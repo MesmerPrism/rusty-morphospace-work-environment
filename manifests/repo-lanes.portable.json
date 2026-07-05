@@ -1,0 +1,59 @@
+{
+  "schema": "rusty.morphospace.work_environment.repo_lanes.v1",
+  "umbrella": "Rusty Morphospace",
+  "lanes": [
+    {
+      "id": "matter",
+      "name": "Rusty Matter",
+      "owns": ["fields", "forms", "SDF and volume contracts", "simulation-facing geometry"],
+      "does_not_own": ["Quest lifecycle", "Makepad widgets", "APK install"]
+    },
+    {
+      "id": "lattice",
+      "name": "Rusty Lattice",
+      "owns": ["spaces", "transforms", "tracked poses", "view sets", "spatial input roles", "validity", "confidence"],
+      "does_not_own": ["renderer backends", "Android property writes"]
+    },
+    {
+      "id": "manifold",
+      "name": "Rusty Manifold",
+      "owns": ["commands", "sessions", "streams", "host manifests", "control transport"],
+      "does_not_own": ["OpenXR tracking ownership", "Android package identities"]
+    },
+    {
+      "id": "optics",
+      "name": "Rusty Optics",
+      "owns": ["camera models", "image metadata", "projection contracts", "homography", "lens metadata"],
+      "does_not_own": ["permission prompts", "APK signing"]
+    },
+    {
+      "id": "gui",
+      "name": "Rusty GUI",
+      "owns": ["operator UI contracts", "CLI parity surfaces", "app-neutral views"],
+      "does_not_own": ["hidden setup", "device command business logic"]
+    },
+    {
+      "id": "makepad",
+      "name": "Rusty Makepad",
+      "owns": ["Makepad adapters", "settings surfaces", "app-shell integration"],
+      "does_not_own": ["Quest platform authority", "generic core state"]
+    },
+    {
+      "id": "quest",
+      "name": "Rusty Quest",
+      "owns": ["Quest profiles", "Android permissions", "launch", "ADB-facing validation receipts"],
+      "does_not_own": ["generic command/session authority"]
+    },
+    {
+      "id": "hostess",
+      "name": "Rusty Hostess",
+      "owns": ["install/test/evidence orchestration", "shell UX"],
+      "does_not_own": ["runtime feature authority"]
+    }
+  ],
+  "public_compatibility": {
+    "id": "rusty-xr",
+    "name": "Rusty XR",
+    "role": "Public compatibility core, schemas, examples, and source-only public fixtures."
+  }
+}

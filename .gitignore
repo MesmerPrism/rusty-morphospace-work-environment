@@ -1,0 +1,27 @@
+.DS_Store
+Thumbs.db
+
+# Local setup.
+local/
+artifacts/
+tmp/
+*.local.json
+*.local.ps1
+*.log
+
+# Build outputs.
+target/
+build/
+dist/
+out/
+*.apk
+*.aab
+*.idsig
+*.keystore
+*.jks
+
+# Tool caches.
+.venv/
+node_modules/
+.pytest_cache/
+__pycache__/

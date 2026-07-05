@@ -1,0 +1,116 @@
+{
+  "schema": "rusty.morphospace.work_environment.dependencies.v1",
+  "purpose": "Portable dependency categories for Rusty Morphospace onboarding.",
+  "required_core": [
+    {
+      "id": "git",
+      "role": "Source control and repo checkout.",
+      "verify": ["git --version"],
+      "source": "https://git-scm.com/"
+    },
+    {
+      "id": "powershell",
+      "role": "Portable scripts and Windows-friendly setup.",
+      "verify": ["$PSVersionTable.PSVersion"],
+      "source": "https://learn.microsoft.com/powershell/"
+    },
+    {
+      "id": "rustup-cargo",
+      "role": "Rust workspace builds and Android Rust target installation.",
+      "verify": ["rustup --version", "cargo --version"],
+      "source": "https://www.rust-lang.org/tools/install"
+    },
+    {
+      "id": "python",
+      "role": "Schema, graph, docs, and validation helpers.",
+      "verify": ["python --version"],
+      "source": "https://www.python.org/"
+    },
+    {
+      "id": "ripgrep",
+      "role": "Fast source and docs search.",
+      "verify": ["rg --version"],
+      "source": "https://github.com/BurntSushi/ripgrep"
+    }
+  ],
+  "quest_android": [
+    {
+      "id": "android-sdk-commandline-tools",
+      "role": "SDK manager and Android platform installation.",
+      "verify": ["sdkmanager --version"],
+      "source": "https://developer.android.com/studio"
+    },
+    {
+      "id": "android-platform-tools",
+      "role": "ADB install, launch, logcat, screenshots, and file transfer.",
+      "verify": ["adb version"],
+      "source": "https://developer.android.com/tools/releases/platform-tools"
+    },
+    {
+      "id": "android-build-tools",
+      "role": "AAPT2, D8, zipalign, and apksigner.",
+      "verify": ["<android-sdk-root>/build-tools/<version>"],
+      "source": "https://developer.android.com/studio"
+    },
+    {
+      "id": "android-ndk",
+      "role": "Native aarch64 Android builds.",
+      "verify": ["<android-ndk-root>/toolchains/llvm"],
+      "source": "https://developer.android.com/ndk"
+    },
+    {
+      "id": "jdk",
+      "role": "Java compile and Android signing tools.",
+      "verify": ["java -version", "javac -version"],
+      "source": "https://adoptium.net/"
+    },
+    {
+      "id": "openxr-loader-quest",
+      "role": "Quest-compatible OpenXR loader supplied by the app/toolchain owner.",
+      "verify": ["<openxr-loader-so>"],
+      "source": "Use a license-compliant OpenXR loader from the selected app shell or SDK."
+    }
+  ],
+  "optional": [
+    {
+      "id": "node-npm-npx",
+      "role": "Optional Meta VR CLI route and frontend tooling.",
+      "verify": ["node --version", "npm --version", "npx --version"],
+      "source": "https://nodejs.org/"
+    },
+    {
+      "id": "dotnet",
+      "role": "Companion apps and CLI workflows when used.",
+      "verify": ["dotnet --version"],
+      "source": "https://dotnet.microsoft.com/"
+    },
+    {
+      "id": "termux",
+      "role": "Quest-hosted Linux sidecar lab workflows.",
+      "verify": ["pkg --version"],
+      "source": "https://github.com/termux/termux-app"
+    },
+    {
+      "id": "termux-x11",
+      "role": "Quest-hosted X11 sidecar experiments.",
+      "verify": ["termux-x11 --help"],
+      "source": "https://github.com/termux/termux-x11"
+    },
+    {
+      "id": "proot-distro",
+      "role": "Optional Linux userland sidecar experiments.",
+      "verify": ["proot-distro --help"],
+      "source": "https://github.com/termux/proot-distro"
+    }
+  ],
+  "environment_variables": [
+    "RUSTY_MORPHOSPACE_WORKSPACE",
+    "RUSTY_MORPHOSPACE_REPOS",
+    "RUSTY_XR_ANDROID_SDK_ROOT",
+    "RUSTY_XR_ANDROID_NDK_ROOT",
+    "RUSTY_XR_ANDROID_JDK_ROOT",
+    "RUSTY_XR_OPENXR_LOADER_QUEST",
+    "RUSTY_QUEST_MAKEPAD_SOURCE_ROOT",
+    "RUSTY_MORPHOSPACE_ARTIFACTS"
+  ]
+}

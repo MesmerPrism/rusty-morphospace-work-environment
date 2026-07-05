@@ -1,0 +1,23 @@
+{
+  "schema": "rusty.morphospace.work_environment.local_paths.v1",
+  "workspace_root": "<workspace-root>",
+  "repos_root": "<workspace-root>/repos",
+  "artifacts_root": "<workspace-root>/artifacts",
+  "skills_root": "<codex-skills-root>",
+  "android": {
+    "sdk_root": "<android-sdk-root>",
+    "ndk_root": "<android-ndk-root>",
+    "jdk_root": "<jdk-root>",
+    "openxr_loader_quest": "<openxr-loader-so>"
+  },
+  "repos": {
+    "rusty_xr": "<workspace-root>/repos/Rusty-XR",
+    "rusty_xr_companion_apps": "<workspace-root>/repos/Rusty-XR-Companion-Apps",
+    "meta_quest_agent_workflow": "<workspace-root>/repos/meta-quest-agent-workflow",
+    "quest_termux_lab": "<workspace-root>/repos/quest-termux-lab",
+    "rusty_manifold": "<workspace-root>/repos/rusty-manifold",
+    "rusty_lattice": "<workspace-root>/repos/rusty-lattice",
+    "rusty_quest": "<workspace-root>/repos/rusty-quest",
+    "makepad_morphospace": "<workspace-root>/repos/makepad-morphospace"
+  }
+}
