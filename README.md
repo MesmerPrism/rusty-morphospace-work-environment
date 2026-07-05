@@ -84,6 +84,7 @@ The exact layout is not mandatory. Store local paths in ignored files under
 
 ## Public Upstreams
 
+- Rusty Morphospace Work Environment: `https://github.com/MesmerPrism/rusty-morphospace-work-environment`
 - Rusty XR public core: `https://github.com/MesmerPrism/Rusty-XR`
 - Meta Quest agent workflow: `https://github.com/MesmerPrism/meta-quest-agent-workflow`
 - Quest Termux Lab: `https://github.com/MesmerPrism/quest-termux-lab`

@@ -6,7 +6,7 @@ build Rusty Morphospace apps or public examples.
 ## 1. Clone This Repo
 
 ```powershell
-git clone <work-environment-repo-url> <workspace-root>\rusty-morphospace-work-environment
+git clone https://github.com/MesmerPrism/rusty-morphospace-work-environment.git <workspace-root>\rusty-morphospace-work-environment
 cd <workspace-root>\rusty-morphospace-work-environment
 ```
 
