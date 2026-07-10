@@ -56,6 +56,11 @@ For particle extraction graphs, report owner surfaces separately: Matter
 simulation/contracts, Lattice relations, Optics appearance/projection, Quest
 platform/render adapters, and application composition. Search those owners for
 an existing contract before recommending a new module or schema.
+The landed source map is anchored by Matter
+`fixtures/particles/contract-conformance.json`, Lattice
+`crates/rusty-lattice-model/src/anchor.rs`, and Optics
+`crates/rusty-optics-fixtures/src/particle_contract.rs`; include their damaged
+boundary fixtures in future impact graphs.
 
 Treat `AGENTS.md`, `SKILL.md`, README, and router docs as graphable instruction
 surfaces. Module-layout or repo-routing changes must include their

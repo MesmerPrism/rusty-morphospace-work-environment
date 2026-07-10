@@ -56,6 +56,11 @@ provides particle state, configuration, diagnostics, render-neutral payloads,
 and surface-runtime snapshots, prove conformance and adapter isolation before
 adding another schema; keep relations, appearance, platform rendering, and app
 policy in their separate lanes.
+The landed proof uses strict serialized fixtures: Matter binds its existing
+state/config/diagnostics/render/surface-snapshot contracts, Lattice adds only a
+situated pose relation, and Optics adds only a visual frame preserving Matter
+identity. Unknown-field rejection is acceptance evidence that product,
+platform, backend, private-driver, and cadence policy did not enter core.
 
 Authority, module-layout, activation, and validation changes also have
 instruction impact. Route them through

@@ -100,6 +100,12 @@ contracts first. Keep relation inputs in Lattice, appearance/projection in
 Optics, platform/render adapters in Quest, and composition/private policy in
 the app. A new app-derived particle schema requires evidence that these
 existing owner contracts cannot express the neutral boundary.
+The accepted conformance surfaces are Matter
+`fixtures/particles/contract-conformance.json`, Lattice
+`rusty.lattice.situated_anchor.v1`, and Optics
+`fixtures/particles/matter-visual-conformance.json`. Their damaged fixtures
+reject app, platform, renderer-resource, private-driver, and high-rate-control
+leakage.
 
 When repo routing, module placement, activation, validation, or public/private
 rules change, synchronize this router and the nearest repo instructions in the
