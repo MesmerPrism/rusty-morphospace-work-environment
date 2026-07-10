@@ -95,6 +95,12 @@ baseline shell, lists optional families disabled, leaves unrelated nearby
 features absent and inert, and records extraction candidates before source is
 moved.
 
+For particle candidates, search Matter's particle and surface-runtime
+contracts first. Keep relation inputs in Lattice, appearance/projection in
+Optics, platform/render adapters in Quest, and composition/private policy in
+the app. A new app-derived particle schema requires evidence that these
+existing owner contracts cannot express the neutral boundary.
+
 When repo routing, module placement, activation, validation, or public/private
 rules change, synchronize this router and the nearest repo instructions in the
 same iteration unit. Keep detailed recipes in linked docs.

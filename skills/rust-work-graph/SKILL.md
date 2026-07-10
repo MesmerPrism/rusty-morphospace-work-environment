@@ -52,6 +52,11 @@ authority surface. Check that source edges into optional modules agree with the
 closed feature lock, and report nearby-but-absent features as inert rather than
 silently adding them to the project.
 
+For particle extraction graphs, report owner surfaces separately: Matter
+simulation/contracts, Lattice relations, Optics appearance/projection, Quest
+platform/render adapters, and application composition. Search those owners for
+an existing contract before recommending a new module or schema.
+
 Treat `AGENTS.md`, `SKILL.md`, README, and router docs as graphable instruction
 surfaces. Module-layout or repo-routing changes must include their
 synchronization records; keep detailed scan recipes outside the entrypoints.

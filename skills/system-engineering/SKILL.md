@@ -51,6 +51,12 @@ baseline shell, record optional nearby families as disabled, assert one
 unrelated feature is absent and inert, and create candidate records before
 extracting reusable source.
 
+Candidate classification starts with owner-contract reuse. If Matter already
+provides particle state, configuration, diagnostics, render-neutral payloads,
+and surface-runtime snapshots, prove conformance and adapter isolation before
+adding another schema; keep relations, appearance, platform rendering, and app
+policy in their separate lanes.
+
 Authority, module-layout, activation, and validation changes also have
 instruction impact. Route them through
 `docs/INSTRUCTION_SYNCHRONIZATION.md`; update concise routers and place long
