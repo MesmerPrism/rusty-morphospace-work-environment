@@ -61,6 +61,10 @@ The landed source map is anchored by Matter
 `crates/rusty-lattice-model/src/anchor.rs`, and Optics
 `crates/rusty-optics-fixtures/src/particle_contract.rs`; include their damaged
 boundary fixtures in future impact graphs.
+For Quest adoption, connect the adapter crate, both app consumer modules, the
+two-consumer fixture, runtime profile, property manifest, and evidence checker
+as one slice without assigning nearby renderer/private-particle code to adapter
+ownership.
 
 Treat `AGENTS.md`, `SKILL.md`, README, and router docs as graphable instruction
 surfaces. Module-layout or repo-routing changes must include their

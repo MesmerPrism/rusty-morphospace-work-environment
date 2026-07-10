@@ -61,6 +61,10 @@ state/config/diagnostics/render/surface-snapshot contracts, Lattice adds only a
 situated pose relation, and Optics adds only a visual frame preserving Matter
 identity. Unknown-field rejection is acceptance evidence that product,
 platform, backend, private-driver, and cadence policy did not enter core.
+The Quest proof uses one adapter crate and two thin consumer modules. The
+adapter may prepare renderer-neutral instance rows; selection, backend
+resources, markers, and app policy stay with each consumer. Require a disabled
+zero-row receipt as rollback evidence.
 
 Authority, module-layout, activation, and validation changes also have
 instruction impact. Route them through

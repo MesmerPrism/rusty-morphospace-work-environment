@@ -38,6 +38,11 @@ In the public Meta Quest workflow repo:
 - Do not treat Termux as Android shell authority unless an already authorized
   ADB gate reports `uid=2000(shell)`.
 - Keep raw device evidence private unless a public redaction gate exists.
+- Validate the shared particle adapter per consumer with serial-scoped ADB.
+  Require each effective `channel=particle-adapter` marker, fold private logs
+  with `rusty-quest/tools/Test-QuestParticleAdapterEvidence.ps1`, require
+  high-rate JSON false and backend payload absent, then stop both packages and
+  clear only run-owned adapter profile state.
 
 ## Install And Launch Shape
 

@@ -106,6 +106,10 @@ The accepted conformance surfaces are Matter
 `fixtures/particles/matter-visual-conformance.json`. Their damaged fixtures
 reject app, platform, renderer-resource, private-driver, and high-rate-control
 leakage.
+Quest adoption routes through `crates/rusty-quest-particle-adapter`: Spatial
+Camera Panel selects it only from explicit surface-layer start, while native
+renderer selects it only through its conformance profile. Both default
+disabled and share no application policy.
 
 When repo routing, module placement, activation, validation, or public/private
 rules change, synchronize this router and the nearest repo instructions in the
