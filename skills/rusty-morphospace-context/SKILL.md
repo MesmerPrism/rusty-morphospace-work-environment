@@ -89,6 +89,12 @@ Project composition is closed-world. Modules and features absent from the
 project spec and feature lock are inert. Stable module promotion requires an
 independent consumer or neutral conformance harness.
 
+The reference downstream adoption shape is a project-local `morphospace/`
+workspace beside an application README. It selects only the application's
+baseline shell, lists optional families disabled, leaves unrelated nearby
+features absent and inert, and records extraction candidates before source is
+moved.
+
 When repo routing, module placement, activation, validation, or public/private
 rules change, synchronize this router and the nearest repo instructions in the
 same iteration unit. Keep detailed recipes in linked docs.

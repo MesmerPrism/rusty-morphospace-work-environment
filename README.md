@@ -86,6 +86,12 @@ powershell -NoProfile -ExecutionPolicy Bypass `
 This repository owns the portable protocol. The project adopting it owns its
 live `morphospace/` state and evidence.
 
+The first downstream adoption proof lives in Rusty Quest's public
+`apps/spatial-camera-panel-android/morphospace/` directory. It demonstrates a
+behavior-neutral bootstrap: one selected base shell, explicit disabled optional
+families, one absent/inert nearby feature, candidate records, a compact next
+unit, and a project-owned static gate.
+
 ## Repository Layout
 
 ```text

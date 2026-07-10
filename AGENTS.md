@@ -76,6 +76,10 @@ private evidence, or machine paths back into this repository.
 - A reusable module cannot become stable without an independent consumer or a
   neutral conformance harness plus an accepted promotion review.
 - At most one iteration unit is active or validating in a project workspace.
+- A downstream adoption unit must be behavior-neutral unless its scope says
+  otherwise: select the baseline shell, list optional families disabled,
+  assert an unrelated nearby feature is absent/inert, and add candidate records
+  before moving reusable source.
 - Units changing authority, module layout, activation, validation, device
   policy, repo routing, or public/private boundaries must synchronize the
   nearest repo instructions, a README/router doc, and relevant skills before

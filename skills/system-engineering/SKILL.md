@@ -46,6 +46,11 @@ composition authority, `feature.lock.json` as activation authority, and
 `workspace.state.json` as the compact agent-resume surface. Work only within
 the repository and path scope declared by the current iteration unit.
 
+For an adopting application, require a behavior-neutral bootstrap: select its
+baseline shell, record optional nearby families as disabled, assert one
+unrelated feature is absent and inert, and create candidate records before
+extracting reusable source.
+
 Authority, module-layout, activation, and validation changes also have
 instruction impact. Route them through
 `docs/INSTRUCTION_SYNCHRONIZATION.md`; update concise routers and place long
