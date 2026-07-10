@@ -111,6 +111,11 @@ Camera Panel selects it only from explicit surface-layer start, while native
 renderer selects it only through its conformance profile. Both default
 disabled and share no application policy.
 
+The hand substrate routes tracked capability, joint relations, reference
+space, coordinate basis, confidence, and staleness through Lattice; bind rigs
+and deterministic CPU skinning through Matter; and provider/rig/hand-preserving
+visual profiles through Optics. Platform adapters stay outside all three cores.
+
 When repo routing, module placement, activation, validation, or public/private
 rules change, synchronize this router and the nearest repo instructions in the
 same iteration unit. Keep detailed recipes in linked docs.

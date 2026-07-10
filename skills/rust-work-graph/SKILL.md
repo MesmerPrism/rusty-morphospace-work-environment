@@ -66,6 +66,11 @@ two-consumer fixture, runtime profile, property manifest, and evidence checker
 as one slice without assigning nearby renderer/private-particle code to adapter
 ownership.
 
+For the hand substrate, graph Lattice capability/frame/mapping, Matter
+rig/joint-frame/CPU-skinning conformance, and Optics identity-preserving visual
+profiles as three owner clusters. Include provider-mixup, basis-mismatch,
+invalid-rig, and backend-leak fixtures as rejection edges.
+
 Treat `AGENTS.md`, `SKILL.md`, README, and router docs as graphable instruction
 surfaces. Module-layout or repo-routing changes must include their
 synchronization records; keep detailed scan recipes outside the entrypoints.

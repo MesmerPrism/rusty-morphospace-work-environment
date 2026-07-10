@@ -66,6 +66,12 @@ adapter may prepare renderer-neutral instance rows; selection, backend
 resources, markers, and app policy stay with each consumer. Require a disabled
 zero-row receipt as rollback evidence.
 
+For hand systems, preserve provider identity and coordinate basis end to end.
+Lattice validates capability-to-frame ownership, Matter rejects provider,
+handedness, reference-space, joint-count, weight, and rig mismatches before CPU
+skinning, and Optics preserves provider/frame/rig/hand identity without backend
+fields. Provider substitution must fail closed.
+
 Authority, module-layout, activation, and validation changes also have
 instruction impact. Route them through
 `docs/INSTRUCTION_SYNCHRONIZATION.md`; update concise routers and place long
