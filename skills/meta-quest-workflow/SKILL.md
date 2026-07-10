@@ -14,6 +14,7 @@ In this work-environment repo:
 1. `docs/QUEST_APK_WORKFLOW.md`
 2. `docs/TERMUX_SIDECAR_LAB.md`
 3. `docs/PUBLIC_PRIVATE_BOUNDARY.md`
+4. `docs/INSTRUCTION_SYNCHRONIZATION.md`, when device or evidence policy changes
 
 In the public Meta Quest workflow repo:
 
@@ -57,3 +58,8 @@ Stop and ask for explicit operator approval before:
 - changing proximity, power, or keep-awake policy;
 - running long APK builds or Perfetto captures on shared devices;
 - using package identities or artifacts from private apps in public docs.
+
+When durable device, ADB, APK, QCL, sidecar, signal, capture, or evidence rules
+change, synchronize this router, the touched repo `AGENTS.md`, and the nearest
+README/runbook entrypoint in the same iteration unit. Keep operational recipes
+in the public device-workflow docs rather than expanding this router.

@@ -10,13 +10,15 @@ Quick checks:
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-PublicBoundary.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkEnvironment.ps1 -SelfTest
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkflowContracts.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\New-ProjectWorkspace.ps1 -SelfTest
 git diff --check
 ```
 
 JSON parse:
 
 ```powershell
-Get-ChildItem .\manifests,.\templates -Filter *.json -File |
+Get-ChildItem .\manifests,.\schemas,.\templates -Filter *.json -File |
   ForEach-Object { Get-Content -Raw $_.FullName | ConvertFrom-Json | Out-Null }
 ```
 
@@ -28,6 +30,33 @@ Get-ChildItem .\scripts -Filter *.ps1 -File |
     [scriptblock]::Create((Get-Content -Raw $_.FullName)) | Out-Null
   }
 ```
+
+## Project Workflow Contracts
+
+The workflow validator checks more than JSON syntax. It enforces:
+
+- closed-world activation and declared-module references;
+- one authority owner per parameter;
+- module maturity and iteration state vocabularies;
+- repository/path scope, non-scope, acceptance, risk, device, and push fields;
+- at most one active unit and consistent compact state;
+- increasing, parseable JSONL iteration events;
+- stable-promotion gates, rollback, and an independent consumer or
+  conformance harness;
+- required instruction synchronization for authority, module-layout,
+  activation, validation, device-policy, repo-routing, and boundary changes.
+
+Validate an instantiated project workspace:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\Test-WorkflowContracts.ps1 `
+  -WorkspaceRoot <project-root>\morphospace
+```
+
+The scaffold self-test creates a temporary project workspace, validates it,
+proves that a second invocation cannot overwrite it, and removes only its own
+temporary directory.
 
 ## Source Repos
 

@@ -84,12 +84,36 @@ function Invoke-JsonParseCheck {
     }
 }
 
+function Invoke-JsonLinesParseCheck {
+    param([string]$Path)
+
+    try {
+        $lineNumber = 0
+        foreach ($line in @(Get-Content -LiteralPath $Path)) {
+            $lineNumber++
+            if ([string]::IsNullOrWhiteSpace($line)) {
+                continue
+            }
+            $line | ConvertFrom-Json | Out-Null
+        }
+        Add-CheckResult -Name "jsonl:$Path" -Status "ok" -Detail "Parsed JSON Lines."
+    } catch {
+        Add-CheckResult -Name "jsonl:$Path" -Status "missing" -Required $true -Detail "Line $lineNumber`: $($_.Exception.Message)"
+    }
+}
+
 if ($SelfTest) {
     Get-ChildItem -LiteralPath (Join-Path $RepoRoot "manifests") -Filter "*.json" -File |
         ForEach-Object { Invoke-JsonParseCheck -Path $_.FullName }
 
     Get-ChildItem -LiteralPath (Join-Path $RepoRoot "templates") -Filter "*.json" -File |
         ForEach-Object { Invoke-JsonParseCheck -Path $_.FullName }
+
+    Get-ChildItem -LiteralPath (Join-Path $RepoRoot "schemas") -Filter "*.json" -File |
+        ForEach-Object { Invoke-JsonParseCheck -Path $_.FullName }
+
+    Get-ChildItem -LiteralPath (Join-Path $RepoRoot "templates") -Filter "*.jsonl" -File |
+        ForEach-Object { Invoke-JsonLinesParseCheck -Path $_.FullName }
 
     Get-ChildItem -LiteralPath (Join-Path $RepoRoot "scripts") -Filter "*.ps1" -File |
         ForEach-Object {
@@ -100,6 +124,20 @@ if ($SelfTest) {
                 Add-CheckResult -Name "powershell:$($_.Name)" -Status "missing" -Required $true -Detail $_.Exception.Message
             }
         }
+
+    try {
+        & (Join-Path $RepoRoot "scripts\Test-WorkflowContracts.ps1") -RepoRoot $RepoRoot
+        Add-CheckResult -Name "workflow:contracts" -Status "ok" -Detail "Validated lifecycle, schemas, and examples."
+    } catch {
+        Add-CheckResult -Name "workflow:contracts" -Status "missing" -Required $true -Detail $_.Exception.Message
+    }
+
+    try {
+        & (Join-Path $RepoRoot "scripts\New-ProjectWorkspace.ps1") -SelfTest
+        Add-CheckResult -Name "scaffold:project-workspace" -Status "ok" -Detail "Created, validated, and protected a temporary scaffold."
+    } catch {
+        Add-CheckResult -Name "scaffold:project-workspace" -Status "missing" -Required $true -Detail $_.Exception.Message
+    }
 }
 
 Test-CommandAvailable -Name "git" -Required $true
@@ -164,7 +202,7 @@ if ($Strict -and $failedRequired.Count -gt 0) {
 }
 
 if ($SelfTest) {
-    $selfTestFailures = $results | Where-Object { $_.Name -match "^(json|powershell):" -and $_.Status -ne "ok" }
+    $selfTestFailures = $results | Where-Object { $_.Name -match "^(json|jsonl|powershell|workflow|scaffold):" -and $_.Status -ne "ok" }
     if ($selfTestFailures.Count -gt 0) {
         Write-Error "Self-test failed."
         exit 1

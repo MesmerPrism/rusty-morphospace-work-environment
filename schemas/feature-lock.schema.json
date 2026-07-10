@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/feature-lock.schema.json",
+  "title": "Rusty Morphospace feature lock",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "project_id", "revision", "default_activation", "features"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schema": { "const": "rusty.morphospace.workflow.feature_lock.v1" },
+    "project_id": { "$ref": "#/$defs/id" },
+    "revision": { "type": "integer", "minimum": 1 },
+    "default_activation": { "const": "disabled" },
+    "features": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "feature_id",
+          "module_id",
+          "enabled",
+          "requested_by",
+          "descriptor",
+          "dependencies",
+          "conflicts",
+          "permissions",
+          "routes",
+          "assets",
+          "parameter_authorities",
+          "activation_receipt"
+        ],
+        "properties": {
+          "feature_id": { "$ref": "#/$defs/id" },
+          "module_id": { "$ref": "#/$defs/id" },
+          "enabled": { "type": "boolean" },
+          "requested_by": { "type": "string" },
+          "descriptor": { "type": "string" },
+          "dependencies": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "$ref": "#/$defs/id" }
+          },
+          "conflicts": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "$ref": "#/$defs/id" }
+          },
+          "permissions": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "routes": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "assets": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "parameter_authorities": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["parameter", "owner"],
+              "properties": {
+                "parameter": { "$ref": "#/$defs/dottedId" },
+                "owner": { "$ref": "#/$defs/id" }
+              }
+            }
+          },
+          "activation_receipt": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["required", "schema", "effective_marker"],
+            "properties": {
+              "required": { "type": "boolean" },
+              "schema": { "$ref": "#/$defs/dottedId" },
+              "effective_marker": { "$ref": "#/$defs/dottedId" }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,63}$"
+    },
+    "dottedId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_.-]{2,127}$"
+    }
+  }
+}

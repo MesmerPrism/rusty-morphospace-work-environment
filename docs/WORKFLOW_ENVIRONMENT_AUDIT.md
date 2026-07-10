@@ -1,15 +1,16 @@
 # Workflow And Environment Dependency Audit
 
-Status: initial portable baseline.
+Status: portable workflow v1 implemented.
 
 ## Decision
 
-Create a dedicated Rusty Morphospace Work Environment repository that carries
-portable onboarding docs, manifests, validation scripts, and local-skill
-templates. It should not copy private planning state or machine-specific
-receipts. It should give a new contributor enough structure to install tools,
-clone source repos, install local skills, build public examples, and run Quest
-APK workflows with explicit placeholders.
+Maintain a dedicated Rusty Morphospace Work Environment repository that carries
+portable onboarding docs, project/module workflow contracts, manifests,
+schemas, validation scripts, and local-skill templates. It must not copy
+private planning state or machine-specific receipts. It gives contributors and
+agents a repeatable way to set up tools, compose an application explicitly,
+extract reusable modules without application leakage, resume iteration, and
+run public Quest APK workflows with placeholders.
 
 ## Sources Audited
 
@@ -45,9 +46,15 @@ The reusable content is mostly process and contract discipline:
 - tiered validation and graph inventory defaults;
 - local-skill installation pattern.
 
+The first baseline did not provide a project composition contract, explicit
+feature lock, module maturity record, autonomous work unit, compact resume
+state, event log, promotion review, or semantic validator. Portable workflow
+v1 adds these without moving live project state into this repository.
+
 ## Portable Repo Architecture
 
-This repo owns onboarding and agent setup. It does not own runtime behavior.
+This repo owns onboarding, portable workflow contracts, and agent setup. It
+does not own project composition decisions or runtime behavior.
 
 | Area | Owner in this repo | Runtime/source owner |
 | --- | --- | --- |
@@ -55,6 +62,10 @@ This repo owns onboarding and agent setup. It does not own runtime behavior.
 | Dependency list | `docs/DEPENDENCY_MATRIX.md`, `manifests/dependencies.portable.json` | Official tool installers and source repos |
 | Skill templates | `skills/`, `docs/SKILL_INSTALLATION.md` | Contributor agent installation |
 | Repo lanes | `docs/REPO_LANES.md`, `manifests/repo-lanes.portable.json` | Morphospace source repos |
+| Project workflow | `docs/PROJECT_WORKSPACE_PROTOCOL.md`, `schemas/`, workflow templates | The adopting project's `morphospace/` directory |
+| Module lifecycle | `docs/MODULE_LIFECYCLE.md`, candidate and promotion schemas | Module's owning lane and project reviewers |
+| Feature activation | `docs/FEATURE_ACTIVATION.md`, feature-lock schema | Project app shell and consuming runtime |
+| Autonomous iteration | `docs/AUTONOMOUS_ITERATION.md`, unit/state/event schemas | The adopting project and its repositories |
 | Quest APK workflow | `docs/QUEST_APK_WORKFLOW.md` | App shell, Rusty Quest, Rusty XR examples, Meta Quest workflow |
 | Termux sidecar lab | `docs/TERMUX_SIDECAR_LAB.md` | Quest Termux Lab and live Quest workflow |
 | Validation | `scripts/` and `docs/VALIDATION.md` | Contributor machine and source repos |
@@ -67,6 +78,9 @@ This repo owns onboarding and agent setup. It does not own runtime behavior.
 - Replacing the public Meta Quest workflow.
 - Creating live device evidence.
 - Moving private app payload semantics into public Morphospace docs.
+- Acting as the live state database or runtime module registry for projects.
+- Automatically pushing branches or promoting modules without project-owned
+  validation and review.
 
 ## Mitigation Map
 
@@ -78,14 +92,19 @@ This repo owns onboarding and agent setup. It does not own runtime behavior.
 | Quest work mutates a device without clear authority. | Route live device work through `meta-quest-workflow` and serial-scoped ADB commands. | Device run evidence must name provider, goal, serial placeholder, and artifacts. |
 | Termux is mistaken for shell or product authority. | Document loopback ADB gate and sidecar limits. | Require `uid=2000(shell)` gate before install/launch through Termux ADB. |
 | Generic utilities get trapped in app repos. | Keep repo-lane docs and public extraction gates first-hop. | Add a contract/schema/helper before runtime adapter code. |
+| Application defaults leak into a reusable module. | Require exclusions, a neutral contract, adapter separation, and second-consumer evidence. | `scripts/Test-WorkflowContracts.ps1` plus promotion review. |
+| Merely present code changes unrelated application behavior. | Use closed-world activation; absent and disabled features are inert. | Validate project spec and feature lock together. |
+| Autonomous work drifts outside the intended project. | Scope each unit to declared repos/paths with non-scope, acceptance, risk, device, and push fields. | Validate unit scope and allow at most one active unit. |
+| Long push intervals lose iteration context. | Use local checkpoint commits, compact workspace state, append-only events, and pending push bundles. | Scaffold and workflow contract self-tests. |
+| Skills or `AGENTS.md` lag behind architecture changes. | Declare change categories and instruction surfaces in each unit; require synchronized repo, router, and relevant skill updates before acceptance. | Instruction-sync workflow and stable-promotion gates. |
 
 ## Next Work
 
-1. Replace placeholder upstream clone URLs with canonical repo URLs as public
-   repos are finalized.
-2. Add optional bootstrap scripts only after the dependency manifest has been
-   tested on a clean machine.
-3. Add source-repo-specific check recipes once each public repo's onboarding
-   commands are stable.
-4. Decide whether this repo should publish a release archive of skill
-   templates or remain source-only.
+1. Exercise the scaffold in one public example project and refine only from
+   recorded friction.
+2. Add source-repo-specific validation profiles once their public commands are
+   stable.
+3. Add a portable coordinated-push receipt after two projects have used the
+   iteration-unit protocol.
+4. Decide whether this repo should publish a release archive of schemas and
+   skill templates or remain source-only.

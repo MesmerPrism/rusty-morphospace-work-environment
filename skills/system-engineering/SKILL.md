@@ -34,6 +34,22 @@ decision and validation note.
   pose, or GPU-buffer streams into them.
 - UI handlers collect parameters, invoke routes, show progress, and project
   structured evidence. They should not own hidden setup or business logic.
+- Project composition uses a closed-world feature lock. Unlisted or disabled
+  modules are inert and cannot change unrelated packaging or runtime behavior.
+- Stable reusable modules require a second independent consumer or neutral
+  conformance harness and an accepted promotion review.
+
+## Portable Project Contracts
+
+When a project has a `morphospace/` directory, treat `project.spec.json` as
+composition authority, `feature.lock.json` as activation authority, and
+`workspace.state.json` as the compact agent-resume surface. Work only within
+the repository and path scope declared by the current iteration unit.
+
+Authority, module-layout, activation, and validation changes also have
+instruction impact. Route them through
+`docs/INSTRUCTION_SYNCHRONIZATION.md`; update concise routers and place long
+procedures in linked docs.
 
 ## Reference Intake
 

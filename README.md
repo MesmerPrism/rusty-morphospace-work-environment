@@ -1,6 +1,7 @@
 # Rusty Morphospace Work Environment
 
-Portable onboarding workspace for Rusty Morphospace development.
+Portable onboarding and project-iteration workspace for Rusty Morphospace
+development.
 
 This repository packages the agent instructions, setup notes, dependency
 matrix, validation scripts, and local-skill templates needed to bring up a
@@ -15,6 +16,10 @@ Included:
   agent workflows;
 - portable skill templates for Morphospace routing, system engineering,
   Rust workspace graph audits, and Meta Quest workflow handoffs;
+- project-local composition, feature activation, module extraction, promotion,
+  and autonomous-iteration contracts;
+- JSON schemas, public examples, validators, and a no-overwrite project
+  scaffold for those contracts;
 - setup examples that use placeholders such as `<workspace-root>`,
   `<android-sdk-root>`, `<quest-serial>`, and `<path-to.apk>`;
 - public/private boundary rules for notes, logs, APKs, screenshots, package
@@ -49,9 +54,37 @@ powershell -NoProfile -ExecutionPolicy Bypass `
   -Execute
 ```
 
-5. For Quest APK work, read [Quest APK Workflow](docs/QUEST_APK_WORKFLOW.md)
+5. For a new or existing application, read
+   [Project Workspace Protocol](docs/PROJECT_WORKSPACE_PROTOCOL.md), then run a
+   scaffold dry run:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\New-ProjectWorkspace.ps1 `
+  -ProjectRoot <project-root> `
+  -ProjectId <project-id>
+```
+
+6. For Quest APK work, read [Quest APK Workflow](docs/QUEST_APK_WORKFLOW.md)
    and use the public Meta Quest workflow repo as the device-operations
    authority.
+
+## Project Iteration
+
+- [Project Workspace Protocol](docs/PROJECT_WORKSPACE_PROTOCOL.md) defines the
+  project-local control surface and agent resume order.
+- [Module Lifecycle](docs/MODULE_LIFECYCLE.md) defines extraction and stable
+  promotion, including the second-consumer gate.
+- [Feature Activation](docs/FEATURE_ACTIVATION.md) makes absent features inert
+  and requires one parameter authority plus effective-runtime receipts.
+- [Autonomous Iteration](docs/AUTONOMOUS_ITERATION.md) defines work-unit scope,
+  compact state, event notes, validation tiers, and larger push checkpoints.
+- [Instruction Synchronization](docs/INSTRUCTION_SYNCHRONIZATION.md) keeps
+  skills, planning instructions, touched-repo `AGENTS.md`, and README/router
+  docs aligned without duplicating long recipes.
+
+This repository owns the portable protocol. The project adopting it owns its
+live `morphospace/` state and evidence.
 
 ## Repository Layout
 
@@ -60,6 +93,7 @@ AGENTS.md
 README.md
 docs/
 manifests/
+schemas/
 scripts/
 skills/
 templates/
@@ -74,8 +108,14 @@ The repo is designed to be cloned beside source repositories, for example:
     Rusty-XR/
     Rusty-XR-Companion-Apps/
     rusty-manifold/
+    rusty-manifold-packages/
+    rusty-matter/
+    rusty-optics/
     rusty-lattice/
+    rusty-gui/
     rusty-quest/
+    rusty-hostess/
+    rusty-quest-sidecar-mesh/
     makepad-morphospace/
 ```
 

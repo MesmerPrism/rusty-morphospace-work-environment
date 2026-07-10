@@ -1,0 +1,22 @@
+{
+  "$schema": "../schemas/workspace-state.schema.json",
+  "schema": "rusty.morphospace.workflow.workspace_state.v1",
+  "project_id": "example-project",
+  "plan_revision": 1,
+  "current_unit": "unit-example-001",
+  "next_ready_unit": null,
+  "last_event_id": "event-example-001",
+  "dirty_repositories": [],
+  "blockers": [],
+  "validation_checkpoint": {
+    "tier": "quick",
+    "receipt": "<quick-validation-receipt>",
+    "result": "pass"
+  },
+  "pending_push_bundle": {
+    "bundle_id": "bundle-example-001",
+    "unit_ids": ["unit-example-001"],
+    "repo_ids": ["matter-core", "project-shell"],
+    "ready": false
+  }
+}

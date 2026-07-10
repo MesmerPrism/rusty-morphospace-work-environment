@@ -1,0 +1,32 @@
+{
+  "$schema": "../schemas/feature-lock.schema.json",
+  "schema": "rusty.morphospace.workflow.feature_lock.v1",
+  "project_id": "example-project",
+  "revision": 1,
+  "default_activation": "disabled",
+  "features": [
+    {
+      "feature_id": "particle-field",
+      "module_id": "particle-field",
+      "enabled": true,
+      "requested_by": "project-spec:example-project",
+      "descriptor": "<repo-root>/morphospace/features/particle-field.json",
+      "dependencies": [],
+      "conflicts": [],
+      "permissions": [],
+      "routes": [],
+      "assets": [],
+      "parameter_authorities": [
+        {
+          "parameter": "particle-field.step-rate",
+          "owner": "matter"
+        }
+      ],
+      "activation_receipt": {
+        "required": true,
+        "schema": "rusty.matter.particle_field.activation_receipt.v1",
+        "effective_marker": "rusty.matter.particle_field.effective"
+      }
+    }
+  ]
+}

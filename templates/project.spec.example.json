@@ -1,0 +1,73 @@
+{
+  "$schema": "../schemas/project-spec.schema.json",
+  "schema": "rusty.morphospace.workflow.project_spec.v1",
+  "project_id": "example-project",
+  "revision": 1,
+  "purpose": "Demonstrate explicit project composition without placing application details in a reusable module.",
+  "activation_model": {
+    "default": "disabled",
+    "unlisted_modules": "inert"
+  },
+  "authority_map": [
+    {
+      "parameter": "project.composition",
+      "owner": "project-shell",
+      "adapters": []
+    },
+    {
+      "parameter": "particle-field.step-rate",
+      "owner": "matter",
+      "adapters": ["project-shell"]
+    }
+  ],
+  "repositories": [
+    {
+      "repo_id": "project-shell",
+      "role": "application",
+      "path": "<repo-root>",
+      "allowed_paths": ["src/", "docs/", "morphospace/"]
+    },
+    {
+      "repo_id": "matter-core",
+      "role": "core",
+      "path": "<workspace-root>/repos/rusty-matter",
+      "allowed_paths": ["crates/", "schemas/", "fixtures/", "docs/"]
+    }
+  ],
+  "modules": [
+    {
+      "module_id": "particle-field",
+      "feature_id": "particle-field",
+      "lane": "matter",
+      "maturity": "cross-consumer-validated",
+      "contract": "rusty.matter.particle_field.v1",
+      "source_repo": "matter-core",
+      "dependencies": []
+    }
+  ],
+  "non_scope": [
+    "Application-specific visual treatment and tuning.",
+    "Platform renderer and package behavior.",
+    "Modules and features absent from this specification."
+  ],
+  "validation_profiles": [
+    {
+      "profile_id": "quick",
+      "commands": ["<quick-validation-command>"]
+    },
+    {
+      "profile_id": "deep",
+      "commands": ["<deep-validation-command>"]
+    }
+  ],
+  "public_boundary": {
+    "mode": "public",
+    "private_overlay": "<project-root>/local",
+    "prohibited_evidence": [
+      "device serials",
+      "private package identities",
+      "raw logs and captures",
+      "signing and pairing material"
+    ]
+  }
+}

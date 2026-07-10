@@ -41,3 +41,12 @@ Use it to find:
 
 Then route changes through `rusty-morphospace-context` and
 `system-engineering`.
+
+When a project uses the portable `morphospace/` workflow, compare graph
+findings with the project spec and current iteration-unit scope. A graph can
+identify pressure; it does not authorize edits outside the declared repos or
+paths.
+
+Treat `AGENTS.md`, `SKILL.md`, README, and router docs as graphable instruction
+surfaces. Module-layout or repo-routing changes must include their
+synchronization records; keep detailed scan recipes outside the entrypoints.

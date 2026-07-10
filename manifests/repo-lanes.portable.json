@@ -55,5 +55,26 @@
     "id": "rusty-xr",
     "name": "Rusty XR",
     "role": "Public compatibility core, schemas, examples, and source-only public fixtures."
-  }
+  },
+  "lane_repositories": [
+    {
+      "id": "rusty-manifold-packages",
+      "lane": "manifold",
+      "role": "Reusable Manifold package and profile integrations."
+    }
+  ],
+  "supporting_repositories": [
+    {
+      "id": "meta-quest-agent-workflow",
+      "role": "Portable live-device operation workflow."
+    },
+    {
+      "id": "quest-termux-lab",
+      "role": "Termux and synthetic peer-lab evidence before sanitized integration."
+    },
+    {
+      "id": "rusty-quest-sidecar-mesh",
+      "role": "Sanitized Quest sidecar proposal and integration boundary."
+    }
+  ]
 }

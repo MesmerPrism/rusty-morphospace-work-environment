@@ -1,0 +1,110 @@
+{
+  "$schema": "../schemas/iteration-unit.schema.json",
+  "schema": "rusty.morphospace.workflow.iteration_unit.v1",
+  "unit_id": "unit-example-001",
+  "project_id": "example-project",
+  "status": "active",
+  "objective": "Validate the neutral particle-field contract and its explicit project activation.",
+  "change_categories": ["module-layout", "feature-activation", "validation"],
+  "instruction_impact": "update",
+  "instruction_surfaces": [
+    {
+      "surface_kind": "agents",
+      "path": "<repo-root>/AGENTS.md",
+      "owner": "matter-core",
+      "change_reason": "Route the new module boundary, activation rule, and validation command.",
+      "action": "update",
+      "status": "planned",
+      "validation": "<instruction-validation-command>",
+      "skill_id": null
+    },
+    {
+      "surface_kind": "readme",
+      "path": "<repo-root>/README.md",
+      "owner": "matter-core",
+      "change_reason": "Expose the public module contract and first validation path.",
+      "action": "update",
+      "status": "planned",
+      "validation": "<instruction-validation-command>",
+      "skill_id": null
+    },
+    {
+      "surface_kind": "skill",
+      "path": "<skills-root>/rusty-morphospace-context/SKILL.md",
+      "owner": "workflow-maintainer",
+      "change_reason": "Keep module placement and feature-activation routing current.",
+      "action": "update",
+      "status": "planned",
+      "validation": "<skill-validation-command>",
+      "skill_id": "rusty-morphospace-context"
+    },
+    {
+      "surface_kind": "skill",
+      "path": "<skills-root>/system-engineering/SKILL.md",
+      "owner": "workflow-maintainer",
+      "change_reason": "Keep contract, activation, and acceptance invariants current.",
+      "action": "update",
+      "status": "planned",
+      "validation": "<skill-validation-command>",
+      "skill_id": "system-engineering"
+    },
+    {
+      "surface_kind": "skill",
+      "path": "<skills-root>/rust-work-graph/SKILL.md",
+      "owner": "workflow-maintainer",
+      "change_reason": "Keep module-layout and instruction-surface audit routing current.",
+      "action": "update",
+      "status": "planned",
+      "validation": "<skill-validation-command>",
+      "skill_id": "rust-work-graph"
+    }
+  ],
+  "instruction_none_justification": null,
+  "prerequisites": [],
+  "allowed_repositories": [
+    {
+      "repo_id": "matter-core",
+      "allowed_paths": ["crates/particle-field/", "schemas/", "fixtures/", "docs/"]
+    },
+    {
+      "repo_id": "project-shell",
+      "allowed_paths": ["morphospace/"]
+    }
+  ],
+  "non_scope": [
+    "Application visual changes.",
+    "Platform, packaging, permission, and device work.",
+    "Unrelated modules."
+  ],
+  "acceptance": [
+    {
+      "acceptance_id": "contract-fixtures",
+      "proof": "Valid and damaged fixtures produce the documented outcomes.",
+      "command": "<contract-fixture-command>"
+    },
+    {
+      "acceptance_id": "inactive-baseline",
+      "proof": "Removing the feature-lock entry leaves the module inert.",
+      "command": "<inactive-baseline-command>"
+    }
+  ],
+  "risk_tier": "standard",
+  "device_requirement": "none",
+  "validation": [
+    {
+      "profile_id": "quick",
+      "command": "<quick-validation-command>"
+    },
+    {
+      "profile_id": "deep",
+      "command": "<deep-validation-command>"
+    }
+  ],
+  "outputs": [
+    "Contract and fixture changes.",
+    "Sanitized validation receipt.",
+    "Updated iteration event."
+  ],
+  "commit_policy": "Commit each coherent slice after standard validation.",
+  "push_checkpoint": "integration-batch"
+}

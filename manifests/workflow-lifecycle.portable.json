@@ -1,0 +1,143 @@
+{
+  "schema": "rusty.morphospace.work_environment.workflow_lifecycle.v1",
+  "module_maturity": [
+    {
+      "id": "app-local",
+      "next": ["candidate", "deprecated"],
+      "required_evidence": ["app tests", "non-reuse statement"]
+    },
+    {
+      "id": "candidate",
+      "next": ["contract-ready", "deprecated"],
+      "required_evidence": ["candidate record", "proposed lane", "provenance"]
+    },
+    {
+      "id": "contract-ready",
+      "next": ["adapter-ready", "deprecated"],
+      "required_evidence": ["versioned contract", "valid fixture", "damaged fixture"]
+    },
+    {
+      "id": "adapter-ready",
+      "next": ["cross-consumer-validated", "deprecated"],
+      "required_evidence": ["adapter boundary", "dependency check", "effective receipt"]
+    },
+    {
+      "id": "cross-consumer-validated",
+      "next": ["stable", "deprecated"],
+      "required_evidence": ["independent consumer or conformance harness"]
+    },
+    {
+      "id": "stable",
+      "next": ["deprecated"],
+      "required_evidence": ["accepted promotion review"]
+    },
+    {
+      "id": "deprecated",
+      "next": [],
+      "required_evidence": ["migration or retirement path"]
+    }
+  ],
+  "iteration_states": [
+    { "id": "proposed", "next": ["ready", "superseded"] },
+    { "id": "ready", "next": ["active", "blocked", "superseded"] },
+    { "id": "active", "next": ["validating", "blocked", "superseded"] },
+    { "id": "validating", "next": ["accepted", "active", "blocked", "superseded"] },
+    { "id": "accepted", "next": [] },
+    { "id": "blocked", "next": ["ready", "active", "superseded"] },
+    { "id": "superseded", "next": [] }
+  ],
+  "promotion_gates": [
+    "authority",
+    "contract",
+    "dependency",
+    "public-boundary",
+    "conformance",
+    "negative-fixture",
+    "second-consumer",
+    "instruction-sync",
+    "rollback"
+  ],
+  "risk_tiers": ["quick", "standard", "deep"],
+  "device_requirements": ["none", "optional", "required"],
+  "push_checkpoints": ["none", "local-only", "integration-batch", "release"],
+  "change_categories": [
+    "implementation",
+    "authority",
+    "module-layout",
+    "feature-activation",
+    "validation",
+    "device-policy",
+    "repo-routing",
+    "public-private-boundary",
+    "documentation-only"
+  ],
+  "instruction_sync": {
+    "impact_values": ["none", "review", "update"],
+    "surface_kinds": ["agents", "readme", "router-doc", "skill"],
+    "trigger_categories": [
+      "authority",
+      "module-layout",
+      "feature-activation",
+      "validation",
+      "device-policy",
+      "repo-routing",
+      "public-private-boundary"
+    ],
+    "required_surface_groups": ["agents", "readme-or-router", "skill"],
+    "skill_routing": [
+      {
+        "change_category": "authority",
+        "skill_ids": ["rusty-morphospace-context", "system-engineering"]
+      },
+      {
+        "change_category": "module-layout",
+        "skill_ids": ["rusty-morphospace-context", "system-engineering", "rust-work-graph"]
+      },
+      {
+        "change_category": "feature-activation",
+        "skill_ids": ["rusty-morphospace-context", "system-engineering"]
+      },
+      {
+        "change_category": "validation",
+        "skill_ids": ["system-engineering"]
+      },
+      {
+        "change_category": "device-policy",
+        "skill_ids": ["rusty-morphospace-context", "meta-quest-workflow"]
+      },
+      {
+        "change_category": "repo-routing",
+        "skill_ids": ["rusty-morphospace-context", "rust-work-graph"]
+      },
+      {
+        "change_category": "public-private-boundary",
+        "skill_ids": ["rusty-morphospace-context", "system-engineering"]
+      }
+    ],
+    "acceptance_invariant": "Triggered units require complete updates to the nearest AGENTS, a README or router document, and every routed skill before acceptance."
+  },
+  "feature_activation": {
+    "default": "disabled",
+    "unlisted_modules": "inert",
+    "enabled_requires": [
+      "requester",
+      "descriptor",
+      "dependencies",
+      "conflicts",
+      "permissions",
+      "routes",
+      "assets",
+      "parameter authorities",
+      "effective-runtime receipt"
+    ]
+  },
+  "invariants": [
+    "At most one iteration unit is active or validating.",
+    "Every mutable parameter has one authority owner.",
+    "Unlisted modules and features are inert.",
+    "Stable modules pass every promotion gate.",
+    "Stable modules have an independent consumer or conformance harness.",
+    "Iteration units cannot expand project repository or path scope.",
+    "Instruction-triggering units cannot be accepted with incomplete AGENTS, README or router, or relevant skill updates."
+  ]
+}

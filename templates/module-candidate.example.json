@@ -1,0 +1,56 @@
+{
+  "$schema": "../schemas/module-candidate.schema.json",
+  "schema": "rusty.morphospace.workflow.module_candidate.v1",
+  "candidate_id": "particle-field-candidate",
+  "module_id": "particle-field",
+  "source_project": "example-project",
+  "proposed_lane": "matter",
+  "maturity": "cross-consumer-validated",
+  "problem": "Advance a deterministic particle field from app-neutral inputs and emit app-neutral state.",
+  "neutral_contract": "rusty.matter.particle_field.v1",
+  "owns": [
+    "Particle state transitions.",
+    "Deterministic stepping from contract inputs."
+  ],
+  "does_not_own": [
+    "Application scene composition.",
+    "Renderer, package, permission, or device lifecycle."
+  ],
+  "app_specific_exclusions": [
+    "Visual style and project tuning.",
+    "Private assets and application payload rules."
+  ],
+  "dependencies": [],
+  "provenance": [
+    {
+      "source": "<public-reference>",
+      "license": "<license>",
+      "lesson": "Use stable component and fixture boundaries.",
+      "rejected_overreach": "Do not copy application composition or renderer dependencies."
+    }
+  ],
+  "consumers": [
+    {
+      "consumer_id": "originating-app",
+      "kind": "originating-app",
+      "contract_only": true,
+      "evidence": "<originating-consumer-receipt>"
+    },
+    {
+      "consumer_id": "neutral-harness",
+      "kind": "conformance-harness",
+      "contract_only": true,
+      "evidence": "<conformance-receipt>"
+    }
+  ],
+  "evidence": [
+    "<valid-fixture-receipt>",
+    "<damaged-fixture-receipt>",
+    "<dependency-receipt>"
+  ],
+  "rollback": {
+    "strategy": "Disable the project feature and restore the app-local adapter.",
+    "acceptance": "The inactive baseline contains no module routes, assets, or runtime markers."
+  },
+  "promotion_target": "stable"
+}

@@ -1,0 +1,155 @@
+# Project Workspace Protocol
+
+This protocol gives each Rusty Morphospace application a small, explicit
+control surface for project composition, reusable-module extraction, and
+autonomous iteration. The work-environment repository owns the portable
+protocol and templates. Each application or planning repository owns its live
+instance and evidence.
+
+## Decision
+
+Create a `morphospace/` directory in each project that adopts this protocol.
+The directory describes what the project is, which repositories an agent may
+touch, which modules are available, which features are explicitly active, and
+which iteration unit is current.
+
+The project specification is composition authority. It is not runtime
+authority for the modules it composes. A module's owning lane remains the
+authority for its contract, and an app or platform adapter remains the
+authority for app-shell or platform behavior.
+
+## Directory Contract
+
+```text
+<project-root>/
+  morphospace/
+    project.spec.json
+    feature.lock.json
+    workspace.state.json
+    iteration-events.jsonl
+    module-candidates/
+    iteration-units/
+    promotion-reviews/
+    receipts/
+```
+
+- `project.spec.json` declares purpose, repositories, module candidates,
+  parameter authority, non-scope, and validation profiles.
+- `feature.lock.json` is the closed-world feature activation list. Unlisted
+  modules and features are inert.
+- `workspace.state.json` is the compact resume surface for an agent.
+- `iteration-events.jsonl` is append-only chronological evidence.
+- `module-candidates/` holds extraction records throughout their lifecycle.
+- `iteration-units/` holds independently reviewable work packets.
+- `promotion-reviews/` holds gate decisions for module maturity changes.
+- `receipts/` holds structured validation and coordinated-push receipts.
+
+Generated APKs, logs, screenshots, traces, pairing material, private payloads,
+and tool caches do not belong in this directory.
+
+## Project And Module Firewall
+
+Application-specific details stay on the project side of the boundary:
+
+- product names, package identities, launch activities, signing, permissions,
+  and store metadata;
+- scene composition, visual treatment, study rules, content, and tuning;
+- private assets, endpoints, payloads, participant data, and release policy;
+- app-specific defaults and recovery behavior.
+
+A reusable module may cross the boundary only with:
+
+- neutral vocabulary and an owning lane;
+- a versioned contract or schema;
+- explicit `owns` and `does_not_own` lists;
+- platform-independent fixtures or a conformance harness;
+- declared dependencies and parameter authority;
+- provenance, license, public-boundary, and rollback records.
+
+An originating application is evidence that a module is useful. It is not
+proof that the module is general-purpose.
+
+## Instruction Surfaces
+
+An iteration unit declares whether it changes durable instructions. Changes to
+authority, module layout, activation, validation, device policy, repo routing,
+or public/private boundaries must update the nearest `AGENTS.md`, a README or
+router doc, and relevant skills before acceptance. Implementation-only units
+may declare no impact only with an explicit justification.
+
+Use the matrix in
+[Instruction Synchronization](INSTRUCTION_SYNCHRONIZATION.md). Entry points
+remain compact routing indexes; detailed recipes belong in named docs and
+runbooks.
+
+## Authority Map
+
+Every mutable runtime parameter has one master owner. The project spec names
+that owner and may name adapters, but adapters do not become parallel sources
+of truth.
+
+Examples:
+
+- Manifold owns command, session, stream, and lease decisions.
+- Lattice owns generic tracked-space relations and validity.
+- Quest app shells own Android permissions and effective platform profiles.
+- Application shells own composition and private behavior.
+
+Raw adapter readback proves transport. Acceptance requires an effective-value
+or effective-marker receipt from the consuming runtime.
+
+## Repository Scope
+
+Every repository entry declares an ID, role, path, and allowed paths. An
+iteration unit can narrow this scope, but cannot expand it. An autonomous agent
+must stop if the required change falls outside both declarations.
+
+Use repository-relative paths in committed project instances when possible.
+Use placeholders in public templates. Never copy workstation paths into this
+public repository.
+
+## Bootstrap
+
+Dry run:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\New-ProjectWorkspace.ps1 `
+  -ProjectRoot <project-root> `
+  -ProjectId <project-id>
+```
+
+Create the directory:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\New-ProjectWorkspace.ps1 `
+  -ProjectRoot <project-root> `
+  -ProjectId <project-id> `
+  -Execute
+```
+
+The scaffold refuses to overwrite an existing `morphospace/` directory.
+
+## Agent Resume Order
+
+1. Read the nearest `AGENTS.md` and repository instructions.
+2. Read `morphospace/project.spec.json`.
+3. Read `morphospace/feature.lock.json`.
+4. Read `morphospace/workspace.state.json`.
+5. Read the current iteration unit, if one is active.
+6. Read only the event tail and receipts named by workspace state.
+7. Read the current unit's instruction-impact surfaces.
+8. Inspect Git status for every repository in the current unit before editing.
+
+This keeps resume context small while preserving a durable audit trail.
+
+## Validation
+
+Validate the portable examples and a project instance with:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\Test-WorkflowContracts.ps1 `
+  -WorkspaceRoot <project-root>\morphospace
+```

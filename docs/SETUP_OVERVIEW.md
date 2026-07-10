@@ -80,7 +80,23 @@ If your agent uses a different skill location, pass that directory with
 `-TargetRoot`. The installer is dry-run by default and refuses to overwrite an
 existing skill directory.
 
-## 5. Build A Public APK Example
+## 5. Scaffold A Project Workflow
+
+For an application that will compose reusable Morphospace modules, start with
+a dry run:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\New-ProjectWorkspace.ps1 `
+  -ProjectRoot <project-root> `
+  -ProjectId <project-id>
+```
+
+Re-run with `-Execute` to create a no-overwrite `morphospace/` directory in
+the project. Read [Project Workspace Protocol](PROJECT_WORKSPACE_PROTOCOL.md)
+before filling its module list or activating features.
+
+## 6. Build A Public APK Example
 
 From a cloned Rusty XR repo:
 
@@ -103,7 +119,7 @@ powershell -ExecutionPolicy Bypass `
 
 Generated APKs stay in ignored build folders.
 
-## 6. Install And Launch On Quest
+## 7. Install And Launch On Quest
 
 Use [Quest APK Workflow](QUEST_APK_WORKFLOW.md). The short form is:
 

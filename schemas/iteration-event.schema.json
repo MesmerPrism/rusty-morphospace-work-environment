@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/iteration-event.schema.json",
+  "title": "Rusty Morphospace iteration event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "event_id",
+    "sequence",
+    "timestamp",
+    "project_id",
+    "unit_id",
+    "event_type",
+    "summary",
+    "receipts"
+  ],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.workflow.iteration_event.v1" },
+    "event_id": { "$ref": "#/$defs/id" },
+    "sequence": { "type": "integer", "minimum": 1 },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "project_id": { "$ref": "#/$defs/id" },
+    "unit_id": { "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
+    "event_type": {
+      "enum": [
+        "state-transition",
+        "decision",
+        "extraction",
+        "validation",
+        "commit",
+        "push",
+        "promotion",
+        "blocker"
+      ]
+    },
+    "summary": { "type": "string", "minLength": 1 },
+    "receipts": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,63}$"
+    }
+  }
+}

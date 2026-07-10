@@ -1,0 +1,50 @@
+# Instruction Synchronization
+
+Agent entrypoints must stay aligned with the architecture they route. Record
+instruction impact in every iteration unit and update the smallest relevant
+surfaces in the same unit. Keep `AGENTS.md`, `SKILL.md`, and README entrypoints
+concise; link to detailed runbooks instead of copying long recipes into them.
+
+## Synchronization Matrix
+
+| Surface | Update when | Keep in the entrypoint |
+| --- | --- | --- |
+| `rusty-morphospace-context` | Repo lanes, naming, project/module lifecycle, feature activation, or public/private routing changes. | First-hop repo routing, ownership defaults, boundary rules, and links. |
+| `system-engineering` | Authority, contracts, manifests, module kinds, observability, validation gates, or mitigation structure changes. | Architecture questions, invariants, output shape, and links. |
+| `meta-quest-workflow` | Device policy, ADB, APK, runtime validation, QCL, sidecar, capture, signal, or evidence rules change. | Device-operation gates, stop rules, evidence boundary, and links. |
+| `rust-work-graph` | Repo inventory, source roots, module layout, instruction-surface audits, graph cadence, or impact analysis changes. | Scan order, graph interpretation rules, scope limits, and links. |
+| `<planning-root>/AGENTS.md` | Machine-local read order, lane defaults, public/private strategy, validation tiers, or autonomous workflow policy changes. | Compact state read order, required skills, durable defaults, and links. |
+| `<repo-root>/AGENTS.md` | The touched repo's authority, source map, module layout, activation, validation, or platform boundary changes. | Repo-local ownership, validation commands, source routing, and links. |
+| `<repo-root>/README.md` or nearest router doc | Contributor workflow, public contract, setup, module placement, or validation entrypoint changes. | User-facing first path, supported surface, and links to deeper docs. |
+
+Only skills relevant to the change category need updating. The lifecycle
+manifest provides the minimum skill routing used by validation; a unit may add
+more surfaces when its scope crosses multiple concerns.
+
+## Iteration-Unit Record
+
+Every unit declares:
+
+- `change_categories`;
+- `instruction_impact`: `none`, `review`, or `update`;
+- `instruction_surfaces`, each with kind, path, owner, change reason, action,
+  status, validation, and a skill ID when the surface is a skill;
+- `instruction_none_justification` when impact is `none`.
+
+Changes to authority, module layout, feature activation, validation, device
+policy, repo routing, or public/private boundaries require `update`. Before
+such a unit can become `accepted`, the nearest repo `AGENTS.md`, a README or
+router doc, and every relevant skill named by the synchronization matrix must
+have complete update records.
+
+## Cadence
+
+1. Declare instruction impact when the unit becomes `ready`.
+2. Update instruction entrypoints with the implementation slice that makes
+   them true, or before accepting that slice.
+3. Keep recipes in detailed docs or runbooks; add only durable routing to
+   `AGENTS.md` and `SKILL.md`.
+4. Run workflow-contract, public-boundary, link, and repo-owned validation.
+5. Mark surfaces complete and append an iteration event before acceptance.
+
+Stable module promotion also includes the `instruction-sync` gate.

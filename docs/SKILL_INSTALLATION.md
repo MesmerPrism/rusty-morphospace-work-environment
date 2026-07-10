@@ -44,3 +44,14 @@ Do not edit committed skill templates with local paths. Put local paths in:
 
 Skill templates should use placeholders such as `<workspace-root>` and refer
 to docs in this repo.
+
+When project workflow docs or schemas change, review the installed
+`rusty-morphospace-context` and `system-engineering` routers as part of the
+same update. The installed skills should point agents to the project spec,
+feature lock, module lifecycle, and iteration-unit protocol rather than carry
+a private copy of live project state.
+
+Use [Instruction Synchronization](INSTRUCTION_SYNCHRONIZATION.md) to decide
+which installed routers need a content update. Do not expand every skill for
+every project change; update only relevant durable routing and keep the unit's
+surface record as evidence.

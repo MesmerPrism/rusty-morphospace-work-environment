@@ -15,6 +15,15 @@ From the cloned work-environment repo:
 4. `docs/PUBLIC_PRIVATE_BOUNDARY.md`
 5. `docs/SETUP_OVERVIEW.md`
 
+For project composition, reusable-module extraction, feature activation, or
+autonomous iteration, also read:
+
+1. `docs/PROJECT_WORKSPACE_PROTOCOL.md`
+2. `docs/MODULE_LIFECYCLE.md`
+3. `docs/FEATURE_ACTIVATION.md`
+4. `docs/AUTONOMOUS_ITERATION.md`
+5. `docs/INSTRUCTION_SYNCHRONIZATION.md`
+
 If the task touches live Quest, ADB, APK install/launch, logcat, screenshots,
 Perfetto, Wi-Fi ADB, or Meta tooling, also use `meta-quest-workflow`.
 
@@ -75,3 +84,11 @@ Do not extract:
 
 Add public reusable work as contracts, schemas, deterministic helpers,
 synthetic fixtures, and source examples before adapters.
+
+Project composition is closed-world. Modules and features absent from the
+project spec and feature lock are inert. Stable module promotion requires an
+independent consumer or neutral conformance harness.
+
+When repo routing, module placement, activation, validation, or public/private
+rules change, synchronize this router and the nearest repo instructions in the
+same iteration unit. Keep detailed recipes in linked docs.

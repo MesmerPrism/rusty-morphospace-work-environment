@@ -30,6 +30,25 @@ Before moving a utility from an app or lab repo into a generic lane:
 3. Keep platform calls, renderer ownership, package identity, device mutation,
    and release payloads in adapters or app shells.
 4. Add a synthetic test, fixture, source example, or docs matrix entry.
+5. Record `owns`, `does_not_own`, app-specific exclusions, dependencies,
+   provenance, license, and rollback in a module-candidate record.
+6. Reconnect the originating app through the neutral contract.
+7. Require an independent consumer or conformance harness before stable
+   promotion.
+
+See [Module Lifecycle](MODULE_LIFECYCLE.md) for the complete state machine and
+promotion gates.
+
+## Project Composition
+
+Applications select modules in `project.spec.json` and activate them in
+`feature.lock.json`. The project owns composition; it does not become the
+authority for a reusable module's contract. An unlisted module, a module
+without a feature entry, or a disabled feature is inert.
+
+Feature entries must not silently add permissions, routes, assets, services,
+media paths, input routes, or private defaults to other projects. See
+[Feature Activation](FEATURE_ACTIVATION.md).
 
 ## First Placement Rules
 

@@ -41,6 +41,21 @@ Use placeholders in public docs:
 Do not commit private evidence or local setup output. Keep those under ignored
 `local/` or `artifacts/` folders.
 
+## Project Workflow
+
+For project composition, module extraction, explicit activation, or autonomous
+iteration, read in this order:
+
+1. `docs/PROJECT_WORKSPACE_PROTOCOL.md`
+2. `docs/MODULE_LIFECYCLE.md`
+3. `docs/FEATURE_ACTIVATION.md`
+4. `docs/AUTONOMOUS_ITERATION.md`
+5. `docs/INSTRUCTION_SYNCHRONIZATION.md`
+
+The work-environment repo owns portable schemas, examples, and validators. A
+project owns its instantiated `morphospace/` directory. Do not copy live state,
+private evidence, or machine paths back into this repository.
+
 ## Authority Rules
 
 - Rusty Morphospace names the ecosystem; concrete authority stays in lanes
@@ -55,6 +70,18 @@ Do not commit private evidence or local setup output. Keep those under ignored
 - Android properties, JSON profiles, and hotload files are low-rate control
   surfaces. Do not route high-rate camera frames, meshes, particles, depth
   maps, or GPU buffers through them.
+- Feature activation is closed-world: absent or unlisted means inert.
+- Every mutable parameter has one authority owner; other entrypoints are
+  adapters into that owner.
+- A reusable module cannot become stable without an independent consumer or a
+  neutral conformance harness plus an accepted promotion review.
+- At most one iteration unit is active or validating in a project workspace.
+- Units changing authority, module layout, activation, validation, device
+  policy, repo routing, or public/private boundaries must synchronize the
+  nearest repo instructions, a README/router doc, and relevant skills before
+  acceptance.
+- Keep `AGENTS.md` and `SKILL.md` as routing indexes. Put long recipes in linked
+  docs or runbooks.
 
 ## Validation
 
@@ -63,12 +90,14 @@ Before committing, run:
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-PublicBoundary.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkEnvironment.ps1 -SelfTest
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkflowContracts.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\New-ProjectWorkspace.ps1 -SelfTest
 git diff --check
 ```
 
 If docs or manifests change, also parse JSON files:
 
 ```powershell
-Get-ChildItem .\manifests,.\templates -Filter *.json -File |
+Get-ChildItem .\manifests,.\schemas,.\templates -Filter *.json -File |
   ForEach-Object { Get-Content -Raw $_.FullName | ConvertFrom-Json | Out-Null }
 ```
