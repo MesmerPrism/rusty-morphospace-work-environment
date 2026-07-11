@@ -66,6 +66,11 @@ In the public Meta Quest workflow repo:
   package/system fatals, and task-authorized package removal. A missing public
   Android `Network` must not be converted into a fake handle or Android socket
   authority.
+- For BLE-to-product-topology validation, require the live two-role BLE pair
+  with authenticated reconnects, project it to Manifold, then prove
+  unauthenticated, stale-after-revocation, and revoked decisions remain
+  non-grouped. Only a fresh accepted revision may initialize Wi-Fi P2P and run
+  the bounded Rust-socket exchange; BLE never carries media or mutates topology.
 
 ## Install And Launch Shape
 

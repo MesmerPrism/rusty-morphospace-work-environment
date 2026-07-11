@@ -78,6 +78,10 @@ private evidence, or machine paths back into this repository.
 - Direct networking keeps topology, platform network observation, socket
   ownership, exchange, and cleanup as separate authority surfaces; harnesses
   do not become product dependencies.
+- Authenticated rendezvous is evidence only. Peer-session acceptance,
+  revision, replay, expiry, peer change, and revocation belong to Manifold;
+  product topology requires a fresh current-revision authorization bound to
+  exact peer roles and topology contract before platform mutation.
 - At most one iteration unit is active or validating in a project workspace.
 - A downstream adoption unit must be behavior-neutral unless its scope says
   otherwise: select the baseline shell, list optional families disabled,

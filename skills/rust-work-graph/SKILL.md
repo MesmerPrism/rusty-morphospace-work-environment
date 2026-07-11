@@ -91,6 +91,12 @@ node, then branch to accepted state plus application receipt or rejection plus
 unchanged revision. Include trust, replay, staleness, role escalation,
 high-rate, and command-field fixtures as rejection edges.
 
+For authenticated peer sessions, graph rendezvous evidence into Manifold
+proposal/review, accepted decisions into revision-scoped topology
+authorization, and rejected decisions into unchanged state. Connect explicit
+revocation to the next revision and stale-receipt rejection. Keep BLE and
+Android Wi-Fi P2P outside Manifold authority and gate every topology edge.
+
 For the Manifold Runtime Host, graph snapshot, command registry, lease set,
 review, dispatch receipt, application receipt, explicit expiry, restart, replay
 set, and audit chain as distinct authority nodes. Treat sockets, platform

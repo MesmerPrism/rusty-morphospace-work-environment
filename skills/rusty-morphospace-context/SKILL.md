@@ -171,6 +171,13 @@ valid `p2p0` route without a public Android `Network`, record that absence
 honestly and require the Rust socket provider to prove its own explicit bind,
 bounded non-media exchange, close, and inactive cleanup.
 
+Authenticated BLE rendezvous is evidence, not peer-session or topology
+authority. Project it through a Quest peer-session adapter; Manifold owns
+accept/reject, revision, replay, peer change, expiry, and revocation. Product
+topology requires a fresh current-revision Manifold authorization bound to the
+exact topology contract and local role. Prove rejected, stale, and revoked
+receipts leave topology non-grouped before the accepted product exchange.
+
 When repo routing, module placement, activation, validation, or public/private
 rules change, synchronize this router and the nearest repo instructions in the
 same iteration unit. Keep detailed recipes in linked docs.

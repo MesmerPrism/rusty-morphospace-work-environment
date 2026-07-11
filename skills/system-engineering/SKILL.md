@@ -92,6 +92,12 @@ audit, and application receipt. Bind trust and replay checks to the review,
 advance the authority revision only during accepted application, and reject
 high-rate/media planes or advisory command fields before state mutation.
 
+For rendezvous-to-topology flows, keep transport evidence, peer-session
+decision, topology authorization, and platform mutation as separate
+authorities. Bind short-lived authorization to the current revision, exact
+peer roles, and topology contract. Rejection leaves state unchanged;
+revocation advances it and invalidates older receipts.
+
 A runtime authority host should separate review from application, bind every
 dispatch receipt to the request and reviewed revision, advance accepted state
 exactly once, and persist replay/audit lineage across restart. Expiry is an
