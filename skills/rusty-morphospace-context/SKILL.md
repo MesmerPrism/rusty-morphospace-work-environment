@@ -181,6 +181,12 @@ across service rebinds. Multi-app device proof requires distinct app ids, both
 token lifecycles, bleed checks, generic media evidence folding, zero fatals,
 and complete package cleanup.
 
+Hostess and other operator/evidence surfaces may reference canonical Manifold
+and Quest receipts only as unchanged, hash-bound owner artifacts. Workflow
+metadata belongs in a separate `rusty.hostess.*` binding or envelope; never
+extend an owner document while retaining its schema ID. Owner, schema, path,
+or SHA drift fails the run.
+
 Reusable product Wi-Fi Direct must not depend on a connectivity-lab harness.
 Keep temporary group topology, platform `Network` observation, Rust-owned
 socket bind/exchange, and cleanup as separate receipts. If a Quest exposes a

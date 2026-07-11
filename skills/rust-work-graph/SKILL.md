@@ -128,7 +128,10 @@ source, including Rust `src/bin`, and tracked dependency/license material.
 Never treat a directory named `bin` as build output in tracked mode. Untracked
 filesystem scans may skip build/dependency trees but must still retain
 `src/bin`. Reconcile release counts to `git ls-tree`/`git ls-files` and make
-remaining filters explicit.
+remaining filters explicit. The canonical snapshot writes
+`tracked-tree-reconciliation.json`: require its exact HEAD, included/excluded
+counts, named exclusion reasons, missing-worktree paths, index-only paths, and
+`reconciles=true` before using a graph as release evidence.
 
 Every release graph carries an instruction-impact receipt that records whether
 the nearest AGENTS/README/router and routed skills were updated or reviewed

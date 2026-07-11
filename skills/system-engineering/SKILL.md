@@ -154,6 +154,11 @@ or JNI layer as an adapter. A bridge may validate schema and authority labels,
 but acceptance, lease, revision, replay, rejection, and next-state rules stay
 in the shared authority owner.
 
+Schema ownership follows the payload. Preserve an owner-issued artifact
+byte-for-byte and bind its exact path, schema, owner, and SHA-256 from a
+separately named workflow wrapper. Never add workflow fields while retaining
+the owner's schema ID or relabel an augmented wrapper as the owner receipt.
+
 For cross-process admission, separate platform identity evidence from the grant
 decision. Bind an OS-derived subject and signing identity to explicit
 capabilities, issue high-entropy short-lived opaque tokens from the authority,
