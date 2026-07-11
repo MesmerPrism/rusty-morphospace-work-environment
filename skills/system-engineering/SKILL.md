@@ -118,6 +118,12 @@ consume one-time request ids, and revision/audit issue, use, revoke, and expiry.
 Test identity substitution, capability escalation, token collision, replay,
 staleness, expiry, and post-revocation use; a transport ACK is never admission.
 
+For direct networking, separate topology formation, platform network
+observation, socket ownership, protocol exchange, and cleanup into provider
+receipts. Platform absence is evidence, not permission to fabricate
+authority; a socket provider may proceed only when its own route and bind
+contract explicitly allows that fallback.
+
 Authority, module-layout, activation, and validation changes also have
 instruction impact. Route them through
 `docs/INSTRUCTION_SYNCHRONIZATION.md`; update concise routers and place long

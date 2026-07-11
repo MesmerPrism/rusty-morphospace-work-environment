@@ -171,6 +171,13 @@ Durable success signals:
 
 ## Device Evidence
 
+For product Wi-Fi Direct tests, keep Android group topology, public `Network`
+observation, Rust-owned explicit `p2p0` sockets, bounded non-media exchange,
+and cleanup as separate evidence rows. A valid `p2p0` route may exist without
+a public Android `Network`; report that absence rather than inventing a
+binding. Require both peers to return to inactive state and scan the bounded
+window for both package and system fatals.
+
 Publish sanitized summaries only. Keep raw artifacts private:
 
 - serials;

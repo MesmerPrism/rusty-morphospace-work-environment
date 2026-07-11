@@ -164,6 +164,13 @@ opaque tokens, capability-use replay, expiry, revocation, revisions, and audit.
 Do not treat a WebSocket acknowledgement, Java allowlist, or shared secret as
 product authorization.
 
+Reusable product Wi-Fi Direct must not depend on a connectivity-lab harness.
+Keep temporary group topology, platform `Network` observation, Rust-owned
+socket bind/exchange, and cleanup as separate receipts. If a Quest exposes a
+valid `p2p0` route without a public Android `Network`, record that absence
+honestly and require the Rust socket provider to prove its own explicit bind,
+bounded non-media exchange, close, and inactive cleanup.
+
 When repo routing, module placement, activation, validation, or public/private
 rules change, synchronize this router and the nearest repo instructions in the
 same iteration unit. Keep detailed recipes in linked docs.

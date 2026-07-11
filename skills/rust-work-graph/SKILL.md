@@ -116,6 +116,11 @@ signer, identity substitution, capability escalation, random-token collision,
 replay, stale revision, expiry, and revoked-token reuse as distinct rejection
 edges; keep WebSocket transport acknowledgements outside admission authority.
 
+For direct-network graphs, keep topology providers, platform network
+observation, socket providers, exchange protocols, and cleanup receipts as
+distinct nodes. Model any harness-to-product dependency as a pressure or
+rejection edge rather than reusable ownership.
+
 Treat `AGENTS.md`, `SKILL.md`, README, and router docs as graphable instruction
 surfaces. Module-layout or repo-routing changes must include their
 synchronization records; keep detailed scan recipes outside the entrypoints.

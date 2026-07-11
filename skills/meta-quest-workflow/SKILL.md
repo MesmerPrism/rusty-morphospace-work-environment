@@ -60,6 +60,12 @@ In the public Meta Quest workflow repo:
   unauthorized `signature-permission` denial, zero package fatals, and
   force-stop plus uninstall cleanup. Raw device evidence and generated keys
   stay private; Manifold remains grant/token/replay/revocation authority.
+- For product Wi-Fi Direct, require two explicit serials, temporary
+  credentialed topology, honest Android `Network` availability, Rust-owned
+  explicit `p2p0` bind and bounded non-media exchange, inactive cleanup, zero
+  package/system fatals, and task-authorized package removal. A missing public
+  Android `Network` must not be converted into a fake handle or Android socket
+  authority.
 
 ## Install And Launch Shape
 
