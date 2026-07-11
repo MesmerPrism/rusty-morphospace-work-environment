@@ -529,7 +529,9 @@ function Invoke-MorphospaceWorkUnitAutomation {
             $state.last_event_id = [string]$event.event_id
             Add-MorphospaceEvent -Path $eventsPath -Event $event
         }
-        $state.dirty_repositories = @($repoStatesArray | Where-Object { $_.PSObject.Properties.Name -contains "dirty" -and $_.dirty -eq $true } | ForEach-Object { [string]$_.repo_id } | Sort-Object -Unique)
+        if ($RepoMapPath) {
+            $state.dirty_repositories = @($repoStatesArray | Where-Object { $_.PSObject.Properties.Name -contains "dirty" -and $_.dirty -eq $true } | ForEach-Object { [string]$_.repo_id } | Sort-Object -Unique)
+        }
         Write-MorphospaceJson -Path $statePath -Value $state
     }
 

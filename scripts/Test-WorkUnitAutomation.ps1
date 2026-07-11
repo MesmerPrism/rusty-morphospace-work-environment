@@ -154,7 +154,12 @@ try {
     Assert-Automation ($divergedBefore -eq ((Invoke-TestGit -Path $repo -Arguments @("status", "--porcelain=v1", "--branch")) -join "`n")) "divergent repo was rewritten"
 
     $recoveryWorkspace = New-TestWorkspace -Root (Join-Path $testRoot "recovery-project") -ProjectId "recovery-test" -UnitId "unit-recover-001"
+    $recoveryStatePath = Join-Path $recoveryWorkspace "workspace.state.json"
+    $initialRecoveryState = Get-Content $recoveryStatePath -Raw | ConvertFrom-Json
+    $initialRecoveryState.dirty_repositories = @("project-shell")
+    Write-TestJson -Path $recoveryStatePath -Value $initialRecoveryState
     Invoke-MorphospaceWorkUnitAutomation -Action Claim -WorkspaceRoot $recoveryWorkspace -UnitId "unit-recover-001" -Timestamp $fixed -Execute | Out-Null
+    Assert-Automation (@((Get-Content $recoveryStatePath -Raw | ConvertFrom-Json).dirty_repositories) -contains "project-shell") "unmapped execution erased prior dirty-repository state"
     Invoke-MorphospaceWorkUnitAutomation -Action BeginValidation -WorkspaceRoot $recoveryWorkspace -UnitId "unit-recover-001" -Timestamp $fixed -Execute | Out-Null
     Invoke-MorphospaceWorkUnitAutomation -Action RecordValidation -WorkspaceRoot $recoveryWorkspace -UnitId "unit-recover-001" -ValidationTier standard -ValidationResult fail -ValidationReceipt "receipts/failure.json" -Timestamp $fixed -Execute | Out-Null
     $blockedState = Get-Content (Join-Path $recoveryWorkspace "workspace.state.json") -Raw | ConvertFrom-Json
