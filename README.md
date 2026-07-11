@@ -3,9 +3,10 @@
 Portable onboarding and project-iteration workspace for Rusty Morphospace
 development.
 
-Current portable protocol release: `0.1.0` (2026-07-11). The machine-readable
-release manifest is `manifests/release-0.1.0.json`. Existing project instances
-adopt it additively: preserve live events and receipts, normalize portable
+Current portable protocol release: `0.2.0` (2026-07-11). The machine-readable
+release manifest is `manifests/release-0.2.0.json`. The immutable `0.1.0`
+manifest remains readable. Existing project instances adopt either baseline
+additively: preserve live events and receipts, normalize portable
 change categories while retaining domain detail in `tags`, and validate before
 using the optional automation CLI.
 
@@ -99,10 +100,18 @@ New scaffolds use `project_spec.v2`, `feature_lock.v2`, and
 `scripts/Resolve-FeatureLock.ps1`; `scripts/Test-FeatureActivationAgainstLock.ps1`
 provides the fail-closed selection/fingerprint/runtime-input gate. Existing v1
 workspaces remain valid and migrate additively rather than being rewritten.
+If a corrective unit supersedes an immutable historical active/validating
+unit, append the exact
+`<old-unit>-superseded-by-<current-unit>` state-transition event and keep the
+replacement as the sole current unit; do not rewrite the old unit or event
+prefix.
 
 The automation CLI inspects or plans by default. `-Execute` is required for a
 workspace-state transition; it still does not run Git push, force-push,
 checkout/reset/stash, validation commands, or live device commands.
+Use `-Action Ready -Execute` to review a bounded `proposed` unit into the
+claimable queue after its prerequisites are accepted; this replaces manual
+status/state/event edits.
 `RecordValidation` and `Accept` require a local `validation_receipt.v1` whose
 hashed artifacts, exact acceptance/gate coverage, repository revisions,
 changed paths, and required device cleanup/fatal fields still match current
@@ -115,7 +124,8 @@ gate only through a generated `inflight_adoption_receipt.v1` that exactly
 hashes every dirty in-scope file or deletion and becomes stale on any change.
 Prepared push plans use `execution: not-performed`. After an authorized
 external push, `executed_push_receipt.v1` records exact old/new/readback refs,
-ancestry, validation, planning-last order, no-force proof, and rollback points;
+ancestry, hash-bound validation files, a pre-publication capture when required,
+planning-final-suffix order, no-force proof, and rollback points;
 validate it with `scripts/Test-ExecutedPushReceipt.ps1`.
 
 The first downstream adoption proof lives in Rusty Quest's public

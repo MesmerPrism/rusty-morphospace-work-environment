@@ -546,11 +546,6 @@ function Test-ProjectBundle {
             Assert-Contract ($unitMap.ContainsKey([string]$prerequisite)) "$Context unit '$($unit.unit_id)' references missing prerequisite '$prerequisite'."
         }
     }
-    $activeUnits = @($units | Where-Object { $_.status -eq "active" })
-    Assert-Contract ($activeUnits.Count -le 1) "$Context has more than one active iteration unit."
-    $inFlightUnits = @($units | Where-Object { $_.status -eq "active" -or $_.status -eq "validating" })
-    Assert-Contract ($inFlightUnits.Count -le 1) "$Context has more than one in-flight iteration unit."
-
     $events = @(Read-EventLog -Path $Bundle.EventsPath -Context "$Context iteration event log")
     Test-UniqueProperty -Items $events -Property "event_id" -Context "$Context iteration events"
     $eventMap = @{}
@@ -566,6 +561,39 @@ function Test-ProjectBundle {
             Assert-Contract ($unitMap.ContainsKey([string]$event.unit_id)) "$Context event '$eventId' references missing unit '$($event.unit_id)'."
         }
     }
+
+    # A corrective unit may supersede an immutable historical active/validating
+    # unit without rewriting that unit artifact or its earlier event prefix.
+    # The additive state-transition event is the projection override and must
+    # use the exact `<old-unit>-superseded-by-<current-unit>` identity.
+    $supersededInFlightIds = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($event in $events) {
+        $eventId = [string]$event.event_id
+        $match = [regex]::Match($eventId, '^(?<old>[a-z0-9][a-z0-9-]{1,63})-superseded-by-(?<current>[a-z0-9][a-z0-9-]{1,63})$')
+        if (-not $match.Success) { continue }
+        $oldId = $match.Groups['old'].Value
+        $currentId = $match.Groups['current'].Value
+        Assert-Contract ($event.event_type -eq "state-transition") "$Context supersession event '$eventId' must be a state transition."
+        Assert-Contract ([string]$event.unit_id -eq $oldId) "$Context supersession event '$eventId' must target old unit '$oldId'."
+        Assert-Contract ($unitMap.ContainsKey($oldId)) "$Context supersession event '$eventId' references missing old unit '$oldId'."
+        Assert-Contract ($unitMap.ContainsKey($currentId)) "$Context supersession event '$eventId' references missing current unit '$currentId'."
+        if ($unitMap.ContainsKey($oldId)) {
+            Assert-Contract (@("active", "validating") -contains [string]$unitMap[$oldId].status) "$Context supersession event '$eventId' may override only an immutable active/validating unit."
+        }
+        if ($unitMap.ContainsKey($currentId)) {
+            Assert-Contract (@("active", "validating", "accepted") -contains [string]$unitMap[$currentId].status) "$Context supersession replacement '$currentId' is not current or accepted."
+        }
+        [void]$supersededInFlightIds.Add($oldId)
+    }
+    $activeUnits = @($units | Where-Object {
+        $_.status -eq "active" -and -not $supersededInFlightIds.Contains([string]$_.unit_id)
+    })
+    Assert-Contract ($activeUnits.Count -le 1) "$Context has more than one effective active iteration unit."
+    $inFlightUnits = @($units | Where-Object {
+        ($_.status -eq "active" -or $_.status -eq "validating") -and
+        -not $supersededInFlightIds.Contains([string]$_.unit_id)
+    })
+    Assert-Contract ($inFlightUnits.Count -le 1) "$Context has more than one effective in-flight iteration unit."
 
     $isStateV2 = [string]$state.schema -eq "rusty.morphospace.workflow.workspace_state.v2"
     Assert-Contract (($isProjectV2 -and $isStateV2) -or (-not $isProjectV2 -and $state.schema -eq "rusty.morphospace.workflow.workspace_state.v1")) "$Context workspace state schema must match the project protocol version."

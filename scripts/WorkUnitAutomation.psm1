@@ -796,7 +796,7 @@ function Get-MorphospaceNextReadyUnit {
 function Invoke-MorphospaceWorkUnitAutomation {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory = $true)][ValidateSet("Inspect", "Claim", "Resume", "BeginValidation", "RecordValidation", "Accept", "PreparePush", "Recover")][string]$Action,
+        [Parameter(Mandatory = $true)][ValidateSet("Inspect", "Ready", "Claim", "Resume", "BeginValidation", "RecordValidation", "Accept", "PreparePush", "Recover")][string]$Action,
         [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
         [string]$UnitId = "",
         [string]$RepoMapPath = "",
@@ -868,6 +868,21 @@ function Invoke-MorphospaceWorkUnitAutomation {
     switch ($Action) {
         "Inspect" {
             $transition = "inspect-only"
+        }
+        "Ready" {
+            if ($beforeStatus -eq "ready") {
+                $transition = "idempotent"
+            } else {
+                if ($beforeStatus -ne "proposed") { throw "Ready requires proposed status; '$UnitId' is '$beforeStatus'." }
+                Test-MorphospacePrerequisites -Unit $unit -UnitMap $unitMap
+                $transition = "proposed-to-ready"
+                if ($Execute) {
+                    $unit.status = "ready"
+                    $nextReady = @(Get-MorphospaceNextReadyUnit -UnitMap $unitMap)
+                    $state.next_ready_unit = if ($nextReady.Count -gt 0) { [string]$nextReady[0] } else { $UnitId }
+                    $event = New-MorphospaceEvent -State $state -Events $events -UnitId $UnitId -ActionSlug "ready" -Timestamp $Timestamp -EventType "state-transition" -Summary "Reviewed the bounded proposal and made it claimable without expanding its repositories, paths, or prerequisites."
+                }
+            }
         }
         "Claim" {
             if ($beforeStatus -eq "active" -and [string]$state.current_unit -eq $UnitId) {

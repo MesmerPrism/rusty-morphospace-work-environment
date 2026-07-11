@@ -96,10 +96,18 @@ private evidence, or machine paths back into this repository.
   pair-level validation must reject ambient unions and cross-app defaults,
   properties, markers, or authority-reset behavior.
 - At most one iteration unit is active or validating in a project workspace.
+  An immutable historical in-flight unit may be excluded from the current
+  projection only by an additive
+  `<old-unit>-superseded-by-<current-unit>` state-transition event whose
+  replacement is the sole current unit; never rewrite the historical unit or
+  event prefix to make the workspace look clean.
 - Optional work-unit automation is fail-closed: inspect/plan by default,
   require `-Execute` for workspace-state mutation, preserve dirty/divergent
   repositories, derive graph scope from the unit, and never own Git push,
   force-push, checkout/reset/stash, validation execution, or device mutation.
+- Move a reviewed proposal into the claimable queue only with the automation
+  `Ready` action. It verifies accepted prerequisites, appends the transition,
+  and derives `next_ready_unit`; do not hand-edit proposal status.
 - New project workspaces default to protocol v2. Resolve exact feature
   descriptors into a fingerprinted closed-world lock; project selection alone
   never activates a run. Runtime effects require the selected current lock and
@@ -116,8 +124,10 @@ private evidence, or machine paths back into this repository.
   recovery never performs Git, build-process, or device cleanup itself.
 - A prepared push plan is never execution evidence. After an authorized
   external push, validate an `executed_push_receipt.v1` containing full old,
-  new, and remote-readback revisions, ancestry, passing validation references,
-  no-force proof, and reverse-order rollback anchors.
+  new, and remote-readback revisions, ancestry, hash-bound validation evidence,
+  no-force proof, and reverse-order rollback anchors. A release may additionally
+  bind the pre-publication capture that supplied every old revision; multiple
+  planning refs must form the final execution suffix.
 - A downstream adoption unit must be behavior-neutral unless its scope says
   otherwise: select the baseline shell, list optional families disabled,
   assert an unrelated nearby feature is absent/inert, and add candidate records

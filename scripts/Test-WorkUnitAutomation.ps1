@@ -205,6 +205,36 @@ try {
     $receiptRoot = Join-Path $workspace "receipts"
     $fixed = "2026-01-02T03:04:05Z"
 
+    $readyWorkspace = New-TestWorkspace -Root (Join-Path $testRoot "ready-project") -ProjectId "ready-test" -UnitId "unit-ready-001"
+    $readyUnitPath = Join-Path $readyWorkspace "iteration-units\unit-ready-001.json"
+    $readyUnit = Get-Content -LiteralPath $readyUnitPath -Raw | ConvertFrom-Json
+    $readyUnit.status = "proposed"
+    Write-TestJson -Path $readyUnitPath -Value $readyUnit
+    $readyStatePath = Join-Path $readyWorkspace "workspace.state.json"
+    $readyState = Get-Content -LiteralPath $readyStatePath -Raw | ConvertFrom-Json
+    $readyState.next_ready_unit = $null
+    Write-TestJson -Path $readyStatePath -Value $readyState
+    $readyResult = Invoke-MorphospaceWorkUnitAutomation -Action Ready -WorkspaceRoot $readyWorkspace -UnitId "unit-ready-001" -Timestamp $fixed -Execute
+    Assert-Automation ($readyResult.transition -eq "proposed-to-ready" -and $readyResult.status_after -eq "ready") "proposal review transition"
+    $readyState = Get-Content -LiteralPath $readyStatePath -Raw | ConvertFrom-Json
+    Assert-Automation ([string]$readyState.next_ready_unit -eq "unit-ready-001") "proposal review did not derive next-ready state"
+    $readyEventCount = @(Get-Content (Join-Path $readyWorkspace "iteration-events.jsonl")).Count
+    $readyAgain = Invoke-MorphospaceWorkUnitAutomation -Action Ready -WorkspaceRoot $readyWorkspace -UnitId "unit-ready-001" -Timestamp $fixed -Execute
+    Assert-Automation ($readyAgain.transition -eq "idempotent") "idempotent proposal review"
+    Assert-Automation (@(Get-Content (Join-Path $readyWorkspace "iteration-events.jsonl")).Count -eq $readyEventCount) "idempotent proposal review appended an event"
+
+    $blockedReadyWorkspace = New-TestWorkspace -Root (Join-Path $testRoot "blocked-ready-project") -ProjectId "blocked-ready-test" -UnitId "unit-blocked-ready-001"
+    $blockedReadyPath = Join-Path $blockedReadyWorkspace "iteration-units\unit-blocked-ready-001.json"
+    $blockedReadyUnit = Get-Content -LiteralPath $blockedReadyPath -Raw | ConvertFrom-Json
+    $blockedReadyUnit.status = "proposed"
+    $blockedReadyUnit.prerequisites = @("missing-prerequisite")
+    Write-TestJson -Path $blockedReadyPath -Value $blockedReadyUnit
+    $blockedReadyRejected = $false
+    try {
+        Invoke-MorphospaceWorkUnitAutomation -Action Ready -WorkspaceRoot $blockedReadyWorkspace -UnitId "unit-blocked-ready-001" -Timestamp $fixed -Execute | Out-Null
+    } catch { $blockedReadyRejected = $true }
+    Assert-Automation $blockedReadyRejected "proposal review accepted an unmet prerequisite"
+
     $claim = Invoke-MorphospaceWorkUnitAutomation -Action Claim -WorkspaceRoot $workspace -UnitId "unit-auto-001" -RepoMapPath $repoMapPath -Timestamp $fixed -OutPath (Join-Path $receiptRoot "claim.json") -Execute
     Assert-Automation ($claim.transition -eq "ready-to-active" -and $claim.status_after -eq "active") "claim transition"
     $eventCount = @(Get-Content (Join-Path $workspace "iteration-events.jsonl")).Count
@@ -405,6 +435,56 @@ try {
         Assert-Automation ($safeRecovery.preservation.git_mutation_performed -eq $false -and $safeRecovery.preservation.device_mutation_performed -eq $false) "$($case.kind) recovery mutated external state"
         & (Join-Path $PSScriptRoot "Test-WorkflowContracts.ps1") -RepoRoot $RepoRoot -WorkspaceRoot $caseWorkspace
     }
+
+    $supersessionWorkspace = New-TestWorkspace `
+        -Root (Join-Path $testRoot "supersession-test") `
+        -ProjectId "supersession-test" `
+        -UnitId "old-unit"
+    $oldUnitPath = Join-Path $supersessionWorkspace "iteration-units\old-unit.json"
+    $oldUnit = Get-Content -LiteralPath $oldUnitPath -Raw | ConvertFrom-Json
+    $oldUnit.status = "active"
+    Write-TestJson -Path $oldUnitPath -Value $oldUnit
+    $currentUnit = New-TestUnit -ProjectId "supersession-test" -UnitId "current-unit"
+    $currentUnit.status = "validating"
+    $currentUnit.prerequisites = @("old-unit")
+    Write-TestJson -Path (Join-Path $supersessionWorkspace "iteration-units\current-unit.json") -Value $currentUnit
+    $supersessionEvent = [ordered]@{
+        schema = "rusty.morphospace.workflow.iteration_event.v1"
+        event_id = "old-unit-superseded-by-current-unit"
+        sequence = 1
+        timestamp = "2026-01-02T03:04:05Z"
+        project_id = "supersession-test"
+        unit_id = "old-unit"
+        event_type = "state-transition"
+        summary = "The corrective current unit additively supersedes immutable historical in-flight state."
+        receipts = @()
+    }
+    [System.IO.File]::WriteAllText(
+        (Join-Path $supersessionWorkspace "iteration-events.jsonl"),
+        (($supersessionEvent | ConvertTo-Json -Compress) + [Environment]::NewLine),
+        $encoding
+    )
+    $supersessionStatePath = Join-Path $supersessionWorkspace "workspace.state.json"
+    $supersessionState = Get-Content -LiteralPath $supersessionStatePath -Raw | ConvertFrom-Json
+    $supersessionState.current_unit = "current-unit"
+    $supersessionState.next_ready_unit = $null
+    $supersessionState.last_event_id = "old-unit-superseded-by-current-unit"
+    Write-TestJson -Path $supersessionStatePath -Value $supersessionState
+    & (Join-Path $PSScriptRoot "Test-WorkflowContracts.ps1") -RepoRoot $RepoRoot -WorkspaceRoot $supersessionWorkspace
+
+    $supersessionEvent.event_type = "validation"
+    [System.IO.File]::WriteAllText(
+        (Join-Path $supersessionWorkspace "iteration-events.jsonl"),
+        (($supersessionEvent | ConvertTo-Json -Compress) + [Environment]::NewLine),
+        $encoding
+    )
+    $damagedSupersessionRejected = $false
+    try {
+        & (Join-Path $PSScriptRoot "Test-WorkflowContracts.ps1") -RepoRoot $RepoRoot -WorkspaceRoot $supersessionWorkspace
+    } catch {
+        $damagedSupersessionRejected = $_.Exception.Message -like "Workflow contract validation failed*"
+    }
+    Assert-Automation $damagedSupersessionRejected "supersession accepted a non-state-transition event"
 
     & (Join-Path $PSScriptRoot "Test-WorkflowContracts.ps1") -RepoRoot $RepoRoot -WorkspaceRoot $recoveryWorkspace
     Write-Host "Work-unit automation self-test passed."

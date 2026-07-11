@@ -62,6 +62,9 @@ from the unit, keep acceptance separate from a pass receipt, preserve blockers
 through resume/recovery, and report dirty, detached, ahead/behind, or divergent
 Git states without rewriting them. Push preparation records exact source-first,
 planning-last revisions but does not commit, push, or force-push.
+The proposed-to-ready review is also an owned transition: use `Ready` to verify
+accepted prerequisites, preserve the unit envelope, append the event, and
+derive the claimable queue instead of hand-editing status/state/history.
 `RecordValidation` and `Accept` must validate a workspace-local
 `validation_receipt.v1`: exact acceptance/gate coverage, artifact hashes,
 current heads/branches, ancestor bases, exact in-scope changed paths, and—when
@@ -139,6 +142,15 @@ Keep command acceptance, prepared platform action, every required owner
 completion, Rust application, and independently observed effect as distinct
 facts. A successful dispatch remains incomplete until exact current-epoch
 owner receipts, including terminal cleanup where selected, have applied.
+Treat a caller-supplied aggregate `completed=true` document as an untrusted
+proposal. Each selected owner adapter must issue its own receipt bound to the
+provider instance/epoch, exact resource/action, prerequisite order, and an
+owner-observed handle, counter, state, or readback before aggregation.
+
+Keep trust roots and accepted operator/key/adapter sets in immutable or
+revisioned authority state, never in mutation-call arguments. A canonical
+descriptor, lock, or digest proves shape/identity only; downstream leases and
+effects bind a retained current decision/receipt, revision, epoch, and digest.
 
 A runtime authority host should separate review from application, bind every
 dispatch receipt to the request and reviewed revision, advance accepted state

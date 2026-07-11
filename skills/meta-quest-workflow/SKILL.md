@@ -71,9 +71,12 @@ In the public Meta Quest workflow repo:
   broker builds require the exact generated media-session binding. For the
   two-Quest lifecycle, command acceptance remains
   `platform_effect_completed=false` until each app's exact lock/lease consumes
-  a prepared action, seven matching owner completions apply in Rust, and fresh
+  a prepared action, seven owner-issued provider-state/readback completions
+  apply in Rust, and fresh
   hash/epoch/bytes/frames/render, death/recovery, no-bleed, fatal, and cleanup
-  evidence passes on both explicit serials.
+  evidence passes on both explicit serials. Package the real app feature-lock
+  fingerprint/SHA and separate accepted descriptor/sink; never relabel a
+  display/Hostess sink as OpenXR or Spatial render adoption.
 - For product Wi-Fi Direct, require two explicit serials, temporary
   credentialed topology, honest Android `Network` availability, Rust-owned
   explicit `p2p0` bind and bounded non-media exchange, inactive cleanup, zero

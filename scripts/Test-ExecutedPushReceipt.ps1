@@ -94,6 +94,24 @@ function Test-ExecutedPushReceiptDocument {
         }
     }
 
+    if (Test-ReceiptProperty -Value $Document -Property "capture") {
+        $capture = $Document.capture
+        $captureProperties = @($capture.PSObject.Properties.Name)
+        if ($captureProperties.Count -ne 2 -or $captureProperties -cnotcontains "path" -or $captureProperties -cnotcontains "sha256") {
+            Add-ReceiptFailure -Failures $failures -Message "capture must contain only path and sha256."
+        } else {
+            $capturePath = [string]$capture.path
+            $captureHash = ([string]$capture.sha256).ToLowerInvariant()
+            if (-not (Test-Path -LiteralPath $capturePath -PathType Leaf)) {
+                Add-ReceiptFailure -Failures $failures -Message "capture path does not exist."
+            } elseif ($captureHash -cnotmatch '^[0-9a-f]{64}$') {
+                Add-ReceiptFailure -Failures $failures -Message "capture sha256 is malformed."
+            } elseif ((Get-FileHash -LiteralPath $capturePath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $captureHash) {
+                Add-ReceiptFailure -Failures $failures -Message "capture sha256 does not match its file."
+            }
+        }
+    }
+
     if ([string]$Document.schema -cne "rusty.morphospace.workflow.executed_push_receipt.v1") {
         Add-ReceiptFailure -Failures $failures -Message "Receipt has the wrong schema ID."
     }
@@ -169,8 +187,26 @@ function Test-ExecutedPushReceiptDocument {
         if ([string]$gate.status -cne "pass") {
             Add-ReceiptFailure -Failures $failures -Message "Validation gate '$gateId' must pass for a validated receipt."
         }
-        if (-not (Test-ReceiptText $gate.evidence)) {
-            Add-ReceiptFailure -Failures $failures -Message "Validation gate '$gateId' needs evidence."
+        if ($gate.evidence -is [string]) {
+            if (-not (Test-ReceiptText $gate.evidence)) {
+                Add-ReceiptFailure -Failures $failures -Message "Validation gate '$gateId' needs evidence."
+            }
+        } else {
+            $binding = $gate.evidence
+            $bindingProperties = @($binding.PSObject.Properties.Name)
+            if ($bindingProperties.Count -ne 2 -or $bindingProperties -cnotcontains "path" -or $bindingProperties -cnotcontains "sha256") {
+                Add-ReceiptFailure -Failures $failures -Message "Validation gate '$gateId' evidence binding must contain only path and sha256."
+            } else {
+                $bindingPath = [string]$binding.path
+                $bindingHash = ([string]$binding.sha256).ToLowerInvariant()
+                if (-not (Test-Path -LiteralPath $bindingPath -PathType Leaf)) {
+                    Add-ReceiptFailure -Failures $failures -Message "Validation gate '$gateId' evidence file does not exist."
+                } elseif ($bindingHash -cnotmatch '^[0-9a-f]{64}$') {
+                    Add-ReceiptFailure -Failures $failures -Message "Validation gate '$gateId' evidence sha256 is malformed."
+                } elseif ((Get-FileHash -LiteralPath $bindingPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $bindingHash) {
+                    Add-ReceiptFailure -Failures $failures -Message "Validation gate '$gateId' evidence sha256 does not match its file."
+                }
+            }
         }
     }
 
@@ -258,16 +294,24 @@ function Test-ExecutedPushReceiptDocument {
     }
 
     $planningRows = @($repositories | Where-Object { [string]$_.role -ceq "planning" })
-    if ($planningRows.Count -ne 1) {
-        Add-ReceiptFailure -Failures $failures -Message "Validated receipt must contain exactly one planning ref."
-    } elseif ($executionOrder.Count -eq 0 -or $executionOrder[-1] -cne [string]$planningRows[0].ref_id) {
-        Add-ReceiptFailure -Failures $failures -Message "Planning ref must be the final execution_order entry."
+    if ($planningRows.Count -lt 1) {
+        Add-ReceiptFailure -Failures $failures -Message "Validated receipt must contain at least one planning ref."
     }
-    for ($index = 0; $index -lt [Math]::Max(0, $executionOrder.Count - 1); $index++) {
+    $planningStarted = $false
+    for ($index = 0; $index -lt $executionOrder.Count; $index++) {
         $refId = $executionOrder[$index]
-        if ($repositoryMap.ContainsKey($refId) -and [string]$repositoryMap[$refId].role -cne "source-owner") {
-            Add-ReceiptFailure -Failures $failures -Message "Only source-owner refs may precede the final planning ref."
+        if (-not $repositoryMap.ContainsKey($refId)) { continue }
+        $role = [string]$repositoryMap[$refId].role
+        if ($role -ceq "planning") {
+            $planningStarted = $true
+        } elseif ($planningStarted) {
+            Add-ReceiptFailure -Failures $failures -Message "Planning refs must form the final execution_order suffix."
         }
+    }
+    if ($executionOrder.Count -eq 0 -or
+        -not $repositoryMap.ContainsKey($executionOrder[-1]) -or
+        [string]$repositoryMap[$executionOrder[-1]].role -cne "planning") {
+        Add-ReceiptFailure -Failures $failures -Message "A planning ref must be the final execution_order entry."
     }
 
     foreach ($gateId in $validationUse.Keys) {
@@ -378,10 +422,55 @@ if ($SelfTest) {
     $template = Read-ReceiptDocument -ReceiptPath $templatePath
     Assert-ReceiptValid -Document $template -Context "Executed push receipt example"
 
+    $planningSuffix = Copy-ReceiptDocument -Document $template
+    $planningDev = Copy-ReceiptDocument -Document $planningSuffix.repositories[-1]
+    $planningDev.ref_id = "planning-dev"
+    $planningDev.branch = "dev"
+    $planningDev.upstream = "origin/dev"
+    $planningSuffix.repositories = @($planningSuffix.repositories) + @($planningDev)
+    $planningSuffix.dependency_order = @($planningSuffix.dependency_order) + @("planning-dev")
+    $planningSuffix.execution_order = @($planningSuffix.execution_order) + @("planning-dev")
+    $planningDevPoint = [pscustomobject][ordered]@{
+        ref_id = "planning-dev"
+        rollback_revision = [string]$planningDev.old_revision
+        acceptance = "Planning dev returns to its pre-bundle revision before planning main."
+    }
+    $planningSuffix.rollback.reverse_dependency_order = @("planning-dev") + @($planningSuffix.rollback.reverse_dependency_order)
+    $planningSuffix.rollback.points = @($planningDevPoint) + @($planningSuffix.rollback.points)
+    Assert-ReceiptValid -Document $planningSuffix -Context "Executed push receipt planning-suffix example"
+
+    $captureFixture = [IO.Path]::GetTempFileName()
+    try {
+        [IO.File]::WriteAllText($captureFixture, "pre-publication capture fixture`n", [Text.UTF8Encoding]::new($false))
+        $captureBound = Copy-ReceiptDocument -Document $template
+        $captureBound | Add-Member -NotePropertyName capture -NotePropertyValue ([pscustomobject][ordered]@{
+            path = $captureFixture
+            sha256 = (Get-FileHash -LiteralPath $captureFixture -Algorithm SHA256).Hash.ToLowerInvariant()
+        })
+        $captureBound.validation[0].evidence = [pscustomobject][ordered]@{
+            path = $captureFixture
+            sha256 = (Get-FileHash -LiteralPath $captureFixture -Algorithm SHA256).Hash.ToLowerInvariant()
+        }
+        Assert-ReceiptValid -Document $captureBound -Context "Executed push receipt capture-bound example"
+        $captureBound.validation[0].evidence.sha256 = "0" * 64
+        $evidenceFailures = @(Test-ExecutedPushReceiptDocument -Document $captureBound)
+        if (@($evidenceFailures | Where-Object { $_ -like "*evidence sha256 does not match*" }).Count -ne 1) {
+            throw "Validation-evidence damage case failed for the wrong reason: $($evidenceFailures -join ' | ')"
+        }
+        $captureBound.validation[0].evidence.sha256 = (Get-FileHash -LiteralPath $captureFixture -Algorithm SHA256).Hash.ToLowerInvariant()
+        $captureBound.capture.sha256 = "0" * 64
+        $captureFailures = @(Test-ExecutedPushReceiptDocument -Document $captureBound)
+        if (@($captureFailures | Where-Object { $_ -like "*capture sha256 does not match*" }).Count -ne 1) {
+            throw "Capture-binding damage case failed for the wrong reason: $($captureFailures -join ' | ')"
+        }
+    } finally {
+        Remove-Item -LiteralPath $captureFixture -Force -ErrorAction SilentlyContinue
+    }
+
     $damageCases = @(
         [pscustomobject]@{
             Name = "planning-last"
-            Expected = "Planning ref must be the final"
+            Expected = "Planning refs must form the final"
             Mutate = { param($value) $value.execution_order = @("planning-main", "matter-main", "workflow-main") }
         },
         [pscustomobject]@{

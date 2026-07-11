@@ -1,8 +1,8 @@
 # Autonomous Iteration
 
-This document describes the `0.1.0` portable workflow release. Later releases
-must preserve accepted event/receipt history or provide an explicit migration
-and rollback path.
+This document describes the `0.2.0` portable workflow release. The accepted
+`0.1.0` history remains immutable; later releases must preserve accepted
+event/receipt history or provide an explicit migration and rollback path.
 
 This protocol lets an agent continue a project safely across sessions without
 turning a broad roadmap into unrestricted edit authority.
@@ -46,6 +46,12 @@ user or external event needed to resume. Work may continue on a different
 ready unit only after workspace state is updated so there is still one current
 authority.
 
+Use the fail-closed automation `Ready` action for the proposal-review
+transition. It requires every prerequisite to be accepted, appends the state
+transition, and derives `next_ready_unit`; do not hand-edit a proposed unit to
+make it claimable. `Ready` does not authorize implementation outside the
+unit's existing repository and path allowlists.
+
 ## Instruction Synchronization
 
 Units changing authority, module layout, feature activation, validation,
@@ -75,6 +81,14 @@ matrix. Keep entrypoints short and move detailed recipes into linked docs.
 Protocol v2 also records exact repository heads/dirty fingerprints, the last
 accepted receipt, and current module/capability registries. These are compact
 current projections; append-only events remain the historical source.
+
+When a corrective unit replaces an immutable historical unit still recorded
+as `active` or `validating`, do not rewrite the old unit or event prefix.
+Append one `state-transition` whose ID is exactly
+`<old-unit>-superseded-by-<current-unit>`, target the old unit in `unit_id`, and
+make the replacement the sole `current_unit`. Contract validation treats the
+old artifact as historical only after that exact, internally consistent event;
+missing units, a wrong event type, or a non-current replacement fails closed.
 
 `iteration-events.jsonl` is append-only. Add a compact record after a state
 transition, contract decision, extraction, validation result, commit, push,
@@ -165,7 +179,7 @@ successful push is not proof that the whole batch is complete.
 
 `scripts/Invoke-WorkUnitAutomation.ps1` is the portable owner for mechanical
 work-unit transitions and preparation artifacts. It supports `Inspect`,
-`Claim`, `Resume`, `BeginValidation`, `RecordValidation`, `Accept`,
+`Ready`, `Claim`, `Resume`, `BeginValidation`, `RecordValidation`, `Accept`,
 `PreparePush`, and `Recover`.
 
 The CLI is deliberately narrower than an autonomous coding agent:
