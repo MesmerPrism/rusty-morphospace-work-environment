@@ -1,5 +1,9 @@
 # Autonomous Iteration
 
+This document describes the `0.1.0` portable workflow release. Later releases
+must preserve accepted event/receipt history or provide an explicit migration
+and rollback path.
+
 This protocol lets an agent continue a project safely across sessions without
 turning a broad roadmap into unrestricted edit authority.
 

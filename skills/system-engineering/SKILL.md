@@ -162,6 +162,11 @@ owner's full check after fixes, recheck replay/revocation/identity gates, and
 require route inactivity, package cleanup, zero bounded fatals, and named
 remaining limitations.
 
+Treat work-environment `0.1.0` as the first versioned workflow baseline.
+Schema or state-machine evolution must be additive or ship an explicit
+migration, compatibility window, rollback, and accepted-history preservation
+rule.
+
 For direct networking, separate topology formation, platform network
 observation, socket ownership, protocol exchange, and cleanup into provider
 receipts. Platform absence is evidence, not permission to fabricate

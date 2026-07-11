@@ -115,6 +115,11 @@ rebuild, route cleanup, N-peer damage edges, private receipt references, and
 instruction updates. Preserve failed-attempt nodes, and rerun/reconnect the
 touched repo's full-check node after any source fix.
 
+Use the work-environment `0.1.0` release manifest plus the final tracked graph
+as the baseline for future diff-impact runs. Compare schema IDs, repo heads,
+module/adapter edges, feature locks, instruction surfaces, and validation
+entrypoints; a later dirty filesystem scan does not replace this release node.
+
 For generic media sessions, graph the accepted Manifold descriptor to the
 platform runtime, then source → processor → route provider → sink, with codec
 and socket authority as separate nodes. Include receiver-first transitions and

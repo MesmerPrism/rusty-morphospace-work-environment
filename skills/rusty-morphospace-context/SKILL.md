@@ -218,3 +218,8 @@ rebinds use fresh request namespaces at the current authority revision;
 provider death requires an explicit fresh-epoch rebuild. Require explicit
 serials, inactive route/package cleanup, zero bounded fatals, and private raw
 evidence.
+
+The first consolidated portable project/module workflow baseline is release
+`0.1.0` in `manifests/release-0.1.0.json`. Preserve accepted events/receipts
+when adopting it; normalize routing categories additively and keep domain
+detail in unit tags.

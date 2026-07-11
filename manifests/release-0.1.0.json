@@ -1,0 +1,30 @@
+{
+  "schema": "rusty.morphospace.work_environment.release.v1",
+  "version": "0.1.0",
+  "released_at": "2026-07-11",
+  "compatibility": "additive-with-explicit-migration",
+  "protocols": [
+    "rusty.morphospace.workflow.project_spec.v1",
+    "rusty.morphospace.workflow.feature_lock.v1",
+    "rusty.morphospace.workflow.workspace_state.v1",
+    "rusty.morphospace.workflow.iteration_unit.v1",
+    "rusty.morphospace.workflow.iteration_event.v1",
+    "rusty.morphospace.workflow.module_candidate.v1",
+    "rusty.morphospace.workflow.promotion_review.v1",
+    "rusty.morphospace.workflow.work_unit_automation_receipt.v1",
+    "rusty.morphospace.workflow.push_bundle_plan.v1"
+  ],
+  "invariants": [
+    "Application composition and reusable module authority remain separate.",
+    "Unlisted or disabled features are inert.",
+    "One mutable parameter has one runtime authority.",
+    "Stable modules require an independent consumer or neutral conformance harness.",
+    "At most one iteration unit is active or validating.",
+    "Automation inspects or plans by default and never owns Git push or device mutation.",
+    "Instruction-triggering units synchronize AGENTS, a README/router, and routed skills before acceptance."
+  ],
+  "migration_entrypoint": "docs/PROJECT_WORKSPACE_PROTOCOL.md",
+  "automation_entrypoint": "scripts/Invoke-WorkUnitAutomation.ps1",
+  "validation_entrypoint": "scripts/Test-WorkEnvironment.ps1 -SelfTest",
+  "license": "AGPL-3.0-or-later"
+}

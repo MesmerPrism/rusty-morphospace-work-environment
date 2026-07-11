@@ -3,6 +3,12 @@
 Portable onboarding and project-iteration workspace for Rusty Morphospace
 development.
 
+Current portable protocol release: `0.1.0` (2026-07-11). The machine-readable
+release manifest is `manifests/release-0.1.0.json`. Existing project instances
+adopt it additively: preserve live events and receipts, normalize portable
+change categories while retaining domain detail in `tags`, and validate before
+using the optional automation CLI.
+
 This repository packages the agent instructions, setup notes, dependency
 matrix, validation scripts, and local-skill templates needed to bring up a
 new contributor environment without relying on one maintainer's machine paths.
