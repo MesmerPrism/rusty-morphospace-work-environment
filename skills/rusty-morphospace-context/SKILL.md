@@ -178,6 +178,12 @@ topology requires a fresh current-revision Manifold authorization bound to the
 exact topology contract and local role. Prove rejected, stale, and revoked
 receipts leave topology non-grouped before the accepted product exchange.
 
+Generic media sessions use Manifold for accepted low-rate session/stream
+references and Quest for receiver-first platform adoption. Keep source,
+processor, route provider, sink, codec, and socket authorities explicit.
+Camera2 and display-composite conform independently; remote-camera remains a
+compatibility adapter rather than a source of generic defaults.
+
 When repo routing, module placement, activation, validation, or public/private
 rules change, synchronize this router and the nearest repo instructions in the
 same iteration unit. Keep detailed recipes in linked docs.

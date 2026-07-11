@@ -98,6 +98,12 @@ authorities. Bind short-lived authorization to the current revision, exact
 peer roles, and topology contract. Rejection leaves state unchanged;
 revocation advances it and invalidates older receipts.
 
+For media runtimes, separate accepted session/stream references from platform
+adoption. Compose source, processor, route, codec, socket provider, and sink as
+explicit owners. Require receiver-first revisioned transitions and sink-
+observed frames; compatibility adapters preserve behavior without exporting
+legacy defaults or permissions.
+
 A runtime authority host should separate review from application, bind every
 dispatch receipt to the request and reviewed revision, advance accepted state
 exactly once, and persist replay/audit lineage across restart. Expiry is an

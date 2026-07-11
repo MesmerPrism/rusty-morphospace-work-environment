@@ -97,6 +97,11 @@ authorization, and rejected decisions into unchanged state. Connect explicit
 revocation to the next revision and stale-receipt rejection. Keep BLE and
 Android Wi-Fi P2P outside Manifold authority and gate every topology edge.
 
+For generic media sessions, graph the accepted Manifold descriptor to the
+platform runtime, then source → processor → route provider → sink, with codec
+and socket authority as separate nodes. Include receiver-first transitions and
+damage edges; remote-camera is compatibility ingress, not parallel authority.
+
 For the Manifold Runtime Host, graph snapshot, command registry, lease set,
 review, dispatch receipt, application receipt, explicit expiry, restart, replay
 set, and audit chain as distinct authority nodes. Treat sockets, platform

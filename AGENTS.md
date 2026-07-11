@@ -82,6 +82,10 @@ private evidence, or machine paths back into this repository.
   revision, replay, expiry, peer change, and revocation belong to Manifold;
   product topology requires a fresh current-revision authorization bound to
   exact peer roles and topology contract before platform mutation.
+- Generic media composition keeps accepted Manifold session/stream references
+  separate from platform lifecycle. Sources, processors, routes, codec/socket
+  providers, and sinks stay explicit; compatibility adapters cannot export
+  application defaults or permissions into reusable modules.
 - At most one iteration unit is active or validating in a project workspace.
 - A downstream adoption unit must be behavior-neutral unless its scope says
   otherwise: select the baseline shell, list optional families disabled,
