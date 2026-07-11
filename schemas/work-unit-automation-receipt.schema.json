@@ -4,7 +4,7 @@
   "title": "Work-unit automation action receipt",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "project_id", "unit_id", "action", "timestamp", "executed", "transition", "status_before", "status_after", "current_unit_before", "current_unit_after", "preservation", "validation_matrix", "graph_scope", "push_plan", "event_id"],
+  "required": ["schema", "project_id", "unit_id", "action", "timestamp", "executed", "transition", "status_before", "status_after", "current_unit_before", "current_unit_after", "preservation", "validation_matrix", "graph_scope", "adoption_receipt", "push_plan", "event_id"],
   "properties": {
     "schema": { "const": "rusty.morphospace.workflow.work_unit_automation_receipt.v1" },
     "project_id": { "$ref": "#/$defs/id" },
@@ -30,6 +30,7 @@
     },
     "validation_matrix": { "type": "array", "items": { "type": "object" } },
     "graph_scope": { "type": "object" },
+    "adoption_receipt": { "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }] },
     "push_plan": { "oneOf": [{ "type": "object" }, { "type": "null" }] },
     "event_id": { "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] }
   },

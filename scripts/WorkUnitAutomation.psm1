@@ -357,12 +357,13 @@ function Get-MorphospaceStatusPath {
     return (ConvertTo-MorphospaceRelativePath -Path $value.Trim('"'))
 }
 
-function Test-MorphospaceClaimDirtyOverlap {
+function Get-MorphospaceClaimDirtyOverlap {
     param(
         [Parameter(Mandatory = $true)][object]$Unit,
         [Parameter(Mandatory = $true)][object[]]$RepositoryStates
     )
 
+    $result = New-Object System.Collections.Generic.List[object]
     foreach ($repo in @($Unit.allowed_repositories)) {
         $repoId = [string]$repo.repo_id
         $state = @($RepositoryStates | Where-Object { [string]$_.repo_id -eq $repoId } | Select-Object -First 1)
@@ -375,9 +376,166 @@ function Test-MorphospaceClaimDirtyOverlap {
             }
         }
         if ($overlap.Count -gt 0) {
-            throw "Claim refused pre-existing dirty-path overlap in '$repoId': $(@($overlap | Sort-Object -Unique) -join ', ')."
+            $result.Add([pscustomobject][ordered]@{
+                repo_id = $repoId
+                paths = @($overlap | Sort-Object -Unique)
+            }) | Out-Null
         }
     }
+    return @($result.ToArray())
+}
+
+function Test-MorphospaceClaimDirtyOverlap {
+    param(
+        [Parameter(Mandatory = $true)][object]$Unit,
+        [Parameter(Mandatory = $true)][object[]]$RepositoryStates
+    )
+
+    $overlaps = @(Get-MorphospaceClaimDirtyOverlap -Unit $Unit -RepositoryStates $RepositoryStates)
+    if ($overlaps.Count -gt 0) {
+        $detail = @($overlaps | ForEach-Object { "'$([string]$_.repo_id)': $(@($_.paths) -join ', ')" }) -join '; '
+        throw "Claim refused pre-existing dirty-path overlap in $detail."
+    }
+}
+
+function Get-MorphospaceAdoptionFileEvidence {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryPath,
+        [Parameter(Mandatory = $true)][string[]]$Paths
+    )
+
+    $items = New-Object System.Collections.Generic.List[object]
+    foreach ($pathValue in @($Paths | Sort-Object -Unique)) {
+        $path = ConvertTo-MorphospaceRelativePath -Path ([string]$pathValue)
+        $absolute = Join-Path $RepositoryPath ($path.Replace('/', [System.IO.Path]::DirectorySeparatorChar))
+        if (Test-Path -LiteralPath $absolute -PathType Leaf) {
+            $items.Add([pscustomobject][ordered]@{
+                path = $path
+                state = "present"
+                sha256 = (Get-FileHash -LiteralPath $absolute -Algorithm SHA256).Hash.ToLowerInvariant()
+            }) | Out-Null
+        } elseif (-not (Test-Path -LiteralPath $absolute)) {
+            $items.Add([pscustomobject][ordered]@{ path = $path; state = "deleted"; sha256 = $null }) | Out-Null
+        } else {
+            throw "In-flight adoption only supports file or deletion evidence, not directory '$path'."
+        }
+    }
+    return @($items.ToArray())
+}
+
+function Test-MorphospaceInflightAdoptionReceipt {
+    param(
+        [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
+        [Parameter(Mandatory = $true)][string]$ReceiptReference,
+        [Parameter(Mandatory = $true)][object]$Spec,
+        [Parameter(Mandatory = $true)][object]$Unit,
+        [Parameter(Mandatory = $true)][hashtable]$RepositoryMap,
+        [Parameter(Mandatory = $true)][object[]]$RepositoryStates,
+        [Parameter(Mandatory = $true)][object[]]$Overlaps
+    )
+
+    $receiptPath = Resolve-MorphospaceReceiptPath -WorkspaceRoot $WorkspaceRoot -ReceiptReference $ReceiptReference
+    $receipt = Read-MorphospaceJson -Path $receiptPath
+    if ([string]$receipt.schema -ne "rusty.morphospace.workflow.inflight_adoption_receipt.v1") { throw "In-flight adoption receipt has the wrong schema ID." }
+    if ([string]$receipt.project_id -ne [string]$Spec.project_id -or [string]$receipt.unit_id -ne [string]$Unit.unit_id) { throw "In-flight adoption receipt identity does not match the requested unit." }
+    if ([string]$receipt.reason -ne "work-started-before-protocol-v2" -or $receipt.safe_to_claim -ne $true -or $receipt.external_mutation_performed -ne $false) {
+        throw "In-flight adoption receipt must explicitly prove bounded pre-protocol work, safe claim, and no external mutation."
+    }
+
+    $receiptRepos = @{}
+    foreach ($entry in @($receipt.repositories)) {
+        $repoId = [string]$entry.repo_id
+        if (-not $repoId -or $receiptRepos.ContainsKey($repoId)) { throw "In-flight adoption receipt contains a missing or duplicate repository identity." }
+        $receiptRepos[$repoId] = $entry
+    }
+    $expectedRepoIds = @($Overlaps | ForEach-Object { [string]$_.repo_id } | Sort-Object)
+    $actualRepoIds = @($receiptRepos.Keys | Sort-Object)
+    if (($expectedRepoIds -join "`n") -ne ($actualRepoIds -join "`n")) { throw "In-flight adoption receipt repository set does not match dirty in-scope repositories." }
+
+    foreach ($overlap in @($Overlaps)) {
+        $repoId = [string]$overlap.repo_id
+        if (-not $RepositoryMap.ContainsKey($repoId)) { throw "In-flight adoption repository '$repoId' is not mapped." }
+        $repoState = @($RepositoryStates | Where-Object { [string]$_.repo_id -eq $repoId } | Select-Object -First 1)[0]
+        $entry = $receiptRepos[$repoId]
+        if ([string]$entry.observed_revision -ne [string]$repoState.head) { throw "In-flight adoption receipt revision mismatch for '$repoId'." }
+        $recordedFiles = @($entry.files)
+        $recordedPaths = @($recordedFiles | ForEach-Object { ConvertTo-MorphospaceRelativePath -Path ([string]$_.path) } | Sort-Object)
+        $expectedPaths = @($overlap.paths | Sort-Object)
+        if ($recordedPaths.Count -ne @($recordedPaths | Sort-Object -Unique).Count -or ($recordedPaths -join "`n") -ne ($expectedPaths -join "`n")) {
+            throw "In-flight adoption receipt path set mismatch for '$repoId'."
+        }
+        $actualFiles = @(Get-MorphospaceAdoptionFileEvidence -RepositoryPath ([string]$RepositoryMap[$repoId].path) -Paths $expectedPaths)
+        $actualMap = @{}
+        foreach ($file in $actualFiles) { $actualMap[[string]$file.path] = $file }
+        foreach ($file in $recordedFiles) {
+            $path = ConvertTo-MorphospaceRelativePath -Path ([string]$file.path)
+            $actual = $actualMap[$path]
+            if ([string]$file.state -ne [string]$actual.state) { throw "In-flight adoption receipt file-state mismatch for '$repoId/$path'." }
+            if ([string]$file.sha256 -ne [string]$actual.sha256) { throw "In-flight adoption receipt hash mismatch for '$repoId/$path'." }
+        }
+    }
+    return $receiptPath
+}
+
+function New-MorphospaceInflightAdoptionReceipt {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
+        [Parameter(Mandatory = $true)][string]$UnitId,
+        [Parameter(Mandatory = $true)][string]$RepoMapPath,
+        [string]$Timestamp = "",
+        [Parameter(Mandatory = $true)][string]$OutPath,
+        [switch]$Execute
+    )
+
+    $resolvedWorkspace = (Resolve-Path -LiteralPath $WorkspaceRoot).Path
+    $resolvedOutPath = [System.IO.Path]::GetFullPath($OutPath)
+    $workspacePrefix = $resolvedWorkspace.TrimEnd("\", "/") + [System.IO.Path]::DirectorySeparatorChar
+    if (-not $resolvedOutPath.StartsWith($workspacePrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "In-flight adoption receipt output must stay inside the project morphospace workspace."
+    }
+    $spec = Read-MorphospaceJson -Path (Join-Path $resolvedWorkspace "project.spec.json")
+    $unitMap = Get-MorphospaceUnitMap -UnitRoot (Join-Path $resolvedWorkspace "iteration-units")
+    if (-not $unitMap.ContainsKey($UnitId)) { throw "Iteration unit '$UnitId' does not exist." }
+    $unit = $unitMap[$UnitId].document
+    if ([string]$unit.status -ne "ready") { throw "In-flight adoption receipt requires a ready unit; '$UnitId' is '$([string]$unit.status)'." }
+    $repoMap = Get-MorphospaceRepositoryMap -RepoMapPath $RepoMapPath
+    $repositoryStates = New-Object System.Collections.Generic.List[object]
+    foreach ($repo in @($unit.allowed_repositories | Sort-Object repo_id)) {
+        $repoId = [string]$repo.repo_id
+        if ($repoMap.ContainsKey($repoId)) {
+            $repositoryStates.Add((Get-MorphospaceRepositoryState -RepoId $repoId -Path ([string]$repoMap[$repoId].path))) | Out-Null
+        }
+    }
+    $repoStatesArray = @($repositoryStates.ToArray())
+    $overlaps = @(Get-MorphospaceClaimDirtyOverlap -Unit $unit -RepositoryStates $repoStatesArray)
+    if ($overlaps.Count -eq 0) { throw "In-flight adoption receipt is unnecessary because no dirty in-scope paths exist." }
+    if (-not $Timestamp) { $Timestamp = (Get-Date).ToUniversalTime().ToString("o") }
+
+    $repositories = New-Object System.Collections.Generic.List[object]
+    foreach ($overlap in @($overlaps | Sort-Object repo_id)) {
+        $repoId = [string]$overlap.repo_id
+        $state = @($repoStatesArray | Where-Object { [string]$_.repo_id -eq $repoId } | Select-Object -First 1)[0]
+        $repositories.Add([pscustomobject][ordered]@{
+            repo_id = $repoId
+            observed_revision = [string]$state.head
+            files = @(Get-MorphospaceAdoptionFileEvidence -RepositoryPath ([string]$repoMap[$repoId].path) -Paths @($overlap.paths))
+        }) | Out-Null
+    }
+    $receipt = [pscustomobject][ordered]@{
+        '$schema' = "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/inflight-adoption-receipt.schema.json"
+        schema = "rusty.morphospace.workflow.inflight_adoption_receipt.v1"
+        receipt_id = "$UnitId-inflight-adoption"
+        project_id = [string]$spec.project_id
+        unit_id = $UnitId
+        captured_at = $Timestamp
+        reason = "work-started-before-protocol-v2"
+        safe_to_claim = $true
+        external_mutation_performed = $false
+        repositories = @($repositories.ToArray())
+    }
+    if ($Execute) { Write-MorphospaceJson -Path $resolvedOutPath -Value $receipt }
+    return $receipt
 }
 
 function Get-MorphospaceChangedPaths {
@@ -646,6 +804,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
         [ValidateSet("pass", "partial", "fail", "blocked")][string]$ValidationResult = "pass",
         [string]$ValidationReceipt = "",
         [string]$RecoveryReceipt = "",
+        [string]$AdoptionReceipt = "",
         [ValidateSet("quick", "standard", "deep")][string]$ValidationTier = "standard",
         [string[]]$DeviceSerials = @(),
         [string]$Timestamp = "",
@@ -704,6 +863,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
     $transition = "inspect-only"
     $event = $null
     $pushPlan = $null
+    $adoptionReference = $null
 
     switch ($Action) {
         "Inspect" {
@@ -716,12 +876,21 @@ function Invoke-MorphospaceWorkUnitAutomation {
                 if ($beforeStatus -ne "ready") { throw "Claim requires ready status; '$UnitId' is '$beforeStatus'." }
                 if ($state.current_unit) { throw "Workspace already has current unit '$($state.current_unit)'." }
                 Test-MorphospacePrerequisites -Unit $unit -UnitMap $unitMap
-                Test-MorphospaceClaimDirtyOverlap -Unit $unit -RepositoryStates $repoStatesArray
+                $claimOverlaps = @(Get-MorphospaceClaimDirtyOverlap -Unit $unit -RepositoryStates $repoStatesArray)
+                if ($claimOverlaps.Count -gt 0) {
+                    if (-not $AdoptionReceipt) { Test-MorphospaceClaimDirtyOverlap -Unit $unit -RepositoryStates $repoStatesArray }
+                    $adoptionPath = Test-MorphospaceInflightAdoptionReceipt -WorkspaceRoot $resolvedWorkspace -ReceiptReference $AdoptionReceipt -Spec $spec -Unit $unit -RepositoryMap $repoMap -RepositoryStates $repoStatesArray -Overlaps $claimOverlaps
+                    $workspacePrefix = $resolvedWorkspace.TrimEnd("\", "/") + [System.IO.Path]::DirectorySeparatorChar
+                    $adoptionReference = $adoptionPath.Substring($workspacePrefix.Length).Replace("\", "/")
+                } elseif ($AdoptionReceipt) {
+                    throw "In-flight adoption receipt is unnecessary because no dirty in-scope paths exist."
+                }
                 $transition = "ready-to-active"
                 if ($Execute) {
                     $unit.status = "active"; $state.current_unit = $UnitId
                     if ([string]$state.next_ready_unit -eq $UnitId) { $state.next_ready_unit = $null }
-                    $event = New-MorphospaceEvent -State $state -Events $events -UnitId $UnitId -ActionSlug "claimed" -Timestamp $Timestamp -EventType "state-transition" -Summary "Claimed one ready iteration unit without expanding repository or path scope."
+                    $summary = if ($adoptionReference) { "Claimed one ready iteration unit with an exact hashed receipt for in-flight work that began before protocol v2." } else { "Claimed one ready iteration unit without expanding repository or path scope." }
+                    $event = New-MorphospaceEvent -State $state -Events $events -UnitId $UnitId -ActionSlug "claimed" -Timestamp $Timestamp -EventType "state-transition" -Summary $summary -Receipts @($adoptionReference | Where-Object { $_ })
                 }
             }
         }
@@ -964,6 +1133,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
             force_push_allowed = $false; repository_states = @($repoStatesArray | ForEach-Object { New-MorphospaceRepositorySummary -State $_ })
         }
         validation_matrix = $validationMatrix; graph_scope = $graphScope
+        adoption_receipt = $adoptionReference
         push_plan = $pushPlan
         event_id = if ($event) { [string]$event.event_id } else { $null }
     }
@@ -971,4 +1141,4 @@ function Invoke-MorphospaceWorkUnitAutomation {
     return $result
 }
 
-Export-ModuleMember -Function Invoke-MorphospaceWorkUnitAutomation, Get-MorphospaceRepositoryState
+Export-ModuleMember -Function Invoke-MorphospaceWorkUnitAutomation, Get-MorphospaceRepositoryState, New-MorphospaceInflightAdoptionReceipt

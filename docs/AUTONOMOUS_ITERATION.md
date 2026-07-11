@@ -119,6 +119,13 @@ device acceptance.
   processes plus quarantined partial outputs; device recovery requires explicit
   serials, no remaining test packages, inactive routes, and zero bounded
   fatals. Recovery restores only workflow state.
+- `Claim` normally rejects every pre-existing dirty path inside the unit
+  envelope. For work demonstrably started before protocol v2, first run
+  `scripts/New-InflightAdoptionReceipt.ps1 -Execute`; then pass its local
+  `inflight_adoption_receipt.v1` through `-AdoptionReceipt`. The receipt binds
+  the exact repository heads, path set, file/deletion state, and content hashes.
+  Any later edit, missing path, extra path, or repo-head change rejects. This is
+  a one-time bounded migration route, not a general dirty-work override.
 
 ### Executed push evidence
 
@@ -205,6 +212,27 @@ powershell -NoProfile -ExecutionPolicy Bypass `
   -Execute
 ```
 
+Pre-protocol in-flight adoption is a separate two-step operation:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\New-InflightAdoptionReceipt.ps1 `
+  -WorkspaceRoot <project-root>\morphospace `
+  -UnitId <unit-id> `
+  -RepoMapPath <local-repository-map> `
+  -OutPath <project-root>\morphospace\receipts\<unit-id>-inflight-adoption.json `
+  -Execute
+
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\Invoke-WorkUnitAutomation.ps1 `
+  -Action Claim `
+  -WorkspaceRoot <project-root>\morphospace `
+  -UnitId <unit-id> `
+  -RepoMapPath <local-repository-map> `
+  -AdoptionReceipt receipts/<unit-id>-inflight-adoption.json `
+  -Execute
+```
+
 Every action returns a validation matrix, a graph scope limited to the unit's
 declared repositories and paths, and a repository-preservation report.
 `Recover` only repairs an unambiguous stale current-unit pointer; it preserves
@@ -223,6 +251,7 @@ Stop and record a blocker when:
 - existing user changes overlap the unit and cannot be preserved safely.
 
 Run `scripts/Test-WorkUnitAutomation.ps1` after changing automation behavior.
-Its temporary repositories exercise clean, dirty, untracked, detached, ahead,
-divergent, blocked, resumed, and interrupted states and verify that push
-preparation never changes a remote.
+Its temporary repositories exercise clean, dirty, hash-bound in-flight
+adoption, post-receipt tampering, untracked, detached, ahead, divergent,
+blocked, resumed, and interrupted states and verify that push preparation
+never changes a remote.

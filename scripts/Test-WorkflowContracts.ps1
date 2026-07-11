@@ -722,6 +722,7 @@ $requiredSchemaNames = @(
     "feature-descriptor.schema.json",
     "feature-lock.schema.json",
     "feature-lock-v2.schema.json",
+    "inflight-adoption-receipt.schema.json",
     "interruption-receipt.schema.json",
     "iteration-event.schema.json",
     "iteration-unit.schema.json",

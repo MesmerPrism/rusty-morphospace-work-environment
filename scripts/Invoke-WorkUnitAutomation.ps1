@@ -9,6 +9,7 @@ param(
     [ValidateSet("pass", "partial", "fail", "blocked")][string]$ValidationResult = "pass",
     [string]$ValidationReceipt = "",
     [string]$RecoveryReceipt = "",
+    [string]$AdoptionReceipt = "",
     [ValidateSet("quick", "standard", "deep")][string]$ValidationTier = "standard",
     [string[]]$DeviceSerials = @(),
     [string]$Timestamp = "",
@@ -28,6 +29,7 @@ $arguments = @{
     ValidationResult = $ValidationResult
     ValidationReceipt = $ValidationReceipt
     RecoveryReceipt = $RecoveryReceipt
+    AdoptionReceipt = $AdoptionReceipt
     ValidationTier = $ValidationTier
     DeviceSerials = $DeviceSerials
     Timestamp = $Timestamp

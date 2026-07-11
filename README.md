@@ -110,6 +110,9 @@ state.
 Interrupted cross-repo commits, builds, and device runs resume only from a
 validated `interruption_receipt.v1`; the automation restores workflow state
 after cleanup evidence exists but never performs the external cleanup.
+Work already in flight before protocol v2 can cross the normal dirty-claim
+gate only through a generated `inflight_adoption_receipt.v1` that exactly
+hashes every dirty in-scope file or deletion and becomes stale on any change.
 Prepared push plans use `execution: not-performed`. After an authorized
 external push, `executed_push_receipt.v1` records exact old/new/readback refs,
 ancestry, validation, planning-last order, no-force proof, and rollback points;

@@ -103,6 +103,11 @@ baseline shell, lists optional families disabled, leaves unrelated nearby
 features absent and inert, and records extraction candidates before source is
 moved.
 
+Normal work-unit claims reject pre-existing dirty paths inside their declared
+envelope. For work begun before protocol v2, generate an exact hash-bound
+receipt with `scripts/New-InflightAdoptionReceipt.ps1` and pass it through
+`-AdoptionReceipt`; never hand-edit state to bypass the claim gate.
+
 For particle candidates, search Matter's particle and surface-runtime
 contracts first. Keep relation inputs in Lattice, appearance/projection in
 Optics, platform/render adapters in Quest, and composition/private policy in

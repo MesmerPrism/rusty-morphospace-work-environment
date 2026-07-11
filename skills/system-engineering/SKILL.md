@@ -71,6 +71,10 @@ Declared partial-commit, interrupted-build, or interrupted-device recovery
 requires a hashed `interruption_receipt.v1` with observed repo checkpoints and
 kind-specific safe cleanup. Workflow recovery may restore state only; it never
 owns Git, process, package, route, or device cleanup.
+Normal claims reject dirty in-scope paths. Work started before protocol v2 may
+cross that boundary only through a generated `inflight_adoption_receipt.v1`
+that binds exact heads, paths, file/deletion state, and content hashes; any
+post-receipt drift rejects.
 After an externally authorized push, accept only a validated
 `rusty.morphospace.workflow.executed_push_receipt.v1` with full old, new, and
 observed remote revisions, ancestry and validation references, no-force proof,
