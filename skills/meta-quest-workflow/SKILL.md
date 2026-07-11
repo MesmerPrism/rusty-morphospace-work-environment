@@ -78,6 +78,12 @@ In the public Meta Quest workflow repo:
   unauthenticated, stale-after-revocation, and revoked decisions remain
   non-grouped. Only a fresh accepted revision may initialize Wi-Fi P2P and run
   the bounded Rust-socket exchange; BLE never carries media or mutates topology.
+- For configured N-peer proof with two physical Quests, require a fresh BLE
+  role swap/reconnect between the live peers, then fold one sanitized configured
+  peer through Manifold. Require three members, only the authenticated live
+  pair as a direct candidate, replay/split-brain/advisory-media rejection,
+  expiry/revocation, zero fatals, stable state, and package cleanup. Explicitly
+  clear and record any Guardian launch blocker before rerun.
 
 ## Install And Launch Shape
 

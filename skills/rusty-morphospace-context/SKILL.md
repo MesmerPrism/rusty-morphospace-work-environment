@@ -187,6 +187,13 @@ topology requires a fresh current-revision Manifold authorization bound to the
 exact topology contract and local role. Prove rejected, stale, and revoked
 receipts leave topology non-grouped before the accepted product exchange.
 
+Bounded N-peer membership belongs to Manifold. It owns the accepted set,
+revision, deterministic coordinator, direct-route ranking, split-brain
+rejection, expiry, revocation, direct-lane eligibility, and audit. Public-lab
+and sidecar artifacts remain source/privacy/advisory only; a platform adapter
+may add independently authenticated live-pair evidence. Advisory gossip never
+authenticates a direct route or carries media.
+
 Generic media sessions use Manifold for accepted low-rate session/stream
 references and Quest for receiver-first platform adoption. Keep source,
 processor, route provider, sink, codec, and socket authorities explicit.

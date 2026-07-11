@@ -139,6 +139,14 @@ initialization that resets live authority. Device proof should exercise both
 consumers against one authority and verify identity, revision continuity,
 release paths, zero fatals, and cleanup.
 
+For an N-peer control mesh, separate accepted membership from observations and
+advisory connectivity from authenticated direct lanes. Require canonical
+bounded membership, one deterministic coordinator per epoch, revision/replay,
+expiry, revocation, audit, and stable direct-route ranking. Same-epoch
+coordinator disagreement is split brain. Advisory edges may connect the
+low-rate graph but cannot become direct/media authority without independent
+authentication.
+
 For direct networking, separate topology formation, platform network
 observation, socket ownership, protocol exchange, and cleanup into provider
 receipts. Platform absence is evidence, not permission to fabricate

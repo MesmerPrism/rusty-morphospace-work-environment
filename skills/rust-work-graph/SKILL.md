@@ -97,6 +97,13 @@ authorization, and rejected decisions into unchanged state. Connect explicit
 revocation to the next revision and stale-receipt rejection. Keep BLE and
 Android Wi-Fi P2P outside Manifold authority and gate every topology edge.
 
+For N-peer meshes, keep observations/proposers outside the authority cluster,
+then graph review into membership revision, coordinator epoch, route ranking,
+selected direct pairs, expiry/revocation, and audit. Separate advisory from
+authenticated direct-lane edges; add rejection edges for replay, stale state,
+split brain, disconnection, revoked resurrection, and advisory-media
+substitution. Attach live-device evidence only to live peer nodes.
+
 For generic media sessions, graph the accepted Manifold descriptor to the
 platform runtime, then source → processor → route provider → sink, with codec
 and socket authority as separate nodes. Include receiver-first transitions and

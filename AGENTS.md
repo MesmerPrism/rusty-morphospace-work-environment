@@ -82,6 +82,10 @@ private evidence, or machine paths back into this repository.
   revision, replay, expiry, peer change, and revocation belong to Manifold;
   product topology requires a fresh current-revision authorization bound to
   exact peer roles and topology contract before platform mutation.
+- N-peer membership, coordinator epoch, route ranking, split-brain rejection,
+  expiry, revocation, and audit remain Manifold authority. Public-lab and
+  sidecar inputs are advisory only; only independently authenticated pairwise
+  evidence may produce a direct-lane candidate, and gossip never carries media.
 - Generic media composition keeps accepted Manifold session/stream references
   separate from platform lifecycle. Sources, processors, routes, codec/socket
   providers, and sinks stay explicit; compatibility adapters cannot export
