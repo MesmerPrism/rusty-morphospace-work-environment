@@ -25,15 +25,24 @@ $warnPatterns = @(
     [ordered]@{ Name = "possible-key-material"; Pattern = "(?i)\b(api[_-]?key|access[_-]?token|-----BEGIN [A-Z ]*PRIVATE KEY-----)\b" }
 )
 
-$files = Get-ChildItem -LiteralPath $resolvedRoot -Recurse -File -Force |
-    Where-Object {
-        $_.FullName -notmatch "[\\/]\.git[\\/]" -and
-        $_.FullName -notmatch "[\\/]artifacts[\\/]" -and
-        $_.FullName -notmatch "[\\/]local[\\/]" -and
-        $_.FullName -notmatch "[\\/]target[\\/]" -and
-        $_.FullName -notmatch "[\\/]build[\\/]" -and
-        $_.FullName -ine $selfPath
-    }
+$insideGit = @(& git -C $resolvedRoot rev-parse --is-inside-work-tree 2>$null)
+if ($LASTEXITCODE -eq 0 -and ($insideGit -join "").Trim() -eq "true") {
+    $files = @(& git -C $resolvedRoot ls-files --cached --others --exclude-standard | ForEach-Object {
+        $candidate = Join-Path $resolvedRoot ([string]$_)
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) { Get-Item -LiteralPath $candidate }
+    })
+} else {
+    $files = @(Get-ChildItem -LiteralPath $resolvedRoot -Recurse -File -Force |
+        Where-Object {
+            $_.FullName -notmatch "[\\/]\.git[\\/]" -and
+            $_.FullName -notmatch "[\\/]artifacts[\\/]" -and
+            $_.FullName -notmatch "[\\/]local[\\/]" -and
+            $_.FullName -notmatch "[\\/]target[\\/]" -and
+            $_.FullName -notmatch "[\\/]build[\\/]" -and
+            $_.FullName -ine $selfPath
+        })
+}
+$files = @($files | Where-Object { $_.FullName -ine $selfPath })
 
 $failures = New-Object System.Collections.Generic.List[object]
 $warnings = New-Object System.Collections.Generic.List[object]
@@ -45,6 +54,7 @@ foreach ($file in $files) {
     } catch {
         continue
     }
+    if ($null -eq $text) { continue }
 
     foreach ($entry in $failPatterns) {
         if ([regex]::IsMatch($text, $entry.Pattern)) {
