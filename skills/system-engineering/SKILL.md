@@ -81,6 +81,12 @@ A Quest hand adapter must map provider joints to Matter target joints exactly
 once, reject duplicate or incomplete targets, and compare its prepared rows to
 the Matter CPU oracle. App consumers stay thin and default inert.
 
+When serial expectation/preflight/handoff artifacts accumulate, consolidate
+their relationships into a bounded DAG with named policy profiles and
+registry-driven validators. Preserve compatibility artifacts, keep the DAG
+non-executing, and assign approval/submission/decision/receipt authority to
+their real owners instead of the workflow index.
+
 Authority, module-layout, activation, and validation changes also have
 instruction impact. Route them through
 `docs/INSTRUCTION_SYNCHRONIZATION.md`; update concise routers and place long

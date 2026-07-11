@@ -81,6 +81,11 @@ consumers, native hand-lab app build, property manifest, conformance and damage
 fixtures, and device evidence reducer. Do not absorb neighboring OpenXR,
 Spatial, or renderer modules into adapter ownership.
 
+For sidecar workflow consolidation, graph the Termux source profile, the six
+DAG phase nodes, registry/profile validator dispatch, all compatibility
+artifact references, and damaged authority edges as separate clusters. Report
+retained serial v1 tools as compatibility leaves, not new DAG stages.
+
 Treat `AGENTS.md`, `SKILL.md`, README, and router docs as graphable instruction
 surfaces. Module-layout or repo-routing changes must include their
 synchronization records; keep detailed scan recipes outside the entrypoints.

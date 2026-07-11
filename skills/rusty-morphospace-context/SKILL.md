@@ -127,6 +127,12 @@ selects it only when the live-hand bridge starts. The consumers share
 conversion and parity contracts, not provider acquisition, renderer resources,
 or application policy.
 
+For peer-workflow consolidation, `quest-termux-lab` owns only the sanitized
+`source`/`privacy` profile. `rusty-quest-sidecar-mesh` owns the six-phase
+source/privacy/approval/submission/decision/receipt planning DAG. The DAG
+indexes retained v1 artifacts; it is not an execution engine. Manifold remains
+decision, receipt, audit, and accepted-state authority.
+
 When repo routing, module placement, activation, validation, or public/private
 rules change, synchronize this router and the nearest repo instructions in the
 same iteration unit. Keep detailed recipes in linked docs.
