@@ -72,6 +72,10 @@ matrix. Keep entrypoints short and move detailed recipes into linked docs.
 - last validation checkpoint;
 - pending coordinated-push bundle.
 
+Protocol v2 also records exact repository heads/dirty fingerprints, the last
+accepted receipt, and current module/capability registries. These are compact
+current projections; append-only events remain the historical source.
+
 `iteration-events.jsonl` is append-only. Add a compact record after a state
 transition, contract decision, extraction, validation result, commit, push,
 promotion, or blocker change. Large logs and device artifacts remain outside
@@ -101,6 +105,44 @@ device acceptance.
   listing repositories, branches, commits, validation, and rollback points.
 - Update workspace state and append a push event only after the push succeeds.
 - Do not accept a unit with unresolved required instruction surfaces.
+- `RecordValidation` validates the referenced receipt before writing a
+  checkpoint. A passing receipt covers every acceptance ID and validation
+  gate, hashes each artifact, matches current repository heads and the exact
+  base-to-worktree changed-path set, and keeps every path inside the unit.
+  Required-device receipts name serials, prove cleanup, and carry zero bounded
+  package/system fatal counts. `Accept` revalidates the same receipt so later
+  drift fails closed.
+- A blocker describing a partial cross-repo commit, interrupted build, or
+  interrupted device run cannot recover from prose alone. Supply a local
+  `interruption_receipt.v1` with hashed evidence, observed repo checkpoints,
+  and kind-specific safe cleanup. Build recovery requires zero active bounded
+  processes plus quarantined partial outputs; device recovery requires explicit
+  serials, no remaining test packages, inactive routes, and zero bounded
+  fatals. Recovery restores only workflow state.
+
+### Executed push evidence
+
+A prepared `push_bundle_plan.v1` is never proof that Git changed. It remains a
+non-executing intent artifact even when its workspace transition used
+`-Execute`. An authorized external operator or orchestrator records
+`executed_push_receipt.v1` only after all listed remote refs are read back.
+
+The executed receipt uses one `ref_id` per branch and records full old, new,
+and observed-remote revisions, whether the ref was pushed or only read back,
+fast-forward ancestry evidence, passing validation references, explicit
+source-first/planning-last order, `force_push_used: false`, and rollback
+anchors in reverse dependency order. A rollback anchor is evidence for a
+reviewed revert; it is not permission to reset a shared branch.
+
+`validated-pushed` is deliberately success-only. A partial or failed push must
+remain a blocker with its completed prefix and recovery evidence; it must not
+be rewritten into this receipt shape. Validate completed evidence with:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\Test-ExecutedPushReceipt.ps1 `
+  -Path <project-root>\morphospace\receipts\<executed-push-receipt>.json
+```
 
 The protocol supports larger push intervals without losing local commit
 history or resumption evidence.
@@ -131,6 +173,8 @@ The CLI is deliberately narrower than an autonomous coding agent:
   and no behind or divergent upstream state;
 - a prepared push bundle records source-first and planning-last order but has
   `execution: not-performed` and `force_push_allowed: false`.
+- it never emits `executed_push_receipt.v1`; that receipt belongs to the
+  externally authorized push/readback step.
 
 Keep the local repository map outside a public project instance when its paths
 identify a workstation. Start from `templates/repository-map.example.json`.

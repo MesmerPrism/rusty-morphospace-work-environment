@@ -12,6 +12,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-PublicBoundar
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkEnvironment.ps1 -SelfTest
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkflowContracts.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\New-ProjectWorkspace.ps1 -SelfTest
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-FeatureLockResolver.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ExecutedPushReceipt.ps1 -SelfTest
 git diff --check
 ```
 
@@ -57,6 +59,36 @@ powershell -NoProfile -ExecutionPolicy Bypass `
 The scaffold self-test creates a temporary project workspace, validates it,
 proves that a second invocation cannot overwrite it, and removes only its own
 temporary directory.
+
+The feature-lock resolver self-test proves dependency closure, descriptor and
+source hashing, exact effect unions, selected-lock-plus-runtime-input
+activation, absent-feature rejection, ambient-input rejection, and stale-lock
+fingerprint rejection.
+
+Work-unit automation self-tests keep missing/spoofed validation receipts,
+dirty-path overlap, and out-of-scope changed paths as hard failures. A passing
+device receipt is incomplete without explicit serial scope, cleanup, and zero
+bounded package/system fatal counts.
+They also simulate partial cross-repo commits, interrupted builds, and
+interrupted device work: missing/unsafe cleanup receipts reject, while typed
+safe receipts restore only the current-unit pointer and leave Git/devices
+untouched.
+
+## Executed Push Receipts
+
+Validate externally produced successful push evidence with:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\Test-ExecutedPushReceipt.ps1 `
+  -Path <project-root>\morphospace\receipts\<executed-push-receipt>.json
+```
+
+The semantic validator requires dependency order to equal actual execution
+order, exactly one planning ref last, full old/new/readback revisions, exact
+remote equality, fast-forward ancestry, no force push, passing referenced
+validation gates, and rollback points that exactly reverse execution order.
+It does not execute Git or contact a remote.
 
 ## Source Repos
 

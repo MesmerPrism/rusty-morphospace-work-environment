@@ -18,6 +18,13 @@ authority for the modules it composes. A module's owning lane remains the
 authority for its contract, and an app or platform adapter remains the
 authority for app-shell or platform behavior.
 
+New workspaces use protocol v2. Existing v1 workspaces remain readable and may
+be migrated through an explicit unit; do not rewrite their event history.
+`project_spec.v2` adds owner, selected/denied features and modules, permission
+and data-class policy, acceptance profiles, and release/push policy.
+`workspace_state.v2` adds exact repo heads, the last accepted receipt, and the
+current module/capability registries.
+
 ## Directory Contract
 
 ```text
@@ -35,14 +42,18 @@ authority for app-shell or platform behavior.
 
 - `project.spec.json` declares purpose, repositories, module candidates,
   parameter authority, non-scope, and validation profiles.
-- `feature.lock.json` is the closed-world feature activation list. Unlisted
-  modules and features are inert.
+- `feature.lock.json` is the closed-world feature composition lock. Unlisted
+  or denied modules and features are inert. In v2 it includes descriptor and
+  source hashes, the complete packaging/runtime effect union, and one lock
+  fingerprint; composition still does not activate a run.
 - `workspace.state.json` is the compact resume surface for an agent.
 - `iteration-events.jsonl` is append-only chronological evidence.
 - `module-candidates/` holds extraction records throughout their lifecycle.
 - `iteration-units/` holds independently reviewable work packets.
 - `promotion-reviews/` holds gate decisions for module maturity changes.
-- `receipts/` holds structured validation and coordinated-push receipts.
+- `receipts/` holds structured validation, non-executing push plans, and
+  externally produced executed-push receipts. A plan never substitutes for
+  exact remote readback.
 
 Generated APKs, logs, screenshots, traces, pairing material, private payloads,
 and tool caches do not belong in this directory.
@@ -130,6 +141,19 @@ powershell -NoProfile -ExecutionPolicy Bypass `
 ```
 
 The scaffold refuses to overwrite an existing `morphospace/` directory.
+It defaults to protocol v2; pass `-ProtocolVersion 1` only for an explicit
+compatibility fixture.
+
+Resolve a non-empty v2 lock from owner-issued descriptors:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\Resolve-FeatureLock.ps1 `
+  -ProjectSpecPath <project-root>\morphospace\project.spec.json `
+  -DescriptorPaths <descriptor-paths> `
+  -OutPath <project-root>\morphospace\feature.lock.json `
+  -Execute
+```
 
 ## Agent Resume Order
 

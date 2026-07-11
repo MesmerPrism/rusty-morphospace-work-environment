@@ -39,17 +39,22 @@ decision and validation note.
   pose, or GPU-buffer streams into them.
 - UI handlers collect parameters, invoke routes, show progress, and project
   structured evidence. They should not own hidden setup or business logic.
-- Project composition uses a closed-world feature lock. Unlisted or disabled
-  modules are inert and cannot change unrelated packaging or runtime behavior.
+- Project composition uses a closed-world feature lock. In protocol v2 an
+  owner-issued descriptor is pinned by descriptor/source revision and hash;
+  the resolver records the exact packaging/runtime effect union. Unlisted or
+  denied modules are inert, and selection alone cannot activate a run.
 - Stable reusable modules require a second independent consumer or neutral
   conformance harness and an accepted promotion review.
 
 ## Portable Project Contracts
 
 When a project has a `morphospace/` directory, treat `project.spec.json` as
-composition authority, `feature.lock.json` as activation authority, and
-`workspace.state.json` as the compact agent-resume surface. Work only within
-the repository and path scope declared by the current iteration unit.
+composition authority, `feature.lock.json` as the permitted feature/effect
+closure, and `workspace.state.json` as the compact agent-resume surface. In
+v2 runtime activation additionally requires the current lock fingerprint and
+one descriptor-approved runtime input; the consuming runtime receipt binds
+project, feature, lock revision/fingerprint, and applied or rejected state.
+Work only within the repository and path scope declared by the current unit.
 
 Use one fail-closed owner for unit state transitions. Inspection and planning
 are non-mutating; execution is explicit. Derive validation and graph scope
@@ -57,6 +62,21 @@ from the unit, keep acceptance separate from a pass receipt, preserve blockers
 through resume/recovery, and report dirty, detached, ahead/behind, or divergent
 Git states without rewriting them. Push preparation records exact source-first,
 planning-last revisions but does not commit, push, or force-push.
+`RecordValidation` and `Accept` must validate a workspace-local
+`validation_receipt.v1`: exact acceptance/gate coverage, artifact hashes,
+current heads/branches, ancestor bases, exact in-scope changed paths, and—when
+device-gated—explicit serials, cleanup, and zero bounded package/system fatals.
+Revalidate at acceptance so post-validation drift rejects.
+Declared partial-commit, interrupted-build, or interrupted-device recovery
+requires a hashed `interruption_receipt.v1` with observed repo checkpoints and
+kind-specific safe cleanup. Workflow recovery may restore state only; it never
+owns Git, process, package, route, or device cleanup.
+After an externally authorized push, accept only a validated
+`rusty.morphospace.workflow.executed_push_receipt.v1` with full old, new, and
+observed remote revisions, ancestry and validation references, no-force proof,
+planning last, and reverse-order rollback anchors. A prepared plan is never
+execution evidence, and the work-unit automation must not manufacture this
+receipt.
 
 For an adopting application, require a behavior-neutral bootstrap: select its
 baseline shell, record optional nearby families as disabled, assert one

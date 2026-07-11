@@ -133,6 +133,20 @@ if ($SelfTest) {
     }
 
     try {
+        & (Join-Path $RepoRoot "scripts\Test-ExecutedPushReceipt.ps1") -SelfTest
+        Add-CheckResult -Name "workflow:executed-push-receipt" -Status "ok" -Detail "Validated exact readback, ordering, ancestry, validation, force-push, and rollback invariants."
+    } catch {
+        Add-CheckResult -Name "workflow:executed-push-receipt" -Status "missing" -Required $true -Detail $_.Exception.Message
+    }
+
+    try {
+        & (Join-Path $RepoRoot "scripts\Test-FeatureLockResolver.ps1")
+        Add-CheckResult -Name "workflow:feature-lock-v2" -Status "ok" -Detail "Validated descriptor closure, hashes, effect union, activation, and damaged-lock rejection."
+    } catch {
+        Add-CheckResult -Name "workflow:feature-lock-v2" -Status "missing" -Required $true -Detail $_.Exception.Message
+    }
+
+    try {
         & (Join-Path $RepoRoot "scripts\New-ProjectWorkspace.ps1") -SelfTest
         Add-CheckResult -Name "scaffold:project-workspace" -Status "ok" -Detail "Created, validated, and protected a temporary scaffold."
     } catch {

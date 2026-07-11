@@ -90,9 +90,12 @@ Do not extract:
 Add public reusable work as contracts, schemas, deterministic helpers,
 synthetic fixtures, and source examples before adapters.
 
-Project composition is closed-world. Modules and features absent from the
-project spec and feature lock are inert. Stable module promotion requires an
-independent consumer or neutral conformance harness.
+Project composition is closed-world. New protocol-v2 workspaces explicitly
+select/deny modules and features; owner descriptors resolve into exact
+descriptor/source hashes and a fingerprinted effect union. Absent or denied
+features are inert, and selection alone cannot activate a run: the consumer
+also requires the current lock plus a descriptor-approved runtime input.
+Stable promotion requires an independent consumer or conformance harness.
 
 The reference downstream adoption shape is a project-local `morphospace/`
 workspace beside an application README. It selects only the application's
@@ -210,6 +213,11 @@ or plans by default and requires `-Execute` for workspace mutation. A local
 repository map cannot expand project/unit scope. The CLI never owns Git push,
 force-push, checkout/reset/stash, validation execution, or device mutation;
 required device units need explicit serials before validation begins.
+`RecordValidation` and `Accept` require and revalidate a workspace-local typed
+receipt with exact criterion/gate coverage, artifact hashes, current repo
+heads, ancestor bases, exact in-scope changed paths, and required device
+cleanup/zero-fatal evidence. A prepared push plan never proves execution;
+external pushes use the executed-push receipt and remote readback contract.
 
 At release-candidate checkpoints, run every owner repo's full gate before
 device work, preserve interrupted/failed summaries, rerun a touched repo after
@@ -219,7 +227,8 @@ provider death requires an explicit fresh-epoch rebuild. Require explicit
 serials, inactive route/package cleanup, zero bounded fatals, and private raw
 evidence.
 
-The first consolidated portable project/module workflow baseline is release
-`0.1.0` in `manifests/release-0.1.0.json`. Preserve accepted events/receipts
-when adopting it; normalize routing categories additively and keep domain
-detail in unit tags.
+Release `0.1.0` in `manifests/release-0.1.0.json` is the historical
+compatibility baseline. Protocol-v2 corrections remain additive and unreleased
+until their corrective units and derived release pass. Preserve accepted
+events/receipts when migrating; normalize routing categories additively and
+keep domain detail in unit tags.

@@ -2,6 +2,7 @@ param(
     [string]$ProjectRoot = "",
     [string]$ProjectId = "",
     [string]$Purpose = "",
+    [ValidateSet("1", "2")][string]$ProtocolVersion = "2",
     [switch]$Execute,
     [switch]$SelfTest
 )
@@ -21,11 +22,23 @@ function Write-JsonDocument {
     [System.IO.File]::WriteAllText($Path, $json + [Environment]::NewLine, $utf8NoBom)
 }
 
+function Get-LockFingerprint {
+    param([object]$Lock)
+    $copy = ($Lock | ConvertTo-Json -Depth 48 | ConvertFrom-Json)
+    $copy.lock_fingerprint = "0" * 64
+    $json = $copy | ConvertTo-Json -Depth 48 -Compress
+    $bytes = (New-Object System.Text.UTF8Encoding($false)).GetBytes($json)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { return (($sha.ComputeHash($bytes) | ForEach-Object { $_.ToString("x2") }) -join "") }
+    finally { $sha.Dispose() }
+}
+
 function New-ProjectWorkspaceInternal {
     param(
         [string]$Root,
         [string]$Id,
         [string]$ProjectPurpose,
+        [string]$Version,
         [bool]$DoExecute
     )
 
@@ -69,7 +82,7 @@ function New-ProjectWorkspaceInternal {
         $ProjectPurpose = "Describe the project purpose before starting implementation."
     }
 
-    $projectSpec = [ordered]@{
+    $projectSpecV1 = [ordered]@{
         '$schema' = "$SchemaBase/project-spec.schema.json"
         schema = "rusty.morphospace.workflow.project_spec.v1"
         project_id = $Id
@@ -119,7 +132,7 @@ function New-ProjectWorkspaceInternal {
         }
     }
 
-    $featureLock = [ordered]@{
+    $featureLockV1 = [ordered]@{
         '$schema' = "$SchemaBase/feature-lock.schema.json"
         schema = "rusty.morphospace.workflow.feature_lock.v1"
         project_id = $Id
@@ -128,7 +141,7 @@ function New-ProjectWorkspaceInternal {
         features = @()
     }
 
-    $workspaceState = [ordered]@{
+    $workspaceStateV1 = [ordered]@{
         '$schema' = "$SchemaBase/workspace-state.schema.json"
         schema = "rusty.morphospace.workflow.workspace_state.v1"
         project_id = $Id
@@ -140,6 +153,97 @@ function New-ProjectWorkspaceInternal {
         blockers = @()
         validation_checkpoint = $null
         pending_push_bundle = $null
+    }
+
+    if ($Version -eq "2") {
+        $projectSpec = [ordered]@{
+            '$schema' = "$SchemaBase/project-spec-v2.schema.json"
+            schema = "rusty.morphospace.workflow.project_spec.v2"
+            project_id = $Id
+            revision = 1
+            owner = "project-owner"
+            purpose = $ProjectPurpose
+            activation_model = [ordered]@{
+                default = "disabled"
+                unlisted_modules = "inert"
+                runtime_rule = "selected-lock-and-runtime-input"
+            }
+            composition = [ordered]@{
+                selected_features = @()
+                denied_features = @()
+                selected_modules = @()
+                denied_modules = @()
+                allowed_permissions = @()
+                denied_permissions = @()
+                data_classes = @()
+            }
+            authority_map = @([ordered]@{ parameter = "project.composition"; owner = "project-shell"; adapters = @() })
+            repositories = @([ordered]@{ repo_id = "project-shell"; role = "application"; path = ".."; allowed_paths = @("src/", "docs/", "morphospace/") })
+            modules = @()
+            non_scope = @(
+                "Modules and features not declared in this specification.",
+                "Private evidence outside the declared project boundary."
+            )
+            validation_profiles = @([ordered]@{
+                profile_id = "workflow"
+                commands = @("powershell -NoProfile -ExecutionPolicy Bypass -File <work-environment-root>/scripts/Test-WorkflowContracts.ps1 -WorkspaceRoot <project-root>/morphospace")
+            })
+            acceptance_profiles = @([ordered]@{
+                profile_id = "rollback"
+                commands = @("Disable selected conformance features and verify the effect union is absent.")
+            })
+            release_policy = [ordered]@{
+                versioning = "semver"
+                commit_policy = "Commit coherent validated slices locally and use declared push checkpoints."
+                push_checkpoint = "integration-batch"
+                source_first = $true
+                planning_last = $true
+                force_push_allowed = $false
+            }
+            public_boundary = $projectSpecV1.public_boundary
+        }
+        $featureLock = [ordered]@{
+            '$schema' = "$SchemaBase/feature-lock-v2.schema.json"
+            schema = "rusty.morphospace.workflow.feature_lock.v2"
+            project_id = $Id
+            project_revision = 1
+            revision = 1
+            generated_at = "1970-01-01T00:00:00Z"
+            resolver_version = "rusty-morphospace-feature-resolver/2"
+            lock_fingerprint = "0" * 64
+            default_activation = "disabled"
+            activation_rule = "selected-lock-and-runtime-input"
+            selected_features = @()
+            denied_features = @()
+            features = @()
+            effect_union = [ordered]@{
+                permissions = @(); services = @(); activities = @(); queries = @(); tools = @(); assets = @()
+                shaders = @(); native_libraries = @(); commands = @(); routes = @(); streams = @(); inputs = @()
+                scenes = @(); markers = @()
+            }
+        }
+        $featureLock.lock_fingerprint = Get-LockFingerprint -Lock $featureLock
+        $workspaceState = [ordered]@{
+            '$schema' = "$SchemaBase/workspace-state-v2.schema.json"
+            schema = "rusty.morphospace.workflow.workspace_state.v2"
+            project_id = $Id
+            plan_revision = 1
+            current_unit = $null
+            next_ready_unit = $null
+            last_event_id = $null
+            last_accepted_receipt = $null
+            repository_heads = @()
+            module_registry = [ordered]@{ lock_revision = 1; lock_fingerprint = $featureLock.lock_fingerprint; modules = @() }
+            capability_registry = @()
+            dirty_repositories = @()
+            blockers = @()
+            validation_checkpoint = $null
+            pending_push_bundle = $null
+        }
+    } else {
+        $projectSpec = $projectSpecV1
+        $featureLock = $featureLockV1
+        $workspaceState = $workspaceStateV1
     }
 
     Write-JsonDocument -Path (Join-Path $target "project.spec.json") -Value $projectSpec
@@ -161,7 +265,7 @@ function Invoke-ScaffoldSelfTest {
     $created = $null
     try {
         New-Item -ItemType Directory -Path $projectRoot -Force | Out-Null
-        $created = New-ProjectWorkspaceInternal -Root $projectRoot -Id "self-test-project" -ProjectPurpose "Exercise portable workspace scaffolding." -DoExecute $true
+        $created = New-ProjectWorkspaceInternal -Root $projectRoot -Id "self-test-project" -ProjectPurpose "Exercise portable workspace scaffolding." -Version "2" -DoExecute $true
 
         foreach ($relative in @(
             "project.spec.json",
@@ -181,7 +285,7 @@ function Invoke-ScaffoldSelfTest {
 
         $overwriteBlocked = $false
         try {
-            New-ProjectWorkspaceInternal -Root $projectRoot -Id "self-test-project" -ProjectPurpose "Must not overwrite." -DoExecute $true | Out-Null
+            New-ProjectWorkspaceInternal -Root $projectRoot -Id "self-test-project" -ProjectPurpose "Must not overwrite." -Version "2" -DoExecute $true | Out-Null
         } catch {
             if ($_.Exception.Message -like "Refusing to overwrite existing workspace:*") {
                 $overwriteBlocked = $true
@@ -217,4 +321,4 @@ if (-not $ProjectId) {
     throw "ProjectId is required unless -SelfTest is used."
 }
 
-New-ProjectWorkspaceInternal -Root $ProjectRoot -Id $ProjectId -ProjectPurpose $Purpose -DoExecute $Execute.IsPresent | Out-Null
+New-ProjectWorkspaceInternal -Root $ProjectRoot -Id $ProjectId -ProjectPurpose $Purpose -Version $ProtocolVersion -DoExecute $Execute.IsPresent | Out-Null

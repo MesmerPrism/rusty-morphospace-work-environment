@@ -63,6 +63,105 @@ function New-TestWorkspace {
     return $workspace
 }
 
+function New-TestValidationReceipt {
+    param(
+        [string]$Workspace,
+        [string]$ProjectId,
+        [string]$UnitId,
+        [string]$Tier,
+        [string]$Result,
+        [object[]]$RepositoryRevisions = @(),
+        [object[]]$ChangedPaths = @(),
+        [string]$EvidenceName = "self-test-evidence.txt"
+    )
+
+    $receiptRoot = Join-Path $Workspace "receipts"
+    [System.IO.Directory]::CreateDirectory($receiptRoot) | Out-Null
+    $evidencePath = Join-Path $receiptRoot $EvidenceName
+    [System.IO.File]::WriteAllText($evidencePath, "validation evidence for $UnitId $Result`n", (New-Object System.Text.UTF8Encoding($false)))
+    $hash = (Get-FileHash -LiteralPath $evidencePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $status = if ($Result -eq "pass") { "pass" } else { "fail" }
+    $receipt = [ordered]@{
+        '$schema' = "../schemas/validation-receipt.schema.json"
+        schema = "rusty.morphospace.workflow.validation_receipt.v1"
+        receipt_id = "$UnitId-$Result-validation"
+        project_id = $ProjectId
+        unit_id = $UnitId
+        created_at = "2026-01-02T03:04:05Z"
+        tier = $Tier
+        result = $Result
+        repository_revisions = @($RepositoryRevisions)
+        changed_paths = @($ChangedPaths)
+        artifacts = @([ordered]@{
+            artifact_id = "validation-evidence"
+            kind = "test-log"
+            path = $EvidenceName
+            sha256 = $hash
+        })
+        criteria = @([ordered]@{
+            acceptance_id = "self-test"
+            status = $status
+            command = "Test-WorkUnitAutomation.ps1"
+            evidence_refs = @("validation-evidence")
+        })
+        gates = @([ordered]@{
+            gate_id = "validation-workflow"
+            status = $status
+            command = "temporary validation command"
+            evidence_refs = @("validation-evidence")
+        })
+        device_validation = $null
+    }
+    $receiptPath = Join-Path $receiptRoot "$UnitId-$Result-validation.json"
+    Write-TestJson -Path $receiptPath -Value $receipt
+    return $receiptPath
+}
+
+function New-TestInterruptionReceipt {
+    param(
+        [string]$Workspace,
+        [string]$ProjectId,
+        [string]$UnitId,
+        [string]$Kind,
+        [string]$Revision,
+        [bool]$Safe = $true,
+        [bool]$Cleanup = $true
+    )
+
+    $receiptRoot = Join-Path $Workspace "receipts"
+    [System.IO.Directory]::CreateDirectory($receiptRoot) | Out-Null
+    $evidenceName = "$Kind-evidence.txt"
+    $evidencePath = Join-Path $receiptRoot $evidenceName
+    [System.IO.File]::WriteAllText($evidencePath, "interruption evidence for $Kind`n", (New-Object System.Text.UTF8Encoding($false)))
+    $hash = (Get-FileHash -LiteralPath $evidencePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $repositories = if ($Kind -eq "partial-cross-repo-commit") {
+        @(
+            [ordered]@{ repo_id = "project-shell"; observed_revision = $Revision; state = "committed" },
+            [ordered]@{ repo_id = "planning-surface"; observed_revision = $Revision; state = "pending" }
+        )
+    } else {
+        @([ordered]@{ repo_id = "project-shell"; observed_revision = $Revision; state = "preserved" })
+    }
+    $buildCleanup = if ($Kind -eq "interrupted-build") {
+        [ordered]@{ active_process_count = 0; outputs_quarantined = $Cleanup; cleanup_actions = @("stop bounded build process", "quarantine partial output") }
+    } else { $null }
+    $deviceCleanup = if ($Kind -eq "interrupted-device") {
+        [ordered]@{ serials = @("test-device-a", "test-device-b"); packages_remaining = @(); routes_inactive = $Cleanup; package_fatal_count = 0; system_fatal_count = 0 }
+    } else { $null }
+    $receipt = [ordered]@{
+        '$schema' = "../schemas/interruption-receipt.schema.json"
+        schema = "rusty.morphospace.workflow.interruption_receipt.v1"
+        receipt_id = "$UnitId-$Kind-recovery"
+        project_id = $ProjectId; unit_id = $UnitId; captured_at = "2026-01-02T03:04:05Z"
+        interruption_kind = $Kind; safe_to_resume = $Safe; cleanup_complete = $Cleanup
+        repositories = $repositories; build_cleanup = $buildCleanup; device_cleanup = $deviceCleanup
+        artifacts = @([ordered]@{ artifact_id = "recovery-evidence"; path = $evidenceName; sha256 = $hash })
+    }
+    $path = Join-Path $receiptRoot "$UnitId-$Kind-recovery.json"
+    Write-TestJson -Path $path -Value $receipt
+    return $path
+}
+
 $tempBase = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
 $testRoot = Join-Path $tempBase ("rusty-morphospace-automation-" + [guid]::NewGuid().ToString("N"))
 try {
@@ -85,6 +184,9 @@ try {
     Invoke-TestGit -Path $repo -Arguments @("push", "-u", "origin", "main") | Out-Null
 
     $workspace = New-TestWorkspace -Root (Join-Path $testRoot "project") -ProjectId "automation-test" -UnitId "unit-auto-001"
+    $nextUnit = New-TestUnit -ProjectId "automation-test" -UnitId "unit-auto-002"
+    $nextUnit.prerequisites = @("unit-auto-001")
+    Write-TestJson -Path (Join-Path $workspace "iteration-units\unit-auto-002.json") -Value $nextUnit
     $repoMapPath = Join-Path $testRoot "repo-map.json"
     Write-TestJson -Path $repoMapPath -Value ([ordered]@{ schema = "rusty.morphospace.workflow.repository_map.v1"; repositories = @([ordered]@{ repo_id = "project-shell"; path = $repo; role = "source" }) })
     $receiptRoot = Join-Path $workspace "receipts"
@@ -107,6 +209,17 @@ try {
     Remove-Item -LiteralPath (Join-Path $repo "local-only.txt")
     Assert-Automation ($statusBefore -eq ((Invoke-TestGit -Path $repo -Arguments @("status", "--porcelain=v1", "--untracked-files=all")) -join "`n")) "test cleanup failed"
 
+    $dirtyClaimWorkspace = New-TestWorkspace -Root (Join-Path $testRoot "dirty-claim-project") -ProjectId "dirty-claim-test" -UnitId "unit-dirty-001"
+    [System.IO.File]::WriteAllText((Join-Path $repo "src\preexisting.txt"), "preexisting`n", $encoding)
+    $dirtyClaimRejected = $false
+    try {
+        Invoke-MorphospaceWorkUnitAutomation -Action Claim -WorkspaceRoot $dirtyClaimWorkspace -UnitId "unit-dirty-001" -RepoMapPath $repoMapPath -Timestamp $fixed -Execute | Out-Null
+    } catch {
+        $dirtyClaimRejected = $_.Exception.Message -like "Claim refused pre-existing dirty-path overlap*"
+    }
+    Assert-Automation $dirtyClaimRejected "claim did not reject pre-existing dirty overlap inside allowed paths"
+    Remove-Item -LiteralPath (Join-Path $repo "src\preexisting.txt")
+
     $headBeforeDetach = @(Invoke-TestGit -Path $repo -Arguments @("rev-parse", "HEAD"))[0]
     Invoke-TestGit -Path $repo -Arguments @("checkout", "--detach") | Out-Null
     $inspectDetached = Invoke-MorphospaceWorkUnitAutomation -Action Inspect -WorkspaceRoot $workspace -UnitId "unit-auto-001" -RepoMapPath $repoMapPath -Timestamp $fixed
@@ -116,10 +229,54 @@ try {
 
     $begin = Invoke-MorphospaceWorkUnitAutomation -Action BeginValidation -WorkspaceRoot $workspace -UnitId "unit-auto-001" -RepoMapPath $repoMapPath -Timestamp $fixed -OutPath (Join-Path $receiptRoot "begin-validation.json") -Execute
     Assert-Automation ($begin.status_after -eq "validating" -and $begin.validation_matrix.Count -eq 1) "validation plan"
-    $record = Invoke-MorphospaceWorkUnitAutomation -Action RecordValidation -WorkspaceRoot $workspace -UnitId "unit-auto-001" -RepoMapPath $repoMapPath -ValidationTier deep -ValidationResult pass -ValidationReceipt "receipts/self-test-validation.json" -Timestamp $fixed -OutPath (Join-Path $receiptRoot "validation.json") -Execute
+    $missingReceiptRejected = $false
+    try {
+        Invoke-MorphospaceWorkUnitAutomation -Action RecordValidation -WorkspaceRoot $workspace -UnitId "unit-auto-001" -RepoMapPath $repoMapPath -ValidationTier deep -ValidationResult pass -ValidationReceipt "receipts/does-not-exist.json" -Timestamp $fixed | Out-Null
+    } catch {
+        $missingReceiptRejected = $_.Exception.Message -like "Validation receipt does not exist:*"
+    }
+    Assert-Automation $missingReceiptRejected "nonexistent validation receipt was accepted"
+    $validationHead = @(Invoke-TestGit -Path $repo -Arguments @("rev-parse", "HEAD"))[0]
+    $validationBranch = @(Invoke-TestGit -Path $repo -Arguments @("branch", "--show-current"))[0]
+    $validReceiptPath = New-TestValidationReceipt -Workspace $workspace -ProjectId "automation-test" -UnitId "unit-auto-001" -Tier deep -Result pass -RepositoryRevisions @([ordered]@{
+        repo_id = "project-shell"; base_revision = $validationHead; head_revision = $validationHead; branch = $validationBranch
+    })
+    $record = Invoke-MorphospaceWorkUnitAutomation -Action RecordValidation -WorkspaceRoot $workspace -UnitId "unit-auto-001" -RepoMapPath $repoMapPath -ValidationTier deep -ValidationResult pass -ValidationReceipt "receipts/unit-auto-001-pass-validation.json" -Timestamp $fixed -OutPath (Join-Path $receiptRoot "validation.json") -Execute
     Assert-Automation ($record.transition -eq "validation-pass") "passing validation record"
+    $validationEvidencePath = Join-Path $receiptRoot "self-test-evidence.txt"
+    [System.IO.File]::WriteAllText($validationEvidencePath, "tampered after validation`n", $encoding)
+    $tamperedAcceptanceRejected = $false
+    try {
+        Invoke-MorphospaceWorkUnitAutomation -Action Accept -WorkspaceRoot $workspace -UnitId "unit-auto-001" -RepoMapPath $repoMapPath -Timestamp $fixed | Out-Null
+    } catch {
+        $tamperedAcceptanceRejected = $_.Exception.Message -like "Validation artifact hash mismatch*"
+    }
+    Assert-Automation $tamperedAcceptanceRejected "acceptance did not revalidate a tampered artifact"
+    [System.IO.File]::WriteAllText($validationEvidencePath, "validation evidence for unit-auto-001 pass`n", $encoding)
     $accepted = Invoke-MorphospaceWorkUnitAutomation -Action Accept -WorkspaceRoot $workspace -UnitId "unit-auto-001" -RepoMapPath $repoMapPath -Timestamp $fixed -OutPath (Join-Path $receiptRoot "accept.json") -Execute
     Assert-Automation ($accepted.status_after -eq "accepted" -and $null -eq $accepted.current_unit_after) "accept transition"
+    $acceptedState = Get-Content -LiteralPath (Join-Path $workspace "workspace.state.json") -Raw | ConvertFrom-Json
+    Assert-Automation ([string]$acceptedState.next_ready_unit -eq "unit-auto-002") "deterministic next-ready selection"
+    Assert-Automation ([string]$acceptedState.last_accepted_receipt -eq "receipts/unit-auto-001-pass-validation.json") "v2 last accepted receipt projection"
+    Assert-Automation (@($acceptedState.repository_heads).Count -eq 1) "v2 repository-head projection"
+
+    $scopeWorkspace = New-TestWorkspace -Root (Join-Path $testRoot "scope-project") -ProjectId "scope-test" -UnitId "unit-scope-001"
+    [System.IO.File]::WriteAllText((Join-Path $repo "outside.txt"), "outside unit scope`n", $encoding)
+    Invoke-MorphospaceWorkUnitAutomation -Action Claim -WorkspaceRoot $scopeWorkspace -UnitId "unit-scope-001" -RepoMapPath $repoMapPath -Timestamp $fixed -Execute | Out-Null
+    Invoke-MorphospaceWorkUnitAutomation -Action BeginValidation -WorkspaceRoot $scopeWorkspace -UnitId "unit-scope-001" -RepoMapPath $repoMapPath -Timestamp $fixed -Execute | Out-Null
+    $scopeHead = @(Invoke-TestGit -Path $repo -Arguments @("rev-parse", "HEAD"))[0]
+    $scopeBranch = @(Invoke-TestGit -Path $repo -Arguments @("branch", "--show-current"))[0]
+    New-TestValidationReceipt -Workspace $scopeWorkspace -ProjectId "scope-test" -UnitId "unit-scope-001" -Tier standard -Result pass -RepositoryRevisions @([ordered]@{
+        repo_id = "project-shell"; base_revision = $scopeHead; head_revision = $scopeHead; branch = $scopeBranch
+    }) -ChangedPaths @([ordered]@{ repo_id = "project-shell"; path = "outside.txt" }) | Out-Null
+    $outsideScopeRejected = $false
+    try {
+        Invoke-MorphospaceWorkUnitAutomation -Action RecordValidation -WorkspaceRoot $scopeWorkspace -UnitId "unit-scope-001" -RepoMapPath $repoMapPath -ValidationTier standard -ValidationResult pass -ValidationReceipt "receipts/unit-scope-001-pass-validation.json" -Timestamp $fixed | Out-Null
+    } catch {
+        $outsideScopeRejected = $_.Exception.Message -like "Validation changed path is outside unit scope*"
+    }
+    Assert-Automation $outsideScopeRejected "validation did not reject an out-of-scope changed path"
+    Remove-Item -LiteralPath (Join-Path $repo "outside.txt")
 
     [System.IO.File]::WriteAllText((Join-Path $repo "src\ahead.txt"), "ahead`n", $encoding)
     Invoke-TestGit -Path $repo -Arguments @("add", "src/ahead.txt") | Out-Null
@@ -130,7 +287,8 @@ try {
     Write-TestJson -Path $revisionsPath -Value ([ordered]@{ schema = "rusty.morphospace.workflow.revision_set.v1"; repositories = @([ordered]@{ repo_id = "project-shell"; commit = $localHead }) })
     $pushPlanPath = Join-Path $receiptRoot "push-plan.json"
     $prepared = Invoke-MorphospaceWorkUnitAutomation -Action PreparePush -WorkspaceRoot $workspace -UnitId "unit-auto-001" -RepoMapPath $repoMapPath -RevisionsPath $revisionsPath -Timestamp $fixed -OutPath $pushPlanPath -Execute
-    Assert-Automation ($prepared.push_plan.execution -eq "not-performed" -and -not $prepared.push_plan.force_push_allowed) "push plan execution boundary"
+    Assert-Automation ($prepared.push_plan.schema -eq "rusty.morphospace.workflow.push_bundle_plan.v1" -and $prepared.push_plan.execution -eq "not-performed" -and -not $prepared.push_plan.force_push_allowed) "push plan execution boundary"
+    Assert-Automation (-not ($prepared.push_plan.PSObject.Properties.Name -contains "remote_readback_complete")) "automation fabricated executed-push evidence"
     Assert-Automation ((@(Invoke-TestGit -Path $repo -Arguments @("rev-parse", "origin/main"))[0]) -eq $remoteBefore) "push preparation changed the remote"
 
     & git clone --quiet --branch main $remote $peer 2>$null | Out-Null
@@ -161,7 +319,8 @@ try {
     Invoke-MorphospaceWorkUnitAutomation -Action Claim -WorkspaceRoot $recoveryWorkspace -UnitId "unit-recover-001" -Timestamp $fixed -Execute | Out-Null
     Assert-Automation (@((Get-Content $recoveryStatePath -Raw | ConvertFrom-Json).dirty_repositories) -contains "project-shell") "unmapped execution erased prior dirty-repository state"
     Invoke-MorphospaceWorkUnitAutomation -Action BeginValidation -WorkspaceRoot $recoveryWorkspace -UnitId "unit-recover-001" -Timestamp $fixed -Execute | Out-Null
-    Invoke-MorphospaceWorkUnitAutomation -Action RecordValidation -WorkspaceRoot $recoveryWorkspace -UnitId "unit-recover-001" -ValidationTier standard -ValidationResult fail -ValidationReceipt "receipts/failure.json" -Timestamp $fixed -Execute | Out-Null
+    $failureReceiptPath = New-TestValidationReceipt -Workspace $recoveryWorkspace -ProjectId "recovery-test" -UnitId "unit-recover-001" -Tier standard -Result fail -EvidenceName "failure-evidence.txt"
+    Invoke-MorphospaceWorkUnitAutomation -Action RecordValidation -WorkspaceRoot $recoveryWorkspace -UnitId "unit-recover-001" -ValidationTier standard -ValidationResult fail -ValidationReceipt "receipts/unit-recover-001-fail-validation.json" -Timestamp $fixed -Execute | Out-Null
     $blockedState = Get-Content (Join-Path $recoveryWorkspace "workspace.state.json") -Raw | ConvertFrom-Json
     Assert-Automation ($blockedState.blockers.Count -eq 1 -and $null -eq $blockedState.current_unit) "failed validation did not persist blocker"
     Invoke-MorphospaceWorkUnitAutomation -Action Resume -WorkspaceRoot $recoveryWorkspace -UnitId "unit-recover-001" -Timestamp $fixed -Execute | Out-Null
@@ -171,6 +330,51 @@ try {
     Write-TestJson -Path (Join-Path $recoveryWorkspace "workspace.state.json") -Value $resumedState
     $recovered = Invoke-MorphospaceWorkUnitAutomation -Action Recover -WorkspaceRoot $recoveryWorkspace -UnitId "unit-recover-001" -Timestamp $fixed -Execute
     Assert-Automation ($recovered.transition -eq "restore-current-unit" -and [string]$recovered.current_unit_after -eq "unit-recover-001") "interrupted recovery"
+
+    $interruptionCases = @(
+        [ordered]@{ kind = "partial-cross-repo-commit"; project = "partial-recovery-test"; unit = "unit-partial-001" },
+        [ordered]@{ kind = "interrupted-build"; project = "build-recovery-test"; unit = "unit-build-001" },
+        [ordered]@{ kind = "interrupted-device"; project = "device-recovery-test"; unit = "unit-device-001" }
+    )
+    foreach ($case in $interruptionCases) {
+        $caseWorkspace = New-TestWorkspace -Root (Join-Path $testRoot $case.project) -ProjectId $case.project -UnitId $case.unit
+        $caseUnitPath = Join-Path $caseWorkspace "iteration-units\$($case.unit).json"
+        $caseUnit = Get-Content -LiteralPath $caseUnitPath -Raw | ConvertFrom-Json
+        $caseUnit.status = "active"
+        if ($case.kind -eq "partial-cross-repo-commit") {
+            $caseUnit.allowed_repositories = @($caseUnit.allowed_repositories) + [pscustomobject][ordered]@{ repo_id = "planning-surface"; allowed_paths = @("workspaces/") }
+            $caseSpecPath = Join-Path $caseWorkspace "project.spec.json"
+            $caseSpec = Get-Content -LiteralPath $caseSpecPath -Raw | ConvertFrom-Json
+            $caseSpec.repositories = @($caseSpec.repositories) + [pscustomobject][ordered]@{ repo_id = "planning-surface"; role = "planning"; path = "<planning>"; allowed_paths = @("workspaces/") }
+            Write-TestJson -Path $caseSpecPath -Value $caseSpec
+        }
+        Write-TestJson -Path $caseUnitPath -Value $caseUnit
+        $caseStatePath = Join-Path $caseWorkspace "workspace.state.json"
+        $caseState = Get-Content -LiteralPath $caseStatePath -Raw | ConvertFrom-Json
+        $caseState.current_unit = $null; $caseState.next_ready_unit = $null
+        $caseState.blockers = @([pscustomobject][ordered]@{
+            blocker_id = "$($case.unit)-interrupted"
+            condition = "Interrupted $($case.kind) requires structured cleanup evidence."
+            resume_when = "A typed recovery receipt proves safe cleanup."
+        })
+        Write-TestJson -Path $caseStatePath -Value $caseState
+
+        $missingRecoveryRejected = $false
+        try { Invoke-MorphospaceWorkUnitAutomation -Action Recover -WorkspaceRoot $caseWorkspace -UnitId $case.unit -RepoMapPath $repoMapPath -Timestamp $fixed | Out-Null }
+        catch { $missingRecoveryRejected = $_.Exception.Message -eq "Interrupted work requires a typed recovery receipt before state restoration." }
+        Assert-Automation $missingRecoveryRejected "$($case.kind) recovered without a typed receipt"
+        $currentRevision = @(Invoke-TestGit -Path $repo -Arguments @("rev-parse", "HEAD"))[0]
+        New-TestInterruptionReceipt -Workspace $caseWorkspace -ProjectId $case.project -UnitId $case.unit -Kind $case.kind -Revision $currentRevision -Safe $false -Cleanup $false | Out-Null
+        $unsafeRecoveryRejected = $false
+        try { Invoke-MorphospaceWorkUnitAutomation -Action Recover -WorkspaceRoot $caseWorkspace -UnitId $case.unit -RepoMapPath $repoMapPath -RecoveryReceipt "receipts/$($case.unit)-$($case.kind)-recovery.json" -Timestamp $fixed | Out-Null }
+        catch { $unsafeRecoveryRejected = $_.Exception.Message -eq "Recovery receipt does not prove safe, complete cleanup." }
+        Assert-Automation $unsafeRecoveryRejected "$($case.kind) accepted incomplete cleanup"
+        New-TestInterruptionReceipt -Workspace $caseWorkspace -ProjectId $case.project -UnitId $case.unit -Kind $case.kind -Revision $currentRevision | Out-Null
+        $safeRecovery = Invoke-MorphospaceWorkUnitAutomation -Action Recover -WorkspaceRoot $caseWorkspace -UnitId $case.unit -RepoMapPath $repoMapPath -RecoveryReceipt "receipts/$($case.unit)-$($case.kind)-recovery.json" -Timestamp $fixed -Execute
+        Assert-Automation ($safeRecovery.transition -eq "restore-current-unit" -and [string]$safeRecovery.current_unit_after -eq [string]$case.unit) "$($case.kind) safe recovery"
+        Assert-Automation ($safeRecovery.preservation.git_mutation_performed -eq $false -and $safeRecovery.preservation.device_mutation_performed -eq $false) "$($case.kind) recovery mutated external state"
+        & (Join-Path $PSScriptRoot "Test-WorkflowContracts.ps1") -RepoRoot $RepoRoot -WorkspaceRoot $caseWorkspace
+    }
 
     & (Join-Path $PSScriptRoot "Test-WorkflowContracts.ps1") -RepoRoot $RepoRoot -WorkspaceRoot $recoveryWorkspace
     Write-Host "Work-unit automation self-test passed."

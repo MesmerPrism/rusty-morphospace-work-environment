@@ -62,7 +62,7 @@ powershell -NoProfile -ExecutionPolicy Bypass `
 
 5. For a new or existing application, read
    [Project Workspace Protocol](docs/PROJECT_WORKSPACE_PROTOCOL.md), then run a
-   scaffold dry run:
+   protocol-v2 scaffold dry run (v1 remains readable for existing workspaces):
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass `
@@ -82,7 +82,8 @@ powershell -NoProfile -ExecutionPolicy Bypass `
 - [Module Lifecycle](docs/MODULE_LIFECYCLE.md) defines extraction and stable
   promotion, including the second-consumer gate.
 - [Feature Activation](docs/FEATURE_ACTIVATION.md) makes absent features inert
-  and requires one parameter authority plus effective-runtime receipts.
+  and requires one parameter authority plus a fingerprinted selected lock,
+  explicit runtime input, and effective-runtime receipts.
 - [Autonomous Iteration](docs/AUTONOMOUS_ITERATION.md) defines work-unit scope,
   compact state, event notes, validation tiers, larger push checkpoints, and
   the optional fail-closed work-unit automation CLI.
@@ -93,9 +94,26 @@ powershell -NoProfile -ExecutionPolicy Bypass `
 This repository owns the portable protocol. The project adopting it owns its
 live `morphospace/` state and evidence.
 
+New scaffolds use `project_spec.v2`, `feature_lock.v2`, and
+`workspace_state.v2`. Exact feature descriptors resolve through
+`scripts/Resolve-FeatureLock.ps1`; `scripts/Test-FeatureActivationAgainstLock.ps1`
+provides the fail-closed selection/fingerprint/runtime-input gate. Existing v1
+workspaces remain valid and migrate additively rather than being rewritten.
+
 The automation CLI inspects or plans by default. `-Execute` is required for a
 workspace-state transition; it still does not run Git push, force-push,
 checkout/reset/stash, validation commands, or live device commands.
+`RecordValidation` and `Accept` require a local `validation_receipt.v1` whose
+hashed artifacts, exact acceptance/gate coverage, repository revisions,
+changed paths, and required device cleanup/fatal fields still match current
+state.
+Interrupted cross-repo commits, builds, and device runs resume only from a
+validated `interruption_receipt.v1`; the automation restores workflow state
+after cleanup evidence exists but never performs the external cleanup.
+Prepared push plans use `execution: not-performed`. After an authorized
+external push, `executed_push_receipt.v1` records exact old/new/readback refs,
+ancestry, validation, planning-last order, no-force proof, and rollback points;
+validate it with `scripts/Test-ExecutedPushReceipt.ps1`.
 
 The first downstream adoption proof lives in Rusty Quest's public
 `apps/spatial-camera-panel-android/morphospace/` directory. It demonstrates a

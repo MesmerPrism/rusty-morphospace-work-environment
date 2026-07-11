@@ -100,6 +100,24 @@ private evidence, or machine paths back into this repository.
   require `-Execute` for workspace-state mutation, preserve dirty/divergent
   repositories, derive graph scope from the unit, and never own Git push,
   force-push, checkout/reset/stash, validation execution, or device mutation.
+- New project workspaces default to protocol v2. Resolve exact feature
+  descriptors into a fingerprinted closed-world lock; project selection alone
+  never activates a run. Runtime effects require the selected current lock and
+  one descriptor-approved runtime input, and the effective marker/receipt must
+  bind the project, lock revision/fingerprint, and feature.
+- Automation may record or accept validation only from a workspace-local
+  `validation_receipt.v1` with exact criterion/gate coverage, verified artifact
+  hashes, current repo heads/branches, ancestor bases, exact changed paths, and
+  required device cleanup plus zero bounded fatals. Reject missing, stale,
+  spoofed, or out-of-scope evidence.
+- Recovery from a declared partial cross-repo commit, interrupted build, or
+  interrupted device run requires `interruption_receipt.v1`. It must hash its
+  evidence and prove preserved repo checkpoints plus safe build/device cleanup;
+  recovery never performs Git, build-process, or device cleanup itself.
+- A prepared push plan is never execution evidence. After an authorized
+  external push, validate an `executed_push_receipt.v1` containing full old,
+  new, and remote-readback revisions, ancestry, passing validation references,
+  no-force proof, and reverse-order rollback anchors.
 - A downstream adoption unit must be behavior-neutral unless its scope says
   otherwise: select the baseline shell, list optional families disabled,
   assert an unrelated nearby feature is absent/inert, and add candidate records
@@ -121,6 +139,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkEnvironme
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkflowContracts.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\New-ProjectWorkspace.ps1 -SelfTest
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkUnitAutomation.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-FeatureLockResolver.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ExecutedPushReceipt.ps1 -SelfTest
 git diff --check
 ```
 

@@ -143,6 +143,12 @@
   "feature_activation": {
     "default": "disabled",
     "unlisted_modules": "inert",
+    "protocol_v2_rule": "selected-lock-and-runtime-input",
+    "descriptor_effects": [
+      "permissions", "services", "activities", "queries", "tools", "assets",
+      "shaders", "native libraries", "commands", "routes", "streams", "inputs",
+      "scenes", "markers"
+    ],
     "enabled_requires": [
       "requester",
       "descriptor",
@@ -163,6 +169,9 @@
     "Stable modules have an independent consumer or conformance harness.",
     "Iteration units cannot expand project repository or path scope.",
     "Instruction-triggering units cannot be accepted with incomplete AGENTS, README or router, or relevant skill updates.",
-    "Workflow automation inspects or prepares by default, requires explicit execution for state mutation, and never owns Git push or device mutation."
+    "Workflow automation inspects or prepares by default, requires explicit execution for state mutation, and never owns Git push or device mutation.",
+    "Validation recording and acceptance require a typed, hashed, exact-scope receipt that is revalidated against current state.",
+    "Feature selection never activates a run without the current lock fingerprint and a descriptor-approved runtime input.",
+    "A prepared push plan never proves external execution; executed pushes require remote readback, ancestry, validation, and rollback evidence."
   ]
 }

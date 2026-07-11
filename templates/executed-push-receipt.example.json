@@ -1,0 +1,134 @@
+{
+  "$schema": "../schemas/executed-push-receipt.schema.json",
+  "schema": "rusty.morphospace.workflow.executed_push_receipt.v1",
+  "receipt_id": "unit-alpha-executed-push",
+  "bundle_id": "unit-alpha-push-bundle",
+  "project_id": "example-project",
+  "unit_ids": [
+    "unit-alpha"
+  ],
+  "prepared_plan_id": "unit-alpha-push-bundle",
+  "started_at": "2026-01-01T12:00:00Z",
+  "finished_at": "2026-01-01T12:03:00Z",
+  "status": "validated-pushed",
+  "execution": "externally-performed",
+  "dependency_order": [
+    "matter-main",
+    "workflow-main",
+    "planning-main"
+  ],
+  "execution_order": [
+    "matter-main",
+    "workflow-main",
+    "planning-main"
+  ],
+  "repositories": [
+    {
+      "ref_id": "matter-main",
+      "repo_id": "matter-core",
+      "role": "source-owner",
+      "branch": "main",
+      "remote": "origin",
+      "upstream": "origin/main",
+      "action": "pushed",
+      "old_revision": "1111111111111111111111111111111111111111",
+      "new_revision": "2222222222222222222222222222222222222222",
+      "observed_remote_revision": "2222222222222222222222222222222222222222",
+      "push_status": "pass",
+      "ancestry_verified": true,
+      "remote_match": true,
+      "force_push_used": false,
+      "validation_refs": [
+        "matter-full"
+      ],
+      "rollback_revision": "1111111111111111111111111111111111111111"
+    },
+    {
+      "ref_id": "workflow-main",
+      "repo_id": "work-environment",
+      "role": "source-owner",
+      "branch": "main",
+      "remote": "origin",
+      "upstream": "origin/main",
+      "action": "readback-only",
+      "old_revision": "3333333333333333333333333333333333333333",
+      "new_revision": "3333333333333333333333333333333333333333",
+      "observed_remote_revision": "3333333333333333333333333333333333333333",
+      "push_status": "pass",
+      "ancestry_verified": true,
+      "remote_match": true,
+      "force_push_used": false,
+      "validation_refs": [
+        "workflow-public"
+      ],
+      "rollback_revision": "3333333333333333333333333333333333333333"
+    },
+    {
+      "ref_id": "planning-main",
+      "repo_id": "planning-ledger",
+      "role": "planning",
+      "branch": "main",
+      "remote": "origin",
+      "upstream": "origin/main",
+      "action": "pushed",
+      "old_revision": "4444444444444444444444444444444444444444",
+      "new_revision": "5555555555555555555555555555555555555555",
+      "observed_remote_revision": "5555555555555555555555555555555555555555",
+      "push_status": "pass",
+      "ancestry_verified": true,
+      "remote_match": true,
+      "force_push_used": false,
+      "validation_refs": [
+        "planning-deep"
+      ],
+      "rollback_revision": "4444444444444444444444444444444444444444"
+    }
+  ],
+  "validation": [
+    {
+      "gate_id": "matter-full",
+      "status": "pass",
+      "evidence": "owner full-check receipt"
+    },
+    {
+      "gate_id": "workflow-public",
+      "status": "pass",
+      "evidence": "workflow and public-boundary receipt"
+    },
+    {
+      "gate_id": "planning-deep",
+      "status": "pass",
+      "evidence": "planning deep-validation receipt"
+    }
+  ],
+  "rollback": {
+    "strategy": "revert-in-reverse-dependency-order",
+    "reverse_dependency_order": [
+      "planning-main",
+      "workflow-main",
+      "matter-main"
+    ],
+    "points": [
+      {
+        "ref_id": "planning-main",
+        "rollback_revision": "4444444444444444444444444444444444444444",
+        "acceptance": "Planning release pointer no longer names the pushed source bundle."
+      },
+      {
+        "ref_id": "workflow-main",
+        "rollback_revision": "3333333333333333333333333333333333333333",
+        "acceptance": "Workflow readback remains at its pre-bundle revision."
+      },
+      {
+        "ref_id": "matter-main",
+        "rollback_revision": "1111111111111111111111111111111111111111",
+        "acceptance": "Owner behavior and validation return to the pre-bundle contract."
+      }
+    ]
+  },
+  "source_first": true,
+  "planning_last": true,
+  "force_push_used": false,
+  "remote_readback_complete": true,
+  "failure": null
+}

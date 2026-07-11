@@ -8,6 +8,7 @@ param(
     [string]$RevisionsPath = "",
     [ValidateSet("pass", "partial", "fail", "blocked")][string]$ValidationResult = "pass",
     [string]$ValidationReceipt = "",
+    [string]$RecoveryReceipt = "",
     [ValidateSet("quick", "standard", "deep")][string]$ValidationTier = "standard",
     [string[]]$DeviceSerials = @(),
     [string]$Timestamp = "",
@@ -26,6 +27,7 @@ $arguments = @{
     RevisionsPath = $RevisionsPath
     ValidationResult = $ValidationResult
     ValidationReceipt = $ValidationReceipt
+    RecoveryReceipt = $RecoveryReceipt
     ValidationTier = $ValidationTier
     DeviceSerials = $DeviceSerials
     Timestamp = $Timestamp

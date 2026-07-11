@@ -183,6 +183,19 @@ function New-MorphospaceRepositorySummary {
     return [pscustomobject]$summary
 }
 
+function Get-MorphospaceDirtyFingerprint {
+    param([Parameter(Mandatory = $true)][object]$State)
+
+    $lines = if ($State.PSObject.Properties.Name -contains "status_porcelain") {
+        @($State.status_porcelain | ForEach-Object { [string]$_ } | Sort-Object)
+    } else { @() }
+    $text = ($lines -join "`n")
+    $bytes = (New-Object System.Text.UTF8Encoding($false)).GetBytes($text)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { return (($sha.ComputeHash($bytes) | ForEach-Object { $_.ToString("x2") }) -join "") }
+    finally { $sha.Dispose() }
+}
+
 function Get-MorphospaceUnitMap {
     param([Parameter(Mandatory = $true)][string]$UnitRoot)
 
@@ -303,6 +316,321 @@ function Test-MorphospaceInstructionCompletion {
     }
 }
 
+function ConvertTo-MorphospaceRelativePath {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $normalized = $Path.Replace("\", "/").Trim()
+    while ($normalized.StartsWith("./")) { $normalized = $normalized.Substring(2) }
+    if (-not $normalized -or [System.IO.Path]::IsPathRooted($normalized)) {
+        throw "Expected a non-rooted repository-relative path, received '$Path'."
+    }
+    if (@($normalized.Split("/") | Where-Object { $_ -eq ".." }).Count -gt 0) {
+        throw "Repository-relative path may not contain '..': $Path"
+    }
+    return $normalized
+}
+
+function Test-MorphospacePathAllowed {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][object[]]$AllowedPaths
+    )
+
+    $normalized = ConvertTo-MorphospaceRelativePath -Path $Path
+    foreach ($candidate in @($AllowedPaths)) {
+        $allowed = ([string]$candidate).Replace("\", "/").Trim().TrimStart("./").TrimEnd("/")
+        if (-not $allowed) { continue }
+        if ($normalized.Equals($allowed, [System.StringComparison]::OrdinalIgnoreCase) -or
+            $normalized.StartsWith($allowed + "/", [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Get-MorphospaceStatusPath {
+    param([Parameter(Mandatory = $true)][string]$StatusLine)
+
+    if ($StatusLine.Length -lt 4) { return $null }
+    $value = $StatusLine.Substring(3).Trim()
+    if ($value.Contains(" -> ")) { $value = @($value -split " -> ")[-1] }
+    return (ConvertTo-MorphospaceRelativePath -Path $value.Trim('"'))
+}
+
+function Test-MorphospaceClaimDirtyOverlap {
+    param(
+        [Parameter(Mandatory = $true)][object]$Unit,
+        [Parameter(Mandatory = $true)][object[]]$RepositoryStates
+    )
+
+    foreach ($repo in @($Unit.allowed_repositories)) {
+        $repoId = [string]$repo.repo_id
+        $state = @($RepositoryStates | Where-Object { [string]$_.repo_id -eq $repoId } | Select-Object -First 1)
+        if ($state.Count -eq 0 -or -not ($state[0].PSObject.Properties.Name -contains "status_porcelain")) { continue }
+        $overlap = New-Object System.Collections.Generic.List[string]
+        foreach ($line in @($state[0].status_porcelain)) {
+            $path = Get-MorphospaceStatusPath -StatusLine ([string]$line)
+            if ($path -and (Test-MorphospacePathAllowed -Path $path -AllowedPaths @($repo.allowed_paths))) {
+                $overlap.Add($path) | Out-Null
+            }
+        }
+        if ($overlap.Count -gt 0) {
+            throw "Claim refused pre-existing dirty-path overlap in '$repoId': $(@($overlap | Sort-Object -Unique) -join ', ')."
+        }
+    }
+}
+
+function Get-MorphospaceChangedPaths {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryPath,
+        [Parameter(Mandatory = $true)][string]$BaseRevision
+    )
+
+    $changed = New-Object System.Collections.Generic.List[string]
+    $diff = Get-MorphospaceGitOutput -RepositoryPath $RepositoryPath -Arguments @("diff", "--name-only", $BaseRevision, "--")
+    foreach ($line in @($diff.lines)) {
+        if (-not [string]::IsNullOrWhiteSpace([string]$line)) {
+            $changed.Add((ConvertTo-MorphospaceRelativePath -Path ([string]$line))) | Out-Null
+        }
+    }
+    $untracked = Get-MorphospaceGitOutput -RepositoryPath $RepositoryPath -Arguments @("ls-files", "--others", "--exclude-standard")
+    foreach ($line in @($untracked.lines)) {
+        if (-not [string]::IsNullOrWhiteSpace([string]$line)) {
+            $changed.Add((ConvertTo-MorphospaceRelativePath -Path ([string]$line))) | Out-Null
+        }
+    }
+    return @($changed | Sort-Object -Unique)
+}
+
+function Resolve-MorphospaceReceiptPath {
+    param(
+        [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
+        [Parameter(Mandatory = $true)][string]$ReceiptReference
+    )
+
+    $candidate = if ([System.IO.Path]::IsPathRooted($ReceiptReference)) {
+        [System.IO.Path]::GetFullPath($ReceiptReference)
+    } else {
+        [System.IO.Path]::GetFullPath((Join-Path $WorkspaceRoot $ReceiptReference))
+    }
+    $workspacePrefix = [System.IO.Path]::GetFullPath($WorkspaceRoot).TrimEnd("\", "/") + [System.IO.Path]::DirectorySeparatorChar
+    if (-not $candidate.StartsWith($workspacePrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Validation receipt must stay inside the project workspace: $ReceiptReference"
+    }
+    if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+        throw "Validation receipt does not exist: $ReceiptReference"
+    }
+    return $candidate
+}
+
+function Test-MorphospaceValidationReceipt {
+    param(
+        [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
+        [Parameter(Mandatory = $true)][string]$ReceiptReference,
+        [Parameter(Mandatory = $true)][object]$Spec,
+        [Parameter(Mandatory = $true)][object]$Unit,
+        [Parameter(Mandatory = $true)][hashtable]$RepositoryMap,
+        [Parameter(Mandatory = $true)][object[]]$RepositoryStates,
+        [Parameter(Mandatory = $true)][object[]]$ValidationMatrix,
+        [Parameter(Mandatory = $true)][string]$ExpectedResult,
+        [Parameter(Mandatory = $true)][string]$ExpectedTier
+    )
+
+    $receiptPath = Resolve-MorphospaceReceiptPath -WorkspaceRoot $WorkspaceRoot -ReceiptReference $ReceiptReference
+    $receipt = Read-MorphospaceJson -Path $receiptPath
+    if ([string]$receipt.schema -ne "rusty.morphospace.workflow.validation_receipt.v1") { throw "Validation receipt has the wrong schema ID." }
+    if ([string]$receipt.project_id -ne [string]$Spec.project_id -or [string]$receipt.unit_id -ne [string]$Unit.unit_id) {
+        throw "Validation receipt project/unit identity does not match the active unit."
+    }
+    if ([string]$receipt.result -ne $ExpectedResult -or [string]$receipt.tier -ne $ExpectedTier) {
+        throw "Validation receipt result/tier does not match the requested checkpoint."
+    }
+
+    $artifactMap = @{}
+    $receiptDirectory = Split-Path -Parent $receiptPath
+    foreach ($artifact in @($receipt.artifacts)) {
+        $artifactId = [string]$artifact.artifact_id
+        if (-not $artifactId -or $artifactMap.ContainsKey($artifactId)) { throw "Validation receipt contains a missing or duplicate artifact ID '$artifactId'." }
+        $artifactPath = if ([System.IO.Path]::IsPathRooted([string]$artifact.path)) {
+            [System.IO.Path]::GetFullPath([string]$artifact.path)
+        } else {
+            [System.IO.Path]::GetFullPath((Join-Path $receiptDirectory ([string]$artifact.path)))
+        }
+        if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf)) { throw "Validation artifact does not exist: $($artifact.path)" }
+        $actualHash = (Get-FileHash -LiteralPath $artifactPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actualHash -ne ([string]$artifact.sha256).ToLowerInvariant()) { throw "Validation artifact hash mismatch for '$artifactId'." }
+        $artifactMap[$artifactId] = $artifact
+    }
+    if ($artifactMap.Count -eq 0) { throw "Validation receipt must contain at least one hashed artifact." }
+
+    $expectedCriteria = @($Unit.acceptance | ForEach-Object { [string]$_.acceptance_id } | Sort-Object)
+    $actualCriteria = @($receipt.criteria | ForEach-Object { [string]$_.acceptance_id } | Sort-Object)
+    if (($expectedCriteria -join "|") -ne ($actualCriteria -join "|")) { throw "Validation receipt does not cover the exact acceptance-criterion set." }
+    foreach ($criterion in @($receipt.criteria)) {
+        $definition = @($Unit.acceptance | Where-Object { [string]$_.acceptance_id -eq [string]$criterion.acceptance_id } | Select-Object -First 1)[0]
+        if ([string]$criterion.command -ne [string]$definition.command) { throw "Validation command drifted for criterion '$($criterion.acceptance_id)'." }
+        if ($ExpectedResult -eq "pass" -and [string]$criterion.status -ne "pass") { throw "Passing validation has a non-passing criterion '$($criterion.acceptance_id)'." }
+        foreach ($reference in @($criterion.evidence_refs)) {
+            if (-not $artifactMap.ContainsKey([string]$reference)) { throw "Criterion '$($criterion.acceptance_id)' references unknown artifact '$reference'." }
+        }
+        if (@($criterion.evidence_refs).Count -eq 0) { throw "Criterion '$($criterion.acceptance_id)' has no evidence references." }
+    }
+
+    $expectedGates = @($ValidationMatrix | Where-Object { [string]$_.disposition -ne "forbidden" } | ForEach-Object { [string]$_.gate_id } | Sort-Object)
+    $actualGates = @($receipt.gates | ForEach-Object { [string]$_.gate_id } | Sort-Object)
+    if (($expectedGates -join "|") -ne ($actualGates -join "|")) { throw "Validation receipt does not cover the exact validation-gate set." }
+    foreach ($gate in @($receipt.gates)) {
+        $definition = @($ValidationMatrix | Where-Object { [string]$_.gate_id -eq [string]$gate.gate_id } | Select-Object -First 1)[0]
+        if ([string]$gate.command -ne [string]$definition.command) { throw "Validation command drifted for gate '$($gate.gate_id)'." }
+        if ($ExpectedResult -eq "pass" -and [string]$gate.status -ne "pass") { throw "Passing validation has a non-passing gate '$($gate.gate_id)'." }
+        foreach ($reference in @($gate.evidence_refs)) {
+            if (-not $artifactMap.ContainsKey([string]$reference)) { throw "Gate '$($gate.gate_id)' references unknown artifact '$reference'." }
+        }
+        if (@($gate.evidence_refs).Count -eq 0) { throw "Gate '$($gate.gate_id)' has no evidence references." }
+    }
+
+    $revisionMap = @{}
+    foreach ($revision in @($receipt.repository_revisions)) {
+        $repoId = [string]$revision.repo_id
+        if (-not $repoId -or $revisionMap.ContainsKey($repoId)) { throw "Validation receipt repeats repository revision '$repoId'." }
+        $revisionMap[$repoId] = $revision
+    }
+    $changedByRepo = @{}
+    foreach ($change in @($receipt.changed_paths)) {
+        $repoId = [string]$change.repo_id
+        if (-not $changedByRepo.ContainsKey($repoId)) { $changedByRepo[$repoId] = New-Object System.Collections.Generic.List[string] }
+        $changedByRepo[$repoId].Add((ConvertTo-MorphospaceRelativePath -Path ([string]$change.path))) | Out-Null
+    }
+    foreach ($repo in @($Unit.allowed_repositories)) {
+        $repoId = [string]$repo.repo_id
+        if (-not $RepositoryMap.ContainsKey($repoId)) {
+            if ($ExpectedResult -eq "pass") { throw "Passing validation requires a repository mapping for '$repoId'." }
+            continue
+        }
+        $repositoryPath = [string]$RepositoryMap[$repoId].path
+        $state = @($RepositoryStates | Where-Object { [string]$_.repo_id -eq $repoId } | Select-Object -First 1)[0]
+        if (-not $state.is_git) {
+            if (-not $state.available) { throw "Validation repository/tool surface is unavailable for '$repoId'." }
+            if ($revisionMap.ContainsKey($repoId)) { throw "Non-Git surface '$repoId' must be evidenced by artifact hashes, not a fabricated Git revision." }
+            if ($changedByRepo.ContainsKey($repoId)) { throw "Non-Git surface '$repoId' cannot use Git changed_paths; hash its changed artifacts instead." }
+            continue
+        }
+        if (-not $revisionMap.ContainsKey($repoId)) { throw "Validation receipt is missing repository revision '$repoId'." }
+        $revision = $revisionMap[$repoId]
+        if ([string]$revision.head_revision -ne [string]$state.head -or [string]$revision.branch -ne [string]$state.branch) {
+            throw "Validation receipt does not match current HEAD/branch for '$repoId'."
+        }
+        $ancestor = Get-MorphospaceGitOutput -RepositoryPath $repositoryPath -Arguments @("merge-base", "--is-ancestor", [string]$revision.base_revision, [string]$revision.head_revision) -AllowFailure
+        if ($ancestor.exit_code -ne 0) { throw "Validation base revision is not an ancestor of HEAD for '$repoId'." }
+        $actualChanged = @(Get-MorphospaceChangedPaths -RepositoryPath $repositoryPath -BaseRevision ([string]$revision.base_revision))
+        $recordedChanged = if ($changedByRepo.ContainsKey($repoId)) { @($changedByRepo[$repoId] | Sort-Object -Unique) } else { @() }
+        if (($actualChanged -join "|") -ne ($recordedChanged -join "|")) { throw "Validation changed-path set does not match repository '$repoId'." }
+        foreach ($path in $recordedChanged) {
+            if (-not (Test-MorphospacePathAllowed -Path $path -AllowedPaths @($repo.allowed_paths))) {
+                throw "Validation changed path is outside unit scope for '$repoId': $path"
+            }
+        }
+    }
+    foreach ($repoId in $changedByRepo.Keys) {
+        if (@($Unit.allowed_repositories | Where-Object { [string]$_.repo_id -eq [string]$repoId }).Count -eq 0) {
+            throw "Validation receipt contains a changed path for undeclared repository '$repoId'."
+        }
+    }
+
+    $deviceRequirement = [string]$Unit.device_requirement
+    if ($deviceRequirement -eq "required" -and $ExpectedResult -eq "pass" -and $null -eq $receipt.device_validation) {
+        throw "Passing required-device validation needs explicit device evidence."
+    }
+    if ($null -ne $receipt.device_validation) {
+        if (@($receipt.device_validation.serials).Count -eq 0) { throw "Device validation must name at least one serial." }
+        if ($ExpectedResult -eq "pass" -and (-not [bool]$receipt.device_validation.cleanup_complete -or [int]$receipt.device_validation.package_fatal_count -ne 0 -or [int]$receipt.device_validation.system_fatal_count -ne 0)) {
+            throw "Passing device validation requires complete cleanup and zero bounded package/system fatals."
+        }
+        foreach ($reference in @($receipt.device_validation.evidence_refs)) {
+            if (-not $artifactMap.ContainsKey([string]$reference)) { throw "Device validation references unknown artifact '$reference'." }
+        }
+    }
+    return $receipt
+}
+
+function Test-MorphospaceRecoveryReceipt {
+    param(
+        [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
+        [Parameter(Mandatory = $true)][string]$ReceiptReference,
+        [Parameter(Mandatory = $true)][object]$Spec,
+        [Parameter(Mandatory = $true)][object]$Unit,
+        [Parameter(Mandatory = $true)][hashtable]$RepositoryMap,
+        [Parameter(Mandatory = $true)][object[]]$RepositoryStates
+    )
+
+    $receiptPath = Resolve-MorphospaceReceiptPath -WorkspaceRoot $WorkspaceRoot -ReceiptReference $ReceiptReference
+    $receipt = Read-MorphospaceJson -Path $receiptPath
+    if ([string]$receipt.schema -ne "rusty.morphospace.workflow.interruption_receipt.v1") { throw "Recovery receipt has the wrong schema ID." }
+    if ([string]$receipt.project_id -ne [string]$Spec.project_id -or [string]$receipt.unit_id -ne [string]$Unit.unit_id) { throw "Recovery receipt identity does not match the requested unit." }
+    if ($receipt.safe_to_resume -ne $true -or $receipt.cleanup_complete -ne $true) { throw "Recovery receipt does not prove safe, complete cleanup." }
+
+    $artifactIds = @{}
+    $receiptDirectory = Split-Path -Parent $receiptPath
+    foreach ($artifact in @($receipt.artifacts)) {
+        $artifactId = [string]$artifact.artifact_id
+        if (-not $artifactId -or $artifactIds.ContainsKey($artifactId)) { throw "Recovery receipt has a missing or duplicate artifact ID." }
+        $artifactPath = if ([System.IO.Path]::IsPathRooted([string]$artifact.path)) { [System.IO.Path]::GetFullPath([string]$artifact.path) } else { [System.IO.Path]::GetFullPath((Join-Path $receiptDirectory ([string]$artifact.path))) }
+        if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf)) { throw "Recovery artifact does not exist: $($artifact.path)" }
+        $actualHash = (Get-FileHash -LiteralPath $artifactPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actualHash -ne ([string]$artifact.sha256).ToLowerInvariant()) { throw "Recovery artifact hash mismatch for '$artifactId'." }
+        $artifactIds[$artifactId] = $true
+    }
+    if ($artifactIds.Count -eq 0) { throw "Recovery receipt requires hashed evidence." }
+
+    $kind = [string]$receipt.interruption_kind
+    if ($kind -eq "partial-cross-repo-commit") {
+        $states = @($receipt.repositories | ForEach-Object { [string]$_.state })
+        if ($states -notcontains "committed" -or $states -notcontains "pending") { throw "Partial-commit recovery must preserve both committed and pending repository checkpoints." }
+    } elseif ($kind -eq "interrupted-build") {
+        if ($null -eq $receipt.build_cleanup -or [int]$receipt.build_cleanup.active_process_count -ne 0 -or $receipt.build_cleanup.outputs_quarantined -ne $true) { throw "Interrupted-build recovery requires zero active processes and quarantined partial outputs." }
+    } elseif ($kind -eq "interrupted-device") {
+        if ($null -eq $receipt.device_cleanup -or @($receipt.device_cleanup.serials).Count -eq 0 -or @($receipt.device_cleanup.packages_remaining).Count -ne 0 -or $receipt.device_cleanup.routes_inactive -ne $true -or [int]$receipt.device_cleanup.package_fatal_count -ne 0 -or [int]$receipt.device_cleanup.system_fatal_count -ne 0) {
+            throw "Interrupted-device recovery requires explicit serials, no remaining packages, inactive routes, and zero bounded fatals."
+        }
+    } else { throw "Unsupported interruption kind '$kind'." }
+
+    $seenRepos = @{}
+    foreach ($checkpoint in @($receipt.repositories)) {
+        $repoId = [string]$checkpoint.repo_id
+        if (-not $repoId -or $seenRepos.ContainsKey($repoId)) { throw "Recovery receipt repeats repository '$repoId'." }
+        $seenRepos[$repoId] = $true
+        if (@($Unit.allowed_repositories | Where-Object { [string]$_.repo_id -eq $repoId }).Count -ne 1) { throw "Recovery checkpoint references repository outside the unit: '$repoId'." }
+        if ([string]$checkpoint.observed_revision -notmatch "^[0-9a-fA-F]{40}$") { throw "Recovery checkpoint '$repoId' has an invalid revision." }
+        if ($RepositoryMap.ContainsKey($repoId)) {
+            $state = @($RepositoryStates | Where-Object { [string]$_.repo_id -eq $repoId } | Select-Object -First 1)
+            if ($state.Count -eq 1 -and $state[0].is_git -eq $true -and [string]$state[0].head -ne [string]$checkpoint.observed_revision) {
+                throw "Recovery checkpoint '$repoId' no longer matches current HEAD."
+            }
+        }
+    }
+    return $receipt
+}
+
+function Get-MorphospaceNextReadyUnit {
+    param([Parameter(Mandatory = $true)][hashtable]$UnitMap)
+
+    $ready = New-Object System.Collections.Generic.List[string]
+    foreach ($entry in @($UnitMap.Values)) {
+        $candidate = $entry.document
+        if ([string]$candidate.status -ne "ready") { continue }
+        $prerequisitesAccepted = $true
+        foreach ($prerequisite in @($candidate.prerequisites)) {
+            $id = [string]$prerequisite
+            if (-not $UnitMap.ContainsKey($id) -or [string]$UnitMap[$id].document.status -ne "accepted") {
+                $prerequisitesAccepted = $false
+                break
+            }
+        }
+        if ($prerequisitesAccepted) { $ready.Add([string]$candidate.unit_id) | Out-Null }
+    }
+    return @($ready | Sort-Object | Select-Object -First 1)
+}
+
 function Invoke-MorphospaceWorkUnitAutomation {
     [CmdletBinding()]
     param(
@@ -313,6 +641,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
         [string]$RevisionsPath = "",
         [ValidateSet("pass", "partial", "fail", "blocked")][string]$ValidationResult = "pass",
         [string]$ValidationReceipt = "",
+        [string]$RecoveryReceipt = "",
         [ValidateSet("quick", "standard", "deep")][string]$ValidationTier = "standard",
         [string[]]$DeviceSerials = @(),
         [string]$Timestamp = "",
@@ -332,6 +661,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
         $receiptReference = $resolvedOutPath.Substring($workspacePrefix.Length).Replace("\", "/")
     }
     $spec = Read-MorphospaceJson -Path (Join-Path $resolvedWorkspace "project.spec.json")
+    $featureLock = Read-MorphospaceJson -Path (Join-Path $resolvedWorkspace "feature.lock.json")
     $statePath = Join-Path $resolvedWorkspace "workspace.state.json"
     $eventsPath = Join-Path $resolvedWorkspace "iteration-events.jsonl"
     $state = Read-MorphospaceJson -Path $statePath
@@ -350,6 +680,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
     if ([string]$unit.project_id -ne [string]$spec.project_id -or [string]$state.project_id -ne [string]$spec.project_id) {
         throw "Project identifiers do not agree."
     }
+    if ([string]$featureLock.project_id -ne [string]$spec.project_id) { throw "Feature lock project identifier does not agree." }
 
     $repoMap = Get-MorphospaceRepositoryMap -RepoMapPath $RepoMapPath
     $repositoryStates = New-Object System.Collections.Generic.List[object]
@@ -381,6 +712,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
                 if ($beforeStatus -ne "ready") { throw "Claim requires ready status; '$UnitId' is '$beforeStatus'." }
                 if ($state.current_unit) { throw "Workspace already has current unit '$($state.current_unit)'." }
                 Test-MorphospacePrerequisites -Unit $unit -UnitMap $unitMap
+                Test-MorphospaceClaimDirtyOverlap -Unit $unit -RepositoryStates $repoStatesArray
                 $transition = "ready-to-active"
                 if ($Execute) {
                     $unit.status = "active"; $state.current_unit = $UnitId
@@ -417,9 +749,26 @@ function Invoke-MorphospaceWorkUnitAutomation {
         "RecordValidation" {
             if ($beforeStatus -ne "validating" -or [string]$state.current_unit -ne $UnitId) { throw "RecordValidation requires the matching validating unit." }
             if (-not $ValidationReceipt) { throw "ValidationReceipt is required." }
+            $validatedReceipt = Test-MorphospaceValidationReceipt `
+                -WorkspaceRoot $resolvedWorkspace `
+                -ReceiptReference $ValidationReceipt `
+                -Spec $spec `
+                -Unit $unit `
+                -RepositoryMap $repoMap `
+                -RepositoryStates $repoStatesArray `
+                -ValidationMatrix $validationMatrix `
+                -ExpectedResult $ValidationResult `
+                -ExpectedTier $ValidationTier
+            $validatedReceiptPath = Resolve-MorphospaceReceiptPath -WorkspaceRoot $resolvedWorkspace -ReceiptReference $ValidationReceipt
+            $workspacePrefix = $resolvedWorkspace.TrimEnd("\", "/") + [System.IO.Path]::DirectorySeparatorChar
+            $ValidationReceipt = $validatedReceiptPath.Substring($workspacePrefix.Length).Replace("\", "/")
             $transition = "validation-$ValidationResult"
             if ($Execute) {
-                $state.validation_checkpoint = [pscustomobject][ordered]@{ tier = $ValidationTier; receipt = $ValidationReceipt; result = $ValidationResult }
+                $state.validation_checkpoint = [pscustomobject][ordered]@{
+                    tier = $ValidationTier
+                    receipt = $ValidationReceipt
+                    result = $ValidationResult
+                }
                 if ($ValidationResult -ne "pass") {
                     $unit.status = "blocked"; $state.current_unit = $null
                     $blockerId = "$UnitId-validation-$ValidationResult"
@@ -442,15 +791,43 @@ function Invoke-MorphospaceWorkUnitAutomation {
             } else {
                 if ($beforeStatus -ne "validating" -or [string]$state.current_unit -ne $UnitId) { throw "Accept requires the matching validating unit." }
                 if ($null -eq $state.validation_checkpoint -or [string]$state.validation_checkpoint.result -ne "pass") { throw "Acceptance requires a passing validation checkpoint." }
+                $validatedReceipt = Test-MorphospaceValidationReceipt `
+                    -WorkspaceRoot $resolvedWorkspace `
+                    -ReceiptReference ([string]$state.validation_checkpoint.receipt) `
+                    -Spec $spec `
+                    -Unit $unit `
+                    -RepositoryMap $repoMap `
+                    -RepositoryStates $repoStatesArray `
+                    -ValidationMatrix $validationMatrix `
+                    -ExpectedResult "pass" `
+                    -ExpectedTier ([string]$state.validation_checkpoint.tier)
                 Test-MorphospaceInstructionCompletion -Unit $unit
                 $transition = "validating-to-accepted"
                 if ($Execute) {
                     $unit.status = "accepted"; $state.current_unit = $null
+                    if ([string]$state.schema -eq "rusty.morphospace.workflow.workspace_state.v2") {
+                        $state.last_accepted_receipt = [string]$state.validation_checkpoint.receipt
+                    }
+                    $nextReady = @(Get-MorphospaceNextReadyUnit -UnitMap $unitMap)
+                    $state.next_ready_unit = if ($nextReady.Count -gt 0) { [string]$nextReady[0] } else { $null }
                     $event = New-MorphospaceEvent -State $state -Events $events -UnitId $UnitId -ActionSlug "accepted" -Timestamp $Timestamp -EventType "state-transition" -Summary "Accepted the unit after passing validation and instruction synchronization." -Receipts @([string]$state.validation_checkpoint.receipt)
                 }
             }
         }
         "Recover" {
+            $interruptionBlockers = @($state.blockers | Where-Object {
+                ([string]$_.blocker_id -match "interrupt|partial-commit") -or ([string]$_.condition -match "(?i)interrupt|partial commit")
+            })
+            $recoveryReference = $null
+            if ($interruptionBlockers.Count -gt 0 -and -not $RecoveryReceipt) {
+                throw "Interrupted work requires a typed recovery receipt before state restoration."
+            }
+            if ($RecoveryReceipt) {
+                $null = Test-MorphospaceRecoveryReceipt -WorkspaceRoot $resolvedWorkspace -ReceiptReference $RecoveryReceipt -Spec $spec -Unit $unit -RepositoryMap $repoMap -RepositoryStates $repoStatesArray
+                $recoveryPath = Resolve-MorphospaceReceiptPath -WorkspaceRoot $resolvedWorkspace -ReceiptReference $RecoveryReceipt
+                $workspacePrefix = $resolvedWorkspace.TrimEnd("\", "/") + [System.IO.Path]::DirectorySeparatorChar
+                $recoveryReference = $recoveryPath.Substring($workspacePrefix.Length).Replace("\", "/")
+            }
             $inFlight = @($unitMap.Values | Where-Object { [string]$_.document.status -in @("active", "validating") })
             if (-not $state.current_unit -and $inFlight.Count -eq 1) {
                 $recoveredId = [string]$inFlight[0].document.unit_id
@@ -458,7 +835,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
                 $transition = "restore-current-unit"
                 if ($Execute) {
                     $state.current_unit = $UnitId
-                    $event = New-MorphospaceEvent -State $state -Events $events -UnitId $UnitId -ActionSlug "recovered" -Timestamp $Timestamp -EventType "state-transition" -Summary "Recovered the sole interrupted in-flight unit without changing repository contents or prior evidence."
+                    $event = New-MorphospaceEvent -State $state -Events $events -UnitId $UnitId -ActionSlug "recovered" -Timestamp $Timestamp -EventType "state-transition" -Summary "Recovered the sole interrupted in-flight unit without changing repository contents or prior evidence." -Receipts @($recoveryReference | Where-Object { $_ })
                 }
             } elseif ($state.current_unit -and [string]$state.current_unit -eq $UnitId -and $beforeStatus -notin @("active", "validating")) {
                 $transition = "clear-stale-current-unit"
@@ -530,7 +907,44 @@ function Invoke-MorphospaceWorkUnitAutomation {
             Add-MorphospaceEvent -Path $eventsPath -Event $event
         }
         if ($RepoMapPath) {
-            $state.dirty_repositories = @($repoStatesArray | Where-Object { $_.PSObject.Properties.Name -contains "dirty" -and $_.dirty -eq $true } | ForEach-Object { [string]$_.repo_id } | Sort-Object -Unique)
+            $dirtySet = @{}
+            foreach ($repoId in @($state.dirty_repositories)) { $dirtySet[[string]$repoId] = $true }
+            foreach ($repoState in $repoStatesArray) {
+                $repoId = [string]$repoState.repo_id
+                if (-not $repoMap.ContainsKey($repoId) -or -not ($repoState.PSObject.Properties.Name -contains "dirty")) { continue }
+                if ($repoState.dirty -eq $true) { $dirtySet[$repoId] = $true } else { $dirtySet.Remove($repoId) }
+            }
+            $state.dirty_repositories = @($dirtySet.Keys | Sort-Object)
+        }
+        if ([string]$state.schema -eq "rusty.morphospace.workflow.workspace_state.v2") {
+            if ($RepoMapPath) {
+                $headMap = @{}
+                foreach ($head in @($state.repository_heads)) { $headMap[[string]$head.repo_id] = $head }
+                foreach ($repoState in @($repoStatesArray | Where-Object { $_.PSObject.Properties.Name -contains "is_git" -and $_.is_git -eq $true })) {
+                    $headMap[[string]$repoState.repo_id] = [pscustomobject][ordered]@{
+                        repo_id = [string]$repoState.repo_id
+                        head = [string]$repoState.head
+                        branch = $repoState.branch
+                        dirty_fingerprint = Get-MorphospaceDirtyFingerprint -State $repoState
+                    }
+                }
+                $state.repository_heads = @($headMap.Values | Sort-Object repo_id)
+            }
+            if ([string]$featureLock.schema -eq "rusty.morphospace.workflow.feature_lock.v2") {
+                $state.module_registry = [pscustomobject][ordered]@{
+                    lock_revision = [int]$featureLock.revision
+                    lock_fingerprint = [string]$featureLock.lock_fingerprint
+                    modules = @($spec.modules | Where-Object { $_.selected -eq $true } | Sort-Object module_id | ForEach-Object {
+                        [pscustomobject][ordered]@{
+                            module_id = [string]$_.module_id
+                            owner_repo = [string]$_.source_repo
+                            maturity = [string]$_.maturity
+                            contract = [string]$_.contract
+                            contract_revision = [string]$_.contract_revision
+                        }
+                    })
+                }
+            }
         }
         Write-MorphospaceJson -Path $statePath -Value $state
     }

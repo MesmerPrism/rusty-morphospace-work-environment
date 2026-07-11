@@ -115,10 +115,20 @@ rebuild, route cleanup, N-peer damage edges, private receipt references, and
 instruction updates. Preserve failed-attempt nodes, and rerun/reconnect the
 touched repo's full-check node after any source fix.
 
-Use the work-environment `0.1.0` release manifest plus the final tracked graph
-as the baseline for future diff-impact runs. Compare schema IDs, repo heads,
-module/adapter edges, feature locks, instruction surfaces, and validation
-entrypoints; a later dirty filesystem scan does not replace this release node.
+Treat the work-environment `0.1.0` release manifest and graph as a historical
+checkpoint, not terminal proof. The July 11 strict audit found that the graph
+omitted tracked Rust `src/bin` files and did not contain the terminal planning
+transition. A corrected release graph must reconcile its file set against the
+exact Git trees, include workflow state and validation surfaces, and label any
+intentional third-party or generated exclusions. A later dirty filesystem scan
+does not replace a versioned release node.
+
+Tracked-file inventories must include every deliberately committed executable
+source, including Rust `src/bin`, and tracked dependency/license material.
+Never treat a directory named `bin` as build output in tracked mode. Untracked
+filesystem scans may skip build/dependency trees but must still retain
+`src/bin`. Reconcile release counts to `git ls-tree`/`git ls-files` and make
+remaining filters explicit.
 
 For generic media sessions, graph the accepted Manifold descriptor to the
 platform runtime, then source → processor → route provider → sink, with codec

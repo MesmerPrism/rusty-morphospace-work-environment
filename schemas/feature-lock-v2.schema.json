@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/feature-lock-v2.schema.json",
+  "title": "Rusty Morphospace closed-world feature lock v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "project_id", "project_revision", "revision", "generated_at",
+    "resolver_version", "lock_fingerprint", "default_activation", "activation_rule",
+    "selected_features", "denied_features", "features", "effect_union"
+  ],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schema": { "const": "rusty.morphospace.workflow.feature_lock.v2" },
+    "project_id": { "$ref": "#/$defs/id" },
+    "project_revision": { "type": "integer", "minimum": 1 },
+    "revision": { "type": "integer", "minimum": 1 },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "resolver_version": { "const": "rusty-morphospace-feature-resolver/2" },
+    "lock_fingerprint": { "$ref": "#/$defs/hash" },
+    "default_activation": { "const": "disabled" },
+    "activation_rule": { "const": "selected-lock-and-runtime-input" },
+    "selected_features": { "$ref": "#/$defs/ids" },
+    "denied_features": { "$ref": "#/$defs/ids" },
+    "features": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "feature_id", "module_id", "version", "owner_lane", "selected",
+          "run_activation_default", "descriptor", "dependencies", "conflicts",
+          "exclusive_group", "effects", "parameter_authorities", "activation",
+          "validation_profile", "rollback_profile"
+        ],
+        "properties": {
+          "feature_id": { "$ref": "#/$defs/id" },
+          "module_id": { "$ref": "#/$defs/id" },
+          "version": { "type": "string", "minLength": 1 },
+          "owner_lane": { "$ref": "#/$defs/id" },
+          "selected": { "const": true },
+          "run_activation_default": { "const": "disabled" },
+          "descriptor": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "sha256", "source_repo", "source_revision", "source_path", "source_sha256"],
+            "properties": {
+              "path": { "type": "string", "minLength": 1 },
+              "sha256": { "$ref": "#/$defs/hash" },
+              "source_repo": { "$ref": "#/$defs/id" },
+              "source_revision": { "$ref": "#/$defs/sha" },
+              "source_path": { "type": "string", "minLength": 1 },
+              "source_sha256": { "$ref": "#/$defs/hash" }
+            }
+          },
+          "dependencies": { "$ref": "#/$defs/ids" },
+          "conflicts": { "$ref": "#/$defs/ids" },
+          "exclusive_group": { "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
+          "effects": { "$ref": "#/$defs/effects" },
+          "parameter_authorities": { "type": "array", "items": { "$ref": "#/$defs/authority" } },
+          "activation": { "$ref": "#/$defs/activation" },
+          "validation_profile": { "$ref": "#/$defs/id" },
+          "rollback_profile": { "$ref": "#/$defs/id" }
+        }
+      }
+    },
+    "effect_union": { "$ref": "#/$defs/effects" }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,63}$" },
+    "dottedId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]{2,127}$" },
+    "sha": { "type": "string", "pattern": "^[0-9a-fA-F]{40}$" },
+    "hash": { "type": "string", "pattern": "^[0-9a-fA-F]{64}$" },
+    "ids": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/id" } },
+    "strings": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+    "effects": {
+      "type": "object", "additionalProperties": false,
+      "required": ["permissions", "services", "activities", "queries", "tools", "assets", "shaders", "native_libraries", "commands", "routes", "streams", "inputs", "scenes", "markers"],
+      "properties": {
+        "permissions": { "$ref": "#/$defs/strings" }, "services": { "$ref": "#/$defs/strings" },
+        "activities": { "$ref": "#/$defs/strings" }, "queries": { "$ref": "#/$defs/strings" },
+        "tools": { "$ref": "#/$defs/strings" }, "assets": { "$ref": "#/$defs/strings" },
+        "shaders": { "$ref": "#/$defs/strings" }, "native_libraries": { "$ref": "#/$defs/strings" },
+        "commands": { "$ref": "#/$defs/strings" }, "routes": { "$ref": "#/$defs/strings" },
+        "streams": { "$ref": "#/$defs/strings" }, "inputs": { "$ref": "#/$defs/strings" },
+        "scenes": { "$ref": "#/$defs/strings" }, "markers": { "$ref": "#/$defs/strings" }
+      }
+    },
+    "authority": {
+      "type": "object", "additionalProperties": false, "required": ["parameter", "owner"],
+      "properties": { "parameter": { "$ref": "#/$defs/dottedId" }, "owner": { "$ref": "#/$defs/id" } }
+    },
+    "activation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["rule", "runtime_inputs", "receipt_schema", "effective_marker"],
+      "properties": {
+        "rule": { "const": "selected-lock-and-runtime-input" },
+        "runtime_inputs": { "$ref": "#/$defs/strings" },
+        "receipt_schema": { "$ref": "#/$defs/dottedId" },
+        "effective_marker": { "$ref": "#/$defs/dottedId" }
+      }
+    }
+  }
+}

@@ -126,6 +126,18 @@ function Test-PathInScope {
     return $false
 }
 
+function Get-FeatureLockFingerprint {
+    param([object]$Lock)
+
+    $copy = ($Lock | ConvertTo-Json -Depth 48 | ConvertFrom-Json)
+    $copy.lock_fingerprint = "0" * 64
+    $json = $copy | ConvertTo-Json -Depth 48 -Compress
+    $bytes = (New-Object System.Text.UTF8Encoding($false)).GetBytes($json)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { return (($sha.ComputeHash($bytes) | ForEach-Object { $_.ToString("x2") }) -join "") }
+    finally { $sha.Dispose() }
+}
+
 function Get-JsonFiles {
     param([string]$Path)
 
@@ -197,12 +209,31 @@ function Test-ProjectBundle {
         return
     }
 
-    Assert-Contract ($spec.schema -eq "rusty.morphospace.workflow.project_spec.v1") "$Context project spec has the wrong schema ID."
+    $isProjectV2 = [string]$spec.schema -eq "rusty.morphospace.workflow.project_spec.v2"
+    Assert-Contract ($isProjectV2 -or $spec.schema -eq "rusty.morphospace.workflow.project_spec.v1") "$Context project spec has the wrong schema ID."
     Assert-Contract (Test-Text $spec.project_id) "$Context project spec needs project_id."
     Assert-Contract ([int]$spec.revision -ge 1) "$Context project revision must be at least 1."
     Assert-Contract (Test-Text $spec.purpose) "$Context project spec needs purpose."
     Assert-Contract ($spec.activation_model.default -eq "disabled") "$Context default feature activation must be disabled."
     Assert-Contract ($spec.activation_model.unlisted_modules -eq "inert") "$Context unlisted modules must be inert."
+    if ($isProjectV2) {
+        Assert-Contract (Test-Text $spec.owner) "$Context project_spec.v2 needs an owner."
+        Assert-Contract ($spec.activation_model.runtime_rule -eq "selected-lock-and-runtime-input") "$Context project_spec.v2 must require selected lock plus runtime input."
+        foreach ($field in @("selected_features", "denied_features", "selected_modules", "denied_modules", "allowed_permissions", "denied_permissions", "data_classes")) {
+            $values = @($spec.composition.$field | ForEach-Object { [string]$_ })
+            foreach ($group in @($values | Group-Object | Where-Object { $_.Count -gt 1 })) {
+                Add-Failure -Message "$Context project composition repeats '$($group.Name)' in $field."
+            }
+        }
+        $selectedFeatureIds = @($spec.composition.selected_features | ForEach-Object { [string]$_ })
+        $deniedFeatureIds = @($spec.composition.denied_features | ForEach-Object { [string]$_ })
+        foreach ($id in $selectedFeatureIds) { Assert-Contract ($deniedFeatureIds -notcontains $id) "$Context feature '$id' is both selected and denied." }
+        $selectedModuleIds = @($spec.composition.selected_modules | ForEach-Object { [string]$_ })
+        $deniedModuleIds = @($spec.composition.denied_modules | ForEach-Object { [string]$_ })
+        foreach ($id in $selectedModuleIds) { Assert-Contract ($deniedModuleIds -notcontains $id) "$Context module '$id' is both selected and denied." }
+        Assert-Contract ($spec.release_policy.source_first -eq $true -and $spec.release_policy.planning_last -eq $true -and $spec.release_policy.force_push_allowed -eq $false) "$Context project_spec.v2 release policy must be source-first, planning-last, and no-force-push."
+        Assert-Contract (Test-Text $spec.release_policy.commit_policy) "$Context project_spec.v2 needs a commit policy."
+    }
     Test-NonEmptyTextArray -Value $spec.non_scope -Context "$Context project non_scope"
 
     $authorityEntries = @($spec.authority_map)
@@ -240,6 +271,11 @@ function Test-ProjectBundle {
         }
         Assert-Contract ($script:ModuleMaturityIds -contains [string]$module.maturity) "$Context module '$moduleId' has unknown maturity '$($module.maturity)'."
         Assert-Contract ($repositoryMap.ContainsKey([string]$module.source_repo)) "$Context module '$moduleId' references unknown source repo '$($module.source_repo)'."
+        if ($isProjectV2) {
+            Assert-Contract (Test-Text $module.contract_revision) "$Context project_spec.v2 module '$moduleId' needs contract_revision."
+            Assert-Contract ($module.selected -is [bool]) "$Context project_spec.v2 module '$moduleId' needs Boolean selected."
+            if ($module.selected -eq $true) { Assert-Contract ($selectedModuleIds -contains $moduleId) "$Context selected module '$moduleId' is absent from composition.selected_modules." }
+        }
     }
     foreach ($module in $modules) {
         foreach ($dependency in @($module.dependencies)) {
@@ -254,44 +290,80 @@ function Test-ProjectBundle {
     foreach ($profile in $validationProfiles) {
         Test-NonEmptyTextArray -Value $profile.commands -Context "$Context validation profile '$($profile.profile_id)' commands"
     }
+    if ($isProjectV2) {
+        $acceptanceProfiles = @($spec.acceptance_profiles)
+        Assert-Contract ($acceptanceProfiles.Count -gt 0) "$Context project_spec.v2 needs acceptance profiles."
+        Test-UniqueProperty -Items $acceptanceProfiles -Property "profile_id" -Context "$Context acceptance profiles"
+        foreach ($profile in $acceptanceProfiles) { Test-NonEmptyTextArray -Value $profile.commands -Context "$Context acceptance profile '$($profile.profile_id)' commands" }
+    }
 
-    Assert-Contract ($lock.schema -eq "rusty.morphospace.workflow.feature_lock.v1") "$Context feature lock has the wrong schema ID."
+    $isLockV2 = [string]$lock.schema -eq "rusty.morphospace.workflow.feature_lock.v2"
+    Assert-Contract (($isProjectV2 -and $isLockV2) -or (-not $isProjectV2 -and $lock.schema -eq "rusty.morphospace.workflow.feature_lock.v1")) "$Context feature lock schema must match the project protocol version."
     Assert-Contract ($lock.project_id -eq $spec.project_id) "$Context feature lock project_id does not match the project spec."
     Assert-Contract ($lock.default_activation -eq "disabled") "$Context feature lock default must be disabled."
     $features = @($lock.features)
     Test-UniqueProperty -Items $features -Property "feature_id" -Context "$Context feature lock"
     Test-UniqueProperty -Items $features -Property "module_id" -Context "$Context feature lock"
-    $enabledFeatureIds = @($features | Where-Object { $_.enabled -eq $true } | ForEach-Object { [string]$_.feature_id })
-    foreach ($feature in $features) {
-        $featureId = [string]$feature.feature_id
-        $moduleId = [string]$feature.module_id
-        Assert-Contract ($moduleMap.ContainsKey($moduleId)) "$Context feature '$featureId' references undeclared module '$moduleId'."
-        if ($moduleMap.ContainsKey($moduleId)) {
-            Assert-Contract ($moduleMap[$moduleId].feature_id -eq $featureId) "$Context feature '$featureId' does not match module '$moduleId' feature_id."
-        }
-        foreach ($dependency in @($feature.dependencies)) {
-            Assert-Contract ($moduleMap.ContainsKey([string]$dependency)) "$Context feature '$featureId' references undeclared dependency '$dependency'."
-        }
-        if ($feature.enabled -eq $true) {
-            Assert-Contract (Test-Text $feature.requested_by) "$Context enabled feature '$featureId' needs requested_by."
-            Assert-Contract (Test-Text $feature.descriptor) "$Context enabled feature '$featureId' needs a descriptor."
-            Assert-Contract ($feature.activation_receipt.required -eq $true) "$Context enabled feature '$featureId' must require an effective-runtime receipt."
-            Assert-Contract (Test-Text $feature.activation_receipt.schema) "$Context enabled feature '$featureId' needs an activation receipt schema."
-            Assert-Contract (Test-Text $feature.activation_receipt.effective_marker) "$Context enabled feature '$featureId' needs an effective marker."
+    if ($isLockV2) {
+        Assert-Contract ([int]$lock.project_revision -eq [int]$spec.revision) "$Context feature_lock.v2 project revision drifted."
+        Assert-Contract ($lock.activation_rule -eq "selected-lock-and-runtime-input") "$Context feature_lock.v2 activation rule drifted."
+        Assert-Contract ([string]$lock.lock_fingerprint -eq (Get-FeatureLockFingerprint -Lock $lock)) "$Context feature_lock.v2 fingerprint is stale or damaged."
+        $selectedLockIds = @($lock.selected_features | ForEach-Object { [string]$_ } | Sort-Object)
+        $featureIds = @($features | ForEach-Object { [string]$_.feature_id } | Sort-Object)
+        Assert-Contract (($selectedLockIds -join "|") -eq ($featureIds -join "|")) "$Context feature_lock.v2 selected_features must exactly match feature entries."
+        foreach ($id in @($lock.denied_features)) { Assert-Contract ($selectedLockIds -notcontains [string]$id) "$Context feature_lock.v2 selects denied feature '$id'." }
+        foreach ($requestedId in @($spec.composition.selected_features)) { Assert-Contract ($selectedLockIds -contains [string]$requestedId) "$Context feature_lock.v2 is missing requested feature '$requestedId'." }
+        $exclusiveGroups = @{}
+        $observedUnion = @{}
+        foreach ($effectName in @("permissions", "services", "activities", "queries", "tools", "assets", "shaders", "native_libraries", "commands", "routes", "streams", "inputs", "scenes", "markers")) { $observedUnion[$effectName] = New-Object System.Collections.Generic.List[string] }
+        foreach ($feature in $features) {
+            $featureId = [string]$feature.feature_id; $moduleId = [string]$feature.module_id
+            Assert-Contract ($feature.selected -eq $true -and $feature.run_activation_default -eq "disabled") "$Context feature_lock.v2 feature '$featureId' must be selected but default runtime-disabled."
+            Assert-Contract ($moduleMap.ContainsKey($moduleId)) "$Context feature '$featureId' references undeclared module '$moduleId'."
+            if ($moduleMap.ContainsKey($moduleId)) { Assert-Contract ($moduleMap[$moduleId].feature_id -eq $featureId) "$Context feature '$featureId' does not match module '$moduleId'." }
+            Assert-Contract ([string]$feature.descriptor.sha256 -match "^[0-9a-fA-F]{64}$" -and [string]$feature.descriptor.source_revision -match "^[0-9a-fA-F]{40}$" -and [string]$feature.descriptor.source_sha256 -match "^[0-9a-fA-F]{64}$") "$Context feature '$featureId' lacks exact descriptor/source hashes."
+            foreach ($dependency in @($feature.dependencies)) { Assert-Contract ($selectedLockIds -contains [string]$dependency) "$Context feature '$featureId' has unselected dependency '$dependency'." }
+            foreach ($conflict in @($feature.conflicts)) { Assert-Contract ($selectedLockIds -notcontains [string]$conflict) "$Context feature '$featureId' conflicts with '$conflict'." }
+            if ($null -ne $feature.exclusive_group) {
+                $group = [string]$feature.exclusive_group
+                Assert-Contract (-not $exclusiveGroups.ContainsKey($group)) "$Context feature '$featureId' repeats exclusive group '$group'."
+                $exclusiveGroups[$group] = $featureId
+            }
+            Assert-Contract ($feature.activation.rule -eq "selected-lock-and-runtime-input" -and @($feature.activation.runtime_inputs).Count -gt 0) "$Context feature '$featureId' lacks explicit lock-bound runtime inputs."
             Test-UniqueProperty -Items @($feature.parameter_authorities) -Property "parameter" -Context "$Context feature '$featureId' parameter authorities"
             foreach ($parameterAuthority in @($feature.parameter_authorities)) {
                 $parameter = [string]$parameterAuthority.parameter
-                Assert-Contract ($authorityOwners.ContainsKey($parameter)) "$Context enabled feature '$featureId' references parameter '$parameter' without project authority."
-                if ($authorityOwners.ContainsKey($parameter)) {
-                    Assert-Contract ($authorityOwners[$parameter] -eq [string]$parameterAuthority.owner) "$Context enabled feature '$featureId' disagrees with the authority owner for '$parameter'."
+                Assert-Contract ($authorityOwners.ContainsKey($parameter) -and $authorityOwners[$parameter] -eq [string]$parameterAuthority.owner) "$Context feature '$featureId' disagrees with authority for '$parameter'."
+            }
+            foreach ($effectName in $observedUnion.Keys) {
+                foreach ($effect in @($feature.effects.$effectName | ForEach-Object { [string]$_ })) {
+                    if (-not $observedUnion[$effectName].Contains($effect)) { $observedUnion[$effectName].Add($effect) | Out-Null }
                 }
             }
         }
-    }
-    foreach ($feature in @($features | Where-Object { $_.enabled -eq $true })) {
-        foreach ($conflict in @($feature.conflicts)) {
-            Assert-Contract (-not ($enabledFeatureIds -contains [string]$conflict)) "$Context enabled feature '$($feature.feature_id)' conflicts with enabled feature '$conflict'."
+        foreach ($effectName in $observedUnion.Keys) {
+            $expected = @($observedUnion[$effectName] | Sort-Object -Unique)
+            $actual = @($lock.effect_union.$effectName | ForEach-Object { [string]$_ } | Sort-Object -Unique)
+            Assert-Contract (($expected -join "|") -eq ($actual -join "|")) "$Context feature_lock.v2 effect union drifted for '$effectName'."
         }
+    } else {
+        $enabledFeatureIds = @($features | Where-Object { $_.enabled -eq $true } | ForEach-Object { [string]$_.feature_id })
+        foreach ($feature in $features) {
+            $featureId = [string]$feature.feature_id; $moduleId = [string]$feature.module_id
+            Assert-Contract ($moduleMap.ContainsKey($moduleId)) "$Context feature '$featureId' references undeclared module '$moduleId'."
+            if ($moduleMap.ContainsKey($moduleId)) { Assert-Contract ($moduleMap[$moduleId].feature_id -eq $featureId) "$Context feature '$featureId' does not match module '$moduleId' feature_id." }
+            foreach ($dependency in @($feature.dependencies)) { Assert-Contract ($moduleMap.ContainsKey([string]$dependency)) "$Context feature '$featureId' references undeclared dependency '$dependency'." }
+            if ($feature.enabled -eq $true) {
+                Assert-Contract ((Test-Text $feature.requested_by) -and (Test-Text $feature.descriptor)) "$Context enabled feature '$featureId' needs requested_by and descriptor."
+                Assert-Contract ($feature.activation_receipt.required -eq $true -and (Test-Text $feature.activation_receipt.schema) -and (Test-Text $feature.activation_receipt.effective_marker)) "$Context enabled feature '$featureId' needs an effective-runtime receipt."
+                Test-UniqueProperty -Items @($feature.parameter_authorities) -Property "parameter" -Context "$Context feature '$featureId' parameter authorities"
+                foreach ($parameterAuthority in @($feature.parameter_authorities)) {
+                    $parameter = [string]$parameterAuthority.parameter
+                    Assert-Contract ($authorityOwners.ContainsKey($parameter) -and $authorityOwners[$parameter] -eq [string]$parameterAuthority.owner) "$Context enabled feature '$featureId' disagrees with authority for '$parameter'."
+                }
+            }
+        }
+        foreach ($feature in @($features | Where-Object { $_.enabled -eq $true })) { foreach ($conflict in @($feature.conflicts)) { Assert-Contract (-not ($enabledFeatureIds -contains [string]$conflict)) "$Context enabled feature '$($feature.feature_id)' conflicts with '$conflict'." } }
     }
 
     $candidates = New-Object System.Collections.Generic.List[object]
@@ -495,7 +567,8 @@ function Test-ProjectBundle {
         }
     }
 
-    Assert-Contract ($state.schema -eq "rusty.morphospace.workflow.workspace_state.v1") "$Context workspace state has the wrong schema ID."
+    $isStateV2 = [string]$state.schema -eq "rusty.morphospace.workflow.workspace_state.v2"
+    Assert-Contract (($isProjectV2 -and $isStateV2) -or (-not $isProjectV2 -and $state.schema -eq "rusty.morphospace.workflow.workspace_state.v1")) "$Context workspace state schema must match the project protocol version."
     Assert-Contract ($state.project_id -eq $spec.project_id) "$Context workspace state project_id does not match."
     Assert-Contract ([int]$state.plan_revision -ge 1) "$Context workspace plan revision must be at least 1."
     if ($null -eq $state.current_unit) {
@@ -520,6 +593,25 @@ function Test-ProjectBundle {
     }
     foreach ($dirtyRepo in @($state.dirty_repositories)) {
         Assert-Contract ($repositoryMap.ContainsKey([string]$dirtyRepo)) "$Context workspace state references undeclared dirty repo '$dirtyRepo'."
+    }
+    if ($isStateV2) {
+        Test-UniqueProperty -Items @($state.repository_heads) -Property "repo_id" -Context "$Context workspace repository heads"
+        foreach ($head in @($state.repository_heads)) {
+            Assert-Contract ($repositoryMap.ContainsKey([string]$head.repo_id)) "$Context workspace state has a head for undeclared repo '$($head.repo_id)'."
+            Assert-Contract ([string]$head.head -match "^[0-9a-fA-F]{40}$") "$Context workspace repo '$($head.repo_id)' has invalid HEAD."
+        }
+        if ($null -ne $state.module_registry.lock_revision) {
+            Assert-Contract ([int]$state.module_registry.lock_revision -eq [int]$lock.revision -and [string]$state.module_registry.lock_fingerprint -eq [string]$lock.lock_fingerprint) "$Context module registry does not match feature lock revision/fingerprint."
+        }
+        Test-UniqueProperty -Items @($state.module_registry.modules) -Property "module_id" -Context "$Context workspace module registry"
+        foreach ($registered in @($state.module_registry.modules)) {
+            Assert-Contract ($moduleMap.ContainsKey([string]$registered.module_id)) "$Context workspace registry references undeclared module '$($registered.module_id)'."
+            Assert-Contract ($repositoryMap.ContainsKey([string]$registered.owner_repo)) "$Context workspace registry module '$($registered.module_id)' has undeclared owner repo."
+        }
+        Test-UniqueProperty -Items @($state.capability_registry) -Property "capability_id" -Context "$Context workspace capability registry"
+        if (@($units | Where-Object { $_.status -eq "accepted" }).Count -gt 0) {
+            Assert-Contract (Test-Text $state.last_accepted_receipt) "$Context accepted units require last_accepted_receipt in workspace_state.v2."
+        }
     }
     if ($null -ne $state.pending_push_bundle) {
         foreach ($unitId in @($state.pending_push_bundle.unit_ids)) {
@@ -607,6 +699,7 @@ if ($null -ne $lifecycle) {
     Test-UniqueProperty -Items @($lifecycle.iteration_states) -Property "id" -Context "iteration state lifecycle"
     Assert-Contract ($lifecycle.feature_activation.default -eq "disabled") "Workflow default activation must be disabled."
     Assert-Contract ($lifecycle.feature_activation.unlisted_modules -eq "inert") "Workflow unlisted modules must be inert."
+    Assert-Contract ($lifecycle.feature_activation.protocol_v2_rule -eq "selected-lock-and-runtime-input") "Workflow protocol-v2 activation rule must require selected lock plus runtime input."
 } else {
     $script:ModuleMaturityIds = @()
     $script:ModuleMaturityNext = @{}
@@ -625,17 +718,24 @@ if ($null -ne $lifecycle) {
 $schemaRoot = Join-Path $RepoRoot "schemas"
 $schemaFiles = @(Get-ChildItem -LiteralPath $schemaRoot -Filter "*.schema.json" -File | Sort-Object Name)
 $requiredSchemaNames = @(
+    "executed-push-receipt.schema.json",
+    "feature-descriptor.schema.json",
     "feature-lock.schema.json",
+    "feature-lock-v2.schema.json",
+    "interruption-receipt.schema.json",
     "iteration-event.schema.json",
     "iteration-unit.schema.json",
     "module-candidate.schema.json",
     "project-spec.schema.json",
+    "project-spec-v2.schema.json",
     "promotion-review.schema.json",
     "push-bundle-plan.schema.json",
     "repository-map.schema.json",
     "revision-set.schema.json",
+    "validation-receipt.schema.json",
     "work-unit-automation-receipt.schema.json",
-    "workspace-state.schema.json"
+    "workspace-state.schema.json",
+    "workspace-state-v2.schema.json"
 )
 foreach ($requiredSchemaName in $requiredSchemaNames) {
     Assert-Contract (Test-Path -LiteralPath (Join-Path $schemaRoot $requiredSchemaName) -PathType Leaf) "Required workflow schema is missing: $requiredSchemaName"
@@ -658,6 +758,18 @@ $templateBundle = New-Bundle `
     -ReviewPaths @((Join-Path $templatesRoot "promotion-review.example.json")) `
     -EventsPath (Join-Path $templatesRoot "iteration-events.example.jsonl")
 Test-ProjectBundle -Bundle $templateBundle -Context "portable example"
+
+$executedPushTemplate = Join-Path $templatesRoot "executed-push-receipt.example.json"
+$executedPushValidator = Join-Path $RepoRoot "scripts\Test-ExecutedPushReceipt.ps1"
+Assert-Contract (Test-Path -LiteralPath $executedPushTemplate -PathType Leaf) "Required executed-push receipt example is missing."
+Assert-Contract (Test-Path -LiteralPath $executedPushValidator -PathType Leaf) "Required executed-push receipt validator is missing."
+if ((Test-Path -LiteralPath $executedPushTemplate -PathType Leaf) -and (Test-Path -LiteralPath $executedPushValidator -PathType Leaf)) {
+    try {
+        & $executedPushValidator -Path $executedPushTemplate | Out-Null
+    } catch {
+        Add-Failure -Message "Executed-push receipt example failed semantic validation: $($_.Exception.Message)"
+    }
+}
 
 if ($WorkspaceRoot) {
     $resolvedWorkspace = (Resolve-Path -LiteralPath $WorkspaceRoot).Path
