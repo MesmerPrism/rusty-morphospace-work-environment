@@ -56,6 +56,21 @@ The work-environment repo owns portable schemas, examples, and validators. A
 project owns its instantiated `morphospace/` directory. Do not copy live state,
 private evidence, or machine paths back into this repository.
 
+### Draft validation-authority boundary
+
+The `MorphospaceOwnership` module and the current-unit, registry, ownership,
+validation-v2, trust-migration, and state-transition schemas are a tested but
+non-promotional lower-layer draft. They are inert unless explicitly invoked.
+Do not use them to claim, validate, accept, recover, or promote a unit until a
+tracked owner-validator registry, trust-migration verifier, high validation
+authority, transactional state/event integration, public CLI, and their full
+damage tests are present.
+
+Ordinary application work may continue through a separate project-local
+`morphospace/` workspace and the published workflow. Keep exact repository/path
+scope and inert default locks, and do not present draft validation-v2 artifacts
+as acceptance evidence.
+
 ## Authority Rules
 
 - Rusty Morphospace names the ecosystem; concrete authority stays in lanes

@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/validator-trust-anchor-migration.schema.json",
+  "title": "Validator trust-anchor migration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "migration_id", "created_at", "project_id", "unit_id",
+    "bootstrap_exception", "lineage", "registry", "authority_artifacts",
+    "prior_event_anchor", "independent_review", "status"
+  ],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.workflow.validator_trust_anchor_migration.v1" },
+    "migration_id": { "$ref": "#/$defs/id" },
+    "created_at": { "$ref": "#/$defs/utc" },
+    "project_id": { "$ref": "#/$defs/id" },
+    "unit_id": { "$ref": "#/$defs/id" },
+    "bootstrap_exception": { "$ref": "#/$defs/bootstrapException" },
+    "lineage": {
+      "type": "array", "minItems": 4, "maxItems": 4,
+      "items": { "$ref": "#/$defs/lineageEntry" }
+    },
+    "registry": { "$ref": "#/$defs/registryReference" },
+    "authority_artifacts": {
+      "type": "array", "minItems": 1,
+      "items": { "$ref": "#/$defs/authorityArtifact" }
+    },
+    "prior_event_anchor": { "$ref": "#/$defs/eventAnchorReference" },
+    "independent_review": { "$ref": "#/$defs/typedReference" },
+    "status": { "const": "accepted" }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,191}$" },
+    "dottedId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]{2,191}$" },
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "oid": { "type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$" },
+    "utc": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{7}Z$" },
+    "typedReference": {
+      "type": "object", "additionalProperties": false,
+      "required": ["role", "path", "schema", "sha256"],
+      "properties": {
+        "role": { "$ref": "#/$defs/id" },
+        "path": { "type": "string", "minLength": 1 },
+        "schema": { "$ref": "#/$defs/dottedId" },
+        "sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "registryReference": {
+      "type": "object", "additionalProperties": false,
+      "required": ["role", "path", "schema", "sha256"],
+      "properties": {
+        "role": { "const": "owner-validator-registry" },
+        "path": { "type": "string", "minLength": 1 },
+        "schema": { "const": "rusty.morphospace.workflow.owner_validator_registry.v1" },
+        "sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "eventAnchorReference": {
+      "type": "object", "additionalProperties": false,
+      "required": ["role", "path", "schema", "sha256"],
+      "properties": {
+        "role": { "const": "legacy-prefix-anchor" },
+        "path": { "type": "string", "minLength": 1 },
+        "schema": { "const": "rusty.morphospace.workflow.legacy_event_prefix_anchor.v1" },
+        "sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "bootstrapException": {
+      "type": "object", "additionalProperties": false,
+      "required": ["one_time", "non_promotional", "self_authorization_scope", "normal_ownership_after_commit"],
+      "properties": {
+        "one_time": { "const": true },
+        "non_promotional": { "const": true },
+        "self_authorization_scope": { "const": "authority-adoption-only" },
+        "normal_ownership_after_commit": { "const": true }
+      }
+    },
+    "lineageEntry": {
+      "type": "object", "additionalProperties": false,
+      "required": ["role", "revision"],
+      "properties": {
+        "role": { "enum": ["legacy-bootstrap", "protocol-v2", "foundation", "authority"] },
+        "revision": { "$ref": "#/$defs/oid" }
+      }
+    },
+    "authorityArtifact": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repo_id", "path", "sha256", "git_blob_oid"],
+      "properties": {
+        "repo_id": { "$ref": "#/$defs/id" },
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/hash" },
+        "git_blob_oid": { "$ref": "#/$defs/oid" }
+      }
+    }
+  }
+}

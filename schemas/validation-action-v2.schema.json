@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/validation-action-v2.schema.json",
+  "title": "Authorized current-unit validation action v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "action_id", "created_at", "project_id", "unit_id", "attempt_id",
+    "profile_id", "current_protocol", "registry", "ownership", "claim_baseline",
+    "repository_map", "selected_validators", "expected_outputs",
+    "pre_observation_sha256", "device_validation", "status"
+  ],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.workflow.validation_action.v2" },
+    "action_id": { "$ref": "#/$defs/id" },
+    "created_at": { "$ref": "#/$defs/utc" },
+    "project_id": { "$ref": "#/$defs/id" },
+    "unit_id": { "$ref": "#/$defs/id" },
+    "attempt_id": { "$ref": "#/$defs/id" },
+    "profile_id": { "$ref": "#/$defs/id" },
+    "current_protocol": { "$ref": "#/$defs/currentProtocolReference" },
+    "registry": { "$ref": "#/$defs/registryReference" },
+    "ownership": { "$ref": "#/$defs/ownershipReference" },
+    "claim_baseline": { "$ref": "#/$defs/claimBaselineReference" },
+    "repository_map": { "$ref": "#/$defs/repositoryMapReference" },
+    "selected_validators": {
+      "type": "array", "minItems": 1,
+      "items": { "$ref": "#/$defs/selectedValidator" }
+    },
+    "expected_outputs": {
+      "type": "array", "minItems": 1, "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "pre_observation_sha256": { "$ref": "#/$defs/hash" },
+    "device_validation": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/deviceValidation" }
+      ]
+    },
+    "status": { "const": "authorized" }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,191}$" },
+    "dottedId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]{2,191}$" },
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "utc": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{7}Z$" },
+    "typedReference": {
+      "type": "object", "additionalProperties": false,
+      "required": ["role", "path", "schema", "sha256"],
+      "properties": { "role": { "$ref": "#/$defs/id" }, "path": { "type": "string", "minLength": 1 }, "schema": { "$ref": "#/$defs/dottedId" }, "sha256": { "$ref": "#/$defs/hash" } }
+    },
+    "currentProtocolReference": {
+      "type": "object", "additionalProperties": false,
+      "required": ["role", "path", "schema", "sha256"],
+      "properties": { "role": { "const": "current-unit-protocol" }, "path": { "type": "string", "minLength": 1 }, "schema": { "const": "rusty.morphospace.workflow.current_unit_protocol.v1" }, "sha256": { "$ref": "#/$defs/hash" } }
+    },
+    "registryReference": {
+      "type": "object", "additionalProperties": false,
+      "required": ["role", "path", "schema", "sha256"],
+      "properties": { "role": { "const": "owner-validator-registry" }, "path": { "type": "string", "minLength": 1 }, "schema": { "const": "rusty.morphospace.workflow.owner_validator_registry.v1" }, "sha256": { "$ref": "#/$defs/hash" } }
+    },
+    "ownershipReference": {
+      "type": "object", "additionalProperties": false,
+      "required": ["role", "path", "schema", "sha256"],
+      "properties": { "role": { "const": "unit-ownership" }, "path": { "type": "string", "minLength": 1 }, "schema": { "const": "rusty.morphospace.workflow.unit_ownership.v1" }, "sha256": { "$ref": "#/$defs/hash" } }
+    },
+    "claimBaselineReference": {
+      "type": "object", "additionalProperties": false,
+      "required": ["role", "path", "schema", "sha256"],
+      "properties": { "role": { "const": "claim-baseline" }, "path": { "type": "string", "minLength": 1 }, "schema": { "const": "rusty.morphospace.workflow.claim_baseline.v1" }, "sha256": { "$ref": "#/$defs/hash" } }
+    },
+    "repositoryMapReference": {
+      "type": "object", "additionalProperties": false,
+      "required": ["role", "path", "schema", "sha256"],
+      "properties": { "role": { "const": "repository-map" }, "path": { "type": "string", "minLength": 1 }, "schema": { "const": "rusty.morphospace.workflow.repository_map.v1" }, "sha256": { "$ref": "#/$defs/hash" } }
+    },
+    "selectedValidator": {
+      "type": "object", "additionalProperties": false,
+      "required": ["validator_id", "registry_entry_sha256"],
+      "properties": { "validator_id": { "$ref": "#/$defs/id" }, "registry_entry_sha256": { "$ref": "#/$defs/hash" } }
+    },
+    "deviceValidation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["policy_id", "owner_repo_id", "validator_id", "profile_id", "device_plan", "required_criteria"],
+      "properties": {
+        "policy_id": { "$ref": "#/$defs/id" },
+        "owner_repo_id": { "$ref": "#/$defs/id" },
+        "validator_id": { "$ref": "#/$defs/id" },
+        "profile_id": { "$ref": "#/$defs/id" },
+        "device_plan": { "$ref": "#/$defs/typedReference" },
+        "required_criteria": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        }
+      }
+    }
+  }
+}

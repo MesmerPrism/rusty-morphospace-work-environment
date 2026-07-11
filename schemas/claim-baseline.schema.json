@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/claim-baseline.schema.json",
+  "title": "Current-unit claim baseline",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "baseline_id", "created_at", "project_id", "unit_id",
+    "repository_map", "repositories", "status"
+  ],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.workflow.claim_baseline.v1" },
+    "baseline_id": { "$ref": "#/$defs/id" },
+    "created_at": { "$ref": "#/$defs/utc" },
+    "project_id": { "$ref": "#/$defs/id" },
+    "unit_id": { "$ref": "#/$defs/id" },
+    "repository_map": { "$ref": "#/$defs/repositoryMapReference" },
+    "repositories": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/repository" } },
+    "status": { "const": "frozen" }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,191}$" },
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "oid": { "type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$" },
+    "utc": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{7}Z$" },
+    "nullableOid": { "oneOf": [{ "$ref": "#/$defs/oid" }, { "type": "null" }] },
+    "nullableHash": { "oneOf": [{ "$ref": "#/$defs/hash" }, { "type": "null" }] },
+    "nullableString": { "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }] },
+    "nullableLength": { "oneOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }] },
+    "repositoryMapReference": {
+      "type": "object", "additionalProperties": false,
+      "required": ["role", "path", "schema", "sha256"],
+      "properties": {
+        "role": { "const": "repository-map" },
+        "path": { "type": "string", "minLength": 1 },
+        "schema": { "const": "rusty.morphospace.workflow.repository_map.v1" },
+        "sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "hunk": {
+      "type": "object", "additionalProperties": false,
+      "required": ["header", "hunk_sha256"],
+      "properties": {
+        "header": { "type": "string", "minLength": 1 },
+        "hunk_sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "entry": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "path", "entry_fingerprint_sha256", "state", "sha256", "length",
+        "mode", "patch_sha256", "hunks"
+      ],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "entry_fingerprint_sha256": { "$ref": "#/$defs/hash" },
+        "state": { "enum": ["file", "deleted", "directory"] },
+        "sha256": { "$ref": "#/$defs/nullableHash" },
+        "length": { "$ref": "#/$defs/nullableLength" },
+        "mode": { "$ref": "#/$defs/nullableString" },
+        "patch_sha256": { "$ref": "#/$defs/nullableHash" },
+        "hunks": { "type": "array", "items": { "$ref": "#/$defs/hunk" } }
+      }
+    },
+    "instruction": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repo_id", "path", "relative_path", "sha256"],
+      "properties": {
+        "repo_id": { "$ref": "#/$defs/id" },
+        "path": { "type": "string", "minLength": 1 },
+        "relative_path": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "repository": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "repo_id", "kind", "head_revision", "head_tree_oid", "branch",
+        "allowed_paths", "content_observation_sha256", "status_sha256",
+        "overlay_fingerprint_sha256", "commit_manifest_fingerprint_sha256",
+        "instruction_observation_sha256", "entries_fingerprint_sha256", "entries",
+        "instructions_fingerprint_sha256", "instructions"
+      ],
+      "properties": {
+        "repo_id": { "$ref": "#/$defs/id" },
+        "kind": { "enum": ["git", "non-git"] },
+        "head_revision": { "$ref": "#/$defs/nullableOid" },
+        "head_tree_oid": { "$ref": "#/$defs/nullableOid" },
+        "branch": { "$ref": "#/$defs/nullableString" },
+        "allowed_paths": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "content_observation_sha256": { "$ref": "#/$defs/hash" },
+        "status_sha256": { "$ref": "#/$defs/nullableHash" },
+        "overlay_fingerprint_sha256": { "$ref": "#/$defs/nullableHash" },
+        "commit_manifest_fingerprint_sha256": { "$ref": "#/$defs/nullableHash" },
+        "instruction_observation_sha256": { "$ref": "#/$defs/hash" },
+        "entries_fingerprint_sha256": { "$ref": "#/$defs/hash" },
+        "entries": { "type": "array", "items": { "$ref": "#/$defs/entry" } },
+        "instructions_fingerprint_sha256": { "$ref": "#/$defs/hash" },
+        "instructions": { "type": "array", "items": { "$ref": "#/$defs/instruction" } }
+      }
+    }
+  }
+}

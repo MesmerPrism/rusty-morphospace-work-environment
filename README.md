@@ -95,6 +95,13 @@ powershell -NoProfile -ExecutionPolicy Bypass `
 This repository owns the portable protocol. The project adopting it owns its
 live `morphospace/` state and evidence.
 
+> **Draft authority note:** the ownership/clean-room module and the new
+> current-unit/validation-v2 schemas are preserved as non-promotional protocol
+> development. Existing projects should keep using the published workflow and
+> separate project-local workspaces; the draft must not be used for acceptance
+> until its registry, trust, validation, transaction, recovery, and CLI layers
+> are complete.
+
 New scaffolds use `project_spec.v2`, `feature_lock.v2`, and
 `workspace_state.v2`. Exact feature descriptors resolve through
 `scripts/Resolve-FeatureLock.ps1`; `scripts/Test-FeatureActivationAgainstLock.ps1`

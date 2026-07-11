@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/owner-validator-registry.schema.json",
+  "title": "Owner validator registry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "registry_id", "revision", "created_at", "foundation_commit",
+    "previous_registry", "validators"
+  ],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.workflow.owner_validator_registry.v1" },
+    "registry_id": { "$ref": "#/$defs/id" },
+    "revision": { "type": "integer", "minimum": 1 },
+    "created_at": { "$ref": "#/$defs/utc" },
+    "foundation_commit": { "$ref": "#/$defs/oid" },
+    "previous_registry": {
+      "oneOf": [
+        { "$ref": "#/$defs/registryReference" },
+        { "type": "null" }
+      ]
+    },
+    "validators": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/validator" }
+    }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,191}$" },
+    "dottedId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]{2,191}$" },
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "oid": { "type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$" },
+    "utc": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{7}Z$" },
+    "registryReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "path", "schema", "sha256"],
+      "properties": {
+        "role": { "const": "owner-validator-registry" },
+        "path": { "type": "string", "minLength": 1 },
+        "schema": { "const": "rusty.morphospace.workflow.owner_validator_registry.v1" },
+        "sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "validator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "validator_id", "owner_repo_id", "owner_revision", "owner_tree_oid",
+        "path", "sha256", "git_blob_oid",
+        "entrypoint", "profiles", "acceptance_ids", "evidence_schema",
+        "input_closure", "timeout_seconds",
+        "max_output_bytes", "mutation_policy", "device_policy"
+      ],
+      "properties": {
+        "validator_id": { "$ref": "#/$defs/id" },
+        "owner_repo_id": { "$ref": "#/$defs/id" },
+        "owner_revision": { "$ref": "#/$defs/oid" },
+        "owner_tree_oid": { "$ref": "#/$defs/oid" },
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/hash" },
+        "git_blob_oid": { "$ref": "#/$defs/oid" },
+        "entrypoint": { "const": "powershell-file" },
+        "profiles": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "acceptance_ids": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "evidence_schema": { "$ref": "#/$defs/dottedId" },
+        "input_closure": {
+          "type": "array", "minItems": 1,
+          "items": { "$ref": "#/$defs/inputClosureEntry" }
+        },
+        "timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 600 },
+        "max_output_bytes": { "type": "integer", "minimum": 1024, "maximum": 268435456 },
+        "mutation_policy": { "const": "temp-output-only" },
+        "device_policy": { "enum": ["forbidden", "required"] }
+      }
+    },
+    "inputClosureEntry": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repo_id", "kind", "paths"],
+      "properties": {
+        "repo_id": { "$ref": "#/$defs/id" },
+        "kind": { "enum": ["git-tree", "non-git-tree", "instructions", "project-contracts"] },
+        "paths": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

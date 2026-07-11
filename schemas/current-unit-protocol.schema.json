@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/current-unit-protocol.schema.json",
+  "title": "Current-unit protocol authority binding",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "protocol_id", "created_at", "project_id", "unit_id",
+    "authority_revision", "registry", "trust_anchor_migration", "repository_map",
+    "claim_baseline", "unit_ownership", "event_anchor", "state_sha256",
+    "unit_sha256", "status"
+  ],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.workflow.current_unit_protocol.v1" },
+    "protocol_id": { "$ref": "#/$defs/id" },
+    "created_at": { "$ref": "#/$defs/utc" },
+    "project_id": { "$ref": "#/$defs/id" },
+    "unit_id": { "$ref": "#/$defs/id" },
+    "authority_revision": { "$ref": "#/$defs/oid" },
+    "registry": { "$ref": "#/$defs/registryReference" },
+    "trust_anchor_migration": { "$ref": "#/$defs/migrationReference" },
+    "repository_map": { "$ref": "#/$defs/repositoryMapReference" },
+    "claim_baseline": { "$ref": "#/$defs/claimBaselineReference" },
+    "unit_ownership": { "$ref": "#/$defs/ownershipReference" },
+    "event_anchor": { "$ref": "#/$defs/eventAnchorReference" },
+    "state_sha256": { "$ref": "#/$defs/hash" },
+    "unit_sha256": { "$ref": "#/$defs/hash" },
+    "status": { "const": "active" }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,191}$" },
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "oid": { "type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$" },
+    "utc": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{7}Z$" },
+    "registryReference": { "$ref": "#/$defs/fixedRegistryReference" },
+    "fixedRegistryReference": {
+      "type": "object", "additionalProperties": false,
+      "required": ["role", "path", "schema", "sha256"],
+      "properties": { "role": { "const": "owner-validator-registry" }, "path": { "type": "string", "minLength": 1 }, "schema": { "const": "rusty.morphospace.workflow.owner_validator_registry.v1" }, "sha256": { "$ref": "#/$defs/hash" } }
+    },
+    "migrationReference": {
+      "type": "object", "additionalProperties": false,
+      "required": ["role", "path", "schema", "sha256"],
+      "properties": { "role": { "const": "validator-trust-anchor-migration" }, "path": { "type": "string", "minLength": 1 }, "schema": { "const": "rusty.morphospace.workflow.validator_trust_anchor_migration.v1" }, "sha256": { "$ref": "#/$defs/hash" } }
+    },
+    "repositoryMapReference": {
+      "type": "object", "additionalProperties": false,
+      "required": ["role", "path", "schema", "sha256"],
+      "properties": { "role": { "const": "repository-map" }, "path": { "type": "string", "minLength": 1 }, "schema": { "const": "rusty.morphospace.workflow.repository_map.v1" }, "sha256": { "$ref": "#/$defs/hash" } }
+    },
+    "claimBaselineReference": {
+      "type": "object", "additionalProperties": false,
+      "required": ["role", "path", "schema", "sha256"],
+      "properties": { "role": { "const": "claim-baseline" }, "path": { "type": "string", "minLength": 1 }, "schema": { "const": "rusty.morphospace.workflow.claim_baseline.v1" }, "sha256": { "$ref": "#/$defs/hash" } }
+    },
+    "ownershipReference": {
+      "type": "object", "additionalProperties": false,
+      "required": ["role", "path", "schema", "sha256"],
+      "properties": { "role": { "const": "unit-ownership" }, "path": { "type": "string", "minLength": 1 }, "schema": { "const": "rusty.morphospace.workflow.unit_ownership.v1" }, "sha256": { "$ref": "#/$defs/hash" } }
+    },
+    "eventAnchorReference": {
+      "type": "object", "additionalProperties": false,
+      "required": ["role", "path", "schema", "sha256"],
+      "properties": { "role": { "const": "legacy-prefix-anchor" }, "path": { "type": "string", "minLength": 1 }, "schema": { "const": "rusty.morphospace.workflow.legacy_event_prefix_anchor.v1" }, "sha256": { "$ref": "#/$defs/hash" } }
+    }
+  }
+}

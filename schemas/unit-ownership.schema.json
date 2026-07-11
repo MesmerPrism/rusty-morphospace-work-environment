@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/unit-ownership.schema.json",
+  "title": "Current-unit content ownership",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "ownership_id", "created_at", "project_id", "unit_id",
+    "claim_baseline", "repositories", "shared_overlaps", "status"
+  ],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.workflow.unit_ownership.v1" },
+    "ownership_id": { "$ref": "#/$defs/id" },
+    "created_at": { "$ref": "#/$defs/utc" },
+    "project_id": { "$ref": "#/$defs/id" },
+    "unit_id": { "$ref": "#/$defs/id" },
+    "claim_baseline": { "$ref": "#/$defs/claimBaselineReference" },
+    "repositories": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/repository" } },
+    "shared_overlaps": { "type": "array", "items": { "$ref": "#/$defs/sharedOverlap" } },
+    "status": { "const": "assigned" }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,191}$" },
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "oid": { "type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$" },
+    "utc": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{7}Z$" },
+    "nullableOid": { "oneOf": [{ "$ref": "#/$defs/oid" }, { "type": "null" }] },
+    "nullableHash": { "oneOf": [{ "$ref": "#/$defs/hash" }, { "type": "null" }] },
+    "nullableString": { "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }] },
+    "nullableLength": { "oneOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }] },
+    "claimBaselineReference": {
+      "type": "object", "additionalProperties": false,
+      "required": ["role", "path", "schema", "sha256"],
+      "properties": {
+        "role": { "const": "claim-baseline" },
+        "path": { "type": "string", "minLength": 1 },
+        "schema": { "const": "rusty.morphospace.workflow.claim_baseline.v1" },
+        "sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "hunk": {
+      "type": "object", "additionalProperties": false,
+      "required": ["header", "hunk_sha256"],
+      "properties": {
+        "header": { "type": "string", "minLength": 1 },
+        "hunk_sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "entry": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "path", "final_entry_fingerprint_sha256", "baseline_entry_fingerprint_sha256",
+        "state", "sha256", "length", "mode", "patch_sha256", "hunks", "attribution"
+      ],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "final_entry_fingerprint_sha256": { "$ref": "#/$defs/hash" },
+        "baseline_entry_fingerprint_sha256": { "$ref": "#/$defs/nullableHash" },
+        "state": { "enum": ["file", "deleted", "directory"] },
+        "sha256": { "$ref": "#/$defs/nullableHash" },
+        "length": { "$ref": "#/$defs/nullableLength" },
+        "mode": { "$ref": "#/$defs/nullableString" },
+        "patch_sha256": { "$ref": "#/$defs/nullableHash" },
+        "hunks": { "type": "array", "items": { "$ref": "#/$defs/hunk" } },
+        "attribution": { "enum": ["unit", "shared"] }
+      }
+    },
+    "repository": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "repo_id", "kind", "base_revision", "head_revision", "head_tree_oid",
+        "branch", "allowed_paths", "live_content_observation_sha256",
+        "live_status_sha256", "live_overlay_fingerprint_sha256",
+        "live_commit_manifest_fingerprint_sha256", "baseline_entries_sha256",
+        "preserved_baseline_entries_sha256", "preserved_baseline_count",
+        "instruction_observation_sha256", "entries"
+      ],
+      "properties": {
+        "repo_id": { "$ref": "#/$defs/id" },
+        "kind": { "enum": ["git", "non-git"] },
+        "base_revision": { "$ref": "#/$defs/nullableOid" },
+        "head_revision": { "$ref": "#/$defs/nullableOid" },
+        "head_tree_oid": { "$ref": "#/$defs/nullableOid" },
+        "branch": { "$ref": "#/$defs/nullableString" },
+        "allowed_paths": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "live_content_observation_sha256": { "$ref": "#/$defs/hash" },
+        "live_status_sha256": { "$ref": "#/$defs/nullableHash" },
+        "live_overlay_fingerprint_sha256": { "$ref": "#/$defs/nullableHash" },
+        "live_commit_manifest_fingerprint_sha256": { "$ref": "#/$defs/nullableHash" },
+        "baseline_entries_sha256": { "$ref": "#/$defs/hash" },
+        "preserved_baseline_entries_sha256": { "$ref": "#/$defs/hash" },
+        "preserved_baseline_count": { "type": "integer", "minimum": 0 },
+        "instruction_observation_sha256": { "$ref": "#/$defs/hash" },
+        "entries": { "type": "array", "items": { "$ref": "#/$defs/entry" } }
+      }
+    },
+    "sharedBinding": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "path", "baseline_entry_fingerprint_sha256", "final_entry_fingerprint_sha256",
+        "patch_sha256", "hunks"
+      ],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "baseline_entry_fingerprint_sha256": { "$ref": "#/$defs/hash" },
+        "final_entry_fingerprint_sha256": { "$ref": "#/$defs/hash" },
+        "patch_sha256": { "$ref": "#/$defs/hash" },
+        "hunks": { "type": "array", "items": { "$ref": "#/$defs/hunk" } }
+      }
+    },
+    "sharedOverlap": {
+      "type": "object", "additionalProperties": false,
+      "required": ["integration_id", "repo_id", "bindings", "contributing_units", "integration_owner", "decision"],
+      "properties": {
+        "integration_id": { "$ref": "#/$defs/id" },
+        "repo_id": { "$ref": "#/$defs/id" },
+        "bindings": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/sharedBinding" } },
+        "contributing_units": { "type": "array", "minItems": 2, "uniqueItems": true, "items": { "$ref": "#/$defs/id" } },
+        "integration_owner": { "$ref": "#/$defs/id" },
+        "decision": { "const": "accepted" }
+      }
+    }
+  }
+}
