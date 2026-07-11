@@ -104,6 +104,13 @@ ambient capabilities. Reject stale fingerprints, expanded fields, duplicate
 features, and zero-or-two runtime modes; keep sensitive features as separate
 opt-ins rather than broadening the base product.
 
+Treat standalone and embedded as placement adapters over one authority engine.
+Bind both to the exact product lock and command registry, compare their
+underlying decision/application receipts differentially, and label the process
+or JNI layer as an adapter. A bridge may validate schema and authority labels,
+but acceptance, lease, revision, replay, rejection, and next-state rules stay
+in the shared authority owner.
+
 Authority, module-layout, activation, and validation changes also have
 instruction impact. Route them through
 `docs/INSTRUCTION_SYNCHRONIZATION.md`; update concise routers and place long

@@ -102,6 +102,13 @@ mode, commands, streams, modules, and permissions as one closure; represent
 stale fingerprints, expanded fields, permission unions, and invalid mode count
 as damaged rejection edges rather than alternative product paths.
 
+For standalone/embedded authority adoption, branch the exact product lock into
+placement-specific adapter configs and JNI/process edges, then converge both on
+one Runtime Host review/application node. Compare applied, unknown, and
+unleased host receipts as parity edges; graph local Java acceptance rules,
+authority-label substitution, mode mismatch, and command-registry drift only as
+rejection edges.
+
 Treat `AGENTS.md`, `SKILL.md`, README, and router docs as graphable instruction
 surfaces. Module-layout or repo-routing changes must include their
 synchronization records; keep detailed scan recipes outside the entrypoints.

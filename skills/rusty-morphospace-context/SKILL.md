@@ -150,6 +150,13 @@ one standalone or embedded mode. Rusty Quest may only project the accepted
 permission enum into an Android manifest. It must reject stale, expanded, or
 union locks rather than inventing packaging authority.
 
+Standalone and embedded broker adoption now routes through
+`rusty-manifold-broker-adapter`; mode changes placement and adapter role only,
+not review/application behavior. Quest product paths use
+`rusty-quest-broker-authority` and thin JNI classes that preserve the Manifold
+receipt, next snapshot, and `module.runtime.host` decision owner. Java must not
+carry command, lease, revision, replay, or rejection policy.
+
 When repo routing, module placement, activation, validation, or public/private
 rules change, synchronize this router and the nearest repo instructions in the
 same iteration unit. Keep detailed recipes in linked docs.
