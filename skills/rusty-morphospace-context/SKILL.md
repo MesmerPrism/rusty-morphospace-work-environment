@@ -210,3 +210,11 @@ or plans by default and requires `-Execute` for workspace mutation. A local
 repository map cannot expand project/unit scope. The CLI never owns Git push,
 force-push, checkout/reset/stash, validation execution, or device mutation;
 required device units need explicit serials before validation begins.
+
+At release-candidate checkpoints, run every owner repo's full gate before
+device work, preserve interrupted/failed summaries, rerun a touched repo after
+any reliability fix, and reduce only structured passing evidence. Client
+rebinds use fresh request namespaces at the current authority revision;
+provider death requires an explicit fresh-epoch rebuild. Require explicit
+serials, inactive route/package cleanup, zero bounded fatals, and private raw
+evidence.

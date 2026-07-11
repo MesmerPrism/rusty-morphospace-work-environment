@@ -109,6 +109,12 @@ authenticated direct-lane edges; add rejection edges for replay, stale state,
 split brain, disconnection, revoked resurrection, and advisory-media
 substitution. Attach live-device evidence only to live peer nodes.
 
+For a release-candidate graph, include owner full checks, failed and passing
+matrix summaries, workflow recovery, client rebind, provider fresh-epoch
+rebuild, route cleanup, N-peer damage edges, private receipt references, and
+instruction updates. Preserve failed-attempt nodes, and rerun/reconnect the
+touched repo's full-check node after any source fix.
+
 For generic media sessions, graph the accepted Manifold descriptor to the
 platform runtime, then source → processor → route provider → sink, with codec
 and socket authority as separate nodes. Include receiver-first transitions and

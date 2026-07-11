@@ -84,6 +84,12 @@ In the public Meta Quest workflow repo:
   pair as a direct candidate, replay/split-brain/advisory-media rejection,
   expiry/revocation, zero fatals, stable state, and package cleanup. Explicitly
   clear and record any Guardian launch blocker before rerun.
+- For admission death/recovery, namespace requests per client process, bind a
+  same-authority rebind to the current revision, and explicitly restart the
+  broker into a fresh epoch after provider `force-stop`. If 6DoF launch is
+  unavailable, use dedicated 2D admission clients rather than bypassing
+  Guardian. Wait for the signature grant, retain failed attempts, require zero
+  bounded fatals, and uninstall all test packages on both explicit serials.
 
 ## Install And Launch Shape
 

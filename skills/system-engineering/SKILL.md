@@ -154,6 +154,14 @@ coordinator disagreement is split brain. Advisory edges may connect the
 low-rate graph but cannot become direct/media authority without independent
 authentication.
 
+Release reliability separates workflow interruption, repository-state damage,
+client death/rebind, and provider death. A client relaunch gets a fresh request
+namespace and the current authority revision; provider death requires an
+explicit fresh-epoch rebuild. Preserve failed attempts, rerun the touched
+owner's full check after fixes, recheck replay/revocation/identity gates, and
+require route inactivity, package cleanup, zero bounded fatals, and named
+remaining limitations.
+
 For direct networking, separate topology formation, platform network
 observation, socket ownership, protocol exchange, and cleanup into provider
 receipts. Platform absence is evidence, not permission to fabricate
