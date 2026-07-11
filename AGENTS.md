@@ -86,6 +86,11 @@ private evidence, or machine paths back into this repository.
   separate from platform lifecycle. Sources, processors, routes, codec/socket
   providers, and sinks stay explicit; compatibility adapters cannot export
   application defaults or permissions into reusable modules.
+- Multi-app broker SDKs share only accepted contract families and the minimum
+  platform permission. Every app keeps a distinct OS/package identity, client
+  id, exact feature lock, marker namespace, grant, and app-local capability;
+  pair-level validation must reject ambient unions and cross-app defaults,
+  properties, markers, or authority-reset behavior.
 - At most one iteration unit is active or validating in a project workspace.
 - A downstream adoption unit must be behavior-neutral unless its scope says
   otherwise: select the baseline shell, list optional families disabled,

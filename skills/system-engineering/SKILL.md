@@ -130,6 +130,15 @@ consume one-time request ids, and revision/audit issue, use, revoke, and expiry.
 Test identity substitution, capability escalation, token collision, replay,
 staleness, expiry, and post-revocation use; a transport ACK is never admission.
 
+For a shared SDK used by multiple applications, validate the pair as well as
+each client. Share only versioned contract families and the minimum transport
+permission; keep OS/package identity, client id, feature lock, marker, grant,
+and app-specific capability distinct. Reject ambient unions, duplicated
+markers, copied defaults/properties, non-canonical capability sets, and
+initialization that resets live authority. Device proof should exercise both
+consumers against one authority and verify identity, revision continuity,
+release paths, zero fatals, and cleanup.
+
 For direct networking, separate topology formation, platform network
 observation, socket ownership, protocol exchange, and cleanup into provider
 receipts. Platform absence is evidence, not permission to fabricate

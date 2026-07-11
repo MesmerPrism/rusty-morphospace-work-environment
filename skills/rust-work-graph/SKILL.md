@@ -127,6 +127,14 @@ signer, identity substitution, capability escalation, random-token collision,
 replay, stale revision, expiry, and revoked-token reuse as distinct rejection
 edges; keep WebSocket transport acknowledgements outside admission authority.
 
+For multi-app consumers, keep separate package/client/feature-lock/marker/
+grant/sink clusters, converging only at the shared SDK and accepted peer/media
+contract nodes. Add parity edges for shared contracts and rejection edges for
+identity reuse, ambient union, cross-markers, copied defaults/properties,
+unsorted capabilities, authority reset on rebind, and incomplete release.
+Attach distinct app ids and per-client lifecycle/cleanup evidence to the
+individual clusters rather than collapsing them into one broad client.
+
 For direct-network graphs, keep topology providers, platform network
 observation, socket providers, exchange protocols, and cleanup receipts as
 distinct nodes. Model any harness-to-product dependency as a pressure or

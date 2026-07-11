@@ -60,6 +60,13 @@ In the public Meta Quest workflow repo:
   unauthorized `signature-permission` denial, zero package fatals, and
   force-stop plus uninstall cleanup. Raw device evidence and generated keys
   stay private; Manifold remains grant/token/replay/revocation authority.
+- For two independent product-app consumers, build the broker and both apps
+  with one signing identity, then run the repo's multi-app suite with exactly
+  two explicit serials. Require distinct Android app ids, client ids, feature
+  locks, marker namespaces, grants, and app-local capabilities while both apps
+  use only the accepted peer/media contracts. Reject cross-markers, authority
+  revision reset on rebind, default/property bleed, fatals, incomplete generic
+  evidence folding, or incomplete force-stop/uninstall cleanup.
 - For product Wi-Fi Direct, require two explicit serials, temporary
   credentialed topology, honest Android `Network` availability, Rust-owned
   explicit `p2p0` bind and bounded non-media exchange, inactive cleanup, zero

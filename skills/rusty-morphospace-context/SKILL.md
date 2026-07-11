@@ -164,6 +164,15 @@ opaque tokens, capability-use replay, expiry, revocation, revisions, and audit.
 Do not treat a WebSocket acknowledgement, Java allowlist, or shared secret as
 product authorization.
 
+Real product apps consume admission through a policy-free shared client SDK.
+Each keeps a distinct package/client identity, exact feature lock, marker
+namespace, grant, and app-local capability while converging only on accepted
+Manifold peer/media contracts. Keep capabilities canonical and sorted, keep
+app properties/defaults out of the SDK, and preserve live authority revision
+across service rebinds. Multi-app device proof requires distinct app ids, both
+token lifecycles, bleed checks, generic media evidence folding, zero fatals,
+and complete package cleanup.
+
 Reusable product Wi-Fi Direct must not depend on a connectivity-lab harness.
 Keep temporary group topology, platform `Network` observation, Rust-owned
 socket bind/exchange, and cleanup as separate receipts. If a Quest exposes a
