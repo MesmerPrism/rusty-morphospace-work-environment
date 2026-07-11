@@ -67,6 +67,13 @@ In the public Meta Quest workflow repo:
   use only the accepted peer/media contracts. Reject cross-markers, authority
   revision reset on rebind, default/property bleed, fatals, incomplete generic
   evidence folding, or incomplete force-stop/uninstall cleanup.
+- Generic media source/build conformance is not a headset gate. Full media
+  broker builds require the exact generated media-session binding. For the
+  two-Quest lifecycle, command acceptance remains
+  `platform_effect_completed=false` until each app's exact lock/lease consumes
+  a prepared action, seven matching owner completions apply in Rust, and fresh
+  hash/epoch/bytes/frames/render, death/recovery, no-bleed, fatal, and cleanup
+  evidence passes on both explicit serials.
 - For product Wi-Fi Direct, require two explicit serials, temporary
   credentialed topology, honest Android `Network` availability, Rust-owned
   explicit `p2p0` bind and bounded non-media exchange, inactive cleanup, zero

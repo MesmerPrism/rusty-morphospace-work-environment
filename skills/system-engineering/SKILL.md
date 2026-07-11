@@ -130,10 +130,15 @@ peer roles, and topology contract. Rejection leaves state unchanged;
 revocation advances it and invalidates older receipts.
 
 For media runtimes, separate accepted session/stream references from platform
-adoption. Compose source, processor, route, codec, socket provider, and sink as
-explicit owners. Require receiver-first revisioned transitions and sink-
-observed frames; compatibility adapters preserve behavior without exporting
-legacy defaults or permissions.
+adoption. Compose source, processor, route, socket provider, codec, sink, and
+terminal cleanup as explicit owners. Require receiver-first revisioned
+transitions and sink-observed frames; compatibility adapters preserve behavior
+without exporting legacy defaults or permissions.
+
+Keep command acceptance, prepared platform action, every required owner
+completion, Rust application, and independently observed effect as distinct
+facts. A successful dispatch remains incomplete until exact current-epoch
+owner receipts, including terminal cleanup where selected, have applied.
 
 A runtime authority host should separate review from application, bind every
 dispatch receipt to the request and reviewed revision, advance accepted state

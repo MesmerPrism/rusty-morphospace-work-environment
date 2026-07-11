@@ -210,9 +210,19 @@ authenticates a direct route or carries media.
 
 Generic media sessions use Manifold for accepted low-rate session/stream
 references and Quest for receiver-first platform adoption. Keep source,
-processor, route provider, sink, codec, and socket authorities explicit.
+processor, route provider, socket, codec, sink, and terminal cleanup
+authorities explicit. A packaged product binds exact canonical Manifold and
+Quest artifacts and stays incomplete until all seven current-epoch owner
+completions apply in Rust. Command acceptance or Java/JNI dispatch remains
+`platform_effect_completed=false` and is not platform adoption.
 Camera2 and display-composite conform independently; remote-camera remains a
 compatibility adapter rather than a source of generic defaults.
+
+Each real product app keeps an exact media client lock and app-local lease.
+Native and Spatial lifecycle proof covers action, owner completions,
+application, subscription, render, stop/release, client/provider death,
+fresh epoch, and pair-level no-bleed; admission-probe or remote-camera
+compatibility identities cannot substitute for that proof.
 
 When repo routing, module placement, activation, validation, or public/private
 rules change, synchronize this router and the nearest repo instructions in the
