@@ -86,6 +86,11 @@ DAG phase nodes, registry/profile validator dispatch, all compatibility
 artifact references, and damaged authority edges as separate clusters. Report
 retained serial v1 tools as compatibility leaves, not new DAG stages.
 
+For Manifold peer authority, graph identity/status proposals into one review
+node, then branch to accepted state plus application receipt or rejection plus
+unchanged revision. Include trust, replay, staleness, role escalation,
+high-rate, and command-field fixtures as rejection edges.
+
 Treat `AGENTS.md`, `SKILL.md`, README, and router docs as graphable instruction
 surfaces. Module-layout or repo-routing changes must include their
 synchronization records; keep detailed scan recipes outside the entrypoints.

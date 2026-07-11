@@ -87,6 +87,11 @@ registry-driven validators. Preserve compatibility artifacts, keep the DAG
 non-executing, and assign approval/submission/decision/receipt authority to
 their real owners instead of the workflow index.
 
+For peer status, separate proposal, review decision, accepted state, rejection,
+audit, and application receipt. Bind trust and replay checks to the review,
+advance the authority revision only during accepted application, and reject
+high-rate/media planes or advisory command fields before state mutation.
+
 Authority, module-layout, activation, and validation changes also have
 instruction impact. Route them through
 `docs/INSTRUCTION_SYNCHRONIZATION.md`; update concise routers and place long

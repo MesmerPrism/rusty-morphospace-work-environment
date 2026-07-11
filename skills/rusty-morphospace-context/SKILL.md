@@ -133,6 +133,11 @@ source/privacy/approval/submission/decision/receipt planning DAG. The DAG
 indexes retained v1 artifacts; it is not an execution engine. Manifold remains
 decision, receipt, audit, and accepted-state authority.
 
+The landed Manifold peer authority lives in `rusty-manifold-peer`: adapters
+propose stable identity and bounded low-rate status, while Manifold alone
+reviews trust/revision/replay/freshness, advances accepted peer state, and
+emits decisions, rejections, audit events, and application receipts.
+
 When repo routing, module placement, activation, validation, or public/private
 rules change, synchronize this router and the nearest repo instructions in the
 same iteration unit. Keep detailed recipes in linked docs.
