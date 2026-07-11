@@ -96,6 +96,12 @@ review, dispatch receipt, application receipt, explicit expiry, restart, replay
 set, and audit chain as distinct authority nodes. Treat sockets, platform
 adapters, product locks, and plugins as absent downstream nodes.
 
+For broker products, graph product spec to feature descriptors to the exact
+Manifold lock, then to the Quest Android manifest projection. Connect runtime
+mode, commands, streams, modules, and permissions as one closure; represent
+stale fingerprints, expanded fields, permission unions, and invalid mode count
+as damaged rejection edges rather than alternative product paths.
+
 Treat `AGENTS.md`, `SKILL.md`, README, and router docs as graphable instruction
 surfaces. Module-layout or repo-routing changes must include their
 synchronization records; keep detailed scan recipes outside the entrypoints.

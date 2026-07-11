@@ -143,6 +143,13 @@ registered-command review/application, accepted leases, explicit expiry,
 replay guards, restart, and audit. Standalone or embedded brokers add policy
 and adapters later; they must not fork the host's accepted state.
 
+Broker product selection now resolves in Manifold through an immutable exact
+lock. The base product is camera/P2P/BLE-free; camera media, direct Wi-Fi P2P,
+and BLE rendezvous remain independent opt-ins, and every product selects exactly
+one standalone or embedded mode. Rusty Quest may only project the accepted
+permission enum into an Android manifest. It must reject stale, expanded, or
+union locks rather than inventing packaging authority.
+
 When repo routing, module placement, activation, validation, or public/private
 rules change, synchronize this router and the nearest repo instructions in the
 same iteration unit. Keep detailed recipes in linked docs.

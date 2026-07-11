@@ -97,6 +97,13 @@ dispatch receipt to the request and reviewed revision, advance accepted state
 exactly once, and persist replay/audit lineage across restart. Expiry is an
 explicit revisioned application, not a hidden timer mutation.
 
+Resolve deployable products from a declared spec into an immutable exact lock:
+runtime mode, features, commands, streams, modules, and permissions must close
+together. A downstream packager may project that closure but must not union in
+ambient capabilities. Reject stale fingerprints, expanded fields, duplicate
+features, and zero-or-two runtime modes; keep sensitive features as separate
+opt-ins rather than broadening the base product.
+
 Authority, module-layout, activation, and validation changes also have
 instruction impact. Route them through
 `docs/INSTRUCTION_SYNCHRONIZATION.md`; update concise routers and place long
