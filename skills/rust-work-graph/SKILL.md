@@ -130,6 +130,10 @@ filesystem scans may skip build/dependency trees but must still retain
 `src/bin`. Reconcile release counts to `git ls-tree`/`git ls-files` and make
 remaining filters explicit.
 
+Every release graph carries an instruction-impact receipt that records whether
+the nearest AGENTS/README/router and routed skills were updated or reviewed
+without change; inferred graph edges never substitute for that receipt.
+
 For generic media sessions, graph the accepted Manifold descriptor to the
 platform runtime, then source → processor → route provider → sink, with codec
 and socket authority as separate nodes. Include receiver-first transitions and
