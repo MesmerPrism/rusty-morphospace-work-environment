@@ -92,6 +92,11 @@ audit, and application receipt. Bind trust and replay checks to the review,
 advance the authority revision only during accepted application, and reject
 high-rate/media planes or advisory command fields before state mutation.
 
+A runtime authority host should separate review from application, bind every
+dispatch receipt to the request and reviewed revision, advance accepted state
+exactly once, and persist replay/audit lineage across restart. Expiry is an
+explicit revisioned application, not a hidden timer mutation.
+
 Authority, module-layout, activation, and validation changes also have
 instruction impact. Route them through
 `docs/INSTRUCTION_SYNCHRONIZATION.md`; update concise routers and place long

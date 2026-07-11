@@ -91,6 +91,11 @@ node, then branch to accepted state plus application receipt or rejection plus
 unchanged revision. Include trust, replay, staleness, role escalation,
 high-rate, and command-field fixtures as rejection edges.
 
+For the Manifold Runtime Host, graph snapshot, command registry, lease set,
+review, dispatch receipt, application receipt, explicit expiry, restart, replay
+set, and audit chain as distinct authority nodes. Treat sockets, platform
+adapters, product locks, and plugins as absent downstream nodes.
+
 Treat `AGENTS.md`, `SKILL.md`, README, and router docs as graphable instruction
 surfaces. Module-layout or repo-routing changes must include their
 synchronization records; keep detailed scan recipes outside the entrypoints.

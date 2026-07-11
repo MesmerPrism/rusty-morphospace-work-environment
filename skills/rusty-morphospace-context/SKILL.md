@@ -138,6 +138,11 @@ propose stable identity and bounded low-rate status, while Manifold alone
 reviews trust/revision/replay/freshness, advances accepted peer state, and
 emits decisions, rejections, audit events, and application receipts.
 
+The source-only `rusty-manifold-runtime-host` owns durable authority snapshots,
+registered-command review/application, accepted leases, explicit expiry,
+replay guards, restart, and audit. Standalone or embedded brokers add policy
+and adapters later; they must not fork the host's accepted state.
+
 When repo routing, module placement, activation, validation, or public/private
 rules change, synchronize this router and the nearest repo instructions in the
 same iteration unit. Keep detailed recipes in linked docs.
