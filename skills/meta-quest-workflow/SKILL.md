@@ -1,3 +1,8 @@
+---
+name: meta-quest-workflow
+description: 'Use for connected Meta Quest work: APK install, launch, and validation; serial-scoped ADB; Meta VR CLI or hzdb checks; screenshots, logcat, and Perfetto; Wi-Fi ADB; Rusty Morphospace headset smoke tests; and Quest toolchain routing.'
+---
+
 # Meta Quest Workflow
 
 Use this skill before touching a Quest headset, ADB, APK install/launch,
@@ -43,6 +48,11 @@ In the public Meta Quest workflow repo:
   with `rusty-quest/tools/Test-QuestParticleAdapterEvidence.ps1`, require
   high-rate JSON false and backend payload absent, then stop both packages and
   clear only run-owned adapter profile state.
+- For shared hand-adapter promotion, use the native hand-lab app build on one
+  serial and the Spatial live-hand bridge smoke on the other. Require accepted
+  `channel=hand-adapter` markers, zero package fatals, and evidence folded
+  through `rusty-quest/tools/Test-QuestHandAdapterEvidence.ps1`; then stop both
+  packages and restore the run-owned native adapter property to `false`.
 
 ## Install And Launch Shape
 

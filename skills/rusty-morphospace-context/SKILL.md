@@ -1,3 +1,8 @@
+---
+name: rusty-morphospace-context
+description: 'Use for Rusty Morphospace repo-family work: repo routing, public/private boundaries, modular extraction, cross-repo contracts, clean Matter/Manifold/Optics/Lattice/GUI/Quest/Hostess lanes, public Rusty XR compatibility, native Quest apps, legacy Makepad lanes, private proving apps, Windows operator tools, and Android companions.'
+---
+
 # Rusty Morphospace Context
 
 Use this skill for Rusty Morphospace repo-family work: deciding which repo lane
@@ -115,6 +120,12 @@ The hand substrate routes tracked capability, joint relations, reference
 space, coordinate basis, confidence, and staleness through Lattice; bind rigs
 and deterministic CPU skinning through Matter; and provider/rig/hand-preserving
 visual profiles through Optics. Platform adapters stay outside all three cores.
+
+Quest adoption routes through `crates/rusty-quest-hand-adapter`. The native
+OpenXR hand lab enables it only through its explicit app build, while Spatial
+selects it only when the live-hand bridge starts. The consumers share
+conversion and parity contracts, not provider acquisition, renderer resources,
+or application policy.
 
 When repo routing, module placement, activation, validation, or public/private
 rules change, synchronize this router and the nearest repo instructions in the

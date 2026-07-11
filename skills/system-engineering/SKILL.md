@@ -1,3 +1,8 @@
+---
+name: system-engineering
+description: 'Use for architecture and system-engineering work across local repos: authority boundaries, contracts, manifests, modules and adapters, data/control/media planes, observability, validation scorecards, workflow design, durable project memory, and maintainable handoff surfaces.'
+---
+
 # System Engineering
 
 Use this skill for architecture and system-engineering work across Rusty
@@ -71,6 +76,10 @@ Lattice validates capability-to-frame ownership, Matter rejects provider,
 handedness, reference-space, joint-count, weight, and rig mismatches before CPU
 skinning, and Optics preserves provider/frame/rig/hand identity without backend
 fields. Provider substitution must fail closed.
+
+A Quest hand adapter must map provider joints to Matter target joints exactly
+once, reject duplicate or incomplete targets, and compare its prepared rows to
+the Matter CPU oracle. App consumers stay thin and default inert.
 
 Authority, module-layout, activation, and validation changes also have
 instruction impact. Route them through

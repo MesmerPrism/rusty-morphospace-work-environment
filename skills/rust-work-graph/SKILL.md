@@ -1,3 +1,8 @@
+---
+name: rust-work-graph
+description: 'Use for graph-based coding workspace analysis: repo inventories, source-root and framework maps, AGENTS.md and skill instruction audits, pattern registries, architecture/layer/domain graphs, dependency pressure, diff-impact planning, and graph-tool evaluation.'
+---
+
 # Rust Work Graph
 
 Use this skill for graph-based coding workspace analysis: repo inventories,
@@ -70,6 +75,11 @@ For the hand substrate, graph Lattice capability/frame/mapping, Matter
 rig/joint-frame/CPU-skinning conformance, and Optics identity-preserving visual
 profiles as three owner clusters. Include provider-mixup, basis-mismatch,
 invalid-rig, and backend-leak fixtures as rejection edges.
+
+For Quest adoption, connect the hand-adapter crate, native and Spatial
+consumers, native hand-lab app build, property manifest, conformance and damage
+fixtures, and device evidence reducer. Do not absorb neighboring OpenXR,
+Spatial, or renderer modules into adapter ownership.
 
 Treat `AGENTS.md`, `SKILL.md`, README, and router docs as graphable instruction
 surfaces. Module-layout or repo-routing changes must include their
