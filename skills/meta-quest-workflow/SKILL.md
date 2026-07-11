@@ -53,6 +53,13 @@ In the public Meta Quest workflow repo:
   `channel=hand-adapter` markers, zero package fatals, and evidence folded
   through `rusty-quest/tools/Test-QuestHandAdapterEvidence.ps1`; then stop both
   packages and restore the run-owned native adapter property to `false`.
+- For signature-scoped cross-app broker admission, build the broker first so
+  its certificate fingerprint and arm64 JNI library enter the product, then
+  build one same-keystore client and one separately signed client. On every
+  serial require the authorized issue/use/replay/revoke/post-revoke marker,
+  unauthorized `signature-permission` denial, zero package fatals, and
+  force-stop plus uninstall cleanup. Raw device evidence and generated keys
+  stay private; Manifold remains grant/token/replay/revocation authority.
 
 ## Install And Launch Shape
 

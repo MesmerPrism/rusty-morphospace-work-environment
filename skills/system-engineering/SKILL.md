@@ -111,6 +111,13 @@ or JNI layer as an adapter. A bridge may validate schema and authority labels,
 but acceptance, lease, revision, replay, rejection, and next-state rules stay
 in the shared authority owner.
 
+For cross-process admission, separate platform identity evidence from the grant
+decision. Bind an OS-derived subject and signing identity to explicit
+capabilities, issue high-entropy short-lived opaque tokens from the authority,
+consume one-time request ids, and revision/audit issue, use, revoke, and expiry.
+Test identity substitution, capability escalation, token collision, replay,
+staleness, expiry, and post-revocation use; a transport ACK is never admission.
+
 Authority, module-layout, activation, and validation changes also have
 instruction impact. Route them through
 `docs/INSTRUCTION_SYNCHRONIZATION.md`; update concise routers and place long

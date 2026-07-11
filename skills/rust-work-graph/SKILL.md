@@ -109,6 +109,13 @@ unleased host receipts as parity edges; graph local Java acceptance rules,
 authority-label substitution, mode mismatch, and command-registry drift only as
 rejection edges.
 
+For cross-app admission, graph Binder sending UID to package/signing-certificate
+evidence, then to the Manifold client grant, token issue, one-time capability
+use, revocation/expiry, revision, receipt, and audit nodes. Model different
+signer, identity substitution, capability escalation, random-token collision,
+replay, stale revision, expiry, and revoked-token reuse as distinct rejection
+edges; keep WebSocket transport acknowledgements outside admission authority.
+
 Treat `AGENTS.md`, `SKILL.md`, README, and router docs as graphable instruction
 surfaces. Module-layout or repo-routing changes must include their
 synchronization records; keep detailed scan recipes outside the entrypoints.

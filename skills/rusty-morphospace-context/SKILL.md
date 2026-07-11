@@ -157,6 +157,13 @@ not review/application behavior. Quest product paths use
 receipt, next snapshot, and `module.runtime.host` decision owner. Java must not
 carry command, lease, revision, replay, or rejection policy.
 
+Cross-app broker admission uses Quest signature-scoped Binder caller evidence
+over `rusty-manifold-admission`. Android owns UID/package/signing-certificate
+projection and SecureRandom entropy; Manifold owns explicit grants, short-lived
+opaque tokens, capability-use replay, expiry, revocation, revisions, and audit.
+Do not treat a WebSocket acknowledgement, Java allowlist, or shared secret as
+product authorization.
+
 When repo routing, module placement, activation, validation, or public/private
 rules change, synchronize this router and the nearest repo instructions in the
 same iteration unit. Keep detailed recipes in linked docs.
