@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/legacy-event-prefix-anchor.schema.json",
+  "title": "Immutable legacy event-prefix anchor",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "anchor_id", "created_at", "project_id", "unit_id", "run_id", "event_log_path", "byte_length", "line_count", "prefix_sha256", "last_event_id", "last_sequence", "max_timestamp_utc", "timestamp_order", "timestamp_anomaly_projection", "substitution_envelope"],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.workflow.legacy_event_prefix_anchor.v1" },
+    "anchor_id": { "$ref": "#/$defs/id" }, "created_at": { "$ref": "#/$defs/utc" },
+    "project_id": { "$ref": "#/$defs/id" }, "unit_id": { "$ref": "#/$defs/id" }, "run_id": { "$ref": "#/$defs/id" },
+    "event_log_path": { "const": "iteration-events.jsonl" }, "byte_length": { "type": "integer", "minimum": 1 },
+    "line_count": { "type": "integer", "minimum": 1 }, "prefix_sha256": { "$ref": "#/$defs/hash" },
+    "last_event_id": { "$ref": "#/$defs/id" }, "last_sequence": { "type": "integer", "minimum": 1 },
+    "max_timestamp_utc": { "$ref": "#/$defs/utc" }, "timestamp_order": { "enum": ["monotonic", "projected-legacy-anomalies"] },
+    "timestamp_anomaly_projection": { "oneOf": [{ "$ref": "#/$defs/reference" }, { "type": "null" }] },
+    "substitution_envelope": { "oneOf": [{ "$ref": "#/$defs/reference" }, { "type": "null" }] }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" }, "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "utc": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{7}Z$" },
+    "reference": { "type": "object", "additionalProperties": false, "required": ["role", "path", "schema", "sha256"], "properties": { "role": { "$ref": "#/$defs/id" }, "path": { "type": "string", "minLength": 1 }, "schema": { "type": "string", "minLength": 3 }, "sha256": { "$ref": "#/$defs/hash" } } }
+  }
+}

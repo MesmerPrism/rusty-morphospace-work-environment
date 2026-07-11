@@ -9,7 +9,7 @@
     "schema": { "const": "rusty.morphospace.workflow.work_unit_automation_receipt.v1" },
     "project_id": { "$ref": "#/$defs/id" },
     "unit_id": { "$ref": "#/$defs/id" },
-    "action": { "enum": ["Inspect", "Claim", "Resume", "BeginValidation", "RecordValidation", "Accept", "PreparePush", "Recover"] },
+    "action": { "enum": ["Inspect", "Claim", "Resume", "Ready", "BeginValidation", "RecordValidation", "Accept", "PreparePush", "Recover"] },
     "timestamp": { "type": "string", "format": "date-time" },
     "executed": { "type": "boolean" },
     "transition": { "type": "string", "minLength": 1 },

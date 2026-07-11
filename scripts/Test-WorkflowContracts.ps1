@@ -11,6 +11,7 @@ if (-not $RepoRoot) {
 
 $RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
 $script:Failures = New-Object System.Collections.Generic.List[string]
+Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceProtocolCommon.psm1') -Force
 
 function Add-Failure {
     param([string]$Message)
@@ -166,12 +167,30 @@ function Read-EventLog {
             continue
         }
         try {
-            $events.Add(($line | ConvertFrom-Json)) | Out-Null
+            $bytes=(New-Object System.Text.UTF8Encoding($false,$true)).GetBytes([string]$line)
+            $document=ConvertFrom-MorphospaceProtocolJsonBytes -Bytes $bytes -Context "$Context line $lineNumber"
+            $document.PSObject.Properties.Add([Management.Automation.PSNoteProperty]::new('__line_sha256',(Get-MorphospaceSha256Bytes $bytes)))
+            $events.Add($document) | Out-Null
         } catch {
             Add-Failure -Message "$Context line $lineNumber is not valid JSON: $($_.Exception.Message)"
         }
     }
     return $events.ToArray()
+}
+
+function Test-V2EventInstance {
+    param([object]$Event,[string]$Context)
+    $required=@('schema','event_id','sequence','timestamp','run_id','session_id','project_id','unit_id','event_type','summary','previous_event_sha256','receipts');$actual=@($Event.PSObject.Properties.Name|Where-Object{$_-ne'__line_sha256'})
+    foreach($name in $required){Assert-Contract ($actual-ccontains$name) "$Context v2 event is missing '$name'."};foreach($name in $actual){Assert-Contract ($required-ccontains$name) "$Context v2 event has unexpected '$name'."}
+    foreach($field in @('event_id','run_id','project_id','unit_id')){Assert-Contract ([string]$Event.$field-match'^[a-z0-9][a-z0-9-]{1,95}$') "$Context v2 '$field' is invalid."}
+    Assert-Contract ($null-eq$Event.session_id-or[string]$Event.session_id-match'^[a-z0-9][a-z0-9-]{7,95}$') "$Context v2 session_id is invalid."
+    Assert-Contract ([string]$Event.timestamp-match'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{7}Z$') "$Context v2 timestamp is not strict UTC."
+    Assert-Contract (@('state-transition','decision','extraction','validation','commit','push','promotion','blocker')-ccontains[string]$Event.event_type) "$Context v2 event_type is invalid."
+    Assert-Contract (-not[string]::IsNullOrWhiteSpace([string]$Event.summary)-and([string]$Event.summary).Length-le4096) "$Context v2 summary is invalid."
+    Assert-Contract ([string]$Event.previous_event_sha256-match'^[0-9a-f]{64}$') "$Context v2 previous hash is invalid."
+    Assert-Contract (@($Event.receipts).Count-le64) "$Context v2 has too many receipts."
+    $paths=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach($reference in @($Event.receipts)){$names=@($reference.PSObject.Properties.Name);Assert-Contract ($names.Count-eq4-and$names-ccontains'role'-and$names-ccontains'path'-and$names-ccontains'schema'-and$names-ccontains'sha256') "$Context v2 receipt property set is invalid.";Assert-Contract ([string]$reference.role-match'^[a-z0-9][a-z0-9-]{1,95}$') "$Context v2 receipt role is invalid.";Assert-Contract ([string]$reference.schema-match'^[a-z0-9][a-z0-9_.-]{2,191}$') "$Context v2 receipt schema is invalid.";Assert-Contract ([string]$reference.sha256-match'^[0-9a-f]{64}$') "$Context v2 receipt hash is invalid.";Assert-Contract ((Test-Text $reference.path)-and$paths.Add(([string]$reference.path).Replace('\','/'))) "$Context v2 receipt path is empty or duplicated."}
 }
 
 function New-Bundle {
@@ -550,13 +569,17 @@ function Test-ProjectBundle {
     Test-UniqueProperty -Items $events -Property "event_id" -Context "$Context iteration events"
     $eventMap = @{}
     $previousSequence = 0
+    $previousEvent = $null
     foreach ($event in $events) {
         $eventId = [string]$event.event_id
         if (Test-Text $eventId) { $eventMap[$eventId] = $event }
-        Assert-Contract ($event.schema -eq "rusty.morphospace.workflow.iteration_event.v1") "$Context event '$eventId' has the wrong schema ID."
+        $isEventV2=[string]$event.schema-eq'rusty.morphospace.workflow.iteration_event.v2'
+        Assert-Contract ($isEventV2-or[string]$event.schema-eq'rusty.morphospace.workflow.iteration_event.v1') "$Context event '$eventId' has the wrong schema ID."
+        if($isEventV2){Test-V2EventInstance -Event $event -Context "$Context event '$eventId'";Assert-Contract ([int]$event.sequence-eq$previousSequence+1) "$Context v2 event '$eventId' sequence must extend the exact prior sequence.";if($null-ne$previousEvent-and[string]$previousEvent.schema-eq'rusty.morphospace.workflow.iteration_event.v2'){Assert-Contract ([string]$event.previous_event_sha256-ceq[string]$previousEvent.__line_sha256) "$Context v2 event '$eventId' previous hash does not bind the prior v2 line."}}
         Assert-Contract ($event.project_id -eq $spec.project_id) "$Context event '$eventId' project_id does not match."
         Assert-Contract ([int]$event.sequence -gt $previousSequence) "$Context event sequences must be strictly increasing."
         $previousSequence = [int]$event.sequence
+        $previousEvent = $event
         if ($null -ne $event.unit_id) {
             Assert-Contract ($unitMap.ContainsKey([string]$event.unit_id)) "$Context event '$eventId' references missing unit '$($event.unit_id)'."
         }
@@ -750,18 +773,25 @@ $requiredSchemaNames = @(
     "feature-descriptor.schema.json",
     "feature-lock.schema.json",
     "feature-lock-v2.schema.json",
+    "event-transaction-completion.schema.json",
+    "event-transaction-intent.schema.json",
     "inflight-adoption-receipt.schema.json",
     "interruption-receipt.schema.json",
     "iteration-event.schema.json",
+    "iteration-event-v2.schema.json",
     "iteration-unit.schema.json",
     "module-candidate.schema.json",
+    "pending-quarantine-authorization.schema.json",
+    "pending-quarantine-completion.schema.json",
     "project-spec.schema.json",
     "project-spec-v2.schema.json",
     "promotion-review.schema.json",
     "push-bundle-plan.schema.json",
     "repository-map.schema.json",
+    "legacy-event-prefix-anchor.schema.json",
     "revision-set.schema.json",
     "validation-receipt.schema.json",
+    "timestamp-anomaly-projection.schema.json",
     "work-unit-automation-receipt.schema.json",
     "workspace-state.schema.json",
     "workspace-state-v2.schema.json"

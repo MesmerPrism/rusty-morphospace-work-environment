@@ -18,7 +18,12 @@
         "properties": {
           "repo_id": { "$ref": "#/$defs/id" },
           "path": { "type": "string", "minLength": 1 },
-          "role": { "enum": ["source", "planning"] }
+          "role": { "enum": ["source", "planning"] },
+          "aliases": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "$ref": "#/$defs/id" }
+          }
         }
       }
     }
