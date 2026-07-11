@@ -387,7 +387,11 @@ function Get-MorphospaceChangedPaths {
     )
 
     $changed = New-Object System.Collections.Generic.List[string]
-    $diff = Get-MorphospaceGitOutput -RepositoryPath $RepositoryPath -Arguments @("diff", "--name-only", $BaseRevision, "--")
+    # Disable checkout line-ending projection for this path-only query. On
+    # Windows, Git otherwise writes CRLF advisory messages to stderr; the
+    # generic command wrapper intentionally captures stderr for diagnostics,
+    # so those advisories could be mistaken for changed paths.
+    $diff = Get-MorphospaceGitOutput -RepositoryPath $RepositoryPath -Arguments @("-c", "core.safecrlf=false", "-c", "core.autocrlf=false", "diff", "--name-only", $BaseRevision, "--")
     foreach ($line in @($diff.lines)) {
         if (-not [string]::IsNullOrWhiteSpace([string]$line)) {
             $changed.Add((ConvertTo-MorphospaceRelativePath -Path ([string]$line))) | Out-Null
