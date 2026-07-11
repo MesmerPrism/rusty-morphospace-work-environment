@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/revision-set.schema.json",
+  "title": "Explicit revisions for push-bundle preparation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "repositories"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schema": { "const": "rusty.morphospace.workflow.revision_set.v1" },
+    "repositories": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["repo_id", "commit"],
+        "properties": {
+          "repo_id": { "$ref": "#/$defs/id" },
+          "commit": { "type": "string", "pattern": "^[0-9a-fA-F]{7,64}$" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,63}$" }
+  }
+}

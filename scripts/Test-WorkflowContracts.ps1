@@ -336,6 +336,18 @@ function Test-ProjectBundle {
         Assert-Contract ($script:IterationStateIds -contains [string]$unit.status) "$Context unit '$($unit.unit_id)' has unknown status '$($unit.status)'."
         Assert-Contract (Test-Text $unit.objective) "$Context unit '$($unit.unit_id)' needs an objective."
 
+        $unitTags = if ($unit.PSObject.Properties.Name -contains "tags") {
+            @($unit.tags | ForEach-Object { [string]$_ })
+        } else {
+            @()
+        }
+        foreach ($tag in $unitTags) {
+            Assert-Contract ($tag -match "^[a-z0-9][a-z0-9-]{1,63}$") "$Context unit '$($unit.unit_id)' has invalid tag '$tag'."
+        }
+        foreach ($tagGroup in @($unitTags | Group-Object)) {
+            Assert-Contract ($tagGroup.Count -eq 1) "$Context unit '$($unit.unit_id)' repeats tag '$($tagGroup.Name)'."
+        }
+
         $changeCategories = @($unit.change_categories | ForEach-Object { [string]$_ })
         Assert-Contract ($changeCategories.Count -gt 0) "$Context unit '$($unit.unit_id)' needs at least one change category."
         foreach ($categoryGroup in @($changeCategories | Group-Object)) {
@@ -619,6 +631,10 @@ $requiredSchemaNames = @(
     "module-candidate.schema.json",
     "project-spec.schema.json",
     "promotion-review.schema.json",
+    "push-bundle-plan.schema.json",
+    "repository-map.schema.json",
+    "revision-set.schema.json",
+    "work-unit-automation-receipt.schema.json",
     "workspace-state.schema.json"
 )
 foreach ($requiredSchemaName in $requiredSchemaNames) {

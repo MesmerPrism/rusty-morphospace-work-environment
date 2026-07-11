@@ -78,13 +78,18 @@ powershell -NoProfile -ExecutionPolicy Bypass `
 - [Feature Activation](docs/FEATURE_ACTIVATION.md) makes absent features inert
   and requires one parameter authority plus effective-runtime receipts.
 - [Autonomous Iteration](docs/AUTONOMOUS_ITERATION.md) defines work-unit scope,
-  compact state, event notes, validation tiers, and larger push checkpoints.
+  compact state, event notes, validation tiers, larger push checkpoints, and
+  the optional fail-closed work-unit automation CLI.
 - [Instruction Synchronization](docs/INSTRUCTION_SYNCHRONIZATION.md) keeps
   skills, planning instructions, touched-repo `AGENTS.md`, and README/router
   docs aligned without duplicating long recipes.
 
 This repository owns the portable protocol. The project adopting it owns its
 live `morphospace/` state and evidence.
+
+The automation CLI inspects or plans by default. `-Execute` is required for a
+workspace-state transition; it still does not run Git push, force-push,
+checkout/reset/stash, validation commands, or live device commands.
 
 The first downstream adoption proof lives in Rusty Quest's public
 `apps/spatial-camera-panel-android/morphospace/` directory. It demonstrates a

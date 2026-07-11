@@ -51,6 +51,13 @@ composition authority, `feature.lock.json` as activation authority, and
 `workspace.state.json` as the compact agent-resume surface. Work only within
 the repository and path scope declared by the current iteration unit.
 
+Use one fail-closed owner for unit state transitions. Inspection and planning
+are non-mutating; execution is explicit. Derive validation and graph scope
+from the unit, keep acceptance separate from a pass receipt, preserve blockers
+through resume/recovery, and report dirty, detached, ahead/behind, or divergent
+Git states without rewriting them. Push preparation records exact source-first,
+planning-last revisions but does not commit, push, or force-push.
+
 For an adopting application, require a behavior-neutral bootstrap: select its
 baseline shell, record optional nearby families as disabled, assert one
 unrelated feature is absent and inert, and create candidate records before

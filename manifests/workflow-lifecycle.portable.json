@@ -58,7 +58,7 @@
     "rollback"
   ],
   "risk_tiers": ["quick", "standard", "deep"],
-  "device_requirements": ["none", "optional", "required"],
+  "device_requirements": ["forbidden", "none", "optional", "required"],
   "push_checkpoints": ["none", "local-only", "integration-batch", "release"],
   "change_categories": [
     "implementation",
@@ -69,6 +69,10 @@
     "device-policy",
     "repo-routing",
     "public-private-boundary",
+    "workflow-automation",
+    "state-machine",
+    "validation-routing",
+    "recovery",
     "documentation-only"
   ],
   "instruction_sync": {
@@ -81,7 +85,11 @@
       "validation",
       "device-policy",
       "repo-routing",
-      "public-private-boundary"
+      "public-private-boundary",
+      "workflow-automation",
+      "state-machine",
+      "validation-routing",
+      "recovery"
     ],
     "required_surface_groups": ["agents", "readme-or-router", "skill"],
     "skill_routing": [
@@ -112,6 +120,22 @@
       {
         "change_category": "public-private-boundary",
         "skill_ids": ["rusty-morphospace-context", "system-engineering"]
+      },
+      {
+        "change_category": "workflow-automation",
+        "skill_ids": ["rusty-morphospace-context", "system-engineering", "rust-work-graph"]
+      },
+      {
+        "change_category": "state-machine",
+        "skill_ids": ["system-engineering"]
+      },
+      {
+        "change_category": "validation-routing",
+        "skill_ids": ["system-engineering"]
+      },
+      {
+        "change_category": "recovery",
+        "skill_ids": ["system-engineering"]
       }
     ],
     "acceptance_invariant": "Triggered units require complete updates to the nearest AGENTS, a README or router document, and every routed skill before acceptance."
@@ -138,6 +162,7 @@
     "Stable modules pass every promotion gate.",
     "Stable modules have an independent consumer or conformance harness.",
     "Iteration units cannot expand project repository or path scope.",
-    "Instruction-triggering units cannot be accepted with incomplete AGENTS, README or router, or relevant skill updates."
+    "Instruction-triggering units cannot be accepted with incomplete AGENTS, README or router, or relevant skill updates.",
+    "Workflow automation inspects or prepares by default, requires explicit execution for state mutation, and never owns Git push or device mutation."
   ]
 }

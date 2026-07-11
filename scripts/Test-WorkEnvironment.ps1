@@ -138,6 +138,13 @@ if ($SelfTest) {
     } catch {
         Add-CheckResult -Name "scaffold:project-workspace" -Status "missing" -Required $true -Detail $_.Exception.Message
     }
+
+    try {
+        & (Join-Path $RepoRoot "scripts\Test-WorkUnitAutomation.ps1")
+        Add-CheckResult -Name "automation:work-unit" -Status "ok" -Detail "Validated transitions, preservation, routing, push preparation, and recovery."
+    } catch {
+        Add-CheckResult -Name "automation:work-unit" -Status "missing" -Required $true -Detail $_.Exception.Message
+    }
 }
 
 Test-CommandAvailable -Name "git" -Required $true
@@ -202,7 +209,7 @@ if ($Strict -and $failedRequired.Count -gt 0) {
 }
 
 if ($SelfTest) {
-    $selfTestFailures = $results | Where-Object { $_.Name -match "^(json|jsonl|powershell|workflow|scaffold):" -and $_.Status -ne "ok" }
+    $selfTestFailures = $results | Where-Object { $_.Name -match "^(json|jsonl|powershell|workflow|scaffold|automation):" -and $_.Status -ne "ok" }
     if ($selfTestFailures.Count -gt 0) {
         Write-Error "Self-test failed."
         exit 1

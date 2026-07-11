@@ -1,0 +1,8 @@
+{
+  "$schema": "../schemas/revision-set.schema.json",
+  "schema": "rusty.morphospace.workflow.revision_set.v1",
+  "repositories": [
+    { "repo_id": "matter-core", "commit": "0123456789abcdef0123456789abcdef01234567" },
+    { "repo_id": "project-shell", "commit": "89abcdef0123456789abcdef0123456789abcdef" }
+  ]
+}

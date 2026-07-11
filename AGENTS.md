@@ -96,6 +96,10 @@ private evidence, or machine paths back into this repository.
   pair-level validation must reject ambient unions and cross-app defaults,
   properties, markers, or authority-reset behavior.
 - At most one iteration unit is active or validating in a project workspace.
+- Optional work-unit automation is fail-closed: inspect/plan by default,
+  require `-Execute` for workspace-state mutation, preserve dirty/divergent
+  repositories, derive graph scope from the unit, and never own Git push,
+  force-push, checkout/reset/stash, validation execution, or device mutation.
 - A downstream adoption unit must be behavior-neutral unless its scope says
   otherwise: select the baseline shell, list optional families disabled,
   assert an unrelated nearby feature is absent/inert, and add candidate records
@@ -116,6 +120,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-PublicBoundar
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkEnvironment.ps1 -SelfTest
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkflowContracts.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\New-ProjectWorkspace.ps1 -SelfTest
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkUnitAutomation.ps1
 git diff --check
 ```
 

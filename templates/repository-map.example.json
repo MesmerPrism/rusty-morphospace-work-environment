@@ -1,0 +1,8 @@
+{
+  "$schema": "../schemas/repository-map.schema.json",
+  "schema": "rusty.morphospace.workflow.repository_map.v1",
+  "repositories": [
+    { "repo_id": "matter-core", "path": "<workspace-root>/repos/rusty-matter", "role": "source" },
+    { "repo_id": "project-shell", "path": "<project-root>", "role": "planning" }
+  ]
+}

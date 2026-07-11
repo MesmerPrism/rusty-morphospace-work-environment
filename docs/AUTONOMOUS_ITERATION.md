@@ -8,6 +8,7 @@ turning a broad roadmap into unrestricted edit authority.
 Every implementation slice has one `iteration-unit` record containing:
 
 - objective and prerequisites;
+- stable workflow change categories plus optional project-specific `tags`;
 - allowed repositories and narrower allowed paths;
 - explicit non-scope;
 - acceptance proofs and validation commands;
@@ -20,6 +21,11 @@ Every implementation slice has one `iteration-unit` record containing:
 
 An agent may reduce scope while working. It may not expand scope beyond the
 project spec and unit without a reviewed unit update.
+
+Use `change_categories` only for portable routing and instruction-impact
+semantics. Preserve domain detail such as `peer-mesh`, `binder`, or
+`contract-extraction` in `tags`; do not grow the portable category registry for
+each application-specific noun.
 
 ## Unit State Machine
 
@@ -102,6 +108,61 @@ their adapters. A coordinated receipt records dependency order and confirms
 that each repository is clean or intentionally dirty afterward. One repo's
 successful push is not proof that the whole batch is complete.
 
+## Optional Automation CLI
+
+`scripts/Invoke-WorkUnitAutomation.ps1` is the portable owner for mechanical
+work-unit transitions and preparation artifacts. It supports `Inspect`,
+`Claim`, `Resume`, `BeginValidation`, `RecordValidation`, `Accept`,
+`PreparePush`, and `Recover`.
+
+The CLI is deliberately narrower than an autonomous coding agent:
+
+- inspection and plans are the default; state changes require `-Execute`;
+- it reads Git state but never runs checkout, reset, stash, commit, push, or
+  force-push;
+- it never runs validation commands or device commands;
+- a required device unit cannot enter validation without explicit serials;
+- acceptance is separate from recording a passing validation receipt;
+- push preparation requires exact HEAD revisions, clean attached branches,
+  and no behind or divergent upstream state;
+- a prepared push bundle records source-first and planning-last order but has
+  `execution: not-performed` and `force_push_allowed: false`.
+
+Keep the local repository map outside a public project instance when its paths
+identify a workstation. Start from `templates/repository-map.example.json`.
+Supply exact revisions through `templates/revision-set.example.json` only
+after the relevant validation has passed.
+
+Inspection example:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\Invoke-WorkUnitAutomation.ps1 `
+  -Action Inspect `
+  -WorkspaceRoot <project-root>\morphospace `
+  -UnitId <unit-id> `
+  -RepoMapPath <local-repository-map>
+```
+
+Explicit claim example:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\Invoke-WorkUnitAutomation.ps1 `
+  -Action Claim `
+  -WorkspaceRoot <project-root>\morphospace `
+  -UnitId <unit-id> `
+  -RepoMapPath <local-repository-map> `
+  -OutPath <project-root>\morphospace\receipts\<claim-receipt>.json `
+  -Execute
+```
+
+Every action returns a validation matrix, a graph scope limited to the unit's
+declared repositories and paths, and a repository-preservation report.
+`Recover` only repairs an unambiguous stale current-unit pointer; it preserves
+blockers and prior validation evidence. `Resume` is the explicit transition
+out of `blocked`.
+
 ## Stop Conditions
 
 Stop and record a blocker when:
@@ -112,3 +173,8 @@ Stop and record a blocker when:
 - a stable promotion lacks a second consumer or conformance harness;
 - validation would require unapproved device mutation or external authority;
 - existing user changes overlap the unit and cannot be preserved safely.
+
+Run `scripts/Test-WorkUnitAutomation.ps1` after changing automation behavior.
+Its temporary repositories exercise clean, dirty, untracked, detached, ahead,
+divergent, blocked, resumed, and interrupted states and verify that push
+preparation never changes a remote.

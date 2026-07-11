@@ -52,6 +52,11 @@ findings with the project spec and current iteration-unit scope. A graph can
 identify pressure; it does not authorize edits outside the declared repos or
 paths.
 
+If work-unit automation emits a `graph_scope`, use its sorted repositories,
+normalized allowed paths, and change categories as the maximum scan envelope.
+Exclude unlisted repositories and paths; the scope is authority for bounded
+discovery, not evidence that every listed path changed.
+
 Treat the project-local `morphospace/` directory itself as an instruction and
 authority surface. Check that source edges into optional modules agree with the
 closed feature lock, and report nearby-but-absent features as inert rather than

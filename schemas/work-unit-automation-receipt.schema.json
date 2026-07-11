@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/work-unit-automation-receipt.schema.json",
+  "title": "Work-unit automation action receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "project_id", "unit_id", "action", "timestamp", "executed", "transition", "status_before", "status_after", "current_unit_before", "current_unit_after", "preservation", "validation_matrix", "graph_scope", "push_plan", "event_id"],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.workflow.work_unit_automation_receipt.v1" },
+    "project_id": { "$ref": "#/$defs/id" },
+    "unit_id": { "$ref": "#/$defs/id" },
+    "action": { "enum": ["Inspect", "Claim", "Resume", "BeginValidation", "RecordValidation", "Accept", "PreparePush", "Recover"] },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "executed": { "type": "boolean" },
+    "transition": { "type": "string", "minLength": 1 },
+    "status_before": { "$ref": "#/$defs/id" },
+    "status_after": { "$ref": "#/$defs/id" },
+    "current_unit_before": { "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
+    "current_unit_after": { "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
+    "preservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["git_mutation_performed", "device_mutation_performed", "force_push_allowed", "repository_states"],
+      "properties": {
+        "git_mutation_performed": { "const": false },
+        "device_mutation_performed": { "const": false },
+        "force_push_allowed": { "const": false },
+        "repository_states": { "type": "array", "items": { "type": "object" } }
+      }
+    },
+    "validation_matrix": { "type": "array", "items": { "type": "object" } },
+    "graph_scope": { "type": "object" },
+    "push_plan": { "oneOf": [{ "type": "object" }, { "type": "null" }] },
+    "event_id": { "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,63}$" }
+  }
+}

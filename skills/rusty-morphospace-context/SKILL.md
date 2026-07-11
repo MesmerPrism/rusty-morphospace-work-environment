@@ -203,3 +203,10 @@ compatibility adapter rather than a source of generic defaults.
 When repo routing, module placement, activation, validation, or public/private
 rules change, synchronize this router and the nearest repo instructions in the
 same iteration unit. Keep detailed recipes in linked docs.
+
+For mechanical work-unit state changes, use
+`scripts/Invoke-WorkUnitAutomation.ps1` from the work-environment. It inspects
+or plans by default and requires `-Execute` for workspace mutation. A local
+repository map cannot expand project/unit scope. The CLI never owns Git push,
+force-push, checkout/reset/stash, validation execution, or device mutation;
+required device units need explicit serials before validation begins.

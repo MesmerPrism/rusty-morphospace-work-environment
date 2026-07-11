@@ -5,6 +5,7 @@
   "project_id": "example-project",
   "status": "active",
   "objective": "Validate the neutral particle-field contract and its explicit project activation.",
+  "tags": ["particle", "contract-extraction"],
   "change_categories": ["module-layout", "feature-activation", "validation"],
   "instruction_impact": "update",
   "instruction_surfaces": [

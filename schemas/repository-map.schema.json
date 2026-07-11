@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/repository-map.schema.json",
+  "title": "Local repository map for work-unit automation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "repositories"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schema": { "const": "rusty.morphospace.workflow.repository_map.v1" },
+    "repositories": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["repo_id", "path", "role"],
+        "properties": {
+          "repo_id": { "$ref": "#/$defs/id" },
+          "path": { "type": "string", "minLength": 1 },
+          "role": { "enum": ["source", "planning"] }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,63}$" }
+  }
+}

@@ -144,6 +144,12 @@ The scaffold refuses to overwrite an existing `morphospace/` directory.
 
 This keeps resume context small while preserving a durable audit trail.
 
+The optional automation CLI described in
+[Autonomous Iteration](AUTONOMOUS_ITERATION.md) can produce the same bounded
+inspection, validation matrix, graph scope, and state transitions. Its local
+repository map is an adapter into project-declared scope; it cannot expand
+that scope.
+
 ## Validation
 
 Validate the portable examples and a project instance with:
