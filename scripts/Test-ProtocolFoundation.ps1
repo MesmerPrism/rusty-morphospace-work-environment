@@ -55,6 +55,9 @@ $root=Join-Path $tempBase ('morphospace-protocol-foundation-'+[guid]::NewGuid().
 $junctionPath=$null
 try{
     [IO.Directory]::CreateDirectory($root)|Out-Null
+    # A mapped repository may sit directly below a drive root; this must not
+    # be rejected by the reparse-ancestor guard because of a doubled separator.
+    $driveRootContained=$true;try{Assert-MorphospaceNoReparseAncestor ([IO.Path]::GetPathRoot($root)) $root}catch{$driveRootContained=$false};Assert-Foundation $driveRootContained 'drive-root containment was rejected'
     Assert-Foundation (@(Get-Command -Module MorphospaceEventChain|Where-Object{$_.Name-in@('Add-MorphospaceEventV2','Repair-MorphospaceEventTransaction')}).Count-eq0) 'unauthorized append/repair primitives are publicly exported'
     Assert-Foundation (@(Get-Command -Module MorphospaceContentObservation|Where-Object{$_.Name-eq'Invoke-MorphospaceBoundGitBytes'}).Count-eq0) 'raw Git invocation primitive is publicly exported'
     Assert-Foundation (@(Get-Command -Module MorphospaceProtocolCommon|Where-Object{$_.Name-in@('Get-MorphospacePendingObservation','Invoke-MorphospacePendingQuarantineRecovery','Repair-MorphospaceDeterministicCanonicalJsonInternal')}).Count-eq0) 'pending/deterministic repair primitives are publicly exported'

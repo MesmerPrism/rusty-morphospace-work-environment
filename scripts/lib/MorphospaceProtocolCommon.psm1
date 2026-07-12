@@ -313,7 +313,7 @@ function Assert-MorphospaceNoReparseAncestor {
     $rootVolume = [System.IO.Path]::GetPathRoot($rootPath)
     if($rootPath.Length-gt$rootVolume.Length){$rootPath=$rootPath.TrimEnd('\','/')}
     $candidatePath = [System.IO.Path]::GetFullPath($Candidate)
-    $prefix = $rootPath + [System.IO.Path]::DirectorySeparatorChar
+    $prefix = if ($rootPath.EndsWith([System.IO.Path]::DirectorySeparatorChar) -or $rootPath.EndsWith([System.IO.Path]::AltDirectorySeparatorChar)) { $rootPath } else { $rootPath + [System.IO.Path]::DirectorySeparatorChar }
     if (-not $candidatePath.Equals($rootPath,[System.StringComparison]::OrdinalIgnoreCase) -and -not $candidatePath.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
         throw "Candidate path is outside its declared root: $Candidate"
     }
