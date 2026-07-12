@@ -171,6 +171,7 @@ function Get-MorphospaceAuthorityObservation {
 function Get-MorphospaceAutomationOutputContract {
     param([Parameter(Mandatory=$true)][object]$Ownership,[Parameter(Mandatory=$true)][object]$Unit,[Parameter(Mandatory=$true)][hashtable]$Scopes)
     $allowedRoles=@{
+        'owner-validator-registry'=[pscustomobject]@{phase='bootstrap';schema='rusty.morphospace.workflow.owner_validator_registry.v1'}
         'unit-ownership'=[pscustomobject]@{phase='bootstrap';schema='rusty.morphospace.workflow.unit_ownership.v1'}
         'legacy-prefix-anchor'=[pscustomobject]@{phase='bootstrap';schema='rusty.morphospace.workflow.legacy_event_prefix_anchor.v1'}
         'validator-trust-anchor-migration'=[pscustomobject]@{phase='bootstrap';schema='rusty.morphospace.workflow.validator_trust_anchor_migration.v1'}
@@ -180,6 +181,8 @@ function Get-MorphospaceAutomationOutputContract {
         'validation-evidence'=[pscustomobject]@{phase='validation';schema='rusty.morphospace.workflow.validation_evidence.v2'}
         'validation-execution'=[pscustomobject]@{phase='validation';schema='rusty.morphospace.workflow.validation_execution.v1'}
         'validation-receipt'=[pscustomobject]@{phase='validation';schema='rusty.morphospace.workflow.validation_receipt.v2'}
+        'transition-ledger-intent'=[pscustomobject]@{phase='transition';schema='rusty.morphospace.workflow.transition_ledger_intent.v1'}
+        'transition-ledger-completion'=[pscustomobject]@{phase='transition';schema='rusty.morphospace.workflow.transition_ledger_completion.v1'}
     }
     $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase);$rows=[Collections.Generic.List[object]]::new()
     $rawOutputs=if($Ownership.PSObject.Properties.Name-contains'automation_outputs'){@($Ownership.automation_outputs)}else{@()}

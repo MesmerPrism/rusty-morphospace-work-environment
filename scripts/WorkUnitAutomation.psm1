@@ -2,6 +2,7 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = "Stop"
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceValidationAuthority.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1') -Force
 
 function Read-MorphospaceJson {
     param([Parameter(Mandatory = $true)][string]$Path)
@@ -1124,10 +1125,8 @@ function Invoke-MorphospaceWorkUnitAutomation {
     }
 
     if ($Execute -and $transition -ne "idempotent" -and $transition -ne "inspect-only") {
-        Write-MorphospaceJson -Path $unitEntry.path -Value $unit
         if ($event) {
             $state.last_event_id = [string]$event.event_id
-            Add-MorphospaceEvent -Path $eventsPath -Event $event
         }
         if ($RepoMapPath) {
             $dirtySet = @{}
@@ -1169,7 +1168,22 @@ function Invoke-MorphospaceWorkUnitAutomation {
                 }
             }
         }
-        Write-MorphospaceJson -Path $statePath -Value $state
+        if ($event) {
+            $transactionId = "$([string]$event.event_id)-transition"
+            $unitRelativePath = $unitEntry.path.Substring(($resolvedWorkspace.TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar).Length).Replace('\', '/')
+            Start-MorphospaceTransitionLedger `
+                -WorkspaceRoot $resolvedWorkspace `
+                -TransactionId $transactionId `
+                -StatePath 'workspace.state.json' `
+                -UnitPath $unitRelativePath `
+                -EventsPath 'iteration-events.jsonl' `
+                -TargetState $state `
+                -TargetUnit $unit `
+                -Event $event | Out-Null
+        } else {
+            Write-MorphospaceJson -Path $unitEntry.path -Value $unit
+            Write-MorphospaceJson -Path $statePath -Value $state
+        }
     }
 
     $result = [pscustomobject][ordered]@{
