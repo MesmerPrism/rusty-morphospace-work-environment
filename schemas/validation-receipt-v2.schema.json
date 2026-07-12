@@ -6,7 +6,7 @@
   "additionalProperties": false,
   "required": [
     "schema", "receipt_id", "created_at", "project_id", "unit_id", "attempt_id",
-    "action", "evidence", "current_protocol", "ownership", "registry", "profile_id",
+    "action", "evidence", "execution", "current_protocol", "ownership", "registry", "profile_id",
     "result", "criteria", "validators", "observations", "device_validation", "status"
   ],
   "properties": {
@@ -18,6 +18,7 @@
     "attempt_id": { "$ref": "#/$defs/id" },
     "action": { "$ref": "#/$defs/actionReference" },
     "evidence": { "$ref": "#/$defs/evidenceReference" },
+    "execution": { "$ref": "#/$defs/executionReference" },
     "current_protocol": { "$ref": "#/$defs/currentProtocolReference" },
     "ownership": { "$ref": "#/$defs/ownershipReference" },
     "registry": { "$ref": "#/$defs/registryReference" },
@@ -53,6 +54,11 @@
       "type": "object", "additionalProperties": false,
       "required": ["role", "path", "schema", "sha256"],
       "properties": { "role": { "const": "validation-evidence" }, "path": { "type": "string", "minLength": 1 }, "schema": { "const": "rusty.morphospace.workflow.validation_evidence.v2" }, "sha256": { "$ref": "#/$defs/hash" } }
+    },
+    "executionReference": {
+      "type": "object", "additionalProperties": false,
+      "required": ["role", "path", "schema", "sha256"],
+      "properties": { "role": { "const": "validation-execution" }, "path": { "type": "string", "minLength": 1 }, "schema": { "const": "rusty.morphospace.workflow.validation_execution.v1" }, "sha256": { "$ref": "#/$defs/hash" } }
     },
     "currentProtocolReference": {
       "type": "object", "additionalProperties": false,

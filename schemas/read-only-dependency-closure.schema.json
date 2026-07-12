@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/read-only-dependency-closure.schema.json",
+  "title": "Hash-bound read-only dependency closure",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "closure_id", "captured_at", "project_id", "unit_id", "dependencies", "status", "does_not_prove"],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.workflow.read_only_dependency_closure.v1" },
+    "closure_id": { "$ref": "#/$defs/id" },
+    "captured_at": { "$ref": "#/$defs/utc" },
+    "project_id": { "$ref": "#/$defs/id" },
+    "unit_id": { "$ref": "#/$defs/id" },
+    "dependencies": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/dependency" } },
+    "status": { "const": "captured" },
+    "does_not_prove": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,191}$" },
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "utc": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{7}Z$" },
+    "dependency": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repo_id", "purpose", "verification", "head", "branch", "files"],
+      "properties": {
+        "repo_id": { "$ref": "#/$defs/id" },
+        "purpose": { "type": "string", "minLength": 1 },
+        "verification": { "type": "string", "minLength": 1 },
+        "head": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "branch": { "type": "string", "minLength": 1 },
+        "files": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/file" } }
+      }
+    },
+    "file": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "length", "worktree_sha256", "index_blob_sha256", "head_blob_sha256", "status_porcelain"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "length": { "type": "integer", "minimum": 0 },
+        "worktree_sha256": { "$ref": "#/$defs/hash" },
+        "index_blob_sha256": { "oneOf": [{ "$ref": "#/$defs/hash" }, { "type": "null" }] },
+        "head_blob_sha256": { "oneOf": [{ "$ref": "#/$defs/hash" }, { "type": "null" }] },
+        "status_porcelain": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

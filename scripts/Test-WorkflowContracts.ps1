@@ -528,13 +528,29 @@ function Test-ProjectBundle {
         }
 
         Assert-Contract (@($unit.allowed_repositories).Count -gt 0) "$Context unit '$($unit.unit_id)' needs allowed repositories."
+        $writeRepositoryIds = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
         foreach ($allowedRepo in @($unit.allowed_repositories)) {
             $repoId = [string]$allowedRepo.repo_id
+            Assert-Contract ($writeRepositoryIds.Add($repoId)) "$Context unit '$($unit.unit_id)' repeats writable repository '$repoId'."
             Assert-Contract ($repositoryMap.ContainsKey($repoId)) "$Context unit '$($unit.unit_id)' references undeclared repo '$repoId'."
             Test-NonEmptyTextArray -Value $allowedRepo.allowed_paths -Context "$Context unit '$($unit.unit_id)' repo '$repoId' allowed paths"
             if ($repositoryMap.ContainsKey($repoId)) {
                 foreach ($candidatePath in @($allowedRepo.allowed_paths)) {
                     Assert-Contract (Test-PathInScope -Candidate ([string]$candidatePath) -Allowed @($repositoryMap[$repoId].allowed_paths)) "$Context unit '$($unit.unit_id)' path '$candidatePath' expands project scope for '$repoId'."
+                }
+            }
+        }
+        $readOnlyDependencies = if ($unit.PSObject.Properties.Name -contains 'read_only_dependencies') { @($unit.read_only_dependencies) } else { @() }
+        foreach ($dependency in $readOnlyDependencies) {
+            $repoId = [string]$dependency.repo_id
+            Assert-Contract (-not $writeRepositoryIds.Contains($repoId)) "$Context unit '$($unit.unit_id)' cannot make '$repoId' both writable scope and a read-only dependency."
+            Assert-Contract ($repositoryMap.ContainsKey($repoId)) "$Context unit '$($unit.unit_id)' read-only dependency references undeclared repo '$repoId'."
+            Test-NonEmptyTextArray -Value $dependency.paths -Context "$Context unit '$($unit.unit_id)' read-only dependency '$repoId' paths"
+            Assert-Contract (Test-Text ([string]$dependency.purpose)) "$Context unit '$($unit.unit_id)' read-only dependency '$repoId' needs a purpose."
+            Assert-Contract (Test-Text ([string]$dependency.verification)) "$Context unit '$($unit.unit_id)' read-only dependency '$repoId' needs a verification command."
+            if ($repositoryMap.ContainsKey($repoId)) {
+                foreach ($candidatePath in @($dependency.paths)) {
+                    Assert-Contract (Test-PathInScope -Candidate ([string]$candidatePath) -Allowed @($repositoryMap[$repoId].allowed_paths)) "$Context unit '$($unit.unit_id)' read-only dependency path '$candidatePath' expands project scope for '$repoId'."
                 }
             }
         }

@@ -1,6 +1,7 @@
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = "Stop"
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceValidationAuthority.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
 
 function Read-MorphospaceJson {
     param([Parameter(Mandatory = $true)][string]$Path)
@@ -267,6 +268,14 @@ function New-MorphospaceGraphScope {
     return [pscustomobject][ordered]@{
         change_categories = @($Unit.change_categories | ForEach-Object { [string]$_ } | Sort-Object -Unique)
         repositories = @($repos.ToArray())
+        read_only_dependencies = @($(if ($Unit.PSObject.Properties.Name -contains 'read_only_dependencies') { @($Unit.read_only_dependencies) } else { @() }) | ForEach-Object {
+            [pscustomobject][ordered]@{
+                repo_id = [string]$_.repo_id
+                paths = @($_.paths | ForEach-Object { ([string]$_ -replace "\\", "/") } | Sort-Object -Unique)
+                purpose = [string]$_.purpose
+                verification = [string]$_.verification
+            }
+        } | Sort-Object repo_id)
         exclusion = "Do not scan repositories or paths outside this list."
     }
 }
@@ -413,7 +422,7 @@ function Get-MorphospaceAdoptionFileEvidence {
             $items.Add([pscustomobject][ordered]@{
                 path = $path
                 state = "present"
-                sha256 = (Get-FileHash -LiteralPath $absolute -Algorithm SHA256).Hash.ToLowerInvariant()
+                sha256 = Get-MorphospaceFileSha256 -Path $absolute
             }) | Out-Null
         } elseif (-not (Test-Path -LiteralPath $absolute)) {
             $items.Add([pscustomobject][ordered]@{ path = $path; state = "deleted"; sha256 = $null }) | Out-Null

@@ -87,7 +87,7 @@
         "repo_id": { "$ref": "#/$defs/id" },
         "path": { "type": "string", "minLength": 1 },
         "phase": { "const": "validation" },
-        "role": { "enum": ["owner-validation", "validation-evidence", "validation-receipt"] },
+        "role": { "enum": ["owner-validation", "validation-evidence", "validation-execution", "validation-receipt"] },
         "schema": { "$ref": "#/$defs/dottedId" },
         "validator_id": { "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] }
       }

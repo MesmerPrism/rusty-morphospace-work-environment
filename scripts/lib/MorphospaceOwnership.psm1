@@ -178,6 +178,7 @@ function Get-MorphospaceAutomationOutputContract {
         'validation-action'=[pscustomobject]@{phase='bootstrap';schema='rusty.morphospace.workflow.validation_action.v2'}
         'owner-validation'=[pscustomobject]@{phase='validation';schema='rusty.morphospace.workflow.owner_validation.v1'}
         'validation-evidence'=[pscustomobject]@{phase='validation';schema='rusty.morphospace.workflow.validation_evidence.v2'}
+        'validation-execution'=[pscustomobject]@{phase='validation';schema='rusty.morphospace.workflow.validation_execution.v1'}
         'validation-receipt'=[pscustomobject]@{phase='validation';schema='rusty.morphospace.workflow.validation_receipt.v2'}
     }
     $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase);$rows=[Collections.Generic.List[object]]::new()

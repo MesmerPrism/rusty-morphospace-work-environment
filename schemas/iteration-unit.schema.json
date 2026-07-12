@@ -121,6 +121,26 @@
         }
       }
     },
+    "read_only_dependencies": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["repo_id", "paths", "purpose", "verification"],
+        "properties": {
+          "repo_id": { "$ref": "#/$defs/id" },
+          "paths": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "purpose": { "type": "string", "minLength": 1 },
+          "verification": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
     "non_scope": { "$ref": "#/$defs/nonEmptyStrings" },
     "acceptance": {
       "type": "array",
