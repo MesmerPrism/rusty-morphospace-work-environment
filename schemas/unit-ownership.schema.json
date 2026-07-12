@@ -17,6 +17,7 @@
     "claim_baseline": { "$ref": "#/$defs/claimBaselineReference" },
     "repositories": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/repository" } },
     "shared_overlaps": { "type": "array", "items": { "$ref": "#/$defs/sharedOverlap" } },
+    "automation_outputs": { "type": "array", "items": { "$ref": "#/$defs/automationOutput" } },
     "status": { "const": "assigned" }
   },
   "$defs": {
@@ -121,6 +122,24 @@
         "contributing_units": { "type": "array", "minItems": 2, "uniqueItems": true, "items": { "$ref": "#/$defs/id" } },
         "integration_owner": { "$ref": "#/$defs/id" },
         "decision": { "const": "accepted" }
+      }
+    },
+    "automationOutput": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repo_id", "path", "phase", "role", "schema", "validator_id"],
+      "properties": {
+        "repo_id": { "$ref": "#/$defs/id" },
+        "path": { "type": "string", "minLength": 1 },
+        "phase": { "enum": ["bootstrap", "validation"] },
+        "role": {
+          "enum": [
+            "unit-ownership", "legacy-prefix-anchor", "validator-trust-anchor-migration",
+            "current-unit-protocol", "validation-action", "owner-validation",
+            "validation-evidence", "validation-receipt"
+          ]
+        },
+        "schema": { "type": "string", "minLength": 1 },
+        "validator_id": { "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] }
       }
     }
   }

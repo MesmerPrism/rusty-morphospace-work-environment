@@ -29,7 +29,7 @@
     },
     "expected_outputs": {
       "type": "array", "minItems": 1, "uniqueItems": true,
-      "items": { "type": "string", "minLength": 1 }
+      "items": { "$ref": "#/$defs/expectedOutput" }
     },
     "pre_observation_sha256": { "$ref": "#/$defs/hash" },
     "device_validation": {
@@ -79,6 +79,18 @@
       "type": "object", "additionalProperties": false,
       "required": ["validator_id", "registry_entry_sha256"],
       "properties": { "validator_id": { "$ref": "#/$defs/id" }, "registry_entry_sha256": { "$ref": "#/$defs/hash" } }
+    },
+    "expectedOutput": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repo_id", "path", "phase", "role", "schema", "validator_id"],
+      "properties": {
+        "repo_id": { "$ref": "#/$defs/id" },
+        "path": { "type": "string", "minLength": 1 },
+        "phase": { "const": "validation" },
+        "role": { "enum": ["owner-validation", "validation-evidence", "validation-receipt"] },
+        "schema": { "$ref": "#/$defs/dottedId" },
+        "validator_id": { "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] }
+      }
     },
     "deviceValidation": {
       "type": "object", "additionalProperties": false,

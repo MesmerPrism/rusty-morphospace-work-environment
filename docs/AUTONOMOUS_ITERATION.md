@@ -253,6 +253,18 @@ declared repositories and paths, and a repository-preservation report.
 blockers and prior validation evidence. `Resume` is the explicit transition
 out of `blocked`.
 
+## Receipt-Security Corrective Units
+
+A unit tagged `receipt-security` must not use a hand-authored
+`validation_receipt.v1`. It requires a registry-selected, tracked owner
+validator, a fresh content/ownership observation, typed per-criterion owner
+evidence, and a derived `validation_receipt.v2`. Validator execution happens
+from a closed input room; registry byte, closure, output-limit, mutation, and
+no-device policies are rechecked before the receipt is accepted. A pre-existing
+dirty instruction file is baseline input, never current-unit attribution. If
+the unit adds routing to that file, declare its exact shared integration rather
+than absorbing the prior work.
+
 ## Stop Conditions
 
 Stop and record a blocker when:

@@ -13,7 +13,8 @@ function Read-MorphospaceAuthorityJson {
 function Get-MorphospaceAuthoritySha256 {
     param([Parameter(Mandatory = $true)][string]$Path)
     if (-not [IO.File]::Exists($Path)) { throw "Authority artifact does not exist: $Path" }
-    return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+    $stream = [IO.FileStream]::new($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+    try { return ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($stream))).Replace('-', '').ToLowerInvariant() } finally { $stream.Dispose() }
 }
 
 function Resolve-MorphospaceAuthorityPath {
@@ -131,7 +132,7 @@ function New-MorphospaceValidationReceiptV2 {
         schema = 'rusty.morphospace.workflow.validation_receipt.v2'; receipt_id = "$($Unit.unit_id)-$($Action.attempt_id)-receipt"; created_at = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffffffZ'); project_id = [string]$Unit.project_id; unit_id = [string]$Unit.unit_id; attempt_id = [string]$Action.attempt_id
         action = Get-MorphospaceAuthorityReference $WorkspaceRoot ([string]$Action.__path) 'validation-action' 'rusty.morphospace.workflow.validation_action.v2'; evidence = Get-MorphospaceAuthorityReference $WorkspaceRoot ([string]$Evidence.__path) 'validation-evidence' 'rusty.morphospace.workflow.validation_evidence.v2'
         current_protocol = Get-MorphospaceAuthorityReference $WorkspaceRoot ([string]$Protocol.__path) 'current-unit-protocol' 'rusty.morphospace.workflow.current_unit_protocol.v1'; ownership = Get-MorphospaceAuthorityReference $WorkspaceRoot ([string]$Ownership.__path) 'unit-ownership' 'rusty.morphospace.workflow.unit_ownership.v1'; registry = Get-MorphospaceAuthorityReference $WorkspaceRoot ([string]$Registry.__path) 'owner-validator-registry' 'rusty.morphospace.workflow.owner_validator_registry.v1'
-        profile_id = [string]$Action.profile_id; result = [string]$Evidence.result; criteria = @($criteria.ToArray()); validators = @($Evidence.validator_results | ForEach-Object { [string]$_.validator_id } | Sort-Object -Unique); observations = [pscustomobject][ordered]@{ before_sha256 = [string]$Action.pre_observation_sha256; after_sha256 = [string]$Observation.sha256; allowed_delta_sha256 = (Get-MorphospaceCanonicalJsonSha256 ([pscustomobject]@{ outputs = @($Action.expected_outputs | Sort-Object) })) }; device_validation = $Evidence.device_validation; status = 'accepted-evidence'
+        profile_id = [string]$Action.profile_id; result = [string]$Evidence.result; criteria = @($criteria.ToArray()); validators = @($Evidence.validator_results | ForEach-Object { [string]$_.validator_id } | Sort-Object -Unique); observations = [pscustomobject][ordered]@{ before_sha256 = [string]$Action.pre_observation_sha256; after_sha256 = [string]$Observation.sha256; allowed_delta_sha256 = (Get-MorphospaceCanonicalJsonSha256 ([pscustomobject]@{ outputs = @($Action.expected_outputs | Sort-Object repo_id,path) })) }; device_validation = $Evidence.device_validation; status = 'accepted-evidence'
     }
 }
 
@@ -160,10 +161,20 @@ function Test-MorphospaceValidationReceiptV2 {
     $baseline = Read-MorphospaceAuthorityJson $baselinePath
     Test-MorphospaceClaimBaseline -Baseline $baseline -Unit $Unit -RepositoryMapReference $protocol.repository_map -RepositoryMap $RepositoryMap | Out-Null
     $current = Test-MorphospaceUnitOwnership -Ownership $ownership -ClaimBaseline $baseline -ClaimBaselineReference $protocol.claim_baseline -Unit $Unit -RepositoryMapReference $protocol.repository_map -RepositoryMap $RepositoryMap
+    $automationOutputs = @($current.automation_outputs)
+    if ($automationOutputs.Count -eq 0) { throw 'Validation receipt v2 lacks an ownership-bound automation output contract.' }
+    Test-MorphospaceAutomationOutputSet -AutomationOutputs $automationOutputs -RepositoryMap $RepositoryMap -Expected present
     $actionPath = Assert-MorphospaceAuthorityReference $WorkspaceRoot $receipt.action 'validation-action' 'rusty.morphospace.workflow.validation_action.v2'
     $action = Read-MorphospaceAuthorityJson $actionPath; $action | Add-Member -NotePropertyName __path -NotePropertyValue $actionPath -Force
     if ([string]$action.pre_observation_sha256 -ne [string]$receipt.observations.before_sha256 -or [string]$current.observation.sha256 -ne [string]$receipt.observations.after_sha256) { throw 'Validation receipt v2 observation boundary drifted.' }
     $selection = Get-MorphospaceRegistrySelection -Registry $registry -Unit $Unit -RepositoryMap $RepositoryMap -AssertedProfileId ([string]$action.profile_id)
+    $expectedOutputs = @($automationOutputs | Where-Object { [string]$_.phase -eq 'validation' } | Sort-Object repo_id,path)
+    $actionOutputs = @($action.expected_outputs | Sort-Object repo_id,path)
+    if ((Get-MorphospaceCanonicalJsonSha256 $actionOutputs) -ne (Get-MorphospaceCanonicalJsonSha256 $expectedOutputs) -or [string]$receipt.observations.allowed_delta_sha256 -ne (Get-MorphospaceCanonicalJsonSha256 ([pscustomobject]@{ outputs = $expectedOutputs }))) { throw 'Validation receipt v2 automation output delta is not bound to the ownership contract.' }
+    $receiptOutput = @($expectedOutputs | Where-Object { [string]$_.role -eq 'validation-receipt' })
+    if ($receiptOutput.Count -ne 1) { throw 'Validation receipt v2 has no exact receipt output contract.' }
+    $expectedReceiptPath = [IO.Path]::GetFullPath((Join-Path ([string]$RepositoryMap[[string]$receiptOutput[0].repo_id].path) ([string]$receiptOutput[0].path)))
+    if (-not $receiptPath.Equals($expectedReceiptPath, [StringComparison]::OrdinalIgnoreCase)) { throw 'Validation receipt v2 was not written to its exact ownership-bound automation path.' }
     $evidencePath = Assert-MorphospaceAuthorityReference $WorkspaceRoot $receipt.evidence 'validation-evidence' 'rusty.morphospace.workflow.validation_evidence.v2'
     Test-MorphospaceValidationEvidenceV2 -WorkspaceRoot $WorkspaceRoot -EvidencePath $evidencePath -Unit $Unit -SelectedValidators @($selection.validators) -Action $action | Out-Null
     $expectedCriteria = @($Unit.acceptance | ForEach-Object { [string]$_.acceptance_id } | Sort-Object)
