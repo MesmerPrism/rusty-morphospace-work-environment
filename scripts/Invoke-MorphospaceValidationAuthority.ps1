@@ -31,7 +31,7 @@ function Invoke-MorphospacePinnedValidator {
         [Parameter(Mandatory = $true)][string]$StderrPath,
         [Parameter(Mandatory = $true)][int]$TimeoutSeconds
     )
-    if (Test-Path -LiteralPath $OwnerOut -or Test-Path -LiteralPath $StdoutPath -or Test-Path -LiteralPath $StderrPath) { throw 'Pinned validator output paths must be absent before launch.' }
+    if ((Test-Path -LiteralPath $OwnerOut) -or (Test-Path -LiteralPath $StdoutPath) -or (Test-Path -LiteralPath $StderrPath)) { throw 'Pinned validator output paths must be absent before launch.' }
     $host = (Get-Command powershell.exe -ErrorAction Stop).Source
     $arguments = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $ValidatorPath, '-WorkspaceRoot', $Workspace, '-QuestRoot', $Quest, '-RoadmapPath', $Roadmap, '-UnitId', $Unit, '-OutPath', $OwnerOut)
     $process = Start-Process -FilePath $host -ArgumentList $arguments -PassThru -WindowStyle Hidden -RedirectStandardOutput $StdoutPath -RedirectStandardError $StderrPath
