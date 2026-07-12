@@ -1,0 +1,55 @@
+$ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot 'MorphospaceProtocolCommon.psm1') -Force
+
+function Get-MorphospaceLedgerDocumentHash { param([object]$Value) Get-MorphospaceCanonicalJsonSha256 $Value }
+function Get-MorphospaceLedgerPath { param([string]$WorkspaceRoot,[string]$TransactionId,[ValidateSet('intent','completion')][string]$Kind) "receipts/transactions/$TransactionId.$Kind.json" }
+function Read-MorphospaceLedgerJson { param([string]$Path) if(-not[IO.File]::Exists($Path)){throw "Transition artifact is missing: $Path"};Read-MorphospaceProtocolJson -Path $Path }
+function Write-MorphospaceLedgerProjection { param([string]$WorkspaceRoot,[string]$RelativePath,[object]$Document) Write-MorphospaceManagedProtocolJsonAtomic -WorkspaceRoot $WorkspaceRoot -RelativePath $RelativePath -Value $Document }
+function Add-MorphospaceLedgerEvent { param([string]$Path,[object]$Event)
+    $line=($Event|ConvertTo-Json -Depth 32 -Compress)+[Environment]::NewLine
+    $stream=[IO.FileStream]::new($Path,[IO.FileMode]::Append,[IO.FileAccess]::Write,[IO.FileShare]::Read)
+    try{$bytes=[Text.UTF8Encoding]::new($false).GetBytes($line);$stream.Write($bytes,0,$bytes.Length);$stream.Flush($true)}finally{$stream.Dispose()}
+}
+function Test-MorphospaceLedgerEventPresent { param([string]$EventsPath,[string]$EventId)
+    @((Get-Content -LiteralPath $EventsPath | Where-Object { $_.Length -gt 0 } | ForEach-Object { $_|ConvertFrom-Json }) | Where-Object { [string]$_.event_id -eq $EventId })
+}
+function Complete-MorphospaceTransitionLedger {
+    param([string]$WorkspaceRoot,[string]$TransactionId,[switch]$Repair,[ValidateSet('none','after-intent','after-projection','after-event')][string]$FaultAfter='none')
+    $workspace=[IO.Path]::GetFullPath($WorkspaceRoot);$intentRelative=Get-MorphospaceLedgerPath $workspace $TransactionId intent;$completionRelative=Get-MorphospaceLedgerPath $workspace $TransactionId completion
+    $completionAbsolute=Resolve-MorphospaceWorkspacePath -WorkspaceRoot $workspace -RelativePath $completionRelative
+    if([IO.File]::Exists($completionAbsolute)){return [pscustomobject]@{transaction_id=$TransactionId;status='already-committed'}}
+    $intentAbsolute=Resolve-MorphospaceWorkspacePath -WorkspaceRoot $workspace -RelativePath $intentRelative -RequireLeaf;$intent=Read-MorphospaceLedgerJson $intentAbsolute
+    if([string]$intent.schema-ne'rusty.morphospace.workflow.transition_ledger_intent.v1'-or[string]$intent.status-ne'prepared'-or[string]$intent.transaction_id-ne$TransactionId){throw 'Transition ledger intent identity/status is invalid.'}
+    $lock=Enter-MorphospaceWorkspaceMutex -WorkspaceRoot $workspace
+    try {
+        foreach($projection in @('state','unit')){
+            $current=Read-MorphospaceProtocolJson -Path (Resolve-MorphospaceWorkspacePath $workspace ([string]$intent.$projection.path) -RequireLeaf)
+            $actual=Get-MorphospaceLedgerDocumentHash $current
+            if($actual-ne[string]$intent.target.$projection.sha256){
+                if($actual-ne[string]$intent.pre.$projection.sha256){throw "Transition $TransactionId has an unauthorized $projection projection."}
+                Write-MorphospaceLedgerProjection $workspace ([string]$intent.$projection.path) $intent.target.$projection.document
+            }
+        }
+        if($FaultAfter-eq'after-projection'){throw 'Injected interruption after projections.'}
+        $eventsAbsolute=Resolve-MorphospaceWorkspacePath -WorkspaceRoot $workspace -RelativePath ([string]$intent.events.path) -RequireLeaf
+        $existing=@(Test-MorphospaceLedgerEventPresent $eventsAbsolute $intent.event.event_id)
+        if($existing.Count-eq0){Add-MorphospaceLedgerEvent $eventsAbsolute $intent.event}elseif($existing.Count-ne1){throw 'Transition event is duplicated.'}
+        if($FaultAfter-eq'after-event'){throw 'Injected interruption after event append.'}
+        $completion=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.transition_ledger_completion.v1';transaction_id=$TransactionId;completed_at=[DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffffffZ');intent=[pscustomobject]@{role='transition-ledger-intent';path=$intentRelative;schema=$intent.schema;sha256=(Get-MorphospaceFileSha256 $intentAbsolute)};state_sha256=[string]$intent.target.state.sha256;unit_sha256=[string]$intent.target.unit.sha256;event_id=[string]$intent.event.event_id;status='committed'}
+        Write-MorphospaceManagedProtocolJsonAtomic -WorkspaceRoot $workspace -RelativePath $completionRelative -Value $completion -NoOverwrite
+        return [pscustomobject]@{transaction_id=$TransactionId;status='committed';repaired=[bool]$Repair}
+    } finally {Exit-MorphospaceWorkspaceMutex $lock}
+}
+function Start-MorphospaceTransitionLedger {
+    param([string]$WorkspaceRoot,[string]$TransactionId,[string]$StatePath,[string]$UnitPath,[string]$EventsPath,[object]$TargetState,[object]$TargetUnit,[object]$Event,[ValidateSet('none','after-intent','after-projection','after-event')][string]$FaultAfter='none')
+    $workspace=[IO.Path]::GetFullPath($WorkspaceRoot);$lock=Enter-MorphospaceWorkspaceMutex -WorkspaceRoot $workspace
+    try {
+        $state=Read-MorphospaceProtocolJson -Path (Resolve-MorphospaceWorkspacePath $workspace $StatePath -RequireLeaf);$unit=Read-MorphospaceProtocolJson -Path (Resolve-MorphospaceWorkspacePath $workspace $UnitPath -RequireLeaf)
+        $intentRelative=Get-MorphospaceLedgerPath $workspace $TransactionId intent
+        $intent=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.transition_ledger_intent.v1';transaction_id=$TransactionId;created_at=[DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffffffZ');state=[pscustomobject]@{path=(ConvertTo-MorphospaceProtocolRelativePath -Path $StatePath)};unit=[pscustomobject]@{path=(ConvertTo-MorphospaceProtocolRelativePath -Path $UnitPath)};events=[pscustomobject]@{path=(ConvertTo-MorphospaceProtocolRelativePath -Path $EventsPath)};pre=[pscustomobject]@{state=[pscustomobject]@{sha256=(Get-MorphospaceLedgerDocumentHash $state)};unit=[pscustomobject]@{sha256=(Get-MorphospaceLedgerDocumentHash $unit)}};target=[pscustomobject]@{state=[pscustomobject]@{sha256=(Get-MorphospaceLedgerDocumentHash $TargetState);document=$TargetState};unit=[pscustomobject]@{sha256=(Get-MorphospaceLedgerDocumentHash $TargetUnit);document=$TargetUnit}};event=$Event;status='prepared'}
+        Write-MorphospaceManagedProtocolJsonAtomic -WorkspaceRoot $workspace -RelativePath $intentRelative -Value $intent -NoOverwrite
+        if($FaultAfter-eq'after-intent'){throw 'Injected interruption after intent publication.'}
+    } finally {Exit-MorphospaceWorkspaceMutex $lock}
+    Complete-MorphospaceTransitionLedger -WorkspaceRoot $workspace -TransactionId $TransactionId -FaultAfter $FaultAfter
+}
+Export-ModuleMember -Function Start-MorphospaceTransitionLedger,Complete-MorphospaceTransitionLedger

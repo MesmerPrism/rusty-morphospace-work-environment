@@ -259,7 +259,11 @@ function Write-MorphospaceProtocolJsonAtomicInternal {
     $temporary = "$Path.tmp-$([guid]::NewGuid().ToString('N'))"
     $stream = [System.IO.FileStream]::new($temporary, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None, 4096, [System.IO.FileOptions]::WriteThrough)
     try { $stream.Write($bytes, 0, $bytes.Length); $stream.Flush($true) } finally { $stream.Dispose() }
-    if ([System.IO.File]::Exists($Path)) { [System.IO.File]::Replace($temporary, $Path, $null) }
+    if ([System.IO.File]::Exists($Path)) {
+        $backup = "$Path.backup-$([guid]::NewGuid().ToString('N'))"
+        try { [System.IO.File]::Replace($temporary, $Path, $backup) }
+        finally { if ([System.IO.File]::Exists($backup)) { [System.IO.File]::Delete($backup) } }
+    }
     else { [System.IO.File]::Move($temporary, $Path) }
 }
 
