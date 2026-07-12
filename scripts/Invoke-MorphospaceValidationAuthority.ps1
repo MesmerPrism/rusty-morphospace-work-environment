@@ -96,9 +96,10 @@ if ([string]$protocol.project_id -ne [string]$unit.project_id -or [string]$proto
 $migration = Test-MorphospaceValidatorTrustAnchorMigration -WorkspaceRoot $workspace -MigrationPath $TrustMigrationPath -RegistryReference $protocol.registry -ExpectedProjectId ([string]$unit.project_id) -ExpectedUnitId $UnitId
 $baseline = Read-MorphospaceAuthorityJson (Resolve-MorphospaceAuthorityPath $workspace $ClaimBaselinePath)
 $ownershipAbsolute = Resolve-MorphospaceAuthorityPath $workspace $OwnershipPath
-$ownership = Read-MorphospaceAuthorityJson $ownershipAbsolute; $ownership | Add-Member -NotePropertyName __path -NotePropertyValue $ownershipAbsolute -Force
+$ownership = Read-MorphospaceAuthorityJson $ownershipAbsolute
 Test-MorphospaceClaimBaseline -Baseline $baseline -Unit $unit -RepositoryMapReference $protocol.repository_map -RepositoryMap $map.map | Out-Null
 $observation = Test-MorphospaceUnitOwnership -Ownership $ownership -ClaimBaseline $baseline -ClaimBaselineReference $protocol.claim_baseline -Unit $unit -RepositoryMapReference $protocol.repository_map -RepositoryMap $map.map
+$ownership | Add-Member -NotePropertyName __path -NotePropertyValue $ownershipAbsolute -Force
 $automationOutputs = @($observation.automation_outputs)
 Test-MorphospaceAutomationOutputSet -AutomationOutputs $automationOutputs -RepositoryMap $map.map -Expected present -Phase 'bootstrap'
 $actionAbsolute = Resolve-MorphospaceAuthorityPath $workspace $ValidationActionPath
