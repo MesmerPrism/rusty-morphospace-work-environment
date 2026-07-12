@@ -249,7 +249,7 @@ function Test-MorphospaceUnitOwnership {
 function Test-MorphospacePathInClosure {
     param([string]$Path,[string[]]$AllowedPaths)
     $candidate=ConvertTo-MorphospaceProtocolRelativePath $Path
-    foreach($raw in $AllowedPaths){$allowed=(ConvertTo-MorphospaceProtocolRelativePath $raw).TrimEnd('/');if($candidate.Equals($allowed,[StringComparison]::OrdinalIgnoreCase)-or$candidate.StartsWith($allowed+'/',[StringComparison]::OrdinalIgnoreCase)){return $true}}
+    foreach($raw in $AllowedPaths){$scope=([string]$raw).TrimEnd('/','\');if(-not$scope){throw 'Path scope cannot be empty after a directory suffix is normalized.'};$allowed=ConvertTo-MorphospaceProtocolRelativePath $scope;if($candidate.Equals($allowed,[StringComparison]::OrdinalIgnoreCase)-or$candidate.StartsWith($allowed+'/',[StringComparison]::OrdinalIgnoreCase)){return $true}}
     return $false
 }
 
