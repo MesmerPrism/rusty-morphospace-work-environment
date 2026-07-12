@@ -81,15 +81,44 @@ function Test-MorphospaceValidationEvidenceV2 {
         $id = [string]$result.validator_id
         if (-not $selected.ContainsKey($id)) { throw "Validation evidence names an unselected validator: $id" }
         if ([string]$result.status -notin @('pass', 'fail', 'blocked') -or [int]$result.exit_code -lt 0) { throw "Validator result is malformed: $id" }
+        $validator = $selected[$id]
+        if ([string]$result.owner_repo_id -ne [string]$validator.owner_repo_id -or [string]$result.command_identity_sha256 -ne [string]$validator.sha256) { throw "Validator identity is not bound to the selected registry entry: $id" }
+        if ([string]$result.cleanroom_fingerprint_sha256 -notmatch '^[0-9a-f]{64}$' -or [string]$result.input_closure_sha256 -ne (Get-MorphospaceCanonicalJsonSha256 ([pscustomobject]@{ closure = @($validator.input_closure) }))) { throw "Validator clean-room closure is not bound to the selected registry entry: $id" }
         foreach ($acceptance in @($result.acceptance_ids)) { if (-not $covered.Add([string]$acceptance)) { throw "Acceptance is claimed twice: $acceptance" } }
         $ownerPath = Assert-MorphospaceAuthorityReference $WorkspaceRoot $result.owner_evidence 'owner-validation' 'rusty.morphospace.workflow.owner_validation.v1'
         $owner = Read-MorphospaceAuthorityJson $ownerPath
-        if ([string]$owner.validator_id -ne $id -or [string]$owner.status -ne [string]$result.status -or ((@($owner.acceptance_ids) | Sort-Object) -join '|') -ne ((@($result.acceptance_ids) | Sort-Object) -join '|')) { throw "Owner validation does not match the evidence projection: $id" }
+        Test-MorphospaceOwnerValidation -OwnerEvidence $owner -Validator $validator -Unit $Unit -ExpectedStatus ([string]$result.status) | Out-Null
     }
     $expected = @($Unit.acceptance | ForEach-Object { [string]$_.acceptance_id } | Sort-Object)
     if (($covered.ToArray() | Sort-Object) -join '|' -ne $expected -join '|') { throw 'Validation evidence does not cover the exact acceptance set.' }
     if ([string]$evidence.result -eq 'pass' -and (@($evidence.validator_results | Where-Object { [string]$_.status -ne 'pass' }).Count -ne 0)) { throw 'Passing evidence has a non-passing validator.' }
     return $evidence
+}
+
+function Test-MorphospaceOwnerValidation {
+    param(
+        [Parameter(Mandatory = $true)][object]$OwnerEvidence,
+        [Parameter(Mandatory = $true)][object]$Validator,
+        [Parameter(Mandatory = $true)][object]$Unit,
+        [Parameter(Mandatory = $true)][string]$ExpectedStatus
+    )
+    Assert-MorphospaceExactPropertySet $OwnerEvidence @('schema','validator_id','created_at','project_id','unit_id','acceptance_ids','status','criteria','does_not_prove') @() 'owner validation evidence'
+    if ([string]$OwnerEvidence.schema -ne [string]$Validator.evidence_schema -or [string]$OwnerEvidence.validator_id -ne [string]$Validator.validator_id -or [string]$OwnerEvidence.project_id -ne [string]$Unit.project_id -or [string]$OwnerEvidence.unit_id -ne [string]$Unit.unit_id -or [string]$OwnerEvidence.status -ne $ExpectedStatus) { throw 'Owner validation identity/status is not bound to the selected validator.' }
+    [void](Test-MorphospaceStrictUtcTimestamp ([string]$OwnerEvidence.created_at))
+    $expected = @($Validator.acceptance_ids | ForEach-Object { [string]$_ } | Sort-Object)
+    $actual = @($OwnerEvidence.acceptance_ids | ForEach-Object { [string]$_ } | Sort-Object)
+    if (($actual -join '|') -ne ($expected -join '|')) { throw 'Owner validation acceptance set is not bound to the registry.' }
+    $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($criterion in @($OwnerEvidence.criteria)) {
+        Assert-MorphospaceExactPropertySet $criterion @('acceptance_id','status','command_id','command_path','command_sha256','output_sha256','exit_code') @() 'owner validation criterion'
+        $criterionId = [string]$criterion.acceptance_id
+        if (-not $seen.Add($criterionId) -or $criterionId -notin $expected -or [string]$criterion.status -notin @('pass','fail','blocked') -or [string]$criterion.command_id -notmatch '^[a-z0-9][a-z0-9-]{1,191}$' -or [string]$criterion.command_path -match '[\\/]' -or [string]$criterion.command_sha256 -notmatch '^[0-9a-f]{64}$' -or [string]$criterion.output_sha256 -notmatch '^[0-9a-f]{64}$' -or [int]$criterion.exit_code -lt 0) { throw "Owner validation criterion is malformed: $criterionId" }
+        if ($ExpectedStatus -eq 'pass' -and ([string]$criterion.status -ne 'pass' -or [int]$criterion.exit_code -ne 0)) { throw "Passing owner validation has a non-passing criterion: $criterionId" }
+    }
+    $covered = @($seen.ToArray() | Sort-Object)
+    if (($covered -join '|') -ne ($expected -join '|')) { throw 'Owner validation does not provide one typed criterion per selected acceptance.' }
+    if (@($OwnerEvidence.does_not_prove | Where-Object { [string]::IsNullOrWhiteSpace([string]$_) }).Count -ne 0 -or @($OwnerEvidence.does_not_prove).Count -eq 0) { throw 'Owner validation limits are missing.' }
+    return $OwnerEvidence
 }
 
 function New-MorphospaceValidationReceiptV2 {
@@ -106,4 +135,42 @@ function New-MorphospaceValidationReceiptV2 {
     }
 }
 
-Microsoft.PowerShell.Core\Export-ModuleMember -Function Read-MorphospaceAuthorityJson, Get-MorphospaceAuthoritySha256, Resolve-MorphospaceAuthorityPath, Get-MorphospaceAuthorityReference, Assert-MorphospaceAuthorityReference, Test-MorphospaceValidatorTrustAnchorMigration, Test-MorphospaceValidationEvidenceV2, New-MorphospaceValidationReceiptV2
+function Test-MorphospaceValidationReceiptV2 {
+    param(
+        [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
+        [Parameter(Mandatory = $true)][string]$ReceiptReference,
+        [Parameter(Mandatory = $true)][object]$Unit,
+        [Parameter(Mandatory = $true)][hashtable]$RepositoryMap,
+        [Parameter(Mandatory = $true)][string]$ExpectedResult
+    )
+    $receiptPath = Resolve-MorphospaceAuthorityPath $WorkspaceRoot $ReceiptReference
+    $receipt = Read-MorphospaceAuthorityJson $receiptPath
+    if ([string]$receipt.schema -ne 'rusty.morphospace.workflow.validation_receipt.v2' -or [string]$receipt.project_id -ne [string]$Unit.project_id -or [string]$receipt.unit_id -ne [string]$Unit.unit_id -or [string]$receipt.status -ne 'accepted-evidence') { throw 'Validation receipt v2 identity/status is invalid.' }
+    if ([string]$receipt.result -ne $ExpectedResult) { throw 'Validation receipt v2 result does not match the requested transition.' }
+    $protocolPath = Assert-MorphospaceAuthorityReference $WorkspaceRoot $receipt.current_protocol 'current-unit-protocol' 'rusty.morphospace.workflow.current_unit_protocol.v1'
+    $protocol = Read-MorphospaceAuthorityJson $protocolPath; $protocol | Add-Member -NotePropertyName __path -NotePropertyValue $protocolPath -Force
+    if ([string]$protocol.project_id -ne [string]$Unit.project_id -or [string]$protocol.unit_id -ne [string]$Unit.unit_id -or [string]$protocol.status -ne 'active') { throw 'Current protocol does not bind this active unit.' }
+    $registryPath = Assert-MorphospaceAuthorityReference $WorkspaceRoot $receipt.registry 'owner-validator-registry' 'rusty.morphospace.workflow.owner_validator_registry.v1'
+    $registry = Read-MorphospaceAuthorityJson $registryPath
+    Test-MorphospaceOwnerValidatorRegistry -Registry $registry -RepositoryMap $RepositoryMap | Out-Null
+    Test-MorphospaceValidatorTrustAnchorMigration -WorkspaceRoot $WorkspaceRoot -MigrationPath ([string]$protocol.trust_anchor_migration.path) -RegistryReference $protocol.registry -ExpectedProjectId ([string]$Unit.project_id) -ExpectedUnitId ([string]$Unit.unit_id) | Out-Null
+    $ownershipPath = Assert-MorphospaceAuthorityReference $WorkspaceRoot $receipt.ownership 'unit-ownership' 'rusty.morphospace.workflow.unit_ownership.v1'
+    $ownership = Read-MorphospaceAuthorityJson $ownershipPath
+    $baselinePath = Assert-MorphospaceAuthorityReference $WorkspaceRoot $ownership.claim_baseline 'claim-baseline' 'rusty.morphospace.workflow.claim_baseline.v1'
+    $baseline = Read-MorphospaceAuthorityJson $baselinePath
+    Test-MorphospaceClaimBaseline -Baseline $baseline -Unit $Unit -RepositoryMapReference $protocol.repository_map -RepositoryMap $RepositoryMap | Out-Null
+    $current = Test-MorphospaceUnitOwnership -Ownership $ownership -ClaimBaseline $baseline -ClaimBaselineReference $protocol.claim_baseline -Unit $Unit -RepositoryMapReference $protocol.repository_map -RepositoryMap $RepositoryMap
+    $actionPath = Assert-MorphospaceAuthorityReference $WorkspaceRoot $receipt.action 'validation-action' 'rusty.morphospace.workflow.validation_action.v2'
+    $action = Read-MorphospaceAuthorityJson $actionPath; $action | Add-Member -NotePropertyName __path -NotePropertyValue $actionPath -Force
+    if ([string]$action.pre_observation_sha256 -ne [string]$receipt.observations.before_sha256 -or [string]$current.observation.sha256 -ne [string]$receipt.observations.after_sha256) { throw 'Validation receipt v2 observation boundary drifted.' }
+    $selection = Get-MorphospaceRegistrySelection -Registry $registry -Unit $Unit -RepositoryMap $RepositoryMap -AssertedProfileId ([string]$action.profile_id)
+    $evidencePath = Assert-MorphospaceAuthorityReference $WorkspaceRoot $receipt.evidence 'validation-evidence' 'rusty.morphospace.workflow.validation_evidence.v2'
+    Test-MorphospaceValidationEvidenceV2 -WorkspaceRoot $WorkspaceRoot -EvidencePath $evidencePath -Unit $Unit -SelectedValidators @($selection.validators) -Action $action | Out-Null
+    $expectedCriteria = @($Unit.acceptance | ForEach-Object { [string]$_.acceptance_id } | Sort-Object)
+    $actualCriteria = @($receipt.criteria | ForEach-Object { [string]$_.acceptance_id } | Sort-Object)
+    if (($expectedCriteria -join '|') -ne ($actualCriteria -join '|')) { throw 'Validation receipt v2 does not cover the exact acceptance set.' }
+    if ($ExpectedResult -eq 'pass' -and @($receipt.criteria | Where-Object { [string]$_.status -ne 'pass' }).Count -ne 0) { throw 'Passing validation receipt v2 has a non-passing criterion.' }
+    return $receipt
+}
+
+Microsoft.PowerShell.Core\Export-ModuleMember -Function Read-MorphospaceAuthorityJson, Get-MorphospaceAuthoritySha256, Resolve-MorphospaceAuthorityPath, Get-MorphospaceAuthorityReference, Assert-MorphospaceAuthorityReference, Test-MorphospaceValidatorTrustAnchorMigration, Test-MorphospaceOwnerValidation, Test-MorphospaceValidationEvidenceV2, New-MorphospaceValidationReceiptV2, Test-MorphospaceValidationReceiptV2

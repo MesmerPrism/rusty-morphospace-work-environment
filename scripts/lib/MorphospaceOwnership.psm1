@@ -89,7 +89,7 @@ function Test-MorphospaceOwnerValidatorRegistry {
         $id=[string]$validator.validator_id;if($id-notmatch'^[a-z0-9][a-z0-9-]{1,191}$'-or-not$validatorIds.Add($id)){throw "Duplicate/invalid validator '$id'."};$owner=[string]$validator.owner_repo_id;if(-not$RepositoryMap.ContainsKey($owner)){throw "Validator owner '$owner' is not mapped."}
         Test-MorphospaceLowerObjectId ([string]$validator.owner_revision) "Validator '$id' owner revision";Test-MorphospaceLowerObjectId ([string]$validator.owner_tree_oid) "Validator '$id' owner tree";Test-MorphospaceLowerObjectId ([string]$validator.git_blob_oid) "Validator '$id' blob"
         $path=ConvertTo-MorphospaceProtocolRelativePath ([string]$validator.path);if($path-cne[string]$validator.path-or[string]$validator.sha256-notmatch'^[0-9a-f]{64}$'){throw "Validator '$id' path/hash is invalid."}
-        if([string]$validator.entrypoint-cne'powershell-file'-or[string]$validator.mutation_policy-cne'temp-output-only'-or[string]$validator.device_policy-notin@('forbidden','required')){throw "Validator '$id' policy is unsafe."};if([long]$validator.timeout_seconds-lt1-or[long]$validator.timeout_seconds-gt600-or[long]$validator.max_output_bytes-lt1024-or[long]$validator.max_output_bytes-gt268435456){throw "Validator '$id' bounds are invalid."}
+        if([string]$validator.entrypoint-cne'powershell-file'-or[string]$validator.evidence_schema-cne'rusty.morphospace.workflow.owner_validation.v1'-or[string]$validator.mutation_policy-cne'temp-output-only'-or[string]$validator.device_policy-notin@('forbidden','required')){throw "Validator '$id' policy is unsafe."};if([long]$validator.timeout_seconds-lt1-or[long]$validator.timeout_seconds-gt600-or[long]$validator.max_output_bytes-lt1024-or[long]$validator.max_output_bytes-gt268435456){throw "Validator '$id' bounds are invalid."}
         foreach($property in @('profiles','acceptance_ids')){$values=@($validator.$property);if($values.Count-eq0){throw "Validator '$id' has empty $property."};$seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase);foreach($value in $values){if([string]$value-notmatch'^[a-z0-9][a-z0-9-]{1,191}$'-or-not$seen.Add([string]$value)){throw "Validator '$id' repeats/invalidates $property."}}}
         Test-MorphospaceInputClosure $validator $RepositoryMap
     }
@@ -240,14 +240,55 @@ function New-MorphospaceCleanRoom {
             if([string]$owned.kind-ceq'git'){$arguments=[Collections.Generic.List[string]]::new();foreach($value in @('ls-tree','-r','-z','--full-tree',[string]$owned.base_revision,'--')){$arguments.Add($value)};foreach($path in $paths){$arguments.Add($path)};$treeText=ConvertFrom-MorphospaceOwnershipUtf8 (Invoke-MorphospaceOwnershipGit $GitExecutable $source @($arguments.ToArray())).stdout
                 foreach($token in $treeText.Split([char]0)){if(-not$token){continue};$match=[regex]::Match($token,'^(?<mode>[0-9]{6}) (?<kind>\S+) (?<oid>[0-9a-f]{40,64})\t(?<path>.+)$');if(-not$match.Success-or$match.Groups['kind'].Value-cne'blob'-or$match.Groups['mode'].Value-notin@('100644','100755')){throw "Unsupported base entry in '$repoId'."};$relative=ConvertTo-MorphospaceProtocolRelativePath $match.Groups['path'].Value;if(-not(Test-MorphospacePathInClosure $relative $paths)){throw "Git returned an out-of-closure base path: $repoId/$relative"};$target=[IO.Path]::GetFullPath([IO.Path]::Combine($destination,$relative));Assert-MorphospaceNoReparseAncestor $destination $target;$blob=(Invoke-MorphospaceOwnershipGit $GitExecutable $source @('cat-file','blob',$match.Groups['oid'].Value)).stdout;$total+=$blob.Length;if($total-gt536870912){throw 'Clean-room input exceeds 512 MiB.'};Write-MorphospaceCleanBlob $target $blob;$modes[$relative]=$match.Groups['mode'].Value}
             }else{if(-not$baselineByRepo.ContainsKey($repoId)){throw "Non-Git clean room lacks claim baseline '$repoId'."};$ownedPaths=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase);foreach($entry in @($owned.entries)){[void]$ownedPaths.Add([string]$entry.path)};foreach($entry in @($baselineByRepo[$repoId].entries)){if(-not(Test-MorphospacePathInClosure ([string]$entry.path) $paths)-or$ownedPaths.Contains([string]$entry.path)){continue};$relative=ConvertTo-MorphospaceProtocolRelativePath ([string]$entry.path);$target=[IO.Path]::GetFullPath([IO.Path]::Combine($destination,$relative));Assert-MorphospaceNoReparseAncestor $destination $target;if([string]$entry.state-ceq'directory'){if(-not[IO.Directory]::Exists($target)){[void][IO.Directory]::CreateDirectory($target)}}elseif([string]$entry.state-ceq'file'){$live=[IO.Path]::GetFullPath([IO.Path]::Combine($source,$relative));Assert-MorphospaceNoReparseAncestor $source $live;$sourceLeases.Add((Copy-MorphospaceLeasedOverlay $live $target $entry))}}}
+            # The claim baseline may contain pre-existing dirty Git bytes.  Those bytes
+            # are deliberately not attributed to the current unit, but a validator
+            # must still see the exact observed baseline rather than the repository
+            # base tree.  Materialize them before the unit-owned overlay so a later
+            # owned entry can replace the baseline value deterministically.
+            foreach($entry in @($baselineByRepo[$repoId].entries)){
+                if(-not(Test-MorphospacePathInClosure ([string]$entry.path) $paths)){continue}
+                $relative=ConvertTo-MorphospaceProtocolRelativePath ([string]$entry.path)
+                $target=[IO.Path]::GetFullPath([IO.Path]::Combine($destination,$relative));Assert-MorphospaceNoReparseAncestor $destination $target
+                if([string]$entry.state-ceq'deleted'){
+                    if([IO.File]::Exists($target)){[IO.File]::Delete($target)}
+                    $modes.Remove($relative)
+                    continue
+                }
+                if([string]$entry.state-ceq'directory'){
+                    if(-not[IO.Directory]::Exists($target)){[void][IO.Directory]::CreateDirectory($target)}
+                    continue
+                }
+                if($null-ne$entry.mode-and[string]$entry.mode-notin@('100644','100755')){throw "Baseline overlay has unsupported mode: $repoId/$relative"}
+                $live=[IO.Path]::GetFullPath([IO.Path]::Combine($source,$relative));Assert-MorphospaceNoReparseAncestor $source $live
+                $sourceLeases.Add((Copy-MorphospaceLeasedOverlay $live $target $entry))
+                if($null-ne$entry.mode){$modes[$relative]=[string]$entry.mode}else{[void]$modes.Remove($relative)}
+            }
             foreach($entry in @($owned.entries)){if([string]$entry.attribution-notin@('unit','shared')-or-not(Test-MorphospacePathInClosure ([string]$entry.path) $paths)){continue};$relative=ConvertTo-MorphospaceProtocolRelativePath ([string]$entry.path);$target=[IO.Path]::GetFullPath([IO.Path]::Combine($destination,$relative));Assert-MorphospaceNoReparseAncestor $destination $target;if([string]$entry.state-ceq'deleted'){if([IO.File]::Exists($target)){[IO.File]::Delete($target)};$modes.Remove($relative);continue};if([string]$entry.state-ceq'directory'){if(-not[IO.Directory]::Exists($target)){[void][IO.Directory]::CreateDirectory($target)};continue};if($null-ne$entry.mode-and[string]$entry.mode-notin@('100644','100755')){throw "Owned overlay has unsupported mode: $repoId/$relative"};$live=[IO.Path]::GetFullPath([IO.Path]::Combine($source,$relative));Assert-MorphospaceNoReparseAncestor $source $live;$sourceLeases.Add((Copy-MorphospaceLeasedOverlay $live $target $entry));if($null-ne$entry.mode){$modes[$relative]=[string]$entry.mode}else{[void]$modes.Remove($relative)}}
             foreach($requiredPath in $paths){$required=[IO.Path]::GetFullPath([IO.Path]::Combine($destination,$requiredPath));if(-not([IO.File]::Exists($required)-or[IO.Directory]::Exists($required))){throw "Clean-room closure path is absent: $repoId/$requiredPath"}}
             $roots[$repoId]=$destination;$modesByRepo[$repoId]=$modes
         }
         $rows=[Collections.Generic.List[object]]::new();foreach($repoId in @($roots.Keys)){foreach($row in @(Get-MorphospaceNoFollowTreeRows ([string]$roots[$repoId]) $repoId $modesByRepo[$repoId])){if(-not(Test-MorphospacePathInClosure ([string]$row.path) ([string[]]$closure[$repoId]))){throw "Clean room contains out-of-closure path: $repoId/$([string]$row.path)"};$rows.Add($row)}}
         foreach($lease in $sourceLeases){if([long]$lease.stream.Length-ne[long]$lease.length-or(Get-MorphospaceStreamSha256 $lease.stream)-cne[string]$lease.sha256){throw "Owned overlay changed before clean-room finalization: $([string]$lease.path)"}};$sorted=@($rows.ToArray());[Array]::Sort($sorted,[Comparison[object]]{param($left,$right)[StringComparer]::Ordinal.Compare("$([string]$left.repo_id)/$([string]$left.path)","$([string]$right.repo_id)/$([string]$right.path)")})
-        return [pscustomobject]@{root=$root;parent=$parent;guard=$guard;repositories=$roots;closure=$closure;fingerprint_sha256=(Get-MorphospaceOrdinalFingerprint $sorted)}
+        return [pscustomobject]@{root=$root;parent=$parent;guard=$guard;repositories=$roots;closure=$closure;modes_by_repository=$modesByRepo;fingerprint_sha256=(Get-MorphospaceOrdinalFingerprint $sorted)}
     }catch{try{Remove-MorphospaceCleanRoom ([pscustomobject]@{root=$root;parent=$parent;guard=$guard})}catch{};throw}finally{foreach($lease in $sourceLeases){$lease.stream.Dispose()}}
+}
+
+function Get-MorphospaceCleanRoomFingerprint {
+    param([Parameter(Mandatory=$true)][object]$CleanRoom)
+    $root=[IO.Path]::GetFullPath([string]$CleanRoom.root)
+    if(-not$script:CleanRoomGuards.ContainsKey($root)-or[string]$script:CleanRoomGuards[$root]-cne[string]$CleanRoom.guard){throw 'Clean-room fingerprint authority is missing or forged.'}
+    $rows=[Collections.Generic.List[object]]::new()
+    foreach($repoId in @($CleanRoom.repositories.Keys)){
+        $repoRoot=[string]$CleanRoom.repositories[$repoId]
+        $modes=@{}
+        if($null-ne$CleanRoom.modes_by_repository-and$null-ne$CleanRoom.modes_by_repository[$repoId]){$modes=$CleanRoom.modes_by_repository[$repoId]}
+        foreach($row in @(Get-MorphospaceNoFollowTreeRows $repoRoot ([string]$repoId) $modes)){
+            if(-not(Test-MorphospacePathInClosure ([string]$row.path) ([string[]]$CleanRoom.closure[$repoId]))){throw "Clean room contains out-of-closure path: $repoId/$([string]$row.path)"}
+            $rows.Add($row)
+        }
+    }
+    $sorted=@($rows.ToArray());[Array]::Sort($sorted,[Comparison[object]]{param($left,$right)[StringComparer]::Ordinal.Compare("$([string]$left.repo_id)/$([string]$left.path)","$([string]$right.repo_id)/$([string]$right.path)")})
+    return Get-MorphospaceOrdinalFingerprint $sorted
 }
 
 function Remove-MorphospaceNoFollowTree {
@@ -261,4 +302,4 @@ function Remove-MorphospaceCleanRoom {
     $root=[IO.Path]::GetFullPath([string]$CleanRoom.root);$parent=[IO.Path]::GetFullPath([string]$CleanRoom.parent).TrimEnd('\','/');$actualParent=[IO.Path]::GetDirectoryName($root).TrimEnd('\','/');if(-not$actualParent.Equals($parent,[StringComparison]::OrdinalIgnoreCase)-or-not$script:CleanRoomGuards.ContainsKey($root)-or[string]$script:CleanRoomGuards[$root]-cne[string]$CleanRoom.guard){throw 'Clean-room cleanup authority is missing or forged.'};$temp=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\','/');if(-not[IO.Path]::GetDirectoryName($parent).TrimEnd('\','/').Equals($temp,[StringComparison]::OrdinalIgnoreCase)-or[IO.Path]::GetFileName($parent)-cne'rusty-morphospace-cleanrooms'){throw 'Clean-room cleanup parent is outside the owned temp root.'};Assert-MorphospaceNoReparseAncestor $temp $parent;Assert-MorphospaceNoReparseAncestor $parent $root;if([IO.Directory]::Exists($root)){Remove-MorphospaceNoFollowTree $root};[void]$script:CleanRoomGuards.Remove($root)
 }
 
-Microsoft.PowerShell.Core\Export-ModuleMember -Function Get-MorphospaceFixedRepositoryMap,Test-MorphospaceOwnerValidatorRegistry,Get-MorphospaceRegistrySelection,Test-MorphospaceClaimBaseline,Test-MorphospaceUnitOwnership,Get-MorphospaceAuthorityObservation,New-MorphospaceCleanRoom,Remove-MorphospaceCleanRoom
+Microsoft.PowerShell.Core\Export-ModuleMember -Function Get-MorphospaceFixedRepositoryMap,Test-MorphospaceOwnerValidatorRegistry,Get-MorphospaceRegistrySelection,Test-MorphospaceClaimBaseline,Test-MorphospaceUnitOwnership,Get-MorphospaceAuthorityObservation,New-MorphospaceCleanRoom,Get-MorphospaceCleanRoomFingerprint,Remove-MorphospaceCleanRoom

@@ -1,5 +1,6 @@
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = "Stop"
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceValidationAuthority.psm1') -Force
 
 function Read-MorphospaceJson {
     param([Parameter(Mandatory = $true)][string]$Path)
@@ -613,6 +614,11 @@ function Test-MorphospaceValidationReceipt {
 
     $receiptPath = Resolve-MorphospaceReceiptPath -WorkspaceRoot $WorkspaceRoot -ReceiptReference $ReceiptReference
     $receipt = Read-MorphospaceJson -Path $receiptPath
+    if ([string]$receipt.schema -eq "rusty.morphospace.workflow.validation_receipt.v2") {
+        if (@($Unit.tags | Where-Object { [string]$_ -eq 'receipt-security' }).Count -eq 0) { throw 'Validation receipt v2 is reserved for a receipt-security corrective unit.' }
+        return Test-MorphospaceValidationReceiptV2 -WorkspaceRoot $WorkspaceRoot -ReceiptReference $ReceiptReference -Unit $Unit -RepositoryMap $RepositoryMap -ExpectedResult $ExpectedResult
+    }
+    if (@($Unit.tags | Where-Object { [string]$_ -eq 'receipt-security' }).Count -ne 0) { throw 'Receipt-security corrective units require an authority-derived validation_receipt.v2; v1/manual receipts are rejected.' }
     if ([string]$receipt.schema -ne "rusty.morphospace.workflow.validation_receipt.v1") { throw "Validation receipt has the wrong schema ID." }
     if ([string]$receipt.project_id -ne [string]$Spec.project_id -or [string]$receipt.unit_id -ne [string]$Unit.unit_id) {
         throw "Validation receipt project/unit identity does not match the active unit."
