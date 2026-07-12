@@ -61,9 +61,14 @@ $expected = @($unit.acceptance | ForEach-Object { [string]$_.acceptance_id } | S
 $gate = Join-Path $quest 'tools\checks\Test-SpatialCameraPanelWorkflowStatic.ps1'
 $ownership = Join-Path $PSScriptRoot 'Test-OwnershipAuthority.ps1'
 $contracts = Join-Path $PSScriptRoot 'Test-WorkflowContracts.ps1'
+$executionAuthority = Join-Path $PSScriptRoot 'Test-ValidationExecutionAuthority.ps1'
+$transitionLedger = Join-Path $PSScriptRoot 'Test-TransitionLedger.ps1'
 $staticResult = Invoke-ValidatorCommand -CommandId 'quest-workspace-static-gate' -ScriptPath $gate -Arguments @('-RepoRoot', $quest, '-RoadmapPath', $roadmap)
 $ownershipResult = Invoke-ValidatorCommand -CommandId 'portable-ownership-authority-self-test' -ScriptPath $ownership -Arguments @()
 $contractResult = Invoke-ValidatorCommand -CommandId 'portable-workflow-contract-self-test' -ScriptPath $contracts -Arguments @('-RepoRoot', (Split-Path -Parent $PSScriptRoot), '-WorkspaceRoot', $workspace)
+$executionResult = Invoke-ValidatorCommand -CommandId 'validation-execution-authority-self-test' -ScriptPath $executionAuthority -Arguments @()
+$transitionResult = Invoke-ValidatorCommand -CommandId 'transition-ledger-recovery-self-test' -ScriptPath $transitionLedger -Arguments @()
+if ($executionResult.exit_code -ne 0 -or $transitionResult.exit_code -ne 0) { throw 'Authority execution or transition-ledger self-test failed.' }
 $criterionCommands = @{
     'spatial-history' = $staticResult
     'candidate-maturity' = $staticResult
