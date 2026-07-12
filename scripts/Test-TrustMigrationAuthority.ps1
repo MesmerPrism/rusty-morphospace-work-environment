@@ -13,7 +13,10 @@ try {
     $registry=Get-MorphospaceAuthorityReference $workspace $registryPath 'owner-validator-registry' 'rusty.morphospace.workflow.owner_validator_registry.v1'
     $anchor=Get-MorphospaceAuthorityReference $workspace $anchorPath 'legacy-prefix-anchor' 'rusty.morphospace.workflow.legacy_event_prefix_anchor.v1'
     $paths=@('scripts/Invoke-MorphospaceValidationAuthority.ps1','scripts/Invoke-Wf005OwnerValidator.ps1','scripts/Test-ValidationAuthorityLauncher.ps1','scripts/Test-AuthorityRunnerHandoff.ps1','scripts/Test-TrustMigrationAuthority.ps1','scripts/Test-ValidationExecutionAuthority.ps1','scripts/Test-TransitionLedger.ps1','scripts/WorkUnitAutomation.psm1','scripts/lib/MorphospaceOwnership.psm1','scripts/lib/MorphospaceTransitionLedger.psm1')
-    $artifacts=@($paths|ForEach-Object{[pscustomobject]@{repo_id='work-environment';path=$_;sha256=(Get-MorphospaceAuthoritySha256 (Join-Path $repo $_));git_blob_oid=((& git -C $repo rev-parse "HEAD:$_").Trim().ToLowerInvariant()}})
+    $artifacts=@($paths|ForEach-Object{
+        $path=[string]$_;$blob=(& git -C $repo rev-parse "HEAD:$path").Trim().ToLowerInvariant()
+        [pscustomobject]@{repo_id='work-environment';path=$path;sha256=(Get-MorphospaceAuthoritySha256 (Join-Path $repo $path));git_blob_oid=$blob}
+    })
     $migration=[pscustomobject]@{schema='rusty.morphospace.workflow.validator_trust_anchor_migration.v1';project_id='fixture-project';unit_id='fixture-unit';status='accepted';bootstrap_exception=[pscustomobject]@{one_time=$true;non_promotional=$true;self_authorization_scope='authority-adoption-only';normal_ownership_after_commit=$true};lineage=@([pscustomobject]@{role='legacy-bootstrap'},[pscustomobject]@{role='protocol-v2'},[pscustomobject]@{role='foundation'},[pscustomobject]@{role='authority'});registry=$registry;prior_event_anchor=$anchor;authority_artifacts=$artifacts}
     $migrationPath=Join-Path $workspace 'migration.json';Write-Json $migrationPath $migration
     $map=@{'work-environment'=[pscustomobject]@{path=$repo}}
