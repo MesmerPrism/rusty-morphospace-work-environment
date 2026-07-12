@@ -39,7 +39,7 @@ function ConvertFrom-MorphospaceOwnershipUtf8 {
 function ConvertTo-MorphospaceSortedCanonicalPaths {
     param([object[]]$Paths)
     $list=[Collections.Generic.List[string]]::new();$seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
-    foreach($raw in $Paths){$path=(ConvertTo-MorphospaceProtocolRelativePath ([string]$raw)).TrimEnd('/');if(-not$seen.Add($path)){throw "Duplicate/case-fold path '$path'."};$list.Add($path)}
+    foreach($raw in $Paths){$candidate=([string]$raw).TrimEnd('/','\');if(-not$candidate){throw 'Path scope cannot be empty after a directory suffix is normalized.'};$path=ConvertTo-MorphospaceProtocolRelativePath $candidate;if(-not$seen.Add($path)){throw "Duplicate/case-fold path '$path'."};$list.Add($path)}
     $array=@($list.ToArray());[Array]::Sort($array,[StringComparer]::Ordinal);return $array
 }
 
