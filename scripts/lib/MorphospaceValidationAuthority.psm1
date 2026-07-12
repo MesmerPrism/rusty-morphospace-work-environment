@@ -180,6 +180,18 @@ function Test-MorphospaceOwnerValidation {
     return $OwnerEvidence
 }
 
+function Get-MorphospaceCommittedTransitionPaths {
+    param([Parameter(Mandatory = $true)][string]$WorkspaceRoot,[Parameter(Mandatory = $true)][object[]]$AutomationOutputs,[Parameter(Mandatory = $true)][hashtable]$RepositoryMap)
+    $workspace=[IO.Path]::GetFullPath($WorkspaceRoot).TrimEnd('\','/');$planningRoot=[IO.Path]::GetFullPath([string]$RepositoryMap['planning'].path).TrimEnd('\','/');if(-not$workspace.StartsWith($planningRoot+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw 'Authority workspace is not contained by the planning repository.'};$prefix=$workspace.Substring($planningRoot.Length).TrimStart('\','/').Replace('\','/')
+    $paths=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach($completionOutput in @($AutomationOutputs|Where-Object{[string]$_.phase-ceq'transition'-and[string]$_.role-ceq'transition-ledger-completion'})){
+        $completionAbsolute=[IO.Path]::GetFullPath((Join-Path $planningRoot ([string]$completionOutput.path)));if(-not[IO.File]::Exists($completionAbsolute)){continue};$completion=Read-MorphospaceAuthorityJson $completionAbsolute;if([string]$completion.schema-cne'rusty.morphospace.workflow.transition_ledger_completion.v1'-or[string]$completion.status-cne'committed'){throw 'Committed transition completion is malformed.'};$intentRelative=([string]$completion.intent.path);$intentAbsolute=Resolve-MorphospaceAuthorityPath $workspace $intentRelative;$intent=Read-MorphospaceAuthorityJson $intentAbsolute;if([string]$intent.schema-cne'rusty.morphospace.workflow.transition_ledger_intent.v1'-or[string]$intent.status-cne'prepared'-or[string]$intent.transaction_id-cne[string]$completion.transaction_id-or(Get-MorphospaceAuthoritySha256 $intentAbsolute)-cne[string]$completion.intent.sha256){throw 'Committed transition intent is malformed or substituted.'}
+        foreach($projection in @('state','unit')){$relative=[string]$intent.$projection.path;$absolute=Resolve-MorphospaceAuthorityPath $workspace $relative;$live=Read-MorphospaceAuthorityJson $absolute;if((Get-MorphospaceCanonicalJsonSha256 $live)-cne[string]$intent.target.$projection.sha256-or[string]$completion."$($projection)_sha256"-cne[string]$intent.target.$projection.sha256){throw "Committed transition $projection projection drifted."};[void]$paths.Add("$prefix/$relative")}
+        $eventsAbsolute=Resolve-MorphospaceAuthorityPath $workspace ([string]$intent.events.path);$eventId=[regex]::Escape([string]$intent.event.event_id);$matches=@(Get-Content -LiteralPath $eventsAbsolute|Where-Object{$_ -match ('"event_id"\s*:\s*"'+$eventId+'"')});$expectedEvent=($intent.event|ConvertTo-Json -Depth 32 -Compress);if($matches.Count-ne1-or$matches[0].Trim()-cne$expectedEvent-or[string]$completion.event_id-cne[string]$intent.event.event_id){throw 'Committed transition event is missing, duplicated, or substituted.'};[void]$paths.Add("$prefix/$([string]$intent.events.path)")
+    }
+    return @($paths.ToArray()|Sort-Object)
+}
+
 function New-MorphospaceValidationReceiptV2 {
     param([string]$WorkspaceRoot, [object]$Unit, [object]$Action, [object]$Evidence, [object]$Execution, [object]$Protocol, [object]$Ownership, [object]$Registry, [object]$Observation)
     $criteria = [Collections.Generic.List[object]]::new()
@@ -218,13 +230,14 @@ function Test-MorphospaceValidationReceiptV2 {
     $baselinePath = Assert-MorphospaceAuthorityReference $WorkspaceRoot $ownership.claim_baseline 'claim-baseline' 'rusty.morphospace.workflow.claim_baseline.v1'
     $baseline = Read-MorphospaceAuthorityJson $baselinePath
     Test-MorphospaceClaimBaseline -Baseline $baseline -Unit $Unit -RepositoryMapReference $protocol.repository_map -RepositoryMap $RepositoryMap | Out-Null
-    $current = Test-MorphospaceUnitOwnership -Ownership $ownership -ClaimBaseline $baseline -ClaimBaselineReference $protocol.claim_baseline -Unit $Unit -RepositoryMapReference $protocol.repository_map -RepositoryMap $RepositoryMap
+    $transitionPaths=Get-MorphospaceCommittedTransitionPaths -WorkspaceRoot $WorkspaceRoot -AutomationOutputs $automationOutputs -RepositoryMap $RepositoryMap
+    $current = Test-MorphospaceUnitOwnership -Ownership $ownership -ClaimBaseline $baseline -ClaimBaselineReference $protocol.claim_baseline -Unit $Unit -RepositoryMapReference $protocol.repository_map -RepositoryMap $RepositoryMap -CommittedTransitionPaths $transitionPaths
     $automationOutputs = @($current.automation_outputs)
     if ($automationOutputs.Count -eq 0) { throw 'Validation receipt v2 lacks an ownership-bound automation output contract.' }
-    Test-MorphospaceAutomationOutputSet -AutomationOutputs $automationOutputs -RepositoryMap $RepositoryMap -Expected present
+    Test-MorphospaceAutomationOutputSet -AutomationOutputs @($automationOutputs|Where-Object{[string]$_.phase-cne'transition'}) -RepositoryMap $RepositoryMap -Expected present
     $actionPath = Assert-MorphospaceAuthorityReference $WorkspaceRoot $receipt.action 'validation-action' 'rusty.morphospace.workflow.validation_action.v2'
     $action = Read-MorphospaceAuthorityJson $actionPath; $action | Add-Member -NotePropertyName __path -NotePropertyValue $actionPath -Force
-    if ([string]$action.pre_observation_sha256 -ne [string]$receipt.observations.before_sha256 -or [string]$current.observation.sha256 -ne [string]$receipt.observations.after_sha256) { throw 'Validation receipt v2 observation boundary drifted.' }
+    if ([string]$action.pre_observation_sha256 -ne [string]$receipt.observations.before_sha256 -or($transitionPaths.Count-eq0-and[string]$current.observation.sha256 -ne [string]$receipt.observations.after_sha256)) { throw 'Validation receipt v2 observation boundary drifted.' }
     $selection = Get-MorphospaceRegistrySelection -Registry $registry -Unit $Unit -RepositoryMap $RepositoryMap -AssertedProfileId ([string]$action.profile_id)
     $expectedOutputs = @($automationOutputs | Where-Object { [string]$_.phase -eq 'validation' } | Sort-Object repo_id,path)
     $actionOutputs = @($action.expected_outputs | Sort-Object repo_id,path)
