@@ -17,6 +17,33 @@ function Get-MorphospaceAuthoritySha256 {
     try { return ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($stream))).Replace('-', '').ToLowerInvariant() } finally { $stream.Dispose() }
 }
 
+function Invoke-MorphospacePinnedValidator {
+    param(
+        [Parameter(Mandatory = $true)][string]$ValidatorPath,
+        [Parameter(Mandatory = $true)][string]$Workspace,
+        [Parameter(Mandatory = $true)][string]$Quest,
+        [Parameter(Mandatory = $true)][string]$Roadmap,
+        [Parameter(Mandatory = $true)][string]$Unit,
+        [Parameter(Mandatory = $true)][string]$OwnerOut,
+        [Parameter(Mandatory = $true)][string]$StdoutPath,
+        [Parameter(Mandatory = $true)][string]$StderrPath,
+        [Parameter(Mandatory = $true)][int]$TimeoutSeconds
+    )
+    if ((Test-Path -LiteralPath $OwnerOut) -or (Test-Path -LiteralPath $StdoutPath) -or (Test-Path -LiteralPath $StderrPath)) { throw 'Pinned validator output paths must be absent before launch.' }
+    $host = (Get-Command powershell.exe -ErrorAction Stop).Source
+    $arguments = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $ValidatorPath, '-WorkspaceRoot', $Workspace, '-QuestRoot', $Quest, '-RoadmapPath', $Roadmap, '-UnitId', $Unit, '-OutPath', $OwnerOut)
+    $process = Start-Process -FilePath $host -ArgumentList $arguments -PassThru -WindowStyle Hidden -RedirectStandardOutput $StdoutPath -RedirectStandardError $StderrPath
+    try {
+        if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+            try { $process.Kill() } catch {}
+            throw "Pinned validator exceeded its registry timeout of $TimeoutSeconds seconds."
+        }
+        $stdout = if (Test-Path -LiteralPath $StdoutPath -PathType Leaf) { [IO.File]::ReadAllText($StdoutPath, [Text.UTF8Encoding]::new($false)) } else { '' }
+        $stderr = if (Test-Path -LiteralPath $StderrPath -PathType Leaf) { [IO.File]::ReadAllText($StderrPath, [Text.UTF8Encoding]::new($false)) } else { '' }
+        return [pscustomobject][ordered]@{ exit_code = [int]$process.ExitCode; stdout = $stdout; stderr = $stderr }
+    } finally { $process.Dispose() }
+}
+
 function Resolve-MorphospaceAuthorityPath {
     param([Parameter(Mandatory = $true)][string]$WorkspaceRoot, [Parameter(Mandatory = $true)][string]$Reference)
     $workspace = [IO.Path]::GetFullPath($WorkspaceRoot).TrimEnd('\', '/')
@@ -257,4 +284,4 @@ function Test-MorphospaceValidationReceiptV2 {
     return $receipt
 }
 
-Microsoft.PowerShell.Core\Export-ModuleMember -Function Read-MorphospaceAuthorityJson, Get-MorphospaceAuthoritySha256, Resolve-MorphospaceAuthorityPath, Get-MorphospaceAuthorityReference, Assert-MorphospaceAuthorityReference, Test-MorphospaceValidatorTrustAnchorMigration, Test-MorphospaceOwnerValidation, Test-MorphospaceValidationEvidenceV2, New-MorphospaceValidationExecutionV1, Test-MorphospaceValidationExecutionV1, New-MorphospaceValidationReceiptV2, Test-MorphospaceValidationReceiptV2
+Microsoft.PowerShell.Core\Export-ModuleMember -Function Read-MorphospaceAuthorityJson, Get-MorphospaceAuthoritySha256, Invoke-MorphospacePinnedValidator, Resolve-MorphospaceAuthorityPath, Get-MorphospaceAuthorityReference, Assert-MorphospaceAuthorityReference, Test-MorphospaceValidatorTrustAnchorMigration, Test-MorphospaceOwnerValidation, Test-MorphospaceValidationEvidenceV2, New-MorphospaceValidationExecutionV1, Test-MorphospaceValidationExecutionV1, New-MorphospaceValidationReceiptV2, Test-MorphospaceValidationReceiptV2

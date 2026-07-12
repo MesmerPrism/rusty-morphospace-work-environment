@@ -19,35 +19,6 @@ Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceValidationAuthority.psm1'
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceOwnership.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
 
-function Invoke-MorphospacePinnedValidator {
-    param(
-        [Parameter(Mandatory = $true)][string]$ValidatorPath,
-        [Parameter(Mandatory = $true)][string]$Workspace,
-        [Parameter(Mandatory = $true)][string]$Quest,
-        [Parameter(Mandatory = $true)][string]$Roadmap,
-        [Parameter(Mandatory = $true)][string]$Unit,
-        [Parameter(Mandatory = $true)][string]$OwnerOut,
-        [Parameter(Mandatory = $true)][string]$StdoutPath,
-        [Parameter(Mandatory = $true)][string]$StderrPath,
-        [Parameter(Mandatory = $true)][int]$TimeoutSeconds
-    )
-    if ((Test-Path -LiteralPath $OwnerOut) -or (Test-Path -LiteralPath $StdoutPath) -or (Test-Path -LiteralPath $StderrPath)) { throw 'Pinned validator output paths must be absent before launch.' }
-    $host = (Get-Command powershell.exe -ErrorAction Stop).Source
-    $arguments = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $ValidatorPath, '-WorkspaceRoot', $Workspace, '-QuestRoot', $Quest, '-RoadmapPath', $Roadmap, '-UnitId', $Unit, '-OutPath', $OwnerOut)
-    $process = Start-Process -FilePath $host -ArgumentList $arguments -PassThru -WindowStyle Hidden -RedirectStandardOutput $StdoutPath -RedirectStandardError $StderrPath
-    try {
-        if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
-            try { $process.Kill() } catch {}
-            throw "Pinned validator exceeded its registry timeout of $TimeoutSeconds seconds."
-        }
-        $stdout = if (Test-Path -LiteralPath $StdoutPath -PathType Leaf) { [IO.File]::ReadAllText($StdoutPath, [Text.UTF8Encoding]::new($false)) } else { '' }
-        $stderr = if (Test-Path -LiteralPath $StderrPath -PathType Leaf) { [IO.File]::ReadAllText($StderrPath, [Text.UTF8Encoding]::new($false)) } else { '' }
-        return [pscustomobject][ordered]@{ exit_code = [int]$process.ExitCode; stdout = $stdout; stderr = $stderr }
-    } finally {
-        $process.Dispose()
-    }
-}
-
 function Get-MorphospaceAutomationWorkspacePath {
     param([Parameter(Mandatory = $true)][object]$Output, [Parameter(Mandatory = $true)][hashtable]$RepositoryMap, [Parameter(Mandatory = $true)][string]$Workspace)
     $repoId = [string]$Output.repo_id
@@ -109,6 +80,7 @@ $selection = Get-MorphospaceRegistrySelection -Registry $registry -Unit $unit -R
 Assert-MorphospaceAuthorizedAction -ActionDocument $actionDocument -Selection $selection -Unit $unit -AutomationOutputs $automationOutputs
 if ($Action -eq 'Inspect') { [pscustomobject][ordered]@{ action = 'Inspect'; project_id = $unit.project_id; unit_id = $UnitId; validators = @($selection.validators | ForEach-Object { $_.validator_id }); observation_sha256 = $observation.observation.sha256; trust_migration = $migration.migration_id } | ConvertTo-Json -Depth 20; exit 0 }
 if (-not $EvidencePath -or -not $OutPath) { throw 'Validate requires EvidencePath and OutPath.' }
+& (Join-Path $PSScriptRoot 'Test-ValidationAuthorityLauncher.ps1') | Out-Null
 $evidenceAbsolute = Resolve-MorphospaceAuthorityPath $workspace $EvidencePath
 $receiptAbsolute = Resolve-MorphospaceAuthorityPath $workspace $OutPath
 $evidenceOutput = @($automationOutputs | Where-Object { [string]$_.phase -eq 'validation' -and [string]$_.role -eq 'validation-evidence' })
