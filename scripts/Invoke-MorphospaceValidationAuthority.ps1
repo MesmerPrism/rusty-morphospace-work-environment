@@ -84,6 +84,7 @@ if (-not $EvidencePath -or -not $OutPath) { throw 'Validate requires EvidencePat
 if ($ExecutionNonce -notmatch '^[0-9a-f]{64}$') { throw 'Validate requires an authority-generated 32-byte execution nonce.' }
 & (Join-Path $PSScriptRoot 'Test-ValidationAuthorityLauncher.ps1') | Out-Null
 & (Join-Path $PSScriptRoot 'Test-AuthorityRunnerHandoff.ps1') | Out-Null
+& (Join-Path $PSScriptRoot 'Test-TrustMigrationAuthority.ps1') | Out-Null
 $evidenceAbsolute = Resolve-MorphospaceAuthorityPath $workspace $EvidencePath
 $receiptAbsolute = Resolve-MorphospaceAuthorityPath $workspace $OutPath
 $evidenceOutput = @($automationOutputs | Where-Object { [string]$_.phase -eq 'validation' -and [string]$_.role -eq 'validation-evidence' })

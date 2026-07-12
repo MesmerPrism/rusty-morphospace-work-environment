@@ -98,7 +98,7 @@ function Test-MorphospaceValidatorTrustAnchorMigration {
         if (-not $RepositoryMap.ContainsKey($repoId) -or -not $seenArtifacts.Add($key) -or [string]$artifact.sha256 -notmatch '^[0-9a-f]{64}$') {
             throw "Trust migration authority artifact is malformed: $key"
         }
-        Test-MorphospaceLowerObjectId ([string]$artifact.git_blob_oid) "Trust migration authority artifact '$key' blob"
+        if ([string]$artifact.git_blob_oid -notmatch '^(?:[0-9a-f]{40}|[0-9a-f]{64})$') { throw "Trust migration authority artifact '$key' blob is invalid." }
         $absolute = [IO.Path]::GetFullPath((Join-Path ([string]$RepositoryMap[$repoId].path) $relative))
         Assert-MorphospaceNoReparseAncestor ([string]$RepositoryMap[$repoId].path) $absolute
         if (-not [IO.File]::Exists($absolute) -or (Get-MorphospaceAuthoritySha256 $absolute) -cne [string]$artifact.sha256) {
@@ -114,6 +114,7 @@ function Test-MorphospaceValidatorTrustAnchorMigration {
         'scripts/Invoke-Wf005OwnerValidator.ps1',
         'scripts/Test-ValidationAuthorityLauncher.ps1',
         'scripts/Test-AuthorityRunnerHandoff.ps1',
+        'scripts/Test-TrustMigrationAuthority.ps1',
         'scripts/Test-ValidationExecutionAuthority.ps1',
         'scripts/Test-TransitionLedger.ps1',
         'scripts/WorkUnitAutomation.psm1',
