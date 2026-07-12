@@ -87,8 +87,9 @@ $unit = Read-MorphospaceAuthorityJson $unitPath
 if ([string]$unit.unit_id -ne $UnitId -or [string]$unit.project_id -ne [string]$spec.project_id) { throw 'Unit identity does not match the workspace.' }
 $map = Get-MorphospaceFixedRepositoryMap -WorkspaceRoot $workspace -RequiredRepositoryIds @($unit.allowed_repositories | ForEach-Object { [string]$_.repo_id })
 $registryAbsolute = Resolve-MorphospaceAuthorityPath $workspace $RegistryPath
-$registry = Read-MorphospaceAuthorityJson $registryAbsolute; $registry | Add-Member -NotePropertyName __path -NotePropertyValue $registryAbsolute -Force
+$registry = Read-MorphospaceAuthorityJson $registryAbsolute
 Test-MorphospaceOwnerValidatorRegistry -Registry $registry -RepositoryMap $map.map | Out-Null
+$registry | Add-Member -NotePropertyName __path -NotePropertyValue $registryAbsolute -Force
 $protocolAbsolute = Resolve-MorphospaceAuthorityPath $workspace $CurrentProtocolPath
 $protocol = Read-MorphospaceAuthorityJson $protocolAbsolute; $protocol | Add-Member -NotePropertyName __path -NotePropertyValue $protocolAbsolute -Force
 if ([string]$protocol.project_id -ne [string]$unit.project_id -or [string]$protocol.unit_id -ne $UnitId -or [string]$protocol.status -ne 'active') { throw 'Current protocol does not bind the active unit.' }
