@@ -265,6 +265,15 @@ dirty instruction file is baseline input, never current-unit attribution. If
 the unit adds routing to that file, declare its exact shared integration rather
 than absorbing the prior work.
 
+For this stricter path, `RecordValidation -Execute` invokes the migrated,
+hash-pinned authority runner itself. It supplies a fresh 32-byte execution
+nonce and accepts the resulting v2 receipt only when that exact nonce is bound
+to the authority execution record. Supplying a prewritten v2 receipt, a
+different runner path, or caller-selected runner switches is rejected. A
+closed room may carry explicitly listed historical Git blobs when a static
+gate verifies historical object IDs; those blobs are copied into a local,
+sealed object store and are fingerprinted separately from the live repository.
+
 WF-005 is also selected by its immutable project/unit identity while this
 one-time corrective migration is active. Removing its descriptive tag cannot
 downgrade it to the generic v1 receipt path.

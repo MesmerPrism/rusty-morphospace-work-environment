@@ -4,11 +4,12 @@
   "title": "Non-replayable authority validation execution",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "execution_id", "completed_at", "project_id", "unit_id", "attempt_id", "action", "evidence", "expected_receipt", "output_contract_sha256", "observations", "executor", "status"],
+  "required": ["schema", "execution_id", "completed_at", "execution_nonce", "project_id", "unit_id", "attempt_id", "action", "evidence", "expected_receipt", "output_contract_sha256", "observations", "executor", "status"],
   "properties": {
     "schema": { "const": "rusty.morphospace.workflow.validation_execution.v1" },
     "execution_id": { "$ref": "#/$defs/id" },
     "completed_at": { "$ref": "#/$defs/utc" },
+    "execution_nonce": { "$ref": "#/$defs/hash" },
     "project_id": { "$ref": "#/$defs/id" },
     "unit_id": { "$ref": "#/$defs/id" },
     "attempt_id": { "$ref": "#/$defs/id" },

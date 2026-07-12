@@ -12,6 +12,8 @@ param(
     [string]$AdoptionReceipt = "",
     [ValidateSet("quick", "standard", "deep")][string]$ValidationTier = "standard",
     [string[]]$DeviceSerials = @(),
+    [string]$AuthorityRunnerPath = "",
+    [string[]]$AuthorityRunnerArguments = @(),
     [string]$Timestamp = "",
     [string]$OutPath = "",
     [switch]$Execute
@@ -32,6 +34,8 @@ $arguments = @{
     AdoptionReceipt = $AdoptionReceipt
     ValidationTier = $ValidationTier
     DeviceSerials = $DeviceSerials
+    AuthorityRunnerPath = $AuthorityRunnerPath
+    AuthorityRunnerArguments = $AuthorityRunnerArguments
     Timestamp = $Timestamp
     OutPath = $OutPath
     Execute = $Execute

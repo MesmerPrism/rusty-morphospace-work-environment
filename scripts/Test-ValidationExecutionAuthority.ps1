@@ -28,7 +28,7 @@ try {
     $missing=[pscustomobject]@{role='validation-execution';path='receipts/execution.json';schema='rusty.morphospace.workflow.validation_execution.v1';sha256=('0'*64)}
     Assert-Rejected { Test-MorphospaceValidationExecutionV1 -WorkspaceRoot $workspace -ExecutionReference $missing -Unit $unit -Action $action -Evidence $evidence -AutomationOutputs $outputs -ReceiptReference 'receipts/receipt.json' -Receipt $receipt | Out-Null } 'manual receipt without an authority execution was accepted'
     $execution=[pscustomobject][ordered]@{
-        schema='rusty.morphospace.workflow.validation_execution.v1';execution_id='receipt-test-attempt-001-execution';completed_at='2026-07-12T10:00:00.0000000Z';project_id='execution-test';unit_id='receipt-test';attempt_id='attempt-001'
+        schema='rusty.morphospace.workflow.validation_execution.v1';execution_id='receipt-test-attempt-001-execution';completed_at='2026-07-12T10:00:00.0000000Z';execution_nonce=('c'*64);project_id='execution-test';unit_id='receipt-test';attempt_id='attempt-001'
         action=Get-MorphospaceAuthorityReference $workspace $actionPath 'validation-action' 'rusty.morphospace.workflow.validation_action.v2'
         evidence=Get-MorphospaceAuthorityReference $workspace $evidencePath 'validation-evidence' 'rusty.morphospace.workflow.validation_evidence.v2'
         expected_receipt=[pscustomobject]@{role='validation-receipt';path='receipts/receipt.json';schema='rusty.morphospace.workflow.validation_receipt.v2'}
@@ -39,12 +39,13 @@ try {
     }
     Write-TestJson $workspace 'receipts/execution.json' $execution
     $reference=Get-MorphospaceAuthorityReference $workspace (Join-Path $workspace 'receipts\execution.json') 'validation-execution' 'rusty.morphospace.workflow.validation_execution.v1'
-    $validated=Test-MorphospaceValidationExecutionV1 -WorkspaceRoot $workspace -ExecutionReference $reference -Unit $unit -Action $action -Evidence $evidence -AutomationOutputs $outputs -ReceiptReference 'receipts/receipt.json' -Receipt $receipt
+    $validated=Test-MorphospaceValidationExecutionV1 -WorkspaceRoot $workspace -ExecutionReference $reference -Unit $unit -Action $action -Evidence $evidence -AutomationOutputs $outputs -ReceiptReference 'receipts/receipt.json' -Receipt $receipt -ExpectedExecutionNonce ('c'*64)
     Assert-Execution ([string]$validated.execution_id -eq 'receipt-test-attempt-001-execution') 'authority execution did not validate its exact action/evidence/output contract'
     $execution.expected_receipt.path='receipts/other.json'
     Write-TestJson $workspace 'receipts/mutated-execution.json' $execution
     $mutatedReference=Get-MorphospaceAuthorityReference $workspace (Join-Path $workspace 'receipts\mutated-execution.json') 'validation-execution' 'rusty.morphospace.workflow.validation_execution.v1'
     Assert-Rejected { Test-MorphospaceValidationExecutionV1 -WorkspaceRoot $workspace -ExecutionReference $mutatedReference -Unit $unit -Action $action -Evidence $evidence -AutomationOutputs $outputs -ReceiptReference 'receipts/receipt.json' -Receipt $receipt | Out-Null } 'execution validation accepted a forged receipt target'
+    Assert-Rejected { Test-MorphospaceValidationExecutionV1 -WorkspaceRoot $workspace -ExecutionReference $reference -Unit $unit -Action $action -Evidence $evidence -AutomationOutputs $outputs -ReceiptReference 'receipts/receipt.json' -Receipt $receipt -ExpectedExecutionNonce ('d'*64) | Out-Null } 'execution validation accepted a nonce from another authority invocation'
     Write-Host 'Validation-execution authority self-test passed.'
 } finally {
     if([IO.Directory]::Exists($workspace)){[IO.Directory]::Delete($workspace,$true)}

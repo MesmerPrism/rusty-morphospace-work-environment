@@ -78,6 +78,19 @@ function Test-MorphospaceInputClosure {
     }
 }
 
+function Test-MorphospaceHistoryBlobClosure {
+    param([object[]]$HistoryBlobs,[hashtable]$RepositoryMap)
+    $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($blob in @($HistoryBlobs)) {
+        Assert-MorphospaceExactPropertySet $blob @('repo_id','object_id','sha256') @() 'validator history blob'
+        $repoId = [string]$blob.repo_id
+        Test-MorphospaceLowerObjectId ([string]$blob.object_id) "Validator history blob '$repoId' object"
+        if (-not $RepositoryMap.ContainsKey($repoId) -or [string]$blob.sha256 -notmatch '^[0-9a-f]{64}$' -or -not $seen.Add("$repoId/$([string]$blob.object_id)")) {
+            throw "Validator history blob is malformed or duplicated: $repoId/$([string]$blob.object_id)"
+        }
+    }
+}
+
 function Test-MorphospaceOwnerValidatorRegistry {
     param([object]$Registry,[hashtable]$RepositoryMap)
     Assert-MorphospaceExactPropertySet $Registry @('$schema','schema','registry_id','revision','created_at','foundation_commit','previous_registry','validators') @() 'owner-validator registry'
@@ -85,13 +98,14 @@ function Test-MorphospaceOwnerValidatorRegistry {
     if([long]$Registry.revision-lt1-or@($Registry.validators).Count-eq0){throw 'Owner-validator registry revision/entries are invalid.'};if($null-ne$Registry.previous_registry){Assert-MorphospaceExactPropertySet $Registry.previous_registry @('role','path','schema','sha256') @() 'previous registry reference'}
     $validatorIds=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach($validator in @($Registry.validators)){
-        Assert-MorphospaceExactPropertySet $validator @('validator_id','owner_repo_id','owner_revision','owner_tree_oid','path','sha256','git_blob_oid','entrypoint','profiles','acceptance_ids','evidence_schema','input_closure','timeout_seconds','max_output_bytes','mutation_policy','device_policy') @() 'owner-validator registry entry'
+        Assert-MorphospaceExactPropertySet $validator @('validator_id','owner_repo_id','owner_revision','owner_tree_oid','path','sha256','git_blob_oid','entrypoint','profiles','acceptance_ids','evidence_schema','input_closure','timeout_seconds','max_output_bytes','mutation_policy','device_policy') @('history_blobs') 'owner-validator registry entry'
         $id=[string]$validator.validator_id;if($id-notmatch'^[a-z0-9][a-z0-9-]{1,191}$'-or-not$validatorIds.Add($id)){throw "Duplicate/invalid validator '$id'."};$owner=[string]$validator.owner_repo_id;if(-not$RepositoryMap.ContainsKey($owner)){throw "Validator owner '$owner' is not mapped."}
         Test-MorphospaceLowerObjectId ([string]$validator.owner_revision) "Validator '$id' owner revision";Test-MorphospaceLowerObjectId ([string]$validator.owner_tree_oid) "Validator '$id' owner tree";Test-MorphospaceLowerObjectId ([string]$validator.git_blob_oid) "Validator '$id' blob"
         $path=ConvertTo-MorphospaceProtocolRelativePath ([string]$validator.path);if($path-cne[string]$validator.path-or[string]$validator.sha256-notmatch'^[0-9a-f]{64}$'){throw "Validator '$id' path/hash is invalid."}
         if([string]$validator.entrypoint-cne'powershell-file'-or[string]$validator.evidence_schema-cne'rusty.morphospace.workflow.owner_validation.v1'-or[string]$validator.mutation_policy-cne'temp-output-only'-or[string]$validator.device_policy-notin@('forbidden','required')){throw "Validator '$id' policy is unsafe."};if([long]$validator.timeout_seconds-lt1-or[long]$validator.timeout_seconds-gt600-or[long]$validator.max_output_bytes-lt1024-or[long]$validator.max_output_bytes-gt268435456){throw "Validator '$id' bounds are invalid."}
         foreach($property in @('profiles','acceptance_ids')){$values=@($validator.$property);if($values.Count-eq0){throw "Validator '$id' has empty $property."};$seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase);foreach($value in $values){if([string]$value-notmatch'^[a-z0-9][a-z0-9-]{1,191}$'-or-not$seen.Add([string]$value)){throw "Validator '$id' repeats/invalidates $property."}}}
         Test-MorphospaceInputClosure $validator $RepositoryMap
+        if ($validator.PSObject.Properties.Name -contains 'history_blobs') { Test-MorphospaceHistoryBlobClosure @($validator.history_blobs) $RepositoryMap }
     }
     return $true
 }
@@ -282,11 +296,48 @@ function Get-MorphospaceNoFollowTreeRows {
     return @($rows.ToArray())
 }
 
+function Get-MorphospaceBytesSha256 {
+    param([Parameter(Mandatory = $true)][byte[]]$Bytes)
+    return ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($Bytes))).Replace('-', '').ToLowerInvariant()
+}
+
+function Add-MorphospaceCleanHistoryObjects {
+    param(
+        [Parameter(Mandatory = $true)][string]$SourceRepository,
+        [Parameter(Mandatory = $true)][string]$Destination,
+        [Parameter(Mandatory = $true)][object[]]$HistoryBlobs,
+        [Parameter(Mandatory = $true)][string]$GitExecutable
+    )
+    $items = @($HistoryBlobs)
+    if ($items.Count -eq 0) { return @() }
+    foreach ($item in $items) { if ([string]$item.object_id -notmatch '^[0-9a-f]{40}$') { throw 'Clean history currently supports SHA-1 Git blob IDs only.' } }
+    $initOutput = @(& $GitExecutable -C $Destination init --quiet --object-format=sha1 2>&1)
+    if ($LASTEXITCODE -ne 0) { throw "Unable to initialize the sealed clean-room history store: $($initOutput -join [Environment]::NewLine)" }
+    $rows = [Collections.Generic.List[object]]::new()
+    foreach ($item in $items) {
+        $objectId = [string]$item.object_id
+        $bytes = (Invoke-MorphospaceOwnershipGit $GitExecutable $SourceRepository @('cat-file','blob',$objectId)).stdout
+        $sha = Get-MorphospaceBytesSha256 $bytes
+        if ($sha -cne [string]$item.sha256) { throw "Historical clean-room blob bytes drifted: $objectId" }
+        $temporary = Join-Path $Destination ('.morphospace-history-' + [guid]::NewGuid().ToString('N') + '.blob')
+        [IO.File]::WriteAllBytes($temporary, $bytes)
+        try {
+            $output = @(& $GitExecutable -C $Destination hash-object -w --no-filters $temporary 2>&1)
+            $exitCode = $LASTEXITCODE
+            $stdout = ([string]($output -join [Environment]::NewLine)).Trim().ToLowerInvariant()
+            if ($exitCode -ne 0 -or -not $stdout.Equals($objectId, [StringComparison]::Ordinal)) { throw "Unable to seal historical clean-room blob '$objectId' (exit=$exitCode, output='$stdout')." }
+        } finally { if ([IO.File]::Exists($temporary)) { [IO.File]::Delete($temporary) } }
+        $rows.Add([pscustomobject][ordered]@{ repo_id = [string]$item.repo_id; path = "git-history/$objectId"; object_id = $objectId; sha256 = $sha }) | Out-Null
+    }
+    return @($rows.ToArray())
+}
+
 function New-MorphospaceCleanRoom {
-    param([object]$Ownership,[object]$ClaimBaseline,[hashtable]$RepositoryMap,[object[]]$InputClosure,[string]$AttemptId,[string]$GitExecutable='')
+    param([object]$Ownership,[object]$ClaimBaseline,[hashtable]$RepositoryMap,[object[]]$InputClosure,[string]$AttemptId,[string]$GitExecutable='',[object[]]$HistoryBlobs=@())
     if($AttemptId-notmatch'^[a-z0-9][a-z0-9-]{7,95}$'){throw 'Clean-room attempt ID is invalid.'};if(-not$GitExecutable){$GitExecutable=(Get-MorphospaceBoundExecutable git).path};$ownedByRepo=@{};foreach($row in @($Ownership.repositories)){$ownedByRepo[[string]$row.repo_id]=$row};$baselineByRepo=@{};foreach($row in @($ClaimBaseline.repositories)){$baselineByRepo[[string]$row.repo_id]=$row};$closure=Get-MorphospaceCleanClosureMap $InputClosure $ownedByRepo
-    $temp=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\','/');$parent=[IO.Path]::Combine($temp,'rusty-morphospace-cleanrooms');if(-not[IO.Directory]::Exists($parent)){[void][IO.Directory]::CreateDirectory($parent)};Assert-MorphospaceNoReparseAncestor $temp $parent;$root=[IO.Path]::Combine($parent,"$AttemptId-$([guid]::NewGuid().ToString('N'))");[void][IO.Directory]::CreateDirectory($root);$guard=[guid]::NewGuid().ToString('N');$script:CleanRoomGuards[$root]=$guard;$roots=@{};$modesByRepo=@{};$total=[long]0;$sourceLeases=[Collections.Generic.List[object]]::new()
+    $temp=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\','/');$parent=[IO.Path]::Combine($temp,'rusty-morphospace-cleanrooms');if(-not[IO.Directory]::Exists($parent)){[void][IO.Directory]::CreateDirectory($parent)};Assert-MorphospaceNoReparseAncestor $temp $parent;$root=[IO.Path]::Combine($parent,"$AttemptId-$([guid]::NewGuid().ToString('N'))");[void][IO.Directory]::CreateDirectory($root);$guard=[guid]::NewGuid().ToString('N');$script:CleanRoomGuards[$root]=$guard;$roots=@{};$modesByRepo=@{};$total=[long]0;$sourceLeases=[Collections.Generic.List[object]]::new();$historyRows=[Collections.Generic.List[object]]::new()
     try{
+        Test-MorphospaceHistoryBlobClosure @($HistoryBlobs) $RepositoryMap
         foreach($repoId in @($closure.Keys)){$owned=$ownedByRepo[$repoId];$source=[string]$RepositoryMap[$repoId].path;$destination=[IO.Path]::Combine($root,$repoId);[void][IO.Directory]::CreateDirectory($destination);$modes=@{};$paths=[string[]]$closure[$repoId]
             if([string]$owned.kind-ceq'git'){$arguments=[Collections.Generic.List[string]]::new();foreach($value in @('ls-tree','-r','-z','--full-tree',[string]$owned.base_revision,'--')){$arguments.Add($value)};foreach($path in $paths){$arguments.Add($path)};$treeText=ConvertFrom-MorphospaceOwnershipUtf8 (Invoke-MorphospaceOwnershipGit $GitExecutable $source @($arguments.ToArray())).stdout
                 foreach($token in $treeText.Split([char]0)){if(-not$token){continue};$match=[regex]::Match($token,'^(?<mode>[0-9]{6}) (?<kind>\S+) (?<oid>[0-9a-f]{40,64})\t(?<path>.+)$');if(-not$match.Success-or$match.Groups['kind'].Value-cne'blob'-or$match.Groups['mode'].Value-notin@('100644','100755')){throw "Unsupported base entry in '$repoId'."};$relative=ConvertTo-MorphospaceProtocolRelativePath $match.Groups['path'].Value;if(-not(Test-MorphospacePathInClosure $relative $paths)){throw "Git returned an out-of-closure base path: $repoId/$relative"};$target=[IO.Path]::GetFullPath([IO.Path]::Combine($destination,$relative));Assert-MorphospaceNoReparseAncestor $destination $target;$blob=(Invoke-MorphospaceOwnershipGit $GitExecutable $source @('cat-file','blob',$match.Groups['oid'].Value)).stdout;$total+=$blob.Length;if($total-gt536870912){throw 'Clean-room input exceeds 512 MiB.'};Write-MorphospaceCleanBlob $target $blob;$modes[$relative]=$match.Groups['mode'].Value}
@@ -316,11 +367,16 @@ function New-MorphospaceCleanRoom {
             }
             foreach($entry in @($owned.entries)){if([string]$entry.attribution-notin@('unit','shared')-or-not(Test-MorphospacePathInClosure ([string]$entry.path) $paths)){continue};$relative=ConvertTo-MorphospaceProtocolRelativePath ([string]$entry.path);$target=[IO.Path]::GetFullPath([IO.Path]::Combine($destination,$relative));Assert-MorphospaceNoReparseAncestor $destination $target;if([string]$entry.state-ceq'deleted'){if([IO.File]::Exists($target)){[IO.File]::Delete($target)};$modes.Remove($relative);continue};if([string]$entry.state-ceq'directory'){if(-not[IO.Directory]::Exists($target)){[void][IO.Directory]::CreateDirectory($target)};continue};if($null-ne$entry.mode-and[string]$entry.mode-notin@('100644','100755')){throw "Owned overlay has unsupported mode: $repoId/$relative"};$live=[IO.Path]::GetFullPath([IO.Path]::Combine($source,$relative));Assert-MorphospaceNoReparseAncestor $source $live;$sourceLeases.Add((Copy-MorphospaceLeasedOverlay $live $target $entry));if($null-ne$entry.mode){$modes[$relative]=[string]$entry.mode}else{[void]$modes.Remove($relative)}}
             foreach($requiredPath in $paths){$required=[IO.Path]::GetFullPath([IO.Path]::Combine($destination,$requiredPath));if(-not([IO.File]::Exists($required)-or[IO.Directory]::Exists($required))){throw "Clean-room closure path is absent: $repoId/$requiredPath"}}
+            $repoHistory = @($HistoryBlobs | Where-Object { [string]$_.repo_id -ceq $repoId })
+            if ($repoHistory.Count -gt 0) {
+                foreach ($row in @(Add-MorphospaceCleanHistoryObjects -SourceRepository $source -Destination $destination -HistoryBlobs $repoHistory -GitExecutable $GitExecutable)) { $historyRows.Add($row) | Out-Null }
+            }
             $roots[$repoId]=$destination;$modesByRepo[$repoId]=$modes
         }
-        $rows=[Collections.Generic.List[object]]::new();foreach($repoId in @($roots.Keys)){foreach($row in @(Get-MorphospaceNoFollowTreeRows ([string]$roots[$repoId]) $repoId $modesByRepo[$repoId])){if(-not(Test-MorphospacePathInClosure ([string]$row.path) ([string[]]$closure[$repoId]))){throw "Clean room contains out-of-closure path: $repoId/$([string]$row.path)"};$rows.Add($row)}}
+        $rows=[Collections.Generic.List[object]]::new();foreach($repoId in @($roots.Keys)){foreach($row in @(Get-MorphospaceNoFollowTreeRows ([string]$roots[$repoId]) $repoId $modesByRepo[$repoId])){if([string]$row.path -like '.git/*'){if(@($HistoryBlobs|Where-Object{[string]$_.repo_id-ceq$repoId}).Count-eq0){throw "Clean room contains undeclared Git metadata: $repoId/$([string]$row.path)"};continue};if(-not(Test-MorphospacePathInClosure ([string]$row.path) ([string[]]$closure[$repoId]))){throw "Clean room contains out-of-closure path: $repoId/$([string]$row.path)"};$rows.Add($row)}}
+        foreach($historyRow in @($historyRows)){ $rows.Add($historyRow) | Out-Null }
         foreach($lease in $sourceLeases){if([long]$lease.stream.Length-ne[long]$lease.length-or(Get-MorphospaceStreamSha256 $lease.stream)-cne[string]$lease.sha256){throw "Owned overlay changed before clean-room finalization: $([string]$lease.path)"}};$sorted=@($rows.ToArray());[Array]::Sort($sorted,[Comparison[object]]{param($left,$right)[StringComparer]::Ordinal.Compare("$([string]$left.repo_id)/$([string]$left.path)","$([string]$right.repo_id)/$([string]$right.path)")})
-        return [pscustomobject]@{root=$root;parent=$parent;guard=$guard;repositories=$roots;closure=$closure;modes_by_repository=$modesByRepo;fingerprint_sha256=(Get-MorphospaceOrdinalFingerprint $sorted)}
+        return [pscustomobject]@{root=$root;parent=$parent;guard=$guard;repositories=$roots;closure=$closure;modes_by_repository=$modesByRepo;history_rows=@($historyRows.ToArray());fingerprint_sha256=(Get-MorphospaceOrdinalFingerprint $sorted)}
     }catch{try{Remove-MorphospaceCleanRoom ([pscustomobject]@{root=$root;parent=$parent;guard=$guard})}catch{};throw}finally{foreach($lease in $sourceLeases){$lease.stream.Dispose()}}
 }
 
@@ -334,10 +390,15 @@ function Get-MorphospaceCleanRoomFingerprint {
         $modes=@{}
         if($null-ne$CleanRoom.modes_by_repository-and$null-ne$CleanRoom.modes_by_repository[$repoId]){$modes=$CleanRoom.modes_by_repository[$repoId]}
         foreach($row in @(Get-MorphospaceNoFollowTreeRows $repoRoot ([string]$repoId) $modes)){
+            if([string]$row.path -like '.git/*'){
+                if(@($CleanRoom.history_rows|Where-Object{[string]$_.repo_id-ceq$repoId}).Count-eq0){throw "Clean room contains undeclared Git metadata: $repoId/$([string]$row.path)"}
+                continue
+            }
             if(-not(Test-MorphospacePathInClosure ([string]$row.path) ([string[]]$CleanRoom.closure[$repoId]))){throw "Clean room contains out-of-closure path: $repoId/$([string]$row.path)"}
             $rows.Add($row)
         }
     }
+    foreach($historyRow in @($CleanRoom.history_rows)){ $rows.Add($historyRow) | Out-Null }
     $sorted=@($rows.ToArray());[Array]::Sort($sorted,[Comparison[object]]{param($left,$right)[StringComparer]::Ordinal.Compare("$([string]$left.repo_id)/$([string]$left.path)","$([string]$right.repo_id)/$([string]$right.path)")})
     return Get-MorphospaceOrdinalFingerprint $sorted
 }

@@ -9,6 +9,7 @@ param(
     [Parameter(Mandatory = $true)][string]$ClaimBaselinePath,
     [Parameter(Mandatory = $true)][string]$OwnershipPath,
     [Parameter(Mandatory = $true)][string]$ValidationActionPath,
+    [string]$ExecutionNonce = '',
     [string]$EvidencePath,
     [string]$OutPath
 )
@@ -64,7 +65,7 @@ $registry | Add-Member -NotePropertyName __path -NotePropertyValue $registryAbso
 $protocolAbsolute = Resolve-MorphospaceAuthorityPath $workspace $CurrentProtocolPath
 $protocol = Read-MorphospaceAuthorityJson $protocolAbsolute; $protocol | Add-Member -NotePropertyName __path -NotePropertyValue $protocolAbsolute -Force
 if ([string]$protocol.project_id -ne [string]$unit.project_id -or [string]$protocol.unit_id -ne $UnitId -or [string]$protocol.status -ne 'active') { throw 'Current protocol does not bind the active unit.' }
-$migration = Test-MorphospaceValidatorTrustAnchorMigration -WorkspaceRoot $workspace -MigrationPath $TrustMigrationPath -RegistryReference $protocol.registry -ExpectedProjectId ([string]$unit.project_id) -ExpectedUnitId $UnitId
+$migration = Test-MorphospaceValidatorTrustAnchorMigration -WorkspaceRoot $workspace -MigrationPath $TrustMigrationPath -RegistryReference $protocol.registry -ExpectedProjectId ([string]$unit.project_id) -ExpectedUnitId $UnitId -RepositoryMap $map.map
 $baseline = Read-MorphospaceAuthorityJson (Resolve-MorphospaceAuthorityPath $workspace $ClaimBaselinePath)
 $ownershipAbsolute = Resolve-MorphospaceAuthorityPath $workspace $OwnershipPath
 $ownership = Read-MorphospaceAuthorityJson $ownershipAbsolute
@@ -80,7 +81,9 @@ $selection = Get-MorphospaceRegistrySelection -Registry $registry -Unit $unit -R
 Assert-MorphospaceAuthorizedAction -ActionDocument $actionDocument -Selection $selection -Unit $unit -AutomationOutputs $automationOutputs
 if ($Action -eq 'Inspect') { [pscustomobject][ordered]@{ action = 'Inspect'; project_id = $unit.project_id; unit_id = $UnitId; validators = @($selection.validators | ForEach-Object { $_.validator_id }); observation_sha256 = $observation.observation.sha256; trust_migration = $migration.migration_id } | ConvertTo-Json -Depth 20; exit 0 }
 if (-not $EvidencePath -or -not $OutPath) { throw 'Validate requires EvidencePath and OutPath.' }
+if ($ExecutionNonce -notmatch '^[0-9a-f]{64}$') { throw 'Validate requires an authority-generated 32-byte execution nonce.' }
 & (Join-Path $PSScriptRoot 'Test-ValidationAuthorityLauncher.ps1') | Out-Null
+& (Join-Path $PSScriptRoot 'Test-AuthorityRunnerHandoff.ps1') | Out-Null
 $evidenceAbsolute = Resolve-MorphospaceAuthorityPath $workspace $EvidencePath
 $receiptAbsolute = Resolve-MorphospaceAuthorityPath $workspace $OutPath
 $evidenceOutput = @($automationOutputs | Where-Object { [string]$_.phase -eq 'validation' -and [string]$_.role -eq 'validation-evidence' })
@@ -94,7 +97,7 @@ foreach ($validator in @($selection.validators)) {
     if ([string]$UnitId -ne 'wf-005') { throw 'The current authority runner supports only the WF-005 owner-validator contract.' }
     $cleanRoom = $null; $tempRoot = $null
     try {
-        $cleanRoom = New-MorphospaceCleanRoom -Ownership $ownership -ClaimBaseline $baseline -RepositoryMap $map.map -InputClosure @($validator.input_closure) -AttemptId "$UnitId-$($actionDocument.attempt_id)-$([string]$validator.validator_id)"
+        $cleanRoom = New-MorphospaceCleanRoom -Ownership $ownership -ClaimBaseline $baseline -RepositoryMap $map.map -InputClosure @($validator.input_closure) -HistoryBlobs @($validator.history_blobs) -AttemptId "$UnitId-$($actionDocument.attempt_id)-$([string]$validator.validator_id)"
         $cleanBefore = Get-MorphospaceCleanRoomFingerprint $cleanRoom
         if ($cleanBefore -ne [string]$cleanRoom.fingerprint_sha256) { throw 'New clean room does not match its reported fingerprint.' }
         $validatorPath = [IO.Path]::GetFullPath((Join-Path ([string]$cleanRoom.repositories[[string]$validator.owner_repo_id]) ([string]$validator.path)))
@@ -133,7 +136,7 @@ Write-MorphospaceManagedProtocolJsonAtomic -WorkspaceRoot $workspace -RelativePa
 $evidence = Test-MorphospaceValidationEvidenceV2 -WorkspaceRoot $workspace -EvidencePath $EvidencePath -Unit $unit -SelectedValidators @($selection.validators) -Action $actionDocument; $evidence | Add-Member -NotePropertyName __path -NotePropertyValue $evidenceAbsolute -Force
 $afterObservation = Test-MorphospaceUnitOwnership -Ownership $ownership -ClaimBaseline $baseline -ClaimBaselineReference $protocol.claim_baseline -Unit $unit -RepositoryMapReference $protocol.repository_map -RepositoryMap $map.map
 if ([string]$afterObservation.observation.sha256 -ne [string]$observation.observation.sha256) { throw 'Validation created a repository delta outside the exact automation contract.' }
-$executionDocument = New-MorphospaceValidationExecutionV1 -WorkspaceRoot $workspace -Unit $unit -Action $actionDocument -Evidence $evidence -Observation $afterObservation.observation -ExpectedReceiptPath ([string]$receiptOutput[0].path) -ExecutorPath $PSCommandPath
+$executionDocument = New-MorphospaceValidationExecutionV1 -WorkspaceRoot $workspace -Unit $unit -Action $actionDocument -Evidence $evidence -Observation $afterObservation.observation -ExpectedReceiptPath ([string]$receiptOutput[0].path) -ExecutorPath $PSCommandPath -ExecutionNonce $ExecutionNonce
 Write-MorphospaceManagedProtocolJsonAtomic -WorkspaceRoot $workspace -RelativePath (Get-MorphospaceAutomationWorkspaceRelativePath -Workspace $workspace -AbsolutePath $executionAbsolute) -Value $executionDocument -NoOverwrite
 $execution = Read-MorphospaceAuthorityJson $executionAbsolute; $execution | Add-Member -NotePropertyName __path -NotePropertyValue $executionAbsolute -Force
 $receipt = New-MorphospaceValidationReceiptV2 -WorkspaceRoot $workspace -Unit $unit -Action $actionDocument -Evidence $evidence -Execution $execution -Protocol $protocol -Ownership $ownership -Registry $registry -Observation $afterObservation.observation

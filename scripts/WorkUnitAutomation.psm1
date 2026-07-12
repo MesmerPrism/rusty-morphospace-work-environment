@@ -619,7 +619,8 @@ function Test-MorphospaceValidationReceipt {
         [Parameter(Mandatory = $true)][object[]]$RepositoryStates,
         [Parameter(Mandatory = $true)][object[]]$ValidationMatrix,
         [Parameter(Mandatory = $true)][string]$ExpectedResult,
-        [Parameter(Mandatory = $true)][string]$ExpectedTier
+        [Parameter(Mandatory = $true)][string]$ExpectedTier,
+        [string]$ExpectedExecutionNonce = ''
     )
 
     $receiptPath = Resolve-MorphospaceReceiptPath -WorkspaceRoot $WorkspaceRoot -ReceiptReference $ReceiptReference
@@ -633,7 +634,7 @@ function Test-MorphospaceValidationReceipt {
     )
     if ([string]$receipt.schema -eq "rusty.morphospace.workflow.validation_receipt.v2") {
         if (-not $receiptSecurityUnit) { throw 'Validation receipt v2 is reserved for a receipt-security corrective unit.' }
-        return Test-MorphospaceValidationReceiptV2 -WorkspaceRoot $WorkspaceRoot -ReceiptReference $ReceiptReference -Unit $Unit -RepositoryMap $RepositoryMap -ExpectedResult $ExpectedResult
+        return Test-MorphospaceValidationReceiptV2 -WorkspaceRoot $WorkspaceRoot -ReceiptReference $ReceiptReference -Unit $Unit -RepositoryMap $RepositoryMap -ExpectedResult $ExpectedResult -ExpectedExecutionNonce $ExpectedExecutionNonce
     }
     if ($receiptSecurityUnit) { throw 'Receipt-security corrective units require an authority-derived validation_receipt.v2; v1/manual receipts are rejected.' }
     if ([string]$receipt.schema -ne "rusty.morphospace.workflow.validation_receipt.v1") { throw "Validation receipt has the wrong schema ID." }
@@ -829,6 +830,49 @@ function Get-MorphospaceNextReadyUnit {
     return @($ready | Sort-Object | Select-Object -First 1)
 }
 
+function Invoke-MorphospaceAuthorityRunnerForRecord {
+    param(
+        [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
+        [Parameter(Mandatory = $true)][string]$UnitId,
+        [Parameter(Mandatory = $true)][hashtable]$RepositoryMap,
+        [Parameter(Mandatory = $true)][string]$AuthorityRunnerPath,
+        [Parameter(Mandatory = $true)][string[]]$AuthorityRunnerArguments,
+        [Parameter(Mandatory = $true)][string]$ValidationReceipt
+    )
+
+    if (($AuthorityRunnerArguments.Count % 2) -ne 0) { throw 'Authority runner arguments must be explicit parameter/value pairs.' }
+    $required = @('RegistryPath','RepositoryMapPath','CurrentProtocolPath','TrustMigrationPath','ClaimBaselinePath','OwnershipPath','ValidationActionPath','EvidencePath')
+    $allowed = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($name in $required) { [void]$allowed.Add($name) }
+    $provided = @{}
+    for ($index = 0; $index -lt $AuthorityRunnerArguments.Count; $index += 2) {
+        $rawName = [string]$AuthorityRunnerArguments[$index]
+        if (-not $rawName.StartsWith('-') -or $rawName.Length -lt 2) { throw 'Authority runner arguments must use named parameters only.' }
+        $name = $rawName.Substring(1)
+        if (-not $allowed.Contains($name) -or $provided.ContainsKey($name)) { throw "Authority runner argument is forbidden or duplicated: $rawName" }
+        $provided[$name] = [string]$AuthorityRunnerArguments[$index + 1]
+    }
+    foreach ($name in $required) { if (-not $provided.ContainsKey($name) -or [string]::IsNullOrWhiteSpace([string]$provided[$name])) { throw "Authority runner argument is missing: -$name" } }
+    $migrationPath = Resolve-MorphospaceAuthorityPath $WorkspaceRoot ([string]$provided['TrustMigrationPath'])
+    $migration = Read-MorphospaceAuthorityJson $migrationPath
+    $runnerArtifacts = @($migration.authority_artifacts | Where-Object { [string]$_.repo_id -ceq 'work-environment' -and [string]$_.path -ceq 'scripts/Invoke-MorphospaceValidationAuthority.ps1' })
+    if ($runnerArtifacts.Count -ne 1 -or -not $RepositoryMap.ContainsKey('work-environment')) { throw 'Authority runner is absent from the migrated authority artifact set.' }
+    $expectedRunner = [IO.Path]::GetFullPath((Join-Path ([string]$RepositoryMap['work-environment'].path) ([string]$runnerArtifacts[0].path)))
+    $resolvedRunner = [IO.Path]::GetFullPath($AuthorityRunnerPath)
+    if (-not $resolvedRunner.Equals($expectedRunner, [StringComparison]::OrdinalIgnoreCase) -or -not [IO.File]::Exists($resolvedRunner) -or (Get-MorphospaceAuthoritySha256 $resolvedRunner) -cne [string]$runnerArtifacts[0].sha256) {
+        throw 'Authority runner path or bytes do not match the migrated trust anchor.'
+    }
+    $nonceBytes = [byte[]]::new(32)
+    $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
+    try { $rng.GetBytes($nonceBytes) } finally { $rng.Dispose() }
+    $nonce = ([BitConverter]::ToString($nonceBytes)).Replace('-', '').ToLowerInvariant()
+    $host = (Get-Command powershell.exe -CommandType Application -ErrorAction Stop).Source
+    $nativeArguments = @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$resolvedRunner,'-Action','Validate','-WorkspaceRoot',$WorkspaceRoot,'-UnitId',$UnitId,'-ExecutionNonce',$nonce) + @($AuthorityRunnerArguments) + @('-OutPath',$ValidationReceipt)
+    $output = @(& $host @nativeArguments 2>&1)
+    if ($LASTEXITCODE -ne 0) { throw "Authority runner failed before validation could be recorded: $($output -join [Environment]::NewLine)" }
+    return $nonce
+}
+
 function Invoke-MorphospaceWorkUnitAutomation {
     [CmdletBinding()]
     param(
@@ -843,6 +887,8 @@ function Invoke-MorphospaceWorkUnitAutomation {
         [string]$AdoptionReceipt = "",
         [ValidateSet("quick", "standard", "deep")][string]$ValidationTier = "standard",
         [string[]]$DeviceSerials = @(),
+        [string]$AuthorityRunnerPath = "",
+        [string[]]$AuthorityRunnerArguments = @(),
         [string]$Timestamp = "",
         [string]$OutPath = "",
         [switch]$Execute
@@ -973,6 +1019,19 @@ function Invoke-MorphospaceWorkUnitAutomation {
         "RecordValidation" {
             if ($beforeStatus -ne "validating" -or [string]$state.current_unit -ne $UnitId) { throw "RecordValidation requires the matching validating unit." }
             if (-not $ValidationReceipt) { throw "ValidationReceipt is required." }
+            $receiptSecurityUnit = (
+                [string]$unit.project_id -eq 'morphospace-platform-iteration' -and
+                [string]$unit.unit_id -eq 'wf-005'
+            ) -or (
+                ($unit.PSObject.Properties.Name -contains 'tags') -and
+                @($unit.tags | Where-Object { [string]$_ -eq 'receipt-security' }).Count -ne 0
+            )
+            $authorityNonce = ''
+            if ($receiptSecurityUnit) {
+                if (-not $Execute) { throw 'Receipt-security validation must invoke the pinned authority runner in the same executed RecordValidation action.' }
+                if (-not $AuthorityRunnerPath) { throw 'Receipt-security validation requires AuthorityRunnerPath; manual v2 receipt recording is rejected.' }
+                $authorityNonce = Invoke-MorphospaceAuthorityRunnerForRecord -WorkspaceRoot $resolvedWorkspace -UnitId $UnitId -RepositoryMap $repoMap -AuthorityRunnerPath $AuthorityRunnerPath -AuthorityRunnerArguments $AuthorityRunnerArguments -ValidationReceipt $ValidationReceipt
+            }
             $validatedReceipt = Test-MorphospaceValidationReceipt `
                 -WorkspaceRoot $resolvedWorkspace `
                 -ReceiptReference $ValidationReceipt `
@@ -982,7 +1041,8 @@ function Invoke-MorphospaceWorkUnitAutomation {
                 -RepositoryStates $repoStatesArray `
                 -ValidationMatrix $validationMatrix `
                 -ExpectedResult $ValidationResult `
-                -ExpectedTier $ValidationTier
+                -ExpectedTier $ValidationTier `
+                -ExpectedExecutionNonce $authorityNonce
             $validatedReceiptPath = Resolve-MorphospaceReceiptPath -WorkspaceRoot $resolvedWorkspace -ReceiptReference $ValidationReceipt
             $workspacePrefix = $resolvedWorkspace.TrimEnd("\", "/") + [System.IO.Path]::DirectorySeparatorChar
             $ValidationReceipt = $validatedReceiptPath.Substring($workspacePrefix.Length).Replace("\", "/")
