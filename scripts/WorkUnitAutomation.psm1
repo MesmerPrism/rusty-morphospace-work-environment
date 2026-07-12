@@ -455,16 +455,29 @@ function Test-MorphospaceInflightAdoptionReceipt {
     foreach ($overlap in @($Overlaps)) {
         $repoId = [string]$overlap.repo_id
         if (-not $RepositoryMap.ContainsKey($repoId)) { throw "In-flight adoption repository '$repoId' is not mapped." }
+        $repositoryPath = [System.IO.Path]::GetFullPath([string]$RepositoryMap[$repoId].path)
+        $repositoryPrefix = $repositoryPath.TrimEnd("\", "/") + [System.IO.Path]::DirectorySeparatorChar
+        $receiptRelativePath = $null
+        if ($receiptPath.StartsWith($repositoryPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $receiptRelativePath = ConvertTo-MorphospaceRelativePath -Path ($receiptPath.Substring($repositoryPrefix.Length))
+        }
         $repoState = @($RepositoryStates | Where-Object { [string]$_.repo_id -eq $repoId } | Select-Object -First 1)[0]
         $entry = $receiptRepos[$repoId]
         if ([string]$entry.observed_revision -ne [string]$repoState.head) { throw "In-flight adoption receipt revision mismatch for '$repoId'." }
         $recordedFiles = @($entry.files)
         $recordedPaths = @($recordedFiles | ForEach-Object { ConvertTo-MorphospaceRelativePath -Path ([string]$_.path) } | Sort-Object)
-        $expectedPaths = @($overlap.paths | Sort-Object)
+        # The generated adoption receipt is itself a validated workflow-control
+        # artifact. When the workspace lives inside a mapped planning repo it
+        # appears only after capture, so exclude that one exact path from the
+        # pre-existing source/WIP overlay instead of requiring a self-hash.
+        $expectedPaths = @($overlap.paths | Where-Object {
+            $null -eq $receiptRelativePath -or
+            (ConvertTo-MorphospaceRelativePath -Path ([string]$_)) -ne $receiptRelativePath
+        } | Sort-Object)
         if ($recordedPaths.Count -ne @($recordedPaths | Sort-Object -Unique).Count -or ($recordedPaths -join "`n") -ne ($expectedPaths -join "`n")) {
             throw "In-flight adoption receipt path set mismatch for '$repoId'."
         }
-        $actualFiles = @(Get-MorphospaceAdoptionFileEvidence -RepositoryPath ([string]$RepositoryMap[$repoId].path) -Paths $expectedPaths)
+        $actualFiles = @(Get-MorphospaceAdoptionFileEvidence -RepositoryPath $repositoryPath -Paths $expectedPaths)
         $actualMap = @{}
         foreach ($file in $actualFiles) { $actualMap[[string]$file.path] = $file }
         foreach ($file in $recordedFiles) {
