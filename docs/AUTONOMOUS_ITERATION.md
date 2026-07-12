@@ -265,6 +265,10 @@ dirty instruction file is baseline input, never current-unit attribution. If
 the unit adds routing to that file, declare its exact shared integration rather
 than absorbing the prior work.
 
+WF-005 is also selected by its immutable project/unit identity while this
+one-time corrective migration is active. Removing its descriptive tag cannot
+downgrade it to the generic v1 receipt path.
+
 ## Stop Conditions
 
 Stop and record a blocker when:

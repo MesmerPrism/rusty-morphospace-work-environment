@@ -614,7 +614,13 @@ function Test-MorphospaceValidationReceipt {
 
     $receiptPath = Resolve-MorphospaceReceiptPath -WorkspaceRoot $WorkspaceRoot -ReceiptReference $ReceiptReference
     $receipt = Read-MorphospaceJson -Path $receiptPath
-    $receiptSecurityUnit = ($Unit.PSObject.Properties.Name -contains 'tags') -and @($Unit.tags | Where-Object { [string]$_ -eq 'receipt-security' }).Count -ne 0
+    $receiptSecurityUnit = (
+        [string]$Unit.project_id -eq 'morphospace-platform-iteration' -and
+        [string]$Unit.unit_id -eq 'wf-005'
+    ) -or (
+        ($Unit.PSObject.Properties.Name -contains 'tags') -and
+        @($Unit.tags | Where-Object { [string]$_ -eq 'receipt-security' }).Count -ne 0
+    )
     if ([string]$receipt.schema -eq "rusty.morphospace.workflow.validation_receipt.v2") {
         if (-not $receiptSecurityUnit) { throw 'Validation receipt v2 is reserved for a receipt-security corrective unit.' }
         return Test-MorphospaceValidationReceiptV2 -WorkspaceRoot $WorkspaceRoot -ReceiptReference $ReceiptReference -Unit $Unit -RepositoryMap $RepositoryMap -ExpectedResult $ExpectedResult
