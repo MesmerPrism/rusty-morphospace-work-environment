@@ -154,7 +154,7 @@ function Test-MorphospaceValidationEvidenceV2 {
         Test-MorphospaceOwnerValidation -OwnerEvidence $owner -Validator $validator -Unit $Unit -ExpectedStatus ([string]$result.status) | Out-Null
     }
     $expected = @($Unit.acceptance | ForEach-Object { [string]$_.acceptance_id } | Sort-Object)
-    if (($covered.ToArray() | Sort-Object) -join '|' -ne $expected -join '|') { throw 'Validation evidence does not cover the exact acceptance set.' }
+    if ((@($covered) | Sort-Object) -join '|' -ne $expected -join '|') { throw 'Validation evidence does not cover the exact acceptance set.' }
     if ([string]$evidence.result -eq 'pass' -and (@($evidence.validator_results | Where-Object { [string]$_.status -ne 'pass' }).Count -ne 0)) { throw 'Passing evidence has a non-passing validator.' }
     return $evidence
 }
@@ -241,7 +241,7 @@ function Test-MorphospaceOwnerValidation {
         if (-not $seen.Add($criterionId) -or $criterionId -notin $expected -or [string]$criterion.status -notin @('pass','fail','blocked') -or [string]$criterion.command_id -notmatch '^[a-z0-9][a-z0-9-]{1,191}$' -or [string]$criterion.command_path -match '[\\/]' -or [string]$criterion.command_sha256 -notmatch '^[0-9a-f]{64}$' -or [string]$criterion.output_sha256 -notmatch '^[0-9a-f]{64}$' -or [int]$criterion.exit_code -lt 0) { throw "Owner validation criterion is malformed: $criterionId" }
         if ($ExpectedStatus -eq 'pass' -and ([string]$criterion.status -ne 'pass' -or [int]$criterion.exit_code -ne 0)) { throw "Passing owner validation has a non-passing criterion: $criterionId" }
     }
-    $covered = @($seen.ToArray() | Sort-Object)
+    $covered = @($seen | Sort-Object)
     if (($covered -join '|') -ne ($expected -join '|')) { throw 'Owner validation does not provide one typed criterion per selected acceptance.' }
     if (@($OwnerEvidence.does_not_prove | Where-Object { [string]::IsNullOrWhiteSpace([string]$_) }).Count -ne 0 -or @($OwnerEvidence.does_not_prove).Count -eq 0) { throw 'Owner validation limits are missing.' }
     return $OwnerEvidence
