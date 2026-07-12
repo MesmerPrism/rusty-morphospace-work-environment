@@ -10,11 +10,11 @@
     {
       "validator_id": "wf005-workspace-owner",
       "owner_repo_id": "work-environment",
-      "owner_revision": "32adc1d6b081e41cab68e693edf6fa4f197fa7c6",
-      "owner_tree_oid": "b0f26465e6a9c1b1c46c0c77f3d48a32c6c495de",
+      "owner_revision": "b568aab1e2a382abc44b954a3bcc50917cea535d",
+      "owner_tree_oid": "eb2f6f1cd6c13598b583743cb1cd334ab1ee38e5",
       "path": "scripts/Invoke-Wf005OwnerValidator.ps1",
-      "sha256": "6a46a22e1fb06f6a3a57734b6bbca58d4cfb957d6e9224410bf35b3c995a65cb",
-      "git_blob_oid": "cabfefca393be08dc05662b7bcfa92b294f6bc33",
+      "sha256": "d638d34d3433ba77b9927890cee029753f838d6d466fc6dc0901c3861417018b",
+      "git_blob_oid": "a84836e012a31ecfcf6b7654d9441cdfe6e50eab",
       "entrypoint": "powershell-file",
       "profiles": ["deep"],
       "acceptance_ids": [
@@ -34,7 +34,24 @@
         {
           "repo_id": "work-environment",
           "kind": "git-tree",
-          "paths": ["scripts/Invoke-Wf005OwnerValidator.ps1"]
+          "paths": ["scripts/", "schemas/", "templates/"]
+        },
+        {
+          "repo_id": "quest",
+          "kind": "git-tree",
+          "paths": [
+            "apps/spatial-camera-panel-android/morphospace/",
+            "apps/native-renderer-android/morphospace/",
+            "tools/checks/Test-SpatialCameraPanelWorkflowStatic.ps1"
+          ]
+        },
+        {
+          "repo_id": "planning",
+          "kind": "git-tree",
+          "paths": [
+            "agent-state/morphospace-autonomous-iteration-roadmap-2026-07-10.json",
+            "workspaces/morphospace-platform-iteration/morphospace/"
+          ]
         }
       ],
       "timeout_seconds": 600,
