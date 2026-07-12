@@ -15,8 +15,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
-Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceOwnership.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceValidationAuthority.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceOwnership.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
 
 function Invoke-MorphospacePinnedValidator {
     param(
