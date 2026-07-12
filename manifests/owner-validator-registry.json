@@ -1,0 +1,46 @@
+{
+  "$schema": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/owner-validator-registry.schema.json",
+  "schema": "rusty.morphospace.workflow.owner_validator_registry.v1",
+  "registry_id": "morphospace-owner-validator-registry",
+  "revision": 1,
+  "created_at": "2026-07-12T08:15:00.0000000Z",
+  "foundation_commit": "a4f89480df302eb62d03866ffb80995924eff855",
+  "previous_registry": null,
+  "validators": [
+    {
+      "validator_id": "wf005-workspace-owner",
+      "owner_repo_id": "work-environment",
+      "owner_revision": "32adc1d6b081e41cab68e693edf6fa4f197fa7c6",
+      "owner_tree_oid": "b0f26465e6a9c1b1c46c0c77f3d48a32c6c495de",
+      "path": "scripts/Invoke-Wf005OwnerValidator.ps1",
+      "sha256": "6a46a22e1fb06f6a3a57734b6bbca58d4cfb957d6e9224410bf35b3c995a65cb",
+      "git_blob_oid": "cabfefca393be08dc05662b7bcfa92b294f6bc33",
+      "entrypoint": "powershell-file",
+      "profiles": ["deep"],
+      "acceptance_ids": [
+        "candidate-maturity",
+        "derived-state",
+        "device-derivation",
+        "inert-defaults",
+        "inflight-adoption",
+        "native-workspace",
+        "overlay-content-integrity",
+        "spatial-history",
+        "unit-attribution",
+        "validator-derived-evidence"
+      ],
+      "evidence_schema": "rusty.morphospace.workflow.owner_validation.v1",
+      "input_closure": [
+        {
+          "repo_id": "work-environment",
+          "kind": "git-tree",
+          "paths": ["scripts/Invoke-Wf005OwnerValidator.ps1"]
+        }
+      ],
+      "timeout_seconds": 600,
+      "max_output_bytes": 16777216,
+      "mutation_policy": "temp-output-only",
+      "device_policy": "forbidden"
+    }
+  ]
+}

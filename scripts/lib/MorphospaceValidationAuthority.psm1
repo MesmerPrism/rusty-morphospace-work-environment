@@ -7,7 +7,7 @@ Microsoft.PowerShell.Core\Import-Module ([IO.Path]::Combine($PSScriptRoot, 'Morp
 function Read-MorphospaceAuthorityJson {
     param([Parameter(Mandatory = $true)][string]$Path)
     if (-not [IO.File]::Exists($Path)) { throw "Authority artifact does not exist: $Path" }
-    try { return [IO.File]::ReadAllText($Path, [Text.UTF8Encoding]::new($false)) | ConvertFrom-Json } catch { throw "Authority artifact is not JSON: $Path" }
+    return Read-MorphospaceProtocolJson -Path $Path
 }
 
 function Get-MorphospaceAuthoritySha256 {

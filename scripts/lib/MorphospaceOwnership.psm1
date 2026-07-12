@@ -72,7 +72,7 @@ function Test-MorphospaceInputClosure {
         Assert-MorphospaceExactPropertySet $closure @('repo_id','kind','paths') @() 'validator input-closure row'
         $repoId=[string]$closure.repo_id;if(-not$RepositoryMap.ContainsKey($repoId)){throw "Validator input repository '$repoId' is not mapped."}
         if([string]$closure.kind-notin@('git-tree','non-git-tree','instructions','project-contracts')){throw 'Validator input kind is unknown.'}
-        $paths=ConvertTo-MorphospaceSortedCanonicalPaths @($closure.paths);if($paths.Count-eq0){throw 'Validator input closure row is empty.'}
+        $paths=@(ConvertTo-MorphospaceSortedCanonicalPaths @($closure.paths));if($paths.Count-eq0){throw 'Validator input closure row is empty.'}
         $key="$repoId/$([string]$closure.kind)";if(-not$seen.Add($key)){throw "Validator repeats input-closure row '$key'."}
         for($i=0;$i-lt$paths.Count;$i++){for($j=$i+1;$j-lt$paths.Count;$j++){if($paths[$j].StartsWith($paths[$i]+'/',[StringComparison]::OrdinalIgnoreCase)){throw "Validator input closure overlaps '$($paths[$i])'."}}}
     }
@@ -80,7 +80,7 @@ function Test-MorphospaceInputClosure {
 
 function Test-MorphospaceOwnerValidatorRegistry {
     param([object]$Registry,[hashtable]$RepositoryMap)
-    Assert-MorphospaceExactPropertySet $Registry @('schema','registry_id','revision','created_at','foundation_commit','previous_registry','validators') @() 'owner-validator registry'
+    Assert-MorphospaceExactPropertySet $Registry @('$schema','schema','registry_id','revision','created_at','foundation_commit','previous_registry','validators') @() 'owner-validator registry'
     if([string]$Registry.schema-cne'rusty.morphospace.workflow.owner_validator_registry.v1'){throw 'Owner-validator registry has the wrong schema.'};[void](Test-MorphospaceStrictUtcTimestamp ([string]$Registry.created_at));Test-MorphospaceLowerObjectId ([string]$Registry.foundation_commit) 'Registry foundation commit'
     if([long]$Registry.revision-lt1-or@($Registry.validators).Count-eq0){throw 'Owner-validator registry revision/entries are invalid.'};if($null-ne$Registry.previous_registry){Assert-MorphospaceExactPropertySet $Registry.previous_registry @('role','path','schema','sha256') @() 'previous registry reference'}
     $validatorIds=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
