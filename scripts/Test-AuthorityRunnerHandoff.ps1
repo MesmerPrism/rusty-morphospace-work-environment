@@ -3,6 +3,7 @@ Import-Module (Join-Path $PSScriptRoot 'WorkUnitAutomation.psm1') -Force
 
 function Assert-Handoff { param([bool]$Condition,[string]$Message) if(-not $Condition){throw "Authority-runner handoff self-test failed: $Message"} }
 function Assert-Rejected { param([scriptblock]$Action,[string]$Message) $rejected=$false;try{&$Action}catch{$rejected=$true};Assert-Handoff $rejected $Message }
+function Get-HandoffSha256 { param([string]$Path) $stream=[IO.FileStream]::new($Path,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read);$sha=[Security.Cryptography.SHA256]::Create();try{return ([BitConverter]::ToString($sha.ComputeHash($stream))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose();$stream.Dispose()} }
 
 $root=Join-Path ([IO.Path]::GetTempPath()) ('morphospace-authority-handoff-'+[guid]::NewGuid().ToString('N'))
 try {
@@ -12,7 +13,7 @@ try {
 param([string]$Action,[string]$WorkspaceRoot,[string]$UnitId,[string]$ExecutionNonce,[Parameter(ValueFromRemainingArguments=$true)][string[]]$Remaining)
 [IO.File]::WriteAllText($env:MORPHOSPACE_HANDOFF_MARKER,(@{action=$Action;workspace=$WorkspaceRoot;unit=$UnitId;nonce=$ExecutionNonce;remaining=$Remaining}|ConvertTo-Json -Compress),[Text.UTF8Encoding]::new($false))
 '@
-    [IO.File]::WriteAllText($runner,$body,[Text.UTF8Encoding]::new($false));$runnerSha=(Get-FileHash -LiteralPath $runner -Algorithm SHA256).Hash.ToLowerInvariant()
+    [IO.File]::WriteAllText($runner,$body,[Text.UTF8Encoding]::new($false));$runnerSha=Get-HandoffSha256 $runner
     $migration=[pscustomobject]@{authority_artifacts=@([pscustomobject]@{repo_id='work-environment';path='scripts/Invoke-MorphospaceValidationAuthority.ps1';sha256=$runnerSha;git_blob_oid=('a'*40)})};$migrationPath=Join-Path $workspace 'migration.json';[IO.File]::WriteAllText($migrationPath,(($migration|ConvertTo-Json -Depth 10)+[Environment]::NewLine),[Text.UTF8Encoding]::new($false))
     $repoMap=@{'work-environment'=[pscustomobject]@{path=$owner}}
     $arguments=@('-RegistryPath','registry.json','-RepositoryMapPath','repository-map.json','-CurrentProtocolPath','protocol.json','-TrustMigrationPath','migration.json','-ClaimBaselinePath','baseline.json','-OwnershipPath','ownership.json','-ValidationActionPath','action.json','-EvidencePath','evidence.json')
