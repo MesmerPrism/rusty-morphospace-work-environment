@@ -70,6 +70,9 @@ try{
 
     $authoritySources=@('scripts/Invoke-MorphospaceValidationAuthority.ps1','scripts/WorkUnitAutomation.psm1','scripts/lib/MorphospaceOwnership.psm1','scripts/lib/MorphospaceValidationAuthority.psm1','scripts/lib/MorphospaceAuthorityReadiness.psm1')
     foreach($relative in $authoritySources){$path=Join-Path $root $relative;$tokens=$null;$errors=$null;$ast=[Management.Automation.Language.Parser]::ParseFile($path,[ref]$tokens,[ref]$errors);if($errors){throw "Authority source does not parse: $relative"};$ambient=@($ast.FindAll({param($node)$node-is[Management.Automation.Language.CommandAst]-and[string]$node.GetCommandName()-ceq'Get-FileHash'},$true));Assert-Readiness ($ambient.Count-eq0) "authority source uses ambient Get-FileHash: $relative"}
+    $runnerText=Get-Content -LiteralPath (Join-Path $root 'scripts\Invoke-MorphospaceValidationAuthority.ps1') -Raw
+    Assert-Readiness ($runnerText.Contains('function Invoke-MorphospaceIsolatedAuthoritySelfTest')-and@([regex]::Matches($runnerText,'Invoke-MorphospaceIsolatedAuthoritySelfTest -Migration \$migration')).Count-eq3) 'record self-tests are not isolated child processes'
+    foreach($selfTestName in @('Test-ValidationAuthorityLauncher.ps1','Test-AuthorityRunnerHandoff.ps1','Test-TrustMigrationAuthority.ps1')){Assert-Readiness (-not$runnerText.Contains("& (Join-Path `$PSScriptRoot '$selfTestName')")) "record self-test still mutates the authority process module graph: $selfTestName"}
 
     Write-Host 'Authority record-readiness self-test passed.'
 }finally{if([IO.Directory]::Exists($temp)){[IO.Directory]::Delete($temp,$true)}}

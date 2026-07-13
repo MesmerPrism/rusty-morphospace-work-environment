@@ -72,6 +72,37 @@ function Get-MorphospaceReadinessReference {
     return Get-MorphospaceAuthorityReference -WorkspaceRoot $Workspace -Path $Path -Role $Role -Schema $Schema
 }
 
+function Invoke-MorphospaceIsolatedAuthoritySelfTest {
+    param(
+        [Parameter(Mandatory = $true)][object]$Migration,
+        [Parameter(Mandatory = $true)][string]$RelativePath,
+        [ValidateRange(1, 600)][int]$TimeoutSeconds = 300
+    )
+    $artifacts = @($Migration.authority_artifacts | Where-Object { [string]$_.repo_id -ceq 'work-environment' -and [string]$_.path -ceq $RelativePath })
+    if ($artifacts.Count -ne 1) { throw "Authority self-test is not uniquely pinned by the trust migration: $RelativePath" }
+    $repositoryRoot = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
+    $path = [IO.Path]::GetFullPath((Join-Path $repositoryRoot $RelativePath))
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf) -or (Get-MorphospaceAuthoritySha256 $path) -cne [string]$artifacts[0].sha256) { throw "Authority self-test bytes do not match the trust migration: $RelativePath" }
+    $hostPath = (Get-Command powershell.exe -CommandType Application -ErrorAction Stop).Source
+    $captureRoot = Join-Path ([IO.Path]::GetTempPath()) ('morphospace-authority-selftest-' + [guid]::NewGuid().ToString('N'))
+    [IO.Directory]::CreateDirectory($captureRoot) | Out-Null
+    $stdoutPath = Join-Path $captureRoot 'stdout.txt'; $stderrPath = Join-Path $captureRoot 'stderr.txt'
+    try {
+        $process = Start-Process -FilePath $hostPath -ArgumentList @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$path) -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+        try {
+            if (-not $process.WaitForExit($TimeoutSeconds * 1000)) { try { $process.Kill() } catch {}; throw "Authority self-test timed out: $RelativePath" }
+            $exitCode = [int]$process.ExitCode
+        } finally { $process.Dispose() }
+        $stdout = if ([IO.File]::Exists($stdoutPath)) { [IO.File]::ReadAllText($stdoutPath, [Text.UTF8Encoding]::new($false)) } else { '' }
+        $stderr = if ([IO.File]::Exists($stderrPath)) { [IO.File]::ReadAllText($stderrPath, [Text.UTF8Encoding]::new($false)) } else { '' }
+        if (([Text.Encoding]::UTF8.GetByteCount($stdout) + [Text.Encoding]::UTF8.GetByteCount($stderr)) -gt 1048576) { throw "Authority self-test output exceeded 1 MiB: $RelativePath" }
+        if ($exitCode -ne 0) {
+            $detail = ($stderr + "`n" + $stdout).Trim(); if ($detail.Length -gt 2048) { $detail = $detail.Substring($detail.Length - 2048) }
+            throw "Authority self-test failed with exit code ${exitCode}: $RelativePath`n$detail"
+        }
+    } finally { if ([IO.Directory]::Exists($captureRoot)) { [IO.Directory]::Delete($captureRoot, $true) } }
+}
+
 function Assert-MorphospaceAuthorizedAction {
     param([Parameter(Mandatory = $true)][object]$ActionDocument, [Parameter(Mandatory = $true)][object]$Selection, [Parameter(Mandatory = $true)][object]$Unit, [Parameter(Mandatory = $true)][object[]]$AutomationOutputs)
     if ([string]$ActionDocument.schema -ne 'rusty.morphospace.workflow.validation_action.v2' -or [string]$ActionDocument.project_id -ne [string]$Unit.project_id -or [string]$ActionDocument.unit_id -ne [string]$Unit.unit_id -or [string]$ActionDocument.status -ne 'authorized' -or [string]$ActionDocument.profile_id -ne [string]$Selection.profile_id) { throw 'Validation action is not bound to the active unit and selected profile.' }
@@ -194,9 +225,9 @@ try{if((Get-MorphospaceCleanRoomFingerprint $cached)-cne[string]$preflight.clean
 if (-not $EvidencePath -or -not $OutPath) { throw 'Validate requires EvidencePath and OutPath.' }
 if ($ExecutionNonce -notmatch '^[0-9a-f]{64}$') { throw 'Validate requires an authority-generated 32-byte execution nonce.' }
 $script:AuthorityStage='record-self-tests'
-& (Join-Path $PSScriptRoot 'Test-ValidationAuthorityLauncher.ps1') | Out-Null
-& (Join-Path $PSScriptRoot 'Test-AuthorityRunnerHandoff.ps1') | Out-Null
-& (Join-Path $PSScriptRoot 'Test-TrustMigrationAuthority.ps1') | Out-Null
+Invoke-MorphospaceIsolatedAuthoritySelfTest -Migration $migration -RelativePath 'scripts/Test-ValidationAuthorityLauncher.ps1'
+Invoke-MorphospaceIsolatedAuthoritySelfTest -Migration $migration -RelativePath 'scripts/Test-AuthorityRunnerHandoff.ps1'
+Invoke-MorphospaceIsolatedAuthoritySelfTest -Migration $migration -RelativePath 'scripts/Test-TrustMigrationAuthority.ps1'
 $evidenceAbsolute = Resolve-MorphospaceAuthorityPath $workspace $EvidencePath
 $receiptAbsolute = Resolve-MorphospaceAuthorityPath $workspace $OutPath
 $evidenceOutput = @($automationOutputs | Where-Object { [string]$_.phase -eq 'validation' -and [string]$_.role -eq 'validation-evidence' })
