@@ -413,6 +413,21 @@ $document=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.owner_va
         '-CurrentProtocolPath','receipts/fixture/protocol.json','-TrustMigrationPath','receipts/fixture/migration.json','-ClaimBaselinePath','receipts/fixture/claim-baseline.json',
         '-OwnershipPath','receipts/fixture/ownership.json','-ValidationActionPath','receipts/fixture/action.json'
     )
+    $contextFailureNonce = New-TestNonce
+    $contextFailureReport = Join-Path ([IO.Path]::GetTempPath()) "rusty-morphospace-authority-reports\fixture-project\wf-005\fixture-attempt-001\preflight-$contextFailureNonce"
+    $reportRoots.Add($contextFailureReport) | Out-Null
+    $contextDriftPath = Join-Path $workEnvironment 'unrelated-context-drift.txt'
+    Write-TestText $contextDriftPath "context drift`n"
+    try {
+        $contextFailureRun = Invoke-TestRunnerProcess $runner (@('-Action','Preflight') + $commonArguments + @('-ExecutionNonce',$contextFailureNonce))
+        Assert-RunnerFast ($contextFailureRun.exit_code -ne 0) 'stale-baseline context fixture did not fail closed'
+        Assert-RunnerFast ([IO.File]::Exists((Join-Path $contextFailureReport 'failure-report.json'))) 'context-load failure did not retain a typed failure report'
+        Assert-RunnerFast ([IO.File]::Exists((Join-Path $contextFailureReport 'stage-result.json'))) 'context-load failure did not retain a typed stage result'
+        $contextStage = Get-Content -LiteralPath (Join-Path $contextFailureReport 'stage-result.json') -Raw | ConvertFrom-Json
+        Assert-RunnerFast ([string]$contextStage.stage -ceq 'context-load' -and [string]$contextStage.result -ceq 'fail') 'context-load failure stage receipt was not bound to the failing stage'
+    } finally {
+        if ([IO.File]::Exists($contextDriftPath)) { [IO.File]::Delete($contextDriftPath) }
+    }
     $preflightNonce = New-TestNonce
     $preflightReport = Join-Path ([IO.Path]::GetTempPath()) "rusty-morphospace-authority-reports\fixture-project\wf-005\fixture-attempt-001\preflight-$preflightNonce"
     $reportRoots.Add($preflightReport) | Out-Null

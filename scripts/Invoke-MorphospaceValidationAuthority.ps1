@@ -128,6 +128,13 @@ $spec = Read-MorphospaceAuthorityJson (Join-Path $workspace 'project.spec.json')
 $unitPath = Join-Path $workspace (Join-Path 'iteration-units' "$UnitId.json")
 $unit = Read-MorphospaceAuthorityJson $unitPath
 if ([string]$unit.unit_id -ne $UnitId -or [string]$unit.project_id -ne [string]$spec.project_id) { throw 'Unit identity does not match the workspace.' }
+$actionAbsolute = Resolve-MorphospaceAuthorityPath $workspace $ValidationActionPath
+$actionDocument = Read-MorphospaceAuthorityJson $actionAbsolute
+if ($Action -ne 'Inspect') {
+    $reportAction = if ($Action -eq 'Preflight') { 'preflight' } else { 'record' }
+    $runIdentity = if ($ExecutionNonce) { $ExecutionNonce } else { [guid]::NewGuid().ToString('N') }
+    $script:AuthorityReportContext = New-MorphospaceAuthorityReportContext -ProjectId ([string]$unit.project_id) -UnitId $UnitId -AttemptId ([string]$actionDocument.attempt_id) -Action $reportAction -RunIdentity $runIdentity
+}
 $map = Get-MorphospaceFixedRepositoryMap -WorkspaceRoot $workspace -RequiredRepositoryIds @($unit.allowed_repositories | ForEach-Object { [string]$_.repo_id })
 $registryAbsolute = Resolve-MorphospaceAuthorityPath $workspace $RegistryPath
 $registry = Read-MorphospaceAuthorityJson $registryAbsolute
@@ -143,16 +150,11 @@ Test-MorphospaceClaimBaseline -Baseline $baseline -Unit $unit -RepositoryMapRefe
 $observation = Test-MorphospaceUnitOwnership -Ownership $ownership -ClaimBaseline $baseline -ClaimBaselineReference $protocol.claim_baseline -Unit $unit -RepositoryMapReference $protocol.repository_map -RepositoryMap $map.map
 $automationOutputs = @($observation.automation_outputs)
 Test-MorphospaceAutomationOutputSet -AutomationOutputs $automationOutputs -RepositoryMap $map.map -Expected present -Phase 'bootstrap'
-$actionAbsolute = Resolve-MorphospaceAuthorityPath $workspace $ValidationActionPath
-$actionDocument = Read-MorphospaceAuthorityJson $actionAbsolute
 if ([string]$actionDocument.pre_observation_sha256 -ne [string]$observation.observation.sha256) { throw 'Validation action is not bound to the current ownership observation.' }
 $selection = Get-MorphospaceRegistrySelection -Registry $registry -Unit $unit -RepositoryMap $map.map -AssertedProfileId ([string]$actionDocument.profile_id)
 Assert-MorphospaceAuthorizedAction -ActionDocument $actionDocument -Selection $selection -Unit $unit -AutomationOutputs $automationOutputs
 if ($Action -eq 'Inspect') { [pscustomobject][ordered]@{ action = 'Inspect'; project_id = $unit.project_id; unit_id = $UnitId; validators = @($selection.validators | ForEach-Object { $_.validator_id }); observation_sha256 = $observation.observation.sha256; trust_migration = $migration.migration_id } | ConvertTo-Json -Depth 20; exit 0 }
 
-$reportAction=if($Action-eq'Preflight'){'preflight'}else{'record'}
-$runIdentity=if($ExecutionNonce){$ExecutionNonce}else{[guid]::NewGuid().ToString('N')}
-$script:AuthorityReportContext=New-MorphospaceAuthorityReportContext -ProjectId ([string]$unit.project_id) -UnitId $UnitId -AttemptId ([string]$actionDocument.attempt_id) -Action $reportAction -RunIdentity $runIdentity
 $script:AuthorityStage='output-collision'
 
 $runnerReleasePath=Get-MorphospaceReadinessOutput $automationOutputs 'authority-runner-release' $map.map $workspace
