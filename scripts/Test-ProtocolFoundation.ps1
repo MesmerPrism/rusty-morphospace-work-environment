@@ -162,6 +162,7 @@ try {
     Assert-Foundation ($observation1.scope_violation_count-eq0-and@($observation1.entries).Count-ge4) 'Git observation missed rename/binary/untracked entries'
     Assert-Foundation (@($observation1.entries|Where-Object{$_.attribution-ne'unassigned'}).Count-eq0) 'allowed path was misclassified as owned'
     Assert-Foundation (@($observation1.status_records|Where-Object{$_.xy-eq'MM'}).Count-eq1) 'index/worktree split state was not preserved'
+    $driverObservation=@($observation1.entries|Where-Object{[string]$_.path-ceq'src/driver.txt'})[0];Assert-Foundation ($null-ne$driverObservation-and[string]$driverObservation.patch_sha256-match'^[0-9a-f]{64}$'-and@($driverObservation.hunks).Count-gt0) 'batched Git observation lost path-bound patch/hunk evidence'
     Assert-Foundation (-not[IO.File]::Exists($textconvProbe)) 'repository textconv driver executed during Git observation'
     Assert-Foundation (-not[IO.File]::Exists($filterProbe)) 'repository clean/process/smudge filter executed during Git observation'
     $worktreeConfigPath=Join-Path $repo '.git\config.worktree';Assert-Foundation (-not[IO.File]::Exists($worktreeConfigPath)) 'Git fixture unexpectedly began with config.worktree'

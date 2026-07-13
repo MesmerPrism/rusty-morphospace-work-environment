@@ -365,6 +365,98 @@ function Get-MorphospaceGitIndexEntries {
     return @($list.ToArray())
 }
 
+function Get-MorphospaceGitTreeEntryMap {
+    param(
+        [string]$GitExecutable,
+        [string]$RepositoryPath,
+        [string]$Revision,
+        [string[]]$Paths,
+        [string]$ExpectedGitHash='',
+        [object]$SafetyContext=$null
+    )
+    $requested=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach($path in $Paths){[void]$requested.Add((ConvertTo-MorphospaceProtocolRelativePath $path))}
+    $map=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+    if($requested.Count-eq0){return $map}
+    $result=Invoke-MorphospaceBoundGitBytes -GitExecutable $GitExecutable -RepositoryPath $RepositoryPath -Arguments @('ls-tree','-r','-z',$Revision,'--') -ExpectedExecutableSha256 $ExpectedGitHash -SafetyContext $SafetyContext
+    foreach($token in @(Split-MorphospaceNulBytes $result.stdout)){
+        $match=[regex]::Match($token,'^(?<mode>[0-9]{6})\s+(?<kind>\S+)\s+(?<oid>[0-9a-f]{40,64})\t(?<path>.+)$')
+        if(-not$match.Success){throw "Damaged recursive tree entry at '$Revision'."}
+        $path=ConvertTo-MorphospaceProtocolRelativePath $match.Groups['path'].Value
+        if(-not$requested.Contains($path)){continue}
+        if($map.ContainsKey($path)){throw "Recursive tree repeats '$path' at '$Revision'."}
+        $map[$path]=[pscustomobject][ordered]@{mode=$match.Groups['mode'].Value;kind=$match.Groups['kind'].Value;oid=$match.Groups['oid'].Value}
+    }
+    return $map
+}
+
+function Get-MorphospaceGitIndexEntryMap {
+    param(
+        [string]$GitExecutable,
+        [string]$RepositoryPath,
+        [string[]]$Paths,
+        [string]$ExpectedGitHash='',
+        [object]$SafetyContext=$null
+    )
+    $requested=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach($path in $Paths){[void]$requested.Add((ConvertTo-MorphospaceProtocolRelativePath $path))}
+    $lists=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+    if($requested.Count-eq0){return $lists}
+    $result=Invoke-MorphospaceBoundGitBytes -GitExecutable $GitExecutable -RepositoryPath $RepositoryPath -Arguments @('ls-files','--stage','-z','--') -ExpectedExecutableSha256 $ExpectedGitHash -SafetyContext $SafetyContext
+    foreach($token in @(Split-MorphospaceNulBytes $result.stdout)){
+        $match=[regex]::Match($token,'^(?<mode>[0-9]{6})\s+(?<oid>[0-9a-f]{40,64})\s+(?<stage>[0-3])\t(?<path>.+)$')
+        if(-not$match.Success){throw 'Damaged aggregate index entry.'}
+        $path=ConvertTo-MorphospaceProtocolRelativePath $match.Groups['path'].Value
+        if(-not$requested.Contains($path)){continue}
+        if(-not$lists.ContainsKey($path)){$lists[$path]=[Collections.Generic.List[object]]::new()}
+        $lists[$path].Add([pscustomobject][ordered]@{mode=$match.Groups['mode'].Value;oid=$match.Groups['oid'].Value;stage=[int]$match.Groups['stage'].Value})|Out-Null
+    }
+    return $lists
+}
+
+function Get-MorphospaceBatchedHunkEvidence {
+    param(
+        [string]$GitExecutable,
+        [string]$RepositoryPath,
+        [string]$BaseRevision,
+        [object[]]$Changes,
+        [string]$ExpectedGitHash='',
+        [object]$SafetyContext=$null
+    )
+    $result=Invoke-MorphospaceBoundGitBytes -GitExecutable $GitExecutable -RepositoryPath $RepositoryPath -Arguments @('-c','core.safecrlf=false','-c','core.autocrlf=false','diff','--unified=0','--find-renames','--no-color','--no-ext-diff','--no-textconv',$BaseRevision,'--') -ExpectedExecutableSha256 $ExpectedGitHash -SafetyContext $SafetyContext
+    $map=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+    foreach($change in @($Changes)){
+        foreach($path in @([string]$change.path,[string]$change.original_path)){
+            if($path-and-not$map.ContainsKey($path)){$map[$path]=[Collections.Generic.List[object]]::new()}
+        }
+    }
+    $lines=@((ConvertFrom-MorphospaceUtf8Bytes $result.stdout) -split "`n",0,'SimpleMatch')
+    $changeIndex=-1
+    for($i=0;$i-lt$lines.Count;$i++){
+        if($lines[$i].StartsWith('diff --git ')){
+            $changeIndex++
+            if($changeIndex-ge@($Changes).Count){throw 'Unified aggregate diff has more file blocks than name-status evidence.'}
+            continue
+        }
+        if(-not$lines[$i].StartsWith('@@ ')){continue}
+        if($changeIndex-lt0-or$changeIndex-ge@($Changes).Count){throw 'Unified aggregate diff hunk is outside a file block.'}
+        $start=$i;$i++
+        while($i-lt$lines.Count-and-not$lines[$i].StartsWith('@@ ')-and-not$lines[$i].StartsWith('diff --git ')){$i++}
+        $end=$i-1
+        while($end-gt$start-and[string]$lines[$end]-ceq''){$end--}
+        $i--
+        $chunk=($lines[$start..$end]-join"`n")+"`n"
+        $change=$Changes[$changeIndex]
+        foreach($path in @([string]$change.path,[string]$change.original_path)){
+            if(-not$path){continue}
+            $hash=Get-MorphospaceSha256Bytes ([Text.UTF8Encoding]::new($false).GetBytes($path+"`n"+$chunk))
+            $map[$path].Add([pscustomobject][ordered]@{header=$lines[$start];hunk_sha256=$hash})|Out-Null
+        }
+    }
+    if(@($Changes).Count-ne($changeIndex+1)){throw 'Unified aggregate diff file-block count differs from name-status evidence.'}
+    return [pscustomobject]@{map=$map;sha256=(Get-MorphospaceSha256Bytes $result.stdout)}
+}
+
 function Assert-MorphospaceNoHiddenIndexEntries {
     param([string]$GitExecutable,[string]$RepositoryPath,[string]$ExpectedGitHash,[object]$SafetyContext=$null)
     $result=Invoke-MorphospaceBoundGitBytes -GitExecutable $GitExecutable -RepositoryPath $RepositoryPath -Arguments @('ls-files','-v','-z') -ExpectedExecutableSha256 $ExpectedGitHash -SafetyContext $SafetyContext
@@ -484,46 +576,50 @@ function Get-MorphospaceGitRepositoryObservation {
     $sorted=Sort-MorphospaceOrdinalStrings @($paths)
     $caseFold=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach($path in $sorted){if(-not $caseFold.Add($path)){throw "Case-fold path collision in '$RepoId': $path"}}
+    $baseEntries=Get-MorphospaceGitTreeEntryMap $GitExecutable $root $BaseRevision $sorted $gitHash $gitSafetyContext
+    $headEntries=Get-MorphospaceGitTreeEntryMap $GitExecutable $root $head $sorted $gitHash $gitSafetyContext
+    $indexEntriesByPath=Get-MorphospaceGitIndexEntryMap $GitExecutable $root $sorted $gitHash $gitSafetyContext
+    $hunkEvidence=Get-MorphospaceBatchedHunkEvidence $GitExecutable $root $BaseRevision $changes $gitHash $gitSafetyContext
+    $wholePatch=Invoke-MorphospaceBoundGitBytes -GitExecutable $GitExecutable -RepositoryPath $root -Arguments @('-c','core.safecrlf=false','-c','core.autocrlf=false','diff','--binary','--full-index','--find-renames','--no-ext-diff','--no-textconv',$BaseRevision,'--') -ExpectedExecutableSha256 $gitHash -SafetyContext $gitSafetyContext
     $entries=[Collections.Generic.List[object]]::new()
     foreach($path in $sorted){
         $scope=if(Test-MorphospaceObservationPathAllowed $path $AllowedPaths){'allowed'}else{'outside-unit-scope'}
-        $patch=Get-MorphospacePathPatchEvidence $GitExecutable $root $BaseRevision $path $gitHash $gitSafetyContext
-        $baseEntry=Get-MorphospaceGitTreeEntry $GitExecutable $root $BaseRevision $path $gitHash $gitSafetyContext
-        $headEntry=Get-MorphospaceGitTreeEntry $GitExecutable $root $head $path $gitHash $gitSafetyContext
+        $baseEntry=if($baseEntries.ContainsKey($path)){$baseEntries[$path]}else{$null}
+        $headEntry=if($headEntries.ContainsKey($path)){$headEntries[$path]}else{$null}
         if(($baseEntry -and $baseEntry.kind -eq 'commit') -or ($headEntry -and $headEntry.kind -eq 'commit')){throw "Submodule changes are not accepted as unit content: $path"}
-        $indexEntries=@(Get-MorphospaceGitIndexEntries $GitExecutable $root $path $gitHash $gitSafetyContext)
+        $indexEntries=if($indexEntriesByPath.ContainsKey($path)){@($indexEntriesByPath[$path].ToArray())}else{@()}
         foreach($indexEntry in $indexEntries){if([int]$indexEntry.stage-ne0){throw "Unmerged index stages are not accepted: $path"}}
         $worktreeSnapshot=Get-MorphospaceWorktreeSnapshot $root $path;if($null-ne$worktreeSnapshot.stream){$leases.Add($worktreeSnapshot.stream);$leaseByPath[$path]=$worktreeSnapshot}
+        $statusRecord=if($statusMap.ContainsKey($path)){$statusMap[$path]}else{$null}
+        $patchSha=Get-MorphospaceCanonicalJsonSha256 ([pscustomobject][ordered]@{format='content-binding-v2';path=$path;status=$statusRecord;base=$baseEntry;head=$headEntry;index=@($indexEntries);worktree=$worktreeSnapshot.state})
+        $hunks=if($hunkEvidence.map.ContainsKey($path)){@($hunkEvidence.map[$path].ToArray())}else{@()}
         [void]$entries.Add([pscustomobject][ordered]@{
             path=$path;scope=$scope;attribution='unassigned'
-            status=if($statusMap.ContainsKey($path)){$statusMap[$path]}else{$null}
+            status=$statusRecord
             base=$baseEntry
             head=$headEntry
             index=$indexEntries
             worktree=$worktreeSnapshot.state
-            patch_sha256=$patch.patch_sha256;hunks=@($patch.hunks)
+            patch_sha256=$patchSha;hunks=$hunks
         })
     }
     $entryArray=@($entries.ToArray())
     $commitManifest=Get-MorphospaceGitCommitManifest $GitExecutable $root $BaseRevision $head $gitHash $gitSafetyContext
-    $wholePatch=Invoke-MorphospaceBoundGitBytes -GitExecutable $GitExecutable -RepositoryPath $root -Arguments @('-c','core.safecrlf=false','-c','core.autocrlf=false','diff','--binary','--full-index','--no-ext-diff','--no-textconv',$BaseRevision,'--') -ExpectedExecutableSha256 $gitHash -SafetyContext $gitSafetyContext
     $finalHeadResult=Invoke-MorphospaceBoundGitBytes -GitExecutable $GitExecutable -RepositoryPath $root -Arguments @('rev-parse','HEAD') -ExpectedExecutableSha256 $gitHash -SafetyContext $gitSafetyContext
     $finalHead=(ConvertFrom-MorphospaceUtf8Bytes $finalHeadResult.stdout).Trim()
     $finalStatus=Get-MorphospacePorcelainV2Status $GitExecutable $root $gitHash $gitSafetyContext
     if($finalHead -cne $head -or $finalStatus.raw_sha256 -cne $status.raw_sha256){throw "Repository changed during observation: $RepoId"}
     foreach($entry in $entryArray){
         $finalWorktree=Get-MorphospaceWorktreeState $root ([string]$entry.path)
-        $finalIndex=@(Get-MorphospaceGitIndexEntries $GitExecutable $root ([string]$entry.path) $gitHash $gitSafetyContext)
-        $finalPatch=Get-MorphospacePathPatchEvidence $GitExecutable $root $BaseRevision ([string]$entry.path) $gitHash $gitSafetyContext
-        if((Get-MorphospaceCanonicalJsonSha256 ([pscustomobject]@{v=$finalWorktree})) -cne (Get-MorphospaceCanonicalJsonSha256 ([pscustomobject]@{v=$entry.worktree})) -or
-           (Get-MorphospaceCanonicalJsonSha256 ([pscustomobject]@{v=$finalIndex})) -cne (Get-MorphospaceCanonicalJsonSha256 ([pscustomobject]@{v=$entry.index})) -or
-           (Get-MorphospaceCanonicalJsonSha256 ([pscustomobject]@{v=$finalPatch})) -cne (Get-MorphospaceCanonicalJsonSha256 ([pscustomobject]@{v=[pscustomobject]@{path=[string]$entry.path;patch_sha256=[string]$entry.patch_sha256;hunks=@($entry.hunks)}}))){throw "Path changed during observation: $RepoId/$([string]$entry.path)"}
+        if((Get-MorphospaceCanonicalJsonSha256 ([pscustomobject]@{v=$finalWorktree})) -cne (Get-MorphospaceCanonicalJsonSha256 ([pscustomobject]@{v=$entry.worktree}))){throw "Path changed during observation: $RepoId/$([string]$entry.path)"}
         if($leaseByPath.ContainsKey([string]$entry.path)){$lease=$leaseByPath[[string]$entry.path];if([long]$lease.stream.Length-ne[long]$entry.worktree.length-or(Get-MorphospaceStreamSha256 $lease.stream)-cne[string]$entry.worktree.sha256){throw "Leased worktree bytes changed during observation: $RepoId/$([string]$entry.path)"}}
     }
     $finalChanges=@(Get-MorphospaceDiffNameStatus $GitExecutable $root $BaseRevision $gitHash $gitSafetyContext)
     $finalCommitManifest=Get-MorphospaceGitCommitManifest $GitExecutable $root $BaseRevision $head $gitHash $gitSafetyContext
-    $finalWholePatch=Invoke-MorphospaceBoundGitBytes -GitExecutable $GitExecutable -RepositoryPath $root -Arguments @('-c','core.safecrlf=false','-c','core.autocrlf=false','diff','--binary','--full-index','--no-ext-diff','--no-textconv',$BaseRevision,'--') -ExpectedExecutableSha256 $gitHash -SafetyContext $gitSafetyContext
-    if((Get-MorphospaceCanonicalJsonSha256 ([pscustomobject]@{v=$finalChanges}))-cne(Get-MorphospaceCanonicalJsonSha256 ([pscustomobject]@{v=$changes})) -or $finalCommitManifest.fingerprint_sha256-cne$commitManifest.fingerprint_sha256 -or (Get-MorphospaceSha256Bytes $finalWholePatch.stdout)-cne(Get-MorphospaceSha256Bytes $wholePatch.stdout)){throw "Git evidence changed during the second observation pass: $RepoId"}
+    $finalWholePatch=Invoke-MorphospaceBoundGitBytes -GitExecutable $GitExecutable -RepositoryPath $root -Arguments @('-c','core.safecrlf=false','-c','core.autocrlf=false','diff','--binary','--full-index','--find-renames','--no-ext-diff','--no-textconv',$BaseRevision,'--') -ExpectedExecutableSha256 $gitHash -SafetyContext $gitSafetyContext
+    $finalHunkEvidence=Get-MorphospaceBatchedHunkEvidence $GitExecutable $root $BaseRevision $finalChanges $gitHash $gitSafetyContext
+    Assert-MorphospaceNoHiddenIndexEntries $GitExecutable $root $gitHash $gitSafetyContext
+    if((Get-MorphospaceCanonicalJsonSha256 ([pscustomobject]@{v=$finalChanges}))-cne(Get-MorphospaceCanonicalJsonSha256 ([pscustomobject]@{v=$changes})) -or $finalCommitManifest.fingerprint_sha256-cne$commitManifest.fingerprint_sha256 -or (Get-MorphospaceSha256Bytes $finalWholePatch.stdout)-cne(Get-MorphospaceSha256Bytes $wholePatch.stdout)-or[string]$finalHunkEvidence.sha256-cne[string]$hunkEvidence.sha256){throw "Git evidence changed during the second observation pass: $RepoId"}
     $finalHeadResult2=Invoke-MorphospaceBoundGitBytes -GitExecutable $GitExecutable -RepositoryPath $root -Arguments @('rev-parse','HEAD') -ExpectedExecutableSha256 $gitHash -SafetyContext $gitSafetyContext;$finalHead2=(ConvertFrom-MorphospaceUtf8Bytes $finalHeadResult2.stdout).Trim();$finalStatus2=Get-MorphospacePorcelainV2Status $GitExecutable $root $gitHash $gitSafetyContext
     if($finalHead2-cne$head-or$finalStatus2.raw_sha256-cne$status.raw_sha256){throw "Repository changed during the final observation boundary: $RepoId"}
     foreach($path in @($leaseByPath.Keys)){$lease=$leaseByPath[$path];$entry=$null;foreach($candidateEntry in $entryArray){if([string]$candidateEntry.path-ceq[string]$path){$entry=$candidateEntry;break}};if($null-eq$entry-or[long]$lease.stream.Length-ne[long]$entry.worktree.length-or(Get-MorphospaceStreamSha256 $lease.stream)-cne[string]$entry.worktree.sha256){throw "Leased worktree bytes changed at the final boundary: $RepoId/$path"}}

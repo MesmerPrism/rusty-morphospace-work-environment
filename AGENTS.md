@@ -69,6 +69,10 @@ acceptance bindings without executing acceptance commands. Preflight is
 fail-fast admission only and does not prove validation, acceptance, device
 behavior, or an external operation.
 
+Keep Git ownership observation bounded by aggregate tree/index/diff calls plus
+leased worktree bytes and repeated aggregate boundaries; never scale protected
+Git subprocess count per dirty path.
+
 Every authority stage preserves a typed, bounded result and input identities
 before cleanup. Reuse a clean-room cache only after the capsule, runner,
 materialization, host, and fresh fingerprint checks match exactly; partial,

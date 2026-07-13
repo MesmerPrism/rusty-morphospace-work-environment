@@ -265,6 +265,15 @@ dirty instruction file is baseline input, never current-unit attribution. If
 the unit adds routing to that file, declare its exact shared integration rather
 than absorbing the prior work.
 
+Git content observation must stay proportional when a mapped repository has a
+large pre-existing dirty overlay. Capture tree, index, name-status, binary diff,
+and zero-context hunk evidence in bounded aggregate Git calls; bind each path to
+its exact base/head/index/worktree content; lease observed worktree bytes; then
+repeat aggregate HEAD, status, hidden-index, diff, and instruction boundaries.
+Do not restore per-path Git subprocess loops: they add no authority beyond the
+leased-byte plus aggregate-boundary proof and can multiply one ownership check
+into thousands of process launches.
+
 For this stricter path, `RecordValidation -Execute` invokes the migrated,
 hash-pinned authority runner itself. It supplies a fresh 32-byte execution
 nonce and accepts the resulting v2 receipt only when that exact nonce is bound
