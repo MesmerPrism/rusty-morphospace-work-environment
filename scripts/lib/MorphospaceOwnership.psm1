@@ -194,7 +194,7 @@ function Get-MorphospaceAutomationOutputContract {
         'authority-runner-release'=[pscustomobject]@{phase='readiness';schema='rusty.morphospace.workflow.authority_runner_release.v1'}
         'authority-input-capsule'=[pscustomobject]@{phase='readiness';schema='rusty.morphospace.workflow.authority_input_capsule.v1'}
         'authority-host-capabilities'=[pscustomobject]@{phase='readiness';schema='rusty.morphospace.workflow.authority_host_capabilities.v1'}
-        'authority-preflight-result'=[pscustomobject]@{phase='readiness';schema='rusty.morphospace.workflow.authority_preflight_result.v1'}
+        'authority-preflight-result'=[pscustomobject]@{phase='readiness';schema='rusty.morphospace.workflow.authority_preflight_result.v2'}
         'owner-validation'=[pscustomobject]@{phase='validation';schema='rusty.morphospace.workflow.owner_validation.v1'}
         'validation-evidence'=[pscustomobject]@{phase='validation';schema='rusty.morphospace.workflow.validation_evidence.v2'}
         'validation-execution'=[pscustomobject]@{phase='validation';schema='rusty.morphospace.workflow.validation_execution.v1'}
@@ -227,7 +227,14 @@ function ConvertTo-MorphospaceComparableRepositoryObservation {
     param([Parameter(Mandatory=$true)][object]$Observation,[object[]]$AutomationOutputs=@())
     $excluded=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase);foreach($output in @($AutomationOutputs)){[void]$excluded.Add((ConvertTo-MorphospaceProtocolRelativePath ([string]$output.path)))}
     if($excluded.Count-eq0){return $Observation}
-    $entries=[Collections.Generic.List[object]]::new();foreach($entry in @($Observation.entries)){if(-not$excluded.Contains([string]$entry.path)){$entries.Add($entry);continue};if([string]$entry.scope-cne'allowed'-or$null-eq$entry.status-or[string]$entry.status.record_type-cne'untracked'-or[string]$entry.status.xy-cne'??'-or$null-ne$entry.base-or$null-ne$entry.head-or@($entry.index).Count-ne0-or[string]$entry.worktree.state-cne'present'-or[string]$entry.worktree.kind-cne'file'){throw "Automation output is not an untracked file-only delta: $([string]$Observation.repo_id)/$([string]$entry.path)"}}
+    $entries=[Collections.Generic.List[object]]::new();foreach($entry in @($Observation.entries)){
+        if(-not$excluded.Contains([string]$entry.path)){$entries.Add($entry);continue}
+        if([string]$Observation.kind-ceq'git'){
+            if([string]$entry.scope-cne'allowed'-or$null-eq$entry.status-or[string]$entry.status.record_type-cne'untracked'-or[string]$entry.status.xy-cne'??'-or$null-ne$entry.base-or$null-ne$entry.head-or@($entry.index).Count-ne0-or[string]$entry.worktree.state-cne'present'-or[string]$entry.worktree.kind-cne'file'){throw "Automation output is not an untracked file-only delta: $([string]$Observation.repo_id)/$([string]$entry.path)"}
+        }elseif([string]$Observation.kind-ceq'non-git'){
+            if([string]$entry.kind-cne'file'-or[string]$entry.sha256-notmatch'^[0-9a-f]{64}$'-or[long]$entry.length-lt0){throw "Automation output is not a non-Git file-only delta: $([string]$Observation.repo_id)/$([string]$entry.path)"}
+        }else{throw "Automation output repository kind is unsupported: $([string]$Observation.repo_id)"}
+    }
     $entryArray=@($entries.ToArray())
     if([string]$Observation.kind-ceq'git'){
         $statusRows=[Collections.Generic.List[object]]::new();foreach($record in @($Observation.status_records)){if($excluded.Contains([string]$record.path)-or($null-ne$record.original_path-and$excluded.Contains([string]$record.original_path))){if([string]$record.record_type-cne'untracked'-or[string]$record.xy-cne'??'){throw "Automation output has non-untracked Git status: $([string]$Observation.repo_id)/$([string]$record.path)"};continue};$statusRows.Add($record)|Out-Null}

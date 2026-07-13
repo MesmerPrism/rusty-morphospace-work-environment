@@ -98,10 +98,15 @@ live `morphospace/` state and evidence.
 > **Staged authority note:** receipt-security corrective units use the tracked,
 > hash-pinned authority runner. A record attempt first passes the quick contract,
 > seals an exact content-addressed capsule, probes the child host, and publishes
-> a same-input preflight. Preflight and recovery-source tests are non-promotional;
-> only fresh nonce-bound authority evidence can support the unit's derived v2
-> receipt. Failed stages remain typed evidence, and cache reuse rejects any
-> runner, capsule, host, materialization, or fingerprint drift.
+> a same-input v2 preflight with a typed validator-admission probe. That probe
+> checks the sealed validator, unit contract, command identities, and acceptance
+> bindings without executing acceptance commands. Preflight and recovery-source
+> tests are non-promotional; only the single fresh nonce-bound authority run may
+> execute the full owner validator and support the unit's derived v2 receipt.
+> Failed stages remain typed evidence, and cache reuse rejects any
+> runner, capsule, host, materialization, or fingerprint drift. Canonical
+> authority documents remain schema-pure; the runner binds their paths through
+> separate typed references instead of injecting location properties.
 
 New scaffolds use `project_spec.v2`, `feature_lock.v2`, and
 `workspace_state.v2`. Exact feature descriptors resolve through
@@ -168,6 +173,7 @@ The repo is designed to be cloned beside source repositories, for example:
     rusty-matter/
     rusty-optics/
     rusty-lattice/
+    rusty-lsl/
     rusty-gui/
     rusty-quest/
     rusty-hostess/
@@ -182,6 +188,7 @@ The exact layout is not mandatory. Store local paths in ignored files under
 
 - Rusty Morphospace Work Environment: `https://github.com/MesmerPrism/rusty-morphospace-work-environment`
 - Rusty XR public core: `https://github.com/MesmerPrism/Rusty-XR`
+- Rusty LSL: `https://github.com/MesmerPrism/rusty-lsl`
 - Meta Quest agent workflow: `https://github.com/MesmerPrism/meta-quest-agent-workflow`
 - Quest Termux Lab: `https://github.com/MesmerPrism/quest-termux-lab`
 - Rusty Quest sidecar mesh: `https://github.com/MesmerPrism/rusty-quest-sidecar-mesh`

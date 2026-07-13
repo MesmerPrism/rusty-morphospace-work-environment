@@ -2,7 +2,10 @@ $ErrorActionPreference='Stop'
 $root=Split-Path -Parent $PSScriptRoot
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceOwnership.psm1') -Force
+$script:OwnershipModule=Get-Module MorphospaceOwnership
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceAuthorityReadiness.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceValidationAuthority.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
 
 function Assert-Readiness {param([bool]$Condition,[string]$Message)if(-not$Condition){throw "Authority-readiness self-test failed: $Message"}}
 function Assert-Rejected {param([scriptblock]$Action,[string]$Message)$rejected=$false;try{&$Action}catch{$rejected=$true};Assert-Readiness $rejected $Message}
@@ -31,7 +34,7 @@ try{
     $damaged=($capsule|ConvertTo-Json -Depth 30|ConvertFrom-Json);$damaged.content.attempt_id='attempt-damaged'
     Assert-Rejected {Test-MorphospaceAuthorityInputCapsuleV1 $damaged|Out-Null} 'capsule content drift was accepted'
 
-    $ownerModule=Get-Module MorphospaceOwnership;$cacheResult=&$ownerModule {
+    $cacheResult=&$script:OwnershipModule {
         param($capsuleSha,$materializedSha)
         $parent=Join-Path ([IO.Path]::GetTempPath()) 'rusty-morphospace-cleanrooms';if(-not[IO.Directory]::Exists($parent)){[IO.Directory]::CreateDirectory($parent)|Out-Null}
         $source=Join-Path $parent ('readiness-fixture-'+[guid]::NewGuid().ToString('N'));$repoRoot=Join-Path $source 'fixture-repo';[IO.Directory]::CreateDirectory($repoRoot)|Out-Null;[IO.File]::WriteAllText((Join-Path $repoRoot 'input.txt'),'sealed',[Text.UTF8Encoding]::new($false))
@@ -53,26 +56,35 @@ try{
     Assert-Readiness ($cacheResult.reused-and$cacheResult.same-and$cacheResult.tamper_rejected-and$cacheResult.removed-and$cacheResult.partial_rejected) 'content-addressed clean-room reuse/tamper/cleanup gate failed'
 
     $actionRef=[pscustomobject]@{role='validation-action';path='receipts/action.json';schema='rusty.morphospace.workflow.validation_action.v2';sha256=('d'*64)};$capsuleRef=[pscustomobject]@{role='authority-input-capsule';path='receipts/capsule.json';schema='rusty.morphospace.workflow.authority_input_capsule.v1';sha256=('e'*64)};$hostRef=[pscustomobject]@{role='authority-host-capabilities';path='receipts/host.json';schema='rusty.morphospace.workflow.authority_host_capabilities.v1';sha256=('f'*64)};$releaseRef=[pscustomobject]@{role='authority-runner-release';path='receipts/release.json';schema='rusty.morphospace.workflow.authority_runner_release.v1';sha256=('1'*64)}
-    $probe=[pscustomobject]@{validator_id='owner-test';status='pass';exit_code=0;owner_evidence_sha256=('4'*64);stdout_sha256=('5'*64);stderr_sha256=('6'*64)}
-    $preflight=New-MorphospaceAuthorityPreflightV1 'readiness-test' 'unit-test' 'attempt-test' $actionRef $capsuleRef $hostRef $releaseRef $probe ('2'*64) $true
-    Test-MorphospaceAuthorityPreflightV1 $preflight $actionRef $capsuleRef $hostRef $releaseRef 'readiness-test' 'unit-test' 'attempt-test'|Out-Null
+    $probeUnit=[pscustomobject]@{project_id='readiness-test';unit_id='unit-test';risk_tier='quick';device_requirement='none';acceptance=@([pscustomobject]@{acceptance_id='criterion-a'})}
+    $unitContractText="quick`nnone`ncriterion-a";$probeDocument=[pscustomobject]@{schema='rusty.morphospace.workflow.owner_validator_admission_probe.v1';validator_id='owner-test';created_at='2026-07-13T10:00:00.0000000Z';project_id='readiness-test';unit_id='unit-test';unit_contract_sha256=Get-MorphospaceCanonicalJsonSha256 ([pscustomobject]@{value=$unitContractText});commands=@([pscustomobject]@{command_id='command-a';command_name='command-a.ps1';command_sha256=('4'*64)});acceptance_bindings=@([pscustomobject]@{acceptance_id='criterion-a';command_id='command-a'});status='pass';does_not_prove=@('Admission only.')}
+    Test-MorphospaceOwnerValidatorAdmissionProbeV1 $probeDocument $validator $probeUnit|Out-Null
+    $probe=[pscustomobject]@{validator_id='owner-test';status='pass';exit_code=0;probe_schema='rusty.morphospace.workflow.owner_validator_admission_probe.v1';probe_sha256=('4'*64);stdout_sha256=('5'*64);stderr_sha256=('6'*64)}
+    $preflight=New-MorphospaceAuthorityPreflightV2 'readiness-test' 'unit-test' 'attempt-test' $actionRef $capsuleRef $hostRef $releaseRef $probe ('2'*64) $true
+    Test-MorphospaceAuthorityPreflightV2 $preflight $actionRef $capsuleRef $hostRef $releaseRef 'readiness-test' 'unit-test' 'attempt-test'|Out-Null
     $stale=($preflight|ConvertTo-Json -Depth 20|ConvertFrom-Json);$stale.capsule.sha256=('3'*64)
-    Assert-Rejected {Test-MorphospaceAuthorityPreflightV1 $stale $actionRef $capsuleRef $hostRef $releaseRef 'readiness-test' 'unit-test' 'attempt-test'|Out-Null} 'stale preflight capsule was accepted'
+    Assert-Rejected {Test-MorphospaceAuthorityPreflightV2 $stale $actionRef $capsuleRef $hostRef $releaseRef 'readiness-test' 'unit-test' 'attempt-test'|Out-Null} 'stale preflight capsule was accepted'
     $wrongIdentity=($preflight|ConvertTo-Json -Depth 20|ConvertFrom-Json);$wrongIdentity.unit_id='other-unit'
-    Assert-Rejected {Test-MorphospaceAuthorityPreflightV1 $wrongIdentity $actionRef $capsuleRef $hostRef $releaseRef 'readiness-test' 'unit-test' 'attempt-test'|Out-Null} 'wrong preflight identity was accepted'
-    $forgedProbe=($preflight|ConvertTo-Json -Depth 20|ConvertFrom-Json);$forgedProbe.owner_probe.owner_evidence_sha256='not-a-hash'
-    Assert-Rejected {Test-MorphospaceAuthorityPreflightV1 $forgedProbe $actionRef $capsuleRef $hostRef $releaseRef 'readiness-test' 'unit-test' 'attempt-test'|Out-Null} 'malformed owner probe was accepted'
+    Assert-Rejected {Test-MorphospaceAuthorityPreflightV2 $wrongIdentity $actionRef $capsuleRef $hostRef $releaseRef 'readiness-test' 'unit-test' 'attempt-test'|Out-Null} 'wrong preflight identity was accepted'
+    $forgedProbe=($preflight|ConvertTo-Json -Depth 20|ConvertFrom-Json);$forgedProbe.validator_probe.probe_sha256='not-a-hash'
+    Assert-Rejected {Test-MorphospaceAuthorityPreflightV2 $forgedProbe $actionRef $capsuleRef $hostRef $releaseRef 'readiness-test' 'unit-test' 'attempt-test'|Out-Null} 'malformed validator probe was accepted'
+    $forgedAdmission=($probeDocument|ConvertTo-Json -Depth 20|ConvertFrom-Json);$forgedAdmission.acceptance_bindings[0].command_id='missing-command'
+    Assert-Rejected {Test-MorphospaceOwnerValidatorAdmissionProbeV1 $forgedAdmission $validator $probeUnit|Out-Null} 'admission probe accepted an unbound command'
 
     $context=New-MorphospaceAuthorityReportContext 'readiness-test' 'unit-test' 'attempt-test' preflight
-    try{throw 'nested readiness failure'}catch{$report=Write-MorphospaceAuthorityFailureReport $context 'sealed-owner-preflight' $_ ([DateTime]::UtcNow);Write-MorphospaceAuthorityStageResult $context 'sealed-owner-preflight' fail ([DateTime]::UtcNow) -FailureReportPath $context.failure_report|Out-Null}
+    try{throw 'nested readiness failure'}catch{$report=Write-MorphospaceAuthorityFailureReport $context 'sealed-validator-admission' $_ ([DateTime]::UtcNow);Write-MorphospaceAuthorityStageResult $context 'sealed-validator-admission' fail ([DateTime]::UtcNow) -FailureReportPath $context.failure_report|Out-Null}
     Assert-Readiness ([IO.File]::Exists($context.failure_report)-and[IO.File]::Exists($context.stage_result)) 'typed failure/stage reports were not retained'
-    Assert-Rejected {Write-MorphospaceAuthorityStageResult $context 'sealed-owner-preflight' fail ([DateTime]::UtcNow)|Out-Null} 'stage result overwrite was accepted'
+    Assert-Rejected {Write-MorphospaceAuthorityStageResult $context 'sealed-validator-admission' fail ([DateTime]::UtcNow)|Out-Null} 'stage result overwrite was accepted'
 
     $authoritySources=@('scripts/Invoke-MorphospaceValidationAuthority.ps1','scripts/WorkUnitAutomation.psm1','scripts/lib/MorphospaceOwnership.psm1','scripts/lib/MorphospaceValidationAuthority.psm1','scripts/lib/MorphospaceAuthorityReadiness.psm1')
     foreach($relative in $authoritySources){$path=Join-Path $root $relative;$tokens=$null;$errors=$null;$ast=[Management.Automation.Language.Parser]::ParseFile($path,[ref]$tokens,[ref]$errors);if($errors){throw "Authority source does not parse: $relative"};$ambient=@($ast.FindAll({param($node)$node-is[Management.Automation.Language.CommandAst]-and[string]$node.GetCommandName()-ceq'Get-FileHash'},$true));Assert-Readiness ($ambient.Count-eq0) "authority source uses ambient Get-FileHash: $relative"}
     $runnerText=Get-Content -LiteralPath (Join-Path $root 'scripts\Invoke-MorphospaceValidationAuthority.ps1') -Raw
     Assert-Readiness ($runnerText.Contains('function Invoke-MorphospaceIsolatedAuthoritySelfTest')-and@([regex]::Matches($runnerText,'Invoke-MorphospaceIsolatedAuthoritySelfTest -Migration \$migration')).Count-eq3) 'record self-tests are not isolated child processes'
+    Assert-Readiness ($runnerText.Contains('-ProbeOnly')-and$runnerText.Contains('Test-MorphospaceOwnerValidatorAdmissionProbeV1')) 'preflight does not use the bounded typed validator admission probe'
     foreach($selfTestName in @('Test-ValidationAuthorityLauncher.ps1','Test-AuthorityRunnerHandoff.ps1','Test-TrustMigrationAuthority.ps1')){Assert-Readiness (-not$runnerText.Contains("& (Join-Path `$PSScriptRoot '$selfTestName')")) "record self-test still mutates the authority process module graph: $selfTestName"}
+
+    $validationModuleText=Get-Content -LiteralPath (Join-Path $root 'scripts\lib\MorphospaceValidationAuthority.psm1') -Raw
+    Assert-Readiness (-not$runnerText.Contains('__path')-and-not$validationModuleText.Contains('Add-Member -NotePropertyName __path')) 'authority path metadata is still injected into strict schema documents'
 
     Write-Host 'Authority record-readiness self-test passed.'
 }finally{if([IO.Directory]::Exists($temp)){[IO.Directory]::Delete($temp,$true)}}

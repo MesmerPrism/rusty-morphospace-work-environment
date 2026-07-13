@@ -250,10 +250,12 @@ For a receipt-security corrective chain, preserve any immutable historical
 prefix and use a separately scoped recovery unit. Before a fresh record attempt,
 require the quick contract, a hash-pinned runner release, an exact
 content-addressed capsule, a fresh child-host capability probe, and a same-input
-sealed owner preflight. Preflight is non-promotional admission; only the fresh
-nonce-bound authority rerun may publish the receipt. Preserve typed stage
-failures and invalidate reuse on runner, capsule, materializer, host,
-dependency, or clean-room fingerprint drift.
+typed validator-admission probe. The probe verifies the sealed validator, unit
+contract, command identities, and acceptance bindings without executing
+acceptance commands. Preflight is non-promotional admission; only the single
+fresh nonce-bound Validate run may execute the full owner validator and publish
+the receipt. Preserve typed stage failures and invalidate reuse on runner,
+capsule, materializer, host, dependency, or clean-room fingerprint drift.
 
 At release-candidate checkpoints, run every owner repo's full gate before
 device work, preserve interrupted/failed summaries, rerun a touched repo after

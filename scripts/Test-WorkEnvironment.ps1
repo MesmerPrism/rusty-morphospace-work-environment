@@ -171,11 +171,12 @@ if ($SelfTest) {
     }
 
     foreach ($authorityTest in @(
-        [pscustomobject]@{ name = 'authority:record-readiness'; script = 'Test-AuthorityRecordReadiness.ps1'; detail = 'Validated host probe, capsule identity, content-addressed clean-room reuse, stale-preflight rejection, typed failures, and ambient-hash rejection.' },
+        [pscustomobject]@{ name = 'authority:record-readiness'; script = 'Test-AuthorityRecordReadiness.ps1'; detail = 'Validated host probe, capsule identity, content-addressed clean-room reuse, typed v2 validator admission, stale-preflight rejection, typed failures, and ambient-hash rejection.' },
+        [pscustomobject]@{ name = 'authority:runner-fast'; script = 'Test-ValidationAuthorityRunnerFast.ps1'; detail = 'Drove the real pinned admission-only Preflight and full Validate branches through a bounded fixture and validated the published receipt through the full consumer.' },
         [pscustomobject]@{ name = 'authority:launcher'; script = 'Test-ValidationAuthorityLauncher.ps1'; detail = 'Validated pinned child launch, timeout, no-overwrite outputs, and captured streams.' },
         [pscustomobject]@{ name = 'authority:handoff'; script = 'Test-AuthorityRunnerHandoff.ps1'; detail = 'Validated pinned runner selection, arguments, nonce, and child failure propagation.' },
         [pscustomobject]@{ name = 'authority:trust-migration'; script = 'Test-TrustMigrationAuthority.ps1'; detail = 'Validated tracked authority migration and substitution rejection.' },
-        [pscustomobject]@{ name = 'authority:validation-execution'; script = 'Test-ValidationExecutionAuthority.ps1'; detail = 'Validated nonce-bound execution and forged receipt rejection.' },
+        [pscustomobject]@{ name = 'authority:validation-execution'; script = 'Test-ValidationExecutionAuthority.ps1'; detail = 'Validated schema-pure late publication, strict ownership re-observation, nonce-bound execution, workspace/repository receipt normalization, exact receipt references, and forged receipt rejection.' },
         [pscustomobject]@{ name = 'authority:ownership'; script = 'Test-OwnershipAuthority.ps1'; detail = 'Validated ownership, clean-room closure, historical blobs, and damaged input rejection.' },
         [pscustomobject]@{ name = 'authority:transition-ledger'; script = 'Test-TransitionLedger.ps1'; detail = 'Validated interruption repair and idempotent transition completion.' }
     )) {

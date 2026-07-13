@@ -273,6 +273,11 @@ different runner path, or caller-selected runner switches is rejected. A
 closed room may carry explicitly listed historical Git blobs when a static
 gate verifies historical object IDs; those blobs are copied into a local,
 sealed object store and are fingerprinted separately from the live repository.
+Parsed registry, protocol, ownership, action, evidence, and execution documents
+remain canonical schema objects throughout this path. The runner carries their
+locations separately, verifies that each in-memory document matches its bound
+path, and emits typed path/schema/SHA references; it never decorates a canonical
+document with internal path metadata before strict revalidation.
 
 Run receipt-security authority in these fail-closed stages:
 
@@ -281,13 +286,18 @@ Run receipt-security authority in these fail-closed stages:
    validator, and dependency references into a content-addressed capsule;
 3. materialize or reuse the capsule only after its manifest and clean-room
    fingerprint match, then run a fresh child-host capability probe;
-4. run the owner validator as a preflight and publish a sealed result bound to
-   project, unit, attempt, runner, capsule, host, clean room, and owner probe;
-5. invoke `RecordValidation` with a fresh execution nonce, rerun the owner
-   validator under authority, and publish no-overwrite evidence and receipt;
+4. run the sealed validator in admission-only mode and publish a v2 preflight
+   bound to project, unit, attempt, runner, capsule, host, clean room, unit
+   contract, command identities, and acceptance bindings; the probe must not
+   execute acceptance commands or emit owner-validation evidence;
+5. invoke `RecordValidation` with a fresh execution nonce, run the full owner
+   validator exactly once under authority, and publish no-overwrite evidence
+   and receipt;
 6. revalidate every artifact, current observation, and transition at acceptance.
 
-Preflight is admission, not owner evidence or acceptance. A caller-authored
+Preflight is admission, not owner evidence or acceptance. It may prove that the
+sealed validator and its declared commands are present and bound, but only the
+nonce-bound Validate branch executes acceptance commands. A caller-authored
 preflight or receipt cannot substitute for the fresh authority execution.
 Every stage writes a typed bounded result containing the exact input identities,
 elapsed time, stream hashes/references, status, failure code, and next action

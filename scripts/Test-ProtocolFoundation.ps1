@@ -67,11 +67,11 @@ try{
     $canonicalA=ConvertTo-MorphospaceCanonicalJson ([ordered]@{z=1;a=[ordered]@{b=2;a=1}})
     $canonicalB=ConvertTo-MorphospaceCanonicalJson ([ordered]@{a=[ordered]@{a=1;b=2};z=1})
     Assert-Foundation ($canonicalA-ceq$canonicalB) 'semantic canonical JSON depends on property order'
-    $escapeValue=[ordered]@{path='C:\Program Files\Git\cmd\git.exe';quoted='say "hi"';controls="tab`tline`nnext";unicode='é'}
+    $escapeValue=[ordered]@{path='tool-root\Git\cmd\git.exe';quoted='say "hi"';controls="tab`tline`nnext";unicode=[string][char]0x00e9}
     $canonicalEscapes=ConvertTo-MorphospaceCanonicalJson $escapeValue
     $escapeRoundTrip=$canonicalEscapes|ConvertFrom-Json
     Assert-Foundation ([string]$escapeRoundTrip.path-ceq[string]$escapeValue.path-and[string]$escapeRoundTrip.quoted-ceq[string]$escapeValue.quoted-and[string]$escapeRoundTrip.controls-ceq[string]$escapeValue.controls-and[string]$escapeRoundTrip.unicode-ceq[string]$escapeValue.unicode) 'canonical JSON string escaping does not round-trip'
-    Assert-Foundation ($canonicalEscapes.Contains('"path":"C:\\Program Files\\Git\\cmd\\git.exe"')-and$canonicalEscapes.Contains('"quoted":"say \"hi\""')-and$canonicalEscapes.Contains('"controls":"tab\tline\nnext"')-and$canonicalEscapes.Contains('"unicode":"\u00e9"')) 'canonical JSON escaping is not minimal and deterministic'
+    Assert-Foundation ($canonicalEscapes.Contains('"path":"tool-root\\Git\\cmd\\git.exe"')-and$canonicalEscapes.Contains('"quoted":"say \"hi\""')-and$canonicalEscapes.Contains('"controls":"tab\tline\nnext"')-and$canonicalEscapes.Contains('"unicode":"\u00e9"')) 'canonical JSON escaping is not minimal and deterministic'
     $badJson=@('{"a":1,"a":2}','{"a":1,"A":2}','{"a":1,}','{/*comment*/"a":1}','{"a":1.5}')
     foreach($text in $badJson){$path=Join-Path $commonRoot ([guid]::NewGuid().ToString('N')+'.json');Write-Utf8Lf $path $text;Assert-Rejected {Read-MorphospaceProtocolJson $path|Out-Null} "strict JSON accepted $text"}
     $bomPath=Join-Path $commonRoot 'bom.json';[IO.File]::WriteAllBytes($bomPath,[byte[]](0xef,0xbb,0xbf,0x7b,0x7d));Assert-Rejected {Read-MorphospaceProtocolJson $bomPath|Out-Null} 'UTF-8 BOM accepted'

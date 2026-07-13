@@ -3,7 +3,8 @@ param(
     [Parameter(Mandatory = $true)][string]$QuestRoot,
     [Parameter(Mandatory = $true)][string]$RoadmapPath,
     [Parameter(Mandatory = $true)][string]$UnitId,
-    [Parameter(Mandatory = $true)][string]$OutPath
+    [Parameter(Mandatory = $true)][string]$OutPath,
+    [switch]$ProbeOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -57,6 +58,23 @@ function Invoke-ValidatorCommand {
     }
 }
 
+function Write-ValidatorOutput {
+    param([Parameter(Mandatory = $true)][object]$Value)
+    $target = [IO.Path]::GetFullPath($OutPath)
+    $directory = Split-Path -Parent $target
+    if (-not (Test-Path -LiteralPath $directory -PathType Container)) { throw "Validator output directory does not exist: $directory" }
+    $json = $Value | ConvertTo-Json -Depth 20
+    $stream = [IO.FileStream]::new($target, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    try {
+        $bytes = [Text.UTF8Encoding]::new($false).GetBytes($json)
+        $stream.Write($bytes, 0, $bytes.Length)
+        $stream.Flush($true)
+    } finally {
+        $stream.Dispose()
+    }
+    $json
+}
+
 $workspace = [IO.Path]::GetFullPath($WorkspaceRoot)
 $quest = [IO.Path]::GetFullPath($QuestRoot)
 $roadmap = [IO.Path]::GetFullPath($RoadmapPath)
@@ -71,6 +89,52 @@ $contracts = Join-Path $PSScriptRoot 'Test-WorkflowContracts.ps1'
 $executionAuthority = Join-Path $PSScriptRoot 'Test-ValidationExecutionAuthority.ps1'
 $transitionLedger = Join-Path $PSScriptRoot 'Test-TransitionLedger.ps1'
 $authorityHandoff = Join-Path $PSScriptRoot 'Test-AuthorityRunnerHandoff.ps1'
+$commandDefinitions = @(
+    [pscustomobject]@{ command_id = 'quest-workspace-static-gate'; path = $gate },
+    [pscustomobject]@{ command_id = 'portable-ownership-authority-self-test'; path = $ownership },
+    [pscustomobject]@{ command_id = 'portable-workflow-contract-self-test'; path = $contracts },
+    [pscustomobject]@{ command_id = 'validation-execution-authority-self-test'; path = $executionAuthority },
+    [pscustomobject]@{ command_id = 'transition-ledger-recovery-self-test'; path = $transitionLedger },
+    [pscustomobject]@{ command_id = 'authority-runner-handoff-self-test'; path = $authorityHandoff }
+)
+$criterionCommandIds = @{
+    'spatial-history' = 'quest-workspace-static-gate'
+    'candidate-maturity' = 'quest-workspace-static-gate'
+    'native-workspace' = 'quest-workspace-static-gate'
+    'inert-defaults' = 'quest-workspace-static-gate'
+    'derived-state' = 'quest-workspace-static-gate'
+    'inflight-adoption' = 'portable-workflow-contract-self-test'
+    'validator-derived-evidence' = 'portable-ownership-authority-self-test'
+    'overlay-content-integrity' = 'portable-ownership-authority-self-test'
+    'unit-attribution' = 'portable-ownership-authority-self-test'
+    'device-derivation' = 'portable-workflow-contract-self-test'
+}
+if ($ProbeOnly) {
+    $commands = @($commandDefinitions | Sort-Object command_id | ForEach-Object {
+        Assert-Validator (Test-Path -LiteralPath $_.path -PathType Leaf) "Validator command is missing: $($_.path)"
+        [pscustomobject][ordered]@{command_id=[string]$_.command_id;command_name=[IO.Path]::GetFileName([string]$_.path);command_sha256=Get-ValidatorHash ([string]$_.path)}
+    })
+    $bindings = @($expected | ForEach-Object {
+        $acceptanceId = [string]$_
+        Assert-Validator ($criterionCommandIds.ContainsKey($acceptanceId)) "Validator admission mapping is missing: $acceptanceId"
+        [pscustomobject][ordered]@{acceptance_id=$acceptanceId;command_id=[string]$criterionCommandIds[$acceptanceId]}
+    })
+    $unitContractText = "$([string]$unit.risk_tier)`n$([string]$unit.device_requirement)`n$($expected -join "`n")"
+    $probe = [pscustomobject][ordered]@{
+        schema = 'rusty.morphospace.workflow.owner_validator_admission_probe.v1'
+        validator_id = 'wf005-workspace-owner'
+        created_at = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffffffZ')
+        project_id = [string]$unit.project_id
+        unit_id = $UnitId
+        unit_contract_sha256 = Get-TextHash (($([pscustomobject]@{value=$unitContractText})) | ConvertTo-Json -Compress)
+        commands = $commands
+        acceptance_bindings = $bindings
+        status = 'pass'
+        does_not_prove = @('Admission only: does not execute acceptance commands or constitute owner validation evidence, validation, or acceptance.')
+    }
+    Write-ValidatorOutput $probe
+    exit 0
+}
 $staticResult = Invoke-ValidatorCommand -CommandId 'quest-workspace-static-gate' -ScriptPath $gate -Arguments @('-RepoRoot', $quest, '-RoadmapPath', $roadmap)
 $ownershipResult = Invoke-ValidatorCommand -CommandId 'portable-ownership-authority-self-test' -ScriptPath $ownership -Arguments @()
 $contractResult = Invoke-ValidatorCommand -CommandId 'portable-workflow-contract-self-test' -ScriptPath $contracts -Arguments @('-RepoRoot', (Split-Path -Parent $PSScriptRoot), '-WorkspaceRoot', $workspace)
@@ -115,16 +179,4 @@ $output = [pscustomobject][ordered]@{
     criteria = @($criteria.ToArray())
     does_not_prove = @('Does not prove device validation, stable promotion, external Git push, or any downstream NET-013/MOD-006 acceptance.')
 }
-$target = [IO.Path]::GetFullPath($OutPath)
-$directory = Split-Path -Parent $target
-if (-not (Test-Path -LiteralPath $directory -PathType Container)) { throw "Validator output directory does not exist: $directory" }
-$json = $output | ConvertTo-Json -Depth 20
-$stream = [IO.FileStream]::new($target, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
-try {
-    $bytes = [Text.UTF8Encoding]::new($false).GetBytes($json)
-    $stream.Write($bytes, 0, $bytes.Length)
-    $stream.Flush($true)
-} finally {
-    $stream.Dispose()
-}
-$output | ConvertTo-Json -Depth 20
+Write-ValidatorOutput $output
