@@ -45,11 +45,13 @@ function Add-MorphospaceCanonicalJsonString {
     [void]$Builder.Append('"')
     foreach($codeUnit in $Value.ToCharArray()){
         $code=[int]$codeUnit
-        switch($code){
-            8 {[void]$Builder.Append('\b');continue};9 {[void]$Builder.Append('\t');continue}
-            10 {[void]$Builder.Append('\n');continue};12 {[void]$Builder.Append('\f');continue};13 {[void]$Builder.Append('\r');continue}
-            34 {[void]$Builder.Append('\"');continue};92 {[void]$Builder.Append('\\');continue}
-        }
+        if($code-eq8){[void]$Builder.Append('\b');continue}
+        if($code-eq9){[void]$Builder.Append('\t');continue}
+        if($code-eq10){[void]$Builder.Append('\n');continue}
+        if($code-eq12){[void]$Builder.Append('\f');continue}
+        if($code-eq13){[void]$Builder.Append('\r');continue}
+        if($code-eq34){[void]$Builder.Append('\"');continue}
+        if($code-eq92){[void]$Builder.Append('\\');continue}
         if($code-lt32-or$code-gt126){[void]$Builder.Append(('\u{0:x4}'-f$code))}else{[void]$Builder.Append($codeUnit)}
     }
     [void]$Builder.Append('"')
