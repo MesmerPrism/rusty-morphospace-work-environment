@@ -90,8 +90,9 @@ function Invoke-MorphospaceBoundProcessBytes {
         [Parameter(Mandatory = $true)][string[]]$Arguments,
         [Parameter(Mandatory = $true)][string]$WorkingDirectory,
         [ValidateRange(1, 600)][int]$TimeoutSeconds = 60,
-        [ValidateRange(1024, 268435456)][int]$MaxOutputBytes = 67108864,
+        [ValidateRange(1024, 536870912)][int]$MaxOutputBytes = 67108864,
         [string]$ExpectedExecutableSha256 = '',
+        [AllowNull()][byte[]]$StandardInputBytes = $null,
         [switch]$AllowFailure
     )
     $executablePath = [System.IO.Path]::GetFullPath($Executable)
@@ -106,6 +107,10 @@ function Invoke-MorphospaceBoundProcessBytes {
     $psi.CreateNoWindow = $true
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
+    $psi.RedirectStandardInput = $null -ne $StandardInputBytes
+    if ($psi.RedirectStandardInput -and $psi.PSObject.Properties.Name -contains 'StandardInputEncoding') {
+        $psi.StandardInputEncoding = [Text.Encoding]::ASCII
+    }
     if ($psi.PSObject.Properties.Name -contains 'ArgumentList') {
         foreach ($argument in $Arguments) { [void]$psi.ArgumentList.Add([string]$argument) }
     } else {
@@ -136,10 +141,20 @@ function Invoke-MorphospaceBoundProcessBytes {
     $process.StartInfo = $psi
     $stdout = [MorphospaceBoundedMemoryStream]::new($MaxOutputBytes)
     $stderr = [MorphospaceBoundedMemoryStream]::new($MaxOutputBytes)
+    $started = $false
     try {
         if (-not $process.Start()) { throw "Failed to launch bound executable '$Executable'." }
+        $started = $true
         $stdoutCopy = $process.StandardOutput.BaseStream.CopyToAsync($stdout)
         $stderrCopy = $process.StandardError.BaseStream.CopyToAsync($stderr)
+        if ($null -ne $StandardInputBytes) {
+            try {
+                $process.StandardInput.BaseStream.Write($StandardInputBytes, 0, $StandardInputBytes.Length)
+                $process.StandardInput.BaseStream.Flush()
+            } finally {
+                $process.StandardInput.Close()
+            }
+        }
         $watch = [Diagnostics.Stopwatch]::StartNew()
         while (-not $process.HasExited) {
             if ($stdoutCopy.IsFaulted -or $stderrCopy.IsFaulted) {
@@ -162,6 +177,7 @@ function Invoke-MorphospaceBoundProcessBytes {
         $outBytes = $stdout.ToArray()
         $errBytes = $stderr.ToArray()
     } finally {
+        if ($started -and -not $process.HasExited) { try { $process.Kill($true) } catch { try { $process.Kill() } catch {} } }
         $process.Dispose(); $stdout.Dispose(); $stderr.Dispose()
     }
     $executableHashAfter = Get-MorphospaceFileSha256 -Path $executablePath
@@ -183,6 +199,9 @@ function Invoke-MorphospaceBoundGitBytes {
         [Parameter(Mandatory = $true)][string[]]$Arguments,
         [string]$ExpectedExecutableSha256 = '',
         [object]$SafetyContext = $null,
+        [ValidateRange(1, 600)][int]$TimeoutSeconds = 60,
+        [ValidateRange(1024, 536870912)][int]$MaxOutputBytes = 67108864,
+        [AllowNull()][byte[]]$StandardInputBytes = $null,
         [switch]$AllowFailure
     )
     $baseArguments = @(
@@ -197,7 +216,7 @@ function Invoke-MorphospaceBoundGitBytes {
         if($remaining.Count-eq0-or[string]$remaining[0]-ceq'config'){throw 'Observation safety context cannot execute a missing/config-mutating Git subcommand.'}
         $args=$baseArguments+@($safeCallerConfig.ToArray())+@($SafetyContext.override_arguments)+@($remaining.ToArray())
     }else{$args=$baseArguments+@($Arguments)}
-    return Invoke-MorphospaceBoundProcessBytes -Executable $GitExecutable -Arguments $args -WorkingDirectory $RepositoryPath -ExpectedExecutableSha256 $ExpectedExecutableSha256 -AllowFailure:$AllowFailure
+    return Invoke-MorphospaceBoundProcessBytes -Executable $GitExecutable -Arguments $args -WorkingDirectory $RepositoryPath -ExpectedExecutableSha256 $ExpectedExecutableSha256 -TimeoutSeconds $TimeoutSeconds -MaxOutputBytes $MaxOutputBytes -StandardInputBytes $StandardInputBytes -AllowFailure:$AllowFailure
 }
 
 function ConvertFrom-MorphospaceUtf8Bytes {

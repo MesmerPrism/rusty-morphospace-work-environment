@@ -31,6 +31,77 @@ function Invoke-MorphospaceOwnershipGit {
     } $GitExecutable $RepositoryPath $Arguments $AllowFailure
 }
 
+function Invoke-MorphospaceOwnershipGitWithInput {
+    param([string]$GitExecutable,[string]$RepositoryPath,[string[]]$Arguments,[byte[]]$StandardInputBytes,[int]$TimeoutSeconds=300,[int]$MaxOutputBytes=536870912)
+    return & $script:ContentModule {
+        param($git,$root,$arguments,$inputBytes,$timeout,$maxOutput)
+        $gitHash=Get-MorphospaceFileSha256 $git
+        $safety=$null
+        try{
+            $safety=New-MorphospaceGitSafetyContext $git $root $gitHash
+            $result=Invoke-MorphospaceBoundGitBytes -GitExecutable $git -RepositoryPath $root -Arguments $arguments -ExpectedExecutableSha256 $gitHash -SafetyContext $safety -TimeoutSeconds $timeout -MaxOutputBytes $maxOutput -StandardInputBytes $inputBytes
+            Test-MorphospaceGitSafetyContext $safety $git $root $gitHash
+            return $result
+        }finally{Close-MorphospaceGitSafetyContext $safety}
+    } $GitExecutable $RepositoryPath $Arguments $StandardInputBytes $TimeoutSeconds $MaxOutputBytes
+}
+
+function New-MorphospaceOwnershipGitSession {
+    param([string]$GitExecutable,[string]$RepositoryPath)
+    return & $script:ContentModule {
+        param($git,$root)
+        $gitHash=Get-MorphospaceFileSha256 $git
+        $safety=New-MorphospaceGitSafetyContext $git $root $gitHash
+        return [pscustomobject]@{git=$git;root=[IO.Path]::GetFullPath($root);git_hash=$gitHash;safety=$safety}
+    } $GitExecutable $RepositoryPath
+}
+
+function Invoke-MorphospaceOwnershipGitSession {
+    param([object]$Session,[string[]]$Arguments,[byte[]]$StandardInputBytes=$null,[int]$TimeoutSeconds=300,[int]$MaxOutputBytes=536870912)
+    return & $script:ContentModule {
+        param($session,$arguments,$inputBytes,$timeout,$maxOutput)
+        return Invoke-MorphospaceBoundGitBytes -GitExecutable ([string]$session.git) -RepositoryPath ([string]$session.root) -Arguments $arguments -ExpectedExecutableSha256 ([string]$session.git_hash) -SafetyContext $session.safety -TimeoutSeconds $timeout -MaxOutputBytes $maxOutput -StandardInputBytes $inputBytes
+    } $Session $Arguments $StandardInputBytes $TimeoutSeconds $MaxOutputBytes
+}
+
+function Close-MorphospaceOwnershipGitSession {
+    param([object]$Session)
+    if($null-eq$Session){return}
+    & $script:ContentModule {
+        param($session)
+        try{Test-MorphospaceGitSafetyContext $session.safety ([string]$session.git) ([string]$session.root) ([string]$session.git_hash)}finally{Close-MorphospaceGitSafetyContext $session.safety}
+    } $Session
+}
+
+function Get-MorphospaceOwnershipGitBlobBatch {
+    param([string]$GitExecutable,[string]$RepositoryPath,[string[]]$ObjectIds,[object]$GitSession=$null)
+    $ordered=[Collections.Generic.List[string]]::new();$seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach($raw in @($ObjectIds)){$oid=[string]$raw;Test-MorphospaceLowerObjectId $oid 'Batch blob object ID';if($seen.Add($oid)){$ordered.Add($oid)}}
+    $result=[Collections.Generic.Dictionary[string,byte[]]]::new([StringComparer]::Ordinal)
+    if($ordered.Count-eq0){return $result}
+    $sentinel=('0'*40);$input=[Text.UTF8Encoding]::new($false,$true).GetBytes($sentinel+"`n"+($ordered.ToArray()-join"`n")+"`n")
+    $batch=if($null-ne$GitSession){Invoke-MorphospaceOwnershipGitSession $GitSession @('cat-file','--batch') $input 300 536870912}else{Invoke-MorphospaceOwnershipGitWithInput $GitExecutable $RepositoryPath @('cat-file','--batch') $input 300 536870912}
+    $buffer=[byte[]]$batch.stdout;$offset=0;$ascii=[Text.Encoding]::ASCII
+    $sentinelEnd=$offset;while($sentinelEnd-lt$buffer.Length-and$buffer[$sentinelEnd]-ne10){$sentinelEnd++}
+    if($sentinelEnd-ge$buffer.Length){throw 'Git batch sentinel response is truncated.'}
+    $plainSentinel=$ascii.GetBytes("$sentinel missing");$bom=[byte[]](0xef,0xbb,0xbf);$plainMatch=($sentinelEnd-eq$plainSentinel.Length);if($plainMatch){for($index=0;$index-lt$plainSentinel.Length;$index++){if($buffer[$index]-ne$plainSentinel[$index]){$plainMatch=$false;break}}};$bomMatch=($sentinelEnd-eq($bom.Length+$plainSentinel.Length));if($bomMatch){for($index=0;$index-lt$bom.Length;$index++){if($buffer[$index]-ne$bom[$index]){$bomMatch=$false;break}};if($bomMatch){for($index=0;$index-lt$plainSentinel.Length;$index++){if($buffer[$bom.Length+$index]-ne$plainSentinel[$index]){$bomMatch=$false;break}}}}
+    if(-not$plainMatch-and-not$bomMatch){throw 'Git batch sentinel response changed.'};$offset=$sentinelEnd+1
+    foreach($expected in $ordered){
+        $lineStart=$offset;while($offset-lt$buffer.Length-and$buffer[$offset]-ne10){$offset++}
+        if($offset-ge$buffer.Length){throw "Git batch blob header is truncated: $expected"}
+        $header=$ascii.GetString($buffer,$lineStart,$offset-$lineStart);$offset++
+        $match=[regex]::Match($header,'^(?<oid>[0-9a-f]{40}|[0-9a-f]{64}) blob (?<length>[0-9]+)$')
+        if(-not$match.Success-or$match.Groups['oid'].Value-cne$expected){throw "Git batch blob header changed: expected $expected, got '$header'"}
+        [long]$length=0;if(-not[long]::TryParse($match.Groups['length'].Value,[Globalization.NumberStyles]::None,[Globalization.CultureInfo]::InvariantCulture,[ref]$length)-or$length-lt0-or$length-gt536870912){throw "Git batch blob length is invalid: $expected"}
+        if($offset+$length-ge$buffer.Length){throw "Git batch blob body is truncated: $expected"}
+        $bytes=[byte[]]::new([int]$length);if($length-gt0){[Array]::Copy($buffer,$offset,$bytes,0,[int]$length)};$offset+=[int]$length
+        if($buffer[$offset]-ne10){throw "Git batch blob terminator is invalid: $expected"};$offset++
+        $result.Add($expected,$bytes)
+    }
+    if($offset-ne$buffer.Length){throw 'Git batch blob output has trailing bytes.'}
+    return $result
+}
+
 function ConvertFrom-MorphospaceOwnershipUtf8 {
     param([byte[]]$Bytes)
     return & $script:ContentModule {param($value) ConvertFrom-MorphospaceUtf8Bytes $value} $Bytes
@@ -317,7 +388,8 @@ function Add-MorphospaceCleanHistoryObjects {
         [Parameter(Mandatory = $true)][string]$SourceRepository,
         [Parameter(Mandatory = $true)][string]$Destination,
         [Parameter(Mandatory = $true)][object[]]$HistoryBlobs,
-        [Parameter(Mandatory = $true)][string]$GitExecutable
+        [Parameter(Mandatory = $true)][string]$GitExecutable,
+        [AllowNull()][object]$PreloadedBlobs = $null
     )
     $items = @($HistoryBlobs)
     if ($items.Count -eq 0) { return @() }
@@ -325,9 +397,11 @@ function Add-MorphospaceCleanHistoryObjects {
     $initOutput = @(& $GitExecutable -C $Destination init --quiet --object-format=sha1 2>&1)
     if ($LASTEXITCODE -ne 0) { throw "Unable to initialize the sealed clean-room history store: $($initOutput -join [Environment]::NewLine)" }
     $rows = [Collections.Generic.List[object]]::new()
+    if($null-ne$PreloadedBlobs){$batch=$PreloadedBlobs}else{$historyObjectIds=[Collections.Generic.List[string]]::new();foreach($item in $items){$historyObjectIds.Add([string]$item.object_id)};$batch=Get-MorphospaceOwnershipGitBlobBatch $GitExecutable $SourceRepository @($historyObjectIds.ToArray())}
     foreach ($item in $items) {
         $objectId = [string]$item.object_id
-        $bytes = (Invoke-MorphospaceOwnershipGit $GitExecutable $SourceRepository @('cat-file','blob',$objectId)).stdout
+        if(-not$batch.ContainsKey($objectId)){throw "Preloaded clean history blob is missing: $objectId"}
+        $bytes = [byte[]]$batch[$objectId]
         $sha = Get-MorphospaceBytesSha256 $bytes
         if ($sha -cne [string]$item.sha256) { throw "Historical clean-room blob bytes drifted: $objectId" }
         $temporary = Join-Path $Destination ('.morphospace-history-' + [guid]::NewGuid().ToString('N') + '.blob')
@@ -349,10 +423,16 @@ function New-MorphospaceCleanRoom {
     $temp=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\','/');$parent=[IO.Path]::Combine($temp,'rusty-morphospace-cleanrooms');if(-not[IO.Directory]::Exists($parent)){[void][IO.Directory]::CreateDirectory($parent)};Assert-MorphospaceNoReparseAncestor $temp $parent;$root=[IO.Path]::Combine($parent,"$AttemptId-$([guid]::NewGuid().ToString('N'))");[void][IO.Directory]::CreateDirectory($root);$guard=[guid]::NewGuid().ToString('N');$script:CleanRoomGuards[$root]=$guard;$roots=@{};$modesByRepo=@{};$total=[long]0;$sourceLeases=[Collections.Generic.List[object]]::new();$historyRows=[Collections.Generic.List[object]]::new()
     try{
         Test-MorphospaceHistoryBlobClosure @($HistoryBlobs) $RepositoryMap
-        foreach($repoId in @($closure.Keys)){$owned=$ownedByRepo[$repoId];$source=[string]$RepositoryMap[$repoId].path;$destination=[IO.Path]::Combine($root,$repoId);[void][IO.Directory]::CreateDirectory($destination);$modes=@{};$paths=[string[]]$closure[$repoId]
-            if([string]$owned.kind-ceq'git'){$arguments=[Collections.Generic.List[string]]::new();foreach($value in @('ls-tree','-r','-z','--full-tree',[string]$owned.base_revision,'--')){$arguments.Add($value)};foreach($path in $paths){$arguments.Add($path)};$treeText=ConvertFrom-MorphospaceOwnershipUtf8 (Invoke-MorphospaceOwnershipGit $GitExecutable $source @($arguments.ToArray())).stdout
-                foreach($token in $treeText.Split([char]0)){if(-not$token){continue};$match=[regex]::Match($token,'^(?<mode>[0-9]{6}) (?<kind>\S+) (?<oid>[0-9a-f]{40,64})\t(?<path>.+)$');if(-not$match.Success-or$match.Groups['kind'].Value-cne'blob'-or$match.Groups['mode'].Value-notin@('100644','100755')){throw "Unsupported base entry in '$repoId'."};$relative=ConvertTo-MorphospaceProtocolRelativePath $match.Groups['path'].Value;if(-not(Test-MorphospacePathInClosure $relative $paths)){throw "Git returned an out-of-closure base path: $repoId/$relative"};$target=[IO.Path]::GetFullPath([IO.Path]::Combine($destination,$relative));Assert-MorphospaceNoReparseAncestor $destination $target;$blob=(Invoke-MorphospaceOwnershipGit $GitExecutable $source @('cat-file','blob',$match.Groups['oid'].Value)).stdout;$total+=$blob.Length;if($total-gt536870912){throw 'Clean-room input exceeds 512 MiB.'};Write-MorphospaceCleanBlob $target $blob;$modes[$relative]=$match.Groups['mode'].Value}
-            }else{if(-not$baselineByRepo.ContainsKey($repoId)){throw "Non-Git clean room lacks claim baseline '$repoId'."};$ownedPaths=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase);foreach($entry in @($owned.entries)){[void]$ownedPaths.Add([string]$entry.path)};foreach($entry in @($baselineByRepo[$repoId].entries)){if(-not(Test-MorphospacePathInClosure ([string]$entry.path) $paths)-or$ownedPaths.Contains([string]$entry.path)){continue};$relative=ConvertTo-MorphospaceProtocolRelativePath ([string]$entry.path);$target=[IO.Path]::GetFullPath([IO.Path]::Combine($destination,$relative));Assert-MorphospaceNoReparseAncestor $destination $target;if([string]$entry.state-ceq'directory'){if(-not[IO.Directory]::Exists($target)){[void][IO.Directory]::CreateDirectory($target)}}elseif([string]$entry.state-ceq'file'){$live=[IO.Path]::GetFullPath([IO.Path]::Combine($source,$relative));Assert-MorphospaceNoReparseAncestor $source $live;$sourceLeases.Add((Copy-MorphospaceLeasedOverlay $live $target $entry))}}}
+        foreach($repoId in @($closure.Keys)){$owned=$ownedByRepo[$repoId];$source=[string]$RepositoryMap[$repoId].path;$destination=[IO.Path]::Combine($root,$repoId);[void][IO.Directory]::CreateDirectory($destination);$modes=@{};$paths=[string[]]$closure[$repoId];$repoHistoryList=[Collections.Generic.List[object]]::new();foreach($historyItem in @($HistoryBlobs)){if([string]$historyItem.repo_id-ceq$repoId){$repoHistoryList.Add($historyItem)}};$repoHistory=@($repoHistoryList.ToArray());$blobBatch=$null
+            if([string]$owned.kind-ceq'git'){$arguments=[Collections.Generic.List[string]]::new();foreach($value in @('ls-tree','-r','-z','--full-tree',[string]$owned.base_revision,'--')){$arguments.Add($value)};foreach($path in $paths){$arguments.Add($path)};$gitSession=$null
+                try{$gitSession=New-MorphospaceOwnershipGitSession $GitExecutable $source;$treeText=ConvertFrom-MorphospaceOwnershipUtf8 (Invoke-MorphospaceOwnershipGitSession $gitSession @($arguments.ToArray())).stdout
+                    $treeRows=[Collections.Generic.List[object]]::new();$requestedObjectIds=[Collections.Generic.List[string]]::new()
+                    foreach($token in $treeText.Split([char]0)){if(-not$token){continue};$match=[regex]::Match($token,'^(?<mode>[0-9]{6}) (?<kind>\S+) (?<oid>[0-9a-f]{40,64})\t(?<path>.+)$');if(-not$match.Success-or$match.Groups['kind'].Value-cne'blob'-or$match.Groups['mode'].Value-notin@('100644','100755')){throw "Unsupported base entry in '$repoId'."};$relative=ConvertTo-MorphospaceProtocolRelativePath $match.Groups['path'].Value;if(-not(Test-MorphospacePathInClosure $relative $paths)){throw "Git returned an out-of-closure base path: $repoId/$relative"};$oid=$match.Groups['oid'].Value;$treeRows.Add([pscustomobject]@{path=$relative;mode=$match.Groups['mode'].Value;oid=$oid})|Out-Null;$requestedObjectIds.Add($oid)}
+                    foreach($historyItem in $repoHistory){$requestedObjectIds.Add([string]$historyItem.object_id)}
+                    $blobBatch=Get-MorphospaceOwnershipGitBlobBatch $GitExecutable $source @($requestedObjectIds.ToArray()) $gitSession
+                }finally{if($null-ne$gitSession){Close-MorphospaceOwnershipGitSession $gitSession}}
+                foreach($treeRow in $treeRows){$relative=[string]$treeRow.path;$target=[IO.Path]::GetFullPath([IO.Path]::Combine($destination,$relative));Assert-MorphospaceNoReparseAncestor $destination $target;$blob=[byte[]]$blobBatch[[string]$treeRow.oid];$total+=$blob.Length;if($total-gt536870912){throw 'Clean-room input exceeds 512 MiB.'};Write-MorphospaceCleanBlob $target $blob;$modes[$relative]=[string]$treeRow.mode}
+            }else{if(-not$baselineByRepo.ContainsKey($repoId)){throw "Non-Git clean room lacks claim baseline '$repoId'."}}
             # The claim baseline may contain pre-existing dirty Git bytes.  Those bytes
             # are deliberately not attributed to the current unit, but a validator
             # must still see the exact observed baseline rather than the repository
@@ -378,9 +458,8 @@ function New-MorphospaceCleanRoom {
             }
             foreach($entry in @($owned.entries)){if([string]$entry.attribution-notin@('unit','shared')-or-not(Test-MorphospacePathInClosure ([string]$entry.path) $paths)){continue};$relative=ConvertTo-MorphospaceProtocolRelativePath ([string]$entry.path);$target=[IO.Path]::GetFullPath([IO.Path]::Combine($destination,$relative));Assert-MorphospaceNoReparseAncestor $destination $target;if([string]$entry.state-ceq'deleted'){if([IO.File]::Exists($target)){[IO.File]::Delete($target)};$modes.Remove($relative);continue};if([string]$entry.state-ceq'directory'){if(-not[IO.Directory]::Exists($target)){[void][IO.Directory]::CreateDirectory($target)};continue};if($null-ne$entry.mode-and[string]$entry.mode-notin@('100644','100755')){throw "Owned overlay has unsupported mode: $repoId/$relative"};$live=[IO.Path]::GetFullPath([IO.Path]::Combine($source,$relative));Assert-MorphospaceNoReparseAncestor $source $live;$sourceLeases.Add((Copy-MorphospaceLeasedOverlay $live $target $entry));if($null-ne$entry.mode){$modes[$relative]=[string]$entry.mode}else{[void]$modes.Remove($relative)}}
             foreach($requiredPath in $paths){$required=[IO.Path]::GetFullPath([IO.Path]::Combine($destination,$requiredPath));if(-not([IO.File]::Exists($required)-or[IO.Directory]::Exists($required))){throw "Clean-room closure path is absent: $repoId/$requiredPath"}}
-            $repoHistory = @($HistoryBlobs | Where-Object { [string]$_.repo_id -ceq $repoId })
             if ($repoHistory.Count -gt 0) {
-                foreach ($row in @(Add-MorphospaceCleanHistoryObjects -SourceRepository $source -Destination $destination -HistoryBlobs $repoHistory -GitExecutable $GitExecutable)) { $historyRows.Add($row) | Out-Null }
+                foreach ($row in @(Add-MorphospaceCleanHistoryObjects -SourceRepository $source -Destination $destination -HistoryBlobs $repoHistory -GitExecutable $GitExecutable -PreloadedBlobs $blobBatch)) { $historyRows.Add($row) | Out-Null }
             }
             $roots[$repoId]=$destination;$modesByRepo[$repoId]=$modes
         }
