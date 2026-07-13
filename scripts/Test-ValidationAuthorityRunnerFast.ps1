@@ -188,15 +188,28 @@ function Invoke-TestRunnerProcess {
     $stderrTask = $process.StandardError.ReadToEndAsync()
     try {
         if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
-            try { $process.Kill() } catch {}
+            try {
+                $process.Kill($true)
+            } catch {
+                try { & taskkill.exe /PID $process.Id /T /F | Out-Null } catch {}
+                try { $process.Kill() } catch {}
+            }
+            try { $process.WaitForExit(5000) | Out-Null } catch {}
             throw "Authority runner fixture exceeded ${TimeoutSeconds}s."
         }
         $exitCode = [int]$process.ExitCode
     } finally {
-        if (-not $process.HasExited) { try { $process.Kill() } catch {} }
+        if (-not $process.HasExited) {
+            try {
+                $process.Kill($true)
+            } catch {
+                try { & taskkill.exe /PID $process.Id /T /F | Out-Null } catch {}
+                try { $process.Kill() } catch {}
+            }
+        }
     }
-    $stdout = [string]$stdoutTask.Result
-    $stderr = [string]$stderrTask.Result
+    $stdout = if ($stdoutTask.Wait(5000)) { [string]$stdoutTask.Result } else { '' }
+    $stderr = if ($stderrTask.Wait(5000)) { [string]$stderrTask.Result } else { '' }
     $process.Dispose()
     return [pscustomobject]@{exit_code=$exitCode;stdout=$stdout;stderr=$stderr}
 }

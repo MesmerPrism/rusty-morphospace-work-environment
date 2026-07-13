@@ -1,14 +1,14 @@
 ---
 name: rusty-morphospace-context
-description: 'Use for Rusty Morphospace repo-family work: repo routing, public/private boundaries, modular extraction, cross-repo contracts, clean Matter/Manifold/Optics/Lattice/GUI/Quest/Hostess lanes, public Rusty XR compatibility, native Quest apps, legacy Makepad lanes, private proving apps, Windows operator tools, and Android companions.'
+description: 'Use for Rusty Morphospace repo-family work: repo routing, public/private boundaries, modular extraction, cross-repo contracts, clean Matter/Manifold/Optics/Lattice/LSL/GUI/Quest/Hostess lanes, public Rusty XR compatibility, native Quest apps, legacy Makepad lanes, private proving apps, Windows operator tools, and Android companions.'
 ---
 
 # Rusty Morphospace Context
 
 Use this skill for Rusty Morphospace repo-family work: deciding which repo lane
 owns a change, setting public/private boundaries, orienting a new workspace,
-and routing Quest, Makepad, Manifold, Lattice, Optics, Matter, GUI, Hostess,
-or public Rusty XR compatibility work.
+and routing Quest, Makepad, Manifold, Lattice, LSL, Optics, Matter, GUI,
+Hostess, or public Rusty XR compatibility work.
 
 ## First Read
 
@@ -45,6 +45,9 @@ observability, validation, or authority boundaries, also use
 - Use Lattice for generic tracked-space relation work.
 - Use Manifold for command, session, stream, host-manifest, and control
   transport work.
+- Use Rusty LSL for independently authored LSL compatibility and black-box
+  oracle evidence. Its Morphospace hooks stop at typed observations/proposals;
+  Manifold retains stream authority.
 - Use Quest for Quest/Horizon/Android profiles, launch, permissions, ADB-facing
   receipts, and headset workflow.
 - Use Makepad for Makepad adapters, settings surfaces, and app-shell behavior.
