@@ -70,6 +70,14 @@ derive the claimable queue instead of hand-editing status/state/history.
 current heads/branches, ancestor bases, exact in-scope changed paths, and—when
 device-gated—explicit serials, cleanup, and zero bounded package/system fatals.
 Revalidate at acceptance so post-validation drift rejects.
+For long-running promotion or validation-authority work, run a fail-fast
+preflight in the exact execution environment first. Bind it to immutable
+inputs, runner/tool release, host capabilities, materialized-workspace
+fingerprint, owner probe, action, and attempt, and label it non-promotional.
+The authoritative stage reruns under a fresh transaction identity and preserves
+a typed bounded result before cleanup. Reuse a content-addressed checkpoint
+only after exact input/materialization identity and fresh host/fingerprint
+validation; drift invalidates it.
 Declared partial-commit, interrupted-build, or interrupted-device recovery
 requires a hashed `interruption_receipt.v1` with observed repo checkpoints and
 kind-specific safe cleanup. Workflow recovery may restore state only; it never

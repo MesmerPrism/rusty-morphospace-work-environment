@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/authority-runner-release.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "content", "content_sha256", "status"],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.workflow.authority_runner_release.v1" },
+    "content": {
+      "type": "object", "additionalProperties": false,
+      "required": ["artifacts", "runner"],
+      "properties": {
+        "artifacts": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/artifact" } },
+        "runner": { "$ref": "#/$defs/runner" }
+      }
+    },
+    "content_sha256": { "$ref": "#/$defs/hash" },
+    "status": { "const": "sealed" }
+  },
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "objectId": { "type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$" },
+    "artifact": { "type": "object", "additionalProperties": false, "required": ["repo_id", "path", "sha256", "git_blob_oid"], "properties": { "repo_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,191}$" }, "path": { "type": "string", "minLength": 1 }, "sha256": { "$ref": "#/$defs/hash" }, "git_blob_oid": { "$ref": "#/$defs/objectId" } } },
+    "runner": { "type": "object", "additionalProperties": false, "required": ["repo_id", "path", "sha256"], "properties": { "repo_id": { "const": "work-environment" }, "path": { "const": "scripts/Invoke-MorphospaceValidationAuthority.ps1" }, "sha256": { "$ref": "#/$defs/hash" } } }
+  }
+}

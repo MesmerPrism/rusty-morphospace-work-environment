@@ -656,7 +656,7 @@ function Test-MorphospaceValidationReceipt {
             [System.IO.Path]::GetFullPath((Join-Path $receiptDirectory ([string]$artifact.path)))
         }
         if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf)) { throw "Validation artifact does not exist: $($artifact.path)" }
-        $actualHash = (Get-FileHash -LiteralPath $artifactPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        $actualHash = Get-MorphospaceAuthoritySha256 $artifactPath
         if ($actualHash -ne ([string]$artifact.sha256).ToLowerInvariant()) { throw "Validation artifact hash mismatch for '$artifactId'." }
         $artifactMap[$artifactId] = $artifact
     }
@@ -775,7 +775,7 @@ function Test-MorphospaceRecoveryReceipt {
         if (-not $artifactId -or $artifactIds.ContainsKey($artifactId)) { throw "Recovery receipt has a missing or duplicate artifact ID." }
         $artifactPath = if ([System.IO.Path]::IsPathRooted([string]$artifact.path)) { [System.IO.Path]::GetFullPath([string]$artifact.path) } else { [System.IO.Path]::GetFullPath((Join-Path $receiptDirectory ([string]$artifact.path))) }
         if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf)) { throw "Recovery artifact does not exist: $($artifact.path)" }
-        $actualHash = (Get-FileHash -LiteralPath $artifactPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        $actualHash = Get-MorphospaceAuthoritySha256 $artifactPath
         if ($actualHash -ne ([string]$artifact.sha256).ToLowerInvariant()) { throw "Recovery artifact hash mismatch for '$artifactId'." }
         $artifactIds[$artifactId] = $true
     }
@@ -837,7 +837,8 @@ function Invoke-MorphospaceAuthorityRunnerForRecord {
         [Parameter(Mandatory = $true)][hashtable]$RepositoryMap,
         [Parameter(Mandatory = $true)][string]$AuthorityRunnerPath,
         [Parameter(Mandatory = $true)][string[]]$AuthorityRunnerArguments,
-        [Parameter(Mandatory = $true)][string]$ValidationReceipt
+        [Parameter(Mandatory = $true)][ValidateSet('Preflight','Validate')][string]$RunnerAction,
+        [string]$ValidationReceipt = ''
     )
 
     if (($AuthorityRunnerArguments.Count % 2) -ne 0) { throw 'Authority runner arguments must be explicit parameter/value pairs.' }
@@ -862,21 +863,29 @@ function Invoke-MorphospaceAuthorityRunnerForRecord {
     if (-not $resolvedRunner.Equals($expectedRunner, [StringComparison]::OrdinalIgnoreCase) -or -not [IO.File]::Exists($resolvedRunner) -or (Get-MorphospaceAuthoritySha256 $resolvedRunner) -cne [string]$runnerArtifacts[0].sha256) {
         throw 'Authority runner path or bytes do not match the migrated trust anchor.'
     }
+    if($RunnerAction-eq'Validate'-and-not$ValidationReceipt){throw 'Validate authority handoff requires a validation receipt target.'}
+    if($RunnerAction-eq'Preflight'-and$ValidationReceipt){throw 'Preflight authority handoff must not carry a validation receipt target.'}
     $nonceBytes = [byte[]]::new(32)
     $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
     try { $rng.GetBytes($nonceBytes) } finally { $rng.Dispose() }
     $nonce = ([BitConverter]::ToString($nonceBytes)).Replace('-', '').ToLowerInvariant()
     $host = (Get-Command powershell.exe -CommandType Application -ErrorAction Stop).Source
-    $nativeArguments = @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$resolvedRunner,'-Action','Validate','-WorkspaceRoot',$WorkspaceRoot,'-UnitId',$UnitId,'-ExecutionNonce',$nonce) + @($AuthorityRunnerArguments) + @('-OutPath',$ValidationReceipt)
-    $output = @(& $host @nativeArguments 2>&1)
-    if ($LASTEXITCODE -ne 0) { throw "Authority runner failed before validation could be recorded: $($output -join [Environment]::NewLine)" }
+    $nativeArguments = @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$resolvedRunner,'-Action',$RunnerAction,'-WorkspaceRoot',$WorkspaceRoot,'-UnitId',$UnitId,'-ExecutionNonce',$nonce) + @($AuthorityRunnerArguments)
+    if($RunnerAction-eq'Validate'){$nativeArguments+=@('-OutPath',$ValidationReceipt)}
+    $captureRoot=Join-Path ([IO.Path]::GetTempPath()) ('morphospace-authority-handoff-'+[guid]::NewGuid().ToString('N'));[IO.Directory]::CreateDirectory($captureRoot)|Out-Null;$stdoutPath=Join-Path $captureRoot 'stdout.txt';$stderrPath=Join-Path $captureRoot 'stderr.txt'
+    try{
+        try{$process=Start-Process -FilePath $host -ArgumentList $nativeArguments -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath}catch{throw "Authority runner launch failed ($RunnerAction): $([string]$_.Exception.Message)"}
+        try{$process.WaitForExit();$exitCode=[int]$process.ExitCode}finally{$process.Dispose()}
+        $stdout=if([IO.File]::Exists($stdoutPath)){[IO.File]::ReadAllText($stdoutPath,[Text.UTF8Encoding]::new($false))}else{''};$stderr=if([IO.File]::Exists($stderrPath)){[IO.File]::ReadAllText($stderrPath,[Text.UTF8Encoding]::new($false))}else{''}
+        if($exitCode-ne0){$failureLine=@(($stderr-split"`r?`n")|Where-Object{$_ -match'AUTHORITY_FAILURE'}|Select-Object -Last 1);$detail=if($failureLine){[string]$failureLine[0]}else{($stderr.Trim())};throw "Authority runner $RunnerAction failed with exit code $exitCode. $detail"}
+    }finally{if([IO.Directory]::Exists($captureRoot)){[IO.Directory]::Delete($captureRoot,$true)}}
     return $nonce
 }
 
 function Invoke-MorphospaceWorkUnitAutomation {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory = $true)][ValidateSet("Inspect", "Ready", "Claim", "Resume", "BeginValidation", "RecordValidation", "Accept", "PreparePush", "Recover")][string]$Action,
+        [Parameter(Mandatory = $true)][ValidateSet("Inspect", "Ready", "Claim", "Resume", "BeginValidation", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "Recover")][string]$Action,
         [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
         [string]$UnitId = "",
         [string]$RepoMapPath = "",
@@ -1016,6 +1025,21 @@ function Invoke-MorphospaceWorkUnitAutomation {
                 }
             }
         }
+        "PreflightValidation" {
+            if ($beforeStatus -ne "validating" -or [string]$state.current_unit -ne $UnitId) { throw "PreflightValidation requires the matching validating unit." }
+            $receiptSecurityUnit = (
+                [string]$unit.project_id -eq 'morphospace-platform-iteration' -and
+                [string]$unit.unit_id -eq 'wf-005'
+            ) -or (
+                ($unit.PSObject.Properties.Name -contains 'tags') -and
+                @($unit.tags | Where-Object { [string]$_ -eq 'receipt-security' }).Count -ne 0
+            )
+            if (-not $receiptSecurityUnit) { throw 'PreflightValidation is reserved for receipt-security validation.' }
+            if (-not $Execute) { throw 'PreflightValidation must execute the pinned authority runner.' }
+            if (-not $AuthorityRunnerPath) { throw 'PreflightValidation requires AuthorityRunnerPath.' }
+            [void](Invoke-MorphospaceAuthorityRunnerForRecord -WorkspaceRoot $resolvedWorkspace -UnitId $UnitId -RepositoryMap $repoMap -AuthorityRunnerPath $AuthorityRunnerPath -AuthorityRunnerArguments $AuthorityRunnerArguments -RunnerAction Preflight)
+            $transition = 'authority-preflight-ready'
+        }
         "RecordValidation" {
             if ($beforeStatus -ne "validating" -or [string]$state.current_unit -ne $UnitId) { throw "RecordValidation requires the matching validating unit." }
             if (-not $ValidationReceipt) { throw "ValidationReceipt is required." }
@@ -1030,7 +1054,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
             if ($receiptSecurityUnit) {
                 if (-not $Execute) { throw 'Receipt-security validation must invoke the pinned authority runner in the same executed RecordValidation action.' }
                 if (-not $AuthorityRunnerPath) { throw 'Receipt-security validation requires AuthorityRunnerPath; manual v2 receipt recording is rejected.' }
-                $authorityNonce = Invoke-MorphospaceAuthorityRunnerForRecord -WorkspaceRoot $resolvedWorkspace -UnitId $UnitId -RepositoryMap $repoMap -AuthorityRunnerPath $AuthorityRunnerPath -AuthorityRunnerArguments $AuthorityRunnerArguments -ValidationReceipt $ValidationReceipt
+                $authorityNonce = Invoke-MorphospaceAuthorityRunnerForRecord -WorkspaceRoot $resolvedWorkspace -UnitId $UnitId -RepositoryMap $repoMap -AuthorityRunnerPath $AuthorityRunnerPath -AuthorityRunnerArguments $AuthorityRunnerArguments -RunnerAction Validate -ValidationReceipt $ValidationReceipt
             }
             $validatedReceipt = Test-MorphospaceValidationReceipt `
                 -WorkspaceRoot $resolvedWorkspace `

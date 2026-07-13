@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/authority-input-capsule.schema.json",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema", "content", "capsule_sha256", "status"],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.workflow.authority_input_capsule.v1" },
+    "content": { "type": "object", "required": ["project_id", "unit_id", "attempt_id", "references", "validator", "runner_release_sha256", "materializer"], "additionalProperties": false, "properties": { "project_id": { "$ref": "#/$defs/id" }, "unit_id": { "$ref": "#/$defs/id" }, "attempt_id": { "$ref": "#/$defs/id" }, "references": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/reference" } }, "validator": { "$ref": "#/$defs/validator" }, "runner_release_sha256": { "$ref": "#/$defs/hash" }, "materializer": { "const": "MorphospaceOwnership/New-MorphospaceCleanRoom" } } },
+    "capsule_sha256": { "$ref": "#/$defs/hash" },
+    "status": { "const": "sealed" }
+  },
+  "$defs": { "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }, "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,191}$" }, "reference": { "type": "object", "additionalProperties": false, "required": ["role", "path", "schema", "sha256"], "properties": { "role": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,95}$" }, "path": { "type": "string", "minLength": 1 }, "schema": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{2,191}$" }, "sha256": { "$ref": "#/$defs/hash" } } }, "validator": { "type": "object", "additionalProperties": false, "required": ["validator_id", "owner_repo_id", "sha256", "registry_entry_sha256", "input_closure_sha256", "history_sha256", "timeout_seconds", "max_output_bytes", "mutation_policy", "device_policy"], "properties": { "validator_id": { "$ref": "#/$defs/id" }, "owner_repo_id": { "$ref": "#/$defs/id" }, "sha256": { "$ref": "#/$defs/hash" }, "registry_entry_sha256": { "$ref": "#/$defs/hash" }, "input_closure_sha256": { "$ref": "#/$defs/hash" }, "history_sha256": { "$ref": "#/$defs/hash" }, "timeout_seconds": { "type": "integer", "minimum": 1 }, "max_output_bytes": { "type": "integer", "minimum": 1 }, "mutation_policy": { "type": "string", "minLength": 1 }, "device_policy": { "type": "string", "minLength": 1 } } } }
+}

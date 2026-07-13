@@ -1,5 +1,5 @@
 param(
-    [Parameter(Mandatory = $true)][ValidateSet('Inspect', 'Validate')][string]$Action,
+    [Parameter(Mandatory = $true)][ValidateSet('Inspect', 'Preflight', 'Validate')][string]$Action,
     [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
     [Parameter(Mandatory = $true)][string]$UnitId,
     [Parameter(Mandatory = $true)][string]$RegistryPath,
@@ -18,7 +18,29 @@ $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceValidationAuthority.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceOwnership.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceAuthorityReadiness.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
+
+$script:AuthorityReportContext = $null
+$script:AuthorityStage = 'context-load'
+$script:AuthorityStartedAt = [DateTime]::UtcNow
+$script:AuthorityCapsuleSha256 = ''
+$script:AuthorityRunnerReleaseSha256 = ''
+
+trap {
+    $failurePath = ''
+    if ($null -ne $script:AuthorityReportContext) {
+        try {
+            $failure = Write-MorphospaceAuthorityFailureReport -Context $script:AuthorityReportContext -Stage $script:AuthorityStage -ErrorRecord $_ -StartedAt $script:AuthorityStartedAt -CapsuleSha256 $script:AuthorityCapsuleSha256 -RunnerReleaseSha256 $script:AuthorityRunnerReleaseSha256
+            $failurePath = [string]$script:AuthorityReportContext.failure_report
+            if (-not (Test-Path -LiteralPath $script:AuthorityReportContext.stage_result -PathType Leaf)) {
+                Write-MorphospaceAuthorityStageResult -Context $script:AuthorityReportContext -Stage $script:AuthorityStage -Result fail -StartedAt $script:AuthorityStartedAt -CapsuleSha256 $script:AuthorityCapsuleSha256 -RunnerReleaseSha256 $script:AuthorityRunnerReleaseSha256 -FailureReportPath $failurePath | Out-Null
+            }
+        } catch {}
+    }
+    [Console]::Error.WriteLine("AUTHORITY_FAILURE stage=$script:AuthorityStage report=$failurePath message=$([string]$_.Exception.Message)")
+    exit 1
+}
 
 function Get-MorphospaceAutomationWorkspacePath {
     param([Parameter(Mandatory = $true)][object]$Output, [Parameter(Mandatory = $true)][hashtable]$RepositoryMap, [Parameter(Mandatory = $true)][string]$Workspace)
@@ -36,6 +58,18 @@ function Get-MorphospaceAutomationWorkspaceRelativePath {
     $candidate = [IO.Path]::GetFullPath($AbsolutePath)
     if (-not $candidate.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) { throw "Automation output is outside the workspace: $AbsolutePath" }
     return $candidate.Substring($root.Length).Replace('\', '/')
+}
+
+function Get-MorphospaceReadinessOutput {
+    param([object[]]$AutomationOutputs,[string]$Role,[hashtable]$RepositoryMap,[string]$Workspace)
+    $rows=@($AutomationOutputs|Where-Object{[string]$_.phase-ceq'readiness'-and[string]$_.role-ceq$Role})
+    if($rows.Count-ne1){throw "Readiness automation contract requires exactly one $Role output."}
+    return Get-MorphospaceAutomationWorkspacePath -Output $rows[0] -RepositoryMap $RepositoryMap -Workspace $Workspace
+}
+
+function Get-MorphospaceReadinessReference {
+    param([string]$Workspace,[string]$Path,[string]$Role,[string]$Schema)
+    return Get-MorphospaceAuthorityReference -WorkspaceRoot $Workspace -Path $Path -Role $Role -Schema $Schema
 }
 
 function Assert-MorphospaceAuthorizedAction {
@@ -80,8 +114,86 @@ if ([string]$actionDocument.pre_observation_sha256 -ne [string]$observation.obse
 $selection = Get-MorphospaceRegistrySelection -Registry $registry -Unit $unit -RepositoryMap $map.map -AssertedProfileId ([string]$actionDocument.profile_id)
 Assert-MorphospaceAuthorizedAction -ActionDocument $actionDocument -Selection $selection -Unit $unit -AutomationOutputs $automationOutputs
 if ($Action -eq 'Inspect') { [pscustomobject][ordered]@{ action = 'Inspect'; project_id = $unit.project_id; unit_id = $UnitId; validators = @($selection.validators | ForEach-Object { $_.validator_id }); observation_sha256 = $observation.observation.sha256; trust_migration = $migration.migration_id } | ConvertTo-Json -Depth 20; exit 0 }
+
+$reportAction=if($Action-eq'Preflight'){'preflight'}else{'record'}
+$runIdentity=if($ExecutionNonce){$ExecutionNonce}else{[guid]::NewGuid().ToString('N')}
+$script:AuthorityReportContext=New-MorphospaceAuthorityReportContext -ProjectId ([string]$unit.project_id) -UnitId $UnitId -AttemptId ([string]$actionDocument.attempt_id) -Action $reportAction -RunIdentity $runIdentity
+$script:AuthorityStage='output-collision'
+
+$runnerReleasePath=Get-MorphospaceReadinessOutput $automationOutputs 'authority-runner-release' $map.map $workspace
+$capsulePath=Get-MorphospaceReadinessOutput $automationOutputs 'authority-input-capsule' $map.map $workspace
+$hostCapabilitiesPath=Get-MorphospaceReadinessOutput $automationOutputs 'authority-host-capabilities' $map.map $workspace
+$preflightPath=Get-MorphospaceReadinessOutput $automationOutputs 'authority-preflight-result' $map.map $workspace
+$actionReference=Get-MorphospaceReadinessReference $workspace $actionAbsolute 'validation-action' 'rusty.morphospace.workflow.validation_action.v2'
+$protocolReference=Get-MorphospaceReadinessReference $workspace $protocolAbsolute 'current-unit-protocol' 'rusty.morphospace.workflow.current_unit_protocol.v1'
+$stateAbsolute=Join-Path $workspace 'workspace.state.json';$stateDocument=Read-MorphospaceAuthorityJson $stateAbsolute
+$stateReference=Get-MorphospaceReadinessReference $workspace $stateAbsolute 'workspace-state' ([string]$stateDocument.schema)
+$unitReference=Get-MorphospaceReadinessReference $workspace $unitPath 'iteration-unit' ([string]$unit.schema)
+$capsuleReferences=@($protocol.registry,$protocol.trust_anchor_migration,$protocol.claim_baseline,$protocol.unit_ownership,$protocol.repository_map,$protocol.event_anchor,$protocolReference,$actionReference,$stateReference,$unitReference)
+$validator=@($selection.validators)[0]
+if(@($selection.validators).Count-ne1){throw 'The current readiness path requires exactly one selected owner validator.'}
+$runnerRelease=New-MorphospaceAuthorityRunnerReleaseV1 -Migration $migration -RepositoryMap $map.map -RunnerPath $PSCommandPath
+$script:AuthorityRunnerReleaseSha256=[string]$runnerRelease.content_sha256
+$capsule=New-MorphospaceAuthorityInputCapsuleV1 -ProjectId ([string]$unit.project_id) -UnitId $UnitId -AttemptId ([string]$actionDocument.attempt_id) -References $capsuleReferences -Validator $validator -RunnerRelease $runnerRelease
+$script:AuthorityCapsuleSha256=[string]$capsule.capsule_sha256
+
+if($Action-eq'Preflight'){
+    Test-MorphospaceAutomationOutputSet -AutomationOutputs $automationOutputs -RepositoryMap $map.map -Expected absent -Phase 'readiness'
+    $script:AuthorityStage='host-probe'
+    $hostCapabilities=Invoke-MorphospaceAuthorityHostProbe -RequiredCommands @('git.exe')
+    Test-MorphospaceAuthorityHostCapabilitiesV1 $hostCapabilities @('git.exe')|Out-Null
+    Write-MorphospaceManagedProtocolJsonAtomic -WorkspaceRoot $workspace -RelativePath (Get-MorphospaceAutomationWorkspaceRelativePath $workspace $runnerReleasePath) -Value $runnerRelease -NoOverwrite
+    Write-MorphospaceManagedProtocolJsonAtomic -WorkspaceRoot $workspace -RelativePath (Get-MorphospaceAutomationWorkspaceRelativePath $workspace $hostCapabilitiesPath) -Value $hostCapabilities -NoOverwrite
+    Write-MorphospaceManagedProtocolJsonAtomic -WorkspaceRoot $workspace -RelativePath (Get-MorphospaceAutomationWorkspaceRelativePath $workspace $capsulePath) -Value $capsule -NoOverwrite
+    $runnerReference=Get-MorphospaceReadinessReference $workspace $runnerReleasePath 'authority-runner-release' 'rusty.morphospace.workflow.authority_runner_release.v1'
+    $hostReference=Get-MorphospaceReadinessReference $workspace $hostCapabilitiesPath 'authority-host-capabilities' 'rusty.morphospace.workflow.authority_host_capabilities.v1'
+    $capsuleReference=Get-MorphospaceReadinessReference $workspace $capsulePath 'authority-input-capsule' 'rusty.morphospace.workflow.authority_input_capsule.v1'
+    $script:AuthorityStage='capsule-materialization'
+    $cleanRoom=Open-MorphospaceContentAddressedCleanRoom -CapsuleSha256 ([string]$capsule.capsule_sha256) -MaterializedInputsSha256 ([string]$capsule.capsule_sha256);$ephemeral=$null
+    if($null-eq$cleanRoom){$ephemeral=New-MorphospaceCleanRoom -Ownership $ownership -ClaimBaseline $baseline -RepositoryMap $map.map -InputClosure @($validator.input_closure) -HistoryBlobs @($validator.history_blobs) -AttemptId "$UnitId-$($actionDocument.attempt_id)-$([string]$validator.validator_id)";$cleanRoom=Save-MorphospaceContentAddressedCleanRoom -CleanRoom $ephemeral -CapsuleSha256 ([string]$capsule.capsule_sha256) -MaterializedInputsSha256 ([string]$capsule.capsule_sha256);$ephemeral=$null}
+    try{
+        $cleanBefore=Get-MorphospaceCleanRoomFingerprint $cleanRoom
+        if($cleanBefore-cne[string]$cleanRoom.fingerprint_sha256){throw 'Content-addressed clean room does not match its sealed manifest.'}
+        $script:AuthorityStage='sealed-owner-preflight'
+        $validatorPath=[IO.Path]::GetFullPath((Join-Path ([string]$cleanRoom.repositories[[string]$validator.owner_repo_id]) ([string]$validator.path)))
+        if(-not(Test-Path -LiteralPath $validatorPath -PathType Leaf)-or(Get-MorphospaceAuthoritySha256 $validatorPath)-cne[string]$validator.sha256){throw "Clean-room validator bytes do not match the registry: $($validator.validator_id)"}
+        $stagedOwnerOut=Join-Path $script:AuthorityReportContext.root 'owner-evidence.json'
+        $planningRoot=[string]$cleanRoom.repositories['planning'];$questRoot=[string]$cleanRoom.repositories['quest'];$cleanWorkspace=Join-Path $planningRoot 'workspaces\morphospace-platform-iteration\morphospace';$cleanRoadmap=Join-Path $planningRoot 'agent-state\morphospace-autonomous-iteration-roadmap-2026-07-10.json'
+        $run=Invoke-MorphospacePinnedValidator -ValidatorPath $validatorPath -Workspace $cleanWorkspace -Quest $questRoot -Roadmap $cleanRoadmap -Unit $UnitId -OwnerOut $stagedOwnerOut -StdoutPath $script:AuthorityReportContext.stdout -StderrPath $script:AuthorityReportContext.stderr -TimeoutSeconds ([int]$validator.timeout_seconds)
+        if(([Text.Encoding]::UTF8.GetByteCount([string]$run.stdout)+[Text.Encoding]::UTF8.GetByteCount([string]$run.stderr))-gt[int]$validator.max_output_bytes){throw "Validator output exceeded its registered limit: $($validator.validator_id)"}
+        if((Get-MorphospaceCleanRoomFingerprint $cleanRoom)-cne$cleanBefore){throw "Validator modified its clean-room input closure: $($validator.validator_id)"}
+        if(-not(Test-Path -LiteralPath $stagedOwnerOut -PathType Leaf)){throw "Selected validator did not emit its owner evidence: $($validator.validator_id)"}
+        $owner=Read-MorphospaceAuthorityJson $stagedOwnerOut;$ownerStatus=if($run.exit_code-eq0-and[string]$owner.status-eq'pass'){'pass'}else{'fail'}
+        Test-MorphospaceOwnerValidation -OwnerEvidence $owner -Validator $validator -Unit $unit -ExpectedStatus $ownerStatus|Out-Null
+        if($ownerStatus-ne'pass'){throw "Sealed owner-validator preflight did not pass: $($validator.validator_id)"}
+        $ownerProbe=[pscustomobject][ordered]@{validator_id=[string]$validator.validator_id;status='pass';exit_code=[int]$run.exit_code;owner_evidence_sha256=Get-MorphospaceAuthoritySha256 $stagedOwnerOut;stdout_sha256=Get-MorphospaceCanonicalJsonSha256 ([pscustomobject]@{value=[string]$run.stdout});stderr_sha256=Get-MorphospaceCanonicalJsonSha256 ([pscustomobject]@{value=[string]$run.stderr})}
+        $preflight=New-MorphospaceAuthorityPreflightV1 -ProjectId ([string]$unit.project_id) -UnitId $UnitId -AttemptId ([string]$actionDocument.attempt_id) -ActionReference $actionReference -CapsuleReference $capsuleReference -HostReference $hostReference -RunnerReleaseReference $runnerReference -OwnerProbe $ownerProbe -CleanroomFingerprint $cleanBefore -CapsuleReused ([bool]$cleanRoom.reused)
+        Write-MorphospaceManagedProtocolJsonAtomic -WorkspaceRoot $workspace -RelativePath (Get-MorphospaceAutomationWorkspaceRelativePath $workspace $preflightPath) -Value $preflight -NoOverwrite
+        Test-MorphospaceAutomationOutputSet -AutomationOutputs $automationOutputs -RepositoryMap $map.map -Expected present -Phase 'readiness'
+        Write-MorphospaceAuthorityStageResult -Context $script:AuthorityReportContext -Stage 'sealed-owner-preflight' -Result pass -StartedAt $script:AuthorityStartedAt -CapsuleSha256 $script:AuthorityCapsuleSha256 -RunnerReleaseSha256 $script:AuthorityRunnerReleaseSha256|Out-Null
+        [pscustomobject][ordered]@{action='Preflight';project_id=[string]$unit.project_id;unit_id=$UnitId;attempt_id=[string]$actionDocument.attempt_id;capsule_sha256=[string]$capsule.capsule_sha256;cleanroom_fingerprint_sha256=$cleanBefore;capsule_reused=[bool]$cleanRoom.reused;preflight_path=(Get-MorphospaceAutomationWorkspaceRelativePath $workspace $preflightPath);report_root=[string]$script:AuthorityReportContext.root;status='ready-for-record'}|ConvertTo-Json -Depth 20
+        exit 0
+    }finally{if($null-ne$cleanRoom){Close-MorphospaceContentAddressedCleanRoom $cleanRoom};if($null-ne$ephemeral){Remove-MorphospaceCleanRoom $ephemeral}}
+}
+
+$script:AuthorityStage='readiness-revalidation'
+Test-MorphospaceAutomationOutputSet -AutomationOutputs $automationOutputs -RepositoryMap $map.map -Expected present -Phase 'readiness'
+$storedRunner=Read-MorphospaceAuthorityJson $runnerReleasePath;Test-MorphospaceAuthorityRunnerReleaseV1 $storedRunner $map.map|Out-Null
+if([string]$storedRunner.content_sha256-cne[string]$runnerRelease.content_sha256){throw 'Authority runner release changed after preflight.'}
+$storedCapsule=Read-MorphospaceAuthorityJson $capsulePath;Test-MorphospaceAuthorityInputCapsuleV1 $storedCapsule|Out-Null
+if([string]$storedCapsule.capsule_sha256-cne[string]$capsule.capsule_sha256){throw 'Authority input capsule changed after preflight.'}
+$storedHost=Read-MorphospaceAuthorityJson $hostCapabilitiesPath;Test-MorphospaceAuthorityHostCapabilitiesV1 $storedHost @('git.exe')|Out-Null
+$freshHost=Invoke-MorphospaceAuthorityHostProbe -RequiredCommands @('git.exe');Test-MorphospaceAuthorityHostCapabilitiesV1 $freshHost @('git.exe')|Out-Null
+if([string]$freshHost.content_sha256-cne[string]$storedHost.content_sha256){throw 'Authority child-host capabilities changed after preflight.'}
+$runnerReference=Get-MorphospaceReadinessReference $workspace $runnerReleasePath 'authority-runner-release' 'rusty.morphospace.workflow.authority_runner_release.v1';$capsuleReference=Get-MorphospaceReadinessReference $workspace $capsulePath 'authority-input-capsule' 'rusty.morphospace.workflow.authority_input_capsule.v1';$hostReference=Get-MorphospaceReadinessReference $workspace $hostCapabilitiesPath 'authority-host-capabilities' 'rusty.morphospace.workflow.authority_host_capabilities.v1'
+$preflight=Read-MorphospaceAuthorityJson $preflightPath;Test-MorphospaceAuthorityPreflightV1 $preflight $actionReference $capsuleReference $hostReference $runnerReference ([string]$unit.project_id) $UnitId ([string]$actionDocument.attempt_id)|Out-Null
+$cached=Open-MorphospaceContentAddressedCleanRoom -CapsuleSha256 ([string]$capsule.capsule_sha256) -MaterializedInputsSha256 ([string]$capsule.capsule_sha256)
+if($null-eq$cached){throw 'Passing preflight has no reusable content-addressed clean-room capsule.'}
+try{if((Get-MorphospaceCleanRoomFingerprint $cached)-cne[string]$preflight.cleanroom_fingerprint_sha256){throw 'Cached clean-room manifest changed after preflight.'}}finally{Close-MorphospaceContentAddressedCleanRoom $cached}
+
 if (-not $EvidencePath -or -not $OutPath) { throw 'Validate requires EvidencePath and OutPath.' }
 if ($ExecutionNonce -notmatch '^[0-9a-f]{64}$') { throw 'Validate requires an authority-generated 32-byte execution nonce.' }
+$script:AuthorityStage='record-self-tests'
 & (Join-Path $PSScriptRoot 'Test-ValidationAuthorityLauncher.ps1') | Out-Null
 & (Join-Path $PSScriptRoot 'Test-AuthorityRunnerHandoff.ps1') | Out-Null
 & (Join-Path $PSScriptRoot 'Test-TrustMigrationAuthority.ps1') | Out-Null
@@ -91,10 +203,12 @@ $evidenceOutput = @($automationOutputs | Where-Object { [string]$_.phase -eq 'va
 $executionOutput = @($automationOutputs | Where-Object { [string]$_.phase -eq 'validation' -and [string]$_.role -eq 'validation-execution' })
 $receiptOutput = @($automationOutputs | Where-Object { [string]$_.phase -eq 'validation' -and [string]$_.role -eq 'validation-receipt' })
 $executionAbsolute = if ($executionOutput.Count -eq 1) { Get-MorphospaceAutomationWorkspacePath -Output $executionOutput[0] -RepositoryMap $map.map -Workspace $workspace } else { $null }
+$script:AuthorityStage='record-output-collision'
 if ($evidenceOutput.Count -ne 1 -or $executionOutput.Count -ne 1 -or $receiptOutput.Count -ne 1 -or -not $evidenceAbsolute.Equals((Get-MorphospaceAutomationWorkspacePath -Output $evidenceOutput[0] -RepositoryMap $map.map -Workspace $workspace), [StringComparison]::OrdinalIgnoreCase) -or -not $receiptAbsolute.Equals((Get-MorphospaceAutomationWorkspacePath -Output $receiptOutput[0] -RepositoryMap $map.map -Workspace $workspace), [StringComparison]::OrdinalIgnoreCase)) { throw 'Validation paths do not match the exact authorized automation outputs.' }
 Test-MorphospaceAutomationOutputSet -AutomationOutputs $automationOutputs -RepositoryMap $map.map -Expected absent -Phase 'validation'
 $validatorResults = [Collections.Generic.List[object]]::new()
 foreach ($validator in @($selection.validators)) {
+    $script:AuthorityStage='record-owner-validator'
     if ([string]$UnitId -ne 'wf-005') { throw 'The current authority runner supports only the WF-005 owner-validator contract.' }
     $cleanRoom = $null; $tempRoot = $null
     try {
@@ -106,11 +220,9 @@ foreach ($validator in @($selection.validators)) {
         $ownerOutput = @($automationOutputs | Where-Object { [string]$_.phase -eq 'validation' -and [string]$_.role -eq 'owner-validation' -and [string]$_.validator_id -eq [string]$validator.validator_id })
         if ($ownerOutput.Count -ne 1) { throw "Validation automation contract is missing owner evidence for $($validator.validator_id)." }
         $ownerOut = Get-MorphospaceAutomationWorkspacePath -Output $ownerOutput[0] -RepositoryMap $map.map -Workspace $workspace
-        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ('morphospace-authority-' + [guid]::NewGuid().ToString('N'))
-        [IO.Directory]::CreateDirectory($tempRoot) | Out-Null
-        $stagedOwnerOut = Join-Path $tempRoot 'owner-evidence.json'
-        $stdoutPath = Join-Path $tempRoot "$([string]$validator.validator_id).stdout.txt"
-        $stderrPath = Join-Path $tempRoot "$([string]$validator.validator_id).stderr.txt"
+        $stagedOwnerOut = Join-Path $script:AuthorityReportContext.root 'owner-evidence.json'
+        $stdoutPath = $script:AuthorityReportContext.stdout
+        $stderrPath = $script:AuthorityReportContext.stderr
         $planningRoot = [string]$cleanRoom.repositories['planning']
         $questRoot = [string]$cleanRoom.repositories['quest']
         $cleanWorkspace = Join-Path $planningRoot 'workspaces\morphospace-platform-iteration\morphospace'
@@ -132,6 +244,7 @@ foreach ($validator in @($selection.validators)) {
     } finally { if ($null -ne $cleanRoom) { Remove-MorphospaceCleanRoom $cleanRoom }; if ($tempRoot -and [IO.Directory]::Exists($tempRoot)) { [IO.Directory]::Delete($tempRoot, $true) } }
 }
 $evidenceResult = if (@($validatorResults | Where-Object { [string]$_.status -ne 'pass' }).Count -eq 0) { 'pass' } else { 'fail' }
+$script:AuthorityStage='record-publication'
 $evidenceDocument = [pscustomobject][ordered]@{ schema = 'rusty.morphospace.workflow.validation_evidence.v2'; evidence_id = "$UnitId-$($actionDocument.attempt_id)-evidence"; created_at = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffffffZ'); project_id = [string]$unit.project_id; unit_id = $UnitId; attempt_id = [string]$actionDocument.attempt_id; action = Get-MorphospaceAuthorityReference $workspace ([string]$actionDocument.__path) 'validation-action' 'rusty.morphospace.workflow.validation_action.v2'; profile_id = [string]$actionDocument.profile_id; result = $evidenceResult; validator_results = @($validatorResults.ToArray()); device_validation = $null; does_not_prove = @('Does not prove device validation, stable promotion, external Git push, or any downstream NET-013/MOD-006 acceptance.') }
 Write-MorphospaceManagedProtocolJsonAtomic -WorkspaceRoot $workspace -RelativePath (Get-MorphospaceAutomationWorkspaceRelativePath -Workspace $workspace -AbsolutePath $evidenceAbsolute) -Value $evidenceDocument -NoOverwrite
 $evidence = Test-MorphospaceValidationEvidenceV2 -WorkspaceRoot $workspace -EvidencePath $EvidencePath -Unit $unit -SelectedValidators @($selection.validators) -Action $actionDocument; $evidence | Add-Member -NotePropertyName __path -NotePropertyValue $evidenceAbsolute -Force
@@ -143,4 +256,5 @@ $execution = Read-MorphospaceAuthorityJson $executionAbsolute; $execution | Add-
 $receipt = New-MorphospaceValidationReceiptV2 -WorkspaceRoot $workspace -Unit $unit -Action $actionDocument -Evidence $evidence -Execution $execution -Protocol $protocol -Ownership $ownership -Registry $registry -Observation $afterObservation.observation
 Write-MorphospaceManagedProtocolJsonAtomic -WorkspaceRoot $workspace -RelativePath (Get-MorphospaceAutomationWorkspaceRelativePath -Workspace $workspace -AbsolutePath $receiptAbsolute) -Value $receipt -NoOverwrite
 Test-MorphospaceAutomationOutputSet -AutomationOutputs $automationOutputs -RepositoryMap $map.map -Expected present -Phase 'validation'
+Write-MorphospaceAuthorityStageResult -Context $script:AuthorityReportContext -Stage 'record-validation' -Result pass -StartedAt $script:AuthorityStartedAt -CapsuleSha256 $script:AuthorityCapsuleSha256 -RunnerReleaseSha256 $script:AuthorityRunnerReleaseSha256|Out-Null
 $receipt | ConvertTo-Json -Depth 30

@@ -130,12 +130,14 @@
       "properties": {
         "repo_id": { "$ref": "#/$defs/id" },
         "path": { "type": "string", "minLength": 1 },
-        "phase": { "enum": ["bootstrap", "validation"] },
+        "phase": { "enum": ["bootstrap", "readiness", "validation", "transition"] },
         "role": {
           "enum": [
-            "unit-ownership", "legacy-prefix-anchor", "validator-trust-anchor-migration",
+            "owner-validator-registry", "unit-ownership", "legacy-prefix-anchor", "validator-trust-anchor-migration",
             "current-unit-protocol", "validation-action", "owner-validation",
-            "validation-evidence", "validation-receipt"
+            "authority-runner-release", "authority-input-capsule", "authority-host-capabilities", "authority-preflight-result",
+            "validation-evidence", "validation-execution", "validation-receipt",
+            "transition-ledger-intent", "transition-ledger-completion"
           ]
         },
         "schema": { "type": "string", "minLength": 1 },

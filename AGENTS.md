@@ -56,20 +56,24 @@ The work-environment repo owns portable schemas, examples, and validators. A
 project owns its instantiated `morphospace/` directory. Do not copy live state,
 private evidence, or machine paths back into this repository.
 
-### Draft validation-authority boundary
+### Staged validation-authority boundary
 
-The `MorphospaceOwnership` module and the current-unit, registry, ownership,
-validation-v2, trust-migration, and state-transition schemas are a tested but
-non-promotional lower-layer draft. They are inert unless explicitly invoked.
-Do not use them to claim, validate, accept, recover, or promote a unit until a
-tracked owner-validator registry, trust-migration verifier, high validation
-authority, transactional state/event integration, public CLI, and their full
-damage tests are present.
+The ownership, registry, trust migration, closed-room validation-v2, and
+transactional state/event layers form a staged corrective authority path. A
+receipt-security record attempt must pass the quick workspace contract, select
+a hash-pinned runner release, seal an exact content-addressed input capsule,
+probe the child host, and publish a same-input owner-validator preflight before
+the nonce-bound authority runner can record evidence. Preflight is fail-fast
+admission only and does not prove validation, acceptance, device behavior, or
+an external operation.
 
-Ordinary application work may continue through a separate project-local
-`morphospace/` workspace and the published workflow. Keep exact repository/path
-scope and inert default locks, and do not present draft validation-v2 artifacts
-as acceptance evidence.
+Every authority stage preserves a typed, bounded result and input identities
+before cleanup. Reuse a clean-room cache only after the capsule, runner,
+materialization, host, and fresh fingerprint checks match exactly; partial,
+tampered, stale, or mismatched caches reject and clean up only their owned
+temporary paths. Ordinary application work remains in a separate project-local
+`morphospace/` workspace with exact path scope and inert default locks. Never
+present recovery-source tests as acceptance of the central corrective unit.
 
 ## Authority Rules
 

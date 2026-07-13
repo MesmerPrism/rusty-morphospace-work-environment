@@ -175,6 +175,13 @@ unsorted capabilities, authority reset on rebind, and incomplete release.
 Attach distinct app ids and per-client lifecycle/cleanup evidence to the
 individual clusters rather than collapsing them into one broad client.
 
+For a long-running authority stage, graph the quick contract, input capsule,
+runner release, host probe, materialized clean room, readiness-only preflight,
+fresh transaction/nonce, authoritative rerun, outputs, transition, and typed
+failures separately. Add cache invalidation edges for input, dependency,
+runner, materializer, host, fingerprint, policy, and owner drift. A later pass
+may recover from but must not replace a failed attempt.
+
 For direct-network graphs, keep topology providers, platform network
 observation, socket providers, exchange protocols, and cleanup receipts as
 distinct nodes. Model any harness-to-product dependency as a pressure or

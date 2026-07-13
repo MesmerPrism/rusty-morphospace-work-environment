@@ -125,6 +125,16 @@ if ($SelfTest) {
             }
         }
 
+    Get-ChildItem -LiteralPath (Join-Path $RepoRoot "scripts\lib") -Filter "*.psm1" -File |
+        ForEach-Object {
+            try {
+                [scriptblock]::Create((Get-Content -Raw -LiteralPath $_.FullName)) | Out-Null
+                Add-CheckResult -Name "powershell-module:$($_.Name)" -Status "ok" -Detail "Parsed module."
+            } catch {
+                Add-CheckResult -Name "powershell-module:$($_.Name)" -Status "missing" -Required $true -Detail $_.Exception.Message
+            }
+        }
+
     try {
         & (Join-Path $RepoRoot "scripts\Test-WorkflowContracts.ps1") -RepoRoot $RepoRoot
         Add-CheckResult -Name "workflow:contracts" -Status "ok" -Detail "Validated lifecycle, schemas, and examples."
@@ -158,6 +168,23 @@ if ($SelfTest) {
         Add-CheckResult -Name "automation:work-unit" -Status "ok" -Detail "Validated transitions, preservation, routing, push preparation, and recovery."
     } catch {
         Add-CheckResult -Name "automation:work-unit" -Status "missing" -Required $true -Detail $_.Exception.Message
+    }
+
+    foreach ($authorityTest in @(
+        [pscustomobject]@{ name = 'authority:record-readiness'; script = 'Test-AuthorityRecordReadiness.ps1'; detail = 'Validated host probe, capsule identity, content-addressed clean-room reuse, stale-preflight rejection, typed failures, and ambient-hash rejection.' },
+        [pscustomobject]@{ name = 'authority:launcher'; script = 'Test-ValidationAuthorityLauncher.ps1'; detail = 'Validated pinned child launch, timeout, no-overwrite outputs, and captured streams.' },
+        [pscustomobject]@{ name = 'authority:handoff'; script = 'Test-AuthorityRunnerHandoff.ps1'; detail = 'Validated pinned runner selection, arguments, nonce, and child failure propagation.' },
+        [pscustomobject]@{ name = 'authority:trust-migration'; script = 'Test-TrustMigrationAuthority.ps1'; detail = 'Validated tracked authority migration and substitution rejection.' },
+        [pscustomobject]@{ name = 'authority:validation-execution'; script = 'Test-ValidationExecutionAuthority.ps1'; detail = 'Validated nonce-bound execution and forged receipt rejection.' },
+        [pscustomobject]@{ name = 'authority:ownership'; script = 'Test-OwnershipAuthority.ps1'; detail = 'Validated ownership, clean-room closure, historical blobs, and damaged input rejection.' },
+        [pscustomobject]@{ name = 'authority:transition-ledger'; script = 'Test-TransitionLedger.ps1'; detail = 'Validated interruption repair and idempotent transition completion.' }
+    )) {
+        try {
+            & (Join-Path (Join-Path $RepoRoot 'scripts') ([string]$authorityTest.script))
+            Add-CheckResult -Name ([string]$authorityTest.name) -Status 'ok' -Detail ([string]$authorityTest.detail)
+        } catch {
+            Add-CheckResult -Name ([string]$authorityTest.name) -Status 'missing' -Required $true -Detail $_.Exception.Message
+        }
     }
 }
 
@@ -223,7 +250,7 @@ if ($Strict -and $failedRequired.Count -gt 0) {
 }
 
 if ($SelfTest) {
-    $selfTestFailures = $results | Where-Object { $_.Name -match "^(json|jsonl|powershell|workflow|scaffold|automation):" -and $_.Status -ne "ok" }
+    $selfTestFailures = $results | Where-Object { $_.Name -match "^(json|jsonl|powershell|workflow|scaffold|automation|authority):" -and $_.Status -ne "ok" }
     if ($selfTestFailures.Count -gt 0) {
         Write-Error "Self-test failed."
         exit 1

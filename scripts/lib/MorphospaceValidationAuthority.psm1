@@ -111,15 +111,21 @@ function Test-MorphospaceValidatorTrustAnchorMigration {
     }
     foreach ($required in @(
         'scripts/Invoke-MorphospaceValidationAuthority.ps1',
+        'scripts/Invoke-WorkUnitAutomation.ps1',
         'scripts/Invoke-Wf005OwnerValidator.ps1',
         'scripts/Test-ValidationAuthorityLauncher.ps1',
         'scripts/Test-AuthorityRunnerHandoff.ps1',
+        'scripts/Test-AuthorityRecordReadiness.ps1',
         'scripts/Test-TrustMigrationAuthority.ps1',
         'scripts/Test-ValidationExecutionAuthority.ps1',
         'scripts/Test-TransitionLedger.ps1',
         'scripts/WorkUnitAutomation.psm1',
+        'scripts/lib/MorphospaceAuthorityReadiness.psm1',
+        'scripts/lib/MorphospaceContentObservation.psm1',
         'scripts/lib/MorphospaceOwnership.psm1',
-        'scripts/lib/MorphospaceTransitionLedger.psm1'
+        'scripts/lib/MorphospaceProtocolCommon.psm1',
+        'scripts/lib/MorphospaceTransitionLedger.psm1',
+        'scripts/lib/MorphospaceValidationAuthority.psm1'
     )) {
         if (-not $seenArtifacts.Contains("work-environment/$required")) { throw "Trust migration omits required authority artifact: $required" }
     }

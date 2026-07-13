@@ -274,6 +274,32 @@ closed room may carry explicitly listed historical Git blobs when a static
 gate verifies historical object IDs; those blobs are copied into a local,
 sealed object store and are fingerprinted separately from the live repository.
 
+Run receipt-security authority in these fail-closed stages:
+
+1. validate the portable and project workspace contracts without mutation;
+2. seal the exact runner release and all repository, registry, protocol,
+   validator, and dependency references into a content-addressed capsule;
+3. materialize or reuse the capsule only after its manifest and clean-room
+   fingerprint match, then run a fresh child-host capability probe;
+4. run the owner validator as a preflight and publish a sealed result bound to
+   project, unit, attempt, runner, capsule, host, clean room, and owner probe;
+5. invoke `RecordValidation` with a fresh execution nonce, rerun the owner
+   validator under authority, and publish no-overwrite evidence and receipt;
+6. revalidate every artifact, current observation, and transition at acceptance.
+
+Preflight is admission, not owner evidence or acceptance. A caller-authored
+preflight or receipt cannot substitute for the fresh authority execution.
+Every stage writes a typed bounded result containing the exact input identities,
+elapsed time, stream hashes/references, status, failure code, and next action
+before temporary cleanup. Failed attempts remain immutable evidence.
+
+Content-addressed reuse is an optimization only. Reuse requires the same
+capsule and runner release plus fresh host and clean-room checks. A partial
+publication, tamper, stale host, changed dependency, materializer drift, or
+fingerprint mismatch rejects the cache. Cleanup is confined to the owned
+capsule temporary directory and cannot remove an ordinary clean room or an
+unrelated path.
+
 WF-005 is also selected by its immutable project/unit identity while this
 one-time corrective migration is active. Removing its descriptive tag cannot
 downgrade it to the generic v1 receipt path.

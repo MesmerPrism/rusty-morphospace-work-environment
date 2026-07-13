@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/authority-stage-result.schema.json",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema", "stage", "result", "started_at", "completed_at", "elapsed_ms", "capsule_sha256", "runner_release_sha256", "failure_report"],
+  "properties": { "schema": { "const": "rusty.morphospace.workflow.authority_stage_result.v1" }, "stage": { "type": "string" }, "result": { "enum": ["pass", "fail"] }, "started_at": { "type": "string" }, "completed_at": { "type": "string" }, "elapsed_ms": { "type": "integer", "minimum": 0 }, "capsule_sha256": { "oneOf": [{ "$ref": "#/$defs/hash" }, { "type": "null" }] }, "runner_release_sha256": { "oneOf": [{ "$ref": "#/$defs/hash" }, { "type": "null" }] }, "failure_report": { "oneOf": [{ "type": "string" }, { "type": "null" }] } },
+  "$defs": { "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" } }
+}

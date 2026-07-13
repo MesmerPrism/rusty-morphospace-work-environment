@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/authority-failure-report.schema.json",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema", "stage", "failure_code", "classification", "summary", "exception_type", "exit_code", "started_at", "completed_at", "elapsed_ms", "capsule_sha256", "runner_release_sha256", "streams", "created_outputs", "next_action"],
+  "properties": { "schema": { "const": "rusty.morphospace.workflow.authority_failure_report.v1" }, "stage": { "type": "string" }, "failure_code": { "type": "string" }, "classification": { "type": "string" }, "summary": { "type": "string" }, "exception_type": { "type": "string" }, "exit_code": { "oneOf": [{ "type": "integer" }, { "type": "null" }] }, "started_at": { "type": "string" }, "completed_at": { "type": "string" }, "elapsed_ms": { "type": "integer", "minimum": 0 }, "capsule_sha256": { "oneOf": [{ "$ref": "#/$defs/hash" }, { "type": "null" }] }, "runner_release_sha256": { "oneOf": [{ "$ref": "#/$defs/hash" }, { "type": "null" }] }, "streams": { "type": "array", "items": { "type": "object" } }, "created_outputs": { "type": "array", "items": { "type": "string" } }, "next_action": { "enum": ["fix-contract", "fix-closure", "fix-runner", "rebuild-capsule", "rerun-preflight", "new-execution-attempt", "repair-transition"] } },
+  "$defs": { "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" } }
+}

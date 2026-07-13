@@ -191,6 +191,10 @@ function Get-MorphospaceAutomationOutputContract {
         'validator-trust-anchor-migration'=[pscustomobject]@{phase='bootstrap';schema='rusty.morphospace.workflow.validator_trust_anchor_migration.v1'}
         'current-unit-protocol'=[pscustomobject]@{phase='bootstrap';schema='rusty.morphospace.workflow.current_unit_protocol.v1'}
         'validation-action'=[pscustomobject]@{phase='bootstrap';schema='rusty.morphospace.workflow.validation_action.v2'}
+        'authority-runner-release'=[pscustomobject]@{phase='readiness';schema='rusty.morphospace.workflow.authority_runner_release.v1'}
+        'authority-input-capsule'=[pscustomobject]@{phase='readiness';schema='rusty.morphospace.workflow.authority_input_capsule.v1'}
+        'authority-host-capabilities'=[pscustomobject]@{phase='readiness';schema='rusty.morphospace.workflow.authority_host_capabilities.v1'}
+        'authority-preflight-result'=[pscustomobject]@{phase='readiness';schema='rusty.morphospace.workflow.authority_preflight_result.v1'}
         'owner-validation'=[pscustomobject]@{phase='validation';schema='rusty.morphospace.workflow.owner_validation.v1'}
         'validation-evidence'=[pscustomobject]@{phase='validation';schema='rusty.morphospace.workflow.validation_evidence.v2'}
         'validation-execution'=[pscustomobject]@{phase='validation';schema='rusty.morphospace.workflow.validation_execution.v1'}
@@ -403,6 +407,118 @@ function Get-MorphospaceCleanRoomFingerprint {
     return Get-MorphospaceOrdinalFingerprint $sorted
 }
 
+function Get-MorphospaceCleanRoomCachePaths {
+    param([Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-f]{64}$')][string]$CapsuleSha256)
+    $temp=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\','/')
+    $parent=[IO.Path]::Combine($temp,'rusty-morphospace-cleanroom-cache')
+    if(-not[IO.Directory]::Exists($parent)){[void][IO.Directory]::CreateDirectory($parent)}
+    Assert-MorphospaceNoReparseAncestor $temp $parent
+    return [pscustomobject]@{
+        temp=$temp
+        parent=$parent
+        root=[IO.Path]::Combine($parent,$CapsuleSha256)
+        manifest=[IO.Path]::Combine($parent,"$CapsuleSha256.cache.json")
+    }
+}
+
+function Save-MorphospaceContentAddressedCleanRoom {
+    param(
+        [Parameter(Mandatory=$true)][object]$CleanRoom,
+        [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-f]{64}$')][string]$CapsuleSha256,
+        [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-f]{64}$')][string]$MaterializedInputsSha256
+    )
+    $paths=Get-MorphospaceCleanRoomCachePaths $CapsuleSha256
+    if([IO.Directory]::Exists($paths.root)-or[IO.File]::Exists($paths.manifest)){throw "Clean-room cache already exists for capsule $CapsuleSha256."}
+    $source=[IO.Path]::GetFullPath([string]$CleanRoom.root)
+    if(-not$script:CleanRoomGuards.ContainsKey($source)-or[string]$script:CleanRoomGuards[$source]-cne[string]$CleanRoom.guard){throw 'Clean-room cache source guard is missing or forged.'}
+    $fingerprint=Get-MorphospaceCleanRoomFingerprint $CleanRoom
+    if($fingerprint-cne[string]$CleanRoom.fingerprint_sha256){throw 'Clean-room cache source fingerprint drifted before publication.'}
+    $closureRows=[Collections.Generic.List[object]]::new();$modeRows=[Collections.Generic.List[object]]::new()
+    foreach($repoId in @($CleanRoom.repositories.Keys|Sort-Object)){
+        $closureRows.Add([pscustomobject][ordered]@{repo_id=[string]$repoId;paths=@($CleanRoom.closure[$repoId])})|Out-Null
+        $entries=[Collections.Generic.List[object]]::new();$modes=$CleanRoom.modes_by_repository[$repoId]
+        foreach($path in @($modes.Keys|Sort-Object)){$entries.Add([pscustomobject][ordered]@{path=[string]$path;mode=[string]$modes[$path]})|Out-Null}
+        $modeRows.Add([pscustomobject][ordered]@{repo_id=[string]$repoId;entries=@($entries.ToArray())})|Out-Null
+    }
+    $content=[pscustomobject][ordered]@{
+        capsule_sha256=$CapsuleSha256
+        materialized_inputs_sha256=$MaterializedInputsSha256
+        cleanroom_fingerprint_sha256=$fingerprint
+        repositories=@($CleanRoom.repositories.Keys|Sort-Object)
+        closure=@($closureRows.ToArray())
+        modes=@($modeRows.ToArray())
+        history_rows=@($CleanRoom.history_rows)
+    }
+    $document=[pscustomobject][ordered]@{
+        schema='rusty.morphospace.workflow.cleanroom_cache.v1'
+        content=$content
+        content_sha256=Get-MorphospaceOrdinalFingerprint $content
+        status='sealed'
+    }
+    $oldGuard=[string]$CleanRoom.guard;$manifestPending=[IO.Path]::Combine($paths.parent,".$CapsuleSha256.$([guid]::NewGuid().ToString('N')).pending")
+    $moved=$false;$manifestPublished=$false;$cached=$null
+    try{
+        $bytes=[Text.UTF8Encoding]::new($false).GetBytes(($document|ConvertTo-Json -Depth 80))
+        $stream=[IO.FileStream]::new($manifestPending,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+        try{$stream.Write($bytes,0,$bytes.Length);$stream.Flush($true)}finally{$stream.Dispose()}
+        [IO.Directory]::Move($source,$paths.root);$moved=$true
+        [void]$script:CleanRoomGuards.Remove($source);$script:CleanRoomGuards[$paths.root]=$oldGuard
+        $repositories=@{};foreach($repoId in @($CleanRoom.repositories.Keys)){$repositories[[string]$repoId]=[IO.Path]::Combine($paths.root,[string]$repoId)}
+        $cached=[pscustomobject]@{root=$paths.root;parent=$paths.parent;guard=$oldGuard;repositories=$repositories;closure=$CleanRoom.closure;modes_by_repository=$CleanRoom.modes_by_repository;history_rows=@($CleanRoom.history_rows);fingerprint_sha256=$fingerprint;cache_manifest=$paths.manifest;capsule_sha256=$CapsuleSha256;reused=$false}
+        [IO.File]::Move($manifestPending,$paths.manifest);$manifestPublished=$true
+        return $cached
+    }catch{
+        if($moved-and$null-ne$cached){try{Remove-MorphospaceContentAddressedCleanRoom $cached -RemoveManifest:$manifestPublished}catch{}}
+        throw
+    }finally{
+        if([IO.File]::Exists($manifestPending)){[IO.File]::Delete($manifestPending)}
+    }
+}
+
+function Open-MorphospaceContentAddressedCleanRoom {
+    param(
+        [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-f]{64}$')][string]$CapsuleSha256,
+        [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-f]{64}$')][string]$MaterializedInputsSha256
+    )
+    $paths=Get-MorphospaceCleanRoomCachePaths $CapsuleSha256
+    $hasRoot=[IO.Directory]::Exists($paths.root);$hasManifest=[IO.File]::Exists($paths.manifest)
+    if(-not$hasRoot-and-not$hasManifest){return $null}
+    if(-not$hasRoot-or-not$hasManifest){throw "Clean-room cache is partial for capsule $CapsuleSha256."}
+    Assert-MorphospaceNoReparseAncestor $paths.parent $paths.root
+    $document=Read-MorphospaceProtocolJson $paths.manifest
+    if([string]$document.schema-cne'rusty.morphospace.workflow.cleanroom_cache.v1'-or[string]$document.status-cne'sealed'-or(Get-MorphospaceOrdinalFingerprint $document.content)-cne[string]$document.content_sha256){throw "Clean-room cache manifest is malformed for capsule $CapsuleSha256."}
+    $content=$document.content
+    if([string]$content.capsule_sha256-cne$CapsuleSha256-or[string]$content.materialized_inputs_sha256-cne$MaterializedInputsSha256-or[string]$content.cleanroom_fingerprint_sha256-notmatch'^[0-9a-f]{64}$'){throw "Clean-room cache identity drifted for capsule $CapsuleSha256."}
+    $repositories=@{};$closure=@{};$modesByRepo=@{}
+    foreach($repoId in @($content.repositories)){
+        $id=[string]$repoId;if($id-notmatch'^[a-z0-9][a-z0-9-]{1,63}$'-or$repositories.ContainsKey($id)){throw 'Clean-room cache repository list is invalid.'}
+        $repositories[$id]=[IO.Path]::Combine($paths.root,$id)
+        if(-not[IO.Directory]::Exists($repositories[$id])){throw "Clean-room cache repository is missing: $id"}
+    }
+    foreach($row in @($content.closure)){if(-not$repositories.ContainsKey([string]$row.repo_id)-or$closure.ContainsKey([string]$row.repo_id)){throw 'Clean-room cache closure is invalid.'};$closure[[string]$row.repo_id]=[string[]]@($row.paths)}
+    foreach($row in @($content.modes)){$id=[string]$row.repo_id;if(-not$repositories.ContainsKey($id)-or$modesByRepo.ContainsKey($id)){throw 'Clean-room cache mode table is invalid.'};$map=@{};foreach($entry in @($row.entries)){$map[[string]$entry.path]=[string]$entry.mode};$modesByRepo[$id]=$map}
+    $guard=[guid]::NewGuid().ToString('N');$script:CleanRoomGuards[$paths.root]=$guard
+    $cached=[pscustomobject]@{root=$paths.root;parent=$paths.parent;guard=$guard;repositories=$repositories;closure=$closure;modes_by_repository=$modesByRepo;history_rows=@($content.history_rows);fingerprint_sha256=[string]$content.cleanroom_fingerprint_sha256;cache_manifest=$paths.manifest;capsule_sha256=$CapsuleSha256;reused=$true}
+    try{if((Get-MorphospaceCleanRoomFingerprint $cached)-cne[string]$cached.fingerprint_sha256){throw "Clean-room cache content drifted for capsule $CapsuleSha256."};return $cached}catch{[void]$script:CleanRoomGuards.Remove($paths.root);throw}
+}
+
+function Close-MorphospaceContentAddressedCleanRoom {
+    param([Parameter(Mandatory=$true)][object]$CleanRoom)
+    $root=[IO.Path]::GetFullPath([string]$CleanRoom.root)
+    if(-not$script:CleanRoomGuards.ContainsKey($root)-or[string]$script:CleanRoomGuards[$root]-cne[string]$CleanRoom.guard){throw 'Clean-room cache close guard is missing or forged.'}
+    [void]$script:CleanRoomGuards.Remove($root)
+}
+
+function Remove-MorphospaceContentAddressedCleanRoom {
+    param([Parameter(Mandatory=$true)][object]$CleanRoom,[switch]$RemoveManifest)
+    $root=[IO.Path]::GetFullPath([string]$CleanRoom.root);$parent=[IO.Path]::GetFullPath([string]$CleanRoom.parent).TrimEnd('\','/');$temp=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\','/')
+    if(-not[IO.Path]::GetDirectoryName($parent).TrimEnd('\','/').Equals($temp,[StringComparison]::OrdinalIgnoreCase)-or[IO.Path]::GetFileName($parent)-cne'rusty-morphospace-cleanroom-cache'-or-not[IO.Path]::GetDirectoryName($root).TrimEnd('\','/').Equals($parent,[StringComparison]::OrdinalIgnoreCase)){throw 'Content-addressed clean-room cleanup target is outside the owned cache root.'}
+    if(-not$script:CleanRoomGuards.ContainsKey($root)-or[string]$script:CleanRoomGuards[$root]-cne[string]$CleanRoom.guard){throw 'Content-addressed clean-room cleanup guard is missing or forged.'}
+    Assert-MorphospaceNoReparseAncestor $temp $parent;Assert-MorphospaceNoReparseAncestor $parent $root
+    if([IO.Directory]::Exists($root)){Remove-MorphospaceNoFollowTree $root};[void]$script:CleanRoomGuards.Remove($root)
+    if($RemoveManifest){$manifest=[IO.Path]::GetFullPath([string]$CleanRoom.cache_manifest);if(-not[IO.Path]::GetDirectoryName($manifest).TrimEnd('\','/').Equals($parent,[StringComparison]::OrdinalIgnoreCase)){throw 'Content-addressed clean-room manifest is outside the owned cache root.'};if([IO.File]::Exists($manifest)){[IO.File]::Delete($manifest)}}
+}
+
 function Remove-MorphospaceNoFollowTree {
     param([string]$Root)
     $stack=[Collections.Generic.Stack[object]]::new();$stack.Push([pscustomobject]@{path=$Root;visited=$false})
@@ -414,4 +530,4 @@ function Remove-MorphospaceCleanRoom {
     $root=[IO.Path]::GetFullPath([string]$CleanRoom.root);$parent=[IO.Path]::GetFullPath([string]$CleanRoom.parent).TrimEnd('\','/');$actualParent=[IO.Path]::GetDirectoryName($root).TrimEnd('\','/');if(-not$actualParent.Equals($parent,[StringComparison]::OrdinalIgnoreCase)-or-not$script:CleanRoomGuards.ContainsKey($root)-or[string]$script:CleanRoomGuards[$root]-cne[string]$CleanRoom.guard){throw 'Clean-room cleanup authority is missing or forged.'};$temp=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\','/');if(-not[IO.Path]::GetDirectoryName($parent).TrimEnd('\','/').Equals($temp,[StringComparison]::OrdinalIgnoreCase)-or[IO.Path]::GetFileName($parent)-cne'rusty-morphospace-cleanrooms'){throw 'Clean-room cleanup parent is outside the owned temp root.'};Assert-MorphospaceNoReparseAncestor $temp $parent;Assert-MorphospaceNoReparseAncestor $parent $root;if([IO.Directory]::Exists($root)){Remove-MorphospaceNoFollowTree $root};[void]$script:CleanRoomGuards.Remove($root)
 }
 
-Microsoft.PowerShell.Core\Export-ModuleMember -Function Get-MorphospaceFixedRepositoryMap,Test-MorphospaceOwnerValidatorRegistry,Get-MorphospaceRegistrySelection,Test-MorphospaceClaimBaseline,Test-MorphospaceUnitOwnership,Get-MorphospaceAuthorityObservation,Get-MorphospaceAutomationOutputContract,Test-MorphospaceAutomationOutputSet,ConvertTo-MorphospaceComparableRepositoryObservation,New-MorphospaceCleanRoom,Get-MorphospaceCleanRoomFingerprint,Remove-MorphospaceCleanRoom
+Microsoft.PowerShell.Core\Export-ModuleMember -Function Get-MorphospaceFixedRepositoryMap,Test-MorphospaceOwnerValidatorRegistry,Get-MorphospaceRegistrySelection,Test-MorphospaceClaimBaseline,Test-MorphospaceUnitOwnership,Get-MorphospaceAuthorityObservation,Get-MorphospaceAutomationOutputContract,Test-MorphospaceAutomationOutputSet,ConvertTo-MorphospaceComparableRepositoryObservation,New-MorphospaceCleanRoom,Get-MorphospaceCleanRoomFingerprint,Save-MorphospaceContentAddressedCleanRoom,Open-MorphospaceContentAddressedCleanRoom,Close-MorphospaceContentAddressedCleanRoom,Remove-MorphospaceContentAddressedCleanRoom,Remove-MorphospaceCleanRoom

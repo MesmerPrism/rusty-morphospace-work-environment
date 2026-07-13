@@ -45,6 +45,9 @@ have complete update records.
 3. Keep recipes in detailed docs or runbooks; add only durable routing to
    `AGENTS.md` and `SKILL.md`.
 4. Run workflow-contract, public-boundary, link, and repo-owned validation.
+5. For receipt-security workflow changes, verify installed/portable skill
+   parity and bind the quick-contract, capsule, child-host preflight,
+   nonce-bound record, typed-failure, and cache-invalidation rules explicitly.
 5. Mark surfaces complete and append an iteration event before acceptance.
 
 Stable module promotion also includes the `instruction-sync` gate.
