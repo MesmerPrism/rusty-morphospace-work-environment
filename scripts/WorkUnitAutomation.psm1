@@ -721,8 +721,18 @@ function Test-MorphospaceValidationReceipt {
         }
         $ancestor = Get-MorphospaceGitOutput -RepositoryPath $repositoryPath -Arguments @("merge-base", "--is-ancestor", [string]$revision.base_revision, [string]$revision.head_revision) -AllowFailure
         if ($ancestor.exit_code -ne 0) { throw "Validation base revision is not an ancestor of HEAD for '$repoId'." }
+        $transactionPrefix = $null
+        $repositoryFull = [System.IO.Path]::GetFullPath($repositoryPath).TrimEnd("\", "/")
+        $workspaceFull = [System.IO.Path]::GetFullPath($WorkspaceRoot).TrimEnd("\", "/")
+        $repositoryPrefix = $repositoryFull + [System.IO.Path]::DirectorySeparatorChar
+        if ($workspaceFull.StartsWith($repositoryPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $workspaceRelative = [System.IO.Path]::GetRelativePath($repositoryFull, $workspaceFull).Replace("\", "/").TrimEnd("/")
+            $transactionPrefix = "$workspaceRelative/receipts/transactions/"
+        }
         $actualChanged = @(Get-MorphospaceChangedPaths -RepositoryPath $repositoryPath -BaseRevision ([string]$revision.base_revision) | Where-Object {
-            Test-MorphospacePathAllowed -Path ([string]$_) -AllowedPaths @($repo.allowed_paths)
+            $candidatePath = ConvertTo-MorphospaceRelativePath -Path ([string]$_)
+            (Test-MorphospacePathAllowed -Path $candidatePath -AllowedPaths @($repo.allowed_paths)) -and
+            (-not $transactionPrefix -or -not $candidatePath.StartsWith($transactionPrefix, [System.StringComparison]::OrdinalIgnoreCase))
         })
         $recordedChanged = if ($changedByRepo.ContainsKey($repoId)) { @($changedByRepo[$repoId] | Sort-Object -Unique) } else { @() }
         foreach ($path in $recordedChanged) {

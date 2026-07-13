@@ -320,7 +320,7 @@ try {
     Assert-Automation ([string]$acceptedState.last_accepted_receipt -eq "receipts/unit-auto-001-pass-validation.json") "v2 last accepted receipt projection"
     Assert-Automation (@($acceptedState.repository_heads).Count -eq 1) "v2 repository-head projection"
 
-    $scopeWorkspace = New-TestWorkspace -Root (Join-Path $testRoot "scope-project") -ProjectId "scope-test" -UnitId "unit-scope-001"
+    $scopeWorkspace = New-TestWorkspace -Root (Join-Path $repo "morphospace-scope-test") -ProjectId "scope-test" -UnitId "unit-scope-001"
     [System.IO.File]::WriteAllText((Join-Path $repo "outside.txt"), "outside unit scope`n", $encoding)
     Invoke-MorphospaceWorkUnitAutomation -Action Claim -WorkspaceRoot $scopeWorkspace -UnitId "unit-scope-001" -RepoMapPath $repoMapPath -Timestamp $fixed -Execute | Out-Null
     Invoke-MorphospaceWorkUnitAutomation -Action BeginValidation -WorkspaceRoot $scopeWorkspace -UnitId "unit-scope-001" -RepoMapPath $repoMapPath -Timestamp $fixed -Execute | Out-Null
@@ -330,7 +330,8 @@ try {
         repo_id = "project-shell"; base_revision = $scopeHead; head_revision = $scopeHead; branch = $scopeBranch
     }) | Out-Null
     $scopeRecord = Invoke-MorphospaceWorkUnitAutomation -Action RecordValidation -WorkspaceRoot $scopeWorkspace -UnitId "unit-scope-001" -RepoMapPath $repoMapPath -ValidationTier standard -ValidationResult pass -ValidationReceipt "receipts/unit-scope-001-pass-validation.json" -Timestamp $fixed
-    Assert-Automation ($scopeRecord.transition -eq "validation-pass" -and (Test-Path -LiteralPath (Join-Path $repo "outside.txt"))) "out-of-scope user work blocked validation or was modified"
+    $scopeTransactions = @(Get-ChildItem -LiteralPath (Join-Path $scopeWorkspace "receipts\transactions") -File -ErrorAction SilentlyContinue)
+    Assert-Automation ($scopeRecord.transition -eq "validation-pass" -and (Test-Path -LiteralPath (Join-Path $repo "outside.txt")) -and $scopeTransactions.Count -gt 0) "out-of-scope user work or protocol-owned transaction artifacts blocked validation or were modified"
     New-TestValidationReceipt -Workspace $scopeWorkspace -ProjectId "scope-test" -UnitId "unit-scope-001" -Tier standard -Result pass -RepositoryRevisions @([ordered]@{
         repo_id = "project-shell"; base_revision = $scopeHead; head_revision = $scopeHead; branch = $scopeBranch
     }) -ChangedPaths @([ordered]@{ repo_id = "project-shell"; path = "outside.txt" }) | Out-Null
@@ -342,6 +343,7 @@ try {
     }
     Assert-Automation $outsideScopeRejected "validation did not reject an out-of-scope changed path"
     Remove-Item -LiteralPath (Join-Path $repo "outside.txt")
+    Remove-Item -LiteralPath $scopeWorkspace -Recurse -Force
 
     [System.IO.File]::WriteAllText((Join-Path $repo "src\ahead.txt"), "ahead`n", $encoding)
     Invoke-TestGit -Path $repo -Arguments @("add", "src/ahead.txt") | Out-Null
