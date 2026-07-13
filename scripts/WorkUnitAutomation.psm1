@@ -726,7 +726,7 @@ function Test-MorphospaceValidationReceipt {
         $workspaceFull = [System.IO.Path]::GetFullPath($WorkspaceRoot).TrimEnd("\", "/")
         $repositoryPrefix = $repositoryFull + [System.IO.Path]::DirectorySeparatorChar
         if ($workspaceFull.StartsWith($repositoryPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
-            $workspaceRelative = [System.IO.Path]::GetRelativePath($repositoryFull, $workspaceFull).Replace("\", "/").TrimEnd("/")
+            $workspaceRelative = $workspaceFull.Substring($repositoryPrefix.Length).Replace("\", "/").TrimEnd("/")
             $transactionPrefix = "$workspaceRelative/receipts/transactions/"
         }
         $actualChanged = @(Get-MorphospaceChangedPaths -RepositoryPath $repositoryPath -BaseRevision ([string]$revision.base_revision) | Where-Object {
