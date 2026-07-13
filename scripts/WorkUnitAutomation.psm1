@@ -1220,10 +1220,8 @@ function Invoke-MorphospaceWorkUnitAutomation {
         }
     }
 
-    if ($Execute -and $transition -ne "idempotent" -and $transition -ne "inspect-only") {
-        if ($event) {
-            $state.last_event_id = [string]$event.event_id
-        }
+    if ($Execute -and $event) {
+        $state.last_event_id = [string]$event.event_id
         if ($RepoMapPath) {
             $dirtySet = @{}
             foreach ($repoId in @($state.dirty_repositories)) { $dirtySet[[string]$repoId] = $true }
@@ -1264,22 +1262,17 @@ function Invoke-MorphospaceWorkUnitAutomation {
                 }
             }
         }
-        if ($event) {
-            $transactionId = "$([string]$event.event_id)-transition"
-            $unitRelativePath = $unitEntry.path.Substring(($resolvedWorkspace.TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar).Length).Replace('\', '/')
-            Start-MorphospaceTransitionLedger `
-                -WorkspaceRoot $resolvedWorkspace `
-                -TransactionId $transactionId `
-                -StatePath 'workspace.state.json' `
-                -UnitPath $unitRelativePath `
-                -EventsPath 'iteration-events.jsonl' `
-                -TargetState $state `
-                -TargetUnit $unit `
-                -Event $event | Out-Null
-        } else {
-            Write-MorphospaceJson -Path $unitEntry.path -Value $unit
-            Write-MorphospaceJson -Path $statePath -Value $state
-        }
+        $transactionId = "$([string]$event.event_id)-transition"
+        $unitRelativePath = $unitEntry.path.Substring(($resolvedWorkspace.TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar).Length).Replace('\', '/')
+        Start-MorphospaceTransitionLedger `
+            -WorkspaceRoot $resolvedWorkspace `
+            -TransactionId $transactionId `
+            -StatePath 'workspace.state.json' `
+            -UnitPath $unitRelativePath `
+            -EventsPath 'iteration-events.jsonl' `
+            -TargetState $state `
+            -TargetUnit $unit `
+            -Event $event | Out-Null
     }
 
     $result = [pscustomobject][ordered]@{

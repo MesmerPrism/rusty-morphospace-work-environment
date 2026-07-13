@@ -242,6 +242,29 @@ try {
     Assert-Automation ($claimAgain.transition -eq "idempotent") "idempotent claim"
     Assert-Automation (@(Get-Content (Join-Path $workspace "iteration-events.jsonl")).Count -eq $eventCount) "idempotent claim appended an event"
 
+    $preflightWorkspace = New-TestWorkspace -Root (Join-Path $testRoot "preflight-project") -ProjectId "preflight-test" -UnitId "unit-preflight-001"
+    $preflightUnitPath = Join-Path $preflightWorkspace "iteration-units\unit-preflight-001.json"
+    $preflightUnit = Get-Content -LiteralPath $preflightUnitPath -Raw | ConvertFrom-Json
+    $preflightUnit | Add-Member -NotePropertyName tags -NotePropertyValue @("receipt-security")
+    Write-TestJson -Path $preflightUnitPath -Value $preflightUnit
+    Invoke-MorphospaceWorkUnitAutomation -Action Claim -WorkspaceRoot $preflightWorkspace -UnitId "unit-preflight-001" -RepoMapPath $repoMapPath -Timestamp $fixed -Execute | Out-Null
+    Invoke-MorphospaceWorkUnitAutomation -Action BeginValidation -WorkspaceRoot $preflightWorkspace -UnitId "unit-preflight-001" -RepoMapPath $repoMapPath -Timestamp $fixed -Execute | Out-Null
+    $preflightStatePath = Join-Path $preflightWorkspace "workspace.state.json"
+    $preflightEventsPath = Join-Path $preflightWorkspace "iteration-events.jsonl"
+    $preflightBefore = @(@($preflightUnitPath, $preflightStatePath, $preflightEventsPath) | ForEach-Object { (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash })
+    $automationModule = Get-Module WorkUnitAutomation
+    $preflightResult = & $automationModule {
+        param($Workspace, $UnitId, $MapPath, $Timestamp)
+        function Invoke-MorphospaceAuthorityRunnerForRecord {
+            param($WorkspaceRoot, $UnitId, $RepositoryMap, $AuthorityRunnerPath, $AuthorityRunnerArguments, $RunnerAction, $ValidationReceipt)
+            return "stub-preflight-nonce"
+        }
+        Invoke-MorphospaceWorkUnitAutomation -Action PreflightValidation -WorkspaceRoot $Workspace -UnitId $UnitId -RepoMapPath $MapPath -AuthorityRunnerPath "stub-authority-runner.ps1" -Timestamp $Timestamp -Execute
+    } $preflightWorkspace "unit-preflight-001" $repoMapPath $fixed
+    $preflightAfter = @(@($preflightUnitPath, $preflightStatePath, $preflightEventsPath) | ForEach-Object { (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash })
+    Assert-Automation ($preflightResult.transition -eq "authority-preflight-ready") "receipt-security preflight did not complete"
+    Assert-Automation (($preflightBefore -join "`n") -ceq ($preflightAfter -join "`n")) "preflight rewrote workflow state without an event"
+
     $statusBefore = (Invoke-TestGit -Path $repo -Arguments @("status", "--porcelain=v1", "--untracked-files=all")) -join "`n"
     [System.IO.File]::WriteAllText((Join-Path $repo "local-only.txt"), "preserve me`n", $encoding)
     $dirtyBefore = (Invoke-TestGit -Path $repo -Arguments @("status", "--porcelain=v1", "--untracked-files=all")) -join "`n"
