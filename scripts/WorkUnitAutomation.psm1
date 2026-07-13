@@ -721,14 +721,16 @@ function Test-MorphospaceValidationReceipt {
         }
         $ancestor = Get-MorphospaceGitOutput -RepositoryPath $repositoryPath -Arguments @("merge-base", "--is-ancestor", [string]$revision.base_revision, [string]$revision.head_revision) -AllowFailure
         if ($ancestor.exit_code -ne 0) { throw "Validation base revision is not an ancestor of HEAD for '$repoId'." }
-        $actualChanged = @(Get-MorphospaceChangedPaths -RepositoryPath $repositoryPath -BaseRevision ([string]$revision.base_revision))
+        $actualChanged = @(Get-MorphospaceChangedPaths -RepositoryPath $repositoryPath -BaseRevision ([string]$revision.base_revision) | Where-Object {
+            Test-MorphospacePathAllowed -Path ([string]$_) -AllowedPaths @($repo.allowed_paths)
+        })
         $recordedChanged = if ($changedByRepo.ContainsKey($repoId)) { @($changedByRepo[$repoId] | Sort-Object -Unique) } else { @() }
-        if (($actualChanged -join "|") -ne ($recordedChanged -join "|")) { throw "Validation changed-path set does not match repository '$repoId'." }
         foreach ($path in $recordedChanged) {
             if (-not (Test-MorphospacePathAllowed -Path $path -AllowedPaths @($repo.allowed_paths))) {
                 throw "Validation changed path is outside unit scope for '$repoId': $path"
             }
         }
+        if (($actualChanged -join "|") -ne ($recordedChanged -join "|")) { throw "Validation changed-path set does not match repository '$repoId'." }
     }
     foreach ($repoId in $changedByRepo.Keys) {
         if (@($Unit.allowed_repositories | Where-Object { [string]$_.repo_id -eq [string]$repoId }).Count -eq 0) {
