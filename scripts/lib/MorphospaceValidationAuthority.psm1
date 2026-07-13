@@ -160,7 +160,7 @@ function Test-MorphospaceValidationEvidenceV2 {
         Test-MorphospaceOwnerValidation -OwnerEvidence $owner -Validator $validator -Unit $Unit -ExpectedStatus ([string]$result.status) | Out-Null
     }
     $expected = @($Unit.acceptance | ForEach-Object { [string]$_.acceptance_id } | Sort-Object)
-    if ((@($covered) | Sort-Object) -join '|' -ne $expected -join '|') { throw 'Validation evidence does not cover the exact acceptance set.' }
+    if (((@($covered) | Sort-Object) -join '|') -ne ($expected -join '|')) { throw 'Validation evidence does not cover the exact acceptance set.' }
     if ([string]$evidence.result -eq 'pass' -and (@($evidence.validator_results | Where-Object { [string]$_.status -ne 'pass' }).Count -ne 0)) { throw 'Passing evidence has a non-passing validator.' }
     return $evidence
 }

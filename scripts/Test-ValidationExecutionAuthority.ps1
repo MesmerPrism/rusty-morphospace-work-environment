@@ -11,6 +11,22 @@ function Get-TestCanonicalSha { param([object]$Value) return & (Get-Module Morph
 $workspace = Join-Path ([IO.Path]::GetTempPath()) ('morphospace-validation-execution-' + [guid]::NewGuid().ToString('N'))
 try {
     [IO.Directory]::CreateDirectory($workspace) | Out-Null
+    $coverageUnit=[pscustomobject]@{project_id='coverage-test';unit_id='coverage-unit';device_requirement='none';acceptance=@([pscustomobject]@{acceptance_id='criterion-a'},[pscustomobject]@{acceptance_id='criterion-b'})}
+    $coverageValidator=[pscustomobject]@{validator_id='coverage-owner';owner_repo_id='work-environment';sha256=('d'*64);input_closure=@();acceptance_ids=@('criterion-a','criterion-b');evidence_schema='rusty.morphospace.workflow.owner_validation.v1'}
+    $coverageOwner=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.owner_validation.v1';validator_id='coverage-owner';created_at='2026-07-12T10:00:00.0000000Z';project_id='coverage-test';unit_id='coverage-unit';acceptance_ids=@('criterion-a','criterion-b');status='pass';criteria=@(
+        [pscustomobject]@{acceptance_id='criterion-a';status='pass';command_id='coverage-command';command_path='coverage.ps1';command_sha256=('1'*64);output_sha256=('2'*64);exit_code=0},
+        [pscustomobject]@{acceptance_id='criterion-b';status='pass';command_id='coverage-command';command_path='coverage.ps1';command_sha256=('1'*64);output_sha256=('2'*64);exit_code=0}
+    );does_not_prove=@('Does not prove unrelated acceptance.')}
+    Write-TestJson $workspace 'coverage\owner.json' $coverageOwner
+    $coverageAction=[pscustomobject]@{schema='rusty.morphospace.workflow.validation_action.v2';attempt_id='coverage-attempt';profile_id='deep'}
+    Write-TestJson $workspace 'coverage\action.json' $coverageAction
+    $coverageEvidence=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.validation_evidence.v2';evidence_id='coverage-evidence';project_id='coverage-test';unit_id='coverage-unit';attempt_id='coverage-attempt';profile_id='deep';result='pass';action=Get-MorphospaceAuthorityReference $workspace (Join-Path $workspace 'coverage\action.json') 'validation-action' 'rusty.morphospace.workflow.validation_action.v2';device_validation=$null;validator_results=@([pscustomobject]@{validator_id='coverage-owner';owner_repo_id='work-environment';status='pass';exit_code=0;command_identity_sha256=('d'*64);cleanroom_fingerprint_sha256=('e'*64);input_closure_sha256=Get-TestCanonicalSha ([pscustomobject]@{closure=@()});acceptance_ids=@('criterion-a','criterion-b');owner_evidence=Get-MorphospaceAuthorityReference $workspace (Join-Path $workspace 'coverage\owner.json') 'owner-validation' 'rusty.morphospace.workflow.owner_validation.v1'})}
+    Write-TestJson $workspace 'coverage\evidence.json' $coverageEvidence
+    $coverageValidated=Test-MorphospaceValidationEvidenceV2 -WorkspaceRoot $workspace -EvidencePath 'coverage/evidence.json' -Unit $coverageUnit -SelectedValidators @($coverageValidator) -Action $coverageAction
+    Assert-Execution ([string]$coverageValidated.result-eq'pass') 'exact multi-criterion evidence coverage was rejected'
+    $coverageDamaged=($coverageEvidence|ConvertTo-Json -Depth 32|ConvertFrom-Json);$coverageDamaged.validator_results[0].acceptance_ids=@('criterion-a');Write-TestJson $workspace 'coverage\evidence-damaged.json' $coverageDamaged
+    Assert-Rejected {Test-MorphospaceValidationEvidenceV2 -WorkspaceRoot $workspace -EvidencePath 'coverage/evidence-damaged.json' -Unit $coverageUnit -SelectedValidators @($coverageValidator) -Action $coverageAction|Out-Null} 'incomplete evidence acceptance coverage was accepted'
+
     $unit = [pscustomobject]@{ project_id='execution-test'; unit_id='receipt-test' }
     $outputs = @(
         [pscustomobject]@{repo_id='planning';path='receipts/owner.json';phase='validation';role='owner-validation';schema='rusty.morphospace.workflow.owner_validation.v1';validator_id='owner-test'},
