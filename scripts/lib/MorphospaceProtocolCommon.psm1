@@ -375,7 +375,7 @@ function Get-MorphospaceManagedControlPath {
         [string]$AttemptId = ""
     )
 
-    if ($UnitId -notmatch '^[a-z0-9][a-z0-9-]{1,63}$') {
+    if ($UnitId -notmatch '^[a-z0-9][a-z0-9-]{1,127}$') {
         throw "Invalid unit ID for a managed control path: $UnitId"
     }
     $names = @{
@@ -744,7 +744,7 @@ function Invoke-MorphospacePendingQuarantineRecovery {
         }
         if ([string]$authorization.authorization_id -notmatch '^[a-z0-9][a-z0-9-]{7,95}$' -or
             [string]$authorization.project_id -notmatch '^[a-z0-9][a-z0-9-]{1,191}$' -or
-            [string]$authorization.unit_id -notmatch '^[a-z0-9][a-z0-9-]{1,63}$') {
+            [string]$authorization.unit_id -notmatch '^[a-z0-9][a-z0-9-]{1,127}$') {
             throw 'Pending quarantine authorization has an invalid identifier.'
         }
         [void](Test-MorphospaceStrictUtcTimestamp ([string]$authorization.created_at))

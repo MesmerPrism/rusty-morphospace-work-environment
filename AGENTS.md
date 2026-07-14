@@ -56,6 +56,12 @@ The work-environment repo owns portable schemas, examples, and validators. A
 project owns its instantiated `morphospace/` directory. Do not copy live state,
 private evidence, or machine paths back into this repository.
 
+Portable composition and iteration IDs have one 2-through-128-character
+lowercase alphanumeric/hyphen domain across their schemas and validators.
+Changes to that domain require passing boundary coverage at 64, 65, 128, and
+129 characters. Separately versioned authority-stage IDs may declare wider
+bounds explicitly.
+
 ### Staged validation-authority boundary
 
 The ownership, registry, trust migration, closed-room validation-v2, and

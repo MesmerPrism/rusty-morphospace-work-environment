@@ -123,10 +123,10 @@ function Get-MorphospaceFixedRepositoryMap {
     $map=@{};$aliases=[Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach($entry in @($document.repositories)){
         Assert-MorphospaceExactPropertySet $entry @('repo_id','path','role') @('aliases') 'fixed repository-map row'
-        $repoId=[string]$entry.repo_id;if($repoId-notmatch'^[a-z0-9][a-z0-9-]{1,63}$'-or$map.ContainsKey($repoId)-or$aliases.ContainsKey($repoId)){throw "Duplicate/invalid repository ID '$repoId'."}
+        $repoId=[string]$entry.repo_id;if($repoId-notmatch'^[a-z0-9][a-z0-9-]{1,127}$'-or$map.ContainsKey($repoId)-or$aliases.ContainsKey($repoId)){throw "Duplicate/invalid repository ID '$repoId'."}
         if([string]$entry.role-notin@('source','planning')){throw "Unsupported repository role for '$repoId'."}
         $path=[IO.Path]::GetFullPath([string]$entry.path);if(-not[IO.Directory]::Exists($path)){throw "Mapped repository is missing: $repoId"};$parent=[IO.Directory]::GetParent($path);if($null-eq$parent){throw "Mapped repository cannot be a volume root: $repoId"};Assert-MorphospaceNoReparseAncestor $parent.FullName $path
-        $aliasList=[Collections.Generic.List[string]]::new();foreach($rawAlias in @($entry.aliases)){$alias=[string]$rawAlias;if($alias-notmatch'^[a-z0-9][a-z0-9-]{1,63}$'-or$aliases.ContainsKey($alias)-or$map.ContainsKey($alias)){throw "Duplicate/invalid repository alias '$alias'."};$aliases[$alias]=$repoId;$aliasList.Add($alias)}
+        $aliasList=[Collections.Generic.List[string]]::new();foreach($rawAlias in @($entry.aliases)){$alias=[string]$rawAlias;if($alias-notmatch'^[a-z0-9][a-z0-9-]{1,127}$'-or$aliases.ContainsKey($alias)-or$map.ContainsKey($alias)){throw "Duplicate/invalid repository alias '$alias'."};$aliases[$alias]=$repoId;$aliasList.Add($alias)}
         $aliases[$repoId]=$repoId;$map[$repoId]=[pscustomobject]@{repo_id=$repoId;path=$path;role=[string]$entry.role;aliases=@($aliasList.ToArray())}
     }
     $required=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
@@ -577,7 +577,7 @@ function Open-MorphospaceContentAddressedCleanRoom {
     if([string]$content.capsule_sha256-cne$CapsuleSha256-or[string]$content.materialized_inputs_sha256-cne$MaterializedInputsSha256-or[string]$content.cleanroom_fingerprint_sha256-notmatch'^[0-9a-f]{64}$'){throw "Clean-room cache identity drifted for capsule $CapsuleSha256."}
     $repositories=@{};$closure=@{};$modesByRepo=@{}
     foreach($repoId in @($content.repositories)){
-        $id=[string]$repoId;if($id-notmatch'^[a-z0-9][a-z0-9-]{1,63}$'-or$repositories.ContainsKey($id)){throw 'Clean-room cache repository list is invalid.'}
+        $id=[string]$repoId;if($id-notmatch'^[a-z0-9][a-z0-9-]{1,127}$'-or$repositories.ContainsKey($id)){throw 'Clean-room cache repository list is invalid.'}
         $repositories[$id]=[IO.Path]::Combine($paths.root,$id)
         if(-not[IO.Directory]::Exists($repositories[$id])){throw "Clean-room cache repository is missing: $id"}
     }

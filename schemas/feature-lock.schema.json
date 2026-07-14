@@ -90,7 +90,7 @@
   "$defs": {
     "id": {
       "type": "string",
-      "pattern": "^[a-z0-9][a-z0-9-]{1,63}$"
+      "pattern": "^[a-z0-9][a-z0-9-]{1,127}$"
     },
     "dottedId": {
       "type": "string",

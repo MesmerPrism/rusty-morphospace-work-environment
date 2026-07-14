@@ -11,6 +11,7 @@ if (-not $RepoRoot) {
 
 $RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
 $script:Failures = New-Object System.Collections.Generic.List[string]
+$script:PortableIdPattern = "^[a-z0-9][a-z0-9-]{1,127}$"
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceProtocolCommon.psm1') -Force
 
 function Add-Failure {
@@ -182,7 +183,7 @@ function Test-V2EventInstance {
     param([object]$Event,[string]$Context)
     $required=@('schema','event_id','sequence','timestamp','run_id','session_id','project_id','unit_id','event_type','summary','previous_event_sha256','receipts');$actual=@($Event.PSObject.Properties.Name|Where-Object{$_-ne'__line_sha256'})
     foreach($name in $required){Assert-Contract ($actual-ccontains$name) "$Context v2 event is missing '$name'."};foreach($name in $actual){Assert-Contract ($required-ccontains$name) "$Context v2 event has unexpected '$name'."}
-    foreach($field in @('event_id','run_id','project_id','unit_id')){Assert-Contract ([string]$Event.$field-match'^[a-z0-9][a-z0-9-]{1,95}$') "$Context v2 '$field' is invalid."}
+    foreach($field in @('event_id','run_id','project_id','unit_id')){Assert-Contract ([string]$Event.$field-match$script:PortableIdPattern) "$Context v2 '$field' is invalid."}
     Assert-Contract ($null-eq$Event.session_id-or[string]$Event.session_id-match'^[a-z0-9][a-z0-9-]{7,95}$') "$Context v2 session_id is invalid."
     Assert-Contract ([string]$Event.timestamp-match'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{7}Z$') "$Context v2 timestamp is not strict UTC."
     Assert-Contract (@('state-transition','decision','extraction','validation','commit','push','promotion','blocker')-ccontains[string]$Event.event_type) "$Context v2 event_type is invalid."
@@ -422,6 +423,7 @@ function Test-ProjectBundle {
         $unit = Read-JsonDocument -Path $path -Context "$Context iteration unit"
         if ($null -eq $unit) { continue }
         $units.Add($unit) | Out-Null
+        Assert-Contract ([string]$unit.unit_id -match $script:PortableIdPattern) "$Context unit has invalid unit_id '$($unit.unit_id)'."
         Assert-Contract ($unit.schema -eq "rusty.morphospace.workflow.iteration_unit.v1") "$Context unit '$($unit.unit_id)' has the wrong schema ID."
         Assert-Contract ($unit.project_id -eq $spec.project_id) "$Context unit '$($unit.unit_id)' project_id does not match."
         Assert-Contract ($script:IterationStateIds -contains [string]$unit.status) "$Context unit '$($unit.unit_id)' has unknown status '$($unit.status)'."
@@ -433,7 +435,7 @@ function Test-ProjectBundle {
             @()
         }
         foreach ($tag in $unitTags) {
-            Assert-Contract ($tag -match "^[a-z0-9][a-z0-9-]{1,63}$") "$Context unit '$($unit.unit_id)' has invalid tag '$tag'."
+            Assert-Contract ($tag -match "^[a-z0-9][a-z0-9-]{1,127}$") "$Context unit '$($unit.unit_id)' has invalid tag '$tag'."
         }
         foreach ($tagGroup in @($unitTags | Group-Object)) {
             Assert-Contract ($tagGroup.Count -eq 1) "$Context unit '$($unit.unit_id)' repeats tag '$($tagGroup.Name)'."
@@ -608,7 +610,7 @@ function Test-ProjectBundle {
     $supersededInFlightIds = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($event in $events) {
         $eventId = [string]$event.event_id
-        $match = [regex]::Match($eventId, '^(?<old>[a-z0-9][a-z0-9-]{1,63})-superseded-by-(?<current>[a-z0-9][a-z0-9-]{1,63})$')
+        $match = [regex]::Match($eventId, '^(?<old>[a-z0-9][a-z0-9-]{1,127})-superseded-by-(?<current>[a-z0-9][a-z0-9-]{1,127})$')
         if (-not $match.Success) { continue }
         $oldId = $match.Groups['old'].Value
         $currentId = $match.Groups['current'].Value

@@ -7,20 +7,20 @@
   "required": ["schema", "event_id", "sequence", "timestamp", "run_id", "session_id", "project_id", "unit_id", "event_type", "summary", "previous_event_sha256", "receipts"],
   "properties": {
     "schema": { "const": "rusty.morphospace.workflow.iteration_event.v2" },
-    "event_id": { "$ref": "#/$defs/id96" },
+    "event_id": { "$ref": "#/$defs/id128" },
     "sequence": { "type": "integer", "minimum": 1 },
     "timestamp": { "$ref": "#/$defs/utc" },
-    "run_id": { "$ref": "#/$defs/id96" },
+    "run_id": { "$ref": "#/$defs/id128" },
     "session_id": { "oneOf": [{ "$ref": "#/$defs/session" }, { "type": "null" }] },
-    "project_id": { "$ref": "#/$defs/id96" },
-    "unit_id": { "$ref": "#/$defs/id96" },
+    "project_id": { "$ref": "#/$defs/id128" },
+    "unit_id": { "$ref": "#/$defs/id128" },
     "event_type": { "enum": ["state-transition", "decision", "extraction", "validation", "commit", "push", "promotion", "blocker"] },
     "summary": { "type": "string", "minLength": 1, "maxLength": 4096 },
     "previous_event_sha256": { "$ref": "#/$defs/hash" },
     "receipts": { "type": "array", "maxItems": 64, "items": { "$ref": "#/$defs/reference" } }
   },
   "$defs": {
-    "id96": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,95}$" },
+    "id128": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" },
     "session": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{7,95}$" },
     "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "utc": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{7}Z$" },
@@ -28,7 +28,7 @@
       "type": "object", "additionalProperties": false,
       "required": ["role", "path", "schema", "sha256"],
       "properties": {
-        "role": { "$ref": "#/$defs/id96" }, "path": { "type": "string", "minLength": 1 },
+        "role": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,95}$" }, "path": { "type": "string", "minLength": 1 },
         "schema": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]{2,191}$" }, "sha256": { "$ref": "#/$defs/hash" }
       }
     }

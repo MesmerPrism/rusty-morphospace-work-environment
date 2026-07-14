@@ -1,6 +1,6 @@
 # Autonomous Iteration
 
-This document describes the `0.2.0` portable workflow release. The accepted
+This document describes the `0.2.1` portable workflow release. The accepted
 `0.1.0` history remains immutable; later releases must preserve accepted
 event/receipt history or provide an explicit migration and rollback path.
 

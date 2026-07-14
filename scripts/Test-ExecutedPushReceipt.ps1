@@ -6,7 +6,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
-$IdPattern = "^[a-z0-9][a-z0-9-]{1,63}$"
+$IdPattern = "^[a-z0-9][a-z0-9-]{1,127}$"
 $RevisionPattern = "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
 
 function Add-ReceiptFailure {
@@ -422,6 +422,41 @@ if ($SelfTest) {
     $template = Read-ReceiptDocument -ReceiptPath $templatePath
     Assert-ReceiptValid -Document $template -Context "Executed push receipt example"
 
+    foreach ($length in @(64, 65, 128)) {
+        $bounded = Copy-ReceiptDocument -Document $template
+        $bounded.unit_ids = @("u" + ("a" * ($length - 1)))
+        $boundedPath = [IO.Path]::GetTempFileName()
+        try {
+            [IO.File]::WriteAllText($boundedPath, ($bounded | ConvertTo-Json -Depth 50), [Text.UTF8Encoding]::new($false))
+            Assert-ReceiptSchema -ReceiptPath $boundedPath
+            Assert-ReceiptValid -Document $bounded -Context "Executed push receipt $length-character unit ID"
+        } finally {
+            Remove-Item -LiteralPath $boundedPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    $tooLong = Copy-ReceiptDocument -Document $template
+    $tooLong.unit_ids = @("u" + ("a" * 128))
+    $tooLongFailures = @(Test-ExecutedPushReceiptDocument -Document $tooLong)
+    if (@($tooLongFailures | Where-Object { $_ -like "*unit_ids contains invalid ID*" }).Count -ne 1) {
+        throw "129-character ID damage case failed for the wrong reason: $($tooLongFailures -join ' | ')"
+    }
+    $tooLongPath = [IO.Path]::GetTempFileName()
+    try {
+        [IO.File]::WriteAllText($tooLongPath, ($tooLong | ConvertTo-Json -Depth 50), [Text.UTF8Encoding]::new($false))
+        $schemaRejected = $false
+        try {
+            Assert-ReceiptSchema -ReceiptPath $tooLongPath
+        } catch {
+            $schemaRejected = $true
+        }
+        if (-not $schemaRejected -and (Get-Command Test-Json -ErrorAction SilentlyContinue)) {
+            throw "Executed push receipt schema unexpectedly accepted a 129-character unit ID."
+        }
+    } finally {
+        Remove-Item -LiteralPath $tooLongPath -Force -ErrorAction SilentlyContinue
+    }
+
     $planningSuffix = Copy-ReceiptDocument -Document $template
     $planningDev = Copy-ReceiptDocument -Document $planningSuffix.repositories[-1]
     $planningDev.ref_id = "planning-dev"
@@ -532,7 +567,7 @@ if ($SelfTest) {
         }
     }
 
-    Write-Host "Executed push receipt self-test passed (valid example plus $($damageCases.Count) damaged cases)."
+    Write-Host "Executed push receipt self-test passed (64/65/128/129 ID boundaries, valid example, and $($damageCases.Count) damaged cases)."
 }
 
 if (-not $Path -and -not $SelfTest) {

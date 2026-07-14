@@ -148,7 +148,7 @@ function Test-MorphospaceEventV2Document {
     param([object]$Event)
     Assert-MorphospaceExactPropertySet $Event @('schema','event_id','sequence','timestamp','run_id','session_id','project_id','unit_id','event_type','summary','previous_event_sha256','receipts') @() 'iteration_event.v2'
     if([string]$Event.schema -cne 'rusty.morphospace.workflow.iteration_event.v2'){throw 'Wrong v2 event schema.'}
-    foreach($identity in @([string]$Event.event_id,[string]$Event.project_id,[string]$Event.unit_id,[string]$Event.run_id)){if($identity -notmatch '^[a-z0-9][a-z0-9-]{1,95}$'){throw "V2 event identity is invalid: $identity"}}
+    foreach($identity in @([string]$Event.event_id,[string]$Event.project_id,[string]$Event.unit_id,[string]$Event.run_id)){if($identity -notmatch '^[a-z0-9][a-z0-9-]{1,127}$'){throw "V2 event identity is invalid: $identity"}}
     if($null-ne$Event.session_id -and [string]$Event.session_id -notmatch '^[a-z0-9][a-z0-9-]{7,95}$'){throw 'V2 event session ID is invalid.'}
     if(([string]$Event.summary).Length -gt 4096 -or @($Event.receipts).Count -gt 64){throw 'V2 event exceeds summary/receipt bounds.'}
     if([string]::IsNullOrWhiteSpace([string]$Event.summary)){throw 'V2 event summary must be non-empty.'}

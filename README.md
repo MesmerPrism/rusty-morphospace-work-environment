@@ -3,12 +3,16 @@
 Portable onboarding and project-iteration workspace for Rusty Morphospace
 development.
 
-Current portable protocol release: `0.2.0` (2026-07-11). The machine-readable
-release manifest is `manifests/release-0.2.0.json`. The immutable `0.1.0`
+Current portable protocol release: `0.2.1` (2026-07-14). The machine-readable
+release manifest is `manifests/release-0.2.1.json`. The immutable `0.1.0`
 manifest remains readable. Existing project instances adopt either baseline
 additively: preserve live events and receipts, normalize portable
 change categories while retaining domain detail in `tags`, and validate before
 using the optional automation CLI.
+
+Portable project, unit, repository, feature, receipt, and event identities use
+lowercase alphanumeric/hyphen syntax and support 2 through 128 characters.
+Authority-stage protocols may declare a wider identity domain explicitly.
 
 This repository packages the agent instructions, setup notes, dependency
 matrix, validation scripts, and local-skill templates needed to bring up a

@@ -42,7 +42,7 @@ function New-ProjectWorkspaceInternal {
         [bool]$DoExecute
     )
 
-    if (-not ($Id -match "^[a-z0-9][a-z0-9-]{1,63}$")) {
+    if (-not ($Id -match "^[a-z0-9][a-z0-9-]{1,127}$")) {
         throw "ProjectId must use 2-64 lowercase letters, digits, or hyphens and start with a letter or digit."
     }
 
