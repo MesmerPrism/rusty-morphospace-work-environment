@@ -1,6 +1,7 @@
 {
   "schema": "rusty.morphospace.work_environment.local_paths.v1",
   "workspace_root": "<workspace-root>",
+  "work_environment_root": "<workspace-root>/rusty-morphospace-work-environment",
   "repos_root": "<workspace-root>/repos",
   "artifacts_root": "<workspace-root>/artifacts",
   "skills_root": "<codex-skills-root>",
@@ -20,6 +21,7 @@
     "rusty_matter": "<workspace-root>/repos/rusty-matter",
     "rusty_optics": "<workspace-root>/repos/rusty-optics",
     "rusty_lattice": "<workspace-root>/repos/rusty-lattice",
+    "rusty_lsl": "<workspace-root>/repos/rusty-lsl",
     "rusty_gui": "<workspace-root>/repos/rusty-gui",
     "rusty_quest": "<workspace-root>/repos/rusty-quest",
     "rusty_hostess": "<workspace-root>/repos/rusty-hostess",

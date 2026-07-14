@@ -1,0 +1,18 @@
+{
+  "$schema": "https://raw.githubusercontent.com/MesmerPrism/rusty-morphospace-work-environment/114d86d0f5dba66e8bf7b949c8d117ade90f10b4/schemas/project-spec-v2.schema.json",
+  "schema": "rusty.morphospace.workflow.project_spec.v2",
+  "project_id": "hello-morphospace",
+  "revision": 1,
+  "owner": "project-owner",
+  "purpose": "Demonstrate an inert, public-safe protocol-v2 project workspace.",
+  "activation_model": {"default": "disabled", "unlisted_modules": "inert", "runtime_rule": "selected-lock-and-runtime-input"},
+  "composition": {"selected_features": [], "denied_features": [], "selected_modules": [], "denied_modules": [], "allowed_permissions": [], "denied_permissions": [], "data_classes": []},
+  "authority_map": [{"parameter": "project.composition", "owner": "project-shell", "adapters": []}],
+  "repositories": [{"repo_id": "project-shell", "role": "application", "path": "..", "allowed_paths": ["README.md", "morphospace/"]}],
+  "modules": [],
+  "non_scope": ["Runtime features and modules.", "Private evidence and machine-specific paths.", "Device work."],
+  "validation_profiles": [{"profile_id": "workflow", "commands": ["powershell -NoProfile -ExecutionPolicy Bypass -File <work-environment-root>/scripts/Test-WorkflowContracts.ps1 -WorkspaceRoot <project-root>/morphospace"]}],
+  "acceptance_profiles": [{"profile_id": "rollback", "commands": ["Restore the inert checked-in example and re-run workflow validation."]}],
+  "release_policy": {"versioning": "semver", "commit_policy": "Commit only a coherent validated tutorial change.", "push_checkpoint": "integration-batch", "source_first": true, "planning_last": true, "force_push_allowed": false},
+  "public_boundary": {"mode": "public", "private_overlay": "local/", "prohibited_evidence": ["device serials", "private package identities", "raw logs and captures", "signing and pairing material"]}
+}

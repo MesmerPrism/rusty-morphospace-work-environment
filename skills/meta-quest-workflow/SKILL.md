@@ -12,6 +12,14 @@ Horizon MCP, or Quest runtime validation.
 This template is a Morphospace router. For detailed portable device-operation
 docs and scripts, use the public `meta-quest-agent-workflow` repository.
 
+## Resolve The Local Work Environment
+
+When installed by `Install-LocalSkills.ps1`, read
+`references/local-work-environment.json` before following work-environment doc
+paths. It binds the exact local clone, source commit/release, dirty-source state,
+and docs root. If absent, use an explicitly configured
+`RUSTY_MORPHOSPACE_WORK_ENVIRONMENT` or ask for the clone; never guess paths.
+
 ## First Read
 
 In this work-environment repo:

@@ -1,57 +1,39 @@
 # Skill Installation
 
-This repo includes portable skill templates under `skills/`. They are designed
-for contributors to copy into their local agent skill directory and customize
-through local config, not by editing committed files.
+This repository ships four portable skill routers. Use the managed installer;
+do not copy them by hand or place contributor paths in committed templates.
 
-## Included Templates
-
-| Skill | Purpose |
+| Skill | Primary use |
 | --- | --- |
-| `rusty-morphospace-context` | Route repo-family work, lane ownership, public/private boundary, and onboarding state. |
-| `system-engineering` | Structure architecture work around authority, interfaces, observability, validation, and risk. |
-| `rust-work-graph` | Inventory source roots, dependency pressure, instruction surfaces, and graph snapshots. |
-| `meta-quest-workflow` | Route live Quest, ADB, APK, logcat, screenshots, Perfetto, and Wi-Fi ADB work to the public device workflow. |
+| `rusty-morphospace-context` | Repo-family state, ownership, and public/private routing. |
+| `system-engineering` | Authority, contracts, interfaces, observability, and validation. |
+| `rust-work-graph` | Bounded inventories, dependency/diff maps, and graph receipts. |
+| `meta-quest-workflow` | Live Quest/ADB/APK/evidence routing to the public device workflow. |
 
-## Dry Run
+For the complete new-machine, existing-installation, update, backup, and
+verification procedure, use [Local Skill Bootstrap](LOCAL_SKILL_BOOTSTRAP.md).
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass `
-  -File .\scripts\Install-LocalSkills.ps1 `
-  -TargetRoot <codex-skills-root>
-```
-
-## Install
+The short path is:
 
 ```powershell
+$SkillRoot = Join-Path $env:USERPROFILE ".codex\skills"
+
 powershell -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Install-LocalSkills.ps1 `
-  -TargetRoot <codex-skills-root> `
+  -TargetRoot $SkillRoot `
+  -Action Plan
+
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\Install-LocalSkills.ps1 `
+  -TargetRoot $SkillRoot `
+  -Action Install `
   -Execute
+
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\Install-LocalSkills.ps1 `
+  -TargetRoot $SkillRoot `
+  -Action Verify
 ```
 
-The script refuses to overwrite an existing skill directory. To update an
-installed skill, review the diff and replace it intentionally.
-
-## Customization
-
-Do not edit committed skill templates with local paths. Put local paths in:
-
-- `local/local.paths.json`;
-- your agent configuration;
-- your shell profile;
-- ignored per-repo environment files.
-
-Skill templates should use placeholders such as `<workspace-root>` and refer
-to docs in this repo.
-
-When project workflow docs or schemas change, review the installed
-`rusty-morphospace-context` and `system-engineering` routers as part of the
-same update. The installed skills should point agents to the project spec,
-feature lock, module lifecycle, and iteration-unit protocol rather than carry
-a private copy of live project state.
-
-Use [Instruction Synchronization](INSTRUCTION_SYNCHRONIZATION.md) to decide
-which installed routers need a content update. Do not expand every skill for
-every project change; update only relevant durable routing and keep the unit's
-surface record as evidence.
+`Install` never overwrites an existing directory. `Update` is a separate,
+explicit operation and creates a backup outside the skill-discovery root.

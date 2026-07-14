@@ -10,6 +10,14 @@ source-root maps, language/framework maps, AGENTS or skill instruction-surface
 audits, dependency pressure, architecture/layer/domain graphs, and broad
 cleanup planning.
 
+## Resolve The Local Work Environment
+
+When installed by `Install-LocalSkills.ps1`, read
+`references/local-work-environment.json` before following work-environment doc
+paths. It binds the exact local clone, source commit/release, dirty-source state,
+and docs root. If absent, use an explicitly configured
+`RUSTY_MORPHOSPACE_WORK_ENVIRONMENT` or ask for the clone; never guess paths.
+
 ## Default Order
 
 1. Start with the smallest inventory that answers the question.

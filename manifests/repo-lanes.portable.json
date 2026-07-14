@@ -15,6 +15,12 @@
       "does_not_own": ["renderer backends", "Android property writes"]
     },
     {
+      "id": "lsl",
+      "name": "Rusty LSL",
+      "owns": ["independently authored LSL compatibility", "backend-neutral stream metadata and samples", "typed observations and proposals", "black-box oracle evidence"],
+      "does_not_own": ["Manifold stream authority", "application policy", "device lifecycle"]
+    },
+    {
       "id": "manifold",
       "name": "Rusty Manifold",
       "owns": ["commands", "sessions", "streams", "host manifests", "control transport"],
@@ -35,6 +41,7 @@
     {
       "id": "makepad",
       "name": "Rusty Makepad",
+      "default_status": "legacy-explicit-request-only",
       "owns": ["Makepad adapters", "settings surfaces", "app-shell integration"],
       "does_not_own": ["Quest platform authority", "generic core state"]
     },

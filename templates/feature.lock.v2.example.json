@@ -1,0 +1,31 @@
+{
+  "$schema": "https://raw.githubusercontent.com/MesmerPrism/rusty-morphospace-work-environment/114d86d0f5dba66e8bf7b949c8d117ade90f10b4/schemas/feature-lock-v2.schema.json",
+  "schema": "rusty.morphospace.workflow.feature_lock.v2",
+  "project_id": "hello-morphospace",
+  "project_revision": 1,
+  "revision": 1,
+  "generated_at": "1970-01-01T00:00:00Z",
+  "resolver_version": "rusty-morphospace-feature-resolver/2",
+  "lock_fingerprint": "7811b69fc171fd85dc4214da62618bcbdc02ad7d3b1e9eb430317fe4025be8d4",
+  "default_activation": "disabled",
+  "activation_rule": "selected-lock-and-runtime-input",
+  "selected_features": [],
+  "denied_features": [],
+  "features": [],
+  "effect_union": {
+    "permissions": [],
+    "services": [],
+    "activities": [],
+    "queries": [],
+    "tools": [],
+    "assets": [],
+    "shaders": [],
+    "native_libraries": [],
+    "commands": [],
+    "routes": [],
+    "streams": [],
+    "inputs": [],
+    "scenes": [],
+    "markers": []
+  }
+}

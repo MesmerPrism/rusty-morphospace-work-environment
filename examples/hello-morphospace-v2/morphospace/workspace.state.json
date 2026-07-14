@@ -1,0 +1,17 @@
+{
+  "$schema": "https://raw.githubusercontent.com/MesmerPrism/rusty-morphospace-work-environment/114d86d0f5dba66e8bf7b949c8d117ade90f10b4/schemas/workspace-state-v2.schema.json",
+  "schema": "rusty.morphospace.workflow.workspace_state.v2",
+  "project_id": "hello-morphospace",
+  "plan_revision": 1,
+  "current_unit": null,
+  "next_ready_unit": null,
+  "last_event_id": "hello-unit-proposed-0001",
+  "last_accepted_receipt": null,
+  "repository_heads": [],
+  "module_registry": {"lock_revision": 1, "lock_fingerprint": "7811b69fc171fd85dc4214da62618bcbdc02ad7d3b1e9eb430317fe4025be8d4", "modules": []},
+  "capability_registry": [],
+  "dirty_repositories": [],
+  "blockers": [],
+  "validation_checkpoint": null,
+  "pending_push_bundle": null
+}

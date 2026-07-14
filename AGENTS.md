@@ -18,6 +18,10 @@ Use the local skill templates in `skills/` after installation:
 - `meta-quest-workflow`: live Quest, ADB, APK install/launch, screenshot,
   logcat, Perfetto, Wi-Fi ADB, or Meta tooling operations.
 
+Install and verify them through `docs/LOCAL_SKILL_BOOTSTRAP.md` and
+`scripts/Install-LocalSkills.ps1`. Managed writes require `-Execute`; updates
+create a backup and must not delete unmanaged local files.
+
 For live headset work, prefer the public `meta-quest-agent-workflow` repository
 as the device-operation source of truth. This repo may point to that workflow,
 but it should not fork a competing Quest procedure.
@@ -51,6 +55,10 @@ iteration, read in this order:
 3. `docs/FEATURE_ACTIVATION.md`
 4. `docs/AUTONOMOUS_ITERATION.md`
 5. `docs/INSTRUCTION_SYNCHRONIZATION.md`
+
+For broad validation, use `Test-WorkEnvironment.ps1 -SelfTest -Tier Quick`,
+then `Standard`, then `Deep` only when the risk warrants it. A single failed
+child check fails the aggregate. These tiers never authorize device work.
 
 The work-environment repo owns portable schemas, examples, and validators. A
 project owns its instantiated `morphospace/` directory. Do not copy live state,

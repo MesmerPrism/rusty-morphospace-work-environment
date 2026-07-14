@@ -1,6 +1,7 @@
 # Workflow And Environment Dependency Audit
 
-Status: portable workflow v1 implemented.
+Status: historical baseline audit. The current implementation plan is
+[Onboarding And Local-Skill Implementation Plan](ONBOARDING_IMPLEMENTATION_PLAN.md).
 
 ## Decision
 
@@ -98,13 +99,12 @@ does not own project composition decisions or runtime behavior.
 | Long push intervals lose iteration context. | Use local checkpoint commits, compact workspace state, append-only events, and pending push bundles. | Scaffold and workflow contract self-tests. |
 | Skills or `AGENTS.md` lag behind architecture changes. | Declare change categories and instruction surfaces in each unit; require synchronized repo, router, and relevant skill updates before acceptance. | Instruction-sync workflow and stable-promotion gates. |
 
-## Next Work
+## Superseded Next Work
 
-1. Exercise the scaffold in one public example project and refine only from
-   recorded friction.
+1. The scaffold is now exercised by `examples/hello-morphospace-v2`.
 2. Add source-repo-specific validation profiles once their public commands are
    stable.
 3. Add a portable coordinated-push receipt after two projects have used the
    iteration-unit protocol.
-4. Decide whether this repo should publish a release archive of schemas and
-   skill templates or remain source-only.
+4. Release `0.3.0` adds publication metadata; remote commit/tag/release remains
+   a separate explicit action.

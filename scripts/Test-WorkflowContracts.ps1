@@ -853,6 +853,16 @@ $templateBundle = New-Bundle `
     -EventsPath (Join-Path $templatesRoot "iteration-events.example.jsonl")
 Test-ProjectBundle -Bundle $templateBundle -Context "portable example"
 
+$templateV2Bundle = New-Bundle `
+    -SpecPath (Join-Path $templatesRoot "project.spec.v2.example.json") `
+    -LockPath (Join-Path $templatesRoot "feature.lock.v2.example.json") `
+    -StatePath (Join-Path $templatesRoot "workspace.state.v2.example.json") `
+    -CandidatePaths @() `
+    -UnitPaths @() `
+    -ReviewPaths @() `
+    -EventsPath (Join-Path $templatesRoot "iteration-events.v2.example.jsonl")
+Test-ProjectBundle -Bundle $templateV2Bundle -Context "portable v2 example"
+
 $executedPushTemplate = Join-Path $templatesRoot "executed-push-receipt.example.json"
 $executedPushValidator = Join-Path $RepoRoot "scripts\Test-ExecutedPushReceipt.ps1"
 Assert-Contract (Test-Path -LiteralPath $executedPushTemplate -PathType Leaf) "Required executed-push receipt example is missing."
