@@ -9,12 +9,8 @@ permissions:
   contents: read
 
 jobs:
-  quick:
+  quick-powershell:
     runs-on: windows-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        shell: [powershell, pwsh]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -27,7 +23,26 @@ jobs:
             choco install ripgrep -y --no-progress
           }
       - name: Quick portable validation
-        shell: ${{ matrix.shell }}
+        shell: powershell
+        run: |
+          ./scripts/Test-WorkEnvironment.ps1 -SelfTest -Tier Quick
+          git diff --check
+
+  quick-pwsh:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Ensure ripgrep
+        shell: powershell
+        run: |
+          if (-not (Get-Command rg -ErrorAction SilentlyContinue)) {
+            choco install ripgrep -y --no-progress
+          }
+      - name: Quick portable validation
+        shell: pwsh
         run: |
           ./scripts/Test-WorkEnvironment.ps1 -SelfTest -Tier Quick
           git diff --check
