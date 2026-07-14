@@ -1,0 +1,1 @@
+{"schema":"rusty.morphospace.workflow.iteration_event.v1","event_id":"hello-unit-proposed-0001","sequence":1,"timestamp":"2026-01-01T00:00:00Z","project_id":"hello-morphospace","unit_id":"hello-001","event_type":"decision","summary":"Proposed a documentation-only tutorial validation unit; no work is active.","receipts":[]}

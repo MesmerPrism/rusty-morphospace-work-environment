@@ -1,0 +1,74 @@
+{
+  "$schema": "https://raw.githubusercontent.com/MesmerPrism/rusty-morphospace-work-environment/114d86d0f5dba66e8bf7b949c8d117ade90f10b4/schemas/project-spec-v2.schema.json",
+  "schema": "rusty.morphospace.workflow.project_spec.v2",
+  "project_id": "hello-morphospace",
+  "revision": 1,
+  "owner": "project-owner",
+  "purpose": "Demonstrate an inert, public-safe protocol-v2 project workspace.",
+  "activation_model": {
+    "default": "disabled",
+    "unlisted_modules": "inert",
+    "runtime_rule": "selected-lock-and-runtime-input"
+  },
+  "composition": {
+    "selected_features": [],
+    "denied_features": [],
+    "selected_modules": [],
+    "denied_modules": [],
+    "allowed_permissions": [],
+    "denied_permissions": [],
+    "data_classes": []
+  },
+  "authority_map": [
+    {
+      "parameter": "project.composition",
+      "owner": "project-shell",
+      "adapters": []
+    }
+  ],
+  "repositories": [
+    {
+      "repo_id": "project-shell",
+      "role": "application",
+      "path": "..",
+      "allowed_paths": ["src/", "docs/", "morphospace/"]
+    }
+  ],
+  "modules": [],
+  "non_scope": [
+    "Modules and features not declared in this specification.",
+    "Private evidence outside the declared project boundary."
+  ],
+  "validation_profiles": [
+    {
+      "profile_id": "workflow",
+      "commands": [
+        "powershell -NoProfile -ExecutionPolicy Bypass -File <work-environment-root>/scripts/Test-WorkflowContracts.ps1 -WorkspaceRoot <project-root>/morphospace"
+      ]
+    }
+  ],
+  "acceptance_profiles": [
+    {
+      "profile_id": "rollback",
+      "commands": ["Disable selected conformance features and verify the effect union is absent."]
+    }
+  ],
+  "release_policy": {
+    "versioning": "semver",
+    "commit_policy": "Commit coherent validated slices locally and use declared push checkpoints.",
+    "push_checkpoint": "integration-batch",
+    "source_first": true,
+    "planning_last": true,
+    "force_push_allowed": false
+  },
+  "public_boundary": {
+    "mode": "mixed",
+    "private_overlay": "local/",
+    "prohibited_evidence": [
+      "device serials",
+      "private package identities",
+      "raw logs and captures",
+      "signing and pairing material"
+    ]
+  }
+}

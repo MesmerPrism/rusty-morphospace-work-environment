@@ -10,6 +10,14 @@ Morphospace repos: authority boundaries, contracts, manifests, module/plugin
 boundaries, data/control/media planes, observability, validation scorecards,
 reference-intake notes, and mitigation maps.
 
+## Resolve The Local Work Environment
+
+When installed by `Install-LocalSkills.ps1`, read
+`references/local-work-environment.json` before following work-environment doc
+paths. It binds the exact local clone, source commit/release, dirty-source state,
+and docs root. If absent, use an explicitly configured
+`RUSTY_MORPHOSPACE_WORK_ENVIRONMENT` or ask for the clone; never guess paths.
+
 ## Output Shape
 
 For substantial architecture work, produce:

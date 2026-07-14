@@ -1,0 +1,83 @@
+name: validate
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quick-powershell:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Ensure ripgrep
+        shell: powershell
+        run: |
+          if (-not (Get-Command rg -ErrorAction SilentlyContinue)) {
+            choco install ripgrep -y --no-progress
+          }
+      - name: Quick portable validation
+        shell: powershell
+        run: |
+          ./scripts/Test-WorkEnvironment.ps1 -SelfTest -Tier Quick
+          git diff --check
+
+  quick-pwsh:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Ensure ripgrep
+        shell: powershell
+        run: |
+          if (-not (Get-Command rg -ErrorAction SilentlyContinue)) {
+            choco install ripgrep -y --no-progress
+          }
+      - name: Quick portable validation
+        shell: pwsh
+        run: |
+          ./scripts/Test-WorkEnvironment.ps1 -SelfTest -Tier Quick
+          git diff --check
+
+  standard:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Ensure ripgrep
+        shell: powershell
+        run: |
+          if (-not (Get-Command rg -ErrorAction SilentlyContinue)) {
+            choco install ripgrep -y --no-progress
+          }
+      - name: Standard portable validation
+        shell: pwsh
+        run: ./scripts/Test-WorkEnvironment.ps1 -SelfTest -Tier Standard
+
+  deep:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Ensure ripgrep
+        shell: powershell
+        run: |
+          if (-not (Get-Command rg -ErrorAction SilentlyContinue)) {
+            choco install ripgrep -y --no-progress
+          }
+      - name: Deep authority validation
+        shell: pwsh
+        run: ./scripts/Test-WorkEnvironment.ps1 -SelfTest -Tier Deep

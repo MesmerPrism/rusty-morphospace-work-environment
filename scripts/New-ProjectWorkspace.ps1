@@ -3,13 +3,25 @@ param(
     [string]$ProjectId = "",
     [string]$Purpose = "",
     [ValidateSet("1", "2")][string]$ProtocolVersion = "2",
+    [string]$SchemaRevision = "",
     [switch]$Execute,
     [switch]$SelfTest
 )
 
 $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
-$SchemaBase = "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas"
+
+if (-not $SchemaRevision) {
+    try {
+        $SchemaRevision = ([string](& git -C $RepoRoot rev-parse HEAD 2>$null)).Trim()
+    } catch {
+        $SchemaRevision = "main"
+    }
+}
+if (-not ($SchemaRevision -match "^([0-9a-f]{40}|v[0-9]+\.[0-9]+\.[0-9]+|main)$")) {
+    throw "SchemaRevision must be a full Git commit, a vMAJOR.MINOR.PATCH tag, or main."
+}
+$SchemaBase = "https://raw.githubusercontent.com/MesmerPrism/rusty-morphospace-work-environment/$SchemaRevision/schemas"
 
 function Write-JsonDocument {
     param(
@@ -43,7 +55,7 @@ function New-ProjectWorkspaceInternal {
     )
 
     if (-not ($Id -match "^[a-z0-9][a-z0-9-]{1,127}$")) {
-        throw "ProjectId must use 2-64 lowercase letters, digits, or hyphens and start with a letter or digit."
+        throw "ProjectId must use 2-128 lowercase letters, digits, or hyphens and start with a letter or digit."
     }
 
     if (-not (Test-Path -LiteralPath $Root -PathType Container)) {
@@ -252,6 +264,27 @@ function New-ProjectWorkspaceInternal {
     $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
     [System.IO.File]::WriteAllText((Join-Path $target "iteration-events.jsonl"), "", $utf8NoBom)
 
+    $readme = @"
+# $Id Morphospace Workspace
+
+This directory was generated from Rusty Morphospace Work Environment protocol
+v$Version at schema revision $SchemaRevision.
+
+Start here:
+
+1. Review project.spec.json and replace the placeholder purpose and repository scope.
+2. Keep feature.lock.json inert until descriptors have been reviewed and resolved.
+3. Add a proposed unit under iteration-units/; do not hand-edit workflow state transitions.
+4. Validate from the work-environment clone:
+
+   ``powershell -NoProfile -ExecutionPolicy Bypass -File <work-environment-root>/scripts/Test-WorkflowContracts.ps1 -WorkspaceRoot <project-root>/morphospace``
+
+The portable protocol guide is docs/PROJECT_WORKSPACE_PROTOCOL.md in the
+work-environment repository. Keep machine paths and private evidence outside
+tracked files.
+"@
+    [System.IO.File]::WriteAllText((Join-Path $target "README.md"), $readme.Trim() + [Environment]::NewLine, $utf8NoBom)
+
     $validator = Join-Path $RepoRoot "scripts\Test-WorkflowContracts.ps1"
     & $validator -RepoRoot $RepoRoot -WorkspaceRoot $target
     Write-Host "Created project workspace: $target"
@@ -272,6 +305,7 @@ function Invoke-ScaffoldSelfTest {
             "feature.lock.json",
             "workspace.state.json",
             "iteration-events.jsonl",
+            "README.md",
             "module-candidates",
             "iteration-units",
             "promotion-reviews",
@@ -281,6 +315,14 @@ function Invoke-ScaffoldSelfTest {
             if (-not (Test-Path -LiteralPath $path)) {
                 throw "Scaffold self-test did not create: $relative"
             }
+        }
+
+        $spec = Get-Content -Raw -LiteralPath (Join-Path $created "project.spec.json") | ConvertFrom-Json
+        if (-not ([string]$spec.'$schema').StartsWith("https://raw.githubusercontent.com/", [System.StringComparison]::Ordinal)) {
+            throw "Scaffold self-test expected a raw-content schema URL."
+        }
+        if ([string]$spec.'$schema' -notmatch "/([0-9a-f]{40}|v[0-9]+\.[0-9]+\.[0-9]+|main)/schemas/") {
+            throw "Scaffold self-test expected a revision-pinned schema URL."
         }
 
         $overwriteBlocked = $false

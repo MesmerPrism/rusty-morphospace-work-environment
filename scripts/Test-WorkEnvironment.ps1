@@ -1,7 +1,9 @@
 param(
     [string]$ConfigPath = "",
+    [ValidateSet("Core", "Quest", "Full")][string]$Profile = "Core",
     [switch]$Strict,
     [switch]$SelfTest,
+    [ValidateSet("Quick", "Standard", "Deep")][string]$Tier = "Quick",
     [switch]$CheckQuestDevice
 )
 
@@ -32,12 +34,66 @@ function Test-CommandAvailable {
         [bool]$Required = $false
     )
 
-    $cmd = Get-Command $Name -ErrorAction SilentlyContinue
+    $cmd = @(Get-Command $Name -ErrorAction SilentlyContinue | Select-Object -First 1)
     if ($cmd) {
-        Add-CheckResult -Name $Name -Status "ok" -Required $Required -Detail $cmd.Source
+        Add-CheckResult -Name $Name -Status "ok" -Required $Required -Detail $cmd[0].Source
     } else {
         $status = if ($Required) { "missing" } else { "optional-missing" }
         Add-CheckResult -Name $Name -Status $status -Required $Required -Detail "Command not found on PATH."
+    }
+}
+
+function Test-CommandVersion {
+    param(
+        [string]$Name,
+        [string]$Command,
+        [string[]]$Arguments,
+        [version]$Minimum,
+        [bool]$Required = $false
+    )
+
+    $cmd = @(Get-Command $Command -ErrorAction SilentlyContinue | Select-Object -First 1)
+    if (-not $cmd) {
+        $status = if ($Required) { "missing" } else { "optional-missing" }
+        Add-CheckResult -Name $Name -Status $status -Required $Required -Detail "$Command was not found on PATH."
+        return
+    }
+
+    try {
+        $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+        if ([System.IO.Path]::GetExtension($cmd[0].Source) -in @(".cmd", ".bat")) {
+            $startInfo.FileName = $env:ComSpec
+            $startInfo.Arguments = "/d /c `"$($cmd[0].Source)`" $($Arguments -join ' ')"
+        } else {
+            $startInfo.FileName = $cmd[0].Source
+            $startInfo.Arguments = ($Arguments -join " ")
+        }
+        $startInfo.UseShellExecute = $false
+        $startInfo.CreateNoWindow = $true
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+        $process = New-Object System.Diagnostics.Process
+        $process.StartInfo = $startInfo
+        [void]$process.Start()
+        $output = (($process.StandardOutput.ReadToEnd() + " " + $process.StandardError.ReadToEnd()).Trim())
+        $process.WaitForExit()
+        if ($process.ExitCode -ne 0) {
+            throw "$Command version probe exited $($process.ExitCode): $output"
+        }
+        $match = [regex]::Match($output, "(?<![0-9])([0-9]+)\.([0-9]+)(?:\.([0-9]+))?")
+        if (-not $match.Success) {
+            throw "Could not parse a version from: $output"
+        }
+        $patch = if ($match.Groups[3].Success) { $match.Groups[3].Value } else { "0" }
+        $actual = [version]("{0}.{1}.{2}" -f $match.Groups[1].Value, $match.Groups[2].Value, $patch)
+        if ($actual -lt $Minimum) {
+            Add-CheckResult -Name $Name -Status "version-too-old" -Required $Required -Detail "Found $actual; require $Minimum or newer."
+        } else {
+            Add-CheckResult -Name $Name -Status "ok" -Required $Required -Detail "Found $actual; require $Minimum or newer."
+        }
+    } catch {
+        $status = if ($Required) { "missing" } else { "optional-missing" }
+        Add-CheckResult -Name $Name -Status $status -Required $Required -Detail $_.Exception.Message
     }
 }
 
@@ -103,6 +159,14 @@ function Invoke-JsonLinesParseCheck {
 }
 
 if ($SelfTest) {
+    $singleFailureProbe = @([pscustomobject]@{ Name = "probe"; Status = "missing"; Required = $true })
+    $singleFailureCount = @($singleFailureProbe | Where-Object { $_.Required -and $_.Status -eq "missing" }).Count
+    if ($singleFailureCount -eq 1) {
+        Add-CheckResult -Name "aggregate:single-failure" -Status "ok" -Required $true -Detail "A scalar required failure remains countable under Windows PowerShell 5.1."
+    } else {
+        Add-CheckResult -Name "aggregate:single-failure" -Status "missing" -Required $true -Detail "Expected one aggregate failure, found $singleFailureCount."
+    }
+
     Get-ChildItem -LiteralPath (Join-Path $RepoRoot "manifests") -Filter "*.json" -File |
         ForEach-Object { Invoke-JsonParseCheck -Path $_.FullName }
 
@@ -163,45 +227,69 @@ if ($SelfTest) {
         Add-CheckResult -Name "scaffold:project-workspace" -Status "missing" -Required $true -Detail $_.Exception.Message
     }
 
-    try {
-        & (Join-Path $RepoRoot "scripts\Test-WorkUnitAutomation.ps1")
-        Add-CheckResult -Name "automation:work-unit" -Status "ok" -Detail "Validated transitions, preservation, routing, push preparation, and recovery."
-    } catch {
-        Add-CheckResult -Name "automation:work-unit" -Status "missing" -Required $true -Detail $_.Exception.Message
-    }
-
-    foreach ($authorityTest in @(
-        [pscustomobject]@{ name = 'authority:record-readiness'; script = 'Test-AuthorityRecordReadiness.ps1'; detail = 'Validated host probe, capsule identity, content-addressed clean-room reuse, typed v2 validator admission, stale-preflight rejection, typed failures, and ambient-hash rejection.' },
-        [pscustomobject]@{ name = 'authority:runner-fast'; script = 'Test-ValidationAuthorityRunnerFast.ps1'; detail = 'Drove the real pinned admission-only Preflight and full Validate branches through a bounded fixture and validated the published receipt through the full consumer.' },
-        [pscustomobject]@{ name = 'authority:launcher'; script = 'Test-ValidationAuthorityLauncher.ps1'; detail = 'Validated pinned child launch, timeout, no-overwrite outputs, and captured streams.' },
-        [pscustomobject]@{ name = 'authority:handoff'; script = 'Test-AuthorityRunnerHandoff.ps1'; detail = 'Validated pinned runner selection, arguments, nonce, and child failure propagation.' },
-        [pscustomobject]@{ name = 'authority:trust-migration'; script = 'Test-TrustMigrationAuthority.ps1'; detail = 'Validated tracked authority migration and substitution rejection.' },
-        [pscustomobject]@{ name = 'authority:validation-execution'; script = 'Test-ValidationExecutionAuthority.ps1'; detail = 'Validated schema-pure late publication, strict ownership re-observation, nonce-bound execution, workspace/repository receipt normalization, exact receipt references, and forged receipt rejection.' },
-        [pscustomobject]@{ name = 'authority:ownership'; script = 'Test-OwnershipAuthority.ps1'; detail = 'Validated ownership, clean-room closure, historical blobs, and damaged input rejection.' },
-        [pscustomobject]@{ name = 'authority:transition-ledger'; script = 'Test-TransitionLedger.ps1'; detail = 'Validated interruption repair and idempotent transition completion.' }
+    foreach ($quickTest in @(
+        [pscustomobject]@{ name = "workflow:public-boundary"; script = "Test-PublicBoundary.ps1"; detail = "Validated the portable public/private boundary." },
+        [pscustomobject]@{ name = "workflow:documentation-links"; script = "Test-DocumentationLinks.ps1"; detail = "Validated relative Markdown links." },
+        [pscustomobject]@{ name = "workflow:skill-templates"; script = "Test-SkillTemplates.ps1"; detail = "Validated the four portable skill routers and locator contract." },
+        [pscustomobject]@{ name = "workflow:environment-validation"; script = "Test-EnvironmentValidation.ps1"; detail = "Validated strict placeholders, repo paths, and Python/JDK minimum versions." },
+        [pscustomobject]@{ name = "workflow:local-skill-bootstrap"; script = "Test-LocalSkillBootstrap.ps1"; detail = "Validated plan, install, verify, drift, backup, update, and local-file preservation." }
     )) {
         try {
-            & (Join-Path (Join-Path $RepoRoot 'scripts') ([string]$authorityTest.script))
-            Add-CheckResult -Name ([string]$authorityTest.name) -Status 'ok' -Detail ([string]$authorityTest.detail)
+            & (Join-Path (Join-Path $RepoRoot "scripts") $quickTest.script)
+            Add-CheckResult -Name $quickTest.name -Status "ok" -Detail $quickTest.detail
         } catch {
-            Add-CheckResult -Name ([string]$authorityTest.name) -Status 'missing' -Required $true -Detail $_.Exception.Message
+            Add-CheckResult -Name $quickTest.name -Status "missing" -Required $true -Detail $_.Exception.Message
+        }
+    }
+
+    if ($Tier -in @("Standard", "Deep")) {
+        try {
+            & (Join-Path $RepoRoot "scripts\Test-WorkUnitAutomation.ps1")
+            Add-CheckResult -Name "automation:work-unit" -Status "ok" -Detail "Validated transitions, preservation, routing, push preparation, and recovery."
+        } catch {
+            Add-CheckResult -Name "automation:work-unit" -Status "missing" -Required $true -Detail $_.Exception.Message
+        }
+    }
+
+    if ($Tier -eq "Deep") {
+        foreach ($authorityTest in @(
+            [pscustomobject]@{ name = 'authority:record-readiness'; script = 'Test-AuthorityRecordReadiness.ps1'; detail = 'Validated host probe, capsule identity, content-addressed clean-room reuse, typed v2 validator admission, stale-preflight rejection, typed failures, and ambient-hash rejection.' },
+            [pscustomobject]@{ name = 'authority:runner-fast'; script = 'Test-ValidationAuthorityRunnerFast.ps1'; detail = 'Drove the real pinned admission-only Preflight and full Validate branches through a bounded fixture and validated the published receipt through the full consumer.' },
+            [pscustomobject]@{ name = 'authority:launcher'; script = 'Test-ValidationAuthorityLauncher.ps1'; detail = 'Validated pinned child launch, timeout, no-overwrite outputs, and captured streams.' },
+            [pscustomobject]@{ name = 'authority:handoff'; script = 'Test-AuthorityRunnerHandoff.ps1'; detail = 'Validated pinned runner selection, arguments, nonce, and child failure propagation.' },
+            [pscustomobject]@{ name = 'authority:trust-migration'; script = 'Test-TrustMigrationAuthority.ps1'; detail = 'Validated tracked authority migration and substitution rejection.' },
+            [pscustomobject]@{ name = 'authority:validation-execution'; script = 'Test-ValidationExecutionAuthority.ps1'; detail = 'Validated schema-pure late publication, strict ownership re-observation, nonce-bound execution, workspace/repository receipt normalization, exact receipt references, and forged receipt rejection.' },
+            [pscustomobject]@{ name = 'authority:ownership'; script = 'Test-OwnershipAuthority.ps1'; detail = 'Validated ownership, clean-room closure, historical blobs, and damaged input rejection.' },
+            [pscustomobject]@{ name = 'authority:transition-ledger'; script = 'Test-TransitionLedger.ps1'; detail = 'Validated interruption repair and idempotent transition completion.' }
+        )) {
+            try {
+                & (Join-Path (Join-Path $RepoRoot 'scripts') ([string]$authorityTest.script))
+                Add-CheckResult -Name ([string]$authorityTest.name) -Status 'ok' -Detail ([string]$authorityTest.detail)
+            } catch {
+                Add-CheckResult -Name ([string]$authorityTest.name) -Status 'missing' -Required $true -Detail $_.Exception.Message
+            }
         }
     }
 }
+
+$questProfile = $Profile -in @("Quest", "Full")
+$fullProfile = $Profile -eq "Full"
 
 Test-CommandAvailable -Name "git" -Required $true
 Test-CommandAvailable -Name "rustup" -Required $true
 Test-CommandAvailable -Name "cargo" -Required $true
 Test-CommandAvailable -Name "python" -Required $true
 Test-CommandAvailable -Name "rg" -Required $true
+Test-CommandVersion -Name "python.version" -Command "python" -Arguments @("--version") -Minimum ([version]"3.11") -Required $true
 
-Test-CommandAvailable -Name "adb" -Required $false
-Test-CommandAvailable -Name "java" -Required $false
-Test-CommandAvailable -Name "javac" -Required $false
-Test-CommandAvailable -Name "node" -Required $false
-Test-CommandAvailable -Name "npm" -Required $false
-Test-CommandAvailable -Name "npx" -Required $false
-Test-CommandAvailable -Name "dotnet" -Required $false
+Test-CommandAvailable -Name "adb" -Required $questProfile
+Test-CommandAvailable -Name "java" -Required $questProfile
+Test-CommandAvailable -Name "javac" -Required $questProfile
+Test-CommandVersion -Name "java.version" -Command "java" -Arguments @("-version") -Minimum ([version]"17.0") -Required $questProfile
+Test-CommandAvailable -Name "node" -Required $fullProfile
+Test-CommandAvailable -Name "npm" -Required $fullProfile
+Test-CommandAvailable -Name "npx" -Required $fullProfile
+Test-CommandAvailable -Name "dotnet" -Required $fullProfile
 
 if ($ConfigPath) {
     if (Test-Path -LiteralPath $ConfigPath) {
@@ -213,11 +301,18 @@ if ($ConfigPath) {
             Test-ConfiguredPath -Name "repos_root" -Value $config.repos_root -Required $Strict.IsPresent
             Test-ConfiguredPath -Name "artifacts_root" -Value $config.artifacts_root -Required $false
             Test-ConfiguredPath -Name "skills_root" -Value $config.skills_root -Required $false
+            Test-ConfiguredPath -Name "work_environment_root" -Value $config.work_environment_root -Required $Strict.IsPresent
+
+            if ($config.repos) {
+                foreach ($repoProperty in @($config.repos.PSObject.Properties)) {
+                    Test-ConfiguredPath -Name ("repos." + $repoProperty.Name) -Value $repoProperty.Value -Required $Strict.IsPresent
+                }
+            }
 
             if ($config.android) {
-                Test-ConfiguredPath -Name "android.sdk_root" -Value $config.android.sdk_root -Required $Strict.IsPresent
-                Test-ConfiguredPath -Name "android.ndk_root" -Value $config.android.ndk_root -Required $false
-                Test-ConfiguredPath -Name "android.jdk_root" -Value $config.android.jdk_root -Required $false
+                Test-ConfiguredPath -Name "android.sdk_root" -Value $config.android.sdk_root -Required ($Strict.IsPresent -and $questProfile)
+                Test-ConfiguredPath -Name "android.ndk_root" -Value $config.android.ndk_root -Required ($Strict.IsPresent -and $questProfile)
+                Test-ConfiguredPath -Name "android.jdk_root" -Value $config.android.jdk_root -Required ($Strict.IsPresent -and $questProfile)
                 Test-ConfiguredPath -Name "android.openxr_loader_quest" -Value $config.android.openxr_loader_quest -Required $false
             }
         } catch {
@@ -244,14 +339,14 @@ if ($CheckQuestDevice) {
 
 $results | Sort-Object Name | Format-Table -AutoSize
 
-$failedRequired = $results | Where-Object { $_.Required -and $_.Status -eq "missing" }
+$failedRequired = @($results | Where-Object { $_.Required -and $_.Status -in @("missing", "placeholder", "version-too-old", "invalid") })
 if ($Strict -and $failedRequired.Count -gt 0) {
     Write-Error "Required checks failed in strict mode."
     exit 1
 }
 
 if ($SelfTest) {
-    $selfTestFailures = $results | Where-Object { $_.Name -match "^(json|jsonl|powershell|workflow|scaffold|automation|authority):" -and $_.Status -ne "ok" }
+    $selfTestFailures = @($results | Where-Object { $_.Name -match "^(aggregate|json|jsonl|powershell|workflow|scaffold|automation|authority):" -and $_.Status -ne "ok" })
     if ($selfTestFailures.Count -gt 0) {
         Write-Error "Self-test failed."
         exit 1

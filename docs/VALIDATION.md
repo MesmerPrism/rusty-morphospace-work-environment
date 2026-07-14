@@ -9,13 +9,36 @@ Quick checks:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-PublicBoundary.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkEnvironment.ps1 -SelfTest
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkEnvironment.ps1 -SelfTest -Tier Quick
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkflowContracts.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\New-ProjectWorkspace.ps1 -SelfTest
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-DocumentationLinks.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-SkillTemplates.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-EnvironmentValidation.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-LocalSkillBootstrap.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-FeatureLockResolver.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ExecutedPushReceipt.ps1 -SelfTest
 git diff --check
 ```
+
+`Quick` covers portable contracts, scaffolding, skill bootstrap, and docs.
+`Standard` additionally runs the work-unit automation suite. `Deep` adds the
+closed-room validation-authority suites. A device is not part of any of these
+tiers.
+
+Validate a configured contributor machine separately:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\Test-WorkEnvironment.ps1 `
+  -ConfigPath .\local\local.paths.json `
+  -Profile Core `
+  -Strict
+```
+
+Use `-Profile Quest` when the Android SDK, NDK, JDK 17, and ADB toolchain are
+required. Strict mode rejects required placeholders and missing configured repo
+paths; Python 3.11 is required for every profile.
 
 JSON parse:
 
@@ -54,6 +77,14 @@ Validate an instantiated project workspace:
 powershell -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Test-WorkflowContracts.ps1 `
   -WorkspaceRoot <project-root>\morphospace
+```
+
+The checked-in v2 onboarding workspace is a semantic regression target:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\Test-WorkflowContracts.ps1 `
+  -WorkspaceRoot .\examples\hello-morphospace-v2\morphospace
 ```
 
 The scaffold self-test creates a temporary project workspace, validates it,

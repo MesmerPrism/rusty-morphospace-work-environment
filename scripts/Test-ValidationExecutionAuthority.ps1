@@ -60,7 +60,7 @@ try {
     $publicationWorkspace=Join-Path $workspace 'publication-workspace'
     [IO.Directory]::CreateDirectory((Join-Path $publicationWorkspace 'publication'))|Out-Null
     [IO.File]::WriteAllText((Join-Path $publicationWorkspace 'publication\.keep'),'baseline',[Text.UTF8Encoding]::new($false))
-    $publicationGit=(Get-Command git.exe -CommandType Application -ErrorAction Stop).Source
+    $publicationGit=(Get-Command git.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
     Invoke-TestGit $publicationGit $publicationWorkspace @('init','--quiet')|Out-Null
     Invoke-TestGit $publicationGit $publicationWorkspace @('config','user.name','Publication Test')|Out-Null
     Invoke-TestGit $publicationGit $publicationWorkspace @('config','user.email','publication@example.invalid')|Out-Null

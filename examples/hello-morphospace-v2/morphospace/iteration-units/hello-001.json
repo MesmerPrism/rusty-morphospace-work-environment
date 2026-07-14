@@ -1,0 +1,37 @@
+{
+  "$schema": "https://raw.githubusercontent.com/MesmerPrism/rusty-morphospace-work-environment/114d86d0f5dba66e8bf7b949c8d117ade90f10b4/schemas/iteration-unit.schema.json",
+  "schema": "rusty.morphospace.workflow.iteration_unit.v1",
+  "unit_id": "hello-001",
+  "project_id": "hello-morphospace",
+  "status": "proposed",
+  "objective": "Verify the public tutorial and keep its default feature lock inert.",
+  "tags": ["onboarding", "tutorial"],
+  "change_categories": ["documentation-only"],
+  "instruction_impact": "review",
+  "instruction_surfaces": [
+    {
+      "surface_kind": "readme",
+      "path": "<project-root>/README.md",
+      "owner": "project-shell",
+      "change_reason": "Keep the tutorial commands aligned with the checked-in workspace.",
+      "action": "review-no-change",
+      "status": "planned",
+      "validation": "Test-DocumentationLinks.ps1 and Test-WorkflowContracts.ps1",
+      "skill_id": null
+    }
+  ],
+  "instruction_none_justification": null,
+  "prerequisites": [],
+  "allowed_repositories": [{"repo_id": "project-shell", "allowed_paths": ["README.md", "morphospace/"]}],
+  "non_scope": ["Runtime implementation.", "Feature activation.", "Device work."],
+  "acceptance": [
+    {"acceptance_id": "workflow-valid", "proof": "The example passes semantic workflow validation.", "command": "Test-WorkflowContracts.ps1 -WorkspaceRoot <project-root>/morphospace"},
+    {"acceptance_id": "inert-lock", "proof": "No selected feature or effect is present.", "command": "Inspect feature.lock.json and run Test-WorkflowContracts.ps1"}
+  ],
+  "risk_tier": "quick",
+  "device_requirement": "none",
+  "validation": [{"profile_id": "workflow", "command": "Test-WorkflowContracts.ps1 -WorkspaceRoot <project-root>/morphospace"}],
+  "outputs": ["Validated public onboarding example."],
+  "commit_policy": "Commit only after the example and documentation links pass.",
+  "push_checkpoint": "integration-batch"
+}

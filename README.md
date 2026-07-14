@@ -3,8 +3,14 @@
 Portable onboarding and project-iteration workspace for Rusty Morphospace
 development.
 
-Current portable protocol release: `0.2.1` (2026-07-14). The machine-readable
-release manifest is `manifests/release-0.2.1.json`. The immutable `0.1.0`
+Current work-environment protocol release: `0.3.0` (2026-07-15). Its
+implementation and acceptance plan is
+[Onboarding And Local-Skill Implementation Plan](docs/ONBOARDING_IMPLEMENTATION_PLAN.md),
+and its machine-readable release surface is the
+[0.3.0 manifest](manifests/release-0.3.0.json). This version identifies the
+portable onboarding, protocol, and tooling release; it does not change the
+separately governed Rusty Morphospace platform/runtime baseline. The immutable
+work-environment `0.1.0`
 manifest remains readable. Existing project instances adopt either baseline
 additively: preserve live events and receipts, normalize portable
 change categories while retaining domain detail in `tags`, and validate before
@@ -53,16 +59,30 @@ Not included:
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Test-WorkEnvironment.ps1 `
-  -ConfigPath .\local\local.paths.json
+  -ConfigPath .\local\local.paths.json `
+  -Profile Core `
+  -Strict
 ```
 
-4. Install the skill templates into your agent environment:
+4. Read [Local Skill Bootstrap](docs/LOCAL_SKILL_BOOTSTRAP.md), then plan,
+   install, and verify the four skill routers:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Install-LocalSkills.ps1 `
   -TargetRoot <codex-skills-root> `
+  -Action Plan
+
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\Install-LocalSkills.ps1 `
+  -TargetRoot <codex-skills-root> `
+  -Action Install `
   -Execute
+
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\Install-LocalSkills.ps1 `
+  -TargetRoot <codex-skills-root> `
+  -Action Verify
 ```
 
 5. For a new or existing application, read
@@ -79,6 +99,10 @@ powershell -NoProfile -ExecutionPolicy Bypass `
 6. For Quest APK work, read [Quest APK Workflow](docs/QUEST_APK_WORKFLOW.md)
    and use the public Meta Quest workflow repo as the device-operations
    authority.
+
+The checked-in [Hello Morphospace V2](examples/hello-morphospace-v2/README.md)
+workspace demonstrates an inert lock, a proposed bounded unit, and semantic
+validation without a device.
 
 ## Project Iteration
 
@@ -99,18 +123,10 @@ powershell -NoProfile -ExecutionPolicy Bypass `
 This repository owns the portable protocol. The project adopting it owns its
 live `morphospace/` state and evidence.
 
-> **Staged authority note:** receipt-security corrective units use the tracked,
-> hash-pinned authority runner. A record attempt first passes the quick contract,
-> seals an exact content-addressed capsule, probes the child host, and publishes
-> a same-input v2 preflight with a typed validator-admission probe. That probe
-> checks the sealed validator, unit contract, command identities, and acceptance
-> bindings without executing acceptance commands. Preflight and recovery-source
-> tests are non-promotional; only the single fresh nonce-bound authority run may
-> execute the full owner validator and support the unit's derived v2 receipt.
-> Failed stages remain typed evidence, and cache reuse rejects any
-> runner, capsule, host, materialization, or fingerprint drift. Canonical
-> authority documents remain schema-pure; the runner binds their paths through
-> separate typed references instead of injecting location properties.
+Receipt-security corrective units use a stricter hash-pinned runner and derived
+v2 receipt. Preflight remains non-promotional. See
+[Advanced Validation Authority](docs/VALIDATION_AUTHORITY_ADVANCED.md) before
+changing that path or running its Deep tests.
 
 New scaffolds use `project_spec.v2`, `feature_lock.v2`, and
 `workspace_state.v2`. Exact feature descriptors resolve through
@@ -157,6 +173,7 @@ unit, and a project-owned static gate.
 AGENTS.md
 README.md
 docs/
+examples/
 manifests/
 schemas/
 scripts/

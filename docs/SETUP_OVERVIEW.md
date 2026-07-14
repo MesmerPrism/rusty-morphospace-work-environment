@@ -39,11 +39,13 @@ Then run:
 powershell -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Test-WorkEnvironment.ps1 `
   -ConfigPath .\local\local.paths.json `
+  -Profile Core `
   -Strict
 ```
 
-Use `-SelfTest` when you only want to verify that the repo's manifests and
-scripts parse.
+Use `-Profile Quest` only when Android/Quest build dependencies are in scope.
+Use `-SelfTest -Tier Quick` to verify the repo's portable contracts without a
+device; `Standard` adds work-unit automation and `Deep` adds authority tests.
 
 ## 3. Clone Source Repos
 
@@ -69,16 +71,26 @@ to decide where a change belongs.
 
 ## 4. Install Local Skills
 
+Read [Local Skill Bootstrap](LOCAL_SKILL_BOOTSTRAP.md) for new installs,
+existing unmanaged directories, provenance, backups, and updates.
+
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Install-LocalSkills.ps1 `
   -TargetRoot <codex-skills-root> `
+  -Action Plan
+
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\Install-LocalSkills.ps1 `
+  -TargetRoot <codex-skills-root> `
+  -Action Install `
   -Execute
 ```
 
 If your agent uses a different skill location, pass that directory with
-`-TargetRoot`. The installer is dry-run by default and refuses to overwrite an
-existing skill directory.
+`-TargetRoot`. Verify after installation with `-Action Verify`. Install never
+overwrites an existing directory; updates require `-Action Update -Execute` and
+create a timestamped backup.
 
 ## 5. Scaffold A Project Workflow
 
