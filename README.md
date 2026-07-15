@@ -3,7 +3,7 @@
 Portable onboarding and project-iteration workspace for Rusty Morphospace
 development.
 
-Current work-environment protocol candidate: `0.4.0` (2026-07-15). Its
+Current work-environment protocol release: `0.4.0` (2026-07-15). Its
 implementation and acceptance plan is
 [Onboarding And Local-Skill Implementation Plan](docs/ONBOARDING_IMPLEMENTATION_PLAN.md),
 and its machine-readable release surface is the

@@ -2,7 +2,7 @@
   "schema": "rusty.morphospace.work_environment.release.v1",
   "version": "0.4.0",
   "released_at": "2026-07-15",
-  "publication_status": "candidate",
+  "publication_status": "published",
   "compatibility": "additive-immutable-release-capsules-with-v1-and-v2-workspace-read-compatibility",
   "protocols": [
     "rusty.morphospace.workflow.project_spec.v1",
