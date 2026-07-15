@@ -1,0 +1,40 @@
+{
+  "schema": "rusty.morphospace.work_environment.release.v1",
+  "version": "0.4.0",
+  "released_at": "2026-07-15",
+  "publication_status": "candidate",
+  "compatibility": "additive-immutable-release-capsules-with-v1-and-v2-workspace-read-compatibility",
+  "protocols": [
+    "rusty.morphospace.workflow.project_spec.v1",
+    "rusty.morphospace.workflow.project_spec.v2",
+    "rusty.morphospace.workflow.iteration_unit.v1",
+    "rusty.morphospace.workflow.iteration_event.v1",
+    "rusty.morphospace.workflow.iteration_event.v2",
+    "rusty.morphospace.workflow.validation_receipt.v1",
+    "rusty.morphospace.workflow.validation_receipt.v2",
+    "rusty.morphospace.workflow.executed_push_receipt.v1",
+    "rusty.morphospace.workflow.release_capsule.v1",
+    "rusty.morphospace.workflow.release_capsule_validation_receipt.v1",
+    "rusty.morphospace.workflow.historical_release_closure_receipt.v1",
+    "rusty.morphospace.local_skill_source.v1",
+    "rusty.morphospace.local_work_environment.v1"
+  ],
+  "invariants": [
+    "Version 0.4.0 identifies the portable work-environment protocol and tooling release; it does not change the separately governed Rusty Morphospace platform or runtime baseline.",
+    "Accepted events, receipts, candidates, and release capsules remain append-only.",
+    "A candidate cut requires declared remote refs to equal the pinned revision; historical closure requires ancestor-or-equal and rejects missing or rewritten refs.",
+    "Every release repository is pinned by full commit and tree and is materialized in an isolated clean worktree.",
+    "Active worktrees are observed but never materialized as release payload, mutated, or required to remain clean for historical closure.",
+    "Branch convergence is a candidate-cut property and is not a permanent post-release branch constraint.",
+    "Damaged original evidence stays explicitly damaged; an independent reconstruction never claims to be the original bytes.",
+    "Historical exact-tree graphs use isolated capsule materializations rather than live worktree overlays.",
+    "Historical closure does not validate post-cut commits or require a device rerun for an unchanged pinned source subject."
+  ],
+  "onboarding_entrypoint": "docs/SETUP_OVERVIEW.md",
+  "release_capsule_entrypoint": "docs/RELEASE_CAPSULE_AND_HISTORICAL_CLOSURE.md",
+  "automation_entrypoint": "scripts/Invoke-WorkUnitAutomation.ps1",
+  "release_capsule_validation_entrypoint": "scripts/Test-ReleaseCapsule.ps1 -SelfTest",
+  "validation_entrypoint": "scripts/Test-WorkEnvironment.ps1 -SelfTest -Tier Quick",
+  "deep_validation_entrypoint": "scripts/Test-WorkEnvironment.ps1 -SelfTest -Tier Deep",
+  "license": "AGPL-3.0-or-later"
+}

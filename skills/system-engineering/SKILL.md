@@ -101,6 +101,13 @@ planning last, and reverse-order rollback anchors. A prepared plan is never
 execution evidence, and the work-unit automation must not manufacture this
 receipt.
 
+Separate release-candidate cut from historical closure. Seal exact commits and
+trees while declared refs are equal; later require ancestor-or-equal refs and
+verify those trees in isolated clean materializations. Active worktree dirt is
+observed context, not historical payload. If accepted evidence bytes are
+missing or hash-mismatched, preserve the damage and append an independent
+reconstruction that explicitly does not claim to be the original.
+
 For an adopting application, require a behavior-neutral bootstrap: select its
 baseline shell, record optional nearby families as disabled, assert one
 unrelated feature is absent and inert, and create candidate records before

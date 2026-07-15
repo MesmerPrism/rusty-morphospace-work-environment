@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/historical-release-closure-receipt.schema.json",
+  "title": "Historical release closure receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "closure_id", "project_id", "release_id", "created_at", "status", "capsule", "historical_validation", "exact_tree_graph", "publication_evidence", "active_work_preservation", "device_validation", "does_not_prove"],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.workflow.historical_release_closure_receipt.v1" },
+    "closure_id": { "$ref": "#/$defs/id" }, "project_id": { "$ref": "#/$defs/id" }, "release_id": { "$ref": "#/$defs/id" },
+    "created_at": { "type": "string", "format": "date-time" }, "status": { "const": "closed" },
+    "capsule": { "$ref": "#/$defs/file-binding" }, "historical_validation": { "$ref": "#/$defs/file-binding" }, "exact_tree_graph": { "$ref": "#/$defs/file-binding" },
+    "publication_evidence": {
+      "type": "object", "additionalProperties": false, "required": ["original_binding_status", "reconstruction", "claim"],
+      "properties": {
+        "original_binding_status": { "enum": ["intact", "damaged-original-unavailable"] },
+        "reconstruction": { "$ref": "#/$defs/file-binding" },
+        "claim": { "const": "independent-reconstruction-not-original-bytes" }
+      }
+    },
+    "active_work_preservation": { "type": "object", "additionalProperties": false, "required": ["mutated", "disposition"], "properties": { "mutated": { "const": false }, "disposition": { "const": "observed-not-materialized" } } },
+    "device_validation": { "const": "historical-evidence-reused-no-device-rerun" },
+    "does_not_prove": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "file-binding": { "type": "object", "additionalProperties": false, "required": ["path", "sha256"], "properties": { "path": { "type": "string", "minLength": 1 }, "sha256": { "$ref": "#/$defs/sha256" } } }
+  }
+}

@@ -502,7 +502,7 @@ function Test-ProjectBundle {
                 })
                 Assert-Contract ($matchingSkill.Count -eq 1) "$Context unit '$($unit.unit_id)' needs one instruction surface for relevant skill '$requiredSkillId'."
                 if ($matchingSkill.Count -eq 1) {
-                    Assert-Contract ($matchingSkill[0].action -eq "update") "$Context unit '$($unit.unit_id)' relevant skill '$requiredSkillId' must be updated."
+                    Assert-Contract (@("update", "review-no-change") -contains [string]$matchingSkill[0].action) "$Context unit '$($unit.unit_id)' relevant skill '$requiredSkillId' must be updated or explicitly reviewed without change."
                 }
             }
 
@@ -796,6 +796,7 @@ $requiredSchemaNames = @(
     "claim-baseline.schema.json",
     "current-unit-protocol.schema.json",
     "executed-push-receipt.schema.json",
+    "historical-release-closure-receipt.schema.json",
     "feature-descriptor.schema.json",
     "feature-lock.schema.json",
     "feature-lock-v2.schema.json",
@@ -814,6 +815,8 @@ $requiredSchemaNames = @(
     "promotion-review.schema.json",
     "push-bundle-plan.schema.json",
     "repository-map.schema.json",
+    "release-capsule.schema.json",
+    "release-capsule-validation-receipt.schema.json",
     "legacy-event-prefix-anchor.schema.json",
     "owner-validator-registry.schema.json",
     "revision-set.schema.json",
@@ -872,6 +875,18 @@ if ((Test-Path -LiteralPath $executedPushTemplate -PathType Leaf) -and (Test-Pat
         & $executedPushValidator -Path $executedPushTemplate | Out-Null
     } catch {
         Add-Failure -Message "Executed-push receipt example failed semantic validation: $($_.Exception.Message)"
+    }
+}
+
+$releaseCapsuleTemplate = Join-Path $templatesRoot "release-capsule.example.json"
+$releaseCapsuleValidator = Join-Path $RepoRoot "scripts\Test-ReleaseCapsule.ps1"
+Assert-Contract (Test-Path -LiteralPath $releaseCapsuleTemplate -PathType Leaf) "Required release-capsule example is missing."
+Assert-Contract (Test-Path -LiteralPath $releaseCapsuleValidator -PathType Leaf) "Required release-capsule validator is missing."
+if ((Test-Path -LiteralPath $releaseCapsuleTemplate -PathType Leaf) -and (Test-Path -LiteralPath $releaseCapsuleValidator -PathType Leaf)) {
+    try {
+        & $releaseCapsuleValidator -Path $releaseCapsuleTemplate -SchemaOnly | Out-Null
+    } catch {
+        Add-Failure -Message "Release-capsule example failed semantic validation: $($_.Exception.Message)"
     }
 }
 

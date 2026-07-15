@@ -169,6 +169,12 @@ in runner variables or typed reference wrappers, never injected properties.
   no-force proof, and reverse-order rollback anchors. A release may additionally
   bind the pre-publication capture that supplied every old revision; multiple
   planning refs must form the final execution suffix.
+- Seal a coordinated release with `release_capsule.v1`: exact remote equality
+  and branch convergence belong to the candidate cut, while later historical
+  closure requires ancestor-or-equal remote refs and an isolated exact clean
+  tree. Observe active worktrees without mutating them or treating overlays as
+  release payload. Route details to
+  `docs\RELEASE_CAPSULE_AND_HISTORICAL_CLOSURE.md`.
 - A downstream adoption unit must be behavior-neutral unless its scope says
   otherwise: select the baseline shell, list optional families disabled,
   assert an unrelated nearby feature is absent/inert, and add candidate records
@@ -192,6 +198,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\New-ProjectWorkspa
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkUnitAutomation.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-FeatureLockResolver.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ExecutedPushReceipt.ps1 -SelfTest
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ReleaseCapsule.ps1 -SelfTest
 git diff --check
 ```
 

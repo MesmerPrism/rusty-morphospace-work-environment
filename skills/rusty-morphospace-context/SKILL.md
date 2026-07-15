@@ -112,12 +112,20 @@ For composition, module extraction, activation, iteration, or promotion, read:
 3. `docs/FEATURE_ACTIVATION.md`
 4. `docs/AUTONOMOUS_ITERATION.md`
 5. `docs/INSTRUCTION_SYNCHRONIZATION.md`
+6. `docs/RELEASE_CAPSULE_AND_HISTORICAL_CLOSURE.md` for a release cut,
+   post-release audit, or damaged publication-evidence repair.
 
 Work only in the repositories and paths declared by the current unit. Use the
 owned automation for transitions; inspection is non-mutating and writes require
 explicit execution. A validation pass is evidence, not acceptance. Preserve
 blocked/interrupted history, dirty user work, exact repo heads, cleanup state,
 and public/private evidence boundaries.
+
+Treat a release as sealed commits and trees, not permanently frozen live
+branches. Require exact remote equality and convergence at the candidate cut;
+later historical closure requires ancestor-or-equal refs and isolated clean
+materialization. Observe dirty active work without mutating it or absorbing it
+into the release.
 
 ## Validation And Instruction Impact
 

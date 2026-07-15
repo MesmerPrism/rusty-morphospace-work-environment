@@ -6,6 +6,12 @@ autonomous iteration. The work-environment repository owns the portable
 protocol and templates. Each application or planning repository owns its live
 instance and evidence.
 
+For a coordinated release, add a sealed `release_capsule.v1` under the
+project-owned receipt/evidence surface and validate it at the candidate cut.
+Later closure audits use ancestry, exact pinned trees, and isolated clean
+materialization; they do not require current contributor worktrees to be clean.
+See [Release Capsules And Historical Closure](RELEASE_CAPSULE_AND_HISTORICAL_CLOSURE.md).
+
 ## Decision
 
 Create a `morphospace/` directory in each project that adopts this protocol.

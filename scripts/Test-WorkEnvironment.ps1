@@ -214,6 +214,13 @@ if ($SelfTest) {
     }
 
     try {
+        & (Join-Path $RepoRoot "scripts\Test-ReleaseCapsule.ps1") -SelfTest
+        Add-CheckResult -Name "workflow:release-capsule" -Status "ok" -Detail "Validated immutable candidate cuts, historical descendant closure, isolated trees, preserved dirty overlays, and damaged evidence rejection."
+    } catch {
+        Add-CheckResult -Name "workflow:release-capsule" -Status "missing" -Required $true -Detail $_.Exception.Message
+    }
+
+    try {
         & (Join-Path $RepoRoot "scripts\Test-FeatureLockResolver.ps1")
         Add-CheckResult -Name "workflow:feature-lock-v2" -Status "ok" -Detail "Validated descriptor closure, hashes, effect union, activation, and damaged-lock rejection."
     } catch {

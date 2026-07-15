@@ -131,6 +131,13 @@ exact Git trees, include workflow state and validation surfaces, and label any
 intentional third-party or generated exclusions. A later dirty filesystem scan
 does not replace a versioned release node.
 
+For historical release closure, graph the sealed capsule's exact commit trees
+from isolated clean materializations. Treat current branches as ancestry and
+no-rewrite observations, and current dirty worktrees as excluded overlays.
+Branch convergence belongs to the candidate cut, not to permanent
+post-release state. Keep damaged original evidence and any independent
+reconstruction as distinct nodes.
+
 Tracked-file inventories must include every deliberately committed executable
 source, including Rust `src/bin`, and tracked dependency/license material.
 Never treat a directory named `bin` as build output in tracked mode. Untracked

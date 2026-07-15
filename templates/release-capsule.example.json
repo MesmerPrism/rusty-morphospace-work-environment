@@ -1,0 +1,35 @@
+{
+  "$schema": "../schemas/release-capsule.schema.json",
+  "schema": "rusty.morphospace.workflow.release_capsule.v1",
+  "capsule_id": "example-release-capsule",
+  "project_id": "example-project",
+  "release_id": "rel-001",
+  "release_version": "1.0.0",
+  "status": "sealed",
+  "created_at": "2026-01-01T00:00:00Z",
+  "closure_policy": {
+    "candidate_cut_remote_relation": "exact",
+    "historical_closure_remote_relation": "ancestor-or-equal",
+    "active_worktrees": "observed-not-materialized",
+    "materialization": "isolated-clean-tree",
+    "branch_convergence": "candidate-cut-only",
+    "receipt_history": "append-only"
+  },
+  "repositories": [
+    {
+      "repo_id": "example-source",
+      "role": "release-source",
+      "remote_url": "https://example.invalid/example-source.git",
+      "revision": "1111111111111111111111111111111111111111",
+      "tree": "2222222222222222222222222222222222222222",
+      "remote_refs": [{ "ref_id": "example-source-main", "ref": "refs/heads/main" }],
+      "payload": true,
+      "overlay_disposition": "excluded",
+      "materialization": "isolated-clean-tree",
+      "validation_refs": ["source-validation"]
+    }
+  ],
+  "validations": [{ "artifact_id": "source-validation", "path": "<evidence-root>/source-validation.json", "sha256": "3333333333333333333333333333333333333333333333333333333333333333" }],
+  "external_receipts": [],
+  "does_not_prove": ["The example is a contract fixture and is not release evidence."]
+}
