@@ -86,6 +86,9 @@ Project composition is closed-world. `project.spec.json` owns the declared
 composition, `feature.lock.json` owns the resolved permission/effect closure,
 and runtime activation additionally requires a descriptor-approved current-run
 input. Unlisted, denied, stale, or merely registered features remain inert.
+Descriptor filesystem locations are local resolver inputs only. A v2 lock uses
+forward-slash descriptor references relative to its `project.spec.json` and
+rejects absolute, parent-traversing, or out-of-project paths.
 
 UI handlers collect inputs, invoke owned routes, show progress, and project
 structured evidence. Every accepted operator action needs a CLI or local API

@@ -40,6 +40,7 @@ current module/capability registries.
     feature.lock.json
     workspace.state.json
     iteration-events.jsonl
+    features/
     module-candidates/
     iteration-units/
     promotion-reviews/
@@ -54,6 +55,7 @@ current module/capability registries.
   fingerprint; composition still does not activate a run.
 - `workspace.state.json` is the compact resume surface for an agent.
 - `iteration-events.jsonl` is append-only chronological evidence.
+- `features/` holds the owner-issued descriptors selected by this project.
 - `module-candidates/` holds extraction records throughout their lifecycle.
 - `iteration-units/` holds independently reviewable work packets.
 - `promotion-reviews/` holds gate decisions for module maturity changes.
@@ -160,6 +162,12 @@ powershell -NoProfile -ExecutionPolicy Bypass `
   -OutPath <project-root>\morphospace\feature.lock.json `
   -Execute
 ```
+
+Descriptor input paths are filesystem adapters used only to read and hash the
+files. Every descriptor must live under the directory containing
+`project.spec.json`; the resolver writes a forward-slash relative reference
+such as `features/example.json` into the lock and rejects absolute, parent-
+traversing, or out-of-project descriptor paths.
 
 ## Agent Resume Order
 

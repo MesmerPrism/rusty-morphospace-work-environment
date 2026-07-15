@@ -106,6 +106,14 @@ function Normalize-RelativePath {
     return (($Path -replace "\\", "/").Trim()).TrimStart("./")
 }
 
+function Test-PortableRelativePath {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+    if ($Path.StartsWith("/") -or $Path -match "^[A-Za-z]:/" -or $Path.Contains("\")) { return $false }
+    return $Path -notmatch "(^|/)\.\.?($|/)"
+}
+
 function Test-PathInScope {
     param(
         [string]$Candidate,
@@ -342,6 +350,8 @@ function Test-ProjectBundle {
             Assert-Contract ($moduleMap.ContainsKey($moduleId)) "$Context feature '$featureId' references undeclared module '$moduleId'."
             if ($moduleMap.ContainsKey($moduleId)) { Assert-Contract ($moduleMap[$moduleId].feature_id -eq $featureId) "$Context feature '$featureId' does not match module '$moduleId'." }
             Assert-Contract ([string]$feature.descriptor.sha256 -match "^[0-9a-fA-F]{64}$" -and [string]$feature.descriptor.source_revision -match "^[0-9a-fA-F]{40}$" -and [string]$feature.descriptor.source_sha256 -match "^[0-9a-fA-F]{64}$") "$Context feature '$featureId' lacks exact descriptor/source hashes."
+            Assert-Contract (Test-PortableRelativePath ([string]$feature.descriptor.path)) "$Context feature '$featureId' descriptor path must be portable and project-spec-relative."
+            Assert-Contract (Test-PortableRelativePath ([string]$feature.descriptor.source_path)) "$Context feature '$featureId' source path must be portable and repository-relative."
             foreach ($dependency in @($feature.dependencies)) { Assert-Contract ($selectedLockIds -contains [string]$dependency) "$Context feature '$featureId' has unselected dependency '$dependency'." }
             foreach ($conflict in @($feature.conflicts)) { Assert-Contract ($selectedLockIds -notcontains [string]$conflict) "$Context feature '$featureId' conflicts with '$conflict'." }
             if ($null -ne $feature.exclusive_group) {

@@ -49,8 +49,10 @@ decision and validation note.
   structured evidence. They should not own hidden setup or business logic.
 - Project composition uses a closed-world feature lock. In protocol v2 an
   owner-issued descriptor is pinned by descriptor/source revision and hash;
-  the resolver records the exact packaging/runtime effect union. Unlisted or
-  denied modules are inert, and selection alone cannot activate a run.
+  the resolver records a project-spec-relative descriptor reference and the
+  exact packaging/runtime effect union. Resolver filesystem locations are
+  adapter state and never lock content. Unlisted or denied modules are inert,
+  and selection alone cannot activate a run.
 - Stable reusable modules require a second independent consumer or neutral
   conformance harness and an accepted promotion review.
 

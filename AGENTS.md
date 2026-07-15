@@ -150,10 +150,13 @@ in runner variables or typed reference wrappers, never injected properties.
   `Ready` action. It verifies accepted prerequisites, appends the transition,
   and derives `next_ready_unit`; do not hand-edit proposal status.
 - New project workspaces default to protocol v2. Resolve exact feature
-  descriptors into a fingerprinted closed-world lock; project selection alone
-  never activates a run. Runtime effects require the selected current lock and
-  one descriptor-approved runtime input, and the effective marker/receipt must
-  bind the project, lock revision/fingerprint, and feature.
+  descriptors into a fingerprinted closed-world lock. Descriptor filesystem
+  locations are resolver inputs only; the lock records forward-slash paths
+  relative to `project.spec.json` and rejects absolute, parent-traversing, or
+  out-of-project locations. Project selection alone never activates a run.
+  Runtime effects require the selected current lock and one descriptor-
+  approved runtime input, and the effective marker/receipt must bind the
+  project, lock revision/fingerprint, and feature.
 - Automation may record or accept validation only from a workspace-local
   `validation_receipt.v1` with exact criterion/gate coverage, verified artifact
   hashes, current repo heads/branches, ancestor bases, exact changed paths, and

@@ -40,7 +40,35 @@ function Get-ObjectFingerprint {
     finally { $sha.Dispose() }
 }
 
+function Get-PortableDescriptorReference {
+    param(
+        [string]$ProjectDirectory,
+        [string]$ResolvedDescriptorPath
+    )
+
+    $basePath = [System.IO.Path]::GetFullPath($ProjectDirectory)
+    $basePath = $basePath.TrimEnd([char[]]@("\", "/")) + [System.IO.Path]::DirectorySeparatorChar
+    $baseUri = New-Object System.Uri($basePath)
+    $descriptorUri = New-Object System.Uri([System.IO.Path]::GetFullPath($ResolvedDescriptorPath))
+    $relativeUri = $baseUri.MakeRelativeUri($descriptorUri)
+    if ($relativeUri.IsAbsoluteUri) {
+        throw "Feature descriptor must be inside the project workspace: $ResolvedDescriptorPath"
+    }
+
+    $reference = [System.Uri]::UnescapeDataString($relativeUri.ToString()).Replace("\", "/")
+    if (
+        [string]::IsNullOrWhiteSpace($reference) -or
+        $reference.StartsWith("/") -or
+        $reference -match "^[A-Za-z]:/" -or
+        $reference -match "(^|/)\.\.?($|/)"
+    ) {
+        throw "Feature descriptor must be inside the project workspace: $ResolvedDescriptorPath"
+    }
+    return $reference
+}
+
 $projectPath = (Resolve-Path -LiteralPath $ProjectSpecPath).Path
+$projectDirectory = Split-Path -Parent $projectPath
 $project = Read-JsonFile -Path $projectPath
 if ([string]$project.schema -ne "rusty.morphospace.workflow.project_spec.v2") { throw "Feature-lock v2 resolution requires project_spec.v2." }
 if ($LockRevision -lt 1) { throw "LockRevision must be at least 1." }
@@ -58,12 +86,13 @@ $descriptorPathMap = @{}
 $descriptorHashMap = @{}
 foreach ($pathValue in @($DescriptorPaths | Sort-Object -Unique)) {
     $path = (Resolve-Path -LiteralPath $pathValue).Path
+    $portablePath = Get-PortableDescriptorReference -ProjectDirectory $projectDirectory -ResolvedDescriptorPath $path
     $descriptor = Read-JsonFile -Path $path
     if ([string]$descriptor.schema -ne "rusty.morphospace.workflow.feature_descriptor.v1") { throw "Feature descriptor has the wrong schema ID: $path" }
     $featureId = [string]$descriptor.feature_id
     if (-not $featureId -or $descriptorMap.ContainsKey($featureId)) { throw "Feature descriptor ID is missing or repeated: '$featureId'." }
     $descriptorMap[$featureId] = $descriptor
-    $descriptorPathMap[$featureId] = $path.Replace("\", "/")
+    $descriptorPathMap[$featureId] = $portablePath
     $descriptorHashMap[$featureId] = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 

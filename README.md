@@ -136,6 +136,9 @@ New scaffolds use `project_spec.v2`, `feature_lock.v2`, and
 `scripts/Resolve-FeatureLock.ps1`; `scripts/Test-FeatureActivationAgainstLock.ps1`
 provides the fail-closed selection/fingerprint/runtime-input gate. Existing v1
 workspaces remain valid and migrate additively rather than being rewritten.
+Resolver filesystem paths are local adapter inputs only: v2 locks retain
+forward-slash descriptor references relative to `project.spec.json` and reject
+absolute, parent-traversing, or out-of-project descriptor locations.
 If a corrective unit supersedes an immutable historical active/validating
 unit, append the exact
 `<old-unit>-superseded-by-<current-unit>` state-transition event and keep the
