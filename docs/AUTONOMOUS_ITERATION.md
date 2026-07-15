@@ -1,6 +1,6 @@
 # Autonomous Iteration
 
-This document describes the `0.2.1` portable workflow release. The accepted
+This document describes the portable workflow through `0.4.0`. The accepted
 `0.1.0` history remains immutable; later releases must preserve accepted
 event/receipt history or provide an explicit migration and rollback path.
 
@@ -167,6 +167,21 @@ powershell -NoProfile -ExecutionPolicy Bypass `
 
 The protocol supports larger push intervals without losing local commit
 history or resumption evidence.
+
+### Immutable release capsules
+
+An executed-push receipt proves a particular publication action. A sealed
+`release_capsule.v1` separately defines the release subject as exact committed
+revisions and trees. Validate it in `candidate-cut` mode while publishing.
+Later audits use `historical-closure` mode: declared remote refs may advance
+only as descendants of the pinned commit. Branch convergence and clean active
+worktrees are not permanent post-release requirements.
+
+Historical validation uses isolated clean materializations and observes active
+worktree dirt only as non-payload context. If original receipt bytes are
+missing or hash-mismatched, append an explicit damaged-evidence record and an
+independent reconstruction; never rewrite accepted history. See
+[Release Capsules And Historical Closure](RELEASE_CAPSULE_AND_HISTORICAL_CLOSURE.md).
 
 ## Multi-Repository Changes
 

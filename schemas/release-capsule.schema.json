@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/release-capsule.schema.json",
+  "title": "Immutable release capsule",
+  "description": "Pins the exact committed trees that define a release independently of later branch and worktree activity.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schema", "capsule_id", "project_id", "release_id", "release_version", "status", "created_at", "closure_policy", "repositories", "validations", "external_receipts", "does_not_prove"],
+  "properties": {
+    "$schema": { "type": "string", "minLength": 1 },
+    "schema": { "const": "rusty.morphospace.workflow.release_capsule.v1" },
+    "capsule_id": { "$ref": "#/$defs/id" },
+    "project_id": { "$ref": "#/$defs/id" },
+    "release_id": { "$ref": "#/$defs/id" },
+    "release_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$" },
+    "status": { "const": "sealed" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "closure_policy": { "$ref": "#/$defs/closure-policy" },
+    "repositories": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/repository" } },
+    "validations": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/file-binding" } },
+    "external_receipts": { "type": "array", "items": { "$ref": "#/$defs/external-receipt" } },
+    "does_not_prove": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" },
+    "revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "file-binding": {
+      "type": "object", "additionalProperties": false, "required": ["artifact_id", "path", "sha256"],
+      "properties": { "artifact_id": { "$ref": "#/$defs/id" }, "path": { "type": "string", "minLength": 1 }, "sha256": { "$ref": "#/$defs/sha256" } }
+    },
+    "external-receipt": {
+      "type": "object", "additionalProperties": false, "required": ["artifact_id", "path", "integrity"],
+      "properties": {
+        "artifact_id": { "$ref": "#/$defs/id" }, "path": { "type": "string", "minLength": 1 },
+        "integrity": { "enum": ["hash-bound", "damaged-original-unavailable", "independent-reconstruction"] },
+        "sha256": { "$ref": "#/$defs/sha256" }, "expected_sha256": { "$ref": "#/$defs/sha256" }, "observed_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "closure-policy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["candidate_cut_remote_relation", "historical_closure_remote_relation", "active_worktrees", "materialization", "branch_convergence", "receipt_history"],
+      "properties": {
+        "candidate_cut_remote_relation": { "const": "exact" },
+        "historical_closure_remote_relation": { "const": "ancestor-or-equal" },
+        "active_worktrees": { "const": "observed-not-materialized" },
+        "materialization": { "const": "isolated-clean-tree" },
+        "branch_convergence": { "const": "candidate-cut-only" },
+        "receipt_history": { "const": "append-only" }
+      }
+    },
+    "remote-ref": {
+      "type": "object", "additionalProperties": false, "required": ["ref_id", "ref"],
+      "properties": { "ref_id": { "$ref": "#/$defs/id" }, "ref": { "type": "string", "pattern": "^refs/(heads|tags)/[^ ~^:?*\\[\\]\\\\]+$" } }
+    },
+    "repository": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repo_id", "role", "remote_url", "revision", "tree", "remote_refs", "payload", "overlay_disposition", "materialization", "validation_refs"],
+      "properties": {
+        "repo_id": { "$ref": "#/$defs/id" },
+        "role": { "enum": ["release-source", "workflow-tool", "planning-authority", "evidence-producer"] },
+        "remote_url": { "type": "string", "minLength": 1 },
+        "revision": { "$ref": "#/$defs/revision" },
+        "tree": { "$ref": "#/$defs/revision" },
+        "remote_refs": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/remote-ref" } },
+        "payload": { "type": "boolean" },
+        "overlay_disposition": { "const": "excluded" },
+        "materialization": { "const": "isolated-clean-tree" },
+        "validation_refs": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/id" } }
+      }
+    }
+  }
+}

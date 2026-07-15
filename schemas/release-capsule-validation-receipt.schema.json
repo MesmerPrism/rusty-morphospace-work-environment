@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/release-capsule-validation-receipt.schema.json",
+  "title": "Release capsule validation receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "receipt_id", "created_at", "mode", "status", "capsule", "repositories", "remote_rewrite_detected", "active_worktrees_mutated", "does_not_prove"],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.workflow.release_capsule_validation_receipt.v1" },
+    "receipt_id": { "$ref": "#/$defs/id" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "mode": { "enum": ["candidate-cut", "historical-closure"] },
+    "status": { "const": "pass" },
+    "capsule": { "$ref": "#/$defs/file-binding" },
+    "repositories": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/repository" } },
+    "remote_rewrite_detected": { "const": false },
+    "active_worktrees_mutated": { "const": false },
+    "does_not_prove": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" },
+    "revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "file-binding": { "type": "object", "additionalProperties": false, "required": ["path", "sha256"], "properties": { "path": { "type": "string", "minLength": 1 }, "sha256": { "$ref": "#/$defs/sha256" } } },
+    "remote-observation": {
+      "type": "object", "additionalProperties": false, "required": ["ref_id", "ref", "observed_revision", "relation"],
+      "properties": { "ref_id": { "$ref": "#/$defs/id" }, "ref": { "type": "string", "minLength": 1 }, "observed_revision": { "$ref": "#/$defs/revision" }, "relation": { "enum": ["exact", "descendant"] } }
+    },
+    "repository": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repo_id", "pinned_revision", "pinned_tree", "commit_present", "tree_match", "remote_observations", "active_worktree", "isolated_materialization"],
+      "properties": {
+        "repo_id": { "$ref": "#/$defs/id" }, "pinned_revision": { "$ref": "#/$defs/revision" }, "pinned_tree": { "$ref": "#/$defs/revision" },
+        "commit_present": { "const": true }, "tree_match": { "const": true },
+        "remote_observations": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/remote-observation" } },
+        "active_worktree": {
+          "type": "object", "additionalProperties": false, "required": ["disposition", "dirty_entries"],
+          "properties": { "disposition": { "const": "observed-not-materialized" }, "dirty_entries": { "type": "integer", "minimum": 0 } }
+        },
+        "isolated_materialization": {
+          "type": "object", "additionalProperties": false, "required": ["status", "revision", "tree", "dirty_entries"],
+          "properties": { "status": { "const": "clean" }, "revision": { "$ref": "#/$defs/revision" }, "tree": { "$ref": "#/$defs/revision" }, "dirty_entries": { "const": 0 } }
+        }
+      }
+    }
+  }
+}

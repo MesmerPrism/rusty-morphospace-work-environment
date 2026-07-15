@@ -3,15 +3,15 @@
 Portable onboarding and project-iteration workspace for Rusty Morphospace
 development.
 
-Current work-environment protocol release: `0.3.0` (2026-07-15). Its
+Current work-environment protocol release: `0.4.0` (2026-07-15). Its
 implementation and acceptance plan is
 [Onboarding And Local-Skill Implementation Plan](docs/ONBOARDING_IMPLEMENTATION_PLAN.md),
 and its machine-readable release surface is the
-[0.3.0 manifest](manifests/release-0.3.0.json). This version identifies the
+[0.4.0 manifest](manifests/release-0.4.0.json). This version identifies the
 portable onboarding, protocol, and tooling release; it does not change the
 separately governed Rusty Morphospace platform/runtime baseline. The immutable
-work-environment `0.1.0`
-manifest remains readable. Existing project instances adopt either baseline
+work-environment `0.1.0` and published `0.3.0`
+manifests remain readable. Existing project instances adopt any later baseline
 additively: preserve live events and receipts, normalize portable
 change categories while retaining domain detail in `tags`, and validate before
 using the optional automation CLI.
@@ -119,6 +119,9 @@ validation without a device.
 - [Instruction Synchronization](docs/INSTRUCTION_SYNCHRONIZATION.md) keeps
   skills, planning instructions, touched-repo `AGENTS.md`, and README/router
   docs aligned without duplicating long recipes.
+- [Release Capsules And Historical Closure](docs/RELEASE_CAPSULE_AND_HISTORICAL_CLOSURE.md)
+  separates an exact candidate cut from later ancestry-based audit closure, so
+  normal post-release commits and dirty local work do not rewrite a release.
 
 This repository owns the portable protocol. The project adopting it owns its
 live `morphospace/` state and evidence.
@@ -160,6 +163,13 @@ external push, `executed_push_receipt.v1` records exact old/new/readback refs,
 ancestry, hash-bound validation files, a pre-publication capture when required,
 planning-final-suffix order, no-force proof, and rollback points;
 validate it with `scripts/Test-ExecutedPushReceipt.ps1`.
+
+Seal coordinated releases with `release_capsule.v1`. At publication,
+`Test-ReleaseCapsule.ps1 -Mode CandidateCut` requires every declared remote ref
+to equal the pinned commit. Later, `-Mode HistoricalClosure` requires the
+pinned commit to remain an ancestor-or-equal while verifying the exact clean
+tree in isolation. The validator observes active worktrees but never mutates
+them or treats their overlays as release payload.
 
 The first downstream adoption proof lives in Rusty Quest's public
 `apps/spatial-camera-panel-android/morphospace/` directory. It demonstrates a
