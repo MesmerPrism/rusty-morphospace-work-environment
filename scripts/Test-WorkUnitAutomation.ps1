@@ -9,6 +9,16 @@ function Assert-Automation {
     if (-not $Condition) { throw "Automation self-test failed: $Message" }
 }
 
+$automationModule = Get-Module WorkUnitAutomation
+$leadingDotPathResults = & $automationModule {
+    [pscustomobject]@{
+        exact = Test-MorphospacePathAllowed -Path ".github/workflows/ci.yml" -AllowedPaths @(".github/workflows/ci.yml")
+        optional_prefix = Test-MorphospacePathAllowed -Path ".github/workflows/ci.yml" -AllowedPaths @("./.github/workflows/ci.yml")
+        leading_dot_preserved = -not (Test-MorphospacePathAllowed -Path "github/workflows/ci.yml" -AllowedPaths @(".github/workflows/ci.yml"))
+    }
+}
+Assert-Automation ($leadingDotPathResults.exact -and $leadingDotPathResults.optional_prefix -and $leadingDotPathResults.leading_dot_preserved) "leading-dot allowed-path normalization"
+
 function Write-TestJson {
     param([string]$Path, [object]$Value)
     $encoding = New-Object System.Text.UTF8Encoding($false)

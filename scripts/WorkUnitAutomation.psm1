@@ -349,8 +349,9 @@ function Test-MorphospacePathAllowed {
 
     $normalized = ConvertTo-MorphospaceRelativePath -Path $Path
     foreach ($candidate in @($AllowedPaths)) {
-        $allowed = ([string]$candidate).Replace("\", "/").Trim().TrimStart("./").TrimEnd("/")
+        $allowed = ([string]$candidate).Trim()
         if (-not $allowed) { continue }
+        $allowed = (ConvertTo-MorphospaceRelativePath -Path $allowed).TrimEnd("/")
         if ($normalized.Equals($allowed, [System.StringComparison]::OrdinalIgnoreCase) -or
             $normalized.StartsWith($allowed + "/", [System.StringComparison]::OrdinalIgnoreCase)) {
             return $true
