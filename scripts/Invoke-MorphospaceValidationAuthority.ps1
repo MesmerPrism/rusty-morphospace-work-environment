@@ -89,7 +89,12 @@ function Invoke-MorphospaceIsolatedAuthoritySelfTest {
     $repositoryRoot = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
     $path = [IO.Path]::GetFullPath((Join-Path $repositoryRoot $RelativePath))
     if (-not (Test-Path -LiteralPath $path -PathType Leaf) -or (Get-MorphospaceAuthoritySha256 $path) -cne [string]$artifacts[0].sha256) { throw "Authority self-test bytes do not match the trust migration: $RelativePath" }
-    $hostPath = (Get-Command pwsh -CommandType Application -ErrorAction Stop).Source
+    $hostCommand = Get-Command pwsh -CommandType Application -ErrorAction Stop |
+        Where-Object { [IO.File]::Exists([string]$_.Source) } |
+        Sort-Object -Property @{ Expression = { [version]$_.Version }; Descending = $true }, @{ Expression = { [string]$_.Source }; Descending = $false } |
+        Select-Object -First 1
+    if ($null -eq $hostCommand) { throw 'PowerShell 7 child host is unavailable.' }
+    $hostPath = [IO.Path]::GetFullPath([string]$hostCommand.Source)
     $captureRoot = Join-Path ([IO.Path]::GetTempPath()) ('morphospace-authority-selftest-' + [guid]::NewGuid().ToString('N'))
     [IO.Directory]::CreateDirectory($captureRoot) | Out-Null
     $stdoutPath = Join-Path $captureRoot 'stdout.txt'; $stderrPath = Join-Path $captureRoot 'stderr.txt'

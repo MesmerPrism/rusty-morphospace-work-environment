@@ -882,7 +882,9 @@ function Invoke-MorphospaceAuthorityRunnerForRecord {
     $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
     try { $rng.GetBytes($nonceBytes) } finally { $rng.Dispose() }
     $nonce = ([BitConverter]::ToString($nonceBytes)).Replace('-', '').ToLowerInvariant()
-    $host = (Get-Command pwsh -CommandType Application -ErrorAction Stop).Source
+    $hostCommand=Get-Command pwsh -CommandType Application -ErrorAction Stop|Where-Object{[IO.File]::Exists([string]$_.Source)}|Sort-Object -Property @{Expression={[version]$_.Version};Descending=$true},@{Expression={[string]$_.Source};Descending=$false}|Select-Object -First 1
+    if($null-eq$hostCommand){throw'PowerShell 7 child host is unavailable.'}
+    $host=[IO.Path]::GetFullPath([string]$hostCommand.Source)
     $nativeArguments = @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$resolvedRunner,'-Action',$RunnerAction,'-WorkspaceRoot',$WorkspaceRoot,'-UnitId',$UnitId,'-ExecutionNonce',$nonce) + @($AuthorityRunnerArguments)
     if($RunnerAction-eq'Validate'){$nativeArguments+=@('-OutPath',$ValidationReceipt)}
     $captureRoot=Join-Path ([IO.Path]::GetTempPath()) ('morphospace-authority-handoff-'+[guid]::NewGuid().ToString('N'));[IO.Directory]::CreateDirectory($captureRoot)|Out-Null;$stdoutPath=Join-Path $captureRoot 'stdout.txt';$stderrPath=Join-Path $captureRoot 'stderr.txt'

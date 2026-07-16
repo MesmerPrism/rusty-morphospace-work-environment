@@ -31,7 +31,12 @@ function Invoke-MorphospacePinnedValidator {
         [switch]$ProbeOnly
     )
     if ((Test-Path -LiteralPath $OwnerOut) -or (Test-Path -LiteralPath $StdoutPath) -or (Test-Path -LiteralPath $StderrPath)) { throw 'Pinned validator output paths must be absent before launch.' }
-    $host = (Get-Command pwsh -CommandType Application -ErrorAction Stop).Source
+    $hostCommand = Get-Command pwsh -CommandType Application -ErrorAction Stop |
+        Where-Object { [IO.File]::Exists([string]$_.Source) } |
+        Sort-Object -Property @{ Expression = { [version]$_.Version }; Descending = $true }, @{ Expression = { [string]$_.Source }; Descending = $false } |
+        Select-Object -First 1
+    if ($null -eq $hostCommand) { throw 'PowerShell 7 child host is unavailable.' }
+    $host = [IO.Path]::GetFullPath([string]$hostCommand.Source)
     $arguments = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $ValidatorPath, '-WorkspaceRoot', $Workspace, '-QuestRoot', $Quest, '-RoadmapPath', $Roadmap, '-UnitId', $Unit, '-OutPath', $OwnerOut)
     if ($ProbeOnly) { $arguments += '-ProbeOnly' }
     $process = Start-Process -FilePath $host -ArgumentList $arguments -PassThru -WindowStyle Hidden -RedirectStandardOutput $StdoutPath -RedirectStandardError $StderrPath
