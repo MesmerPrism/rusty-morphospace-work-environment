@@ -9,15 +9,27 @@ function Assert-Automation {
     if (-not $Condition) { throw "Automation self-test failed: $Message" }
 }
 
-$automationModule = Get-Module WorkUnitAutomation
-$leadingDotPathResults = & $automationModule {
+$workUnitAutomationModule = Get-Module WorkUnitAutomation
+$pathNormalizationResults = & $workUnitAutomationModule {
     [pscustomobject]@{
         exact = Test-MorphospacePathAllowed -Path ".github/workflows/ci.yml" -AllowedPaths @(".github/workflows/ci.yml")
         optional_prefix = Test-MorphospacePathAllowed -Path ".github/workflows/ci.yml" -AllowedPaths @("./.github/workflows/ci.yml")
         leading_dot_preserved = -not (Test-MorphospacePathAllowed -Path "github/workflows/ci.yml" -AllowedPaths @(".github/workflows/ci.yml"))
+        hidden_directory = Test-MorphospacePathAllowed -Path ".config/tool/settings.json" -AllowedPaths @(".config/")
+        explicit_relative = Test-MorphospacePathAllowed -Path "src/lib.rs" -AllowedPaths @("./src/")
     }
 }
-Assert-Automation ($leadingDotPathResults.exact -and $leadingDotPathResults.optional_prefix -and $leadingDotPathResults.leading_dot_preserved) "leading-dot allowed-path normalization"
+Assert-Automation ($pathNormalizationResults.exact -and $pathNormalizationResults.optional_prefix -and $pathNormalizationResults.leading_dot_preserved -and $pathNormalizationResults.hidden_directory -and $pathNormalizationResults.explicit_relative) "repository-relative path normalization"
+
+$traversalRejected = $false
+try {
+    & $workUnitAutomationModule {
+        Test-MorphospacePathAllowed -Path "src/lib.rs" -AllowedPaths @("../src/")
+    } | Out-Null
+} catch {
+    $traversalRejected = $_.Exception.Message -like "Repository-relative path may not contain '..'*"
+}
+Assert-Automation $traversalRejected "traversal in an allowed path did not fail closed"
 
 function Write-TestJson {
     param([string]$Path, [object]$Value)
@@ -354,20 +366,29 @@ try {
     Assert-Automation (@($acceptedState.repository_heads).Count -eq 1) "v2 repository-head projection"
 
     $scopeWorkspace = New-TestWorkspace -Root (Join-Path $repo "morphospace-scope-test") -ProjectId "scope-test" -UnitId "unit-scope-001"
+    $scopeUnitPath = Join-Path $scopeWorkspace "iteration-units\unit-scope-001.json"
+    $scopeUnit = Get-Content -LiteralPath $scopeUnitPath -Raw | ConvertFrom-Json
+    $scopeUnit.allowed_repositories[0].allowed_paths = @($scopeUnit.allowed_repositories[0].allowed_paths) + ".github/workflows/ci.yml"
+    Write-TestJson -Path $scopeUnitPath -Value $scopeUnit
     [System.IO.File]::WriteAllText((Join-Path $repo "outside.txt"), "outside unit scope`n", $encoding)
     Invoke-MorphospaceWorkUnitAutomation -Action Claim -WorkspaceRoot $scopeWorkspace -UnitId "unit-scope-001" -RepoMapPath $repoMapPath -Timestamp $fixed -Execute | Out-Null
     Invoke-MorphospaceWorkUnitAutomation -Action BeginValidation -WorkspaceRoot $scopeWorkspace -UnitId "unit-scope-001" -RepoMapPath $repoMapPath -Timestamp $fixed -Execute | Out-Null
+    [System.IO.Directory]::CreateDirectory((Join-Path $repo ".github\workflows")) | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $repo ".github\workflows\ci.yml"), "name: hidden-path-regression`n", $encoding)
     $scopeHead = @(Invoke-TestGit -Path $repo -Arguments @("rev-parse", "HEAD"))[0]
     $scopeBranch = @(Invoke-TestGit -Path $repo -Arguments @("branch", "--show-current"))[0]
     New-TestValidationReceipt -Workspace $scopeWorkspace -ProjectId "scope-test" -UnitId "unit-scope-001" -Tier standard -Result pass -RepositoryRevisions @([ordered]@{
         repo_id = "project-shell"; base_revision = $scopeHead; head_revision = $scopeHead; branch = $scopeBranch
-    }) | Out-Null
+    }) -ChangedPaths @([ordered]@{ repo_id = "project-shell"; path = ".github/workflows/ci.yml" }) | Out-Null
     $scopeRecord = Invoke-MorphospaceWorkUnitAutomation -Action RecordValidation -WorkspaceRoot $scopeWorkspace -UnitId "unit-scope-001" -RepoMapPath $repoMapPath -ValidationTier standard -ValidationResult pass -ValidationReceipt "receipts/unit-scope-001-pass-validation.json" -Timestamp $fixed
     $scopeTransactions = @(Get-ChildItem -LiteralPath (Join-Path $scopeWorkspace "receipts\transactions") -File -ErrorAction SilentlyContinue)
-    Assert-Automation ($scopeRecord.transition -eq "validation-pass" -and (Test-Path -LiteralPath (Join-Path $repo "outside.txt")) -and $scopeTransactions.Count -gt 0) "out-of-scope user work or protocol-owned transaction artifacts blocked validation or were modified"
+    Assert-Automation ($scopeRecord.transition -eq "validation-pass" -and (Test-Path -LiteralPath (Join-Path $repo "outside.txt")) -and $scopeTransactions.Count -gt 0) "hidden in-scope path, out-of-scope user work, or protocol-owned transaction artifacts blocked validation or were modified"
     New-TestValidationReceipt -Workspace $scopeWorkspace -ProjectId "scope-test" -UnitId "unit-scope-001" -Tier standard -Result pass -RepositoryRevisions @([ordered]@{
         repo_id = "project-shell"; base_revision = $scopeHead; head_revision = $scopeHead; branch = $scopeBranch
-    }) -ChangedPaths @([ordered]@{ repo_id = "project-shell"; path = "outside.txt" }) | Out-Null
+    }) -ChangedPaths @(
+        [ordered]@{ repo_id = "project-shell"; path = ".github/workflows/ci.yml" },
+        [ordered]@{ repo_id = "project-shell"; path = "outside.txt" }
+    ) | Out-Null
     $outsideScopeRejected = $false
     try {
         Invoke-MorphospaceWorkUnitAutomation -Action RecordValidation -WorkspaceRoot $scopeWorkspace -UnitId "unit-scope-001" -RepoMapPath $repoMapPath -ValidationTier standard -ValidationResult pass -ValidationReceipt "receipts/unit-scope-001-pass-validation.json" -Timestamp $fixed | Out-Null
@@ -376,6 +397,7 @@ try {
     }
     Assert-Automation $outsideScopeRejected "validation did not reject an out-of-scope changed path"
     Remove-Item -LiteralPath (Join-Path $repo "outside.txt")
+    Remove-Item -LiteralPath (Join-Path $repo ".github") -Recurse -Force
     Remove-Item -LiteralPath $scopeWorkspace -Recurse -Force
 
     [System.IO.File]::WriteAllText((Join-Path $repo "src\ahead.txt"), "ahead`n", $encoding)
