@@ -882,7 +882,7 @@ function Invoke-MorphospaceAuthorityRunnerForRecord {
     $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
     try { $rng.GetBytes($nonceBytes) } finally { $rng.Dispose() }
     $nonce = ([BitConverter]::ToString($nonceBytes)).Replace('-', '').ToLowerInvariant()
-    $host = (Get-Command powershell.exe -CommandType Application -ErrorAction Stop).Source
+    $host = (Get-Command pwsh -CommandType Application -ErrorAction Stop).Source
     $nativeArguments = @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$resolvedRunner,'-Action',$RunnerAction,'-WorkspaceRoot',$WorkspaceRoot,'-UnitId',$UnitId,'-ExecutionNonce',$nonce) + @($AuthorityRunnerArguments)
     if($RunnerAction-eq'Validate'){$nativeArguments+=@('-OutPath',$ValidationReceipt)}
     $captureRoot=Join-Path ([IO.Path]::GetTempPath()) ('morphospace-authority-handoff-'+[guid]::NewGuid().ToString('N'));[IO.Directory]::CreateDirectory($captureRoot)|Out-Null;$stdoutPath=Join-Path $captureRoot 'stdout.txt';$stderrPath=Join-Path $captureRoot 'stderr.txt'

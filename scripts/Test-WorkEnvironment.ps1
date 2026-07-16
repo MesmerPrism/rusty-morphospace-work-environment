@@ -158,11 +158,13 @@ function Invoke-JsonLinesParseCheck {
     }
 }
 
+& (Join-Path $PSScriptRoot "Test-PowerShellHost.ps1") -Quiet
+
 if ($SelfTest) {
     $singleFailureProbe = @([pscustomobject]@{ Name = "probe"; Status = "missing"; Required = $true })
     $singleFailureCount = @($singleFailureProbe | Where-Object { $_.Required -and $_.Status -eq "missing" }).Count
     if ($singleFailureCount -eq 1) {
-        Add-CheckResult -Name "aggregate:single-failure" -Status "ok" -Required $true -Detail "A scalar required failure remains countable under Windows PowerShell 5.1."
+        Add-CheckResult -Name "aggregate:single-failure" -Status "ok" -Required $true -Detail "A scalar required failure remains countable."
     } else {
         Add-CheckResult -Name "aggregate:single-failure" -Status "missing" -Required $true -Detail "Expected one aggregate failure, found $singleFailureCount."
     }
@@ -178,6 +180,13 @@ if ($SelfTest) {
 
     Get-ChildItem -LiteralPath (Join-Path $RepoRoot "templates") -Filter "*.jsonl" -File |
         ForEach-Object { Invoke-JsonLinesParseCheck -Path $_.FullName }
+
+    try {
+        & (Join-Path $PSScriptRoot "Test-PowerShellHost.ps1") -SelfTest -Quiet
+        Add-CheckResult -Name "powershell:host-policy" -Status "ok" -Required $true -Detail "Validated the PowerShell 7.6 Core host contract and rejected legacy command hosts."
+    } catch {
+        Add-CheckResult -Name "powershell:host-policy" -Status "missing" -Required $true -Detail $_.Exception.Message
+    }
 
     Get-ChildItem -LiteralPath (Join-Path $RepoRoot "scripts") -Filter "*.ps1" -File |
         ForEach-Object {
@@ -284,11 +293,13 @@ $questProfile = $Profile -in @("Quest", "Full")
 $fullProfile = $Profile -eq "Full"
 
 Test-CommandAvailable -Name "git" -Required $true
+Test-CommandAvailable -Name "pwsh" -Required $true
 Test-CommandAvailable -Name "rustup" -Required $true
 Test-CommandAvailable -Name "cargo" -Required $true
 Test-CommandAvailable -Name "python" -Required $true
 Test-CommandAvailable -Name "rg" -Required $true
 Test-CommandVersion -Name "python.version" -Command "python" -Arguments @("--version") -Minimum ([version]"3.11") -Required $true
+Test-CommandVersion -Name "pwsh.version" -Command "pwsh" -Arguments @("--version") -Minimum ([version]"7.6") -Required $true
 
 Test-CommandAvailable -Name "adb" -Required $questProfile
 Test-CommandAvailable -Name "java" -Required $questProfile

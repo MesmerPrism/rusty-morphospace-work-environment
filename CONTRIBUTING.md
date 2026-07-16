@@ -19,10 +19,14 @@ and [Instruction Synchronization](docs/INSTRUCTION_SYNCHRONIZATION.md).
 
 ## Validation
 
+Use PowerShell `7.6` LTS or newer and invoke commands with `pwsh`. The
+bootstrap-compatible `scripts/Test-PowerShellHost.ps1` reports a clear install
+route when it is launched from Windows PowerShell 5.1.
+
 During iteration:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Test-WorkEnvironment.ps1 `
   -SelfTest `
   -Tier Quick

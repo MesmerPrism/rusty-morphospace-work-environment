@@ -167,7 +167,7 @@ remain a blocker with its completed prefix and recovery evidence; it must not
 be rewritten into this receipt shape. Validate completed evidence with:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Test-ExecutedPushReceipt.ps1 `
   -Path <project-root>\morphospace\receipts\<executed-push-receipt>.json
 ```
@@ -227,7 +227,7 @@ after the relevant validation has passed.
 Inspection example:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Invoke-WorkUnitAutomation.ps1 `
   -Action Inspect `
   -WorkspaceRoot <project-root>\morphospace `
@@ -238,7 +238,7 @@ powershell -NoProfile -ExecutionPolicy Bypass `
 Explicit claim example:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Invoke-WorkUnitAutomation.ps1 `
   -Action Claim `
   -WorkspaceRoot <project-root>\morphospace `
@@ -251,7 +251,7 @@ powershell -NoProfile -ExecutionPolicy Bypass `
 Pre-protocol in-flight adoption is a separate two-step operation:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\New-InflightAdoptionReceipt.ps1 `
   -WorkspaceRoot <project-root>\morphospace `
   -UnitId <unit-id> `
@@ -259,7 +259,7 @@ powershell -NoProfile -ExecutionPolicy Bypass `
   -OutPath <project-root>\morphospace\receipts\<unit-id>-inflight-adoption.json `
   -Execute
 
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Invoke-WorkUnitAutomation.ps1 `
   -Action Claim `
   -WorkspaceRoot <project-root>\morphospace `

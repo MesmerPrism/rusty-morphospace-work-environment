@@ -140,7 +140,7 @@ public repository.
 Dry run:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\New-ProjectWorkspace.ps1 `
   -ProjectRoot <project-root> `
   -ProjectId <project-id>
@@ -149,7 +149,7 @@ powershell -NoProfile -ExecutionPolicy Bypass `
 Create the directory:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\New-ProjectWorkspace.ps1 `
   -ProjectRoot <project-root> `
   -ProjectId <project-id> `
@@ -163,7 +163,7 @@ compatibility fixture.
 Resolve a non-empty v2 lock from owner-issued descriptors:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Resolve-FeatureLock.ps1 `
   -ProjectSpecPath <project-root>\morphospace\project.spec.json `
   -DescriptorPaths <descriptor-paths> `
@@ -205,7 +205,7 @@ identity, and repeated runs on one headset, follow
 Validate the portable examples and a project instance with:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Test-WorkflowContracts.ps1 `
   -WorkspaceRoot <project-root>\morphospace
 ```

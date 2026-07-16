@@ -28,7 +28,7 @@ Before cross-repository implementation or module extraction, create an exact
 composition lock from clean tracked commits:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\New-SourceCompositionLock.ps1 `
   -WorkspaceRoot <project-root>\morphospace `
   -UnitId <unit-id> `
@@ -40,7 +40,7 @@ commit/tree set. For the strongest isolation, materialize the lock as detached
 clean worktrees under a project-specific local root:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\New-SourceMaterialization.ps1 `
   -LockPath <source-composition-lock> `
   -RepositoryMapPath <local-repository-map> `
@@ -74,7 +74,7 @@ Declare expected mutable resources in the iteration unit and acquire them
 immediately before the relevant write or run:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Invoke-ResourceClaim.ps1 `
   -Action Acquire `
   -ClaimId <claim-id> `

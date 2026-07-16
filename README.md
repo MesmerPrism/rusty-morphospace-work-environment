@@ -3,6 +3,11 @@
 Portable onboarding and project-iteration workspace for Rusty Morphospace
 development.
 
+PowerShell `7.6` LTS or newer, invoked explicitly as `pwsh`, is the supported
+workflow host. Windows PowerShell 5.1 may run the bootstrap host check, but it
+is not an execution environment for validation, automation, builds, or release
+tooling. PowerShell 7 installs side by side with 5.1 on Windows.
+
 Current work-environment protocol release: `0.4.0` (2026-07-15). Its
 implementation and acceptance plan is
 [Onboarding And Local-Skill Implementation Plan](docs/ONBOARDING_IMPLEMENTATION_PLAN.md),
@@ -63,12 +68,13 @@ Not included:
 
 ## Fast Path
 
-1. Read [Setup Overview](docs/SETUP_OVERVIEW.md).
+1. Run `pwsh -NoProfile -File .\scripts\Test-PowerShellHost.ps1` and read
+   [Setup Overview](docs/SETUP_OVERVIEW.md).
 2. Fill a private copy of [local.paths.example.json](templates/local.paths.example.json).
 3. Run the environment smoke test:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Test-WorkEnvironment.ps1 `
   -ConfigPath .\local\local.paths.json `
   -Profile Core `
@@ -79,18 +85,18 @@ powershell -NoProfile -ExecutionPolicy Bypass `
    install, and verify the four skill routers:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Install-LocalSkills.ps1 `
   -TargetRoot <codex-skills-root> `
   -Action Plan
 
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Install-LocalSkills.ps1 `
   -TargetRoot <codex-skills-root> `
   -Action Install `
   -Execute
 
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Install-LocalSkills.ps1 `
   -TargetRoot <codex-skills-root> `
   -Action Verify
@@ -101,7 +107,7 @@ powershell -NoProfile -ExecutionPolicy Bypass `
    protocol-v2 scaffold dry run (v1 remains readable for existing workspaces):
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\New-ProjectWorkspace.ps1 `
   -ProjectRoot <project-root> `
   -ProjectId <project-id>

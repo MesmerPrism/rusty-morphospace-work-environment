@@ -7,7 +7,7 @@ nothing is active and no device is required.
 Validate it from the repository root:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Test-WorkflowContracts.ps1 `
   -WorkspaceRoot .\examples\hello-morphospace-v2\morphospace
 ```

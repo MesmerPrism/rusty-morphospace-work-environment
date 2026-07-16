@@ -18,18 +18,18 @@ The short path is:
 ```powershell
 $SkillRoot = Join-Path $env:USERPROFILE ".codex\skills"
 
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Install-LocalSkills.ps1 `
   -TargetRoot $SkillRoot `
   -Action Plan
 
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Install-LocalSkills.ps1 `
   -TargetRoot $SkillRoot `
   -Action Install `
   -Execute
 
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Install-LocalSkills.ps1 `
   -TargetRoot $SkillRoot `
   -Action Verify

@@ -24,7 +24,7 @@ Edit `local\local.paths.json` for your machine.
 See [Dependency Matrix](DEPENDENCY_MATRIX.md). A practical minimum is:
 
 - Git
-- PowerShell 7 or Windows PowerShell 5.1
+- PowerShell 7.6 LTS or newer (`pwsh`)
 - Rustup and Cargo
 - Python 3.11 or newer
 - ripgrep
@@ -33,10 +33,21 @@ See [Dependency Matrix](DEPENDENCY_MATRIX.md). A practical minimum is:
 - JDK 17 or newer
 - Node.js and npm/npx for optional Meta tooling
 
+Windows PowerShell 5.1 is not the workflow host. It remains installed alongside
+PowerShell 7 and may run the bootstrap detector only:
+
+```powershell
+pwsh -NoProfile -File .\scripts\Test-PowerShellHost.ps1
+```
+
+If `pwsh` is missing on Windows, install the current LTS release with
+`winget install --id Microsoft.PowerShell --source winget`, open `pwsh`, and
+rerun the detector.
+
 Then run:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Test-WorkEnvironment.ps1 `
   -ConfigPath .\local\local.paths.json `
   -Profile Core `
@@ -75,12 +86,12 @@ Read [Local Skill Bootstrap](LOCAL_SKILL_BOOTSTRAP.md) for new installs,
 existing unmanaged directories, provenance, backups, and updates.
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Install-LocalSkills.ps1 `
   -TargetRoot <codex-skills-root> `
   -Action Plan
 
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Install-LocalSkills.ps1 `
   -TargetRoot <codex-skills-root> `
   -Action Install `
@@ -98,7 +109,7 @@ For an application that will compose reusable Morphospace modules, start with
 a dry run:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\New-ProjectWorkspace.ps1 `
   -ProjectRoot <project-root> `
   -ProjectId <project-id>
@@ -114,14 +125,14 @@ From a cloned Rusty XR repo:
 
 ```powershell
 rustup target add aarch64-linux-android
-powershell -ExecutionPolicy Bypass `
+pwsh -ExecutionPolicy Bypass `
   -File .\examples\quest-minimal-apk\tools\Build-QuestMinimalApk.ps1
 ```
 
 Immersive OpenXR/Vulkan examples also need a Quest-compatible OpenXR loader:
 
 ```powershell
-powershell -ExecutionPolicy Bypass `
+pwsh -ExecutionPolicy Bypass `
   -File .\examples\quest-composite-layer-apk\tools\Build-QuestCompositeLayerApk.ps1 `
   -AndroidSdkRoot <android-sdk-root> `
   -AndroidNdkRoot <android-ndk-root> `

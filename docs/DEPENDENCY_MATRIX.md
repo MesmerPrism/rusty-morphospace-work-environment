@@ -8,7 +8,7 @@ not pin global versions. Source repos may add tighter version requirements.
 | Tool | Required for | Verify |
 | --- | --- | --- |
 | Git | source control, submodules, tags | `git --version` |
-| PowerShell | portable scripts in this repo and Rusty XR examples | `$PSVersionTable.PSVersion` |
+| PowerShell 7.6 LTS+ | authoritative portable workflow host (`pwsh`); Windows PowerShell 5.1 is bootstrap detection only | `pwsh -NoProfile -File ./scripts/Test-PowerShellHost.ps1` |
 | Rustup/Cargo | Rust workspaces and Android target setup | `rustup --version`; `cargo --version` |
 | Python 3.11+ | schema, docs, graph, and validation helpers | `python --version` |
 | ripgrep | fast source and docs search | `rg --version` |

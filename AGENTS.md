@@ -22,6 +22,11 @@ Install and verify them through `docs/LOCAL_SKILL_BOOTSTRAP.md` and
 `scripts/Install-LocalSkills.ps1`. Managed writes require `-Execute`; updates
 create a backup and must not delete unmanaged local files.
 
+Use PowerShell `7.6` LTS or newer through the `pwsh` executable for every
+authoritative workflow, child runner, validation command, and documented
+example. Windows PowerShell 5.1 is bootstrap detection only; do not add new
+`powershell.exe`, `& powershell`, or `shell: powershell` execution paths.
+
 For live headset work, prefer the public `meta-quest-agent-workflow` repository
 as the device-operation source of truth. This repo may point to that workflow,
 but it should not fork a competing Quest procedure.
@@ -206,15 +211,16 @@ in runner variables or typed reference wrappers, never injected properties.
 Before committing, run:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-PublicBoundary.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkEnvironment.ps1 -SelfTest
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkflowContracts.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\New-ProjectWorkspace.ps1 -SelfTest
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkUnitAutomation.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-FeatureLockResolver.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ProjectIsolation.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ExecutedPushReceipt.ps1 -SelfTest
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ReleaseCapsule.ps1 -SelfTest
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-PowerShellHost.ps1 -SelfTest
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-PublicBoundary.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkEnvironment.ps1 -SelfTest
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkflowContracts.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\New-ProjectWorkspace.ps1 -SelfTest
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkUnitAutomation.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-FeatureLockResolver.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ProjectIsolation.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ExecutedPushReceipt.ps1 -SelfTest
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ReleaseCapsule.ps1 -SelfTest
 git diff --check
 ```
 

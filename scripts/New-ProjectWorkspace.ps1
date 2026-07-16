@@ -130,7 +130,7 @@ function New-ProjectWorkspaceInternal {
             [ordered]@{
                 profile_id = "workflow"
                 commands = @(
-                    "powershell -NoProfile -ExecutionPolicy Bypass -File <work-environment-root>/scripts/Test-WorkflowContracts.ps1 -WorkspaceRoot <project-root>/morphospace"
+                    "pwsh -NoProfile -ExecutionPolicy Bypass -File <work-environment-root>/scripts/Test-WorkflowContracts.ps1 -WorkspaceRoot <project-root>/morphospace"
                 )
             }
         )
@@ -200,7 +200,7 @@ function New-ProjectWorkspaceInternal {
             )
             validation_profiles = @([ordered]@{
                 profile_id = "workflow"
-                commands = @("powershell -NoProfile -ExecutionPolicy Bypass -File <work-environment-root>/scripts/Test-WorkflowContracts.ps1 -WorkspaceRoot <project-root>/morphospace")
+                commands = @("pwsh -NoProfile -ExecutionPolicy Bypass -File <work-environment-root>/scripts/Test-WorkflowContracts.ps1 -WorkspaceRoot <project-root>/morphospace")
             })
             acceptance_profiles = @([ordered]@{
                 profile_id = "rollback"
@@ -280,7 +280,7 @@ Start here:
 3. Add a proposed unit under iteration-units/; do not hand-edit workflow state transitions.
 4. Validate from the work-environment clone:
 
-   ``powershell -NoProfile -ExecutionPolicy Bypass -File <work-environment-root>/scripts/Test-WorkflowContracts.ps1 -WorkspaceRoot <project-root>/morphospace``
+   ``pwsh -NoProfile -ExecutionPolicy Bypass -File <work-environment-root>/scripts/Test-WorkflowContracts.ps1 -WorkspaceRoot <project-root>/morphospace``
 
 The portable protocol guide is docs/PROJECT_WORKSPACE_PROTOCOL.md in the
 work-environment repository. Keep machine paths and private evidence outside

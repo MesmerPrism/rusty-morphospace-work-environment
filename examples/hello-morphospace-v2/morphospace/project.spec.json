@@ -11,7 +11,7 @@
   "repositories": [{"repo_id": "project-shell", "role": "application", "path": "..", "allowed_paths": ["README.md", "morphospace/"]}],
   "modules": [],
   "non_scope": ["Runtime features and modules.", "Private evidence and machine-specific paths.", "Device work."],
-  "validation_profiles": [{"profile_id": "workflow", "commands": ["powershell -NoProfile -ExecutionPolicy Bypass -File <work-environment-root>/scripts/Test-WorkflowContracts.ps1 -WorkspaceRoot <project-root>/morphospace"]}],
+  "validation_profiles": [{"profile_id": "workflow", "commands": ["pwsh -NoProfile -ExecutionPolicy Bypass -File <work-environment-root>/scripts/Test-WorkflowContracts.ps1 -WorkspaceRoot <project-root>/morphospace"]}],
   "acceptance_profiles": [{"profile_id": "rollback", "commands": ["Restore the inert checked-in example and re-run workflow validation."]}],
   "release_policy": {"versioning": "semver", "commit_policy": "Commit only a coherent validated tutorial change.", "push_checkpoint": "integration-batch", "source_first": true, "planning_last": true, "force_push_allowed": false},
   "public_boundary": {"mode": "public", "private_overlay": "local/", "prohibited_evidence": ["device serials", "private package identities", "raw logs and captures", "signing and pairing material"]}

@@ -48,14 +48,14 @@ $env:RUSTY_XR_OPENXR_LOADER_QUEST = "<openxr-loader-so>"
 Minimal Android smoke APK:
 
 ```powershell
-powershell -ExecutionPolicy Bypass `
+pwsh -ExecutionPolicy Bypass `
   -File .\examples\quest-minimal-apk\tools\Build-QuestMinimalApk.ps1
 ```
 
 OpenXR/Vulkan composite example:
 
 ```powershell
-powershell -ExecutionPolicy Bypass `
+pwsh -ExecutionPolicy Bypass `
   -File .\examples\quest-composite-layer-apk\tools\Build-QuestCompositeLayerApk.ps1 `
   -AndroidSdkRoot <android-sdk-root> `
   -AndroidNdkRoot <android-ndk-root> `
@@ -66,7 +66,7 @@ powershell -ExecutionPolicy Bypass `
 OpenXR/OpenGL ES video-stack feasibility example:
 
 ```powershell
-powershell -ExecutionPolicy Bypass `
+pwsh -ExecutionPolicy Bypass `
   -File .\examples\quest-gl-openxr-video-stack-apk\tools\Build-QuestGlOpenXrVideoStackApk.ps1 `
   -OpenXrLoaderPath <openxr-loader-so>
 ```

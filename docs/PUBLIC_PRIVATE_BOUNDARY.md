@@ -54,7 +54,7 @@ Keep private:
 Run:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-PublicBoundary.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-PublicBoundary.ps1
 ```
 
 The scan is intentionally conservative. If it flags a public repo name that is
