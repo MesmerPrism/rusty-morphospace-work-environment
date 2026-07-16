@@ -367,6 +367,10 @@ if ($Strict -and $failedRequired.Count -gt 0) {
 if ($SelfTest) {
     $selfTestFailures = @($results | Where-Object { $_.Name -match "^(aggregate|json|jsonl|powershell|workflow|scaffold|automation|authority):" -and $_.Status -ne "ok" })
     if ($selfTestFailures.Count -gt 0) {
+        Write-Host "Self-test failures:"
+        foreach ($failure in $selfTestFailures) {
+            Write-Host (" - {0} [{1}]: {2}" -f $failure.Name, $failure.Status, $failure.Detail)
+        }
         Write-Error "Self-test failed."
         exit 1
     }
