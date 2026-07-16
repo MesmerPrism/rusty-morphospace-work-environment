@@ -80,7 +80,7 @@ function Test-MorphospaceAuthorityRunnerReleaseV1 {
 function Invoke-MorphospaceAuthorityHostProbe {
     param([string[]]$RequiredCommands=@('git.exe'),[string]$HostPath='')
     foreach($command in $RequiredCommands){if([string]$command-notmatch'^[A-Za-z0-9_.-]{2,96}$'){throw "Host-probe command name is invalid: $command"}}
-    if(-not$HostPath){$HostPath=(Get-Command pwsh -CommandType Application -ErrorAction Stop).Source}
+    if(-not$HostPath){$hostCommand=Get-Command pwsh -CommandType Application -ErrorAction Stop|Where-Object{[IO.File]::Exists([string]$_.Source)}|Sort-Object -Property @{Expression={[version]$_.Version};Descending=$true},@{Expression={[string]$_.Source};Descending=$false}|Select-Object -First 1;if($null-eq$hostCommand){throw'PowerShell 7 child host is unavailable.'};$HostPath=[string]$hostCommand.Source}
     $host=[IO.Path]::GetFullPath($HostPath);if(-not[IO.File]::Exists($host)){throw "Pinned child host is missing: $host"}
     $commandJson=@($RequiredCommands)|ConvertTo-Json -Compress
     $body=@"
