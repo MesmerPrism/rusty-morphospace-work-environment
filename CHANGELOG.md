@@ -2,7 +2,25 @@
 
 All notable changes to the portable work environment are recorded here.
 
-## 0.5.0 - candidate
+## 0.5.0 - 2026-07-16
+
+### Added
+
+- Exact multi-repository source-composition locks and detached,
+  content-addressed source materializations.
+- Machine-local resource claims for repository paths, outputs, Android
+  packages, headset serials, property and staging namespaces, and bridge
+  ports.
+- Project-specific APK build identities and run capsules that bind source,
+  app identity, artifact, feature lock, runtime profile, properties, and build
+  manifest.
+- Serial-scoped same-headset run cleanup that stops only the target package and
+  restores the exact pre-run Android property state.
+- Extraction receipts and v2 promotion reviews that prove reusable modules do
+  not inherit app defaults, private payloads, package identities, or platform
+  permissions.
+- Validators, schemas, fixtures, and workflow documentation for source, build,
+  run, and module-promotion isolation.
 
 ### Changed
 
@@ -13,11 +31,22 @@ All notable changes to the portable work environment are recorded here.
 - CI validates PowerShell 7 Quick on Windows and Linux plus Standard on
   Windows; the duplicate Windows PowerShell 5.1 job is removed.
 
-### Added
+### Fixed
 
-- A host-policy validator that checks the running version/edition and rejects
+- Hidden-file path normalization and public-boundary scanning are consistent
+  across Windows and Linux.
+- Linux environment-validation shims satisfy the same portable contract as
+  Windows.
+- Validation-authority child processes select exactly one existing PowerShell
+  7 executable when multiple application registrations are discoverable.
+
+### Validation
+
+- A host-policy validator checks the running version and edition and rejects
   new authoritative `powershell.exe`, `& powershell`, or `shell: powershell`
   execution paths.
+- Quick, Standard, and Deep aggregate gates cover the new isolation contracts;
+  release acceptance also passed from a clean clone of the merged candidate.
 
 ## 0.3.0 - 2026-07-15
 
