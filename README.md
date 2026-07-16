@@ -16,6 +16,15 @@ additively: preserve live events and receipts, normalize portable
 change categories while retaining domain detail in `tags`, and validate before
 using the optional automation CLI.
 
+The additive `0.5.0` isolation protocol is currently a local candidate. It
+adds exact multi-repository composition locks, detached content-addressed
+materializations, machine-local resource claims, repository revision
+checkpoints, and extraction-bound v2 promotion reviews. See the
+[0.5.0 candidate manifest](manifests/release-0.5.0.json) and
+[Project, Build, And Headset Isolation](docs/PROJECT_ISOLATION.md). It does not
+change the published `0.4.0` tag or the separately governed platform/runtime
+baseline.
+
 Portable project, unit, repository, feature, receipt, and event identities use
 lowercase alphanumeric/hyphen syntax and support 2 through 128 characters.
 Authority-stage protocols may declare a wider identity domain explicitly.
@@ -35,6 +44,8 @@ Included:
   Rust workspace graph audits, and Meta Quest workflow handoffs;
 - project-local composition, feature activation, module extraction, promotion,
   and autonomous-iteration contracts;
+- exact source-composition locks, detached materializations, resource claims,
+  and repeated same-headset APK-run isolation contracts;
 - JSON schemas, public examples, validators, and a no-overwrite project
   scaffold for those contracts;
 - setup examples that use placeholders such as `<workspace-root>`,
@@ -116,6 +127,9 @@ validation without a device.
 - [Autonomous Iteration](docs/AUTONOMOUS_ITERATION.md) defines work-unit scope,
   compact state, event notes, validation tiers, larger push checkpoints, and
   the optional fail-closed work-unit automation CLI.
+- [Project, Build, And Headset Isolation](docs/PROJECT_ISOLATION.md) separates
+  concurrent source/build identities while serializing transactional runs on
+  one headset.
 - [Instruction Synchronization](docs/INSTRUCTION_SYNCHRONIZATION.md) keeps
   skills, planning instructions, touched-repo `AGENTS.md`, and README/router
   docs aligned without duplicating long recipes.

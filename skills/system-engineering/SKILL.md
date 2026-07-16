@@ -66,6 +66,18 @@ one descriptor-approved runtime input; the consuming runtime receipt binds
 project, feature, lock revision/fingerprint, and applied or rejected state.
 Work only within the repository and path scope declared by the current unit.
 
+For concurrent projects, separate the source, build, and run authorities. Bind
+cross-repository work to exact clean commits/trees and use detached
+materializations when live checkouts are moving. Give every APK an app-specific
+package/client/marker identity and content-addressed output. Serialize runs per
+headset serial, snapshot the complete declared property set, and restore exact
+prior values in `finally` while stopping only the target package.
+
+Reusable extraction requires a hashed receipt binding source composition,
+source/target commits and paths, the neutral contract, dependency audit,
+disabled default, private-payload absence, and app-specific exclusions. The
+originating app remains evidence, not module authority.
+
 Use one fail-closed owner for unit state transitions. Inspection and planning
 are non-mutating; execution is explicit. Derive validation and graph scope
 from the unit, keep acceptance separate from a pass receipt, preserve blockers

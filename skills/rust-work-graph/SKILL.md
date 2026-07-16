@@ -65,6 +65,13 @@ normalized allowed paths, and change categories as the maximum scan envelope.
 Exclude unlisted repositories and paths; the scope is authority for bounded
 discovery, not evidence that every listed path changed.
 
+For concurrent multi-repo work, graph the exact source-composition lock as the
+revision authority and live working-copy heads as observations. Keep claimed,
+validated, and accepted revision edges distinct. Include materialization,
+build-output, Android-package, property/staging-namespace, bridge-port, and
+headset claims as resource edges; collisions are rejection edges rather than
+implicit sharing.
+
 Treat the project-local `morphospace/` directory itself as an instruction and
 authority surface. Check that source edges into optional modules agree with the
 closed feature lock, and report nearby-but-absent features as inert rather than

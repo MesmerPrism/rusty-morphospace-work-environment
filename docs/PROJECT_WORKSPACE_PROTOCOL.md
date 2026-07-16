@@ -29,7 +29,8 @@ be migrated through an explicit unit; do not rewrite their event history.
 `project_spec.v2` adds owner, selected/denied features and modules, permission
 and data-class policy, acceptance profiles, and release/push policy.
 `workspace_state.v2` adds exact repo heads, the last accepted receipt, and the
-current module/capability registries.
+current module/capability registries. The optional repository checkpoints keep
+observed, claimed, validated, and accepted revisions distinct.
 
 ## Directory Contract
 
@@ -42,9 +43,11 @@ current module/capability registries.
     iteration-events.jsonl
     features/
     module-candidates/
+    module-extraction-receipts/
     iteration-units/
     promotion-reviews/
     receipts/
+    source-compositions/
 ```
 
 - `project.spec.json` declares purpose, repositories, module candidates,
@@ -57,11 +60,16 @@ current module/capability registries.
 - `iteration-events.jsonl` is append-only chronological evidence.
 - `features/` holds the owner-issued descriptors selected by this project.
 - `module-candidates/` holds extraction records throughout their lifecycle.
+- `module-extraction-receipts/` binds an extraction to exact source and target
+  commits/trees and its app-specific exclusion boundary.
 - `iteration-units/` holds independently reviewable work packets.
 - `promotion-reviews/` holds gate decisions for module maturity changes.
 - `receipts/` holds structured validation, non-executing push plans, and
   externally produced executed-push receipts. A plan never substitutes for
   exact remote readback.
+- `source-compositions/` holds exact multi-repository commit/tree locks. Use a
+  detached materialization when active working copies are changing in
+  parallel.
 
 Generated APKs, logs, screenshots, traces, pairing material, private payloads,
 and tool caches do not belong in this directory.
@@ -187,6 +195,10 @@ The optional automation CLI described in
 inspection, validation matrix, graph scope, and state transitions. Its local
 repository map is an adapter into project-declared scope; it cannot expand
 that scope.
+
+For cross-project source locks, resource claims, content-addressed build
+identity, and repeated runs on one headset, follow
+[Project, Build, And Headset Isolation](PROJECT_ISOLATION.md).
 
 ## Validation
 

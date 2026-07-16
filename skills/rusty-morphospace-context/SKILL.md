@@ -90,6 +90,12 @@ Descriptor filesystem locations are local resolver inputs only. A v2 lock uses
 forward-slash descriptor references relative to its `project.spec.json` and
 rejects absolute, parent-traversing, or out-of-project paths.
 
+When active working copies move in parallel, bind cross-repository work to a
+clean exact source-composition lock and prefer its detached materialization.
+Keep observed, claimed, validated, and accepted revisions distinct. Parallel
+APK builds require disjoint package/client/output/property identities; runs on
+one headset are serial-scoped transactions.
+
 UI handlers collect inputs, invoke owned routes, show progress, and project
 structured evidence. Every accepted operator action needs a CLI or local API
 route with the same authority and evidence.
@@ -114,8 +120,9 @@ For composition, module extraction, activation, iteration, or promotion, read:
 2. `docs/MODULE_LIFECYCLE.md`
 3. `docs/FEATURE_ACTIVATION.md`
 4. `docs/AUTONOMOUS_ITERATION.md`
-5. `docs/INSTRUCTION_SYNCHRONIZATION.md`
-6. `docs/RELEASE_CAPSULE_AND_HISTORICAL_CLOSURE.md` for a release cut,
+5. `docs/PROJECT_ISOLATION.md`
+6. `docs/INSTRUCTION_SYNCHRONIZATION.md`
+7. `docs/RELEASE_CAPSULE_AND_HISTORICAL_CLOSURE.md` for a release cut,
    post-release audit, or damaged publication-evidence repair.
 
 Work only in the repositories and paths declared by the current unit. Use the

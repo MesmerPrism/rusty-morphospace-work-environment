@@ -72,6 +72,25 @@
       "allowed_paths": ["morphospace/"]
     }
   ],
+  "source_composition": {
+    "mode": "exact-materialization",
+    "lock_path": "source-compositions/unit-example-001.lock.json",
+    "materialization_receipt": "receipts/unit-example-001-materialization.json"
+  },
+  "resource_requirements": [
+    {
+      "resource_kind": "repo-path",
+      "resource_id": "<materialized-matter-core-path>",
+      "mode": "exclusive",
+      "claim_timing": "before-write"
+    },
+    {
+      "resource_kind": "build-output",
+      "resource_id": "<content-addressed-output-path>",
+      "mode": "exclusive",
+      "claim_timing": "before-write"
+    }
+  ],
   "non_scope": [
     "Application visual changes.",
     "Platform, packaging, permission, and device work.",

@@ -8,6 +8,7 @@
   "last_event_id": "hello-bootstrap-0001",
   "last_accepted_receipt": null,
   "repository_heads": [],
+  "repository_checkpoints": [],
   "module_registry": {
     "lock_revision": 1,
     "lock_fingerprint": "7811b69fc171fd85dc4214da62618bcbdc02ad7d3b1e9eb430317fe4025be8d4",

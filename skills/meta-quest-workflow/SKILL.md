@@ -25,9 +25,10 @@ and docs root. If absent, use an explicitly configured
 In this work-environment repo:
 
 1. `docs/QUEST_APK_WORKFLOW.md`
-2. `docs/TERMUX_SIDECAR_LAB.md`
-3. `docs/PUBLIC_PRIVATE_BOUNDARY.md`
-4. `docs/INSTRUCTION_SYNCHRONIZATION.md`, when device or evidence policy changes
+2. `docs/PROJECT_ISOLATION.md`
+3. `docs/TERMUX_SIDECAR_LAB.md`
+4. `docs/PUBLIC_PRIVATE_BOUNDARY.md`
+5. `docs/INSTRUCTION_SYNCHRONIZATION.md`, when device or evidence policy changes
 
 In the public Meta Quest workflow repo:
 
@@ -51,6 +52,12 @@ In the public Meta Quest workflow repo:
 - Do not treat Termux as Android shell authority unless an already authorized
   ADB gate reports `uid=2000(shell)`.
 - Keep raw device evidence private unless a public redaction gate exists.
+- When several projects share one headset, require distinct package/client,
+  build-output, property, and staging identities. Validate a hashed run capsule
+  before install, serialize mutations per serial, snapshot and clear the
+  complete app property manifest, and restore exact prior values in `finally`.
+  Stop only the target package; do not force-stop or clean unrelated apps as
+  generic preflight.
 - Validate the shared particle adapter per consumer with serial-scoped ADB.
   Require each effective `channel=particle-adapter` marker, fold private logs
   with `rusty-quest/tools/Test-QuestParticleAdapterEvidence.ps1`, require

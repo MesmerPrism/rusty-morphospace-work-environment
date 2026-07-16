@@ -54,7 +54,8 @@ iteration, read in this order:
 2. `docs/MODULE_LIFECYCLE.md`
 3. `docs/FEATURE_ACTIVATION.md`
 4. `docs/AUTONOMOUS_ITERATION.md`
-5. `docs/INSTRUCTION_SYNCHRONIZATION.md`
+5. `docs/PROJECT_ISOLATION.md`
+6. `docs/INSTRUCTION_SYNCHRONIZATION.md`
 
 For broad validation, use `Test-WorkEnvironment.ps1 -SelfTest -Tier Quick`,
 then `Standard`, then `Deep` only when the risk warrants it. A single failed
@@ -142,6 +143,17 @@ in runner variables or typed reference wrappers, never injected properties.
   `<old-unit>-superseded-by-<current-unit>` state-transition event whose
   replacement is the sole current unit; never rewrite the historical unit or
   event prefix to make the workspace look clean.
+- Cross-repository implementation and module extraction use an exact source
+  composition lock; use detached clean materializations when working copies
+  are changing in parallel. Observed, claimed, validated, and accepted
+  revisions are separate state.
+- Parallel APK builds require distinct package/client identities,
+  content-addressed outputs, and complete run capsules. Runs on one headset
+  are serial-scoped transactions that restore exact prior properties and
+  stop only the target package.
+- Machine-local resource claims coordinate repo paths, build outputs, Android
+  packages, property/staging namespaces, bridge ports, and headset serials.
+  Claims do not activate features or authorize Git/device operations.
 - Optional work-unit automation is fail-closed: inspect/plan by default,
   require `-Execute` for workspace-state mutation, preserve dirty/divergent
   repositories, derive graph scope from the unit, and never own Git push,
@@ -200,6 +212,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkflowContr
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\New-ProjectWorkspace.ps1 -SelfTest
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkUnitAutomation.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-FeatureLockResolver.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ProjectIsolation.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ExecutedPushReceipt.ps1 -SelfTest
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ReleaseCapsule.ps1 -SelfTest
 git diff --check

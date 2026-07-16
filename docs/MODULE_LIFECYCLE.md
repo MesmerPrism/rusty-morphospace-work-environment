@@ -55,6 +55,8 @@ the boundary exists.
    sockets, device mutation, and private payloads in adapters or app shells.
 6. Reconnect the originating app through the public contract.
 7. Validate a second consumer before stable promotion.
+8. Record the exact source-composition and app-specific exclusions in a
+   `module_extraction_receipt.v1` before v2 stable promotion.
 
 Core modules must not gain an Android, OpenXR, renderer, media SDK, dynamic
 plugin, sidecar, or app-shell dependency merely because the first application
@@ -100,6 +102,11 @@ An accepted review targeting `stable` must pass:
 - second consumer;
 - instruction synchronization;
 - rollback.
+
+A `promotion_review.v2` additionally hashes the module extraction receipt and
+requires `extraction-boundary: pass`. V1 reviews remain readable for existing
+workspaces; use v2 for new extractions so later consumers can prove which
+source revisions and exclusions crossed the boundary.
 
 The machine-readable gate IDs live in
 `manifests/workflow-lifecycle.portable.json`.

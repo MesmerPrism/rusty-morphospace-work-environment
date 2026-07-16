@@ -566,6 +566,34 @@ function Test-ProjectBundle {
                 }
             }
         }
+        if ($unit.PSObject.Properties.Name -contains "source_composition") {
+            $composition = $unit.source_composition
+            $compositionModes = @("observed-working-copies", "exact-lock", "exact-materialization")
+            Assert-Contract ($compositionModes -contains [string]$composition.mode) "$Context unit '$($unit.unit_id)' has unknown source composition mode '$($composition.mode)'."
+            if ($composition.mode -eq "observed-working-copies") {
+                Assert-Contract ($null -eq $composition.lock_path -and $null -eq $composition.materialization_receipt) "$Context unit '$($unit.unit_id)' observed source composition must not cite a lock or materialization receipt."
+            } elseif ($composition.mode -eq "exact-lock") {
+                Assert-Contract ((Test-Text $composition.lock_path) -and $null -eq $composition.materialization_receipt) "$Context unit '$($unit.unit_id)' exact-lock source composition needs a lock and no materialization receipt."
+            } elseif ($composition.mode -eq "exact-materialization") {
+                Assert-Contract ((Test-Text $composition.lock_path) -and (Test-Text $composition.materialization_receipt)) "$Context unit '$($unit.unit_id)' exact materialization needs both lock and materialization receipt."
+            }
+        }
+        if ($unit.PSObject.Properties.Name -contains "resource_requirements") {
+            $resourceKeys = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+            foreach ($requirement in @($unit.resource_requirements)) {
+                $resourceKind = [string]$requirement.resource_kind
+                $resourceId = [string]$requirement.resource_id
+                Assert-Contract (@("repo-path", "build-output", "android-package", "headset", "property-namespace", "staging-namespace", "bridge-port") -contains $resourceKind) "$Context unit '$($unit.unit_id)' has unknown resource kind '$resourceKind'."
+                Assert-Contract (Test-Text $resourceId) "$Context unit '$($unit.unit_id)' resource '$resourceKind' needs an ID."
+                Assert-Contract (@("exclusive", "shared-read") -contains [string]$requirement.mode) "$Context unit '$($unit.unit_id)' resource '$resourceKind/$resourceId' has unknown mode."
+                Assert-Contract (@("none", "before-write", "before-run") -contains [string]$requirement.claim_timing) "$Context unit '$($unit.unit_id)' resource '$resourceKind/$resourceId' has unknown claim timing."
+                Assert-Contract ($resourceKeys.Add("$resourceKind`n$resourceId")) "$Context unit '$($unit.unit_id)' repeats resource '$resourceKind/$resourceId'."
+            }
+            if ($unit.device_requirement -eq "required") {
+                $headsetRequirements = @($unit.resource_requirements | Where-Object { $_.resource_kind -eq "headset" -and $_.mode -eq "exclusive" -and $_.claim_timing -eq "before-run" })
+                Assert-Contract ($headsetRequirements.Count -gt 0) "$Context unit '$($unit.unit_id)' requires a device and must declare an exclusive headset claim before run."
+            }
+        }
         Test-NonEmptyTextArray -Value $unit.non_scope -Context "$Context unit '$($unit.unit_id)' non_scope"
         Assert-Contract (@($unit.acceptance).Count -gt 0) "$Context unit '$($unit.unit_id)' needs acceptance proofs."
         Test-UniqueProperty -Items @($unit.acceptance) -Property "acceptance_id" -Context "$Context unit '$($unit.unit_id)' acceptance"
@@ -679,6 +707,22 @@ function Test-ProjectBundle {
             Assert-Contract ($repositoryMap.ContainsKey([string]$head.repo_id)) "$Context workspace state has a head for undeclared repo '$($head.repo_id)'."
             Assert-Contract ([string]$head.head -match "^[0-9a-fA-F]{40}$") "$Context workspace repo '$($head.repo_id)' has invalid HEAD."
         }
+        if ($state.PSObject.Properties.Name -contains "repository_checkpoints") {
+            Test-UniqueProperty -Items @($state.repository_checkpoints) -Property "repo_id" -Context "$Context workspace repository checkpoints"
+            foreach ($checkpoint in @($state.repository_checkpoints)) {
+                $checkpointRepo = [string]$checkpoint.repo_id
+                Assert-Contract ($repositoryMap.ContainsKey($checkpointRepo)) "$Context workspace state has a checkpoint for undeclared repo '$checkpointRepo'."
+                foreach ($field in @("observed_head", "claimed_head", "validated_head", "accepted_head")) {
+                    $value = $checkpoint.$field
+                    Assert-Contract ($null -eq $value -or [string]$value -match "^[0-9a-fA-F]{40}$") "$Context workspace repo '$checkpointRepo' has invalid $field."
+                }
+                Assert-Contract ($null -eq $checkpoint.composition_fingerprint -or [string]$checkpoint.composition_fingerprint -match "^[0-9a-fA-F]{64}$") "$Context workspace repo '$checkpointRepo' has an invalid composition fingerprint."
+                Assert-Contract ($null -eq $checkpoint.claimed_head -or $null -ne $checkpoint.observed_head) "$Context workspace repo '$checkpointRepo' cannot be claimed before it is observed."
+                Assert-Contract ($null -eq $checkpoint.validated_head -or [string]$checkpoint.validated_head -ceq [string]$checkpoint.claimed_head) "$Context workspace repo '$checkpointRepo' validated revision must equal its claimed revision."
+                Assert-Contract ($null -eq $checkpoint.accepted_head -or [string]$checkpoint.accepted_head -ceq [string]$checkpoint.validated_head) "$Context workspace repo '$checkpointRepo' accepted revision must equal its validated revision."
+                Assert-Contract ($null -eq $checkpoint.composition_fingerprint -or $null -ne $checkpoint.claimed_head) "$Context workspace repo '$checkpointRepo' composition fingerprint requires a claimed revision."
+            }
+        }
         if ($null -ne $state.module_registry.lock_revision) {
             Assert-Contract ([int]$state.module_registry.lock_revision -eq [int]$lock.revision -and [string]$state.module_registry.lock_fingerprint -eq [string]$lock.lock_fingerprint) "$Context module registry does not match feature lock revision/fingerprint."
         }
@@ -707,7 +751,13 @@ function Test-ProjectBundle {
         $review = Read-JsonDocument -Path $path -Context "$Context promotion review"
         if ($null -eq $review) { continue }
         $reviews.Add($review) | Out-Null
-        Assert-Contract ($review.schema -eq "rusty.morphospace.workflow.promotion_review.v1") "$Context review '$($review.review_id)' has the wrong schema ID."
+        $isReviewV2 = [string]$review.schema -eq "rusty.morphospace.workflow.promotion_review.v2"
+        Assert-Contract ($isReviewV2 -or $review.schema -eq "rusty.morphospace.workflow.promotion_review.v1") "$Context review '$($review.review_id)' has the wrong schema ID."
+        if ($isReviewV2) {
+            Assert-Contract (Test-Text $review.extraction_receipt.path) "$Context v2 review '$($review.review_id)' needs a module extraction receipt path."
+            Assert-Contract ([string]$review.extraction_receipt.sha256 -match "^[0-9a-f]{64}$") "$Context v2 review '$($review.review_id)' needs an exact module extraction receipt hash."
+            Assert-Contract ([string]$review.extraction_receipt.source_composition_fingerprint -match "^[0-9a-f]{64}$") "$Context v2 review '$($review.review_id)' needs an exact source composition fingerprint."
+        }
         Assert-Contract ($candidateMap.ContainsKey([string]$review.candidate_id)) "$Context review '$($review.review_id)' references missing candidate '$($review.candidate_id)'."
         if ($candidateMap.ContainsKey([string]$review.candidate_id)) {
             $candidate = $candidateMap[[string]$review.candidate_id]
@@ -722,7 +772,7 @@ function Test-ProjectBundle {
         $gateEntries = @($review.gates)
         Test-UniqueProperty -Items $gateEntries -Property "gate_id" -Context "$Context review '$($review.review_id)' gates"
         foreach ($gate in $gateEntries) {
-            Assert-Contract ($script:PromotionGates -contains [string]$gate.gate_id) "$Context review '$($review.review_id)' has unknown gate '$($gate.gate_id)'."
+            Assert-Contract (($script:PromotionGates -contains [string]$gate.gate_id) -or ($isReviewV2 -and [string]$gate.gate_id -eq "extraction-boundary")) "$Context review '$($review.review_id)' has unknown gate '$($gate.gate_id)'."
             Assert-Contract (Test-Text $gate.evidence) "$Context review '$($review.review_id)' gate '$($gate.gate_id)' needs evidence."
         }
         if ($review.decision -eq "accepted" -and $review.target_maturity -eq "stable") {
@@ -731,6 +781,13 @@ function Test-ProjectBundle {
                 Assert-Contract ($matchingGate.Count -eq 1) "$Context stable review '$($review.review_id)' is missing gate '$gateId'."
                 if ($matchingGate.Count -eq 1) {
                     Assert-Contract ($matchingGate[0].result -eq "pass") "$Context stable review '$($review.review_id)' gate '$gateId' did not pass."
+                }
+            }
+            if ($isReviewV2) {
+                $extractionGate = @($gateEntries | Where-Object { $_.gate_id -eq "extraction-boundary" })
+                Assert-Contract ($extractionGate.Count -eq 1) "$Context stable v2 review '$($review.review_id)' is missing gate 'extraction-boundary'."
+                if ($extractionGate.Count -eq 1) {
+                    Assert-Contract ($extractionGate[0].result -eq "pass") "$Context stable v2 review '$($review.review_id)' extraction boundary did not pass."
                 }
             }
             Assert-Contract ($review.rollback_verified -eq $true) "$Context stable review '$($review.review_id)' must verify rollback."
@@ -818,11 +875,14 @@ $requiredSchemaNames = @(
     "iteration-event-v2.schema.json",
     "iteration-unit.schema.json",
     "module-candidate.schema.json",
+    "module-extraction-receipt.schema.json",
     "pending-quarantine-authorization.schema.json",
     "pending-quarantine-completion.schema.json",
     "project-spec.schema.json",
     "project-spec-v2.schema.json",
     "promotion-review.schema.json",
+    "promotion-review-v2.schema.json",
+    "resource-claim.schema.json",
     "push-bundle-plan.schema.json",
     "repository-map.schema.json",
     "release-capsule.schema.json",
@@ -832,6 +892,8 @@ $requiredSchemaNames = @(
     "revision-set.schema.json",
     "state-transition-completion.schema.json",
     "state-transition-intent.schema.json",
+    "source-composition-lock.schema.json",
+    "source-materialization-receipt.schema.json",
     "validation-receipt.schema.json",
     "unit-ownership.schema.json",
     "validation-action-v2.schema.json",

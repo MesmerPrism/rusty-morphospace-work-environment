@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/module-extraction-receipt.schema.json",
+  "title": "App-local to reusable-module extraction receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "receipt_id", "created_at", "candidate_id", "module_id", "source_composition", "source", "target", "boundary", "validation", "status"],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.workflow.module_extraction_receipt.v1" },
+    "receipt_id": { "$ref": "#/$defs/id" },
+    "created_at": { "type": "string", "minLength": 1 },
+    "candidate_id": { "$ref": "#/$defs/id" },
+    "module_id": { "$ref": "#/$defs/id" },
+    "source_composition": {
+      "type": "object", "additionalProperties": false,
+      "required": ["lock_path", "lock_sha256", "fingerprint"],
+      "properties": {
+        "lock_path": { "type": "string", "minLength": 1 },
+        "lock_sha256": { "$ref": "#/$defs/hash" },
+        "fingerprint": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "source": { "$ref": "#/$defs/repositorySlice" },
+    "target": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repo_id", "commit", "tree", "paths", "contract"],
+      "properties": {
+        "repo_id": { "$ref": "#/$defs/id" },
+        "commit": { "$ref": "#/$defs/oid" },
+        "tree": { "$ref": "#/$defs/oid" },
+        "paths": { "$ref": "#/$defs/nonEmptyStrings" },
+        "contract": { "$ref": "#/$defs/dottedId" }
+      }
+    },
+    "boundary": {
+      "type": "object", "additionalProperties": false,
+      "required": ["app_specific_exclusions", "dependency_audit", "default_activation", "private_payload_included"],
+      "properties": {
+        "app_specific_exclusions": { "$ref": "#/$defs/nonEmptyStrings" },
+        "dependency_audit": { "type": "string", "minLength": 1 },
+        "default_activation": { "const": "disabled" },
+        "private_payload_included": { "const": false }
+      }
+    },
+    "validation": { "$ref": "#/$defs/nonEmptyStrings" },
+    "status": { "const": "accepted" }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" },
+    "dottedId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]{2,127}$" },
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "oid": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "nonEmptyStrings": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+    "repositorySlice": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repo_id", "commit", "tree", "paths"],
+      "properties": {
+        "repo_id": { "$ref": "#/$defs/id" },
+        "commit": { "$ref": "#/$defs/oid" },
+        "tree": { "$ref": "#/$defs/oid" },
+        "paths": { "$ref": "#/$defs/nonEmptyStrings" }
+      }
+    }
+  }
+}

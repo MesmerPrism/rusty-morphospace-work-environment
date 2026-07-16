@@ -17,6 +17,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-SkillTemplate
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-EnvironmentValidation.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-LocalSkillBootstrap.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-FeatureLockResolver.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ProjectIsolation.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ExecutedPushReceipt.ps1 -SelfTest
 git diff --check
 ```
@@ -70,6 +71,8 @@ The workflow validator checks more than JSON syntax. It enforces:
   conformance harness;
 - required instruction synchronization for authority, module-layout,
   activation, validation, device-policy, repo-routing, and boundary changes.
+- exact-lock/materialization source modes, resource requirements, repository
+  revision checkpoints, and extraction-bound v2 stable promotions.
 
 Validate an instantiated project workspace:
 
@@ -90,6 +93,11 @@ powershell -NoProfile -ExecutionPolicy Bypass `
 The scaffold self-test creates a temporary project workspace, validates it,
 proves that a second invocation cannot overwrite it, and removes only its own
 temporary directory.
+
+The project-isolation test creates two temporary Git repositories, locks their
+exact commits and trees, materializes detached clean copies, rejects address
+replacement, and proves that overlapping exclusive local resource claims fail
+closed. It performs no device operations.
 
 The feature-lock resolver self-test proves dependency closure, descriptor and
 source hashing, exact effect unions, selected-lock-plus-runtime-input

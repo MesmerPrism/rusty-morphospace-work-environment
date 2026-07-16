@@ -114,6 +114,17 @@ not exercise generated Android activity and package behavior.
 
 ## Install And Launch
 
+When several projects share one headset, do not launch from a loose APK path
+plus ambient properties. Require an app-specific run capsule that binds the
+APK, package/activity, build manifest, feature lock, effective runtime profile,
+complete property manifest, and exact source commit/tree. Keep package,
+client/marker identity, build output, Gradle/Cargo intermediates, property
+namespace, and staging namespace distinct per project.
+
+Parallel builds are allowed only for disjoint identities. Install/launch runs
+on the same serial are exclusive transactions. Follow
+[Project, Build, And Headset Isolation](PROJECT_ISOLATION.md).
+
 Use serial-scoped ADB:
 
 ```powershell
@@ -130,6 +141,13 @@ adb -s <quest-serial> shell am start -W -n <package>/<activity>
 
 Treat `force-stop` as a lifecycle mutation. It can affect services, panels,
 immersive state, and broker surfaces.
+
+Before a run, take a per-serial mutex/claim and snapshot the complete declared
+property set. Clear that set before applying the selected profile. In a
+`finally` path, stop only the target package, restore exact prior values,
+verify cleanup, and write a transaction receipt. Do not force-stop known XR
+packages as a blanket preflight and do not use another project's installed APK
+or launcher residue as a default.
 
 ## Crash Watch
 

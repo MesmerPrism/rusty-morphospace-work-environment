@@ -141,6 +141,74 @@
         }
       }
     },
+    "source_composition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "lock_path", "materialization_receipt"],
+      "properties": {
+        "mode": {
+          "enum": ["observed-working-copies", "exact-lock", "exact-materialization"]
+        },
+        "lock_path": {
+          "oneOf": [
+            { "type": "string", "minLength": 1 },
+            { "type": "null" }
+          ]
+        },
+        "materialization_receipt": {
+          "oneOf": [
+            { "type": "string", "minLength": 1 },
+            { "type": "null" }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "mode": { "const": "observed-working-copies" } } },
+          "then": {
+            "properties": {
+              "lock_path": { "type": "null" },
+              "materialization_receipt": { "type": "null" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "mode": { "const": "exact-lock" } } },
+          "then": {
+            "properties": {
+              "lock_path": { "type": "string", "minLength": 1 },
+              "materialization_receipt": { "type": "null" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "mode": { "const": "exact-materialization" } } },
+          "then": {
+            "properties": {
+              "lock_path": { "type": "string", "minLength": 1 },
+              "materialization_receipt": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      ]
+    },
+    "resource_requirements": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["resource_kind", "resource_id", "mode", "claim_timing"],
+        "properties": {
+          "resource_kind": {
+            "enum": ["repo-path", "build-output", "android-package", "headset", "property-namespace", "staging-namespace", "bridge-port"]
+          },
+          "resource_id": { "type": "string", "minLength": 1 },
+          "mode": { "enum": ["exclusive", "shared-read"] },
+          "claim_timing": { "enum": ["none", "before-write", "before-run"] }
+        }
+      }
+    },
     "non_scope": { "$ref": "#/$defs/nonEmptyStrings" },
     "acceptance": {
       "type": "array",

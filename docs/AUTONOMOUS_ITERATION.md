@@ -1,6 +1,7 @@
 # Autonomous Iteration
 
-This document describes the portable workflow through `0.4.0`. The accepted
+This document describes the published workflow through `0.4.0` plus the
+additive `0.5.0` isolation candidate. The accepted
 `0.1.0` history remains immutable; later releases must preserve accepted
 event/receipt history or provide an explicit migration and rollback path.
 
@@ -22,6 +23,10 @@ Every implementation slice has one `iteration-unit` record containing:
 - change categories and instruction impact;
 - affected `AGENTS.md`, README/router, and skill surfaces, or an explicit
   reason that no instruction surface changes.
+- source-composition mode and exact lock/materialization receipts when the
+  unit must not follow moving working copies;
+- repo path, build output, package, property/staging namespace, bridge-port,
+  and headset resource requirements with claim timing.
 
 An agent may reduce scope while working. It may not expand scope beyond the
 project spec and unit without a reviewed unit update.
@@ -79,7 +84,9 @@ matrix. Keep entrypoints short and move detailed recipes into linked docs.
 - pending coordinated-push bundle.
 
 Protocol v2 also records exact repository heads/dirty fingerprints, the last
-accepted receipt, and current module/capability registries. These are compact
+accepted receipt, and current module/capability registries. Optional repository
+checkpoints distinguish the currently observed revision from the exact
+revision claimed, validated, and accepted by a composition. These are compact
 current projections; append-only events remain the historical source.
 
 When a corrective unit replaces an immutable historical unit still recorded

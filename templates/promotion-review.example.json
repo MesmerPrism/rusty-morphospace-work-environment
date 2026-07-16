@@ -1,12 +1,17 @@
 {
-  "$schema": "../schemas/promotion-review.schema.json",
-  "schema": "rusty.morphospace.workflow.promotion_review.v1",
+  "$schema": "../schemas/promotion-review-v2.schema.json",
+  "schema": "rusty.morphospace.workflow.promotion_review.v2",
   "review_id": "particle-field-stable-review",
   "candidate_id": "particle-field-candidate",
   "module_id": "particle-field",
   "from_maturity": "cross-consumer-validated",
   "target_maturity": "stable",
   "decision": "accepted",
+  "extraction_receipt": {
+    "path": "module-extraction-receipts/particle-field-extraction.json",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "source_composition_fingerprint": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
   "gates": [
     { "gate_id": "authority", "result": "pass", "evidence": "<authority-receipt>" },
     { "gate_id": "contract", "result": "pass", "evidence": "<contract-receipt>" },
@@ -15,6 +20,7 @@
     { "gate_id": "conformance", "result": "pass", "evidence": "<conformance-receipt>" },
     { "gate_id": "negative-fixture", "result": "pass", "evidence": "<negative-fixture-receipt>" },
     { "gate_id": "second-consumer", "result": "pass", "evidence": "<second-consumer-receipt>" },
+    { "gate_id": "extraction-boundary", "result": "pass", "evidence": "<module-extraction-receipt>" },
     { "gate_id": "instruction-sync", "result": "pass", "evidence": "<instruction-sync-receipt>" },
     { "gate_id": "rollback", "result": "pass", "evidence": "<rollback-receipt>" }
   ],

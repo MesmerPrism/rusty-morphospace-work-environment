@@ -1,0 +1,35 @@
+{
+  "schema": "rusty.morphospace.work_environment.release.v1",
+  "version": "0.5.0",
+  "candidate_at": "2026-07-16",
+  "publication_status": "local-candidate",
+  "compatibility": "additive-project-source-build-run-isolation-with-v1-and-v2-workspace-read-compatibility",
+  "protocols": [
+    "rusty.morphospace.workflow.source_composition_lock.v1",
+    "rusty.morphospace.workflow.source_materialization_receipt.v1",
+    "rusty.morphospace.workflow.resource_claim.v1",
+    "rusty.morphospace.workflow.module_extraction_receipt.v1",
+    "rusty.morphospace.workflow.promotion_review.v2",
+    "rusty.morphospace.workflow.iteration_unit.v1",
+    "rusty.morphospace.workflow.workspace_state.v2"
+  ],
+  "invariants": [
+    "Version 0.5.0 identifies a candidate portable work-environment protocol and tooling release; it does not change the published 0.4.0 tag or the separately governed Rusty Morphospace platform/runtime baseline.",
+    "An observed repository head is not automatically a claimed, validated, or accepted revision.",
+    "Exact multi-repository compositions bind clean tracked commits and trees; uncommitted or untracked source is not silently included.",
+    "Detached source materializations are content addressed, clean, exact-tree verified, and never replaced in place.",
+    "Machine-local claims coordinate overlapping repo paths, outputs, Android packages, headset serials, property/staging namespaces, and bridge ports without authorizing external mutation.",
+    "Parallel APK builds require distinct mutable identities; runs on one headset are serial-scoped transactions.",
+    "A run capsule binds the app package/activity, APK, lock, profile, property manifest, build manifest, and exact source revision.",
+    "Run cleanup stops only the target package and restores the exact property state observed before the run.",
+    "New stable module promotions bind an exact extraction receipt and prove that app defaults, private payloads, platform permissions, and package identity did not cross the reusable boundary.",
+    "Existing v1 project and promotion artifacts remain readable and are not rewritten."
+  ],
+  "isolation_entrypoint": "docs/PROJECT_ISOLATION.md",
+  "source_lock_entrypoint": "scripts/New-SourceCompositionLock.ps1",
+  "source_materialization_entrypoint": "scripts/New-SourceMaterialization.ps1",
+  "resource_claim_entrypoint": "scripts/Invoke-ResourceClaim.ps1",
+  "validation_entrypoint": "scripts/Test-ProjectIsolation.ps1",
+  "aggregate_validation_entrypoint": "scripts/Test-WorkEnvironment.ps1 -SelfTest -Tier Quick",
+  "license": "AGPL-3.0-or-later"
+}
