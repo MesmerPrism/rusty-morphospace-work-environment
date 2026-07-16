@@ -1,8 +1,8 @@
 {
   "schema": "rusty.morphospace.work_environment.release.v1",
   "version": "0.5.0",
-  "candidate_at": "2026-07-16",
-  "publication_status": "local-candidate",
+  "released_at": "2026-07-16",
+  "publication_status": "published",
   "compatibility": "additive-project-source-build-run-isolation-with-v1-and-v2-workspace-read-compatibility",
   "protocols": [
     "rusty.morphospace.workflow.source_composition_lock.v1",
@@ -14,7 +14,7 @@
     "rusty.morphospace.workflow.workspace_state.v2"
   ],
   "invariants": [
-    "Version 0.5.0 identifies a candidate portable work-environment protocol and tooling release; it does not change the published 0.4.0 tag or the separately governed Rusty Morphospace platform/runtime baseline.",
+    "Version 0.5.0 identifies the portable work-environment protocol and tooling release; it does not change the separately governed Rusty Morphospace platform/runtime baseline.",
     "PowerShell 7.6 LTS or newer Core edition, invoked as pwsh, is the authoritative workflow host; Windows PowerShell 5.1 is supported only as a bootstrap detector that points contributors to pwsh.",
     "An observed repository head is not automatically a claimed, validated, or accepted revision.",
     "Exact multi-repository compositions bind clean tracked commits and trees; uncommitted or untracked source is not silently included.",

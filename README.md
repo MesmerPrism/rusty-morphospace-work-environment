@@ -8,27 +8,22 @@ workflow host. Windows PowerShell 5.1 may run the bootstrap host check, but it
 is not an execution environment for validation, automation, builds, or release
 tooling. PowerShell 7 installs side by side with 5.1 on Windows.
 
-Current work-environment protocol release: `0.4.0` (2026-07-15). Its
-implementation and acceptance plan is
-[Onboarding And Local-Skill Implementation Plan](docs/ONBOARDING_IMPLEMENTATION_PLAN.md),
-and its machine-readable release surface is the
-[0.4.0 manifest](manifests/release-0.4.0.json). This version identifies the
-portable onboarding, protocol, and tooling release; it does not change the
-separately governed Rusty Morphospace platform/runtime baseline. The immutable
-work-environment `0.1.0` and published `0.3.0`
-manifests remain readable. Existing project instances adopt any later baseline
-additively: preserve live events and receipts, normalize portable
-change categories while retaining domain detail in `tags`, and validate before
-using the optional automation CLI.
-
-The additive `0.5.0` isolation protocol is currently a local candidate. It
-adds exact multi-repository composition locks, detached content-addressed
+Current work-environment protocol release: `0.5.0` (2026-07-16). It adds exact
+multi-repository composition locks, detached content-addressed
 materializations, machine-local resource claims, repository revision
-checkpoints, and extraction-bound v2 promotion reviews. See the
-[0.5.0 candidate manifest](manifests/release-0.5.0.json) and
-[Project, Build, And Headset Isolation](docs/PROJECT_ISOLATION.md). It does not
-change the published `0.4.0` tag or the separately governed platform/runtime
-baseline.
+checkpoints, repeated same-headset APK run capsules, and extraction-bound v2
+promotion reviews. Its machine-readable release surface is the
+[0.5.0 manifest](manifests/release-0.5.0.json); the operational entrypoint is
+[Project, Build, And Headset Isolation](docs/PROJECT_ISOLATION.md). This
+release does not change the separately governed Rusty Morphospace
+platform/runtime baseline.
+
+The published [0.4.0 manifest](manifests/release-0.4.0.json) remains the
+immutable release-capsule and local-skill onboarding baseline. The `0.1.0` and
+published `0.3.0` manifests also remain readable. Existing project instances
+adopt later baselines additively: preserve live events and receipts, normalize
+portable change categories while retaining domain detail in `tags`, and
+validate before using the optional automation CLI.
 
 Portable project, unit, repository, feature, receipt, and event identities use
 lowercase alphanumeric/hyphen syntax and support 2 through 128 characters.
