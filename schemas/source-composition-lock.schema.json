@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/source-composition-lock.schema.json",
+  "title": "Exact multi-repository source composition lock",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "lock_id", "created_at", "project_id", "unit_id", "fingerprint", "repositories", "status", "does_not_prove"],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.workflow.source_composition_lock.v1" },
+    "lock_id": { "$ref": "#/$defs/id" },
+    "created_at": { "$ref": "#/$defs/utc" },
+    "project_id": { "$ref": "#/$defs/id" },
+    "unit_id": { "$ref": "#/$defs/id" },
+    "fingerprint": { "$ref": "#/$defs/hash" },
+    "repositories": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/repository" } },
+    "status": { "const": "locked" },
+    "does_not_prove": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,191}$" },
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "oid": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "utc": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{7}Z$" },
+    "repository": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repo_id", "role", "commit", "tree", "branch", "remote_url", "materialization_path", "tracked_worktree_clean"],
+      "properties": {
+        "repo_id": { "$ref": "#/$defs/id" },
+        "role": { "type": "string", "minLength": 1 },
+        "commit": { "$ref": "#/$defs/oid" },
+        "tree": { "$ref": "#/$defs/oid" },
+        "branch": { "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }] },
+        "remote_url": { "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }] },
+        "materialization_path": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" },
+        "tracked_worktree_clean": { "const": true }
+      }
+    }
+  }
+}

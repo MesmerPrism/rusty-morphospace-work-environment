@@ -34,7 +34,7 @@
       "properties": {
         "repo_id": { "$ref": "#/$defs/id" },
         "revision": { "$ref": "#/$defs/sha" },
-        "path": { "type": "string", "minLength": 1 },
+        "path": { "$ref": "#/$defs/portablePath" },
         "sha256": { "$ref": "#/$defs/hash" }
       }
     },
@@ -97,6 +97,7 @@
     "dottedId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]{2,127}$" },
     "sha": { "type": "string", "pattern": "^[0-9a-fA-F]{40}$" },
     "hash": { "type": "string", "pattern": "^[0-9a-fA-F]{64}$" },
+    "portablePath": { "type": "string", "minLength": 1, "pattern": "^(?!/)(?![A-Za-z]:/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.?($|/)).+$" },
     "ids": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/id" } },
     "strings": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
   }

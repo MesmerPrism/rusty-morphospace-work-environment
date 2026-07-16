@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 jobs:
-  quick-powershell:
+  quick-windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,26 +17,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Ensure ripgrep
-        shell: powershell
-        run: |
-          if (-not (Get-Command rg -ErrorAction SilentlyContinue)) {
-            choco install ripgrep -y --no-progress
-          }
-      - name: Quick portable validation
-        shell: powershell
-        run: |
-          ./scripts/Test-WorkEnvironment.ps1 -SelfTest -Tier Quick
-          git diff --check
-
-  quick-pwsh:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - name: Ensure ripgrep
-        shell: powershell
+        shell: pwsh
         run: |
           if (-not (Get-Command rg -ErrorAction SilentlyContinue)) {
             choco install ripgrep -y --no-progress
@@ -44,10 +25,32 @@ jobs:
       - name: Quick portable validation
         shell: pwsh
         run: |
+          ./scripts/Test-PowerShellHost.ps1 -SelfTest
           ./scripts/Test-WorkEnvironment.ps1 -SelfTest -Tier Quick
           git diff --check
 
-  standard:
+  quick-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Ensure ripgrep
+        shell: pwsh
+        run: |
+          if (-not (Get-Command rg -ErrorAction SilentlyContinue)) {
+            sudo apt-get update
+            sudo apt-get install -y ripgrep
+          }
+      - name: Quick portable validation
+        shell: pwsh
+        run: |
+          ./scripts/Test-PowerShellHost.ps1 -SelfTest
+          ./scripts/Test-WorkEnvironment.ps1 -SelfTest -Tier Quick
+          git diff --check
+
+  standard-windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -55,14 +58,16 @@ jobs:
         with:
           python-version: "3.11"
       - name: Ensure ripgrep
-        shell: powershell
+        shell: pwsh
         run: |
           if (-not (Get-Command rg -ErrorAction SilentlyContinue)) {
             choco install ripgrep -y --no-progress
           }
       - name: Standard portable validation
         shell: pwsh
-        run: ./scripts/Test-WorkEnvironment.ps1 -SelfTest -Tier Standard
+        run: |
+          ./scripts/Test-PowerShellHost.ps1
+          ./scripts/Test-WorkEnvironment.ps1 -SelfTest -Tier Standard
 
   deep:
     if: github.event_name == 'workflow_dispatch'
@@ -73,11 +78,13 @@ jobs:
         with:
           python-version: "3.11"
       - name: Ensure ripgrep
-        shell: powershell
+        shell: pwsh
         run: |
           if (-not (Get-Command rg -ErrorAction SilentlyContinue)) {
             choco install ripgrep -y --no-progress
           }
       - name: Deep authority validation
         shell: pwsh
-        run: ./scripts/Test-WorkEnvironment.ps1 -SelfTest -Tier Deep
+        run: |
+          ./scripts/Test-PowerShellHost.ps1
+          ./scripts/Test-WorkEnvironment.ps1 -SelfTest -Tier Deep

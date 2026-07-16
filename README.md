@@ -3,6 +3,11 @@
 Portable onboarding and project-iteration workspace for Rusty Morphospace
 development.
 
+PowerShell `7.6` LTS or newer, invoked explicitly as `pwsh`, is the supported
+workflow host. Windows PowerShell 5.1 may run the bootstrap host check, but it
+is not an execution environment for validation, automation, builds, or release
+tooling. PowerShell 7 installs side by side with 5.1 on Windows.
+
 Current work-environment protocol release: `0.4.0` (2026-07-15). Its
 implementation and acceptance plan is
 [Onboarding And Local-Skill Implementation Plan](docs/ONBOARDING_IMPLEMENTATION_PLAN.md),
@@ -15,6 +20,15 @@ manifests remain readable. Existing project instances adopt any later baseline
 additively: preserve live events and receipts, normalize portable
 change categories while retaining domain detail in `tags`, and validate before
 using the optional automation CLI.
+
+The additive `0.5.0` isolation protocol is currently a local candidate. It
+adds exact multi-repository composition locks, detached content-addressed
+materializations, machine-local resource claims, repository revision
+checkpoints, and extraction-bound v2 promotion reviews. See the
+[0.5.0 candidate manifest](manifests/release-0.5.0.json) and
+[Project, Build, And Headset Isolation](docs/PROJECT_ISOLATION.md). It does not
+change the published `0.4.0` tag or the separately governed platform/runtime
+baseline.
 
 Portable project, unit, repository, feature, receipt, and event identities use
 lowercase alphanumeric/hyphen syntax and support 2 through 128 characters.
@@ -35,6 +49,8 @@ Included:
   Rust workspace graph audits, and Meta Quest workflow handoffs;
 - project-local composition, feature activation, module extraction, promotion,
   and autonomous-iteration contracts;
+- exact source-composition locks, detached materializations, resource claims,
+  and repeated same-headset APK-run isolation contracts;
 - JSON schemas, public examples, validators, and a no-overwrite project
   scaffold for those contracts;
 - setup examples that use placeholders such as `<workspace-root>`,
@@ -52,12 +68,13 @@ Not included:
 
 ## Fast Path
 
-1. Read [Setup Overview](docs/SETUP_OVERVIEW.md).
+1. Run `pwsh -NoProfile -File .\scripts\Test-PowerShellHost.ps1` and read
+   [Setup Overview](docs/SETUP_OVERVIEW.md).
 2. Fill a private copy of [local.paths.example.json](templates/local.paths.example.json).
 3. Run the environment smoke test:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Test-WorkEnvironment.ps1 `
   -ConfigPath .\local\local.paths.json `
   -Profile Core `
@@ -68,18 +85,18 @@ powershell -NoProfile -ExecutionPolicy Bypass `
    install, and verify the four skill routers:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Install-LocalSkills.ps1 `
   -TargetRoot <codex-skills-root> `
   -Action Plan
 
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Install-LocalSkills.ps1 `
   -TargetRoot <codex-skills-root> `
   -Action Install `
   -Execute
 
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Install-LocalSkills.ps1 `
   -TargetRoot <codex-skills-root> `
   -Action Verify
@@ -90,7 +107,7 @@ powershell -NoProfile -ExecutionPolicy Bypass `
    protocol-v2 scaffold dry run (v1 remains readable for existing workspaces):
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\New-ProjectWorkspace.ps1 `
   -ProjectRoot <project-root> `
   -ProjectId <project-id>
@@ -116,6 +133,9 @@ validation without a device.
 - [Autonomous Iteration](docs/AUTONOMOUS_ITERATION.md) defines work-unit scope,
   compact state, event notes, validation tiers, larger push checkpoints, and
   the optional fail-closed work-unit automation CLI.
+- [Project, Build, And Headset Isolation](docs/PROJECT_ISOLATION.md) separates
+  concurrent source/build identities while serializing transactional runs on
+  one headset.
 - [Instruction Synchronization](docs/INSTRUCTION_SYNCHRONIZATION.md) keeps
   skills, planning instructions, touched-repo `AGENTS.md`, and README/router
   docs aligned without duplicating long recipes.
@@ -136,6 +156,9 @@ New scaffolds use `project_spec.v2`, `feature_lock.v2`, and
 `scripts/Resolve-FeatureLock.ps1`; `scripts/Test-FeatureActivationAgainstLock.ps1`
 provides the fail-closed selection/fingerprint/runtime-input gate. Existing v1
 workspaces remain valid and migrate additively rather than being rewritten.
+Resolver filesystem paths are local adapter inputs only: v2 locks retain
+forward-slash descriptor references relative to `project.spec.json` and reject
+absolute, parent-traversing, or out-of-project descriptor locations.
 If a corrective unit supersedes an immutable historical active/validating
 unit, append the exact
 `<old-unit>-superseded-by-<current-unit>` state-transition event and keep the

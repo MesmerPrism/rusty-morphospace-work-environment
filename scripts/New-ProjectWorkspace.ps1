@@ -83,10 +83,12 @@ function New-ProjectWorkspaceInternal {
     }
 
     $candidateRoot = Join-Path $target "module-candidates"
+    $extractionRoot = Join-Path $target "module-extraction-receipts"
     $unitRoot = Join-Path $target "iteration-units"
     $reviewRoot = Join-Path $target "promotion-reviews"
     $receiptRoot = Join-Path $target "receipts"
-    foreach ($path in @($target, $candidateRoot, $unitRoot, $reviewRoot, $receiptRoot)) {
+    $compositionRoot = Join-Path $target "source-compositions"
+    foreach ($path in @($target, $candidateRoot, $extractionRoot, $unitRoot, $reviewRoot, $receiptRoot, $compositionRoot)) {
         New-Item -ItemType Directory -Path $path | Out-Null
     }
 
@@ -128,7 +130,7 @@ function New-ProjectWorkspaceInternal {
             [ordered]@{
                 profile_id = "workflow"
                 commands = @(
-                    "powershell -NoProfile -ExecutionPolicy Bypass -File <work-environment-root>/scripts/Test-WorkflowContracts.ps1 -WorkspaceRoot <project-root>/morphospace"
+                    "pwsh -NoProfile -ExecutionPolicy Bypass -File <work-environment-root>/scripts/Test-WorkflowContracts.ps1 -WorkspaceRoot <project-root>/morphospace"
                 )
             }
         )
@@ -198,7 +200,7 @@ function New-ProjectWorkspaceInternal {
             )
             validation_profiles = @([ordered]@{
                 profile_id = "workflow"
-                commands = @("powershell -NoProfile -ExecutionPolicy Bypass -File <work-environment-root>/scripts/Test-WorkflowContracts.ps1 -WorkspaceRoot <project-root>/morphospace")
+                commands = @("pwsh -NoProfile -ExecutionPolicy Bypass -File <work-environment-root>/scripts/Test-WorkflowContracts.ps1 -WorkspaceRoot <project-root>/morphospace")
             })
             acceptance_profiles = @([ordered]@{
                 profile_id = "rollback"
@@ -245,6 +247,7 @@ function New-ProjectWorkspaceInternal {
             last_event_id = $null
             last_accepted_receipt = $null
             repository_heads = @()
+            repository_checkpoints = @()
             module_registry = [ordered]@{ lock_revision = 1; lock_fingerprint = $featureLock.lock_fingerprint; modules = @() }
             capability_registry = @()
             dirty_repositories = @()
@@ -277,7 +280,7 @@ Start here:
 3. Add a proposed unit under iteration-units/; do not hand-edit workflow state transitions.
 4. Validate from the work-environment clone:
 
-   ``powershell -NoProfile -ExecutionPolicy Bypass -File <work-environment-root>/scripts/Test-WorkflowContracts.ps1 -WorkspaceRoot <project-root>/morphospace``
+   ``pwsh -NoProfile -ExecutionPolicy Bypass -File <work-environment-root>/scripts/Test-WorkflowContracts.ps1 -WorkspaceRoot <project-root>/morphospace``
 
 The portable protocol guide is docs/PROJECT_WORKSPACE_PROTOCOL.md in the
 work-environment repository. Keep machine paths and private evidence outside
@@ -307,9 +310,11 @@ function Invoke-ScaffoldSelfTest {
             "iteration-events.jsonl",
             "README.md",
             "module-candidates",
+            "module-extraction-receipts",
             "iteration-units",
             "promotion-reviews",
-            "receipts"
+            "receipts",
+            "source-compositions"
         )) {
             $path = Join-Path $created $relative
             if (-not (Test-Path -LiteralPath $path)) {

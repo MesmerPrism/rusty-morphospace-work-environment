@@ -41,8 +41,11 @@ function New-Descriptor {
 
 try {
     New-Item -ItemType Directory -Path $root -Force | Out-Null
-    $kernelPath = Join-Path $root "kernel.json"
-    $appPath = Join-Path $root "app.json"
+    $projectRoot = Join-Path $root "project"
+    $descriptorRoot = Join-Path $projectRoot "features"
+    New-Item -ItemType Directory -Path $descriptorRoot -Force | Out-Null
+    $kernelPath = Join-Path $descriptorRoot "kernel.json"
+    $appPath = Join-Path $descriptorRoot "app.json"
     Write-Json -Path $kernelPath -Value (New-Descriptor -FeatureId "feature-kernel" -ModuleId "module-kernel" -Dependencies @() -Parameter "feature-kernel.step-rate" -RuntimeInput "profile:kernel")
     Write-Json -Path $appPath -Value (New-Descriptor -FeatureId "feature-app" -ModuleId "module-app" -Dependencies @("feature-kernel") -Parameter "feature-app.enabled" -RuntimeInput "profile:conformance")
 
@@ -74,8 +77,8 @@ try {
         release_policy = [ordered]@{ versioning = "semver"; commit_policy = "validated slices"; push_checkpoint = "integration-batch"; source_first = $true; planning_last = $true; force_push_allowed = $false }
         public_boundary = [ordered]@{ mode = "public"; private_overlay = "local/"; prohibited_evidence = @("device serials") }
     }
-    $projectPath = Join-Path $root "project.spec.json"
-    $lockPath = Join-Path $root "feature.lock.json"
+    $projectPath = Join-Path $projectRoot "project.spec.json"
+    $lockPath = Join-Path $projectRoot "feature.lock.json"
     Write-Json -Path $projectPath -Value $project
     & (Join-Path $PSScriptRoot "Resolve-FeatureLock.ps1") -ProjectSpecPath $projectPath -DescriptorPaths @($kernelPath, $appPath) -OutPath $lockPath -LockRevision 3 -GeneratedAt "2026-01-02T03:04:05Z" -Execute | Out-Null
     $lock = Get-Content -LiteralPath $lockPath -Raw | ConvertFrom-Json
@@ -83,6 +86,29 @@ try {
     Assert-FeatureLock ((@($lock.selected_features) -join ",") -eq "feature-app,feature-kernel") "dependency closure"
     Assert-FeatureLock ($lock.default_activation -eq "disabled" -and $lock.activation_rule -eq "selected-lock-and-runtime-input") "activation rule"
     Assert-FeatureLock (@($lock.effect_union.markers).Count -eq 2) "effect union"
+    Assert-FeatureLock ((@($lock.features | ForEach-Object { [string]$_.descriptor.path }) -join ",") -eq "features/app.json,features/kernel.json") "portable descriptor paths"
+    Assert-FeatureLock (@($lock.features | Where-Object { [string]$_.descriptor.path -match "^[A-Za-z]:/|^/|\\|(^|/)\.\.?($|/)" }).Count -eq 0) "descriptor path boundary"
+
+    $mirrorRoot = Join-Path $root "mirror"
+    $mirrorDescriptorRoot = Join-Path $mirrorRoot "features"
+    New-Item -ItemType Directory -Path $mirrorDescriptorRoot -Force | Out-Null
+    $mirrorKernelPath = Join-Path $mirrorDescriptorRoot "kernel.json"
+    $mirrorAppPath = Join-Path $mirrorDescriptorRoot "app.json"
+    $mirrorProjectPath = Join-Path $mirrorRoot "project.spec.json"
+    $mirrorLockPath = Join-Path $mirrorRoot "feature.lock.json"
+    Write-Json -Path $mirrorKernelPath -Value (New-Descriptor -FeatureId "feature-kernel" -ModuleId "module-kernel" -Dependencies @() -Parameter "feature-kernel.step-rate" -RuntimeInput "profile:kernel")
+    Write-Json -Path $mirrorAppPath -Value (New-Descriptor -FeatureId "feature-app" -ModuleId "module-app" -Dependencies @("feature-kernel") -Parameter "feature-app.enabled" -RuntimeInput "profile:conformance")
+    Write-Json -Path $mirrorProjectPath -Value $project
+    & (Join-Path $PSScriptRoot "Resolve-FeatureLock.ps1") -ProjectSpecPath $mirrorProjectPath -DescriptorPaths @($mirrorKernelPath, $mirrorAppPath) -OutPath $mirrorLockPath -LockRevision 3 -GeneratedAt "2026-01-02T03:04:05Z" -Execute | Out-Null
+    $mirrorLock = Get-Content -LiteralPath $mirrorLockPath -Raw | ConvertFrom-Json
+    Assert-FeatureLock ($mirrorLock.lock_fingerprint -eq $lock.lock_fingerprint) "location-independent fingerprint"
+
+    $outsidePath = Join-Path $root "outside.json"
+    Write-Json -Path $outsidePath -Value (New-Descriptor -FeatureId "feature-kernel" -ModuleId "module-kernel" -Dependencies @() -Parameter "feature-kernel.step-rate" -RuntimeInput "profile:kernel")
+    $outsideRejected = $false
+    try { & (Join-Path $PSScriptRoot "Resolve-FeatureLock.ps1") -ProjectSpecPath $projectPath -DescriptorPaths @($outsidePath, $appPath) -LockRevision 3 -GeneratedAt "2026-01-02T03:04:05Z" | Out-Null }
+    catch { $outsideRejected = $_.Exception.Message -like "Feature descriptor must be inside the project workspace:*" }
+    Assert-FeatureLock $outsideRejected "descriptor outside project boundary"
 
     $accepted = & (Join-Path $PSScriptRoot "Test-FeatureActivationAgainstLock.ps1") -LockPath $lockPath -FeatureId "feature-app" -RuntimeInput "profile:conformance" -ExpectedFingerprint $lock.lock_fingerprint
     Assert-FeatureLock ($accepted.accepted -eq $true -and $accepted.lock_revision -eq 3) "selected runtime activation"

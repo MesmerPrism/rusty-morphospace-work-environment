@@ -5,7 +5,7 @@ These are portable Codex-style skill templates for Rusty Morphospace work.
 Install them with:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File ..\scripts\Install-LocalSkills.ps1 `
   -TargetRoot <codex-skills-root> `
   -Execute

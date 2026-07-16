@@ -25,7 +25,8 @@ listeners, media paths, assets, private payload behavior, or runtime defaults.
 Every selected v2 feature declares:
 
 - feature and module IDs;
-- descriptor version/hash and owner source revision/path/hash;
+- a project-spec-relative descriptor path/hash and owner source
+  revision/repository-relative-path/hash;
 - dependencies and conflicts;
 - exact permissions, services, activities, queries, tools, assets, shaders,
   native libraries, commands, routes, streams, inputs, scenes, and markers;
@@ -42,7 +43,9 @@ model.
 
 1. Add the module to the project spec with lane, contract, maturity, and
    dependencies.
-2. Add an owner-issued feature descriptor with exact source revision/hash.
+2. Add an owner-issued feature descriptor under the project's `morphospace/`
+   directory with exact source revision/hash and a repository-relative source
+   path.
 3. Select the feature/module in `project_spec.v2`; declare denied ambient
    features and permissions.
 4. Resolve and fingerprint `feature_lock.v2` rather than editing it by hand.
@@ -53,6 +56,11 @@ model.
 8. Record the receipt without placing raw private evidence in a public repo.
 
 Adapter readback alone is not activation acceptance.
+
+The resolver may use an absolute local path to read a descriptor, but that
+filesystem location is adapter state and must never enter the lock. It emits a
+forward-slash path relative to the directory containing `project.spec.json`
+and rejects descriptors outside that boundary.
 
 ## Parameter Authority
 

@@ -3,21 +3,27 @@
 Use validation in layers. Do not run live device operations just to prove docs
 or manifests parse.
 
+All validation uses PowerShell `7.6` LTS or newer through `pwsh`. Start with
+the host-policy check; Windows PowerShell 5.1 is supported only far enough to
+emit the migration guidance from that check.
+
 ## Work Environment Repo
 
 Quick checks:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-PublicBoundary.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkEnvironment.ps1 -SelfTest -Tier Quick
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkflowContracts.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\New-ProjectWorkspace.ps1 -SelfTest
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-DocumentationLinks.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-SkillTemplates.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-EnvironmentValidation.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-LocalSkillBootstrap.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-FeatureLockResolver.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ExecutedPushReceipt.ps1 -SelfTest
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-PowerShellHost.ps1 -SelfTest
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-PublicBoundary.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkEnvironment.ps1 -SelfTest -Tier Quick
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkflowContracts.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\New-ProjectWorkspace.ps1 -SelfTest
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-DocumentationLinks.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-SkillTemplates.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-EnvironmentValidation.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-LocalSkillBootstrap.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-FeatureLockResolver.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ProjectIsolation.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ExecutedPushReceipt.ps1 -SelfTest
 git diff --check
 ```
 
@@ -29,7 +35,7 @@ tiers.
 Validate a configured contributor machine separately:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Test-WorkEnvironment.ps1 `
   -ConfigPath .\local\local.paths.json `
   -Profile Core `
@@ -70,11 +76,13 @@ The workflow validator checks more than JSON syntax. It enforces:
   conformance harness;
 - required instruction synchronization for authority, module-layout,
   activation, validation, device-policy, repo-routing, and boundary changes.
+- exact-lock/materialization source modes, resource requirements, repository
+  revision checkpoints, and extraction-bound v2 stable promotions.
 
 Validate an instantiated project workspace:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Test-WorkflowContracts.ps1 `
   -WorkspaceRoot <project-root>\morphospace
 ```
@@ -82,7 +90,7 @@ powershell -NoProfile -ExecutionPolicy Bypass `
 The checked-in v2 onboarding workspace is a semantic regression target:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Test-WorkflowContracts.ps1 `
   -WorkspaceRoot .\examples\hello-morphospace-v2\morphospace
 ```
@@ -90,6 +98,11 @@ powershell -NoProfile -ExecutionPolicy Bypass `
 The scaffold self-test creates a temporary project workspace, validates it,
 proves that a second invocation cannot overwrite it, and removes only its own
 temporary directory.
+
+The project-isolation test creates two temporary Git repositories, locks their
+exact commits and trees, materializes detached clean copies, rejects address
+replacement, and proves that overlapping exclusive local resource claims fail
+closed. It performs no device operations.
 
 The feature-lock resolver self-test proves dependency closure, descriptor and
 source hashing, exact effect unions, selected-lock-plus-runtime-input
@@ -110,7 +123,7 @@ untouched.
 Validate externally produced successful push evidence with:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Test-ExecutedPushReceipt.ps1 `
   -Path <project-root>\morphospace\receipts\<executed-push-receipt>.json
 ```

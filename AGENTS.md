@@ -22,6 +22,11 @@ Install and verify them through `docs/LOCAL_SKILL_BOOTSTRAP.md` and
 `scripts/Install-LocalSkills.ps1`. Managed writes require `-Execute`; updates
 create a backup and must not delete unmanaged local files.
 
+Use PowerShell `7.6` LTS or newer through the `pwsh` executable for every
+authoritative workflow, child runner, validation command, and documented
+example. Windows PowerShell 5.1 is bootstrap detection only; do not add new
+`powershell.exe`, `& powershell`, or `shell: powershell` execution paths.
+
 For live headset work, prefer the public `meta-quest-agent-workflow` repository
 as the device-operation source of truth. This repo may point to that workflow,
 but it should not fork a competing Quest procedure.
@@ -54,7 +59,8 @@ iteration, read in this order:
 2. `docs/MODULE_LIFECYCLE.md`
 3. `docs/FEATURE_ACTIVATION.md`
 4. `docs/AUTONOMOUS_ITERATION.md`
-5. `docs/INSTRUCTION_SYNCHRONIZATION.md`
+5. `docs/PROJECT_ISOLATION.md`
+6. `docs/INSTRUCTION_SYNCHRONIZATION.md`
 
 For broad validation, use `Test-WorkEnvironment.ps1 -SelfTest -Tier Quick`,
 then `Standard`, then `Deep` only when the risk warrants it. A single failed
@@ -142,6 +148,17 @@ in runner variables or typed reference wrappers, never injected properties.
   `<old-unit>-superseded-by-<current-unit>` state-transition event whose
   replacement is the sole current unit; never rewrite the historical unit or
   event prefix to make the workspace look clean.
+- Cross-repository implementation and module extraction use an exact source
+  composition lock; use detached clean materializations when working copies
+  are changing in parallel. Observed, claimed, validated, and accepted
+  revisions are separate state.
+- Parallel APK builds require distinct package/client identities,
+  content-addressed outputs, and complete run capsules. Runs on one headset
+  are serial-scoped transactions that restore exact prior properties and
+  stop only the target package.
+- Machine-local resource claims coordinate repo paths, build outputs, Android
+  packages, property/staging namespaces, bridge ports, and headset serials.
+  Claims do not activate features or authorize Git/device operations.
 - Optional work-unit automation is fail-closed: inspect/plan by default,
   require `-Execute` for workspace-state mutation, preserve dirty/divergent
   repositories, derive graph scope from the unit, and never own Git push,
@@ -150,10 +167,13 @@ in runner variables or typed reference wrappers, never injected properties.
   `Ready` action. It verifies accepted prerequisites, appends the transition,
   and derives `next_ready_unit`; do not hand-edit proposal status.
 - New project workspaces default to protocol v2. Resolve exact feature
-  descriptors into a fingerprinted closed-world lock; project selection alone
-  never activates a run. Runtime effects require the selected current lock and
-  one descriptor-approved runtime input, and the effective marker/receipt must
-  bind the project, lock revision/fingerprint, and feature.
+  descriptors into a fingerprinted closed-world lock. Descriptor filesystem
+  locations are resolver inputs only; the lock records forward-slash paths
+  relative to `project.spec.json` and rejects absolute, parent-traversing, or
+  out-of-project locations. Project selection alone never activates a run.
+  Runtime effects require the selected current lock and one descriptor-
+  approved runtime input, and the effective marker/receipt must bind the
+  project, lock revision/fingerprint, and feature.
 - Automation may record or accept validation only from a workspace-local
   `validation_receipt.v1` with exact criterion/gate coverage, verified artifact
   hashes, current repo heads/branches, ancestor bases, exact changed paths, and
@@ -191,14 +211,16 @@ in runner variables or typed reference wrappers, never injected properties.
 Before committing, run:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-PublicBoundary.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkEnvironment.ps1 -SelfTest
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkflowContracts.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\New-ProjectWorkspace.ps1 -SelfTest
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkUnitAutomation.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-FeatureLockResolver.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ExecutedPushReceipt.ps1 -SelfTest
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ReleaseCapsule.ps1 -SelfTest
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-PowerShellHost.ps1 -SelfTest
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-PublicBoundary.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkEnvironment.ps1 -SelfTest
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkflowContracts.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\New-ProjectWorkspace.ps1 -SelfTest
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkUnitAutomation.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-FeatureLockResolver.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ProjectIsolation.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ExecutedPushReceipt.ps1 -SelfTest
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ReleaseCapsule.ps1 -SelfTest
 git diff --check
 ```
 

@@ -34,8 +34,8 @@ $SkillRoot = if ($env:CODEX_HOME) {
 Run the public boundary and template checks:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-PublicBoundary.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-SkillTemplates.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-PublicBoundary.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-SkillTemplates.ps1
 ```
 
 The installer refuses a write from a dirty worktree by default. That makes an
@@ -48,7 +48,7 @@ records `source_worktree_dirty: true`.
 Planning is read-only:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Install-LocalSkills.ps1 `
   -TargetRoot $SkillRoot `
   -Action Plan
@@ -57,7 +57,7 @@ powershell -NoProfile -ExecutionPolicy Bypass `
 Review all four rows, then install. Writes require `-Execute`:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Install-LocalSkills.ps1 `
   -TargetRoot $SkillRoot `
   -Action Install `
@@ -67,7 +67,7 @@ powershell -NoProfile -ExecutionPolicy Bypass `
 Verify managed hashes and the local locator:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Install-LocalSkills.ps1 `
   -TargetRoot $SkillRoot `
   -Action Verify
@@ -123,12 +123,12 @@ skill does not authorize device mutation or require a connected headset.
 First inspect and verify:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Install-LocalSkills.ps1 `
   -TargetRoot $SkillRoot `
   -Action Plan
 
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Install-LocalSkills.ps1 `
   -TargetRoot $SkillRoot `
   -Action Verify
@@ -138,7 +138,7 @@ An existing directory without provenance is reported as unmanaged and is never
 overwritten by `Install`. Review it, then opt into a managed update:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Install-LocalSkills.ps1 `
   -TargetRoot $SkillRoot `
   -Action Update `
@@ -169,7 +169,7 @@ directory. Removal is a separate user-owned decision.
 Maintainers can validate the complete lifecycle in an isolated temporary root:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Test-LocalSkillBootstrap.ps1
 ```
 

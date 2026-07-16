@@ -89,7 +89,7 @@ function Invoke-MorphospaceIsolatedAuthoritySelfTest {
     $repositoryRoot = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
     $path = [IO.Path]::GetFullPath((Join-Path $repositoryRoot $RelativePath))
     if (-not (Test-Path -LiteralPath $path -PathType Leaf) -or (Get-MorphospaceAuthoritySha256 $path) -cne [string]$artifacts[0].sha256) { throw "Authority self-test bytes do not match the trust migration: $RelativePath" }
-    $hostPath = (Get-Command powershell.exe -CommandType Application -ErrorAction Stop).Source
+    $hostPath = (Get-Command pwsh -CommandType Application -ErrorAction Stop).Source
     $captureRoot = Join-Path ([IO.Path]::GetTempPath()) ('morphospace-authority-selftest-' + [guid]::NewGuid().ToString('N'))
     [IO.Directory]::CreateDirectory($captureRoot) | Out-Null
     $stdoutPath = Join-Path $captureRoot 'stdout.txt'; $stderrPath = Join-Path $captureRoot 'stderr.txt'

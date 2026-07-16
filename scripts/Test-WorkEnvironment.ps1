@@ -158,11 +158,13 @@ function Invoke-JsonLinesParseCheck {
     }
 }
 
+& (Join-Path $PSScriptRoot "Test-PowerShellHost.ps1") -Quiet
+
 if ($SelfTest) {
     $singleFailureProbe = @([pscustomobject]@{ Name = "probe"; Status = "missing"; Required = $true })
     $singleFailureCount = @($singleFailureProbe | Where-Object { $_.Required -and $_.Status -eq "missing" }).Count
     if ($singleFailureCount -eq 1) {
-        Add-CheckResult -Name "aggregate:single-failure" -Status "ok" -Required $true -Detail "A scalar required failure remains countable under Windows PowerShell 5.1."
+        Add-CheckResult -Name "aggregate:single-failure" -Status "ok" -Required $true -Detail "A scalar required failure remains countable."
     } else {
         Add-CheckResult -Name "aggregate:single-failure" -Status "missing" -Required $true -Detail "Expected one aggregate failure, found $singleFailureCount."
     }
@@ -178,6 +180,13 @@ if ($SelfTest) {
 
     Get-ChildItem -LiteralPath (Join-Path $RepoRoot "templates") -Filter "*.jsonl" -File |
         ForEach-Object { Invoke-JsonLinesParseCheck -Path $_.FullName }
+
+    try {
+        & (Join-Path $PSScriptRoot "Test-PowerShellHost.ps1") -SelfTest -Quiet
+        Add-CheckResult -Name "powershell:host-policy" -Status "ok" -Required $true -Detail "Validated the PowerShell 7.6 Core host contract and rejected legacy command hosts."
+    } catch {
+        Add-CheckResult -Name "powershell:host-policy" -Status "missing" -Required $true -Detail $_.Exception.Message
+    }
 
     Get-ChildItem -LiteralPath (Join-Path $RepoRoot "scripts") -Filter "*.ps1" -File |
         ForEach-Object {
@@ -239,7 +248,8 @@ if ($SelfTest) {
         [pscustomobject]@{ name = "workflow:documentation-links"; script = "Test-DocumentationLinks.ps1"; detail = "Validated relative Markdown links." },
         [pscustomobject]@{ name = "workflow:skill-templates"; script = "Test-SkillTemplates.ps1"; detail = "Validated the four portable skill routers and locator contract." },
         [pscustomobject]@{ name = "workflow:environment-validation"; script = "Test-EnvironmentValidation.ps1"; detail = "Validated strict placeholders, repo paths, and Python/JDK minimum versions." },
-        [pscustomobject]@{ name = "workflow:local-skill-bootstrap"; script = "Test-LocalSkillBootstrap.ps1"; detail = "Validated plan, install, verify, drift, backup, update, and local-file preservation." }
+        [pscustomobject]@{ name = "workflow:local-skill-bootstrap"; script = "Test-LocalSkillBootstrap.ps1"; detail = "Validated plan, install, verify, drift, backup, update, and local-file preservation." },
+        [pscustomobject]@{ name = "workflow:project-isolation"; script = "Test-ProjectIsolation.ps1"; detail = "Validated exact source locks, detached materializations, no-overwrite content addresses, and conflicting resource claims." }
     )) {
         try {
             & (Join-Path (Join-Path $RepoRoot "scripts") $quickTest.script)
@@ -283,11 +293,13 @@ $questProfile = $Profile -in @("Quest", "Full")
 $fullProfile = $Profile -eq "Full"
 
 Test-CommandAvailable -Name "git" -Required $true
+Test-CommandAvailable -Name "pwsh" -Required $true
 Test-CommandAvailable -Name "rustup" -Required $true
 Test-CommandAvailable -Name "cargo" -Required $true
 Test-CommandAvailable -Name "python" -Required $true
 Test-CommandAvailable -Name "rg" -Required $true
 Test-CommandVersion -Name "python.version" -Command "python" -Arguments @("--version") -Minimum ([version]"3.11") -Required $true
+Test-CommandVersion -Name "pwsh.version" -Command "pwsh" -Arguments @("--version") -Minimum ([version]"7.6") -Required $true
 
 Test-CommandAvailable -Name "adb" -Required $questProfile
 Test-CommandAvailable -Name "java" -Required $questProfile
@@ -355,6 +367,10 @@ if ($Strict -and $failedRequired.Count -gt 0) {
 if ($SelfTest) {
     $selfTestFailures = @($results | Where-Object { $_.Name -match "^(aggregate|json|jsonl|powershell|workflow|scaffold|automation|authority):" -and $_.Status -ne "ok" })
     if ($selfTestFailures.Count -gt 0) {
+        Write-Host "Self-test failures:"
+        foreach ($failure in $selfTestFailures) {
+            Write-Host (" - {0} [{1}]: {2}" -f $failure.Name, $failure.Status, $failure.Detail)
+        }
         Write-Error "Self-test failed."
         exit 1
     }

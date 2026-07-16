@@ -29,7 +29,7 @@ $insideGit = @(& git -C $resolvedRoot rev-parse --is-inside-work-tree 2>$null)
 if ($LASTEXITCODE -eq 0 -and ($insideGit -join "").Trim() -eq "true") {
     $files = @(& git -C $resolvedRoot ls-files --cached --others --exclude-standard | ForEach-Object {
         $candidate = Join-Path $resolvedRoot ([string]$_)
-        if (Test-Path -LiteralPath $candidate -PathType Leaf) { Get-Item -LiteralPath $candidate }
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) { Get-Item -LiteralPath $candidate -Force }
     })
 } else {
     $files = @(Get-ChildItem -LiteralPath $resolvedRoot -Recurse -File -Force |

@@ -45,7 +45,7 @@ function Invoke-ValidatorCommand {
         [AllowEmptyCollection()][string[]]$Arguments = @()
     )
     Assert-Validator (Test-Path -LiteralPath $ScriptPath -PathType Leaf) "Validator command is missing: $ScriptPath"
-    $output = @(& powershell -NoProfile -ExecutionPolicy Bypass -File $ScriptPath @Arguments 2>&1)
+    $output = @(& pwsh -NoProfile -ExecutionPolicy Bypass -File $ScriptPath @Arguments 2>&1)
     $exitCode = $LASTEXITCODE
     $text = ($output | ForEach-Object { [string]$_ }) -join [Environment]::NewLine
     return [pscustomobject][ordered]@{

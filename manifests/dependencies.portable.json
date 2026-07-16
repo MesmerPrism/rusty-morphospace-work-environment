@@ -10,8 +10,11 @@
     },
     {
       "id": "powershell",
-      "role": "Portable scripts and Windows-friendly setup.",
-      "verify": ["$PSVersionTable.PSVersion"],
+      "role": "Authoritative portable workflow host. Windows PowerShell 5.1 is bootstrap detection only.",
+      "executable": "pwsh",
+      "minimum_version": "7.6.0",
+      "edition": "Core",
+      "verify": ["pwsh -NoProfile -File ./scripts/Test-PowerShellHost.ps1"],
       "source": "https://learn.microsoft.com/powershell/"
     },
     {

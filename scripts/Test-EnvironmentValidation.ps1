@@ -19,6 +19,36 @@ function Write-Config {
     [System.IO.File]::WriteAllText($Path, ($Value | ConvertTo-Json -Depth 8) + [Environment]::NewLine, $utf8NoBom)
 }
 
+function Write-FakeCommand {
+    param(
+        [string]$Directory,
+        [string]$Name,
+        [string]$Output,
+        [switch]$StandardError
+    )
+
+    if ($IsWindows) {
+        $path = Join-Path $Directory ($Name + ".cmd")
+        $redirect = if ($StandardError) { " 1^>^&2" } else { "" }
+        [System.IO.File]::WriteAllText($path, "@echo $Output$redirect`r`n", $utf8NoBom)
+        return
+    }
+
+    $path = Join-Path $Directory $Name
+    $redirect = if ($StandardError) { " >&2" } else { "" }
+    [System.IO.File]::WriteAllText($path, "#!/bin/sh`nprintf '%s\n' '$Output'$redirect`n", $utf8NoBom)
+    [System.IO.File]::SetUnixFileMode(
+        $path,
+        [System.IO.UnixFileMode]::UserRead -bor
+        [System.IO.UnixFileMode]::UserWrite -bor
+        [System.IO.UnixFileMode]::UserExecute -bor
+        [System.IO.UnixFileMode]::GroupRead -bor
+        [System.IO.UnixFileMode]::GroupExecute -bor
+        [System.IO.UnixFileMode]::OtherRead -bor
+        [System.IO.UnixFileMode]::OtherExecute
+    )
+}
+
 function Invoke-EnvironmentChild {
     param(
         [string]$ConfigPath,
@@ -86,12 +116,12 @@ try {
 
     $oldPythonRoot = Join-Path $testRoot "old-python"
     New-Item -ItemType Directory -Force -Path $oldPythonRoot | Out-Null
-    [System.IO.File]::WriteAllText((Join-Path $oldPythonRoot "python.cmd"), "@echo Python 3.10.9`r`n", $utf8NoBom)
+    Write-FakeCommand -Directory $oldPythonRoot -Name "python" -Output "Python 3.10.9"
     Invoke-EnvironmentChild -ConfigPath $validPath -Profile "Core" -ExpectedExit 1 -ExpectedText "version-too-old" -PathPrefix $oldPythonRoot
 
     $oldJavaRoot = Join-Path $testRoot "old-java"
     New-Item -ItemType Directory -Force -Path $oldJavaRoot | Out-Null
-    [System.IO.File]::WriteAllText((Join-Path $oldJavaRoot "java.cmd"), "@echo openjdk version 16.0.2 1^>^&2`r`n", $utf8NoBom)
+    Write-FakeCommand -Directory $oldJavaRoot -Name "java" -Output "openjdk version 16.0.2" -StandardError
     Invoke-EnvironmentChild -ConfigPath $validPath -Profile "Quest" -ExpectedExit 1 -ExpectedText "version-too-old" -PathPrefix $oldJavaRoot
 
     Write-Host "Environment validation regression tests passed."

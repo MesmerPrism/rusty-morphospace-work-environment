@@ -27,7 +27,7 @@ modified by the validator.
 
 ```powershell
 # At the candidate cut
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Test-ReleaseCapsule.ps1 `
   -Path <project-root>\morphospace\receipts\release-capsule.json `
   -RepoMapPath <project-root>\morphospace\repository-map.json `
@@ -35,7 +35,7 @@ powershell -NoProfile -ExecutionPolicy Bypass `
   -OutPath <evidence-root>\candidate-cut-receipt.json
 
 # At any later audit
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Test-ReleaseCapsule.ps1 `
   -Path <project-root>\morphospace\receipts\release-capsule.json `
   -RepoMapPath <project-root>\morphospace\repository-map.json `

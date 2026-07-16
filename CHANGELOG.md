@@ -2,6 +2,23 @@
 
 All notable changes to the portable work environment are recorded here.
 
+## 0.5.0 - candidate
+
+### Changed
+
+- PowerShell 7.6 LTS or newer, invoked as `pwsh`, is the authoritative host for
+  validation, automation, child authority runners, and release tooling.
+- Windows PowerShell 5.1 support is reduced to a bootstrap detector with an
+  explicit PowerShell 7 installation route.
+- CI validates PowerShell 7 Quick on Windows and Linux plus Standard on
+  Windows; the duplicate Windows PowerShell 5.1 job is removed.
+
+### Added
+
+- A host-policy validator that checks the running version/edition and rejects
+  new authoritative `powershell.exe`, `& powershell`, or `shell: powershell`
+  execution paths.
+
 ## 0.3.0 - 2026-07-15
 
 ### Added
