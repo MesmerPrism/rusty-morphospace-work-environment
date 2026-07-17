@@ -36,7 +36,7 @@ function Test-PlannedPublicationTimeNotAfter($EarlierValue,$LaterValue) {
     # whole-second precision. Accept an earlier high-precision observation
     # inside that same represented second, but never across its boundary.
     $laterText=[string]$LaterValue
-    if($laterText-cmatch'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:\d{2})$'){
+    if($laterText-cmatch'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.0+)?(?:Z|[+-]\d{2}:\d{2})$'){
         return $earlier-lt$later.AddSeconds(1)
     }
     return $false

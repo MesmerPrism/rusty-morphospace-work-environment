@@ -14,7 +14,8 @@ mismatched commits fail validation.
 
 Chronology remains bound to the exact timestamp strings in the prepared plan
 and executed receipt. When an evidence timestamp carries only whole-second
-precision, ordering treats it as that represented one-second interval; a
+precision (including a normalized all-zero fractional suffix), ordering treats
+it as that represented one-second interval; a
 higher-precision observation inside the same second is valid, while any value
 at or beyond the next second fails closed.
 
