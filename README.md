@@ -25,6 +25,11 @@ adopt later baselines additively: preserve live events and receipts, normalize
 portable change categories while retaining domain detail in `tags`, and
 validate before using the optional automation CLI.
 
+Terminal historical units with legacy workflow vocabulary use the explicit
+[historical unit adoption contract](docs/HISTORICAL_UNIT_ADOPTION.md). Its
+project receipt binds exact bytes and normalization; current portable
+category, profile, and resource registries remain closed.
+
 Portable project, unit, repository, feature, receipt, and event identities use
 lowercase alphanumeric/hyphen syntax and support 2 through 128 characters.
 Authority-stage protocols may declare a wider identity domain explicitly.

@@ -212,3 +212,7 @@ rejection edge rather than reusable ownership.
 Treat `AGENTS.md`, `SKILL.md`, README, and router docs as graphable instruction
 surfaces. Module-layout or repo-routing changes must include their
 synchronization records; keep detailed scan recipes outside the entrypoints.
+
+Graph historical-unit adoption as an additive evidence node linked to exact
+unit bytes, terminal event, source workflow, and normalized semantics. It must
+not create an authority edge for current work.
