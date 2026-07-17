@@ -70,6 +70,11 @@ The work-environment repo owns portable schemas, examples, and validators. A
 project owns its instantiated `morphospace/` directory. Do not copy live state,
 private evidence, or machine paths back into this repository.
 
+Immutable accepted or blocked units may retain legacy workflow vocabulary only
+through a project-owned hash-bound historical-unit adoption receipt. Current
+and future units remain strict. Route the complete contract to
+`docs/HISTORICAL_UNIT_ADOPTION.md`; never rewrite historical unit or event bytes.
+
 Portable composition and iteration IDs have one 2-through-128-character
 lowercase alphanumeric/hyphen domain across their schemas and validators.
 Changes to that domain require passing boundary coverage at 64, 65, 128, and

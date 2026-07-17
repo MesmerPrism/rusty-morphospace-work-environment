@@ -1,0 +1,33 @@
+{
+  "schema": "rusty.morphospace.work_environment.corrective_validation_receipt.v1",
+  "receipt_id": "workenv-historical-unit-adoption-v1-validation",
+  "unit_id": "workenv-historical-unit-adoption-v1",
+  "result": "pass",
+  "base_revision": "8499cac5953b29ade859bf8694d511862fa8b8d3",
+  "validated_revision": "c214b376a2165bfee456695b8eb279fd80e9cf9a",
+  "validated_tree": "6e13ded68fee2257fdcefe046db756880649e795",
+  "artifacts": [
+    { "path": "schemas/historical-unit-adoption-receipt.schema.json", "sha256": "71c75716f3a9334a17504e89efa26bbd58dfb4fb9fbd106210d71af61f63c2a5" },
+    { "path": "scripts/Test-HistoricalUnitAdoption.ps1", "sha256": "3e55e022cb6848af7c26d632e4b330554d767a7350ba634419af44efb86974f6" }
+  ],
+  "gates": [
+    { "gate": "focused-positive-and-nine-damaged", "result": "pass" },
+    { "gate": "powershell-7-host", "result": "pass" },
+    { "gate": "public-boundary", "result": "pass" },
+    { "gate": "quick", "result": "pass" },
+    { "gate": "standard", "result": "pass" },
+    { "gate": "deep", "result": "pass" },
+    { "gate": "documentation-and-skill-synchronization", "result": "pass" },
+    { "gate": "git-diff-check", "result": "pass" }
+  ],
+  "preserved_failures": [
+    "The first focused fixture attempted to add an already-present resource_requirements member and was corrected without weakening the case.",
+    "The first optional-state implementation produced a PowerShell null-array item for absent references and was corrected to an explicit empty array.",
+    "The first combined Standard/Deep wrapper used an intentionally insufficient timeout; both tiers were rerun independently to completion."
+  ],
+  "limitations": [
+    "This receipt proves workflow contract behavior only.",
+    "It does not normalize any project until that project adds its own hash-bound adoption receipt.",
+    "It does not add network-interface or any other legacy noun to the current resource registry."
+  ]
+}

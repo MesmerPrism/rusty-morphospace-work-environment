@@ -210,6 +210,7 @@ if ($SelfTest) {
 
     try {
         & (Join-Path $RepoRoot "scripts\Test-WorkflowContracts.ps1") -RepoRoot $RepoRoot
+        & (Join-Path $RepoRoot "scripts\Test-HistoricalUnitAdoption.ps1") -SelfTest
         Add-CheckResult -Name "workflow:contracts" -Status "ok" -Detail "Validated lifecycle, schemas, and examples."
     } catch {
         Add-CheckResult -Name "workflow:contracts" -Status "missing" -Required $true -Detail $_.Exception.Message

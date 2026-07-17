@@ -157,3 +157,7 @@ short and link detailed runbooks.
 Do not encode a transient active unit, roadmap position, device identity, or
 release candidate in this skill. Read those from the current project's compact
 state and receipts every time.
+
+Historical-unit normalization is project evidence, not runtime authority: only
+exact hash-bound accepted or blocked units may use it; current units remain
+closed against the published portable registries.

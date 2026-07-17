@@ -102,6 +102,11 @@ transition, contract decision, extraction, validation result, commit, push,
 promotion, or blocker change. Large logs and device artifacts remain outside
 the event file; events point to sanitized receipt IDs or artifact types.
 
+Legacy vocabulary in an immutable accepted or blocked unit requires the
+explicit hash-bound contract in
+[Historical Iteration-Unit Adoption](HISTORICAL_UNIT_ADOPTION.md). It is not an
+ignore list and cannot admit an in-flight or newly authored unit.
+
 ## Validation Tiers
 
 | Tier | Use | Typical evidence |

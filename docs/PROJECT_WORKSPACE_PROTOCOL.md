@@ -77,6 +77,12 @@ observed, claimed, validated, and accepted revisions distinct.
 Generated APKs, logs, screenshots, traces, pairing material, private payloads,
 and tool caches do not belong in this directory.
 
+An existing terminal unit may be normalized without mutation through a
+hash-bound receipt listed by compact state under
+`historical_unit_adoption_receipts`. See
+[Historical Iteration-Unit Adoption](HISTORICAL_UNIT_ADOPTION.md). This route
+is unavailable to current or future units.
+
 ## Project And Module Firewall
 
 Application-specific details stay on the project side of the boundary:

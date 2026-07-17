@@ -148,6 +148,27 @@ function Get-FeatureLockFingerprint {
     finally { $sha.Dispose() }
 }
 
+function Get-FileSha256 {
+    param([string]$Path)
+    return Get-MorphospaceSha256Bytes ([IO.File]::ReadAllBytes($Path))
+}
+
+function Test-ExactLegacyMappings {
+    param([string[]]$UnknownValues, [object[]]$Mappings, [string[]]$CurrentValues, [string]$Context, [bool]$AllowHistoricalOnly = $false)
+    $unknown = @($UnknownValues | Sort-Object -Unique)
+    $legacy = @($Mappings | ForEach-Object { [string]$_.legacy } | Sort-Object)
+    Assert-Contract (($unknown -join "|") -eq ($legacy -join "|")) "$Context mappings must exactly cover the unknown legacy values."
+    Test-UniqueProperty -Items $Mappings -Property "legacy" -Context "$Context mappings"
+    foreach ($mapping in $Mappings) {
+        Assert-Contract (Test-Text $mapping.retained_as) "$Context mapping '$($mapping.legacy)' must retain its domain meaning as a tag or limitation."
+        if ($null -eq $mapping.current) {
+            Assert-Contract $AllowHistoricalOnly "$Context mapping '$($mapping.legacy)' cannot use historical-only semantics."
+        } else {
+            Assert-Contract ($CurrentValues -contains [string]$mapping.current) "$Context mapping '$($mapping.legacy)' targets unknown current value '$($mapping.current)'."
+        }
+    }
+}
+
 function Get-JsonFiles {
     param([string]$Path)
 
@@ -261,6 +282,29 @@ function Test-ProjectBundle {
         foreach ($id in $selectedModuleIds) { Assert-Contract ($deniedModuleIds -notcontains $id) "$Context module '$id' is both selected and denied." }
         Assert-Contract ($spec.release_policy.source_first -eq $true -and $spec.release_policy.planning_last -eq $true -and $spec.release_policy.force_push_allowed -eq $false) "$Context project_spec.v2 release policy must be source-first, planning-last, and no-force-push."
         Assert-Contract (Test-Text $spec.release_policy.commit_policy) "$Context project_spec.v2 needs a commit policy."
+    }
+
+    $workspaceRoot = Split-Path -Parent $Bundle.StatePath
+    $historicalAdoptions = @{}
+    $adoptionReferences = @()
+    if ($state.PSObject.Properties.Name -contains "historical_unit_adoption_receipts") { $adoptionReferences = @($state.historical_unit_adoption_receipts) }
+    Test-UniqueProperty -Items $adoptionReferences -Property "path" -Context "$Context historical-unit adoption references"
+    foreach ($reference in $adoptionReferences) {
+        $relativePath = Normalize-RelativePath ([string]$reference.path)
+        Assert-Contract (Test-PortableRelativePath $relativePath) "$Context historical-unit adoption reference has a non-portable path."
+        $receiptPath = Join-Path $workspaceRoot ($relativePath -replace "/", [IO.Path]::DirectorySeparatorChar)
+        $receipt = Read-JsonDocument -Path $receiptPath -Context "$Context historical-unit adoption receipt"
+        if ($null -eq $receipt) { continue }
+        Assert-Contract ([string]$reference.sha256 -eq (Get-FileSha256 $receiptPath)) "$Context historical-unit adoption receipt '$relativePath' hash drifted."
+        Assert-Contract ([string]$receipt.schema -eq "rusty.morphospace.workflow.historical_unit_adoption_receipt.v1") "$Context historical-unit adoption receipt '$relativePath' has the wrong schema."
+        Assert-Contract ([string]$receipt.project_id -eq [string]$spec.project_id) "$Context historical-unit adoption receipt '$relativePath' belongs to another project."
+        Assert-Contract ((Test-Text $receipt.source_workflow.release) -and ([string]$receipt.source_workflow.commit -match '^[0-9a-f]{40}$')) "$Context historical-unit adoption receipt '$relativePath' lacks source workflow identity."
+        Test-UniqueProperty -Items @($receipt.units) -Property "unit_id" -Context "$Context historical-unit adoption receipt '$relativePath'"
+        foreach ($entry in @($receipt.units)) {
+            $unitId = [string]$entry.unit_id
+            Assert-Contract (-not $historicalAdoptions.ContainsKey($unitId)) "$Context historical unit '$unitId' appears in more than one adoption receipt."
+            if (-not $historicalAdoptions.ContainsKey($unitId)) { $historicalAdoptions[$unitId] = $entry }
+        }
     }
     Test-NonEmptyTextArray -Value $spec.non_scope -Context "$Context project non_scope"
 
@@ -456,8 +500,20 @@ function Test-ProjectBundle {
         foreach ($categoryGroup in @($changeCategories | Group-Object)) {
             Assert-Contract ($categoryGroup.Count -eq 1) "$Context unit '$($unit.unit_id)' repeats change category '$($categoryGroup.Name)'."
         }
-        foreach ($category in $changeCategories) {
-            Assert-Contract ($script:ChangeCategories -contains $category) "$Context unit '$($unit.unit_id)' has unknown change category '$category'."
+        $unitId = [string]$unit.unit_id
+        $adoption = if ($historicalAdoptions.ContainsKey($unitId)) { $historicalAdoptions[$unitId] } else { $null }
+        if ($null -ne $adoption) {
+            $unitPath = Normalize-RelativePath ([IO.Path]::GetRelativePath((Split-Path -Parent $Bundle.StatePath), $path))
+            Assert-Contract ($unitPath -eq [string]$adoption.unit_path) "$Context historical unit '$unitId' adoption path drifted."
+            Assert-Contract ((Get-FileSha256 $path) -eq [string]$adoption.unit_sha256) "$Context historical unit '$unitId' bytes drifted."
+            Assert-Contract (@("accepted", "blocked") -contains [string]$unit.status) "$Context historical adoption cannot be used by current or future unit '$unitId'."
+            Assert-Contract ([string]$unit.status -eq [string]$adoption.terminal_status) "$Context historical unit '$unitId' terminal status drifted."
+            $unknownCategories = @($changeCategories | Where-Object { $script:ChangeCategories -notcontains $_ })
+            Test-ExactLegacyMappings -UnknownValues $unknownCategories -Mappings @($adoption.normalization.change_categories) -CurrentValues $script:ChangeCategories -Context "$Context historical unit '$unitId' change-category"
+        } else {
+            foreach ($category in $changeCategories) {
+                Assert-Contract ($script:ChangeCategories -contains $category) "$Context unit '$unitId' has unknown change category '$category'."
+            }
         }
 
         $instructionImpact = [string]$unit.instruction_impact
@@ -583,7 +639,9 @@ function Test-ProjectBundle {
             foreach ($requirement in @($unit.resource_requirements)) {
                 $resourceKind = [string]$requirement.resource_kind
                 $resourceId = [string]$requirement.resource_id
-                Assert-Contract (@("repo-path", "build-output", "android-package", "headset", "property-namespace", "staging-namespace", "bridge-port") -contains $resourceKind) "$Context unit '$($unit.unit_id)' has unknown resource kind '$resourceKind'."
+                if ($null -eq $adoption) {
+                    Assert-Contract ($script:ResourceKinds -contains $resourceKind) "$Context unit '$($unit.unit_id)' has unknown resource kind '$resourceKind'."
+                }
                 Assert-Contract (Test-Text $resourceId) "$Context unit '$($unit.unit_id)' resource '$resourceKind' needs an ID."
                 Assert-Contract (@("exclusive", "shared-read") -contains [string]$requirement.mode) "$Context unit '$($unit.unit_id)' resource '$resourceKind/$resourceId' has unknown mode."
                 Assert-Contract (@("none", "before-write", "before-run") -contains [string]$requirement.claim_timing) "$Context unit '$($unit.unit_id)' resource '$resourceKind/$resourceId' has unknown claim timing."
@@ -605,8 +663,14 @@ function Test-ProjectBundle {
         Assert-Contract ($script:PushCheckpoints -contains [string]$unit.push_checkpoint) "$Context unit '$($unit.unit_id)' has unknown push checkpoint."
         Assert-Contract (@($unit.validation).Count -gt 0) "$Context unit '$($unit.unit_id)' needs validation commands."
         foreach ($validation in @($unit.validation)) {
-            Assert-Contract ($validationProfileIds -contains [string]$validation.profile_id) "$Context unit '$($unit.unit_id)' references unknown validation profile '$($validation.profile_id)'."
+            if ($null -eq $adoption) { Assert-Contract ($validationProfileIds -contains [string]$validation.profile_id) "$Context unit '$($unit.unit_id)' references unknown validation profile '$($validation.profile_id)'." }
             Assert-Contract (Test-Text $validation.command) "$Context unit '$($unit.unit_id)' has an empty validation command."
+        }
+        if ($null -ne $adoption) {
+            $unknownProfiles = @($unit.validation | ForEach-Object { [string]$_.profile_id } | Where-Object { $validationProfileIds -notcontains $_ })
+            Test-ExactLegacyMappings -UnknownValues $unknownProfiles -Mappings @($adoption.normalization.validation_profiles) -CurrentValues $validationProfileIds -Context "$Context historical unit '$unitId' validation-profile"
+            $unknownResources = if ($unit.PSObject.Properties.Name -contains "resource_requirements") { @($unit.resource_requirements | ForEach-Object { [string]$_.resource_kind } | Where-Object { $script:ResourceKinds -notcontains $_ }) } else { @() }
+            Test-ExactLegacyMappings -UnknownValues $unknownResources -Mappings @($adoption.normalization.resource_kinds) -CurrentValues $script:ResourceKinds -Context "$Context historical unit '$unitId' resource-kind" -AllowHistoricalOnly $true
         }
         Test-NonEmptyTextArray -Value $unit.outputs -Context "$Context unit '$($unit.unit_id)' outputs"
         Assert-Contract (Test-Text $unit.commit_policy) "$Context unit '$($unit.unit_id)' needs a commit policy."
@@ -620,6 +684,9 @@ function Test-ProjectBundle {
         foreach ($prerequisite in @($unit.prerequisites)) {
             Assert-Contract ($unitMap.ContainsKey([string]$prerequisite)) "$Context unit '$($unit.unit_id)' references missing prerequisite '$prerequisite'."
         }
+    }
+    foreach ($adoptedUnitId in @($historicalAdoptions.Keys)) {
+        Assert-Contract ($unitMap.ContainsKey([string]$adoptedUnitId)) "$Context historical adoption contains extra or missing unit '$adoptedUnitId'."
     }
     $events = @(Read-EventLog -Path $Bundle.EventsPath -Context "$Context iteration event log")
     Test-UniqueProperty -Items $events -Property "event_id" -Context "$Context iteration events"
@@ -638,6 +705,18 @@ function Test-ProjectBundle {
         $previousEvent = $event
         if ($null -ne $event.unit_id) {
             Assert-Contract ($unitMap.ContainsKey([string]$event.unit_id)) "$Context event '$eventId' references missing unit '$($event.unit_id)'."
+        }
+    }
+    foreach ($adoptedUnitId in @($historicalAdoptions.Keys)) {
+        $entry = $historicalAdoptions[$adoptedUnitId]
+        $terminalEventId = [string]$entry.terminal_evidence.event_id
+        Assert-Contract ($eventMap.ContainsKey($terminalEventId)) "$Context historical unit '$adoptedUnitId' lacks its declared terminal event '$terminalEventId'."
+        if ($eventMap.ContainsKey($terminalEventId)) {
+            $terminalEvent = $eventMap[$terminalEventId]
+            Assert-Contract ([string]$terminalEvent.unit_id -eq $adoptedUnitId) "$Context historical unit '$adoptedUnitId' terminal event belongs to another unit."
+            if ($null -ne $entry.terminal_evidence.receipt_path) {
+                Assert-Contract (@($terminalEvent.receipts) -contains [string]$entry.terminal_evidence.receipt_path) "$Context historical unit '$adoptedUnitId' terminal event does not reference its declared evidence receipt."
+            }
         }
     }
 
@@ -824,6 +903,7 @@ if ($null -ne $lifecycle) {
     $script:DeviceRequirements = @($lifecycle.device_requirements | ForEach-Object { [string]$_ })
     $script:PushCheckpoints = @($lifecycle.push_checkpoints | ForEach-Object { [string]$_ })
     $script:ChangeCategories = @($lifecycle.change_categories | ForEach-Object { [string]$_ })
+    $script:ResourceKinds = @("repo-path", "build-output", "android-package", "headset", "property-namespace", "staging-namespace", "bridge-port")
     $script:InstructionImpactValues = @($lifecycle.instruction_sync.impact_values | ForEach-Object { [string]$_ })
     $script:InstructionSurfaceKinds = @($lifecycle.instruction_sync.surface_kinds | ForEach-Object { [string]$_ })
     $script:InstructionTriggerCategories = @($lifecycle.instruction_sync.trigger_categories | ForEach-Object { [string]$_ })
@@ -845,6 +925,7 @@ if ($null -ne $lifecycle) {
     $script:DeviceRequirements = @()
     $script:PushCheckpoints = @()
     $script:ChangeCategories = @()
+    $script:ResourceKinds = @()
     $script:InstructionImpactValues = @()
     $script:InstructionSurfaceKinds = @()
     $script:InstructionTriggerCategories = @()
@@ -864,6 +945,7 @@ $requiredSchemaNames = @(
     "current-unit-protocol.schema.json",
     "executed-push-receipt.schema.json",
     "historical-release-closure-receipt.schema.json",
+    "historical-unit-adoption-receipt.schema.json",
     "feature-descriptor.schema.json",
     "feature-lock.schema.json",
     "feature-lock-v2.schema.json",

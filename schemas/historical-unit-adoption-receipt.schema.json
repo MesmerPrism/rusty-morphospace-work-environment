@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/historical-unit-adoption-receipt.schema.json",
+  "title": "Hash-bound adoption of immutable historical iteration units",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "receipt_id", "project_id", "source_workflow", "units"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schema": { "const": "rusty.morphospace.workflow.historical_unit_adoption_receipt.v1" },
+    "receipt_id": { "$ref": "#/$defs/id" },
+    "project_id": { "$ref": "#/$defs/id" },
+    "source_workflow": {
+      "type": "object", "additionalProperties": false,
+      "required": ["release", "commit"],
+      "properties": { "release": { "type": "string", "minLength": 1 }, "commit": { "$ref": "#/$defs/sha" } }
+    },
+    "units": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["unit_id", "unit_path", "unit_sha256", "terminal_status", "terminal_evidence", "normalization"],
+        "properties": {
+          "unit_id": { "$ref": "#/$defs/id" },
+          "unit_path": { "type": "string", "pattern": "^iteration-units/[a-z0-9][a-z0-9-]{1,127}\\.json$" },
+          "unit_sha256": { "$ref": "#/$defs/hash" },
+          "terminal_status": { "enum": ["accepted", "blocked"] },
+          "terminal_evidence": {
+            "type": "object", "additionalProperties": false,
+            "required": ["event_id", "receipt_path"],
+            "properties": { "event_id": { "$ref": "#/$defs/id" }, "receipt_path": { "type": ["string", "null"] } }
+          },
+          "normalization": {
+            "type": "object", "additionalProperties": false,
+            "required": ["change_categories", "validation_profiles", "resource_kinds"],
+            "properties": {
+              "change_categories": { "$ref": "#/$defs/mappings" },
+              "validation_profiles": { "$ref": "#/$defs/mappings" },
+              "resource_kinds": { "$ref": "#/$defs/resourceMappings" }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" },
+    "sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "mappings": {
+      "type": "array", "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["legacy", "current", "retained_as"],
+        "properties": { "legacy": { "$ref": "#/$defs/id" }, "current": { "$ref": "#/$defs/id" }, "retained_as": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "resourceMappings": {
+      "type": "array", "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["legacy", "current", "retained_as"],
+        "properties": { "legacy": { "$ref": "#/$defs/id" }, "current": { "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] }, "retained_as": { "type": "string", "minLength": 1 } }
+      }
+    }
+  }
+}

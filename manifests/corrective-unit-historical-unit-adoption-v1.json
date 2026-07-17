@@ -1,0 +1,30 @@
+{
+  "schema": "rusty.morphospace.work_environment.corrective_unit.v1",
+  "unit_id": "workenv-historical-unit-adoption-v1",
+  "status": "accepted",
+  "base_revision": "8499cac5953b29ade859bf8694d511862fa8b8d3",
+  "objective": "Add explicit project-owned hash-bound normalization for immutable terminal iteration units while preserving strict current registries.",
+  "authority": "rusty-morphospace-work-environment",
+  "scope": [
+    "historical adoption schema and compact-state reference",
+    "generic workflow-contract validation",
+    "focused positive and damaged self-tests",
+    "public documentation and instruction routers"
+  ],
+  "non_scope": [
+    "project-specific allowlists",
+    "historical unit or event mutation",
+    "portable registry expansion",
+    "runtime, activation, device, Git push, or downstream authority"
+  ],
+  "network_interface_decision": "Historical-only normalization; no current generic resource kind is added because the legacy noun lacks a portable isolation and claim contract.",
+  "validation": [
+    "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/Test-HistoricalUnitAdoption.ps1 -SelfTest",
+    "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/Test-WorkEnvironment.ps1 -SelfTest -Tier Quick",
+    "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/Test-WorkEnvironment.ps1 -SelfTest -Tier Standard",
+    "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/Test-WorkEnvironment.ps1 -SelfTest -Tier Deep",
+    "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/Test-PublicBoundary.ps1",
+    "git diff --check"
+  ],
+  "publication": { "branch": "codex/workflow-historical-unit-adoption", "force_push_allowed": false }
+}

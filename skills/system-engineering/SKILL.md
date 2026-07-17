@@ -256,6 +256,11 @@ Schema or state-machine evolution must be additive or ship an explicit
 migration, compatibility window, rollback, and accepted-history preservation
 rule.
 
+When a terminal historical unit uses retired workflow vocabulary, require a
+project-owned receipt binding exact bytes, status, terminal evidence, and
+complete normalization into current portable semantics. Never use that route
+for current work or expand registries merely to silence history.
+
 For direct networking, separate topology formation, platform network
 observation, socket ownership, protocol exchange, and cleanup into provider
 receipts. Platform absence is evidence, not permission to fabricate
