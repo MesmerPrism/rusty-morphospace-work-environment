@@ -12,6 +12,16 @@ triggering unit or a carried unit. A carried unit binds its status evidence and
 must explicitly claim no acceptance. Missing, extra, reordered, or path-
 mismatched commits fail validation.
 
+One additive source-only alternative represents a synchronized carried commit
+that was already published and accounted while blocked, then later accepted
+without another source commit or push. That repository has an empty current
+range and requires `old_revision == prepared_revision == final_revision`, plus
+hash-bound prior accounting, its exact blocked/no-acceptance status evidence,
+the formerly carried revision, and current acceptance evidence. The prior
+accounting must itself validate and attribute that exact revision to the now
+triggering unit as a carried commit. This alternative cannot be used for
+planning transport and does not weaken planning-last suffix or readback checks.
+
 Chronology remains bound to the exact timestamp strings in the prepared plan
 and executed receipt. When an evidence timestamp carries only whole-second
 precision (including a normalized all-zero fractional suffix), ordering treats

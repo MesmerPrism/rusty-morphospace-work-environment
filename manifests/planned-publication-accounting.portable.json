@@ -11,6 +11,7 @@
     "prepared-event-transition-ledger-provenance",
     "unit-status-evidence",
     "carried-unit-no-acceptance",
+    "synchronized-carried-acceptance-prior-accounting",
     "source-prepared-equals-final",
     "single-planning-transport-suffix",
     "no-force-complete-readback"
