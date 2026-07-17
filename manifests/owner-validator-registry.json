@@ -61,8 +61,8 @@
     {
       "validator_id": "planned-publication-accounting-owner",
       "owner_repo_id": "work-environment",
-      "owner_revision": "9afab7ae03ddebbfe16eff8fbdf513fc00326ea9",
-      "owner_tree_oid": "d9216189271728a14dc38a4ffd31943d21b14b09",
+      "owner_revision": "148b8a7a5a64ecf9577fef56310285e7023519ec",
+      "owner_tree_oid": "2a0571974a263b8398bef965f168e35ad14be0f7",
       "path": "scripts/Test-PlannedPublicationAccounting.ps1",
       "sha256": "b81a5e77d99bad2745d50fa38129749c4b8f47f33457463ea754f4ff67ab54ac",
       "git_blob_oid": "03f3f910ca66901813aa65b81040a6e52a332e74",
