@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("Inspect", "Ready", "Claim", "Resume", "BeginValidation", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "Recover", "ReconcilePublication")]
+    [ValidateSet("Inspect", "Ready", "Claim", "Resume", "BeginValidation", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RecordPublication", "Recover", "ReconcilePublication")]
     [string]$Action,
     [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
     [string]$UnitId = "",
@@ -10,6 +10,7 @@ param(
     [string]$ValidationReceipt = "",
     [string]$RecoveryReceipt = "",
     [string]$PublicationClosure = "",
+    [string]$PublicationAccounting = "",
     [string]$AdoptionReceipt = "",
     [ValidateSet("quick", "standard", "deep")][string]$ValidationTier = "standard",
     [string[]]$DeviceSerials = @(),
@@ -33,6 +34,7 @@ $arguments = @{
     ValidationReceipt = $ValidationReceipt
     RecoveryReceipt = $RecoveryReceipt
     PublicationClosure = $PublicationClosure
+    PublicationAccounting = $PublicationAccounting
     AdoptionReceipt = $AdoptionReceipt
     ValidationTier = $ValidationTier
     DeviceSerials = $DeviceSerials

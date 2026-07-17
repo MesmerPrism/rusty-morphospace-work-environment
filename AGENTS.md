@@ -200,6 +200,12 @@ in runner variables or typed reference wrappers, never injected properties.
   with `unplanned_publication_closure.v1` and the workflow-only
   `ReconcilePublication` transition; never fabricate a plan or mutate Git from
   recovery.
+- A planned publication closes only through `RecordPublication` with a
+  validated `planned_publication_accounting.v1`. It must enumerate the exact
+  old-exclusive/final-inclusive commit sequence and carried-unit status, allow
+  only one explicit planning-transport suffix, and clear only the matching
+  bundle after clean no-force readback. See
+  `docs/PLANNED_PUBLICATION_ACCOUNTING.md`.
 - Seal a coordinated release with `release_capsule.v1`: exact remote equality
   and branch convergence belong to the candidate cut, while later historical
   closure requires ancestor-or-equal remote refs and an isolated exact clean

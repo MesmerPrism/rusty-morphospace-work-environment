@@ -187,6 +187,13 @@ ancestry, hash-bound validation files, a pre-publication capture when required,
 planning-final-suffix order, no-force proof, and rollback points;
 validate it with `scripts/Test-ExecutedPushReceipt.ps1`.
 
+After a prepared push is externally executed, use
+`planned_publication_accounting.v1` and the fail-closed `RecordPublication`
+action to enumerate every published commit, preserve carried blocked-unit
+status without claiming acceptance, validate the single planning-transport
+suffix, and consume only the exact pending bundle. See
+[`docs/PLANNED_PUBLICATION_ACCOUNTING.md`](docs/PLANNED_PUBLICATION_ACCOUNTING.md).
+
 Push preparation now requires one distinct external planning repository that
 contains the active project workspace. The source refs remain first and that
 planning ref is the final prepared suffix. If a source push already occurred

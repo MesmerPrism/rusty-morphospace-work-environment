@@ -819,8 +819,14 @@ function Test-ProjectBundle {
         foreach ($unitId in @($state.pending_push_bundle.unit_ids)) {
             Assert-Contract ($unitMap.ContainsKey([string]$unitId)) "$Context pending push bundle references missing unit '$unitId'."
         }
-        foreach ($repoId in @($state.pending_push_bundle.repo_ids)) {
-            Assert-Contract ($repositoryMap.ContainsKey([string]$repoId)) "$Context pending push bundle references undeclared repo '$repoId'."
+        $pendingRepoIds = @($state.pending_push_bundle.repo_ids | ForEach-Object { [string]$_ })
+        $externalPending = @($pendingRepoIds | Where-Object { -not $repositoryMap.ContainsKey($_) })
+        if ($state.pending_push_bundle.PSObject.Properties.Name -contains "planning_transport_repo_id") {
+            $planningTransportId = [string]$state.pending_push_bundle.planning_transport_repo_id
+            Assert-Contract ($externalPending.Count -eq 1 -and $externalPending[0] -ceq $planningTransportId) "$Context pending planned publication must name exactly one external planning transport repository."
+            Assert-Contract ($pendingRepoIds[-1] -ceq $planningTransportId) "$Context external planning transport repository must be last."
+        } else {
+            Assert-Contract ($externalPending.Count -eq 0) "$Context legacy pending push bundle references undeclared repo '$($externalPending -join ',')'."
         }
     }
 
@@ -944,6 +950,7 @@ $requiredSchemaNames = @(
     "claim-baseline.schema.json",
     "current-unit-protocol.schema.json",
     "executed-push-receipt.schema.json",
+    "planned-publication-accounting-receipt.schema.json",
     "historical-release-closure-receipt.schema.json",
     "historical-unit-adoption-receipt.schema.json",
     "feature-descriptor.schema.json",
@@ -1043,6 +1050,15 @@ if (Test-Path -LiteralPath $publicationRecoveryValidator -PathType Leaf) {
     } catch {
         Add-Failure -Message "Unplanned-publication closure self-test failed: $($_.Exception.Message)"
     }
+}
+
+$plannedAccountingTemplate = Join-Path $templatesRoot "planned-publication-accounting.example.json"
+$plannedAccountingValidator = Join-Path $RepoRoot "scripts\Test-PlannedPublicationAccounting.ps1"
+Assert-Contract (Test-Path -LiteralPath $plannedAccountingTemplate -PathType Leaf) "Required planned-publication accounting example is missing."
+Assert-Contract (Test-Path -LiteralPath $plannedAccountingValidator -PathType Leaf) "Required planned-publication accounting validator is missing."
+if (Test-Path -LiteralPath $plannedAccountingValidator -PathType Leaf) {
+    try { & $plannedAccountingValidator -SelfTest | Out-Null }
+    catch { Add-Failure -Message "Planned-publication accounting self-test failed: $($_.Exception.Message)" }
 }
 
 $releaseCapsuleTemplate = Join-Path $templatesRoot "release-capsule.example.json"

@@ -114,6 +114,10 @@ observed remote revisions, ancestry and validation references, no-force proof,
 planning last, and reverse-order rollback anchors. A prepared plan is never
 execution evidence, and the work-unit automation must not manufacture this
 receipt.
+Close that prepared publication only through hash-bound
+`planned_publication_accounting.v1`: enumerate exact commits and unit status,
+restrict the one planning suffix to explicit workflow transport paths, and let
+`RecordPublication` clear only the matching bundle after live clean readback.
 Keep mutable project state in one distinct external planning repository and
 require its ref as the final prepared suffix. If a real source push preceded
 preparation, preserve it only through an independently observed

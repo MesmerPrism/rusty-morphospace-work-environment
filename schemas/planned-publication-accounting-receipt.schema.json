@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/planned-publication-accounting-receipt.schema.json",
+  "title": "Planned publication accounting receipt",
+  "description": "Complete commit and lifecycle accounting for one externally executed prepared publication. Validation records workflow state only and performs no Git, device, or acceptance mutation.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema","accounting_id","project_id","bundle_id","trigger_unit_id","prepared_plan","prepared_event","executed_push_receipt","chronology","dependency_order","execution_order","repositories","workspace_transition","force_push_used","remote_readback_complete","failure"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schema": { "const": "rusty.morphospace.workflow.planned_publication_accounting.v1" },
+    "accounting_id": { "$ref": "#/$defs/id" },
+    "project_id": { "$ref": "#/$defs/id" },
+    "bundle_id": { "$ref": "#/$defs/id" },
+    "trigger_unit_id": { "$ref": "#/$defs/id" },
+    "prepared_plan": { "$ref": "#/$defs/file" },
+    "prepared_event": { "type":"object","additionalProperties":false,"required":["event_id","path","sha256"],"properties":{"event_id":{"$ref":"#/$defs/id"},"path":{"$ref":"#/$defs/path"},"sha256":{"$ref":"#/$defs/hash"}} },
+    "executed_push_receipt": { "$ref": "#/$defs/file" },
+    "chronology": { "type":"object","additionalProperties":false,"required":["prepared_at","push_started_at","push_finished_at","accounted_at"],"properties":{"prepared_at":{"$ref":"#/$defs/time"},"push_started_at":{"$ref":"#/$defs/time"},"push_finished_at":{"$ref":"#/$defs/time"},"accounted_at":{"$ref":"#/$defs/time"}} },
+    "dependency_order": { "$ref":"#/$defs/id-list" },
+    "execution_order": { "$ref":"#/$defs/id-list" },
+    "repositories": { "type":"array","minItems":1,"items":{"$ref":"#/$defs/repository"} },
+    "workspace_transition": { "type":"object","additionalProperties":false,"required":["pending_push_bundle_before","pending_push_bundle_after"],"properties":{"pending_push_bundle_before":{"$ref":"#/$defs/id"},"pending_push_bundle_after":{"type":"null"}} },
+    "force_push_used": { "const": false },
+    "remote_readback_complete": { "const": true },
+    "failure": { "type":"null" }
+  },
+  "$defs": {
+    "id": { "type":"string","pattern":"^[a-z0-9][a-z0-9-]{1,127}$" },
+    "hash": { "type":"string","pattern":"^[0-9a-f]{64}$" },
+    "revision": { "type":"string","pattern":"^[0-9a-f]{40}$" },
+    "time": { "type":"string","format":"date-time" },
+    "path": { "type":"string","pattern":"^(?![A-Za-z]:|/|.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/-]+$" },
+    "file": { "type":"object","additionalProperties":false,"required":["path","sha256"],"properties":{"path":{"$ref":"#/$defs/path"},"sha256":{"$ref":"#/$defs/hash"}} },
+    "id-list": { "type":"array","minItems":1,"uniqueItems":true,"items":{"$ref":"#/$defs/id"} },
+    "unit": { "type":"object","additionalProperties":false,"required":["unit_id","role","status_at_publication","status_evidence","no_acceptance_claim"],"properties":{"unit_id":{"$ref":"#/$defs/id"},"role":{"enum":["triggering-unit","carried-unit"]},"status_at_publication":{"enum":["accepted","blocked"]},"status_evidence":{"$ref":"#/$defs/file"},"no_acceptance_claim":{"type":"boolean"}} },
+    "commit": { "type":"object","additionalProperties":false,"required":["revision","role","unit_id","changed_paths"],"properties":{"revision":{"$ref":"#/$defs/revision"},"role":{"enum":["triggering-unit","carried-unit","workflow-publication-finalization"]},"unit_id":{"oneOf":[{"$ref":"#/$defs/id"},{"type":"null"}]},"changed_paths":{"type":"array","minItems":1,"uniqueItems":true,"items":{"$ref":"#/$defs/path"}}} },
+    "repository": { "type":"object","additionalProperties":false,"required":["repo_id","role","branch","upstream","old_revision","prepared_revision","final_revision","remote_readback_revision","source_first","planning_last","fast_forward_verified","force_push_used","worktree_clean","units","commits","allowed_finalization_paths"],"properties":{"repo_id":{"$ref":"#/$defs/id"},"role":{"enum":["source","planning-transport"]},"branch":{"type":"string","minLength":1},"upstream":{"type":"string","minLength":1},"old_revision":{"$ref":"#/$defs/revision"},"prepared_revision":{"$ref":"#/$defs/revision"},"final_revision":{"$ref":"#/$defs/revision"},"remote_readback_revision":{"$ref":"#/$defs/revision"},"source_first":{"type":"boolean"},"planning_last":{"type":"boolean"},"fast_forward_verified":{"const":true},"force_push_used":{"const":false},"worktree_clean":{"const":true},"units":{"type":"array","items":{"$ref":"#/$defs/unit"}},"commits":{"type":"array","minItems":1,"items":{"$ref":"#/$defs/commit"}},"allowed_finalization_paths":{"type":"array","uniqueItems":true,"items":{"$ref":"#/$defs/path"}}} }
+  }
+}

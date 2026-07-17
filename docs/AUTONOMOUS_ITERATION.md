@@ -159,6 +159,10 @@ A prepared `push_bundle_plan.v1` is never proof that Git changed. It remains a
 non-executing intent artifact even when its workspace transition used
 `-Execute`. An authorized external operator or orchestrator records
 `executed_push_receipt.v1` only after all listed remote refs are read back.
+`RecordPublication` then requires complete `planned_publication_accounting.v1`
+commit/unit accounting and live clean readback before it may clear the exact
+pending bundle. It records workflow state only; details are in
+[Planned Publication Accounting](PLANNED_PUBLICATION_ACCOUNTING.md).
 
 The executed receipt uses one `ref_id` per branch and records full old, new,
 and observed-remote revisions, whether the ref was pushed or only read back,

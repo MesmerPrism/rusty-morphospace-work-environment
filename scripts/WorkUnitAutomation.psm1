@@ -4,6 +4,7 @@ Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceValidationAuthority.psm1'
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospacePublicationRecovery.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospacePlannedPublication.psm1') -Force
 
 function Read-MorphospaceJson {
     param([Parameter(Mandatory = $true)][string]$Path)
@@ -901,7 +902,7 @@ function Invoke-MorphospaceAuthorityRunnerForRecord {
 function Invoke-MorphospaceWorkUnitAutomation {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory = $true)][ValidateSet("Inspect", "Ready", "Claim", "Resume", "BeginValidation", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "Recover", "ReconcilePublication")][string]$Action,
+        [Parameter(Mandatory = $true)][ValidateSet("Inspect", "Ready", "Claim", "Resume", "BeginValidation", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RecordPublication", "Recover", "ReconcilePublication")][string]$Action,
         [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
         [string]$UnitId = "",
         [string]$RepoMapPath = "",
@@ -910,6 +911,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
         [string]$ValidationReceipt = "",
         [string]$RecoveryReceipt = "",
         [string]$PublicationClosure = "",
+        [string]$PublicationAccounting = "",
         [string]$AdoptionReceipt = "",
         [ValidateSet("quick", "standard", "deep")][string]$ValidationTier = "standard",
         [string[]]$DeviceSerials = @(),
@@ -963,21 +965,21 @@ function Invoke-MorphospaceWorkUnitAutomation {
             $repositoryStates.Add([pscustomobject][ordered]@{ repo_id = $repoId; mapped = $false; relation = "not-mapped" }) | Out-Null
         }
     }
-    if ($Action -eq "PreparePush") {
+    if ($Action -in @("PreparePush", "RecordPublication")) {
         $unitRepoIds = @{}
         foreach ($repo in @($unit.allowed_repositories)) { $unitRepoIds[[string]$repo.repo_id] = $true }
         $externalPlanningEntries = @($repoMap.Values | Where-Object {
             [string]$_.role -eq "planning" -and -not $unitRepoIds.ContainsKey([string]$_.repo_id)
         } | Sort-Object repo_id)
         if ($externalPlanningEntries.Count -ne 1) {
-            throw "PreparePush requires exactly one distinct external planning repository in the local repository map."
+            throw "$Action requires exactly one distinct external planning repository in the local repository map."
         }
         $planningEntry = $externalPlanningEntries[0]
         $planningPath = [System.IO.Path]::GetFullPath([string]$planningEntry.path).TrimEnd("\", "/")
         $workspaceFull = [System.IO.Path]::GetFullPath($resolvedWorkspace).TrimEnd("\", "/")
         $planningPrefix = $planningPath + [System.IO.Path]::DirectorySeparatorChar
         if (-not $workspaceFull.StartsWith($planningPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
-            throw "The external planning repository must contain the project workspace used for PreparePush."
+            throw "The external planning repository must contain the project workspace used for $Action."
         }
         $planningState = Get-MorphospaceRepositoryState -RepoId ([string]$planningEntry.repo_id) -Path ([string]$planningEntry.path)
         $planningState | Add-Member -NotePropertyName workflow_transport -NotePropertyValue $true
@@ -994,6 +996,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
     $adoptionReference = $null
     $publicationClosureReference = $null
     $publicationClosureBinding = $null
+    $publicationAccountingBinding = $null
 
     switch ($Action) {
         "Inspect" {
@@ -1215,6 +1218,30 @@ function Invoke-MorphospaceWorkUnitAutomation {
                 $event = New-MorphospaceEvent -State $state -Events $events -UnitId $UnitId -ActionSlug "publication-reconciled" -Timestamp $Timestamp -EventType "push" -Summary "Reconciled an independently verified no-force publication that preceded push preparation without fabricating a pre-push plan or executed-push receipt." -Receipts @($publicationClosureReference)
             }
         }
+        "RecordPublication" {
+            if (-not $PublicationAccounting) { throw "RecordPublication requires PublicationAccounting." }
+            if (-not $RepoMapPath) { throw "RecordPublication requires RepoMapPath." }
+            if ($beforeStatus -ne "accepted") { throw "RecordPublication requires the triggering unit to remain accepted." }
+            $accountingPath = Resolve-MorphospaceReceiptPath -WorkspaceRoot $resolvedWorkspace -ReceiptReference $PublicationAccounting
+            $validatedAccounting = Test-MorphospacePlannedPublicationLive -Path $accountingPath -WorkspaceRoot $resolvedWorkspace -Spec $spec -State $state -RepositoryMap $repoMap -RepositoryStates $repoStatesArray
+            if ([string]$validatedAccounting.document.trigger_unit_id -cne $UnitId) { throw "Publication accounting trigger unit does not match the requested unit." }
+            $workspacePrefix = $resolvedWorkspace.TrimEnd("\", "/") + [System.IO.Path]::DirectorySeparatorChar
+            $accountingReference = $accountingPath.Substring($workspacePrefix.Length).Replace("\", "/")
+            $publicationAccountingBinding = [pscustomobject][ordered]@{
+                accounting_id = [string]$validatedAccounting.document.accounting_id
+                path = $accountingReference
+                sha256 = [string]$validatedAccounting.accounting_sha256
+                executed_push_receipt = [pscustomobject][ordered]@{
+                    path = [string]$validatedAccounting.document.executed_push_receipt.path
+                    sha256 = [string]$validatedAccounting.document.executed_push_receipt.sha256
+                }
+            }
+            $transition = "planned-publication-recorded"
+            if ($Execute) {
+                $state.pending_push_bundle = $null
+                $event = New-MorphospaceEvent -State $state -Events $events -UnitId $UnitId -ActionSlug "publication-recorded" -Timestamp $Timestamp -EventType "push" -Summary "Recorded complete planned-publication accounting after exact no-force remote readback; no Git, device, or acceptance mutation was performed." -Receipts @($accountingReference, [string]$validatedAccounting.document.executed_push_receipt.path)
+            }
+        }
         "PreparePush" {
             if ($beforeStatus -ne "accepted") { throw "PreparePush requires an accepted unit." }
             if (-not $RepoMapPath -or -not $RevisionsPath) { throw "PreparePush requires RepoMapPath and RevisionsPath." }
@@ -1266,7 +1293,8 @@ function Invoke-MorphospaceWorkUnitAutomation {
             if ($Execute) {
                 if (-not $OutPath) { throw "PreparePush with -Execute requires OutPath for the immutable plan." }
                 $state.pending_push_bundle = [pscustomobject][ordered]@{
-                    bundle_id = $bundleId; unit_ids = @($UnitId); repo_ids = $orderedRepoIds; ready = $true
+                    bundle_id = $bundleId; unit_ids = @($UnitId); repo_ids = $orderedRepoIds
+                    planning_transport_repo_id = [string]$planningRepoIds[0]; ready = $true
                 }
                 $event = New-MorphospaceEvent -State $state -Events $events -UnitId $UnitId -ActionSlug "push-prepared" -Timestamp $Timestamp -EventType "commit" -Summary "Prepared a source-first, planning-last push bundle without executing Git push." -Receipts @($receiptReference)
             }
@@ -1343,6 +1371,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
         validation_matrix = $validationMatrix; graph_scope = $graphScope
         adoption_receipt = $adoptionReference
         publication_closure = $publicationClosureBinding
+        planned_publication = $publicationAccountingBinding
         push_plan = $pushPlan
         event_id = if ($event) { [string]$event.event_id } else { $null }
     }

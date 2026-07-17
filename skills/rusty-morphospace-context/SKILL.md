@@ -136,6 +136,10 @@ through a distinct external planning repository and publish that ref last. A
 same-ref source workspace cannot certify its own terminal bytes. If publication
 preceded preparation, route the independently observed recovery closure through
 `ReconcilePublication` without fabricating chronology or mutating source Git.
+For a genuinely prepared publication, route closure through
+`RecordPublication` and `docs/PLANNED_PUBLICATION_ACCOUNTING.md`; require exact
+commit/unit accounting and treat the single external planning repository as
+transport only, never product or source authority.
 
 Treat a release as sealed commits and trees, not permanently frozen live
 branches. Require exact remote equality and convergence at the candidate cut;

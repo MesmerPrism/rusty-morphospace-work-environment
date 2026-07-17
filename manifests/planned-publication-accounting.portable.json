@@ -1,0 +1,24 @@
+{
+  "schema": "rusty.morphospace.work_environment.planned_publication_accounting_manifest.v1",
+  "protocol": "rusty.morphospace.workflow.planned_publication_accounting.v1",
+  "owner_action": "RecordPublication",
+  "schema_path": "schemas/planned-publication-accounting-receipt.schema.json",
+  "validator_path": "scripts/Test-PlannedPublicationAccounting.ps1",
+  "module_path": "scripts/lib/MorphospacePlannedPublication.psm1",
+  "document_requirements": [
+    "exact-commit-enumeration",
+    "unit-status-evidence",
+    "carried-unit-no-acceptance",
+    "source-prepared-equals-final",
+    "single-planning-transport-suffix",
+    "no-force-complete-readback"
+  ],
+  "mutation_boundary": {
+    "workspace_state": "clear-exact-matching-pending-bundle-only",
+    "event_log": "append-hash-bound-push-event",
+    "git": "forbidden",
+    "device": "forbidden",
+    "acceptance": "forbidden"
+  },
+  "unplanned_owner_action": "ReconcilePublication"
+}

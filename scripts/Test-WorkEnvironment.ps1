@@ -224,6 +224,13 @@ if ($SelfTest) {
     }
 
     try {
+        & (Join-Path $RepoRoot "scripts\Test-PlannedPublicationAccounting.ps1") -SelfTest
+        Add-CheckResult -Name "workflow:planned-publication-accounting" -Status "ok" -Detail "Validated commit/unit accounting, carried-unit non-acceptance, chronology, planning suffix, no-force, and readback invariants."
+    } catch {
+        Add-CheckResult -Name "workflow:planned-publication-accounting" -Status "missing" -Required $true -Detail $_.Exception.Message
+    }
+
+    try {
         & (Join-Path $RepoRoot "scripts\Test-ReleaseCapsule.ps1") -SelfTest
         Add-CheckResult -Name "workflow:release-capsule" -Status "ok" -Detail "Validated immutable candidate cuts, historical descendant closure, isolated trees, preserved dirty overlays, and damaged evidence rejection."
     } catch {
