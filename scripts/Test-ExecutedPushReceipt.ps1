@@ -125,8 +125,18 @@ function Test-ExecutedPushReceiptDocument {
 
     $started = [DateTimeOffset]::MinValue
     $finished = [DateTimeOffset]::MinValue
-    $startedValid = [DateTimeOffset]::TryParse([string]$Document.started_at, [ref]$started)
-    $finishedValid = [DateTimeOffset]::TryParse([string]$Document.finished_at, [ref]$finished)
+    $startedValid = if ($Document.started_at -is [DateTime] -or $Document.started_at -is [DateTimeOffset]) {
+        $started = [DateTimeOffset]$Document.started_at
+        $true
+    } else {
+        [DateTimeOffset]::TryParse([string]$Document.started_at, [ref]$started)
+    }
+    $finishedValid = if ($Document.finished_at -is [DateTime] -or $Document.finished_at -is [DateTimeOffset]) {
+        $finished = [DateTimeOffset]$Document.finished_at
+        $true
+    } else {
+        [DateTimeOffset]::TryParse([string]$Document.finished_at, [ref]$finished)
+    }
     if (-not $startedValid) {
         Add-ReceiptFailure -Failures $failures -Message "started_at is not a valid timestamp."
     }
