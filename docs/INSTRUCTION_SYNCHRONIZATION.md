@@ -31,6 +31,11 @@ Every unit declares:
   status, validation, and a skill ID when the surface is a skill;
 - `instruction_none_justification` when impact is `none`.
 
+Surface kinds distinguish concise entrypoints (`agents`, `readme`, and
+`router-doc`), detailed validation routing (`validation-doc`), and installed or
+portable skills (`skill`). A validation document does not substitute for the
+required README or router entrypoint.
+
 Changes to authority, module layout, feature activation, validation, device
 policy, repo routing, or public/private boundaries require `update`. Before
 such a unit can become `accepted`, the nearest repo `AGENTS.md`, a README or

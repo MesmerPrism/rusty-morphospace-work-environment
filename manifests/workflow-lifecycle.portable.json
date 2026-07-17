@@ -77,7 +77,7 @@
   ],
   "instruction_sync": {
     "impact_values": ["none", "review", "update"],
-    "surface_kinds": ["agents", "readme", "router-doc", "skill"],
+    "surface_kinds": ["agents", "readme", "router-doc", "validation-doc", "skill"],
     "trigger_categories": [
       "authority",
       "module-layout",
