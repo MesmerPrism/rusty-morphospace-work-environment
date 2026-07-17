@@ -13,8 +13,14 @@
     "project_id": { "$ref": "#/$defs/id" },
     "bundle_id": { "$ref": "#/$defs/id" },
     "trigger_unit_id": { "$ref": "#/$defs/id" },
-    "prepared_plan": { "$ref": "#/$defs/file" },
-    "prepared_event": { "type":"object","additionalProperties":false,"required":["event_id","path","sha256"],"properties":{"event_id":{"$ref":"#/$defs/id"},"path":{"$ref":"#/$defs/path"},"sha256":{"$ref":"#/$defs/hash"}} },
+    "prepared_plan": { "oneOf": [
+      { "$ref": "#/$defs/file" },
+      { "type":"object","additionalProperties":false,"required":["container","member"],"properties":{"container":{"$ref":"#/$defs/file"},"member":{"const":"push_plan"}} }
+    ] },
+    "prepared_event": { "oneOf": [
+      { "type":"object","additionalProperties":false,"required":["event_id","path","sha256"],"properties":{"event_id":{"$ref":"#/$defs/id"},"path":{"$ref":"#/$defs/path"},"sha256":{"$ref":"#/$defs/hash"}} },
+      { "type":"object","additionalProperties":false,"required":["transaction_id","event_id","intent","completion"],"properties":{"transaction_id":{"$ref":"#/$defs/id"},"event_id":{"$ref":"#/$defs/id"},"intent":{"$ref":"#/$defs/file"},"completion":{"$ref":"#/$defs/file"}} }
+    ] },
     "executed_push_receipt": { "$ref": "#/$defs/file" },
     "chronology": { "type":"object","additionalProperties":false,"required":["prepared_at","push_started_at","push_finished_at","accounted_at"],"properties":{"prepared_at":{"$ref":"#/$defs/time"},"push_started_at":{"$ref":"#/$defs/time"},"push_finished_at":{"$ref":"#/$defs/time"},"accounted_at":{"$ref":"#/$defs/time"}} },
     "dependency_order": { "$ref":"#/$defs/id-list" },

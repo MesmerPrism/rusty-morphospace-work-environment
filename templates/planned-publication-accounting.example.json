@@ -5,8 +5,13 @@
   "project_id": "example-project",
   "bundle_id": "unit-alpha-push-bundle",
   "trigger_unit_id": "unit-alpha",
-  "prepared_plan": { "path": "receipts/unit-alpha-push-plan.json", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
-  "prepared_event": { "event_id": "unit-alpha-push-prepared-0001", "path": "receipts/unit-alpha-prepare-event.json", "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
+  "prepared_plan": { "container": { "path": "receipts/unit-alpha-prepare-push.json", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }, "member": "push_plan" },
+  "prepared_event": {
+    "transaction_id": "unit-alpha-push-prepared-0001-transition",
+    "event_id": "unit-alpha-push-prepared-0001",
+    "intent": { "path": "receipts/transactions/unit-alpha-push-prepared-0001-transition.intent.json", "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
+    "completion": { "path": "receipts/transactions/unit-alpha-push-prepared-0001-transition.completion.json", "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" }
+  },
   "executed_push_receipt": { "path": "receipts/unit-alpha-executed-push.json", "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" },
   "chronology": { "prepared_at": "2026-07-17T10:00:00Z", "push_started_at": "2026-07-17T10:01:00Z", "push_finished_at": "2026-07-17T10:02:00Z", "accounted_at": "2026-07-17T10:03:00Z" },
   "dependency_order": ["source-repo", "planning-repo"],

@@ -7,6 +7,8 @@
   "module_path": "scripts/lib/MorphospacePlannedPublication.psm1",
   "document_requirements": [
     "exact-commit-enumeration",
+    "prepared-plan-container-member-provenance",
+    "prepared-event-transition-ledger-provenance",
     "unit-status-evidence",
     "carried-unit-no-acceptance",
     "source-prepared-equals-final",

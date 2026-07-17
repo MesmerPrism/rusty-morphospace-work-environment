@@ -29,18 +29,54 @@ function ConvertTo-PlannedPublicationTime($Value) {
     return [DateTimeOffset]::Parse([string]$Value,[Globalization.CultureInfo]::InvariantCulture)
 }
 
+function Resolve-PlannedPublicationPlan($Document,[string]$WorkspaceRoot) {
+    if ($Document.prepared_plan.PSObject.Properties.Name -contains 'container') {
+        if ([string]$Document.prepared_plan.member -cne 'push_plan') { throw 'Prepared-plan container member must be push_plan.' }
+        $containerPath=Test-PlannedPublicationBinding $Document.prepared_plan.container $WorkspaceRoot 'prepared-plan container'
+        try{$container=Get-Content -Raw $containerPath|ConvertFrom-Json}catch{throw 'Prepared-plan container is not valid JSON.'}
+        if([string]$container.schema-cne'rusty.morphospace.workflow.work_unit_automation_receipt.v1' -or [string]$container.action-cne'PreparePush' -or [string]$container.transition-cne'push-bundle-prepared' -or $container.executed-ne$true){throw 'Prepared-plan container schema/action/transition/executed state is invalid.'}
+        if([string]$container.project_id-cne[string]$Document.project_id -or [string]$container.unit_id-cne[string]$Document.trigger_unit_id){throw 'Prepared-plan container project/unit identity mismatch.'}
+        if($null-eq$container.push_plan){throw 'Prepared-plan container is missing push_plan.'}
+        return [pscustomobject]@{plan=$container.push_plan;evidence_path=$containerPath;receipt_reference=[string]$Document.prepared_plan.container.path;container=$container}
+    }
+    $planPath=Test-PlannedPublicationBinding $Document.prepared_plan $WorkspaceRoot 'prepared plan'
+    return [pscustomobject]@{plan=(Get-Content -Raw $planPath|ConvertFrom-Json);evidence_path=$planPath;receipt_reference=[string]$Document.prepared_plan.path;container=$null}
+}
+
+function Resolve-PlannedPublicationEvent($Document,[string]$WorkspaceRoot,[string]$PlanReceiptReference) {
+    if ($Document.prepared_event.PSObject.Properties.Name -contains 'intent') {
+        $intentPath=Test-PlannedPublicationBinding $Document.prepared_event.intent $WorkspaceRoot 'prepared-event transition intent'
+        $completionPath=Test-PlannedPublicationBinding $Document.prepared_event.completion $WorkspaceRoot 'prepared-event transition completion'
+        try{$intent=Get-Content -Raw $intentPath|ConvertFrom-Json;$completion=Get-Content -Raw $completionPath|ConvertFrom-Json}catch{throw 'Prepared-event transition evidence is not valid JSON.'}
+        if([string]$intent.schema-cne'rusty.morphospace.workflow.transition_ledger_intent.v1' -or [string]$intent.status-cne'prepared'){throw 'Prepared-event transition intent schema/status is invalid.'}
+        if([string]$completion.schema-cne'rusty.morphospace.workflow.transition_ledger_completion.v1' -or [string]$completion.status-cne'committed'){throw 'Prepared-event transition completion schema/status is invalid.'}
+        $transaction=[string]$Document.prepared_event.transaction_id;$eventId=[string]$Document.prepared_event.event_id
+        if([string]$intent.transaction_id-cne$transaction-or[string]$completion.transaction_id-cne$transaction){throw 'Prepared-event transaction identity mismatch.'}
+        if([string]$completion.event_id-cne$eventId-or[string]$intent.event.event_id-cne$eventId){throw 'Prepared-event event identity mismatch.'}
+        if([string]$completion.intent.role-cne'transition-ledger-intent' -or [string]$completion.intent.schema-cne'rusty.morphospace.workflow.transition_ledger_intent.v1' -or [string]$completion.intent.path-cne[string]$Document.prepared_event.intent.path -or [string]$completion.intent.sha256-cne[string]$Document.prepared_event.intent.sha256){throw 'Prepared-event completion-to-intent reference mismatch.'}
+        $event=$intent.event
+        if([string]$event.schema-cne'rusty.morphospace.workflow.iteration_event.v1' -or [string]$event.project_id-cne[string]$Document.project_id -or [string]$event.unit_id-cne[string]$Document.trigger_unit_id -or [string]$event.event_type-cne'commit'){throw 'Embedded prepared event schema/project/unit/type is invalid.'}
+        if(@($event.receipts|Where-Object{[string]$_-ceq$PlanReceiptReference}).Count-ne1){throw 'Embedded prepared event does not link the exact prepared-plan receipt.'}
+        return [pscustomobject]@{event=$event;evidence_path=$completionPath;intent=$intent;completion=$completion}
+    }
+    $eventPath=Test-PlannedPublicationBinding $Document.prepared_event $WorkspaceRoot 'prepared event'
+    try{$event=Get-Content -Raw $eventPath|ConvertFrom-Json}catch{throw 'Prepared event evidence is not a JSON event document.'}
+    if([string]$event.event_id-cne[string]$Document.prepared_event.event_id){throw 'Prepared event ID does not match its bound evidence.'}
+    return [pscustomobject]@{event=$event;evidence_path=$eventPath;intent=$null;completion=$null}
+}
+
 function Test-MorphospacePlannedPublicationDocument {
     param([Parameter(Mandatory)][string]$Path,[Parameter(Mandatory)][string]$WorkspaceRoot)
     try{$d=Get-Content -Raw -LiteralPath $Path|ConvertFrom-Json}catch{throw "Invalid planned-publication accounting JSON: $($_.Exception.Message)"}
     if([string]$d.schema-cne'rusty.morphospace.workflow.planned_publication_accounting.v1'){throw 'Planned-publication accounting has the wrong schema ID.'}
     foreach($v in @($d.accounting_id,$d.project_id,$d.bundle_id,$d.trigger_unit_id)){if([string]$v-cnotmatch'^[a-z0-9][a-z0-9-]{1,127}$'){throw 'Planned-publication accounting contains an invalid portable ID.'}}
-    $planPath=Test-PlannedPublicationBinding $d.prepared_plan $WorkspaceRoot 'prepared plan'; $eventPath=Test-PlannedPublicationBinding $d.prepared_event $WorkspaceRoot 'prepared event'; $executedPath=Test-PlannedPublicationBinding $d.executed_push_receipt $WorkspaceRoot 'executed push receipt'
-    $plan=Get-Content -Raw $planPath|ConvertFrom-Json; $executed=Get-Content -Raw $executedPath|ConvertFrom-Json
-    try{$preparedEvent=Get-Content -Raw $eventPath|ConvertFrom-Json}catch{throw 'Prepared event evidence is not a JSON event document.'}
-    if([string]$preparedEvent.event_id-cne[string]$d.prepared_event.event_id){throw 'Prepared event ID does not match its bound evidence.'}
+    $resolvedPlan=Resolve-PlannedPublicationPlan $d $WorkspaceRoot;$plan=$resolvedPlan.plan
+    $resolvedEvent=Resolve-PlannedPublicationEvent $d $WorkspaceRoot $resolvedPlan.receipt_reference;$preparedEvent=$resolvedEvent.event
+    $executedPath=Test-PlannedPublicationBinding $d.executed_push_receipt $WorkspaceRoot 'executed push receipt';$executed=Get-Content -Raw $executedPath|ConvertFrom-Json
     if([string]$plan.schema-cne'rusty.morphospace.workflow.push_bundle_plan.v1' -or [string]$executed.schema-cne'rusty.morphospace.workflow.executed_push_receipt.v1'){throw 'Accounting evidence has an unexpected schema.'}
     if([string]$plan.bundle_id-cne[string]$d.bundle_id -or [string]$executed.bundle_id-cne[string]$d.bundle_id -or [string]$executed.prepared_plan_id-cne[string]$plan.bundle_id){throw 'Bundle or prepared-plan identity mismatch.'}
     if([string]$plan.project_id-cne[string]$d.project_id -or [string]$executed.project_id-cne[string]$d.project_id){throw 'Project identity mismatch.'}
+    if(@($plan.unit_ids|Where-Object{[string]$_-ceq[string]$d.trigger_unit_id}).Count-ne1){throw 'Prepared plan does not contain the triggering unit identity.'}
     $times=@($d.chronology.prepared_at,$d.chronology.push_started_at,$d.chronology.push_finished_at,$d.chronology.accounted_at)|ForEach-Object{ConvertTo-PlannedPublicationTime $_}
     if(-not($times[0]-le$times[1]-and$times[1]-le$times[2]-and$times[2]-le$times[3])){throw 'Publication chronology is not monotonic.'}
     if((ConvertTo-PlannedPublicationTime $plan.prepared_at)-ne$times[0] -or (ConvertTo-PlannedPublicationTime $executed.started_at)-ne$times[1] -or (ConvertTo-PlannedPublicationTime $executed.finished_at)-ne$times[2]){throw 'Publication chronology does not match bound evidence.'}
@@ -52,6 +88,7 @@ function Test-MorphospacePlannedPublicationDocument {
     foreach($r in @($d.repositories)){
       $id=[string]$r.repo_id;if(-not$planRepos.ContainsKey($id)-or-not$execRepos.ContainsKey($id)){throw "Repository '$id' is missing from plan or execution evidence."};$p=$planRepos[$id];$e=$execRepos[$id]
       if([string]$r.old_revision-cne[string]$e.old_revision-or[string]$r.final_revision-cne[string]$e.new_revision-or[string]$r.remote_readback_revision-cne[string]$e.observed_remote_revision){throw "Repository '$id' revision mismatch."}
+      if([string]$p.commit-cne[string]$r.prepared_revision){throw "Repository '$id' prepared-plan revision mismatch."}
       if([string]$r.final_revision-cne[string]$r.remote_readback_revision-or$r.force_push_used-ne$false-or$r.fast_forward_verified-ne$true-or$r.worktree_clean-ne$true){throw "Repository '$id' lacks clean no-force readback proof."}
       if($r.role-eq'source'-and[string]$r.prepared_revision-cne[string]$r.final_revision){throw "Source repository '$id' prepared revision must equal final revision."}
       if($r.role-eq'planning-transport'-and(-not$r.planning_last-or$r.source_first)){throw 'Planning transport ordering flags are invalid.'}
@@ -64,7 +101,7 @@ function Test-MorphospacePlannedPublicationDocument {
       if($r.role-eq'planning-transport'){if(@($r.commits.revision)-notcontains[string]$r.prepared_revision-or[string]$r.commits[-1].revision-cne[string]$r.final_revision){throw 'Planning prepared/final revisions are not represented by the ordered commit list.'}}
       elseif([string]$r.commits[-1].role-cne'triggering-unit'){throw "Source repository '$id' must end its accounted range with the triggering unit."}
     }
-    [pscustomobject]@{document=$d;plan=$plan;executed=$executed;accounting_sha256=Get-PlannedPublicationHash $Path;event_path=$eventPath}
+    [pscustomobject]@{document=$d;plan=$plan;executed=$executed;prepared_event=$preparedEvent;accounting_sha256=Get-PlannedPublicationHash $Path;event_path=$resolvedEvent.evidence_path}
 }
 
 function Test-MorphospacePlannedPublicationLive {

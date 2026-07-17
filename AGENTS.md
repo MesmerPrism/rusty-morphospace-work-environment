@@ -206,6 +206,9 @@ in runner variables or typed reference wrappers, never injected properties.
   only one explicit planning-transport suffix, and clear only the matching
   bundle after clean no-force readback. See
   `docs/PLANNED_PUBLICATION_ACCOUNTING.md`.
+  Prepared provenance may bind standalone files or the exact `push_plan`
+  member and transition-ledger event inside hash-bound owner containers; never
+  reconstruct those members outside their immutable evidence containers.
 - Seal a coordinated release with `release_capsule.v1`: exact remote equality
   and branch convergence belong to the candidate cut, while later historical
   closure requires ancestor-or-equal remote refs and an isolated exact clean

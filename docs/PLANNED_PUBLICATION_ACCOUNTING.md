@@ -12,6 +12,19 @@ triggering unit or a carried unit. A carried unit binds its status evidence and
 must explicitly claim no acceptance. Missing, extra, reordered, or path-
 mismatched commits fail validation.
 
+Prepared-plan provenance has two additive forms. The standalone form binds a
+`push_bundle_plan.v1` file directly. The container form binds an immutable
+`work_unit_automation_receipt.v1` by path/hash with `member: push_plan`; the
+validator requires executed `PreparePush`, transition `push-bundle-prepared`,
+matching project/unit/bundle identities, and validates the embedded plan rather
+than accepting a caller-reconstructed copy.
+
+Prepared-event provenance likewise accepts the existing standalone event file
+or a transition-ledger intent/completion pair. The paired form binds both files
+by exact hash, transaction and event identities, completion-to-intent linkage,
+committed status, the embedded prepared event, and its receipt link back to the
+exact prepared-plan container.
+
 Source repositories require `prepared_revision == final_revision`. Exactly one
 external repository may have role `planning-transport`. Its prepared revision
 may be an ancestor of final only when every suffix commit is classified as

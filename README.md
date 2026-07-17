@@ -191,7 +191,9 @@ After a prepared push is externally executed, use
 `planned_publication_accounting.v1` and the fail-closed `RecordPublication`
 action to enumerate every published commit, preserve carried blocked-unit
 status without claiming acceptance, validate the single planning-transport
-suffix, and consume only the exact pending bundle. See
+suffix, and consume only the exact pending bundle. Prepared evidence may bind
+standalone plan/event files or their immutable automation-receipt and
+transition-ledger containers. See
 [`docs/PLANNED_PUBLICATION_ACCOUNTING.md`](docs/PLANNED_PUBLICATION_ACCOUNTING.md).
 
 Push preparation now requires one distinct external planning repository that
