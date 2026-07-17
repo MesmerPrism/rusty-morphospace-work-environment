@@ -902,6 +902,7 @@ $requiredSchemaNames = @(
     "validation-receipt-v2.schema.json",
     "validator-trust-anchor-migration.schema.json",
     "timestamp-anomaly-projection.schema.json",
+    "unplanned-publication-closure.schema.json",
     "work-unit-automation-receipt.schema.json",
     "workspace-state.schema.json",
     "workspace-state-v2.schema.json"
@@ -947,6 +948,18 @@ if ((Test-Path -LiteralPath $executedPushTemplate -PathType Leaf) -and (Test-Pat
         & $executedPushValidator -Path $executedPushTemplate | Out-Null
     } catch {
         Add-Failure -Message "Executed-push receipt example failed semantic validation: $($_.Exception.Message)"
+    }
+}
+
+$publicationRecoveryTemplate = Join-Path $templatesRoot "unplanned-publication-closure.example.json"
+$publicationRecoveryValidator = Join-Path $RepoRoot "scripts\Test-UnplannedPublicationClosure.ps1"
+Assert-Contract (Test-Path -LiteralPath $publicationRecoveryTemplate -PathType Leaf) "Required unplanned-publication closure example is missing."
+Assert-Contract (Test-Path -LiteralPath $publicationRecoveryValidator -PathType Leaf) "Required unplanned-publication closure validator is missing."
+if (Test-Path -LiteralPath $publicationRecoveryValidator -PathType Leaf) {
+    try {
+        & $publicationRecoveryValidator -SelfTest | Out-Null
+    } catch {
+        Add-Failure -Message "Unplanned-publication closure self-test failed: $($_.Exception.Message)"
     }
 }
 

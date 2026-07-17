@@ -1,0 +1,160 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/unplanned-publication-closure.schema.json",
+  "title": "Independent closure for an externally observed push that preceded push preparation",
+  "description": "Recovery evidence only. This contract never claims that a prepared plan or executed-push receipt existed before the observed push.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "closure_id",
+    "project_id",
+    "unit_id",
+    "recorded_at",
+    "status",
+    "chronology",
+    "workspace_state_before",
+    "repository",
+    "validation",
+    "observers",
+    "workspace_transition",
+    "remote_readback_complete",
+    "recovery_scope",
+    "failure"
+  ],
+  "properties": {
+    "$schema": { "type": "string", "minLength": 1 },
+    "schema": { "const": "rusty.morphospace.workflow.unplanned_publication_closure.v1" },
+    "closure_id": { "$ref": "#/$defs/id" },
+    "project_id": { "$ref": "#/$defs/id" },
+    "unit_id": { "$ref": "#/$defs/id" },
+    "recorded_at": { "type": "string", "format": "date-time" },
+    "status": { "const": "independent-reconstruction-verified" },
+    "chronology": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["classification", "prepared_plan_present", "executed_push_receipt_present", "does_not_claim"],
+      "properties": {
+        "classification": { "const": "unplanned-push-before-prepare" },
+        "prepared_plan_present": { "const": false },
+        "executed_push_receipt_present": { "const": false },
+        "does_not_claim": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "workspace_state_before": { "$ref": "#/$defs/workspace-file-binding" },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repo_id",
+        "role",
+        "branch",
+        "remote",
+        "upstream",
+        "action",
+        "old_revision",
+        "new_revision",
+        "observed_remote_revision",
+        "rollback_revision",
+        "fast_forward_verified",
+        "remote_match",
+        "force_push_used",
+        "worktree_clean",
+        "validation_refs"
+      ],
+      "properties": {
+        "repo_id": { "$ref": "#/$defs/id" },
+        "role": { "const": "source-owner" },
+        "branch": { "type": "string", "minLength": 1 },
+        "remote": { "type": "string", "minLength": 1 },
+        "upstream": { "type": "string", "minLength": 1 },
+        "action": { "const": "pushed" },
+        "old_revision": { "$ref": "#/$defs/revision" },
+        "new_revision": { "$ref": "#/$defs/revision" },
+        "observed_remote_revision": { "$ref": "#/$defs/revision" },
+        "rollback_revision": { "$ref": "#/$defs/revision" },
+        "fast_forward_verified": { "const": true },
+        "remote_match": { "const": true },
+        "force_push_used": { "const": false },
+        "worktree_clean": { "const": true },
+        "validation_refs": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        }
+      }
+    },
+    "validation": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["gate_id", "status", "evidence"],
+        "properties": {
+          "gate_id": { "$ref": "#/$defs/id" },
+          "status": { "const": "pass" },
+          "evidence": { "$ref": "#/$defs/workspace-file-binding" }
+        }
+      }
+    },
+    "observers": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["observer_id", "recorded_at", "evidence_sha256"],
+        "properties": {
+          "observer_id": { "$ref": "#/$defs/id" },
+          "recorded_at": { "type": "string", "format": "date-time" },
+          "evidence_sha256": { "$ref": "#/$defs/hash" }
+        }
+      }
+    },
+    "workspace_transition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pending_push_bundle_before",
+        "pending_push_bundle_after",
+        "dirty_repository_ids_to_clear",
+        "repository_head_after"
+      ],
+      "properties": {
+        "pending_push_bundle_before": { "$ref": "#/$defs/id" },
+        "pending_push_bundle_after": { "type": "null" },
+        "dirty_repository_ids_to_clear": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "repository_head_after": { "$ref": "#/$defs/revision" }
+      }
+    },
+    "remote_readback_complete": { "const": true },
+    "recovery_scope": { "const": "workflow-state-only" },
+    "failure": { "type": "null" }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" },
+    "revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "workspace-file-binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/hash" }
+      }
+    }
+  }
+}

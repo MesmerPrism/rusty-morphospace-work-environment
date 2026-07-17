@@ -66,7 +66,10 @@ observed, claimed, validated, and accepted revisions distinct.
 - `promotion-reviews/` holds gate decisions for module maturity changes.
 - `receipts/` holds structured validation, non-executing push plans, and
   externally produced executed-push receipts. A plan never substitutes for
-  exact remote readback.
+  exact remote readback. An independently reconstructed
+  `unplanned_publication_closure.v1` may repair workflow projection only when a
+  real no-force push preceded preparation; it cannot impersonate either a
+  prepared plan or an executed-push receipt.
 - `source-compositions/` holds exact multi-repository commit/tree locks. Use a
   detached materialization when active working copies are changing in
   parallel.
@@ -189,6 +192,12 @@ traversing, or out-of-project descriptor paths.
 8. Inspect Git status for every repository in the current unit before editing.
 
 This keeps resume context small while preserving a durable audit trail.
+
+Keep the mutable project workspace in a distinct planning repository when its
+source repositories are independently published. The local repository map may
+route that planning checkout without adding workstation paths to portable
+project files. Source refs publish first; the planning ref containing state and
+plans publishes last.
 
 The optional automation CLI described in
 [Autonomous Iteration](AUTONOMOUS_ITERATION.md) can produce the same bounded

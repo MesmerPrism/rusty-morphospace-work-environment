@@ -3,6 +3,7 @@ $ErrorActionPreference = "Stop"
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceValidationAuthority.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospacePublicationRecovery.psm1') -Force
 
 function Read-MorphospaceJson {
     param([Parameter(Mandatory = $true)][string]$Path)
@@ -900,7 +901,7 @@ function Invoke-MorphospaceAuthorityRunnerForRecord {
 function Invoke-MorphospaceWorkUnitAutomation {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory = $true)][ValidateSet("Inspect", "Ready", "Claim", "Resume", "BeginValidation", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "Recover")][string]$Action,
+        [Parameter(Mandatory = $true)][ValidateSet("Inspect", "Ready", "Claim", "Resume", "BeginValidation", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "Recover", "ReconcilePublication")][string]$Action,
         [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
         [string]$UnitId = "",
         [string]$RepoMapPath = "",
@@ -908,6 +909,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
         [ValidateSet("pass", "partial", "fail", "blocked")][string]$ValidationResult = "pass",
         [string]$ValidationReceipt = "",
         [string]$RecoveryReceipt = "",
+        [string]$PublicationClosure = "",
         [string]$AdoptionReceipt = "",
         [ValidateSet("quick", "standard", "deep")][string]$ValidationTier = "standard",
         [string[]]$DeviceSerials = @(),
@@ -961,6 +963,26 @@ function Invoke-MorphospaceWorkUnitAutomation {
             $repositoryStates.Add([pscustomobject][ordered]@{ repo_id = $repoId; mapped = $false; relation = "not-mapped" }) | Out-Null
         }
     }
+    if ($Action -eq "PreparePush") {
+        $unitRepoIds = @{}
+        foreach ($repo in @($unit.allowed_repositories)) { $unitRepoIds[[string]$repo.repo_id] = $true }
+        $externalPlanningEntries = @($repoMap.Values | Where-Object {
+            [string]$_.role -eq "planning" -and -not $unitRepoIds.ContainsKey([string]$_.repo_id)
+        } | Sort-Object repo_id)
+        if ($externalPlanningEntries.Count -ne 1) {
+            throw "PreparePush requires exactly one distinct external planning repository in the local repository map."
+        }
+        $planningEntry = $externalPlanningEntries[0]
+        $planningPath = [System.IO.Path]::GetFullPath([string]$planningEntry.path).TrimEnd("\", "/")
+        $workspaceFull = [System.IO.Path]::GetFullPath($resolvedWorkspace).TrimEnd("\", "/")
+        $planningPrefix = $planningPath + [System.IO.Path]::DirectorySeparatorChar
+        if (-not $workspaceFull.StartsWith($planningPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "The external planning repository must contain the project workspace used for PreparePush."
+        }
+        $planningState = Get-MorphospaceRepositoryState -RepoId ([string]$planningEntry.repo_id) -Path ([string]$planningEntry.path)
+        $planningState | Add-Member -NotePropertyName workflow_transport -NotePropertyValue $true
+        $repositoryStates.Add($planningState) | Out-Null
+    }
     $repoStatesArray = @($repositoryStates.ToArray())
     $validationMatrix = @(New-MorphospaceValidationMatrix -Unit $unit -DeviceSerials $DeviceSerials)
     $graphScope = New-MorphospaceGraphScope -Unit $unit
@@ -970,6 +992,8 @@ function Invoke-MorphospaceWorkUnitAutomation {
     $event = $null
     $pushPlan = $null
     $adoptionReference = $null
+    $publicationClosureReference = $null
+    $publicationClosureBinding = $null
 
     switch ($Action) {
         "Inspect" {
@@ -1168,6 +1192,29 @@ function Invoke-MorphospaceWorkUnitAutomation {
                 }
             } else { $transition = "idempotent" }
         }
+        "ReconcilePublication" {
+            if (-not $PublicationClosure) { throw "ReconcilePublication requires PublicationClosure." }
+            $closurePath = Resolve-MorphospaceReceiptPath -WorkspaceRoot $resolvedWorkspace -ReceiptReference $PublicationClosure
+            $validatedClosure = Test-MorphospaceUnplannedPublicationClosureLive `
+                -Path $closurePath `
+                -WorkspaceRoot $resolvedWorkspace `
+                -Spec $spec `
+                -Unit $unit `
+                -State $state `
+                -RepositoryMap $repoMap `
+                -RepositoryStates $repoStatesArray
+            $workspacePrefix = $resolvedWorkspace.TrimEnd("\", "/") + [System.IO.Path]::DirectorySeparatorChar
+            $publicationClosureReference = $closurePath.Substring($workspacePrefix.Length).Replace("\", "/")
+            $publicationClosureBinding = [pscustomobject][ordered]@{
+                closure_id = [string]$validatedClosure.document.closure_id
+                sha256 = [string]$validatedClosure.closure_sha256
+            }
+            $transition = "unplanned-publication-reconciled"
+            if ($Execute) {
+                $state.pending_push_bundle = $null
+                $event = New-MorphospaceEvent -State $state -Events $events -UnitId $UnitId -ActionSlug "publication-reconciled" -Timestamp $Timestamp -EventType "push" -Summary "Reconciled an independently verified no-force publication that preceded push preparation without fabricating a pre-push plan or executed-push receipt." -Receipts @($publicationClosureReference)
+            }
+        }
         "PreparePush" {
             if ($beforeStatus -ne "accepted") { throw "PreparePush requires an accepted unit." }
             if (-not $RepoMapPath -or -not $RevisionsPath) { throw "PreparePush requires RepoMapPath and RevisionsPath." }
@@ -1179,8 +1226,14 @@ function Invoke-MorphospaceWorkUnitAutomation {
                 if ($revisionMap.ContainsKey($revisionId)) { throw "Revision set repeats '$revisionId'." }
                 $revisionMap[$revisionId] = $revision
             }
-            foreach ($repo in @($unit.allowed_repositories)) {
-                $repoId = [string]$repo.repo_id
+            $sourceRepoIds = @($unit.allowed_repositories.repo_id | Where-Object { [string]$repoMap[[string]$_].role -ne "planning" } | Sort-Object)
+            $planningRepoIds = @($repoStatesArray | Where-Object {
+                $repoMap.ContainsKey([string]$_.repo_id) -and [string]$repoMap[[string]$_.repo_id].role -eq "planning"
+            } | ForEach-Object { [string]$_.repo_id } | Sort-Object)
+            if ($planningRepoIds.Count -ne 1) { throw "PreparePush requires exactly one planning repository final suffix." }
+            $orderedRepoIds = @($sourceRepoIds) + @($planningRepoIds)
+            foreach ($repoIdValue in $orderedRepoIds) {
+                $repoId = [string]$repoIdValue
                 if (-not $repoMap.ContainsKey($repoId) -or -not $revisionMap.ContainsKey($repoId)) { throw "Push preparation needs mapping and revision for '$repoId'." }
             }
             foreach ($repoState in $repoStatesArray) {
@@ -1191,15 +1244,12 @@ function Invoke-MorphospaceWorkUnitAutomation {
                     throw "Recorded revision for '$($repoState.repo_id)' does not match HEAD."
                 }
             }
-            $sourceRepoIds = @($unit.allowed_repositories.repo_id | Where-Object { [string]$repoMap[[string]$_].role -ne "planning" } | Sort-Object)
-            $planningRepoIds = @($unit.allowed_repositories.repo_id | Where-Object { [string]$repoMap[[string]$_].role -eq "planning" } | Sort-Object)
-            $orderedRepoIds = @($sourceRepoIds) + @($planningRepoIds)
             $pushRepos = New-Object System.Collections.Generic.List[object]
             foreach ($repoIdValue in $orderedRepoIds) {
                 $repoId = [string]$repoIdValue
                 $repoState = @($repoStatesArray | Where-Object { [string]$_.repo_id -eq $repoId })[0]
                 $pushRepos.Add([pscustomobject][ordered]@{
-                    repo_id = $repoId; branch = $repoState.branch; commit = $repoState.head
+                    repo_id = $repoId; role = [string]$repoMap[$repoId].role; branch = $repoState.branch; commit = $repoState.head
                     upstream = $repoState.upstream; ahead = $repoState.ahead; behind = $repoState.behind
                 }) | Out-Null
             }
@@ -1209,7 +1259,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
                 bundle_id = $bundleId; project_id = [string]$state.project_id
                 unit_ids = @($UnitId); prepared_at = $Timestamp
                 dependency_order = $orderedRepoIds; repositories = @($pushRepos.ToArray())
-                source_first = $true; planning_last = ($planningRepoIds.Count -eq 0 -or [string]$repoMap[[string]$orderedRepoIds[-1]].role -eq "planning")
+                source_first = $true; planning_last = ([string]$repoMap[[string]$orderedRepoIds[-1]].role -eq "planning")
                 execution = "not-performed"; force_push_allowed = $false
             }
             $transition = "push-bundle-prepared"
@@ -1228,7 +1278,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
         if ($RepoMapPath) {
             $dirtySet = @{}
             foreach ($repoId in @($state.dirty_repositories)) { $dirtySet[[string]$repoId] = $true }
-            foreach ($repoState in $repoStatesArray) {
+            foreach ($repoState in @($repoStatesArray | Where-Object { -not ($_.PSObject.Properties.Name -contains "workflow_transport") })) {
                 $repoId = [string]$repoState.repo_id
                 if (-not $repoMap.ContainsKey($repoId) -or -not ($repoState.PSObject.Properties.Name -contains "dirty")) { continue }
                 if ($repoState.dirty -eq $true) { $dirtySet[$repoId] = $true } else { $dirtySet.Remove($repoId) }
@@ -1239,7 +1289,9 @@ function Invoke-MorphospaceWorkUnitAutomation {
             if ($RepoMapPath) {
                 $headMap = @{}
                 foreach ($head in @($state.repository_heads)) { $headMap[[string]$head.repo_id] = $head }
-                foreach ($repoState in @($repoStatesArray | Where-Object { $_.PSObject.Properties.Name -contains "is_git" -and $_.is_git -eq $true })) {
+                foreach ($repoState in @($repoStatesArray | Where-Object {
+                    $_.PSObject.Properties.Name -contains "is_git" -and $_.is_git -eq $true -and -not ($_.PSObject.Properties.Name -contains "workflow_transport")
+                })) {
                     $headMap[[string]$repoState.repo_id] = [pscustomobject][ordered]@{
                         repo_id = [string]$repoState.repo_id
                         head = [string]$repoState.head
@@ -1290,6 +1342,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
         }
         validation_matrix = $validationMatrix; graph_scope = $graphScope
         adoption_receipt = $adoptionReference
+        publication_closure = $publicationClosureBinding
         push_plan = $pushPlan
         event_id = if ($event) { [string]$event.event_id } else { $null }
     }

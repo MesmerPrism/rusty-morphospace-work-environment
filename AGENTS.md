@@ -189,6 +189,12 @@ in runner variables or typed reference wrappers, never injected properties.
   no-force proof, and reverse-order rollback anchors. A release may additionally
   bind the pre-publication capture that supplied every old revision; multiple
   planning refs must form the final execution suffix.
+- `PreparePush` requires one distinct external planning repository containing
+  the active project workspace. A source-only same-ref workspace may not claim
+  planning-last closure. If a push preceded preparation, preserve chronology
+  with `unplanned_publication_closure.v1` and the workflow-only
+  `ReconcilePublication` transition; never fabricate a plan or mutate Git from
+  recovery.
 - Seal a coordinated release with `release_capsule.v1`: exact remote equality
   and branch convergence belong to the candidate cut, while later historical
   closure requires ancestor-or-equal remote refs and an isolated exact clean

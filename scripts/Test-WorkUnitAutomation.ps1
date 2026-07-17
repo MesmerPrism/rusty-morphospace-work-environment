@@ -197,6 +197,60 @@ function New-TestInflightAdoptionReceipt {
     return $path
 }
 
+function New-TestUnplannedPublicationClosure {
+    param(
+        [string]$Workspace,
+        [string]$ProjectId,
+        [string]$UnitId,
+        [string]$RepoId,
+        [string]$Branch,
+        [string]$Upstream,
+        [string]$OldRevision,
+        [string]$NewRevision,
+        [string]$PendingBundle,
+        [string]$ValidationReceipt
+    )
+
+    $statePath = Join-Path $Workspace 'workspace.state.json'
+    $validationPath = Join-Path $Workspace $ValidationReceipt
+    $stateHash = (Get-FileHash -LiteralPath $statePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $validationHash = (Get-FileHash -LiteralPath $validationPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $closure = [ordered]@{
+        schema = 'rusty.morphospace.workflow.unplanned_publication_closure.v1'
+        closure_id = "$UnitId-unplanned-publication-closure"
+        project_id = $ProjectId
+        unit_id = $UnitId
+        recorded_at = '2026-01-02T03:04:05Z'
+        status = 'independent-reconstruction-verified'
+        chronology = [ordered]@{
+            classification = 'unplanned-push-before-prepare'
+            prepared_plan_present = $false
+            executed_push_receipt_present = $false
+            does_not_claim = @('No pre-push PreparePush plan or executed-push receipt is claimed.')
+        }
+        workspace_state_before = [ordered]@{ path = 'workspace.state.json'; sha256 = $stateHash }
+        repository = [ordered]@{
+            repo_id = $RepoId; role = 'source-owner'; branch = $Branch; remote = 'origin'; upstream = $Upstream; action = 'pushed'
+            old_revision = $OldRevision; new_revision = $NewRevision; observed_remote_revision = $NewRevision; rollback_revision = $OldRevision
+            fast_forward_verified = $true; remote_match = $true; force_push_used = $false; worktree_clean = $true
+            validation_refs = @('standard-validation')
+        }
+        validation = @([ordered]@{
+            gate_id = 'standard-validation'; status = 'pass'
+            evidence = [ordered]@{ path = $ValidationReceipt.Replace('\', '/'); sha256 = $validationHash }
+        })
+        observers = @([ordered]@{ observer_id = 'external-coordinator'; recorded_at = '2026-01-02T03:04:05Z'; evidence_sha256 = ('4' * 64) })
+        workspace_transition = [ordered]@{
+            pending_push_bundle_before = $PendingBundle; pending_push_bundle_after = $null
+            dirty_repository_ids_to_clear = @($RepoId); repository_head_after = $NewRevision
+        }
+        remote_readback_complete = $true; recovery_scope = 'workflow-state-only'; failure = $null
+    }
+    $path = Join-Path $Workspace "receipts\$UnitId-unplanned-publication-closure.json"
+    Write-TestJson -Path $path -Value $closure
+    return $path
+}
+
 $tempBase = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
 $testRoot = Join-Path $tempBase ("rusty-morphospace-automation-" + [guid]::NewGuid().ToString("N"))
 try {
@@ -204,6 +258,8 @@ try {
     $remote = Join-Path $testRoot "remote.git"
     $repo = Join-Path $testRoot "project-repo"
     $peer = Join-Path $testRoot "peer-repo"
+    $planningRemote = Join-Path $testRoot "planning-remote.git"
+    $planningRepo = Join-Path $testRoot "planning-repo"
     & git init --bare $remote | Out-Null
     & git init $repo | Out-Null
     Invoke-TestGit -Path $repo -Arguments @("config", "user.name", "Automation Test") | Out-Null
@@ -218,12 +274,27 @@ try {
     Invoke-TestGit -Path $repo -Arguments @("remote", "add", "origin", $remote) | Out-Null
     Invoke-TestGit -Path $repo -Arguments @("push", "-u", "origin", "main") | Out-Null
 
-    $workspace = New-TestWorkspace -Root (Join-Path $testRoot "project") -ProjectId "automation-test" -UnitId "unit-auto-001"
+    & git init --bare $planningRemote | Out-Null
+    & git init $planningRepo | Out-Null
+    Invoke-TestGit -Path $planningRepo -Arguments @("config", "user.name", "Automation Planning Test") | Out-Null
+    Invoke-TestGit -Path $planningRepo -Arguments @("config", "user.email", "planning@example.invalid") | Out-Null
+    Invoke-TestGit -Path $planningRepo -Arguments @("config", "core.autocrlf", "false") | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $planningRepo "planning-seed.txt"), "planning seed`n", $encoding)
+    Invoke-TestGit -Path $planningRepo -Arguments @("add", "planning-seed.txt") | Out-Null
+    Invoke-TestGit -Path $planningRepo -Arguments @("commit", "-m", "planning seed") | Out-Null
+    Invoke-TestGit -Path $planningRepo -Arguments @("branch", "-M", "main") | Out-Null
+    Invoke-TestGit -Path $planningRepo -Arguments @("remote", "add", "origin", $planningRemote) | Out-Null
+    Invoke-TestGit -Path $planningRepo -Arguments @("push", "-u", "origin", "main") | Out-Null
+
+    $workspace = New-TestWorkspace -Root (Join-Path $planningRepo "project") -ProjectId "automation-test" -UnitId "unit-auto-001"
     $nextUnit = New-TestUnit -ProjectId "automation-test" -UnitId "unit-auto-002"
     $nextUnit.prerequisites = @("unit-auto-001")
     Write-TestJson -Path (Join-Path $workspace "iteration-units\unit-auto-002.json") -Value $nextUnit
     $repoMapPath = Join-Path $testRoot "repo-map.json"
-    Write-TestJson -Path $repoMapPath -Value ([ordered]@{ schema = "rusty.morphospace.workflow.repository_map.v1"; repositories = @([ordered]@{ repo_id = "project-shell"; path = $repo; role = "source" }) })
+    Write-TestJson -Path $repoMapPath -Value ([ordered]@{ schema = "rusty.morphospace.workflow.repository_map.v1"; repositories = @(
+        [ordered]@{ repo_id = "project-shell"; path = $repo; role = "source" },
+        [ordered]@{ repo_id = "workflow-planning"; path = $planningRepo; role = "planning" }
+    ) })
     $receiptRoot = Join-Path $workspace "receipts"
     $fixed = "2026-01-02T03:04:05Z"
 
@@ -365,6 +436,49 @@ try {
     Assert-Automation ([string]$acceptedState.last_accepted_receipt -eq "receipts/unit-auto-001-pass-validation.json") "v2 last accepted receipt projection"
     Assert-Automation (@($acceptedState.repository_heads).Count -eq 1) "v2 repository-head projection"
 
+    $unplannedOld = @(Invoke-TestGit -Path $repo -Arguments @("rev-parse", "HEAD"))[0]
+    [System.IO.File]::WriteAllText((Join-Path $repo "src\unplanned.txt"), "published before PreparePush`n", $encoding)
+    Invoke-TestGit -Path $repo -Arguments @("add", "src/unplanned.txt") | Out-Null
+    Invoke-TestGit -Path $repo -Arguments @("commit", "-m", "unplanned publication fixture") | Out-Null
+    Invoke-TestGit -Path $repo -Arguments @("push", "origin", "main") | Out-Null
+    $unplannedNew = @(Invoke-TestGit -Path $repo -Arguments @("rev-parse", "HEAD"))[0]
+    $staleStatePath = Join-Path $workspace "workspace.state.json"
+    $staleState = Get-Content -LiteralPath $staleStatePath -Raw | ConvertFrom-Json
+    $staleState.dirty_repositories = @("project-shell")
+    $staleState.pending_push_bundle = [pscustomobject][ordered]@{
+        bundle_id = "older-unit-push-bundle"; unit_ids = @("unit-auto-001"); repo_ids = @("project-shell"); ready = $true
+    }
+    $staleState.repository_heads = @([pscustomobject][ordered]@{
+        repo_id = "project-shell"; head = $unplannedOld; branch = "main"; dirty_fingerprint = ('0' * 64)
+    })
+    Write-TestJson -Path $staleStatePath -Value $staleState
+    $closurePath = New-TestUnplannedPublicationClosure `
+        -Workspace $workspace `
+        -ProjectId "automation-test" `
+        -UnitId "unit-auto-001" `
+        -RepoId "project-shell" `
+        -Branch "main" `
+        -Upstream "origin/main" `
+        -OldRevision $unplannedOld `
+        -NewRevision $unplannedNew `
+        -PendingBundle "older-unit-push-bundle" `
+        -ValidationReceipt "receipts/unit-auto-001-pass-validation.json"
+    $reconciledPublication = Invoke-MorphospaceWorkUnitAutomation `
+        -Action ReconcilePublication `
+        -WorkspaceRoot $workspace `
+        -UnitId "unit-auto-001" `
+        -RepoMapPath $repoMapPath `
+        -PublicationClosure "receipts/unit-auto-001-unplanned-publication-closure.json" `
+        -Timestamp $fixed `
+        -Execute
+    Assert-Automation ($reconciledPublication.transition -eq "unplanned-publication-reconciled") "unplanned publication recovery transition"
+    Assert-Automation ([string]$reconciledPublication.publication_closure.closure_id -eq "unit-auto-001-unplanned-publication-closure") "unplanned publication closure binding"
+    $reconciledState = Get-Content -LiteralPath $staleStatePath -Raw | ConvertFrom-Json
+    Assert-Automation ($null -eq $reconciledState.pending_push_bundle -and @($reconciledState.dirty_repositories).Count -eq 0) "unplanned publication recovery did not clear stale state"
+    Assert-Automation ([string]$reconciledState.repository_heads[0].head -eq $unplannedNew) "unplanned publication recovery did not project the observed head"
+    Assert-Automation ((@(Invoke-TestGit -Path $repo -Arguments @("rev-parse", "HEAD"))[0]) -eq $unplannedNew) "unplanned publication recovery mutated Git"
+    Assert-Automation (Test-Path -LiteralPath $closurePath -PathType Leaf) "unplanned publication closure was not preserved"
+
     $scopeWorkspace = New-TestWorkspace -Root (Join-Path $repo "morphospace-scope-test") -ProjectId "scope-test" -UnitId "unit-scope-001"
     $scopeUnitPath = Join-Path $scopeWorkspace "iteration-units\unit-scope-001.json"
     $scopeUnit = Get-Content -LiteralPath $scopeUnitPath -Raw | ConvertFrom-Json
@@ -406,10 +520,17 @@ try {
     $localHead = @(Invoke-TestGit -Path $repo -Arguments @("rev-parse", "HEAD"))[0]
     $remoteBefore = @(Invoke-TestGit -Path $repo -Arguments @("rev-parse", "origin/main"))[0]
     $revisionsPath = Join-Path $testRoot "revisions.json"
-    Write-TestJson -Path $revisionsPath -Value ([ordered]@{ schema = "rusty.morphospace.workflow.revision_set.v1"; repositories = @([ordered]@{ repo_id = "project-shell"; commit = $localHead }) })
+    Invoke-TestGit -Path $planningRepo -Arguments @("add", ".") | Out-Null
+    Invoke-TestGit -Path $planningRepo -Arguments @("commit", "-m", "planning state before prepared push") | Out-Null
+    $planningHead = @(Invoke-TestGit -Path $planningRepo -Arguments @("rev-parse", "HEAD"))[0]
+    Write-TestJson -Path $revisionsPath -Value ([ordered]@{ schema = "rusty.morphospace.workflow.revision_set.v1"; repositories = @(
+        [ordered]@{ repo_id = "project-shell"; commit = $localHead },
+        [ordered]@{ repo_id = "workflow-planning"; commit = $planningHead }
+    ) })
     $pushPlanPath = Join-Path $receiptRoot "push-plan.json"
     $prepared = Invoke-MorphospaceWorkUnitAutomation -Action PreparePush -WorkspaceRoot $workspace -UnitId "unit-auto-001" -RepoMapPath $repoMapPath -RevisionsPath $revisionsPath -Timestamp $fixed -OutPath $pushPlanPath -Execute
     Assert-Automation ($prepared.push_plan.schema -eq "rusty.morphospace.workflow.push_bundle_plan.v1" -and $prepared.push_plan.execution -eq "not-performed" -and -not $prepared.push_plan.force_push_allowed) "push plan execution boundary"
+    Assert-Automation ($prepared.push_plan.repositories[-1].role -eq "planning" -and $prepared.push_plan.repositories[-1].repo_id -eq "workflow-planning") "push plan did not place the distinct planning repository last"
     Assert-Automation (-not ($prepared.push_plan.PSObject.Properties.Name -contains "remote_readback_complete")) "automation fabricated executed-push evidence"
     Assert-Automation ((@(Invoke-TestGit -Path $repo -Arguments @("rev-parse", "origin/main"))[0]) -eq $remoteBefore) "push preparation changed the remote"
 

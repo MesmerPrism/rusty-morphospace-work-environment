@@ -182,6 +182,13 @@ ancestry, hash-bound validation files, a pre-publication capture when required,
 planning-final-suffix order, no-force proof, and rollback points;
 validate it with `scripts/Test-ExecutedPushReceipt.ps1`.
 
+Push preparation now requires one distinct external planning repository that
+contains the active project workspace. The source refs remain first and that
+planning ref is the final prepared suffix. If a source push already occurred
+without `PreparePush`, preserve the real publication and use the additive
+`unplanned_publication_closure.v1` plus `ReconcilePublication`; never create a
+retrospective plan or relabel the reconstruction as an executed-push receipt.
+
 Seal coordinated releases with `release_capsule.v1`. At publication,
 `Test-ReleaseCapsule.ps1 -Mode CandidateCut` requires every declared remote ref
 to equal the pinned commit. Later, `-Mode HistoricalClosure` requires the

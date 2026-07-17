@@ -9,7 +9,7 @@
     "schema": { "const": "rusty.morphospace.workflow.work_unit_automation_receipt.v1" },
     "project_id": { "$ref": "#/$defs/id" },
     "unit_id": { "$ref": "#/$defs/id" },
-    "action": { "enum": ["Inspect", "Claim", "Resume", "Ready", "BeginValidation", "RecordValidation", "Accept", "PreparePush", "Recover"] },
+    "action": { "enum": ["Inspect", "Claim", "Resume", "Ready", "BeginValidation", "RecordValidation", "Accept", "PreparePush", "Recover", "ReconcilePublication"] },
     "timestamp": { "type": "string", "format": "date-time" },
     "executed": { "type": "boolean" },
     "transition": { "type": "string", "minLength": 1 },
@@ -31,6 +31,20 @@
     "validation_matrix": { "type": "array", "items": { "type": "object" } },
     "graph_scope": { "type": "object" },
     "adoption_receipt": { "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }] },
+    "publication_closure": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["closure_id", "sha256"],
+          "properties": {
+            "closure_id": { "$ref": "#/$defs/id" },
+            "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+          }
+        },
+        { "type": "null" }
+      ]
+    },
     "push_plan": { "oneOf": [{ "type": "object" }, { "type": "null" }] },
     "event_id": { "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] }
   },

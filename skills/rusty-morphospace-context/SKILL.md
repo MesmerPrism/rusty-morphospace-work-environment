@@ -131,6 +131,12 @@ explicit execution. A validation pass is evidence, not acceptance. Preserve
 blocked/interrupted history, dirty user work, exact repo heads, cleanup state,
 and public/private evidence boundaries.
 
+For independently published source repositories, route mutable project state
+through a distinct external planning repository and publish that ref last. A
+same-ref source workspace cannot certify its own terminal bytes. If publication
+preceded preparation, route the independently observed recovery closure through
+`ReconcilePublication` without fabricating chronology or mutating source Git.
+
 Treat a release as sealed commits and trees, not permanently frozen live
 branches. Require exact remote equality and convergence at the candidate cut;
 later historical closure requires ancestor-or-equal refs and isolated clean

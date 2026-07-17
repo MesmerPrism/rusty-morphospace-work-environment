@@ -114,6 +114,12 @@ observed remote revisions, ancestry and validation references, no-force proof,
 planning last, and reverse-order rollback anchors. A prepared plan is never
 execution evidence, and the work-unit automation must not manufacture this
 receipt.
+Keep mutable project state in one distinct external planning repository and
+require its ref as the final prepared suffix. If a real source push preceded
+preparation, preserve it only through an independently observed
+`unplanned_publication_closure.v1`; `ReconcilePublication` may repair the
+planning projection but cannot create a retrospective plan, executed receipt,
+Git mutation, or source-authority claim.
 
 Separate release-candidate cut from historical closure. Seal exact commits and
 trees while declared refs are equal; later require ancestor-or-equal refs and

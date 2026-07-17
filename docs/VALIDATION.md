@@ -134,6 +134,24 @@ remote equality, fast-forward ancestry, no force push, passing referenced
 validation gates, and rollback points that exactly reverse execution order.
 It does not execute Git or contact a remote.
 
+## Unplanned Publication Recovery
+
+Validate the additive recovery contract with:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\Test-UnplannedPublicationClosure.ps1 `
+  -Path <planning-workspace>\receipts\<closure>.json `
+  -WorkspaceRoot <planning-workspace> `
+  -RepoMapPath <local-repository-map>
+```
+
+The validator requires a hash-bound pre-recovery workspace, passing validation
+evidence, a clean synchronized source ref, exact old/new/readback and rollback
+revisions, verified fast-forward ancestry, no force push, and an external
+observer. Its self-test proves evidence tampering rejects. The recovery action
+changes workflow state only and never performs Git.
+
 ## Source Repos
 
 Each source repo owns its own checks. Typical Rust checks:

@@ -21,6 +21,7 @@
         "required": ["repo_id", "branch", "commit", "upstream", "ahead", "behind"],
         "properties": {
           "repo_id": { "$ref": "#/$defs/id" },
+          "role": { "enum": ["source", "planning"] },
           "branch": { "type": "string", "minLength": 1 },
           "commit": { "type": "string", "pattern": "^[0-9a-fA-F]{7,64}$" },
           "upstream": { "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }] },

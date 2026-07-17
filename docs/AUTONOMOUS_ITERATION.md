@@ -175,6 +175,20 @@ pwsh -NoProfile -ExecutionPolicy Bypass `
 The protocol supports larger push intervals without losing local commit
 history or resumption evidence.
 
+`PreparePush` requires exactly one distinct external planning repository that
+contains the active project workspace. A source-only same-ref layout is not a
+valid planning-final publication topology because committing its terminal
+state changes the ref it is trying to describe.
+
+If an otherwise valid no-force source push happened before `PreparePush`, do
+not reset it and do not invent a retrospective plan. Record
+`unplanned_publication_closure.v1` with exact old/new/readback revisions,
+ancestry, rollback, hash-bound passing validation, the pre-recovery workspace
+hash, and an external observer. `ReconcilePublication` validates that closure
+against a clean synchronized source worktree and mutates only the separate
+planning workspace projection. The reconstruction explicitly remains distinct
+from `executed_push_receipt.v1`.
+
 ### Immutable release capsules
 
 An executed-push receipt proves a particular publication action. A sealed
@@ -202,7 +216,7 @@ successful push is not proof that the whole batch is complete.
 `scripts/Invoke-WorkUnitAutomation.ps1` is the portable owner for mechanical
 work-unit transitions and preparation artifacts. It supports `Inspect`,
 `Ready`, `Claim`, `Resume`, `BeginValidation`, `RecordValidation`, `Accept`,
-`PreparePush`, and `Recover`.
+`PreparePush`, `Recover`, and `ReconcilePublication`.
 
 The CLI is deliberately narrower than an autonomous coding agent:
 
@@ -213,11 +227,14 @@ The CLI is deliberately narrower than an autonomous coding agent:
 - a required device unit cannot enter validation without explicit serials;
 - acceptance is separate from recording a passing validation receipt;
 - push preparation requires exact HEAD revisions, clean attached branches,
-  and no behind or divergent upstream state;
+  no behind or divergent upstream state, and one distinct planning repository
+  containing the active workspace;
 - a prepared push bundle records source-first and planning-last order but has
   `execution: not-performed` and `force_push_allowed: false`.
 - it never emits `executed_push_receipt.v1`; that receipt belongs to the
   externally authorized push/readback step.
+- publication reconciliation consumes independently authored closure evidence,
+  clears only the bound stale bundle/source projection, and never performs Git.
 
 Keep the local repository map outside a public project instance when its paths
 identify a workstation. Start from `templates/repository-map.example.json`.
