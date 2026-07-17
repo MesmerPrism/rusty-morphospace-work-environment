@@ -1,7 +1,7 @@
 {
   "schema": "rusty.morphospace.workflow.owner_validator_registry.v1",
   "registry_id": "morphospace-owner-validator-registry",
-  "revision": 2,
+  "revision": 3,
   "created_at": "2026-07-12T08:15:00.0000000Z",
   "foundation_commit": "a4f89480df302eb62d03866ffb80995924eff855",
   "previous_registry": null,
@@ -61,15 +61,16 @@
     {
       "validator_id": "planned-publication-accounting-owner",
       "owner_repo_id": "work-environment",
-      "owner_revision": "148b8a7a5a64ecf9577fef56310285e7023519ec",
-      "owner_tree_oid": "2a0571974a263b8398bef965f168e35ad14be0f7",
+      "owner_revision": "8ca0b289a0a7da4e59a08950eaf7a7839edf1919",
+      "owner_tree_oid": "250546ef4631321de4b909687dd4d5bf2f8bf8ba",
       "path": "scripts/Test-PlannedPublicationAccounting.ps1",
-      "sha256": "b81a5e77d99bad2745d50fa38129749c4b8f47f33457463ea754f4ff67ab54ac",
-      "git_blob_oid": "03f3f910ca66901813aa65b81040a6e52a332e74",
+      "sha256": "68cea2d9cd35aeeb7c4916b0325750d07179543392d3b228cc5b5a1e6ad94fd8",
+      "git_blob_oid": "eac62a086f6166f0ac9abccb993bef619f9f9c7b",
       "entrypoint": "powershell-file",
       "profiles": ["quick", "standard"],
       "acceptance_ids": [
         "exact-commit-enumeration",
+        "evidence-container-provenance",
         "planned-publication-chronology",
         "planning-transport-suffix",
         "unit-status-accounting"
