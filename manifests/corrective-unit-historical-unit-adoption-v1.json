@@ -1,7 +1,7 @@
 {
   "schema": "rusty.morphospace.work_environment.corrective_unit.v1",
   "unit_id": "workenv-historical-unit-adoption-v1",
-  "status": "validating",
+  "status": "accepted",
   "base_revision": "8499cac5953b29ade859bf8694d511862fa8b8d3",
   "objective": "Add explicit project-owned hash-bound normalization for immutable terminal iteration units while preserving strict current registries.",
   "authority": "rusty-morphospace-work-environment",
