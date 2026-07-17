@@ -1,8 +1,7 @@
 {
-  "$schema": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/owner-validator-registry.schema.json",
   "schema": "rusty.morphospace.workflow.owner_validator_registry.v1",
   "registry_id": "morphospace-owner-validator-registry",
-  "revision": 1,
+  "revision": 2,
   "created_at": "2026-07-12T08:15:00.0000000Z",
   "foundation_commit": "a4f89480df302eb62d03866ffb80995924eff855",
   "previous_registry": null,
@@ -52,6 +51,44 @@
             "agent-state/morphospace-autonomous-iteration-roadmap-2026-07-10.json",
             "workspaces/morphospace-platform-iteration/morphospace/"
           ]
+        }
+      ],
+      "timeout_seconds": 600,
+      "max_output_bytes": 16777216,
+      "mutation_policy": "temp-output-only",
+      "device_policy": "forbidden"
+    },
+    {
+      "validator_id": "planned-publication-accounting-owner",
+      "owner_repo_id": "work-environment",
+      "owner_revision": "9afab7ae03ddebbfe16eff8fbdf513fc00326ea9",
+      "owner_tree_oid": "d9216189271728a14dc38a4ffd31943d21b14b09",
+      "path": "scripts/Test-PlannedPublicationAccounting.ps1",
+      "sha256": "b81a5e77d99bad2745d50fa38129749c4b8f47f33457463ea754f4ff67ab54ac",
+      "git_blob_oid": "03f3f910ca66901813aa65b81040a6e52a332e74",
+      "entrypoint": "powershell-file",
+      "profiles": ["quick", "standard"],
+      "acceptance_ids": [
+        "exact-commit-enumeration",
+        "planned-publication-chronology",
+        "planning-transport-suffix",
+        "unit-status-accounting"
+      ],
+      "evidence_schema": "rusty.morphospace.workflow.planned_publication_accounting.v1",
+      "input_closure": [
+        {
+          "repo_id": "work-environment",
+          "kind": "git-tree",
+          "paths": [
+            "scripts/Test-PlannedPublicationAccounting.ps1",
+            "scripts/lib/MorphospacePlannedPublication.psm1",
+            "schemas/planned-publication-accounting-receipt.schema.json"
+          ]
+        },
+        {
+          "repo_id": "planning",
+          "kind": "project-contracts",
+          "paths": ["morphospace/"]
         }
       ],
       "timeout_seconds": 600,
