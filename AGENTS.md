@@ -209,6 +209,9 @@ in runner variables or typed reference wrappers, never injected properties.
   Prepared provenance may bind standalone files or the exact `push_plan`
   member and transition-ledger event inside hash-bound owner containers; never
   reconstruct those members outside their immutable evidence containers.
+  Live closure remains remote-exact except for the documented clean planning-
+  only prerequisite suffix containing exactly the bound executed-push and
+  accounting receipts; source ahead state and every unrelated path reject.
 - Seal a coordinated release with `release_capsule.v1`: exact remote equality
   and branch convergence belong to the candidate cut, while later historical
   closure requires ancestor-or-equal remote refs and an isolated exact clean

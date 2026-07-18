@@ -118,6 +118,10 @@ Close that prepared publication only through hash-bound
 `planned_publication_accounting.v1`: enumerate exact commits and unit status,
 restrict the one planning suffix to explicit workflow transport paths, and let
 `RecordPublication` clear only the matching bundle after live clean readback.
+The live planning checkout may carry only the exact bound executed-push and
+accounting receipts as a clean local prerequisite suffix while its remote stays
+at the executed final revision; reject source ahead state, remote drift, dirt,
+divergence, stale bindings, and every unrelated suffix path.
 When the plan or event is embedded in owner evidence, bind the immutable
 container and named member plus transition intent/completion linkage; do not
 reconstruct a standalone artifact and claim equivalent provenance.

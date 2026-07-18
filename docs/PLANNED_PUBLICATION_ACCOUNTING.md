@@ -50,6 +50,17 @@ receipt's explicit transport allowlist. Final, live HEAD, upstream readback,
 and executed receipt must agree; force push, dirty/divergent worktrees, or
 non-monotonic chronology reject.
 
+`RecordPublication` normally requires every live repository to equal that
+published final revision. One narrow planning-only prerequisite state is also
+accepted: the remote must still equal the executed final revision, while the
+clean local planning branch may be ahead only by commits whose complete path
+set is exactly the bound executed-push receipt and the accounting receipt being
+consumed. Both paths must be present, every suffix commit must be nonempty, and
+the suffix length must equal the observed ahead count. This does not admit a
+source-repository suffix, dirty or divergent state, remote drift, unrelated
+workflow files, or a general planning-ahead exception. The prerequisite suffix
+is published only with the final planning closure after `RecordPublication`.
+
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Invoke-WorkUnitAutomation.ps1 `
