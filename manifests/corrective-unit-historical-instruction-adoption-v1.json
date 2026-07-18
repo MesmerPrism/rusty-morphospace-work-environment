@@ -1,0 +1,30 @@
+{
+  "schema": "rusty.morphospace.work_environment.corrective_unit.v1",
+  "unit_id": "workenv-historical-instruction-adoption-v1",
+  "status": "active",
+  "base_revision": "fb37e13d5393269a9b8afcc6fd0affb05fe1feda",
+  "objective": "Extend exact hash-bound historical-unit adoption to immutable terminal instruction-impact metadata without weakening current-unit instruction synchronization.",
+  "authority": "rusty-morphospace-work-environment",
+  "scope": [
+    "historical adoption schema and validator",
+    "exact instruction-impact and instruction-surface normalization",
+    "focused positive and damaged self-tests",
+    "public historical-adoption and instruction-routing documentation"
+  ],
+  "non_scope": [
+    "historical unit or event mutation",
+    "portable category, profile, resource, or instruction registry expansion",
+    "adoption by active, validating, proposed, ready, or future units",
+    "runtime, activation, repository scope, device behavior, Git publication, or downstream authority"
+  ],
+  "validation": [
+    "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/Test-HistoricalUnitAdoption.ps1 -SelfTest",
+    "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/Test-WorkEnvironment.ps1 -SelfTest -Tier Quick",
+    "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/Test-PublicBoundary.ps1",
+    "git diff --check"
+  ],
+  "publication": {
+    "branch": "codex/publication-recovery-contract",
+    "force_push_allowed": false
+  }
+}
