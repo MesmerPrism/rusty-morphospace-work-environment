@@ -155,6 +155,7 @@ function Get-FileSha256 {
 
 function Test-ExactLegacyMappings {
     param([string[]]$UnknownValues, [object[]]$Mappings, [string[]]$CurrentValues, [string]$Context, [bool]$AllowHistoricalOnly = $false)
+    $Mappings = @($Mappings | Where-Object { $null -ne $_ })
     $unknown = @($UnknownValues | Sort-Object -Unique)
     $legacy = @($Mappings | ForEach-Object { [string]$_.legacy } | Sort-Object)
     Assert-Contract (($unknown -join "|") -eq ($legacy -join "|")) "$Context mappings must exactly cover the unknown legacy values."
@@ -526,9 +527,10 @@ function Test-ProjectBundle {
         $effectiveInstructionSurfaces = @($instructionSurfaces)
         if ($null -ne $adoption) {
             $expectedImpactMappings = if ($triggeredCategories.Count -gt 0 -and $instructionImpact -ne "update") { @($instructionImpact) } else { @() }
-            Test-ExactLegacyMappings -UnknownValues $expectedImpactMappings -Mappings @($adoption.normalization.instruction_impact) -CurrentValues @("update") -Context "$Context historical unit '$unitId' instruction-impact"
-            if ($expectedImpactMappings.Count -eq 1 -and @($adoption.normalization.instruction_impact).Count -eq 1) {
-                $effectiveInstructionImpact = [string]$adoption.normalization.instruction_impact[0].current
+            $impactMappings = if ($adoption.normalization.PSObject.Properties.Name -contains "instruction_impact") { @($adoption.normalization.instruction_impact) } else { @() }
+            Test-ExactLegacyMappings -UnknownValues $expectedImpactMappings -Mappings $impactMappings -CurrentValues @("update") -Context "$Context historical unit '$unitId' instruction-impact"
+            if ($expectedImpactMappings.Count -eq 1 -and $impactMappings.Count -eq 1) {
+                $effectiveInstructionImpact = [string]$impactMappings[0].current
             }
 
             $expectedSurfacePaths = if ($triggeredCategories.Count -gt 0) {
@@ -536,10 +538,10 @@ function Test-ProjectBundle {
                     ($_.surface_kind -eq "agents" -or $_.surface_kind -eq "readme" -or $_.surface_kind -eq "router-doc") -and $_.action -ne "update"
                 } | ForEach-Object { [string]$_.path } | Sort-Object)
             } else { @() }
-            $surfaceMappings = @($adoption.normalization.instruction_surfaces)
+            $surfaceMappings = if ($adoption.normalization.PSObject.Properties.Name -contains "instruction_surfaces") { @($adoption.normalization.instruction_surfaces | Where-Object { $null -ne $_ }) } else { @() }
             $mappedSurfacePaths = @($surfaceMappings | ForEach-Object { [string]$_.path } | Sort-Object)
             Assert-Contract (($expectedSurfacePaths -join "|") -eq ($mappedSurfacePaths -join "|")) "$Context historical unit '$unitId' instruction-surface mappings must exactly cover required legacy actions."
-            Test-UniqueProperty -Items $surfaceMappings -Property "path" -Context "$Context historical unit '$unitId' instruction-surface mappings"
+            if ($surfaceMappings.Count -gt 0) { Test-UniqueProperty -Items $surfaceMappings -Property "path" -Context "$Context historical unit '$unitId' instruction-surface mappings" }
             foreach ($mapping in $surfaceMappings) {
                 $matchingSurface = @($instructionSurfaces | Where-Object { [string]$_.path -ceq [string]$mapping.path })
                 Assert-Contract ($matchingSurface.Count -eq 1) "$Context historical unit '$unitId' instruction-surface mapping '$($mapping.path)' has no exact surface."
