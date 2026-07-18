@@ -187,6 +187,9 @@ external push, `executed_push_receipt.v1` records exact old/new/readback refs,
 ancestry, hash-bound validation files, a pre-publication capture when required,
 planning-final-suffix order, no-force proof, and rollback points;
 validate it with `scripts/Test-ExecutedPushReceipt.ps1`.
+Use `scripts/Invoke-ProtectedBranchPushGuard.ps1` when a local pre-push hook
+must canonicalize an explicit source selector such as `HEAD`; it binds the
+destination to the exact attached protected branch before plan validation.
 
 After a prepared push is externally executed, use
 `planned_publication_accounting.v1` and the fail-closed `RecordPublication`

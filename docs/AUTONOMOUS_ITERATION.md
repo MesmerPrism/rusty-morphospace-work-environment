@@ -171,6 +171,12 @@ source-first/planning-last order, `force_push_used: false`, and rollback
 anchors in reverse dependency order. A rollback anchor is evidence for a
 reviewed revert; it is not permission to reset a shared branch.
 
+A branch-scoped pre-push guard must identify a protected update by Git's remote
+destination ref, not by the caller's local selector. Before delegating to the
+prepared-plan validator, resolve an explicit selector such as `HEAD` to the
+exact attached protected branch revision and reject deletion, detachment,
+branch/SHA mismatch, malformed input, or multiple protected updates.
+
 `validated-pushed` is deliberately success-only. A partial or failed push must
 remain a blocker with its completed prefix and recovery evidence; it must not
 be rewritten into this receipt shape. Validate completed evidence with:

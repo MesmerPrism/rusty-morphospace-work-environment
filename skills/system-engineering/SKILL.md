@@ -117,6 +117,11 @@ observed remote revisions, ancestry and validation references, no-force proof,
 planning last, and reverse-order rollback anchors. A prepared plan is never
 execution evidence, and the work-unit automation must not manufacture this
 receipt.
+For a branch-scoped pre-push guard, identify the protected update from Git's
+remote destination ref and resolve an explicit local selector such as `HEAD`
+to the exact attached protected branch revision before plan validation.
+Deletion, detachment, branch/SHA mismatch, malformed input, and duplicate
+protected updates reject.
 Close that prepared publication only through hash-bound
 `planned_publication_accounting.v1`: enumerate exact commits and unit status,
 restrict the one planning suffix to explicit workflow transport paths, and let

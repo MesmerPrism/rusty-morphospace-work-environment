@@ -196,6 +196,10 @@ in runner variables or typed reference wrappers, never injected properties.
   no-force proof, and reverse-order rollback anchors. A release may additionally
   bind the pre-publication capture that supplied every old revision; multiple
   planning refs must form the final execution suffix.
+- Protected-branch pre-push guards match Git's remote destination ref and
+  resolve any explicit local selector to the exact attached protected branch
+  revision before prepared-plan validation; deletion, detachment, mismatch,
+  malformed input, and duplicate protected updates fail closed.
 - `PreparePush` requires one distinct external planning repository containing
   the active project workspace. A source-only same-ref workspace may not claim
   planning-last closure. If a push preceded preparation, preserve chronology
