@@ -36,7 +36,21 @@
             "properties": {
               "change_categories": { "$ref": "#/$defs/mappings" },
               "validation_profiles": { "$ref": "#/$defs/mappings" },
-              "resource_kinds": { "$ref": "#/$defs/resourceMappings" }
+              "resource_kinds": { "$ref": "#/$defs/resourceMappings" },
+              "instruction_impact": { "$ref": "#/$defs/mappings" },
+              "instruction_surfaces": {
+                "type": "array",
+                "items": {
+                  "type": "object", "additionalProperties": false,
+                  "required": ["path", "legacy_action", "current_action", "retained_as"],
+                  "properties": {
+                    "path": { "type": "string", "minLength": 1 },
+                    "legacy_action": { "enum": ["update", "review-no-change"] },
+                    "current_action": { "const": "update" },
+                    "retained_as": { "type": "string", "minLength": 1 }
+                  }
+                }
+              }
             }
           }
         }

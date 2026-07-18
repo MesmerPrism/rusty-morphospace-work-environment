@@ -522,7 +522,42 @@ function Test-ProjectBundle {
         Test-UniqueProperty -Items $instructionSurfaces -Property "path" -Context "$Context unit '$($unit.unit_id)' instruction surfaces"
         $triggeredCategories = @($changeCategories | Where-Object { $script:InstructionTriggerCategories -contains $_ })
 
-        if ($instructionImpact -eq "none") {
+        $effectiveInstructionImpact = $instructionImpact
+        $effectiveInstructionSurfaces = @($instructionSurfaces)
+        if ($null -ne $adoption) {
+            $expectedImpactMappings = if ($triggeredCategories.Count -gt 0 -and $instructionImpact -ne "update") { @($instructionImpact) } else { @() }
+            Test-ExactLegacyMappings -UnknownValues $expectedImpactMappings -Mappings @($adoption.normalization.instruction_impact) -CurrentValues @("update") -Context "$Context historical unit '$unitId' instruction-impact"
+            if ($expectedImpactMappings.Count -eq 1 -and @($adoption.normalization.instruction_impact).Count -eq 1) {
+                $effectiveInstructionImpact = [string]$adoption.normalization.instruction_impact[0].current
+            }
+
+            $expectedSurfacePaths = if ($triggeredCategories.Count -gt 0) {
+                @($instructionSurfaces | Where-Object {
+                    ($_.surface_kind -eq "agents" -or $_.surface_kind -eq "readme" -or $_.surface_kind -eq "router-doc") -and $_.action -ne "update"
+                } | ForEach-Object { [string]$_.path } | Sort-Object)
+            } else { @() }
+            $surfaceMappings = @($adoption.normalization.instruction_surfaces)
+            $mappedSurfacePaths = @($surfaceMappings | ForEach-Object { [string]$_.path } | Sort-Object)
+            Assert-Contract (($expectedSurfacePaths -join "|") -eq ($mappedSurfacePaths -join "|")) "$Context historical unit '$unitId' instruction-surface mappings must exactly cover required legacy actions."
+            Test-UniqueProperty -Items $surfaceMappings -Property "path" -Context "$Context historical unit '$unitId' instruction-surface mappings"
+            foreach ($mapping in $surfaceMappings) {
+                $matchingSurface = @($instructionSurfaces | Where-Object { [string]$_.path -ceq [string]$mapping.path })
+                Assert-Contract ($matchingSurface.Count -eq 1) "$Context historical unit '$unitId' instruction-surface mapping '$($mapping.path)' has no exact surface."
+                if ($matchingSurface.Count -eq 1) {
+                    Assert-Contract ([string]$matchingSurface[0].action -ceq [string]$mapping.legacy_action) "$Context historical unit '$unitId' instruction-surface mapping '$($mapping.path)' legacy action drifted."
+                }
+                Assert-Contract ([string]$mapping.current_action -ceq "update") "$Context historical unit '$unitId' instruction-surface mapping '$($mapping.path)' must target update."
+                Assert-Contract (Test-Text $mapping.retained_as) "$Context historical unit '$unitId' instruction-surface mapping '$($mapping.path)' must retain its historical meaning."
+            }
+            $effectiveInstructionSurfaces = @($instructionSurfaces | ForEach-Object {
+                $surface = $_ | Select-Object *
+                $mapping = @($surfaceMappings | Where-Object { [string]$_.path -ceq [string]$surface.path })
+                if ($mapping.Count -eq 1) { $surface.action = [string]$mapping[0].current_action }
+                $surface
+            })
+        }
+
+        if ($effectiveInstructionImpact -eq "none") {
             Assert-Contract ($instructionSurfaces.Count -eq 0) "$Context unit '$($unit.unit_id)' with no instruction impact must not list instruction surfaces."
             Assert-Contract (Test-Text $unit.instruction_none_justification) "$Context unit '$($unit.unit_id)' with no instruction impact needs an explicit justification."
         } else {
@@ -530,7 +565,7 @@ function Test-ProjectBundle {
             Assert-Contract (-not (Test-Text $unit.instruction_none_justification)) "$Context unit '$($unit.unit_id)' must leave instruction_none_justification null unless impact is none."
         }
 
-        foreach ($surface in $instructionSurfaces) {
+        foreach ($surface in $effectiveInstructionSurfaces) {
             Assert-Contract ($script:InstructionSurfaceKinds -contains [string]$surface.surface_kind) "$Context unit '$($unit.unit_id)' has unknown instruction surface kind '$($surface.surface_kind)'."
             Assert-Contract (Test-Text $surface.path) "$Context unit '$($unit.unit_id)' instruction surface needs a path."
             Assert-Contract (Test-Text $surface.owner) "$Context unit '$($unit.unit_id)' instruction surface '$($surface.path)' needs an owner."
@@ -546,9 +581,9 @@ function Test-ProjectBundle {
         }
 
         if ($triggeredCategories.Count -gt 0) {
-            Assert-Contract ($instructionImpact -eq "update") "$Context unit '$($unit.unit_id)' changes instruction-triggering categories and must use instruction_impact 'update'."
-            $agentSurfaces = @($instructionSurfaces | Where-Object { $_.surface_kind -eq "agents" })
-            $routerSurfaces = @($instructionSurfaces | Where-Object { $_.surface_kind -eq "readme" -or $_.surface_kind -eq "router-doc" })
+            Assert-Contract ($effectiveInstructionImpact -eq "update") "$Context unit '$($unit.unit_id)' changes instruction-triggering categories and must use instruction_impact 'update'."
+            $agentSurfaces = @($effectiveInstructionSurfaces | Where-Object { $_.surface_kind -eq "agents" })
+            $routerSurfaces = @($effectiveInstructionSurfaces | Where-Object { $_.surface_kind -eq "readme" -or $_.surface_kind -eq "router-doc" })
             Assert-Contract ($agentSurfaces.Count -gt 0) "$Context unit '$($unit.unit_id)' needs the nearest AGENTS.md instruction surface."
             Assert-Contract ($routerSurfaces.Count -gt 0) "$Context unit '$($unit.unit_id)' needs a README or router-doc instruction surface."
 
@@ -563,7 +598,7 @@ function Test-ProjectBundle {
                 }
             }
             foreach ($requiredSkillId in $requiredSkillIds.ToArray()) {
-                $matchingSkill = @($instructionSurfaces | Where-Object {
+                $matchingSkill = @($effectiveInstructionSurfaces | Where-Object {
                     $_.surface_kind -eq "skill" -and $_.skill_id -eq $requiredSkillId
                 })
                 Assert-Contract ($matchingSkill.Count -eq 1) "$Context unit '$($unit.unit_id)' needs one instruction surface for relevant skill '$requiredSkillId'."
@@ -581,7 +616,7 @@ function Test-ProjectBundle {
                     Assert-Contract ($requiredSurface.status -eq "complete") "$Context accepted unit '$($unit.unit_id)' has incomplete instruction surface '$($requiredSurface.path)'."
                 }
                 foreach ($requiredSkillId in $requiredSkillIds.ToArray()) {
-                    $matchingSkill = @($instructionSurfaces | Where-Object {
+                    $matchingSkill = @($effectiveInstructionSurfaces | Where-Object {
                         $_.surface_kind -eq "skill" -and $_.skill_id -eq $requiredSkillId
                     })
                     if ($matchingSkill.Count -eq 1) {
@@ -589,8 +624,8 @@ function Test-ProjectBundle {
                     }
                 }
             }
-        } elseif ($unit.status -eq "accepted" -and $instructionImpact -ne "none") {
-            foreach ($surface in $instructionSurfaces) {
+        } elseif ($unit.status -eq "accepted" -and $effectiveInstructionImpact -ne "none") {
+            foreach ($surface in $effectiveInstructionSurfaces) {
                 Assert-Contract ($surface.status -eq "complete") "$Context accepted unit '$($unit.unit_id)' has incomplete instruction surface '$($surface.path)'."
             }
         }

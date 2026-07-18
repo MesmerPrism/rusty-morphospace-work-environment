@@ -42,6 +42,12 @@ such a unit can become `accepted`, the nearest repo `AGENTS.md`, a README or
 router doc, and every relevant skill named by the synchronization matrix must
 have complete update records.
 
+Immutable accepted or blocked units whose formerly valid instruction metadata
+predates these rules may be projected through the exact hash-bound historical-
+unit adoption contract. That projection must enumerate every mismatched impact
+and surface action and does not relax synchronization for any current or future
+unit. See [Historical Iteration-Unit Adoption](HISTORICAL_UNIT_ADOPTION.md).
+
 ## Cadence
 
 1. Declare instruction impact when the unit becomes `ready`.

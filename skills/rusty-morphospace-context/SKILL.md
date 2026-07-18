@@ -164,4 +164,6 @@ state and receipts every time.
 
 Historical-unit normalization is project evidence, not runtime authority: only
 exact hash-bound accepted or blocked units may use it; current units remain
-closed against the published portable registries.
+closed against the published portable registries and instruction-sync rules.
+Legacy instruction metadata must bind the exact impact and every affected
+surface path/action without rewriting the historical unit.

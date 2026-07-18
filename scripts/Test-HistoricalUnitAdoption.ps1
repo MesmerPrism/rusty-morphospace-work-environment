@@ -17,9 +17,10 @@ function New-Fixture($Root) {
     Copy-Item (Join-Path $RepoRoot 'templates/promotion-review.example.json') (Join-Path $Root 'promotion-reviews/promotion-review.example.json')
     $unit = Get-Content -Raw (Join-Path $RepoRoot 'templates/iteration-unit.example.json') | ConvertFrom-Json
     $unit.status = 'accepted'
-    $unit.change_categories = @('activation')
+    $unit.change_categories = @('activation', 'validation')
     $unit.tags = @('particle', 'contract-extraction', 'legacy-activation')
-    foreach ($surface in @($unit.instruction_surfaces)) { $surface.status = 'complete' }
+    $unit.instruction_impact = 'review'
+    foreach ($surface in @($unit.instruction_surfaces)) { $surface.status = 'complete'; if ($surface.surface_kind -ne 'skill') { $surface.action = 'review-no-change' } }
     $unit.validation[0].profile_id = 'compatibility'
     $unit.resource_requirements = @([pscustomobject]@{resource_kind='network-interface';resource_id='historical-interface';mode='exclusive';claim_timing='before-run'})
     $unitPath = Join-Path $Root 'iteration-units/unit-example-001.json'
@@ -37,6 +38,8 @@ function New-Fixture($Root) {
                 change_categories=@([pscustomobject]@{legacy='activation';current='feature-activation';retained_as='legacy-activation tag'})
                 validation_profiles=@([pscustomobject]@{legacy='compatibility';current='quick';retained_as='historical compatibility limitation'})
                 resource_kinds=@([pscustomobject]@{legacy='network-interface';current=$null;retained_as='historical observation-only network limitation'})
+                instruction_impact=@([pscustomobject]@{legacy='review';current='update';retained_as='historical review decision retained by the immutable unit'})
+                instruction_surfaces=@($unit.instruction_surfaces | Where-Object { $_.surface_kind -ne 'skill' } | ForEach-Object { [pscustomobject]@{path=$_.path;legacy_action='review-no-change';current_action='update';retained_as='historical no-change review retained by the immutable unit'} })
             }
         })
     }
@@ -64,7 +67,7 @@ $base=Join-Path ([IO.Path]::GetTempPath()) ('morphospace-historical-adoption-'+[
 try {
     New-Fixture $base
     & $validator -RepoRoot $RepoRoot -WorkspaceRoot $base | Out-Null
-    $cases=@('receipt-hash','unit-hash','missing-mapping','extra-mapping','invalid-target','duplicate-unit','current-unit','terminal-event','current-network-kind')
+    $cases=@('receipt-hash','unit-hash','missing-mapping','extra-mapping','invalid-target','missing-instruction-impact','extra-instruction-surface','instruction-action-drift','duplicate-unit','current-unit','terminal-event','current-network-kind')
     foreach($case in $cases){
         $root="$base-$case";Copy-Item $base $root -Recurse
         switch($case){
@@ -73,6 +76,9 @@ try {
             'missing-mapping' { Assert-Rejected $root { $p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$d=Get-Content -Raw $p|ConvertFrom-Json;$d.units[0].normalization.change_categories=@();Write-Json $p $d;Refresh-ReceiptReference $root } $case }
             'extra-mapping' { Assert-Rejected $root { $p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$d=Get-Content -Raw $p|ConvertFrom-Json;$d.units[0].normalization.change_categories+= [pscustomobject]@{legacy='documentation';current='documentation-only';retained_as='tag'};Write-Json $p $d;Refresh-ReceiptReference $root } $case }
             'invalid-target' { Assert-Rejected $root { $p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$d=Get-Content -Raw $p|ConvertFrom-Json;$d.units[0].normalization.change_categories[0].current='compatibility';Write-Json $p $d;Refresh-ReceiptReference $root } $case }
+            'missing-instruction-impact' { Assert-Rejected $root { $p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$d=Get-Content -Raw $p|ConvertFrom-Json;$d.units[0].normalization.instruction_impact=@();Write-Json $p $d;Refresh-ReceiptReference $root } $case }
+            'extra-instruction-surface' { Assert-Rejected $root { $p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$d=Get-Content -Raw $p|ConvertFrom-Json;$d.units[0].normalization.instruction_surfaces+= [pscustomobject]@{path='docs/extra.md';legacy_action='review-no-change';current_action='update';retained_as='extra'};Write-Json $p $d;Refresh-ReceiptReference $root } $case }
+            'instruction-action-drift' { Assert-Rejected $root { $p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$d=Get-Content -Raw $p|ConvertFrom-Json;$d.units[0].normalization.instruction_surfaces[0].legacy_action='update';Write-Json $p $d;Refresh-ReceiptReference $root } $case }
             'duplicate-unit' { Assert-Rejected $root { $p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$d=Get-Content -Raw $p|ConvertFrom-Json;$d.units+= $d.units[0];Write-Json $p $d;Refresh-ReceiptReference $root } $case }
             'current-unit' { Assert-Rejected $root { $u=Join-Path $root 'iteration-units/unit-example-001.json';$d=Get-Content -Raw $u|ConvertFrom-Json;$d.status='active';Write-Json $u $d;$p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$r=Get-Content -Raw $p|ConvertFrom-Json;$r.units[0].unit_sha256=Get-Sha $u;$r.units[0].terminal_status='accepted';Write-Json $p $r;Refresh-ReceiptReference $root } $case }
             'terminal-event' { Assert-Rejected $root { $p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$d=Get-Content -Raw $p|ConvertFrom-Json;$d.units[0].terminal_evidence.event_id='missing-terminal-event';Write-Json $p $d;Refresh-ReceiptReference $root } $case }
@@ -80,5 +86,5 @@ try {
         }
         Remove-Item -LiteralPath $root -Recurse -Force
     }
-    Write-Host 'Historical-unit adoption self-test passed (positive plus 9 damaged cases).'
+    Write-Host 'Historical-unit adoption self-test passed (positive plus 12 damaged cases).'
 } finally { if(Test-Path $base){Remove-Item -LiteralPath $base -Recurse -Force} }

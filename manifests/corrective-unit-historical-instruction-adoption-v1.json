@@ -1,7 +1,7 @@
 {
   "schema": "rusty.morphospace.work_environment.corrective_unit.v1",
   "unit_id": "workenv-historical-instruction-adoption-v1",
-  "status": "active",
+  "status": "accepted",
   "base_revision": "fb37e13d5393269a9b8afcc6fd0affb05fe1feda",
   "objective": "Extend exact hash-bound historical-unit adoption to immutable terminal instruction-impact metadata without weakening current-unit instruction synchronization.",
   "authority": "rusty-morphospace-work-environment",

@@ -23,13 +23,22 @@ non-executable semantics. This preserves old observation evidence without
 claiming a current isolation or lease contract. In particular, an old
 `network-interface` noun does not become a current portable resource kind.
 
+An immutable terminal unit may also retain a formerly valid instruction-impact
+decision and instruction-surface actions. The receipt maps the exact legacy
+impact to `update` and names every affected surface path whose historical
+`review-no-change` action now requires `update`. These mappings must cover
+exactly the current semantic mismatches; missing, extra, renamed, or action-
+drifted surfaces reject. The unit and its historical instruction bytes remain
+unchanged, and current or future units cannot use this route.
+
 ## Fail-Closed Boundary
 
 Validation rejects receipt-reference hash drift, unit-byte drift, changed
 status, missing or duplicate units, duplicate or invalid mappings, missing
-terminal evidence, unknown normalized targets, and adoption by a current or
-future unit. Removing the receipt restores strict current validation; it never
-creates an ambient compatibility mode.
+terminal evidence, unknown normalized targets, incomplete instruction-impact
+or surface-action coverage, and adoption by a current or future unit. Removing
+the receipt restores strict current validation; it never creates an ambient
+compatibility mode.
 
 Historical unit files and event lines remain byte-unchanged. A project adds
 only the receipt and compact-state reference. The receipt conveys workflow

@@ -270,7 +270,9 @@ rule.
 When a terminal historical unit uses retired workflow vocabulary, require a
 project-owned receipt binding exact bytes, status, terminal evidence, and
 complete normalization into current portable semantics. Never use that route
-for current work or expand registries merely to silence history.
+for current work or expand registries merely to silence history. A historical
+instruction mismatch additionally binds the exact legacy impact and every
+affected surface path/action; it is not an ambient instruction-sync bypass.
 
 For direct networking, separate topology formation, platform network
 observation, socket ownership, protocol exchange, and cleanup into provider
