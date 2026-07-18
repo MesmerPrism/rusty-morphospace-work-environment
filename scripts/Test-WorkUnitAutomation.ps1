@@ -534,6 +534,37 @@ try {
     Assert-Automation (-not ($prepared.push_plan.PSObject.Properties.Name -contains "remote_readback_complete")) "automation fabricated executed-push evidence"
     Assert-Automation ((@(Invoke-TestGit -Path $repo -Arguments @("rev-parse", "origin/main"))[0]) -eq $remoteBefore) "push preparation changed the remote"
 
+    $orderingInterruptionPath = Join-Path $receiptRoot "publication-ordering-interruption.json"
+    Write-TestJson -Path $orderingInterruptionPath -Value ([ordered]@{
+        schema = "rusty.morphospace.workflow.publication_ordering_interruption.v1"; project_id = "automation-test"; unit_id = "unit-auto-001"
+        kind = "planning-published-before-source"; observed_at = $fixed
+        planning = [ordered]@{ repo_id = "workflow-planning"; early_remote_revision = (@(Invoke-TestGit -Path $planningRepo -Arguments @("rev-parse", "@{upstream}"))[0]); local_prepared_revision = $planningHead }
+        sources = @([ordered]@{ repo_id = "project-shell"; unpublished_remote_revision = $remoteBefore; local_revision = $localHead })
+        does_not_claim = @("planning-last chronology", "source publication", "executed push", "publication accounting", "recorded publication")
+    })
+    Invoke-TestGit -Path $planningRepo -Arguments @("add", ".") | Out-Null
+    Invoke-TestGit -Path $planningRepo -Arguments @("commit", "-m", "preserve publication ordering interruption") | Out-Null
+    $planningRecoveryHead = @(Invoke-TestGit -Path $planningRepo -Arguments @("rev-parse", "HEAD"))[0]
+    Write-TestJson -Path $revisionsPath -Value ([ordered]@{ schema = "rusty.morphospace.workflow.revision_set.v1"; repositories = @(
+        [ordered]@{ repo_id = "project-shell"; commit = $localHead },
+        [ordered]@{ repo_id = "workflow-planning"; commit = $planningRecoveryHead }
+    ) })
+    $recoveredPlan = Invoke-MorphospaceWorkUnitAutomation -Action PreparePush -WorkspaceRoot $workspace -UnitId "unit-auto-001" -RepoMapPath $repoMapPath -RevisionsPath $revisionsPath -PublicationOrderingInterruption "receipts/publication-ordering-interruption.json" -Timestamp $fixed -OutPath (Join-Path $receiptRoot "recovered-push-plan.json")
+    Assert-Automation ($recoveredPlan.push_plan.publication_ordering_interruption.early_planning_checkpoint_preserved -and -not $recoveredPlan.push_plan.publication_ordering_interruption.source_publication_claimed) "fresh plan did not preserve the early-planning ordering fault"
+    $damagedInterruption = Get-Content -Raw $orderingInterruptionPath | ConvertFrom-Json
+    $damagedInterruption.sources[0].unpublished_remote_revision = "0000000000000000000000000000000000000000"
+    Write-TestJson -Path $orderingInterruptionPath -Value $damagedInterruption
+    Invoke-TestGit -Path $planningRepo -Arguments @("add", ".") | Out-Null
+    Invoke-TestGit -Path $planningRepo -Arguments @("commit", "-m", "damage publication ordering interruption fixture") | Out-Null
+    $planningDamagedHead = @(Invoke-TestGit -Path $planningRepo -Arguments @("rev-parse", "HEAD"))[0]
+    Write-TestJson -Path $revisionsPath -Value ([ordered]@{ schema = "rusty.morphospace.workflow.revision_set.v1"; repositories = @(
+        [ordered]@{ repo_id = "project-shell"; commit = $localHead },
+        [ordered]@{ repo_id = "workflow-planning"; commit = $planningDamagedHead }
+    ) })
+    $damagedOrderingRejected = $false
+    try { Invoke-MorphospaceWorkUnitAutomation -Action PreparePush -WorkspaceRoot $workspace -UnitId "unit-auto-001" -RepoMapPath $repoMapPath -RevisionsPath $revisionsPath -PublicationOrderingInterruption "receipts/publication-ordering-interruption.json" -Timestamp $fixed | Out-Null } catch { $damagedOrderingRejected = $_.Exception.Message -like "Publication-ordering interruption source refs do not match*" }
+    Assert-Automation $damagedOrderingRejected "damaged unpublished source readback was accepted"
+
     & git clone --quiet --branch main $remote $peer 2>$null | Out-Null
     Invoke-TestGit -Path $peer -Arguments @("config", "user.name", "Automation Peer") | Out-Null
     Invoke-TestGit -Path $peer -Arguments @("config", "user.email", "peer@example.invalid") | Out-Null

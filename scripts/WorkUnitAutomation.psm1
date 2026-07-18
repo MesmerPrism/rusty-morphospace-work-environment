@@ -912,6 +912,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
         [string]$RecoveryReceipt = "",
         [string]$PublicationClosure = "",
         [string]$PublicationAccounting = "",
+        [string]$PublicationOrderingInterruption = "",
         [string]$AdoptionReceipt = "",
         [ValidateSet("quick", "standard", "deep")][string]$ValidationTier = "standard",
         [string[]]$DeviceSerials = @(),
@@ -997,6 +998,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
     $publicationClosureReference = $null
     $publicationClosureBinding = $null
     $publicationAccountingBinding = $null
+    $publicationOrderingInterruptionBinding = $null
 
     switch ($Action) {
         "Inspect" {
@@ -1271,6 +1273,33 @@ function Invoke-MorphospaceWorkUnitAutomation {
                     throw "Recorded revision for '$($repoState.repo_id)' does not match HEAD."
                 }
             }
+            if ($PublicationOrderingInterruption) {
+                $interruptionPath = Resolve-MorphospaceReceiptPath -WorkspaceRoot $resolvedWorkspace -ReceiptReference $PublicationOrderingInterruption
+                $interruption = Read-MorphospaceJson -Path $interruptionPath
+                if ([string]$interruption.schema -ne "rusty.morphospace.workflow.publication_ordering_interruption.v1") { throw "Publication-ordering interruption receipt has the wrong schema ID." }
+                if ([string]$interruption.project_id -ne [string]$state.project_id -or [string]$interruption.unit_id -ne $UnitId) { throw "Publication-ordering interruption receipt identity does not match the prepared unit." }
+                if ([string]$interruption.kind -ne "planning-published-before-source") { throw "Publication-ordering interruption kind is not supported." }
+                $planningFault = $interruption.planning
+                if ([string]$planningFault.repo_id -ne [string]$planningRepoIds[0]) { throw "Publication-ordering interruption planning repository does not match the external planning owner." }
+                $planningLive = @($repoStatesArray | Where-Object { [string]$_.repo_id -eq [string]$planningFault.repo_id })[0]
+                $planningRemote = (Get-MorphospaceGitOutput -RepositoryPath ([string]$repoMap[[string]$planningFault.repo_id].path) -Arguments @("rev-parse", "@{upstream}")).text
+                if ($planningRemote -ne [string]$planningFault.early_remote_revision) { throw "Publication-ordering interruption planning remote does not match live readback." }
+                if ((Get-MorphospaceGitOutput -RepositoryPath ([string]$repoMap[[string]$planningFault.repo_id].path) -Arguments @("merge-base", "--is-ancestor", [string]$planningFault.early_remote_revision, [string]$planningFault.local_prepared_revision) -AllowFailure).exit_code -ne 0) { throw "Preserved early planning checkpoint is not an ancestor of the local prepared checkpoint." }
+                if ((Get-MorphospaceGitOutput -RepositoryPath ([string]$repoMap[[string]$planningFault.repo_id].path) -Arguments @("merge-base", "--is-ancestor", [string]$planningFault.local_prepared_revision, [string]$planningLive.head) -AllowFailure).exit_code -ne 0) { throw "Live planning head does not preserve the recorded local prepared checkpoint." }
+                $sourceFaultMap = @{}
+                foreach ($entry in @($interruption.sources)) { if ($sourceFaultMap.ContainsKey([string]$entry.repo_id)) { throw "Publication-ordering interruption repeats a source repository." }; $sourceFaultMap[[string]$entry.repo_id] = $entry }
+                foreach ($sourceRepoId in $sourceRepoIds) {
+                    if (-not $sourceFaultMap.ContainsKey([string]$sourceRepoId)) { throw "Publication-ordering interruption omits source repository '$sourceRepoId'." }
+                    $entry = $sourceFaultMap[[string]$sourceRepoId]
+                    $live = @($repoStatesArray | Where-Object { [string]$_.repo_id -eq [string]$sourceRepoId })[0]
+                    $remote = (Get-MorphospaceGitOutput -RepositoryPath ([string]$repoMap[[string]$sourceRepoId].path) -Arguments @("rev-parse", "@{upstream}")).text
+                    if ($remote -ne [string]$entry.unpublished_remote_revision -or [string]$live.head -ne [string]$entry.local_revision) { throw "Publication-ordering interruption source refs do not match live readback for '$sourceRepoId'." }
+                    if ((Get-MorphospaceGitOutput -RepositoryPath ([string]$repoMap[[string]$sourceRepoId].path) -Arguments @("merge-base", "--is-ancestor", [string]$entry.unpublished_remote_revision, [string]$entry.local_revision) -AllowFailure).exit_code -ne 0) { throw "Unpublished source remote is not an ancestor of the local revision for '$sourceRepoId'." }
+                }
+                if (@($sourceFaultMap.Keys).Count -ne @($sourceRepoIds).Count) { throw "Publication-ordering interruption contains an undeclared source repository." }
+                $workspacePrefix = $resolvedWorkspace.TrimEnd("\", "/") + [System.IO.Path]::DirectorySeparatorChar
+                $publicationOrderingInterruptionBinding = [pscustomobject][ordered]@{ path = $interruptionPath.Substring($workspacePrefix.Length).Replace("\", "/"); sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $interruptionPath).Hash.ToLowerInvariant(); kind = [string]$interruption.kind; early_planning_checkpoint_preserved = $true; source_publication_claimed = $false }
+            }
             $pushRepos = New-Object System.Collections.Generic.List[object]
             foreach ($repoIdValue in $orderedRepoIds) {
                 $repoId = [string]$repoIdValue
@@ -1288,6 +1317,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
                 dependency_order = $orderedRepoIds; repositories = @($pushRepos.ToArray())
                 source_first = $true; planning_last = ([string]$repoMap[[string]$orderedRepoIds[-1]].role -eq "planning")
                 execution = "not-performed"; force_push_allowed = $false
+                publication_ordering_interruption = $publicationOrderingInterruptionBinding
             }
             $transition = "push-bundle-prepared"
             if ($Execute) {

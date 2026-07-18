@@ -34,6 +34,7 @@
     "planning_last": { "type": "boolean" },
     "execution": { "const": "not-performed" },
     "force_push_allowed": { "const": false }
+    ,"publication_ordering_interruption": { "oneOf": [{"type":"null"},{"type":"object","additionalProperties":false,"required":["path","sha256","kind","early_planning_checkpoint_preserved","source_publication_claimed"],"properties":{"path":{"type":"string","minLength":1},"sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"},"kind":{"const":"planning-published-before-source"},"early_planning_checkpoint_preserved":{"const":true},"source_publication_claimed":{"const":false}}}] }
   },
   "$defs": {
     "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" }

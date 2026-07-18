@@ -84,6 +84,9 @@ from the unit, keep acceptance separate from a pass receipt, preserve blockers
 through resume/recovery, and report dirty, detached, ahead/behind, or divergent
 Git states without rewriting them. Push preparation records exact source-first,
 planning-last revisions but does not commit, push, or force-push.
+An early planning checkpoint with every source still unpublished may be bound
+only through a publication-ordering interruption receipt in a fresh plan; exact
+live ancestry must match and the plan claims no corrected order or publication.
 The proposed-to-ready review is also an owned transition: use `Ready` to verify
 accepted prerequisites, preserve the unit envelope, append the event, and
 derive the claimable queue instead of hand-editing status/state/history.

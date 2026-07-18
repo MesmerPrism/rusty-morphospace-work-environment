@@ -202,6 +202,9 @@ in runner variables or typed reference wrappers, never injected properties.
   with `unplanned_publication_closure.v1` and the workflow-only
   `ReconcilePublication` transition; never fabricate a plan or mutate Git from
   recovery.
+- If planning alone published early while every source remains unpublished,
+  preserve the fault through `publication_ordering_interruption.v1` and create
+  a fresh exact-ref plan; never claim that checkpoint was planning-last.
 - A planned publication closes only through `RecordPublication` with a
   validated `planned_publication_accounting.v1`. It must enumerate the exact
   old-exclusive/final-inclusive commit sequence and carried-unit status, allow

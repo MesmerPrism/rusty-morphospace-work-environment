@@ -203,6 +203,9 @@ planning ref is the final prepared suffix. If a source push already occurred
 without `PreparePush`, preserve the real publication and use the additive
 `unplanned_publication_closure.v1` plus `ReconcilePublication`; never create a
 retrospective plan or relabel the reconstruction as an executed-push receipt.
+If planning alone published early while every source remote remains unchanged,
+use the hash-bound publication-ordering interruption input to create a fresh
+plan that preserves the fault and claims no publication or corrected order.
 
 Seal coordinated releases with `release_capsule.v1`. At publication,
 `Test-ReleaseCapsule.ps1 -Mode CandidateCut` requires every declared remote ref

@@ -11,6 +11,7 @@ param(
     [string]$RecoveryReceipt = "",
     [string]$PublicationClosure = "",
     [string]$PublicationAccounting = "",
+    [string]$PublicationOrderingInterruption = "",
     [string]$AdoptionReceipt = "",
     [ValidateSet("quick", "standard", "deep")][string]$ValidationTier = "standard",
     [string[]]$DeviceSerials = @(),
@@ -35,6 +36,7 @@ $arguments = @{
     RecoveryReceipt = $RecoveryReceipt
     PublicationClosure = $PublicationClosure
     PublicationAccounting = $PublicationAccounting
+    PublicationOrderingInterruption = $PublicationOrderingInterruption
     AdoptionReceipt = $AdoptionReceipt
     ValidationTier = $ValidationTier
     DeviceSerials = $DeviceSerials

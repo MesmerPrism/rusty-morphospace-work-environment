@@ -81,5 +81,16 @@ the exact pending bundle no longer exists.
 `PreparePush`; it rejects planned accounting and cannot manufacture a plan or
 executed receipt.
 
+If the external planning checkpoint was published early but every source
+remote is still unchanged, preserve that ordering fault in a hash-bound
+`publication_ordering_interruption.v1` receipt and pass it to a fresh
+`PreparePush` call. The owner accepts only clean exact refs: the live planning
+remote must equal the recorded early checkpoint and be an ancestor of the
+local prepared checkpoint, while each live source remote must equal the
+recorded unpublished revision and be an ancestor of the local source revision.
+The new plan embeds the receipt binding and explicitly claims neither source
+publication nor corrected planning-last chronology. This route performs no Git
+mutation and is not `ReconcilePublication`.
+
 Run `scripts/Test-PlannedPublicationAccounting.ps1 -SelfTest` for focused valid
 and damaged document coverage, followed by the automation and workflow suites.

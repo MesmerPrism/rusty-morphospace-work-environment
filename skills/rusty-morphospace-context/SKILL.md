@@ -136,6 +136,9 @@ through a distinct external planning repository and publish that ref last. A
 same-ref source workspace cannot certify its own terminal bytes. If publication
 preceded preparation, route the independently observed recovery closure through
 `ReconcilePublication` without fabricating chronology or mutating source Git.
+If only planning published early and source remains unpublished, preserve that
+fault through the dedicated hash-bound ordering-interruption input to a fresh
+plan; do not use `ReconcilePublication`.
 For a genuinely prepared publication, route closure through
 `RecordPublication` and `docs/PLANNED_PUBLICATION_ACCOUNTING.md`; require exact
 commit/unit accounting and treat the single external planning repository as
