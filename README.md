@@ -1,5 +1,10 @@
 # Rusty Morphospace Work Environment
 
+Planned publication accounting supports one exact synchronized
+`readback-only` source leg with equal revisions, zero commits, clean bound
+identity/order, and an explicit no-acceptance claim. Changed repositories keep
+complete commit attribution.
+
 Portable onboarding and project-iteration workspace for Rusty Morphospace
 development.
 

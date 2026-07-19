@@ -5,6 +5,11 @@ description: 'Use for Rusty Morphospace repo-family orientation, lane ownership,
 
 # Rusty Morphospace Context
 
+An unchanged declared repository may be accounted as synchronized readback
+only when all revisions are equal, execution is `readback-only`, the range has
+no commits, and no source acceptance is inferred. Changed repositories still
+require complete attribution.
+
 Use this skill to find the authoritative workspace state, choose the owning
 repo lane, preserve public/private boundaries, and route work into the portable
 project workflow. It is a router, not a copy of live project state.

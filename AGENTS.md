@@ -1,5 +1,10 @@
 # Agent Notes
 
+Publication accounting may represent an unchanged declared repository only
+through exact synchronized readback: equal revisions, executed
+`readback-only`, clean state, zero commits, bound identity/order/status, and an
+explicit no-acceptance claim. Never use it for a changed repository.
+
 This repository is intended to be public and portable. Keep committed content
 free of local machine paths, private repository names, device serials, package
 identities, generated APKs, screenshots, logs, pairing material, signing keys,

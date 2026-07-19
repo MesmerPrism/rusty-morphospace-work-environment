@@ -5,6 +5,11 @@ description: 'Use for architecture and system-engineering work across local repo
 
 # System Engineering
 
+An unchanged declared publication leg may use synchronized-readback accounting
+only with four equal revisions, executed `readback-only`, zero commits, clean
+bound identity/order, and an explicit no-acceptance claim. It never relaxes
+changed-repository enumeration.
+
 Use this skill for architecture and system-engineering work across Rusty
 Morphospace repos: authority boundaries, contracts, manifests, module/plugin
 boundaries, data/control/media planes, observability, validation scorecards,

@@ -1,5 +1,13 @@
 # Planned Publication Accounting
 
+An unchanged declared source repository may use additive
+`synchronized_readback` accounting only when the prepared, old, final, and
+remote-readback revisions are identical, the executed receipt says
+`readback-only`, the repository is clean with zero commits, and its triggering
+unit carries `no_acceptance_claim: true`. Identity, branch/upstream, order, and
+status evidence remain exact. Changed repositories still require complete
+commit and changed-path attribution.
+
 `planned_publication_accounting.v1` is the sole portable evidence accepted by
 `RecordPublication` after an externally executed, previously prepared push.
 It is accounting evidence, not push authority and not acceptance evidence.
