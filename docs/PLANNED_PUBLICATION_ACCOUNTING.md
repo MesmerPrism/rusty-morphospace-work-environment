@@ -8,6 +8,18 @@ unit carries `no_acceptance_claim: true`. Identity, branch/upstream, order, and
 status evidence remain exact. Changed repositories still require complete
 commit and changed-path attribution.
 
+If that immutable readback-only execution is followed by a separately
+validated and accepted workflow correction, the additive
+`intervening_accepted_publication` recovery binds the execution-time final and
+readback separately from the current clean remote-exact final. It requires
+fast-forward ancestry, the complete ordered commit/path range, accepted unit
+and passing validation evidence, and source-first/planning-last recovery
+chronology. Planning commits without a unit are admitted only as explicitly
+typed blocker or publication-finalization evidence whose paths equal a narrow
+allowlist. The old readback leg still infers no mutation or acceptance; the
+later unit is accounted independently. Normal changed-source enumeration and
+the immutable prepared/executed evidence remain unchanged.
+
 `planned_publication_accounting.v1` is the sole portable evidence accepted by
 `RecordPublication` after an externally executed, previously prepared push.
 It is accounting evidence, not push authority and not acceptance evidence.

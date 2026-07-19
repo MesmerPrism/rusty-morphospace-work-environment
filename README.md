@@ -204,6 +204,11 @@ suffix, and consume only the exact pending bundle. Prepared evidence may bind
 standalone plan/event files or their immutable automation-receipt and
 transition-ledger containers. See
 [`docs/PLANNED_PUBLICATION_ACCOUNTING.md`](docs/PLANNED_PUBLICATION_ACCOUNTING.md).
+An immutable executed bundle followed by a separately accepted workflow
+correction uses the additive intervening-publication recovery, which binds the
+exact fast-forward commits and paths through current clean remote readback. It
+preserves the original readback-only nonclaim and is never general drift
+tolerance.
 
 Push preparation now requires one distinct external planning repository that
 contains the active project workspace. The source refs remain first and that

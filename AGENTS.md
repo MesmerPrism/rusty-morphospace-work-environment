@@ -4,6 +4,11 @@ Publication accounting may represent an unchanged declared repository only
 through exact synchronized readback: equal revisions, executed
 `readback-only`, clean state, zero commits, bound identity/order/status, and an
 explicit no-acceptance claim. Never use it for a changed repository.
+An already executed synchronized-readback bundle may advance only through the
+additive intervening-accepted-publication recovery: exact execution-time and
+current revisions, fast-forward commits/paths, accepted/pass evidence, narrow
+planning evidence roles, clean no-force readback, and source-first/planning-
+last chronology. This is not general remote-drift tolerance.
 
 This repository is intended to be public and portable. Keep committed content
 free of local machine paths, private repository names, device serials, package

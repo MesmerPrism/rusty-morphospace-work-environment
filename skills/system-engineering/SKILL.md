@@ -135,6 +135,12 @@ The live planning checkout may carry only the exact bound executed-push and
 accounting receipts as a clean local prerequisite suffix while its remote stays
 at the executed final revision; reject source ahead state, remote drift, dirt,
 divergence, stale bindings, and every unrelated suffix path.
+An immutable executed bundle followed by a separately accepted workflow
+correction may close only through intervening-accepted-publication recovery:
+bind execution-time/current finals, exact fast-forward commits and paths,
+accepted/pass evidence, narrow planning evidence roles, and source-first /
+planning-last chronology. Never infer mutation from the old readback-only leg
+or treat the recovery as generic remote drift.
 When the plan or event is embedded in owner evidence, bind the immutable
 container and named member plus transition intent/completion linkage; do not
 reconstruct a standalone artifact and claim equivalent provenance.
