@@ -114,6 +114,10 @@ in runner variables or typed reference wrappers, never injected properties.
   app shells or Quest workflow, not generic core crates.
 - Termux is a normal Android sidecar. It can use an already authorized ADB
   endpoint, but it is not shell authority by itself.
+- Accessibility may provide a privacy-minimized top-level window-transition
+  signal for an attended foreground watchdog. It does not own HOME, intercept
+  the physical Meta button, or provide kiosk/device-owner authority; keep the
+  detailed and version-sensitive recipe in `meta-quest-agent-workflow`.
 - Android properties, JSON profiles, and hotload files are low-rate control
   surfaces. Do not route high-rate camera frames, meshes, particles, depth
   maps, or GPU buffers through them.

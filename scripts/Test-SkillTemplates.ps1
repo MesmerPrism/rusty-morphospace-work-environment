@@ -15,6 +15,7 @@ $publicQuestWorkflowDocs = @(
     "docs/apk-install-launch.md",
     "docs/artifact-and-evidence-discipline.md",
     "docs/quest-signal-patterns.md",
+    "docs/accessibility-foreground-watchdogs.md",
     "docs/termux-linux-sidecars.md"
 )
 $actual = @(Get-ChildItem -LiteralPath $skillRoot -Directory | Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName "SKILL.md") } | Sort-Object Name)

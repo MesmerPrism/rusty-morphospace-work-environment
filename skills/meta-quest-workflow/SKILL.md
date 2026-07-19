@@ -37,7 +37,9 @@ In the public Meta Quest workflow repo:
 3. `docs/apk-install-launch.md`
 4. `docs/artifact-and-evidence-discipline.md`
 5. `docs/quest-signal-patterns.md`
-6. `docs/termux-linux-sidecars.md`, if Termux is involved
+6. `docs/accessibility-foreground-watchdogs.md`, when foreground monitoring,
+   Meta Home transitions, or special Accessibility enablement is involved
+7. `docs/termux-linux-sidecars.md`, if Termux is involved
 
 ## Core Rules
 
@@ -49,6 +51,11 @@ In the public Meta Quest workflow repo:
 - Do not treat screenshots, casting, screenrecord, or MediaProjection as raw
   camera access.
 - Do not treat ADB synthetic input as OpenXR controller parity.
+- Treat an Accessibility foreground watchdog as a user-enabled diagnostic
+  capability, not HOME interception or kiosk authority. Disable UI-content
+  retrieval, group one Meta Home event burst into one invocation, allow late
+  shell tails to request refocus without double-counting escape gestures, and
+  revalidate exact signals/background launch behavior after Horizon updates.
 - Do not treat Termux as Android shell authority unless an already authorized
   ADB gate reports `uid=2000(shell)`.
 - Keep raw device evidence private unless a public redaction gate exists.

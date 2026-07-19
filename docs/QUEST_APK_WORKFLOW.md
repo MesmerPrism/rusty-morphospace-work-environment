@@ -142,6 +142,21 @@ adb -s <quest-serial> shell am start -W -n <package>/<activity>
 Treat `force-stop` as a lifecycle mutation. It can affect services, panels,
 immersive state, and broker surfaces.
 
+## Accessibility Foreground Watchdogs
+
+For an attended watchdog that restores an exported app after Meta Home or
+another top-level window replaces it, route to the public
+`meta-quest-agent-workflow` guide
+`docs/accessibility-foreground-watchdogs.md`. Keep UI-content retrieval
+disabled, treat exact Meta package/class signals as Horizon-version-specific,
+and separate refocus scheduling from distinct Home-invocation escape counting.
+
+Accessibility is not HOME ownership, lock-task mode, or managed-device
+authority. If the normal Accessibility settings surface is unavailable, any
+ADB enablement is explicit development-headset setup and must preserve the
+existing enabled-service list. Termux may perform that setup only through an
+already authorized ADB shell lease that reports `uid=2000(shell)`.
+
 Before a run, take a per-serial mutex/claim and snapshot the complete declared
 property set. Clear that set before applying the selected profile. In a
 `finally` path, stop only the target package, restore exact prior values,
