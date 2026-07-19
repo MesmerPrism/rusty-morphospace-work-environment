@@ -1,5 +1,10 @@
 # Agent Notes
 
+Production declaration vocabulary is accepted only through the versioned
+`change_category_aliases` mapping in the lifecycle manifest. Aliases must map
+one-to-one to existing canonical categories and inherit their instruction and
+skill routing; they never relabel accepted historical evidence.
+
 Publication accounting may represent an unchanged declared repository only
 through exact synchronized readback: equal revisions, executed
 `readback-only`, clean state, zero commits, bound identity/order/status, and an

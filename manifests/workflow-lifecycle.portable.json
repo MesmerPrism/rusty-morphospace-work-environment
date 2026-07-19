@@ -75,6 +75,13 @@
     "recovery",
     "documentation-only"
   ],
+  "change_category_aliases": [
+    {"alias":"production-runtime","canonical":"implementation"},
+    {"alias":"public-api","canonical":"implementation"},
+    {"alias":"module-composition","canonical":"module-layout"},
+    {"alias":"instruction-synchronization","canonical":"workflow-automation"},
+    {"alias":"reliability","canonical":"validation"}
+  ],
   "instruction_sync": {
     "impact_values": ["none", "review", "update"],
     "surface_kinds": ["agents", "readme", "router-doc", "validation-doc", "skill"],

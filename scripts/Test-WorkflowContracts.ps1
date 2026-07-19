@@ -497,6 +497,11 @@ function Test-ProjectBundle {
         }
 
         $changeCategories = @($unit.change_categories | ForEach-Object { [string]$_ })
+        $effectiveChangeCategories = @($changeCategories | ForEach-Object {
+            if ($script:ChangeCategories -contains $_) { $_ }
+            elseif ($script:ChangeCategoryAliases.ContainsKey($_)) { $script:ChangeCategoryAliases[$_] }
+            else { $_ }
+        })
         Assert-Contract ($changeCategories.Count -gt 0) "$Context unit '$($unit.unit_id)' needs at least one change category."
         foreach ($categoryGroup in @($changeCategories | Group-Object)) {
             Assert-Contract ($categoryGroup.Count -eq 1) "$Context unit '$($unit.unit_id)' repeats change category '$($categoryGroup.Name)'."
@@ -513,7 +518,7 @@ function Test-ProjectBundle {
             Test-ExactLegacyMappings -UnknownValues $unknownCategories -Mappings @($adoption.normalization.change_categories) -CurrentValues $script:ChangeCategories -Context "$Context historical unit '$unitId' change-category"
         } else {
             foreach ($category in $changeCategories) {
-                Assert-Contract ($script:ChangeCategories -contains $category) "$Context unit '$unitId' has unknown change category '$category'."
+                Assert-Contract (($script:ChangeCategories -contains $category) -or $script:ChangeCategoryAliases.ContainsKey($category)) "$Context unit '$unitId' has unknown change category '$category'."
             }
         }
 
@@ -521,7 +526,7 @@ function Test-ProjectBundle {
         $instructionSurfaces = @($unit.instruction_surfaces)
         Assert-Contract ($script:InstructionImpactValues -contains $instructionImpact) "$Context unit '$($unit.unit_id)' has unknown instruction impact '$instructionImpact'."
         Test-UniqueProperty -Items $instructionSurfaces -Property "path" -Context "$Context unit '$($unit.unit_id)' instruction surfaces"
-        $triggeredCategories = @($changeCategories | Where-Object { $script:InstructionTriggerCategories -contains $_ })
+        $triggeredCategories = @($effectiveChangeCategories | Where-Object { $script:InstructionTriggerCategories -contains $_ } | Sort-Object -Unique)
 
         $effectiveInstructionImpact = $instructionImpact
         $effectiveInstructionSurfaces = @($instructionSurfaces)
@@ -946,6 +951,14 @@ if ($null -ne $lifecycle) {
     $script:DeviceRequirements = @($lifecycle.device_requirements | ForEach-Object { [string]$_ })
     $script:PushCheckpoints = @($lifecycle.push_checkpoints | ForEach-Object { [string]$_ })
     $script:ChangeCategories = @($lifecycle.change_categories | ForEach-Object { [string]$_ })
+    $script:ChangeCategoryAliases = @{}
+    foreach ($alias in @($lifecycle.change_category_aliases)) {
+        Assert-Contract ((Test-Text $alias.alias) -and (Test-Text $alias.canonical)) "Workflow change-category alias entries must be complete."
+        Assert-Contract ($script:ChangeCategories -contains [string]$alias.canonical) "Workflow change-category alias '$($alias.alias)' has an unknown canonical target."
+        Assert-Contract (-not $script:ChangeCategoryAliases.ContainsKey([string]$alias.alias)) "Workflow change-category alias '$($alias.alias)' is duplicated."
+        Assert-Contract ($script:ChangeCategories -notcontains [string]$alias.alias) "Workflow change-category alias '$($alias.alias)' collides with a canonical category."
+        $script:ChangeCategoryAliases[[string]$alias.alias] = [string]$alias.canonical
+    }
     $script:ResourceKinds = @("repo-path", "build-output", "android-package", "headset", "property-namespace", "staging-namespace", "bridge-port")
     $script:InstructionImpactValues = @($lifecycle.instruction_sync.impact_values | ForEach-Object { [string]$_ })
     $script:InstructionSurfaceKinds = @($lifecycle.instruction_sync.surface_kinds | ForEach-Object { [string]$_ })

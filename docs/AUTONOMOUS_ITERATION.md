@@ -32,6 +32,10 @@ An agent may reduce scope while working. It may not expand scope beyond the
 project spec and unit without a reviewed unit update.
 
 Use `change_categories` only for portable routing and instruction-impact
+derivation. Versioned lifecycle aliases map production vocabulary to one
+canonical category; unknown, duplicate, colliding, or targetless aliases fail
+closed. Project-local `focused` and `skill-focused` profiles may route bounded
+checks without changing accepted historical unit bytes.
 semantics. Preserve domain detail such as `peer-mesh`, `binder`, or
 `contract-extraction` in `tags`; do not grow the portable category registry for
 each application-specific noun.
