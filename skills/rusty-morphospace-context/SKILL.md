@@ -178,3 +178,9 @@ exact hash-bound accepted or blocked units may use it; current units remain
 closed against the published portable registries and instruction-sync rules.
 Legacy instruction metadata must bind the exact impact and every affected
 surface path/action without rewriting the historical unit.
+
+For one immutable prepared/executed range containing multiple separately
+accepted units, retain the single trigger and require the exact accepted-unit
+partition. Every additional unit needs accepted status and complete
+non-overlapping commit attribution; it is neither a blocked carried unit nor a
+second trigger.

@@ -122,3 +122,13 @@ mutation and is not `ReconcilePublication`.
 
 Run `scripts/Test-PlannedPublicationAccounting.ps1 -SelfTest` for focused valid
 and damaged document coverage, followed by the automation and workflow suites.
+
+## Exact multi-accepted-unit prepared ranges
+
+An immutable prepared/executed bundle may opt into `accepted_unit_attribution`
+only when its exact range contains multiple separately accepted units. The
+single prepared trigger remains `triggering-unit`; each additional accepted
+unit uses `bundle-accepted-unit`, has accepted status evidence, and owns at
+least one exact non-overlapping commit. Normal blocked carried-unit and later
+intervening-unit rules remain unchanged. Gaps, overlap, duplicates, stale
+range identity, blocked units, or trigger substitution reject.

@@ -289,3 +289,7 @@ collects the onboarding path across them.
 ## License
 
 AGPL-3.0-or-later. See `LICENSE`.
+
+Planned publication accounting can fail closed over an immutable executed
+range containing multiple separately accepted units while retaining its one
+prepared trigger. See `docs/PLANNED_PUBLICATION_ACCOUNTING.md`.

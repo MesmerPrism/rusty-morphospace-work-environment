@@ -275,6 +275,11 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ReleaseCapsule.ps1 
 git diff --check
 ```
 
+Multi-accepted publication accounting retains one prepared trigger. Additional
+accepted units already in the immutable executed range use only the exact
+partition documented in `docs/PLANNED_PUBLICATION_ACCOUNTING.md`; never relabel
+the trigger or weaken blocked carried-unit rules.
+
 If docs or manifests change, also parse JSON files:
 
 ```powershell
