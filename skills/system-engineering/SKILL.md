@@ -141,6 +141,9 @@ bind execution-time/current finals, exact fast-forward commits and paths,
 accepted/pass evidence, narrow planning evidence roles, and source-first /
 planning-last chronology. Never infer mutation from the old readback-only leg
 or treat the recovery as generic remote drift.
+Only this recovered shape may use an accounting-only local prerequisite when
+the bound executed path/hash occurs exactly once in enumerated intervening
+planning evidence; ordinary accounting still requires both evidence paths.
 When the plan or event is embedded in owner evidence, bind the immutable
 container and named member plus transition intent/completion linkage; do not
 reconstruct a standalone artifact and claim equivalent provenance.

@@ -9,6 +9,10 @@ additive intervening-accepted-publication recovery: exact execution-time and
 current revisions, fast-forward commits/paths, accepted/pass evidence, narrow
 planning evidence roles, clean no-force readback, and source-first/planning-
 last chronology. This is not general remote-drift tolerance.
+Only that recovered shape may use an accounting-only local prerequisite suffix,
+and only when exact bound executed evidence is already present once in its
+enumerated intervening planning history. Normal accounting still requires both
+prerequisite evidence paths.
 
 This repository is intended to be public and portable. Keep committed content
 free of local machine paths, private repository names, device serials, package

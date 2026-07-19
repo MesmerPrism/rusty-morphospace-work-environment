@@ -81,6 +81,14 @@ source-repository suffix, dirty or divergent state, remote drift, unrelated
 workflow files, or a general planning-ahead exception. The prerequisite suffix
 is published only with the final planning closure after `RecordPublication`.
 
+For an `intervening_accepted_publication` recovery only, the local prerequisite
+suffix contains just the accounting receipt when the bound executed receipt's
+exact path and hash still validate and exactly one enumerated intervening
+planning-evidence blocker commit contains that path in the recovered Git
+range. The suffix remains clean, ahead-only, nonempty, and accounting-only.
+Missing or alternate history rejects. Accounting without this recovery proof
+continues to require both accounting and executed-receipt paths.
+
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Invoke-WorkUnitAutomation.ps1 `

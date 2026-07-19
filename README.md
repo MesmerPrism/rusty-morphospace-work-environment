@@ -209,6 +209,9 @@ correction uses the additive intervening-publication recovery, which binds the
 exact fast-forward commits and paths through current clean remote readback. It
 preserves the original readback-only nonclaim and is never general drift
 tolerance.
+Its live prerequisite may contain only the new accounting receipt when the
+unchanged executed receipt path/hash is already proven exactly once in the
+enumerated intervening planning history; ordinary accounting remains two-path.
 
 Push preparation now requires one distinct external planning repository that
 contains the active project workspace. The source refs remain first and that
