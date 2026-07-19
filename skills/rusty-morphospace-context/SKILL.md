@@ -9,12 +9,9 @@ An unchanged declared repository may be accounted as synchronized readback
 only when all revisions are equal, execution is `readback-only`, the range has
 no commits, and no source acceptance is inferred. Changed repositories still
 require complete attribution.
-If a separately validated and accepted workflow correction later advances the
-repository and planning, use only exact intervening-accepted-publication
+Later accepted workflow correction uses only exact intervening-publication
 recovery: complete fast-forward commits/paths, accepted/pass evidence, narrow
-blocker/finalization planning evidence, clean no-force readback, and source-
-first/planning-last chronology. The earlier readback remains a non-mutation
-and non-acceptance observation.
+planning evidence, clean no-force readback, and the old readback nonclaim.
 
 Use this skill to find the authoritative workspace state, choose the owning
 repo lane, preserve public/private boundaries, and route work into the portable
