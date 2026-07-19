@@ -325,8 +325,3 @@ Prefer schema-only and data-only contracts before runtime dependencies.
 Validation should prove the authority boundary, not just happy-path execution.
 For Quest/APK work, source/static/profile gates come before headset runs. For
 public extraction, synthetic tests or fixtures come before live evidence.
-
-An exact prepared-range accepted-unit partition preserves the single trigger
-while binding additional accepted units to unique status evidence and complete
-non-overlapping commit/path enumeration. Gaps, overlap, relabeling, blocked
-status, and stale range identity reject.
