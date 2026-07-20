@@ -1,0 +1,22 @@
+{
+  "$schema": "../schemas/published-prerequisite-suffix-reconciliation.schema.json",
+  "schema": "rusty.morphospace.workflow.published_prerequisite_suffix_reconciliation.v1",
+  "reconciliation_id": "example-published-prerequisite-suffix",
+  "project_id": "example-project", "bundle_id": "example-unit-push-bundle", "trigger_unit_id": "example-unit",
+  "planned_publication_accounting": { "path": "receipts/example-accounting.json", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+  "planning_repository": {
+    "repo_id": "planning-repo", "branch": "main", "upstream": "origin/main",
+    "execution_final_revision": "1111111111111111111111111111111111111111", "execution_final_tree": "2222222222222222222222222222222222222222",
+    "published_suffix_revision": "3333333333333333333333333333333333333333", "published_suffix_tree": "4444444444444444444444444444444444444444",
+    "published_suffix_parent": "1111111111111111111111111111111111111111", "current_remote_readback_revision": "3333333333333333333333333333333333333333",
+    "executed_push_receipt": { "path": "morphospace/receipts/example-executed-push.json", "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
+    "publication_accounting_receipt": { "path": "morphospace/receipts/example-accounting.json", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+    "worktree_clean": true
+  },
+  "source_repositories": [
+    { "repo_id": "source-repo", "branch": "main", "upstream": "origin/main", "execution_final_revision": "5555555555555555555555555555555555555555", "execution_final_tree": "6666666666666666666666666666666666666666", "current_remote_readback_revision": "5555555555555555555555555555555555555555", "history_unchanged": true, "worktree_clean": true }
+  ],
+  "publication": { "scope": "planning-published-prerequisite-suffix", "commit_count": 1, "changed_paths": ["morphospace/receipts/example-accounting.json","morphospace/receipts/example-executed-push.json"], "fast_forward_verified": true, "force_push_used": false, "force_with_lease_used": false, "rewrite_used": false, "observed_at": "2026-07-20T00:00:00Z" },
+  "workspace_transition": { "pending_push_bundle_before": "example-unit-push-bundle", "pending_push_bundle_after": null, "validation_unchanged": true, "acceptance_unchanged": true },
+  "failure": null
+}

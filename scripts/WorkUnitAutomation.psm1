@@ -6,6 +6,7 @@ Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1') -
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospacePublicationRecovery.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospacePlannedPublication.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospacePlanningSuffixRewrite.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospacePublishedPrerequisiteSuffix.psm1') -Force
 
 function Read-MorphospaceJson {
     param([Parameter(Mandatory = $true)][string]$Path)
@@ -903,7 +904,7 @@ function Invoke-MorphospaceAuthorityRunnerForRecord {
 function Invoke-MorphospaceWorkUnitAutomation {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory = $true)][ValidateSet("Inspect", "Ready", "Claim", "Resume", "BeginValidation", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RecordPublication", "Recover", "ReconcilePublication", "ReconcilePlanningSuffixRewrite")][string]$Action,
+        [Parameter(Mandatory = $true)][ValidateSet("Inspect", "Ready", "Claim", "Resume", "BeginValidation", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RecordPublication", "Recover", "ReconcilePublication", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix")][string]$Action,
         [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
         [string]$UnitId = "",
         [string]$RepoMapPath = "",
@@ -914,6 +915,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
         [string]$PublicationClosure = "",
         [string]$PublicationAccounting = "",
         [string]$PlanningSuffixRewriteRecovery = "",
+        [string]$PublishedPrerequisiteSuffixReconciliation = "",
         [string]$PublicationOrderingInterruption = "",
         [string]$AdoptionReceipt = "",
         [ValidateSet("quick", "standard", "deep")][string]$ValidationTier = "standard",
@@ -968,7 +970,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
             $repositoryStates.Add([pscustomobject][ordered]@{ repo_id = $repoId; mapped = $false; relation = "not-mapped" }) | Out-Null
         }
     }
-    if ($Action -in @("PreparePush", "RecordPublication", "ReconcilePlanningSuffixRewrite")) {
+    if ($Action -in @("PreparePush", "RecordPublication", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix")) {
         $unitRepoIds = @{}
         foreach ($repo in @($unit.allowed_repositories)) { $unitRepoIds[[string]$repo.repo_id] = $true }
         $externalPlanningEntries = @($repoMap.Values | Where-Object {
@@ -1001,6 +1003,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
     $publicationClosureBinding = $null
     $publicationAccountingBinding = $null
     $planningSuffixRewriteBinding = $null
+    $publishedPrerequisiteSuffixBinding = $null
     $publicationOrderingInterruptionBinding = $null
 
     switch ($Action) {
@@ -1263,6 +1266,22 @@ function Invoke-MorphospaceWorkUnitAutomation {
                 $event = New-MorphospaceEvent -State $state -Events $events -UnitId $UnitId -ActionSlug "planning-suffix-rewrite-reconciled" -Timestamp $Timestamp -EventType "push" -Summary "Reconciled a force-with-lease replacement of an already published planning-only finalization suffix while preserving the original no-force prepared execution and unchanged source history; no Git, validation, or acceptance mutation was performed." -Receipts @($recoveryReference, [string]$validatedRecovery.document.planned_publication_accounting.path)
             }
         }
+        "ReconcilePublishedPrerequisiteSuffix" {
+            if (-not $PublishedPrerequisiteSuffixReconciliation) { throw "ReconcilePublishedPrerequisiteSuffix requires PublishedPrerequisiteSuffixReconciliation." }
+            if (-not $RepoMapPath) { throw "ReconcilePublishedPrerequisiteSuffix requires RepoMapPath." }
+            if ($beforeStatus -ne "accepted") { throw "ReconcilePublishedPrerequisiteSuffix requires the triggering unit to remain accepted." }
+            $reconciliationPath = Resolve-MorphospaceReceiptPath -WorkspaceRoot $resolvedWorkspace -ReceiptReference $PublishedPrerequisiteSuffixReconciliation
+            $validatedReconciliation = Test-MorphospacePublishedPrerequisiteSuffixLive -Path $reconciliationPath -WorkspaceRoot $resolvedWorkspace -Spec $spec -State $state -RepositoryMap $repoMap -RepositoryStates $repoStatesArray
+            if ([string]$validatedReconciliation.document.trigger_unit_id -cne $UnitId) { throw "Published-prerequisite reconciliation trigger unit does not match the requested unit." }
+            $workspacePrefix = $resolvedWorkspace.TrimEnd("\", "/") + [System.IO.Path]::DirectorySeparatorChar
+            $reconciliationReference = $reconciliationPath.Substring($workspacePrefix.Length).Replace("\", "/")
+            $publishedPrerequisiteSuffixBinding = [pscustomobject][ordered]@{ reconciliation_id = [string]$validatedReconciliation.document.reconciliation_id; path = $reconciliationReference; sha256 = [string]$validatedReconciliation.reconciliation_sha256 }
+            $transition = "published-prerequisite-suffix-reconciled"
+            if ($Execute) {
+                $state.pending_push_bundle = $null
+                $event = New-MorphospaceEvent -State $state -Events $events -UnitId $UnitId -ActionSlug "published-prerequisite-suffix-reconciled" -Timestamp $Timestamp -EventType "push" -Summary "Reconciled one already-published no-force planning prerequisite commit containing exactly the bound executed-push and planned-publication-accounting receipts; no Git, validation, or acceptance mutation was performed." -Receipts @($reconciliationReference, [string]$validatedReconciliation.document.planned_publication_accounting.path, [string]$validatedReconciliation.document.planning_repository.executed_push_receipt.path)
+            }
+        }
         "PreparePush" {
             if ($beforeStatus -ne "accepted") { throw "PreparePush requires an accepted unit." }
             if (-not $RepoMapPath -or -not $RevisionsPath) { throw "PreparePush requires RepoMapPath and RevisionsPath." }
@@ -1422,6 +1441,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
         publication_closure = $publicationClosureBinding
         planned_publication = $publicationAccountingBinding
         planning_suffix_rewrite_recovery = $planningSuffixRewriteBinding
+        published_prerequisite_suffix_reconciliation = $publishedPrerequisiteSuffixBinding
         push_plan = $pushPlan
         event_id = if ($event) { [string]$event.event_id } else { $null }
     }
