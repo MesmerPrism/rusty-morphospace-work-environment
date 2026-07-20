@@ -131,10 +131,10 @@ Close that prepared publication only through hash-bound
 `planned_publication_accounting.v1`: enumerate exact commits and unit status,
 restrict the one planning suffix to explicit workflow transport paths, and let
 `RecordPublication` clear only the matching bundle after live clean readback.
-If that published planning-only one-path suffix was later replaced with
-force-with-lease, use the separate additive incident contract that binds both
-commit trees and unchanged source refs; do not relabel the original no-force
-execution or weaken ordinary accounting.
+If that planning-only suffix was later replaced with force-with-lease, use the
+additive incident contract binding exactly two common parent-relative paths,
+one replacement delta path, both trees, and unchanged source refs; do not
+relabel the original no-force execution or weaken ordinary accounting.
 The live planning checkout may carry only the exact bound executed-push and
 accounting receipts as a clean local prerequisite suffix while its remote stays
 at the executed final revision; reject source ahead state, remote drift, dirt,

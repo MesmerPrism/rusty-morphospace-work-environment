@@ -150,7 +150,7 @@ plan; do not use `ReconcilePublication`.
 For a genuinely prepared publication, route closure through
 `RecordPublication` and `docs/PLANNED_PUBLICATION_ACCOUNTING.md`; require exact
 commit/unit accounting and treat the single external planning repository as
-transport only, never product or source authority. Route its later one-path planning-only force-with-lease suffix replacement through that document's distinct incident recovery, never source history or drift.
+transport only, never product or source authority. Route its later planning-only force-with-lease suffix replacement through that document's two-common-path/one-delta-path incident recovery, never source history or drift.
 
 Treat a release as sealed commits and trees, not permanently frozen live
 branches. Require exact remote equality and convergence at the candidate cut;

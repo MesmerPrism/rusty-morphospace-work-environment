@@ -241,11 +241,11 @@ in runner variables or typed reference wrappers, never injected properties.
   only prerequisite suffix containing exactly the bound executed-push and
   accounting receipts; source ahead state and every unrelated path reject.
 - A later force-with-lease replacement of an already published planning-only
-  one-path finalization suffix uses only the additive
+  finalization suffix uses only the additive
   `planning_suffix_rewrite_recovery.v1` incident route. Bind both commits and
-  trees, the common prepared parent, current replacement readback, and exact
-  unchanged source refs; never route source rewrites or ordinary accounting
-  through it.
+  trees, the common prepared parent, exactly two common parent-relative paths,
+  exactly one replacement-delta path, current readback, and unchanged source
+  refs; never route source rewrites or ordinary accounting through it.
 - Seal a coordinated release with `release_capsule.v1`: exact remote equality
   and branch convergence belong to the candidate cut, while later historical
   closure requires ancestor-or-equal remote refs and an isolated exact clean

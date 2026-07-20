@@ -16,13 +16,15 @@
     "planned_publication_accounting": { "$ref": "#/$defs/file" },
     "planning_repository": {
       "type": "object", "additionalProperties": false,
-      "required": ["repo_id","branch","upstream","prepared_revision","prepared_tree","first_suffix_revision","first_suffix_tree","replacement_suffix_revision","replacement_suffix_tree","changed_path","current_remote_readback_revision","worktree_clean"],
+      "required": ["repo_id","branch","upstream","prepared_revision","prepared_tree","first_suffix_revision","first_suffix_tree","replacement_suffix_revision","replacement_suffix_tree","common_changed_paths","replacement_delta_paths","current_remote_readback_revision","worktree_clean"],
       "properties": {
         "repo_id": { "$ref": "#/$defs/id" }, "branch": { "type": "string", "minLength": 1 }, "upstream": { "type": "string", "minLength": 1 },
         "prepared_revision": { "$ref": "#/$defs/revision" }, "prepared_tree": { "$ref": "#/$defs/revision" },
         "first_suffix_revision": { "$ref": "#/$defs/revision" }, "first_suffix_tree": { "$ref": "#/$defs/revision" },
         "replacement_suffix_revision": { "$ref": "#/$defs/revision" }, "replacement_suffix_tree": { "$ref": "#/$defs/revision" },
-        "changed_path": { "$ref": "#/$defs/path" }, "current_remote_readback_revision": { "$ref": "#/$defs/revision" }, "worktree_clean": { "const": true }
+        "common_changed_paths": { "type": "array", "minItems": 2, "maxItems": 2, "uniqueItems": true, "items": { "$ref": "#/$defs/path" } },
+        "replacement_delta_paths": { "type": "array", "minItems": 1, "maxItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/path" } },
+        "current_remote_readback_revision": { "$ref": "#/$defs/revision" }, "worktree_clean": { "const": true }
       }
     },
     "source_repositories": { "type": "array", "minItems": 1, "items": { "type": "object", "additionalProperties": false, "required": ["repo_id","branch","upstream","executed_revision","current_remote_readback_revision","history_unchanged","worktree_clean"], "properties": { "repo_id": { "$ref": "#/$defs/id" }, "branch": { "type": "string", "minLength": 1 }, "upstream": { "type": "string", "minLength": 1 }, "executed_revision": { "$ref": "#/$defs/revision" }, "current_remote_readback_revision": { "$ref": "#/$defs/revision" }, "history_unchanged": { "const": true }, "worktree_clean": { "const": true } } } },

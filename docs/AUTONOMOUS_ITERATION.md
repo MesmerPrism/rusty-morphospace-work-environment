@@ -256,8 +256,8 @@ The CLI is deliberately narrower than an autonomous coding agent:
 - publication reconciliation consumes independently authored closure evidence,
   clears only the bound stale bundle/source projection, and never performs Git.
 - planning-suffix rewrite reconciliation consumes only an exact pending bundle
-  after proving the original no-force execution, the later one-path
-  force-with-lease planning replacement, and unchanged source history.
+  after proving the original no-force execution, two exact common suffix paths,
+  one exact replacement-delta path, and unchanged source history.
 
 Keep the local repository map outside a public project instance when its paths
 identify a workstation. Start from `templates/repository-map.example.json`.

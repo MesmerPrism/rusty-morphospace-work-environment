@@ -11,7 +11,11 @@
     "prepared_revision": "1111111111111111111111111111111111111111", "prepared_tree": "2222222222222222222222222222222222222222",
     "first_suffix_revision": "3333333333333333333333333333333333333333", "first_suffix_tree": "4444444444444444444444444444444444444444",
     "replacement_suffix_revision": "5555555555555555555555555555555555555555", "replacement_suffix_tree": "6666666666666666666666666666666666666666",
-    "changed_path": "morphospace/receipts/example-publication-finalization.json",
+    "common_changed_paths": [
+      "morphospace/receipts/example-executed-push.json",
+      "morphospace/receipts/example-planned-publication-accounting.json"
+    ],
+    "replacement_delta_paths": ["morphospace/receipts/example-planned-publication-accounting.json"],
     "current_remote_readback_revision": "5555555555555555555555555555555555555555", "worktree_clean": true
   },
   "source_repositories": [

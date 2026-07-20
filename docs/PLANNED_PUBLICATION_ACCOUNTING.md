@@ -122,14 +122,17 @@ The recovery binds the complete, still-valid planned-publication accounting,
 so the original prepared plan/event and no-force source-first/planning-last
 execution remain authoritative facts. It separately binds the planning
 prepared commit/tree, the first published suffix commit/tree, the replacement
-commit/tree, their common prepared parent, one exact changed path, current
-replacement remote readback, and the explicit force-with-lease fact. Every
+commit/tree, their common prepared parent, the exact two-path set changed by
+both children relative to that parent, the exact one-path tree delta between
+the children, current replacement remote readback, and the explicit force-with-lease fact. Every
 declared source repository must remain clean and synchronized at its exact
 executed revision. Both planning commits must still exist locally; missing
 objects fail closed.
 
-The route is deliberately one-commit and one-path. It is not general force-push
-tolerance, remote-drift tolerance, or a way to account for source rewrites.
+The route is deliberately two alternative one-commit children with exactly two
+common parent-relative paths and exactly one replacement-delta path drawn from
+that common set. It is not general force-push tolerance, remote-drift
+tolerance, or a way to account for source rewrites.
 Dirty, ahead, behind, divergent, alternate-path, unrelated-bundle, missing-
 object, source-rewrite, or already-consumed state rejects. The action clears
 only the matching pending bundle and appends a distinct push event. It does not
@@ -149,6 +152,13 @@ pwsh -NoProfile -ExecutionPolicy Bypass `
 Use [`templates/planning-suffix-rewrite-recovery.example.json`](../templates/planning-suffix-rewrite-recovery.example.json)
 as the portable shape. Evidence authors replace every synthetic revision,
 tree, path, and hash with observations from the exact incident.
+
+The first implementation checkpoint modeled each suffix as changing one path.
+A subsequent canonical tree audit showed that both suffix children changed the
+executed-push and planned-accounting paths relative to the prepared parent,
+while only planned accounting differed between their trees. No recovery had
+been consumed; the follow-up retained the original checkpoint and corrected
+the unconsumed contract plus its damaged fixtures.
 
 If the external planning checkpoint was published early but every source
 remote is still unchanged, preserve that ordering fault in a hash-bound
