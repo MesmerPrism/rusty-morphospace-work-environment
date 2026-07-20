@@ -109,6 +109,47 @@ the exact pending bundle no longer exists.
 `PreparePush`; it rejects planned accounting and cannot manufacture a plan or
 executed receipt.
 
+## Planning-only suffix rewrite incident recovery
+
+An already published planning-only finalization suffix that was subsequently
+replaced with `--force-with-lease` does not satisfy ordinary
+`RecordPublication`, and it is not an unplanned publication or intervening
+accepted publication. Preserve that incident with the additive
+`planning_suffix_rewrite_recovery.v1` contract and the distinct
+`ReconcilePlanningSuffixRewrite` action.
+
+The recovery binds the complete, still-valid planned-publication accounting,
+so the original prepared plan/event and no-force source-first/planning-last
+execution remain authoritative facts. It separately binds the planning
+prepared commit/tree, the first published suffix commit/tree, the replacement
+commit/tree, their common prepared parent, one exact changed path, current
+replacement remote readback, and the explicit force-with-lease fact. Every
+declared source repository must remain clean and synchronized at its exact
+executed revision. Both planning commits must still exist locally; missing
+objects fail closed.
+
+The route is deliberately one-commit and one-path. It is not general force-push
+tolerance, remote-drift tolerance, or a way to account for source rewrites.
+Dirty, ahead, behind, divergent, alternate-path, unrelated-bundle, missing-
+object, source-rewrite, or already-consumed state rejects. The action clears
+only the matching pending bundle and appends a distinct push event. It does not
+change unit status, validation, acceptance, Git, devices, tags, or releases.
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\Invoke-WorkUnitAutomation.ps1 `
+  -Action ReconcilePlanningSuffixRewrite `
+  -WorkspaceRoot <project-root>\morphospace `
+  -UnitId <unit-id> `
+  -RepoMapPath <repository-map> `
+  -PlanningSuffixRewriteRecovery receipts/<rewrite-recovery>.json `
+  -Execute
+```
+
+Use [`templates/planning-suffix-rewrite-recovery.example.json`](../templates/planning-suffix-rewrite-recovery.example.json)
+as the portable shape. Evidence authors replace every synthetic revision,
+tree, path, and hash with observations from the exact incident.
+
 If the external planning checkpoint was published early but every source
 remote is still unchanged, preserve that ordering fault in a hash-bound
 `publication_ordering_interruption.v1` receipt and pass it to a fresh

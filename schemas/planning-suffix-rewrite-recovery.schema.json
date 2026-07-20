@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/planning-suffix-rewrite-recovery.schema.json",
+  "title": "Planning-only publication suffix rewrite recovery",
+  "description": "Additive incident evidence for an already executed no-force prepared publication whose planning-only finalization commit was later replaced with force-with-lease. This evidence records workflow accounting only and grants no Git, validation, or acceptance authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema","recovery_id","project_id","bundle_id","trigger_unit_id","planned_publication_accounting","planning_repository","source_repositories","rewrite","workspace_transition","failure"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schema": { "const": "rusty.morphospace.workflow.planning_suffix_rewrite_recovery.v1" },
+    "recovery_id": { "$ref": "#/$defs/id" },
+    "project_id": { "$ref": "#/$defs/id" },
+    "bundle_id": { "$ref": "#/$defs/id" },
+    "trigger_unit_id": { "$ref": "#/$defs/id" },
+    "planned_publication_accounting": { "$ref": "#/$defs/file" },
+    "planning_repository": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repo_id","branch","upstream","prepared_revision","prepared_tree","first_suffix_revision","first_suffix_tree","replacement_suffix_revision","replacement_suffix_tree","changed_path","current_remote_readback_revision","worktree_clean"],
+      "properties": {
+        "repo_id": { "$ref": "#/$defs/id" }, "branch": { "type": "string", "minLength": 1 }, "upstream": { "type": "string", "minLength": 1 },
+        "prepared_revision": { "$ref": "#/$defs/revision" }, "prepared_tree": { "$ref": "#/$defs/revision" },
+        "first_suffix_revision": { "$ref": "#/$defs/revision" }, "first_suffix_tree": { "$ref": "#/$defs/revision" },
+        "replacement_suffix_revision": { "$ref": "#/$defs/revision" }, "replacement_suffix_tree": { "$ref": "#/$defs/revision" },
+        "changed_path": { "$ref": "#/$defs/path" }, "current_remote_readback_revision": { "$ref": "#/$defs/revision" }, "worktree_clean": { "const": true }
+      }
+    },
+    "source_repositories": { "type": "array", "minItems": 1, "items": { "type": "object", "additionalProperties": false, "required": ["repo_id","branch","upstream","executed_revision","current_remote_readback_revision","history_unchanged","worktree_clean"], "properties": { "repo_id": { "$ref": "#/$defs/id" }, "branch": { "type": "string", "minLength": 1 }, "upstream": { "type": "string", "minLength": 1 }, "executed_revision": { "$ref": "#/$defs/revision" }, "current_remote_readback_revision": { "$ref": "#/$defs/revision" }, "history_unchanged": { "const": true }, "worktree_clean": { "const": true } } } },
+    "rewrite": { "type": "object", "additionalProperties": false, "required": ["scope","mechanism","force_with_lease_used","prepared_execution_force_push_used","source_rewrite_used","observed_at"], "properties": { "scope": { "const": "planning-only-finalization-suffix" }, "mechanism": { "const": "force-with-lease" }, "force_with_lease_used": { "const": true }, "prepared_execution_force_push_used": { "const": false }, "source_rewrite_used": { "const": false }, "observed_at": { "type": "string", "format": "date-time" } } },
+    "workspace_transition": { "type": "object", "additionalProperties": false, "required": ["pending_push_bundle_before","pending_push_bundle_after"], "properties": { "pending_push_bundle_before": { "$ref": "#/$defs/id" }, "pending_push_bundle_after": { "type": "null" } } },
+    "failure": { "type": "null" }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" },
+    "revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "path": { "type": "string", "pattern": "^(?![A-Za-z]:|/|.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/-]+$" },
+    "file": { "type": "object", "additionalProperties": false, "required": ["path","sha256"], "properties": { "path": { "$ref": "#/$defs/path" }, "sha256": { "$ref": "#/$defs/hash" } } }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "$schema": "../schemas/planning-suffix-rewrite-recovery.schema.json",
+  "schema": "rusty.morphospace.workflow.planning_suffix_rewrite_recovery.v1",
+  "recovery_id": "example-planning-suffix-rewrite-recovery",
+  "project_id": "example-project",
+  "bundle_id": "example-unit-push-bundle",
+  "trigger_unit_id": "example-unit",
+  "planned_publication_accounting": { "path": "receipts/example-accounting.json", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+  "planning_repository": {
+    "repo_id": "planning-repo", "branch": "main", "upstream": "origin/main",
+    "prepared_revision": "1111111111111111111111111111111111111111", "prepared_tree": "2222222222222222222222222222222222222222",
+    "first_suffix_revision": "3333333333333333333333333333333333333333", "first_suffix_tree": "4444444444444444444444444444444444444444",
+    "replacement_suffix_revision": "5555555555555555555555555555555555555555", "replacement_suffix_tree": "6666666666666666666666666666666666666666",
+    "changed_path": "morphospace/receipts/example-publication-finalization.json",
+    "current_remote_readback_revision": "5555555555555555555555555555555555555555", "worktree_clean": true
+  },
+  "source_repositories": [
+    { "repo_id": "source-repo", "branch": "main", "upstream": "origin/main", "executed_revision": "7777777777777777777777777777777777777777", "current_remote_readback_revision": "7777777777777777777777777777777777777777", "history_unchanged": true, "worktree_clean": true }
+  ],
+  "rewrite": { "scope": "planning-only-finalization-suffix", "mechanism": "force-with-lease", "force_with_lease_used": true, "prepared_execution_force_push_used": false, "source_rewrite_used": false, "observed_at": "2026-07-20T00:00:00Z" },
+  "workspace_transition": { "pending_push_bundle_before": "example-unit-push-bundle", "pending_push_bundle_after": null },
+  "failure": null
+}

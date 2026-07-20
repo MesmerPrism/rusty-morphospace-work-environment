@@ -235,7 +235,8 @@ successful push is not proof that the whole batch is complete.
 `scripts/Invoke-WorkUnitAutomation.ps1` is the portable owner for mechanical
 work-unit transitions and preparation artifacts. It supports `Inspect`,
 `Ready`, `Claim`, `Resume`, `BeginValidation`, `RecordValidation`, `Accept`,
-`PreparePush`, `Recover`, and `ReconcilePublication`.
+`PreparePush`, `Recover`, `ReconcilePublication`, and the narrow
+`ReconcilePlanningSuffixRewrite` incident-recovery action.
 
 The CLI is deliberately narrower than an autonomous coding agent:
 
@@ -254,6 +255,9 @@ The CLI is deliberately narrower than an autonomous coding agent:
   externally authorized push/readback step.
 - publication reconciliation consumes independently authored closure evidence,
   clears only the bound stale bundle/source projection, and never performs Git.
+- planning-suffix rewrite reconciliation consumes only an exact pending bundle
+  after proving the original no-force execution, the later one-path
+  force-with-lease planning replacement, and unchanged source history.
 
 Keep the local repository map outside a public project instance when its paths
 identify a workstation. Start from `templates/repository-map.example.json`.

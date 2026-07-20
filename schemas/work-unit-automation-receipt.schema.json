@@ -9,7 +9,7 @@
     "schema": { "const": "rusty.morphospace.workflow.work_unit_automation_receipt.v1" },
     "project_id": { "$ref": "#/$defs/id" },
     "unit_id": { "$ref": "#/$defs/id" },
-    "action": { "enum": ["Inspect", "Claim", "Resume", "Ready", "BeginValidation", "RecordValidation", "Accept", "PreparePush", "RecordPublication", "Recover", "ReconcilePublication"] },
+    "action": { "enum": ["Inspect", "Claim", "Resume", "Ready", "BeginValidation", "RecordValidation", "Accept", "PreparePush", "RecordPublication", "Recover", "ReconcilePublication", "ReconcilePlanningSuffixRewrite"] },
     "timestamp": { "type": "string", "format": "date-time" },
     "executed": { "type": "boolean" },
     "transition": { "type": "string", "minLength": 1 },
@@ -54,6 +54,7 @@
         { "type":"null" }
       ]
     },
+    "planning_suffix_rewrite_recovery": { "oneOf": [ { "type": "object", "additionalProperties": false, "required": ["recovery_id","path","sha256"], "properties": { "recovery_id": { "$ref": "#/$defs/id" }, "path": { "type": "string", "minLength": 1 }, "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" } } }, { "type": "null" } ] },
     "push_plan": { "oneOf": [{ "type": "object" }, { "type": "null" }] },
     "event_id": { "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] }
   },

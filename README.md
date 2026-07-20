@@ -212,6 +212,10 @@ tolerance.
 Its live prerequisite may contain only the new accounting receipt when the
 unchanged executed receipt path/hash is already proven exactly once in the
 enumerated intervening planning history; ordinary accounting remains two-path.
+A later force-with-lease replacement of a published one-path planning-only
+finalization suffix uses the separate additive incident recovery documented in
+[`PLANNED_PUBLICATION_ACCOUNTING.md`](docs/PLANNED_PUBLICATION_ACCOUNTING.md);
+it preserves the earlier no-force execution and rejects any source rewrite.
 
 Push preparation now requires one distinct external planning repository that
 contains the active project workspace. The source refs remain first and that
