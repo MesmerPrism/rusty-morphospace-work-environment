@@ -109,6 +109,56 @@ the exact pending bundle no longer exists.
 `PreparePush`; it rejects planned accounting and cannot manufacture a plan or
 executed receipt.
 
+## Published prerequisite suffix reconciliation
+
+When the exact local prerequisite suffix described above was published by an
+external no-force operation before `RecordPublication` consumed the pending
+bundle, ordinary accounting must continue to reject the now-advanced planning
+remote. Preserve that incident with the additive
+`published_prerequisite_suffix_reconciliation.v1` contract and the distinct
+`ReconcilePublishedPrerequisiteSuffix` action.
+
+The reconciliation revalidates the unchanged planned accounting and both
+bound receipt hashes. Its execution-time planning final is the exact parent of
+the current planning revision. The current local HEAD and upstream readback
+must equal that revision, the worktree must be clean, and the parent-exclusive
+range must contain exactly one nonempty commit whose complete changed-path set
+is exactly the bound executed-push receipt and planned-accounting receipt.
+Every declared source repository remains clean and upstream-exact at its
+executed revision. Branches, upstreams, unit, project, bundle, commit, tree,
+path, hash, and chronology bindings remain exact.
+
+The evidence must state that the publication was no-force and did not rewrite
+history. Dirty, ahead, behind, divergent, nonancestor, alternate-history,
+missing-object, missing-receipt, stale-hash, extra-commit, extra-path, source-
+drift, wrong-unit, wrong-bundle, force, or rewrite observations reject. This
+route is not remote-drift tolerance, unplanned-publication recovery, or the
+planning-suffix rewrite incident route.
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\Invoke-WorkUnitAutomation.ps1 `
+  -Action ReconcilePublishedPrerequisiteSuffix `
+  -WorkspaceRoot <project-root>\morphospace `
+  -UnitId <unit-id> `
+  -RepoMapPath <repository-map> `
+  -PublishedPrerequisiteSuffixReconciliation receipts/<reconciliation>.json `
+  -Execute
+```
+
+The command revalidates the document and live repositories, clears only the
+exact matching pending bundle, and appends a distinct
+`published-prerequisite-suffix-reconciled` publication event. It changes no
+unit status, validation, acceptance, Git, device, tag, or release state. A
+second invocation fails because the pending bundle was already consumed.
+
+Use
+[`templates/published-prerequisite-suffix-reconciliation.example.json`](../templates/published-prerequisite-suffix-reconciliation.example.json)
+as the portable evidence shape after owner-lane composition. Run
+`scripts/Test-PublishedPrerequisiteSuffixReconciliation.ps1 -SelfTest` for the
+focused exact and damaged matrix, followed by the automation and workflow
+contract suites.
+
 ## Planning-only suffix rewrite incident recovery
 
 An already published planning-only finalization suffix that was subsequently

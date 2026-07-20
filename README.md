@@ -212,6 +212,13 @@ tolerance.
 Its live prerequisite may contain only the new accounting receipt when the
 unchanged executed receipt path/hash is already proven exactly once in the
 enumerated intervening planning history; ordinary accounting remains two-path.
+A no-force prerequisite suffix that was already published before
+`RecordPublication` uses the separate
+`published_prerequisite_suffix_reconciliation.v1` evidence contract and
+`ReconcilePublishedPrerequisiteSuffix` action. That route accepts only one
+planning commit containing exactly the bound executed-push and accounting
+receipt paths, with unchanged source refs; it does not broaden ordinary
+accounting or tolerate rewrites.
 A later force-with-lease replacement of a published planning-only finalization
 suffix uses the cardinality-bounded additive incident recovery documented in
 [`PLANNED_PUBLICATION_ACCOUNTING.md`](docs/PLANNED_PUBLICATION_ACCOUNTING.md);

@@ -9,6 +9,26 @@ function Assert-Automation {
     if (-not $Condition) { throw "Automation self-test failed: $Message" }
 }
 
+# Exercise the public script in a fresh pwsh process so action/parameter routing
+# cannot pass merely because this test imported the module in-process.
+$freshStdout = [IO.Path]::GetTempFileName()
+$freshStderr = [IO.Path]::GetTempFileName()
+try {
+    $freshPwsh = (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source
+    $fresh = Start-Process -FilePath $freshPwsh -ArgumentList @(
+        "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (Join-Path $PSScriptRoot "Invoke-WorkUnitAutomation.ps1"),
+        "-Action", "ReconcilePublishedPrerequisiteSuffix", "-WorkspaceRoot", (Join-Path ([IO.Path]::GetTempPath()) "missing-published-prerequisite-workspace"),
+        "-UnitId", "test-unit", "-RepoMapPath", "missing-repository-map.json",
+        "-PublishedPrerequisiteSuffixReconciliation", "receipts/missing-reconciliation.json"
+    ) -NoNewWindow -Wait -PassThru -RedirectStandardOutput $freshStdout -RedirectStandardError $freshStderr
+    $freshText = ((Get-Content -Raw $freshStdout -ErrorAction SilentlyContinue) + (Get-Content -Raw $freshStderr -ErrorAction SilentlyContinue))
+    Assert-Automation ($fresh.ExitCode -ne 0) "fresh-process reconciliation probe unexpectedly succeeded"
+    Assert-Automation ($freshText -notmatch "Cannot validate argument on parameter 'Action'|named PublishedPrerequisiteSuffixReconciliation parameter cannot be found") "fresh-process public Invoke entrypoint does not expose published-prerequisite reconciliation"
+} finally {
+    if ($null -ne $fresh) { $fresh.Dispose() }
+    Remove-Item -LiteralPath $freshStdout,$freshStderr -Force -ErrorAction SilentlyContinue
+}
+
 $workUnitAutomationModule = Get-Module WorkUnitAutomation
 $pathNormalizationResults = & $workUnitAutomationModule {
     [pscustomobject]@{

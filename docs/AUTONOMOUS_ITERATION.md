@@ -236,7 +236,8 @@ successful push is not proof that the whole batch is complete.
 work-unit transitions and preparation artifacts. It supports `Inspect`,
 `Ready`, `Claim`, `Resume`, `BeginValidation`, `RecordValidation`, `Accept`,
 `PreparePush`, `Recover`, `ReconcilePublication`, and the narrow
-`ReconcilePlanningSuffixRewrite` incident-recovery action.
+`ReconcilePublishedPrerequisiteSuffix` and `ReconcilePlanningSuffixRewrite`
+publication-recovery actions.
 
 The CLI is deliberately narrower than an autonomous coding agent:
 
@@ -255,6 +256,10 @@ The CLI is deliberately narrower than an autonomous coding agent:
   externally authorized push/readback step.
 - publication reconciliation consumes independently authored closure evidence,
   clears only the bound stale bundle/source projection, and never performs Git.
+- published-prerequisite reconciliation requires the current planning remote
+  to be exactly one no-force commit beyond the executed planning final, with
+  exactly the bound executed-push and accounting paths, while every source ref
+  remains clean and unchanged.
 - planning-suffix rewrite reconciliation consumes only an exact pending bundle
   after proving the original no-force execution, two exact common suffix paths,
   one exact replacement-delta path, and unchanged source history.

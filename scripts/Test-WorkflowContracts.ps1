@@ -1001,6 +1001,7 @@ $requiredSchemaNames = @(
     "current-unit-protocol.schema.json",
     "executed-push-receipt.schema.json",
     "planned-publication-accounting-receipt.schema.json",
+    "published-prerequisite-suffix-reconciliation.schema.json",
     "historical-release-closure-receipt.schema.json",
     "historical-unit-adoption-receipt.schema.json",
     "feature-descriptor.schema.json",
@@ -1109,6 +1110,15 @@ Assert-Contract (Test-Path -LiteralPath $plannedAccountingValidator -PathType Le
 if (Test-Path -LiteralPath $plannedAccountingValidator -PathType Leaf) {
     try { & $plannedAccountingValidator -SelfTest | Out-Null }
     catch { Add-Failure -Message "Planned-publication accounting self-test failed: $($_.Exception.Message)" }
+}
+
+$publishedPrerequisiteTemplate = Join-Path $templatesRoot "published-prerequisite-suffix-reconciliation.example.json"
+$publishedPrerequisiteValidator = Join-Path $RepoRoot "scripts\Test-PublishedPrerequisiteSuffixReconciliation.ps1"
+Assert-Contract (Test-Path -LiteralPath $publishedPrerequisiteTemplate -PathType Leaf) "Required published-prerequisite suffix reconciliation example is missing."
+Assert-Contract (Test-Path -LiteralPath $publishedPrerequisiteValidator -PathType Leaf) "Required published-prerequisite suffix reconciliation validator is missing."
+if (Test-Path -LiteralPath $publishedPrerequisiteValidator -PathType Leaf) {
+    try { & $publishedPrerequisiteValidator -SelfTest | Out-Null }
+    catch { Add-Failure -Message "Published-prerequisite suffix reconciliation self-test failed: $($_.Exception.Message)" }
 }
 
 $releaseCapsuleTemplate = Join-Path $templatesRoot "release-capsule.example.json"

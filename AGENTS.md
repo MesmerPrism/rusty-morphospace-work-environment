@@ -240,6 +240,11 @@ in runner variables or typed reference wrappers, never injected properties.
   Live closure remains remote-exact except for the documented clean planning-
   only prerequisite suffix containing exactly the bound executed-push and
   accounting receipts; source ahead state and every unrelated path reject.
+- If that exact one-commit/two-path prerequisite suffix was already published
+  without force before `RecordPublication`, use only the additive
+  `ReconcilePublishedPrerequisiteSuffix` route. Bind the unchanged planned
+  accounting and receipt hashes, exact parent/current refs, clean unchanged
+  sources, and no-force history; never admit extra commits/paths or rewrites.
 - A later force-with-lease replacement of an already published planning-only
   finalization suffix uses only the additive
   `planning_suffix_rewrite_recovery.v1` incident route. Bind both commits and
