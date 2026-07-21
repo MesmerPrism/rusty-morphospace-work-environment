@@ -13,6 +13,7 @@ $expected = @("meta-quest-workflow", "rust-work-graph", "rusty-morphospace-conte
 $publicQuestWorkflowDocs = @(
     "docs/adb-basics.md",
     "docs/apk-install-launch.md",
+    "docs/managed-device-store-apps.md",
     "docs/artifact-and-evidence-discipline.md",
     "docs/quest-signal-patterns.md",
     "docs/accessibility-foreground-watchdogs.md",

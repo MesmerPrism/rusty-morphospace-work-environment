@@ -35,15 +35,23 @@ In the public Meta Quest workflow repo:
 1. `README.md`
 2. `docs/adb-basics.md`
 3. `docs/apk-install-launch.md`
-4. `docs/artifact-and-evidence-discipline.md`
-5. `docs/quest-signal-patterns.md`
-6. `docs/accessibility-foreground-watchdogs.md`, when foreground monitoring,
+4. `docs/managed-device-store-apps.md`, when organization-managed modes,
+   consumer or managed Store apps, paid entitlements, or launcher cleanup is
+   involved
+5. `docs/artifact-and-evidence-discipline.md`
+6. `docs/quest-signal-patterns.md`
+7. `docs/accessibility-foreground-watchdogs.md`, when foreground monitoring,
    Meta Home transitions, or special Accessibility enablement is involved
-7. `docs/termux-linux-sidecars.md`, if Termux is involved
+8. `docs/termux-linux-sidecars.md`, if Termux is involved
 
 ## Core Rules
 
 - Use serial-scoped ADB: `adb -s <quest-serial> ...`.
+- Treat the default ADB daemon as shared infrastructure. When Agent Board
+  coordination is active, routine discovery and serial-scoped commands do not
+  take a global ADB lease. Reserve the exact `quest:<serial>` for exclusive
+  headset work and `adb-server:lifecycle` only for disruptive daemon or
+  transport operations.
 - Prefer read-only probes before install, launch, permission grants, file
   mutation, settings changes, port forwarding, or captures.
 - Record provider, command goal, foreground before/after, artifact types, and
@@ -51,6 +59,14 @@ In the public Meta Quest workflow repo:
 - Do not treat screenshots, casting, screenrecord, or MediaProjection as raw
   camera access.
 - Do not treat ADB synthetic input as OpenXR controller parity.
+- For organization-managed Store validation, identify Individual versus Shared
+  Mode and the active Android user/profile. Individual Mode can expose the
+  consumer Store when policy permits; Shared Mode uses a separate managed
+  catalog. Paid purchases, Store PINs, payment, and terms remain attended
+  account-holder actions and must not be automated.
+- Distinguish a fresh Android task from a fresh process. Background tasks are
+  normal OS-managed state; do not add arbitrary app force-stop authority merely
+  for launcher cleanup.
 - Treat an Accessibility foreground watchdog as a user-enabled diagnostic
   capability, not HOME interception or kiosk authority. Disable UI-content
   retrieval, group one Meta Home event burst into one invocation, allow late
@@ -140,6 +156,8 @@ Stop and ask for explicit operator approval before:
 - uninstalling or clearing apps;
 - deleting files from a device;
 - changing proximity, power, or keep-awake policy;
+- choosing or completing a paid Store transaction, entering a Store PIN or
+  payment, or accepting purchase terms on the user's behalf;
 - running long APK builds or Perfetto captures on shared devices;
 - using package identities or artifacts from private apps in public docs.
 

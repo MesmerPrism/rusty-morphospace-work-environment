@@ -114,6 +114,15 @@ not exercise generated Android activity and package behavior.
 
 ## Install And Launch
 
+Use one shared default ADB daemon for all connected headsets. Device discovery
+and independent clients may run concurrently, but every device command must use
+`adb -s <serial> ...`. Under Agent Board coordination, reserve the exact
+`quest:<serial>` for exclusive headset work. Reserve `adb-server:lifecycle`
+only before global operations such as killing, starting, restarting, recovering,
+or replacing the daemon; configuring Wi-Fi ADB; changing keys; or owning an
+alternate server port. Do not use the legacy broad `adb-server` lease for
+routine serial-scoped work.
+
 When several projects share one headset, do not launch from a loose APK path
 plus ambient properties. Require an app-specific run capsule that binds the
 APK, package/activity, build manifest, feature lock, effective runtime profile,
@@ -141,6 +150,31 @@ adb -s <quest-serial> shell am start -W -n <package>/<activity>
 
 Treat `force-stop` as a lifecycle mutation. It can affect services, panels,
 immersive state, and broker surfaces.
+
+## Managed Store Apps And Launcher Lifecycle
+
+Before validating Meta Horizon Store content on an organization-managed
+headset, identify Individual versus Shared Mode and the active Android
+user/profile. Individual Mode can expose the consumer Store when administrator
+policy permits it. Shared Mode uses a separate managed catalog and must not be
+treated as equivalent consumer-Store or paid-entitlement access.
+
+Read-only automation may resolve and inspect the Store package, effective user
+restrictions, and launcher component. Opening that component proves only that
+the Store Activity ran. The wearer must choose and buy a title, enter Store PIN
+or payment data, accept terms, and report that installation completed. Keep
+account identifiers, payment state, raw policy dumps, and package inventories
+private.
+
+When launcher behavior is under test, distinguish tasks from processes. A
+fresh target task can recreate the Activity and Spatial/OpenXR scene while
+Android retains the same Linux process. Background tasks are normal cached
+state; do not add shell, device-owner, or arbitrary force-stop authority merely
+for cleanup. Use an operator-authorized, serial-scoped `am force-stop` only for
+a named cold-process validation.
+
+Route the detailed public procedure to
+`meta-quest-agent-workflow/docs/managed-device-store-apps.md`.
 
 ## Accessibility Foreground Watchdogs
 
