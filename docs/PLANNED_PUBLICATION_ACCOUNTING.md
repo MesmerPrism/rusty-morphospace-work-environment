@@ -118,12 +118,21 @@ remote. Preserve that incident with the additive
 `published_prerequisite_suffix_reconciliation.v1` contract and the distinct
 `ReconcilePublishedPrerequisiteSuffix` action.
 
+When a second normal descendant commit corrects only the accounting receipt's
+full identity bindings, use the additive
+`published_prerequisite_suffix_reconciliation.v2` contract. V2 is bounded to
+exactly two named 40-hex commits in a gap-free first-parent chain from the
+execution-time planning final to current clean upstream-exact readback. Each
+commit may change only the same two receipt paths, and the final blobs must
+match the bound hashes. A third commit, abbreviation, duplicate, gap, merge,
+empty commit, unrelated path, or general planning correction rejects.
+
 The reconciliation revalidates the unchanged planned accounting and both
 bound receipt hashes. Its execution-time planning final is the exact parent of
 the current planning revision. The current local HEAD and upstream readback
 must equal that revision, the worktree must be clean, and the parent-exclusive
-range must contain exactly one nonempty commit whose complete changed-path set
-is exactly the bound executed-push receipt and planned-accounting receipt.
+range must contain exactly the declared nonempty commit count whose changed-
+path union is exactly the bound executed-push and planned-accounting receipts.
 Every declared source repository remains clean and upstream-exact at its
 executed revision. Branches, upstreams, unit, project, bundle, commit, tree,
 path, hash, and chronology bindings remain exact.

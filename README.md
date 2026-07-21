@@ -219,6 +219,9 @@ A no-force prerequisite suffix that was already published before
 planning commit containing exactly the bound executed-push and accounting
 receipt paths, with unchanged source refs; it does not broaden ordinary
 accounting or tolerate rewrites.
+The additive v2 form accepts only an exact two-commit linear suffix when the
+second commit corrects the accounting receipt and both commits remain confined
+to those same two receipt paths; all identities are full 40-hex revisions.
 A later force-with-lease replacement of a published planning-only finalization
 suffix uses the cardinality-bounded additive incident recovery documented in
 [`PLANNED_PUBLICATION_ACCOUNTING.md`](docs/PLANNED_PUBLICATION_ACCOUNTING.md);

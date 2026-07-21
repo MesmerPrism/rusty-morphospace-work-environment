@@ -150,7 +150,7 @@ plan; do not use `ReconcilePublication`.
 For a genuinely prepared publication, route closure through
 `RecordPublication` and `docs/PLANNED_PUBLICATION_ACCOUNTING.md`; require exact
 commit/unit accounting and treat the single external planning repository as
-transport only, never product or source authority. Route an already-published, no-force one-commit/two-receipt prerequisite suffix through that document's distinct `ReconcilePublishedPrerequisiteSuffix`; route a later force-with-lease suffix replacement through its two-common-path/one-delta-path incident recovery, never source history or drift.
+transport only, never product or source authority. Route an already-published, no-force receipt-only prerequisite suffix through `ReconcilePublishedPrerequisiteSuffix`: v1 is one commit and v2 is exactly two linear full-ID commits with only an accounting-receipt correction. Route a later force-with-lease suffix replacement through its two-common-path/one-delta-path incident recovery, never source history or drift.
 
 Treat a release as sealed commits and trees, not permanently frozen live
 branches. Require exact remote equality and convergence at the candidate cut;

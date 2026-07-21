@@ -140,9 +140,11 @@ accounting receipts as a clean local prerequisite suffix while its remote stays
 at the executed final revision; reject source ahead state, remote drift, dirt,
 divergence, stale bindings, and every unrelated suffix path.
 If that exact prerequisite suffix is already published, reconcile it only
-through a separate hash-bound contract: one no-force planning commit, exactly
-the two receipt paths, exact executed-parent/current readback, unchanged clean
-sources, and one pending-bundle consumption. This does not widen
+through a separate hash-bound contract: v1 allows one no-force planning commit;
+v2 allows exactly two linear full-ID commits when the second corrects only the
+accounting receipt. Both forms allow exactly the two receipt paths, exact
+executed-parent/current readback, unchanged clean sources, and one pending-
+bundle consumption. This does not widen
 `RecordPublication` or admit alternate history and rewrites.
 An immutable executed bundle followed by a separately accepted workflow
 correction may close only through intervening-accepted-publication recovery:
