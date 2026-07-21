@@ -1,5 +1,6 @@
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot 'MorphospacePlannedPublication.psm1')
 
 function Invoke-PublishedPrerequisiteGit([string]$Repo,[string[]]$Arguments,[string]$Context) {
     $output=@(& git -C $Repo @Arguments 2>&1); if($LASTEXITCODE-ne0){throw "$Context failed: $($output-join' ')"}; @($output)
