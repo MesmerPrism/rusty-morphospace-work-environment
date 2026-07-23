@@ -1336,7 +1336,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
                 }
                 if (@($sourceFaultMap.Keys).Count -ne @($sourceRepoIds).Count) { throw "Publication-ordering interruption contains an undeclared source repository." }
                 $workspacePrefix = $resolvedWorkspace.TrimEnd("\", "/") + [System.IO.Path]::DirectorySeparatorChar
-                $publicationOrderingInterruptionBinding = [pscustomobject][ordered]@{ path = $interruptionPath.Substring($workspacePrefix.Length).Replace("\", "/"); sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $interruptionPath).Hash.ToLowerInvariant(); kind = [string]$interruption.kind; early_planning_checkpoint_preserved = $true; source_publication_claimed = $false }
+                $publicationOrderingInterruptionBinding = [pscustomobject][ordered]@{ path = $interruptionPath.Substring($workspacePrefix.Length).Replace("\", "/"); sha256 = Get-MorphospaceFileSha256 $interruptionPath; kind = [string]$interruption.kind; early_planning_checkpoint_preserved = $true; source_publication_claimed = $false }
             }
             $pushRepos = New-Object System.Collections.Generic.List[object]
             foreach ($repoIdValue in $orderedRepoIds) {
