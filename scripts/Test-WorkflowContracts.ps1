@@ -1,6 +1,7 @@
 param(
     [string]$RepoRoot = "",
-    [string]$WorkspaceRoot = ""
+    [string]$WorkspaceRoot = "",
+    [switch]$SkipOwnerSelfTests
 )
 
 $ErrorActionPreference = "Stop"
@@ -1095,7 +1096,7 @@ $publicationRecoveryTemplate = Join-Path $templatesRoot "unplanned-publication-c
 $publicationRecoveryValidator = Join-Path $RepoRoot "scripts\Test-UnplannedPublicationClosure.ps1"
 Assert-Contract (Test-Path -LiteralPath $publicationRecoveryTemplate -PathType Leaf) "Required unplanned-publication closure example is missing."
 Assert-Contract (Test-Path -LiteralPath $publicationRecoveryValidator -PathType Leaf) "Required unplanned-publication closure validator is missing."
-if (Test-Path -LiteralPath $publicationRecoveryValidator -PathType Leaf) {
+if ((-not $SkipOwnerSelfTests) -and (Test-Path -LiteralPath $publicationRecoveryValidator -PathType Leaf)) {
     try {
         & $publicationRecoveryValidator -SelfTest | Out-Null
     } catch {
@@ -1107,7 +1108,7 @@ $plannedAccountingTemplate = Join-Path $templatesRoot "planned-publication-accou
 $plannedAccountingValidator = Join-Path $RepoRoot "scripts\Test-PlannedPublicationAccounting.ps1"
 Assert-Contract (Test-Path -LiteralPath $plannedAccountingTemplate -PathType Leaf) "Required planned-publication accounting example is missing."
 Assert-Contract (Test-Path -LiteralPath $plannedAccountingValidator -PathType Leaf) "Required planned-publication accounting validator is missing."
-if (Test-Path -LiteralPath $plannedAccountingValidator -PathType Leaf) {
+if ((-not $SkipOwnerSelfTests) -and (Test-Path -LiteralPath $plannedAccountingValidator -PathType Leaf)) {
     try { & $plannedAccountingValidator -SelfTest | Out-Null }
     catch { Add-Failure -Message "Planned-publication accounting self-test failed: $($_.Exception.Message)" }
 }
@@ -1116,7 +1117,7 @@ $publishedPrerequisiteTemplate = Join-Path $templatesRoot "published-prerequisit
 $publishedPrerequisiteValidator = Join-Path $RepoRoot "scripts\Test-PublishedPrerequisiteSuffixReconciliation.ps1"
 Assert-Contract (Test-Path -LiteralPath $publishedPrerequisiteTemplate -PathType Leaf) "Required published-prerequisite suffix reconciliation example is missing."
 Assert-Contract (Test-Path -LiteralPath $publishedPrerequisiteValidator -PathType Leaf) "Required published-prerequisite suffix reconciliation validator is missing."
-if (Test-Path -LiteralPath $publishedPrerequisiteValidator -PathType Leaf) {
+if ((-not $SkipOwnerSelfTests) -and (Test-Path -LiteralPath $publishedPrerequisiteValidator -PathType Leaf)) {
     try { & $publishedPrerequisiteValidator -SelfTest | Out-Null }
     catch { Add-Failure -Message "Published-prerequisite suffix reconciliation self-test failed: $($_.Exception.Message)" }
 }

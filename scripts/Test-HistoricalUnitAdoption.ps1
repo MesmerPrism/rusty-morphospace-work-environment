@@ -58,7 +58,7 @@ function Refresh-ReceiptReference($Root) {
 function Assert-Rejected($Root, [scriptblock]$Damage, $Name) {
     & $Damage
     $failed=$false
-    try { & $validator -RepoRoot $RepoRoot -WorkspaceRoot $Root *> $null } catch { $failed=$true }
+    try { & $validator -RepoRoot $RepoRoot -WorkspaceRoot $Root -SkipOwnerSelfTests *> $null } catch { $failed=$true }
     if(-not $failed){throw "Damaged historical adoption was accepted: $Name"}
 }
 
@@ -66,7 +66,7 @@ if (-not $SelfTest) { throw 'Test-HistoricalUnitAdoption.ps1 is a self-test; pas
 $base=Join-Path ([IO.Path]::GetTempPath()) ('morphospace-historical-adoption-'+[guid]::NewGuid().ToString('N'))
 try {
     New-Fixture $base
-    & $validator -RepoRoot $RepoRoot -WorkspaceRoot $base | Out-Null
+    & $validator -RepoRoot $RepoRoot -WorkspaceRoot $base -SkipOwnerSelfTests | Out-Null
     $cases=@('receipt-hash','unit-hash','missing-mapping','extra-mapping','invalid-target','missing-instruction-impact','extra-instruction-surface','instruction-action-drift','duplicate-unit','current-unit','terminal-event','current-network-kind')
     foreach($case in $cases){
         $root="$base-$case";Copy-Item $base $root -Recurse

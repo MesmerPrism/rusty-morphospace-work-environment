@@ -667,7 +667,7 @@ try {
         $safeRecovery = Invoke-MorphospaceWorkUnitAutomation -Action Recover -WorkspaceRoot $caseWorkspace -UnitId $case.unit -RepoMapPath $repoMapPath -RecoveryReceipt "receipts/$($case.unit)-$($case.kind)-recovery.json" -Timestamp $fixed -Execute
         Assert-Automation ($safeRecovery.transition -eq "restore-current-unit" -and [string]$safeRecovery.current_unit_after -eq [string]$case.unit) "$($case.kind) safe recovery"
         Assert-Automation ($safeRecovery.preservation.git_mutation_performed -eq $false -and $safeRecovery.preservation.device_mutation_performed -eq $false) "$($case.kind) recovery mutated external state"
-        & (Join-Path $PSScriptRoot "Test-WorkflowContracts.ps1") -RepoRoot $RepoRoot -WorkspaceRoot $caseWorkspace
+        & (Join-Path $PSScriptRoot "Test-WorkflowContracts.ps1") -RepoRoot $RepoRoot -WorkspaceRoot $caseWorkspace -SkipOwnerSelfTests
     }
 
     $supersessionWorkspace = New-TestWorkspace `
@@ -704,7 +704,7 @@ try {
     $supersessionState.next_ready_unit = $null
     $supersessionState.last_event_id = "old-unit-superseded-by-current-unit"
     Write-TestJson -Path $supersessionStatePath -Value $supersessionState
-    & (Join-Path $PSScriptRoot "Test-WorkflowContracts.ps1") -RepoRoot $RepoRoot -WorkspaceRoot $supersessionWorkspace
+    & (Join-Path $PSScriptRoot "Test-WorkflowContracts.ps1") -RepoRoot $RepoRoot -WorkspaceRoot $supersessionWorkspace -SkipOwnerSelfTests
 
     $supersessionEvent.event_type = "validation"
     [System.IO.File]::WriteAllText(
@@ -714,13 +714,13 @@ try {
     )
     $damagedSupersessionRejected = $false
     try {
-        & (Join-Path $PSScriptRoot "Test-WorkflowContracts.ps1") -RepoRoot $RepoRoot -WorkspaceRoot $supersessionWorkspace
+        & (Join-Path $PSScriptRoot "Test-WorkflowContracts.ps1") -RepoRoot $RepoRoot -WorkspaceRoot $supersessionWorkspace -SkipOwnerSelfTests
     } catch {
         $damagedSupersessionRejected = $_.Exception.Message -like "Workflow contract validation failed*"
     }
     Assert-Automation $damagedSupersessionRejected "supersession accepted a non-state-transition event"
 
-    & (Join-Path $PSScriptRoot "Test-WorkflowContracts.ps1") -RepoRoot $RepoRoot -WorkspaceRoot $recoveryWorkspace
+    & (Join-Path $PSScriptRoot "Test-WorkflowContracts.ps1") -RepoRoot $RepoRoot -WorkspaceRoot $recoveryWorkspace -SkipOwnerSelfTests
     Write-Host "Work-unit automation self-test passed."
 } finally {
     if (Test-Path -LiteralPath $testRoot) {
