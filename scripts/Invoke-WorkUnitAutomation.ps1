@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("Inspect", "Ready", "Claim", "Resume", "BeginValidation", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "Recover")]
+    [ValidateSet("Inspect", "Ready", "Claim", "Resume", "BeginValidation", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RecordPublication", "Recover", "ReconcilePublication", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix")]
     [string]$Action,
     [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
     [string]$UnitId = "",
@@ -9,6 +9,11 @@ param(
     [ValidateSet("pass", "partial", "fail", "blocked")][string]$ValidationResult = "pass",
     [string]$ValidationReceipt = "",
     [string]$RecoveryReceipt = "",
+    [string]$PublicationClosure = "",
+    [string]$PublicationAccounting = "",
+    [string]$PlanningSuffixRewriteRecovery = "",
+    [string]$PublishedPrerequisiteSuffixReconciliation = "",
+    [string]$PublicationOrderingInterruption = "",
     [string]$AdoptionReceipt = "",
     [ValidateSet("quick", "standard", "deep")][string]$ValidationTier = "standard",
     [string[]]$DeviceSerials = @(),
@@ -31,6 +36,11 @@ $arguments = @{
     ValidationResult = $ValidationResult
     ValidationReceipt = $ValidationReceipt
     RecoveryReceipt = $RecoveryReceipt
+    PublicationClosure = $PublicationClosure
+    PublicationAccounting = $PublicationAccounting
+    PlanningSuffixRewriteRecovery = $PlanningSuffixRewriteRecovery
+    PublishedPrerequisiteSuffixReconciliation = $PublishedPrerequisiteSuffixReconciliation
+    PublicationOrderingInterruption = $PublicationOrderingInterruption
     AdoptionReceipt = $AdoptionReceipt
     ValidationTier = $ValidationTier
     DeviceSerials = $DeviceSerials

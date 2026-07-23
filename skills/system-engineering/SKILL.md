@@ -5,6 +5,11 @@ description: 'Use for architecture and system-engineering work across local repo
 
 # System Engineering
 
+An unchanged declared publication leg may use synchronized-readback accounting
+only with four equal revisions, executed `readback-only`, zero commits, clean
+bound identity/order, and an explicit no-acceptance claim. It never relaxes
+changed-repository enumeration.
+
 Use this skill for architecture and system-engineering work across Rusty
 Morphospace repos: authority boundaries, contracts, manifests, module/plugin
 boundaries, data/control/media planes, observability, validation scorecards,
@@ -84,6 +89,9 @@ from the unit, keep acceptance separate from a pass receipt, preserve blockers
 through resume/recovery, and report dirty, detached, ahead/behind, or divergent
 Git states without rewriting them. Push preparation records exact source-first,
 planning-last revisions but does not commit, push, or force-push.
+An early planning checkpoint with every source still unpublished may be bound
+only through a publication-ordering interruption receipt in a fresh plan; exact
+live ancestry must match and the plan claims no corrected order or publication.
 The proposed-to-ready review is also an owned transition: use `Ready` to verify
 accepted prerequisites, preserve the unit envelope, append the event, and
 derive the claimable queue instead of hand-editing status/state/history.
@@ -114,6 +122,48 @@ observed remote revisions, ancestry and validation references, no-force proof,
 planning last, and reverse-order rollback anchors. A prepared plan is never
 execution evidence, and the work-unit automation must not manufacture this
 receipt.
+For a branch-scoped pre-push guard, identify the protected update from Git's
+remote destination ref and resolve an explicit local selector such as `HEAD`
+to the exact attached protected branch revision before plan validation.
+Deletion, detachment, branch/SHA mismatch, malformed input, and duplicate
+protected updates reject.
+Close that prepared publication only through hash-bound
+`planned_publication_accounting.v1`: enumerate exact commits and unit status,
+restrict the one planning suffix to explicit workflow transport paths, and let
+`RecordPublication` clear only the matching bundle after live clean readback.
+If that planning-only suffix was later replaced with force-with-lease, use the
+additive incident contract binding exactly two common parent-relative paths,
+one replacement delta path, both trees, and unchanged source refs; do not
+relabel the original no-force execution or weaken ordinary accounting.
+The live planning checkout may carry only the exact bound executed-push and
+accounting receipts as a clean local prerequisite suffix while its remote stays
+at the executed final revision; reject source ahead state, remote drift, dirt,
+divergence, stale bindings, and every unrelated suffix path.
+If that exact prerequisite suffix is already published, reconcile it only
+through a separate hash-bound contract: v1 allows one no-force planning commit;
+v2 allows exactly two linear full-ID commits when the second corrects only the
+accounting receipt. Both forms allow exactly the two receipt paths, exact
+executed-parent/current readback, unchanged clean sources, and one pending-
+bundle consumption. This does not widen
+`RecordPublication` or admit alternate history and rewrites.
+An immutable executed bundle followed by a separately accepted workflow
+correction may close only through intervening-accepted-publication recovery:
+bind execution-time/current finals, exact fast-forward commits and paths,
+accepted/pass evidence, narrow planning evidence roles, and source-first /
+planning-last chronology. Never infer mutation from the old readback-only leg
+or treat the recovery as generic remote drift.
+Only this recovered shape may use an accounting-only local prerequisite when
+the bound executed path/hash occurs exactly once in enumerated intervening
+planning evidence; ordinary accounting still requires both evidence paths.
+When the plan or event is embedded in owner evidence, bind the immutable
+container and named member plus transition intent/completion linkage; do not
+reconstruct a standalone artifact and claim equivalent provenance.
+Keep mutable project state in one distinct external planning repository and
+require its ref as the final prepared suffix. If a real source push preceded
+preparation, preserve it only through an independently observed
+`unplanned_publication_closure.v1`; `ReconcilePublication` may repair the
+planning projection but cannot create a retrospective plan, executed receipt,
+Git mutation, or source-authority claim.
 
 Separate release-candidate cut from historical closure. Seal exact commits and
 trees while declared refs are equal; later require ancestor-or-equal refs and
@@ -249,6 +299,13 @@ Treat work-environment `0.1.0` as the first versioned workflow baseline.
 Schema or state-machine evolution must be additive or ship an explicit
 migration, compatibility window, rollback, and accepted-history preservation
 rule.
+
+When a terminal historical unit uses retired workflow vocabulary, require a
+project-owned receipt binding exact bytes, status, terminal evidence, and
+complete normalization into current portable semantics. Never use that route
+for current work or expand registries merely to silence history. A historical
+instruction mismatch additionally binds the exact legacy impact and every
+affected surface path/action; it is not an ambient instruction-sync bypass.
 
 For direct networking, separate topology formation, platform network
 observation, socket ownership, protocol exchange, and cleanup into provider

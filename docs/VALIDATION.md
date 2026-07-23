@@ -9,21 +9,11 @@ emit the migration guidance from that check.
 
 ## Work Environment Repo
 
-Quick checks:
+Quick checkpoint:
 
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-PowerShellHost.ps1 -SelfTest
-pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-PublicBoundary.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkEnvironment.ps1 -SelfTest -Tier Quick
-pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkflowContracts.ps1
-pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\New-ProjectWorkspace.ps1 -SelfTest
-pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-DocumentationLinks.ps1
-pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-SkillTemplates.ps1
-pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-EnvironmentValidation.ps1
-pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-LocalSkillBootstrap.ps1
-pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-FeatureLockResolver.ps1
-pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ProjectIsolation.ps1
-pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ExecutedPushReceipt.ps1 -SelfTest
 git diff --check
 ```
 
@@ -31,6 +21,22 @@ git diff --check
 `Standard` additionally runs the work-unit automation suite. `Deep` adds the
 closed-room validation-authority suites. A device is not part of any of these
 tiers.
+
+During an edit loop, run only the focused owner test for the touched surface,
+for example:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkflowContracts.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-PlannedPublicationAccounting.ps1 -SelfTest
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-PublishedPrerequisiteSuffixReconciliation.ps1 -SelfTest
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\New-ProjectWorkspace.ps1 -SelfTest
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-DocumentationLinks.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-SkillTemplates.ps1
+```
+
+Do not append all focused commands to every aggregate run. The aggregate owns
+each expensive owner self-test once; nested temporary workspaces run structural
+contract validation without recursively re-running unrelated owner suites.
 
 Validate a configured contributor machine separately:
 
@@ -133,6 +139,24 @@ order, exactly one planning ref last, full old/new/readback revisions, exact
 remote equality, fast-forward ancestry, no force push, passing referenced
 validation gates, and rollback points that exactly reverse execution order.
 It does not execute Git or contact a remote.
+
+## Unplanned Publication Recovery
+
+Validate the additive recovery contract with:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\Test-UnplannedPublicationClosure.ps1 `
+  -Path <planning-workspace>\receipts\<closure>.json `
+  -WorkspaceRoot <planning-workspace> `
+  -RepoMapPath <local-repository-map>
+```
+
+The validator requires a hash-bound pre-recovery workspace, passing validation
+evidence, a clean synchronized source ref, exact old/new/readback and rollback
+revisions, verified fast-forward ancestry, no force push, and an external
+observer. Its self-test proves evidence tampering rejects. The recovery action
+changes workflow state only and never performs Git.
 
 ## Source Repos
 

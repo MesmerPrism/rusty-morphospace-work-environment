@@ -209,7 +209,8 @@ if ($SelfTest) {
         }
 
     try {
-        & (Join-Path $RepoRoot "scripts\Test-WorkflowContracts.ps1") -RepoRoot $RepoRoot
+        & (Join-Path $RepoRoot "scripts\Test-WorkflowContracts.ps1") -RepoRoot $RepoRoot -SkipOwnerSelfTests
+        & (Join-Path $RepoRoot "scripts\Test-HistoricalUnitAdoption.ps1") -SelfTest
         Add-CheckResult -Name "workflow:contracts" -Status "ok" -Detail "Validated lifecycle, schemas, and examples."
     } catch {
         Add-CheckResult -Name "workflow:contracts" -Status "missing" -Required $true -Detail $_.Exception.Message
@@ -220,6 +221,27 @@ if ($SelfTest) {
         Add-CheckResult -Name "workflow:executed-push-receipt" -Status "ok" -Detail "Validated exact readback, ordering, ancestry, validation, force-push, and rollback invariants."
     } catch {
         Add-CheckResult -Name "workflow:executed-push-receipt" -Status "missing" -Required $true -Detail $_.Exception.Message
+    }
+
+    try {
+        & (Join-Path $RepoRoot "scripts\Test-PlannedPublicationAccounting.ps1") -SelfTest
+        Add-CheckResult -Name "workflow:planned-publication-accounting" -Status "ok" -Detail "Validated commit/unit accounting, carried-unit non-acceptance, chronology, planning suffix, no-force, and readback invariants."
+    } catch {
+        Add-CheckResult -Name "workflow:planned-publication-accounting" -Status "missing" -Required $true -Detail $_.Exception.Message
+    }
+
+    try {
+        & (Join-Path $RepoRoot "scripts\Test-UnplannedPublicationClosure.ps1") -SelfTest
+        Add-CheckResult -Name "workflow:unplanned-publication-closure" -Status "ok" -Detail "Validated truthful recovery for an already-published source without a retrospective push plan."
+    } catch {
+        Add-CheckResult -Name "workflow:unplanned-publication-closure" -Status "missing" -Required $true -Detail $_.Exception.Message
+    }
+
+    try {
+        & (Join-Path $RepoRoot "scripts\Test-PublishedPrerequisiteSuffixReconciliation.ps1") -SelfTest
+        Add-CheckResult -Name "workflow:published-prerequisite-suffix" -Status "ok" -Detail "Validated bounded one- and two-commit planning suffix reconciliation and damaged-case rejection."
+    } catch {
+        Add-CheckResult -Name "workflow:published-prerequisite-suffix" -Status "missing" -Required $true -Detail $_.Exception.Message
     }
 
     try {

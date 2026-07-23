@@ -1,0 +1,40 @@
+{
+  "schema": "rusty.morphospace.work_environment.release.v1",
+  "version": "0.6.0",
+  "released_at": "2026-07-23",
+  "publication_status": "published",
+  "compatibility": "additive-publication-accounting-and-historical-adoption-with-v1-and-v2-workspace-read-compatibility",
+  "protocols": [
+    "rusty.morphospace.workflow.historical_unit_adoption_receipt.v1",
+    "rusty.morphospace.workflow.unplanned_publication_closure.v1",
+    "rusty.morphospace.workflow.planned_publication_accounting.v1",
+    "rusty.morphospace.workflow.publication_ordering_interruption.v1",
+    "rusty.morphospace.workflow.planning_suffix_rewrite_recovery.v1",
+    "rusty.morphospace.workflow.published_prerequisite_suffix_reconciliation.v1",
+    "rusty.morphospace.workflow.published_prerequisite_suffix_reconciliation.v2",
+    "rusty.morphospace.workflow.push_bundle_plan.v1",
+    "rusty.morphospace.workflow.work_unit_automation_receipt.v1"
+  ],
+  "invariants": [
+    "Version 0.6.0 identifies the portable work-environment protocol and tooling release; it does not change the separately governed Rusty Morphospace platform/runtime baseline.",
+    "Historical adoption preserves immutable terminal unit and event bytes, binds exact hashes, and records every normalization needed by current closed registries without weakening current or future validation.",
+    "A planned publication enumerates every published commit and unit, preserves non-acceptance for carried blocked work, proves source-first and planning-last order, and requires clean exact remote readback without force push.",
+    "A synchronized readback-only source leg is valid only when its revisions are equal, its commit range is empty, its bound branch and upstream match, and it makes an explicit no-acceptance claim.",
+    "An unplanned source publication is preserved through a truthful closure receipt and is never reconstructed as a retrospective push plan or relabeled as an executed-push receipt.",
+    "An early planning-only publication ordering interruption records the fault and claims neither source publication nor corrected planning-last chronology.",
+    "Published prerequisite reconciliation is confined to an exact one- or two-commit linear planning suffix and the bound receipt paths; unrelated files, source rewrites, or unbounded suffixes reject.",
+    "A separately accepted correction after immutable publication is represented by bounded additive recovery with complete commit and path attribution, not by drift tolerance.",
+    "Explicit protected-branch guards resolve symbolic local sources to the attached protected branch and reject deletion, detachment, ambiguity, or a mismatched destination.",
+    "Production aliases normalize into closed portable categories without collisions, unknown targets, or rewriting accepted historical artifacts.",
+    "Quest Accessibility foreground watchdogs remain opt-in diagnostics; they do not claim HOME ownership, device-owner authority, lock task, or managed kiosk lifecycle.",
+    "Aggregate validation executes expensive owner self-tests once per gate while nested fixtures retain structural validation and damaged-case rejection.",
+    "Existing v1 and v2 project, workspace, event, promotion, and release artifacts remain readable and are not rewritten."
+  ],
+  "historical_adoption_entrypoint": "docs/HISTORICAL_UNIT_ADOPTION.md",
+  "planned_publication_entrypoint": "docs/PLANNED_PUBLICATION_ACCOUNTING.md",
+  "automation_entrypoint": "scripts/Invoke-WorkUnitAutomation.ps1",
+  "protected_branch_guard_entrypoint": "scripts/Invoke-ProtectedBranchPushGuard.ps1",
+  "aggregate_validation_entrypoint": "scripts/Test-WorkEnvironment.ps1 -SelfTest -Tier Quick",
+  "deep_validation_entrypoint": "scripts/Test-WorkEnvironment.ps1 -SelfTest -Tier Deep",
+  "license": "AGPL-3.0-or-later"
+}

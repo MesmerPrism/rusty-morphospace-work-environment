@@ -1,0 +1,41 @@
+{
+  "$schema": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/planned-publication-accounting-receipt.schema.json",
+  "schema": "rusty.morphospace.workflow.planned_publication_accounting.v1",
+  "accounting_id": "unit-alpha-publication-accounting",
+  "project_id": "example-project",
+  "bundle_id": "unit-alpha-push-bundle",
+  "trigger_unit_id": "unit-alpha",
+  "prepared_plan": { "container": { "path": "receipts/unit-alpha-prepare-push.json", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }, "member": "push_plan" },
+  "prepared_event": {
+    "transaction_id": "unit-alpha-push-prepared-0001-transition",
+    "event_id": "unit-alpha-push-prepared-0001",
+    "intent": { "path": "receipts/transactions/unit-alpha-push-prepared-0001-transition.intent.json", "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
+    "completion": { "path": "receipts/transactions/unit-alpha-push-prepared-0001-transition.completion.json", "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" }
+  },
+  "executed_push_receipt": { "path": "receipts/unit-alpha-executed-push.json", "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" },
+  "chronology": { "prepared_at": "2026-07-17T10:00:00Z", "push_started_at": "2026-07-17T10:01:00Z", "push_finished_at": "2026-07-17T10:02:00Z", "accounted_at": "2026-07-17T10:03:00Z" },
+  "dependency_order": ["source-repo", "planning-repo"],
+  "execution_order": ["source-repo", "planning-repo"],
+  "repositories": [
+    {
+      "repo_id": "source-repo", "role": "source", "branch": "codex/example", "upstream": "origin/codex/example",
+      "old_revision": "1111111111111111111111111111111111111111", "prepared_revision": "2222222222222222222222222222222222222222", "final_revision": "2222222222222222222222222222222222222222", "remote_readback_revision": "2222222222222222222222222222222222222222",
+      "source_first": true, "planning_last": false, "fast_forward_verified": true, "force_push_used": false, "worktree_clean": true,
+      "units": [{ "unit_id": "unit-alpha", "role": "triggering-unit", "status_at_publication": "accepted", "status_evidence": { "path": "iteration-units/unit-alpha.json", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" }, "no_acceptance_claim": false }],
+      "commits": [{ "revision": "2222222222222222222222222222222222222222", "role": "triggering-unit", "unit_id": "unit-alpha", "changed_paths": ["src/example.rs"] }],
+      "allowed_finalization_paths": []
+    },
+    {
+      "repo_id": "planning-repo", "role": "planning-transport", "branch": "codex/example-planning", "upstream": "origin/codex/example-planning",
+      "old_revision": "3333333333333333333333333333333333333333", "prepared_revision": "4444444444444444444444444444444444444444", "final_revision": "5555555555555555555555555555555555555555", "remote_readback_revision": "5555555555555555555555555555555555555555",
+      "source_first": false, "planning_last": true, "fast_forward_verified": true, "force_push_used": false, "worktree_clean": true,
+      "units": [{ "unit_id": "unit-alpha", "role": "triggering-unit", "status_at_publication": "accepted", "status_evidence": { "path": "iteration-units/unit-alpha.json", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" }, "no_acceptance_claim": false }],
+      "commits": [{ "revision": "4444444444444444444444444444444444444444", "role": "triggering-unit", "unit_id": "unit-alpha", "changed_paths": ["morphospace/workspace.state.json"] }, { "revision": "5555555555555555555555555555555555555555", "role": "workflow-publication-finalization", "unit_id": null, "changed_paths": ["morphospace/receipts/executed-push.json"] }],
+      "allowed_finalization_paths": ["morphospace/receipts/"]
+    }
+  ],
+  "workspace_transition": { "pending_push_bundle_before": "unit-alpha-push-bundle", "pending_push_bundle_after": null },
+  "force_push_used": false,
+  "remote_readback_complete": true,
+  "failure": null
+}

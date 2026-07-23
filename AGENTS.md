@@ -1,5 +1,24 @@
 # Agent Notes
 
+Production declaration vocabulary is accepted only through the versioned
+`change_category_aliases` mapping in the lifecycle manifest. Aliases must map
+one-to-one to existing canonical categories and inherit their instruction and
+skill routing; they never relabel accepted historical evidence.
+
+Publication accounting may represent an unchanged declared repository only
+through exact synchronized readback: equal revisions, executed
+`readback-only`, clean state, zero commits, bound identity/order/status, and an
+explicit no-acceptance claim. Never use it for a changed repository.
+An already executed synchronized-readback bundle may advance only through the
+additive intervening-accepted-publication recovery: exact execution-time and
+current revisions, fast-forward commits/paths, accepted/pass evidence, narrow
+planning evidence roles, clean no-force readback, and source-first/planning-
+last chronology. This is not general remote-drift tolerance.
+Only that recovered shape may use an accounting-only local prerequisite suffix,
+and only when exact bound executed evidence is already present once in its
+enumerated intervening planning history. Normal accounting still requires both
+prerequisite evidence paths.
+
 This repository is intended to be public and portable. Keep committed content
 free of local machine paths, private repository names, device serials, package
 identities, generated APKs, screenshots, logs, pairing material, signing keys,
@@ -70,6 +89,13 @@ The work-environment repo owns portable schemas, examples, and validators. A
 project owns its instantiated `morphospace/` directory. Do not copy live state,
 private evidence, or machine paths back into this repository.
 
+Immutable accepted or blocked units may retain legacy workflow vocabulary only
+through a project-owned hash-bound historical-unit adoption receipt. Current
+and future units remain strict. Exact legacy instruction-impact and surface-
+action mismatches use the same complete, path-bound adoption contract; they are
+not an instruction-sync exemption. Route the complete contract to
+`docs/HISTORICAL_UNIT_ADOPTION.md`; never rewrite historical unit or event bytes.
+
 Portable composition and iteration IDs have one 2-through-128-character
 lowercase alphanumeric/hyphen domain across their schemas and validators.
 Changes to that domain require passing boundary coverage at 64, 65, 128, and
@@ -114,6 +140,10 @@ in runner variables or typed reference wrappers, never injected properties.
   app shells or Quest workflow, not generic core crates.
 - Termux is a normal Android sidecar. It can use an already authorized ADB
   endpoint, but it is not shell authority by itself.
+- Accessibility may provide a privacy-minimized top-level window-transition
+  signal for an attended foreground watchdog. It does not own HOME, intercept
+  the physical Meta button, or provide kiosk/device-owner authority; keep the
+  detailed and version-sensitive recipe in `meta-quest-agent-workflow`.
 - Android properties, JSON profiles, and hotload files are low-rate control
   surfaces. Do not route high-rate camera frames, meshes, particles, depth
   maps, or GPU buffers through them.
@@ -189,6 +219,44 @@ in runner variables or typed reference wrappers, never injected properties.
   no-force proof, and reverse-order rollback anchors. A release may additionally
   bind the pre-publication capture that supplied every old revision; multiple
   planning refs must form the final execution suffix.
+- Protected-branch pre-push guards match Git's remote destination ref and
+  resolve any explicit local selector to the exact attached protected branch
+  revision before prepared-plan validation; deletion, detachment, mismatch,
+  malformed input, and duplicate protected updates fail closed.
+- `PreparePush` requires one distinct external planning repository containing
+  the active project workspace. A source-only same-ref workspace may not claim
+  planning-last closure. If a push preceded preparation, preserve chronology
+  with `unplanned_publication_closure.v1` and the workflow-only
+  `ReconcilePublication` transition; never fabricate a plan or mutate Git from
+  recovery.
+- If planning alone published early while every source remains unpublished,
+  preserve the fault through `publication_ordering_interruption.v1` and create
+  a fresh exact-ref plan; never claim that checkpoint was planning-last.
+- A planned publication closes only through `RecordPublication` with a
+  validated `planned_publication_accounting.v1`. It must enumerate the exact
+  old-exclusive/final-inclusive commit sequence and carried-unit status, allow
+  only one explicit planning-transport suffix, and clear only the matching
+  bundle after clean no-force readback. See
+  `docs/PLANNED_PUBLICATION_ACCOUNTING.md`.
+  Prepared provenance may bind standalone files or the exact `push_plan`
+  member and transition-ledger event inside hash-bound owner containers; never
+  reconstruct those members outside their immutable evidence containers.
+  Live closure remains remote-exact except for the documented clean planning-
+  only prerequisite suffix containing exactly the bound executed-push and
+  accounting receipts; source ahead state and every unrelated path reject.
+- If the receipt-only prerequisite suffix was already published without force
+  before `RecordPublication`, use only `ReconcilePublishedPrerequisiteSuffix`:
+  v1 admits one exact commit, while v2 admits exactly two linear full-ID commits
+  when the second corrects only the accounting receipt. Bind the unchanged
+  planned accounting and final receipt hashes, exact parent/current refs, clean
+  unchanged sources, and no-force history; never admit other counts, paths,
+  gaps, merges, abbreviations, duplicates, drift, or rewrites.
+- A later force-with-lease replacement of an already published planning-only
+  finalization suffix uses only the additive
+  `planning_suffix_rewrite_recovery.v1` incident route. Bind both commits and
+  trees, the common prepared parent, exactly two common parent-relative paths,
+  exactly one replacement-delta path, current readback, and unchanged source
+  refs; never route source rewrites or ordinary accounting through it.
 - Seal a coordinated release with `release_capsule.v1`: exact remote equality
   and branch convergence belong to the candidate cut, while later historical
   closure requires ancestor-or-equal remote refs and an isolated exact clean
@@ -223,6 +291,11 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ExecutedPushReceipt
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ReleaseCapsule.ps1 -SelfTest
 git diff --check
 ```
+
+Multi-accepted publication accounting retains one prepared trigger. Additional
+accepted units already in the immutable executed range use only the exact
+partition documented in `docs/PLANNED_PUBLICATION_ACCOUNTING.md`; never relabel
+the trigger or weaken blocked carried-unit rules.
 
 If docs or manifests change, also parse JSON files:
 

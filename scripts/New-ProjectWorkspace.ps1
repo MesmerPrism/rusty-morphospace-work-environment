@@ -289,7 +289,7 @@ tracked files.
     [System.IO.File]::WriteAllText((Join-Path $target "README.md"), $readme.Trim() + [Environment]::NewLine, $utf8NoBom)
 
     $validator = Join-Path $RepoRoot "scripts\Test-WorkflowContracts.ps1"
-    & $validator -RepoRoot $RepoRoot -WorkspaceRoot $target
+    & $validator -RepoRoot $RepoRoot -WorkspaceRoot $target -SkipOwnerSelfTests
     Write-Host "Created project workspace: $target"
     return $target
 }

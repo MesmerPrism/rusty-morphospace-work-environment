@@ -31,11 +31,22 @@ Every unit declares:
   status, validation, and a skill ID when the surface is a skill;
 - `instruction_none_justification` when impact is `none`.
 
+Surface kinds distinguish concise entrypoints (`agents`, `readme`, and
+`router-doc`), detailed validation routing (`validation-doc`), and installed or
+portable skills (`skill`). A validation document does not substitute for the
+required README or router entrypoint.
+
 Changes to authority, module layout, feature activation, validation, device
 policy, repo routing, or public/private boundaries require `update`. Before
 such a unit can become `accepted`, the nearest repo `AGENTS.md`, a README or
 router doc, and every relevant skill named by the synchronization matrix must
 have complete update records.
+
+Immutable accepted or blocked units whose formerly valid instruction metadata
+predates these rules may be projected through the exact hash-bound historical-
+unit adoption contract. That projection must enumerate every mismatched impact
+and surface action and does not relax synchronization for any current or future
+unit. See [Historical Iteration-Unit Adoption](HISTORICAL_UNIT_ADOPTION.md).
 
 ## Cadence
 

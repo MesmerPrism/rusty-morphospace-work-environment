@@ -66,13 +66,25 @@ observed, claimed, validated, and accepted revisions distinct.
 - `promotion-reviews/` holds gate decisions for module maturity changes.
 - `receipts/` holds structured validation, non-executing push plans, and
   externally produced executed-push receipts. A plan never substitutes for
-  exact remote readback.
+  exact remote readback. An independently reconstructed
+  `unplanned_publication_closure.v1` may repair workflow projection only when a
+  real no-force push preceded preparation; it cannot impersonate either a
+  prepared plan or an executed-push receipt.
+  A later force-with-lease replacement of an already published planning-only
+  finalization suffix uses `planning_suffix_rewrite_recovery.v1`; it preserves
+  the original prepared/no-force evidence and cannot authorize source rewrite.
 - `source-compositions/` holds exact multi-repository commit/tree locks. Use a
   detached materialization when active working copies are changing in
   parallel.
 
 Generated APKs, logs, screenshots, traces, pairing material, private payloads,
 and tool caches do not belong in this directory.
+
+An existing terminal unit may be normalized without mutation through a
+hash-bound receipt listed by compact state under
+`historical_unit_adoption_receipts`. See
+[Historical Iteration-Unit Adoption](HISTORICAL_UNIT_ADOPTION.md). This route
+is unavailable to current or future units.
 
 ## Project And Module Firewall
 
@@ -189,6 +201,12 @@ traversing, or out-of-project descriptor paths.
 8. Inspect Git status for every repository in the current unit before editing.
 
 This keeps resume context small while preserving a durable audit trail.
+
+Keep the mutable project workspace in a distinct planning repository when its
+source repositories are independently published. The local repository map may
+route that planning checkout without adding workstation paths to portable
+project files. Source refs publish first; the planning ref containing state and
+plans publishes last.
 
 The optional automation CLI described in
 [Autonomous Iteration](AUTONOMOUS_ITERATION.md) can produce the same bounded

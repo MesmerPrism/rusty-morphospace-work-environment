@@ -76,7 +76,7 @@
           "skill_id"
         ],
         "properties": {
-          "surface_kind": { "enum": ["agents", "readme", "router-doc", "skill"] },
+          "surface_kind": { "enum": ["agents", "readme", "router-doc", "validation-doc", "skill"] },
           "path": { "type": "string", "minLength": 1 },
           "owner": { "type": "string", "minLength": 1 },
           "change_reason": { "type": "string", "minLength": 1 },

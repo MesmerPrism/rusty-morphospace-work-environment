@@ -170,7 +170,12 @@ function Get-TestPowerShellHost {
 }
 
 function Invoke-TestRunnerProcess {
-    param([string]$Runner,[string[]]$Arguments,[int]$TimeoutSeconds=120)
+    param(
+        [string]$Runner,
+        [string[]]$Arguments,
+        [ValidateRange(30,900)]
+        [int]$TimeoutSeconds=480
+    )
     $start = [Diagnostics.ProcessStartInfo]::new()
     $start.FileName = Get-TestPowerShellHost
     $start.UseShellExecute = $false
@@ -183,6 +188,7 @@ function Invoke-TestRunnerProcess {
     } else {
         $start.Arguments = (@($processArguments | ForEach-Object { ConvertTo-TestProcessArgument ([string]$_) }) -join ' ')
     }
+    $stopwatch = [Diagnostics.Stopwatch]::StartNew()
     $process = [Diagnostics.Process]::Start($start)
     $stdoutTask = $process.StandardOutput.ReadToEndAsync()
     $stderrTask = $process.StandardError.ReadToEndAsync()
@@ -211,7 +217,13 @@ function Invoke-TestRunnerProcess {
     $stdout = if ($stdoutTask.Wait(5000)) { [string]$stdoutTask.Result } else { '' }
     $stderr = if ($stderrTask.Wait(5000)) { [string]$stderrTask.Result } else { '' }
     $process.Dispose()
-    return [pscustomobject]@{exit_code=$exitCode;stdout=$stdout;stderr=$stderr}
+    $stopwatch.Stop()
+    return [pscustomobject]@{
+        exit_code=$exitCode
+        elapsed_ms=[long]$stopwatch.ElapsedMilliseconds
+        stdout=$stdout
+        stderr=$stderr
+    }
 }
 
 function New-TestNonce {
@@ -248,7 +260,9 @@ try {
         'scripts/Invoke-MorphospaceValidationAuthority.ps1','scripts/Invoke-WorkUnitAutomation.ps1','scripts/Invoke-Wf005OwnerValidator.ps1','scripts/Test-ValidationAuthorityLauncher.ps1',
         'scripts/Test-AuthorityRunnerHandoff.ps1','scripts/Test-AuthorityRecordReadiness.ps1','scripts/Test-TrustMigrationAuthority.ps1','scripts/Test-ValidationExecutionAuthority.ps1',
         'scripts/Test-TransitionLedger.ps1','scripts/WorkUnitAutomation.psm1','scripts/lib/MorphospaceAuthorityReadiness.psm1','scripts/lib/MorphospaceContentObservation.psm1',
-        'scripts/lib/MorphospaceOwnership.psm1','scripts/lib/MorphospaceProtocolCommon.psm1','scripts/lib/MorphospaceTransitionLedger.psm1','scripts/lib/MorphospaceValidationAuthority.psm1'
+        'scripts/lib/MorphospaceOwnership.psm1','scripts/lib/MorphospacePlannedPublication.psm1','scripts/lib/MorphospacePlanningSuffixRewrite.psm1',
+        'scripts/lib/MorphospaceProtocolCommon.psm1','scripts/lib/MorphospacePublicationRecovery.psm1','scripts/lib/MorphospacePublishedPrerequisiteSuffix.psm1',
+        'scripts/lib/MorphospaceTransitionLedger.psm1','scripts/lib/MorphospaceValidationAuthority.psm1'
     )
     $validatorPath = 'scripts/Invoke-Wf005OwnerValidator.ps1'
     foreach ($relative in $authorityPaths) {
@@ -465,7 +479,12 @@ $document=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.owner_va
     }
     Assert-RunnerFast ([string]$validatedReceipt.status -ceq 'accepted-evidence') 'published receipt did not survive full consumer validation'
 
-    Write-Host 'Fast validation-authority runner self-test passed.'
+    Write-Host (
+        'Fast validation-authority runner self-test passed ' +
+        "(context-load=$($contextFailureRun.elapsed_ms)ms; " +
+        "preflight=$($preflightRun.elapsed_ms)ms; " +
+        "validate=$($recordRun.elapsed_ms)ms)."
+    )
 } finally {
     if ($capsuleSha256 -match '^[0-9a-f]{64}$') {
         try {

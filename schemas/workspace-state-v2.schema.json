@@ -81,9 +81,21 @@
       "type": "object", "additionalProperties": false, "required": ["bundle_id", "unit_ids", "repo_ids", "ready"],
       "properties": {
         "bundle_id": { "$ref": "#/$defs/id" }, "unit_ids": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/id" } },
-        "repo_ids": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/id" } }, "ready": { "type": "boolean" }
+        "repo_ids": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/id" } },
+        "planning_transport_repo_id": { "$ref": "#/$defs/id" }, "ready": { "type": "boolean" }
       }
-    }] }
+    }] },
+    "historical_unit_adoption_receipts": {
+      "type": "array", "uniqueItems": true,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["path", "sha256"],
+        "properties": {
+          "path": { "type": "string", "pattern": "^receipts/[a-z0-9][a-z0-9-]{1,127}\\.json$" },
+          "sha256": { "$ref": "#/$defs/hash" }
+        }
+      }
+    }
   },
   "$defs": {
     "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" },

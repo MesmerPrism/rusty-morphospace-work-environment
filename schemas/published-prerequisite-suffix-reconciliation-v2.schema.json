@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/published-prerequisite-suffix-reconciliation-v2.schema.json",
+  "title": "Bounded published prerequisite suffix reconciliation v2",
+  "description": "Additive accounting evidence for exactly two linear, already-published, no-force planning commits whose union changes only the bound executed-push and planned-publication-accounting receipts.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema","reconciliation_id","project_id","bundle_id","trigger_unit_id","planned_publication_accounting","planning_repository","source_repositories","publication","workspace_transition","failure"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schema": { "const": "rusty.morphospace.workflow.published_prerequisite_suffix_reconciliation.v2" },
+    "reconciliation_id": { "$ref": "#/$defs/id" },
+    "project_id": { "$ref": "#/$defs/id" },
+    "bundle_id": { "$ref": "#/$defs/id" },
+    "trigger_unit_id": { "$ref": "#/$defs/id" },
+    "planned_publication_accounting": { "$ref": "#/$defs/file" },
+    "planning_repository": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repo_id","branch","upstream","execution_final_revision","execution_final_tree","published_suffix_commits","published_suffix_revision","published_suffix_tree","published_suffix_parent","current_remote_readback_revision","executed_push_receipt","publication_accounting_receipt","worktree_clean"],
+      "properties": {
+        "repo_id": { "$ref": "#/$defs/id" }, "branch": { "$ref": "#/$defs/nonempty" }, "upstream": { "$ref": "#/$defs/nonempty" },
+        "execution_final_revision": { "$ref": "#/$defs/revision" }, "execution_final_tree": { "$ref": "#/$defs/revision" },
+        "published_suffix_commits": { "type": "array", "minItems": 2, "maxItems": 2, "uniqueItems": true, "items": { "$ref": "#/$defs/revision" } },
+        "published_suffix_revision": { "$ref": "#/$defs/revision" }, "published_suffix_tree": { "$ref": "#/$defs/revision" },
+        "published_suffix_parent": { "$ref": "#/$defs/revision" }, "current_remote_readback_revision": { "$ref": "#/$defs/revision" },
+        "executed_push_receipt": { "$ref": "#/$defs/file" }, "publication_accounting_receipt": { "$ref": "#/$defs/file" },
+        "worktree_clean": { "const": true }
+      }
+    },
+    "source_repositories": { "type": "array", "minItems": 1, "items": { "type": "object", "additionalProperties": false, "required": ["repo_id","branch","upstream","execution_final_revision","execution_final_tree","current_remote_readback_revision","history_unchanged","worktree_clean"], "properties": {
+      "repo_id": { "$ref": "#/$defs/id" }, "branch": { "$ref": "#/$defs/nonempty" }, "upstream": { "$ref": "#/$defs/nonempty" },
+      "execution_final_revision": { "$ref": "#/$defs/revision" }, "execution_final_tree": { "$ref": "#/$defs/revision" }, "current_remote_readback_revision": { "$ref": "#/$defs/revision" },
+      "history_unchanged": { "const": true }, "worktree_clean": { "const": true }
+    } } },
+    "publication": { "type": "object", "additionalProperties": false, "required": ["scope","commit_count","changed_paths","fast_forward_verified","force_push_used","force_with_lease_used","rewrite_used","observed_at"], "properties": {
+      "scope": { "const": "planning-published-prerequisite-suffix" }, "commit_count": { "const": 2 },
+      "changed_paths": { "type": "array", "minItems": 2, "maxItems": 2, "uniqueItems": true, "items": { "$ref": "#/$defs/path" } },
+      "fast_forward_verified": { "const": true }, "force_push_used": { "const": false }, "force_with_lease_used": { "const": false }, "rewrite_used": { "const": false },
+      "observed_at": { "type": "string", "format": "date-time" }
+    } },
+    "workspace_transition": { "type": "object", "additionalProperties": false, "required": ["pending_push_bundle_before","pending_push_bundle_after","validation_unchanged","acceptance_unchanged"], "properties": {
+      "pending_push_bundle_before": { "$ref": "#/$defs/id" }, "pending_push_bundle_after": { "type": "null" }, "validation_unchanged": { "const": true }, "acceptance_unchanged": { "const": true }
+    } },
+    "failure": { "type": "null" }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" }, "nonempty": { "type": "string", "minLength": 1 },
+    "revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" }, "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "path": { "type": "string", "pattern": "^(?![A-Za-z]:|/|.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/-]+$" },
+    "file": { "type": "object", "additionalProperties": false, "required": ["path","sha256"], "properties": { "path": { "$ref": "#/$defs/path" }, "sha256": { "$ref": "#/$defs/hash" } } }
+  }
+}

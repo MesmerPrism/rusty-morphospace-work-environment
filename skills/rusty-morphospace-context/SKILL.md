@@ -5,6 +5,14 @@ description: 'Use for Rusty Morphospace repo-family orientation, lane ownership,
 
 # Rusty Morphospace Context
 
+An unchanged declared repository may be accounted as synchronized readback
+only when all revisions are equal, execution is `readback-only`, the range has
+no commits, and no source acceptance is inferred. Changed repositories still
+require complete attribution.
+Later accepted correction uses exact intervening-publication recovery with
+complete history/evidence and old-readback nonclaim; accounting-only needs the
+enumerated executed path/hash, while ordinary accounting remains two-path.
+
 Use this skill to find the authoritative workspace state, choose the owning
 repo lane, preserve public/private boundaries, and route work into the portable
 project workflow. It is a router, not a copy of live project state.
@@ -131,6 +139,19 @@ explicit execution. A validation pass is evidence, not acceptance. Preserve
 blocked/interrupted history, dirty user work, exact repo heads, cleanup state,
 and public/private evidence boundaries.
 
+For independently published source repositories, route mutable project state
+through a distinct external planning repository and publish that ref last. A
+same-ref source workspace cannot certify its own terminal bytes. If publication
+preceded preparation, route the independently observed recovery closure through
+`ReconcilePublication` without fabricating chronology or mutating source Git.
+If only planning published early and source remains unpublished, preserve that
+fault through the dedicated hash-bound ordering-interruption input to a fresh
+plan; do not use `ReconcilePublication`.
+For a genuinely prepared publication, route closure through
+`RecordPublication` and `docs/PLANNED_PUBLICATION_ACCOUNTING.md`; require exact
+commit/unit accounting and treat the single external planning repository as
+transport only, never product or source authority. Route an already-published, no-force receipt-only prerequisite suffix through `ReconcilePublishedPrerequisiteSuffix`: v1 is one commit and v2 is exactly two linear full-ID commits with only an accounting-receipt correction. Route a later force-with-lease suffix replacement through its two-common-path/one-delta-path incident recovery, never source history or drift.
+
 Treat a release as sealed commits and trees, not permanently frozen live
 branches. Require exact remote equality and convergence at the candidate cut;
 later historical closure requires ancestor-or-equal refs and isolated clean
@@ -151,3 +172,9 @@ short and link detailed runbooks.
 Do not encode a transient active unit, roadmap position, device identity, or
 release candidate in this skill. Read those from the current project's compact
 state and receipts every time.
+
+Historical-unit normalization is project evidence, not runtime authority: only
+exact hash-bound accepted or blocked units may use it; current units remain
+closed against the published portable registries and instruction-sync rules.
+Legacy instruction metadata must bind the exact impact and every affected
+surface path/action without rewriting the historical unit.

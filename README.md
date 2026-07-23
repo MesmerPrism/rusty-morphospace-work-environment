@@ -8,22 +8,32 @@ workflow host. Windows PowerShell 5.1 may run the bootstrap host check, but it
 is not an execution environment for validation, automation, builds, or release
 tooling. PowerShell 7 installs side by side with 5.1 on Windows.
 
-Current work-environment protocol release: `0.5.0` (2026-07-16). It adds exact
-multi-repository composition locks, detached content-addressed
-materializations, machine-local resource claims, repository revision
-checkpoints, repeated same-headset APK run capsules, and extraction-bound v2
-promotion reviews. Its machine-readable release surface is the
-[0.5.0 manifest](manifests/release-0.5.0.json); the operational entrypoint is
-[Project, Build, And Headset Isolation](docs/PROJECT_ISOLATION.md). This
-release does not change the separately governed Rusty Morphospace
-platform/runtime baseline.
+Current work-environment protocol release: `0.6.0` (2026-07-23). It adds
+hash-bound adoption of immutable terminal work, exact planned and unplanned
+publication accounting, protected-branch source resolution, and bounded
+recovery for already-published planning suffixes. Its machine-readable release
+surface is the [0.6.0 manifest](manifests/release-0.6.0.json); the principal
+operational entrypoints are
+[Historical Unit Adoption](docs/HISTORICAL_UNIT_ADOPTION.md) and
+[Planned Publication Accounting](docs/PLANNED_PUBLICATION_ACCOUNTING.md).
+The release also carries opt-in Quest Accessibility watchdog routing while
+preserving managed provisioning as the preferred kiosk lifecycle. It does not
+change the separately governed Rusty Morphospace platform/runtime baseline.
 
-The published [0.4.0 manifest](manifests/release-0.4.0.json) remains the
-immutable release-capsule and local-skill onboarding baseline. The `0.1.0` and
-published `0.3.0` manifests also remain readable. Existing project instances
-adopt later baselines additively: preserve live events and receipts, normalize
-portable change categories while retaining domain detail in `tags`, and
-validate before using the optional automation CLI.
+The published [0.5.0 manifest](manifests/release-0.5.0.json) remains the
+project/source/build/run isolation baseline, and the
+[0.4.0 manifest](manifests/release-0.4.0.json) remains the immutable
+release-capsule and local-skill onboarding baseline. Earlier manifests remain
+readable. Existing project instances adopt later baselines additively:
+preserve live events and receipts, normalize portable change categories while
+retaining domain detail in `tags`, and validate before using the optional
+automation CLI.
+
+Terminal historical units with legacy workflow vocabulary use the explicit
+[historical unit adoption contract](docs/HISTORICAL_UNIT_ADOPTION.md). Its
+project receipt binds exact bytes and normalization, including exact legacy
+instruction-impact and surface-action mismatches; current portable registries
+and all current/future instruction rules remain closed.
 
 Portable project, unit, repository, feature, receipt, and event identities use
 lowercase alphanumeric/hyphen syntax and support 2 through 128 characters.
@@ -181,6 +191,50 @@ external push, `executed_push_receipt.v1` records exact old/new/readback refs,
 ancestry, hash-bound validation files, a pre-publication capture when required,
 planning-final-suffix order, no-force proof, and rollback points;
 validate it with `scripts/Test-ExecutedPushReceipt.ps1`.
+Use `scripts/Invoke-ProtectedBranchPushGuard.ps1` when a local pre-push hook
+must canonicalize an explicit source selector such as `HEAD`; it binds the
+destination to the exact attached protected branch before plan validation.
+
+After a prepared push is externally executed, use
+`planned_publication_accounting.v1` and the fail-closed `RecordPublication`
+action to enumerate every published commit, preserve carried blocked-unit
+status without claiming acceptance, validate the single planning-transport
+suffix, and consume only the exact pending bundle. Prepared evidence may bind
+standalone plan/event files or their immutable automation-receipt and
+transition-ledger containers. See
+[`docs/PLANNED_PUBLICATION_ACCOUNTING.md`](docs/PLANNED_PUBLICATION_ACCOUNTING.md).
+An immutable executed bundle followed by a separately accepted workflow
+correction uses the additive intervening-publication recovery, which binds the
+exact fast-forward commits and paths through current clean remote readback. It
+preserves the original readback-only nonclaim and is never general drift
+tolerance.
+Its live prerequisite may contain only the new accounting receipt when the
+unchanged executed receipt path/hash is already proven exactly once in the
+enumerated intervening planning history; ordinary accounting remains two-path.
+A no-force prerequisite suffix that was already published before
+`RecordPublication` uses the separate
+`published_prerequisite_suffix_reconciliation.v1` evidence contract and
+`ReconcilePublishedPrerequisiteSuffix` action. That route accepts only one
+planning commit containing exactly the bound executed-push and accounting
+receipt paths, with unchanged source refs; it does not broaden ordinary
+accounting or tolerate rewrites.
+The additive v2 form accepts only an exact two-commit linear suffix when the
+second commit corrects the accounting receipt and both commits remain confined
+to those same two receipt paths; all identities are full 40-hex revisions.
+A later force-with-lease replacement of a published planning-only finalization
+suffix uses the cardinality-bounded additive incident recovery documented in
+[`PLANNED_PUBLICATION_ACCOUNTING.md`](docs/PLANNED_PUBLICATION_ACCOUNTING.md);
+it preserves the earlier no-force execution and rejects any source rewrite.
+
+Push preparation now requires one distinct external planning repository that
+contains the active project workspace. The source refs remain first and that
+planning ref is the final prepared suffix. If a source push already occurred
+without `PreparePush`, preserve the real publication and use the additive
+`unplanned_publication_closure.v1` plus `ReconcilePublication`; never create a
+retrospective plan or relabel the reconstruction as an executed-push receipt.
+If planning alone published early while every source remote remains unchanged,
+use the hash-bound publication-ordering interruption input to create a fresh
+plan that preserves the fault and claims no publication or corrected order.
 
 Seal coordinated releases with `release_capsule.v1`. At publication,
 `Test-ReleaseCapsule.ps1 -Mode CandidateCut` requires every declared remote ref
@@ -248,3 +302,7 @@ collects the onboarding path across them.
 ## License
 
 AGPL-3.0-or-later. See `LICENSE`.
+
+Planned publication accounting can fail closed over an immutable executed
+range containing multiple separately accepted units while retaining its one
+prepared trigger. See `docs/PLANNED_PUBLICATION_ACCOUNTING.md`.
