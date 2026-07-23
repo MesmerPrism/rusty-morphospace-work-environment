@@ -29,6 +29,9 @@ All notable changes to the portable work environment are recorded here.
 - Aggregate validation runs expensive owner self-tests once per gate; nested
   workspace fixtures retain full structural and damaged-case validation
   without recursively repeating those owner suites.
+- The real authority-runner integration fixture remains bounded while allowing
+  its three clean-room Windows branches enough time to complete under the Deep
+  inventory gate.
 
 ### Fixed
 
