@@ -11,7 +11,8 @@ function Get-PublishedPrerequisiteBlobSha256([string]$Repo,[string]$Revision,[st
     [void](Invoke-PublishedPrerequisiteGit $Repo @('cat-file','-e',"$blob^{blob}") "Published receipt '$Path' blob")
     $temporary=[IO.Path]::GetTempFileName()
     try {
-        $start=[Diagnostics.ProcessStartInfo]::new();$start.FileName=(Get-Command git -CommandType Application).Source;$start.UseShellExecute=$false;$start.CreateNoWindow=$true;$start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
+        $gitExecutable=@(Get-Command git -CommandType Application -ErrorAction Stop|Select-Object -First 1)[0].Source
+        $start=[Diagnostics.ProcessStartInfo]::new();$start.FileName=$gitExecutable;$start.UseShellExecute=$false;$start.CreateNoWindow=$true;$start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
         foreach($argument in @('-C',$Repo,'cat-file','blob',[string]$blob)){[void]$start.ArgumentList.Add($argument)}
         $process=[Diagnostics.Process]::new();$process.StartInfo=$start
         try { [void]$process.Start();$stream=[IO.File]::Create($temporary);try{$process.StandardOutput.BaseStream.CopyTo($stream)}finally{$stream.Dispose()};$errorText=$process.StandardError.ReadToEnd();$process.WaitForExit();if($process.ExitCode-ne0){throw "Published receipt '$Path' blob read failed: $errorText"} } finally { $process.Dispose() }

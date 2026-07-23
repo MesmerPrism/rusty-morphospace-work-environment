@@ -4,7 +4,8 @@ Import-Module (Join-Path $PSScriptRoot 'lib\MorphospacePlannedPublication.psm1')
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospacePublishedPrerequisiteSuffix.psm1') -Force
 function Write-Json($Path,$Value){$parent=Split-Path -Parent $Path;if($parent-and-not(Test-Path $parent)){New-Item -ItemType Directory $parent|Out-Null};[IO.File]::WriteAllText($Path,($Value|ConvertTo-Json -Depth 32)+"`n",[Text.UTF8Encoding]::new($false))}
 function Hash($Path){(Get-FileHash $Path -Algorithm SHA256).Hash.ToLowerInvariant()}
-function Invoke-FixtureGit($Repo,[string[]]$GitArgs){$o=@(& (Get-Command git -CommandType Application).Source -C $Repo @GitArgs 2>&1);if($LASTEXITCODE){throw "git $($GitArgs-join' ') failed: $($o-join' ')"};if($o.Count){([string]($o|Select-Object -Last 1)).Trim()}else{''}}
+$script:GitExecutable=@(Get-Command git -CommandType Application -ErrorAction Stop|Select-Object -First 1)[0].Source
+function Invoke-FixtureGit($Repo,[string[]]$GitArgs){$o=@(& $script:GitExecutable -C $Repo @GitArgs 2>&1);if($LASTEXITCODE){throw "git $($GitArgs-join' ') failed: $($o-join' ')"};if($o.Count){([string]($o|Select-Object -Last 1)).Trim()}else{''}}
 function Clone($Value){$Value|ConvertTo-Json -Depth 32|ConvertFrom-Json}
 function Reject([scriptblock]$Action,[string]$Name){try{&$Action|Out-Null}catch{return};throw "Damaged published-prerequisite case '$Name' was accepted."}
 
