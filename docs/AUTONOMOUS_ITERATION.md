@@ -1,7 +1,6 @@
 # Autonomous Iteration
 
-This document describes the published workflow through `0.4.0` plus the
-additive `0.5.0` isolation candidate. The accepted
+This document describes the published workflow through `0.6.0`. The accepted
 `0.1.0` history remains immutable; later releases must preserve accepted
 event/receipt history or provide an explicit migration and rollback path.
 
@@ -35,9 +34,9 @@ Use `change_categories` only for portable routing and instruction-impact
 derivation. Versioned lifecycle aliases map production vocabulary to one
 canonical category; unknown, duplicate, colliding, or targetless aliases fail
 closed. Project-local `focused` and `skill-focused` profiles may route bounded
-checks without changing accepted historical unit bytes.
-semantics. Preserve domain detail such as `peer-mesh`, `binder`, or
-`contract-extraction` in `tags`; do not grow the portable category registry for
+checks without changing accepted historical unit bytes or semantics. Preserve
+domain detail such as `peer-mesh`, `binder`, or `contract-extraction` in
+`tags`; do not grow the portable category registry for
 each application-specific noun.
 
 ## Unit State Machine

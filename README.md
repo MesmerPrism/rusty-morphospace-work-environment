@@ -1,10 +1,5 @@
 # Rusty Morphospace Work Environment
 
-Planned publication accounting supports one exact synchronized
-`readback-only` source leg with equal revisions, zero commits, clean bound
-identity/order, and an explicit no-acceptance claim. Changed repositories keep
-complete commit attribution.
-
 Portable onboarding and project-iteration workspace for Rusty Morphospace
 development.
 
@@ -13,22 +8,26 @@ workflow host. Windows PowerShell 5.1 may run the bootstrap host check, but it
 is not an execution environment for validation, automation, builds, or release
 tooling. PowerShell 7 installs side by side with 5.1 on Windows.
 
-Current work-environment protocol release: `0.5.0` (2026-07-16). It adds exact
-multi-repository composition locks, detached content-addressed
-materializations, machine-local resource claims, repository revision
-checkpoints, repeated same-headset APK run capsules, and extraction-bound v2
-promotion reviews. Its machine-readable release surface is the
-[0.5.0 manifest](manifests/release-0.5.0.json); the operational entrypoint is
-[Project, Build, And Headset Isolation](docs/PROJECT_ISOLATION.md). This
-release does not change the separately governed Rusty Morphospace
-platform/runtime baseline.
+Current work-environment protocol release: `0.6.0` (2026-07-23). It adds
+hash-bound adoption of immutable terminal work, exact planned and unplanned
+publication accounting, protected-branch source resolution, and bounded
+recovery for already-published planning suffixes. Its machine-readable release
+surface is the [0.6.0 manifest](manifests/release-0.6.0.json); the principal
+operational entrypoints are
+[Historical Unit Adoption](docs/HISTORICAL_UNIT_ADOPTION.md) and
+[Planned Publication Accounting](docs/PLANNED_PUBLICATION_ACCOUNTING.md).
+The release also carries opt-in Quest Accessibility watchdog routing while
+preserving managed provisioning as the preferred kiosk lifecycle. It does not
+change the separately governed Rusty Morphospace platform/runtime baseline.
 
-The published [0.4.0 manifest](manifests/release-0.4.0.json) remains the
-immutable release-capsule and local-skill onboarding baseline. The `0.1.0` and
-published `0.3.0` manifests also remain readable. Existing project instances
-adopt later baselines additively: preserve live events and receipts, normalize
-portable change categories while retaining domain detail in `tags`, and
-validate before using the optional automation CLI.
+The published [0.5.0 manifest](manifests/release-0.5.0.json) remains the
+project/source/build/run isolation baseline, and the
+[0.4.0 manifest](manifests/release-0.4.0.json) remains the immutable
+release-capsule and local-skill onboarding baseline. Earlier manifests remain
+readable. Existing project instances adopt later baselines additively:
+preserve live events and receipts, normalize portable change categories while
+retaining domain detail in `tags`, and validate before using the optional
+automation CLI.
 
 Terminal historical units with legacy workflow vocabulary use the explicit
 [historical unit adoption contract](docs/HISTORICAL_UNIT_ADOPTION.md). Its

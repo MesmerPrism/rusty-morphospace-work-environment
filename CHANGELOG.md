@@ -2,6 +2,50 @@
 
 All notable changes to the portable work environment are recorded here.
 
+## 0.6.0 - 2026-07-23
+
+### Added
+
+- Hash-bound adoption receipts for immutable terminal units whose historical
+  vocabulary differs from current closed registries.
+- Planned publication accounting with complete commit/unit attribution,
+  planning-last chronology, synchronized readback-only legs, multi-accepted
+  prepared ranges, and exact remote readback.
+- Truthful unplanned-publication closure and preserved publication-ordering
+  interruption records that do not invent retrospective push plans.
+- Bounded planning-suffix rewrite recovery and one- or two-commit published
+  prerequisite reconciliation contracts.
+- An explicit protected-branch push guard that resolves symbolic local source
+  selectors to the attached protected branch before plan validation.
+- Opt-in Meta Quest Accessibility foreground-watchdog guidance, including
+  managed provisioning precedence and serial-scoped ADB boundaries.
+
+### Changed
+
+- Production change-category aliases normalize into the portable registry
+  without widening it or rewriting accepted historical units.
+- Publication chronology accepts exact whole-second evidence alongside
+  higher-precision timestamps while preserving the bound original strings.
+- Aggregate validation runs expensive owner self-tests once per gate; nested
+  workspace fixtures retain full structural and damaged-case validation
+  without recursively repeating those owner suites.
+
+### Fixed
+
+- Git executable discovery selects one application when Windows or Linux
+  exposes multiple Git command registrations.
+- Published-prerequisite reconciliation binds corrected planning paths and
+  bounded suffix cardinality without admitting unrelated commits.
+- Quick validation no longer multiplies publication self-tests across every
+  historical-adoption and automation fixture.
+
+### Validation
+
+- Quick, Standard, and Deep remain distinct checkpoint tiers; focused owner
+  tests remain available for edit-loop diagnosis.
+- CI runs Quick on Windows and Linux and Standard on Windows. Deep remains an
+  explicit release/consolidation dispatch.
+
 ## 0.5.0 - 2026-07-16
 
 ### Added
