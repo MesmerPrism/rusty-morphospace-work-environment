@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/unplanned-publication-closure-v2.schema.json",
+  "title": "Unplanned source publication closure after exact external planning projection",
+  "type": "object",
+  "$ref": "unplanned-publication-closure.schema.json",
+  "required": ["planning_workspace_projection"],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.workflow.unplanned_publication_closure.v2" }
+  }
+}

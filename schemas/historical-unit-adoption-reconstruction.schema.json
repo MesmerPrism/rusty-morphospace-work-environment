@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/historical-unit-adoption-reconstruction.schema.json",
+  "title": "Damage record and independent reconstruction for a historical-unit adoption receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "reconstruction_id", "project_id", "recorded_at", "status", "damaged_original", "reconstruction", "immutable_anchor", "projection", "failure"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schema": { "const": "rusty.morphospace.workflow.historical_unit_adoption_reconstruction.v1" },
+    "reconstruction_id": { "$ref": "#/$defs/id" },
+    "project_id": { "$ref": "#/$defs/id" },
+    "recorded_at": { "type": "string", "format": "date-time" },
+    "status": { "const": "independent-reconstruction-verified" },
+    "damaged_original": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "expected_sha256", "observed_sha256", "integrity"],
+      "properties": {
+        "path": { "$ref": "#/$defs/receiptPath" },
+        "expected_sha256": { "$ref": "#/$defs/hash" },
+        "observed_sha256": { "$ref": "#/$defs/hash" },
+        "integrity": { "const": "damaged-original-unavailable" }
+      }
+    },
+    "reconstruction": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256", "claim"],
+      "properties": {
+        "path": { "$ref": "#/$defs/receiptPath" },
+        "sha256": { "$ref": "#/$defs/hash" },
+        "claim": { "const": "independent-reconstruction-not-original-bytes" }
+      }
+    },
+    "immutable_anchor": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repository", "revision", "tree", "source_path", "source_blob", "content_sha256"],
+      "properties": {
+        "repository": { "$ref": "#/$defs/id" },
+        "revision": { "$ref": "#/$defs/sha" }, "tree": { "$ref": "#/$defs/sha" },
+        "source_path": { "$ref": "#/$defs/sourcePath" }, "source_blob": { "$ref": "#/$defs/sha" },
+        "content_sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "projection": {
+      "type": "object", "additionalProperties": false,
+      "required": ["scope", "original_reference_preserved", "accepted_evidence_rewritten", "current_or_inflight_units_allowed", "conflicting_reconstruction_allowed"],
+      "properties": {
+        "scope": { "const": "current-validation-only" },
+        "original_reference_preserved": { "const": true },
+        "accepted_evidence_rewritten": { "const": false },
+        "current_or_inflight_units_allowed": { "const": false },
+        "conflicting_reconstruction_allowed": { "const": false }
+      }
+    },
+    "failure": { "type": "null" }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" },
+    "sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "receiptPath": { "type": "string", "pattern": "^receipts/[a-z0-9][a-z0-9-]{1,127}\\.json$" },
+    "sourcePath": { "type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\)[A-Za-z0-9._/-]+\\.json$" }
+  }
+}

@@ -10,6 +10,15 @@ function Get-MorphospacePublicationRecoverySha256 {
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 
+function Get-MorphospacePublicationFreshRemoteRevision {
+    param([Parameter(Mandatory = $true)][string]$RepositoryPath,[Parameter(Mandatory = $true)][string]$Remote,[Parameter(Mandatory = $true)][string]$RemoteRef)
+    $rows = @(& git -C $RepositoryPath ls-remote --exit-code $Remote $RemoteRef 2>$null)
+    if ($LASTEXITCODE -ne 0 -or $rows.Count -ne 1 -or $rows[0] -notmatch '^([0-9a-f]{40})\s+(.+)$' -or $matches[2] -cne $RemoteRef) {
+        throw "Fresh remote readback failed for $Remote $RemoteRef."
+    }
+    return $matches[1]
+}
+
 function Test-MorphospacePublicationRecoveryId {
     param([Parameter(Mandatory = $true)][string]$Value, [Parameter(Mandatory = $true)][string]$Context)
 
@@ -64,8 +73,34 @@ function Test-MorphospaceUnplannedPublicationClosureDocument {
     )
 
     $document = Read-MorphospaceUnplannedPublicationClosure -Path $Path
-    if ([string]$document.schema -cne 'rusty.morphospace.workflow.unplanned_publication_closure.v1') {
+    if ([string]$document.schema -notin @('rusty.morphospace.workflow.unplanned_publication_closure.v1','rusty.morphospace.workflow.unplanned_publication_closure.v2')) {
         throw 'Unplanned-publication closure has the wrong schema ID.'
+    }
+    if ([string]$document.schema -ceq 'rusty.morphospace.workflow.unplanned_publication_closure.v2') {
+        Import-Module (Join-Path $PSScriptRoot 'MorphospacePlanningProjection.psm1') -Force
+        if ($null -eq $document.planning_workspace_projection) { throw 'V2 unplanned-publication closure requires planning-workspace projection evidence.' }
+        $projectionPath = Resolve-MorphospacePublicationWorkspaceFile -WorkspaceRoot $WorkspaceRoot -Reference ([string]$document.planning_workspace_projection.path) -Context 'planning_workspace_projection.path'
+        if ((Get-MorphospacePublicationRecoverySha256 $projectionPath) -cne ([string]$document.planning_workspace_projection.sha256).ToLowerInvariant()) {
+            throw 'Planning-workspace projection hash mismatch.'
+        }
+        Import-Module (Join-Path $PSScriptRoot 'MorphospacePlanningProjection.psm1') -Force
+        $projection = Test-MorphospacePlanningWorkspaceProjectionDocument -Path $projectionPath
+        if ([string]$projection.document.project_id -cne [string]$document.project_id -or [string]$projection.document.unit_id -cne [string]$document.unit_id) {
+            throw 'Planning-workspace projection identity does not match the closure.'
+        }
+        if ([string]$projection.document.source.repo_id -cne [string]$document.repository.repo_id -or
+            [string]$projection.document.source.old_revision -cne [string]$document.repository.old_revision -or
+            [string]$projection.document.source.published_revision -cne [string]$document.repository.new_revision) {
+            throw 'Planning-workspace projection publication range does not match the closure.'
+        }
+        if ([string]$projection.document.source.branch -cne [string]$document.repository.branch -or
+            [string]$projection.document.source.remote -cne [string]$document.repository.remote -or
+            [string]$projection.document.source.upstream -cne [string]$document.repository.upstream -or
+            [string]$projection.document.source.observed_remote_revision -cne [string]$document.repository.observed_remote_revision) {
+            throw 'Planning-workspace projection branch and remote identity do not match the closure.'
+        }
+    } elseif ($document.PSObject.Properties.Name -contains 'planning_workspace_projection') {
+        throw 'V1 unplanned-publication closure may not carry planning-workspace projection evidence.'
     }
     foreach ($entry in @(
         @{ Value = [string]$document.closure_id; Context = 'closure_id' },
@@ -185,6 +220,16 @@ function Test-MorphospaceUnplannedPublicationClosureLive {
         throw 'Unplanned-publication recovery requires an accepted unit and no current in-flight unit.'
     }
     $repoId = [string]$document.repository.repo_id
+    if ([string]$document.schema -ceq 'rusty.morphospace.workflow.unplanned_publication_closure.v2') {
+        $projectionReference = [string]$document.planning_workspace_projection.path
+        $projectionPath = Resolve-MorphospacePublicationWorkspaceFile -WorkspaceRoot $WorkspaceRoot -Reference $projectionReference -Context 'planning_workspace_projection.path'
+        $projectionDocument = (Test-MorphospacePlanningWorkspaceProjectionDocument -Path $projectionPath).document
+        $planningId = [string]$projectionDocument.planning.repo_id
+        if ($planningId -ceq $repoId -or -not $RepositoryMap.ContainsKey($planningId)) { throw 'V2 recovery lacks its distinct mapped external planning repository.' }
+        $planningRoot = [string]$RepositoryMap[$planningId].path
+        $sourceRoot = [string]$RepositoryMap[$repoId].path
+        Test-MorphospacePlanningWorkspaceProjectionLive -Path $projectionPath -SourceRepository $sourceRoot -PlanningRepository $planningRoot -WorkspaceRoot $WorkspaceRoot | Out-Null
+    }
     if (@($Unit.allowed_repositories | Where-Object { [string]$_.repo_id -ceq $repoId }).Count -ne 1 -or -not $RepositoryMap.ContainsKey($repoId)) {
         throw "Unplanned-publication closure repository '$repoId' is outside the accepted unit or local repository map."
     }
@@ -202,6 +247,12 @@ function Test-MorphospaceUnplannedPublicationClosureLive {
         throw "Unplanned-publication closure no longer matches HEAD, branch, or upstream for '$repoId'."
     }
     $repoPath = [string]$RepositoryMap[$repoId].path
+    $declaredRemote=[string]$document.repository.remote
+    $declaredUpstream=[string]$document.repository.upstream
+    if(-not$declaredUpstream.StartsWith("$declaredRemote/",[StringComparison]::Ordinal)-or$declaredUpstream.Length-le$declaredRemote.Length+1){throw'Unplanned-publication closure upstream does not belong to its declared remote.'}
+    $remoteRef='refs/heads/'+$declaredUpstream.Substring($declaredRemote.Length+1)
+    $freshRemote=Get-MorphospacePublicationFreshRemoteRevision $repoPath $declaredRemote $remoteRef
+    if($freshRemote-cne[string]$document.repository.new_revision){throw'Fresh source remote readback no longer equals the unplanned publication.'}
     & git -C $repoPath merge-base --is-ancestor ([string]$document.repository.old_revision) ([string]$document.repository.new_revision) 2>$null
     if ($LASTEXITCODE -ne 0) { throw "Unplanned-publication closure old revision is not an ancestor of the observed new revision for '$repoId'." }
     if ($null -eq $State.pending_push_bundle -or [string]$State.pending_push_bundle.bundle_id -cne [string]$document.workspace_transition.pending_push_bundle_before) {

@@ -1,0 +1,35 @@
+{
+  "$schema": "../schemas/historical-unit-adoption-reconstruction.schema.json",
+  "schema": "rusty.morphospace.workflow.historical_unit_adoption_reconstruction.v1",
+  "reconstruction_id": "example-historical-adoption-reconstruction",
+  "project_id": "example-project",
+  "recorded_at": "2026-01-02T03:04:05Z",
+  "status": "independent-reconstruction-verified",
+  "damaged_original": {
+    "path": "receipts/historical-adoption.json",
+    "expected_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "observed_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "integrity": "damaged-original-unavailable"
+  },
+  "reconstruction": {
+    "path": "receipts/historical-adoption-reconstructed.json",
+    "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "claim": "independent-reconstruction-not-original-bytes"
+  },
+  "immutable_anchor": {
+    "repository": "source-owner",
+    "revision": "1111111111111111111111111111111111111111",
+    "tree": "2222222222222222222222222222222222222222",
+    "source_path": "receipts/historical-adoption.json",
+    "source_blob": "3333333333333333333333333333333333333333",
+    "content_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  },
+  "projection": {
+    "scope": "current-validation-only",
+    "original_reference_preserved": true,
+    "accepted_evidence_rewritten": false,
+    "current_or_inflight_units_allowed": false,
+    "conflicting_reconstruction_allowed": false
+  },
+  "failure": null
+}

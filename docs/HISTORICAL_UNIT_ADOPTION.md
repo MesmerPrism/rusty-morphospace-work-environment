@@ -45,6 +45,15 @@ only the receipt and compact-state reference. The receipt conveys workflow
 validation semantics only; it cannot alter runtime, activation, repository
 scope, device behavior, Git authority, or downstream lane authority.
 
+If the compact-state receipt hash is already damaged, do not change that
+reference. Record the expected and observed hashes, add a separately named
+independent reconstruction with an immutable Git anchor, and add one
+`historical_unit_adoption_reconstructions` state reference. The projection is
+current-validation-only and explicitly not the original bytes. Exact originals,
+conflicting reconstructions, current/in-flight units, and accepted-evidence
+rewrites reject. See
+[External Planning Projection And Historical Reconstruction](EXTERNAL_PLANNING_AND_HISTORICAL_RECONSTRUCTION.md).
+
 ## Validation
 
 ```powershell

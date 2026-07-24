@@ -2,6 +2,23 @@
 
 All notable changes to the portable work environment are recorded here.
 
+## Unreleased
+
+### Added
+
+- Exact no-overwrite projection of an embedded source-owned `morphospace/`
+  workspace into distinct external planning before unplanned-publication
+  reconciliation.
+- Damage-preserving, immutable-anchor reconstruction for drifted historical
+  unit-adoption receipts, limited to current workflow validation.
+
+### Changed
+
+- `ReconcilePublication` now requires the same distinct external planning
+  containment as other publication transitions.
+- Unplanned-publication closure v2 binds and revalidates the exact planning
+  projection without changing v1 semantics.
+
 ## 0.6.0 - 2026-07-23
 
 ### Added
