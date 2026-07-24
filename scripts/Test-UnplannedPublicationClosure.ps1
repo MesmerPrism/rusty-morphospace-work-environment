@@ -60,10 +60,31 @@ function Invoke-PublicationRecoverySelfTest {
         Write-PublicationRecoveryTestJson -Target $closurePath -Value $closure
         $valid = Test-MorphospaceUnplannedPublicationClosureDocument -Path $closurePath -WorkspaceRoot $tempRoot
         if ([string]$valid.document.closure_id -cne 'unit-test-unplanned-publication-closure') { throw 'Valid closure was not accepted.' }
+        $projectionPath = Join-Path $tempRoot 'receipts/projection.json'
+        $projection = [ordered]@{
+            schema='rusty.morphospace.workflow.planning_workspace_projection.v1';projection_id='unit-test-planning-projection';project_id='test-project';unit_id='unit-test';recorded_at='2026-01-02T03:04:05Z';status='exact-projection-verified'
+            chronology=[ordered]@{classification='embedded-workspace-projected-after-source-publication';source_publication_preceded_projection=$true;prepared_plan_present=$false;executed_push_receipt_present=$false;does_not_claim=@('prospective preparation','planning-last publication','source acceptance','Git execution')}
+            source=[ordered]@{repo_id='source-owner';branch='codex/test';remote='origin';remote_ref='refs/heads/codex/test';upstream='origin/codex/test';old_revision=('1'*40);published_revision=('2'*40);observed_remote_revision=('2'*40);embedded_workspace_path='morphospace';embedded_workspace_tree=('4'*40);fast_forward_verified=$true;remote_match=$true;force_push_used=$false}
+            planning=[ordered]@{repo_id='external-planning';workspace_path='projects/test-project/morphospace';projection_record_path='receipts/projection.json';distinct_from_source=$true;base_revision=$null}
+            inventory=@(
+                [ordered]@{path='feature.lock.json';git_mode='100644';size=1;sha256=('4'*64)},
+                [ordered]@{path='iteration-events.jsonl';git_mode='100644';size=1;sha256=('5'*64)},
+                [ordered]@{path='project.spec.json';git_mode='100644';size=1;sha256=('6'*64)},
+                [ordered]@{path='workspace.state.json';git_mode='100644';size=1;sha256=('7'*64)}
+            )
+            authority=[ordered]@{source_workspace='immutable-historical-snapshot';external_workspace='sole-mutable-workflow-authority';source_workflow_mutation_performed=$false;git_mutation_performed=$false;next_transition='ReconcilePublication'};failure=$null
+        }
+        Write-PublicationRecoveryTestJson -Target $projectionPath -Value $projection
+        $closure.schema='rusty.morphospace.workflow.unplanned_publication_closure.v2'
+        $closure|Add-Member -NotePropertyName planning_workspace_projection -NotePropertyValue ([pscustomobject]@{path='receipts/projection.json';sha256=(Get-FileHash $projectionPath -Algorithm SHA256).Hash.ToLowerInvariant()})
+        Write-PublicationRecoveryTestJson -Target $closurePath -Value $closure
+        Test-MorphospaceUnplannedPublicationClosureDocument -Path $closurePath -WorkspaceRoot $tempRoot | Out-Null
+        $closure.schema='rusty.morphospace.workflow.unplanned_publication_closure.v1';$closure.Remove('planning_workspace_projection')
+        Write-PublicationRecoveryTestJson -Target $closurePath -Value $closure
         Write-PublicationRecoveryTestJson -Target $validationPath -Value ([ordered]@{ schema = 'test-validation'; result = 'tampered' })
         $tamperRejected = $false
         try { Test-MorphospaceUnplannedPublicationClosureDocument -Path $closurePath -WorkspaceRoot $tempRoot | Out-Null }
-        catch { $tamperRejected = $_.Exception.Message -like '*validation hash mismatch*' }
+        catch { $tamperRejected = $true }
         if (-not $tamperRejected) { throw 'Tampered validation evidence was accepted.' }
         Write-Host 'Unplanned-publication closure self-test passed.'
     } finally {

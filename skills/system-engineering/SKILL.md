@@ -164,6 +164,12 @@ preparation, preserve it only through an independently observed
 `unplanned_publication_closure.v1`; `ReconcilePublication` may repair the
 planning projection but cannot create a retrospective plan, executed receipt,
 Git mutation, or source-authority claim.
+When the workspace was embedded in that published source, bind its exact
+published-tree bytes into distinct external planning through
+`planning_workspace_projection.v1` and require
+`unplanned_publication_closure.v2`. Reconciliation mutates only that external
+projection. Route the exact byte/inventory procedure through
+`docs/EXTERNAL_PLANNING_AND_HISTORICAL_RECONSTRUCTION.md`.
 
 Separate release-candidate cut from historical closure. Seal exact commits and
 trees while declared refs are equal; later require ancestor-or-equal refs and
@@ -306,6 +312,11 @@ complete normalization into current portable semantics. Never use that route
 for current work or expand registries merely to silence history. A historical
 instruction mismatch additionally binds the exact legacy impact and every
 affected surface path/action; it is not an ambient instruction-sync bypass.
+
+A drifted historical-adoption receipt keeps its expected and observed hashes
+as damaged original evidence. An immutable-Git-anchored
+`historical_unit_adoption_reconstruction.v1` may affect current validation
+only; it cannot restore the original receipt or acceptance chronology.
 
 For direct networking, separate topology formation, platform network
 observation, socket ownership, protocol exchange, and cleanup into provider

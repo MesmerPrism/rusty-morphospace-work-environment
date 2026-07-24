@@ -1,0 +1,29 @@
+{
+  "$schema": "../schemas/unplanned-publication-closure-v2.schema.json",
+  "schema": "rusty.morphospace.workflow.unplanned_publication_closure.v2",
+  "closure_id": "unit-example-unplanned-publication-closure-v2",
+  "project_id": "example-project",
+  "unit_id": "unit-example",
+  "recorded_at": "2026-01-02T03:04:05Z",
+  "status": "independent-reconstruction-verified",
+  "chronology": {
+    "classification": "unplanned-push-before-prepare",
+    "prepared_plan_present": false,
+    "executed_push_receipt_present": false,
+    "does_not_claim": ["No prospective preparation is claimed.", "No executed-push receipt is reconstructed."]
+  },
+  "workspace_state_before": {"path":"workspace.state.json","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+  "repository": {
+    "repo_id":"source-owner","role":"source-owner","branch":"main","remote":"origin","upstream":"origin/main","action":"pushed",
+    "old_revision":"1111111111111111111111111111111111111111","new_revision":"2222222222222222222222222222222222222222",
+    "observed_remote_revision":"2222222222222222222222222222222222222222","rollback_revision":"1111111111111111111111111111111111111111",
+    "fast_forward_verified":true,"remote_match":true,"force_push_used":false,"worktree_clean":true,"validation_refs":["standard-validation"]
+  },
+  "validation":[{"gate_id":"standard-validation","status":"pass","evidence":{"path":"receipts/unit-example-validation.json","sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}],
+  "observers":[{"observer_id":"external-coordinator","recorded_at":"2026-01-02T03:04:05Z","evidence_sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}],
+  "workspace_transition":{"pending_push_bundle_before":"older-unit-push-bundle","pending_push_bundle_after":null,"dirty_repository_ids_to_clear":["source-owner"],"repository_head_after":"2222222222222222222222222222222222222222"},
+  "remote_readback_complete":true,
+  "recovery_scope":"workflow-state-only",
+  "planning_workspace_projection":{"path":"receipts/unit-example-planning-projection.json","sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"},
+  "failure":null
+}

@@ -1,0 +1,43 @@
+{
+  "$schema": "../schemas/planning-workspace-projection.schema.json",
+  "schema": "rusty.morphospace.workflow.planning_workspace_projection.v1",
+  "projection_id": "example-embedded-workspace-projection",
+  "project_id": "example-project",
+  "unit_id": "example-accepted-unit",
+  "recorded_at": "2026-01-02T03:04:05Z",
+  "status": "exact-projection-verified",
+  "chronology": {
+    "classification": "embedded-workspace-projected-after-source-publication",
+    "source_publication_preceded_projection": true,
+    "prepared_plan_present": false,
+    "executed_push_receipt_present": false,
+    "does_not_claim": ["prospective preparation", "planning-last publication", "source acceptance", "Git execution"]
+  },
+  "source": {
+    "repo_id": "source-owner", "branch": "main", "remote": "origin", "remote_ref": "refs/heads/main", "upstream": "origin/main",
+    "old_revision": "1111111111111111111111111111111111111111",
+    "published_revision": "2222222222222222222222222222222222222222",
+    "observed_remote_revision": "2222222222222222222222222222222222222222",
+    "embedded_workspace_path": "morphospace", "embedded_workspace_tree": "3333333333333333333333333333333333333333",
+    "fast_forward_verified": true, "remote_match": true, "force_push_used": false
+  },
+  "planning": {
+    "repo_id": "external-planning", "workspace_path": "projects/example-project/morphospace",
+    "projection_record_path": "receipts/example-embedded-workspace-projection.json",
+    "distinct_from_source": true, "base_revision": null
+  },
+  "inventory": [
+    {"path":"feature.lock.json","git_mode":"100644","size":1,"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+    {"path":"iteration-events.jsonl","git_mode":"100644","size":1,"sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+    {"path":"project.spec.json","git_mode":"100644","size":1,"sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},
+    {"path":"workspace.state.json","git_mode":"100644","size":1,"sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}
+  ],
+  "authority": {
+    "source_workspace": "immutable-historical-snapshot",
+    "external_workspace": "sole-mutable-workflow-authority",
+    "source_workflow_mutation_performed": false,
+    "git_mutation_performed": false,
+    "next_transition": "ReconcilePublication"
+  },
+  "failure": null
+}

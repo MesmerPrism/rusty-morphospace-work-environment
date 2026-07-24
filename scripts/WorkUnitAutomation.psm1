@@ -21,6 +21,13 @@ function Read-MorphospaceJson {
     }
 }
 
+function Get-MorphospaceGitCommonDirectory {
+    param([Parameter(Mandatory = $true)][string]$RepositoryPath)
+    $value = (& git -C $RepositoryPath rev-parse --path-format=absolute --git-common-dir).Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $value) { throw "Repository is not an available Git repository: $RepositoryPath" }
+    return [IO.Path]::GetFullPath($value).TrimEnd('\','/')
+}
+
 function Write-MorphospaceJson {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -970,7 +977,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
             $repositoryStates.Add([pscustomobject][ordered]@{ repo_id = $repoId; mapped = $false; relation = "not-mapped" }) | Out-Null
         }
     }
-    if ($Action -in @("PreparePush", "RecordPublication", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix")) {
+    if ($Action -in @("PreparePush", "RecordPublication", "ReconcilePublication", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix")) {
         $unitRepoIds = @{}
         foreach ($repo in @($unit.allowed_repositories)) { $unitRepoIds[[string]$repo.repo_id] = $true }
         $externalPlanningEntries = @($repoMap.Values | Where-Object {
@@ -985,6 +992,13 @@ function Invoke-MorphospaceWorkUnitAutomation {
         $planningPrefix = $planningPath + [System.IO.Path]::DirectorySeparatorChar
         if (-not $workspaceFull.StartsWith($planningPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
             throw "The external planning repository must contain the project workspace used for $Action."
+        }
+        $planningCommon = Get-MorphospaceGitCommonDirectory ([string]$planningEntry.path)
+        foreach ($repo in @($unit.allowed_repositories)) {
+            $repoId = [string]$repo.repo_id
+            if ($repoMap.ContainsKey($repoId) -and (Get-MorphospaceGitCommonDirectory ([string]$repoMap[$repoId].path)) -ceq $planningCommon) {
+                throw "The external planning repository may not share Git common-directory authority with source repository '$repoId'."
+            }
         }
         $planningState = Get-MorphospaceRepositoryState -RepoId ([string]$planningEntry.repo_id) -Path ([string]$planningEntry.path)
         $planningState | Add-Member -NotePropertyName workflow_transport -NotePropertyValue $true

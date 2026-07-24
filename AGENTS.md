@@ -19,6 +19,16 @@ and only when exact bound executed evidence is already present once in its
 enumerated intervening planning history. Normal accounting still requires both
 prerequisite evidence paths.
 
+An embedded same-source workflow may move after an unplanned source
+publication only through `planning_workspace_projection.v1`: copy exact bytes
+from the published Git tree into one distinct external planning repository,
+preserve the post-publication chronology nonclaims, and run
+`ReconcilePublication` only against that external projection. A drifted
+historical-unit adoption reference remains damaged; admit a separate
+independently anchored reconstruction only through
+`historical_unit_adoption_reconstruction.v1` and current-validation projection.
+See `docs/EXTERNAL_PLANNING_AND_HISTORICAL_RECONSTRUCTION.md`.
+
 This repository is intended to be public and portable. Keep committed content
 free of local machine paths, private repository names, device serials, package
 identities, generated APKs, screenshots, logs, pairing material, signing keys,

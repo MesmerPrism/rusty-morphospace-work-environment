@@ -1,6 +1,7 @@
 param(
     [string]$RepoRoot = "",
     [string]$WorkspaceRoot = "",
+    [string]$RepositoryMapPath = "",
     [switch]$SkipOwnerSelfTests
 )
 
@@ -13,6 +14,11 @@ if (-not $RepoRoot) {
 $RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
 $script:Failures = New-Object System.Collections.Generic.List[string]
 $script:PortableIdPattern = "^[a-z0-9][a-z0-9-]{1,127}$"
+$script:LocalRepositoryMap = @{}
+if ($RepositoryMapPath) {
+    $mapDocument = Get-Content -LiteralPath $RepositoryMapPath -Raw | ConvertFrom-Json
+    foreach ($entry in @($mapDocument.repositories)) { $script:LocalRepositoryMap[[string]$entry.repo_id] = [string]$entry.path }
+}
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceProtocolCommon.psm1') -Force
 
 function Add-Failure {
@@ -288,7 +294,36 @@ function Test-ProjectBundle {
 
     $workspaceRoot = Split-Path -Parent $Bundle.StatePath
     $historicalAdoptions = @{}
+    $reconstructionByOriginal = @{}
+    $reconstructionReferences = @()
+    if ($state.PSObject.Properties.Name -contains "historical_unit_adoption_reconstructions") { $reconstructionReferences = @($state.historical_unit_adoption_reconstructions) }
+    Test-UniqueProperty -Items $reconstructionReferences -Property "path" -Context "$Context historical-unit adoption reconstruction references"
+    if ($reconstructionReferences.Count -gt 0) {
+        Import-Module (Join-Path $RepoRoot "scripts/lib/MorphospaceHistoricalAdoptionReconstruction.psm1") -Force
+    }
+    foreach ($reference in $reconstructionReferences) {
+        $relativePath = [string]$reference.path
+        Assert-Contract ($relativePath -match '^receipts/[a-z0-9][a-z0-9-]{1,127}\.json$') "$Context historical reconstruction reference has a noncanonical path."
+        $recordPath = Join-Path $workspaceRoot ($relativePath -replace "/", [IO.Path]::DirectorySeparatorChar)
+        $validated = $null
+        $recordDocument = Read-JsonDocument -Path $recordPath -Context "$Context historical reconstruction record"
+        $anchorId = if ($recordDocument) { [string]$recordDocument.immutable_anchor.repository } else { "" }
+        Assert-Contract ($script:LocalRepositoryMap.ContainsKey($anchorId)) "$Context historical reconstruction '$relativePath' lacks a mapped immutable anchor repository."
+        try {
+            if ($script:LocalRepositoryMap.ContainsKey($anchorId)) {
+                $validated = Test-MorphospaceHistoricalAdoptionReconstruction -Path $recordPath -WorkspaceRoot $workspaceRoot -AnchorRepository $script:LocalRepositoryMap[$anchorId]
+            }
+        }
+        catch { Add-Failure -Message "$Context historical reconstruction '$relativePath' rejected: $($_.Exception.Message)" }
+        if ($null -eq $validated) { continue }
+        Assert-Contract ([string]$reference.sha256 -ceq [string]$validated.sha256) "$Context historical reconstruction '$relativePath' reference hash drifted."
+        Assert-Contract ([string]$validated.document.project_id -ceq [string]$spec.project_id) "$Context historical reconstruction '$relativePath' belongs to another project."
+        $originalPath = [string]$validated.document.damaged_original.path
+        Assert-Contract (-not $reconstructionByOriginal.ContainsKey($originalPath)) "$Context historical adoption '$originalPath' has conflicting reconstructions."
+        if (-not $reconstructionByOriginal.ContainsKey($originalPath)) { $reconstructionByOriginal[$originalPath] = $validated }
+    }
     $adoptionReferences = @()
+    $consumedReconstructions = @{}
     if ($state.PSObject.Properties.Name -contains "historical_unit_adoption_receipts") { $adoptionReferences = @($state.historical_unit_adoption_receipts) }
     Test-UniqueProperty -Items $adoptionReferences -Property "path" -Context "$Context historical-unit adoption references"
     foreach ($reference in $adoptionReferences) {
@@ -297,7 +332,19 @@ function Test-ProjectBundle {
         $receiptPath = Join-Path $workspaceRoot ($relativePath -replace "/", [IO.Path]::DirectorySeparatorChar)
         $receipt = Read-JsonDocument -Path $receiptPath -Context "$Context historical-unit adoption receipt"
         if ($null -eq $receipt) { continue }
-        Assert-Contract ([string]$reference.sha256 -eq (Get-FileSha256 $receiptPath)) "$Context historical-unit adoption receipt '$relativePath' hash drifted."
+        $observedHash = Get-FileSha256 $receiptPath
+        if ([string]$reference.sha256 -cne $observedHash) {
+            Assert-Contract ($reconstructionByOriginal.ContainsKey($relativePath)) "$Context historical-unit adoption receipt '$relativePath' hash drifted without a reconstruction."
+            if ($reconstructionByOriginal.ContainsKey($relativePath)) {
+                $projection = $reconstructionByOriginal[$relativePath]
+                $consumedReconstructions[$relativePath] = $true
+                Assert-Contract ([string]$projection.document.damaged_original.expected_sha256 -ceq [string]$reference.sha256) "$Context reconstruction does not preserve the original expected hash for '$relativePath'."
+                Assert-Contract ([string]$projection.document.damaged_original.observed_sha256 -ceq $observedHash) "$Context reconstruction does not preserve the observed hash for '$relativePath'."
+                $receipt = $projection.receipt
+            }
+        } else {
+            Assert-Contract (-not $reconstructionByOriginal.ContainsKey($relativePath)) "$Context exact historical adoption '$relativePath' must not use a damage reconstruction."
+        }
         Assert-Contract ([string]$receipt.schema -eq "rusty.morphospace.workflow.historical_unit_adoption_receipt.v1") "$Context historical-unit adoption receipt '$relativePath' has the wrong schema."
         Assert-Contract ([string]$receipt.project_id -eq [string]$spec.project_id) "$Context historical-unit adoption receipt '$relativePath' belongs to another project."
         Assert-Contract ((Test-Text $receipt.source_workflow.release) -and ([string]$receipt.source_workflow.commit -match '^[0-9a-f]{40}$')) "$Context historical-unit adoption receipt '$relativePath' lacks source workflow identity."
@@ -307,6 +354,9 @@ function Test-ProjectBundle {
             Assert-Contract (-not $historicalAdoptions.ContainsKey($unitId)) "$Context historical unit '$unitId' appears in more than one adoption receipt."
             if (-not $historicalAdoptions.ContainsKey($unitId)) { $historicalAdoptions[$unitId] = $entry }
         }
+    }
+    foreach ($originalPath in @($reconstructionByOriginal.Keys)) {
+        Assert-Contract ($consumedReconstructions.ContainsKey([string]$originalPath)) "$Context historical reconstruction for '$originalPath' does not correspond to one damaged adoption reference."
     }
     Test-NonEmptyTextArray -Value $spec.non_scope -Context "$Context project non_scope"
 
@@ -1005,6 +1055,7 @@ $requiredSchemaNames = @(
     "published-prerequisite-suffix-reconciliation.schema.json",
     "historical-release-closure-receipt.schema.json",
     "historical-unit-adoption-receipt.schema.json",
+    "historical-unit-adoption-reconstruction.schema.json",
     "feature-descriptor.schema.json",
     "feature-lock.schema.json",
     "feature-lock-v2.schema.json",
@@ -1012,6 +1063,7 @@ $requiredSchemaNames = @(
     "event-transaction-intent.schema.json",
     "inflight-adoption-receipt.schema.json",
     "interruption-receipt.schema.json",
+    "planning-workspace-projection.schema.json",
     "iteration-event.schema.json",
     "iteration-event-v2.schema.json",
     "iteration-unit.schema.json",
@@ -1044,6 +1096,7 @@ $requiredSchemaNames = @(
     "validator-trust-anchor-migration.schema.json",
     "timestamp-anomaly-projection.schema.json",
     "unplanned-publication-closure.schema.json",
+    "unplanned-publication-closure-v2.schema.json",
     "work-unit-automation-receipt.schema.json",
     "workspace-state.schema.json",
     "workspace-state-v2.schema.json"
@@ -1060,6 +1113,24 @@ foreach ($schemaFile in $schemaFiles) {
 }
 
 $templatesRoot = Join-Path $RepoRoot "templates"
+foreach ($contractExample in @(
+    [pscustomobject]@{ Template = "planning-workspace-projection.example.json"; Schema = "planning-workspace-projection.schema.json" },
+    [pscustomobject]@{ Template = "historical-unit-adoption-reconstruction.example.json"; Schema = "historical-unit-adoption-reconstruction.schema.json" },
+    [pscustomobject]@{ Template = "unplanned-publication-closure-v2.example.json"; Schema = "unplanned-publication-closure.schema.json" }
+)) {
+    $examplePath = Join-Path $templatesRoot $contractExample.Template
+    $exampleSchemaPath = Join-Path $schemaRoot $contractExample.Schema
+    try {
+        Assert-Contract (Get-Content -LiteralPath $examplePath -Raw | Test-Json -SchemaFile $exampleSchemaPath -ErrorAction Stop) "Contract example '$($contractExample.Template)' does not conform to '$($contractExample.Schema)'."
+    } catch {
+        Add-Failure -Message "Contract example '$($contractExample.Template)' schema validation failed: $($_.Exception.Message)"
+    }
+}
+$v2ClosureExample = Read-JsonDocument -Path (Join-Path $templatesRoot "unplanned-publication-closure-v2.example.json") -Context "v2 unplanned-publication closure example"
+if ($v2ClosureExample) {
+    Assert-Contract ([string]$v2ClosureExample.schema -ceq "rusty.morphospace.workflow.unplanned_publication_closure.v2") "V2 unplanned-publication closure example has the wrong discriminator."
+    Assert-Contract ($null -ne $v2ClosureExample.planning_workspace_projection) "V2 unplanned-publication closure example lacks projection evidence."
+}
 $templateBundle = New-Bundle `
     -SpecPath (Join-Path $templatesRoot "project.spec.example.json") `
     -LockPath (Join-Path $templatesRoot "feature.lock.example.json") `
@@ -1101,6 +1172,17 @@ if ((-not $SkipOwnerSelfTests) -and (Test-Path -LiteralPath $publicationRecovery
         & $publicationRecoveryValidator -SelfTest | Out-Null
     } catch {
         Add-Failure -Message "Unplanned-publication closure self-test failed: $($_.Exception.Message)"
+    }
+}
+
+if (-not $SkipOwnerSelfTests) {
+    foreach ($focusedRecoveryTest in @(
+        "Test-PlanningWorkspaceProjection.ps1",
+        "Test-HistoricalUnitAdoptionReconstruction.ps1"
+    )) {
+        $focusedRecoveryPath = Join-Path $RepoRoot "scripts\$focusedRecoveryTest"
+        try { & $focusedRecoveryPath -SelfTest | Out-Null }
+        catch { Add-Failure -Message "$focusedRecoveryTest self-test failed: $($_.Exception.Message)" }
     }
 }
 

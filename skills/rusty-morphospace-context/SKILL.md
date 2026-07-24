@@ -144,6 +144,7 @@ through a distinct external planning repository and publish that ref last. A
 same-ref source workspace cannot certify its own terminal bytes. If publication
 preceded preparation, route the independently observed recovery closure through
 `ReconcilePublication` without fabricating chronology or mutating source Git.
+For embedded state, project exact published-tree bytes externally with `planning_workspace_projection.v1`, use `unplanned_publication_closure.v2`, and route `docs/EXTERNAL_PLANNING_AND_HISTORICAL_RECONSTRUCTION.md`.
 If only planning published early and source remains unpublished, preserve that
 fault through the dedicated hash-bound ordering-interruption input to a fresh
 plan; do not use `ReconcilePublication`.
@@ -172,9 +173,8 @@ short and link detailed runbooks.
 Do not encode a transient active unit, roadmap position, device identity, or
 release candidate in this skill. Read those from the current project's compact
 state and receipts every time.
-
 Historical-unit normalization is project evidence, not runtime authority: only
 exact hash-bound accepted or blocked units may use it; current units remain
 closed against the published portable registries and instruction-sync rules.
-Legacy instruction metadata must bind the exact impact and every affected
-surface path/action without rewriting the historical unit.
+Legacy instruction metadata must bind the exact impact and every affected surface path/action without rewriting the historical unit.
+An immutable-Git-anchored drift reconstruction is current-validation-only and never replaces original adoption evidence.

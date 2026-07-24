@@ -216,3 +216,9 @@ synchronization records; keep detailed scan recipes outside the entrypoints.
 Graph historical-unit adoption as an additive evidence node linked to exact
 unit bytes, terminal event, source workflow, and normalized semantics. It must
 not create an authority edge for current work.
+Graph drift as separate expected-hash, observed-byte, and independently
+reconstructed nodes; only the reconstruction may connect to current validation.
+For embedded recovery, graph published source tree, exact external projection,
+and later reconciliation without implying external planning existed at
+publication time. Route the exact projection checks through
+`docs/EXTERNAL_PLANNING_AND_HISTORICAL_RECONSTRUCTION.md`.

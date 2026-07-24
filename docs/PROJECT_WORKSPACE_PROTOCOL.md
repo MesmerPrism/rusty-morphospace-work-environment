@@ -69,7 +69,10 @@ observed, claimed, validated, and accepted revisions distinct.
   exact remote readback. An independently reconstructed
   `unplanned_publication_closure.v1` may repair workflow projection only when a
   real no-force push preceded preparation; it cannot impersonate either a
-  prepared plan or an executed-push receipt.
+  prepared plan or an executed-push receipt. If that workflow was embedded in
+  the published source, first use `planning_workspace_projection.v1` to copy
+  exact published-tree bytes into distinct external planning, then bind it
+  from `unplanned_publication_closure.v2`. The source copy becomes historical.
   A later force-with-lease replacement of an already published planning-only
   finalization suffix uses `planning_suffix_rewrite_recovery.v1`; it preserves
   the original prepared/no-force evidence and cannot authorize source rewrite.

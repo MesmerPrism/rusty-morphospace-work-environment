@@ -207,6 +207,13 @@ against a clean synchronized source worktree and mutates only the separate
 planning workspace projection. The reconstruction explicitly remains distinct
 from `executed_push_receipt.v1`.
 
+When the workspace was embedded in the published source, first use
+`planning_workspace_projection.v1` to copy its exact published-tree bytes into
+one distinct external planning repository. Bind that receipt from
+`unplanned_publication_closure.v2`; `ReconcilePublication` may then mutate only
+the external projection. See
+[External Planning Projection And Historical Reconstruction](EXTERNAL_PLANNING_AND_HISTORICAL_RECONSTRUCTION.md).
+
 ### Immutable release capsules
 
 An executed-push receipt proves a particular publication action. A sealed

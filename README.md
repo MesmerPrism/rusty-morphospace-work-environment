@@ -232,6 +232,11 @@ planning ref is the final prepared suffix. If a source push already occurred
 without `PreparePush`, preserve the real publication and use the additive
 `unplanned_publication_closure.v1` plus `ReconcilePublication`; never create a
 retrospective plan or relabel the reconstruction as an executed-push receipt.
+If the project workspace was embedded in that source, first project its exact
+published-tree bytes to distinct external planning with
+`planning_workspace_projection.v1`, then use
+`unplanned_publication_closure.v2`. See
+[External Planning Projection And Historical Reconstruction](docs/EXTERNAL_PLANNING_AND_HISTORICAL_RECONSTRUCTION.md).
 If planning alone published early while every source remote remains unchanged,
 use the hash-bound publication-ordering interruption input to create a fresh
 plan that preserves the fault and claims no publication or corrected order.

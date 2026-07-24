@@ -86,5 +86,33 @@ try {
         }
         Remove-Item -LiteralPath $root -Recurse -Force
     }
-    Write-Host 'Historical-unit adoption self-test passed (positive plus 12 damaged cases).'
+    $reconstructionRoot="$base-reconstruction";Copy-Item $base $reconstructionRoot -Recurse
+    $original=Join-Path $reconstructionRoot 'receipts/historical-unit-adoption-example.json'
+    $reconstructed=Join-Path $reconstructionRoot 'receipts/historical-unit-adoption-reconstructed.json'
+    Copy-Item $original $reconstructed
+    Add-Content -LiteralPath $original ' '
+    $anchor=Join-Path $reconstructionRoot 'anchor-repository';New-Item -ItemType Directory $anchor|Out-Null
+    git -C $anchor init -q;git -C $anchor config user.name fixture;git -C $anchor config user.email fixture@example.invalid
+    New-Item -ItemType Directory (Join-Path $anchor 'receipts')|Out-Null
+    Copy-Item $reconstructed (Join-Path $anchor 'receipts\historical-unit-adoption-example.json')
+    git -C $anchor -c core.autocrlf=false add .;git -C $anchor commit -q -m anchor
+    $anchorRevision=(git -C $anchor rev-parse HEAD).Trim();$anchorTree=(git -C $anchor rev-parse 'HEAD^{tree}').Trim();$anchorBlob=(git -C $anchor rev-parse 'HEAD:receipts/historical-unit-adoption-example.json').Trim()
+    $statePath=Join-Path $reconstructionRoot 'workspace.state.json';$state=Get-Content -Raw $statePath|ConvertFrom-Json
+    $record=[ordered]@{
+        schema='rusty.morphospace.workflow.historical_unit_adoption_reconstruction.v1';reconstruction_id='historical-adoption-reconstruction-example';project_id='example-project';recorded_at='2026-01-02T03:04:05Z';status='independent-reconstruction-verified'
+        damaged_original=[ordered]@{path='receipts/historical-unit-adoption-example.json';expected_sha256=[string]$state.historical_unit_adoption_receipts[0].sha256;observed_sha256=Get-Sha $original;integrity='damaged-original-unavailable'}
+        reconstruction=[ordered]@{path='receipts/historical-unit-adoption-reconstructed.json';sha256=Get-Sha $reconstructed;claim='independent-reconstruction-not-original-bytes'}
+        immutable_anchor=[ordered]@{repository='source-owner';revision=$anchorRevision;tree=$anchorTree;source_path='receipts/historical-unit-adoption-example.json';source_blob=$anchorBlob;content_sha256=Get-Sha $reconstructed}
+        projection=[ordered]@{scope='current-validation-only';original_reference_preserved=$true;accepted_evidence_rewritten=$false;current_or_inflight_units_allowed=$false;conflicting_reconstruction_allowed=$false};failure=$null
+    }
+    $recordPath=Join-Path $reconstructionRoot 'receipts/historical-adoption-reconstruction-example.json';Write-Json $recordPath $record
+    $state|Add-Member -NotePropertyName historical_unit_adoption_reconstructions -NotePropertyValue @([pscustomobject]@{path='receipts/historical-adoption-reconstruction-example.json';sha256=Get-Sha $recordPath})
+    Write-Json $statePath $state
+    $repoMapPath=Join-Path $reconstructionRoot 'repository-map.json';Write-Json $repoMapPath ([ordered]@{schema='rusty.morphospace.workflow.repository_map.v1';repositories=@([ordered]@{repo_id='source-owner';path=$anchor;role='source'})})
+    & $validator -RepoRoot $RepoRoot -WorkspaceRoot $reconstructionRoot -RepositoryMapPath $repoMapPath -SkipOwnerSelfTests | Out-Null
+    Add-Content -LiteralPath $recordPath ' '
+    $failed=$false;try{& $validator -RepoRoot $RepoRoot -WorkspaceRoot $reconstructionRoot -RepositoryMapPath $repoMapPath -SkipOwnerSelfTests *> $null}catch{$failed=$true}
+    if(-not$failed){throw'Tampered historical reconstruction reference was accepted.'}
+    Remove-Item -LiteralPath $reconstructionRoot -Recurse -Force
+    Write-Host 'Historical-unit adoption self-test passed (positive, reconstructed projection, and 13 damaged cases).'
 } finally { if(Test-Path $base){Remove-Item -LiteralPath $base -Recurse -Force} }

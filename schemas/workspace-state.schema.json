@@ -93,6 +93,16 @@
           "sha256": { "$ref": "#/$defs/hash" }
         }
       }
+    },
+    "historical_unit_adoption_reconstructions": {
+      "type": "array", "uniqueItems": true,
+      "items": {
+        "type": "object", "additionalProperties": false, "required": ["path", "sha256"],
+        "properties": {
+          "path": { "type": "string", "pattern": "^receipts/[a-z0-9][a-z0-9-]{1,127}\\.json$" },
+          "sha256": { "$ref": "#/$defs/hash" }
+        }
+      }
     }
   },
   "$defs": {

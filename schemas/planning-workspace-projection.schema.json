@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/planning-workspace-projection.schema.json",
+  "title": "Exact projection of an embedded workflow workspace into external planning",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "projection_id", "project_id", "unit_id", "recorded_at", "status", "chronology", "source", "planning", "inventory", "authority", "failure"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schema": { "const": "rusty.morphospace.workflow.planning_workspace_projection.v1" },
+    "projection_id": { "$ref": "#/$defs/id" },
+    "project_id": { "$ref": "#/$defs/id" },
+    "unit_id": { "$ref": "#/$defs/id" },
+    "recorded_at": { "type": "string", "format": "date-time" },
+    "status": { "const": "exact-projection-verified" },
+    "chronology": {
+      "type": "object", "additionalProperties": false,
+      "required": ["classification", "source_publication_preceded_projection", "prepared_plan_present", "executed_push_receipt_present", "does_not_claim"],
+      "properties": {
+        "classification": { "const": "embedded-workspace-projected-after-source-publication" },
+        "source_publication_preceded_projection": { "const": true },
+        "prepared_plan_present": { "const": false },
+        "executed_push_receipt_present": { "const": false },
+        "does_not_claim": { "type": "array", "minItems": 4, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "source": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repo_id", "branch", "remote", "remote_ref", "upstream", "old_revision", "published_revision", "observed_remote_revision", "embedded_workspace_path", "embedded_workspace_tree", "fast_forward_verified", "remote_match", "force_push_used"],
+      "properties": {
+        "repo_id": { "$ref": "#/$defs/id" }, "branch": { "type": "string", "minLength": 1 },
+        "remote": { "type": "string", "minLength": 1 }, "upstream": { "type": "string", "minLength": 1 },
+        "remote_ref": { "type": "string", "pattern": "^refs/heads/[A-Za-z0-9._/-]+$" },
+        "old_revision": { "$ref": "#/$defs/sha" }, "published_revision": { "$ref": "#/$defs/sha" },
+        "observed_remote_revision": { "$ref": "#/$defs/sha" },
+        "embedded_workspace_path": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._/-]*$" },
+        "embedded_workspace_tree": { "$ref": "#/$defs/sha" },
+        "fast_forward_verified": { "const": true }, "remote_match": { "const": true }, "force_push_used": { "const": false }
+      }
+    },
+    "planning": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repo_id", "workspace_path", "projection_record_path", "distinct_from_source", "base_revision"],
+      "properties": {
+        "repo_id": { "$ref": "#/$defs/id" },
+        "workspace_path": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._/-]*$" },
+        "projection_record_path": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._/-]*\\.json$" },
+        "distinct_from_source": { "const": true },
+        "base_revision": { "oneOf": [{ "$ref": "#/$defs/sha" }, { "type": "null" }] }
+      }
+    },
+    "inventory": {
+      "type": "array", "minItems": 4,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["path", "git_mode", "size", "sha256"],
+        "properties": {
+          "path": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._/-]*$" },
+          "git_mode": { "enum": ["100644", "100755"] },
+          "size": { "type": "integer", "minimum": 0 },
+          "sha256": { "$ref": "#/$defs/hash" }
+        }
+      }
+    },
+    "authority": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source_workspace", "external_workspace", "source_workflow_mutation_performed", "git_mutation_performed", "next_transition"],
+      "properties": {
+        "source_workspace": { "const": "immutable-historical-snapshot" },
+        "external_workspace": { "const": "sole-mutable-workflow-authority" },
+        "source_workflow_mutation_performed": { "const": false },
+        "git_mutation_performed": { "const": false },
+        "next_transition": { "const": "ReconcilePublication" }
+      }
+    },
+    "failure": { "type": "null" }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" },
+    "sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  }
+}

@@ -24,7 +24,7 @@
   ],
   "properties": {
     "$schema": { "type": "string", "minLength": 1 },
-    "schema": { "const": "rusty.morphospace.workflow.unplanned_publication_closure.v1" },
+    "schema": { "enum": ["rusty.morphospace.workflow.unplanned_publication_closure.v1", "rusty.morphospace.workflow.unplanned_publication_closure.v2"] },
     "closure_id": { "$ref": "#/$defs/id" },
     "project_id": { "$ref": "#/$defs/id" },
     "unit_id": { "$ref": "#/$defs/id" },
@@ -141,8 +141,22 @@
     },
     "remote_readback_complete": { "const": true },
     "recovery_scope": { "const": "workflow-state-only" },
+    "planning_workspace_projection": {
+      "type": "object", "additionalProperties": false, "required": ["path", "sha256"],
+      "properties": {
+        "path": { "type": "string", "pattern": "^receipts/[a-z0-9][a-z0-9-]{1,127}\\.json$" },
+        "sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
     "failure": { "type": "null" }
   },
+  "allOf": [
+    {
+      "if": { "properties": { "schema": { "const": "rusty.morphospace.workflow.unplanned_publication_closure.v2" } } },
+      "then": { "required": ["planning_workspace_projection"] },
+      "else": { "not": { "required": ["planning_workspace_projection"] } }
+    }
+  ],
   "$defs": {
     "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" },
     "revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
