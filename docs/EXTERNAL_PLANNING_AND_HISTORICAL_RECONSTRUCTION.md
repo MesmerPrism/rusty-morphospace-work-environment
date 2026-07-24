@@ -30,8 +30,10 @@ The tool performs no Git operation. Publish the exact projection through an
 independently authorized planning-repository workflow. Then create
 `unplanned_publication_closure.v2`, bind the projection path/hash, and run
 `ReconcilePublication` from the external workspace. V2 revalidates the source
-tree against the projected bytes. The embedded copy is historical and no
-workflow transition may write it.
+tree against the projected bytes while admitting only the exact bound closure
+receipt as additive transition evidence. The embedded copy is historical until
+that one-time reconciliation makes the external workspace authoritative; no
+workflow transition may write the source copy.
 
 Never use v1 closure for this migration. Never copy a dirty worktree.
 
