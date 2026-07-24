@@ -228,7 +228,14 @@ function Test-MorphospaceUnplannedPublicationClosureLive {
         if ($planningId -ceq $repoId -or -not $RepositoryMap.ContainsKey($planningId)) { throw 'V2 recovery lacks its distinct mapped external planning repository.' }
         $planningRoot = [string]$RepositoryMap[$planningId].path
         $sourceRoot = [string]$RepositoryMap[$repoId].path
-        Test-MorphospacePlanningWorkspaceProjectionLive -Path $projectionPath -SourceRepository $sourceRoot -PlanningRepository $planningRoot -WorkspaceRoot $WorkspaceRoot | Out-Null
+        $workspaceFull = [System.IO.Path]::GetFullPath($WorkspaceRoot).TrimEnd('\', '/')
+        $closureFull = [System.IO.Path]::GetFullPath($Path)
+        $workspacePrefix = $workspaceFull + [System.IO.Path]::DirectorySeparatorChar
+        if (-not $closureFull.StartsWith($workspacePrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw 'V2 closure receipt is outside the projected workspace.'
+        }
+        $closureReference = $closureFull.Substring($workspacePrefix.Length).Replace('\', '/')
+        Test-MorphospacePlanningWorkspaceProjectionLive -Path $projectionPath -SourceRepository $sourceRoot -PlanningRepository $planningRoot -WorkspaceRoot $WorkspaceRoot -AllowedAdditivePaths @($closureReference) | Out-Null
     }
     if (@($Unit.allowed_repositories | Where-Object { [string]$_.repo_id -ceq $repoId }).Count -ne 1 -or -not $RepositoryMap.ContainsKey($repoId)) {
         throw "Unplanned-publication closure repository '$repoId' is outside the accepted unit or local repository map."

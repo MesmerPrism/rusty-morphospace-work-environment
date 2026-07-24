@@ -76,7 +76,8 @@ function Test-MorphospacePlanningWorkspaceProjectionDocument {
 function Test-MorphospacePlanningWorkspaceProjectionLive {
     param(
         [Parameter(Mandatory)][string]$Path,[Parameter(Mandatory)][string]$SourceRepository,
-        [Parameter(Mandatory)][string]$PlanningRepository,[Parameter(Mandatory)][string]$WorkspaceRoot
+        [Parameter(Mandatory)][string]$PlanningRepository,[Parameter(Mandatory)][string]$WorkspaceRoot,
+        [string[]]$AllowedAdditivePaths=@()
     )
     $validated=Test-MorphospacePlanningWorkspaceProjectionDocument $Path;$d=$validated.document
     $sourceRoot=[IO.Path]::GetFullPath($SourceRepository).TrimEnd('\','/');$planningRoot=[IO.Path]::GetFullPath($PlanningRepository).TrimEnd('\','/')
@@ -111,8 +112,16 @@ function Test-MorphospacePlanningWorkspaceProjectionLive {
     }|Sort-Object)
     $destinationDirectories=@(Get-ChildItem -LiteralPath $workspace -Directory -Recurse -Force)
     foreach($directory in $destinationDirectories){if($directory.Attributes-band[IO.FileAttributes]::ReparsePoint){throw"Projected workspace contains a reparse-point directory: $($directory.FullName)"}}
-    $expectedFiles=@(@($actual|ForEach-Object{$_.path})+$relativeProjection|Sort-Object)
+    $allowedAdditiveSet=@{}
+    foreach($allowedPath in @($AllowedAdditivePaths)){
+        Test-PlanningProjectionRelativePath $allowedPath 'Allowed additive path'
+        if($allowedPath-ceq$relativeProjection-or@($actual|Where-Object{$_.path-ceq$allowedPath}).Count-ne0-or$allowedAdditiveSet.ContainsKey($allowedPath)){
+            throw"Allowed additive path conflicts with projected evidence: $allowedPath"
+        }
+        $allowedAdditiveSet[$allowedPath]=$true
+    }
+    $expectedFiles=@(@($actual|ForEach-Object{$_.path})+$relativeProjection+@($allowedAdditiveSet.Keys)|Sort-Object)
     if(($destinationFiles-join'|')-cne($expectedFiles-join'|')){throw'Projected workspace contains missing or additional files beyond the exact source inventory and bound projection record.'}
     return $validated
 }
-Export-ModuleMember -Function Get-GitWorkspaceInventory,Get-GitBlobBytes,Get-GitCommonDirectory,Get-FreshRemoteRevision,Test-MorphospacePlanningWorkspaceProjectionDocument,Test-MorphospacePlanningWorkspaceProjectionLive
+Export-ModuleMember -Function Get-GitWorkspaceInventory,Get-GitBlobBytes,Get-GitCommonDirectory,Get-FreshRemoteRevision,Test-PlanningProjectionRelativePath,Test-MorphospacePlanningWorkspaceProjectionDocument,Test-MorphospacePlanningWorkspaceProjectionLive
