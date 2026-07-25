@@ -11,6 +11,9 @@ All notable changes to the portable work environment are recorded here.
   reconciliation.
 - Damage-preserving, immutable-anchor reconstruction for drifted historical
   unit-adoption receipts, limited to current workflow validation.
+- Planning-workspace projection v2 and a one-time published-planning-authority
+  adoption receipt for null-bundle embedded states with a stale dirty source
+  projection.
 
 ### Changed
 
@@ -18,6 +21,12 @@ All notable changes to the portable work environment are recorded here.
   containment as other publication transitions.
 - Unplanned-publication closure v2 binds and revalidates the exact planning
   projection without changing v1 semantics.
+- `AdoptPublishedPlanningAuthority` performs an exact workflow-only
+  stale-to-synchronized state transition while preserving unrelated state and
+  leaving source Git and the local-only planning base untouched.
+- Transition-ledger starts may bind mutex-checked pre-state and pre-unit hashes,
+  preventing validated workflow state from being replaced after concurrent
+  drift.
 
 ## 0.6.0 - 2026-07-23
 

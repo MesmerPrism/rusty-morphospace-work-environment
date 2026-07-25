@@ -7,7 +7,12 @@
   "required": ["schema", "projection_id", "project_id", "unit_id", "recorded_at", "status", "chronology", "source", "planning", "inventory", "authority", "failure"],
   "properties": {
     "$schema": { "type": "string" },
-    "schema": { "const": "rusty.morphospace.workflow.planning_workspace_projection.v1" },
+    "schema": {
+      "enum": [
+        "rusty.morphospace.workflow.planning_workspace_projection.v1",
+        "rusty.morphospace.workflow.planning_workspace_projection.v2"
+      ]
+    },
     "projection_id": { "$ref": "#/$defs/id" },
     "project_id": { "$ref": "#/$defs/id" },
     "unit_id": { "$ref": "#/$defs/id" },
@@ -17,7 +22,12 @@
       "type": "object", "additionalProperties": false,
       "required": ["classification", "source_publication_preceded_projection", "prepared_plan_present", "executed_push_receipt_present", "does_not_claim"],
       "properties": {
-        "classification": { "const": "embedded-workspace-projected-after-source-publication" },
+        "classification": {
+          "enum": [
+            "embedded-workspace-projected-after-source-publication",
+            "published-embedded-workspace-authority-adoption"
+          ]
+        },
         "source_publication_preceded_projection": { "const": true },
         "prepared_plan_present": { "const": false },
         "executed_push_receipt_present": { "const": false },
@@ -62,6 +72,49 @@
         }
       }
     },
+    "projected_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "current_unit",
+        "next_ready_unit",
+        "pending_push_bundle",
+        "dirty_repository_ids",
+        "source_repository"
+      ],
+      "properties": {
+        "current_unit": { "type": "null" },
+        "next_ready_unit": { "type": "null" },
+        "pending_push_bundle": { "type": "null" },
+        "dirty_repository_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "source_repository": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["repo_id", "head", "branch", "dirty_fingerprint"],
+          "properties": {
+            "repo_id": { "$ref": "#/$defs/id" },
+            "head": { "$ref": "#/$defs/sha" },
+            "branch": {
+              "oneOf": [
+                { "type": "string", "minLength": 1 },
+                { "type": "null" }
+              ]
+            },
+            "dirty_fingerprint": {
+              "oneOf": [
+                { "$ref": "#/$defs/hash" },
+                { "type": "null" }
+              ]
+            }
+          }
+        }
+      }
+    },
     "authority": {
       "type": "object", "additionalProperties": false,
       "required": ["source_workspace", "external_workspace", "source_workflow_mutation_performed", "git_mutation_performed", "next_transition"],
@@ -70,11 +123,74 @@
         "external_workspace": { "const": "sole-mutable-workflow-authority" },
         "source_workflow_mutation_performed": { "const": false },
         "git_mutation_performed": { "const": false },
-        "next_transition": { "const": "ReconcilePublication" }
+        "next_transition": {
+          "enum": ["ReconcilePublication", "AdoptPublishedPlanningAuthority"]
+        }
       }
     },
     "failure": { "type": "null" }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "schema": {
+            "const": "rusty.morphospace.workflow.planning_workspace_projection.v1"
+          }
+        }
+      },
+      "then": {
+        "not": { "required": ["projected_state"] },
+        "properties": {
+          "chronology": {
+            "properties": {
+              "classification": {
+                "const": "embedded-workspace-projected-after-source-publication"
+              }
+            }
+          },
+          "authority": {
+            "properties": {
+              "next_transition": { "const": "ReconcilePublication" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "schema": {
+            "const": "rusty.morphospace.workflow.planning_workspace_projection.v2"
+          }
+        }
+      },
+      "then": {
+        "required": ["projected_state"],
+        "properties": {
+          "chronology": {
+            "properties": {
+              "classification": {
+                "const": "published-embedded-workspace-authority-adoption"
+              }
+            }
+          },
+          "planning": {
+            "properties": {
+              "base_revision": { "$ref": "#/$defs/sha" }
+            }
+          },
+          "authority": {
+            "properties": {
+              "next_transition": {
+                "const": "AdoptPublishedPlanningAuthority"
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
   "$defs": {
     "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" },
     "sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },

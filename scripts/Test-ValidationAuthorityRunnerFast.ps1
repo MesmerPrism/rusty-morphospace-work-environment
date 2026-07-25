@@ -260,8 +260,9 @@ try {
         'scripts/Invoke-MorphospaceValidationAuthority.ps1','scripts/Invoke-WorkUnitAutomation.ps1','scripts/Invoke-Wf005OwnerValidator.ps1','scripts/Test-ValidationAuthorityLauncher.ps1',
         'scripts/Test-AuthorityRunnerHandoff.ps1','scripts/Test-AuthorityRecordReadiness.ps1','scripts/Test-TrustMigrationAuthority.ps1','scripts/Test-ValidationExecutionAuthority.ps1',
         'scripts/Test-TransitionLedger.ps1','scripts/WorkUnitAutomation.psm1','scripts/lib/MorphospaceAuthorityReadiness.psm1','scripts/lib/MorphospaceContentObservation.psm1',
-        'scripts/lib/MorphospaceOwnership.psm1','scripts/lib/MorphospacePlannedPublication.psm1','scripts/lib/MorphospacePlanningSuffixRewrite.psm1',
-        'scripts/lib/MorphospaceProtocolCommon.psm1','scripts/lib/MorphospacePublicationRecovery.psm1','scripts/lib/MorphospacePublishedPrerequisiteSuffix.psm1',
+        'scripts/lib/MorphospaceOwnership.psm1','scripts/lib/MorphospacePlannedPublication.psm1','scripts/lib/MorphospacePlanningProjection.psm1',
+        'scripts/lib/MorphospacePlanningSuffixRewrite.psm1','scripts/lib/MorphospaceProtocolCommon.psm1','scripts/lib/MorphospacePublicationRecovery.psm1',
+        'scripts/lib/MorphospacePublishedPlanningAuthorityAdoption.psm1','scripts/lib/MorphospacePublishedPrerequisiteSuffix.psm1',
         'scripts/lib/MorphospaceTransitionLedger.psm1','scripts/lib/MorphospaceValidationAuthority.psm1'
     )
     $validatorPath = 'scripts/Invoke-Wf005OwnerValidator.ps1'

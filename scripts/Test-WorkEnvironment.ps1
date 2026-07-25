@@ -238,6 +238,13 @@ if ($SelfTest) {
     }
 
     try {
+        & (Join-Path $RepoRoot "scripts\Test-PublishedPlanningAuthorityAdoption.ps1") -SelfTest
+        Add-CheckResult -Name "workflow:published-planning-authority-adoption" -Status "ok" -Detail "Validated exact stale embedded-state adoption into the external planning authority and damaged-case rejection."
+    } catch {
+        Add-CheckResult -Name "workflow:published-planning-authority-adoption" -Status "missing" -Required $true -Detail $_.Exception.Message
+    }
+
+    try {
         & (Join-Path $RepoRoot "scripts\Test-PublishedPrerequisiteSuffixReconciliation.ps1") -SelfTest
         Add-CheckResult -Name "workflow:published-prerequisite-suffix" -Status "ok" -Detail "Validated bounded one- and two-commit planning suffix reconciliation and damaged-case rejection."
     } catch {

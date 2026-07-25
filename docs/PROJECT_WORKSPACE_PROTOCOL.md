@@ -70,9 +70,15 @@ observed, claimed, validated, and accepted revisions distinct.
   `unplanned_publication_closure.v1` may repair workflow projection only when a
   real no-force push preceded preparation; it cannot impersonate either a
   prepared plan or an executed-push receipt. If that workflow was embedded in
-  the published source, first use `planning_workspace_projection.v1` to copy
-  exact published-tree bytes into distinct external planning, then bind it
-  from `unplanned_publication_closure.v2`. The source copy becomes historical.
+  the published source and an actual pending bundle remains, first use
+  `planning_workspace_projection.v1` to copy exact published-tree bytes into
+  distinct external planning, then bind it from
+  `unplanned_publication_closure.v2`. If activity and pending-bundle fields are
+  null but the published state retains a stale dirty source projection, use
+  `planning_workspace_projection.v2` and
+  `published_planning_authority_adoption.v1`; that transition may change only
+  the exact source dirty marker and repository-head projection in the external
+  state. The source copy becomes historical.
   A later force-with-lease replacement of an already published planning-only
   finalization suffix uses `planning_suffix_rewrite_recovery.v1`; it preserves
   the original prepared/no-force evidence and cannot authorize source rewrite.

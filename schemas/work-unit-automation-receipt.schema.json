@@ -4,12 +4,12 @@
   "title": "Work-unit automation action receipt",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "project_id", "unit_id", "action", "timestamp", "executed", "transition", "status_before", "status_after", "current_unit_before", "current_unit_after", "preservation", "validation_matrix", "graph_scope", "adoption_receipt", "publication_closure", "planned_publication", "push_plan", "event_id"],
+  "required": ["schema", "project_id", "unit_id", "action", "timestamp", "executed", "transition", "status_before", "status_after", "current_unit_before", "current_unit_after", "preservation", "validation_matrix", "graph_scope", "adoption_receipt", "publication_closure", "published_planning_authority_adoption", "planned_publication", "planning_suffix_rewrite_recovery", "published_prerequisite_suffix_reconciliation", "push_plan", "event_id"],
   "properties": {
     "schema": { "const": "rusty.morphospace.workflow.work_unit_automation_receipt.v1" },
     "project_id": { "$ref": "#/$defs/id" },
     "unit_id": { "$ref": "#/$defs/id" },
-    "action": { "enum": ["Inspect", "Claim", "Resume", "Ready", "BeginValidation", "RecordValidation", "Accept", "PreparePush", "RecordPublication", "Recover", "ReconcilePublication", "ReconcilePlanningSuffixRewrite"] },
+    "action": { "enum": ["Inspect", "Claim", "Resume", "Ready", "BeginValidation", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix"] },
     "timestamp": { "type": "string", "format": "date-time" },
     "executed": { "type": "boolean" },
     "transition": { "type": "string", "minLength": 1 },
@@ -45,6 +45,21 @@
         { "type": "null" }
       ]
     },
+    "published_planning_authority_adoption": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["adoption_id", "path", "sha256"],
+          "properties": {
+            "adoption_id": { "$ref": "#/$defs/id" },
+            "path": { "type": "string", "minLength": 1 },
+            "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+          }
+        },
+        { "type": "null" }
+      ]
+    },
     "planned_publication": {
       "oneOf": [
         { "type":"object", "additionalProperties":false, "required":["accounting_id","path","sha256","executed_push_receipt"], "properties": {
@@ -55,9 +70,30 @@
       ]
     },
     "planning_suffix_rewrite_recovery": { "oneOf": [ { "type": "object", "additionalProperties": false, "required": ["recovery_id","path","sha256"], "properties": { "recovery_id": { "$ref": "#/$defs/id" }, "path": { "type": "string", "minLength": 1 }, "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" } } }, { "type": "null" } ] },
+    "published_prerequisite_suffix_reconciliation": { "oneOf": [ { "type": "object", "additionalProperties": false, "required": ["reconciliation_id","path","sha256"], "properties": { "reconciliation_id": { "$ref": "#/$defs/id" }, "path": { "type": "string", "minLength": 1 }, "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" } } }, { "type": "null" } ] },
     "push_plan": { "oneOf": [{ "type": "object" }, { "type": "null" }] },
     "event_id": { "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "action": { "const": "AdoptPublishedPlanningAuthority" }
+        },
+        "required": ["action"]
+      },
+      "then": {
+        "properties": {
+          "published_planning_authority_adoption": { "type": "object" }
+        }
+      },
+      "else": {
+        "properties": {
+          "published_planning_authority_adoption": { "type": "null" }
+        }
+      }
+    }
+  ],
   "$defs": {
     "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" }
   }

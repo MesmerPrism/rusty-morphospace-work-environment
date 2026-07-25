@@ -233,9 +233,12 @@ without `PreparePush`, preserve the real publication and use the additive
 `unplanned_publication_closure.v1` plus `ReconcilePublication`; never create a
 retrospective plan or relabel the reconstruction as an executed-push receipt.
 If the project workspace was embedded in that source, first project its exact
-published-tree bytes to distinct external planning with
-`planning_workspace_projection.v1`, then use
-`unplanned_publication_closure.v2`. See
+published-tree bytes to distinct external planning. Use
+`planning_workspace_projection.v1` and `unplanned_publication_closure.v2` only
+when an actual pending bundle remains. If current, next-ready, and pending
+bundle are null while the embedded state still carries the source dirty marker
+and a stale projected head, use `planning_workspace_projection.v2` and the
+workflow-only `AdoptPublishedPlanningAuthority` transition instead. See
 [External Planning Projection And Historical Reconstruction](docs/EXTERNAL_PLANNING_AND_HISTORICAL_RECONSTRUCTION.md).
 If planning alone published early while every source remote remains unchanged,
 use the hash-bound publication-ordering interruption input to create a fresh

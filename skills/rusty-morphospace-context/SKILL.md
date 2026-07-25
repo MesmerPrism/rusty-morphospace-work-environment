@@ -144,7 +144,7 @@ through a distinct external planning repository and publish that ref last. A
 same-ref source workspace cannot certify its own terminal bytes. If publication
 preceded preparation, route the independently observed recovery closure through
 `ReconcilePublication` without fabricating chronology or mutating source Git.
-For embedded state, project exact published-tree bytes externally with `planning_workspace_projection.v1`, use `unplanned_publication_closure.v2`, and route `docs/EXTERNAL_PLANNING_AND_HISTORICAL_RECONSTRUCTION.md`.
+For embedded state with a real pending bundle, use `planning_workspace_projection.v1`, `unplanned_publication_closure.v2`, and `ReconcilePublication`; for null activity/bundle state with a stale dirty source projection, use `planning_workspace_projection.v2` and `AdoptPublishedPlanningAuthority` without inventing a bundle. Route `docs/EXTERNAL_PLANNING_AND_HISTORICAL_RECONSTRUCTION.md`.
 If only planning published early and source remains unpublished, preserve that
 fault through the dedicated hash-bound ordering-interruption input to a fresh
 plan; do not use `ReconcilePublication`.

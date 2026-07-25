@@ -1,0 +1,130 @@
+{
+  "$schema": "../schemas/published-planning-authority-adoption.schema.json",
+  "schema": "rusty.morphospace.workflow.published_planning_authority_adoption.v1",
+  "adoption_id": "example-published-planning-authority-adoption",
+  "project_id": "example-project",
+  "recorded_at": "2026-01-02T03:04:05Z",
+  "status": "published-planning-authority-adopted",
+  "planning_workspace_projection": {
+    "path": "receipts/example-planning-workspace-projection-v2.json",
+    "projection_id": "example-planning-workspace-projection-v2",
+    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "workspace_state_before": {
+    "path": "receipts/example-workspace-state-before.json",
+    "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "current_unit": null,
+    "next_ready_unit": null,
+    "pending_push_bundle": null,
+    "dirty_repository_ids": ["source-owner"],
+    "source_repository": {
+      "repo_id": "source-owner",
+      "head": "1111111111111111111111111111111111111111",
+      "branch": "main",
+      "dirty_fingerprint": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+  },
+  "workspace_state_after": {
+    "path": "receipts/example-workspace-state-after.json",
+    "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "current_unit": null,
+    "next_ready_unit": null,
+    "pending_push_bundle": null,
+    "dirty_repository_ids": [],
+    "source_repository": {
+      "repo_id": "source-owner",
+      "head": "2222222222222222222222222222222222222222",
+      "branch": "main",
+      "dirty_fingerprint": null
+    }
+  },
+  "source_publication": {
+    "repo_id": "source-owner",
+    "branch": "main",
+    "remote": "origin",
+    "remote_ref": "refs/heads/main",
+    "upstream": "origin/main",
+    "pre_merge_revision": "1111111111111111111111111111111111111111",
+    "published_revision": "2222222222222222222222222222222222222222",
+    "readback_revision": "2222222222222222222222222222222222222222",
+    "published_tree": "3333333333333333333333333333333333333333",
+    "worktree_clean": true,
+    "synchronized": true,
+    "fast_forward_verified": true,
+    "remote_match": true,
+    "force_push_used": false,
+    "history_rewrite_used": false
+  },
+  "planning_repository": {
+    "repo_id": "external-planning",
+    "branch": "main",
+    "head_revision": "4444444444444444444444444444444444444444",
+    "head_tree": "5555555555555555555555555555555555555555",
+    "workspace_path": "projects/example-project/morphospace",
+    "distinct_from_source": true,
+    "remote_configured": false,
+    "unrelated_worktree_clean": true
+  },
+  "validation": [
+    {
+      "gate_id": "published-source-readback",
+      "status": "pass",
+      "evidence": {
+        "path": "receipts/example-publication-validation.json",
+        "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      }
+    }
+  ],
+  "observers": [
+    {
+      "observer_id": "external-coordinator",
+      "recorded_at": "2026-01-02T03:04:05Z",
+      "evidence": {
+        "path": "receipts/example-publication-observer.json",
+        "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      }
+    }
+  ],
+  "state_delta": {
+    "cleared_dirty_repository_id": "source-owner",
+    "dirty_repository_ids_before": ["source-owner"],
+    "dirty_repository_ids_after": [],
+    "repository_before": {
+      "repo_id": "source-owner",
+      "head": "1111111111111111111111111111111111111111",
+      "branch": "main",
+      "dirty_fingerprint": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "repository_after": {
+      "repo_id": "source-owner",
+      "head": "2222222222222222222222222222222222222222",
+      "branch": "main",
+      "dirty_fingerprint": null
+    },
+    "last_event_id_before": "example-previous-event",
+    "last_event_id_after": "example-accepted-unit-planning-authority-adopted-0002",
+    "preserved_fields": [
+      "blockers",
+      "capability_registry",
+      "current_unit",
+      "last_accepted_receipt",
+      "module_registry",
+      "next_ready_unit",
+      "pending_push_bundle",
+      "plan_revision",
+      "project_id",
+      "repository_checkpoints",
+      "unrelated_repository_heads",
+      "validation_checkpoint"
+    ]
+  },
+  "nonclaims": {
+    "external_planning_authority_existed_at_publication": false,
+    "prepared_plan_or_executed_push_reconstructed": false,
+    "source_acceptance_created": false,
+    "git_or_remote_mutation_performed": false,
+    "force_push_or_history_rewrite_used": false,
+    "unrelated_dirty_repositories_cleared": false
+  },
+  "failure": null
+}

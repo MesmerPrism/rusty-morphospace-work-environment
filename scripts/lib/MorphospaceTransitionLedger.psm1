@@ -41,12 +41,33 @@ function Complete-MorphospaceTransitionLedger {
     } finally {Exit-MorphospaceWorkspaceMutex $lock}
 }
 function Start-MorphospaceTransitionLedger {
-    param([string]$WorkspaceRoot,[string]$TransactionId,[string]$StatePath,[string]$UnitPath,[string]$EventsPath,[object]$TargetState,[object]$TargetUnit,[object]$Event,[ValidateSet('none','after-intent','after-projection','after-event')][string]$FaultAfter='none')
+    param(
+        [string]$WorkspaceRoot,
+        [string]$TransactionId,
+        [string]$StatePath,
+        [string]$UnitPath,
+        [string]$EventsPath,
+        [object]$TargetState,
+        [object]$TargetUnit,
+        [object]$Event,
+        [ValidateSet('none','after-intent','after-projection','after-event')][string]$FaultAfter='none',
+        [string]$ExpectedPreStateSha256 = '',
+        [string]$ExpectedPreUnitSha256 = ''
+    )
     $workspace=[IO.Path]::GetFullPath($WorkspaceRoot);$lock=Enter-MorphospaceWorkspaceMutex -WorkspaceRoot $workspace
     try {
         $state=Read-MorphospaceProtocolJson -Path (Resolve-MorphospaceWorkspacePath $workspace $StatePath -RequireLeaf);$unit=Read-MorphospaceProtocolJson -Path (Resolve-MorphospaceWorkspacePath $workspace $UnitPath -RequireLeaf)
+        $preStateSha256=Get-MorphospaceLedgerDocumentHash $state;$preUnitSha256=Get-MorphospaceLedgerDocumentHash $unit
+        foreach($expectation in @(
+            [pscustomobject]@{name='pre-state';expected=$ExpectedPreStateSha256;actual=$preStateSha256},
+            [pscustomobject]@{name='pre-unit';expected=$ExpectedPreUnitSha256;actual=$preUnitSha256}
+        )){
+            if([string]::IsNullOrEmpty([string]$expectation.expected)){continue}
+            if([string]$expectation.expected-cnotmatch'^[0-9a-f]{64}$'){throw "Expected $([string]$expectation.name) SHA-256 is not canonical lowercase hex."}
+            if([string]$expectation.expected-cne[string]$expectation.actual){throw "Transition $TransactionId expected $([string]$expectation.name) SHA-256 does not match the mutex-protected current document."}
+        }
         $intentRelative=Get-MorphospaceLedgerPath $workspace $TransactionId intent
-        $intent=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.transition_ledger_intent.v1';transaction_id=$TransactionId;created_at=[DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffffffZ');state=[pscustomobject]@{path=(ConvertTo-MorphospaceProtocolRelativePath -Path $StatePath)};unit=[pscustomobject]@{path=(ConvertTo-MorphospaceProtocolRelativePath -Path $UnitPath)};events=[pscustomobject]@{path=(ConvertTo-MorphospaceProtocolRelativePath -Path $EventsPath)};pre=[pscustomobject]@{state=[pscustomobject]@{sha256=(Get-MorphospaceLedgerDocumentHash $state)};unit=[pscustomobject]@{sha256=(Get-MorphospaceLedgerDocumentHash $unit)}};target=[pscustomobject]@{state=[pscustomobject]@{sha256=(Get-MorphospaceLedgerDocumentHash $TargetState);document=$TargetState};unit=[pscustomobject]@{sha256=(Get-MorphospaceLedgerDocumentHash $TargetUnit);document=$TargetUnit}};event=$Event;status='prepared'}
+        $intent=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.transition_ledger_intent.v1';transaction_id=$TransactionId;created_at=[DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffffffZ');state=[pscustomobject]@{path=(ConvertTo-MorphospaceProtocolRelativePath -Path $StatePath)};unit=[pscustomobject]@{path=(ConvertTo-MorphospaceProtocolRelativePath -Path $UnitPath)};events=[pscustomobject]@{path=(ConvertTo-MorphospaceProtocolRelativePath -Path $EventsPath)};pre=[pscustomobject]@{state=[pscustomobject]@{sha256=$preStateSha256};unit=[pscustomobject]@{sha256=$preUnitSha256}};target=[pscustomobject]@{state=[pscustomobject]@{sha256=(Get-MorphospaceLedgerDocumentHash $TargetState);document=$TargetState};unit=[pscustomobject]@{sha256=(Get-MorphospaceLedgerDocumentHash $TargetUnit);document=$TargetUnit}};event=$Event;status='prepared'}
         Write-MorphospaceManagedProtocolJsonAtomic -WorkspaceRoot $workspace -RelativePath $intentRelative -Value $intent -NoOverwrite
         if($FaultAfter-eq'after-intent'){throw 'Injected interruption after intent publication.'}
     } finally {Exit-MorphospaceWorkspaceMutex $lock}

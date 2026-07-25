@@ -207,11 +207,16 @@ against a clean synchronized source worktree and mutates only the separate
 planning workspace projection. The reconstruction explicitly remains distinct
 from `executed_push_receipt.v1`.
 
-When the workspace was embedded in the published source, first use
-`planning_workspace_projection.v1` to copy its exact published-tree bytes into
-one distinct external planning repository. Bind that receipt from
-`unplanned_publication_closure.v2`; `ReconcilePublication` may then mutate only
-the external projection. See
+When the workspace was embedded in the published source and an actual pending
+bundle remains, first use `planning_workspace_projection.v1` to copy its exact
+published-tree bytes into one distinct external planning repository. Bind that
+receipt from `unplanned_publication_closure.v2`; `ReconcilePublication` may
+then mutate only the external projection. When the activity and pending-bundle
+fields are null but the embedded state retains a stale dirty source head, use
+`planning_workspace_projection.v2` and
+`AdoptPublishedPlanningAuthority`. That action consumes exact adoption
+evidence, clears only the named dirty marker, updates only the named
+repository-head entry, appends one event, and performs no Git operation. See
 [External Planning Projection And Historical Reconstruction](EXTERNAL_PLANNING_AND_HISTORICAL_RECONSTRUCTION.md).
 
 ### Immutable release capsules
@@ -241,7 +246,8 @@ successful push is not proof that the whole batch is complete.
 `scripts/Invoke-WorkUnitAutomation.ps1` is the portable owner for mechanical
 work-unit transitions and preparation artifacts. It supports `Inspect`,
 `Ready`, `Claim`, `Resume`, `BeginValidation`, `RecordValidation`, `Accept`,
-`PreparePush`, `Recover`, `ReconcilePublication`, and the narrow
+`PreparePush`, `Recover`, `ReconcilePublication`,
+`AdoptPublishedPlanningAuthority`, and the narrow
 `ReconcilePublishedPrerequisiteSuffix` and `ReconcilePlanningSuffixRewrite`
 publication-recovery actions.
 
@@ -262,6 +268,10 @@ The CLI is deliberately narrower than an autonomous coding agent:
   externally authorized push/readback step.
 - publication reconciliation consumes independently authored closure evidence,
   clears only the bound stale bundle/source projection, and never performs Git.
+- published-authority adoption consumes independently authored projection,
+  validation, and observer evidence; it requires a clean synchronized source
+  and preserves every state field except the exact named dirty marker and
+  repository-head entry.
 - published-prerequisite reconciliation requires the current planning remote
   to be either the exact v1 one-commit suffix or the exact v2 two-commit linear
   receipt-only correction suffix beyond the executed planning final, while

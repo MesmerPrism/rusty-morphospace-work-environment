@@ -158,6 +158,21 @@ revisions, verified fast-forward ancestry, no force push, and an external
 observer. Its self-test proves evidence tampering rejects. The recovery action
 changes workflow state only and never performs Git.
 
+For a published embedded workspace with null activity and pending-bundle state
+but a stale dirty source projection, validate the distinct adoption contract:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\Test-PublishedPlanningAuthorityAdoption.ps1 -SelfTest
+```
+
+The focused suite proves exact projection and state hashes, the stale-to-clean
+source-head delta, clean attached synchronized source evidence, a clean
+distinct local-only planning authority, preservation of unrelated state, and
+one-time workflow-only execution. It rejects state substitution, identity or
+remote drift, extra dirty-marker clearing, repeated adoption, and fabricated
+plan, push, acceptance, or Git claims.
+
 ## Source Repos
 
 Each source repo owns its own checks. Typical Rust checks:

@@ -3,6 +3,8 @@ param()
 $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 Import-Module (Join-Path $PSScriptRoot "WorkUnitAutomation.psm1") -Force
+Import-Module (Join-Path $PSScriptRoot "lib\MorphospacePlanningProjection.psm1") -Force
+Import-Module (Join-Path $PSScriptRoot "lib\MorphospaceProtocolCommon.psm1") -Force
 
 function Assert-Automation {
     param([bool]$Condition, [string]$Message)
@@ -24,6 +26,25 @@ try {
     $freshText = ((Get-Content -Raw $freshStdout -ErrorAction SilentlyContinue) + (Get-Content -Raw $freshStderr -ErrorAction SilentlyContinue))
     Assert-Automation ($fresh.ExitCode -ne 0) "fresh-process reconciliation probe unexpectedly succeeded"
     Assert-Automation ($freshText -notmatch "Cannot validate argument on parameter 'Action'|named PublishedPrerequisiteSuffixReconciliation parameter cannot be found") "fresh-process public Invoke entrypoint does not expose published-prerequisite reconciliation"
+} finally {
+    if ($null -ne $fresh) { $fresh.Dispose() }
+    Remove-Item -LiteralPath $freshStdout,$freshStderr -Force -ErrorAction SilentlyContinue
+}
+
+$freshStdout = [IO.Path]::GetTempFileName()
+$freshStderr = [IO.Path]::GetTempFileName()
+$fresh = $null
+try {
+    $freshPwsh = (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source
+    $fresh = Start-Process -FilePath $freshPwsh -ArgumentList @(
+        "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (Join-Path $PSScriptRoot "Invoke-WorkUnitAutomation.ps1"),
+        "-Action", "AdoptPublishedPlanningAuthority", "-WorkspaceRoot", (Join-Path ([IO.Path]::GetTempPath()) "missing-planning-authority-adoption-workspace"),
+        "-UnitId", "test-unit", "-RepoMapPath", "missing-repository-map.json",
+        "-PublishedPlanningAuthorityAdoption", "receipts/missing-adoption.json"
+    ) -NoNewWindow -Wait -PassThru -RedirectStandardOutput $freshStdout -RedirectStandardError $freshStderr
+    $freshText = ((Get-Content -Raw $freshStdout -ErrorAction SilentlyContinue) + (Get-Content -Raw $freshStderr -ErrorAction SilentlyContinue))
+    Assert-Automation ($fresh.ExitCode -ne 0) "fresh-process planning-authority adoption probe unexpectedly succeeded"
+    Assert-Automation ($freshText -notmatch "Cannot validate argument on parameter 'Action'|named PublishedPlanningAuthorityAdoption parameter cannot be found") "fresh-process public Invoke entrypoint does not expose planning-authority adoption"
 } finally {
     if ($null -ne $fresh) { $fresh.Dispose() }
     Remove-Item -LiteralPath $freshStdout,$freshStderr -Force -ErrorAction SilentlyContinue
@@ -317,6 +338,338 @@ try {
     ) })
     $receiptRoot = Join-Path $workspace "receipts"
     $fixed = "2026-01-02T03:04:05Z"
+
+    # Exercise the one behavior-neutral bridge from an already published
+    # embedded workspace into a distinct local-only planning authority.
+    $adoptionRemote = Join-Path $testRoot "adoption-source-remote.git"
+    $adoptionSource = Join-Path $testRoot "adoption-source"
+    $adoptionPlanning = Join-Path $testRoot "adoption-planning"
+    & git init --bare $adoptionRemote | Out-Null
+    & git init $adoptionSource | Out-Null
+    Invoke-TestGit -Path $adoptionSource -Arguments @("config", "user.name", "Automation Adoption Source") | Out-Null
+    Invoke-TestGit -Path $adoptionSource -Arguments @("config", "user.email", "adoption-source@example.invalid") | Out-Null
+    Invoke-TestGit -Path $adoptionSource -Arguments @("config", "core.autocrlf", "false") | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $adoptionSource "README.md"), "stale source checkpoint`n", $encoding)
+    Invoke-TestGit -Path $adoptionSource -Arguments @("add", "README.md") | Out-Null
+    Invoke-TestGit -Path $adoptionSource -Arguments @("commit", "-m", "stale source checkpoint") | Out-Null
+    $adoptionStaleRevision = [string](@(Invoke-TestGit -Path $adoptionSource -Arguments @("rev-parse", "HEAD"))[0])
+    [System.IO.File]::WriteAllText((Join-Path $adoptionSource "README.md"), "pre-merge source checkpoint`n", $encoding)
+    Invoke-TestGit -Path $adoptionSource -Arguments @("add", "README.md") | Out-Null
+    Invoke-TestGit -Path $adoptionSource -Arguments @("commit", "-m", "pre-merge source checkpoint") | Out-Null
+    $adoptionPreMergeRevision = [string](@(Invoke-TestGit -Path $adoptionSource -Arguments @("rev-parse", "HEAD"))[0])
+
+    $adoptionSourceWorkspace = New-TestWorkspace -Root $adoptionSource -ProjectId "adoption-e2e" -UnitId "unit-adoption-001"
+    $adoptionUnitPath = Join-Path $adoptionSourceWorkspace "iteration-units\unit-adoption-001.json"
+    $adoptionUnit = Get-Content -LiteralPath $adoptionUnitPath -Raw | ConvertFrom-Json
+    $adoptionUnit.status = "accepted"
+    Write-TestJson -Path $adoptionUnitPath -Value $adoptionUnit
+    $adoptionDirtyFingerprint = "c" * 64
+    $adoptionStatePath = Join-Path $adoptionSourceWorkspace "workspace.state.json"
+    $adoptionBeforeState = Get-Content -LiteralPath $adoptionStatePath -Raw | ConvertFrom-Json
+    $adoptionBeforeState.current_unit = $null
+    $adoptionBeforeState.next_ready_unit = $null
+    $adoptionBeforeState.last_event_id = $null
+    $adoptionBeforeState.pending_push_bundle = $null
+    $adoptionBeforeState.dirty_repositories = @("other-repo", "project-shell")
+    $adoptionBeforeState.repository_heads = @(
+        [pscustomobject][ordered]@{
+            repo_id = "other-repo"; head = ("9" * 40); branch = "main"; dirty_fingerprint = ("8" * 64)
+        },
+        [pscustomobject][ordered]@{
+            repo_id = "project-shell"; head = $adoptionStaleRevision
+            branch = "codex/stale-work"; dirty_fingerprint = $adoptionDirtyFingerprint
+        }
+    )
+    $adoptionBeforeState.blockers = @([pscustomobject][ordered]@{
+        blocker_id = "preserved-unrelated-blocker"
+        condition = "Unrelated evidence remains immutable."
+        resume_when = "A separate corrective unit is accepted."
+    })
+    Write-TestJson -Path $adoptionStatePath -Value $adoptionBeforeState
+    [System.IO.File]::WriteAllText((Join-Path $adoptionSourceWorkspace "iteration-events.jsonl"), "", $encoding)
+    Invoke-TestGit -Path $adoptionSource -Arguments @("add", "morphospace") | Out-Null
+    Invoke-TestGit -Path $adoptionSource -Arguments @("commit", "-m", "publish embedded planning workspace") | Out-Null
+    Invoke-TestGit -Path $adoptionSource -Arguments @("branch", "-M", "main") | Out-Null
+    Invoke-TestGit -Path $adoptionSource -Arguments @("remote", "add", "origin", $adoptionRemote) | Out-Null
+    Invoke-TestGit -Path $adoptionSource -Arguments @("push", "-u", "origin", "main") | Out-Null
+    $adoptionPublishedRevision = [string](@(Invoke-TestGit -Path $adoptionSource -Arguments @("rev-parse", "HEAD"))[0])
+    $adoptionPublishedTree = [string](@(Invoke-TestGit -Path $adoptionSource -Arguments @("rev-parse", "HEAD^{tree}"))[0])
+    $adoptionEmbeddedTree = [string](@(Invoke-TestGit -Path $adoptionSource -Arguments @("rev-parse", "${adoptionPublishedRevision}:morphospace"))[0])
+
+    & git init $adoptionPlanning | Out-Null
+    Invoke-TestGit -Path $adoptionPlanning -Arguments @("config", "user.name", "Automation Adoption Planning") | Out-Null
+    Invoke-TestGit -Path $adoptionPlanning -Arguments @("config", "user.email", "adoption-planning@example.invalid") | Out-Null
+    Invoke-TestGit -Path $adoptionPlanning -Arguments @("config", "core.autocrlf", "false") | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $adoptionPlanning "README.md"), "local-only planning authority`n", $encoding)
+    Invoke-TestGit -Path $adoptionPlanning -Arguments @("add", "README.md") | Out-Null
+    Invoke-TestGit -Path $adoptionPlanning -Arguments @("commit", "-m", "initialize local planning authority") | Out-Null
+    Invoke-TestGit -Path $adoptionPlanning -Arguments @("branch", "-M", "main") | Out-Null
+    $adoptionPlanningRevision = [string](@(Invoke-TestGit -Path $adoptionPlanning -Arguments @("rev-parse", "HEAD"))[0])
+    $adoptionPlanningTree = [string](@(Invoke-TestGit -Path $adoptionPlanning -Arguments @("rev-parse", "HEAD^{tree}"))[0])
+    $adoptionWorkspace = Join-Path $adoptionPlanning "projects\adoption-e2e\morphospace"
+    foreach ($sourceFile in @(Get-ChildItem -LiteralPath $adoptionSourceWorkspace -File -Recurse)) {
+        $relative = $sourceFile.FullName.Substring($adoptionSourceWorkspace.Length + 1)
+        $destination = Join-Path $adoptionWorkspace $relative
+        [System.IO.Directory]::CreateDirectory((Split-Path -Parent $destination)) | Out-Null
+        [System.IO.File]::Copy($sourceFile.FullName, $destination, $true)
+    }
+    $adoptionReceiptRoot = Join-Path $adoptionWorkspace "receipts"
+    [System.IO.Directory]::CreateDirectory($adoptionReceiptRoot) | Out-Null
+    $adoptionInventory = @(Get-GitWorkspaceInventory $adoptionSource $adoptionPublishedRevision "morphospace" | ForEach-Object {
+        [ordered]@{
+            path = [string]$_.path; git_mode = [string]$_.git_mode
+            size = [int64]$_.size; sha256 = [string]$_.sha256
+        }
+    })
+    $adoptionProjectionPath = Join-Path $adoptionReceiptRoot "adoption-projection-v2.json"
+    $adoptionProjection = [ordered]@{
+        schema = "rusty.morphospace.workflow.planning_workspace_projection.v2"
+        projection_id = "adoption-projection-v2"; project_id = "adoption-e2e"; unit_id = "unit-adoption-001"
+        recorded_at = $fixed; status = "exact-projection-verified"
+        chronology = [ordered]@{
+            classification = "published-embedded-workspace-authority-adoption"
+            source_publication_preceded_projection = $true; prepared_plan_present = $false
+            executed_push_receipt_present = $false
+            does_not_claim = @("prospective preparation", "planning-last publication", "source acceptance", "Git execution")
+        }
+        source = [ordered]@{
+            repo_id = "project-shell"; branch = "main"; remote = "origin"
+            remote_ref = "refs/heads/main"; upstream = "origin/main"
+            old_revision = $adoptionPreMergeRevision; published_revision = $adoptionPublishedRevision
+            observed_remote_revision = $adoptionPublishedRevision
+            embedded_workspace_path = "morphospace"; embedded_workspace_tree = $adoptionEmbeddedTree
+            fast_forward_verified = $true; remote_match = $true; force_push_used = $false
+        }
+        planning = [ordered]@{
+            repo_id = "workflow-planning"; workspace_path = "projects/adoption-e2e/morphospace"
+            projection_record_path = "receipts/adoption-projection-v2.json"
+            distinct_from_source = $true; base_revision = $adoptionPlanningRevision
+        }
+        inventory = $adoptionInventory
+        projected_state = [ordered]@{
+            current_unit = $null; next_ready_unit = $null; pending_push_bundle = $null
+            dirty_repository_ids = @("other-repo", "project-shell")
+            source_repository = [ordered]@{
+                repo_id = "project-shell"; head = $adoptionStaleRevision
+                branch = "codex/stale-work"; dirty_fingerprint = $adoptionDirtyFingerprint
+            }
+        }
+        authority = [ordered]@{
+            source_workspace = "immutable-historical-snapshot"
+            external_workspace = "sole-mutable-workflow-authority"
+            source_workflow_mutation_performed = $false; git_mutation_performed = $false
+            next_transition = "AdoptPublishedPlanningAuthority"
+        }
+        failure = $null
+    }
+    Write-TestJson -Path $adoptionProjectionPath -Value $adoptionProjection
+    $adoptionBeforePath = Join-Path $adoptionReceiptRoot "adoption-state-before.json"
+    [System.IO.File]::Copy((Join-Path $adoptionWorkspace "workspace.state.json"), $adoptionBeforePath, $true)
+    $adoptionExpectedEventId = "unit-adoption-001-planning-authority-adopted-0001"
+    $adoptionAfterState = $adoptionBeforeState | ConvertTo-Json -Depth 32 | ConvertFrom-Json
+    $adoptionAfterState.dirty_repositories = @("other-repo")
+    $adoptionAfterState.last_event_id = $adoptionExpectedEventId
+    $adoptionAfterSource = @($adoptionAfterState.repository_heads | Where-Object { [string]$_.repo_id -ceq "project-shell" })[0]
+    $adoptionAfterSource.head = $adoptionPublishedRevision
+    $adoptionAfterSource.branch = "main"
+    $adoptionAfterSource.dirty_fingerprint = $null
+    $adoptionAfterPath = Join-Path $adoptionReceiptRoot "adoption-state-after.json"
+    Write-TestJson -Path $adoptionAfterPath -Value $adoptionAfterState
+    $adoptionValidationPath = Join-Path $adoptionReceiptRoot "adoption-validation.json"
+    $adoptionObserverPath = Join-Path $adoptionReceiptRoot "adoption-observer.json"
+    Write-TestJson -Path $adoptionValidationPath -Value ([ordered]@{
+        schema = "test.validation.v1"; status = "pass"; revision = $adoptionPublishedRevision
+    })
+    Write-TestJson -Path $adoptionObserverPath -Value ([ordered]@{
+        schema = "test.observer.v1"; observed_revision = $adoptionPublishedRevision
+    })
+    $adoptionBeforeBinding = [ordered]@{
+        path = "receipts/adoption-state-before.json"
+        sha256 = (Get-FileHash -LiteralPath $adoptionBeforePath -Algorithm SHA256).Hash.ToLowerInvariant()
+        current_unit = $null; next_ready_unit = $null; pending_push_bundle = $null
+        dirty_repository_ids = @("other-repo", "project-shell")
+        source_repository = $adoptionProjection.projected_state.source_repository
+    }
+    $adoptionAfterBinding = [ordered]@{
+        path = "receipts/adoption-state-after.json"
+        sha256 = (Get-FileHash -LiteralPath $adoptionAfterPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        current_unit = $null; next_ready_unit = $null; pending_push_bundle = $null
+        dirty_repository_ids = @("other-repo")
+        source_repository = [ordered]@{
+            repo_id = "project-shell"; head = $adoptionPublishedRevision
+            branch = "main"; dirty_fingerprint = $null
+        }
+    }
+    $adoptionDocument = [ordered]@{
+        schema = "rusty.morphospace.workflow.published_planning_authority_adoption.v1"
+        adoption_id = "adoption-e2e-published-planning-authority"
+        project_id = "adoption-e2e"; recorded_at = $fixed
+        status = "published-planning-authority-adopted"
+        planning_workspace_projection = [ordered]@{
+            path = "receipts/adoption-projection-v2.json"; projection_id = "adoption-projection-v2"
+            sha256 = (Get-FileHash -LiteralPath $adoptionProjectionPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        }
+        workspace_state_before = $adoptionBeforeBinding
+        workspace_state_after = $adoptionAfterBinding
+        source_publication = [ordered]@{
+            repo_id = "project-shell"; branch = "main"; remote = "origin"
+            remote_ref = "refs/heads/main"; upstream = "origin/main"
+            pre_merge_revision = $adoptionPreMergeRevision; published_revision = $adoptionPublishedRevision
+            readback_revision = $adoptionPublishedRevision; published_tree = $adoptionPublishedTree
+            worktree_clean = $true; synchronized = $true; fast_forward_verified = $true
+            remote_match = $true; force_push_used = $false; history_rewrite_used = $false
+        }
+        planning_repository = [ordered]@{
+            repo_id = "workflow-planning"; branch = "main"
+            head_revision = $adoptionPlanningRevision; head_tree = $adoptionPlanningTree
+            workspace_path = "projects/adoption-e2e/morphospace"; distinct_from_source = $true
+            remote_configured = $false; unrelated_worktree_clean = $true
+        }
+        validation = @([ordered]@{
+            gate_id = "published-source-readback"; status = "pass"
+            evidence = [ordered]@{
+                path = "receipts/adoption-validation.json"
+                sha256 = (Get-FileHash -LiteralPath $adoptionValidationPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            }
+        })
+        observers = @([ordered]@{
+            observer_id = "external-coordinator"; recorded_at = $fixed
+            evidence = [ordered]@{
+                path = "receipts/adoption-observer.json"
+                sha256 = (Get-FileHash -LiteralPath $adoptionObserverPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            }
+        })
+        state_delta = [ordered]@{
+            cleared_dirty_repository_id = "project-shell"
+            dirty_repository_ids_before = @("other-repo", "project-shell")
+            dirty_repository_ids_after = @("other-repo")
+            repository_before = $adoptionBeforeBinding.source_repository
+            repository_after = $adoptionAfterBinding.source_repository
+            last_event_id_before = $null; last_event_id_after = $adoptionExpectedEventId
+            preserved_fields = @(
+                "blockers", "capability_registry", "current_unit", "last_accepted_receipt",
+                "module_registry", "next_ready_unit", "pending_push_bundle", "plan_revision",
+                "project_id", "repository_checkpoints", "unrelated_repository_heads",
+                "validation_checkpoint"
+            )
+        }
+        nonclaims = [ordered]@{
+            external_planning_authority_existed_at_publication = $false
+            prepared_plan_or_executed_push_reconstructed = $false
+            source_acceptance_created = $false; git_or_remote_mutation_performed = $false
+            force_push_or_history_rewrite_used = $false
+            unrelated_dirty_repositories_cleared = $false
+        }
+        failure = $null
+    }
+    $adoptionDocumentPath = Join-Path $adoptionReceiptRoot "adoption.json"
+    Write-TestJson -Path $adoptionDocumentPath -Value $adoptionDocument
+    $adoptionRepoMapPath = Join-Path $testRoot "adoption-repo-map.json"
+    Write-TestJson -Path $adoptionRepoMapPath -Value ([ordered]@{
+        schema = "rusty.morphospace.workflow.repository_map.v1"
+        repositories = @(
+            [ordered]@{ repo_id = "project-shell"; path = $adoptionSource; role = "source" },
+            [ordered]@{ repo_id = "workflow-planning"; path = $adoptionPlanning; role = "planning" }
+        )
+    })
+
+    $adoptionLiveStatePath = Join-Path $adoptionWorkspace "workspace.state.json"
+    $adoptionLiveUnitPath = Join-Path $adoptionWorkspace "iteration-units\unit-adoption-001.json"
+    $adoptionEventsPath = Join-Path $adoptionWorkspace "iteration-events.jsonl"
+    $adoptionStateBeforeDryRun = Get-Content -LiteralPath $adoptionLiveStatePath -Raw
+    $adoptionUnitBeforeDryRun = Get-Content -LiteralPath $adoptionLiveUnitPath -Raw
+    $adoptionEventsBeforeDryRun = Get-Content -LiteralPath $adoptionEventsPath -Raw
+    $adoptionDryRun = Invoke-MorphospaceWorkUnitAutomation `
+        -Action AdoptPublishedPlanningAuthority `
+        -WorkspaceRoot $adoptionWorkspace `
+        -UnitId "unit-adoption-001" `
+        -RepoMapPath $adoptionRepoMapPath `
+        -PublishedPlanningAuthorityAdoption "receipts/adoption.json" `
+        -Timestamp $fixed
+    $adoptionExpectedHash = (Get-FileHash -LiteralPath $adoptionDocumentPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    Assert-Automation (
+        $adoptionDryRun.transition -eq "published-planning-authority-adopted" -and
+        -not $adoptionDryRun.executed -and $null -eq $adoptionDryRun.event_id -and
+        $adoptionDryRun.status_before -eq "accepted" -and $adoptionDryRun.status_after -eq "accepted" -and
+        [string]$adoptionDryRun.published_planning_authority_adoption.adoption_id -eq "adoption-e2e-published-planning-authority" -and
+        [string]$adoptionDryRun.published_planning_authority_adoption.path -eq "receipts/adoption.json" -and
+        [string]$adoptionDryRun.published_planning_authority_adoption.sha256 -eq $adoptionExpectedHash
+    ) "planning-authority adoption dry run did not return the exact binding"
+    Assert-Automation (
+        $adoptionStateBeforeDryRun -ceq (Get-Content -LiteralPath $adoptionLiveStatePath -Raw) -and
+        $adoptionUnitBeforeDryRun -ceq (Get-Content -LiteralPath $adoptionLiveUnitPath -Raw) -and
+        $adoptionEventsBeforeDryRun -ceq (Get-Content -LiteralPath $adoptionEventsPath -Raw)
+    ) "planning-authority adoption dry run mutated workspace projections"
+
+    $adoptionAutomationReceiptPath = Join-Path $adoptionReceiptRoot "adoption-automation-receipt.json"
+    $adoptionExecuted = Invoke-MorphospaceWorkUnitAutomation `
+        -Action AdoptPublishedPlanningAuthority `
+        -WorkspaceRoot $adoptionWorkspace `
+        -UnitId "unit-adoption-001" `
+        -RepoMapPath $adoptionRepoMapPath `
+        -PublishedPlanningAuthorityAdoption "receipts/adoption.json" `
+        -Timestamp $fixed `
+        -OutPath $adoptionAutomationReceiptPath `
+        -Execute
+    Assert-Automation (
+        $adoptionExecuted.transition -eq "published-planning-authority-adopted" -and
+        $adoptionExecuted.executed -and $adoptionExecuted.event_id -eq $adoptionExpectedEventId -and
+        $adoptionExecuted.status_before -eq "accepted" -and $adoptionExecuted.status_after -eq "accepted" -and
+        [string]$adoptionExecuted.published_planning_authority_adoption.sha256 -eq $adoptionExpectedHash -and
+        (Test-Path -LiteralPath $adoptionAutomationReceiptPath -PathType Leaf)
+    ) "planning-authority adoption execution did not return the exact transition"
+    $adoptionActualState = Get-Content -LiteralPath $adoptionLiveStatePath -Raw | ConvertFrom-Json
+    $adoptionExpectedState = Get-Content -LiteralPath $adoptionAfterPath -Raw | ConvertFrom-Json
+    Assert-Automation (
+        (ConvertTo-MorphospaceCanonicalJson $adoptionActualState) -ceq
+            (ConvertTo-MorphospaceCanonicalJson $adoptionExpectedState)
+    ) "planning-authority adoption did not write the exact bound after state"
+    Assert-Automation (
+        $adoptionUnitBeforeDryRun -ceq (Get-Content -LiteralPath $adoptionLiveUnitPath -Raw)
+    ) "planning-authority adoption rewrote the accepted unit"
+    $adoptionEvents = @(Get-Content -LiteralPath $adoptionEventsPath | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json })
+    Assert-Automation (
+        $adoptionEvents.Count -eq 1 -and
+        [string]$adoptionEvents[0].event_id -eq $adoptionExpectedEventId -and
+        [string]$adoptionEvents[0].event_type -eq "state-transition" -and
+        @($adoptionEvents[0].receipts).Count -eq 1 -and
+        [string]$adoptionEvents[0].receipts[0] -eq "receipts/adoption.json"
+    ) "planning-authority adoption did not append exactly one bound receipt event"
+    $adoptionTransactionId = "$adoptionExpectedEventId-transition"
+    $adoptionTransactionRoot = Join-Path $adoptionReceiptRoot "transactions"
+    $adoptionIntentPath = Join-Path $adoptionTransactionRoot "$adoptionTransactionId.intent.json"
+    $adoptionCompletionPath = Join-Path $adoptionTransactionRoot "$adoptionTransactionId.completion.json"
+    $adoptionIntent = Get-Content -LiteralPath $adoptionIntentPath -Raw | ConvertFrom-Json
+    $adoptionCompletion = Get-Content -LiteralPath $adoptionCompletionPath -Raw | ConvertFrom-Json
+    Assert-Automation (
+        @(Get-ChildItem -LiteralPath $adoptionTransactionRoot -File).Count -eq 2 -and
+        [string]$adoptionIntent.schema -eq "rusty.morphospace.workflow.transition_ledger_intent.v1" -and
+        [string]$adoptionIntent.transaction_id -eq $adoptionTransactionId -and
+        [string]$adoptionIntent.status -eq "prepared" -and
+        [string]$adoptionIntent.event.event_id -eq $adoptionExpectedEventId -and
+        [string]$adoptionCompletion.schema -eq "rusty.morphospace.workflow.transition_ledger_completion.v1" -and
+        [string]$adoptionCompletion.transaction_id -eq $adoptionTransactionId -and
+        [string]$adoptionCompletion.status -eq "committed" -and
+        [string]$adoptionCompletion.event_id -eq $adoptionExpectedEventId
+    ) "planning-authority adoption transaction intent/completion artifacts are incomplete"
+    $adoptionReplayRejected = $false
+    try {
+        Invoke-MorphospaceWorkUnitAutomation `
+            -Action AdoptPublishedPlanningAuthority `
+            -WorkspaceRoot $adoptionWorkspace `
+            -UnitId "unit-adoption-001" `
+            -RepoMapPath $adoptionRepoMapPath `
+            -PublishedPlanningAuthorityAdoption "receipts/adoption.json" `
+            -Timestamp $fixed `
+            -Execute | Out-Null
+    } catch {
+        $adoptionReplayRejected = $true
+    }
+    Assert-Automation (
+        $adoptionReplayRejected -and
+        @(Get-Content -LiteralPath $adoptionEventsPath | Where-Object { $_ }).Count -eq 1 -and
+        @(Get-ChildItem -LiteralPath $adoptionTransactionRoot -File).Count -eq 2
+    ) "planning-authority adoption replay was not rejected without a second event or transaction"
 
     $readyWorkspace = New-TestWorkspace -Root (Join-Path $testRoot "ready-project") -ProjectId "ready-test" -UnitId "unit-ready-001"
     $readyUnitPath = Join-Path $readyWorkspace "iteration-units\unit-ready-001.json"
