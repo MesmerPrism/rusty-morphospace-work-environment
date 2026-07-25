@@ -1052,6 +1052,7 @@ $requiredSchemaNames = @(
     "current-unit-protocol.schema.json",
     "executed-push-receipt.schema.json",
     "planned-publication-accounting-receipt.schema.json",
+    "published-planning-authority-adoption.schema.json",
     "published-prerequisite-suffix-reconciliation.schema.json",
     "historical-release-closure-receipt.schema.json",
     "historical-unit-adoption-receipt.schema.json",
@@ -1115,6 +1116,8 @@ foreach ($schemaFile in $schemaFiles) {
 $templatesRoot = Join-Path $RepoRoot "templates"
 foreach ($contractExample in @(
     [pscustomobject]@{ Template = "planning-workspace-projection.example.json"; Schema = "planning-workspace-projection.schema.json" },
+    [pscustomobject]@{ Template = "planning-workspace-projection-v2.example.json"; Schema = "planning-workspace-projection.schema.json" },
+    [pscustomobject]@{ Template = "published-planning-authority-adoption.example.json"; Schema = "published-planning-authority-adoption.schema.json" },
     [pscustomobject]@{ Template = "historical-unit-adoption-reconstruction.example.json"; Schema = "historical-unit-adoption-reconstruction.schema.json" },
     [pscustomobject]@{ Template = "unplanned-publication-closure-v2.example.json"; Schema = "unplanned-publication-closure.schema.json" }
 )) {
@@ -1126,6 +1129,50 @@ foreach ($contractExample in @(
         Add-Failure -Message "Contract example '$($contractExample.Template)' schema validation failed: $($_.Exception.Message)"
     }
 }
+$automationReceiptSchema = Join-Path $schemaRoot "work-unit-automation-receipt.schema.json"
+$automationAdoptionBinding = [ordered]@{
+    adoption_id = "example-authority-adoption"
+    path = "receipts/example-authority-adoption.json"
+    sha256 = ("a" * 64)
+}
+$automationReceipt = [ordered]@{
+    schema = "rusty.morphospace.workflow.work_unit_automation_receipt.v1"
+    project_id = "example-project"
+    unit_id = "example-unit"
+    action = "AdoptPublishedPlanningAuthority"
+    timestamp = "2026-07-25T00:00:00Z"
+    executed = $true
+    transition = "published-planning-authority-adopted"
+    status_before = "accepted"
+    status_after = "accepted"
+    current_unit_before = $null
+    current_unit_after = $null
+    preservation = [ordered]@{
+        git_mutation_performed = $false
+        device_mutation_performed = $false
+        force_push_allowed = $false
+        repository_states = @()
+    }
+    validation_matrix = @()
+    graph_scope = [ordered]@{}
+    adoption_receipt = $null
+    publication_closure = $null
+    published_planning_authority_adoption = $automationAdoptionBinding
+    planned_publication = $null
+    planning_suffix_rewrite_recovery = $null
+    published_prerequisite_suffix_reconciliation = $null
+    push_plan = $null
+    event_id = "example-unit-planning-authority-adopted-0001"
+}
+$automationReceiptJson = $automationReceipt | ConvertTo-Json -Depth 16
+Assert-Contract ($automationReceiptJson | Test-Json -SchemaFile $automationReceiptSchema -ErrorAction Stop) "Adoption automation receipt with a bound adoption was rejected."
+$automationReceipt.published_planning_authority_adoption = $null
+Assert-Contract (-not ($automationReceipt | ConvertTo-Json -Depth 16 | Test-Json -SchemaFile $automationReceiptSchema -ErrorAction SilentlyContinue)) "Adoption automation receipt without an adoption binding was accepted."
+$automationReceipt.action = "Inspect"
+Assert-Contract ($automationReceipt | ConvertTo-Json -Depth 16 | Test-Json -SchemaFile $automationReceiptSchema -ErrorAction Stop) "Non-adoption automation receipt with a null adoption binding was rejected."
+$automationReceipt.published_planning_authority_adoption = $automationAdoptionBinding
+Assert-Contract (-not ($automationReceipt | ConvertTo-Json -Depth 16 | Test-Json -SchemaFile $automationReceiptSchema -ErrorAction SilentlyContinue)) "Non-adoption automation receipt with an adoption binding was accepted."
+
 $v2ClosureExample = Read-JsonDocument -Path (Join-Path $templatesRoot "unplanned-publication-closure-v2.example.json") -Context "v2 unplanned-publication closure example"
 if ($v2ClosureExample) {
     Assert-Contract ([string]$v2ClosureExample.schema -ceq "rusty.morphospace.workflow.unplanned_publication_closure.v2") "V2 unplanned-publication closure example has the wrong discriminator."
@@ -1178,6 +1225,7 @@ if ((-not $SkipOwnerSelfTests) -and (Test-Path -LiteralPath $publicationRecovery
 if (-not $SkipOwnerSelfTests) {
     foreach ($focusedRecoveryTest in @(
         "Test-PlanningWorkspaceProjection.ps1",
+        "Test-PublishedPlanningAuthorityAdoption.ps1",
         "Test-HistoricalUnitAdoptionReconstruction.ps1"
     )) {
         $focusedRecoveryPath = Join-Path $RepoRoot "scripts\$focusedRecoveryTest"

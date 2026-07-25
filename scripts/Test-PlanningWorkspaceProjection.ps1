@@ -2,16 +2,36 @@ param([string]$Path,[string]$SourceRepository,[string]$PlanningRepository,[strin
 $ErrorActionPreference='Stop'
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospacePlanningProjection.psm1') -Force
 if($SelfTest){
- $d=Get-Content -Raw (Join-Path (Split-Path -Parent $PSScriptRoot) 'templates\planning-workspace-projection.example.json')|ConvertFrom-Json
+ $repoRoot=Split-Path -Parent $PSScriptRoot
+ $schemaPath=Join-Path $repoRoot 'schemas\planning-workspace-projection.schema.json'
+ $v1Template=Join-Path $repoRoot 'templates\planning-workspace-projection.example.json'
+ $v2Template=Join-Path $repoRoot 'templates\planning-workspace-projection-v2.example.json'
+ foreach($template in @($v1Template,$v2Template)){
+  if(-not(Get-Content -Raw $template|Test-Json -SchemaFile $schemaPath -ErrorAction Stop)){throw"Projection template does not conform to the shared schema: $template"}
+  Test-MorphospacePlanningWorkspaceProjectionDocument $template|Out-Null
+ }
+ $d=Get-Content -Raw $v1Template|ConvertFrom-Json
  $temp=Join-Path ([IO.Path]::GetTempPath()) ('projection-'+[guid]::NewGuid().ToString('N')+'.json')
  $repo=Join-Path ([IO.Path]::GetTempPath()) ('projection-repo-'+[guid]::NewGuid().ToString('N'));$linked="$repo-linked"
  $fixture=Join-Path ([IO.Path]::GetTempPath()) ('projection-live-'+[guid]::NewGuid().ToString('N'))
  try{$d|ConvertTo-Json -Depth 16|Set-Content $temp -Encoding utf8;Test-MorphospacePlanningWorkspaceProjectionDocument $temp|Out-Null
   $d.source.repo_id=$d.planning.repo_id;$d|ConvertTo-Json -Depth 16|Set-Content $temp -Encoding utf8
   $rejected=$false;try{Test-MorphospacePlanningWorkspaceProjectionDocument $temp|Out-Null}catch{$rejected=$true};if(-not$rejected){throw'Same-repository projection was accepted.'}
-  $d=Get-Content -Raw (Join-Path (Split-Path -Parent $PSScriptRoot) 'templates\planning-workspace-projection.example.json')|ConvertFrom-Json
+  $d=Get-Content -Raw $v1Template|ConvertFrom-Json
   $d.source.upstream='origin/other';$d|ConvertTo-Json -Depth 16|Set-Content $temp -Encoding utf8
   $rejected=$false;try{Test-MorphospacePlanningWorkspaceProjectionDocument $temp|Out-Null}catch{$rejected=$true};if(-not$rejected){throw'Conflicting branch/upstream identity was accepted.'}
+  $d=Get-Content -Raw $v1Template|ConvertFrom-Json
+  $d|Add-Member -NotePropertyName projected_state -NotePropertyValue ([pscustomobject]@{current_unit=$null;next_ready_unit=$null;pending_push_bundle=$null;dirty_repository_ids=@('source-owner');source_repository=[pscustomobject]@{repo_id='source-owner';head=('1'*40);branch='main';dirty_fingerprint=('e'*64)}})
+  $d|ConvertTo-Json -Depth 16|Set-Content $temp -Encoding utf8
+  $rejected=$false;try{Test-MorphospacePlanningWorkspaceProjectionDocument $temp|Out-Null}catch{$rejected=$true};if(-not$rejected){throw'V1 projection accepted a v2 projected-state binding.'}
+  $d=Get-Content -Raw $v2Template|ConvertFrom-Json
+  $d.projected_state.dirty_repository_ids=@('unrelated-owner')
+  $d|ConvertTo-Json -Depth 16|Set-Content $temp -Encoding utf8
+  $rejected=$false;try{Test-MorphospacePlanningWorkspaceProjectionDocument $temp|Out-Null}catch{$rejected=$true};if(-not$rejected){throw'V2 projection accepted a dirty set that omitted the published source.'}
+  $d=Get-Content -Raw $v2Template|ConvertFrom-Json
+  $d.projected_state.dirty_repository_ids=@('source-owner',12)
+  $d|ConvertTo-Json -Depth 16|Set-Content $temp -Encoding utf8
+  $rejected=$false;try{Test-MorphospacePlanningWorkspaceProjectionDocument $temp|Out-Null}catch{$rejected=$true};if(-not$rejected){throw'V2 projection accepted a non-string dirty repository ID.'}
   New-Item -ItemType Directory $repo|Out-Null;git -C $repo init -q;git -C $repo config user.name fixture;git -C $repo config user.email fixture@example.invalid
   'x'|Set-Content (Join-Path $repo 'x.txt');git -C $repo add .;git -C $repo commit -q -m init;git -C $repo worktree add -q $linked
   if((Get-GitCommonDirectory $repo)-cne(Get-GitCommonDirectory $linked)){throw'Linked worktree Git identity was not detected.'}
@@ -29,11 +49,49 @@ if($SelfTest){
   'planning'|Set-Content (Join-Path $planning 'README.md');git -C $planning add .;git -C $planning commit -q -m init
   $workspace=Join-Path $planning 'projects\fixture\morphospace';$projection=Join-Path $workspace 'receipts\projection.json'
   & (Join-Path $PSScriptRoot 'New-ExternalPlanningWorkspace.ps1') -SourceRepository $source -PlanningRepository $planning -WorkspaceRoot $workspace -ProjectionPath $projection -ProjectionId fixture-projection -ProjectId fixture -UnitId fixture-unit -SourceRepoId source-owner -PlanningRepoId planning-owner -Branch main -Upstream origin/main -OldRevision $old -PublishedRevision $published -Timestamp '2026-01-02T03:04:05Z' -Execute|Out-Null
+  $generatedV1=Get-Content -Raw $projection|ConvertFrom-Json
+  if([string]$generatedV1.schema-cne'rusty.morphospace.workflow.planning_workspace_projection.v1'-or$null-ne$generatedV1.planning.base_revision){throw'Default generator output is not unchanged v1 with a null planning base.'}
   $closure=Join-Path $workspace 'receipts\closure.json';'{}'|Set-Content $closure -Encoding utf8
   Test-MorphospacePlanningWorkspaceProjectionLive -Path $projection -SourceRepository $source -PlanningRepository $planning -WorkspaceRoot $workspace -AllowedAdditivePaths @('receipts/closure.json')|Out-Null
   $rejected=$false;try{Test-MorphospacePlanningWorkspaceProjectionLive -Path $projection -SourceRepository $source -PlanningRepository $planning -WorkspaceRoot $workspace|Out-Null}catch{$rejected=$true};if(-not$rejected){throw'Unbound additive file was accepted.'}
   '{}'|Set-Content (Join-Path $workspace 'unexpected.json') -Encoding utf8
   $rejected=$false;try{Test-MorphospacePlanningWorkspaceProjectionLive -Path $projection -SourceRepository $source -PlanningRepository $planning -WorkspaceRoot $workspace -AllowedAdditivePaths @('receipts/closure.json')|Out-Null}catch{$rejected=$true};if(-not$rejected){throw'Unexpected additive file was accepted.'}
+  git -C $planning add .;git -C $planning commit -q -m v1-projection-fixture;$planningBase=(git -C $planning rev-parse HEAD).Trim()
+
+  $lockFingerprint='4142867dc0e3e62f910761aa5a24a75fc74400c34a33af1e38dee2fb9ab7f7be'
+  $dirtyFingerprint='5152867dc0e3e62f910761aa5a24a75fc74400c34a33af1e38dee2fb9ab7f7bf'
+  [ordered]@{schema='rusty.morphospace.workflow.feature_lock.v2';lock_fingerprint=$lockFingerprint}|ConvertTo-Json|Set-Content (Join-Path $source 'morphospace\feature.lock.json') -Encoding utf8
+  [ordered]@{schema='rusty.morphospace.workflow.workspace_state.v2';current_unit=$null;next_ready_unit=$null;pending_push_bundle=$null;dirty_repositories=@('unrelated-owner','source-owner');repository_heads=@([ordered]@{repo_id='source-owner';head=$published;branch='main';dirty_fingerprint=$dirtyFingerprint})}|ConvertTo-Json -Depth 8|Set-Content (Join-Path $source 'morphospace\workspace.state.json') -Encoding utf8
+  git -C $source add .;git -C $source commit -q -m adoptable;$publishedV2=(git -C $source rev-parse HEAD).Trim();git -C $source push -q origin main
+  $workspaceV2=Join-Path $planning 'projects\fixture-v2\morphospace';$projectionV2=Join-Path $workspaceV2 'receipts\projection.json'
+  & (Join-Path $PSScriptRoot 'New-ExternalPlanningWorkspace.ps1') -SourceRepository $source -PlanningRepository $planning -WorkspaceRoot $workspaceV2 -ProjectionPath $projectionV2 -ProjectionId fixture-projection-v2 -ProjectId fixture-v2 -UnitId fixture-adoption -SourceRepoId source-owner -PlanningRepoId planning-owner -Branch main -Upstream origin/main -OldRevision $published -PublishedRevision $publishedV2 -Timestamp '2026-01-02T03:04:05Z' -ProjectionVersion v2 -Execute|Out-Null
+  $generatedV2=Get-Content -Raw $projectionV2|ConvertFrom-Json
+  if([string]$generatedV2.schema-cne'rusty.morphospace.workflow.planning_workspace_projection.v2'-or[string]$generatedV2.authority.next_transition-cne'AdoptPublishedPlanningAuthority'){throw'Explicit v2 generator output has the wrong discriminator or transition.'}
+  if([string]$generatedV2.planning.base_revision-cne$planningBase){throw'V2 generator did not bind the clean local planning base HEAD.'}
+  if((@($generatedV2.projected_state.dirty_repository_ids)-join'|')-cne'source-owner|unrelated-owner'-or[string]$generatedV2.projected_state.source_repository.head-cne$published-or[string]$generatedV2.projected_state.source_repository.dirty_fingerprint-cne$dirtyFingerprint){throw'V2 generator did not bind the exact stale published source state.'}
+  Test-MorphospacePlanningWorkspaceProjectionLive -Path $projectionV2 -SourceRepository $source -PlanningRepository $planning -WorkspaceRoot $workspaceV2|Out-Null
+  $projectionV2Raw=Get-Content -Raw $projectionV2
+  $generatedV2.planning.base_revision=$null;$generatedV2|ConvertTo-Json -Depth 16|Set-Content $projectionV2 -Encoding utf8
+  $rejected=$false;try{Test-MorphospacePlanningWorkspaceProjectionDocument $projectionV2|Out-Null}catch{$rejected=$true};if(-not$rejected){throw'V2 projection accepted a null planning base revision.'}
+  Set-Content -LiteralPath $projectionV2 -Value $projectionV2Raw -NoNewline -Encoding utf8
+  $generatedV2=$projectionV2Raw|ConvertFrom-Json
+  $generatedV2.projected_state.source_repository.head=$publishedV2;$generatedV2|ConvertTo-Json -Depth 16|Set-Content $projectionV2 -Encoding utf8
+  $rejected=$false;try{Test-MorphospacePlanningWorkspaceProjectionDocument $projectionV2|Out-Null}catch{$rejected=$true};if(-not$rejected){throw'V2 projection accepted a damaged published-source binding.'}
+  Set-Content -LiteralPath $projectionV2 -Value $projectionV2Raw -NoNewline -Encoding utf8
+  '{"adopted":true}'|Set-Content (Join-Path $workspaceV2 'workspace.state.json') -Encoding utf8
+  $rejected=$false;try{Test-MorphospacePlanningWorkspaceProjectionLive -Path $projectionV2 -SourceRepository $source -PlanningRepository $planning -WorkspaceRoot $workspaceV2|Out-Null}catch{$rejected=$true};if(-not$rejected){throw'V2 projection silently accepted a replaced workspace state.'}
+  Copy-Item -LiteralPath (Join-Path $source 'morphospace\workspace.state.json') -Destination (Join-Path $workspaceV2 'workspace.state.json') -Force
+  '{"damaged":true}'|Set-Content (Join-Path $workspaceV2 'project.spec.json') -Encoding utf8
+  $rejected=$false;try{Test-MorphospacePlanningWorkspaceProjectionLive -Path $projectionV2 -SourceRepository $source -PlanningRepository $planning -WorkspaceRoot $workspaceV2|Out-Null}catch{$rejected=$true};if(-not$rejected){throw'V2 projection accepted damage to another projected file.'}
+  Copy-Item -LiteralPath (Join-Path $source 'morphospace\project.spec.json') -Destination (Join-Path $workspaceV2 'project.spec.json') -Force
+  git -C $planning add .;git -C $planning commit -q -m v2-projection-fixture
+
+  [ordered]@{schema='rusty.morphospace.workflow.workspace_state.v2';current_unit='active-unit';next_ready_unit=$null;pending_push_bundle=$null;dirty_repositories=@('source-owner');repository_heads=@([ordered]@{repo_id='source-owner';head=$publishedV2;branch='main';dirty_fingerprint=$dirtyFingerprint})}|ConvertTo-Json -Depth 8|Set-Content (Join-Path $source 'morphospace\workspace.state.json') -Encoding utf8
+  git -C $source add .;git -C $source commit -q -m active-state;$active=(git -C $source rev-parse HEAD).Trim();git -C $source push -q origin main
+  $rejected=$false;try{& (Join-Path $PSScriptRoot 'New-ExternalPlanningWorkspace.ps1') -SourceRepository $source -PlanningRepository $planning -WorkspaceRoot (Join-Path $planning 'projects\rejected\morphospace') -ProjectionPath (Join-Path $planning 'projects\rejected\morphospace\receipts\projection.json') -ProjectionId rejected-projection -ProjectId rejected-project -UnitId rejected-unit -SourceRepoId source-owner -PlanningRepoId planning-owner -Branch main -Upstream origin/main -OldRevision $publishedV2 -PublishedRevision $active -ProjectionVersion v2|Out-Null}catch{$rejected=$true};if(-not$rejected){throw'V2 generator accepted a published workspace with an active current unit.'}
+  [IO.File]::WriteAllBytes((Join-Path $source 'morphospace\workspace.state.json'),[byte[]](0xff,0xfe,0xfd))
+  git -C $source add .;git -C $source commit -q -m invalid-utf8;$invalidUtf8=(git -C $source rev-parse HEAD).Trim();git -C $source push -q origin main
+  $rejected=$false;try{& (Join-Path $PSScriptRoot 'New-ExternalPlanningWorkspace.ps1') -SourceRepository $source -PlanningRepository $planning -WorkspaceRoot (Join-Path $planning 'projects\invalid-utf8\morphospace') -ProjectionPath (Join-Path $planning 'projects\invalid-utf8\morphospace\receipts\projection.json') -ProjectionId invalid-utf8-projection -ProjectId invalid-utf8-project -UnitId invalid-utf8-unit -SourceRepoId source-owner -PlanningRepoId planning-owner -Branch main -Upstream origin/main -OldRevision $active -PublishedRevision $invalidUtf8 -ProjectionVersion v2|Out-Null}catch{$rejected=$true};if(-not$rejected){throw'V2 generator accepted invalid UTF-8 projected state.'}
   Write-Host 'Planning-workspace projection self-test passed.'
  }finally{if(Test-Path $linked){git -C $repo worktree remove --force $linked 2>$null};if(Test-Path $repo){Remove-Item -LiteralPath $repo -Recurse -Force};if(Test-Path $fixture){Remove-Item -LiteralPath $fixture -Recurse -Force};if(Test-Path $temp){Remove-Item -LiteralPath $temp -Force}}
  return

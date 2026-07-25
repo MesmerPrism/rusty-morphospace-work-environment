@@ -19,13 +19,20 @@ and only when exact bound executed evidence is already present once in its
 enumerated intervening planning history. Normal accounting still requires both
 prerequisite evidence paths.
 
-An embedded same-source workflow may move after an unplanned source
-publication only through `planning_workspace_projection.v1`: copy exact bytes
-from the published Git tree into one distinct external planning repository,
-preserve the post-publication chronology nonclaims, and run
-`ReconcilePublication` only against that external projection. A drifted
-historical-unit adoption reference remains damaged; admit a separate
-independently anchored reconstruction only through
+An embedded same-source workflow may move after publication only through an
+exact planning-workspace projection into one distinct external planning
+repository. Use `planning_workspace_projection.v1` plus
+`ReconcilePublication` only when a real pending bundle still exists and the
+unplanned-publication closure can consume it without reconstructing a plan.
+Use `planning_workspace_projection.v2` plus
+`AdoptPublishedPlanningAuthority` when current, next-ready, and pending-bundle
+state are all null but the published embedded state still marks the source
+dirty and projects a stale source head. The v2 transition binds the exact stale
+head and state hash, clears only that source dirty marker, updates only that
+repository-head entry to clean synchronized readback, preserves every unrelated
+state field, and performs no Git operation. A drifted historical-unit adoption
+reference remains damaged; admit a separate independently anchored
+reconstruction only through
 `historical_unit_adoption_reconstruction.v1` and current-validation projection.
 See `docs/EXTERNAL_PLANNING_AND_HISTORICAL_RECONSTRUCTION.md`.
 

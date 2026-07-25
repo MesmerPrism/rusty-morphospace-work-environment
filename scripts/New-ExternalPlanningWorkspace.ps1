@@ -5,7 +5,8 @@ param(
     [Parameter(Mandatory)][string]$SourceRepoId,[Parameter(Mandatory)][string]$PlanningRepoId,
     [Parameter(Mandatory)][string]$Branch,[Parameter(Mandatory)][string]$Upstream,
     [Parameter(Mandatory)][string]$OldRevision,[Parameter(Mandatory)][string]$PublishedRevision,
-    [string]$EmbeddedWorkspacePath='morphospace',[string]$Timestamp='',[switch]$Execute
+    [string]$EmbeddedWorkspacePath='morphospace',[string]$Timestamp='',
+    [ValidateSet('v1','v2')][string]$ProjectionVersion='v1',[switch]$Execute
 )
 $ErrorActionPreference='Stop'
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospacePlanningProjection.psm1') -Force
@@ -16,6 +17,13 @@ if((Get-GitCommonDirectory $source)-ceq(Get-GitCommonDirectory $planning)){throw
 if(-not$workspace.StartsWith($planning+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw'WorkspaceRoot must be inside PlanningRepository.'}
 if(-not$projection.StartsWith($workspace+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw'ProjectionPath must be inside WorkspaceRoot.'}
 if(Test-Path -LiteralPath $workspace){throw'WorkspaceRoot already exists; projection is one-time and no-overwrite.'}
+$planningBaseRevision=$null
+if($ProjectionVersion-ceq'v2'){
+    $planningBase=Get-PlanningProjectionLocalBase $planning
+    $planningStatus=@(& git -C $planning status --porcelain=v1 --untracked-files=all)
+    if($LASTEXITCODE-ne0-or$planningStatus.Count-ne0){throw'V2 planning repository base must be clean before projection.'}
+    $planningBaseRevision=[string]$planningBase.head
+}
 & git -C $source merge-base --is-ancestor $OldRevision $PublishedRevision 2>$null;if($LASTEXITCODE-ne0){throw'OldRevision is not an ancestor of PublishedRevision.'}
 $remote=($Upstream-split'/',2)[0];$branchPart=($Upstream-split'/',2)[1];if(-not$branchPart){throw'Upstream must name remote/branch.'};$remoteRef="refs/heads/$branchPart"
 $readback=Get-FreshRemoteRevision $source $remote $remoteRef
@@ -27,15 +35,21 @@ $relativeWorkspace=$workspace.Substring($planning.Length+1).Replace('\','/')
 $relativeProjection=$projection.Substring($workspace.Length+1).Replace('\','/')
 Test-PlanningProjectionRelativePath $relativeProjection 'Projection record path'
 if(@($inventory|Where-Object{$_.path-ceq$relativeProjection}).Count-ne0){throw'ProjectionPath collides with a published workspace file.'}
+$schemaId="rusty.morphospace.workflow.planning_workspace_projection.$ProjectionVersion"
+$classification=if($ProjectionVersion-ceq'v2'){'published-embedded-workspace-authority-adoption'}else{'embedded-workspace-projected-after-source-publication'}
+$nextTransition=if($ProjectionVersion-ceq'v2'){'AdoptPublishedPlanningAuthority'}else{'ReconcilePublication'}
 $document=[ordered]@{
- '$schema'='../schemas/planning-workspace-projection.schema.json';schema='rusty.morphospace.workflow.planning_workspace_projection.v1'
+ '$schema'='../schemas/planning-workspace-projection.schema.json';schema=$schemaId
  projection_id=$ProjectionId;project_id=$ProjectId;unit_id=$UnitId;recorded_at=$Timestamp;status='exact-projection-verified'
- chronology=[ordered]@{classification='embedded-workspace-projected-after-source-publication';source_publication_preceded_projection=$true;prepared_plan_present=$false;executed_push_receipt_present=$false;does_not_claim=@('prospective preparation','planning-last publication','source acceptance','Git execution')}
+ chronology=[ordered]@{classification=$classification;source_publication_preceded_projection=$true;prepared_plan_present=$false;executed_push_receipt_present=$false;does_not_claim=@('prospective preparation','planning-last publication','source acceptance','Git execution')}
  source=[ordered]@{repo_id=$SourceRepoId;branch=$Branch;remote=$remote;remote_ref=$remoteRef;upstream=$Upstream;old_revision=$OldRevision;published_revision=$PublishedRevision;observed_remote_revision=$readback;embedded_workspace_path=$EmbeddedWorkspacePath;embedded_workspace_tree=$tree;fast_forward_verified=$true;remote_match=$true;force_push_used=$false}
- planning=[ordered]@{repo_id=$PlanningRepoId;workspace_path=$relativeWorkspace;projection_record_path=$relativeProjection;distinct_from_source=$true;base_revision=$null}
+ planning=[ordered]@{repo_id=$PlanningRepoId;workspace_path=$relativeWorkspace;projection_record_path=$relativeProjection;distinct_from_source=$true;base_revision=$planningBaseRevision}
  inventory=@($inventory|ForEach-Object{[ordered]@{path=$_.path;git_mode=$_.git_mode;size=$_.size;sha256=$_.sha256}})
- authority=[ordered]@{source_workspace='immutable-historical-snapshot';external_workspace='sole-mutable-workflow-authority';source_workflow_mutation_performed=$false;git_mutation_performed=$false;next_transition='ReconcilePublication'}
+ authority=[ordered]@{source_workspace='immutable-historical-snapshot';external_workspace='sole-mutable-workflow-authority';source_workflow_mutation_performed=$false;git_mutation_performed=$false;next_transition=$nextTransition}
  failure=$null
+}
+if($ProjectionVersion-ceq'v2'){
+    $document['projected_state']=Get-PublishedProjectionStateBinding $source $PublishedRevision $EmbeddedWorkspacePath $SourceRepoId
 }
 if(-not$Execute){$document|ConvertTo-Json -Depth 16;return}
 [IO.Directory]::CreateDirectory($workspace)|Out-Null

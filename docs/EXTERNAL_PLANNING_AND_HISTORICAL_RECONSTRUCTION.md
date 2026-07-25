@@ -37,6 +37,49 @@ workflow transition may write the source copy.
 
 Never use v1 closure for this migration. Never copy a dirty worktree.
 
+## Published embedded authority adoption
+
+Use `planning_workspace_projection.v2` instead of v1 when the exact published
+embedded state has null `current_unit`, `next_ready_unit`, and
+`pending_push_bundle`, but still names the source repository as dirty and
+contains a stale source entry in `repository_heads`. V2 binds that exact
+published state, including the complete dirty-repository set and stale
+head/branch/dirty-fingerprint row:
+
+```powershell
+pwsh -NoProfile -File .\scripts\New-ExternalPlanningWorkspace.ps1 `
+  -SourceRepository <source-repo> -PlanningRepository <planning-repo> `
+  -WorkspaceRoot <planning-repo>\<project>\morphospace `
+  -ProjectionPath <planning-repo>\<project>\morphospace\receipts\<projection>.json `
+  -ProjectionId <projection-id> -ProjectId <project-id> -UnitId <accepted-unit> `
+  -SourceRepoId <source-id> -PlanningRepoId <planning-id> `
+  -Branch <source-branch> -Upstream <remote>/<branch> `
+  -OldRevision <pre-publication> -PublishedRevision <published> `
+  -ProjectionVersion v2 -Execute
+```
+
+After independently recording the exact passing source validation and observer
+evidence, create a `published_planning_authority_adoption.v1` receipt and run
+`AdoptPublishedPlanningAuthority` from the external workspace. The live
+validator requires the source checkout to be clean, attached, synchronized,
+and exact at the published remote readback. The distinct planning repository
+is local-only and must remain attached at the exact receipt-bound base revision
+and tree. Its unrelated worktree must be clean; only the receipt-bound
+projection and adoption evidence may remain as exact workspace changes before
+the transition.
+
+The transition changes only the external workspace: it removes the named
+source from `dirty_repositories`, replaces only that repository-head entry with
+the synchronized head/branch and a null dirty fingerprint, appends one bound
+event, and preserves blockers, registries, checkpoints, accepted evidence,
+unrelated heads, and all null activity fields. It creates no plan, push
+receipt, source acceptance, Git mutation, remote, force push, or history
+rewrite. Repeating the adoption fails because the exact stale state no longer
+exists.
+
+`ReconcilePublication` remains the bundle-bearing recovery route. It must not
+be used to invent a missing pending bundle for this null-bundle adoption case.
+
 ## Damaged historical adoption
 
 Keep a drifted `historical_unit_adoption_receipts` path and expected hash

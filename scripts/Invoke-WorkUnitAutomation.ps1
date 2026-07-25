@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("Inspect", "Ready", "Claim", "Resume", "BeginValidation", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RecordPublication", "Recover", "ReconcilePublication", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix")]
+    [ValidateSet("Inspect", "Ready", "Claim", "Resume", "BeginValidation", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix")]
     [string]$Action,
     [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
     [string]$UnitId = "",
@@ -10,6 +10,7 @@ param(
     [string]$ValidationReceipt = "",
     [string]$RecoveryReceipt = "",
     [string]$PublicationClosure = "",
+    [string]$PublishedPlanningAuthorityAdoption = "",
     [string]$PublicationAccounting = "",
     [string]$PlanningSuffixRewriteRecovery = "",
     [string]$PublishedPrerequisiteSuffixReconciliation = "",
@@ -37,6 +38,7 @@ $arguments = @{
     ValidationReceipt = $ValidationReceipt
     RecoveryReceipt = $RecoveryReceipt
     PublicationClosure = $PublicationClosure
+    PublishedPlanningAuthorityAdoption = $PublishedPlanningAuthorityAdoption
     PublicationAccounting = $PublicationAccounting
     PlanningSuffixRewriteRecovery = $PlanningSuffixRewriteRecovery
     PublishedPrerequisiteSuffixReconciliation = $PublishedPrerequisiteSuffixReconciliation

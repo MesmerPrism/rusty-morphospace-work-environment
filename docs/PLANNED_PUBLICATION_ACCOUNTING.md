@@ -107,7 +107,12 @@ the exact pending bundle no longer exists.
 
 `ReconcilePublication` remains exclusively for a push that genuinely preceded
 `PreparePush`; it rejects planned accounting and cannot manufacture a plan or
-executed receipt.
+executed receipt. It also cannot manufacture a pending bundle for a published
+embedded workspace whose activity and pending-bundle fields are already null.
+That distinct stale-authority shape uses
+`planning_workspace_projection.v2`,
+`published_planning_authority_adoption.v1`, and
+`AdoptPublishedPlanningAuthority`.
 
 ## Published prerequisite suffix reconciliation
 
