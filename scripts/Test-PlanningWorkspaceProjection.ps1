@@ -32,6 +32,10 @@ if($SelfTest){
   $d.projected_state.dirty_repository_ids=@('source-owner',12)
   $d|ConvertTo-Json -Depth 16|Set-Content $temp -Encoding utf8
   $rejected=$false;try{Test-MorphospacePlanningWorkspaceProjectionDocument $temp|Out-Null}catch{$rejected=$true};if(-not$rejected){throw'V2 projection accepted a non-string dirty repository ID.'}
+  foreach($acceptedPath in @('.gitattributes','receipts/.keep')){Test-PlanningProjectionRelativePath $acceptedPath 'Accepted dotfile path'}
+  foreach($damagedPath in @('.','..','.git','.git/config','.git./config','.git.../config','receipts/.','receipts/.git/HEAD','receipts/../state.json','receipts//state.json','receipts\state.json')){
+   $rejected=$false;try{Test-PlanningProjectionRelativePath $damagedPath 'Damaged path'}catch{$rejected=$true};if(-not$rejected){throw "Projection path guard accepted damaged path '$damagedPath'."}
+  }
   New-Item -ItemType Directory $repo|Out-Null;git -C $repo init -q;git -C $repo config user.name fixture;git -C $repo config user.email fixture@example.invalid
   'x'|Set-Content (Join-Path $repo 'x.txt');git -C $repo add .;git -C $repo commit -q -m init;git -C $repo worktree add -q $linked
   if((Get-GitCommonDirectory $repo)-cne(Get-GitCommonDirectory $linked)){throw'Linked worktree Git identity was not detected.'}
@@ -39,6 +43,7 @@ if($SelfTest){
   $source=Join-Path $fixture 'source';$remote=Join-Path $fixture 'source.git';$planning=Join-Path $fixture 'planning'
   New-Item -ItemType Directory $source,$planning|Out-Null;git -C $source init -q;git -C $source config user.name fixture;git -C $source config user.email fixture@example.invalid
   New-Item -ItemType Directory (Join-Path $source 'morphospace\receipts')|Out-Null
+  '* -text'|Set-Content (Join-Path $source 'morphospace\.gitattributes') -Encoding utf8
   '{"project_id":"fixture"}'|Set-Content (Join-Path $source 'morphospace\project.spec.json') -Encoding utf8
   New-Item -ItemType File (Join-Path $source 'morphospace\empty.json')|Out-Null
   git -C $source add .;git -C $source commit -q -m old;$old=(git -C $source rev-parse HEAD).Trim()
@@ -51,6 +56,7 @@ if($SelfTest){
   & (Join-Path $PSScriptRoot 'New-ExternalPlanningWorkspace.ps1') -SourceRepository $source -PlanningRepository $planning -WorkspaceRoot $workspace -ProjectionPath $projection -ProjectionId fixture-projection -ProjectId fixture -UnitId fixture-unit -SourceRepoId source-owner -PlanningRepoId planning-owner -Branch main -Upstream origin/main -OldRevision $old -PublishedRevision $published -Timestamp '2026-01-02T03:04:05Z' -Execute|Out-Null
   $generatedV1=Get-Content -Raw $projection|ConvertFrom-Json
   if([string]$generatedV1.schema-cne'rusty.morphospace.workflow.planning_workspace_projection.v1'-or$null-ne$generatedV1.planning.base_revision){throw'Default generator output is not unchanged v1 with a null planning base.'}
+  if(@($generatedV1.inventory|Where-Object{[string]$_.path-ceq'.gitattributes'}).Count-ne1){throw'Generator omitted a canonical leading-dot workspace file.'}
   $closure=Join-Path $workspace 'receipts\closure.json';'{}'|Set-Content $closure -Encoding utf8
   Test-MorphospacePlanningWorkspaceProjectionLive -Path $projection -SourceRepository $source -PlanningRepository $planning -WorkspaceRoot $workspace -AllowedAdditivePaths @('receipts/closure.json')|Out-Null
   $rejected=$false;try{Test-MorphospacePlanningWorkspaceProjectionLive -Path $projection -SourceRepository $source -PlanningRepository $planning -WorkspaceRoot $workspace|Out-Null}catch{$rejected=$true};if(-not$rejected){throw'Unbound additive file was accepted.'}

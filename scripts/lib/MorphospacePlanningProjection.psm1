@@ -6,7 +6,14 @@ function Get-PlanningProjectionSha256([string]$Path) {
 }
 function Test-PlanningProjectionRelativePath([string]$Path, [string]$Context) {
     if ([IO.Path]::IsPathRooted($Path) -or $Path -match '(^|[\\/])\.\.([\\/]|$)' -or
-        $Path -match '\\' -or $Path -notmatch '^[a-z0-9][a-z0-9._/-]*$') {
+        $Path -match '\\' -or $Path -notmatch '^[a-z0-9.][a-z0-9._/-]*$') {
+        throw "$Context is not a canonical portable relative path."
+    }
+    $segments = @($Path -split '/')
+    if ($segments.Count -eq 0 -or @($segments | Where-Object {
+        [string]::IsNullOrEmpty($_) -or $_ -ceq '.' -or $_ -ceq '..' -or
+        $_.TrimEnd('.') -ceq '.git'
+    }).Count -ne 0) {
         throw "$Context is not a canonical portable relative path."
     }
 }
