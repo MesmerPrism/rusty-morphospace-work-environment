@@ -121,8 +121,8 @@ function Assert-MorphospacePublishedPlanningAuthorityAdoptionProperties {
 
 function Test-MorphospacePublishedPlanningAuthorityAdoptionArray {
     param(
-        [Parameter(Mandatory)][object[]]$Actual,
-        [Parameter(Mandatory)][object[]]$Expected,
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Actual,
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Expected,
         [Parameter(Mandatory)][string]$Context
     )
     if ($Actual.Count -ne $Expected.Count) { throw "$Context does not match exactly." }

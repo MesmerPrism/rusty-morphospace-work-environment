@@ -53,6 +53,10 @@ function Assert-AdoptionTestRejected {
 function Invoke-PublishedPlanningAuthorityAdoptionSelfTest {
     $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ('morphospace-authority-adoption-' + [guid]::NewGuid().ToString('N'))
     try {
+        $adoptionModule = Get-Module -Name MorphospacePublishedPlanningAuthorityAdoption
+        & $adoptionModule {
+            Test-MorphospacePublishedPlanningAuthorityAdoptionArray -Actual @() -Expected @() -Context 'Empty post-adoption dirty set'
+        }
         [IO.Directory]::CreateDirectory($tempRoot) | Out-Null
         $sourceRemote = Join-Path $tempRoot 'source-remote.git'
         $sourceRoot = Join-Path $tempRoot 'source'
