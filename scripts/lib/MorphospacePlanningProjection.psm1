@@ -24,7 +24,7 @@ function Get-GitBlobBytes([string]$RepositoryPath, [string]$Blob) {
     try {
         $process.StandardOutput.BaseStream.CopyTo($memory); $process.WaitForExit()
         if ($process.ExitCode -ne 0) { throw "git cat-file failed: $($process.StandardError.ReadToEnd())" }
-        return $memory.ToArray()
+        return ,$memory.ToArray()
     } finally { $memory.Dispose(); $process.Dispose() }
 }
 function Get-GitWorkspaceInventory([string]$RepositoryPath, [string]$Revision, [string]$Prefix) {
