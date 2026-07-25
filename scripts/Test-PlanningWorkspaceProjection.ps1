@@ -20,6 +20,7 @@ if($SelfTest){
   New-Item -ItemType Directory $source,$planning|Out-Null;git -C $source init -q;git -C $source config user.name fixture;git -C $source config user.email fixture@example.invalid
   New-Item -ItemType Directory (Join-Path $source 'morphospace\receipts')|Out-Null
   '{"project_id":"fixture"}'|Set-Content (Join-Path $source 'morphospace\project.spec.json') -Encoding utf8
+  New-Item -ItemType File (Join-Path $source 'morphospace\empty.json')|Out-Null
   git -C $source add .;git -C $source commit -q -m old;$old=(git -C $source rev-parse HEAD).Trim()
   '{"project_id":"fixture","current_unit":null}'|Set-Content (Join-Path $source 'morphospace\workspace.state.json') -Encoding utf8
   git -C $source add .;git -C $source commit -q -m published;$published=(git -C $source rev-parse HEAD).Trim();git -C $source branch -M main
