@@ -342,8 +342,12 @@ pwsh -NoProfile -ExecutionPolicy Bypass `
   -Execute
 ```
 
-Every action returns a validation matrix, a graph scope limited to the unit's
-declared repositories and paths, and a repository-preservation report.
+Core `work_unit_automation_receipt.v1` actions return a validation matrix, a
+graph scope limited to the unit's declared repositories and paths, and a
+repository-preservation report. Specialized additive actions that return the
+strict `work_unit_automation_receipt.v2` shape instead carry its compact
+preservation and audit-receipt fields; consumers must branch on the receipt
+schema rather than assume the v1 matrix and graph fields are universal.
 Transition repair accepts only a strict UTF-8, duplicate-key-free v1 event
 whose transaction identity, canonical body, sequence, immediate predecessor,
 and tail position match the retained intent. The same placement is
@@ -351,6 +355,17 @@ re-authenticated before event append and completion; a same-ID event elsewhere
 in the ledger is not repair authority. Every retained ledger prefix entry must
 also satisfy the exact v1 schema, unique identity, contiguous sequence, and
 non-regressing invariant timestamp before it can supply a predecessor or tail.
+The proposed event itself must use a strict invariant timestamp and must not
+precede the authenticated tail; both start and repair prove this under the
+workspace mutex before publishing an intent or changing any projection.
+Each intent also binds the exact pre-append ledger byte length and SHA-256.
+Repair accepts an authenticated torn suffix only when it is a strict prefix of
+the one canonical event line, truncates to that bound, and then appends exactly
+once. A workspace may have only one incomplete transition intent; later
+transitions wait for its explicit repair. Transaction artifacts use
+create-new, transaction-scoped staging files, reject occupied, duplicate,
+case-alias, projection, ledger, intent, completion, and stage targets before
+intent publication, and move into their final targets before projections.
 `Recover` only repairs an unambiguous stale current-unit pointer; it preserves
 blockers and prior validation evidence. `Resume` is the explicit transition
 out of `blocked`.

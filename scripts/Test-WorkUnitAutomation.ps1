@@ -1032,6 +1032,25 @@ try {
     Assert-Automation ($retirementDryRun.transition -eq "prepared-push-retired" -and -not $retirementDryRun.executed) "prepared-push retirement dry run"
     Assert-Automation ($null -ne (Get-Content -Raw (Join-Path $workspace "workspace.state.json") | ConvertFrom-Json).pending_push_bundle) "prepared-push retirement dry run mutated state"
     $retirementModule=Get-Module PreparedPushRetirement
+    $selfRetirementRelative="receipts/current-retirement-input.json"
+    $selfRetirementPath=Join-Path $workspace ($selfRetirementRelative-replace"/","\")
+    $competingRetirementPath=Join-Path $workspace "receipts\distinct-retirement-competitor.json"
+    try{
+        Write-TestJson -Path $selfRetirementPath -Value $retirementDocument
+        $selfExcluded=& $retirementModule {
+            param($root,$bundle,$self,$plan,$intent,$completion)
+            try{Test-PreparedPushConflictingEvidence $root $bundle @($self,$plan,$intent,$completion);$true}catch{$false}
+        } $workspace ([string]$retirementDocument.bundle_id) $selfRetirementRelative ([string]$retirementDocument.prepared_plan.container.path) ([string]$retirementDocument.prepared_event.intent.path) ([string]$retirementDocument.prepared_event.completion.path)
+        Assert-Automation $selfExcluded "prepared-push retirement conflict scan treated its exact current receipt input as competing evidence"
+        Write-TestJson -Path $competingRetirementPath -Value $retirementDocument
+        $distinctCompetitorRejected=& $retirementModule {
+            param($root,$bundle,$self,$plan,$intent,$completion)
+            try{Test-PreparedPushConflictingEvidence $root $bundle @($self,$plan,$intent,$completion);$false}catch{$true}
+        } $workspace ([string]$retirementDocument.bundle_id) $selfRetirementRelative ([string]$retirementDocument.prepared_plan.container.path) ([string]$retirementDocument.prepared_event.intent.path) ([string]$retirementDocument.prepared_event.completion.path)
+        Assert-Automation $distinctCompetitorRejected "prepared-push retirement conflict scan excluded a distinct competing retirement"
+    }finally{
+        foreach($path in @($selfRetirementPath,$competingRetirementPath)){if([IO.File]::Exists($path)){Remove-Item -LiteralPath $path -Force}}
+    }
     Assert-Automation (& $retirementModule {try{ConvertFrom-PreparedPushStrictTimestamp 'not-a-timestamp'|Out-Null;$false}catch{$true}}) "prepared-push retirement accepted an invalid timestamp"
     Assert-Automation (& $retirementModule {try{ConvertFrom-PreparedPushStrictTimestamp ' 2026-01-01T00:00:03Z'|Out-Null;$false}catch{$true}}) "prepared-push retirement accepted timestamp whitespace"
     Assert-Automation (& $retirementModule {try{New-PreparedPushRetirementEventId ('a'*128) 4|Out-Null;$false}catch{$true}}) "prepared-push retirement accepted an oversized derived event identity"
@@ -1422,6 +1441,25 @@ try {
     $realReconstructionDryRun = & (Join-Path $PSScriptRoot "Invoke-WorkUnitAutomation.ps1") -Action ReconcilePreparedPublication -WorkspaceRoot $reconstructionWorkspace `
         -UnitId $reconstructionUnitId -RepoMapPath $reconstructionMapPath -PreparedPublicationReconstruction $realReconstructionInput -Timestamp $fixed | ConvertFrom-Json
     Assert-Automation ($realReconstructionDryRun.transition -eq "prepared-publication-reconstructed" -and -not $realReconstructionDryRun.executed) "real RecordValidation/Accept/PreparePush provenance did not pass prepared-publication reconstruction"
+
+    $realPreparedPlanPath=Join-Path $reconstructionWorkspace "receipts\p.json"
+    $realPreparedPlanBytes=[IO.File]::ReadAllBytes($realPreparedPlanPath)
+    $realSubstitutedPlanBytes=[byte[]]::new($realPreparedPlanBytes.Length+1)
+    $realSubstitutedPlanBytes[0]=0x20
+    [Array]::Copy($realPreparedPlanBytes,0,$realSubstitutedPlanBytes,1,$realPreparedPlanBytes.Length)
+    try{
+        [IO.File]::WriteAllBytes($realPreparedPlanPath,$realSubstitutedPlanBytes)
+        $realSubstitutedPlanDocument=$realReconstructionDocument|ConvertTo-Json -Depth 40|ConvertFrom-Json
+        $realSubstitutedPlanDocument.prepared_plan.container.sha256=(Get-FileHash $realPreparedPlanPath).Hash.ToLowerInvariant()
+        Write-TestJson -Path $realReconstructionInput -Value $realSubstitutedPlanDocument
+        $realSubstitutedPlanRejected=$false;$realSubstitutedPlanMessage=''
+        try{& (Join-Path $PSScriptRoot "Invoke-WorkUnitAutomation.ps1") -Action ReconcilePreparedPublication -WorkspaceRoot $reconstructionWorkspace -UnitId $reconstructionUnitId -RepoMapPath $reconstructionMapPath -PreparedPublicationReconstruction $realReconstructionInput -Timestamp $fixed|Out-Null}catch{$realSubstitutedPlanMessage=$_.Exception.Message;$realSubstitutedPlanRejected=$realSubstitutedPlanMessage-like'*transaction-owned preparation artifact*'}
+        Assert-Automation $realSubstitutedPlanRejected "reconstruction accepted byte-substituted real PreparePush owner: $realSubstitutedPlanMessage"
+    }finally{
+        [IO.File]::WriteAllBytes($realPreparedPlanPath,$realPreparedPlanBytes)
+        Write-TestJson -Path $realReconstructionInput -Value $realReconstructionDocument
+    }
+
     $omittedIntervening=$realReconstructionDocument|ConvertTo-Json -Depth 40|ConvertFrom-Json
     $omittedIntervening.intervening_transitions=@()
     Write-TestJson -Path $realReconstructionInput -Value $omittedIntervening
@@ -1513,6 +1551,82 @@ try {
     Assert-Automation (@($nullRetiredState.blockers | Where-Object blocker_id -eq "stale-auto-push-plan").Count -eq 1) "null-blocker retirement removed the canonically observed stale blocker"
     Assert-Automation (@($nullRetiredState.blockers | Where-Object blocker_id -eq "unrelated-auto-blocker").Count -eq 1) "null-blocker retirement removed an unrelated blocker"
     Write-TestJson -Path $retirementInput -Value $retirementDocument
+
+    $faultBaselineState=[IO.File]::ReadAllBytes((Join-Path $workspace "workspace.state.json"))
+    $faultBaselineUnit=[IO.File]::ReadAllBytes((Join-Path $workspace "iteration-units\unit-auto-001.json"))
+    $faultBaselineEvents=[IO.File]::ReadAllBytes((Join-Path $workspace "iteration-events.jsonl"))
+    foreach($retirementFault in @("after-intent","after-artifact","after-projection","after-event")){
+        $faultOutput=Join-Path $workspace "receipts\prepared-push-retirement.json"
+        $faultInterrupted=$false
+        $faultEventId=$null
+        $laterEventId=$null
+        try{
+            try{
+                Invoke-MorphospacePreparedPushRetirement -WorkspaceRoot $workspace -UnitId "unit-auto-001" `
+                    -RepoMapPath $repoMapPath -RetirementReceipt $retirementInput -Timestamp $fixed `
+                    -OutPath $faultOutput -Execute -FaultAfter $retirementFault | Out-Null
+            }catch{$faultInterrupted=$_.Exception.Message-like"*Injected interruption*"}
+            Assert-Automation $faultInterrupted "prepared-push retirement did not stop at $retirementFault"
+            $faultRecovered=Invoke-MorphospacePreparedPushRetirement -WorkspaceRoot $workspace -UnitId "unit-auto-001" `
+                -RepoMapPath $repoMapPath -RetirementReceipt $retirementInput -Timestamp $fixed `
+                -OutPath $faultOutput -Execute
+            $faultEventId=[string]$faultRecovered.event_id
+            $faultState=Get-Content -Raw (Join-Path $workspace "workspace.state.json")|ConvertFrom-Json
+            $faultEvents=@(Get-Content (Join-Path $workspace "iteration-events.jsonl")|Where-Object{$_}|ForEach-Object{$_|ConvertFrom-Json})
+            $faultRetirementEvents=@($faultEvents|Where-Object{[string]$_.event_id-ceq$faultEventId})
+            Assert-Automation ($faultRecovered.executed-and
+                $faultRetirementEvents.Count-eq1-and
+                $null-eq$faultState.pending_push_bundle-and
+                -not($faultState.PSObject.Properties.Name-contains"prepared_push_retirements")-and
+                (Get-FileHash $faultOutput).Hash-ceq(Get-FileHash $retirementInput).Hash
+            ) "prepared-push retirement $retirementFault retry did not repair exactly once"
+            $faultIdempotent=Invoke-MorphospacePreparedPushRetirement -WorkspaceRoot $workspace -UnitId "unit-auto-001" `
+                -RepoMapPath $repoMapPath -RetirementReceipt $retirementInput -Timestamp $fixed `
+                -OutPath $faultOutput -Execute
+            Assert-Automation ([string]$faultIdempotent.event_id-ceq$faultEventId) "prepared-push retirement $retirementFault immediate retry was not idempotent"
+            if($retirementFault-eq"after-event"){
+                $laterState=Get-Content -Raw (Join-Path $workspace "workspace.state.json")|ConvertFrom-Json
+                $laterUnit=Get-Content -Raw (Join-Path $workspace "iteration-units\unit-auto-001.json")|ConvertFrom-Json
+                $laterSequence=$faultEvents.Count+1
+                $laterEventId="unit-auto-001-retirement-later-$('{0:d4}'-f$laterSequence)"
+                $laterEvent=[pscustomobject][ordered]@{
+                    schema="rusty.morphospace.workflow.iteration_event.v1";event_id=$laterEventId;sequence=$laterSequence
+                    timestamp=$fixed;project_id="automation-test";unit_id="unit-auto-001";event_type="state-transition"
+                    summary="Legitimate later transition used to prove historical retirement idempotence.";receipts=@()
+                }
+                $laterState.last_event_id=$laterEventId
+                Import-Module (Join-Path $PSScriptRoot "lib\MorphospaceTransitionLedger.psm1") -Force
+                Start-MorphospaceTransitionLedger -WorkspaceRoot $workspace -TransactionId "$laterEventId-transition" `
+                    -StatePath "workspace.state.json" -UnitPath "iteration-units/unit-auto-001.json" -EventsPath "iteration-events.jsonl" `
+                    -TargetState $laterState -TargetUnit $laterUnit -Event $laterEvent -ExpectedEventTailId $faultEventId|Out-Null
+                $historicalRetry=Invoke-MorphospacePreparedPushRetirement -WorkspaceRoot $workspace -UnitId "unit-auto-001" `
+                    -RepoMapPath $repoMapPath -RetirementReceipt $retirementInput -Timestamp $fixed `
+                    -OutPath $faultOutput -Execute
+                Assert-Automation ([string]$historicalRetry.event_id-ceq$faultEventId-and
+                    @(Get-Content (Join-Path $workspace "iteration-events.jsonl")|Where-Object{$_}).Count-eq$laterSequence
+                ) "historical committed retirement retry did not authenticate after a later transition"
+            }
+        }finally{
+            [IO.File]::WriteAllBytes((Join-Path $workspace "workspace.state.json"),$faultBaselineState)
+            [IO.File]::WriteAllBytes((Join-Path $workspace "iteration-units\unit-auto-001.json"),$faultBaselineUnit)
+            [IO.File]::WriteAllBytes((Join-Path $workspace "iteration-events.jsonl"),$faultBaselineEvents)
+            $cleanupPaths=@($faultOutput)
+            if($faultEventId){
+                $cleanupPaths+=@(
+                    (Join-Path $workspace "receipts\transactions\$faultEventId-transition.intent.json"),
+                    (Join-Path $workspace "receipts\transactions\$faultEventId-transition.completion.json"),
+                    (Join-Path $workspace "receipts\transactions\$faultEventId-transition.artifact-0.pending")
+                )
+            }
+            if($laterEventId){
+                $cleanupPaths+=@(
+                    (Join-Path $workspace "receipts\transactions\$laterEventId-transition.intent.json"),
+                    (Join-Path $workspace "receipts\transactions\$laterEventId-transition.completion.json")
+                )
+            }
+            foreach($cleanupPath in $cleanupPaths){if([IO.File]::Exists($cleanupPath)){Remove-Item -LiteralPath $cleanupPath -Force}}
+        }
+    }
 
     $retired = & (Join-Path $PSScriptRoot "Invoke-WorkUnitAutomation.ps1") -Action RetirePreparedPush -WorkspaceRoot $workspace `
         -UnitId "unit-auto-001" -RepoMapPath $repoMapPath -PreparedPushRetirement $retirementInput -Timestamp $fixed `

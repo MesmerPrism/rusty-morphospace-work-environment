@@ -60,7 +60,10 @@ for workflow-recognized execution, planned accounting, reconciliation,
 unplanned publication, rewrite-recovery, competing reconstruction/retirement,
 or their consuming automation bindings to the bundle. Every event receipt is
 resolved and parsed even when its event is not a push; empty-receipt push
-events reject. Any match,
+events reject. When the current portable retirement input already resides
+under this workspace's `receipts/` tree, only that exact input path is excluded
+from the conflict scan so the candidate does not conflict with itself; a
+distinct retirement or other recognized competitor remains a conflict. Any match,
 malformed searched JSON, failed remote lookup, stale readback, missing
 repository, partial set, tampering, unrelated suffix, dirty state, or consumed
 bundle rejects.
@@ -68,8 +71,10 @@ bundle rejects.
 The portable receipt is authored outside the planning worktree so its own bytes
 do not create a circular clean-state observation. Dry run validates it without
 mutation. Execution copies those exact bytes to the requested top-level
-`receipts/` path, records their SHA-256 in optional compact state
-`prepared_push_retirements`, clears only the matching `pending_push_bundle`,
+`receipts/` path and binds that path, SHA-256, and byte payload through the
+transition intent artifact, event receipt reference, and committed completion.
+The compact workspace-state schema has no `prepared_push_retirements`
+projection. Execution clears only the matching `pending_push_bundle`,
 optionally clears exactly one blocker named by `mutation.blocker_id`, updates
 `last_event_id`, and appends a `prepared-push-retired` transition through the
 existing transaction ledger. Unit files, validation, acceptance, source Git,
@@ -105,4 +110,12 @@ pwsh -NoProfile -ExecutionPolicy Bypass `
 ```
 
 Omit `-Execute` and `-OutPath` for preview. A repeated consume fails because
-the exact pending bundle no longer exists.
+the exact pending bundle no longer exists unless the same executed call is
+resuming its deterministic transaction. Before applying ordinary output-exists
+or consumed-bundle rejection, an executed retry authenticates the exact current
+retirement-input bytes, repository-map bytes, unit, retained output path,
+transition intent, target state/unit, event identity, and optional committed
+completion. It repairs an interrupted intent through the transition ledger or
+returns the already-committed result. Any changed input, path, unit, target,
+artifact, event, or completion fails closed rather than becoming a second
+retirement.

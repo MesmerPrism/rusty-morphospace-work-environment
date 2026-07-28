@@ -23,7 +23,13 @@ the exact accepted unit bytes. Each prepared, validation, and acceptance
 transition must use canonical ledger paths and roles, authenticate its complete
 intent/completion hashes and target state/unit hashes, and equal exactly one
 ordered event in a strict-UTF-8, duplicate-key-rejecting
-`iteration-events.jsonl` with the correct preceding event tail.
+`iteration-events.jsonl` with the correct preceding event tail. Intent and
+completion container timestamps must use the authoritative seven-digit UTC
+form, and every transition artifact must have a canonical path, lowercase
+SHA-256, canonical base64 payload, and matching decoded hash. The prepared
+transition must own exactly one artifact whose path, hash, decoded bytes, and
+byte content equal the retained PreparePush owner snapshot. The embedded
+plan's `prepared_at` must equal the authoritative PreparePush event timestamp.
 Every ledger event from validation through preparation must have its complete
 transition pair hash-bound by the input. The named validation, acceptance, and
 prepared transitions plus the ordered `intervening_transitions` inventory must
@@ -42,6 +48,11 @@ physical repository identity, intended remote, intended merge ref, prepared revi
 branch, and upstream are identical; split, merged, duplicate, unused, or
 substituted refs reject. Live branch, upstream, remote, and remote ref are
 revalidated without making historical actor, time, order, or force claims.
+`active_workspace_observation.repositories` is non-evidentiary context only.
+It is limited to 128 closed, sanitized `{repo_id, relation, dirty}` records;
+`relation` uses the contract's fixed vocabulary and `dirty` is a boolean or
+`null` when it cannot be observed. Paths, branch names, revisions, remote
+identities, and free-form payloads are not admitted, and the list may be empty.
 Every physical ref retains the resolved fetch and push remote identity hashes;
 both must match the observations and each other, so this v1 route does not
 admit split fetch/push endpoints.
@@ -61,7 +72,13 @@ those physical identities plus worktree root, Git ownership, HEAD, branch,
 upstream, upstream tip, ahead/behind counts, cleanliness, and fresh remote tip.
 The resolved fetch and push remote URL identities are captured in both
 observations, so retargeting a named remote to a distinct same-tip repository
-also rejects.
+also rejects. Each observation resolves and pins its fetch endpoint before
+`ls-remote`, performs the readback against that endpoint rather than the mutable
+remote name, and then rechecks both name-to-fetch and name-to-push mappings;
+an intra-observation retarget therefore cannot substitute another endpoint.
+The final mutex-protected admission also compares the exact validated
+event-ledger bytes, byte length, and SHA-256 before passing that same binding to
+the transition ledger; retaining only the same tail identity is insufficient.
 
 Claims about original execution, cross-repository order, planning-last
 execution, force/no-force history, actor/time, and historical non-publication

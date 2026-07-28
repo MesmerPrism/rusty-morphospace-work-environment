@@ -5,13 +5,42 @@ function Get-MorphospaceLedgerDocumentHash { param([object]$Value) Get-Morphospa
 function Get-MorphospaceLedgerPath { param([string]$WorkspaceRoot,[string]$TransactionId,[ValidateSet('intent','completion')][string]$Kind) "receipts/transactions/$TransactionId.$Kind.json" }
 function Read-MorphospaceLedgerJson { param([string]$Path) if(-not[IO.File]::Exists($Path)){throw "Transition artifact is missing: $Path"};Read-MorphospaceProtocolJson -Path $Path }
 function Write-MorphospaceLedgerProjection { param([string]$WorkspaceRoot,[string]$RelativePath,[object]$Document) Write-MorphospaceManagedProtocolJsonAtomic -WorkspaceRoot $WorkspaceRoot -RelativePath $RelativePath -Value $Document }
-function Add-MorphospaceLedgerEvent { param([string]$Path,[object]$Event)
-    $line=($Event|ConvertTo-Json -Depth 32 -Compress)+[Environment]::NewLine
-    $stream=[IO.FileStream]::new($Path,[IO.FileMode]::Append,[IO.FileAccess]::Write,[IO.FileShare]::Read)
-    try{$bytes=[Text.UTF8Encoding]::new($false).GetBytes($line);$stream.Write($bytes,0,$bytes.Length);$stream.Flush($true)}finally{$stream.Dispose()}
+function Get-MorphospaceLedgerEventLineBytes { param([object]$Event)
+    [Text.UTF8Encoding]::new($false).GetBytes(($Event|ConvertTo-Json -Depth 32 -Compress)+"`n")
 }
-function Read-MorphospaceLedgerEvents { param([string]$EventsPath)
-    $bytes=[IO.File]::ReadAllBytes($EventsPath)
+function Add-MorphospaceLedgerEvent { param([string]$Path,[object]$Event)
+    $bytes=Get-MorphospaceLedgerEventLineBytes $Event
+    $stream=[IO.FileStream]::new($Path,[IO.FileMode]::Append,[IO.FileAccess]::Write,[IO.FileShare]::Read)
+    try{$stream.Write($bytes,0,$bytes.Length);$stream.Flush($true)}finally{$stream.Dispose()}
+}
+function Get-MorphospaceLedgerByteHash { param([byte[]]$Bytes)
+    [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($Bytes)).ToLowerInvariant()
+}
+function Get-MorphospaceLedgerArtifactStagePath {
+    param([string]$TransactionId,[int]$Index)
+    "receipts/transactions/$TransactionId.artifact-$Index.pending"
+}
+function Test-MorphospaceLedgerBytePrefix {
+    param([byte[]]$Value,[int64]$PrefixLength,[byte[]]$ExpectedPrefix)
+    if($PrefixLength-lt0-or$PrefixLength-gt$Value.LongLength-or$PrefixLength-ne$ExpectedPrefix.LongLength){return $false}
+    for($index=0L;$index-lt$PrefixLength;$index++){if($Value[$index]-ne$ExpectedPrefix[$index]){return $false}}
+    return $true
+}
+function Test-MorphospaceLedgerRangeEquals {
+    param([byte[]]$Value,[int64]$Offset,[byte[]]$Expected)
+    if($Offset-lt0-or$Expected.LongLength-gt($Value.LongLength-$Offset)){return $false}
+    for($index=0L;$index-lt$Expected.LongLength;$index++){if($Value[$Offset+$index]-ne$Expected[$index]){return $false}}
+    return $true
+}
+function ConvertFrom-MorphospaceLedgerEventTimestamp {
+    param([Parameter(Mandatory=$true)][string]$Value,[string]$Context='transition event timestamp')
+    if($Value-cnotmatch'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,7})?(?:Z|[+-]\d{2}:\d{2})$'){
+        throw "$Context is not a strict invariant ISO-8601 date-time."
+    }
+    try{return ConvertFrom-MorphospaceInvariantTimestamp $Value}catch{throw "$Context is not a valid invariant ISO-8601 date-time."}
+}
+function Read-MorphospaceLedgerEvents { param([string]$EventsPath,[AllowEmptyCollection()][byte[]]$ProvidedBytes)
+    if($PSBoundParameters.ContainsKey('ProvidedBytes')){$bytes=$ProvidedBytes}else{$bytes=[IO.File]::ReadAllBytes($EventsPath)}
     if($bytes.Length-gt67108864){throw 'Transition event ledger exceeds the 64 MiB protocol bound.'}
     if($bytes.Length-ge3-and$bytes[0]-eq0xef-and$bytes[1]-eq0xbb-and$bytes[2]-eq0xbf){throw 'Transition event ledger must not contain a UTF-8 BOM.'}
     if($bytes-contains0){throw 'Transition event ledger contains NUL bytes.'}
@@ -37,12 +66,23 @@ function Read-MorphospaceLedgerEvents { param([string]$EventsPath)
         }
         if(-not$seen.Add([string]$event.event_id)){throw "Transition event ledger repeats event identity '$([string]$event.event_id)'."}
         if([int]$event.sequence-ne$events.Count+1){throw "Transition event ledger sequence is not contiguous at line $($index+1)."}
-        $timestamp=ConvertFrom-MorphospaceInvariantTimestamp ([string]$event.timestamp)
+        $timestamp=ConvertFrom-MorphospaceLedgerEventTimestamp ([string]$event.timestamp) "Transition event ledger timestamp at line $($index+1)"
         if($null-ne$previousTimestamp-and$timestamp-lt$previousTimestamp){throw "Transition event ledger chronology regresses at line $($index+1)."}
         $previousTimestamp=$timestamp
         $events+=,$event
     }
     @($events)
+}
+function Get-MorphospaceLedgerSnapshot { param([string]$EventsPath)
+    $bytes=[IO.File]::ReadAllBytes($EventsPath)
+    $events=@(Read-MorphospaceLedgerEvents -EventsPath $EventsPath -ProvidedBytes $bytes)
+    [pscustomobject]@{
+        bytes=$bytes
+        length=[int64]$bytes.LongLength
+        sha256=Get-MorphospaceLedgerByteHash $bytes
+        events=$events
+        tail_id=$(if($events.Count){[string]$events[-1].event_id}else{$null})
+    }
 }
 function Test-MorphospaceLedgerEventPresent { param([string]$EventsPath,[string]$EventId)
     @((Read-MorphospaceLedgerEvents $EventsPath) | Where-Object { [string]$_.event_id -ceq $EventId })
@@ -54,7 +94,8 @@ function Get-MorphospaceLedgerEventTail { param([string]$EventsPath)
 }
 function Assert-MorphospaceLedgerEventPlacement {
     param([string]$EventsPath,[object]$Intent,[switch]$AllowHistorical,[switch]$RequirePresent)
-    $events=@(Read-MorphospaceLedgerEvents $EventsPath)
+    $snapshot=Get-MorphospaceLedgerSnapshot $EventsPath
+    $events=@($snapshot.events)
     $matchingIndexes=@()
     for($index=0;$index-lt$events.Count;$index++){
         if([string]$events[$index].event_id-ceq[string]$Intent.event.event_id){$matchingIndexes+=,$index}
@@ -62,12 +103,32 @@ function Assert-MorphospaceLedgerEventPlacement {
     if($matchingIndexes.Count-gt1){throw 'Transition event is duplicated.'}
     if($matchingIndexes.Count-eq0){
         if($RequirePresent){throw 'Transition event is absent.'}
+        if($snapshot.length-ne[int64]$Intent.expected.events_length-or
+           [string]$snapshot.sha256-cne[string]$Intent.expected.events_sha256){
+            throw 'Transition event ledger differs from the authenticated pre-append snapshot.'
+        }
         $tail=if($events.Count){[string]$events[-1].event_id}else{$null}
         if([string]$tail-cne[string]$Intent.expected.event_tail_id){throw 'Transition event predecessor differs from its intent.'}
         if([int]$Intent.event.sequence-ne$events.Count+1){throw 'Transition event sequence does not identify the next ledger position.'}
+        $eventTimestamp=ConvertFrom-MorphospaceLedgerEventTimestamp ([string]$Intent.event.timestamp) 'Proposed transition event timestamp'
+        if($events.Count){
+            $tailTimestamp=ConvertFrom-MorphospaceLedgerEventTimestamp ([string]$events[-1].timestamp) 'Transition event ledger tail timestamp'
+            if($eventTimestamp-lt$tailTimestamp){throw 'Proposed transition event timestamp precedes the current ledger tail.'}
+        }
         return $false
     }
     $eventIndex=[int]$matchingIndexes[0]
+    $preLength=[int64]$Intent.expected.events_length
+    if($preLength-gt$snapshot.length){throw 'Transition event ledger is shorter than its authenticated pre-append snapshot.'}
+    $preBytes=[byte[]]::new($preLength)
+    if($preLength){[Array]::Copy($snapshot.bytes,0,$preBytes,0,$preLength)}
+    if((Get-MorphospaceLedgerByteHash $preBytes)-cne[string]$Intent.expected.events_sha256){
+        throw 'Transition event ledger prefix differs from the authenticated pre-append snapshot.'
+    }
+    $eventLine=Get-MorphospaceLedgerEventLineBytes $Intent.event
+    if(-not(Test-MorphospaceLedgerRangeEquals -Value $snapshot.bytes -Offset $preLength -Expected $eventLine)){
+        throw 'Transition event ledger does not contain the exact canonical event append.'
+    }
     if((Get-MorphospaceLedgerDocumentHash $events[$eventIndex])-cne(Get-MorphospaceLedgerDocumentHash $Intent.event)){
         throw 'Transition event differs from its intent.'
     }
@@ -75,6 +136,23 @@ function Assert-MorphospaceLedgerEventPlacement {
     $predecessor=if($eventIndex-gt0){[string]$events[$eventIndex-1].event_id}else{$null}
     if([string]$predecessor-cne[string]$Intent.expected.event_tail_id){throw 'Transition event predecessor differs from its intent.'}
     if([int]$Intent.event.sequence-ne$eventIndex+1){throw 'Transition event sequence does not match its ledger position.'}
+    return $true
+}
+function Repair-MorphospaceLedgerTornAppend {
+    param([string]$EventsPath,[object]$Intent)
+    $bytes=[IO.File]::ReadAllBytes($EventsPath)
+    $preLength=[int64]$Intent.expected.events_length
+    $eventLine=Get-MorphospaceLedgerEventLineBytes $Intent.event
+    if($bytes.LongLength-le$preLength-or$bytes.LongLength-ge($preLength+$eventLine.LongLength)){return $false}
+    $preBytes=[byte[]]::new($preLength)
+    if($preLength){[Array]::Copy($bytes,0,$preBytes,0,$preLength)}
+    if((Get-MorphospaceLedgerByteHash $preBytes)-cne[string]$Intent.expected.events_sha256){return $false}
+    $suffixLength=[int64]($bytes.LongLength-$preLength)
+    $expectedSuffix=[byte[]]::new($suffixLength)
+    [Array]::Copy($eventLine,0,$expectedSuffix,0,$suffixLength)
+    if(-not(Test-MorphospaceLedgerRangeEquals -Value $bytes -Offset $preLength -Expected $expectedSuffix)){return $false}
+    $stream=[IO.FileStream]::new($EventsPath,[IO.FileMode]::Open,[IO.FileAccess]::Write,[IO.FileShare]::Read)
+    try{$stream.SetLength($preLength);$stream.Flush($true)}finally{$stream.Dispose()}
     return $true
 }
 function Assert-MorphospaceLedgerIntent {
@@ -88,7 +166,14 @@ function Assert-MorphospaceLedgerIntent {
     }
     Assert-MorphospaceExactPropertySet $Intent.pre @('state','unit') @() 'Transition ledger intent pre'
     Assert-MorphospaceExactPropertySet $Intent.target @('state','unit') @() 'Transition ledger intent target'
-    Assert-MorphospaceExactPropertySet $Intent.expected @('state_sha256','unit_sha256','event_tail_id') @() 'Transition ledger intent expected'
+    Assert-MorphospaceExactPropertySet $Intent.expected @('state_sha256','unit_sha256','event_tail_id','events_sha256','events_length') @() 'Transition ledger intent expected'
+    if($Intent.expected.events_length-isnot[int]-and$Intent.expected.events_length-isnot[long]){
+        throw 'Transition ledger intent pre-append event-ledger length is not an integer.'
+    }
+    if([string]$Intent.expected.events_sha256-cnotmatch'^[0-9a-f]{64}$'-or
+       [int64]$Intent.expected.events_length-lt0-or[int64]$Intent.expected.events_length-gt67108864){
+        throw 'Transition ledger intent pre-append event-ledger binding is invalid.'
+    }
     foreach($projection in @('state','unit')){
         Assert-MorphospaceExactPropertySet $Intent.pre.$projection @('sha256') @() "Transition ledger intent pre-$projection"
         Assert-MorphospaceExactPropertySet $Intent.target.$projection @('sha256','document') @() "Transition ledger intent target-$projection"
@@ -106,13 +191,107 @@ function Assert-MorphospaceLedgerIntent {
     if(-not(Test-Json -Json ($Intent.event|ConvertTo-Json -Depth 16 -Compress) -SchemaFile $eventSchema)){
         throw 'Transition ledger intent event does not satisfy the exact iteration-event contract.'
     }
-    [void](ConvertFrom-MorphospaceInvariantTimestamp ([string]$Intent.event.timestamp))
+    [void](ConvertFrom-MorphospaceLedgerEventTimestamp ([string]$Intent.event.timestamp) 'Transition ledger intent event timestamp')
+    foreach($targetName in @('state','unit')){
+        $document=$Intent.target.$targetName.document
+        if($document.PSObject.Properties.Name-contains'project_id'){
+            if([string]$document.project_id-cne[string]$Intent.event.project_id){throw "Transition ledger target $targetName project identity differs from its event."}
+        }
+        if($document.PSObject.Properties.Name-contains'last_event_id'){
+            if([string]$document.last_event_id-cne[string]$Intent.event.event_id){throw "Transition ledger target $targetName last-event identity differs from its event."}
+        }
+    }
+    if($Intent.target.unit.document.PSObject.Properties.Name-contains'unit_id'){
+        if([string]$Intent.target.unit.document.unit_id-cne[string]$Intent.event.unit_id){throw 'Transition ledger target unit identity differs from its event.'}
+    }
+    $artifactTargets=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach($artifact in @($Intent.artifacts)){
         Assert-MorphospaceExactPropertySet $artifact @('path','sha256','bytes_base64') @() 'Transition ledger intent artifact'
-        [void](ConvertTo-MorphospaceProtocolRelativePath ([string]$artifact.path))
+        $artifactPath=ConvertTo-MorphospaceProtocolRelativePath ([string]$artifact.path)
+        if(-not$artifactTargets.Add($artifactPath)){throw 'Transition ledger intent repeats an artifact target path.'}
         try{$bytes=[Convert]::FromBase64String([string]$artifact.bytes_base64)}catch{throw 'Transition ledger intent artifact payload is not valid base64.'}
+        if([Convert]::ToBase64String($bytes)-cne[string]$artifact.bytes_base64){throw 'Transition ledger intent artifact payload is not canonical base64.'}
         $hash=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
         if($hash-cne[string]$artifact.sha256){throw 'Transition ledger intent artifact payload hash is inconsistent.'}
+    }
+}
+function Assert-MorphospaceNoOutstandingTransitionIntent {
+    param([string]$Workspace,[string]$TransactionId)
+    $transactions=Resolve-MorphospaceWorkspacePath -WorkspaceRoot $Workspace -RelativePath 'receipts/transactions'
+    if(-not[IO.Directory]::Exists($transactions)){return}
+    foreach($intentFile in @([IO.Directory]::EnumerateFiles($transactions,'*.intent.json',[IO.SearchOption]::TopDirectoryOnly))){
+        $name=[IO.Path]::GetFileName($intentFile)
+        if($name-cnotmatch'^(?<transaction>[a-z0-9][a-z0-9-]{1,191})\.intent\.json$'){
+            throw "Transition receipt namespace contains a noncanonical intent filename: $name"
+        }
+        $pendingTransaction=[string]$Matches.transaction
+        $completion=Resolve-MorphospaceWorkspacePath -WorkspaceRoot $Workspace -RelativePath (Get-MorphospaceLedgerPath $Workspace $pendingTransaction completion)
+        if(-not[IO.File]::Exists($completion)){
+            throw "Workspace has an outstanding transition intent requiring repair: $pendingTransaction"
+        }
+    }
+}
+function Get-MorphospaceLedgerReservedPathSet {
+    param([string]$Workspace,[string]$TransactionId,[object]$Intent)
+    $reserved=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach($relative in @(
+        [string]$Intent.state.path,
+        [string]$Intent.unit.path,
+        [string]$Intent.events.path,
+        (Get-MorphospaceLedgerPath $Workspace $TransactionId intent),
+        (Get-MorphospaceLedgerPath $Workspace $TransactionId completion)
+    )){
+        [void]$reserved.Add([IO.Path]::GetFullPath((Resolve-MorphospaceWorkspacePath -WorkspaceRoot $Workspace -RelativePath $relative)))
+    }
+    for($index=0;$index-lt@($Intent.artifacts).Count;$index++){
+        [void]$reserved.Add([IO.Path]::GetFullPath((Resolve-MorphospaceWorkspacePath -WorkspaceRoot $Workspace -RelativePath (Get-MorphospaceLedgerArtifactStagePath $TransactionId $index))))
+    }
+    return $reserved
+}
+function Assert-MorphospaceLedgerArtifactNamespace {
+    param([string]$Workspace,[string]$TransactionId,[object]$Intent)
+    $reserved=Get-MorphospaceLedgerReservedPathSet $Workspace $TransactionId $Intent
+    $targets=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach($artifact in @($Intent.artifacts)){
+        if([string]$artifact.path-like'receipts/transactions/*'){
+            throw "Transition artifact target may not occupy the transaction control namespace: $($artifact.path)"
+        }
+        $target=[IO.Path]::GetFullPath((Resolve-MorphospaceWorkspacePath -WorkspaceRoot $Workspace -RelativePath ([string]$artifact.path)))
+        if(-not$targets.Add($target)){throw 'Transition artifacts repeat a target path.'}
+        if($reserved.Contains($target)){throw "Transition artifact target collides with the transaction control namespace: $($artifact.path)"}
+    }
+}
+function Install-MorphospaceLedgerArtifacts {
+    param([string]$Workspace,[string]$TransactionId,[object]$Intent)
+    Assert-MorphospaceLedgerArtifactNamespace $Workspace $TransactionId $Intent
+    $installations=@()
+    for($index=0;$index-lt@($Intent.artifacts).Count;$index++){
+        $artifact=@($Intent.artifacts)[$index]
+        $target=Resolve-MorphospaceWorkspacePath -WorkspaceRoot $Workspace -RelativePath ([string]$artifact.path)
+        $stage=Resolve-MorphospaceWorkspacePath -WorkspaceRoot $Workspace -RelativePath (Get-MorphospaceLedgerArtifactStagePath $TransactionId $index)
+        $targetExists=[IO.File]::Exists($target)
+        $stageExists=[IO.File]::Exists($stage)
+        if([IO.Directory]::Exists($target)-or[IO.Directory]::Exists($stage)){
+            throw "Transition artifact target or transaction stage is occupied: $($artifact.path)"
+        }
+        if($stageExists){
+            if((Get-MorphospaceFileSha256 $stage)-cne[string]$artifact.sha256){throw "Transition artifact stage differs from its intent: $($artifact.path)"}
+            if($targetExists){throw "Transition artifact target was occupied after intent publication: $($artifact.path)"}
+        }elseif(-not$targetExists){
+            throw "Transition artifact lost both its transaction stage and target: $($artifact.path)"
+        }
+        if($targetExists-and(Get-MorphospaceFileSha256 $target)-cne[string]$artifact.sha256){throw "Transition artifact target differs from its intent: $($artifact.path)"}
+        $installations+=,[pscustomobject]@{artifact=$artifact;target=$target;stage=$stage;move=$stageExists}
+    }
+    foreach($installation in $installations){
+        if($installation.move){
+            $parent=[IO.Path]::GetDirectoryName([string]$installation.target)
+            [IO.Directory]::CreateDirectory($parent)|Out-Null
+            [IO.File]::Move([string]$installation.stage,[string]$installation.target,$false)
+        }
+        if((Get-MorphospaceFileSha256 ([string]$installation.target))-cne[string]$installation.artifact.sha256){
+            throw "Transition artifact target differs from its intent: $([string]$installation.artifact.path)"
+        }
     }
 }
 function Assert-MorphospaceLedgerCommittedCompletion {
@@ -130,7 +309,9 @@ function Assert-MorphospaceLedgerCommittedCompletion {
        [string]$completion.event_id-cne[string]$Intent.event.event_id){
         throw 'Transition ledger completion is not canonically bound to its exact intent.'
     }
-    [void](Test-MorphospaceStrictUtcTimestamp ([string]$completion.completed_at))
+    $createdAt=Test-MorphospaceStrictUtcTimestamp ([string]$Intent.created_at)
+    $completedAt=Test-MorphospaceStrictUtcTimestamp ([string]$completion.completed_at)
+    if($completedAt-lt$createdAt){throw 'Transition ledger completion timestamp precedes its intent creation.'}
     $eventsAbsolute=Resolve-MorphospaceWorkspacePath -WorkspaceRoot $Workspace -RelativePath ([string]$Intent.events.path) -RequireLeaf
     [void](Assert-MorphospaceLedgerEventPlacement $eventsAbsolute $Intent -AllowHistorical -RequirePresent)
     foreach($artifact in @($Intent.artifacts)){
@@ -145,7 +326,7 @@ function Assert-MorphospaceLedgerCommittedCompletion {
     }
 }
 function Complete-MorphospaceTransitionLedger {
-    param([string]$WorkspaceRoot,[string]$TransactionId,[switch]$Repair,[ValidateSet('none','after-intent','after-projection','after-event')][string]$FaultAfter='none')
+    param([string]$WorkspaceRoot,[string]$TransactionId,[switch]$Repair,[ValidateSet('none','after-intent','after-artifact','after-projection','after-event')][string]$FaultAfter='none')
     $workspace=[IO.Path]::GetFullPath($WorkspaceRoot);$intentRelative=Get-MorphospaceLedgerPath $workspace $TransactionId intent;$completionRelative=Get-MorphospaceLedgerPath $workspace $TransactionId completion
     $completionAbsolute=Resolve-MorphospaceWorkspacePath -WorkspaceRoot $workspace -RelativePath $completionRelative
     $lock=Enter-MorphospaceWorkspaceMutex -WorkspaceRoot $workspace
@@ -153,6 +334,7 @@ function Complete-MorphospaceTransitionLedger {
         $intentAbsolute=Resolve-MorphospaceWorkspacePath -WorkspaceRoot $workspace -RelativePath $intentRelative -RequireLeaf
         $intent=Read-MorphospaceLedgerJson $intentAbsolute
         Assert-MorphospaceLedgerIntent $intent $TransactionId
+        Assert-MorphospaceLedgerArtifactNamespace $workspace $TransactionId $intent
         if([IO.File]::Exists($completionAbsolute)){
             Assert-MorphospaceLedgerCommittedCompletion $workspace $TransactionId $intentRelative $intentAbsolute $intent $completionAbsolute
             return [pscustomobject]@{transaction_id=$TransactionId;status='already-committed'}
@@ -164,13 +346,16 @@ function Complete-MorphospaceTransitionLedger {
         $currentUnit=Read-MorphospaceProtocolJson -Path $unitAbsolute
         $currentStateHash=Get-MorphospaceLedgerDocumentHash $currentState
         $currentUnitHash=Get-MorphospaceLedgerDocumentHash $currentUnit
-        [void](Assert-MorphospaceLedgerEventPlacement $eventsAbsolute $intent)
         if($intent.PSObject.Properties.Name-contains'expected'){
             $allowedStateHashes=@([string]$intent.expected.state_sha256,[string]$intent.target.state.sha256)
             $allowedUnitHashes=@([string]$intent.expected.unit_sha256,[string]$intent.target.unit.sha256)
             if($allowedStateHashes-notcontains$currentStateHash){throw "Transition $TransactionId failed expected pre-state CAS."}
             if($allowedUnitHashes-notcontains$currentUnitHash){throw "Transition $TransactionId failed expected pre-unit CAS."}
         }
+        if($Repair){[void](Repair-MorphospaceLedgerTornAppend $eventsAbsolute $intent)}
+        [void](Assert-MorphospaceLedgerEventPlacement $eventsAbsolute $intent)
+        Install-MorphospaceLedgerArtifacts $workspace $TransactionId $intent
+        if($FaultAfter-eq'after-artifact'){throw 'Injected interruption after artifact installation.'}
         foreach($projection in @('state','unit')){
             $current=Read-MorphospaceProtocolJson -Path (Resolve-MorphospaceWorkspacePath $workspace ([string]$intent.$projection.path) -RequireLeaf)
             $actual=Get-MorphospaceLedgerDocumentHash $current
@@ -186,19 +371,6 @@ function Complete-MorphospaceTransitionLedger {
         }
         [void](Assert-MorphospaceLedgerEventPlacement $eventsAbsolute $intent)
         if($FaultAfter-eq'after-event'){throw 'Injected interruption after event append.'}
-        foreach($artifact in @($intent.artifacts)){
-            $target=Resolve-MorphospaceWorkspacePath -WorkspaceRoot $workspace -RelativePath ([string]$artifact.path)
-            if([IO.File]::Exists($target)){
-                if((Get-MorphospaceFileSha256 $target)-cne[string]$artifact.sha256){throw "Transition artifact target is occupied: $($artifact.path)"}
-            }else{
-                $bytes=[Convert]::FromBase64String([string]$artifact.bytes_base64)
-                $actual=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
-                if($actual-cne[string]$artifact.sha256){throw "Transition artifact payload hash mismatch: $($artifact.path)"}
-                $parent=[IO.Path]::GetDirectoryName($target);[IO.Directory]::CreateDirectory($parent)|Out-Null
-                $temporary=Join-Path $parent (".$([IO.Path]::GetFileName($target)).$TransactionId.tmp")
-                try{[IO.File]::WriteAllBytes($temporary,$bytes);[IO.File]::Move($temporary,$target,$false)}finally{if([IO.File]::Exists($temporary)){[IO.File]::Delete($temporary)}}
-            }
-        }
         [void](Assert-MorphospaceLedgerEventPlacement $eventsAbsolute $intent)
         $completion=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.transition_ledger_completion.v1';transaction_id=$TransactionId;completed_at=[DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffffffZ');intent=[pscustomobject]@{role='transition-ledger-intent';path=$intentRelative;schema=$intent.schema;sha256=(Get-MorphospaceFileSha256 $intentAbsolute)};state_sha256=[string]$intent.target.state.sha256;unit_sha256=[string]$intent.target.unit.sha256;event_id=[string]$intent.event.event_id;status='committed'}
         Write-MorphospaceManagedProtocolJsonAtomic -WorkspaceRoot $workspace -RelativePath $completionRelative -Value $completion -NoOverwrite
@@ -215,16 +387,19 @@ function Start-MorphospaceTransitionLedger {
         [object]$TargetState,
         [object]$TargetUnit,
         [object]$Event,
-        [ValidateSet('none','after-intent','after-projection','after-event')][string]$FaultAfter='none',
+        [ValidateSet('none','after-intent','after-artifact','after-projection','after-event')][string]$FaultAfter='none',
         [string]$ExpectedPreStateSha256 = '',
         [string]$ExpectedPreUnitSha256 = '',
         [string]$ExpectedStateSha256 = '',
         [string]$ExpectedUnitSha256 = '',
         [AllowNull()][string]$ExpectedEventTailId,
+        [string]$ExpectedEventsSha256 = '',
+        [int64]$ExpectedEventsLength = -1,
         [object[]]$Artifacts=@()
     )
     $workspace=[IO.Path]::GetFullPath($WorkspaceRoot);$lock=Enter-MorphospaceWorkspaceMutex -WorkspaceRoot $workspace
     try {
+        Assert-MorphospaceNoOutstandingTransitionIntent $workspace $TransactionId
         $state=Read-MorphospaceProtocolJson -Path (Resolve-MorphospaceWorkspacePath $workspace $StatePath -RequireLeaf);$unit=Read-MorphospaceProtocolJson -Path (Resolve-MorphospaceWorkspacePath $workspace $UnitPath -RequireLeaf)
         $preStateSha256=Get-MorphospaceLedgerDocumentHash $state;$preUnitSha256=Get-MorphospaceLedgerDocumentHash $unit
         if($ExpectedStateSha256-and$ExpectedPreStateSha256-and$ExpectedStateSha256-cne$ExpectedPreStateSha256){throw 'Conflicting expected pre-state SHA-256 values.'}
@@ -240,7 +415,16 @@ function Start-MorphospaceTransitionLedger {
             if([string]$expectation.expected-cne[string]$expectation.actual){throw "Transition $TransactionId expected $([string]$expectation.name) SHA-256 does not match the mutex-protected current document."}
         }
         $eventsAbsolute=Resolve-MorphospaceWorkspacePath $workspace $EventsPath -RequireLeaf
-        if($PSBoundParameters.ContainsKey('ExpectedEventTailId')-and[string]$ExpectedEventTailId-cne[string](Get-MorphospaceLedgerEventTail $eventsAbsolute)){throw "Transition $TransactionId failed expected event-tail CAS."}
+        $eventSnapshot=Get-MorphospaceLedgerSnapshot $eventsAbsolute
+        if($eventSnapshot.length-gt0-and$eventSnapshot.bytes[$eventSnapshot.length-1]-ne0x0a){
+            throw 'Transition event ledger must end with LF before a canonical append.'
+        }
+        if($PSBoundParameters.ContainsKey('ExpectedEventTailId')-and[string]$ExpectedEventTailId-cne[string]$eventSnapshot.tail_id){throw "Transition $TransactionId failed expected event-tail CAS."}
+        if($ExpectedEventsSha256){
+            if($ExpectedEventsSha256-cnotmatch'^[0-9a-f]{64}$'){throw 'Expected event-ledger SHA-256 is not canonical lowercase hex.'}
+            if([string]$eventSnapshot.sha256-cne$ExpectedEventsSha256){throw "Transition $TransactionId failed expected event-ledger byte-hash CAS."}
+        }
+        if($ExpectedEventsLength-ge0-and$eventSnapshot.length-ne$ExpectedEventsLength){throw "Transition $TransactionId failed expected event-ledger byte-length CAS."}
         $ownedArtifacts=@()
         foreach($artifact in @($Artifacts)){
             $hasSource=$null-ne$artifact.PSObject.Properties['source_path']
@@ -259,8 +443,33 @@ function Start-MorphospaceTransitionLedger {
             $ownedArtifacts+=,[pscustomobject][ordered]@{path=(ConvertTo-MorphospaceProtocolRelativePath ([string]$artifact.path));sha256=$hash;bytes_base64=[Convert]::ToBase64String($bytes)}
         }
         $intentRelative=Get-MorphospaceLedgerPath $workspace $TransactionId intent
-        $intent=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.transition_ledger_intent.v1';transaction_id=$TransactionId;created_at=[DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffffffZ');state=[pscustomobject]@{path=(ConvertTo-MorphospaceProtocolRelativePath -Path $StatePath)};unit=[pscustomobject]@{path=(ConvertTo-MorphospaceProtocolRelativePath -Path $UnitPath)};events=[pscustomobject]@{path=(ConvertTo-MorphospaceProtocolRelativePath -Path $EventsPath)};pre=[pscustomobject]@{state=[pscustomobject]@{sha256=$preStateSha256};unit=[pscustomobject]@{sha256=$preUnitSha256}};target=[pscustomobject]@{state=[pscustomobject]@{sha256=(Get-MorphospaceLedgerDocumentHash $TargetState);document=$TargetState};unit=[pscustomobject]@{sha256=(Get-MorphospaceLedgerDocumentHash $TargetUnit);document=$TargetUnit}};expected=[pscustomobject]@{state_sha256=$preStateSha256;unit_sha256=$preUnitSha256;event_tail_id=$(if($PSBoundParameters.ContainsKey('ExpectedEventTailId')){$ExpectedEventTailId}else{Get-MorphospaceLedgerEventTail $eventsAbsolute})};artifacts=@($ownedArtifacts);event=$Event;status='prepared'}
-        Write-MorphospaceManagedProtocolJsonAtomic -WorkspaceRoot $workspace -RelativePath $intentRelative -Value $intent -NoOverwrite
+        $intent=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.transition_ledger_intent.v1';transaction_id=$TransactionId;created_at=[DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffffffZ');state=[pscustomobject]@{path=(ConvertTo-MorphospaceProtocolRelativePath -Path $StatePath)};unit=[pscustomobject]@{path=(ConvertTo-MorphospaceProtocolRelativePath -Path $UnitPath)};events=[pscustomobject]@{path=(ConvertTo-MorphospaceProtocolRelativePath -Path $EventsPath)};pre=[pscustomobject]@{state=[pscustomobject]@{sha256=$preStateSha256};unit=[pscustomobject]@{sha256=$preUnitSha256}};target=[pscustomobject]@{state=[pscustomobject]@{sha256=(Get-MorphospaceLedgerDocumentHash $TargetState);document=$TargetState};unit=[pscustomobject]@{sha256=(Get-MorphospaceLedgerDocumentHash $TargetUnit);document=$TargetUnit}};expected=[pscustomobject]@{state_sha256=$preStateSha256;unit_sha256=$preUnitSha256;event_tail_id=$(if($PSBoundParameters.ContainsKey('ExpectedEventTailId')){$ExpectedEventTailId}else{$eventSnapshot.tail_id});events_sha256=[string]$eventSnapshot.sha256;events_length=[int64]$eventSnapshot.length};artifacts=@($ownedArtifacts);event=$Event;status='prepared'}
+        Assert-MorphospaceLedgerIntent $intent $TransactionId
+        Assert-MorphospaceLedgerArtifactNamespace $workspace $TransactionId $intent
+        [void](Assert-MorphospaceLedgerEventPlacement $eventsAbsolute $intent)
+        $stagePaths=@()
+        for($index=0;$index-lt@($ownedArtifacts).Count;$index++){
+            $artifact=@($ownedArtifacts)[$index]
+            $target=Resolve-MorphospaceWorkspacePath -WorkspaceRoot $workspace -RelativePath ([string]$artifact.path)
+            $stage=Resolve-MorphospaceWorkspacePath -WorkspaceRoot $workspace -RelativePath (Get-MorphospaceLedgerArtifactStagePath $TransactionId $index)
+            if([IO.File]::Exists($target)-or[IO.Directory]::Exists($target)){throw "Transition artifact target must be absent before intent publication: $($artifact.path)"}
+            if([IO.File]::Exists($stage)-or[IO.Directory]::Exists($stage)){throw "Transition artifact stage must be absent before intent publication: $($artifact.path)"}
+            $stagePaths+=,$stage
+        }
+        $intentPublished=$false
+        try{
+            for($index=0;$index-lt@($ownedArtifacts).Count;$index++){
+                $stage=$stagePaths[$index]
+                [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($stage))|Out-Null
+                $bytes=[Convert]::FromBase64String([string]@($ownedArtifacts)[$index].bytes_base64)
+                $stream=[IO.FileStream]::new($stage,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None,4096,[IO.FileOptions]::WriteThrough)
+                try{$stream.Write($bytes,0,$bytes.Length);$stream.Flush($true)}finally{$stream.Dispose()}
+            }
+            Write-MorphospaceManagedProtocolJsonAtomic -WorkspaceRoot $workspace -RelativePath $intentRelative -Value $intent -NoOverwrite
+            $intentPublished=$true
+        }finally{
+            if(-not$intentPublished){foreach($stage in $stagePaths){if([IO.File]::Exists($stage)){[IO.File]::Delete($stage)}}}
+        }
         if($FaultAfter-eq'after-intent'){throw 'Injected interruption after intent publication.'}
     } finally {Exit-MorphospaceWorkspaceMutex $lock}
     Complete-MorphospaceTransitionLedger -WorkspaceRoot $workspace -TransactionId $TransactionId -FaultAfter $FaultAfter

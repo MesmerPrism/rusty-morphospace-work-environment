@@ -187,32 +187,45 @@ function Assert-ReconstructionNoAlternateObjectDatabase {
     }
     $objectsPhysical
 }
-function Get-ReconstructionRemoteIdentity {
+function Get-ReconstructionRemoteEndpoint {
     param([string]$Root,[string]$Remote,[switch]$Push)
     $arguments=@('remote','get-url');if($Push){$arguments+='--push'};$arguments+='--all';$arguments+=$Remote
     $lines=@((Invoke-ReconstructionGit $Root $arguments).text-split"`n"|Where-Object{$_})
     if($lines.Count-ne1){throw "Prepared-publication reconstruction requires exactly one resolved $(if($Push){'push'}else{'fetch'}) URL for remote '$Remote'."}
     $value=[string]$lines[0]
     $descriptor=$null
+    $endpoint=$null
     if([IO.Path]::IsPathFullyQualified($value)){
         $physical=Get-ReconstructionPhysicalDirectory $value
         $descriptor="file|$($physical.canonical_path)|$($physical.identity)"
+        $endpoint=$physical.canonical_path
     }else{
         $uri=$null
         if([Uri]::TryCreate($value,[UriKind]::Absolute,[ref]$uri)-and$uri.IsFile){
             $physical=Get-ReconstructionPhysicalDirectory $uri.LocalPath
             $descriptor="file|$($physical.canonical_path)|$($physical.identity)"
+            $endpoint=$physical.canonical_path
         }elseif($null-ne$uri){
             if($uri.UserInfo){throw "Prepared-publication reconstruction rejects credential-bearing remote '$Remote'."}
             $descriptor="uri|$($uri.AbsoluteUri)"
+            $endpoint=$uri.AbsoluteUri
         }elseif($value-match'^[^/:@\s]+@?[^/:\s]+:.+$'){
             $descriptor="scp|$value"
+            $endpoint=$value
         }else{
             $physical=Get-ReconstructionPhysicalDirectory (Join-Path $Root $value)
             $descriptor="file|$($physical.canonical_path)|$($physical.identity)"
+            $endpoint=$physical.canonical_path
         }
     }
-    Get-MorphospaceSha256Bytes -Bytes ([Text.UTF8Encoding]::new($false).GetBytes($descriptor))
+    [pscustomobject][ordered]@{
+        endpoint=$endpoint
+        identity=Get-MorphospaceSha256Bytes -Bytes ([Text.UTF8Encoding]::new($false).GetBytes($descriptor))
+    }
+}
+function Get-ReconstructionRemoteIdentity {
+    param([string]$Root,[string]$Remote,[switch]$Push)
+    (Get-ReconstructionRemoteEndpoint -Root $Root -Remote $Remote -Push:$Push).identity
 }
 function Get-ReconstructionReadbackObservation {
     param([string]$Repo,[string]$Remote,[string]$Ref)
@@ -236,8 +249,8 @@ function Get-ReconstructionReadbackObservation {
        $objectsPhysical.canonical_path-cne$expectedObjectsPhysical.canonical_path){
         throw 'Prepared-publication reconstruction requires repository-owned .git and object directories below the readback root.'
     }
-    $remoteFetchIdentity=Get-ReconstructionRemoteIdentity $root $Remote
-    $remotePushIdentity=Get-ReconstructionRemoteIdentity $root $Remote -Push
+    $remoteFetchEndpoint=Get-ReconstructionRemoteEndpoint $root $Remote
+    $remotePushEndpoint=Get-ReconstructionRemoteEndpoint $root $Remote -Push
     $branch=(Invoke-ReconstructionGit $Repo @('branch','--show-current')).text
     $upstream=(Invoke-ReconstructionGit $Repo @('rev-parse','--abbrev-ref','--symbolic-full-name','@{upstream}')).text
     $head=(Invoke-ReconstructionGit $Repo @('rev-parse','HEAD^{commit}')).text
@@ -245,8 +258,16 @@ function Get-ReconstructionReadbackObservation {
     $counts=(Invoke-ReconstructionGit $Repo @('rev-list','--left-right','--count','HEAD...@{upstream}')).text-split'\s+'
     if($counts.Count-ne2){throw 'Prepared-publication reconstruction readback divergence observation was malformed.'}
     $status=(Invoke-ReconstructionGit $Repo @('status','--porcelain=v1','--untracked-files=all')).text
-    $remoteFields=(Invoke-ReconstructionGit $Repo @('ls-remote','--exit-code',$Remote,$Ref)).text-split'\s+'
+    $remoteFields=(Invoke-ReconstructionGit $Repo @('ls-remote','--exit-code',[string]$remoteFetchEndpoint.endpoint,$Ref)).text-split'\s+'
     if($remoteFields.Count-lt2-or$remoteFields[0]-notmatch'^[0-9a-f]{40}$'){throw 'Prepared-publication reconstruction remote readback was malformed.'}
+    $remoteFetchAfter=Get-ReconstructionRemoteEndpoint $root $Remote
+    $remotePushAfter=Get-ReconstructionRemoteEndpoint $root $Remote -Push
+    if([string]$remoteFetchEndpoint.endpoint-cne[string]$remoteFetchAfter.endpoint-or
+       [string]$remoteFetchEndpoint.identity-cne[string]$remoteFetchAfter.identity-or
+       [string]$remotePushEndpoint.endpoint-cne[string]$remotePushAfter.endpoint-or
+       [string]$remotePushEndpoint.identity-cne[string]$remotePushAfter.identity){
+        throw "Prepared-publication reconstruction remote '$Remote' changed during one readback observation."
+    }
     [pscustomobject][ordered]@{
         root=$root;git_dir=$gitDir;common_dir=$commonDir;branch=$branch;upstream=$upstream
         head=$head;upstream_tip=$upstreamTip;ahead=[int]$counts[0];behind=[int]$counts[1]
@@ -255,7 +276,7 @@ function Get-ReconstructionReadbackObservation {
         git_dir_canonical=$gitDirPhysical.canonical_path;git_dir_physical_id=$gitDirPhysical.identity
         common_dir_canonical=$commonDirPhysical.canonical_path;common_dir_physical_id=$commonDirPhysical.identity
         object_dir_canonical=$objectsPhysical.canonical_path;object_dir_physical_id=$objectsPhysical.identity
-        remote_fetch_identity=$remoteFetchIdentity;remote_push_identity=$remotePushIdentity
+        remote_fetch_identity=[string]$remoteFetchEndpoint.identity;remote_push_identity=[string]$remotePushEndpoint.identity
     }
 }
 function Assert-ReconstructionObservationEqual {
@@ -336,6 +357,38 @@ function Assert-ReconstructionExactProperties {
     $expected=@($Names|Sort-Object)
     if(($actual-join'|')-cne($expected-join'|')){throw "Prepared-publication reconstruction $Name has a non-canonical shape."}
 }
+function Assert-ReconstructionTransitionArtifacts {
+    param([object]$Intent,[string]$Name)
+    $index=0
+    $paths=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach($artifact in @($Intent.artifacts)){
+        Assert-ReconstructionExactProperties $artifact @('path','sha256','bytes_base64') "$Name intent artifact[$index]"
+        $path=[string]$artifact.path
+        $normalized=ConvertTo-MorphospaceProtocolRelativePath $path
+        if($normalized-cne$path){throw "Prepared-publication reconstruction $Name intent artifact[$index] path is not canonical."}
+        if(-not$paths.Add($normalized)){throw "Prepared-publication reconstruction $Name intent repeats an artifact target path."}
+        if([string]$artifact.sha256-cnotmatch'^[0-9a-f]{64}$'){throw "Prepared-publication reconstruction $Name intent artifact[$index] hash is not canonical."}
+        try{$bytes=[Convert]::FromBase64String([string]$artifact.bytes_base64)}catch{throw "Prepared-publication reconstruction $Name intent artifact[$index] payload is not valid base64."}
+        if([Convert]::ToBase64String($bytes)-cne[string]$artifact.bytes_base64){throw "Prepared-publication reconstruction $Name intent artifact[$index] payload is not canonical base64."}
+        $hash=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+        if($hash-cne[string]$artifact.sha256){throw "Prepared-publication reconstruction $Name intent artifact[$index] payload hash is inconsistent."}
+        $index++
+    }
+}
+function Assert-ReconstructionPreparedPlanArtifact {
+    param([object]$Transition,[object]$PlanSnapshot,[string]$PlanRelativePath)
+    $artifacts=@($Transition.intent.artifacts)
+    if($artifacts.Count-ne1){throw 'Prepared-publication reconstruction prepared transition must own exactly one plan artifact.'}
+    $artifact=$artifacts[0]
+    try{$bytes=[Convert]::FromBase64String([string]$artifact.bytes_base64)}catch{throw 'Prepared-publication reconstruction prepared transition artifact is not valid base64.'}
+    $hash=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+    if([string]$artifact.path-cne$PlanRelativePath-or
+       [string]$artifact.sha256-cne[string]$PlanSnapshot.sha256-or
+       $hash-cne[string]$PlanSnapshot.sha256-or
+       -not(Test-ReconstructionByteArrayEqual $bytes $PlanSnapshot.bytes)){
+        throw 'Prepared-publication reconstruction prepared plan is not the transaction-owned preparation artifact.'
+    }
+}
 function Get-ReconstructionTransitionBinding {
     param(
         [string]$Workspace,
@@ -360,10 +413,24 @@ function Get-ReconstructionTransitionBinding {
     Assert-ReconstructionExactProperties $intent.target @('state','unit') "$Name intent target"
     Assert-ReconstructionExactProperties $intent.target.state @('sha256','document') "$Name intent target-state"
     Assert-ReconstructionExactProperties $intent.target.unit @('sha256','document') "$Name intent target-unit"
-    Assert-ReconstructionExactProperties $intent.expected @('state_sha256','unit_sha256','event_tail_id') "$Name intent expected"
+    $expectedIntentFields=@('state_sha256','unit_sha256','event_tail_id')
+    $hasEventsHash=$intent.expected.PSObject.Properties.Name-ccontains'events_sha256'
+    $hasEventsLength=$intent.expected.PSObject.Properties.Name-ccontains'events_length'
+    if($hasEventsHash-ne$hasEventsLength){throw "Prepared-publication reconstruction $Name intent has an incomplete pre-append event-ledger binding."}
+    if($hasEventsHash){
+        $expectedIntentFields+=@('events_sha256','events_length')
+        if([string]$intent.expected.events_sha256-cnotmatch'^[0-9a-f]{64}$'-or[int64]$intent.expected.events_length-lt0){
+            throw "Prepared-publication reconstruction $Name intent has an invalid pre-append event-ledger binding."
+        }
+    }
+    Assert-ReconstructionExactProperties $intent.expected $expectedIntentFields "$Name intent expected"
     Assert-ReconstructionExactProperties $intent.event @('schema','event_id','sequence','timestamp','project_id','unit_id','event_type','summary','receipts') "$Name intent event"
     Assert-ReconstructionExactProperties $completion @('schema','transaction_id','completed_at','intent','state_sha256','unit_sha256','event_id','status') "$Name completion"
     Assert-ReconstructionExactProperties $completion.intent @('role','path','schema','sha256') "$Name completion intent reference"
+    try{$intentCreatedAt=Test-MorphospaceStrictUtcTimestamp ([string]$intent.created_at)}catch{throw "Prepared-publication reconstruction $Name intent created_at is not an authoritative transition timestamp: $($_.Exception.Message)"}
+    try{$completionCompletedAt=Test-MorphospaceStrictUtcTimestamp ([string]$completion.completed_at)}catch{throw "Prepared-publication reconstruction $Name completion completed_at is not an authoritative transition timestamp: $($_.Exception.Message)"}
+    if($completionCompletedAt-lt$intentCreatedAt){throw "Prepared-publication reconstruction $Name completion timestamp precedes its intent creation."}
+    Assert-ReconstructionTransitionArtifacts $intent $Name
     $transactionId=[string]$intent.transaction_id
     $expectedIntentPath="receipts/transactions/$transactionId.intent.json"
     $expectedCompletionPath="receipts/transactions/$transactionId.completion.json"
@@ -537,7 +604,7 @@ function Get-ReconstructionBundleBindings {
     if($Node-is[pscustomobject]){foreach($p in $Node.PSObject.Properties){if($p.Name-ceq'bundle_id'){[string]$p.Value};Get-ReconstructionBundleBindings $p.Value}}
     elseif($Node-is[System.Collections.IEnumerable]-and$Node-isnot[string]){foreach($item in $Node){Get-ReconstructionBundleBindings $item}}
 }
-function Get-ReconstructionEventLedger {
+function Get-ReconstructionEventLedgerSnapshot {
     param([string]$Workspace)
     $path=Join-Path $Workspace 'iteration-events.jsonl'
     $bytes=[IO.File]::ReadAllBytes($path)
@@ -567,7 +634,18 @@ function Get-ReconstructionEventLedger {
         foreach($reference in @($event.receipts)){if(-not$receiptSet.Add([string]$reference)){throw "Prepared-publication reconstruction event ledger repeats a receipt alias at line $($index+1)."}}
         $previousTimestamp=$timestamp;$events+=,$event
     }
-    @($events)
+    [pscustomobject]@{
+        bytes=$bytes
+        length=[int64]$bytes.LongLength
+        sha256=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+        events=@($events)
+    }
+}
+function Test-ReconstructionByteArrayEqual {
+    param([byte[]]$Left,[byte[]]$Right)
+    if($Left.LongLength-ne$Right.LongLength){return $false}
+    for($index=0L;$index-lt$Left.LongLength;$index++){if($Left[$index]-ne$Right[$index]){return $false}}
+    return $true
 }
 function Assert-ReconstructionLedgerEvent {
     param([object[]]$Ledger,[object]$Transition,[string]$Name)
@@ -617,7 +695,7 @@ function Assert-NoReconstructionConflict {
     }
 }
 function Invoke-MorphospacePreparedPublicationReconstruction {
-    [CmdletBinding()]param([Parameter(Mandatory)][string]$WorkspaceRoot,[Parameter(Mandatory)][string]$UnitId,[Parameter(Mandatory)][string]$RepoMapPath,[Parameter(Mandatory)][string]$ReconstructionReceipt,[string]$Timestamp='',[string]$OutPath='',[switch]$Execute,[ValidateSet('none','after-intent','after-projection','after-event')][string]$FaultAfter='none')
+    [CmdletBinding()]param([Parameter(Mandatory)][string]$WorkspaceRoot,[Parameter(Mandatory)][string]$UnitId,[Parameter(Mandatory)][string]$RepoMapPath,[Parameter(Mandatory)][string]$ReconstructionReceipt,[string]$Timestamp='',[string]$OutPath='',[switch]$Execute,[ValidateSet('none','after-intent','after-artifact','after-projection','after-event')][string]$FaultAfter='none')
     $bindingCache=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
     $leases=[Collections.Generic.List[object]]::new()
     try{
@@ -652,6 +730,10 @@ function Invoke-MorphospacePreparedPublicationReconstruction {
         throw 'Prepared-publication reconstruction does not bind the original not-performed PreparePush owner/member and exact unit set.'
     }
     $preparedTransition=Get-ReconstructionTransitionBinding $workspace $doc.prepared_event 'prepared' ([string]$doc.project_id) $UnitId $bindingCache $leases
+    Assert-ReconstructionPreparedPlanArtifact $preparedTransition $planSnapshot ([string]$doc.prepared_plan.container.path)
+    if([string]$plan.prepared_at-cne[string]$preparedTransition.intent.event.timestamp){
+        throw 'Prepared-publication reconstruction plan prepared_at does not equal the authoritative PreparePush event timestamp.'
+    }
     if([string]$preparedTransition.intent.event.event_type-cne'commit'-or
        @($preparedTransition.intent.event.receipts).Count-ne1-or
        [string]$preparedTransition.intent.event.receipts[0]-cne[string]$doc.prepared_plan.container.path-or
@@ -670,7 +752,8 @@ function Invoke-MorphospacePreparedPublicationReconstruction {
     $acceptanceTransition=Get-ReconstructionTransitionBinding $workspace $doc.acceptance_event 'acceptance' ([string]$doc.project_id) $UnitId $bindingCache $leases
     if([string]$validationTransition.intent.event.event_type-cne'validation'-or-not(Test-ReconstructionExactReceiptVector $validationTransition.intent.event.receipts ([string]$doc.validation_receipt.path))-or[string]$validationTransition.intent.target.unit.document.unit_id-cne$UnitId){throw 'Prepared-publication reconstruction validation-pass event is not bound to the exact passing receipt and unit.'}
     if([string]$acceptanceTransition.intent.event.event_type-cne'state-transition'-or-not(Test-ReconstructionExactReceiptVector $acceptanceTransition.intent.event.receipts ([string]$doc.validation_receipt.path))-or[string]$acceptanceTransition.intent.target.unit.document.status-cne'accepted'-or(Get-MorphospaceCanonicalJsonSha256 $acceptanceTransition.intent.target.unit.document)-cne(Get-MorphospaceCanonicalJsonSha256 $accepted)-or[string]$acceptanceTransition.completion.unit_sha256-cne(Get-MorphospaceCanonicalJsonSha256 $accepted)){throw 'Prepared-publication reconstruction acceptance event is not bound to the exact passing receipt and accepted unit bytes.'}
-    $ledger=Get-ReconstructionEventLedger $workspace
+    $ledgerSnapshot=Get-ReconstructionEventLedgerSnapshot $workspace
+    $ledger=@($ledgerSnapshot.events)
     $ledgerTail=if($ledger.Count){[string]$ledger[-1].event_id}else{$null}
     if([string]$state.last_event_id-cne[string]$ledgerTail){
         throw 'Prepared-publication reconstruction workspace-state event tail does not match the authenticated event ledger.'
@@ -815,11 +898,18 @@ function Invoke-MorphospacePreparedPublicationReconstruction {
             }
             $state=$lockedState;$unit=$lockedUnit
             $lockedPreparedTransition=Get-ReconstructionTransitionBinding $workspace $doc.prepared_event 'prepared' ([string]$doc.project_id) $UnitId $bindingCache $leases
+            Assert-ReconstructionPreparedPlanArtifact $lockedPreparedTransition $planSnapshot ([string]$doc.prepared_plan.container.path)
             $lockedValidationTransition=Get-ReconstructionTransitionBinding $workspace $doc.validation_event 'validation-pass' ([string]$doc.project_id) $UnitId $bindingCache $leases
             $lockedAcceptanceTransition=Get-ReconstructionTransitionBinding $workspace $doc.acceptance_event 'acceptance' ([string]$doc.project_id) $UnitId $bindingCache $leases
-            $lockedLedger=Get-ReconstructionEventLedger $workspace
+            $lockedLedgerSnapshot=Get-ReconstructionEventLedgerSnapshot $workspace
+            $lockedLedger=@($lockedLedgerSnapshot.events)
             $lockedTail=if($lockedLedger.Count){[string]$lockedLedger[-1].event_id}else{$null}
-            if([string]$lockedTail-cne[string]$ledgerTail){throw 'Prepared-publication reconstruction event ledger changed after validation.'}
+            if([string]$lockedTail-cne[string]$ledgerTail-or
+               $lockedLedgerSnapshot.length-ne$ledgerSnapshot.length-or
+               [string]$lockedLedgerSnapshot.sha256-cne[string]$ledgerSnapshot.sha256-or
+               -not(Test-ReconstructionByteArrayEqual $lockedLedgerSnapshot.bytes $ledgerSnapshot.bytes)){
+                throw 'Prepared-publication reconstruction event ledger bytes changed after validation.'
+            }
             if($lockedLedger.Count-and$eventTimestamp-lt(ConvertFrom-ReconstructionStrictTimestamp ([string]$lockedLedger[-1].timestamp) 'locked event-ledger tail timestamp')){
                 throw 'Prepared-publication reconstruction timestamp precedes the locked event-ledger tail.'
             }
@@ -830,7 +920,7 @@ function Invoke-MorphospacePreparedPublicationReconstruction {
             Assert-NoReconstructionConflict $workspace ([string]$doc.bundle_id) @([string]$doc.prepared_plan.container.path,[string]$doc.prepared_event.intent.path,[string]$doc.prepared_event.completion.path,[string]$doc.accepted_unit.path,[string]$doc.validation_receipt.path,[string]$doc.validation_event.intent.path,[string]$doc.validation_event.completion.path,[string]$doc.acceptance_event.intent.path,[string]$doc.acceptance_event.completion.path) $lockedLedger
             $preHash=Get-MorphospaceCanonicalJsonSha256 $state;$preTail=$lockedTail
             $state.pending_push_bundle=$null;$state.blockers=@($state.blockers|Where-Object{[string]$_.blocker_id-cne[string]$doc.stale_blocker.value.blocker_id});$state.last_event_id=$eventId
-            Start-MorphospaceTransitionLedger -WorkspaceRoot $workspace -TransactionId $transactionId -StatePath 'workspace.state.json' -UnitPath $unitRelative -EventsPath 'iteration-events.jsonl' -TargetState $state -TargetUnit $unit -Event $event -ExpectedStateSha256 $preHash -ExpectedUnitSha256 (Get-MorphospaceCanonicalJsonSha256 $unit) -ExpectedEventTailId $preTail -Artifacts @([pscustomobject]@{bytes_base64=[Convert]::ToBase64String($validatedInputBytes);path=$relative;sha256=$validatedInputHash}) -FaultAfter $FaultAfter|Out-Null
+            Start-MorphospaceTransitionLedger -WorkspaceRoot $workspace -TransactionId $transactionId -StatePath 'workspace.state.json' -UnitPath $unitRelative -EventsPath 'iteration-events.jsonl' -TargetState $state -TargetUnit $unit -Event $event -ExpectedStateSha256 $preHash -ExpectedUnitSha256 (Get-MorphospaceCanonicalJsonSha256 $unit) -ExpectedEventTailId $preTail -ExpectedEventsSha256 ([string]$lockedLedgerSnapshot.sha256) -ExpectedEventsLength ([int64]$lockedLedgerSnapshot.length) -Artifacts @([pscustomobject]@{bytes_base64=[Convert]::ToBase64String($validatedInputBytes);path=$relative;sha256=$validatedInputHash}) -FaultAfter $FaultAfter|Out-Null
         }finally{Exit-MorphospaceWorkspaceMutex $boundaryLock}
     }
     $result

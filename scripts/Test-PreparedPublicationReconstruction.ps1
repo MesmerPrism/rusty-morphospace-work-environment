@@ -21,12 +21,12 @@ function New-ReconstructionRepo([string]$Root,[string]$Name){
     [pscustomobject]@{repo=$repo;remote=$remote;prepared=$prepared;tip=(Invoke-ReconstructionTestGit $repo @('rev-parse','HEAD'))}
 }
 function New-FileBinding([string]$Workspace,[string]$Relative){$path=Join-Path $Workspace ($Relative-replace'/','\');[ordered]@{path=$Relative;sha256=Get-MorphospaceFileSha256 $path}}
-function New-TransitionFixture([string]$Workspace,[string]$Name,[object]$Event,[object]$State,[object]$Unit,[AllowNull()][string]$PreviousEventId,[AllowNull()][object]$PreviousState,[AllowNull()][object]$PreviousUnit){
+function New-TransitionFixture([string]$Workspace,[string]$Name,[object]$Event,[object]$State,[object]$Unit,[AllowNull()][string]$PreviousEventId,[AllowNull()][object]$PreviousState,[AllowNull()][object]$PreviousUnit,[object[]]$Artifacts=@()){
     $intentRelative="receipts/transactions/$Name.intent.json";$completionRelative="receipts/transactions/$Name.completion.json"
     $preState=if($null-ne$PreviousState){Get-MorphospaceCanonicalJsonSha256 $PreviousState}else{'1'*64}
     $preUnit=if($null-ne$PreviousUnit){Get-MorphospaceCanonicalJsonSha256 $PreviousUnit}else{'2'*64}
     $intent=[ordered]@{
-        schema='rusty.morphospace.workflow.transition_ledger_intent.v1';transaction_id=$Name;created_at='2026-01-01T00:00:00Z'
+        schema='rusty.morphospace.workflow.transition_ledger_intent.v1';transaction_id=$Name;created_at='2026-01-01T00:00:00.0000000Z'
         state=[ordered]@{path='workspace.state.json'};unit=[ordered]@{path="iteration-units/$([string]$Unit.unit_id).json"};events=[ordered]@{path='iteration-events.jsonl'}
         pre=[ordered]@{state=[ordered]@{sha256=$preState};unit=[ordered]@{sha256=$preUnit}}
         target=[ordered]@{
@@ -34,11 +34,11 @@ function New-TransitionFixture([string]$Workspace,[string]$Name,[object]$Event,[
             unit=[ordered]@{sha256=Get-MorphospaceCanonicalJsonSha256 $Unit;document=$Unit}
         }
         expected=[ordered]@{state_sha256=$preState;unit_sha256=$preUnit;event_tail_id=$PreviousEventId}
-        artifacts=@();event=$Event;status='prepared'
+        artifacts=@($Artifacts);event=$Event;status='prepared'
     }
     Write-ReconstructionJson (Join-Path $Workspace ($intentRelative-replace'/','\')) $intent
     $completion=[ordered]@{
-        schema='rusty.morphospace.workflow.transition_ledger_completion.v1';transaction_id=$Name;completed_at='2026-01-01T00:00:01Z'
+        schema='rusty.morphospace.workflow.transition_ledger_completion.v1';transaction_id=$Name;completed_at='2026-01-01T00:00:01.0000000Z'
         intent=[ordered]@{role='transition-ledger-intent';path=$intentRelative;schema='rusty.morphospace.workflow.transition_ledger_intent.v1';sha256=Get-MorphospaceFileSha256 (Join-Path $Workspace ($intentRelative-replace'/','\'))}
         state_sha256=Get-MorphospaceCanonicalJsonSha256 $State;unit_sha256=Get-MorphospaceCanonicalJsonSha256 $Unit
         event_id=[string]$Event.event_id;status='committed'
@@ -86,7 +86,9 @@ try{
     Write-ReconstructionJson (Join-Path $workspace ($planRelative-replace'/','\')) ([ordered]@{schema='rusty.morphospace.workflow.work_unit_automation_receipt.v1';project_id='synthetic-project';unit_id='unit-reconstruction';action='PreparePush';executed=$true;transition='push-bundle-prepared';event_id='unit-reconstruction-push-prepared';push_plan=$plan})
     $prepareEvent=[ordered]@{schema='rusty.morphospace.workflow.iteration_event.v1';event_id='unit-reconstruction-push-prepared';sequence=3;timestamp='2026-01-01T00:00:02Z';project_id='synthetic-project';unit_id='unit-reconstruction';event_type='commit';summary='Synthetic plan prepared.';receipts=@($planRelative)}
     $preparedState.last_event_id=$prepareEvent.event_id
-    $prepareTransition=New-TransitionFixture -Workspace $workspace -Name "$($prepareEvent.event_id)-transition" -Event $prepareEvent -State $preparedState -Unit $unit -PreviousEventId $acceptanceEvent.event_id -PreviousState $acceptanceState -PreviousUnit $unit
+    $planBytes=[IO.File]::ReadAllBytes((Join-Path $workspace ($planRelative-replace'/','\')))
+    $planArtifact=[ordered]@{path=$planRelative;sha256=Get-MorphospaceFileSha256 (Join-Path $workspace ($planRelative-replace'/','\'));bytes_base64=[Convert]::ToBase64String($planBytes)}
+    $prepareTransition=New-TransitionFixture -Workspace $workspace -Name "$($prepareEvent.event_id)-transition" -Event $prepareEvent -State $preparedState -Unit $unit -PreviousEventId $acceptanceEvent.event_id -PreviousState $acceptanceState -PreviousUnit $unit -Artifacts @($planArtifact)
     $canonicalEventLines=@($validationEvent,$acceptanceEvent,$prepareEvent|ForEach-Object{$_|ConvertTo-Json -Depth 20 -Compress})
     [IO.File]::WriteAllLines((Join-Path $workspace 'iteration-events.jsonl'),$canonicalEventLines,[Text.UTF8Encoding]::new($false))
     $state=[ordered]@{schema='synthetic-state';project_id='synthetic-project';current_unit=$null;pending_push_bundle=$pending;validation_checkpoint=$null;blockers=@($blocker);last_event_id=$prepareEvent.event_id}
@@ -97,6 +99,109 @@ try{
     $input=Join-Path $root 'reconstruction-input.json';Write-ReconstructionJson $input $document
     $dry=Invoke-MorphospacePreparedPublicationReconstruction -WorkspaceRoot $workspace -UnitId 'unit-reconstruction' -RepoMapPath $mapPath -ReconstructionReceipt $input -Timestamp '2026-01-01T00:00:03Z'
     Assert-Reconstruction (-not$dry.executed-and$dry.transition-eq'prepared-publication-reconstructed') 'exact three-logical/two-physical shape did not dry-run'
+
+    $planOwnerPath=Join-Path $workspace ($document.prepared_plan.container.path-replace'/','\')
+    $originalPlanOwnerBytes=[IO.File]::ReadAllBytes($planOwnerPath)
+    $substitutedPlanOwnerBytes=[byte[]]::new($originalPlanOwnerBytes.Length+1)
+    $substitutedPlanOwnerBytes[0]=0x20
+    [Array]::Copy($originalPlanOwnerBytes,0,$substitutedPlanOwnerBytes,1,$originalPlanOwnerBytes.Length)
+    try{
+        [IO.File]::WriteAllBytes($planOwnerPath,$substitutedPlanOwnerBytes)
+        $substitutedPlanDocument=$document|ConvertTo-Json -Depth 40|ConvertFrom-Json
+        $substitutedPlanDocument.prepared_plan.container.sha256=Get-MorphospaceFileSha256 $planOwnerPath
+        Write-ReconstructionJson $input $substitutedPlanDocument
+        $substitutedPlanRejected=$false;$substitutedPlanMessage=''
+        try{Invoke-MorphospacePreparedPublicationReconstruction -WorkspaceRoot $workspace -UnitId 'unit-reconstruction' -RepoMapPath $mapPath -ReconstructionReceipt $input|Out-Null}catch{$substitutedPlanMessage=$_.Exception.Message;$substitutedPlanRejected=$substitutedPlanMessage-like'*transaction-owned preparation artifact*'}
+        Assert-Reconstruction $substitutedPlanRejected "byte-substituted PreparePush owner was not rejected by transaction-owned artifact binding: $substitutedPlanMessage"
+    }finally{
+        [IO.File]::WriteAllBytes($planOwnerPath,$originalPlanOwnerBytes)
+        Write-ReconstructionJson $input $document
+    }
+
+    $prepareIntentPath=Join-Path $workspace ($document.prepared_event.intent.path-replace'/','\')
+    $prepareCompletionPath=Join-Path $workspace ($document.prepared_event.completion.path-replace'/','\')
+    $originalPrepareIntentBytes=[IO.File]::ReadAllBytes($prepareIntentPath)
+    $originalPrepareCompletionBytes=[IO.File]::ReadAllBytes($prepareCompletionPath)
+    try{
+        $retimedOwner=Read-MorphospaceProtocolJson $planOwnerPath
+        $retimedOwner.push_plan.prepared_at='2026-01-01T00:00:01Z'
+        Write-ReconstructionJson $planOwnerPath $retimedOwner
+        $retimedOwnerBytes=[IO.File]::ReadAllBytes($planOwnerPath)
+        $retimedOwnerHash=Get-MorphospaceFileSha256 $planOwnerPath
+        $retimedIntent=Read-MorphospaceProtocolJson $prepareIntentPath
+        $retimedIntent.artifacts[0].sha256=$retimedOwnerHash
+        $retimedIntent.artifacts[0].bytes_base64=[Convert]::ToBase64String($retimedOwnerBytes)
+        Write-ReconstructionJson $prepareIntentPath $retimedIntent
+        $retimedCompletion=Read-MorphospaceProtocolJson $prepareCompletionPath
+        $retimedCompletion.intent.sha256=Get-MorphospaceFileSha256 $prepareIntentPath
+        Write-ReconstructionJson $prepareCompletionPath $retimedCompletion
+        $retimedDocument=$document|ConvertTo-Json -Depth 40|ConvertFrom-Json
+        $retimedDocument.prepared_plan.container.sha256=$retimedOwnerHash
+        $retimedDocument.prepared_event.intent.sha256=Get-MorphospaceFileSha256 $prepareIntentPath
+        $retimedDocument.prepared_event.completion.sha256=Get-MorphospaceFileSha256 $prepareCompletionPath
+        Write-ReconstructionJson $input $retimedDocument
+        $retimedRejected=$false;$retimedMessage=''
+        try{Invoke-MorphospacePreparedPublicationReconstruction -WorkspaceRoot $workspace -UnitId 'unit-reconstruction' -RepoMapPath $mapPath -ReconstructionReceipt $input|Out-Null}catch{$retimedMessage=$_.Exception.Message;$retimedRejected=$retimedMessage-like'*prepared_at does not equal the authoritative PreparePush event timestamp*'}
+        Assert-Reconstruction $retimedRejected "retimed prepared plan was not rejected by authoritative PreparePush event time: $retimedMessage"
+    }finally{
+        [IO.File]::WriteAllBytes($planOwnerPath,$originalPlanOwnerBytes)
+        [IO.File]::WriteAllBytes($prepareIntentPath,$originalPrepareIntentBytes)
+        [IO.File]::WriteAllBytes($prepareCompletionPath,$originalPrepareCompletionBytes)
+        Write-ReconstructionJson $input $document
+    }
+
+    $validationIntentPath=Join-Path $workspace ($document.validation_event.intent.path-replace'/','\')
+    $validationCompletionPath=Join-Path $workspace ($document.validation_event.completion.path-replace'/','\')
+    $originalValidationIntentBytes=[IO.File]::ReadAllBytes($validationIntentPath)
+    $originalValidationCompletionBytes=[IO.File]::ReadAllBytes($validationCompletionPath)
+    try{
+        $noncanonicalIntent=Read-MorphospaceProtocolJson $validationIntentPath
+        $noncanonicalIntent.created_at='2026-01-01T00:00:00Z'
+        Write-ReconstructionJson $validationIntentPath $noncanonicalIntent
+        $reboundCompletion=Read-MorphospaceProtocolJson $validationCompletionPath
+        $reboundCompletion.intent.sha256=Get-MorphospaceFileSha256 $validationIntentPath
+        Write-ReconstructionJson $validationCompletionPath $reboundCompletion
+        $noncanonicalDocument=$document|ConvertTo-Json -Depth 40|ConvertFrom-Json
+        $noncanonicalDocument.validation_event.intent.sha256=Get-MorphospaceFileSha256 $validationIntentPath
+        $noncanonicalDocument.validation_event.completion.sha256=Get-MorphospaceFileSha256 $validationCompletionPath
+        Write-ReconstructionJson $input $noncanonicalDocument
+        $noncanonicalIntentRejected=$false;$noncanonicalIntentMessage=''
+        try{Invoke-MorphospacePreparedPublicationReconstruction -WorkspaceRoot $workspace -UnitId 'unit-reconstruction' -RepoMapPath $mapPath -ReconstructionReceipt $input|Out-Null}catch{$noncanonicalIntentMessage=$_.Exception.Message;$noncanonicalIntentRejected=$noncanonicalIntentMessage-like'*intent created_at is not an authoritative transition timestamp*'}
+        Assert-Reconstruction $noncanonicalIntentRejected "non-authoritative transition intent timestamp was accepted or rejected for the wrong reason: $noncanonicalIntentMessage"
+    }finally{
+        [IO.File]::WriteAllBytes($validationIntentPath,$originalValidationIntentBytes)
+        [IO.File]::WriteAllBytes($validationCompletionPath,$originalValidationCompletionBytes)
+        Write-ReconstructionJson $input $document
+    }
+    try{
+        $noncanonicalCompletion=Read-MorphospaceProtocolJson $validationCompletionPath
+        $noncanonicalCompletion.completed_at='2026-01-01T00:00:01Z'
+        Write-ReconstructionJson $validationCompletionPath $noncanonicalCompletion
+        $noncanonicalDocument=$document|ConvertTo-Json -Depth 40|ConvertFrom-Json
+        $noncanonicalDocument.validation_event.completion.sha256=Get-MorphospaceFileSha256 $validationCompletionPath
+        Write-ReconstructionJson $input $noncanonicalDocument
+        $noncanonicalCompletionRejected=$false;$noncanonicalCompletionMessage=''
+        try{Invoke-MorphospacePreparedPublicationReconstruction -WorkspaceRoot $workspace -UnitId 'unit-reconstruction' -RepoMapPath $mapPath -ReconstructionReceipt $input|Out-Null}catch{$noncanonicalCompletionMessage=$_.Exception.Message;$noncanonicalCompletionRejected=$noncanonicalCompletionMessage-like'*completion completed_at is not an authoritative transition timestamp*'}
+        Assert-Reconstruction $noncanonicalCompletionRejected "non-authoritative transition completion timestamp was accepted or rejected for the wrong reason: $noncanonicalCompletionMessage"
+    }finally{
+        [IO.File]::WriteAllBytes($validationCompletionPath,$originalValidationCompletionBytes)
+        Write-ReconstructionJson $input $document
+    }
+    try{
+        $regressingCompletion=Read-MorphospaceProtocolJson $validationCompletionPath
+        $regressingCompletion.completed_at='2025-12-31T23:59:59.0000000Z'
+        Write-ReconstructionJson $validationCompletionPath $regressingCompletion
+        $regressingDocument=$document|ConvertTo-Json -Depth 40|ConvertFrom-Json
+        $regressingDocument.validation_event.completion.sha256=Get-MorphospaceFileSha256 $validationCompletionPath
+        Write-ReconstructionJson $input $regressingDocument
+        $regressingCompletionRejected=$false
+        try{Invoke-MorphospacePreparedPublicationReconstruction -WorkspaceRoot $workspace -UnitId 'unit-reconstruction' -RepoMapPath $mapPath -ReconstructionReceipt $input|Out-Null}catch{$regressingCompletionRejected=$_.Exception.Message-like'*completion timestamp precedes its intent creation*'}
+        Assert-Reconstruction $regressingCompletionRejected 'transition completion chronology regression was accepted'
+    }finally{
+        [IO.File]::WriteAllBytes($validationCompletionPath,$originalValidationCompletionBytes)
+        Write-ReconstructionJson $input $document
+    }
+
     foreach($case in @(
         @{name='unrelated ref';mutate={param($d)$d.physical_refs[0].ref='refs/heads/unrelated'}},
         @{name='split alias';mutate={param($d)$d.physical_refs[0].logical_repo_ids=@('application')}},
@@ -123,7 +228,6 @@ try{
         $rejected=$false;try{Invoke-MorphospacePreparedPublicationReconstruction -WorkspaceRoot $workspace -UnitId 'unit-reconstruction' -RepoMapPath $mapPath -ReconstructionReceipt $input|Out-Null}catch{$rejected=$true}
         Assert-Reconstruction $rejected "$($case.name) was accepted"
     }
-    $planOwnerPath=Join-Path $workspace ($document.prepared_plan.container.path-replace'/','\')
     $planOwner=Read-MorphospaceProtocolJson $planOwnerPath
     $damagedOwner=$planOwner|ConvertTo-Json -Depth 40|ConvertFrom-Json;$damagedOwner.push_plan.unit_ids=@('different-unit');Write-ReconstructionJson $planOwnerPath $damagedOwner
     $damaged=$document|ConvertTo-Json -Depth 40|ConvertFrom-Json;$damaged.prepared_plan.container.sha256=Get-MorphospaceFileSha256 $planOwnerPath;Write-ReconstructionJson $input $damaged
@@ -137,7 +241,7 @@ try{
     $damaged=$document|ConvertTo-Json -Depth 40|ConvertFrom-Json;$damaged.prepared_event.intent.sha256=Get-MorphospaceFileSha256 $preparedIntentPath;Write-ReconstructionJson $input $damaged
     $rejected=$false;try{Invoke-MorphospacePreparedPublicationReconstruction -WorkspaceRoot $workspace -UnitId 'unit-reconstruction' -RepoMapPath $mapPath -ReconstructionReceipt $input|Out-Null}catch{$rejected=$true}
     Assert-Reconstruction $rejected 'prepared-event intent schema mismatch was accepted'
-    $prepareTransition=New-TransitionFixture -Workspace $workspace -Name "$($prepareEvent.event_id)-transition" -Event $prepareEvent -State $preparedState -Unit $unit -PreviousEventId $acceptanceEvent.event_id -PreviousState $acceptanceState -PreviousUnit $unit
+    $prepareTransition=New-TransitionFixture -Workspace $workspace -Name "$($prepareEvent.event_id)-transition" -Event $prepareEvent -State $preparedState -Unit $unit -PreviousEventId $acceptanceEvent.event_id -PreviousState $acceptanceState -PreviousUnit $unit -Artifacts @($planArtifact)
 
     $preparedCompletionPath=Join-Path $workspace ($document.prepared_event.completion.path-replace'/','\')
     $preparedCompletion=Read-MorphospaceProtocolJson $preparedCompletionPath
@@ -145,7 +249,7 @@ try{
     $damaged=$document|ConvertTo-Json -Depth 40|ConvertFrom-Json;$damaged.prepared_event.completion.sha256=Get-MorphospaceFileSha256 $preparedCompletionPath;Write-ReconstructionJson $input $damaged
     $rejected=$false;try{Invoke-MorphospacePreparedPublicationReconstruction -WorkspaceRoot $workspace -UnitId 'unit-reconstruction' -RepoMapPath $mapPath -ReconstructionReceipt $input|Out-Null}catch{$rejected=$true}
     Assert-Reconstruction $rejected 'prepared-event completion intent role mismatch was accepted'
-    $prepareTransition=New-TransitionFixture -Workspace $workspace -Name "$($prepareEvent.event_id)-transition" -Event $prepareEvent -State $preparedState -Unit $unit -PreviousEventId $acceptanceEvent.event_id -PreviousState $acceptanceState -PreviousUnit $unit
+    $prepareTransition=New-TransitionFixture -Workspace $workspace -Name "$($prepareEvent.event_id)-transition" -Event $prepareEvent -State $preparedState -Unit $unit -PreviousEventId $acceptanceEvent.event_id -PreviousState $acceptanceState -PreviousUnit $unit -Artifacts @($planArtifact)
 
     $validationIntentPath=Join-Path $workspace ($document.validation_event.intent.path-replace'/','\')
     $validationCompletionPath=Join-Path $workspace ($document.validation_event.completion.path-replace'/','\')
@@ -297,7 +401,7 @@ try{
     $damaged=$document|ConvertTo-Json -Depth 40|ConvertFrom-Json;$damaged.prepared_event.completion.sha256=Get-MorphospaceFileSha256 $preparedCompletionPath;Write-ReconstructionJson $input $damaged
     $rejected=$false;try{Invoke-MorphospacePreparedPublicationReconstruction -WorkspaceRoot $workspace -UnitId 'unit-reconstruction' -RepoMapPath $mapPath -ReconstructionReceipt $input|Out-Null}catch{$rejected=$true}
     Assert-Reconstruction $rejected 'transition completion with an unrecognized field was accepted'
-    $prepareTransition=New-TransitionFixture -Workspace $workspace -Name "$($prepareEvent.event_id)-transition" -Event $prepareEvent -State $preparedState -Unit $unit -PreviousEventId $acceptanceEvent.event_id -PreviousState $acceptanceState -PreviousUnit $unit
+    $prepareTransition=New-TransitionFixture -Workspace $workspace -Name "$($prepareEvent.event_id)-transition" -Event $prepareEvent -State $preparedState -Unit $unit -PreviousEventId $acceptanceEvent.event_id -PreviousState $acceptanceState -PreviousUnit $unit -Artifacts @($planArtifact)
 
     $acceptanceIntentPath=Join-Path $workspace ($document.acceptance_event.intent.path-replace'/','\')
     $acceptanceCompletionPath=Join-Path $workspace ($document.acceptance_event.completion.path-replace'/','\')
@@ -319,7 +423,7 @@ try{
     $damaged=$document|ConvertTo-Json -Depth 40|ConvertFrom-Json;$damaged.prepared_event.intent.sha256=Get-MorphospaceFileSha256 $preparedIntentPath;$damaged.prepared_event.completion.sha256=Get-MorphospaceFileSha256 $preparedCompletionPath;Write-ReconstructionJson $input $damaged
     $rejected=$false;try{Invoke-MorphospacePreparedPublicationReconstruction -WorkspaceRoot $workspace -UnitId 'unit-reconstruction' -RepoMapPath $mapPath -ReconstructionReceipt $input|Out-Null}catch{$rejected=$true}
     Assert-Reconstruction $rejected 'prepared pre-unit disconnected from acceptance completion was accepted'
-    $prepareTransition=New-TransitionFixture -Workspace $workspace -Name "$($prepareEvent.event_id)-transition" -Event $prepareEvent -State $preparedState -Unit $unit -PreviousEventId $acceptanceEvent.event_id -PreviousState $acceptanceState -PreviousUnit $unit
+    $prepareTransition=New-TransitionFixture -Workspace $workspace -Name "$($prepareEvent.event_id)-transition" -Event $prepareEvent -State $preparedState -Unit $unit -PreviousEventId $acceptanceEvent.event_id -PreviousState $acceptanceState -PreviousUnit $unit -Artifacts @($planArtifact)
 
     $linkedReadback=Join-Path $root 'application-linked-readback'
     Invoke-ReconstructionTestGit $application.repo @('worktree','add','--detach',$linkedReadback,$application.tip)|Out-Null
@@ -530,8 +634,14 @@ try{
     }
 
     $output=Join-Path $workspace 'receipts\synthetic-reconstruction.json'
-    $interrupted=$false;try{Invoke-MorphospacePreparedPublicationReconstruction -WorkspaceRoot $workspace -UnitId 'unit-reconstruction' -RepoMapPath $mapPath -ReconstructionReceipt $input -Timestamp '2026-01-01T00:00:03Z' -OutPath $output -Execute -FaultAfter after-event|Out-Null}catch{$interrupted=$true}
-    Assert-Reconstruction ($interrupted-and-not(Test-Path $output)) 'reconstruction transaction interruption did not stop before audit-artifact installation'
+    $reconstructionIntent=Join-Path $workspace 'receipts\transactions\unit-reconstruction-prepared-publication-reconstructed-0004-transition.intent.json'
+    $interrupted=$false;$interruptionMessage=''
+    try{Invoke-MorphospacePreparedPublicationReconstruction -WorkspaceRoot $workspace -UnitId 'unit-reconstruction' -RepoMapPath $mapPath -ReconstructionReceipt $input -Timestamp '2026-01-01T00:00:03Z' -OutPath $output -Execute -FaultAfter after-event|Out-Null}catch{$interrupted=$true;$interruptionMessage=$_.Exception.Message}
+    Assert-Reconstruction ($interrupted-and(Test-Path $output)-and
+        (Get-MorphospaceFileSha256 $output)-ceq(Get-MorphospaceFileSha256 $input)-and
+        (Test-Path $reconstructionIntent)-and
+        -not(Test-Path (Join-Path $workspace 'receipts\transactions\unit-reconstruction-prepared-publication-reconstructed-0004-transition.completion.json'))
+    ) "reconstruction transaction did not reach the intended after-event interruption with an exact transaction-owned artifact: $interruptionMessage"
     Complete-MorphospaceTransitionLedger -WorkspaceRoot $workspace -TransactionId 'unit-reconstruction-prepared-publication-reconstructed-0004-transition' -Repair|Out-Null
     $finalState=Read-MorphospaceProtocolJson (Join-Path $workspace 'workspace.state.json')
     Assert-Reconstruction ($null-eq$finalState.pending_push_bundle-and@($finalState.blockers).Count-eq0-and(Get-MorphospaceFileSha256 $output)-eq(Get-MorphospaceFileSha256 $input)-and(Test-Path (Join-Path $workspace 'receipts\transactions\unit-reconstruction-prepared-publication-reconstructed-0004-transition.completion.json'))) 'interruption repair did not atomically own the audit artifact and close exact projections'

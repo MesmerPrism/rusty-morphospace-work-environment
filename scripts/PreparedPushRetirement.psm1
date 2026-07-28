@@ -405,7 +405,7 @@ function New-PreparedPushRetirementEventId {
     $value
 }
 
-function Get-PreparedPushEventLedger {
+function Get-PreparedPushEventLedgerSnapshot {
     param([string]$WorkspaceRoot)
     $eventsPath=Join-Path $WorkspaceRoot "iteration-events.jsonl"
     $bytes=[IO.File]::ReadAllBytes($eventsPath)
@@ -433,7 +433,16 @@ function Get-PreparedPushEventLedger {
         foreach($reference in @($event.receipts)){if(-not$receiptSet.Add([string]$reference)){throw "Prepared-push retirement event ledger repeats a receipt alias at line $($index+1)."}}
         $previousTimestamp=$timestamp;$events+=,$event
     }
-    @($events)
+    [pscustomobject]@{
+        bytes=$bytes
+        length=[int64]$bytes.LongLength
+        sha256=(Get-MorphospaceSha256Bytes -Bytes $bytes)
+        events=@($events)
+    }
+}
+function Get-PreparedPushEventLedger {
+    param([string]$WorkspaceRoot)
+    @((Get-PreparedPushEventLedgerSnapshot $WorkspaceRoot).events)
 }
 
 function Test-PreparedPushConflictingEvidence {
@@ -514,7 +523,13 @@ function Assert-PreparedPushTransitionProvenance {
     foreach($referenceName in @('state','unit','events')){Assert-MorphospaceExactPropertySet $intent.$referenceName @('path') @() "Prepared-push retirement preparation intent $referenceName reference"}
     Assert-MorphospaceExactPropertySet $intent.pre @('state','unit') @() 'Prepared-push retirement preparation intent pre'
     Assert-MorphospaceExactPropertySet $intent.target @('state','unit') @() 'Prepared-push retirement preparation intent target'
-    Assert-MorphospaceExactPropertySet $intent.expected @('state_sha256','unit_sha256','event_tail_id') @() 'Prepared-push retirement preparation intent expected'
+    Assert-MorphospaceExactPropertySet $intent.expected @('state_sha256','unit_sha256','event_tail_id') @('events_sha256','events_length') 'Prepared-push retirement preparation intent expected'
+    $hasEventsHash=$intent.expected.PSObject.Properties.Name-ccontains'events_sha256'
+    $hasEventsLength=$intent.expected.PSObject.Properties.Name-ccontains'events_length'
+    if($hasEventsHash-ne$hasEventsLength-or
+       ($hasEventsHash-and([string]$intent.expected.events_sha256-cnotmatch'^[0-9a-f]{64}$'-or[int64]$intent.expected.events_length-lt0))){
+        throw "Prepared-push retirement preparation intent has an inconsistent pre-append event-ledger binding."
+    }
     Assert-MorphospaceExactPropertySet $completion.intent @('role','path','schema','sha256') @() 'Prepared-push retirement preparation completion intent reference'
     $artifacts=@($intent.artifacts)
     if($artifacts.Count-ne1){throw "Prepared-push retirement preparation intent must own exactly one immutable plan artifact."}
@@ -546,8 +561,9 @@ function Assert-PreparedPushTransitionProvenance {
        [string]$intent.target.state.document.last_event_id-cne$eventId){
         throw "Prepared-push retirement preparation intent is not canonically bound to the exact plan, pending bundle, accepted unit, and event."
     }
-    [void](Test-MorphospaceStrictUtcTimestamp ([string]$intent.created_at))
-    [void](Test-MorphospaceStrictUtcTimestamp ([string]$completion.completed_at))
+    $intentCreatedAt=Test-MorphospaceStrictUtcTimestamp ([string]$intent.created_at)
+    $completionCompletedAt=Test-MorphospaceStrictUtcTimestamp ([string]$completion.completed_at)
+    if($completionCompletedAt-lt$intentCreatedAt){throw "Prepared-push retirement preparation completion timestamp precedes its intent creation."}
     if([string]$completion.schema-cne'rusty.morphospace.workflow.transition_ledger_completion.v1'-or
        [string]$completion.status-cne'committed'-or[string]$completion.transaction_id-cne$transactionId-or
        [string]$completion.intent.role-cne'transition-ledger-intent'-or[string]$completion.intent.path-cne$intentRelative-or
@@ -567,6 +583,180 @@ function Assert-PreparedPushTransitionProvenance {
     }
 }
 
+function Get-PreparedPushRetirementWorkspaceReceiptPath {
+    param(
+        [Parameter(Mandatory=$true)][string]$WorkspaceRoot,
+        [Parameter(Mandatory=$true)][string]$ReceiptPath
+    )
+    $workspace=[IO.Path]::GetFullPath($WorkspaceRoot).TrimEnd([char[]]@('\','/'))
+    $receipt=[IO.Path]::GetFullPath($ReceiptPath)
+    $prefix=$workspace+[IO.Path]::DirectorySeparatorChar
+    if(-not$receipt.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){return $null}
+    $relative=[IO.Path]::GetRelativePath($workspace,$receipt).Replace('\','/')
+    if($relative-cnotmatch'^receipts/.+'){return $null}
+    ConvertTo-MorphospaceProtocolRelativePath $relative
+}
+
+function New-PreparedPushRetirementAutomationResult {
+    param(
+        [Parameter(Mandatory=$true)][object]$Receipt,
+        [Parameter(Mandatory=$true)][string]$UnitId,
+        [Parameter(Mandatory=$true)][object]$Intent,
+        [Parameter(Mandatory=$true)][string]$ReceiptRelative,
+        [Parameter(Mandatory=$true)][string]$ReceiptSha256
+    )
+    $targetState=$Intent.target.state.document
+    $targetUnit=$Intent.target.unit.document
+    $result=[pscustomobject][ordered]@{
+        schema = "rusty.morphospace.workflow.work_unit_automation_receipt.v2"
+        project_id = [string]$Receipt.project_id
+        unit_id = $UnitId
+        action = "RetirePreparedPush"
+        timestamp = [string]$Intent.event.timestamp
+        executed = $true
+        transition = "prepared-push-retired"
+        status_before = [string]$targetUnit.status
+        status_after = [string]$targetUnit.status
+        current_unit_before = $targetState.current_unit
+        current_unit_after = $targetState.current_unit
+        preservation = [pscustomobject][ordered]@{
+            git_mutation_performed=$false
+            device_mutation_performed=$false
+            remote_mutation_performed=$false
+        }
+        audit_receipt=[pscustomobject]@{path=$ReceiptRelative;sha256=$ReceiptSha256}
+        event_id = [string]$Intent.event.event_id
+    }
+    $outputSchema=Join-Path (Split-Path $PSScriptRoot -Parent) 'schemas\work-unit-automation-receipt-v2.schema.json'
+    if(-not(Test-Json -Json ($result|ConvertTo-Json -Depth 32) -SchemaFile $outputSchema)){
+        throw "Prepared-push retirement recovery would emit an invalid automation receipt."
+    }
+    $result
+}
+
+function Get-PreparedPushRetirementRecovery {
+    param(
+        [Parameter(Mandatory=$true)][string]$WorkspaceRoot,
+        [Parameter(Mandatory=$true)][string]$UnitId,
+        [Parameter(Mandatory=$true)][object]$Receipt,
+        [Parameter(Mandatory=$true)][object]$ReceiptSnapshot,
+        [Parameter(Mandatory=$true)][string]$ReceiptRelative
+    )
+    $transactionsRoot=Join-Path $WorkspaceRoot 'receipts\transactions'
+    if(-not[IO.Directory]::Exists($transactionsRoot)){return $null}
+    if(-not(@($Receipt.unit_ids|ForEach-Object{[string]$_})-ccontains$UnitId)){
+        throw "Prepared-push retirement recovery input does not include the requested unit."
+    }
+    $intentNamePattern='^'+[regex]::Escape($UnitId)+'-prepared-push-retired-\d{4,}-transition\.intent\.json$'
+    $recoveries=@()
+    foreach($file in @(Get-ChildItem -LiteralPath $transactionsRoot -File -Filter '*.intent.json' -ErrorAction Stop|Sort-Object Name)){
+        if($file.Name-cnotmatch$intentNamePattern){continue}
+        try{$intent=Read-MorphospaceProtocolJson $file.FullName}catch{
+            throw "Prepared-push retirement recovery encountered a malformed retirement transition intent '$($file.Name)'."
+        }
+        $eventReceipts=@($intent.event.receipts)
+        if($eventReceipts.Count-ne1-or[string]$eventReceipts[0]-cne$ReceiptRelative){continue}
+        $eventId=[string]$intent.event.event_id
+        $transactionId="$eventId-transition"
+        $expectedIntentRelative="receipts/transactions/$transactionId.intent.json"
+        $actualIntentRelative=[IO.Path]::GetRelativePath($WorkspaceRoot,$file.FullName).Replace('\','/')
+        $expectedSummary="Retired one exact unexecuted prepared push bundle without asserting historical non-publication or mutating Git, remotes, validation, acceptance, or unit history."
+        $sequence=0
+        try{$sequence=[int]$intent.event.sequence}catch{throw "Prepared-push retirement recovery intent has an invalid event sequence."}
+        if($sequence-lt1-or
+           $eventId-cne(New-PreparedPushRetirementEventId $UnitId $sequence)-or
+           [string]$intent.transaction_id-cne$transactionId-or
+           $actualIntentRelative-cne$expectedIntentRelative-or
+           [string]$intent.schema-cne'rusty.morphospace.workflow.transition_ledger_intent.v1'-or
+           [string]$intent.status-cne'prepared'-or
+           [string]$intent.state.path-cne'workspace.state.json'-or
+           [string]$intent.unit.path-cne"iteration-units/$UnitId.json"-or
+           [string]$intent.events.path-cne'iteration-events.jsonl'-or
+           [string]$intent.event.schema-cne'rusty.morphospace.workflow.iteration_event.v1'-or
+           [string]$intent.event.project_id-cne[string]$Receipt.project_id-or
+           [string]$intent.event.unit_id-cne$UnitId-or
+           [string]$intent.event.event_type-cne'push'-or
+           [string]$intent.event.summary-cne$expectedSummary-or
+           [string]$intent.target.state.document.project_id-cne[string]$Receipt.project_id-or
+           [string]$intent.target.state.document.last_event_id-cne$eventId-or
+           $null-ne$intent.target.state.document.pending_push_bundle-or
+           [string]$intent.target.unit.document.unit_id-cne$UnitId){
+            throw "Prepared-push retirement recovery intent is not the exact current retirement transaction."
+        }
+        if((Get-MorphospaceCanonicalJsonSha256 $intent.target.state.document)-cne[string]$intent.target.state.sha256-or
+           (Get-MorphospaceCanonicalJsonSha256 $intent.target.unit.document)-cne[string]$intent.target.unit.sha256-or
+           [string]$intent.pre.unit.sha256-cne[string]$intent.target.unit.sha256){
+            throw "Prepared-push retirement recovery intent target hashes or unchanged-unit binding are inconsistent."
+        }
+        $artifacts=@($intent.artifacts)
+        if($artifacts.Count-ne1-or
+           [string]$artifacts[0].path-cne$ReceiptRelative-or
+           [string]$artifacts[0].sha256-cne[string]$ReceiptSnapshot.sha256){
+            throw "Prepared-push retirement recovery intent does not own the exact current retirement input."
+        }
+        try{$artifactBytes=[Convert]::FromBase64String([string]$artifacts[0].bytes_base64)}catch{
+            throw "Prepared-push retirement recovery artifact payload is not valid base64."
+        }
+        if((Get-MorphospaceSha256Bytes -Bytes $artifactBytes)-cne[string]$ReceiptSnapshot.sha256-or
+           -not(Test-PreparedPushByteArrayEqual $artifactBytes $ReceiptSnapshot.bytes)){
+            throw "Prepared-push retirement recovery artifact bytes differ from the current retirement input."
+        }
+        $mutationBlockerId=if($null-eq$Receipt.mutation.blocker_id){$null}else{[string]$Receipt.mutation.blocker_id}
+        $staleBlockerId=[string]$Receipt.stale_blocker.value.blocker_id
+        $targetBlockers=@($intent.target.state.document.blockers|Where-Object{[string]$_.blocker_id-ceq$staleBlockerId})
+        if($null-eq$mutationBlockerId){
+            if($targetBlockers.Count-ne1-or
+               (Get-MorphospaceCanonicalJsonSha256 $targetBlockers[0])-cne[string]$Receipt.stale_blocker.sha256){
+                throw "Prepared-push retirement recovery target did not preserve the exact observed stale blocker."
+            }
+        }elseif($mutationBlockerId-cne$staleBlockerId-or$targetBlockers.Count-ne0){
+            throw "Prepared-push retirement recovery target blocker mutation is not the exact authorized removal."
+        }
+        $currentSpec=Read-MorphospaceProtocolJson (Join-Path $WorkspaceRoot 'project.spec.json')
+        if([string]$currentSpec.project_id-cne[string]$Receipt.project_id){
+            throw "Prepared-push retirement recovery current project identity differs from the transition."
+        }
+        $completionRelative="receipts/transactions/$transactionId.completion.json"
+        $completionPath=Resolve-MorphospaceWorkspacePath $WorkspaceRoot $completionRelative
+        if(-not[IO.File]::Exists($completionPath)){
+            $currentState=Read-MorphospaceProtocolJson (Join-Path $WorkspaceRoot 'workspace.state.json')
+            $currentUnit=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $WorkspaceRoot "iteration-units/$UnitId.json" -RequireLeaf)
+            if([string]$currentState.project_id-cne[string]$Receipt.project_id-or
+               (Get-MorphospaceCanonicalJsonSha256 $currentUnit)-cne[string]$intent.target.unit.sha256){
+                throw "Prepared-push retirement repair current workspace or unit identity differs from the transition."
+            }
+            $currentStateHash=Get-MorphospaceCanonicalJsonSha256 $currentState
+            if($currentStateHash-cne[string]$intent.pre.state.sha256-and$currentStateHash-cne[string]$intent.target.state.sha256){
+                throw "Prepared-push retirement repair current state is neither the exact pre-state nor target state."
+            }
+            if($currentStateHash-ceq[string]$intent.pre.state.sha256){
+                $currentPending=$currentState.pending_push_bundle
+                $currentStaleBlockers=@($currentState.blockers|Where-Object{[string]$_.blocker_id-ceq$staleBlockerId})
+                if($null-eq$currentPending-or
+                   (Get-MorphospaceCanonicalJsonSha256 $currentPending)-cne[string]$Receipt.pending_bundle.sha256-or
+                   (Get-MorphospaceCanonicalJsonSha256 $Receipt.pending_bundle.value)-cne[string]$Receipt.pending_bundle.sha256-or
+                   $currentStaleBlockers.Count-ne1-or
+                   (Get-MorphospaceCanonicalJsonSha256 $currentStaleBlockers[0])-cne[string]$Receipt.stale_blocker.sha256){
+                    throw "Prepared-push retirement recovery pre-state does not contain the exact bound pending bundle and stale blocker."
+                }
+                $expectedTarget=ConvertFrom-MorphospaceProtocolJsonBytes -Bytes ([Text.UTF8Encoding]::new($false).GetBytes(($currentState|ConvertTo-Json -Depth 64 -Compress))) -Context 'prepared-push retirement recovery target'
+                $expectedTarget.pending_push_bundle=$null
+                if($null-ne$mutationBlockerId){
+                    $expectedTarget.blockers=@($expectedTarget.blockers|Where-Object{[string]$_.blocker_id-cne$mutationBlockerId})
+                }
+                $expectedTarget.last_event_id=$eventId
+                if((Get-MorphospaceCanonicalJsonSha256 $expectedTarget)-cne[string]$intent.target.state.sha256){
+                    throw "Prepared-push retirement recovery target changes state outside the authorized bundle, blocker, and event-tail projection."
+                }
+            }
+        }
+        $recoveries+=,[pscustomobject]@{transaction_id=$transactionId;intent=$intent}
+    }
+    if($recoveries.Count-gt1){throw "Prepared-push retirement recovery found multiple transitions for the exact retained receipt path."}
+    if($recoveries.Count-eq1){return $recoveries[0]}
+    $null
+}
+
 function Invoke-MorphospacePreparedPushRetirement {
     [CmdletBinding()]
     param(
@@ -576,13 +766,24 @@ function Invoke-MorphospacePreparedPushRetirement {
         [Parameter(Mandatory=$true)][string]$RetirementReceipt,
         [string]$Timestamp = "",
         [string]$OutPath = "",
-        [switch]$Execute
+        [switch]$Execute,
+        [ValidateSet('none','after-intent','after-artifact','after-projection','after-event')][string]$FaultAfter='none'
     )
     $workspace = (Resolve-Path -LiteralPath $WorkspaceRoot).Path
     $receiptPath = (Resolve-Path -LiteralPath $RetirementReceipt).Path
     $leases=[Collections.Generic.List[object]]::new()
     try{
     $receiptRelative = $null
+    $retainedPath = $null
+    $receiptSnapshot=Open-PreparedPushProtocolSnapshot $receiptPath '' 'retirement input';$leases.Add($receiptSnapshot)|Out-Null
+    $receipt = $receiptSnapshot.document
+    $schemaPath = Join-Path (Split-Path $PSScriptRoot -Parent) "schemas\prepared-push-retirement-v1.schema.json"
+    if (-not (Test-Json -Json ($receipt|ConvertTo-Json -Depth 32 -Compress) -SchemaFile $schemaPath)) {
+        throw "Prepared-push retirement receipt does not satisfy its schema."
+    }
+    [void](ConvertFrom-PreparedPushStrictTimestamp ([string]$receipt.observed_at) 'observed_at')
+    $receiptInputRelative=Get-PreparedPushRetirementWorkspaceReceiptPath $workspace $receiptPath
+    $repoMapSnapshot=Open-PreparedPushProtocolSnapshot (Resolve-Path -LiteralPath $RepoMapPath).Path ([string]$receipt.repository_map_sha256) 'repository map';$leases.Add($repoMapSnapshot)|Out-Null
     if ($Execute) {
         if (-not $OutPath) { throw "Executed prepared-push retirement requires OutPath for the retained receipt." }
         $retainedPath = [IO.Path]::GetFullPath($OutPath)
@@ -594,22 +795,22 @@ function Invoke-MorphospacePreparedPushRetirement {
         if ($receiptRelative -notmatch "^receipts/[a-z0-9][a-z0-9-]{1,127}\.json$") {
             throw "Prepared-push retirement OutPath must be a portable top-level receipts path."
         }
-        if ([IO.File]::Exists($retainedPath)) { throw "Prepared-push retirement OutPath already exists." }
         if($retainedPath-ceq[IO.Path]::GetFullPath($receiptPath)){throw "Prepared-push retirement output must be distinct from its input."}
+        $recovery=Get-PreparedPushRetirementRecovery $workspace $UnitId $receipt $receiptSnapshot $receiptRelative
+        if($null-ne$recovery){
+            foreach($snapshot in $leases){Assert-PreparedPushSnapshotStillCurrent $snapshot "'$([IO.Path]::GetFileName([string]$snapshot.path))'"}
+            [void](Complete-MorphospaceTransitionLedger -WorkspaceRoot $workspace -TransactionId ([string]$recovery.transaction_id) -Repair)
+            return New-PreparedPushRetirementAutomationResult $receipt $UnitId $recovery.intent $receiptRelative ([string]$receiptSnapshot.sha256)
+        }
+        if ([IO.File]::Exists($retainedPath)) { throw "Prepared-push retirement OutPath already exists." }
     }
-    $receiptSnapshot=Open-PreparedPushProtocolSnapshot $receiptPath '' 'retirement input';$leases.Add($receiptSnapshot)|Out-Null
-    $receipt = $receiptSnapshot.document
-    $schemaPath = Join-Path (Split-Path $PSScriptRoot -Parent) "schemas\prepared-push-retirement-v1.schema.json"
-    if (-not (Test-Json -Json ($receipt|ConvertTo-Json -Depth 32 -Compress) -SchemaFile $schemaPath)) {
-        throw "Prepared-push retirement receipt does not satisfy its schema."
-    }
-    [void](ConvertFrom-PreparedPushStrictTimestamp ([string]$receipt.observed_at) 'observed_at')
     $statePath = Join-Path $workspace "workspace.state.json"
     $state = Read-MorphospaceProtocolJson $statePath
     $spec = Read-MorphospaceProtocolJson (Join-Path $workspace "project.spec.json")
     $unitPath = "iteration-units/$UnitId.json"
     $unit = Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace $unitPath -RequireLeaf)
-    $events=@(Get-PreparedPushEventLedger $workspace)
+    $eventSnapshot=Get-PreparedPushEventLedgerSnapshot $workspace
+    $events=@($eventSnapshot.events)
     $ledgerTail=if($events.Count){[string]$events[-1].event_id}else{$null}
     if([string]$state.last_event_id-cne[string]$ledgerTail){throw "Prepared-push retirement workspace-state event tail does not match the authenticated event ledger."}
     $currentUnitBefore = $state.current_unit
@@ -680,7 +881,6 @@ function Invoke-MorphospacePreparedPushRetirement {
     }
     Assert-PreparedPushTransitionProvenance $workspace ([string]$receipt.project_id) $UnitId $receipt $unit $planContainerSnapshot $intentSnapshot $completionSnapshot $events
 
-    $repoMapSnapshot=Open-PreparedPushProtocolSnapshot (Resolve-Path -LiteralPath $RepoMapPath).Path ([string]$receipt.repository_map_sha256) 'repository map';$leases.Add($repoMapSnapshot)|Out-Null
     $repoMap = $repoMapSnapshot.document
     $repoMapSchema=Join-Path (Split-Path $PSScriptRoot -Parent) 'schemas\repository-map.schema.json'
     if ([string]$repoMap.schema -cne "rusty.morphospace.workflow.repository_map.v1"-or
@@ -743,10 +943,12 @@ function Invoke-MorphospacePreparedPushRetirement {
     if(-not(Test-PreparedPushHasUnreachablePhysicalGroup $first)){
         throw "Prepared-push retirement requires at least one distinct prepared revision that is not remotely reachable; use prepared-publication reconstruction."
     }
-    Test-PreparedPushConflictingEvidence $workspace ([string]$receipt.bundle_id) @(
+    $conflictExcludedPaths=@(
         [string]$receipt.prepared_plan.container.path,
         [string]$receipt.prepared_event.intent.path, [string]$receipt.prepared_event.completion.path
     )
+    if($receiptInputRelative){$conflictExcludedPaths+=,[string]$receiptInputRelative}
+    Test-PreparedPushConflictingEvidence $workspace ([string]$receipt.bundle_id) $conflictExcludedPaths
     if(-not$Execute){foreach ($planRepo in @($plan.repositories)) {
         $allowedPreparationPaths = @()
         if ([string]$planRepo.role -eq "planning") {
@@ -811,12 +1013,15 @@ function Invoke-MorphospacePreparedPushRetirement {
                (Get-MorphospaceCanonicalJsonSha256 $lockedUnit)-cne(Get-MorphospaceCanonicalJsonSha256 $unit)){
                 throw "Prepared-push retirement workspace state, project specification, or unit changed after validation."
             }
-            Test-PreparedPushConflictingEvidence $workspace ([string]$receipt.bundle_id) @(
-                [string]$receipt.prepared_plan.container.path,
-                [string]$receipt.prepared_event.intent.path,[string]$receipt.prepared_event.completion.path
-            )
-            $lockedEvents=@(Get-PreparedPushEventLedger $workspace)
+            Test-PreparedPushConflictingEvidence $workspace ([string]$receipt.bundle_id) $conflictExcludedPaths
+            $lockedEventSnapshot=Get-PreparedPushEventLedgerSnapshot $workspace
+            $lockedEvents=@($lockedEventSnapshot.events)
             if($lockedEvents.Count-ne$events.Count){throw "Prepared-push retirement event ledger changed after validation."}
+            if($lockedEventSnapshot.length-ne$eventSnapshot.length-or
+               [string]$lockedEventSnapshot.sha256-cne[string]$eventSnapshot.sha256-or
+               -not(Test-PreparedPushByteArrayEqual $lockedEventSnapshot.bytes $eventSnapshot.bytes)){
+                throw "Prepared-push retirement event ledger bytes changed after validation."
+            }
             for($index=0;$index-lt$events.Count;$index++){
                 if((Get-MorphospaceCanonicalJsonSha256 $lockedEvents[$index])-cne(Get-MorphospaceCanonicalJsonSha256 $events[$index])){
                     throw "Prepared-push retirement event ledger changed after validation."
@@ -852,7 +1057,9 @@ function Invoke-MorphospacePreparedPushRetirement {
                 -StatePath "workspace.state.json" -UnitPath $unitPath -EventsPath "iteration-events.jsonl" `
                 -TargetState $state -TargetUnit $unit -Event $event -ExpectedStateSha256 $preStateHash `
                 -ExpectedUnitSha256 (Get-MorphospaceCanonicalJsonSha256 $unit) -ExpectedEventTailId $preTail `
-                -Artifacts @([pscustomobject]@{bytes_base64=[Convert]::ToBase64String($receiptSnapshot.bytes);path=$receiptRelative;sha256=$receiptHash}) | Out-Null
+                -ExpectedEventsSha256 ([string]$lockedEventSnapshot.sha256) -ExpectedEventsLength ([int64]$lockedEventSnapshot.length) `
+                -Artifacts @([pscustomobject]@{bytes_base64=[Convert]::ToBase64String($receiptSnapshot.bytes);path=$receiptRelative;sha256=$receiptHash}) `
+                -FaultAfter $FaultAfter | Out-Null
         }finally{Exit-MorphospaceWorkspaceMutex $boundaryLock}
     }
     $result
