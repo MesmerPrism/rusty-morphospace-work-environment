@@ -1052,6 +1052,12 @@ $requiredSchemaNames = @(
     "current-unit-protocol.schema.json",
     "executed-push-receipt.schema.json",
     "planned-publication-accounting-receipt.schema.json",
+    "prepared-push-retirement-v1.schema.json",
+    "prepared-publication-reconstruction-v1.schema.json",
+    "blocker-resolution-receipt-v1.schema.json",
+    "blocker-resolution-correction-receipt-v1.schema.json",
+    "legacy-embedded-push-bundle-plan-v1.schema.json",
+    "work-unit-automation-receipt-v2.schema.json",
     "published-planning-authority-adoption.schema.json",
     "published-prerequisite-suffix-reconciliation.schema.json",
     "historical-release-closure-receipt.schema.json",
@@ -1197,6 +1203,32 @@ $templateV2Bundle = New-Bundle `
     -ReviewPaths @() `
     -EventsPath (Join-Path $templatesRoot "iteration-events.v2.example.jsonl")
 Test-ProjectBundle -Bundle $templateV2Bundle -Context "portable v2 example"
+
+$candidateContracts = @(
+    [pscustomobject]@{ Template = "prepared-push-retirement.example.json"; Schema = "prepared-push-retirement-v1.schema.json"; Label = "Prepared-push retirement" },
+    [pscustomobject]@{ Template = "legacy-embedded-push-bundle-plan.example.json"; Schema = "legacy-embedded-push-bundle-plan-v1.schema.json"; Label = "Legacy embedded push-plan" },
+    [pscustomobject]@{ Template = "prepared-publication-reconstruction.example.json"; Schema = "prepared-publication-reconstruction-v1.schema.json"; Label = "Prepared-publication reconstruction" },
+    [pscustomobject]@{ Template = "blocker-resolution-receipt.example.json"; Schema = "blocker-resolution-receipt-v1.schema.json"; Label = "Blocker-resolution" },
+    [pscustomobject]@{ Template = "blocker-resolution-correction-receipt.example.json"; Schema = "blocker-resolution-correction-receipt-v1.schema.json"; Label = "Blocker-resolution correction" }
+)
+foreach ($candidateContract in $candidateContracts) {
+    $candidateTemplate = Join-Path $templatesRoot $candidateContract.Template
+    $candidateSchema = Join-Path $schemaRoot $candidateContract.Schema
+    Assert-Contract (Test-Path -LiteralPath $candidateTemplate -PathType Leaf) "Required $($candidateContract.Label) example is missing."
+    if (Test-Path -LiteralPath $candidateTemplate -PathType Leaf) {
+        try {
+            Assert-Contract (Test-Json -Json (Get-Content -Raw -LiteralPath $candidateTemplate) -SchemaFile $candidateSchema) "$($candidateContract.Label) example does not satisfy its schema."
+        } catch {
+            Add-Failure -Message "$($candidateContract.Label) example validation failed: $($_.Exception.Message)"
+        }
+    }
+}
+if (-not $SkipOwnerSelfTests) {
+    foreach ($selfTest in @("Test-LegacyEmbeddedPushPlanCompatibility.ps1","Test-PreparedPublicationReconstruction.ps1","Test-ResolveBlocker.ps1","Test-CorrectResolvedBlockerEvidence.ps1","Test-TransitionLedger.ps1")) {
+        try { & (Join-Path $RepoRoot "scripts\$selfTest") | Out-Null }
+        catch { Add-Failure -Message "$selfTest failed: $($_.Exception.Message)" }
+    }
+}
 
 $executedPushTemplate = Join-Path $templatesRoot "executed-push-receipt.example.json"
 $executedPushValidator = Join-Path $RepoRoot "scripts\Test-ExecutedPushReceipt.ps1"

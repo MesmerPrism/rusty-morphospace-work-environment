@@ -152,6 +152,7 @@ For a genuinely prepared publication, route closure through
 `RecordPublication` and `docs/PLANNED_PUBLICATION_ACCOUNTING.md`; require exact
 commit/unit accounting and treat the single external planning repository as
 transport only, never product or source authority. Route an already-published, no-force receipt-only prerequisite suffix through `ReconcilePublishedPrerequisiteSuffix`: v1 is one commit and v2 is exactly two linear full-ID commits with only an accounting-receipt correction. Route a later force-with-lease suffix replacement through its two-common-path/one-delta-path incident recovery, never source history or drift.
+Route exact unexecuted plans through `docs/PREPARED_PUSH_RETIREMENT.md`, reachable prepared revisions through `docs/PREPARED_PUBLICATION_RECONSTRUCTION.md`, and generic blocker resolution/correction through their named docs.
 
 Treat a release as sealed commits and trees, not permanently frozen live
 branches. Require exact remote equality and convergence at the candidate cut;
@@ -160,7 +161,6 @@ materialization. Observe dirty active work without mutating it or absorbing it
 into the release.
 
 ## Validation And Instruction Impact
-
 Use Quick checks while iterating, Standard before a coherent handoff, and Deep
 for broad graph, release, authority, or device-gated consolidation. Do not run a
 device suite to prove docs or schemas.

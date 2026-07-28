@@ -24,6 +24,14 @@ the immutable prepared/executed evidence remain unchanged.
 `RecordPublication` after an externally executed, previously prepared push.
 It is accounting evidence, not push authority and not acceptance evidence.
 
+If the exact plan remains `execution: not-performed`, no recognized execution
+or publication evidence binds the bundle, every repository remains clean and
+safely unpublished, and no prepared ahead revision is remotely reachable, the
+separate additive [Prepared Push Retirement](PREPARED_PUSH_RETIREMENT.md)
+protocol may consume that pending bundle. Retirement is unavailable once this
+accounting route or any execution, publication, reconciliation, or recovery
+evidence applies.
+
 The receipt binds the pending bundle, triggering unit, immutable prepared plan
 and prepare event, executed-push receipt, monotonic chronology, dependency and
 execution order, and the exact old-exclusive through final-inclusive commit

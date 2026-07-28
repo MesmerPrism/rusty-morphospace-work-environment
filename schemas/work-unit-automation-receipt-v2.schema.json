@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/work-unit-automation-receipt-v2.schema.json",
+  "title": "Additive work-unit automation action receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema","project_id","unit_id","action","timestamp","executed","transition","status_before","status_after","current_unit_before","current_unit_after","preservation","audit_receipt","event_id"],
+  "properties": {
+    "schema": {"const":"rusty.morphospace.workflow.work_unit_automation_receipt.v2"},
+    "project_id":{"$ref":"#/$defs/id"},"unit_id":{"$ref":"#/$defs/id"},
+    "action":{"enum":["RetirePreparedPush","ReconcilePreparedPublication","ResolveBlocker","CorrectResolvedBlockerEvidence"]},
+    "timestamp":{"type":"string","format":"date-time"},"executed":{"type":"boolean"},
+    "transition":{"enum":["prepared-push-retired","prepared-publication-reconstructed","blocker-resolved","blocker-resolution-corrected"]},
+    "status_before":{"$ref":"#/$defs/id"},"status_after":{"$ref":"#/$defs/id"},
+    "current_unit_before":{"oneOf":[{"$ref":"#/$defs/id"},{"type":"null"}]},
+    "current_unit_after":{"oneOf":[{"$ref":"#/$defs/id"},{"type":"null"}]},
+    "preservation":{"type":"object","additionalProperties":false,"required":["git_mutation_performed","device_mutation_performed","remote_mutation_performed"],"properties":{"git_mutation_performed":{"const":false},"device_mutation_performed":{"const":false},"remote_mutation_performed":{"const":false}}},
+    "audit_receipt":{"type":"object","additionalProperties":false,"required":["path","sha256"],"properties":{"path":{"$ref":"#/$defs/path"},"sha256":{"$ref":"#/$defs/hash"}}},
+    "event_id":{"oneOf":[{"$ref":"#/$defs/id"},{"type":"null"}]}
+  },
+  "$defs":{"id":{"type":"string","pattern":"^[a-z0-9][a-z0-9-]{1,127}$"},"hash":{"type":"string","pattern":"^[0-9a-f]{64}$"},"path":{"type":"string","pattern":"^receipts/[a-z0-9][a-z0-9-]{1,127}\\.json$"}}
+}

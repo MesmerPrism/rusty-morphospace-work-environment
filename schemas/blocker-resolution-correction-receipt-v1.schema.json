@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/blocker-resolution-correction-receipt-v1.schema.json",
+  "title": "Append-only blocker resolution evidence correction",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema","receipt_id","project_id","unit_id","blocker_id","result","supersedes","correction","authority_clarification","evidence","repository_heads","repository_sources","preserve_blocker_ids"],
+  "properties": {
+    "schema": {"const":"rusty.morphospace.workflow.blocker_resolution_correction_receipt.v1"},
+    "receipt_id": {"$ref":"#/$defs/id"},
+    "project_id": {"$ref":"#/$defs/id"},
+    "unit_id": {"$ref":"#/$defs/id"},
+    "blocker_id": {"$ref":"#/$defs/id"},
+    "result": {"const":"pass"},
+    "supersedes": {
+      "type":"object",
+      "additionalProperties":false,
+      "required":["event_id","original_receipt_id","receipt","intent","completion"],
+      "properties":{
+        "event_id":{"$ref":"#/$defs/id"},
+        "original_receipt_id":{"$ref":"#/$defs/id"},
+        "receipt":{"$ref":"#/$defs/binding"},
+        "intent":{"$ref":"#/$defs/binding"},
+        "completion":{"$ref":"#/$defs/binding"}
+      }
+    },
+    "correction": {
+      "type":"object",
+      "additionalProperties":false,
+      "required":["historical_receipt_retained","prior_complete_resolution_claim","corrected_resolution_established"],
+      "properties":{
+        "historical_receipt_retained":{"const":true},
+        "prior_complete_resolution_claim":{"enum":["superseded"]},
+        "corrected_resolution_established":{"const":true}
+      }
+    },
+    "authority_clarification": {
+      "type":"object",
+      "additionalProperties":false,
+      "required":["unit","statement","historical_unit_retained","bindings"],
+      "properties":{
+        "unit":{
+          "type":"object",
+          "additionalProperties":false,
+          "required":["path","sha256"],
+          "properties":{
+            "path":{"type":"string","pattern":"^iteration-units/[a-z0-9][a-z0-9-]{1,127}\\.json$"},
+            "sha256":{"$ref":"#/$defs/hash"}
+          }
+        },
+        "statement":{
+          "type":"object",
+          "additionalProperties":false,
+          "required":["json_pointer","exact_text","exact_text_sha256","disposition"],
+          "properties":{
+            "json_pointer":{"type":"string","pattern":"^/(?:[^~/]|~[01])+(?:/(?:[^~/]|~[01])+)*$"},
+            "exact_text":{"type":"string","minLength":1},
+            "exact_text_sha256":{"$ref":"#/$defs/hash"},
+            "disposition":{"const":"superseded-for-current-interpretation"}
+          }
+        },
+        "historical_unit_retained":{"const":true},
+        "bindings":{
+          "type":"array",
+          "minItems":1,
+          "items":{
+            "type":"object",
+            "additionalProperties":false,
+            "required":["contract_id","authority_id","relation"],
+            "properties":{
+              "contract_id":{"type":"string","minLength":1},
+              "authority_id":{"$ref":"#/$defs/id"},
+              "relation":{"enum":["owns-schema","may-populate","read-only-compatibility","owns-private-semantics"]}
+            }
+          }
+        }
+      }
+    },
+    "evidence": {
+      "type":"array",
+      "minItems":1,
+      "items":{"$ref":"#/$defs/binding"}
+    },
+    "repository_heads": {
+      "type":"array",
+      "minItems":1,
+      "items":{
+        "type":"object",
+        "additionalProperties":false,
+        "required":["repo_id","branch","revision"],
+        "properties":{"repo_id":{"$ref":"#/$defs/id"},"branch":{"type":"string","minLength":1},"revision":{"$ref":"#/$defs/revision"}}
+      }
+    },
+    "repository_sources": {
+      "type":"array",
+      "minItems":1,
+      "items":{
+        "type":"object",
+        "additionalProperties":false,
+        "required":["repo_id","sources"],
+        "properties":{
+          "repo_id":{"$ref":"#/$defs/id"},
+          "sources":{
+            "type":"array",
+            "minItems":1,
+            "items":{
+              "type":"object",
+              "additionalProperties":false,
+              "required":["path","sha256"],
+              "properties":{"path":{"$ref":"#/$defs/repoPath"},"sha256":{"$ref":"#/$defs/hash"}}
+            }
+          }
+        }
+      }
+    },
+    "preserve_blocker_ids":{"type":"array","uniqueItems":true,"items":{"$ref":"#/$defs/id"}}
+  },
+  "$defs": {
+    "id":{"type":"string","pattern":"^[a-z0-9][a-z0-9-]{1,127}$"},
+    "hash":{"type":"string","pattern":"^[0-9a-f]{64}$"},
+    "revision":{"type":"string","pattern":"^[0-9a-f]{40}$"},
+    "path":{"type":"string","pattern":"^(?![A-Za-z]:)(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/-]+$"},
+    "repoPath":{"type":"string","pattern":"^(?![A-Za-z]:)(?!/)(?!.*\\\\)(?!.*(?:^|/)(?:\\.{1,2}|)(?:/|$))(?!.*//)(?!.*[/]$)[A-Za-z0-9._/-]+$"},
+    "binding":{
+      "type":"object",
+      "additionalProperties":false,
+      "required":["path","sha256"],
+      "properties":{"path":{"$ref":"#/$defs/path"},"sha256":{"$ref":"#/$defs/hash"}}
+    }
+  }
+}

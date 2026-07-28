@@ -1,0 +1,18 @@
+{
+  "schema": "rusty.morphospace.workflow.push_bundle_plan.v1",
+  "bundle_id": "example-legacy-bundle",
+  "project_id": "example-project",
+  "unit_ids": ["example-unit"],
+  "prepared_at": "2026-01-01T00:00:00Z",
+  "dependency_order": ["example-application","example-adapter","planning"],
+  "repositories": [
+    {"repo_id":"example-application","role":"application","branch":"example-branch","commit":"1111111111111111111111111111111111111111","upstream":"origin/example-branch","ahead":7,"behind":0},
+    {"repo_id":"example-adapter","role":"adapter","branch":"example-branch","commit":"2222222222222222222222222222222222222222","upstream":"origin/example-branch","ahead":1,"behind":0},
+    {"repo_id":"planning","role":"planning","branch":"example-branch","commit":"1111111111111111111111111111111111111111","upstream":"origin/example-branch","ahead":7,"behind":0}
+  ],
+  "source_first": true,
+  "planning_last": true,
+  "execution": "not-performed",
+  "force_push_allowed": false,
+  "publication_ordering_interruption": null
+}

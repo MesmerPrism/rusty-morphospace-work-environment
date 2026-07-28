@@ -167,6 +167,14 @@ commit/unit accounting and live clean readback before it may clear the exact
 pending bundle. It records workflow state only; details are in
 [Planned Publication Accounting](PLANNED_PUBLICATION_ACCOUNTING.md).
 
+An exact pending bundle that remains demonstrably unexecuted may instead use
+`RetirePreparedPush`. It binds the embedded plan and preparation-event owner
+containers, requires complete stable clean repository observations and fresh
+remote readback, rejects remotely reachable prepared ahead revisions and every
+recognized execution/publication binding, and consumes only the matching
+bundle. See [Prepared Push Retirement](PREPARED_PUSH_RETIREMENT.md). This
+additive route does not weaken publication, reconciliation, or recovery.
+
 The executed receipt uses one `ref_id` per branch and records full old, new,
 and observed-remote revisions, whether the ref was pushed or only read back,
 fast-forward ancestry evidence, passing validation references, explicit
@@ -335,6 +343,22 @@ declared repositories and paths, and a repository-preservation report.
 `Recover` only repairs an unambiguous stale current-unit pointer; it preserves
 blockers and prior validation evidence. `Resume` is the explicit transition
 out of `blocked`.
+
+`ResolveBlocker` is a separate product-neutral action for one exact blocker on
+the current active unit. It validates `blocker_resolution_receipt.v1`, rechecks
+hash-bound evidence, repository heads, and exact dirty source bytes immediately
+before transition, preserves every other blocker and workflow projection, and
+uses state/unit/event-tail CAS. See
+[Generic Blocker Resolution](BLOCKER_RESOLUTION.md).
+
+Use `CorrectResolvedBlockerEvidence` only when the target blocker remains
+absent and the immutable historical resolution transaction is valid, but its
+broader complete-resolution claim needs fresh evidence. The correction binds
+the original event/receipt/intent/completion hash chain, current repository
+heads/source bytes, and every live blocker. It changes only `last_event_id`,
+appends one generic transition, fails closed on damaged retained correction
+evidence, and rejects replay by stable identity or canonical hash. See
+[Blocker Resolution Correction](BLOCKER_RESOLUTION_CORRECTION.md).
 
 ## Receipt-Security Corrective Units
 

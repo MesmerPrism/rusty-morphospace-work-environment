@@ -222,6 +222,13 @@ in runner variables or typed reference wrappers, never injected properties.
 - Move a reviewed proposal into the claimable queue only with the automation
   `Ready` action. It verifies accepted prerequisites, appends the transition,
   and derives `next_ready_unit`; do not hand-edit proposal status.
+- Resolve one exact current active-unit blocker only through product-neutral
+  `blocker_resolution_receipt.v1` and `ResolveBlocker`: revalidate its passing
+  hash-bound evidence, repository heads, and exact per-repository dirty source
+  bytes twice (including immediately before the ledger), preserve every other
+  blocker and workflow projection, and use state/unit/event-tail CAS. Product
+  owner schemas may be referenced as evidence but never become generic
+  workflow authority.
 - New project workspaces default to protocol v2. Resolve exact feature
   descriptors into a fingerprinted closed-world lock. Descriptor filesystem
   locations are resolver inputs only; the lock records forward-slash paths
@@ -245,6 +252,27 @@ in runner variables or typed reference wrappers, never injected properties.
   no-force proof, and reverse-order rollback anchors. A release may additionally
   bind the pre-publication capture that supplied every old revision; multiple
   planning refs must form the final execution suffix.
+- One exact pending plan that still records `execution: not-performed` may be
+  retired only through `prepared_push_retirement.v1` and
+  `RetirePreparedPush`. Bind its immutable plan/event owner containers,
+  complete stable clean repository observations, fresh remote readback, and
+  the absence of recognized execution/publication evidence. Reject remotely
+  reachable prepared ahead revisions. The route clears only the matching
+  bundle, optionally one exact blocker, appends its typed event, and retains a
+  hash-bound receipt; it never claims historical non-publication or weakens a
+  publication/reconciliation route.
+- If every distinct prepared revision is now ancestor-or-equal to its current
+  intended remote ref, retirement must reject. Use only
+  `prepared_publication_reconstruction.v1` and
+  `ReconcilePreparedPublication`, with exact owner/member/event, accepted
+  validation, canonical bundle/blocker, collapsed refs, and complete history.
+- Correct an incomplete broader claim from an otherwise valid immutable
+  blocker-resolution transaction only through the additive
+  `blocker_resolution_correction_receipt.v1` and
+  `CorrectResolvedBlockerEvidence`. The blocker must remain absent; bind the
+  original event/receipt/intent/completion chain plus fresh exact source
+  evidence, preserve every projection except `last_event_id`, and never edit
+  the retained resolution.
 - Protected-branch pre-push guards match Git's remote destination ref and
   resolve any explicit local selector to the exact attached protected branch
   revision before prepared-plan validation; deletion, detachment, mismatch,

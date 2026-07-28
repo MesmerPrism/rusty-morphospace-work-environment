@@ -1,0 +1,74 @@
+{
+  "schema": "rusty.morphospace.workflow.blocker_resolution_correction_receipt.v1",
+  "receipt_id": "example-blocker-resolution-correction",
+  "project_id": "example-project",
+  "unit_id": "example-active-unit",
+  "blocker_id": "example-resolved-blocker",
+  "result": "pass",
+  "supersedes": {
+    "event_id": "example-active-unit-blocker-resolved-0007",
+    "original_receipt_id": "example-blocker-resolution",
+    "receipt": {
+      "path": "receipts/example-blocker-resolution.json",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    "intent": {
+      "path": "receipts/transactions/example-active-unit-blocker-resolved-0007-transition.intent.json",
+      "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    "completion": {
+      "path": "receipts/transactions/example-active-unit-blocker-resolved-0007-transition.completion.json",
+      "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+    }
+  },
+  "correction": {
+    "historical_receipt_retained": true,
+    "prior_complete_resolution_claim": "superseded",
+    "corrected_resolution_established": true
+  },
+  "authority_clarification": {
+    "unit": {
+      "path": "iteration-units/example-active-unit.json",
+      "sha256": "7777777777777777777777777777777777777777777777777777777777777777"
+    },
+    "statement": {
+      "json_pointer": "/non_scope/0",
+      "exact_text": "Retained historical authority wording.",
+      "exact_text_sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+      "disposition": "superseded-for-current-interpretation"
+    },
+    "historical_unit_retained": true,
+    "bindings": [
+      {
+        "contract_id": "example.generic.contract.v1",
+        "authority_id": "example-owner",
+        "relation": "owns-schema"
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "path": "receipts/evidence/example-corrected-resolution.json",
+      "sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+    }
+  ],
+  "repository_heads": [
+    {
+      "repo_id": "example-repository",
+      "branch": "main",
+      "revision": "5555555555555555555555555555555555555555"
+    }
+  ],
+  "repository_sources": [
+    {
+      "repo_id": "example-repository",
+      "sources": [
+        {
+          "path": "src/corrected-resolution.txt",
+          "sha256": "6666666666666666666666666666666666666666666666666666666666666666"
+        }
+      ]
+    }
+  ],
+  "preserve_blocker_ids": []
+}
