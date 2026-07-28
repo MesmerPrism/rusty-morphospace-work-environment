@@ -21,11 +21,27 @@ function New-ReconstructionRepo([string]$Root,[string]$Name){
     [pscustomobject]@{repo=$repo;remote=$remote;prepared=$prepared;tip=(Invoke-ReconstructionTestGit $repo @('rev-parse','HEAD'))}
 }
 function New-FileBinding([string]$Workspace,[string]$Relative){$path=Join-Path $Workspace ($Relative-replace'/','\');[ordered]@{path=$Relative;sha256=Get-MorphospaceFileSha256 $path}}
-function New-TransitionFixture([string]$Workspace,[string]$Name,[object]$Event,[object]$Unit){
+function New-TransitionFixture([string]$Workspace,[string]$Name,[object]$Event,[object]$State,[object]$Unit,[AllowNull()][string]$PreviousEventId){
     $intentRelative="receipts/transactions/$Name.intent.json";$completionRelative="receipts/transactions/$Name.completion.json"
-    $intent=[ordered]@{schema='rusty.morphospace.workflow.transition_ledger_intent.v1';transaction_id=$Name;event=$Event;target=[ordered]@{unit=[ordered]@{sha256=Get-MorphospaceCanonicalJsonSha256 $Unit;document=$Unit}};status='prepared'}
+    $preState='1'*64;$preUnit='2'*64
+    $intent=[ordered]@{
+        schema='rusty.morphospace.workflow.transition_ledger_intent.v1';transaction_id=$Name;created_at='2026-01-01T00:00:00Z'
+        state=[ordered]@{path='workspace.state.json'};unit=[ordered]@{path="iteration-units/$([string]$Unit.unit_id).json"};events=[ordered]@{path='iteration-events.jsonl'}
+        pre=[ordered]@{state=[ordered]@{sha256=$preState};unit=[ordered]@{sha256=$preUnit}}
+        target=[ordered]@{
+            state=[ordered]@{sha256=Get-MorphospaceCanonicalJsonSha256 $State;document=$State}
+            unit=[ordered]@{sha256=Get-MorphospaceCanonicalJsonSha256 $Unit;document=$Unit}
+        }
+        expected=[ordered]@{state_sha256=$preState;unit_sha256=$preUnit;event_tail_id=$PreviousEventId}
+        artifacts=@();event=$Event;status='prepared'
+    }
     Write-ReconstructionJson (Join-Path $Workspace ($intentRelative-replace'/','\')) $intent
-    $completion=[ordered]@{schema='rusty.morphospace.workflow.transition_ledger_completion.v1';transaction_id=$Name;intent=[ordered]@{sha256=Get-MorphospaceFileSha256 (Join-Path $Workspace ($intentRelative-replace'/','\'))};unit_sha256=Get-MorphospaceCanonicalJsonSha256 $Unit;event_id=[string]$Event.event_id;status='committed'}
+    $completion=[ordered]@{
+        schema='rusty.morphospace.workflow.transition_ledger_completion.v1';transaction_id=$Name;completed_at='2026-01-01T00:00:01Z'
+        intent=[ordered]@{role='transition-ledger-intent';path=$intentRelative;schema='rusty.morphospace.workflow.transition_ledger_intent.v1';sha256=Get-MorphospaceFileSha256 (Join-Path $Workspace ($intentRelative-replace'/','\'))}
+        state_sha256=Get-MorphospaceCanonicalJsonSha256 $State;unit_sha256=Get-MorphospaceCanonicalJsonSha256 $Unit
+        event_id=[string]$Event.event_id;status='committed'
+    }
     Write-ReconstructionJson (Join-Path $Workspace ($completionRelative-replace'/','\')) $completion
     [ordered]@{event_id=[string]$Event.event_id;intent=New-FileBinding $Workspace $intentRelative;completion=New-FileBinding $Workspace $completionRelative}
 }
@@ -41,10 +57,11 @@ try{
     [IO.Directory]::CreateDirectory($root)|Out-Null
     $application=New-ReconstructionRepo $root 'application-physical'
     $adapter=New-ReconstructionRepo $root 'adapter-physical'
-    $workspace=Join-Path $application.repo 'morphospace'
+    $workspace=Join-Path $root 'workflow-workspace'
     [IO.Directory]::CreateDirectory((Join-Path $workspace 'iteration-units'))|Out-Null
     [IO.Directory]::CreateDirectory((Join-Path $workspace 'receipts\transactions'))|Out-Null
     $unit=[ordered]@{schema='synthetic-unit';unit_id='unit-reconstruction';status='accepted'}
+    $validationUnit=[ordered]@{schema='synthetic-unit';unit_id='unit-reconstruction';status='validating'}
     Write-ReconstructionJson (Join-Path $workspace 'iteration-units\unit-reconstruction.json') $unit
     $validationRelative='receipts/unit-reconstruction-validation.json'
     $evidenceRelative='receipts/unit-reconstruction-evidence.txt'
@@ -53,16 +70,21 @@ try{
     Write-ReconstructionJson (Join-Path $workspace ($validationRelative-replace'/','\')) $validation
     $validationEvent=[ordered]@{schema='rusty.morphospace.workflow.iteration_event.v1';event_id='unit-reconstruction-validation-pass';sequence=1;timestamp='2026-01-01T00:00:00Z';project_id='synthetic-project';unit_id='unit-reconstruction';event_type='validation';summary='Synthetic validation passed.';receipts=@($validationRelative)}
     $acceptanceEvent=[ordered]@{schema='rusty.morphospace.workflow.iteration_event.v1';event_id='unit-reconstruction-accepted';sequence=2;timestamp='2026-01-01T00:00:01Z';project_id='synthetic-project';unit_id='unit-reconstruction';event_type='state-transition';summary='Synthetic unit accepted.';receipts=@($validationRelative)}
-    $validationTransition=New-TransitionFixture $workspace 'validation-transition' $validationEvent $unit
-    $acceptanceTransition=New-TransitionFixture $workspace 'acceptance-transition' $acceptanceEvent $unit
+    $pending=[ordered]@{bundle_id='synthetic-bundle';unit_ids=@('unit-reconstruction')}
+    $blocker=[ordered]@{blocker_id='stale-prepared-publication';condition='Published revisions remain projected as pending.';resume_when='Canonical reconstruction passes.'}
+    $validationState=[ordered]@{schema='synthetic-state';project_id='synthetic-project';current_unit='unit-reconstruction';pending_push_bundle=$null;validation_checkpoint=[ordered]@{receipt=$validationRelative;result='pass'};blockers=@();last_event_id=$validationEvent.event_id}
+    $acceptanceState=[ordered]@{schema='synthetic-state';project_id='synthetic-project';current_unit=$null;pending_push_bundle=$null;validation_checkpoint=[ordered]@{receipt=$validationRelative;result='pass'};blockers=@();last_event_id=$acceptanceEvent.event_id}
+    $preparedState=[ordered]@{schema='synthetic-state';project_id='synthetic-project';current_unit=$null;pending_push_bundle=$pending;validation_checkpoint=[ordered]@{receipt=$validationRelative;result='pass'};blockers=@();last_event_id=$null}
+    $validationTransition=New-TransitionFixture -Workspace $workspace -Name "$($validationEvent.event_id)-transition" -Event $validationEvent -State $validationState -Unit $validationUnit -PreviousEventId $null
+    $acceptanceTransition=New-TransitionFixture -Workspace $workspace -Name "$($acceptanceEvent.event_id)-transition" -Event $acceptanceEvent -State $acceptanceState -Unit $unit -PreviousEventId $validationEvent.event_id
     $plan=[ordered]@{schema='rusty.morphospace.workflow.push_bundle_plan.v1';bundle_id='synthetic-bundle';project_id='synthetic-project';unit_ids=@('unit-reconstruction');prepared_at='2026-01-01T00:00:02Z';dependency_order=@('application','adapter','planning');repositories=@([ordered]@{repo_id='application';role='application';branch='main';commit=$application.prepared;upstream='origin/main';ahead=0;behind=0},[ordered]@{repo_id='adapter';role='adapter';branch='main';commit=$adapter.prepared;upstream='origin/main';ahead=0;behind=0},[ordered]@{repo_id='planning';role='planning';branch='main';commit=$application.prepared;upstream='origin/main';ahead=0;behind=0});source_first=$true;planning_last=$true;execution='not-performed';force_push_allowed=$false}
     $planRelative='receipts/prepared-plan-owner.json'
-    Write-ReconstructionJson (Join-Path $workspace ($planRelative-replace'/','\')) ([ordered]@{schema='rusty.morphospace.workflow.work_unit_automation_receipt.v1';action='PreparePush';push_plan=$plan})
-    $prepareEvent=[ordered]@{schema='rusty.morphospace.workflow.iteration_event.v1';event_id='unit-reconstruction-push-prepared';sequence=3;timestamp='2026-01-01T00:00:02Z';project_id='synthetic-project';unit_id='unit-reconstruction';event_type='push';summary='Synthetic plan prepared.';receipts=@($planRelative)}
-    $prepareTransition=New-TransitionFixture $workspace 'prepare-transition' $prepareEvent $unit
-    [IO.File]::WriteAllLines((Join-Path $workspace 'iteration-events.jsonl'),@($validationEvent,$acceptanceEvent,$prepareEvent|ForEach-Object{$_|ConvertTo-Json -Depth 20 -Compress}),[Text.UTF8Encoding]::new($false))
-    $blocker=[ordered]@{blocker_id='stale-prepared-publication';condition='Published revisions remain projected as pending.';resume_when='Canonical reconstruction passes.'}
-    $pending=[ordered]@{bundle_id='synthetic-bundle';unit_ids=@('unit-reconstruction')}
+    Write-ReconstructionJson (Join-Path $workspace ($planRelative-replace'/','\')) ([ordered]@{schema='rusty.morphospace.workflow.work_unit_automation_receipt.v1';project_id='synthetic-project';unit_id='unit-reconstruction';action='PreparePush';executed=$true;transition='push-bundle-prepared';event_id='unit-reconstruction-push-prepared';push_plan=$plan})
+    $prepareEvent=[ordered]@{schema='rusty.morphospace.workflow.iteration_event.v1';event_id='unit-reconstruction-push-prepared';sequence=3;timestamp='2026-01-01T00:00:02Z';project_id='synthetic-project';unit_id='unit-reconstruction';event_type='commit';summary='Synthetic plan prepared.';receipts=@($planRelative)}
+    $preparedState.last_event_id=$prepareEvent.event_id
+    $prepareTransition=New-TransitionFixture -Workspace $workspace -Name "$($prepareEvent.event_id)-transition" -Event $prepareEvent -State $preparedState -Unit $unit -PreviousEventId $acceptanceEvent.event_id
+    $canonicalEventLines=@($validationEvent,$acceptanceEvent,$prepareEvent|ForEach-Object{$_|ConvertTo-Json -Depth 20 -Compress})
+    [IO.File]::WriteAllLines((Join-Path $workspace 'iteration-events.jsonl'),$canonicalEventLines,[Text.UTF8Encoding]::new($false))
     $state=[ordered]@{schema='synthetic-state';project_id='synthetic-project';current_unit=$null;pending_push_bundle=$pending;validation_checkpoint=$null;blockers=@($blocker);last_event_id=$prepareEvent.event_id}
     Write-ReconstructionJson (Join-Path $workspace 'workspace.state.json') $state
     $mapPath=Join-Path $root 'repository-map.json'
@@ -86,29 +108,213 @@ try{
         $rejected=$false;try{Invoke-MorphospacePreparedPublicationReconstruction -WorkspaceRoot $workspace -UnitId 'unit-reconstruction' -RepoMapPath $mapPath -ReconstructionReceipt $input|Out-Null}catch{$rejected=$true}
         Assert-Reconstruction $rejected "$($case.name) was accepted"
     }
+    foreach($case in @(
+        @{name='omitted document unit_ids';mutate={param($d)$d.unit_ids=@()}},
+        @{name='document unit_ids mismatch';mutate={param($d)$d.unit_ids=@('different-unit')}},
+        @{name='case-changed document unit_ids';mutate={param($d)$d.unit_ids=@('Unit-reconstruction')}},
+        @{name='injected accepted-unit request';mutate={param($d)$d.unit_ids=@('unit-reconstruction','different-unit')}},
+        @{name='duplicate accepted-unit request';mutate={param($d)$d.unit_ids=@('unit-reconstruction','unit-reconstruction')}}
+    )){
+        $damaged=$document|ConvertTo-Json -Depth 40|ConvertFrom-Json;& $case.mutate $damaged;Write-ReconstructionJson $input $damaged
+        $rejected=$false;try{Invoke-MorphospacePreparedPublicationReconstruction -WorkspaceRoot $workspace -UnitId 'unit-reconstruction' -RepoMapPath $mapPath -ReconstructionReceipt $input|Out-Null}catch{$rejected=$true}
+        Assert-Reconstruction $rejected "$($case.name) was accepted"
+    }
+    $planOwnerPath=Join-Path $workspace ($document.prepared_plan.container.path-replace'/','\')
+    $planOwner=Read-MorphospaceProtocolJson $planOwnerPath
+    $damagedOwner=$planOwner|ConvertTo-Json -Depth 40|ConvertFrom-Json;$damagedOwner.push_plan.unit_ids=@('different-unit');Write-ReconstructionJson $planOwnerPath $damagedOwner
+    $damaged=$document|ConvertTo-Json -Depth 40|ConvertFrom-Json;$damaged.prepared_plan.container.sha256=Get-MorphospaceFileSha256 $planOwnerPath;Write-ReconstructionJson $input $damaged
+    $rejected=$false;try{Invoke-MorphospacePreparedPublicationReconstruction -WorkspaceRoot $workspace -UnitId 'unit-reconstruction' -RepoMapPath $mapPath -ReconstructionReceipt $input|Out-Null}catch{$rejected=$true}
+    Assert-Reconstruction $rejected 'prepared plan unit_ids mismatch was accepted'
+    Write-ReconstructionJson $planOwnerPath $planOwner
+
+    $preparedIntentPath=Join-Path $workspace ($document.prepared_event.intent.path-replace'/','\')
+    $preparedIntent=Read-MorphospaceProtocolJson $preparedIntentPath
+    $damagedIntent=$preparedIntent|ConvertTo-Json -Depth 40|ConvertFrom-Json;$damagedIntent.schema='rusty.morphospace.workflow.iteration_event.v1';Write-ReconstructionJson $preparedIntentPath $damagedIntent
+    $damaged=$document|ConvertTo-Json -Depth 40|ConvertFrom-Json;$damaged.prepared_event.intent.sha256=Get-MorphospaceFileSha256 $preparedIntentPath;Write-ReconstructionJson $input $damaged
+    $rejected=$false;try{Invoke-MorphospacePreparedPublicationReconstruction -WorkspaceRoot $workspace -UnitId 'unit-reconstruction' -RepoMapPath $mapPath -ReconstructionReceipt $input|Out-Null}catch{$rejected=$true}
+    Assert-Reconstruction $rejected 'prepared-event intent schema mismatch was accepted'
+    $prepareTransition=New-TransitionFixture -Workspace $workspace -Name "$($prepareEvent.event_id)-transition" -Event $prepareEvent -State $preparedState -Unit $unit -PreviousEventId $acceptanceEvent.event_id
+
+    $preparedCompletionPath=Join-Path $workspace ($document.prepared_event.completion.path-replace'/','\')
+    $preparedCompletion=Read-MorphospaceProtocolJson $preparedCompletionPath
+    $damagedCompletion=$preparedCompletion|ConvertTo-Json -Depth 40|ConvertFrom-Json;$damagedCompletion.intent.role='untrusted-reference';Write-ReconstructionJson $preparedCompletionPath $damagedCompletion
+    $damaged=$document|ConvertTo-Json -Depth 40|ConvertFrom-Json;$damaged.prepared_event.completion.sha256=Get-MorphospaceFileSha256 $preparedCompletionPath;Write-ReconstructionJson $input $damaged
+    $rejected=$false;try{Invoke-MorphospacePreparedPublicationReconstruction -WorkspaceRoot $workspace -UnitId 'unit-reconstruction' -RepoMapPath $mapPath -ReconstructionReceipt $input|Out-Null}catch{$rejected=$true}
+    Assert-Reconstruction $rejected 'prepared-event completion intent role mismatch was accepted'
+    $prepareTransition=New-TransitionFixture -Workspace $workspace -Name "$($prepareEvent.event_id)-transition" -Event $prepareEvent -State $preparedState -Unit $unit -PreviousEventId $acceptanceEvent.event_id
+
+    $validationIntentPath=Join-Path $workspace ($document.validation_event.intent.path-replace'/','\')
+    $validationCompletionPath=Join-Path $workspace ($document.validation_event.completion.path-replace'/','\')
+    $validationIntent=Read-MorphospaceProtocolJson $validationIntentPath
+    $validationCompletion=Read-MorphospaceProtocolJson $validationCompletionPath
+    $damagedIntent=$validationIntent|ConvertTo-Json -Depth 40|ConvertFrom-Json;$damagedIntent.transaction_id='different-transition';Write-ReconstructionJson $validationIntentPath $damagedIntent
+    $damagedCompletion=$validationCompletion|ConvertTo-Json -Depth 40|ConvertFrom-Json;$damagedCompletion.intent.sha256=Get-MorphospaceFileSha256 $validationIntentPath;Write-ReconstructionJson $validationCompletionPath $damagedCompletion
+    $damaged=$document|ConvertTo-Json -Depth 40|ConvertFrom-Json;$damaged.validation_event.intent.sha256=Get-MorphospaceFileSha256 $validationIntentPath;$damaged.validation_event.completion.sha256=Get-MorphospaceFileSha256 $validationCompletionPath;Write-ReconstructionJson $input $damaged
+    $rejected=$false;try{Invoke-MorphospacePreparedPublicationReconstruction -WorkspaceRoot $workspace -UnitId 'unit-reconstruction' -RepoMapPath $mapPath -ReconstructionReceipt $input|Out-Null}catch{$rejected=$true}
+    Assert-Reconstruction $rejected 'validation transition transaction/path mismatch was accepted'
+    $validationTransition=New-TransitionFixture -Workspace $workspace -Name "$($validationEvent.event_id)-transition" -Event $validationEvent -State $validationState -Unit $validationUnit -PreviousEventId $null
+
+    $alternateIntentRelative='receipts/transactions/alternate-validation.intent.json'
+    $alternateIntentPath=Join-Path $workspace ($alternateIntentRelative-replace'/','\')
+    Copy-Item -LiteralPath $validationIntentPath -Destination $alternateIntentPath
+    $damaged=$document|ConvertTo-Json -Depth 40|ConvertFrom-Json;$damaged.validation_event.intent.path=$alternateIntentRelative;$damaged.validation_event.intent.sha256=Get-MorphospaceFileSha256 $alternateIntentPath;Write-ReconstructionJson $input $damaged
+    $rejected=$false;try{Invoke-MorphospacePreparedPublicationReconstruction -WorkspaceRoot $workspace -UnitId 'unit-reconstruction' -RepoMapPath $mapPath -ReconstructionReceipt $input|Out-Null}catch{$rejected=$true}
+    Assert-Reconstruction $rejected 'non-canonical validation intent path was accepted'
+    Remove-Item -LiteralPath $alternateIntentPath
+
+    $validationIntent=Read-MorphospaceProtocolJson $validationIntentPath;$validationCompletion=Read-MorphospaceProtocolJson $validationCompletionPath
+    $damagedIntent=$validationIntent|ConvertTo-Json -Depth 40|ConvertFrom-Json;$damagedIntent.target.state.sha256='0'*64;Write-ReconstructionJson $validationIntentPath $damagedIntent
+    $damagedCompletion=$validationCompletion|ConvertTo-Json -Depth 40|ConvertFrom-Json;$damagedCompletion.intent.sha256=Get-MorphospaceFileSha256 $validationIntentPath;Write-ReconstructionJson $validationCompletionPath $damagedCompletion
+    $damaged=$document|ConvertTo-Json -Depth 40|ConvertFrom-Json;$damaged.validation_event.intent.sha256=Get-MorphospaceFileSha256 $validationIntentPath;$damaged.validation_event.completion.sha256=Get-MorphospaceFileSha256 $validationCompletionPath;Write-ReconstructionJson $input $damaged
+    $rejected=$false;try{Invoke-MorphospacePreparedPublicationReconstruction -WorkspaceRoot $workspace -UnitId 'unit-reconstruction' -RepoMapPath $mapPath -ReconstructionReceipt $input|Out-Null}catch{$rejected=$true}
+    Assert-Reconstruction $rejected 'validation target state hash mismatch was accepted'
+    $validationTransition=New-TransitionFixture -Workspace $workspace -Name "$($validationEvent.event_id)-transition" -Event $validationEvent -State $validationState -Unit $validationUnit -PreviousEventId $null
+
+    $acceptanceCompletionPath=Join-Path $workspace ($document.acceptance_event.completion.path-replace'/','\')
+    $acceptanceCompletion=Read-MorphospaceProtocolJson $acceptanceCompletionPath;$acceptanceCompletion.state_sha256='0'*64;Write-ReconstructionJson $acceptanceCompletionPath $acceptanceCompletion
+    $damaged=$document|ConvertTo-Json -Depth 40|ConvertFrom-Json;$damaged.acceptance_event.completion.sha256=Get-MorphospaceFileSha256 $acceptanceCompletionPath;Write-ReconstructionJson $input $damaged
+    $rejected=$false;try{Invoke-MorphospacePreparedPublicationReconstruction -WorkspaceRoot $workspace -UnitId 'unit-reconstruction' -RepoMapPath $mapPath -ReconstructionReceipt $input|Out-Null}catch{$rejected=$true}
+    Assert-Reconstruction $rejected 'acceptance completion target-state hash mismatch was accepted'
+    $acceptanceTransition=New-TransitionFixture -Workspace $workspace -Name "$($acceptanceEvent.event_id)-transition" -Event $acceptanceEvent -State $acceptanceState -Unit $unit -PreviousEventId $validationEvent.event_id
+
+    [IO.File]::WriteAllText((Join-Path $application.repo 'untracked-readback.txt'),'dirty',[Text.UTF8Encoding]::new($false))
+    Write-ReconstructionJson $input $document
+    $rejected=$false;try{Invoke-MorphospacePreparedPublicationReconstruction -WorkspaceRoot $workspace -UnitId 'unit-reconstruction' -RepoMapPath $mapPath -ReconstructionReceipt $input|Out-Null}catch{$rejected=$true}
+    Assert-Reconstruction $rejected 'dirty/untracked readback repository was accepted'
+    Remove-Item -LiteralPath (Join-Path $application.repo 'untracked-readback.txt')
+
+    $fabricatedEvent=$validationEvent|ConvertTo-Json -Depth 20|ConvertFrom-Json
+    $fabricatedEvent.event_id='unit-reconstruction-fabricated-validation';$fabricatedEvent.sequence=1
+    $fabricatedTransition=New-TransitionFixture -Workspace $workspace -Name "$($fabricatedEvent.event_id)-transition" -Event $fabricatedEvent -State $validationState -Unit $validationUnit -PreviousEventId $null
+    $damaged=$document|ConvertTo-Json -Depth 40|ConvertFrom-Json;$damaged.validation_event=$fabricatedTransition;Write-ReconstructionJson $input $damaged
+    $rejected=$false;try{Invoke-MorphospacePreparedPublicationReconstruction -WorkspaceRoot $workspace -UnitId 'unit-reconstruction' -RepoMapPath $mapPath -ReconstructionReceipt $input|Out-Null}catch{$rejected=$true}
+    Assert-Reconstruction $rejected 'fabricated self-consistent transition absent from the event ledger was accepted'
+
+    [IO.File]::WriteAllLines((Join-Path $workspace 'iteration-events.jsonl'),@($canonicalEventLines[1],$canonicalEventLines[0],$canonicalEventLines[2]),[Text.UTF8Encoding]::new($false))
+    Write-ReconstructionJson $input $document
+    $rejected=$false;try{Invoke-MorphospacePreparedPublicationReconstruction -WorkspaceRoot $workspace -UnitId 'unit-reconstruction' -RepoMapPath $mapPath -ReconstructionReceipt $input|Out-Null}catch{$rejected=$true}
+    Assert-Reconstruction $rejected 'reordered event ledger was accepted'
+    [IO.File]::WriteAllLines((Join-Path $workspace 'iteration-events.jsonl'),@($canonicalEventLines+$canonicalEventLines[2]),[Text.UTF8Encoding]::new($false))
+    $rejected=$false;try{Invoke-MorphospacePreparedPublicationReconstruction -WorkspaceRoot $workspace -UnitId 'unit-reconstruction' -RepoMapPath $mapPath -ReconstructionReceipt $input|Out-Null}catch{$rejected=$true}
+    Assert-Reconstruction $rejected 'duplicate event ledger identity was accepted'
+    [IO.File]::WriteAllLines((Join-Path $workspace 'iteration-events.jsonl'),@($canonicalEventLines[1..2]),[Text.UTF8Encoding]::new($false))
+    $rejected=$false;try{Invoke-MorphospacePreparedPublicationReconstruction -WorkspaceRoot $workspace -UnitId 'unit-reconstruction' -RepoMapPath $mapPath -ReconstructionReceipt $input|Out-Null}catch{$rejected=$true}
+    Assert-Reconstruction $rejected 'event ledger with an absent validation event was accepted'
+    [IO.File]::WriteAllLines((Join-Path $workspace 'iteration-events.jsonl'),$canonicalEventLines,[Text.UTF8Encoding]::new($false))
+
+    $validationIntent=Read-MorphospaceProtocolJson $validationIntentPath;$validationCompletion=Read-MorphospaceProtocolJson $validationCompletionPath
+    $validationIntent.expected.event_tail_id=$acceptanceEvent.event_id;Write-ReconstructionJson $validationIntentPath $validationIntent
+    $validationCompletion.intent.sha256=Get-MorphospaceFileSha256 $validationIntentPath;Write-ReconstructionJson $validationCompletionPath $validationCompletion
+    $damaged=$document|ConvertTo-Json -Depth 40|ConvertFrom-Json;$damaged.validation_event.intent.sha256=Get-MorphospaceFileSha256 $validationIntentPath;$damaged.validation_event.completion.sha256=Get-MorphospaceFileSha256 $validationCompletionPath;Write-ReconstructionJson $input $damaged
+    $rejected=$false;try{Invoke-MorphospacePreparedPublicationReconstruction -WorkspaceRoot $workspace -UnitId 'unit-reconstruction' -RepoMapPath $mapPath -ReconstructionReceipt $input|Out-Null}catch{$rejected=$true}
+    Assert-Reconstruction $rejected 'transition with the wrong preceding event tail was accepted'
+    $validationTransition=New-TransitionFixture -Workspace $workspace -Name "$($validationEvent.event_id)-transition" -Event $validationEvent -State $validationState -Unit $validationUnit -PreviousEventId $null
+
+    $conflictingRelative='receipts/event-bound-conflict.json'
+    Write-ReconstructionJson (Join-Path $workspace ($conflictingRelative-replace'/','\')) ([ordered]@{schema='rusty.morphospace.workflow.executed_push_receipt.v1';bundle_id='synthetic-bundle'})
+    $conflictEvent=[ordered]@{schema='rusty.morphospace.workflow.iteration_event.v1';event_id='unit-reconstruction-conflicting-publication';sequence=4;timestamp='2026-01-01T00:00:04Z';project_id='synthetic-project';unit_id='unit-reconstruction';event_type='push';summary='Conflicting publication evidence.';receipts=@($conflictingRelative)}
+    $conflictLines=@($canonicalEventLines+($conflictEvent|ConvertTo-Json -Depth 20 -Compress))
+    [IO.File]::WriteAllLines((Join-Path $workspace 'iteration-events.jsonl'),$conflictLines,[Text.UTF8Encoding]::new($false))
+    $preConflictState=Read-MorphospaceProtocolJson (Join-Path $workspace 'workspace.state.json')
+    $conflictState=$preConflictState|ConvertTo-Json -Depth 40|ConvertFrom-Json;$conflictState.last_event_id=$conflictEvent.event_id
+    Write-ReconstructionJson (Join-Path $workspace 'workspace.state.json') $conflictState
+    Write-ReconstructionJson $input $document
+    $rejected=$false;try{Invoke-MorphospacePreparedPublicationReconstruction -WorkspaceRoot $workspace -UnitId 'unit-reconstruction' -RepoMapPath $mapPath -ReconstructionReceipt $input|Out-Null}catch{$rejected=$true}
+    Assert-Reconstruction $rejected 'event-bound conflicting publication evidence was accepted'
+    Remove-Item -LiteralPath (Join-Path $workspace ($conflictingRelative-replace'/','\'))
+    [IO.File]::WriteAllLines((Join-Path $workspace 'iteration-events.jsonl'),$canonicalEventLines,[Text.UTF8Encoding]::new($false))
+    Write-ReconstructionJson (Join-Path $workspace 'workspace.state.json') $preConflictState
+
+    foreach($action in @('RecordPublication','ReconcilePublication','ReconcilePlanningSuffixRewrite','ReconcilePublishedPrerequisiteSuffix')){
+        $slug=($action-replace'([a-z])([A-Z])','$1-$2').ToLowerInvariant()
+        $standaloneRelative="receipts/standalone-$slug.json"
+        Write-ReconstructionJson (Join-Path $workspace ($standaloneRelative-replace'/','\')) ([ordered]@{schema='rusty.morphospace.workflow.work_unit_automation_receipt.v2';action=$action;audit_receipt=[ordered]@{bundle_id='synthetic-bundle'}})
+        Write-ReconstructionJson $input $document
+        $rejected=$false;try{Invoke-MorphospacePreparedPublicationReconstruction -WorkspaceRoot $workspace -UnitId 'unit-reconstruction' -RepoMapPath $mapPath -ReconstructionReceipt $input|Out-Null}catch{$rejected=$true}
+        Assert-Reconstruction $rejected "standalone bundle-bound $action automation receipt was accepted"
+        Remove-Item -LiteralPath (Join-Path $workspace ($standaloneRelative-replace'/','\'))
+
+        $eventRelative="event-evidence/$slug.json"
+        Write-ReconstructionJson (Join-Path $workspace ($eventRelative-replace'/','\')) ([ordered]@{schema='rusty.morphospace.workflow.work_unit_automation_receipt.v2';action=$action;audit_receipt=[ordered]@{bundle_id='synthetic-bundle'}})
+        $automationEvent=[ordered]@{schema='rusty.morphospace.workflow.iteration_event.v1';event_id="unit-reconstruction-$slug";sequence=4;timestamp='2026-01-01T00:00:04Z';project_id='synthetic-project';unit_id='unit-reconstruction';event_type='push';summary='Conflicting consuming automation evidence.';receipts=@($eventRelative)}
+        [IO.File]::WriteAllLines((Join-Path $workspace 'iteration-events.jsonl'),@($canonicalEventLines+($automationEvent|ConvertTo-Json -Depth 20 -Compress)),[Text.UTF8Encoding]::new($false))
+        $eventBoundState=Read-MorphospaceProtocolJson (Join-Path $workspace 'workspace.state.json')
+        $eventBoundState.last_event_id=$automationEvent.event_id
+        Write-ReconstructionJson (Join-Path $workspace 'workspace.state.json') $eventBoundState
+        $rejected=$false;try{Invoke-MorphospacePreparedPublicationReconstruction -WorkspaceRoot $workspace -UnitId 'unit-reconstruction' -RepoMapPath $mapPath -ReconstructionReceipt $input|Out-Null}catch{$rejected=$true}
+        Assert-Reconstruction $rejected "event-bound bundle-bound $action automation receipt was accepted"
+        Remove-Item -LiteralPath (Join-Path $workspace ($eventRelative-replace'/','\'))
+        [IO.File]::WriteAllLines((Join-Path $workspace 'iteration-events.jsonl'),$canonicalEventLines,[Text.UTF8Encoding]::new($false))
+        $eventBoundState.last_event_id=$prepareEvent.event_id
+        Write-ReconstructionJson (Join-Path $workspace 'workspace.state.json') $eventBoundState
+    }
+
+    $canonicalState=Read-MorphospaceProtocolJson (Join-Path $workspace 'workspace.state.json')
+    foreach($tailCase in @($null,'Unit-Reconstruction-Push-Prepared','unit-reconstruction-nonexistent-event','unit-reconstruction-accepted')){
+        $damagedState=$canonicalState|ConvertTo-Json -Depth 40|ConvertFrom-Json
+        $damagedState.last_event_id=$tailCase
+        Write-ReconstructionJson (Join-Path $workspace 'workspace.state.json') $damagedState
+        Write-ReconstructionJson $input $document
+        $rejected=$false;try{Invoke-MorphospacePreparedPublicationReconstruction -WorkspaceRoot $workspace -UnitId 'unit-reconstruction' -RepoMapPath $mapPath -ReconstructionReceipt $input|Out-Null}catch{$rejected=$true}
+        Assert-Reconstruction $rejected "workspace state tail '$tailCase' was accepted despite differing from the authenticated event ledger"
+    }
+    Write-ReconstructionJson (Join-Path $workspace 'workspace.state.json') $canonicalState
+
+    $preparedCompletion=Read-MorphospaceProtocolJson $preparedCompletionPath
+    $preparedCompletion|Add-Member -NotePropertyName untrusted_extra -NotePropertyValue 'not-canonical'
+    Write-ReconstructionJson $preparedCompletionPath $preparedCompletion
+    $damaged=$document|ConvertTo-Json -Depth 40|ConvertFrom-Json;$damaged.prepared_event.completion.sha256=Get-MorphospaceFileSha256 $preparedCompletionPath;Write-ReconstructionJson $input $damaged
+    $rejected=$false;try{Invoke-MorphospacePreparedPublicationReconstruction -WorkspaceRoot $workspace -UnitId 'unit-reconstruction' -RepoMapPath $mapPath -ReconstructionReceipt $input|Out-Null}catch{$rejected=$true}
+    Assert-Reconstruction $rejected 'transition completion with an unrecognized field was accepted'
+    $prepareTransition=New-TransitionFixture -Workspace $workspace -Name "$($prepareEvent.event_id)-transition" -Event $prepareEvent -State $preparedState -Unit $unit -PreviousEventId $acceptanceEvent.event_id
+
+    $linkedReadback=Join-Path $root 'application-linked-readback'
+    Invoke-ReconstructionTestGit $application.repo @('worktree','add','--detach',$linkedReadback,$application.tip)|Out-Null
+    $linkedMap=Read-MorphospaceProtocolJson $mapPath
+    (@($linkedMap.repositories|Where-Object{[string]$_.repo_id-ceq'application-physical'}))[0].path=$linkedReadback
+    $linkedMapPath=Join-Path $root 'repository-map-linked.json';Write-ReconstructionJson $linkedMapPath $linkedMap
+    Write-ReconstructionJson $input $document
+    $rejected=$false;try{Invoke-MorphospacePreparedPublicationReconstruction -WorkspaceRoot $workspace -UnitId 'unit-reconstruction' -RepoMapPath $linkedMapPath -ReconstructionReceipt $input|Out-Null}catch{$rejected=$true}
+    Assert-Reconstruction $rejected 'linked/shared-Git readback worktree was accepted'
+
+    [IO.File]::AppendAllText((Join-Path $application.repo '.git\info\exclude'),"`nnested-workspace/`n",[Text.UTF8Encoding]::new($false))
+    $nestedWorkspace=Join-Path $application.repo 'nested-workspace'
+    Copy-Item -LiteralPath $workspace -Destination $nestedWorkspace -Recurse
+    $nestedInput=Join-Path $root 'nested-reconstruction-input.json';Write-ReconstructionJson $nestedInput $document
+    $rejected=$false;try{Invoke-MorphospacePreparedPublicationReconstruction -WorkspaceRoot $nestedWorkspace -UnitId 'unit-reconstruction' -RepoMapPath $mapPath -ReconstructionReceipt $nestedInput|Out-Null}catch{$rejected=$true}
+    Assert-Reconstruction $rejected 'readback repository containing the active workflow workspace was accepted'
+
+    $observationModule=Get-Module PreparedPublicationReconstruction
+    $stableObservation=[pscustomobject][ordered]@{root='r';git_dir='g';common_dir='g';branch='main';upstream='origin/main';head=('a'*40);upstream_tip=('a'*40);ahead=0;behind=0;clean=$true;remote_tip=('a'*40)}
+    foreach($field in @('head','branch','upstream')){
+        $changed=$stableObservation|ConvertTo-Json|ConvertFrom-Json
+        $changed.$field=if($field-eq'head'){'b'*40}else{"changed-$field"}
+        $rejected=$false;try{& $observationModule {param($first,$second) Assert-ReconstructionObservationEqual $first $second 'synthetic'} $stableObservation $changed}catch{$rejected=$true}
+        Assert-Reconstruction $rejected "second readback observation accepted changed $field"
+    }
     $damaged=$document|ConvertTo-Json -Depth 40|ConvertFrom-Json
     $validationIntent=Read-MorphospaceProtocolJson (Join-Path $workspace ($damaged.validation_event.intent.path-replace'/','\'));$validationIntent.event.receipts=@('receipts/different-validation.json')
     Write-ReconstructionJson (Join-Path $workspace ($damaged.validation_event.intent.path-replace'/','\')) $validationIntent;$damaged.validation_event.intent.sha256=Get-MorphospaceFileSha256 (Join-Path $workspace ($damaged.validation_event.intent.path-replace'/','\'));Write-ReconstructionJson $input $damaged
     $differentValidationRejected=$false;try{Invoke-MorphospacePreparedPublicationReconstruction -WorkspaceRoot $workspace -UnitId 'unit-reconstruction' -RepoMapPath $mapPath -ReconstructionReceipt $input|Out-Null}catch{$differentValidationRejected=$true};Assert-Reconstruction $differentValidationRejected 'validation event pointing to a different receipt was accepted'
-    $validationTransition=New-TransitionFixture $workspace 'validation-transition' $validationEvent $unit
+    $validationTransition=New-TransitionFixture -Workspace $workspace -Name "$($validationEvent.event_id)-transition" -Event $validationEvent -State $validationState -Unit $validationUnit -PreviousEventId $null
 
     $damaged=$document|ConvertTo-Json -Depth 40|ConvertFrom-Json
     $acceptanceIntent=Read-MorphospaceProtocolJson (Join-Path $workspace ($damaged.acceptance_event.intent.path-replace'/','\'));$acceptanceIntent.event.receipts=@('receipts/different-validation.json')
     Write-ReconstructionJson (Join-Path $workspace ($damaged.acceptance_event.intent.path-replace'/','\')) $acceptanceIntent;$damaged.acceptance_event.intent.sha256=Get-MorphospaceFileSha256 (Join-Path $workspace ($damaged.acceptance_event.intent.path-replace'/','\'));Write-ReconstructionJson $input $damaged
     $differentAcceptanceRejected=$false;try{Invoke-MorphospacePreparedPublicationReconstruction -WorkspaceRoot $workspace -UnitId 'unit-reconstruction' -RepoMapPath $mapPath -ReconstructionReceipt $input|Out-Null}catch{$differentAcceptanceRejected=$true};Assert-Reconstruction $differentAcceptanceRejected 'acceptance event pointing to different validation provenance was accepted'
-    $acceptanceTransition=New-TransitionFixture $workspace 'acceptance-transition' $acceptanceEvent $unit
+    $acceptanceTransition=New-TransitionFixture -Workspace $workspace -Name "$($acceptanceEvent.event_id)-transition" -Event $acceptanceEvent -State $acceptanceState -Unit $unit -PreviousEventId $validationEvent.event_id
 
     $damaged=$document|ConvertTo-Json -Depth 40|ConvertFrom-Json
     $acceptanceIntent=Read-MorphospaceProtocolJson (Join-Path $workspace ($damaged.acceptance_event.intent.path-replace'/','\'));$acceptanceIntent.target.unit.document.status='validating';$acceptanceIntent.target.unit.sha256=Get-MorphospaceCanonicalJsonSha256 $acceptanceIntent.target.unit.document
     Write-ReconstructionJson (Join-Path $workspace ($damaged.acceptance_event.intent.path-replace'/','\')) $acceptanceIntent;$damaged.acceptance_event.intent.sha256=Get-MorphospaceFileSha256 (Join-Path $workspace ($damaged.acceptance_event.intent.path-replace'/','\'));Write-ReconstructionJson $input $damaged
     $targetMismatchRejected=$false;try{Invoke-MorphospacePreparedPublicationReconstruction -WorkspaceRoot $workspace -UnitId 'unit-reconstruction' -RepoMapPath $mapPath -ReconstructionReceipt $input|Out-Null}catch{$targetMismatchRejected=$true};Assert-Reconstruction $targetMismatchRejected 'accepted transition target-unit byte mismatch was accepted'
-    $acceptanceTransition=New-TransitionFixture $workspace 'acceptance-transition' $acceptanceEvent $unit
+    $acceptanceTransition=New-TransitionFixture -Workspace $workspace -Name "$($acceptanceEvent.event_id)-transition" -Event $acceptanceEvent -State $acceptanceState -Unit $unit -PreviousEventId $validationEvent.event_id
 
     $damaged=$document|ConvertTo-Json -Depth 40|ConvertFrom-Json
     $acceptanceCompletion=Read-MorphospaceProtocolJson (Join-Path $workspace ($damaged.acceptance_event.completion.path-replace'/','\'));$acceptanceCompletion.unit_sha256='0'*64
     Write-ReconstructionJson (Join-Path $workspace ($damaged.acceptance_event.completion.path-replace'/','\')) $acceptanceCompletion;$damaged.acceptance_event.completion.sha256=Get-MorphospaceFileSha256 (Join-Path $workspace ($damaged.acceptance_event.completion.path-replace'/','\'));Write-ReconstructionJson $input $damaged
     $completionMismatchRejected=$false;try{Invoke-MorphospacePreparedPublicationReconstruction -WorkspaceRoot $workspace -UnitId 'unit-reconstruction' -RepoMapPath $mapPath -ReconstructionReceipt $input|Out-Null}catch{$completionMismatchRejected=$true};Assert-Reconstruction $completionMismatchRejected 'acceptance completion unit_sha256 mismatch was accepted'
-    $acceptanceTransition=New-TransitionFixture $workspace 'acceptance-transition' $acceptanceEvent $unit
+    $acceptanceTransition=New-TransitionFixture -Workspace $workspace -Name "$($acceptanceEvent.event_id)-transition" -Event $acceptanceEvent -State $acceptanceState -Unit $unit -PreviousEventId $validationEvent.event_id
 
     $damaged=$document|ConvertTo-Json -Depth 40|ConvertFrom-Json;$unused=$damaged.physical_refs[1]|ConvertTo-Json -Depth 20|ConvertFrom-Json;$unused.physical_ref_id='unused-physical-ref';$damaged.physical_refs+=,$unused;Write-ReconstructionJson $input $damaged
     $unusedPhysicalRejected=$false;try{Invoke-MorphospacePreparedPublicationReconstruction -WorkspaceRoot $workspace -UnitId 'unit-reconstruction' -RepoMapPath $mapPath -ReconstructionReceipt $input|Out-Null}catch{$unusedPhysicalRejected=$true};Assert-Reconstruction $unusedPhysicalRejected 'extra unused physical ref was accepted'

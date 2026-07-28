@@ -168,7 +168,13 @@ function Test-PreparedPushConflictingEvidence {
         if ([string]$event.event_type -eq "push" -and @($event.receipts).Count) {
             $bound=$false
             foreach($reference in @($event.receipts)){
-                try{$resolved=Resolve-MorphospaceWorkspacePath $WorkspaceRoot ([string]$reference) -RequireLeaf;$owned=Read-MorphospaceProtocolJson $resolved;if(@($owned.bundle_id,$owned.audit_receipt.bundle_id)-contains$BundleId){$bound=$true}}catch{}
+                try{
+                    $resolved=Resolve-MorphospaceWorkspacePath $WorkspaceRoot ([string]$reference) -RequireLeaf
+                    $owned=Read-MorphospaceProtocolJson $resolved
+                }catch{
+                    throw "Prepared-push retirement could not authenticate event receipt '$([string]$reference)' at iteration-events.jsonl:$lineNumber."
+                }
+                if(@(Get-PreparedPushBundleBindings $owned)-contains$BundleId){$bound=$true}
             }
             if(-not$bound){continue}
             throw "Prepared-push retirement found a bundle-bound publication event at iteration-events.jsonl:$lineNumber."
@@ -346,10 +352,11 @@ function Invoke-MorphospacePreparedPushRetirement {
     }
 
     $blockerId = [string]$receipt.stale_blocker.value.blocker_id
+    $mutationBlockerId = if($null-eq$receipt.mutation.blocker_id){$null}else{[string]$receipt.mutation.blocker_id}
     $blockers=@($state.blockers|Where-Object{[string]$_.blocker_id-ceq$blockerId})
     if($blockers.Count-ne1-or(Get-MorphospaceCanonicalJsonSha256 $blockers[0])-cne[string]$receipt.stale_blocker.sha256-or
        (Get-MorphospaceCanonicalJsonSha256 $receipt.stale_blocker.value)-cne[string]$receipt.stale_blocker.sha256){throw "Prepared-push retirement stale blocker canonical hash mismatch."}
-    if($null-ne$receipt.mutation.blocker_id-and[string]$receipt.mutation.blocker_id-cne$blockerId){throw "Prepared-push retirement blocker identity mismatch."}
+    if($null-ne$mutationBlockerId-and$mutationBlockerId-cne$blockerId){throw "Prepared-push retirement blocker identity mismatch."}
     $receiptHash = Get-MorphospaceFileSha256 $receiptPath
     $eventsPath = Join-Path $workspace "iteration-events.jsonl"
     $events = @(Get-Content -LiteralPath $eventsPath | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json })
@@ -366,7 +373,7 @@ function Invoke-MorphospacePreparedPushRetirement {
         $preStateHash=Get-MorphospaceCanonicalJsonSha256 $state
         $preTail=if($events.Count){[string]$events[-1].event_id}else{$null}
         $state.pending_push_bundle = $null
-        if ($null -ne $blockerId) { $state.blockers = @($state.blockers | Where-Object {[string]$_.blocker_id -cne [string]$blockerId}) }
+        if ($null -ne $mutationBlockerId) { $state.blockers = @($state.blockers | Where-Object {[string]$_.blocker_id -cne $mutationBlockerId}) }
         $state.last_event_id = $eventId
         Start-MorphospaceTransitionLedger -WorkspaceRoot $workspace -TransactionId "$eventId-transition" `
             -StatePath "workspace.state.json" -UnitPath $unitPath -EventsPath "iteration-events.jsonl" `

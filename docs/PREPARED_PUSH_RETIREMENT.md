@@ -58,6 +58,11 @@ optionally clears exactly one blocker named by `mutation.blocker_id`, updates
 `last_event_id`, and appends a `prepared-push-retired` transition through the
 existing transaction ledger. Unit files, validation, acceptance, source Git,
 remotes, devices, tags, and release history remain unchanged.
+`stale_blocker` remains mandatory even when `mutation.blocker_id` is `null`:
+in that shape it is a canonical observation of the live stale blocker, not
+authority to remove it. A null mutation retires only the pending bundle and
+preserves that blocker plus every unrelated blocker. A non-null mutation must
+equal the observed stale blocker ID exactly.
 
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass `

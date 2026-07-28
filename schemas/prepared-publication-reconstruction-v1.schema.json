@@ -7,7 +7,7 @@
   "properties":{
     "schema":{"const":"rusty.morphospace.workflow.prepared_publication_reconstruction.v1"},
     "reconstruction_id":{"$ref":"#/$defs/id"},"project_id":{"$ref":"#/$defs/id"},"bundle_id":{"$ref":"#/$defs/id"},
-    "unit_ids":{"type":"array","minItems":1,"uniqueItems":true,"items":{"$ref":"#/$defs/id"}},
+    "unit_ids":{"type":"array","minItems":1,"maxItems":1,"uniqueItems":true,"items":{"$ref":"#/$defs/id"}},
     "prepared_plan":{"$ref":"#/$defs/memberBinding"},"prepared_event":{"type":"object","additionalProperties":false,"required":["event_id","intent","completion","member"],"properties":{"event_id":{"$ref":"#/$defs/id"},"intent":{"$ref":"#/$defs/file"},"completion":{"$ref":"#/$defs/file"},"member":{"const":"event"}}},
     "accepted_unit":{"$ref":"#/$defs/file"},"validation_receipt":{"$ref":"#/$defs/file"},
     "validation_event":{"$ref":"#/$defs/transitionBinding"},"acceptance_event":{"$ref":"#/$defs/transitionBinding"},

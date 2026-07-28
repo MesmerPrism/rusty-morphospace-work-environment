@@ -916,6 +916,20 @@ try {
     $preparedCompletionRelative = "receipts/transactions/$preparedEventId-transition.completion.json"
     $preparedIntentPath = Join-Path $workspace ($preparedIntentRelative -replace "/", "\")
     $preparedCompletionPath = Join-Path $workspace ($preparedCompletionRelative -replace "/", "\")
+    $realPreparedIntent = Get-Content -Raw $preparedIntentPath | ConvertFrom-Json
+    $realPreparedCompletion = Get-Content -Raw $preparedCompletionPath | ConvertFrom-Json
+    $realPreparedLedgerEvents = @(Get-Content (Join-Path $workspace "iteration-events.jsonl") | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json })
+    $realPreparedEvent = @($realPreparedLedgerEvents | Where-Object { [string]$_.event_id -eq $preparedEventId })
+    Assert-Automation (
+        [string]$realPreparedIntent.schema -eq "rusty.morphospace.workflow.transition_ledger_intent.v1" -and
+        [string]$realPreparedIntent.transaction_id -eq "$preparedEventId-transition" -and
+        [string]$realPreparedIntent.event.event_type -eq "commit" -and
+        [string]$realPreparedCompletion.intent.role -eq "transition-ledger-intent" -and
+        [string]$realPreparedCompletion.intent.path -eq $preparedIntentRelative -and
+        [string]$realPreparedCompletion.intent.schema -eq [string]$realPreparedIntent.schema -and
+        [string]$realPreparedCompletion.intent.sha256 -eq (Get-FileHash $preparedIntentPath).Hash.ToLowerInvariant() -and
+        $realPreparedEvent.Count -eq 1
+    ) "real PreparePush/transition-ledger provenance is incompatible with prepared-publication reconstruction"
     $retirementInput = Join-Path $testRoot "prepared-push-retirement-input.json"
     $retirementOutput = Join-Path $receiptRoot "prepared-push-retirement.json"
     $retirementStatePath = Join-Path $workspace "workspace.state.json"
@@ -925,7 +939,12 @@ try {
         condition = "The exact prepared bundle remains pending."
         resume_when = "Typed stale-bookkeeping evidence is accepted."
     }
-    $retirementState.blockers = @($retirementState.blockers) + $staleBlocker
+    $unrelatedBlocker = [pscustomobject][ordered]@{
+        blocker_id = "unrelated-auto-blocker"
+        condition = "An unrelated condition remains unresolved."
+        resume_when = "Separate unrelated evidence passes."
+    }
+    $retirementState.blockers = @($retirementState.blockers) + $staleBlocker + $unrelatedBlocker
     Write-TestJson -Path $retirementStatePath -Value $retirementState
     Invoke-TestGit -Path $planningRepo -Arguments @("add", ".") | Out-Null
     Invoke-TestGit -Path $planningRepo -Arguments @("commit", "-m", "bind exact stale prepared-push blocker") | Out-Null
@@ -1023,10 +1042,133 @@ try {
     $reachablePreparedRejected = $false
     try { & (Join-Path $PSScriptRoot "Invoke-WorkUnitAutomation.ps1") -Action RetirePreparedPush -WorkspaceRoot $workspace -UnitId "unit-auto-001" -RepoMapPath $repoMapPath -PreparedPushRetirement $retirementInput -Timestamp $fixed | Out-Null } catch { $reachablePreparedRejected = $_.Exception.Message -like "*requires at least one distinct prepared revision*" }
     Assert-Automation $reachablePreparedRejected "prepared-push retirement became an alternate accounting path for a remotely reachable prepared revision"
+
+    # The real RecordValidation -> Accept -> PreparePush chain must be accepted
+    # by reconstruction when observed through independent clean readback clones.
+    $sourceReadback = Join-Path $testRoot "source-reconstruction-readback"
+    $planningReadback = Join-Path $testRoot "planning-reconstruction-readback"
+    Invoke-TestGit -Path $testRoot -Arguments @("-c", "core.autocrlf=false", "clone", "--quiet", "--branch", "main", $remote, $sourceReadback) | Out-Null
+    Invoke-TestGit -Path $testRoot -Arguments @("-c", "core.autocrlf=false", "clone", "--quiet", "--branch", "main", $planningRemote, $planningReadback) | Out-Null
+    $reconstructionMapPath = Join-Path $testRoot "repository-map-real-reconstruction.json"
+    Write-TestJson -Path $reconstructionMapPath -Value ([ordered]@{
+        schema = "rusty.morphospace.workflow.repository_map.v1"
+        repositories = @(
+            [ordered]@{ repo_id = "project-shell"; path = $sourceReadback; role = "source"; aliases = @() },
+            [ordered]@{ repo_id = "workflow-planning"; path = $planningReadback; role = "planning"; aliases = @() }
+        )
+    })
+    Import-Module (Join-Path $PSScriptRoot "lib\MorphospaceProtocolCommon.psm1") -Force
+    $realReconstructionState = Get-Content -Raw $retirementStatePath | ConvertFrom-Json
+    $realUnitRelative = "iteration-units/unit-auto-001.json"
+    $realValidationRelative = [IO.Path]::GetRelativePath($workspace, $validReceiptPath).Replace("\","/")
+    $realValidationIntentRelative = "receipts/transactions/$([string]$record.event_id)-transition.intent.json"
+    $realValidationCompletionRelative = "receipts/transactions/$([string]$record.event_id)-transition.completion.json"
+    $realAcceptanceIntentRelative = "receipts/transactions/$([string]$accepted.event_id)-transition.intent.json"
+    $realAcceptanceCompletionRelative = "receipts/transactions/$([string]$accepted.event_id)-transition.completion.json"
+    $realFileBinding = {
+        param([string]$Relative)
+        $absolute = Join-Path $workspace ($Relative -replace "/","\")
+        [ordered]@{ path = $Relative; sha256 = (Get-FileHash $absolute).Hash.ToLowerInvariant() }
+    }
+    $realLogicalLegs = @()
+    $realPhysicalRefs = @()
+    foreach($planRepository in @($prepared.push_plan.repositories)){
+        $repoId = [string]$planRepository.repo_id
+        $readback = if($repoId -eq "project-shell"){$sourceReadback}else{$planningReadback}
+        $physicalId = "$repoId-main-readback"
+        $tip = @(Invoke-TestGit -Path $readback -Arguments @("rev-parse","HEAD"))[0]
+        $preparedRevision = [string]$planRepository.commit
+        $historyIds = @((@(Invoke-TestGit -Path $readback -Arguments @("rev-list","--reverse","$preparedRevision..$tip")) -join "`n") -split "`n" | Where-Object { $_ })
+        $history = @($historyIds | ForEach-Object {
+            $revision = [string]$_
+            [ordered]@{
+                revision = $revision
+                parents = @(((@(Invoke-TestGit -Path $readback -Arguments @("show","-s","--format=%P",$revision)) -join "") -split " ") | Where-Object { $_ })
+                tree = (@(Invoke-TestGit -Path $readback -Arguments @("show","-s","--format=%T",$revision)) -join "")
+                changed_paths = @(((@(Invoke-TestGit -Path $readback -Arguments @("diff-tree","--no-commit-id","--name-only","-r","--root",$revision)) -join "`n") -split "`n" | Where-Object { $_ } | Sort-Object -Unique))
+            }
+        })
+        $realLogicalLegs += [ordered]@{ repo_id=$repoId; role=[string]$planRepository.role; physical_ref_id=$physicalId; prepared_revision=$preparedRevision }
+        $realPhysicalRefs += [ordered]@{
+            physical_ref_id=$physicalId; observation_repo_id=$repoId; logical_repo_ids=@($repoId)
+            remote="origin"; ref="refs/heads/main"; branch="main"; upstream="origin/main"
+            prepared_revision=$preparedRevision
+            prepared_tree=(@(Invoke-TestGit -Path $readback -Arguments @("show","-s","--format=%T",$preparedRevision)) -join "")
+            remote_tip_revision=$tip
+            remote_tip_tree=(@(Invoke-TestGit -Path $readback -Arguments @("show","-s","--format=%T",$tip)) -join "")
+            ancestor_or_equal=$true; history=$history
+        }
+    }
+    $realReconstructionDocument = [ordered]@{
+        schema="rusty.morphospace.workflow.prepared_publication_reconstruction.v1"
+        reconstruction_id="real-automation-reconstruction";project_id="automation-test"
+        bundle_id=[string]$prepared.push_plan.bundle_id;unit_ids=@("unit-auto-001")
+        prepared_plan=[ordered]@{container=&$realFileBinding "receipts/push-plan.json";member="push_plan"}
+        prepared_event=[ordered]@{event_id=$preparedEventId;intent=&$realFileBinding $preparedIntentRelative;completion=&$realFileBinding $preparedCompletionRelative;member="event"}
+        accepted_unit=&$realFileBinding $realUnitRelative
+        validation_receipt=&$realFileBinding $realValidationRelative
+        validation_event=[ordered]@{event_id=[string]$record.event_id;intent=&$realFileBinding $realValidationIntentRelative;completion=&$realFileBinding $realValidationCompletionRelative}
+        acceptance_event=[ordered]@{event_id=[string]$accepted.event_id;intent=&$realFileBinding $realAcceptanceIntentRelative;completion=&$realFileBinding $realAcceptanceCompletionRelative}
+        pending_bundle=[ordered]@{value=$realReconstructionState.pending_push_bundle;sha256=Get-MorphospaceCanonicalJsonSha256 $realReconstructionState.pending_push_bundle}
+        stale_blocker=[ordered]@{value=$staleBlocker;sha256=Get-MorphospaceCanonicalJsonSha256 $staleBlocker}
+        active_workspace_observation=[ordered]@{evidentiary=$false;repositories=@()}
+        logical_legs=$realLogicalLegs;physical_refs=$realPhysicalRefs
+        conflicting_evidence=[ordered]@{executed_push_receipt_present=$false;planned_accounting_present=$false;unplanned_closure_present=$false}
+        claims=[ordered]@{original_plan_execution=$false;cross_repository_execution_or_publication_order=$false;source_first_planning_last_execution=$false;force_or_no_force_history=$false;publication_actor_or_timestamp=$false;historical_nonpublication_or_impossibility=$false;original_not_performed_preserved=$true}
+        mutation=[ordered]@{pending_bundle_consumed=$true;blocker_consumed=$true}
+    }
+    $realReconstructionInput = Join-Path $testRoot "real-prepared-publication-reconstruction.json"
+    Write-TestJson -Path $realReconstructionInput -Value $realReconstructionDocument
+    $realReconstructionDryRun = & (Join-Path $PSScriptRoot "Invoke-WorkUnitAutomation.ps1") -Action ReconcilePreparedPublication -WorkspaceRoot $workspace `
+        -UnitId "unit-auto-001" -RepoMapPath $reconstructionMapPath -PreparedPublicationReconstruction $realReconstructionInput -Timestamp $fixed | ConvertFrom-Json
+    Assert-Automation ($realReconstructionDryRun.transition -eq "prepared-publication-reconstructed" -and -not $realReconstructionDryRun.executed) "real RecordValidation/Accept/PreparePush provenance did not pass prepared-publication reconstruction"
+
     Invoke-TestGit -Path $remote -Arguments @("update-ref", "refs/heads/main", $remoteBefore) | Out-Null
     Invoke-TestGit -Path $repo -Arguments @("fetch", "origin") | Out-Null
     Invoke-TestGit -Path $planningRemote -Arguments @("update-ref", "refs/heads/main", $planningRemoteBefore) | Out-Null
     Invoke-TestGit -Path $planningRepo -Arguments @("fetch", "origin") | Out-Null
+    Write-TestJson -Path $retirementInput -Value $retirementDocument
+
+    $mismatchedBlockerRetirement = $retirementDocument | ConvertTo-Json -Depth 32 | ConvertFrom-Json
+    $mismatchedBlockerRetirement.mutation.blocker_id = "unrelated-auto-blocker"
+    Write-TestJson -Path $retirementInput -Value $mismatchedBlockerRetirement
+    $mismatchedBlockerRejected = $false
+    try { & (Join-Path $PSScriptRoot "Invoke-WorkUnitAutomation.ps1") -Action RetirePreparedPush -WorkspaceRoot $workspace -UnitId "unit-auto-001" -RepoMapPath $repoMapPath -PreparedPushRetirement $retirementInput -Timestamp $fixed | Out-Null } catch { $mismatchedBlockerRejected = $_.Exception.Message -like "*blocker identity mismatch*" }
+    Assert-Automation $mismatchedBlockerRejected "prepared-push retirement accepted a non-null blocker ID different from the canonical stale blocker"
+
+    $nullPlanningRepo = Join-Path $testRoot "planning-null-retirement"
+    Invoke-TestGit -Path $testRoot -Arguments @("-c", "core.autocrlf=false", "clone", "--quiet", "--branch", "main", $planningRepo, $nullPlanningRepo) | Out-Null
+    $workspaceRelative = [IO.Path]::GetRelativePath($planningRepo, $workspace)
+    $nullWorkspace = Join-Path $nullPlanningRepo $workspaceRelative
+    $nullRepoMapPath = Join-Path $testRoot "repository-map-null-retirement.json"
+    $nullRepoMap = Get-Content -Raw $repoMapPath | ConvertFrom-Json
+    (@($nullRepoMap.repositories | Where-Object { [string]$_.repo_id -eq "workflow-planning" }))[0].path = $nullPlanningRepo
+    Write-TestJson -Path $nullRepoMapPath -Value $nullRepoMap
+    $nullRetirement = $retirementDocument | ConvertTo-Json -Depth 32 | ConvertFrom-Json
+    $nullRetirement.mutation.blocker_id = $null
+    $nullRetirement.repositories = @($prepared.push_plan.repositories | ForEach-Object {
+        $path = if ([string]$_.repo_id -eq "project-shell") { $repo } else { $nullPlanningRepo }
+        $head = @(Invoke-TestGit -Path $path -Arguments @("rev-parse", "HEAD"))[0]
+        $upstream = @(Invoke-TestGit -Path $path -Arguments @("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"))[0]
+        $remoteRevision = @(Invoke-TestGit -Path $path -Arguments @("rev-parse", "@{upstream}"))[0]
+        $counts = (@(Invoke-TestGit -Path $path -Arguments @("rev-list", "--left-right", "--count", "HEAD...@{upstream}"))[0] -split "\s+")
+        [ordered]@{
+            repo_id = [string]$_.repo_id; role = [string]$_.role; branch = [string]$_.branch; upstream = $upstream
+            prepared_revision = @(Invoke-TestGit -Path $path -Arguments @("rev-parse", "$([string]$_.commit)^{commit}"))[0]
+            local_head = $head; remote_readback_revision = $remoteRevision; worktree_clean = $true
+            detached = $false; ahead = [int]$counts[0]; behind = [int]$counts[1]; diverged = $false
+        }
+    })
+    $nullRetirementInput = Join-Path $testRoot "prepared-push-retirement-null-input.json"
+    $nullRetirementOutput = Join-Path $nullWorkspace "receipts\prepared-push-retirement-null.json"
+    Write-TestJson -Path $nullRetirementInput -Value $nullRetirement
+    $nullRetired = & (Join-Path $PSScriptRoot "Invoke-WorkUnitAutomation.ps1") -Action RetirePreparedPush -WorkspaceRoot $nullWorkspace `
+        -UnitId "unit-auto-001" -RepoMapPath $nullRepoMapPath -PreparedPushRetirement $nullRetirementInput -Timestamp $fixed `
+        -OutPath $nullRetirementOutput -Execute | ConvertFrom-Json
+    $nullRetiredState = Get-Content -Raw (Join-Path $nullWorkspace "workspace.state.json") | ConvertFrom-Json
+    Assert-Automation ($nullRetired.executed -and $null-eq$nullRetiredState.pending_push_bundle) "null-blocker retirement did not consume the pending bundle"
+    Assert-Automation (@($nullRetiredState.blockers | Where-Object blocker_id -eq "stale-auto-push-plan").Count -eq 1) "null-blocker retirement removed the canonically observed stale blocker"
+    Assert-Automation (@($nullRetiredState.blockers | Where-Object blocker_id -eq "unrelated-auto-blocker").Count -eq 1) "null-blocker retirement removed an unrelated blocker"
     Write-TestJson -Path $retirementInput -Value $retirementDocument
 
     $retired = & (Join-Path $PSScriptRoot "Invoke-WorkUnitAutomation.ps1") -Action RetirePreparedPush -WorkspaceRoot $workspace `
@@ -1035,6 +1177,7 @@ try {
     $retiredState = Get-Content -Raw (Join-Path $workspace "workspace.state.json") | ConvertFrom-Json
     Assert-Automation ($retired.executed -and $retired.event_id -like "*prepared-push-retired*" -and $null -eq $retiredState.pending_push_bundle) "prepared-push retirement did not consume exactly one pending bundle"
     Assert-Automation ((-not ($retiredState.PSObject.Properties.Name -contains "prepared_push_retirements")) -and (Test-Path $retirementOutput) -and @($retiredState.blockers | Where-Object blocker_id -eq "stale-auto-push-plan").Count -eq 0) "prepared-push retirement receipt was not transaction-owned or exact blocker was not removed"
+    Assert-Automation (@($retiredState.blockers | Where-Object blocker_id -eq "unrelated-auto-blocker").Count -eq 1) "prepared-push retirement removed an unrelated blocker"
     $repeatRejected = $false
     try { & (Join-Path $PSScriptRoot "Invoke-WorkUnitAutomation.ps1") -Action RetirePreparedPush -WorkspaceRoot $workspace -UnitId "unit-auto-001" -RepoMapPath $repoMapPath -PreparedPushRetirement $retirementInput -Timestamp $fixed | Out-Null } catch { $repeatRejected = $_.Exception.Message -like "*already consumed*" }
     Assert-Automation $repeatRejected "prepared-push retirement permitted repeated consumption"
