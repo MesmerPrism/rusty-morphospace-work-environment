@@ -33,16 +33,17 @@ In this work-environment repo:
 In the public Meta Quest workflow repo:
 
 1. `README.md`
-2. `docs/adb-basics.md`
-3. `docs/apk-install-launch.md`
-4. `docs/managed-device-store-apps.md`, when organization-managed modes,
+2. `docs/agent-execution-providers.md`
+3. `docs/adb-basics.md`
+4. `docs/apk-install-launch.md`
+5. `docs/managed-device-store-apps.md`, when organization-managed modes,
    consumer or managed Store apps, paid entitlements, or launcher cleanup is
    involved
-5. `docs/artifact-and-evidence-discipline.md`
-6. `docs/quest-signal-patterns.md`
-7. `docs/accessibility-foreground-watchdogs.md`, when foreground monitoring,
+6. `docs/artifact-and-evidence-discipline.md`
+7. `docs/quest-signal-patterns.md`
+8. `docs/accessibility-foreground-watchdogs.md`, when foreground monitoring,
    Meta Home transitions, or special Accessibility enablement is involved
-8. `docs/termux-linux-sidecars.md`, if Termux is involved
+9. `docs/termux-linux-sidecars.md`, if Termux is involved
 
 ## Core Rules
 
@@ -75,6 +76,23 @@ In the public Meta Quest workflow repo:
 - Do not treat Termux as Android shell authority unless an already authorized
   ADB gate reports `uid=2000(shell)`.
 - Keep raw device evidence private unless a public redaction gate exists.
+- Prefer an owning application's typed CLI or local API for repeatable
+  operations it fully supports. QuestIonAble File Manager is the preferred
+  local provider only for its advertised closed exact-serial commands; Rusty
+  Fleet is the managed multi-target provider only with current Manifold
+  authority and effect-owner receipts.
+- Keep portable workflow intent, private local resolution, File Manager local
+  execution, Fleet managed execution, and workflow evidence wrapping as
+  separate records. Never put local paths, serial aliases, credentials,
+  targets, approvals, Agent Board correlations, or Manifold fields in a public
+  portable intent.
+- Preserve owner-issued evidence byte-for-byte. Bind only its schema and
+  SHA-256 from a sanitized workflow wrapper, and never relabel raw ADB fallback
+  output as accepted File Manager, Fleet, Manifold, Kiosk, or app evidence.
+- Add MCP only after an owning typed command registry and its CLI/local API
+  projections have stable conformance tests. Never expose raw shell, generic
+  ADB arguments, arbitrary components/intents/paths/properties/processes, or
+  caller-supplied authority.
 - When several projects share one headset, require distinct package/client,
   build-output, property, and staging identities. Validate a hashed run capsule
   before install, serialize mutations per serial, snapshot and clear the
@@ -140,6 +158,10 @@ In the public Meta Quest workflow repo:
   bounded fatals, and uninstall all test packages on both explicit serials.
 
 ## Install And Launch Shape
+
+Use the File Manager typed inspected-deployment route when its advertised
+capabilities cover the operation. Use the following serial-scoped ADB shape as
+an explicitly labeled diagnostic fallback or for provider-gap recovery:
 
 ```powershell
 adb -s <quest-serial> install -r -d -g <path-to.apk>

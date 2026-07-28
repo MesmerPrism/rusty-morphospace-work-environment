@@ -120,7 +120,10 @@ pwsh -NoProfile -ExecutionPolicy Bypass `
 
 6. For Quest APK work, read [Quest APK Workflow](docs/QUEST_APK_WORKFLOW.md)
    and use the public Meta Quest workflow repo as the device-operations
-   authority.
+   authority. Its provider policy prefers closed typed application commands
+   for repeatable utilities, keeps local File Manager and managed Fleet
+   execution contracts separate, and retains raw ADB as a labeled diagnostic
+   fallback.
 
 The checked-in [Hello Morphospace V2](examples/hello-morphospace-v2/README.md)
 workspace demonstrates an inert lock, a proposed bounded unit, and semantic

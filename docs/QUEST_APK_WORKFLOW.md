@@ -4,6 +4,18 @@ Use this runbook when building, installing, launching, or validating Quest APKs
 for Rusty Morphospace work. For live device operations, use the public
 `meta-quest-workflow` skill or the `meta-quest-agent-workflow` repository.
 
+For repeatable agent operations, follow
+`meta-quest-agent-workflow/docs/agent-execution-providers.md`. Prefer an owning
+application's closed typed CLI or local API when it covers the exact operation
+and produces fresh effective readback. QuestIonAble File Manager may own a
+local exact-serial inspected deployment; Rusty Fleet may own a managed
+multi-target operation only through current Manifold authority and effect-
+owner receipts. Their executable requests and receipts are deliberately
+different. Keep machine paths, serial aliases, target resolution, credentials,
+approvals, and coordination correlations in private resolver/run evidence.
+Use direct serial-scoped ADB below as a labeled diagnostic fallback or for
+provider-gap recovery, never as substitute owner acceptance.
+
 ## Authority Split
 
 | Surface | Owner |

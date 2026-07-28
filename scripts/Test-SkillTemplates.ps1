@@ -11,6 +11,7 @@ $RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
 $skillRoot = Join-Path $RepoRoot "skills"
 $expected = @("meta-quest-workflow", "rust-work-graph", "rusty-morphospace-context", "system-engineering")
 $publicQuestWorkflowDocs = @(
+    "docs/agent-execution-providers.md",
     "docs/adb-basics.md",
     "docs/apk-install-launch.md",
     "docs/managed-device-store-apps.md",

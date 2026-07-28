@@ -206,6 +206,15 @@ in runner variables or typed reference wrappers, never injected properties.
 - Machine-local resource claims coordinate repo paths, build outputs, Android
   packages, property/staging namespaces, bridge ports, and headset serials.
   Claims do not activate features or authorize Git/device operations.
+- Repeatable Quest utilities prefer an owning application's closed typed
+  CLI/local API when it can produce exact-target effective readback. Local
+  File Manager and managed Fleet execution use disjoint executable contracts;
+  raw serial-scoped ADB remains a labeled diagnostic fallback.
+- A portable workflow intent contains no machine resolver, target, approval,
+  coordination, credential, or Manifold state. Preserve owner evidence
+  byte-for-byte and bind only its schema and SHA-256 from a sanitized wrapper.
+  Add MCP only after the owning typed registry is stable; never expose a raw
+  shell or generic ADB-argument surface.
 - Optional work-unit automation is fail-closed: inspect/plan by default,
   require `-Execute` for workspace-state mutation, preserve dirty/divergent
   repositories, derive graph scope from the unit, and never own Git push,

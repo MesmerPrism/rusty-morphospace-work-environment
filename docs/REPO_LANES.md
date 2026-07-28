@@ -15,6 +15,7 @@ Rusty Morphospace is the umbrella. Concrete ownership stays in lanes.
 | Makepad | Makepad adapters, settings surfaces, app-shell integration | Quest platform authority or generic core state |
 | Quest | Quest/Horizon/Android platform profiles, permissions, launch, ADB-facing validation receipts | generic command/session authority |
 | Hostess | install/test/evidence orchestration and shell UX | runtime feature authority |
+| QuestIonAble File Manager | Windows-first exact-serial ADB storage, inspected APK deployment, constrained resolved launch, bounded device observation, and reviewed local device utilities through typed CLI/API/WPF routes | managed target selection, Manifold authority, Fleet scheduling, app-owned OpenXR/runtime truth |
 
 ## Public Rusty XR Compatibility
 
@@ -57,8 +58,15 @@ media paths, input routes, or private defaults to other projects. See
 - Command/session/stream/control transport starts in Manifold.
 - LSL compatibility starts in Rusty LSL; official liblsl is a black-box oracle,
   not a source template or production dependency, and rLSL source is excluded.
-- Quest install, launch, runtime profiles, Android property hygiene, and
-  headset evidence start in Quest or Meta Quest workflow.
+- Repeatable local exact-serial storage, inspected APK deployment, constrained
+  launch, and bounded device observation start in QuestIonAble File Manager
+  when its closed typed registry covers the operation.
+- Quest platform profiles and app-owned effective runtime receipts start in
+  Quest; portable provider selection, raw diagnostic fallback, and evidence
+  wrapping start in Meta Quest workflow.
+- Managed multi-headset selection and scheduling start in Fleet, with Manifold
+  retaining command/lease authority and the effect owner retaining application
+  receipts.
 - Termux sidecars stay in Quest Termux Lab until a sanitized sidecar contract
   is ready for Rusty Quest sidecar integration.
 - Makepad-specific packaging and generated activity behavior stay in the
