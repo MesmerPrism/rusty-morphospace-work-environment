@@ -1079,6 +1079,7 @@ try {
         $fabricatedPlanOwner.event_id=$fabricatedEventId
         Write-TestJson -Path $fabricatedPlanPath -Value $fabricatedPlanOwner
         $fabricatedIntent=$realPreparedIntent|ConvertTo-Json -Depth 32|ConvertFrom-Json
+        $fabricatedIntent.created_at=& $retirementModule {param($value)ConvertTo-MorphospaceUtcTimestamp ([DateTimeOffset]$value)} $fabricatedIntent.created_at
         $fabricatedIntent.transaction_id=$fabricatedTransactionId
         $fabricatedIntent.event.event_id=$fabricatedEventId
         $fabricatedIntent.event.sequence=[int]$realPreparedEvent[0].sequence+1
@@ -1094,6 +1095,7 @@ try {
         })
         Write-TestJson -Path $fabricatedIntentPath -Value $fabricatedIntent
         $fabricatedCompletion=$realPreparedCompletion|ConvertTo-Json -Depth 32|ConvertFrom-Json
+        $fabricatedCompletion.completed_at=& $retirementModule {param($value)ConvertTo-MorphospaceUtcTimestamp ([DateTimeOffset]$value)} $fabricatedCompletion.completed_at
         $fabricatedCompletion.transaction_id=$fabricatedTransactionId
         $fabricatedCompletion.intent.path=$fabricatedIntentRelative
         $fabricatedCompletion.intent.sha256=(Get-FileHash $fabricatedIntentPath).Hash.ToLowerInvariant()
