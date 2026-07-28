@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/legacy-embedded-push-bundle-plan-v1.schema.json",
+  "title": "Retained historical PreparePush embedded plan compatibility",
+  "description": "Additive read-only compatibility shape for immutable historical push_bundle_plan.v1 members. It is not a production declaration schema.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema","bundle_id","project_id","unit_ids","prepared_at","dependency_order","repositories","source_first","planning_last","execution","force_push_allowed"],
+  "properties": {
+    "schema": {"const":"rusty.morphospace.workflow.push_bundle_plan.v1"},
+    "bundle_id": {"$ref":"#/$defs/id"},
+    "project_id": {"$ref":"#/$defs/id"},
+    "unit_ids": {"type":"array","minItems":1,"uniqueItems":true,"items":{"$ref":"#/$defs/id"}},
+    "prepared_at": {"type":"string","format":"date-time"},
+    "dependency_order": {"type":"array","minItems":1,"uniqueItems":true,"items":{"$ref":"#/$defs/id"}},
+    "repositories": {
+      "type":"array","minItems":1,
+      "items":{
+        "type":"object","additionalProperties":false,
+        "required":["repo_id","role","branch","commit","upstream","ahead","behind"],
+        "properties":{
+          "repo_id":{"$ref":"#/$defs/id"},
+          "role":{"enum":["application","adapter","source","planning"]},
+          "branch":{"type":"string","minLength":1},
+          "commit":{"type":"string","pattern":"^[0-9a-fA-F]{7,64}$"},
+          "upstream":{"oneOf":[{"type":"string","minLength":1},{"type":"null"}]},
+          "ahead":{"oneOf":[{"type":"integer","minimum":0},{"type":"null"}]},
+          "behind":{"oneOf":[{"type":"integer","minimum":0},{"type":"null"}]}
+        }
+      }
+    },
+    "source_first":{"const":true},
+    "planning_last":{"type":"boolean"},
+    "execution":{"const":"not-performed"},
+    "force_push_allowed":{"const":false},
+    "publication_ordering_interruption":{
+      "oneOf":[
+        {"type":"null"},
+        {
+          "type":"object","additionalProperties":false,
+          "required":["path","sha256","kind","early_planning_checkpoint_preserved","source_publication_claimed"],
+          "properties":{
+            "path":{"type":"string","minLength":1},
+            "sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"},
+            "kind":{"const":"planning-published-before-source"},
+            "early_planning_checkpoint_preserved":{"const":true},
+            "source_publication_claimed":{"const":false}
+          }
+        }
+      ]
+    }
+  },
+  "$defs":{
+    "id":{"type":"string","pattern":"^[a-z0-9][a-z0-9-]{1,127}$"}
+  }
+}

@@ -95,6 +95,12 @@ hash-bound receipt listed by compact state under
 [Historical Iteration-Unit Adoption](HISTORICAL_UNIT_ADOPTION.md). This route
 is unavailable to current or future units.
 
+Compact state may add optional `prepared_push_retirements`. Each entry binds
+one retirement ID and bundle ID to a retained workspace-relative receipt path
+and SHA-256. Absence preserves 0.6.0 compatibility. Presence changes no unit,
+validation, acceptance, or publication history; authority remains in
+[Prepared Push Retirement](PREPARED_PUSH_RETIREMENT.md).
+
 ## Project And Module Firewall
 
 Application-specific details stay on the project side of the boundary:
@@ -180,6 +186,22 @@ pwsh -NoProfile -ExecutionPolicy Bypass `
 The scaffold refuses to overwrite an existing `morphospace/` directory.
 It defaults to protocol v2; pass `-ProtocolVersion 1` only for an explicit
 compatibility fixture.
+
+The additive `ResolveBlocker` automation action does not change either pinned
+workspace-state schema. It removes only one exact blocker from the current
+active unit after validating product-neutral, hash-bound passing evidence and
+exact repository heads plus per-repository dirty source bytes, with a final
+recheck immediately before transition. See
+[Generic Blocker Resolution](BLOCKER_RESOLUTION.md).
+
+`CorrectResolvedBlockerEvidence` is a separate additive v2-receipt action for
+an absent blocker whose immutable historical resolution transaction remains
+valid but whose broader complete-resolution evidence was incomplete. It binds
+the retained event/receipt/intent/completion chain and fresh exact repository
+heads/source bytes, appends a generic transition, and changes only
+`last_event_id`. It never changes blockers, pending publication, validation,
+acceptance, plan, current unit, or unit bytes. See
+[Blocker Resolution Correction](BLOCKER_RESOLUTION_CORRECTION.md).
 
 Resolve a non-empty v2 lock from owner-issued descriptors:
 

@@ -183,6 +183,17 @@ status/state/event edits.
 hashed artifacts, exact acceptance/gate coverage, repository revisions,
 changed paths, and required device cleanup/fatal fields still match current
 state.
+One exact active-unit blocker may be cleared through the additive,
+product-neutral `ResolveBlocker` route. Its strict receipt binds the blocker,
+passing evidence, current repository heads, exact per-repository dirty source
+bytes, and every other blocker that must remain unchanged. See
+[Generic Blocker Resolution](docs/BLOCKER_RESOLUTION.md).
+When that immutable resolution remains historically valid but its broader
+complete-resolution evidence was incomplete, use the separate append-only
+`CorrectResolvedBlockerEvidence` route. It binds the original
+event/receipt/intent/completion chain plus fresh exact repository source
+evidence and changes only `last_event_id`. See
+[Blocker Resolution Correction](docs/BLOCKER_RESOLUTION_CORRECTION.md).
 Interrupted cross-repo commits, builds, and device runs resume only from a
 validated `interruption_receipt.v1`; the automation restores workflow state
 after cleanup evidence exists but never performs the external cleanup.
@@ -206,6 +217,23 @@ suffix, and consume only the exact pending bundle. Prepared evidence may bind
 standalone plan/event files or their immutable automation-receipt and
 transition-ledger containers. See
 [`docs/PLANNED_PUBLICATION_ACCOUNTING.md`](docs/PLANNED_PUBLICATION_ACCOUNTING.md).
+The additive post-0.6.0
+[prepared-push retirement candidate](docs/PREPARED_PUSH_RETIREMENT.md) handles
+only an exact pending bundle whose immutable plan records
+`execution: not-performed`. It requires complete stable clean repository and
+fresh remote-readback evidence, rejects execution/publication bindings and
+remotely reachable prepared ahead revisions, and retains a hash-bound receipt.
+Current `PreparePush` writes that plan only as the preparation transition's
+single byte-exact owned artifact; retirement rejects a plan path, hash, or
+payload that differs from the historical intent.
+It is not a published 0.6.1 release and does not reinterpret publication or
+reconciliation.
+When every distinct prepared revision is reachable while the immutable plan
+still says `not-performed`, use
+[prepared-publication reconstruction](docs/PREPARED_PUBLICATION_RECONSTRUCTION.md).
+It enumerates exact intervening history and clears stale bookkeeping without
+claiming execution, chronology, force history, actor/time, or historical
+non-publication.
 An immutable executed bundle followed by a separately accepted workflow
 correction uses the additive intervening-publication recovery, which binds the
 exact fast-forward commits and paths through current clean remote readback. It

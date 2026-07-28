@@ -89,6 +89,14 @@ from the unit, keep acceptance separate from a pass receipt, preserve blockers
 through resume/recovery, and report dirty, detached, ahead/behind, or divergent
 Git states without rewriting them. Push preparation records exact source-first,
 planning-last revisions but does not commit, push, or force-push.
+An exact still-unexecuted prepared bundle may be retired only after complete
+stable clean observations, fresh remote readback, and exclusion of recognized
+execution/publication evidence. If all distinct prepared revisions are already
+reachable, use the separate complete-history reconstruction route instead.
+Generic blocker resolution and its additive evidence correction bind exact
+source bytes, heads, event/receipt/ledger history, and state/event-tail CAS;
+they preserve every unrelated workflow projection and never perform external
+cleanup or Git mutation.
 An early planning checkpoint with every source still unpublished may be bound
 only through a publication-ordering interruption receipt in a fresh plan; exact
 live ancestry must match and the plan claims no corrected order or publication.

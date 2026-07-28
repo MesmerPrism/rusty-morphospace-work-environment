@@ -281,7 +281,12 @@ if ($SelfTest) {
         [pscustomobject]@{ name = "workflow:project-isolation"; script = "Test-ProjectIsolation.ps1"; detail = "Validated exact source locks, detached materializations, no-overwrite content addresses, and conflicting resource claims." }
     )) {
         try {
-            & (Join-Path (Join-Path $RepoRoot "scripts") $quickTest.script)
+            $quickTestPath = Join-Path (Join-Path $RepoRoot "scripts") $quickTest.script
+            if ($quickTest.name -eq "workflow:public-boundary") {
+                & $quickTestPath -Root $RepoRoot
+            } else {
+                & $quickTestPath
+            }
             Add-CheckResult -Name $quickTest.name -Status "ok" -Detail $quickTest.detail
         } catch {
             Add-CheckResult -Name $quickTest.name -Status "missing" -Required $true -Detail $_.Exception.Message

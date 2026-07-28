@@ -167,6 +167,14 @@ commit/unit accounting and live clean readback before it may clear the exact
 pending bundle. It records workflow state only; details are in
 [Planned Publication Accounting](PLANNED_PUBLICATION_ACCOUNTING.md).
 
+An exact pending bundle that remains demonstrably unexecuted may instead use
+`RetirePreparedPush`. It binds the embedded plan and preparation-event owner
+containers, requires complete stable clean repository observations and fresh
+remote readback, rejects remotely reachable prepared ahead revisions and every
+recognized execution/publication binding, and consumes only the matching
+bundle. See [Prepared Push Retirement](PREPARED_PUSH_RETIREMENT.md). This
+additive route does not weaken publication, reconciliation, or recovery.
+
 The executed receipt uses one `ref_id` per branch and records full old, new,
 and observed-remote revisions, whether the ref was pushed or only read back,
 fast-forward ancestry evidence, passing validation references, explicit
@@ -264,6 +272,10 @@ The CLI is deliberately narrower than an autonomous coding agent:
   containing the active workspace;
 - a prepared push bundle records source-first and planning-last order but has
   `execution: not-performed` and `force_push_allowed: false`.
+- executed `PreparePush` constructs its final receipt bytes before transition
+  start and installs that receipt as the transition's single owned artifact;
+  the receipt is never written as an overwriteable post-transition side
+  effect.
 - it never emits `executed_push_receipt.v1`; that receipt belongs to the
   externally authorized push/readback step.
 - publication reconciliation consumes independently authored closure evidence,
@@ -330,11 +342,49 @@ pwsh -NoProfile -ExecutionPolicy Bypass `
   -Execute
 ```
 
-Every action returns a validation matrix, a graph scope limited to the unit's
-declared repositories and paths, and a repository-preservation report.
+Core `work_unit_automation_receipt.v1` actions return a validation matrix, a
+graph scope limited to the unit's declared repositories and paths, and a
+repository-preservation report. Specialized additive actions that return the
+strict `work_unit_automation_receipt.v2` shape instead carry its compact
+preservation and audit-receipt fields; consumers must branch on the receipt
+schema rather than assume the v1 matrix and graph fields are universal.
+Transition repair accepts only a strict UTF-8, duplicate-key-free v1 event
+whose transaction identity, canonical body, sequence, immediate predecessor,
+and tail position match the retained intent. The same placement is
+re-authenticated before event append and completion; a same-ID event elsewhere
+in the ledger is not repair authority. Every retained ledger prefix entry must
+also satisfy the exact v1 schema, unique identity, contiguous sequence, and
+non-regressing invariant timestamp before it can supply a predecessor or tail.
+The proposed event itself must use a strict invariant timestamp and must not
+precede the authenticated tail; both start and repair prove this under the
+workspace mutex before publishing an intent or changing any projection.
+Each intent also binds the exact pre-append ledger byte length and SHA-256.
+Repair accepts an authenticated torn suffix only when it is a strict prefix of
+the one canonical event line, truncates to that bound, and then appends exactly
+once. A workspace may have only one incomplete transition intent; later
+transitions wait for its explicit repair. Transaction artifacts use
+create-new, transaction-scoped staging files, reject occupied, duplicate,
+case-alias, projection, ledger, intent, completion, and stage targets before
+intent publication, and move into their final targets before projections.
 `Recover` only repairs an unambiguous stale current-unit pointer; it preserves
 blockers and prior validation evidence. `Resume` is the explicit transition
 out of `blocked`.
+
+`ResolveBlocker` is a separate product-neutral action for one exact blocker on
+the current active unit. It validates `blocker_resolution_receipt.v1`, rechecks
+hash-bound evidence, repository heads, and exact dirty source bytes immediately
+before transition, preserves every other blocker and workflow projection, and
+uses state/unit/event-tail CAS. See
+[Generic Blocker Resolution](BLOCKER_RESOLUTION.md).
+
+Use `CorrectResolvedBlockerEvidence` only when the target blocker remains
+absent and the immutable historical resolution transaction is valid, but its
+broader complete-resolution claim needs fresh evidence. The correction binds
+the original event/receipt/intent/completion hash chain, current repository
+heads/source bytes, and every live blocker. It changes only `last_event_id`,
+appends one generic transition, fails closed on damaged retained correction
+evidence, and rejects replay by stable identity or canonical hash. See
+[Blocker Resolution Correction](BLOCKER_RESOLUTION_CORRECTION.md).
 
 ## Receipt-Security Corrective Units
 

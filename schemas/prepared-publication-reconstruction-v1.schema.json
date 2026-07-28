@@ -1,0 +1,34 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/prepared-publication-reconstruction-v1.schema.json",
+  "title":"Prepared publication evidence reconstruction",
+  "type":"object","additionalProperties":false,
+  "required":["schema","reconstruction_id","project_id","bundle_id","unit_ids","repository_map_sha256","prepared_plan","prepared_event","accepted_unit","validation_receipt","validation_predecessor","validation_event","acceptance_event","intervening_transitions","pending_bundle","stale_blocker","active_workspace_observation","logical_legs","physical_refs","conflicting_evidence","claims","mutation"],
+  "properties":{
+    "schema":{"const":"rusty.morphospace.workflow.prepared_publication_reconstruction.v1"},
+    "reconstruction_id":{"$ref":"#/$defs/id"},"project_id":{"$ref":"#/$defs/id"},"bundle_id":{"$ref":"#/$defs/id"},
+    "repository_map_sha256":{"$ref":"#/$defs/hash"},
+    "unit_ids":{"type":"array","minItems":1,"maxItems":1,"uniqueItems":true,"items":{"$ref":"#/$defs/id"}},
+    "prepared_plan":{"$ref":"#/$defs/memberBinding"},"prepared_event":{"type":"object","additionalProperties":false,"required":["event_id","intent","completion","member"],"properties":{"event_id":{"$ref":"#/$defs/id"},"intent":{"$ref":"#/$defs/file"},"completion":{"$ref":"#/$defs/file"},"member":{"const":"event"}}},
+    "accepted_unit":{"$ref":"#/$defs/file"},"validation_receipt":{"$ref":"#/$defs/file"},
+    "validation_predecessor":{"oneOf":[{"type":"null"},{"$ref":"#/$defs/transitionBinding"}]},
+    "validation_event":{"$ref":"#/$defs/transitionBinding"},"acceptance_event":{"$ref":"#/$defs/transitionBinding"},
+    "intervening_transitions":{"type":"array","maxItems":128,"uniqueItems":true,"items":{"$ref":"#/$defs/transitionBinding"}},
+    "pending_bundle":{"$ref":"#/$defs/canonicalObject"},"stale_blocker":{"$ref":"#/$defs/canonicalObject"},
+    "active_workspace_observation":{"type":"object","additionalProperties":false,"required":["evidentiary","repositories"],"properties":{"evidentiary":{"const":false},"repositories":{"type":"array","maxItems":128,"uniqueItems":true,"items":{"$ref":"#/$defs/activeWorkspaceRepositoryObservation"}}}},
+    "logical_legs":{"type":"array","minItems":1,"items":{"type":"object","additionalProperties":false,"required":["repo_id","role","physical_ref_id","prepared_revision"],"properties":{"repo_id":{"$ref":"#/$defs/id"},"role":{"enum":["application","adapter","source","planning"]},"physical_ref_id":{"$ref":"#/$defs/id"},"prepared_revision":{"$ref":"#/$defs/revision"}}}},
+    "physical_refs":{"type":"array","minItems":1,"items":{"type":"object","additionalProperties":false,"required":["physical_ref_id","observation_repo_id","logical_repo_ids","remote","ref","branch","upstream","remote_fetch_identity","remote_push_identity","prepared_revision","prepared_tree","remote_tip_revision","remote_tip_tree","ancestor_or_equal","history"],"properties":{"physical_ref_id":{"$ref":"#/$defs/id"},"observation_repo_id":{"$ref":"#/$defs/id"},"logical_repo_ids":{"type":"array","minItems":1,"uniqueItems":true,"items":{"$ref":"#/$defs/id"}},"remote":{"type":"string","minLength":1},"ref":{"type":"string","minLength":1},"branch":{"type":"string","minLength":1},"upstream":{"type":"string","minLength":1},"remote_fetch_identity":{"$ref":"#/$defs/hash"},"remote_push_identity":{"$ref":"#/$defs/hash"},"prepared_revision":{"$ref":"#/$defs/revision"},"prepared_tree":{"$ref":"#/$defs/revision"},"remote_tip_revision":{"$ref":"#/$defs/revision"},"remote_tip_tree":{"$ref":"#/$defs/revision"},"ancestor_or_equal":{"const":true},"history":{"type":"array","items":{"$ref":"#/$defs/commit"}}}}},
+    "conflicting_evidence":{"type":"object","additionalProperties":false,"required":["executed_push_receipt_present","planned_accounting_present","unplanned_closure_present"],"properties":{"executed_push_receipt_present":{"const":false},"planned_accounting_present":{"const":false},"unplanned_closure_present":{"const":false}}},
+    "claims":{"type":"object","additionalProperties":false,"required":["original_plan_execution","cross_repository_execution_or_publication_order","source_first_planning_last_execution","force_or_no_force_history","publication_actor_or_timestamp","historical_nonpublication_or_impossibility","original_not_performed_preserved"],"properties":{"original_plan_execution":{"const":false},"cross_repository_execution_or_publication_order":{"const":false},"source_first_planning_last_execution":{"const":false},"force_or_no_force_history":{"const":false},"publication_actor_or_timestamp":{"const":false},"historical_nonpublication_or_impossibility":{"const":false},"original_not_performed_preserved":{"const":true}}},
+    "mutation":{"type":"object","additionalProperties":false,"required":["pending_bundle_consumed","blocker_consumed"],"properties":{"pending_bundle_consumed":{"const":true},"blocker_consumed":{"const":true}}}
+  },
+  "$defs":{
+    "id":{"type":"string","pattern":"^[a-z0-9][a-z0-9-]{1,127}$"},"hash":{"type":"string","pattern":"^[0-9a-f]{64}$"},"revision":{"type":"string","pattern":"^[0-9a-f]{40}$"},"path":{"type":"string","pattern":"^(?![A-Za-z]:)(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/-]+$"},
+    "file":{"type":"object","additionalProperties":false,"required":["path","sha256"],"properties":{"path":{"$ref":"#/$defs/path"},"sha256":{"$ref":"#/$defs/hash"}}},
+    "memberBinding":{"type":"object","additionalProperties":false,"required":["container","member"],"properties":{"container":{"$ref":"#/$defs/file"},"member":{"const":"push_plan"}}},
+    "transitionBinding":{"type":"object","additionalProperties":false,"required":["event_id","intent","completion"],"properties":{"event_id":{"$ref":"#/$defs/id"},"intent":{"$ref":"#/$defs/file"},"completion":{"$ref":"#/$defs/file"}}},
+    "canonicalObject":{"type":"object","additionalProperties":false,"required":["value","sha256"],"properties":{"value":{"type":"object"},"sha256":{"$ref":"#/$defs/hash"}}},
+    "activeWorkspaceRepositoryObservation":{"type":"object","additionalProperties":false,"required":["repo_id","relation","dirty"],"properties":{"repo_id":{"$ref":"#/$defs/id"},"relation":{"enum":["missing","not-git","not-mapped","detached","no-upstream","unknown","ahead","behind","diverged","synchronized"]},"dirty":{"oneOf":[{"type":"boolean"},{"type":"null"}]}}},
+    "commit":{"type":"object","additionalProperties":false,"required":["revision","parents","tree","changed_paths"],"properties":{"revision":{"$ref":"#/$defs/revision"},"parents":{"type":"array","items":{"$ref":"#/$defs/revision"}},"tree":{"$ref":"#/$defs/revision"},"changed_paths":{"type":"array","uniqueItems":true,"items":{"type":"string","minLength":1}}}}
+  }
+}

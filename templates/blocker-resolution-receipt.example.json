@@ -1,0 +1,37 @@
+{
+  "schema": "rusty.morphospace.workflow.blocker_resolution_receipt.v1",
+  "receipt_id": "example-blocker-resolution",
+  "project_id": "example-project",
+  "unit_id": "example-unit",
+  "blocker": {
+    "blocker_id": "example-blocker",
+    "condition": "A required product-neutral contract check failed.",
+    "resume_when": "The named evidence passes and repository heads remain exact."
+  },
+  "result": "pass",
+  "evidence": [
+    {
+      "path": "receipts/example-check.json",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ],
+  "repository_heads": [
+    {
+      "repo_id": "example-repository",
+      "branch": "main",
+      "revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  ],
+  "repository_sources": [
+    {
+      "repo_id": "example-repository",
+      "sources": [
+        {
+          "path": "src/example.txt",
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      ]
+    }
+  ],
+  "preserve_blocker_ids": []
+}

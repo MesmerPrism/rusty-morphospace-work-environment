@@ -1439,6 +1439,31 @@ function Invoke-MorphospaceWorkUnitAutomation {
         }
     }
 
+    $newAutomationResult = {
+        [pscustomobject][ordered]@{
+            schema = "rusty.morphospace.workflow.work_unit_automation_receipt.v1"
+            project_id = [string]$state.project_id; unit_id = $UnitId; action = $Action
+            timestamp = $Timestamp; executed = $Execute.IsPresent; transition = $transition
+            status_before = $beforeStatus; status_after = [string]$unit.status
+            current_unit_before = $beforeCurrent; current_unit_after = $state.current_unit
+            preservation = [pscustomobject][ordered]@{
+                git_mutation_performed = $false; device_mutation_performed = $false
+                force_push_allowed = $false; repository_states = @($repoStatesArray | ForEach-Object { New-MorphospaceRepositorySummary -State $_ })
+            }
+            validation_matrix = $validationMatrix; graph_scope = $graphScope
+            adoption_receipt = $adoptionReference
+            publication_closure = $publicationClosureBinding
+            published_planning_authority_adoption = $publishedPlanningAuthorityAdoptionBinding
+            planned_publication = $publicationAccountingBinding
+            planning_suffix_rewrite_recovery = $planningSuffixRewriteBinding
+            published_prerequisite_suffix_reconciliation = $publishedPrerequisiteSuffixBinding
+            push_plan = $pushPlan
+            event_id = if ($event) { [string]$event.event_id } else { $null }
+        }
+    }
+    $result = $null
+    $transitionArtifacts = @()
+    $transitionOwnsOutPath = $false
     if ($Execute -and $event) {
         $state.last_event_id = [string]$event.event_id
         if (-not $skipAutomaticRepositoryProjection) {
@@ -1485,6 +1510,18 @@ function Invoke-MorphospaceWorkUnitAutomation {
                 }
             }
         }
+        if ($Action -eq "PreparePush") {
+            $result = & $newAutomationResult
+            $receiptBytes = [System.Text.UTF8Encoding]::new($false).GetBytes(
+                (($result | ConvertTo-Json -Depth 32) + [Environment]::NewLine)
+            )
+            $transitionArtifacts = @([pscustomobject][ordered]@{
+                bytes_base64 = [Convert]::ToBase64String($receiptBytes)
+                path = $receiptReference
+                sha256 = Get-MorphospaceSha256Bytes -Bytes $receiptBytes
+            })
+            $transitionOwnsOutPath = $true
+        }
         $transactionId = "$([string]$event.event_id)-transition"
         $unitRelativePath = $unitEntry.path.Substring(($resolvedWorkspace.TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar).Length).Replace('\', '/')
         Start-MorphospaceTransitionLedger `
@@ -1497,30 +1534,12 @@ function Invoke-MorphospaceWorkUnitAutomation {
             -TargetUnit $unit `
             -Event $event `
             -ExpectedPreStateSha256 $expectedPreStateSha256 `
-            -ExpectedPreUnitSha256 $expectedPreUnitSha256 | Out-Null
+            -ExpectedPreUnitSha256 $expectedPreUnitSha256 `
+            -Artifacts $transitionArtifacts | Out-Null
     }
 
-    $result = [pscustomobject][ordered]@{
-        schema = "rusty.morphospace.workflow.work_unit_automation_receipt.v1"
-        project_id = [string]$state.project_id; unit_id = $UnitId; action = $Action
-        timestamp = $Timestamp; executed = $Execute.IsPresent; transition = $transition
-        status_before = $beforeStatus; status_after = [string]$unit.status
-        current_unit_before = $beforeCurrent; current_unit_after = $state.current_unit
-        preservation = [pscustomobject][ordered]@{
-            git_mutation_performed = $false; device_mutation_performed = $false
-            force_push_allowed = $false; repository_states = @($repoStatesArray | ForEach-Object { New-MorphospaceRepositorySummary -State $_ })
-        }
-        validation_matrix = $validationMatrix; graph_scope = $graphScope
-        adoption_receipt = $adoptionReference
-        publication_closure = $publicationClosureBinding
-        published_planning_authority_adoption = $publishedPlanningAuthorityAdoptionBinding
-        planned_publication = $publicationAccountingBinding
-        planning_suffix_rewrite_recovery = $planningSuffixRewriteBinding
-        published_prerequisite_suffix_reconciliation = $publishedPrerequisiteSuffixBinding
-        push_plan = $pushPlan
-        event_id = if ($event) { [string]$event.event_id } else { $null }
-    }
-    if ($Execute -and $OutPath) { Write-MorphospaceJson -Path $OutPath -Value $result }
+    if ($null -eq $result) { $result = & $newAutomationResult }
+    if ($Execute -and $OutPath -and -not $transitionOwnsOutPath) { Write-MorphospaceJson -Path $OutPath -Value $result }
     return $result
 }
 

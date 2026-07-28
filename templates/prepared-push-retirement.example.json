@@ -1,0 +1,79 @@
+{
+  "schema": "rusty.morphospace.workflow.prepared_push_retirement.v1",
+  "retirement_id": "retirement-example-001",
+  "project_id": "example-project",
+  "bundle_id": "example-project-unit-example-001-push",
+  "unit_ids": ["unit-example-001"],
+  "reason": "reprepared",
+  "repository_map_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+  "prepared_plan": {
+    "container": {
+      "path": "receipts/example-project-unit-example-001-push-plan.json",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    "member": "push_plan"
+  },
+  "prepared_event": {
+    "event_id": "unit-example-001-push-bundle-prepared-7",
+    "intent": {
+      "path": "receipts/transactions/unit-example-001-push-bundle-prepared-7-transition.intent.json",
+      "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    "completion": {
+      "path": "receipts/transactions/unit-example-001-push-bundle-prepared-7-transition.completion.json",
+      "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+    },
+    "member": "event"
+  },
+  "pending_bundle": {
+    "value": {
+      "bundle_id": "example-project-unit-example-001-push",
+      "unit_ids": ["unit-example-001"],
+      "repo_ids": ["example-source"],
+      "planning_transport_repo_id": "example-source",
+      "ready": true
+    },
+    "sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+  },
+  "stale_blocker": {
+    "value": {
+      "blocker_id": "stale-example-push-plan",
+      "condition": "The exact prepared bundle remains pending.",
+      "resume_when": "Typed retirement evidence is accepted."
+    },
+    "sha256": "5555555555555555555555555555555555555555555555555555555555555555"
+  },
+  "observed_at": "2026-07-28T12:00:00Z",
+  "repositories": [
+    {
+      "repo_id": "example-source",
+      "role": "source",
+      "branch": "main",
+      "upstream": "origin/main",
+      "prepared_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "local_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "remote_readback_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "worktree_clean": true,
+      "detached": false,
+      "ahead": 1,
+      "behind": 0,
+      "diverged": false,
+      "remote_fetch_identity": "7777777777777777777777777777777777777777777777777777777777777777",
+      "remote_push_identity": "7777777777777777777777777777777777777777777777777777777777777777"
+    }
+  ],
+  "evidence_search": {
+    "workspace_relative_roots": ["receipts", "iteration-events.jsonl"],
+    "recognized_binding_count": 0,
+    "complete": true
+  },
+  "claims": {
+    "workflow_recognized_execution_or_publication_asserted": false,
+    "historical_publication_impossible": false,
+    "remote_mutation_performed": false
+  },
+  "mutation": {
+    "pending_bundle_consumed": true,
+    "blocker_id": "stale-example-push-plan"
+  }
+}
