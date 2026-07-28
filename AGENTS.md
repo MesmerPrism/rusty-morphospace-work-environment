@@ -254,7 +254,10 @@ in runner variables or typed reference wrappers, never injected properties.
   planning refs must form the final execution suffix.
 - One exact pending plan that still records `execution: not-performed` may be
   retired only through `prepared_push_retirement.v1` and
-  `RetirePreparedPush`. Bind its immutable plan/event owner containers,
+  `RetirePreparedPush`. `PreparePush` must install its automation receipt as
+  the transition's single byte-exact owned artifact; retirement must bind the
+  identical artifact path, SHA-256, and payload from the immutable intent.
+  Bind its immutable plan/event owner containers,
   complete stable clean repository observations, fresh remote readback, and
   the absence of recognized execution/publication evidence. Reject remotely
   reachable prepared ahead revisions. The route clears only the matching
@@ -279,7 +282,9 @@ in runner variables or typed reference wrappers, never injected properties.
   malformed input, and duplicate protected updates fail closed.
 - `PreparePush` requires one distinct external planning repository containing
   the active project workspace. A source-only same-ref workspace may not claim
-  planning-last closure. If a push preceded preparation, preserve chronology
+  planning-last closure. Its executed receipt output is installed by the same
+  transition that appends the preparation event, never by a later overwrite.
+  If a push preceded preparation, preserve chronology
   with `unplanned_publication_closure.v1` and the workflow-only
   `ReconcilePublication` transition; never fabricate a plan or mutate Git from
   recovery.

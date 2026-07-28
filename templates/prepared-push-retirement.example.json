@@ -5,6 +5,7 @@
   "bundle_id": "example-project-unit-example-001-push",
   "unit_ids": ["unit-example-001"],
   "reason": "reprepared",
+  "repository_map_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
   "prepared_plan": {
     "container": {
       "path": "receipts/example-project-unit-example-001-push-plan.json",
@@ -56,7 +57,9 @@
       "detached": false,
       "ahead": 1,
       "behind": 0,
-      "diverged": false
+      "diverged": false,
+      "remote_fetch_identity": "7777777777777777777777777777777777777777777777777777777777777777",
+      "remote_push_identity": "7777777777777777777777777777777777777777777777777777777777777777"
     }
   ],
   "evidence_search": {

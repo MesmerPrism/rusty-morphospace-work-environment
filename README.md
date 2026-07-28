@@ -223,6 +223,9 @@ only an exact pending bundle whose immutable plan records
 `execution: not-performed`. It requires complete stable clean repository and
 fresh remote-readback evidence, rejects execution/publication bindings and
 remotely reachable prepared ahead revisions, and retains a hash-bound receipt.
+Current `PreparePush` writes that plan only as the preparation transition's
+single byte-exact owned artifact; retirement rejects a plan path, hash, or
+payload that differs from the historical intent.
 It is not a published 0.6.1 release and does not reinterpret publication or
 reconciliation.
 When every distinct prepared revision is reachable while the immutable plan

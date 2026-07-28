@@ -6,7 +6,7 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "schema", "retirement_id", "project_id", "bundle_id", "unit_ids", "reason",
+    "schema", "retirement_id", "project_id", "bundle_id", "unit_ids", "reason", "repository_map_sha256",
     "prepared_plan", "prepared_event", "pending_bundle", "stale_blocker", "observed_at", "repositories",
     "evidence_search", "claims", "mutation"
   ],
@@ -20,6 +20,7 @@
       "items": { "$ref": "#/$defs/id" }
     },
     "reason": { "enum": ["superseded", "obsolete-composition", "reprepared"] },
+    "repository_map_sha256": { "$ref": "#/$defs/hash" },
     "prepared_plan": {
       "type": "object", "additionalProperties": false,
       "required": ["container", "member"],
@@ -48,7 +49,7 @@
         "required": [
           "repo_id", "role", "branch", "upstream", "prepared_revision",
           "local_head", "remote_readback_revision", "worktree_clean",
-          "detached", "ahead", "behind", "diverged"
+          "detached", "ahead", "behind", "diverged", "remote_fetch_identity", "remote_push_identity"
         ],
         "properties": {
           "repo_id": { "$ref": "#/$defs/id" },
@@ -62,7 +63,9 @@
           "detached": { "const": false },
           "ahead": { "type": "integer", "minimum": 0 },
           "behind": { "const": 0 },
-          "diverged": { "const": false }
+          "diverged": { "const": false },
+          "remote_fetch_identity": { "$ref": "#/$defs/hash" },
+          "remote_push_identity": { "$ref": "#/$defs/hash" }
         }
       }
     },

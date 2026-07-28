@@ -4,6 +4,7 @@
   "project_id": "example-project",
   "bundle_id": "example-bundle",
   "unit_ids": ["example-unit"],
+  "repository_map_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
   "prepared_plan": {
     "container": {"path":"receipts/example-prepare-owner.json","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
     "member": "push_plan"
@@ -16,6 +17,7 @@
   },
   "accepted_unit":{"path":"iteration-units/example-unit.json","sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"},
   "validation_receipt":{"path":"receipts/example-validation.json","sha256":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"},
+  "validation_predecessor":null,
   "validation_event":{
     "event_id":"example-validation-pass",
     "intent":{"path":"receipts/transactions/example-validation.intent.json","sha256":"1111111111111111111111111111111111111111111111111111111111111111"},
@@ -26,6 +28,7 @@
     "intent":{"path":"receipts/transactions/example-accept.intent.json","sha256":"3333333333333333333333333333333333333333333333333333333333333333"},
     "completion":{"path":"receipts/transactions/example-accept.completion.json","sha256":"4444444444444444444444444444444444444444444444444444444444444444"}
   },
+  "intervening_transitions":[],
   "pending_bundle":{"value":{"bundle_id":"example-bundle","unit_ids":["example-unit"]},"sha256":"5555555555555555555555555555555555555555555555555555555555555555"},
   "stale_blocker":{"value":{"blocker_id":"example-stale-publication","condition":"Published revisions remain pending.","resume_when":"Canonical reconstruction passes."},"sha256":"6666666666666666666666666666666666666666666666666666666666666666"},
   "active_workspace_observation":{"evidentiary":false,"repositories":[]},
@@ -35,8 +38,8 @@
     {"repo_id":"planning","role":"planning","physical_ref_id":"application-main","prepared_revision":"7777777777777777777777777777777777777777"}
   ],
   "physical_refs":[
-    {"physical_ref_id":"application-main","observation_repo_id":"application-physical","logical_repo_ids":["application","planning"],"remote":"origin","ref":"refs/heads/main","branch":"main","upstream":"origin/main","prepared_revision":"7777777777777777777777777777777777777777","prepared_tree":"9999999999999999999999999999999999999999","remote_tip_revision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","remote_tip_tree":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","ancestor_or_equal":true,"history":[]},
-    {"physical_ref_id":"adapter-main","observation_repo_id":"adapter-physical","logical_repo_ids":["adapter"],"remote":"origin","ref":"refs/heads/main","branch":"main","upstream":"origin/main","prepared_revision":"8888888888888888888888888888888888888888","prepared_tree":"cccccccccccccccccccccccccccccccccccccccc","remote_tip_revision":"dddddddddddddddddddddddddddddddddddddddd","remote_tip_tree":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","ancestor_or_equal":true,"history":[]}
+    {"physical_ref_id":"application-main","observation_repo_id":"application-physical","logical_repo_ids":["application","planning"],"remote":"origin","ref":"refs/heads/main","branch":"main","upstream":"origin/main","remote_fetch_identity":"1111111111111111111111111111111111111111111111111111111111111111","remote_push_identity":"1111111111111111111111111111111111111111111111111111111111111111","prepared_revision":"7777777777777777777777777777777777777777","prepared_tree":"9999999999999999999999999999999999999999","remote_tip_revision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","remote_tip_tree":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","ancestor_or_equal":true,"history":[]},
+    {"physical_ref_id":"adapter-main","observation_repo_id":"adapter-physical","logical_repo_ids":["adapter"],"remote":"origin","ref":"refs/heads/main","branch":"main","upstream":"origin/main","remote_fetch_identity":"2222222222222222222222222222222222222222222222222222222222222222","remote_push_identity":"2222222222222222222222222222222222222222222222222222222222222222","prepared_revision":"8888888888888888888888888888888888888888","prepared_tree":"cccccccccccccccccccccccccccccccccccccccc","remote_tip_revision":"dddddddddddddddddddddddddddddddddddddddd","remote_tip_tree":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","ancestor_or_equal":true,"history":[]}
   ],
   "conflicting_evidence":{"executed_push_receipt_present":false,"planned_accounting_present":false,"unplanned_closure_present":false},
   "claims":{"original_plan_execution":false,"cross_repository_execution_or_publication_order":false,"source_first_planning_last_execution":false,"force_or_no_force_history":false,"publication_actor_or_timestamp":false,"historical_nonpublication_or_impossibility":false,"original_not_performed_preserved":true},

@@ -272,6 +272,10 @@ The CLI is deliberately narrower than an autonomous coding agent:
   containing the active workspace;
 - a prepared push bundle records source-first and planning-last order but has
   `execution: not-performed` and `force_push_allowed: false`.
+- executed `PreparePush` constructs its final receipt bytes before transition
+  start and installs that receipt as the transition's single owned artifact;
+  the receipt is never written as an overwriteable post-transition side
+  effect.
 - it never emits `executed_push_receipt.v1`; that receipt belongs to the
   externally authorized push/readback step.
 - publication reconciliation consumes independently authored closure evidence,
@@ -340,6 +344,13 @@ pwsh -NoProfile -ExecutionPolicy Bypass `
 
 Every action returns a validation matrix, a graph scope limited to the unit's
 declared repositories and paths, and a repository-preservation report.
+Transition repair accepts only a strict UTF-8, duplicate-key-free v1 event
+whose transaction identity, canonical body, sequence, immediate predecessor,
+and tail position match the retained intent. The same placement is
+re-authenticated before event append and completion; a same-ID event elsewhere
+in the ledger is not repair authority. Every retained ledger prefix entry must
+also satisfy the exact v1 schema, unique identity, contiguous sequence, and
+non-regressing invariant timestamp before it can supply a predecessor or tail.
 `Recover` only repairs an unambiguous stale current-unit pointer; it preserves
 blockers and prior validation evidence. `Resume` is the explicit transition
 out of `blocked`.

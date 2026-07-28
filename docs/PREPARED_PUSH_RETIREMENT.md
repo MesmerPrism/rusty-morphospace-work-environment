@@ -30,21 +30,37 @@ provenance binds the immutable executed `PreparePush` automation receipt by
 workspace-relative path and SHA-256 with member `push_plan`. It also binds the
 original preparation event through the exact transition-ledger intent and
 completion containers, their hashes, event identity, and member `event`.
+The preparation intent must own exactly one artifact: that same automation
+receipt with identical path, SHA-256, and base64-decoded bytes. `PreparePush`
+constructs those final bytes before starting the transition; the ledger
+installs them inside the state/unit/event transaction, so a later plan-file
+replacement is not admissible historical provenance.
 Validators read those embedded members; they never reconstruct standalone
-copies.
+copies. `repository_map_sha256` binds the exact portable repository map used
+for both readback passes.
 
 Every planned repository must appear exactly once in the plan, pending compact
 state, repository map, and retirement observation. Validation requires the
 planned branch and upstream, resolved prepared revision, current local HEAD,
 fresh remote branch readback, clean attached worktree, no behind/divergent
-state, and two stable observation passes. Source HEAD remains the prepared
+state, retained fetch/push endpoint identity, and two stable observation
+passes. Source HEAD remains the prepared
 revision. A planning HEAD may contain only the exact preparation evidence
 suffix. If a prepared ahead revision is remotely reachable, retirement rejects
 and the appropriate publication-accounting route remains authoritative.
+Every Git graph read disables replacement objects and rejects replacement refs,
+grafts, shallow history, alternates, external object storage, linked Git
+ownership, and `GIT_*` overrides. Physical directory identity—not textual path
+casing—defines aliased repository groups, and fetch/push endpoints must resolve
+to one stable identity.
 
-The validator searches the complete workspace `receipts/` tree and event log
+The validator searches the complete workspace `receipts/` tree and a bounded,
+strict-UTF-8, duplicate-key-rejecting event log
 for workflow-recognized execution, planned accounting, reconciliation,
-unplanned publication, and rewrite-recovery bindings to the bundle. Any match,
+unplanned publication, rewrite-recovery, competing reconstruction/retirement,
+or their consuming automation bindings to the bundle. Every event receipt is
+resolved and parsed even when its event is not a push; empty-receipt push
+events reject. Any match,
 malformed searched JSON, failed remote lookup, stale readback, missing
 repository, partial set, tampering, unrelated suffix, dirty state, or consumed
 bundle rejects.
@@ -58,11 +74,23 @@ optionally clears exactly one blocker named by `mutation.blocker_id`, updates
 `last_event_id`, and appends a `prepared-push-retired` transition through the
 existing transaction ledger. Unit files, validation, acceptance, source Git,
 remotes, devices, tags, and release history remain unchanged.
+Input, bound preparation evidence, and the repository map are read once into
+bounded strict-JSON snapshots and retained under read leases. Execution repeats
+their exact-byte checks, state/unit/specification CAS, strict ledger and
+conflict scans, output absence, and the complete Git readback under the
+workspace transaction mutex before installing the retained input bytes.
 `stale_blocker` remains mandatory even when `mutation.blocker_id` is `null`:
 in that shape it is a canonical observation of the live stale blocker, not
 authority to remove it. A null mutation retires only the pending bundle and
 preserves that blocker plus every unrelated blocker. A non-null mutation must
 equal the observed stale blocker ID exactly.
+
+The original preparation owner is accepted only when its canonical transaction
+paths, intent targets, completion hashes, exact event bytes, and preceding
+event tail authenticate to one entry in the strict append-only event ledger.
+The current workspace-state `last_event_id` must equal that ledger's tail both
+before validation and again under the execution mutex; retirement never heals
+a pre-existing split authority.
 
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass `
