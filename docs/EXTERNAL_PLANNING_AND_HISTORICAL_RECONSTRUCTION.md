@@ -80,6 +80,27 @@ exists.
 `ReconcilePublication` remains the bundle-bearing recovery route. It must not
 be used to invent a missing pending bundle for this null-bundle adoption case.
 
+## Published active embedded authority adoption
+
+Use `planning_workspace_projection.v3` when the exact published embedded state
+still has the matching `active` or `validating` current unit, while
+`next_ready_unit` and `pending_push_bundle` are null. The generator also reads
+the exact projected unit and rejects a mismatched ID or a status outside those
+two in-flight states.
+
+After independently recording the exact source-publication and observer
+evidence, create a `published_planning_authority_adoption.v2` receipt and run
+`AdoptPublishedPlanningAuthority` from the external workspace. The transition
+changes only `last_event_id`: it preserves the current unit, dirty repository
+set, repository heads and checkpoints, validation checkpoint, and every other
+state field.
+
+This is authority migration, not acceptance reconstruction. It creates no
+validation, acceptance, prepared plan, executed-push receipt, Git mutation, or
+publication-order claim. Finish the in-flight unit through ordinary
+`BeginValidation`, `RecordValidation`, and `Accept` transitions in the external
+planning workspace.
+
 ## Damaged historical adoption
 
 Keep a drifted `historical_unit_adoption_receipts` path and expected hash

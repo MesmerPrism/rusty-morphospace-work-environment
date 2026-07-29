@@ -10,7 +10,8 @@
     "schema": {
       "enum": [
         "rusty.morphospace.workflow.planning_workspace_projection.v1",
-        "rusty.morphospace.workflow.planning_workspace_projection.v2"
+        "rusty.morphospace.workflow.planning_workspace_projection.v2",
+        "rusty.morphospace.workflow.planning_workspace_projection.v3"
       ]
     },
     "projection_id": { "$ref": "#/$defs/id" },
@@ -25,7 +26,8 @@
         "classification": {
           "enum": [
             "embedded-workspace-projected-after-source-publication",
-            "published-embedded-workspace-authority-adoption"
+            "published-embedded-workspace-authority-adoption",
+            "published-embedded-active-workspace-authority-adoption"
           ]
         },
         "source_publication_preceded_projection": { "const": true },
@@ -83,7 +85,12 @@
         "source_repository"
       ],
       "properties": {
-        "current_unit": { "type": "null" },
+        "current_unit": {
+          "oneOf": [
+            { "$ref": "#/$defs/id" },
+            { "type": "null" }
+          ]
+        },
         "next_ready_unit": { "type": "null" },
         "pending_push_bundle": { "type": "null" },
         "dirty_repository_ids": {
@@ -178,6 +185,46 @@
           "planning": {
             "properties": {
               "base_revision": { "$ref": "#/$defs/sha" }
+            }
+          },
+          "authority": {
+            "properties": {
+              "next_transition": {
+                "const": "AdoptPublishedPlanningAuthority"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "schema": {
+            "const": "rusty.morphospace.workflow.planning_workspace_projection.v3"
+          }
+        }
+      },
+      "then": {
+        "required": ["projected_state"],
+        "properties": {
+          "chronology": {
+            "properties": {
+              "classification": {
+                "const": "published-embedded-active-workspace-authority-adoption"
+              }
+            }
+          },
+          "planning": {
+            "properties": {
+              "base_revision": { "$ref": "#/$defs/sha" }
+            }
+          },
+          "projected_state": {
+            "properties": {
+              "current_unit": { "$ref": "#/$defs/id" },
+              "next_ready_unit": { "type": "null" },
+              "pending_push_bundle": { "type": "null" }
             }
           },
           "authority": {

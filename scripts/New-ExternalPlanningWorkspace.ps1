@@ -6,7 +6,7 @@ param(
     [Parameter(Mandatory)][string]$Branch,[Parameter(Mandatory)][string]$Upstream,
     [Parameter(Mandatory)][string]$OldRevision,[Parameter(Mandatory)][string]$PublishedRevision,
     [string]$EmbeddedWorkspacePath='morphospace',[string]$Timestamp='',
-    [ValidateSet('v1','v2')][string]$ProjectionVersion='v1',[switch]$Execute
+    [ValidateSet('v1','v2','v3')][string]$ProjectionVersion='v1',[switch]$Execute
 )
 $ErrorActionPreference='Stop'
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospacePlanningProjection.psm1') -Force
@@ -18,7 +18,7 @@ if(-not$workspace.StartsWith($planning+[IO.Path]::DirectorySeparatorChar,[String
 if(-not$projection.StartsWith($workspace+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw'ProjectionPath must be inside WorkspaceRoot.'}
 if(Test-Path -LiteralPath $workspace){throw'WorkspaceRoot already exists; projection is one-time and no-overwrite.'}
 $planningBaseRevision=$null
-if($ProjectionVersion-ceq'v2'){
+if($ProjectionVersion-cin@('v2','v3')){
     $planningBase=Get-PlanningProjectionLocalBase $planning
     $planningStatus=@(& git -C $planning status --porcelain=v1 --untracked-files=all)
     if($LASTEXITCODE-ne0-or$planningStatus.Count-ne0){throw'V2 planning repository base must be clean before projection.'}
@@ -36,8 +36,12 @@ $relativeProjection=$projection.Substring($workspace.Length+1).Replace('\','/')
 Test-PlanningProjectionRelativePath $relativeProjection 'Projection record path'
 if(@($inventory|Where-Object{$_.path-ceq$relativeProjection}).Count-ne0){throw'ProjectionPath collides with a published workspace file.'}
 $schemaId="rusty.morphospace.workflow.planning_workspace_projection.$ProjectionVersion"
-$classification=if($ProjectionVersion-ceq'v2'){'published-embedded-workspace-authority-adoption'}else{'embedded-workspace-projected-after-source-publication'}
-$nextTransition=if($ProjectionVersion-ceq'v2'){'AdoptPublishedPlanningAuthority'}else{'ReconcilePublication'}
+$classification=switch($ProjectionVersion){
+    'v2'{'published-embedded-workspace-authority-adoption'}
+    'v3'{'published-embedded-active-workspace-authority-adoption'}
+    default{'embedded-workspace-projected-after-source-publication'}
+}
+$nextTransition=if($ProjectionVersion-cin@('v2','v3')){'AdoptPublishedPlanningAuthority'}else{'ReconcilePublication'}
 $document=[ordered]@{
  '$schema'='../schemas/planning-workspace-projection.schema.json';schema=$schemaId
  projection_id=$ProjectionId;project_id=$ProjectId;unit_id=$UnitId;recorded_at=$Timestamp;status='exact-projection-verified'
@@ -48,8 +52,8 @@ $document=[ordered]@{
  authority=[ordered]@{source_workspace='immutable-historical-snapshot';external_workspace='sole-mutable-workflow-authority';source_workflow_mutation_performed=$false;git_mutation_performed=$false;next_transition=$nextTransition}
  failure=$null
 }
-if($ProjectionVersion-ceq'v2'){
-    $document['projected_state']=Get-PublishedProjectionStateBinding $source $PublishedRevision $EmbeddedWorkspacePath $SourceRepoId
+if($ProjectionVersion-cin@('v2','v3')){
+    $document['projected_state']=Get-PublishedProjectionStateBinding $source $PublishedRevision $EmbeddedWorkspacePath $SourceRepoId $UnitId ($ProjectionVersion-ceq'v3')
 }
 if(-not$Execute){$document|ConvertTo-Json -Depth 16;return}
 [IO.Directory]::CreateDirectory($workspace)|Out-Null
