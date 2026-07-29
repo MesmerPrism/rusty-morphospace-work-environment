@@ -120,10 +120,12 @@ pwsh -NoProfile -ExecutionPolicy Bypass `
 
 6. For Quest APK work, read [Quest APK Workflow](docs/QUEST_APK_WORKFLOW.md)
    and use the public Meta Quest workflow repo as the device-operations
-   authority. Its provider policy prefers closed typed application commands
-   for repeatable utilities, keeps local File Manager and managed Fleet
-   execution contracts separate, and retains raw ADB as a labeled diagnostic
-   fallback.
+   authority. Routine local work uses a hash-pinned File Manager CLI, Kiosk
+   launch/foreground control when applicable, and app-owned runtime evidence.
+   Managed target-set work uses Fleet with current authority and effect-owner
+   receipts. Local File Manager and managed Fleet contracts remain separate;
+   raw ADB requires an explicit bootstrap, provider-gap, diagnostic, or
+   recovery fallback.
 
 The checked-in [Hello Morphospace V2](examples/hello-morphospace-v2/README.md)
 workspace demonstrates an inert lock, a proposed bounded unit, and semantic

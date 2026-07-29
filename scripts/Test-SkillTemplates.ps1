@@ -11,6 +11,7 @@ $RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
 $skillRoot = Join-Path $RepoRoot "skills"
 $expected = @("meta-quest-workflow", "rust-work-graph", "rusty-morphospace-context", "system-engineering")
 $publicQuestWorkflowDocs = @(
+    "docs/rusty-morphospace-default-device-loop.md",
     "docs/agent-execution-providers.md",
     "docs/adb-basics.md",
     "docs/apk-install-launch.md",
@@ -62,6 +63,20 @@ if ($contextLines.Count -gt 180) {
 }
 if ($context -match "WF-005|NET-013|REL-003|unreleased until") {
     throw "The context router contains transient roadmap or release state."
+}
+
+$metaAgentPath = Join-Path $skillRoot "meta-quest-workflow\agents\openai.yaml"
+if (-not (Test-Path -LiteralPath $metaAgentPath -PathType Leaf)) {
+    throw "Meta Quest skill is missing agents/openai.yaml."
+}
+$metaAgent = Get-Content -Raw -LiteralPath $metaAgentPath
+foreach ($field in @("display_name:", "short_description:", "default_prompt:")) {
+    if (-not $metaAgent.Contains($field, [System.StringComparison]::Ordinal)) {
+        throw "Meta Quest skill metadata is missing $field"
+    }
+}
+if ($metaAgent -match "[A-Za-z]:\\") {
+    throw "Meta Quest skill metadata contains an absolute Windows path."
 }
 
 Write-Host "Portable skill template validation passed."

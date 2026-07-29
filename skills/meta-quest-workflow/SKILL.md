@@ -1,6 +1,6 @@
 ---
 name: meta-quest-workflow
-description: 'Use for connected Meta Quest work: APK install, launch, and validation; serial-scoped ADB; Meta VR CLI or hzdb checks; screenshots, logcat, and Perfetto; Wi-Fi ADB; Rusty Morphospace headset smoke tests; and Quest toolchain routing.'
+description: 'Use for Meta Quest work through Rusty Morphospace File Manager, Kiosk, or Fleet defaults, with APK validation, serial-scoped ADB fallback, diagnostics, capture, Wi-Fi ADB, and Quest toolchain routing.'
 ---
 
 # Meta Quest Workflow
@@ -33,17 +33,43 @@ In this work-environment repo:
 In the public Meta Quest workflow repo:
 
 1. `README.md`
-2. `docs/agent-execution-providers.md`
-3. `docs/adb-basics.md`
-4. `docs/apk-install-launch.md`
-5. `docs/managed-device-store-apps.md`, when organization-managed modes,
+2. `docs/rusty-morphospace-default-device-loop.md`
+3. `docs/agent-execution-providers.md`
+4. `docs/adb-basics.md` only for bootstrap, diagnostics, or fallback
+5. `docs/apk-install-launch.md`
+6. `docs/managed-device-store-apps.md`, when organization-managed modes,
    consumer or managed Store apps, paid entitlements, or launcher cleanup is
    involved
-6. `docs/artifact-and-evidence-discipline.md`
-7. `docs/quest-signal-patterns.md`
-8. `docs/accessibility-foreground-watchdogs.md`, when foreground monitoring,
+7. `docs/artifact-and-evidence-discipline.md`
+8. `docs/quest-signal-patterns.md`
+9. `docs/accessibility-foreground-watchdogs.md`, when foreground monitoring,
    Meta Home transitions, or special Accessibility enablement is involved
-9. `docs/termux-linux-sidecars.md`, if Termux is involved
+10. `docs/termux-linux-sidecars.md`, if Termux is involved
+
+## Default Ecosystem Loop
+
+For routine Rusty Morphospace work, use:
+
+```text
+project-owned build and run capsule
+  -> File Manager inspected deployment for one local exact serial
+     OR Fleet approved execution for one immutable managed target snapshot
+  -> Kiosk catalog/launch/foreground control when applicable
+  -> app-owned effective-runtime evidence
+  -> owner-specific cleanup
+```
+
+Do not force every operation through every product. File Manager is the local
+single-headset default. Fleet is the managed-target default only with current
+Manifold and effect-owner authority. Kiosk is the launch front door when the
+app participates in its catalog or foreground-control workflow.
+
+Resolve the File Manager CLI through the ignored
+`local/quest-file-manager-cli.json` plus
+`scripts/Resolve-QuestFileManagerCli.ps1`. Keep the resolver, targets, aliases,
+credentials, approvals, and coordination private. Default routine portable
+intents to `raw_fallback_allowed=false`; record a provider gap, bounded
+fallback, cleanup, and suggested product improvement before raw ADB.
 
 ## Core Rules
 
@@ -77,9 +103,10 @@ In the public Meta Quest workflow repo:
   ADB gate reports `uid=2000(shell)`.
 - Keep raw device evidence private unless a public redaction gate exists.
 - Prefer an owning application's typed CLI or local API for repeatable
-  operations it fully supports. QuestIonAble File Manager is the preferred
-  local provider only for its advertised closed exact-serial commands; Rusty
-  Fleet is the managed multi-target provider only with current Manifold
+  operations it fully supports. Use the ecosystem loop above as the routine
+  path. QuestIonAble File Manager is the local provider only for its advertised
+  closed exact-serial commands; Rusty Kiosk retains catalog/launch/guard
+  authority; Rusty Fleet is the managed provider only with current Manifold
   authority and effect-owner receipts.
 - Keep portable workflow intent, private local resolution, File Manager local
   execution, Fleet managed execution, and workflow evidence wrapping as
@@ -157,11 +184,17 @@ In the public Meta Quest workflow repo:
   Guardian. Wait for the signature grant, retain failed attempts, require zero
   bounded fatals, and uninstall all test packages on both explicit serials.
 
-## Install And Launch Shape
+## Default Local Install And Launch
 
-Use the File Manager typed inspected-deployment route when its advertised
-capabilities cover the operation. Use the following serial-scoped ADB shape as
-an explicitly labeled diagnostic fallback or for provider-gap recovery:
+Use File Manager's typed `apk inspect`, `apk install`, `kiosk status`,
+Kiosk launch command when applicable, `apk launch` otherwise, and
+`apk observe` routes. Require exact artifact, serial, installed-byte,
+resolved-launcher, foreground, Kiosk, and app-owned readback as applicable.
+
+## Raw ADB Fallback Shape
+
+Only after the fallback gate is satisfied, use the following serial-scoped ADB
+shape for bootstrap, provider-gap diagnosis, or recovery:
 
 ```powershell
 adb -s <quest-serial> install -r -d -g <path-to.apk>

@@ -214,9 +214,13 @@ in runner variables or typed reference wrappers, never injected properties.
   packages, property/staging namespaces, bridge ports, and headset serials.
   Claims do not activate features or authorize Git/device operations.
 - Repeatable Quest utilities prefer an owning application's closed typed
-  CLI/local API when it can produce exact-target effective readback. Local
-  File Manager and managed Fleet execution use disjoint executable contracts;
-  raw serial-scoped ADB remains a labeled diagnostic fallback.
+  CLI/local API when it can produce exact-target effective readback. Routine
+  local work uses File Manager inspected deployment, Kiosk launch/foreground
+  control when applicable, and app-owned runtime evidence. Managed target-set
+  work uses Fleet with current authority and effect-owner receipts. Local File
+  Manager and managed Fleet execution use disjoint contracts; raw
+  serial-scoped ADB requires a labeled bootstrap, provider-gap, diagnostic, or
+  recovery gate.
 - A portable workflow intent contains no machine resolver, target, approval,
   coordination, credential, or Manifold state. Preserve owner evidence
   byte-for-byte and bind only its schema and SHA-256 from a sanitized wrapper.
