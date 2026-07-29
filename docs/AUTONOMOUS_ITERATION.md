@@ -257,7 +257,9 @@ work-unit transitions and preparation artifacts. It supports `Inspect`,
 `PreparePush`, `Recover`, `ReconcilePublication`,
 `AdoptPublishedPlanningAuthority`, and the narrow
 `ReconcilePublishedPrerequisiteSuffix` and `ReconcilePlanningSuffixRewrite`
-publication-recovery actions.
+publication-recovery actions. It also routes the separately bounded
+`NormalizeEventLedgerPrefix` migration for exactly one leading CRLF blank
+record in a protocol-v2 workspace.
 
 The CLI is deliberately narrower than an autonomous coding agent:
 
@@ -291,6 +293,12 @@ The CLI is deliberately narrower than an autonomous coding agent:
 - planning-suffix rewrite reconciliation consumes only an exact pending bundle
   after proving the original no-force execution, two exact common suffix paths,
   one exact replacement-delta path, and unchanged source history.
+- event-ledger prefix normalization requires an initially clean Git worktree,
+  exact caller-bound repository/project/state/current-unit/ledger/tail
+  identities, a dry-run intent SHA-256 pinned again for execution/recovery, and
+  one `0D0A` prefix. It preserves all prior event and unit bytes, appends its
+  typed event, publishes its normalized receipt only after target readback, and
+  changes only `last_event_id`; all other blank records remain invalid.
 
 Keep the local repository map outside a public project instance when its paths
 identify a workstation. Start from `templates/repository-map.example.json`.
@@ -320,6 +328,32 @@ pwsh -NoProfile -ExecutionPolicy Bypass `
   -OutPath <project-root>\morphospace\receipts\<claim-receipt>.json `
   -Execute
 ```
+
+Exact event-ledger prefix normalization is documented separately because it is
+a migration, not an ordinary unit action:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\Invoke-WorkUnitAutomation.ps1 `
+  -Action NormalizeEventLedgerPrefix `
+  -WorkspaceRoot <project-root>\morphospace `
+  -UnitId <unit-id> `
+  -LedgerPrefixNormalizationId <normalization-id> `
+  -ExpectedRepositoryHead <40-character-head> `
+  -ExpectedProjectSha256 <64-character-project-file-sha256> `
+  -ExpectedStateSha256 <64-character-state-file-sha256> `
+  -ExpectedUnitSha256 <64-character-unit-file-sha256> `
+  -ExpectedEventsSha256 <64-character-event-ledger-sha256> `
+  -ExpectedEventsLength <event-ledger-byte-length> `
+  -ExpectedEventTailId <event-tail-id> `
+  -Timestamp <strict-utc-timestamp>
+```
+
+This is a dry run until `-ExpectedIntentSha256
+<reported-intent-sha256> -Execute` is added. Repeat that exact caller-pinned
+executed command to recover an incomplete intent; a committed completion
+rejects replay.
+See [Event-Ledger Prefix Normalization](EVENT_LEDGER_PREFIX_NORMALIZATION.md).
 
 Pre-protocol in-flight adoption is a separate two-step operation:
 

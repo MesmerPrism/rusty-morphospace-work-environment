@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/event-ledger-prefix-normalization-completion-v1.schema.json",
+  "title": "Rusty Morphospace event-ledger prefix normalization completion v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "transaction_id", "normalization_id", "completed_at",
+    "intent", "receipt", "repository_head", "state_sha256",
+    "unit_sha256", "events_sha256", "event_id", "status"
+  ],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.workflow.event_ledger_prefix_normalization_completion.v1" },
+    "transaction_id": { "$ref": "#/$defs/id" },
+    "normalization_id": { "$ref": "#/$defs/id" },
+    "completed_at": { "type": "string", "format": "date-time" },
+    "intent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "path", "schema", "sha256"],
+      "properties": {
+        "role": { "const": "event-ledger-prefix-normalization-intent" },
+        "path": { "type": "string", "pattern": "^receipts/transactions/[a-z0-9][a-z0-9-]{1,127}-normalization\\.intent\\.json$" },
+        "schema": { "const": "rusty.morphospace.workflow.event_ledger_prefix_normalization_intent.v1" },
+        "sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "path", "schema", "sha256"],
+      "properties": {
+        "role": { "const": "event-ledger-prefix-normalization" },
+        "path": { "type": "string", "pattern": "^receipts/[a-z0-9][a-z0-9-]{1,127}\\.json$" },
+        "schema": { "const": "rusty.morphospace.workflow.event_ledger_prefix_normalization.v1" },
+        "sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "repository_head": { "$ref": "#/$defs/sha" },
+    "state_sha256": { "$ref": "#/$defs/hash" },
+    "unit_sha256": { "$ref": "#/$defs/hash" },
+    "events_sha256": { "$ref": "#/$defs/hash" },
+    "event_id": { "$ref": "#/$defs/id" },
+    "status": { "const": "committed" }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" },
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" }
+  }
+}

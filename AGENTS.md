@@ -219,6 +219,13 @@ in runner variables or typed reference wrappers, never injected properties.
   require `-Execute` for workspace-state mutation, preserve dirty/divergent
   repositories, derive graph scope from the unit, and never own Git push,
   force-push, checkout/reset/stash, validation execution, or device mutation.
+- One exact leading CRLF blank event record may be removed only through the
+  typed `NormalizeEventLedgerPrefix` migration. It preserves every prior event
+  byte and current-unit byte, appends one canonical event, changes only
+  `state.last_event_id`, requires caller-pinned dry-run intent authority,
+  publishes its receipt only after target readback, and keeps ordinary
+  blank-record parsing strict. Route the complete procedure to
+  `docs/EVENT_LEDGER_PREFIX_NORMALIZATION.md`.
 - Move a reviewed proposal into the claimable queue only with the automation
   `Ready` action. It verifies accepted prerequisites, appends the transition,
   and derives `next_ready_unit`; do not hand-edit proposal status.
@@ -344,6 +351,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkEnvironment.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkflowContracts.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\New-ProjectWorkspace.ps1 -SelfTest
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkUnitAutomation.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-EventLedgerPrefixNormalization.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-FeatureLockResolver.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ProjectIsolation.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ExecutedPushReceipt.ps1 -SelfTest

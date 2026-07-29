@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("Inspect", "Ready", "Claim", "Resume", "BeginValidation", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RetirePreparedPush", "ReconcilePreparedPublication", "ResolveBlocker", "CorrectResolvedBlockerEvidence", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix")]
+    [ValidateSet("Inspect", "Ready", "Claim", "Resume", "BeginValidation", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RetirePreparedPush", "ReconcilePreparedPublication", "ResolveBlocker", "CorrectResolvedBlockerEvidence", "NormalizeEventLedgerPrefix", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix")]
     [string]$Action,
     [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
     [string]$UnitId = "",
@@ -19,6 +19,15 @@ param(
     [string]$PreparedPublicationReconstruction = "",
     [string]$BlockerResolutionReceipt = "",
     [string]$BlockerResolutionCorrectionReceipt = "",
+    [string]$LedgerPrefixNormalizationId = "",
+    [string]$ExpectedRepositoryHead = "",
+    [string]$ExpectedProjectSha256 = "",
+    [string]$ExpectedStateSha256 = "",
+    [string]$ExpectedUnitSha256 = "",
+    [string]$ExpectedEventsSha256 = "",
+    [long]$ExpectedEventsLength = -1,
+    [string]$ExpectedEventTailId = "",
+    [string]$ExpectedIntentSha256 = "",
     [string]$AdoptionReceipt = "",
     [ValidateSet("quick", "standard", "deep")][string]$ValidationTier = "standard",
     [string[]]$DeviceSerials = @(),
@@ -71,6 +80,32 @@ if ($Action -eq "CorrectResolvedBlockerEvidence") {
     Invoke-MorphospaceCorrectResolvedBlockerEvidence -WorkspaceRoot $WorkspaceRoot -UnitId $UnitId `
         -RepoMapPath $RepoMapPath -CorrectionReceipt $BlockerResolutionCorrectionReceipt `
         -Timestamp $Timestamp -OutPath $OutPath -Execute:$Execute |
+        ConvertTo-Json -Depth 32
+    return
+}
+if ($Action -eq "NormalizeEventLedgerPrefix") {
+    foreach ($required in @(
+        [pscustomobject]@{name='LedgerPrefixNormalizationId';value=$LedgerPrefixNormalizationId},
+        [pscustomobject]@{name='UnitId';value=$UnitId},
+        [pscustomobject]@{name='ExpectedRepositoryHead';value=$ExpectedRepositoryHead},
+        [pscustomobject]@{name='ExpectedProjectSha256';value=$ExpectedProjectSha256},
+        [pscustomobject]@{name='ExpectedStateSha256';value=$ExpectedStateSha256},
+        [pscustomobject]@{name='ExpectedUnitSha256';value=$ExpectedUnitSha256},
+        [pscustomobject]@{name='ExpectedEventsSha256';value=$ExpectedEventsSha256},
+        [pscustomobject]@{name='ExpectedEventTailId';value=$ExpectedEventTailId}
+    )) {
+        if (-not [string]$required.value) { throw "NormalizeEventLedgerPrefix requires $([string]$required.name)." }
+    }
+    if ($ExpectedEventsLength -lt 0) { throw "NormalizeEventLedgerPrefix requires ExpectedEventsLength." }
+    if ($Execute -and -not $ExpectedIntentSha256) { throw "Executed NormalizeEventLedgerPrefix requires ExpectedIntentSha256 from its dry-run." }
+    Import-Module (Join-Path $PSScriptRoot "EventLedgerPrefixNormalization.psm1") -Force
+    Invoke-MorphospaceEventLedgerPrefixNormalization -WorkspaceRoot $WorkspaceRoot `
+        -NormalizationId $LedgerPrefixNormalizationId -UnitId $UnitId `
+        -ExpectedRepositoryHead $ExpectedRepositoryHead -ExpectedProjectSha256 $ExpectedProjectSha256 `
+        -ExpectedStateSha256 $ExpectedStateSha256 -ExpectedUnitSha256 $ExpectedUnitSha256 `
+        -ExpectedEventsSha256 $ExpectedEventsSha256 -ExpectedEventsLength $ExpectedEventsLength `
+        -ExpectedEventTailId $ExpectedEventTailId -ExpectedIntentSha256 $ExpectedIntentSha256 `
+        -Timestamp $Timestamp -Execute:$Execute |
         ConvertTo-Json -Depth 32
     return
 }

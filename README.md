@@ -141,6 +141,9 @@ validation without a device.
 - [Autonomous Iteration](docs/AUTONOMOUS_ITERATION.md) defines work-unit scope,
   compact state, event notes, validation tiers, larger push checkpoints, and
   the optional fail-closed work-unit automation CLI.
+- [Event-Ledger Prefix Normalization](docs/EVENT_LEDGER_PREFIX_NORMALIZATION.md)
+  defines the one-time typed correction for exactly one leading CRLF blank
+  record while preserving strict ordinary parsing and every prior event byte.
 - [Project, Build, And Headset Isolation](docs/PROJECT_ISOLATION.md) separates
   concurrent source/build identities while serializing transactional runs on
   one headset.
@@ -179,6 +182,12 @@ checkout/reset/stash, validation commands, or live device commands.
 Use `-Action Ready -Execute` to review a bounded `proposed` unit into the
 claimable queue after its prerequisites are accepted; this replaces manual
 status/state/event edits.
+Use `NormalizeEventLedgerPrefix` only for the exact protocol-v2 framing defect
+defined by its runbook. It requires a clean worktree plus caller-bound
+repository, project, state, unit, event-ledger, tail, and dry-run intent
+identities; it appends one correction event, publishes the normalized receipt
+only after exact target readback, and changes no state field except
+`last_event_id`.
 `RecordValidation` and `Accept` require a local `validation_receipt.v1` whose
 hashed artifacts, exact acceptance/gate coverage, repository revisions,
 changed paths, and required device cleanup/fatal fields still match current
