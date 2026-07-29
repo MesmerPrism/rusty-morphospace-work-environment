@@ -232,7 +232,7 @@ function Get-MorphospaceNormalizationGitObservation {
     $prefix=$root.TrimEnd('\','/')+[IO.Path]::DirectorySeparatorChar
     $pathComparison=if($IsWindows){[StringComparison]::OrdinalIgnoreCase}else{[StringComparison]::Ordinal}
     if(-not$workspacePath.StartsWith($prefix,$pathComparison)){throw 'Morphospace workspace is not below its observed Git root.'}
-    $workspaceRelative=$workspacePath.Substring($prefix.Length).Replace('\','/').TrimEnd('/')
+    $workspaceRelative=((Invoke-MorphospaceNormalizationGit $Workspace @('rev-parse','--show-prefix'))-join"`n").Trim().Replace('\','/').TrimEnd('/')
     $status=@(Get-MorphospaceNormalizationGitStatus $root)
     [pscustomobject]@{root=$root;head=$head;branch=$branch;workspace_relative=$workspaceRelative;status=@($status)}
 }
@@ -244,8 +244,7 @@ function Assert-MorphospaceNormalizationGitClean {
 
 function Assert-MorphospaceNormalizationOwnedDirt {
     param([Parameter(Mandatory=$true)][object]$Observation,[Parameter(Mandatory=$true)][object]$Paths)
-    $pathComparer=if($IsWindows){[StringComparer]::OrdinalIgnoreCase}else{[StringComparer]::Ordinal}
-    $allowed=[Collections.Generic.HashSet[string]]::new($pathComparer)
+    $allowed=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach($relative in @($Paths.state,$Paths.events,$Paths.receipt,$Paths.intent,$Paths.completion,$Paths.stage,$Paths.backup,$Paths.state_stage,$Paths.state_backup)){
         $joined=if($Observation.workspace_relative){"$($Observation.workspace_relative)/$relative"}else{$relative}
         [void]$allowed.Add($joined.Replace('\','/'))

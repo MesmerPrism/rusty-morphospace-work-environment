@@ -324,6 +324,28 @@ try{
     $weirdObservation=& $normalizationModule {param($workspace) Get-MorphospaceNormalizationGitObservation $workspace} $weirdPath.workspace
     Assert-NormalizationTest (@($weirdObservation.status).Count-eq1-and[string]$weirdObservation.status[0].path-ceq'literal -- snowman-☃ pathname.txt') 'NUL-delimited Git status did not preserve an unusual pathname exactly'
     Assert-NormalizationRejected {Invoke-NormalizationFixture $weirdPath} 'literal unusual pathname' '*initially clean*'
+    $exactOwnedCase=& $normalizationModule {
+        $paths=Get-MorphospaceNormalizationPaths 'event-ledger-prefix-normalized-0002'
+        $paths.unit='iteration-units/current-unit-001.json'
+        $observation=[pscustomobject]@{
+            workspace_relative='morphospace'
+            status=@([pscustomobject]@{xy=' M';path='morphospace/workspace.state.json'})
+        }
+        Assert-MorphospaceNormalizationOwnedDirt $observation $paths
+        $true
+    }
+    Assert-NormalizationTest $exactOwnedCase 'exact canonical owned Git pathname was rejected'
+    Assert-NormalizationRejected {
+        & $normalizationModule {
+            $paths=Get-MorphospaceNormalizationPaths 'event-ledger-prefix-normalized-0002'
+            $paths.unit='iteration-units/current-unit-001.json'
+            $observation=[pscustomobject]@{
+                workspace_relative='morphospace'
+                status=@([pscustomobject]@{xy=' M';path='morphospace/Workspace.State.json'})
+            }
+            Assert-MorphospaceNormalizationOwnedDirt $observation $paths
+        }
+    } 'case-distinct transaction-owned Git pathname' '*unrelated Git dirt: morphospace/Workspace.State.json*'
     $renameStatus=New-NormalizationFixture $base 'rename-status'
     [IO.File]::WriteAllText((Join-Path $renameStatus.repo 'tracked-name.txt'),'tracked',[Text.UTF8Encoding]::new($false))
     [void](Invoke-NormalizationTestGit $renameStatus.repo @('add','tracked-name.txt'))
