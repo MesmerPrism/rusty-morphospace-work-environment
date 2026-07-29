@@ -1249,13 +1249,19 @@ function Invoke-MorphospaceWorkUnitAutomation {
         "AdoptPublishedPlanningAuthority" {
             if (-not $PublishedPlanningAuthorityAdoption) { throw "AdoptPublishedPlanningAuthority requires PublishedPlanningAuthorityAdoption." }
             if (-not $RepoMapPath) { throw "AdoptPublishedPlanningAuthority requires RepoMapPath." }
-            if ($beforeStatus -ne "accepted") { throw "AdoptPublishedPlanningAuthority requires the triggering unit to remain accepted." }
-            if ($null -ne $state.current_unit -or $null -ne $state.next_ready_unit -or $null -ne $state.pending_push_bundle) {
-                throw "AdoptPublishedPlanningAuthority requires null current, next-ready, and pending-bundle state."
-            }
             $adoptionPath = Resolve-MorphospaceReceiptPath -WorkspaceRoot $resolvedWorkspace -ReceiptReference $PublishedPlanningAuthorityAdoption
             $validatedAdoptionDocument = Test-MorphospacePublishedPlanningAuthorityAdoptionDocument -Path $adoptionPath -WorkspaceRoot $resolvedWorkspace
             $adoptionDocument = $validatedAdoptionDocument.document
+            $activeAdoption = [string]$adoptionDocument.schema -ceq "rusty.morphospace.workflow.published_planning_authority_adoption.v2"
+            if ($activeAdoption) {
+                if ($beforeStatus -notin @("active", "validating") -or [string]$state.current_unit -cne $UnitId -or
+                    $null -ne $state.next_ready_unit -or $null -ne $state.pending_push_bundle) {
+                    throw "Active published planning authority adoption requires the matching active or validating unit and null next-ready and pending-bundle state."
+                }
+            } elseif ($beforeStatus -ne "accepted" -or $null -ne $state.current_unit -or
+                $null -ne $state.next_ready_unit -or $null -ne $state.pending_push_bundle) {
+                throw "Inactive published planning authority adoption requires the accepted triggering unit and null current, next-ready, and pending-bundle state."
+            }
             if ([string]$validatedAdoptionDocument.projection.unit_id -cne $UnitId) {
                 throw "Published planning authority adoption projection unit does not match the requested unit."
             }
@@ -1289,7 +1295,13 @@ function Invoke-MorphospaceWorkUnitAutomation {
             $transition = "published-planning-authority-adopted"
             if ($Execute) {
                 $state = $validatedAdoptionDocument.workspace_state_after
-                $event = New-MorphospaceEvent -State $state -Events $events -UnitId $UnitId -ActionSlug "planning-authority-adopted" -Timestamp $Timestamp -EventType "state-transition" -Summary "Adopted the exact published embedded workspace as external planning authority by clearing only the bound source dirty marker and synchronizing only its stale repository-head projection; no Git, validation, or acceptance mutation was performed." -Receipts @($adoptionReference)
+                $actionSlug = if ($activeAdoption) { "active-planning-authority-adopted" } else { "planning-authority-adopted" }
+                $summary = if ($activeAdoption) {
+                    "Adopted the exact published embedded active workspace as external planning authority while preserving the active unit and every source projection; no Git, validation, acceptance, or dirty-state mutation was performed."
+                } else {
+                    "Adopted the exact published embedded workspace as external planning authority by clearing only the bound source dirty marker and synchronizing only its stale repository-head projection; no Git, validation, or acceptance mutation was performed."
+                }
+                $event = New-MorphospaceEvent -State $state -Events $events -UnitId $UnitId -ActionSlug $actionSlug -Timestamp $Timestamp -EventType "state-transition" -Summary $summary -Receipts @($adoptionReference)
                 if ([string]$event.event_id -cne [string]$adoptionDocument.state_delta.last_event_id_after) {
                     throw "Published planning authority adoption expected-after state does not bind the deterministic transition event."
                 }

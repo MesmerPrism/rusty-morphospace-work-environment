@@ -1141,7 +1141,9 @@ $templatesRoot = Join-Path $RepoRoot "templates"
 foreach ($contractExample in @(
     [pscustomobject]@{ Template = "planning-workspace-projection.example.json"; Schema = "planning-workspace-projection.schema.json" },
     [pscustomobject]@{ Template = "planning-workspace-projection-v2.example.json"; Schema = "planning-workspace-projection.schema.json" },
+    [pscustomobject]@{ Template = "planning-workspace-projection-v3.example.json"; Schema = "planning-workspace-projection.schema.json" },
     [pscustomobject]@{ Template = "published-planning-authority-adoption.example.json"; Schema = "published-planning-authority-adoption.schema.json" },
+    [pscustomobject]@{ Template = "published-active-planning-authority-adoption.example.json"; Schema = "published-planning-authority-adoption.schema.json" },
     [pscustomobject]@{ Template = "historical-unit-adoption-reconstruction.example.json"; Schema = "historical-unit-adoption-reconstruction.schema.json" },
     [pscustomobject]@{ Template = "unplanned-publication-closure-v2.example.json"; Schema = "unplanned-publication-closure.schema.json" }
 )) {

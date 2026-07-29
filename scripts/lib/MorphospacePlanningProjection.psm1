@@ -77,7 +77,9 @@ function Get-PublishedProjectionStateBinding(
     [string]$RepositoryPath,
     [string]$Revision,
     [string]$Prefix,
-    [string]$SourceRepoId
+    [string]$SourceRepoId,
+    [string]$UnitId,
+    [bool]$RequireActiveUnit
 ) {
     $state = Get-GitWorkspaceJsonDocument $RepositoryPath $Revision $Prefix 'workspace.state.json' 'Projected workspace state'
     foreach ($property in @('current_unit', 'next_ready_unit', 'pending_push_bundle', 'dirty_repositories', 'repository_heads')) {
@@ -85,8 +87,19 @@ function Get-PublishedProjectionStateBinding(
             throw "Projected workspace state is missing '$property'."
         }
     }
-    if ($null -ne $state.current_unit -or $null -ne $state.next_ready_unit -or $null -ne $state.pending_push_bundle) {
-        throw 'Published authority adoption requires null current_unit, next_ready_unit, and pending_push_bundle.'
+    if ($null -ne $state.next_ready_unit -or $null -ne $state.pending_push_bundle) {
+        throw 'Published authority adoption requires null next_ready_unit and pending_push_bundle.'
+    }
+    if ($RequireActiveUnit) {
+        if ([string]$state.current_unit -cne $UnitId) {
+            throw 'Published active-authority adoption requires current_unit to match the projected unit.'
+        }
+        $unit = Get-GitWorkspaceJsonDocument $RepositoryPath $Revision $Prefix "iteration-units/$UnitId.json" 'Projected active unit'
+        if ([string]$unit.unit_id -cne $UnitId -or [string]$unit.status -cnotin @('active', 'validating')) {
+            throw 'Published active-authority adoption requires the exact active or validating projected unit.'
+        }
+    } elseif ($null -ne $state.current_unit) {
+        throw 'Published inactive-authority adoption requires null current_unit.'
     }
     $dirtyValues = @($state.dirty_repositories)
     if (@($dirtyValues | Where-Object { $_ -isnot [string] }).Count -ne 0) {
@@ -129,7 +142,7 @@ function Get-PublishedProjectionStateBinding(
         throw 'Projected source repository dirty fingerprint is noncanonical.'
     }
     return [pscustomobject][ordered]@{
-        current_unit = $null
+        current_unit = if ($RequireActiveUnit) { $UnitId } else { $null }
         next_ready_unit = $null
         pending_push_bundle = $null
         dirty_repository_ids = $sortedDirtyIds
@@ -170,10 +183,12 @@ function Test-MorphospacePlanningWorkspaceProjectionDocument {
     param([Parameter(Mandatory)][string]$Path)
     $document=Get-PlanningProjectionDocument $Path
     $schema = [string]$document.schema
-    if($schema-cnotin@('rusty.morphospace.workflow.planning_workspace_projection.v1','rusty.morphospace.workflow.planning_workspace_projection.v2')){throw'Planning-workspace projection has the wrong schema.'}
+    if($schema-cnotin@('rusty.morphospace.workflow.planning_workspace_projection.v1','rusty.morphospace.workflow.planning_workspace_projection.v2','rusty.morphospace.workflow.planning_workspace_projection.v3')){throw'Planning-workspace projection has the wrong schema.'}
     $isV2 = $schema -ceq 'rusty.morphospace.workflow.planning_workspace_projection.v2'
-    $expectedClassification = if($isV2){'published-embedded-workspace-authority-adoption'}else{'embedded-workspace-projected-after-source-publication'}
-    $expectedTransition = if($isV2){'AdoptPublishedPlanningAuthority'}else{'ReconcilePublication'}
+    $isV3 = $schema -ceq 'rusty.morphospace.workflow.planning_workspace_projection.v3'
+    $isAdoption = $isV2 -or $isV3
+    $expectedClassification = if($isV3){'published-embedded-active-workspace-authority-adoption'}elseif($isV2){'published-embedded-workspace-authority-adoption'}else{'embedded-workspace-projected-after-source-publication'}
+    $expectedTransition = if($isAdoption){'AdoptPublishedPlanningAuthority'}else{'ReconcilePublication'}
     if([string]$document.status-cne'exact-projection-verified'-or[string]$document.chronology.classification-cne$expectedClassification){throw'Planning-workspace projection chronology/status is invalid.'}
     if($document.chronology.source_publication_preceded_projection-ne$true-or$document.chronology.prepared_plan_present-ne$false-or$document.chronology.executed_push_receipt_present-ne$false){throw'Planning-workspace projection fabricates publication chronology.'}
     if([string]$document.source.repo_id-ceq[string]$document.planning.repo_id-or$document.planning.distinct_from_source-ne$true){throw'Source and planning repositories must be distinct.'}
@@ -187,16 +202,19 @@ function Test-MorphospacePlanningWorkspaceProjectionDocument {
     if((@($paths|Sort-Object -Unique).Count-ne$paths.Count)-or(($paths-join'|')-cne(@($paths|Sort-Object)-join'|'))){throw'Projection inventory paths must be unique and ordinally sorted.'}
     if(@($document.chronology.does_not_claim).Count-lt4){throw'Projection must retain all material nonclaims.'}
     if([string]$document.authority.source_workspace-cne'immutable-historical-snapshot'-or[string]$document.authority.external_workspace-cne'sole-mutable-workflow-authority'-or$document.authority.source_workflow_mutation_performed-ne$false-or$document.authority.git_mutation_performed-ne$false-or[string]$document.authority.next_transition-cne$expectedTransition){throw'Projection authority boundary is invalid.'}
-    if(-not$isV2){
-        if($document.PSObject.Properties.Name-ccontains'projected_state'){throw'V1 planning-workspace projection cannot carry a v2 projected-state binding.'}
+    if(-not$isAdoption){
+        if($document.PSObject.Properties.Name-ccontains'projected_state'){throw'V1 planning-workspace projection cannot carry an adoption projected-state binding.'}
     }else{
-        if($document.planning.base_revision-isnot[string]-or[string]$document.planning.base_revision-notmatch'^[0-9a-f]{40}$'){throw'V2 planning-workspace projection requires a full planning base revision.'}
-        if($document.PSObject.Properties.Name-cnotcontains'projected_state'){throw'V2 planning-workspace projection lacks projected-state binding.'}
+        if($document.planning.base_revision-isnot[string]-or[string]$document.planning.base_revision-notmatch'^[0-9a-f]{40}$'){throw'Adoption planning-workspace projection requires a full planning base revision.'}
+        if($document.PSObject.Properties.Name-cnotcontains'projected_state'){throw'Adoption planning-workspace projection lacks projected-state binding.'}
         $state=$document.projected_state
         foreach($property in @('current_unit','next_ready_unit','pending_push_bundle','dirty_repository_ids','source_repository')){
             if($state.PSObject.Properties.Name-cnotcontains$property){throw"V2 projected-state binding is missing '$property'."}
         }
-        if($null-ne$state.current_unit-or$null-ne$state.next_ready_unit-or$null-ne$state.pending_push_bundle){throw'V2 projected-state active-work conditions are invalid.'}
+        if($null-ne$state.next_ready_unit-or$null-ne$state.pending_push_bundle){throw'Adoption projected-state queue conditions are invalid.'}
+        if($isV3){
+            if($state.current_unit-isnot[string]-or[string]$state.current_unit-cne[string]$document.unit_id){throw'V3 projected-state current unit does not match the projection unit.'}
+        }elseif($null-ne$state.current_unit){throw'V2 projected-state current unit must be null.'}
         $dirtyValues=@($state.dirty_repository_ids)
         if(@($dirtyValues|Where-Object{$_-isnot[string]}).Count-ne0){throw'V2 projected-state dirty repository IDs must be strings.'}
         $dirtyIds=@($dirtyValues|ForEach-Object{[string]$_})

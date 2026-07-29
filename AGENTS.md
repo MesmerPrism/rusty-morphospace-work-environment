@@ -34,6 +34,13 @@ state field, and performs no Git operation. A drifted historical-unit adoption
 reference remains damaged; admit a separate independently anchored
 reconstruction only through
 `historical_unit_adoption_reconstruction.v1` and current-validation projection.
+Use `planning_workspace_projection.v3` plus a
+`published_planning_authority_adoption.v2` receipt when the exact published
+embedded workspace still has the matching active or validating unit but no
+next-ready unit or pending bundle. That migration preserves the unit, dirty
+set, repository projections, and every state field except the deterministic
+adoption event ID. It creates no validation or acceptance evidence; finish the
+unit through ordinary external-workspace transitions.
 See `docs/EXTERNAL_PLANNING_AND_HISTORICAL_RECONSTRUCTION.md`.
 
 This repository is intended to be public and portable. Keep committed content

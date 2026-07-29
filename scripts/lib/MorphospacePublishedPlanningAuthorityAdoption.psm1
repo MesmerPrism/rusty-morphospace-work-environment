@@ -214,16 +214,21 @@ function Test-MorphospacePublishedPlanningAuthorityAdoptionStateBinding {
         [Parameter(Mandatory)][object]$Binding,
         [Parameter(Mandatory)][object]$State,
         [Parameter(Mandatory)][string]$SourceRepositoryId,
+        [AllowNull()][string]$ExpectedCurrentUnit,
         [Parameter(Mandatory)][string]$Context
     )
     Assert-MorphospacePublishedPlanningAuthorityAdoptionProperties -Object $Binding `
         -Required @('path', 'sha256', 'current_unit', 'next_ready_unit', 'pending_push_bundle', 'dirty_repository_ids', 'source_repository') `
         -Context $Context
-    if ($null -ne $Binding.current_unit -or $null -ne $Binding.next_ready_unit -or $null -ne $Binding.pending_push_bundle) {
-        throw "$Context must bind null current_unit, next_ready_unit, and pending_push_bundle."
+    if ($null -ne $Binding.next_ready_unit -or $null -ne $Binding.pending_push_bundle) {
+        throw "$Context must bind null next_ready_unit and pending_push_bundle."
     }
-    if ($null -ne $State.current_unit -or $null -ne $State.next_ready_unit -or $null -ne $State.pending_push_bundle) {
-        throw "$Context does not match the required inactive workspace state."
+    if (($null -eq $ExpectedCurrentUnit -and $null -ne $Binding.current_unit) -or
+        ($null -ne $ExpectedCurrentUnit -and [string]$Binding.current_unit -cne $ExpectedCurrentUnit) -or
+        ($null -eq $ExpectedCurrentUnit -and $null -ne $State.current_unit) -or
+        ($null -ne $ExpectedCurrentUnit -and [string]$State.current_unit -cne $ExpectedCurrentUnit) -or
+        $null -ne $State.next_ready_unit -or $null -ne $State.pending_push_bundle) {
+        throw "$Context does not match the required current-unit and queue state."
     }
     $bindingDirty = @($Binding.dirty_repository_ids | ForEach-Object { [string]$_ })
     $stateDirty = @($State.dirty_repositories | ForEach-Object { [string]$_ })
@@ -263,8 +268,13 @@ function Test-MorphospacePublishedPlanningAuthorityAdoptionDocument {
             'source_publication', 'planning_repository', 'validation', 'observers',
             'state_delta', 'nonclaims', 'failure'
         ) -Optional @('$schema') -Context 'Published planning authority adoption'
-    if ([string]$document.schema -cne 'rusty.morphospace.workflow.published_planning_authority_adoption.v1' -or
-        [string]$document.status -cne 'published-planning-authority-adopted' -or
+    $documentSchema = [string]$document.schema
+    $isActiveAdoption = $documentSchema -ceq 'rusty.morphospace.workflow.published_planning_authority_adoption.v2'
+    $expectedStatus = if ($isActiveAdoption) { 'published-active-planning-authority-adopted' } else { 'published-planning-authority-adopted' }
+    if ($documentSchema -cnotin @(
+            'rusty.morphospace.workflow.published_planning_authority_adoption.v1',
+            'rusty.morphospace.workflow.published_planning_authority_adoption.v2'
+        ) -or [string]$document.status -cne $expectedStatus -or
         $null -ne $document.failure) {
         throw 'Published planning authority adoption schema, status, or failure state is invalid.'
     }
@@ -283,13 +293,18 @@ function Test-MorphospacePublishedPlanningAuthorityAdoptionDocument {
         throw 'Published planning authority adoption projection hash mismatch.'
     }
     $projection = (Test-MorphospacePlanningWorkspaceProjectionDocument -Path $projectionPath).document
-    if ([string]$projection.schema -cne 'rusty.morphospace.workflow.planning_workspace_projection.v2' -or
+    $expectedProjectionSchema = if ($isActiveAdoption) {
+        'rusty.morphospace.workflow.planning_workspace_projection.v3'
+    } else {
+        'rusty.morphospace.workflow.planning_workspace_projection.v2'
+    }
+    if ([string]$projection.schema -cne $expectedProjectionSchema -or
         [string]$projection.projection_id -cne [string]$projectionReference.projection_id -or
         [string]$projection.project_id -cne [string]$document.project_id) {
-        throw 'Published planning authority adoption does not bind the exact v2 projection identity.'
+        throw 'Published planning authority adoption does not bind the exact compatible projection identity.'
     }
     if ([string]$projection.planning.projection_record_path -cne [string]$projectionReference.path) {
-        throw 'Published planning authority adoption projection path differs from its v2 self-binding.'
+        throw 'Published planning authority adoption projection path differs from its self-binding.'
     }
 
     $source = $document.source_publication
@@ -323,7 +338,7 @@ function Test-MorphospacePublishedPlanningAuthorityAdoptionDocument {
         [string]$projection.source.old_revision -cne [string]$source.pre_merge_revision -or
         [string]$projection.source.published_revision -cne [string]$source.published_revision -or
         [string]$projection.source.observed_remote_revision -cne [string]$source.readback_revision) {
-        throw 'Published planning authority adoption source proof differs from the bound v2 projection.'
+        throw 'Published planning authority adoption source proof differs from the bound projection.'
     }
     if ([string]$projection.projected_state.source_repository.repo_id -cne [string]$source.repo_id -or
         [string]$projection.projected_state.source_repository.head -ceq [string]$source.published_revision) {
@@ -380,10 +395,11 @@ function Test-MorphospacePublishedPlanningAuthorityAdoptionDocument {
         [string]$afterState.project_id -cne [string]$document.project_id) {
         throw 'Published planning authority adoption requires matching v2 workspace states.'
     }
+    $expectedCurrentUnit = if ($isActiveAdoption) { [string]$projection.unit_id } else { $null }
     Test-MorphospacePublishedPlanningAuthorityAdoptionStateBinding -Binding $beforeReference -State $beforeState `
-        -SourceRepositoryId ([string]$source.repo_id) -Context 'workspace_state_before'
+        -SourceRepositoryId ([string]$source.repo_id) -ExpectedCurrentUnit $expectedCurrentUnit -Context 'workspace_state_before'
     Test-MorphospacePublishedPlanningAuthorityAdoptionStateBinding -Binding $afterReference -State $afterState `
-        -SourceRepositoryId ([string]$source.repo_id) -Context 'workspace_state_after'
+        -SourceRepositoryId ([string]$source.repo_id) -ExpectedCurrentUnit $expectedCurrentUnit -Context 'workspace_state_after'
     $projectionDirty = @($projection.projected_state.dirty_repository_ids | ForEach-Object { [string]$_ })
     $beforeDirty = @($beforeReference.dirty_repository_ids | ForEach-Object { [string]$_ })
     Test-MorphospacePublishedPlanningAuthorityAdoptionArray $beforeDirty $projectionDirty 'Projected and before-state dirty repository IDs'
@@ -398,12 +414,17 @@ function Test-MorphospacePublishedPlanningAuthorityAdoptionDocument {
     if ($projectionStateRow.Count -ne 1 -or [string]$projectionStateRow[0].sha256 -cne [string]$beforeReference.sha256) {
         throw 'Published planning authority adoption before-state bytes differ from the projected published workspace state.'
     }
-    if ([string]$beforeReference.source_repository.head -ceq [string]$source.published_revision -or
+    if ($isActiveAdoption) {
+        if (-not (Test-MorphospacePublishedPlanningAuthorityAdoptionDeepEqual `
+                $beforeReference.source_repository $afterReference.source_repository)) {
+            throw 'Published active planning authority adoption must preserve the projected source repository row.'
+        }
+    } elseif ([string]$beforeReference.source_repository.head -ceq [string]$source.published_revision -or
         [string]$afterReference.source_repository.head -cne [string]$source.published_revision -or
         [string]$afterReference.source_repository.branch -cne [string]$source.branch -or
         $null -eq $beforeReference.source_repository.dirty_fingerprint -or
         $null -ne $afterReference.source_repository.dirty_fingerprint) {
-        throw 'Published planning authority adoption does not update the named source head, branch, and dirty fingerprint exactly.'
+        throw 'Published inactive planning authority adoption does not update the named source head, branch, and dirty fingerprint exactly.'
     }
 
     $delta = $document.state_delta
@@ -413,18 +434,28 @@ function Test-MorphospacePublishedPlanningAuthorityAdoptionDocument {
             'dirty_repository_ids_after', 'repository_before', 'repository_after',
             'last_event_id_before', 'last_event_id_after', 'preserved_fields'
         ) -Context 'state_delta'
-    $preservedFields = @(
-        'blockers', 'capability_registry', 'current_unit', 'last_accepted_receipt',
-        'module_registry', 'next_ready_unit', 'pending_push_bundle', 'plan_revision',
-        'project_id', 'repository_checkpoints',
-        'unrelated_repository_heads', 'validation_checkpoint'
-    )
+    $preservedFields = if ($isActiveAdoption) {
+        @(
+            'blockers', 'capability_registry', 'current_unit', 'dirty_repositories',
+            'last_accepted_receipt', 'module_registry', 'next_ready_unit',
+            'pending_push_bundle', 'plan_revision', 'project_id',
+            'repository_checkpoints', 'repository_heads', 'validation_checkpoint'
+        )
+    } else {
+        @(
+            'blockers', 'capability_registry', 'current_unit', 'last_accepted_receipt',
+            'module_registry', 'next_ready_unit', 'pending_push_bundle', 'plan_revision',
+            'project_id', 'repository_checkpoints',
+            'unrelated_repository_heads', 'validation_checkpoint'
+        )
+    }
     Test-MorphospacePublishedPlanningAuthorityAdoptionArray @($delta.preserved_fields) $preservedFields 'state_delta.preserved_fields'
     Test-MorphospacePublishedPlanningAuthorityAdoptionArray @($delta.dirty_repository_ids_before) $beforeDirty 'state_delta.dirty_repository_ids_before'
     $afterDirty = @($afterReference.dirty_repository_ids | ForEach-Object { [string]$_ })
     Test-MorphospacePublishedPlanningAuthorityAdoptionArray @($delta.dirty_repository_ids_after) $afterDirty 'state_delta.dirty_repository_ids_after'
-    if ([string]$delta.cleared_dirty_repository_id -cne [string]$source.repo_id) {
-        throw 'Published planning authority adoption may clear only its named source repository.'
+    if (($isActiveAdoption -and $null -ne $delta.cleared_dirty_repository_id) -or
+        (-not $isActiveAdoption -and [string]$delta.cleared_dirty_repository_id -cne [string]$source.repo_id)) {
+        throw 'Published planning authority adoption dirty-repository delta is invalid for its schema.'
     }
     if (($null -eq $delta.last_event_id_before) -ne ($null -eq $beforeState.last_event_id) -or
         ($null -ne $delta.last_event_id_before -and [string]$delta.last_event_id_before -cne [string]$beforeState.last_event_id) -or
@@ -433,7 +464,11 @@ function Test-MorphospacePublishedPlanningAuthorityAdoptionDocument {
         throw 'Published planning authority adoption does not bind one exact new adoption event ID.'
     }
     Test-MorphospacePublishedPlanningAuthorityAdoptionId ([string]$delta.last_event_id_after) 'state_delta.last_event_id_after'
-    $expectedAfterDirty = @($beforeDirty | Where-Object { $_ -cne [string]$source.repo_id })
+    $expectedAfterDirty = if ($isActiveAdoption) {
+        @($beforeDirty)
+    } else {
+        @($beforeDirty | Where-Object { $_ -cne [string]$source.repo_id })
+    }
     Test-MorphospacePublishedPlanningAuthorityAdoptionArray $afterDirty $expectedAfterDirty 'workspace_state_after.dirty_repository_ids'
     $beforeActualRepository = Get-MorphospacePublishedPlanningAuthorityAdoptionRepositoryState $beforeState ([string]$source.repo_id) 'Before workspace state'
     $afterActualRepository = Get-MorphospacePublishedPlanningAuthorityAdoptionRepositoryState $afterState ([string]$source.repo_id) 'After workspace state'
@@ -447,9 +482,11 @@ function Test-MorphospacePublishedPlanningAuthorityAdoptionDocument {
     $expectedAfterState = $beforeState | ConvertTo-Json -Depth 100 | ConvertFrom-Json
     $expectedAfterState.dirty_repositories = @($expectedAfterDirty)
     $expectedRepository = Get-MorphospacePublishedPlanningAuthorityAdoptionRepositoryState $expectedAfterState ([string]$source.repo_id) 'Expected after workspace state'
-    $expectedRepository.head = [string]$delta.repository_after.head
-    $expectedRepository.branch = $delta.repository_after.branch
-    $expectedRepository.dirty_fingerprint = $delta.repository_after.dirty_fingerprint
+    if (-not $isActiveAdoption) {
+        $expectedRepository.head = [string]$delta.repository_after.head
+        $expectedRepository.branch = $delta.repository_after.branch
+        $expectedRepository.dirty_fingerprint = $delta.repository_after.dirty_fingerprint
+    }
     $expectedAfterState.last_event_id = [string]$delta.last_event_id_after
     $expectedAfterJson = $expectedAfterState | ConvertTo-Json -Depth 100 -Compress
     $actualAfterJson = $afterState | ConvertTo-Json -Depth 100 -Compress
@@ -457,7 +494,7 @@ function Test-MorphospacePublishedPlanningAuthorityAdoptionDocument {
         $differentFields = @($expectedAfterState.PSObject.Properties.Name | Where-Object {
             -not (Test-MorphospacePublishedPlanningAuthorityAdoptionDeepEqual $expectedAfterState.$_ $afterState.$_)
         })
-        throw "Published planning authority adoption changes workspace state beyond the exact event and one named dirty repository/head/branch/fingerprint delta: $($differentFields -join ', ')."
+        throw "Published planning authority adoption changes workspace state beyond its schema's exact event and repository delta: $($differentFields -join ', ')."
     }
 
     $evidencePaths = New-Object System.Collections.Generic.List[string]
@@ -598,11 +635,11 @@ function Test-MorphospacePublishedPlanningAuthorityAdoptionLive {
         @('rev-parse', "$([string]$source.published_revision):$([string]$projection.source.embedded_workspace_path)") `
         'published embedded workspace tree'
     if ($embeddedTree -cne [string]$projection.source.embedded_workspace_tree) {
-        throw 'Published planning authority adoption embedded workspace tree differs from the v2 projection.'
+        throw 'Published planning authority adoption embedded workspace tree differs from the projection.'
     }
     $sourceInventory = @(Get-GitWorkspaceInventory $sourceRoot ([string]$source.published_revision) ([string]$projection.source.embedded_workspace_path))
     if ($sourceInventory.Count -ne @($projection.inventory).Count) {
-        throw 'Published planning authority adoption source inventory count differs from the v2 projection.'
+        throw 'Published planning authority adoption source inventory count differs from the projection.'
     }
     for ($index = 0; $index -lt $sourceInventory.Count; $index++) {
         $actual = $sourceInventory[$index]
@@ -713,7 +750,7 @@ function Test-MorphospacePublishedPlanningAuthorityAdoptionLive {
         planning_tree = $planningTree
         source_remote_readback_revision = $freshSource
         planning_remote_configured = $false
-        cleared_dirty_repository_id = [string]$document.state_delta.cleared_dirty_repository_id
+        cleared_dirty_repository_id = $document.state_delta.cleared_dirty_repository_id
         dirty_repository_ids_before = @($document.state_delta.dirty_repository_ids_before)
         dirty_repository_ids_after = @($document.state_delta.dirty_repository_ids_after)
     }
