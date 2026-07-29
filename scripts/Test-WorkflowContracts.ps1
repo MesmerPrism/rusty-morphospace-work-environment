@@ -21,6 +21,24 @@ if ($RepositoryMapPath) {
 }
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceProtocolCommon.psm1') -Force
 
+function Invoke-IsolatedWorkflowSelfTest {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [string[]]$Arguments = @()
+    )
+
+    $hostPath = [Environment]::ProcessPath
+    if ([string]::IsNullOrWhiteSpace($hostPath) -or -not [IO.File]::Exists($hostPath)) {
+        $hostPath = (Get-Command pwsh -ErrorAction Stop).Source
+    }
+    $output = @(& $hostPath -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $Path @Arguments 2>&1)
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -ne 0) {
+        $detail = (($output | ForEach-Object { [string]$_ }) -join [Environment]::NewLine).Trim()
+        throw "Isolated workflow self-test '$([IO.Path]::GetFileName($Path))' failed with exit $exitCode.$([Environment]::NewLine)$detail"
+    }
+}
+
 function Add-Failure {
     param([string]$Message)
 
@@ -1225,7 +1243,7 @@ foreach ($candidateContract in $candidateContracts) {
 }
 if (-not $SkipOwnerSelfTests) {
     foreach ($selfTest in @("Test-LegacyEmbeddedPushPlanCompatibility.ps1","Test-PreparedPublicationReconstruction.ps1","Test-ResolveBlocker.ps1","Test-CorrectResolvedBlockerEvidence.ps1","Test-TransitionLedger.ps1")) {
-        try { & (Join-Path $RepoRoot "scripts\$selfTest") | Out-Null }
+        try { Invoke-IsolatedWorkflowSelfTest -Path (Join-Path $RepoRoot "scripts\$selfTest") }
         catch { Add-Failure -Message "$selfTest failed: $($_.Exception.Message)" }
     }
 }
