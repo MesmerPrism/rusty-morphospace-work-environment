@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/event-ledger-prefix-normalization-v1.schema.json",
+  "title": "Rusty Morphospace event-ledger prefix normalization receipt v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "normalization_id", "created_at", "project_id", "unit_id",
+    "repository", "ledger", "state", "unit", "event", "guarantees", "status"
+  ],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.workflow.event_ledger_prefix_normalization.v1" },
+    "normalization_id": { "$ref": "#/$defs/id" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "project_id": { "$ref": "#/$defs/id" },
+    "unit_id": { "$ref": "#/$defs/id" },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["head", "branch"],
+      "properties": {
+        "head": { "$ref": "#/$defs/sha" },
+        "branch": { "type": ["string", "null"], "minLength": 1 }
+      }
+    },
+    "ledger": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path", "before_sha256", "before_length", "removed_prefix_base64",
+        "normalized_prefix_sha256", "normalized_prefix_length", "after_sha256",
+        "after_length", "preserved_event_count", "prior_tail_event_id",
+        "prior_tail_sequence"
+      ],
+      "properties": {
+        "path": { "const": "iteration-events.jsonl" },
+        "before_sha256": { "$ref": "#/$defs/hash" },
+        "before_length": { "type": "integer", "minimum": 3, "maximum": 1048576 },
+        "removed_prefix_base64": { "const": "DQo=" },
+        "normalized_prefix_sha256": { "$ref": "#/$defs/hash" },
+        "normalized_prefix_length": { "type": "integer", "minimum": 1, "maximum": 1048574 },
+        "after_sha256": { "$ref": "#/$defs/hash" },
+        "after_length": { "type": "integer", "minimum": 2, "maximum": 1064960 },
+        "preserved_event_count": { "type": "integer", "minimum": 1 },
+        "prior_tail_event_id": { "$ref": "#/$defs/id" },
+        "prior_tail_sequence": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path", "before_file_sha256", "before_document_sha256",
+        "after_file_sha256", "after_document_sha256", "changed_fields"
+      ],
+      "properties": {
+        "path": { "const": "workspace.state.json" },
+        "before_file_sha256": { "$ref": "#/$defs/hash" },
+        "before_document_sha256": { "$ref": "#/$defs/hash" },
+        "after_file_sha256": { "$ref": "#/$defs/hash" },
+        "after_document_sha256": { "$ref": "#/$defs/hash" },
+        "changed_fields": { "const": ["last_event_id"] }
+      }
+    },
+    "unit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "file_sha256", "document_sha256", "status"],
+      "properties": {
+        "path": { "type": "string", "pattern": "^iteration-units/[a-z0-9][a-z0-9-]{1,127}\\.json$" },
+        "file_sha256": { "$ref": "#/$defs/hash" },
+        "document_sha256": { "$ref": "#/$defs/hash" },
+        "status": { "type": "string", "minLength": 1 }
+      }
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event_id", "sequence", "receipt_path"],
+      "properties": {
+        "event_id": { "$ref": "#/$defs/id" },
+        "sequence": { "type": "integer", "minimum": 2 },
+        "receipt_path": { "type": "string", "pattern": "^receipts/[a-z0-9][a-z0-9-]{1,127}\\.json$" }
+      }
+    },
+    "guarantees": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "removed_exactly_one_leading_crlf_record", "prior_event_bytes_unchanged",
+        "current_unit_bytes_unchanged", "state_change_limited_to_last_event_id",
+        "git_mutation_performed", "device_work"
+      ],
+      "properties": {
+        "removed_exactly_one_leading_crlf_record": { "const": true },
+        "prior_event_bytes_unchanged": { "const": true },
+        "current_unit_bytes_unchanged": { "const": true },
+        "state_change_limited_to_last_event_id": { "const": true },
+        "git_mutation_performed": { "const": false },
+        "device_work": { "const": false }
+      }
+    },
+    "status": { "const": "normalized" }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" },
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" }
+  }
+}

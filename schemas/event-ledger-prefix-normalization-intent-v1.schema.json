@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/event-ledger-prefix-normalization-intent-v1.schema.json",
+  "title": "Rusty Morphospace event-ledger prefix normalization intent v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "transaction_id", "normalization_id", "created_at", "paths",
+    "repository", "project", "pre", "target", "pre_events_base64",
+    "pre_state", "target_state", "event", "receipt", "status"
+  ],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.workflow.event_ledger_prefix_normalization_intent.v1" },
+    "transaction_id": { "$ref": "#/$defs/id" },
+    "normalization_id": { "$ref": "#/$defs/id" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "paths": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project", "state", "unit", "events", "receipt", "completion"],
+      "properties": {
+        "project": { "const": "project.spec.json" },
+        "state": { "const": "workspace.state.json" },
+        "unit": { "type": "string", "pattern": "^iteration-units/[a-z0-9][a-z0-9-]{1,127}\\.json$" },
+        "events": { "const": "iteration-events.jsonl" },
+        "receipt": { "type": "string", "pattern": "^receipts/[a-z0-9][a-z0-9-]{1,127}\\.json$" },
+        "completion": { "type": "string", "pattern": "^receipts/transactions/[a-z0-9][a-z0-9-]{1,127}-normalization\\.completion\\.json$" }
+      }
+    },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["head", "branch"],
+      "properties": {
+        "head": { "$ref": "#/$defs/sha" },
+        "branch": { "type": ["string", "null"], "minLength": 1 }
+      }
+    },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id", "file_sha256", "document_sha256"],
+      "properties": {
+        "project_id": { "$ref": "#/$defs/id" },
+        "file_sha256": { "$ref": "#/$defs/hash" },
+        "document_sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "pre": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state_file_sha256", "state_document_sha256", "unit_file_sha256",
+        "unit_document_sha256", "events_sha256", "events_length",
+        "event_tail_id", "event_tail_sequence"
+      ],
+      "properties": {
+        "state_file_sha256": { "$ref": "#/$defs/hash" },
+        "state_document_sha256": { "$ref": "#/$defs/hash" },
+        "unit_file_sha256": { "$ref": "#/$defs/hash" },
+        "unit_document_sha256": { "$ref": "#/$defs/hash" },
+        "events_sha256": { "$ref": "#/$defs/hash" },
+        "events_length": { "type": "integer", "minimum": 3, "maximum": 1048576 },
+        "event_tail_id": { "$ref": "#/$defs/id" },
+        "event_tail_sequence": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state_file_sha256", "state_document_sha256", "unit_file_sha256",
+        "unit_document_sha256", "normalized_prefix_sha256",
+        "normalized_prefix_length", "events_sha256", "events_length"
+      ],
+      "properties": {
+        "state_file_sha256": { "$ref": "#/$defs/hash" },
+        "state_document_sha256": { "$ref": "#/$defs/hash" },
+        "unit_file_sha256": { "$ref": "#/$defs/hash" },
+        "unit_document_sha256": { "$ref": "#/$defs/hash" },
+        "normalized_prefix_sha256": { "$ref": "#/$defs/hash" },
+        "normalized_prefix_length": { "type": "integer", "minimum": 1, "maximum": 1048574 },
+        "events_sha256": { "$ref": "#/$defs/hash" },
+        "events_length": { "type": "integer", "minimum": 2, "maximum": 1064960 }
+      }
+    },
+    "pre_events_base64": { "type": "string", "minLength": 4, "maxLength": 1398104 },
+    "pre_state": { "type": "object" },
+    "target_state": { "type": "object" },
+    "event": { "type": "object" },
+    "receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "document"],
+      "properties": {
+        "path": { "type": "string", "pattern": "^receipts/[a-z0-9][a-z0-9-]{1,127}\\.json$" },
+        "sha256": { "$ref": "#/$defs/hash" },
+        "document": { "type": "object" }
+      }
+    },
+    "status": { "const": "prepared" }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" },
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" }
+  }
+}
