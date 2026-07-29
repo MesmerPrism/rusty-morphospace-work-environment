@@ -295,9 +295,10 @@ The CLI is deliberately narrower than an autonomous coding agent:
   one exact replacement-delta path, and unchanged source history.
 - event-ledger prefix normalization requires an initially clean Git worktree,
   exact caller-bound repository/project/state/current-unit/ledger/tail
-  identities, and one `0D0A` prefix. It preserves all prior event and unit
-  bytes, appends its typed event, and changes only `last_event_id`; all other
-  blank records remain invalid.
+  identities, a dry-run intent SHA-256 pinned again for execution/recovery, and
+  one `0D0A` prefix. It preserves all prior event and unit bytes, appends its
+  typed event, publishes its normalized receipt only after target readback, and
+  changes only `last_event_id`; all other blank records remain invalid.
 
 Keep the local repository map outside a public project instance when its paths
 identify a workstation. Start from `templates/repository-map.example.json`.
@@ -348,8 +349,10 @@ pwsh -NoProfile -ExecutionPolicy Bypass `
   -Timestamp <strict-utc-timestamp>
 ```
 
-This is a dry run until `-Execute` is added. Repeat the same executed command
-to recover an incomplete exact intent; a committed completion rejects replay.
+This is a dry run until `-ExpectedIntentSha256
+<reported-intent-sha256> -Execute` is added. Repeat that exact caller-pinned
+executed command to recover an incomplete intent; a committed completion
+rejects replay.
 See [Event-Ledger Prefix Normalization](EVENT_LEDGER_PREFIX_NORMALIZATION.md).
 
 Pre-protocol in-flight adoption is a separate two-step operation:

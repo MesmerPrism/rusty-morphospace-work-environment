@@ -96,7 +96,10 @@ through the typed workflow-owner migration in
 [Event-Ledger Prefix Normalization](EVENT_LEDGER_PREFIX_NORMALIZATION.md). The
 transaction preserves every event byte after that prefix, appends its own
 canonical event, changes only `workspace.state.json.last_event_id`, and leaves
-the current unit byte-identical. No other event-history rewrite is admitted.
+the current unit byte-identical. Execution/recovery requires the caller-pinned
+dry-run intent digest, and the standalone normalized receipt appears only
+after exact state/ledger target readback. No other event-history rewrite is
+admitted.
 
 An existing terminal unit may be normalized without mutation through a
 hash-bound receipt listed by compact state under

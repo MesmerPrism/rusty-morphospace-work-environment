@@ -317,10 +317,11 @@ rule.
 Do not make an event parser broadly tolerant to repair historical JSONL
 framing. Exactly one leading CRLF blank record may be removed only through the
 typed `NormalizeEventLedgerPrefix` owner migration: raw-byte and state/unit/
-project/tail CAS, durable intent/completion, unchanged prior event and current-
-unit bytes, one appended correction event, and only `last_event_id` changed.
-Every other blank record remains fail-closed. Route the detailed procedure to
-`docs/EVENT_LEDGER_PREFIX_NORMALIZATION.md`.
+project/tail CAS, caller-pinned dry-run intent SHA-256, durable intent/
+completion, receipt-after-target publication, unchanged prior event and
+current-unit bytes, one appended correction event, and only `last_event_id`
+changed. Every other blank record remains fail-closed. Route the detailed
+procedure to `docs/EVENT_LEDGER_PREFIX_NORMALIZATION.md`.
 
 When a terminal historical unit uses retired workflow vocabulary, require a
 project-owned receipt binding exact bytes, status, terminal evidence, and

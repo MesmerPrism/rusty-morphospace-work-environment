@@ -27,6 +27,7 @@ param(
     [string]$ExpectedEventsSha256 = "",
     [long]$ExpectedEventsLength = -1,
     [string]$ExpectedEventTailId = "",
+    [string]$ExpectedIntentSha256 = "",
     [string]$AdoptionReceipt = "",
     [ValidateSet("quick", "standard", "deep")][string]$ValidationTier = "standard",
     [string[]]$DeviceSerials = @(),
@@ -96,13 +97,15 @@ if ($Action -eq "NormalizeEventLedgerPrefix") {
         if (-not [string]$required.value) { throw "NormalizeEventLedgerPrefix requires $([string]$required.name)." }
     }
     if ($ExpectedEventsLength -lt 0) { throw "NormalizeEventLedgerPrefix requires ExpectedEventsLength." }
+    if ($Execute -and -not $ExpectedIntentSha256) { throw "Executed NormalizeEventLedgerPrefix requires ExpectedIntentSha256 from its dry-run." }
     Import-Module (Join-Path $PSScriptRoot "EventLedgerPrefixNormalization.psm1") -Force
     Invoke-MorphospaceEventLedgerPrefixNormalization -WorkspaceRoot $WorkspaceRoot `
         -NormalizationId $LedgerPrefixNormalizationId -UnitId $UnitId `
         -ExpectedRepositoryHead $ExpectedRepositoryHead -ExpectedProjectSha256 $ExpectedProjectSha256 `
         -ExpectedStateSha256 $ExpectedStateSha256 -ExpectedUnitSha256 $ExpectedUnitSha256 `
         -ExpectedEventsSha256 $ExpectedEventsSha256 -ExpectedEventsLength $ExpectedEventsLength `
-        -ExpectedEventTailId $ExpectedEventTailId -Timestamp $Timestamp -Execute:$Execute |
+        -ExpectedEventTailId $ExpectedEventTailId -ExpectedIntentSha256 $ExpectedIntentSha256 `
+        -Timestamp $Timestamp -Execute:$Execute |
         ConvertTo-Json -Depth 32
     return
 }

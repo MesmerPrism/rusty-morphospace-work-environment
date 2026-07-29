@@ -184,8 +184,10 @@ claimable queue after its prerequisites are accepted; this replaces manual
 status/state/event edits.
 Use `NormalizeEventLedgerPrefix` only for the exact protocol-v2 framing defect
 defined by its runbook. It requires a clean worktree plus caller-bound
-repository, project, state, unit, event-ledger, and tail identities; it appends
-one correction event and changes no state field except `last_event_id`.
+repository, project, state, unit, event-ledger, tail, and dry-run intent
+identities; it appends one correction event, publishes the normalized receipt
+only after exact target readback, and changes no state field except
+`last_event_id`.
 `RecordValidation` and `Accept` require a local `validation_receipt.v1` whose
 hashed artifacts, exact acceptance/gate coverage, repository revisions,
 changed paths, and required device cleanup/fatal fields still match current

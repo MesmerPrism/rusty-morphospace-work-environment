@@ -6,6 +6,121 @@ Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Fo
 $script:NormalizationMaximumLedgerBytes = 1048576
 $script:NormalizationPrefix = [byte[]]@(0x0d,0x0a)
 
+if($IsWindows-and-not('RustyMorphospace.ExactFileMutation'-as[type])){
+    Add-Type -TypeDefinition @'
+using Microsoft.Win32.SafeHandles;
+using System;
+using System.ComponentModel;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Text;
+
+namespace RustyMorphospace {
+    public static class ExactFileMutation {
+        private const uint GenericRead = 0x80000000;
+        private const uint Delete = 0x00010000;
+        private const uint ShareRead = 0x00000001;
+        private const uint OpenExisting = 3;
+        private const int FileRenameInfo = 3;
+        private const int FileDispositionInfo = 4;
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern SafeFileHandle CreateFileW(
+            string name, uint access, uint share, IntPtr security, uint creation,
+            uint flags, IntPtr template);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool SetFileInformationByHandle(
+            SafeFileHandle handle, int informationClass, IntPtr information,
+            uint bufferSize);
+
+        private static SafeFileHandle OpenExact(string path) {
+            var handle = CreateFileW(path, GenericRead | Delete, ShareRead,
+                IntPtr.Zero, OpenExisting, 0, IntPtr.Zero);
+            if (handle.IsInvalid) {
+                int error = Marshal.GetLastWin32Error();
+                handle.Dispose();
+                throw new Win32Exception(error, "Could not lease exact file: " + path);
+            }
+            return handle;
+        }
+
+        private static string Hash(SafeFileHandle handle) {
+            long length = RandomAccess.GetLength(handle);
+            if (length > Int32.MaxValue) throw new IOException("Exact file exceeds supported length.");
+            byte[] bytes = new byte[(int)length];
+            int offset = 0;
+            while (offset < bytes.Length) {
+                int read = RandomAccess.Read(handle, bytes.AsSpan(offset), offset);
+                if (read == 0) throw new EndOfStreamException("Exact leased file ended early.");
+                offset += read;
+            }
+            return Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+        }
+
+        private static void RequireHash(SafeFileHandle handle, string expected, string path) {
+            string actual = Hash(handle);
+            if (!String.Equals(actual, expected, StringComparison.Ordinal)) {
+                throw new IOException("Exact leased file hash differs before mutation: " + path);
+            }
+        }
+
+        public static void MoveExact(string source, string destination, string expectedSha256) {
+            if (File.Exists(destination) || Directory.Exists(destination)) {
+                throw new IOException("Exact move destination is occupied: " + destination);
+            }
+            using (SafeFileHandle handle = OpenExact(source)) {
+                RequireHash(handle, expectedSha256, source);
+                byte[] name = Encoding.Unicode.GetBytes(@"\\?\" + Path.GetFullPath(destination));
+                int size = checked(22 + name.Length);
+                IntPtr buffer = Marshal.AllocHGlobal(size);
+                try {
+                    for (int index = 0; index < size; index++) Marshal.WriteByte(buffer, index, 0);
+                    Marshal.WriteByte(buffer, 0, 0);
+                    Marshal.WriteIntPtr(buffer, 8, IntPtr.Zero);
+                    Marshal.WriteInt32(buffer, 16, name.Length);
+                    Marshal.Copy(name, 0, IntPtr.Add(buffer, 20), name.Length);
+                    if (!SetFileInformationByHandle(handle, FileRenameInfo, buffer, (uint)size)) {
+                        throw new Win32Exception(Marshal.GetLastWin32Error(), "Exact handle rename failed.");
+                    }
+                } finally {
+                    Marshal.FreeHGlobal(buffer);
+                }
+            }
+        }
+
+        public static void DeleteExact(string path, string expectedSha256) {
+            using (SafeFileHandle handle = OpenExact(path)) {
+                RequireHash(handle, expectedSha256, path);
+                IntPtr buffer = Marshal.AllocHGlobal(4);
+                try {
+                    Marshal.WriteInt32(buffer, 1);
+                    if (!SetFileInformationByHandle(handle, FileDispositionInfo, buffer, 4)) {
+                        throw new Win32Exception(Marshal.GetLastWin32Error(), "Exact handle deletion failed.");
+                    }
+                } finally {
+                    Marshal.FreeHGlobal(buffer);
+                }
+            }
+        }
+    }
+}
+'@
+}
+
+function Move-MorphospaceNormalizationExactFile {
+    param([Parameter(Mandatory=$true)][string]$Source,[Parameter(Mandatory=$true)][string]$Destination,[Parameter(Mandatory=$true)][string]$ExpectedSha256)
+    if(-not$IsWindows){throw 'Executed event-ledger prefix normalization requires the Windows exact-handle file mutation primitive.'}
+    [RustyMorphospace.ExactFileMutation]::MoveExact($Source,$Destination,$ExpectedSha256)
+}
+
+function Remove-MorphospaceNormalizationExactFile {
+    param([Parameter(Mandatory=$true)][string]$Path,[Parameter(Mandatory=$true)][string]$ExpectedSha256)
+    if(-not$IsWindows){throw 'Executed event-ledger prefix normalization requires the Windows exact-handle file mutation primitive.'}
+    [RustyMorphospace.ExactFileMutation]::DeleteExact($Path,$ExpectedSha256)
+}
+
 function Test-MorphospaceTransitionLedgerBytes {
     param([Parameter(Mandatory=$true)][AllowEmptyCollection()][byte[]]$Bytes)
     & $script:TransitionLedgerModule {
@@ -61,6 +176,51 @@ function Invoke-MorphospaceNormalizationGit {
     return @($output|ForEach-Object{[string]$_})
 }
 
+function Invoke-MorphospaceNormalizationGitText {
+    param([Parameter(Mandatory=$true)][string]$Path,[Parameter(Mandatory=$true)][string[]]$Arguments)
+    $start=[Diagnostics.ProcessStartInfo]::new()
+    $start.FileName='git'
+    $start.WorkingDirectory=$Path
+    $start.UseShellExecute=$false
+    $start.RedirectStandardOutput=$true
+    $start.RedirectStandardError=$true
+    $start.StandardOutputEncoding=[Text.UTF8Encoding]::new($false,$true)
+    $start.StandardErrorEncoding=[Text.UTF8Encoding]::new($false,$true)
+    foreach($argument in $Arguments){[void]$start.ArgumentList.Add($argument)}
+    $process=[Diagnostics.Process]::new();$process.StartInfo=$start
+    if(-not$process.Start()){throw 'Event-ledger normalization could not start Git observation.'}
+    $stdout=$process.StandardOutput.ReadToEndAsync()
+    $stderr=$process.StandardError.ReadToEndAsync()
+    $process.WaitForExit()
+    $output=$stdout.GetAwaiter().GetResult();$errorText=$stderr.GetAwaiter().GetResult()
+    if($process.ExitCode-ne0){throw "Event-ledger normalization Git observation failed: git $($Arguments -join ' '): $errorText"}
+    $output
+}
+
+function Get-MorphospaceNormalizationGitStatus {
+    param([Parameter(Mandatory=$true)][string]$Root)
+    $raw=Invoke-MorphospaceNormalizationGitText $Root @('status','--porcelain=v1','-z','--untracked-files=all')
+    if(-not$raw){return @()}
+    if($raw[$raw.Length-1]-ne[char]0){throw 'Event-ledger normalization Git status is not NUL terminated.'}
+    $records=$raw.Split([char]0,[StringSplitOptions]::None)
+    $entries=[Collections.Generic.List[object]]::new()
+    for($index=0;$index-lt$records.Length-1;$index++){
+        $record=$records[$index]
+        if($record.Length-lt4-or$record[2]-cne' '){throw 'Malformed NUL-delimited Git status entry during event-ledger normalization.'}
+        $x=[char]$record[0];$y=[char]$record[1]
+        if($x-ceq'R'-or$y-ceq'R'-or$x-ceq'C'-or$y-ceq'C'){
+            throw 'Event-ledger normalization rejects rename/copy Git status entries.'
+        }
+        $path=$record.Substring(3)
+        if(-not$path-or$path.Contains("`r")-or$path.Contains("`n")-or$path.Contains([char]0)-or
+           $path.StartsWith('/')-or$path-cmatch'(^|/)\.\.?(/|$)'){
+            throw 'Event-ledger normalization rejects a malformed Git status pathname.'
+        }
+        $entries.Add([pscustomobject]@{xy="$x$y";path=$path})
+    }
+    @($entries)
+}
+
 function Get-MorphospaceNormalizationGitObservation {
     param([Parameter(Mandatory=$true)][string]$Workspace)
     $rootText=((Invoke-MorphospaceNormalizationGit $Workspace @('rev-parse','--show-toplevel'))-join"`n").Trim()
@@ -70,18 +230,11 @@ function Get-MorphospaceNormalizationGitObservation {
     $root=[IO.Path]::GetFullPath($rootText)
     $workspacePath=[IO.Path]::GetFullPath($Workspace)
     $prefix=$root.TrimEnd('\','/')+[IO.Path]::DirectorySeparatorChar
-    if(-not$workspacePath.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){throw 'Morphospace workspace is not below its observed Git root.'}
+    $pathComparison=if($IsWindows){[StringComparison]::OrdinalIgnoreCase}else{[StringComparison]::Ordinal}
+    if(-not$workspacePath.StartsWith($prefix,$pathComparison)){throw 'Morphospace workspace is not below its observed Git root.'}
     $workspaceRelative=$workspacePath.Substring($prefix.Length).Replace('\','/').TrimEnd('/')
-    $status=@(Invoke-MorphospaceNormalizationGit $root @('status','--porcelain=v1','--untracked-files=all'))
+    $status=@(Get-MorphospaceNormalizationGitStatus $root)
     [pscustomobject]@{root=$root;head=$head;branch=$branch;workspace_relative=$workspaceRelative;status=@($status)}
-}
-
-function Get-MorphospaceNormalizationDirtyPath {
-    param([Parameter(Mandatory=$true)][string]$Line)
-    if($Line.Length-lt4){throw "Malformed Git status entry during event-ledger normalization: $Line"}
-    $path=$Line.Substring(3)
-    if($path.Contains(' -> ')){$path=($path-split' -> ',2)[1]}
-    $path.Trim('"').Replace('\','/')
 }
 
 function Assert-MorphospaceNormalizationGitClean {
@@ -91,13 +244,14 @@ function Assert-MorphospaceNormalizationGitClean {
 
 function Assert-MorphospaceNormalizationOwnedDirt {
     param([Parameter(Mandatory=$true)][object]$Observation,[Parameter(Mandatory=$true)][object]$Paths)
-    $allowed=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
-    foreach($relative in @($Paths.state,$Paths.events,$Paths.receipt,$Paths.intent,$Paths.completion,$Paths.stage,$Paths.backup)){
+    $pathComparer=if($IsWindows){[StringComparer]::OrdinalIgnoreCase}else{[StringComparer]::Ordinal}
+    $allowed=[Collections.Generic.HashSet[string]]::new($pathComparer)
+    foreach($relative in @($Paths.state,$Paths.events,$Paths.receipt,$Paths.intent,$Paths.completion,$Paths.stage,$Paths.backup,$Paths.state_stage,$Paths.state_backup)){
         $joined=if($Observation.workspace_relative){"$($Observation.workspace_relative)/$relative"}else{$relative}
         [void]$allowed.Add($joined.Replace('\','/'))
     }
-    foreach($line in @($Observation.status)){
-        $dirty=Get-MorphospaceNormalizationDirtyPath ([string]$line)
+    foreach($entry in @($Observation.status)){
+        $dirty=[string]$entry.path
         if(-not$allowed.Contains($dirty)){throw "Event-ledger normalization observed unrelated Git dirt: $dirty"}
     }
 }
@@ -116,6 +270,8 @@ function Get-MorphospaceNormalizationPaths {
         completion="receipts/transactions/$transactionId.completion.json"
         stage="iteration-events.jsonl.$transactionId.pending"
         backup="iteration-events.jsonl.$transactionId.before"
+        state_stage="workspace.state.json.$transactionId.pending"
+        state_backup="workspace.state.json.$transactionId.before"
         transaction_id=$transactionId
     }
 }
@@ -167,7 +323,8 @@ function Get-MorphospaceNormalizationCandidate {
     if([string]$state.current_unit-cne$UnitId-or[string]$unit.unit_id-cne$UnitId){throw 'Event-ledger normalization does not bind the exact current unit.'}
 
     $projectFileHash=Get-MorphospaceFileSha256 $projectPath
-    $stateFileHash=Get-MorphospaceFileSha256 $statePath
+    $stateFileBytes=[IO.File]::ReadAllBytes($statePath)
+    $stateFileHash=Get-MorphospaceNormalizationSha256 $stateFileBytes
     $unitFileHash=Get-MorphospaceFileSha256 $unitPath
     Assert-MorphospaceNormalizationExpectedHash 'project file' $ExpectedProjectSha256 $projectFileHash
     Assert-MorphospaceNormalizationExpectedHash 'state file' $ExpectedStateSha256 $stateFileHash
@@ -265,6 +422,7 @@ function Get-MorphospaceNormalizationCandidate {
         before=$before;normalized=$normalized;after=$after;event=$event
         pre_state=$preState;target_state=$targetState;target_state_bytes=$targetStateBytes
         receipt=$receipt;receipt_bytes=$receiptBytes
+        state_file_bytes=$stateFileBytes
         project_file_sha256=$projectFileHash;state_file_sha256=$stateFileHash;unit_file_sha256=$unitFileHash
     }
 }
@@ -308,6 +466,7 @@ function New-MorphospaceNormalizationIntent {
             events_length=[int64]$c.receipt.ledger.after_length
         }
         pre_events_base64=[Convert]::ToBase64String($c.before)
+        pre_state_base64=[Convert]::ToBase64String($c.state_file_bytes)
         pre_state=$c.pre_state
         target_state=$c.target_state
         event=$c.event
@@ -329,16 +488,25 @@ function Assert-MorphospaceNormalizationIntent {
     Test-MorphospaceNormalizationSchema $Intent.receipt.document 'event-ledger-prefix-normalization-v1.schema.json' 'Event-ledger normalization intent receipt'
     $paths=Get-MorphospaceNormalizationPaths $NormalizationId
     $paths.unit=[string]$Intent.paths.unit
+    $unitId=[IO.Path]::GetFileNameWithoutExtension([string]$Intent.paths.unit)
     if([string]$Intent.normalization_id-cne$NormalizationId-or[string]$Intent.transaction_id-cne$paths.transaction_id-or
        [string]$Intent.paths.project-cne$paths.project-or[string]$Intent.paths.state-cne$paths.state-or
        [string]$Intent.paths.events-cne$paths.events-or[string]$Intent.paths.receipt-cne$paths.receipt-or
-       [string]$Intent.paths.completion-cne$paths.completion-or[string]$Intent.event.event_id-cne$NormalizationId){
+       [string]$Intent.paths.completion-cne$paths.completion-or[string]$Intent.event.event_id-cne$NormalizationId-or
+       [string]$Intent.status-cne'prepared'){
         throw 'Event-ledger normalization intent identity or path binding is invalid.'
     }
+    [void](Test-MorphospaceStrictUtcTimestamp ([string]$Intent.created_at))
     try{$before=[Convert]::FromBase64String([string]$Intent.pre_events_base64)}catch{throw 'Event-ledger normalization intent preimage is not valid base64.'}
     if([Convert]::ToBase64String($before)-cne[string]$Intent.pre_events_base64){throw 'Event-ledger normalization intent preimage is not canonical base64.'}
     if($before.Length-ne[int64]$Intent.pre.events_length-or(Get-MorphospaceNormalizationSha256 $before)-cne[string]$Intent.pre.events_sha256-or
        $before.Length-lt3-or$before[0]-ne0x0d-or$before[1]-ne0x0a){throw 'Event-ledger normalization intent preimage binding is invalid.'}
+    try{$beforeStateBytes=[Convert]::FromBase64String([string]$Intent.pre_state_base64)}catch{throw 'Event-ledger normalization intent state preimage is not valid base64.'}
+    if([Convert]::ToBase64String($beforeStateBytes)-cne[string]$Intent.pre_state_base64-or
+       (Get-MorphospaceNormalizationSha256 $beforeStateBytes)-cne[string]$Intent.pre.state_file_sha256-or
+       (Get-MorphospaceCanonicalJsonSha256 (ConvertFrom-MorphospaceProtocolJsonBytes -Bytes $beforeStateBytes -Context 'event-ledger normalization intent state preimage'))-cne[string]$Intent.pre.state_document_sha256){
+        throw 'Event-ledger normalization intent state preimage binding is invalid.'
+    }
     $normalized=[byte[]]::new($before.Length-2);[Array]::Copy($before,2,$normalized,0,$normalized.Length)
     $prior=Test-MorphospaceTransitionLedgerBytes $normalized
     if($prior.events.Count-lt1-or[string]$prior.tail_id-cne[string]$Intent.pre.event_tail_id-or
@@ -347,21 +515,27 @@ function Assert-MorphospaceNormalizationIntent {
        $normalized.Length-ne[int64]$Intent.target.normalized_prefix_length){throw 'Event-ledger normalization intent preserved-prefix binding is invalid.'}
     foreach($priorEvent in @($prior.events)){if([string]$priorEvent.project_id-cne[string]$Intent.project.project_id){throw 'Event-ledger normalization intent contains a wrong-project preserved event.'}}
     if([int]$Intent.event.sequence-ne[int]$Intent.pre.event_tail_sequence+1-or[string]$Intent.event.project_id-cne[string]$Intent.project.project_id-or
-       [string]$Intent.event.unit_id-cne([IO.Path]::GetFileNameWithoutExtension([string]$Intent.paths.unit))-or
+       [string]$Intent.event.unit_id-cne$unitId-or[string]$Intent.event.timestamp-cne[string]$Intent.created_at-or
        [string]$Intent.event.event_type-cne'state-transition'-or@($Intent.event.receipts).Count-ne1-or[string]$Intent.event.receipts[0]-cne[string]$Intent.paths.receipt){
         throw 'Event-ledger normalization intent event binding is invalid.'
     }
     $line=Get-MorphospaceTransitionLedgerEventLineBytes $Intent.event
     $after=[byte[]]::new($normalized.Length+$line.Length);[Array]::Copy($normalized,0,$after,0,$normalized.Length);[Array]::Copy($line,0,$after,$normalized.Length,$line.Length)
     [void](Test-MorphospaceTransitionLedgerBytes $after)
-    if($after.Length-ne[int64]$Intent.target.events_length-or(Get-MorphospaceNormalizationSha256 $after)-cne[string]$Intent.target.events_sha256){throw 'Event-ledger normalization intent target ledger binding is invalid.'}
+    if($after.Length-ne[int64]$Intent.target.events_length-or(Get-MorphospaceNormalizationSha256 $after)-cne[string]$Intent.target.events_sha256-or
+       [int64]$Intent.pre.events_length-ne[int64]$Intent.target.normalized_prefix_length+2-or
+       [int64]$Intent.target.events_length-ne[int64]$Intent.target.normalized_prefix_length+[int64]$line.Length-or
+       [string]$Intent.target.unit_file_sha256-cne[string]$Intent.pre.unit_file_sha256-or
+       [string]$Intent.target.unit_document_sha256-cne[string]$Intent.pre.unit_document_sha256){
+        throw 'Event-ledger normalization intent target ledger or unit binding is invalid.'
+    }
     if((Get-MorphospaceCanonicalJsonSha256 $Intent.pre_state)-cne[string]$Intent.pre.state_document_sha256-or
        (Get-MorphospaceCanonicalJsonSha256 $Intent.target_state)-cne[string]$Intent.target.state_document_sha256){throw 'Event-ledger normalization intent state hash binding is invalid.'}
     $expectedTarget=Copy-MorphospaceNormalizationDocument $Intent.pre_state 'event-ledger normalization intent state comparison'
     $expectedTarget.last_event_id=$NormalizationId
     if((Get-MorphospaceCanonicalJsonSha256 $expectedTarget)-cne(Get-MorphospaceCanonicalJsonSha256 $Intent.target_state)){throw 'Event-ledger normalization intent changes state beyond last_event_id.'}
-    if([string]$Intent.pre_state.current_unit-cne([IO.Path]::GetFileNameWithoutExtension([string]$Intent.paths.unit))-or
-       [string]$Intent.pre_state.project_id-cne[string]$Intent.project.project_id-or[string]$Intent.pre_state.last_event_id-cne[string]$Intent.pre.event_tail_id){
+    if([string]$Intent.pre_state.current_unit-cne$unitId-or[string]$Intent.target_state.current_unit-cne$unitId-or
+        [string]$Intent.pre_state.project_id-cne[string]$Intent.project.project_id-or[string]$Intent.pre_state.last_event_id-cne[string]$Intent.pre.event_tail_id){
         throw 'Event-ledger normalization intent pre-state identity or tail binding is invalid.'
     }
     $targetStateBytes=Get-MorphospaceNormalizationJsonBytes $Intent.target_state
@@ -370,17 +544,145 @@ function Assert-MorphospaceNormalizationIntent {
     if((Get-MorphospaceNormalizationSha256 $receiptBytes)-cne[string]$Intent.receipt.sha256){throw 'Event-ledger normalization intent receipt hash is invalid.'}
     $r=$Intent.receipt.document
     if([string]$r.normalization_id-cne$NormalizationId-or[string]$r.project_id-cne[string]$Intent.project.project_id-or
-       [string]$r.unit_id-cne([IO.Path]::GetFileNameWithoutExtension([string]$Intent.paths.unit))-or
+       [string]$r.unit_id-cne$unitId-or[string]$r.created_at-cne[string]$Intent.created_at-or[string]$r.status-cne'normalized'-or
+       [string]$r.repository.head-cne[string]$Intent.repository.head-or[string]$r.repository.branch-cne[string]$Intent.repository.branch-or
+       [string]$r.ledger.path-cne[string]$Intent.paths.events-or
        [string]$r.ledger.before_sha256-cne[string]$Intent.pre.events_sha256-or[int64]$r.ledger.before_length-ne[int64]$Intent.pre.events_length-or
        [string]$r.ledger.normalized_prefix_sha256-cne[string]$Intent.target.normalized_prefix_sha256-or
-       [string]$r.ledger.after_sha256-cne[string]$Intent.target.events_sha256-or
+       [int64]$r.ledger.normalized_prefix_length-ne[int64]$Intent.target.normalized_prefix_length-or
+       [string]$r.ledger.after_sha256-cne[string]$Intent.target.events_sha256-or[int64]$r.ledger.after_length-ne[int64]$Intent.target.events_length-or
+       [int]$r.ledger.preserved_event_count-ne[int]$prior.events.Count-or
+       [string]$r.ledger.prior_tail_event_id-cne[string]$Intent.pre.event_tail_id-or[int]$r.ledger.prior_tail_sequence-ne[int]$Intent.pre.event_tail_sequence-or
+       [string]$r.state.path-cne[string]$Intent.paths.state-or
        [string]$r.state.before_file_sha256-cne[string]$Intent.pre.state_file_sha256-or
+       [string]$r.state.before_document_sha256-cne[string]$Intent.pre.state_document_sha256-or
        [string]$r.state.after_file_sha256-cne[string]$Intent.target.state_file_sha256-or
+       [string]$r.state.after_document_sha256-cne[string]$Intent.target.state_document_sha256-or
+       [string]$r.unit.path-cne[string]$Intent.paths.unit-or
        [string]$r.unit.file_sha256-cne[string]$Intent.pre.unit_file_sha256-or
-       [string]$r.event.event_id-cne$NormalizationId){
+       [string]$r.unit.document_sha256-cne[string]$Intent.pre.unit_document_sha256-or
+       [string]$r.event.event_id-cne$NormalizationId-or[int]$r.event.sequence-ne[int]$Intent.event.sequence-or
+       [string]$r.event.receipt_path-cne[string]$Intent.paths.receipt){
         throw 'Event-ledger normalization receipt does not derive from its intent.'
     }
-    [pscustomobject]@{paths=$paths;before=$before;normalized=$normalized;after=$after;target_state_bytes=$targetStateBytes;receipt_bytes=$receiptBytes}
+    [pscustomobject]@{paths=$paths;before=$before;before_state=$beforeStateBytes;normalized=$normalized;after=$after;target_state_bytes=$targetStateBytes;receipt_bytes=$receiptBytes}
+}
+
+function Assert-MorphospaceNormalizationCallerAuthority {
+    param(
+        [Parameter(Mandatory=$true)][object]$Intent,
+        [Parameter(Mandatory=$true)][string]$UnitId,
+        [Parameter(Mandatory=$true)][string]$ExpectedRepositoryHead,
+        [Parameter(Mandatory=$true)][string]$ExpectedProjectSha256,
+        [Parameter(Mandatory=$true)][string]$ExpectedStateSha256,
+        [Parameter(Mandatory=$true)][string]$ExpectedUnitSha256,
+        [Parameter(Mandatory=$true)][string]$ExpectedEventsSha256,
+        [Parameter(Mandatory=$true)][int64]$ExpectedEventsLength,
+        [Parameter(Mandatory=$true)][string]$ExpectedEventTailId
+    )
+    foreach($expected in @(
+        [pscustomobject]@{name='project file';value=$ExpectedProjectSha256;bound=[string]$Intent.project.file_sha256},
+        [pscustomobject]@{name='state file';value=$ExpectedStateSha256;bound=[string]$Intent.pre.state_file_sha256},
+        [pscustomobject]@{name='unit file';value=$ExpectedUnitSha256;bound=[string]$Intent.pre.unit_file_sha256},
+        [pscustomobject]@{name='event-ledger';value=$ExpectedEventsSha256;bound=[string]$Intent.pre.events_sha256}
+    )){
+        Assert-MorphospaceNormalizationExpectedHash $expected.name ([string]$expected.value) ([string]$expected.bound)
+    }
+    if($ExpectedRepositoryHead-cnotmatch'^[0-9a-f]{40}$'-or$ExpectedRepositoryHead-cne[string]$Intent.repository.head){
+        throw 'Event-ledger prefix normalization caller repository-HEAD CAS does not match the authenticated intent.'
+    }
+    if($UnitId-cne([IO.Path]::GetFileNameWithoutExtension([string]$Intent.paths.unit))-or[string]$Intent.event.unit_id-cne$UnitId){
+        throw 'Event-ledger prefix normalization caller UnitId does not match the authenticated intent.'
+    }
+    if($ExpectedEventsLength-lt0-or$ExpectedEventsLength-ne[int64]$Intent.pre.events_length){
+        throw 'Event-ledger prefix normalization caller event-ledger length CAS does not match the authenticated intent.'
+    }
+    if($ExpectedEventTailId-cne[string]$Intent.pre.event_tail_id){
+        throw 'Event-ledger prefix normalization caller event-tail CAS does not match the authenticated intent.'
+    }
+}
+
+function Read-MorphospaceNormalizationLeasedBytes {
+    param([Parameter(Mandatory=$true)][string]$Path)
+    $stream=[IO.FileStream]::new($Path,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
+    try{
+        $bytes=[byte[]]::new($stream.Length)
+        $offset=0
+        while($offset-lt$bytes.Length){
+            $read=$stream.Read($bytes,$offset,$bytes.Length-$offset)
+            if($read-eq0){throw 'Event-ledger normalization leased read ended before the exact file length.'}
+            $offset+=$read
+        }
+        $bytes
+    }finally{$stream.Dispose()}
+}
+
+function Install-MorphospaceNormalizationExactTarget {
+    param(
+        [Parameter(Mandatory=$true)][string]$Target,
+        [Parameter(Mandatory=$true)][string]$Stage,
+        [Parameter(Mandatory=$true)][string]$Backup,
+        [Parameter(Mandatory=$true)][byte[]]$BeforeBytes,
+        [Parameter(Mandatory=$true)][byte[]]$TargetBytes,
+        [Parameter(Mandatory=$true)][string]$Label
+    )
+    $beforeHash=Get-MorphospaceNormalizationSha256 $BeforeBytes
+    $targetHash=Get-MorphospaceNormalizationSha256 $TargetBytes
+    foreach($owned in @([pscustomobject]@{path=$Stage;hash=$targetHash},[pscustomobject]@{path=$Backup;hash=$beforeHash})){
+        if([IO.Directory]::Exists($owned.path)){throw "Event-ledger normalization $Label transaction path is occupied by a directory."}
+        if([IO.File]::Exists($owned.path)-and(Get-MorphospaceFileSha256 $owned.path)-cne$owned.hash){
+            throw "Event-ledger normalization $Label transaction file differs from its exact intended bytes."
+        }
+    }
+
+    if([IO.File]::Exists($Target)){
+        $current=Read-MorphospaceNormalizationLeasedBytes $Target
+        $currentHash=Get-MorphospaceNormalizationSha256 $current
+        if($currentHash-cne$beforeHash-and$currentHash-cne$targetHash){
+            throw "Event-ledger normalization found neither the exact before nor exact after $Label state."
+        }
+        if($currentHash-ceq$targetHash){
+            if([IO.File]::Exists($Stage)){Remove-MorphospaceNormalizationExactFile $Stage $targetHash}
+            if([IO.File]::Exists($Backup)){Remove-MorphospaceNormalizationExactFile $Backup $beforeHash}
+            return
+        }
+        if([IO.File]::Exists($Backup)){throw "Event-ledger normalization has an ambiguous before-state plus $Label backup."}
+        if(-not[IO.File]::Exists($Stage)){
+            $stream=[IO.FileStream]::new($Stage,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None,4096,[IO.FileOptions]::WriteThrough)
+            try{$stream.Write($TargetBytes,0,$TargetBytes.Length);$stream.Flush($true)}finally{$stream.Dispose()}
+        }
+        Move-MorphospaceNormalizationExactFile $Target $Backup $beforeHash
+        if((Get-MorphospaceFileSha256 $Backup)-cne$beforeHash){
+            throw "Event-ledger normalization exact-handle $Label backup readback failed."
+        }
+    }elseif(-not[IO.File]::Exists($Backup)){
+        throw "Event-ledger normalization $Label target and exact leased backup are both absent."
+    }
+
+    if((Get-MorphospaceFileSha256 $Backup)-cne$beforeHash-or-not[IO.File]::Exists($Stage)-or
+       (Get-MorphospaceFileSha256 $Stage)-cne$targetHash){
+        throw "Event-ledger normalization cannot recover the exact staged $Label replacement."
+    }
+    if([IO.File]::Exists($Target)){throw "Event-ledger normalization will not overwrite an existing $Label recovery target."}
+    Move-MorphospaceNormalizationExactFile $Stage $Target $targetHash
+    $readback=Read-MorphospaceNormalizationLeasedBytes $Target
+    if((Get-MorphospaceNormalizationSha256 $readback)-cne$targetHash-or(Get-MorphospaceFileSha256 $Backup)-cne$beforeHash){
+        throw "Event-ledger normalization exact $Label replacement readback failed."
+    }
+    Remove-MorphospaceNormalizationExactFile $Backup $beforeHash
+}
+
+function Write-MorphospaceNormalizationStateTarget {
+    param([Parameter(Mandatory=$true)][string]$Workspace,[Parameter(Mandatory=$true)][object]$Intent,[Parameter(Mandatory=$true)][object]$Derived)
+    $state=Get-MorphospaceNormalizationAbsolute $Workspace ([string]$Intent.paths.state) -RequireLeaf
+    $stage=Get-MorphospaceNormalizationAbsolute $Workspace ([string]$Derived.paths.state_stage)
+    $backup=Get-MorphospaceNormalizationAbsolute $Workspace ([string]$Derived.paths.state_backup)
+    Install-MorphospaceNormalizationExactTarget $state $stage $backup $Derived.before_state $Derived.target_state_bytes 'state'
+    $stateBytes=Read-MorphospaceNormalizationLeasedBytes $state
+    if((Get-MorphospaceNormalizationSha256 $stateBytes)-cne[string]$Intent.target.state_file_sha256-or
+       (Get-MorphospaceCanonicalJsonSha256 (Read-MorphospaceProtocolJson $state))-cne[string]$Intent.target.state_document_sha256){
+        throw 'Event-ledger normalization target state readback differs from its intent.'
+    }
 }
 
 function Write-MorphospaceNormalizationLedgerTarget {
@@ -388,39 +690,80 @@ function Write-MorphospaceNormalizationLedgerTarget {
     $events=Get-MorphospaceNormalizationAbsolute $Workspace ([string]$Intent.paths.events) -RequireLeaf
     $stage=Get-MorphospaceNormalizationAbsolute $Workspace ([string]$Derived.paths.stage)
     $backup=Get-MorphospaceNormalizationAbsolute $Workspace ([string]$Derived.paths.backup)
-    $current=[IO.File]::ReadAllBytes($events);$currentHash=Get-MorphospaceNormalizationSha256 $current
-    if($currentHash-cne[string]$Intent.pre.events_sha256-and$currentHash-cne[string]$Intent.target.events_sha256){throw 'Event-ledger normalization found neither the exact before nor exact after ledger state.'}
-    foreach($owned in @([pscustomobject]@{path=$stage;hash=[string]$Intent.target.events_sha256},[pscustomobject]@{path=$backup;hash=[string]$Intent.pre.events_sha256})){
-        if([IO.Directory]::Exists($owned.path)){throw 'Event-ledger normalization transaction path is occupied by a directory.'}
-        if([IO.File]::Exists($owned.path)-and(Get-MorphospaceFileSha256 $owned.path)-cne$owned.hash){throw 'Event-ledger normalization transaction file differs from its exact intended bytes.'}
-    }
-    if($currentHash-ceq[string]$Intent.pre.events_sha256){
-        if([IO.File]::Exists($backup)){throw 'Event-ledger normalization has an ambiguous before-state plus backup.'}
-        if(-not[IO.File]::Exists($stage)){
-            $stream=[IO.FileStream]::new($stage,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None,4096,[IO.FileOptions]::WriteThrough)
-            try{$stream.Write($Derived.after,0,$Derived.after.Length);$stream.Flush($true)}finally{$stream.Dispose()}
-        }
-        [IO.File]::Replace($stage,$events,$backup)
-        if((Get-MorphospaceFileSha256 $events)-cne[string]$Intent.target.events_sha256-or
-           (Get-MorphospaceFileSha256 $backup)-cne[string]$Intent.pre.events_sha256){throw 'Event-ledger normalization atomic replacement readback failed.'}
-    }
-    if([IO.File]::Exists($stage)){
-        if((Get-MorphospaceFileSha256 $stage)-cne[string]$Intent.target.events_sha256){throw 'Event-ledger normalization retained a damaged stage.'}
-        [IO.File]::Delete($stage)
-    }
-    if([IO.File]::Exists($backup)){
-        if((Get-MorphospaceFileSha256 $backup)-cne[string]$Intent.pre.events_sha256){throw 'Event-ledger normalization retained a damaged backup.'}
-        [IO.File]::Delete($backup)
-    }
-    $afterBytes=[IO.File]::ReadAllBytes($events)
+    Install-MorphospaceNormalizationExactTarget $events $stage $backup $Derived.before $Derived.after 'event-ledger'
+    $afterBytes=Read-MorphospaceNormalizationLeasedBytes $events
     if((Get-MorphospaceNormalizationSha256 $afterBytes)-cne[string]$Intent.target.events_sha256){throw 'Event-ledger normalization target ledger changed after replacement.'}
     [void](Test-MorphospaceTransitionLedgerBytes $afterBytes)
+}
+
+function Assert-MorphospaceNormalizationFinalProjection {
+    param(
+        [Parameter(Mandatory=$true)][string]$Workspace,
+        [Parameter(Mandatory=$true)][object]$Intent,
+        [Parameter(Mandatory=$true)][object]$Derived,
+        [Parameter(Mandatory=$true)][string]$ExpectedIntentSha256
+    )
+    $intentPath=Get-MorphospaceNormalizationAbsolute $Workspace ([string]$Derived.paths.intent) -RequireLeaf
+    Assert-MorphospaceNormalizationExpectedHash 'intent file' $ExpectedIntentSha256 (Get-MorphospaceFileSha256 $intentPath)
+    $git=Get-MorphospaceNormalizationGitObservation $Workspace
+    if($git.head-cne[string]$Intent.repository.head-or$git.branch-cne[string]$Intent.repository.branch){
+        throw 'Event-ledger normalization repository HEAD or branch drifted before completion.'
+    }
+    Assert-MorphospaceNormalizationOwnedDirt $git $Derived.paths
+
+    $projectPath=Get-MorphospaceNormalizationAbsolute $Workspace ([string]$Intent.paths.project) -RequireLeaf
+    $statePath=Get-MorphospaceNormalizationAbsolute $Workspace ([string]$Intent.paths.state) -RequireLeaf
+    $unitPath=Get-MorphospaceNormalizationAbsolute $Workspace ([string]$Intent.paths.unit) -RequireLeaf
+    $eventsPath=Get-MorphospaceNormalizationAbsolute $Workspace ([string]$Intent.paths.events) -RequireLeaf
+    $receiptPath=Get-MorphospaceNormalizationAbsolute $Workspace ([string]$Intent.paths.receipt) -RequireLeaf
+    if((Get-MorphospaceFileSha256 $projectPath)-cne[string]$Intent.project.file_sha256){throw 'Event-ledger normalization project bytes drifted before completion.'}
+    $project=Read-MorphospaceProtocolJson $projectPath
+    if((Get-MorphospaceCanonicalJsonSha256 $project)-cne[string]$Intent.project.document_sha256-or
+       [string]$project.project_id-cne[string]$Intent.project.project_id){throw 'Event-ledger normalization project document drifted before completion.'}
+    if((Get-MorphospaceFileSha256 $statePath)-cne[string]$Intent.target.state_file_sha256){throw 'Event-ledger normalization state bytes drifted before completion.'}
+    $state=Read-MorphospaceProtocolJson $statePath
+    if((Get-MorphospaceCanonicalJsonSha256 $state)-cne[string]$Intent.target.state_document_sha256-or
+       [string]$state.last_event_id-cne[string]$Intent.event.event_id-or[string]$state.current_unit-cne[string]$Intent.event.unit_id){
+        throw 'Event-ledger normalization state document drifted before completion.'
+    }
+    if((Get-MorphospaceFileSha256 $unitPath)-cne[string]$Intent.pre.unit_file_sha256){throw 'Event-ledger normalization current-unit bytes drifted before completion.'}
+    $unit=Read-MorphospaceProtocolJson $unitPath
+    if((Get-MorphospaceCanonicalJsonSha256 $unit)-cne[string]$Intent.pre.unit_document_sha256-or
+       [string]$unit.unit_id-cne[string]$Intent.event.unit_id-or[string]$unit.project_id-cne[string]$Intent.project.project_id-or
+       [string]$unit.status-cne[string]$Intent.receipt.document.unit.status){
+        throw 'Event-ledger normalization current-unit document drifted before completion.'
+    }
+    $events=Read-MorphospaceNormalizationLeasedBytes $eventsPath
+    if((Get-MorphospaceNormalizationSha256 $events)-cne[string]$Intent.target.events_sha256-or$events.LongLength-ne[int64]$Intent.target.events_length){
+        throw 'Event-ledger normalization ledger bytes drifted before completion.'
+    }
+    $ledger=Test-MorphospaceTransitionLedgerBytes $events
+    if($ledger.events.Count-ne[int]$Intent.receipt.document.ledger.preserved_event_count+1-or
+       [string]$ledger.tail_id-cne[string]$Intent.event.event_id-or[int]$ledger.events[-1].sequence-ne[int]$Intent.event.sequence){
+        throw 'Event-ledger normalization ledger sequence drifted before completion.'
+    }
+    if((Get-MorphospaceFileSha256 $receiptPath)-cne[string]$Intent.receipt.sha256){throw 'Event-ledger normalization receipt bytes drifted before completion.'}
+    $receipt=Read-MorphospaceProtocolJson $receiptPath
+    Test-MorphospaceNormalizationSchema $receipt 'event-ledger-prefix-normalization-v1.schema.json' 'Event-ledger normalization final receipt'
+    if((Get-MorphospaceNormalizationSha256 (Get-MorphospaceNormalizationJsonBytes $receipt))-cne[string]$Intent.receipt.sha256-or
+       (Get-MorphospaceCanonicalJsonSha256 $receipt)-cne(Get-MorphospaceCanonicalJsonSha256 $Intent.receipt.document)){
+        throw 'Event-ledger normalization receipt document drifted before completion.'
+    }
 }
 
 function Complete-MorphospaceEventLedgerPrefixNormalization {
     param(
         [Parameter(Mandatory=$true)][string]$WorkspaceRoot,
         [Parameter(Mandatory=$true)][string]$NormalizationId,
+        [Parameter(Mandatory=$true)][string]$UnitId,
+        [Parameter(Mandatory=$true)][string]$ExpectedRepositoryHead,
+        [Parameter(Mandatory=$true)][string]$ExpectedProjectSha256,
+        [Parameter(Mandatory=$true)][string]$ExpectedStateSha256,
+        [Parameter(Mandatory=$true)][string]$ExpectedUnitSha256,
+        [Parameter(Mandatory=$true)][string]$ExpectedEventsSha256,
+        [Parameter(Mandatory=$true)][int64]$ExpectedEventsLength,
+        [Parameter(Mandatory=$true)][string]$ExpectedEventTailId,
+        [Parameter(Mandatory=$true)][string]$ExpectedIntentSha256,
         [ValidateSet('none','after-receipt','after-state','after-events')][string]$FaultAfter='none'
     )
     $workspace=[IO.Path]::GetFullPath($WorkspaceRoot);$paths=Get-MorphospaceNormalizationPaths $NormalizationId
@@ -429,8 +772,12 @@ function Complete-MorphospaceEventLedgerPrefixNormalization {
         $intentPath=Get-MorphospaceNormalizationAbsolute $workspace $paths.intent -RequireLeaf
         $completionPath=Get-MorphospaceNormalizationAbsolute $workspace $paths.completion
         if([IO.File]::Exists($completionPath)){throw 'Event-ledger prefix normalization rejects replay after committed completion.'}
-        $intent=Read-MorphospaceProtocolJson $intentPath
+        $intentBytes=Read-MorphospaceNormalizationLeasedBytes $intentPath
+        Assert-MorphospaceNormalizationExpectedHash 'intent file' $ExpectedIntentSha256 (Get-MorphospaceNormalizationSha256 $intentBytes)
+        $intent=ConvertFrom-MorphospaceProtocolJsonBytes -Bytes $intentBytes -Context 'authenticated event-ledger prefix normalization intent'
         $derived=Assert-MorphospaceNormalizationIntent $intent $NormalizationId
+        Assert-MorphospaceNormalizationCallerAuthority $intent $UnitId $ExpectedRepositoryHead $ExpectedProjectSha256 `
+            $ExpectedStateSha256 $ExpectedUnitSha256 $ExpectedEventsSha256 $ExpectedEventsLength $ExpectedEventTailId
         $paths=$derived.paths
         $git=Get-MorphospaceNormalizationGitObservation $workspace
         if($git.head-cne[string]$intent.repository.head-or[string]$git.branch-cne[string]$intent.repository.branch){throw 'Event-ledger normalization repository identity drifted after intent publication.'}
@@ -440,9 +787,10 @@ function Complete-MorphospaceEventLedgerPrefixNormalization {
         $statePath=Get-MorphospaceNormalizationAbsolute $workspace ([string]$intent.paths.state) -RequireLeaf
         $unitPath=Get-MorphospaceNormalizationAbsolute $workspace ([string]$intent.paths.unit) -RequireLeaf
         if((Get-MorphospaceFileSha256 $projectPath)-cne[string]$intent.project.file_sha256){throw 'Event-ledger normalization project bytes drifted after intent publication.'}
+        if((Get-MorphospaceCanonicalJsonSha256 (Read-MorphospaceProtocolJson $projectPath))-cne[string]$intent.project.document_sha256){throw 'Event-ledger normalization project document drifted after intent publication.'}
         if((Get-MorphospaceFileSha256 $unitPath)-cne[string]$intent.pre.unit_file_sha256){throw 'Event-ledger normalization current-unit bytes drifted after intent publication.'}
         $unit=Read-MorphospaceProtocolJson $unitPath
-        if((Get-MorphospaceCanonicalJsonSha256 $unit)-cne[string]$intent.pre.unit_document_sha256){throw 'Event-ledger normalization current-unit document drifted after intent publication.'}
+        if((Get-MorphospaceCanonicalJsonSha256 $unit)-cne[string]$intent.pre.unit_document_sha256-or[string]$unit.status-cne[string]$intent.receipt.document.unit.status){throw 'Event-ledger normalization current-unit document drifted after intent publication.'}
         $stateFileHash=Get-MorphospaceFileSha256 $statePath
         if($stateFileHash-cne[string]$intent.pre.state_file_sha256-and$stateFileHash-cne[string]$intent.target.state_file_sha256){throw 'Event-ledger normalization found neither the exact before nor exact after state.'}
 
@@ -450,29 +798,25 @@ function Complete-MorphospaceEventLedgerPrefixNormalization {
         if([IO.Directory]::Exists($receiptPath)){throw 'Event-ledger normalization receipt path is occupied by a directory.'}
         if([IO.File]::Exists($receiptPath)){
             if((Get-MorphospaceFileSha256 $receiptPath)-cne[string]$intent.receipt.sha256){throw 'Event-ledger normalization receipt differs from its intent.'}
-        }else{
-            Write-MorphospaceManagedProtocolJsonAtomic $workspace ([string]$intent.paths.receipt) $intent.receipt.document -NoOverwrite
+            $eventsHash=Get-MorphospaceFileSha256 (Get-MorphospaceNormalizationAbsolute $workspace ([string]$intent.paths.events) -RequireLeaf)
+            if($stateFileHash-cne[string]$intent.target.state_file_sha256-or$eventsHash-cne[string]$intent.target.events_sha256){
+                throw 'Event-ledger normalization found a prematurely published receipt before its target projection.'
+            }
         }
-        if($FaultAfter-eq'after-receipt'){throw 'Injected interruption after normalization receipt installation.'}
 
-        if($stateFileHash-ceq[string]$intent.pre.state_file_sha256){
-            $currentState=Read-MorphospaceProtocolJson $statePath
-            if((Get-MorphospaceCanonicalJsonSha256 $currentState)-cne[string]$intent.pre.state_document_sha256){throw 'Event-ledger normalization pre-state document differs from its intent.'}
-            Write-MorphospaceManagedProtocolJsonAtomic $workspace ([string]$intent.paths.state) $intent.target_state
-        }
-        if((Get-MorphospaceFileSha256 $statePath)-cne[string]$intent.target.state_file_sha256-or
-           (Get-MorphospaceCanonicalJsonSha256 (Read-MorphospaceProtocolJson $statePath))-cne[string]$intent.target.state_document_sha256){
-            throw 'Event-ledger normalization target state readback differs from its intent.'
-        }
+        Write-MorphospaceNormalizationStateTarget $workspace $intent $derived
         if($FaultAfter-eq'after-state'){throw 'Injected interruption after normalization state projection.'}
 
         Write-MorphospaceNormalizationLedgerTarget $workspace $intent $derived
         if($FaultAfter-eq'after-events'){throw 'Injected interruption after normalized event-ledger publication.'}
 
-        $finalGit=Get-MorphospaceNormalizationGitObservation $workspace
-        if($finalGit.head-cne[string]$intent.repository.head){throw 'Event-ledger normalization repository HEAD drifted before completion.'}
-        Assert-MorphospaceNormalizationOwnedDirt $finalGit $paths
-        if((Get-MorphospaceFileSha256 $unitPath)-cne[string]$intent.pre.unit_file_sha256){throw 'Event-ledger normalization current-unit bytes changed before completion.'}
+        if(-not[IO.File]::Exists($receiptPath)){
+            Write-MorphospaceManagedProtocolJsonAtomic $workspace ([string]$intent.paths.receipt) $intent.receipt.document -NoOverwrite
+        }
+        if((Get-MorphospaceFileSha256 $receiptPath)-cne[string]$intent.receipt.sha256){throw 'Event-ledger normalization truthful receipt publication readback failed.'}
+        if($FaultAfter-eq'after-receipt'){throw 'Injected interruption after normalization receipt installation.'}
+
+        Assert-MorphospaceNormalizationFinalProjection $workspace $intent $derived $ExpectedIntentSha256
         $completion=[pscustomobject][ordered]@{
             schema='rusty.morphospace.workflow.event_ledger_prefix_normalization_completion.v1'
             transaction_id=[string]$intent.transaction_id
@@ -480,7 +824,7 @@ function Complete-MorphospaceEventLedgerPrefixNormalization {
             completed_at=[DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffffffZ')
             intent=[pscustomobject][ordered]@{
                 role='event-ledger-prefix-normalization-intent';path=$paths.intent
-                schema=[string]$intent.schema;sha256=Get-MorphospaceFileSha256 $intentPath
+                schema=[string]$intent.schema;sha256=$ExpectedIntentSha256
             }
             receipt=[pscustomobject][ordered]@{
                 role='event-ledger-prefix-normalization';path=[string]$intent.paths.receipt
@@ -494,6 +838,7 @@ function Complete-MorphospaceEventLedgerPrefixNormalization {
             status='committed'
         }
         Test-MorphospaceNormalizationSchema $completion 'event-ledger-prefix-normalization-completion-v1.schema.json' 'Event-ledger normalization completion'
+        Assert-MorphospaceNormalizationFinalProjection $workspace $intent $derived $ExpectedIntentSha256
         Write-MorphospaceManagedProtocolJsonAtomic $workspace $paths.completion $completion -NoOverwrite
         return [pscustomobject][ordered]@{
             normalization_id=$NormalizationId;transaction_id=[string]$intent.transaction_id
@@ -516,6 +861,7 @@ function Invoke-MorphospaceEventLedgerPrefixNormalization {
         [Parameter(Mandatory=$true)][string]$ExpectedEventsSha256,
         [Parameter(Mandatory=$true)][int64]$ExpectedEventsLength,
         [Parameter(Mandatory=$true)][string]$ExpectedEventTailId,
+        [string]$ExpectedIntentSha256='',
         [string]$Timestamp='',
         [switch]$Execute,
         [ValidateSet('none','after-intent','after-receipt','after-state','after-events')][string]$FaultAfter='none'
@@ -527,9 +873,12 @@ function Invoke-MorphospaceEventLedgerPrefixNormalization {
     $intentPath=Get-MorphospaceNormalizationAbsolute $workspace $paths.intent
     $completionPath=Get-MorphospaceNormalizationAbsolute $workspace $paths.completion
     if([IO.File]::Exists($completionPath)){throw 'Event-ledger prefix normalization rejects replay after committed completion.'}
+    if($Execute-and-not$ExpectedIntentSha256){throw 'Executed event-ledger prefix normalization requires ExpectedIntentSha256 from its deterministic dry-run.'}
     if([IO.File]::Exists($intentPath)){
         if(-not$Execute){throw 'Event-ledger prefix normalization has an outstanding intent requiring executed recovery.'}
-        return Complete-MorphospaceEventLedgerPrefixNormalization $workspace $NormalizationId -FaultAfter $(if($FaultAfter-eq'after-intent'){'none'}else{$FaultAfter})
+        return Complete-MorphospaceEventLedgerPrefixNormalization $workspace $NormalizationId $UnitId $ExpectedRepositoryHead `
+            $ExpectedProjectSha256 $ExpectedStateSha256 $ExpectedUnitSha256 $ExpectedEventsSha256 $ExpectedEventsLength `
+            $ExpectedEventTailId $ExpectedIntentSha256 -FaultAfter $(if($FaultAfter-eq'after-intent'){'none'}else{$FaultAfter})
     }
 
     $lock=Enter-MorphospaceWorkspaceMutex $workspace
@@ -550,7 +899,9 @@ function Invoke-MorphospaceEventLedgerPrefixNormalization {
         Assert-MorphospaceNormalizationGitClean $candidate.git
         $intent=New-MorphospaceNormalizationIntent $candidate
         Test-MorphospaceNormalizationSchema $intent 'event-ledger-prefix-normalization-intent-v1.schema.json' 'Event-ledger normalization intent'
-        foreach($relative in @($paths.receipt,$paths.completion,$paths.stage,$paths.backup)){
+        $intentBytes=Get-MorphospaceNormalizationJsonBytes $intent
+        $intentSha256=Get-MorphospaceNormalizationSha256 $intentBytes
+        foreach($relative in @($paths.receipt,$paths.completion,$paths.stage,$paths.backup,$paths.state_stage,$paths.state_backup)){
             $target=Get-MorphospaceNormalizationAbsolute $workspace $relative
             if([IO.File]::Exists($target)-or[IO.Directory]::Exists($target)){throw "Event-ledger normalization target path is occupied: $relative"}
         }
@@ -560,13 +911,18 @@ function Invoke-MorphospaceEventLedgerPrefixNormalization {
                 repository_head=$candidate.git.head;project_id=[string]$candidate.project.project_id;unit_id=$UnitId
                 before_events_sha256=[string]$intent.pre.events_sha256;after_events_sha256=[string]$intent.target.events_sha256
                 before_state_sha256=[string]$intent.pre.state_file_sha256;after_state_sha256=[string]$intent.target.state_file_sha256
+                intent=$paths.intent;intent_sha256=$intentSha256;created_at=[string]$intent.created_at
                 receipt=$paths.receipt;completion=$paths.completion;execution='not-performed'
             }
         }
+        Assert-MorphospaceNormalizationExpectedHash 'intent file' $ExpectedIntentSha256 $intentSha256
         Write-MorphospaceManagedProtocolJsonAtomic $workspace $paths.intent $intent -NoOverwrite
+        Assert-MorphospaceNormalizationExpectedHash 'intent file' $ExpectedIntentSha256 (Get-MorphospaceFileSha256 $intentPath)
         if($FaultAfter-eq'after-intent'){throw 'Injected interruption after normalization intent publication.'}
     }finally{Exit-MorphospaceWorkspaceMutex $lock}
-    Complete-MorphospaceEventLedgerPrefixNormalization $workspace $NormalizationId -FaultAfter $FaultAfter
+    Complete-MorphospaceEventLedgerPrefixNormalization $workspace $NormalizationId $UnitId $ExpectedRepositoryHead `
+        $ExpectedProjectSha256 $ExpectedStateSha256 $ExpectedUnitSha256 $ExpectedEventsSha256 $ExpectedEventsLength `
+        $ExpectedEventTailId $ExpectedIntentSha256 -FaultAfter $FaultAfter
 }
 
 Export-ModuleMember -Function Invoke-MorphospaceEventLedgerPrefixNormalization,Complete-MorphospaceEventLedgerPrefixNormalization

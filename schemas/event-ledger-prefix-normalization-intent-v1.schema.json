@@ -6,7 +6,7 @@
   "additionalProperties": false,
   "required": [
     "schema", "transaction_id", "normalization_id", "created_at", "paths",
-    "repository", "project", "pre", "target", "pre_events_base64",
+    "repository", "project", "pre", "target", "pre_events_base64", "pre_state_base64",
     "pre_state", "target_state", "event", "receipt", "status"
   ],
   "properties": {
@@ -85,6 +85,7 @@
       }
     },
     "pre_events_base64": { "type": "string", "minLength": 4, "maxLength": 1398104 },
+    "pre_state_base64": { "type": "string", "minLength": 4, "maxLength": 1398104 },
     "pre_state": { "type": "object" },
     "target_state": { "type": "object" },
     "event": { "type": "object" },

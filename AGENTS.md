@@ -222,8 +222,10 @@ in runner variables or typed reference wrappers, never injected properties.
 - One exact leading CRLF blank event record may be removed only through the
   typed `NormalizeEventLedgerPrefix` migration. It preserves every prior event
   byte and current-unit byte, appends one canonical event, changes only
-  `state.last_event_id`, and keeps ordinary blank-record parsing strict. Route
-  the complete procedure to `docs/EVENT_LEDGER_PREFIX_NORMALIZATION.md`.
+  `state.last_event_id`, requires caller-pinned dry-run intent authority,
+  publishes its receipt only after target readback, and keeps ordinary
+  blank-record parsing strict. Route the complete procedure to
+  `docs/EVENT_LEDGER_PREFIX_NORMALIZATION.md`.
 - Move a reviewed proposal into the claimable queue only with the automation
   `Ready` action. It verifies accepted prerequisites, appends the transition,
   and derives `next_ready_unit`; do not hand-edit proposal status.
