@@ -1,0 +1,20 @@
+{
+  "schema": "rusty.morphospace.workflow.external_validation_authority_policy.v1",
+  "policy_id": "example-validation-authority-v1",
+  "repository": "example/example",
+  "mandatory_protected_paths": [
+    ".github/workflows/validation-authority.yml",
+    "config/external-validation-authority.json",
+    "schemas/external-validation-authority-assessment-v1.schema.json",
+    "tools/validation-authority-adapter.ps1"
+  ],
+  "protected_rules": [
+    {
+      "rule_id": "validation-authority",
+      "match": "prefix",
+      "path": ".github/"
+    }
+  ],
+  "approved_change_sets": [],
+  "status": "active"
+}

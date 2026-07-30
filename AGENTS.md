@@ -155,6 +155,14 @@ present recovery-source tests as acceptance of the central corrective unit.
 Keep canonical authority documents schema-pure: path/location metadata belongs
 in runner variables or typed reference wrappers, never injected properties.
 
+When a pull request changes the policy or runner that would validate that same
+change, use the separate base-owned external validation-authority boundary in
+`docs/EXTERNAL_VALIDATION_AUTHORITY.md`. Static admission reads policy from the
+exact trusted base tree and inspects fetched candidate Git objects without
+checking them out or executing them. It never attests execution or authorizes
+publication. Keep ordinary application changes on their proportional
+single-PR path.
+
 ## Authority Rules
 
 - Rusty Morphospace names the ecosystem; concrete authority stays in lanes

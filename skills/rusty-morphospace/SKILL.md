@@ -36,6 +36,11 @@ named by the user or ask for its location; never guess a machine path.
 Keep those routes separate: architecture guidance does not authorize a device
 operation, and graph scope does not authorize an edit.
 
+When a repository changes its own validation policy or runner, route the
+two-step trust-root procedure to
+`docs/EXTERNAL_VALIDATION_AUTHORITY.md`. Static base-owned admission never
+substitutes for dynamic validation or publication authority.
+
 ## Authority Limits
 
 Treat inspection and planning as non-mutating. Work only inside user-authorized
