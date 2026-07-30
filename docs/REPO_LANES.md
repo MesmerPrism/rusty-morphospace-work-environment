@@ -14,7 +14,7 @@ Rusty Morphospace is the umbrella. Concrete ownership stays in lanes.
 | GUI | app-neutral operator UI contracts and CLI parity surfaces | hidden device setup or command business logic |
 | Makepad | Makepad adapters, settings surfaces, app-shell integration | Quest platform authority or generic core state |
 | Quest | Quest/Horizon/Android platform profiles, permissions, launch, ADB-facing validation receipts | generic command/session authority |
-| Hostess | install/test/evidence orchestration and shell UX | runtime feature authority |
+| Hostess | install/test/evidence orchestration, shell UX, Windows media receivers, and opaque operator-presentation adapters such as the bounded Meta/MQDH Cinematic route | Quest runtime feature authority, Meta casting transport, or generic Manifold media authority |
 | QuestIonAble File Manager | Windows-first exact-serial ADB storage, inspected APK deployment, constrained resolved launch, bounded device observation, and reviewed local device utilities through typed CLI/API/WPF routes | managed target selection, Manifold authority, Fleet scheduling, app-owned OpenXR/runtime truth |
 
 ## Public Rusty XR Compatibility
@@ -52,6 +52,19 @@ Feature entries must not silently add permissions, routes, assets, services,
 media paths, input routes, or private defaults to other projects. See
 [Feature Activation](FEATURE_ACTIVATION.md).
 
+## Streaming Placement
+
+Rusty-owned Quest-to-PC streaming keeps Manifold session/stream references,
+Quest platform source lifecycle, dedicated high-rate media bytes, Hostess
+receiver/presentation, and cleanup evidence under their explicit owners.
+
+An opaque operator-presentation provider is adjacent, not equivalent. The
+Hostess Meta/MQDH Cinematic adapter supervises a separately installed Meta
+process and reports Hostess observations without receiving generic media
+packets. It must not be promoted into a Quest source or Manifold stream, and a
+successful Cast window does not prove recording, input forwarding, arbitrary
+2D-panel control, Meta device-session cleanup, or FOV restoration.
+
 ## First Placement Rules
 
 - Generic spatial relation work starts in Lattice.
@@ -64,6 +77,9 @@ media paths, input routes, or private defaults to other projects. See
 - Quest platform profiles and app-owned effective runtime receipts start in
   Quest; portable provider selection, raw diagnostic fallback, and evidence
   wrapping start in Meta Quest workflow.
+- Windows receiver/presentation orchestration and opaque Meta/MQDH Cast process
+  supervision start in Hostess; version-sensitive capture and evidence
+  procedure stays in Meta Quest workflow.
 - Managed multi-headset selection and scheduling start in Fleet, with Manifold
   retaining command/lease authority and the effect owner retaining application
   receipts.

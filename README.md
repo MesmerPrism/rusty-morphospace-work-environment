@@ -52,6 +52,8 @@ Included:
   agent workflows;
 - four portable local skill templates plus explicit installation of the
   canonical Meta Quest workflow skill from `meta-quest-agent-workflow`;
+- repo-lane routing for both Rusty-owned media streams and the separately
+  bounded Hostess Meta/MQDH Cinematic presentation provider;
 - project-local composition, feature activation, module extraction, promotion,
   and autonomous-iteration contracts;
 - exact source-composition locks, detached materializations, resource claims,
@@ -143,6 +145,13 @@ publication authority remain separate.
    receipts. Local File Manager and managed Fleet contracts remain separate;
    raw ADB requires an explicit bootstrap, provider-gap, diagnostic, or
    recovery fallback.
+
+For Quest-to-PC visuals, keep the Rusty-owned display/media stream and the
+Hostess Meta/MQDH Cinematic route distinct. The former exposes owned media
+plane evidence; the latter is an opaque supervised presentation provider whose
+recording, input, Meta device-session cleanup, and FOV restoration claims stay
+separate. Route the version-sensitive procedure through the canonical Meta
+Quest workflow rather than copying it here.
 
 The checked-in [Hello Morphospace V2](examples/hello-morphospace-v2/README.md)
 workspace demonstrates an inert lock, a proposed bounded unit, and semantic
