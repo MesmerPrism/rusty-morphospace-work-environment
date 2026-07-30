@@ -32,6 +32,10 @@ For a validation-authority change:
    admission does not attest that a candidate-issued receipt or command ran.
 7. Publish only after the repository's required checks and review policy are
    satisfied.
+8. Retire consumed approvals from the policy as routine trust-root hygiene.
+   An approval can match only while its reviewed `required_ancestor` is in the
+   candidate and not yet in the trusted base, so landing the implementation
+   makes that approval inert even before cleanup.
 
 The extra PR is intentional at the trust-root boundary. Do not require it for
 ordinary source or documentation changes.
@@ -117,6 +121,8 @@ candidate-issued receipt as independent execution evidence.
   pathspec, shallow-file, and injected-config environment selectors reject
   and are removed from each child process.
 - More than one matching approval rejects as ambiguous.
+- An approval whose reviewed ancestor is already present in the trusted base
+  is consumed and cannot match again.
 - A policy change is itself a protected authority change and follows the same
   two-PR process after bootstrap.
 
@@ -132,5 +138,5 @@ artifact and Git-mode tamper rejection, policy self-protection,
 ambiguous-approval rejection, duplicate-key rejection, path-scope and
 path-count bounds, reviewed-ancestor enforcement, base ancestry enforcement,
 dirty-base rejection, and replacement-ref/alternate-object rejection without
-executing the candidate script. It also rejects inherited Git repository and
-object-store selectors.
+executing the candidate script. It also proves consumed-approval rejection and
+rejects inherited Git repository and object-store selectors.

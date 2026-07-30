@@ -723,6 +723,7 @@ function Test-Approval {
         [Parameter(Mandatory = $true)][object]$Approval,
         [Parameter(Mandatory = $true)][string[]]$ChangedPaths,
         [Parameter(Mandatory = $true)][string]$GitRoot,
+        [Parameter(Mandatory = $true)][string]$BaseRevision,
         [Parameter(Mandatory = $true)][string]$CandidateRevision,
         [Parameter(Mandatory = $true)]
         [Collections.Generic.Dictionary[string, object]]$EvidenceCache,
@@ -737,14 +738,30 @@ function Test-Approval {
         return $false
     }
 
+    $alreadyConsumed = Invoke-Git $GitRoot @(
+        "merge-base",
+        "--is-ancestor",
+        [string]$Approval.required_ancestor,
+        $BaseRevision
+    ) -AllowFailure
+    if ($alreadyConsumed.exit_code -eq 0) {
+        return $false
+    }
+    if ($alreadyConsumed.exit_code -ne 1) {
+        throw "Approval consumption ancestry could not be evaluated."
+    }
+
     $ancestor = Invoke-Git $GitRoot @(
         "merge-base",
         "--is-ancestor",
         [string]$Approval.required_ancestor,
         $CandidateRevision
     ) -AllowFailure
-    if ($ancestor.exit_code -ne 0) {
+    if ($ancestor.exit_code -eq 1) {
         return $false
+    }
+    if ($ancestor.exit_code -ne 0) {
+        throw "Approval candidate ancestry could not be evaluated."
     }
 
     $artifacts = @($Approval.artifacts)
@@ -889,8 +906,11 @@ $baseInCandidate = Invoke-Git $trusted @(
     $BaseCommit,
     $CandidateCommit
 ) -AllowFailure
-if ($baseInCandidate.exit_code -ne 0) {
+if ($baseInCandidate.exit_code -eq 1) {
     throw "Trusted base is not an ancestor of the candidate."
+}
+if ($baseInCandidate.exit_code -ne 0) {
+    throw "Trusted-base ancestry could not be evaluated."
 }
 
 [string[]]$changedPaths = Get-ChangedPaths $trusted $BaseCommit $CandidateCommit
@@ -937,6 +957,7 @@ if ($protectedPaths.Count -gt 0) {
                 -Approval $approval `
                 -ChangedPaths $changedPaths `
                 -GitRoot $trusted `
+                -BaseRevision $BaseCommit `
                 -CandidateRevision $CandidateCommit `
                 -EvidenceCache $evidenceCache `
                 -HashBudget $hashBudget
