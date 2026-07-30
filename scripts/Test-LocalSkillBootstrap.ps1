@@ -61,11 +61,15 @@ try {
         Assert-True -Condition ($metadata.source_files.Count -gt 0) -Message "$skill provenance has no managed file hashes."
         if ($skill -eq "meta-quest-workflow") {
             Assert-True -Condition (Test-Path -LiteralPath (Join-Path $skillRoot "agents\openai.yaml")) -Message "Meta Quest agents/openai.yaml is missing."
-            Assert-True -Condition (@($metadata.source_files | Where-Object { $_.path -eq "agents\openai.yaml" }).Count -eq 1) -Message "Meta Quest skill provenance does not bind agents/openai.yaml."
+            Assert-True -Condition (@($metadata.source_files | Where-Object {
+                ([string]$_.path).Replace("\", "/") -ceq "agents/openai.yaml"
+            }).Count -eq 1) -Message "Meta Quest skill provenance does not bind agents/openai.yaml."
         }
         if ($skill -in @("rusty-morphospace", "rusty-morphospace-context")) {
             Assert-True -Condition (Test-Path -LiteralPath (Join-Path $skillRoot "agents\openai.yaml")) -Message "$skill agents/openai.yaml is missing."
-            Assert-True -Condition (@($metadata.source_files | Where-Object { $_.path -eq "agents\openai.yaml" }).Count -eq 1) -Message "$skill provenance does not bind agents/openai.yaml."
+            Assert-True -Condition (@($metadata.source_files | Where-Object {
+                ([string]$_.path).Replace("\", "/") -ceq "agents/openai.yaml"
+            }).Count -eq 1) -Message "$skill provenance does not bind agents/openai.yaml."
         }
     }
 
