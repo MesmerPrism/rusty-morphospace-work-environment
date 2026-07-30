@@ -16,6 +16,51 @@ approvals, and coordination correlations in private resolver/run evidence.
 Use direct serial-scoped ADB below as a labeled diagnostic fallback or for
 provider-gap recovery, never as substitute owner acceptance.
 
+## Default Ecosystem Loop
+
+For routine local iteration:
+
+```text
+exact project source + feature lock + content-addressed run capsule
+  -> private hash-pinned File Manager CLI resolution
+  -> File Manager artifact inspection and exact-serial install
+  -> Kiosk status and typed launch when the app participates
+  -> File Manager bounded Android observation
+  -> app-owned effective-runtime receipt
+  -> owner-specific cleanup readback
+```
+
+For enrolled managed targets, replace the local File Manager operation with a
+Fleet request over one immutable target snapshot. Require current operator
+policy, Manifold authority when applicable, effect-owner delivery/receipts,
+and terminal cleanup or reconciliation per target. Do not translate local
+File Manager arguments into a Fleet request and do not use local File Manager
+to bypass managed policy.
+
+Copy
+[`quest-file-manager-cli.example.json`](../templates/quest-file-manager-cli.example.json)
+to the ignored `local/quest-file-manager-cli.json`, bind the exact executable
+SHA-256 and source revision, then resolve it without touching a headset:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\Resolve-QuestFileManagerCli.ps1 `
+  -ConfigPath .\local\quest-file-manager-cli.json `
+  -Json
+```
+
+Use the resolved executable for typed `apk inspect`, `apk install`,
+`kiosk status`, Kiosk launch control when applicable, `apk launch` otherwise,
+and `apk observe`. Kiosk retains catalog, selection, launch, and foreground-
+guard authority even when File Manager or Fleet carries its request. Android
+foreground observation does not replace app-owned OpenXR, renderer, source, or
+feature-lock evidence.
+
+Routine portable intents set `raw_fallback_allowed=false`. Before a raw ADB
+fallback, record the intended provider/version, missing or failed capability,
+unavailable claim, bounded diagnostic or recovery scope, stop condition,
+cleanup, and product improvement follow-up.
+
 ## Authority Split
 
 | Surface | Owner |
@@ -124,7 +169,7 @@ Do not treat a direct `cargo check --target aarch64-linux-android` as the full
 Makepad Android acceptance gate. It compiles Rust for the target, but it does
 not exercise generated Android activity and package behavior.
 
-## Install And Launch
+## Raw ADB Install And Launch Fallback
 
 Use one shared default ADB daemon for all connected headsets. Device discovery
 and independent clients may run concurrently, but every device command must use
@@ -146,7 +191,7 @@ Parallel builds are allowed only for disjoint identities. Install/launch runs
 on the same serial are exclusive transactions. Follow
 [Project, Build, And Headset Isolation](PROJECT_ISOLATION.md).
 
-Use serial-scoped ADB:
+Only after the provider-gap fallback is recorded, use serial-scoped ADB:
 
 ```powershell
 adb -s <quest-serial> install -r -d -g <path-to.apk>

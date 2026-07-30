@@ -59,6 +59,10 @@ try {
         $metadata = Get-Content -Raw -LiteralPath (Join-Path $skillRoot ".morphospace-skill-source.json") | ConvertFrom-Json
         Assert-True -Condition ($metadata.schema -eq "rusty.morphospace.local_skill_source.v1") -Message "$skill provenance schema is wrong."
         Assert-True -Condition ($metadata.source_files.Count -gt 0) -Message "$skill provenance has no managed file hashes."
+        if ($skill -eq "meta-quest-workflow") {
+            Assert-True -Condition (Test-Path -LiteralPath (Join-Path $skillRoot "agents\openai.yaml")) -Message "Meta Quest agents/openai.yaml is missing."
+            Assert-True -Condition (@($metadata.source_files | Where-Object { $_.path -eq "agents\openai.yaml" }).Count -eq 1) -Message "Meta Quest skill provenance does not bind agents/openai.yaml."
+        }
     }
 
     $verifyText = Invoke-InstallerChild -Arguments @("-RepoRoot", $RepoRoot, "-TargetRoot", $targetRoot, "-Action", "Verify", "-Json")

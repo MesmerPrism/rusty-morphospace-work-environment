@@ -118,6 +118,24 @@ device operations there; this work-environment repo does not bundle ADB, SDKs,
 Meta tools, device serials, or a competing headset procedure. Installing the
 skill does not authorize device mutation or require a connected headset.
 
+For the routine local ecosystem loop, copy
+`templates/quest-file-manager-cli.example.json` to the ignored
+`local/quest-file-manager-cli.json`. Pin the exact CLI SHA-256, semantic
+version, and source revision, then run:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\Resolve-QuestFileManagerCli.ps1 `
+  -ConfigPath .\local\quest-file-manager-cli.json `
+  -Json
+```
+
+The resolver is target-free and read-only. It verifies the configured
+executable hash, product/version/source identity, release signature when
+applicable, and the required inspected-deployment/Kiosk help routes. It does
+not discover a headset, approve an operation, establish Fleet authority, or
+authorize fallback.
+
 ## 5. Update An Existing Installation
 
 First inspect and verify:
