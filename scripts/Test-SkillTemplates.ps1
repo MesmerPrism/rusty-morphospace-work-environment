@@ -126,7 +126,7 @@ if ((Get-Content -Raw -LiteralPath $contextAgentPath) -notmatch "allow_implicit_
 }
 
 $lifecycle = Get-Content -Raw -LiteralPath (
-    Join-Path $RepoRoot "manifests\workflow-lifecycle.portable.json"
+    Join-Path $RepoRoot "manifests/workflow-lifecycle.portable.json"
 ) | ConvertFrom-Json -Depth 100
 $triggerCategories = @(
     $lifecycle.instruction_sync.trigger_categories | ForEach-Object { [string]$_ }
@@ -151,7 +151,7 @@ foreach ($route in $routes) {
 }
 
 $installation = Get-Content -Raw -LiteralPath (
-    Join-Path $RepoRoot "docs\SKILL_INSTALLATION.md"
+    Join-Path $RepoRoot "docs/SKILL_INSTALLATION.md"
 )
 if (
     $installation -notmatch "ships five portable skill routers" -or
