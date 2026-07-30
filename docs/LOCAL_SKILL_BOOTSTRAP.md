@@ -1,6 +1,6 @@
 # Local Skill Bootstrap
 
-This guide installs the four Rusty Morphospace skill routers into a contributor's
+This guide installs the five Rusty Morphospace skill routers into a contributor's
 own agent environment with verifiable source provenance. It supports a new
 machine and an existing installation without silently overwriting local work.
 
@@ -54,7 +54,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass `
   -Action Plan
 ```
 
-Review all four rows, then install. Writes require `-Execute`:
+Review all five rows, then install. Writes require `-Execute`:
 
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass `
@@ -90,12 +90,21 @@ public repository.
 The installed routers use the same locator, but their external prerequisites
 differ.
 
+### rusty-morphospace
+
+Use this as the portable first-hop router for public architecture, ownership,
+composition, activation, source locks, work-unit lifecycle, validation,
+boundary, and instruction-routing questions. It is eligible for implicit use
+and contains no machine paths or live state.
+
 ### rusty-morphospace-context
 
-Install this as the first-hop router. It reads the current project's nearest
-instructions and compact state on every run; it deliberately contains no live
-unit or release-candidate status. Private planning workspaces may add a stricter
-state-first read order in their own `AGENTS.md`.
+Invoke this resolver explicitly when a task needs the installed
+work-environment clone. It reads the generated locator, then hands portable
+guidance to `rusty-morphospace`. Its `agents/openai.yaml` keeps
+`allow_implicit_invocation: false`; it contains no architecture copy, live
+unit, or release-candidate status. Private planning workspaces may add a
+stricter state-first read order in their own `AGENTS.md`.
 
 ### system-engineering
 
@@ -171,7 +180,7 @@ file edited locally is managed drift and will be restored by Update; keep local
 notes in separate files or project/repo instructions.
 
 After review, repeat Update for the remaining named skills or omit `-SkillId`
-to update all four. Run Verify again.
+to update all five. Run Verify again.
 
 ## 6. Recovery And Removal
 
@@ -193,4 +202,4 @@ pwsh -NoProfile -ExecutionPolicy Bypass `
 
 The test proves plan/install/verify behavior, drift detection, explicit update,
 backup creation, unmanaged-file preservation, and final verification for all
-four skills without touching the contributor's real skill directory.
+five skills without touching the contributor's real skill directory.

@@ -8,7 +8,7 @@ release.
 
 Make this repository the complete public first-run surface for a contributor:
 strict environment verification, a current protocol-v2 example, and managed
-local installation of the four portable skill routers. Keep live project state,
+local installation of the five portable skill routers. Keep live project state,
 machine paths, and device evidence outside the repository.
 
 The `0.3.0` version belongs to this work-environment protocol and tooling
@@ -27,7 +27,7 @@ Morphospace platform/runtime baseline.
 4. Maintainability: docs-link and skill-template gates, public CI, contributor,
    security, changelog, release manifest, and advanced-authority doc split.
 5. Instruction sync: concise state-first context router plus local-locator
-   routing in all four portable skills.
+   routing in all five portable skills.
 
 ## Acceptance
 

@@ -50,8 +50,9 @@ Included:
 - workspace layout and repo-lane orientation;
 - dependency matrix for Rust, Android, Quest APK, Makepad, Termux sidecar, and
   agent workflows;
-- portable skill templates for Morphospace routing, system engineering,
-  Rust workspace graph audits, and Meta Quest workflow handoffs;
+- five portable skill templates for public Morphospace routing, explicit local
+  environment resolution, system engineering, Rust workspace graph audits,
+  and Meta Quest workflow handoffs;
 - project-local composition, feature activation, module extraction, promotion,
   and autonomous-iteration contracts;
 - exact source-composition locks, detached materializations, resource claims,
@@ -87,7 +88,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass `
 ```
 
 4. Read [Local Skill Bootstrap](docs/LOCAL_SKILL_BOOTSTRAP.md), then plan,
-   install, and verify the four skill routers:
+   install, and verify the five skill routers:
 
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass `
