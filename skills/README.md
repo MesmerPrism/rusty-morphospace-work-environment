@@ -15,6 +15,10 @@ The templates intentionally use placeholders and repo-relative docs instead of
 local paths. Put workstation-specific paths in ignored `local/` files or in
 your agent configuration.
 
+Plan and Verify report files outside the managed template inventory. Updates
+preserve them. Only the explicit, fingerprint-bound, backup-first
+`PruneUnmanaged -Execute` action may remove the exact reported files.
+
 The public `rusty-morphospace` and `system-engineering` templates route project
 work through the portable project spec, feature lock, module lifecycle, and
 autonomous iteration protocol in `docs/`. The explicit

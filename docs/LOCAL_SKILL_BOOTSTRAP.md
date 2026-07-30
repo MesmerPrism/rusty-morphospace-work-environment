@@ -74,7 +74,9 @@ pwsh -NoProfile -ExecutionPolicy Bypass `
 ```
 
 Use `-SkillId <skill-name>` to operate on one or more selected skills. Use
-`-Json` when another tool needs structured results.
+`-Json` when another tool needs structured results. Plan and Verify also report
+sorted `unmanaged_files` and their fingerprint without failing an otherwise
+current managed skill.
 
 Each installed skill receives:
 
@@ -182,16 +184,41 @@ notes in separate files or project/repo instructions.
 After review, repeat Update for the remaining named skills or omit `-SkillId`
 to update all five. Run Verify again.
 
-## 6. Recovery And Removal
+## 6. Review And Prune Unmanaged Files
+
+Unmanaged files are never removed by Install, Update, Plan, or Verify. If
+reported files are obsolete, review one skill's exact sorted list and run a
+dry prune:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\Install-LocalSkills.ps1 `
+  -TargetRoot $SkillRoot `
+  -Action PruneUnmanaged `
+  -SkillId rusty-morphospace-context `
+  -Json
+```
+
+To execute, copy the returned `unmanaged_fingerprint` into
+`-ExpectedUnmanagedFingerprint` and add `-Execute`. Pruning accepts exactly one
+skill, requires an otherwise current managed installation and a clean source
+worktree, and does not honor `-AllowDirtySource`. It backs up the complete skill
+directory outside the skill root, verifies the complete backup inventory,
+rechecks the fingerprint, removes only those exact ordinary files, preserves
+directories, and requires a final current/zero-unmanaged readback.
+
+## 7. Recovery And Removal
 
 If an update is unsuitable, stop the agent, compare the timestamped backup with
 the installed directory, and restore only the intended skill. Do not merge old
 transient roadmap state back into `rusty-morphospace-context`.
 
 The installer does not provide an uninstall action and never deletes a skill
-directory. Removal is a separate user-owned decision.
+directory. `PruneUnmanaged` deletes only its reviewed fingerprinted file
+inventory after a verified complete backup. Whole-skill removal remains a
+separate user-owned decision.
 
-## 7. Bootstrap Regression Test
+## 8. Bootstrap Regression Test
 
 Maintainers can validate the complete lifecycle in an isolated temporary root:
 
@@ -201,5 +228,6 @@ pwsh -NoProfile -ExecutionPolicy Bypass `
 ```
 
 The test proves plan/install/verify behavior, drift detection, explicit update,
-backup creation, unmanaged-file preservation, and final verification for all
-five skills without touching the contributor's real skill directory.
+unmanaged-file reporting and preservation, dry-run and fingerprinted
+backup-first pruning, and final verification for all five skills without
+touching the contributor's real skill directory.

@@ -108,6 +108,10 @@ pwsh -NoProfile -ExecutionPolicy Bypass `
   -Action Verify
 ```
 
+Plan and Verify report source-unowned files without deleting them. Use the
+fingerprint-bound, backup-first `PruneUnmanaged` action only after reviewing one
+skill's exact reported inventory.
+
 5. For a new or existing application, read
    [Project Workspace Protocol](docs/PROJECT_WORKSPACE_PROTOCOL.md), then run a
    protocol-v2 scaffold dry run (v1 remains readable for existing workspaces):
