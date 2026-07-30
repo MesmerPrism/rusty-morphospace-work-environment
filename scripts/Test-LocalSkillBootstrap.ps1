@@ -13,13 +13,22 @@ $hostExecutable = (Get-Process -Id $PID).Path
 $tempBase = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
 $testRoot = Join-Path $tempBase ("rusty-morphospace-skill-bootstrap-" + [guid]::NewGuid().ToString("N"))
 $installerSourceRoot = Join-Path $testRoot "source"
+$metaSourceRoot = Join-Path $testRoot "meta-source"
 $targetRoot = Join-Path $testRoot "skills"
 $backupRoot = Join-Path $testRoot "backups"
 
 function Invoke-InstallerChild {
-    param([string[]]$Arguments, [int]$ExpectedExit = 0)
+    param(
+        [string[]]$Arguments,
+        [int]$ExpectedExit = 0,
+        [switch]$NoMetaSource
+    )
 
-    $output = @(& $hostExecutable -NoProfile -ExecutionPolicy Bypass -File $installer @Arguments 2>&1)
+    $effectiveArguments = @($Arguments)
+    if (-not $NoMetaSource) {
+        $effectiveArguments += @("-MetaQuestWorkflowRepoRoot", $metaSourceRoot)
+    }
+    $output = @(& $hostExecutable -NoProfile -ExecutionPolicy Bypass -File $installer @effectiveArguments 2>&1)
     $exitCode = $LASTEXITCODE
     if ($exitCode -ne $ExpectedExit) {
         throw "Installer exit $exitCode; expected $ExpectedExit. Output: $($output -join ' | ')"
@@ -31,6 +40,48 @@ function Assert-True {
     param([bool]$Condition, [string]$Message)
     if (-not $Condition) {
         throw $Message
+    }
+}
+
+function Assert-IgnoredMetaRequiredFileRejected {
+    param([string]$RelativePath)
+
+    $excludePath = Join-Path $metaSourceRoot ".git\info\exclude"
+    $originalExclude = [System.IO.File]::ReadAllText($excludePath)
+    & git -C $metaSourceRoot rm -q --cached -- $RelativePath
+    & git -C $metaSourceRoot commit -q --no-verify -m "test: remove required Meta source ownership"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to create ignored-required-file fixture for $RelativePath."
+    }
+    try {
+        [System.IO.File]::AppendAllText(
+            $excludePath,
+            "`n/$($RelativePath.Replace('\', '/'))`n",
+            (New-Object System.Text.UTF8Encoding($false))
+        )
+        $status = @(& git -C $metaSourceRoot status --porcelain --untracked-files=normal)
+        Assert-True -Condition ($status.Count -eq 0) -Message "Ignored-required-file fixture was not clean for $RelativePath."
+        $rejection = Invoke-InstallerChild -Arguments @(
+            "-RepoRoot", $installerSourceRoot,
+            "-TargetRoot", $targetRoot,
+            "-Action", "Plan",
+            "-SkillId", "meta-quest-workflow",
+            "-Json"
+        ) -ExpectedExit 1
+        Assert-True `
+            -Condition ($rejection -match "Git-owned skill source inventory is missing required path") `
+            -Message "Ignored required Meta file was not rejected from the Git-owned inventory: $RelativePath"
+    } finally {
+        [System.IO.File]::WriteAllText(
+            $excludePath,
+            $originalExclude,
+            (New-Object System.Text.UTF8Encoding($false))
+        )
+        & git -C $metaSourceRoot add -- $RelativePath
+        & git -C $metaSourceRoot commit -q --no-verify -m "test: restore required Meta source ownership"
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to restore required Meta source fixture for $RelativePath."
+        }
     }
 }
 
@@ -55,6 +106,38 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to create the clean temporary skill source."
     }
+
+    $metaSkillRoot = Join-Path $metaSourceRoot "skills\meta-quest-workflow"
+    New-Item -ItemType Directory -Force -Path (Join-Path $metaSkillRoot "agents") | Out-Null
+    [System.IO.File]::WriteAllText(
+        (Join-Path $metaSkillRoot "SKILL.md"),
+        "---`nname: meta-quest-workflow`ndescription: 'Canonical external test skill.'`n---`n`n# Meta Quest Workflow`n`nOptional local metadata: references/local-work-environment.json`n",
+        (New-Object System.Text.UTF8Encoding($false))
+    )
+    [System.IO.File]::WriteAllText(
+        (Join-Path $metaSkillRoot "agents\openai.yaml"),
+        "interface:`n  display_name: `"Meta Quest Workflow`"`n  short_description: `"Quest ecosystem routing and validation`"`n  default_prompt: `"Use `$meta-quest-workflow for the narrowest provider.`"`n",
+        (New-Object System.Text.UTF8Encoding($false))
+    )
+    & git -C $metaSourceRoot init -q -b main
+    & git -C $metaSourceRoot config core.autocrlf false
+    & git -C $metaSourceRoot config commit.gpgsign false
+    $metaEmptyHooks = Join-Path $metaSourceRoot ".empty-hooks"
+    New-Item -ItemType Directory -Force -Path $metaEmptyHooks | Out-Null
+    & git -C $metaSourceRoot config core.hooksPath $metaEmptyHooks
+    & git -C $metaSourceRoot config user.name "Meta Quest Bootstrap Test"
+    & git -C $metaSourceRoot config user.email "bootstrap-test@example.invalid"
+    & git -C $metaSourceRoot add -- .
+    & git -C $metaSourceRoot commit -q --no-verify -m "test: materialize canonical Meta skill source"
+    & git -C $metaSourceRoot remote add origin "https://github.com/MesmerPrism/meta-quest-agent-workflow.git"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to create the clean temporary Meta Quest skill source."
+    }
+
+    Assert-IgnoredMetaRequiredFileRejected -RelativePath "skills/meta-quest-workflow/SKILL.md"
+    Assert-IgnoredMetaRequiredFileRejected -RelativePath "skills/meta-quest-workflow/agents/openai.yaml"
+
+    Invoke-InstallerChild -Arguments @("-RepoRoot", $installerSourceRoot, "-TargetRoot", $targetRoot, "-Action", "Plan", "-SkillId", "meta-quest-workflow", "-Json") -ExpectedExit 1 -NoMetaSource | Out-Null
 
     $planText = Invoke-InstallerChild -Arguments @("-RepoRoot", $installerSourceRoot, "-TargetRoot", $targetRoot, "-Action", "Plan", "-Json")
     $plan = $planText | ConvertFrom-Json
@@ -84,6 +167,13 @@ try {
             Assert-True -Condition (@($metadata.source_files | Where-Object {
                 ([string]$_.path).Replace("\", "/") -ceq "agents/openai.yaml"
             }).Count -eq 1) -Message "Meta Quest skill provenance does not bind agents/openai.yaml."
+            $metaCommit = ([string](git -C $metaSourceRoot rev-parse HEAD)).Trim()
+            Assert-True -Condition ($metadata.source_repository -eq "https://github.com/MesmerPrism/meta-quest-agent-workflow.git") -Message "Meta Quest skill provenance does not name the canonical repository."
+            Assert-True -Condition ($metadata.source_commit -eq $metaCommit) -Message "Meta Quest skill provenance does not bind the canonical source commit."
+            $locator = Get-Content -Raw -LiteralPath (Join-Path $skillRoot "references\local-work-environment.json") | ConvertFrom-Json
+            $workEnvironmentCommit = ([string](git -C $installerSourceRoot rev-parse HEAD)).Trim()
+            Assert-True -Condition ($locator.source_repository -eq "https://example.invalid/rusty-morphospace-work-environment.git") -Message "Meta Quest locator does not retain Work Environment provenance."
+            Assert-True -Condition ($locator.source_commit -eq $workEnvironmentCommit) -Message "Meta Quest locator does not bind the Work Environment commit."
         }
         if ($skill -in @("rusty-morphospace", "rusty-morphospace-context")) {
             Assert-True -Condition (Test-Path -LiteralPath (Join-Path $skillRoot "agents\openai.yaml")) -Message "$skill agents/openai.yaml is missing."
@@ -161,6 +251,11 @@ try {
     [System.IO.File]::WriteAllText($dirtyMarker, "dirty`n", (New-Object System.Text.UTF8Encoding($false)))
     Invoke-InstallerChild -Arguments @("-RepoRoot", $installerSourceRoot, "-TargetRoot", $targetRoot, "-BackupRoot", $backupRoot, "-Action", "PruneUnmanaged", "-SkillId", "rusty-morphospace-context", "-Execute", "-AllowDirtySource", "-ExpectedUnmanagedFingerprint", $dryPrune[0].unmanaged_fingerprint, "-Json") -ExpectedExit 1 | Out-Null
     Remove-Item -LiteralPath $dirtyMarker -Force
+
+    $dirtyMetaMarker = Join-Path $metaSourceRoot "dirty-meta-source-marker.txt"
+    [System.IO.File]::WriteAllText($dirtyMetaMarker, "dirty`n", (New-Object System.Text.UTF8Encoding($false)))
+    Invoke-InstallerChild -Arguments @("-RepoRoot", $installerSourceRoot, "-TargetRoot", $targetRoot, "-Action", "Update", "-SkillId", "meta-quest-workflow", "-Execute", "-Json") -ExpectedExit 1 | Out-Null
+    Remove-Item -LiteralPath $dirtyMetaMarker -Force
 
     $pruneText = Invoke-InstallerChild -Arguments @("-RepoRoot", $installerSourceRoot, "-TargetRoot", $targetRoot, "-BackupRoot", $backupRoot, "-Action", "PruneUnmanaged", "-SkillId", "rusty-morphospace-context", "-Execute", "-ExpectedUnmanagedFingerprint", $dryPrune[0].unmanaged_fingerprint, "-Json")
     $pruned = $pruneText | ConvertFrom-Json

@@ -50,9 +50,8 @@ Included:
 - workspace layout and repo-lane orientation;
 - dependency matrix for Rust, Android, Quest APK, Makepad, Termux sidecar, and
   agent workflows;
-- five portable skill templates for public Morphospace routing, explicit local
-  environment resolution, system engineering, Rust workspace graph audits,
-  and Meta Quest workflow handoffs;
+- four portable local skill templates plus explicit installation of the
+  canonical Meta Quest workflow skill from `meta-quest-agent-workflow`;
 - project-local composition, feature activation, module extraction, promotion,
   and autonomous-iteration contracts;
 - exact source-composition locks, detached materializations, resource claims,
@@ -87,23 +86,29 @@ pwsh -NoProfile -ExecutionPolicy Bypass `
   -Strict
 ```
 
-4. Read [Local Skill Bootstrap](docs/LOCAL_SKILL_BOOTSTRAP.md), then plan,
-   install, and verify the five skill routers:
+4. Read [Local Skill Bootstrap](docs/LOCAL_SKILL_BOOTSTRAP.md), set the exact
+   clean canonical Meta workflow checkout, then plan, install, and verify the
+   five skill routers:
 
 ```powershell
+$MetaWorkflowRoot = "<workspace-root>\meta-quest-agent-workflow"
+
 pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Install-LocalSkills.ps1 `
+  -MetaQuestWorkflowRepoRoot $MetaWorkflowRoot `
   -TargetRoot <codex-skills-root> `
   -Action Plan
 
 pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Install-LocalSkills.ps1 `
+  -MetaQuestWorkflowRepoRoot $MetaWorkflowRoot `
   -TargetRoot <codex-skills-root> `
   -Action Install `
   -Execute
 
 pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Install-LocalSkills.ps1 `
+  -MetaQuestWorkflowRepoRoot $MetaWorkflowRoot `
   -TargetRoot <codex-skills-root> `
   -Action Verify
 ```

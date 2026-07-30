@@ -86,13 +86,17 @@ Read [Local Skill Bootstrap](LOCAL_SKILL_BOOTSTRAP.md) for new installs,
 existing unmanaged directories, provenance, backups, and updates.
 
 ```powershell
+$MetaWorkflowRoot = "<workspace-root>\meta-quest-agent-workflow"
+
 pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Install-LocalSkills.ps1 `
+  -MetaQuestWorkflowRepoRoot $MetaWorkflowRoot `
   -TargetRoot <codex-skills-root> `
   -Action Plan
 
 pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Install-LocalSkills.ps1 `
+  -MetaQuestWorkflowRepoRoot $MetaWorkflowRoot `
   -TargetRoot <codex-skills-root> `
   -Action Install `
   -Execute

@@ -1,5 +1,6 @@
 param(
     [string]$RepoRoot = "",
+    [string]$MetaQuestWorkflowRepoRoot = "",
     [string]$TargetRoot = "",
     [ValidateSet("Plan", "Install", "Verify", "Update", "PruneUnmanaged")][string]$Action = "Plan",
     [string[]]$SkillId = @(),
@@ -39,6 +40,9 @@ $SourceRoot = Join-Path $RepoRoot "skills"
 
 if (-not (Test-Path -LiteralPath $SourceRoot -PathType Container)) {
     throw "Skill source root not found: $SourceRoot"
+}
+if ($MetaQuestWorkflowRepoRoot) {
+    $MetaQuestWorkflowRepoRoot = (Resolve-Path -LiteralPath $MetaQuestWorkflowRepoRoot).Path
 }
 
 if (-not $TargetRoot) {
@@ -88,16 +92,34 @@ function Get-StringSha256 {
 }
 
 function Get-SkillSourceFiles {
-    param([string]$SkillRoot)
+    param(
+        [string]$SkillRoot,
+        [string]$RepositoryRoot
+    )
 
+    $relativeSkillRoot = (Get-RelativeFilePath -BasePath $RepositoryRoot -FilePath $SkillRoot).Replace('\', '/')
+    if ($relativeSkillRoot -eq ".." -or $relativeSkillRoot.StartsWith("../", [System.StringComparison]::Ordinal)) {
+        throw "Skill source root is outside its repository: $SkillRoot"
+    }
+    $git = @(Get-Command git -ErrorAction Stop | Select-Object -First 1)[0].Source
+    $repositoryPaths = @(
+        & $git -C $RepositoryRoot ls-files --cached --others --exclude-standard -- $relativeSkillRoot |
+            Sort-Object -CaseSensitive
+    )
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to enumerate skill source files from Git: $SkillRoot"
+    }
     return @(
-        Get-ChildItem -LiteralPath $SkillRoot -Recurse -File |
-            Sort-Object FullName -CaseSensitive |
+        $repositoryPaths |
             ForEach-Object {
+                $sourcePath = Join-Path $RepositoryRoot $_
+                if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
+                    throw "Tracked skill source file is missing: $_"
+                }
                 [pscustomobject]@{
-                    path = Get-RelativeFilePath -BasePath $SkillRoot -FilePath $_.FullName
-                    sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant()
-                    source_path = $_.FullName
+                    path = Get-RelativeFilePath -BasePath $SkillRoot -FilePath $sourcePath
+                    sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $sourcePath).Hash.ToLowerInvariant()
+                    source_path = $sourcePath
                 }
             }
     )
@@ -108,6 +130,32 @@ function Get-SkillSourceFingerprint {
 
     $inputText = (($SourceFiles | ForEach-Object { "$($_.path):$($_.sha256)" }) -join "`n") + "`n"
     return Get-StringSha256 -Text $inputText
+}
+
+function Assert-RequiredSkillSourceFiles {
+    param(
+        [string]$SkillName,
+        [object[]]$SourceFiles
+    )
+
+    $sourcePaths = @($SourceFiles | ForEach-Object { ([string]$_.path).Replace('\', '/') })
+    $requiredPaths = @("SKILL.md")
+    if ($SkillName -eq "meta-quest-workflow") {
+        $requiredPaths += "agents/openai.yaml"
+    }
+    foreach ($requiredPath in $requiredPaths) {
+        if ($sourcePaths -cnotcontains $requiredPath) {
+            throw "Git-owned skill source inventory is missing required path: $SkillName/$requiredPath"
+        }
+    }
+    foreach ($generatedPath in @(
+        ".morphospace-skill-source.json",
+        "references/local-work-environment.json"
+    )) {
+        if ($sourcePaths -ccontains $generatedPath) {
+            throw "Git-owned skill source inventory contains generated local metadata: $SkillName/$generatedPath"
+        }
+    }
 }
 
 function Get-SkillFileInventory {
@@ -206,12 +254,18 @@ function Add-UnmanagedDetail {
 }
 
 function Get-SourceRepositoryInfo {
+    param([string]$RepositoryRoot)
+
     $git = @(Get-Command git -ErrorAction Stop | Select-Object -First 1)[0].Source
-    $commit = ([string](& $git -C $RepoRoot rev-parse HEAD)).Trim()
-    $remote = ([string](& $git -C $RepoRoot remote get-url origin 2>$null)).Trim()
-    $dirtyLines = @(& $git -C $RepoRoot status --porcelain --untracked-files=normal)
-    $release = @(
-        Get-ChildItem -LiteralPath (Join-Path $RepoRoot "manifests") -Filter "release-*.json" -File |
+    $commit = ([string](& $git -C $RepositoryRoot rev-parse HEAD)).Trim()
+    $remote = ([string](& $git -C $RepositoryRoot remote get-url origin 2>$null)).Trim()
+    $dirtyLines = @(& $git -C $RepositoryRoot status --porcelain --untracked-files=normal | Sort-Object -CaseSensitive)
+    $statusText = if ($dirtyLines.Count -eq 0) { "" } else { ($dirtyLines -join "`n") + "`n" }
+    $statusFingerprint = Get-StringSha256 -Text $statusText
+    $manifestRoot = Join-Path $RepositoryRoot "manifests"
+    $release = if (Test-Path -LiteralPath $manifestRoot -PathType Container) {
+        @(
+            Get-ChildItem -LiteralPath $manifestRoot -Filter "release-*.json" -File |
             ForEach-Object {
                 try {
                     $document = Get-Content -Raw -LiteralPath $_.FullName | ConvertFrom-Json
@@ -223,31 +277,52 @@ function Get-SourceRepositoryInfo {
             Where-Object { $null -ne $_ } |
             Sort-Object Version -Descending |
             Select-Object -First 1
-    )
+        )
+    } else {
+        @()
+    }
 
     return [pscustomobject]@{
         commit = $commit
         remote = $remote
         dirty = ($dirtyLines.Count -gt 0)
+        status_fingerprint = $statusFingerprint
         release = if ($release.Count -gt 0) { $release[0].Text } else { $null }
+    }
+}
+
+function Assert-RepositorySnapshotCurrent {
+    param(
+        [string]$RepositoryRoot,
+        [object]$ExpectedRepositoryInfo,
+        [switch]$RequireClean
+    )
+
+    $freshRepositoryInfo = Get-SourceRepositoryInfo -RepositoryRoot $RepositoryRoot
+    if (($RequireClean -and $freshRepositoryInfo.dirty) -or
+        $freshRepositoryInfo.commit -ne $ExpectedRepositoryInfo.commit -or
+        $freshRepositoryInfo.remote -ne $ExpectedRepositoryInfo.remote -or
+        [bool]$freshRepositoryInfo.dirty -ne [bool]$ExpectedRepositoryInfo.dirty -or
+        $freshRepositoryInfo.status_fingerprint -ne $ExpectedRepositoryInfo.status_fingerprint -or
+        [string]$freshRepositoryInfo.release -ne [string]$ExpectedRepositoryInfo.release) {
+        throw "Skill source repository changed after inspection."
     }
 }
 
 function Assert-SourceSnapshotCurrent {
     param(
+        [string]$RepositoryRoot,
         [string]$SkillRoot,
         [object]$ExpectedRepositoryInfo,
-        [string]$ExpectedSourceFingerprint
+        [string]$ExpectedSourceFingerprint,
+        [switch]$RequireClean
     )
 
-    $freshRepositoryInfo = Get-SourceRepositoryInfo
-    if ($freshRepositoryInfo.dirty -or
-        $freshRepositoryInfo.commit -ne $ExpectedRepositoryInfo.commit -or
-        $freshRepositoryInfo.remote -ne $ExpectedRepositoryInfo.remote -or
-        [string]$freshRepositoryInfo.release -ne [string]$ExpectedRepositoryInfo.release) {
-        throw "Skill source repository changed after inspection."
-    }
-    $freshSourceFiles = @(Get-SkillSourceFiles -SkillRoot $SkillRoot)
+    Assert-RepositorySnapshotCurrent `
+        -RepositoryRoot $RepositoryRoot `
+        -ExpectedRepositoryInfo $ExpectedRepositoryInfo `
+        -RequireClean:$RequireClean
+    $freshSourceFiles = @(Get-SkillSourceFiles -SkillRoot $SkillRoot -RepositoryRoot $RepositoryRoot)
     $freshSourceFingerprint = Get-SkillSourceFingerprint -SourceFiles $freshSourceFiles
     if ($freshSourceFingerprint -ne $ExpectedSourceFingerprint) {
         throw "Skill source files changed after inspection."
@@ -271,7 +346,8 @@ function Test-TargetSkill {
         [string]$SkillName,
         [string]$Target,
         [object[]]$SourceFiles,
-        [object]$RepositoryInfo
+        [object]$SourceRepositoryInfo,
+        [object]$WorkEnvironmentRepositoryInfo
     )
 
     if (-not (Test-Path -LiteralPath $Target -PathType Container)) {
@@ -309,13 +385,21 @@ function Test-TargetSkill {
             $metadata = Get-Content -Raw -LiteralPath $metadataPath | ConvertFrom-Json
             $locator = Get-Content -Raw -LiteralPath $locatorPath | ConvertFrom-Json
             $expectedFingerprint = Get-SkillSourceFingerprint -SourceFiles $SourceFiles
-            if ($metadata.schema -ne "rusty.morphospace.local_skill_source.v1" -or $metadata.skill_id -ne $SkillName) { $differences.Add("provenance:identity") }
-            if ($metadata.source_commit -ne $RepositoryInfo.commit -or [bool]$metadata.source_worktree_dirty -ne [bool]$RepositoryInfo.dirty) { $differences.Add("provenance:source-state") }
-            if ([string]$metadata.source_release -ne [string]$RepositoryInfo.release -or $metadata.source_tree_sha256 -ne $expectedFingerprint) { $differences.Add("provenance:source-version") }
-            if (-not ([string]$metadata.work_environment_root).Equals($RepoRoot, [System.StringComparison]::OrdinalIgnoreCase)) { $differences.Add("provenance:work-environment-root") }
-            if ($locator.schema -ne "rusty.morphospace.local_work_environment.v1" -or $locator.source_commit -ne $RepositoryInfo.commit) { $differences.Add("locator:identity") }
-            if ([string]$locator.source_release -ne [string]$RepositoryInfo.release -or [bool]$locator.source_worktree_dirty -ne [bool]$RepositoryInfo.dirty) { $differences.Add("locator:source-state") }
-            if (-not ([string]$locator.work_environment_root).Equals($RepoRoot, [System.StringComparison]::OrdinalIgnoreCase)) { $differences.Add("locator:work-environment-root") }
+            if ($metadata.schema -ne "rusty.morphospace.local_skill_source.v1" -or
+                $metadata.skill_id -ne $SkillName -or
+                $metadata.source_repository -ne $SourceRepositoryInfo.remote) { $differences.Add("provenance:identity") }
+            if ($metadata.source_commit -ne $SourceRepositoryInfo.commit -or
+                [bool]$metadata.source_worktree_dirty -ne [bool]$SourceRepositoryInfo.dirty) { $differences.Add("provenance:source-state") }
+            if ([string]$metadata.source_release -ne [string]$SourceRepositoryInfo.release -or
+                $metadata.source_tree_sha256 -ne $expectedFingerprint) { $differences.Add("provenance:source-version") }
+            if (-not ([string]$metadata.work_environment_root).Equals($RepoRoot, $pathStringComparison)) { $differences.Add("provenance:work-environment-root") }
+            if ($locator.schema -ne "rusty.morphospace.local_work_environment.v1" -or
+                $locator.source_repository -ne $WorkEnvironmentRepositoryInfo.remote -or
+                $locator.source_commit -ne $WorkEnvironmentRepositoryInfo.commit) { $differences.Add("locator:identity") }
+            if ([string]$locator.source_release -ne [string]$WorkEnvironmentRepositoryInfo.release -or
+                [bool]$locator.source_worktree_dirty -ne [bool]$WorkEnvironmentRepositoryInfo.dirty) { $differences.Add("locator:source-state") }
+            if (-not ([string]$locator.work_environment_root).Equals($RepoRoot, $pathStringComparison)) { $differences.Add("locator:work-environment-root") }
+            if (-not ([string]$locator.docs_root).Equals((Join-Path $RepoRoot "docs"), $pathStringComparison)) { $differences.Add("locator:docs-root") }
         } catch {
             $differences.Add("provenance:invalid-json")
         }
@@ -380,9 +464,12 @@ function New-SkillBackup {
 function Remove-UnmanagedSkillFiles {
     param(
         [string]$Target,
+        [string]$RepositoryRoot,
+        [string]$WorkEnvironmentRepositoryRoot,
         [string]$SkillRoot,
         [object[]]$SourceFiles,
         [object]$ExpectedRepositoryInfo,
+        [object]$ExpectedWorkEnvironmentRepositoryInfo,
         [string]$ExpectedSourceFingerprint,
         [object[]]$ExpectedInventory,
         [object[]]$ExpectedUnmanagedFiles,
@@ -399,9 +486,15 @@ function Remove-UnmanagedSkillFiles {
     }
     Compare-FileInventory -Expected $ExpectedUnmanagedFiles -Actual $freshUnmanagedFiles -Label "Unmanaged skill"
     Assert-SourceSnapshotCurrent `
+        -RepositoryRoot $RepositoryRoot `
         -SkillRoot $SkillRoot `
         -ExpectedRepositoryInfo $ExpectedRepositoryInfo `
-        -ExpectedSourceFingerprint $ExpectedSourceFingerprint
+        -ExpectedSourceFingerprint $ExpectedSourceFingerprint `
+        -RequireClean
+    Assert-RepositorySnapshotCurrent `
+        -RepositoryRoot $WorkEnvironmentRepositoryRoot `
+        -ExpectedRepositoryInfo $ExpectedWorkEnvironmentRepositoryInfo `
+        -RequireClean
 
     $targetFull = [System.IO.Path]::GetFullPath($Target)
     $targetPrefix = $targetFull.TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
@@ -440,6 +533,10 @@ function Copy-ManagedSkillFiles {
             New-Item -ItemType Directory -Force -Path $parent | Out-Null
         }
         Copy-Item -LiteralPath $file.source_path -Destination $destination -Force
+        $destinationHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $destination).Hash.ToLowerInvariant()
+        if ($destinationHash -ne $file.sha256) {
+            throw "Managed skill copy readback mismatch: $($file.path)"
+        }
     }
 }
 
@@ -448,7 +545,8 @@ function Write-InstallationRecords {
         [string]$SkillName,
         [string]$Target,
         [object[]]$SourceFiles,
-        [object]$RepositoryInfo
+        [object]$SourceRepositoryInfo,
+        [object]$WorkEnvironmentRepositoryInfo
     )
 
     $fingerprint = Get-SkillSourceFingerprint -SourceFiles $SourceFiles
@@ -459,10 +557,10 @@ function Write-InstallationRecords {
         schema = "rusty.morphospace.local_skill_source.v1"
         skill_id = $SkillName
         installed_at = $installedAt
-        source_repository = $RepositoryInfo.remote
-        source_commit = $RepositoryInfo.commit
-        source_worktree_dirty = [bool]$RepositoryInfo.dirty
-        source_release = $RepositoryInfo.release
+        source_repository = $SourceRepositoryInfo.remote
+        source_commit = $SourceRepositoryInfo.commit
+        source_worktree_dirty = [bool]$SourceRepositoryInfo.dirty
+        source_release = $SourceRepositoryInfo.release
         source_tree_sha256 = $fingerprint
         source_files = $publicFiles
         work_environment_root = $RepoRoot
@@ -472,22 +570,40 @@ function Write-InstallationRecords {
     $locator = [ordered]@{
         schema = "rusty.morphospace.local_work_environment.v1"
         work_environment_root = $RepoRoot
-        source_repository = $RepositoryInfo.remote
-        source_commit = $RepositoryInfo.commit
-        source_worktree_dirty = [bool]$RepositoryInfo.dirty
-        source_release = $RepositoryInfo.release
+        source_repository = $WorkEnvironmentRepositoryInfo.remote
+        source_commit = $WorkEnvironmentRepositoryInfo.commit
+        source_worktree_dirty = [bool]$WorkEnvironmentRepositoryInfo.dirty
+        source_release = $WorkEnvironmentRepositoryInfo.release
         docs_root = (Join-Path $RepoRoot "docs")
     }
     Write-JsonUtf8NoBom -Path (Join-Path $Target "references\local-work-environment.json") -Value $locator
 }
 
-$allSkills = @(
+$localSkills = @(
     Get-ChildItem -LiteralPath $SourceRoot -Directory |
         Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName "SKILL.md") } |
-        Sort-Object Name
+        Sort-Object Name |
+        ForEach-Object {
+            [pscustomobject]@{
+                Name = $_.Name
+                FullName = $_.FullName
+                RepositoryRoot = $RepoRoot
+            }
+        }
 )
-if ($allSkills.Count -eq 0) {
+if ($localSkills.Count -eq 0) {
     throw "No skills found under $SourceRoot"
+}
+
+$metaSkillId = "meta-quest-workflow"
+$metaSkill = $null
+if ($MetaQuestWorkflowRepoRoot) {
+    $metaSkillRoot = Join-Path $MetaQuestWorkflowRepoRoot "skills\meta-quest-workflow"
+    $metaSkill = [pscustomobject]@{
+        Name = $metaSkillId
+        FullName = $metaSkillRoot
+        RepositoryRoot = $MetaQuestWorkflowRepoRoot
+    }
 }
 
 if ($Action -eq "PruneUnmanaged" -and $SkillId.Count -ne 1) {
@@ -495,20 +611,56 @@ if ($Action -eq "PruneUnmanaged" -and $SkillId.Count -ne 1) {
 }
 
 if ($SkillId.Count -gt 0) {
-    $unknown = @($SkillId | Where-Object { $_ -notin @($allSkills.Name) })
+    if ($SkillId -contains $metaSkillId -and $null -eq $metaSkill) {
+        throw "SkillId meta-quest-workflow requires an explicit -MetaQuestWorkflowRepoRoot."
+    }
+    $knownNames = @($localSkills.Name)
+    if ($null -ne $metaSkill) {
+        $knownNames += $metaSkillId
+    }
+    $unknown = @($SkillId | Where-Object { $_ -notin $knownNames })
     if ($unknown.Count -gt 0) {
         throw "Unknown SkillId value(s): $($unknown -join ', ')"
     }
-    $skills = @($allSkills | Where-Object { $_.Name -in $SkillId })
+    $skills = @($localSkills | Where-Object { $_.Name -in $SkillId })
+    if ($null -ne $metaSkill -and $SkillId -contains $metaSkillId) {
+        $skills += $metaSkill
+    }
 } else {
-    $skills = $allSkills
+    $skills = @($localSkills)
+    if ($null -ne $metaSkill) {
+        $skills += $metaSkill
+    }
 }
+$skills = @($skills | Sort-Object Name)
 
-$repositoryInfo = Get-SourceRepositoryInfo
-if ($Execute -and $Action -in @("Install", "Update") -and $repositoryInfo.dirty -and -not $AllowDirtySource) {
+$workEnvironmentRepositoryInfo = Get-SourceRepositoryInfo -RepositoryRoot $RepoRoot
+$skillContexts = @(
+    foreach ($skill in $skills) {
+        $sourceRepositoryInfo = Get-SourceRepositoryInfo -RepositoryRoot $skill.RepositoryRoot
+        if ($skill.Name -eq $metaSkillId -and
+            $sourceRepositoryInfo.remote -notmatch '(?i)(?:github\.com[:/])MesmerPrism/meta-quest-agent-workflow(?:\.git)?$') {
+            throw "MetaQuestWorkflowRepoRoot origin is not the canonical Meta Quest workflow repository."
+        }
+        $sourceFiles = @(Get-SkillSourceFiles -SkillRoot $skill.FullName -RepositoryRoot $skill.RepositoryRoot)
+        Assert-RequiredSkillSourceFiles -SkillName $skill.Name -SourceFiles $sourceFiles
+        [pscustomobject]@{
+            Skill = $skill
+            SourceFiles = $sourceFiles
+            SourceFingerprint = Get-SkillSourceFingerprint -SourceFiles $sourceFiles
+            SourceRepositoryInfo = $sourceRepositoryInfo
+        }
+    }
+)
+$dirtySources = @(
+    @($workEnvironmentRepositoryInfo) + @($skillContexts.SourceRepositoryInfo) |
+        Where-Object { $_.dirty } |
+        Select-Object -Unique commit, remote, dirty, release
+)
+if ($Execute -and $Action -in @("Install", "Update") -and $dirtySources.Count -gt 0 -and -not $AllowDirtySource) {
     throw "Refusing to install from a dirty source worktree. Commit/stash it, or pass -AllowDirtySource and retain the dirty-source provenance."
 }
-if ($Execute -and $Action -eq "PruneUnmanaged" -and $repositoryInfo.dirty) {
+if ($Execute -and $Action -eq "PruneUnmanaged" -and $dirtySources.Count -gt 0) {
     throw "Refusing to prune against a dirty source worktree."
 }
 
@@ -516,11 +668,18 @@ $timestamp = [DateTime]::UtcNow.ToString("yyyyMMddTHHmmssfffZ")
 $results = New-Object System.Collections.Generic.List[object]
 $failed = $false
 
-foreach ($skill in $skills) {
-    $sourceFiles = @(Get-SkillSourceFiles -SkillRoot $skill.FullName)
-    $sourceFingerprint = Get-SkillSourceFingerprint -SourceFiles $sourceFiles
+foreach ($context in $skillContexts) {
+    $skill = $context.Skill
+    $sourceFiles = @($context.SourceFiles)
+    $sourceFingerprint = $context.SourceFingerprint
+    $sourceRepositoryInfo = $context.SourceRepositoryInfo
     $target = Join-Path $TargetRoot $skill.Name
-    $inspection = Test-TargetSkill -SkillName $skill.Name -Target $target -SourceFiles $sourceFiles -RepositoryInfo $repositoryInfo
+    $inspection = Test-TargetSkill `
+        -SkillName $skill.Name `
+        -Target $target `
+        -SourceFiles $sourceFiles `
+        -SourceRepositoryInfo $sourceRepositoryInfo `
+        -WorkEnvironmentRepositoryInfo $workEnvironmentRepositoryInfo
     $resultAction = $inspection.status
     $detail = $inspection.detail
     $backup = $null
@@ -554,8 +713,38 @@ foreach ($skill in $skills) {
                 $resultAction = "would-install"
                 $detail = "No write performed; add -Execute to install."
             } else {
+                Assert-SourceSnapshotCurrent `
+                    -RepositoryRoot $skill.RepositoryRoot `
+                    -SkillRoot $skill.FullName `
+                    -ExpectedRepositoryInfo $sourceRepositoryInfo `
+                    -ExpectedSourceFingerprint $sourceFingerprint
+                Assert-RepositorySnapshotCurrent `
+                    -RepositoryRoot $RepoRoot `
+                    -ExpectedRepositoryInfo $workEnvironmentRepositoryInfo
                 Copy-ManagedSkillFiles -SourceFiles $sourceFiles -Target $target
-                Write-InstallationRecords -SkillName $skill.Name -Target $target -SourceFiles $sourceFiles -RepositoryInfo $repositoryInfo
+                Write-InstallationRecords `
+                    -SkillName $skill.Name `
+                    -Target $target `
+                    -SourceFiles $sourceFiles `
+                    -SourceRepositoryInfo $sourceRepositoryInfo `
+                    -WorkEnvironmentRepositoryInfo $workEnvironmentRepositoryInfo
+                Assert-SourceSnapshotCurrent `
+                    -RepositoryRoot $skill.RepositoryRoot `
+                    -SkillRoot $skill.FullName `
+                    -ExpectedRepositoryInfo $sourceRepositoryInfo `
+                    -ExpectedSourceFingerprint $sourceFingerprint
+                Assert-RepositorySnapshotCurrent `
+                    -RepositoryRoot $RepoRoot `
+                    -ExpectedRepositoryInfo $workEnvironmentRepositoryInfo
+                $finalInspection = Test-TargetSkill `
+                    -SkillName $skill.Name `
+                    -Target $target `
+                    -SourceFiles $sourceFiles `
+                    -SourceRepositoryInfo $sourceRepositoryInfo `
+                    -WorkEnvironmentRepositoryInfo $workEnvironmentRepositoryInfo
+                if ($finalInspection.status -ne "current") {
+                    throw "Installed skill did not read back as current."
+                }
                 $resultAction = "installed"
                 $detail = "Installed managed files and local provenance."
             }
@@ -571,10 +760,48 @@ foreach ($skill in $skills) {
                 $resultAction = "would-update"
                 $detail = "No write performed; add -Execute to back up and update managed files."
             } else {
+                Assert-SourceSnapshotCurrent `
+                    -RepositoryRoot $skill.RepositoryRoot `
+                    -SkillRoot $skill.FullName `
+                    -ExpectedRepositoryInfo $sourceRepositoryInfo `
+                    -ExpectedSourceFingerprint $sourceFingerprint
+                Assert-RepositorySnapshotCurrent `
+                    -RepositoryRoot $RepoRoot `
+                    -ExpectedRepositoryInfo $workEnvironmentRepositoryInfo
                 $backup = Join-Path (Join-Path $BackupRoot $timestamp) $skill.Name
                 New-SkillBackup -Target $target -Backup $backup -ExpectedInventory @($inspection.inventory)
+                Assert-SourceSnapshotCurrent `
+                    -RepositoryRoot $skill.RepositoryRoot `
+                    -SkillRoot $skill.FullName `
+                    -ExpectedRepositoryInfo $sourceRepositoryInfo `
+                    -ExpectedSourceFingerprint $sourceFingerprint
+                Assert-RepositorySnapshotCurrent `
+                    -RepositoryRoot $RepoRoot `
+                    -ExpectedRepositoryInfo $workEnvironmentRepositoryInfo
                 Copy-ManagedSkillFiles -SourceFiles $sourceFiles -Target $target
-                Write-InstallationRecords -SkillName $skill.Name -Target $target -SourceFiles $sourceFiles -RepositoryInfo $repositoryInfo
+                Write-InstallationRecords `
+                    -SkillName $skill.Name `
+                    -Target $target `
+                    -SourceFiles $sourceFiles `
+                    -SourceRepositoryInfo $sourceRepositoryInfo `
+                    -WorkEnvironmentRepositoryInfo $workEnvironmentRepositoryInfo
+                Assert-SourceSnapshotCurrent `
+                    -RepositoryRoot $skill.RepositoryRoot `
+                    -SkillRoot $skill.FullName `
+                    -ExpectedRepositoryInfo $sourceRepositoryInfo `
+                    -ExpectedSourceFingerprint $sourceFingerprint
+                Assert-RepositorySnapshotCurrent `
+                    -RepositoryRoot $RepoRoot `
+                    -ExpectedRepositoryInfo $workEnvironmentRepositoryInfo
+                $finalInspection = Test-TargetSkill `
+                    -SkillName $skill.Name `
+                    -Target $target `
+                    -SourceFiles $sourceFiles `
+                    -SourceRepositoryInfo $sourceRepositoryInfo `
+                    -WorkEnvironmentRepositoryInfo $workEnvironmentRepositoryInfo
+                if ($finalInspection.status -ne "current") {
+                    throw "Updated skill did not read back as current."
+                }
                 $resultAction = "updated"
                 $detail = "Updated managed files; unmanaged local files were preserved."
             }
@@ -597,22 +824,36 @@ foreach ($skill in $skills) {
                 $failed = $true
             } else {
                 Assert-SourceSnapshotCurrent `
+                    -RepositoryRoot $skill.RepositoryRoot `
                     -SkillRoot $skill.FullName `
-                    -ExpectedRepositoryInfo $repositoryInfo `
-                    -ExpectedSourceFingerprint $sourceFingerprint
+                    -ExpectedRepositoryInfo $sourceRepositoryInfo `
+                    -ExpectedSourceFingerprint $sourceFingerprint `
+                    -RequireClean
+                Assert-RepositorySnapshotCurrent `
+                    -RepositoryRoot $RepoRoot `
+                    -ExpectedRepositoryInfo $workEnvironmentRepositoryInfo `
+                    -RequireClean
                 $backup = Join-Path (Join-Path $BackupRoot $timestamp) $skill.Name
                 New-SkillBackup -Target $target -Backup $backup -ExpectedInventory @($inspection.inventory)
                 Remove-UnmanagedSkillFiles `
                     -Target $target `
+                    -RepositoryRoot $skill.RepositoryRoot `
+                    -WorkEnvironmentRepositoryRoot $RepoRoot `
                     -SkillRoot $skill.FullName `
                     -SourceFiles $sourceFiles `
-                    -ExpectedRepositoryInfo $repositoryInfo `
+                    -ExpectedRepositoryInfo $sourceRepositoryInfo `
+                    -ExpectedWorkEnvironmentRepositoryInfo $workEnvironmentRepositoryInfo `
                     -ExpectedSourceFingerprint $sourceFingerprint `
                     -ExpectedInventory @($inspection.inventory) `
                     -ExpectedUnmanagedFiles $unmanagedFiles `
                     -ExpectedFingerprint $unmanagedFingerprint `
                     -Backup $backup
-                $finalInspection = Test-TargetSkill -SkillName $skill.Name -Target $target -SourceFiles $sourceFiles -RepositoryInfo $repositoryInfo
+                $finalInspection = Test-TargetSkill `
+                    -SkillName $skill.Name `
+                    -Target $target `
+                    -SourceFiles $sourceFiles `
+                    -SourceRepositoryInfo $sourceRepositoryInfo `
+                    -WorkEnvironmentRepositoryInfo $workEnvironmentRepositoryInfo
                 if ($finalInspection.status -ne "current" -or @($finalInspection.unmanaged_files).Count -ne 0) {
                     throw "Skill prune did not read back as current with zero unmanaged files."
                 }
@@ -629,15 +870,16 @@ foreach ($skill in $skills) {
     $results.Add([pscustomobject]@{
         skill = $skill.Name
         action = $resultAction
-        source_commit = $repositoryInfo.commit
-        source_dirty = [bool]$repositoryInfo.dirty
+        source_repository = $sourceRepositoryInfo.remote
+        source_commit = $sourceRepositoryInfo.commit
+        source_dirty = [bool]$sourceRepositoryInfo.dirty
         target = $target
         backup = $backup
         unmanaged_count = $unmanagedFiles.Count
-        unmanaged_files = @($unmanagedFiles.path)
+        unmanaged_files = @($unmanagedFiles | ForEach-Object { $_.path })
         unmanaged_fingerprint = $unmanagedFingerprint
         pruned_count = $prunedFiles.Count
-        pruned_files = $prunedFiles
+        pruned_files = @($prunedFiles)
         pruned_fingerprint = $prunedFingerprint
         detail = $detail
     })

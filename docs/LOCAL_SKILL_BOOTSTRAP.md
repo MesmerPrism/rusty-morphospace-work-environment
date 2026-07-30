@@ -1,8 +1,9 @@
 # Local Skill Bootstrap
 
-This guide installs the five Rusty Morphospace skill routers into a contributor's
-own agent environment with verifiable source provenance. It supports a new
-machine and an existing installation without silently overwriting local work.
+This guide installs four Work Environment-owned skill routers plus the
+canonical Meta Quest router into a contributor's own agent environment with
+verifiable split source provenance. It supports a new machine and an existing
+installation without silently overwriting local work.
 
 ## 1. Establish The Local Clone
 
@@ -11,6 +12,7 @@ configuration:
 
 ```powershell
 $WorkEnvironmentRoot = "<workspace-root>\rusty-morphospace-work-environment"
+$MetaWorkflowRoot = "<workspace-root>\meta-quest-agent-workflow"
 $env:RUSTY_MORPHOSPACE_WORK_ENVIRONMENT = $WorkEnvironmentRoot
 Set-Location $WorkEnvironmentRoot
 ```
@@ -35,7 +37,9 @@ Run the public boundary and template checks:
 
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-PublicBoundary.ps1
-pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-SkillTemplates.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\Test-SkillTemplates.ps1 `
+  -MetaQuestWorkflowRepoRoot $MetaWorkflowRoot
 ```
 
 The installer refuses a write from a dirty worktree by default. That makes an
@@ -50,6 +54,7 @@ Planning is read-only:
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Install-LocalSkills.ps1 `
+  -MetaQuestWorkflowRepoRoot $MetaWorkflowRoot `
   -TargetRoot $SkillRoot `
   -Action Plan
 ```
@@ -59,6 +64,7 @@ Review all five rows, then install. Writes require `-Execute`:
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Install-LocalSkills.ps1 `
+  -MetaQuestWorkflowRepoRoot $MetaWorkflowRoot `
   -TargetRoot $SkillRoot `
   -Action Install `
   -Execute
@@ -69,6 +75,7 @@ Verify managed hashes and the local locator:
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Install-LocalSkills.ps1 `
+  -MetaQuestWorkflowRepoRoot $MetaWorkflowRoot `
   -TargetRoot $SkillRoot `
   -Action Verify
 ```
@@ -85,7 +92,9 @@ Each installed skill receives:
 - `references/local-work-environment.json`: the exact local clone and docs root.
 
 Those files are local installation records. Do not copy them back into this
-public repository.
+public repository. For `meta-quest-workflow`, the source record binds the
+canonical Meta repository and commit while the locator independently binds this
+Work Environment checkout.
 
 ## 4. Configure Each Router
 
@@ -123,11 +132,13 @@ scan scope from the current unit. A tracked-file inventory is the safe default.
 
 ### meta-quest-workflow
 
-Clone the public `meta-quest-agent-workflow` repo only when Quest work is in
-scope and record its path in the ignored local configuration. The skill routes
-device operations there; this work-environment repo does not bundle ADB, SDKs,
-Meta tools, device serials, or a competing headset procedure. Installing the
-skill does not authorize device mutation or require a connected headset.
+The public `meta-quest-agent-workflow` repo is the canonical tracked skill
+owner. Pass its exact clean checkout through `-MetaQuestWorkflowRepoRoot`; the
+installer copies its skill bytes and records its commit without guessing or
+fetching. This work-environment repo generates only the local locator and does
+not bundle ADB, SDKs, Meta tools, device serials, or a competing headset
+procedure. Installing the skill does not authorize device mutation or require
+a connected headset.
 
 For the routine local ecosystem loop, copy
 `templates/quest-file-manager-cli.example.json` to the ignored
@@ -154,11 +165,13 @@ First inspect and verify:
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Install-LocalSkills.ps1 `
+  -MetaQuestWorkflowRepoRoot $MetaWorkflowRoot `
   -TargetRoot $SkillRoot `
   -Action Plan
 
 pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Install-LocalSkills.ps1 `
+  -MetaQuestWorkflowRepoRoot $MetaWorkflowRoot `
   -TargetRoot $SkillRoot `
   -Action Verify
 ```
@@ -169,6 +182,7 @@ overwritten by `Install`. Review it, then opt into a managed update:
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Install-LocalSkills.ps1 `
+  -MetaQuestWorkflowRepoRoot $MetaWorkflowRoot `
   -TargetRoot $SkillRoot `
   -Action Update `
   -SkillId rusty-morphospace-context `

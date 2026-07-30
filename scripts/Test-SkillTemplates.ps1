@@ -1,5 +1,6 @@
 param(
-    [string]$RepoRoot = ""
+    [string]$RepoRoot = "",
+    [string]$MetaQuestWorkflowRepoRoot = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -9,22 +10,15 @@ if (-not $RepoRoot) {
 }
 $RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
 $skillRoot = Join-Path $RepoRoot "skills"
-$expected = @("meta-quest-workflow", "rust-work-graph", "rusty-morphospace", "rusty-morphospace-context", "system-engineering")
-$publicQuestWorkflowDocs = @(
-    "docs/rusty-morphospace-default-device-loop.md",
-    "docs/agent-execution-providers.md",
-    "docs/adb-basics.md",
-    "docs/apk-install-launch.md",
-    "docs/managed-device-store-apps.md",
-    "docs/artifact-and-evidence-discipline.md",
-    "docs/quest-signal-patterns.md",
-    "docs/accessibility-foreground-watchdogs.md",
-    "docs/termux-linux-sidecars.md"
-)
+$expected = @("rust-work-graph", "rusty-morphospace", "rusty-morphospace-context", "system-engineering")
 $actual = @(Get-ChildItem -LiteralPath $skillRoot -Directory | Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName "SKILL.md") } | Sort-Object Name)
 
 if (@($actual.Name).Count -ne $expected.Count -or (@($actual.Name) -join "|") -ne (($expected | Sort-Object) -join "|")) {
-    throw "Expected exactly the five supported portable skills. Found: $($actual.Name -join ', ')"
+    throw "Expected exactly the four work-environment-owned portable skills. Found: $($actual.Name -join ', ')"
+}
+if ((Test-Path -LiteralPath (Join-Path $skillRoot "meta-quest-workflow\SKILL.md") -PathType Leaf) -or
+    (Test-Path -LiteralPath (Join-Path $skillRoot "meta-quest-workflow\agents\openai.yaml") -PathType Leaf)) {
+    throw "Work Environment must not track a competing Meta Quest skill source."
 }
 
 foreach ($directory in $actual) {
@@ -46,9 +40,6 @@ foreach ($directory in $actual) {
 
     $docReferences = @([regex]::Matches($content, "docs/[A-Za-z0-9_.-]+\.md") | ForEach-Object { $_.Value } | Sort-Object -Unique)
     foreach ($reference in $docReferences) {
-        if ($directory.Name -eq "meta-quest-workflow" -and $reference -in $publicQuestWorkflowDocs) {
-            continue
-        }
         if (-not (Test-Path -LiteralPath (Join-Path $RepoRoot $reference) -PathType Leaf)) {
             throw "Skill references a missing work-environment document: $reference ($path)"
         }
@@ -88,18 +79,35 @@ foreach ($route in @('$meta-quest-workflow', '$system-engineering', '$rust-work-
     }
 }
 
-$metaAgentPath = Join-Path $skillRoot "meta-quest-workflow\agents\openai.yaml"
-if (-not (Test-Path -LiteralPath $metaAgentPath -PathType Leaf)) {
-    throw "Meta Quest skill is missing agents/openai.yaml."
-}
-$metaAgent = Get-Content -Raw -LiteralPath $metaAgentPath
-foreach ($field in @("display_name:", "short_description:", "default_prompt:")) {
-    if (-not $metaAgent.Contains($field, [System.StringComparison]::Ordinal)) {
-        throw "Meta Quest skill metadata is missing $field"
+if ($MetaQuestWorkflowRepoRoot) {
+    $MetaQuestWorkflowRepoRoot = (Resolve-Path -LiteralPath $MetaQuestWorkflowRepoRoot).Path
+    $metaSkillRoot = Join-Path $MetaQuestWorkflowRepoRoot "skills\meta-quest-workflow"
+    $metaSkillPath = Join-Path $metaSkillRoot "SKILL.md"
+    $metaAgentPath = Join-Path $metaSkillRoot "agents\openai.yaml"
+    foreach ($path in @($metaSkillPath, $metaAgentPath)) {
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            throw "Canonical Meta Quest skill source is missing: $path"
+        }
     }
-}
-if ($metaAgent -match "[A-Za-z]:\\") {
-    throw "Meta Quest skill metadata contains an absolute Windows path."
+    if (Test-Path -LiteralPath (Join-Path $metaSkillRoot "references\local-work-environment.json")) {
+        throw "Canonical Meta Quest skill source contains generated locator metadata."
+    }
+    $metaRemote = ([string](git -C $MetaQuestWorkflowRepoRoot remote get-url origin)).Trim()
+    if ($metaRemote -notmatch '(?i)(?:github\.com[:/])MesmerPrism/meta-quest-agent-workflow(?:\.git)?$') {
+        throw "Canonical Meta Quest skill source has the wrong origin."
+    }
+    if (@(git -C $MetaQuestWorkflowRepoRoot status --porcelain --untracked-files=normal).Count -ne 0) {
+        throw "Canonical Meta Quest skill source must be clean."
+    }
+    $metaAgent = Get-Content -Raw -LiteralPath $metaAgentPath
+    foreach ($field in @("display_name:", "short_description:", "default_prompt:")) {
+        if (-not $metaAgent.Contains($field, [System.StringComparison]::Ordinal)) {
+            throw "Meta Quest skill metadata is missing $field"
+        }
+    }
+    if ($metaAgent -match "[A-Za-z]:\\") {
+        throw "Meta Quest skill metadata contains an absolute Windows path."
+    }
 }
 
 $publicAgentPath = Join-Path $skillRoot "rusty-morphospace\agents\openai.yaml"
@@ -154,7 +162,9 @@ $installation = Get-Content -Raw -LiteralPath (
     Join-Path $RepoRoot "docs/SKILL_INSTALLATION.md"
 )
 if (
-    $installation -notmatch "ships five portable skill routers" -or
+    $installation -notmatch "ships four local portable skill routers" -or
+    $installation -notmatch "canonical" -or
+    $installation -notmatch "meta-quest-agent-workflow" -or
     $installation -notmatch '\| `rusty-morphospace` \|' -or
     $installation -notmatch '\| `rusty-morphospace-context` \|'
 ) {
