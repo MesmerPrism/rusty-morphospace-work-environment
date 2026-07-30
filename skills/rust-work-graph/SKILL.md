@@ -52,8 +52,10 @@ Use it to find:
 - source files mixing independent authority;
 - validation gaps.
 
-Then route changes through `rusty-morphospace-context` and
-`system-engineering`.
+Then route portable ownership and workflow questions through
+`rusty-morphospace`, and authority design through `system-engineering`. Use
+`rusty-morphospace-context` only when an explicit machine-local environment
+must be resolved.
 
 When a project uses the portable `morphospace/` workflow, compare graph
 findings with the project spec and current iteration-unit scope. A graph can

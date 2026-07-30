@@ -1,0 +1,6 @@
+interface:
+  display_name: "Rusty Morphospace Context"
+  short_description: "Resolve the local Morphospace environment"
+  default_prompt: "Use $rusty-morphospace-context to resolve the exact local work environment, then hand portable guidance to $rusty-morphospace."
+policy:
+  allow_implicit_invocation: false

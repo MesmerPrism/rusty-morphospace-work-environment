@@ -18,7 +18,7 @@ run public Quest APK workflows with placeholders.
 | Source family | Reusable extraction | Excluded from this repo |
 | --- | --- | --- |
 | Morphospace planning instructions | Lane naming, state-first workflow, split pressure, public/private boundary, tiered validation. | Local absolute paths, branch hygiene receipts, private repo names, raw planning ledgers. |
-| Local skill files | Four skill templates: Morphospace context, system engineering, Rust work graph, and Meta Quest workflow. | Machine-specific script paths and private project details. |
+| Local skill files | Five templates: public Morphospace routing, explicit local context resolution, system engineering, Rust work graph, and Meta Quest workflow. | Machine-specific script paths and private project details. |
 | Rusty XR public docs | Android toolchain split, public extraction gates, APK build examples, Quest shell checklist, OpenXR bring-up lessons. | Public repo generated APKs, private downstream package names, local loader paths, live evidence. |
 | Meta Quest agent workflow | Device-operation discipline, ADB install/launch/logcat patterns, capture taxonomy, provider model. | A bundled copy of Meta tools, ADB, SDKs, screenshots, or logs. |
 | Quest Termux Lab | Termux sidecar authority model, loopback Wi-Fi ADB gate, on-device APK lab path, public-safe evidence discipline. | Live endpoint values, pairing material, generated APKs, helper-app private package details. |

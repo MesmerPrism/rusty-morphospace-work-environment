@@ -31,13 +31,13 @@
     },
     {
       "surface_kind": "skill",
-      "path": "<skills-root>/rusty-morphospace-context/SKILL.md",
+      "path": "<skills-root>/rusty-morphospace/SKILL.md",
       "owner": "workflow-maintainer",
       "change_reason": "Keep module placement and feature-activation routing current.",
       "action": "update",
       "status": "planned",
       "validation": "<skill-validation-command>",
-      "skill_id": "rusty-morphospace-context"
+      "skill_id": "rusty-morphospace"
     },
     {
       "surface_kind": "skill",

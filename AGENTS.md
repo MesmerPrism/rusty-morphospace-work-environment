@@ -52,8 +52,10 @@ and private app payload details.
 
 Use the local skill templates in `skills/` after installation:
 
-- `rusty-morphospace-context`: repo-family orientation and public/private
-  boundary checks.
+- `rusty-morphospace`: public architecture, ownership, project workflow,
+  boundary, validation, and agent routing.
+- `rusty-morphospace-context`: explicit machine-local work-environment
+  resolution before handing portable guidance to `rusty-morphospace`.
 - `system-engineering`: authority, interface, observability, validation, and
   mitigation-map structure.
 - `rust-work-graph`: inventory, source-root maps, and graph snapshots before

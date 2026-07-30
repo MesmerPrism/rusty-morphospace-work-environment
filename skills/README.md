@@ -15,8 +15,10 @@ The templates intentionally use placeholders and repo-relative docs instead of
 local paths. Put workstation-specific paths in ignored `local/` files or in
 your agent configuration.
 
-The Morphospace and system-engineering templates route project work through
-the portable project spec, feature lock, module lifecycle, and autonomous
-iteration protocol in `docs/`. All four templates also follow the instruction
-synchronization matrix so durable routing changes stay aligned without copying
-long recipes into skill entrypoints.
+The public `rusty-morphospace` and `system-engineering` templates route project
+work through the portable project spec, feature lock, module lifecycle, and
+autonomous iteration protocol in `docs/`. The explicit
+`rusty-morphospace-context` template resolves an installed machine-local clone
+and hands portable guidance to `rusty-morphospace`. All five templates follow
+the instruction synchronization matrix so durable routing changes stay aligned
+without copying long recipes into skill entrypoints.

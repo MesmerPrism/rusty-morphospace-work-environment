@@ -1,0 +1,6 @@
+interface:
+  display_name: "Rusty Morphospace"
+  short_description: "Route portable Morphospace architecture and workflow"
+  default_prompt: "Use $rusty-morphospace to route this Rusty Morphospace architecture or project-workflow task to the correct owner, contracts, and validation."
+policy:
+  allow_implicit_invocation: true
