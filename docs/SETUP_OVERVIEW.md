@@ -101,7 +101,9 @@ pwsh -NoProfile -ExecutionPolicy Bypass `
 If your agent uses a different skill location, pass that directory with
 `-TargetRoot`. Verify after installation with `-Action Verify`. Install never
 overwrites an existing directory; updates require `-Action Update -Execute` and
-create a timestamped backup.
+create a timestamped backup. Plan and Verify report source-unowned files;
+`PruneUnmanaged` is a separate single-skill, fingerprint-bound, backup-first
+action.
 
 ## 5. Scaffold A Project Workflow
 

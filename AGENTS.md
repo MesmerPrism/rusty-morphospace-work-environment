@@ -65,7 +65,10 @@ Use the local skill templates in `skills/` after installation:
 
 Install and verify them through `docs/LOCAL_SKILL_BOOTSTRAP.md` and
 `scripts/Install-LocalSkills.ps1`. Managed writes require `-Execute`; updates
-create a backup and must not delete unmanaged local files.
+create a backup and must not delete unmanaged local files. Plan and Verify
+report unmanaged files without failing current managed content. Remove such
+files only through the separately reviewed, fingerprint-bound, backup-first
+`PruneUnmanaged -Execute` action.
 
 Use PowerShell `7.6` LTS or newer through the `pwsh` executable for every
 authoritative workflow, child runner, validation command, and documented

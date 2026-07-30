@@ -38,3 +38,6 @@ pwsh -NoProfile -ExecutionPolicy Bypass `
 
 `Install` never overwrites an existing directory. `Update` is a separate,
 explicit operation and creates a backup outside the skill-discovery root.
+Plan and Verify report source-unowned files without treating them as managed
+drift. The separate `PruneUnmanaged` action is dry-run by default and can remove
+only one skill's fingerprinted inventory after a verified complete backup.
