@@ -1,4 +1,0 @@
-interface:
-  display_name: "Meta Quest Workflow"
-  short_description: "Quest ecosystem routing and validation"
-  default_prompt: "Use $meta-quest-workflow to route Quest build outputs, local File Manager deployment, Kiosk launch, managed Fleet execution, runtime evidence, cleanup, and explicit fallback through the narrowest owning provider."

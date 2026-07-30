@@ -60,8 +60,9 @@ Use the local skill templates in `skills/` after installation:
   mitigation-map structure.
 - `rust-work-graph`: inventory, source-root maps, and graph snapshots before
   broad refactors.
-- `meta-quest-workflow`: live Quest, ADB, APK install/launch, screenshot,
-  logcat, Perfetto, Wi-Fi ADB, or Meta tooling operations.
+- `meta-quest-workflow`: the canonical external skill from
+  `meta-quest-agent-workflow` for live Quest, ADB, APK install/launch,
+  screenshot, logcat, Perfetto, Wi-Fi ADB, or Meta tooling operations.
 
 Install and verify them through `docs/LOCAL_SKILL_BOOTSTRAP.md` and
 `scripts/Install-LocalSkills.ps1`. Managed writes require `-Execute`; updates
@@ -69,6 +70,12 @@ create a backup and must not delete unmanaged local files. Plan and Verify
 report unmanaged files without failing current managed content. Remove such
 files only through the separately reviewed, fingerprint-bound, backup-first
 `PruneUnmanaged -Execute` action.
+
+This repository tracks four local routers. It installs
+`meta-quest-workflow` only from an explicit clean canonical
+`meta-quest-agent-workflow` checkout, records that repository and commit as the
+skill source, and generates Work Environment locator metadata separately. Do
+not restore a competing tracked copy under `skills/`.
 
 Use PowerShell `7.6` LTS or newer through the `pwsh` executable for every
 authoritative workflow, child runner, validation command, and documented

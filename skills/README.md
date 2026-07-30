@@ -1,12 +1,16 @@
 # Skill Templates
 
-These are portable Codex-style skill templates for Rusty Morphospace work.
+These are the four Work Environment-owned portable Codex-style skill templates
+for Rusty Morphospace work. The canonical `meta-quest-workflow` template is
+owned by `meta-quest-agent-workflow` and is supplied to the installer through
+`-MetaQuestWorkflowRepoRoot`.
 
 Install them with:
 
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass `
   -File ..\scripts\Install-LocalSkills.ps1 `
+  -MetaQuestWorkflowRepoRoot <meta-quest-agent-workflow-root> `
   -TargetRoot <codex-skills-root> `
   -Execute
 ```
