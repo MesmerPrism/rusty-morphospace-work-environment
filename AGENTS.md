@@ -211,6 +211,11 @@ single-PR path.
   separate from platform lifecycle. Sources, processors, routes, codec/socket
   providers, and sinks stay explicit; compatibility adapters cannot export
   application defaults or permissions into reusable modules.
+- Keep Rusty-owned media streams distinct from opaque operator-presentation
+  providers. Hostess may supervise a separately installed Meta/MQDH Cinematic
+  Cast process and report only its own observations; that does not make the
+  route a generic Quest or Manifold media source or prove recording, input,
+  device-session cleanup, or FOV restoration.
 - Multi-app broker SDKs share only accepted contract families and the minimum
   platform permission. Every app keeps a distinct OS/package identity, client
   id, exact feature lock, marker namespace, grant, and app-local capability;
