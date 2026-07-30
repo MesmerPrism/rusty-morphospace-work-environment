@@ -364,3 +364,10 @@ Prefer schema-only and data-only contracts before runtime dependencies.
 Validation should prove the authority boundary, not just happy-path execution.
 For Quest/APK work, source/static/profile gates come before headset runs. For
 public extraction, synthetic tests or fixtures come before live evidence.
+
+For a change to the validator, policy, workflow, or schema that would otherwise
+approve itself, separate exact base-owned static admission from
+credential-free dynamic execution. Route the portable two-PR contract through
+`docs/EXTERNAL_VALIDATION_AUTHORITY.md`; its static assessment must retain
+`candidate_code_executed=false`, `execution_attested=false`, and
+`publication_authority=false`.

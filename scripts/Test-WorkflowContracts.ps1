@@ -1155,6 +1155,7 @@ foreach ($contractExample in @(
     [pscustomobject]@{ Template = "published-planning-authority-adoption.example.json"; Schema = "published-planning-authority-adoption.schema.json" },
     [pscustomobject]@{ Template = "published-active-planning-authority-adoption.example.json"; Schema = "published-planning-authority-adoption.schema.json" },
     [pscustomobject]@{ Template = "historical-unit-adoption-reconstruction.example.json"; Schema = "historical-unit-adoption-reconstruction.schema.json" },
+    [pscustomobject]@{ Template = "external-validation-authority-policy.example.json"; Schema = "external-validation-authority-policy-v1.schema.json" },
     [pscustomobject]@{ Template = "unplanned-publication-closure-v2.example.json"; Schema = "unplanned-publication-closure.schema.json" }
 )) {
     $examplePath = Join-Path $templatesRoot $contractExample.Template

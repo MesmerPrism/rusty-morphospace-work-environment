@@ -123,6 +123,13 @@ pwsh -NoProfile -ExecutionPolicy Bypass `
    and use the public Meta Quest workflow repo as the device-operations
    authority. Routine local work uses a hash-pinned File Manager CLI, Kiosk
    launch/foreground control when applicable, and app-owned runtime evidence.
+
+When a repository changes its own validation policy, workflow, schema, or
+runner, use the two-step
+[External Validation Authority](docs/EXTERNAL_VALIDATION_AUTHORITY.md)
+boundary. A base-owned policy admits an exact reviewed change set without
+checking out or executing candidate content; dynamic validation and
+publication authority remain separate.
    Managed target-set work uses Fleet with current authority and effect-owner
    receipts. Local File Manager and managed Fleet contracts remain separate;
    raw ADB requires an explicit bootstrap, provider-gap, diagnostic, or

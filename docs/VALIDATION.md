@@ -29,6 +29,7 @@ for example:
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkflowContracts.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-PlannedPublicationAccounting.ps1 -SelfTest
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-PublishedPrerequisiteSuffixReconciliation.ps1 -SelfTest
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ExternalValidationAuthoritySelfTest.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\New-ProjectWorkspace.ps1 -SelfTest
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-DocumentationLinks.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-SkillTemplates.ps1
@@ -37,6 +38,11 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-SkillTemplates.ps1
 Do not append all focused commands to every aggregate run. The aggregate owns
 each expensive owner self-test once; nested temporary workspaces run structural
 contract validation without recursively re-running unrelated owner suites.
+
+Changes to a validation trust root use the separate base-owned static admission
+contract in [External Validation Authority](EXTERNAL_VALIDATION_AUTHORITY.md).
+That verifier examines fetched Git objects only and explicitly does not attest
+candidate execution or authorize publication.
 
 Validate a configured contributor machine separately:
 

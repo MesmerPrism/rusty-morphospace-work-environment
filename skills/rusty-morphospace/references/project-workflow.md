@@ -93,6 +93,13 @@ Require validation evidence to bind exact criteria, artifacts, repository
 revisions, ancestor bases, and in-scope changed paths. Revalidate before
 acceptance so drift rejects. Keep acceptance under the workflow owner.
 
+If a change modifies its own validation authority, use the two-PR external
+validation-authority boundary. The trusted base first approves the exact
+reviewed ancestor, complete path set, sizes, and hashes. A base-owned static
+check then reads candidate Git objects without checkout or execution. Run
+dynamic validation separately; neither static admission nor a candidate-issued
+receipt is independent publication authority.
+
 ## Public And Private Boundary
 
 Commit only portable schemas, synthetic fixtures, placeholder commands,

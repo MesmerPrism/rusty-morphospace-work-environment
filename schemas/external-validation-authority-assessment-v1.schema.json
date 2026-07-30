@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/external-validation-authority-assessment-v1.schema.json",
+  "title": "External validation authority assessment v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "policy_id",
+    "policy_sha256",
+    "repository",
+    "base",
+    "candidate",
+    "changed_paths",
+    "protected_paths",
+    "decision",
+    "approval_id",
+    "candidate_code_executed",
+    "execution_attested",
+    "publication_authority",
+    "limitations"
+  ],
+  "properties": {
+    "schema": {
+      "const": "rusty.morphospace.workflow.external_validation_authority_assessment.v1"
+    },
+    "policy_id": {
+      "$ref": "#/$defs/id"
+    },
+    "policy_sha256": {
+      "$ref": "#/$defs/hash"
+    },
+    "repository": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$"
+    },
+    "base": {
+      "$ref": "#/$defs/gitIdentity"
+    },
+    "candidate": {
+      "$ref": "#/$defs/gitIdentity"
+    },
+    "changed_paths": {
+      "$ref": "#/$defs/pathSet"
+    },
+    "protected_paths": {
+      "$ref": "#/$defs/pathSet"
+    },
+    "decision": {
+      "enum": [
+        "unprotected",
+        "approved-change-set"
+      ]
+    },
+    "approval_id": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/id"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "candidate_code_executed": {
+      "const": false
+    },
+    "execution_attested": {
+      "const": false
+    },
+    "publication_authority": {
+      "const": false
+    },
+    "limitations": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,127}$"
+    },
+    "hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "objectId": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^[^\\\\\\u0000-\\u001f\\u007f]+$"
+    },
+    "pathSet": {
+      "type": "array",
+      "maxItems": 512,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/path"
+      }
+    },
+    "gitIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commit",
+        "tree"
+      ],
+      "properties": {
+        "commit": {
+          "$ref": "#/$defs/objectId"
+        },
+        "tree": {
+          "$ref": "#/$defs/objectId"
+        }
+      }
+    }
+  }
+}
