@@ -121,6 +121,7 @@ $baseRoot = Join-Path $temp "base"
 $candidateRoot = Join-Path $temp "candidate"
 $docsRoot = Join-Path $temp "docs-only"
 $impostorRoot = Join-Path $temp "impostor"
+$replayRoot = Join-Path $temp "replay"
 
 try {
     [IO.Directory]::CreateDirectory($baseRoot) | Out-Null
@@ -242,6 +243,39 @@ try {
     Assert-Rejected (
         Invoke-AuthorityTest $baseRoot $baseCommit $candidateCommit $outputPath
     ) "already exists|CreateNew" "assessment overwrite"
+    Write-Utf8 (
+        Join-Path $candidateRoot "tools/authority.ps1"
+    ) "throw 'later authority baseline'`n"
+    Write-Utf8 (Join-Path $candidateRoot "docs/note.md") "later baseline`n"
+    Invoke-GitTest $candidateRoot @("add", ".") | Out-Null
+    Invoke-GitTest $candidateRoot @("commit", "-m", "later authority baseline") |
+        Out-Null
+    $consumedBase = Invoke-GitTest $candidateRoot @("rev-parse", "HEAD")
+    Invoke-GitTest $baseRoot @(
+        "worktree",
+        "add",
+        "-b",
+        "replay",
+        $replayRoot,
+        $consumedBase
+    ) | Out-Null
+    Invoke-GitTest $replayRoot @(
+        "checkout",
+        $candidateCommit,
+        "--",
+        "docs/note.md",
+        "tools/authority.ps1"
+    ) | Out-Null
+    Invoke-GitTest $replayRoot @("commit", "-m", "replay consumed authority bytes") |
+        Out-Null
+    $replayCommit = Invoke-GitTest $replayRoot @("rev-parse", "HEAD")
+    Assert-Rejected (
+        Invoke-AuthorityTest $candidateRoot $consumedBase $replayCommit
+    ) "do not match an exact base-approved change set" "consumed approval"
+    Invoke-GitTest $baseRoot @("worktree", "remove", "--force", $replayRoot) |
+        Out-Null
+    Invoke-GitTest $candidateRoot @("reset", "--hard", $candidateCommit) |
+        Out-Null
 
     Invoke-GitTest $baseRoot @(
         "worktree",
