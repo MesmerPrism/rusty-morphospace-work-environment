@@ -6,6 +6,8 @@ All notable changes to the portable work environment are recorded here.
 
 ### Added
 
+- A public-safe `rusty-morphospace` skill for portable ownership, composition,
+  project workflow, validation, boundary, and agent routing.
 - Exact no-overwrite projection of an embedded source-owned `morphospace/`
   workspace into distinct external planning before unplanned-publication
   reconciliation.
@@ -17,6 +19,9 @@ All notable changes to the portable work environment are recorded here.
 
 ### Changed
 
+- `rusty-morphospace-context` is now an explicit machine-local resolver that
+  hands portable guidance to `rusty-morphospace`; the installer, lifecycle
+  routing, and instruction synchronization now cover five skills.
 - `ReconcilePublication` now requires the same distinct external planning
   containment as other publication transitions.
 - Unplanned-publication closure v2 binds and revalidates the exact planning

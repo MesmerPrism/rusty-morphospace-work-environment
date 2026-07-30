@@ -275,7 +275,7 @@ if ($SelfTest) {
     foreach ($quickTest in @(
         [pscustomobject]@{ name = "workflow:public-boundary"; script = "Test-PublicBoundary.ps1"; detail = "Validated the portable public/private boundary." },
         [pscustomobject]@{ name = "workflow:documentation-links"; script = "Test-DocumentationLinks.ps1"; detail = "Validated relative Markdown links." },
-        [pscustomobject]@{ name = "workflow:skill-templates"; script = "Test-SkillTemplates.ps1"; detail = "Validated the four portable skill routers and locator contract." },
+        [pscustomobject]@{ name = "workflow:skill-templates"; script = "Test-SkillTemplates.ps1"; detail = "Validated the five portable skill routers and locator contract." },
         [pscustomobject]@{ name = "workflow:environment-validation"; script = "Test-EnvironmentValidation.ps1"; detail = "Validated strict placeholders, repo paths, and Python/JDK minimum versions." },
         [pscustomobject]@{ name = "workflow:local-skill-bootstrap"; script = "Test-LocalSkillBootstrap.ps1"; detail = "Validated plan, install, verify, drift, backup, update, and local-file preservation." },
         [pscustomobject]@{ name = "workflow:project-isolation"; script = "Test-ProjectIsolation.ps1"; detail = "Validated exact source locks, detached materializations, no-overwrite content addresses, and conflicting resource claims." }

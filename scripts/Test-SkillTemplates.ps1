@@ -125,4 +125,40 @@ if ((Get-Content -Raw -LiteralPath $contextAgentPath) -notmatch "allow_implicit_
     throw "The local context resolver must require explicit invocation."
 }
 
+$lifecycle = Get-Content -Raw -LiteralPath (
+    Join-Path $RepoRoot "manifests\workflow-lifecycle.portable.json"
+) | ConvertFrom-Json -Depth 100
+$triggerCategories = @(
+    $lifecycle.instruction_sync.trigger_categories | ForEach-Object { [string]$_ }
+)
+$routes = @($lifecycle.instruction_sync.skill_routing)
+$routeCategories = @($routes | ForEach-Object { [string]$_.change_category })
+if (
+    $routeCategories.Count -ne @($routeCategories | Sort-Object -Unique -CaseSensitive).Count -or
+    (($routeCategories | Sort-Object -CaseSensitive) -join "`0") -cne
+        (($triggerCategories | Sort-Object -CaseSensitive) -join "`0")
+) {
+    throw "Portable lifecycle skill routing must cover every trigger category exactly once."
+}
+foreach ($route in $routes) {
+    $skillIds = @($route.skill_ids | ForEach-Object { [string]$_ })
+    if (-not ($skillIds -ccontains "rusty-morphospace")) {
+        throw "Portable lifecycle route '$($route.change_category)' omits rusty-morphospace."
+    }
+    if ($skillIds -ccontains "rusty-morphospace-context") {
+        throw "Portable lifecycle route '$($route.change_category)' uses the machine-local resolver."
+    }
+}
+
+$installation = Get-Content -Raw -LiteralPath (
+    Join-Path $RepoRoot "docs\SKILL_INSTALLATION.md"
+)
+if (
+    $installation -notmatch "ships five portable skill routers" -or
+    $installation -notmatch '\| `rusty-morphospace` \|' -or
+    $installation -notmatch '\| `rusty-morphospace-context` \|'
+) {
+    throw "Skill installation guidance does not describe the five-skill split."
+}
+
 Write-Host "Portable skill template validation passed."

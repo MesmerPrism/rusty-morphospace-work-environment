@@ -102,47 +102,47 @@
     "skill_routing": [
       {
         "change_category": "authority",
-        "skill_ids": ["rusty-morphospace-context", "system-engineering"]
+        "skill_ids": ["rusty-morphospace", "system-engineering"]
       },
       {
         "change_category": "module-layout",
-        "skill_ids": ["rusty-morphospace-context", "system-engineering", "rust-work-graph"]
+        "skill_ids": ["rusty-morphospace", "system-engineering", "rust-work-graph"]
       },
       {
         "change_category": "feature-activation",
-        "skill_ids": ["rusty-morphospace-context", "system-engineering"]
+        "skill_ids": ["rusty-morphospace", "system-engineering"]
       },
       {
         "change_category": "validation",
-        "skill_ids": ["system-engineering"]
+        "skill_ids": ["rusty-morphospace", "system-engineering"]
       },
       {
         "change_category": "device-policy",
-        "skill_ids": ["rusty-morphospace-context", "meta-quest-workflow"]
+        "skill_ids": ["rusty-morphospace", "meta-quest-workflow"]
       },
       {
         "change_category": "repo-routing",
-        "skill_ids": ["rusty-morphospace-context", "rust-work-graph"]
+        "skill_ids": ["rusty-morphospace", "rust-work-graph"]
       },
       {
         "change_category": "public-private-boundary",
-        "skill_ids": ["rusty-morphospace-context", "system-engineering"]
+        "skill_ids": ["rusty-morphospace", "system-engineering"]
       },
       {
         "change_category": "workflow-automation",
-        "skill_ids": ["rusty-morphospace-context", "system-engineering", "rust-work-graph"]
+        "skill_ids": ["rusty-morphospace", "system-engineering", "rust-work-graph"]
       },
       {
         "change_category": "state-machine",
-        "skill_ids": ["system-engineering"]
+        "skill_ids": ["rusty-morphospace", "system-engineering"]
       },
       {
         "change_category": "validation-routing",
-        "skill_ids": ["system-engineering"]
+        "skill_ids": ["rusty-morphospace", "system-engineering"]
       },
       {
         "change_category": "recovery",
-        "skill_ids": ["system-engineering"]
+        "skill_ids": ["rusty-morphospace", "system-engineering"]
       }
     ],
     "acceptance_invariant": "Triggered units require complete updates to the nearest AGENTS, a README or router document, and every routed skill before acceptance."

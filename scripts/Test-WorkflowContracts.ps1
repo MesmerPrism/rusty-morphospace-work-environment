@@ -1034,7 +1034,17 @@ if ($null -ne $lifecycle) {
     $script:InstructionTriggerCategories = @($lifecycle.instruction_sync.trigger_categories | ForEach-Object { [string]$_ })
     $script:InstructionSkillRouting = @{}
     foreach ($entry in @($lifecycle.instruction_sync.skill_routing)) {
-        $script:InstructionSkillRouting[[string]$entry.change_category] = @($entry.skill_ids | ForEach-Object { [string]$_ })
+        $category = [string]$entry.change_category
+        $skillIds = @($entry.skill_ids | ForEach-Object { [string]$_ })
+        Assert-Contract ($script:InstructionTriggerCategories -ccontains $category) "Workflow skill routing contains unknown trigger category '$category'."
+        Assert-Contract (-not $script:InstructionSkillRouting.ContainsKey($category)) "Workflow skill routing duplicates trigger category '$category'."
+        Assert-Contract ($skillIds.Count -gt 0) "Workflow skill routing for '$category' must name at least one skill."
+        Assert-Contract ($skillIds.Count -eq @($skillIds | Sort-Object -Unique -CaseSensitive).Count) "Workflow skill routing for '$category' contains duplicate skills."
+        $script:InstructionSkillRouting[$category] = $skillIds
+    }
+    Assert-Contract ($script:InstructionSkillRouting.Count -eq $script:InstructionTriggerCategories.Count) "Workflow skill routing must cover every trigger category exactly once."
+    foreach ($category in $script:InstructionTriggerCategories) {
+        Assert-Contract ($script:InstructionSkillRouting.ContainsKey($category)) "Workflow skill routing omits trigger category '$category'."
     }
     Test-UniqueProperty -Items @($lifecycle.module_maturity) -Property "id" -Context "module maturity lifecycle"
     Test-UniqueProperty -Items @($lifecycle.iteration_states) -Property "id" -Context "iteration state lifecycle"
