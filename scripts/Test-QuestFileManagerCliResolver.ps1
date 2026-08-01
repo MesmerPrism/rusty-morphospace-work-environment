@@ -9,6 +9,7 @@ if (-not $RepoRoot) {
 }
 $RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
 $resolver = Join-Path $RepoRoot "scripts\Resolve-QuestFileManagerCli.ps1"
+$deployment = Join-Path $RepoRoot "scripts\Invoke-QuestFileManagerDeployment.ps1"
 $hostExecutable = (Get-Process -Id $PID).Path
 $hostSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $hostExecutable).Hash.ToLowerInvariant()
 $tempBase = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
@@ -73,7 +74,21 @@ try {
     Write-JsonUtf8NoBom -Path $configPath -Value $config
     Invoke-ResolverChild -ExpectedExit 1 | Out-Null
 
-    Write-Host "Quest File Manager CLI resolver self-test passed."
+    $deploymentOutput = @(
+        & $hostExecutable -NoProfile -ExecutionPolicy Bypass `
+            -File $deployment -SelfTest 2>&1
+    )
+    if ($LASTEXITCODE -ne 0) {
+        throw "Deployment wrapper self-test failed: $($deploymentOutput -join ' | ')"
+    }
+    $deploymentResult = ($deploymentOutput -join [Environment]::NewLine) | ConvertFrom-Json
+    if ($deploymentResult.status -cne "passed" -or
+        -not $deploymentResult.immutable_run_copy -or
+        -not $deploymentResult.process_failure_retained) {
+        throw "Deployment wrapper self-test did not return its complete passing contract."
+    }
+
+    Write-Host "Quest File Manager CLI resolver and deployment self-tests passed."
 } finally {
     if (Test-Path -LiteralPath $testRoot) {
         $resolved = (Resolve-Path -LiteralPath $testRoot).Path

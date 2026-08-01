@@ -56,6 +56,39 @@ guard authority even when File Manager or Fleet carries its request. Android
 foreground observation does not replace app-owned OpenXR, renderer, source, or
 feature-lock evidence.
 
+For repeatable local work, use the fail-closed wrapper instead of reconstructing
+that sequence from ambient executables. Its default mode resolves the pinned
+provider and inspects only the local artifact without touching a headset:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\Invoke-QuestFileManagerDeployment.ps1 `
+  -Mode Inspect `
+  -ApkPath <path-to.apk>
+```
+
+After reserving the exact `quest:<quest-serial>` resource, run a read-only
+installed-artifact check with `-Mode Observe`, or one full non-Kiosk deployment
+transaction with `-Mode Deploy`:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\Invoke-QuestFileManagerDeployment.ps1 `
+  -Mode Deploy `
+  -Serial <quest-serial> `
+  -ApkPath <path-to.apk> `
+  -EvidenceDirectory .\local\quest-runs\<run-id>
+```
+
+`Install` and `Deploy` fail if File Manager returns anything short of exact
+headset-confirmed artifact readback. Every device mode requires a new
+run-owned evidence directory, makes content-addressed read-locked copies of
+both the APK and hash-pinned provider, and retains provider resolution plus
+exact JSON and execution evidence for each attempted typed step. In-repository
+evidence is accepted only below ignored `local/` or `artifacts/`. Use
+`-Mode Install`, then Kiosk's typed status/launch route, for an app whose launch
+authority belongs to Kiosk.
+
 Routine portable intents set `raw_fallback_allowed=false`. Before a raw ADB
 fallback, record the intended provider/version, missing or failed capability,
 unavailable claim, bounded diagnostic or recovery scope, stop condition,
