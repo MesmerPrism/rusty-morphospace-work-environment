@@ -18,8 +18,8 @@
         "quest_lease_id": { "type": ["string", "null"], "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$" }
       },
       "allOf": [
-        { "if": { "properties": { "mode": { "const": "agent-board" } } }, "then": { "properties": { "quest_lease_id": { "type": "string" } } },
-        { "if": { "properties": { "mode": { "const": "user-supervised" } } }, "then": { "properties": { "quest_lease_id": { "type": "null" } } }
+        { "if": { "properties": { "mode": { "const": "agent-board" } } }, "then": { "properties": { "quest_lease_id": { "type": "string" } } } },
+        { "if": { "properties": { "mode": { "const": "user-supervised" } } }, "then": { "properties": { "quest_lease_id": { "type": "null" } } } }
       ]
     },
     "artifact": {
