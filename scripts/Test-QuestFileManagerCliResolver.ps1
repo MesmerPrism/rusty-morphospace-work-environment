@@ -46,13 +46,14 @@ function Invoke-ResolverChild {
 try {
     New-Item -ItemType Directory -Force -Path $testRoot | Out-Null
     $config = [ordered]@{
-        schema = "rusty.morphospace.local_quest_file_manager_cli.v1"
+        schema = "rusty.morphospace.local_quest_file_manager_cli.v2"
         provider_id = "file-manager-local"
         executable_path = $hostExecutable
         executable_sha256 = $hostSha256
         source_kind = "source-build"
         source_version = "0.1.0-dev"
         source_revision = ("a" * 40)
+        runtime_observation_contract = "questionable.file_manager.app_runtime_observation.v2"
     }
     Write-JsonUtf8NoBom -Path $configPath -Value $config
 
@@ -87,6 +88,18 @@ try {
         -not $deploymentResult.process_failure_retained) {
         throw "Deployment wrapper self-test did not return its complete passing contract."
     }
+
+    $buildOutput = @(
+        & $hostExecutable -NoProfile -ExecutionPolicy Bypass `
+            -File (Join-Path $RepoRoot "scripts\Invoke-QuestBuildProfile.ps1") -SelfTest 2>&1
+    )
+    if ($LASTEXITCODE -ne 0 -or
+        [string](($buildOutput -join [Environment]::NewLine) | ConvertFrom-Json).status -cne "passed") {
+        throw "Quest build-profile self-test failed."
+    }
+    & $hostExecutable -NoProfile -ExecutionPolicy Bypass `
+        -File (Join-Path $RepoRoot "scripts\Test-QuestBuildProfile.ps1")
+    if ($LASTEXITCODE -ne 0) { throw "Quest build-profile execution test failed." }
 
     Write-Host "Quest File Manager CLI resolver and deployment self-tests passed."
 } finally {

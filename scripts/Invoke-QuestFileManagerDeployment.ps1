@@ -5,6 +5,9 @@ param(
     [string]$Serial = "",
     [string]$EvidenceDirectory = "",
     [string]$ConfigPath = "",
+    [ValidateSet("Android2d", "ImmersiveXr", "ProcessAlive")]
+    [string]$RuntimeShape = "Android2d",
+    [string]$ExpectedComponent = "",
     [ValidateRange(10, 300)]
     [int]$TimeoutSeconds = 180,
     [switch]$SelfTest
@@ -134,6 +137,37 @@ function Assert-MutationConfirmed {
     }
 }
 
+function Assert-RuntimeObservation {
+    param(
+        [object]$Observation,
+        [ValidateSet("Android2d", "ImmersiveXr", "ProcessAlive")]
+        [string]$Shape,
+        [string]$Component = ""
+    )
+
+    if ([string]$Observation.ObservationContract -cne
+        "questionable.file_manager.app_runtime_observation.v2") {
+        throw "Runtime observation does not implement the required v2 fact contract."
+    }
+    if (-not [bool]$Observation.ProcessAlive -or @($Observation.ProcessIds).Count -eq 0) {
+        throw "Runtime observation did not confirm a live package process."
+    }
+    if ($Shape -ceq "Android2d" -and
+        (-not [bool]$Observation.IsForeground -or -not [bool]$Observation.IsTopResumed)) {
+        throw "Android2d runtime policy requires foreground and top-resumed package facts."
+    }
+    if ($Shape -ceq "ImmersiveXr" -and -not [bool]$Observation.IsTopResumed) {
+        throw "ImmersiveXr runtime policy requires a top-resumed package fact."
+    }
+    if ($Shape -cne "ProcessAlive" -and @($Observation.BlockingSystemComponents).Count -gt 0) {
+        throw "Runtime observation contains a blocking Quest system component."
+    }
+    if (-not [string]::IsNullOrWhiteSpace($Component) -and
+        @($Observation.TopResumedComponents) -cnotcontains $Component) {
+        throw "Runtime observation did not contain the exact expected top-resumed component."
+    }
+}
+
 function Write-StepEvidence {
     param(
         [string]$Directory,
@@ -252,6 +286,42 @@ function Invoke-SelfTest {
         BaseApkSizeBytes = 4
     }
     Assert-InstalledArtifact -Expected $artifact -Installed $installed -ExpectedSerial "QUEST123" -Step "self-test"
+    $immersiveObservation = [pscustomobject]@{
+        ObservationContract = "questionable.file_manager.app_runtime_observation.v2"
+        IsForeground = $false
+        IsTopResumed = $true
+        ProcessAlive = $true
+        ProcessIds = @(123)
+        TopResumedComponents = @("com.example.app/com.example.app.Main")
+        BlockingSystemComponents = @()
+    }
+    Assert-RuntimeObservation `
+        -Observation $immersiveObservation `
+        -Shape ImmersiveXr `
+        -Component "com.example.app/com.example.app.Main"
+    $android2dRejected = $false
+    try {
+        Assert-RuntimeObservation -Observation $immersiveObservation -Shape Android2d
+    } catch {
+        $android2dRejected = $true
+    }
+    if (-not $android2dRejected) {
+        throw "Self-test did not distinguish Android2d from immersive runtime facts."
+    }
+    $blockedRejected = $false
+    try {
+        Assert-RuntimeObservation `
+            -Observation ($immersiveObservation | Select-Object *, @{
+                Name = "BlockingSystemComponents"
+                Expression = { @("com.oculus.systemux/com.oculus.systemux.SensorLockActivity") }
+            }) `
+            -Shape ImmersiveXr
+    } catch {
+        $blockedRejected = $true
+    }
+    if (-not $blockedRejected) {
+        throw "Self-test did not reject a blocking Quest system component."
+    }
     $rejected = $false
     try {
         Assert-InstalledArtifact -Expected $artifact `
@@ -311,6 +381,8 @@ function Invoke-SelfTest {
         mismatch_rejected = $true
         immutable_run_copy = $true
         process_failure_retained = $true
+        immersive_runtime_policy = $true
+        blocking_system_component_rejected = $true
     } | ConvertTo-Json -Depth 4
 }
 
@@ -417,6 +489,10 @@ try {
             -ExpectedExecutableSha256 ([string]$resolution.executable_sha256) `
             -DeadlineSeconds $TimeoutSeconds
         Assert-InstalledArtifact -Expected $inspection -Installed $observation.Installed -ExpectedSerial $Serial -Step Observe
+        Assert-RuntimeObservation `
+            -Observation $observation `
+            -Shape $RuntimeShape `
+            -Component $ExpectedComponent
     }
 
     if ($Mode -in @("Install", "Deploy")) {
@@ -456,11 +532,10 @@ try {
             -ExpectedExecutableSha256 ([string]$resolution.executable_sha256) `
             -DeadlineSeconds $TimeoutSeconds
         Assert-InstalledArtifact -Expected $inspection -Installed $observation.Installed -ExpectedSerial $Serial -Step Observe
-        if (-not [bool]$observation.IsForeground -or
-            -not [bool]$observation.IsTopResumed -or
-            @($observation.ProcessIds).Count -eq 0) {
-            throw "Post-launch observation did not confirm foreground, top-resumed, and process state."
-        }
+        Assert-RuntimeObservation `
+            -Observation $observation `
+            -Shape $RuntimeShape `
+            -Component $ExpectedComponent
     }
 } finally {
     if ($null -ne $artifactRunCopy) {
@@ -480,4 +555,6 @@ try {
     artifact_sha256 = [string]$inspection.Sha256
     artifact_size_bytes = [long]$inspection.SizeBytes
     evidence_directory = $evidenceRoot
+    runtime_shape = $RuntimeShape
+    expected_component = if ([string]::IsNullOrWhiteSpace($ExpectedComponent)) { $null } else { $ExpectedComponent }
 } | ConvertTo-Json -Depth 6

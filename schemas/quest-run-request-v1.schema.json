@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/quest-run-request-v1.schema.json",
+  "title": "Rusty Morphospace exact Quest run request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "run_id", "serial", "coordination", "artifact", "deployment", "oracle", "diagnostics"],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.quest_run_request.v1" },
+    "run_id": { "pattern": "^[a-z0-9][a-z0-9._-]{0,95}$" },
+    "serial": { "pattern": "^[A-Za-z0-9._:-]{1,128}$" },
+    "coordination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "quest_lease_id"],
+      "properties": {
+        "mode": { "enum": ["agent-board", "user-supervised"] },
+        "quest_lease_id": { "type": ["string", "null"], "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$" }
+      },
+      "allOf": [
+        { "if": { "properties": { "mode": { "const": "agent-board" } } }, "then": { "properties": { "quest_lease_id": { "type": "string" } } },
+        { "if": { "properties": { "mode": { "const": "user-supervised" } } }, "then": { "properties": { "quest_lease_id": { "type": "null" } } }
+      ]
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "size_bytes"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "pattern": "^[a-f0-9]{64}$" },
+        "size_bytes": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "deployment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["install_authorized", "runtime_shape", "expected_component"],
+      "properties": {
+        "install_authorized": { "const": true },
+        "runtime_shape": { "enum": ["Android2d", "ImmersiveXr", "ProcessAlive"] },
+        "expected_component": { "type": ["string", "null"], "maxLength": 320 }
+      }
+    },
+    "oracle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tag", "settle_seconds", "lines", "required_substrings", "forbidden_substrings"],
+      "properties": {
+        "tag": { "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,63}$" },
+        "settle_seconds": { "type": "number", "minimum": 0, "maximum": 30 },
+        "lines": { "type": "integer", "minimum": 1, "maximum": 5000 },
+        "required_substrings": { "type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 512 } },
+        "forbidden_substrings": { "type": "array", "maxItems": 64, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 512 } }
+      }
+    },
+    "diagnostics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["recipes", "perfetto_duration_ms"],
+      "properties": {
+        "recipes": { "type": "array", "uniqueItems": true, "items": { "enum": ["health", "foreground", "screenshot", "perfetto-vr"] } },
+        "perfetto_duration_ms": { "type": "integer", "minimum": 1000, "maximum": 30000 }
+      }
+    }
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/quest-build-profile-v1.schema.json",
+  "title": "Rusty Morphospace reviewed Quest build profile v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "profile_id", "working_directory", "executable", "arguments", "artifact"],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.quest_build_profile.v1" },
+    "profile_id": { "pattern": "^[a-z0-9][a-z0-9._-]{0,95}$" },
+    "working_directory": { "type": "string", "minLength": 1 },
+    "executable": { "type": "string", "minLength": 1 },
+    "arguments": { "type": "array", "maxItems": 128, "items": { "type": "string", "maxLength": 1024 } },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["relative_path", "kind"],
+      "properties": {
+        "relative_path": { "type": "string", "minLength": 5 },
+        "kind": { "const": "single-base-apk" }
+      }
+    }
+  }
+}

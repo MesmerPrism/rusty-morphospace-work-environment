@@ -1,0 +1,30 @@
+{
+  "schema": "rusty.morphospace.quest_run_request.v1",
+  "run_id": "example-immersive-run",
+  "serial": "<exact-quest-serial>",
+  "coordination": {
+    "mode": "agent-board",
+    "quest_lease_id": "<active-quest-lease-uuid>"
+  },
+  "artifact": {
+    "path": "<absolute-path-to-exact-apk>",
+    "sha256": "<lowercase-apk-sha256>",
+    "size_bytes": 1
+  },
+  "deployment": {
+    "install_authorized": true,
+    "runtime_shape": "ImmersiveXr",
+    "expected_component": "example.package/example.package.MainActivity"
+  },
+  "oracle": {
+    "tag": "ExampleApp",
+    "settle_seconds": 5,
+    "lines": 1000,
+    "required_substrings": ["status=ready"],
+    "forbidden_substrings": ["FATAL EXCEPTION", "UnsatisfiedLinkError"]
+  },
+  "diagnostics": {
+    "recipes": ["health", "foreground", "screenshot"],
+    "perfetto_duration_ms": 5000
+  }
+}

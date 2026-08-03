@@ -71,6 +71,39 @@ function Invoke-HelpProbe {
     }
 }
 
+function Invoke-ContractProbe {
+    param([string]$ExecutablePath)
+
+    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $ExecutablePath
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    foreach ($argument in @("operator-actions", "--json")) {
+        $startInfo.ArgumentList.Add($argument)
+    }
+    $process = [System.Diagnostics.Process]::new()
+    $process.StartInfo = $startInfo
+    try {
+        if (-not $process.Start()) { throw "File Manager CLI contract probe did not start." }
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit(15000)) {
+            $process.Kill($true)
+            throw "File Manager CLI contract probe exceeded 15 seconds."
+        }
+        $stdout = $stdoutTask.GetAwaiter().GetResult()
+        $stderr = $stderrTask.GetAwaiter().GetResult()
+        if ($process.ExitCode -ne 0 -or -not [string]::IsNullOrWhiteSpace($stderr)) {
+            throw "File Manager CLI contract probe failed."
+        }
+        return $stdout | ConvertFrom-Json -Depth 32
+    } finally {
+        $process.Dispose()
+    }
+}
+
 $config = Get-Content -Raw -LiteralPath $ConfigPath | ConvertFrom-Json
 Assert-ExactProperties -Value $config -Expected @(
     "schema",
@@ -79,11 +112,16 @@ Assert-ExactProperties -Value $config -Expected @(
     "executable_sha256",
     "source_kind",
     "source_version",
-    "source_revision"
+    "source_revision",
+    "runtime_observation_contract"
 ) -Location "resolver config"
 
-if ($config.schema -cne "rusty.morphospace.local_quest_file_manager_cli.v1") {
+if ($config.schema -cne "rusty.morphospace.local_quest_file_manager_cli.v2") {
     throw "Unsupported Quest File Manager CLI resolver schema."
+}
+if ($config.runtime_observation_contract -cne
+    "questionable.file_manager.app_runtime_observation.v2") {
+    throw "runtime_observation_contract must require the QFM v2 fact contract."
 }
 if ($config.provider_id -cne "file-manager-local") {
     throw "Quest File Manager CLI resolver provider_id must be file-manager-local."
@@ -163,6 +201,12 @@ if (-not $SkipExecutableProbe) {
             throw "Resolved File Manager CLI does not advertise required route '$route'."
         }
     }
+    $contracts = Invoke-ContractProbe -ExecutablePath $executablePath
+    if ([string]$contracts.schema -cne "questionable.file_manager.operator_actions.v1" -or
+        [string]$contracts.contracts.runtimeObservation -cne
+            [string]$config.runtime_observation_contract) {
+        throw "Resolved File Manager CLI does not advertise the required runtime-observation contract."
+    }
     $probeStatus = "passed"
 }
 
@@ -179,6 +223,7 @@ $result = [ordered]@{
     signature_status = $signatureStatus
     command_probe = $probeStatus
     required_routes = $requiredRoutes
+    runtime_observation_contract = [string]$config.runtime_observation_contract
 }
 
 if ($Json) {
