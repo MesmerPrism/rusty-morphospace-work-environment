@@ -203,6 +203,7 @@ function Invoke-Step {
         [string]$Artifact,
         [string]$TargetSerial,
         [string]$EvidenceRoot,
+        [string]$EvidenceName = "",
         [string]$ExpectedExecutableSha256,
         [int]$DeadlineSeconds
     )
@@ -214,7 +215,8 @@ function Invoke-Step {
     }
     $execution = Invoke-BoundedProcess -Executable $Executable -Arguments $arguments -DeadlineSeconds $DeadlineSeconds
     if ($EvidenceRoot) {
-        Write-StepEvidence -Directory $EvidenceRoot -Name $Step.ToLowerInvariant() -Execution $execution
+        $name = if ($EvidenceName) { $EvidenceName } else { $Step.ToLowerInvariant() }
+        Write-StepEvidence -Directory $EvidenceRoot -Name $name -Execution $execution
     }
     $afterSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $Executable).Hash.ToLowerInvariant()
     if ($afterSha256 -cne $ExpectedExecutableSha256) {
@@ -505,7 +507,20 @@ try {
             -ExpectedExecutableSha256 ([string]$resolution.executable_sha256) `
             -DeadlineSeconds $TimeoutSeconds
         Assert-MutationConfirmed -Envelope $install -Step Install
-        Assert-InstalledArtifact -Expected $inspection -Installed $install.result.Installed -ExpectedSerial $Serial -Step Install
+        $postInstallObservation = Invoke-Step `
+            -Executable $executionProvider `
+            -Step Observe `
+            -Artifact $executionArtifact `
+            -TargetSerial $Serial `
+            -EvidenceRoot $evidenceRoot `
+            -EvidenceName "post-install-observe" `
+            -ExpectedExecutableSha256 ([string]$resolution.executable_sha256) `
+            -DeadlineSeconds $TimeoutSeconds
+        Assert-InstalledArtifact `
+            -Expected $inspection `
+            -Installed $postInstallObservation.Installed `
+            -ExpectedSerial $Serial `
+            -Step "Post-install observe"
     }
 
     if ($Mode -eq "Deploy") {
@@ -515,6 +530,7 @@ try {
             -Artifact $executionArtifact `
             -TargetSerial $Serial `
             -EvidenceRoot $evidenceRoot `
+            -EvidenceName "post-launch-observe" `
             -ExpectedExecutableSha256 ([string]$resolution.executable_sha256) `
             -DeadlineSeconds $TimeoutSeconds
         Assert-MutationConfirmed -Envelope $launch -Step Launch
