@@ -8,6 +8,8 @@ param(
     [ValidateSet("Android2d", "ImmersiveXr", "ProcessAlive")]
     [string]$RuntimeShape = "Android2d",
     [string]$ExpectedComponent = "",
+    [ValidateRange(5, 60)]
+    [int]$LaunchWaitSeconds = 30,
     [ValidateRange(10, 300)]
     [int]$TimeoutSeconds = 180,
     [switch]$SelfTest
@@ -134,6 +136,17 @@ function Assert-MutationConfirmed {
         [string]$Envelope.mutation.Stage -cne "confirmed") {
         $stage = if ($null -eq $Envelope.mutation) { "missing" } else { [string]$Envelope.mutation.Stage }
         throw "$Step mutation is not headset-confirmed (stage: $stage)."
+    }
+}
+
+function Assert-LaunchAdmitted {
+    param([object]$Envelope)
+    if ([string]$Envelope.schema -cne "questionable.file_manager.apk_launch_result.v1" -or
+        -not [bool]$Envelope.succeeded -or
+        $null -eq $Envelope.result -or
+        -not [bool]$Envelope.result.CommandResult.Succeeded -or
+        [string]$Envelope.mutation.Stage -cnotin @("pending", "confirmed")) {
+        throw "Launch was not admitted by the inspected File Manager provider."
     }
 }
 
@@ -301,6 +314,12 @@ function Invoke-SelfTest {
         -Observation $immersiveObservation `
         -Shape ImmersiveXr `
         -Component "com.example.app/com.example.app.Main"
+    Assert-LaunchAdmitted ([pscustomobject]@{
+        schema = "questionable.file_manager.apk_launch_result.v1"
+        succeeded = $true
+        mutation = [pscustomobject]@{ Stage = "pending" }
+        result = [pscustomobject]@{ CommandResult = [pscustomobject]@{ Succeeded = $true } }
+    })
     $android2dRejected = $false
     try {
         Assert-RuntimeObservation -Observation $immersiveObservation -Shape Android2d
@@ -530,28 +549,42 @@ try {
             -Artifact $executionArtifact `
             -TargetSerial $Serial `
             -EvidenceRoot $evidenceRoot `
-            -EvidenceName "post-launch-observe" `
+            -EvidenceName "launch" `
             -ExpectedExecutableSha256 ([string]$resolution.executable_sha256) `
             -DeadlineSeconds $TimeoutSeconds
-        Assert-MutationConfirmed -Envelope $launch -Step Launch
+        Assert-LaunchAdmitted -Envelope $launch
         Assert-InstalledArtifact -Expected $inspection -Installed $launch.result.Installed -ExpectedSerial $Serial -Step Launch
-        if (-not [bool]$launch.result.ComponentObservedResumed) {
-            throw "Launch did not return resumed-component confirmation."
+        $launchDeadline = [DateTime]::UtcNow.AddSeconds($LaunchWaitSeconds)
+        $observationAttempt = 0
+        $runtimeConfirmed = $false
+        $lastRuntimeFailure = "No post-launch observation was attempted."
+        do {
+            $observationAttempt++
+            $observation = Invoke-Step `
+                -Executable $executionProvider `
+                -Step Observe `
+                -Artifact $executionArtifact `
+                -TargetSerial $Serial `
+                -EvidenceRoot $evidenceRoot `
+                -EvidenceName ("post-launch-observe-{0:d2}" -f $observationAttempt) `
+                -ExpectedExecutableSha256 ([string]$resolution.executable_sha256) `
+                -DeadlineSeconds $TimeoutSeconds
+            Assert-InstalledArtifact -Expected $inspection -Installed $observation.Installed -ExpectedSerial $Serial -Step Observe
+            try {
+                Assert-RuntimeObservation `
+                    -Observation $observation `
+                    -Shape $RuntimeShape `
+                    -Component $ExpectedComponent
+                $runtimeConfirmed = $true
+                break
+            } catch {
+                $lastRuntimeFailure = $_.Exception.Message
+            }
+            if ([DateTime]::UtcNow -lt $launchDeadline) { Start-Sleep -Milliseconds 500 }
+        } while ([DateTime]::UtcNow -lt $launchDeadline)
+        if (-not $runtimeConfirmed) {
+            throw "Post-launch runtime policy was not satisfied within $LaunchWaitSeconds seconds: $lastRuntimeFailure"
         }
-
-        $observation = Invoke-Step `
-            -Executable $executionProvider `
-            -Step Observe `
-            -Artifact $executionArtifact `
-            -TargetSerial $Serial `
-            -EvidenceRoot $evidenceRoot `
-            -ExpectedExecutableSha256 ([string]$resolution.executable_sha256) `
-            -DeadlineSeconds $TimeoutSeconds
-        Assert-InstalledArtifact -Expected $inspection -Installed $observation.Installed -ExpectedSerial $Serial -Step Observe
-        Assert-RuntimeObservation `
-            -Observation $observation `
-            -Shape $RuntimeShape `
-            -Component $ExpectedComponent
     }
 } finally {
     if ($null -ne $artifactRunCopy) {
