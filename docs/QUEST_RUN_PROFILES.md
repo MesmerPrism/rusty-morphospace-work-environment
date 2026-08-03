@@ -3,10 +3,16 @@
 A regular iteration now has two portable, non-authoritative inputs:
 
 - a reviewed `rusty.morphospace.quest_build_profile.v1` in the owning app
-  repository, containing the fixed build vector and expected single-base APK;
+repository, containing the fixed build vector and expected single-base APK;
 - a private `rusty.morphospace.quest_run_request.v1`, binding the resulting APK
   bytes, exact serial, 2D/XR/process observation policy, app-owned log oracle,
-  and named diagnostic recipes.
+and named diagnostic recipes.
+
+An app can name a repository-relative build wrapper or the portable `gradle`
+tool id. The latter requires a separate private absolute `ToolPath` and
+`ToolSha256`; the resolved `gradle.bat`/`gradle.exe` hash is recorded in the
+build receipt. This keeps machine paths out of the portable profile without
+silently trusting whichever Gradle happens to be first on `PATH`.
 
 The build profile removes recurring Gradle/PowerShell command reconstruction.
 The run request does not contain an arbitrary device command. A private Hostess

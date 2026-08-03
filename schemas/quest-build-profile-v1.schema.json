@@ -9,7 +9,7 @@
     "schema": { "const": "rusty.morphospace.quest_build_profile.v1" },
     "profile_id": { "pattern": "^[a-z0-9][a-z0-9._-]{0,95}$" },
     "working_directory": { "type": "string", "minLength": 1 },
-    "executable": { "type": "string", "minLength": 1 },
+    "executable": { "type": "string", "minLength": 1, "description": "Repository-relative executable or the portable external tool id 'gradle'." },
     "arguments": { "type": "array", "maxItems": 128, "items": { "type": "string", "maxLength": 1024 } },
     "artifact": {
       "type": "object",

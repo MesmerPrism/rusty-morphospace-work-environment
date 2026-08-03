@@ -3,6 +3,8 @@ param(
     [string]$ProfileSha256 = "",
     [string]$SourceRoot = "",
     [string]$ReceiptPath = "",
+    [string]$ToolPath = "",
+    [string]$ToolSha256 = "",
     [ValidateRange(30, 3600)]
     [int]$TimeoutSeconds = 900,
     [switch]$SelfTest
@@ -52,18 +54,43 @@ function Read-Profile {
         throw "Build profile arguments are invalid."
     }
     $working = Resolve-ContainedPath $Root ([string]$profile.working_directory) "working_directory"
-    $executable = Resolve-ContainedPath $Root ([string]$profile.executable) "executable"
+    $externalToolId = $null
+    if ([string]$profile.executable -ceq "gradle") {
+        $executable = $null
+        $externalToolId = "gradle"
+    } else {
+        $executable = Resolve-ContainedPath $Root ([string]$profile.executable) "executable"
+    }
     $artifact = Resolve-ContainedPath $Root ([string]$profile.artifact.relative_path) "artifact.relative_path"
     if ([System.IO.Path]::GetExtension($artifact) -cne ".apk") { throw "Build profile artifact must be one APK." }
     if (-not (Test-Path -LiteralPath $working -PathType Container)) { throw "Build working directory does not exist." }
-    if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) { throw "Build executable does not exist." }
-    return [pscustomobject]@{ Document = $profile; Sha256 = $actualSha256; Working = $working; Executable = $executable; Artifact = $artifact }
+    if ($null -ne $executable -and -not (Test-Path -LiteralPath $executable -PathType Leaf)) { throw "Build executable does not exist." }
+    return [pscustomobject]@{ Document = $profile; Sha256 = $actualSha256; Working = $working; Executable = $executable; ExternalToolId = $externalToolId; Artifact = $artifact }
 }
 
 function Invoke-Build {
-    param([object]$Resolved, [int]$DeadlineSeconds)
-    $extension = [System.IO.Path]::GetExtension([string]$Resolved.Executable).ToLowerInvariant()
-    $fileName = [string]$Resolved.Executable
+    param([object]$Resolved, [int]$DeadlineSeconds, [string]$ResolvedToolPath, [string]$ExpectedToolSha256)
+    if ($Resolved.ExternalToolId) {
+        if ([string]::IsNullOrWhiteSpace($ResolvedToolPath) -or
+            -not [System.IO.Path]::IsPathFullyQualified($ResolvedToolPath) -or
+            -not (Test-Path -LiteralPath $ResolvedToolPath -PathType Leaf)) {
+            throw "The gradle profile requires one absolute private ToolPath."
+        }
+        $fileName = [System.IO.Path]::GetFullPath($ResolvedToolPath)
+        if ([System.IO.Path]::GetFileName($fileName) -cnotin @("gradle.bat", "gradle.exe")) {
+            throw "The gradle profile requires gradle.bat or gradle.exe."
+        }
+        $toolHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $fileName).Hash.ToLowerInvariant()
+        if ($ExpectedToolSha256 -cnotmatch "^[a-f0-9]{64}$" -or $toolHash -cne $ExpectedToolSha256) {
+            throw "The resolved Gradle executable does not match ToolSha256."
+        }
+        $extension = [System.IO.Path]::GetExtension($fileName).ToLowerInvariant()
+    } else {
+        $extension = [System.IO.Path]::GetExtension([string]$Resolved.Executable).ToLowerInvariant()
+        $fileName = [string]$Resolved.Executable
+        $toolHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $fileName).Hash.ToLowerInvariant()
+    }
+    $boundToolPath = $fileName
     $arguments = @($Resolved.Document.arguments | ForEach-Object { [string]$_ })
     if ($extension -ceq ".ps1") {
         $fileName = (Get-Command pwsh -ErrorAction Stop).Source
@@ -96,6 +123,8 @@ function Invoke-Build {
             StandardError = $stderrTask.GetAwaiter().GetResult()
             FileName = $fileName
             Arguments = $arguments
+            ToolSha256 = $toolHash
+            ResolvedToolPath = $boundToolPath
         }
     } finally { $process.Dispose() }
 }
@@ -129,7 +158,7 @@ if (-not (Test-Path -LiteralPath $receiptParent -PathType Container)) { New-Item
 $before = if (Test-Path -LiteralPath $profile.Artifact -PathType Leaf) {
     [ordered]@{ sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $profile.Artifact).Hash.ToLowerInvariant(); size_bytes = (Get-Item -LiteralPath $profile.Artifact).Length }
 } else { $null }
-$execution = Invoke-Build $profile $TimeoutSeconds
+$execution = Invoke-Build $profile $TimeoutSeconds $ToolPath $ToolSha256
 [System.IO.File]::WriteAllText("$receipt.stdout.txt", [string]$execution.StandardOutput, [System.Text.UTF8Encoding]::new($false))
 [System.IO.File]::WriteAllText("$receipt.stderr.txt", [string]$execution.StandardError, [System.Text.UTF8Encoding]::new($false))
 if ($execution.ExitCode -ne 0) { throw "Build profile exited $($execution.ExitCode)." }
@@ -153,7 +182,12 @@ $result = [ordered]@{
     source_revision = if ($gitHead) { [string]$gitHead } else { $null }
     source_tree = if ($gitTree) { [string]$gitTree } else { $null }
     source_dirty = -not [string]::IsNullOrEmpty($gitStatus)
-    command = [ordered]@{ executable = [string]$profile.Document.executable; arguments = @($profile.Document.arguments) }
+    command = [ordered]@{
+        executable = [string]$profile.Document.executable
+        resolved_path = [string]$execution.ResolvedToolPath
+        resolved_sha256 = [string]$execution.ToolSha256
+        arguments = @($profile.Document.arguments)
+    }
     artifact = [ordered]@{
         path = [string]$profile.Artifact
         size_bytes = $artifactInfo.Length
