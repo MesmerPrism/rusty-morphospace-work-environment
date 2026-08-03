@@ -14,6 +14,13 @@ tool id. The latter requires a separate private absolute `ToolPath` and
 build receipt. This keeps machine paths out of the portable profile without
 silently trusting whichever Gradle happens to be first on `PATH`.
 
+Machine-local build prerequisites use profile environment variables mapped to
+portable binding IDs. A separate hash-pinned
+`rusty.morphospace.local_quest_build_environment.v1` file resolves those IDs
+to files or directories; Git-backed directories can require an exact clean
+revision and tree. The receipt records only the variable, binding ID, kind, and
+Git identity. A nonzero build retains both streams and a typed failure receipt.
+
 The build profile removes recurring Gradle/PowerShell command reconstruction.
 The run request does not contain an arbitrary device command. A private Hostess
 provider map resolves the hash-pinned File Manager deployment wrapper, File

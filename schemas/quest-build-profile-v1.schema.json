@@ -4,13 +4,19 @@
   "title": "Rusty Morphospace reviewed Quest build profile v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "profile_id", "working_directory", "executable", "arguments", "artifact"],
+  "required": ["schema", "profile_id", "working_directory", "executable", "arguments", "environment", "artifact"],
   "properties": {
     "schema": { "const": "rusty.morphospace.quest_build_profile.v1" },
     "profile_id": { "pattern": "^[a-z0-9][a-z0-9._-]{0,95}$" },
     "working_directory": { "type": "string", "minLength": 1 },
     "executable": { "type": "string", "minLength": 1, "description": "Repository-relative executable or the portable external tool id 'gradle'." },
     "arguments": { "type": "array", "maxItems": 128, "items": { "type": "string", "maxLength": 1024 } },
+    "environment": {
+      "type": "object",
+      "maxProperties": 32,
+      "propertyNames": { "pattern": "^[A-Z][A-Z0-9_]{0,63}$" },
+      "additionalProperties": { "pattern": "^[a-z0-9][a-z0-9._-]{0,95}$" }
+    },
     "artifact": {
       "type": "object",
       "additionalProperties": false,

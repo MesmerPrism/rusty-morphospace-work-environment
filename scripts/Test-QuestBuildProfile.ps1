@@ -18,6 +18,7 @@ try {
         working_directory = "."
         executable = "build.ps1"
         arguments = @("out\fixture.apk")
+        environment = [ordered]@{}
         artifact = [ordered]@{ relative_path = "out\fixture.apk"; kind = "single-base-apk" }
     } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $profilePath -Encoding utf8NoBOM
     $sha = (Get-FileHash -Algorithm SHA256 -LiteralPath $profilePath).Hash.ToLowerInvariant()

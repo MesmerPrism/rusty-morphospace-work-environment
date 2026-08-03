@@ -4,6 +4,7 @@
   "working_directory": "apps/example-android",
   "executable": "apps/example-android/gradlew.bat",
   "arguments": [":app:assembleDebug", "--console=plain"],
+  "environment": {},
   "artifact": {
     "relative_path": "apps/example-android/app/build/outputs/apk/debug/app-debug.apk",
     "kind": "single-base-apk"

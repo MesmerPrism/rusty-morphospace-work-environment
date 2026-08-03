@@ -1,0 +1,12 @@
+{
+  "schema": "rusty.morphospace.local_quest_build_environment.v1",
+  "bindings": [
+    {
+      "id": "example-source-root",
+      "path": "<absolute-private-directory>",
+      "kind": "directory",
+      "git_revision": "<full-clean-git-revision-or-empty>",
+      "git_tree": "<full-clean-git-tree-or-empty>"
+    }
+  ]
+}

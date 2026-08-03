@@ -5,6 +5,8 @@ param(
     [string]$ReceiptPath = "",
     [string]$ToolPath = "",
     [string]$ToolSha256 = "",
+    [string]$EnvironmentBindingsPath = "",
+    [string]$EnvironmentBindingsSha256 = "",
     [ValidateRange(30, 3600)]
     [int]$TimeoutSeconds = 900,
     [switch]$SelfTest
@@ -43,7 +45,7 @@ function Read-Profile {
         throw "Build profile SHA-256 does not match."
     }
     $profile = Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json -Depth 32
-    Assert-ExactProperties $profile @("schema", "profile_id", "working_directory", "executable", "arguments", "artifact") "build profile"
+    Assert-ExactProperties $profile @("schema", "profile_id", "working_directory", "executable", "arguments", "environment", "artifact") "build profile"
     Assert-ExactProperties $profile.artifact @("relative_path", "kind") "build profile artifact"
     if ([string]$profile.schema -cne "rusty.morphospace.quest_build_profile.v1" -or
         [string]$profile.profile_id -cnotmatch "^[a-z0-9][a-z0-9._-]{0,95}$" -or
@@ -52,6 +54,13 @@ function Read-Profile {
     }
     if (@($profile.arguments).Count -gt 128 -or @($profile.arguments | Where-Object { $_ -isnot [string] -or $_.Length -gt 1024 }).Count -gt 0) {
         throw "Build profile arguments are invalid."
+    }
+    if (@($profile.environment.PSObject.Properties).Count -gt 32 -or
+        @($profile.environment.PSObject.Properties | Where-Object {
+            $_.Name -cnotmatch "^[A-Z][A-Z0-9_]{0,63}$" -or
+            [string]$_.Value -cnotmatch "^[a-z0-9][a-z0-9._-]{0,95}$"
+        }).Count -gt 0) {
+        throw "Build profile environment bindings are invalid."
     }
     $working = Resolve-ContainedPath $Root ([string]$profile.working_directory) "working_directory"
     $externalToolId = $null
@@ -68,8 +77,63 @@ function Read-Profile {
     return [pscustomobject]@{ Document = $profile; Sha256 = $actualSha256; Working = $working; Executable = $executable; ExternalToolId = $externalToolId; Artifact = $artifact }
 }
 
+function Resolve-EnvironmentBindings {
+    param([object]$Profile, [string]$BindingsPath, [string]$BindingsSha256)
+    $requirements = @($Profile.environment.PSObject.Properties)
+    if ($requirements.Count -eq 0) {
+        if ($BindingsPath -or $BindingsSha256) { throw "Environment binding inputs were supplied for a profile that declares none." }
+        return [pscustomobject]@{ Values = @{}; Evidence = @() }
+    }
+    if (-not $BindingsPath -or -not (Test-Path -LiteralPath $BindingsPath -PathType Leaf)) {
+        throw "This build profile requires one private environment-binding file."
+    }
+    $actualSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $BindingsPath).Hash.ToLowerInvariant()
+    if ($BindingsSha256 -cnotmatch "^[a-f0-9]{64}$" -or $actualSha256 -cne $BindingsSha256) {
+        throw "Environment-binding file SHA-256 does not match."
+    }
+    $document = Get-Content -Raw -LiteralPath $BindingsPath | ConvertFrom-Json -Depth 32
+    Assert-ExactProperties $document @("schema", "bindings") "environment-binding document"
+    if ([string]$document.schema -cne "rusty.morphospace.local_quest_build_environment.v1") { throw "Environment-binding schema is invalid." }
+    $byId = @{}
+    foreach ($binding in @($document.bindings)) {
+        Assert-ExactProperties $binding @("id", "path", "kind", "git_revision", "git_tree") "environment binding"
+        $id = [string]$binding.id
+        if ($id -cnotmatch "^[a-z0-9][a-z0-9._-]{0,95}$" -or $byId.ContainsKey($id)) { throw "Environment binding id is invalid or duplicated." }
+        if ([string]$binding.kind -cnotin @("file", "directory") -or
+            -not [System.IO.Path]::IsPathFullyQualified([string]$binding.path)) { throw "Environment binding path or kind is invalid." }
+        $path = [System.IO.Path]::GetFullPath([string]$binding.path)
+        $pathType = if ([string]$binding.kind -ceq "file") { "Leaf" } else { "Container" }
+        if (-not (Test-Path -LiteralPath $path -PathType $pathType)) { throw "Environment binding target does not exist." }
+        $revision = [string]$binding.git_revision
+        $tree = [string]$binding.git_tree
+        if (($revision -or $tree) -and
+            ($revision -cnotmatch "^[a-f0-9]{40}$" -or $tree -cnotmatch "^[a-f0-9]{40}$" -or [string]$binding.kind -cne "directory")) {
+            throw "Git-bound environment entries require one exact revision/tree pair and directory kind."
+        }
+        if ($revision) {
+            $observedRevision = ((& git -C $path rev-parse HEAD 2>$null) -join "").Trim()
+            $observedTree = ((& git -C $path rev-parse 'HEAD^{tree}' 2>$null) -join "").Trim()
+            $observedStatus = (& git -C $path status --porcelain=v1 -z 2>$null) -join ""
+            if ($LASTEXITCODE -ne 0 -or $observedRevision -cne $revision -or $observedTree -cne $tree -or $observedStatus) {
+                throw "Git-bound environment entry is not the exact clean revision and tree."
+            }
+        }
+        $byId[$id] = [pscustomobject]@{ Path = $path; Kind = [string]$binding.kind; Revision = if ($revision) { $revision } else { $null }; Tree = if ($tree) { $tree } else { $null } }
+    }
+    $values = @{}
+    $evidence = @()
+    foreach ($requirement in $requirements) {
+        $bindingId = [string]$requirement.Value
+        if (-not $byId.ContainsKey($bindingId)) { throw "Required environment binding '$bindingId' is missing." }
+        $binding = $byId[$bindingId]
+        $values[$requirement.Name] = $binding.Path
+        $evidence += [ordered]@{ variable = $requirement.Name; binding_id = $bindingId; kind = $binding.Kind; git_revision = $binding.Revision; git_tree = $binding.Tree }
+    }
+    return [pscustomobject]@{ Values = $values; Evidence = $evidence }
+}
+
 function Invoke-Build {
-    param([object]$Resolved, [int]$DeadlineSeconds, [string]$ResolvedToolPath, [string]$ExpectedToolSha256)
+    param([object]$Resolved, [int]$DeadlineSeconds, [string]$ResolvedToolPath, [string]$ExpectedToolSha256, [hashtable]$EnvironmentValues)
     if ($Resolved.ExternalToolId) {
         if ([string]::IsNullOrWhiteSpace($ResolvedToolPath) -or
             -not [System.IO.Path]::IsPathFullyQualified($ResolvedToolPath) -or
@@ -105,6 +169,7 @@ function Invoke-Build {
     $startInfo.CreateNoWindow = $true
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
+    foreach ($name in $EnvironmentValues.Keys) { $startInfo.Environment[[string]$name] = [string]$EnvironmentValues[$name] }
     foreach ($argument in $arguments) { $startInfo.ArgumentList.Add($argument) }
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $startInfo
@@ -158,10 +223,21 @@ if (-not (Test-Path -LiteralPath $receiptParent -PathType Container)) { New-Item
 $before = if (Test-Path -LiteralPath $profile.Artifact -PathType Leaf) {
     [ordered]@{ sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $profile.Artifact).Hash.ToLowerInvariant(); size_bytes = (Get-Item -LiteralPath $profile.Artifact).Length }
 } else { $null }
-$execution = Invoke-Build $profile $TimeoutSeconds $ToolPath $ToolSha256
+$environment = Resolve-EnvironmentBindings $profile.Document $EnvironmentBindingsPath $EnvironmentBindingsSha256
+$execution = Invoke-Build $profile $TimeoutSeconds $ToolPath $ToolSha256 $environment.Values
 [System.IO.File]::WriteAllText("$receipt.stdout.txt", [string]$execution.StandardOutput, [System.Text.UTF8Encoding]::new($false))
 [System.IO.File]::WriteAllText("$receipt.stderr.txt", [string]$execution.StandardError, [System.Text.UTF8Encoding]::new($false))
-if ($execution.ExitCode -ne 0) { throw "Build profile exited $($execution.ExitCode)." }
+if ($execution.ExitCode -ne 0) {
+    [ordered]@{
+        schema = "rusty.morphospace.quest_build_failure.v1"
+        status = "failed"
+        profile_id = [string]$profile.Document.profile_id
+        profile_sha256 = [string]$profile.Sha256
+        exit_code = [int]$execution.ExitCode
+        streams = [ordered]@{ stdout = "$receipt.stdout.txt"; stderr = "$receipt.stderr.txt" }
+    } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath "$receipt.failure.json" -Encoding utf8NoBOM
+    throw "Build profile exited $($execution.ExitCode)."
+}
 if (-not (Test-Path -LiteralPath $profile.Artifact -PathType Leaf)) { throw "Build profile did not produce its declared APK." }
 $artifactInfo = Get-Item -LiteralPath $profile.Artifact
 if ($artifactInfo.Length -le 0) { throw "Built APK is empty." }
@@ -187,6 +263,7 @@ $result = [ordered]@{
         resolved_path = [string]$execution.ResolvedToolPath
         resolved_sha256 = [string]$execution.ToolSha256
         arguments = @($profile.Document.arguments)
+        environment = @($environment.Evidence)
     }
     artifact = [ordered]@{
         path = [string]$profile.Artifact
