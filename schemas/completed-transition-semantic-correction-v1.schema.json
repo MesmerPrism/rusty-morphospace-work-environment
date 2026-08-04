@@ -1,0 +1,172 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/completed-transition-semantic-correction-v1.schema.json",
+  "title": "Append-only completed-transition semantic correction",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "receipt_id",
+    "project_id",
+    "fault_kind",
+    "original_transition",
+    "semantic_correction",
+    "correction_event",
+    "preservation"
+  ],
+  "properties": {
+    "schema": {
+      "const": "rusty.morphospace.workflow.completed_transition_semantic_correction.v1"
+    },
+    "receipt_id": { "$ref": "#/$defs/id" },
+    "project_id": { "$ref": "#/$defs/id" },
+    "fault_kind": {
+      "const": "legacy-v1-supersession-event-unit-id-targeted-replacement"
+    },
+    "original_transition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event",
+        "event_ledger",
+        "state",
+        "old_unit",
+        "replacement_unit",
+        "intent",
+        "completion"
+      ],
+      "properties": {
+        "event": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["event_id", "sequence", "sha256"],
+          "properties": {
+            "event_id": { "$ref": "#/$defs/id" },
+            "sequence": { "type": "integer", "minimum": 1 },
+            "sha256": { "$ref": "#/$defs/hash" }
+          }
+        },
+        "event_ledger": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "sha256", "length", "tail_event_id"],
+          "properties": {
+            "path": { "const": "iteration-events.jsonl" },
+            "sha256": { "$ref": "#/$defs/hash" },
+            "length": { "type": "integer", "minimum": 1, "maximum": 67108864 },
+            "tail_event_id": { "$ref": "#/$defs/id" }
+          }
+        },
+        "state": { "$ref": "#/$defs/stateBinding" },
+        "old_unit": { "$ref": "#/$defs/unitBinding" },
+        "replacement_unit": { "$ref": "#/$defs/unitBinding" },
+        "intent": { "$ref": "#/$defs/fileBinding" },
+        "completion": { "$ref": "#/$defs/fileBinding" }
+      }
+    },
+    "semantic_correction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "recorded_unit_id",
+        "effective_old_unit_id",
+        "replacement_unit_id",
+        "original_receipts",
+        "original_intent_artifacts",
+        "disposition"
+      ],
+      "properties": {
+        "recorded_unit_id": { "$ref": "#/$defs/id" },
+        "effective_old_unit_id": { "$ref": "#/$defs/id" },
+        "replacement_unit_id": { "$ref": "#/$defs/id" },
+        "original_receipts": {
+          "type": "array",
+          "maxItems": 0
+        },
+        "original_intent_artifacts": {
+          "type": "array",
+          "maxItems": 0
+        },
+        "disposition": {
+          "const": "project-original-event-with-authenticated-old-unit"
+        }
+      }
+    },
+    "correction_event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event_id", "sequence", "timestamp", "unit_id", "receipt_path"],
+      "properties": {
+        "event_id": { "$ref": "#/$defs/id" },
+        "sequence": { "type": "integer", "minimum": 2 },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "unit_id": { "$ref": "#/$defs/id" },
+        "receipt_path": {
+          "type": "string",
+          "pattern": "^receipts/completed-transition-semantics-corrected-[0-9]{4,}\\.json$"
+        }
+      }
+    },
+    "preservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "historical_event_bytes_retained",
+        "historical_transaction_bytes_retained",
+        "unit_bytes_retained",
+        "state_change"
+      ],
+      "properties": {
+        "historical_event_bytes_retained": { "const": true },
+        "historical_transaction_bytes_retained": { "const": true },
+        "unit_bytes_retained": { "const": true },
+        "state_change": { "const": "last_event_id-only" }
+      }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,127}$"
+    },
+    "hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "fileBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^receipts/transactions/[a-z0-9][a-z0-9-]{1,191}\\.(?:intent|completion)\\.json$"
+        },
+        "sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "stateBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "document"],
+      "properties": {
+        "path": { "const": "workspace.state.json" },
+        "sha256": { "$ref": "#/$defs/hash" },
+        "document": { "type": "object" }
+      }
+    },
+    "unitBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "document"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^iteration-units/[a-z0-9][a-z0-9-]{1,127}\\.json$"
+        },
+        "sha256": { "$ref": "#/$defs/hash" },
+        "document": { "type": "object" }
+      }
+    }
+  }
+}

@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("Inspect", "Ready", "Claim", "Resume", "BeginValidation", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RetirePreparedPush", "ReconcilePreparedPublication", "ResolveBlocker", "CorrectResolvedBlockerEvidence", "NormalizeEventLedgerPrefix", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix")]
+    [ValidateSet("Inspect", "Ready", "Claim", "Resume", "BeginValidation", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RetirePreparedPush", "ReconcilePreparedPublication", "ResolveBlocker", "CorrectResolvedBlockerEvidence", "CorrectCompletedTransitionSemantics", "NormalizeEventLedgerPrefix", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix")]
     [string]$Action,
     [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
     [string]$UnitId = "",
@@ -19,6 +19,7 @@ param(
     [string]$PreparedPublicationReconstruction = "",
     [string]$BlockerResolutionReceipt = "",
     [string]$BlockerResolutionCorrectionReceipt = "",
+    [string]$CompletedTransitionSemanticCorrection = "",
     [string]$LedgerPrefixNormalizationId = "",
     [string]$ExpectedRepositoryHead = "",
     [string]$ExpectedProjectSha256 = "",
@@ -80,6 +81,14 @@ if ($Action -eq "CorrectResolvedBlockerEvidence") {
     Invoke-MorphospaceCorrectResolvedBlockerEvidence -WorkspaceRoot $WorkspaceRoot -UnitId $UnitId `
         -RepoMapPath $RepoMapPath -CorrectionReceipt $BlockerResolutionCorrectionReceipt `
         -Timestamp $Timestamp -OutPath $OutPath -Execute:$Execute |
+        ConvertTo-Json -Depth 32
+    return
+}
+if ($Action -eq "CorrectCompletedTransitionSemantics") {
+    if (-not $CompletedTransitionSemanticCorrection) { throw "CorrectCompletedTransitionSemantics requires CompletedTransitionSemanticCorrection." }
+    Import-Module (Join-Path $PSScriptRoot "CompletedTransitionSemanticCorrection.psm1") -Force
+    Invoke-MorphospaceCompletedTransitionSemanticCorrection -WorkspaceRoot $WorkspaceRoot `
+        -CorrectionReceipt $CompletedTransitionSemanticCorrection -OutPath $OutPath -Execute:$Execute |
         ConvertTo-Json -Depth 32
     return
 }

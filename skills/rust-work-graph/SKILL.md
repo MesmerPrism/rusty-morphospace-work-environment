@@ -86,6 +86,14 @@ exact unambiguous rendering. Attach the authenticated pre-state and exact
 old-unit path/document hashes to the edge. A target-as-event identity, legacy
 unbound intent, delimiter ambiguity, or endpoint drift is a rejection edge,
 not a repairable alternate history.
+When the workflow owner supplies an authenticated completed-transition
+semantic correction, graph it as a separate evidence node binding the exact
+historical event/prefix, retained old and replacement units, original
+intent/completion, and correction intent/completion. Only that verified node
+may relabel the historical edge's effective old endpoint; a path-only receipt,
+damaged chain, nonempty original artifact vector, or ordinary malformed event
+remains a rejection edge. Route the contract to
+`docs/COMPLETED_TRANSITION_SEMANTIC_CORRECTION.md`.
 
 For particle extraction graphs, report owner surfaces separately: Matter
 simulation/contracts, Lattice relations, Optics appearance/projection, Quest

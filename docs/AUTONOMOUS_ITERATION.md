@@ -109,6 +109,14 @@ active/validating old-unit path/document. Completion accepts an applied target
 only from that binding and validates it before torn-tail repair or projection
 mutation; legacy supersession intents fail closed.
 
+If an already completed legacy-v1 transaction has the exact event ID above but
+incorrectly recorded the replacement in `event.unit_id`, do not edit it and do
+not relax this rule. Route only the narrow empty-receipt/empty-intent-artifact
+fault through
+[Completed-Transition Semantic Correction](COMPLETED_TRANSITION_SEMANTIC_CORRECTION.md).
+Its derived receipt preserves the historical prefix and both unit files,
+appends one authenticated correction event, and changes only `last_event_id`.
+
 `iteration-events.jsonl` is append-only. Add a compact record after a state
 transition, contract decision, extraction, validation result, commit, push,
 promotion, or blocker change. Large logs and device artifacts remain outside
@@ -428,6 +436,14 @@ heads/source bytes, and every live blocker. It changes only `last_event_id`,
 appends one generic transition, fails closed on damaged retained correction
 evidence, and rejects replay by stable identity or canonical hash. See
 [Blocker Resolution Correction](BLOCKER_RESOLUTION_CORRECTION.md).
+
+Use `CorrectCompletedTransitionSemantics` only for the single documented
+completed legacy-v1 target-as-event-unit fault. The original transition must
+remain state/ledger tail while the inspected receipt is built. Workflow
+contracts project the effective old unit only from an installed correction
+whose shared verifier authenticates the original prefix, original
+intent/completion, correction intent/completion, and sole receipt bytes. See
+[Completed-Transition Semantic Correction](COMPLETED_TRANSITION_SEMANTIC_CORRECTION.md).
 
 ## Receipt-Security Corrective Units
 
