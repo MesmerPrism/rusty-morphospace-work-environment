@@ -19,6 +19,7 @@ if ($RepositoryMapPath) {
     $mapDocument = Get-Content -LiteralPath $RepositoryMapPath -Raw | ConvertFrom-Json
     foreach ($entry in @($mapDocument.repositories)) { $script:LocalRepositoryMap[[string]$entry.repo_id] = [string]$entry.path }
 }
+Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceCompletedTransitionSemanticCorrection.psm1') -Force
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceProtocolCommon.psm1') -Force
 
 function Invoke-IsolatedWorkflowSelfTest {
@@ -831,6 +832,45 @@ function Test-ProjectBundle {
         }
     }
 
+    # Authenticate the one narrow append-only correction that can project a
+    # malformed completed legacy-v1 supersession event with its independently
+    # retained old-unit endpoint. A receipt path alone never authorizes this
+    # projection: the shared verifier binds the historical ledger prefix,
+    # original intent/completion, embedded state/units, and correction
+    # intent/completion before returning the effective endpoint.
+    $completedTransitionCorrections = @{}
+    $correctionEventPrefix = 'completed-transition-semantics-corrected-'
+    foreach ($candidateCorrectionEvent in @($events | Where-Object { ([string]$_.event_id).StartsWith($correctionEventPrefix, [StringComparison]::Ordinal) })) {
+        $candidateId = [string]$candidateCorrectionEvent.event_id
+        try {
+            if ($candidateId -cnotmatch '^completed-transition-semantics-corrected-[0-9]{4,}$' -or
+                [string]$candidateCorrectionEvent.schema -cne 'rusty.morphospace.workflow.iteration_event.v1' -or
+                [string]$candidateCorrectionEvent.event_type -cne 'state-transition' -or
+                @($candidateCorrectionEvent.receipts).Count -ne 1 -or
+                @($candidateCorrectionEvent.receipts)[0] -isnot [string]) {
+                throw "Correction event '$candidateId' does not have its exact v1 event shape."
+            }
+            $receiptRelative = [string]@($candidateCorrectionEvent.receipts)[0]
+            $receiptAbsolute = Resolve-MorphospaceWorkspacePath -WorkspaceRoot $workspaceRoot -RelativePath $receiptRelative -RequireLeaf
+            $strictEventBytes = [Text.UTF8Encoding]::new($false).GetBytes(($candidateCorrectionEvent | ConvertTo-Json -Depth 32 -Compress))
+            $strictEvent = ConvertFrom-MorphospaceProtocolJsonBytes -Bytes $strictEventBytes -Context "correction event '$candidateId'"
+            [void]$strictEvent.PSObject.Properties.Remove('__line_sha256')
+            $verifiedCorrection = Test-MorphospaceCompletedTransitionSemanticCorrection `
+                -WorkspaceRoot $workspaceRoot -ReceiptPath $receiptAbsolute -Mode Projection -CorrectionEvent $strictEvent
+            $originalId = [string]$verifiedCorrection.original_event.event_id
+            if ($completedTransitionCorrections.ContainsKey($originalId)) {
+                throw "Original event '$originalId' has more than one completed-transition semantic correction."
+            }
+            $completedTransitionCorrections[$originalId] = [pscustomobject][ordered]@{
+                correction_event_id = $candidateId
+                effective_old_unit_id = [string]$verifiedCorrection.receipt.semantic_correction.effective_old_unit_id
+                replacement_unit_id = [string]$verifiedCorrection.receipt.semantic_correction.replacement_unit_id
+            }
+        } catch {
+            Add-Failure -Message "$Context completed-transition correction '$candidateId' is unauthenticated: $($_.Exception.Message)"
+        }
+    }
+
     # A corrective unit may supersede an immutable historical active/validating
     # unit without rewriting that unit artifact or its earlier event prefix.
     # The additive state-transition event is the projection override and must
@@ -846,7 +886,11 @@ function Test-ProjectBundle {
         $hasOneDelimiter = $firstDelimiter -eq $eventId.LastIndexOf($supersessionDelimiter, [StringComparison]::Ordinal)
         Assert-Contract $hasOneDelimiter "$Context supersession event '$eventId' contains an ambiguous repeated delimiter."
         if (-not $hasOneDelimiter) { continue }
-        $oldId = [string]$event.unit_id
+        $oldId = if ($completedTransitionCorrections.ContainsKey($eventId)) {
+            [string]$completedTransitionCorrections[$eventId].effective_old_unit_id
+        } else {
+            [string]$event.unit_id
+        }
         $oldEndpointValid = $oldId -match '^[a-z0-9][a-z0-9-]{1,127}$' -and -not $oldId.Contains($supersessionDelimiter, [StringComparison]::Ordinal)
         Assert-Contract $oldEndpointValid "$Context supersession event '$eventId' lacks a portable independently bound old unit or uses the reserved delimiter inside it."
         if (-not $oldEndpointValid) { continue }
@@ -860,6 +904,9 @@ function Test-ProjectBundle {
         Assert-Contract ($replacementCandidates.Count -eq 1) "$Context supersession event '$eventId' does not exactly bind event.unit_id '$oldId' to one independently identified replacement unit document."
         if ($replacementCandidates.Count -ne 1) { continue }
         $currentId = [string]$replacementCandidates[0]
+        if ($completedTransitionCorrections.ContainsKey($eventId)) {
+            Assert-Contract ([string]$completedTransitionCorrections[$eventId].replacement_unit_id -ceq $currentId) "$Context correction for supersession event '$eventId' does not bind its independently derived replacement '$currentId'."
+        }
         Assert-Contract ($eventId -ceq "$oldId$supersessionDelimiter$currentId") "$Context supersession event '$eventId' is not the exact old-to-replacement rendering."
         Assert-Contract ($event.event_type -eq "state-transition") "$Context supersession event '$eventId' must be a state transition."
         Assert-Contract ($unitMap.ContainsKey($oldId)) "$Context supersession event '$eventId' references missing old unit '$oldId'."
@@ -1105,6 +1152,7 @@ $requiredSchemaNames = @(
     "prepared-publication-reconstruction-v1.schema.json",
     "blocker-resolution-receipt-v1.schema.json",
     "blocker-resolution-correction-receipt-v1.schema.json",
+    "completed-transition-semantic-correction-v1.schema.json",
     "legacy-embedded-push-bundle-plan-v1.schema.json",
     "work-unit-automation-receipt-v2.schema.json",
     "published-planning-authority-adoption.schema.json",
@@ -1276,7 +1324,7 @@ foreach ($candidateContract in $candidateContracts) {
     }
 }
 if (-not $SkipOwnerSelfTests) {
-    foreach ($selfTest in @("Test-LegacyEmbeddedPushPlanCompatibility.ps1","Test-PreparedPublicationReconstruction.ps1","Test-ResolveBlocker.ps1","Test-CorrectResolvedBlockerEvidence.ps1","Test-TransitionLedger.ps1")) {
+    foreach ($selfTest in @("Test-LegacyEmbeddedPushPlanCompatibility.ps1","Test-PreparedPublicationReconstruction.ps1","Test-ResolveBlocker.ps1","Test-CorrectResolvedBlockerEvidence.ps1","Test-CompletedTransitionSemanticCorrection.ps1","Test-TransitionLedger.ps1")) {
         try { Invoke-IsolatedWorkflowSelfTest -Path (Join-Path $RepoRoot "scripts\$selfTest") }
         catch { Add-Failure -Message "$selfTest failed: $($_.Exception.Message)" }
     }

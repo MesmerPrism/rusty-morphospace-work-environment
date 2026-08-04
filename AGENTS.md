@@ -325,6 +325,16 @@ single-PR path.
   original event/receipt/intent/completion chain plus fresh exact source
   evidence, preserve every projection except `last_event_id`, and never edit
   the retained resolution.
+- Correct only the completed legacy-v1 supersession fault where the exact
+  `<old>-superseded-by-<replacement>` event recorded the replacement in
+  `event.unit_id` through `completed_transition_semantic_correction.v1` and
+  `CorrectCompletedTransitionSemantics`. Derive both endpoints from retained
+  state/unit evidence, require the original receipt and intent-artifact arrays
+  to be empty, preserve every historical byte, and project the old endpoint
+  only after the shared verifier authenticates both transaction chains. Route
+  the complete procedure to
+  `docs/COMPLETED_TRANSITION_SEMANTIC_CORRECTION.md`; never weaken ordinary v2
+  supersession validation or hand-edit the malformed event.
 - Protected-branch pre-push guards match Git's remote destination ref and
   resolve any explicit local selector to the exact attached protected branch
   revision before prepared-plan validation; deletion, detachment, mismatch,
@@ -394,6 +404,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkflowContracts.p
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\New-ProjectWorkspace.ps1 -SelfTest
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkUnitAutomation.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-EventLedgerPrefixNormalization.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-CompletedTransitionSemanticCorrection.ps1 -SelfTest
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-FeatureLockResolver.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ProjectIsolation.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ExecutedPushReceipt.ps1 -SelfTest

@@ -95,6 +95,14 @@ unambiguous rendering. Publish only a v2 intent that hash-binds the original
 state and retained active/validating old-unit path/document. Completion fails
 closed on legacy or damaged binding before applied-target recovery, repair, or
 projection mutation.
+For the one already-completed legacy-v1 event that has an exact rendered edge
+but recorded the replacement as event unit, use only the derived
+`completed_transition_semantic_correction.v1` owner receipt. Treat the
+historical prefix, empty receipt/artifact shape, old/replacement unit bytes,
+and both completion-to-intent chains as required authority. The additive
+correction may change only `last_event_id` and append/install one exact
+event/receipt; it does not weaken normal v2 transition semantics. Route detail
+to `docs/COMPLETED_TRANSITION_SEMANTIC_CORRECTION.md`.
 An exact still-unexecuted prepared bundle may be retired only after complete
 stable clean observations, fresh remote readback, and exclusion of recognized
 execution/publication evidence. If all distinct prepared revisions are already

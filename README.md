@@ -209,6 +209,14 @@ the distinct replacement, and the event ID is their exact unambiguous
 rendering. A supersession uses a v2 intent that hash-binds the original state
 document and exact old-unit path/document. Completion rejects legacy or damaged
 bindings before applied-target recovery, torn-tail repair, or projection writes.
+One completed legacy-v1 fault has a separately reviewed append-only repair:
+an otherwise exact `<old>-superseded-by-<replacement>` event that recorded the
+replacement in `event.unit_id`. Use only the derived
+`completed_transition_semantic_correction.v1` receipt and
+`CorrectCompletedTransitionSemantics`; it preserves all historical bytes,
+changes only `last_event_id`, and authorizes the old endpoint in contract
+validation only after both historical and correction transaction chains are
+authenticated. See [Completed-Transition Semantic Correction](docs/COMPLETED_TRANSITION_SEMANTIC_CORRECTION.md).
 
 The automation CLI inspects or plans by default. `-Execute` is required for a
 workspace-state transition; it still does not run Git push, force-push,
@@ -222,6 +230,11 @@ repository, project, state, unit, event-ledger, tail, and dry-run intent
 identities; it appends one correction event, publishes the normalized receipt
 only after exact target readback, and changes no state field except
 `last_event_id`.
+`CorrectCompletedTransitionSemantics` is not a compatibility mode for malformed
+events. Its builder derives the old and replacement from current retained
+state/unit evidence, requires the original event receipts and legacy-v1 intent
+artifacts to be empty, and installs the inspected receipt as the correction
+transition's sole artifact.
 `RecordValidation` and `Accept` require a local `validation_receipt.v1` whose
 hashed artifacts, exact acceptance/gate coverage, repository revisions,
 changed paths, and required device cleanup/fatal fields still match current

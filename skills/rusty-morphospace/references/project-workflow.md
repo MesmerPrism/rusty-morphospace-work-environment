@@ -69,6 +69,14 @@ Require a v2 intent to hash-bind the original state plus the exact
 active/validating old-unit path/document, and reject legacy or damaged bindings
 before intent, artifact, torn-tail repair, projection, or event mutation.
 
+Do not make that rule tolerant for history. The only supported completed
+legacy-v1 target-as-event-unit fault uses the workflow owner's derived
+`completed_transition_semantic_correction.v1` receipt and
+`CorrectCompletedTransitionSemantics`. Require empty original receipts and
+intent artifacts, authenticate both transaction chains, preserve all
+historical/unit bytes, and route the procedure to
+`docs/COMPLETED_TRANSITION_SEMANTIC_CORRECTION.md`.
+
 Derive repository, path, graph, and validation scope from the unit. Keep
 proposals, claims, validation results, acceptance, publication planning, and
 external execution as separate facts. A passing check is evidence, not
