@@ -1,5 +1,8 @@
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'MorphospaceProtocolCommon.psm1') -Force
+$script:MorphospaceSupersessionDelimiter = '-superseded-by-'
+$script:MorphospaceTransitionIntentV1 = 'rusty.morphospace.workflow.transition_ledger_intent.v1'
+$script:MorphospaceTransitionIntentV2 = 'rusty.morphospace.workflow.transition_ledger_intent.v2'
 
 function Get-MorphospaceLedgerDocumentHash { param([object]$Value) Get-MorphospaceCanonicalJsonSha256 $Value }
 function Get-MorphospaceLedgerPath { param([string]$WorkspaceRoot,[string]$TransactionId,[ValidateSet('intent','completion')][string]$Kind) "receipts/transactions/$TransactionId.$Kind.json" }
@@ -155,10 +158,116 @@ function Repair-MorphospaceLedgerTornAppend {
     try{$stream.SetLength($preLength);$stream.Flush($true)}finally{$stream.Dispose()}
     return $true
 }
+function Assert-MorphospaceSupersessionTarget {
+    param([object]$Event,[object]$TargetState,[object]$TargetUnit)
+    if($null-eq$Event-or$null-eq$Event.PSObject.Properties['event_id']){return $null}
+    $eventId=[string]$Event.event_id
+    $delimiter=$script:MorphospaceSupersessionDelimiter
+    $firstDelimiter=$eventId.IndexOf($delimiter,[StringComparison]::Ordinal)
+    if($firstDelimiter-lt0){return $null}
+    if($firstDelimiter-ne$eventId.LastIndexOf($delimiter,[StringComparison]::Ordinal)){
+        throw 'Transition ledger supersession event identity contains an ambiguous repeated delimiter.'
+    }
+    if($null-eq$Event.PSObject.Properties['unit_id']-or$null-eq$TargetState.PSObject.Properties['current_unit']){
+        throw 'Transition ledger supersession requires independently bound old and replacement unit identities.'
+    }
+    $oldId=[string]$Event.unit_id
+    $currentId=[string]$TargetState.current_unit
+    foreach($endpoint in @(
+        [pscustomobject]@{role='old';value=$oldId},
+        [pscustomobject]@{role='replacement';value=$currentId}
+    )){
+        if(([string]$endpoint.value).Contains($delimiter,[StringComparison]::Ordinal)){
+            throw "Transition ledger supersession $([string]$endpoint.role) endpoint contains the reserved delimiter."
+        }
+        if([string]$endpoint.value-cnotmatch'^[a-z0-9][a-z0-9-]{1,127}$'){
+            throw "Transition ledger supersession $([string]$endpoint.role) endpoint is not a portable unit identity."
+        }
+    }
+    if($oldId-ceq$currentId){throw 'Transition ledger supersession old and replacement unit identities must differ.'}
+    $expectedEventId="$oldId$delimiter$currentId"
+    if($eventId-cne$expectedEventId){
+        throw "Transition ledger supersession event identity must exactly equal '$expectedEventId'."
+    }
+    if([string]$Event.event_type-cne'state-transition'){
+        throw 'Transition ledger supersession event must be a state transition.'
+    }
+    if($null-eq$TargetUnit.PSObject.Properties['unit_id']-or
+       [string]$TargetUnit.unit_id-cne$currentId){
+        throw "Transition ledger supersession target unit must be replacement '$currentId'."
+    }
+    return [pscustomobject]@{old_unit_id=$oldId;current_unit_id=$currentId;event_id=$expectedEventId}
+}
+function Get-MorphospaceSupersededUnitBinding {
+    param([string]$Workspace,[string]$UnitPath,[string]$OldUnitId)
+    $unitAbsolute=Resolve-MorphospaceWorkspacePath -WorkspaceRoot $Workspace -RelativePath $UnitPath -RequireLeaf
+    $unitDirectory=[IO.Path]::GetDirectoryName($unitAbsolute)
+    $matches=@()
+    foreach($candidatePath in @([IO.Directory]::EnumerateFiles($unitDirectory,'*.json',[IO.SearchOption]::TopDirectoryOnly))){
+        $candidate=Read-MorphospaceProtocolJson -Path $candidatePath
+        if($null-ne$candidate.PSObject.Properties['unit_id']-and[string]$candidate.unit_id-ceq$OldUnitId){
+            $relativePath=ConvertTo-MorphospaceProtocolRelativePath ([IO.Path]::GetRelativePath($Workspace,$candidatePath).Replace('\','/'))
+            $matches+=,[pscustomobject]@{
+                path=$relativePath
+                sha256=Get-MorphospaceLedgerDocumentHash $candidate
+                document=$candidate
+            }
+        }
+    }
+    if($matches.Count-ne1){
+        throw "Transition ledger supersession requires exactly one old unit document for '$OldUnitId'."
+    }
+    return $matches[0]
+}
+function Assert-MorphospaceSupersessionWorkspacePreflight {
+    param(
+        [string]$Workspace,
+        [string]$UnitPath,
+        [object]$CurrentState,
+        [object]$CurrentTargetUnit,
+        [object]$TargetState,
+        [object]$TargetUnit,
+        [object]$Event,
+        [AllowNull()][object]$AuthenticatedBinding,
+        [switch]$AllowAppliedTarget
+    )
+    $identity=Assert-MorphospaceSupersessionTarget -Event $Event -TargetState $TargetState -TargetUnit $TargetUnit
+    if($null-eq$identity){return}
+    if($null-eq$CurrentState.PSObject.Properties['current_unit']){
+        throw 'Transition ledger supersession requires a current old unit in workspace state.'
+    }
+    $observedCurrent=[string]$CurrentState.current_unit
+    if($observedCurrent-cne[string]$identity.old_unit_id-and
+       (-not$AllowAppliedTarget-or$observedCurrent-cne[string]$identity.current_unit_id)){
+        throw "Transition ledger supersession current unit must be old unit '$([string]$identity.old_unit_id)'."
+    }
+    if($null-eq$CurrentTargetUnit.PSObject.Properties['unit_id']-or
+       [string]$CurrentTargetUnit.unit_id-cne[string]$identity.current_unit_id){
+        throw "Transition ledger supersession unit path must identify replacement '$([string]$identity.current_unit_id)'."
+    }
+    $oldUnitBinding=Get-MorphospaceSupersededUnitBinding -Workspace $Workspace -UnitPath $UnitPath -OldUnitId ([string]$identity.old_unit_id)
+    if($null-ne$AuthenticatedBinding){
+        if([string]$AuthenticatedBinding.old_unit_id-cne[string]$identity.old_unit_id-or
+           [string]$AuthenticatedBinding.new_unit_id-cne[string]$identity.current_unit_id-or
+           [string]$AuthenticatedBinding.old_unit.path-cne[string]$oldUnitBinding.path-or
+           [string]$AuthenticatedBinding.old_unit.sha256-cne[string]$oldUnitBinding.sha256){
+            throw 'Transition ledger supersession workspace endpoints differ from the authenticated intent binding.'
+        }
+    }
+    if(@('active','validating')-cnotcontains[string]$oldUnitBinding.document.status){
+        throw "Transition ledger supersession old unit '$([string]$identity.old_unit_id)' must be active or validating."
+    }
+    return $oldUnitBinding
+}
 function Assert-MorphospaceLedgerIntent {
     param([object]$Intent,[string]$TransactionId)
-    Assert-MorphospaceExactPropertySet $Intent @('schema','transaction_id','created_at','state','unit','events','pre','target','expected','artifacts','event','status') @() 'Transition ledger intent'
-    if([string]$Intent.schema-cne'rusty.morphospace.workflow.transition_ledger_intent.v1'-or[string]$Intent.status-cne'prepared'-or[string]$Intent.transaction_id-cne$TransactionId){throw 'Transition ledger intent identity/status is invalid.'}
+    $schema=[string]$Intent.schema
+    if($schema-ceq$script:MorphospaceTransitionIntentV1){
+        Assert-MorphospaceExactPropertySet $Intent @('schema','transaction_id','created_at','state','unit','events','pre','target','expected','artifacts','event','status') @() 'Transition ledger intent'
+    }elseif($schema-ceq$script:MorphospaceTransitionIntentV2){
+        Assert-MorphospaceExactPropertySet $Intent @('schema','transaction_id','created_at','state','unit','events','pre','target','expected','artifacts','event','supersession','status') @() 'Transition ledger intent'
+    }else{throw 'Transition ledger intent schema is unsupported.'}
+    if([string]$Intent.status-cne'prepared'-or[string]$Intent.transaction_id-cne$TransactionId){throw 'Transition ledger intent identity/status is invalid.'}
     [void](Test-MorphospaceStrictUtcTimestamp ([string]$Intent.created_at))
     foreach($referenceName in @('state','unit','events')){
         Assert-MorphospaceExactPropertySet $Intent.$referenceName @('path') @() "Transition ledger intent $referenceName reference"
@@ -201,7 +310,47 @@ function Assert-MorphospaceLedgerIntent {
             if([string]$document.last_event_id-cne[string]$Intent.event.event_id){throw "Transition ledger target $targetName last-event identity differs from its event."}
         }
     }
-    if($Intent.target.unit.document.PSObject.Properties.Name-contains'unit_id'){
+    $isSupersessionCandidate=([string]$Intent.event.event_id).Contains($script:MorphospaceSupersessionDelimiter,[StringComparison]::Ordinal)
+    if($isSupersessionCandidate-and$schema-cne$script:MorphospaceTransitionIntentV2){
+        throw 'Legacy supersession intent lacks an authenticated semantic binding.'
+    }
+    if(-not$isSupersessionCandidate-and$schema-ceq$script:MorphospaceTransitionIntentV2){
+        throw 'Transition ledger intent v2 is reserved for an authenticated supersession.'
+    }
+    $supersession=Assert-MorphospaceSupersessionTarget -Event $Intent.event -TargetState $Intent.target.state.document -TargetUnit $Intent.target.unit.document
+    if($null-ne$supersession){
+        $binding=$Intent.supersession
+        Assert-MorphospaceExactPropertySet $binding @('old_unit_id','new_unit_id','pre_state','old_unit','target_unit_path') @() 'Transition ledger supersession binding'
+        Assert-MorphospaceExactPropertySet $binding.pre_state @('path','sha256','document') @() 'Transition ledger supersession pre-state binding'
+        Assert-MorphospaceExactPropertySet $binding.old_unit @('path','sha256','document') @() 'Transition ledger supersession old-unit binding'
+        $preStatePath=ConvertTo-MorphospaceProtocolRelativePath ([string]$binding.pre_state.path)
+        $oldPath=ConvertTo-MorphospaceProtocolRelativePath ([string]$binding.old_unit.path)
+        $targetUnitPath=ConvertTo-MorphospaceProtocolRelativePath ([string]$binding.target_unit_path)
+        if($preStatePath-cne[string]$Intent.state.path-or$targetUnitPath-cne[string]$Intent.unit.path){
+            throw 'Transition ledger supersession state or replacement path differs from its authenticated binding.'
+        }
+        if($oldPath-ceq[string]$Intent.unit.path){throw 'Transition ledger supersession old and replacement unit paths must differ.'}
+        if([string]$binding.old_unit_id-cne[string]$supersession.old_unit_id-or
+           [string]$binding.new_unit_id-cne[string]$supersession.current_unit_id){
+            throw 'Transition ledger supersession binding endpoints differ from the event and target state.'
+        }
+        if([string]$binding.pre_state.sha256-cne[string]$Intent.pre.state.sha256-or
+           (Get-MorphospaceLedgerDocumentHash $binding.pre_state.document)-cne[string]$binding.pre_state.sha256-or
+           [string]$binding.pre_state.document.current_unit-cne[string]$supersession.old_unit_id){
+            throw 'Transition ledger supersession pre-state binding is invalid.'
+        }
+        if([string]$binding.old_unit.sha256-cnotmatch'^[0-9a-f]{64}$'-or
+           (Get-MorphospaceLedgerDocumentHash $binding.old_unit.document)-cne[string]$binding.old_unit.sha256-or
+           [string]$binding.old_unit.document.unit_id-cne[string]$supersession.old_unit_id-or
+           @('active','validating')-cnotcontains[string]$binding.old_unit.document.status){
+            throw 'Transition ledger supersession old-unit binding is invalid.'
+        }
+        if($binding.old_unit.document.PSObject.Properties.Name-contains'project_id'-and
+           [string]$binding.old_unit.document.project_id-cne[string]$Intent.event.project_id){
+            throw 'Transition ledger supersession old-unit project identity differs from its event.'
+        }
+    }
+    if($null-eq$supersession-and$Intent.target.unit.document.PSObject.Properties.Name-contains'unit_id'){
         if([string]$Intent.target.unit.document.unit_id-cne[string]$Intent.event.unit_id){throw 'Transition ledger target unit identity differs from its event.'}
     }
     $artifactTargets=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
@@ -352,6 +501,16 @@ function Complete-MorphospaceTransitionLedger {
             if($allowedStateHashes-notcontains$currentStateHash){throw "Transition $TransactionId failed expected pre-state CAS."}
             if($allowedUnitHashes-notcontains$currentUnitHash){throw "Transition $TransactionId failed expected pre-unit CAS."}
         }
+        [void](Assert-MorphospaceSupersessionWorkspacePreflight `
+            -Workspace $workspace `
+            -UnitPath ([string]$intent.unit.path) `
+            -CurrentState $currentState `
+            -CurrentTargetUnit $currentUnit `
+            -TargetState $intent.target.state.document `
+            -TargetUnit $intent.target.unit.document `
+            -Event $intent.event `
+            -AuthenticatedBinding $intent.supersession `
+            -AllowAppliedTarget)
         if($Repair){[void](Repair-MorphospaceLedgerTornAppend $eventsAbsolute $intent)}
         [void](Assert-MorphospaceLedgerEventPlacement $eventsAbsolute $intent)
         Install-MorphospaceLedgerArtifacts $workspace $TransactionId $intent
@@ -395,6 +554,7 @@ function Start-MorphospaceTransitionLedger {
         [AllowNull()][string]$ExpectedEventTailId,
         [string]$ExpectedEventsSha256 = '',
         [int64]$ExpectedEventsLength = -1,
+        [string]$ExpectedSupersededUnitSha256 = '',
         [object[]]$Artifacts=@()
     )
     $workspace=[IO.Path]::GetFullPath($WorkspaceRoot);$lock=Enter-MorphospaceWorkspaceMutex -WorkspaceRoot $workspace
@@ -413,6 +573,23 @@ function Start-MorphospaceTransitionLedger {
             if([string]::IsNullOrEmpty([string]$expectation.expected)){continue}
             if([string]$expectation.expected-cnotmatch'^[0-9a-f]{64}$'){throw "Expected $([string]$expectation.name) SHA-256 is not canonical lowercase hex."}
             if([string]$expectation.expected-cne[string]$expectation.actual){throw "Transition $TransactionId expected $([string]$expectation.name) SHA-256 does not match the mutex-protected current document."}
+        }
+        $supersessionOldUnitBinding=Assert-MorphospaceSupersessionWorkspacePreflight `
+            -Workspace $workspace `
+            -UnitPath $UnitPath `
+            -CurrentState $state `
+            -CurrentTargetUnit $unit `
+            -TargetState $TargetState `
+            -TargetUnit $TargetUnit `
+            -Event $Event
+        if($ExpectedSupersededUnitSha256){
+            if($ExpectedSupersededUnitSha256-cnotmatch'^[0-9a-f]{64}$'){
+                throw 'Expected superseded-unit SHA-256 is not canonical lowercase hex.'
+            }
+            if($null-eq$supersessionOldUnitBinding-or
+               [string]$supersessionOldUnitBinding.sha256-cne$ExpectedSupersededUnitSha256){
+                throw "Transition $TransactionId expected superseded-unit SHA-256 does not match the mutex-protected old unit."
+            }
         }
         $eventsAbsolute=Resolve-MorphospaceWorkspacePath $workspace $EventsPath -RequireLeaf
         $eventSnapshot=Get-MorphospaceLedgerSnapshot $eventsAbsolute
@@ -443,7 +620,38 @@ function Start-MorphospaceTransitionLedger {
             $ownedArtifacts+=,[pscustomobject][ordered]@{path=(ConvertTo-MorphospaceProtocolRelativePath ([string]$artifact.path));sha256=$hash;bytes_base64=[Convert]::ToBase64String($bytes)}
         }
         $intentRelative=Get-MorphospaceLedgerPath $workspace $TransactionId intent
-        $intent=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.transition_ledger_intent.v1';transaction_id=$TransactionId;created_at=[DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffffffZ');state=[pscustomobject]@{path=(ConvertTo-MorphospaceProtocolRelativePath -Path $StatePath)};unit=[pscustomobject]@{path=(ConvertTo-MorphospaceProtocolRelativePath -Path $UnitPath)};events=[pscustomobject]@{path=(ConvertTo-MorphospaceProtocolRelativePath -Path $EventsPath)};pre=[pscustomobject]@{state=[pscustomobject]@{sha256=$preStateSha256};unit=[pscustomobject]@{sha256=$preUnitSha256}};target=[pscustomobject]@{state=[pscustomobject]@{sha256=(Get-MorphospaceLedgerDocumentHash $TargetState);document=$TargetState};unit=[pscustomobject]@{sha256=(Get-MorphospaceLedgerDocumentHash $TargetUnit);document=$TargetUnit}};expected=[pscustomobject]@{state_sha256=$preStateSha256;unit_sha256=$preUnitSha256;event_tail_id=$(if($PSBoundParameters.ContainsKey('ExpectedEventTailId')){$ExpectedEventTailId}else{$eventSnapshot.tail_id});events_sha256=[string]$eventSnapshot.sha256;events_length=[int64]$eventSnapshot.length};artifacts=@($ownedArtifacts);event=$Event;status='prepared'}
+        $intentFields=[ordered]@{
+            schema=$(if($null-ne$supersessionOldUnitBinding){$script:MorphospaceTransitionIntentV2}else{$script:MorphospaceTransitionIntentV1})
+            transaction_id=$TransactionId
+            created_at=[DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffffffZ')
+            state=[pscustomobject]@{path=(ConvertTo-MorphospaceProtocolRelativePath -Path $StatePath)}
+            unit=[pscustomobject]@{path=(ConvertTo-MorphospaceProtocolRelativePath -Path $UnitPath)}
+            events=[pscustomobject]@{path=(ConvertTo-MorphospaceProtocolRelativePath -Path $EventsPath)}
+            pre=[pscustomobject]@{state=[pscustomobject]@{sha256=$preStateSha256};unit=[pscustomobject]@{sha256=$preUnitSha256}}
+            target=[pscustomobject]@{state=[pscustomobject]@{sha256=(Get-MorphospaceLedgerDocumentHash $TargetState);document=$TargetState};unit=[pscustomobject]@{sha256=(Get-MorphospaceLedgerDocumentHash $TargetUnit);document=$TargetUnit}}
+            expected=[pscustomobject]@{state_sha256=$preStateSha256;unit_sha256=$preUnitSha256;event_tail_id=$(if($PSBoundParameters.ContainsKey('ExpectedEventTailId')){$ExpectedEventTailId}else{$eventSnapshot.tail_id});events_sha256=[string]$eventSnapshot.sha256;events_length=[int64]$eventSnapshot.length}
+            artifacts=@($ownedArtifacts)
+            event=$Event
+        }
+        if($null-ne$supersessionOldUnitBinding){
+            $intentFields.supersession=[pscustomobject][ordered]@{
+                old_unit_id=[string]$Event.unit_id
+                new_unit_id=[string]$TargetState.current_unit
+                pre_state=[pscustomobject][ordered]@{
+                    path=(ConvertTo-MorphospaceProtocolRelativePath -Path $StatePath)
+                    sha256=$preStateSha256
+                    document=$state
+                }
+                old_unit=[pscustomobject][ordered]@{
+                    path=[string]$supersessionOldUnitBinding.path
+                    sha256=[string]$supersessionOldUnitBinding.sha256
+                    document=$supersessionOldUnitBinding.document
+                }
+                target_unit_path=(ConvertTo-MorphospaceProtocolRelativePath -Path $UnitPath)
+            }
+        }
+        $intentFields.status='prepared'
+        $intent=[pscustomobject]$intentFields
         Assert-MorphospaceLedgerIntent $intent $TransactionId
         Assert-MorphospaceLedgerArtifactNamespace $workspace $TransactionId $intent
         [void](Assert-MorphospaceLedgerEventPlacement $eventsAbsolute $intent)

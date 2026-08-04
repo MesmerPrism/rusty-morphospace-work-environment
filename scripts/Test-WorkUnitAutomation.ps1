@@ -1808,6 +1808,39 @@ try {
     }
     Assert-Automation $damagedSupersessionRejected "supersession accepted a non-state-transition event"
 
+    $supersessionEvent.event_type = "state-transition"
+    $supersessionEvent.event_id = "old-unit-superseded-by-injected-superseded-by-current-unit"
+    [System.IO.File]::WriteAllText(
+        (Join-Path $supersessionWorkspace "iteration-events.jsonl"),
+        (($supersessionEvent | ConvertTo-Json -Compress) + [Environment]::NewLine),
+        $encoding
+    )
+    $supersessionState.last_event_id = [string]$supersessionEvent.event_id
+    Write-TestJson -Path $supersessionStatePath -Value $supersessionState
+    $ambiguousSupersessionRejected = $false
+    try {
+        & (Join-Path $PSScriptRoot "Test-WorkflowContracts.ps1") -RepoRoot $RepoRoot -WorkspaceRoot $supersessionWorkspace -SkipOwnerSelfTests
+    } catch {
+        $ambiguousSupersessionRejected = $_.Exception.Message -like "Workflow contract validation failed*"
+    }
+    Assert-Automation $ambiguousSupersessionRejected "supersession validator accepted an ambiguous repeated delimiter"
+
+    $supersessionEvent.event_id = "counterfeit-old-unit-superseded-by-current-unit"
+    [System.IO.File]::WriteAllText(
+        (Join-Path $supersessionWorkspace "iteration-events.jsonl"),
+        (($supersessionEvent | ConvertTo-Json -Compress) + [Environment]::NewLine),
+        $encoding
+    )
+    $supersessionState.last_event_id = [string]$supersessionEvent.event_id
+    Write-TestJson -Path $supersessionStatePath -Value $supersessionState
+    $damagedEndpointRejected = $false
+    try {
+        & (Join-Path $PSScriptRoot "Test-WorkflowContracts.ps1") -RepoRoot $RepoRoot -WorkspaceRoot $supersessionWorkspace -SkipOwnerSelfTests
+    } catch {
+        $damagedEndpointRejected = $_.Exception.Message -like "Workflow contract validation failed*"
+    }
+    Assert-Automation $damagedEndpointRejected "supersession validator inferred a damaged old endpoint from the event ID"
+
     & (Join-Path $PSScriptRoot "Test-WorkflowContracts.ps1") -RepoRoot $RepoRoot -WorkspaceRoot $recoveryWorkspace -SkipOwnerSelfTests
     Write-Host "Work-unit automation self-test passed."
 } finally {

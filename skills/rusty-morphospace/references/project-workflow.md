@@ -62,6 +62,13 @@ planning non-mutating; require explicit execution for an owned state
 transition. Use the workflow owner's actions instead of hand-editing status,
 compact state, or event history.
 
+For an exact `<old>-superseded-by-<new>` event, bind old independently from
+event `unit_id` and new independently from target-state `current_unit`; treat
+the event ID only as their exact rendering and reject delimiter ambiguity.
+Require a v2 intent to hash-bind the original state plus the exact
+active/validating old-unit path/document, and reject legacy or damaged bindings
+before intent, artifact, torn-tail repair, projection, or event mutation.
+
 Derive repository, path, graph, and validation scope from the unit. Keep
 proposals, claims, validation results, acceptance, publication planning, and
 external execution as separate facts. A passing check is evidence, not
