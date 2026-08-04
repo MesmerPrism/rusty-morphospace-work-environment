@@ -227,9 +227,12 @@ single-PR path.
   `<old-unit>-superseded-by-<current-unit>` state-transition event whose
   replacement is the sole current unit; never rewrite the historical unit or
   event prefix to make the workspace look clean. Before publishing a
-  transition intent, the generic ledger must bind pre-state current unit and
-  event target to the active/validating old unit, and bind target-state current
-  unit plus target-unit identity to the distinct replacement.
+  transition intent, the generic ledger must derive the exact event ID from
+  independently bound event-target old unit and target-state current unit,
+  reject reserved-delimiter ambiguity, and publish a v2 intent binding the
+  exact pre-state plus the active/validating old-unit path and document by
+  canonical hashes. Legacy supersession intents fail closed; completion
+  authenticates the binding before applied-target recovery or torn-tail repair.
 - Cross-repository implementation and module extraction use an exact source
   composition lock; use detached clean materializations when working copies
   are changing in parallel. Observed, claimed, validated, and accepted

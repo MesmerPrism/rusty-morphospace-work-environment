@@ -203,9 +203,12 @@ unit, append the exact
 `<old-unit>-superseded-by-<current-unit>` state-transition event and keep the
 replacement as the sole current unit; do not rewrite the old unit or event
 prefix. The transactional ledger rejects the transition before intent
-publication unless pre-state `current_unit` and event `unit_id` identify the
-old active/validating unit while target-state `current_unit` and the target
-unit document identify the distinct replacement.
+publication unless event `unit_id` independently identifies the old
+active/validating unit, target-state `current_unit` and the target unit identify
+the distinct replacement, and the event ID is their exact unambiguous
+rendering. A supersession uses a v2 intent that hash-binds the original state
+document and exact old-unit path/document. Completion rejects legacy or damaged
+bindings before applied-target recovery, torn-tail repair, or projection writes.
 
 The automation CLI inspects or plans by default. `-Execute` is required for a
 workspace-state transition; it still does not run Git push, force-push,

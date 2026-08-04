@@ -80,10 +80,12 @@ closed feature lock, and report nearby-but-absent features as inert rather than
 silently adding them to the project.
 
 Graph an `<old>-superseded-by-<new>` transition as one directed authority edge:
-pre-state current unit and event target remain the active/validating old unit,
-while target-state current unit and target-unit identity become the distinct
-new unit. A target-as-event identity or any mismatched endpoint is a rejection
-edge, not a repairable alternate history.
+event target independently names the active/validating old unit and target
+state independently names the distinct new unit; the event ID is only their
+exact unambiguous rendering. Attach the authenticated pre-state and exact
+old-unit path/document hashes to the edge. A target-as-event identity, legacy
+unbound intent, delimiter ambiguity, or endpoint drift is a rejection edge,
+not a repairable alternate history.
 
 For particle extraction graphs, report owner surfaces separately: Matter
 simulation/contracts, Lattice relations, Optics appearance/projection, Quest

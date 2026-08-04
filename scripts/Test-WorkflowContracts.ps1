@@ -834,16 +834,34 @@ function Test-ProjectBundle {
     # A corrective unit may supersede an immutable historical active/validating
     # unit without rewriting that unit artifact or its earlier event prefix.
     # The additive state-transition event is the projection override and must
-    # use the exact `<old-unit>-superseded-by-<current-unit>` identity.
+    # render the independently bound event.unit_id and replacement unit as the
+    # exact `<old-unit>-superseded-by-<current-unit>` identity. Never infer the
+    # old endpoint with a greedy delimiter split.
     $supersededInFlightIds = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $supersessionDelimiter = '-superseded-by-'
     foreach ($event in $events) {
         $eventId = [string]$event.event_id
-        $match = [regex]::Match($eventId, '^(?<old>[a-z0-9][a-z0-9-]{1,127})-superseded-by-(?<current>[a-z0-9][a-z0-9-]{1,127})$')
-        if (-not $match.Success) { continue }
-        $oldId = $match.Groups['old'].Value
-        $currentId = $match.Groups['current'].Value
+        $firstDelimiter = $eventId.IndexOf($supersessionDelimiter, [StringComparison]::Ordinal)
+        if ($firstDelimiter -lt 0) { continue }
+        $hasOneDelimiter = $firstDelimiter -eq $eventId.LastIndexOf($supersessionDelimiter, [StringComparison]::Ordinal)
+        Assert-Contract $hasOneDelimiter "$Context supersession event '$eventId' contains an ambiguous repeated delimiter."
+        if (-not $hasOneDelimiter) { continue }
+        $oldId = [string]$event.unit_id
+        $oldEndpointValid = $oldId -match '^[a-z0-9][a-z0-9-]{1,127}$' -and -not $oldId.Contains($supersessionDelimiter, [StringComparison]::Ordinal)
+        Assert-Contract $oldEndpointValid "$Context supersession event '$eventId' lacks a portable independently bound old unit or uses the reserved delimiter inside it."
+        if (-not $oldEndpointValid) { continue }
+        $replacementCandidates = @($unitMap.Keys | Where-Object {
+            $candidateId = [string]$_
+            $candidateId -cne $oldId -and
+            $candidateId -match '^[a-z0-9][a-z0-9-]{1,127}$' -and
+            -not $candidateId.Contains($supersessionDelimiter, [StringComparison]::Ordinal) -and
+            $eventId -ceq "$oldId$supersessionDelimiter$candidateId"
+        })
+        Assert-Contract ($replacementCandidates.Count -eq 1) "$Context supersession event '$eventId' does not exactly bind event.unit_id '$oldId' to one independently identified replacement unit document."
+        if ($replacementCandidates.Count -ne 1) { continue }
+        $currentId = [string]$replacementCandidates[0]
+        Assert-Contract ($eventId -ceq "$oldId$supersessionDelimiter$currentId") "$Context supersession event '$eventId' is not the exact old-to-replacement rendering."
         Assert-Contract ($event.event_type -eq "state-transition") "$Context supersession event '$eventId' must be a state transition."
-        Assert-Contract ([string]$event.unit_id -eq $oldId) "$Context supersession event '$eventId' must target old unit '$oldId'."
         Assert-Contract ($unitMap.ContainsKey($oldId)) "$Context supersession event '$eventId' references missing old unit '$oldId'."
         Assert-Contract ($unitMap.ContainsKey($currentId)) "$Context supersession event '$eventId' references missing current unit '$currentId'."
         if ($unitMap.ContainsKey($oldId)) {
@@ -851,6 +869,9 @@ function Test-ProjectBundle {
         }
         if ($unitMap.ContainsKey($currentId)) {
             Assert-Contract (@("active", "validating", "accepted") -contains [string]$unitMap[$currentId].status) "$Context supersession replacement '$currentId' is not current or accepted."
+        }
+        if ([string]$state.last_event_id -ceq $eventId) {
+            Assert-Contract ([string]$state.current_unit -ceq $currentId) "$Context supersession tail '$eventId' does not project replacement '$currentId' as current_unit."
         }
         [void]$supersededInFlightIds.Add($oldId)
     }
