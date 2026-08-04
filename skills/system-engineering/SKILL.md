@@ -89,6 +89,11 @@ from the unit, keep acceptance separate from a pass receipt, preserve blockers
 through resume/recovery, and report dirty, detached, ahead/behind, or divergent
 Git states without rewriting them. Push preparation records exact source-first,
 planning-last revisions but does not commit, push, or force-push.
+An additive `<old>-superseded-by-<new>` edge must be validated atomically before
+intent publication: pre-state current unit, event target, and retained
+active/validating old-unit identity agree; target-state current unit, unit-path
+identity, and target unit agree on the distinct replacement. Completion
+rechecks the edge before repair or projection mutation.
 An exact still-unexecuted prepared bundle may be retired only after complete
 stable clean observations, fresh remote readback, and exclusion of recognized
 execution/publication evidence. If all distinct prepared revisions are already

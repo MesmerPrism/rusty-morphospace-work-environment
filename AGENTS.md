@@ -226,7 +226,10 @@ single-PR path.
   projection only by an additive
   `<old-unit>-superseded-by-<current-unit>` state-transition event whose
   replacement is the sole current unit; never rewrite the historical unit or
-  event prefix to make the workspace look clean.
+  event prefix to make the workspace look clean. Before publishing a
+  transition intent, the generic ledger must bind pre-state current unit and
+  event target to the active/validating old unit, and bind target-state current
+  unit plus target-unit identity to the distinct replacement.
 - Cross-repository implementation and module extraction use an exact source
   composition lock; use detached clean materializations when working copies
   are changing in parallel. Observed, claimed, validated, and accepted

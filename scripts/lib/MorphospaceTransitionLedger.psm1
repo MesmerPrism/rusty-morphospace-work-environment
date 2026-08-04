@@ -155,6 +155,85 @@ function Repair-MorphospaceLedgerTornAppend {
     try{$stream.SetLength($preLength);$stream.Flush($true)}finally{$stream.Dispose()}
     return $true
 }
+function Get-MorphospaceSupersessionIdentity {
+    param([object]$Event)
+    if($null-eq$Event-or$null-eq$Event.PSObject.Properties['event_id']){return $null}
+    $match=[regex]::Match(
+        [string]$Event.event_id,
+        '^(?<old>[a-z0-9][a-z0-9-]{1,127})-superseded-by-(?<current>[a-z0-9][a-z0-9-]{1,127})$'
+    )
+    if(-not$match.Success){return $null}
+    $oldId=[string]$match.Groups['old'].Value
+    $currentId=[string]$match.Groups['current'].Value
+    if($oldId-ceq$currentId){throw 'Transition ledger supersession old and replacement unit identities must differ.'}
+    return [pscustomobject]@{old_unit_id=$oldId;current_unit_id=$currentId}
+}
+function Assert-MorphospaceSupersessionTarget {
+    param([object]$Event,[object]$TargetState,[object]$TargetUnit)
+    $identity=Get-MorphospaceSupersessionIdentity $Event
+    if($null-eq$identity){return $null}
+    if([string]$Event.event_type-cne'state-transition'){
+        throw 'Transition ledger supersession event must be a state transition.'
+    }
+    if([string]$Event.unit_id-cne[string]$identity.old_unit_id){
+        throw "Transition ledger supersession event must target old unit '$([string]$identity.old_unit_id)'."
+    }
+    if($null-eq$TargetState.PSObject.Properties['current_unit']-or
+       [string]$TargetState.current_unit-cne[string]$identity.current_unit_id){
+        throw "Transition ledger supersession target state must make '$([string]$identity.current_unit_id)' the current unit."
+    }
+    if($null-eq$TargetUnit.PSObject.Properties['unit_id']-or
+       [string]$TargetUnit.unit_id-cne[string]$identity.current_unit_id){
+        throw "Transition ledger supersession target unit must be replacement '$([string]$identity.current_unit_id)'."
+    }
+    return $identity
+}
+function Get-MorphospaceSupersededUnitDocument {
+    param([string]$Workspace,[string]$UnitPath,[string]$OldUnitId)
+    $unitAbsolute=Resolve-MorphospaceWorkspacePath -WorkspaceRoot $Workspace -RelativePath $UnitPath -RequireLeaf
+    $unitDirectory=[IO.Path]::GetDirectoryName($unitAbsolute)
+    $matches=@()
+    foreach($candidatePath in @([IO.Directory]::EnumerateFiles($unitDirectory,'*.json',[IO.SearchOption]::TopDirectoryOnly))){
+        $candidate=Read-MorphospaceProtocolJson -Path $candidatePath
+        if($null-ne$candidate.PSObject.Properties['unit_id']-and[string]$candidate.unit_id-ceq$OldUnitId){
+            $matches+=,$candidate
+        }
+    }
+    if($matches.Count-ne1){
+        throw "Transition ledger supersession requires exactly one old unit document for '$OldUnitId'."
+    }
+    return $matches[0]
+}
+function Assert-MorphospaceSupersessionWorkspacePreflight {
+    param(
+        [string]$Workspace,
+        [string]$UnitPath,
+        [object]$CurrentState,
+        [object]$CurrentTargetUnit,
+        [object]$TargetState,
+        [object]$TargetUnit,
+        [object]$Event,
+        [switch]$AllowAppliedTarget
+    )
+    $identity=Assert-MorphospaceSupersessionTarget -Event $Event -TargetState $TargetState -TargetUnit $TargetUnit
+    if($null-eq$identity){return}
+    if($null-eq$CurrentState.PSObject.Properties['current_unit']){
+        throw 'Transition ledger supersession requires a current old unit in workspace state.'
+    }
+    $observedCurrent=[string]$CurrentState.current_unit
+    if($observedCurrent-cne[string]$identity.old_unit_id-and
+       (-not$AllowAppliedTarget-or$observedCurrent-cne[string]$identity.current_unit_id)){
+        throw "Transition ledger supersession current unit must be old unit '$([string]$identity.old_unit_id)'."
+    }
+    if($null-eq$CurrentTargetUnit.PSObject.Properties['unit_id']-or
+       [string]$CurrentTargetUnit.unit_id-cne[string]$identity.current_unit_id){
+        throw "Transition ledger supersession unit path must identify replacement '$([string]$identity.current_unit_id)'."
+    }
+    $oldUnit=Get-MorphospaceSupersededUnitDocument -Workspace $Workspace -UnitPath $UnitPath -OldUnitId ([string]$identity.old_unit_id)
+    if(@('active','validating')-cnotcontains[string]$oldUnit.status){
+        throw "Transition ledger supersession old unit '$([string]$identity.old_unit_id)' must be active or validating."
+    }
+}
 function Assert-MorphospaceLedgerIntent {
     param([object]$Intent,[string]$TransactionId)
     Assert-MorphospaceExactPropertySet $Intent @('schema','transaction_id','created_at','state','unit','events','pre','target','expected','artifacts','event','status') @() 'Transition ledger intent'
@@ -201,7 +280,8 @@ function Assert-MorphospaceLedgerIntent {
             if([string]$document.last_event_id-cne[string]$Intent.event.event_id){throw "Transition ledger target $targetName last-event identity differs from its event."}
         }
     }
-    if($Intent.target.unit.document.PSObject.Properties.Name-contains'unit_id'){
+    $supersession=Assert-MorphospaceSupersessionTarget -Event $Intent.event -TargetState $Intent.target.state.document -TargetUnit $Intent.target.unit.document
+    if($null-eq$supersession-and$Intent.target.unit.document.PSObject.Properties.Name-contains'unit_id'){
         if([string]$Intent.target.unit.document.unit_id-cne[string]$Intent.event.unit_id){throw 'Transition ledger target unit identity differs from its event.'}
     }
     $artifactTargets=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
@@ -352,6 +432,15 @@ function Complete-MorphospaceTransitionLedger {
             if($allowedStateHashes-notcontains$currentStateHash){throw "Transition $TransactionId failed expected pre-state CAS."}
             if($allowedUnitHashes-notcontains$currentUnitHash){throw "Transition $TransactionId failed expected pre-unit CAS."}
         }
+        Assert-MorphospaceSupersessionWorkspacePreflight `
+            -Workspace $workspace `
+            -UnitPath ([string]$intent.unit.path) `
+            -CurrentState $currentState `
+            -CurrentTargetUnit $currentUnit `
+            -TargetState $intent.target.state.document `
+            -TargetUnit $intent.target.unit.document `
+            -Event $intent.event `
+            -AllowAppliedTarget
         if($Repair){[void](Repair-MorphospaceLedgerTornAppend $eventsAbsolute $intent)}
         [void](Assert-MorphospaceLedgerEventPlacement $eventsAbsolute $intent)
         Install-MorphospaceLedgerArtifacts $workspace $TransactionId $intent
@@ -414,6 +503,14 @@ function Start-MorphospaceTransitionLedger {
             if([string]$expectation.expected-cnotmatch'^[0-9a-f]{64}$'){throw "Expected $([string]$expectation.name) SHA-256 is not canonical lowercase hex."}
             if([string]$expectation.expected-cne[string]$expectation.actual){throw "Transition $TransactionId expected $([string]$expectation.name) SHA-256 does not match the mutex-protected current document."}
         }
+        Assert-MorphospaceSupersessionWorkspacePreflight `
+            -Workspace $workspace `
+            -UnitPath $UnitPath `
+            -CurrentState $state `
+            -CurrentTargetUnit $unit `
+            -TargetState $TargetState `
+            -TargetUnit $TargetUnit `
+            -Event $Event
         $eventsAbsolute=Resolve-MorphospaceWorkspacePath $workspace $EventsPath -RequireLeaf
         $eventSnapshot=Get-MorphospaceLedgerSnapshot $eventsAbsolute
         if($eventSnapshot.length-gt0-and$eventSnapshot.bytes[$eventSnapshot.length-1]-ne0x0a){

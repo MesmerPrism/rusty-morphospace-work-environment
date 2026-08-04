@@ -79,6 +79,12 @@ authority surface. Check that source edges into optional modules agree with the
 closed feature lock, and report nearby-but-absent features as inert rather than
 silently adding them to the project.
 
+Graph an `<old>-superseded-by-<new>` transition as one directed authority edge:
+pre-state current unit and event target remain the active/validating old unit,
+while target-state current unit and target-unit identity become the distinct
+new unit. A target-as-event identity or any mismatched endpoint is a rejection
+edge, not a repairable alternate history.
+
 For particle extraction graphs, report owner surfaces separately: Matter
 simulation/contracts, Lattice relations, Optics appearance/projection, Quest
 platform/render adapters, and application composition. Search those owners for

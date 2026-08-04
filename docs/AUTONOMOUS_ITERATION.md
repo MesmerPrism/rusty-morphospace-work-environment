@@ -99,6 +99,13 @@ Append one `state-transition` whose ID is exactly
 make the replacement the sole `current_unit`. Contract validation treats the
 old artifact as historical only after that exact, internally consistent event;
 missing units, a wrong event type, or a non-current replacement fails closed.
+The generic transition ledger enforces the same edge under its workspace
+mutex before staging artifacts or publishing an intent: pre-state
+`current_unit` and event `unit_id` must equal the old unit, the retained old
+unit must still be `active` or `validating`, and target-state `current_unit`,
+the unit-path document, and the target unit must equal the distinct
+replacement. Completion rechecks these bindings before torn-tail repair or
+projection mutation.
 
 `iteration-events.jsonl` is append-only. Add a compact record after a state
 transition, contract decision, extraction, validation result, commit, push,

@@ -62,6 +62,12 @@ planning non-mutating; require explicit execution for an owned state
 transition. Use the workflow owner's actions instead of hand-editing status,
 compact state, or event history.
 
+For an exact `<old>-superseded-by-<new>` event, require the ledger preflight to
+bind pre-state `current_unit` and event `unit_id` to the active/validating old
+unit, while target-state `current_unit`, the unit-path document, and target
+unit bind the distinct new unit. Reject any mismatch before intent, artifact,
+projection, or event mutation.
+
 Derive repository, path, graph, and validation scope from the unit. Keep
 proposals, claims, validation results, acceptance, publication planning, and
 external execution as separate facts. A passing check is evidence, not

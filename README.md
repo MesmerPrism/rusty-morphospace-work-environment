@@ -202,7 +202,10 @@ If a corrective unit supersedes an immutable historical active/validating
 unit, append the exact
 `<old-unit>-superseded-by-<current-unit>` state-transition event and keep the
 replacement as the sole current unit; do not rewrite the old unit or event
-prefix.
+prefix. The transactional ledger rejects the transition before intent
+publication unless pre-state `current_unit` and event `unit_id` identify the
+old active/validating unit while target-state `current_unit` and the target
+unit document identify the distinct replacement.
 
 The automation CLI inspects or plans by default. `-Execute` is required for a
 workspace-state transition; it still does not run Git push, force-push,

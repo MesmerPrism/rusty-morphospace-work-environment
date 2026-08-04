@@ -70,6 +70,121 @@ function Initialize-LedgerFixture {
     )
 }
 
+function Initialize-SupersessionLedgerFixture {
+    param(
+        [string]$WorkspaceRoot,
+        [string]$OldUnitId,
+        [string]$NewUnitId,
+        [string]$OldStatus = 'active',
+        [string]$CurrentUnitId = $OldUnitId
+    )
+    $eventId = "$OldUnitId-superseded-by-$NewUnitId"
+    $state = [pscustomobject][ordered]@{
+        schema = 'test'
+        project_id = 'ledger-test'
+        current_unit = $CurrentUnitId
+        last_event_id = $null
+    }
+    $oldUnit = [pscustomobject][ordered]@{
+        schema = 'test'
+        project_id = 'ledger-test'
+        unit_id = $OldUnitId
+        status = $OldStatus
+    }
+    $newUnit = [pscustomobject][ordered]@{
+        schema = 'test'
+        project_id = 'ledger-test'
+        unit_id = $NewUnitId
+        status = 'ready'
+    }
+    $targetState = [pscustomobject][ordered]@{
+        schema = 'test'
+        project_id = 'ledger-test'
+        current_unit = $NewUnitId
+        last_event_id = $eventId
+    }
+    $targetUnit = [pscustomobject][ordered]@{
+        schema = 'test'
+        project_id = 'ledger-test'
+        unit_id = $NewUnitId
+        status = 'active'
+    }
+    $event = New-LedgerEvent $eventId 1 'Superseded one immutable in-flight unit with the sole current replacement.'
+    $event.unit_id = $OldUnitId
+    [IO.Directory]::CreateDirectory((Join-Path $WorkspaceRoot 'receipts')) | Out-Null
+    Write-Json (Join-Path $WorkspaceRoot 'workspace.state.json') $state
+    $oldPath = "iteration-units/$OldUnitId.json"
+    $newPath = "iteration-units/$NewUnitId.json"
+    Write-Json (Join-Path $WorkspaceRoot $oldPath) $oldUnit
+    Write-Json (Join-Path $WorkspaceRoot $newPath) $newUnit
+    [IO.File]::WriteAllText(
+        (Join-Path $WorkspaceRoot 'iteration-events.jsonl'),
+        '',
+        [Text.UTF8Encoding]::new($false)
+    )
+    [pscustomobject]@{
+        workspace = $WorkspaceRoot
+        event_id = $eventId
+        transaction_id = "$eventId-transition"
+        state = $state
+        old_unit = $oldUnit
+        new_unit = $newUnit
+        target_state = $targetState
+        target_unit = $targetUnit
+        event = $event
+        old_unit_path = $oldPath
+        new_unit_path = $newPath
+    }
+}
+
+function Assert-SupersessionRejectedAtomically {
+    param(
+        [object]$Fixture,
+        [object]$TargetState = $Fixture.target_state,
+        [object]$TargetUnit = $Fixture.target_unit,
+        [object]$Event = $Fixture.event,
+        [string]$ExpectedMessage = '*supersession*'
+    )
+    $paths = @(
+        'workspace.state.json',
+        $Fixture.old_unit_path,
+        $Fixture.new_unit_path,
+        'iteration-events.jsonl'
+    )
+    $before = @{}
+    foreach ($path in $paths) {
+        $before[$path] = [Convert]::ToHexString([IO.File]::ReadAllBytes((Join-Path $Fixture.workspace $path)))
+    }
+    $rejected = $false
+    $message = ''
+    try {
+        Start-MorphospaceTransitionLedger `
+            -WorkspaceRoot $Fixture.workspace `
+            -TransactionId "$([string]$Event.event_id)-transition" `
+            -StatePath 'workspace.state.json' `
+            -UnitPath $Fixture.new_unit_path `
+            -EventsPath 'iteration-events.jsonl' `
+            -TargetState $TargetState `
+            -TargetUnit $TargetUnit `
+            -Event $Event `
+            -ExpectedPreStateSha256 (Get-LedgerDocumentHash $Fixture.state) `
+            -ExpectedPreUnitSha256 (Get-LedgerDocumentHash $Fixture.new_unit) | Out-Null
+    } catch {
+        $rejected = $true
+        $message = $_.Exception.Message
+    }
+    Assert-Ledger ($rejected -and $message -like $ExpectedMessage) "supersession damage was not rejected with '$ExpectedMessage': $message"
+    foreach ($path in $paths) {
+        $after = [Convert]::ToHexString([IO.File]::ReadAllBytes((Join-Path $Fixture.workspace $path)))
+        Assert-Ledger ($after -ceq $before[$path]) "supersession rejection changed '$path'"
+    }
+    $transactions = Join-Path $Fixture.workspace 'receipts\transactions'
+    Assert-Ledger (
+        -not [IO.Directory]::Exists($transactions) -or
+        @([IO.Directory]::EnumerateFileSystemEntries($transactions)).Count -eq 0
+    ) 'supersession rejection published a transaction artifact'
+}
+
 function Invoke-ConcurrentLedgerDriftTest {
     param(
         [string]$WorkspaceRoot,
@@ -184,6 +299,108 @@ try {
     Assert-Ledger ((Get-Content (Join-Path $workspace 'workspace.state.json') -Raw | ConvertFrom-Json).stage -eq 'after') 'repair did not preserve target state'
     Assert-Ledger (@(Get-Content (Join-Path $workspace 'iteration-events.jsonl') | Where-Object { $_ }).Count -eq 1) 'repair event count is not one'
     Assert-Ledger ((Complete-MorphospaceTransitionLedger -WorkspaceRoot $workspace -TransactionId 'unit-accept-0001-transition').status -eq 'already-committed') 'completion was not idempotent'
+
+    $unit036 = 'historical-active-unit-036'
+    $unit037 = 'corrective-current-unit-037'
+
+    $targetIdentityWorkspace = Join-Path $workspace 'supersession-target-as-event-identity'
+    $targetIdentityFixture = Initialize-SupersessionLedgerFixture $targetIdentityWorkspace $unit036 $unit037
+    $targetIdentityFixture.event.unit_id = $unit037
+    Assert-SupersessionRejectedAtomically `
+        -Fixture $targetIdentityFixture `
+        -ExpectedMessage "*must target old unit '$unit036'*"
+
+    $wrongOldWorkspace = Join-Path $workspace 'supersession-wrong-old'
+    $wrongOldFixture = Initialize-SupersessionLedgerFixture $wrongOldWorkspace $unit036 $unit037
+    $wrongOldId = 'wrong-historical-unit-036'
+    $wrongOldEvent = New-LedgerEvent "$wrongOldId-superseded-by-$unit037" 1
+    $wrongOldEvent.unit_id = $wrongOldId
+    $wrongOldTargetState = [pscustomobject][ordered]@{
+        schema = 'test'; project_id = 'ledger-test'; current_unit = $unit037
+        last_event_id = [string]$wrongOldEvent.event_id
+    }
+    Assert-SupersessionRejectedAtomically `
+        -Fixture $wrongOldFixture `
+        -TargetState $wrongOldTargetState `
+        -Event $wrongOldEvent `
+        -ExpectedMessage "*current unit must be old unit '$wrongOldId'*"
+
+    $wrongNewWorkspace = Join-Path $workspace 'supersession-wrong-new'
+    $wrongNewFixture = Initialize-SupersessionLedgerFixture $wrongNewWorkspace $unit036 $unit037
+    $wrongNewId = 'wrong-corrective-unit-037'
+    $wrongNewEvent = New-LedgerEvent "$unit036-superseded-by-$wrongNewId" 1
+    $wrongNewEvent.unit_id = $unit036
+    Assert-SupersessionRejectedAtomically `
+        -Fixture $wrongNewFixture `
+        -Event $wrongNewEvent `
+        -ExpectedMessage "*target state must make '$wrongNewId'*"
+
+    $inactiveOldWorkspace = Join-Path $workspace 'supersession-inactive-old'
+    $inactiveOldFixture = Initialize-SupersessionLedgerFixture $inactiveOldWorkspace $unit036 $unit037 -OldStatus accepted
+    Assert-SupersessionRejectedAtomically `
+        -Fixture $inactiveOldFixture `
+        -ExpectedMessage "*old unit '$unit036' must be active or validating*"
+
+    $wrongTargetWorkspace = Join-Path $workspace 'supersession-wrong-target'
+    $wrongTargetFixture = Initialize-SupersessionLedgerFixture $wrongTargetWorkspace $unit036 $unit037
+    $wrongTargetState = [pscustomobject][ordered]@{
+        schema = 'test'; project_id = 'ledger-test'; current_unit = $unit036
+        last_event_id = [string]$wrongTargetFixture.event_id
+    }
+    Assert-SupersessionRejectedAtomically `
+        -Fixture $wrongTargetFixture `
+        -TargetState $wrongTargetState `
+        -ExpectedMessage "*target state must make '$unit037'*"
+
+    $wrongCurrentWorkspace = Join-Path $workspace 'supersession-wrong-current'
+    $wrongCurrentFixture = Initialize-SupersessionLedgerFixture `
+        $wrongCurrentWorkspace $unit036 $unit037 `
+        -CurrentUnitId 'unrelated-current-unit'
+    Assert-SupersessionRejectedAtomically `
+        -Fixture $wrongCurrentFixture `
+        -ExpectedMessage "*current unit must be old unit '$unit036'*"
+
+    $validSupersessionWorkspace = Join-Path $workspace 'supersession-valid-start-complete'
+    $validSupersession = Initialize-SupersessionLedgerFixture $validSupersessionWorkspace $unit036 $unit037 -OldStatus validating
+    $validOldBytes = [Convert]::ToHexString([IO.File]::ReadAllBytes((Join-Path $validSupersessionWorkspace $validSupersession.old_unit_path)))
+    $validInterrupted = $false
+    try {
+        Start-MorphospaceTransitionLedger `
+            -WorkspaceRoot $validSupersessionWorkspace `
+            -TransactionId $validSupersession.transaction_id `
+            -StatePath 'workspace.state.json' `
+            -UnitPath $validSupersession.new_unit_path `
+            -EventsPath 'iteration-events.jsonl' `
+            -TargetState $validSupersession.target_state `
+            -TargetUnit $validSupersession.target_unit `
+            -Event $validSupersession.event `
+            -ExpectedPreStateSha256 (Get-LedgerDocumentHash $validSupersession.state) `
+            -ExpectedPreUnitSha256 (Get-LedgerDocumentHash $validSupersession.new_unit) `
+            -FaultAfter after-intent | Out-Null
+    } catch {
+        $validInterrupted = $_.Exception.Message -like '*Injected interruption after intent publication*'
+    }
+    Assert-Ledger $validInterrupted 'valid supersession start did not publish exactly one repairable intent'
+    Assert-Ledger (
+        [IO.File]::Exists((Join-Path $validSupersessionWorkspace "receipts\transactions\$($validSupersession.transaction_id).intent.json")) -and
+        @(Get-Content (Join-Path $validSupersessionWorkspace 'iteration-events.jsonl') | Where-Object { $_ }).Count -eq 0
+    ) 'valid supersession start changed the event tail before completion'
+    $validResult = Complete-MorphospaceTransitionLedger `
+        -WorkspaceRoot $validSupersessionWorkspace `
+        -TransactionId $validSupersession.transaction_id `
+        -Repair
+    $validEvent = Get-Content (Join-Path $validSupersessionWorkspace 'iteration-events.jsonl') | ConvertFrom-Json
+    $validState = Get-Content -Raw (Join-Path $validSupersessionWorkspace 'workspace.state.json') | ConvertFrom-Json
+    $validNewUnit = Get-Content -Raw (Join-Path $validSupersessionWorkspace $validSupersession.new_unit_path) | ConvertFrom-Json
+    Assert-Ledger (
+        $validResult.status -eq 'committed' -and
+        [string]$validState.current_unit -ceq $unit037 -and
+        [string]$validNewUnit.unit_id -ceq $unit037 -and
+        [string]$validNewUnit.status -ceq 'active' -and
+        [string]$validEvent.unit_id -ceq $unit036 -and
+        [string]$validEvent.event_id -ceq "$unit036-superseded-by-$unit037" -and
+        [Convert]::ToHexString([IO.File]::ReadAllBytes((Join-Path $validSupersessionWorkspace $validSupersession.old_unit_path))) -ceq $validOldBytes
+    ) 'valid supersession did not commit one exact old-to-replacement edge while preserving the old unit'
 
     $counterfeitWorkspace=Join-Path $workspace 'counterfeit-event'
     Initialize-LedgerFixture $counterfeitWorkspace $state $unit
