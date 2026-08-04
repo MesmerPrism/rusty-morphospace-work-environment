@@ -1,0 +1,122 @@
+{
+  "schema": "rusty.morphospace.workflow.external_validation_authority_policy.v1",
+  "policy_id": "rusty-morphospace-work-environment-validation-authority-v1",
+  "repository": "MesmerPrism/rusty-morphospace-work-environment",
+  "mandatory_protected_paths": [
+    ".github/workflows/validate.yml",
+    "config/external-validation-authority.json",
+    "schemas/external-validation-authority-assessment-v1.schema.json",
+    "schemas/external-validation-authority-policy-v1.schema.json",
+    "scripts/Test-ExternalValidationAuthority.ps1",
+    "scripts/Test-ExternalValidationAuthoritySelfTest.ps1"
+  ],
+  "protected_rules": [
+    {
+      "rule_id": "github-workflows",
+      "match": "prefix",
+      "path": ".github/"
+    },
+    {
+      "rule_id": "validation-schemas",
+      "match": "prefix",
+      "path": "schemas/"
+    },
+    {
+      "rule_id": "validation-scripts",
+      "match": "prefix",
+      "path": "scripts/"
+    }
+  ],
+  "approved_change_sets": [
+    {
+      "approval_id": "transition-ledger-supersession-semantics-20260804",
+      "required_ancestor": "82a0f22eacbf7adf8ad9e1fc2f300777f1a8ea3a",
+      "changed_paths": [
+        "AGENTS.md",
+        "README.md",
+        "docs/AUTONOMOUS_ITERATION.md",
+        "scripts/Test-TransitionLedger.ps1",
+        "scripts/Test-WorkUnitAutomation.ps1",
+        "scripts/Test-WorkflowContracts.ps1",
+        "scripts/lib/MorphospaceTransitionLedger.psm1",
+        "skills/rust-work-graph/SKILL.md",
+        "skills/rusty-morphospace/references/project-workflow.md",
+        "skills/system-engineering/SKILL.md"
+      ],
+      "artifacts": [
+        {
+          "path": "AGENTS.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 24945,
+          "sha256": "836b9ce41b95e7423408f3cf299b701dd5c75938c9adc96cd067f3eccb234e3a"
+        },
+        {
+          "path": "README.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 20078,
+          "sha256": "c267b6e9329d5a2d8cbab3521951d74bef81bb6c0009d544301131052d10d381"
+        },
+        {
+          "path": "docs/AUTONOMOUS_ITERATION.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 23804,
+          "sha256": "944d8fba7c02f5c72042632f2831d4e57c1f458831f476f05ac9cc9c75dab37c"
+        },
+        {
+          "path": "scripts/Test-TransitionLedger.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 75895,
+          "sha256": "ab961bbe8c03baf91e1d662cc68206a2ec7f449f1d4e7f7a3a19a6dc0be67b59"
+        },
+        {
+          "path": "scripts/Test-WorkUnitAutomation.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 149710,
+          "sha256": "913b91c6ce627d2ffb9b19fcba1ba1428671e3b82c42031c6280d992dcc087bb"
+        },
+        {
+          "path": "scripts/Test-WorkflowContracts.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 99599,
+          "sha256": "2af949aacf9aba1a3a2b4c1789ee9e81d4c0007653e72f49e1fc331dde05a46b"
+        },
+        {
+          "path": "scripts/lib/MorphospaceTransitionLedger.psm1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 48937,
+          "sha256": "54e6ea7996d255d2537aaf45feb721514fe0ae2a635c9a145e60394cdbbda419"
+        },
+        {
+          "path": "skills/rust-work-graph/SKILL.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 12776,
+          "sha256": "e4638d102c150aaa40ebb093ec6d3f54b92deb198827de0eff14d6fc9623e53f"
+        },
+        {
+          "path": "skills/rusty-morphospace/references/project-workflow.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 6445,
+          "sha256": "40d77e7ea5eb4a5816059ba184eb7a1f25f0f39d1e401f6c0bd7bd0ef3246ceb"
+        },
+        {
+          "path": "skills/system-engineering/SKILL.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 22076,
+          "sha256": "17b206393a9047c0c0db7bb9eeb6000bb16eaaf9f9b4799b034aeea75d551f8b"
+        }
+      ],
+      "status": "approved"
+    }
+  ],
+  "status": "active"
+}
