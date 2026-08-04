@@ -32,6 +32,17 @@ receipt binds:
 The builder derives both semantic endpoints. It exposes no old-unit,
 replacement-unit, or original-event override.
 
+The retained active units are historical byte evidence. Their nested
+instruction-surface vocabulary may require an ordinary project-owned
+historical adoption under current `WorkflowContracts`; this correction binds
+their stable v1 identity/project/status envelope rather than pretending their
+old bytes satisfy today's complete nested unit schema. The current replacement
+unit may also contain planning detail added after the malformed transition
+completed. Its current exact bytes are independently bound and preserved,
+while the immutable original intent/completion authenticate their own original
+target-unit bytes. Both must name the same derived replacement project/unit
+and remain `active` or `validating`.
+
 Create an inspected receipt outside the project workspace:
 
 ```powershell
@@ -104,7 +115,8 @@ pwsh -NoProfile -ExecutionPolicy Bypass `
 
 It covers positive execution, non-mutating planning, typed CLI routing,
 no-caller-patch derivation, exact historical-byte preservation,
-last-event-only state change, authenticated WorkflowContracts projection,
+historical unit-schema/current-replacement drift, last-event-only state change,
+authenticated WorkflowContracts projection,
 all four interruption boundaries, forward repair, replay, path confinement,
 CAS drift, damaged retained evidence, damaged pending intent, and forged
 projection rejection.

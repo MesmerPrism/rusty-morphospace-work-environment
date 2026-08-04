@@ -225,6 +225,35 @@ try {
         Invoke-MorphospaceCompletedTransitionSemanticCorrection -WorkspaceRoot $positive.root -CorrectionReceipt $canonicalTarget -OutPath $canonicalTarget | Out-Null
     } 'Installed receipt was accepted as its own inspected input.' '*distinct*'
 
+    # Historical active units may require a project-owned WorkflowContracts
+    # adoption for nested instruction-surface vocabulary, and the current
+    # replacement unit may have accumulated planning detail after the original
+    # completion. The correction binds both exact byte sets without rewriting
+    # either or pretending the current unit equals the intent's old target.
+    $compatibility = New-CorrectionFixture (Join-Path $testRoot 'historical-compatibility\workspace')
+    $compatOld = Read-MorphospaceProtocolJson $compatibility.old_path
+    foreach ($surface in @($compatOld.instruction_surfaces)) { [void]$surface.PSObject.Properties.Remove('skill_id') }
+    Write-CorrectionJson $compatibility.old_path $compatOld
+    $compatIntent = Read-MorphospaceProtocolJson $compatibility.original_intent_path
+    foreach ($surface in @($compatIntent.target.unit.document.instruction_surfaces)) { [void]$surface.PSObject.Properties.Remove('skill_id') }
+    $compatIntent.target.unit.sha256 = Get-MorphospaceCanonicalJsonSha256 $compatIntent.target.unit.document
+    Write-CorrectionJson $compatibility.original_intent_path $compatIntent
+    $compatCompletion = Read-MorphospaceProtocolJson $compatibility.original_completion_path
+    $compatCompletion.intent.sha256 = Get-MorphospaceFileSha256 $compatibility.original_intent_path
+    $compatCompletion.unit_sha256 = [string]$compatIntent.target.unit.sha256
+    Write-CorrectionJson $compatibility.original_completion_path $compatCompletion
+    $compatCurrent = Copy-CorrectionDocument $compatIntent.target.unit.document
+    $compatCurrent.objective = 'Current replacement planning detail added after the malformed transition completed.'
+    Write-CorrectionJson $compatibility.replacement_path $compatCurrent
+    $compatInput = New-CorrectionInput $compatibility (Join-Path $testRoot 'historical-compatibility\inspected.json')
+    $compatReceipt = Read-MorphospaceCompletedTransitionSemanticCorrection $compatInput
+    $compatTarget = Join-Path $compatibility.root ([string]$compatReceipt.document.correction_event.receipt_path -replace '/', '\')
+    $compatDry = Invoke-MorphospaceCompletedTransitionSemanticCorrection -WorkspaceRoot $compatibility.root -CorrectionReceipt $compatInput -OutPath $compatTarget
+    Assert-CorrectionTest (-not $compatDry.executed -and
+        [string]$compatReceipt.document.semantic_correction.effective_old_unit_id -ceq 'unit-old-001' -and
+        [string]$compatReceipt.document.semantic_correction.replacement_unit_id -ceq 'unit-new-001' -and
+        [string]$compatReceipt.document.original_transition.replacement_unit.sha256 -cne [string]$compatIntent.target.unit.sha256) 'Historical unit-schema/current-replacement drift compatibility was not preserved.'
+
     foreach ($fault in @('after-intent','after-artifact','after-projection','after-event')) {
         $fixture = New-CorrectionFixture (Join-Path $testRoot "$fault\workspace")
         $faultInput = New-CorrectionInput $fixture (Join-Path $testRoot "$fault\inspected.json")

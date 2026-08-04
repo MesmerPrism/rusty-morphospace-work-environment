@@ -16,10 +16,6 @@ function Get-CorrectionEventSchemaPath {
     Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'schemas\iteration-event.schema.json'
 }
 
-function Get-CorrectionUnitSchemaPath {
-    Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'schemas\iteration-unit.schema.json'
-}
-
 function Get-CorrectionStateSchemaPath {
     param([object]$Document)
     $name = if ([string]$Document.schema -ceq 'rusty.morphospace.workflow.workspace_state.v2') {
@@ -123,16 +119,23 @@ function Assert-CorrectionDocumentBinding {
         [Parameter(Mandatory = $true)][object]$Binding,
         [Parameter(Mandatory = $true)][string]$ExpectedPath,
         [Parameter(Mandatory = $true)][string]$ExpectedId,
-        [Parameter(Mandatory = $true)][string]$Context,
-        [Parameter(Mandatory = $true)][string]$SchemaPath
+        [Parameter(Mandatory = $true)][string]$Context
     )
     if ([string]$Binding.path -cne $ExpectedPath -or
         [string]$Binding.sha256 -cne (Get-MorphospaceCanonicalJsonSha256 $Binding.document) -or
         [string]$Binding.document.unit_id -cne $ExpectedId) {
         throw "$Context binding is inconsistent."
     }
-    if (-not (Test-Json -Json ($Binding.document | ConvertTo-Json -Depth 64) -SchemaFile $SchemaPath)) {
-        throw "$Context document is schema-invalid."
+    # These units are immutable historical evidence. Their nested instruction
+    # surfaces may require a project-owned historical adoption under today's
+    # WorkflowContracts, so do not reinterpret their exact bytes through the
+    # latest full iteration-unit schema here. Bind the stable unit envelope;
+    # WorkflowContracts validates/adopts the complete document independently
+    # before it considers this correction projection.
+    if ([string]$Binding.document.schema -cne 'rusty.morphospace.workflow.iteration_unit.v1' -or
+        [string]$Binding.document.project_id -cnotmatch '^[a-z0-9][a-z0-9-]{1,127}$' -or
+        [string]$Binding.document.status -notin @('active','validating')) {
+        throw "$Context document lacks the strict historical unit identity/status envelope."
     }
 }
 
@@ -181,9 +184,18 @@ function Assert-CorrectionOriginalIntent {
         }
     }
     if ((Get-MorphospaceCanonicalJsonSha256 $intent.event) -cne (Get-MorphospaceCanonicalJsonSha256 $OriginalEvent) -or
-        (Get-MorphospaceCanonicalJsonSha256 $intent.target.state.document) -cne [string]$Receipt.original_transition.state.sha256 -or
-        (Get-MorphospaceCanonicalJsonSha256 $intent.target.unit.document) -cne [string]$Receipt.original_transition.replacement_unit.sha256) {
-        throw 'Original intent event or target projections differ from retained correction evidence.'
+        (Get-MorphospaceCanonicalJsonSha256 $intent.target.state.document) -cne [string]$Receipt.original_transition.state.sha256) {
+        throw 'Original intent event or target state differs from retained correction evidence.'
+    }
+    # The current active replacement unit may have accumulated reviewed unit
+    # planning detail after the malformed transition completed. Preserve and
+    # CAS-bind its current exact bytes separately; the immutable original
+    # intent/completion continue to authenticate their own target-unit bytes.
+    if ([string]$intent.target.unit.document.schema -cne 'rusty.morphospace.workflow.iteration_unit.v1' -or
+        [string]$intent.target.unit.document.unit_id -cne [string]$Receipt.semantic_correction.replacement_unit_id -or
+        [string]$intent.target.unit.document.project_id -cne [string]$Receipt.project_id -or
+        [string]$intent.target.unit.document.status -notin @('active','validating')) {
+        throw 'Original intent target unit lacks the derived replacement identity/status envelope.'
     }
     Assert-MorphospaceExactPropertySet $intent.expected @('state_sha256','unit_sha256','event_tail_id','events_sha256','events_length') @() 'Original transition expected boundary'
     if ([string]$intent.expected.state_sha256 -cne [string]$intent.pre.state.sha256 -or
@@ -307,8 +319,8 @@ function Assert-CorrectionReceiptCore {
     if (-not (Test-Json -Json ($original.state.document | ConvertTo-Json -Depth 100) -SchemaFile (Get-CorrectionStateSchemaPath $original.state.document))) {
         throw 'Correction retained target state is schema-invalid.'
     }
-    Assert-CorrectionDocumentBinding $original.old_unit "iteration-units/$oldId.json" $oldId 'Correction old unit' (Get-CorrectionUnitSchemaPath)
-    Assert-CorrectionDocumentBinding $original.replacement_unit "iteration-units/$replacementId.json" $replacementId 'Correction replacement unit' (Get-CorrectionUnitSchemaPath)
+    Assert-CorrectionDocumentBinding $original.old_unit "iteration-units/$oldId.json" $oldId 'Correction old unit'
+    Assert-CorrectionDocumentBinding $original.replacement_unit "iteration-units/$replacementId.json" $replacementId 'Correction replacement unit'
     if ([string]$original.old_unit.document.project_id -cne [string]$Receipt.project_id -or
         [string]$original.replacement_unit.document.project_id -cne [string]$Receipt.project_id -or
         @('active','validating') -cnotcontains [string]$original.old_unit.document.status -or
