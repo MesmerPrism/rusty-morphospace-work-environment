@@ -116,6 +116,143 @@
         }
       ],
       "status": "approved"
+    },
+    {
+      "approval_id": "completed-transition-semantic-correction-20260804-v2",
+      "required_ancestor": "cab21376b715ceb0d7c4c71c71c2c05f6d939d4e",
+      "changed_paths": [
+        "AGENTS.md",
+        "README.md",
+        "docs/AUTONOMOUS_ITERATION.md",
+        "docs/COMPLETED_TRANSITION_SEMANTIC_CORRECTION.md",
+        "schemas/completed-transition-semantic-correction-v1.schema.json",
+        "schemas/work-unit-automation-receipt-v2.schema.json",
+        "scripts/CompletedTransitionSemanticCorrection.psm1",
+        "scripts/Invoke-WorkUnitAutomation.ps1",
+        "scripts/New-CompletedTransitionSemanticCorrection.ps1",
+        "scripts/Test-CompletedTransitionSemanticCorrection.ps1",
+        "scripts/Test-WorkEnvironment.ps1",
+        "scripts/Test-WorkflowContracts.ps1",
+        "scripts/lib/MorphospaceCompletedTransitionSemanticCorrection.psm1",
+        "skills/rust-work-graph/SKILL.md",
+        "skills/rusty-morphospace/references/project-workflow.md",
+        "skills/system-engineering/SKILL.md"
+      ],
+      "artifacts": [
+        {
+          "path": "AGENTS.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 25757,
+          "sha256": "277dd06fb41dce4ad1d36688616b83f7d402618e4e755dd8200afb493241bc33"
+        },
+        {
+          "path": "README.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 21018,
+          "sha256": "0e78f39468434962a8a75108a72acb40e73e6db17717b6ba2f05b7569fe4c989"
+        },
+        {
+          "path": "docs/AUTONOMOUS_ITERATION.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 24826,
+          "sha256": "7f61c60b83e82d1f9f6751f616d47fdc8efc295b71d7e156c2ddce7fab427d24"
+        },
+        {
+          "path": "docs/COMPLETED_TRANSITION_SEMANTIC_CORRECTION.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 5951,
+          "sha256": "1c3f54c8897b68fa5936b175ebfe480a889fdb3c939c92e1e92dabfea6d6b6d1"
+        },
+        {
+          "path": "schemas/completed-transition-semantic-correction-v1.schema.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 5388,
+          "sha256": "1bace68fb9249ebd72d06912f617a365c420731471e167f3437156a330890839"
+        },
+        {
+          "path": "schemas/work-unit-automation-receipt-v2.schema.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 2117,
+          "sha256": "6d0d8de6a81b0609200a7d411cc80696de83f2d83bf205ad05fb488feb4f4a5d"
+        },
+        {
+          "path": "scripts/CompletedTransitionSemanticCorrection.psm1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 7032,
+          "sha256": "db0299d7e2b8aa856ac92e6ea98fa9f44449520d2d2548468c87839dfe8f3706"
+        },
+        {
+          "path": "scripts/Invoke-WorkUnitAutomation.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 8254,
+          "sha256": "e97c2196902c3ac3828b2011916384f129e790d29d184c453aac3353310cc42e"
+        },
+        {
+          "path": "scripts/New-CompletedTransitionSemanticCorrection.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 1630,
+          "sha256": "d83502bff8900f2c3d8e1e0f0d78d964c497cf0d8f6e663880829b3159073a37"
+        },
+        {
+          "path": "scripts/Test-CompletedTransitionSemanticCorrection.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 23985,
+          "sha256": "265790d6e03ae80c6c94dd044d5231681da5d3107f404c56c702f0eee74fae44"
+        },
+        {
+          "path": "scripts/Test-WorkEnvironment.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 21722,
+          "sha256": "bc57aac8b1ed7a338747566fbf8b696fc95cc0b627d441bd53cbdd3be6b3c068"
+        },
+        {
+          "path": "scripts/Test-WorkflowContracts.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 103295,
+          "sha256": "01e573ecb0851012c1d2d4523465c75b10ef2e3cf5d49cb93f4f76fb293a3238"
+        },
+        {
+          "path": "scripts/lib/MorphospaceCompletedTransitionSemanticCorrection.psm1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 47335,
+          "sha256": "7a9d449c7ce05b49e158142cfe32f2b6d79a0caca9d85bd0094074b55077b1a6"
+        },
+        {
+          "path": "skills/rust-work-graph/SKILL.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 13327,
+          "sha256": "89496c6fcdcd9c25edccc69915cfb1c9dd7533c01c0422666c114ad41eea5033"
+        },
+        {
+          "path": "skills/rusty-morphospace/references/project-workflow.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 6894,
+          "sha256": "7a3c29f8f9a92cf3b89e6d1936f2e096c6439112d69bb0079064dce6984950c1"
+        },
+        {
+          "path": "skills/system-engineering/SKILL.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 22646,
+          "sha256": "f7e72a536b3f22b59277dd56fc2913e3c9c7c9e8c45a1f10863c4802a3a67b6c"
+        }
+      ],
+      "status": "approved"
     }
   ],
   "status": "active"
