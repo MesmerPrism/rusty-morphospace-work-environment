@@ -270,7 +270,8 @@ successful push is not proof that the whole batch is complete.
 
 `scripts/Invoke-WorkUnitAutomation.ps1` is the portable owner for mechanical
 work-unit transitions and preparation artifacts. It supports `Inspect`,
-`Ready`, `Claim`, `Resume`, `BeginValidation`, `RecordValidation`, `Accept`,
+`Ready`, `Claim`, `Resume`, `CompleteInstructionSurfaces`, `BeginValidation`,
+`RecordValidation`, `Accept`,
 `PreparePush`, `Recover`, `ReconcilePublication`,
 `AdoptPublishedPlanningAuthority`, and the narrow
 `ReconcilePublishedPrerequisiteSuffix` and `ReconcilePlanningSuffixRewrite`
@@ -281,6 +282,10 @@ record in a protocol-v2 workspace.
 The CLI is deliberately narrower than an autonomous coding agent:
 
 - inspection and plans are the default; state changes require `-Execute`;
+- instruction completion is available only to the matching active or
+  validating unit; it
+  requires the exact full set of currently planned surface IDs, a caller-
+  replayed unit hash, and a caller-replayed stable surface-observation hash;
 - it reads Git state but never runs checkout, reset, stash, commit, push, or
   force-push;
 - it never runs validation commands or device commands;
@@ -321,6 +326,46 @@ Keep the local repository map outside a public project instance when its paths
 identify a workstation. Start from `templates/repository-map.example.json`.
 Supply exact revisions through `templates/revision-set.example.json` only
 after the relevant validation has passed.
+
+Complete declared instruction surfaces with a two-phase transaction. First
+inspect the exact target and retain the returned values:
+
+```powershell
+$plan = pwsh -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\Invoke-WorkUnitAutomation.ps1 `
+  -Action CompleteInstructionSurfaces `
+  -WorkspaceRoot <project-root>\morphospace `
+  -UnitId <unit-id> `
+  -RepoMapPath <local-repository-map> `
+  -InstructionCompletionId <completion-id> |
+  ConvertFrom-Json
+```
+
+Then replay its exact in-flight-unit hash, stable observation hash, and every
+opaque planned-surface ID:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\Invoke-WorkUnitAutomation.ps1 `
+  -Action CompleteInstructionSurfaces `
+  -WorkspaceRoot <project-root>\morphospace `
+  -UnitId <unit-id> `
+  -RepoMapPath <local-repository-map> `
+  -InstructionCompletionId <completion-id> `
+  -InstructionSurfaceIds $plan.instruction_surface_completion.surfaces.surface_id `
+  -ExpectedUnitSha256 $plan.instruction_surface_completion.expected_unit_sha256 `
+  -ExpectedInstructionObservationSha256 $plan.instruction_surface_completion.observation_sha256 `
+  -OutPath <project-root>\morphospace\receipts\<completion-id>.json `
+  -Execute
+```
+
+The action resolves every declared surface through the bound repository map,
+leases and hashes the files across repeated observations, and changes only
+currently `planned` surface statuses to `complete`. All planned surfaces must
+be named; missing, extra, duplicate, stale, moved, or changed surfaces fail.
+The receipt and event are installed in the same transition. The action records
+`validation_commands_executed: false`: later validation and `Accept` remain
+separate gates.
 
 Inspection example:
 

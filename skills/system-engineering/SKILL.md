@@ -117,6 +117,11 @@ live ancestry must match and the plan claims no corrected order or publication.
 The proposed-to-ready review is also an owned transition: use `Ready` to verify
 accepted prerequisites, preserve the unit envelope, append the event, and
 derive the claimable queue instead of hand-editing status/state/history.
+For the matching active or validating unit, complete declared instruction surfaces only with the
+two-phase `CompleteInstructionSurfaces` transaction: replay the exact unit
+hash, stable surface-observation hash, and complete planned-surface ID set.
+Treat its receipt as content-observation evidence, not execution evidence; it
+must change no other unit field and must not execute validation commands.
 `RecordValidation` and `Accept` must validate a workspace-local
 `validation_receipt.v1`: exact acceptance/gate coverage, artifact hashes,
 current heads/branches, ancestor bases, exact in-scope changed paths, and—when

@@ -271,6 +271,11 @@ single-PR path.
 - Move a reviewed proposal into the claimable queue only with the automation
   `Ready` action. It verifies accepted prerequisites, appends the transition,
   and derives `next_ready_unit`; do not hand-edit proposal status.
+- Mark an in-flight unit's declared instruction surfaces complete only through
+  `CompleteInstructionSurfaces`. Replay the dry-run unit hash, stable
+  observation hash, and complete planned-surface ID set; the executed action
+  installs its receipt in the same transaction and never runs validation
+  commands or changes unit fields other than those surface statuses.
 - Resolve one exact current active-unit blocker only through product-neutral
   `blocker_resolution_receipt.v1` and `ResolveBlocker`: revalidate its passing
   hash-bound evidence, repository heads, and exact per-repository dirty source

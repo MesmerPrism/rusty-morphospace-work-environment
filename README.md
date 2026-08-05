@@ -224,6 +224,12 @@ checkout/reset/stash, validation commands, or live device commands.
 Use `-Action Ready -Execute` to review a bounded `proposed` unit into the
 claimable queue after its prerequisites are accepted; this replaces manual
 status/state/event edits.
+For a matching active or validating unit with declared instruction surfaces, use the two-phase
+`CompleteInstructionSurfaces` action before validation. Its dry run reports
+the exact unit hash, stable instruction-file observation hash, and complete
+planned-surface ID set. Execution must replay those values and installs the
+receipt transactionally; it does not execute the surfaces' validation
+commands or amend any other unit field.
 Use `NormalizeEventLedgerPrefix` only for the exact protocol-v2 framing defect
 defined by its runbook. It requires a clean worktree plus caller-bound
 repository, project, state, unit, event-ledger, tail, and dry-run intent

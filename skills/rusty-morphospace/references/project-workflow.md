@@ -142,3 +142,9 @@ Keep `AGENTS.md`, `SKILL.md`, and README entrypoints concise. Put detailed
 procedures in linked references or runbooks. Record reviewed-without-change
 surfaces explicitly when the workflow requires it; inferred graph edges do not
 substitute for instruction-impact evidence.
+
+Do not hand-edit an in-flight unit to mark planned instruction surfaces complete.
+Use `CompleteInstructionSurfaces` with the dry-run unit hash, stable content-
+observation hash, and exact full planned-surface ID set. The transaction may
+change only those statuses and records that it executed no validation command;
+ordinary validation and acceptance remain separate.

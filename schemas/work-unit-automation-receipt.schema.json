@@ -9,7 +9,7 @@
     "schema": { "const": "rusty.morphospace.workflow.work_unit_automation_receipt.v1" },
     "project_id": { "$ref": "#/$defs/id" },
     "unit_id": { "$ref": "#/$defs/id" },
-    "action": { "enum": ["Inspect", "Claim", "Resume", "Ready", "BeginValidation", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix"] },
+    "action": { "enum": ["Inspect", "Claim", "Resume", "Ready", "CompleteInstructionSurfaces", "BeginValidation", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix"] },
     "timestamp": { "type": "string", "format": "date-time" },
     "executed": { "type": "boolean" },
     "transition": { "type": "string", "minLength": 1 },
@@ -71,10 +71,72 @@
     },
     "planning_suffix_rewrite_recovery": { "oneOf": [ { "type": "object", "additionalProperties": false, "required": ["recovery_id","path","sha256"], "properties": { "recovery_id": { "$ref": "#/$defs/id" }, "path": { "type": "string", "minLength": 1 }, "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" } } }, { "type": "null" } ] },
     "published_prerequisite_suffix_reconciliation": { "oneOf": [ { "type": "object", "additionalProperties": false, "required": ["reconciliation_id","path","sha256"], "properties": { "reconciliation_id": { "$ref": "#/$defs/id" }, "path": { "type": "string", "minLength": 1 }, "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" } } }, { "type": "null" } ] },
+    "instruction_surface_completion": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["completion_id", "expected_unit_sha256", "resulting_unit_sha256", "observation_sha256", "all_planned_surfaces_completed", "surface_files_observed_stable", "validation_commands_executed", "surfaces"],
+          "properties": {
+            "completion_id": { "$ref": "#/$defs/id" },
+            "expected_unit_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "resulting_unit_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "observation_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "all_planned_surfaces_completed": { "const": true },
+            "surface_files_observed_stable": { "const": true },
+            "validation_commands_executed": { "const": false },
+            "surfaces": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 64,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["surface_id", "surface_kind", "declared_path", "repo_id", "relative_path", "owner", "action", "validation", "skill_id", "previous_status", "resulting_status", "sha256"],
+                "properties": {
+                  "surface_id": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+                  "surface_kind": { "enum": ["agents", "readme", "router-doc", "validation-doc", "skill"] },
+                  "declared_path": { "type": "string", "minLength": 1 },
+                  "repo_id": { "$ref": "#/$defs/id" },
+                  "relative_path": { "type": "string", "minLength": 1 },
+                  "owner": { "type": "string", "minLength": 1 },
+                  "action": { "enum": ["update", "review-no-change"] },
+                  "validation": { "type": "string", "minLength": 1 },
+                  "skill_id": { "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
+                  "previous_status": { "const": "planned" },
+                  "resulting_status": { "const": "complete" },
+                  "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+                }
+              }
+            }
+          }
+        },
+        { "type": "null" }
+      ]
+    },
     "push_plan": { "oneOf": [{ "type": "object" }, { "type": "null" }] },
     "event_id": { "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] }
   },
   "allOf": [
+    {
+      "if": {
+        "properties": {
+          "action": { "const": "CompleteInstructionSurfaces" }
+        },
+        "required": ["action"]
+      },
+      "then": {
+        "required": ["instruction_surface_completion"],
+        "properties": {
+          "instruction_surface_completion": { "type": "object" }
+        }
+      },
+      "else": {
+        "properties": {
+          "instruction_surface_completion": { "type": "null" }
+        }
+      }
+    },
     {
       "if": {
         "properties": {
