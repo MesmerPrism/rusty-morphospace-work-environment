@@ -189,7 +189,6 @@ try {
         PullRequestNumber = $pullRequestNumber
         BaseCommit = $baseCommit
         HeadCommit = $headCommit
-        MergeCommit = $mergeCommit
         PinnedVerifierCommit = $baseCommit
         PinnedVerifierTree = $baseTree
         PinnedVerifierPath = "scripts/Test-ExternalValidationAuthority.ps1"
@@ -236,7 +235,6 @@ try {
         "${oneParentMerge}:refs/pull/$pullRequestNumber/merge"
     ))
     $oneParent = @{} + $commonArguments
-    $oneParent.MergeCommit = $oneParentMerge
     Assert-Rejected {
         & $adapter @oneParent
     } "exact ordered event base and head parents" "one-parent merge"
@@ -250,7 +248,6 @@ try {
         "${reversedMerge}:refs/pull/$pullRequestNumber/merge"
     ))
     $reversed = @{} + $commonArguments
-    $reversed.MergeCommit = $reversedMerge
     Assert-Rejected {
         & $adapter @reversed
     } "exact ordered event base and head parents" "reversed merge parents"
@@ -264,14 +261,15 @@ try {
         "${wrongTreeMerge}:refs/pull/$pullRequestNumber/merge"
     ))
     $wrongTree = @{} + $commonArguments
-    $wrongTree.MergeCommit = $wrongTreeMerge
     Assert-Rejected {
         & $adapter @wrongTree
     } "merge tree does not equal the exact event head tree" `
         "exact-parent wrong-tree merge"
 
+    $staleMerge = @{} + $commonArguments
+    $staleMerge.MergeCommit = $mergeCommit
     Assert-Rejected {
-        & $adapter @commonArguments
+        & $adapter @staleMerge
     } "Fetched pull request merge does not equal" "stale merge identity"
 
     [void](Invoke-GitTest $seedRoot @(

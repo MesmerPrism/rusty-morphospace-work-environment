@@ -92,9 +92,10 @@ The adapter:
 - uses no actions or checkout token; any future action must be pinned by full
   commit and keep credentials disabled;
 - checks out only `pull_request.base.sha`;
-- validates the numeric PR number and full event SHAs;
+- validates the numeric PR number and full event base/head SHAs;
 - fetches the PR head and merge objects into private refs without checkout;
-- verifies the event head and the merge's exact `base, head` parents;
+- verifies the event head and binds the fetched merge ref to exact `base, head`
+  parents;
 - requires the merge tree to equal the exact head tree;
 - pins the work-environment verifier commit, tree, entrypoint, and SHA-256;
 - invokes only the base-owned adapter and pinned verifier;
