@@ -846,6 +846,151 @@
         }
       ],
       "status": "approved"
+    },
+    {
+      "approval_id": "work-unit-active-project-scope-correction-20260805",
+      "required_ancestor": "de5fb7e30451789423a09ac0f69c2fd0b594efc9",
+      "changed_paths": [
+        "AGENTS.md",
+        "README.md",
+        "docs/ACTIVE_PROJECT_REPOSITORY_SCOPE_CORRECTION.md",
+        "docs/AUTONOMOUS_ITERATION.md",
+        "schemas/active-project-repository-scope-correction-v1.schema.json",
+        "schemas/work-unit-automation-receipt-v2.schema.json",
+        "scripts/CorrectActiveProjectRepositoryScope.psm1",
+        "scripts/Invoke-WorkUnitAutomation.ps1",
+        "scripts/Test-CorrectActiveProjectRepositoryScope.ps1",
+        "scripts/Test-OwnershipAuthority.ps1",
+        "scripts/Test-TransitionLedger.ps1",
+        "scripts/Test-WorkEnvironment.ps1",
+        "scripts/Test-WorkflowContracts.ps1",
+        "scripts/lib/MorphospaceOwnership.psm1",
+        "scripts/lib/MorphospaceTransitionLedger.psm1",
+        "scripts/lib/MorphospaceValidationAuthority.psm1",
+        "templates/active-project-repository-scope-correction.example.json"
+      ],
+      "artifacts": [
+        {
+          "path": "AGENTS.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 27633,
+          "sha256": "c4dfc9979274e7e6e7377a3e445ff551208ac4a678ba3058545e1e83e1a222ea"
+        },
+        {
+          "path": "README.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 22770,
+          "sha256": "fa6bdb164bd52caf933d4bd0fa27bb63cdbe4ed9142ff50855251da3d1a52f31"
+        },
+        {
+          "path": "docs/ACTIVE_PROJECT_REPOSITORY_SCOPE_CORRECTION.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 3571,
+          "sha256": "10f80ff12aff9a30c25044fca727bbac7b4e81bc8458e419e6876dbbf8a38e16"
+        },
+        {
+          "path": "docs/AUTONOMOUS_ITERATION.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 28439,
+          "sha256": "138bbd6745a31e8cb4a5c4da617457f18cde9bb94e1d97052fbae9b173b3926f"
+        },
+        {
+          "path": "schemas/active-project-repository-scope-correction-v1.schema.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 2903,
+          "sha256": "0f1ed25334c24cf1267dd1e08e35ad2bffa8593ca100150dd17b565e3fc22087"
+        },
+        {
+          "path": "schemas/work-unit-automation-receipt-v2.schema.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 2277,
+          "sha256": "459105c904524cd78bb33bce76209e2eb8e72b82cfa2bdfebadd7ded1515d6be"
+        },
+        {
+          "path": "scripts/CorrectActiveProjectRepositoryScope.psm1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 18404,
+          "sha256": "25cec456104276eebac9e0023dca61baa602217ea70905c29b2c84487dd5e55a"
+        },
+        {
+          "path": "scripts/Invoke-WorkUnitAutomation.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 10617,
+          "sha256": "f68d6ea398f8d99c8f3d7592efd137b5e4c71f8c76aec8594ca410eb9c875c53"
+        },
+        {
+          "path": "scripts/Test-CorrectActiveProjectRepositoryScope.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 16316,
+          "sha256": "557baf792f9ed356047f96c463e631fb76fbc7e83c0b5099464bb2ce2673b9e9"
+        },
+        {
+          "path": "scripts/Test-OwnershipAuthority.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 26209,
+          "sha256": "6285365af23c8f2d4e93fe0ca65d6342666af5b3ec308fdf23d5bfd22cca3765"
+        },
+        {
+          "path": "scripts/Test-TransitionLedger.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 83137,
+          "sha256": "f181959a21fa8de30db0ba3023f964ac6958ea1ee2cfd58e26a67b9fe45be25c"
+        },
+        {
+          "path": "scripts/Test-WorkEnvironment.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 22922,
+          "sha256": "bd52455b64efc8fbf69619b7073ca99a4eb4573589878b80d90c80410e21dff5"
+        },
+        {
+          "path": "scripts/Test-WorkflowContracts.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 103655,
+          "sha256": "b578dda9d0d963311fe772b260d937971d5ec30bf7e34d165363ebf63ee1cf4b"
+        },
+        {
+          "path": "scripts/lib/MorphospaceOwnership.psm1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 84061,
+          "sha256": "a0e78c1ed94791835984ed5f50312da3a08a94a79ef50e10d7190d8e17197093"
+        },
+        {
+          "path": "scripts/lib/MorphospaceTransitionLedger.psm1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 56510,
+          "sha256": "975297ce603cfaa92b1ac630797c9d82916d1f8aad28830ea7fbf88bad9da77a"
+        },
+        {
+          "path": "scripts/lib/MorphospaceValidationAuthority.psm1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 42898,
+          "sha256": "7b8e3e9f6b7beefff5eaa30cc962d217b4736786c4976ba3c5feea49f68956c0"
+        },
+        {
+          "path": "templates/active-project-repository-scope-correction.example.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 1325,
+          "sha256": "118d02ae1e048b215ac861f4f5cb9d2d4dbc8f07360a859b6800543e592957db"
+        }
+      ],
+      "status": "approved"
     }
   ],
   "status": "active"
