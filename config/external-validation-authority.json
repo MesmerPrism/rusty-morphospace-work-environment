@@ -991,6 +991,143 @@
         }
       ],
       "status": "approved"
+    },
+    {
+      "approval_id": "work-unit-historical-blocker-resolution-intent-binding-correction-20260805",
+      "required_ancestor": "47b69cbf0b984a8b7e85d5f1a8733fe2b16f5b8c",
+      "changed_paths": [
+        "AGENTS.md",
+        "README.md",
+        "docs/AUTONOMOUS_ITERATION.md",
+        "docs/HISTORICAL_BLOCKER_RESOLUTION_INTENT_BINDING_CORRECTION.md",
+        "docs/PROJECT_WORKSPACE_PROTOCOL.md",
+        "schemas/historical-blocker-resolution-intent-binding-correction-v1.schema.json",
+        "schemas/work-unit-automation-receipt-v2.schema.json",
+        "scripts/CorrectHistoricalBlockerResolutionIntentBinding.psm1",
+        "scripts/Invoke-WorkUnitAutomation.ps1",
+        "scripts/New-HistoricalBlockerResolutionIntentBindingCorrection.ps1",
+        "scripts/ResolveBlocker.psm1",
+        "scripts/Test-HistoricalBlockerResolutionIntentBindingCorrection.ps1",
+        "scripts/Test-WorkEnvironment.ps1",
+        "scripts/Test-WorkflowContracts.ps1",
+        "scripts/lib/MorphospaceHistoricalBlockerResolutionIntentBindingCorrection.psm1",
+        "templates/historical-blocker-resolution-intent-binding-correction.example.json"
+      ],
+      "artifacts": [
+        {
+          "path": "AGENTS.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 28288,
+          "sha256": "e5dde80a64a80c3e8949e4df1296a4a7556329022b7545b75aa6a16cc5e893ee"
+        },
+        {
+          "path": "README.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 23308,
+          "sha256": "1df41236881322ccdf9a27740a53aad57c7b7939d9b805fa5646f6777a077c2d"
+        },
+        {
+          "path": "docs/AUTONOMOUS_ITERATION.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 29073,
+          "sha256": "abf153229279e37ad8d86549ff7550bdae0c3343f0e144fbdd341793bcc7815a"
+        },
+        {
+          "path": "docs/HISTORICAL_BLOCKER_RESOLUTION_INTENT_BINDING_CORRECTION.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 4315,
+          "sha256": "9d9380f6bc974b7e1e85793a43ef621317959d0041fd395bcfd296078736bb8b"
+        },
+        {
+          "path": "docs/PROJECT_WORKSPACE_PROTOCOL.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 12877,
+          "sha256": "7d6b6217cab40be3f067d1b4718c99f4db9da29e25b3b9c6d89e0fc58b5462fb"
+        },
+        {
+          "path": "schemas/historical-blocker-resolution-intent-binding-correction-v1.schema.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 6844,
+          "sha256": "cdf0a78da75a910b686f96e28f4469c81ade15542aab612a6ad6d94345e333c4"
+        },
+        {
+          "path": "schemas/work-unit-automation-receipt-v2.schema.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 2384,
+          "sha256": "52f7753e127598441ef9c36dc89f5e62e62fccb3710061e5e8d3c2904ff337f4"
+        },
+        {
+          "path": "scripts/CorrectHistoricalBlockerResolutionIntentBinding.psm1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 7143,
+          "sha256": "20c974709938d10a5f94c946073807948671688b8c4c1c0f172827ec8d35dae2"
+        },
+        {
+          "path": "scripts/Invoke-WorkUnitAutomation.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 11678,
+          "sha256": "959e317ed3e470a9ea2f436d91c73c312821958e57b1115eef50f33eeae70dc3"
+        },
+        {
+          "path": "scripts/New-HistoricalBlockerResolutionIntentBindingCorrection.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 1603,
+          "sha256": "c591edba368340e24d0d1a371555019c320456a921d009ecc6cb49e254b8f157"
+        },
+        {
+          "path": "scripts/ResolveBlocker.psm1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 17972,
+          "sha256": "61b0a150e2c109da75504a380a269cb1c654e74c9c98a8019bda8bdedb3e33fd"
+        },
+        {
+          "path": "scripts/Test-HistoricalBlockerResolutionIntentBindingCorrection.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 27766,
+          "sha256": "73e2918109994a377243ddad14a3e8448f8018039d3e32af51b1094b14185655"
+        },
+        {
+          "path": "scripts/Test-WorkEnvironment.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 23299,
+          "sha256": "69218c8f081f501230bbd63cc8e9f6fa6cfa5d22851d0823af67fb04d27425a7"
+        },
+        {
+          "path": "scripts/Test-WorkflowContracts.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 104815,
+          "sha256": "282899490386f5e25d22dbe652179bbd476afe0ba3e859cb03db18a86ba90272"
+        },
+        {
+          "path": "scripts/lib/MorphospaceHistoricalBlockerResolutionIntentBindingCorrection.psm1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 46289,
+          "sha256": "8ab5fa32f9d79bcbf6dde6bb52145408162df8b6ef10e35dfc5ea3293ad409d5"
+        },
+        {
+          "path": "templates/historical-blocker-resolution-intent-binding-correction.example.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 3578,
+          "sha256": "8584a8ae93ac0481e879d3d525d53580c11e268147941543abe5122a1ae439cd"
+        }
+      ],
+      "status": "approved"
     }
   ],
   "status": "active"
