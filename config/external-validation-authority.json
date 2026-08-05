@@ -3,11 +3,14 @@
   "policy_id": "rusty-morphospace-work-environment-validation-authority-v1",
   "repository": "MesmerPrism/rusty-morphospace-work-environment",
   "mandatory_protected_paths": [
+    ".github/workflows/static-admission.yml",
     ".github/workflows/validate.yml",
     "config/external-validation-authority.json",
     "schemas/external-validation-authority-assessment-v1.schema.json",
     "schemas/external-validation-authority-policy-v1.schema.json",
+    "scripts/Invoke-ExternalValidationAuthorityForGitHub.ps1",
     "scripts/Test-ExternalValidationAuthority.ps1",
+    "scripts/Test-ExternalValidationAuthorityGitHubAdapterSelfTest.ps1",
     "scripts/Test-ExternalValidationAuthoritySelfTest.ps1"
   ],
   "protected_rules": [
@@ -161,6 +164,87 @@
           "mode": "100644",
           "size_bytes": 22646,
           "sha256": "f7e72a536b3f22b59277dd56fc2913e3c9c7c9e8c45a1f10863c4802a3a67b6c"
+        }
+      ],
+      "status": "approved"
+    },
+    {
+      "approval_id": "instruction-surface-completion-20260805",
+      "required_ancestor": "74cd30b33f2daa0110db7ccf6da242e65cc67e33",
+      "changed_paths": [
+        "AGENTS.md",
+        "README.md",
+        "docs/AUTONOMOUS_ITERATION.md",
+        "schemas/work-unit-automation-receipt.schema.json",
+        "scripts/Invoke-WorkUnitAutomation.ps1",
+        "scripts/Test-WorkUnitAutomation.ps1",
+        "scripts/WorkUnitAutomation.psm1",
+        "skills/rusty-morphospace/references/project-workflow.md",
+        "skills/system-engineering/SKILL.md"
+      ],
+      "artifacts": [
+        {
+          "path": "AGENTS.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 26125,
+          "sha256": "74dd966b8f1f6a41366635c9bcb48aafeea35037ee11763bdd709f991bc39643"
+        },
+        {
+          "path": "README.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 21451,
+          "sha256": "2513cd875959d86b3c38f6cc7874c295e54ca3de7060d081dac83635a3faabef"
+        },
+        {
+          "path": "docs/AUTONOMOUS_ITERATION.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 26797,
+          "sha256": "d9bd57d853334615b48faf98d3712cc990c5c1b6d0ac874ade8154c321d393a7"
+        },
+        {
+          "path": "schemas/work-unit-automation-receipt.schema.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 8081,
+          "sha256": "035dfd7db6bcf842c19fff25ff5daee73972736b0b1248a1f21fb64e90668a05"
+        },
+        {
+          "path": "scripts/Invoke-WorkUnitAutomation.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 8660,
+          "sha256": "d702f126023693281a46a52743f0b0630db68c6b56d34d428f9aafa61581f052"
+        },
+        {
+          "path": "scripts/Test-WorkUnitAutomation.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 158553,
+          "sha256": "3b4a47b336486c2f99b36c4659b65868a0f6c0339c6268a5abfcfad7f165f4fc"
+        },
+        {
+          "path": "scripts/WorkUnitAutomation.psm1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 110688,
+          "sha256": "6b6f5b3586932f3a059a83177c6546ae8ffc9bee4ad79b72088bc9663c1104ae"
+        },
+        {
+          "path": "skills/rusty-morphospace/references/project-workflow.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 7263,
+          "sha256": "9ab653fa37853b8ea6bfc76ad52b2ce8de869147128d6c321d6c9a3c77aef3af"
+        },
+        {
+          "path": "skills/system-engineering/SKILL.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 23046,
+          "sha256": "6e42a5190dc821fc5174ce141a32a388fe3157fc4f0a045907ca41020763d84e"
         }
       ],
       "status": "approved"
@@ -613,6 +697,23 @@
           "mode": "100644",
           "size_bytes": 22076,
           "sha256": "17b206393a9047c0c0db7bb9eeb6000bb16eaaf9f9b4799b034aeea75d551f8b"
+        }
+      ],
+      "status": "approved"
+    },
+    {
+      "approval_id": "validation-workflow-action-pins-20260805",
+      "required_ancestor": "f258b0ce0202694f7704f260311f8376e0aeffe3",
+      "changed_paths": [
+        ".github/workflows/validate.yml"
+      ],
+      "artifacts": [
+        {
+          "path": ".github/workflows/validate.yml",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 2782,
+          "sha256": "cd09c53f269c638f888c835ed4f5165edecae7e977110bfa843b79d2cfee28fb"
         }
       ],
       "status": "approved"
