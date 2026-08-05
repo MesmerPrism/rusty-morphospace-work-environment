@@ -287,6 +287,127 @@
       "status": "approved"
     },
     {
+      "approval_id": "quest-deployment-contract-portability-20260805",
+      "required_ancestor": "257738fec2f5dd708e230bfbec2e3c236fd5b51f",
+      "changed_paths": [
+        "docs/QUEST_APK_WORKFLOW.md",
+        "docs/QUEST_RUN_PROFILES.md",
+        "schemas/quest-build-profile-v1.schema.json",
+        "schemas/quest-run-request-v1.schema.json",
+        "scripts/Invoke-QuestBuildProfile.ps1",
+        "scripts/Invoke-QuestFileManagerDeployment.ps1",
+        "scripts/Resolve-QuestFileManagerCli.ps1",
+        "scripts/Test-QuestBuildProfile.ps1",
+        "scripts/Test-QuestFileManagerCliResolver.ps1",
+        "scripts/Test-WorkEnvironment.ps1",
+        "templates/quest-build-environment.example.json",
+        "templates/quest-build-profile.example.json",
+        "templates/quest-file-manager-cli.example.json",
+        "templates/quest-run-request.example.json"
+      ],
+      "artifacts": [
+        {
+          "path": "docs/QUEST_APK_WORKFLOW.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 13717,
+          "sha256": "fdaf0a262365b7f668bfdfd95f736d565e2232bd0cb33cccdf466033b65ea9c1"
+        },
+        {
+          "path": "docs/QUEST_RUN_PROFILES.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 2057,
+          "sha256": "30e1cb97e7cdc0b5ee25ba14ed275edad8f51a6abd2fcad0036461c7c4aa3320"
+        },
+        {
+          "path": "schemas/quest-build-profile-v1.schema.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 1379,
+          "sha256": "75cb8aab99719e3cf1c9de610c15e3658a1bdd46a33bfa812af9d17325b460ae"
+        },
+        {
+          "path": "schemas/quest-run-request-v1.schema.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 3197,
+          "sha256": "bdbe7bb0fe57e39b4fff2aadc74bc2d1691b5682f1f5cfaf185cdbe62502b573"
+        },
+        {
+          "path": "scripts/Invoke-QuestBuildProfile.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 15841,
+          "sha256": "216e4b05f55c225e13397ba2d245ee5b90307ec8340adf5b6e1bd5f9cd0e5340"
+        },
+        {
+          "path": "scripts/Invoke-QuestFileManagerDeployment.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 24242,
+          "sha256": "efe8d4d6842bcff13ebc4545668db41d859ba2fe7ae2ef29cf4b43c29b2697ef"
+        },
+        {
+          "path": "scripts/Resolve-QuestFileManagerCli.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 10070,
+          "sha256": "69c231d1ebabcc82c8edc21b7a082e525c78613ad1faf349e2497d43e2d1d11e"
+        },
+        {
+          "path": "scripts/Test-QuestBuildProfile.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 2519,
+          "sha256": "fade8fe5e507037e3c4a6572d4a190ea8e24d34aab8361f1c3f041628614fda5"
+        },
+        {
+          "path": "scripts/Test-QuestFileManagerCliResolver.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 5729,
+          "sha256": "5f3c7286818df0a06dd81fadddf59bc28175fa14da13caece08a39f4097319bc"
+        },
+        {
+          "path": "scripts/Test-WorkEnvironment.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 21992,
+          "sha256": "e64941766ed230d4f33a1336f8598ccc3f1cdd630d223eb8a53603306c80ba52"
+        },
+        {
+          "path": "templates/quest-build-environment.example.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 321,
+          "sha256": "65f782a2c4b34f726d19a0c1338e25763261fb1ed5d0aa71c24015af8492fbba"
+        },
+        {
+          "path": "templates/quest-build-profile.example.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 412,
+          "sha256": "fff3e3e92fdaedf919b6c24a181345e22b5d0a10c5c72200719fca8de0f7fe76"
+        },
+        {
+          "path": "templates/quest-file-manager-cli.example.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 722,
+          "sha256": "e2726732dfbf1d4564a163bbae9909b0ad69b5ba1cde42db8e00b1b051659735"
+        },
+        {
+          "path": "templates/quest-run-request.example.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 838,
+          "sha256": "cc0ebe72a90612caa6150a379fe6999fe6c4515a06ef01f42600720e2e1fc62c"
+        }
+      ],
+      "status": "approved"
+    },
+    {
       "approval_id": "transition-ledger-supersession-semantics-20260804",
       "required_ancestor": "82a0f22eacbf7adf8ad9e1fc2f300777f1a8ea3a",
       "changed_paths": [
