@@ -1326,7 +1326,7 @@ foreach ($candidateContract in $candidateContracts) {
     }
 }
 if (-not $SkipOwnerSelfTests) {
-    foreach ($selfTest in @("Test-LegacyEmbeddedPushPlanCompatibility.ps1","Test-PreparedPublicationReconstruction.ps1","Test-ResolveBlocker.ps1","Test-CorrectResolvedBlockerEvidence.ps1","Test-CorrectActiveReadOnlyDependencies.ps1","Test-CompletedTransitionSemanticCorrection.ps1","Test-TransitionLedger.ps1")) {
+    foreach ($selfTest in @("Test-LegacyEmbeddedPushPlanCompatibility.ps1","Test-PreparedPublicationReconstruction.ps1","Test-ResolveBlocker.ps1","Test-CorrectResolvedBlockerEvidence.ps1","Test-CorrectActiveReadOnlyDependencies.ps1","Test-CorrectActiveProjectRepositoryScope.ps1","Test-CompletedTransitionSemanticCorrection.ps1","Test-TransitionLedger.ps1")) {
         try { Invoke-IsolatedWorkflowSelfTest -Path (Join-Path $RepoRoot "scripts\$selfTest") }
         catch { Add-Failure -Message "$selfTest failed: $($_.Exception.Message)" }
     }

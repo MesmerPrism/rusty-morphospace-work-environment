@@ -172,6 +172,9 @@ validation without a device.
 - [Active Read-Only Dependency Correction](docs/ACTIVE_READ_ONLY_DEPENDENCY_CORRECTION.md)
   defines the exact-CAS transaction for correcting only an active unit's
   project-declared parse/build dependency closure.
+- [Active Project Repository Scope Correction](docs/ACTIVE_PROJECT_REPOSITORY_SCOPE_CORRECTION.md)
+  defines the additive, unit-bounded transaction for a project allow-list path
+  omitted during admission.
 - [Event-Ledger Prefix Normalization](docs/EVENT_LEDGER_PREFIX_NORMALIZATION.md)
   defines the one-time typed correction for exactly one leading CRLF blank
   record while preserving strict ordinary parsing and every prior event byte.
@@ -245,6 +248,11 @@ Its correction binds the full before/after dependency sets, state/unit/event
 CAS, and one full commit/tree per resulting dependency. It can add only
 project-declared, non-writable paths and changes no other unit field. See
 [Active Read-Only Dependency Correction](docs/ACTIVE_READ_ONLY_DEPENDENCY_CORRECTION.md).
+Use `CorrectActiveProjectRepositoryScope` only when an exact current `active`
+unit already declares a writable path that its project repository allow-list
+omits. The action is additive-only, preserves the unit, and atomically advances
+the project revision, feature lock, and workspace registry through transition
+intent v3. See [Active Project Repository Scope Correction](docs/ACTIVE_PROJECT_REPOSITORY_SCOPE_CORRECTION.md).
 `CorrectCompletedTransitionSemantics` is not a compatibility mode for malformed
 events. Its builder derives the old and replacement from current retained
 state/unit evidence, requires the original event receipts and legacy-v1 intent

@@ -280,7 +280,12 @@ function Get-MorphospaceAutomationOutputContract {
         $repoId=[string]$output.repo_id;if(-not$Scopes.ContainsKey($repoId)){throw "Automation output names an unowned repository: $repoId"}
         $path=ConvertTo-MorphospaceProtocolRelativePath ([string]$output.path);if([string]$output.path-cne$path-or-not(Test-MorphospacePathInClosure $path @($Scopes[$repoId].allowed_paths))){throw "Automation output is outside unit scope: $repoId/$path"}
         $role=[string]$output.role;if(-not$allowedRoles.ContainsKey($role)){throw "Automation output role is not allowlisted: $role"};$rule=$allowedRoles[$role]
-        if([string]$output.phase-cne[string]$rule.phase-or[string]$output.schema-cne[string]$rule.schema){throw "Automation output phase/schema is not canonical: $repoId/$path"}
+        $allowedSchemas=if($role-ceq'transition-ledger-intent'){@(
+            'rusty.morphospace.workflow.transition_ledger_intent.v1',
+            'rusty.morphospace.workflow.transition_ledger_intent.v2',
+            'rusty.morphospace.workflow.transition_ledger_intent.v3'
+        )}else{@([string]$rule.schema)}
+        if([string]$output.phase-cne[string]$rule.phase-or$allowedSchemas-cnotcontains[string]$output.schema){throw "Automation output phase/schema is not canonical: $repoId/$path"}
         $validatorId=[string]$output.validator_id
         if($role-ceq'owner-validation') {if($validatorId-notmatch'^[a-z0-9][a-z0-9-]{1,191}$'){throw "Owner-validation output lacks a validator id: $repoId/$path"}}elseif($null-ne$output.validator_id){throw "Non-owner automation output carries a validator id: $repoId/$path"}
         if(-not$seen.Add("$repoId/$path")){throw "Automation output repeats: $repoId/$path"}
