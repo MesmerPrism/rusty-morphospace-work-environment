@@ -11,10 +11,11 @@ $RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
 $resolver = Join-Path $RepoRoot "scripts\Resolve-QuestFileManagerCli.ps1"
 $deployment = Join-Path $RepoRoot "scripts\Invoke-QuestFileManagerDeployment.ps1"
 $hostExecutable = (Get-Process -Id $PID).Path
-$hostSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $hostExecutable).Hash.ToLowerInvariant()
 $tempBase = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
 $testRoot = Join-Path $tempBase ("rusty-morphospace-qfm-resolver-" + [guid]::NewGuid().ToString("N"))
 $configPath = Join-Path $testRoot "resolver.json"
+$fixtureExecutable = Join-Path $testRoot "questionable-file-manager.exe"
+$invalidExtensionFixture = Join-Path $testRoot "questionable-file-manager.bin"
 
 function Write-JsonUtf8NoBom {
     param([string]$Path, [object]$Value)
@@ -45,11 +46,16 @@ function Invoke-ResolverChild {
 
 try {
     New-Item -ItemType Directory -Force -Path $testRoot | Out-Null
+    $fixtureBytes = [System.Text.UTF8Encoding]::new($false).GetBytes(
+        "portable Quest File Manager resolver fixture`n")
+    [System.IO.File]::WriteAllBytes($fixtureExecutable, $fixtureBytes)
+    [System.IO.File]::WriteAllBytes($invalidExtensionFixture, $fixtureBytes)
+    $fixtureSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $fixtureExecutable).Hash.ToLowerInvariant()
     $config = [ordered]@{
         schema = "rusty.morphospace.local_quest_file_manager_cli.v3"
         provider_id = "file-manager-local"
-        executable_path = $hostExecutable
-        executable_sha256 = $hostSha256
+        executable_path = $fixtureExecutable
+        executable_sha256 = $fixtureSha256
         source_kind = "source-build"
         source_version = "0.1.0-dev"
         source_revision = ("a" * 40)
@@ -65,7 +71,7 @@ try {
         $result.provider_id -cne "file-manager-local" -or
         $result.identity_probe -cne "skipped" -or
         $result.command_probe -cne "skipped" -or
-        $result.executable_sha256 -cne $hostSha256) {
+        $result.executable_sha256 -cne $fixtureSha256) {
         throw "Resolver did not return the expected hash-pinned ready result."
     }
 
@@ -73,12 +79,17 @@ try {
     Write-JsonUtf8NoBom -Path $configPath -Value $config
     Invoke-ResolverChild -ExpectedExit 1 | Out-Null
 
-    $config.executable_sha256 = $hostSha256
+    $config.executable_sha256 = $fixtureSha256
     $config.apk_launch_result_contract = "questionable.file_manager.apk_launch_result.v0"
     Write-JsonUtf8NoBom -Path $configPath -Value $config
     Invoke-ResolverChild -ExpectedExit 1 | Out-Null
 
     $config.apk_launch_result_contract = "questionable.file_manager.apk_launch_result.v1"
+    $config.executable_path = $invalidExtensionFixture
+    Write-JsonUtf8NoBom -Path $configPath -Value $config
+    Invoke-ResolverChild -ExpectedExit 1 | Out-Null
+
+    $config.executable_path = $fixtureExecutable
     $config.extra = "not-allowed"
     Write-JsonUtf8NoBom -Path $configPath -Value $config
     Invoke-ResolverChild -ExpectedExit 1 | Out-Null
