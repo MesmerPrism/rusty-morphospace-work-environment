@@ -221,11 +221,11 @@ try {
         & $adapter @staleHead
     } "Fetched pull request head does not equal" "stale event head"
 
-    $staleBase = @{} + $commonArguments
-    $staleBase.BaseCommit = $headCommit
+    $retargetedBase = @{} + $commonArguments
+    $retargetedBase.BaseCommit = $headCommit
     Assert-Rejected {
-        & $adapter @staleBase
-    } "Trusted checkout HEAD does not equal" "stale event base"
+        & $adapter @retargetedBase
+    } "Trusted checkout HEAD does not equal" "retargeted or stale event base"
 
     $oneParentMerge = Invoke-GitTest $seedRoot @(
         "commit-tree", $headTree, "-p", $baseCommit,
@@ -254,6 +254,21 @@ try {
     Assert-Rejected {
         & $adapter @reversed
     } "exact ordered event base and head parents" "reversed merge parents"
+
+    $wrongTreeMerge = Invoke-GitTest $seedRoot @(
+        "commit-tree", $baseTree, "-p", $baseCommit, "-p", $headCommit,
+        "-m", "exact parents with wrong merge tree"
+    )
+    [void](Invoke-GitTest $seedRoot @(
+        "push", "--force", "origin",
+        "${wrongTreeMerge}:refs/pull/$pullRequestNumber/merge"
+    ))
+    $wrongTree = @{} + $commonArguments
+    $wrongTree.MergeCommit = $wrongTreeMerge
+    Assert-Rejected {
+        & $adapter @wrongTree
+    } "merge tree does not equal the exact event head tree" `
+        "exact-parent wrong-tree merge"
 
     Assert-Rejected {
         & $adapter @commonArguments

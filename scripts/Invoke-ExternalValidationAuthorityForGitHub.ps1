@@ -380,6 +380,15 @@ if (
 ) {
     throw "Pull request merge must have the exact ordered event base and head parents."
 }
+$headTree = (
+    Invoke-Git $trusted @("rev-parse", "--verify", "${HeadCommit}^{tree}")
+).stdout.Trim()
+$mergeTree = (
+    Invoke-Git $trusted @("rev-parse", "--verify", "${MergeCommit}^{tree}")
+).stdout.Trim()
+if ($mergeTree -cne $headTree) {
+    throw "Pull request merge tree does not equal the exact event head tree."
+}
 
 $headAfterFetch = (Invoke-Git $trusted @("rev-parse", "HEAD")).stdout.Trim()
 $dirtyAfterFetch = (Invoke-Git $trusted @(

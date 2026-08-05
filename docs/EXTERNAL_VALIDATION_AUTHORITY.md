@@ -95,6 +95,7 @@ The adapter:
 - validates the numeric PR number and full event SHAs;
 - fetches the PR head and merge objects into private refs without checkout;
 - verifies the event head and the merge's exact `base, head` parents;
+- requires the merge tree to equal the exact head tree;
 - pins the work-environment verifier commit, tree, entrypoint, and SHA-256;
 - invokes only the base-owned adapter and pinned verifier;
 - never imports, executes, restores, builds, or extracts candidate content;
@@ -109,7 +110,11 @@ The workflow's `Static admission` job is static policy evidence only. Keep the
 ordinary `pull_request` jobs `quick-linux`, `quick-windows`, and
 `standard-windows` separate because those jobs intentionally execute candidate
 content. Required-check policy must require both the static job and those
-dynamic jobs; neither substitutes for the other.
+dynamic jobs; neither substitutes for the other. The ruleset must also enable
+strict required-status-check handling so a pull request branch is up to date
+with `main` before merge. A previously successful head-bound check is not valid
+after the base advances. The static workflow includes the `edited` event so a
+base-branch retarget receives a new exact-base assessment.
 
 ## One-Time Bootstrap
 
@@ -183,5 +188,6 @@ pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass `
 
 That fixture publishes synthetic PR head and merge refs to a local bare remote.
 It proves the positive unprotected path while a candidate marker script remains
-absent, then rejects stale base/head/merge identities, one-parent and reversed
-merge objects, malformed event identities, and a substituted verifier pin.
+absent, then rejects stale or retargeted base, stale head/merge identities,
+one-parent, reversed-parent, and exact-parent/wrong-tree merge objects,
+malformed event identities, and a substituted verifier pin.
