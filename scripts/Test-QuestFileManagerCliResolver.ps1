@@ -104,6 +104,9 @@ try {
     $deploymentResult = ($deploymentOutput -join [Environment]::NewLine) | ConvertFrom-Json
     if ($deploymentResult.status -cne "passed" -or
         -not $deploymentResult.immutable_run_copy -or
+        -not $deploymentResult.portable_content_addressing_verified -or
+        ($IsWindows -and -not $deploymentResult.host_read_lock_enforced) -or
+        (-not $IsWindows -and $deploymentResult.host_read_lock_enforced) -or
         -not $deploymentResult.process_failure_retained) {
         throw "Deployment wrapper self-test did not return its complete passing contract."
     }

@@ -93,6 +93,12 @@ evidence is accepted only below ignored `local/` or `artifacts/`. Use
 `-Mode Install`, then Kiosk's typed status/launch route, for an app whose launch
 authority belongs to Kiosk.
 
+The pinned `.exe` provider is Windows-hosted. Windows self-tests therefore
+require the open read lease to reject mutation. Portable non-Windows CI does
+not treat `FileShare` as a Windows-style mutation lock; it verifies the exact
+content-addressed filename and retained hash instead, and reports the host lock
+result separately.
+
 Routine portable intents set `raw_fallback_allowed=false`. Before a raw ADB
 fallback, record the intended provider/version, missing or failed capability,
 unavailable claim, bounded diagnostic or recovery scope, stop condition,

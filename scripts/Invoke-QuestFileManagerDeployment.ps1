@@ -362,6 +362,8 @@ function Invoke-SelfTest {
         "rusty-qfm-deployment-self-test-$([Guid]::NewGuid().ToString('N'))"
     New-Item -ItemType Directory -Path $temporaryRoot | Out-Null
     $lockedCopy = $null
+    $hostReadLockEnforced = $false
+    $portableContentAddressingVerified = $false
     try {
         $source = Join-Path $temporaryRoot "source.apk"
         [System.IO.File]::WriteAllBytes($source, [byte[]](1, 2, 3, 4))
@@ -370,14 +372,29 @@ function Invoke-SelfTest {
             -Directory $temporaryRoot `
             -Prefix "artifact" `
             -Extension ".apk"
-        $mutationRejected = $false
-        try {
-            [System.IO.File]::WriteAllBytes($lockedCopy.Path, [byte[]](5, 6, 7, 8))
-        } catch {
-            $mutationRejected = $true
+        $expectedName = "artifact-$($lockedCopy.Sha256).apk"
+        $retainedName = [System.IO.Path]::GetFileName($lockedCopy.Path)
+        $retainedSha256 = (Get-FileHash -Algorithm SHA256 `
+            -LiteralPath $lockedCopy.Path).Hash.ToLowerInvariant()
+        if ($retainedName -cne $expectedName -or
+            $retainedSha256 -cne $lockedCopy.Sha256) {
+            throw "Self-test did not retain an exact content-addressed run copy."
         }
-        if (-not $mutationRejected) {
-            throw "Self-test did not retain a read-locked run copy."
+        $portableContentAddressingVerified = $true
+
+        if ($IsWindows) {
+            $mutationRejected = $false
+            try {
+                [System.IO.File]::WriteAllBytes(
+                    $lockedCopy.Path,
+                    [byte[]](5, 6, 7, 8))
+            } catch {
+                $mutationRejected = $true
+            }
+            if (-not $mutationRejected) {
+                throw "Self-test did not retain a Windows read-locked run copy."
+            }
+            $hostReadLockEnforced = $true
         }
 
         $failure = Invoke-BoundedProcess `
@@ -401,6 +418,8 @@ function Invoke-SelfTest {
         exact_typed_vectors = $true
         mismatch_rejected = $true
         immutable_run_copy = $true
+        portable_content_addressing_verified = $portableContentAddressingVerified
+        host_read_lock_enforced = $hostReadLockEnforced
         process_failure_retained = $true
         immersive_runtime_policy = $true
         blocking_system_component_rejected = $true
