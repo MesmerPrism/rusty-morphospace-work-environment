@@ -77,14 +77,25 @@ The assessment always records:
 
 ## Base-Owned GitHub Workflow
 
-A safe `pull_request_target` adapter:
+The repository-owned `.github/workflows/static-admission.yml` workflow runs on
+every pull request targeting `main`. It is deliberately actionless, so there is
+no third-party action ref or candidate action to execute. Its first base-owned
+PowerShell step creates a new repository under the runner temporary directory,
+fetches public `main` without credentials, disables hooks and LFS smudging, and
+checks out only the event's exact base commit. Its second step invokes
+`scripts/Invoke-ExternalValidationAuthorityForGitHub.ps1` from that trusted
+checkout.
+
+The adapter:
 
 - declares only `contents: read`;
-- uses actions pinned by full commit and `persist-credentials: false`;
+- uses no actions or checkout token; any future action must be pinned by full
+  commit and keep credentials disabled;
 - checks out only `pull_request.base.sha`;
 - validates the numeric PR number and full event SHAs;
 - fetches the PR head and merge objects into private refs without checkout;
 - verifies the event head and the merge's exact `base, head` parents;
+- requires the merge tree to equal the exact head tree;
 - pins the work-environment verifier commit, tree, entrypoint, and SHA-256;
 - invokes only the base-owned adapter and pinned verifier;
 - never imports, executes, restores, builds, or extracts candidate content;
@@ -94,6 +105,33 @@ A safe `pull_request_target` adapter:
 The base adapter may issue a repository-specific typed assessment that adds
 workflow run identity. It must not relabel a static assessment or a
 candidate-issued receipt as independent execution evidence.
+
+The workflow's `Static admission` job is static policy evidence only. Keep the
+ordinary `pull_request` jobs `quick-linux`, `quick-windows`, and
+`standard-windows` separate because those jobs intentionally execute candidate
+content. Required-check policy must require both the static job and those
+dynamic jobs; neither substitutes for the other. The ruleset must also enable
+strict required-status-check handling so a pull request branch is up to date
+with `main` before merge. A previously successful head-bound check is not valid
+after the base advances. The static workflow includes the `edited` event so a
+base-branch retarget receives a new exact-base assessment.
+
+## One-Time Bootstrap
+
+The first merge that installs the adapter cannot be remotely admitted by an
+adapter that is not yet present on `main`. Treat that merge as a disclosed
+bootstrap exception, not as self-validation. Its pull request record must bind
+the exact base commit, candidate commit and tree, complete path set, and each
+resulting path's Git mode, size, and SHA-256. It also requires independent
+review plus the existing Linux Quick, Windows Quick, and Windows Standard
+checks.
+
+The bootstrap may install exact base-policy approvals for separately reviewed
+canaries. It must not claim that remote static admission validated its own
+workflow, policy, adapter, or tests. After the bootstrap lands, prove the live
+boundary with an exact approved protected canary, protected path/byte
+substitutions that reject, and an ordinary unprotected change. Only then make
+the live static job and dynamic jobs required by the repository ruleset.
 
 ## Policy Rules
 
@@ -133,10 +171,23 @@ pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass `
   -File .\scripts\Test-ExternalValidationAuthoritySelfTest.ps1
 ```
 
-The self-test proves exact admission, unprotected bypass, no-overwrite output,
+The verifier self-test proves exact admission, unprotected bypass, no-overwrite output,
 artifact and Git-mode tamper rejection, policy self-protection,
 ambiguous-approval rejection, duplicate-key rejection, path-scope and
 path-count bounds, reviewed-ancestor enforcement, base ancestry enforcement,
 dirty-base rejection, and replacement-ref/alternate-object rejection without
 executing the candidate script. It also proves consumed-approval rejection and
 rejects inherited Git repository and object-store selectors.
+
+Run the GitHub adapter regression with:
+
+```powershell
+pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass `
+  -File .\scripts\Test-ExternalValidationAuthorityGitHubAdapterSelfTest.ps1
+```
+
+That fixture publishes synthetic PR head and merge refs to a local bare remote.
+It proves the positive unprotected path while a candidate marker script remains
+absent, then rejects stale or retargeted base, stale head/merge identities,
+one-parent, reversed-parent, and exact-parent/wrong-tree merge objects,
+malformed event identities, and a substituted verifier pin.
