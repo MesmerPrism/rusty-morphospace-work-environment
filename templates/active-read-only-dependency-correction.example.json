@@ -1,0 +1,56 @@
+{
+  "$schema": "../schemas/active-read-only-dependency-correction-v1.schema.json",
+  "schema": "rusty.morphospace.workflow.active_read_only_dependency_correction.v1",
+  "correction_id": "unit-example-001-read-only-dependencies",
+  "project_id": "example-project",
+  "unit_id": "unit-example-001",
+  "reason": "Replace one exact build pin and add one project-declared parse-only dependency without widening write scope.",
+  "expected": {
+    "status": "active",
+    "current_unit": "unit-example-001",
+    "state_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "unit_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "events_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+    "events_length": 1,
+    "event_tail_id": "unit-example-001-claimed-0001"
+  },
+  "before": [
+    {
+      "repo_id": "matter-core",
+      "paths": ["Cargo.toml", "crates/"],
+      "purpose": "Provide the exact build dependency.",
+      "verification": "Observed prior dependency declaration."
+    }
+  ],
+  "after": [
+    {
+      "repo_id": "lattice-core",
+      "paths": ["Cargo.toml", "crates/"],
+      "purpose": "Provide parse-only workspace metadata.",
+      "verification": "Exact Git revision 0123456789abcdef0123456789abcdef01234567 with tree 89abcdef0123456789abcdef0123456789abcdef; role workspace-parse-only."
+    },
+    {
+      "repo_id": "matter-core",
+      "paths": ["Cargo.toml", "crates/"],
+      "purpose": "Provide the exact build dependency.",
+      "verification": "Exact Git revision fedcba9876543210fedcba9876543210fedcba98 with tree 76543210fedcba9876543210fedcba9876543210; role exact-build-pin."
+    }
+  ],
+  "repository_identities": [
+    {
+      "repo_id": "lattice-core",
+      "revision": "0123456789abcdef0123456789abcdef01234567",
+      "tree": "89abcdef0123456789abcdef0123456789abcdef",
+      "role": "workspace-parse-only"
+    },
+    {
+      "repo_id": "matter-core",
+      "revision": "fedcba9876543210fedcba9876543210fedcba98",
+      "tree": "76543210fedcba9876543210fedcba9876543210",
+      "role": "exact-build-pin"
+    }
+  ],
+  "does_not_prove": [
+    "Does not materialize dependencies, execute validation, mutate Git, or authorize publication."
+  ]
+}

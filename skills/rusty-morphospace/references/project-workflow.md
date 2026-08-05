@@ -148,3 +148,11 @@ Use `CompleteInstructionSurfaces` with the dry-run unit hash, stable content-
 observation hash, and exact full planned-surface ID set. The transaction may
 change only those statuses and records that it executed no validation command;
 ordinary validation and acceptance remain separate.
+
+Do not hand-edit an active unit when its read-only parser/build closure has one
+wrong exact identity or lacks an already project-declared parse-only
+repository. Use `CorrectActiveReadOnlyDependencies` with the complete exact
+before/after dependency sets, state/unit/event-ledger CAS, and one resolvable
+full commit/tree for every resulting dependency. It may update only existing
+verification text or add declared non-writable dependency paths; materializing
+the resulting siblings and validating them remain separate owner steps.

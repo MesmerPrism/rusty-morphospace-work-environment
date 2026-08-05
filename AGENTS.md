@@ -276,6 +276,15 @@ single-PR path.
   observation hash, and complete planned-surface ID set; the executed action
   installs its receipt in the same transaction and never runs validation
   commands or changes unit fields other than those surface statuses.
+- Correct an active unit's read-only parse/build closure only through
+  `CorrectActiveReadOnlyDependencies` and the exact
+  `active_read_only_dependency_correction.v1` contract. Require canonical
+  state/unit and byte-exact event-ledger CAS, full before/after dependency
+  sets, project-declared non-writable paths, and one resolvable full commit/tree
+  identity for every resulting dependency. The transaction may change only
+  `read_only_dependencies` plus `state.last_event_id`; it never materializes a
+  worktree or runs a build. Route the full procedure to
+  `docs/ACTIVE_READ_ONLY_DEPENDENCY_CORRECTION.md`.
 - Resolve one exact current active-unit blocker only through product-neutral
   `blocker_resolution_receipt.v1` and `ResolveBlocker`: revalidate its passing
   hash-bound evidence, repository heads, and exact per-repository dirty source
@@ -408,6 +417,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkEnvironment.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkflowContracts.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\New-ProjectWorkspace.ps1 -SelfTest
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkUnitAutomation.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-CorrectActiveReadOnlyDependencies.ps1 -SelfTest
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-EventLedgerPrefixNormalization.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-CompletedTransitionSemanticCorrection.ps1 -SelfTest
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-FeatureLockResolver.ps1
