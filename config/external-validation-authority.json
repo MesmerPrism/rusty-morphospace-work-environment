@@ -32,6 +32,135 @@
   ],
   "approved_change_sets": [
     {
+      "approval_id": "active-read-only-dependency-correction-20260805",
+      "required_ancestor": "23050b55c38003241fd3fd4f7dae7c5c3eea8b67",
+      "changed_paths": [
+        "AGENTS.md",
+        "README.md",
+        "docs/ACTIVE_READ_ONLY_DEPENDENCY_CORRECTION.md",
+        "docs/AUTONOMOUS_ITERATION.md",
+        "schemas/active-read-only-dependency-correction-v1.schema.json",
+        "schemas/work-unit-automation-receipt-v2.schema.json",
+        "scripts/CorrectActiveReadOnlyDependencies.psm1",
+        "scripts/Invoke-WorkUnitAutomation.ps1",
+        "scripts/Test-CorrectActiveReadOnlyDependencies.ps1",
+        "scripts/Test-WorkEnvironment.ps1",
+        "scripts/Test-WorkflowContracts.ps1",
+        "skills/rust-work-graph/SKILL.md",
+        "skills/rusty-morphospace/references/project-workflow.md",
+        "skills/system-engineering/SKILL.md",
+        "templates/active-read-only-dependency-correction.example.json"
+      ],
+      "artifacts": [
+        {
+          "path": "AGENTS.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 26848,
+          "sha256": "dd2c974f9eb5b05b83946dafa5a79bfe5c7036e79d581d490058c4829ee42b40"
+        },
+        {
+          "path": "README.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 22138,
+          "sha256": "97b4ea317471870aa4ccd6709b34fc10270f3de3f919a61549ebfeb3d7a2414c"
+        },
+        {
+          "path": "docs/ACTIVE_READ_ONLY_DEPENDENCY_CORRECTION.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 4701,
+          "sha256": "d1eb9f7726facc02d5be379c9579bddf2d541bef2f8724cda0d9cacd9c5ed55a"
+        },
+        {
+          "path": "docs/AUTONOMOUS_ITERATION.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 27609,
+          "sha256": "abb305d1d74ca32bae47696ffed7f9077d0cc879b484b53098ef101d09542b20"
+        },
+        {
+          "path": "schemas/active-read-only-dependency-correction-v1.schema.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 3444,
+          "sha256": "e367ecd51d712410046183ba4b17e12d8576283eb5b1e0a4f78548997d853d93"
+        },
+        {
+          "path": "schemas/work-unit-automation-receipt-v2.schema.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 2195,
+          "sha256": "ed39d63b98404cd1f4f02bd09a39910499cbb3f69a9b49d4c07fa0ccc7f86f8d"
+        },
+        {
+          "path": "scripts/CorrectActiveReadOnlyDependencies.psm1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 19880,
+          "sha256": "aa3a9cf7085a38e38aa7a705b00814e481101825fd10f999931a1f52b7d4e15f"
+        },
+        {
+          "path": "scripts/Invoke-WorkUnitAutomation.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 9677,
+          "sha256": "f08667412fa4b242cd359228cc5be083db26f6e4059841a5734758b9cd2b8d5c"
+        },
+        {
+          "path": "scripts/Test-CorrectActiveReadOnlyDependencies.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 17824,
+          "sha256": "6051e5d2d8cc373f8b2dd6c46c80841ad56a9ed71869403fdc604e3acf6398ad"
+        },
+        {
+          "path": "scripts/Test-WorkEnvironment.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 22605,
+          "sha256": "175aecc1b962ef0a1de1c4b6a2463092d8501b07fe49d7039b0a8bd2c3accdbe"
+        },
+        {
+          "path": "scripts/Test-WorkflowContracts.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 103608,
+          "sha256": "7117e53d41c221a0e58756106c0fd6f3a93c606e15b8de97de8753fcee34e600"
+        },
+        {
+          "path": "skills/rust-work-graph/SKILL.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 13709,
+          "sha256": "9178c5869d88ae6ddf5c1781b8a43784ad094ac29dc648dfa81d7fc6a6f6eb2b"
+        },
+        {
+          "path": "skills/rusty-morphospace/references/project-workflow.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 7795,
+          "sha256": "0270bfe8175c43964b752ab36f4a3ee1733a63b57d03746cd281420c0058e747"
+        },
+        {
+          "path": "skills/system-engineering/SKILL.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 23505,
+          "sha256": "f6b83b4776c7a362ffe786fa536c7660582d510ee39f74b6d0183f35d159e00c"
+        },
+        {
+          "path": "templates/active-read-only-dependency-correction.example.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 2259,
+          "sha256": "1e5d830c52bb3fb96f6739d22501481123b982a9f6293ba5f890a6899a78c524"
+        }
+      ],
+      "status": "approved"
+    },
+    {
       "approval_id": "completed-transition-semantic-correction-20260804-v2",
       "required_ancestor": "cab21376b715ceb0d7c4c71c71c2c05f6d939d4e",
       "changed_paths": [
