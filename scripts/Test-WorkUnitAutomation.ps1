@@ -14,6 +14,12 @@ function Assert-Automation {
     if (-not $Condition) { throw "Automation self-test failed: $Message" }
 }
 
+function Get-TestCanonicalHash {
+    param([object]$Value)
+    $module = Get-Module WorkUnitAutomation
+    return & $module { param($Document) Get-MorphospaceCanonicalJsonSha256 $Document } $Value
+}
+
 # Exercise the public script in a fresh pwsh process so action/parameter routing
 # cannot pass merely because this test imported the module in-process.
 $freshStdout = [IO.Path]::GetTempFileName()
@@ -138,7 +144,8 @@ function New-TestValidationReceipt {
         [string]$Result,
         [object[]]$RepositoryRevisions = @(),
         [object[]]$ChangedPaths = @(),
-        [string]$EvidenceName = "self-test-evidence.txt"
+        [string]$EvidenceName = "self-test-evidence.txt",
+        [switch]$InstructionSynchronization
     )
 
     $receiptRoot = Join-Path $Workspace "receipts"
@@ -175,7 +182,12 @@ function New-TestValidationReceipt {
             status = $status
             command = "temporary validation command"
             evidence_refs = @("validation-evidence")
-        })
+        }) + $(if ($InstructionSynchronization) { @([ordered]@{
+            gate_id = "instruction-synchronization"
+            status = $status
+            command = "Verify every declared instruction surface is complete and validated."
+            evidence_refs = @("validation-evidence")
+        }) } else { @() })
         device_validation = $null
     }
     $receiptPath = Join-Path $receiptRoot "$UnitId-$Result-validation.json"
@@ -317,6 +329,12 @@ try {
     Invoke-TestGit -Path $repo -Arguments @("branch", "-M", "main") | Out-Null
     Invoke-TestGit -Path $repo -Arguments @("remote", "add", "origin", $remote) | Out-Null
     Invoke-TestGit -Path $repo -Arguments @("push", "-u", "origin", "main") | Out-Null
+    [System.IO.Directory]::CreateDirectory((Join-Path $repo "docs")) | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $repo "AGENTS.md"), "bounded agent routing`n", $encoding)
+    [System.IO.File]::WriteAllText((Join-Path $repo "docs\workflow.md"), "bounded workflow routing`n", $encoding)
+    Invoke-TestGit -Path $repo -Arguments @("add", "AGENTS.md", "docs/workflow.md") | Out-Null
+    Invoke-TestGit -Path $repo -Arguments @("commit", "-m", "add instruction surfaces") | Out-Null
+    Invoke-TestGit -Path $repo -Arguments @("push", "origin", "main") | Out-Null
 
     & git init --bare $planningRemote | Out-Null
     & git init $planningRepo | Out-Null
@@ -331,6 +349,15 @@ try {
     Invoke-TestGit -Path $planningRepo -Arguments @("push", "-u", "origin", "main") | Out-Null
 
     $workspace = New-TestWorkspace -Root (Join-Path $planningRepo "project") -ProjectId "automation-test" -UnitId "unit-auto-001"
+    $instructionUnitPath = Join-Path $workspace "iteration-units\unit-auto-001.json"
+    $instructionUnit = Get-Content -LiteralPath $instructionUnitPath -Raw | ConvertFrom-Json
+    $instructionUnit.instruction_impact = "update"
+    [void]$instructionUnit.PSObject.Properties.Remove("instruction_none_justification")
+    $instructionUnit.instruction_surfaces = @(
+        [pscustomobject][ordered]@{ surface_kind = "agents"; path = "<project-shell>/AGENTS.md"; owner = "project-shell"; change_reason = "Exercise exact agent-entrypoint completion."; action = "update"; status = "planned"; validation = "Review the stable observed file hash."; skill_id = $null },
+        [pscustomobject][ordered]@{ surface_kind = "router-doc"; path = "<project-shell>/docs/workflow.md"; owner = "project-shell"; change_reason = "Exercise exact router completion."; action = "update"; status = "planned"; validation = "Review the stable observed file hash."; skill_id = $null }
+    )
+    Write-TestJson -Path $instructionUnitPath -Value $instructionUnit
     $nextUnit = New-TestUnit -ProjectId "automation-test" -UnitId "unit-auto-002"
     $nextUnit.prerequisites = @("unit-auto-001")
     Write-TestJson -Path (Join-Path $workspace "iteration-units\unit-auto-002.json") -Value $nextUnit
@@ -711,6 +738,73 @@ try {
     Assert-Automation ($claimAgain.transition -eq "idempotent") "idempotent claim"
     Assert-Automation (@(Get-Content (Join-Path $workspace "iteration-events.jsonl")).Count -eq $eventCount) "idempotent claim appended an event"
 
+    $completionId = "unit-auto-001-instruction-completion"
+    $nonInFlightRejected = $false
+    try {
+        Invoke-MorphospaceWorkUnitAutomation -Action CompleteInstructionSurfaces -WorkspaceRoot $readyWorkspace -UnitId "unit-ready-001" `
+            -RepoMapPath $repoMapPath -InstructionCompletionId "unit-ready-001-instruction-completion" -Timestamp $fixed | Out-Null
+    } catch { $nonInFlightRejected = $_.Exception.Message -like "CompleteInstructionSurfaces requires the matching in-flight unit.*" }
+    Assert-Automation $nonInFlightRejected "instruction completion accepted a non-in-flight unit"
+
+    $validatingEntry = Invoke-MorphospaceWorkUnitAutomation -Action BeginValidation -WorkspaceRoot $workspace -UnitId "unit-auto-001" -RepoMapPath $repoMapPath -Timestamp $fixed -Execute
+    Assert-Automation ($validatingEntry.status_after -eq "validating") "instruction completion fixture did not enter validating state"
+    $completionPlan = & (Join-Path $PSScriptRoot "Invoke-WorkUnitAutomation.ps1") `
+        -Action CompleteInstructionSurfaces -WorkspaceRoot $workspace -UnitId "unit-auto-001" `
+        -RepoMapPath $repoMapPath -InstructionCompletionId $completionId -Timestamp $fixed |
+        ConvertFrom-Json
+    Assert-Automation (-not $completionPlan.executed -and $completionPlan.instruction_surface_completion.surfaces.Count -eq 2) "instruction completion dry run"
+    Assert-Automation (@((Get-Content -LiteralPath $instructionUnitPath -Raw | ConvertFrom-Json).instruction_surfaces | Where-Object { [string]$_.status -ne "planned" }).Count -eq 0) "instruction completion dry run mutated the unit"
+    $completionEventCount = @(Get-Content (Join-Path $workspace "iteration-events.jsonl")).Count
+    $completionStateBefore = Get-Content -LiteralPath (Join-Path $workspace "workspace.state.json") -Raw | ConvertFrom-Json
+    $completionUnitBefore = Get-Content -LiteralPath $instructionUnitPath -Raw | ConvertFrom-Json
+
+    $wrongIdentityRejected = $false
+    try {
+        Invoke-MorphospaceWorkUnitAutomation -Action CompleteInstructionSurfaces -WorkspaceRoot $workspace -UnitId "unit-auto-001" `
+            -RepoMapPath $repoMapPath -InstructionCompletionId $completionId -InstructionSurfaceIds (('0' * 64) -join '') `
+            -ExpectedUnitSha256 ([string]$completionPlan.instruction_surface_completion.expected_unit_sha256) `
+            -ExpectedInstructionObservationSha256 ([string]$completionPlan.instruction_surface_completion.observation_sha256) `
+            -OutPath (Join-Path $receiptRoot "instruction-completion.json") -Timestamp $fixed -Execute | Out-Null
+    } catch { $wrongIdentityRejected = $_.Exception.Message -like "InstructionSurfaceIds must equal*" }
+    Assert-Automation $wrongIdentityRejected "instruction completion accepted an unexpected surface identity"
+
+    $instructionBytes = [System.IO.File]::ReadAllBytes((Join-Path $repo "AGENTS.md"))
+    try {
+        [System.IO.File]::WriteAllText((Join-Path $repo "AGENTS.md"), "one-byte-drift!`n", $encoding)
+        $staleObservationRejected = $false
+        try {
+            Invoke-MorphospaceWorkUnitAutomation -Action CompleteInstructionSurfaces -WorkspaceRoot $workspace -UnitId "unit-auto-001" `
+                -RepoMapPath $repoMapPath -InstructionCompletionId $completionId `
+                -InstructionSurfaceIds @($completionPlan.instruction_surface_completion.surfaces.surface_id) `
+                -ExpectedUnitSha256 ([string]$completionPlan.instruction_surface_completion.expected_unit_sha256) `
+                -ExpectedInstructionObservationSha256 ([string]$completionPlan.instruction_surface_completion.observation_sha256) `
+                -OutPath (Join-Path $receiptRoot "instruction-completion.json") -Timestamp $fixed -Execute | Out-Null
+        } catch { $staleObservationRejected = $_.Exception.Message -like "ExpectedInstructionObservationSha256 does not match*" }
+        Assert-Automation $staleObservationRejected "instruction completion accepted changed surface evidence"
+    } finally {
+        [System.IO.File]::WriteAllBytes((Join-Path $repo "AGENTS.md"), $instructionBytes)
+    }
+
+    $completionReceiptPath = Join-Path $receiptRoot "instruction-completion.json"
+    $completed = Invoke-MorphospaceWorkUnitAutomation -Action CompleteInstructionSurfaces -WorkspaceRoot $workspace -UnitId "unit-auto-001" `
+        -RepoMapPath $repoMapPath -InstructionCompletionId $completionId `
+        -InstructionSurfaceIds @($completionPlan.instruction_surface_completion.surfaces.surface_id) `
+        -ExpectedUnitSha256 ([string]$completionPlan.instruction_surface_completion.expected_unit_sha256) `
+        -ExpectedInstructionObservationSha256 ([string]$completionPlan.instruction_surface_completion.observation_sha256) `
+        -OutPath $completionReceiptPath -Timestamp $fixed -Execute
+    Assert-Automation ($completed.transition -eq "planned-instruction-surfaces-to-complete" -and $completed.instruction_surface_completion.validation_commands_executed -eq $false) "instruction completion transition"
+    Assert-Automation (Test-Path -LiteralPath $completionReceiptPath -PathType Leaf) "instruction completion receipt was not installed transactionally"
+    $completedUnit = Get-Content -LiteralPath $instructionUnitPath -Raw | ConvertFrom-Json
+    Assert-Automation (@($completedUnit.instruction_surfaces | Where-Object { [string]$_.status -ne "complete" }).Count -eq 0) "instruction completion did not complete every planned surface"
+    foreach ($surface in @($completedUnit.instruction_surfaces)) { $surface.status = "planned" }
+    Assert-Automation ((Get-TestCanonicalHash $completedUnit) -ceq (Get-TestCanonicalHash $completionUnitBefore)) "instruction completion changed unit fields other than declared surface status"
+    $completionStateAfter = Get-Content -LiteralPath (Join-Path $workspace "workspace.state.json") -Raw | ConvertFrom-Json
+    $completionStateAfter.last_event_id = $completionStateBefore.last_event_id
+    Assert-Automation ((Get-TestCanonicalHash $completionStateAfter) -ceq (Get-TestCanonicalHash $completionStateBefore)) "instruction completion changed state fields other than last_event_id"
+    Assert-Automation (@(Get-Content (Join-Path $workspace "iteration-events.jsonl")).Count -eq ($completionEventCount + 1)) "instruction completion did not append exactly one event"
+    $completionReceipt = Get-Content -LiteralPath $completionReceiptPath -Raw
+    Assert-Automation (Test-Json -Json $completionReceipt -SchemaFile (Join-Path $RepoRoot "schemas\work-unit-automation-receipt.schema.json")) "instruction completion receipt failed its schema"
+
     $preflightWorkspace = New-TestWorkspace -Root (Join-Path $testRoot "preflight-project") -ProjectId "preflight-test" -UnitId "unit-preflight-001"
     $preflightUnitPath = Join-Path $preflightWorkspace "iteration-units\unit-preflight-001.json"
     $preflightUnit = Get-Content -LiteralPath $preflightUnitPath -Raw | ConvertFrom-Json
@@ -780,7 +874,7 @@ try {
     Invoke-TestGit -Path $repo -Arguments @("switch", "main") | Out-Null
 
     $begin = Invoke-MorphospaceWorkUnitAutomation -Action BeginValidation -WorkspaceRoot $workspace -UnitId "unit-auto-001" -RepoMapPath $repoMapPath -Timestamp $fixed -OutPath (Join-Path $receiptRoot "begin-validation.json") -Execute
-    Assert-Automation ($begin.status_after -eq "validating" -and $begin.validation_matrix.Count -eq 1) "validation plan"
+    Assert-Automation ($begin.status_after -eq "validating" -and @($begin.validation_matrix).Count -eq 2) "validation plan including instruction synchronization"
     $missingReceiptRejected = $false
     try {
         Invoke-MorphospaceWorkUnitAutomation -Action RecordValidation -WorkspaceRoot $workspace -UnitId "unit-auto-001" -RepoMapPath $repoMapPath -ValidationTier deep -ValidationResult pass -ValidationReceipt "receipts/does-not-exist.json" -Timestamp $fixed | Out-Null
@@ -792,7 +886,7 @@ try {
     $validationBranch = @(Invoke-TestGit -Path $repo -Arguments @("branch", "--show-current"))[0]
     $validReceiptPath = New-TestValidationReceipt -Workspace $workspace -ProjectId "automation-test" -UnitId "unit-auto-001" -Tier deep -Result pass -RepositoryRevisions @([ordered]@{
         repo_id = "project-shell"; base_revision = $validationHead; head_revision = $validationHead; branch = $validationBranch
-    })
+    }) -InstructionSynchronization
     $record = Invoke-MorphospaceWorkUnitAutomation -Action RecordValidation -WorkspaceRoot $workspace -UnitId "unit-auto-001" -RepoMapPath $repoMapPath -ValidationTier deep -ValidationResult pass -ValidationReceipt "receipts/unit-auto-001-pass-validation.json" -Timestamp $fixed -OutPath (Join-Path $receiptRoot "validation.json") -Execute
     Assert-Automation ($record.transition -eq "validation-pass") "passing validation record"
     $validationEvidencePath = Join-Path $receiptRoot "self-test-evidence.txt"

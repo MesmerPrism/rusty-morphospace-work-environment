@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("Inspect", "Ready", "Claim", "Resume", "BeginValidation", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RetirePreparedPush", "ReconcilePreparedPublication", "ResolveBlocker", "CorrectResolvedBlockerEvidence", "CorrectCompletedTransitionSemantics", "NormalizeEventLedgerPrefix", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix")]
+    [ValidateSet("Inspect", "Ready", "Claim", "Resume", "CompleteInstructionSurfaces", "BeginValidation", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RetirePreparedPush", "ReconcilePreparedPublication", "ResolveBlocker", "CorrectResolvedBlockerEvidence", "CorrectCompletedTransitionSemantics", "NormalizeEventLedgerPrefix", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix")]
     [string]$Action,
     [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
     [string]$UnitId = "",
@@ -30,6 +30,9 @@ param(
     [string]$ExpectedEventTailId = "",
     [string]$ExpectedIntentSha256 = "",
     [string]$AdoptionReceipt = "",
+    [string]$InstructionCompletionId = "",
+    [string[]]$InstructionSurfaceIds = @(),
+    [string]$ExpectedInstructionObservationSha256 = "",
     [ValidateSet("quick", "standard", "deep")][string]$ValidationTier = "standard",
     [string[]]$DeviceSerials = @(),
     [string]$AuthorityRunnerPath = "",
@@ -135,6 +138,10 @@ $arguments = @{
     PublishedPrerequisiteSuffixReconciliation = $PublishedPrerequisiteSuffixReconciliation
     PublicationOrderingInterruption = $PublicationOrderingInterruption
     AdoptionReceipt = $AdoptionReceipt
+    InstructionCompletionId = $InstructionCompletionId
+    InstructionSurfaceIds = $InstructionSurfaceIds
+    ExpectedUnitSha256 = $ExpectedUnitSha256
+    ExpectedInstructionObservationSha256 = $ExpectedInstructionObservationSha256
     ValidationTier = $ValidationTier
     DeviceSerials = $DeviceSerials
     AuthorityRunnerPath = $AuthorityRunnerPath

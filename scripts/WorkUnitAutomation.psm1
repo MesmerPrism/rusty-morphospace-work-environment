@@ -2,6 +2,7 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = "Stop"
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceValidationAuthority.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceContentObservation.psm1') -Force -DisableNameChecking
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospacePublicationRecovery.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospacePublishedPlanningAuthorityAdoption.psm1') -Force
@@ -336,6 +337,100 @@ function Test-MorphospaceInstructionCompletion {
     $incomplete = @($Unit.instruction_surfaces | Where-Object { [string]$_.status -ne "complete" })
     if ($incomplete.Count -gt 0) {
         throw "Instruction surfaces are incomplete: $(@($incomplete | ForEach-Object { [string]$_.path }) -join ', ')"
+    }
+}
+
+function Get-MorphospaceInstructionSurfaceCompletionPlan {
+    param(
+        [Parameter(Mandatory = $true)][object]$Unit,
+        [Parameter(Mandatory = $true)][hashtable]$RepositoryMap
+    )
+
+    if ([string]$Unit.instruction_impact -eq "none") {
+        throw "Instruction-surface completion requires review or update impact."
+    }
+    $planned = @($Unit.instruction_surfaces | Where-Object { [string]$_.status -eq "planned" })
+    if ($planned.Count -eq 0) { throw "Instruction-surface completion requires at least one planned surface." }
+    if ($planned.Count -gt 64) { throw "Instruction-surface completion is limited to 64 planned surfaces." }
+
+    $instructionRepositoryMap = @{}
+    foreach ($repoId in @($RepositoryMap.Keys)) {
+        $entry = ($RepositoryMap[$repoId] | ConvertTo-Json -Depth 16 | ConvertFrom-Json)
+        if ($entry.PSObject.Properties.Name -notcontains "aliases") {
+            $entry | Add-Member -NotePropertyName aliases -NotePropertyValue @()
+        }
+        $instructionRepositoryMap[[string]$repoId] = $entry
+    }
+
+    $targetUnit = ($Unit | ConvertTo-Json -Depth 32 | ConvertFrom-Json)
+    foreach ($surface in @($targetUnit.instruction_surfaces)) {
+        if ([string]$surface.status -eq "planned") {
+            $surface.status = "complete"
+        } elseif ([string]$surface.status -ne "complete") {
+            throw "Instruction surface has an unsupported status: $([string]$surface.path)"
+        }
+    }
+
+    $observations = @(Get-MorphospaceInstructionObservation -Unit $targetUnit -RepositoryMap $instructionRepositoryMap)
+    $records = New-Object System.Collections.Generic.List[object]
+    foreach ($surface in $planned) {
+        $declaredPath = ([string]$surface.path).Replace("\", "/")
+        $matches = @($observations | Where-Object { [string]$_.path -ceq $declaredPath })
+        if ($matches.Count -ne 1) {
+            throw "Planned instruction surface did not resolve to one stable observation: $declaredPath"
+        }
+        $observation = $matches[0]
+        $skillId = if ($surface.PSObject.Properties.Name -contains "skill_id") { $surface.skill_id } else { $null }
+        $identity = [pscustomobject][ordered]@{
+            surface_kind = [string]$surface.surface_kind
+            declared_path = $declaredPath
+            repo_id = [string]$observation.repo_id
+            relative_path = [string]$observation.relative_path
+            owner = [string]$surface.owner
+            action = [string]$surface.action
+            validation = [string]$surface.validation
+            skill_id = $skillId
+        }
+        $records.Add([pscustomobject][ordered]@{
+            surface_id = Get-MorphospaceCanonicalJsonSha256 $identity
+            surface_kind = [string]$identity.surface_kind
+            declared_path = [string]$identity.declared_path
+            repo_id = [string]$identity.repo_id
+            relative_path = [string]$identity.relative_path
+            owner = [string]$identity.owner
+            action = [string]$identity.action
+            validation = [string]$identity.validation
+            skill_id = $identity.skill_id
+            previous_status = "planned"
+            resulting_status = "complete"
+            sha256 = [string]$observation.sha256
+        }) | Out-Null
+    }
+    $surfaceRecords = @($records.ToArray() | Sort-Object surface_id -CaseSensitive)
+    $observationDocument = [pscustomobject][ordered]@{ surfaces = $surfaceRecords }
+    return [pscustomobject][ordered]@{
+        target_unit = $targetUnit
+        resulting_unit_sha256 = Get-MorphospaceCanonicalJsonSha256 $targetUnit
+        observation_sha256 = Get-MorphospaceCanonicalJsonSha256 $observationDocument
+        surfaces = $surfaceRecords
+    }
+}
+
+function Assert-MorphospaceExactInstructionSurfaceIds {
+    param(
+        [Parameter(Mandatory = $true)][object[]]$Surfaces,
+        [AllowEmptyCollection()][string[]]$RequestedIds = @(),
+        [switch]$Required
+    )
+
+    $expected = @($Surfaces | ForEach-Object { [string]$_.surface_id } | Sort-Object -CaseSensitive)
+    $provided = @($RequestedIds | ForEach-Object { [string]$_ } | Sort-Object -CaseSensitive)
+    if ($Required -and $provided.Count -eq 0) { throw "Executed instruction-surface completion requires exact InstructionSurfaceIds from the dry run." }
+    if ($provided.Count -eq 0) { return }
+    if (@($provided | Select-Object -Unique).Count -ne $provided.Count) { throw "InstructionSurfaceIds contains a duplicate identity." }
+    if ($provided.Count -ne $expected.Count) { throw "InstructionSurfaceIds must equal the complete planned surface set." }
+    for ($index = 0; $index -lt $expected.Count; $index++) {
+        if ($provided[$index] -cne $expected[$index]) { throw "InstructionSurfaceIds must equal the complete planned surface set." }
     }
 }
 
@@ -912,7 +1007,7 @@ function Invoke-MorphospaceAuthorityRunnerForRecord {
 function Invoke-MorphospaceWorkUnitAutomation {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory = $true)][ValidateSet("Inspect", "Ready", "Claim", "Resume", "BeginValidation", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix")][string]$Action,
+        [Parameter(Mandatory = $true)][ValidateSet("Inspect", "Ready", "Claim", "Resume", "CompleteInstructionSurfaces", "BeginValidation", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix")][string]$Action,
         [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
         [string]$UnitId = "",
         [string]$RepoMapPath = "",
@@ -927,6 +1022,10 @@ function Invoke-MorphospaceWorkUnitAutomation {
         [string]$PublishedPrerequisiteSuffixReconciliation = "",
         [string]$PublicationOrderingInterruption = "",
         [string]$AdoptionReceipt = "",
+        [string]$InstructionCompletionId = "",
+        [string[]]$InstructionSurfaceIds = @(),
+        [string]$ExpectedUnitSha256 = "",
+        [string]$ExpectedInstructionObservationSha256 = "",
         [ValidateSet("quick", "standard", "deep")][string]$ValidationTier = "standard",
         [string[]]$DeviceSerials = @(),
         [string]$AuthorityRunnerPath = "",
@@ -1025,6 +1124,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
     $publishedPrerequisiteSuffixBinding = $null
     $skipAutomaticRepositoryProjection = $false
     $publicationOrderingInterruptionBinding = $null
+    $instructionSurfaceCompletionBinding = $null
 
     switch ($Action) {
         "Inspect" {
@@ -1068,6 +1168,44 @@ function Invoke-MorphospaceWorkUnitAutomation {
                     $summary = if ($adoptionReference) { "Claimed one ready iteration unit with an exact hashed receipt for in-flight work that began before protocol v2." } else { "Claimed one ready iteration unit without expanding repository or path scope." }
                     $event = New-MorphospaceEvent -State $state -Events $events -UnitId $UnitId -ActionSlug "claimed" -Timestamp $Timestamp -EventType "state-transition" -Summary $summary -Receipts @($adoptionReference | Where-Object { $_ })
                 }
+            }
+        }
+        "CompleteInstructionSurfaces" {
+            if ($beforeStatus -notin @("active", "validating") -or [string]$state.current_unit -ne $UnitId) {
+                throw "CompleteInstructionSurfaces requires the matching in-flight unit."
+            }
+            if (-not $RepoMapPath) { throw "CompleteInstructionSurfaces requires RepoMapPath." }
+            if (-not $InstructionCompletionId -or $InstructionCompletionId -cnotmatch '^[a-z0-9][a-z0-9-]{1,95}$') {
+                throw "InstructionCompletionId must contain 2 through 96 lowercase alphanumeric/hyphen characters."
+            }
+            $completionPlan = Get-MorphospaceInstructionSurfaceCompletionPlan -Unit $unit -RepositoryMap $repoMap
+            Assert-MorphospaceExactInstructionSurfaceIds -Surfaces $completionPlan.surfaces -RequestedIds $InstructionSurfaceIds -Required:$Execute
+            if ($ExpectedUnitSha256 -and $ExpectedUnitSha256 -cne $expectedPreUnitSha256) {
+                throw "ExpectedUnitSha256 does not match the current active unit."
+            }
+            if ($ExpectedInstructionObservationSha256 -and $ExpectedInstructionObservationSha256 -cne [string]$completionPlan.observation_sha256) {
+                throw "ExpectedInstructionObservationSha256 does not match the stable instruction observation."
+            }
+            if ($Execute) {
+                if (-not $OutPath) { throw "Executed CompleteInstructionSurfaces requires OutPath for its transaction-owned receipt." }
+                if (-not $ExpectedUnitSha256) { throw "Executed CompleteInstructionSurfaces requires ExpectedUnitSha256 from the dry run." }
+                if (-not $ExpectedInstructionObservationSha256) { throw "Executed CompleteInstructionSurfaces requires ExpectedInstructionObservationSha256 from the dry run." }
+            }
+            $instructionSurfaceCompletionBinding = [pscustomobject][ordered]@{
+                completion_id = $InstructionCompletionId
+                expected_unit_sha256 = $expectedPreUnitSha256
+                resulting_unit_sha256 = [string]$completionPlan.resulting_unit_sha256
+                observation_sha256 = [string]$completionPlan.observation_sha256
+                all_planned_surfaces_completed = $true
+                surface_files_observed_stable = $true
+                validation_commands_executed = $false
+                surfaces = @($completionPlan.surfaces)
+            }
+            $transition = "planned-instruction-surfaces-to-complete"
+            if ($Execute) {
+                $unit = $completionPlan.target_unit
+                $event = New-MorphospaceEvent -State $state -Events $events -UnitId $UnitId -ActionSlug "instructions" -Timestamp $Timestamp -EventType "state-transition" -Summary "Completed the exact declared instruction-surface set after stable content observation without executing validation commands." -Receipts @($receiptReference)
+                $event.event_id = "$InstructionCompletionId-recorded"
             }
         }
         "Resume" {
@@ -1469,6 +1607,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
             planned_publication = $publicationAccountingBinding
             planning_suffix_rewrite_recovery = $planningSuffixRewriteBinding
             published_prerequisite_suffix_reconciliation = $publishedPrerequisiteSuffixBinding
+            instruction_surface_completion = $instructionSurfaceCompletionBinding
             push_plan = $pushPlan
             event_id = if ($event) { [string]$event.event_id } else { $null }
         }
@@ -1522,7 +1661,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
                 }
             }
         }
-        if ($Action -eq "PreparePush") {
+        if ($Action -in @("PreparePush", "CompleteInstructionSurfaces")) {
             $result = & $newAutomationResult
             $receiptBytes = [System.Text.UTF8Encoding]::new($false).GetBytes(
                 (($result | ConvertTo-Json -Depth 32) + [Environment]::NewLine)
