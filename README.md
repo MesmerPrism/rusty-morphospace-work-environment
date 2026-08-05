@@ -169,6 +169,9 @@ validation without a device.
 - [Autonomous Iteration](docs/AUTONOMOUS_ITERATION.md) defines work-unit scope,
   compact state, event notes, validation tiers, larger push checkpoints, and
   the optional fail-closed work-unit automation CLI.
+- [Active Read-Only Dependency Correction](docs/ACTIVE_READ_ONLY_DEPENDENCY_CORRECTION.md)
+  defines the exact-CAS transaction for correcting only an active unit's
+  project-declared parse/build dependency closure.
 - [Event-Ledger Prefix Normalization](docs/EVENT_LEDGER_PREFIX_NORMALIZATION.md)
   defines the one-time typed correction for exactly one leading CRLF blank
   record while preserving strict ordinary parsing and every prior event byte.
@@ -236,6 +239,12 @@ repository, project, state, unit, event-ledger, tail, and dry-run intent
 identities; it appends one correction event, publishes the normalized receipt
 only after exact target readback, and changes no state field except
 `last_event_id`.
+Use `CorrectActiveReadOnlyDependencies` only for an exact current `active` unit
+whose existing build or workspace parser needs corrected read-only identities.
+Its correction binds the full before/after dependency sets, state/unit/event
+CAS, and one full commit/tree per resulting dependency. It can add only
+project-declared, non-writable paths and changes no other unit field. See
+[Active Read-Only Dependency Correction](docs/ACTIVE_READ_ONLY_DEPENDENCY_CORRECTION.md).
 `CorrectCompletedTransitionSemantics` is not a compatibility mode for malformed
 events. Its builder derives the old and replacement from current retained
 state/unit evidence, requires the original event receipts and legacy-v1 intent

@@ -282,7 +282,8 @@ if ($SelfTest) {
         [pscustomobject]@{ name = "workflow:local-skill-bootstrap"; script = "Test-LocalSkillBootstrap.ps1"; detail = "Validated plan, install, verify, drift, backup, update, and local-file preservation." },
         [pscustomobject]@{ name = "workflow:quest-file-manager-provider"; script = "Test-QuestFileManagerCliResolver.ps1"; detail = "Validated exact provider resolution, immutable deployment inputs, typed vectors, mismatch rejection, and failure evidence retention." },
         [pscustomobject]@{ name = "workflow:project-isolation"; script = "Test-ProjectIsolation.ps1"; detail = "Validated exact source locks, detached materializations, no-overwrite content addresses, and conflicting resource claims." },
-        [pscustomobject]@{ name = "workflow:completed-transition-semantic-correction"; script = "Test-CompletedTransitionSemanticCorrection.ps1"; detail = "Validated derived legacy-v1 supersession correction, historical-byte preservation, authenticated projection, interruption repair, replay, path, CAS, and damaged-evidence rejection." }
+        [pscustomobject]@{ name = "workflow:completed-transition-semantic-correction"; script = "Test-CompletedTransitionSemanticCorrection.ps1"; detail = "Validated derived legacy-v1 supersession correction, historical-byte preservation, authenticated projection, interruption repair, replay, path, CAS, and damaged-evidence rejection." },
+        [pscustomobject]@{ name = "workflow:active-read-only-dependency-correction"; script = "Test-CorrectActiveReadOnlyDependencies.ps1"; detail = "Validated exact active/current CAS, bounded dependency changes, project paths, Git commit/tree identities, transaction ownership, and no Git/device/remote mutation." }
     )) {
         try {
             $quickTestPath = Join-Path (Join-Path $RepoRoot "scripts") $quickTest.script

@@ -121,7 +121,13 @@ For the matching active or validating unit, complete declared instruction surfac
 two-phase `CompleteInstructionSurfaces` transaction: replay the exact unit
 hash, stable surface-observation hash, and complete planned-surface ID set.
 Treat its receipt as content-observation evidence, not execution evidence; it
-must change no other unit field and must not execute validation commands.
+  must change no other unit field and must not execute validation commands.
+For an active unit whose admitted build/parser closure needs corrected
+read-only identities, use the typed `CorrectActiveReadOnlyDependencies`
+transaction instead of editing workflow JSON. Require exact state/unit/event
+CAS, complete before/after sets, project-declared non-writable paths, and full
+commit/tree identity resolution. Keep worktree materialization, build execution,
+validation, acceptance, and publication outside that correction transaction.
 `RecordValidation` and `Accept` must validate a workspace-local
 `validation_receipt.v1`: exact acceptance/gate coverage, artifact hashes,
 current heads/branches, ancestor bases, exact in-scope changed paths, and—when

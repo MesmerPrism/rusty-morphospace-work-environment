@@ -67,6 +67,12 @@ normalized allowed paths, and change categories as the maximum scan envelope.
 Exclude unlisted repositories and paths; the scope is authority for bounded
 discovery, not evidence that every listed path changed.
 
+If `CorrectActiveReadOnlyDependencies` has transactionally changed an active
+unit's read-only closure, treat only the resulting declared repositories and
+paths as additional read-only scan edges. Preserve writable/read-only edge
+distinction, bind each read-only edge to its corrected full commit/tree, and do
+not infer that the action materialized or validated those repositories.
+
 For concurrent multi-repo work, graph the exact source-composition lock as the
 revision authority and live working-copy heads as observations. Keep claimed,
 validated, and accepted revision edges distinct. Include materialization,

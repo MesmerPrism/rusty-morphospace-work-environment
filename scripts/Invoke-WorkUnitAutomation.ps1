@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("Inspect", "Ready", "Claim", "Resume", "CompleteInstructionSurfaces", "BeginValidation", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RetirePreparedPush", "ReconcilePreparedPublication", "ResolveBlocker", "CorrectResolvedBlockerEvidence", "CorrectCompletedTransitionSemantics", "NormalizeEventLedgerPrefix", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix")]
+    [ValidateSet("Inspect", "Ready", "Claim", "Resume", "CompleteInstructionSurfaces", "CorrectActiveReadOnlyDependencies", "BeginValidation", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RetirePreparedPush", "ReconcilePreparedPublication", "ResolveBlocker", "CorrectResolvedBlockerEvidence", "CorrectCompletedTransitionSemantics", "NormalizeEventLedgerPrefix", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix")]
     [string]$Action,
     [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
     [string]$UnitId = "",
@@ -20,6 +20,8 @@ param(
     [string]$BlockerResolutionReceipt = "",
     [string]$BlockerResolutionCorrectionReceipt = "",
     [string]$CompletedTransitionSemanticCorrection = "",
+    [string]$ReadOnlyDependencyCorrection = "",
+    [string]$ExpectedReadOnlyDependencyCorrectionSha256 = "",
     [string]$LedgerPrefixNormalizationId = "",
     [string]$ExpectedRepositoryHead = "",
     [string]$ExpectedProjectSha256 = "",
@@ -92,6 +94,18 @@ if ($Action -eq "CorrectCompletedTransitionSemantics") {
     Import-Module (Join-Path $PSScriptRoot "CompletedTransitionSemanticCorrection.psm1") -Force
     Invoke-MorphospaceCompletedTransitionSemanticCorrection -WorkspaceRoot $WorkspaceRoot `
         -CorrectionReceipt $CompletedTransitionSemanticCorrection -OutPath $OutPath -Execute:$Execute |
+        ConvertTo-Json -Depth 32
+    return
+}
+if ($Action -eq "CorrectActiveReadOnlyDependencies") {
+    if (-not $ReadOnlyDependencyCorrection) { throw "CorrectActiveReadOnlyDependencies requires ReadOnlyDependencyCorrection." }
+    if (-not $RepoMapPath) { throw "CorrectActiveReadOnlyDependencies requires RepoMapPath." }
+    if (-not $OutPath) { throw "CorrectActiveReadOnlyDependencies requires OutPath." }
+    Import-Module (Join-Path $PSScriptRoot "CorrectActiveReadOnlyDependencies.psm1") -Force
+    Invoke-MorphospaceCorrectActiveReadOnlyDependencies -WorkspaceRoot $WorkspaceRoot -UnitId $UnitId `
+        -RepoMapPath $RepoMapPath -ReadOnlyDependencyCorrection $ReadOnlyDependencyCorrection `
+        -ExpectedReadOnlyDependencyCorrectionSha256 $ExpectedReadOnlyDependencyCorrectionSha256 `
+        -Timestamp $Timestamp -OutPath $OutPath -Execute:$Execute |
         ConvertTo-Json -Depth 32
     return
 }

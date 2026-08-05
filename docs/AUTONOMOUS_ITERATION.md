@@ -270,7 +270,8 @@ successful push is not proof that the whole batch is complete.
 
 `scripts/Invoke-WorkUnitAutomation.ps1` is the portable owner for mechanical
 work-unit transitions and preparation artifacts. It supports `Inspect`,
-`Ready`, `Claim`, `Resume`, `CompleteInstructionSurfaces`, `BeginValidation`,
+`Ready`, `Claim`, `Resume`, `CompleteInstructionSurfaces`,
+`CorrectActiveReadOnlyDependencies`, `BeginValidation`,
 `RecordValidation`, `Accept`,
 `PreparePush`, `Recover`, `ReconcilePublication`,
 `AdoptPublishedPlanningAuthority`, and the narrow
@@ -286,6 +287,10 @@ The CLI is deliberately narrower than an autonomous coding agent:
   validating unit; it
   requires the exact full set of currently planned surface IDs, a caller-
   replayed unit hash, and a caller-replayed stable surface-observation hash;
+- active-unit read-only dependency correction requires exact state/unit and
+  byte-level event-ledger CAS, full before/after sets, already-declared project
+  paths, and full commit/tree identities; it never changes writable scope or
+  materializes a repository;
 - it reads Git state but never runs checkout, reset, stash, commit, push, or
   force-push;
 - it never runs validation commands or device commands;
@@ -366,6 +371,15 @@ be named; missing, extra, duplicate, stale, moved, or changed surfaces fail.
 The receipt and event are installed in the same transition. The action records
 `validation_commands_executed: false`: later validation and `Accept` remain
 separate gates.
+
+When an active unit's admitted build or parser cannot run because its read-only
+dependency declaration has a wrong exact identity or omits an already
+project-declared parse-only repository, use the separate two-phase
+`CorrectActiveReadOnlyDependencies` action. It is deliberately not a generic
+unit amendment. See
+[Active Read-Only Dependency Correction](ACTIVE_READ_ONLY_DEPENDENCY_CORRECTION.md)
+for the strict correction document, canonical verification text, dry-run hash
+replay, and transaction invariants.
 
 Inspection example:
 

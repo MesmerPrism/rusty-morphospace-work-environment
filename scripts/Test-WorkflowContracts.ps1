@@ -1152,6 +1152,7 @@ $requiredSchemaNames = @(
     "prepared-publication-reconstruction-v1.schema.json",
     "blocker-resolution-receipt-v1.schema.json",
     "blocker-resolution-correction-receipt-v1.schema.json",
+    "active-read-only-dependency-correction-v1.schema.json",
     "completed-transition-semantic-correction-v1.schema.json",
     "legacy-embedded-push-bundle-plan-v1.schema.json",
     "work-unit-automation-receipt-v2.schema.json",
@@ -1309,7 +1310,8 @@ $candidateContracts = @(
     [pscustomobject]@{ Template = "legacy-embedded-push-bundle-plan.example.json"; Schema = "legacy-embedded-push-bundle-plan-v1.schema.json"; Label = "Legacy embedded push-plan" },
     [pscustomobject]@{ Template = "prepared-publication-reconstruction.example.json"; Schema = "prepared-publication-reconstruction-v1.schema.json"; Label = "Prepared-publication reconstruction" },
     [pscustomobject]@{ Template = "blocker-resolution-receipt.example.json"; Schema = "blocker-resolution-receipt-v1.schema.json"; Label = "Blocker-resolution" },
-    [pscustomobject]@{ Template = "blocker-resolution-correction-receipt.example.json"; Schema = "blocker-resolution-correction-receipt-v1.schema.json"; Label = "Blocker-resolution correction" }
+    [pscustomobject]@{ Template = "blocker-resolution-correction-receipt.example.json"; Schema = "blocker-resolution-correction-receipt-v1.schema.json"; Label = "Blocker-resolution correction" },
+    [pscustomobject]@{ Template = "active-read-only-dependency-correction.example.json"; Schema = "active-read-only-dependency-correction-v1.schema.json"; Label = "Active read-only dependency correction" }
 )
 foreach ($candidateContract in $candidateContracts) {
     $candidateTemplate = Join-Path $templatesRoot $candidateContract.Template
@@ -1324,7 +1326,7 @@ foreach ($candidateContract in $candidateContracts) {
     }
 }
 if (-not $SkipOwnerSelfTests) {
-    foreach ($selfTest in @("Test-LegacyEmbeddedPushPlanCompatibility.ps1","Test-PreparedPublicationReconstruction.ps1","Test-ResolveBlocker.ps1","Test-CorrectResolvedBlockerEvidence.ps1","Test-CompletedTransitionSemanticCorrection.ps1","Test-TransitionLedger.ps1")) {
+    foreach ($selfTest in @("Test-LegacyEmbeddedPushPlanCompatibility.ps1","Test-PreparedPublicationReconstruction.ps1","Test-ResolveBlocker.ps1","Test-CorrectResolvedBlockerEvidence.ps1","Test-CorrectActiveReadOnlyDependencies.ps1","Test-CompletedTransitionSemanticCorrection.ps1","Test-TransitionLedger.ps1")) {
         try { Invoke-IsolatedWorkflowSelfTest -Path (Join-Path $RepoRoot "scripts\$selfTest") }
         catch { Add-Failure -Message "$selfTest failed: $($_.Exception.Message)" }
     }
