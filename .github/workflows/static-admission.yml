@@ -1,0 +1,117 @@
+name: Static Admission
+
+on:
+  pull_request_target:
+    branches:
+      - main
+    types:
+      - opened
+      - ready_for_review
+      - reopened
+      - synchronize
+
+permissions:
+  contents: read
+
+concurrency:
+  group: static-admission-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  static-admission:
+    name: Static admission
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out exact trusted base without credentials
+        shell: pwsh
+        env:
+          BASE_COMMIT: ${{ github.event.pull_request.base.sha }}
+          EXPECTED_REPOSITORY: MesmerPrism/rusty-morphospace-work-environment
+          EVENT_REPOSITORY: ${{ github.repository }}
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = "Stop"
+          if ($env:EVENT_REPOSITORY -cne $env:EXPECTED_REPOSITORY) {
+            throw "Workflow repository identity is not the expected repository."
+          }
+          if ($env:BASE_COMMIT -cnotmatch "^[0-9a-f]{40}$") {
+            throw "Event base commit is not a lowercase full SHA-1."
+          }
+
+          $trusted = Join-Path $env:RUNNER_TEMP "trusted-static-admission-base"
+          if (Test-Path -LiteralPath $trusted) {
+            throw "Trusted checkout path already exists."
+          }
+          [void](New-Item -ItemType Directory -Path $trusted)
+          $disabledHooks = Join-Path $trusted ".git/codex-disabled-hooks"
+          $nullConfig = if ($IsWindows) { "NUL" } else { "/dev/null" }
+          $env:GIT_CONFIG_NOSYSTEM = "1"
+          $env:GIT_CONFIG_GLOBAL = $nullConfig
+          $env:GIT_LFS_SKIP_SMUDGE = "1"
+          $env:GIT_TERMINAL_PROMPT = "0"
+          try {
+            & git init --initial-branch=static-admission $trusted
+            if ($LASTEXITCODE -ne 0) { throw "git init failed." }
+            & git -C $trusted config core.autocrlf false
+            if ($LASTEXITCODE -ne 0) { throw "git config failed." }
+            & git -C $trusted config core.hooksPath $disabledHooks
+            if ($LASTEXITCODE -ne 0) { throw "git hooks-path config failed." }
+            & git -C $trusted config credential.helper ""
+            if ($LASTEXITCODE -ne 0) { throw "git credential config failed." }
+            & git -C $trusted remote add origin `
+              "https://github.com/$($env:EXPECTED_REPOSITORY).git"
+            if ($LASTEXITCODE -ne 0) { throw "git remote setup failed." }
+            & git -C $trusted fetch --force --no-tags --no-recurse-submodules `
+              --upload-pack=git-upload-pack origin `
+              "+refs/heads/main:refs/remotes/origin/main"
+            if ($LASTEXITCODE -ne 0) { throw "Trusted main fetch failed." }
+            & git -C $trusted cat-file -e "${env:BASE_COMMIT}^{commit}"
+            if ($LASTEXITCODE -ne 0) { throw "Event base commit was not fetched." }
+            & git -C $trusted checkout --detach $env:BASE_COMMIT
+            if ($LASTEXITCODE -ne 0) { throw "Exact base checkout failed." }
+          } finally {
+            Remove-Item Env:GIT_CONFIG_NOSYSTEM -ErrorAction SilentlyContinue
+            Remove-Item Env:GIT_CONFIG_GLOBAL -ErrorAction SilentlyContinue
+            Remove-Item Env:GIT_LFS_SKIP_SMUDGE -ErrorAction SilentlyContinue
+            Remove-Item Env:GIT_TERMINAL_PROMPT -ErrorAction SilentlyContinue
+          }
+
+          $actual = (& git -C $trusted rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $actual -cne $env:BASE_COMMIT) {
+            throw "Trusted checkout is not the exact event base commit."
+          }
+          $dirty = & git -C $trusted status --porcelain=v1 `
+            --untracked-files=all
+          if ($LASTEXITCODE -ne 0 -or @($dirty).Count -ne 0) {
+            throw "Trusted checkout is dirty."
+          }
+
+      - name: Inspect pull request objects with the pinned base verifier
+        shell: pwsh
+        env:
+          BASE_COMMIT: ${{ github.event.pull_request.base.sha }}
+          HEAD_COMMIT: ${{ github.event.pull_request.head.sha }}
+          MERGE_COMMIT: ${{ github.event.pull_request.merge_commit_sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = "Stop"
+          $trusted = Join-Path $env:RUNNER_TEMP "trusted-static-admission-base"
+          & (Join-Path $trusted `
+              "scripts/Invoke-ExternalValidationAuthorityForGitHub.ps1") `
+            -RepositoryRoot $trusted `
+            -Repository $env:REPOSITORY `
+            -PullRequestNumber $env:PR_NUMBER `
+            -BaseCommit $env:BASE_COMMIT `
+            -HeadCommit $env:HEAD_COMMIT `
+            -MergeCommit $env:MERGE_COMMIT `
+            -PinnedVerifierCommit `
+              "9cfe4f328579a44bf8f0adf6bdb3fa7f68084f5b" `
+            -PinnedVerifierTree `
+              "df9233a4b3e930982d97e5e9b16148d17cdc790c" `
+            -PinnedVerifierPath `
+              "scripts/Test-ExternalValidationAuthority.ps1" `
+            -PinnedVerifierSha256 `
+              "89c3875c426eaa30500108644c0e2a89802d44049827aec2fe452358a5416c0e"
