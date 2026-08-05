@@ -58,6 +58,11 @@ try{
     $automationOwnership.repositories[0]=New-OwnershipRow $baselineGitRow $automationComparable
     $automationOwnership.repositories[1]=New-OwnershipRow $baselineNonGitRow $automationNonGitComparable
     $automationContract=@(Get-MorphospaceAutomationOutputContract $automationOwnership $unit @{'git-owner'=$unit.allowed_repositories[0];'non-git-owner'=$unit.allowed_repositories[1]})
+    $transitionOwnership=Copy-JsonObject $automationOwnership
+    $transitionOwnership.automation_outputs=@([pscustomobject][ordered]@{repo_id='git-owner';path='src/transition-intent.json';phase='transition';role='transition-ledger-intent';schema='rusty.morphospace.workflow.transition_ledger_intent.v3';validator_id=$null})
+    $transitionContract=@(Get-MorphospaceAutomationOutputContract $transitionOwnership $unit @{'git-owner'=$unit.allowed_repositories[0];'non-git-owner'=$unit.allowed_repositories[1]})
+    Assert-Owner ($transitionContract.Count-eq1-and[string]$transitionContract[0].schema-ceq'rusty.morphospace.workflow.transition_ledger_intent.v3') 'transition-ledger intent v3 was not admitted as a typed automation output'
+    $unsupportedTransition=Copy-JsonObject $transitionOwnership;$unsupportedTransition.automation_outputs[0].schema='rusty.morphospace.workflow.transition_ledger_intent.v4';Assert-Rejected {Get-MorphospaceAutomationOutputContract $unsupportedTransition $unit @{'git-owner'=$unit.allowed_repositories[0];'non-git-owner'=$unit.allowed_repositories[1]}|Out-Null} 'unsupported transition-ledger intent schema was accepted'
     Test-MorphospaceAutomationOutputSet $automationContract $map 'absent';[void](Test-MorphospaceUnitOwnership $automationOwnership $claim $claimReference $unit $mapReference $map)
     Write-Utf8 (Join-Path $repo 'src\automation-evidence.json') '{"evidence":true}';Write-Utf8 (Join-Path $nonGit 'inputs\automation-owner.json') '{"owner":true}'
     Test-MorphospaceAutomationOutputSet $automationContract $map 'present';[void](Test-MorphospaceUnitOwnership $automationOwnership $claim $claimReference $unit $mapReference $map)

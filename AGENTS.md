@@ -285,6 +285,16 @@ single-PR path.
   `read_only_dependencies` plus `state.last_event_id`; it never materializes a
   worktree or runs a build. Route the full procedure to
   `docs/ACTIVE_READ_ONLY_DEPENDENCY_CORRECTION.md`.
+- Correct an omitted project repository allow-list path only through
+  `CorrectActiveProjectRepositoryScope` and the exact
+  `active_project_repository_scope_correction.v1` contract. Require an exact
+  current `active` unit, canonical project/lock/state/unit and byte-exact ledger
+  CAS, complete before/after project path sets, and additions that exactly match
+  paths already declared by that unit for the same repository. The v3
+  transition must preserve the unit, atomically synchronize project revision,
+  feature lock, and workspace registry, and never mutate source repositories.
+  Route the full procedure to
+  `docs/ACTIVE_PROJECT_REPOSITORY_SCOPE_CORRECTION.md`.
 - Resolve one exact current active-unit blocker only through product-neutral
   `blocker_resolution_receipt.v1` and `ResolveBlocker`: revalidate its passing
   hash-bound evidence, repository heads, and exact per-repository dirty source
@@ -418,6 +428,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkflowContracts.p
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\New-ProjectWorkspace.ps1 -SelfTest
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkUnitAutomation.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-CorrectActiveReadOnlyDependencies.ps1 -SelfTest
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-CorrectActiveProjectRepositoryScope.ps1 -SelfTest
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-EventLedgerPrefixNormalization.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-CompletedTransitionSemanticCorrection.ps1 -SelfTest
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-FeatureLockResolver.ps1

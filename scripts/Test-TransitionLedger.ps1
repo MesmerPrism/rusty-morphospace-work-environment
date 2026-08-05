@@ -3,6 +3,9 @@ $root = Split-Path -Parent $PSScriptRoot
 $transitionModulePath = Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1'
 Import-Module $transitionModulePath -Force
 $transitionModule = Get-Module MorphospaceTransitionLedger
+$validationAuthorityModulePath = Join-Path $PSScriptRoot 'lib\MorphospaceValidationAuthority.psm1'
+Import-Module $validationAuthorityModulePath -Force
+$validationAuthorityModule = Get-Module MorphospaceValidationAuthority
 
 function Assert-Ledger {
     param([bool]$Value, [string]$Message)
@@ -25,6 +28,14 @@ function Get-LedgerDocumentHash {
         param($Document)
         Get-MorphospaceLedgerDocumentHash $Document
     } $Value
+}
+
+function Get-LedgerCommittedTransitionPaths {
+    param([string]$WorkspaceRoot,[object[]]$AutomationOutputs,[hashtable]$RepositoryMap)
+    & $script:validationAuthorityModule {
+        param($Workspace,$Outputs,$Map)
+        Get-MorphospaceCommittedTransitionPaths -WorkspaceRoot $Workspace -AutomationOutputs $Outputs -RepositoryMap $Map
+    } $WorkspaceRoot $AutomationOutputs $RepositoryMap
 }
 
 function New-LedgerEvent {
@@ -1190,6 +1201,83 @@ try {
     Assert-Ledger ($tornResult.status-eq'committed'-and
         @(Get-Content (Join-Path $tornWorkspace 'iteration-events.jsonl')|Where-Object{$_}).Count-eq1
     ) 'authenticated torn event append did not repair to one canonical event'
+
+    $projectionWorkspace=Join-Path $workspace 'additional-projection-repair'
+    Initialize-LedgerFixture $projectionWorkspace $state $unit
+    $projectBefore=[pscustomobject][ordered]@{schema='test';project_id='ledger-test';revision=1}
+    $projectAfter=[pscustomobject][ordered]@{schema='test';project_id='ledger-test';revision=2}
+    $lockBefore=[pscustomobject][ordered]@{schema='test';project_id='ledger-test';revision=4}
+    $lockAfter=[pscustomobject][ordered]@{schema='test';project_id='ledger-test';revision=5}
+    Write-Json (Join-Path $projectionWorkspace 'project.spec.json') $projectBefore
+    Write-Json (Join-Path $projectionWorkspace 'feature.lock.json') $lockBefore
+    $projectionInterrupted=$false
+    try{
+        Start-MorphospaceTransitionLedger `
+            -WorkspaceRoot $projectionWorkspace `
+            -TransactionId 'additional-projection-repair-transition' `
+            -StatePath 'workspace.state.json' `
+            -UnitPath 'iteration-units/unit.json' `
+            -EventsPath 'iteration-events.jsonl' `
+            -TargetState $targetState `
+            -TargetUnit $targetUnit `
+            -Event (New-LedgerEvent 'additional-projection-repair' 1) `
+            -AdditionalProjections @(
+                [pscustomobject]@{path='feature.lock.json';expected_sha256=(Get-LedgerDocumentHash $lockBefore);document=$lockAfter},
+                [pscustomobject]@{path='project.spec.json';expected_sha256=(Get-LedgerDocumentHash $projectBefore);document=$projectAfter}
+            ) `
+            -FaultAfter after-projection | Out-Null
+    }catch{$projectionInterrupted=$true}
+    $projectionIntent=Get-Content -Raw (Join-Path $projectionWorkspace 'receipts\transactions\additional-projection-repair-transition.intent.json')|ConvertFrom-Json
+    Assert-Ledger ($projectionInterrupted-and[string]$projectionIntent.schema-ceq'rusty.morphospace.workflow.transition_ledger_intent.v3'-and@($projectionIntent.additional_projections).Count-eq2) 'additional projections did not publish one authenticated v3 intent'
+    $projectionResult=Complete-MorphospaceTransitionLedger -WorkspaceRoot $projectionWorkspace -TransactionId 'additional-projection-repair-transition' -Repair
+    Assert-Ledger ($projectionResult.status-eq'committed'-and
+        (Get-LedgerDocumentHash (Get-Content -Raw (Join-Path $projectionWorkspace 'project.spec.json')|ConvertFrom-Json))-ceq(Get-LedgerDocumentHash $projectAfter)-and
+        (Get-LedgerDocumentHash (Get-Content -Raw (Join-Path $projectionWorkspace 'feature.lock.json')|ConvertFrom-Json))-ceq(Get-LedgerDocumentHash $lockAfter)-and
+        @(Get-Content (Join-Path $projectionWorkspace 'iteration-events.jsonl')|Where-Object{$_}).Count-eq1
+    ) 'additional projection interruption did not repair to one committed target'
+    $projectionCompletionRelative=[IO.Path]::GetRelativePath($workspace,(Join-Path $projectionWorkspace 'receipts\transactions\additional-projection-repair-transition.completion.json')).Replace('\','/')
+    $projectionPaths=@(Get-LedgerCommittedTransitionPaths -WorkspaceRoot $projectionWorkspace -AutomationOutputs @([pscustomobject]@{phase='transition';role='transition-ledger-completion';path=$projectionCompletionRelative}) -RepositoryMap @{planning=[pscustomobject]@{path=$workspace}})
+    Assert-Ledger ($projectionPaths.Count-eq5-and@($projectionPaths|Where-Object{$_-like'*/feature.lock.json'}).Count-eq1-and@($projectionPaths|Where-Object{$_-like'*/project.spec.json'}).Count-eq1) 'validation authority did not bind both committed v3 additional projections'
+
+    $projectionTamperWorkspace=Join-Path $workspace 'additional-projection-tamper'
+    Initialize-LedgerFixture $projectionTamperWorkspace $state $unit
+    Write-Json (Join-Path $projectionTamperWorkspace 'project.spec.json') $projectBefore
+    try{
+        Start-MorphospaceTransitionLedger `
+            -WorkspaceRoot $projectionTamperWorkspace `
+            -TransactionId 'additional-projection-tamper-transition' `
+            -StatePath 'workspace.state.json' `
+            -UnitPath 'iteration-units/unit.json' `
+            -EventsPath 'iteration-events.jsonl' `
+            -TargetState $targetState `
+            -TargetUnit $targetUnit `
+            -Event (New-LedgerEvent 'additional-projection-tamper' 1) `
+            -AdditionalProjections @([pscustomobject]@{path='project.spec.json';expected_sha256=(Get-LedgerDocumentHash $projectBefore);document=$projectAfter}) `
+            -FaultAfter after-intent | Out-Null
+    }catch{}
+    Write-Json (Join-Path $projectionTamperWorkspace 'project.spec.json') ([pscustomobject]@{schema='test';project_id='ledger-test';revision=99})
+    $projectionTamperRejected=$false
+    try{Complete-MorphospaceTransitionLedger -WorkspaceRoot $projectionTamperWorkspace -TransactionId 'additional-projection-tamper-transition' -Repair|Out-Null}catch{$projectionTamperRejected=$_.Exception.Message-like'*additional-projection CAS*'}
+    Assert-Ledger ($projectionTamperRejected-and@(Get-Content (Join-Path $projectionTamperWorkspace 'iteration-events.jsonl')|Where-Object{$_}).Count-eq0) 'unauthorized additional projection drift reached event mutation'
+
+    $projectionCollisionWorkspace=Join-Path $workspace 'additional-projection-collision'
+    Initialize-LedgerFixture $projectionCollisionWorkspace $state $unit
+    Write-Json (Join-Path $projectionCollisionWorkspace 'feature.lock.json') $lockBefore
+    $projectionCollisionRejected=$false
+    try{
+        Start-MorphospaceTransitionLedger `
+            -WorkspaceRoot $projectionCollisionWorkspace `
+            -TransactionId 'additional-projection-collision-transition' `
+            -StatePath 'workspace.state.json' `
+            -UnitPath 'iteration-units/unit.json' `
+            -EventsPath 'iteration-events.jsonl' `
+            -TargetState $targetState `
+            -TargetUnit $targetUnit `
+            -Event (New-LedgerEvent 'additional-projection-collision' 1) `
+            -AdditionalProjections @([pscustomobject]@{path='feature.lock.json';expected_sha256=(Get-LedgerDocumentHash $lockBefore);document=$lockAfter}) `
+            -Artifacts @([pscustomobject]@{bytes_base64=[Convert]::ToBase64String($memoryPayload);path='feature.lock.json';sha256=$memoryHash}) | Out-Null
+    }catch{$projectionCollisionRejected=$_.Exception.Message-like'*collides with the transaction control namespace*'}
+    Assert-Ledger ($projectionCollisionRejected-and-not[IO.File]::Exists((Join-Path $projectionCollisionWorkspace 'receipts\transactions\additional-projection-collision-transition.intent.json'))) 'additional projection collision reached intent publication'
 
     Invoke-ConcurrentLedgerDriftTest `
         -WorkspaceRoot (Join-Path $workspace 'concurrent-state') `

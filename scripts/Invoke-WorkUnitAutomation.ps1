@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("Inspect", "Ready", "Claim", "Resume", "CompleteInstructionSurfaces", "CorrectActiveReadOnlyDependencies", "BeginValidation", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RetirePreparedPush", "ReconcilePreparedPublication", "ResolveBlocker", "CorrectResolvedBlockerEvidence", "CorrectCompletedTransitionSemantics", "NormalizeEventLedgerPrefix", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix")]
+    [ValidateSet("Inspect", "Ready", "Claim", "Resume", "CompleteInstructionSurfaces", "CorrectActiveReadOnlyDependencies", "CorrectActiveProjectRepositoryScope", "BeginValidation", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RetirePreparedPush", "ReconcilePreparedPublication", "ResolveBlocker", "CorrectResolvedBlockerEvidence", "CorrectCompletedTransitionSemantics", "NormalizeEventLedgerPrefix", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix")]
     [string]$Action,
     [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
     [string]$UnitId = "",
@@ -22,6 +22,8 @@ param(
     [string]$CompletedTransitionSemanticCorrection = "",
     [string]$ReadOnlyDependencyCorrection = "",
     [string]$ExpectedReadOnlyDependencyCorrectionSha256 = "",
+    [string]$ProjectRepositoryScopeCorrection = "",
+    [string]$ExpectedProjectRepositoryScopeCorrectionSha256 = "",
     [string]$LedgerPrefixNormalizationId = "",
     [string]$ExpectedRepositoryHead = "",
     [string]$ExpectedProjectSha256 = "",
@@ -105,6 +107,17 @@ if ($Action -eq "CorrectActiveReadOnlyDependencies") {
     Invoke-MorphospaceCorrectActiveReadOnlyDependencies -WorkspaceRoot $WorkspaceRoot -UnitId $UnitId `
         -RepoMapPath $RepoMapPath -ReadOnlyDependencyCorrection $ReadOnlyDependencyCorrection `
         -ExpectedReadOnlyDependencyCorrectionSha256 $ExpectedReadOnlyDependencyCorrectionSha256 `
+        -Timestamp $Timestamp -OutPath $OutPath -Execute:$Execute |
+        ConvertTo-Json -Depth 32
+    return
+}
+if ($Action -eq "CorrectActiveProjectRepositoryScope") {
+    if (-not $ProjectRepositoryScopeCorrection) { throw "CorrectActiveProjectRepositoryScope requires ProjectRepositoryScopeCorrection." }
+    if (-not $OutPath) { throw "CorrectActiveProjectRepositoryScope requires OutPath." }
+    Import-Module (Join-Path $PSScriptRoot "CorrectActiveProjectRepositoryScope.psm1") -Force
+    Invoke-MorphospaceCorrectActiveProjectRepositoryScope -WorkspaceRoot $WorkspaceRoot -UnitId $UnitId `
+        -ProjectRepositoryScopeCorrection $ProjectRepositoryScopeCorrection `
+        -ExpectedProjectRepositoryScopeCorrectionSha256 $ExpectedProjectRepositoryScopeCorrectionSha256 `
         -Timestamp $Timestamp -OutPath $OutPath -Execute:$Execute |
         ConvertTo-Json -Depth 32
     return

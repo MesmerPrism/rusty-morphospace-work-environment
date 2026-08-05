@@ -271,7 +271,8 @@ successful push is not proof that the whole batch is complete.
 `scripts/Invoke-WorkUnitAutomation.ps1` is the portable owner for mechanical
 work-unit transitions and preparation artifacts. It supports `Inspect`,
 `Ready`, `Claim`, `Resume`, `CompleteInstructionSurfaces`,
-`CorrectActiveReadOnlyDependencies`, `BeginValidation`,
+`CorrectActiveReadOnlyDependencies`, `CorrectActiveProjectRepositoryScope`,
+`BeginValidation`,
 `RecordValidation`, `Accept`,
 `PreparePush`, `Recover`, `ReconcilePublication`,
 `AdoptPublishedPlanningAuthority`, and the narrow
@@ -291,6 +292,11 @@ The CLI is deliberately narrower than an autonomous coding agent:
   byte-level event-ledger CAS, full before/after sets, already-declared project
   paths, and full commit/tree identities; it never changes writable scope or
   materializes a repository;
+- active project repository scope correction requires exact
+  project/lock/state/unit and byte-level event-ledger CAS, is additive-only, and
+  can add only exact paths already declared by the active unit; its v3 journal
+  synchronizes project, feature lock, and workspace registry while preserving
+  the unit;
 - it reads Git state but never runs checkout, reset, stash, commit, push, or
   force-push;
 - it never runs validation commands or device commands;
@@ -380,6 +386,14 @@ unit amendment. See
 [Active Read-Only Dependency Correction](ACTIVE_READ_ONLY_DEPENDENCY_CORRECTION.md)
 for the strict correction document, canonical verification text, dry-run hash
 replay, and transaction invariants.
+
+When an active unit already declares an exact writable path but the matching
+project repository allow-list omits it, use the separate two-phase
+`CorrectActiveProjectRepositoryScope` action. It is additive-only, cannot
+broaden a unit path, and carries the project spec plus feature lock as
+recoverable transition-ledger v3 projections. See
+[Active Project Repository Scope Correction](ACTIVE_PROJECT_REPOSITORY_SCOPE_CORRECTION.md)
+for its exact-CAS input and dry-run hash replay.
 
 Inspection example:
 

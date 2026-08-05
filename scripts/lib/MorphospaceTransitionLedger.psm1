@@ -3,6 +3,7 @@ Import-Module (Join-Path $PSScriptRoot 'MorphospaceProtocolCommon.psm1') -Force
 $script:MorphospaceSupersessionDelimiter = '-superseded-by-'
 $script:MorphospaceTransitionIntentV1 = 'rusty.morphospace.workflow.transition_ledger_intent.v1'
 $script:MorphospaceTransitionIntentV2 = 'rusty.morphospace.workflow.transition_ledger_intent.v2'
+$script:MorphospaceTransitionIntentV3 = 'rusty.morphospace.workflow.transition_ledger_intent.v3'
 
 function Get-MorphospaceLedgerDocumentHash { param([object]$Value) Get-MorphospaceCanonicalJsonSha256 $Value }
 function Get-MorphospaceLedgerPath { param([string]$WorkspaceRoot,[string]$TransactionId,[ValidateSet('intent','completion')][string]$Kind) "receipts/transactions/$TransactionId.$Kind.json" }
@@ -266,6 +267,8 @@ function Assert-MorphospaceLedgerIntent {
         Assert-MorphospaceExactPropertySet $Intent @('schema','transaction_id','created_at','state','unit','events','pre','target','expected','artifacts','event','status') @() 'Transition ledger intent'
     }elseif($schema-ceq$script:MorphospaceTransitionIntentV2){
         Assert-MorphospaceExactPropertySet $Intent @('schema','transaction_id','created_at','state','unit','events','pre','target','expected','artifacts','event','supersession','status') @() 'Transition ledger intent'
+    }elseif($schema-ceq$script:MorphospaceTransitionIntentV3){
+        Assert-MorphospaceExactPropertySet $Intent @('schema','transaction_id','created_at','state','unit','events','pre','target','expected','additional_projections','artifacts','event','status') @() 'Transition ledger intent'
     }else{throw 'Transition ledger intent schema is unsupported.'}
     if([string]$Intent.status-cne'prepared'-or[string]$Intent.transaction_id-cne$TransactionId){throw 'Transition ledger intent identity/status is invalid.'}
     [void](Test-MorphospaceStrictUtcTimestamp ([string]$Intent.created_at))
@@ -317,6 +320,9 @@ function Assert-MorphospaceLedgerIntent {
     if(-not$isSupersessionCandidate-and$schema-ceq$script:MorphospaceTransitionIntentV2){
         throw 'Transition ledger intent v2 is reserved for an authenticated supersession.'
     }
+    if($isSupersessionCandidate-and$schema-ceq$script:MorphospaceTransitionIntentV3){
+        throw 'Transition ledger intent v3 may not be combined with supersession.'
+    }
     $supersession=Assert-MorphospaceSupersessionTarget -Event $Intent.event -TargetState $Intent.target.state.document -TargetUnit $Intent.target.unit.document
     if($null-ne$supersession){
         $binding=$Intent.supersession
@@ -352,6 +358,36 @@ function Assert-MorphospaceLedgerIntent {
     }
     if($null-eq$supersession-and$Intent.target.unit.document.PSObject.Properties.Name-contains'unit_id'){
         if([string]$Intent.target.unit.document.unit_id-cne[string]$Intent.event.unit_id){throw 'Transition ledger target unit identity differs from its event.'}
+    }
+    if($schema-ceq$script:MorphospaceTransitionIntentV3){
+        if(@($Intent.additional_projections).Count-lt1-or@($Intent.additional_projections).Count-gt2){
+            throw 'Transition ledger intent v3 requires one or two additional projections.'
+        }
+        $projectionPaths=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        $previousProjectionPath=$null
+        foreach($projection in @($Intent.additional_projections)){
+            Assert-MorphospaceExactPropertySet $projection @('path','pre_sha256','target_sha256','document') @() 'Transition ledger additional projection'
+            $projectionPath=ConvertTo-MorphospaceProtocolRelativePath ([string]$projection.path)
+            if([string]$projection.path-cne$projectionPath-or-not$projectionPaths.Add($projectionPath)){
+                throw 'Transition ledger intent v3 repeats or mis-canonicalizes an additional projection path.'
+            }
+            if(@('feature.lock.json','project.spec.json')-cnotcontains$projectionPath){
+                throw "Transition ledger intent v3 does not authorize additional projection '$projectionPath'."
+            }
+            if($null-ne$previousProjectionPath-and[StringComparer]::Ordinal.Compare([string]$previousProjectionPath,$projectionPath)-ge0){
+                throw 'Transition ledger intent v3 additional projections are not in canonical path order.'
+            }
+            $previousProjectionPath=$projectionPath
+            if([string]$projection.pre_sha256-cnotmatch'^[0-9a-f]{64}$'-or
+               [string]$projection.target_sha256-cnotmatch'^[0-9a-f]{64}$'-or
+               (Get-MorphospaceLedgerDocumentHash $projection.document)-cne[string]$projection.target_sha256){
+                throw "Transition ledger additional projection '$projectionPath' has invalid or inconsistent hashes."
+            }
+            if($projection.document.PSObject.Properties.Name-contains'project_id'-and
+               [string]$projection.document.project_id-cne[string]$Intent.event.project_id){
+                throw "Transition ledger additional projection '$projectionPath' project identity differs from its event."
+            }
+        }
     }
     $artifactTargets=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach($artifact in @($Intent.artifacts)){
@@ -391,6 +427,10 @@ function Get-MorphospaceLedgerReservedPathSet {
         (Get-MorphospaceLedgerPath $Workspace $TransactionId completion)
     )){
         [void]$reserved.Add([IO.Path]::GetFullPath((Resolve-MorphospaceWorkspacePath -WorkspaceRoot $Workspace -RelativePath $relative)))
+    }
+    foreach($projection in @($(if($Intent.PSObject.Properties.Name-contains'additional_projections'){$Intent.additional_projections}else{@()}))){
+        $projectionPath=[IO.Path]::GetFullPath((Resolve-MorphospaceWorkspacePath -WorkspaceRoot $Workspace -RelativePath ([string]$projection.path)))
+        if(-not$reserved.Add($projectionPath)){throw "Transition additional projection collides with a reserved path: $($projection.path)"}
     }
     for($index=0;$index-lt@($Intent.artifacts).Count;$index++){
         [void]$reserved.Add([IO.Path]::GetFullPath((Resolve-MorphospaceWorkspacePath -WorkspaceRoot $Workspace -RelativePath (Get-MorphospaceLedgerArtifactStagePath $TransactionId $index))))
@@ -472,6 +512,10 @@ function Assert-MorphospaceLedgerCommittedCompletion {
             $current=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $Workspace ([string]$Intent.$projection.path) -RequireLeaf)
             if((Get-MorphospaceLedgerDocumentHash $current)-cne[string]$Intent.target.$projection.sha256){throw "Transition ledger tail completion does not own its target $projection projection."}
         }
+        foreach($projection in @($(if($Intent.PSObject.Properties.Name-contains'additional_projections'){$Intent.additional_projections}else{@()}))){
+            $current=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $Workspace ([string]$projection.path) -RequireLeaf)
+            if((Get-MorphospaceLedgerDocumentHash $current)-cne[string]$projection.target_sha256){throw "Transition ledger tail completion does not own additional projection '$($projection.path)'."}
+        }
     }
 }
 function Complete-MorphospaceTransitionLedger {
@@ -501,6 +545,13 @@ function Complete-MorphospaceTransitionLedger {
             if($allowedStateHashes-notcontains$currentStateHash){throw "Transition $TransactionId failed expected pre-state CAS."}
             if($allowedUnitHashes-notcontains$currentUnitHash){throw "Transition $TransactionId failed expected pre-unit CAS."}
         }
+        foreach($projection in @($(if($intent.PSObject.Properties.Name-contains'additional_projections'){$intent.additional_projections}else{@()}))){
+            $current=Read-MorphospaceProtocolJson -Path (Resolve-MorphospaceWorkspacePath $workspace ([string]$projection.path) -RequireLeaf)
+            $actual=Get-MorphospaceLedgerDocumentHash $current
+            if(@([string]$projection.pre_sha256,[string]$projection.target_sha256)-notcontains$actual){
+                throw "Transition $TransactionId failed additional-projection CAS for '$($projection.path)'."
+            }
+        }
         [void](Assert-MorphospaceSupersessionWorkspacePreflight `
             -Workspace $workspace `
             -UnitPath ([string]$intent.unit.path) `
@@ -521,6 +572,14 @@ function Complete-MorphospaceTransitionLedger {
             if($actual-ne[string]$intent.target.$projection.sha256){
                 if($actual-ne[string]$intent.pre.$projection.sha256){throw "Transition $TransactionId has an unauthorized $projection projection."}
                 Write-MorphospaceLedgerProjection $workspace ([string]$intent.$projection.path) $intent.target.$projection.document
+            }
+        }
+        foreach($projection in @($(if($intent.PSObject.Properties.Name-contains'additional_projections'){$intent.additional_projections}else{@()}))){
+            $current=Read-MorphospaceProtocolJson -Path (Resolve-MorphospaceWorkspacePath $workspace ([string]$projection.path) -RequireLeaf)
+            $actual=Get-MorphospaceLedgerDocumentHash $current
+            if($actual-cne[string]$projection.target_sha256){
+                if($actual-cne[string]$projection.pre_sha256){throw "Transition $TransactionId has an unauthorized additional projection '$($projection.path)'."}
+                Write-MorphospaceLedgerProjection $workspace ([string]$projection.path) $projection.document
             }
         }
         if($FaultAfter-eq'after-projection'){throw 'Injected interruption after projections.'}
@@ -555,6 +614,7 @@ function Start-MorphospaceTransitionLedger {
         [string]$ExpectedEventsSha256 = '',
         [int64]$ExpectedEventsLength = -1,
         [string]$ExpectedSupersededUnitSha256 = '',
+        [object[]]$AdditionalProjections=@(),
         [object[]]$Artifacts=@()
     )
     $workspace=[IO.Path]::GetFullPath($WorkspaceRoot);$lock=Enter-MorphospaceWorkspaceMutex -WorkspaceRoot $workspace
@@ -602,6 +662,37 @@ function Start-MorphospaceTransitionLedger {
             if([string]$eventSnapshot.sha256-cne$ExpectedEventsSha256){throw "Transition $TransactionId failed expected event-ledger byte-hash CAS."}
         }
         if($ExpectedEventsLength-ge0-and$eventSnapshot.length-ne$ExpectedEventsLength){throw "Transition $TransactionId failed expected event-ledger byte-length CAS."}
+        if($null-ne$supersessionOldUnitBinding-and@($AdditionalProjections).Count){throw 'Transition supersession may not carry additional projections.'}
+        $ownedProjections=@()
+        $projectionPaths=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        $previousProjectionPath=$null
+        foreach($projection in @($AdditionalProjections)){
+            Assert-MorphospaceExactPropertySet $projection @('path','expected_sha256','document') @() 'Transition additional projection request'
+            $projectionPath=ConvertTo-MorphospaceProtocolRelativePath ([string]$projection.path)
+            if([string]$projection.path-cne$projectionPath-or-not$projectionPaths.Add($projectionPath)){
+                throw 'Transition additional projection request repeats or mis-canonicalizes a path.'
+            }
+            if(@('feature.lock.json','project.spec.json')-cnotcontains$projectionPath){
+                throw "Transition additional projection request does not authorize '$projectionPath'."
+            }
+            if($null-ne$previousProjectionPath-and[StringComparer]::Ordinal.Compare([string]$previousProjectionPath,$projectionPath)-ge0){
+                throw 'Transition additional projection requests are not in canonical path order.'
+            }
+            $previousProjectionPath=$projectionPath
+            $current=Read-MorphospaceProtocolJson -Path (Resolve-MorphospaceWorkspacePath $workspace $projectionPath -RequireLeaf)
+            $currentHash=Get-MorphospaceLedgerDocumentHash $current
+            if([string]$projection.expected_sha256-cnotmatch'^[0-9a-f]{64}$'-or[string]$projection.expected_sha256-cne$currentHash){
+                throw "Transition $TransactionId expected additional-projection SHA-256 does not match '$projectionPath'."
+            }
+            try{$targetProjectionHash=Get-MorphospaceLedgerDocumentHash $projection.document}
+            catch{throw "Transition $TransactionId additional-projection target '$projectionPath' is not a bounded protocol document: $($_.Exception.Message)"}
+            $ownedProjections+=,[pscustomobject][ordered]@{
+                path=$projectionPath
+                pre_sha256=$currentHash
+                target_sha256=$targetProjectionHash
+                document=$projection.document
+            }
+        }
         $ownedArtifacts=@()
         foreach($artifact in @($Artifacts)){
             $hasSource=$null-ne$artifact.PSObject.Properties['source_path']
@@ -621,7 +712,7 @@ function Start-MorphospaceTransitionLedger {
         }
         $intentRelative=Get-MorphospaceLedgerPath $workspace $TransactionId intent
         $intentFields=[ordered]@{
-            schema=$(if($null-ne$supersessionOldUnitBinding){$script:MorphospaceTransitionIntentV2}else{$script:MorphospaceTransitionIntentV1})
+            schema=$(if($null-ne$supersessionOldUnitBinding){$script:MorphospaceTransitionIntentV2}elseif(@($ownedProjections).Count){$script:MorphospaceTransitionIntentV3}else{$script:MorphospaceTransitionIntentV1})
             transaction_id=$TransactionId
             created_at=[DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffffffZ')
             state=[pscustomobject]@{path=(ConvertTo-MorphospaceProtocolRelativePath -Path $StatePath)}
@@ -633,6 +724,7 @@ function Start-MorphospaceTransitionLedger {
             artifacts=@($ownedArtifacts)
             event=$Event
         }
+        if(@($ownedProjections).Count){$intentFields.additional_projections=@($ownedProjections)}
         if($null-ne$supersessionOldUnitBinding){
             $intentFields.supersession=[pscustomobject][ordered]@{
                 old_unit_id=[string]$Event.unit_id
