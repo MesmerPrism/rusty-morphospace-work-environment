@@ -93,7 +93,6 @@ jobs:
         env:
           BASE_COMMIT: ${{ github.event.pull_request.base.sha }}
           HEAD_COMMIT: ${{ github.event.pull_request.head.sha }}
-          MERGE_COMMIT: ${{ github.event.pull_request.merge_commit_sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPOSITORY: ${{ github.repository }}
         run: |
@@ -107,7 +106,6 @@ jobs:
             -PullRequestNumber $env:PR_NUMBER `
             -BaseCommit $env:BASE_COMMIT `
             -HeadCommit $env:HEAD_COMMIT `
-            -MergeCommit $env:MERGE_COMMIT `
             -PinnedVerifierCommit `
               "9cfe4f328579a44bf8f0adf6bdb3fa7f68084f5b" `
             -PinnedVerifierTree `

@@ -4,7 +4,7 @@ param(
     [Parameter(Mandatory = $true)][string]$PullRequestNumber,
     [Parameter(Mandatory = $true)][string]$BaseCommit,
     [Parameter(Mandatory = $true)][string]$HeadCommit,
-    [Parameter(Mandatory = $true)][string]$MergeCommit,
+    [string]$MergeCommit = "",
     [Parameter(Mandatory = $true)][string]$PinnedVerifierCommit,
     [Parameter(Mandatory = $true)][string]$PinnedVerifierTree,
     [Parameter(Mandatory = $true)][string]$PinnedVerifierPath,
@@ -308,7 +308,9 @@ if (
 }
 Assert-FullCommit $BaseCommit "Base commit"
 Assert-FullCommit $HeadCommit "Head commit"
-Assert-FullCommit $MergeCommit "Merge commit"
+if (-not [string]::IsNullOrEmpty($MergeCommit)) {
+    Assert-FullCommit $MergeCommit "Merge commit"
+}
 Assert-FullCommit $PinnedVerifierCommit "Pinned verifier commit"
 Assert-FullCommit $PinnedVerifierTree "Pinned verifier tree"
 if ($PinnedVerifierSha256 -cnotmatch "^[0-9a-f]{64}$") {
@@ -366,7 +368,10 @@ $fetchedMerge = (
 if ($fetchedHead -cne $HeadCommit) {
     throw "Fetched pull request head does not equal the event head commit."
 }
-if ($fetchedMerge -cne $MergeCommit) {
+if (
+    -not [string]::IsNullOrEmpty($MergeCommit) -and
+    $fetchedMerge -cne $MergeCommit
+) {
     throw "Fetched pull request merge does not equal the event merge commit."
 }
 $mergeIdentity = (
@@ -374,7 +379,7 @@ $mergeIdentity = (
 ).stdout.Trim().Split(" ", [StringSplitOptions]::RemoveEmptyEntries)
 if (
     $mergeIdentity.Count -ne 3 -or
-    $mergeIdentity[0] -cne $MergeCommit -or
+    $mergeIdentity[0] -cne $fetchedMerge -or
     $mergeIdentity[1] -cne $BaseCommit -or
     $mergeIdentity[2] -cne $HeadCommit
 ) {
@@ -384,7 +389,7 @@ $headTree = (
     Invoke-Git $trusted @("rev-parse", "--verify", "${HeadCommit}^{tree}")
 ).stdout.Trim()
 $mergeTree = (
-    Invoke-Git $trusted @("rev-parse", "--verify", "${MergeCommit}^{tree}")
+    Invoke-Git $trusted @("rev-parse", "--verify", "${fetchedMerge}^{tree}")
 ).stdout.Trim()
 if ($mergeTree -cne $headTree) {
     throw "Pull request merge tree does not equal the exact event head tree."
