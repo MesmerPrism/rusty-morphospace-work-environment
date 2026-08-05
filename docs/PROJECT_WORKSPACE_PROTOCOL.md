@@ -215,6 +215,15 @@ heads/source bytes, appends a generic transition, and changes only
 acceptance, plan, current unit, or unit bytes. See
 [Blocker Resolution Correction](BLOCKER_RESOLUTION_CORRECTION.md).
 
+`CorrectHistoricalBlockerResolutionIntentBinding` is a separate cross-unit
+additive action for the exact legacy terminal-LF-to-CRLF expansion affecting an
+intent-owned blocker-resolution receipt and its completion-bound intent. The
+installed correction binds both byte pairs plus current active-unit
+state/unit/full-ledger CAS, appends one event, and changes only `last_event_id`.
+It never edits historical evidence or admits any other completion or artifact
+fault. See
+[Historical Blocker-Resolution Intent-Binding Correction](HISTORICAL_BLOCKER_RESOLUTION_INTENT_BINDING_CORRECTION.md).
+
 Resolve a non-empty v2 lock from owner-issued descriptors:
 
 ```powershell

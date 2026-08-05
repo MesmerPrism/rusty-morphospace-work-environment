@@ -349,6 +349,14 @@ single-PR path.
   original event/receipt/intent/completion chain plus fresh exact source
   evidence, preserve every projection except `last_event_id`, and never edit
   the retained resolution.
+- Repair a historical blocker-resolution raw binding across units only through
+  `historical_blocker_resolution_intent_binding_correction.v1` and
+  `CorrectHistoricalBlockerResolutionIntentBinding`. Admit only the exact
+  legacy terminal LF-to-CRLF expansion on both the intent-owned receipt and
+  completion-bound intent; bind the current active state/unit/event-ledger CAS,
+  preserve every blocker and historical byte, and reject any second fault.
+  Follow
+  `docs/HISTORICAL_BLOCKER_RESOLUTION_INTENT_BINDING_CORRECTION.md`.
 - Correct only the completed legacy-v1 supersession fault where the exact
   `<old>-superseded-by-<replacement>` event recorded the replacement in
   `event.unit_id` through `completed_transition_semantic_correction.v1` and
@@ -431,6 +439,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-CorrectActiveReadOn
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-CorrectActiveProjectRepositoryScope.ps1 -SelfTest
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-EventLedgerPrefixNormalization.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-CompletedTransitionSemanticCorrection.ps1 -SelfTest
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-HistoricalBlockerResolutionIntentBindingCorrection.ps1 -SelfTest
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-FeatureLockResolver.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ProjectIsolation.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ExecutedPushReceipt.ps1 -SelfTest

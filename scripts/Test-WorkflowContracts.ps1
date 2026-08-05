@@ -20,6 +20,7 @@ if ($RepositoryMapPath) {
     foreach ($entry in @($mapDocument.repositories)) { $script:LocalRepositoryMap[[string]$entry.repo_id] = [string]$entry.path }
 }
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceCompletedTransitionSemanticCorrection.psm1') -Force
+Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceHistoricalBlockerResolutionIntentBindingCorrection.psm1') -Force
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceProtocolCommon.psm1') -Force
 
 function Invoke-IsolatedWorkflowSelfTest {
@@ -800,6 +801,7 @@ function Test-ProjectBundle {
     foreach ($adoptedUnitId in @($historicalAdoptions.Keys)) {
         Assert-Contract ($unitMap.ContainsKey([string]$adoptedUnitId)) "$Context historical adoption contains extra or missing unit '$adoptedUnitId'."
     }
+
     $events = @(Read-EventLog -Path $Bundle.EventsPath -Context "$Context iteration event log")
     Test-UniqueProperty -Items $events -Property "event_id" -Context "$Context iteration events"
     $eventMap = @{}
@@ -830,6 +832,17 @@ function Test-ProjectBundle {
                 Assert-Contract (@($terminalEvent.receipts) -contains [string]$entry.terminal_evidence.receipt_path) "$Context historical unit '$adoptedUnitId' terminal event does not reference its declared evidence receipt."
             }
         }
+    }
+
+    # Authenticate every additive cross-unit repair of a historical
+    # blocker-resolution completion-to-intent hash mismatch. The shared
+    # verifier rejects any second fault, altered retained byte, ambiguous
+    # correction, or correction transaction whose current-unit CAS is not
+    # recoverable from its immutable intent.
+    try {
+        [void](Get-MorphospaceHistoricalBlockerResolutionIntentBindingCorrectionIndex -WorkspaceRoot $workspaceRoot -Events $events)
+    } catch {
+        Add-Failure -Message "$Context historical blocker-resolution intent-binding correction is unauthenticated: $($_.Exception.Message)"
     }
 
     # Authenticate the one narrow append-only correction that can project a
@@ -1152,6 +1165,7 @@ $requiredSchemaNames = @(
     "prepared-publication-reconstruction-v1.schema.json",
     "blocker-resolution-receipt-v1.schema.json",
     "blocker-resolution-correction-receipt-v1.schema.json",
+    "historical-blocker-resolution-intent-binding-correction-v1.schema.json",
     "active-read-only-dependency-correction-v1.schema.json",
     "completed-transition-semantic-correction-v1.schema.json",
     "legacy-embedded-push-bundle-plan-v1.schema.json",
@@ -1311,6 +1325,7 @@ $candidateContracts = @(
     [pscustomobject]@{ Template = "prepared-publication-reconstruction.example.json"; Schema = "prepared-publication-reconstruction-v1.schema.json"; Label = "Prepared-publication reconstruction" },
     [pscustomobject]@{ Template = "blocker-resolution-receipt.example.json"; Schema = "blocker-resolution-receipt-v1.schema.json"; Label = "Blocker-resolution" },
     [pscustomobject]@{ Template = "blocker-resolution-correction-receipt.example.json"; Schema = "blocker-resolution-correction-receipt-v1.schema.json"; Label = "Blocker-resolution correction" },
+    [pscustomobject]@{ Template = "historical-blocker-resolution-intent-binding-correction.example.json"; Schema = "historical-blocker-resolution-intent-binding-correction-v1.schema.json"; Label = "Historical blocker-resolution intent-binding correction" },
     [pscustomobject]@{ Template = "active-read-only-dependency-correction.example.json"; Schema = "active-read-only-dependency-correction-v1.schema.json"; Label = "Active read-only dependency correction" }
 )
 foreach ($candidateContract in $candidateContracts) {
@@ -1326,7 +1341,7 @@ foreach ($candidateContract in $candidateContracts) {
     }
 }
 if (-not $SkipOwnerSelfTests) {
-    foreach ($selfTest in @("Test-LegacyEmbeddedPushPlanCompatibility.ps1","Test-PreparedPublicationReconstruction.ps1","Test-ResolveBlocker.ps1","Test-CorrectResolvedBlockerEvidence.ps1","Test-CorrectActiveReadOnlyDependencies.ps1","Test-CorrectActiveProjectRepositoryScope.ps1","Test-CompletedTransitionSemanticCorrection.ps1","Test-TransitionLedger.ps1")) {
+    foreach ($selfTest in @("Test-LegacyEmbeddedPushPlanCompatibility.ps1","Test-PreparedPublicationReconstruction.ps1","Test-ResolveBlocker.ps1","Test-CorrectResolvedBlockerEvidence.ps1","Test-HistoricalBlockerResolutionIntentBindingCorrection.ps1","Test-CorrectActiveReadOnlyDependencies.ps1","Test-CorrectActiveProjectRepositoryScope.ps1","Test-CompletedTransitionSemanticCorrection.ps1","Test-TransitionLedger.ps1")) {
         try { Invoke-IsolatedWorkflowSelfTest -Path (Join-Path $RepoRoot "scripts\$selfTest") }
         catch { Add-Failure -Message "$selfTest failed: $($_.Exception.Message)" }
     }

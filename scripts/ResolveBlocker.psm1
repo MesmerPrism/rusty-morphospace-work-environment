@@ -2,6 +2,7 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference='Stop'
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceHistoricalBlockerResolutionIntentBindingCorrection.psm1') -Force
 
 function Invoke-ResolveBlockerGit {
     param([string]$Path,[string[]]$Arguments)
@@ -44,6 +45,7 @@ function Assert-ResolveBlockerRepositories {
 function Assert-ResolveBlockerNotConsumed {
     param([string]$Workspace,[object]$Receipt,[string]$CanonicalSha256,[object[]]$Events,[string]$SchemaPath)
     $candidates=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $historicalIntentBindingCorrections=Get-MorphospaceHistoricalBlockerResolutionIntentBindingCorrectionIndex -WorkspaceRoot $Workspace -Events $Events
     foreach($event in @($Events)){
         if([string]$event.event_id-notmatch'-blocker-resolved-[0-9]{4}$'){continue}
         $references=@($(if($event.PSObject.Properties.Name-contains'receipts'){@($event.receipts)}else{@()}))
@@ -67,12 +69,27 @@ function Assert-ResolveBlockerNotConsumed {
             [string]$completion.intent.role-cne'transition-ledger-intent'-or
             [string]$completion.intent.path-cne$intentRelative-or
             [string]$completion.intent.schema-cne[string]$intent.schema-or
-            [string]$completion.intent.sha256-cne$intentFileHash-or
             [string]$completion.state_sha256-cne[string]$intent.target.state.sha256-or
             [string]$completion.unit_sha256-cne[string]$intent.target.unit.sha256
         ){throw "ResolveBlocker historical event '$($event.event_id)' has cryptographically inconsistent transition completion/intent evidence."}
+        if([string]$completion.intent.sha256-cne$intentFileHash){
+            $historicalEventId=[string]$event.event_id
+            if(-not$historicalIntentBindingCorrections.ContainsKey($historicalEventId)){
+                throw "ResolveBlocker historical event '$historicalEventId' has cryptographically inconsistent transition completion/intent evidence."
+            }
+            $correction=$historicalIntentBindingCorrections[$historicalEventId]
+            if([string]$correction.recorded_intent_sha256-cne[string]$completion.intent.sha256-or[string]$correction.observed_intent_sha256-cne$intentFileHash){
+                throw "ResolveBlocker historical event '$historicalEventId' differs from its authenticated additive intent-binding correction."
+            }
+        }
         $owned=@($intent.artifacts|Where-Object{[string]$_.path-ceq$relative})
-        if([string]$intent.event.event_id-cne[string]$event.event_id-or$owned.Count-ne1-or[string]$owned[0].sha256-cne(Get-MorphospaceFileSha256 $path)){throw "ResolveBlocker historical event '$($event.event_id)' has hash/identity-inconsistent retained blocker-resolution evidence."}
+        $actualReceiptHash=Get-MorphospaceFileSha256 $path
+        $receiptBindingAccepted=$owned.Count-eq1-and[string]$owned[0].sha256-ceq$actualReceiptHash
+        if(-not$receiptBindingAccepted-and$historicalIntentBindingCorrections.ContainsKey([string]$event.event_id)){
+            $correction=$historicalIntentBindingCorrections[[string]$event.event_id]
+            $receiptBindingAccepted=$owned.Count-eq1-and[string]$owned[0].sha256-ceq[string]$correction.recorded_receipt_sha256-and$actualReceiptHash-ceq[string]$correction.observed_receipt_sha256
+        }
+        if([string]$intent.event.event_id-cne[string]$event.event_id-or-not$receiptBindingAccepted){throw "ResolveBlocker historical event '$($event.event_id)' has hash/identity-inconsistent retained blocker-resolution evidence."}
         if([string]$candidate.receipt_id-ceq[string]$Receipt.receipt_id-and[string]$candidate.unit_id-ceq[string]$Receipt.unit_id-and[string]$candidate.blocker.blocker_id-ceq[string]$Receipt.blocker.blocker_id-or(Get-MorphospaceCanonicalJsonSha256 $candidate)-ceq$CanonicalSha256){
             throw 'ResolveBlocker receipt identity or canonical receipt hash was already consumed.'
         }
