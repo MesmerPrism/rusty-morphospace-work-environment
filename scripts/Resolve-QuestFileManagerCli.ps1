@@ -113,11 +113,26 @@ Assert-ExactProperties -Value $config -Expected @(
     "source_kind",
     "source_version",
     "source_revision",
+    "inspected_deployment_contract",
+    "apk_launch_result_contract",
+    "launcher_export_proof_contract",
     "runtime_observation_contract"
 ) -Location "resolver config"
 
-if ($config.schema -cne "rusty.morphospace.local_quest_file_manager_cli.v2") {
+if ($config.schema -cne "rusty.morphospace.local_quest_file_manager_cli.v3") {
     throw "Unsupported Quest File Manager CLI resolver schema."
+}
+if ($config.inspected_deployment_contract -cne
+    "questionable.file_manager.inspected_deployment.v3") {
+    throw "inspected_deployment_contract must require the QFM v3 deployment contract."
+}
+if ($config.apk_launch_result_contract -cne
+    "questionable.file_manager.apk_launch_result.v1") {
+    throw "apk_launch_result_contract must require the QFM v1 JSON launch result contract."
+}
+if ($config.launcher_export_proof_contract -cne
+    "questionable.file_manager.launcher_export_proof.v2") {
+    throw "launcher_export_proof_contract must require the QFM v2 launcher proof contract."
 }
 if ($config.runtime_observation_contract -cne
     "questionable.file_manager.app_runtime_observation.v2") {
@@ -203,9 +218,15 @@ if (-not $SkipExecutableProbe) {
     }
     $contracts = Invoke-ContractProbe -ExecutablePath $executablePath
     if ([string]$contracts.schema -cne "questionable.file_manager.operator_actions.v1" -or
+        [string]$contracts.contracts.inspectedDeployment -cne
+            [string]$config.inspected_deployment_contract -or
+        [string]$contracts.contracts.apkLaunchResult -cne
+            [string]$config.apk_launch_result_contract -or
+        [string]$contracts.contracts.launcherExportProof -cne
+            [string]$config.launcher_export_proof_contract -or
         [string]$contracts.contracts.runtimeObservation -cne
             [string]$config.runtime_observation_contract) {
-        throw "Resolved File Manager CLI does not advertise the required runtime-observation contract."
+        throw "Resolved File Manager CLI does not advertise the complete inspected-deployment contract set."
     }
     $probeStatus = "passed"
 }
@@ -223,6 +244,9 @@ $result = [ordered]@{
     signature_status = $signatureStatus
     command_probe = $probeStatus
     required_routes = $requiredRoutes
+    inspected_deployment_contract = [string]$config.inspected_deployment_contract
+    apk_launch_result_contract = [string]$config.apk_launch_result_contract
+    launcher_export_proof_contract = [string]$config.launcher_export_proof_contract
     runtime_observation_contract = [string]$config.runtime_observation_contract
 }
 

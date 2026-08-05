@@ -46,13 +46,16 @@ function Invoke-ResolverChild {
 try {
     New-Item -ItemType Directory -Force -Path $testRoot | Out-Null
     $config = [ordered]@{
-        schema = "rusty.morphospace.local_quest_file_manager_cli.v2"
+        schema = "rusty.morphospace.local_quest_file_manager_cli.v3"
         provider_id = "file-manager-local"
         executable_path = $hostExecutable
         executable_sha256 = $hostSha256
         source_kind = "source-build"
         source_version = "0.1.0-dev"
         source_revision = ("a" * 40)
+        inspected_deployment_contract = "questionable.file_manager.inspected_deployment.v3"
+        apk_launch_result_contract = "questionable.file_manager.apk_launch_result.v1"
+        launcher_export_proof_contract = "questionable.file_manager.launcher_export_proof.v2"
         runtime_observation_contract = "questionable.file_manager.app_runtime_observation.v2"
     }
     Write-JsonUtf8NoBom -Path $configPath -Value $config
@@ -71,6 +74,11 @@ try {
     Invoke-ResolverChild -ExpectedExit 1 | Out-Null
 
     $config.executable_sha256 = $hostSha256
+    $config.apk_launch_result_contract = "questionable.file_manager.apk_launch_result.v0"
+    Write-JsonUtf8NoBom -Path $configPath -Value $config
+    Invoke-ResolverChild -ExpectedExit 1 | Out-Null
+
+    $config.apk_launch_result_contract = "questionable.file_manager.apk_launch_result.v1"
     $config.extra = "not-allowed"
     Write-JsonUtf8NoBom -Path $configPath -Value $config
     Invoke-ResolverChild -ExpectedExit 1 | Out-Null

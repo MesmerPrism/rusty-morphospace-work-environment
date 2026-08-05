@@ -1,10 +1,13 @@
 {
-  "schema": "rusty.morphospace.local_quest_file_manager_cli.v2",
+  "schema": "rusty.morphospace.local_quest_file_manager_cli.v3",
   "provider_id": "file-manager-local",
   "executable_path": "<absolute-file-manager-cli-path>",
   "executable_sha256": "<lowercase-file-manager-cli-sha256>",
   "source_kind": "source-build",
   "source_version": "<file-manager-semantic-version>",
   "source_revision": "<full-file-manager-source-commit>",
+  "inspected_deployment_contract": "questionable.file_manager.inspected_deployment.v3",
+  "apk_launch_result_contract": "questionable.file_manager.apk_launch_result.v1",
+  "launcher_export_proof_contract": "questionable.file_manager.launcher_export_proof.v2",
   "runtime_observation_contract": "questionable.file_manager.app_runtime_observation.v2"
 }

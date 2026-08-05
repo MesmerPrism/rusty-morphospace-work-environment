@@ -40,7 +40,11 @@ to bypass managed policy.
 Copy
 [`quest-file-manager-cli.example.json`](../templates/quest-file-manager-cli.example.json)
 to the ignored `local/quest-file-manager-cli.json`, bind the exact executable
-SHA-256 and source revision, then resolve it without touching a headset:
+SHA-256 and source revision, and retain the complete inspected-deployment
+contract set from that template. The resolver rejects older provider pins that
+do not advertise immutable v3 deployment admission, one typed JSON launch
+envelope on success or failure, the current-Quest launcher-export proof, and
+v2 runtime observation. Resolve the provider without touching a headset:
 
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass `
