@@ -279,6 +279,7 @@ if ($SelfTest) {
         [pscustomobject]@{ name = "workflow:external-validation-authority"; script = "Test-ExternalValidationAuthoritySelfTest.ps1"; detail = "Validated base-owned exact change-set admission without candidate checkout or execution." },
         [pscustomobject]@{ name = "workflow:environment-validation"; script = "Test-EnvironmentValidation.ps1"; detail = "Validated strict placeholders, repo paths, and Python/JDK minimum versions." },
         [pscustomobject]@{ name = "workflow:local-skill-bootstrap"; script = "Test-LocalSkillBootstrap.ps1"; detail = "Validated plan, install, verify, drift, backup, update, and local-file preservation." },
+        [pscustomobject]@{ name = "workflow:quest-file-manager-provider"; script = "Test-QuestFileManagerCliResolver.ps1"; detail = "Validated exact provider resolution, immutable deployment inputs, typed vectors, mismatch rejection, and failure evidence retention." },
         [pscustomobject]@{ name = "workflow:project-isolation"; script = "Test-ProjectIsolation.ps1"; detail = "Validated exact source locks, detached materializations, no-overwrite content addresses, and conflicting resource claims." },
         [pscustomobject]@{ name = "workflow:completed-transition-semantic-correction"; script = "Test-CompletedTransitionSemanticCorrection.ps1"; detail = "Validated derived legacy-v1 supersession correction, historical-byte preservation, authenticated projection, interruption repair, replay, path, CAS, and damaged-evidence rejection." }
     )) {
