@@ -13,7 +13,7 @@ Rusty Morphospace is the umbrella. Concrete ownership stays in lanes.
 | Optics | camera, image, projection, homography, lens and media metadata contracts | Android permission prompts, APK signing |
 | GUI | app-neutral operator UI contracts and CLI parity surfaces | hidden device setup or command business logic |
 | Makepad | Makepad adapters, settings surfaces, app-shell integration | Quest platform authority or generic core state |
-| Quest | Quest/Horizon/Android platform profiles, permissions, launch, ADB-facing validation receipts | generic command/session authority |
+| Quest | Quest/Horizon/Android platform profiles, permissions, launch, OpenXR bridge/API-layer packaging and effective readback, ADB-facing validation receipts | app semantics or generic command/session authority |
 | Hostess | install/test/evidence orchestration, shell UX, Windows media receivers, and opaque operator-presentation adapters such as the bounded Meta/MQDH Cinematic route | Quest runtime feature authority, Meta casting transport, or generic Manifold media authority |
 | QuestIonAble File Manager | Windows-first exact-serial ADB storage, inspected APK deployment, constrained resolved launch, bounded device observation, and reviewed local device utilities through typed CLI/API/WPF routes | managed target selection, Manifold authority, Fleet scheduling, app-owned OpenXR/runtime truth |
 
@@ -77,6 +77,10 @@ successful Cast window does not prove recording, input forwarding, arbitrary
 - Quest platform profiles and app-owned effective runtime receipts start in
   Quest; portable provider selection, raw diagnostic fallback, and evidence
   wrapping start in Meta Quest workflow.
+- OpenXR API-layer loading/interception and co-resident native bridges start in
+  Quest or the owning app shell. Portable tracked-space relations remain in
+  Lattice; semantic actions remain in the app; command admission remains in
+  Manifold.
 - Windows receiver/presentation orchestration and opaque Meta/MQDH Cast process
   supervision start in Hostess; version-sensitive capture and evidence
   procedure stays in Meta Quest workflow.

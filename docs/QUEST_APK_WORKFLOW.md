@@ -112,6 +112,9 @@ cleanup, and product improvement follow-up.
 | Android package identity and signing | app shell |
 | Manifest permissions and activity declarations | app shell or Quest build workflow |
 | OpenXR loader, Vulkan/GL setup, swapchains, frame loop | app shell or renderer adapter |
+| OpenXR API-layer package/manifest, activation, call interception, and effective readback | app shell plus Quest adapter |
+| Semantic XR actions and panel/entity meaning | app shell |
+| Accepted commands, leases, replay, revocation, and control transport | Manifold |
 | Install, launch, logcat, screenshots, Perfetto | Meta Quest workflow |
 | App-specific assets, payloads, tuning, screenshots | app repo or private evidence store |
 
@@ -335,6 +338,26 @@ Durable success signals:
 - Frame logs continue after the first submitted frame.
 - A bright fallback clear or synthetic pattern proves renderer liveness before
   camera, stream, or depth ingestion is debugged.
+
+## OpenXR Integration Choice
+
+Choose the narrowest integration shape that provides the required evidence or
+effect:
+
+| Shape | Use it for | Do not claim |
+| --- | --- | --- |
+| App-owned native OpenXR | Owning the instance, session, actions, spaces, swapchains, and frame loop. | That another component may also own frame wait/begin/end. |
+| Co-resident Meta Spatial SDK bridge | Reusing the SDK-owned instance, session, and `xrGetInstanceProcAddr` handle for compatible functions and enabled extensions. | That resolving a function transfers session, frame-loop, composition, or semantic ownership. |
+| OpenXR API layer | Observing or interposing the app-to-runtime call chain, including lifecycle, poses, actions, haptics, and submitted composition metadata. | Generic engine UI semantics, system-wide Touch input, post-instance attachment, or injection into arbitrary installed apps. |
+
+For Android, an ordinary layer is part of the target APK feature closure: pin
+its ABI library, JSON manifest, explicit/implicit activation route, layer order,
+IPC surface, cleanup behavior, and effective app-visible readback. A Termux or
+host process may be a bounded typed client only after the target APK has loaded
+the layer. Keep high-rate pose/image/depth data out of generic command JSON.
+
+The canonical capability and packaging model is the Meta Quest workflow's
+[`openxr-tracking-boundary.md`](https://github.com/MesmerPrism/meta-quest-agent-workflow/blob/main/docs/openxr-tracking-boundary.md).
 
 ## Device Evidence
 

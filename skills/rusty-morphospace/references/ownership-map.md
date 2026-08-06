@@ -26,9 +26,12 @@ adapters or app shells unless an accepted owner contract places them elsewhere.
   proposals; it does not replace Manifold stream or decision authority.
 - GUI owns portable interaction descriptors and command bindings, not hidden
   setup or runtime policy.
-- Quest owns Android, OpenXR, or platform adapters, permissions, packaging,
-  lifecycle, and effective platform receipts. Application shells retain their
-  package identity, composition, private behavior, and renderer choices.
+- Quest owns Android/OpenXR platform adapters, including co-resident bridges
+  and API-layer packaging, activation, interception, permissions, lifecycle,
+  and effective platform receipts. Application shells retain their package
+  identity, OpenXR/frame-loop ownership where applicable, semantic actions,
+  composition, private behavior, and renderer choices. Manifold retains
+  accepted-command, lease, replay, revocation, and control-transport authority.
 - Hostess owns install, test, and report workflows plus equivalent Windows
   operator CLI or local-API projections.
 - Compatibility lanes preserve existing public contracts until an explicit

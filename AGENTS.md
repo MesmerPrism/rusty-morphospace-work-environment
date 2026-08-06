@@ -182,6 +182,10 @@ single-PR path.
 - Android package identity, signing, manifest permissions, OpenXR lifecycle,
   renderer ownership, headset install/launch, and visual validation belong to
   app shells or Quest workflow, not generic core crates.
+- Distinguish app-owned OpenXR, co-resident bridges over engine-owned handles,
+  and loader API layers. Quest owns layer packaging, activation, interception,
+  and effective readback; the app owns semantic actions, while Manifold retains
+  accepted-command, lease, replay, and revocation authority.
 - Termux is a normal Android sidecar. It can use an already authorized ADB
   endpoint, but it is not shell authority by itself.
 - Accessibility may provide a privacy-minimized top-level window-transition
