@@ -4,7 +4,7 @@
   "title": "Work-unit automation action receipt",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "project_id", "unit_id", "action", "timestamp", "executed", "transition", "status_before", "status_after", "current_unit_before", "current_unit_after", "preservation", "validation_matrix", "graph_scope", "adoption_receipt", "publication_closure", "published_planning_authority_adoption", "planned_publication", "planning_suffix_rewrite_recovery", "published_prerequisite_suffix_reconciliation", "push_plan", "event_id"],
+  "required": ["schema", "project_id", "unit_id", "action", "timestamp", "executed", "transition", "status_before", "status_after", "current_unit_before", "current_unit_after", "preservation", "validation_matrix", "graph_scope", "claim_preflight", "adoption_receipt", "publication_closure", "published_planning_authority_adoption", "planned_publication", "planning_suffix_rewrite_recovery", "published_prerequisite_suffix_reconciliation", "push_plan", "event_id"],
   "properties": {
     "schema": { "const": "rusty.morphospace.workflow.work_unit_automation_receipt.v1" },
     "project_id": { "$ref": "#/$defs/id" },
@@ -30,6 +30,26 @@
     },
     "validation_matrix": { "type": "array", "items": { "type": "object" } },
     "graph_scope": { "type": "object" },
+    "claim_preflight": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "ready_to_claim", "validation_tier", "requirements_declared", "disk", "tools", "product_inputs", "writable_repositories", "read_only_dependencies", "instruction_surfaces", "resources", "validation_matrix", "issues"],
+      "properties": {
+        "version": { "const": "v1" },
+        "ready_to_claim": { "type": "boolean" },
+        "validation_tier": { "enum": ["quick", "standard", "deep"] },
+        "requirements_declared": { "type": "boolean" },
+        "disk": { "type": "array", "items": { "type": "object" } },
+        "tools": { "type": "array", "items": { "type": "object" } },
+        "product_inputs": { "type": "array", "items": { "type": "object" } },
+        "writable_repositories": { "type": "array", "items": { "type": "object" } },
+        "read_only_dependencies": { "type": "array", "items": { "type": "object" } },
+        "instruction_surfaces": { "type": "array", "items": { "type": "object" } },
+        "resources": { "type": "array", "items": { "type": "object" } },
+        "validation_matrix": { "type": "array", "items": { "type": "object" } },
+        "issues": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
     "adoption_receipt": { "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }] },
     "publication_closure": {
       "oneOf": [

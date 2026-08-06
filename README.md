@@ -169,6 +169,10 @@ validation without a device.
 - [Autonomous Iteration](docs/AUTONOMOUS_ITERATION.md) defines work-unit scope,
   compact state, event notes, validation tiers, larger push checkpoints, and
   the optional fail-closed work-unit automation CLI.
+- [Workflow Stability And Feature Throughput](docs/WORKFLOW_STABILITY.md)
+  defines validation-only review units, claim preflight, exact generated
+  handoffs, semantic gates, one-captain ownership, and the three-feature-unit
+  stability window.
 - [Active Read-Only Dependency Correction](docs/ACTIVE_READ_ONLY_DEPENDENCY_CORRECTION.md)
   defines the exact-CAS transaction for correcting only an active unit's
   project-declared parse/build dependency closure.
@@ -230,6 +234,13 @@ checkout/reset/stash, validation commands, or live device commands.
 Use `-Action Ready -Execute` to review a bounded `proposed` unit into the
 claimable queue after its prerequisites are accepted; this replaces manual
 status/state/event edits.
+Run `Inspect` with the exact repository map before Claim. Its embedded
+`claim_preflight` resolves writable repositories, read-only input paths,
+instruction aliases/files, resource declarations, validation tier, and device
+selection. Claim repeats the check and does not change state unless it passes.
+Use `scripts/New-WorkUnitHandoff.ps1` to bind exact unit/state/event/repository
+hashes and copy validation and acceptance commands verbatim for the next
+captain or execution stage.
 For a matching active or validating unit with declared instruction surfaces, use the two-phase
 `CompleteInstructionSurfaces` action before validation. Its dry run reports
 the exact unit hash, stable instruction-file observation hash, and complete

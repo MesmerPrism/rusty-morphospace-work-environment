@@ -1,0 +1,137 @@
+{
+  "$schema": "../schemas/iteration-unit.schema.json",
+  "schema": "rusty.morphospace.workflow.iteration_unit.v1",
+  "unit_id": "unit-validation-only-001",
+  "project_id": "example-project",
+  "status": "ready",
+  "objective": "Validate the exact frozen application artifact on its required host and serial-scoped device surfaces without changing production content.",
+  "work_mode": "validation-only",
+  "change_categories": ["validation"],
+  "instruction_impact": "review",
+  "instruction_surfaces": [
+    {
+      "surface_kind": "agents",
+      "path": "<repo-root>/AGENTS.md",
+      "owner": "project-shell",
+      "change_reason": "Confirm existing project validation routing remains sufficient.",
+      "action": "review-no-change",
+      "status": "planned",
+      "validation": "Review the stable observed file hash.",
+      "skill_id": null
+    },
+    {
+      "surface_kind": "readme",
+      "path": "<repo-root>/README.md",
+      "owner": "project-shell",
+      "change_reason": "Confirm the existing contributor validation entrypoint remains accurate.",
+      "action": "review-no-change",
+      "status": "planned",
+      "validation": "Review the stable observed file hash.",
+      "skill_id": null
+    },
+    {
+      "surface_kind": "skill",
+      "path": "<skills-root>/rusty-morphospace/SKILL.md",
+      "owner": "workflow-maintainer",
+      "change_reason": "Confirm project validation routing requires no durable skill change.",
+      "action": "review-no-change",
+      "status": "planned",
+      "validation": "Review the stable observed file hash.",
+      "skill_id": "rusty-morphospace"
+    },
+    {
+      "surface_kind": "skill",
+      "path": "<skills-root>/system-engineering/SKILL.md",
+      "owner": "workflow-maintainer",
+      "change_reason": "Confirm validation and acceptance invariants require no durable skill change.",
+      "action": "review-no-change",
+      "status": "planned",
+      "validation": "Review the stable observed file hash.",
+      "skill_id": "system-engineering"
+    }
+  ],
+  "instruction_none_justification": null,
+  "prerequisites": ["unit-feature-001"],
+  "allowed_repositories": [
+    {
+      "repo_id": "project-shell",
+      "allowed_paths": ["morphospace/receipts/"]
+    }
+  ],
+  "read_only_dependencies": [
+    {
+      "repo_id": "application-source",
+      "paths": ["artifacts/application.apk"],
+      "purpose": "Validate the exact frozen application artifact.",
+      "verification": "Require the declared product-input SHA-256 before Claim."
+    }
+  ],
+  "resource_requirements": [
+    {
+      "resource_kind": "headset",
+      "resource_id": "<serial-scoped-headset>",
+      "mode": "exclusive",
+      "claim_timing": "before-run"
+    }
+  ],
+  "claim_requirements": {
+    "minimum_free_disk_mib": 1024,
+    "required_tools": [
+      {
+        "tool_id": "adb",
+        "executable": "adb",
+        "purpose": "Run serial-scoped device validation without changing ADB lifecycle."
+      },
+      {
+        "tool_id": "pwsh",
+        "executable": "pwsh",
+        "purpose": "Run portable host and receipt validation."
+      }
+    ],
+    "product_inputs": [
+      {
+        "input_id": "application-apk",
+        "repo_id": "application-source",
+        "path": "artifacts/application.apk",
+        "kind": "file",
+        "expected_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ]
+  },
+  "non_scope": [
+    "Production source or configuration edits.",
+    "Workflow or schema repair.",
+    "ADB daemon lifecycle changes."
+  ],
+  "acceptance": [
+    {
+      "acceptance_id": "host-proof",
+      "proof": "The exact frozen artifact passes the declared host check.",
+      "command": "<exact-host-validation-command>"
+    },
+    {
+      "acceptance_id": "device-proof",
+      "proof": "The exact frozen artifact passes the declared serial-scoped device check.",
+      "command": "<exact-device-validation-command>"
+    }
+  ],
+  "risk_tier": "standard",
+  "device_requirement": "required",
+  "validation": [
+    {
+      "profile_id": "host",
+      "command": "<exact-host-validation-command>"
+    },
+    {
+      "profile_id": "device",
+      "command": "<exact-device-validation-command>"
+    }
+  ],
+  "outputs": [
+    "Hash-bound host validation evidence.",
+    "Serial-scoped device validation evidence.",
+    "Generated exact handoff bundle."
+  ],
+  "commit_policy": "Commit only evidence and workflow-state transitions; production content is read-only.",
+  "push_checkpoint": "integration-batch"
+}

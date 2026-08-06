@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/work-unit-handoff.schema.json",
+  "title": "Rusty Morphospace work-unit handoff",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "generated_at", "project_id", "unit", "workspace", "repositories", "commands", "instruction_surfaces", "claim_requirements", "resources", "outputs", "next_action"],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.workflow.work_unit_handoff.v1" },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "project_id": { "$ref": "#/$defs/id" },
+    "unit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["unit_id", "path", "sha256", "status", "work_mode", "objective", "risk_tier", "device_requirement"],
+      "properties": {
+        "unit_id": { "$ref": "#/$defs/id" },
+        "path": { "type": "string", "pattern": "^iteration-units/[^/]+[.]json$" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "status": { "$ref": "#/$defs/id" },
+        "work_mode": { "enum": ["feature", "validation-only"] },
+        "objective": { "type": "string", "minLength": 1 },
+        "risk_tier": { "enum": ["quick", "standard", "deep"] },
+        "device_requirement": { "enum": ["forbidden", "none", "optional", "required"] }
+      }
+    },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state_sha256", "event_ledger_sha256", "current_unit", "last_event_id", "event_count", "blockers"],
+      "properties": {
+        "state_sha256": { "$ref": "#/$defs/sha256" },
+        "event_ledger_sha256": { "$ref": "#/$defs/sha256" },
+        "current_unit": { "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
+        "last_event_id": { "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
+        "event_count": { "type": "integer", "minimum": 0 },
+        "blockers": { "type": "array", "items": { "type": "object" } }
+      }
+    },
+    "repositories": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["repo_id", "access", "head", "tree", "dirty", "paths"],
+        "properties": {
+          "repo_id": { "$ref": "#/$defs/id" },
+          "access": { "enum": ["write", "read-only"] },
+          "head": { "oneOf": [{ "$ref": "#/$defs/git" }, { "type": "null" }] },
+          "tree": { "oneOf": [{ "$ref": "#/$defs/git" }, { "type": "null" }] },
+          "dirty": { "oneOf": [{ "type": "boolean" }, { "type": "null" }] },
+          "paths": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
+        }
+      }
+    },
+    "commands": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["validation", "acceptance"],
+      "properties": {
+        "validation": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/command" } },
+        "acceptance": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/command" } }
+      }
+    },
+    "instruction_surfaces": { "type": "array", "items": { "type": "object" } },
+    "claim_requirements": { "oneOf": [{ "type": "object" }, { "type": "null" }] },
+    "resources": { "type": "array", "items": { "type": "object" } },
+    "outputs": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+    "next_action": { "enum": ["Ready", "Claim", "CompleteInstructionSurfaces", "BeginValidation", "RecordValidation", "Accept", "PreparePush", "terminal"] }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" },
+    "git": { "type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command_id", "command"],
+      "properties": {
+        "command_id": { "$ref": "#/$defs/id" },
+        "command": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

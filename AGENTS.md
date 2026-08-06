@@ -435,6 +435,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkEnvironment.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkflowContracts.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\New-ProjectWorkspace.ps1 -SelfTest
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkUnitAutomation.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkUnitHandoff.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-CorrectActiveReadOnlyDependencies.ps1 -SelfTest
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-CorrectActiveProjectRepositoryScope.ps1 -SelfTest
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-EventLedgerPrefixNormalization.ps1

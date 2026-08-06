@@ -351,6 +351,15 @@ try {
     $workspace = New-TestWorkspace -Root (Join-Path $planningRepo "project") -ProjectId "automation-test" -UnitId "unit-auto-001"
     $instructionUnitPath = Join-Path $workspace "iteration-units\unit-auto-001.json"
     $instructionUnit = Get-Content -LiteralPath $instructionUnitPath -Raw | ConvertFrom-Json
+    $instructionUnit | Add-Member -NotePropertyName work_mode -NotePropertyValue "feature"
+    $instructionUnit | Add-Member -NotePropertyName claim_requirements -NotePropertyValue ([pscustomobject][ordered]@{
+        minimum_free_disk_mib = 1
+        required_tools = @(
+            [pscustomobject][ordered]@{ tool_id = "git"; executable = "git"; purpose = "Observe exact repository identities." },
+            [pscustomobject][ordered]@{ tool_id = "pwsh"; executable = "pwsh"; purpose = "Run portable workflow checks." }
+        )
+        product_inputs = @([pscustomobject][ordered]@{ input_id = "seed-source"; repo_id = "project-shell"; path = "src/seed.txt"; kind = "file"; expected_sha256 = (Get-FileHash -LiteralPath (Join-Path $repo "src\seed.txt") -Algorithm SHA256).Hash.ToLowerInvariant() })
+    })
     $instructionUnit.instruction_impact = "update"
     [void]$instructionUnit.PSObject.Properties.Remove("instruction_none_justification")
     $instructionUnit.instruction_surfaces = @(
@@ -731,8 +740,25 @@ try {
     } catch { $blockedReadyRejected = $true }
     Assert-Automation $blockedReadyRejected "proposal review accepted an unmet prerequisite"
 
+    $unresolvedWorkspace = New-TestWorkspace -Root (Join-Path $testRoot "unresolved-instruction-project") -ProjectId "unresolved-instruction-test" -UnitId "unit-unresolved-001"
+    $unresolvedUnitPath = Join-Path $unresolvedWorkspace "iteration-units\unit-unresolved-001.json"
+    $unresolvedUnit = Get-Content -LiteralPath $unresolvedUnitPath -Raw | ConvertFrom-Json
+    $unresolvedUnit.instruction_impact = "review"
+    $unresolvedUnit.instruction_none_justification = $null
+    $unresolvedUnit.instruction_surfaces = @(
+        [pscustomobject][ordered]@{ surface_kind = "agents"; path = "<missing-root>/AGENTS.md"; owner = "missing-root"; change_reason = "Prove unresolved aliases fail before claim."; action = "review-no-change"; status = "planned"; validation = "Observe the exact stable file."; skill_id = $null }
+    )
+    Write-TestJson -Path $unresolvedUnitPath -Value $unresolvedUnit
+    $unresolvedInspect = Invoke-MorphospaceWorkUnitAutomation -Action Inspect -WorkspaceRoot $unresolvedWorkspace -UnitId "unit-unresolved-001" -RepoMapPath $repoMapPath -Timestamp $fixed
+    Assert-Automation (-not $unresolvedInspect.claim_preflight.ready_to_claim -and @($unresolvedInspect.claim_preflight.issues | Where-Object { $_ -like "Instruction surface preflight failed*" }).Count -eq 1) "claim preflight did not report an unresolved instruction alias"
+    $unresolvedClaimRejected = $false
+    try {
+        Invoke-MorphospaceWorkUnitAutomation -Action Claim -WorkspaceRoot $unresolvedWorkspace -UnitId "unit-unresolved-001" -RepoMapPath $repoMapPath -Timestamp $fixed -Execute | Out-Null
+    } catch { $unresolvedClaimRejected = $_.Exception.Message -like "Claim preflight blocked:*" }
+    Assert-Automation ($unresolvedClaimRejected -and [string](Get-Content -LiteralPath $unresolvedUnitPath -Raw | ConvertFrom-Json).status -eq "ready") "claim crossed the state boundary with an unresolved instruction alias"
+
     $claim = Invoke-MorphospaceWorkUnitAutomation -Action Claim -WorkspaceRoot $workspace -UnitId "unit-auto-001" -RepoMapPath $repoMapPath -Timestamp $fixed -OutPath (Join-Path $receiptRoot "claim.json") -Execute
-    Assert-Automation ($claim.transition -eq "ready-to-active" -and $claim.status_after -eq "active") "claim transition"
+    Assert-Automation ($claim.transition -eq "ready-to-active" -and $claim.status_after -eq "active" -and $claim.claim_preflight.ready_to_claim -and $claim.claim_preflight.requirements_declared -and @($claim.claim_preflight.tools | Where-Object { -not $_.available }).Count -eq 0 -and $claim.claim_preflight.product_inputs[0].hash_matches -and [string]$claim.claim_preflight.writable_repositories[0].tree -match '^[0-9a-f]{40}$') "claim transition and complete exact preflight evidence"
     $eventCount = @(Get-Content (Join-Path $workspace "iteration-events.jsonl")).Count
     $claimAgain = Invoke-MorphospaceWorkUnitAutomation -Action Claim -WorkspaceRoot $workspace -UnitId "unit-auto-001" -RepoMapPath $repoMapPath -Timestamp $fixed -Execute
     Assert-Automation ($claimAgain.transition -eq "idempotent") "idempotent claim"
@@ -1792,8 +1818,9 @@ try {
     $initialRecoveryState = Get-Content $recoveryStatePath -Raw | ConvertFrom-Json
     $initialRecoveryState.dirty_repositories = @("project-shell")
     Write-TestJson -Path $recoveryStatePath -Value $initialRecoveryState
-    Invoke-MorphospaceWorkUnitAutomation -Action Claim -WorkspaceRoot $recoveryWorkspace -UnitId "unit-recover-001" -Timestamp $fixed -Execute | Out-Null
-    Assert-Automation (@((Get-Content $recoveryStatePath -Raw | ConvertFrom-Json).dirty_repositories) -contains "project-shell") "unmapped execution erased prior dirty-repository state"
+    $recoveryClaim = Invoke-MorphospaceWorkUnitAutomation -Action Claim -WorkspaceRoot $recoveryWorkspace -UnitId "unit-recover-001" -RepoMapPath $repoMapPath -Timestamp $fixed -Execute
+    Assert-Automation ($recoveryClaim.claim_preflight.ready_to_claim -and [string]$recoveryClaim.claim_preflight.writable_repositories[0].head -match '^[0-9a-f]{40}$') "mapped recovery claim lacks exact preflight evidence"
+    Assert-Automation (@((Get-Content $recoveryStatePath -Raw | ConvertFrom-Json).dirty_repositories) -notcontains "project-shell") "mapped clean repository was not projected deterministically"
     Invoke-MorphospaceWorkUnitAutomation -Action BeginValidation -WorkspaceRoot $recoveryWorkspace -UnitId "unit-recover-001" -Timestamp $fixed -Execute | Out-Null
     $failureReceiptPath = New-TestValidationReceipt -Workspace $recoveryWorkspace -ProjectId "recovery-test" -UnitId "unit-recover-001" -Tier standard -Result fail -EvidenceName "failure-evidence.txt"
     Invoke-MorphospaceWorkUnitAutomation -Action RecordValidation -WorkspaceRoot $recoveryWorkspace -UnitId "unit-recover-001" -ValidationTier standard -ValidationResult fail -ValidationReceipt "receipts/unit-recover-001-fail-validation.json" -Timestamp $fixed -Execute | Out-Null

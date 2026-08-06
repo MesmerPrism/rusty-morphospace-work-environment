@@ -32,6 +32,7 @@
     "project_id": { "$ref": "#/$defs/id" },
     "status": { "$ref": "#/$defs/id" },
     "objective": { "type": "string", "minLength": 1 },
+    "work_mode": { "enum": ["feature", "validation-only"] },
     "tags": {
       "type": "array",
       "uniqueItems": true,
@@ -209,6 +210,49 @@
         }
       }
     },
+    "claim_requirements": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minimum_free_disk_mib", "required_tools", "product_inputs"],
+      "properties": {
+        "minimum_free_disk_mib": { "type": "integer", "minimum": 0 },
+        "required_tools": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["tool_id", "executable", "purpose"],
+            "properties": {
+              "tool_id": { "$ref": "#/$defs/id" },
+              "executable": { "type": "string", "pattern": "^[A-Za-z0-9_.+-]{1,128}$" },
+              "purpose": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "product_inputs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["input_id", "repo_id", "path", "kind", "expected_sha256"],
+            "properties": {
+              "input_id": { "$ref": "#/$defs/id" },
+              "repo_id": { "$ref": "#/$defs/id" },
+              "path": { "type": "string", "minLength": 1 },
+              "kind": { "enum": ["file", "directory"] },
+              "expected_sha256": {
+                "oneOf": [
+                  { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+                  { "type": "null" }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
     "non_scope": { "$ref": "#/$defs/nonEmptyStrings" },
     "acceptance": {
       "type": "array",
@@ -259,6 +303,41 @@
         "properties": {
           "instruction_surfaces": { "minItems": 1 },
           "instruction_none_justification": { "type": "null" }
+        }
+      }
+    },
+    {
+      "if": { "required": ["work_mode"] },
+      "then": { "required": ["claim_requirements"] }
+    },
+    {
+      "if": {
+        "properties": { "work_mode": { "const": "validation-only" } },
+        "required": ["work_mode"]
+      },
+      "then": {
+        "properties": {
+          "change_categories": {
+            "minItems": 1,
+            "maxItems": 1,
+            "items": { "const": "validation" }
+          },
+          "instruction_impact": { "const": "review" },
+          "instruction_surfaces": {
+            "minItems": 1,
+            "items": {
+              "properties": { "action": { "const": "review-no-change" } }
+            }
+          },
+          "allowed_repositories": {
+            "items": {
+              "properties": {
+                "allowed_paths": {
+                  "items": { "type": "string", "pattern": "^morphospace(?:/|$)" }
+                }
+              }
+            }
+          }
         }
       }
     }
