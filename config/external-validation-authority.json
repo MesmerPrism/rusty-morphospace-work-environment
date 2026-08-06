@@ -1128,6 +1128,159 @@
         }
       ],
       "status": "approved"
+    },
+    {
+      "approval_id": "work-unit-workflow-friction-stabilization-20260806",
+      "required_ancestor": "db500a2a42d03ab54ec6042cf427255265d7d56d",
+      "changed_paths": [
+        "AGENTS.md",
+        "README.md",
+        "docs/AUTONOMOUS_ITERATION.md",
+        "docs/EXTERNAL_VALIDATION_AUTHORITY.md",
+        "docs/INSTRUCTION_SYNCHRONIZATION.md",
+        "docs/WORKFLOW_STABILITY.md",
+        "manifests/workflow-lifecycle.portable.json",
+        "schemas/iteration-unit.schema.json",
+        "schemas/work-unit-automation-receipt.schema.json",
+        "schemas/work-unit-handoff.schema.json",
+        "scripts/New-WorkUnitHandoff.ps1",
+        "scripts/Test-WorkEnvironment.ps1",
+        "scripts/Test-WorkUnitAutomation.ps1",
+        "scripts/Test-WorkUnitHandoff.ps1",
+        "scripts/Test-WorkflowContracts.ps1",
+        "scripts/WorkUnitAutomation.psm1",
+        "templates/iteration-unit-validation-only.example.json",
+        "templates/iteration-unit.example.json"
+      ],
+      "artifacts": [
+        {
+          "path": "AGENTS.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 28828,
+          "sha256": "adaffedc63965c74c0646362ef4b0c2372fc22a301ff7aaf0383e2dff9e9ba03"
+        },
+        {
+          "path": "README.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 24462,
+          "sha256": "60614b581f98db641e5570d02a6ee483d00668a28d1fcba13e6999325472b661"
+        },
+        {
+          "path": "docs/AUTONOMOUS_ITERATION.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 30400,
+          "sha256": "cca8502b981f7b42ecf78aafe221b01c3191878c87629b4380b9702820956848"
+        },
+        {
+          "path": "docs/EXTERNAL_VALIDATION_AUTHORITY.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 10854,
+          "sha256": "6c81183febfd6e90cae68dacd941a756396208178180e07b0187866b297a52f3"
+        },
+        {
+          "path": "docs/INSTRUCTION_SYNCHRONIZATION.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 4995,
+          "sha256": "4d309c836fb391f2911d1b4824fec40a42b17fcd53575a4912b2bdaccaa49e90"
+        },
+        {
+          "path": "docs/WORKFLOW_STABILITY.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 4821,
+          "sha256": "5ed5dc80b50705fb645204a736c102d1b99af84f890629d3d4b12391c83ff2d0"
+        },
+        {
+          "path": "manifests/workflow-lifecycle.portable.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 6998,
+          "sha256": "7744bf83314e4246a58744959d633b28b3b0830e1535a27e85d50a43514595fd"
+        },
+        {
+          "path": "schemas/iteration-unit.schema.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 11091,
+          "sha256": "3d9c9aec8b8bf4a0b0c3a90704173b3f225e7659af920a9037210374881280fe"
+        },
+        {
+          "path": "schemas/work-unit-automation-receipt.schema.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 9551,
+          "sha256": "98aadd04d6380855a3ce163208625d6a8bb16b1a0d8b8f6e942847935eaec862"
+        },
+        {
+          "path": "schemas/work-unit-handoff.schema.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 4123,
+          "sha256": "827e1a7c39928d8da7d693f33d63ca84d795798613615e8fbab307f5845cb809"
+        },
+        {
+          "path": "scripts/New-WorkUnitHandoff.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 7367,
+          "sha256": "31e6f35774797f0958da043006ab0b142bd35e4c121a3699875f5e131954c2b7"
+        },
+        {
+          "path": "scripts/Test-WorkEnvironment.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 23935,
+          "sha256": "ef7f65798768d4d08921b9850f4779be82394d5415d3cfbf08c29f0a88298d4c"
+        },
+        {
+          "path": "scripts/Test-WorkUnitAutomation.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 163851,
+          "sha256": "46744d439d80fa4ea05fd4974982d572a2e3ca327478797de0b443a304d84491"
+        },
+        {
+          "path": "scripts/Test-WorkUnitHandoff.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 3466,
+          "sha256": "74b9105d749447c87affe6dc395f22fa415bf9968bab6b74e29f58b138bb38cd"
+        },
+        {
+          "path": "scripts/Test-WorkflowContracts.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 109075,
+          "sha256": "0a585dfc8a8ad5d6dd39c4e1ddbe23db927dc8a5af2090de4cd3f911eff0f107"
+        },
+        {
+          "path": "scripts/WorkUnitAutomation.psm1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 124670,
+          "sha256": "23ede7942556e8312c80f3aa7aeb09ac83a44e522470345f5d6b94d07af575f4"
+        },
+        {
+          "path": "templates/iteration-unit-validation-only.example.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 4506,
+          "sha256": "a6f542999f5ccbc1dafe1d0aac7566630ef45f48564bc2fa27f5ffca97dd8031"
+        },
+        {
+          "path": "templates/iteration-unit.example.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 4764,
+          "sha256": "cd121acd95d6fc8b229f9a9e8fed1c5b2589e12c7dc694ce281d8954526f2270"
+        }
+      ],
+      "status": "approved"
     }
   ],
   "status": "active"
