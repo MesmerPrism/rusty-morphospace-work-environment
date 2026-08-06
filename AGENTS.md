@@ -172,6 +172,15 @@ exact trusted base tree and inspects fetched candidate Git objects without
 checking them out or executing them. It never attests execution or authorizes
 publication. Keep ordinary application changes on their proportional
 single-PR path.
+Only the exact protected-without-base-approval v1 result may enter the durable
+external owner gate. Require exactly one fresh pinned-owner authorization for
+the current evidence, bound by RSA-PSS-SHA256 to complete
+PR/Git/artifact/assessment evidence. Older mismatched comments remain inert
+audit history. It permits only the base static assessment, never execution,
+acceptance, merge, or publication; signing helpers print text only. Its unique
+ID is audit identity, not mutable replay state: exact-candidate reruns are
+idempotent within freshness, changed evidence rejects, and trusted-base
+ancestry consumes the authorization.
 
 ## Authority Rules
 

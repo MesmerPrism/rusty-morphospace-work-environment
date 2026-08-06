@@ -142,6 +142,9 @@ pwsh -NoProfile -ExecutionPolicy Bypass `
 When a repository changes its own validation policy, workflow, schema, or
 runner, use the two-step
 [External Validation Authority](docs/EXTERNAL_VALIDATION_AUTHORITY.md)
+also defines the pinned-owner signed-comment gate for the one exact protected
+change lacking a base approval. It can authorize only a base static assessment,
+never execution, acceptance, or publication.
 boundary. A base-owned policy admits an exact reviewed change set without
 checking out or executing candidate content; dynamic validation and
 publication authority remain separate.

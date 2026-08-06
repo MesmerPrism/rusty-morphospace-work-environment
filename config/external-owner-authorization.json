@@ -1,0 +1,13 @@
+{
+  "schema": "rusty.morphospace.workflow.external_owner_authorization_policy.v1",
+  "issuer_id": "mesmerprism-owner-policy-authority-v1",
+  "owner_login": "MesmerPrism",
+  "comment_marker": "rusty-morphospace-external-owner-authorization:v1",
+  "max_authorization_age_seconds": 86400,
+  "max_future_skew_seconds": 300,
+  "maximum_comments": 1000,
+  "maximum_response_bytes": 1048576,
+  "maximum_comment_bytes": 65536,
+  "public_key_spki_sha256": "e6ceb8c9bb2d3c178b28f15b9cd47ff1229e13584cd9c3b7dec1c2cda2f476e6",
+  "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAv1Xrt1xDfxPjF8WNeGzj\nQTbzdi0gqT3L7/UM0UpXr2N2MnCoD4NW5yh0sCgC7aLClyAaCDDfuN1NM934ZxNh\nvssbED3qdyXv27GFhLBrv38SfBrGsWASl0001hDnMq8NjExRlyO3ComVznBTo2L8\nBVa/EejOiQuFOVeRXCrqZ/v1tfZIid98UGPSZEiCTAJ0d2t+ex9y5RSKXWZQ6WYW\niDsqxGzSG5xe1w46k9Lt38NodAv+mObbvEDHbZlsH02IDGLca0nPLsyylfrl2Ko3\ndn9BKg5pbevRNj4aqfCNkzEm3uPhKdOxoVtnWU7MqZNPMn+5dZEr3yLJ567zFR57\nGLIDgArKDOPcPHcd0AnrsBfq3tdeQlUezcBuCIhZ43pjoV93d4typIPh8DIe9jK3\nJ3v3+E1EOQsV1odV9aKhYDIRPVPjdq5xmU0U2fQbIJMfGX1e/4jAWq5Th01NQEgz\nVlmGiim/woJLzJU6K8rd8VN7pfWFHIfMNMDcCSBZQRflAgMBAAE=\n-----END PUBLIC KEY-----"
+}

@@ -236,6 +236,11 @@ rejection edge rather than reusable ownership.
 Treat `AGENTS.md`, `SKILL.md`, README, and router docs as graphable instruction
 surfaces. Module-layout or repo-routing changes must include their
 synchronization records; keep detailed scan recipes outside the entrypoints.
+Graph the external-owner gate only from the exact protected-without-approval
+result through one pinned-owner signed authorization identity to the exact
+static assessment; exact-evidence reruns remain idempotent within freshness,
+changed evidence rejects, and trusted-base ancestry consumes the authorization;
+execution, acceptance, and publication remain disconnected authority nodes.
 
 Graph historical-unit adoption as an additive evidence node linked to exact
 unit bytes, terminal event, source workflow, and normalized semantics. It must

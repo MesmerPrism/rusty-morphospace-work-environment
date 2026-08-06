@@ -95,6 +95,8 @@ jobs:
           HEAD_COMMIT: ${{ github.event.pull_request.head.sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPOSITORY: ${{ github.repository }}
+          # The adapter fetches public issue comments without a token. Keep
+          # permissions read-only and do not add issues/pull-requests write.
         run: |
           Set-StrictMode -Version Latest
           $ErrorActionPreference = "Stop"
