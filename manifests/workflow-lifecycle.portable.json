@@ -58,6 +58,13 @@
     "rollback"
   ],
   "risk_tiers": ["quick", "standard", "deep"],
+  "work_modes": ["feature", "validation-only"],
+  "workflow_stability": {
+    "feature_units_before_protocol_change": 3,
+    "target_feature_work_percent": 70,
+    "validation_only_instruction_action": "review-no-change",
+    "unit_captain_through_acceptance": true
+  },
   "device_requirements": ["forbidden", "none", "optional", "required"],
   "push_checkpoints": ["none", "local-only", "integration-batch", "release"],
   "change_categories": [

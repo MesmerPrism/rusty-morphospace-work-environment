@@ -5,6 +5,7 @@
   "project_id": "example-project",
   "status": "active",
   "objective": "Validate the neutral particle-field contract and its explicit project activation.",
+  "work_mode": "feature",
   "tags": ["particle", "contract-extraction"],
   "change_categories": ["module-layout", "feature-activation", "validation"],
   "instruction_impact": "update",
@@ -91,6 +92,22 @@
       "claim_timing": "before-write"
     }
   ],
+  "claim_requirements": {
+    "minimum_free_disk_mib": 1024,
+    "required_tools": [
+      {
+        "tool_id": "git",
+        "executable": "git",
+        "purpose": "Observe and bind exact source commits and trees."
+      },
+      {
+        "tool_id": "pwsh",
+        "executable": "pwsh",
+        "purpose": "Run portable workflow and validation entrypoints."
+      }
+    ],
+    "product_inputs": []
+  },
   "non_scope": [
     "Application visual changes.",
     "Platform, packaging, permission, and device work.",

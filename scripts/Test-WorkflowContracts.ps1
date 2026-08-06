@@ -568,6 +568,8 @@ function Test-ProjectBundle {
         }
 
         $changeCategories = @($unit.change_categories | ForEach-Object { [string]$_ })
+        $workMode = if ($unit.PSObject.Properties.Name -contains "work_mode") { [string]$unit.work_mode } else { "feature" }
+        Assert-Contract ($script:WorkModes -contains $workMode) "$Context unit '$($unit.unit_id)' has unknown work mode '$workMode'."
         $effectiveChangeCategories = @($changeCategories | ForEach-Object {
             if ($script:ChangeCategories -contains $_) { $_ }
             elseif ($script:ChangeCategoryAliases.ContainsKey($_)) { $script:ChangeCategoryAliases[$_] }
@@ -659,7 +661,9 @@ function Test-ProjectBundle {
         }
 
         if ($triggeredCategories.Count -gt 0) {
-            Assert-Contract ($effectiveInstructionImpact -eq "update") "$Context unit '$($unit.unit_id)' changes instruction-triggering categories and must use instruction_impact 'update'."
+            $expectedInstructionImpact = if ($workMode -eq "validation-only") { "review" } else { "update" }
+            $expectedRequiredAction = if ($workMode -eq "validation-only") { "review-no-change" } else { "update" }
+            Assert-Contract ($effectiveInstructionImpact -eq $expectedInstructionImpact) "$Context unit '$($unit.unit_id)' work mode '$workMode' must use instruction_impact '$expectedInstructionImpact'."
             $agentSurfaces = @($effectiveInstructionSurfaces | Where-Object { $_.surface_kind -eq "agents" })
             $routerSurfaces = @($effectiveInstructionSurfaces | Where-Object { $_.surface_kind -eq "readme" -or $_.surface_kind -eq "router-doc" })
             Assert-Contract ($agentSurfaces.Count -gt 0) "$Context unit '$($unit.unit_id)' needs the nearest AGENTS.md instruction surface."
@@ -681,12 +685,20 @@ function Test-ProjectBundle {
                 })
                 Assert-Contract ($matchingSkill.Count -eq 1) "$Context unit '$($unit.unit_id)' needs one instruction surface for relevant skill '$requiredSkillId'."
                 if ($matchingSkill.Count -eq 1) {
-                    Assert-Contract (@("update", "review-no-change") -contains [string]$matchingSkill[0].action) "$Context unit '$($unit.unit_id)' relevant skill '$requiredSkillId' must be updated or explicitly reviewed without change."
+                    Assert-Contract ([string]$matchingSkill[0].action -eq $expectedRequiredAction) "$Context unit '$($unit.unit_id)' relevant skill '$requiredSkillId' must use '$expectedRequiredAction'."
                 }
             }
 
             foreach ($requiredSurface in @($agentSurfaces + $routerSurfaces)) {
-                Assert-Contract ($requiredSurface.action -eq "update") "$Context unit '$($unit.unit_id)' required instruction surface '$($requiredSurface.path)' must be updated."
+                Assert-Contract ($requiredSurface.action -eq $expectedRequiredAction) "$Context unit '$($unit.unit_id)' required instruction surface '$($requiredSurface.path)' must use '$expectedRequiredAction'."
+            }
+
+            if ($workMode -eq "validation-only") {
+                Assert-Contract ($effectiveChangeCategories.Count -eq 1 -and $effectiveChangeCategories[0] -eq "validation") "$Context validation-only unit '$($unit.unit_id)' may declare only the validation change category."
+                Assert-Contract (@($effectiveInstructionSurfaces | Where-Object { [string]$_.action -ne "review-no-change" }).Count -eq 0) "$Context validation-only unit '$($unit.unit_id)' may only review instruction surfaces without change."
+                foreach ($allowedRepo in @($unit.allowed_repositories)) {
+                    Assert-Contract (@($allowedRepo.allowed_paths | Where-Object { (Normalize-RelativePath ([string]$_)) -notmatch '^morphospace(?:/|$)' }).Count -eq 0) "$Context validation-only unit '$($unit.unit_id)' may write only project morphospace state/evidence paths."
+                }
             }
 
             if ($unit.status -eq "accepted") {
@@ -1098,9 +1110,15 @@ if ($null -ne $lifecycle) {
     $script:IterationStateIds = @($lifecycle.iteration_states | ForEach-Object { [string]$_.id })
     $script:PromotionGates = @($lifecycle.promotion_gates | ForEach-Object { [string]$_ })
     $script:RiskTiers = @($lifecycle.risk_tiers | ForEach-Object { [string]$_ })
+    $script:WorkModes = @($lifecycle.work_modes | ForEach-Object { [string]$_ })
     $script:DeviceRequirements = @($lifecycle.device_requirements | ForEach-Object { [string]$_ })
     $script:PushCheckpoints = @($lifecycle.push_checkpoints | ForEach-Object { [string]$_ })
     $script:ChangeCategories = @($lifecycle.change_categories | ForEach-Object { [string]$_ })
+    Assert-Contract (($script:WorkModes -join "|") -eq "feature|validation-only") "Workflow work modes must expose feature and validation-only in that order."
+    Assert-Contract ([int]$lifecycle.workflow_stability.feature_units_before_protocol_change -eq 3) "Workflow stability must freeze protocol changes for three feature units."
+    Assert-Contract ([int]$lifecycle.workflow_stability.target_feature_work_percent -eq 70) "Workflow stability must target seventy percent feature work."
+    Assert-Contract ([string]$lifecycle.workflow_stability.validation_only_instruction_action -eq "review-no-change") "Validation-only units must use review-no-change instruction handling."
+    Assert-Contract ($lifecycle.workflow_stability.unit_captain_through_acceptance -eq $true) "Workflow stability must keep one unit captain through acceptance."
     $script:ChangeCategoryAliases = @{}
     foreach ($alias in @($lifecycle.change_category_aliases)) {
         Assert-Contract ((Test-Text $alias.alias) -and (Test-Text $alias.canonical)) "Workflow change-category alias entries must be complete."
@@ -1138,6 +1156,7 @@ if ($null -ne $lifecycle) {
     $script:IterationStateIds = @()
     $script:PromotionGates = @()
     $script:RiskTiers = @()
+    $script:WorkModes = @()
     $script:DeviceRequirements = @()
     $script:PushCheckpoints = @()
     $script:ChangeCategories = @()
@@ -1240,6 +1259,7 @@ foreach ($contractExample in @(
     [pscustomobject]@{ Template = "published-active-planning-authority-adoption.example.json"; Schema = "published-planning-authority-adoption.schema.json" },
     [pscustomobject]@{ Template = "historical-unit-adoption-reconstruction.example.json"; Schema = "historical-unit-adoption-reconstruction.schema.json" },
     [pscustomobject]@{ Template = "external-validation-authority-policy.example.json"; Schema = "external-validation-authority-policy-v1.schema.json" },
+    [pscustomobject]@{ Template = "iteration-unit-validation-only.example.json"; Schema = "iteration-unit.schema.json" },
     [pscustomobject]@{ Template = "unplanned-publication-closure-v2.example.json"; Schema = "unplanned-publication-closure.schema.json" }
 )) {
     $examplePath = Join-Path $templatesRoot $contractExample.Template
@@ -1276,6 +1296,12 @@ $automationReceipt = [ordered]@{
     }
     validation_matrix = @()
     graph_scope = [ordered]@{}
+    claim_preflight = [ordered]@{
+        version = "v1"; ready_to_claim = $true; validation_tier = "standard"; requirements_declared = $false
+        disk = @(); tools = @(); product_inputs = @()
+        writable_repositories = @(); read_only_dependencies = @(); instruction_surfaces = @()
+        resources = @(); validation_matrix = @(); issues = @()
+    }
     adoption_receipt = $null
     publication_closure = $null
     published_planning_authority_adoption = $automationAdoptionBinding

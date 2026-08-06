@@ -26,6 +26,8 @@ Every implementation slice has one `iteration-unit` record containing:
   unit must not follow moving working copies;
 - repo path, build output, package, property/staging namespace, bridge-port,
   and headset resource requirements with claim timing.
+- an optional `work_mode`; omission preserves historical feature behavior,
+  while `validation-only` is the explicit review-without-product-change mode.
 
 An agent may reduce scope while working. It may not expand scope beyond the
 project spec and unit without a reviewed unit update.
@@ -73,6 +75,17 @@ For an implementation-only unit with no instruction change, use
 specific justification. See
 [Instruction Synchronization](INSTRUCTION_SYNCHRONIZATION.md) for the routing
 matrix. Keep entrypoints short and move detailed recipes into linked docs.
+
+A `validation-only` unit declares only the `validation` change category, uses
+`instruction_impact: review`, and marks every required surface
+`review-no-change`. It may run host or serial-scoped device checks. A defect
+found by that unit belongs in a separately proposed feature unit rather than an
+in-place scope expansion.
+
+Use one unit captain through acceptance. Host and device stages remain in the
+same unit unless write, publication, or rollback authority changes. After a
+workflow-contract change, preserve a three-feature-unit stability window; see
+[Workflow Stability And Feature Throughput](WORKFLOW_STABILITY.md).
 
 ## Compact State And Event Log
 

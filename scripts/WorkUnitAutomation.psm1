@@ -113,7 +113,7 @@ function Get-MorphospaceRepositoryState {
     if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
         return [pscustomobject][ordered]@{
             repo_id = $RepoId; path = $Path; available = $false; is_git = $false
-            head = $null; branch = $null; upstream = $null; dirty = $null
+            head = $null; tree = $null; branch = $null; upstream = $null; dirty = $null
             tracked_changes = $null; untracked_changes = $null; ahead = $null
             behind = $null; diverged = $null; relation = "missing"; status_porcelain = @()
         }
@@ -123,13 +123,14 @@ function Get-MorphospaceRepositoryState {
     if ($inside.exit_code -ne 0 -or $inside.text -ne "true") {
         return [pscustomobject][ordered]@{
             repo_id = $RepoId; path = $Path; available = $true; is_git = $false
-            head = $null; branch = $null; upstream = $null; dirty = $null
+            head = $null; tree = $null; branch = $null; upstream = $null; dirty = $null
             tracked_changes = $null; untracked_changes = $null; ahead = $null
             behind = $null; diverged = $null; relation = "not-git"; status_porcelain = @()
         }
     }
 
     $head = (Get-MorphospaceGitOutput -RepositoryPath $Path -Arguments @("rev-parse", "HEAD")).text
+    $tree = (Get-MorphospaceGitOutput -RepositoryPath $Path -Arguments @("rev-parse", "HEAD^{tree}")).text
     $branchResult = Get-MorphospaceGitOutput -RepositoryPath $Path -Arguments @("symbolic-ref", "--quiet", "--short", "HEAD") -AllowFailure
     $branch = if ($branchResult.exit_code -eq 0) { $branchResult.text } else { $null }
     $upstreamResult = Get-MorphospaceGitOutput -RepositoryPath $Path -Arguments @("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}") -AllowFailure
@@ -158,6 +159,7 @@ function Get-MorphospaceRepositoryState {
         available = $true
         is_git = $true
         head = $head
+        tree = $tree
         branch = $branch
         upstream = $upstream
         dirty = ($statusLines.Count -gt 0)
@@ -193,7 +195,7 @@ function New-MorphospaceRepositorySummary {
     param([Parameter(Mandatory = $true)][object]$State)
 
     $summary = [ordered]@{ repo_id = [string]$State.repo_id }
-    foreach ($name in @("mapped", "available", "is_git", "head", "branch", "upstream", "dirty", "tracked_changes", "untracked_changes", "ahead", "behind", "diverged", "relation")) {
+    foreach ($name in @("mapped", "available", "is_git", "head", "tree", "branch", "upstream", "dirty", "tracked_changes", "untracked_changes", "ahead", "behind", "diverged", "relation")) {
         if ($State.PSObject.Properties.Name -contains $name) { $summary[$name] = $State.$name }
     }
     return [pscustomobject]$summary
@@ -291,6 +293,168 @@ function New-MorphospaceGraphScope {
             }
         } | Sort-Object repo_id)
         exclusion = "Do not scan repositories or paths outside this list."
+    }
+}
+
+function New-MorphospaceClaimPreflight {
+    param(
+        [Parameter(Mandatory = $true)][object]$Unit,
+        [Parameter(Mandatory = $true)][hashtable]$RepositoryMap,
+        [Parameter(Mandatory = $true)][object[]]$RepositoryStates,
+        [Parameter(Mandatory = $true)][object[]]$ValidationMatrix,
+        [Parameter(Mandatory = $true)][string]$ValidationTier
+    )
+
+    $issues = New-Object System.Collections.Generic.List[string]
+    $stateMap = @{}
+    foreach ($state in @($RepositoryStates)) { $stateMap[[string]$state.repo_id] = $state }
+
+    $writable = New-Object System.Collections.Generic.List[object]
+    foreach ($repo in @($Unit.allowed_repositories | Sort-Object repo_id)) {
+        $repoId = [string]$repo.repo_id
+        $mapped = $RepositoryMap.ContainsKey($repoId)
+        $state = if ($stateMap.ContainsKey($repoId)) { $stateMap[$repoId] } else { $null }
+        $available = $mapped -and $null -ne $state -and $state.available -eq $true
+        if (-not $mapped) { $issues.Add("Writable repository '$repoId' is absent from the repository map.") | Out-Null }
+        elseif (-not $available) { $issues.Add("Writable repository '$repoId' is not available at its mapped path.") | Out-Null }
+        $writable.Add([pscustomobject][ordered]@{
+            repo_id = $repoId; mapped = $mapped; available = $available
+            is_git = if ($null -ne $state -and $state.PSObject.Properties.Name -contains 'is_git') { $state.is_git } else { $null }
+            head = if ($null -ne $state -and $state.PSObject.Properties.Name -contains 'head') { $state.head } else { $null }
+            tree = if ($null -ne $state -and $state.PSObject.Properties.Name -contains 'tree') { $state.tree } else { $null }
+            allowed_paths = @($repo.allowed_paths | ForEach-Object { ([string]$_).Replace('\', '/') } | Sort-Object -Unique)
+        }) | Out-Null
+    }
+
+    $dependencies = New-Object System.Collections.Generic.List[object]
+    foreach ($dependency in @($(if ($Unit.PSObject.Properties.Name -contains 'read_only_dependencies') { @($Unit.read_only_dependencies) } else { @() }) | Sort-Object repo_id)) {
+        $repoId = [string]$dependency.repo_id
+        $mapped = $RepositoryMap.ContainsKey($repoId)
+        $state = if ($stateMap.ContainsKey($repoId)) { $stateMap[$repoId] } else { $null }
+        if (-not $mapped) {
+            $issues.Add("Read-only dependency repository '$repoId' is absent from the repository map.") | Out-Null
+        }
+        foreach ($declaredPath in @($dependency.paths | Sort-Object -Unique)) {
+            $relative = $null; $exists = $false; $kind = $null
+            try {
+                $relative = ConvertTo-MorphospaceRelativePath -Path ([string]$declaredPath)
+                if (-not $mapped) { throw "repository is not mapped" }
+                $root = [IO.Path]::GetFullPath([string]$RepositoryMap[$repoId].path).TrimEnd('\', '/')
+                $absolute = [IO.Path]::GetFullPath([IO.Path]::Combine($root, $relative))
+                if (-not $absolute.StartsWith($root + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+                    throw "path escapes its mapped repository"
+                }
+                $exists = Test-Path -LiteralPath $absolute
+                if (-not $exists) { throw "path is missing" }
+                $kind = if (Test-Path -LiteralPath $absolute -PathType Leaf) { 'file' } else { 'directory' }
+            } catch {
+                $issues.Add("Read-only dependency '$repoId/$([string]$declaredPath)' failed preflight: $($_.Exception.Message)") | Out-Null
+            }
+            $dependencies.Add([pscustomobject][ordered]@{
+                repo_id = $repoId; path = ([string]$declaredPath).Replace('\', '/'); mapped = $mapped
+                exists = $exists; kind = $kind
+                head = if ($null -ne $state -and $state.PSObject.Properties.Name -contains 'head') { $state.head } else { $null }
+                tree = if ($null -ne $state -and $state.PSObject.Properties.Name -contains 'tree') { $state.tree } else { $null }
+            }) | Out-Null
+        }
+    }
+
+    $instructionObservations = @()
+    if ([string]$Unit.instruction_impact -ne 'none') {
+        try {
+            $instructionRepositoryMap = @{}
+            foreach ($repoId in @($RepositoryMap.Keys)) {
+                $entry = ($RepositoryMap[$repoId] | ConvertTo-Json -Depth 16 | ConvertFrom-Json)
+                if ($entry.PSObject.Properties.Name -notcontains 'aliases') { $entry | Add-Member -NotePropertyName aliases -NotePropertyValue @() }
+                $instructionRepositoryMap[[string]$repoId] = $entry
+            }
+            $instructionUnit = ($Unit | ConvertTo-Json -Depth 32 | ConvertFrom-Json)
+            foreach ($surface in @($instructionUnit.instruction_surfaces)) { $surface.status = 'complete' }
+            $instructionObservations = @(Get-MorphospaceInstructionObservation -Unit $instructionUnit -RepositoryMap $instructionRepositoryMap)
+        } catch {
+            $issues.Add("Instruction surface preflight failed: $($_.Exception.Message)") | Out-Null
+        }
+    }
+
+    $resources = @($(if ($Unit.PSObject.Properties.Name -contains 'resource_requirements') { @($Unit.resource_requirements) } else { @() }))
+    foreach ($group in @($resources | Group-Object resource_id | Where-Object { $_.Count -gt 1 })) {
+        $issues.Add("Resource requirement '$($group.Name)' is declared more than once.") | Out-Null
+    }
+    foreach ($deviceGate in @($ValidationMatrix | Where-Object { [string]$_.kind -eq 'device' -and [string]$_.disposition -eq 'blocked-missing-serials' })) {
+        $issues.Add("Required device validation has no explicitly supplied serial.") | Out-Null
+    }
+
+    $requirementsDeclared = $Unit.PSObject.Properties.Name -contains 'claim_requirements'
+    if (($Unit.PSObject.Properties.Name -contains 'work_mode') -and -not $requirementsDeclared) {
+        $issues.Add("Explicit work_mode requires complete claim_requirements.") | Out-Null
+    }
+    $diskRows = New-Object System.Collections.Generic.List[object]
+    $toolRows = New-Object System.Collections.Generic.List[object]
+    $inputRows = New-Object System.Collections.Generic.List[object]
+    if ($requirementsDeclared) {
+        $requirements = $Unit.claim_requirements
+        $minimumBytes = [long]$requirements.minimum_free_disk_mib * 1MB
+        $roots = @($Unit.allowed_repositories | ForEach-Object {
+            $repoId = [string]$_.repo_id
+            if ($RepositoryMap.ContainsKey($repoId)) { [IO.Path]::GetPathRoot([IO.Path]::GetFullPath([string]$RepositoryMap[$repoId].path)) }
+        } | Where-Object { $_ } | Sort-Object -Unique)
+        $volumeIndex = 0
+        foreach ($root in $roots) {
+            $volumeIndex++
+            $availableBytes = $null; $passed = $false
+            try {
+                $drive = [IO.DriveInfo]::new([string]$root)
+                $availableBytes = [long]$drive.AvailableFreeSpace
+                $passed = $availableBytes -ge $minimumBytes
+                if (-not $passed) { $issues.Add("Writable volume $volumeIndex lacks the declared minimum free disk space.") | Out-Null }
+            } catch { $issues.Add("Writable volume $volumeIndex disk capacity could not be observed: $($_.Exception.Message)") | Out-Null }
+            $diskRows.Add([pscustomobject][ordered]@{ volume_index = $volumeIndex; minimum_free_mib = [long]$requirements.minimum_free_disk_mib; available_free_mib = if ($null -ne $availableBytes) { [long][Math]::Floor($availableBytes / 1MB) } else { $null }; passed = $passed }) | Out-Null
+        }
+        foreach ($tool in @($requirements.required_tools | Sort-Object tool_id)) {
+            $matches = @(Get-Command -Name ([string]$tool.executable) -CommandType Application -ErrorAction SilentlyContinue)
+            $available = $matches.Count -gt 0
+            if (-not $available) { $issues.Add("Required tool '$([string]$tool.tool_id)' is unavailable as executable '$([string]$tool.executable)'.") | Out-Null }
+            $toolRows.Add([pscustomobject][ordered]@{ tool_id = [string]$tool.tool_id; executable = [string]$tool.executable; available = $available }) | Out-Null
+        }
+        foreach ($input in @($requirements.product_inputs | Sort-Object input_id)) {
+            $repoId = [string]$input.repo_id; $declaredPath = [string]$input.path
+            $exists = $false; $kindMatches = $false; $sha256 = $null; $hashMatches = $null
+            try {
+                if (-not $RepositoryMap.ContainsKey($repoId)) { throw "repository is not mapped" }
+                $relative = ConvertTo-MorphospaceRelativePath -Path $declaredPath
+                $root = [IO.Path]::GetFullPath([string]$RepositoryMap[$repoId].path).TrimEnd('\', '/')
+                $absolute = [IO.Path]::GetFullPath([IO.Path]::Combine($root, $relative))
+                if (-not $absolute.StartsWith($root + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw "path escapes its mapped repository" }
+                $exists = Test-Path -LiteralPath $absolute
+                if (-not $exists) { throw "path is missing" }
+                $kindMatches = if ([string]$input.kind -eq 'file') { Test-Path -LiteralPath $absolute -PathType Leaf } else { Test-Path -LiteralPath $absolute -PathType Container }
+                if (-not $kindMatches) { throw "path kind does not match '$([string]$input.kind)'" }
+                if ([string]$input.kind -eq 'file') {
+                    $sha256 = (Get-FileHash -LiteralPath $absolute -Algorithm SHA256).Hash.ToLowerInvariant()
+                    if ($null -ne $input.expected_sha256) {
+                        $hashMatches = $sha256 -ceq [string]$input.expected_sha256
+                        if (-not $hashMatches) { throw "file SHA-256 differs from expected_sha256" }
+                    }
+                }
+            } catch { $issues.Add("Product input '$([string]$input.input_id)' failed preflight: $($_.Exception.Message)") | Out-Null }
+            $inputRows.Add([pscustomobject][ordered]@{ input_id = [string]$input.input_id; repo_id = $repoId; path = $declaredPath.Replace('\', '/'); kind = [string]$input.kind; exists = $exists; kind_matches = $kindMatches; sha256 = $sha256; hash_matches = $hashMatches }) | Out-Null
+        }
+    }
+
+    return [pscustomobject][ordered]@{
+        version = 'v1'
+        ready_to_claim = ($issues.Count -eq 0)
+        validation_tier = $ValidationTier
+        requirements_declared = $requirementsDeclared
+        disk = @($diskRows.ToArray())
+        tools = @($toolRows.ToArray())
+        product_inputs = @($inputRows.ToArray())
+        writable_repositories = @($writable.ToArray())
+        read_only_dependencies = @($dependencies.ToArray())
+        instruction_surfaces = @($instructionObservations)
+        resources = @($resources | Sort-Object resource_id)
+        validation_matrix = @($ValidationMatrix)
+        issues = @($issues.ToArray())
     }
 }
 
@@ -633,10 +797,22 @@ function New-MorphospaceInflightAdoptionReceipt {
     if ([string]$unit.status -ne "ready") { throw "In-flight adoption receipt requires a ready unit; '$UnitId' is '$([string]$unit.status)'." }
     $repoMap = Get-MorphospaceRepositoryMap -RepoMapPath $RepoMapPath
     $repositoryStates = New-Object System.Collections.Generic.List[object]
+    $observedRepositoryIds = @{}
     foreach ($repo in @($unit.allowed_repositories | Sort-Object repo_id)) {
         $repoId = [string]$repo.repo_id
+        $observedRepositoryIds[$repoId] = $true
         if ($repoMap.ContainsKey($repoId)) {
             $repositoryStates.Add((Get-MorphospaceRepositoryState -RepoId $repoId -Path ([string]$repoMap[$repoId].path))) | Out-Null
+        }
+    }
+    foreach ($dependency in @($(if ($unit.PSObject.Properties.Name -contains 'read_only_dependencies') { @($unit.read_only_dependencies) } else { @() }) | Sort-Object repo_id)) {
+        $repoId = [string]$dependency.repo_id
+        if ($observedRepositoryIds.ContainsKey($repoId)) { continue }
+        $observedRepositoryIds[$repoId] = $true
+        if ($repoMap.ContainsKey($repoId)) {
+            $repositoryStates.Add((Get-MorphospaceRepositoryState -RepoId $repoId -Path ([string]$repoMap[$repoId].path))) | Out-Null
+        } else {
+            $repositoryStates.Add([pscustomobject][ordered]@{ repo_id = $repoId; mapped = $false; relation = 'not-mapped' }) | Out-Null
         }
     }
     $repoStatesArray = @($repositoryStates.ToArray())
@@ -1108,6 +1284,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
     $repoStatesArray = @($repositoryStates.ToArray())
     $validationMatrix = @(New-MorphospaceValidationMatrix -Unit $unit -DeviceSerials $DeviceSerials)
     $graphScope = New-MorphospaceGraphScope -Unit $unit
+    $claimPreflight = New-MorphospaceClaimPreflight -Unit $unit -RepositoryMap $repoMap -RepositoryStates $repoStatesArray -ValidationMatrix $validationMatrix -ValidationTier $ValidationTier
     $beforeStatus = [string]$unit.status
     $beforeCurrent = $state.current_unit
     $expectedPreStateSha256 = Get-MorphospaceCanonicalJsonSha256 $state
@@ -1152,6 +1329,9 @@ function Invoke-MorphospaceWorkUnitAutomation {
                 if ($beforeStatus -ne "ready") { throw "Claim requires ready status; '$UnitId' is '$beforeStatus'." }
                 if ($state.current_unit) { throw "Workspace already has current unit '$($state.current_unit)'." }
                 Test-MorphospacePrerequisites -Unit $unit -UnitMap $unitMap
+                if (-not $claimPreflight.ready_to_claim) {
+                    throw "Claim preflight blocked: $(@($claimPreflight.issues) -join ' ')"
+                }
                 $claimOverlaps = @(Get-MorphospaceClaimDirtyOverlap -Unit $unit -RepositoryStates $repoStatesArray)
                 if ($claimOverlaps.Count -gt 0) {
                     if (-not $AdoptionReceipt) { Test-MorphospaceClaimDirtyOverlap -Unit $unit -RepositoryStates $repoStatesArray }
@@ -1601,6 +1781,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
                 force_push_allowed = $false; repository_states = @($repoStatesArray | ForEach-Object { New-MorphospaceRepositorySummary -State $_ })
             }
             validation_matrix = $validationMatrix; graph_scope = $graphScope
+            claim_preflight = $claimPreflight
             adoption_receipt = $adoptionReference
             publication_closure = $publicationClosureBinding
             published_planning_authority_adoption = $publishedPlanningAuthorityAdoptionBinding

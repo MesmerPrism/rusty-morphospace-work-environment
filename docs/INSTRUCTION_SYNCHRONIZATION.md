@@ -43,6 +43,13 @@ such a unit can become `accepted`, the nearest repo `AGENTS.md`, a README or
 router doc, and every relevant skill named by the synchronization matrix must
 have complete update records.
 
+The sole current-unit exception is an explicitly declared
+`work_mode: validation-only` unit. It changes no product or reusable workflow
+behavior, uses `instruction_impact: review`, and records each routed AGENTS,
+README/router, validation document, and skill surface as `review-no-change`.
+Discovering a needed content change ends that unit; it does not convert the
+review record into an update claim.
+
 Immutable accepted or blocked units whose formerly valid instruction metadata
 predates these rules may be projected through the exact hash-bound historical-
 unit adoption contract. That projection must enumerate every mismatched impact

@@ -40,6 +40,27 @@ For a validation-authority change:
 The extra PR is intentional at the trust-root boundary. Do not require it for
 ordinary source or documentation changes.
 
+## Permanent Policy-Evolution Route
+
+Do not wait until every exact approval is consumed. Before that point,
+configure a separate owner-controlled policy-evolution gate whose trust root is
+outside the policy being changed. The gate must:
+
+- execute only base-owned code;
+- display and bind the exact base/head commits and trees plus the complete
+  candidate path, Git mode, size, and SHA-256 set;
+- require an explicit repository-owner decision after that evidence exists;
+- issue a typed, candidate-specific, one-use authorization;
+- retain `candidate_code_executed: false`, `execution_attested: false`, and
+  `publication_authority: false` for the static assessment.
+
+This is disclosed external owner authorization, not self-validation. A
+standing bypass actor, wildcard hash, candidate workflow, temporary ruleset
+removal, or authorization inferred from prior approvals is forbidden. Dynamic
+checks, review, acceptance, and publication remain separate. The portable
+contract and rationale are summarized in
+[Workflow Stability And Feature Throughput](WORKFLOW_STABILITY.md).
+
 ## Portable Command
 
 Fetch the candidate commit into a clean base checkout without checking it out,
