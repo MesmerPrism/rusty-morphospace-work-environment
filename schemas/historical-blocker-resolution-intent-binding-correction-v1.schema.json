@@ -1,0 +1,198 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/historical-blocker-resolution-intent-binding-correction-v1.schema.json",
+  "title": "Append-only historical blocker-resolution intent-binding correction",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "receipt_id",
+    "project_id",
+    "fault_kind",
+    "current_authority",
+    "historical_resolution",
+    "correction_event",
+    "preservation"
+  ],
+  "properties": {
+    "schema": {
+      "const": "rusty.morphospace.workflow.historical_blocker_resolution_intent_binding_correction.v1"
+    },
+    "receipt_id": { "$ref": "#/$defs/id" },
+    "project_id": { "$ref": "#/$defs/id" },
+    "fault_kind": {
+      "const": "legacy-terminal-crlf-expanded-raw-bindings"
+    },
+    "current_authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["unit_id", "status", "state", "unit", "event_ledger", "blocker_ids"],
+      "properties": {
+        "unit_id": { "$ref": "#/$defs/id" },
+        "status": { "const": "active" },
+        "state": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "sha256", "canonical_sha256"],
+          "properties": {
+            "path": { "const": "workspace.state.json" },
+            "sha256": { "$ref": "#/$defs/hash" },
+            "canonical_sha256": { "$ref": "#/$defs/hash" }
+          }
+        },
+        "unit": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "sha256", "canonical_sha256"],
+          "properties": {
+            "path": { "type": "string", "pattern": "^iteration-units/[a-z0-9][a-z0-9-]{1,127}\\.json$" },
+            "sha256": { "$ref": "#/$defs/hash" },
+            "canonical_sha256": { "$ref": "#/$defs/hash" }
+          }
+        },
+        "event_ledger": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "sha256", "length", "tail_event_id", "tail_sequence"],
+          "properties": {
+            "path": { "const": "iteration-events.jsonl" },
+            "sha256": { "$ref": "#/$defs/hash" },
+            "length": { "type": "integer", "minimum": 1, "maximum": 67108864 },
+            "tail_event_id": { "$ref": "#/$defs/id" },
+            "tail_sequence": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "blocker_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        }
+      }
+    },
+    "historical_resolution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "unit_id",
+        "blocker_id",
+        "original_receipt_id",
+        "event",
+        "receipt",
+        "intent",
+        "completion",
+        "receipt_binding",
+        "intent_binding"
+      ],
+      "properties": {
+        "unit_id": { "$ref": "#/$defs/id" },
+        "blocker_id": { "$ref": "#/$defs/id" },
+        "original_receipt_id": { "$ref": "#/$defs/id" },
+        "event": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["event_id", "sequence", "sha256"],
+          "properties": {
+            "event_id": { "$ref": "#/$defs/id" },
+            "sequence": { "type": "integer", "minimum": 1 },
+            "sha256": { "$ref": "#/$defs/hash" }
+          }
+        },
+        "receipt": { "$ref": "#/$defs/fileBinding" },
+        "intent": { "$ref": "#/$defs/fileBinding" },
+        "completion": { "$ref": "#/$defs/fileBinding" },
+        "receipt_binding": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "intent_recorded_sha256",
+            "observed_file_sha256",
+            "normalized_lf_sha256",
+            "exact_terminal_lf_to_crlf_expansion"
+          ],
+          "properties": {
+            "intent_recorded_sha256": { "$ref": "#/$defs/hash" },
+            "observed_file_sha256": { "$ref": "#/$defs/hash" },
+            "normalized_lf_sha256": { "$ref": "#/$defs/hash" },
+            "exact_terminal_lf_to_crlf_expansion": { "const": true }
+          }
+        },
+        "intent_binding": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "completion_recorded_sha256",
+            "observed_file_sha256",
+            "normalized_lf_sha256",
+            "exact_terminal_lf_to_crlf_expansion",
+            "all_other_completion_fields_valid"
+          ],
+          "properties": {
+            "completion_recorded_sha256": { "$ref": "#/$defs/hash" },
+            "observed_file_sha256": { "$ref": "#/$defs/hash" },
+            "normalized_lf_sha256": { "$ref": "#/$defs/hash" },
+            "exact_terminal_lf_to_crlf_expansion": { "const": true },
+            "all_other_completion_fields_valid": { "const": true }
+          }
+        }
+      }
+    },
+    "correction_event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event_id", "sequence", "timestamp", "unit_id", "receipt_path"],
+      "properties": {
+        "event_id": { "$ref": "#/$defs/id" },
+        "sequence": { "type": "integer", "minimum": 2 },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "unit_id": { "$ref": "#/$defs/id" },
+        "receipt_path": {
+          "type": "string",
+          "pattern": "^receipts/[a-z0-9][a-z0-9-]{1,127}\\.json$"
+        }
+      }
+    },
+    "preservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "historical_event_bytes_retained",
+        "historical_receipt_bytes_retained",
+        "historical_transaction_bytes_retained",
+        "current_unit_bytes_retained",
+        "current_blockers_retained",
+        "state_change"
+      ],
+      "properties": {
+        "historical_event_bytes_retained": { "const": true },
+        "historical_receipt_bytes_retained": { "const": true },
+        "historical_transaction_bytes_retained": { "const": true },
+        "current_unit_bytes_retained": { "const": true },
+        "current_blockers_retained": { "const": true },
+        "state_change": { "const": "last_event_id-only" }
+      }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,127}$"
+    },
+    "hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "path": {
+      "type": "string",
+      "pattern": "^(?![A-Za-z]:)(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/-]+$"
+    },
+    "fileBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/path" },
+        "sha256": { "$ref": "#/$defs/hash" }
+      }
+    }
+  }
+}

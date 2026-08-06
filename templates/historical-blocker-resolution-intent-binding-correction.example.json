@@ -1,0 +1,80 @@
+{
+  "schema": "rusty.morphospace.workflow.historical_blocker_resolution_intent_binding_correction.v1",
+  "receipt_id": "example-historical-resolution-intent-binding-correction",
+  "project_id": "example-project",
+  "fault_kind": "legacy-terminal-crlf-expanded-raw-bindings",
+  "current_authority": {
+    "unit_id": "example-current-unit",
+    "status": "active",
+    "state": {
+      "path": "workspace.state.json",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "canonical_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "unit": {
+      "path": "iteration-units/example-current-unit.json",
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "canonical_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    "event_ledger": {
+      "path": "iteration-events.jsonl",
+      "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "length": 1024,
+      "tail_event_id": "example-current-unit-resumed-0047",
+      "tail_sequence": 47
+    },
+    "blocker_ids": [
+      "example-current-blocker"
+    ]
+  },
+  "historical_resolution": {
+    "unit_id": "example-historical-unit",
+    "blocker_id": "example-historical-blocker",
+    "original_receipt_id": "example-original-resolution",
+    "event": {
+      "event_id": "example-historical-unit-blocker-resolved-0046",
+      "sequence": 46,
+      "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    "receipt": {
+      "path": "receipts/example-original-resolution.json",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    "intent": {
+      "path": "receipts/transactions/example-historical-unit-blocker-resolved-0046-transition.intent.json",
+      "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    "completion": {
+      "path": "receipts/transactions/example-historical-unit-blocker-resolved-0046-transition.completion.json",
+      "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+    },
+    "receipt_binding": {
+      "intent_recorded_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+      "observed_file_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "normalized_lf_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+      "exact_terminal_lf_to_crlf_expansion": true
+    },
+    "intent_binding": {
+      "completion_recorded_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+      "observed_file_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "normalized_lf_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+      "exact_terminal_lf_to_crlf_expansion": true,
+      "all_other_completion_fields_valid": true
+    }
+  },
+  "correction_event": {
+    "event_id": "example-current-unit-historical-blocker-resolution-intent-binding-corrected-0048",
+    "sequence": 48,
+    "timestamp": "2026-08-05T12:00:00Z",
+    "unit_id": "example-current-unit",
+    "receipt_path": "receipts/example-historical-resolution-intent-binding-correction.json"
+  },
+  "preservation": {
+    "historical_event_bytes_retained": true,
+    "historical_receipt_bytes_retained": true,
+    "historical_transaction_bytes_retained": true,
+    "current_unit_bytes_retained": true,
+    "current_blockers_retained": true,
+    "state_change": "last_event_id-only"
+  }
+}

@@ -273,6 +273,13 @@ complete-resolution evidence was incomplete, use the separate append-only
 event/receipt/intent/completion chain plus fresh exact repository source
 evidence and changes only `last_event_id`. See
 [Blocker Resolution Correction](docs/BLOCKER_RESOLUTION_CORRECTION.md).
+For the distinct legacy terminal-newline fault where an immutable
+blocker-resolution receipt and intent were retained with CRLF while their
+transaction recorded LF bytes, use only the cross-unit additive
+`CorrectHistoricalBlockerResolutionIntentBinding` route. It binds the exact
+current active-unit CAS, both historical raw-byte pairs, and every unaffected
+transaction field; it changes only `last_event_id`. See
+[Historical Blocker-Resolution Intent-Binding Correction](docs/HISTORICAL_BLOCKER_RESOLUTION_INTENT_BINDING_CORRECTION.md).
 Interrupted cross-repo commits, builds, and device runs resume only from a
 validated `interruption_receipt.v1`; the automation restores workflow state
 after cleanup evidence exists but never performs the external cleanup.

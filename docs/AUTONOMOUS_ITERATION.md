@@ -510,6 +510,15 @@ appends one generic transition, fails closed on damaged retained correction
 evidence, and rejects replay by stable identity or canonical hash. See
 [Blocker Resolution Correction](BLOCKER_RESOLUTION_CORRECTION.md).
 
+Use `CorrectHistoricalBlockerResolutionIntentBinding` only for the independently
+verified legacy terminal-newline fault: the retained historical resolution
+receipt and intent end in CRLF, and removing only each terminal carriage return
+reproduces the intent-owned receipt and completion-recorded intent hashes.
+The correction may be owned by a different current active unit, but binds that
+unit's full state/unit/event-ledger CAS, preserves all blockers and historical
+bytes, and changes only `last_event_id`. See
+[Historical Blocker-Resolution Intent-Binding Correction](HISTORICAL_BLOCKER_RESOLUTION_INTENT_BINDING_CORRECTION.md).
+
 Use `CorrectCompletedTransitionSemantics` only for the single documented
 completed legacy-v1 target-as-event-unit fault. The original transition must
 remain state/ledger tail while the inspected receipt is built. Workflow

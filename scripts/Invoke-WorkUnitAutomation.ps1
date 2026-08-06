@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("Inspect", "Ready", "Claim", "Resume", "CompleteInstructionSurfaces", "CorrectActiveReadOnlyDependencies", "CorrectActiveProjectRepositoryScope", "BeginValidation", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RetirePreparedPush", "ReconcilePreparedPublication", "ResolveBlocker", "CorrectResolvedBlockerEvidence", "CorrectCompletedTransitionSemantics", "NormalizeEventLedgerPrefix", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix")]
+    [ValidateSet("Inspect", "Ready", "Claim", "Resume", "CompleteInstructionSurfaces", "CorrectActiveReadOnlyDependencies", "CorrectActiveProjectRepositoryScope", "BeginValidation", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RetirePreparedPush", "ReconcilePreparedPublication", "ResolveBlocker", "CorrectResolvedBlockerEvidence", "CorrectHistoricalBlockerResolutionIntentBinding", "CorrectCompletedTransitionSemantics", "NormalizeEventLedgerPrefix", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix")]
     [string]$Action,
     [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
     [string]$UnitId = "",
@@ -19,6 +19,8 @@ param(
     [string]$PreparedPublicationReconstruction = "",
     [string]$BlockerResolutionReceipt = "",
     [string]$BlockerResolutionCorrectionReceipt = "",
+    [string]$HistoricalBlockerResolutionIntentBindingCorrection = "",
+    [string]$ExpectedHistoricalBlockerResolutionIntentBindingCorrectionSha256 = "",
     [string]$CompletedTransitionSemanticCorrection = "",
     [string]$ReadOnlyDependencyCorrection = "",
     [string]$ExpectedReadOnlyDependencyCorrectionSha256 = "",
@@ -88,6 +90,17 @@ if ($Action -eq "CorrectResolvedBlockerEvidence") {
     Invoke-MorphospaceCorrectResolvedBlockerEvidence -WorkspaceRoot $WorkspaceRoot -UnitId $UnitId `
         -RepoMapPath $RepoMapPath -CorrectionReceipt $BlockerResolutionCorrectionReceipt `
         -Timestamp $Timestamp -OutPath $OutPath -Execute:$Execute |
+        ConvertTo-Json -Depth 32
+    return
+}
+if ($Action -eq "CorrectHistoricalBlockerResolutionIntentBinding") {
+    if (-not $HistoricalBlockerResolutionIntentBindingCorrection) { throw "CorrectHistoricalBlockerResolutionIntentBinding requires HistoricalBlockerResolutionIntentBindingCorrection." }
+    if (-not $OutPath) { throw "CorrectHistoricalBlockerResolutionIntentBinding requires OutPath." }
+    Import-Module (Join-Path $PSScriptRoot "CorrectHistoricalBlockerResolutionIntentBinding.psm1") -Force
+    Invoke-MorphospaceCorrectHistoricalBlockerResolutionIntentBinding -WorkspaceRoot $WorkspaceRoot -UnitId $UnitId `
+        -CorrectionReceipt $HistoricalBlockerResolutionIntentBindingCorrection `
+        -ExpectedCorrectionSha256 $ExpectedHistoricalBlockerResolutionIntentBindingCorrectionSha256 `
+        -OutPath $OutPath -Execute:$Execute |
         ConvertTo-Json -Depth 32
     return
 }
