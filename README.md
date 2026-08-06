@@ -50,6 +50,8 @@ Included:
 - workspace layout and repo-lane orientation;
 - dependency matrix for Rust, Android, Quest APK, Makepad, Termux sidecar, and
   agent workflows;
+- routing guidance for app-owned OpenXR, Meta Spatial SDK native bridges, and
+  app-packaged OpenXR API layers;
 - four portable local skill templates plus explicit installation of the
   canonical Meta Quest workflow skill from `meta-quest-agent-workflow`;
 - repo-lane routing for both Rusty-owned media streams and the separately
@@ -134,6 +136,8 @@ pwsh -NoProfile -ExecutionPolicy Bypass `
    and use the public Meta Quest workflow repo as the device-operations
    authority. Routine local work uses a hash-pinned File Manager CLI, Kiosk
    launch/foreground control when applicable, and app-owned runtime evidence.
+   For OpenXR inspection or interaction, explicitly choose an app-native route,
+   a bridge over the existing Spatial SDK session, or a packaged API layer.
 
 When a repository changes its own validation policy, workflow, schema, or
 runner, use the two-step

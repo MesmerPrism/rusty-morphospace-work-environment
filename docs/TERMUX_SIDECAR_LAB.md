@@ -14,6 +14,8 @@ turn a sidecar into hidden shell or runtime authority.
   shell lease.
 - A source-only smoke APK can be built, signed, installed, and launched from
   Termux when the loopback ADB shell gate passes.
+- Termux can be a bounded typed client of a custom OpenXR API layer that was
+  already packaged and activated by the foreground development APK.
 
 ## What Termux Does Not Prove
 
@@ -24,6 +26,20 @@ turn a sidecar into hidden shell or runtime authority.
 - No product permission to route camera frames, H.264 payloads, meshes, depth,
   or controller state through command JSON.
 - No proof that OpenXR tracking or renderer adoption works in a native app.
+- No ability to attach a layer after `xrCreateInstance`, install a privileged
+  system layer, or inject a layer into an arbitrary installed XR app.
+
+## OpenXR API-Layer Client Boundary
+
+An API layer runs in the target XR app's loader call chain. Termux may send
+accepted low-rate typed state through authenticated localhost or another
+explicit app adapter; it does not own the layer, OpenXR session, frame loop,
+semantic action, or command authority. Require an explicit synthetic-input
+release path and app-visible readback.
+
+Use the canonical Meta Quest workflow
+[`openxr-tracking-boundary.md`](https://github.com/MesmerPrism/meta-quest-agent-workflow/blob/main/docs/openxr-tracking-boundary.md)
+for Android packaging, capability, and limitation details.
 
 ## Loopback ADB Gate
 
