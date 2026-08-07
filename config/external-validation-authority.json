@@ -5,13 +5,20 @@
   "mandatory_protected_paths": [
     ".github/workflows/static-admission.yml",
     ".github/workflows/validate.yml",
+    "config/external-owner-authorization.json",
     "config/external-validation-authority.json",
+    "schemas/external-owner-authorization-v1.schema.json",
+    "schemas/external-owner-authorization-policy-v1.schema.json",
+    "schemas/external-owner-authorization-request-v1.schema.json",
     "schemas/external-validation-authority-assessment-v1.schema.json",
     "schemas/external-validation-authority-policy-v1.schema.json",
     "scripts/Invoke-ExternalValidationAuthorityForGitHub.ps1",
+    "scripts/New-ExternalOwnerAuthorizationComment.ps1",
+    "scripts/Test-ExternalOwnerAuthorization.ps1",
     "scripts/Test-ExternalValidationAuthority.ps1",
     "scripts/Test-ExternalValidationAuthorityGitHubAdapterSelfTest.ps1",
-    "scripts/Test-ExternalValidationAuthoritySelfTest.ps1"
+    "scripts/Test-ExternalValidationAuthoritySelfTest.ps1",
+    "scripts/lib/ExternalOwnerAuthorization.psm1"
   ],
   "protected_rules": [
     {

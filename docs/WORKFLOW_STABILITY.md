@@ -95,10 +95,20 @@ creating a circular trust claim. Before the last exact approval is consumed,
 maintain a separate owner-controlled policy-evolution gate. The gate must run
 base-owned code, bind the exact base/head commit and tree plus the complete
 path/mode/size/hash set, require a human owner decision after that evidence is
-visible, and emit a typed authorization that cannot be replayed for another
-candidate.
+visible, and emit a typed authorization that is idempotent only for the exact
+candidate evidence within freshness and unusable for another candidate. It is
+consumed and inert after its head becomes an ancestor of trusted base.
 
 That owner authorization is an external trust root. It is not static
 admission, dynamic validation, acceptance, or publication authority. Never
 replace it with a standing bypass actor, a wildcard approval, candidate code,
 or a temporary removal of branch protection.
+
+For the exact protected-without-base-approval result, emit the canonical typed
+owner request before failing when no authorization comment exists. The request
+must expose the complete ordinal-sorted candidate artifact evidence and the
+immutable assessment hash. The owner signs only a payload derived from that
+request; comment fields never supply expected repository, Git, artifact, or
+assessment evidence. A stale authorization remains inert history and triggers
+a fresh request instead of blocking recovery. Keep signing outside the
+anonymous read-only workflow.
