@@ -1,0 +1,13 @@
+{
+  "$schema": "../schemas/unpublished-workspace-materialization-v1.schema.json",
+  "schema": "rusty.morphospace.workflow.unpublished_workspace_materialization.v1",
+  "materialization_id": "example-unpublished-workspace-materialization",
+  "project_id": "example-project",
+  "source": {
+    "repo_id": "source-owner", "head": "1111111111111111111111111111111111111111", "tree": "2222222222222222222222222222222222222222", "branch": "main", "workspace_path": "projects/example/morphospace",
+    "inventory": [{ "ordinal": 0, "path": "workspace.state.json", "type": "file", "size": 3, "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }],
+    "state_anchor": { "path": "workspace.state.json", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+  },
+  "planning": { "repo_id": "planning-owner", "base_commit": "3333333333333333333333333333333333333333", "base_tree": "4444444444444444444444444444444444444444", "branch": "main", "destination_workspace_path": "projects/example/morphospace", "receipt_path": "receipts/unpublished-authority.json" },
+  "claims": ["owner-authorized one-time unpublished workspace materialization"]
+}

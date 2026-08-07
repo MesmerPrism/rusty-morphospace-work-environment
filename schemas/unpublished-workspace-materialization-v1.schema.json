@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/unpublished-workspace-materialization-v1.schema.json",
+  "title": "Unpublished project workspace materialization input",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "materialization_id", "project_id", "source", "planning", "claims"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schema": { "const": "rusty.morphospace.workflow.unpublished_workspace_materialization.v1" },
+    "materialization_id": { "$ref": "#/$defs/id" },
+    "project_id": { "$ref": "#/$defs/id" },
+    "source": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repo_id", "head", "tree", "branch", "workspace_path", "inventory", "state_anchor"],
+      "properties": {
+        "repo_id": { "$ref": "#/$defs/id" }, "head": { "$ref": "#/$defs/oid" }, "tree": { "$ref": "#/$defs/oid" },
+        "branch": { "$ref": "#/$defs/branch" }, "workspace_path": { "$ref": "#/$defs/path" },
+        "inventory": { "$ref": "#/$defs/inventory" },
+        "state_anchor": {
+          "type": "object", "additionalProperties": false, "required": ["path", "sha256"],
+          "properties": { "path": { "$ref": "#/$defs/path" }, "sha256": { "$ref": "#/$defs/hash" } }
+        }
+      }
+    },
+    "planning": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repo_id", "base_commit", "base_tree", "branch", "destination_workspace_path", "receipt_path"],
+      "properties": {
+        "repo_id": { "$ref": "#/$defs/id" }, "base_commit": { "$ref": "#/$defs/oid" }, "base_tree": { "$ref": "#/$defs/oid" },
+        "branch": { "$ref": "#/$defs/branch" }, "destination_workspace_path": { "$ref": "#/$defs/path" }, "receipt_path": { "$ref": "#/$defs/path" }
+      }
+    },
+    "claims": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 256 } }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" },
+    "oid": { "type": "string", "pattern": "^[0-9a-f]{40}$" }, "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "branch": { "type": "string", "pattern": "^(?!HEAD$)[^\\s~^:?*\\[\\]\\\\]+(?:/[^\\s~^:?*\\[\\]\\\\]+)*$" },
+    "path": { "type": "string", "minLength": 1, "maxLength": 512, "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.?(?:/|$))(?!.*(?:^|/)\\.git(?:/|$))[^:]+$" },
+    "inventory": {
+      "type": "array", "minItems": 1,
+      "items": { "type": "object", "additionalProperties": false, "required": ["ordinal", "path", "type", "size", "sha256"],
+        "properties": { "ordinal": { "type": "integer", "minimum": 0 }, "path": { "$ref": "#/$defs/path" }, "type": { "const": "file" }, "size": { "type": "integer", "minimum": 0 }, "sha256": { "$ref": "#/$defs/hash" } } }
+    }
+  }
+}

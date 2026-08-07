@@ -43,6 +43,16 @@ adoption event ID. It creates no validation or acceptance evidence; finish the
 unit through ordinary external-workspace transitions.
 See `docs/EXTERNAL_PLANNING_AND_HISTORICAL_RECONSTRUCTION.md`.
 
+When exact project workspace bytes exist only in one intentionally dirty source
+checkout and no published-tree projection applies, use the additive unreleased
+`MaterializeUnpublishedPlanningAuthority` contract. It inventories and
+re-observes only one caller-selected `morphospace/` directory, atomically
+installs it below one distinct clean planning repository, preserves the source
+copy as historical/non-authoritative, and performs no Git or workflow
+transition. Route the complete procedure to
+`docs/UNPUBLISHED_PLANNING_AUTHORITY_MATERIALIZATION.md`; never use it to copy
+sibling source/runtime files or replace `planning_workspace_projection.v1-v3`.
+
 This repository is intended to be public and portable. Keep committed content
 free of local machine paths, private repository names, device serials, package
 identities, generated APKs, screenshots, logs, pairing material, signing keys,
@@ -454,6 +464,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-CorrectActiveProjec
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-EventLedgerPrefixNormalization.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-CompletedTransitionSemanticCorrection.ps1 -SelfTest
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-HistoricalBlockerResolutionIntentBindingCorrection.ps1 -SelfTest
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-UnpublishedPlanningAuthorityMaterialization.ps1 -SelfTest
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-FeatureLockResolver.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ProjectIsolation.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ExecutedPushReceipt.ps1 -SelfTest

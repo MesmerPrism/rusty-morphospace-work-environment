@@ -86,6 +86,12 @@ observed, claimed, validated, and accepted revisions distinct.
   detached materialization when active working copies are changing in
   parallel.
 
+If the complete workspace exists only as intentional dirty bytes in one source
+checkout and no published-tree projection applies, move authority once through
+[Unpublished Planning Authority Materialization](UNPUBLISHED_PLANNING_AUTHORITY_MATERIALIZATION.md).
+That contract copies only the exact selected workspace inventory into distinct
+clean planning and leaves ordinary lifecycle admission for a later step.
+
 Generated APKs, logs, screenshots, traces, pairing material, private payloads,
 and tool caches do not belong in this directory.
 

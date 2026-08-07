@@ -257,6 +257,14 @@ evidence, clears only the named dirty marker, updates only the named
 repository-head entry, appends one event, and performs no Git operation. See
 [External Planning Projection And Historical Reconstruction](EXTERNAL_PLANNING_AND_HISTORICAL_RECONSTRUCTION.md).
 
+If no published tree contains the workspace and its exact bytes exist only in
+one intentionally dirty source checkout, do not fabricate a projection.
+Use the separate one-time
+[Unpublished Planning Authority Materialization](UNPUBLISHED_PLANNING_AUTHORITY_MATERIALIZATION.md)
+contract, then perform ordinary lifecycle admission from the external planning
+workspace. Materialization itself is not a transition, validation, acceptance,
+or Git action.
+
 ### Immutable release capsules
 
 An executed-push receipt proves a particular publication action. A sealed
