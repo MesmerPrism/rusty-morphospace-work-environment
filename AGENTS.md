@@ -54,6 +54,9 @@ copy as historical/non-authoritative, and performs no Git or workflow
 transition. Route the complete procedure to
 `docs/UNPUBLISHED_PLANNING_AUTHORITY_MATERIALIZATION.md`; never use it to copy
 sibling source/runtime files or replace `planning_workspace_projection.v1-v3`.
+On Windows, require volume-serial plus FileIdInfo directory identities for both
+repository/common-dir authorities and replay destination/stage identities;
+lexical paths or namespace aliases alone never establish separation.
 
 This repository is intended to be public and portable. Keep committed content
 free of local machine paths, private repository names, device serials, package

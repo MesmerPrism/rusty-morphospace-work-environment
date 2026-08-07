@@ -261,3 +261,6 @@ historical/non-authoritative leaf. Keep publication projections, workflow
 admission, validation, acceptance, Git mutation, caller eligibility claims,
 and sibling source paths as
 disconnected or rejection edges.
+Model Windows physical identity separately from path labels: volume serial plus
+FileIdInfo connects namespace aliases to the same repository/common-dir node,
+while identity change between observations is a rejection edge.

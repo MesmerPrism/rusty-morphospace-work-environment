@@ -389,6 +389,9 @@ tree, and copies only the complete bounded inventory into a distinct clean
 planning repository. It installs a canonical, tool-generated authority receipt atomically,
 and leaves the source untouched. It is not a 0.6.0 release claim, workflow
 admission, validation, acceptance, Git action, or projection v1-v3 variant.
+Windows execution additionally binds and replays volume-serial plus 128-bit
+FileIdInfo directory identities so `subst` and equivalent namespace aliases
+cannot manufacture distinct source/planning authority.
 
 Seal coordinated releases with `release_capsule.v1`. At publication,
 `Test-ReleaseCapsule.ps1 -Mode CandidateCut` requires every declared remote ref

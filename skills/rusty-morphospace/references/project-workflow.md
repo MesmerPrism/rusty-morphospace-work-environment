@@ -59,6 +59,9 @@ copy no sibling bytes, install atomically into a
 distinct clean planning repository, preserve the source as historical, and
 leave ordinary workflow admission for later. This is not
 `planning_workspace_projection.v1-v3` and grants no Git or acceptance claim.
+Windows execution establishes distinct authority with volume-serial plus
+FileIdInfo identities and replays destination/stage identities; namespace
+aliases such as `subst` are not distinct repositories.
 
 Separate source, build, and run identities. Use disjoint application,
 client, marker, output, property, staging, and other mutable resource

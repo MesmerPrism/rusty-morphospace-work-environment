@@ -71,6 +71,19 @@ before the commit point, atomically installs, and performs final readback.
 Failure removes only the owned stage, the newly installed destination if final
 readback itself fails, and empty destination-parent directories created by that
 attempt. Pre-existing parents are never removed. A second execution rejects.
+On Windows, lexical containment is augmented with stable physical directory
+identity obtained from handles opened by `CreateFileW` with
+`FILE_FLAG_BACKUP_SEMANTICS` and queried using
+`GetFileInformationByHandleEx(FileIdInfo)`. The identity is the filesystem
+volume serial number plus 128-bit file/directory ID. Source and planning roots
+and Git common directories must be physically distinct. Existing destination
+ancestors, the staging parent, stage, and installed destination are bound and
+replayed before staging, at the commit point, and through final readback; the
+atomic move must preserve the stage directory ID. A `subst` or other namespace
+alias therefore cannot create a second authority identity. Execution fails
+closed with a bounded error when Windows FileIdInfo is unavailable; portable
+inspection and static validation remain possible on other platforms.
+
 Every existing component from each declared repository root through source,
 destination parent, stage, and installed destination is checked. Reparse
 points, ancestor junctions, multi-link files,
@@ -80,6 +93,13 @@ or resolved filesystem/Git identities, shared Git authority,
 dirty/detached planning state, overlap, and receipt collisions fail closed.
 Unrelated source dirtiness is allowed because selection is limited to the
 complete workspace inventory.
+
+This is repeated identity observation, not a handle-relative filesystem
+transaction. It trusts the Windows kernel/file-system FileIdInfo result and
+assumes the executing principal and kernel are not malicious. A privileged
+host actor can still race namespace operations between bounded observations;
+the repeated commit-point/readback checks reduce but do not eliminate that
+host-level race.
 
 ## Authority And Non-Scope
 

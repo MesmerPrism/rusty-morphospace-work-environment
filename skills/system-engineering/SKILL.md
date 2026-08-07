@@ -214,6 +214,9 @@ ordinal inventory and fixed anchor, re-observe before the atomic destination
 commit point, preserve the source as historical/non-authoritative, and require
 ordinary later admission. Never widen projection v1-v3 or copy sibling source
 or runtime files.
+On Windows, bind repository roots, Git common directories, existing destination
+ancestors, stage, and installed destination by volume serial plus FileIdInfo;
+replay those identities at staging, commit-point, and readback boundaries.
 
 Separate release-candidate cut from historical closure. Seal exact commits and
 trees while declared refs are equal; later require ancestor-or-equal refs and
