@@ -7,13 +7,20 @@ only in an intentionally dirty source checkout. It is not part of the published
 
 ## Decision
 
-Copy exactly one caller-selected workspace directory below one Git-backed
+Copy exactly the repository-root `morphospace/` workspace below one Git-backed
 source repository into a previously absent path below a distinct, clean,
 attached Git-backed planning repository. The installed receipt designates the
 destination as the sole workspace authority and preserves the source copy as
 historical and non-authoritative. The source is neither changed nor deleted.
 
-This route is unavailable when a published Git-tree projection applies.
+Eligibility is derived rather than claimed. The source path must be exactly
+`morphospace`, its anchor must be exactly `workspace.state.json`, that state
+must bind the input project, Git must report dirt in that path, and the complete
+live path set plus aggregate tracked diff must differ from the pinned source
+`HEAD:morphospace` tree. Equality, including a clean/tracked workspace, is
+projection-eligible and rejects. Because v1-v3 project exact published-tree
+bytes, this live-versus-pinned-tree divergence is also the deterministic proof
+that those routes are inapplicable; caller prose is not accepted as evidence.
 `planning_workspace_projection.v1` through `.v3` remain the only published-tree
 routes described in
 [External Planning Projection And Historical Reconstruction](EXTERNAL_PLANNING_AND_HISTORICAL_RECONSTRUCTION.md).
@@ -23,15 +30,23 @@ routes described in
 The caller signs off a document conforming to
 `unpublished-workspace-materialization-v1.schema.json`. It binds source and
 planning repository IDs; each attached branch and full commit/tree identity;
-source and destination workspace-relative paths; a complete ordinal file
-path/type/size/SHA-256 inventory; the caller-declared workspace-state file and
-SHA-256 anchor; the destination receipt path; and explicit claims.
+the fixed source workspace and state-anchor paths; a complete ordinal file
+path/type/size/SHA-256 inventory; the state SHA-256 anchor; and destination and
+receipt paths. The input has no free-form claims surface.
 
 The installed canonical receipt conforms to
 `unpublished-planning-authority-receipt-v1.schema.json`. It binds the exact
 input SHA-256, both repository identities, source inventory/state anchor,
-destination inventory, timestamp, and authority/nonclaim statements. Portable
+destination inventory, generated eligibility facts, timestamp, and fixed
+authority/nonclaim statements. Portable
 documents contain no checkout locations.
+
+This is a planning-control-byte route, not a generic source/runtime payload
+copy. Limits are deterministic: input JSON at most 1 MiB and depth 32; 1–512
+regular single-link files; 4 MiB per file and 32 MiB aggregate; portable paths
+at most 512 characters; JSON depth 32; and JSONL at most 4,096 records with
+each line at most 256 KiB. Input and receipt schemas carry the corresponding
+inventory, ordinal, and file-size bounds. Hashing is streamed after size checks.
 
 ## Execution
 
@@ -53,10 +68,15 @@ owned same-volume sibling stage, verifies the stage, writes and validates the
 canonical receipt, re-observes source bytes and Git identities immediately
 before the commit point, atomically installs, and performs final readback.
 
-Failure removes only the owned stage, or the newly installed destination if
-final readback itself fails. A second execution rejects. Reparse points,
+Failure removes only the owned stage, the newly installed destination if final
+readback itself fails, and empty destination-parent directories created by that
+attempt. Pre-existing parents are never removed. A second execution rejects.
+Every existing component from each declared repository root through source,
+destination parent, stage, and installed destination is checked. Reparse
+points, ancestor junctions, multi-link files,
 symlinks, non-regular files, invalid JSON/schema IDs, traversal, case ambiguity,
-inventory drift, wrong roots or identities, shared Git authority,
+reserved/trailing-dot/trailing-space equivalents, inventory drift, wrong roots
+or resolved filesystem/Git identities, shared Git authority,
 dirty/detached planning state, overlap, and receipt collisions fail closed.
 Unrelated source dirtiness is allowed because selection is limited to the
 complete workspace inventory.

@@ -383,8 +383,10 @@ The additive unreleased
 [unpublished planning-authority materialization](docs/UNPUBLISHED_PLANNING_AUTHORITY_MATERIALIZATION.md)
 handles a different case: exact project workspace bytes exist only in one
 intentionally dirty source checkout and no published-tree projection applies.
-It copies only a complete caller-bound `morphospace/` inventory into a distinct
-clean planning repository, installs a canonical authority receipt atomically,
+It accepts only repository-root `morphospace/` plus the exact
+`workspace.state.json` anchor, proves live bytes differ from the pinned source
+tree, and copies only the complete bounded inventory into a distinct clean
+planning repository. It installs a canonical, tool-generated authority receipt atomically,
 and leaves the source untouched. It is not a 0.6.0 release claim, workflow
 admission, validation, acceptance, Git action, or projection v1-v3 variant.
 

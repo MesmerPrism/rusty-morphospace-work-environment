@@ -45,8 +45,10 @@ See `docs/EXTERNAL_PLANNING_AND_HISTORICAL_RECONSTRUCTION.md`.
 
 When exact project workspace bytes exist only in one intentionally dirty source
 checkout and no published-tree projection applies, use the additive unreleased
-`MaterializeUnpublishedPlanningAuthority` contract. It inventories and
-re-observes only one caller-selected `morphospace/` directory, atomically
+`MaterializeUnpublishedPlanningAuthority` contract. It accepts only the exact
+repository-root `morphospace/` directory and `workspace.state.json` anchor,
+derives dirt and pinned-tree divergence rather than accepting eligibility
+prose, inventories and re-observes those bounded control bytes, atomically
 installs it below one distinct clean planning repository, preserves the source
 copy as historical/non-authoritative, and performs no Git or workflow
 transition. Route the complete procedure to

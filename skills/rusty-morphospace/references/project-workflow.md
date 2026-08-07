@@ -50,10 +50,12 @@ cross-repository implementation or extraction, bind clean exact commits and
 trees in a source-composition lock. Prefer detached clean materializations when
 live checkouts are moving.
 
-When one exact project workspace exists only as intentional dirty bytes below
-a Git-backed source checkout, and no published-tree projection applies, use
-`MaterializeUnpublishedPlanningAuthority`. Bind the complete selected-workspace
-inventory and state anchor, copy no sibling bytes, install atomically into a
+When the repository-root `morphospace/` exists only as intentional dirty bytes
+in a Git-backed source checkout, and its complete bounded live inventory
+differs from the pinned tree, use `MaterializeUnpublishedPlanningAuthority`.
+That derived predicate excludes published-tree projection v1-v3; caller prose
+does not. Bind the complete inventory and exact `workspace.state.json` anchor,
+copy no sibling bytes, install atomically into a
 distinct clean planning repository, preserve the source as historical, and
 leave ordinary workflow admission for later. This is not
 `planning_workspace_projection.v1-v3` and grants no Git or acceptance claim.

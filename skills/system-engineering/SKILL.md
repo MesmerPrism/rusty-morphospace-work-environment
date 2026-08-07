@@ -205,10 +205,12 @@ projection. Route the exact byte/inventory procedure through
 `docs/EXTERNAL_PLANNING_AND_HISTORICAL_RECONSTRUCTION.md`.
 
 For the separate unpublished-only case, use
-`MaterializeUnpublishedPlanningAuthority` only when the complete selected
-workspace exists as intentional dirty source-checkout bytes and no published
-tree can anchor a projection. Bind the source HEAD/tree/branch, complete
-ordinal inventory and state anchor, re-observe before the atomic destination
+`MaterializeUnpublishedPlanningAuthority` only for repository-root
+`morphospace/` with exact `workspace.state.json`, when Git reports that path
+dirty and its complete bounded live inventory differs from the pinned source
+tree. That derived predicate excludes projection v1-v3; never accept caller
+prose or claims as eligibility. Bind the source HEAD/tree/branch, complete
+ordinal inventory and fixed anchor, re-observe before the atomic destination
 commit point, preserve the source as historical/non-authoritative, and require
 ordinary later admission. Never widen projection v1-v3 or copy sibling source
 or runtime files.
