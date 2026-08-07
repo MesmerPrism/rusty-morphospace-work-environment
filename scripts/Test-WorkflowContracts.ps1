@@ -64,6 +64,98 @@ function Test-Text {
     return -not [string]::IsNullOrWhiteSpace([string]$Value)
 }
 
+function Test-LegacySkillReviewCompatibility {
+    param(
+        [Parameter(Mandatory = $true)][object]$Candidate,
+        [Parameter(Mandatory = $true)][hashtable]$UnitMap,
+        [Parameter(Mandatory = $true)][hashtable]$EventMap,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][Collections.Generic.HashSet[string]]$SupersededInFlightIds,
+        [Parameter(Mandatory = $true)][object]$State
+    )
+
+    if ($Candidate.work_mode_explicit -or
+        [string]$Candidate.action -cne "review-no-change" -or
+        [string]$Candidate.status -cne "complete") {
+        return $false
+    }
+
+    $unitId = [string]$Candidate.unit_id
+    if ($SupersededInFlightIds.Contains($unitId)) { return $true }
+    if (-not $UnitMap.ContainsKey($unitId)) { return $false }
+
+    $unit = $UnitMap[$unitId]
+    $unitEvents = @($EventMap.Values | Where-Object { [string]$_.unit_id -ceq $unitId } | Sort-Object { [int]$_.sequence })
+    if ([string]$unit.status -ceq "accepted") {
+        return @($unitEvents | Where-Object {
+            [string]$_.event_type -ceq "state-transition" -and
+            [string]$_.event_id -cmatch "^$([regex]::Escape($unitId))-accepted-[0-9]{4,}$"
+        }).Count -eq 1
+    }
+
+    if ([string]$unit.status -ceq "blocked" -and [string]$State.current_unit -cne $unitId -and $unitEvents.Count -gt 0) {
+        $latest = $unitEvents[-1]
+        return [string]$latest.event_type -ceq "blocker"
+    }
+
+    return $false
+}
+
+function Invoke-LegacySkillReviewCompatibilitySelfTest {
+    $acceptedId = "legacy-accepted"
+    $blockedId = "legacy-blocked"
+    $blockedLaterId = "legacy-blocked-later"
+    $acceptedMissingId = "legacy-accepted-missing"
+    $activeId = "legacy-active"
+    $supersededId = "legacy-superseded"
+    $unitMap = @{
+        $acceptedId = [pscustomobject]@{ unit_id = $acceptedId; status = "accepted" }
+        $blockedId = [pscustomobject]@{ unit_id = $blockedId; status = "blocked" }
+        $blockedLaterId = [pscustomobject]@{ unit_id = $blockedLaterId; status = "blocked" }
+        $acceptedMissingId = [pscustomobject]@{ unit_id = $acceptedMissingId; status = "accepted" }
+        $activeId = [pscustomobject]@{ unit_id = $activeId; status = "active" }
+        $supersededId = [pscustomobject]@{ unit_id = $supersededId; status = "active" }
+    }
+    $eventMap = @{
+        "$acceptedId-ready-0001" = [pscustomobject]@{ event_id = "$acceptedId-ready-0001"; event_type = "state-transition"; unit_id = $acceptedId; sequence = 1 }
+        "$acceptedId-accepted-0002" = [pscustomobject]@{ event_id = "$acceptedId-accepted-0002"; event_type = "state-transition"; unit_id = $acceptedId; sequence = 2 }
+        "$blockedId-blocker-0003" = [pscustomobject]@{ event_id = "$blockedId-blocker-0003"; event_type = "blocker"; unit_id = $blockedId; sequence = 3 }
+        "$activeId-claimed-0004" = [pscustomobject]@{ event_id = "$activeId-claimed-0004"; event_type = "state-transition"; unit_id = $activeId; sequence = 4 }
+        "$blockedLaterId-blocker-0005" = [pscustomobject]@{ event_id = "$blockedLaterId-blocker-0005"; event_type = "blocker"; unit_id = $blockedLaterId; sequence = 5 }
+        "$blockedLaterId-validation-0006" = [pscustomobject]@{ event_id = "$blockedLaterId-validation-0006"; event_type = "validation"; unit_id = $blockedLaterId; sequence = 6 }
+        "$acceptedMissingId-validating-0007" = [pscustomobject]@{ event_id = "$acceptedMissingId-validating-0007"; event_type = "state-transition"; unit_id = $acceptedMissingId; sequence = 7 }
+    }
+    $superseded = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    [void]$superseded.Add($supersededId)
+    $state = [pscustomobject]@{ current_unit = $activeId }
+    $candidate = [pscustomobject]@{
+        unit_id = $acceptedId
+        action = "review-no-change"
+        status = "complete"
+        work_mode_explicit = $false
+    }
+
+    Assert-Contract (Test-LegacySkillReviewCompatibility -Candidate $candidate -UnitMap $unitMap -EventMap $eventMap -SupersededInFlightIds $superseded -State $state) "Legacy accepted skill-review compatibility self-test failed."
+    $candidate.unit_id = $blockedId
+    Assert-Contract (Test-LegacySkillReviewCompatibility -Candidate $candidate -UnitMap $unitMap -EventMap $eventMap -SupersededInFlightIds $superseded -State $state) "Legacy blocked skill-review compatibility self-test failed."
+    $candidate.unit_id = $supersededId
+    Assert-Contract (Test-LegacySkillReviewCompatibility -Candidate $candidate -UnitMap $unitMap -EventMap $eventMap -SupersededInFlightIds $superseded -State $state) "Legacy superseded skill-review compatibility self-test failed."
+    $candidate.unit_id = $activeId
+    Assert-Contract (-not (Test-LegacySkillReviewCompatibility -Candidate $candidate -UnitMap $unitMap -EventMap $eventMap -SupersededInFlightIds $superseded -State $state)) "Unsuperseded active legacy skill review was accepted."
+    $candidate.unit_id = $acceptedMissingId
+    Assert-Contract (-not (Test-LegacySkillReviewCompatibility -Candidate $candidate -UnitMap $unitMap -EventMap $eventMap -SupersededInFlightIds $superseded -State $state)) "Legacy accepted skill review without an acceptance event was accepted."
+    $candidate.unit_id = $blockedLaterId
+    Assert-Contract (-not (Test-LegacySkillReviewCompatibility -Candidate $candidate -UnitMap $unitMap -EventMap $eventMap -SupersededInFlightIds $superseded -State $state)) "Legacy blocked skill review whose latest event was not a blocker was accepted."
+    $candidate.unit_id = $acceptedId
+    $candidate.work_mode_explicit = $true
+    Assert-Contract (-not (Test-LegacySkillReviewCompatibility -Candidate $candidate -UnitMap $unitMap -EventMap $eventMap -SupersededInFlightIds $superseded -State $state)) "Explicit feature-mode skill review was accepted through legacy compatibility."
+    $candidate.work_mode_explicit = $false
+    $candidate.status = "pending"
+    Assert-Contract (-not (Test-LegacySkillReviewCompatibility -Candidate $candidate -UnitMap $unitMap -EventMap $eventMap -SupersededInFlightIds $superseded -State $state)) "Incomplete legacy skill review was accepted."
+    $candidate.status = "complete"
+    $candidate.action = "update"
+    Assert-Contract (-not (Test-LegacySkillReviewCompatibility -Candidate $candidate -UnitMap $unitMap -EventMap $eventMap -SupersededInFlightIds $superseded -State $state)) "Wrong-action legacy skill review was accepted."
+}
+
 function Read-JsonDocument {
     param(
         [string]$Path,
@@ -544,6 +636,7 @@ function Test-ProjectBundle {
     }
 
     $units = New-Object System.Collections.Generic.List[object]
+    $legacySkillReviewCandidates = New-Object System.Collections.Generic.List[object]
     foreach ($path in @($Bundle.UnitPaths)) {
         if (-not (Test-Text $path)) { continue }
         $unit = Read-JsonDocument -Path $path -Context "$Context iteration unit"
@@ -568,7 +661,8 @@ function Test-ProjectBundle {
         }
 
         $changeCategories = @($unit.change_categories | ForEach-Object { [string]$_ })
-        $workMode = if ($unit.PSObject.Properties.Name -contains "work_mode") { [string]$unit.work_mode } else { "feature" }
+        $workModeExplicit = $unit.PSObject.Properties.Name -contains "work_mode"
+        $workMode = if ($workModeExplicit) { [string]$unit.work_mode } else { "feature" }
         Assert-Contract ($script:WorkModes -contains $workMode) "$Context unit '$($unit.unit_id)' has unknown work mode '$workMode'."
         $effectiveChangeCategories = @($changeCategories | ForEach-Object {
             if ($script:ChangeCategories -contains $_) { $_ }
@@ -685,7 +779,20 @@ function Test-ProjectBundle {
                 })
                 Assert-Contract ($matchingSkill.Count -eq 1) "$Context unit '$($unit.unit_id)' needs one instruction surface for relevant skill '$requiredSkillId'."
                 if ($matchingSkill.Count -eq 1) {
-                    Assert-Contract ([string]$matchingSkill[0].action -eq $expectedRequiredAction) "$Context unit '$($unit.unit_id)' relevant skill '$requiredSkillId' must use '$expectedRequiredAction'."
+                    $skillSurface = $matchingSkill[0]
+                    if ([string]$skillSurface.action -ceq $expectedRequiredAction) {
+                        # Current feature and validation-only records use the exact mode action.
+                    } elseif (-not $workModeExplicit -and [string]$skillSurface.action -ceq "review-no-change") {
+                        $legacySkillReviewCandidates.Add([pscustomobject][ordered]@{
+                            unit_id = [string]$unit.unit_id
+                            skill_id = [string]$requiredSkillId
+                            action = [string]$skillSurface.action
+                            status = [string]$skillSurface.status
+                            work_mode_explicit = $false
+                        }) | Out-Null
+                    } else {
+                        Assert-Contract $false "$Context unit '$($unit.unit_id)' relevant skill '$requiredSkillId' must use '$expectedRequiredAction'."
+                    }
                 }
             }
 
@@ -946,6 +1053,14 @@ function Test-ProjectBundle {
             Assert-Contract ([string]$state.current_unit -ceq $currentId) "$Context supersession tail '$eventId' does not project replacement '$currentId' as current_unit."
         }
         [void]$supersededInFlightIds.Add($oldId)
+    }
+    foreach ($candidate in $legacySkillReviewCandidates.ToArray()) {
+        Assert-Contract (Test-LegacySkillReviewCompatibility `
+            -Candidate $candidate `
+            -UnitMap $unitMap `
+            -EventMap $eventMap `
+            -SupersededInFlightIds $supersededInFlightIds `
+            -State $state) "$Context legacy unit '$($candidate.unit_id)' relevant skill '$($candidate.skill_id)' review-no-change is not eligible for the canonical legacy terminal skill-review compatibility projection."
     }
     $activeUnits = @($units | Where-Object {
         $_.status -eq "active" -and -not $supersededInFlightIds.Contains([string]$_.unit_id)
@@ -1325,6 +1440,58 @@ if ($v2ClosureExample) {
     Assert-Contract ([string]$v2ClosureExample.schema -ceq "rusty.morphospace.workflow.unplanned_publication_closure.v2") "V2 unplanned-publication closure example has the wrong discriminator."
     Assert-Contract ($null -ne $v2ClosureExample.planning_workspace_projection) "V2 unplanned-publication closure example lacks projection evidence."
 }
+Invoke-LegacySkillReviewCompatibilitySelfTest
+
+function Invoke-LegacySkillReviewBundleSelfTest {
+    $fixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ("morphospace-legacy-skill-review-" + [guid]::NewGuid().ToString("N"))
+    [IO.Directory]::CreateDirectory($fixtureRoot) | Out-Null
+    try {
+        $unit = Read-JsonDocument -Path (Join-Path $templatesRoot "iteration-unit.example.json") -Context "legacy skill-review fixture unit source"
+        [void]$unit.PSObject.Properties.Remove("work_mode")
+        $unit.status = "accepted"
+        foreach ($surface in @($unit.instruction_surfaces)) {
+            $surface.status = "complete"
+            if ([string]$surface.surface_kind -ceq "skill") { $surface.action = "review-no-change" }
+        }
+        $state = Read-JsonDocument -Path (Join-Path $templatesRoot "workspace.state.example.json") -Context "legacy skill-review fixture state source"
+        $state.current_unit = $null
+        $state.last_event_id = "$([string]$unit.unit_id)-accepted-0001"
+        $event = [pscustomobject][ordered]@{
+            schema = "rusty.morphospace.workflow.iteration_event.v1"
+            event_id = [string]$state.last_event_id
+            sequence = 1
+            timestamp = "2026-01-01T00:00:00Z"
+            project_id = [string]$unit.project_id
+            unit_id = [string]$unit.unit_id
+            event_type = "state-transition"
+            summary = "Accepted the immutable pre-work_mode compatibility fixture."
+            receipts = @()
+        }
+        $utf8 = [Text.UTF8Encoding]::new($false)
+        $unitPath = Join-Path $fixtureRoot "unit.json"
+        $statePath = Join-Path $fixtureRoot "state.json"
+        $eventsPath = Join-Path $fixtureRoot "events.jsonl"
+        [IO.File]::WriteAllText($unitPath, ($unit | ConvertTo-Json -Depth 32), $utf8)
+        [IO.File]::WriteAllText($statePath, ($state | ConvertTo-Json -Depth 32), $utf8)
+        [IO.File]::WriteAllText($eventsPath, (($event | ConvertTo-Json -Depth 16 -Compress) + [Environment]::NewLine), $utf8)
+        $bundle = New-Bundle `
+            -SpecPath (Join-Path $templatesRoot "project.spec.example.json") `
+            -LockPath (Join-Path $templatesRoot "feature.lock.example.json") `
+            -StatePath $statePath `
+            -CandidatePaths @((Join-Path $templatesRoot "module-candidate.example.json")) `
+            -UnitPaths @($unitPath) `
+            -ReviewPaths @((Join-Path $templatesRoot "promotion-review.example.json")) `
+            -EventsPath $eventsPath
+        Test-ProjectBundle -Bundle $bundle -Context "legacy terminal skill-review compatibility fixture"
+    } finally {
+        if ([IO.Directory]::Exists($fixtureRoot)) {
+            [IO.Directory]::Delete($fixtureRoot, $true)
+        }
+    }
+}
+
+Invoke-LegacySkillReviewBundleSelfTest
+
 $templateBundle = New-Bundle `
     -SpecPath (Join-Path $templatesRoot "project.spec.example.json") `
     -LockPath (Join-Path $templatesRoot "feature.lock.example.json") `

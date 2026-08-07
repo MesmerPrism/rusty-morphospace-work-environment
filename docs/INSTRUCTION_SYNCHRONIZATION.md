@@ -50,11 +50,18 @@ README/router, validation document, and skill surface as `review-no-change`.
 Discovering a needed content change ends that unit; it does not convert the
 review record into an update claim.
 
-Immutable accepted or blocked units whose formerly valid instruction metadata
-predates these rules may be projected through the exact hash-bound historical-
-unit adoption contract. That projection must enumerate every mismatched impact
-and surface action and does not relax synchronization for any current or future
-unit. See [Historical Iteration-Unit Adoption](HISTORICAL_UNIT_ADOPTION.md).
+An immutable unit that predates `work_mode` may retain a completed relevant-
+skill `review-no-change` only when the append-only ledger proves that unit is
+accepted, blocked and no longer current with a blocker as its latest event, or
+superseded by the validator's canonical legacy old-to-replacement event
+projection. This compatibility does not upgrade that legacy projection to a
+current transaction-authentication claim, authorize a new transition or
+repair, or apply to a unit with explicit `work_mode`. Current and future
+feature units must update every relevant skill. Other formerly valid
+instruction metadata may be projected only through the exact hash-bound
+historical-unit adoption contract, which does not relax synchronization for
+a current or future unit. See
+[Historical Iteration-Unit Adoption](HISTORICAL_UNIT_ADOPTION.md).
 
 ## Cadence
 
