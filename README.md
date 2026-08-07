@@ -379,6 +379,20 @@ If planning alone published early while every source remote remains unchanged,
 use the hash-bound publication-ordering interruption input to create a fresh
 plan that preserves the fault and claims no publication or corrected order.
 
+The additive unreleased
+[unpublished planning-authority materialization](docs/UNPUBLISHED_PLANNING_AUTHORITY_MATERIALIZATION.md)
+handles a different case: exact project workspace bytes exist only in one
+intentionally dirty source checkout and no published-tree projection applies.
+It accepts only repository-root `morphospace/` plus the exact
+`workspace.state.json` anchor, proves live bytes differ from the pinned source
+tree, and copies only the complete bounded inventory into a distinct clean
+planning repository. It installs a canonical, tool-generated authority receipt atomically,
+and leaves the source untouched. It is not a 0.6.0 release claim, workflow
+admission, validation, acceptance, Git action, or projection v1-v3 variant.
+Windows execution additionally binds and replays volume-serial plus 128-bit
+FileIdInfo directory identities so `subst` and equivalent namespace aliases
+cannot manufacture distinct source/planning authority.
+
 Seal coordinated releases with `release_capsule.v1`. At publication,
 `Test-ReleaseCapsule.ps1 -Mode CandidateCut` requires every declared remote ref
 to equal the pinned commit. Later, `-Mode HistoricalClosure` requires the

@@ -1317,6 +1317,8 @@ $requiredSchemaNames = @(
     "inflight-adoption-receipt.schema.json",
     "interruption-receipt.schema.json",
     "planning-workspace-projection.schema.json",
+    "unpublished-workspace-materialization-v1.schema.json",
+    "unpublished-planning-authority-receipt-v1.schema.json",
     "iteration-event.schema.json",
     "iteration-event-v2.schema.json",
     "iteration-unit.schema.json",
@@ -1367,6 +1369,7 @@ foreach ($schemaFile in $schemaFiles) {
 
 $templatesRoot = Join-Path $RepoRoot "templates"
 foreach ($contractExample in @(
+    [pscustomobject]@{ Template = "unpublished-workspace-materialization.example.json"; Schema = "unpublished-workspace-materialization-v1.schema.json" },
     [pscustomobject]@{ Template = "planning-workspace-projection.example.json"; Schema = "planning-workspace-projection.schema.json" },
     [pscustomobject]@{ Template = "planning-workspace-projection-v2.example.json"; Schema = "planning-workspace-projection.schema.json" },
     [pscustomobject]@{ Template = "planning-workspace-projection-v3.example.json"; Schema = "planning-workspace-projection.schema.json" },

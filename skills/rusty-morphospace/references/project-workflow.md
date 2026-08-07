@@ -50,6 +50,19 @@ cross-repository implementation or extraction, bind clean exact commits and
 trees in a source-composition lock. Prefer detached clean materializations when
 live checkouts are moving.
 
+When the repository-root `morphospace/` exists only as intentional dirty bytes
+in a Git-backed source checkout, and its complete bounded live inventory
+differs from the pinned tree, use `MaterializeUnpublishedPlanningAuthority`.
+That derived predicate excludes published-tree projection v1-v3; caller prose
+does not. Bind the complete inventory and exact `workspace.state.json` anchor,
+copy no sibling bytes, install atomically into a
+distinct clean planning repository, preserve the source as historical, and
+leave ordinary workflow admission for later. This is not
+`planning_workspace_projection.v1-v3` and grants no Git or acceptance claim.
+Windows execution establishes distinct authority with volume-serial plus
+FileIdInfo identities and replays destination/stage identities; namespace
+aliases such as `subst` are not distinct repositories.
+
 Separate source, build, and run identities. Use disjoint application,
 client, marker, output, property, staging, and other mutable resource
 identities. Treat machine-local claims as coordination only; they do not

@@ -3,6 +3,13 @@
 These recovery contracts preserve damaged chronology without rewriting source
 workflow history.
 
+They apply only to bytes anchored in published Git trees. When the exact
+workspace exists only in an intentionally dirty source checkout, use the
+separate additive unreleased
+[Unpublished Planning Authority Materialization](UNPUBLISHED_PLANNING_AUTHORITY_MATERIALIZATION.md)
+contract. It is not a projection v1-v3 form and creates no publication or
+historical-reconstruction claim.
+
 ## Embedded workspace projection
 
 Use `planning_workspace_projection.v1` only when source publication preceded

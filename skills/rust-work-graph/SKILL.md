@@ -251,3 +251,16 @@ For embedded recovery, graph published source tree, exact external projection,
 and later reconciliation without implying external planning existed at
 publication time. Route the exact projection checks through
 `docs/EXTERNAL_PLANNING_AND_HISTORICAL_RECONSTRUCTION.md`.
+
+Graph unpublished planning-authority materialization separately: one dirty
+source checkout identity and one complete bounded repository-root
+`morphospace/` inventory feed an
+atomic stage/readback node in a distinct clean planning repository. The
+destination becomes sole workspace authority; the untouched source becomes a
+historical/non-authoritative leaf. Keep publication projections, workflow
+admission, validation, acceptance, Git mutation, caller eligibility claims,
+and sibling source paths as
+disconnected or rejection edges.
+Model Windows physical identity separately from path labels: volume serial plus
+FileIdInfo connects namespace aliases to the same repository/common-dir node,
+while identity change between observations is a rejection edge.

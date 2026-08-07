@@ -34,6 +34,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ExternalOwnerAuthor
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\New-ProjectWorkspace.ps1 -SelfTest
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-DocumentationLinks.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-SkillTemplates.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-UnpublishedPlanningAuthorityMaterialization.ps1 -SelfTest
 ```
 
 Do not append all focused commands to every aggregate run. The aggregate owns

@@ -204,6 +204,20 @@ published-tree bytes into distinct external planning through
 projection. Route the exact byte/inventory procedure through
 `docs/EXTERNAL_PLANNING_AND_HISTORICAL_RECONSTRUCTION.md`.
 
+For the separate unpublished-only case, use
+`MaterializeUnpublishedPlanningAuthority` only for repository-root
+`morphospace/` with exact `workspace.state.json`, when Git reports that path
+dirty and its complete bounded live inventory differs from the pinned source
+tree. That derived predicate excludes projection v1-v3; never accept caller
+prose or claims as eligibility. Bind the source HEAD/tree/branch, complete
+ordinal inventory and fixed anchor, re-observe before the atomic destination
+commit point, preserve the source as historical/non-authoritative, and require
+ordinary later admission. Never widen projection v1-v3 or copy sibling source
+or runtime files.
+On Windows, bind repository roots, Git common directories, existing destination
+ancestors, stage, and installed destination by volume serial plus FileIdInfo;
+replay those identities at staging, commit-point, and readback boundaries.
+
 Separate release-candidate cut from historical closure. Seal exact commits and
 trees while declared refs are equal; later require ancestor-or-equal refs and
 verify those trees in isolated clean materializations. Active worktree dirt is
