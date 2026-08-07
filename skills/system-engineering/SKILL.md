@@ -311,6 +311,14 @@ or JNI layer as an adapter. A bridge may validate schema and authority labels,
 but acceptance, lease, revision, replay, rejection, and next-state rules stay
 in the shared authority owner.
 
+Treat standalone and embedded RFC6455 servers as placement adapters over one
+transport core. Put strict upgrade/framing, bounded per-client message and byte
+queues, one writer per socket, Ping/Pong/Close deadlines, deterministic
+cancellation, cleanup-exactly-once, and sanitized telemetry in that core. Keep
+JSON semantics, Binder identity, Manifold decisions, command outcomes/effects,
+and media outside it. Prove malformed-input, slow-client, shutdown/restart, and
+placement parity on the host before any Binder or device phase.
+
 Schema ownership follows the payload. Preserve an owner-issued artifact
 byte-for-byte and bind its exact path, schema, owner, and SHA-256 from a
 separately named workflow wrapper. Never add workflow fields while retaining

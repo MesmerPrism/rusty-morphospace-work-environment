@@ -206,6 +206,13 @@ unleased host receipts as parity edges; graph local Java acceptance rules,
 authority-label substitution, mode mismatch, and command-registry drift only as
 rejection edges.
 
+For Android RFC6455 consolidation, graph each standalone or embedded
+HTTP/socket acceptor into one shared transport core. Put upgrade/framing,
+bounded per-client message/byte queues, isolated writers, liveness/close,
+cancellation, and sanitized telemetry inside that core. Keep JSON, Binder,
+Manifold, command effects, and media as separate owner nodes or explicit
+rejection edges, and require host differential parity before device edges.
+
 For cross-app admission, graph Binder sending UID to package/signing-certificate
 evidence, then to the Manifold client grant, token issue, one-time capability
 use, revocation/expiry, revision, receipt, and audit nodes. Model different
