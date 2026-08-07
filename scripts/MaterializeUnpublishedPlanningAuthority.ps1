@@ -34,7 +34,7 @@ public static class MorphospacePhysicalIdentityV1 {
 }
 
 function Invoke-GitReadOnly { param([string]$Repository,[string[]]$Arguments)
-    $output=@(& git.exe -C $Repository -c core.fsmonitor=false -c core.autocrlf=false @Arguments 2>&1|ForEach-Object{[string]$_})
+    $output=@(& git -C $Repository -c core.fsmonitor=false -c core.autocrlf=false @Arguments 2>&1|ForEach-Object{[string]$_})
     if($LASTEXITCODE-ne0){throw "Git inspection failed: git $($Arguments-join' ')`n$($output-join"`n")"};@($output)
 }
 function Get-Sha256File { param([string]$Path)
@@ -131,7 +131,7 @@ function Assert-InventoryEqual { param([object[]]$Expected,[object[]]$Actual,[st
 function Test-PinnedTreeInventoryEqual { param([string]$Repository,[object[]]$Inventory)
     $treePaths=@(Invoke-GitReadOnly $Repository @('ls-tree','-r','--name-only','HEAD','--','morphospace')|ForEach-Object{if($_.StartsWith('morphospace/')){$_.Substring(12)}})
     $livePaths=@($Inventory|ForEach-Object{[string]$_.path});if((ConvertTo-CanonicalJson $treePaths)-cne(ConvertTo-CanonicalJson $livePaths)){return $false}
-    & git.exe -C $Repository -c core.fsmonitor=false -c core.autocrlf=false diff --quiet --no-ext-diff HEAD -- morphospace
+    & git -C $Repository -c core.fsmonitor=false -c core.autocrlf=false diff --quiet --no-ext-diff HEAD -- morphospace
     if($LASTEXITCODE-eq0){return $true};if($LASTEXITCODE-eq1){return $false};throw 'Git tree comparison failed.'
 }
 function Test-PlanningStatusOwnedStage { param([string]$Repository,[string]$Stage)
