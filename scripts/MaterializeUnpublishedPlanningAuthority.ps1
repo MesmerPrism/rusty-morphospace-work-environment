@@ -123,7 +123,7 @@ function Get-WorkspaceInventory { param([string]$Workspace)
 }
 function Test-JsonWorkspace { param([string]$Workspace,[object[]]$Inventory)
     foreach($row in @($Inventory)){$path=Join-Path $Workspace ([string]$row.path)
-        if([string]$row.path-match'\.json$'){$raw=Read-BoundedUtf8 $path $MaxFileBytes 'Workspace JSON';try{$doc=$raw|ConvertFrom-Json -Depth $MaxJsonDepth -ErrorAction Stop}catch{throw "Invalid or over-depth JSON: $($row.path)"};if(-not$doc.PSObject.Properties['schema']-or[string]$doc.schema-notmatch'^rusty\.morphospace\.workflow\.[a-z0-9_.-]+\.v[0-9]+$'){throw "Invalid or absent workflow schema ID: $($row.path)"}}
+        if([string]$row.path-match'\.json$'){$raw=Read-BoundedUtf8 $path $MaxFileBytes 'Workspace JSON';try{$doc=$raw|ConvertFrom-Json -Depth $MaxJsonDepth -ErrorAction Stop}catch{throw "Invalid or over-depth JSON: $($row.path)"};if(-not$doc.PSObject.Properties['schema']-or[string]$doc.schema-notmatch'^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?)+\.v[0-9]+$'){throw "Invalid or absent versioned schema ID: $($row.path)"}}
         elseif([string]$row.path-match'\.jsonl$'){$count=0;$lines=[IO.File]::ReadLines($path).GetEnumerator();try{while($lines.MoveNext()){$line=[string]$lines.Current;$count++;if($count-gt$MaxJsonlRecords){throw 'JSONL record bound exceeded.'};if([Text.Encoding]::UTF8.GetByteCount($line)-gt$MaxJsonlLineBytes){throw 'JSONL line byte bound exceeded.'};if([string]::IsNullOrWhiteSpace($line)){throw 'Blank JSONL record.'};try{$null=$line|ConvertFrom-Json -Depth $MaxJsonDepth -ErrorAction Stop}catch{throw 'Invalid or over-depth JSONL record.'}}}finally{if($lines-is[IDisposable]){$lines.Dispose()}}}
     }
 }
