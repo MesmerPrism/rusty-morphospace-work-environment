@@ -396,3 +396,9 @@ credential-free dynamic execution. Route the portable two-PR contract through
 `docs/EXTERNAL_VALIDATION_AUTHORITY.md`; its static assessment must retain
 `candidate_code_executed=false`, `execution_attested=false`, and
 `publication_authority=false`.
+Its durable external-owner fallback admits only the exact v1
+protected-without-base-approval result and binds one RSA-PSS authorization
+to complete PR, Git, artifact, and assessment evidence. It authorizes only the
+base static assessment, never execution, acceptance, or publication.
+Its unique ID is audit identity: exact-evidence reruns are idempotent within
+freshness, different evidence rejects, and trusted-base ancestry consumes it.

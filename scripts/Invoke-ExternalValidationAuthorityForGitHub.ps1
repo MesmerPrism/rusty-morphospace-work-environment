@@ -11,6 +11,8 @@ param(
     [Parameter(Mandatory = $true)][string]$PinnedVerifierSha256,
     [string]$PolicyPath = "config/external-validation-authority.json",
     [string]$RemoteUrl = "",
+    [string]$CommentsJsonPath = "",
+    [string]$AuthorizationRequestPath = "",
     [switch]$AllowLocalTestRemote
 )
 
@@ -197,7 +199,7 @@ function Invoke-GitBytes {
     param(
         [Parameter(Mandatory = $true)][string]$Root,
         [Parameter(Mandatory = $true)][string[]]$Arguments,
-        [ValidateRange(1, 1048576)][int]$MaximumBytes = $MaximumVerifierBytes
+        [ValidateRange(1, 16777216)][int]$MaximumBytes = $MaximumVerifierBytes
     )
 
     $start = New-GitStartInfo $Root
@@ -294,6 +296,82 @@ function Get-Sha256 {
     return [Convert]::ToHexString(
         [Security.Cryptography.SHA256]::HashData($Bytes)
     ).ToLowerInvariant()
+}
+
+function Get-ExternalOwnerCandidateArtifacts {
+    param([string]$Root,[string]$Base,[string]$Head)
+    [byte[]]$diff = Invoke-GitBytes $Root @("diff","--name-status","-z","--no-renames",$Base,$Head) 1048576
+    $tokens = [Text.Encoding]::UTF8.GetString($diff).Split([char]0,[StringSplitOptions]::RemoveEmptyEntries)
+    if (($tokens.Count % 2) -ne 0 -or ($tokens.Count / 2) -gt 512) { throw "External authorization diff is malformed or exceeds its bound." }
+    $items = [Collections.Generic.List[object]]::new(); [int64]$total=0
+    for($i=0;$i -lt $tokens.Count;$i+=2){
+        $path=$tokens[$i+1]; Assert-PortableRelativePath $path "authorization artifact"
+        $line=(Invoke-Git $Root @("ls-tree",$Head,"--",$path)).stdout.TrimEnd()
+        if([string]::IsNullOrEmpty($line)){ $items.Add([ordered]@{path=$path;state="absent"}); continue }
+        if($line -cnotmatch "^(100644|100755) blob ([0-9a-f]{40}|[0-9a-f]{64})`t(.+)$" -or $Matches[3] -cne $path){throw "Authorization artifact is not a regular exact path."}
+        $size=[int64](Invoke-Git $Root @("cat-file","-s",$Matches[2])).stdout.Trim(); if($size -gt 16777216){throw "Authorization artifact exceeds its size bound."};$total+=$size;if($total -gt 67108864){throw "Authorization artifacts exceed the total hash bound."}
+        [byte[]]$bytes=Invoke-GitBytes $Root @("cat-file","blob",$Matches[2]) ([int][Math]::Max(1,$size))
+        $items.Add([ordered]@{path=$path;state="present";mode=$Matches[1];size_bytes=$size;sha256=Get-Sha256 $bytes})
+    }
+    return ,@($items | Sort-Object { [string]$_.path } -CaseSensitive)
+}
+
+function Get-PublicIssueComments {
+    param(
+        [string]$RepositoryName,
+        [int]$Number,
+        [string]$FixturePath,
+        [int]$MaximumComments,
+        [int]$MaximumResponseBytes
+    )
+    Import-Module (Join-Path $PSScriptRoot "lib/ExternalOwnerAuthorization.psm1") -Force
+    if($FixturePath){
+        if(-not $AllowLocalTestRemote){throw "Comment fixtures are test-only."}
+        $raw=[IO.File]::ReadAllBytes((Resolve-Path $FixturePath))
+        if($raw.Length -gt $MaximumResponseBytes){throw "Comment response exceeds its size bound."}
+        $rawText=[Text.Encoding]::UTF8.GetString($raw)
+        $fixtureComments=@(ConvertFrom-ExternalOwnerJsonStrict -Json $rawText)
+        if($fixtureComments.Count -gt $MaximumComments){throw "Comment count exceeds the configured bound."}
+        return $fixtureComments
+    }
+    $handler=[Net.Http.HttpClientHandler]::new()
+    $handler.AllowAutoRedirect=$false
+    $client=[Net.Http.HttpClient]::new($handler)
+    $client.Timeout=[Threading.Timeout]::InfiniteTimeSpan
+    $client.DefaultRequestHeaders.UserAgent.ParseAdd("rusty-morphospace-static-admission/1")
+    $deadline=[Threading.CancellationTokenSource]::new([TimeSpan]::FromSeconds(20))
+    $comments=[Collections.Generic.List[object]]::new()
+    [int64]$totalBytes=0
+    try{
+        for($page=1;;$page++){
+            $uri="https://api.github.com/repos/$RepositoryName/issues/$Number/comments?per_page=100&page=$page"
+            $response=$client.GetAsync($uri,[Net.Http.HttpCompletionOption]::ResponseHeadersRead,$deadline.Token).GetAwaiter().GetResult()
+            try{
+                if(-not $response.IsSuccessStatusCode){throw "Public comment fetch failed with HTTP $([int]$response.StatusCode)."}
+                if($response.Content.Headers.ContentLength -and $totalBytes+$response.Content.Headers.ContentLength -gt $MaximumResponseBytes){throw "Comment response exceeds its size bound."}
+                $stream=$response.Content.ReadAsStream($deadline.Token)
+                $memory=[IO.MemoryStream]::new()
+                try{
+                    $buffer=[byte[]]::new(8192)
+                    while(($n=$stream.ReadAsync($buffer,0,$buffer.Length,$deadline.Token).GetAwaiter().GetResult())-gt 0){
+                        if($totalBytes+$memory.Length+$n -gt $MaximumResponseBytes){throw "Comment response exceeds its size bound."}
+                        $memory.Write($buffer,0,$n)
+                    }
+                    $pageBytes=$memory.ToArray()
+                    $totalBytes+=$pageBytes.Length
+                    $json=[Text.Encoding]::UTF8.GetString($pageBytes)
+                }finally{$memory.Dispose();$stream.Dispose()}
+                if(-not $json.TrimStart().StartsWith("[",[StringComparison]::Ordinal)){throw "Comment response must be a JSON array."}
+                $pageComments=@(ConvertFrom-ExternalOwnerJsonStrict -Json $json)
+                foreach($comment in $pageComments){$comments.Add($comment)}
+                if($comments.Count -gt $MaximumComments){throw "Comment count exceeds the configured bound."}
+                $links=[Collections.Generic.IEnumerable[string]]$null
+                $hasNext=$response.Headers.TryGetValues("Link",[ref]$links)-and @($links|Where-Object{$_ -match 'rel="next"'}).Count -gt 0
+                if(-not $hasNext){break}
+            }finally{$response.Dispose()}
+        }
+        return $comments.ToArray()
+    }finally{$deadline.Dispose();$client.Dispose();$handler.Dispose()}
 }
 
 Assert-CleanGitProcessEnvironment
@@ -394,6 +472,12 @@ $mergeTree = (
 if ($mergeTree -cne $headTree) {
     throw "Pull request merge tree does not equal the exact event head tree."
 }
+$headAlreadyTrusted = Invoke-Git $trusted @(
+    "merge-base", "--is-ancestor", $HeadCommit, $BaseCommit
+) -AllowFailure
+if ($headAlreadyTrusted.exit_code -eq 0) {
+    throw "External owner authorization is consumed and inert because the candidate head is already an ancestor of the trusted base."
+}
 
 $headAfterFetch = (Invoke-Git $trusted @("rev-parse", "HEAD")).stdout.Trim()
 $dirtyAfterFetch = (Invoke-Git $trusted @(
@@ -444,15 +528,50 @@ if (
     throw "Pinned verifier entrypoint is not a regular checked-out file."
 }
 
-$assessmentJson = & $verifierFullPath `
-    -RepositoryRoot $trusted `
-    -PolicyPath $PolicyPath `
-    -Repository $Repository `
-    -BaseCommit $BaseCommit `
-    -CandidateCommit $HeadCommit `
-    -Json
+$externalOutcome=$false
+try {
+    $assessmentJson = & $verifierFullPath -RepositoryRoot $trusted -PolicyPath $PolicyPath -Repository $Repository -BaseCommit $BaseCommit -CandidateCommit $HeadCommit -Json
+} catch {
+    if ($_.Exception.Message -cne "Protected changes do not match an exact base-approved change set.") { throw }
+    $externalOutcome=$true
+}
+if($externalOutcome){
+    $policy=Get-Content -Raw (Join-Path $trusted $PolicyPath)|ConvertFrom-Json -Depth 30
+    $ownerPolicyPath=Join-Path $trusted "config/external-owner-authorization.json"
+    $artifacts=Get-ExternalOwnerCandidateArtifacts $trusted $BaseCommit $HeadCommit
+    $protectedPaths=@($artifacts|ForEach-Object{$path=[string]$_.path;$matched=@($policy.mandatory_protected_paths)-ccontains $path;if(-not $matched){foreach($rule in @($policy.protected_rules)){if(([string]$rule.match -ceq "exact" -and $path -ceq [string]$rule.path)-or([string]$rule.match -ceq "prefix" -and $path.StartsWith([string]$rule.path,[StringComparison]::Ordinal))){$matched=$true;break}}};if($matched){$path}})
+    $baseTree=(Invoke-Git $trusted @("rev-parse","${BaseCommit}^{tree}")).stdout.Trim()
+    Import-Module (Join-Path $trusted "scripts/lib/ExternalOwnerAuthorization.psm1") -Force
+    $ownerPolicy=Read-ExternalOwnerAuthorizationPolicy -Path $ownerPolicyPath -SchemaPath (Join-Path $trusted "schemas/external-owner-authorization-policy-v1.schema.json")
+    $requestAssessment=[ordered]@{schema="rusty.morphospace.workflow.external_validation_authority_assessment.v1";policy_id=[string]$policy.policy_id;policy_sha256=Get-Sha256 ([IO.File]::ReadAllBytes((Join-Path $trusted $PolicyPath)));repository=$Repository;base=[ordered]@{commit=$BaseCommit;tree=$baseTree};candidate=[ordered]@{commit=$HeadCommit;tree=$headTree};changed_paths=@($artifacts|ForEach-Object{$_.path});protected_paths=$protectedPaths;decision="external-owner-authorization";approval_id="external-owner-authorization-required";candidate_code_executed=$false;execution_attested=$false;publication_authority=$false;limitations=@("Static admission only; no candidate code was executed.","Execution, tests, acceptance, and publication remain separately authorized.","External owner authorization permits only this base verifier assessment.")}
+    $request=New-ExternalOwnerAuthorizationRequest ([string]$ownerPolicy.issuer_id) $Repository ([int]$PullRequestNumber) ([ordered]@{commit=$BaseCommit;tree=$baseTree}) ([ordered]@{commit=$HeadCommit;tree=$headTree}) $artifacts $requestAssessment
+    $requestText=$request|ConvertTo-Json -Depth 30
+    if(-not(Test-Json -Json ($requestAssessment|ConvertTo-Json -Depth 30) -SchemaFile (Join-Path $trusted "schemas/external-validation-authority-assessment-v1.schema.json") -ErrorAction Stop)){throw "Request assessment failed its schema."}
+    if(-not(Test-Json -Json $requestText -SchemaFile (Join-Path $trusted "schemas/external-owner-authorization-request-v1.schema.json") -ErrorAction Stop)){throw "External owner authorization request failed its schema."}
+    $comments=@(Get-PublicIssueComments $Repository ([int]$PullRequestNumber) $CommentsJsonPath ([int]$ownerPolicy.maximum_comments) ([int]$ownerPolicy.maximum_response_bytes))
+    $markerComments=@($comments|Where-Object{[string]$_.user.login -ceq [string]$ownerPolicy.owner_login -and [regex]::Matches([string]$_.body,"(?m)^$([regex]::Escape([string]$ownerPolicy.comment_marker))$").Count -gt 0})
+    $emitRequest={if($AuthorizationRequestPath){if(-not $AllowLocalTestRemote){throw "Authorization request fixture output is test-only."};[IO.File]::WriteAllText($AuthorizationRequestPath,$requestText,[Text.UTF8Encoding]::new($false))};Write-Output $requestText;throw "External owner authorization is required; the canonical request was emitted."}
+    if($markerComments.Count -eq 0){& $emitRequest}
+    $validAuthorizations=[Collections.Generic.List[object]]::new()
+    foreach($markerComment in $markerComments){
+        try{
+            $payloadText=([string]$markerComment.body -split "\r?\n",2)[1]
+            $payloadDoc=ConvertFrom-ExternalOwnerJsonStrict -Json $payloadText
+            $expected=New-ExternalOwnerAuthorizationPayload $request ([string]$payloadDoc.payload.authorization_id) ([string]$payloadDoc.payload.issued_at) ([string]$payloadDoc.payload.expires_at)
+            $verified=Test-ExternalOwnerAuthorizationComments @($markerComment) $expected $ownerPolicy ([datetimeoffset]::UtcNow) (Join-Path $trusted "schemas/external-owner-authorization-v1.schema.json")
+            $validAuthorizations.Add($verified)
+        }catch{continue}
+    }
+    if($validAuthorizations.Count -eq 0){& $emitRequest}
+    if($validAuthorizations.Count -ne 1){throw "Exactly one current exact-evidence owner authorization is required."}
+    $assessmentJson=$requestAssessment|ConvertTo-Json -Depth 30
+}
 $assessmentText = @($assessmentJson) -join "`n"
 $assessment = $assessmentText | ConvertFrom-Json -Depth 30
+$assessmentSchema = Join-Path $trusted "schemas/external-validation-authority-assessment-v1.schema.json"
+if (-not (Test-Json -Json $assessmentText -SchemaFile $assessmentSchema -ErrorAction Stop)) {
+    throw "Base-owned verifier returned an assessment outside the schema."
+}
 if (
     [string]$assessment.repository -cne $Repository -or
     [string]$assessment.base.commit -cne $BaseCommit -or

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/external-owner-authorization-policy-v1.schema.json",
+  "title": "External owner authorization policy v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "issuer_id", "owner_login", "comment_marker", "max_authorization_age_seconds", "max_future_skew_seconds", "maximum_comments", "maximum_response_bytes", "maximum_comment_bytes", "public_key_spki_sha256", "public_key_pem"],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.workflow.external_owner_authorization_policy.v1" },
+    "issuer_id": { "const": "mesmerprism-owner-policy-authority-v1" },
+    "owner_login": { "const": "MesmerPrism" },
+    "comment_marker": { "const": "rusty-morphospace-external-owner-authorization:v1" },
+    "max_authorization_age_seconds": { "const": 86400 },
+    "max_future_skew_seconds": { "const": 300 },
+    "maximum_comments": { "type": "integer", "minimum": 1, "maximum": 1000 },
+    "maximum_response_bytes": { "type": "integer", "minimum": 1024, "maximum": 1048576 },
+    "maximum_comment_bytes": { "type": "integer", "minimum": 1024, "maximum": 65536 },
+    "public_key_spki_sha256": { "const": "e6ceb8c9bb2d3c178b28f15b9cd47ff1229e13584cd9c3b7dec1c2cda2f476e6" },
+    "public_key_pem": { "type": "string", "minLength": 512, "maxLength": 2048, "pattern": "^-----BEGIN PUBLIC KEY-----\\n[A-Za-z0-9+/=\\n]+\\n-----END PUBLIC KEY-----$" }
+  }
+}

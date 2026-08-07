@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/external-owner-authorization-v1.schema.json",
+  "title": "External owner authorization v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "payload", "signature"],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.workflow.external_owner_authorization.v1" },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "issuer_id", "authorization_id", "repository", "pull_request_number", "base", "head", "artifacts", "assessment_sha256", "request_sha256", "issued_at", "expires_at", "decision", "limitations"],
+      "properties": {
+        "schema": { "const": "rusty.morphospace.workflow.external_owner_authorization_payload.v1" },
+        "issuer_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" },
+        "authorization_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{15,127}$" },
+        "repository": { "type": "string", "pattern": "^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$" },
+        "pull_request_number": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+        "base": { "$ref": "#/$defs/gitIdentity" },
+        "head": { "$ref": "#/$defs/gitIdentity" },
+        "artifacts": { "type": "array", "minItems": 1, "maxItems": 512, "items": { "$ref": "#/$defs/artifact" } },
+        "assessment_sha256": { "$ref": "#/$defs/hash" },
+        "request_sha256": { "$ref": "#/$defs/hash" },
+        "issued_at": { "type": "string", "format": "date-time" },
+        "expires_at": { "type": "string", "format": "date-time" },
+        "decision": { "const": "authorize-static-assessment" },
+        "limitations": {
+          "const": [
+            "candidate_code_executed=false",
+            "execution_attested=false",
+            "acceptance_authority=false",
+            "publication_authority=false"
+          ]
+        }
+      }
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "public_key_spki_sha256", "value_base64"],
+      "properties": {
+        "algorithm": { "const": "RSA-PSS-SHA256" },
+        "public_key_spki_sha256": { "$ref": "#/$defs/hash" },
+        "value_base64": { "type": "string", "minLength": 128, "maxLength": 2048, "pattern": "^[A-Za-z0-9+/]+={0,2}$" }
+      }
+    }
+  },
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "objectId": { "type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$" },
+    "gitIdentity": {
+      "type": "object", "additionalProperties": false, "required": ["commit", "tree"],
+      "properties": { "commit": { "$ref": "#/$defs/objectId" }, "tree": { "$ref": "#/$defs/objectId" } }
+    },
+    "artifact": {
+      "oneOf": [
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["path", "state", "mode", "size_bytes", "sha256"],
+          "properties": {
+            "path": { "type": "string", "minLength": 1, "maxLength": 512, "pattern": "^[^\\\\\u0000-\u001f\u007f:]+$" },
+            "state": { "const": "present" }, "mode": { "enum": ["100644", "100755"] },
+            "size_bytes": { "type": "integer", "minimum": 0, "maximum": 16777216 }, "sha256": { "$ref": "#/$defs/hash" }
+          }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["path", "state"],
+          "properties": { "path": { "type": "string", "minLength": 1, "maxLength": 512, "pattern": "^[^\\\\\u0000-\u001f\u007f:]+$" }, "state": { "const": "absent" } }
+        }
+      ]
+    }
+  }
+}
