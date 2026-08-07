@@ -386,6 +386,31 @@
       "status": "approved"
     },
     {
+      "approval_id": "legacy-skill-review-compatibility-20260806",
+      "required_ancestor": "3ea062dccd6fa9f3ddbc6161beb27d87f4a4fe69",
+      "changed_paths": [
+        "docs/INSTRUCTION_SYNCHRONIZATION.md",
+        "scripts/Test-WorkflowContracts.ps1"
+      ],
+      "artifacts": [
+        {
+          "path": "docs/INSTRUCTION_SYNCHRONIZATION.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 5381,
+          "sha256": "cb3b055ff699cf3df67a0ea894378c60e26bedabc0726b6a065902464319069d"
+        },
+        {
+          "path": "scripts/Test-WorkflowContracts.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 118291,
+          "sha256": "7e7cf5f17af08235b6413e71325eeea94d74bc21199f77aaeea346781c2de0b8"
+        }
+      ],
+      "status": "approved"
+    },
+    {
       "approval_id": "quest-deployment-contract-consolidation-20260805",
       "required_ancestor": "8d5948dcd57f4a8c95c40121e879b6e094e77787",
       "changed_paths": [
