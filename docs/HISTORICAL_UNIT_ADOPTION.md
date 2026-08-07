@@ -18,6 +18,13 @@ legacy categories and profiles map into current portable routing semantics;
 their original domain meaning remains visible as a tag or limitation. Mappings
 must cover exactly the unknown values—neither missing nor extra entries pass.
 
+The one retired terminal publication-accounting mode may map from
+`publication` to current `feature` semantics for a blocked unit only. That
+mapping neither adds a current work mode nor reclassifies current work. It
+additionally binds the exact terminal event-line SHA-256 and terminal
+validation-receipt SHA-256; the compact-state reference hash-binds the adoption
+receipt, forming one exact state-to-receipt-to-terminal-evidence chain.
+
 Resource kinds may use a `null` current target only for historical-only,
 non-executable semantics. This preserves old observation evidence without
 claiming a current isolation or lease contract. In particular, an old
@@ -34,11 +41,15 @@ complete or claim that an instruction edit or validation command ran. The unit
 and its historical instruction bytes remain unchanged, and current or future
 units cannot use this route.
 
+Work-mode adoption changes only current validation projection. It does not
+complete a surface, accept a unit, execute a command, or prove publication.
+
 ## Fail-Closed Boundary
 
 Validation rejects receipt-reference hash drift, unit-byte drift, changed
-status, missing or duplicate units, duplicate or invalid mappings, missing
-terminal evidence, unknown normalized targets, incomplete instruction-impact
+status, missing or duplicate units, duplicate or invalid mappings, missing or
+drifted terminal evidence hashes, unknown normalized targets, incomplete
+work-mode or instruction-impact
 or surface-action coverage, and adoption by a current or future unit. Removing
 the receipt restores strict current validation; it never creates an ambient
 compatibility mode.
