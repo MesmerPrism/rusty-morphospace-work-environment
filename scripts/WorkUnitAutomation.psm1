@@ -430,7 +430,7 @@ function New-MorphospaceClaimPreflight {
                 $kindMatches = if ([string]$input.kind -eq 'file') { Test-Path -LiteralPath $absolute -PathType Leaf } else { Test-Path -LiteralPath $absolute -PathType Container }
                 if (-not $kindMatches) { throw "path kind does not match '$([string]$input.kind)'" }
                 if ([string]$input.kind -eq 'file') {
-                    $sha256 = (Get-FileHash -LiteralPath $absolute -Algorithm SHA256).Hash.ToLowerInvariant()
+                    $sha256 = Get-MorphospaceFileSha256 -Path $absolute
                     if ($null -ne $input.expected_sha256) {
                         $hashMatches = $sha256 -ceq [string]$input.expected_sha256
                         if (-not $hashMatches) { throw "file SHA-256 differs from expected_sha256" }
