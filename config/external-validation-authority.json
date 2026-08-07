@@ -5,13 +5,20 @@
   "mandatory_protected_paths": [
     ".github/workflows/static-admission.yml",
     ".github/workflows/validate.yml",
+    "config/external-owner-authorization.json",
     "config/external-validation-authority.json",
+    "schemas/external-owner-authorization-policy-v1.schema.json",
+    "schemas/external-owner-authorization-request-v1.schema.json",
+    "schemas/external-owner-authorization-v1.schema.json",
     "schemas/external-validation-authority-assessment-v1.schema.json",
     "schemas/external-validation-authority-policy-v1.schema.json",
     "scripts/Invoke-ExternalValidationAuthorityForGitHub.ps1",
+    "scripts/New-ExternalOwnerAuthorizationComment.ps1",
+    "scripts/Test-ExternalOwnerAuthorization.ps1",
     "scripts/Test-ExternalValidationAuthority.ps1",
     "scripts/Test-ExternalValidationAuthorityGitHubAdapterSelfTest.ps1",
-    "scripts/Test-ExternalValidationAuthoritySelfTest.ps1"
+    "scripts/Test-ExternalValidationAuthoritySelfTest.ps1",
+    "scripts/lib/ExternalOwnerAuthorization.psm1"
   ],
   "protected_rules": [
     {
@@ -374,6 +381,31 @@
           "mode": "100644",
           "size_bytes": 23046,
           "sha256": "6e42a5190dc821fc5174ce141a32a388fe3157fc4f0a045907ca41020763d84e"
+        }
+      ],
+      "status": "approved"
+    },
+    {
+      "approval_id": "legacy-skill-review-compatibility-20260806",
+      "required_ancestor": "3ea062dccd6fa9f3ddbc6161beb27d87f4a4fe69",
+      "changed_paths": [
+        "docs/INSTRUCTION_SYNCHRONIZATION.md",
+        "scripts/Test-WorkflowContracts.ps1"
+      ],
+      "artifacts": [
+        {
+          "path": "docs/INSTRUCTION_SYNCHRONIZATION.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 5381,
+          "sha256": "cb3b055ff699cf3df67a0ea894378c60e26bedabc0726b6a065902464319069d"
+        },
+        {
+          "path": "scripts/Test-WorkflowContracts.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 118291,
+          "sha256": "7e7cf5f17af08235b6413e71325eeea94d74bc21199f77aaeea346781c2de0b8"
         }
       ],
       "status": "approved"

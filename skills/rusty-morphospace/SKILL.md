@@ -40,6 +40,8 @@ When a repository changes its own validation policy or runner, route the
 two-step trust-root procedure to
 `docs/EXTERNAL_VALIDATION_AUTHORITY.md`. Static base-owned admission never
 substitutes for dynamic validation or publication authority.
+Only its exact protected-without-base-approval result may route to the pinned
+external-owner signed-comment gate, which can issue only the bound assessment.
 
 ## Authority Limits
 

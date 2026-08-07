@@ -30,6 +30,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkflowContracts.p
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-PlannedPublicationAccounting.ps1 -SelfTest
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-PublishedPrerequisiteSuffixReconciliation.ps1 -SelfTest
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ExternalValidationAuthoritySelfTest.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ExternalOwnerAuthorization.ps1 -SelfTest
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\New-ProjectWorkspace.ps1 -SelfTest
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-DocumentationLinks.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-SkillTemplates.ps1

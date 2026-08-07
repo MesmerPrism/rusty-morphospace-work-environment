@@ -50,7 +50,9 @@ outside the policy being changed. The gate must:
 - display and bind the exact base/head commits and trees plus the complete
   candidate path, Git mode, size, and SHA-256 set;
 - require an explicit repository-owner decision after that evidence exists;
-- issue a typed, candidate-specific, one-use authorization;
+- issue a typed authorization with a unique audit identity that is idempotent
+  only for the exact repository, pull request, base, head, tree, artifacts, and
+  assessment while it remains fresh;
 - retain `candidate_code_executed: false`, `execution_attested: false`, and
   `publication_authority: false` for the static assessment.
 
@@ -60,6 +62,55 @@ removal, or authorization inferred from prior approvals is forbidden. Dynamic
 checks, review, acceptance, and publication remain separate. The portable
 contract and rationale are summarized in
 [Workflow Stability And Feature Throughput](WORKFLOW_STABILITY.md).
+
+### Durable external owner gate
+
+The durable v1 route runs ordinary base-policy admission first. Only the exact
+`Protected changes do not match an exact base-approved change set.` outcome may
+continue; every other outcome fails. The adapter fetches public PR issue
+comments anonymously across bounded pages, with a shared timeout plus
+policy-controlled response-byte, comment-count, and comment-size bounds. It
+sends no token and performs no write. Exactly one fresh pinned-owner comment
+must contain a valid `rusty-morphospace-external-owner-authorization:v1` for the
+current evidence. Historical comments for older evidence remain inert audit
+history and do not have to be edited or deleted.
+
+The RSA-PSS-SHA256 signed canonical payload binds the issuer and unique audit ID,
+repository and PR, exact base/head commits and trees, complete sorted artifact
+path/state/mode/size/SHA-256 set, exact assessment SHA-256, issuance, expiry,
+decision, and limitations. The public SPKI is pinned in
+`config/external-owner-authorization.json`; authorization is limited to 24
+hours with at most five minutes of future skew. It permits only the base
+verifier to issue that static assessment and explicitly grants no execution,
+acceptance, merge, or publication authority.
+Required-check reruns are idempotent: the same valid comment may authorize the
+same exact evidence again within freshness. It is unusable for any changed
+repository, pull request, base, head, tree, artifact, or assessment. Once its
+candidate head is an ancestor of the trusted base, it is consumed and inert.
+No mutable replay database or exported signing key is introduced.
+When no current exact-evidence authorization is valid, the failed static job
+emits a fresh canonical typed request containing the complete evidence and
+assessment hash. The local helper signs that request-derived payload; it does
+not reconstruct evidence supplied by the owner. The successful assessment is
+the same assessment whose hash was signed; the authorization ID remains in the
+signed authorization document as audit identity rather than rewriting those
+assessment bytes.
+
+The safe local helper prints comment text but never publishes it:
+
+```powershell
+pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass `
+  -File .\scripts\New-ExternalOwnerAuthorizationComment.ps1 `
+  -RequestPath <authorization-request.json> `
+  -AuthorizationId <unique-audit-id> `
+  -IssuedAt <utc-issued-at> -ExpiresAt <utc-expires-at> `
+  -CertificateThumbprint <external-current-user-my-thumbprint>
+```
+
+Use `-PrivateKeyPemPath <external-private-key.pem>` instead when appropriate.
+Exactly one external signing source is required. Private keys and production
+certificate thumbprints never belong in portable configuration; tests create
+ephemeral RSA keys in process memory.
 
 ## Portable Command
 

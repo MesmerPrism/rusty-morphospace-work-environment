@@ -76,4 +76,9 @@ a current or future unit. See
    nonce-bound record, typed-failure, and cache-invalidation rules explicitly.
 5. Mark surfaces complete and append an iteration event before acceptance.
 
+External-owner-gate review for this authority change updated `AGENTS.md`, the
+README/router, the detailed external-validation runbook, and the three routed
+portable skills. No Meta Quest workflow change applies because the gate cannot
+execute candidate code or authorize a device operation.
+
 Stable module promotion also includes the `instruction-sync` gate.
