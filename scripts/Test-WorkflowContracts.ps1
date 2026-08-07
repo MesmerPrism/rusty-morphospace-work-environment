@@ -694,6 +694,16 @@ function Test-ProjectBundle {
         Assert-Contract ($script:InstructionImpactValues -contains $instructionImpact) "$Context unit '$($unit.unit_id)' has unknown instruction impact '$instructionImpact'."
         Test-UniqueProperty -Items $instructionSurfaces -Property "path" -Context "$Context unit '$($unit.unit_id)' instruction surfaces"
         $triggeredCategories = @($effectiveChangeCategories | Where-Object { $script:InstructionTriggerCategories -contains $_ } | Sort-Object -Unique)
+        $requiredSkillIds = New-Object System.Collections.Generic.List[string]
+        foreach ($category in $triggeredCategories) {
+            if ($script:InstructionSkillRouting.ContainsKey($category)) {
+                foreach ($skillId in @($script:InstructionSkillRouting[$category])) {
+                    if (-not $requiredSkillIds.Contains([string]$skillId)) {
+                        $requiredSkillIds.Add([string]$skillId) | Out-Null
+                    }
+                }
+            }
+        }
 
         $effectiveInstructionImpact = $instructionImpact
         $effectiveInstructionSurfaces = @($instructionSurfaces)
@@ -707,7 +717,8 @@ function Test-ProjectBundle {
 
             $expectedSurfacePaths = if ($triggeredCategories.Count -gt 0) {
                 @($instructionSurfaces | Where-Object {
-                    ($_.surface_kind -eq "agents" -or $_.surface_kind -eq "readme" -or $_.surface_kind -eq "router-doc") -and $_.action -ne "update"
+                    (($_.surface_kind -eq "agents" -or $_.surface_kind -eq "readme" -or $_.surface_kind -eq "router-doc") -and $_.action -eq "review-no-change") -or
+                    ($_.surface_kind -eq "skill" -and $requiredSkillIds.Contains([string]$_.skill_id) -and $_.action -eq "review-no-change")
                 } | ForEach-Object { [string]$_.path } | Sort-Object)
             } else { @() }
             $surfaceMappings = if ($adoption.normalization.PSObject.Properties.Name -contains "instruction_surfaces") { @($adoption.normalization.instruction_surfaces | Where-Object { $null -ne $_ }) } else { @() }
@@ -715,6 +726,8 @@ function Test-ProjectBundle {
             Assert-Contract (($expectedSurfacePaths -join "|") -eq ($mappedSurfacePaths -join "|")) "$Context historical unit '$unitId' instruction-surface mappings must exactly cover required legacy actions."
             if ($surfaceMappings.Count -gt 0) { Test-UniqueProperty -Items $surfaceMappings -Property "path" -Context "$Context historical unit '$unitId' instruction-surface mappings" }
             foreach ($mapping in $surfaceMappings) {
+                $mappingProperties = @($mapping.PSObject.Properties.Name | Sort-Object)
+                Assert-Contract (($mappingProperties -join "|") -ceq "current_action|legacy_action|path|retained_as") "$Context historical unit '$unitId' instruction-surface mapping '$($mapping.path)' has an unexpected property."
                 $matchingSurface = @($instructionSurfaces | Where-Object { [string]$_.path -ceq [string]$mapping.path })
                 Assert-Contract ($matchingSurface.Count -eq 1) "$Context historical unit '$unitId' instruction-surface mapping '$($mapping.path)' has no exact surface."
                 if ($matchingSurface.Count -eq 1) {
@@ -763,16 +776,6 @@ function Test-ProjectBundle {
             Assert-Contract ($agentSurfaces.Count -gt 0) "$Context unit '$($unit.unit_id)' needs the nearest AGENTS.md instruction surface."
             Assert-Contract ($routerSurfaces.Count -gt 0) "$Context unit '$($unit.unit_id)' needs a README or router-doc instruction surface."
 
-            $requiredSkillIds = New-Object System.Collections.Generic.List[string]
-            foreach ($category in $triggeredCategories) {
-                if ($script:InstructionSkillRouting.ContainsKey($category)) {
-                    foreach ($skillId in @($script:InstructionSkillRouting[$category])) {
-                        if (-not $requiredSkillIds.Contains([string]$skillId)) {
-                            $requiredSkillIds.Add([string]$skillId) | Out-Null
-                        }
-                    }
-                }
-            }
             foreach ($requiredSkillId in $requiredSkillIds.ToArray()) {
                 $matchingSkill = @($effectiveInstructionSurfaces | Where-Object {
                     $_.surface_kind -eq "skill" -and $_.skill_id -eq $requiredSkillId

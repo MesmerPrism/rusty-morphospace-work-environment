@@ -367,7 +367,9 @@ project-owned receipt binding exact bytes, status, terminal evidence, and
 complete normalization into current portable semantics. Never use that route
 for current work or expand registries merely to silence history. A historical
 instruction mismatch additionally binds the exact legacy impact and every
-affected surface path/action; it is not an ambient instruction-sync bypass.
+affected agent, router, or skill surface path/action. Preserve a blocked
+surface's `planned` status and record no completion or execution claim; this is
+not an ambient instruction-sync bypass.
 
 A drifted historical-adoption receipt keeps its expected and observed hashes
 as damaged original evidence. An immutable-Git-anchored

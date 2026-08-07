@@ -244,7 +244,9 @@ execution, acceptance, and publication remain disconnected authority nodes.
 
 Graph historical-unit adoption as an additive evidence node linked to exact
 unit bytes, terminal event, source workflow, and normalized semantics. It must
-not create an authority edge for current work.
+not create an authority edge for current work. If it normalizes a blocked skill
+surface action, retain the `planned` node and do not add completion or execution
+edges.
 Graph drift as separate expected-hash, observed-byte, and independently
 reconstructed nodes; only the reconstruction may connect to current validation.
 For embedded recovery, graph published source tree, exact external projection,
