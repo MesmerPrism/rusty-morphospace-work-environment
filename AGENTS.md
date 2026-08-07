@@ -142,9 +142,11 @@ private evidence, or machine paths back into this repository.
 
 Immutable accepted or blocked units may retain legacy workflow vocabulary only
 through a project-owned hash-bound historical-unit adoption receipt. Current
-and future units remain strict. Exact legacy instruction-impact and surface-
-action mismatches use the same complete, path-bound adoption contract; they are
-not an instruction-sync exemption. Route the complete contract to
+and future units remain strict. Exact legacy instruction-impact and agent,
+README/router, or skill surface-action mismatches use the same complete,
+path-bound adoption contract; a blocked unit's planned status remains planned
+and never claims an edit or validation ran. This is not an instruction-sync
+exemption. Route the complete contract to
 `docs/HISTORICAL_UNIT_ADOPTION.md`; never rewrite historical unit or event bytes.
 
 Portable composition and iteration IDs have one 2-through-128-character

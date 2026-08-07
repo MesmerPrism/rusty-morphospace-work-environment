@@ -32,8 +32,10 @@ automation CLI.
 Terminal historical units with legacy workflow vocabulary use the explicit
 [historical unit adoption contract](docs/HISTORICAL_UNIT_ADOPTION.md). Its
 project receipt binds exact bytes and normalization, including exact legacy
-instruction-impact and surface-action mismatches; current portable registries
-and all current/future instruction rules remain closed.
+instruction-impact and agent, router, or skill surface-action mismatches. It
+does not promote a blocked unit's planned surface to complete or claim an edit
+or validation ran; current portable registries and all current/future
+instruction rules remain closed.
 
 Portable project, unit, repository, feature, receipt, and event identities use
 lowercase alphanumeric/hyphen syntax and support 2 through 128 characters.

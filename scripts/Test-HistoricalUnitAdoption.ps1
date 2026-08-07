@@ -55,6 +55,22 @@ function Refresh-ReceiptReference($Root) {
     $state.historical_unit_adoption_receipts[0].sha256=Get-Sha (Join-Path $Root $state.historical_unit_adoption_receipts[0].path)
     Write-Json $statePath $state
 }
+function Convert-ToBlockedPlannedSkillFixture($Root) {
+    $unitPath=Join-Path $Root 'iteration-units/unit-example-001.json';$unit=Get-Content -Raw $unitPath|ConvertFrom-Json
+    $unit.status='blocked'
+    $requiredSkills=@($unit.instruction_surfaces|Where-Object{$_.surface_kind-eq'skill'-and$_.skill_id-in@('rusty-morphospace','system-engineering')})
+    foreach($surface in @($unit.instruction_surfaces|Where-Object{$_.surface_kind-eq'skill'})){$surface.action='review-no-change';$surface.status='planned'}
+    $unit.instruction_surfaces+= [pscustomobject]@{surface_kind='skill';skill_id='optional-skill';path='<skills-root>/optional-skill/SKILL.md';owner='optional-skill-owner';change_reason='Unrelated optional historical skill.';action='review-no-change';status='planned';validation='No normalization is required.'}
+    Write-Json $unitPath $unit
+    $event=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.iteration_event.v1';event_id='unit-example-001-validation-blocked';sequence=1;timestamp='2026-01-01T00:00:00Z';project_id='example-project';unit_id='unit-example-001';event_type='blocker';summary='Blocked under the historical workflow.';receipts=@('receipts/unit-example-001-validation.json')}
+    ($event|ConvertTo-Json -Compress)|Set-Content -LiteralPath (Join-Path $Root 'iteration-events.jsonl') -Encoding utf8
+    $receiptPath=Join-Path $Root 'receipts/historical-unit-adoption-example.json';$receipt=Get-Content -Raw $receiptPath|ConvertFrom-Json
+    $receipt.units[0].unit_sha256=Get-Sha $unitPath;$receipt.units[0].terminal_status='blocked';$receipt.units[0].terminal_evidence.event_id='unit-example-001-validation-blocked'
+    $receipt.units[0].normalization.instruction_surfaces+=@($requiredSkills|ForEach-Object{[pscustomobject]@{path=$_.path;legacy_action='review-no-change';current_action='update';retained_as='historical planned skill action retained without a completion claim'}})
+    Write-Json $receiptPath $receipt
+    $statePath=Join-Path $Root 'workspace.state.json';$state=Get-Content -Raw $statePath|ConvertFrom-Json;$state.last_event_id='unit-example-001-validation-blocked';Write-Json $statePath $state
+    Refresh-ReceiptReference $Root
+}
 function Assert-Rejected($Root, [scriptblock]$Damage, $Name) {
     & $Damage
     $failed=$false
@@ -67,7 +83,20 @@ $base=Join-Path ([IO.Path]::GetTempPath()) ('morphospace-historical-adoption-'+[
 try {
     New-Fixture $base
     & $validator -RepoRoot $RepoRoot -WorkspaceRoot $base -SkipOwnerSelfTests | Out-Null
-    $cases=@('receipt-hash','unit-hash','missing-mapping','extra-mapping','invalid-target','missing-instruction-impact','extra-instruction-surface','instruction-action-drift','duplicate-unit','current-unit','terminal-event','current-network-kind')
+    $blockedSkillRoot="$base-blocked-skill";Copy-Item $base $blockedSkillRoot -Recurse
+    Convert-ToBlockedPlannedSkillFixture $blockedSkillRoot
+    & $validator -RepoRoot $RepoRoot -WorkspaceRoot $blockedSkillRoot -SkipOwnerSelfTests | Out-Null
+    foreach($case in @('missing-skill-surface','skill-status-claim','unknown-skill-action')){
+        $root="$blockedSkillRoot-$case";Copy-Item $blockedSkillRoot $root -Recurse
+        switch($case){
+            'missing-skill-surface' { Assert-Rejected $root { $p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$d=Get-Content -Raw $p|ConvertFrom-Json;$d.units[0].normalization.instruction_surfaces=@($d.units[0].normalization.instruction_surfaces|Where-Object{$_.path-ne'<skills-root>/rusty-morphospace/SKILL.md'});Write-Json $p $d;Refresh-ReceiptReference $root } $case }
+            'skill-status-claim' { Assert-Rejected $root { $p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$d=Get-Content -Raw $p|ConvertFrom-Json;$skill=@($d.units[0].normalization.instruction_surfaces|Where-Object{$_.path-like'<skills-root>/*'})[0];$skill|Add-Member -NotePropertyName current_status -NotePropertyValue complete;Write-Json $p $d;Refresh-ReceiptReference $root } $case }
+            'unknown-skill-action' { Assert-Rejected $root { $u=Join-Path $root 'iteration-units/unit-example-001.json';$d=Get-Content -Raw $u|ConvertFrom-Json;$skill=@($d.instruction_surfaces|Where-Object{$_.skill_id-eq'rusty-morphospace'})[0];$skill.action='skip';Write-Json $u $d;$p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$r=Get-Content -Raw $p|ConvertFrom-Json;$r.units[0].unit_sha256=Get-Sha $u;Write-Json $p $r;Refresh-ReceiptReference $root } $case }
+        }
+        Remove-Item -LiteralPath $root -Recurse -Force
+    }
+    Remove-Item -LiteralPath $blockedSkillRoot -Recurse -Force
+    $cases=@('receipt-hash','unit-hash','missing-mapping','extra-mapping','invalid-target','missing-instruction-impact','extra-instruction-surface','instruction-action-drift','unknown-agent-action','unknown-router-action','duplicate-unit','current-unit','terminal-event','current-network-kind')
     foreach($case in $cases){
         $root="$base-$case";Copy-Item $base $root -Recurse
         switch($case){
@@ -79,6 +108,8 @@ try {
             'missing-instruction-impact' { Assert-Rejected $root { $p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$d=Get-Content -Raw $p|ConvertFrom-Json;$d.units[0].normalization.instruction_impact=@();Write-Json $p $d;Refresh-ReceiptReference $root } $case }
             'extra-instruction-surface' { Assert-Rejected $root { $p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$d=Get-Content -Raw $p|ConvertFrom-Json;$d.units[0].normalization.instruction_surfaces+= [pscustomobject]@{path='docs/extra.md';legacy_action='review-no-change';current_action='update';retained_as='extra'};Write-Json $p $d;Refresh-ReceiptReference $root } $case }
             'instruction-action-drift' { Assert-Rejected $root { $p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$d=Get-Content -Raw $p|ConvertFrom-Json;$d.units[0].normalization.instruction_surfaces[0].legacy_action='update';Write-Json $p $d;Refresh-ReceiptReference $root } $case }
+            'unknown-agent-action' { Assert-Rejected $root { $u=Join-Path $root 'iteration-units/unit-example-001.json';$d=Get-Content -Raw $u|ConvertFrom-Json;$surface=@($d.instruction_surfaces|Where-Object{$_.surface_kind-eq'agents'})[0];$surface.action='skip';Write-Json $u $d;$p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$r=Get-Content -Raw $p|ConvertFrom-Json;$r.units[0].unit_sha256=Get-Sha $u;$mapping=@($r.units[0].normalization.instruction_surfaces|Where-Object{$_.path-eq$surface.path})[0];$mapping.legacy_action='skip';Write-Json $p $r;Refresh-ReceiptReference $root } $case }
+            'unknown-router-action' { Assert-Rejected $root { $u=Join-Path $root 'iteration-units/unit-example-001.json';$d=Get-Content -Raw $u|ConvertFrom-Json;$surfaces=@($d.instruction_surfaces|Where-Object{$_.surface_kind-eq'readme'-or$_.surface_kind-eq'router-doc'});foreach($surface in $surfaces){$surface.action='skip'};Write-Json $u $d;$p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$r=Get-Content -Raw $p|ConvertFrom-Json;$r.units[0].unit_sha256=Get-Sha $u;foreach($surface in $surfaces){$mapping=@($r.units[0].normalization.instruction_surfaces|Where-Object{$_.path-eq$surface.path})[0];$mapping.legacy_action='skip'};Write-Json $p $r;Refresh-ReceiptReference $root } $case }
             'duplicate-unit' { Assert-Rejected $root { $p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$d=Get-Content -Raw $p|ConvertFrom-Json;$d.units+= $d.units[0];Write-Json $p $d;Refresh-ReceiptReference $root } $case }
             'current-unit' { Assert-Rejected $root { $u=Join-Path $root 'iteration-units/unit-example-001.json';$d=Get-Content -Raw $u|ConvertFrom-Json;$d.status='active';Write-Json $u $d;$p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$r=Get-Content -Raw $p|ConvertFrom-Json;$r.units[0].unit_sha256=Get-Sha $u;$r.units[0].terminal_status='accepted';Write-Json $p $r;Refresh-ReceiptReference $root } $case }
             'terminal-event' { Assert-Rejected $root { $p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$d=Get-Content -Raw $p|ConvertFrom-Json;$d.units[0].terminal_evidence.event_id='missing-terminal-event';Write-Json $p $d;Refresh-ReceiptReference $root } $case }
@@ -114,5 +145,5 @@ try {
     $failed=$false;try{& $validator -RepoRoot $RepoRoot -WorkspaceRoot $reconstructionRoot -RepositoryMapPath $repoMapPath -SkipOwnerSelfTests *> $null}catch{$failed=$true}
     if(-not$failed){throw'Tampered historical reconstruction reference was accepted.'}
     Remove-Item -LiteralPath $reconstructionRoot -Recurse -Force
-    Write-Host 'Historical-unit adoption self-test passed (positive, reconstructed projection, and 13 damaged cases).'
+    Write-Host 'Historical-unit adoption self-test passed (positive, reconstructed projection, and 18 damaged cases).'
 } finally { if(Test-Path $base){Remove-Item -LiteralPath $base -Recurse -Force} }

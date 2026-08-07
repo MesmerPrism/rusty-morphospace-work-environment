@@ -25,11 +25,14 @@ claiming a current isolation or lease contract. In particular, an old
 
 An immutable terminal unit may also retain a formerly valid instruction-impact
 decision and instruction-surface actions. The receipt maps the exact legacy
-impact to `update` and names every affected surface path whose historical
-`review-no-change` action now requires `update`. These mappings must cover
-exactly the current semantic mismatches; missing, extra, renamed, or action-
-drifted surfaces reject. The unit and its historical instruction bytes remain
-unchanged, and current or future units cannot use this route.
+impact to `update` and names every affected agent, README/router, or skill path
+whose historical `review-no-change` action now requires `update`. These
+mappings must cover exactly the current semantic mismatches; missing, extra,
+renamed, or action-drifted surfaces reject. A blocked unit may retain a
+historical `planned` status: action normalization does not mark a surface
+complete or claim that an instruction edit or validation command ran. The unit
+and its historical instruction bytes remain unchanged, and current or future
+units cannot use this route.
 
 ## Fail-Closed Boundary
 
@@ -61,4 +64,5 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-HistoricalUnitAdopt
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkflowContracts.ps1 -WorkspaceRoot <project-root>\morphospace
 ```
 
-The focused self-test covers one positive adoption and nine damaged cases.
+The focused self-test covers accepted and blocked positive adoptions, including
+planned skill-action normalization, plus damaged and over-claiming cases.
