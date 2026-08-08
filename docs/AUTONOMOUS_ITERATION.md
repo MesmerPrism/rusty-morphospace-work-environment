@@ -197,6 +197,15 @@ commit/unit accounting and live clean readback before it may clear the exact
 pending bundle. It records workflow state only; details are in
 [Planned Publication Accounting](PLANNED_PUBLICATION_ACCOUNTING.md).
 
+When immutable no-force execution evidence instead predates the recorded plan
+timestamp and a source final is an explicitly bound merge integration that
+ordinary commit projection cannot enumerate truthfully, do not loosen
+`RecordPublication` or edit the evidence. Route the one matching bundle through
+[`ReconcileExecutedPreparedPublication`](EXECUTED_PREPARED_PUBLICATION_RECONCILIATION.md)
+after exact container, timestamp, ref, path-set, parent-order, and per-parent
+projection validation. The action records the non-ordinary shape and changes
+workflow state only.
+
 An exact pending bundle that remains demonstrably unexecuted may instead use
 `RetirePreparedPush`. It binds the embedded plan and preparation-event owner
 containers, requires complete stable clean repository observations and fresh

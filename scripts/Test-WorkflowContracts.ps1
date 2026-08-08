@@ -1349,6 +1349,7 @@ $requiredSchemaNames = @(
     "work-unit-automation-receipt-v2.schema.json",
     "published-planning-authority-adoption.schema.json",
     "published-prerequisite-suffix-reconciliation.schema.json",
+    "executed-prepared-publication-reconciliation.schema.json",
     "historical-release-closure-receipt.schema.json",
     "historical-unit-adoption-receipt.schema.json",
     "historical-unit-adoption-reconstruction.schema.json",
@@ -1469,6 +1470,7 @@ $automationReceipt = [ordered]@{
     planned_publication = $null
     planning_suffix_rewrite_recovery = $null
     published_prerequisite_suffix_reconciliation = $null
+    executed_prepared_publication_reconciliation = $null
     push_plan = $null
     event_id = "example-unit-planning-authority-adopted-0001"
 }
@@ -1480,6 +1482,20 @@ $automationReceipt.action = "Inspect"
 Assert-Contract ($automationReceipt | ConvertTo-Json -Depth 16 | Test-Json -SchemaFile $automationReceiptSchema -ErrorAction Stop) "Non-adoption automation receipt with a null adoption binding was rejected."
 $automationReceipt.published_planning_authority_adoption = $automationAdoptionBinding
 Assert-Contract (-not ($automationReceipt | ConvertTo-Json -Depth 16 | Test-Json -SchemaFile $automationReceiptSchema -ErrorAction SilentlyContinue)) "Non-adoption automation receipt with an adoption binding was accepted."
+$automationReceipt.published_planning_authority_adoption = $null
+$automationReceipt.action = "ReconcileExecutedPreparedPublication"
+$automationReceipt.executed_prepared_publication_reconciliation = [ordered]@{
+    reconciliation_id = "example-executed-prepared-reconciliation"
+    path = "receipts/example-executed-prepared-reconciliation.json"
+    sha256 = ("b" * 64)
+    executed_push_receipt = [ordered]@{ path = "receipts/example-executed-push.json"; sha256 = ("c" * 64) }
+}
+Assert-Contract ($automationReceipt | ConvertTo-Json -Depth 16 | Test-Json -SchemaFile $automationReceiptSchema -ErrorAction Stop) "Executed prepared-publication automation receipt with its exact binding was rejected."
+$automationReceipt.executed_prepared_publication_reconciliation = $null
+Assert-Contract (-not ($automationReceipt | ConvertTo-Json -Depth 16 | Test-Json -SchemaFile $automationReceiptSchema -ErrorAction SilentlyContinue)) "Executed prepared-publication automation receipt without its binding was accepted."
+$automationReceipt.action = "Inspect"
+$automationReceipt.executed_prepared_publication_reconciliation = [ordered]@{ reconciliation_id = "example-executed-prepared-reconciliation"; path = "receipts/example.json"; sha256 = ("b" * 64); executed_push_receipt = [ordered]@{ path = "receipts/executed.json"; sha256 = ("c" * 64) } }
+Assert-Contract (-not ($automationReceipt | ConvertTo-Json -Depth 16 | Test-Json -SchemaFile $automationReceiptSchema -ErrorAction SilentlyContinue)) "Non-reconciliation automation receipt with an executed prepared-publication binding was accepted."
 
 $v2ClosureExample = Read-JsonDocument -Path (Join-Path $templatesRoot "unplanned-publication-closure-v2.example.json") -Context "v2 unplanned-publication closure example"
 if ($v2ClosureExample) {
@@ -1638,6 +1654,19 @@ Assert-Contract (Test-Path -LiteralPath $publishedPrerequisiteValidator -PathTyp
 if ((-not $SkipOwnerSelfTests) -and (Test-Path -LiteralPath $publishedPrerequisiteValidator -PathType Leaf)) {
     try { & $publishedPrerequisiteValidator -SelfTest | Out-Null }
     catch { Add-Failure -Message "Published-prerequisite suffix reconciliation self-test failed: $($_.Exception.Message)" }
+}
+
+$executedPreparedTemplate = Join-Path $templatesRoot "executed-prepared-publication-reconciliation.example.json"
+$executedPreparedValidator = Join-Path $RepoRoot "scripts\Test-ExecutedPreparedPublicationReconciliation.ps1"
+Assert-Contract (Test-Path -LiteralPath $executedPreparedTemplate -PathType Leaf) "Required executed prepared-publication reconciliation example is missing."
+Assert-Contract (Test-Path -LiteralPath $executedPreparedValidator -PathType Leaf) "Required executed prepared-publication reconciliation validator is missing."
+if (Test-Path -LiteralPath $executedPreparedTemplate -PathType Leaf) {
+    try { Assert-Contract (Get-Content -Raw -LiteralPath $executedPreparedTemplate | Test-Json -SchemaFile (Join-Path $schemaRoot 'executed-prepared-publication-reconciliation.schema.json') -ErrorAction Stop) "Executed prepared-publication reconciliation example was rejected by its schema." }
+    catch { Add-Failure -Message "Executed prepared-publication reconciliation example schema validation failed: $($_.Exception.Message)" }
+}
+if ((-not $SkipOwnerSelfTests) -and (Test-Path -LiteralPath $executedPreparedValidator -PathType Leaf)) {
+    try { & $executedPreparedValidator -SelfTest | Out-Null }
+    catch { Add-Failure -Message "Executed prepared-publication reconciliation self-test failed: $($_.Exception.Message)" }
 }
 
 $releaseCapsuleTemplate = Join-Path $templatesRoot "release-capsule.example.json"

@@ -124,6 +124,14 @@ That distinct stale-authority shape uses
 
 ## Published prerequisite suffix reconciliation
 
+If ordinary accounting fails earlier because immutable no-force execution
+predates the recorded PreparePush timestamp and an exact source final is
+a bound merge integration, do not route that shape through the prerequisite
+suffix contract. Use the separate
+[`executed_prepared_publication_reconciliation.v1`](EXECUTED_PREPARED_PUBLICATION_RECONCILIATION.md)
+contract, which preserves the failed ordinary-accounting claim and consumes
+only the matching pending bundle after exact live evidence validation.
+
 When the exact local prerequisite suffix described above was published by an
 external no-force operation before `RecordPublication` consumed the pending
 bundle, ordinary accounting must continue to reject the now-advanced planning

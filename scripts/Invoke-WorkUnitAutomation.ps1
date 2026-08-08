@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("Inspect", "Ready", "Claim", "Resume", "CompleteInstructionSurfaces", "CorrectActiveReadOnlyDependencies", "CorrectActiveProjectRepositoryScope", "BeginValidation", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RetirePreparedPush", "ReconcilePreparedPublication", "ResolveBlocker", "CorrectResolvedBlockerEvidence", "CorrectHistoricalBlockerResolutionIntentBinding", "CorrectCompletedTransitionSemantics", "NormalizeEventLedgerPrefix", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix")]
+    [ValidateSet("Inspect", "Ready", "Claim", "Resume", "CompleteInstructionSurfaces", "CorrectActiveReadOnlyDependencies", "CorrectActiveProjectRepositoryScope", "BeginValidation", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RetirePreparedPush", "ReconcilePreparedPublication", "ResolveBlocker", "CorrectResolvedBlockerEvidence", "CorrectHistoricalBlockerResolutionIntentBinding", "CorrectCompletedTransitionSemantics", "NormalizeEventLedgerPrefix", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix", "ReconcileExecutedPreparedPublication")]
     [string]$Action,
     [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
     [string]$UnitId = "",
@@ -14,6 +14,7 @@ param(
     [string]$PublicationAccounting = "",
     [string]$PlanningSuffixRewriteRecovery = "",
     [string]$PublishedPrerequisiteSuffixReconciliation = "",
+    [string]$ExecutedPreparedPublicationReconciliation = "",
     [string]$PublicationOrderingInterruption = "",
     [string]$PreparedPushRetirement = "",
     [string]$PreparedPublicationReconstruction = "",
@@ -176,6 +177,7 @@ $arguments = @{
     PublicationAccounting = $PublicationAccounting
     PlanningSuffixRewriteRecovery = $PlanningSuffixRewriteRecovery
     PublishedPrerequisiteSuffixReconciliation = $PublishedPrerequisiteSuffixReconciliation
+    ExecutedPreparedPublicationReconciliation = $ExecutedPreparedPublicationReconciliation
     PublicationOrderingInterruption = $PublicationOrderingInterruption
     AdoptionReceipt = $AdoptionReceipt
     InstructionCompletionId = $InstructionCompletionId

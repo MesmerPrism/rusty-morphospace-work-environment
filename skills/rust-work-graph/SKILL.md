@@ -241,6 +241,11 @@ result through one pinned-owner signed authorization identity to the exact
 static assessment; exact-evidence reruns remain idempotent within freshness,
 changed evidence rejects, and trusted-base ancestry consumes the authorization;
 execution, acceptance, and publication remain disconnected authority nodes.
+For non-ordinary executed prepared-publication evidence, graph the plan owner,
+prepare transition, executed receipt, pending bundle, and live remote refs as
+separate nodes. A merge integration must retain ordered side/protected parents,
+their merge base and trees, and base-to-parent plus parent-to-final path-set
+edges; never replace that graph with an empty single-commit projection.
 
 Graph historical-unit adoption as an additive evidence node linked to exact
 unit bytes, terminal event, source workflow, and normalized semantics. It must

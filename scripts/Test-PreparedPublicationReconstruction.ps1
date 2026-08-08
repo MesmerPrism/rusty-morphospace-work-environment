@@ -340,7 +340,7 @@ try{
     [IO.File]::WriteAllLines((Join-Path $workspace 'iteration-events.jsonl'),$canonicalEventLines,[Text.UTF8Encoding]::new($false))
     Write-ReconstructionJson (Join-Path $workspace 'workspace.state.json') $preConflictState
 
-    foreach($action in @('RecordPublication','ReconcilePublication','ReconcilePlanningSuffixRewrite','ReconcilePublishedPrerequisiteSuffix','ReconcilePreparedPublication','RetirePreparedPush')){
+    foreach($action in @('RecordPublication','ReconcilePublication','ReconcilePlanningSuffixRewrite','ReconcilePublishedPrerequisiteSuffix','ReconcileExecutedPreparedPublication','ReconcilePreparedPublication','RetirePreparedPush')){
         $slug=($action-replace'([a-z])([A-Z])','$1-$2').ToLowerInvariant()
         $standaloneRelative="receipts/standalone-$slug.json"
         Write-ReconstructionJson (Join-Path $workspace ($standaloneRelative-replace'/','\')) ([ordered]@{schema='rusty.morphospace.workflow.work_unit_automation_receipt.v2';action=$action;audit_receipt=[ordered]@{bundle_id='synthetic-bundle'}})
