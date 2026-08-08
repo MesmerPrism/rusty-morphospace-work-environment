@@ -48,6 +48,8 @@ external-owner signed-comment gate, which can issue only the bound assessment.
 For an immutable terminal unit, normalize an outdated skill action only through
 the exact hash-bound historical adoption receipt. Preserve `planned` as
 `planned`; never infer instruction completion or validation execution.
+Normalize retired `publication` to `feature` only for an exact blocked unit
+with hashed terminal evidence; never infer acceptance or publication.
 
 Treat inspection and planning as non-mutating. Work only inside user-authorized
 repositories and current-unit paths. Preserve dirty work and historical

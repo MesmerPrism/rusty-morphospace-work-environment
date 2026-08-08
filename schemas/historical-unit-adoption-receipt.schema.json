@@ -28,13 +28,19 @@
           "terminal_evidence": {
             "type": "object", "additionalProperties": false,
             "required": ["event_id", "receipt_path"],
-            "properties": { "event_id": { "$ref": "#/$defs/id" }, "receipt_path": { "type": ["string", "null"] } }
+            "properties": {
+              "event_id": { "$ref": "#/$defs/id" },
+              "event_sha256": { "$ref": "#/$defs/hash" },
+              "receipt_path": { "type": ["string", "null"] },
+              "receipt_sha256": { "$ref": "#/$defs/hash" }
+            }
           },
           "normalization": {
             "type": "object", "additionalProperties": false,
             "required": ["change_categories", "validation_profiles", "resource_kinds"],
             "properties": {
               "change_categories": { "$ref": "#/$defs/mappings" },
+              "work_modes": { "$ref": "#/$defs/historicalWorkModeMappings" },
               "validation_profiles": { "$ref": "#/$defs/mappings" },
               "resource_kinds": { "$ref": "#/$defs/resourceMappings" },
               "instruction_impact": { "$ref": "#/$defs/mappings" },
@@ -52,7 +58,28 @@
                 }
               }
             }
-          }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "normalization": {
+                    "required": ["work_modes"],
+                    "properties": { "work_modes": { "minItems": 1 } }
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "terminal_status": { "const": "blocked" },
+                  "terminal_evidence": {
+                    "required": ["event_id", "event_sha256", "receipt_path", "receipt_sha256"],
+                    "properties": { "receipt_path": { "type": "string", "minLength": 1 } }
+                  }
+                }
+              }
+            }
+          ]
         }
       }
     }
@@ -66,6 +93,18 @@
         "type": "object", "additionalProperties": false,
         "required": ["legacy", "current", "retained_as"],
         "properties": { "legacy": { "$ref": "#/$defs/id" }, "current": { "$ref": "#/$defs/id" }, "retained_as": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "historicalWorkModeMappings": {
+      "type": "array", "maxItems": 1,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["legacy", "current", "retained_as"],
+        "properties": {
+          "legacy": { "const": "publication" },
+          "current": { "const": "feature" },
+          "retained_as": { "type": "string", "minLength": 1 }
+        }
       }
     },
     "resourceMappings": {
