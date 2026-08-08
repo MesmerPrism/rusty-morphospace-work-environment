@@ -230,6 +230,40 @@ try {
         $Value.authorization.signature.value_base64 = [Convert]::ToBase64String($signature)
         return $Value
     }
+
+    # Exercise the public signing helper in a fresh process. Its repository-pinned
+    # key must reject this fixture key, but only after every helper command remains
+    # visible across the nested reconciliation-module imports.
+    $helperDraftPath = Join-Path $planning 'local\fixture-prepared-push-suffix-helper-draft.json'
+    $helperKeyPath = Join-Path $planning 'local\fixture-prepared-push-suffix-helper-key.pem'
+    $helperOutPath = Join-Path $planning 'local\fixture-prepared-push-suffix-helper-signed.json'
+    Write-TestJson $helperDraftPath $document
+    [IO.File]::WriteAllText($helperKeyPath,$rsa.ExportPkcs8PrivateKeyPem().Replace("`r",''),[Text.UTF8Encoding]::new($false))
+    $helperIssued = [datetimeoffset]::UtcNow
+    $helperTimestampFormat = "yyyy-MM-dd'T'HH:mm:ss'Z'"
+    $helperIssuedText = $helperIssued.ToString($helperTimestampFormat,[Globalization.CultureInfo]::InvariantCulture)
+    $helperExpiresText = $helperIssued.AddHours(1).ToString($helperTimestampFormat,[Globalization.CultureInfo]::InvariantCulture)
+    $nativeCommandPreference = $PSNativeCommandUseErrorActionPreference
+    $PSNativeCommandUseErrorActionPreference = $false
+    try {
+        $helperOutput = @(& pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass `
+            -File (Join-Path $PSScriptRoot 'New-PreparedPushTransactionSuffixAuthorization.ps1') `
+            -DraftPath $helperDraftPath `
+            -AuthorizationId 'fixture-standalone-helper-import-lifetime' `
+            -IssuedAt $helperIssuedText `
+            -ExpiresAt $helperExpiresText `
+            -PrivateKeyPemPath $helperKeyPath `
+            -OutPath $helperOutPath 2>&1)
+        $helperExitCode = $LASTEXITCODE
+    } finally {
+        $PSNativeCommandUseErrorActionPreference = $nativeCommandPreference
+    }
+    $helperText = ($helperOutput | ForEach-Object { [string]$_ }) -join "`n"
+    if ($helperExitCode -eq 0 -or $helperText -cnotmatch 'Signing key does not equal the pinned external owner key\.' -or
+        $helperText -match "Read-MorphospaceProtocolJson'.*not recognized" -or [IO.File]::Exists($helperOutPath)) {
+        throw "Standalone signing-helper import-lifetime regression failed (exit $helperExitCode): $helperText"
+    }
+
     $document = & $signDocument $document
     $inputPath = Join-Path $planning 'local\fixture-prepared-push-suffix.json'
     Write-TestJson $inputPath $document

@@ -12,9 +12,9 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 if (($PrivateKeyPemPath -eq '') -eq ($CertificateThumbprint -eq '')) { throw 'Specify exactly one external signing source.' }
 
+Import-Module (Join-Path $PSScriptRoot 'ReconcilePreparedPushTransactionSuffix.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\ExternalOwnerAuthorization.psm1') -Force
-Import-Module (Join-Path $PSScriptRoot 'ReconcilePreparedPushTransactionSuffix.psm1') -Force
 
 $repoRoot = Split-Path $PSScriptRoot -Parent
 $draft = Read-MorphospaceProtocolJson (Resolve-Path -LiteralPath $DraftPath)
