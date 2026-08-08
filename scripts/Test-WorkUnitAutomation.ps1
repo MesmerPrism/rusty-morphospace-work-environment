@@ -66,6 +66,26 @@ try {
     $freshPwsh = (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source
     $fresh = Start-Process -FilePath $freshPwsh -ArgumentList @(
         "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (Join-Path $PSScriptRoot "Invoke-WorkUnitAutomation.ps1"),
+        "-Action", "ReconcilePreparedPushTransactionSuffix", "-WorkspaceRoot", (Join-Path ([IO.Path]::GetTempPath()) "missing-prepared-push-suffix-workspace"),
+        "-UnitId", "test-unit", "-RepoMapPath", "missing-repository-map.json",
+        "-PreparedPushTransactionSuffixReconciliation", "receipts/missing-reconciliation.json",
+        "-OutPath", "receipts/missing-output.json"
+    ) -NoNewWindow -Wait -PassThru -RedirectStandardOutput $freshStdout -RedirectStandardError $freshStderr
+    $freshText = ((Get-Content -Raw $freshStdout -ErrorAction SilentlyContinue) + (Get-Content -Raw $freshStderr -ErrorAction SilentlyContinue))
+    Assert-Automation ($fresh.ExitCode -ne 0) "fresh-process prepared-push transaction-suffix probe unexpectedly succeeded"
+    Assert-Automation ($freshText -notmatch "Cannot validate argument on parameter 'Action'|named PreparedPushTransactionSuffixReconciliation parameter cannot be found|named OutPath parameter cannot be found") "fresh-process public Invoke entrypoint does not expose prepared-push transaction-suffix reconciliation"
+} finally {
+    if ($null -ne $fresh) { $fresh.Dispose() }
+    Remove-Item -LiteralPath $freshStdout,$freshStderr -Force -ErrorAction SilentlyContinue
+}
+
+$freshStdout = [IO.Path]::GetTempFileName()
+$freshStderr = [IO.Path]::GetTempFileName()
+$fresh = $null
+try {
+    $freshPwsh = (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source
+    $fresh = Start-Process -FilePath $freshPwsh -ArgumentList @(
+        "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (Join-Path $PSScriptRoot "Invoke-WorkUnitAutomation.ps1"),
         "-Action", "AdoptPublishedPlanningAuthority", "-WorkspaceRoot", (Join-Path ([IO.Path]::GetTempPath()) "missing-planning-authority-adoption-workspace"),
         "-UnitId", "test-unit", "-RepoMapPath", "missing-repository-map.json",
         "-PublishedPlanningAuthorityAdoption", "receipts/missing-adoption.json"

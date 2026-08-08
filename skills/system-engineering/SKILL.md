@@ -174,6 +174,11 @@ final is a merge integration, use a distinct non-ordinary reconciliation:
 bind both evidence containers, exact live refs, full path-set fingerprints,
 ordered parents, merge base, and all per-parent projections. Preserve the
 chronology defect and merge graph; do not weaken ordinary accounting.
+Model a prepared-push transaction-suffix recovery as one signed, exact-bundle
+state transition only when source owners are clean linear commits, planning has
+one receipt-only commit, and exactly five transaction-owned paths remain dirty.
+Bind every existing byte and timestamp; add no Git, acceptance, execution, or
+publication-authority edge.
 If that planning-only suffix was later replaced with force-with-lease, use the
 additive incident contract binding exactly two common parent-relative paths,
 one replacement delta path, both trees, and unchanged source refs; do not

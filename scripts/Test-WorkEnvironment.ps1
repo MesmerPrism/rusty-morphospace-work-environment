@@ -259,6 +259,13 @@ if ($SelfTest) {
     }
 
     try {
+        & (Join-Path $RepoRoot "scripts\Test-PreparedPushTransactionSuffixReconciliation.ps1") -SelfTest
+        Add-CheckResult -Name "workflow:prepared-push-transaction-suffix-reconciliation" -Status "ok" -Detail "Validated signed exact-bundle authority, the normal linear owner shape, one planning receipt suffix, exactly five dirty PreparePush paths, and one-bundle consumption."
+    } catch {
+        Add-CheckResult -Name "workflow:prepared-push-transaction-suffix-reconciliation" -Status "missing" -Required $true -Detail $_.Exception.Message
+    }
+
+    try {
         & (Join-Path $RepoRoot "scripts\Test-ReleaseCapsule.ps1") -SelfTest
         Add-CheckResult -Name "workflow:release-capsule" -Status "ok" -Detail "Validated immutable candidate cuts, historical descendant closure, isolated trees, preserved dirty overlays, and damaged evidence rejection."
     } catch {

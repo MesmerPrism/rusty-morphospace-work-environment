@@ -458,6 +458,13 @@ ancestry consumes the authorization.
   merge parents/per-parent projections; claim neither corrected chronology nor
   flattened history. See
   `docs/EXECUTED_PREPARED_PUBLICATION_RECONCILIATION.md`.
+- If normal linear source publication and one clean planning receipt-only
+  commit are complete but exactly the five transaction-owned `PreparePush`
+  paths remain dirty, keep `RecordPublication` strict. Use only the externally
+  signed `ReconcilePreparedPushTransactionSuffix` route for the exact pending
+  bundle; preserve all evidence bytes/timestamps and claim no Git, acceptance,
+  execution, or publication authority. See
+  `docs/PREPARED_PUSH_TRANSACTION_SUFFIX_RECONCILIATION.md`.
 - A later force-with-lease replacement of an already published planning-only
   finalization suffix uses only the additive
   `planning_suffix_rewrite_recovery.v1` incident route. Bind both commits and
