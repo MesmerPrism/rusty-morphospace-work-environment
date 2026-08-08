@@ -41,6 +41,16 @@ A useful inventory records:
 - high-pressure files or modules;
 - public/private boundary notes.
 
+For branch/worktree lifecycle work, route the exact procedure through
+`docs/REPOSITORY_LIFECYCLE.md` in the resolved Work Environment. Require the
+strict consumer registry and read-only advisory before proposing retirement.
+`candidate-retire` is only an owner-review edge: it never authorizes a delete,
+local cleanup, merge, GC, ref update, or GitHub setting change. Preserve
+`hold` and `incomplete` nodes with their exact consumer and reevaluation gate.
+Keep remote ref retirement separate from local branch/worktree cleanup, and
+resolve each repository's divergent, dirty, or tip-mismatched legacy refs
+before graphing adoption of a new byte-level source policy.
+
 ## Graph Interpretation
 
 Graph evidence is a routing aid, not proof that a dependency belongs in core.
