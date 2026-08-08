@@ -30,6 +30,10 @@ named by the user or ask for its location; never guess a machine path.
   observability, validation scorecards, or mitigation maps.
 - Invoke `$rust-work-graph` before broad inventories, source-root maps,
   dependency or instruction-surface audits, and refactor impact graphs.
+- Route shared Android WebSocket hardening to Rusty Quest: consolidate
+  standalone and embedded placements behind one bounded RFC6455 core, keep
+  JSON/Binder/Manifold/effect/media authority separate, and require host
+  conformance and placement parity before Binder or device work.
 - Invoke `$meta-quest-workflow` before any live Quest, device, ADB, APK
   install/launch, capture, logcat, Perfetto, Wi-Fi ADB, or Meta tooling work.
 
