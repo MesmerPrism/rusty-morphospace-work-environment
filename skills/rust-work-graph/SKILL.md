@@ -234,6 +234,11 @@ use, revocation/expiry, revision, receipt, and audit nodes. Model different
 signer, identity substitution, capability escalation, random-token collision,
 replay, stale revision, expiry, and revoked-token reuse as distinct rejection
 edges; keep WebSocket transport acknowledgements outside admission authority.
+Add separate process, binding, session, broker-epoch, logical-operation,
+attempt, correlation, registration, command, and owner-effect nodes. Connect
+late callbacks/replies/deadlines to stale-generation rejection edges, exact
+registration replay to one equivalence edge, and ambiguous relative effects to
+an `outcome_unknown` terminal node rather than a retry edge.
 
 For multi-app consumers, keep separate package/client/feature-lock/marker/
 grant/sink clusters, converging only at the shared SDK and accepted peer/media

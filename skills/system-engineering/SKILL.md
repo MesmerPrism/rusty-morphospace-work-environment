@@ -345,6 +345,12 @@ capabilities, issue high-entropy short-lived opaque tokens from the authority,
 consume one-time request ids, and revision/audit issue, use, revoke, and expiry.
 Test identity substitution, capability escalation, token collision, replay,
 staleness, expiry, and post-revocation use; a transport ACK is never admission.
+Drive Binder/Messenger lifecycle through one serialized reducer. Fence process,
+binding, and session generations plus broker epoch; distinguish logical
+operation, attempt, correlation, registration, command, and effect identities;
+use bounded monotonic deadlines and cleanup exactly once. Retry only read-only
+or byte-equivalent idempotent work. Reconcile desired state, and report unknown
+outcome instead of replaying an ambiguous relative effect.
 
 For a shared SDK used by multiple applications, validate the pair as well as
 each client. Share only versioned contract families and the minimum transport

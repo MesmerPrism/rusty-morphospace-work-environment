@@ -34,6 +34,10 @@ named by the user or ask for its location; never guess a machine path.
   standalone and embedded placements behind one bounded RFC6455 core, keep
   JSON/Binder/Manifold/effect/media authority separate, and require host
   conformance and placement parity before Binder or device work.
+- After transport acceptance, route cross-app Binder admission to a host-first
+  Rusty Quest slice. Require OS-derived package/signer identity to select one
+  grant, reducer-fenced session generations, bounded equivalent-operation retry,
+  and explicit unknown outcomes before any device admission.
 - Invoke `$meta-quest-workflow` before any live Quest, device, ADB, APK
   install/launch, capture, logcat, Perfetto, Wi-Fi ADB, or Meta tooling work.
 
