@@ -184,6 +184,10 @@ validation without a device.
   defines validation-only review units, claim preflight, exact generated
   handoffs, semantic gates, one-captain ownership, and the three-feature-unit
   stability window.
+- [Repository Lifecycle Advisory](docs/REPOSITORY_LIFECYCLE.md) defines the
+  strict read-only ref/worktree hold registry, three-state disposition, exact
+  tip readback, owner-release boundary, and separation between remote ref
+  retirement and local cleanup.
 - [Active Read-Only Dependency Correction](docs/ACTIVE_READ_ONLY_DEPENDENCY_CORRECTION.md)
   defines the exact-CAS transaction for correcting only an active unit's
   project-declared parse/build dependency closure.

@@ -348,6 +348,12 @@ ancestry consumes the authorization.
   Runtime effects require the selected current lock and one descriptor-
   approved runtime input, and the effective marker/receipt must bind the
   project, lock revision/fingerprint, and feature.
+- Before ref cleanup or byte-level source-policy adoption, run the read-only
+  repository lifecycle advisory and route the full contract to
+  `docs/REPOSITORY_LIFECYCLE.md`. Treat `candidate-retire` as evidence for a
+  separate owner decision, never deletion authority; keep remote ref retirement
+  separate from local worktree/branch cleanup and preserve incomplete, dirty,
+  divergent, operational, or evidence-held refs.
 - Automation may record or accept validation only from a workspace-local
   `validation_receipt.v1` with exact criterion/gate coverage, verified artifact
   hashes, current repo heads/branches, ancestor bases, exact changed paths, and
