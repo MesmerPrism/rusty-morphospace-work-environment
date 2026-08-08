@@ -458,7 +458,7 @@ function Test-PreparedPushConflictingEvidence {
         "rusty.morphospace.workflow.prepared_publication_reconstruction.v1",
         "rusty.morphospace.workflow.prepared_push_retirement.v1"
     )
-    $consumingActions=@("RecordPublication","ReconcilePublication","ReconcilePlanningSuffixRewrite","ReconcilePublishedPrerequisiteSuffix","ReconcilePreparedPublication","RetirePreparedPush")
+    $consumingActions=@("RecordPublication","ReconcilePublication","ReconcilePlanningSuffixRewrite","ReconcilePublishedPrerequisiteSuffix","ReconcileExecutedPreparedPublication","ReconcilePreparedPublication","RetirePreparedPush")
     $receiptsRoot = Join-Path $WorkspaceRoot "receipts"
     foreach ($file in @(Get-ChildItem -LiteralPath $receiptsRoot -File -Recurse -Filter *.json -ErrorAction Stop)) {
         $relative = [IO.Path]::GetRelativePath($WorkspaceRoot, $file.FullName).Replace("\","/")

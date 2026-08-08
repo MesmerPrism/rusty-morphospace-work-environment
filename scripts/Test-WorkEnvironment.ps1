@@ -252,6 +252,13 @@ if ($SelfTest) {
     }
 
     try {
+        & (Join-Path $RepoRoot "scripts\Test-ExecutedPreparedPublicationReconciliation.ps1") -SelfTest
+        Add-CheckResult -Name "workflow:executed-prepared-publication-reconciliation" -Status "ok" -Detail "Validated immutable chronology classification, exact linear and merge-parent history, path-set fingerprints, live refs, and one-bundle consumption."
+    } catch {
+        Add-CheckResult -Name "workflow:executed-prepared-publication-reconciliation" -Status "missing" -Required $true -Detail $_.Exception.Message
+    }
+
+    try {
         & (Join-Path $RepoRoot "scripts\Test-ReleaseCapsule.ps1") -SelfTest
         Add-CheckResult -Name "workflow:release-capsule" -Status "ok" -Detail "Validated immutable candidate cuts, historical descendant closure, isolated trees, preserved dirty overlays, and damaged evidence rejection."
     } catch {
