@@ -661,9 +661,38 @@ function Test-ProjectBundle {
         }
 
         $changeCategories = @($unit.change_categories | ForEach-Object { [string]$_ })
+        $unitId = [string]$unit.unit_id
+        $adoption = if ($historicalAdoptions.ContainsKey($unitId)) { $historicalAdoptions[$unitId] } else { $null }
+        if ($null -ne $adoption) {
+            $unitPath = Normalize-RelativePath ([IO.Path]::GetRelativePath((Split-Path -Parent $Bundle.StatePath), $path))
+            Assert-Contract ($unitPath -eq [string]$adoption.unit_path) "$Context historical unit '$unitId' adoption path drifted."
+            Assert-Contract ((Get-FileSha256 $path) -eq [string]$adoption.unit_sha256) "$Context historical unit '$unitId' bytes drifted."
+            Assert-Contract (@("accepted", "blocked") -contains [string]$unit.status) "$Context historical adoption cannot be used by current or future unit '$unitId'."
+            Assert-Contract ([string]$unit.status -eq [string]$adoption.terminal_status) "$Context historical unit '$unitId' terminal status drifted."
+        }
+
         $workModeExplicit = $unit.PSObject.Properties.Name -contains "work_mode"
         $workMode = if ($workModeExplicit) { [string]$unit.work_mode } else { "feature" }
-        Assert-Contract ($script:WorkModes -contains $workMode) "$Context unit '$($unit.unit_id)' has unknown work mode '$workMode'."
+        $effectiveWorkMode = $workMode
+        if ($null -ne $adoption) {
+            $unknownWorkModes = if ($script:WorkModes -contains $workMode) { @() } else { @($workMode) }
+            $workModeMappings = if ($adoption.normalization.PSObject.Properties.Name -contains "work_modes") { @($adoption.normalization.work_modes | Where-Object { $null -ne $_ }) } else { @() }
+            Test-ExactLegacyMappings -UnknownValues $unknownWorkModes -Mappings $workModeMappings -CurrentValues @("feature") -Context "$Context historical unit '$unitId' work-mode"
+            foreach ($mapping in $workModeMappings) {
+                $mappingProperties = @($mapping.PSObject.Properties.Name | Sort-Object)
+                Assert-Contract (($mappingProperties -join "|") -ceq "current|legacy|retained_as") "$Context historical unit '$unitId' work-mode mapping has an unexpected property."
+                Assert-Contract ([string]$mapping.legacy -ceq "publication") "$Context historical unit '$unitId' may normalize only retired publication work mode."
+                Assert-Contract ([string]$mapping.current -ceq "feature") "$Context historical unit '$unitId' publication work mode must target feature."
+            }
+            if ($workModeMappings.Count -gt 0) {
+                Assert-Contract ([string]$unit.status -ceq "blocked") "$Context historical publication work-mode adoption is limited to terminal blocked unit '$unitId'."
+            }
+            if ($unknownWorkModes.Count -eq 1 -and $workModeMappings.Count -eq 1) {
+                $effectiveWorkMode = [string]$workModeMappings[0].current
+            }
+        } else {
+            Assert-Contract ($script:WorkModes -contains $workMode) "$Context unit '$($unit.unit_id)' has unknown work mode '$workMode'."
+        }
         $effectiveChangeCategories = @($changeCategories | ForEach-Object {
             if ($script:ChangeCategories -contains $_) { $_ }
             elseif ($script:ChangeCategoryAliases.ContainsKey($_)) { $script:ChangeCategoryAliases[$_] }
@@ -673,14 +702,7 @@ function Test-ProjectBundle {
         foreach ($categoryGroup in @($changeCategories | Group-Object)) {
             Assert-Contract ($categoryGroup.Count -eq 1) "$Context unit '$($unit.unit_id)' repeats change category '$($categoryGroup.Name)'."
         }
-        $unitId = [string]$unit.unit_id
-        $adoption = if ($historicalAdoptions.ContainsKey($unitId)) { $historicalAdoptions[$unitId] } else { $null }
         if ($null -ne $adoption) {
-            $unitPath = Normalize-RelativePath ([IO.Path]::GetRelativePath((Split-Path -Parent $Bundle.StatePath), $path))
-            Assert-Contract ($unitPath -eq [string]$adoption.unit_path) "$Context historical unit '$unitId' adoption path drifted."
-            Assert-Contract ((Get-FileSha256 $path) -eq [string]$adoption.unit_sha256) "$Context historical unit '$unitId' bytes drifted."
-            Assert-Contract (@("accepted", "blocked") -contains [string]$unit.status) "$Context historical adoption cannot be used by current or future unit '$unitId'."
-            Assert-Contract ([string]$unit.status -eq [string]$adoption.terminal_status) "$Context historical unit '$unitId' terminal status drifted."
             $unknownCategories = @($changeCategories | Where-Object { $script:ChangeCategories -notcontains $_ })
             Test-ExactLegacyMappings -UnknownValues $unknownCategories -Mappings @($adoption.normalization.change_categories) -CurrentValues $script:ChangeCategories -Context "$Context historical unit '$unitId' change-category"
         } else {
@@ -768,9 +790,9 @@ function Test-ProjectBundle {
         }
 
         if ($triggeredCategories.Count -gt 0) {
-            $expectedInstructionImpact = if ($workMode -eq "validation-only") { "review" } else { "update" }
-            $expectedRequiredAction = if ($workMode -eq "validation-only") { "review-no-change" } else { "update" }
-            Assert-Contract ($effectiveInstructionImpact -eq $expectedInstructionImpact) "$Context unit '$($unit.unit_id)' work mode '$workMode' must use instruction_impact '$expectedInstructionImpact'."
+            $expectedInstructionImpact = if ($effectiveWorkMode -eq "validation-only") { "review" } else { "update" }
+            $expectedRequiredAction = if ($effectiveWorkMode -eq "validation-only") { "review-no-change" } else { "update" }
+            Assert-Contract ($effectiveInstructionImpact -eq $expectedInstructionImpact) "$Context unit '$($unit.unit_id)' effective work mode '$effectiveWorkMode' must use instruction_impact '$expectedInstructionImpact'."
             $agentSurfaces = @($effectiveInstructionSurfaces | Where-Object { $_.surface_kind -eq "agents" })
             $routerSurfaces = @($effectiveInstructionSurfaces | Where-Object { $_.surface_kind -eq "readme" -or $_.surface_kind -eq "router-doc" })
             Assert-Contract ($agentSurfaces.Count -gt 0) "$Context unit '$($unit.unit_id)' needs the nearest AGENTS.md instruction surface."
@@ -946,12 +968,30 @@ function Test-ProjectBundle {
     foreach ($adoptedUnitId in @($historicalAdoptions.Keys)) {
         $entry = $historicalAdoptions[$adoptedUnitId]
         $terminalEventId = [string]$entry.terminal_evidence.event_id
+        $workModeMappings = if ($entry.normalization.PSObject.Properties.Name -contains "work_modes") { @($entry.normalization.work_modes | Where-Object { $null -ne $_ }) } else { @() }
+        if ($workModeMappings.Count -gt 0) {
+            $terminalProperties = @($entry.terminal_evidence.PSObject.Properties.Name | Sort-Object)
+            Assert-Contract (($terminalProperties -join "|") -ceq "event_id|event_sha256|receipt_path|receipt_sha256") "$Context historical work-mode adoption for '$adoptedUnitId' must bind exact event and receipt evidence."
+            Assert-Contract (Test-Text $entry.terminal_evidence.receipt_path) "$Context historical work-mode adoption for '$adoptedUnitId' requires a terminal receipt path."
+        }
         Assert-Contract ($eventMap.ContainsKey($terminalEventId)) "$Context historical unit '$adoptedUnitId' lacks its declared terminal event '$terminalEventId'."
         if ($eventMap.ContainsKey($terminalEventId)) {
             $terminalEvent = $eventMap[$terminalEventId]
             Assert-Contract ([string]$terminalEvent.unit_id -eq $adoptedUnitId) "$Context historical unit '$adoptedUnitId' terminal event belongs to another unit."
+            if ($workModeMappings.Count -gt 0) {
+                Assert-Contract ([string]$entry.terminal_evidence.event_sha256 -ceq [string]$terminalEvent.__line_sha256) "$Context historical work-mode adoption for '$adoptedUnitId' terminal event hash drifted."
+            }
             if ($null -ne $entry.terminal_evidence.receipt_path) {
                 Assert-Contract (@($terminalEvent.receipts) -contains [string]$entry.terminal_evidence.receipt_path) "$Context historical unit '$adoptedUnitId' terminal event does not reference its declared evidence receipt."
+                if ($workModeMappings.Count -gt 0) {
+                    $terminalReceiptRelativePath = Normalize-RelativePath ([string]$entry.terminal_evidence.receipt_path)
+                    Assert-Contract (Test-PortableRelativePath $terminalReceiptRelativePath) "$Context historical work-mode adoption for '$adoptedUnitId' receipt path is not portable."
+                    $terminalReceiptPath = Join-Path $workspaceRoot ($terminalReceiptRelativePath -replace "/", [IO.Path]::DirectorySeparatorChar)
+                    Assert-Contract (Test-Path -LiteralPath $terminalReceiptPath -PathType Leaf) "$Context historical work-mode adoption for '$adoptedUnitId' receipt is missing."
+                    if (Test-Path -LiteralPath $terminalReceiptPath -PathType Leaf) {
+                        Assert-Contract ([string]$entry.terminal_evidence.receipt_sha256 -ceq (Get-FileSha256 $terminalReceiptPath)) "$Context historical work-mode adoption for '$adoptedUnitId' receipt hash drifted."
+                    }
+                }
             }
         }
     }

@@ -374,6 +374,8 @@ When a terminal historical unit uses retired workflow vocabulary, require a
 project-owned receipt binding exact bytes, status, terminal evidence, and
 complete normalization into current portable semantics. Never use that route
 for current work or expand registries merely to silence history. A historical
+`publication` work mode may map only to `feature` for a blocked unit with exact
+terminal event and receipt hashes; it is not publication evidence. A historical
 instruction mismatch additionally binds the exact legacy impact and every
 affected agent, router, or skill surface path/action. Preserve a blocked
 surface's `planned` status and record no completion or execution claim; this is

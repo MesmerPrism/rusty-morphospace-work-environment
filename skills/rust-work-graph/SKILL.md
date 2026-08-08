@@ -251,7 +251,9 @@ execution, acceptance, and publication remain disconnected authority nodes.
 
 Graph historical-unit adoption as an additive evidence node linked to exact
 unit bytes, terminal event, source workflow, and normalized semantics. It must
-not create an authority edge for current work. If it normalizes a blocked skill
+not create an authority edge for current work. Model retired `publication` to
+`feature` only as a blocked-unit projection with hashed terminal evidence, not
+as a publication edge. If it normalizes a blocked skill
 surface action, retain the `planned` node and do not add completion or execution
 edges.
 Graph drift as separate expected-hash, observed-byte, and independently
