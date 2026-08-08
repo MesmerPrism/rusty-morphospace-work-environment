@@ -146,6 +146,52 @@ invalidate the candidate. Refresh orchestration state at merge,
 materialization, and handoff boundaries so continuation never resumes from a
 stale PR, base, writer, or authority claim.
 
+## Canonical Text Bytes And Signing Preflight
+
+Treat raw bytes as evidence. Line-ending policy is repository-owned and
+additive: inventory the real tracked tree first and resolve that repository's
+divergent, dirty, or local/remote-tip-mismatched legacy refs. When the tracked
+text blobs already satisfy the policy, `.gitattributes` may cover that proven
+text set with explicit binary exceptions. Otherwise enroll exact text paths in
+reviewed tranches. Covered text is strict UTF-8 without a BOM and LF-only.
+Binary or intentionally preserved historical content stays byte-exact with
+`-text`. An unenrolled path is not silently canonicalized and must not be
+presented as covered.
+
+Do not introduce a blanket text rule when it would rewrite existing history or
+turn a bounded policy change into repository-wide content churn. Preserve
+historical blob bytes, explicitly name each first tranche, and treat a later
+conversion as its own reviewed owner change with pre/post hashes and rollback.
+Editor defaults may help authors, but Git attributes plus raw-byte validation
+define the contract; `core.autocrlf` is never authority.
+Validate adoption in a fresh clean checkout. Refresh an older working-tree
+presentation only after proving it clean; never overwrite or normalize a dirty
+checkout merely to satisfy the policy.
+
+Before hashing, signing, or publishing a request or receipt, run the byte
+preflight on the exact input:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\Test-CanonicalTextBytes.ps1 `
+  -EvidencePath <exact-evidence-path>
+```
+
+CRLF, mixed endings, a UTF-8 BOM, lone carriage returns, invalid UTF-8, and
+binary bytes fail with stable reason codes. The signing helper performs this
+check before it opens the owner policy or signing key. It never repairs or
+normalizes the input. The request producer emits LF deterministically; existing
+signed comments and their historical request bytes remain verified under their
+original canonical payload semantics and are never rewritten. The repository
+self-test also proves that explicitly
+covered LF text and byte-exact legacy/binary files have identical bytes under
+supported `core.autocrlf=true` and `core.autocrlf=false` checkouts.
+
+This contract does not rewrite commits, reinterpret historical hashes, decide
+whether a legacy branch is wanted, or authorize a signature, merge,
+publication, ref deletion, or local cleanup. Repository-lifecycle disposition
+and owner authority remain separate gates.
+
 ## Compact State And Event Log
 
 `workspace.state.json` names:

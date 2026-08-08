@@ -50,6 +50,11 @@ local cleanup, merge, GC, ref update, or GitHub setting change. Preserve
 Keep remote ref retirement separate from local branch/worktree cleanup, and
 resolve each repository's divergent, dirty, or tip-mismatched legacy refs
 before graphing adoption of a new byte-level source policy.
+For that adoption, inventory raw tracked blob bytes and classify exact paths as
+canonical UTF-8/LF or byte-exact legacy/binary before changing attributes.
+Treat `core.autocrlf`, editor presentation, and filtered hashes as observations,
+not authority; route the exact policy and pre-signing check through
+`docs/AUTONOMOUS_ITERATION.md`.
 
 ## Graph Interpretation
 

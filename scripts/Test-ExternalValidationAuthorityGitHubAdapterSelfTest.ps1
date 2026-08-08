@@ -247,6 +247,9 @@ try {
     $commentsPath=Join-Path $temp "comments.json";Write-Utf8 $commentsPath "[]"
     $requestPath=Join-Path $temp "request.json";$ownerArguments=@{}+$commonArguments;$ownerArguments.CommentsJsonPath=$commentsPath;$ownerArguments.AuthorizationRequestPath=$requestPath
     try{& $adapter @ownerArguments | Out-Null;throw "Missing authorization unexpectedly passed."}catch{if($_.Exception.Message -notmatch "canonical request was emitted"){throw}}
+    [byte[]]$requestBytes=[IO.File]::ReadAllBytes($requestPath)
+    if($requestBytes -contains 0x0D){throw "Authorization request producer emitted a carriage return."}
+    if($requestBytes.Length -ge 3 -and $requestBytes[0] -eq 0xEF -and $requestBytes[1] -eq 0xBB -and $requestBytes[2] -eq 0xBF){throw "Authorization request producer emitted a UTF-8 BOM."}
     $requestText=Get-Content -Raw $requestPath
     $request=$requestText|ConvertFrom-Json -Depth 30 -DateKind String
     if([string]$request.schema -cne "rusty.morphospace.workflow.external_owner_authorization_request.v1"){throw "Wrong request schema."}

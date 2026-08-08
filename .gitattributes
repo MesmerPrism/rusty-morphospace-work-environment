@@ -1,0 +1,25 @@
+# EOL-002: repository text is canonical UTF-8 without BOM and LF-only.
+* text eol=lf
+
+# Binary paths remain byte-exact. The validator rejects an unclassified binary
+# before it can enter the covered text set, so new formats must be added here.
+*.7z -text
+*.apk -text
+*.bin -text
+*.dll -text
+*.exe -text
+*.gif -text
+*.gz -text
+*.ico -text
+*.jar -text
+*.jpeg -text
+*.jpg -text
+*.pdf -text
+*.png -text
+*.so -text
+*.tar -text
+*.tgz -text
+*.woff -text
+*.woff2 -text
+*.xz -text
+*.zip -text

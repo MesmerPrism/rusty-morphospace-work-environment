@@ -188,6 +188,9 @@ validation without a device.
   strict read-only ref/worktree hold registry, three-state disposition, exact
   tip readback, owner-release boundary, and separation between remote ref
   retirement and local cleanup.
+- [Canonical Text Bytes And Signing Preflight](docs/AUTONOMOUS_ITERATION.md#canonical-text-bytes-and-signing-preflight)
+  defines explicit LF enrollment, byte-exact historical/binary preservation,
+  cross-platform checkout parity, and the non-normalizing pre-signing check.
 - [Active Read-Only Dependency Correction](docs/ACTIVE_READ_ONLY_DEPENDENCY_CORRECTION.md)
   defines the exact-CAS transaction for correcting only an active unit's
   project-declared parse/build dependency closure.

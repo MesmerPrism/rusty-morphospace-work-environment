@@ -60,6 +60,11 @@ decision and validation note.
   and selection alone cannot activate a run.
 - Stable reusable modules require a second independent consumer or neutral
   conformance harness and an accepted promotion review.
+- Raw evidence bytes precede text convenience. Enroll canonical text paths
+  explicitly as UTF-8 without BOM and LF-only, preserve historical/binary paths
+  byte-for-byte until a separately reviewed conversion, and reject CRLF, mixed,
+  BOM, invalid-UTF-8, or binary evidence before hashing or signing. Never treat
+  `core.autocrlf` or hidden normalization as authority.
 
 ## Portable Project Contracts
 
