@@ -433,6 +433,14 @@ ancestry consumes the authorization.
   planned accounting and final receipt hashes, exact parent/current refs, clean
   unchanged sources, and no-force history; never admit other counts, paths,
   gaps, merges, abbreviations, duplicates, drift, or rewrites.
+- If immutable no-force execution evidence predates its recorded PreparePush
+  timestamp and an exact source final is a bound merge integration that ordinary
+  commit projection cannot represent, keep `RecordPublication` strict. Use only
+  `ReconcileExecutedPreparedPublication`: bind the original containers and
+  timestamps, exact live refs, complete path-set fingerprints, and ordered
+  merge parents/per-parent projections; claim neither corrected chronology nor
+  flattened history. See
+  `docs/EXECUTED_PREPARED_PUBLICATION_RECONCILIATION.md`.
 - A later force-with-lease replacement of an already published planning-only
   finalization suffix uses only the additive
   `planning_suffix_rewrite_recovery.v1` incident route. Bind both commits and

@@ -325,6 +325,13 @@ suffix, and consume only the exact pending bundle. Prepared evidence may bind
 standalone plan/event files or their immutable automation-receipt and
 transition-ledger containers. See
 [`docs/PLANNED_PUBLICATION_ACCOUNTING.md`](docs/PLANNED_PUBLICATION_ACCOUNTING.md).
+If immutable execution predates its recorded preparation timestamp and an exact
+source final is a merge integration that ordinary commit projection cannot
+represent, normal accounting must still reject. The distinct
+[`executed_prepared_publication_reconciliation.v1`](docs/EXECUTED_PREPARED_PUBLICATION_RECONCILIATION.md)
+route preserves every timestamp and parent, verifies complete path-set
+fingerprints and live refs, and consumes only the exact bundle without claiming
+corrected chronology, flattened history, Git mutation, or ordinary accounting.
 The additive post-0.6.0
 [prepared-push retirement candidate](docs/PREPARED_PUSH_RETIREMENT.md) handles
 only an exact pending bundle whose immutable plan records

@@ -1,0 +1,47 @@
+{
+  "$schema": "../schemas/executed-prepared-publication-reconciliation.schema.json",
+  "schema": "rusty.morphospace.workflow.executed_prepared_publication_reconciliation.v1",
+  "reconciliation_id": "example-executed-prepared-publication-reconciliation",
+  "project_id": "example-project",
+  "bundle_id": "example-unit-push-bundle",
+  "trigger_unit_id": "example-unit",
+  "prepared_plan": { "container": { "path": "receipts/example-prepare-push.json", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }, "member": "push_plan" },
+  "prepared_event": {
+    "event_id": "example-unit-push-prepared-0007",
+    "intent": { "path": "receipts/transactions/example-unit-push-prepared-0007-transition.intent.json", "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
+    "completion": { "path": "receipts/transactions/example-unit-push-prepared-0007-transition.completion.json", "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" }
+  },
+  "executed_push_receipt": { "path": "receipts/example-executed-push.json", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" },
+  "chronology": {
+    "prepared_at": "2026-01-01T00:02:00Z", "push_started_at": "2026-01-01T00:01:00Z", "push_finished_at": "2026-01-01T00:01:30Z",
+    "execution_preceded_recorded_preparation": true, "timestamps_preserved": true, "corrected_chronology_claimed": false, "ordinary_accounting_satisfied": false
+  },
+  "repositories": [
+    {
+      "repo_id": "source-repo", "role": "source", "branch": "codex/example", "remote": "origin", "upstream": "origin/codex/example",
+      "planned_revision": "1111111111111111111111111111111111111111", "old_revision": "2222222222222222222222222222222222222222", "final_revision": "1111111111111111111111111111111111111111", "final_tree": "3333333333333333333333333333333333333333", "current_remote_readback_revision": "1111111111111111111111111111111111111111",
+      "history": {
+        "mode": "merge-integration", "commit_count": 2, "changed_path_count": 1, "changed_paths_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "merge_integration": {
+          "base_revision": "8888888888888888888888888888888888888888", "base_tree": "9999999999999999999999999999999999999999",
+          "side_parent": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "side_parent_tree": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "protected_parent": "2222222222222222222222222222222222222222", "protected_parent_tree": "cccccccccccccccccccccccccccccccccccccccc",
+          "ordered_parents": ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","2222222222222222222222222222222222222222"],
+          "side_delta": { "count": 1, "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" },
+          "protected_delta": { "count": 1, "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" },
+          "final_delta_against_protected": { "count": 1, "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" },
+          "final_delta_against_side": { "count": 1, "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" }
+        }
+      }, "force_push_used": false
+    },
+    {
+      "repo_id": "planning-repo", "role": "planning", "branch": "codex/example-planning", "remote": "origin", "upstream": "origin/codex/example-planning",
+      "planned_revision": "4444444444444444444444444444444444444444", "old_revision": "5555555555555555555555555555555555555555", "final_revision": "6666666666666666666666666666666666666666", "final_tree": "7777777777777777777777777777777777777777", "current_remote_readback_revision": "6666666666666666666666666666666666666666",
+      "history": { "mode": "linear", "commit_count": 2, "changed_path_count": 5, "changed_paths_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", "merge_integration": null }, "force_push_used": false
+    }
+  ],
+  "planning_transport": { "repo_id": "planning-repo", "allowed_untracked_paths": ["project/morphospace/receipts/example-executed-push.json","project/morphospace/receipts/example-reconciliation.json"] },
+  "claims": { "original_evidence_preserved": true, "ordinary_record_publication_satisfied": false, "retrospective_plan_claimed": false, "merge_history_flattened": false, "source_first_execution_order_observed": true, "planning_last_execution_order_observed": true },
+  "workspace_transition": { "pending_push_bundle_before": "example-unit-push-bundle", "pending_push_bundle_after": null, "validation_unchanged": true, "acceptance_unchanged": true, "git_mutation_performed": false },
+  "failure": null
+}

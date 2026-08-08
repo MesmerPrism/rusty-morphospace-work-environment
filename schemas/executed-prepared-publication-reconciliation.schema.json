@@ -1,0 +1,152 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/executed-prepared-publication-reconciliation.schema.json",
+  "title": "Executed prepared-publication evidence reconciliation",
+  "description": "Additive, non-mutating evidence for one already executed prepared bundle whose immutable timestamps do not satisfy ordinary chronology and whose exact source history contains at least one explicitly bound merge integration. It does not weaken normal planned-publication accounting.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema","reconciliation_id","project_id","bundle_id","trigger_unit_id","prepared_plan","prepared_event","executed_push_receipt","chronology","repositories","planning_transport","claims","workspace_transition","failure"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schema": { "const": "rusty.morphospace.workflow.executed_prepared_publication_reconciliation.v1" },
+    "reconciliation_id": { "$ref": "#/$defs/id" },
+    "project_id": { "$ref": "#/$defs/id" },
+    "bundle_id": { "$ref": "#/$defs/id" },
+    "trigger_unit_id": { "$ref": "#/$defs/id" },
+    "prepared_plan": {
+      "type": "object", "additionalProperties": false,
+      "required": ["container","member"],
+      "properties": { "container": { "$ref": "#/$defs/file" }, "member": { "const": "push_plan" } }
+    },
+    "prepared_event": {
+      "type": "object", "additionalProperties": false,
+      "required": ["event_id","intent","completion"],
+      "properties": { "event_id": { "$ref": "#/$defs/id" }, "intent": { "$ref": "#/$defs/file" }, "completion": { "$ref": "#/$defs/file" } }
+    },
+    "executed_push_receipt": { "$ref": "#/$defs/file" },
+    "chronology": {
+      "type": "object", "additionalProperties": false,
+      "required": ["prepared_at","push_started_at","push_finished_at","execution_preceded_recorded_preparation","timestamps_preserved","corrected_chronology_claimed","ordinary_accounting_satisfied"],
+      "properties": {
+        "prepared_at": { "type": "string", "format": "date-time" },
+        "push_started_at": { "type": "string", "format": "date-time" },
+        "push_finished_at": { "type": "string", "format": "date-time" },
+        "execution_preceded_recorded_preparation": { "const": true },
+        "timestamps_preserved": { "const": true },
+        "corrected_chronology_claimed": { "const": false },
+        "ordinary_accounting_satisfied": { "const": false }
+      }
+    },
+    "repositories": {
+      "type": "array", "minItems": 2, "minContains": 1,
+      "contains": {
+        "type": "object",
+        "required": ["history"],
+        "properties": {
+          "history": {
+            "type": "object",
+            "required": ["mode"],
+            "properties": { "mode": { "const": "merge-integration" } }
+          }
+        }
+      },
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["repo_id","role","branch","remote","upstream","planned_revision","old_revision","final_revision","final_tree","current_remote_readback_revision","history","force_push_used"],
+        "properties": {
+          "repo_id": { "$ref": "#/$defs/id" },
+          "role": { "enum": ["source","planning"] },
+          "branch": { "$ref": "#/$defs/nonempty" },
+          "remote": { "$ref": "#/$defs/nonempty" },
+          "upstream": { "$ref": "#/$defs/nonempty" },
+          "planned_revision": { "$ref": "#/$defs/revision" },
+          "old_revision": { "$ref": "#/$defs/revision" },
+          "final_revision": { "$ref": "#/$defs/revision" },
+          "final_tree": { "$ref": "#/$defs/revision" },
+          "current_remote_readback_revision": { "$ref": "#/$defs/revision" },
+          "history": {
+            "type": "object", "additionalProperties": false,
+            "required": ["mode","commit_count","changed_path_count","changed_paths_sha256","merge_integration"],
+            "properties": {
+              "mode": { "enum": ["linear","merge-integration"] },
+              "commit_count": { "type": "integer", "minimum": 1 },
+              "changed_path_count": { "type": "integer", "minimum": 1 },
+              "changed_paths_sha256": { "$ref": "#/$defs/hash" },
+              "merge_integration": {
+                "oneOf": [
+                  { "type": "null" },
+                  {
+                    "type": "object", "additionalProperties": false,
+                    "required": ["base_revision","base_tree","side_parent","side_parent_tree","protected_parent","protected_parent_tree","ordered_parents","side_delta","protected_delta","final_delta_against_protected","final_delta_against_side"],
+                    "properties": {
+                      "base_revision": { "$ref": "#/$defs/revision" }, "base_tree": { "$ref": "#/$defs/revision" },
+                      "side_parent": { "$ref": "#/$defs/revision" }, "side_parent_tree": { "$ref": "#/$defs/revision" },
+                      "protected_parent": { "$ref": "#/$defs/revision" }, "protected_parent_tree": { "$ref": "#/$defs/revision" },
+                      "ordered_parents": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "$ref": "#/$defs/revision" } },
+                      "side_delta": { "$ref": "#/$defs/pathSet" },
+                      "protected_delta": { "$ref": "#/$defs/pathSet" },
+                      "final_delta_against_protected": { "$ref": "#/$defs/pathSet" },
+                      "final_delta_against_side": { "$ref": "#/$defs/pathSet" }
+                    }
+                  }
+                ]
+              }
+            },
+            "allOf": [
+              {
+                "if": { "properties": { "mode": { "const": "linear" } }, "required": ["mode"] },
+                "then": { "properties": { "merge_integration": { "type": "null" } } }
+              },
+              {
+                "if": { "properties": { "mode": { "const": "merge-integration" } }, "required": ["mode"] },
+                "then": { "properties": { "commit_count": { "const": 2 }, "merge_integration": { "type": "object" } } }
+              }
+            ]
+          },
+          "force_push_used": { "const": false }
+        }
+      }
+    },
+    "planning_transport": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repo_id","allowed_untracked_paths"],
+      "properties": {
+        "repo_id": { "$ref": "#/$defs/id" },
+        "allowed_untracked_paths": { "type": "array", "minItems": 2, "maxItems": 2, "uniqueItems": true, "items": { "$ref": "#/$defs/path" } }
+      }
+    },
+    "claims": {
+      "type": "object", "additionalProperties": false,
+      "required": ["original_evidence_preserved","ordinary_record_publication_satisfied","retrospective_plan_claimed","merge_history_flattened","source_first_execution_order_observed","planning_last_execution_order_observed"],
+      "properties": {
+        "original_evidence_preserved": { "const": true },
+        "ordinary_record_publication_satisfied": { "const": false },
+        "retrospective_plan_claimed": { "const": false },
+        "merge_history_flattened": { "const": false },
+        "source_first_execution_order_observed": { "const": true },
+        "planning_last_execution_order_observed": { "const": true }
+      }
+    },
+    "workspace_transition": {
+      "type": "object", "additionalProperties": false,
+      "required": ["pending_push_bundle_before","pending_push_bundle_after","validation_unchanged","acceptance_unchanged","git_mutation_performed"],
+      "properties": {
+        "pending_push_bundle_before": { "$ref": "#/$defs/id" },
+        "pending_push_bundle_after": { "type": "null" },
+        "validation_unchanged": { "const": true },
+        "acceptance_unchanged": { "const": true },
+        "git_mutation_performed": { "const": false }
+      }
+    },
+    "failure": { "type": "null" }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" },
+    "nonempty": { "type": "string", "minLength": 1 },
+    "revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "path": { "type": "string", "pattern": "^(?![A-Za-z]:|/|.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/-]+$" },
+    "file": { "type": "object", "additionalProperties": false, "required": ["path","sha256"], "properties": { "path": { "$ref": "#/$defs/path" }, "sha256": { "$ref": "#/$defs/hash" } } },
+    "pathSet": { "type": "object", "additionalProperties": false, "required": ["count","sha256"], "properties": { "count": { "type": "integer", "minimum": 1 }, "sha256": { "$ref": "#/$defs/hash" } } }
+  }
+}

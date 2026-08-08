@@ -664,7 +664,7 @@ function Assert-ReconstructionLedgerEvent {
 function Assert-NoReconstructionConflict {
     param([string]$Workspace,[string]$BundleId,[string[]]$Excluded,[object[]]$Ledger)
     $recognized=@('rusty.morphospace.workflow.executed_push_receipt.v1','rusty.morphospace.workflow.planned_publication_accounting.v1','rusty.morphospace.workflow.unplanned_publication_closure.v1','rusty.morphospace.workflow.unplanned_publication_closure.v2','rusty.morphospace.workflow.published_prerequisite_suffix_reconciliation.v1','rusty.morphospace.workflow.published_prerequisite_suffix_reconciliation.v2','rusty.morphospace.workflow.planning_suffix_rewrite_recovery.v1','rusty.morphospace.workflow.prepared_publication_reconstruction.v1','rusty.morphospace.workflow.prepared_push_retirement.v1')
-    $consumingActions=@('RecordPublication','ReconcilePublication','ReconcilePlanningSuffixRewrite','ReconcilePublishedPrerequisiteSuffix','ReconcilePreparedPublication','RetirePreparedPush')
+    $consumingActions=@('RecordPublication','ReconcilePublication','ReconcilePlanningSuffixRewrite','ReconcilePublishedPrerequisiteSuffix','ReconcileExecutedPreparedPublication','ReconcilePreparedPublication','RetirePreparedPush')
     foreach($file in @(Get-ChildItem (Join-Path $Workspace 'receipts') -File -Recurse -Filter *.json)){
         $relative=[IO.Path]::GetRelativePath($Workspace,$file.FullName).Replace('\','/');if($Excluded-ccontains$relative){continue}
         try{$candidate=Read-MorphospaceProtocolJson $file.FullName}catch{throw "Prepared-publication reconstruction encountered malformed evidence '$relative'."}

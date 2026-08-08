@@ -164,6 +164,11 @@ Close that prepared publication only through hash-bound
 `planned_publication_accounting.v1`: enumerate exact commits and unit status,
 restrict the one planning suffix to explicit workflow transport paths, and let
 `RecordPublication` clear only the matching bundle after live clean readback.
+If immutable execution predates its recorded plan timestamp and an exact source
+final is a merge integration, use a distinct non-ordinary reconciliation:
+bind both evidence containers, exact live refs, full path-set fingerprints,
+ordered parents, merge base, and all per-parent projections. Preserve the
+chronology defect and merge graph; do not weaken ordinary accounting.
 If that planning-only suffix was later replaced with force-with-lease, use the
 additive incident contract binding exactly two common parent-relative paths,
 one replacement delta path, both trees, and unchanged source refs; do not

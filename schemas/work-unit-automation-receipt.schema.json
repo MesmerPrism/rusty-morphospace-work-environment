@@ -4,12 +4,12 @@
   "title": "Work-unit automation action receipt",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "project_id", "unit_id", "action", "timestamp", "executed", "transition", "status_before", "status_after", "current_unit_before", "current_unit_after", "preservation", "validation_matrix", "graph_scope", "claim_preflight", "adoption_receipt", "publication_closure", "published_planning_authority_adoption", "planned_publication", "planning_suffix_rewrite_recovery", "published_prerequisite_suffix_reconciliation", "push_plan", "event_id"],
+  "required": ["schema", "project_id", "unit_id", "action", "timestamp", "executed", "transition", "status_before", "status_after", "current_unit_before", "current_unit_after", "preservation", "validation_matrix", "graph_scope", "claim_preflight", "adoption_receipt", "publication_closure", "published_planning_authority_adoption", "planned_publication", "planning_suffix_rewrite_recovery", "published_prerequisite_suffix_reconciliation", "executed_prepared_publication_reconciliation", "push_plan", "event_id"],
   "properties": {
     "schema": { "const": "rusty.morphospace.workflow.work_unit_automation_receipt.v1" },
     "project_id": { "$ref": "#/$defs/id" },
     "unit_id": { "$ref": "#/$defs/id" },
-    "action": { "enum": ["Inspect", "Claim", "Resume", "Ready", "CompleteInstructionSurfaces", "BeginValidation", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix"] },
+    "action": { "enum": ["Inspect", "Claim", "Resume", "Ready", "CompleteInstructionSurfaces", "BeginValidation", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix", "ReconcileExecutedPreparedPublication"] },
     "timestamp": { "type": "string", "format": "date-time" },
     "executed": { "type": "boolean" },
     "transition": { "type": "string", "minLength": 1 },
@@ -91,6 +91,7 @@
     },
     "planning_suffix_rewrite_recovery": { "oneOf": [ { "type": "object", "additionalProperties": false, "required": ["recovery_id","path","sha256"], "properties": { "recovery_id": { "$ref": "#/$defs/id" }, "path": { "type": "string", "minLength": 1 }, "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" } } }, { "type": "null" } ] },
     "published_prerequisite_suffix_reconciliation": { "oneOf": [ { "type": "object", "additionalProperties": false, "required": ["reconciliation_id","path","sha256"], "properties": { "reconciliation_id": { "$ref": "#/$defs/id" }, "path": { "type": "string", "minLength": 1 }, "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" } } }, { "type": "null" } ] },
+    "executed_prepared_publication_reconciliation": { "oneOf": [ { "type": "object", "additionalProperties": false, "required": ["reconciliation_id","path","sha256","executed_push_receipt"], "properties": { "reconciliation_id": { "$ref": "#/$defs/id" }, "path": { "type": "string", "minLength": 1 }, "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }, "executed_push_receipt": { "type": "object", "additionalProperties": false, "required": ["path","sha256"], "properties": { "path": { "type": "string", "minLength": 1 }, "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" } } } } }, { "type": "null" } ] },
     "instruction_surface_completion": {
       "oneOf": [
         {
@@ -173,6 +174,18 @@
         "properties": {
           "published_planning_authority_adoption": { "type": "null" }
         }
+      }
+    },
+    {
+      "if": {
+        "properties": { "action": { "const": "ReconcileExecutedPreparedPublication" } },
+        "required": ["action"]
+      },
+      "then": {
+        "properties": { "executed_prepared_publication_reconciliation": { "type": "object" } }
+      },
+      "else": {
+        "properties": { "executed_prepared_publication_reconciliation": { "type": "null" } }
       }
     }
   ],
