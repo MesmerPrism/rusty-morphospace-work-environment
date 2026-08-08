@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("Inspect", "Ready", "Claim", "Resume", "CompleteInstructionSurfaces", "CorrectActiveReadOnlyDependencies", "CorrectActiveProjectRepositoryScope", "BeginValidation", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RetirePreparedPush", "ReconcilePreparedPublication", "ResolveBlocker", "CorrectResolvedBlockerEvidence", "CorrectHistoricalBlockerResolutionIntentBinding", "CorrectCompletedTransitionSemantics", "NormalizeEventLedgerPrefix", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix", "ReconcileExecutedPreparedPublication")]
+    [ValidateSet("Inspect", "Ready", "Claim", "Resume", "CompleteInstructionSurfaces", "CorrectActiveReadOnlyDependencies", "CorrectActiveProjectRepositoryScope", "BeginValidation", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RetirePreparedPush", "ReconcilePreparedPublication", "ReconcilePreparedPushTransactionSuffix", "ResolveBlocker", "CorrectResolvedBlockerEvidence", "CorrectHistoricalBlockerResolutionIntentBinding", "CorrectCompletedTransitionSemantics", "NormalizeEventLedgerPrefix", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix", "ReconcileExecutedPreparedPublication")]
     [string]$Action,
     [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
     [string]$UnitId = "",
@@ -18,6 +18,8 @@ param(
     [string]$PublicationOrderingInterruption = "",
     [string]$PreparedPushRetirement = "",
     [string]$PreparedPublicationReconstruction = "",
+    [string]$PreparedPushTransactionSuffixReconciliation = "",
+    [string]$ExpectedPreparedPushTransactionSuffixReconciliationSha256 = "",
     [string]$BlockerResolutionReceipt = "",
     [string]$BlockerResolutionCorrectionReceipt = "",
     [string]$HistoricalBlockerResolutionIntentBindingCorrection = "",
@@ -70,6 +72,18 @@ if ($Action -eq "ReconcilePreparedPublication") {
     Import-Module (Join-Path $PSScriptRoot "PreparedPublicationReconstruction.psm1") -Force
     Invoke-MorphospacePreparedPublicationReconstruction -WorkspaceRoot $WorkspaceRoot -UnitId $UnitId `
         -RepoMapPath $RepoMapPath -ReconstructionReceipt $PreparedPublicationReconstruction `
+        -Timestamp $Timestamp -OutPath $OutPath -Execute:$Execute |
+        ConvertTo-Json -Depth 32
+    return
+}
+if ($Action -eq "ReconcilePreparedPushTransactionSuffix") {
+    if (-not $PreparedPushTransactionSuffixReconciliation) { throw "ReconcilePreparedPushTransactionSuffix requires PreparedPushTransactionSuffixReconciliation." }
+    if (-not $RepoMapPath) { throw "ReconcilePreparedPushTransactionSuffix requires RepoMapPath." }
+    if (-not $OutPath) { throw "ReconcilePreparedPushTransactionSuffix requires OutPath." }
+    Import-Module (Join-Path $PSScriptRoot "ReconcilePreparedPushTransactionSuffix.psm1") -Force
+    Invoke-MorphospaceReconcilePreparedPushTransactionSuffix -WorkspaceRoot $WorkspaceRoot -UnitId $UnitId `
+        -RepoMapPath $RepoMapPath -Reconciliation $PreparedPushTransactionSuffixReconciliation `
+        -ExpectedReconciliationSha256 $ExpectedPreparedPushTransactionSuffixReconciliationSha256 `
         -Timestamp $Timestamp -OutPath $OutPath -Execute:$Execute |
         ConvertTo-Json -Depth 32
     return

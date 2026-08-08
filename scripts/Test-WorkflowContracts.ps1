@@ -1350,6 +1350,7 @@ $requiredSchemaNames = @(
     "published-planning-authority-adoption.schema.json",
     "published-prerequisite-suffix-reconciliation.schema.json",
     "executed-prepared-publication-reconciliation.schema.json",
+    "prepared-push-transaction-suffix-reconciliation-v1.schema.json",
     "historical-release-closure-receipt.schema.json",
     "historical-unit-adoption-receipt.schema.json",
     "historical-unit-adoption-reconstruction.schema.json",
@@ -1575,6 +1576,7 @@ $templateV2Bundle = New-Bundle `
 Test-ProjectBundle -Bundle $templateV2Bundle -Context "portable v2 example"
 
 $candidateContracts = @(
+    [pscustomobject]@{ Template = "prepared-push-transaction-suffix-reconciliation.example.json"; Schema = "prepared-push-transaction-suffix-reconciliation-v1.schema.json"; Label = "Prepared-push transaction-suffix reconciliation" },
     [pscustomobject]@{ Template = "prepared-push-retirement.example.json"; Schema = "prepared-push-retirement-v1.schema.json"; Label = "Prepared-push retirement" },
     [pscustomobject]@{ Template = "legacy-embedded-push-bundle-plan.example.json"; Schema = "legacy-embedded-push-bundle-plan-v1.schema.json"; Label = "Legacy embedded push-plan" },
     [pscustomobject]@{ Template = "prepared-publication-reconstruction.example.json"; Schema = "prepared-publication-reconstruction-v1.schema.json"; Label = "Prepared-publication reconstruction" },
@@ -1667,6 +1669,15 @@ if (Test-Path -LiteralPath $executedPreparedTemplate -PathType Leaf) {
 if ((-not $SkipOwnerSelfTests) -and (Test-Path -LiteralPath $executedPreparedValidator -PathType Leaf)) {
     try { & $executedPreparedValidator -SelfTest | Out-Null }
     catch { Add-Failure -Message "Executed prepared-publication reconciliation self-test failed: $($_.Exception.Message)" }
+}
+
+$preparedPushSuffixTemplate = Join-Path $templatesRoot "prepared-push-transaction-suffix-reconciliation.example.json"
+$preparedPushSuffixValidator = Join-Path $RepoRoot "scripts\Test-PreparedPushTransactionSuffixReconciliation.ps1"
+Assert-Contract (Test-Path -LiteralPath $preparedPushSuffixTemplate -PathType Leaf) "Required prepared-push transaction-suffix reconciliation example is missing."
+Assert-Contract (Test-Path -LiteralPath $preparedPushSuffixValidator -PathType Leaf) "Required prepared-push transaction-suffix reconciliation validator is missing."
+if ((-not $SkipOwnerSelfTests) -and (Test-Path -LiteralPath $preparedPushSuffixValidator -PathType Leaf)) {
+    try { & $preparedPushSuffixValidator -SelfTest | Out-Null }
+    catch { Add-Failure -Message "Prepared-push transaction-suffix reconciliation self-test failed: $($_.Exception.Message)" }
 }
 
 $releaseCapsuleTemplate = Join-Path $templatesRoot "release-capsule.example.json"

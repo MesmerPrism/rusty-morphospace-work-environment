@@ -1,0 +1,157 @@
+{
+  "$schema": "../schemas/prepared-push-transaction-suffix-reconciliation-v1.schema.json",
+  "schema": "rusty.morphospace.workflow.prepared_push_transaction_suffix_reconciliation.v1",
+  "reconciliation_id": "example-prepared-push-suffix-reconciliation",
+  "project_id": "example-project",
+  "unit_id": "example-publication-unit",
+  "bundle_id": "example-publication-unit-push-bundle",
+  "reason": "Consume one signed, byte-exact PreparePush suffix after an externally completed clean publication left only the five transaction-owned planning paths dirty.",
+  "expected": {
+    "unit_status": "accepted",
+    "current_unit": null,
+    "unit_raw_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "unit_canonical_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+    "state_raw_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+    "state_canonical_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+    "events_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+    "events_length": 4096,
+    "event_tail_id": "example-publication-unit-push-prepared-0009"
+  },
+  "prepared_plan": {
+    "container": {
+      "path": "receipts/example-publication-unit-prepare-push.json",
+      "bytes": 2048,
+      "sha256": "6666666666666666666666666666666666666666666666666666666666666666"
+    },
+    "member": "push_plan"
+  },
+  "prepared_event": {
+    "transaction_id": "example-publication-unit-push-prepared-0009-transition",
+    "event_id": "example-publication-unit-push-prepared-0009",
+    "intent": {
+      "path": "receipts/transactions/example-publication-unit-push-prepared-0009-transition.intent.json",
+      "bytes": 3072,
+      "sha256": "7777777777777777777777777777777777777777777777777777777777777777"
+    },
+    "completion": {
+      "path": "receipts/transactions/example-publication-unit-push-prepared-0009-transition.completion.json",
+      "bytes": 768,
+      "sha256": "8888888888888888888888888888888888888888888888888888888888888888"
+    }
+  },
+  "executed_push_receipt": {
+    "path": "receipts/example-publication-unit-executed-push.json",
+    "bytes": 4096,
+    "sha256": "9999999999999999999999999999999999999999999999999999999999999999"
+  },
+  "planned_publication_accounting": {
+    "path": "receipts/example-publication-unit-accounting.json",
+    "bytes": 8192,
+    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "source_repositories": [
+    {
+      "repo_id": "example-source-owner",
+      "branch": "codex/example-publication",
+      "upstream": "origin/codex/example-publication",
+      "parent_revision": "0123456789abcdef0123456789abcdef01234567",
+      "revision": "123456789abcdef0123456789abcdef012345678",
+      "tree": "23456789abcdef0123456789abcdef0123456789",
+      "history_mode": "linear",
+      "worktree_clean": true
+    }
+  ],
+  "planning_transport": {
+    "repo_id": "example-planning-owner",
+    "branch": "codex/example-planning",
+    "upstream": "origin/codex/example-planning",
+    "execution_final_revision": "3456789abcdef0123456789abcdef0123456789a",
+    "execution_final_tree": "456789abcdef0123456789abcdef0123456789ab",
+    "receipt_suffix_revision": "56789abcdef0123456789abcdef0123456789abc",
+    "receipt_suffix_tree": "6789abcdef0123456789abcdef0123456789abcd",
+    "receipt_suffix_parent": "3456789abcdef0123456789abcdef0123456789a",
+    "receipt_suffix_commit_count": 1,
+    "receipt_suffix_paths": [
+      "project/morphospace/receipts/example-publication-unit-accounting.json",
+      "project/morphospace/receipts/example-publication-unit-executed-push.json"
+    ],
+    "dirty_prepare_paths": [
+      {
+        "path": "project/morphospace/iteration-events.jsonl",
+        "bytes": 4096,
+        "sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+        "status": "modified"
+      },
+      {
+        "path": "project/morphospace/receipts/example-publication-unit-prepare-push.json",
+        "bytes": 2048,
+        "sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+        "status": "untracked"
+      },
+      {
+        "path": "project/morphospace/receipts/transactions/example-publication-unit-push-prepared-0009-transition.completion.json",
+        "bytes": 768,
+        "sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+        "status": "untracked"
+      },
+      {
+        "path": "project/morphospace/receipts/transactions/example-publication-unit-push-prepared-0009-transition.intent.json",
+        "bytes": 3072,
+        "sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+        "status": "untracked"
+      },
+      {
+        "path": "project/morphospace/workspace.state.json",
+        "bytes": 1024,
+        "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+        "status": "modified"
+      }
+    ],
+    "worktree_expected_dirty": true
+  },
+  "workspace_transition": {
+    "pending_push_bundle_before": "example-publication-unit-push-bundle",
+    "pending_push_bundle_after": null,
+    "unit_unchanged": true,
+    "validation_unchanged": true,
+    "acceptance_unchanged": true
+  },
+  "preservation": {
+    "existing_evidence_bytes_unchanged": true,
+    "existing_timestamps_unchanged": true,
+    "ordinary_record_publication_unchanged": true,
+    "git_mutation_performed": false,
+    "source_mutation_performed": false,
+    "device_mutation_performed": false,
+    "acceptance_mutation_performed": false,
+    "publication_authority_claimed": false
+  },
+  "authorization": {
+    "schema": "rusty.morphospace.workflow.prepared_push_transaction_suffix_authorization.v1",
+    "payload": {
+      "issuer_id": "example-owner-authority",
+      "authorization_id": "example-prepared-push-suffix-authorization",
+      "project_id": "example-project",
+      "unit_id": "example-publication-unit",
+      "bundle_id": "example-publication-unit-push-bundle",
+      "scope_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "issued_at": "2026-01-01T00:00:00Z",
+      "expires_at": "2026-01-01T01:00:00Z",
+      "decision": "authorize-prepared-push-transaction-suffix-reconciliation",
+      "limitations": [
+        "matching_pending_bundle_only",
+        "preserve_existing_evidence_bytes",
+        "workflow_state_only",
+        "git_mutation=false",
+        "acceptance_mutation=false",
+        "publication_authority=false"
+      ]
+    },
+    "signature": {
+      "algorithm": "RSA-PSS-SHA256",
+      "public_key_spki_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "value_base64": "AA=="
+    }
+  },
+  "failure": null
+}
