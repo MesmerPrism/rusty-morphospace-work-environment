@@ -300,6 +300,7 @@ function New-MorphospaceGraphScope {
 function New-MorphospaceClaimPreflight {
     param(
         [Parameter(Mandatory = $true)][object]$Unit,
+        [Parameter(Mandatory = $true)][object]$Spec,
         [Parameter(Mandatory = $true)][hashtable]$RepositoryMap,
         [Parameter(Mandatory = $true)][object[]]$RepositoryStates,
         [Parameter(Mandatory = $true)][object[]]$ValidationMatrix,
@@ -442,9 +443,165 @@ function New-MorphospaceClaimPreflight {
         }
     }
 
+    $lifecyclePath = Join-Path (Split-Path -Parent $PSScriptRoot) 'manifests\workflow-lifecycle.portable.json'
+    $unitSchemaPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'schemas\iteration-unit.schema.json'
+    $automationSchemaPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'schemas\work-unit-automation-receipt.schema.json'
+    $validatorRegistryPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'manifests\owner-validator-registry.json'
+    $instructionRouterPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'skills\rusty-morphospace\references\project-workflow.md'
+    $lifecycle = Get-Content -LiteralPath $lifecyclePath -Raw | ConvertFrom-Json
+    $contractBindings = [pscustomobject][ordered]@{
+        project_revision = [int]$Spec.revision
+        workflow_lifecycle_sha256 = Get-MorphospaceFileSha256 -Path $lifecyclePath
+        iteration_unit_schema_sha256 = Get-MorphospaceFileSha256 -Path $unitSchemaPath
+        automation_receipt_schema_sha256 = Get-MorphospaceFileSha256 -Path $automationSchemaPath
+        owner_validator_registry_sha256 = Get-MorphospaceFileSha256 -Path $validatorRegistryPath
+        instruction_router_sha256 = Get-MorphospaceFileSha256 -Path $instructionRouterPath
+    }
+    $candidateFingerprint = Get-MorphospaceCanonicalJsonSha256 ([pscustomobject][ordered]@{
+        unit_sha256 = Get-MorphospaceCanonicalJsonSha256 $Unit
+        validation_tier = $ValidationTier
+        contract_bindings = $contractBindings
+    })
+
+    $checks = New-Object System.Collections.Generic.List[object]
+    $addCheck = {
+        param([string]$CheckId, [string]$Outcome, [string]$CoverageState, [string[]]$ReasonCodes)
+        $checks.Add([pscustomobject][ordered]@{
+            check_id = $CheckId
+            outcome = $Outcome
+            coverage_state = $CoverageState
+            reason_codes = @($ReasonCodes | Sort-Object -Unique)
+        }) | Out-Null
+    }
+    & $addCheck 'contract-bindings' 'pass' 'completed' @()
+
+    $knownProfileIds = @($Spec.validation_profiles | ForEach-Object { [string]$_.profile_id })
+    $unknownProfileIds = @($Unit.validation | ForEach-Object { [string]$_.profile_id } | Where-Object { $knownProfileIds -notcontains $_ } | Sort-Object -Unique)
+    if ($unknownProfileIds.Count -gt 0) {
+        & $addCheck 'validation-profile-closure' 'fail' 'completed' @('validation-profile-unknown')
+    } else {
+        & $addCheck 'validation-profile-closure' 'pass' 'completed' @()
+    }
+
+    $unavailableWritable = @($writable.ToArray() | Where-Object { -not $_.mapped -or -not $_.available })
+    if ($unavailableWritable.Count -gt 0) {
+        & $addCheck 'writable-repository-availability' 'incomplete' 'missing' @('writable-repository-unavailable')
+    } else {
+        & $addCheck 'writable-repository-availability' 'pass' 'completed' @()
+    }
+
+    if ($dependencies.Count -eq 0) {
+        & $addCheck 'read-only-dependency-availability' 'pass' 'skipped' @('not-applicable')
+    } elseif (@($dependencies.ToArray() | Where-Object { -not $_.mapped -or -not $_.exists }).Count -gt 0) {
+        & $addCheck 'read-only-dependency-availability' 'incomplete' 'missing' @('read-only-dependency-unavailable')
+    } else {
+        & $addCheck 'read-only-dependency-availability' 'pass' 'completed' @()
+    }
+
+    $workMode = if ($Unit.PSObject.Properties.Name -contains 'work_mode') { [string]$Unit.work_mode } else { 'feature' }
+    $knownWorkModes = @($lifecycle.work_modes | ForEach-Object { [string]$_ })
+    $instructionReasons = New-Object System.Collections.Generic.List[string]
+    if ($knownWorkModes -notcontains $workMode) { $instructionReasons.Add('work-mode-unknown') | Out-Null }
+    $categoryAliases = @{}
+    foreach ($alias in @($lifecycle.change_category_aliases)) { $categoryAliases[[string]$alias.alias] = [string]$alias.canonical }
+    $effectiveCategories = @($Unit.change_categories | ForEach-Object {
+        $category = [string]$_
+        if ($categoryAliases.ContainsKey($category)) { $categoryAliases[$category] } else { $category }
+    })
+    $triggerCategories = @($lifecycle.instruction_sync.trigger_categories | ForEach-Object { [string]$_ })
+    $triggered = @($effectiveCategories | Where-Object { $triggerCategories -contains $_ } | Sort-Object -Unique)
+    if ($triggered.Count -eq 0 -and [string]$Unit.instruction_impact -eq 'none') {
+        & $addCheck 'instruction-action-compatibility' 'pass' 'skipped' @('not-applicable')
+    } else {
+        $expectedImpact = if ($workMode -eq 'validation-only') { 'review' } else { 'update' }
+        $expectedAction = if ($workMode -eq 'validation-only') { 'review-no-change' } else { 'update' }
+        if ([string]$Unit.instruction_impact -ne $expectedImpact) { $instructionReasons.Add('instruction-impact-mode-mismatch') | Out-Null }
+        foreach ($surface in @($Unit.instruction_surfaces)) {
+            if ([string]$surface.action -ne $expectedAction) { $instructionReasons.Add('instruction-action-mode-mismatch') | Out-Null }
+        }
+        if ($instructionReasons.Count -gt 0) {
+            & $addCheck 'instruction-action-compatibility' 'fail' 'completed' @($instructionReasons.ToArray())
+        } else {
+            & $addCheck 'instruction-action-compatibility' 'pass' 'completed' @()
+        }
+    }
+
+    if (-not $requirementsDeclared) {
+        if ($Unit.PSObject.Properties.Name -contains 'work_mode') {
+            & $addCheck 'claim-requirements' 'fail' 'completed' @('claim-requirements-missing')
+        } else {
+            & $addCheck 'claim-requirements' 'pass' 'skipped' @('legacy-implicit-work-mode')
+        }
+    } else {
+        $requirementsIncomplete = @($toolRows.ToArray() | Where-Object { -not $_.available }).Count -gt 0 -or
+            @($inputRows.ToArray() | Where-Object { -not $_.exists -or -not $_.kind_matches }).Count -gt 0
+        $requirementsFailed = @($diskRows.ToArray() | Where-Object { -not $_.passed -and $null -ne $_.available_free_mib }).Count -gt 0 -or
+            @($inputRows.ToArray() | Where-Object { $null -ne $_.hash_matches -and -not $_.hash_matches }).Count -gt 0
+        if ($requirementsFailed) { & $addCheck 'claim-requirements' 'fail' 'completed' @('claim-requirement-mismatch') }
+        elseif ($requirementsIncomplete) { & $addCheck 'claim-requirements' 'incomplete' 'missing' @('claim-requirement-unavailable') }
+        else { & $addCheck 'claim-requirements' 'pass' 'completed' @() }
+    }
+
+    if ($resources.Count -eq 0) {
+        & $addCheck 'resource-declaration-uniqueness' 'pass' 'skipped' @('not-applicable')
+    } elseif (@($resources | Group-Object resource_id | Where-Object { $_.Count -gt 1 }).Count -gt 0) {
+        & $addCheck 'resource-declaration-uniqueness' 'fail' 'completed' @('resource-declaration-duplicate')
+    } else {
+        & $addCheck 'resource-declaration-uniqueness' 'pass' 'completed' @()
+    }
+
+    if (@($ValidationMatrix | Where-Object { [string]$_.kind -eq 'device' }).Count -eq 0) {
+        & $addCheck 'device-selection' 'pass' 'skipped' @('not-applicable')
+    } elseif (@($ValidationMatrix | Where-Object { [string]$_.kind -eq 'device' -and [string]$_.disposition -eq 'blocked-missing-serials' }).Count -gt 0) {
+        & $addCheck 'device-selection' 'incomplete' 'missing' @('device-serial-missing')
+    } else {
+        & $addCheck 'device-selection' 'pass' 'completed' @()
+    }
+
+    $declaredPaths = @(
+        @($Unit.allowed_repositories | ForEach-Object { @($_.allowed_paths) })
+        @($(if ($Unit.PSObject.Properties.Name -contains 'read_only_dependencies') { @($Unit.read_only_dependencies | ForEach-Object { @($_.paths) }) } else { @() }))
+    ) | ForEach-Object { ([string]$_).Replace('\', '/') }
+    $longDeclaredPaths = @($declaredPaths | Where-Object { $_.Length -gt 180 })
+    if ($longDeclaredPaths.Count -gt 0) {
+        & $addCheck 'declared-path-budget' 'incomplete' 'missing' @('declared-path-capability-unproven')
+    } else {
+        & $addCheck 'declared-path-budget' 'pass' 'completed' @()
+    }
+
+    $writableRoots = @($Unit.allowed_repositories | ForEach-Object {
+        $repoId = [string]$_.repo_id
+        if ($RepositoryMap.ContainsKey($repoId)) {
+            [IO.Path]::GetFullPath([string]$RepositoryMap[$repoId].path).TrimEnd('\', '/').Replace('\', '/').ToLowerInvariant()
+        }
+    } | Where-Object { $_ })
+    if (@($writableRoots | Group-Object | Where-Object { $_.Count -gt 1 }).Count -gt 0) {
+        & $addCheck 'single-writer-repository-map' 'fail' 'completed' @('writable-repository-map-alias')
+    } else {
+        & $addCheck 'single-writer-repository-map' 'pass' 'completed' @()
+    }
+
+    $checkRows = @($checks.ToArray() | Sort-Object check_id)
+    $failedChecks = @($checkRows | Where-Object { $_.outcome -eq 'fail' })
+    $missingChecks = @($checkRows | Where-Object { $_.coverage_state -eq 'missing' })
+    $advisoryStatus = if ($failedChecks.Count -gt 0) { 'fail' } elseif ($missingChecks.Count -gt 0) { 'incomplete' } else { 'pass' }
+    $coverage = [pscustomobject][ordered]@{
+        expected = @($checkRows | ForEach-Object { [string]$_.check_id })
+        completed = @($checkRows | Where-Object { $_.coverage_state -eq 'completed' } | ForEach-Object { [string]$_.check_id })
+        skipped = @($checkRows | Where-Object { $_.coverage_state -eq 'skipped' } | ForEach-Object { [string]$_.check_id })
+        missing = @($missingChecks | ForEach-Object { [string]$_.check_id })
+        checks = $checkRows
+    }
+
     return [pscustomobject][ordered]@{
-        version = 'v1'
+        version = 'v2'
         ready_to_claim = ($issues.Count -eq 0)
+        advisory_status = $advisoryStatus
+        candidate_fingerprint = $candidateFingerprint
+        state_mutation_performed = $false
+        reason_codes = @($checkRows.reason_codes | Sort-Object -Unique | Where-Object { $_ -notin @('not-applicable', 'legacy-implicit-work-mode') })
+        contract_bindings = $contractBindings
+        coverage = $coverage
         validation_tier = $ValidationTier
         requirements_declared = $requirementsDeclared
         disk = @($diskRows.ToArray())
@@ -1286,7 +1443,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
     $repoStatesArray = @($repositoryStates.ToArray())
     $validationMatrix = @(New-MorphospaceValidationMatrix -Unit $unit -DeviceSerials $DeviceSerials)
     $graphScope = New-MorphospaceGraphScope -Unit $unit
-    $claimPreflight = New-MorphospaceClaimPreflight -Unit $unit -RepositoryMap $repoMap -RepositoryStates $repoStatesArray -ValidationMatrix $validationMatrix -ValidationTier $ValidationTier
+    $claimPreflight = New-MorphospaceClaimPreflight -Unit $unit -Spec $spec -RepositoryMap $repoMap -RepositoryStates $repoStatesArray -ValidationMatrix $validationMatrix -ValidationTier $ValidationTier
     $beforeStatus = [string]$unit.status
     $beforeCurrent = $state.current_unit
     $expectedPreStateSha256 = Get-MorphospaceCanonicalJsonSha256 $state
