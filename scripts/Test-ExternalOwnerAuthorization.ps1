@@ -73,5 +73,28 @@ try {
         @{name="oversized policy";text=(" "*17000)+($policyDocument|ConvertTo-Json -Depth 10)}
     )
     foreach($case in $policyNegatives){[IO.File]::WriteAllText($policyPath,[string]$case.text,[Text.UTF8Encoding]::new($false));$failed=$false;try{$null=Read-ExternalOwnerAuthorizationPolicy $policyPath $policySchemaPath}catch{$failed=$true};if(-not $failed){throw "Negative policy case passed: $($case.name)"}}
-    Write-Output "External owner authorization tests passed (exact-evidence idempotence plus changed evidence, policy, identity, time, signature, and key negatives)."
+    $signingHelper = Get-Content -Raw (Join-Path $PSScriptRoot "New-ExternalOwnerAuthorizationComment.ps1")
+    $bytePreflightIndex = $signingHelper.IndexOf('Test-CanonicalTextBytes.ps1',[StringComparison]::Ordinal)
+    $policyReadIndex = $signingHelper.IndexOf('Read-ExternalOwnerAuthorizationPolicy',[StringComparison]::Ordinal)
+    $keyOpenIndex = $signingHelper.IndexOf('ImportFromPem',[StringComparison]::Ordinal)
+    if ($bytePreflightIndex -lt 0 -or $policyReadIndex -lt 0 -or $keyOpenIndex -lt 0 -or $bytePreflightIndex -gt $policyReadIndex -or $bytePreflightIndex -gt $keyOpenIndex) {
+        throw "External owner signing helper must run canonical text-byte preflight before policy or key use."
+    }
+    $crlfRequestPath = Join-Path $temp "noncanonical-crlf-request.json"
+    [IO.File]::WriteAllBytes($crlfRequestPath, [Text.UTF8Encoding]::new($false).GetBytes("{`r`n}`r`n"))
+    $crlfFailure = ""
+    try {
+        & (Join-Path $PSScriptRoot "New-ExternalOwnerAuthorizationComment.ps1") `
+            -RequestPath $crlfRequestPath `
+            -AuthorizationId "noncanonical-request-probe" `
+            -IssuedAt "2026-08-06T11:59:00Z" `
+            -ExpiresAt "2026-08-06T13:00:00Z" `
+            -CertificateThumbprint ("0" * 40) | Out-Null
+    } catch {
+        $crlfFailure = $_.Exception.Message
+    }
+    if ($crlfFailure -notmatch 'eol002-evidence-crlf') {
+        throw "CRLF authorization request was not rejected before signing-key access: $crlfFailure"
+    }
+    Write-Output "External owner authorization tests passed (exact-evidence idempotence, executed byte-preflight ordering, and changed evidence, policy, identity, time, signature, and key negatives)."
 } finally { $rsa.Dispose(); if(Test-Path $temp){Remove-Item -LiteralPath $temp -Recurse -Force} }

@@ -11,6 +11,14 @@ $ErrorActionPreference = "Stop"
 if (($PrivateKeyPemPath -eq "") -eq ($CertificateThumbprint -eq "")) { throw "Specify exactly one external signing source." }
 $root = Split-Path -Parent $PSScriptRoot
 Import-Module (Join-Path $PSScriptRoot "lib/ExternalOwnerAuthorization.psm1") -Force
+$bytePreflight = & (Join-Path $PSScriptRoot "Test-CanonicalTextBytes.ps1") `
+    -EvidencePath (Resolve-Path -LiteralPath $RequestPath -ErrorAction Stop).Path `
+    -Json `
+    -NoThrow |
+    ConvertFrom-Json -Depth 12
+if ($bytePreflight.advisory_status -cne "pass") {
+    throw "External owner authorization request byte preflight failed: $($bytePreflight.reason_codes -join ', ')."
+}
 $policy = Read-ExternalOwnerAuthorizationPolicy `
     -Path (Join-Path $root "config/external-owner-authorization.json") `
     -SchemaPath (Join-Path $root "schemas/external-owner-authorization-policy-v1.schema.json")

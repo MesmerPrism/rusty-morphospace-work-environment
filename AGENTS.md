@@ -354,6 +354,11 @@ ancestry consumes the authorization.
   separate owner decision, never deletion authority; keep remote ref retirement
   separate from local worktree/branch cleanup and preserve incomplete, dirty,
   divergent, operational, or evidence-held refs.
+- Enroll canonical text paths explicitly through repository-owned attributes;
+  covered text is strict UTF-8 without BOM and LF-only, while historical and
+  binary paths remain byte-exact until a separate reviewed conversion. Run the
+  raw-byte preflight before hashing or signing and never let `core.autocrlf`
+  normalize evidence. Route the full rule to `docs/AUTONOMOUS_ITERATION.md`.
 - Automation may record or accept validation only from a workspace-local
   `validation_receipt.v1` with exact criterion/gate coverage, verified artifact
   hashes, current repo heads/branches, ancestor bases, exact changed paths, and
