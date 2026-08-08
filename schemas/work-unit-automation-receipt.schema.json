@@ -35,8 +35,50 @@
       "additionalProperties": false,
       "required": ["version", "ready_to_claim", "validation_tier", "requirements_declared", "disk", "tools", "product_inputs", "writable_repositories", "read_only_dependencies", "instruction_surfaces", "resources", "validation_matrix", "issues"],
       "properties": {
-        "version": { "const": "v1" },
+        "version": { "enum": ["v1", "v2"] },
         "ready_to_claim": { "type": "boolean" },
+        "advisory_status": { "enum": ["pass", "fail", "incomplete"] },
+        "candidate_fingerprint": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "state_mutation_performed": { "const": false },
+        "reason_codes": {
+          "type": "array", "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" }
+        },
+        "contract_bindings": {
+          "type": "object", "additionalProperties": false,
+          "required": ["project_revision", "workflow_lifecycle_sha256", "iteration_unit_schema_sha256", "automation_receipt_schema_sha256", "owner_validator_registry_sha256", "instruction_router_sha256"],
+          "properties": {
+            "project_revision": { "type": "integer", "minimum": 1 },
+            "workflow_lifecycle_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "iteration_unit_schema_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "automation_receipt_schema_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "owner_validator_registry_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "instruction_router_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+          }
+        },
+        "coverage": {
+          "type": "object", "additionalProperties": false,
+          "required": ["expected", "completed", "skipped", "missing", "checks"],
+          "properties": {
+            "expected": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" } },
+            "completed": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" } },
+            "skipped": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" } },
+            "missing": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" } },
+            "checks": {
+              "type": "array", "minItems": 1,
+              "items": {
+                "type": "object", "additionalProperties": false,
+                "required": ["check_id", "outcome", "coverage_state", "reason_codes"],
+                "properties": {
+                  "check_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" },
+                  "outcome": { "enum": ["pass", "fail", "incomplete"] },
+                  "coverage_state": { "enum": ["completed", "skipped", "missing"] },
+                  "reason_codes": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" } }
+                }
+              }
+            }
+          }
+        },
         "validation_tier": { "enum": ["quick", "standard", "deep"] },
         "requirements_declared": { "type": "boolean" },
         "disk": { "type": "array", "items": { "type": "object" } },
@@ -48,7 +90,28 @@
         "resources": { "type": "array", "items": { "type": "object" } },
         "validation_matrix": { "type": "array", "items": { "type": "object" } },
         "issues": { "type": "array", "items": { "type": "string", "minLength": 1 } }
-      }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "version": { "const": "v2" } }, "required": ["version"] },
+          "then": { "required": ["advisory_status", "candidate_fingerprint", "state_mutation_performed", "reason_codes", "contract_bindings", "coverage"] }
+        },
+        {
+          "if": { "properties": { "version": { "const": "v1" } }, "required": ["version"] },
+          "then": {
+            "not": {
+              "anyOf": [
+                { "required": ["advisory_status"] },
+                { "required": ["candidate_fingerprint"] },
+                { "required": ["state_mutation_performed"] },
+                { "required": ["reason_codes"] },
+                { "required": ["contract_bindings"] },
+                { "required": ["coverage"] }
+              ]
+            }
+          }
+        }
+      ]
     },
     "adoption_receipt": { "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }] },
     "publication_closure": {

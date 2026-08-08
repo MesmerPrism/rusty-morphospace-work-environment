@@ -95,6 +95,23 @@ proposals, claims, validation results, acceptance, publication planning, and
 external execution as separate facts. A passing check is evidence, not
 acceptance. A prepared publication plan is not execution evidence.
 
+Before Claim, run `Inspect` with the exact consumer inventory and inputs. Read
+v2 `claim_preflight.advisory_status`, its expected/completed/skipped/missing
+coverage, reason codes, candidate fingerprint, and bound contract identities.
+Treat `fail` as a known contradiction and `incomplete` as missing proof; never
+promote either to pass. Keep this result diagnostic and non-mutating, separate
+from `ready_to_claim`, until a separately reviewed shadow-evidence gate changes
+Claim authority.
+
+Before an expensive reusable-contract matrix, preflight the real consumer,
+iterate with focused checks, obtain independent review, freeze one candidate,
+then run the final matrix once. Do not promote a single-consumer recovery to
+shared infrastructure without a second consumer, neutral harness, or explicit
+owner decision. After one new control-plane prerequisite on a product path, a
+second mismatch is an exact blocker; return priority to the next code-bearing
+product checkpoint. Update orchestration state at merge, materialization, and
+handoff boundaries.
+
 Preserve blockers and interruptions with typed, hash-bound evidence. Recovery
 may update workflow state only after the external owner proves safe cleanup;
 it does not silently perform Git, process, package, route, or device cleanup.

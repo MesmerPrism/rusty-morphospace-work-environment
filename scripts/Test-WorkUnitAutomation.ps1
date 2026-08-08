@@ -397,6 +397,98 @@ try {
     $receiptRoot = Join-Path $workspace "receipts"
     $fixed = "2026-01-02T03:04:05Z"
 
+    # PRE-001 keeps Claim behavior unchanged while making Inspect coverage
+    # explicit and machine-readable. The named shapes are synthetic; they
+    # contain no private workspace evidence.
+    $positivePaths = @(
+        $instructionUnitPath,
+        (Join-Path $workspace "workspace.state.json"),
+        (Join-Path $workspace "iteration-events.jsonl")
+    )
+    $positiveBefore = @($positivePaths | ForEach-Object { (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash })
+    $unit047Inspect = Invoke-MorphospaceWorkUnitAutomation -Action Inspect -WorkspaceRoot $workspace -UnitId "unit-auto-001" -RepoMapPath $repoMapPath -Timestamp $fixed
+    $unit047InspectAgain = Invoke-MorphospaceWorkUnitAutomation -Action Inspect -WorkspaceRoot $workspace -UnitId "unit-auto-001" -RepoMapPath $repoMapPath -Timestamp $fixed
+    $positiveAfter = @($positivePaths | ForEach-Object { (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash })
+    Assert-Automation (
+        $unit047Inspect.claim_preflight.version -eq "v2" -and
+        $unit047Inspect.claim_preflight.advisory_status -eq "pass" -and
+        $unit047Inspect.claim_preflight.state_mutation_performed -eq $false -and
+        $unit047Inspect.claim_preflight.coverage.missing.Count -eq 0 -and
+        $unit047Inspect.claim_preflight.candidate_fingerprint -match '^[0-9a-f]{64}$'
+    ) "Unit047-shaped positive advisory preflight"
+    Assert-Automation (
+        $unit047Inspect.claim_preflight.candidate_fingerprint -ceq $unit047InspectAgain.claim_preflight.candidate_fingerprint -and
+        ($unit047Inspect.claim_preflight.coverage.expected -join "`n") -ceq ($unit047InspectAgain.claim_preflight.coverage.expected -join "`n")
+    ) "advisory preflight was not deterministic"
+    $automationReceiptSchema = Join-Path $RepoRoot "schemas\work-unit-automation-receipt.schema.json"
+    $unit047InspectJson = $unit047Inspect | ConvertTo-Json -Depth 100
+    Assert-Automation (Test-Json -Json $unit047InspectJson -SchemaFile $automationReceiptSchema) "v2 advisory Inspect receipt failed its schema"
+    $mislabeledV1Inspect = $unit047InspectJson | ConvertFrom-Json
+    $mislabeledV1Inspect.claim_preflight.version = "v1"
+    $mislabeledV1Accepted = Test-Json -Json ($mislabeledV1Inspect | ConvertTo-Json -Depth 100) -SchemaFile $automationReceiptSchema -ErrorAction SilentlyContinue
+    Assert-Automation (-not $mislabeledV1Accepted) "v1 claim preflight accepted v2-only advisory fields"
+    $legacyV1Inspect = $unit047InspectJson | ConvertFrom-Json
+    $legacyV1Inspect.claim_preflight.version = "v1"
+    foreach ($propertyName in @("advisory_status", "candidate_fingerprint", "state_mutation_performed", "reason_codes", "contract_bindings", "coverage")) {
+        $legacyV1Inspect.claim_preflight.PSObject.Properties.Remove($propertyName)
+    }
+    Assert-Automation (Test-Json -Json ($legacyV1Inspect | ConvertTo-Json -Depth 100) -SchemaFile $automationReceiptSchema) "legacy v1 claim preflight shape was not preserved"
+    Assert-Automation (($positiveBefore -join "`n") -ceq ($positiveAfter -join "`n")) "Inspect advisory preflight mutated workflow bytes"
+
+    $unit045Workspace = New-TestWorkspace -Root (Join-Path $testRoot "unit045-shape") -ProjectId "unit045-shape" -UnitId "unit045-shape-001"
+    $unit045Path = Join-Path $unit045Workspace "iteration-units\unit045-shape-001.json"
+    $unit045 = Get-Content -LiteralPath $unit045Path -Raw | ConvertFrom-Json
+    $unit045.validation[0].profile_id = "unknown-host-profile"
+    Write-TestJson -Path $unit045Path -Value $unit045
+    $unit045Inspect = Invoke-MorphospaceWorkUnitAutomation -Action Inspect -WorkspaceRoot $unit045Workspace -UnitId "unit045-shape-001" -RepoMapPath $repoMapPath -Timestamp $fixed
+    Assert-Automation (
+        $unit045Inspect.claim_preflight.advisory_status -eq "fail" -and
+        @($unit045Inspect.claim_preflight.reason_codes) -contains "validation-profile-unknown" -and
+        $unit045Inspect.claim_preflight.ready_to_claim
+    ) "Unit045-shaped unknown validation profile was not advisory-failed without changing Claim behavior"
+
+    $unit046Workspace = New-TestWorkspace -Root (Join-Path $testRoot "unit046-shape") -ProjectId "unit046-shape" -UnitId "unit046-shape-001"
+    $unit046Path = Join-Path $unit046Workspace "iteration-units\unit046-shape-001.json"
+    $unit046 = Get-Content -LiteralPath $unit046Path -Raw | ConvertFrom-Json
+    $unit046 | Add-Member -NotePropertyName read_only_dependencies -NotePropertyValue @(
+        [pscustomobject][ordered]@{ repo_id = "missing-manifold-input"; paths = @("crates/required/Cargo.toml"); purpose = "Exercise an unavailable read-only build edge."; verification = "Inspect the declared manifest." }
+    )
+    Write-TestJson -Path $unit046Path -Value $unit046
+    $unit046Inspect = Invoke-MorphospaceWorkUnitAutomation -Action Inspect -WorkspaceRoot $unit046Workspace -UnitId "unit046-shape-001" -RepoMapPath $repoMapPath -Timestamp $fixed
+    Assert-Automation (
+        $unit046Inspect.claim_preflight.advisory_status -eq "incomplete" -and
+        @($unit046Inspect.claim_preflight.reason_codes) -contains "read-only-dependency-unavailable" -and
+        @($unit046Inspect.claim_preflight.coverage.missing) -contains "read-only-dependency-availability"
+    ) "Unit046-shaped missing read-only dependency was not advisory-incomplete"
+
+    $unit048Workspace = New-TestWorkspace -Root (Join-Path $testRoot "unit048-shape") -ProjectId "unit048-shape" -UnitId "unit048-shape-001"
+    $unit048Path = Join-Path $unit048Workspace "iteration-units\unit048-shape-001.json"
+    $unit048 = Get-Content -LiteralPath $unit048Path -Raw | ConvertFrom-Json
+    $unit048.allowed_repositories += [pscustomobject][ordered]@{ repo_id = "duplicate-writer"; allowed_paths = @("docs/") }
+    Write-TestJson -Path $unit048Path -Value $unit048
+    $duplicateMapPath = Join-Path $testRoot "duplicate-writer-repo-map.json"
+    Write-TestJson -Path $duplicateMapPath -Value ([ordered]@{ schema = "rusty.morphospace.workflow.repository_map.v1"; repositories = @(
+        [ordered]@{ repo_id = "project-shell"; path = $repo; role = "source" },
+        [ordered]@{ repo_id = "duplicate-writer"; path = $repo; role = "source" },
+        [ordered]@{ repo_id = "workflow-planning"; path = $planningRepo; role = "planning" }
+    ) })
+    $unit048Inspect = Invoke-MorphospaceWorkUnitAutomation -Action Inspect -WorkspaceRoot $unit048Workspace -UnitId "unit048-shape-001" -RepoMapPath $duplicateMapPath -Timestamp $fixed
+    Assert-Automation (
+        $unit048Inspect.claim_preflight.advisory_status -eq "fail" -and
+        @($unit048Inspect.claim_preflight.reason_codes) -contains "writable-repository-map-alias"
+    ) "Unit048-shaped duplicate writer map was not advisory-failed"
+
+    $longPathWorkspace = New-TestWorkspace -Root (Join-Path $testRoot "long-path-shape") -ProjectId "long-path-shape" -UnitId "long-path-shape-001"
+    $longPathUnitPath = Join-Path $longPathWorkspace "iteration-units\long-path-shape-001.json"
+    $longPathUnit = Get-Content -LiteralPath $longPathUnitPath -Raw | ConvertFrom-Json
+    $longPathUnit.allowed_repositories[0].allowed_paths += ("generated/" + ("segment/" * 24) + "artifact.json")
+    Write-TestJson -Path $longPathUnitPath -Value $longPathUnit
+    $longPathInspect = Invoke-MorphospaceWorkUnitAutomation -Action Inspect -WorkspaceRoot $longPathWorkspace -UnitId "long-path-shape-001" -RepoMapPath $repoMapPath -Timestamp $fixed
+    Assert-Automation (
+        $longPathInspect.claim_preflight.advisory_status -eq "incomplete" -and
+        @($longPathInspect.claim_preflight.reason_codes) -contains "declared-path-capability-unproven"
+    ) "long declared path was not advisory-incomplete"
+
     # Exercise the one behavior-neutral bridge from an already published
     # embedded workspace into a distinct local-only planning authority.
     $adoptionRemote = Join-Path $testRoot "adoption-source-remote.git"

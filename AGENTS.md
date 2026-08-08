@@ -136,6 +136,12 @@ For broad validation, use `Test-WorkEnvironment.ps1 -SelfTest -Tier Quick`,
 then `Standard`, then `Deep` only when the risk warrants it. A single failed
 child check fails the aggregate. These tiers never authorize device work.
 
+Before Claim or an expensive final matrix, route the exact real consumer
+inventory through the advisory `Inspect` preflight and follow the candidate-
+freeze and control-plane budget in `docs/AUTONOMOUS_ITERATION.md`. Its
+`pass`/`fail`/`incomplete` result is diagnostic only; it does not replace
+`ready_to_claim`, mutate workflow state, or authorize Claim.
+
 The work-environment repo owns portable schemas, examples, and validators. A
 project owns its instantiated `morphospace/` directory. Do not copy live state,
 private evidence, or machine paths back into this repository.

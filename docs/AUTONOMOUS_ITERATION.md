@@ -87,6 +87,65 @@ same unit unless write, publication, or rollback authority changes. After a
 workflow-contract change, preserve a three-feature-unit stability window; see
 [Workflow Stability And Feature Throughput](WORKFLOW_STABILITY.md).
 
+## Advisory Admission Preflight And Control-Plane Budget
+
+Run `Inspect` against the exact repository map, product inputs, read-only
+dependencies, validation profiles, instruction surfaces, resources, and device
+selection that a later Claim would receive. The additive v2
+`claim_preflight` result reports:
+
+- `advisory_status` as `pass`, `fail`, or `incomplete`;
+- a stable candidate fingerprint and exact project/workflow/schema/validator/
+  instruction-router bindings;
+- the complete expected check set plus completed, skipped, and missing checks;
+- stable reason codes and `state_mutation_performed: false`.
+
+`fail` means the observed declaration contradicts a known contract.
+`incomplete` means required proof or a required input is unavailable. A
+skipped check must identify why it is not applicable; it is not missing proof.
+`pass` means only that every current advisory check completed or was explicitly
+inapplicable. The preflight does not run acceptance commands, prove product
+behavior, or grant repository, publication, device, or user authority.
+
+This is a shadow result. Keep the existing `ready_to_claim` lifecycle result
+separate and keep Claim behavior unchanged. Do not make
+`advisory_status: pass` a Claim requirement until the separately reviewed
+promotion gate has enough real shadow evidence and a rollback decision.
+
+Before publishing a reusable authority/workflow contract or running its final
+expensive matrix, perform one bounded read-only compatibility preflight against
+the real consumer inventory and state shape. Sanitize public fixtures and keep
+private evidence private; generic fixtures alone are insufficient. Use focused
+or Quick checks while iterating. Obtain independent review, freeze one exact
+candidate, and run the owner-required final matrix once. Any later code or
+contract-byte revision invalidates that matrix and requires a newly justified
+run.
+
+Do not turn a one-consumer recovery into shared infrastructure without a
+second independent consumer, a neutral conformance harness, or an explicit
+owner decision. A product-critical path may acquire at most one newly reviewed
+control-plane prerequisite. If another workflow or contract mismatch appears,
+stop with its exact bounded evidence instead of recursively inventing another
+repair.
+
+For example, a project may have its only authoritative planning bytes in an
+intentionally dirty checkout. The tempting response is to invent a reusable
+materialization contract immediately and then repair every mismatch found by
+that contract. First preflight the exact dirty inventory and consumer state
+read-only. If one bounded recovery is justified, freeze and review it. If its
+execution reveals a second semantic mismatch, preserve the source, report the
+blocker, and return the next available checkpoint to product code; do not grow
+another general workflow layer from that one consumer.
+
+Measure progress by owner product deltas and focused behavior tests. Cleanup,
+documentation residuals, ref retirement, and unrelated workflow improvements
+must not preempt the next code-bearing product checkpoint unless safety or
+resource release requires it. Validate in proportion to risk and candidate
+maturity; classify unrelated host failures and defer them unless they
+invalidate the candidate. Refresh orchestration state at merge,
+materialization, and handoff boundaries so continuation never resumes from a
+stale PR, base, writer, or authority claim.
+
 ## Compact State And Event Log
 
 `workspace.state.json` names:
