@@ -311,6 +311,16 @@ after exact container, timestamp, ref, path-set, parent-order, and per-parent
 projection validation. The action records the non-ordinary shape and changes
 workflow state only.
 
+For a normal linear publication whose source refs and one planning
+receipt-only commit already match the immutable execution/accounting evidence,
+but whose planning worktree contains exactly the five transaction-owned
+`PreparePush` paths, use only the externally signed
+[`ReconcilePreparedPushTransactionSuffix`](PREPARED_PUSH_TRANSACTION_SUFFIX_RECONCILIATION.md)
+route. It CAS-binds the exact unit, state, ledger, plan, transition, receipts,
+refs, suffix commit, and dirty paths; consumes only the matching pending bundle;
+and changes no Git, evidence bytes, timestamps, validation, acceptance, or
+publication authority. Another bundle requires another signed owner scope.
+
 An exact pending bundle that remains demonstrably unexecuted may instead use
 `RetirePreparedPush`. It binds the embedded plan and preparation-event owner
 containers, requires complete stable clean repository observations and fresh

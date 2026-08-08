@@ -332,6 +332,13 @@ suffix, and consume only the exact pending bundle. Prepared evidence may bind
 standalone plan/event files or their immutable automation-receipt and
 transition-ledger containers. See
 [`docs/PLANNED_PUBLICATION_ACCOUNTING.md`](docs/PLANNED_PUBLICATION_ACCOUNTING.md).
+For the separately owner-authorized normal linear shape in which a planning
+receipt-only commit is already clean and only the five transaction-owned
+`PreparePush` paths remain dirty, use the exact-bundle
+[`prepared_push_transaction_suffix_reconciliation.v1`](docs/PREPARED_PUSH_TRANSACTION_SUFFIX_RECONCILIATION.md)
+route. It verifies the signed scope and consumes only the matching pending
+bundle without changing Git, evidence bytes, timestamps, acceptance, or
+publication authority.
 If immutable execution predates its recorded preparation timestamp and an exact
 source final is a merge integration that ordinary commit projection cannot
 represent, normal accounting must still reject. The distinct

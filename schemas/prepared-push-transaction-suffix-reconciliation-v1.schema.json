@@ -1,0 +1,242 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/prepared-push-transaction-suffix-reconciliation-v1.schema.json",
+  "title": "Signed reconciliation of one exact dirty PreparePush transaction suffix",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema", "schema", "reconciliation_id", "project_id", "unit_id", "bundle_id",
+    "reason", "expected", "prepared_plan", "prepared_event",
+    "executed_push_receipt", "planned_publication_accounting",
+    "source_repositories", "planning_transport", "workspace_transition",
+    "preservation", "authorization", "failure"
+  ],
+  "properties": {
+    "$schema": { "type": "string", "minLength": 1 },
+    "schema": { "const": "rusty.morphospace.workflow.prepared_push_transaction_suffix_reconciliation.v1" },
+    "reconciliation_id": { "$ref": "#/$defs/shortId" },
+    "project_id": { "$ref": "#/$defs/id" },
+    "unit_id": { "$ref": "#/$defs/id" },
+    "bundle_id": { "$ref": "#/$defs/id" },
+    "reason": { "type": "string", "minLength": 1, "maxLength": 1024 },
+    "expected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "unit_status", "current_unit", "unit_raw_sha256", "unit_canonical_sha256",
+        "state_raw_sha256", "state_canonical_sha256", "events_sha256",
+        "events_length", "event_tail_id"
+      ],
+      "properties": {
+        "unit_status": { "const": "accepted" },
+        "current_unit": { "type": "null" },
+        "unit_raw_sha256": { "$ref": "#/$defs/hash" },
+        "unit_canonical_sha256": { "$ref": "#/$defs/hash" },
+        "state_raw_sha256": { "$ref": "#/$defs/hash" },
+        "state_canonical_sha256": { "$ref": "#/$defs/hash" },
+        "events_sha256": { "$ref": "#/$defs/hash" },
+        "events_length": { "type": "integer", "minimum": 1 },
+        "event_tail_id": { "$ref": "#/$defs/id" }
+      }
+    },
+    "prepared_plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["container", "member"],
+      "properties": {
+        "container": { "$ref": "#/$defs/fileBinding" },
+        "member": { "const": "push_plan" }
+      }
+    },
+    "prepared_event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["transaction_id", "event_id", "intent", "completion"],
+      "properties": {
+        "transaction_id": { "$ref": "#/$defs/id" },
+        "event_id": { "$ref": "#/$defs/id" },
+        "intent": { "$ref": "#/$defs/fileBinding" },
+        "completion": { "$ref": "#/$defs/fileBinding" }
+      }
+    },
+    "executed_push_receipt": { "$ref": "#/$defs/fileBinding" },
+    "planned_publication_accounting": { "$ref": "#/$defs/fileBinding" },
+    "source_repositories": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "items": { "$ref": "#/$defs/sourceRepository" }
+    },
+    "planning_transport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repo_id", "branch", "upstream", "execution_final_revision",
+        "execution_final_tree", "receipt_suffix_revision", "receipt_suffix_tree",
+        "receipt_suffix_parent", "receipt_suffix_commit_count",
+        "receipt_suffix_paths", "dirty_prepare_paths", "worktree_expected_dirty"
+      ],
+      "properties": {
+        "repo_id": { "$ref": "#/$defs/id" },
+        "branch": { "$ref": "#/$defs/gitRef" },
+        "upstream": { "$ref": "#/$defs/gitRef" },
+        "execution_final_revision": { "$ref": "#/$defs/gitObject" },
+        "execution_final_tree": { "$ref": "#/$defs/gitObject" },
+        "receipt_suffix_revision": { "$ref": "#/$defs/gitObject" },
+        "receipt_suffix_tree": { "$ref": "#/$defs/gitObject" },
+        "receipt_suffix_parent": { "$ref": "#/$defs/gitObject" },
+        "receipt_suffix_commit_count": { "const": 1 },
+        "receipt_suffix_paths": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/path" }
+        },
+        "dirty_prepare_paths": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "items": { "$ref": "#/$defs/dirtyPath" }
+        },
+        "worktree_expected_dirty": { "const": true }
+      }
+    },
+    "workspace_transition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pending_push_bundle_before", "pending_push_bundle_after",
+        "unit_unchanged", "validation_unchanged", "acceptance_unchanged"
+      ],
+      "properties": {
+        "pending_push_bundle_before": { "$ref": "#/$defs/id" },
+        "pending_push_bundle_after": { "type": "null" },
+        "unit_unchanged": { "const": true },
+        "validation_unchanged": { "const": true },
+        "acceptance_unchanged": { "const": true }
+      }
+    },
+    "preservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "existing_evidence_bytes_unchanged", "existing_timestamps_unchanged",
+        "ordinary_record_publication_unchanged", "git_mutation_performed",
+        "source_mutation_performed", "device_mutation_performed",
+        "acceptance_mutation_performed", "publication_authority_claimed"
+      ],
+      "properties": {
+        "existing_evidence_bytes_unchanged": { "const": true },
+        "existing_timestamps_unchanged": { "const": true },
+        "ordinary_record_publication_unchanged": { "const": true },
+        "git_mutation_performed": { "const": false },
+        "source_mutation_performed": { "const": false },
+        "device_mutation_performed": { "const": false },
+        "acceptance_mutation_performed": { "const": false },
+        "publication_authority_claimed": { "const": false }
+      }
+    },
+    "authorization": { "$ref": "#/$defs/authorization" },
+    "failure": { "type": "null" }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" },
+    "shortId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,95}$" },
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "gitObject": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "gitRef": { "type": "string", "minLength": 1, "maxLength": 255 },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\)[^\\u0000-\\u001f:]+$"
+    },
+    "fileBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "bytes", "sha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/path" },
+        "bytes": { "type": "integer", "minimum": 1, "maximum": 16777216 },
+        "sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "sourceRepository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repo_id", "branch", "upstream", "parent_revision", "revision", "tree", "history_mode", "worktree_clean"],
+      "properties": {
+        "repo_id": { "$ref": "#/$defs/id" },
+        "branch": { "$ref": "#/$defs/gitRef" },
+        "upstream": { "$ref": "#/$defs/gitRef" },
+        "parent_revision": { "$ref": "#/$defs/gitObject" },
+        "revision": { "$ref": "#/$defs/gitObject" },
+        "tree": { "$ref": "#/$defs/gitObject" },
+        "history_mode": { "const": "linear" },
+        "worktree_clean": { "const": true }
+      }
+    },
+    "dirtyPath": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "bytes", "sha256", "status"],
+      "properties": {
+        "path": { "$ref": "#/$defs/path" },
+        "bytes": { "type": "integer", "minimum": 1, "maximum": 16777216 },
+        "sha256": { "$ref": "#/$defs/hash" },
+        "status": { "enum": ["modified", "untracked"] }
+      }
+    },
+    "authorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "payload", "signature"],
+      "properties": {
+        "schema": { "const": "rusty.morphospace.workflow.prepared_push_transaction_suffix_authorization.v1" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "issuer_id", "authorization_id", "project_id", "unit_id", "bundle_id",
+            "scope_sha256", "issued_at", "expires_at", "decision", "limitations"
+          ],
+          "properties": {
+            "issuer_id": { "$ref": "#/$defs/id" },
+            "authorization_id": { "$ref": "#/$defs/id" },
+            "project_id": { "$ref": "#/$defs/id" },
+            "unit_id": { "$ref": "#/$defs/id" },
+            "bundle_id": { "$ref": "#/$defs/id" },
+            "scope_sha256": { "$ref": "#/$defs/hash" },
+            "issued_at": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$" },
+            "expires_at": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$" },
+            "decision": { "const": "authorize-prepared-push-transaction-suffix-reconciliation" },
+            "limitations": {
+              "type": "array",
+              "minItems": 6,
+              "maxItems": 6,
+              "prefixItems": [
+                { "const": "matching_pending_bundle_only" },
+                { "const": "preserve_existing_evidence_bytes" },
+                { "const": "workflow_state_only" },
+                { "const": "git_mutation=false" },
+                { "const": "acceptance_mutation=false" },
+                { "const": "publication_authority=false" }
+              ]
+            }
+          }
+        },
+        "signature": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["algorithm", "public_key_spki_sha256", "value_base64"],
+          "properties": {
+            "algorithm": { "const": "RSA-PSS-SHA256" },
+            "public_key_spki_sha256": { "$ref": "#/$defs/hash" },
+            "value_base64": { "type": "string", "minLength": 1, "maxLength": 4096 }
+          }
+        }
+      }
+    }
+  }
+}

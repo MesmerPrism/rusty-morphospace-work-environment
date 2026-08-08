@@ -273,6 +273,11 @@ prepare transition, executed receipt, pending bundle, and live remote refs as
 separate nodes. A merge integration must retain ordered side/protected parents,
 their merge base and trees, and base-to-parent plus parent-to-final path-set
 edges; never replace that graph with an empty single-commit projection.
+For a signed prepared-push transaction-suffix reconciliation, graph the plan,
+prepare event, five exact dirty paths, clean linear source refs, one planning
+receipt-only suffix, owner authorization, and pending bundle as distinct nodes.
+Permit only the bundle-consumption edge; do not infer Git, acceptance,
+execution, or publication authority.
 
 Graph historical-unit adoption as an additive evidence node linked to exact
 unit bytes, terminal event, source workflow, and normalized semantics. It must

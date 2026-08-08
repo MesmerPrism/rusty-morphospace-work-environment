@@ -63,6 +63,12 @@ a merge integration that ordinary commit projection cannot represent, keep
 `RecordPublication` strict and route only the exact additive
 `ReconcileExecutedPreparedPublication` contract. Preserve timestamps and
 parents; claim neither corrected chronology nor flattened history.
+When normal linear source publication and one clean planning receipt-only
+commit are complete but exactly five transaction-owned `PreparePush` paths
+remain dirty, keep `RecordPublication` strict. Route only the exact pending
+bundle through externally signed `ReconcilePreparedPushTransactionSuffix`;
+preserve evidence bytes and timestamps and claim no Git or publication
+authority.
 
 Treat inspection and planning as non-mutating. Work only inside user-authorized
 repositories and current-unit paths. Preserve dirty work and historical
