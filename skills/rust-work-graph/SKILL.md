@@ -247,6 +247,12 @@ Require Connection Hub native Cargo, WebSocket, Binder, and broker-authority hos
 nodes to pass before owner publication, and keep device nodes disconnected until
 a separately admitted clean-base unit.
 
+Graph wearer UI and published shell-UID operator entrypoints as adapters into
+one Hub controller/state node. Add fixed start/stop/status/pair/revoke/forget
+edges, secret-redaction and platform-identity guards, and terminal confirmed,
+rejected, or `outcome_unknown` receipt nodes. Reject any edge that injects a
+component, client identity, grant, capability, or arbitrary command.
+
 For multi-app consumers, keep separate package/client/feature-lock/marker/
 grant/sink clusters, converging only at the shared SDK and accepted peer/media
 contract nodes. Add parity edges for shared contracts and rejection edges for

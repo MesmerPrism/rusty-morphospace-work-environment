@@ -345,6 +345,12 @@ Connection Hub Cargo, shared WebSocket, Binder reducer, and broker-authority hos
 gates before owner publication; admit device evidence only from clean landed
 owner bases in a separate unit.
 
+Treat UI and ADB operator surfaces as adapters into one product authority. Gate
+the published ADB adapter with the platform shell identity; expose only fixed
+typed actions; reject caller-selected components, identities, grants, and
+capabilities. Keep credentials out of receipts and require sent, pending, then
+effective-state-confirmed, rejected, or `outcome_unknown` closure.
+
 Schema ownership follows the payload. Preserve an owner-issued artifact
 byte-for-byte and bind its exact path, schema, owner, and SHA-256 from a
 separately named workflow wrapper. Never add workflow fields while retaining

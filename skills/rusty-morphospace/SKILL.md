@@ -43,6 +43,10 @@ named by the user or ask for its location; never guess a machine path.
   manifest-relative read-only sibling. Require Connection Hub native Cargo,
   WebSocket, Binder, and broker-authority host gates before source-first owner
   publication; admit device proof only from clean landed bases in a later unit.
+- Route published ADB operator parity through one fixed shell-UID provider and
+  the same Hub controller as wearer actions. Keep start/stop/status/pair/revoke/
+  forget closed and typed; reject caller-selected authority, redact secrets,
+  and require effective-state confirmation or `outcome_unknown` receipts.
 - Invoke `$meta-quest-workflow` before any live Quest, device, ADB, APK
   install/launch, capture, logcat, Perfetto, Wi-Fi ADB, or Meta tooling work.
 
