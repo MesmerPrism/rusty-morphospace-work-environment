@@ -66,6 +66,11 @@ project only the exact required skill IDs and canonical `<skills-root>` paths;
 retain `planned` and bind exact blocker-event and receipt hashes.
 Normalize retired `publication` to `feature` only for an exact blocked unit
 with hashed terminal evidence; never infer acceptance or publication.
+For ordinary planned-publication accounting, admit an empty path list only on
+an exact typed two-parent integration merge. Keep the preceding side/content
+commit separately attributed to the triggering unit and verify ordered
+parents/trees, merge base, all four path projections, and the empty plain merge
+projection; reject every ordinary or untyped empty commit.
 When an executed prepared publication has immutable non-monotonic timestamps and
 a merge integration that ordinary commit projection cannot represent, keep
 `RecordPublication` strict and route only the exact additive

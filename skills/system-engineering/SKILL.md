@@ -169,6 +169,10 @@ Close that prepared publication only through hash-bound
 `planned_publication_accounting.v1`: enumerate exact commits and unit status,
 restrict the one planning suffix to explicit workflow transport paths, and let
 `RecordPublication` clear only the matching bundle after live clean readback.
+Model a normal two-parent source integration as typed topology, not an empty
+ordinary commit: retain the separately enumerated side/content attribution and
+bind ordered parents/trees, merge base, all four path projections, and the
+empty plain merge projection. Reject linear, untyped, or drifted empty entries.
 If immutable execution predates its recorded plan timestamp and an exact source
 final is a merge integration, use a distinct non-ordinary reconciliation:
 bind both evidence containers, exact live refs, full path-set fingerprints,

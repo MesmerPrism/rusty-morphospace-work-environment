@@ -42,6 +42,48 @@ function Test-PlannedPublicationTimeNotAfter($EarlierValue,$LaterValue) {
     return $false
 }
 
+function Test-PlannedPublicationExactList($Actual,$Expected) {
+    $actualItems=@($Actual|ForEach-Object{[string]$_})
+    $expectedItems=@($Expected|ForEach-Object{[string]$_})
+    return ($actualItems.Count-eq$expectedItems.Count-and($actualItems-join'|')-ceq($expectedItems-join'|'))
+}
+
+function Assert-PlannedPublicationFullRevision([object]$Value,[string]$Context) {
+    if([string]$Value-cnotmatch'^[0-9a-f]{40}$'){throw "$Context must be one full lowercase 40-hex Git object ID."}
+}
+
+function Assert-PlannedPublicationProjection([object[]]$Values,[string]$Context) {
+    $items=@($Values|ForEach-Object{[string]$_})
+    if($items.Count-lt1-or@($items|Sort-Object -Unique).Count-ne$items.Count){throw "$Context must be a nonempty unique path list."}
+    foreach($item in $items){if($item-cnotmatch'^(?![A-Za-z]:|/|.*(?:^|/)\.\.(?:/|$))[A-Za-z0-9._/-]+$'){throw "$Context contains an invalid portable path '$item'."}}
+}
+
+function Assert-PlannedPublicationIntegrationMergeDocument($Repository,$Commit,[object[]]$OrderedCommits,[int]$CommitIndex,[string]$TriggerUnitId) {
+    if([string]$Repository.role-cne'source'-or$null-ne$Commit.unit_id-or@($Commit.changed_paths).Count-ne0){throw 'Verified integration merge must be an empty-path source commit with null unit attribution.'}
+    if($CommitIndex-ne($OrderedCommits.Count-1)-or[string]$Commit.revision-cne[string]$Repository.prepared_revision-or[string]$Commit.revision-cne[string]$Repository.final_revision){throw 'Verified integration merge must be the prepared/final source endpoint.'}
+    if($CommitIndex-lt1){throw 'Verified integration merge lacks its separately enumerated side/content commit.'}
+    $merge=$Commit.integration_merge
+    $mergeProperties=@($merge.PSObject.Properties.Name|Sort-Object)
+    if(-not(Test-PlannedPublicationExactList $mergeProperties @('merge_base','ordered_parents','projections','topology','trees'))){throw 'Verified integration merge contains an unexpected or missing property.'}
+    if([string]$merge.topology-cne'two-parent-side-over-protected'){throw 'Verified integration merge topology is invalid.'}
+    Assert-PlannedPublicationFullRevision $Commit.revision 'Verified integration merge revision'
+    Assert-PlannedPublicationFullRevision $merge.merge_base 'Verified integration merge base'
+    $parents=@($merge.ordered_parents|ForEach-Object{[string]$_})
+    if($parents.Count-ne2-or$parents[0]-ceq$parents[1]){throw 'Verified integration merge must bind exactly two distinct ordered parents.'}
+    foreach($parent in $parents){Assert-PlannedPublicationFullRevision $parent 'Verified integration merge parent'}
+    if($parents[1]-cne[string]$Repository.old_revision){throw 'Verified integration merge protected parent must equal the source old revision.'}
+    $side=$OrderedCommits[$CommitIndex-1]
+    if([string]$side.revision-cne$parents[0]-or[string]$side.role-cne'triggering-unit'-or[string]$side.unit_id-cne$TriggerUnitId-or$null-ne$side.PSObject.Properties['integration_merge']){throw 'Verified integration merge side/content commit attribution is invalid.'}
+    if($CommitIndex-ne1){throw 'Verified integration merge source range must contain exactly the side/content commit followed by the merge.'}
+    $treeProperties=@($merge.trees.PSObject.Properties.Name|Sort-Object)
+    if(-not(Test-PlannedPublicationExactList $treeProperties @('final','merge_base','protected_parent','side_parent'))){throw 'Verified integration merge tree bindings are incomplete or expanded.'}
+    foreach($treeName in @('merge_base','side_parent','protected_parent','final')){Assert-PlannedPublicationFullRevision $merge.trees.$treeName "Verified integration merge $treeName tree"}
+    $projectionProperties=@($merge.projections.PSObject.Properties.Name|Sort-Object)
+    if(-not(Test-PlannedPublicationExactList $projectionProperties @('merge_base_to_protected','merge_base_to_side','protected_to_final','side_to_final'))){throw 'Verified integration merge projection bindings are incomplete or expanded.'}
+    foreach($projectionName in @('merge_base_to_side','merge_base_to_protected','protected_to_final','side_to_final')){Assert-PlannedPublicationProjection @($merge.projections.$projectionName) "Verified integration merge $projectionName projection"}
+    if(-not(Test-PlannedPublicationExactList @($side.changed_paths) @($merge.projections.merge_base_to_side))-or-not(Test-PlannedPublicationExactList @($side.changed_paths) @($merge.projections.protected_to_final))){throw 'Verified integration merge side/content attribution must equal both side and final unit projections.'}
+}
+
 function Resolve-PlannedPublicationPlan($Document,[string]$WorkspaceRoot) {
     if ($Document.prepared_plan.PSObject.Properties.Name -contains 'container') {
         if ([string]$Document.prepared_plan.member -cne 'push_plan') { throw 'Prepared-plan container member must be push_plan.' }
@@ -118,10 +160,31 @@ function Test-MorphospacePlannedPublicationDocument {
       if($r.role-eq'source'-and(-not$r.source_first-or$r.planning_last)){throw "Source repository '$id' ordering flags are invalid."}
       $synchronized=$null-ne$r.PSObject.Properties['synchronized_carried_acceptance'];$readback=$null-ne$r.PSObject.Properties['synchronized_readback']
       $seen=@{};foreach($u in @($r.units)){if($seen.ContainsKey([string]$u.unit_id)){throw "Repository '$id' repeats a unit."};$seen[[string]$u.unit_id]=$true;$statusPath=Test-PlannedPublicationBinding $u.status_evidence $WorkspaceRoot "unit '$($u.unit_id)' status evidence";try{$statusDocument=Get-Content -Raw $statusPath|ConvertFrom-Json -DateKind String}catch{throw "Unit '$($u.unit_id)' status evidence is not JSON."};if([string]$statusDocument.unit_id-cne[string]$u.unit_id-or[string]$statusDocument.status-cne[string]$u.status_at_publication){throw "Unit '$($u.unit_id)' status evidence payload mismatch."};if($u.role-eq'carried-unit'-and($u.status_at_publication-ne'blocked'-or$u.no_acceptance_claim-ne$true)){throw "Carried unit '$($u.unit_id)' must be blocked with an explicit no-acceptance claim."};if($u.role-eq'bundle-accepted-unit'-and(-not$acceptedPartition-or$acceptedPartitionIds-notcontains[string]$u.unit_id-or$u.status_at_publication-ne'accepted'-or$u.no_acceptance_claim-ne$false-or[string]$u.unit_id-ceq[string]$d.trigger_unit_id)){throw "Bundle-accepted unit '$($u.unit_id)' lacks exact partition acceptance."};if($u.role-eq'intervening-unit'){$validationPath=Test-PlannedPublicationBinding $u.validation_evidence $WorkspaceRoot "unit '$($u.unit_id)' validation evidence";try{$validationDocument=Get-Content -Raw $validationPath|ConvertFrom-Json -DateKind String}catch{throw "Unit '$($u.unit_id)' validation evidence is not JSON."};if([string]$validationDocument.schema-cne'rusty.morphospace.workflow.validation_receipt.v1'-or[string]$validationDocument.unit_id-cne[string]$u.unit_id-or[string]$validationDocument.result-cne'pass'-or$u.status_at_publication-ne'accepted'-or$u.no_acceptance_claim-ne$false){throw "Intervening unit '$($u.unit_id)' lacks exact accepted/pass evidence."}};if($u.role-eq'triggering-unit'-and([string]$u.unit_id-cne[string]$d.trigger_unit_id-or$u.status_at_publication-ne'accepted'-or($readback-and$u.no_acceptance_claim-ne$true)-or(-not$readback-and$u.no_acceptance_claim-ne$false))){throw 'Triggering-unit status claim is invalid.'}}
-      $commitIds=@($r.commits|Where-Object{$null-ne$_.unit_id}|ForEach-Object{[string]$_.unit_id})
-      $commitRevisions=@($r.commits|ForEach-Object{[string]$_.revision});if(@($commitRevisions|Sort-Object -Unique).Count-ne@($r.commits).Count){throw "Repository '$id' repeats a commit revision."}
+      $orderedCommits=@($r.commits)
+      $commitIds=@($orderedCommits|Where-Object{$null-ne$_.unit_id}|ForEach-Object{[string]$_.unit_id})
+      $commitRevisions=@($orderedCommits|ForEach-Object{[string]$_.revision});if(@($commitRevisions|Sort-Object -Unique).Count-ne$orderedCommits.Count){throw "Repository '$id' repeats a commit revision."}
+      foreach($revision in $commitRevisions){Assert-PlannedPublicationFullRevision $revision "Repository '$id' commit revision"}
       foreach($u in @($r.units)){if($u.role-in@('intervening-unit','bundle-accepted-unit')-and@($commitIds|Where-Object{$_-ceq[string]$u.unit_id}).Count-lt1){throw "Repository '$id' accepted attributed unit '$($u.unit_id)' has no commit."};if(-not$synchronized-and-not$readback-and$u.role-ne'intervening-unit'-and@($commitIds|Where-Object{$_-ceq[string]$u.unit_id}).Count-lt1){throw "Repository '$id' unit '$($u.unit_id)' has no attributed commit."}}
-      foreach($c in @($r.commits)){if($c.role-eq'workflow-publication-finalization'){if($r.role-ne'planning-transport'-or$null-ne$c.unit_id){throw 'Workflow/publication-finalization commits belong only to planning transport and cannot claim a unit.'};foreach($changedPath in @($c.changed_paths)){if(@($r.allowed_finalization_paths|Where-Object{[string]$changedPath-like(([string]$_).TrimEnd('/')+'*')}).Count-eq0){throw "Planning suffix path '$changedPath' is outside explicit transport scope."}}}elseif($c.role-eq'intervening-planning-evidence'){if(-not$recovery-or$r.role-ne'planning-transport'-or$null-ne$c.unit_id-or$c.evidence_kind-notin@('blocker','publication-finalization')){throw 'Intervening planning evidence has invalid recovery scope or identity.'};foreach($changedPath in @($c.changed_paths)){if(@($r.intervening_accepted_publication.allowed_planning_evidence_paths|Where-Object{[string]$changedPath-ceq[string]$_}).Count-eq0){throw "Intervening planning evidence path '$changedPath' is outside the exact recovery allowlist."}}}elseif(-not$seen.ContainsKey([string]$c.unit_id)-or[string]$c.role-cne[string](@($r.units|Where-Object{$_.unit_id-ceq$c.unit_id})[0].role)){throw "Repository '$id' commit attribution mismatch."}}
+      for($commitIndex=0;$commitIndex-lt$orderedCommits.Count;$commitIndex++){
+        $c=$orderedCommits[$commitIndex]
+        $hasIntegrationMerge=$null-ne$c.PSObject.Properties['integration_merge']
+        if($c.role-eq'verified-integration-merge'){
+          if(-not$hasIntegrationMerge){throw 'Verified integration merge lacks its typed topology evidence.'}
+          Assert-PlannedPublicationIntegrationMergeDocument $r $c $orderedCommits $commitIndex ([string]$d.trigger_unit_id)
+        }elseif($hasIntegrationMerge){
+          throw 'Only a verified-integration-merge commit may carry integration_merge evidence.'
+        }elseif(@($c.changed_paths).Count-lt1){
+          throw "Ordinary commit '$($c.revision)' must retain a nonempty changed-path projection."
+        }elseif($c.role-eq'workflow-publication-finalization'){
+          if($r.role-ne'planning-transport'-or$null-ne$c.unit_id){throw 'Workflow/publication-finalization commits belong only to planning transport and cannot claim a unit.'}
+          foreach($changedPath in @($c.changed_paths)){if(@($r.allowed_finalization_paths|Where-Object{[string]$changedPath-like(([string]$_).TrimEnd('/')+'*')}).Count-eq0){throw "Planning suffix path '$changedPath' is outside explicit transport scope."}}
+        }elseif($c.role-eq'intervening-planning-evidence'){
+          if(-not$recovery-or$r.role-ne'planning-transport'-or$null-ne$c.unit_id-or$c.evidence_kind-notin@('blocker','publication-finalization')){throw 'Intervening planning evidence has invalid recovery scope or identity.'}
+          foreach($changedPath in @($c.changed_paths)){if(@($r.intervening_accepted_publication.allowed_planning_evidence_paths|Where-Object{[string]$changedPath-ceq[string]$_}).Count-eq0){throw "Intervening planning evidence path '$changedPath' is outside the exact recovery allowlist."}}
+        }elseif(-not$seen.ContainsKey([string]$c.unit_id)-or[string]$c.role-cne[string](@($r.units|Where-Object{$_.unit_id-ceq$c.unit_id})[0].role)){
+          throw "Repository '$id' commit attribution mismatch."
+        }
+      }
       if($r.role-eq'planning-transport'){if(@($r.commits.revision)-notcontains[string]$r.prepared_revision-or[string]$r.commits[-1].revision-cne[string]$r.final_revision){throw 'Planning prepared/final revisions are not represented by the ordered commit list.'}}
       elseif($synchronized){
         if(@($r.commits).Count-ne0-or[string]$r.old_revision-cne[string]$r.final_revision-or[string]$r.prepared_revision-cne[string]$r.final_revision){throw "Synchronized source '$id' must be an exact zero-commit prepared/final/readback leg."}
@@ -140,7 +203,7 @@ function Test-MorphospacePlannedPublicationDocument {
         if([string]$e.action-cne'readback-only'-or[string]$r.synchronized_readback.executed_action-cne'readback-only'-or$r.synchronized_readback.no_mutation_inferred-ne$true-or[string]$e.branch-cne[string]$r.branch-or[string]$e.upstream-cne[string]$r.upstream){throw "Synchronized readback '$id' execution identity or non-mutation proof mismatch."}
         $orderIndex=[array]::IndexOf(@($d.dependency_order),$id);$executionIndex=[array]::IndexOf(@($d.execution_order),$id);if($orderIndex-lt0-or$executionIndex-ne$orderIndex-or[array]::IndexOf(@($plan.dependency_order),$id)-ne$orderIndex){throw "Synchronized readback '$id' order position mismatch."}
       }
-      elseif([string]$r.commits[-1].role-cne'triggering-unit'-and(-not$acceptedPartition-or[string]$r.commits[-1].role-cne'bundle-accepted-unit')){throw "Source repository '$id' must end its accounted range with an accepted partition unit."}
+      elseif([string]$r.commits[-1].role-cne'triggering-unit'-and[string]$r.commits[-1].role-cne'verified-integration-merge'-and(-not$acceptedPartition-or[string]$r.commits[-1].role-cne'bundle-accepted-unit')){throw "Source repository '$id' must end its accounted range with an accepted partition unit or its exact verified integration merge."}
       if($recovery){$re=$r.intervening_accepted_publication;if([string]$re.current_final_revision-cne[string]$r.final_revision-or[string]$re.current_remote_readback_revision-cne[string]$r.remote_readback_revision-or$re.original_to_current_fast_forward-ne$true){throw "Repository '$id' recovered-final binding mismatch."};if(-not(Test-PlannedPublicationTimeNotAfter $d.chronology.push_finished_at $re.recovered_at)-or-not(Test-PlannedPublicationTimeNotAfter $re.recovered_at $d.chronology.accounted_at)){throw "Repository '$id' recovery chronology is invalid."};if(@($r.units|Where-Object{$_.role-eq'intervening-unit'}).Count-lt1){throw "Repository '$id' recovery has no accepted intervening unit."}}
     }
     if($acceptedPartition){$observedPartitionIds=@($d.repositories.units|Where-Object{$_.role-in@('triggering-unit','bundle-accepted-unit')}|ForEach-Object{[string]$_.unit_id}|Sort-Object -Unique);if(($observedPartitionIds-join'|')-cne(@($acceptedPartitionIds|Sort-Object)-join'|')){throw 'Accepted-unit attribution does not exactly cover the represented accepted units.'}}
@@ -167,7 +230,55 @@ function Test-MorphospacePlannedPublicationLive {
    foreach($localCommit in $localSuffix){$localPaths=@(Invoke-PlannedPublicationGit $repo @('diff-tree','--no-commit-id','--name-only','-r',[string]$localCommit) 'Planning prerequisite-suffix paths');if($localPaths.Count-eq0){throw 'Planning prerequisite suffix contains an empty commit.'};foreach($localPath in $localPaths){if($required-notcontains[string]$localPath){throw "Planning prerequisite suffix path '$localPath' is not exact accounting/executed evidence."};$observed+=[string]$localPath}}
     if((@($observed|Sort-Object -Unique)-join'|')-cne(@($required|Sort-Object -Unique)-join'|')){throw 'Planning prerequisite suffix does not contain the exact required publication evidence paths.'}
   }
-   [void](Invoke-PlannedPublicationGit $repo @('merge-base','--is-ancestor',[string]$r.old_revision,[string]$r.final_revision) "Repository '$id' fast-forward check");if($null-ne$r.PSObject.Properties['synchronized_carried_acceptance']){[void](Invoke-PlannedPublicationGit $repo @('merge-base','--is-ancestor',[string]$r.synchronized_carried_acceptance.carried_revision,[string]$r.final_revision) 'Synchronized carried revision ancestry')};if($null-ne$r.PSObject.Properties['intervening_accepted_publication']){[void](Invoke-PlannedPublicationGit $repo @('merge-base','--is-ancestor',[string]$r.intervening_accepted_publication.executed_final_revision,[string]$r.final_revision) "Repository '$id' intervening-publication ancestry")};if($r.role-eq'planning-transport'){[void](Invoke-PlannedPublicationGit $repo @('merge-base','--is-ancestor',[string]$r.prepared_revision,[string]$r.final_revision) 'Planning suffix ancestry');$allowed=@($r.allowed_finalization_paths);$suffix=@(Invoke-PlannedPublicationGit $repo @('rev-list','--reverse',"$($r.prepared_revision)..$($r.final_revision)") 'Planning suffix enumeration')}else{$suffix=@()};$commits=@(Invoke-PlannedPublicationGit $repo @('rev-list','--reverse',"$($r.old_revision)..$($r.final_revision)") 'Commit enumeration');if(($commits-join'|')-cne(@($r.commits|ForEach-Object{$_.revision})-join'|')){throw "Repository '$id' commit enumeration mismatch."};foreach($c in @($r.commits)){if($c.role-eq'workflow-publication-finalization'){if($r.role-ne'planning-transport'-or$suffix-notcontains[string]$c.revision-or$null-ne$c.unit_id){throw 'Invalid workflow/publication-finalization commit.'};foreach($p in @($c.changed_paths)){if(@($allowed|Where-Object{[string]$p-like(([string]$_).TrimEnd('/')+'*')}).Count-eq0){throw "Planning suffix path '$p' is outside explicit transport scope."}}}elseif($c.role-eq'intervening-planning-evidence'){if($r.role-ne'planning-transport'-or$null-ne$c.unit_id){throw 'Invalid intervening planning evidence commit.'}}elseif(-not$c.unit_id-or@($r.units.unit_id)-notcontains[string]$c.unit_id){throw "Commit '$($c.revision)' lacks matching unit attribution."};$actual=@(Invoke-PlannedPublicationGit $repo @('diff-tree','--no-commit-id','--name-only','-r',[string]$c.revision) 'Changed-path enumeration');if(($actual-join'|')-cne(@($c.changed_paths)-join'|')){throw "Commit '$($c.revision)' changed-path mismatch."}}
+   [void](Invoke-PlannedPublicationGit $repo @('merge-base','--is-ancestor',[string]$r.old_revision,[string]$r.final_revision) "Repository '$id' fast-forward check")
+   if($null-ne$r.PSObject.Properties['synchronized_carried_acceptance']){[void](Invoke-PlannedPublicationGit $repo @('merge-base','--is-ancestor',[string]$r.synchronized_carried_acceptance.carried_revision,[string]$r.final_revision) 'Synchronized carried revision ancestry')}
+   if($null-ne$r.PSObject.Properties['intervening_accepted_publication']){[void](Invoke-PlannedPublicationGit $repo @('merge-base','--is-ancestor',[string]$r.intervening_accepted_publication.executed_final_revision,[string]$r.final_revision) "Repository '$id' intervening-publication ancestry")}
+   if($r.role-eq'planning-transport'){
+     [void](Invoke-PlannedPublicationGit $repo @('merge-base','--is-ancestor',[string]$r.prepared_revision,[string]$r.final_revision) 'Planning suffix ancestry')
+     $allowed=@($r.allowed_finalization_paths)
+     $suffix=@(Invoke-PlannedPublicationGit $repo @('rev-list','--reverse',"$($r.prepared_revision)..$($r.final_revision)") 'Planning suffix enumeration')
+   }else{$suffix=@()}
+   $commits=@(Invoke-PlannedPublicationGit $repo @('rev-list','--reverse',"$($r.old_revision)..$($r.final_revision)") 'Commit enumeration')
+   if(-not(Test-PlannedPublicationExactList $commits @($r.commits|ForEach-Object{$_.revision}))){throw "Repository '$id' commit enumeration mismatch."}
+   foreach($c in @($r.commits)){
+     if($c.role-eq'workflow-publication-finalization'){
+       if($r.role-ne'planning-transport'-or$suffix-notcontains[string]$c.revision-or$null-ne$c.unit_id){throw 'Invalid workflow/publication-finalization commit.'}
+       foreach($p in @($c.changed_paths)){if(@($allowed|Where-Object{[string]$p-like(([string]$_).TrimEnd('/')+'*')}).Count-eq0){throw "Planning suffix path '$p' is outside explicit transport scope."}}
+     }elseif($c.role-eq'intervening-planning-evidence'){
+       if($r.role-ne'planning-transport'-or$null-ne$c.unit_id){throw 'Invalid intervening planning evidence commit.'}
+     }elseif($c.role-eq'verified-integration-merge'){
+       $merge=$c.integration_merge
+       $parents=@(Invoke-PlannedPublicationGit $repo @('rev-list','--parents','-n','1',[string]$c.revision) 'Integration-merge parent readback')
+       $expectedParents=@([string]$c.revision)+@($merge.ordered_parents|ForEach-Object{[string]$_})
+       $parentFields=@(([string]$parents[0]).Split(' ',[StringSplitOptions]::RemoveEmptyEntries))
+       if(-not(Test-PlannedPublicationExactList $parentFields $expectedParents)){throw 'Integration-merge ordered-parent readback mismatch.'}
+       $sideParent=[string]$merge.ordered_parents[0];$protectedParent=[string]$merge.ordered_parents[1];$mergeBase=[string]$merge.merge_base
+       $sideParentLine=[string]@(Invoke-PlannedPublicationGit $repo @('rev-list','--parents','-n','1',$sideParent) 'Integration side-parent ancestry')[0]
+       $sideParents=@($sideParentLine.Split(' ',[StringSplitOptions]::RemoveEmptyEntries))
+       if(-not(Test-PlannedPublicationExactList $sideParents @($sideParent,$mergeBase))){throw 'Integration side/content commit must have the exact merge base as its sole parent.'}
+       $observedBase=@(Invoke-PlannedPublicationGit $repo @('merge-base',$sideParent,$protectedParent) 'Integration merge-base readback')
+       if($observedBase.Count-ne1-or[string]$observedBase[0]-cne$mergeBase){throw 'Integration merge-base readback mismatch.'}
+       $treeChecks=[ordered]@{
+         merge_base=@($mergeBase,'merge_base')
+         side_parent=@($sideParent,'side_parent')
+         protected_parent=@($protectedParent,'protected_parent')
+         final=@([string]$c.revision,'final')
+       }
+       foreach($treeCheck in $treeChecks.GetEnumerator()){$actualTree=[string]@(Invoke-PlannedPublicationGit $repo @('rev-parse',"$($treeCheck.Value[0])^{tree}") "Integration $($treeCheck.Key) tree readback")[0];if($actualTree-cne[string]$merge.trees.($treeCheck.Value[1])){throw "Integration $($treeCheck.Key) tree readback mismatch."}}
+       $projectionChecks=[ordered]@{
+         merge_base_to_side=@($mergeBase,$sideParent)
+         merge_base_to_protected=@($mergeBase,$protectedParent)
+         protected_to_final=@($protectedParent,[string]$c.revision)
+         side_to_final=@($sideParent,[string]$c.revision)
+       }
+       foreach($projectionCheck in $projectionChecks.GetEnumerator()){$actualProjection=@(Invoke-PlannedPublicationGit $repo @('diff','--name-only',[string]$projectionCheck.Value[0],[string]$projectionCheck.Value[1]) "Integration $($projectionCheck.Key) projection");if(-not(Test-PlannedPublicationExactList $actualProjection @($merge.projections.($projectionCheck.Key)))){throw "Integration $($projectionCheck.Key) projection mismatch."}}
+       $plainProjection=@(Invoke-PlannedPublicationGit $repo @('diff-tree','--no-commit-id','--name-only','-r',[string]$c.revision) 'Integration merge plain projection')
+       if($plainProjection.Count-ne0){throw 'Verified integration merge must retain an empty plain commit projection.'}
+       continue
+     }elseif(-not$c.unit_id-or@($r.units.unit_id)-notcontains[string]$c.unit_id){throw "Commit '$($c.revision)' lacks matching unit attribution."}
+     $actual=@(Invoke-PlannedPublicationGit $repo @('diff-tree','--no-commit-id','--name-only','-r',[string]$c.revision) 'Changed-path enumeration')
+     if(-not(Test-PlannedPublicationExactList $actual @($c.changed_paths))){throw "Commit '$($c.revision)' changed-path mismatch."}
+   }
  }
   $recoveredSources=@($d.repositories|Where-Object{$_.role-eq'source'-and$null-ne$_.PSObject.Properties['intervening_accepted_publication']});$recoveredPlanning=@($d.repositories|Where-Object{$_.role-eq'planning-transport'-and$null-ne$_.PSObject.Properties['intervening_accepted_publication']});if($recoveredSources.Count-gt0-and$recoveredPlanning.Count-ne1){throw 'Recovered source publication requires exactly one recovered planning-last leg.'};foreach($source in $recoveredSources){if(-not(Test-PlannedPublicationTimeNotAfter $source.intervening_accepted_publication.recovered_at $recoveredPlanning[0].intervening_accepted_publication.recovered_at)){throw 'Intervening accepted publication is not source-first and planning-last.'}}
   $v

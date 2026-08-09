@@ -442,6 +442,11 @@ ancestry consumes the authorization.
   only one explicit planning-transport suffix, and clear only the matching
   bundle after clean no-force readback. See
   `docs/PLANNED_PUBLICATION_ACCOUNTING.md`.
+  A source integration may use an empty merge-entry path list only for the
+  typed exact two-parent topology: retain the preceding side/content commit's
+  full triggering-unit attribution and verify ordered parents/trees, merge
+  base, all four path projections, and the empty plain merge projection.
+  Ordinary linear or untyped merge entries remain nonempty.
   Prepared provenance may bind standalone files or the exact `push_plan`
   member and transition-ledger event inside hash-bound owner containers; never
   reconstruct those members outside their immutable evidence containers.
@@ -456,8 +461,8 @@ ancestry consumes the authorization.
   unchanged sources, and no-force history; never admit other counts, paths,
   gaps, merges, abbreviations, duplicates, drift, or rewrites.
 - If immutable no-force execution evidence predates its recorded PreparePush
-  timestamp and an exact source final is a bound merge integration that ordinary
-  commit projection cannot represent, keep `RecordPublication` strict. Use only
+  timestamp, typed integration topology does not repair chronology. Keep
+  `RecordPublication` strict and use only
   `ReconcileExecutedPreparedPublication`: bind the original containers and
   timestamps, exact live refs, complete path-set fingerprints, and ordered
   merge parents/per-parent projections; claim neither corrected chronology nor

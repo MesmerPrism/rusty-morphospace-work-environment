@@ -26,6 +26,126 @@ if($SelfTest){
   $account=[ordered]@{schema='rusty.morphospace.workflow.planned_publication_accounting.v1';accounting_id='publication-accounting';project_id='test-project';bundle_id=$plan.bundle_id;trigger_unit_id='trigger-unit';prepared_plan=[ordered]@{path='receipts/plan.json';sha256=Hash (Join-Path $ws 'receipts\plan.json')};prepared_event=[ordered]@{event_id='trigger-unit-push-prepared-0001';path='prepared-event.json';sha256=Hash (Join-Path $ws 'prepared-event.json')};executed_push_receipt=[ordered]@{path='receipts/executed.json';sha256=Hash (Join-Path $ws 'receipts\executed.json')};chronology=[ordered]@{prepared_at='2026-07-17T10:00:00Z';push_started_at='2026-07-17T10:01:00Z';push_finished_at='2026-07-17T10:02:00Z';accounted_at='2026-07-17T10:03:00Z'};dependency_order=@('source-repo','planning-repo');execution_order=@('source-repo','planning-repo');repositories=@([ordered]@{repo_id='source-repo';role='source';branch='main';upstream='origin/main';old_revision=$srcOld;prepared_revision=$srcFinal;final_revision=$srcFinal;remote_readback_revision=$srcFinal;source_first=$true;planning_last=$false;fast_forward_verified=$true;force_push_used=$false;worktree_clean=$true;units=@([ordered]@{unit_id='carried-unit';role='carried-unit';status_at_publication='blocked';status_evidence=[ordered]@{path='carried-status.json';sha256=Hash (Join-Path $ws 'carried-status.json')};no_acceptance_claim=$true},[ordered]@{unit_id='trigger-unit';role='triggering-unit';status_at_publication='accepted';status_evidence=[ordered]@{path='trigger-status.json';sha256=Hash (Join-Path $ws 'trigger-status.json')};no_acceptance_claim=$false});commits=@([ordered]@{revision=$srcCarried;role='carried-unit';unit_id='carried-unit';changed_paths=@('carried.txt')},[ordered]@{revision=$srcFinal;role='triggering-unit';unit_id='trigger-unit';changed_paths=@('trigger.txt')});allowed_finalization_paths=@()},[ordered]@{repo_id='planning-repo';role='planning-transport';branch='main';upstream='origin/main';old_revision=$planOld;prepared_revision=$planPrepared;final_revision=$planFinal;remote_readback_revision=$planFinal;source_first=$false;planning_last=$true;fast_forward_verified=$true;force_push_used=$false;worktree_clean=$true;units=@([ordered]@{unit_id='trigger-unit';role='triggering-unit';status_at_publication='accepted';status_evidence=[ordered]@{path='trigger-status.json';sha256=Hash (Join-Path $ws 'trigger-status.json')};no_acceptance_claim=$false});commits=@([ordered]@{revision=$planPrepared;role='triggering-unit';unit_id='trigger-unit';changed_paths=$planPreparedPaths},[ordered]@{revision=$planFinal;role='workflow-publication-finalization';unit_id=$null;changed_paths=$planFinalPaths});allowed_finalization_paths=@('project/morphospace/receipts/','project/morphospace/publication-finalized.txt')});workspace_transition=[ordered]@{pending_push_bundle_before=$plan.bundle_id;pending_push_bundle_after=$null};force_push_used=$false;remote_readback_complete=$true;failure=$null};$accountPath=Join-Path $ws 'receipts\accounting.json';Write-Json $accountPath $account
   $account.repositories[1].allowed_finalization_paths=@('project/morphospace/');Write-Json $accountPath $account
   Test-MorphospacePlannedPublicationDocument $accountPath $ws|Out-Null
+
+  # One ordinary prepared source leg may end in an exact two-parent integration
+  # merge only when the side commit and all four tree projections remain bound.
+  $mergeSource=Join-Path $root 'merge-source'
+  New-Item -ItemType Directory $mergeSource -Force|Out-Null
+  Invoke-FixtureGit $mergeSource @('init','-q')|Out-Null
+  Invoke-FixtureGit $mergeSource @('config','user.email','fixture@example.invalid')|Out-Null
+  Invoke-FixtureGit $mergeSource @('config','user.name','Fixture')|Out-Null
+  Invoke-FixtureGit $mergeSource @('checkout','-q','-b','protected')|Out-Null
+  [IO.File]::WriteAllText((Join-Path $mergeSource 'base.txt'),"base`n")
+  Invoke-FixtureGit $mergeSource @('add','base.txt')|Out-Null
+  Invoke-FixtureGit $mergeSource @('commit','-q','-m','merge base')|Out-Null
+  $integrationBase=Invoke-FixtureGit $mergeSource @('rev-parse','HEAD')
+  Invoke-FixtureGit $mergeSource @('checkout','-q','-b','side')|Out-Null
+  [IO.File]::WriteAllText((Join-Path $mergeSource 'trigger.txt'),"accepted side content`n")
+  Invoke-FixtureGit $mergeSource @('add','trigger.txt')|Out-Null
+  Invoke-FixtureGit $mergeSource @('commit','-q','-m','triggering side content')|Out-Null
+  $integrationSide=Invoke-FixtureGit $mergeSource @('rev-parse','HEAD')
+  Invoke-FixtureGit $mergeSource @('checkout','-q','protected')|Out-Null
+  [IO.File]::WriteAllText((Join-Path $mergeSource 'protected.txt'),"protected main change`n")
+  Invoke-FixtureGit $mergeSource @('add','protected.txt')|Out-Null
+  Invoke-FixtureGit $mergeSource @('commit','-q','-m','protected main change')|Out-Null
+  $integrationProtected=Invoke-FixtureGit $mergeSource @('rev-parse','HEAD')
+  Invoke-FixtureGit $mergeSource @('checkout','-q','side')|Out-Null
+  Invoke-FixtureGit $mergeSource @('merge','--no-ff','protected','-m','integrate protected main')|Out-Null
+  $integrationFinal=Invoke-FixtureGit $mergeSource @('rev-parse','HEAD')
+  Invoke-FixtureGit $mergeSource @('update-ref','refs/remotes/origin/side',$integrationFinal)|Out-Null
+
+  $integrationPlan=Clone-Object $plan
+  $integrationPlan.repositories[0].branch='side'
+  $integrationPlan.repositories[0].commit=$integrationFinal
+  $integrationPlan.repositories[0].upstream='origin/side'
+  Write-Json (Join-Path $ws 'receipts/integration-plan.json') $integrationPlan
+  $integrationExecuted=Clone-Object $executed
+  $integrationExecuted.repositories[0].old_revision=$integrationProtected
+  $integrationExecuted.repositories[0].new_revision=$integrationFinal
+  $integrationExecuted.repositories[0].observed_remote_revision=$integrationFinal
+  Write-Json (Join-Path $ws 'receipts/integration-executed.json') $integrationExecuted
+  $integration=Clone-Object $account
+  $integration.accounting_id='verified-integration-merge-accounting'
+  $integration.prepared_plan=[ordered]@{path='receipts/integration-plan.json';sha256=Hash (Join-Path $ws 'receipts/integration-plan.json')}
+  $integration.executed_push_receipt=[ordered]@{path='receipts/integration-executed.json';sha256=Hash (Join-Path $ws 'receipts/integration-executed.json')}
+  $integration.repositories[0].branch='side'
+  $integration.repositories[0].upstream='origin/side'
+  $integration.repositories[0].old_revision=$integrationProtected
+  $integration.repositories[0].prepared_revision=$integrationFinal
+  $integration.repositories[0].final_revision=$integrationFinal
+  $integration.repositories[0].remote_readback_revision=$integrationFinal
+  $integration.repositories[0].units=@($integration.repositories[0].units|Where-Object{$_.role-eq'triggering-unit'})
+  $integration.repositories[0].commits=@(
+    [ordered]@{revision=$integrationSide;role='triggering-unit';unit_id='trigger-unit';changed_paths=@('trigger.txt')},
+    [ordered]@{
+      revision=$integrationFinal
+      role='verified-integration-merge'
+      unit_id=$null
+      changed_paths=@()
+      integration_merge=[ordered]@{
+        topology='two-parent-side-over-protected'
+        ordered_parents=@($integrationSide,$integrationProtected)
+        merge_base=$integrationBase
+        trees=[ordered]@{
+          merge_base=Invoke-FixtureGit $mergeSource @('rev-parse',"$integrationBase^{tree}")
+          side_parent=Invoke-FixtureGit $mergeSource @('rev-parse',"$integrationSide^{tree}")
+          protected_parent=Invoke-FixtureGit $mergeSource @('rev-parse',"$integrationProtected^{tree}")
+          final=Invoke-FixtureGit $mergeSource @('rev-parse',"$integrationFinal^{tree}")
+        }
+        projections=[ordered]@{
+          merge_base_to_side=@('trigger.txt')
+          merge_base_to_protected=@('protected.txt')
+          protected_to_final=@('trigger.txt')
+          side_to_final=@('protected.txt')
+        }
+      }
+    }
+  )
+  $integrationPath=Join-Path $ws 'receipts/integration-accounting.json'
+  Write-Json $integrationPath $integration
+  Test-MorphospacePlannedPublicationDocument $integrationPath $ws|Out-Null
+  $integrationSpec=[pscustomobject]@{project_id='test-project'}
+  $integrationState=[pscustomobject]@{current_unit=$null;pending_push_bundle=[pscustomobject]@{bundle_id=$integrationPlan.bundle_id;unit_ids=@('trigger-unit');repo_ids=@('source-repo','planning-repo')}}
+  $integrationMap=@{'source-repo'=[pscustomobject]@{path=$mergeSource};'planning-repo'=[pscustomobject]@{path=$planning}}
+  $integrationSourceState=[pscustomobject]@{repo_id='source-repo';dirty=$false;diverged=$false;ahead=0;behind=0;head=$integrationFinal;branch='side';upstream='origin/side'}
+  $integrationPlanningState=[pscustomobject]@{repo_id='planning-repo';dirty=$false;diverged=$false;ahead=0;behind=0;head=$planFinal;branch='main';upstream='origin/main'}
+  Test-MorphospacePlannedPublicationLive $integrationPath $ws $integrationSpec $integrationState $integrationMap @($integrationSourceState,$integrationPlanningState)|Out-Null
+
+  $integrationCases=@(
+    'one-parent','three-parent','parent-order','parent-tree','merge-base','base-tree',
+    'projection','missing-side','extra-side','side-attribution','untyped-empty',
+    'unrelated-path','abbreviated-revision','dirty','ref-drift','force','ordinary-empty'
+  )
+  foreach($case in $integrationCases){
+    $bad=Clone-Object $integration
+    $badSource=Clone-Object $integrationSourceState
+    switch($case){
+      'one-parent'{$bad.repositories[0].commits[1].integration_merge.ordered_parents=@($integrationSide)}
+      'three-parent'{$bad.repositories[0].commits[1].integration_merge.ordered_parents=@($integrationSide,$integrationProtected,$integrationBase)}
+      'parent-order'{$bad.repositories[0].commits[1].integration_merge.ordered_parents=@($integrationProtected,$integrationSide)}
+      'parent-tree'{$bad.repositories[0].commits[1].integration_merge.trees.side_parent=('a'*40)}
+      'merge-base'{$bad.repositories[0].commits[1].integration_merge.merge_base=$integrationProtected}
+      'base-tree'{$bad.repositories[0].commits[1].integration_merge.trees.merge_base=('b'*40)}
+      'projection'{$bad.repositories[0].commits[1].integration_merge.projections.side_to_final=@('other.txt')}
+      'missing-side'{$bad.repositories[0].commits=@($bad.repositories[0].commits[1])}
+      'extra-side'{$bad.repositories[0].commits=@($bad.repositories[0].commits[0],(Clone-Object $bad.repositories[0].commits[0]),$bad.repositories[0].commits[1]);$bad.repositories[0].commits[1].revision=$integrationBase}
+      'side-attribution'{$bad.repositories[0].commits[0].changed_paths=@('other.txt')}
+      'untyped-empty'{$bad.repositories[0].commits[1].role='triggering-unit';$bad.repositories[0].commits[1].unit_id='trigger-unit';$bad.repositories[0].commits[1].PSObject.Properties.Remove('integration_merge')}
+      'unrelated-path'{$bad.repositories[0].commits[1].integration_merge.projections.merge_base_to_side=@('trigger.txt','unrelated.txt')}
+      'abbreviated-revision'{$bad.repositories[0].commits[1].integration_merge.merge_base=$integrationBase.Substring(0,12)}
+      'dirty'{$badSource.dirty=$true}
+      'ref-drift'{$badSource.head=$integrationProtected}
+      'force'{$bad.force_push_used=$true}
+      'ordinary-empty'{$bad.repositories[0].commits[0].changed_paths=@()}
+    }
+    $badPath=Join-Path $ws "receipts/bad-integration-$case.json"
+    Write-Json $badPath $bad
+    if($case-in@('parent-tree','merge-base','base-tree','projection','unrelated-path','dirty','ref-drift')){
+      Expect-Reject {Test-MorphospacePlannedPublicationLive $badPath $ws $integrationSpec $integrationState $integrationMap @($badSource,$integrationPlanningState)} "integration-$case"
+    }else{
+      Expect-Reject {Test-MorphospacePlannedPublicationDocument $badPath $ws} "integration-$case"
+    }
+  }
   Write-Json (Join-Path $ws 'carried-accepted-partition-status.json') ([ordered]@{unit_id='carried-unit';status='accepted'})
   $partition=Clone-Object $account;$partition|Add-Member -NotePropertyName accepted_unit_attribution -NotePropertyValue ([pscustomobject][ordered]@{mode='exact-prepared-range-partition';trigger_unit_id='trigger-unit';unit_ids=@('trigger-unit','carried-unit')});$partition.repositories[0].units[0].role='bundle-accepted-unit';$partition.repositories[0].units[0].status_at_publication='accepted';$partition.repositories[0].units[0].no_acceptance_claim=$false;$partition.repositories[0].units[0].status_evidence=[ordered]@{path='carried-accepted-partition-status.json';sha256=Hash (Join-Path $ws 'carried-accepted-partition-status.json')};$partition.repositories[0].commits[0].role='bundle-accepted-unit';$partitionPath=Join-Path $ws 'receipts\multi-accepted-partition.json';Write-Json $partitionPath $partition;Test-MorphospacePlannedPublicationDocument $partitionPath $ws|Out-Null
   foreach($case in @('partition-marker','partition-duplicate-id','partition-gap','partition-duplicate-commit','partition-blocked','partition-trigger-relabel','partition-wrong-role')){$bad=Clone-Object $partition;switch($case){'partition-marker'{$bad.PSObject.Properties.Remove('accepted_unit_attribution')}'partition-duplicate-id'{$bad.accepted_unit_attribution.unit_ids=@('trigger-unit','trigger-unit')}'partition-gap'{$bad.repositories[0].commits=@($bad.repositories[0].commits|Select-Object -Last 1)}'partition-duplicate-commit'{$bad.repositories[0].commits+=Clone-Object $bad.repositories[0].commits[0]}'partition-blocked'{$bad.repositories[0].units[0].status_at_publication='blocked'}'partition-trigger-relabel'{$bad.repositories[0].units[1].role='bundle-accepted-unit'}'partition-wrong-role'{$bad.repositories[0].commits[0].role='triggering-unit'}};$badPath=Join-Path $ws "receipts\bad-$case.json";Write-Json $badPath $bad;Expect-Reject {Test-MorphospacePlannedPublicationDocument $badPath $ws} $case}
@@ -102,7 +222,7 @@ if($SelfTest){
   Test-MorphospacePlanningSuffixRewriteLive $incidentPath $ws $spec $state $map @($incidentSourceState,$incidentPlanningState)|Out-Null
   $incidentCases=@('dirty','divergent','missing-first-object','missing-replacement-object','source-rewrite','alternate-common-path','alternate-delta-path','common-cardinality','delta-cardinality','unrelated-bundle','wrong-remote','not-force-with-lease','repeated-consumption')
   foreach($case in $incidentCases){$bad=Clone-Object $incident;$badSource=Clone-Object $incidentSourceState;$badPlanning=Clone-Object $incidentPlanningState;$badState=Clone-Object $state;switch($case){'dirty'{$badPlanning.dirty=$true}'divergent'{$badPlanning.diverged=$true}'missing-first-object'{$bad.planning_repository.first_suffix_revision=('f'*40)}'missing-replacement-object'{$bad.planning_repository.replacement_suffix_revision=('e'*40);$bad.planning_repository.current_remote_readback_revision=('e'*40)}'source-rewrite'{$bad.source_repositories[0].current_remote_readback_revision=$srcOld}'alternate-common-path'{$bad.planning_repository.common_changed_paths[0]='project/morphospace/receipts/alternate.json'}'alternate-delta-path'{$bad.planning_repository.replacement_delta_paths=@($incidentExecutedRelative)}'common-cardinality'{$bad.planning_repository.common_changed_paths=@($incidentAccountingRelative)}'delta-cardinality'{$bad.planning_repository.replacement_delta_paths=$incidentCommonPaths}'unrelated-bundle'{$bad.bundle_id='other-bundle'}'wrong-remote'{$badPlanning.head=$planPrepared}'not-force-with-lease'{$bad.rewrite.force_with_lease_used=$false}'repeated-consumption'{$badState.pending_push_bundle=$null}};$badPath=Join-Path $ws "receipts\bad-incident-$case.json";Write-Json $badPath $bad;Expect-Reject {Test-MorphospacePlanningSuffixRewriteLive $badPath $ws $spec $badState $map @($badSource,$badPlanning)} "planning-suffix-$case"}
-  "Planned-publication accounting self-test passed (including 1 rewrite recovery positive and $($incidentCases.Count) focused negative cases)."
+  "Planned-publication accounting self-test passed (including 1 verified integration-merge positive, $($integrationCases.Count) integration negatives, 1 rewrite-recovery positive, and $($incidentCases.Count) rewrite negatives)."
  }finally{if(Test-Path $root){Remove-Item -Recurse -Force $root}}
  exit 0
 }
