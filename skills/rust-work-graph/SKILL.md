@@ -240,6 +240,13 @@ late callbacks/replies/deadlines to stale-generation rejection edges, exact
 registration replay to one equivalence edge, and ambiguous relative effects to
 an `outcome_unknown` terminal node rather than a retry edge.
 
+For locked-playlist Hub current-main integration, graph carried product blobs as
+hash-bound immutable inputs and the Cargo-relative detached Manifold checkout as
+a read-only dependency edge; do not substitute another location or a junction.
+Require Connection Hub native Cargo, WebSocket, Binder, and broker-authority host
+nodes to pass before owner publication, and keep device nodes disconnected until
+a separately admitted clean-base unit.
+
 For multi-app consumers, keep separate package/client/feature-lock/marker/
 grant/sink clusters, converging only at the shared SDK and accepted peer/media
 contract nodes. Add parity edges for shared contracts and rejection edges for

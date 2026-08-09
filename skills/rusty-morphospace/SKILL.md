@@ -38,6 +38,11 @@ named by the user or ask for its location; never guess a machine path.
   Rusty Quest slice. Require OS-derived package/signer identity to select one
   grant, reducer-fenced session generations, bounded equivalent-operation retry,
   and explicit unknown outcomes before any device admission.
+- For current-main locked-playlist Hub integration, preserve adopted product
+  bytes by exact hash and predeclare the clean Manifold owner at Cargo's required
+  manifest-relative read-only sibling. Require Connection Hub native Cargo,
+  WebSocket, Binder, and broker-authority host gates before source-first owner
+  publication; admit device proof only from clean landed bases in a later unit.
 - Invoke `$meta-quest-workflow` before any live Quest, device, ADB, APK
   install/launch, capture, logcat, Perfetto, Wi-Fi ADB, or Meta tooling work.
 
