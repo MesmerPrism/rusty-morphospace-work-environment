@@ -338,6 +338,13 @@ JSON semantics, Binder identity, Manifold decisions, command outcomes/effects,
 and media outside it. Prove malformed-input, slow-client, shutdown/restart, and
 placement parity on the host before any Binder or device phase.
 
+For locked-playlist Hub integration on a moving public owner main, preserve
+adopted product bytes by exact hash and materialize the pinned Manifold owner at
+Cargo's manifest-relative sibling as a non-writable dependency. Require native
+Connection Hub Cargo, shared WebSocket, Binder reducer, and broker-authority host
+gates before owner publication; admit device evidence only from clean landed
+owner bases in a separate unit.
+
 Schema ownership follows the payload. Preserve an owner-issued artifact
 byte-for-byte and bind its exact path, schema, owner, and SHA-256 from a
 separately named workflow wrapper. Never add workflow fields while retaining
