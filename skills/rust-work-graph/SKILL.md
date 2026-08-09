@@ -268,6 +268,10 @@ result through one pinned-owner signed authorization identity to the exact
 static assessment; exact-evidence reruns remain idempotent within freshness,
 changed evidence rejects, and trusted-base ancestry consumes the authorization;
 execution, acceptance, and publication remain disconnected authority nodes.
+For an ordinary typed two-parent source integration, graph the separately
+attributed side/content commit, ordered side/protected parents and trees, merge
+base, final tree, all four path projections, and the empty plain merge
+projection. Never convert that exact proof into general empty-commit tolerance.
 For non-ordinary executed prepared-publication evidence, graph the plan owner,
 prepare transition, executed receipt, pending bundle, and live remote refs as
 separate nodes. A merge integration must retain ordered side/protected parents,

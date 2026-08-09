@@ -40,6 +40,30 @@ triggering unit or a carried unit. A carried unit binds its status evidence and
 must explicitly claim no acceptance. Missing, extra, reordered, or path-
 mismatched commits fail validation.
 
+One source repository may represent a normal, fully verified integration merge
+with the commit role `verified-integration-merge`. This is not an empty-commit
+exception: the immediately preceding, separately enumerated side/content
+commit retains the triggering unit and its complete nonempty changed-path
+attribution. The integration entry itself has `changed_paths: []` only because
+plain first-parent-free `git diff-tree` reports no projection for that exact
+two-parent merge.
+
+The typed `two-parent-side-over-protected` evidence binds the two full ordered
+parent revisions, their full tree identities, the merge base and its tree, the
+final tree, and the complete `merge_base_to_side`,
+`merge_base_to_protected`, `protected_to_final`, and `side_to_final` path
+projections. Live validation proves the exact two-commit old-exclusive range,
+the side commit's sole merge-base parent, parent order, every tree and
+projection, and an empty plain merge projection. The side attribution must
+equal both the base-to-side and protected-to-final projections. One- or
+three-parent shapes, abbreviations, reordered parents, missing or extra side
+commits, tree/base/projection drift, unrelated paths, dirty or ref drift,
+force, untyped empty commits, and ordinary empty linear commits reject.
+
+This ordinary topology proof does not repair non-monotonic preparation and
+execution evidence. When chronology itself is invalid, preserve it and use the
+separate owner-authorized executed/prepared reconciliation contract.
+
 One additive source-only alternative represents a synchronized carried commit
 that was already published and accounted while blocked, then later accepted
 without another source commit or push. That repository has an empty current
@@ -125,8 +149,8 @@ That distinct stale-authority shape uses
 ## Published prerequisite suffix reconciliation
 
 If ordinary accounting fails earlier because immutable no-force execution
-predates the recorded PreparePush timestamp and an exact source final is
-a bound merge integration, do not route that shape through the prerequisite
+predates the recorded PreparePush timestamp, the typed integration-merge proof
+does not repair that chronology. Do not route the shape through the prerequisite
 suffix contract. Use the separate
 [`executed_prepared_publication_reconciliation.v1`](EXECUTED_PREPARED_PUBLICATION_RECONCILIATION.md)
 contract, which preserves the failed ordinary-accounting claim and consumes
