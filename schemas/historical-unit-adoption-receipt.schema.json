@@ -56,6 +56,20 @@
                     "retained_as": { "type": "string", "minLength": 1 }
                   }
                 }
+              },
+              "missing_required_skill_surfaces": {
+                "type": "array",
+                "items": {
+                  "type": "object", "additionalProperties": false,
+                  "required": ["skill_id", "path", "current_action", "retained_status", "retained_as"],
+                  "properties": {
+                    "skill_id": { "$ref": "#/$defs/id" },
+                    "path": { "type": "string", "pattern": "^<skills-root>/[a-z0-9][a-z0-9-]{1,127}/SKILL\\.md$" },
+                    "current_action": { "const": "update" },
+                    "retained_status": { "const": "planned" },
+                    "retained_as": { "type": "string", "minLength": 1 }
+                  }
+                }
               }
             }
           },
@@ -66,6 +80,25 @@
                   "normalization": {
                     "required": ["work_modes"],
                     "properties": { "work_modes": { "minItems": 1 } }
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "terminal_status": { "const": "blocked" },
+                  "terminal_evidence": {
+                    "required": ["event_id", "event_sha256", "receipt_path", "receipt_sha256"],
+                    "properties": { "receipt_path": { "type": "string", "minLength": 1 } }
+                  }
+                }
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "normalization": {
+                    "required": ["missing_required_skill_surfaces"],
+                    "properties": { "missing_required_skill_surfaces": { "minItems": 1 } }
                   }
                 }
               },

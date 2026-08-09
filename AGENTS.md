@@ -156,6 +156,11 @@ path-bound adoption contract; a blocked unit's planned status remains planned
 and never claims an edit or validation ran. This is not an instruction-sync
 exemption or publication evidence. Route the complete contract to
 `docs/HISTORICAL_UNIT_ADOPTION.md`; never rewrite historical unit or event bytes.
+If a required skill surface is wholly absent from immutable terminal blocked
+unit bytes, project only the exact currently required skill IDs and canonical
+`<skills-root>/<skill-id>/SKILL.md` paths. Retain `planned`, bind the terminal
+event and receipt hashes, and reject current, accepted, optional, or extra
+surfaces; the projection never claims an instruction edit or completion.
 
 Portable composition and iteration IDs have one 2-through-128-character
 lowercase alphanumeric/hyphen domain across their schemas and validators.

@@ -764,6 +764,54 @@ function Test-ProjectBundle {
                 if ($mapping.Count -eq 1) { $surface.action = [string]$mapping[0].current_action }
                 $surface
             })
+
+            $missingSkillMappings = if ($adoption.normalization.PSObject.Properties.Name -contains "missing_required_skill_surfaces") {
+                @($adoption.normalization.missing_required_skill_surfaces | Where-Object { $null -ne $_ })
+            } else { @() }
+            $expectedMissingSkillIds = @($requiredSkillIds.ToArray() | Where-Object {
+                $requiredSkillId = [string]$_
+                @($instructionSurfaces | Where-Object {
+                    [string]$_.surface_kind -ceq "skill" -and [string]$_.skill_id -ceq $requiredSkillId
+                }).Count -eq 0
+            } | Sort-Object)
+            $mappedMissingSkillIds = @($missingSkillMappings | ForEach-Object { [string]$_.skill_id } | Sort-Object)
+            Assert-Contract (($expectedMissingSkillIds -join "|") -ceq ($mappedMissingSkillIds -join "|")) "$Context historical unit '$unitId' missing-skill mappings must exactly cover wholly absent required skill surfaces."
+            if ($missingSkillMappings.Count -gt 0) {
+                $adoptionProperties = @($adoption.PSObject.Properties.Name | Sort-Object)
+                Assert-Contract (($adoptionProperties -join "|") -ceq "normalization|terminal_evidence|terminal_status|unit_id|unit_path|unit_sha256") "$Context missing-skill projection for '$unitId' has an unexpected unit-level property."
+                $allowedNormalizationProperties = @("change_categories", "instruction_impact", "instruction_surfaces", "missing_required_skill_surfaces", "resource_kinds", "validation_profiles", "work_modes")
+                $unexpectedNormalizationProperties = @($adoption.normalization.PSObject.Properties.Name | Where-Object { $allowedNormalizationProperties -cnotcontains [string]$_ })
+                Assert-Contract ($unexpectedNormalizationProperties.Count -eq 0) "$Context missing-skill projection for '$unitId' has an unexpected normalization property."
+                Assert-Contract ([string]$unit.status -ceq "blocked") "$Context missing-skill projection is limited to terminal blocked unit '$unitId'."
+                Assert-Contract ([string]$state.current_unit -cne $unitId -and [string]$state.next_ready_unit -cne $unitId) "$Context missing-skill projection cannot apply to current or next-ready unit '$unitId'."
+                Test-UniqueProperty -Items $missingSkillMappings -Property "skill_id" -Context "$Context historical unit '$unitId' missing-skill mappings"
+                Test-UniqueProperty -Items $missingSkillMappings -Property "path" -Context "$Context historical unit '$unitId' missing-skill mappings"
+            }
+            foreach ($mapping in $missingSkillMappings) {
+                $mappingProperties = @($mapping.PSObject.Properties.Name | Sort-Object)
+                Assert-Contract (($mappingProperties -join "|") -ceq "current_action|path|retained_as|retained_status|skill_id") "$Context historical unit '$unitId' missing-skill mapping '$($mapping.path)' has an unexpected property."
+                $skillId = [string]$mapping.skill_id
+                $expectedPath = "<skills-root>/$skillId/SKILL.md"
+                Assert-Contract ([string]$mapping.path -ceq $expectedPath) "$Context historical unit '$unitId' missing-skill mapping '$($mapping.path)' does not use the canonical required-skill path."
+                Assert-Contract ([string]$mapping.current_action -ceq "update") "$Context historical unit '$unitId' missing-skill mapping '$($mapping.path)' must project update."
+                Assert-Contract ([string]$mapping.retained_status -ceq "planned") "$Context historical unit '$unitId' missing-skill mapping '$($mapping.path)' must retain planned status."
+                Assert-Contract (Test-Text $mapping.retained_as) "$Context historical unit '$unitId' missing-skill mapping '$($mapping.path)' must state the retained historical meaning."
+                Assert-Contract (@($instructionSurfaces | Where-Object { [string]$_.path -ceq [string]$mapping.path -or ([string]$_.surface_kind -ceq "skill" -and [string]$_.skill_id -ceq $skillId) }).Count -eq 0) "$Context historical unit '$unitId' missing-skill mapping '$($mapping.path)' is not wholly absent from immutable unit bytes."
+            }
+            if ($missingSkillMappings.Count -gt 0) {
+                $effectiveInstructionSurfaces = @($effectiveInstructionSurfaces + @($missingSkillMappings | ForEach-Object {
+                    [pscustomobject][ordered]@{
+                        surface_kind = "skill"
+                        path = [string]$_.path
+                        owner = "historical-adoption-projection"
+                        change_reason = "A required skill surface is absent from immutable terminal historical unit bytes."
+                        action = [string]$_.current_action
+                        status = [string]$_.retained_status
+                        validation = "Current validation projection only; no historical instruction edit, completion, or execution is claimed."
+                        skill_id = [string]$_.skill_id
+                    }
+                }))
+            }
         }
 
         if ($effectiveInstructionImpact -eq "none") {
@@ -969,27 +1017,32 @@ function Test-ProjectBundle {
         $entry = $historicalAdoptions[$adoptedUnitId]
         $terminalEventId = [string]$entry.terminal_evidence.event_id
         $workModeMappings = if ($entry.normalization.PSObject.Properties.Name -contains "work_modes") { @($entry.normalization.work_modes | Where-Object { $null -ne $_ }) } else { @() }
-        if ($workModeMappings.Count -gt 0) {
+        $missingSkillMappings = if ($entry.normalization.PSObject.Properties.Name -contains "missing_required_skill_surfaces") { @($entry.normalization.missing_required_skill_surfaces | Where-Object { $null -ne $_ }) } else { @() }
+        $requiresExactTerminalEvidence = $workModeMappings.Count -gt 0 -or $missingSkillMappings.Count -gt 0
+        if ($requiresExactTerminalEvidence) {
             $terminalProperties = @($entry.terminal_evidence.PSObject.Properties.Name | Sort-Object)
-            Assert-Contract (($terminalProperties -join "|") -ceq "event_id|event_sha256|receipt_path|receipt_sha256") "$Context historical work-mode adoption for '$adoptedUnitId' must bind exact event and receipt evidence."
-            Assert-Contract (Test-Text $entry.terminal_evidence.receipt_path) "$Context historical work-mode adoption for '$adoptedUnitId' requires a terminal receipt path."
+            Assert-Contract (($terminalProperties -join "|") -ceq "event_id|event_sha256|receipt_path|receipt_sha256") "$Context evidence-bound historical adoption for '$adoptedUnitId' must bind exact event and receipt evidence."
+            Assert-Contract (Test-Text $entry.terminal_evidence.receipt_path) "$Context evidence-bound historical adoption for '$adoptedUnitId' requires a terminal receipt path."
         }
         Assert-Contract ($eventMap.ContainsKey($terminalEventId)) "$Context historical unit '$adoptedUnitId' lacks its declared terminal event '$terminalEventId'."
         if ($eventMap.ContainsKey($terminalEventId)) {
             $terminalEvent = $eventMap[$terminalEventId]
             Assert-Contract ([string]$terminalEvent.unit_id -eq $adoptedUnitId) "$Context historical unit '$adoptedUnitId' terminal event belongs to another unit."
-            if ($workModeMappings.Count -gt 0) {
-                Assert-Contract ([string]$entry.terminal_evidence.event_sha256 -ceq [string]$terminalEvent.__line_sha256) "$Context historical work-mode adoption for '$adoptedUnitId' terminal event hash drifted."
+            if ($requiresExactTerminalEvidence) {
+                Assert-Contract ([string]$entry.terminal_evidence.event_sha256 -ceq [string]$terminalEvent.__line_sha256) "$Context evidence-bound historical adoption for '$adoptedUnitId' terminal event hash drifted."
+            }
+            if ($missingSkillMappings.Count -gt 0) {
+                Assert-Contract ([string]$terminalEvent.event_type -ceq "blocker") "$Context missing-skill projection for '$adoptedUnitId' requires its terminal blocker event."
             }
             if ($null -ne $entry.terminal_evidence.receipt_path) {
                 Assert-Contract (@($terminalEvent.receipts) -contains [string]$entry.terminal_evidence.receipt_path) "$Context historical unit '$adoptedUnitId' terminal event does not reference its declared evidence receipt."
-                if ($workModeMappings.Count -gt 0) {
+                if ($requiresExactTerminalEvidence) {
                     $terminalReceiptRelativePath = Normalize-RelativePath ([string]$entry.terminal_evidence.receipt_path)
-                    Assert-Contract (Test-PortableRelativePath $terminalReceiptRelativePath) "$Context historical work-mode adoption for '$adoptedUnitId' receipt path is not portable."
+                    Assert-Contract (Test-PortableRelativePath $terminalReceiptRelativePath) "$Context evidence-bound historical adoption for '$adoptedUnitId' receipt path is not portable."
                     $terminalReceiptPath = Join-Path $workspaceRoot ($terminalReceiptRelativePath -replace "/", [IO.Path]::DirectorySeparatorChar)
-                    Assert-Contract (Test-Path -LiteralPath $terminalReceiptPath -PathType Leaf) "$Context historical work-mode adoption for '$adoptedUnitId' receipt is missing."
+                    Assert-Contract (Test-Path -LiteralPath $terminalReceiptPath -PathType Leaf) "$Context evidence-bound historical adoption for '$adoptedUnitId' receipt is missing."
                     if (Test-Path -LiteralPath $terminalReceiptPath -PathType Leaf) {
-                        Assert-Contract ([string]$entry.terminal_evidence.receipt_sha256 -ceq (Get-FileSha256 $terminalReceiptPath)) "$Context historical work-mode adoption for '$adoptedUnitId' receipt hash drifted."
+                        Assert-Contract ([string]$entry.terminal_evidence.receipt_sha256 -ceq (Get-FileSha256 $terminalReceiptPath)) "$Context evidence-bound historical adoption for '$adoptedUnitId' receipt hash drifted."
                     }
                 }
             }

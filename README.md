@@ -39,6 +39,12 @@ unit's planned surface to complete or claim an edit, validation, acceptance,
 execution, or publication; current portable registries and all current/future
 instruction rules remain closed.
 
+For an immutable terminal blocked unit whose bytes wholly omit a currently
+required skill surface, the same receipt may project only the exact missing
+required skill IDs at canonical `<skills-root>/<skill-id>/SKILL.md` paths.
+Those projected surfaces remain `planned`; exact terminal hashes are required,
+and optional, extra, current, accepted, completed, or executed claims reject.
+
 Portable project, unit, repository, feature, receipt, and event identities use
 lowercase alphanumeric/hyphen syntax and support 2 through 128 characters.
 Authority-stage protocols may declare a wider identity domain explicitly.

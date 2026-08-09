@@ -286,6 +286,10 @@ not create an authority edge for current work. Model retired `publication` to
 as a publication edge. If it normalizes a blocked skill
 surface action, retain the `planned` node and do not add completion or execution
 edges.
+If a terminal blocked unit wholly lacks a required skill node, add only the
+exact current-validation projection edges from its bound unit, blocker event,
+and terminal receipt to the required canonical skill nodes. Keep those nodes
+`planned`; add no edit, completion, execution, or current-work authority edge.
 Graph drift as separate expected-hash, observed-byte, and independently
 reconstructed nodes; only the reconstruction may connect to current validation.
 For embedded recovery, graph published source tree, exact external projection,
