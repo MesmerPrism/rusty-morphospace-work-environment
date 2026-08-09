@@ -41,6 +41,17 @@ complete or claim that an instruction edit or validation command ran. The unit
 and its historical instruction bytes remain unchanged, and current or future
 units cannot use this route.
 
+A narrower terminal-blocked projection covers a required skill surface that is
+wholly absent from the immutable unit bytes. The receipt lists every and only
+the skill IDs currently required by the unit's triggered change categories,
+using each exact canonical `<skills-root>/<skill-id>/SKILL.md` path. Validation
+projects `action: update` while retaining `status: planned`; the historical unit
+still contains no such surface, and the receipt claims no instruction edit,
+completion, or validation execution. Exact unit bytes, blocker event-line hash,
+and terminal receipt hash are mandatory. This route rejects accepted,
+current/in-flight, optional, extra, already-present, renamed, or non-`update`
+surfaces.
+
 Work-mode adoption changes only current validation projection. It does not
 complete a surface, accept a unit, execute a command, or prove publication.
 
@@ -50,7 +61,8 @@ Validation rejects receipt-reference hash drift, unit-byte drift, changed
 status, missing or duplicate units, duplicate or invalid mappings, missing or
 drifted terminal evidence hashes, unknown normalized targets, incomplete
 work-mode or instruction-impact
-or surface-action coverage, and adoption by a current or future unit. Removing
+or surface-action coverage, incomplete or extra missing-skill coverage, and
+adoption by a current or future unit. Removing
 the receipt restores strict current validation; it never creates an ambient
 compatibility mode.
 
@@ -76,4 +88,5 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkflowContracts.p
 ```
 
 The focused self-test covers accepted and blocked positive adoptions, including
-planned skill-action normalization, plus damaged and over-claiming cases.
+planned skill-action normalization and exact missing-required-skill projection,
+plus damaged, optional-surface, current-unit, and over-claiming cases.
