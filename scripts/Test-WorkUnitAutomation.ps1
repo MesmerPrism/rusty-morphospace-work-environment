@@ -455,6 +455,40 @@ try {
     Assert-Automation (Test-Json -Json ($legacyV1Inspect | ConvertTo-Json -Depth 100) -SchemaFile $automationReceiptSchema) "legacy v1 claim preflight shape was not preserved"
     Assert-Automation (($positiveBefore -join "`n") -ceq ($positiveAfter -join "`n")) "Inspect advisory preflight mutated workflow bytes"
 
+    # A fully declared all-green candidate has no reason token on any check.
+    # Keep this synthetic so the regression covers strict-mode aggregation
+    # without binding the test suite to a private product unit or live device.
+    $allGreenUnitId = "unit-auto-all-green"
+    $allGreenUnitPath = Join-Path $workspace "iteration-units\$allGreenUnitId.json"
+    $allGreenUnit = $instructionUnit | ConvertTo-Json -Depth 32 | ConvertFrom-Json
+    $allGreenUnit.unit_id = $allGreenUnitId
+    $allGreenUnit.objective = "Exercise an all-green claim preflight whose check reason arrays are all empty."
+    $allGreenUnit.device_requirement = "required"
+    $allGreenUnit | Add-Member -NotePropertyName read_only_dependencies -NotePropertyValue @(
+        [pscustomobject][ordered]@{ repo_id = "workflow-planning"; paths = @("planning-seed.txt"); purpose = "Exercise an available read-only input."; verification = "Inspect the exact synthetic seed file." }
+    )
+    $allGreenUnit | Add-Member -NotePropertyName resource_requirements -NotePropertyValue @(
+        [pscustomobject][ordered]@{ resource_kind = "headset"; resource_id = "quest:test-device-a"; mode = "exclusive"; claim_timing = "before-run" }
+    )
+    Write-TestJson -Path $allGreenUnitPath -Value $allGreenUnit
+    $allGreenPaths = @(
+        $allGreenUnitPath,
+        (Join-Path $workspace "workspace.state.json"),
+        (Join-Path $workspace "iteration-events.jsonl")
+    )
+    $allGreenBefore = @($allGreenPaths | ForEach-Object { (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash })
+    $allGreenInspect = Invoke-MorphospaceWorkUnitAutomation -Action Inspect -WorkspaceRoot $workspace -UnitId $allGreenUnitId -RepoMapPath $repoMapPath -DeviceSerials @("test-device-a") -Timestamp $fixed
+    $allGreenAfter = @($allGreenPaths | ForEach-Object { (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash })
+    Assert-Automation (
+        $allGreenInspect.claim_preflight.advisory_status -eq "pass" -and
+        $allGreenInspect.claim_preflight.state_mutation_performed -eq $false -and
+        @($allGreenInspect.claim_preflight.reason_codes).Count -eq 0 -and
+        @($allGreenInspect.claim_preflight.coverage.missing).Count -eq 0 -and
+        @($allGreenInspect.claim_preflight.coverage.skipped).Count -eq 0 -and
+        @($allGreenInspect.claim_preflight.coverage.checks | Where-Object { @($_.reason_codes).Count -ne 0 }).Count -eq 0 -and
+        ($allGreenBefore -join "`n") -ceq ($allGreenAfter -join "`n")
+    ) "all-green advisory preflight did not preserve empty reason arrays without mutation"
+
     $unit045Workspace = New-TestWorkspace -Root (Join-Path $testRoot "unit045-shape") -ProjectId "unit045-shape" -UnitId "unit045-shape-001"
     $unit045Path = Join-Path $unit045Workspace "iteration-units\unit045-shape-001.json"
     $unit045 = Get-Content -LiteralPath $unit045Path -Raw | ConvertFrom-Json
