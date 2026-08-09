@@ -599,7 +599,7 @@ function New-MorphospaceClaimPreflight {
         advisory_status = $advisoryStatus
         candidate_fingerprint = $candidateFingerprint
         state_mutation_performed = $false
-        reason_codes = @($checkRows.reason_codes | Sort-Object -Unique | Where-Object { $_ -notin @('not-applicable', 'legacy-implicit-work-mode') })
+        reason_codes = @($checkRows | ForEach-Object { @($_.reason_codes) } | Sort-Object -Unique | Where-Object { $_ -notin @('not-applicable', 'legacy-implicit-work-mode') })
         contract_bindings = $contractBindings
         coverage = $coverage
         validation_tier = $ValidationTier
