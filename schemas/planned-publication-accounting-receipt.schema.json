@@ -36,6 +36,7 @@
     "id": { "type":"string","pattern":"^[a-z0-9][a-z0-9-]{1,127}$" },
     "hash": { "type":"string","pattern":"^[0-9a-f]{64}$" },
     "revision": { "type":"string","pattern":"^[0-9a-f]{40}$" },
+    "tree": { "type":"string","pattern":"^[0-9a-f]{40}$" },
     "time": { "type":"string","format":"date-time" },
     "path": { "type":"string","pattern":"^(?![A-Za-z]:|/|.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/-]+$" },
     "file": { "type":"object","additionalProperties":false,"required":["path","sha256"],"properties":{"path":{"$ref":"#/$defs/path"},"sha256":{"$ref":"#/$defs/hash"}} },
@@ -43,7 +44,55 @@
     "synchronized-readback": { "type":"object","additionalProperties":false,"required":["executed_action","unchanged_revision","no_mutation_inferred"],"properties":{"executed_action":{"const":"readback-only"},"unchanged_revision":{"$ref":"#/$defs/revision"},"no_mutation_inferred":{"const":true}} },
     "id-list": { "type":"array","minItems":1,"uniqueItems":true,"items":{"$ref":"#/$defs/id"} },
     "unit": { "type":"object","additionalProperties":false,"required":["unit_id","role","status_at_publication","status_evidence","no_acceptance_claim"],"properties":{"unit_id":{"$ref":"#/$defs/id"},"role":{"enum":["triggering-unit","carried-unit","intervening-unit","bundle-accepted-unit"]},"status_at_publication":{"enum":["accepted","blocked"]},"status_evidence":{"$ref":"#/$defs/file"},"validation_evidence":{"$ref":"#/$defs/file"},"no_acceptance_claim":{"type":"boolean"}},"allOf":[{"if":{"properties":{"role":{"enum":["intervening-unit","bundle-accepted-unit"]}}},"then":{"properties":{"status_at_publication":{"const":"accepted"},"no_acceptance_claim":{"const":false}}}},{"if":{"properties":{"role":{"const":"intervening-unit"}}},"then":{"required":["validation_evidence"]}}] },
-    "commit": { "type":"object","additionalProperties":false,"required":["revision","role","unit_id","changed_paths"],"properties":{"revision":{"$ref":"#/$defs/revision"},"role":{"enum":["triggering-unit","carried-unit","intervening-unit","bundle-accepted-unit","workflow-publication-finalization","intervening-planning-evidence"]},"unit_id":{"oneOf":[{"$ref":"#/$defs/id"},{"type":"null"}]},"evidence_kind":{"enum":["blocker","publication-finalization"]},"changed_paths":{"type":"array","minItems":1,"uniqueItems":true,"items":{"$ref":"#/$defs/path"}}},"allOf":[{"if":{"properties":{"role":{"const":"intervening-planning-evidence"}}},"then":{"required":["evidence_kind"],"properties":{"unit_id":{"type":"null"}}},"else":{"not":{"required":["evidence_kind"]}}}] },
+    "integration-merge": {
+      "type":"object",
+      "additionalProperties":false,
+      "required":["topology","ordered_parents","merge_base","trees","projections"],
+      "properties":{
+        "topology":{"const":"two-parent-side-over-protected"},
+        "ordered_parents":{"type":"array","minItems":2,"maxItems":2,"uniqueItems":true,"items":{"$ref":"#/$defs/revision"}},
+        "merge_base":{"$ref":"#/$defs/revision"},
+        "trees":{
+          "type":"object",
+          "additionalProperties":false,
+          "required":["merge_base","side_parent","protected_parent","final"],
+          "properties":{
+            "merge_base":{"$ref":"#/$defs/tree"},
+            "side_parent":{"$ref":"#/$defs/tree"},
+            "protected_parent":{"$ref":"#/$defs/tree"},
+            "final":{"$ref":"#/$defs/tree"}
+          }
+        },
+        "projections":{
+          "type":"object",
+          "additionalProperties":false,
+          "required":["merge_base_to_side","merge_base_to_protected","protected_to_final","side_to_final"],
+          "properties":{
+            "merge_base_to_side":{"type":"array","minItems":1,"uniqueItems":true,"items":{"$ref":"#/$defs/path"}},
+            "merge_base_to_protected":{"type":"array","minItems":1,"uniqueItems":true,"items":{"$ref":"#/$defs/path"}},
+            "protected_to_final":{"type":"array","minItems":1,"uniqueItems":true,"items":{"$ref":"#/$defs/path"}},
+            "side_to_final":{"type":"array","minItems":1,"uniqueItems":true,"items":{"$ref":"#/$defs/path"}}
+          }
+        }
+      }
+    },
+    "commit": {
+      "type":"object",
+      "additionalProperties":false,
+      "required":["revision","role","unit_id","changed_paths"],
+      "properties":{
+        "revision":{"$ref":"#/$defs/revision"},
+        "role":{"enum":["triggering-unit","carried-unit","intervening-unit","bundle-accepted-unit","workflow-publication-finalization","intervening-planning-evidence","verified-integration-merge"]},
+        "unit_id":{"oneOf":[{"$ref":"#/$defs/id"},{"type":"null"}]},
+        "evidence_kind":{"enum":["blocker","publication-finalization"]},
+        "changed_paths":{"type":"array","uniqueItems":true,"items":{"$ref":"#/$defs/path"}},
+        "integration_merge":{"$ref":"#/$defs/integration-merge"}
+      },
+      "allOf":[
+        {"if":{"properties":{"role":{"const":"intervening-planning-evidence"}}},"then":{"required":["evidence_kind"],"properties":{"unit_id":{"type":"null"}}},"else":{"not":{"required":["evidence_kind"]}}},
+        {"if":{"properties":{"role":{"const":"verified-integration-merge"}}},"then":{"required":["integration_merge"],"properties":{"unit_id":{"type":"null"},"changed_paths":{"maxItems":0}}},"else":{"properties":{"changed_paths":{"minItems":1}},"not":{"required":["integration_merge"]}}}
+      ]
+    },
     "intervening-accepted-publication": { "type":"object","additionalProperties":false,"required":["executed_final_revision","executed_remote_readback_revision","current_final_revision","current_remote_readback_revision","original_to_current_fast_forward","recovered_at","allowed_planning_evidence_paths"],"properties":{"executed_final_revision":{"$ref":"#/$defs/revision"},"executed_remote_readback_revision":{"$ref":"#/$defs/revision"},"current_final_revision":{"$ref":"#/$defs/revision"},"current_remote_readback_revision":{"$ref":"#/$defs/revision"},"original_to_current_fast_forward":{"const":true},"recovered_at":{"$ref":"#/$defs/time"},"allowed_planning_evidence_paths":{"type":"array","uniqueItems":true,"items":{"$ref":"#/$defs/path"}}} },
     "repository": { "type":"object","additionalProperties":false,"required":["repo_id","role","branch","upstream","old_revision","prepared_revision","final_revision","remote_readback_revision","source_first","planning_last","fast_forward_verified","force_push_used","worktree_clean","units","commits","allowed_finalization_paths"],"properties":{"repo_id":{"$ref":"#/$defs/id"},"role":{"enum":["source","planning-transport"]},"branch":{"type":"string","minLength":1},"upstream":{"type":"string","minLength":1},"old_revision":{"$ref":"#/$defs/revision"},"prepared_revision":{"$ref":"#/$defs/revision"},"final_revision":{"$ref":"#/$defs/revision"},"remote_readback_revision":{"$ref":"#/$defs/revision"},"source_first":{"type":"boolean"},"planning_last":{"type":"boolean"},"fast_forward_verified":{"const":true},"force_push_used":{"const":false},"worktree_clean":{"const":true},"units":{"type":"array","items":{"$ref":"#/$defs/unit"}},"commits":{"type":"array","items":{"$ref":"#/$defs/commit"}},"allowed_finalization_paths":{"type":"array","uniqueItems":true,"items":{"$ref":"#/$defs/path"}},"synchronized_carried_acceptance":{"$ref":"#/$defs/synchronized-carried-acceptance"},"synchronized_readback":{"$ref":"#/$defs/synchronized-readback"},"intervening_accepted_publication":{"$ref":"#/$defs/intervening-accepted-publication"}},"oneOf":[{"required":["synchronized_carried_acceptance"],"not":{"required":["synchronized_readback"]},"properties":{"role":{"const":"source"},"commits":{"maxItems":0}}},{"required":["synchronized_readback"],"not":{"required":["synchronized_carried_acceptance"]},"properties":{"role":{"const":"source"}}},{"not":{"anyOf":[{"required":["synchronized_carried_acceptance"]},{"required":["synchronized_readback"]}]},"properties":{"commits":{"minItems":1}}}] }
   }

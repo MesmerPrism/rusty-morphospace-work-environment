@@ -338,6 +338,12 @@ suffix, and consume only the exact pending bundle. Prepared evidence may bind
 standalone plan/event files or their immutable automation-receipt and
 transition-ledger containers. See
 [`docs/PLANNED_PUBLICATION_ACCOUNTING.md`](docs/PLANNED_PUBLICATION_ACCOUNTING.md).
+A normal source integration may use `changed_paths: []` only on an explicitly
+typed exact two-parent merge whose preceding side/content commit remains
+separately enumerated with full triggering-unit attribution. Parent order,
+trees, merge base, four complete path projections, and the empty plain merge
+projection are verified live; every linear or untyped merge entry remains
+nonempty.
 For the separately owner-authorized normal linear shape in which a planning
 receipt-only commit is already clean and only the five transaction-owned
 `PreparePush` paths remain dirty, use the exact-bundle
@@ -345,9 +351,9 @@ receipt-only commit is already clean and only the five transaction-owned
 route. It verifies the signed scope and consumes only the matching pending
 bundle without changing Git, evidence bytes, timestamps, acceptance, or
 publication authority.
-If immutable execution predates its recorded preparation timestamp and an exact
-source final is a merge integration that ordinary commit projection cannot
-represent, normal accounting must still reject. The distinct
+If immutable execution predates its recorded preparation timestamp, typed merge
+topology cannot repair that chronology and normal accounting must still reject.
+The distinct
 [`executed_prepared_publication_reconciliation.v1`](docs/EXECUTED_PREPARED_PUBLICATION_RECONCILIATION.md)
 route preserves every timestamp and parent, verifies complete path-set
 fingerprints and live refs, and consumes only the exact bundle without claiming
