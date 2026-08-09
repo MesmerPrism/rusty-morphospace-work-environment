@@ -782,6 +782,8 @@ function Test-ProjectBundle {
                 $allowedNormalizationProperties = @("change_categories", "instruction_impact", "instruction_surfaces", "missing_required_skill_surfaces", "resource_kinds", "validation_profiles", "work_modes")
                 $unexpectedNormalizationProperties = @($adoption.normalization.PSObject.Properties.Name | Where-Object { $allowedNormalizationProperties -cnotcontains [string]$_ })
                 Assert-Contract ($unexpectedNormalizationProperties.Count -eq 0) "$Context missing-skill projection for '$unitId' has an unexpected normalization property."
+                Assert-Contract ([string]$workMode -ceq "feature" -and $workModeMappings.Count -eq 0) "$Context missing-skill projection requires immutable feature work mode for '$unitId'."
+                Assert-Contract ([string]$instructionImpact -ceq "update" -and $impactMappings.Count -eq 0) "$Context missing-skill projection requires immutable update instruction impact for '$unitId'."
                 Assert-Contract ([string]$unit.status -ceq "blocked") "$Context missing-skill projection is limited to terminal blocked unit '$unitId'."
                 Assert-Contract ([string]$state.current_unit -cne $unitId -and [string]$state.next_ready_unit -cne $unitId) "$Context missing-skill projection cannot apply to current or next-ready unit '$unitId'."
                 Test-UniqueProperty -Items $missingSkillMappings -Property "skill_id" -Context "$Context historical unit '$unitId' missing-skill mappings"
@@ -1043,6 +1045,15 @@ function Test-ProjectBundle {
                     Assert-Contract (Test-Path -LiteralPath $terminalReceiptPath -PathType Leaf) "$Context evidence-bound historical adoption for '$adoptedUnitId' receipt is missing."
                     if (Test-Path -LiteralPath $terminalReceiptPath -PathType Leaf) {
                         Assert-Contract ([string]$entry.terminal_evidence.receipt_sha256 -ceq (Get-FileSha256 $terminalReceiptPath)) "$Context evidence-bound historical adoption for '$adoptedUnitId' receipt hash drifted."
+                        if ($missingSkillMappings.Count -gt 0) {
+                            $terminalReceipt = Read-JsonDocument -Path $terminalReceiptPath -Context "$Context missing-skill terminal receipt for '$adoptedUnitId'"
+                            if ($null -ne $terminalReceipt) {
+                                Assert-Contract ([string]$terminalReceipt.schema -ceq "rusty.morphospace.workflow.validation_receipt.v1") "$Context missing-skill projection for '$adoptedUnitId' requires a validation receipt."
+                                Assert-Contract ([string]$terminalReceipt.project_id -ceq [string]$spec.project_id) "$Context missing-skill projection for '$adoptedUnitId' terminal receipt belongs to another project."
+                                Assert-Contract ([string]$terminalReceipt.unit_id -ceq $adoptedUnitId) "$Context missing-skill projection for '$adoptedUnitId' terminal receipt belongs to another unit."
+                                Assert-Contract ([string]$terminalReceipt.result -ceq "blocked") "$Context missing-skill projection for '$adoptedUnitId' requires a blocked validation receipt."
+                            }
+                        }
                     }
                 }
             }
