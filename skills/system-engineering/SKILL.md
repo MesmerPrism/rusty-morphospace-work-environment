@@ -401,6 +401,10 @@ instruction mismatch additionally binds the exact legacy impact and every
 affected agent, router, or skill surface path/action. Preserve a blocked
 surface's `planned` status and record no completion or execution claim; this is
 not an ambient instruction-sync bypass.
+When a required skill surface is wholly absent from terminal blocked unit
+bytes, allow only an exact hash-bound projection of the currently required
+skill IDs at canonical paths. Retain `planned`; reject optional, current,
+accepted, completed, executed, or already-present surfaces.
 
 A drifted historical-adoption receipt keeps its expected and observed hashes
 as damaged original evidence. An immutable-Git-anchored
