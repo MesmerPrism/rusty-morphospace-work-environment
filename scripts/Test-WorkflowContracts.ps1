@@ -1035,6 +1035,8 @@ function Test-ProjectBundle {
             }
             if ($missingSkillMappings.Count -gt 0) {
                 Assert-Contract ([string]$terminalEvent.event_type -ceq "blocker") "$Context missing-skill projection for '$adoptedUnitId' requires its terminal blocker event."
+                $latestUnitEvent = @($events | Where-Object { [string]$_.unit_id -ceq $adoptedUnitId } | Select-Object -Last 1)
+                Assert-Contract ($latestUnitEvent.Count -eq 1 -and [string]$latestUnitEvent[0].event_id -ceq $terminalEventId) "$Context missing-skill projection for '$adoptedUnitId' must bind its latest same-unit event."
             }
             if ($null -ne $entry.terminal_evidence.receipt_path) {
                 Assert-Contract (@($terminalEvent.receipts) -contains [string]$entry.terminal_evidence.receipt_path) "$Context historical unit '$adoptedUnitId' terminal event does not reference its declared evidence receipt."
