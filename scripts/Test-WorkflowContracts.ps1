@@ -1966,7 +1966,8 @@ $candidateContracts = @(
     [pscustomobject]@{ Template = "blocker-resolution-receipt.example.json"; Schema = "blocker-resolution-receipt-v1.schema.json"; Label = "Blocker-resolution" },
     [pscustomobject]@{ Template = "blocker-resolution-correction-receipt.example.json"; Schema = "blocker-resolution-correction-receipt-v1.schema.json"; Label = "Blocker-resolution correction" },
     [pscustomobject]@{ Template = "historical-blocker-resolution-intent-binding-correction.example.json"; Schema = "historical-blocker-resolution-intent-binding-correction-v1.schema.json"; Label = "Historical blocker-resolution intent-binding correction" },
-    [pscustomobject]@{ Template = "active-read-only-dependency-correction.example.json"; Schema = "active-read-only-dependency-correction-v1.schema.json"; Label = "Active read-only dependency correction" }
+    [pscustomobject]@{ Template = "active-read-only-dependency-correction.example.json"; Schema = "active-read-only-dependency-correction-v1.schema.json"; Label = "Active read-only dependency correction" },
+    [pscustomobject]@{ Template = "active-write-scope-amendment.example.json"; Schema = "active-write-scope-amendment-v1.schema.json"; Label = "Active write-scope amendment" }
 )
 foreach ($candidateContract in $candidateContracts) {
     $candidateTemplate = Join-Path $templatesRoot $candidateContract.Template
@@ -1981,7 +1982,7 @@ foreach ($candidateContract in $candidateContracts) {
     }
 }
 if (-not $SkipOwnerSelfTests) {
-    foreach ($selfTest in @("Test-LegacyEmbeddedPushPlanCompatibility.ps1","Test-PreparedPublicationReconstruction.ps1","Test-ResolveBlocker.ps1","Test-CorrectResolvedBlockerEvidence.ps1","Test-HistoricalBlockerResolutionIntentBindingCorrection.ps1","Test-CorrectActiveReadOnlyDependencies.ps1","Test-CorrectActiveProjectRepositoryScope.ps1","Test-CompletedTransitionSemanticCorrection.ps1","Test-TransitionLedger.ps1")) {
+    foreach ($selfTest in @("Test-LegacyEmbeddedPushPlanCompatibility.ps1","Test-PreparedPublicationReconstruction.ps1","Test-ResolveBlocker.ps1","Test-CorrectResolvedBlockerEvidence.ps1","Test-HistoricalBlockerResolutionIntentBindingCorrection.ps1","Test-CorrectActiveReadOnlyDependencies.ps1","Test-CorrectActiveProjectRepositoryScope.ps1","Test-ActiveWriteScopeAmendment.ps1","Test-CompletedTransitionSemanticCorrection.ps1","Test-TransitionLedger.ps1")) {
         try { Invoke-IsolatedWorkflowSelfTest -Path (Join-Path $RepoRoot "scripts\$selfTest") }
         catch { Add-Failure -Message "$selfTest failed: $($_.Exception.Message)" }
     }

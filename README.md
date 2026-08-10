@@ -99,10 +99,10 @@ its declared repositories and device stages, `labs` for product-authority or
 composition policy changes, and `locked` for releases or workflow trust-root
 changes. Select `risk_tier` independently.
 
-The guard-profile and `ReturnToActive` additions on this development line are
-unreleased candidate behavior. They do not amend the published `0.6.0`
-contract until the repository's external validation-authority and release
-process accepts an exact candidate.
+The guard-profile, execution-preflight, `ReturnToActive`, and active write-scope
+amendment additions on this development line are unreleased candidate behavior.
+They do not amend the published `0.6.0` contract until the repository's
+external validation-authority and release process accepts an exact candidate.
 
 1. Run `pwsh -NoProfile -File .\scripts\Test-PowerShellHost.ps1` and read
    [Setup Overview](docs/SETUP_OVERVIEW.md).
@@ -312,6 +312,13 @@ unit already declares a writable path that its project repository allow-list
 omits. The action is additive-only, preserves the unit, and atomically advances
 the project revision, feature lock, and workspace registry through transition
 intent v3. See [Active Project Repository Scope Correction](docs/ACTIVE_PROJECT_REPOSITORY_SCOPE_CORRECTION.md).
+When implementation discovers another writable path or repository that is
+already inside the project allow-list and the same feature authority, use the
+two-phase `AmendActiveWriteScope` action. It adds scope only to the current
+active feature unit, retains its captain and status, and mutex-binds the
+unchanged project spec. It never edits project authority or performs source,
+Git, build, validation, device, or remote work. See
+[Active Write-Scope Amendment](docs/ACTIVE_WRITE_SCOPE_AMENDMENT.md).
 `CorrectCompletedTransitionSemantics` is not a compatibility mode for malformed
 events. Its builder derives the old and replacement from current retained
 state/unit evidence, requires the original event receipts and legacy-v1 intent

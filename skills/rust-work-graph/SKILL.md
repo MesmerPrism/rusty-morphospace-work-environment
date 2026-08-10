@@ -92,6 +92,12 @@ Graph a bound execution-preflight observation as an admission-evidence node
 with value/capability assertion edges. It is not a build, device, validation,
 or acceptance node, and a failed assertion is a pre-Claim rejection edge.
 
+After an executed `AmendActiveWriteScope`, graph only the added project-bounded
+writable edges on the same active feature-unit node. Bind them to the amendment
+receipt and project CAS; do not model a new captain, project-authority change,
+source mutation, materialization, build, validation, device run, or repository
+change merely because the write edge became authorized.
+
 If `CorrectActiveReadOnlyDependencies` has transactionally changed an active
 unit's read-only closure, treat only the resulting declared repositories and
 paths as additional read-only scan edges. Preserve writable/read-only edge

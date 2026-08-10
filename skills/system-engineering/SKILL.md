@@ -101,6 +101,12 @@ workflow trust-root changes. `risk_tier` governs evidence, not permission. For a
 in-scope feature failure, `ReturnToActive` must validate and retain the
 non-passing receipt while keeping the same current-unit owner; blocker plus
 `Resume` remains the stop-and-release route.
+For a writable path or repository discovered inside the same active feature
+authority, use the additive `AmendActiveWriteScope` contract. It must bind
+exact current project/state/unit/event identities, prove the complete
+before/after set stays within project authority, mutex-bind the unchanged
+project document, retain captain/status, and separate authorization from any
+source, Git, build, validation, device, or remote execution.
 Before expensive execution, prefer a hash-bound, project-produced
 `execution_preflight_observation.v1` for exact package/application, signer,
 grant, toolchain, source-lock, or bridge/port facts. The workflow may compare

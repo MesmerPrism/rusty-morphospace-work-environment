@@ -108,6 +108,14 @@ Keep the same captain and retain the attempt. Use blocker recording plus
 `Resume` only when work stops or current-unit authority is released. A
 validation-only unit cannot convert itself into product implementation.
 
+If the same active feature unit discovers another writable path or repository
+already authorized by the project, use `AmendActiveWriteScope`. Bind the exact
+project/state/unit/event inputs and complete before/after path sets, add at
+least one path, preserve every prior path, and replay the dry-run amendment
+hash. The transaction keeps captain/status, mutex-binds the unchanged project
+spec, and performs no source, Git, build, validation, device, or remote work.
+It is never a route to broaden project authority or a validation-only unit.
+
 Before Claim, run `Inspect` with the exact consumer inventory and inputs. Read
 v2 `claim_preflight.advisory_status`, its expected/completed/skipped/missing
 coverage, reason codes, candidate fingerprint, and bound contract identities.

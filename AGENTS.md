@@ -359,6 +359,15 @@ ancestry consumes the authorization.
   feature lock, and workspace registry, and never mutate source repositories.
   Route the full procedure to
   `docs/ACTIVE_PROJECT_REPOSITORY_SCOPE_CORRECTION.md`.
+- Expand the current active feature unit within existing project repository
+  authority only through `AmendActiveWriteScope` and the exact
+  `active_write_scope_amendment.v1` contract. Require project/state/unit/event
+  CAS, exact before/after path sets, at least one addition, a mutex-bound
+  unchanged project spec, and dry-run input-hash replay. It may add a
+  project-declared repository row but may not remove scope, edit project
+  authority, change captain/status, or perform source, Git, build, validation,
+  device, or remote work. Route the procedure to
+  `docs/ACTIVE_WRITE_SCOPE_AMENDMENT.md`.
 - Resolve one exact current active-unit blocker only through product-neutral
   `blocker_resolution_receipt.v1` and `ResolveBlocker`: revalidate its passing
   hash-bound evidence, repository heads, and exact per-repository dirty source

@@ -47,6 +47,13 @@ Claim repeats the same checks and fails before changing state when any item is
 unresolved. Do not claim first and repair repository maps, dependency closure,
 or instruction paths later.
 
+If bounded feature implementation later discovers another writable path or
+project-declared repository under the same authority and rollback envelope,
+use `AmendActiveWriteScope` instead of releasing the captain or inventing a
+successor unit. The amendment must be additive, remain inside project scope,
+bind exact current state and the unchanged project spec, and retain the unit's
+status. It does not authorize project-scope changes or execute product work.
+
 When an exact validation attempt fails but the correction remains inside the
 same feature unit and authority envelope, use `ReturnToActive` with that
 non-passing receipt. The captain remains owner and the attempt remains in the

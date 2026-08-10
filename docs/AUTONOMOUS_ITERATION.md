@@ -465,7 +465,8 @@ successful push is not proof that the whole batch is complete.
 `scripts/Invoke-WorkUnitAutomation.ps1` is the portable owner for mechanical
 work-unit transitions and preparation artifacts. It supports `Inspect`,
 `Ready`, `Claim`, `Resume`, `CompleteInstructionSurfaces`,
-`CorrectActiveReadOnlyDependencies`, `CorrectActiveProjectRepositoryScope`,
+`AmendActiveWriteScope`, `CorrectActiveReadOnlyDependencies`,
+`CorrectActiveProjectRepositoryScope`,
 `BeginValidation`, `ReturnToActive`,
 `RecordValidation`, `Accept`,
 `PreparePush`, `Recover`, `ReconcilePublication`,
@@ -491,6 +492,10 @@ The CLI is deliberately narrower than an autonomous coding agent:
   can add only exact paths already declared by the active unit; its v3 journal
   synchronizes project, feature lock, and workspace registry while preserving
   the unit;
+- active write-scope amendment requires the exact current active feature unit,
+  project/state/unit/event CAS, complete before/after paths, at least one
+  project-approved addition, and dry-run input-hash replay; it retains captain,
+  status, project authority, and every unit field except `allowed_repositories`;
 - it reads Git state but never runs checkout, reset, stash, commit, push, or
   force-push;
 - it never runs validation commands or device commands;
@@ -588,6 +593,13 @@ broaden a unit path, and carries the project spec plus feature lock as
 recoverable transition-ledger v3 projections. See
 [Active Project Repository Scope Correction](ACTIVE_PROJECT_REPOSITORY_SCOPE_CORRECTION.md)
 for its exact-CAS input and dry-run hash replay.
+
+When the same active feature work discovers another writable path or
+repository that the project already authorizes, use the separate two-phase
+`AmendActiveWriteScope` action. It keeps the captain and status, is
+additive-only, and cannot expand project authority. See
+[Active Write-Scope Amendment](ACTIVE_WRITE_SCOPE_AMENDMENT.md) for the input,
+dry-run replay, transaction, and negative boundaries.
 
 Inspection example:
 
