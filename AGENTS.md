@@ -136,6 +136,19 @@ For broad validation, use `Test-WorkEnvironment.ps1 -SelfTest -Tier Quick`,
 then `Standard`, then `Deep` only when the risk warrants it. A single failed
 child check fails the aggregate. These tiers never authorize device work.
 
+Select change authority separately: `guard_profile: fast` for bounded product
+iteration across its declared repositories and device stages, `labs` for
+product-authority/composition policy work, and `locked` for releases or
+workflow trust-root changes. `risk_tier` controls
+evidence depth, not authority. For an in-scope feature failure, use the typed
+`ReturnToActive` receipt path to keep the same captain; reserve blocker plus
+`Resume` for a real stop or authority release.
+
+For expensive package, signer, grant, toolchain, or bridge-dependent work,
+declare a hash-bound `execution_preflight_observation.v1` and exact assertions
+before Claim. The workflow reads this non-sensitive observation but never runs
+its producer, a build, a device command, or a bridge.
+
 Before Claim or an expensive final matrix, route the exact real consumer
 inventory through the advisory `Inspect` preflight and follow the candidate-
 freeze and control-plane budget in `docs/AUTONOMOUS_ITERATION.md`. Its

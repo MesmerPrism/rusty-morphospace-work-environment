@@ -33,6 +33,7 @@
     "status": { "$ref": "#/$defs/id" },
     "objective": { "type": "string", "minLength": 1 },
     "work_mode": { "enum": ["feature", "validation-only"] },
+    "guard_profile": { "enum": ["fast", "labs", "locked"] },
     "tags": {
       "type": "array",
       "uniqueItems": true,
@@ -246,6 +247,51 @@
                 "oneOf": [
                   { "type": "string", "pattern": "^[0-9a-f]{64}$" },
                   { "type": "null" }
+                ]
+              }
+            }
+          }
+        },
+        "execution_preflight": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["observation", "assertions"],
+          "properties": {
+            "observation": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["repo_id", "path", "expected_sha256"],
+              "properties": {
+                "repo_id": { "$ref": "#/$defs/id" },
+                "path": { "type": "string", "minLength": 1 },
+                "expected_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+              }
+            },
+            "assertions": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["assertion_id", "kind", "key", "expected"],
+                "properties": {
+                  "assertion_id": { "$ref": "#/$defs/id" },
+                  "kind": { "enum": ["value-equals", "capability-present"] },
+                  "key": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]{1,127}$" },
+                  "expected": {
+                    "oneOf": [
+                      { "type": "string", "minLength": 1 },
+                      { "type": "null" }
+                    ]
+                  }
+                },
+                "allOf": [
+                  {
+                    "if": { "properties": { "kind": { "const": "value-equals" } }, "required": ["kind"] },
+                    "then": { "properties": { "expected": { "type": "string", "minLength": 1 } } },
+                    "else": { "properties": { "expected": { "type": "null" } } }
+                  }
                 ]
               }
             }

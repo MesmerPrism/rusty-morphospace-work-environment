@@ -58,6 +58,23 @@
     "rollback"
   ],
   "risk_tiers": ["quick", "standard", "deep"],
+  "guard_profiles": [
+    {
+      "id": "fast",
+      "purpose": "Bounded product iteration, including declared cross-repository and device stages, with local or integration checkpoints and independently selected validation depth.",
+      "minimum_for": ["implementation", "validation", "documentation-only"]
+    },
+    {
+      "id": "labs",
+      "purpose": "Cross-repository, device, composition, and product-authority work that is not a release or workflow trust-root change.",
+      "minimum_for": ["authority", "module-layout", "feature-activation", "device-policy", "repo-routing"]
+    },
+    {
+      "id": "locked",
+      "purpose": "Release preparation and workflow, recovery, publication-boundary, or validation-authority changes.",
+      "minimum_for": ["public-private-boundary", "workflow-automation", "state-machine", "validation-routing", "recovery", "release"]
+    }
+  ],
   "work_modes": ["feature", "validation-only"],
   "workflow_stability": {
     "feature_units_before_protocol_change": 3,
@@ -177,6 +194,9 @@
   },
   "invariants": [
     "At most one iteration unit is active or validating.",
+    "Guard profile and validation risk tier are independent: guard profile controls change authority while risk tier controls evidence depth.",
+    "Explicit fast units may span their declared repositories and device stages; product-authority changes require labs or locked guard, while releases and workflow trust-root changes require locked guard.",
+    "A validating feature unit may return directly to active only through a typed action that validates and retains the non-passing attempt receipt.",
     "Every mutable parameter has one authority owner.",
     "Unlisted modules and features are inert.",
     "Stable modules pass every promotion gate.",

@@ -94,6 +94,18 @@ from the unit, keep acceptance separate from a pass receipt, preserve blockers
 through resume/recovery, and report dirty, detached, ahead/behind, or divergent
 Git states without rewriting them. Push preparation records exact source-first,
 planning-last revisions but does not commit, push, or force-push.
+Select the unit's guard authority separately from validation depth: `fast` for
+bounded product iteration across declared repositories and device stages,
+`labs` for composition and product-authority work, and `locked` for releases or
+workflow trust-root changes. `risk_tier` governs evidence, not permission. For an
+in-scope feature failure, `ReturnToActive` must validate and retain the
+non-passing receipt while keeping the same current-unit owner; blocker plus
+`Resume` remains the stop-and-release route.
+Before expensive execution, prefer a hash-bound, project-produced
+`execution_preflight_observation.v1` for exact package/application, signer,
+grant, toolchain, source-lock, or bridge/port facts. The workflow may compare
+declared values and capabilities but must not generate the observation or
+mistake admission evidence for validation.
 An additive `<old>-superseded-by-<new>` edge must derive old from the event
 target and new from target state, then require the event ID to be their exact,
 unambiguous rendering. Publish only a v2 intent that hash-binds the original

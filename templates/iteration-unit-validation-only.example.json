@@ -6,6 +6,7 @@
   "status": "ready",
   "objective": "Validate the exact frozen application artifact on its required host and serial-scoped device surfaces without changing production content.",
   "work_mode": "validation-only",
+  "guard_profile": "labs",
   "change_categories": ["validation"],
   "instruction_impact": "review",
   "instruction_surfaces": [
