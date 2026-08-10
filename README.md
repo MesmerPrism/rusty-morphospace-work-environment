@@ -44,6 +44,12 @@ required skill surface, the same receipt may project only the exact missing
 required skill IDs at canonical `<skills-root>/<skill-id>/SKILL.md` paths.
 Those projected surfaces remain `planned`; exact terminal hashes are required,
 and optional, extra, current, accepted, completed, or executed claims reject.
+The same terminal-blocked contract can project only exact closure-derived
+read-only leaves for invalid legacy directory rows, or retain external scope
+rows solely as evidence of completed additions-only project transactions while
+projecting planning-only validation semantics. Both forms require exact
+terminal and supporting artifact hashes; neither grants source write, runtime,
+Git, remote, or device authority.
 
 Portable project, unit, repository, feature, receipt, and event identities use
 lowercase alphanumeric/hyphen syntax and support 2 through 128 characters.

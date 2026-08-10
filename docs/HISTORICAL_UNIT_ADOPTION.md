@@ -52,6 +52,29 @@ and terminal receipt hash are mandatory. This route rejects accepted,
 current/in-flight, optional, extra, already-present, renamed, or non-`update`
 surfaces.
 
+A terminal blocked validation unit may replace a formerly broad read-only
+dependency directory only in the current validation view. Its receipt binds a
+portable exact-closure artifact and maps every and only the immutable rows that
+no longer fit current project scope. Each target must be a nonempty exact
+current project path, a strict descendant of the original row, and the complete
+set of closure leaves attributed to that row. Repository identities, unit
+bytes, purposes, verification commands, and every already-valid dependency row
+remain unchanged. Optional, unrelated, broader, duplicate, colliding, renamed,
+or closure-drifted targets reject.
+
+A separate terminal blocked projection covers a planning-only scope precursor
+whose declared external repository rows were consumed by completed
+additions-only project-scope transactions. The receipt retains those rows as
+immutable transaction declarations while the current validation view contains
+only the unit's original `morphospace/` planning write scope, work mode
+`validation-only`, and change category `validation`. It binds the current
+project, feature-lock, and plan revisions and hashes, the exact blocker bytes,
+plus each correction
+receipt, ledger event, intent, completion, embedded receipt bytes, and strict
+chronology. The added paths must exactly equal the retained historical row and
+the correction's after-set must remain contained in current project scope. Git,
+device, and remote mutation claims are fixed false.
+
 Work-mode adoption changes only current validation projection. It does not
 complete a surface, accept a unit, execute a command, or prove publication.
 
@@ -60,9 +83,10 @@ complete a surface, accept a unit, execute a command, or prove publication.
 Validation rejects receipt-reference hash drift, unit-byte drift, changed
 status, missing or duplicate units, duplicate or invalid mappings, missing or
 drifted terminal evidence hashes, unknown normalized targets, incomplete
-work-mode or instruction-impact
-or surface-action coverage, incomplete or extra missing-skill coverage, and
-adoption by a current or future unit. Removing
+work-mode or instruction-impact or surface-action coverage, incomplete or
+extra missing-skill or dependency-scope coverage, closure or project drift,
+missing scope-correction evidence, transaction or chronology drift, retained
+write authority, and adoption by a current or future unit. Removing
 the receipt restores strict current validation; it never creates an ambient
 compatibility mode.
 
@@ -89,4 +113,5 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkflowContracts.p
 
 The focused self-test covers accepted and blocked positive adoptions, including
 planned skill-action normalization and exact missing-required-skill projection,
-plus damaged, optional-surface, current-unit, and over-claiming cases.
+exact dependency-scope and completed-project-scope projections, plus damaged,
+optional-path, current-unit, transaction-drift, and over-claiming cases.

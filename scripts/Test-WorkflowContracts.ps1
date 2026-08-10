@@ -663,12 +663,35 @@ function Test-ProjectBundle {
         $changeCategories = @($unit.change_categories | ForEach-Object { [string]$_ })
         $unitId = [string]$unit.unit_id
         $adoption = if ($historicalAdoptions.ContainsKey($unitId)) { $historicalAdoptions[$unitId] } else { $null }
+        $readOnlyDependencyScopeProjection = $null
+        $completedProjectScopeProjection = $null
         if ($null -ne $adoption) {
             $unitPath = Normalize-RelativePath ([IO.Path]::GetRelativePath((Split-Path -Parent $Bundle.StatePath), $path))
             Assert-Contract ($unitPath -eq [string]$adoption.unit_path) "$Context historical unit '$unitId' adoption path drifted."
             Assert-Contract ((Get-FileSha256 $path) -eq [string]$adoption.unit_sha256) "$Context historical unit '$unitId' bytes drifted."
             Assert-Contract (@("accepted", "blocked") -contains [string]$unit.status) "$Context historical adoption cannot be used by current or future unit '$unitId'."
             Assert-Contract ([string]$unit.status -eq [string]$adoption.terminal_status) "$Context historical unit '$unitId' terminal status drifted."
+            if ($adoption.normalization.PSObject.Properties.Name -contains "read_only_dependency_scope") {
+                $readOnlyDependencyScopeProjection = $adoption.normalization.read_only_dependency_scope
+            }
+            if ($adoption.normalization.PSObject.Properties.Name -contains "completed_project_scope") {
+                $completedProjectScopeProjection = $adoption.normalization.completed_project_scope
+            }
+            Assert-Contract (-not ($null -ne $readOnlyDependencyScopeProjection -and $null -ne $completedProjectScopeProjection)) "$Context historical unit '$unitId' cannot combine read-only and completed-project scope projections."
+            if ($null -ne $readOnlyDependencyScopeProjection -or $null -ne $completedProjectScopeProjection) {
+                $adoptionProperties = @($adoption.PSObject.Properties.Name | Sort-Object)
+                Assert-Contract (($adoptionProperties -join "|") -ceq "normalization|terminal_evidence|terminal_status|unit_id|unit_path|unit_sha256") "$Context historical scope projection for '$unitId' has an unexpected unit-level property."
+                Assert-Contract ([string]$unit.status -ceq "blocked" -and [string]$adoption.terminal_status -ceq "blocked") "$Context historical scope projection is limited to terminal blocked unit '$unitId'."
+                Assert-Contract ([string]$state.current_unit -cne $unitId -and [string]$state.next_ready_unit -cne $unitId) "$Context historical scope projection cannot apply to current or next-ready unit '$unitId'."
+                Assert-Contract (@($adoption.normalization.change_categories).Count -eq 0 -and @($adoption.normalization.validation_profiles).Count -eq 0 -and @($adoption.normalization.resource_kinds).Count -eq 0) "$Context historical scope projection for '$unitId' cannot combine unrelated legacy mappings."
+                $normalizationProperties = @($adoption.normalization.PSObject.Properties.Name | Sort-Object)
+                $expectedNormalizationProperties = if ($null -ne $readOnlyDependencyScopeProjection) {
+                    "change_categories|read_only_dependency_scope|resource_kinds|validation_profiles"
+                } else {
+                    "change_categories|completed_project_scope|resource_kinds|validation_profiles"
+                }
+                Assert-Contract (($normalizationProperties -join "|") -ceq $expectedNormalizationProperties) "$Context historical scope projection for '$unitId' has an unexpected normalization property."
+            }
         }
 
         $workModeExplicit = $unit.PSObject.Properties.Name -contains "work_mode"
@@ -690,6 +713,11 @@ function Test-ProjectBundle {
             if ($unknownWorkModes.Count -eq 1 -and $workModeMappings.Count -eq 1) {
                 $effectiveWorkMode = [string]$workModeMappings[0].current
             }
+            if ($null -ne $completedProjectScopeProjection) {
+                Assert-Contract ([string]$workMode -ceq "validation-only" -and $workModeMappings.Count -eq 0) "$Context completed-project scope projection requires immutable validation-only work mode for '$unitId'."
+                Assert-Contract ([string]$completedProjectScopeProjection.work_mode -ceq "validation-only") "$Context completed-project scope projection for '$unitId' must remain validation-only."
+                $effectiveWorkMode = [string]$completedProjectScopeProjection.work_mode
+            }
         } else {
             Assert-Contract ($script:WorkModes -contains $workMode) "$Context unit '$($unit.unit_id)' has unknown work mode '$workMode'."
         }
@@ -702,13 +730,48 @@ function Test-ProjectBundle {
         foreach ($categoryGroup in @($changeCategories | Group-Object)) {
             Assert-Contract ($categoryGroup.Count -eq 1) "$Context unit '$($unit.unit_id)' repeats change category '$($categoryGroup.Name)'."
         }
-        if ($null -ne $adoption) {
+        if ($null -ne $completedProjectScopeProjection) {
+            Assert-Contract (@($completedProjectScopeProjection.change_categories).Count -eq 1 -and [string]$completedProjectScopeProjection.change_categories[0] -ceq "validation") "$Context completed-project scope projection for '$unitId' must project only validation."
+            $effectiveChangeCategories = @("validation")
+        } elseif ($null -ne $adoption) {
             $unknownCategories = @($changeCategories | Where-Object { $script:ChangeCategories -notcontains $_ })
             Test-ExactLegacyMappings -UnknownValues $unknownCategories -Mappings @($adoption.normalization.change_categories) -CurrentValues $script:ChangeCategories -Context "$Context historical unit '$unitId' change-category"
         } else {
             foreach ($category in $changeCategories) {
                 Assert-Contract (($script:ChangeCategories -contains $category) -or $script:ChangeCategoryAliases.ContainsKey($category)) "$Context unit '$unitId' has unknown change category '$category'."
             }
+        }
+
+        $effectiveAllowedRepositories = @($unit.allowed_repositories)
+        if ($null -ne $completedProjectScopeProjection) {
+            $projectionProperties = @($completedProjectScopeProjection.PSObject.Properties.Name | Sort-Object)
+            Assert-Contract (($projectionProperties -join "|") -ceq "allowed_repositories|blocker_evidence|change_categories|corrections|mutation_performed|project_snapshot|retained_as|work_mode") "$Context completed-project scope projection for '$unitId' has an unexpected property."
+            Assert-Contract (Test-Text $completedProjectScopeProjection.retained_as) "$Context completed-project scope projection for '$unitId' must retain its historical meaning."
+            Assert-Contract ([int]$completedProjectScopeProjection.project_snapshot.project_revision -le [int]$spec.revision) "$Context completed-project scope projection for '$unitId' project revision is newer than current project state."
+            Assert-Contract ([int]$completedProjectScopeProjection.project_snapshot.feature_lock_revision -le [int]$lock.revision) "$Context completed-project scope projection for '$unitId' feature-lock revision is newer than current project state."
+            Assert-Contract ([int]$completedProjectScopeProjection.project_snapshot.plan_revision -le [int]$state.plan_revision) "$Context completed-project scope projection for '$unitId' plan revision is newer than current workspace state."
+            $mutationProperties = @($completedProjectScopeProjection.mutation_performed.PSObject.Properties.Name | Sort-Object)
+            Assert-Contract (($mutationProperties -join "|") -ceq "device|git|remote") "$Context completed-project scope projection for '$unitId' mutation statement has an unexpected property."
+            Assert-Contract ($completedProjectScopeProjection.mutation_performed.git -eq $false -and $completedProjectScopeProjection.mutation_performed.device -eq $false -and $completedProjectScopeProjection.mutation_performed.remote -eq $false) "$Context completed-project scope projection for '$unitId' cannot claim Git, device, or remote mutation."
+            Assert-Contract ([string]$unit.device_requirement -ceq "none" -and @($unit.resource_requirements).Count -eq 0) "$Context completed-project scope projection for '$unitId' cannot retain device or resource authority."
+
+            $expectedPlanningRepositories = @($unit.allowed_repositories | Where-Object {
+                @($_.allowed_paths).Count -gt 0 -and @($_.allowed_paths | Where-Object { (Normalize-RelativePath ([string]$_)) -notmatch '^morphospace(?:/|$)' }).Count -eq 0
+            })
+            $projectedRepositories = @($completedProjectScopeProjection.allowed_repositories)
+            Test-UniqueProperty -Items $projectedRepositories -Property "repo_id" -Context "$Context completed-project scope projection for '$unitId' allowed repositories"
+            Assert-Contract ($projectedRepositories.Count -eq $expectedPlanningRepositories.Count) "$Context completed-project scope projection for '$unitId' must retain only immutable planning repositories."
+            foreach ($projectedRepo in $projectedRepositories) {
+                $repoId = [string]$projectedRepo.repo_id
+                $immutableRepo = @($expectedPlanningRepositories | Where-Object { [string]$_.repo_id -ceq $repoId })
+                Assert-Contract ($immutableRepo.Count -eq 1) "$Context completed-project scope projection for '$unitId' introduced repository '$repoId'."
+                Test-NonEmptyTextArray -Value $projectedRepo.allowed_paths -Context "$Context completed-project scope projection for '$unitId' repository '$repoId' paths"
+                $projectedPaths = @($projectedRepo.allowed_paths | ForEach-Object { Normalize-RelativePath ([string]$_) } | Sort-Object -CaseSensitive)
+                $immutablePaths = if ($immutableRepo.Count -eq 1) { @($immutableRepo[0].allowed_paths | ForEach-Object { Normalize-RelativePath ([string]$_) } | Sort-Object -CaseSensitive) } else { @() }
+                Assert-Contract (($projectedPaths -join "|") -ceq ($immutablePaths -join "|")) "$Context completed-project scope projection for '$unitId' planning paths drifted."
+                Assert-Contract (@($projectedPaths | Where-Object { $_ -notmatch '^morphospace(?:/|$)' }).Count -eq 0) "$Context completed-project scope projection for '$unitId' may retain only morphospace planning paths."
+            }
+            $effectiveAllowedRepositories = @($projectedRepositories)
         }
 
         $instructionImpact = [string]$unit.instruction_impact
@@ -730,14 +793,15 @@ function Test-ProjectBundle {
         $effectiveInstructionImpact = $instructionImpact
         $effectiveInstructionSurfaces = @($instructionSurfaces)
         if ($null -ne $adoption) {
-            $expectedImpactMappings = if ($triggeredCategories.Count -gt 0 -and $instructionImpact -ne "update") { @($instructionImpact) } else { @() }
+            $projectedInstructionImpact = if ($effectiveWorkMode -eq "validation-only") { "review" } else { "update" }
+            $expectedImpactMappings = if ($triggeredCategories.Count -gt 0 -and $instructionImpact -ne $projectedInstructionImpact) { @($instructionImpact) } else { @() }
             $impactMappings = if ($adoption.normalization.PSObject.Properties.Name -contains "instruction_impact") { @($adoption.normalization.instruction_impact) } else { @() }
-            Test-ExactLegacyMappings -UnknownValues $expectedImpactMappings -Mappings $impactMappings -CurrentValues @("update") -Context "$Context historical unit '$unitId' instruction-impact"
+            Test-ExactLegacyMappings -UnknownValues $expectedImpactMappings -Mappings $impactMappings -CurrentValues @($projectedInstructionImpact) -Context "$Context historical unit '$unitId' instruction-impact"
             if ($expectedImpactMappings.Count -eq 1 -and $impactMappings.Count -eq 1) {
                 $effectiveInstructionImpact = [string]$impactMappings[0].current
             }
 
-            $expectedSurfacePaths = if ($triggeredCategories.Count -gt 0) {
+            $expectedSurfacePaths = if ($triggeredCategories.Count -gt 0 -and $effectiveWorkMode -ne "validation-only") {
                 @($instructionSurfaces | Where-Object {
                     (($_.surface_kind -eq "agents" -or $_.surface_kind -eq "readme" -or $_.surface_kind -eq "router-doc") -and $_.action -eq "review-no-change") -or
                     ($_.surface_kind -eq "skill" -and $requiredSkillIds.Contains([string]$_.skill_id) -and $_.action -eq "review-no-change")
@@ -875,10 +939,10 @@ function Test-ProjectBundle {
                 Assert-Contract ($requiredSurface.action -eq $expectedRequiredAction) "$Context unit '$($unit.unit_id)' required instruction surface '$($requiredSurface.path)' must use '$expectedRequiredAction'."
             }
 
-            if ($workMode -eq "validation-only") {
+            if ($effectiveWorkMode -eq "validation-only") {
                 Assert-Contract ($effectiveChangeCategories.Count -eq 1 -and $effectiveChangeCategories[0] -eq "validation") "$Context validation-only unit '$($unit.unit_id)' may declare only the validation change category."
                 Assert-Contract (@($effectiveInstructionSurfaces | Where-Object { [string]$_.action -ne "review-no-change" }).Count -eq 0) "$Context validation-only unit '$($unit.unit_id)' may only review instruction surfaces without change."
-                foreach ($allowedRepo in @($unit.allowed_repositories)) {
+                foreach ($allowedRepo in @($effectiveAllowedRepositories)) {
                     Assert-Contract (@($allowedRepo.allowed_paths | Where-Object { (Normalize-RelativePath ([string]$_)) -notmatch '^morphospace(?:/|$)' }).Count -eq 0) "$Context validation-only unit '$($unit.unit_id)' may write only project morphospace state/evidence paths."
                 }
             }
@@ -902,9 +966,119 @@ function Test-ProjectBundle {
             }
         }
 
-        Assert-Contract (@($unit.allowed_repositories).Count -gt 0) "$Context unit '$($unit.unit_id)' needs allowed repositories."
+        $immutableReadOnlyDependencies = if ($unit.PSObject.Properties.Name -contains 'read_only_dependencies') { @($unit.read_only_dependencies) } else { @() }
+        $effectiveReadOnlyDependencies = @($immutableReadOnlyDependencies)
+        if ($null -ne $readOnlyDependencyScopeProjection) {
+            $projectionProperties = @($readOnlyDependencyScopeProjection.PSObject.Properties.Name | Sort-Object)
+            Assert-Contract (($projectionProperties -join "|") -ceq "closure|mappings|retained_as") "$Context read-only dependency scope projection for '$unitId' has an unexpected property."
+            Assert-Contract (Test-Text $readOnlyDependencyScopeProjection.retained_as) "$Context read-only dependency scope projection for '$unitId' must retain its historical meaning."
+            Assert-Contract ([string]$workMode -ceq "validation-only" -and $effectiveChangeCategories.Count -eq 1 -and [string]$effectiveChangeCategories[0] -ceq "validation") "$Context read-only dependency scope projection for '$unitId' is limited to immutable validation-only units."
+            Assert-Contract (@($effectiveAllowedRepositories | Where-Object { @($_.allowed_paths | Where-Object { (Normalize-RelativePath ([string]$_)) -notmatch '^morphospace(?:/|$)' }).Count -gt 0 }).Count -eq 0) "$Context read-only dependency scope projection for '$unitId' cannot retain source write authority."
+
+            $closureReferenceProperties = @($readOnlyDependencyScopeProjection.closure.PSObject.Properties.Name | Sort-Object)
+            Assert-Contract (($closureReferenceProperties -join "|") -ceq "path|sha256") "$Context read-only dependency scope projection for '$unitId' closure reference has an unexpected property."
+            $closureRelativePath = Normalize-RelativePath ([string]$readOnlyDependencyScopeProjection.closure.path)
+            Assert-Contract (Test-PortableRelativePath $closureRelativePath) "$Context read-only dependency scope projection for '$unitId' closure path is not portable."
+            $closurePath = Join-Path $workspaceRoot ($closureRelativePath -replace '/', [IO.Path]::DirectorySeparatorChar)
+            Assert-Contract (Test-Path -LiteralPath $closurePath -PathType Leaf) "$Context read-only dependency scope projection for '$unitId' closure is missing."
+            Assert-Contract ([string]$readOnlyDependencyScopeProjection.closure.sha256 -ceq (Get-FileSha256 $closurePath)) "$Context read-only dependency scope projection for '$unitId' closure hash drifted."
+            $closure = Read-JsonDocument -Path $closurePath -Context "$Context read-only dependency scope closure for '$unitId'"
+            if ($null -ne $closure) {
+                Assert-Contract ([string]$closure.schema -match '^[a-z0-9][a-z0-9_.-]{2,191}$') "$Context read-only dependency scope projection for '$unitId' closure lacks a portable schema identity."
+                Assert-Contract ([string]$closure.source_terminal_unit.unit_id -ceq $unitId -and [string]$closure.source_terminal_unit.status -ceq "blocked") "$Context read-only dependency scope projection for '$unitId' closure belongs to another unit or status."
+                Assert-Contract ([string]$closure.source_terminal_unit.sha256 -ceq [string]$adoption.unit_sha256 -and [int64]$closure.source_terminal_unit.byte_length -eq (Get-Item -LiteralPath $path).Length) "$Context read-only dependency scope projection for '$unitId' closure unit identity drifted."
+                Assert-Contract ([string]$closure.source_terminal_unit.terminal_event_id -ceq [string]$adoption.terminal_evidence.event_id) "$Context read-only dependency scope projection for '$unitId' closure terminal event drifted."
+                Assert-Contract ([string]$closure.source_terminal_unit.blocker_evidence_sha256 -match '^[0-9a-f]{64}$') "$Context read-only dependency scope projection for '$unitId' closure lacks blocker evidence identity."
+            }
+
+            Test-UniqueProperty -Items $immutableReadOnlyDependencies -Property "repo_id" -Context "$Context immutable read-only dependencies for '$unitId'"
+            $closureDependencies = if ($null -ne $closure) { @($closure.proposed_read_only_dependencies) } else { @() }
+            Test-UniqueProperty -Items $closureDependencies -Property "repo_id" -Context "$Context read-only dependency scope closure for '$unitId'"
+            $immutableRepoIds = @($immutableReadOnlyDependencies | ForEach-Object { [string]$_.repo_id } | Sort-Object -CaseSensitive)
+            $closureRepoIds = @($closureDependencies | ForEach-Object { [string]$_.repo_id } | Sort-Object -CaseSensitive)
+            Assert-Contract (($immutableRepoIds -join "|") -ceq ($closureRepoIds -join "|")) "$Context read-only dependency scope projection for '$unitId' closure repository identities drifted."
+
+            $closurePathsByRepo = @{}
+            foreach ($closureDependency in $closureDependencies) {
+                $repoId = [string]$closureDependency.repo_id
+                $closurePaths = @($closureDependency.paths | ForEach-Object { Normalize-RelativePath ([string]$_) })
+                Test-NonEmptyTextArray -Value $closurePaths -Context "$Context read-only dependency scope closure for '$unitId' repository '$repoId' paths"
+                Assert-Contract (@($closurePaths | Group-Object -CaseSensitive | Where-Object { $_.Count -ne 1 }).Count -eq 0) "$Context read-only dependency scope closure for '$unitId' repository '$repoId' repeats a path."
+                $sortedClosurePaths = @($closurePaths | Sort-Object -CaseSensitive)
+                $joinedClosurePaths = [string]::Join([char]10, $sortedClosurePaths)
+                $closurePathsSha = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.UTF8Encoding]::new($false, $true).GetBytes($joinedClosurePaths))).ToLowerInvariant()
+                Assert-Contract ([int]$closureDependency.path_count -eq $sortedClosurePaths.Count -and [string]$closureDependency.sorted_lf_joined_path_sha256 -ceq $closurePathsSha) "$Context read-only dependency scope closure for '$unitId' repository '$repoId' path inventory drifted."
+                Assert-Contract ($repositoryMap.ContainsKey($repoId)) "$Context read-only dependency scope closure for '$unitId' references undeclared repository '$repoId'."
+                $immutableDependency = @($immutableReadOnlyDependencies | Where-Object { [string]$_.repo_id -ceq $repoId })
+                Assert-Contract ($immutableDependency.Count -eq 1) "$Context read-only dependency scope closure for '$unitId' cannot resolve repository '$repoId'."
+                foreach ($closureCandidate in $sortedClosurePaths) {
+                    Assert-Contract (Test-PortableRelativePath $closureCandidate) "$Context read-only dependency scope closure for '$unitId' has non-portable path '$closureCandidate'."
+                    if ($repositoryMap.ContainsKey($repoId)) {
+                        Assert-Contract (Test-PathInScope -Candidate $closureCandidate -Allowed @($repositoryMap[$repoId].allowed_paths)) "$Context read-only dependency scope closure for '$unitId' path '$closureCandidate' is outside current project scope for '$repoId'."
+                    }
+                    $containingLegacyRows = if ($immutableDependency.Count -eq 1) { @($immutableDependency[0].paths | Where-Object { Test-PathInScope -Candidate $closureCandidate -Allowed @([string]$_) }) } else { @() }
+                    Assert-Contract ($containingLegacyRows.Count -le 1) "$Context read-only dependency scope closure for '$unitId' path '$closureCandidate' collides across immutable legacy rows."
+                }
+                $closurePathsByRepo[$repoId] = $sortedClosurePaths
+            }
+
+            $invalidLegacyRows = New-Object System.Collections.Generic.List[object]
+            foreach ($dependency in $immutableReadOnlyDependencies) {
+                $repoId = [string]$dependency.repo_id
+                foreach ($legacyPathValue in @($dependency.paths)) {
+                    $legacyPath = Normalize-RelativePath ([string]$legacyPathValue)
+                    if (-not $repositoryMap.ContainsKey($repoId) -or -not (Test-PathInScope -Candidate $legacyPath -Allowed @($repositoryMap[$repoId].allowed_paths))) {
+                        $invalidLegacyRows.Add([pscustomobject][ordered]@{ repo_id = $repoId; legacy_path = $legacyPath }) | Out-Null
+                    }
+                }
+            }
+            $scopeMappings = @($readOnlyDependencyScopeProjection.mappings)
+            $mappingKeys = @($scopeMappings | ForEach-Object { "{0}`n{1}" -f [string]$_.repo_id, (Normalize-RelativePath ([string]$_.legacy_path)) })
+            Assert-Contract (@($mappingKeys | Group-Object -CaseSensitive | Where-Object { $_.Count -ne 1 }).Count -eq 0) "$Context read-only dependency scope projection for '$unitId' repeats a legacy row."
+            $invalidKeys = @($invalidLegacyRows | ForEach-Object { "{0}`n{1}" -f [string]$_.repo_id, [string]$_.legacy_path } | Sort-Object -CaseSensitive)
+            Assert-Contract ((@($mappingKeys | Sort-Object -CaseSensitive) -join "|") -ceq ($invalidKeys -join "|")) "$Context read-only dependency scope projection for '$unitId' must map every and only invalid legacy rows."
+            $allMappedTargets = New-Object System.Collections.Generic.List[string]
+            foreach ($mapping in $scopeMappings) {
+                $mappingProperties = @($mapping.PSObject.Properties.Name | Sort-Object)
+                Assert-Contract (($mappingProperties -join "|") -ceq "current_paths|legacy_path|repo_id|retained_as") "$Context read-only dependency scope projection for '$unitId' mapping has an unexpected property."
+                $repoId = [string]$mapping.repo_id
+                $legacyPath = Normalize-RelativePath ([string]$mapping.legacy_path)
+                Assert-Contract (Test-Text $mapping.retained_as) "$Context read-only dependency scope projection for '$unitId' mapping '$repoId/$legacyPath' must retain its historical meaning."
+                $currentPaths = @($mapping.current_paths | ForEach-Object { Normalize-RelativePath ([string]$_) } | Sort-Object -CaseSensitive)
+                Test-NonEmptyTextArray -Value $currentPaths -Context "$Context read-only dependency scope projection for '$unitId' mapping '$repoId/$legacyPath' current paths"
+                Assert-Contract (@($currentPaths | Group-Object -CaseSensitive | Where-Object { $_.Count -ne 1 }).Count -eq 0) "$Context read-only dependency scope projection for '$unitId' mapping '$repoId/$legacyPath' repeats a current path."
+                $expectedCurrentPaths = if ($closurePathsByRepo.ContainsKey($repoId)) { @($closurePathsByRepo[$repoId] | Where-Object { $_ -cne $legacyPath -and (Test-PathInScope -Candidate $_ -Allowed @($legacyPath)) } | Sort-Object -CaseSensitive) } else { @() }
+                Assert-Contract (($currentPaths -join "|") -ceq ($expectedCurrentPaths -join "|")) "$Context read-only dependency scope projection for '$unitId' mapping '$repoId/$legacyPath' does not equal the closure descendants."
+                foreach ($currentPath in $currentPaths) {
+                    Assert-Contract ($currentPath -cne $legacyPath -and (Test-PathInScope -Candidate $currentPath -Allowed @($legacyPath))) "$Context read-only dependency scope projection for '$unitId' target '$currentPath' is not a strict descendant of '$legacyPath'."
+                    Assert-Contract ($repositoryMap.ContainsKey($repoId) -and @($repositoryMap[$repoId].allowed_paths | ForEach-Object { Normalize-RelativePath ([string]$_) }) -ccontains $currentPath) "$Context read-only dependency scope projection for '$unitId' target '$currentPath' is not an exact current project path for '$repoId'."
+                    Assert-Contract (-not $allMappedTargets.Contains("$repoId`n$currentPath")) "$Context read-only dependency scope projection for '$unitId' maps target '$currentPath' more than once for '$repoId'."
+                    $allMappedTargets.Add("$repoId`n$currentPath") | Out-Null
+                }
+            }
+
+            $effectiveReadOnlyDependencies = @($immutableReadOnlyDependencies | ForEach-Object {
+                $dependency = $_ | Select-Object *
+                $repoId = [string]$dependency.repo_id
+                $projectedPaths = New-Object System.Collections.Generic.List[string]
+                foreach ($legacyPathValue in @($dependency.paths)) {
+                    $legacyPath = Normalize-RelativePath ([string]$legacyPathValue)
+                    $mapping = @($scopeMappings | Where-Object { [string]$_.repo_id -ceq $repoId -and (Normalize-RelativePath ([string]$_.legacy_path)) -ceq $legacyPath })
+                    if ($mapping.Count -eq 1) {
+                        foreach ($currentPath in @($mapping[0].current_paths)) { $projectedPaths.Add((Normalize-RelativePath ([string]$currentPath))) | Out-Null }
+                    } else {
+                        $projectedPaths.Add($legacyPath) | Out-Null
+                    }
+                }
+                Assert-Contract (@($projectedPaths | Group-Object -CaseSensitive | Where-Object { $_.Count -ne 1 }).Count -eq 0) "$Context read-only dependency scope projection for '$unitId' produces duplicate dependency paths for '$repoId'."
+                $dependency.paths = @($projectedPaths)
+                $dependency
+            })
+        }
+
+        Assert-Contract (@($effectiveAllowedRepositories).Count -gt 0) "$Context unit '$($unit.unit_id)' needs allowed repositories."
         $writeRepositoryIds = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-        foreach ($allowedRepo in @($unit.allowed_repositories)) {
+        foreach ($allowedRepo in @($effectiveAllowedRepositories)) {
             $repoId = [string]$allowedRepo.repo_id
             Assert-Contract ($writeRepositoryIds.Add($repoId)) "$Context unit '$($unit.unit_id)' repeats writable repository '$repoId'."
             Assert-Contract ($repositoryMap.ContainsKey($repoId)) "$Context unit '$($unit.unit_id)' references undeclared repo '$repoId'."
@@ -915,7 +1089,7 @@ function Test-ProjectBundle {
                 }
             }
         }
-        $readOnlyDependencies = if ($unit.PSObject.Properties.Name -contains 'read_only_dependencies') { @($unit.read_only_dependencies) } else { @() }
+        $readOnlyDependencies = @($effectiveReadOnlyDependencies)
         foreach ($dependency in $readOnlyDependencies) {
             $repoId = [string]$dependency.repo_id
             Assert-Contract (-not $writeRepositoryIds.Contains($repoId)) "$Context unit '$($unit.unit_id)' cannot make '$repoId' both writable scope and a read-only dependency."
@@ -1020,7 +1194,11 @@ function Test-ProjectBundle {
         $terminalEventId = [string]$entry.terminal_evidence.event_id
         $workModeMappings = if ($entry.normalization.PSObject.Properties.Name -contains "work_modes") { @($entry.normalization.work_modes | Where-Object { $null -ne $_ }) } else { @() }
         $missingSkillMappings = if ($entry.normalization.PSObject.Properties.Name -contains "missing_required_skill_surfaces") { @($entry.normalization.missing_required_skill_surfaces | Where-Object { $null -ne $_ }) } else { @() }
-        $requiresExactTerminalEvidence = $workModeMappings.Count -gt 0 -or $missingSkillMappings.Count -gt 0
+        $terminalReceipt = $null
+        $hasReadOnlyDependencyScopeProjection = $entry.normalization.PSObject.Properties.Name -contains "read_only_dependency_scope"
+        $hasCompletedProjectScopeProjection = $entry.normalization.PSObject.Properties.Name -contains "completed_project_scope"
+        $requiresScopeTerminalEvidence = $hasReadOnlyDependencyScopeProjection -or $hasCompletedProjectScopeProjection
+        $requiresExactTerminalEvidence = $workModeMappings.Count -gt 0 -or $missingSkillMappings.Count -gt 0 -or $requiresScopeTerminalEvidence
         if ($requiresExactTerminalEvidence) {
             $terminalProperties = @($entry.terminal_evidence.PSObject.Properties.Name | Sort-Object)
             Assert-Contract (($terminalProperties -join "|") -ceq "event_id|event_sha256|receipt_path|receipt_sha256") "$Context evidence-bound historical adoption for '$adoptedUnitId' must bind exact event and receipt evidence."
@@ -1033,10 +1211,11 @@ function Test-ProjectBundle {
             if ($requiresExactTerminalEvidence) {
                 Assert-Contract ([string]$entry.terminal_evidence.event_sha256 -ceq [string]$terminalEvent.__line_sha256) "$Context evidence-bound historical adoption for '$adoptedUnitId' terminal event hash drifted."
             }
-            if ($missingSkillMappings.Count -gt 0) {
-                Assert-Contract ([string]$terminalEvent.event_type -ceq "blocker") "$Context missing-skill projection for '$adoptedUnitId' requires its terminal blocker event."
+            if ($missingSkillMappings.Count -gt 0 -or $requiresScopeTerminalEvidence) {
+                $projectionKind = if ($missingSkillMappings.Count -gt 0) { "missing-skill" } else { "historical scope" }
+                Assert-Contract ([string]$terminalEvent.event_type -ceq "blocker") "$Context $projectionKind projection for '$adoptedUnitId' requires its terminal blocker event."
                 $latestUnitEvent = @($events | Where-Object { [string]$_.unit_id -ceq $adoptedUnitId } | Select-Object -Last 1)
-                Assert-Contract ($latestUnitEvent.Count -eq 1 -and [string]$latestUnitEvent[0].event_id -ceq $terminalEventId) "$Context missing-skill projection for '$adoptedUnitId' must bind its latest same-unit event."
+                Assert-Contract ($latestUnitEvent.Count -eq 1 -and [string]$latestUnitEvent[0].event_id -ceq $terminalEventId) "$Context $projectionKind projection for '$adoptedUnitId' must bind its latest same-unit event."
             }
             if ($null -ne $entry.terminal_evidence.receipt_path) {
                 Assert-Contract (@($terminalEvent.receipts) -contains [string]$entry.terminal_evidence.receipt_path) "$Context historical unit '$adoptedUnitId' terminal event does not reference its declared evidence receipt."
@@ -1047,17 +1226,139 @@ function Test-ProjectBundle {
                     Assert-Contract (Test-Path -LiteralPath $terminalReceiptPath -PathType Leaf) "$Context evidence-bound historical adoption for '$adoptedUnitId' receipt is missing."
                     if (Test-Path -LiteralPath $terminalReceiptPath -PathType Leaf) {
                         Assert-Contract ([string]$entry.terminal_evidence.receipt_sha256 -ceq (Get-FileSha256 $terminalReceiptPath)) "$Context evidence-bound historical adoption for '$adoptedUnitId' receipt hash drifted."
-                        if ($missingSkillMappings.Count -gt 0) {
-                            $terminalReceipt = Read-JsonDocument -Path $terminalReceiptPath -Context "$Context missing-skill terminal receipt for '$adoptedUnitId'"
+                        if ($missingSkillMappings.Count -gt 0 -or $requiresScopeTerminalEvidence) {
+                            $projectionKind = if ($missingSkillMappings.Count -gt 0) { "missing-skill" } else { "historical scope" }
+                            $terminalReceipt = Read-JsonDocument -Path $terminalReceiptPath -Context "$Context $projectionKind terminal receipt for '$adoptedUnitId'"
                             if ($null -ne $terminalReceipt) {
-                                Assert-Contract ([string]$terminalReceipt.schema -ceq "rusty.morphospace.workflow.validation_receipt.v1") "$Context missing-skill projection for '$adoptedUnitId' requires a validation receipt."
-                                Assert-Contract ([string]$terminalReceipt.project_id -ceq [string]$spec.project_id) "$Context missing-skill projection for '$adoptedUnitId' terminal receipt belongs to another project."
-                                Assert-Contract ([string]$terminalReceipt.unit_id -ceq $adoptedUnitId) "$Context missing-skill projection for '$adoptedUnitId' terminal receipt belongs to another unit."
-                                Assert-Contract ([string]$terminalReceipt.result -ceq "blocked") "$Context missing-skill projection for '$adoptedUnitId' requires a blocked validation receipt."
+                                Assert-Contract ([string]$terminalReceipt.schema -ceq "rusty.morphospace.workflow.validation_receipt.v1") "$Context $projectionKind projection for '$adoptedUnitId' requires a validation receipt."
+                                Assert-Contract ([string]$terminalReceipt.project_id -ceq [string]$spec.project_id) "$Context $projectionKind projection for '$adoptedUnitId' terminal receipt belongs to another project."
+                                Assert-Contract ([string]$terminalReceipt.unit_id -ceq $adoptedUnitId) "$Context $projectionKind projection for '$adoptedUnitId' terminal receipt belongs to another unit."
+                                Assert-Contract ([string]$terminalReceipt.result -ceq "blocked") "$Context $projectionKind projection for '$adoptedUnitId' requires a blocked validation receipt."
                             }
                         }
                     }
                 }
+            }
+        }
+        if ($hasCompletedProjectScopeProjection) {
+            $projection = $entry.normalization.completed_project_scope
+            $blockerEvidenceProperties = @($projection.blocker_evidence.PSObject.Properties.Name | Sort-Object)
+            Assert-Contract (($blockerEvidenceProperties -join "|") -ceq "path|sha256") "$Context completed-project scope projection for '$adoptedUnitId' blocker evidence has an unexpected property."
+            $blockerRelativePath = Normalize-RelativePath ([string]$projection.blocker_evidence.path)
+            Assert-Contract (Test-PortableRelativePath $blockerRelativePath) "$Context completed-project scope projection for '$adoptedUnitId' blocker path is not portable."
+            $blockerPath = Join-Path $workspaceRoot ($blockerRelativePath -replace '/', [IO.Path]::DirectorySeparatorChar)
+            Assert-Contract (Test-Path -LiteralPath $blockerPath -PathType Leaf) "$Context completed-project scope projection for '$adoptedUnitId' blocker evidence is missing."
+            Assert-Contract ([string]$projection.blocker_evidence.sha256 -ceq (Get-FileSha256 $blockerPath)) "$Context completed-project scope projection for '$adoptedUnitId' blocker evidence hash drifted."
+            if ($null -ne $terminalReceipt) {
+                $validationReceiptDirectory = Split-Path -Parent (Normalize-RelativePath ([string]$entry.terminal_evidence.receipt_path))
+                $matchingBlockerArtifacts = @($terminalReceipt.artifacts | Where-Object {
+                    $artifactRelativePath = Normalize-RelativePath (Join-Path $validationReceiptDirectory ([string]$_.path))
+                    $artifactRelativePath -ceq $blockerRelativePath -and [string]$_.sha256 -ceq [string]$projection.blocker_evidence.sha256
+                })
+                Assert-Contract ($matchingBlockerArtifacts.Count -eq 1) "$Context completed-project scope projection for '$adoptedUnitId' terminal validation receipt must bind the exact blocker evidence."
+            }
+            $immutableUnit = $unitMap[$adoptedUnitId]
+            $projectedRepoIds = @($projection.allowed_repositories | ForEach-Object { [string]$_.repo_id })
+            $historicalExternalRows = @($immutableUnit.allowed_repositories | Where-Object { $projectedRepoIds -cnotcontains [string]$_.repo_id })
+            $corrections = @($projection.corrections)
+            Test-UniqueProperty -Items $corrections -Property "repository_id" -Context "$Context completed-project scope projection for '$adoptedUnitId' corrections"
+            $historicalRepoIds = @($historicalExternalRows | ForEach-Object { [string]$_.repo_id })
+            $correctionRepoIds = @($corrections | ForEach-Object { [string]$_.repository_id })
+            Assert-Contract (($correctionRepoIds -join "|") -ceq ($historicalRepoIds -join "|")) "$Context completed-project scope projection for '$adoptedUnitId' corrections must exactly cover retained external repository declarations in original order."
+            $priorCorrectionSequence = 0
+            $lastCorrectionIntent = $null
+            foreach ($correction in $corrections) {
+                $correctionProperties = @($correction.PSObject.Properties.Name | Sort-Object)
+                Assert-Contract (($correctionProperties -join "|") -ceq "completion_path|completion_sha256|event_id|event_sha256|intent_path|intent_sha256|receipt_path|receipt_sha256|repository_id") "$Context completed-project scope projection for '$adoptedUnitId' correction has an unexpected property."
+                $repoId = [string]$correction.repository_id
+                $historicalRepo = @($historicalExternalRows | Where-Object { [string]$_.repo_id -ceq $repoId })
+                Assert-Contract ($historicalRepo.Count -eq 1) "$Context completed-project scope projection for '$adoptedUnitId' correction renamed or duplicated repository '$repoId'."
+
+                $receiptRelativePath = Normalize-RelativePath ([string]$correction.receipt_path)
+                Assert-Contract (Test-PortableRelativePath $receiptRelativePath) "$Context completed-project scope projection for '$adoptedUnitId' correction receipt path is not portable."
+                $receiptPath = Join-Path $workspaceRoot ($receiptRelativePath -replace '/', [IO.Path]::DirectorySeparatorChar)
+                Assert-Contract (Test-Path -LiteralPath $receiptPath -PathType Leaf) "$Context completed-project scope projection for '$adoptedUnitId' correction receipt is missing."
+                Assert-Contract ([string]$correction.receipt_sha256 -ceq (Get-FileSha256 $receiptPath)) "$Context completed-project scope projection for '$adoptedUnitId' correction receipt hash drifted."
+                $scopeReceipt = Read-JsonDocument -Path $receiptPath -Context "$Context completed-project scope correction receipt for '$adoptedUnitId/$repoId'"
+                if ($null -ne $scopeReceipt) {
+                    Assert-Contract ([string]$scopeReceipt.schema -ceq "rusty.morphospace.workflow.active_project_repository_scope_correction.v1") "$Context completed-project scope projection for '$adoptedUnitId/$repoId' correction receipt has the wrong schema."
+                    Assert-Contract ([string]$scopeReceipt.project_id -ceq [string]$spec.project_id -and [string]$scopeReceipt.unit_id -ceq $adoptedUnitId -and [string]$scopeReceipt.repository_id -ceq $repoId) "$Context completed-project scope projection for '$adoptedUnitId/$repoId' correction receipt identity drifted."
+                    $beforePaths = @($scopeReceipt.before_allowed_paths | ForEach-Object { Normalize-RelativePath ([string]$_) })
+                    $afterPaths = @($scopeReceipt.after_allowed_paths | ForEach-Object { Normalize-RelativePath ([string]$_) })
+                    Assert-Contract (@($beforePaths | Where-Object { $afterPaths -cnotcontains $_ }).Count -eq 0) "$Context completed-project scope projection for '$adoptedUnitId/$repoId' correction removed project paths."
+                    $addedPaths = @($afterPaths | Where-Object { $beforePaths -cnotcontains $_ } | Sort-Object -CaseSensitive)
+                    $historicalPaths = if ($historicalRepo.Count -eq 1) { @($historicalRepo[0].allowed_paths | ForEach-Object { Normalize-RelativePath ([string]$_) } | Sort-Object -CaseSensitive) } else { @() }
+                    Assert-Contract (($addedPaths -join "|") -ceq ($historicalPaths -join "|")) "$Context completed-project scope projection for '$adoptedUnitId/$repoId' correction additions do not equal the immutable historical declaration."
+                    Assert-Contract ($repositoryMap.ContainsKey($repoId)) "$Context completed-project scope projection for '$adoptedUnitId/$repoId' correction repository is absent from current project scope."
+                    if ($repositoryMap.ContainsKey($repoId)) {
+                        $currentPaths = @($repositoryMap[$repoId].allowed_paths | ForEach-Object { Normalize-RelativePath ([string]$_) } | Sort-Object -CaseSensitive)
+                        Assert-Contract (@($afterPaths | Where-Object { $currentPaths -cnotcontains $_ }).Count -eq 0) "$Context completed-project scope projection for '$adoptedUnitId/$repoId' correction paths are no longer retained by current project scope."
+                    }
+                    Assert-Contract (@($scopeReceipt.does_not_prove).Count -eq 1 -and [string]$scopeReceipt.does_not_prove[0] -match 'Does not change source' -and [string]$scopeReceipt.does_not_prove[0] -match 'device') "$Context completed-project scope projection for '$adoptedUnitId/$repoId' correction overclaims execution authority."
+                }
+
+                $correctionEventId = [string]$correction.event_id
+                Assert-Contract ($eventMap.ContainsKey($correctionEventId)) "$Context completed-project scope projection for '$adoptedUnitId/$repoId' correction event is missing."
+                if ($eventMap.ContainsKey($correctionEventId)) {
+                    $correctionEvent = $eventMap[$correctionEventId]
+                    Assert-Contract ([string]$correction.event_sha256 -ceq [string]$correctionEvent.__line_sha256) "$Context completed-project scope projection for '$adoptedUnitId/$repoId' correction event hash drifted."
+                    Assert-Contract ([string]$correctionEvent.unit_id -ceq $adoptedUnitId -and [string]$correctionEvent.event_type -ceq "state-transition") "$Context completed-project scope projection for '$adoptedUnitId/$repoId' correction event has the wrong identity or type."
+                    Assert-Contract (@($correctionEvent.receipts).Count -eq 1 -and [string]$correctionEvent.receipts[0] -ceq $receiptRelativePath) "$Context completed-project scope projection for '$adoptedUnitId/$repoId' correction event receipt binding drifted."
+                    Assert-Contract ([int]$correctionEvent.sequence -gt $priorCorrectionSequence -and [int]$correctionEvent.sequence -lt [int]$terminalEvent.sequence) "$Context completed-project scope projection for '$adoptedUnitId/$repoId' correction chronology drifted."
+                    $priorCorrectionSequence = [int]$correctionEvent.sequence
+                }
+
+                $intentRelativePath = Normalize-RelativePath ([string]$correction.intent_path)
+                $completionRelativePath = Normalize-RelativePath ([string]$correction.completion_path)
+                Assert-Contract ((Test-PortableRelativePath $intentRelativePath) -and (Test-PortableRelativePath $completionRelativePath)) "$Context completed-project scope projection for '$adoptedUnitId/$repoId' transaction paths are not portable."
+                $intentPath = Join-Path $workspaceRoot ($intentRelativePath -replace '/', [IO.Path]::DirectorySeparatorChar)
+                $completionPath = Join-Path $workspaceRoot ($completionRelativePath -replace '/', [IO.Path]::DirectorySeparatorChar)
+                Assert-Contract ((Test-Path -LiteralPath $intentPath -PathType Leaf) -and (Test-Path -LiteralPath $completionPath -PathType Leaf)) "$Context completed-project scope projection for '$adoptedUnitId/$repoId' transaction evidence is missing."
+                Assert-Contract ([string]$correction.intent_sha256 -ceq (Get-FileSha256 $intentPath) -and [string]$correction.completion_sha256 -ceq (Get-FileSha256 $completionPath)) "$Context completed-project scope projection for '$adoptedUnitId/$repoId' transaction evidence hash drifted."
+                $intent = Read-JsonDocument -Path $intentPath -Context "$Context completed-project scope intent for '$adoptedUnitId/$repoId'"
+                $completion = Read-JsonDocument -Path $completionPath -Context "$Context completed-project scope completion for '$adoptedUnitId/$repoId'"
+                if ($null -ne $intent -and $null -ne $completion) {
+                    Assert-Contract ([string]$intent.schema -ceq "rusty.morphospace.workflow.transition_ledger_intent.v3" -and [string]$intent.status -ceq "prepared") "$Context completed-project scope projection for '$adoptedUnitId/$repoId' intent has the wrong schema or status."
+                    Assert-Contract ([string]$completion.schema -ceq "rusty.morphospace.workflow.transition_ledger_completion.v1" -and [string]$completion.status -ceq "committed") "$Context completed-project scope projection for '$adoptedUnitId/$repoId' completion has the wrong schema or status."
+                    Assert-Contract ([string]$completion.transaction_id -ceq [string]$intent.transaction_id -and [string]$completion.event_id -ceq $correctionEventId) "$Context completed-project scope projection for '$adoptedUnitId/$repoId' transaction identity drifted."
+                    Assert-Contract ([string]$completion.intent.path -ceq $intentRelativePath -and [string]$completion.intent.sha256 -ceq [string]$correction.intent_sha256 -and [string]$completion.intent.schema -ceq [string]$intent.schema) "$Context completed-project scope projection for '$adoptedUnitId/$repoId' completion does not bind its intent."
+                    Assert-Contract ([string]$intent.unit.path -ceq [string]$entry.unit_path -and [string]$intent.event.event_id -ceq $correctionEventId -and [string]$intent.event.unit_id -ceq $adoptedUnitId) "$Context completed-project scope projection for '$adoptedUnitId/$repoId' intent unit or event binding drifted."
+                    if ($eventMap.ContainsKey($correctionEventId)) {
+                        foreach ($eventProperty in @('schema','event_id','sequence','project_id','unit_id','event_type','summary')) {
+                            Assert-Contract ([string]$intent.event.$eventProperty -ceq [string]$eventMap[$correctionEventId].$eventProperty) "$Context completed-project scope projection for '$adoptedUnitId/$repoId' intent event property '$eventProperty' drifted."
+                        }
+                        Assert-Contract ([DateTimeOffset]$intent.event.timestamp -eq [DateTimeOffset]$eventMap[$correctionEventId].timestamp) "$Context completed-project scope projection for '$adoptedUnitId/$repoId' intent event timestamp drifted."
+                        Assert-Contract ((@($intent.event.receipts | ForEach-Object { [string]$_ }) -join "|") -ceq (@($eventMap[$correctionEventId].receipts | ForEach-Object { [string]$_ }) -join "|")) "$Context completed-project scope projection for '$adoptedUnitId/$repoId' intent event receipt set drifted."
+                    }
+                    Assert-Contract ([string]$completion.unit_sha256 -ceq [string]$intent.target.unit.sha256 -and [string]$completion.state_sha256 -ceq [string]$intent.target.state.sha256) "$Context completed-project scope projection for '$adoptedUnitId/$repoId' completion target binding drifted."
+                    Assert-Contract ([string]$intent.pre.unit.sha256 -ceq [string]$intent.target.unit.sha256) "$Context completed-project scope projection for '$adoptedUnitId/$repoId' correction changed immutable unit bytes."
+                    Assert-Contract (@($intent.artifacts).Count -eq 1) "$Context completed-project scope projection for '$adoptedUnitId/$repoId' intent must bind exactly one correction artifact."
+                    if (@($intent.artifacts).Count -eq 1) {
+                        $artifact = @($intent.artifacts)[0]
+                        Assert-Contract ([string]$artifact.path -ceq $receiptRelativePath -and [string]$artifact.sha256 -ceq [string]$correction.receipt_sha256) "$Context completed-project scope projection for '$adoptedUnitId/$repoId' intent artifact identity drifted."
+                        try {
+                            $embeddedReceiptBytes = [Convert]::FromBase64String([string]$artifact.bytes_base64)
+                            $embeddedReceiptSha = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($embeddedReceiptBytes)).ToLowerInvariant()
+                            Assert-Contract ($embeddedReceiptSha -ceq [string]$correction.receipt_sha256 -and $embeddedReceiptBytes.Length -eq (Get-Item -LiteralPath $receiptPath).Length) "$Context completed-project scope projection for '$adoptedUnitId/$repoId' intent artifact bytes drifted."
+                        } catch {
+                            Assert-Contract $false "$Context completed-project scope projection for '$adoptedUnitId/$repoId' intent artifact bytes are invalid."
+                        }
+                    }
+                    $lastCorrectionIntent = $intent
+                }
+            }
+            Assert-Contract ($null -ne $lastCorrectionIntent) "$Context completed-project scope projection for '$adoptedUnitId' lacks its final correction intent."
+            if ($null -ne $lastCorrectionIntent) {
+                $projectProjection = @($lastCorrectionIntent.additional_projections | Where-Object { [string]$_.path -ceq 'project.spec.json' })
+                $lockProjection = @($lastCorrectionIntent.additional_projections | Where-Object { [string]$_.path -ceq 'feature.lock.json' })
+                Assert-Contract ($projectProjection.Count -eq 1 -and $lockProjection.Count -eq 1) "$Context completed-project scope projection for '$adoptedUnitId' final intent must bind one project spec and one feature lock."
+                if ($projectProjection.Count -eq 1) {
+                    Assert-Contract ([string]$projectProjection[0].target_sha256 -ceq [string]$projection.project_snapshot.project_sha256 -and [int]$projectProjection[0].document.revision -eq [int]$projection.project_snapshot.project_revision) "$Context completed-project scope projection for '$adoptedUnitId' project snapshot is not bound by the final correction intent."
+                }
+                if ($lockProjection.Count -eq 1) {
+                    Assert-Contract ([string]$lockProjection[0].target_sha256 -ceq [string]$projection.project_snapshot.feature_lock_sha256 -and [int]$lockProjection[0].document.revision -eq [int]$projection.project_snapshot.feature_lock_revision) "$Context completed-project scope projection for '$adoptedUnitId' feature-lock snapshot is not bound by the final correction intent."
+                }
+                Assert-Contract ([int]$lastCorrectionIntent.target.state.document.plan_revision -eq [int]$projection.project_snapshot.plan_revision) "$Context completed-project scope projection for '$adoptedUnitId' plan snapshot is not bound by the final correction intent."
             }
         }
     }

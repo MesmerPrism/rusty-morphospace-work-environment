@@ -70,6 +70,109 @@
                     "retained_as": { "type": "string", "minLength": 1 }
                   }
                 }
+              },
+              "read_only_dependency_scope": {
+                "type": "object", "additionalProperties": false,
+                "required": ["closure", "mappings", "retained_as"],
+                "properties": {
+                  "closure": {
+                    "type": "object", "additionalProperties": false,
+                    "required": ["path", "sha256"],
+                    "properties": {
+                      "path": { "type": "string", "minLength": 1 },
+                      "sha256": { "$ref": "#/$defs/hash" }
+                    }
+                  },
+                  "mappings": {
+                    "type": "array", "minItems": 1,
+                    "items": {
+                      "type": "object", "additionalProperties": false,
+                      "required": ["repo_id", "legacy_path", "current_paths", "retained_as"],
+                      "properties": {
+                        "repo_id": { "$ref": "#/$defs/id" },
+                        "legacy_path": { "type": "string", "minLength": 1 },
+                        "current_paths": {
+                          "type": "array", "minItems": 1,
+                          "items": { "type": "string", "minLength": 1 }
+                        },
+                        "retained_as": { "type": "string", "minLength": 1 }
+                      }
+                    }
+                  },
+                  "retained_as": { "type": "string", "minLength": 1 }
+                }
+              },
+              "completed_project_scope": {
+                "type": "object", "additionalProperties": false,
+                "required": ["work_mode", "change_categories", "allowed_repositories", "blocker_evidence", "project_snapshot", "corrections", "mutation_performed", "retained_as"],
+                "properties": {
+                  "work_mode": { "const": "validation-only" },
+                  "change_categories": {
+                    "type": "array", "prefixItems": [{ "const": "validation" }], "items": false,
+                    "minItems": 1, "maxItems": 1
+                  },
+                  "allowed_repositories": {
+                    "type": "array", "minItems": 1,
+                    "items": {
+                      "type": "object", "additionalProperties": false,
+                      "required": ["repo_id", "allowed_paths"],
+                      "properties": {
+                        "repo_id": { "$ref": "#/$defs/id" },
+                        "allowed_paths": {
+                          "type": "array", "minItems": 1,
+                          "items": { "type": "string", "minLength": 1 }
+                        }
+                      }
+                    }
+                  },
+                  "blocker_evidence": {
+                    "type": "object", "additionalProperties": false,
+                    "required": ["path", "sha256"],
+                    "properties": {
+                      "path": { "type": "string", "minLength": 1 },
+                      "sha256": { "$ref": "#/$defs/hash" }
+                    }
+                  },
+                  "project_snapshot": {
+                    "type": "object", "additionalProperties": false,
+                    "required": ["project_revision", "project_sha256", "feature_lock_revision", "feature_lock_sha256", "plan_revision"],
+                    "properties": {
+                      "project_revision": { "type": "integer", "minimum": 1 },
+                      "project_sha256": { "$ref": "#/$defs/hash" },
+                      "feature_lock_revision": { "type": "integer", "minimum": 1 },
+                      "feature_lock_sha256": { "$ref": "#/$defs/hash" },
+                      "plan_revision": { "type": "integer", "minimum": 1 }
+                    }
+                  },
+                  "corrections": {
+                    "type": "array", "minItems": 1,
+                    "items": {
+                      "type": "object", "additionalProperties": false,
+                      "required": ["repository_id", "receipt_path", "receipt_sha256", "event_id", "event_sha256", "intent_path", "intent_sha256", "completion_path", "completion_sha256"],
+                      "properties": {
+                        "repository_id": { "$ref": "#/$defs/id" },
+                        "receipt_path": { "type": "string", "minLength": 1 },
+                        "receipt_sha256": { "$ref": "#/$defs/hash" },
+                        "event_id": { "$ref": "#/$defs/id" },
+                        "event_sha256": { "$ref": "#/$defs/hash" },
+                        "intent_path": { "type": "string", "minLength": 1 },
+                        "intent_sha256": { "$ref": "#/$defs/hash" },
+                        "completion_path": { "type": "string", "minLength": 1 },
+                        "completion_sha256": { "$ref": "#/$defs/hash" }
+                      }
+                    }
+                  },
+                  "mutation_performed": {
+                    "type": "object", "additionalProperties": false,
+                    "required": ["git", "device", "remote"],
+                    "properties": {
+                      "git": { "const": false },
+                      "device": { "const": false },
+                      "remote": { "const": false }
+                    }
+                  },
+                  "retained_as": { "type": "string", "minLength": 1 }
+                }
               }
             }
           },
@@ -99,6 +202,27 @@
                   "normalization": {
                     "required": ["missing_required_skill_surfaces"],
                     "properties": { "missing_required_skill_surfaces": { "minItems": 1 } }
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "terminal_status": { "const": "blocked" },
+                  "terminal_evidence": {
+                    "required": ["event_id", "event_sha256", "receipt_path", "receipt_sha256"],
+                    "properties": { "receipt_path": { "type": "string", "minLength": 1 } }
+                  }
+                }
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "normalization": {
+                    "anyOf": [
+                      { "required": ["read_only_dependency_scope"] },
+                      { "required": ["completed_project_scope"] }
+                    ]
                   }
                 }
               },

@@ -120,6 +120,111 @@ function Convert-ToBlockedMissingRequiredSkillFixture($Root) {
     $statePath=Join-Path $Root 'workspace.state.json';$state=Get-Content -Raw $statePath|ConvertFrom-Json;$state.last_event_id='unit-example-001-validation-blocked';Write-Json $statePath $state
     Refresh-ReceiptReference $Root
 }
+function Write-BlockedValidationFixture($Root, $UnitId, $EventId) {
+    $blockerPath=Join-Path $Root 'receipts/evidence/historical-scope-blocker.json'
+    New-Item -ItemType Directory -Path (Split-Path -Parent $blockerPath) -Force|Out-Null
+    Write-Json $blockerPath ([pscustomobject][ordered]@{schema='rusty.morphospace.workflow.historical_scope_blocker.v1';unit_id=$UnitId;event_id=$EventId;status='blocked'})
+    $validationPath=Join-Path $Root "receipts/$UnitId-validation.json"
+    Write-Json $validationPath ([pscustomobject][ordered]@{
+        '$schema'='../schemas/validation-receipt.schema.json';schema='rusty.morphospace.workflow.validation_receipt.v1';receipt_id="$UnitId-validation-blocked";project_id='example-project';unit_id=$UnitId;created_at='2026-01-02T00:00:00Z';tier='standard';result='blocked'
+        repository_revisions=@();changed_paths=@();artifacts=@([pscustomobject]@{artifact_id='historical-scope-blocker';kind='workflow-blocker';path='evidence/historical-scope-blocker.json';sha256=Get-Sha $blockerPath})
+        criteria=@([pscustomobject]@{acceptance_id='historical-scope';status='blocked';command='Fixture only.';evidence_refs=@('historical-scope-blocker')})
+        gates=@([pscustomobject]@{gate_id='historical-scope';status='blocked';command='Fixture only.';evidence_refs=@('historical-scope-blocker')});device_validation=$null
+    })
+    return $validationPath
+}
+function Set-HistoricalTerminalEvidence($Root, $UnitPath, $EventId, $ValidationPath) {
+    $eventPath=Join-Path $Root 'iteration-events.jsonl'
+    $receiptPath=Join-Path $Root 'receipts/historical-unit-adoption-example.json';$receipt=Get-Content -Raw $receiptPath|ConvertFrom-Json
+    $receipt.units[0].unit_sha256=Get-Sha $UnitPath;$receipt.units[0].terminal_status='blocked'
+    $receipt.units[0].terminal_evidence=[pscustomobject][ordered]@{event_id=$EventId;event_sha256=Get-EventLineSha $eventPath;receipt_path=(Normalize-FixturePath $Root $ValidationPath);receipt_sha256=Get-Sha $ValidationPath}
+    Write-Json $receiptPath $receipt
+    $statePath=Join-Path $Root 'workspace.state.json';$state=Get-Content -Raw $statePath|ConvertFrom-Json;$state.current_unit=$null;$state.next_ready_unit=$null;$state.last_event_id=$EventId;Write-Json $statePath $state
+    Refresh-ReceiptReference $Root
+}
+function Normalize-FixturePath($Root, $Path) {
+    return [IO.Path]::GetRelativePath($Root,$Path).Replace('\','/')
+}
+function Get-SortedPathSha([string[]]$Paths) {
+    $payload=[string]::Join([char]10,@($Paths|Sort-Object -CaseSensitive))
+    return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.UTF8Encoding]::new($false,$true).GetBytes($payload))).ToLowerInvariant()
+}
+function Convert-ToBlockedReadOnlyDependencyScopeFixture($Root) {
+    $specPath=Join-Path $Root 'project.spec.json';$spec=Get-Content -Raw $specPath|ConvertFrom-Json
+    $matter=@($spec.repositories|Where-Object{$_.repo_id-eq'matter-core'})[0]
+    $matter.allowed_paths=@('crates/particle-field/src/lib.rs','schemas/','fixtures/','docs/')
+    Write-Json $specPath $spec
+    $unitPath=Join-Path $Root 'iteration-units/unit-example-001.json';$unit=Get-Content -Raw $unitPath|ConvertFrom-Json
+    $unit.status='blocked';$unit.work_mode='validation-only';$unit.change_categories=@('validation');$unit.instruction_impact='review';$unit.device_requirement='none';$unit.resource_requirements=@()
+    $unit.validation[0].profile_id='quick'
+    $unit.allowed_repositories=@([pscustomobject]@{repo_id='project-shell';allowed_paths=@('morphospace/')})
+    $unit|Add-Member -Force -NotePropertyName read_only_dependencies -NotePropertyValue @([pscustomobject][ordered]@{repo_id='matter-core';paths=@('crates/particle-field/','schemas/');purpose='Historical read-only fixture.';verification='Fixture only.'})
+    foreach($surface in @($unit.instruction_surfaces)){$surface.action='review-no-change';$surface.status='planned'}
+    Write-Json $unitPath $unit
+    $event=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.iteration_event.v1';event_id='unit-example-001-validation-blocked';sequence=1;timestamp='2026-01-02T00:00:00Z';project_id='example-project';unit_id='unit-example-001';event_type='blocker';summary='Blocked on historical read-only directory scope.';receipts=@('receipts/unit-example-001-validation.json')}
+    $eventPath=Join-Path $Root 'iteration-events.jsonl';($event|ConvertTo-Json -Compress)|Set-Content -LiteralPath $eventPath -Encoding utf8
+    $validationPath=Write-BlockedValidationFixture $Root 'unit-example-001' $event.event_id
+    $closurePaths=@('crates/particle-field/src/lib.rs','schemas/')
+    $closure=[pscustomobject][ordered]@{
+        schema='rusty.morphospace.workflow.proposed_unit_project_read_scope_closure.v1';status='complete'
+        source_terminal_unit=[pscustomobject][ordered]@{unit_id='unit-example-001';status='blocked';byte_length=(Get-Item $unitPath).Length;sha256=Get-Sha $unitPath;terminal_event_id=$event.event_id;blocker_evidence_sha256=('0'*64)}
+        proposed_read_only_dependencies=@([pscustomobject][ordered]@{repo_id='matter-core';path_count=$closurePaths.Count;sorted_lf_joined_path_sha256=Get-SortedPathSha $closurePaths;paths=$closurePaths})
+    }
+    $closurePath=Join-Path $Root 'receipts/read-only-scope-closure.json';Write-Json $closurePath $closure
+    $adoptionPath=Join-Path $Root 'receipts/historical-unit-adoption-example.json';$adoption=Get-Content -Raw $adoptionPath|ConvertFrom-Json
+    $adoption.units[0].normalization=[pscustomobject][ordered]@{
+        change_categories=@();validation_profiles=@();resource_kinds=@()
+        read_only_dependency_scope=[pscustomobject][ordered]@{
+            closure=[pscustomobject]@{path='receipts/read-only-scope-closure.json';sha256=Get-Sha $closurePath}
+            mappings=@([pscustomobject][ordered]@{repo_id='matter-core';legacy_path='crates/particle-field/';current_paths=@('crates/particle-field/src/lib.rs');retained_as='Historical directory read projected to the exact closure leaf.'})
+            retained_as='Current validation only; no source or historical unit mutation.'
+        }
+    }
+    Write-Json $adoptionPath $adoption
+    Set-HistoricalTerminalEvidence $Root $unitPath $event.event_id $validationPath
+}
+function Convert-ToBlockedCompletedProjectScopeFixture($Root) {
+    $specPath=Join-Path $Root 'project.spec.json';$spec=Get-Content -Raw $specPath|ConvertFrom-Json
+    $matter=@($spec.repositories|Where-Object{$_.repo_id-eq'matter-core'})[0]
+    $beforePaths=@($matter.allowed_paths);$matter.allowed_paths=@($beforePaths+'tools/exact.ps1')
+    Write-Json $specPath $spec
+    $unitPath=Join-Path $Root 'iteration-units/unit-example-001.json';$unit=Get-Content -Raw $unitPath|ConvertFrom-Json
+    $unit.status='blocked';$unit.work_mode='validation-only';$unit.change_categories=@('repo-routing');$unit.instruction_impact='review';$unit.device_requirement='none';$unit.resource_requirements=@()
+    $unit.validation[0].profile_id='quick'
+    $unit.allowed_repositories=@([pscustomobject]@{repo_id='project-shell';allowed_paths=@('morphospace/')},[pscustomobject]@{repo_id='matter-core';allowed_paths=@('tools/exact.ps1')})
+    foreach($surface in @($unit.instruction_surfaces)){$surface.action='review-no-change';$surface.status='planned'}
+    Write-Json $unitPath $unit
+    $scopeReceipt=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.active_project_repository_scope_correction.v1';correction_id='fixture-scope-correction';project_id='example-project';unit_id='unit-example-001';repository_id='matter-core';reason='Fixture additions-only scope correction.';expected=[pscustomobject]@{status='active';current_unit='unit-example-001'};before_allowed_paths=$beforePaths;after_allowed_paths=@($matter.allowed_paths);does_not_prove=@('Does not change source, execute validation, authorize publication, reserve resources, or contact a device.')}
+    $scopeReceiptPath=Join-Path $Root 'receipts/fixture-scope-correction.json';Write-Json $scopeReceiptPath $scopeReceipt
+    $scopeReceiptSha=Get-Sha $scopeReceiptPath;$scopeReceiptBytes=[IO.File]::ReadAllBytes($scopeReceiptPath)
+    $correctionEvent=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.iteration_event.v1';event_id='fixture-scope-correction-recorded';sequence=1;timestamp='2026-01-01T12:00:00Z';project_id='example-project';unit_id='unit-example-001';event_type='state-transition';summary='Recorded fixture additions-only project scope.';receipts=@('receipts/fixture-scope-correction.json')}
+    $terminalEvent=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.iteration_event.v1';event_id='unit-example-001-validation-blocked';sequence=2;timestamp='2026-01-02T00:00:00Z';project_id='example-project';unit_id='unit-example-001';event_type='blocker';summary='Blocked after completed historical project scope.';receipts=@('receipts/unit-example-001-validation.json')}
+    $eventPath=Join-Path $Root 'iteration-events.jsonl';@(($correctionEvent|ConvertTo-Json -Compress),($terminalEvent|ConvertTo-Json -Compress))|Set-Content -LiteralPath $eventPath -Encoding utf8
+    $validationPath=Write-BlockedValidationFixture $Root 'unit-example-001' $terminalEvent.event_id
+    $transactionId='fixture-scope-correction-recorded-transition'
+    $intentRelative='receipts/transactions/fixture-scope-correction-recorded-transition.intent.json';$completionRelative='receipts/transactions/fixture-scope-correction-recorded-transition.completion.json'
+    New-Item -ItemType Directory -Path (Join-Path $Root 'receipts/transactions') -Force|Out-Null
+    $lockPath=Join-Path $Root 'feature.lock.json';$statePath=Join-Path $Root 'workspace.state.json';$state=Get-Content -Raw $statePath|ConvertFrom-Json
+    $unitSha=Get-Sha $unitPath;$stateSha=Get-Sha $statePath;$projectSha=Get-Sha $specPath;$lockSha=Get-Sha $lockPath
+    $intent=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.transition_ledger_intent.v3';transaction_id=$transactionId;status='prepared';unit=[pscustomobject]@{path='iteration-units/unit-example-001.json'};event=$correctionEvent;pre=[pscustomobject]@{unit=[pscustomobject]@{sha256=$unitSha}};target=[pscustomobject]@{unit=[pscustomobject]@{sha256=$unitSha};state=[pscustomobject]@{sha256=$stateSha;document=$state}};additional_projections=@([pscustomobject]@{path='project.spec.json';target_sha256=$projectSha;document=$spec},[pscustomobject]@{path='feature.lock.json';target_sha256=$lockSha;document=(Get-Content -Raw $lockPath|ConvertFrom-Json)});artifacts=@([pscustomobject]@{path='receipts/fixture-scope-correction.json';sha256=$scopeReceiptSha;bytes_base64=[Convert]::ToBase64String($scopeReceiptBytes)})}
+    $intentPath=Join-Path $Root ($intentRelative-replace'/','\');Write-Json $intentPath $intent
+    $completion=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.transition_ledger_completion.v1';transaction_id=$transactionId;status='committed';event_id=$correctionEvent.event_id;unit_sha256=$unitSha;state_sha256=$stateSha;intent=[pscustomobject]@{path=$intentRelative;role='transition-ledger-intent';schema='rusty.morphospace.workflow.transition_ledger_intent.v3';sha256=Get-Sha $intentPath}}
+    $completionPath=Join-Path $Root ($completionRelative-replace'/','\');Write-Json $completionPath $completion
+    $correctionLine=@(Get-Content $eventPath)[0];$correctionEventSha=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.UTF8Encoding]::new($false,$true).GetBytes($correctionLine))).ToLowerInvariant()
+    $adoptionPath=Join-Path $Root 'receipts/historical-unit-adoption-example.json';$adoption=Get-Content -Raw $adoptionPath|ConvertFrom-Json
+    $adoption.units[0].normalization=[pscustomobject][ordered]@{
+        change_categories=@();validation_profiles=@();resource_kinds=@()
+        completed_project_scope=[pscustomobject][ordered]@{
+            work_mode='validation-only';change_categories=@('validation');allowed_repositories=@([pscustomobject]@{repo_id='project-shell';allowed_paths=@('morphospace/')})
+            blocker_evidence=[pscustomobject]@{path='receipts/evidence/historical-scope-blocker.json';sha256=Get-Sha (Join-Path $Root 'receipts/evidence/historical-scope-blocker.json')}
+            project_snapshot=[pscustomobject]@{project_revision=$spec.revision;project_sha256=$projectSha;feature_lock_revision=(Get-Content -Raw $lockPath|ConvertFrom-Json).revision;feature_lock_sha256=$lockSha;plan_revision=$state.plan_revision}
+            corrections=@([pscustomobject][ordered]@{repository_id='matter-core';receipt_path='receipts/fixture-scope-correction.json';receipt_sha256=$scopeReceiptSha;event_id=$correctionEvent.event_id;event_sha256=$correctionEventSha;intent_path=$intentRelative;intent_sha256=Get-Sha $intentPath;completion_path=$completionRelative;completion_sha256=Get-Sha $completionPath})
+            mutation_performed=[pscustomobject]@{git=$false;device=$false;remote=$false};retained_as='Current validation only; completed additions remain historical declarations, not write authority.'
+        }
+    }
+    Write-Json $adoptionPath $adoption
+    Set-HistoricalTerminalEvidence $Root $unitPath $terminalEvent.event_id $validationPath
+}
 function Assert-Rejected($Root, [scriptblock]$Damage, $Name) {
     & $Damage
     $failed=$false
@@ -185,6 +290,57 @@ try {
         Remove-Item -LiteralPath $root -Recurse -Force
     }
     Remove-Item -LiteralPath $missingSkillRoot -Recurse -Force
+    $readOnlyScopeRoot="$base-read-only-dependency-scope";Copy-Item $base $readOnlyScopeRoot -Recurse
+    Convert-ToBlockedReadOnlyDependencyScopeFixture $readOnlyScopeRoot
+    if(-not(Get-Content -Raw (Join-Path $readOnlyScopeRoot 'receipts/historical-unit-adoption-example.json')|Test-Json -SchemaFile (Join-Path $RepoRoot 'schemas/historical-unit-adoption-receipt.schema.json') -ErrorAction SilentlyContinue)){throw'Read-only dependency scope adoption fixture failed its schema.'}
+    & $validator -RepoRoot $RepoRoot -WorkspaceRoot $readOnlyScopeRoot -SkipOwnerSelfTests | Out-Null
+    $readOnlyScopeCases=@('read-scope-missing-mapping','read-scope-extra-valid-row-mapping','read-scope-broader-target','read-scope-optional-target','read-scope-closure-hash','read-scope-renamed-repo','read-scope-current-unit','read-scope-accepted-unit','read-scope-terminal-receipt','read-scope-reference-removed')
+    foreach($case in $readOnlyScopeCases){
+        $root="$readOnlyScopeRoot-$case";Copy-Item $readOnlyScopeRoot $root -Recurse
+        switch($case){
+            'read-scope-missing-mapping' { Assert-Rejected $root { $p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$d=Get-Content -Raw $p|ConvertFrom-Json;$d.units[0].normalization.read_only_dependency_scope.mappings=@();Write-Json $p $d;Refresh-ReceiptReference $root } $case }
+            'read-scope-extra-valid-row-mapping' { Assert-Rejected $root { $p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$d=Get-Content -Raw $p|ConvertFrom-Json;$d.units[0].normalization.read_only_dependency_scope.mappings+=[pscustomobject]@{repo_id='matter-core';legacy_path='schemas/';current_paths=@('schemas/');retained_as='must reject valid row mapping'};Write-Json $p $d;Refresh-ReceiptReference $root } $case }
+            'read-scope-broader-target' { Assert-Rejected $root { $p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$d=Get-Content -Raw $p|ConvertFrom-Json;$d.units[0].normalization.read_only_dependency_scope.mappings[0].current_paths=@('crates/particle-field/');Write-Json $p $d;Refresh-ReceiptReference $root } $case }
+            'read-scope-optional-target' { Assert-Rejected $root { $c=Join-Path $root 'receipts/read-only-scope-closure.json';$closure=Get-Content -Raw $c|ConvertFrom-Json;$paths=@('crates/particle-field/src/optional.rs','schemas/');$closure.proposed_read_only_dependencies[0].paths=$paths;$closure.proposed_read_only_dependencies[0].path_count=$paths.Count;$closure.proposed_read_only_dependencies[0].sorted_lf_joined_path_sha256=Get-SortedPathSha $paths;Write-Json $c $closure;$p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$d=Get-Content -Raw $p|ConvertFrom-Json;$d.units[0].normalization.read_only_dependency_scope.closure.sha256=Get-Sha $c;$d.units[0].normalization.read_only_dependency_scope.mappings[0].current_paths=@('crates/particle-field/src/optional.rs');Write-Json $p $d;Refresh-ReceiptReference $root } $case }
+            'read-scope-closure-hash' { Assert-Rejected $root { $p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$d=Get-Content -Raw $p|ConvertFrom-Json;$d.units[0].normalization.read_only_dependency_scope.closure.sha256=('0'*64);Write-Json $p $d;Refresh-ReceiptReference $root } $case }
+            'read-scope-renamed-repo' { Assert-Rejected $root { $p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$d=Get-Content -Raw $p|ConvertFrom-Json;$d.units[0].normalization.read_only_dependency_scope.mappings[0].repo_id='project-shell';Write-Json $p $d;Refresh-ReceiptReference $root } $case }
+            'read-scope-current-unit' { Assert-Rejected $root { $s=Join-Path $root 'workspace.state.json';$d=Get-Content -Raw $s|ConvertFrom-Json;$d.current_unit='unit-example-001';Write-Json $s $d } $case }
+            'read-scope-accepted-unit' { Assert-Rejected $root { $u=Join-Path $root 'iteration-units/unit-example-001.json';$d=Get-Content -Raw $u|ConvertFrom-Json;$d.status='accepted';Write-Json $u $d;$p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$r=Get-Content -Raw $p|ConvertFrom-Json;$r.units[0].unit_sha256=Get-Sha $u;$r.units[0].terminal_status='accepted';Write-Json $p $r;Refresh-ReceiptReference $root } $case }
+            'read-scope-terminal-receipt' { Assert-Rejected $root { $v=Join-Path $root 'receipts/unit-example-001-validation.json';$d=Get-Content -Raw $v|ConvertFrom-Json;$d.result='partial';Write-Json $v $d;$p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$r=Get-Content -Raw $p|ConvertFrom-Json;$r.units[0].terminal_evidence.receipt_sha256=Get-Sha $v;Write-Json $p $r;Refresh-ReceiptReference $root } $case }
+            'read-scope-reference-removed' { Assert-Rejected $root { $s=Join-Path $root 'workspace.state.json';$d=Get-Content -Raw $s|ConvertFrom-Json;$d.PSObject.Properties.Remove('historical_unit_adoption_receipts');Write-Json $s $d } $case }
+        }
+        Remove-Item -LiteralPath $root -Recurse -Force
+    }
+    Remove-Item -LiteralPath $readOnlyScopeRoot -Recurse -Force
+    $completedScopeRoot="$base-completed-project-scope";Copy-Item $base $completedScopeRoot -Recurse
+    Convert-ToBlockedCompletedProjectScopeFixture $completedScopeRoot
+    if(-not(Get-Content -Raw (Join-Path $completedScopeRoot 'receipts/historical-unit-adoption-example.json')|Test-Json -SchemaFile (Join-Path $RepoRoot 'schemas/historical-unit-adoption-receipt.schema.json') -ErrorAction SilentlyContinue)){throw'Completed project scope adoption fixture failed its schema.'}
+    & $validator -RepoRoot $RepoRoot -WorkspaceRoot $completedScopeRoot -SkipOwnerSelfTests | Out-Null
+    $completedScopeCases=@('completed-scope-missing-correction','completed-scope-extra-correction','completed-scope-retained-write-repo','completed-scope-category-drift','completed-scope-project-hash','completed-scope-blocker-hash','completed-scope-blocker-missing','completed-scope-receipt-hash','completed-scope-missing-receipt','completed-scope-event-hash','completed-scope-intent-hash','completed-scope-unit-path-drift','completed-scope-mutation-claim','completed-scope-current-unit','completed-scope-later-event','completed-scope-terminal-receipt','completed-scope-reference-removed')
+    foreach($case in $completedScopeCases){
+        $root="$completedScopeRoot-$case";Copy-Item $completedScopeRoot $root -Recurse
+        switch($case){
+            'completed-scope-missing-correction' { Assert-Rejected $root { $p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$d=Get-Content -Raw $p|ConvertFrom-Json;$d.units[0].normalization.completed_project_scope.corrections=@();Write-Json $p $d;Refresh-ReceiptReference $root } $case }
+            'completed-scope-extra-correction' { Assert-Rejected $root { $p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$d=Get-Content -Raw $p|ConvertFrom-Json;$d.units[0].normalization.completed_project_scope.corrections+=$d.units[0].normalization.completed_project_scope.corrections[0];Write-Json $p $d;Refresh-ReceiptReference $root } $case }
+            'completed-scope-retained-write-repo' { Assert-Rejected $root { $p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$d=Get-Content -Raw $p|ConvertFrom-Json;$d.units[0].normalization.completed_project_scope.allowed_repositories+=[pscustomobject]@{repo_id='matter-core';allowed_paths=@('tools/exact.ps1')};Write-Json $p $d;Refresh-ReceiptReference $root } $case }
+            'completed-scope-category-drift' { Assert-Rejected $root { $p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$d=Get-Content -Raw $p|ConvertFrom-Json;$d.units[0].normalization.completed_project_scope.change_categories=@('validation','repo-routing');Write-Json $p $d;Refresh-ReceiptReference $root } $case }
+            'completed-scope-project-hash' { Assert-Rejected $root { $p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$d=Get-Content -Raw $p|ConvertFrom-Json;$d.units[0].normalization.completed_project_scope.project_snapshot.project_sha256=('0'*64);Write-Json $p $d;Refresh-ReceiptReference $root } $case }
+            'completed-scope-blocker-hash' { Assert-Rejected $root { $p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$d=Get-Content -Raw $p|ConvertFrom-Json;$d.units[0].normalization.completed_project_scope.blocker_evidence.sha256=('0'*64);Write-Json $p $d;Refresh-ReceiptReference $root } $case }
+            'completed-scope-blocker-missing' { Assert-Rejected $root { Remove-Item -LiteralPath (Join-Path $root 'receipts/evidence/historical-scope-blocker.json') -Force } $case }
+            'completed-scope-receipt-hash' { Assert-Rejected $root { $p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$d=Get-Content -Raw $p|ConvertFrom-Json;$d.units[0].normalization.completed_project_scope.corrections[0].receipt_sha256=('0'*64);Write-Json $p $d;Refresh-ReceiptReference $root } $case }
+            'completed-scope-missing-receipt' { Assert-Rejected $root { Move-Item (Join-Path $root 'receipts/fixture-scope-correction.json') (Join-Path $root 'receipts/fixture-scope-correction.missing') } $case }
+            'completed-scope-event-hash' { Assert-Rejected $root { $p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$d=Get-Content -Raw $p|ConvertFrom-Json;$d.units[0].normalization.completed_project_scope.corrections[0].event_sha256=('0'*64);Write-Json $p $d;Refresh-ReceiptReference $root } $case }
+            'completed-scope-intent-hash' { Assert-Rejected $root { $p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$d=Get-Content -Raw $p|ConvertFrom-Json;$d.units[0].normalization.completed_project_scope.corrections[0].intent_sha256=('0'*64);Write-Json $p $d;Refresh-ReceiptReference $root } $case }
+            'completed-scope-unit-path-drift' { Assert-Rejected $root { $u=Join-Path $root 'iteration-units/unit-example-001.json';$d=Get-Content -Raw $u|ConvertFrom-Json;@($d.allowed_repositories|Where-Object{$_.repo_id-eq'matter-core'})[0].allowed_paths=@('tools/other.ps1');Write-Json $u $d;$p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$r=Get-Content -Raw $p|ConvertFrom-Json;$r.units[0].unit_sha256=Get-Sha $u;Write-Json $p $r;Refresh-ReceiptReference $root } $case }
+            'completed-scope-mutation-claim' { Assert-Rejected $root { $p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$d=Get-Content -Raw $p|ConvertFrom-Json;$d.units[0].normalization.completed_project_scope.mutation_performed.git=$true;Write-Json $p $d;Refresh-ReceiptReference $root } $case }
+            'completed-scope-current-unit' { Assert-Rejected $root { $s=Join-Path $root 'workspace.state.json';$d=Get-Content -Raw $s|ConvertFrom-Json;$d.current_unit='unit-example-001';Write-Json $s $d } $case }
+            'completed-scope-later-event' { Assert-Rejected $root { $e=Join-Path $root 'iteration-events.jsonl';$later=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.iteration_event.v1';event_id='unit-example-001-later-blocked';sequence=3;timestamp='2026-01-03T00:00:00Z';project_id='example-project';unit_id='unit-example-001';event_type='blocker';summary='Later event.';receipts=@('receipts/unit-example-001-validation.json')};($later|ConvertTo-Json -Compress)|Add-Content -LiteralPath $e -Encoding utf8;$s=Join-Path $root 'workspace.state.json';$state=Get-Content -Raw $s|ConvertFrom-Json;$state.last_event_id='unit-example-001-later-blocked';Write-Json $s $state } $case }
+            'completed-scope-terminal-receipt' { Assert-Rejected $root { $v=Join-Path $root 'receipts/unit-example-001-validation.json';$d=Get-Content -Raw $v|ConvertFrom-Json;$d.result='partial';Write-Json $v $d;$p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$r=Get-Content -Raw $p|ConvertFrom-Json;$r.units[0].terminal_evidence.receipt_sha256=Get-Sha $v;Write-Json $p $r;Refresh-ReceiptReference $root } $case }
+            'completed-scope-reference-removed' { Assert-Rejected $root { $s=Join-Path $root 'workspace.state.json';$d=Get-Content -Raw $s|ConvertFrom-Json;$d.PSObject.Properties.Remove('historical_unit_adoption_receipts');Write-Json $s $d } $case }
+        }
+        Remove-Item -LiteralPath $root -Recurse -Force
+    }
+    Remove-Item -LiteralPath $completedScopeRoot -Recurse -Force
     $publicationRoot="$base-publication";Copy-Item $base $publicationRoot -Recurse
     Convert-ToBlockedPublicationFixture $publicationRoot
     & $validator -RepoRoot $RepoRoot -WorkspaceRoot $publicationRoot -SkipOwnerSelfTests | Out-Null
