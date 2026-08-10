@@ -161,6 +161,14 @@ unit bytes, project only the exact currently required skill IDs and canonical
 `<skills-root>/<skill-id>/SKILL.md` paths. Retain `planned`, bind the terminal
 event and receipt hashes, and reject current, accepted, optional, or extra
 surfaces; the projection never claims an instruction edit or completion.
+For a terminal blocked validation unit, map an invalid legacy read-only
+directory only to every exact closure-derived current project leaf. A completed
+planning scope precursor may retain external rows only as hash-bound evidence
+of its additions-only correction transactions while projecting
+`validation-only`, `[validation]`, and its original `morphospace/` write scope.
+Reject broader, optional, renamed, colliding, evidence-drifted, current, or
+write-authorizing projections; removing the receipt must restore strict
+validation.
 
 Portable composition and iteration IDs have one 2-through-128-character
 lowercase alphanumeric/hyphen domain across their schemas and validators.
