@@ -118,6 +118,20 @@ During the stability window:
   instruction metadata;
 - preserve a genuine product blocker as product evidence, not workflow debt.
 
+## CI Execution Budget
+
+Run candidate validation from pull-request events, not from both a feature
+branch push and its pull request. Retain `main` push validation as post-merge
+readback and keep manual dispatch for deliberate Deep runs. Cancel superseded
+runs only when they address the same exact candidate head.
+
+Keep Linux Quick, Windows Quick, and Windows Standard as separate required
+contexts. Quick owns the common portable suite. Standard runs only the
+additional `Test-WorkUnitAutomation.ps1` delta and relies on the required Quick
+contexts; it must not replay the complete Quick tier. Pin third-party actions
+to reviewed full commits and update those pins through the locked validation-
+authority path.
+
 ## Semantic Checks
 
 Static gates must validate meaning at the cheapest trustworthy layer. Prefer,
