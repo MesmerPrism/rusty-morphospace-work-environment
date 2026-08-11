@@ -79,6 +79,21 @@ foreach ($route in @('$meta-quest-workflow', '$system-engineering', '$rust-work-
     }
 }
 
+$projectWorkflow = (
+    Get-Content -Raw -LiteralPath (
+        Join-Path (Split-Path -Parent $publicPath) "references/project-workflow.md"
+    )
+) -replace '\s+', ' '
+foreach ($requiredPolicy in @(
+    "Treat a dirty aggregate as explicit diagnostic evidence, not a prerequisite for a clean handoff.",
+    "Freeze and commit the coherent candidate, then run its risk-selected aggregate once against the exact base.",
+    "Do not run the same aggregate before and after a commit solely to produce both dirty and clean receipts."
+)) {
+    if (-not $projectWorkflow.Contains($requiredPolicy, [StringComparison]::Ordinal)) {
+        throw "The public Morphospace workflow is missing the single-clean-aggregate policy: $requiredPolicy"
+    }
+}
+
 if ($MetaQuestWorkflowRepoRoot) {
     $MetaQuestWorkflowRepoRoot = (Resolve-Path -LiteralPath $MetaQuestWorkflowRepoRoot).Path
     $metaSkillRoot = Join-Path $MetaQuestWorkflowRepoRoot "skills\meta-quest-workflow"

@@ -107,7 +107,10 @@ external validation-authority and release process accepts an exact candidate.
 Repository CI runs feature-branch validation from pull-request events, keeps a
 post-merge `main` readback, and cancels superseded runs for the same exact head.
 The required Quick jobs own shared coverage; the Windows Standard job executes
-only the additional work-unit automation gate.
+only the additional work-unit automation gate. During local iteration, use
+focused checks; freeze and commit the candidate before its one risk-selected
+handoff aggregate. A dirty aggregate is diagnostic and is not a prerequisite
+for a matching clean receipt.
 
 1. Run `pwsh -NoProfile -File .\scripts\Test-PowerShellHost.ps1` and read
    [Setup Overview](docs/SETUP_OVERVIEW.md).
