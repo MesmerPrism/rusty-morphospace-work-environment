@@ -158,6 +158,13 @@ Select the smallest tier that can prove the changed boundary:
 - Use Deep checks for broad authority, graph, release, or device-gated
   consolidation when the risk warrants them.
 
+Treat a dirty aggregate as explicit diagnostic evidence, not a prerequisite
+for a clean handoff. Freeze and commit the coherent candidate, then run its
+risk-selected aggregate once against the exact base. Do not run the same
+aggregate before and after a commit solely to produce both dirty and clean
+receipts. If a repair changes the candidate, rerun the nearest failed check
+first and execute the aggregate once more for the repaired commit.
+
 For repository CI, run feature-candidate validation from pull-request events
 and retain `main` push readback. Cancel superseded same-head runs. Keep Quick
 contexts required, and make a separate required Standard context execute only

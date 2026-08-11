@@ -38,6 +38,13 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-SkillTemplates.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-UnpublishedPlanningAuthorityMaterialization.ps1 -SelfTest
 ```
 
+Do not execute the same risk-selected aggregate on dirty source and again on
+clean source solely to obtain both receipt shapes. A dirty aggregate is an
+explicit diagnostic. For handoff, freeze and commit the coherent candidate,
+then run the smallest sufficient aggregate once against its exact base. If a
+repair changes that commit, rerun the nearest failed check first and execute
+the aggregate once for the repaired candidate.
+
 Do not append all focused commands to every aggregate run. The aggregate owns
 each expensive owner self-test once; nested temporary workspaces run structural
 contract validation without recursively re-running unrelated owner suites.
