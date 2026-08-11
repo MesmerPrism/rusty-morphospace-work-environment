@@ -94,7 +94,7 @@ function Assert-ResolveBlockerNotConsumed {
             throw 'ResolveBlocker receipt identity or canonical receipt hash was already consumed.'
         }
     }
-    foreach($file in @(Get-ChildItem (Join-Path $Workspace 'receipts') -File -Recurse -Filter *.json)){
+    foreach($file in @(Get-ChildItem (Join-Path $Workspace 'receipts') -File -Filter *.json)){
         [void]$candidates.Add([IO.Path]::GetRelativePath($Workspace,$file.FullName).Replace('\','/'))
     }
     foreach($relative in $candidates){
