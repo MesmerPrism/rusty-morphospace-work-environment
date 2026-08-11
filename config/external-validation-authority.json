@@ -1313,6 +1313,255 @@
         }
       ],
       "status": "approved"
+    },
+    {
+      "approval_id": "workflow-guard-profiles-resolver-stabilization-20260811",
+      "required_ancestor": "2e70bd55f400a5c344324af8bb102c0b66cb5bda",
+      "changed_paths": [
+        "AGENTS.md",
+        "README.md",
+        "docs/ACTIVE_WRITE_SCOPE_AMENDMENT.md",
+        "docs/AUTONOMOUS_ITERATION.md",
+        "docs/BLOCKER_RESOLUTION.md",
+        "docs/WORKFLOW_STABILITY.md",
+        "manifests/workflow-lifecycle.portable.json",
+        "schemas/active-write-scope-amendment-v1.schema.json",
+        "schemas/blocker-resolution-receipt-v1.schema.json",
+        "schemas/execution-preflight-observation.schema.json",
+        "schemas/iteration-unit.schema.json",
+        "schemas/work-unit-automation-receipt-v2.schema.json",
+        "schemas/work-unit-automation-receipt.schema.json",
+        "schemas/work-unit-handoff.schema.json",
+        "scripts/ActiveWriteScopeAmendment.psm1",
+        "scripts/Invoke-WorkUnitAutomation.ps1",
+        "scripts/New-WorkUnitHandoff.ps1",
+        "scripts/ResolveBlocker.psm1",
+        "scripts/Test-ActiveWriteScopeAmendment.ps1",
+        "scripts/Test-ResolveBlocker.ps1",
+        "scripts/Test-WorkEnvironment.ps1",
+        "scripts/Test-WorkUnitAutomation.ps1",
+        "scripts/Test-WorkflowContracts.ps1",
+        "scripts/WorkUnitAutomation.psm1",
+        "skills/rust-work-graph/SKILL.md",
+        "skills/rusty-morphospace/references/project-workflow.md",
+        "skills/system-engineering/SKILL.md",
+        "templates/active-write-scope-amendment.example.json",
+        "templates/iteration-unit-validation-only.example.json",
+        "templates/iteration-unit.example.json"
+      ],
+      "artifacts": [
+        {
+          "path": "AGENTS.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 35677,
+          "sha256": "e74a9d6856414bcab4de0650e10d9b55bc05c2fddb3687f72758dee21c220da2"
+        },
+        {
+          "path": "README.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 30526,
+          "sha256": "522a65f4e4d9908bb9bae3334093e195eccf053e0dd9d30ecc26497cadcda144"
+        },
+        {
+          "path": "docs/ACTIVE_WRITE_SCOPE_AMENDMENT.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 2749,
+          "sha256": "50b32dbb2bfeebc4580d3d1b3e32863b858941e269447fa18488893112a2e473"
+        },
+        {
+          "path": "docs/AUTONOMOUS_ITERATION.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 41428,
+          "sha256": "4fdfe90b4e7ff9aab97fdf5dd53f6cdf75ad6a88ad1e1391ff55a3b9e9bfa8b1"
+        },
+        {
+          "path": "docs/BLOCKER_RESOLUTION.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 3599,
+          "sha256": "731a7fd94bbabc78053b3cb199a1aaa3c0aa28311be3613f1420b13921ce53b7"
+        },
+        {
+          "path": "docs/WORKFLOW_STABILITY.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 7688,
+          "sha256": "128356f938b5b549d024f27bea7621f19cc87b12f4e887d304d0399f52bb02e3"
+        },
+        {
+          "path": "manifests/workflow-lifecycle.portable.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 8334,
+          "sha256": "d753386ffb4b12deee22218fd53ebcbd5035fc0cc339aeaa7fa65f89784ffce9"
+        },
+        {
+          "path": "schemas/active-write-scope-amendment-v1.schema.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 2524,
+          "sha256": "c3585f8338812b57e57eeaf4c5be865021079afb2f2a14e1d8783d26e799b68d"
+        },
+        {
+          "path": "schemas/blocker-resolution-receipt-v1.schema.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 2748,
+          "sha256": "c211919a38b8a29303cc218ad34e0acc05b95e4a8275e8cdec6503331b320c29"
+        },
+        {
+          "path": "schemas/execution-preflight-observation.schema.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 1724,
+          "sha256": "6963d16c6d8fb9c2c3f582d47775e9ca9b59b3d5ebd591615959be79dc1d9f19"
+        },
+        {
+          "path": "schemas/iteration-unit.schema.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 12709,
+          "sha256": "b05607da966aa44c9a9e215aab73b03a9137401e4e3c4832ef47da6c00c5aacb"
+        },
+        {
+          "path": "schemas/work-unit-automation-receipt-v2.schema.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 2524,
+          "sha256": "780ba97238d025434e7c262d3a41be2c9695c521c557456777ff2252bb94055c"
+        },
+        {
+          "path": "schemas/work-unit-automation-receipt.schema.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 17391,
+          "sha256": "963dad18bf0c93bc7698630011ceb7a81539a298770ffe030347a52a254b8272"
+        },
+        {
+          "path": "schemas/work-unit-handoff.schema.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 4223,
+          "sha256": "760ae7f6928cda38a7e697b515b101ddc25b47a59ef3adb371cf897d9ee34cca"
+        },
+        {
+          "path": "scripts/ActiveWriteScopeAmendment.psm1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 15679,
+          "sha256": "1cde43c2e9d82fa72b756d2c90b8dcc59bb9d86a066127434c854ddf0524e44c"
+        },
+        {
+          "path": "scripts/Invoke-WorkUnitAutomation.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 13806,
+          "sha256": "435fc5c39c3cad0f3aedc6ff27f7dcb11ebc90218987ef6812442a068db7008f"
+        },
+        {
+          "path": "scripts/New-WorkUnitHandoff.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 7648,
+          "sha256": "8e0dec6d8e3a84897908f5ccf578973f41b70f59b03951108339cb14f1ca140c"
+        },
+        {
+          "path": "scripts/ResolveBlocker.psm1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 18037,
+          "sha256": "547623c5c57d6332df7dcb9e9dd581c9fd56883a3f53116f79e6c41bd11f0ce8"
+        },
+        {
+          "path": "scripts/Test-ActiveWriteScopeAmendment.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 16552,
+          "sha256": "aa4cb6604bdaeeb0cb66292548bab9a56828f897bef4fcf0f9cdbb77df92cdd4"
+        },
+        {
+          "path": "scripts/Test-ResolveBlocker.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 26009,
+          "sha256": "6ba1ab642d11cd3efdc5722ab10376d8c065b91a542eb36ffa1e8cfbf96bd317"
+        },
+        {
+          "path": "scripts/Test-WorkEnvironment.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 26906,
+          "sha256": "0479e0da03263d926ea13dfd8aa72aba1e468bfd60f94781c00a2b16d9b2d2cf"
+        },
+        {
+          "path": "scripts/Test-WorkUnitAutomation.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 182693,
+          "sha256": "6e7243c6a277e71203f02d11699197c381e6c48455e9a8e2a3ec678aea5aa855"
+        },
+        {
+          "path": "scripts/Test-WorkflowContracts.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 175962,
+          "sha256": "86f8f312dfb70129c06e60128b25930eca3a861386a7597f3fc80579fa19f85b"
+        },
+        {
+          "path": "scripts/WorkUnitAutomation.psm1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 149370,
+          "sha256": "b8b6b7cc719b84ef88dd9421b717696372be9667c6b9998ae4dbc53b76832ed8"
+        },
+        {
+          "path": "skills/rust-work-graph/SKILL.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 20058,
+          "sha256": "b3e5ac5ad4d7b4951ec4cb97bad5df6c99680565f65ae0f2d9baf59f399ce16e"
+        },
+        {
+          "path": "skills/rusty-morphospace/references/project-workflow.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 11649,
+          "sha256": "145d77566cf9627221e6607cd20997186700df4b02c62e1b6052cc80c71d52b4"
+        },
+        {
+          "path": "skills/system-engineering/SKILL.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 30055,
+          "sha256": "a20c07147e98d43a86a8597b6c55f8284a86a29e5bf4edd19577f6f93ce617e6"
+        },
+        {
+          "path": "templates/active-write-scope-amendment.example.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 1165,
+          "sha256": "15f2c078c1be7a998711b70ff9ae2b247350b374fcaaedf32a4b8c8b2d41e2d9"
+        },
+        {
+          "path": "templates/iteration-unit-validation-only.example.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 4533,
+          "sha256": "88132f5e4663bf6c930bbf38062a530144a70f5a036529496c8b4a2d2d17eecb"
+        },
+        {
+          "path": "templates/iteration-unit.example.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 5345,
+          "sha256": "d662ca762b512dcccdc49becc5fadf862b8281efb64c9fca723a72264db47ea6"
+        }
+      ],
+      "status": "approved"
     }
   ],
   "status": "active"
