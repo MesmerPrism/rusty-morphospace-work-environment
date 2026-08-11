@@ -11,8 +11,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: validate-${{ github.event.pull_request.head.sha || github.sha }}
-  cancel-in-progress: true
+  group: validate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   quick-windows:
