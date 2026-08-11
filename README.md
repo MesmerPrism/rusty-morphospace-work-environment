@@ -223,6 +223,9 @@ validation without a device.
   strict read-only ref/worktree hold registry, three-state disposition, exact
   tip readback, owner-release boundary, and separation between remote ref
   retirement and local cleanup.
+- [Fast Local Worktree Index](docs/LOCAL_WORKTREE_INDEX.md) defines the Tier 0
+  registration-only shortlist pass, zero-status/zero-network boundary, and
+  escalation to exact-path and operational checks only when needed.
 - [Canonical Text Bytes And Signing Preflight](docs/AUTONOMOUS_ITERATION.md#canonical-text-bytes-and-signing-preflight)
   defines explicit LF enrollment, byte-exact historical/binary preservation,
   cross-platform checkout parity, and the non-normalizing pre-signing check.
