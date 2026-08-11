@@ -99,6 +99,11 @@ its declared repositories and device stages, `labs` for product-authority or
 composition policy changes, and `locked` for releases or workflow trust-root
 changes. Select `risk_tier` independently.
 
+[Direct Work Packages](docs/DIRECT_WORK_PACKAGES.md) provide a lightweight
+front door for ordinary work. A validated `fast` package may proceed directly;
+`labs` (the guarded lane), `locked`, or an under-declared profile graduates to
+the existing autonomous-unit workflow before mutation.
+
 The guard-profile, execution-preflight, `ReturnToActive`, and active write-scope
 amendment additions on this development line are unreleased candidate behavior.
 They do not amend the published `0.6.0` contract until the repository's
