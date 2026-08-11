@@ -1315,6 +1315,63 @@
       "status": "approved"
     },
     {
+      "approval_id": "workflow-ci-throughput-deduplication-20260811",
+      "required_ancestor": "c6951dafa9a4cdd4c859b73b41824854c261ee7a",
+      "changed_paths": [
+        ".github/workflows/validate.yml",
+        "AGENTS.md",
+        "README.md",
+        "docs/WORKFLOW_STABILITY.md",
+        "skills/rusty-morphospace/references/project-workflow.md",
+        "skills/system-engineering/SKILL.md"
+      ],
+      "artifacts": [
+        {
+          "path": ".github/workflows/validate.yml",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 2864,
+          "sha256": "4d38a76da9a5158fe4b6da0e1ae88e03bc8ec23f5fe67fbf6d6d530fd58a1760"
+        },
+        {
+          "path": "AGENTS.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 35987,
+          "sha256": "5b7e3c810768d83e5458a02d25bb99d87463c8d319c7dd2c8d29922fe7b229c1"
+        },
+        {
+          "path": "README.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 30813,
+          "sha256": "8d0a2a8a0aface87ae6222647d04e7c8eedcb3d583cea383d5d2cb5cd21a832a"
+        },
+        {
+          "path": "docs/WORKFLOW_STABILITY.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 8402,
+          "sha256": "ea4a3b263ccf6211cb699debae7793178bee63db890c38dbc276d32d1b1de009"
+        },
+        {
+          "path": "skills/rusty-morphospace/references/project-workflow.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 11932,
+          "sha256": "3fc3934fb5183f152a1e7c057ec8f5040c52da9732f26e8337c2c38f077dff89"
+        },
+        {
+          "path": "skills/system-engineering/SKILL.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 30416,
+          "sha256": "95a30fae1fe7aaf521244d78817a03b69b195413c00a432741f2d97d297705b1"
+        }
+      ],
+      "status": "approved"
+    },
+    {
       "approval_id": "workflow-guard-profiles-resolver-stabilization-20260811",
       "required_ancestor": "2e70bd55f400a5c344324af8bb102c0b66cb5bda",
       "changed_paths": [
