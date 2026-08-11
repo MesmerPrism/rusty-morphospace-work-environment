@@ -309,15 +309,20 @@ if ($SelfTest) {
     )) {
         try {
             $quickTestPath = Join-Path (Join-Path $RepoRoot "scripts") $quickTest.script
-            $quickTestArguments = if ($null -ne $quickTest.PSObject.Properties["arguments"]) {
-                @($quickTest.arguments)
-            } else {
-                @()
-            }
+            [string[]]$quickTestArguments = if ($null -ne $quickTest.PSObject.Properties["arguments"]) {
+                @($quickTest.arguments | ForEach-Object { [string]$_ })
+            } else { @() }
             if ($quickTest.name -eq "workflow:public-boundary") {
-                & $quickTestPath -Root $RepoRoot @quickTestArguments
+                if ($quickTestArguments.Count -ne 0) {
+                    throw "Public-boundary Quick test declares unsupported additional arguments."
+                }
+                & $quickTestPath -Root $RepoRoot
+            } elseif ($quickTestArguments.Count -eq 0) {
+                & $quickTestPath
+            } elseif ($quickTestArguments.Count -eq 1 -and $quickTestArguments[0] -ceq "-SelfTest") {
+                & $quickTestPath -SelfTest
             } else {
-                & $quickTestPath @quickTestArguments
+                throw "Quick test '$($quickTest.name)' declares unsupported arguments."
             }
             Add-CheckResult -Name $quickTest.name -Status "ok" -Detail $quickTest.detail
         } catch {
