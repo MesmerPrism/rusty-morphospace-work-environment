@@ -17,10 +17,20 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkEnvironment.ps1
 git diff --check
 ```
 
-`Quick` covers portable contracts, scaffolding, skill bootstrap, and docs.
-`Standard` additionally runs the work-unit automation suite. `Deep` adds the
-closed-room validation-authority suites. A device is not part of any of these
-tiers.
+Standard delta, after a passing Quick checkpoint when the changed boundary
+requires it:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkUnitAutomation.ps1
+```
+
+`Quick` covers portable contracts, scaffolding, skill bootstrap, and docs. The
+standalone command above adds the Standard work-unit automation coverage
+without replaying Quick. `Test-WorkEnvironment.ps1 -SelfTest -Tier Standard`
+remains a cumulative compatibility aggregate for callers that have not already
+run Quick; do not invoke it after the Quick checkpoint. `Deep` adds the
+closed-room validation-authority suites and should run only when that risk is
+in scope. A device is not part of any of these tiers.
 
 During an edit loop, run only the focused owner test for the touched surface,
 for example:

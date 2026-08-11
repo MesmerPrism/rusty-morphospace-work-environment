@@ -132,13 +132,18 @@ iteration, read in this order:
 5. `docs/PROJECT_ISOLATION.md`
 6. `docs/INSTRUCTION_SYNCHRONIZATION.md`
 
-For broad validation, use `Test-WorkEnvironment.ps1 -SelfTest -Tier Quick`,
-then `Standard`, then `Deep` only when the risk warrants it. A single failed
-child check fails the aggregate. These tiers never authorize device work.
+For broad local validation, run
+`Test-WorkEnvironment.ps1 -SelfTest -Tier Quick` once, then invoke
+`Test-WorkUnitAutomation.ps1` only when the Standard delta is required. The
+cumulative `-Tier Standard` form remains a compatibility aggregate for callers
+that have not already run Quick; do not run it after a Quick checkpoint.
+Use Deep only when the risk warrants it. A single failed child check fails the
+selected aggregate. These tiers never authorize device work.
 Repository CI executes candidate Quick and Standard-delta jobs only for pull
 requests, retains the same matrix as post-merge `main` readback, and cancels
-superseded runs for the same exact head. The required Quick jobs own the shared
-Quick coverage; `standard-windows` runs only `Test-WorkUnitAutomation.ps1`.
+superseded runs within the same pull request without cancelling `main`
+readback. The required Quick jobs own the shared Quick coverage;
+`standard-windows` runs only `Test-WorkUnitAutomation.ps1`.
 Use focused checks on dirty source, then freeze and commit the candidate before
 one risk-selected handoff aggregate. Do not require matching dirty and clean
 aggregate receipts; a dirty aggregate is explicit diagnostic evidence.

@@ -105,12 +105,16 @@ They do not amend the published `0.6.0` contract until the repository's
 external validation-authority and release process accepts an exact candidate.
 
 Repository CI runs feature-branch validation from pull-request events, keeps a
-post-merge `main` readback, and cancels superseded runs for the same exact head.
+post-merge `main` readback, and cancels superseded runs within the same pull
+request without cancelling `main` readback.
 The required Quick jobs own shared coverage; the Windows Standard job executes
 only the additional work-unit automation gate. During local iteration, use
 focused checks; freeze and commit the candidate before its one risk-selected
 handoff aggregate. A dirty aggregate is diagnostic and is not a prerequisite
-for a matching clean receipt.
+for a matching clean receipt. For a local Standard handoff, run Quick once and
+then run `scripts/Test-WorkUnitAutomation.ps1` as the delta. Do not follow Quick
+with cumulative `Test-WorkEnvironment.ps1 -Tier Standard`, which replays the
+Quick suite for compatibility.
 
 1. Run `pwsh -NoProfile -File .\scripts\Test-PowerShellHost.ps1` and read
    [Setup Overview](docs/SETUP_OVERVIEW.md).

@@ -158,6 +158,11 @@ Select the smallest tier that can prove the changed boundary:
 - Use Deep checks for broad authority, graph, release, or device-gated
   consolidation when the risk warrants them.
 
+When a repository retains a cumulative Standard compatibility entrypoint, run
+Quick once and then invoke its explicit Standard-delta owner command. Do not
+follow a passing Quick checkpoint with cumulative Standard solely to replay the
+same Quick coverage.
+
 Treat a dirty aggregate as explicit diagnostic evidence, not a prerequisite
 for a clean handoff. Freeze and commit the coherent candidate, then run its
 risk-selected aggregate once against the exact base. Do not run the same
@@ -166,7 +171,8 @@ receipts. If a repair changes the candidate, rerun the nearest failed check
 first and execute the aggregate once more for the repaired commit.
 
 For repository CI, run feature-candidate validation from pull-request events
-and retain `main` push readback. Cancel superseded same-head runs. Keep Quick
+and retain `main` push readback. Group candidate runs by pull request so a new
+revision cancels its superseded run; do not cancel `main` readback. Keep Quick
 contexts required, and make a separate required Standard context execute only
 its additional delta instead of replaying Quick.
 
