@@ -39,6 +39,13 @@ try{
     }
     $dry=Invoke-MorphospaceResolveBlocker -WorkspaceRoot $workspace -UnitId 'active-unit' -RepoMapPath $map -BlockerResolutionReceipt $input -Timestamp '2026-01-01T00:00:00Z'
     Assert-Resolve (-not$dry.executed-and@(Read-MorphospaceProtocolJson (Join-Path $workspace 'workspace.state.json')).blockers.Count-eq2) 'dry run mutated blockers'
+    Invoke-ResolveGit $repo @('checkout','--detach',$head)|Out-Null
+    try{
+        $detached=$receipt|ConvertTo-Json -Depth 20|ConvertFrom-Json;$detached.repository_heads[0].branch='';Write-ResolveJson $input $detached
+        $detachedDry=Invoke-MorphospaceResolveBlocker -WorkspaceRoot $workspace -UnitId 'active-unit' -RepoMapPath $map -BlockerResolutionReceipt $input -Timestamp '2026-01-01T00:00:00Z'
+        Assert-Resolve (-not$detachedDry.executed) 'detached repository head was rejected'
+    }finally{Invoke-ResolveGit $repo @('checkout','main')|Out-Null}
+    Write-ResolveJson $input $receipt
     $damaged=$receipt|ConvertTo-Json -Depth 20|ConvertFrom-Json;$damaged.evidence[0].sha256='0'*64;Write-ResolveJson $input $damaged
     $tamperRejected=$false;try{Invoke-MorphospaceResolveBlocker -WorkspaceRoot $workspace -UnitId 'active-unit' -RepoMapPath $map -BlockerResolutionReceipt $input|Out-Null}catch{$tamperRejected=$true};Assert-Resolve $tamperRejected 'tampered evidence was accepted'
     $damaged=$receipt|ConvertTo-Json -Depth 20|ConvertFrom-Json;$damaged.preserve_blocker_ids=@();Write-ResolveJson $input $damaged
