@@ -158,6 +158,11 @@ Select the smallest tier that can prove the changed boundary:
 - Use Deep checks for broad authority, graph, release, or device-gated
   consolidation when the risk warrants them.
 
+For repository CI, run feature-candidate validation from pull-request events
+and retain `main` push readback. Cancel superseded same-head runs. Keep Quick
+contexts required, and make a separate required Standard context execute only
+its additional delta instead of replaying Quick.
+
 Run static, schema, contract, fixture, and synthetic checks before platform or
 device validation. Do not run a device suite to prove documentation or schema
 changes. When device validation is actually required, route it through

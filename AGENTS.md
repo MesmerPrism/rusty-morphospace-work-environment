@@ -135,6 +135,10 @@ iteration, read in this order:
 For broad validation, use `Test-WorkEnvironment.ps1 -SelfTest -Tier Quick`,
 then `Standard`, then `Deep` only when the risk warrants it. A single failed
 child check fails the aggregate. These tiers never authorize device work.
+Repository CI executes candidate Quick and Standard-delta jobs only for pull
+requests, retains the same matrix as post-merge `main` readback, and cancels
+superseded runs for the same exact head. The required Quick jobs own the shared
+Quick coverage; `standard-windows` runs only `Test-WorkUnitAutomation.ps1`.
 
 Select change authority separately: `guard_profile: fast` for bounded product
 iteration across its declared repositories and device stages, `labs` for

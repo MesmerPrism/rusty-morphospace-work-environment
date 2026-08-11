@@ -101,6 +101,11 @@ workflow trust-root changes. `risk_tier` governs evidence, not permission. For a
 in-scope feature failure, `ReturnToActive` must validate and retain the
 non-passing receipt while keeping the same current-unit owner; blocker plus
 `Resume` remains the stop-and-release route.
+Budget CI by exact candidate identity: validate feature work from pull requests,
+retain post-merge `main` readback, cancel only superseded same-head runs, and
+keep required tier contexts disjoint so Standard executes its delta rather than
+replaying required Quick coverage. Route action-pin or workflow changes through
+the locked validation-authority boundary.
 For a writable path or repository discovered inside the same active feature
 authority, use the additive `AmendActiveWriteScope` contract. It must bind
 exact current project/state/unit/event identities, prove the complete

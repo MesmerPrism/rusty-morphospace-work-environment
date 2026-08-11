@@ -104,6 +104,11 @@ amendment additions on this development line are unreleased candidate behavior.
 They do not amend the published `0.6.0` contract until the repository's
 external validation-authority and release process accepts an exact candidate.
 
+Repository CI runs feature-branch validation from pull-request events, keeps a
+post-merge `main` readback, and cancels superseded runs for the same exact head.
+The required Quick jobs own shared coverage; the Windows Standard job executes
+only the additional work-unit automation gate.
+
 1. Run `pwsh -NoProfile -File .\scripts\Test-PowerShellHost.ps1` and read
    [Setup Overview](docs/SETUP_OVERVIEW.md).
 2. Fill a private copy of [local.paths.example.json](templates/local.paths.example.json).
