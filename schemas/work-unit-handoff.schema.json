@@ -12,13 +12,14 @@
     "unit": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["unit_id", "path", "sha256", "status", "work_mode", "objective", "risk_tier", "device_requirement"],
+      "required": ["unit_id", "path", "sha256", "status", "work_mode", "guard_profile", "objective", "risk_tier", "device_requirement"],
       "properties": {
         "unit_id": { "$ref": "#/$defs/id" },
         "path": { "type": "string", "pattern": "^iteration-units/[^/]+[.]json$" },
         "sha256": { "$ref": "#/$defs/sha256" },
         "status": { "$ref": "#/$defs/id" },
         "work_mode": { "enum": ["feature", "validation-only"] },
+        "guard_profile": { "enum": ["fast", "labs", "locked"] },
         "objective": { "type": "string", "minLength": 1 },
         "risk_tier": { "enum": ["quick", "standard", "deep"] },
         "device_requirement": { "enum": ["forbidden", "none", "optional", "required"] }
@@ -67,7 +68,7 @@
     "claim_requirements": { "oneOf": [{ "type": "object" }, { "type": "null" }] },
     "resources": { "type": "array", "items": { "type": "object" } },
     "outputs": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
-    "next_action": { "enum": ["Ready", "Claim", "CompleteInstructionSurfaces", "BeginValidation", "RecordValidation", "Accept", "PreparePush", "terminal"] }
+    "next_action": { "enum": ["Ready", "Claim", "CompleteInstructionSurfaces", "BeginValidation", "ReturnToActive", "RecordValidation", "Accept", "PreparePush", "terminal"] }
   },
   "$defs": {
     "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" },

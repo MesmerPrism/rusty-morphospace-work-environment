@@ -94,6 +94,24 @@ from the unit, keep acceptance separate from a pass receipt, preserve blockers
 through resume/recovery, and report dirty, detached, ahead/behind, or divergent
 Git states without rewriting them. Push preparation records exact source-first,
 planning-last revisions but does not commit, push, or force-push.
+Select the unit's guard authority separately from validation depth: `fast` for
+bounded product iteration across declared repositories and device stages,
+`labs` for composition and product-authority work, and `locked` for releases or
+workflow trust-root changes. `risk_tier` governs evidence, not permission. For an
+in-scope feature failure, `ReturnToActive` must validate and retain the
+non-passing receipt while keeping the same current-unit owner; blocker plus
+`Resume` remains the stop-and-release route.
+For a writable path or repository discovered inside the same active feature
+authority, use the additive `AmendActiveWriteScope` contract. It must bind
+exact current project/state/unit/event identities, prove the complete
+before/after set stays within project authority, mutex-bind the unchanged
+project document, retain captain/status, and separate authorization from any
+source, Git, build, validation, device, or remote execution.
+Before expensive execution, prefer a hash-bound, project-produced
+`execution_preflight_observation.v1` for exact package/application, signer,
+grant, toolchain, source-lock, or bridge/port facts. The workflow may compare
+declared values and capabilities but must not generate the observation or
+mistake admission evidence for validation.
 An additive `<old>-superseded-by-<new>` edge must derive old from the event
 target and new from target state, then require the event ID to be their exact,
 unambiguous rendering. Publish only a v2 intent that hash-binds the original
@@ -113,9 +131,11 @@ stable clean observations, fresh remote readback, and exclusion of recognized
 execution/publication evidence. If all distinct prepared revisions are already
 reachable, use the separate complete-history reconstruction route instead.
 Generic blocker resolution and its additive evidence correction bind exact
-source bytes, heads, event/receipt/ledger history, and state/event-tail CAS;
-they preserve every unrelated workflow projection and never perform external
-cleanup or Git mutation.
+source bytes, attached-branch or exact detached heads, event/receipt/ledger
+history, and state/event-tail CAS. Bound replay discovery to direct workflow
+receipts and event-named receipt paths; nested product evidence is not generic
+workflow authority. These routes preserve every unrelated workflow projection
+and never perform external cleanup or Git mutation.
 An early planning checkpoint with every source still unpublished may be bound
 only through a publication-ordering interruption receipt in a fresh plan; exact
 live ancestry must match and the plan claims no corrected order or publication.

@@ -74,6 +74,15 @@ foreach ($dependency in @($(if ($unit.PSObject.Properties.Name -contains "read_o
 
 $eventLines = @(Get-Content -LiteralPath $eventsPath | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
 $workMode = if ($unit.PSObject.Properties.Name -contains "work_mode") { [string]$unit.work_mode } else { "feature" }
+$guardProfile = if ($unit.PSObject.Properties.Name -contains "guard_profile") {
+    [string]$unit.guard_profile
+} else {
+    switch ([string]$unit.risk_tier) {
+        "quick" { "fast" }
+        "deep" { "locked" }
+        default { "labs" }
+    }
+}
 $nextAction = switch ([string]$unit.status) {
     "proposed" { "Ready" }
     "ready" { "Claim" }
@@ -89,7 +98,7 @@ $document = [pscustomobject][ordered]@{
     project_id = [string]$spec.project_id
     unit = [pscustomobject][ordered]@{
         unit_id = $UnitId; path = $unitRelative; sha256 = Get-HandoffSha256 $unitPath
-        status = [string]$unit.status; work_mode = $workMode; objective = [string]$unit.objective
+        status = [string]$unit.status; work_mode = $workMode; guard_profile = $guardProfile; objective = [string]$unit.objective
         risk_tier = [string]$unit.risk_tier; device_requirement = [string]$unit.device_requirement
     }
     workspace = [pscustomobject][ordered]@{

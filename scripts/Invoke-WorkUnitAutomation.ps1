@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("Inspect", "Ready", "Claim", "Resume", "CompleteInstructionSurfaces", "CorrectActiveReadOnlyDependencies", "CorrectActiveProjectRepositoryScope", "BeginValidation", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RetirePreparedPush", "ReconcilePreparedPublication", "ReconcilePreparedPushTransactionSuffix", "ResolveBlocker", "CorrectResolvedBlockerEvidence", "CorrectHistoricalBlockerResolutionIntentBinding", "CorrectCompletedTransitionSemantics", "NormalizeEventLedgerPrefix", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix", "ReconcileExecutedPreparedPublication")]
+    [ValidateSet("Inspect", "Ready", "Claim", "Resume", "CompleteInstructionSurfaces", "AmendActiveWriteScope", "CorrectActiveReadOnlyDependencies", "CorrectActiveProjectRepositoryScope", "BeginValidation", "ReturnToActive", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RetirePreparedPush", "ReconcilePreparedPublication", "ReconcilePreparedPushTransactionSuffix", "ResolveBlocker", "CorrectResolvedBlockerEvidence", "CorrectHistoricalBlockerResolutionIntentBinding", "CorrectCompletedTransitionSemantics", "NormalizeEventLedgerPrefix", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix", "ReconcileExecutedPreparedPublication")]
     [string]$Action,
     [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
     [string]$UnitId = "",
@@ -29,6 +29,8 @@ param(
     [string]$ExpectedReadOnlyDependencyCorrectionSha256 = "",
     [string]$ProjectRepositoryScopeCorrection = "",
     [string]$ExpectedProjectRepositoryScopeCorrectionSha256 = "",
+    [string]$ActiveWriteScopeAmendment = "",
+    [string]$ExpectedActiveWriteScopeAmendmentSha256 = "",
     [string]$LedgerPrefixNormalizationId = "",
     [string]$ExpectedRepositoryHead = "",
     [string]$ExpectedProjectSha256 = "",
@@ -146,6 +148,17 @@ if ($Action -eq "CorrectActiveProjectRepositoryScope") {
     Invoke-MorphospaceCorrectActiveProjectRepositoryScope -WorkspaceRoot $WorkspaceRoot -UnitId $UnitId `
         -ProjectRepositoryScopeCorrection $ProjectRepositoryScopeCorrection `
         -ExpectedProjectRepositoryScopeCorrectionSha256 $ExpectedProjectRepositoryScopeCorrectionSha256 `
+        -Timestamp $Timestamp -OutPath $OutPath -Execute:$Execute |
+        ConvertTo-Json -Depth 32
+    return
+}
+if ($Action -eq "AmendActiveWriteScope") {
+    if (-not $ActiveWriteScopeAmendment) { throw "AmendActiveWriteScope requires ActiveWriteScopeAmendment." }
+    if (-not $OutPath) { throw "AmendActiveWriteScope requires OutPath." }
+    Import-Module (Join-Path $PSScriptRoot "ActiveWriteScopeAmendment.psm1") -Force
+    Invoke-MorphospaceAmendActiveWriteScope -WorkspaceRoot $WorkspaceRoot -UnitId $UnitId `
+        -ActiveWriteScopeAmendment $ActiveWriteScopeAmendment `
+        -ExpectedActiveWriteScopeAmendmentSha256 $ExpectedActiveWriteScopeAmendmentSha256 `
         -Timestamp $Timestamp -OutPath $OutPath -Execute:$Execute |
         ConvertTo-Json -Depth 32
     return

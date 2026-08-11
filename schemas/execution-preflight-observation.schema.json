@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/execution-preflight-observation.schema.json",
+  "title": "Execution preflight observation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "observation_id", "created_at", "subject", "values", "capabilities"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schema": { "const": "rusty.morphospace.workflow.execution_preflight_observation.v1" },
+    "observation_id": { "$ref": "#/$defs/id" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "subject": { "type": "string", "minLength": 1 },
+    "values": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key", "value"],
+        "properties": {
+          "key": { "$ref": "#/$defs/key" },
+          "value": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "capabilities": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["capability_id", "available", "detail"],
+        "properties": {
+          "capability_id": { "$ref": "#/$defs/id" },
+          "available": { "type": "boolean" },
+          "detail": {
+            "oneOf": [
+              { "type": "string", "minLength": 1 },
+              { "type": "null" }
+            ]
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" },
+    "key": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]{1,127}$" }
+  }
+}

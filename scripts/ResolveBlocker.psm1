@@ -94,7 +94,7 @@ function Assert-ResolveBlockerNotConsumed {
             throw 'ResolveBlocker receipt identity or canonical receipt hash was already consumed.'
         }
     }
-    foreach($file in @(Get-ChildItem (Join-Path $Workspace 'receipts') -File -Recurse -Filter *.json)){
+    foreach($file in @(Get-ChildItem (Join-Path $Workspace 'receipts') -File -Filter *.json)){
         [void]$candidates.Add([IO.Path]::GetRelativePath($Workspace,$file.FullName).Replace('\','/'))
     }
     foreach($relative in $candidates){
@@ -102,7 +102,8 @@ function Assert-ResolveBlockerNotConsumed {
             $path=Resolve-MorphospaceWorkspacePath $Workspace $relative -RequireLeaf
             $candidate=Read-MorphospaceProtocolJson $path
         }catch{continue}
-        if([string]$candidate.schema-cne'rusty.morphospace.workflow.blocker_resolution_receipt.v1'){continue}
+        if(-not($candidate.PSObject.Properties.Name-contains'schema')-or
+            [string]$candidate.schema-cne'rusty.morphospace.workflow.blocker_resolution_receipt.v1'){continue}
         $sameIdentity=([string]$candidate.receipt_id-ceq[string]$Receipt.receipt_id-and[string]$candidate.unit_id-ceq[string]$Receipt.unit_id-and[string]$candidate.blocker.blocker_id-ceq[string]$Receipt.blocker.blocker_id)
         $sameCanonical=(Get-MorphospaceCanonicalJsonSha256 $candidate)-ceq$CanonicalSha256
         if($sameIdentity-or$sameCanonical){throw 'ResolveBlocker receipt identity or canonical receipt hash was already consumed.'}

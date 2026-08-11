@@ -1142,6 +1142,20 @@ function Test-ProjectBundle {
         Assert-Contract ($script:RiskTiers -contains [string]$unit.risk_tier) "$Context unit '$($unit.unit_id)' has unknown risk tier."
         Assert-Contract ($script:DeviceRequirements -contains [string]$unit.device_requirement) "$Context unit '$($unit.unit_id)' has unknown device requirement."
         Assert-Contract ($script:PushCheckpoints -contains [string]$unit.push_checkpoint) "$Context unit '$($unit.unit_id)' has unknown push checkpoint."
+        if ($unit.PSObject.Properties.Name -contains "guard_profile") {
+            $guardProfile = [string]$unit.guard_profile
+            Assert-Contract ($script:GuardProfiles -contains $guardProfile) "$Context unit '$($unit.unit_id)' has unknown guard profile '$guardProfile'."
+            $guardRanks = @{ fast = 0; labs = 1; locked = 2 }
+            $lockedCategories = @("public-private-boundary", "workflow-automation", "state-machine", "validation-routing", "recovery")
+            $labsCategories = @("authority", "module-layout", "feature-activation", "device-policy", "repo-routing")
+            $minimumGuardRank = 0
+            if (@($effectiveChangeCategories | Where-Object { $lockedCategories -contains $_ }).Count -gt 0 -or [string]$unit.push_checkpoint -eq "release") {
+                $minimumGuardRank = 2
+            } elseif (@($effectiveChangeCategories | Where-Object { $labsCategories -contains $_ }).Count -gt 0) {
+                $minimumGuardRank = 1
+            }
+            Assert-Contract ([int]$guardRanks[$guardProfile] -ge $minimumGuardRank) "$Context unit '$($unit.unit_id)' guard profile '$guardProfile' is below the required authority level."
+        }
         Assert-Contract (@($unit.validation).Count -gt 0) "$Context unit '$($unit.unit_id)' needs validation commands."
         foreach ($validation in @($unit.validation)) {
             if ($null -eq $adoption) { Assert-Contract ($validationProfileIds -contains [string]$validation.profile_id) "$Context unit '$($unit.unit_id)' references unknown validation profile '$($validation.profile_id)'." }
@@ -1635,11 +1649,13 @@ if ($null -ne $lifecycle) {
     $script:IterationStateIds = @($lifecycle.iteration_states | ForEach-Object { [string]$_.id })
     $script:PromotionGates = @($lifecycle.promotion_gates | ForEach-Object { [string]$_ })
     $script:RiskTiers = @($lifecycle.risk_tiers | ForEach-Object { [string]$_ })
+    $script:GuardProfiles = @($lifecycle.guard_profiles | ForEach-Object { [string]$_.id })
     $script:WorkModes = @($lifecycle.work_modes | ForEach-Object { [string]$_ })
     $script:DeviceRequirements = @($lifecycle.device_requirements | ForEach-Object { [string]$_ })
     $script:PushCheckpoints = @($lifecycle.push_checkpoints | ForEach-Object { [string]$_ })
     $script:ChangeCategories = @($lifecycle.change_categories | ForEach-Object { [string]$_ })
     Assert-Contract (($script:WorkModes -join "|") -eq "feature|validation-only") "Workflow work modes must expose feature and validation-only in that order."
+    Assert-Contract (($script:GuardProfiles -join "|") -eq "fast|labs|locked") "Workflow guard profiles must expose fast, labs, and locked in increasing authority order."
     Assert-Contract ([int]$lifecycle.workflow_stability.feature_units_before_protocol_change -eq 3) "Workflow stability must freeze protocol changes for three feature units."
     Assert-Contract ([int]$lifecycle.workflow_stability.target_feature_work_percent -eq 70) "Workflow stability must target seventy percent feature work."
     Assert-Contract ([string]$lifecycle.workflow_stability.validation_only_instruction_action -eq "review-no-change") "Validation-only units must use review-no-change instruction handling."
@@ -1950,7 +1966,8 @@ $candidateContracts = @(
     [pscustomobject]@{ Template = "blocker-resolution-receipt.example.json"; Schema = "blocker-resolution-receipt-v1.schema.json"; Label = "Blocker-resolution" },
     [pscustomobject]@{ Template = "blocker-resolution-correction-receipt.example.json"; Schema = "blocker-resolution-correction-receipt-v1.schema.json"; Label = "Blocker-resolution correction" },
     [pscustomobject]@{ Template = "historical-blocker-resolution-intent-binding-correction.example.json"; Schema = "historical-blocker-resolution-intent-binding-correction-v1.schema.json"; Label = "Historical blocker-resolution intent-binding correction" },
-    [pscustomobject]@{ Template = "active-read-only-dependency-correction.example.json"; Schema = "active-read-only-dependency-correction-v1.schema.json"; Label = "Active read-only dependency correction" }
+    [pscustomobject]@{ Template = "active-read-only-dependency-correction.example.json"; Schema = "active-read-only-dependency-correction-v1.schema.json"; Label = "Active read-only dependency correction" },
+    [pscustomobject]@{ Template = "active-write-scope-amendment.example.json"; Schema = "active-write-scope-amendment-v1.schema.json"; Label = "Active write-scope amendment" }
 )
 foreach ($candidateContract in $candidateContracts) {
     $candidateTemplate = Join-Path $templatesRoot $candidateContract.Template
@@ -1965,7 +1982,7 @@ foreach ($candidateContract in $candidateContracts) {
     }
 }
 if (-not $SkipOwnerSelfTests) {
-    foreach ($selfTest in @("Test-LegacyEmbeddedPushPlanCompatibility.ps1","Test-PreparedPublicationReconstruction.ps1","Test-ResolveBlocker.ps1","Test-CorrectResolvedBlockerEvidence.ps1","Test-HistoricalBlockerResolutionIntentBindingCorrection.ps1","Test-CorrectActiveReadOnlyDependencies.ps1","Test-CorrectActiveProjectRepositoryScope.ps1","Test-CompletedTransitionSemanticCorrection.ps1","Test-TransitionLedger.ps1")) {
+    foreach ($selfTest in @("Test-LegacyEmbeddedPushPlanCompatibility.ps1","Test-PreparedPublicationReconstruction.ps1","Test-ResolveBlocker.ps1","Test-CorrectResolvedBlockerEvidence.ps1","Test-HistoricalBlockerResolutionIntentBindingCorrection.ps1","Test-CorrectActiveReadOnlyDependencies.ps1","Test-CorrectActiveProjectRepositoryScope.ps1","Test-ActiveWriteScopeAmendment.ps1","Test-CompletedTransitionSemanticCorrection.ps1","Test-TransitionLedger.ps1")) {
         try { Invoke-IsolatedWorkflowSelfTest -Path (Join-Path $RepoRoot "scripts\$selfTest") }
         catch { Add-Failure -Message "$selfTest failed: $($_.Exception.Message)" }
     }

@@ -93,6 +93,17 @@ Not included:
 
 ## Fast Path
 
+For project iteration, “fast” is an explicit authority profile, not a synonym
+for shallow testing. Use `guard_profile: fast` for bounded product work across
+its declared repositories and device stages, `labs` for product-authority or
+composition policy changes, and `locked` for releases or workflow trust-root
+changes. Select `risk_tier` independently.
+
+The guard-profile, execution-preflight, `ReturnToActive`, and active write-scope
+amendment additions on this development line are unreleased candidate behavior.
+They do not amend the published `0.6.0` contract until the repository's
+external validation-authority and release process accepts an exact candidate.
+
 1. Run `pwsh -NoProfile -File .\scripts\Test-PowerShellHost.ps1` and read
    [Setup Overview](docs/SETUP_OVERVIEW.md).
 2. Fill a private copy of [local.paths.example.json](templates/local.paths.example.json).
@@ -268,6 +279,13 @@ Run `Inspect` with the exact repository map before Claim. Its embedded
 `claim_preflight` resolves writable repositories, read-only input paths,
 instruction aliases/files, resource declarations, validation tier, and device
 selection. Claim repeats the check and does not change state unless it passes.
+The preflight also reports whether the unit's explicit `fast`, `labs`, or
+`locked` guard is sufficient. Immutable older units remain readable through
+risk-tier inference, while new units declare the guard.
+When a unit declares `execution_preflight`, Claim also verifies a hash-pinned
+observation of exact identity values and capabilities before an expensive build
+or device stage. The runner reads that evidence; it does not generate it or
+execute the expensive path.
 Use `scripts/New-WorkUnitHandoff.ps1` to bind exact unit/state/event/repository
 hashes and copy validation and acceptance commands verbatim for the next
 captain or execution stage.
@@ -294,6 +312,13 @@ unit already declares a writable path that its project repository allow-list
 omits. The action is additive-only, preserves the unit, and atomically advances
 the project revision, feature lock, and workspace registry through transition
 intent v3. See [Active Project Repository Scope Correction](docs/ACTIVE_PROJECT_REPOSITORY_SCOPE_CORRECTION.md).
+When implementation discovers another writable path or repository that is
+already inside the project allow-list and the same feature authority, use the
+two-phase `AmendActiveWriteScope` action. It adds scope only to the current
+active feature unit, retains its captain and status, and mutex-binds the
+unchanged project spec. It never edits project authority or performs source,
+Git, build, validation, device, or remote work. See
+[Active Write-Scope Amendment](docs/ACTIVE_WRITE_SCOPE_AMENDMENT.md).
 `CorrectCompletedTransitionSemantics` is not a compatibility mode for malformed
 events. Its builder derives the old and replacement from current retained
 state/unit evidence, requires the original event receipts and legacy-v1 intent
@@ -303,10 +328,17 @@ transition's sole artifact.
 hashed artifacts, exact acceptance/gate coverage, repository revisions,
 changed paths, and required device cleanup/fatal fields still match current
 state.
+For a non-passing feature attempt that remains in scope, `ReturnToActive`
+retains the same receipt and returns `validating` to `active` without releasing
+the captain or creating a blocker. Non-passing `RecordValidation` remains the
+stop-and-release path.
 One exact active-unit blocker may be cleared through the additive,
 product-neutral `ResolveBlocker` route. Its strict receipt binds the blocker,
-passing evidence, current repository heads, exact per-repository dirty source
-bytes, and every other blocker that must remain unchanged. See
+passing evidence, current attached-branch or exact detached repository heads,
+exact per-repository dirty source bytes, and every other blocker that must
+remain unchanged. Replay checks inspect direct workflow receipts and their
+bound event references without treating nested product evidence as resolution
+receipts. See
 [Generic Blocker Resolution](docs/BLOCKER_RESOLUTION.md).
 When that immutable resolution remains historically valid but its broader
 complete-resolution evidence was incomplete, use the separate append-only

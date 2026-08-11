@@ -33,7 +33,7 @@
       "items":{
         "type":"object","additionalProperties":false,
         "required":["repo_id","branch","revision"],
-        "properties":{"repo_id":{"$ref":"#/$defs/id"},"branch":{"type":"string","minLength":1},"revision":{"$ref":"#/$defs/revision"}}
+        "properties":{"repo_id":{"$ref":"#/$defs/id"},"branch":{"type":"string"},"revision":{"$ref":"#/$defs/revision"}}
       }
     },
     "repository_sources": {

@@ -136,6 +136,19 @@ For broad validation, use `Test-WorkEnvironment.ps1 -SelfTest -Tier Quick`,
 then `Standard`, then `Deep` only when the risk warrants it. A single failed
 child check fails the aggregate. These tiers never authorize device work.
 
+Select change authority separately: `guard_profile: fast` for bounded product
+iteration across its declared repositories and device stages, `labs` for
+product-authority/composition policy work, and `locked` for releases or
+workflow trust-root changes. `risk_tier` controls
+evidence depth, not authority. For an in-scope feature failure, use the typed
+`ReturnToActive` receipt path to keep the same captain; reserve blocker plus
+`Resume` for a real stop or authority release.
+
+For expensive package, signer, grant, toolchain, or bridge-dependent work,
+declare a hash-bound `execution_preflight_observation.v1` and exact assertions
+before Claim. The workflow reads this non-sensitive observation but never runs
+its producer, a build, a device command, or a bridge.
+
 Before Claim or an expensive final matrix, route the exact real consumer
 inventory through the advisory `Inspect` preflight and follow the candidate-
 freeze and control-plane budget in `docs/AUTONOMOUS_ITERATION.md`. Its
@@ -346,12 +359,23 @@ ancestry consumes the authorization.
   feature lock, and workspace registry, and never mutate source repositories.
   Route the full procedure to
   `docs/ACTIVE_PROJECT_REPOSITORY_SCOPE_CORRECTION.md`.
+- Expand the current active feature unit within existing project repository
+  authority only through `AmendActiveWriteScope` and the exact
+  `active_write_scope_amendment.v1` contract. Require project/state/unit/event
+  CAS, exact before/after path sets, at least one addition, a mutex-bound
+  unchanged project spec, and dry-run input-hash replay. It may add a
+  project-declared repository row but may not remove scope, edit project
+  authority, change captain/status, or perform source, Git, build, validation,
+  device, or remote work. Route the procedure to
+  `docs/ACTIVE_WRITE_SCOPE_AMENDMENT.md`.
 - Resolve one exact current active-unit blocker only through product-neutral
   `blocker_resolution_receipt.v1` and `ResolveBlocker`: revalidate its passing
-  hash-bound evidence, repository heads, and exact per-repository dirty source
-  bytes twice (including immediately before the ledger), preserve every other
-  blocker and workflow projection, and use state/unit/event-tail CAS. Product
-  owner schemas may be referenced as evidence but never become generic
+  hash-bound evidence, attached-branch or exact detached repository heads, and
+  exact per-repository dirty source bytes twice (including immediately before
+  the ledger), preserve every other blocker and workflow projection, and use
+  state/unit/event-tail CAS. Scan direct workflow receipts plus bound event
+  references for replay; nested product evidence is not a resolution receipt.
+  Product owner schemas may be referenced as evidence but never become generic
   workflow authority.
 - New project workspaces default to protocol v2. Resolve exact feature
   descriptors into a fingerprinted closed-world lock. Descriptor filesystem

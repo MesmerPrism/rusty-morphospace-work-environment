@@ -95,13 +95,42 @@ proposals, claims, validation results, acceptance, publication planning, and
 external execution as separate facts. A passing check is evidence, not
 acceptance. A prepared publication plan is not execution evidence.
 
+Select `guard_profile` independently from `risk_tier`. Use `fast` for bounded
+product work across its declared repositories and device stages, `labs` for
+composition, activation, product-authority, device-policy, or routing work, and
+`locked` for releases or workflow/state/validation/recovery trust-root changes.
+Risk tier controls evidence depth only. Treat inferred guards on immutable
+older units as compatibility; new units declare the guard explicitly.
+
+If an exact non-passing validation attempt remains inside the same feature
+unit's scope and authority, use `ReturnToActive` with the validation receipt.
+Keep the same captain and retain the attempt. Use blocker recording plus
+`Resume` only when work stops or current-unit authority is released. A
+validation-only unit cannot convert itself into product implementation.
+
+If the same active feature unit discovers another writable path or repository
+already authorized by the project, use `AmendActiveWriteScope`. Bind the exact
+project/state/unit/event inputs and complete before/after path sets, add at
+least one path, preserve every prior path, and replay the dry-run amendment
+hash. The transaction keeps captain/status, mutex-binds the unchanged project
+spec, and performs no source, Git, build, validation, device, or remote work.
+It is never a route to broaden project authority or a validation-only unit.
+
 Before Claim, run `Inspect` with the exact consumer inventory and inputs. Read
 v2 `claim_preflight.advisory_status`, its expected/completed/skipped/missing
 coverage, reason codes, candidate fingerprint, and bound contract identities.
 Treat `fail` as a known contradiction and `incomplete` as missing proof; never
 promote either to pass. Keep this result diagnostic and non-mutating, separate
 from `ready_to_claim`, until a separately reviewed shadow-evidence gate changes
-Claim authority.
+Claim authority. Guard sufficiency is a distinct lifecycle declaration gate,
+not a promoted advisory check: an insufficient explicit guard blocks Claim.
+
+For an expensive execution path, bind a project-produced
+`execution_preflight_observation.v1` and assert the exact non-sensitive identity
+values or capabilities needed by the unit. Use it for package/application ID,
+grant mode, signer fingerprint, toolchain/NDK/CLI capability, bridge/port
+readiness, or source-lock identity. Claim verifies bytes and assertions only;
+it does not generate the observation or execute a build/device/bridge stage.
 
 Before an expensive reusable-contract matrix, preflight the real consumer,
 iterate with focused checks, obtain independent review, freeze one candidate,

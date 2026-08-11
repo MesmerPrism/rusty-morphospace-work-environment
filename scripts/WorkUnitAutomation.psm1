@@ -393,6 +393,11 @@ function New-MorphospaceClaimPreflight {
     $diskRows = New-Object System.Collections.Generic.List[object]
     $toolRows = New-Object System.Collections.Generic.List[object]
     $inputRows = New-Object System.Collections.Generic.List[object]
+    $executionPreflightDeclared = $false
+    $executionPreflightStatus = 'not-declared'
+    $executionPreflightObservation = $null
+    $executionPreflightRows = New-Object System.Collections.Generic.List[object]
+    $executionPreflightIssues = New-Object System.Collections.Generic.List[string]
     if ($requirementsDeclared) {
         $requirements = $Unit.claim_requirements
         $minimumBytes = [long]$requirements.minimum_free_disk_mib * 1MB
@@ -441,19 +446,162 @@ function New-MorphospaceClaimPreflight {
             } catch { $issues.Add("Product input '$([string]$input.input_id)' failed preflight: $($_.Exception.Message)") | Out-Null }
             $inputRows.Add([pscustomobject][ordered]@{ input_id = [string]$input.input_id; repo_id = $repoId; path = $declaredPath.Replace('\', '/'); kind = [string]$input.kind; exists = $exists; kind_matches = $kindMatches; sha256 = $sha256; hash_matches = $hashMatches }) | Out-Null
         }
+        if ($requirements.PSObject.Properties.Name -contains 'execution_preflight') {
+            $executionPreflightDeclared = $true
+            $executionPreflightStatus = 'incomplete'
+            $preflightContract = $requirements.execution_preflight
+            $observationContract = $preflightContract.observation
+            $observationRepoId = [string]$observationContract.repo_id
+            $observationDeclaredPath = [string]$observationContract.path
+            $expectedObservationSha256 = [string]$observationContract.expected_sha256
+            $observedSha256 = $null
+            $observationHashMatches = $null
+            $observationSchema = $null
+            $observationId = $null
+            try {
+                if (-not $RepositoryMap.ContainsKey($observationRepoId)) { throw "repository is not mapped" }
+                $observationRelative = ConvertTo-MorphospaceRelativePath -Path $observationDeclaredPath
+                $observationRoot = [IO.Path]::GetFullPath([string]$RepositoryMap[$observationRepoId].path).TrimEnd('\', '/')
+                $observationAbsolute = [IO.Path]::GetFullPath([IO.Path]::Combine($observationRoot, $observationRelative))
+                if (-not $observationAbsolute.StartsWith($observationRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw "path escapes its mapped repository" }
+                if (-not (Test-Path -LiteralPath $observationAbsolute -PathType Leaf)) { throw "observation file is missing" }
+                $observedSha256 = Get-MorphospaceFileSha256 -Path $observationAbsolute
+                $observationHashMatches = $observedSha256 -ceq $expectedObservationSha256
+                if (-not $observationHashMatches) {
+                    $executionPreflightStatus = 'fail'
+                    throw "observation SHA-256 differs from expected_sha256"
+                }
+                $executionPreflightStatus = 'fail'
+                $executionObservationSchemaPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'schemas\execution-preflight-observation.schema.json'
+                $observationJson = Get-Content -LiteralPath $observationAbsolute -Raw
+                if (-not (Test-Json -Json $observationJson -SchemaFile $executionObservationSchemaPath -ErrorAction SilentlyContinue)) {
+                    throw "observation does not conform to execution-preflight-observation.schema.json"
+                }
+                $observationDocument = $observationJson | ConvertFrom-Json
+                $observationSchema = [string]$observationDocument.schema
+                $observationId = [string]$observationDocument.observation_id
+                if ($observationSchema -cne 'rusty.morphospace.workflow.execution_preflight_observation.v1') {
+                    $executionPreflightStatus = 'fail'
+                    throw "observation has the wrong schema ID"
+                }
+                if ($observationId -cnotmatch '^[a-z0-9][a-z0-9-]{1,127}$') {
+                    $executionPreflightStatus = 'fail'
+                    throw "observation_id is invalid"
+                }
+                $valueMap = @{}
+                foreach ($entry in @($observationDocument.values)) {
+                    $key = [string]$entry.key
+                    if ($valueMap.ContainsKey($key)) { $executionPreflightStatus = 'fail'; throw "observation repeats value key '$key'" }
+                    $valueMap[$key] = [string]$entry.value
+                }
+                $capabilityMap = @{}
+                foreach ($entry in @($observationDocument.capabilities)) {
+                    $key = [string]$entry.capability_id
+                    if ($capabilityMap.ContainsKey($key)) { $executionPreflightStatus = 'fail'; throw "observation repeats capability '$key'" }
+                    $capabilityMap[$key] = [bool]$entry.available
+                }
+                foreach ($assertion in @($preflightContract.assertions | Sort-Object assertion_id)) {
+                    $assertionId = [string]$assertion.assertion_id
+                    $kind = [string]$assertion.kind
+                    $key = [string]$assertion.key
+                    $expected = if ($null -ne $assertion.expected) { [string]$assertion.expected } else { $null }
+                    $observed = $null
+                    $passed = $false
+                    if ($kind -eq 'value-equals') {
+                        if ($valueMap.ContainsKey($key)) { $observed = [string]$valueMap[$key] }
+                        $passed = $null -ne $observed -and $observed -ceq $expected
+                    } elseif ($kind -eq 'capability-present') {
+                        if ($capabilityMap.ContainsKey($key)) { $observed = [bool]$capabilityMap[$key] }
+                        $passed = $null -ne $observed -and $observed -eq $true
+                    } else {
+                        $executionPreflightStatus = 'fail'
+                        throw "assertion '$assertionId' has unsupported kind '$kind'"
+                    }
+                    $executionPreflightRows.Add([pscustomobject][ordered]@{
+                        assertion_id = $assertionId; kind = $kind; key = $key
+                        expected = $expected; observed = $observed; passed = $passed
+                    }) | Out-Null
+                    if (-not $passed) {
+                        $executionPreflightStatus = 'fail'
+                        $executionPreflightIssues.Add("Execution preflight assertion '$assertionId' did not pass.") | Out-Null
+                    }
+                }
+                $executionPreflightStatus = if ($executionPreflightIssues.Count -eq 0) { 'pass' } else { 'fail' }
+            } catch {
+                $executionPreflightIssues.Add("Execution preflight observation failed: $($_.Exception.Message)") | Out-Null
+            }
+            $executionPreflightObservation = [pscustomobject][ordered]@{
+                repo_id = $observationRepoId
+                path = $observationDeclaredPath.Replace('\', '/')
+                expected_sha256 = $expectedObservationSha256
+                sha256 = $observedSha256
+                hash_matches = $observationHashMatches
+                schema = $observationSchema
+                observation_id = if ($observationId) { $observationId } else { $null }
+            }
+            foreach ($preflightIssue in @($executionPreflightIssues.ToArray())) { $issues.Add($preflightIssue) | Out-Null }
+        }
     }
 
     $lifecyclePath = Join-Path (Split-Path -Parent $PSScriptRoot) 'manifests\workflow-lifecycle.portable.json'
     $unitSchemaPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'schemas\iteration-unit.schema.json'
     $automationSchemaPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'schemas\work-unit-automation-receipt.schema.json'
+    $executionObservationSchemaPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'schemas\execution-preflight-observation.schema.json'
     $validatorRegistryPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'manifests\owner-validator-registry.json'
     $instructionRouterPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'skills\rusty-morphospace\references\project-workflow.md'
     $lifecycle = Get-Content -LiteralPath $lifecyclePath -Raw | ConvertFrom-Json
+    $guardProfileExplicit = $Unit.PSObject.Properties.Name -contains 'guard_profile'
+    $guardProfileId = if ($guardProfileExplicit) {
+        [string]$Unit.guard_profile
+    } else {
+        switch ([string]$Unit.risk_tier) {
+            'quick' { 'fast' }
+            'deep' { 'locked' }
+            default { 'labs' }
+        }
+    }
+    $guardReasonCodes = New-Object System.Collections.Generic.List[string]
+    $knownGuardProfiles = @($lifecycle.guard_profiles | ForEach-Object { [string]$_.id })
+    $guardRanks = @{ fast = 0; labs = 1; locked = 2 }
+    $guardCategoryAliases = @{}
+    foreach ($alias in @($lifecycle.change_category_aliases)) { $guardCategoryAliases[[string]$alias.alias] = [string]$alias.canonical }
+    $guardEffectiveCategories = @($Unit.change_categories | ForEach-Object {
+        $category = [string]$_
+        if ($guardCategoryAliases.ContainsKey($category)) { $guardCategoryAliases[$category] } else { $category }
+    })
+    $lockedCategories = @('public-private-boundary', 'workflow-automation', 'state-machine', 'validation-routing', 'recovery')
+    $labsCategories = @('authority', 'module-layout', 'feature-activation', 'device-policy', 'repo-routing')
+    $requiredGuardRank = 0
+    if (@($guardEffectiveCategories | Where-Object { $lockedCategories -contains $_ }).Count -gt 0 -or [string]$Unit.push_checkpoint -eq 'release') {
+        $requiredGuardRank = 2
+    } elseif (@($guardEffectiveCategories | Where-Object { $labsCategories -contains $_ }).Count -gt 0) {
+        $requiredGuardRank = 1
+    }
+    if ($guardProfileExplicit) {
+        if ($knownGuardProfiles -notcontains $guardProfileId) {
+            $guardReasonCodes.Add('guard-profile-unknown') | Out-Null
+            $issues.Add("Explicit guard profile '$guardProfileId' is not declared by the lifecycle contract.") | Out-Null
+        } elseif ([int]$guardRanks[$guardProfileId] -lt $requiredGuardRank) {
+            $requiredGuardProfile = @('fast', 'labs', 'locked')[$requiredGuardRank]
+            $guardReasonCodes.Add('guard-profile-insufficient') | Out-Null
+            $issues.Add("Guard profile '$guardProfileId' is insufficient; this unit requires '$requiredGuardProfile' or stricter authority.") | Out-Null
+        }
+    } else {
+        $guardReasonCodes.Add('legacy-risk-inference') | Out-Null
+    }
+    $guardProfile = [pscustomobject][ordered]@{
+        id = $guardProfileId
+        explicit = $guardProfileExplicit
+        source = if ($guardProfileExplicit) { 'unit' } else { 'legacy-risk-inference' }
+        status = if (-not $guardProfileExplicit) { 'legacy-compatible' } elseif ($guardReasonCodes.Count -eq 0) { 'pass' } else { 'fail' }
+        reason_codes = @($guardReasonCodes.ToArray())
+    }
     $contractBindings = [pscustomobject][ordered]@{
         project_revision = [int]$Spec.revision
         workflow_lifecycle_sha256 = Get-MorphospaceFileSha256 -Path $lifecyclePath
         iteration_unit_schema_sha256 = Get-MorphospaceFileSha256 -Path $unitSchemaPath
         automation_receipt_schema_sha256 = Get-MorphospaceFileSha256 -Path $automationSchemaPath
+        execution_preflight_observation_schema_sha256 = Get-MorphospaceFileSha256 -Path $executionObservationSchemaPath
         owner_validator_registry_sha256 = Get-MorphospaceFileSha256 -Path $validatorRegistryPath
         instruction_router_sha256 = Get-MorphospaceFileSha256 -Path $instructionRouterPath
     }
@@ -474,6 +622,13 @@ function New-MorphospaceClaimPreflight {
         }) | Out-Null
     }
     & $addCheck 'contract-bindings' 'pass' 'completed' @()
+    if (-not $guardProfileExplicit) {
+        & $addCheck 'guard-profile' 'pass' 'skipped' @('legacy-risk-inference')
+    } elseif ($guardReasonCodes.Count -gt 0) {
+        & $addCheck 'guard-profile' 'fail' 'completed' @($guardReasonCodes.ToArray())
+    } else {
+        & $addCheck 'guard-profile' 'pass' 'completed' @()
+    }
 
     $knownProfileIds = @($Spec.validation_profiles | ForEach-Object { [string]$_.profile_id })
     $unknownProfileIds = @($Unit.validation | ForEach-Object { [string]$_.profile_id } | Where-Object { $knownProfileIds -notcontains $_ } | Sort-Object -Unique)
@@ -542,6 +697,16 @@ function New-MorphospaceClaimPreflight {
         else { & $addCheck 'claim-requirements' 'pass' 'completed' @() }
     }
 
+    if (-not $executionPreflightDeclared) {
+        & $addCheck 'execution-preflight' 'pass' 'skipped' @('not-applicable')
+    } elseif ($executionPreflightStatus -eq 'pass') {
+        & $addCheck 'execution-preflight' 'pass' 'completed' @()
+    } elseif ($executionPreflightStatus -eq 'fail') {
+        & $addCheck 'execution-preflight' 'fail' 'completed' @('execution-preflight-mismatch')
+    } else {
+        & $addCheck 'execution-preflight' 'incomplete' 'missing' @('execution-preflight-unavailable')
+    }
+
     if ($resources.Count -eq 0) {
         & $addCheck 'resource-declaration-uniqueness' 'pass' 'skipped' @('not-applicable')
     } elseif (@($resources | Group-Object resource_id | Where-Object { $_.Count -gt 1 }).Count -gt 0) {
@@ -599,10 +764,18 @@ function New-MorphospaceClaimPreflight {
         advisory_status = $advisoryStatus
         candidate_fingerprint = $candidateFingerprint
         state_mutation_performed = $false
-        reason_codes = @($checkRows | ForEach-Object { @($_.reason_codes) } | Sort-Object -Unique | Where-Object { $_ -notin @('not-applicable', 'legacy-implicit-work-mode') })
+        reason_codes = @($checkRows | ForEach-Object { @($_.reason_codes) } | Sort-Object -Unique | Where-Object { $_ -notin @('not-applicable', 'legacy-implicit-work-mode', 'legacy-risk-inference') })
         contract_bindings = $contractBindings
         coverage = $coverage
         validation_tier = $ValidationTier
+        guard_profile = $guardProfile
+        execution_preflight = [pscustomobject][ordered]@{
+            declared = $executionPreflightDeclared
+            status = $executionPreflightStatus
+            observation = $executionPreflightObservation
+            assertions = @($executionPreflightRows.ToArray())
+            issues = @($executionPreflightIssues.ToArray())
+        }
         requirements_declared = $requirementsDeclared
         disk = @($diskRows.ToArray())
         tools = @($toolRows.ToArray())
@@ -1341,7 +1514,7 @@ function Invoke-MorphospaceAuthorityRunnerForRecord {
 function Invoke-MorphospaceWorkUnitAutomation {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory = $true)][ValidateSet("Inspect", "Ready", "Claim", "Resume", "CompleteInstructionSurfaces", "BeginValidation", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix", "ReconcileExecutedPreparedPublication")][string]$Action,
+        [Parameter(Mandatory = $true)][ValidateSet("Inspect", "Ready", "Claim", "Resume", "CompleteInstructionSurfaces", "BeginValidation", "ReturnToActive", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix", "ReconcileExecutedPreparedPublication")][string]$Action,
         [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
         [string]$UnitId = "",
         [string]$RepoMapPath = "",
@@ -1571,6 +1744,41 @@ function Invoke-MorphospaceWorkUnitAutomation {
                     $unit.status = "validating"
                     $event = New-MorphospaceEvent -State $state -Events $events -UnitId $UnitId -ActionSlug "validating" -Timestamp $Timestamp -EventType "state-transition" -Summary "Entered validation with a deterministic command, instruction, graph, and device-impact plan."
                 }
+            }
+        }
+        "ReturnToActive" {
+            if ($beforeStatus -ne "validating" -or [string]$state.current_unit -ne $UnitId) {
+                throw "ReturnToActive requires the matching validating unit."
+            }
+            $workMode = if ($unit.PSObject.Properties.Name -contains 'work_mode') { [string]$unit.work_mode } else { 'feature' }
+            if ($workMode -ne 'feature') { throw "ReturnToActive is available only to feature units." }
+            if ($ValidationResult -eq 'pass') { throw "ReturnToActive requires a non-passing ValidationResult." }
+            if (-not $ValidationReceipt) { throw "ReturnToActive requires ValidationReceipt for the retained attempt." }
+            if (($unit.PSObject.Properties.Name -contains 'tags') -and @($unit.tags | Where-Object { [string]$_ -eq 'receipt-security' }).Count -ne 0) {
+                throw "Receipt-security units must record validation through the pinned authority path."
+            }
+            $null = Test-MorphospaceValidationReceipt `
+                -WorkspaceRoot $resolvedWorkspace `
+                -ReceiptReference $ValidationReceipt `
+                -Spec $spec `
+                -Unit $unit `
+                -RepositoryMap $repoMap `
+                -RepositoryStates $repoStatesArray `
+                -ValidationMatrix $validationMatrix `
+                -ExpectedResult $ValidationResult `
+                -ExpectedTier $ValidationTier
+            $validatedReceiptPath = Resolve-MorphospaceReceiptPath -WorkspaceRoot $resolvedWorkspace -ReceiptReference $ValidationReceipt
+            $workspacePrefix = $resolvedWorkspace.TrimEnd("\", "/") + [System.IO.Path]::DirectorySeparatorChar
+            $ValidationReceipt = $validatedReceiptPath.Substring($workspacePrefix.Length).Replace("\", "/")
+            $transition = "validation-$ValidationResult-to-active"
+            if ($Execute) {
+                $state.validation_checkpoint = [pscustomobject][ordered]@{
+                    tier = $ValidationTier
+                    receipt = $ValidationReceipt
+                    result = $ValidationResult
+                }
+                $unit.status = 'active'
+                $event = New-MorphospaceEvent -State $state -Events $events -UnitId $UnitId -ActionSlug "validation-$ValidationResult-return" -Timestamp $Timestamp -EventType "validation" -Summary "Retained a non-passing validation attempt and returned the same feature unit to active for an in-scope correction." -Receipts @($ValidationReceipt)
             }
         }
         "PreflightValidation" {

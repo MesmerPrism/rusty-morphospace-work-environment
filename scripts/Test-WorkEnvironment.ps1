@@ -304,14 +304,25 @@ if ($SelfTest) {
         [pscustomobject]@{ name = "workflow:completed-transition-semantic-correction"; script = "Test-CompletedTransitionSemanticCorrection.ps1"; detail = "Validated derived legacy-v1 supersession correction, historical-byte preservation, authenticated projection, interruption repair, replay, path, CAS, and damaged-evidence rejection." },
         [pscustomobject]@{ name = "workflow:historical-blocker-resolution-intent-binding-correction"; script = "Test-HistoricalBlockerResolutionIntentBindingCorrection.ps1"; detail = "Validated exact cross-unit current authority, terminal CRLF-to-LF hash recovery, historical-byte preservation, transactional projection, replay integration, and damaged-evidence rejection." },
         [pscustomobject]@{ name = "workflow:active-read-only-dependency-correction"; script = "Test-CorrectActiveReadOnlyDependencies.ps1"; detail = "Validated exact active/current CAS, bounded dependency changes, project paths, Git commit/tree identities, transaction ownership, and no Git/device/remote mutation." },
-        [pscustomobject]@{ name = "workflow:active-project-repository-scope-correction"; script = "Test-CorrectActiveProjectRepositoryScope.ps1"; detail = "Validated exact active/current CAS, additive unit-bounded project scope, atomic project/lock/state projections, recovery, and no Git/device/remote mutation." }
+        [pscustomobject]@{ name = "workflow:active-project-repository-scope-correction"; script = "Test-CorrectActiveProjectRepositoryScope.ps1"; detail = "Validated exact active/current CAS, additive unit-bounded project scope, atomic project/lock/state projections, recovery, and no Git/device/remote mutation." },
+        [pscustomobject]@{ name = "workflow:active-write-scope-amendment"; script = "Test-ActiveWriteScopeAmendment.ps1"; detail = "Validated additive project-bounded active feature-unit write-scope amendments, exact CAS, transaction ownership, and no Git/device/remote mutation." }
     )) {
         try {
             $quickTestPath = Join-Path (Join-Path $RepoRoot "scripts") $quickTest.script
+            [string[]]$quickTestArguments = if ($null -ne $quickTest.PSObject.Properties["arguments"]) {
+                @($quickTest.arguments | ForEach-Object { [string]$_ })
+            } else { @() }
             if ($quickTest.name -eq "workflow:public-boundary") {
+                if ($quickTestArguments.Count -ne 0) {
+                    throw "Public-boundary Quick test declares unsupported additional arguments."
+                }
                 & $quickTestPath -Root $RepoRoot
-            } else {
+            } elseif ($quickTestArguments.Count -eq 0) {
                 & $quickTestPath
+            } elseif ($quickTestArguments.Count -eq 1 -and $quickTestArguments[0] -ceq "-SelfTest") {
+                & $quickTestPath -SelfTest
+            } else {
+                throw "Quick test '$($quickTest.name)' declares unsupported arguments."
             }
             Add-CheckResult -Name $quickTest.name -Status "ok" -Detail $quickTest.detail
         } catch {

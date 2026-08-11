@@ -16,7 +16,7 @@ Every implementation slice has one `iteration-unit` record containing:
 - allowed repositories and narrower allowed paths;
 - explicit non-scope;
 - acceptance proofs and validation commands;
-- risk tier and device requirement;
+- guard profile, risk tier, and device requirement;
 - expected outputs;
 - commit policy and push checkpoint;
 - change categories and instruction impact;
@@ -44,7 +44,7 @@ each application-specific noun.
 ## Unit State Machine
 
 ```text
-proposed -> ready -> active -> validating -> accepted
+proposed -> ready -> active <-> validating -> accepted
                          |          |
                          +-> blocked+
                          +-> superseded
@@ -55,6 +55,35 @@ workspace. A blocked unit records the condition, checks attempted, and the
 user or external event needed to resume. Work may continue on a different
 ready unit only after workspace state is updated so there is still one current
 authority.
+
+For an in-scope feature correction, `ReturnToActive` validates and retains a
+non-passing `validation_receipt.v1`, changes `validating` back to `active`, and
+keeps the same `current_unit`. It does not create a blocker or release the unit
+captain. Use the existing non-passing `RecordValidation` path when the result is
+a genuine blocker, requires another owner, or should release current-unit
+authority. Validation-only units cannot use `ReturnToActive`; a discovered
+product defect becomes a separately proposed feature unit.
+
+## Guard Profiles
+
+`guard_profile` selects change authority; `risk_tier` independently selects
+validation depth. A fast unit may still require deep evidence, and a locked
+unit may use focused checks while iterating before its final matrix.
+
+- `fast` is the default shape for bounded implementation, validation, or
+  documentation work. It may span the unit's declared repositories, host and
+  device stages, and local or integration checkpoints, but not a release or
+  change to product/workflow authority.
+- `labs` covers module/activation changes, product authority, device policy,
+  and repository routing without release or workflow trust-root authority.
+- `locked` is required for a `release` checkpoint and for public/private
+  boundary, workflow automation, state-machine, validation-routing, or recovery
+  changes.
+
+New units declare the profile explicitly. Immutable units that predate the
+field remain readable through `quick -> fast`, `standard -> labs`, and
+`deep -> locked` inference; inference is compatibility, not permission to omit
+the field from new work.
 
 Use the fail-closed automation `Ready` action for the proposal-review
 transition. It requires every prerequisite to be accepted, appends the state
@@ -99,6 +128,10 @@ selection that a later Claim would receive. The additive v2
   instruction-router bindings;
 - the complete expected check set plus completed, skipped, and missing checks;
 - stable reason codes and `state_mutation_performed: false`.
+- the explicit or compatibility-inferred guard profile and whether it is
+  sufficient for the declared authority category and push boundary.
+- an optional hash-bound `execution_preflight` observation plus exact value and
+  capability assertions required before Claim.
 
 `fail` means the observed declaration contradicts a known contract.
 `incomplete` means required proof or a required input is unavailable. A
@@ -107,10 +140,23 @@ skipped check must identify why it is not applicable; it is not missing proof.
 inapplicable. The preflight does not run acceptance commands, prove product
 behavior, or grant repository, publication, device, or user authority.
 
-This is a shadow result. Keep the existing `ready_to_claim` lifecycle result
-separate and keep Claim behavior unchanged. Do not make
-`advisory_status: pass` a Claim requirement until the separately reviewed
-promotion gate has enough real shadow evidence and a rollback decision.
+The v2 compatibility and coverage checks remain a shadow result. Keep their
+`advisory_status` separate from `ready_to_claim`; do not make advisory pass a
+Claim requirement until a separately reviewed promotion gate has enough real
+shadow evidence and a rollback decision. Explicit guard sufficiency is the one
+separate lifecycle declaration gate: an insufficient explicit guard adds a
+claim issue immediately because the unit is requesting authority it does not
+declare.
+
+Use `execution_preflight` when the expensive path depends on runtime inputs that
+ordinary file/tool presence cannot prove: package or application identity,
+grant mode, signer/keystore fingerprint, CLI or NDK capability, bridge/port
+availability, or an exact source-lock identity. The owning project produces a
+small `execution_preflight_observation.v1`; the unit binds its SHA-256 and names
+only the values/capabilities it needs. Claim reads and checks the observation
+but does not run its producer, build, device, or bridge. Keep secrets out of the
+observation; record only non-sensitive identities, fingerprints, and capability
+results.
 
 Before publishing a reusable authority/workflow contract or running its final
 expensive matrix, perform one bounded read-only compatibility preflight against
@@ -254,7 +300,8 @@ ignore list and cannot admit an in-flight or newly authored unit.
 | `deep` | Before a coordinated push or promotion. | Full repo checks, graph/inventory refresh where relevant, cross-consumer and integration evidence. |
 
 Live headset work is a separate device gate. A source-only unit must not claim
-device acceptance.
+device acceptance. Validation tiers do not grant authority: select authority
+with `guard_profile` and evidence depth with `risk_tier`.
 
 ## Git Checkpoint Policy
 
@@ -264,6 +311,8 @@ device acceptance.
 - Do not mix unrelated projects or untracked user work into a unit.
 - Push only at the unit's declared checkpoint: `none`, `local-only`,
   `integration-batch`, or `release`.
+- A `release` checkpoint requires `guard_profile: locked`; fast and labs units
+  may still make regular local commits and use declared integration batches.
 - An `integration-batch` may collect several accepted units. Before pushing,
   run the deep gates named by those units and create one coordinated receipt
   listing repositories, branches, commits, validation, and rollback points.
@@ -416,8 +465,9 @@ successful push is not proof that the whole batch is complete.
 `scripts/Invoke-WorkUnitAutomation.ps1` is the portable owner for mechanical
 work-unit transitions and preparation artifacts. It supports `Inspect`,
 `Ready`, `Claim`, `Resume`, `CompleteInstructionSurfaces`,
-`CorrectActiveReadOnlyDependencies`, `CorrectActiveProjectRepositoryScope`,
-`BeginValidation`,
+`AmendActiveWriteScope`, `CorrectActiveReadOnlyDependencies`,
+`CorrectActiveProjectRepositoryScope`,
+`BeginValidation`, `ReturnToActive`,
 `RecordValidation`, `Accept`,
 `PreparePush`, `Recover`, `ReconcilePublication`,
 `AdoptPublishedPlanningAuthority`, and the narrow
@@ -442,6 +492,10 @@ The CLI is deliberately narrower than an autonomous coding agent:
   can add only exact paths already declared by the active unit; its v3 journal
   synchronizes project, feature lock, and workspace registry while preserving
   the unit;
+- active write-scope amendment requires the exact current active feature unit,
+  project/state/unit/event CAS, complete before/after paths, at least one
+  project-approved addition, and dry-run input-hash replay; it retains captain,
+  status, project authority, and every unit field except `allowed_repositories`;
 - it reads Git state but never runs checkout, reset, stash, commit, push, or
   force-push;
 - it never runs validation commands or device commands;
@@ -540,6 +594,13 @@ recoverable transition-ledger v3 projections. See
 [Active Project Repository Scope Correction](ACTIVE_PROJECT_REPOSITORY_SCOPE_CORRECTION.md)
 for its exact-CAS input and dry-run hash replay.
 
+When the same active feature work discovers another writable path or
+repository that the project already authorizes, use the separate two-phase
+`AmendActiveWriteScope` action. It keeps the captain and status, is
+additive-only, and cannot expand project authority. See
+[Active Write-Scope Amendment](ACTIVE_WRITE_SCOPE_AMENDMENT.md) for the input,
+dry-run replay, transaction, and negative boundaries.
+
 Inspection example:
 
 ```powershell
@@ -637,7 +698,9 @@ case-alias, projection, ledger, intent, completion, and stage targets before
 intent publication, and move into their final targets before projections.
 `Recover` only repairs an unambiguous stale current-unit pointer; it preserves
 blockers and prior validation evidence. `Resume` is the explicit transition
-out of `blocked`.
+out of `blocked`. `ReturnToActive` is the distinct same-owner transition from
+`validating` to `active`; it requires a non-passing exact-scope validation
+receipt and preserves that attempt without manufacturing a blocker.
 
 `ResolveBlocker` is a separate product-neutral action for one exact blocker on
 the current active unit. It validates `blocker_resolution_receipt.v1`, rechecks

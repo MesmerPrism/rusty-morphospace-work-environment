@@ -9,7 +9,7 @@
     "schema": { "const": "rusty.morphospace.workflow.work_unit_automation_receipt.v1" },
     "project_id": { "$ref": "#/$defs/id" },
     "unit_id": { "$ref": "#/$defs/id" },
-    "action": { "enum": ["Inspect", "Claim", "Resume", "Ready", "CompleteInstructionSurfaces", "BeginValidation", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix", "ReconcileExecutedPreparedPublication"] },
+    "action": { "enum": ["Inspect", "Claim", "Resume", "Ready", "CompleteInstructionSurfaces", "BeginValidation", "ReturnToActive", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix", "ReconcileExecutedPreparedPublication"] },
     "timestamp": { "type": "string", "format": "date-time" },
     "executed": { "type": "boolean" },
     "transition": { "type": "string", "minLength": 1 },
@@ -46,12 +46,13 @@
         },
         "contract_bindings": {
           "type": "object", "additionalProperties": false,
-          "required": ["project_revision", "workflow_lifecycle_sha256", "iteration_unit_schema_sha256", "automation_receipt_schema_sha256", "owner_validator_registry_sha256", "instruction_router_sha256"],
+          "required": ["project_revision", "workflow_lifecycle_sha256", "iteration_unit_schema_sha256", "automation_receipt_schema_sha256", "execution_preflight_observation_schema_sha256", "owner_validator_registry_sha256", "instruction_router_sha256"],
           "properties": {
             "project_revision": { "type": "integer", "minimum": 1 },
             "workflow_lifecycle_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
             "iteration_unit_schema_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
             "automation_receipt_schema_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "execution_preflight_observation_schema_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
             "owner_validator_registry_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
             "instruction_router_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
           }
@@ -80,6 +81,67 @@
           }
         },
         "validation_tier": { "enum": ["quick", "standard", "deep"] },
+        "guard_profile": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "explicit", "source", "status", "reason_codes"],
+          "properties": {
+            "id": { "enum": ["fast", "labs", "locked"] },
+            "explicit": { "type": "boolean" },
+            "source": { "enum": ["unit", "legacy-risk-inference"] },
+            "status": { "enum": ["pass", "fail", "legacy-compatible"] },
+            "reason_codes": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" }
+            }
+          }
+        },
+        "execution_preflight": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["declared", "status", "observation", "assertions", "issues"],
+          "properties": {
+            "declared": { "type": "boolean" },
+            "status": { "enum": ["pass", "fail", "incomplete", "not-declared"] },
+            "observation": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["repo_id", "path", "expected_sha256", "sha256", "hash_matches", "schema", "observation_id"],
+                  "properties": {
+                    "repo_id": { "$ref": "#/$defs/id" },
+                    "path": { "type": "string", "minLength": 1 },
+                    "expected_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+                    "sha256": { "oneOf": [{ "type": "string", "pattern": "^[0-9a-f]{64}$" }, { "type": "null" }] },
+                    "hash_matches": { "oneOf": [{ "type": "boolean" }, { "type": "null" }] },
+                    "schema": { "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }] },
+                    "observation_id": { "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] }
+                  }
+                },
+                { "type": "null" }
+              ]
+            },
+            "assertions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["assertion_id", "kind", "key", "expected", "observed", "passed"],
+                "properties": {
+                  "assertion_id": { "$ref": "#/$defs/id" },
+                  "kind": { "enum": ["value-equals", "capability-present"] },
+                  "key": { "type": "string", "minLength": 1 },
+                  "expected": { "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }] },
+                  "observed": { "oneOf": [{ "type": "string" }, { "type": "boolean" }, { "type": "null" }] },
+                  "passed": { "type": "boolean" }
+                }
+              }
+            },
+            "issues": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+          }
+        },
         "requirements_declared": { "type": "boolean" },
         "disk": { "type": "array", "items": { "type": "object" } },
         "tools": { "type": "array", "items": { "type": "object" } },
@@ -94,7 +156,7 @@
       "allOf": [
         {
           "if": { "properties": { "version": { "const": "v2" } }, "required": ["version"] },
-          "then": { "required": ["advisory_status", "candidate_fingerprint", "state_mutation_performed", "reason_codes", "contract_bindings", "coverage"] }
+          "then": { "required": ["advisory_status", "candidate_fingerprint", "state_mutation_performed", "reason_codes", "contract_bindings", "coverage", "guard_profile", "execution_preflight"] }
         },
         {
           "if": { "properties": { "version": { "const": "v1" } }, "required": ["version"] },
@@ -106,7 +168,9 @@
                 { "required": ["state_mutation_performed"] },
                 { "required": ["reason_codes"] },
                 { "required": ["contract_bindings"] },
-                { "required": ["coverage"] }
+                { "required": ["coverage"] },
+                { "required": ["guard_profile"] },
+                { "required": ["execution_preflight"] }
               ]
             }
           }

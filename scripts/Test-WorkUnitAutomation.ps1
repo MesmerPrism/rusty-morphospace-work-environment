@@ -374,6 +374,26 @@ try {
     Invoke-TestGit -Path $repo -Arguments @("add", "AGENTS.md", "docs/workflow.md") | Out-Null
     Invoke-TestGit -Path $repo -Arguments @("commit", "-m", "add instruction surfaces") | Out-Null
     Invoke-TestGit -Path $repo -Arguments @("push", "origin", "main") | Out-Null
+    $executionObservationPath = Join-Path $repo "src\execution-preflight.json"
+    Write-TestJson -Path $executionObservationPath -Value ([ordered]@{
+        '$schema' = "../schemas/execution-preflight-observation.schema.json"
+        schema = "rusty.morphospace.workflow.execution_preflight_observation.v1"
+        observation_id = "synthetic-android-execution"
+        created_at = "2026-01-02T03:04:05Z"
+        subject = "Synthetic Android build and bridge inputs."
+        values = @(
+            [ordered]@{ key = "android.package"; value = "org.example.synthetic" },
+            [ordered]@{ key = "signing.fingerprint"; value = "test-fingerprint" }
+        )
+        capabilities = @(
+            [ordered]@{ capability_id = "ndk-available"; available = $true; detail = "synthetic-r27" },
+            [ordered]@{ capability_id = "bridge-port-available"; available = $true; detail = "synthetic-44800" }
+        )
+    })
+    Invoke-TestGit -Path $repo -Arguments @("add", "src/execution-preflight.json") | Out-Null
+    Invoke-TestGit -Path $repo -Arguments @("commit", "-m", "add execution preflight fixture") | Out-Null
+    Invoke-TestGit -Path $repo -Arguments @("push", "origin", "main") | Out-Null
+    $executionObservationSha256 = (Get-FileHash -LiteralPath $executionObservationPath -Algorithm SHA256).Hash.ToLowerInvariant()
 
     & git init --bare $planningRemote | Out-Null
     & git init $planningRepo | Out-Null
@@ -449,7 +469,7 @@ try {
     Assert-Automation (-not $mislabeledV1Accepted) "v1 claim preflight accepted v2-only advisory fields"
     $legacyV1Inspect = $unit047InspectJson | ConvertFrom-Json
     $legacyV1Inspect.claim_preflight.version = "v1"
-    foreach ($propertyName in @("advisory_status", "candidate_fingerprint", "state_mutation_performed", "reason_codes", "contract_bindings", "coverage")) {
+    foreach ($propertyName in @("advisory_status", "candidate_fingerprint", "state_mutation_performed", "reason_codes", "contract_bindings", "coverage", "guard_profile", "execution_preflight")) {
         $legacyV1Inspect.claim_preflight.PSObject.Properties.Remove($propertyName)
     }
     Assert-Automation (Test-Json -Json ($legacyV1Inspect | ConvertTo-Json -Depth 100) -SchemaFile $automationReceiptSchema) "legacy v1 claim preflight shape was not preserved"
@@ -464,6 +484,14 @@ try {
     $allGreenUnit.unit_id = $allGreenUnitId
     $allGreenUnit.objective = "Exercise an all-green claim preflight whose check reason arrays are all empty."
     $allGreenUnit.device_requirement = "required"
+    $allGreenUnit | Add-Member -NotePropertyName guard_profile -NotePropertyValue "fast"
+    $allGreenUnit.claim_requirements | Add-Member -NotePropertyName execution_preflight -NotePropertyValue ([pscustomobject][ordered]@{
+        observation = [pscustomobject][ordered]@{ repo_id = "project-shell"; path = "src/execution-preflight.json"; expected_sha256 = $executionObservationSha256 }
+        assertions = @(
+            [pscustomobject][ordered]@{ assertion_id = "package-match"; kind = "value-equals"; key = "android.package"; expected = "org.example.synthetic" },
+            [pscustomobject][ordered]@{ assertion_id = "ndk-ready"; kind = "capability-present"; key = "ndk-available"; expected = $null }
+        )
+    })
     $allGreenUnit | Add-Member -NotePropertyName read_only_dependencies -NotePropertyValue @(
         [pscustomobject][ordered]@{ repo_id = "workflow-planning"; paths = @("planning-seed.txt"); purpose = "Exercise an available read-only input."; verification = "Inspect the exact synthetic seed file." }
     )
@@ -482,12 +510,24 @@ try {
     Assert-Automation (
         $allGreenInspect.claim_preflight.advisory_status -eq "pass" -and
         $allGreenInspect.claim_preflight.state_mutation_performed -eq $false -and
+        $allGreenInspect.claim_preflight.execution_preflight.status -eq "pass" -and
+        @($allGreenInspect.claim_preflight.execution_preflight.assertions | Where-Object { -not $_.passed }).Count -eq 0 -and
         @($allGreenInspect.claim_preflight.reason_codes).Count -eq 0 -and
         @($allGreenInspect.claim_preflight.coverage.missing).Count -eq 0 -and
         @($allGreenInspect.claim_preflight.coverage.skipped).Count -eq 0 -and
         @($allGreenInspect.claim_preflight.coverage.checks | Where-Object { @($_.reason_codes).Count -ne 0 }).Count -eq 0 -and
         ($allGreenBefore -join "`n") -ceq ($allGreenAfter -join "`n")
     ) "all-green advisory preflight did not preserve empty reason arrays without mutation"
+
+    $executionMismatchId = "unit-execution-mismatch"
+    $executionMismatchPath = Join-Path $workspace "iteration-units\$executionMismatchId.json"
+    $executionMismatchUnit = $allGreenUnit | ConvertTo-Json -Depth 32 | ConvertFrom-Json
+    $executionMismatchUnit.unit_id = $executionMismatchId
+    $executionMismatchUnit.objective = "Reject a stale or substituted execution-preflight observation before Claim."
+    $executionMismatchUnit.claim_requirements.execution_preflight.observation.expected_sha256 = ('0' * 64)
+    Write-TestJson -Path $executionMismatchPath -Value $executionMismatchUnit
+    $executionMismatchInspect = Invoke-MorphospaceWorkUnitAutomation -Action Inspect -WorkspaceRoot $workspace -UnitId $executionMismatchId -RepoMapPath $repoMapPath -DeviceSerials @("test-device-a") -Timestamp $fixed
+    Assert-Automation (-not $executionMismatchInspect.claim_preflight.ready_to_claim -and $executionMismatchInspect.claim_preflight.execution_preflight.status -eq "fail" -and @($executionMismatchInspect.claim_preflight.reason_codes) -contains "execution-preflight-mismatch") "execution preflight accepted a substituted observation"
 
     $unit045Workspace = New-TestWorkspace -Root (Join-Path $testRoot "unit045-shape") -ProjectId "unit045-shape" -UnitId "unit045-shape-001"
     $unit045Path = Join-Path $unit045Workspace "iteration-units\unit045-shape-001.json"
@@ -921,6 +961,18 @@ try {
         Invoke-MorphospaceWorkUnitAutomation -Action Claim -WorkspaceRoot $unresolvedWorkspace -UnitId "unit-unresolved-001" -RepoMapPath $repoMapPath -Timestamp $fixed -Execute | Out-Null
     } catch { $unresolvedClaimRejected = $_.Exception.Message -like "Claim preflight blocked:*" }
     Assert-Automation ($unresolvedClaimRejected -and [string](Get-Content -LiteralPath $unresolvedUnitPath -Raw | ConvertFrom-Json).status -eq "ready") "claim crossed the state boundary with an unresolved instruction alias"
+
+    $guardWorkspace = New-TestWorkspace -Root (Join-Path $testRoot "guard-profile-project") -ProjectId "guard-profile-test" -UnitId "unit-guard-001"
+    $guardUnitPath = Join-Path $guardWorkspace "iteration-units\unit-guard-001.json"
+    $guardUnit = Get-Content -LiteralPath $guardUnitPath -Raw | ConvertFrom-Json
+    $guardUnit | Add-Member -NotePropertyName guard_profile -NotePropertyValue "fast"
+    Write-TestJson -Path $guardUnitPath -Value $guardUnit
+    $fastInspect = Invoke-MorphospaceWorkUnitAutomation -Action Inspect -WorkspaceRoot $guardWorkspace -UnitId "unit-guard-001" -RepoMapPath $repoMapPath -Timestamp $fixed
+    Assert-Automation ($fastInspect.claim_preflight.guard_profile.status -eq "pass" -and $fastInspect.claim_preflight.ready_to_claim) "explicit fast product guard was not claimable"
+    $guardUnit.change_categories = @("workflow-automation")
+    Write-TestJson -Path $guardUnitPath -Value $guardUnit
+    $lockedInspect = Invoke-MorphospaceWorkUnitAutomation -Action Inspect -WorkspaceRoot $guardWorkspace -UnitId "unit-guard-001" -RepoMapPath $repoMapPath -Timestamp $fixed
+    Assert-Automation (-not $lockedInspect.claim_preflight.ready_to_claim -and $lockedInspect.claim_preflight.guard_profile.status -eq "fail" -and @($lockedInspect.claim_preflight.guard_profile.reason_codes) -contains "guard-profile-insufficient") "fast guard did not reject workflow trust-root work"
 
     $claim = Invoke-MorphospaceWorkUnitAutomation -Action Claim -WorkspaceRoot $workspace -UnitId "unit-auto-001" -RepoMapPath $repoMapPath -Timestamp $fixed -OutPath (Join-Path $receiptRoot "claim.json") -Execute
     Assert-Automation ($claim.transition -eq "ready-to-active" -and $claim.status_after -eq "active" -and $claim.claim_preflight.ready_to_claim -and $claim.claim_preflight.requirements_declared -and @($claim.claim_preflight.tools | Where-Object { -not $_.available }).Count -eq 0 -and $claim.claim_preflight.product_inputs[0].hash_matches -and [string]$claim.claim_preflight.writable_repositories[0].tree -match '^[0-9a-f]{40}$') "claim transition and complete exact preflight evidence"
@@ -1994,6 +2046,22 @@ try {
     Invoke-MorphospaceWorkUnitAutomation -Action Resume -WorkspaceRoot $recoveryWorkspace -UnitId "unit-recover-001" -Timestamp $fixed -Execute | Out-Null
     $resumedState = Get-Content (Join-Path $recoveryWorkspace "workspace.state.json") -Raw | ConvertFrom-Json
     Assert-Automation ($resumedState.blockers.Count -eq 1) "resume discarded blocker history"
+
+    $returnWorkspace = New-TestWorkspace -Root (Join-Path $testRoot "validation-return-project") -ProjectId "validation-return-test" -UnitId "unit-return-001"
+    Invoke-MorphospaceWorkUnitAutomation -Action Claim -WorkspaceRoot $returnWorkspace -UnitId "unit-return-001" -RepoMapPath $repoMapPath -Timestamp $fixed -Execute | Out-Null
+    Invoke-MorphospaceWorkUnitAutomation -Action BeginValidation -WorkspaceRoot $returnWorkspace -UnitId "unit-return-001" -Timestamp $fixed -Execute | Out-Null
+    New-TestValidationReceipt -Workspace $returnWorkspace -ProjectId "validation-return-test" -UnitId "unit-return-001" -Tier standard -Result fail -EvidenceName "return-failure-evidence.txt" | Out-Null
+    $passReturnRejected = $false
+    try {
+        Invoke-MorphospaceWorkUnitAutomation -Action ReturnToActive -WorkspaceRoot $returnWorkspace -UnitId "unit-return-001" -ValidationTier standard -ValidationResult pass -ValidationReceipt "receipts/unit-return-001-fail-validation.json" -Timestamp $fixed | Out-Null
+    } catch { $passReturnRejected = $_.Exception.Message -like "ReturnToActive requires a non-passing*" }
+    Assert-Automation $passReturnRejected "ReturnToActive accepted a passing result"
+    $returnReceiptPath = Join-Path $returnWorkspace "receipts\return-to-active.json"
+    $returned = & (Join-Path $PSScriptRoot "Invoke-WorkUnitAutomation.ps1") -Action ReturnToActive -WorkspaceRoot $returnWorkspace -UnitId "unit-return-001" -ValidationTier standard -ValidationResult fail -ValidationReceipt "receipts/unit-return-001-fail-validation.json" -Timestamp $fixed -OutPath $returnReceiptPath -Execute | ConvertFrom-Json
+    $returnedState = Get-Content (Join-Path $returnWorkspace "workspace.state.json") -Raw | ConvertFrom-Json
+    Assert-Automation ($returned.transition -eq "validation-fail-to-active" -and $returned.status_after -eq "active" -and [string]$returnedState.current_unit -eq "unit-return-001" -and @($returnedState.blockers).Count -eq 0) "non-passing validation did not return the same feature unit to active"
+    Assert-Automation ([string]$returnedState.validation_checkpoint.receipt -eq "receipts/unit-return-001-fail-validation.json" -and [string]$returnedState.validation_checkpoint.result -eq "fail") "ReturnToActive did not retain the failed validation checkpoint"
+    Assert-Automation (Test-Json -Json (Get-Content -LiteralPath $returnReceiptPath -Raw) -SchemaFile (Join-Path $RepoRoot "schemas\work-unit-automation-receipt.schema.json")) "ReturnToActive receipt failed its schema"
     $resumedState.current_unit = $null
     Write-TestJson -Path (Join-Path $recoveryWorkspace "workspace.state.json") -Value $resumedState
     $recovered = Invoke-MorphospaceWorkUnitAutomation -Action Recover -WorkspaceRoot $recoveryWorkspace -UnitId "unit-recover-001" -Timestamp $fixed -Execute

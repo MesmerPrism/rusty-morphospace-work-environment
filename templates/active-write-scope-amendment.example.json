@@ -1,0 +1,30 @@
+{
+  "$schema": "../schemas/active-write-scope-amendment-v1.schema.json",
+  "schema": "rusty.morphospace.workflow.active_write_scope_amendment.v1",
+  "amendment_id": "unit-example-add-docs",
+  "project_id": "project-example",
+  "unit_id": "unit-example",
+  "repository_id": "owner-repository",
+  "reason": "Continue the same feature unit with one additional project-approved writable directory.",
+  "expected": {
+    "status": "active",
+    "current_unit": "unit-example",
+    "project_revision": 1,
+    "project_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "state_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "unit_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "events_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "events_length": 1,
+    "event_tail_id": "unit-example-claimed-0001"
+  },
+  "before_allowed_paths": [
+    "src/"
+  ],
+  "after_allowed_paths": [
+    "docs/",
+    "src/"
+  ],
+  "does_not_prove": [
+    "Does not change source, run a build, validate a product, mutate a device, or authorize publication."
+  ]
+}

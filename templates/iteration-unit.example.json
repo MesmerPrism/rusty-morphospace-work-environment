@@ -6,6 +6,7 @@
   "status": "active",
   "objective": "Validate the neutral particle-field contract and its explicit project activation.",
   "work_mode": "feature",
+  "guard_profile": "labs",
   "tags": ["particle", "contract-extraction"],
   "change_categories": ["module-layout", "feature-activation", "validation"],
   "instruction_impact": "update",
@@ -106,7 +107,28 @@
         "purpose": "Run portable workflow and validation entrypoints."
       }
     ],
-    "product_inputs": []
+    "product_inputs": [],
+    "execution_preflight": {
+      "observation": {
+        "repo_id": "project-shell",
+        "path": "morphospace/receipts/unit-example-001-execution-preflight.json",
+        "expected_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "assertions": [
+        {
+          "assertion_id": "source-lock-match",
+          "kind": "value-equals",
+          "key": "source.lock-fingerprint",
+          "expected": "<lock-fingerprint>"
+        },
+        {
+          "assertion_id": "materialization-ready",
+          "kind": "capability-present",
+          "key": "materialization-ready",
+          "expected": null
+        }
+      ]
+    }
   },
   "non_scope": [
     "Application visual changes.",

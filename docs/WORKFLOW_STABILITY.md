@@ -3,6 +3,24 @@
 This policy keeps safety evidence proportional to product work. It does not
 weaken validation, publication, device, or repository authority boundaries.
 
+## Select The Guard Deliberately
+
+Choose guard authority separately from validation depth:
+
+- `fast`: bounded implementation, validation, or documentation across the
+  unit's declared repositories and host/device stages; no release or change to
+  product/workflow authority.
+- `labs`: composition, activation, product authority, device policy, or
+  repository routing.
+- `locked`: releases plus public/private, workflow automation, state-machine,
+  validation-routing, and recovery changes.
+
+New units state `guard_profile` explicitly. Older immutable units may be read
+through risk-tier inference for compatibility, but that inference is not the
+authoring rule. Use `risk_tier` only to select how much evidence the current
+change needs. For example, a `fast` product correction can use `deep`
+validation without acquiring release authority.
+
 ## Golden Path
 
 Use one unit captain from `proposed` through acceptance. Split a unit only when
@@ -19,10 +37,33 @@ that Claim will receive. The returned `claim_preflight` must report
 - every instruction alias, path, and stable file observation;
 - declared disk floor, required tool availability, and exact product inputs;
 - resource identities, validation tier/matrix, and required device selection.
+- guard-profile sufficiency for the unit's authority category and publication
+  boundary.
+- an optional exact execution observation for package/application identity,
+  signer fingerprint, grant mode, required CLI/NDK capability, and bridge/port
+  readiness.
 
 Claim repeats the same checks and fails before changing state when any item is
 unresolved. Do not claim first and repair repository maps, dependency closure,
 or instruction paths later.
+
+If bounded feature implementation later discovers another writable path or
+project-declared repository under the same authority and rollback envelope,
+use `AmendActiveWriteScope` instead of releasing the captain or inventing a
+successor unit. The amendment must be additive, remain inside project scope,
+bind exact current state and the unchanged project spec, and retain the unit's
+status. It does not authorize project-scope changes or execute product work.
+
+When an exact validation attempt fails but the correction remains inside the
+same feature unit and authority envelope, use `ReturnToActive` with that
+non-passing receipt. The captain remains owner and the attempt remains in the
+ledger. Use blocker recording plus `Resume` only when work actually stops or
+authority is released.
+
+Prefer this small observation over discovering immutable input mismatches after
+an expensive build. The producer remains owned by the product/tool lane; Claim
+only verifies its bound bytes and declared assertions and never treats the
+observation as product validation.
 
 Generate a handoff without paraphrasing commands:
 
