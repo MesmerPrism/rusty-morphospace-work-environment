@@ -131,9 +131,11 @@ stable clean observations, fresh remote readback, and exclusion of recognized
 execution/publication evidence. If all distinct prepared revisions are already
 reachable, use the separate complete-history reconstruction route instead.
 Generic blocker resolution and its additive evidence correction bind exact
-source bytes, heads, event/receipt/ledger history, and state/event-tail CAS;
-they preserve every unrelated workflow projection and never perform external
-cleanup or Git mutation.
+source bytes, attached-branch or exact detached heads, event/receipt/ledger
+history, and state/event-tail CAS. Bound replay discovery to direct workflow
+receipts and event-named receipt paths; nested product evidence is not generic
+workflow authority. These routes preserve every unrelated workflow projection
+and never perform external cleanup or Git mutation.
 An early planning checkpoint with every source still unpublished may be bound
 only through a publication-ordering interruption receipt in a fresh plan; exact
 live ancestry must match and the plan claims no corrected order or publication.

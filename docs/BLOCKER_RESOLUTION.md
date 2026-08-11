@@ -16,7 +16,11 @@ repository. Absolute, drive-qualified, UNC, empty, dot, dot-dot,
 trailing-separator, escaping, case-insensitive duplicate, symlink, and reparse
 ancestor/target paths reject. Every declared branch, live `HEAD`, and source
 file hash is validated initially and revalidated immediately before the
-transition-ledger call, so an intervening source edit cannot be consumed.
+transition-ledger call, so an intervening source edit cannot be consumed. An
+attached checkout records its exact branch name. An intentionally detached
+materialization records `branch` as the empty string, which must match
+`git branch --show-current`; this is exact detached-state evidence, not a
+branch-check bypass.
 
 The receipt binds the exact blocker ID, condition, and `resume_when`, a passing
 result, hash-bound evidence, current repository heads, dirty source bytes, and
@@ -34,7 +38,10 @@ artifact. A consumed receipt or blocker cannot be consumed again.
 Consumption identity is stable across paths: retained resolution receipts and
 event references are scanned, and the same canonical receipt hash or the same
 `receipt_id` + `unit_id` + `blocker_id` tuple rejects even if the caller changes
-input/output paths or a later projection reintroduces the blocker.
+input/output paths or a later projection reintroduces the blocker. The bounded
+scan covers direct JSON files under `receipts/` plus the exact receipt paths
+named by blocker-resolution events. Nested product evidence is not interpreted
+as a workflow resolution receipt.
 Every historical blocker-resolution event must retain one readable,
 schema-valid receipt whose project/unit identity matches the event and whose
 file hash matches the immutable transaction intent's owned-artifact binding.

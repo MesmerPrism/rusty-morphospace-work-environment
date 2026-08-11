@@ -370,10 +370,12 @@ ancestry consumes the authorization.
   `docs/ACTIVE_WRITE_SCOPE_AMENDMENT.md`.
 - Resolve one exact current active-unit blocker only through product-neutral
   `blocker_resolution_receipt.v1` and `ResolveBlocker`: revalidate its passing
-  hash-bound evidence, repository heads, and exact per-repository dirty source
-  bytes twice (including immediately before the ledger), preserve every other
-  blocker and workflow projection, and use state/unit/event-tail CAS. Product
-  owner schemas may be referenced as evidence but never become generic
+  hash-bound evidence, attached-branch or exact detached repository heads, and
+  exact per-repository dirty source bytes twice (including immediately before
+  the ledger), preserve every other blocker and workflow projection, and use
+  state/unit/event-tail CAS. Scan direct workflow receipts plus bound event
+  references for replay; nested product evidence is not a resolution receipt.
+  Product owner schemas may be referenced as evidence but never become generic
   workflow authority.
 - New project workspaces default to protocol v2. Resolve exact feature
   descriptors into a fingerprinted closed-world lock. Descriptor filesystem

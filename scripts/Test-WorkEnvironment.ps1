@@ -309,10 +309,15 @@ if ($SelfTest) {
     )) {
         try {
             $quickTestPath = Join-Path (Join-Path $RepoRoot "scripts") $quickTest.script
-            if ($quickTest.name -eq "workflow:public-boundary") {
-                & $quickTestPath -Root $RepoRoot
+            $quickTestArguments = if ($null -ne $quickTest.PSObject.Properties["arguments"]) {
+                @($quickTest.arguments)
             } else {
-                & $quickTestPath
+                @()
+            }
+            if ($quickTest.name -eq "workflow:public-boundary") {
+                & $quickTestPath -Root $RepoRoot @quickTestArguments
+            } else {
+                & $quickTestPath @quickTestArguments
             }
             Add-CheckResult -Name $quickTest.name -Status "ok" -Detail $quickTest.detail
         } catch {

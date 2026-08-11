@@ -334,8 +334,11 @@ the captain or creating a blocker. Non-passing `RecordValidation` remains the
 stop-and-release path.
 One exact active-unit blocker may be cleared through the additive,
 product-neutral `ResolveBlocker` route. Its strict receipt binds the blocker,
-passing evidence, current repository heads, exact per-repository dirty source
-bytes, and every other blocker that must remain unchanged. See
+passing evidence, current attached-branch or exact detached repository heads,
+exact per-repository dirty source bytes, and every other blocker that must
+remain unchanged. Replay checks inspect direct workflow receipts and their
+bound event references without treating nested product evidence as resolution
+receipts. See
 [Generic Blocker Resolution](docs/BLOCKER_RESOLUTION.md).
 When that immutable resolution remains historically valid but its broader
 complete-resolution evidence was incomplete, use the separate append-only
