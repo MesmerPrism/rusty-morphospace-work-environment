@@ -108,6 +108,10 @@ The guard-profile, execution-preflight, `ReturnToActive`, and active write-scope
 amendment additions on this development line are unreleased candidate behavior.
 They do not amend the published `0.6.0` contract until the repository's
 external validation-authority and release process accepts an exact candidate.
+Use [External Validation Approval Proposals](docs/EXTERNAL_VALIDATION_APPROVAL_PROPOSALS.md)
+to derive sorted canonical Git-object review input for a protected change.
+The proposal is deliberately non-authoritative and still requires a separate
+trusted-base policy decision plus independent static and dynamic validation.
 
 Repository CI runs feature-branch validation from pull-request events, keeps a
 post-merge `main` readback, and cancels superseded runs within the same pull

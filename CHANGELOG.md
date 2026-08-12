@@ -6,6 +6,9 @@ All notable changes to the portable work environment are recorded here.
 
 ### Added
 
+- A read-only external-validation approval-proposal tool that binds exact
+  base/candidate ancestry, sorted paths, and canonical Git blob evidence while
+  granting no approval, execution, merge, release, or publication authority.
 - A public-safe `rusty-morphospace` skill for portable ownership, composition,
   project workflow, validation, boundary, and agent routing.
 - Exact no-overwrite projection of an embedded source-owned `morphospace/`
