@@ -108,7 +108,7 @@
   ],
   "instruction_sync": {
     "impact_values": ["none", "review", "update"],
-    "surface_kinds": ["agents", "readme", "router-doc", "validation-doc", "skill"],
+    "surface_kinds": ["agents", "readme", "router-doc", "validation-doc", "compatibility-doc", "roadmap-doc", "skill"],
     "trigger_categories": [
       "authority",
       "module-layout",
@@ -169,7 +169,7 @@
         "skill_ids": ["rusty-morphospace", "system-engineering"]
       }
     ],
-    "acceptance_invariant": "Triggered units require complete updates to the nearest AGENTS, a README or router document, and every routed skill before acceptance."
+    "acceptance_invariant": "Triggered units require complete updates to the nearest AGENTS and a README or router document. Routed skills require updates except that a current feature unit doing ordinary validation work may declare review-no-change for an out-of-scope skill path when no portable authority, routing, module, or validation-policy rule changed."
   },
   "feature_activation": {
     "default": "disabled",
@@ -202,7 +202,7 @@
     "Stable modules pass every promotion gate.",
     "Stable modules have an independent consumer or conformance harness.",
     "Iteration units cannot expand project repository or path authority; an active feature unit may add only already project-authorized write paths through the typed additive amendment transaction.",
-    "Instruction-triggering units cannot be accepted with incomplete AGENTS, README or router, or relevant skill updates.",
+    "Instruction-triggering units cannot be accepted with incomplete AGENTS or README/router work. Relevant skills require updates except for the exact current-feature, out-of-scope, non-policy validation review compatibility rule.",
     "Workflow automation inspects or prepares by default, requires explicit execution for state mutation, and never owns Git push or device mutation.",
     "Validation recording and acceptance require a typed, hashed, exact-scope receipt that is revalidated against current state.",
     "Feature selection never activates a run without the current lock fingerprint and a descriptor-approved runtime input.",

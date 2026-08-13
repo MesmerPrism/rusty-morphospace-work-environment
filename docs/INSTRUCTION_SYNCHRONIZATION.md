@@ -33,9 +33,10 @@ Every unit declares:
 - `instruction_none_justification` when impact is `none`.
 
 Surface kinds distinguish concise entrypoints (`agents`, `readme`, and
-`router-doc`), detailed validation routing (`validation-doc`), and installed or
-portable skills (`skill`). A validation document does not substitute for the
-required README or router entrypoint.
+`router-doc`), detailed validation routing (`validation-doc`), compatibility
+and roadmap records (`compatibility-doc` and `roadmap-doc`), and installed or
+portable skills (`skill`). Compatibility, roadmap, and validation documents do
+not substitute for the required README or router entrypoint.
 
 Changes to authority, module layout, feature activation, validation, device
 policy, repo routing, or public/private boundaries require `update`. Before
@@ -43,12 +44,21 @@ such a unit can become `accepted`, the nearest repo `AGENTS.md`, a README or
 router doc, and every relevant skill named by the synchronization matrix must
 have complete update records.
 
-The sole current-unit exception is an explicitly declared
-`work_mode: validation-only` unit. It changes no product or reusable workflow
-behavior, uses `instruction_impact: review`, and records each routed AGENTS,
-README/router, validation document, and skill surface as `review-no-change`.
-Discovering a needed content change ends that unit; it does not convert the
-review record into an update claim.
+An explicitly declared `work_mode: validation-only` unit changes no product or
+reusable workflow behavior, uses `instruction_impact: review`, and records each
+routed AGENTS, README/router, validation document, and skill surface as
+`review-no-change`. Discovering a needed content change ends that unit; it does
+not convert the review record into an update claim.
+
+A second, narrower current-unit compatibility rule applies only to an explicit
+feature unit doing ordinary validation work. A relevant skill may be recorded
+as `review-no-change` only while that exact skill path is outside the unit's
+writable scope and the unit changes no portable authority, module layout,
+feature activation, device policy, repository routing, public/private rule,
+workflow/state machine, validation routing, or recovery policy. A writable
+skill path or any such policy category still requires `update`. This rule does
+not apply to accepted, blocked, superseded, or other historical units and does
+not reclassify their diagnostics.
 
 An immutable unit that predates `work_mode` may retain a completed relevant-
 skill `review-no-change` only when the append-only ledger proves that unit is
@@ -82,3 +92,19 @@ portable skills. No Meta Quest workflow change applies because the gate cannot
 execute candidate code or authorize a device operation.
 
 Stable module promotion also includes the `instruction-sync` gate.
+
+When immutable adopted history has separately classified diagnostics, validate
+the exact current unit's instruction contract without rewriting or waiving that
+history:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File `
+  .\scripts\Test-WorkflowContracts.ps1 `
+  -WorkspaceRoot <workspace-root> `
+  -CurrentUnitInstructionOnly
+```
+
+This narrow gate validates the current unit schema, closed surface-kind set,
+required entrypoints and routed skills. It intentionally does not inspect,
+normalize, or claim a pass for historical units; the aggregate contract remains
+the separate historical diagnostic.
