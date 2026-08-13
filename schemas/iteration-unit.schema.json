@@ -32,6 +32,22 @@
     "project_id": { "$ref": "#/$defs/id" },
     "status": { "$ref": "#/$defs/id" },
     "objective": { "type": "string", "minLength": 1 },
+    "architecture_decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "selected",
+        "material_advance",
+        "deferred",
+        "deferred_reason"
+      ],
+      "properties": {
+        "selected": { "type": "string", "minLength": 1 },
+        "material_advance": { "type": "string", "minLength": 1 },
+        "deferred": { "type": "string", "minLength": 1 },
+        "deferred_reason": { "type": "string", "minLength": 1 }
+      }
+    },
     "work_mode": { "enum": ["feature", "validation-only"] },
     "guard_profile": { "enum": ["fast", "labs", "locked"] },
     "tags": {

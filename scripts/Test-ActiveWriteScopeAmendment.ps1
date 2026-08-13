@@ -4,6 +4,7 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path $PSScriptRoot -Parent
 Import-Module (Join-Path $PSScriptRoot 'ActiveWriteScopeAmendment.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
+$iterationUnitSchema = Join-Path $repoRoot 'schemas\iteration-unit.schema.json'
 
 function Assert-WriteScopeTest {
     param([bool]$Condition,[string]$Message)
@@ -15,6 +16,12 @@ function Assert-WriteScopeRejected {
     $rejected = $false
     try { & $Action | Out-Null } catch { $rejected = $true }
     Assert-WriteScopeTest $rejected $Message
+}
+
+function Assert-IterationUnitSchema {
+    param([object]$Unit,[bool]$Expected,[string]$Message)
+    $valid = Test-Json -Json ($Unit | ConvertTo-Json -Depth 64) -SchemaFile $iterationUnitSchema -ErrorAction SilentlyContinue
+    Assert-WriteScopeTest ($valid -eq $Expected) $Message
 }
 
 function Write-WriteScopeJson {
@@ -30,7 +37,12 @@ function Copy-WriteScopeValue {
 }
 
 function New-WriteScopeFixture {
-    param([string]$Root,[string]$Suffix='main',[switch]$AddRepository)
+    param(
+        [string]$Root,
+        [string]$Suffix='main',
+        [switch]$AddRepository,
+        [switch]$WithoutArchitectureDecision
+    )
     $workspace = Join-Path $Root "morphospace-$Suffix"
     [IO.Directory]::CreateDirectory((Join-Path $workspace 'iteration-units')) | Out-Null
     [IO.Directory]::CreateDirectory((Join-Path $workspace 'receipts')) | Out-Null
@@ -59,6 +71,14 @@ function New-WriteScopeFixture {
         read_only_dependencies=@();non_scope=@('Any work outside declared project repositories.');acceptance=@([pscustomobject][ordered]@{acceptance_id='bounded-amendment';proof='Only project-approved paths are added.';command='test-command'})
         risk_tier='quick';device_requirement='forbidden';validation=@([pscustomobject][ordered]@{profile_id='quick';command='test-command'})
         outputs=@('Transactional amendment receipt.');commit_policy='Commit after validation.';push_checkpoint='local-only'
+    }
+    if (-not $WithoutArchitectureDecision) {
+        $unit | Add-Member -NotePropertyName architecture_decision -NotePropertyValue ([pscustomobject][ordered]@{
+            selected='Keep the existing feature unit and add only a project-approved path.'
+            material_advance='The amendment unlocks the next bounded implementation slice.'
+            deferred='Any broader project-authority or product change remains deferred.'
+            deferred_reason='Those changes are outside this amendment contract.'
+        })
     }
     $eventId = 'unit-write-scope-001-claimed-0001'
     $state = [pscustomobject][ordered]@{
@@ -125,6 +145,23 @@ try {
     foreach ($name in @('project','state','unit','events')) { $before[$name] = [IO.File]::ReadAllBytes([string]$paths.$name) }
     $beforeStateDocument = Read-MorphospaceProtocolJson $paths.state
     $beforeUnitDocument = Read-MorphospaceProtocolJson $paths.unit
+    Assert-IterationUnitSchema $beforeUnitDocument $true 'the exact four-field architecture decision was rejected'
+
+    $missingArchitectureField = Copy-WriteScopeValue $beforeUnitDocument
+    $missingArchitectureField.architecture_decision.PSObject.Properties.Remove('deferred_reason')
+    Assert-IterationUnitSchema $missingArchitectureField $false 'an architecture decision with a missing field was accepted'
+
+    $emptyArchitectureField = Copy-WriteScopeValue $beforeUnitDocument
+    $emptyArchitectureField.architecture_decision.material_advance = ''
+    Assert-IterationUnitSchema $emptyArchitectureField $false 'an architecture decision with an empty field was accepted'
+
+    $wrongTypeArchitectureField = Copy-WriteScopeValue $beforeUnitDocument
+    $wrongTypeArchitectureField.architecture_decision.deferred = 1
+    Assert-IterationUnitSchema $wrongTypeArchitectureField $false 'an architecture decision with a wrong-type field was accepted'
+
+    $unknownArchitectureField = Copy-WriteScopeValue $beforeUnitDocument
+    $unknownArchitectureField.architecture_decision | Add-Member -NotePropertyName unexpected -NotePropertyValue 'not admitted'
+    Assert-IterationUnitSchema $unknownArchitectureField $false 'an architecture decision with an unknown field was accepted'
 
     $dry = Invoke-MorphospaceAmendActiveWriteScope -WorkspaceRoot $paths.workspace -UnitId 'unit-write-scope-001' `
         -ActiveWriteScopeAmendment $fixture.amendment_path -OutPath $paths.out -Timestamp '2026-08-10T01:00:00.0000000Z'
@@ -176,6 +213,10 @@ try {
     Assert-WriteScopeTest ((Get-MorphospaceSha256Bytes $before.project) -ceq (Get-MorphospaceFileSha256 $paths.project)) 'execute changed project bytes'
     Assert-WriteScopeTest ([string]$afterState.current_unit -ceq 'unit-write-scope-001' -and [int]$afterState.plan_revision -eq 1 -and [string]$afterState.last_event_id -ceq 'unit-write-scope-001-add-docs-recorded') 'state continuity is wrong'
     Assert-WriteScopeTest ([string]$afterUnit.status -ceq 'active' -and (@($afterUnit.allowed_repositories[0].allowed_paths) -join '|') -ceq 'docs/|src/') 'active unit did not receive the exact additive paths'
+    Assert-WriteScopeTest (
+        (Get-MorphospaceCanonicalJsonSha256 $afterUnit.architecture_decision) -ceq
+        (Get-MorphospaceCanonicalJsonSha256 $beforeUnitDocument.architecture_decision)
+    ) 'execute changed the architecture decision'
     $expectedState = Copy-WriteScopeValue $beforeStateDocument
     $expectedState.last_event_id = 'unit-write-scope-001-add-docs-recorded'
     Assert-WriteScopeTest ((Get-MorphospaceCanonicalJsonSha256 $afterState) -ceq (Get-MorphospaceCanonicalJsonSha256 $expectedState)) 'execute changed another state field'
@@ -188,6 +229,17 @@ try {
     $intent = Read-MorphospaceProtocolJson $intentPath
     Assert-WriteScopeTest ([string]$intent.schema -ceq 'rusty.morphospace.workflow.transition_ledger_intent.v3' -and @($intent.additional_projections).Count -eq 1 -and [string]$intent.additional_projections[0].path -ceq 'project.spec.json') 'transaction did not mutex-bind the unchanged project authority'
     Assert-WriteScopeTest ([IO.File]::Exists($completionPath)) 'transaction completion is missing'
+
+    $withoutArchitecture = New-WriteScopeFixture $temp 'without-architecture' -WithoutArchitectureDecision
+    $withoutArchitectureUnit = Read-MorphospaceProtocolJson $withoutArchitecture.paths.unit
+    Assert-IterationUnitSchema $withoutArchitectureUnit $true 'a unit without the optional architecture decision was rejected'
+    $withoutArchitectureDry = Invoke-MorphospaceAmendActiveWriteScope `
+        -WorkspaceRoot $withoutArchitecture.paths.workspace `
+        -UnitId 'unit-write-scope-001' `
+        -ActiveWriteScopeAmendment $withoutArchitecture.amendment_path `
+        -OutPath $withoutArchitecture.paths.out `
+        -Timestamp '2026-08-10T01:05:00.0000000Z'
+    Assert-WriteScopeTest (-not $withoutArchitectureDry.executed) 'dry run rejected a unit without the optional architecture decision'
 
     $addRepo = New-WriteScopeFixture $temp 'add-repo' -AddRepository
     $addRepoHash = Get-MorphospaceFileSha256 $addRepo.amendment_path
@@ -210,7 +262,7 @@ try {
             -OutPath $race.paths.out -Timestamp '2026-08-10T01:20:00.0000000Z' -BeforeTransitionHook $raceHook -Execute
     } 'mutex-protected project CAS race was accepted'
 
-    [pscustomobject]@{result='pass';action='AmendActiveWriteScope';additive=$true;project_bounded=$true;transactional=$true;git_mutation_performed=$false;device_mutation_performed=$false;remote_mutation_performed=$false} | ConvertTo-Json -Compress
+    [pscustomobject]@{result='pass';action='AmendActiveWriteScope';additive=$true;project_bounded=$true;transactional=$true;architecture_decision_optional_and_strict=$true;git_mutation_performed=$false;device_mutation_performed=$false;remote_mutation_performed=$false} | ConvertTo-Json -Compress
 } finally {
     if ([IO.Directory]::Exists($temp)) {
         foreach ($file in [IO.Directory]::EnumerateFiles($temp,'*',[IO.SearchOption]::AllDirectories)) {
