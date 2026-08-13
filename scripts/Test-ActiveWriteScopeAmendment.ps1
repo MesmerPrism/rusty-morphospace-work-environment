@@ -41,7 +41,8 @@ function New-WriteScopeFixture {
         [string]$Root,
         [string]$Suffix='main',
         [switch]$AddRepository,
-        [switch]$WithoutArchitectureDecision
+        [switch]$WithoutArchitectureDecision,
+        [switch]$UpdateInstructionImpact
     )
     $workspace = Join-Path $Root "morphospace-$Suffix"
     [IO.Directory]::CreateDirectory((Join-Path $workspace 'iteration-units')) | Out-Null
@@ -78,6 +79,37 @@ function New-WriteScopeFixture {
             material_advance='The amendment unlocks the next bounded implementation slice.'
             deferred='Any broader project-authority or product change remains deferred.'
             deferred_reason='Those changes are outside this amendment contract.'
+        })
+    }
+    if ($UpdateInstructionImpact) {
+        $surfacePaths = [ordered]@{
+            'agents'='<repo-root>/AGENTS.md'
+            'readme'='<repo-root>/README.md'
+            'router-doc'='<repo-root>/docs/ROUTER.md'
+            'validation-doc'='<repo-root>/docs/VALIDATION.md'
+            'compatibility-doc'='<repo-root>/docs/COMPATIBILITY.md'
+            'roadmap-doc'='<repo-root>/docs/ROADMAP.md'
+        }
+        $unit.instruction_impact = 'update'
+        $unit.instruction_surfaces = @(
+            @($surfacePaths.Keys) | ForEach-Object {
+                [pscustomobject][ordered]@{
+                    surface_kind=$_
+                    path=$surfacePaths[$_]
+                    owner='workflow-self-test'
+                    change_reason='Keep the synthetic amendment contract current.'
+                    action='update'
+                    status='planned'
+                    validation='Test-ActiveWriteScopeAmendment.ps1 -SelfTest'
+                    skill_id=$null
+                }
+            }
+        )
+        $unit.instruction_none_justification = $null
+        $unit | Add-Member -NotePropertyName source_composition -NotePropertyValue ([pscustomobject][ordered]@{
+            mode='observed-working-copies'
+            lock_path=$null
+            materialization_receipt=$null
         })
     }
     $eventId = 'unit-write-scope-001-claimed-0001'
@@ -241,6 +273,34 @@ try {
         -Timestamp '2026-08-10T01:05:00.0000000Z'
     Assert-WriteScopeTest (-not $withoutArchitectureDry.executed) 'dry run rejected a unit without the optional architecture decision'
 
+    $updateImpact = New-WriteScopeFixture $temp 'update-impact' -UpdateInstructionImpact
+    $updateImpactUnit = Read-MorphospaceProtocolJson $updateImpact.paths.unit
+    Assert-IterationUnitSchema $updateImpactUnit $true 'an update-impact unit with planned surfaces and null justification was rejected'
+    Assert-WriteScopeTest (
+        [string]$updateImpactUnit.instruction_impact -ceq 'update' -and
+        (@($updateImpactUnit.instruction_surfaces | ForEach-Object { [string]$_.surface_kind }) -join '|') -ceq
+            'agents|readme|router-doc|validation-doc|compatibility-doc|roadmap-doc' -and
+        @($updateImpactUnit.instruction_surfaces | Where-Object { $_.status -cne 'planned' -or $null -ne $_.skill_id }).Count -eq 0 -and
+        $null -eq $updateImpactUnit.instruction_none_justification -and
+        [string]$updateImpactUnit.source_composition.mode -ceq 'observed-working-copies' -and
+        $null -eq $updateImpactUnit.source_composition.lock_path -and
+        $null -eq $updateImpactUnit.source_composition.materialization_receipt
+    ) 'the update-impact fixture does not exercise the intended exact nullable shape'
+    $unknownSurfaceKind = Copy-WriteScopeValue $updateImpactUnit
+    $unknownSurfaceKind.instruction_surfaces[4].surface_kind = 'unknown-doc'
+    Assert-IterationUnitSchema $unknownSurfaceKind $false 'an unknown instruction surface kind was accepted'
+    $updateImpactUnitHash = Get-MorphospaceFileSha256 $updateImpact.paths.unit
+    $updateImpactDry = Invoke-MorphospaceAmendActiveWriteScope `
+        -WorkspaceRoot $updateImpact.paths.workspace `
+        -UnitId 'unit-write-scope-001' `
+        -ActiveWriteScopeAmendment $updateImpact.amendment_path `
+        -OutPath $updateImpact.paths.out `
+        -Timestamp '2026-08-10T01:07:00.0000000Z'
+    Assert-WriteScopeTest (-not $updateImpactDry.executed) 'dry run rejected an update-impact unit with null justification'
+    Assert-WriteScopeTest (
+        $updateImpactUnitHash -ceq (Get-MorphospaceFileSha256 $updateImpact.paths.unit)
+    ) 'update-impact dry run changed active-unit bytes'
+
     $addRepo = New-WriteScopeFixture $temp 'add-repo' -AddRepository
     $addRepoHash = Get-MorphospaceFileSha256 $addRepo.amendment_path
     Invoke-MorphospaceAmendActiveWriteScope -WorkspaceRoot $addRepo.paths.workspace -UnitId 'unit-write-scope-001' `
@@ -262,7 +322,7 @@ try {
             -OutPath $race.paths.out -Timestamp '2026-08-10T01:20:00.0000000Z' -BeforeTransitionHook $raceHook -Execute
     } 'mutex-protected project CAS race was accepted'
 
-    [pscustomobject]@{result='pass';action='AmendActiveWriteScope';additive=$true;project_bounded=$true;transactional=$true;architecture_decision_optional_and_strict=$true;git_mutation_performed=$false;device_mutation_performed=$false;remote_mutation_performed=$false} | ConvertTo-Json -Compress
+    [pscustomobject]@{result='pass';action='AmendActiveWriteScope';additive=$true;project_bounded=$true;transactional=$true;architecture_decision_optional_and_strict=$true;update_instruction_null_compatible=$true;compatibility_and_roadmap_surfaces_strict=$true;git_mutation_performed=$false;device_mutation_performed=$false;remote_mutation_performed=$false} | ConvertTo-Json -Compress
 } finally {
     if ([IO.Directory]::Exists($temp)) {
         foreach ($file in [IO.Directory]::EnumerateFiles($temp,'*',[IO.SearchOption]::AllDirectories)) {
