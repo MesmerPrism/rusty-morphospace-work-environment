@@ -51,7 +51,10 @@ function Read-ActiveWriteScopeEvents {
     $events = [Collections.Generic.List[object]]::new()
     foreach ($line in @(Get-Content -LiteralPath $Path)) {
         if ([string]::IsNullOrWhiteSpace($line)) { continue }
-        try { $events.Add(($line | ConvertFrom-Json)) | Out-Null } catch { throw 'Iteration event ledger contains malformed JSON.' }
+        try {
+            $bytes = [Text.UTF8Encoding]::new($false).GetBytes($line)
+            $events.Add((ConvertFrom-MorphospaceProtocolJsonBytes -Bytes $bytes -Context 'iteration event ledger entry')) | Out-Null
+        } catch { throw 'Iteration event ledger contains malformed JSON.' }
     }
     if ($events.Count -eq 0) { throw 'AmendActiveWriteScope requires a non-empty iteration event ledger.' }
     return @($events.ToArray())
@@ -64,6 +67,7 @@ function Assert-ActiveWriteScopeProtocolDocument {
         'rusty.morphospace.workflow.workspace_state.v2' { 'workspace-state-v2.schema.json' }
         'rusty.morphospace.workflow.iteration_unit.v1' { 'iteration-unit.schema.json' }
         'rusty.morphospace.workflow.iteration_event.v1' { 'iteration-event.schema.json' }
+        'rusty.morphospace.workflow.iteration_event.v2' { 'iteration-event-v2.schema.json' }
         default { throw "Unsupported workflow document schema for ${Label}: $([string]$Document.schema)" }
     }
     if (-not (Test-Json -Json ($Document | ConvertTo-Json -Depth 64) -SchemaFile (Join-Path $RepositoryRoot "schemas\$schemaName"))) {
@@ -112,7 +116,18 @@ function Invoke-MorphospaceAmendActiveWriteScope {
         [pscustomobject]@{label='state';value=$state},
         [pscustomobject]@{label='unit';value=$unit}
     )) { Assert-ActiveWriteScopeProtocolDocument $document.label $document.value $repoRoot }
-    foreach ($ledgerEvent in $events) { Assert-ActiveWriteScopeProtocolDocument 'event' $ledgerEvent $repoRoot }
+    for ($eventIndex = 0; $eventIndex -lt $events.Count; $eventIndex++) {
+        $ledgerEvent = $events[$eventIndex]
+        if ([string]$ledgerEvent.schema -ceq 'rusty.morphospace.workflow.iteration_event.v2') {
+            if ($eventIndex -ne 0) {
+                throw "Iteration event ledger contains a v2 event outside the historical bootstrap position at line $($eventIndex + 1)."
+            }
+            if ([string]$ledgerEvent.previous_event_sha256 -cne ('0' * 64)) {
+                throw 'Iteration event ledger historical v2 bootstrap does not use the zero predecessor.'
+            }
+        }
+        Assert-ActiveWriteScopeProtocolDocument 'event' $ledgerEvent $repoRoot
+    }
 
     if ([string]$project.schema -cne 'rusty.morphospace.workflow.project_spec.v2' -or
         [string]$state.schema -cne 'rusty.morphospace.workflow.workspace_state.v2') {

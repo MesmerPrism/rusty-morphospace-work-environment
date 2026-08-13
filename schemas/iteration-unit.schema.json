@@ -32,6 +32,22 @@
     "project_id": { "$ref": "#/$defs/id" },
     "status": { "$ref": "#/$defs/id" },
     "objective": { "type": "string", "minLength": 1 },
+    "architecture_decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "selected",
+        "material_advance",
+        "deferred",
+        "deferred_reason"
+      ],
+      "properties": {
+        "selected": { "type": "string", "minLength": 1 },
+        "material_advance": { "type": "string", "minLength": 1 },
+        "deferred": { "type": "string", "minLength": 1 },
+        "deferred_reason": { "type": "string", "minLength": 1 }
+      }
+    },
     "work_mode": { "enum": ["feature", "validation-only"] },
     "guard_profile": { "enum": ["fast", "labs", "locked"] },
     "tags": {
@@ -78,7 +94,17 @@
           "skill_id"
         ],
         "properties": {
-          "surface_kind": { "enum": ["agents", "readme", "router-doc", "validation-doc", "skill"] },
+          "surface_kind": {
+            "enum": [
+              "agents",
+              "readme",
+              "router-doc",
+              "validation-doc",
+              "compatibility-doc",
+              "roadmap-doc",
+              "skill"
+            ]
+          },
           "path": { "type": "string", "minLength": 1 },
           "owner": { "type": "string", "minLength": 1 },
           "change_reason": { "type": "string", "minLength": 1 },
@@ -95,10 +121,8 @@
       }
     },
     "instruction_none_justification": {
-      "oneOf": [
-        { "type": "string", "minLength": 1 },
-        { "type": "null" }
-      ]
+      "type": ["string", "null"],
+      "minLength": 1
     },
     "prerequisites": {
       "type": "array",

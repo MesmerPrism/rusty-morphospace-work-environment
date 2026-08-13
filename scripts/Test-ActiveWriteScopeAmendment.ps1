@@ -4,6 +4,7 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path $PSScriptRoot -Parent
 Import-Module (Join-Path $PSScriptRoot 'ActiveWriteScopeAmendment.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
+$iterationUnitSchema = Join-Path $repoRoot 'schemas\iteration-unit.schema.json'
 
 function Assert-WriteScopeTest {
     param([bool]$Condition,[string]$Message)
@@ -15,6 +16,12 @@ function Assert-WriteScopeRejected {
     $rejected = $false
     try { & $Action | Out-Null } catch { $rejected = $true }
     Assert-WriteScopeTest $rejected $Message
+}
+
+function Assert-IterationUnitSchema {
+    param([object]$Unit,[bool]$Expected,[string]$Message)
+    $valid = Test-Json -Json ($Unit | ConvertTo-Json -Depth 64) -SchemaFile $iterationUnitSchema -ErrorAction SilentlyContinue
+    Assert-WriteScopeTest ($valid -eq $Expected) $Message
 }
 
 function Write-WriteScopeJson {
@@ -30,7 +37,13 @@ function Copy-WriteScopeValue {
 }
 
 function New-WriteScopeFixture {
-    param([string]$Root,[string]$Suffix='main',[switch]$AddRepository)
+    param(
+        [string]$Root,
+        [string]$Suffix='main',
+        [switch]$AddRepository,
+        [switch]$WithoutArchitectureDecision,
+        [switch]$UpdateInstructionImpact
+    )
     $workspace = Join-Path $Root "morphospace-$Suffix"
     [IO.Directory]::CreateDirectory((Join-Path $workspace 'iteration-units')) | Out-Null
     [IO.Directory]::CreateDirectory((Join-Path $workspace 'receipts')) | Out-Null
@@ -43,7 +56,7 @@ function New-WriteScopeFixture {
         authority_map=@([pscustomobject][ordered]@{parameter='project.composition';owner='owner-repo';adapters=@()})
         repositories=@(
             [pscustomobject][ordered]@{repo_id='owner-repo';role='application';path='<owner>';allowed_paths=@('docs/','src/')},
-            [pscustomobject][ordered]@{repo_id='aux-repo';role='core';path='<aux>';allowed_paths=@('crates/')}
+            [pscustomobject][ordered]@{repo_id='aux-repo';role='platform-test-harness';path='<aux>';allowed_paths=@('crates/')}
         )
         modules=@();non_scope=@('No source, Git, device, build, validation, or remote mutation.')
         validation_profiles=@([pscustomobject][ordered]@{profile_id='quick';commands=@('test-command')})
@@ -60,6 +73,45 @@ function New-WriteScopeFixture {
         risk_tier='quick';device_requirement='forbidden';validation=@([pscustomobject][ordered]@{profile_id='quick';command='test-command'})
         outputs=@('Transactional amendment receipt.');commit_policy='Commit after validation.';push_checkpoint='local-only'
     }
+    if (-not $WithoutArchitectureDecision) {
+        $unit | Add-Member -NotePropertyName architecture_decision -NotePropertyValue ([pscustomobject][ordered]@{
+            selected='Keep the existing feature unit and add only a project-approved path.'
+            material_advance='The amendment unlocks the next bounded implementation slice.'
+            deferred='Any broader project-authority or product change remains deferred.'
+            deferred_reason='Those changes are outside this amendment contract.'
+        })
+    }
+    if ($UpdateInstructionImpact) {
+        $surfacePaths = [ordered]@{
+            'agents'='<repo-root>/AGENTS.md'
+            'readme'='<repo-root>/README.md'
+            'router-doc'='<repo-root>/docs/ROUTER.md'
+            'validation-doc'='<repo-root>/docs/VALIDATION.md'
+            'compatibility-doc'='<repo-root>/docs/COMPATIBILITY.md'
+            'roadmap-doc'='<repo-root>/docs/ROADMAP.md'
+        }
+        $unit.instruction_impact = 'update'
+        $unit.instruction_surfaces = @(
+            @($surfacePaths.Keys) | ForEach-Object {
+                [pscustomobject][ordered]@{
+                    surface_kind=$_
+                    path=$surfacePaths[$_]
+                    owner='workflow-self-test'
+                    change_reason='Keep the synthetic amendment contract current.'
+                    action='update'
+                    status='planned'
+                    validation='Test-ActiveWriteScopeAmendment.ps1 -SelfTest'
+                    skill_id=$null
+                }
+            }
+        )
+        $unit.instruction_none_justification = $null
+        $unit | Add-Member -NotePropertyName source_composition -NotePropertyValue ([pscustomobject][ordered]@{
+            mode='observed-working-copies'
+            lock_path=$null
+            materialization_receipt=$null
+        })
+    }
     $eventId = 'unit-write-scope-001-claimed-0001'
     $state = [pscustomobject][ordered]@{
         '$schema'='https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/workspace-state-v2.schema.json'
@@ -69,8 +121,9 @@ function New-WriteScopeFixture {
         capability_registry=@();dirty_repositories=@('owner-repo');blockers=@();validation_checkpoint=$null;pending_push_bundle=$null
     }
     $event = [pscustomobject][ordered]@{
-        schema='rusty.morphospace.workflow.iteration_event.v1';event_id=$eventId;sequence=1;timestamp='2026-08-10T00:00:00Z'
-        project_id='write-scope-test';unit_id='unit-write-scope-001';event_type='state-transition';summary='Claimed the bounded write-scope test unit.';receipts=@()
+        schema='rusty.morphospace.workflow.iteration_event.v2';event_id=$eventId;sequence=1;timestamp='2026-08-10T00:00:00.0000000Z'
+        run_id='write-scope-bootstrap-20260810';session_id=$null;project_id='write-scope-test';unit_id='unit-write-scope-001'
+        event_type='state-transition';summary='Claimed the bounded write-scope test unit.';previous_event_sha256=('0'*64);receipts=@()
     }
     $amendmentId = if ($AddRepository) { 'unit-write-scope-001-add-aux' } else { 'unit-write-scope-001-add-docs' }
     $repositoryId = if ($AddRepository) { 'aux-repo' } else { 'owner-repo' }
@@ -124,6 +177,23 @@ try {
     foreach ($name in @('project','state','unit','events')) { $before[$name] = [IO.File]::ReadAllBytes([string]$paths.$name) }
     $beforeStateDocument = Read-MorphospaceProtocolJson $paths.state
     $beforeUnitDocument = Read-MorphospaceProtocolJson $paths.unit
+    Assert-IterationUnitSchema $beforeUnitDocument $true 'the exact four-field architecture decision was rejected'
+
+    $missingArchitectureField = Copy-WriteScopeValue $beforeUnitDocument
+    $missingArchitectureField.architecture_decision.PSObject.Properties.Remove('deferred_reason')
+    Assert-IterationUnitSchema $missingArchitectureField $false 'an architecture decision with a missing field was accepted'
+
+    $emptyArchitectureField = Copy-WriteScopeValue $beforeUnitDocument
+    $emptyArchitectureField.architecture_decision.material_advance = ''
+    Assert-IterationUnitSchema $emptyArchitectureField $false 'an architecture decision with an empty field was accepted'
+
+    $wrongTypeArchitectureField = Copy-WriteScopeValue $beforeUnitDocument
+    $wrongTypeArchitectureField.architecture_decision.deferred = 1
+    Assert-IterationUnitSchema $wrongTypeArchitectureField $false 'an architecture decision with a wrong-type field was accepted'
+
+    $unknownArchitectureField = Copy-WriteScopeValue $beforeUnitDocument
+    $unknownArchitectureField.architecture_decision | Add-Member -NotePropertyName unexpected -NotePropertyValue 'not admitted'
+    Assert-IterationUnitSchema $unknownArchitectureField $false 'an architecture decision with an unknown field was accepted'
 
     $dry = Invoke-MorphospaceAmendActiveWriteScope -WorkspaceRoot $paths.workspace -UnitId 'unit-write-scope-001' `
         -ActiveWriteScopeAmendment $fixture.amendment_path -OutPath $paths.out -Timestamp '2026-08-10T01:00:00.0000000Z'
@@ -175,6 +245,10 @@ try {
     Assert-WriteScopeTest ((Get-MorphospaceSha256Bytes $before.project) -ceq (Get-MorphospaceFileSha256 $paths.project)) 'execute changed project bytes'
     Assert-WriteScopeTest ([string]$afterState.current_unit -ceq 'unit-write-scope-001' -and [int]$afterState.plan_revision -eq 1 -and [string]$afterState.last_event_id -ceq 'unit-write-scope-001-add-docs-recorded') 'state continuity is wrong'
     Assert-WriteScopeTest ([string]$afterUnit.status -ceq 'active' -and (@($afterUnit.allowed_repositories[0].allowed_paths) -join '|') -ceq 'docs/|src/') 'active unit did not receive the exact additive paths'
+    Assert-WriteScopeTest (
+        (Get-MorphospaceCanonicalJsonSha256 $afterUnit.architecture_decision) -ceq
+        (Get-MorphospaceCanonicalJsonSha256 $beforeUnitDocument.architecture_decision)
+    ) 'execute changed the architecture decision'
     $expectedState = Copy-WriteScopeValue $beforeStateDocument
     $expectedState.last_event_id = 'unit-write-scope-001-add-docs-recorded'
     Assert-WriteScopeTest ((Get-MorphospaceCanonicalJsonSha256 $afterState) -ceq (Get-MorphospaceCanonicalJsonSha256 $expectedState)) 'execute changed another state field'
@@ -187,6 +261,45 @@ try {
     $intent = Read-MorphospaceProtocolJson $intentPath
     Assert-WriteScopeTest ([string]$intent.schema -ceq 'rusty.morphospace.workflow.transition_ledger_intent.v3' -and @($intent.additional_projections).Count -eq 1 -and [string]$intent.additional_projections[0].path -ceq 'project.spec.json') 'transaction did not mutex-bind the unchanged project authority'
     Assert-WriteScopeTest ([IO.File]::Exists($completionPath)) 'transaction completion is missing'
+
+    $withoutArchitecture = New-WriteScopeFixture $temp 'without-architecture' -WithoutArchitectureDecision
+    $withoutArchitectureUnit = Read-MorphospaceProtocolJson $withoutArchitecture.paths.unit
+    Assert-IterationUnitSchema $withoutArchitectureUnit $true 'a unit without the optional architecture decision was rejected'
+    $withoutArchitectureDry = Invoke-MorphospaceAmendActiveWriteScope `
+        -WorkspaceRoot $withoutArchitecture.paths.workspace `
+        -UnitId 'unit-write-scope-001' `
+        -ActiveWriteScopeAmendment $withoutArchitecture.amendment_path `
+        -OutPath $withoutArchitecture.paths.out `
+        -Timestamp '2026-08-10T01:05:00.0000000Z'
+    Assert-WriteScopeTest (-not $withoutArchitectureDry.executed) 'dry run rejected a unit without the optional architecture decision'
+
+    $updateImpact = New-WriteScopeFixture $temp 'update-impact' -UpdateInstructionImpact
+    $updateImpactUnit = Read-MorphospaceProtocolJson $updateImpact.paths.unit
+    Assert-IterationUnitSchema $updateImpactUnit $true 'an update-impact unit with planned surfaces and null justification was rejected'
+    Assert-WriteScopeTest (
+        [string]$updateImpactUnit.instruction_impact -ceq 'update' -and
+        (@($updateImpactUnit.instruction_surfaces | ForEach-Object { [string]$_.surface_kind }) -join '|') -ceq
+            'agents|readme|router-doc|validation-doc|compatibility-doc|roadmap-doc' -and
+        @($updateImpactUnit.instruction_surfaces | Where-Object { $_.status -cne 'planned' -or $null -ne $_.skill_id }).Count -eq 0 -and
+        $null -eq $updateImpactUnit.instruction_none_justification -and
+        [string]$updateImpactUnit.source_composition.mode -ceq 'observed-working-copies' -and
+        $null -eq $updateImpactUnit.source_composition.lock_path -and
+        $null -eq $updateImpactUnit.source_composition.materialization_receipt
+    ) 'the update-impact fixture does not exercise the intended exact nullable shape'
+    $unknownSurfaceKind = Copy-WriteScopeValue $updateImpactUnit
+    $unknownSurfaceKind.instruction_surfaces[4].surface_kind = 'unknown-doc'
+    Assert-IterationUnitSchema $unknownSurfaceKind $false 'an unknown instruction surface kind was accepted'
+    $updateImpactUnitHash = Get-MorphospaceFileSha256 $updateImpact.paths.unit
+    $updateImpactDry = Invoke-MorphospaceAmendActiveWriteScope `
+        -WorkspaceRoot $updateImpact.paths.workspace `
+        -UnitId 'unit-write-scope-001' `
+        -ActiveWriteScopeAmendment $updateImpact.amendment_path `
+        -OutPath $updateImpact.paths.out `
+        -Timestamp '2026-08-10T01:07:00.0000000Z'
+    Assert-WriteScopeTest (-not $updateImpactDry.executed) 'dry run rejected an update-impact unit with null justification'
+    Assert-WriteScopeTest (
+        $updateImpactUnitHash -ceq (Get-MorphospaceFileSha256 $updateImpact.paths.unit)
+    ) 'update-impact dry run changed active-unit bytes'
 
     $addRepo = New-WriteScopeFixture $temp 'add-repo' -AddRepository
     $addRepoHash = Get-MorphospaceFileSha256 $addRepo.amendment_path
@@ -209,7 +322,7 @@ try {
             -OutPath $race.paths.out -Timestamp '2026-08-10T01:20:00.0000000Z' -BeforeTransitionHook $raceHook -Execute
     } 'mutex-protected project CAS race was accepted'
 
-    [pscustomobject]@{result='pass';action='AmendActiveWriteScope';additive=$true;project_bounded=$true;transactional=$true;git_mutation_performed=$false;device_mutation_performed=$false;remote_mutation_performed=$false} | ConvertTo-Json -Compress
+    [pscustomobject]@{result='pass';action='AmendActiveWriteScope';additive=$true;project_bounded=$true;transactional=$true;architecture_decision_optional_and_strict=$true;update_instruction_null_compatible=$true;compatibility_and_roadmap_surfaces_strict=$true;git_mutation_performed=$false;device_mutation_performed=$false;remote_mutation_performed=$false} | ConvertTo-Json -Compress
 } finally {
     if ([IO.Directory]::Exists($temp)) {
         foreach ($file in [IO.Directory]::EnumerateFiles($temp,'*',[IO.SearchOption]::AllDirectories)) {
