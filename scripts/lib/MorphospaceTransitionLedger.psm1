@@ -51,7 +51,9 @@ function Read-MorphospaceLedgerEvents { param([string]$EventsPath,[AllowEmptyCol
     try{$text=[Text.UTF8Encoding]::new($false,$true).GetString($bytes)}catch{throw 'Transition event ledger is not strict UTF-8.'}
     $lines=$text-split"`n",0
     $events=@()
-    $eventSchema=Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'schemas\iteration-event.schema.json'
+    $schemaRoot=Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'schemas'
+    $eventV1Schema=Join-Path $schemaRoot 'iteration-event.schema.json'
+    $eventV2Schema=Join-Path $schemaRoot 'iteration-event-v2.schema.json'
     $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $previousTimestamp=$null
     for($index=0;$index-lt$lines.Count;$index++){
@@ -65,6 +67,20 @@ function Read-MorphospaceLedgerEvents { param([string]$EventsPath,[AllowEmptyCol
         try{
             $event=ConvertFrom-MorphospaceProtocolJsonBytes -Bytes ([Text.UTF8Encoding]::new($false).GetBytes($line)) -Context "transition event ledger line $($index+1)"
         }catch{throw "Transition event ledger contains malformed JSON at line $($index+1): $($_.Exception.Message)"}
+        $eventSchemaId=[string]$event.schema
+        if($eventSchemaId-ceq'rusty.morphospace.workflow.iteration_event.v1'){
+            $eventSchema=$eventV1Schema
+        }elseif($eventSchemaId-ceq'rusty.morphospace.workflow.iteration_event.v2'){
+            if($index-ne0){
+                throw "Transition event ledger contains a v2 event outside the historical bootstrap position at line $($index+1)."
+            }
+            if([string]$event.previous_event_sha256-cne('0'*64)){
+                throw 'Transition event ledger historical v2 bootstrap does not use the zero predecessor.'
+            }
+            $eventSchema=$eventV2Schema
+        }else{
+            throw "Transition event ledger entry has an unsupported schema at line $($index+1)."
+        }
         if(-not(Test-Json -Json ($event|ConvertTo-Json -Depth 16 -Compress) -SchemaFile $eventSchema)){
             throw "Transition event ledger entry fails the exact iteration-event contract at line $($index+1)."
         }

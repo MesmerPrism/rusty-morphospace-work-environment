@@ -53,6 +53,31 @@ function New-LedgerEvent {
     }
 }
 
+function New-LedgerBootstrapEvent {
+    [pscustomobject][ordered]@{
+        schema='rusty.morphospace.workflow.iteration_event.v2'
+        event_id='mixed-prefix-bootstrap-001'
+        sequence=1
+        timestamp='2026-01-02T03:04:05.0000000Z'
+        run_id='mixed-prefix-bootstrap-run'
+        session_id=$null
+        project_id='ledger-test'
+        unit_id='unit-test'
+        event_type='decision'
+        summary='Bootstrap the historical event ledger before v1 transition ownership.'
+        previous_event_sha256='0' * 64
+        receipts=@()
+    }
+}
+
+function Read-LedgerEventsForTest {
+    param([string]$Path)
+    @(& $script:transitionModule {
+        param($EventsPath)
+        Read-MorphospaceLedgerEvents -EventsPath $EventsPath
+    } $Path)
+}
+
 function Enter-LedgerTestMutex {
     param([string]$WorkspaceRoot)
     & $script:transitionModule {
@@ -355,6 +380,32 @@ function Invoke-ConcurrentLedgerDriftTest {
 
 $workspace = Join-Path ([IO.Path]::GetTempPath()) ('morphospace-ledger-' + [guid]::NewGuid().ToString('N'))
 try {
+    $mixedLedgerPath = Join-Path $workspace 'mixed-event-prefix.jsonl'
+    [IO.Directory]::CreateDirectory($workspace) | Out-Null
+    $bootstrapEvent = New-LedgerBootstrapEvent
+    $legacyEvent = New-LedgerEvent 'mixed-prefix-ready-002' 2
+    $legacyEvent.timestamp = '2026-01-02T03:04:06.0000000Z'
+    $mixedLedgerText = (@(
+        $bootstrapEvent | ConvertTo-Json -Depth 16 -Compress
+        $legacyEvent | ConvertTo-Json -Depth 16 -Compress
+    ) -join "`n") + "`n"
+    [IO.File]::WriteAllText($mixedLedgerPath, $mixedLedgerText, [Text.UTF8Encoding]::new($false))
+    $mixedEvents = @(Read-LedgerEventsForTest $mixedLedgerPath)
+    Assert-Ledger ($mixedEvents.Count -eq 2 -and [string]$mixedEvents[0].schema -eq 'rusty.morphospace.workflow.iteration_event.v2' -and [string]$mixedEvents[1].schema -eq 'rusty.morphospace.workflow.iteration_event.v1') 'historical v2 bootstrap followed by v1 events was not admitted'
+
+    $firstLegacyEvent = New-LedgerEvent 'mixed-prefix-legacy-001' 1
+    [IO.File]::WriteAllText($mixedLedgerPath, (($firstLegacyEvent | ConvertTo-Json -Depth 16 -Compress) + "`n" + ($bootstrapEvent | ConvertTo-Json -Depth 16 -Compress) + "`n"), [Text.UTF8Encoding]::new($false))
+    $lateV2Rejected = $false
+    try { Read-LedgerEventsForTest $mixedLedgerPath | Out-Null } catch { $lateV2Rejected = $_.Exception.Message -like '*v2 event outside the historical bootstrap position*' }
+    Assert-Ledger $lateV2Rejected 'v2 event outside the historical bootstrap position was accepted'
+
+    $nonzeroBootstrap = New-LedgerBootstrapEvent
+    $nonzeroBootstrap.previous_event_sha256 = '1' * 64
+    [IO.File]::WriteAllText($mixedLedgerPath, (($nonzeroBootstrap | ConvertTo-Json -Depth 16 -Compress) + "`n"), [Text.UTF8Encoding]::new($false))
+    $nonzeroBootstrapRejected = $false
+    try { Read-LedgerEventsForTest $mixedLedgerPath | Out-Null } catch { $nonzeroBootstrapRejected = $_.Exception.Message -like '*does not use the zero predecessor*' }
+    Assert-Ledger $nonzeroBootstrapRejected 'historical v2 bootstrap with a nonzero predecessor was accepted'
+
     $state = [pscustomobject]@{schema='test';stage='before'}
     $unit = [pscustomobject]@{schema='test';status='validating'}
     $event = New-LedgerEvent 'unit-accept-0001' 1
