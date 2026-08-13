@@ -2,6 +2,7 @@ param(
     [string]$RepoRoot = "",
     [string]$WorkspaceRoot = "",
     [string]$RepositoryMapPath = "",
+    [switch]$CurrentUnitInstructionOnly,
     [switch]$SkipOwnerSelfTests
 )
 
@@ -253,6 +254,206 @@ function Test-PathInScope {
         }
     }
     return $false
+}
+
+function Test-CurrentSkillReviewNoChangeCompatibility {
+    param(
+        [Parameter(Mandatory = $true)][object]$Unit,
+        [Parameter(Mandatory = $true)][object]$State,
+        [Parameter(Mandatory = $true)][string[]]$EffectiveChangeCategories,
+        [Parameter(Mandatory = $true)][object[]]$EffectiveAllowedRepositories,
+        [Parameter(Mandatory = $true)][object]$SkillSurface
+    )
+
+    if ([string]$Unit.work_mode -cne "feature" -or
+        -not ($Unit.PSObject.Properties.Name -contains "work_mode") -or
+        @("active", "validating") -cnotcontains [string]$Unit.status -or
+        [string]$State.current_unit -cne [string]$Unit.unit_id -or
+        [string]$SkillSurface.action -cne "review-no-change") {
+        return $false
+    }
+
+    $portablePolicyCategories = @(
+        "authority",
+        "module-layout",
+        "feature-activation",
+        "device-policy",
+        "repo-routing",
+        "public-private-boundary",
+        "workflow-automation",
+        "state-machine",
+        "validation-routing",
+        "recovery"
+    )
+    if (@($EffectiveChangeCategories | Where-Object {
+        $portablePolicyCategories -ccontains [string]$_
+    }).Count -gt 0) {
+        return $false
+    }
+
+    $writablePaths = @($EffectiveAllowedRepositories | ForEach-Object {
+        @($_.allowed_paths | ForEach-Object { [string]$_ })
+    })
+    return -not (Test-PathInScope -Candidate ([string]$SkillSurface.path) -Allowed $writablePaths)
+}
+
+function Test-CurrentUnitInstructionWorkspace {
+    param(
+        [Parameter(Mandatory = $true)][string]$Root,
+        [Parameter(Mandatory = $true)][string]$SchemaPath,
+        [string]$Context = "current-unit instruction contract"
+    )
+
+    $statePath = Join-Path $Root "workspace.state.json"
+    $state = Read-JsonDocument -Path $statePath -Context "$Context workspace state"
+    if ($null -eq $state) { return }
+    $currentUnitId = [string]$state.current_unit
+    Assert-Contract ($currentUnitId -match $script:PortableIdPattern) "$Context requires one canonical current_unit."
+    if ($currentUnitId -notmatch $script:PortableIdPattern) { return }
+
+    $unitPath = Join-Path $Root ("iteration-units/{0}.json" -f $currentUnitId)
+    $unit = Read-JsonDocument -Path $unitPath -Context "$Context current unit '$currentUnitId'"
+    if ($null -eq $unit) { return }
+    try {
+        Assert-Contract (Get-Content -Raw -LiteralPath $unitPath | Test-Json -SchemaFile $SchemaPath -ErrorAction Stop) "$Context current unit '$currentUnitId' failed its schema."
+    } catch {
+        Add-Failure -Message "$Context current unit '$currentUnitId' schema validation failed: $($_.Exception.Message)"
+    }
+
+    Assert-Contract ([string]$unit.unit_id -ceq $currentUnitId) "$Context current unit identity drifted."
+    Assert-Contract ([string]$unit.project_id -ceq [string]$state.project_id) "$Context current unit project_id does not match workspace state."
+    Assert-Contract (@("active", "validating") -ccontains [string]$unit.status) "$Context current unit must be active or validating."
+
+    $workModeExplicit = $unit.PSObject.Properties.Name -contains "work_mode"
+    $workMode = if ($workModeExplicit) { [string]$unit.work_mode } else { "feature" }
+    Assert-Contract ($script:WorkModes -ccontains $workMode) "$Context current unit has unknown work mode '$workMode'."
+
+    $changeCategories = @($unit.change_categories | ForEach-Object { [string]$_ })
+    $effectiveChangeCategories = @($changeCategories | ForEach-Object {
+        if ($script:ChangeCategories -ccontains $_) { $_ }
+        elseif ($script:ChangeCategoryAliases.ContainsKey($_)) { $script:ChangeCategoryAliases[$_] }
+        else { $_ }
+    })
+    foreach ($category in $changeCategories) {
+        Assert-Contract (($script:ChangeCategories -ccontains $category) -or $script:ChangeCategoryAliases.ContainsKey($category)) "$Context current unit has unknown change category '$category'."
+    }
+
+    $instructionImpact = [string]$unit.instruction_impact
+    $instructionSurfaces = @($unit.instruction_surfaces)
+    $effectiveAllowedRepositories = @($unit.allowed_repositories)
+    Assert-Contract ($script:InstructionImpactValues -ccontains $instructionImpact) "$Context current unit has unknown instruction impact '$instructionImpact'."
+    Test-UniqueProperty -Items $instructionSurfaces -Property "path" -Context "$Context current unit instruction surfaces"
+    foreach ($surface in $instructionSurfaces) {
+        Assert-Contract ($script:InstructionSurfaceKinds -ccontains [string]$surface.surface_kind) "$Context current unit has unknown instruction surface kind '$($surface.surface_kind)'."
+        Assert-Contract (Test-Text $surface.path) "$Context current unit instruction surface needs a path."
+        Assert-Contract (Test-Text $surface.owner) "$Context current unit instruction surface '$($surface.path)' needs an owner."
+        Assert-Contract (Test-Text $surface.change_reason) "$Context current unit instruction surface '$($surface.path)' needs a change reason."
+        Assert-Contract (@("update", "review-no-change") -ccontains [string]$surface.action) "$Context current unit instruction surface '$($surface.path)' has unknown action."
+        Assert-Contract (@("planned", "complete") -ccontains [string]$surface.status) "$Context current unit instruction surface '$($surface.path)' has unknown status."
+        Assert-Contract (Test-Text $surface.validation) "$Context current unit instruction surface '$($surface.path)' needs validation."
+        if ([string]$surface.surface_kind -ceq "skill") {
+            Assert-Contract (Test-Text $surface.skill_id) "$Context current unit skill surface '$($surface.path)' needs skill_id."
+        } else {
+            Assert-Contract ($null -eq $surface.skill_id) "$Context current unit non-skill surface '$($surface.path)' must use null skill_id."
+        }
+    }
+
+    $triggeredCategories = @($effectiveChangeCategories | Where-Object {
+        $script:InstructionTriggerCategories -ccontains [string]$_
+    } | Sort-Object -Unique -CaseSensitive)
+    if ($triggeredCategories.Count -eq 0) { return }
+
+    $expectedInstructionImpact = if ($workMode -ceq "validation-only") { "review" } else { "update" }
+    $expectedRequiredAction = if ($workMode -ceq "validation-only") { "review-no-change" } else { "update" }
+    Assert-Contract ($instructionImpact -ceq $expectedInstructionImpact) "$Context current unit work mode '$workMode' must use instruction_impact '$expectedInstructionImpact'."
+    $agentSurfaces = @($instructionSurfaces | Where-Object { [string]$_.surface_kind -ceq "agents" })
+    $routerSurfaces = @($instructionSurfaces | Where-Object {
+        @("readme", "router-doc") -ccontains [string]$_.surface_kind
+    })
+    Assert-Contract ($agentSurfaces.Count -gt 0) "$Context current unit needs the nearest AGENTS.md instruction surface."
+    Assert-Contract ($routerSurfaces.Count -gt 0) "$Context current unit needs a README or router-doc instruction surface."
+    foreach ($surface in @($agentSurfaces + $routerSurfaces)) {
+        Assert-Contract ([string]$surface.action -ceq $expectedRequiredAction) "$Context current unit required instruction surface '$($surface.path)' must use '$expectedRequiredAction'."
+    }
+
+    $requiredSkillIds = [Collections.Generic.List[string]]::new()
+    foreach ($category in $triggeredCategories) {
+        foreach ($skillId in @($script:InstructionSkillRouting[[string]$category])) {
+            if (-not $requiredSkillIds.Contains([string]$skillId)) { $requiredSkillIds.Add([string]$skillId) }
+        }
+    }
+    foreach ($requiredSkillId in $requiredSkillIds.ToArray()) {
+        $matching = @($instructionSurfaces | Where-Object {
+            [string]$_.surface_kind -ceq "skill" -and [string]$_.skill_id -ceq [string]$requiredSkillId
+        })
+        Assert-Contract ($matching.Count -eq 1) "$Context current unit needs one instruction surface for relevant skill '$requiredSkillId'."
+        if ($matching.Count -eq 1 -and [string]$matching[0].action -cne $expectedRequiredAction) {
+            Assert-Contract (Test-CurrentSkillReviewNoChangeCompatibility `
+                -Unit $unit `
+                -State $state `
+                -EffectiveChangeCategories $effectiveChangeCategories `
+                -EffectiveAllowedRepositories $effectiveAllowedRepositories `
+                -SkillSurface $matching[0]) "$Context current unit relevant skill '$requiredSkillId' must use '$expectedRequiredAction'."
+        }
+    }
+
+    if ($workMode -ceq "validation-only") {
+        Assert-Contract ($effectiveChangeCategories.Count -eq 1 -and [string]$effectiveChangeCategories[0] -ceq "validation") "$Context validation-only current unit may declare only validation."
+        Assert-Contract (@($instructionSurfaces | Where-Object { [string]$_.action -cne "review-no-change" }).Count -eq 0) "$Context validation-only current unit may only review instruction surfaces without change."
+    }
+}
+
+function Invoke-CurrentInstructionSurfacePolicySelfTest {
+    param(
+        [Parameter(Mandatory = $true)][string]$TemplateRoot,
+        [Parameter(Mandatory = $true)][string]$SchemaPath
+    )
+
+    $fixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ("morphospace-current-instruction-" + [guid]::NewGuid().ToString("N"))
+    [IO.Directory]::CreateDirectory((Join-Path $fixtureRoot "iteration-units")) | Out-Null
+    try {
+        $unit = Read-JsonDocument -Path (Join-Path $TemplateRoot "iteration-unit.example.json") -Context "current instruction fixture unit source"
+        $state = Read-JsonDocument -Path (Join-Path $TemplateRoot "workspace.state.example.json") -Context "current instruction fixture state source"
+        if ($null -eq $unit -or $null -eq $state) { return }
+        $unit.unit_id = "current-instruction-surface"
+        $unit.status = "active"
+        $unit.work_mode = "feature"
+        $unit.change_categories = @("implementation", "validation")
+        $unit.instruction_impact = "update"
+        $unit.instruction_surfaces = @(
+            [pscustomobject][ordered]@{ surface_kind="agents"; path="<repo-root>/AGENTS.md"; owner="example-owner"; change_reason="Review the local product instructions."; action="update"; status="planned"; validation="<instruction-validation>"; skill_id=$null },
+            [pscustomobject][ordered]@{ surface_kind="readme"; path="<repo-root>/README.md"; owner="example-owner"; change_reason="Review the public product router."; action="update"; status="planned"; validation="<instruction-validation>"; skill_id=$null },
+            [pscustomobject][ordered]@{ surface_kind="compatibility-doc"; path="docs/COMPATIBILITY.md"; owner="example-owner"; change_reason="Record the compatibility boundary."; action="update"; status="planned"; validation="<instruction-validation>"; skill_id=$null },
+            [pscustomobject][ordered]@{ surface_kind="roadmap-doc"; path="docs/ROADMAP.md"; owner="example-owner"; change_reason="Record the deferred follow-up."; action="update"; status="planned"; validation="<instruction-validation>"; skill_id=$null },
+            [pscustomobject][ordered]@{ surface_kind="skill"; path="<skills-root>/rusty-morphospace/SKILL.md"; owner="workflow-maintainer"; change_reason="The portable routing remains unchanged."; action="review-no-change"; status="planned"; validation="<skill-validation>"; skill_id="rusty-morphospace" },
+            [pscustomobject][ordered]@{ surface_kind="skill"; path="<skills-root>/system-engineering/SKILL.md"; owner="workflow-maintainer"; change_reason="The system authority remains unchanged."; action="review-no-change"; status="planned"; validation="<skill-validation>"; skill_id="system-engineering" }
+        )
+        $state.current_unit = [string]$unit.unit_id
+        $state.project_id = [string]$unit.project_id
+
+        $unitJson = $unit | ConvertTo-Json -Depth 40
+        Assert-Contract ($unitJson | Test-Json -SchemaFile $SchemaPath -ErrorAction Stop) "Synthetic current update unit with compatibility and roadmap documents was rejected."
+        $utf8 = [Text.UTF8Encoding]::new($false)
+        [IO.File]::WriteAllText((Join-Path $fixtureRoot "workspace.state.json"), ($state | ConvertTo-Json -Depth 40), $utf8)
+        [IO.File]::WriteAllText((Join-Path $fixtureRoot "iteration-units/current-instruction-surface.json"), $unitJson, $utf8)
+        Test-CurrentUnitInstructionWorkspace -Root $fixtureRoot -SchemaPath $SchemaPath -Context "synthetic current instruction fixture"
+
+        $skillSurface = @($unit.instruction_surfaces | Where-Object { [string]$_.skill_id -ceq "rusty-morphospace" })[0]
+        Assert-Contract (Test-CurrentSkillReviewNoChangeCompatibility -Unit $unit -State $state -EffectiveChangeCategories @("implementation", "validation") -EffectiveAllowedRepositories @($unit.allowed_repositories) -SkillSurface $skillSurface) "Out-of-scope current skill review-no-change was rejected."
+        Assert-Contract (-not (Test-CurrentSkillReviewNoChangeCompatibility -Unit $unit -State $state -EffectiveChangeCategories @("authority") -EffectiveAllowedRepositories @($unit.allowed_repositories) -SkillSurface $skillSurface)) "Authority-changing current unit weakened the required skill update."
+        $writableSkillScope = @([pscustomobject]@{ repo_id="workflow-owner"; allowed_paths=@("<skills-root>/rusty-morphospace/SKILL.md") })
+        Assert-Contract (-not (Test-CurrentSkillReviewNoChangeCompatibility -Unit $unit -State $state -EffectiveChangeCategories @("validation") -EffectiveAllowedRepositories $writableSkillScope -SkillSurface $skillSurface)) "Writable current skill path weakened the required skill update."
+        $otherState = $state | ConvertTo-Json -Depth 40 | ConvertFrom-Json -Depth 40
+        $otherState.current_unit = "different-current-unit"
+        Assert-Contract (-not (Test-CurrentSkillReviewNoChangeCompatibility -Unit $unit -State $otherState -EffectiveChangeCategories @("validation") -EffectiveAllowedRepositories @($unit.allowed_repositories) -SkillSurface $skillSurface)) "Non-current unit used current skill-review compatibility."
+
+        $unknownUnit = $unitJson | ConvertFrom-Json -Depth 40
+        @($unknownUnit.instruction_surfaces | Where-Object { [string]$_.surface_kind -ceq "compatibility-doc" })[0].surface_kind = "unknown-doc"
+        Assert-Contract (-not ($unknownUnit | ConvertTo-Json -Depth 40 | Test-Json -SchemaFile $SchemaPath -ErrorAction SilentlyContinue)) "Unknown instruction surface kind passed the iteration-unit schema."
+        Assert-Contract ($script:InstructionSurfaceKinds -cnotcontains "unknown-doc") "Unknown instruction surface kind entered the lifecycle manifest."
+    } finally {
+        if ([IO.Directory]::Exists($fixtureRoot)) { [IO.Directory]::Delete($fixtureRoot, $true) }
+    }
 }
 
 function Get-FeatureLockFingerprint {
@@ -921,6 +1122,15 @@ function Test-ProjectBundle {
                     $skillSurface = $matchingSkill[0]
                     if ([string]$skillSurface.action -ceq $expectedRequiredAction) {
                         # Current feature and validation-only records use the exact mode action.
+                    } elseif (Test-CurrentSkillReviewNoChangeCompatibility `
+                        -Unit $unit `
+                        -State $state `
+                        -EffectiveChangeCategories $effectiveChangeCategories `
+                        -EffectiveAllowedRepositories $effectiveAllowedRepositories `
+                        -SkillSurface $skillSurface) {
+                        # Current feature units may retain an out-of-scope skill
+                        # review only for validation work that changes no
+                        # portable authority, routing, module, or policy rule.
                     } elseif (-not $workModeExplicit -and [string]$skillSurface.action -ceq "review-no-change") {
                         $legacySkillReviewCandidates.Add([pscustomobject][ordered]@{
                             unit_id = [string]$unit.unit_id
@@ -1796,6 +2006,32 @@ foreach ($schemaFile in $schemaFiles) {
 }
 
 $templatesRoot = Join-Path $RepoRoot "templates"
+$iterationUnitSchemaPath = Join-Path $schemaRoot "iteration-unit.schema.json"
+$iterationUnitSchema = Read-JsonDocument -Path $iterationUnitSchemaPath -Context "iteration-unit schema parity"
+if ($null -ne $iterationUnitSchema) {
+    $schemaInstructionSurfaceKinds = @($iterationUnitSchema.properties.instruction_surfaces.items.properties.surface_kind.enum | ForEach-Object { [string]$_ })
+    $expectedInstructionSurfaceKinds = @("agents", "readme", "router-doc", "validation-doc", "compatibility-doc", "roadmap-doc", "skill")
+    Assert-Contract (($script:InstructionSurfaceKinds -join "|") -ceq ($expectedInstructionSurfaceKinds -join "|")) "Workflow lifecycle instruction surface kinds are not in the established closed order."
+    Assert-Contract (($script:InstructionSurfaceKinds -join "|") -ceq ($schemaInstructionSurfaceKinds -join "|")) "Workflow lifecycle and iteration-unit schema instruction surface kinds drifted."
+}
+Invoke-CurrentInstructionSurfacePolicySelfTest -TemplateRoot $templatesRoot -SchemaPath $iterationUnitSchemaPath
+
+if ($CurrentUnitInstructionOnly) {
+    if (-not $WorkspaceRoot) {
+        Add-Failure -Message "CurrentUnitInstructionOnly requires WorkspaceRoot."
+    } else {
+        $resolvedCurrentWorkspace = (Resolve-Path -LiteralPath $WorkspaceRoot).Path
+        Test-CurrentUnitInstructionWorkspace -Root $resolvedCurrentWorkspace -SchemaPath $iterationUnitSchemaPath
+    }
+    if ($script:Failures.Count -gt 0) {
+        Write-Host "Current-unit instruction contract failures:"
+        foreach ($failure in $script:Failures) { Write-Host " - $failure" }
+        throw "Current-unit instruction contract failed with $($script:Failures.Count) error(s)."
+    }
+    Write-Host "Current-unit instruction contract passed; immutable historical units were not inspected or reclassified."
+    return
+}
+
 foreach ($contractExample in @(
     [pscustomobject]@{ Template = "unpublished-workspace-materialization.example.json"; Schema = "unpublished-workspace-materialization-v1.schema.json" },
     [pscustomobject]@{ Template = "planning-workspace-projection.example.json"; Schema = "planning-workspace-projection.schema.json" },
