@@ -43,7 +43,7 @@ function New-WriteScopeFixture {
         authority_map=@([pscustomobject][ordered]@{parameter='project.composition';owner='owner-repo';adapters=@()})
         repositories=@(
             [pscustomobject][ordered]@{repo_id='owner-repo';role='application';path='<owner>';allowed_paths=@('docs/','src/')},
-            [pscustomobject][ordered]@{repo_id='aux-repo';role='core';path='<aux>';allowed_paths=@('crates/')}
+            [pscustomobject][ordered]@{repo_id='aux-repo';role='platform-test-harness';path='<aux>';allowed_paths=@('crates/')}
         )
         modules=@();non_scope=@('No source, Git, device, build, validation, or remote mutation.')
         validation_profiles=@([pscustomobject][ordered]@{profile_id='quick';commands=@('test-command')})

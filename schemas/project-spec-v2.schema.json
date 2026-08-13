@@ -54,7 +54,7 @@
         "type": "object", "additionalProperties": false, "required": ["repo_id", "role", "path", "allowed_paths"],
         "properties": {
           "repo_id": { "$ref": "#/$defs/id" },
-          "role": { "enum": ["application", "core", "adapter", "tool", "lab", "planning", "compatibility"] },
+          "role": { "enum": ["application", "core", "adapter", "tool", "lab", "planning", "compatibility", "platform-test-harness"] },
           "path": { "type": "string", "minLength": 1 },
           "allowed_paths": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
         }
