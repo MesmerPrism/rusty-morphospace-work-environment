@@ -69,8 +69,9 @@ function New-WriteScopeFixture {
         capability_registry=@();dirty_repositories=@('owner-repo');blockers=@();validation_checkpoint=$null;pending_push_bundle=$null
     }
     $event = [pscustomobject][ordered]@{
-        schema='rusty.morphospace.workflow.iteration_event.v1';event_id=$eventId;sequence=1;timestamp='2026-08-10T00:00:00Z'
-        project_id='write-scope-test';unit_id='unit-write-scope-001';event_type='state-transition';summary='Claimed the bounded write-scope test unit.';receipts=@()
+        schema='rusty.morphospace.workflow.iteration_event.v2';event_id=$eventId;sequence=1;timestamp='2026-08-10T00:00:00.0000000Z'
+        run_id='write-scope-bootstrap-20260810';session_id=$null;project_id='write-scope-test';unit_id='unit-write-scope-001'
+        event_type='state-transition';summary='Claimed the bounded write-scope test unit.';previous_event_sha256=('0'*64);receipts=@()
     }
     $amendmentId = if ($AddRepository) { 'unit-write-scope-001-add-aux' } else { 'unit-write-scope-001-add-docs' }
     $repositoryId = if ($AddRepository) { 'aux-repo' } else { 'owner-repo' }
