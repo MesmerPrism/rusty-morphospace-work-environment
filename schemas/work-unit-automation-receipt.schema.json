@@ -243,7 +243,7 @@
                 "required": ["surface_id", "surface_kind", "declared_path", "repo_id", "relative_path", "owner", "action", "validation", "skill_id", "previous_status", "resulting_status", "sha256"],
                 "properties": {
                   "surface_id": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-                  "surface_kind": { "enum": ["agents", "readme", "router-doc", "validation-doc", "skill"] },
+                  "surface_kind": { "enum": ["agents", "readme", "router-doc", "validation-doc", "compatibility-doc", "roadmap-doc", "skill"] },
                   "declared_path": { "type": "string", "minLength": 1 },
                   "repo_id": { "$ref": "#/$defs/id" },
                   "relative_path": { "type": "string", "minLength": 1 },
