@@ -2014,6 +2014,12 @@ if ($null -ne $iterationUnitSchema) {
     Assert-Contract (($script:InstructionSurfaceKinds -join "|") -ceq ($expectedInstructionSurfaceKinds -join "|")) "Workflow lifecycle instruction surface kinds are not in the established closed order."
     Assert-Contract (($script:InstructionSurfaceKinds -join "|") -ceq ($schemaInstructionSurfaceKinds -join "|")) "Workflow lifecycle and iteration-unit schema instruction surface kinds drifted."
 }
+$automationReceiptSchemaPath = Join-Path $schemaRoot "work-unit-automation-receipt.schema.json"
+$automationReceiptSchemaDocument = Read-JsonDocument -Path $automationReceiptSchemaPath -Context "automation-receipt instruction surface parity"
+if ($null -ne $automationReceiptSchemaDocument) {
+    $receiptInstructionSurfaceKinds = @($automationReceiptSchemaDocument.properties.instruction_surface_completion.oneOf[0].properties.surfaces.items.properties.surface_kind.enum | ForEach-Object { [string]$_ })
+    Assert-Contract (($script:InstructionSurfaceKinds -join "|") -ceq ($receiptInstructionSurfaceKinds -join "|")) "Workflow lifecycle and automation-receipt instruction surface kinds drifted."
+}
 Invoke-CurrentInstructionSurfacePolicySelfTest -TemplateRoot $templatesRoot -SchemaPath $iterationUnitSchemaPath
 
 if ($CurrentUnitInstructionOnly) {

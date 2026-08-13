@@ -371,7 +371,9 @@ try {
     [System.IO.Directory]::CreateDirectory((Join-Path $repo "docs")) | Out-Null
     [System.IO.File]::WriteAllText((Join-Path $repo "AGENTS.md"), "bounded agent routing`n", $encoding)
     [System.IO.File]::WriteAllText((Join-Path $repo "docs\workflow.md"), "bounded workflow routing`n", $encoding)
-    Invoke-TestGit -Path $repo -Arguments @("add", "AGENTS.md", "docs/workflow.md") | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $repo "docs\compatibility.md"), "bounded compatibility record`n", $encoding)
+    [System.IO.File]::WriteAllText((Join-Path $repo "docs\roadmap.md"), "bounded roadmap record`n", $encoding)
+    Invoke-TestGit -Path $repo -Arguments @("add", "AGENTS.md", "docs/workflow.md", "docs/compatibility.md", "docs/roadmap.md") | Out-Null
     Invoke-TestGit -Path $repo -Arguments @("commit", "-m", "add instruction surfaces") | Out-Null
     Invoke-TestGit -Path $repo -Arguments @("push", "origin", "main") | Out-Null
     $executionObservationPath = Join-Path $repo "src\execution-preflight.json"
@@ -423,7 +425,9 @@ try {
     [void]$instructionUnit.PSObject.Properties.Remove("instruction_none_justification")
     $instructionUnit.instruction_surfaces = @(
         [pscustomobject][ordered]@{ surface_kind = "agents"; path = "<project-shell>/AGENTS.md"; owner = "project-shell"; change_reason = "Exercise exact agent-entrypoint completion."; action = "update"; status = "planned"; validation = "Review the stable observed file hash."; skill_id = $null },
-        [pscustomobject][ordered]@{ surface_kind = "router-doc"; path = "<project-shell>/docs/workflow.md"; owner = "project-shell"; change_reason = "Exercise exact router completion."; action = "update"; status = "planned"; validation = "Review the stable observed file hash."; skill_id = $null }
+        [pscustomobject][ordered]@{ surface_kind = "router-doc"; path = "<project-shell>/docs/workflow.md"; owner = "project-shell"; change_reason = "Exercise exact router completion."; action = "update"; status = "planned"; validation = "Review the stable observed file hash."; skill_id = $null },
+        [pscustomobject][ordered]@{ surface_kind = "compatibility-doc"; path = "<project-shell>/docs/compatibility.md"; owner = "project-shell"; change_reason = "Exercise exact compatibility-record completion."; action = "update"; status = "planned"; validation = "Review the stable observed file hash."; skill_id = $null },
+        [pscustomobject][ordered]@{ surface_kind = "roadmap-doc"; path = "<project-shell>/docs/roadmap.md"; owner = "project-shell"; change_reason = "Exercise exact roadmap-record completion."; action = "update"; status = "planned"; validation = "Review the stable observed file hash."; skill_id = $null }
     )
     Write-TestJson -Path $instructionUnitPath -Value $instructionUnit
     $nextUnit = New-TestUnit -ProjectId "automation-test" -UnitId "unit-auto-002"
@@ -995,7 +999,12 @@ try {
         -Action CompleteInstructionSurfaces -WorkspaceRoot $workspace -UnitId "unit-auto-001" `
         -RepoMapPath $repoMapPath -InstructionCompletionId $completionId -Timestamp $fixed |
         ConvertFrom-Json
-    Assert-Automation (-not $completionPlan.executed -and $completionPlan.instruction_surface_completion.surfaces.Count -eq 2) "instruction completion dry run"
+    $completionSurfaceKinds = @($completionPlan.instruction_surface_completion.surfaces.surface_kind | ForEach-Object { [string]$_ })
+    Assert-Automation (
+        -not $completionPlan.executed -and
+        $completionSurfaceKinds.Count -eq 4 -and
+        @("agents", "router-doc", "compatibility-doc", "roadmap-doc" | Where-Object { $completionSurfaceKinds -cnotcontains $_ }).Count -eq 0
+    ) "instruction completion dry run"
     Assert-Automation (@((Get-Content -LiteralPath $instructionUnitPath -Raw | ConvertFrom-Json).instruction_surfaces | Where-Object { [string]$_.status -ne "planned" }).Count -eq 0) "instruction completion dry run mutated the unit"
     $completionEventCount = @(Get-Content (Join-Path $workspace "iteration-events.jsonl")).Count
     $completionStateBefore = Get-Content -LiteralPath (Join-Path $workspace "workspace.state.json") -Raw | ConvertFrom-Json
@@ -1047,6 +1056,9 @@ try {
     Assert-Automation (@(Get-Content (Join-Path $workspace "iteration-events.jsonl")).Count -eq ($completionEventCount + 1)) "instruction completion did not append exactly one event"
     $completionReceipt = Get-Content -LiteralPath $completionReceiptPath -Raw
     Assert-Automation (Test-Json -Json $completionReceipt -SchemaFile (Join-Path $RepoRoot "schemas\work-unit-automation-receipt.schema.json")) "instruction completion receipt failed its schema"
+    $damagedCompletionReceipt = $completionReceipt | ConvertFrom-Json -Depth 100
+    @($damagedCompletionReceipt.instruction_surface_completion.surfaces | Where-Object { [string]$_.surface_kind -ceq "compatibility-doc" })[0].surface_kind = "unknown-doc"
+    Assert-Automation (-not ($damagedCompletionReceipt | ConvertTo-Json -Depth 100 | Test-Json -SchemaFile (Join-Path $RepoRoot "schemas\work-unit-automation-receipt.schema.json") -ErrorAction SilentlyContinue)) "instruction completion receipt accepted an unknown surface kind"
 
     $preflightWorkspace = New-TestWorkspace -Root (Join-Path $testRoot "preflight-project") -ProjectId "preflight-test" -UnitId "unit-preflight-001"
     $preflightUnitPath = Join-Path $preflightWorkspace "iteration-units\unit-preflight-001.json"
