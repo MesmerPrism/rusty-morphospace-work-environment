@@ -183,6 +183,7 @@ function New-TestValidationReceipt {
         [string]$Result,
         [object[]]$RepositoryRevisions = @(),
         [object[]]$ChangedPaths = @(),
+        [object[]]$Gates = @(),
         [string]$EvidenceName = "self-test-evidence.txt",
         [switch]$InstructionSynchronization
     )
@@ -193,6 +194,25 @@ function New-TestValidationReceipt {
     [System.IO.File]::WriteAllText($evidencePath, "validation evidence for $UnitId $Result`n", (New-Object System.Text.UTF8Encoding($false)))
     $hash = (Get-FileHash -LiteralPath $evidencePath -Algorithm SHA256).Hash.ToLowerInvariant()
     $status = if ($Result -eq "pass") { "pass" } else { "fail" }
+    $receiptGates = New-Object System.Collections.Generic.List[object]
+    if ($Gates.Count -ne 0) {
+        foreach ($gate in @($Gates)) { $receiptGates.Add($gate) | Out-Null }
+    } else {
+        $receiptGates.Add([pscustomobject][ordered]@{
+            gate_id = "validation-workflow"
+            status = $status
+            command = "temporary validation command"
+            evidence_refs = @("validation-evidence")
+        }) | Out-Null
+    }
+    if ($InstructionSynchronization) {
+        $receiptGates.Add([pscustomobject][ordered]@{
+            gate_id = "instruction-synchronization"
+            status = $status
+            command = "Verify every declared instruction surface is complete and validated."
+            evidence_refs = @("validation-evidence")
+        }) | Out-Null
+    }
     $receipt = [ordered]@{
         '$schema' = "../schemas/validation-receipt.schema.json"
         schema = "rusty.morphospace.workflow.validation_receipt.v1"
@@ -216,17 +236,7 @@ function New-TestValidationReceipt {
             command = "Test-WorkUnitAutomation.ps1"
             evidence_refs = @("validation-evidence")
         })
-        gates = @([ordered]@{
-            gate_id = "validation-workflow"
-            status = $status
-            command = "temporary validation command"
-            evidence_refs = @("validation-evidence")
-        }) + $(if ($InstructionSynchronization) { @([ordered]@{
-            gate_id = "instruction-synchronization"
-            status = $status
-            command = "Verify every declared instruction surface is complete and validated."
-            evidence_refs = @("validation-evidence")
-        }) } else { @() })
+        gates = @($receiptGates.ToArray())
         device_validation = $null
     }
     $receiptPath = Join-Path $receiptRoot "$UnitId-$Result-validation.json"
@@ -1144,6 +1154,55 @@ try {
     }) -InstructionSynchronization
     $record = Invoke-MorphospaceWorkUnitAutomation -Action RecordValidation -WorkspaceRoot $workspace -UnitId "unit-auto-001" -RepoMapPath $repoMapPath -ValidationTier deep -ValidationResult pass -ValidationReceipt "receipts/unit-auto-001-pass-validation.json" -Timestamp $fixed -OutPath (Join-Path $receiptRoot "validation.json") -Execute
     Assert-Automation ($record.transition -eq "validation-pass") "passing validation record"
+
+    $duplicateGateWorkspace = New-TestWorkspace -Root (Join-Path $planningRepo "duplicate-gate-project") -ProjectId "duplicate-gate-test" -UnitId "unit-duplicate-gate-001"
+    $duplicateGateUnitPath = Join-Path $duplicateGateWorkspace "iteration-units\unit-duplicate-gate-001.json"
+    $duplicateGateUnit = Get-Content -LiteralPath $duplicateGateUnitPath -Raw | ConvertFrom-Json
+    $duplicateGateUnit.validation = @(
+        [pscustomobject][ordered]@{ profile_id = "source-only"; command = "first source-only command" },
+        [pscustomobject][ordered]@{ profile_id = "source-only"; command = "second source-only command" },
+        [pscustomobject][ordered]@{ profile_id = "source-only"; command = "third source-only command" }
+    )
+    Write-TestJson -Path $duplicateGateUnitPath -Value $duplicateGateUnit
+    Invoke-MorphospaceWorkUnitAutomation -Action Claim -WorkspaceRoot $duplicateGateWorkspace -UnitId "unit-duplicate-gate-001" -RepoMapPath $repoMapPath -Timestamp $fixed -Execute | Out-Null
+    Invoke-MorphospaceWorkUnitAutomation -Action BeginValidation -WorkspaceRoot $duplicateGateWorkspace -UnitId "unit-duplicate-gate-001" -RepoMapPath $repoMapPath -Timestamp $fixed -Execute | Out-Null
+    $duplicateGateHead = @(Invoke-TestGit -Path $repo -Arguments @("rev-parse", "HEAD"))[0]
+    $duplicateGateBranch = @(Invoke-TestGit -Path $repo -Arguments @("branch", "--show-current"))[0]
+    $duplicateGateRows = @(
+        [ordered]@{ gate_id = "validation-source-only"; status = "pass"; command = "third source-only command"; evidence_refs = @("validation-evidence") },
+        [ordered]@{ gate_id = "validation-source-only"; status = "pass"; command = "first source-only command"; evidence_refs = @("validation-evidence") },
+        [ordered]@{ gate_id = "validation-source-only"; status = "pass"; command = "second source-only command"; evidence_refs = @("validation-evidence") }
+    )
+    $duplicateGateReceiptPath = New-TestValidationReceipt -Workspace $duplicateGateWorkspace -ProjectId "duplicate-gate-test" -UnitId "unit-duplicate-gate-001" -Tier standard -Result pass -RepositoryRevisions @([ordered]@{
+        repo_id = "project-shell"; base_revision = $duplicateGateHead; head_revision = $duplicateGateHead; branch = $duplicateGateBranch
+    }) -Gates $duplicateGateRows -EvidenceName "duplicate-gate-validation-evidence.txt"
+    $duplicateGateReceiptReference = "receipts/unit-duplicate-gate-001-pass-validation.json"
+    $duplicateGatePositive = Invoke-MorphospaceWorkUnitAutomation -Action RecordValidation -WorkspaceRoot $duplicateGateWorkspace -UnitId "unit-duplicate-gate-001" -RepoMapPath $repoMapPath -ValidationTier standard -ValidationResult pass -ValidationReceipt $duplicateGateReceiptReference -Timestamp $fixed
+    Assert-Automation ($duplicateGatePositive.transition -eq "validation-pass") "distinct commands sharing one gate ID did not pair as an exact multiset"
+
+    $validDuplicateGateReceipt = Get-Content -LiteralPath $duplicateGateReceiptPath -Raw | ConvertFrom-Json
+    $duplicateGateDamageCases = @(
+        [pscustomobject]@{ name = "missing"; expected = "Validation receipt does not cover the exact validation-gate set."; mutate = { param($receipt) $receipt.gates = @($receipt.gates | Select-Object -First 2) } },
+        [pscustomobject]@{ name = "extra"; expected = "Validation receipt does not cover the exact validation-gate set."; mutate = { param($receipt) $receipt.gates = @($receipt.gates) + @([pscustomobject][ordered]@{ gate_id = "validation-extra"; status = "pass"; command = "unexpected command"; evidence_refs = @("validation-evidence") }) } },
+        [pscustomobject]@{ name = "command-drift"; expected = "Validation command drifted for gate 'validation-source-only'."; mutate = { param($receipt) $receipt.gates[0].command = "THIRD SOURCE-ONLY COMMAND" } },
+        [pscustomobject]@{ name = "duplicate-count"; expected = "Validation command drifted for gate 'validation-source-only'."; mutate = { param($receipt) $receipt.gates[2].command = [string]$receipt.gates[1].command } },
+        [pscustomobject]@{ name = "status"; expected = "Passing validation has a non-passing gate 'validation-source-only'."; mutate = { param($receipt) $receipt.gates[1].status = "fail" } },
+        [pscustomobject]@{ name = "evidence"; expected = "Gate 'validation-source-only' references unknown artifact 'missing-evidence'."; mutate = { param($receipt) $receipt.gates[1].evidence_refs = @("missing-evidence") } }
+    )
+    foreach ($damageCase in $duplicateGateDamageCases) {
+        $damagedReceipt = $validDuplicateGateReceipt | ConvertTo-Json -Depth 32 | ConvertFrom-Json
+        & $damageCase.mutate $damagedReceipt
+        Write-TestJson -Path $duplicateGateReceiptPath -Value $damagedReceipt
+        $damageRejected = $false
+        try {
+            Invoke-MorphospaceWorkUnitAutomation -Action RecordValidation -WorkspaceRoot $duplicateGateWorkspace -UnitId "unit-duplicate-gate-001" -RepoMapPath $repoMapPath -ValidationTier standard -ValidationResult pass -ValidationReceipt $duplicateGateReceiptReference -Timestamp $fixed | Out-Null
+        } catch {
+            $damageRejected = $_.Exception.Message -ceq [string]$damageCase.expected
+        }
+        Assert-Automation $damageRejected "duplicate gate $($damageCase.name) damage did not fail closed"
+    }
+    Write-TestJson -Path $duplicateGateReceiptPath -Value $validDuplicateGateReceipt
+
     $validationEvidencePath = Join-Path $receiptRoot "self-test-evidence.txt"
     [System.IO.File]::WriteAllText($validationEvidencePath, "tampered after validation`n", $encoding)
     $tamperedAcceptanceRejected = $false
