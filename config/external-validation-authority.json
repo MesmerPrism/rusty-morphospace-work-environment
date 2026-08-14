@@ -411,6 +411,95 @@
       "status": "approved"
     },
     {
+      "approval_id": "manual-owner-review-checkpoint-parity-20260814",
+      "required_ancestor": "bea9af9bb5a9f339c268aa19a615a084e5f10582",
+      "changed_paths": [
+        "AGENTS.md",
+        "docs/AUTONOMOUS_ITERATION.md",
+        "manifests/workflow-lifecycle.portable.json",
+        "schemas/iteration-unit.schema.json",
+        "schemas/project-spec-v2.schema.json",
+        "scripts/Test-ActiveWriteScopeAmendment.ps1",
+        "scripts/Test-WorkflowContracts.ps1",
+        "skills/rust-work-graph/SKILL.md",
+        "skills/rusty-morphospace/references/project-workflow.md",
+        "skills/system-engineering/SKILL.md"
+      ],
+      "artifacts": [
+        {
+          "path": "AGENTS.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 36711,
+          "sha256": "bde0ce9ef4ab98640bc38cd45aee4e007d10c7f48b4c0ad081d337a1a2316ba1"
+        },
+        {
+          "path": "docs/AUTONOMOUS_ITERATION.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 41666,
+          "sha256": "5e90a41e4548c22d81df9a5dabeb647679cc36fc3aa859a1ce2df93d5b385266"
+        },
+        {
+          "path": "manifests/workflow-lifecycle.portable.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 8700,
+          "sha256": "c2c50169ebf3ca3eebd08c82b33c74969586ee63b72b35616cab6476b76697c7"
+        },
+        {
+          "path": "schemas/iteration-unit.schema.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 13357,
+          "sha256": "20802e43244b31a50e65dfdae7a882c34f74ed0cdfedaa8070ca3afbb1b7d0b6"
+        },
+        {
+          "path": "schemas/project-spec-v2.schema.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 5552,
+          "sha256": "49413e335647903e4a9bac59556b112518e0d2af7679f063b95ed5dd2b20e0cd"
+        },
+        {
+          "path": "scripts/Test-ActiveWriteScopeAmendment.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 25055,
+          "sha256": "263005983b1b566c2b537389699eab1ba564eb58d6a6f2a4fa90cdfe46ffa883"
+        },
+        {
+          "path": "scripts/Test-WorkflowContracts.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 195011,
+          "sha256": "f2f11b4be6dd7977bef52207e075ff3bc33e9863836ac66af94a4a6e97fa74bc"
+        },
+        {
+          "path": "skills/rust-work-graph/SKILL.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 20240,
+          "sha256": "980b0c5c79ab0b71bc18a5f9316cc1ad41b64f0684ff63e7cd5f460f44804977"
+        },
+        {
+          "path": "skills/rusty-morphospace/references/project-workflow.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 12875,
+          "sha256": "1e8df41c353826325ccd24c3df94a7027c57b63da64a325db6b7fafb250b6052"
+        },
+        {
+          "path": "skills/system-engineering/SKILL.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 30596,
+          "sha256": "33a4c4b469b1627a70aa09918675c94fd9977ade944e9bcc94b493c499be542f"
+        }
+      ],
+      "status": "approved"
+    },
+    {
       "approval_id": "quest-deployment-contract-consolidation-20260805",
       "required_ancestor": "8d5948dcd57f4a8c95c40121e879b6e094e77787",
       "changed_paths": [
