@@ -1293,15 +1293,31 @@ function Test-MorphospaceValidationReceipt {
     $expectedGates = @($ValidationMatrix | Where-Object { [string]$_.disposition -ne "forbidden" } | ForEach-Object { [string]$_.gate_id } | Sort-Object)
     $actualGates = @($receipt.gates | ForEach-Object { [string]$_.gate_id } | Sort-Object)
     if (($expectedGates -join "|") -ne ($actualGates -join "|")) { throw "Validation receipt does not cover the exact validation-gate set." }
+    $unmatchedGateDefinitions = New-Object System.Collections.Generic.List[object]
+    foreach ($definition in @($ValidationMatrix | Where-Object { [string]$_.disposition -ne "forbidden" })) {
+        $unmatchedGateDefinitions.Add($definition) | Out-Null
+    }
     foreach ($gate in @($receipt.gates)) {
-        $definition = @($ValidationMatrix | Where-Object { [string]$_.gate_id -eq [string]$gate.gate_id } | Select-Object -First 1)[0]
-        if ([string]$gate.command -ne [string]$definition.command) { throw "Validation command drifted for gate '$($gate.gate_id)'." }
+        $definitionIndex = -1
+        for ($index = 0; $index -lt $unmatchedGateDefinitions.Count; $index++) {
+            $candidate = $unmatchedGateDefinitions[$index]
+            if (
+                [string]$candidate.gate_id -eq [string]$gate.gate_id -and
+                [string]$candidate.command -ceq [string]$gate.command
+            ) {
+                $definitionIndex = $index
+                break
+            }
+        }
+        if ($definitionIndex -lt 0) { throw "Validation command drifted for gate '$($gate.gate_id)'." }
+        $unmatchedGateDefinitions.RemoveAt($definitionIndex)
         if ($ExpectedResult -eq "pass" -and [string]$gate.status -ne "pass") { throw "Passing validation has a non-passing gate '$($gate.gate_id)'." }
         foreach ($reference in @($gate.evidence_refs)) {
             if (-not $artifactMap.ContainsKey([string]$reference)) { throw "Gate '$($gate.gate_id)' references unknown artifact '$reference'." }
         }
         if (@($gate.evidence_refs).Count -eq 0) { throw "Gate '$($gate.gate_id)' has no evidence references." }
     }
+    if ($unmatchedGateDefinitions.Count -ne 0) { throw "Validation receipt does not cover the exact validation-gate set." }
 
     $revisionMap = @{}
     foreach ($revision in @($receipt.repository_revisions)) {
