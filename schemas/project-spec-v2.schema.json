@@ -83,7 +83,7 @@
       "properties": {
         "versioning": { "enum": ["semver", "calendar", "private-revision"] },
         "commit_policy": { "type": "string", "minLength": 1 },
-        "push_checkpoint": { "enum": ["none", "local-only", "integration-batch", "release"] },
+        "push_checkpoint": { "enum": ["none", "local-only", "integration-batch", "manual-owner-review", "release"] },
         "source_first": { "const": true }, "planning_last": { "const": true }, "force_push_allowed": { "const": false }
       }
     },

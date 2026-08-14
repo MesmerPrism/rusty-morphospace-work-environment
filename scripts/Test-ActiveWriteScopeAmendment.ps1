@@ -5,6 +5,7 @@ $repoRoot = Split-Path $PSScriptRoot -Parent
 Import-Module (Join-Path $PSScriptRoot 'ActiveWriteScopeAmendment.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
 $iterationUnitSchema = Join-Path $repoRoot 'schemas\iteration-unit.schema.json'
+$projectSpecSchema = Join-Path $repoRoot 'schemas\project-spec-v2.schema.json'
 
 function Assert-WriteScopeTest {
     param([bool]$Condition,[string]$Message)
@@ -21,6 +22,12 @@ function Assert-WriteScopeRejected {
 function Assert-IterationUnitSchema {
     param([object]$Unit,[bool]$Expected,[string]$Message)
     $valid = Test-Json -Json ($Unit | ConvertTo-Json -Depth 64) -SchemaFile $iterationUnitSchema -ErrorAction SilentlyContinue
+    Assert-WriteScopeTest ($valid -eq $Expected) $Message
+}
+
+function Assert-ProjectSpecSchema {
+    param([object]$Project,[bool]$Expected,[string]$Message)
+    $valid = Test-Json -Json ($Project | ConvertTo-Json -Depth 64) -SchemaFile $projectSpecSchema -ErrorAction SilentlyContinue
     Assert-WriteScopeTest ($valid -eq $Expected) $Message
 }
 
@@ -61,7 +68,7 @@ function New-WriteScopeFixture {
         modules=@();non_scope=@('No source, Git, device, build, validation, or remote mutation.')
         validation_profiles=@([pscustomobject][ordered]@{profile_id='quick';commands=@('test-command')})
         acceptance_profiles=@([pscustomobject][ordered]@{profile_id='rollback';commands=@('test-command')})
-        release_policy=[pscustomobject][ordered]@{versioning='semver';commit_policy='validated slices';push_checkpoint='local-only';source_first=$true;planning_last=$true;force_push_allowed=$false}
+        release_policy=[pscustomobject][ordered]@{versioning='semver';commit_policy='validated slices';push_checkpoint='manual-owner-review';source_first=$true;planning_last=$true;force_push_allowed=$false}
         public_boundary=[pscustomobject][ordered]@{mode='public';private_overlay='local/';prohibited_evidence=@('private evidence')}
     }
     $unit = [pscustomobject][ordered]@{
@@ -71,7 +78,7 @@ function New-WriteScopeFixture {
         prerequisites=@();allowed_repositories=@([pscustomobject][ordered]@{repo_id='owner-repo';allowed_paths=@('src/')})
         read_only_dependencies=@();non_scope=@('Any work outside declared project repositories.');acceptance=@([pscustomobject][ordered]@{acceptance_id='bounded-amendment';proof='Only project-approved paths are added.';command='test-command'})
         risk_tier='quick';device_requirement='forbidden';validation=@([pscustomobject][ordered]@{profile_id='quick';command='test-command'})
-        outputs=@('Transactional amendment receipt.');commit_policy='Commit after validation.';push_checkpoint='local-only'
+        outputs=@('Transactional amendment receipt.');commit_policy='Commit after validation.';push_checkpoint='manual-owner-review'
     }
     if (-not $WithoutArchitectureDecision) {
         $unit | Add-Member -NotePropertyName architecture_decision -NotePropertyValue ([pscustomobject][ordered]@{
@@ -177,7 +184,18 @@ try {
     foreach ($name in @('project','state','unit','events')) { $before[$name] = [IO.File]::ReadAllBytes([string]$paths.$name) }
     $beforeStateDocument = Read-MorphospaceProtocolJson $paths.state
     $beforeUnitDocument = Read-MorphospaceProtocolJson $paths.unit
+    $beforeProjectDocument = Read-MorphospaceProtocolJson $paths.project
     Assert-IterationUnitSchema $beforeUnitDocument $true 'the exact four-field architecture decision was rejected'
+    Assert-ProjectSpecSchema $beforeProjectDocument $true 'the manual-owner-review project checkpoint was rejected'
+    Assert-WriteScopeTest ([string]$beforeUnitDocument.push_checkpoint -ceq 'manual-owner-review') 'the active fixture does not exercise manual-owner-review'
+
+    $unknownPushCheckpoint = Copy-WriteScopeValue $beforeUnitDocument
+    $unknownPushCheckpoint.push_checkpoint = 'unknown-checkpoint'
+    Assert-IterationUnitSchema $unknownPushCheckpoint $false 'an unknown unit push checkpoint was accepted'
+
+    $unknownProjectPushCheckpoint = Copy-WriteScopeValue $beforeProjectDocument
+    $unknownProjectPushCheckpoint.release_policy.push_checkpoint = 'unknown-checkpoint'
+    Assert-ProjectSpecSchema $unknownProjectPushCheckpoint $false 'an unknown project push checkpoint was accepted'
 
     $missingArchitectureField = Copy-WriteScopeValue $beforeUnitDocument
     $missingArchitectureField.architecture_decision.PSObject.Properties.Remove('deferred_reason')
@@ -245,6 +263,7 @@ try {
     Assert-WriteScopeTest ((Get-MorphospaceSha256Bytes $before.project) -ceq (Get-MorphospaceFileSha256 $paths.project)) 'execute changed project bytes'
     Assert-WriteScopeTest ([string]$afterState.current_unit -ceq 'unit-write-scope-001' -and [int]$afterState.plan_revision -eq 1 -and [string]$afterState.last_event_id -ceq 'unit-write-scope-001-add-docs-recorded') 'state continuity is wrong'
     Assert-WriteScopeTest ([string]$afterUnit.status -ceq 'active' -and (@($afterUnit.allowed_repositories[0].allowed_paths) -join '|') -ceq 'docs/|src/') 'active unit did not receive the exact additive paths'
+    Assert-WriteScopeTest ([string]$afterUnit.push_checkpoint -ceq 'manual-owner-review') 'execute changed the manual owner-review checkpoint'
     Assert-WriteScopeTest (
         (Get-MorphospaceCanonicalJsonSha256 $afterUnit.architecture_decision) -ceq
         (Get-MorphospaceCanonicalJsonSha256 $beforeUnitDocument.architecture_decision)
@@ -322,7 +341,7 @@ try {
             -OutPath $race.paths.out -Timestamp '2026-08-10T01:20:00.0000000Z' -BeforeTransitionHook $raceHook -Execute
     } 'mutex-protected project CAS race was accepted'
 
-    [pscustomobject]@{result='pass';action='AmendActiveWriteScope';additive=$true;project_bounded=$true;transactional=$true;architecture_decision_optional_and_strict=$true;update_instruction_null_compatible=$true;compatibility_and_roadmap_surfaces_strict=$true;git_mutation_performed=$false;device_mutation_performed=$false;remote_mutation_performed=$false} | ConvertTo-Json -Compress
+    [pscustomobject]@{result='pass';action='AmendActiveWriteScope';additive=$true;project_bounded=$true;transactional=$true;architecture_decision_optional_and_strict=$true;manual_owner_review_preserved=$true;unknown_push_checkpoint_rejected=$true;update_instruction_null_compatible=$true;compatibility_and_roadmap_surfaces_strict=$true;git_mutation_performed=$false;device_mutation_performed=$false;remote_mutation_performed=$false} | ConvertTo-Json -Compress
 } finally {
     if ([IO.Directory]::Exists($temp)) {
         foreach ($file in [IO.Directory]::EnumerateFiles($temp,'*',[IO.SearchOption]::AllDirectories)) {

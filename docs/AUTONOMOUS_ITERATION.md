@@ -310,7 +310,10 @@ with `guard_profile` and evidence depth with `risk_tier`.
   cross-repo commit.
 - Do not mix unrelated projects or untracked user work into a unit.
 - Push only at the unit's declared checkpoint: `none`, `local-only`,
-  `integration-batch`, or `release`.
+  `integration-batch`, `manual-owner-review`, or `release`.
+- `manual-owner-review` holds publication until an explicit owner review. It
+  does not itself authorize a push, PR, merge, release, validation result,
+  acceptance transition, guard change, or any remote mutation.
 - A `release` checkpoint requires `guard_profile: locked`; fast and labs units
   may still make regular local commits and use declared integration batches.
 - An `integration-batch` may collect several accepted units. Before pushing,

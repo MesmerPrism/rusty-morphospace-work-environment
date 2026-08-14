@@ -355,7 +355,7 @@
     },
     "outputs": { "$ref": "#/$defs/nonEmptyStrings" },
     "commit_policy": { "type": "string", "minLength": 1 },
-    "push_checkpoint": { "enum": ["none", "local-only", "integration-batch", "release"] }
+    "push_checkpoint": { "enum": ["none", "local-only", "integration-batch", "manual-owner-review", "release"] }
   },
   "allOf": [
     {

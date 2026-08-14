@@ -83,7 +83,7 @@
     "unit_captain_through_acceptance": true
   },
   "device_requirements": ["forbidden", "none", "optional", "required"],
-  "push_checkpoints": ["none", "local-only", "integration-batch", "release"],
+  "push_checkpoints": ["none", "local-only", "integration-batch", "manual-owner-review", "release"],
   "change_categories": [
     "implementation",
     "authority",
