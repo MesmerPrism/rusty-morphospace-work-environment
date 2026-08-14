@@ -2009,10 +2009,20 @@ $templatesRoot = Join-Path $RepoRoot "templates"
 $iterationUnitSchemaPath = Join-Path $schemaRoot "iteration-unit.schema.json"
 $iterationUnitSchema = Read-JsonDocument -Path $iterationUnitSchemaPath -Context "iteration-unit schema parity"
 if ($null -ne $iterationUnitSchema) {
+    $expectedPushCheckpoints = @("none", "local-only", "integration-batch", "manual-owner-review", "release")
+    $schemaPushCheckpoints = @($iterationUnitSchema.properties.push_checkpoint.enum | ForEach-Object { [string]$_ })
+    Assert-Contract (($script:PushCheckpoints -join "|") -ceq ($expectedPushCheckpoints -join "|")) "Workflow lifecycle push checkpoints are not in the established closed order."
+    Assert-Contract (($script:PushCheckpoints -join "|") -ceq ($schemaPushCheckpoints -join "|")) "Workflow lifecycle and iteration-unit schema push checkpoints drifted."
     $schemaInstructionSurfaceKinds = @($iterationUnitSchema.properties.instruction_surfaces.items.properties.surface_kind.enum | ForEach-Object { [string]$_ })
     $expectedInstructionSurfaceKinds = @("agents", "readme", "router-doc", "validation-doc", "compatibility-doc", "roadmap-doc", "skill")
     Assert-Contract (($script:InstructionSurfaceKinds -join "|") -ceq ($expectedInstructionSurfaceKinds -join "|")) "Workflow lifecycle instruction surface kinds are not in the established closed order."
     Assert-Contract (($script:InstructionSurfaceKinds -join "|") -ceq ($schemaInstructionSurfaceKinds -join "|")) "Workflow lifecycle and iteration-unit schema instruction surface kinds drifted."
+}
+$projectSpecV2SchemaPath = Join-Path $schemaRoot "project-spec-v2.schema.json"
+$projectSpecV2Schema = Read-JsonDocument -Path $projectSpecV2SchemaPath -Context "project-spec push checkpoint parity"
+if ($null -ne $projectSpecV2Schema) {
+    $projectPushCheckpoints = @($projectSpecV2Schema.properties.release_policy.properties.push_checkpoint.enum | ForEach-Object { [string]$_ })
+    Assert-Contract (($script:PushCheckpoints -join "|") -ceq ($projectPushCheckpoints -join "|")) "Workflow lifecycle and project-spec schema push checkpoints drifted."
 }
 $automationReceiptSchemaPath = Join-Path $schemaRoot "work-unit-automation-receipt.schema.json"
 $automationReceiptSchemaDocument = Read-JsonDocument -Path $automationReceiptSchemaPath -Context "automation-receipt instruction surface parity"

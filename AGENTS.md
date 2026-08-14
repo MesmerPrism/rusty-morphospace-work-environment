@@ -155,6 +155,9 @@ workflow trust-root changes. `risk_tier` controls
 evidence depth, not authority. For an in-scope feature failure, use the typed
 `ReturnToActive` receipt path to keep the same captain; reserve blocker plus
 `Resume` for a real stop or authority release.
+`push_checkpoint: manual-owner-review` is only a publication hold: it requires
+an explicit owner review before any publication step and grants no push, PR,
+merge, release, validation, acceptance, or guard authority.
 
 For expensive package, signer, grant, toolchain, or bridge-dependent work,
 declare a hash-bound `execution_preflight_observation.v1` and exact assertions

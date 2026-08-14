@@ -97,7 +97,10 @@ planning-last revisions but does not commit, push, or force-push.
 Select the unit's guard authority separately from validation depth: `fast` for
 bounded product iteration across declared repositories and device stages,
 `labs` for composition and product-authority work, and `locked` for releases or
-workflow trust-root changes. `risk_tier` governs evidence, not permission. For an
+workflow trust-root changes. `risk_tier` governs evidence, not permission.
+Treat a `manual-owner-review` push checkpoint as a publication hold requiring
+explicit owner review, never as push, PR, merge, release, validation,
+acceptance, or guard authority. For an
 in-scope feature failure, `ReturnToActive` must validate and retain the
 non-passing receipt while keeping the same current-unit owner; blocker plus
 `Resume` remains the stop-and-release route.

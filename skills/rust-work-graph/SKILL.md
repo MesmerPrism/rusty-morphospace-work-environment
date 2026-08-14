@@ -87,6 +87,9 @@ Record guard profile and validation risk as separate node attributes. `fast`,
 `deep` describe evidence depth. Graph `ReturnToActive` as a validating-to-active
 edge on the same feature-unit node with the non-passing receipt attached; do
 not model it as a blocker, ownership release, or new unit.
+Graph `manual-owner-review` as a publication-hold node requiring an explicit
+owner-review edge; it adds no push, PR, merge, release, validation, acceptance,
+or guard-authority edge.
 
 Graph a bound execution-preflight observation as an admission-evidence node
 with value/capability assertion edges. It is not a build, device, validation,

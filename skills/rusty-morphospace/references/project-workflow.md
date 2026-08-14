@@ -148,6 +148,9 @@ it does not silently perform Git, process, package, route, or device cleanup.
 This portable workflow never grants commit, push, force-push, merge,
 publication, repository-setting, or device authority. Perform those actions
 only when the user and the owning workflow explicitly authorize them.
+Treat `manual-owner-review` as a publication hold requiring explicit owner
+review, never as push, PR, merge, release, validation, acceptance, or guard
+authority.
 
 ## Validation Selection
 
