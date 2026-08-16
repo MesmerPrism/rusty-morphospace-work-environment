@@ -39,7 +39,7 @@ function New-Fixture($Root) {
         source_workflow=[pscustomobject]@{release='0.1.0';commit=('a'*40)}
         units=@([pscustomobject][ordered]@{
             unit_id='unit-example-001';unit_path='iteration-units/unit-example-001.json';unit_sha256=(Get-Sha $unitPath);terminal_status='accepted'
-            terminal_evidence=[pscustomobject]@{event_id='unit-example-001-accepted';receipt_path='receipts/unit-example-001-validation.json'}
+            terminal_evidence=[pscustomobject]@{event_id='unit-example-001-accepted';event_sha256=Get-EventLineSha (Join-Path $Root 'iteration-events.jsonl');receipt_path='receipts/unit-example-001-validation.json';receipt_sha256=Get-Sha (Join-Path $Root 'receipts/unit-example-001-validation.json')}
             normalization=[pscustomobject]@{
                 change_categories=@([pscustomobject]@{legacy='activation';current='feature-activation';retained_as='legacy-activation tag'})
                 validation_profiles=@([pscustomobject]@{legacy='compatibility';current='quick';retained_as='historical compatibility limitation'})
@@ -72,6 +72,8 @@ function Convert-ToBlockedPlannedSkillFixture($Root) {
     ($event|ConvertTo-Json -Compress)|Set-Content -LiteralPath (Join-Path $Root 'iteration-events.jsonl') -Encoding utf8
     $receiptPath=Join-Path $Root 'receipts/historical-unit-adoption-example.json';$receipt=Get-Content -Raw $receiptPath|ConvertFrom-Json
     $receipt.units[0].unit_sha256=Get-Sha $unitPath;$receipt.units[0].terminal_status='blocked';$receipt.units[0].terminal_evidence.event_id='unit-example-001-validation-blocked'
+    $receipt.units[0].terminal_evidence.event_sha256=Get-EventLineSha (Join-Path $Root 'iteration-events.jsonl')
+    $receipt.units[0].terminal_evidence.receipt_sha256=Get-Sha (Join-Path $Root 'receipts/unit-example-001-validation.json')
     $receipt.units[0].normalization.instruction_surfaces+=@($requiredSkills|ForEach-Object{[pscustomobject]@{path=$_.path;legacy_action='review-no-change';current_action='update';retained_as='historical planned skill action retained without a completion claim'}})
     Write-Json $receiptPath $receipt
     $statePath=Join-Path $Root 'workspace.state.json';$state=Get-Content -Raw $statePath|ConvertFrom-Json;$state.last_event_id='unit-example-001-validation-blocked';Write-Json $statePath $state
@@ -119,6 +121,43 @@ function Convert-ToBlockedMissingRequiredSkillFixture($Root) {
     Write-Json $receiptPath $receipt
     $statePath=Join-Path $Root 'workspace.state.json';$state=Get-Content -Raw $statePath|ConvertFrom-Json;$state.last_event_id='unit-example-001-validation-blocked';Write-Json $statePath $state
     Refresh-ReceiptReference $Root
+}
+function Convert-ToAcceptedLaterRequiredSkillFixture($Root) {
+    $unitPath=Join-Path $Root 'iteration-units/unit-example-001.json';$unit=Get-Content -Raw $unitPath|ConvertFrom-Json
+    $unit.instruction_surfaces=@($unit.instruction_surfaces|Where-Object{[string]$_.skill_id-cne'rusty-morphospace'})
+    Write-Json $unitPath $unit
+    $validationPath=Join-Path $Root 'receipts/unit-example-001-validation.json'
+    Write-Json $validationPath ([pscustomobject][ordered]@{
+        schema='rusty.morphospace.workflow.validation_receipt.v1';receipt_id='unit-example-001-validation';project_id='example-project';unit_id='unit-example-001';created_at='2026-01-01T00:00:00Z';tier='standard';result='pass'
+        repository_revisions=@();changed_paths=@();artifacts=@();criteria=@();gates=@();device_validation=$null
+    })
+    $receiptPath=Join-Path $Root 'receipts/historical-unit-adoption-example.json';$receipt=Get-Content -Raw $receiptPath|ConvertFrom-Json
+    $receipt.units[0].unit_sha256=Get-Sha $unitPath
+    $receipt.units[0].terminal_evidence.receipt_sha256=Get-Sha $validationPath
+    $receipt.units[0].normalization|Add-Member -NotePropertyName later_required_skill_surfaces -NotePropertyValue @(
+        [pscustomobject][ordered]@{skill_id='rusty-morphospace';path='<skills-root>/rusty-morphospace/SKILL.md';current_action='update';terminal_requirement='not-required-at-acceptance';retained_as='The current skill route postdates this exact accepted unit; no historical edit, completion, or execution is claimed.'}
+    )
+    Write-Json $receiptPath $receipt
+    Refresh-ReceiptReference $Root
+}
+function Convert-ToSupersededInstructionDebtFixture($Root) {
+    $oldId='unit-example-001';$replacementId='unit-example-002'
+    $oldPath=Join-Path $Root "iteration-units/$oldId.json"
+    $old=Get-Content -Raw (Join-Path $RepoRoot 'templates/iteration-unit.example.json')|ConvertFrom-Json
+    $old.unit_id=$oldId;$old.status='active'
+    $old.instruction_surfaces=@($old.instruction_surfaces|Where-Object{[string]$_.skill_id-cne'rusty-morphospace'})
+    foreach($surface in @($old.instruction_surfaces)){$surface.action='review-no-change'}
+    Write-Json $oldPath $old
+    $replacement=Get-Content -Raw (Join-Path $RepoRoot 'templates/iteration-unit.example.json')|ConvertFrom-Json
+    $replacement.unit_id=$replacementId;$replacement.status='active'
+    Write-Json (Join-Path $Root "iteration-units/$replacementId.json") $replacement
+    $eventId="$oldId-superseded-by-$replacementId"
+    $event=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.iteration_event.v1';event_id=$eventId;sequence=1;timestamp='2026-01-01T00:00:00Z';project_id='example-project';unit_id=$oldId;event_type='state-transition';summary='Replace an immutable historical in-flight unit without rewriting it.';receipts=@()}
+    ($event|ConvertTo-Json -Compress)|Set-Content -LiteralPath (Join-Path $Root 'iteration-events.jsonl') -Encoding utf8
+    $statePath=Join-Path $Root 'workspace.state.json';$state=Get-Content -Raw $statePath|ConvertFrom-Json
+    $state.current_unit=$replacementId;$state.next_ready_unit=$null;$state.last_event_id=$eventId;$state.pending_push_bundle=$null
+    $state.PSObject.Properties.Remove('historical_unit_adoption_receipts')
+    Write-Json $statePath $state
 }
 function Write-BlockedValidationFixture($Root, $UnitId, $EventId) {
     $blockerPath=Join-Path $Root 'receipts/evidence/historical-scope-blocker.json'
@@ -238,6 +277,45 @@ $base=Join-Path ([IO.Path]::GetTempPath()) ('morphospace-historical-adoption-'+[
 try {
     New-Fixture $base
     & $validator -RepoRoot $RepoRoot -WorkspaceRoot $base -SkipOwnerSelfTests | Out-Null
+    $laterSkillRoot="$base-later-required-skill";Copy-Item $base $laterSkillRoot -Recurse
+    Convert-ToAcceptedLaterRequiredSkillFixture $laterSkillRoot
+    if(-not(Get-Content -Raw (Join-Path $laterSkillRoot 'receipts/historical-unit-adoption-example.json')|Test-Json -SchemaFile (Join-Path $RepoRoot 'schemas/historical-unit-adoption-receipt.schema.json') -ErrorAction SilentlyContinue)){throw'Accepted later-required-skill adoption fixture failed its schema.'}
+    & $validator -RepoRoot $RepoRoot -WorkspaceRoot $laterSkillRoot -SkipOwnerSelfTests | Out-Null
+    $laterSkillCases=@('later-skill-missing-mapping','later-skill-extra-mapping','later-skill-already-present','later-skill-wrong-path','later-skill-action-claim','later-skill-terminal-requirement','later-skill-blocked-status','later-skill-current-unit','later-skill-event-type','later-skill-event-hash','later-skill-receipt-hash','later-skill-receipt-result','later-skill-reference-removed')
+    foreach($case in $laterSkillCases){
+        $root="$laterSkillRoot-$case";Copy-Item $laterSkillRoot $root -Recurse
+        switch($case){
+            'later-skill-missing-mapping' { Assert-Rejected $root { $p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$d=Get-Content -Raw $p|ConvertFrom-Json;$d.units[0].normalization.later_required_skill_surfaces=@();Write-Json $p $d;Refresh-ReceiptReference $root } $case }
+            'later-skill-extra-mapping' { Assert-Rejected $root { $p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$d=Get-Content -Raw $p|ConvertFrom-Json;$d.units[0].normalization.later_required_skill_surfaces+=[pscustomobject][ordered]@{skill_id='optional-skill';path='<skills-root>/optional-skill/SKILL.md';current_action='update';terminal_requirement='not-required-at-acceptance';retained_as='must reject optional current route'};Write-Json $p $d;Refresh-ReceiptReference $root } $case }
+            'later-skill-already-present' { Assert-Rejected $root { $u=Join-Path $root 'iteration-units/unit-example-001.json';$d=Get-Content -Raw $u|ConvertFrom-Json;$d.instruction_surfaces+=[pscustomobject]@{surface_kind='skill';skill_id='rusty-morphospace';path='<skills-root>/rusty-morphospace/SKILL.md';owner='workflow-maintainer';change_reason='Already present immutable skill surface.';action='update';status='complete';validation='Fixture.'};Write-Json $u $d;$p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$r=Get-Content -Raw $p|ConvertFrom-Json;$r.units[0].unit_sha256=Get-Sha $u;Write-Json $p $r;Refresh-ReceiptReference $root } $case }
+            'later-skill-wrong-path' { Assert-Rejected $root { $p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$d=Get-Content -Raw $p|ConvertFrom-Json;$d.units[0].normalization.later_required_skill_surfaces[0].path='<skills-root>/wrong-skill/SKILL.md';Write-Json $p $d;Refresh-ReceiptReference $root } $case }
+            'later-skill-action-claim' { Assert-Rejected $root { $p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$d=Get-Content -Raw $p|ConvertFrom-Json;$d.units[0].normalization.later_required_skill_surfaces[0].current_action='review-no-change';Write-Json $p $d;Refresh-ReceiptReference $root } $case }
+            'later-skill-terminal-requirement' { Assert-Rejected $root { $p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$d=Get-Content -Raw $p|ConvertFrom-Json;$d.units[0].normalization.later_required_skill_surfaces[0].terminal_requirement='complete';Write-Json $p $d;Refresh-ReceiptReference $root } $case }
+            'later-skill-blocked-status' { Assert-Rejected $root { $u=Join-Path $root 'iteration-units/unit-example-001.json';$d=Get-Content -Raw $u|ConvertFrom-Json;$d.status='blocked';Write-Json $u $d;$p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$r=Get-Content -Raw $p|ConvertFrom-Json;$r.units[0].unit_sha256=Get-Sha $u;$r.units[0].terminal_status='blocked';Write-Json $p $r;Refresh-ReceiptReference $root } $case }
+            'later-skill-current-unit' { Assert-Rejected $root { $s=Join-Path $root 'workspace.state.json';$d=Get-Content -Raw $s|ConvertFrom-Json;$d.current_unit='unit-example-001';Write-Json $s $d } $case }
+            'later-skill-event-type' { Assert-Rejected $root { $e=Join-Path $root 'iteration-events.jsonl';$d=@(Get-Content $e|ForEach-Object{$_|ConvertFrom-Json})[0];$d.event_type='blocker';($d|ConvertTo-Json -Compress)|Set-Content -LiteralPath $e -Encoding utf8;$p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$r=Get-Content -Raw $p|ConvertFrom-Json;$r.units[0].terminal_evidence.event_sha256=Get-EventLineSha $e;Write-Json $p $r;Refresh-ReceiptReference $root } $case }
+            'later-skill-event-hash' { Assert-Rejected $root { $p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$d=Get-Content -Raw $p|ConvertFrom-Json;$d.units[0].terminal_evidence.event_sha256=('0'*64);Write-Json $p $d;Refresh-ReceiptReference $root } $case }
+            'later-skill-receipt-hash' { Assert-Rejected $root { $p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$d=Get-Content -Raw $p|ConvertFrom-Json;$d.units[0].terminal_evidence.receipt_sha256=('0'*64);Write-Json $p $d;Refresh-ReceiptReference $root } $case }
+            'later-skill-receipt-result' { Assert-Rejected $root { $v=Join-Path $root 'receipts/unit-example-001-validation.json';$d=Get-Content -Raw $v|ConvertFrom-Json;$d.result='blocked';Write-Json $v $d;$p=Join-Path $root 'receipts/historical-unit-adoption-example.json';$r=Get-Content -Raw $p|ConvertFrom-Json;$r.units[0].terminal_evidence.receipt_sha256=Get-Sha $v;Write-Json $p $r;Refresh-ReceiptReference $root } $case }
+            'later-skill-reference-removed' { Assert-Rejected $root { $s=Join-Path $root 'workspace.state.json';$d=Get-Content -Raw $s|ConvertFrom-Json;$d.PSObject.Properties.Remove('historical_unit_adoption_receipts');Write-Json $s $d } $case }
+        }
+        Remove-Item -LiteralPath $root -Recurse -Force
+    }
+    Remove-Item -LiteralPath $laterSkillRoot -Recurse -Force
+    $supersededInstructionRoot="$base-superseded-instruction";Copy-Item $base $supersededInstructionRoot -Recurse
+    Convert-ToSupersededInstructionDebtFixture $supersededInstructionRoot
+    & $validator -RepoRoot $RepoRoot -WorkspaceRoot $supersededInstructionRoot -SkipOwnerSelfTests | Out-Null
+    foreach($case in @('supersession-event-missing','supersession-event-id','supersession-old-binding','supersession-current-old')){
+        $root="$supersededInstructionRoot-$case";Copy-Item $supersededInstructionRoot $root -Recurse
+        switch($case){
+            'supersession-event-missing' { Assert-Rejected $root { Set-Content -LiteralPath (Join-Path $root 'iteration-events.jsonl') -Value '' -Encoding utf8;$s=Join-Path $root 'workspace.state.json';$d=Get-Content -Raw $s|ConvertFrom-Json;$d.last_event_id=$null;Write-Json $s $d } $case }
+            'supersession-event-id' { Assert-Rejected $root { $e=Join-Path $root 'iteration-events.jsonl';$d=@(Get-Content $e|Where-Object{-not[string]::IsNullOrWhiteSpace($_)}|ForEach-Object{$_|ConvertFrom-Json})[0];$d.event_id='unit-example-001-replaced-by-unit-example-002';($d|ConvertTo-Json -Compress)|Set-Content -LiteralPath $e -Encoding utf8;$s=Join-Path $root 'workspace.state.json';$state=Get-Content -Raw $s|ConvertFrom-Json;$state.last_event_id=$d.event_id;Write-Json $s $state } $case }
+            'supersession-old-binding' { Assert-Rejected $root { $e=Join-Path $root 'iteration-events.jsonl';$d=@(Get-Content $e|Where-Object{-not[string]::IsNullOrWhiteSpace($_)}|ForEach-Object{$_|ConvertFrom-Json})[0];$d.unit_id='unit-example-002';($d|ConvertTo-Json -Compress)|Set-Content -LiteralPath $e -Encoding utf8 } $case }
+            'supersession-current-old' { Assert-Rejected $root { $s=Join-Path $root 'workspace.state.json';$d=Get-Content -Raw $s|ConvertFrom-Json;$d.current_unit='unit-example-001';Write-Json $s $d } $case }
+        }
+        Remove-Item -LiteralPath $root -Recurse -Force
+    }
+    Remove-Item -LiteralPath $supersededInstructionRoot -Recurse -Force
     $blockedSkillRoot="$base-blocked-skill";Copy-Item $base $blockedSkillRoot -Recurse
     Convert-ToBlockedPlannedSkillFixture $blockedSkillRoot
     & $validator -RepoRoot $RepoRoot -WorkspaceRoot $blockedSkillRoot -SkipOwnerSelfTests | Out-Null

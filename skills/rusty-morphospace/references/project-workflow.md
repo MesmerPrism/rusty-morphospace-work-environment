@@ -81,6 +81,11 @@ the event ID only as their exact rendering and reject delimiter ambiguity.
 Require a v2 intent to hash-bind the original state plus the exact
 active/validating old-unit path/document, and reject legacy or damaged bindings
 before intent, artifact, torn-tail repair, projection, or event mutation.
+In aggregate historical validation, evolving instruction-policy failures for a
+non-current, non-next-ready raw active/validating unit may be deferred only
+until that same pass authenticates the exact canonical supersession edge.
+Missing or damaged evidence restores the original failures; no structural,
+registry, event, or current-unit check is deferred.
 
 Do not make that rule tolerant for history. The only supported completed
 legacy-v1 target-as-event-unit fault uses the workflow owner's derived

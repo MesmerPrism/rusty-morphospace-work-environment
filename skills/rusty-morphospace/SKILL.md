@@ -68,6 +68,10 @@ the exact hash-bound historical adoption receipt. Preserve `planned` as
 If a terminal blocked unit wholly omits a currently required skill surface,
 project only the exact required skill IDs and canonical `<skills-root>` paths;
 retain `planned` and bind exact blocker-event and receipt hashes.
+For an accepted unit missing a later skill route, require exact
+`later_required_skill_surfaces` evidence and never synthesize completion. Defer
+stale in-flight instruction-policy errors only through the same pass's exact
+canonical supersession; never defer structural, current-unit, registry, or event errors.
 Normalize retired `publication` to `feature` only for an exact blocked unit
 with hashed terminal evidence; never infer acceptance or publication.
 For ordinary planned-publication accounting, admit an empty path list only on

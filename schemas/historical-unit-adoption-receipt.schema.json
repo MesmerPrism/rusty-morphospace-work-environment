@@ -71,6 +71,20 @@
                   }
                 }
               },
+              "later_required_skill_surfaces": {
+                "type": "array",
+                "items": {
+                  "type": "object", "additionalProperties": false,
+                  "required": ["skill_id", "path", "current_action", "terminal_requirement", "retained_as"],
+                  "properties": {
+                    "skill_id": { "$ref": "#/$defs/id" },
+                    "path": { "type": "string", "pattern": "^<skills-root>/[a-z0-9][a-z0-9-]{1,127}/SKILL\\.md$" },
+                    "current_action": { "const": "update" },
+                    "terminal_requirement": { "const": "not-required-at-acceptance" },
+                    "retained_as": { "type": "string", "minLength": 1 }
+                  }
+                }
+              },
               "read_only_dependency_scope": {
                 "type": "object", "additionalProperties": false,
                 "required": ["closure", "mappings", "retained_as"],
@@ -189,6 +203,25 @@
               "then": {
                 "properties": {
                   "terminal_status": { "const": "blocked" },
+                  "terminal_evidence": {
+                    "required": ["event_id", "event_sha256", "receipt_path", "receipt_sha256"],
+                    "properties": { "receipt_path": { "type": "string", "minLength": 1 } }
+                  }
+                }
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "normalization": {
+                    "required": ["later_required_skill_surfaces"],
+                    "properties": { "later_required_skill_surfaces": { "minItems": 1 } }
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "terminal_status": { "const": "accepted" },
                   "terminal_evidence": {
                     "required": ["event_id", "event_sha256", "receipt_path", "receipt_sha256"],
                     "properties": { "receipt_path": { "type": "string", "minLength": 1 } }

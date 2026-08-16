@@ -450,6 +450,13 @@ When a required skill surface is wholly absent from terminal blocked unit
 bytes, allow only an exact hash-bound projection of the currently required
 skill IDs at canonical paths. Retain `planned`; reject optional, current,
 accepted, completed, executed, or already-present surfaces.
+When a required skill route postdates an accepted unit, require a distinct
+exact adoption mapping that binds the accepted bytes, accepted event line, and
+passing validation receipt and records `not-required-at-acceptance`. Do not add
+a synthetic surface or completion edge. For raw active/validating history,
+defer only evolving instruction-policy failures and discharge them only through
+the exact canonical supersession edge authenticated later in the same aggregate
+pass; structural and current-unit rules remain immediate.
 
 A drifted historical-adoption receipt keeps its expected and observed hashes
 as damaged original evidence. An immutable-Git-anchored

@@ -9,6 +9,14 @@ legacy vocabulary only through a project-owned
 `historical_unit_adoption_receipt.v1` referenced and hash-bound by compact
 workspace state.
 
+An immutable raw `active` or `validating` unit is not terminal adoption input.
+Its evolving instruction-policy diagnostics are deferred only when it is not
+current or next-ready, and are discharged only after the aggregate validator
+authenticates an exact canonical `<old>-superseded-by-<replacement>` event for
+that same unit. Missing, malformed, ambiguous, or misbound supersession restores
+the deferred errors and fails validation. Structural unit checks, closed
+registries, event checks, and the one-current-unit invariant are never deferred.
+
 ## Contract
 
 Each receipt binds the project, source workflow release and commit, and every
@@ -40,6 +48,8 @@ historical `planned` status: action normalization does not mark a surface
 complete or claim that an instruction edit or validation command ran. The unit
 and its historical instruction bytes remain unchanged, and current or future
 units cannot use this route.
+Any instruction-impact or surface-action mapping also binds exact terminal
+event-line and receipt hashes.
 
 A narrower terminal-blocked projection covers a required skill surface that is
 wholly absent from the immutable unit bytes. The receipt lists every and only
@@ -51,6 +61,16 @@ completion, or validation execution. Exact unit bytes, blocker event-line hash,
 and terminal receipt hash are mandatory. This route rejects accepted,
 current/in-flight, optional, extra, already-present, renamed, or non-`update`
 surfaces.
+
+A separate accepted-only projection covers a current required skill route that
+did not apply when the exact historical unit was accepted. The receipt lists
+every and only the wholly absent current skill IDs and canonical paths, records
+the current `update` requirement, and fixes the terminal requirement to
+`not-required-at-acceptance`. It does not synthesize a surface, mark one
+complete, or claim a historical edit or execution. Exact accepted unit bytes,
+accepted event-line hash, and passing validation-receipt hash are mandatory.
+Current, blocked, in-flight, optional, extra, already-present, renamed, or
+non-passing evidence rejects.
 
 A terminal blocked validation unit may replace a formerly broad read-only
 dependency directory only in the current validation view. Its receipt binds a
@@ -84,9 +104,12 @@ Validation rejects receipt-reference hash drift, unit-byte drift, changed
 status, missing or duplicate units, duplicate or invalid mappings, missing or
 drifted terminal evidence hashes, unknown normalized targets, incomplete
 work-mode or instruction-impact or surface-action coverage, incomplete or
-extra missing-skill or dependency-scope coverage, closure or project drift,
-missing scope-correction evidence, transaction or chronology drift, retained
-write authority, and adoption by a current or future unit. Removing
+extra missing-skill or later-required-skill or dependency-scope coverage,
+overlap between blocked and accepted missing-skill projections, closure or
+project drift, missing scope-correction evidence, transaction or chronology
+drift, retained write authority, and adoption by a current or future unit.
+Superseded-unit instruction debt rejects unless the exact canonical event
+projection is authenticated. Removing
 the receipt restores strict current validation; it never creates an ambient
 compatibility mode.
 
@@ -112,6 +135,8 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkflowContracts.p
 ```
 
 The focused self-test covers accepted and blocked positive adoptions, including
-planned skill-action normalization and exact missing-required-skill projection,
-exact dependency-scope and completed-project-scope projections, plus damaged,
-optional-path, current-unit, transaction-drift, and over-claiming cases.
+planned skill-action normalization, exact blocked missing-required-skill and
+accepted later-required-skill projections, canonical superseded instruction
+debt, exact dependency-scope and completed-project-scope projections, plus
+damaged, optional-path, current-unit, transaction-drift, and over-claiming
+cases.
