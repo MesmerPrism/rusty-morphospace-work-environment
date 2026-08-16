@@ -34,8 +34,19 @@ function Invoke-IsolatedWorkflowSelfTest {
     if ([string]::IsNullOrWhiteSpace($hostPath) -or -not [IO.File]::Exists($hostPath)) {
         $hostPath = (Get-Command pwsh -ErrorAction Stop).Source
     }
-    $output = @(& $hostPath -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $Path @Arguments 2>&1)
-    $exitCode = $LASTEXITCODE
+    $ambientGitEnvironment = @{}
+    foreach ($item in @(Get-ChildItem Env: | Where-Object { $_.Name -like 'GIT_*' })) {
+        $ambientGitEnvironment[[string]$item.Name] = [string]$item.Value
+        Remove-Item -LiteralPath "Env:$($item.Name)" -ErrorAction SilentlyContinue
+    }
+    try {
+        $output = @(& $hostPath -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $Path @Arguments 2>&1)
+        $exitCode = $LASTEXITCODE
+    } finally {
+        foreach ($entry in $ambientGitEnvironment.GetEnumerator()) {
+            Set-Item -LiteralPath "Env:$($entry.Key)" -Value ([string]$entry.Value)
+        }
+    }
     if ($exitCode -ne 0) {
         $detail = (($output | ForEach-Object { [string]$_ }) -join [Environment]::NewLine).Trim()
         throw "Isolated workflow self-test '$([IO.Path]::GetFileName($Path))' failed with exit $exitCode.$([Environment]::NewLine)$detail"
@@ -57,6 +68,32 @@ function Assert-Contract {
     if (-not $Condition) {
         Add-Failure -Message $Message
     }
+}
+
+function Assert-EvolvingInstructionPolicy {
+    param(
+        [bool]$Condition,
+        [Parameter(Mandatory = $true)][object]$Unit,
+        [Parameter(Mandatory = $true)][object]$State,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][Collections.Generic.List[object]]$DeferredSupersededFailures,
+        [Parameter(Mandatory = $true)][string]$Message
+    )
+
+    if ($Condition) { return }
+
+    $unitId = [string]$Unit.unit_id
+    $mayBeHistoricalInFlight = @("active", "validating") -ccontains [string]$Unit.status -and
+        [string]$State.current_unit -cne $unitId -and
+        [string]$State.next_ready_unit -cne $unitId
+    if ($mayBeHistoricalInFlight) {
+        $DeferredSupersededFailures.Add([pscustomobject][ordered]@{
+            unit_id = $unitId
+            message = $Message
+        }) | Out-Null
+        return
+    }
+
+    Add-Failure -Message $Message
 }
 
 function Test-Text {
@@ -838,6 +875,7 @@ function Test-ProjectBundle {
 
     $units = New-Object System.Collections.Generic.List[object]
     $legacySkillReviewCandidates = New-Object System.Collections.Generic.List[object]
+    $deferredSupersededInstructionFailures = New-Object System.Collections.Generic.List[object]
     foreach ($path in @($Bundle.UnitPaths)) {
         if (-not (Test-Text $path)) { continue }
         $unit = Read-JsonDocument -Path $path -Context "$Context iteration unit"
@@ -1033,14 +1071,19 @@ function Test-ProjectBundle {
             $missingSkillMappings = if ($adoption.normalization.PSObject.Properties.Name -contains "missing_required_skill_surfaces") {
                 @($adoption.normalization.missing_required_skill_surfaces | Where-Object { $null -ne $_ })
             } else { @() }
+            $laterRequiredSkillMappings = if ($adoption.normalization.PSObject.Properties.Name -contains "later_required_skill_surfaces") {
+                @($adoption.normalization.later_required_skill_surfaces | Where-Object { $null -ne $_ })
+            } else { @() }
             $expectedMissingSkillIds = @($requiredSkillIds.ToArray() | Where-Object {
                 $requiredSkillId = [string]$_
                 @($instructionSurfaces | Where-Object {
                     [string]$_.surface_kind -ceq "skill" -and [string]$_.skill_id -ceq $requiredSkillId
                 }).Count -eq 0
             } | Sort-Object)
-            $mappedMissingSkillIds = @($missingSkillMappings | ForEach-Object { [string]$_.skill_id } | Sort-Object)
+            $allMissingSkillMappings = @($missingSkillMappings) + @($laterRequiredSkillMappings)
+            $mappedMissingSkillIds = @($allMissingSkillMappings | ForEach-Object { [string]$_.skill_id } | Sort-Object)
             Assert-Contract (($expectedMissingSkillIds -join "|") -ceq ($mappedMissingSkillIds -join "|")) "$Context historical unit '$unitId' missing-skill mappings must exactly cover wholly absent required skill surfaces."
+            Assert-Contract (@($mappedMissingSkillIds | Group-Object -CaseSensitive | Where-Object { $_.Count -ne 1 }).Count -eq 0) "$Context historical unit '$unitId' missing-skill mappings overlap or repeat a required skill."
             if ($missingSkillMappings.Count -gt 0) {
                 $adoptionProperties = @($adoption.PSObject.Properties.Name | Sort-Object)
                 Assert-Contract (($adoptionProperties -join "|") -ceq "normalization|terminal_evidence|terminal_status|unit_id|unit_path|unit_sha256") "$Context missing-skill projection for '$unitId' has an unexpected unit-level property."
@@ -1054,6 +1097,17 @@ function Test-ProjectBundle {
                 Test-UniqueProperty -Items $missingSkillMappings -Property "skill_id" -Context "$Context historical unit '$unitId' missing-skill mappings"
                 Test-UniqueProperty -Items $missingSkillMappings -Property "path" -Context "$Context historical unit '$unitId' missing-skill mappings"
             }
+            if ($laterRequiredSkillMappings.Count -gt 0) {
+                $adoptionProperties = @($adoption.PSObject.Properties.Name | Sort-Object)
+                Assert-Contract (($adoptionProperties -join "|") -ceq "normalization|terminal_evidence|terminal_status|unit_id|unit_path|unit_sha256") "$Context later-required-skill projection for '$unitId' has an unexpected unit-level property."
+                $allowedNormalizationProperties = @("change_categories", "instruction_impact", "instruction_surfaces", "later_required_skill_surfaces", "resource_kinds", "validation_profiles", "work_modes")
+                $unexpectedNormalizationProperties = @($adoption.normalization.PSObject.Properties.Name | Where-Object { $allowedNormalizationProperties -cnotcontains [string]$_ })
+                Assert-Contract ($unexpectedNormalizationProperties.Count -eq 0) "$Context later-required-skill projection for '$unitId' has an unexpected normalization property."
+                Assert-Contract ([string]$unit.status -ceq "accepted" -and [string]$adoption.terminal_status -ceq "accepted") "$Context later-required-skill projection is limited to immutable accepted unit '$unitId'."
+                Assert-Contract ([string]$state.current_unit -cne $unitId -and [string]$state.next_ready_unit -cne $unitId) "$Context later-required-skill projection cannot apply to current or next-ready unit '$unitId'."
+                Test-UniqueProperty -Items $laterRequiredSkillMappings -Property "skill_id" -Context "$Context historical unit '$unitId' later-required-skill mappings"
+                Test-UniqueProperty -Items $laterRequiredSkillMappings -Property "path" -Context "$Context historical unit '$unitId' later-required-skill mappings"
+            }
             foreach ($mapping in $missingSkillMappings) {
                 $mappingProperties = @($mapping.PSObject.Properties.Name | Sort-Object)
                 Assert-Contract (($mappingProperties -join "|") -ceq "current_action|path|retained_as|retained_status|skill_id") "$Context historical unit '$unitId' missing-skill mapping '$($mapping.path)' has an unexpected property."
@@ -1064,6 +1118,17 @@ function Test-ProjectBundle {
                 Assert-Contract ([string]$mapping.retained_status -ceq "planned") "$Context historical unit '$unitId' missing-skill mapping '$($mapping.path)' must retain planned status."
                 Assert-Contract (Test-Text $mapping.retained_as) "$Context historical unit '$unitId' missing-skill mapping '$($mapping.path)' must state the retained historical meaning."
                 Assert-Contract (@($instructionSurfaces | Where-Object { [string]$_.path -ceq [string]$mapping.path -or ([string]$_.surface_kind -ceq "skill" -and [string]$_.skill_id -ceq $skillId) }).Count -eq 0) "$Context historical unit '$unitId' missing-skill mapping '$($mapping.path)' is not wholly absent from immutable unit bytes."
+            }
+            foreach ($mapping in $laterRequiredSkillMappings) {
+                $mappingProperties = @($mapping.PSObject.Properties.Name | Sort-Object)
+                Assert-Contract (($mappingProperties -join "|") -ceq "current_action|path|retained_as|skill_id|terminal_requirement") "$Context historical unit '$unitId' later-required-skill mapping '$($mapping.path)' has an unexpected property."
+                $skillId = [string]$mapping.skill_id
+                $expectedPath = "<skills-root>/$skillId/SKILL.md"
+                Assert-Contract ([string]$mapping.path -ceq $expectedPath) "$Context historical unit '$unitId' later-required-skill mapping '$($mapping.path)' does not use the canonical current skill path."
+                Assert-Contract ([string]$mapping.current_action -ceq "update") "$Context historical unit '$unitId' later-required-skill mapping '$($mapping.path)' must record the current update requirement."
+                Assert-Contract ([string]$mapping.terminal_requirement -ceq "not-required-at-acceptance") "$Context historical unit '$unitId' later-required-skill mapping '$($mapping.path)' must preserve non-applicability at acceptance."
+                Assert-Contract (Test-Text $mapping.retained_as) "$Context historical unit '$unitId' later-required-skill mapping '$($mapping.path)' must state the retained historical meaning."
+                Assert-Contract (@($instructionSurfaces | Where-Object { [string]$_.path -ceq [string]$mapping.path -or ([string]$_.surface_kind -ceq "skill" -and [string]$_.skill_id -ceq $skillId) }).Count -eq 0) "$Context historical unit '$unitId' later-required-skill mapping '$($mapping.path)' is not wholly absent from immutable unit bytes."
             }
             if ($missingSkillMappings.Count -gt 0) {
                 $effectiveInstructionSurfaces = @($effectiveInstructionSurfaces + @($missingSkillMappings | ForEach-Object {
@@ -1107,17 +1172,32 @@ function Test-ProjectBundle {
         if ($triggeredCategories.Count -gt 0) {
             $expectedInstructionImpact = if ($effectiveWorkMode -eq "validation-only") { "review" } else { "update" }
             $expectedRequiredAction = if ($effectiveWorkMode -eq "validation-only") { "review-no-change" } else { "update" }
-            Assert-Contract ($effectiveInstructionImpact -eq $expectedInstructionImpact) "$Context unit '$($unit.unit_id)' effective work mode '$effectiveWorkMode' must use instruction_impact '$expectedInstructionImpact'."
+            Assert-EvolvingInstructionPolicy `
+                -Condition ($effectiveInstructionImpact -eq $expectedInstructionImpact) `
+                -Unit $unit -State $state -DeferredSupersededFailures $deferredSupersededInstructionFailures `
+                -Message "$Context unit '$($unit.unit_id)' effective work mode '$effectiveWorkMode' must use instruction_impact '$expectedInstructionImpact'."
             $agentSurfaces = @($effectiveInstructionSurfaces | Where-Object { $_.surface_kind -eq "agents" })
             $routerSurfaces = @($effectiveInstructionSurfaces | Where-Object { $_.surface_kind -eq "readme" -or $_.surface_kind -eq "router-doc" })
-            Assert-Contract ($agentSurfaces.Count -gt 0) "$Context unit '$($unit.unit_id)' needs the nearest AGENTS.md instruction surface."
-            Assert-Contract ($routerSurfaces.Count -gt 0) "$Context unit '$($unit.unit_id)' needs a README or router-doc instruction surface."
+            Assert-EvolvingInstructionPolicy `
+                -Condition ($agentSurfaces.Count -gt 0) `
+                -Unit $unit -State $state -DeferredSupersededFailures $deferredSupersededInstructionFailures `
+                -Message "$Context unit '$($unit.unit_id)' needs the nearest AGENTS.md instruction surface."
+            Assert-EvolvingInstructionPolicy `
+                -Condition ($routerSurfaces.Count -gt 0) `
+                -Unit $unit -State $state -DeferredSupersededFailures $deferredSupersededInstructionFailures `
+                -Message "$Context unit '$($unit.unit_id)' needs a README or router-doc instruction surface."
 
             foreach ($requiredSkillId in $requiredSkillIds.ToArray()) {
                 $matchingSkill = @($effectiveInstructionSurfaces | Where-Object {
                     $_.surface_kind -eq "skill" -and $_.skill_id -eq $requiredSkillId
                 })
-                Assert-Contract ($matchingSkill.Count -eq 1) "$Context unit '$($unit.unit_id)' needs one instruction surface for relevant skill '$requiredSkillId'."
+                $laterRequiredSkillCompatibility = if ($null -ne $adoption -and $adoption.normalization.PSObject.Properties.Name -contains "later_required_skill_surfaces") {
+                    @($adoption.normalization.later_required_skill_surfaces | Where-Object { [string]$_.skill_id -ceq [string]$requiredSkillId })
+                } else { @() }
+                Assert-EvolvingInstructionPolicy `
+                    -Condition ($matchingSkill.Count -eq 1 -or ($matchingSkill.Count -eq 0 -and $laterRequiredSkillCompatibility.Count -eq 1)) `
+                    -Unit $unit -State $state -DeferredSupersededFailures $deferredSupersededInstructionFailures `
+                    -Message "$Context unit '$($unit.unit_id)' needs one instruction surface for relevant skill '$requiredSkillId'."
                 if ($matchingSkill.Count -eq 1) {
                     $skillSurface = $matchingSkill[0]
                     if ([string]$skillSurface.action -ceq $expectedRequiredAction) {
@@ -1140,13 +1220,19 @@ function Test-ProjectBundle {
                             work_mode_explicit = $false
                         }) | Out-Null
                     } else {
-                        Assert-Contract $false "$Context unit '$($unit.unit_id)' relevant skill '$requiredSkillId' must use '$expectedRequiredAction'."
+                        Assert-EvolvingInstructionPolicy `
+                            -Condition $false `
+                            -Unit $unit -State $state -DeferredSupersededFailures $deferredSupersededInstructionFailures `
+                            -Message "$Context unit '$($unit.unit_id)' relevant skill '$requiredSkillId' must use '$expectedRequiredAction'."
                     }
                 }
             }
 
             foreach ($requiredSurface in @($agentSurfaces + $routerSurfaces)) {
-                Assert-Contract ($requiredSurface.action -eq $expectedRequiredAction) "$Context unit '$($unit.unit_id)' required instruction surface '$($requiredSurface.path)' must use '$expectedRequiredAction'."
+                Assert-EvolvingInstructionPolicy `
+                    -Condition ($requiredSurface.action -eq $expectedRequiredAction) `
+                    -Unit $unit -State $state -DeferredSupersededFailures $deferredSupersededInstructionFailures `
+                    -Message "$Context unit '$($unit.unit_id)' required instruction surface '$($requiredSurface.path)' must use '$expectedRequiredAction'."
             }
 
             if ($effectiveWorkMode -eq "validation-only") {
@@ -1418,11 +1504,19 @@ function Test-ProjectBundle {
         $terminalEventId = [string]$entry.terminal_evidence.event_id
         $workModeMappings = if ($entry.normalization.PSObject.Properties.Name -contains "work_modes") { @($entry.normalization.work_modes | Where-Object { $null -ne $_ }) } else { @() }
         $missingSkillMappings = if ($entry.normalization.PSObject.Properties.Name -contains "missing_required_skill_surfaces") { @($entry.normalization.missing_required_skill_surfaces | Where-Object { $null -ne $_ }) } else { @() }
+        $laterRequiredSkillMappings = if ($entry.normalization.PSObject.Properties.Name -contains "later_required_skill_surfaces") { @($entry.normalization.later_required_skill_surfaces | Where-Object { $null -ne $_ }) } else { @() }
+        $instructionImpactMappings = if ($entry.normalization.PSObject.Properties.Name -contains "instruction_impact") { @($entry.normalization.instruction_impact | Where-Object { $null -ne $_ }) } else { @() }
+        $instructionSurfaceMappings = if ($entry.normalization.PSObject.Properties.Name -contains "instruction_surfaces") { @($entry.normalization.instruction_surfaces | Where-Object { $null -ne $_ }) } else { @() }
         $terminalReceipt = $null
         $hasReadOnlyDependencyScopeProjection = $entry.normalization.PSObject.Properties.Name -contains "read_only_dependency_scope"
         $hasCompletedProjectScopeProjection = $entry.normalization.PSObject.Properties.Name -contains "completed_project_scope"
         $requiresScopeTerminalEvidence = $hasReadOnlyDependencyScopeProjection -or $hasCompletedProjectScopeProjection
-        $requiresExactTerminalEvidence = $workModeMappings.Count -gt 0 -or $missingSkillMappings.Count -gt 0 -or $requiresScopeTerminalEvidence
+        $requiresExactTerminalEvidence = $workModeMappings.Count -gt 0 -or
+            $missingSkillMappings.Count -gt 0 -or
+            $laterRequiredSkillMappings.Count -gt 0 -or
+            $instructionImpactMappings.Count -gt 0 -or
+            $instructionSurfaceMappings.Count -gt 0 -or
+            $requiresScopeTerminalEvidence
         if ($requiresExactTerminalEvidence) {
             $terminalProperties = @($entry.terminal_evidence.PSObject.Properties.Name | Sort-Object)
             Assert-Contract (($terminalProperties -join "|") -ceq "event_id|event_sha256|receipt_path|receipt_sha256") "$Context evidence-bound historical adoption for '$adoptedUnitId' must bind exact event and receipt evidence."
@@ -1441,6 +1535,10 @@ function Test-ProjectBundle {
                 $latestUnitEvent = @($events | Where-Object { [string]$_.unit_id -ceq $adoptedUnitId } | Select-Object -Last 1)
                 Assert-Contract ($latestUnitEvent.Count -eq 1 -and [string]$latestUnitEvent[0].event_id -ceq $terminalEventId) "$Context $projectionKind projection for '$adoptedUnitId' must bind its latest same-unit event."
             }
+            if ($laterRequiredSkillMappings.Count -gt 0) {
+                Assert-Contract ([string]$terminalEvent.event_type -ceq "state-transition") "$Context later-required-skill projection for '$adoptedUnitId' requires its accepted state-transition event."
+                Assert-Contract ([string]$terminalEvent.event_id -cmatch "^$([regex]::Escape($adoptedUnitId))-accepted(?:-|$)") "$Context later-required-skill projection for '$adoptedUnitId' must bind its accepted event."
+            }
             if ($null -ne $entry.terminal_evidence.receipt_path) {
                 Assert-Contract (@($terminalEvent.receipts) -contains [string]$entry.terminal_evidence.receipt_path) "$Context historical unit '$adoptedUnitId' terminal event does not reference its declared evidence receipt."
                 if ($requiresExactTerminalEvidence) {
@@ -1450,14 +1548,15 @@ function Test-ProjectBundle {
                     Assert-Contract (Test-Path -LiteralPath $terminalReceiptPath -PathType Leaf) "$Context evidence-bound historical adoption for '$adoptedUnitId' receipt is missing."
                     if (Test-Path -LiteralPath $terminalReceiptPath -PathType Leaf) {
                         Assert-Contract ([string]$entry.terminal_evidence.receipt_sha256 -ceq (Get-FileSha256 $terminalReceiptPath)) "$Context evidence-bound historical adoption for '$adoptedUnitId' receipt hash drifted."
-                        if ($missingSkillMappings.Count -gt 0 -or $requiresScopeTerminalEvidence) {
-                            $projectionKind = if ($missingSkillMappings.Count -gt 0) { "missing-skill" } else { "historical scope" }
+                        if ($missingSkillMappings.Count -gt 0 -or $laterRequiredSkillMappings.Count -gt 0 -or $requiresScopeTerminalEvidence) {
+                            $projectionKind = if ($missingSkillMappings.Count -gt 0) { "missing-skill" } elseif ($laterRequiredSkillMappings.Count -gt 0) { "later-required-skill" } else { "historical scope" }
                             $terminalReceipt = Read-JsonDocument -Path $terminalReceiptPath -Context "$Context $projectionKind terminal receipt for '$adoptedUnitId'"
                             if ($null -ne $terminalReceipt) {
                                 Assert-Contract ([string]$terminalReceipt.schema -ceq "rusty.morphospace.workflow.validation_receipt.v1") "$Context $projectionKind projection for '$adoptedUnitId' requires a validation receipt."
                                 Assert-Contract ([string]$terminalReceipt.project_id -ceq [string]$spec.project_id) "$Context $projectionKind projection for '$adoptedUnitId' terminal receipt belongs to another project."
                                 Assert-Contract ([string]$terminalReceipt.unit_id -ceq $adoptedUnitId) "$Context $projectionKind projection for '$adoptedUnitId' terminal receipt belongs to another unit."
-                                Assert-Contract ([string]$terminalReceipt.result -ceq "blocked") "$Context $projectionKind projection for '$adoptedUnitId' requires a blocked validation receipt."
+                                $expectedTerminalResult = if ($laterRequiredSkillMappings.Count -gt 0) { "pass" } else { "blocked" }
+                                Assert-Contract ([string]$terminalReceipt.result -ceq $expectedTerminalResult) "$Context $projectionKind projection for '$adoptedUnitId' requires a '$expectedTerminalResult' validation receipt."
                             }
                         }
                     }
@@ -1687,6 +1786,9 @@ function Test-ProjectBundle {
             Assert-Contract ([string]$state.current_unit -ceq $currentId) "$Context supersession tail '$eventId' does not project replacement '$currentId' as current_unit."
         }
         [void]$supersededInFlightIds.Add($oldId)
+    }
+    foreach ($candidate in $deferredSupersededInstructionFailures.ToArray()) {
+        Assert-Contract ($supersededInFlightIds.Contains([string]$candidate.unit_id)) ([string]$candidate.message)
     }
     foreach ($candidate in $legacySkillReviewCandidates.ToArray()) {
         Assert-Contract (Test-LegacySkillReviewCompatibility `

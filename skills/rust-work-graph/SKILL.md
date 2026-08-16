@@ -326,6 +326,13 @@ If a terminal blocked unit wholly lacks a required skill node, add only the
 exact current-validation projection edges from its bound unit, blocker event,
 and terminal receipt to the required canonical skill nodes. Keep those nodes
 `planned`; add no edit, completion, execution, or current-work authority edge.
+For an accepted unit whose exact bytes predate a current required skill route,
+graph the adoption as a `not-required-at-acceptance` evidence edge bound to the
+accepted event and passing receipt. Do not add a synthetic skill, edit, or
+completion node. For raw active/validating historical instruction debt, retain
+the debt nodes until an exact authenticated supersession edge discharges only
+their evolving policy diagnostics; malformed or absent edges leave the debt
+live.
 Graph drift as separate expected-hash, observed-byte, and independently
 reconstructed nodes; only the reconstruction may connect to current validation.
 For embedded recovery, graph published source tree, exact external projection,

@@ -189,6 +189,15 @@ unit bytes, project only the exact currently required skill IDs and canonical
 `<skills-root>/<skill-id>/SKILL.md` paths. Retain `planned`, bind the terminal
 event and receipt hashes, and reject current, accepted, optional, or extra
 surfaces; the projection never claims an instruction edit or completion.
+If an exact accepted unit wholly omits a skill route introduced after its
+acceptance, use `later_required_skill_surfaces` to bind every and only the
+current missing skill IDs, canonical paths, accepted event lines, and passing
+validation receipts. Record `not-required-at-acceptance`; never synthesize a
+surface or completion. A raw active/validating historical unit gets no adoption
+receipt: defer only its evolving instruction-policy failures, and discharge
+them only after the same aggregate pass authenticates its exact canonical
+supersession event. Structural, registry, event, and current-unit checks remain
+immediate.
 For a terminal blocked validation unit, map an invalid legacy read-only
 directory only to every exact closure-derived current project leaf. A completed
 planning scope precursor may retain external rows only as hash-bound evidence

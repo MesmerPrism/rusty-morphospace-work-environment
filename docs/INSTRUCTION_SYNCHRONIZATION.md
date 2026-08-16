@@ -73,6 +73,14 @@ historical-unit adoption contract, which does not relax synchronization for
 a current or future unit. See
 [Historical Iteration-Unit Adoption](HISTORICAL_UNIT_ADOPTION.md).
 
+Aggregate validation may defer evolving instruction-policy failures for a raw
+active/validating unit only when it is neither current nor next-ready. The
+failures disappear only after the same pass authenticates that unit as the old
+endpoint of an exact canonical supersession event. An accepted unit that wholly
+omits a skill route introduced later needs an exact project-owned
+`later_required_skill_surfaces` adoption entry; the entry records
+`not-required-at-acceptance` and never fabricates completion.
+
 ## Cadence
 
 1. Declare instruction impact when the unit becomes `ready`.
