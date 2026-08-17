@@ -212,6 +212,9 @@ and final live projection derivation. It may not carry a supersession, change
 captain/status/readiness/acceptance state, or tolerate unknown fields;
 later legitimate units may proceed, but a status-only blocked replacement,
 damaged chain, detached continuation, or inferred acceptance fails closed.
+For v3 artifacts, canonicalize and case-insensitively deduplicate the complete
+target-path set before any live lookup, then validate each unique payload,
+hash, live byte sequence, and event-receipt binding.
 For a terminal blocked validation unit, map an invalid legacy read-only
 directory only to every exact closure-derived current project leaf. A completed
 planning scope precursor may retain external rows only as hash-bound evidence

@@ -600,6 +600,21 @@ try {
         }
         Rebind-FixtureTransaction -Workspace $case -EventId $ownerAmendEventId
     }
+    Assert-HelperRejects -Template $ownerAmendWorkspace -Name 'v3-case-alias-duplicate-artifact-path-reverse' -ExpectedMessage 'repeats an artifact target path' -Mutation {
+        param($case)
+        Update-FixtureJson (Join-Path $case "receipts\transactions\$ownerAmendEventId-transition.intent.json") {
+            param($i)
+            $original = Copy-FixtureValue $i.artifacts[0]
+            $alias = Copy-FixtureValue $original
+            $alias.path = 'Receipts/' + ([string]$alias.path).Substring('receipts/'.Length)
+            $i.artifacts = @($alias, $original)
+        }
+        Rebind-FixtureTransaction -Workspace $case -EventId $ownerAmendEventId
+    }
+    Assert-HelperRejects -Template $ownerAmendWorkspace -Name 'v3-unique-missing-live-artifact' -ExpectedMessage 'Workspace artifact is missing' -Mutation {
+        param($case)
+        Remove-Item -LiteralPath (Join-Path $case 'receipts\later-current-owner-add-docs.json') -Force
+    }
     Assert-HelperRejects -Template $ownerAmendWorkspace -Name 'v3-embedded-artifact-hash-drift' -ExpectedMessage 'embedded-byte hash drifted' -Mutation {
         param($case)
         Update-FixtureJson (Join-Path $case "receipts\transactions\$ownerAmendEventId-transition.intent.json") {

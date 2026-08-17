@@ -132,28 +132,39 @@ function Test-MorphospaceBlockedSupersessionProjectionDocument {
     }
 }
 
-function Test-MorphospaceBlockedSupersessionArtifact {
+function Get-MorphospaceBlockedSupersessionArtifactTargetPath {
     param(
-        [string]$WorkspaceRoot,
         [object]$Artifact,
         [string]$Context
     )
     Assert-MorphospaceExactPropertySet $Artifact @('bytes_base64', 'path', 'sha256') @() $Context
-    Assert-MorphospaceBlockedSupersessionHash $Artifact.sha256 "$Context hash"
     $relative = ConvertTo-MorphospaceProtocolRelativePath -Path ([string]$Artifact.path)
     if ([string]$Artifact.path -cne $relative) { throw "$Context path is not canonical." }
+    return $relative
+}
+
+function Test-MorphospaceBlockedSupersessionArtifact {
+    param(
+        [string]$WorkspaceRoot,
+        [object]$Artifact,
+        [string]$CanonicalPath,
+        [string]$Context
+    )
+    Assert-MorphospaceExactPropertySet $Artifact @('bytes_base64', 'path', 'sha256') @() $Context
+    if ([string]$Artifact.path -cne $CanonicalPath) { throw "$Context canonical target changed between validation passes." }
+    Assert-MorphospaceBlockedSupersessionHash $Artifact.sha256 "$Context hash"
     $embedded = try { [Convert]::FromBase64String([string]$Artifact.bytes_base64) } catch { throw "$Context has invalid base64 bytes." }
     if ([Convert]::ToBase64String($embedded) -cne [string]$Artifact.bytes_base64) {
         throw "$Context base64 bytes are not canonical."
     }
     $embeddedHash = Get-MorphospaceSha256Bytes -Bytes $embedded
     if ($embeddedHash -cne [string]$Artifact.sha256) { throw "$Context embedded-byte hash drifted." }
-    $livePath = Resolve-MorphospaceWorkspacePath -WorkspaceRoot $WorkspaceRoot -RelativePath $relative -RequireLeaf
+    $livePath = Resolve-MorphospaceWorkspacePath -WorkspaceRoot $WorkspaceRoot -RelativePath $CanonicalPath -RequireLeaf
     $liveBytes = [IO.File]::ReadAllBytes($livePath)
     if ((Get-MorphospaceSha256Bytes -Bytes $liveBytes) -cne $embeddedHash -or $liveBytes.Length -ne $embedded.Length) {
         throw "$Context live artifact bytes drifted."
     }
-    return [pscustomobject][ordered]@{ path = $relative; sha256 = $embeddedHash }
+    return [pscustomobject][ordered]@{ path = $CanonicalPath; sha256 = $embeddedHash }
 }
 
 function Test-MorphospaceBlockedSupersessionTransaction {
@@ -332,11 +343,21 @@ function Test-MorphospaceBlockedSupersessionTransaction {
         }
     }
     $artifactPaths = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $artifactRecords = [Collections.Generic.List[object]]::new()
     foreach ($artifact in @($intent.artifacts)) {
-        $validatedArtifact = Test-MorphospaceBlockedSupersessionArtifact -WorkspaceRoot $WorkspaceRoot -Artifact $artifact -Context "transition intent '$eventId' artifact"
-        if (-not $artifactPaths.Add([string]$validatedArtifact.path)) {
+        $context = "transition intent '$eventId' artifact"
+        $artifactPath = Get-MorphospaceBlockedSupersessionArtifactTargetPath -Artifact $artifact -Context $context
+        if (-not $artifactPaths.Add($artifactPath)) {
             throw "Transition intent '$eventId' repeats an artifact target path."
         }
+        $artifactRecords.Add([pscustomobject][ordered]@{ artifact = $artifact; path = $artifactPath; context = $context }) | Out-Null
+    }
+    foreach ($record in $artifactRecords) {
+        [void](Test-MorphospaceBlockedSupersessionArtifact `
+            -WorkspaceRoot $WorkspaceRoot `
+            -Artifact $record.artifact `
+            -CanonicalPath ([string]$record.path) `
+            -Context ([string]$record.context))
     }
     if ($ExpectedIntentSchema -ceq 'rusty.morphospace.workflow.transition_ledger_intent.v3') {
         $eventReceiptPaths = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)

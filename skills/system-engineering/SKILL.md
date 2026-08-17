@@ -471,6 +471,9 @@ and final-live derivation. It must retain the active captain, status, readiness,
 and acceptance projection. Do not require the fail event to remain the live
 tail, admit v3 supersession/unknown fields, broaden blocked status, or infer
 acceptance.
+For v3 artifact evidence, validate and case-insensitively deduplicate every
+canonical target path as a complete set before live filesystem access; only
+then validate each unique payload/hash/live-byte and event-receipt binding.
 
 A drifted historical-adoption receipt keeps its expected and observed hashes
 as damaged original evidence. An immutable-Git-anchored

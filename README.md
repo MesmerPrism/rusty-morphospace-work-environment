@@ -300,6 +300,9 @@ or acceptance inference remain invalid. Run
 `scripts/Test-BlockedSupersessionTerminalValidation.ps1` for the neutral
 owner-produced one-projection, two-projection, chained-advance, and adversarial
 fixtures.
+V3 artifact validation resolves portability deterministically: it canonicalizes
+and case-insensitively deduplicates every target path before any filesystem
+lookup, then validates the unique artifacts and their exact receipt set.
 One completed legacy-v1 fault has a separately reviewed append-only repair:
 an otherwise exact `<old>-superseded-by-<replacement>` event that recorded the
 replacement in `event.unit_id`. Use only the derived
