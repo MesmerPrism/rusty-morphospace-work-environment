@@ -168,6 +168,111 @@
       "status": "approved"
     },
     {
+      "approval_id": "blocked-supersession-terminal-validation-20260817",
+      "required_ancestor": "5864142caa8e938d485825d806822d5afd07437f",
+      "changed_paths": [
+        "AGENTS.md",
+        "README.md",
+        "docs/AUTONOMOUS_ITERATION.md",
+        "docs/EXTERNAL_VALIDATION_AUTHORITY.md",
+        "scripts/Test-BlockedSupersessionTerminalValidation.ps1",
+        "scripts/Test-WorkEnvironment.ps1",
+        "scripts/Test-WorkflowContracts.ps1",
+        "scripts/lib/MorphospaceBlockedSupersessionTerminalValidation.psm1",
+        "skills/rust-work-graph/SKILL.md",
+        "skills/rusty-morphospace/SKILL.md",
+        "skills/rusty-morphospace/references/project-workflow.md",
+        "skills/system-engineering/SKILL.md"
+      ],
+      "artifacts": [
+        {
+          "path": "AGENTS.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 37984,
+          "sha256": "a5e48bb9519d40a6a4f22dd3e19be7919a0c1ec693429a660a7af54537fcef5e"
+        },
+        {
+          "path": "README.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 32823,
+          "sha256": "dcba9a01867bf27079da02b236f2b082cdd52a7bdc437b4cbb51cd36ae82bdfe"
+        },
+        {
+          "path": "docs/AUTONOMOUS_ITERATION.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 42761,
+          "sha256": "bf05427a48cf5e7366c6509e7a62cbbe2933b490ca450abd5fdd4ed592b3c7c9"
+        },
+        {
+          "path": "docs/EXTERNAL_VALIDATION_AUTHORITY.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 13999,
+          "sha256": "230710a70e585f90e47dcceff3d9762c645fde91a12d03927b619d37e9811625"
+        },
+        {
+          "path": "scripts/Test-BlockedSupersessionTerminalValidation.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 33910,
+          "sha256": "99bc4e82df08d2f09dd0c33e4395dc4144cfb9f540ae2653898285cd7da7f9e0"
+        },
+        {
+          "path": "scripts/Test-WorkEnvironment.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 27210,
+          "sha256": "2514cfe98b0a4b56a37ea5a1e72b9f3b7c05f6bfd4f648e1d57bb8a93836639d"
+        },
+        {
+          "path": "scripts/Test-WorkflowContracts.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 205208,
+          "sha256": "92c3decaeba4d8241ec550ea18fc437d2232a0692ae2bc78f0546a9caa2e0b3c"
+        },
+        {
+          "path": "scripts/lib/MorphospaceBlockedSupersessionTerminalValidation.psm1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 30389,
+          "sha256": "b1c8c7056165f1f04be29eb1da1f696e1ce9cc276c77acf0845dd00aa99bb71a"
+        },
+        {
+          "path": "skills/rust-work-graph/SKILL.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 21201,
+          "sha256": "173c41f7de211da8a6b2b7c97862e05742449a98b3a82b4faeed998e96454e8a"
+        },
+        {
+          "path": "skills/rusty-morphospace/SKILL.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 6320,
+          "sha256": "46082df63a7fad3c142d1449750e44d5146709571cb753bc2d494ddb033f2891"
+        },
+        {
+          "path": "skills/rusty-morphospace/references/project-workflow.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 13855,
+          "sha256": "5fa45017ad121007d265ef82e237cb3abffb44f357b53721599caa2a7c9db44b"
+        },
+        {
+          "path": "skills/system-engineering/SKILL.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 31647,
+          "sha256": "72a95f99a1743d934347976278e06a2430b7f8be3243d9ec4dbb828e68c074e3"
+        }
+      ],
+      "status": "approved"
+    },
+    {
       "approval_id": "completed-transition-semantic-correction-20260804-v2",
       "required_ancestor": "cab21376b715ceb0d7c4c71c71c2c05f6d939d4e",
       "changed_paths": [
