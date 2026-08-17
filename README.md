@@ -284,6 +284,16 @@ the distinct replacement, and the event ID is their exact unambiguous
 rendering. A supersession uses a v2 intent that hash-binds the original state
 document and exact old-unit path/document. Completion rejects legacy or damaged
 bindings before applied-target recovery, torn-tail repair, or projection writes.
+If that exact replacement later reaches the owner-defined terminal
+`validation-fail` route, aggregate validation admits its blocked status only
+from the authenticated v2 supersession transaction and the complete directly
+chained `BeginValidation`/fail transactions, including the same-unit fail
+receipt, blocker/checkpoint, and exact historical state/unit targets. The proof
+remains valid after later legitimate units advance only when every later owner
+transaction derives the live projection; status-only mutation, damaged history,
+or acceptance inference remains invalid. Run
+`scripts/Test-BlockedSupersessionTerminalValidation.ps1` for the neutral
+positive and adversarial fixtures.
 One completed legacy-v1 fault has a separately reviewed append-only repair:
 an otherwise exact `<old>-superseded-by-<replacement>` event that recorded the
 replacement in `event.unit_id`. Use only the derived

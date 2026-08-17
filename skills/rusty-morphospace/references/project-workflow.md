@@ -87,6 +87,16 @@ until that same pass authenticates the exact canonical supersession edge.
 Missing or damaged evidence restores the original failures; no structural,
 registry, event, or current-unit check is deferred.
 
+If the exact replacement later terminates through typed validation failure,
+admit its blocked history only after authenticating the exact v2 supersession
+intent/completion and target, then the directly chained
+`BeginValidation`/`validation-fail` intent and completion chains, same-unit fail
+receipt, blocker/checkpoint, and terminal state/unit targets. Authenticate all
+later owner transactions as a derivable suffix rather than requiring the fail
+event to remain the live tail. An arbitrary blocked replacement, detached or
+damaged suffix, receipt substitution, status-only mutation, or acceptance
+inference fails closed.
+
 Do not make that rule tolerant for history. The only supported completed
 legacy-v1 target-as-event-unit fault uses the workflow owner's derived
 `completed_transition_semantic_correction.v1` receipt and
