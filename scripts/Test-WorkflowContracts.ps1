@@ -1790,14 +1790,14 @@ function Test-ProjectBundle {
                     -SupersessionEventId $eventId `
                     -ReplacementUnitId $currentId
             } catch {
-                Assert-Contract $false "$Context supersession replacement '$currentId' has unauthenticated terminal-fail history: $($_.Exception.Message)"
+                Assert-Contract $false "$Context supersession replacement '$currentId' has unauthenticated terminal-fail or owner-projection continuation history: $($_.Exception.Message)"
             }
             if ($replacementStatus -ceq 'blocked') {
                 Assert-Contract (
                     $null -ne $terminalFailHistory -and
                     $terminalFailHistory.history_present -eq $true -and
                     $terminalFailHistory.authenticated -eq $true
-                ) "$Context supersession replacement '$currentId' is blocked without an authenticated owner validation-fail lifecycle."
+                ) "$Context supersession replacement '$currentId' is blocked without an authenticated owner validation-fail lifecycle and derivable strict v1/v3 continuation suffix."
             } else {
                 Assert-Contract (@("active", "validating", "accepted") -contains $replacementStatus) "$Context supersession replacement '$currentId' is neither current, accepted, nor an authenticated terminal failure."
             }

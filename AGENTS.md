@@ -204,7 +204,12 @@ v2 supersession intent/completion and its immediately chained
 `BeginValidation` and `validation-fail` intents, completions, events, same-unit
 fail receipt, blocker/checkpoint, and terminal blocked/current-null projection.
 Every later ledger event must extend those owner transaction preimages and
-derive the live state and touched unit bytes;
+derive the live state and touched unit bytes. A later v3 projection transaction
+is valid only with its exact owner property set, one or two canonical ordered
+`feature.lock.json`/`project.spec.json` projections, unchanged first-seen
+anchors, prior-target-to-next-preimage chaining for a changed anchored path,
+and final live projection derivation. It may not carry a supersession, change
+captain/status/readiness/acceptance state, or tolerate unknown fields;
 later legitimate units may proceed, but a status-only blocked replacement,
 damaged chain, detached continuation, or inferred acceptance fails closed.
 For a terminal blocked validation unit, map an invalid legacy read-only

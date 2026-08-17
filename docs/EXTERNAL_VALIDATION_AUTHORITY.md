@@ -21,6 +21,14 @@ complete path/blob set pass the trusted-base static admission route below;
 dynamic success neither replaces that admission nor grants acceptance or
 publication authority.
 
+This boundary also applies when extending a trusted historical validator to
+recognize a later owner-ledger schema. Tests must use the existing owner writer
+to create positive transactions; hand-authored events or receipts are only
+damage fixtures. Preserve prior schemas exactly and admit the new schema only
+through complete intent, ledger-predecessor, projection, artifact, completion,
+and final-live derivation. Candidate-side success remains dynamic evidence,
+not static admission of the protected validator change.
+
 ## Two-PR Trust Change
 
 For a validation-authority change:

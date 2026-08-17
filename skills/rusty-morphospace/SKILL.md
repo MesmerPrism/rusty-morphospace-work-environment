@@ -69,7 +69,7 @@ If a terminal blocked unit wholly omits a currently required skill surface,
 project only the exact required skill IDs and canonical `<skills-root>` paths;
 retain `planned` and bind exact blocker-event and receipt hashes.
 For an accepted unit missing a later skill route, require exact `later_required_skill_surfaces` evidence and never synthesize completion.
-A blocked supersession replacement requires its exact v2 supersession transaction and directly chained owner `BeginValidation`-to-`validation-fail` transactions, same-unit fail receipt and blocker/checkpoint, plus a derivable later transaction suffix; never broaden `blocked` or infer acceptance.
+A blocked supersession replacement requires its exact v2 supersession transaction and directly chained owner `BeginValidation`-to-`validation-fail` transactions, same-unit fail receipt and blocker/checkpoint, plus a derivable later transaction suffix. In that suffix, preserve strict v1 handling and admit v3 only with one or two exact ordered project/lock projections: unchanged first anchors, chained later advances, exact artifacts/completion, and final-live derivation. Never admit v3 supersession or unknown fields, broaden `blocked`, or infer acceptance.
 Defer stale in-flight instruction-policy errors only through the same pass's exact canonical supersession;
 never defer structural, current-unit, registry, or event errors.
 Normalize retired `publication` to `feature` only for an exact blocked unit

@@ -462,9 +462,14 @@ Model a blocked supersession replacement as valid only when its exact
 v2 supersession transaction target directly chains into the historical
 `BeginValidation` to `validation-fail` owner transactions, which bind the
 same-unit fail receipt, blocker/checkpoint, blocked unit, cleared current/next
-state, and unchanged acceptance projection. Validate subsequent
-owner transactions as a derivation of live state and unit bytes; do not require
-the fail event to remain the live tail, broaden blocked status, or infer
+state, and unchanged acceptance projection. Validate subsequent owner
+transactions as a derivation of live state and unit bytes. Preserve v1 and v2
+semantics; a later v3 transaction is valid only with the exact known property
+set, one or two canonical ordered project/lock projections, an unchanged first
+anchor or prior-target-to-next-preimage chain, exact artifacts and completion,
+and final-live derivation. It must retain the active captain, status, readiness,
+and acceptance projection. Do not require the fail event to remain the live
+tail, admit v3 supersession/unknown fields, broaden blocked status, or infer
 acceptance.
 
 A drifted historical-adoption receipt keeps its expected and observed hashes

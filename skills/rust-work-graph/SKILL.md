@@ -56,6 +56,13 @@ Treat `core.autocrlf`, editor presentation, and filtered hashes as observations,
 not authority; route the exact policy and pre-signing check through
 `docs/AUTONOMOUS_ITERATION.md`.
 
+For a blocked-supersession history graph, keep its authenticated v2 edge and
+immediate BeginValidation-to-fail chain intact. Graph each later owner v3
+projection transaction as an ordered path-specific edge: first-seen paths must
+be unchanged anchors, later changed paths must connect prior target to next
+preimage, and final targets must connect to live project/lock documents. Do not
+graph unknown projections, hand-authored positive authority, or acceptance.
+
 ## Graph Interpretation
 
 Graph evidence is a routing aid, not proof that a dependency belongs in core.

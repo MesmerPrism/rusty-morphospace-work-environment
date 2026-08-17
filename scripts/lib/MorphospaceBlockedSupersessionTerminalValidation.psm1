@@ -98,6 +98,40 @@ function Assert-MorphospaceBlockedSupersessionEventEqual {
     if ($expectedHash -cne $actualHash) { throw "$Context does not match the immutable event-ledger record." }
 }
 
+function Test-MorphospaceBlockedSupersessionProjectionDocument {
+    param(
+        [Parameter(Mandatory = $true)][string]$ProjectionPath,
+        [Parameter(Mandatory = $true)][object]$Document,
+        [Parameter(Mandatory = $true)][string]$ProjectId,
+        [Parameter(Mandatory = $true)][string]$Context
+    )
+    $schemaName = switch ([string]$Document.schema) {
+        'rusty.morphospace.workflow.feature_lock.v1' {
+            if ($ProjectionPath -cne 'feature.lock.json') { throw "$Context uses a feature-lock schema on the wrong path." }
+            'feature-lock.schema.json'
+        }
+        'rusty.morphospace.workflow.feature_lock.v2' {
+            if ($ProjectionPath -cne 'feature.lock.json') { throw "$Context uses a feature-lock schema on the wrong path." }
+            'feature-lock-v2.schema.json'
+        }
+        'rusty.morphospace.workflow.project_spec.v1' {
+            if ($ProjectionPath -cne 'project.spec.json') { throw "$Context uses a project-spec schema on the wrong path." }
+            'project-spec.schema.json'
+        }
+        'rusty.morphospace.workflow.project_spec.v2' {
+            if ($ProjectionPath -cne 'project.spec.json') { throw "$Context uses a project-spec schema on the wrong path." }
+            'project-spec-v2.schema.json'
+        }
+        default { throw "$Context uses an unsupported projection-document schema." }
+    }
+    if ([string]$Document.project_id -cne $ProjectId) { throw "$Context has a mismatched project identity." }
+    $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+    $schemaPath = Join-Path $repositoryRoot "schemas\$schemaName"
+    if (-not (Test-Json -Json ($Document | ConvertTo-Json -Depth 64) -SchemaFile $schemaPath)) {
+        throw "$Context does not satisfy '$schemaName'."
+    }
+}
+
 function Test-MorphospaceBlockedSupersessionArtifact {
     param(
         [string]$WorkspaceRoot,
@@ -107,7 +141,11 @@ function Test-MorphospaceBlockedSupersessionArtifact {
     Assert-MorphospaceExactPropertySet $Artifact @('bytes_base64', 'path', 'sha256') @() $Context
     Assert-MorphospaceBlockedSupersessionHash $Artifact.sha256 "$Context hash"
     $relative = ConvertTo-MorphospaceProtocolRelativePath -Path ([string]$Artifact.path)
+    if ([string]$Artifact.path -cne $relative) { throw "$Context path is not canonical." }
     $embedded = try { [Convert]::FromBase64String([string]$Artifact.bytes_base64) } catch { throw "$Context has invalid base64 bytes." }
+    if ([Convert]::ToBase64String($embedded) -cne [string]$Artifact.bytes_base64) {
+        throw "$Context base64 bytes are not canonical."
+    }
     $embeddedHash = Get-MorphospaceSha256Bytes -Bytes $embedded
     if ($embeddedHash -cne [string]$Artifact.sha256) { throw "$Context embedded-byte hash drifted." }
     $livePath = Resolve-MorphospaceWorkspacePath -WorkspaceRoot $WorkspaceRoot -RelativePath $relative -RequireLeaf
@@ -115,6 +153,7 @@ function Test-MorphospaceBlockedSupersessionArtifact {
     if ((Get-MorphospaceSha256Bytes -Bytes $liveBytes) -cne $embeddedHash -or $liveBytes.Length -ne $embedded.Length) {
         throw "$Context live artifact bytes drifted."
     }
+    return [pscustomobject][ordered]@{ path = $relative; sha256 = $embeddedHash }
 }
 
 function Test-MorphospaceBlockedSupersessionTransaction {
@@ -128,7 +167,8 @@ function Test-MorphospaceBlockedSupersessionTransaction {
         [string]$ExpectedTargetUnitId = '',
         [ValidateSet(
             'rusty.morphospace.workflow.transition_ledger_intent.v1',
-            'rusty.morphospace.workflow.transition_ledger_intent.v2'
+            'rusty.morphospace.workflow.transition_ledger_intent.v2',
+            'rusty.morphospace.workflow.transition_ledger_intent.v3'
         )][string]$ExpectedIntentSchema = 'rusty.morphospace.workflow.transition_ledger_intent.v1'
     )
 
@@ -145,6 +185,8 @@ function Test-MorphospaceBlockedSupersessionTransaction {
     $intentProperties = @('artifacts','created_at','event','events','expected','pre','schema','state','status','target','transaction_id','unit')
     if ($ExpectedIntentSchema -ceq 'rusty.morphospace.workflow.transition_ledger_intent.v2') {
         $intentProperties += 'supersession'
+    } elseif ($ExpectedIntentSchema -ceq 'rusty.morphospace.workflow.transition_ledger_intent.v3') {
+        $intentProperties += 'additional_projections'
     }
     Assert-MorphospaceExactPropertySet $intent $intentProperties @() "transition intent '$eventId'"
     if ([string]$intent.schema -cne $ExpectedIntentSchema -or [string]$intent.status -cne 'prepared') {
@@ -258,9 +300,61 @@ function Test-MorphospaceBlockedSupersessionTransaction {
         if ((Get-MorphospaceCanonicalJsonSha256 -Value $readyReplacement) -cne [string]$intent.pre.unit.sha256) {
             throw "Supersession transaction '$eventId' pre-unit hash is not the exact ready form of its active replacement target."
         }
+    } elseif ($ExpectedIntentSchema -ceq 'rusty.morphospace.workflow.transition_ledger_intent.v3') {
+        if ($eventId.Contains('-superseded-by-', [StringComparison]::Ordinal)) {
+            throw "Transition intent v3 '$eventId' may not authenticate a supersession."
+        }
+        $projections = @($intent.additional_projections)
+        if ($projections.Count -lt 1 -or $projections.Count -gt 2) {
+            throw "Transition intent v3 '$eventId' must bind one or two additional projections."
+        }
+        $projectionPaths = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        $previousProjectionPath = $null
+        foreach ($projection in $projections) {
+            Assert-MorphospaceExactPropertySet $projection @('document','path','pre_sha256','target_sha256') @() "transition intent '$eventId' additional projection"
+            $projectionPath = ConvertTo-MorphospaceProtocolRelativePath -Path ([string]$projection.path)
+            if ([string]$projection.path -cne $projectionPath -or -not $projectionPaths.Add($projectionPath)) {
+                throw "Transition intent v3 '$eventId' repeats or mis-canonicalizes an additional projection path."
+            }
+            if ($projectionPath -cnotin @('feature.lock.json','project.spec.json')) {
+                throw "Transition intent v3 '$eventId' does not authorize additional projection '$projectionPath'."
+            }
+            if ($null -ne $previousProjectionPath -and [StringComparer]::Ordinal.Compare([string]$previousProjectionPath, $projectionPath) -ge 0) {
+                throw "Transition intent v3 '$eventId' additional projections are not in canonical path order."
+            }
+            $previousProjectionPath = $projectionPath
+            Assert-MorphospaceBlockedSupersessionHash $projection.pre_sha256 "Transition intent v3 '$eventId' projection preimage"
+            Assert-MorphospaceBlockedSupersessionHash $projection.target_sha256 "Transition intent v3 '$eventId' projection target"
+            if ((Get-MorphospaceCanonicalJsonSha256 -Value $projection.document) -cne [string]$projection.target_sha256) {
+                throw "Transition intent v3 '$eventId' projection '$projectionPath' target document hash drifted."
+            }
+            Test-MorphospaceBlockedSupersessionProjectionDocument -ProjectionPath $projectionPath -Document $projection.document -ProjectId $ProjectId -Context "Transition intent v3 '$eventId' projection '$projectionPath'"
+        }
     }
+    $artifactPaths = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach ($artifact in @($intent.artifacts)) {
-        Test-MorphospaceBlockedSupersessionArtifact -WorkspaceRoot $WorkspaceRoot -Artifact $artifact -Context "transition intent '$eventId' artifact"
+        $validatedArtifact = Test-MorphospaceBlockedSupersessionArtifact -WorkspaceRoot $WorkspaceRoot -Artifact $artifact -Context "transition intent '$eventId' artifact"
+        if (-not $artifactPaths.Add([string]$validatedArtifact.path)) {
+            throw "Transition intent '$eventId' repeats an artifact target path."
+        }
+    }
+    if ($ExpectedIntentSchema -ceq 'rusty.morphospace.workflow.transition_ledger_intent.v3') {
+        $eventReceiptPaths = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        foreach ($receipt in @($event.receipts)) {
+            if ($receipt -isnot [string]) { throw "Transition intent v3 '$eventId' event receipt is not a canonical path string." }
+            $receiptPath = ConvertTo-MorphospaceProtocolRelativePath -Path ([string]$receipt)
+            if ([string]$receipt -cne $receiptPath -or -not $eventReceiptPaths.Add($receiptPath)) {
+                throw "Transition intent v3 '$eventId' repeats or mis-canonicalizes an event receipt path."
+            }
+        }
+        if ($eventReceiptPaths.Count -ne $artifactPaths.Count) {
+            throw "Transition intent v3 '$eventId' event receipts do not exactly match its artifact targets."
+        }
+        foreach ($receiptPath in $eventReceiptPaths) {
+            if (-not $artifactPaths.Contains($receiptPath)) {
+                throw "Transition intent v3 '$eventId' event receipt '$receiptPath' is not bound as an exact artifact target."
+            }
+        }
     }
 
     Assert-MorphospaceExactPropertySet $completion @('completed_at','event_id','intent','schema','state_sha256','status','transaction_id','unit_sha256') @() "transition completion '$eventId'"
@@ -291,6 +385,7 @@ function Test-MorphospaceBlockedSupersessionTransaction {
         state_sha256 = [string]$intent.target.state.sha256
         unit_document = $intent.target.unit.document
         unit_sha256 = [string]$intent.target.unit.sha256
+        additional_projections = @($(if ($ExpectedIntentSchema -ceq 'rusty.morphospace.workflow.transition_ledger_intent.v3') { $intent.additional_projections } else { @() }))
     }
 }
 
@@ -440,13 +535,59 @@ function Test-MorphospaceBlockedSupersessionTerminalValidation {
     $stateProjectionSha256 = $fail.state_sha256
     $unitProjection = @{}
     $unitProjection[$ReplacementUnitId] = [pscustomobject][ordered]@{ document = $fail.unit_document; sha256 = $fail.unit_sha256 }
+    $additionalProjection = @{}
     $continuationCount = 0
     for ($ordinal = [int]$failRow.ordinal + 1; $ordinal -lt $ledger.rows.Count; $ordinal++) {
         $row = $ledger.rows[$ordinal]
         $eventUnitId = [string]$row.document.unit_id
         if (-not $eventUnitId) { throw "Later event '$([string]$row.document.event_id)' lacks a unit identity required for historical derivation." }
         $knownUnitSha = if ($unitProjection.ContainsKey($eventUnitId)) { [string]$unitProjection[$eventUnitId].sha256 } else { '' }
-        $transition = Test-MorphospaceBlockedSupersessionTransaction -WorkspaceRoot $workspace -Ledger $ledger -Row $row -ProjectId $ProjectId -ExpectedPreStateSha256 $stateProjectionSha256 -ExpectedPreUnitSha256 $knownUnitSha
+        $laterEventId = [string]$row.document.event_id
+        $laterIntent = Read-MorphospaceBlockedSupersessionJson -WorkspaceRoot $workspace -RelativePath "receipts/transactions/$laterEventId-transition.intent.json" -Context "later transition intent '$laterEventId' schema dispatch"
+        $laterIntentSchema = [string]$laterIntent.document.schema
+        if ($laterIntentSchema -cnotin @(
+            'rusty.morphospace.workflow.transition_ledger_intent.v1',
+            'rusty.morphospace.workflow.transition_ledger_intent.v3'
+        )) {
+            throw "Later transition '$laterEventId' uses an unsupported owner-intent schema."
+        }
+        if ($laterIntentSchema -ceq 'rusty.morphospace.workflow.transition_ledger_intent.v3' -and -not $knownUnitSha) {
+            throw "Later transition intent v3 '$laterEventId' does not continue a previously authenticated unit projection."
+        }
+        $priorStateProjection = $stateProjection
+        $priorUnitProjection = if ($unitProjection.ContainsKey($eventUnitId)) { $unitProjection[$eventUnitId].document } else { $null }
+        $transition = Test-MorphospaceBlockedSupersessionTransaction -WorkspaceRoot $workspace -Ledger $ledger -Row $row -ProjectId $ProjectId -ExpectedPreStateSha256 $stateProjectionSha256 -ExpectedPreUnitSha256 $knownUnitSha -ExpectedIntentSchema $laterIntentSchema
+        if ($laterIntentSchema -ceq 'rusty.morphospace.workflow.transition_ledger_intent.v3') {
+            if ($null -eq $priorUnitProjection -or
+                [string]$priorUnitProjection.status -cne 'active' -or
+                [string]$transition.unit_document.status -cne [string]$priorUnitProjection.status -or
+                [string]$transition.unit_document.unit_id -cne $eventUnitId -or
+                [string]$priorStateProjection.current_unit -cne $eventUnitId -or
+                [string]$transition.state_document.current_unit -cne $eventUnitId -or
+                [string]$transition.state_document.next_ready_unit -cne [string]$priorStateProjection.next_ready_unit -or
+                [string]$transition.state_document.last_accepted_receipt -cne [string]$priorStateProjection.last_accepted_receipt) {
+                throw "Later transition intent v3 '$laterEventId' changed captain, status, readiness, or acceptance projection."
+            }
+            $expectedState = $priorStateProjection | ConvertTo-Json -Depth 64 | ConvertFrom-Json
+            $expectedState.last_event_id = $laterEventId
+            if ((Get-MorphospaceCanonicalJsonSha256 -Value $expectedState) -cne [string]$transition.state_sha256) {
+                throw "Later transition intent v3 '$laterEventId' changed workspace state beyond its authenticated event tail."
+            }
+            foreach ($projection in @($transition.additional_projections)) {
+                $projectionPath = [string]$projection.path
+                if ($additionalProjection.ContainsKey($projectionPath)) {
+                    if ([string]$projection.pre_sha256 -cne [string]$additionalProjection[$projectionPath].sha256) {
+                        throw "Later transition intent v3 '$laterEventId' detaches projection '$projectionPath' from its authenticated predecessor target."
+                    }
+                } elseif ([string]$projection.pre_sha256 -cne [string]$projection.target_sha256) {
+                    throw "Later transition intent v3 '$laterEventId' changes unanchored projection '$projectionPath'."
+                }
+                $additionalProjection[$projectionPath] = [pscustomobject][ordered]@{
+                    document = $projection.document
+                    sha256 = [string]$projection.target_sha256
+                }
+            }
+        }
         $stateProjection = $transition.state_document
         $stateProjectionSha256 = $transition.state_sha256
         $unitProjection[$eventUnitId] = [pscustomobject][ordered]@{ document = $transition.unit_document; sha256 = $transition.unit_sha256 }
@@ -463,6 +604,12 @@ function Test-MorphospaceBlockedSupersessionTerminalValidation {
             throw "Live unit '$unitId' is not derivable from the authenticated fail transition and later event chain."
         }
     }
+    foreach ($projectionPath in @($additionalProjection.Keys)) {
+        $liveProjection = Read-MorphospaceBlockedSupersessionJson -WorkspaceRoot $workspace -RelativePath $projectionPath -Context "live additional projection '$projectionPath'"
+        if ((Get-MorphospaceCanonicalJsonSha256 -Value $liveProjection.document) -cne [string]$additionalProjection[$projectionPath].sha256) {
+            throw "Live additional projection '$projectionPath' is not derivable from the authenticated v3 continuation chain."
+        }
+    }
     $liveReplacement = $unitProjection[$ReplacementUnitId].document
     if ([string]$liveReplacement.status -cnotin @('blocked','active','validating','accepted')) {
         throw "Replacement '$ReplacementUnitId' has an illegal live status after its authenticated fail history."
@@ -476,6 +623,7 @@ function Test-MorphospaceBlockedSupersessionTerminalValidation {
         supersession_event_id = [string]$supersessionEvent.event_id
         validation_receipt = $receiptPath
         continuation_event_count = $continuationCount
+        continuation_projection_count = $additionalProjection.Count
         final_state_sha256 = $stateProjectionSha256
         live_replacement_status = [string]$liveReplacement.status
         acceptance_inferred = $false

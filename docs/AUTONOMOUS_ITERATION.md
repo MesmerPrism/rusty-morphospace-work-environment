@@ -281,12 +281,23 @@ their intent/completion chains. Bind their prefix preimages, event identity,
 same-project/unit fail receipt, validation checkpoint, owner blocker, blocked
 unit target, cleared current/next target, and unchanged acceptance projection.
 Then authenticate each later event transaction as a continuation of the prior
-state target and derive the final live state plus every touched live unit. This
-lets a later unit become current or accepted without requiring the fail event
-to remain the live tail. Missing or damaged links, receipt substitutions,
-detached suffixes, status-only mutation, non-derived live projections, and any
-acceptance inference fail closed. The ordinary active, validating, and accepted
-replacement rules remain unchanged when no terminal-fail history exists.
+state target and derive the final live state plus every touched live unit. Keep
+v1 suffix handling unchanged. Admit a suffix intent v3 only after the fail
+target, never as supersession: require its exact known property set, one or two
+canonical unique ordinal-ordered `feature.lock.json`/`project.spec.json`
+projections, exact embedded schema/project/hash bindings, canonical-base64
+artifacts with case-insensitively unique canonical paths and exact event-receipt
+coverage, live artifact bytes, and completion binding. A path without an earlier authenticated suffix projection
+must be unchanged (`pre_sha256 == target_sha256`); a later changed projection
+must chain the earlier target into its preimage, and the last target must derive
+the live document. The v3 state may advance only `last_event_id`, while the
+same active captain, status, current/next, and acceptance projection remain.
+This lets a later unit become current or accepted without requiring the fail
+event to remain the live tail. Missing or damaged links, receipt substitutions,
+detached suffixes, status-only mutation, non-derived live projections, unknown
+v3 fields or paths, and any acceptance inference fail closed. The ordinary
+active, validating, and accepted replacement rules remain unchanged when no
+terminal-fail history exists.
 
 If an already completed legacy-v1 transaction has the exact event ID above but
 incorrectly recorded the replacement in `event.unit_id`, do not edit it and do
