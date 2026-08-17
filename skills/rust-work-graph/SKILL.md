@@ -333,6 +333,13 @@ completion node. For raw active/validating historical instruction debt, retain
 the debt nodes until an exact authenticated supersession edge discharges only
 their evolving policy diagnostics; malformed or absent edges leave the debt
 live.
+For a replacement that later terminates blocked, add separate nodes for the
+v2 supersession intent/completion and target, directly chained
+BeginValidation/fail intents and completions, same-unit fail receipt,
+blocker/checkpoint, and exact terminal state/unit targets. Chain every later
+owner event from the preceding state target to the
+live projection. Do not collapse this graph into a generic blocked-status edge
+or add acceptance; missing, detached, or status-only edges fail closed.
 Graph drift as separate expected-hash, observed-byte, and independently
 reconstructed nodes; only the reconstruction may connect to current validation.
 For embedded recovery, graph published source tree, exact external projection,

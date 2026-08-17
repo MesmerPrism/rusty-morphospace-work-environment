@@ -198,6 +198,15 @@ receipt: defer only its evolving instruction-policy failures, and discharge
 them only after the same aggregate pass authenticates its exact canonical
 supersession event. Structural, registry, event, and current-unit checks remain
 immediate.
+An exact supersession replacement may remain honestly `blocked` after typed
+validation failure only when aggregate validation authenticates its historical
+v2 supersession intent/completion and its immediately chained
+`BeginValidation` and `validation-fail` intents, completions, events, same-unit
+fail receipt, blocker/checkpoint, and terminal blocked/current-null projection.
+Every later ledger event must extend those owner transaction preimages and
+derive the live state and touched unit bytes;
+later legitimate units may proceed, but a status-only blocked replacement,
+damaged chain, detached continuation, or inferred acceptance fails closed.
 For a terminal blocked validation unit, map an invalid legacy read-only
 directory only to every exact closure-derived current project leaf. A completed
 planning scope precursor may retain external rows only as hash-bound evidence

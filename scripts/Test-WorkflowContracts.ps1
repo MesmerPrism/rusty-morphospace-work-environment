@@ -22,6 +22,7 @@ if ($RepositoryMapPath) {
 }
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceCompletedTransitionSemanticCorrection.psm1') -Force
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceHistoricalBlockerResolutionIntentBindingCorrection.psm1') -Force
+Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceBlockedSupersessionTerminalValidation.psm1') -Force
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceProtocolCommon.psm1') -Force
 
 function Invoke-IsolatedWorkflowSelfTest {
@@ -1780,7 +1781,26 @@ function Test-ProjectBundle {
             Assert-Contract (@("active", "validating") -contains [string]$unitMap[$oldId].status) "$Context supersession event '$eventId' may override only an immutable active/validating unit."
         }
         if ($unitMap.ContainsKey($currentId)) {
-            Assert-Contract (@("active", "validating", "accepted") -contains [string]$unitMap[$currentId].status) "$Context supersession replacement '$currentId' is not current or accepted."
+            $replacementStatus = [string]$unitMap[$currentId].status
+            $terminalFailHistory = $null
+            try {
+                $terminalFailHistory = Test-MorphospaceBlockedSupersessionTerminalValidation `
+                    -WorkspaceRoot $workspaceRoot `
+                    -ProjectId ([string]$spec.project_id) `
+                    -SupersessionEventId $eventId `
+                    -ReplacementUnitId $currentId
+            } catch {
+                Assert-Contract $false "$Context supersession replacement '$currentId' has unauthenticated terminal-fail history: $($_.Exception.Message)"
+            }
+            if ($replacementStatus -ceq 'blocked') {
+                Assert-Contract (
+                    $null -ne $terminalFailHistory -and
+                    $terminalFailHistory.history_present -eq $true -and
+                    $terminalFailHistory.authenticated -eq $true
+                ) "$Context supersession replacement '$currentId' is blocked without an authenticated owner validation-fail lifecycle."
+            } else {
+                Assert-Contract (@("active", "validating", "accepted") -contains $replacementStatus) "$Context supersession replacement '$currentId' is neither current, accepted, nor an authenticated terminal failure."
+            }
         }
         if ([string]$state.last_event_id -ceq $eventId) {
             Assert-Contract ([string]$state.current_unit -ceq $currentId) "$Context supersession tail '$eventId' does not project replacement '$currentId' as current_unit."

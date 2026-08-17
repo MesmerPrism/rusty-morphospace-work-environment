@@ -458,6 +458,15 @@ defer only evolving instruction-policy failures and discharge them only through
 the exact canonical supersession edge authenticated later in the same aggregate
 pass; structural and current-unit rules remain immediate.
 
+Model a blocked supersession replacement as valid only when its exact
+v2 supersession transaction target directly chains into the historical
+`BeginValidation` to `validation-fail` owner transactions, which bind the
+same-unit fail receipt, blocker/checkpoint, blocked unit, cleared current/next
+state, and unchanged acceptance projection. Validate subsequent
+owner transactions as a derivation of live state and unit bytes; do not require
+the fail event to remain the live tail, broaden blocked status, or infer
+acceptance.
+
 A drifted historical-adoption receipt keeps its expected and observed hashes
 as damaged original evidence. An immutable-Git-anchored
 `historical_unit_adoption_reconstruction.v1` may affect current validation

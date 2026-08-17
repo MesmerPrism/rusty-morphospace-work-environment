@@ -273,6 +273,21 @@ active/validating old-unit path/document. Completion accepts an applied target
 only from that binding and validates it before torn-tail repair or projection
 mutation; legacy supersession intents fail closed.
 
+A supersession replacement whose typed validation result is `fail` is a narrow
+historical terminal case, not a generic permitted blocked status. Authenticate
+the exact v2 supersession intent/completion and target state/unit, then require
+the directly chained `BeginValidation` and `validation-fail` ledger records and
+their intent/completion chains. Bind their prefix preimages, event identity,
+same-project/unit fail receipt, validation checkpoint, owner blocker, blocked
+unit target, cleared current/next target, and unchanged acceptance projection.
+Then authenticate each later event transaction as a continuation of the prior
+state target and derive the final live state plus every touched live unit. This
+lets a later unit become current or accepted without requiring the fail event
+to remain the live tail. Missing or damaged links, receipt substitutions,
+detached suffixes, status-only mutation, non-derived live projections, and any
+acceptance inference fail closed. The ordinary active, validating, and accepted
+replacement rules remain unchanged when no terminal-fail history exists.
+
 If an already completed legacy-v1 transaction has the exact event ID above but
 incorrectly recorded the replacement in `event.unit_id`, do not edit it and do
 not relax this rule. Route only the narrow empty-receipt/empty-intent-artifact

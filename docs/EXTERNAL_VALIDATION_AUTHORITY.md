@@ -14,6 +14,13 @@ It does not check candidate files out, execute candidate code, run tests,
 validate an owner effect, accept a work unit, change repository settings, or
 authorize publication.
 
+Candidate-side focused and aggregate tests are useful dynamic evidence, but a
+validator candidate cannot admit its own protected-path change. Keep that
+evidence explicitly non-authoritative until an exact implementation commit and
+complete path/blob set pass the trusted-base static admission route below;
+dynamic success neither replaces that admission nor grants acceptance or
+publication authority.
+
 ## Two-PR Trust Change
 
 For a validation-authority change:
