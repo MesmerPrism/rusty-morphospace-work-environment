@@ -93,8 +93,13 @@ intent/completion and target, then the directly chained
 `BeginValidation`/`validation-fail` intent and completion chains, same-unit fail
 receipt, blocker/checkpoint, and terminal state/unit targets. Authenticate all
 later owner transactions as a derivable suffix rather than requiring the fail
-event to remain the live tail. An arbitrary blocked replacement, detached or
-damaged suffix, receipt substitution, status-only mutation, or acceptance
+event to remain the live tail. Preserve strict v1 suffix handling. A later v3
+transaction must be owner-produced, non-superseding, exact-property, and bind
+one or two canonical ordered project/lock projections. First-seen projection
+paths must be unchanged anchors; changed paths must chain an earlier target to
+the next preimage and finally to live bytes. An arbitrary blocked replacement,
+unknown or detached projection, damaged suffix, receipt substitution,
+status-only mutation, or acceptance
 inference fails closed.
 
 Do not make that rule tolerant for history. The only supported completed
