@@ -1178,6 +1178,119 @@
       "status": "approved"
     },
     {
+      "approval_id": "ready-withdrawal-authority-20260818",
+      "required_ancestor": "c5be0834cd6d5c86abd9623cd62bb6ef665a4dc7",
+      "changed_paths": [
+        "AGENTS.md",
+        "README.md",
+        "docs/AUTONOMOUS_ITERATION.md",
+        "schemas/work-unit-automation-receipt.schema.json",
+        "scripts/Invoke-WorkUnitAutomation.ps1",
+        "scripts/Test-TransitionLedger.ps1",
+        "scripts/Test-WorkUnitAutomation.ps1",
+        "scripts/WorkUnitAutomation.psm1",
+        "scripts/lib/MorphospaceTransitionLedger.psm1",
+        "skills/rust-work-graph/SKILL.md",
+        "skills/rusty-morphospace/SKILL.md",
+        "skills/rusty-morphospace/references/project-workflow.md",
+        "skills/system-engineering/SKILL.md"
+      ],
+      "artifacts": [
+        {
+          "path": "AGENTS.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 39126,
+          "sha256": "75be0f1f47d78052c3e5491102a2ec06345949f0ae6597bc55ceb4dfee5a452b"
+        },
+        {
+          "path": "README.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 34009,
+          "sha256": "1ceca431f0c73e79e20064db16909c903d06ddc2da4b09d9ab5904d482412e2e"
+        },
+        {
+          "path": "docs/AUTONOMOUS_ITERATION.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 44177,
+          "sha256": "ca4419edac3eaf30fcfcf351c4258e3c687e9a3ac17ef80e8c7544744d1be852"
+        },
+        {
+          "path": "schemas/work-unit-automation-receipt.schema.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 20702,
+          "sha256": "f09a261d4315ebb424e53b5c8180fe405748e612cf6b6f809cfbdf67b03e6b06"
+        },
+        {
+          "path": "scripts/Invoke-WorkUnitAutomation.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 13823,
+          "sha256": "983406ecf4bb1f44a8a66c7b4df69c410ae8cc25d60c40d15577d5b2ab82956f"
+        },
+        {
+          "path": "scripts/Test-TransitionLedger.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 86732,
+          "sha256": "bcff4850ec247d982721b3df5275a5fd39a6f05a36c0c47c1ada0b2c835e1930"
+        },
+        {
+          "path": "scripts/Test-WorkUnitAutomation.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 212345,
+          "sha256": "490a2212b23f08c8f9a417175b48eb3ce7d6bfec79c080796962a891f57f806f"
+        },
+        {
+          "path": "scripts/WorkUnitAutomation.psm1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 160567,
+          "sha256": "275af857ff772e650b7635c33e328cfa9277e89bc970245073f8abeeea80ff9c"
+        },
+        {
+          "path": "scripts/lib/MorphospaceTransitionLedger.psm1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 58034,
+          "sha256": "bab78982567a1f6fc86be16d5d411882f2940da386747093f52cf857dcdf9f34"
+        },
+        {
+          "path": "skills/rust-work-graph/SKILL.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 22184,
+          "sha256": "00eaacfe9a3d1fc9b3451b486ed62a841643f1dce8d278bbb95465f6bc8ca72a"
+        },
+        {
+          "path": "skills/rusty-morphospace/SKILL.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 7144,
+          "sha256": "1c68d776f00974198a73909c174040699f91098e8f0e8b282ea5ededd573dba1"
+        },
+        {
+          "path": "skills/rusty-morphospace/references/project-workflow.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 14811,
+          "sha256": "c1b72ee058815552b8422e94a24a36450838f07c4e92d743606e4a1a61d524a8"
+        },
+        {
+          "path": "skills/system-engineering/SKILL.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 32820,
+          "sha256": "c4de45dadc21d4f3a659c9ad605654352ffcc17d677963c79511b8a4abdbac4e"
+        }
+      ],
+      "status": "approved"
+    },
+    {
       "approval_id": "transition-ledger-supersession-semantics-20260804",
       "required_ancestor": "82a0f22eacbf7adf8ad9e1fc2f300777f1a8ea3a",
       "changed_paths": [
