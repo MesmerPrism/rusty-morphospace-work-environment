@@ -380,6 +380,16 @@ function Invoke-ConcurrentLedgerDriftTest {
 
 $workspace = Join-Path ([IO.Path]::GetTempPath()) ('morphospace-ledger-' + [guid]::NewGuid().ToString('N'))
 try {
+    $exactBoundarySupersessionId = Get-MorphospaceSupersessionEventId -OldUnitId 'aa' -ReplacementUnitId ('b' * 111)
+    Assert-Ledger ($exactBoundarySupersessionId.Length -eq 128 -and $exactBoundarySupersessionId -ceq (('aa-superseded-by-') + ('b' * 111))) 'canonical supersession constructor rejected the exact 128-character boundary'
+    $overlongSupersessionRejected = $false
+    try {
+        Get-MorphospaceSupersessionEventId -OldUnitId 'aa' -ReplacementUnitId ('b' * 112) | Out-Null
+    } catch {
+        $overlongSupersessionRejected = $_.Exception.Message -like '*exceeds the portable 128-character event-ID contract*'
+    }
+    Assert-Ledger $overlongSupersessionRejected 'canonical supersession constructor accepted a 129-character event identity'
+
     $mixedLedgerPath = Join-Path $workspace 'mixed-event-prefix.jsonl'
     [IO.Directory]::CreateDirectory($workspace) | Out-Null
     $bootstrapEvent = New-LedgerBootstrapEvent

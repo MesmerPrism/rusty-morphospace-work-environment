@@ -317,7 +317,14 @@ workspace-state transition; it still does not run Git push, force-push,
 checkout/reset/stash, validation commands, or live device commands.
 Use `-Action Ready -Execute` to review a bounded `proposed` unit into the
 claimable queue after its prerequisites are accepted; this replaces manual
-status/state/event edits.
+status/state/event edits. If another unit is current, Ready uses the same
+canonical supersession-ID constructor as execution and rejects an event ID
+longer than 128 characters before mutation. Use `-Action WithdrawReady` only
+for the exact `next_ready_unit`: it authenticates that unit's unique original
+Ready transaction, changes only `ready` to `proposed`, deterministically
+recomputes the queue, and installs its receipt with the withdrawal event.
+Withdrawn identities cannot be readied again; a revised proposal uses a new
+unit identity.
 Run `Inspect` with the exact repository map before Claim. Its embedded
 `claim_preflight` resolves writable repositories, read-only input paths,
 instruction aliases/files, resource declarations, validation tier, and device

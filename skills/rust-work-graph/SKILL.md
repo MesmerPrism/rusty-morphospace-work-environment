@@ -133,6 +133,13 @@ exact unambiguous rendering. Attach the authenticated pre-state and exact
 old-unit path/document hashes to the edge. A target-as-event identity, legacy
 unbound intent, delimiter ambiguity, or endpoint drift is a rejection edge,
 not a repairable alternate history.
+Before graphing a Ready edge while another unit is current, require the same
+canonical constructor used by v2 execution and the unchanged 128-character
+event-ID bound. Graph `WithdrawReady` as a separate authenticated edge from the
+unique original Ready transaction and current state/unit/ledger preimage to the
+ready-to-proposed target: current authority and the original Ready edge remain,
+while `next_ready_unit` is deterministically re-derived. Reject reuse of the
+withdrawn identity; a revision is a new unit node.
 When the workflow owner supplies an authenticated completed-transition
 semantic correction, graph it as a separate evidence node binding the exact
 historical event/prefix, retained old and replacement units, original

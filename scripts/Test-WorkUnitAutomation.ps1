@@ -20,6 +20,12 @@ function Get-TestCanonicalHash {
     return & $module { param($Document) Get-MorphospaceCanonicalJsonSha256 $Document } $Value
 }
 
+function Get-TestNullableCanonicalHash {
+    param([AllowNull()][object]$Value)
+    if ($null -eq $Value) { return '<null>' }
+    return Get-TestCanonicalHash $Value
+}
+
 # Exercise the public script in a fresh pwsh process so action/parameter routing
 # cannot pass merely because this test imported the module in-process.
 $freshStdout = [IO.Path]::GetTempFileName()
@@ -172,6 +178,49 @@ function New-TestWorkspace {
     $state.next_ready_unit = $UnitId
     Write-TestJson -Path $statePath -Value $state
     return $workspace
+}
+
+function New-TestReadyWithdrawalWorkspace {
+    param(
+        [string]$Root,
+        [string]$ProjectId,
+        [switch]$IncludeSecondReady
+    )
+
+    $currentId = 'unit-current-001'
+    $withdrawId = 'unit-next-a-001'
+    $remainingId = 'unit-next-b-001'
+    $workspace = New-TestWorkspace -Root $Root -ProjectId $ProjectId -UnitId $currentId
+    $currentPath = Join-Path $workspace "iteration-units\$currentId.json"
+    $current = Get-Content -LiteralPath $currentPath -Raw | ConvertFrom-Json
+    $current.status = 'active'
+    Write-TestJson -Path $currentPath -Value $current
+    $statePath = Join-Path $workspace 'workspace.state.json'
+    $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
+    $state.current_unit = $currentId
+    $state.next_ready_unit = $null
+    Write-TestJson -Path $statePath -Value $state
+
+    foreach ($candidateId in @($withdrawId) + $(if ($IncludeSecondReady) { @($remainingId) } else { @() })) {
+        $candidate = New-TestUnit -ProjectId $ProjectId -UnitId $candidateId
+        $candidate.status = 'proposed'
+        Write-TestJson -Path (Join-Path $workspace "iteration-units\$candidateId.json") -Value $candidate
+        Invoke-MorphospaceWorkUnitAutomation -Action Ready -WorkspaceRoot $workspace -UnitId $candidateId -Timestamp '2026-01-02T03:04:05Z' -Execute | Out-Null
+    }
+    return [pscustomobject][ordered]@{
+        workspace = $workspace
+        project_id = $ProjectId
+        current_id = $currentId
+        withdraw_id = $withdrawId
+        remaining_id = if ($IncludeSecondReady) { $remainingId } else { $null }
+    }
+}
+
+function Copy-TestWorkspace {
+    param([string]$Source,[string]$Destination)
+    if (Test-Path -LiteralPath $Destination) { throw "Test destination already exists: $Destination" }
+    Copy-Item -LiteralPath $Source -Destination $Destination -Recurse
+    return $Destination
 }
 
 function New-TestValidationReceipt {
@@ -958,6 +1007,243 @@ try {
         Invoke-MorphospaceWorkUnitAutomation -Action Ready -WorkspaceRoot $blockedReadyWorkspace -UnitId "unit-blocked-ready-001" -Timestamp $fixed -Execute | Out-Null
     } catch { $blockedReadyRejected = $true }
     Assert-Automation $blockedReadyRejected "proposal review accepted an unmet prerequisite"
+
+    # Ready must prove that the canonical v2 supersession identity remains
+    # representable before publishing any ready-state bytes.
+    foreach ($boundary in @(
+        [pscustomobject]@{ name = 'exact-128'; candidate = ('b' * 111); should_pass = $true },
+        [pscustomobject]@{ name = 'overlong-129'; candidate = ('b' * 112); should_pass = $false }
+    )) {
+        $boundaryWorkspace = New-TestWorkspace -Root (Join-Path $testRoot "ready-boundary-$($boundary.name)") -ProjectId "ready-boundary-$($boundary.name)" -UnitId 'aa'
+        $boundaryCurrentPath = Join-Path $boundaryWorkspace 'iteration-units\aa.json'
+        $boundaryCurrent = Get-Content -LiteralPath $boundaryCurrentPath -Raw | ConvertFrom-Json
+        $boundaryCurrent.status = 'active'
+        Write-TestJson -Path $boundaryCurrentPath -Value $boundaryCurrent
+        $boundaryStatePath = Join-Path $boundaryWorkspace 'workspace.state.json'
+        $boundaryState = Get-Content -LiteralPath $boundaryStatePath -Raw | ConvertFrom-Json
+        $boundaryState.current_unit = 'aa'
+        $boundaryState.next_ready_unit = $null
+        Write-TestJson -Path $boundaryStatePath -Value $boundaryState
+        $boundaryCandidatePath = Join-Path $boundaryWorkspace "iteration-units\$([string]$boundary.candidate).json"
+        $boundaryCandidate = New-TestUnit -ProjectId "ready-boundary-$($boundary.name)" -UnitId ([string]$boundary.candidate)
+        $boundaryCandidate.status = 'proposed'
+        Write-TestJson -Path $boundaryCandidatePath -Value $boundaryCandidate
+        $beforeBoundaryState = Get-Content -LiteralPath $boundaryStatePath -Raw
+        $beforeBoundaryUnit = Get-Content -LiteralPath $boundaryCandidatePath -Raw
+        $beforeBoundaryEvents = Get-Content -LiteralPath (Join-Path $boundaryWorkspace 'iteration-events.jsonl') -Raw
+        $boundaryRejected = $false
+        try {
+            $boundaryResult = Invoke-MorphospaceWorkUnitAutomation -Action Ready -WorkspaceRoot $boundaryWorkspace -UnitId ([string]$boundary.candidate) -Timestamp $fixed -Execute
+        } catch {
+            $boundaryRejected = $_.Exception.Message -like 'Ready supersession-composability preflight failed:*128-character event-ID contract*'
+        }
+        if ($boundary.should_pass) {
+            Assert-Automation (-not $boundaryRejected -and $boundaryResult.status_after -eq 'ready') 'Ready rejected the exact 128-character supersession identity'
+        } else {
+            Assert-Automation (
+                $boundaryRejected -and
+                $beforeBoundaryState -ceq (Get-Content -LiteralPath $boundaryStatePath -Raw) -and
+                $beforeBoundaryUnit -ceq (Get-Content -LiteralPath $boundaryCandidatePath -Raw) -and
+                $beforeBoundaryEvents -ceq (Get-Content -LiteralPath (Join-Path $boundaryWorkspace 'iteration-events.jsonl') -Raw) -and
+                @(Get-ChildItem -LiteralPath (Join-Path $boundaryWorkspace 'receipts\transactions') -File -ErrorAction SilentlyContinue).Count -eq 0
+            ) 'Ready overlong supersession preflight mutated workflow bytes or failed with the wrong boundary'
+            $boundaryCandidate.status = 'ready'
+            Write-TestJson -Path $boundaryCandidatePath -Value $boundaryCandidate
+            $boundaryState.next_ready_unit = [string]$boundary.candidate
+            Write-TestJson -Path $boundaryStatePath -Value $boundaryState
+            $idempotentOverlong = Invoke-MorphospaceWorkUnitAutomation -Action Ready -WorkspaceRoot $boundaryWorkspace -UnitId ([string]$boundary.candidate) -Timestamp $fixed -Execute
+            Assert-Automation ($idempotentOverlong.transition -eq 'idempotent') 'Ready changed already-ready idempotence at the overlong supersession boundary'
+        }
+    }
+
+    $withdrawFixture = New-TestReadyWithdrawalWorkspace -Root (Join-Path $testRoot 'withdraw-ready-positive') -ProjectId 'withdraw-ready-positive' -IncludeSecondReady
+    $withdrawWorkspace = $withdrawFixture.workspace
+    $withdrawStatePath = Join-Path $withdrawWorkspace 'workspace.state.json'
+    $withdrawUnitPath = Join-Path $withdrawWorkspace "iteration-units\$($withdrawFixture.withdraw_id).json"
+    $withdrawEventsPath = Join-Path $withdrawWorkspace 'iteration-events.jsonl'
+    $withdrawStateBefore = Get-Content -LiteralPath $withdrawStatePath -Raw | ConvertFrom-Json
+    $withdrawUnitBefore = Get-Content -LiteralPath $withdrawUnitPath -Raw | ConvertFrom-Json
+    $withdrawEventLinesBefore = @(Get-Content -LiteralPath $withdrawEventsPath)
+    $withdrawReceiptPath = Join-Path $withdrawWorkspace 'receipts\withdraw-ready.json'
+    $withdrawDry = & (Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1') `
+        -Action WithdrawReady -WorkspaceRoot $withdrawWorkspace -UnitId $withdrawFixture.withdraw_id `
+        -Timestamp $fixed -OutPath $withdrawReceiptPath | ConvertFrom-Json
+    Assert-Automation (
+        -not $withdrawDry.executed -and
+        $withdrawDry.transition -eq 'ready-to-proposed-withdrawn' -and
+        [string]$withdrawDry.ready_withdrawal.next_ready_unit_before -eq $withdrawFixture.withdraw_id -and
+        [string]$withdrawDry.ready_withdrawal.next_ready_unit_after -eq $withdrawFixture.remaining_id -and
+        -not (Test-Path -LiteralPath $withdrawReceiptPath)
+    ) 'WithdrawReady public dry run did not authenticate and derive the ready queue without mutation'
+    $withdrawResult = Invoke-MorphospaceWorkUnitAutomation `
+        -Action WithdrawReady -WorkspaceRoot $withdrawWorkspace -UnitId $withdrawFixture.withdraw_id `
+        -Timestamp $fixed -OutPath $withdrawReceiptPath -Execute
+    $withdrawStateAfter = Get-Content -LiteralPath $withdrawStatePath -Raw | ConvertFrom-Json
+    $withdrawUnitAfter = Get-Content -LiteralPath $withdrawUnitPath -Raw | ConvertFrom-Json
+    $withdrawEventLinesAfter = @(Get-Content -LiteralPath $withdrawEventsPath)
+    Assert-Automation (
+        $withdrawResult.executed -and
+        $withdrawResult.transition -eq 'ready-to-proposed-withdrawn' -and
+        $withdrawResult.status_before -eq 'ready' -and $withdrawResult.status_after -eq 'proposed' -and
+        [string]$withdrawStateAfter.current_unit -eq $withdrawFixture.current_id -and
+        [string]$withdrawStateAfter.next_ready_unit -eq $withdrawFixture.remaining_id -and
+        [string]$withdrawUnitAfter.status -eq 'proposed' -and
+        $withdrawResult.ready_withdrawal.original_ready_event_preserved -and
+        $withdrawEventLinesAfter.Count -eq ($withdrawEventLinesBefore.Count + 1) -and
+        ($withdrawEventLinesAfter[0..($withdrawEventLinesBefore.Count - 1)] -join "`n") -ceq ($withdrawEventLinesBefore -join "`n") -and
+        (Test-Path -LiteralPath $withdrawReceiptPath -PathType Leaf)
+    ) 'WithdrawReady did not produce the exact state/unit/ledger projection'
+    Assert-Automation (
+        (Get-TestNullableCanonicalHash $withdrawStateBefore.blockers) -ceq (Get-TestNullableCanonicalHash $withdrawStateAfter.blockers) -and
+        (Get-TestNullableCanonicalHash $withdrawStateBefore.validation_checkpoint) -ceq (Get-TestNullableCanonicalHash $withdrawStateAfter.validation_checkpoint) -and
+        (Get-TestNullableCanonicalHash $withdrawStateBefore.repository_heads) -ceq (Get-TestNullableCanonicalHash $withdrawStateAfter.repository_heads) -and
+        [string]$withdrawUnitBefore.objective -ceq [string]$withdrawUnitAfter.objective -and
+        (Get-TestCanonicalHash $withdrawUnitBefore.allowed_repositories) -ceq (Get-TestCanonicalHash $withdrawUnitAfter.allowed_repositories)
+    ) 'WithdrawReady changed unrelated state or unit fields'
+    Assert-Automation (
+        (Test-Json -Json (Get-Content -LiteralPath $withdrawReceiptPath -Raw) -SchemaFile (Join-Path $RepoRoot 'schemas\work-unit-automation-receipt.schema.json'))
+    ) 'WithdrawReady receipt does not satisfy the strict action receipt schema'
+    $remainingReceiptPath = Join-Path $withdrawWorkspace 'receipts\withdraw-ready-remaining.json'
+    $remainingWithdrawal = Invoke-MorphospaceWorkUnitAutomation `
+        -Action WithdrawReady -WorkspaceRoot $withdrawWorkspace -UnitId $withdrawFixture.remaining_id `
+        -Timestamp $fixed -OutPath $remainingReceiptPath -Execute
+    $stateAfterRemainingWithdrawal = Get-Content -LiteralPath $withdrawStatePath -Raw | ConvertFrom-Json
+    Assert-Automation (
+        $remainingWithdrawal.status_after -eq 'proposed' -and
+        $null -eq $stateAfterRemainingWithdrawal.next_ready_unit -and
+        [string]$remainingWithdrawal.ready_withdrawal.original_ready_transaction.target_state_sha256 -match '^[0-9a-f]{64}$'
+    ) 'WithdrawReady rejected a later queued unit after deterministic promotion to next-ready'
+    $withdrawReplayRejected = $false
+    try {
+        Invoke-MorphospaceWorkUnitAutomation -Action WithdrawReady -WorkspaceRoot $withdrawWorkspace -UnitId $withdrawFixture.withdraw_id -Timestamp $fixed -OutPath (Join-Path $withdrawWorkspace 'receipts\withdraw-ready-replay.json') -Execute | Out-Null
+    } catch { $withdrawReplayRejected = $_.Exception.Message -like 'WithdrawReady requires*' }
+    Assert-Automation $withdrawReplayRejected 'WithdrawReady replay was not rejected after the committed withdrawal'
+    $withdrawIdentityReuseRejected = $false
+    try {
+        Invoke-MorphospaceWorkUnitAutomation -Action Ready -WorkspaceRoot $withdrawWorkspace -UnitId $withdrawFixture.withdraw_id -Timestamp $fixed -Execute | Out-Null
+    } catch { $withdrawIdentityReuseRejected = $_.Exception.Message -like "Ready refuses withdrawn unit identity*" }
+    Assert-Automation $withdrawIdentityReuseRejected 'WithdrawReady allowed the withdrawn identity to be readied again'
+    $replacementIdentity = 'unit-next-c-001'
+    $replacementUnit = New-TestUnit -ProjectId $withdrawFixture.project_id -UnitId $replacementIdentity
+    $replacementUnit.status = 'proposed'
+    Write-TestJson -Path (Join-Path $withdrawWorkspace "iteration-units\$replacementIdentity.json") -Value $replacementUnit
+    $replacementReady = Invoke-MorphospaceWorkUnitAutomation -Action Ready -WorkspaceRoot $withdrawWorkspace -UnitId $replacementIdentity -Timestamp $fixed -Execute
+    Assert-Automation ($replacementReady.status_after -eq 'ready') 'WithdrawReady prevented a revised proposal under a fresh unit identity'
+
+    $withdrawDamageBase = New-TestReadyWithdrawalWorkspace -Root (Join-Path $testRoot 'withdraw-ready-damage-base') -ProjectId 'withdraw-ready-damage-base'
+    $withdrawDamageCases = @(
+        [pscustomobject]@{ name = 'wrong-next'; mutate = {
+            param($w,$f)
+            $path = Join-Path $w 'workspace.state.json'; $doc = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json; $doc.next_ready_unit = $null; Write-TestJson $path $doc
+        }; expected = '*exact next-ready unit*' },
+        [pscustomobject]@{ name = 'wrong-status'; mutate = {
+            param($w,$f)
+            $path = Join-Path $w "iteration-units\$($f.withdraw_id).json"; $doc = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json; $doc.status = 'proposed'; Write-TestJson $path $doc
+        }; expected = '*requires ready status*' },
+        [pscustomobject]@{ name = 'current-target'; mutate = {
+            param($w,$f)
+            $path = Join-Path $w 'workspace.state.json'; $doc = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json; $doc.current_unit = $f.withdraw_id; Write-TestJson $path $doc
+        }; expected = '*may not target the current unit*' },
+        [pscustomobject]@{ name = 'missing-ready-event'; mutate = {
+            param($w,$f)
+            [IO.File]::WriteAllText((Join-Path $w 'iteration-events.jsonl'), '', [Text.UTF8Encoding]::new($false))
+        }; expected = '*exactly one owner-generated Ready event*' },
+        [pscustomobject]@{ name = 'ready-event-project-drift'; mutate = {
+            param($w,$f)
+            $path = Join-Path $w 'iteration-events.jsonl'; $text = [IO.File]::ReadAllText($path).Replace('"project_id":"withdraw-ready-damage-base"', '"project_id":"wrong-project"'); [IO.File]::WriteAllText($path, $text, [Text.UTF8Encoding]::new($false))
+        }; expected = '*exactly one owner-generated Ready event*' },
+        [pscustomobject]@{ name = 'ready-event-unit-drift'; mutate = {
+            param($w,$f)
+            $path = Join-Path $w 'iteration-events.jsonl'; $old = '"unit_id":"{0}"' -f $f.withdraw_id; $text = [IO.File]::ReadAllText($path).Replace($old, '"unit_id":"wrong-unit"'); [IO.File]::WriteAllText($path, $text, [Text.UTF8Encoding]::new($false))
+        }; expected = '*exactly one owner-generated Ready event*' },
+        [pscustomobject]@{ name = 'ready-event-id-drift'; mutate = {
+            param($w,$f)
+            $path = Join-Path $w 'iteration-events.jsonl'; $old = '"event_id":"{0}-ready-0001"' -f $f.withdraw_id; $new = '"event_id":"{0}-other-0001"' -f $f.withdraw_id; $text = [IO.File]::ReadAllText($path).Replace($old, $new); [IO.File]::WriteAllText($path, $text, [Text.UTF8Encoding]::new($false))
+        }; expected = '*exactly one owner-generated Ready event*' },
+        [pscustomobject]@{ name = 'ready-event-sequence-drift'; mutate = {
+            param($w,$f)
+            $path = Join-Path $w 'iteration-events.jsonl'; $text = [IO.File]::ReadAllText($path).Replace('"sequence":1', '"sequence":2'); [IO.File]::WriteAllText($path, $text, [Text.UTF8Encoding]::new($false))
+        }; expected = '*sequence is not contiguous*' },
+        [pscustomobject]@{ name = 'ready-event-hash-drift'; mutate = {
+            param($w,$f)
+            $path = Join-Path $w 'iteration-events.jsonl'; $text = [IO.File]::ReadAllText($path).Replace('Reviewed the bounded proposal', 'Altered the bounded proposal'); [IO.File]::WriteAllText($path, $text, [Text.UTF8Encoding]::new($false))
+        }; expected = '*exactly one owner-generated Ready event*' },
+        [pscustomobject]@{ name = 'missing-ready-intent'; mutate = {
+            param($w,$f)
+            $event = Get-Content -LiteralPath (Join-Path $w 'iteration-events.jsonl') | Select-Object -First 1 | ConvertFrom-Json
+            Remove-Item -LiteralPath (Join-Path $w "receipts\transactions\$([string]$event.event_id)-transition.intent.json") -Force
+        }; expected = '*missing*' },
+        [pscustomobject]@{ name = 'damaged-ready-completion'; mutate = {
+            param($w,$f)
+            $event = Get-Content -LiteralPath (Join-Path $w 'iteration-events.jsonl') | Select-Object -First 1 | ConvertFrom-Json
+            $path = Join-Path $w "receipts\transactions\$([string]$event.event_id)-transition.completion.json"
+            $doc = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json; $doc.intent.sha256 = '0' * 64; Write-TestJson $path $doc
+        }; expected = '*completion is not canonically bound*' },
+        [pscustomobject]@{ name = 'target-unit-drift'; mutate = {
+            param($w,$f)
+            $path = Join-Path $w "iteration-units\$($f.withdraw_id).json"; $doc = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json; $doc.objective = 'Unauthorized live target drift.'; Write-TestJson $path $doc
+        }; expected = '*target unit projection*' },
+        [pscustomobject]@{ name = 'ledger-prefix-drift'; mutate = {
+            param($w,$f)
+            $path = Join-Path $w 'iteration-events.jsonl'; $bytes = [IO.File]::ReadAllBytes($path); [IO.File]::WriteAllBytes($path, @([byte]0x20) + $bytes)
+        }; expected = '*exact canonical event append*' },
+        [pscustomobject]@{ name = 'duplicate-receipt-target'; mutate = {
+            param($w,$f)
+            $path = Join-Path $w 'receipts\withdraw-ready.json'; [IO.File]::WriteAllText($path, "occupied`n", [Text.UTF8Encoding]::new($false))
+        }; expected = '*artifact target must be absent*' },
+        [pscustomobject]@{ name = 'contradictory-ready-order'; mutate = {
+            param($w,$f)
+            $candidate = New-TestUnit -ProjectId $f.project_id -UnitId 'aaa-ready-001'; $candidate.status = 'ready'; Write-TestJson (Join-Path $w 'iteration-units\aaa-ready-001.json') $candidate
+        }; expected = '*contradictory or non-derivable next-ready projection*' }
+    )
+    foreach ($damage in $withdrawDamageCases) {
+        $damageWorkspace = Copy-TestWorkspace -Source $withdrawDamageBase.workspace -Destination (Join-Path $testRoot "withdraw-ready-damage-$($damage.name)")
+        & $damage.mutate $damageWorkspace $withdrawDamageBase
+        $damageRejected = $false
+        $damageMessage = ''
+        try {
+            Invoke-MorphospaceWorkUnitAutomation -Action WithdrawReady -WorkspaceRoot $damageWorkspace -UnitId $withdrawDamageBase.withdraw_id -Timestamp $fixed -OutPath (Join-Path $damageWorkspace 'receipts\withdraw-ready.json') -Execute | Out-Null
+        } catch { $damageMessage = $_.Exception.Message; $damageRejected = $damageMessage -like [string]$damage.expected }
+        Assert-Automation $damageRejected "WithdrawReady damage '$($damage.name)' did not reject at its intended authority boundary (actual: $damageMessage)"
+    }
+
+    $ambiguousReadyWorkspace = Copy-TestWorkspace -Source $withdrawDamageBase.workspace -Destination (Join-Path $testRoot 'withdraw-ready-ambiguous-event')
+    $ambiguousEventPath = Join-Path $ambiguousReadyWorkspace 'iteration-events.jsonl'
+    $ambiguousEvent = [ordered]@{
+        schema = 'rusty.morphospace.workflow.iteration_event.v1'; event_id = "$($withdrawDamageBase.withdraw_id)-ready-0002"; sequence = 2
+        timestamp = $fixed; project_id = $withdrawDamageBase.project_id; unit_id = $withdrawDamageBase.withdraw_id
+        event_type = 'state-transition'; summary = 'Reviewed the bounded proposal and made it claimable without expanding its repositories, paths, or prerequisites.'; receipts = @()
+    }
+    [IO.File]::AppendAllText($ambiguousEventPath, (($ambiguousEvent | ConvertTo-Json -Compress) + "`n"), [Text.UTF8Encoding]::new($false))
+    $ambiguousReadyRejected = $false
+    try {
+        Invoke-MorphospaceWorkUnitAutomation -Action WithdrawReady -WorkspaceRoot $ambiguousReadyWorkspace -UnitId $withdrawDamageBase.withdraw_id -Timestamp $fixed -OutPath (Join-Path $ambiguousReadyWorkspace 'receipts\withdraw-ready.json') -Execute | Out-Null
+    } catch { $ambiguousReadyRejected = $_.Exception.Message -like '*exactly one owner-generated Ready event*' }
+    Assert-Automation $ambiguousReadyRejected 'WithdrawReady accepted ambiguous Ready-event authority'
+
+    $faultFixture = New-TestReadyWithdrawalWorkspace -Root (Join-Path $testRoot 'withdraw-ready-fault') -ProjectId 'withdraw-ready-fault'
+    $faultReceiptPath = Join-Path $faultFixture.workspace 'receipts\withdraw-ready.json'
+    $faultInterrupted = $false
+    try {
+        Invoke-MorphospaceWorkUnitAutomation -Action WithdrawReady -WorkspaceRoot $faultFixture.workspace -UnitId $faultFixture.withdraw_id -Timestamp $fixed -OutPath $faultReceiptPath -TransitionFaultAfter after-intent -Execute | Out-Null
+    } catch { $faultInterrupted = $_.Exception.Message -like '*Injected interruption after intent publication*' }
+    $faultUnitPath = Join-Path $faultFixture.workspace "iteration-units\$($faultFixture.withdraw_id).json"
+    Assert-Automation (
+        $faultInterrupted -and
+        [string](Get-Content -LiteralPath $faultUnitPath -Raw | ConvertFrom-Json).status -eq 'ready' -and
+        -not (Test-Path -LiteralPath $faultReceiptPath)
+    ) 'WithdrawReady fault injection changed the live target before recovery'
+    $faultWithdrawalEvent = "$($faultFixture.withdraw_id)-ready-withdrawn-0002"
+    $faultRecovery = & $transitionLedgerModule {
+        param($Workspace,$Transaction)
+        Complete-MorphospaceTransitionLedger -WorkspaceRoot $Workspace -TransactionId $Transaction -Repair
+    } $faultFixture.workspace "$faultWithdrawalEvent-transition"
+    Assert-Automation (
+        $faultRecovery.status -eq 'committed' -and
+        [string](Get-Content -LiteralPath $faultUnitPath -Raw | ConvertFrom-Json).status -eq 'proposed' -and
+        (Test-Path -LiteralPath $faultReceiptPath -PathType Leaf) -and
+        @((Get-Content -LiteralPath (Join-Path $faultFixture.workspace 'iteration-events.jsonl')) | Where-Object { $_ -like "*$faultWithdrawalEvent*" }).Count -eq 1
+    ) 'WithdrawReady transaction recovery did not complete exactly once'
 
     $unresolvedWorkspace = New-TestWorkspace -Root (Join-Path $testRoot "unresolved-instruction-project") -ProjectId "unresolved-instruction-test" -UnitId "unit-unresolved-001"
     $unresolvedUnitPath = Join-Path $unresolvedWorkspace "iteration-units\unit-unresolved-001.json"
