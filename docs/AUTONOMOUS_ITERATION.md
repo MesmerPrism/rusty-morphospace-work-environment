@@ -89,7 +89,14 @@ Use the fail-closed automation `Ready` action for the proposal-review
 transition. It requires every prerequisite to be accepted, appends the state
 transition, and derives `next_ready_unit`; do not hand-edit a proposed unit to
 make it claimable. `Ready` does not authorize implementation outside the
-unit's existing repository and path allowlists.
+unit's existing repository and path allowlists. When a current unit exists,
+Ready calls the same canonical supersession-ID constructor as the v2 ledger
+and rejects an ID beyond the existing 128-character contract before writing.
+Use `WithdrawReady` only to return the exact next-ready unit to `proposed`:
+the owner authenticates its unique Ready event and intent/completion, CAS-binds
+the current state/unit/ledger prefix, preserves current authority and the
+original event, then deterministically derives the remaining queue. The
+withdrawn identity is not reusable; create a new identity for a revision.
 
 ## Instruction Synchronization
 
@@ -493,7 +500,7 @@ successful push is not proof that the whole batch is complete.
 
 `scripts/Invoke-WorkUnitAutomation.ps1` is the portable owner for mechanical
 work-unit transitions and preparation artifacts. It supports `Inspect`,
-`Ready`, `Claim`, `Resume`, `CompleteInstructionSurfaces`,
+`Ready`, `WithdrawReady`, `Claim`, `Resume`, `CompleteInstructionSurfaces`,
 `AmendActiveWriteScope`, `CorrectActiveReadOnlyDependencies`,
 `CorrectActiveProjectRepositoryScope`,
 `BeginValidation`, `ReturnToActive`,

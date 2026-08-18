@@ -175,6 +175,31 @@ function Repair-MorphospaceLedgerTornAppend {
     try{$stream.SetLength($preLength);$stream.Flush($true)}finally{$stream.Dispose()}
     return $true
 }
+function Get-MorphospaceSupersessionEventId {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)][string]$OldUnitId,
+        [Parameter(Mandatory=$true)][string]$ReplacementUnitId
+    )
+    $delimiter=$script:MorphospaceSupersessionDelimiter
+    foreach($endpoint in @(
+        [pscustomobject]@{role='old';value=$OldUnitId},
+        [pscustomobject]@{role='replacement';value=$ReplacementUnitId}
+    )){
+        if(([string]$endpoint.value).Contains($delimiter,[StringComparison]::Ordinal)){
+            throw "Transition ledger supersession $([string]$endpoint.role) endpoint contains the reserved delimiter."
+        }
+        if([string]$endpoint.value-cnotmatch'^[a-z0-9][a-z0-9-]{1,127}$'){
+            throw "Transition ledger supersession $([string]$endpoint.role) endpoint is not a portable unit identity."
+        }
+    }
+    if($OldUnitId-ceq$ReplacementUnitId){throw 'Transition ledger supersession old and replacement unit identities must differ.'}
+    $eventId="$OldUnitId$delimiter$ReplacementUnitId"
+    if($eventId-cnotmatch'^[a-z0-9][a-z0-9-]{1,127}$'){
+        throw "Transition ledger supersession event identity '$eventId' exceeds the portable 128-character event-ID contract."
+    }
+    return $eventId
+}
 function Assert-MorphospaceSupersessionTarget {
     param([object]$Event,[object]$TargetState,[object]$TargetUnit)
     if($null-eq$Event-or$null-eq$Event.PSObject.Properties['event_id']){return $null}
@@ -190,19 +215,7 @@ function Assert-MorphospaceSupersessionTarget {
     }
     $oldId=[string]$Event.unit_id
     $currentId=[string]$TargetState.current_unit
-    foreach($endpoint in @(
-        [pscustomobject]@{role='old';value=$oldId},
-        [pscustomobject]@{role='replacement';value=$currentId}
-    )){
-        if(([string]$endpoint.value).Contains($delimiter,[StringComparison]::Ordinal)){
-            throw "Transition ledger supersession $([string]$endpoint.role) endpoint contains the reserved delimiter."
-        }
-        if([string]$endpoint.value-cnotmatch'^[a-z0-9][a-z0-9-]{1,127}$'){
-            throw "Transition ledger supersession $([string]$endpoint.role) endpoint is not a portable unit identity."
-        }
-    }
-    if($oldId-ceq$currentId){throw 'Transition ledger supersession old and replacement unit identities must differ.'}
-    $expectedEventId="$oldId$delimiter$currentId"
+    $expectedEventId=Get-MorphospaceSupersessionEventId -OldUnitId $oldId -ReplacementUnitId $currentId
     if($eventId-cne$expectedEventId){
         throw "Transition ledger supersession event identity must exactly equal '$expectedEventId'."
     }
@@ -790,4 +803,4 @@ function Start-MorphospaceTransitionLedger {
     } finally {Exit-MorphospaceWorkspaceMutex $lock}
     Complete-MorphospaceTransitionLedger -WorkspaceRoot $workspace -TransactionId $TransactionId -FaultAfter $FaultAfter
 }
-Export-ModuleMember -Function Start-MorphospaceTransitionLedger,Complete-MorphospaceTransitionLedger
+Export-ModuleMember -Function Start-MorphospaceTransitionLedger,Complete-MorphospaceTransitionLedger,Get-MorphospaceSupersessionEventId

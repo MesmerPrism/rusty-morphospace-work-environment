@@ -75,6 +75,15 @@ planning non-mutating; require explicit execution for an owned state
 transition. Use the workflow owner's actions instead of hand-editing status,
 compact state, or event history.
 
+When a current unit exists, Ready must use the ledger's canonical v2
+supersession-ID constructor before mutation and reject identities whose exact
+rendering exceeds the existing 128-character event-ID contract. Withdraw only
+the exact next-ready unit with `WithdrawReady`: authenticate its unique
+owner-generated Ready event and transaction plus the current state/unit/event
+prefix, preserve current authority and the historical Ready event, change only
+`ready` to `proposed`, and deterministically recompute the queue. A withdrawn
+identity is not eligible for Ready again; a revised proposal needs a new ID.
+
 For an exact `<old>-superseded-by-<new>` event, bind old independently from
 event `unit_id` and new independently from target-state `current_unit`; treat
 the event ID only as their exact rendering and reject delimiter ambiguity.

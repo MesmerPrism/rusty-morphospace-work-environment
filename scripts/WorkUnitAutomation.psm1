@@ -1453,13 +1453,17 @@ function Test-MorphospaceRecoveryReceipt {
     return $receipt
 }
 
-function Get-MorphospaceNextReadyUnit {
-    param([Parameter(Mandatory = $true)][hashtable]$UnitMap)
+function Get-MorphospaceReadyUnitQueue {
+    param(
+        [Parameter(Mandatory = $true)][hashtable]$UnitMap,
+        [string]$ExcludeUnitId = ''
+    )
 
     $ready = New-Object System.Collections.Generic.List[string]
     foreach ($entry in @($UnitMap.Values)) {
         $candidate = $entry.document
         if ([string]$candidate.status -ne "ready") { continue }
+        if ($ExcludeUnitId -and [string]$candidate.unit_id -ceq $ExcludeUnitId) { continue }
         $prerequisitesAccepted = $true
         foreach ($prerequisite in @($candidate.prerequisites)) {
             $id = [string]$prerequisite
@@ -1470,7 +1474,135 @@ function Get-MorphospaceNextReadyUnit {
         }
         if ($prerequisitesAccepted) { $ready.Add([string]$candidate.unit_id) | Out-Null }
     }
-    return @($ready | Sort-Object | Select-Object -First 1)
+    return @($ready | Sort-Object)
+}
+
+function Get-MorphospaceNextReadyUnit {
+    param([Parameter(Mandatory = $true)][hashtable]$UnitMap)
+
+    return @(Get-MorphospaceReadyUnitQueue -UnitMap $UnitMap | Select-Object -First 1)
+}
+
+function Get-MorphospaceAutomationEventLedgerSnapshot {
+    param(
+        [Parameter(Mandatory = $true)][string]$EventsPath,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$Events
+    )
+
+    $bytes = [IO.File]::ReadAllBytes($EventsPath)
+    if ($bytes.LongLength -gt 0 -and $bytes[$bytes.LongLength - 1] -ne 0x0a) {
+        throw 'Work-unit automation requires the event ledger to end with LF before an owned append.'
+    }
+    return [pscustomobject][ordered]@{
+        sha256 = Get-MorphospaceSha256Bytes -Bytes $bytes
+        length = [int64]$bytes.LongLength
+        tail_id = if ($Events.Count -gt 0) { [string]$Events[-1].event_id } else { $null }
+    }
+}
+
+function Get-MorphospaceReadyWithdrawalBinding {
+    param(
+        [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
+        [Parameter(Mandatory = $true)][string]$UnitRelativePath,
+        [Parameter(Mandatory = $true)][string]$UnitId,
+        [Parameter(Mandatory = $true)][string]$ProjectId,
+        [Parameter(Mandatory = $true)][object]$LiveState,
+        [Parameter(Mandatory = $true)][object]$LiveUnit,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$Events,
+        [Parameter(Mandatory = $true)][hashtable]$UnitMap,
+        [Parameter(Mandatory = $true)][string]$ExpectedStateSha256,
+        [Parameter(Mandatory = $true)][string]$ExpectedUnitSha256
+    )
+
+    if ([string]$LiveState.next_ready_unit -cne $UnitId) {
+        throw "WithdrawReady requires '$UnitId' to be the exact next-ready unit."
+    }
+    if ([string]$LiveUnit.status -cne 'ready') {
+        throw "WithdrawReady requires ready status; '$UnitId' is '$([string]$LiveUnit.status)'."
+    }
+    if ([string]$LiveState.current_unit -ceq $UnitId) {
+        throw 'WithdrawReady may not target the current unit.'
+    }
+
+    $queueBefore = @(Get-MorphospaceReadyUnitQueue -UnitMap $UnitMap)
+    if ($queueBefore.Count -eq 0 -or [string]$queueBefore[0] -cne $UnitId) {
+        throw 'WithdrawReady found a contradictory or non-derivable next-ready projection.'
+    }
+
+    $expectedSummary = 'Reviewed the bounded proposal and made it claimable without expanding its repositories, paths, or prerequisites.'
+    $escapedUnitId = [regex]::Escape($UnitId)
+    $readyEvents = @($Events | Where-Object {
+        [string]$_.project_id -ceq $ProjectId -and
+        [string]$_.unit_id -ceq $UnitId -and
+        [string]$_.event_type -ceq 'state-transition' -and
+        [string]$_.summary -ceq $expectedSummary -and
+        [string]$_.event_id -cmatch "^$escapedUnitId-ready-[0-9]{4}$" -and
+        @($_.receipts).Count -eq 0
+    })
+    if ($readyEvents.Count -ne 1) {
+        throw "WithdrawReady requires exactly one owner-generated Ready event for '$UnitId'."
+    }
+    $readyEvent = $readyEvents[0]
+    $transactionId = "$([string]$readyEvent.event_id)-transition"
+    $authentication = Complete-MorphospaceTransitionLedger -WorkspaceRoot $WorkspaceRoot -TransactionId $transactionId
+    if ([string]$authentication.status -cne 'already-committed') {
+        throw 'WithdrawReady requires an already committed Ready transaction.'
+    }
+
+    $intentRelative = "receipts/transactions/$transactionId.intent.json"
+    $completionRelative = "receipts/transactions/$transactionId.completion.json"
+    $intentPath = Join-Path $WorkspaceRoot ($intentRelative.Replace('/', [IO.Path]::DirectorySeparatorChar))
+    $completionPath = Join-Path $WorkspaceRoot ($completionRelative.Replace('/', [IO.Path]::DirectorySeparatorChar))
+    $intent = Read-MorphospaceProtocolJson -Path $intentPath
+    $completion = Read-MorphospaceProtocolJson -Path $completionPath
+    if ([string]$intent.schema -cne 'rusty.morphospace.workflow.transition_ledger_intent.v1' -or
+        [string]$intent.transaction_id -cne $transactionId -or
+        [string]$intent.state.path -cne 'workspace.state.json' -or
+        [string]$intent.unit.path -cne $UnitRelativePath -or
+        [string]$intent.events.path -cne 'iteration-events.jsonl' -or
+        [string]$intent.event.event_id -cne [string]$readyEvent.event_id -or
+        [int]$intent.event.sequence -ne [int]$readyEvent.sequence -or
+        [string]$intent.target.unit.document.project_id -cne $ProjectId -or
+        [string]$intent.target.unit.document.unit_id -cne $UnitId -or
+        [string]$intent.target.unit.document.status -cne 'ready' -or
+        [string]$intent.target.state.document.project_id -cne $ProjectId -or
+        [string]$intent.target.state.document.last_event_id -cne [string]$readyEvent.event_id -or
+        [string]$intent.target.unit.sha256 -cne $ExpectedUnitSha256 -or
+        [string]$completion.transaction_id -cne $transactionId -or
+        [string]$completion.event_id -cne [string]$readyEvent.event_id -or
+        [string]$completion.unit_sha256 -cne $ExpectedUnitSha256) {
+        throw 'WithdrawReady original Ready transaction does not bind the exact live unit and historical ready projection.'
+    }
+
+    $eventsPath = Join-Path $WorkspaceRoot 'iteration-events.jsonl'
+    $ledger = Get-MorphospaceAutomationEventLedgerSnapshot -EventsPath $eventsPath -Events $Events
+    $queueAfter = @(Get-MorphospaceReadyUnitQueue -UnitMap $UnitMap -ExcludeUnitId $UnitId)
+    return [pscustomobject][ordered]@{
+        original_ready_event = [pscustomobject][ordered]@{
+            event_id = [string]$intent.event.event_id
+            sequence = [int]$intent.event.sequence
+            sha256 = Get-MorphospaceCanonicalJsonSha256 $intent.event
+        }
+        original_ready_transaction = [pscustomobject][ordered]@{
+            transaction_id = $transactionId
+            intent = [pscustomobject][ordered]@{ path = $intentRelative; sha256 = Get-MorphospaceFileSha256 $intentPath }
+            completion = [pscustomobject][ordered]@{ path = $completionRelative; sha256 = Get-MorphospaceFileSha256 $completionPath }
+            target_state_sha256 = [string]$intent.target.state.sha256
+            target_unit_sha256 = [string]$intent.target.unit.sha256
+        }
+        authenticated_preimage = [pscustomobject][ordered]@{
+            state_sha256 = $ExpectedStateSha256
+            unit_sha256 = $ExpectedUnitSha256
+            events_sha256 = [string]$ledger.sha256
+            events_length = [int64]$ledger.length
+            event_tail_id = $ledger.tail_id
+        }
+        next_ready_unit_before = $UnitId
+        next_ready_unit_after = if ($queueAfter.Count -gt 0) { [string]$queueAfter[0] } else { $null }
+        ready_queue_before = @($queueBefore)
+        ready_queue_after = @($queueAfter)
+        original_ready_event_preserved = $true
+    }
 }
 
 function Invoke-MorphospaceAuthorityRunnerForRecord {
@@ -1530,7 +1662,7 @@ function Invoke-MorphospaceAuthorityRunnerForRecord {
 function Invoke-MorphospaceWorkUnitAutomation {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory = $true)][ValidateSet("Inspect", "Ready", "Claim", "Resume", "CompleteInstructionSurfaces", "BeginValidation", "ReturnToActive", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix", "ReconcileExecutedPreparedPublication")][string]$Action,
+        [Parameter(Mandatory = $true)][ValidateSet("Inspect", "Ready", "WithdrawReady", "Claim", "Resume", "CompleteInstructionSurfaces", "BeginValidation", "ReturnToActive", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix", "ReconcileExecutedPreparedPublication")][string]$Action,
         [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
         [string]$UnitId = "",
         [string]$RepoMapPath = "",
@@ -1556,10 +1688,14 @@ function Invoke-MorphospaceWorkUnitAutomation {
         [string[]]$AuthorityRunnerArguments = @(),
         [string]$Timestamp = "",
         [string]$OutPath = "",
+        [ValidateSet('none','after-intent','after-artifact','after-projection','after-event')][string]$TransitionFaultAfter = 'none',
         [switch]$Execute
     )
 
     $resolvedWorkspace = (Resolve-Path -LiteralPath $WorkspaceRoot).Path
+    if ($TransitionFaultAfter -ne 'none' -and ($Action -ne 'WithdrawReady' -or -not $Execute)) {
+        throw 'Transition fault injection is available only to executed WithdrawReady owner tests.'
+    }
     $receiptReference = $null
     if ($Execute -and $OutPath) {
         $resolvedOutPath = [System.IO.Path]::GetFullPath($OutPath)
@@ -1651,6 +1787,8 @@ function Invoke-MorphospaceWorkUnitAutomation {
     $skipAutomaticRepositoryProjection = $false
     $publicationOrderingInterruptionBinding = $null
     $instructionSurfaceCompletionBinding = $null
+    $readyWithdrawalBinding = $null
+    $transitionEventSnapshot = $null
 
     switch ($Action) {
         "Inspect" {
@@ -1661,7 +1799,21 @@ function Invoke-MorphospaceWorkUnitAutomation {
                 $transition = "idempotent"
             } else {
                 if ($beforeStatus -ne "proposed") { throw "Ready requires proposed status; '$UnitId' is '$beforeStatus'." }
+                $withdrawalEvents = @($events | Where-Object {
+                    [string]$_.unit_id -ceq $UnitId -and
+                    [string]$_.event_id -cmatch "^$([regex]::Escape($UnitId))-ready-withdrawn-[0-9]{4}$"
+                })
+                if ($withdrawalEvents.Count -gt 0) {
+                    throw "Ready refuses withdrawn unit identity '$UnitId'; revise the proposal under a new unit identity."
+                }
                 Test-MorphospacePrerequisites -Unit $unit -UnitMap $unitMap
+                if ($state.current_unit) {
+                    try {
+                        [void](Get-MorphospaceSupersessionEventId -OldUnitId ([string]$state.current_unit) -ReplacementUnitId $UnitId)
+                    } catch {
+                        throw "Ready supersession-composability preflight failed: $($_.Exception.Message)"
+                    }
+                }
                 $transition = "proposed-to-ready"
                 if ($Execute) {
                     $unit.status = "ready"
@@ -1669,6 +1821,39 @@ function Invoke-MorphospaceWorkUnitAutomation {
                     $state.next_ready_unit = if ($nextReady.Count -gt 0) { [string]$nextReady[0] } else { $UnitId }
                     $event = New-MorphospaceEvent -State $state -Events $events -UnitId $UnitId -ActionSlug "ready" -Timestamp $Timestamp -EventType "state-transition" -Summary "Reviewed the bounded proposal and made it claimable without expanding its repositories, paths, or prerequisites."
                 }
+            }
+        }
+        "WithdrawReady" {
+            if ($Execute -and -not $OutPath) {
+                throw 'Executed WithdrawReady requires OutPath for its transaction-owned receipt.'
+            }
+            $unitRelativePath = $unitEntry.path.Substring(($resolvedWorkspace.TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar).Length).Replace('\', '/')
+            $readyWithdrawalBinding = Get-MorphospaceReadyWithdrawalBinding `
+                -WorkspaceRoot $resolvedWorkspace `
+                -UnitRelativePath $unitRelativePath `
+                -UnitId $UnitId `
+                -ProjectId ([string]$spec.project_id) `
+                -LiveState $state `
+                -LiveUnit $unit `
+                -Events $events `
+                -UnitMap $unitMap `
+                -ExpectedStateSha256 $expectedPreStateSha256 `
+                -ExpectedUnitSha256 $expectedPreUnitSha256
+            $transitionEventSnapshot = $readyWithdrawalBinding.authenticated_preimage
+            $transition = 'ready-to-proposed-withdrawn'
+            if ($Execute) {
+                $unit.status = 'proposed'
+                $state.next_ready_unit = $readyWithdrawalBinding.next_ready_unit_after
+                $skipAutomaticRepositoryProjection = $true
+                $event = New-MorphospaceEvent `
+                    -State $state `
+                    -Events $events `
+                    -UnitId $UnitId `
+                    -ActionSlug 'ready-withdrawn' `
+                    -Timestamp $Timestamp `
+                    -EventType 'state-transition' `
+                    -Summary 'Withdrew the exact next-ready unit through its authenticated Ready transaction while preserving current authority and deterministic queue order.' `
+                    -Receipts @($receiptReference)
             }
         }
         "Claim" {
@@ -2198,6 +2383,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
             published_prerequisite_suffix_reconciliation = $publishedPrerequisiteSuffixBinding
             executed_prepared_publication_reconciliation = $executedPreparedPublicationBinding
             instruction_surface_completion = $instructionSurfaceCompletionBinding
+            ready_withdrawal = $readyWithdrawalBinding
             push_plan = $pushPlan
             event_id = if ($event) { [string]$event.event_id } else { $null }
         }
@@ -2251,7 +2437,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
                 }
             }
         }
-        if ($Action -in @("PreparePush", "CompleteInstructionSurfaces")) {
+        if ($Action -in @("PreparePush", "CompleteInstructionSurfaces", "WithdrawReady")) {
             $result = & $newAutomationResult
             $receiptBytes = [System.Text.UTF8Encoding]::new($false).GetBytes(
                 (($result | ConvertTo-Json -Depth 32) + [Environment]::NewLine)
@@ -2265,18 +2451,26 @@ function Invoke-MorphospaceWorkUnitAutomation {
         }
         $transactionId = "$([string]$event.event_id)-transition"
         $unitRelativePath = $unitEntry.path.Substring(($resolvedWorkspace.TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar).Length).Replace('\', '/')
-        Start-MorphospaceTransitionLedger `
-            -WorkspaceRoot $resolvedWorkspace `
-            -TransactionId $transactionId `
-            -StatePath 'workspace.state.json' `
-            -UnitPath $unitRelativePath `
-            -EventsPath 'iteration-events.jsonl' `
-            -TargetState $state `
-            -TargetUnit $unit `
-            -Event $event `
-            -ExpectedPreStateSha256 $expectedPreStateSha256 `
-            -ExpectedPreUnitSha256 $expectedPreUnitSha256 `
-            -Artifacts $transitionArtifacts | Out-Null
+        $transitionArguments = @{
+            WorkspaceRoot = $resolvedWorkspace
+            TransactionId = $transactionId
+            StatePath = 'workspace.state.json'
+            UnitPath = $unitRelativePath
+            EventsPath = 'iteration-events.jsonl'
+            TargetState = $state
+            TargetUnit = $unit
+            Event = $event
+            ExpectedPreStateSha256 = $expectedPreStateSha256
+            ExpectedPreUnitSha256 = $expectedPreUnitSha256
+            Artifacts = $transitionArtifacts
+            FaultAfter = $TransitionFaultAfter
+        }
+        if ($Action -eq 'WithdrawReady') {
+            $transitionArguments.ExpectedEventTailId = $transitionEventSnapshot.event_tail_id
+            $transitionArguments.ExpectedEventsSha256 = [string]$transitionEventSnapshot.events_sha256
+            $transitionArguments.ExpectedEventsLength = [int64]$transitionEventSnapshot.events_length
+        }
+        Start-MorphospaceTransitionLedger @transitionArguments | Out-Null
     }
 
     if ($null -eq $result) { $result = & $newAutomationResult }

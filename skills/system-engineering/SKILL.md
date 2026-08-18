@@ -149,7 +149,14 @@ only through a publication-ordering interruption receipt in a fresh plan; exact
 live ancestry must match and the plan claims no corrected order or publication.
 The proposed-to-ready review is also an owned transition: use `Ready` to verify
 accepted prerequisites, preserve the unit envelope, append the event, and
-derive the claimable queue instead of hand-editing status/state/history.
+derive the claimable queue instead of hand-editing status/state/history. With
+a current unit, reject Ready before mutation unless the shared canonical v2
+supersession constructor yields an event ID within the existing 128-character
+contract. Withdraw only the exact next-ready unit through `WithdrawReady`:
+authenticate its unique owner Ready transaction and current state/unit/ledger
+preimage, preserve current authority and the original Ready event, recompute
+the deterministic queue, and atomically record the ready-to-proposed receipt.
+Treat that identity as retired from Ready; revisions require a new identity.
 For the matching active or validating unit, complete declared instruction surfaces only with the
 two-phase `CompleteInstructionSurfaces` transaction: replay the exact unit
 hash, stable surface-observation hash, and complete planned-surface ID set.

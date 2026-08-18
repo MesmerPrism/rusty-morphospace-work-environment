@@ -375,7 +375,14 @@ ancestry consumes the authorization.
   `docs/EVENT_LEDGER_PREFIX_NORMALIZATION.md`.
 - Move a reviewed proposal into the claimable queue only with the automation
   `Ready` action. It verifies accepted prerequisites, appends the transition,
-  and derives `next_ready_unit`; do not hand-edit proposal status.
+  and derives `next_ready_unit`; when a current unit exists it must also prove
+  the exact canonical supersession event ID fits the existing 128-character
+  contract before any write. Withdraw only the exact next-ready unit through
+  `WithdrawReady`: authenticate its original Ready transaction, preserve that
+  event and current authority, derive the remaining queue, and record the
+  ready-to-proposed withdrawal transaction and receipt. A withdrawn identity
+  is retired from Ready; revise the proposal under a new unit identity. Do not
+  hand-edit proposal status or ready-queue state.
 - Mark an in-flight unit's declared instruction surfaces complete only through
   `CompleteInstructionSurfaces`. Replay the dry-run unit hash, stable
   observation hash, and complete planned-surface ID set; the executed action
