@@ -109,14 +109,31 @@ try {
 
     $metaSkillRoot = Join-Path $metaSourceRoot "skills\meta-quest-workflow"
     New-Item -ItemType Directory -Force -Path (Join-Path $metaSkillRoot "agents") | Out-Null
+    New-Item -ItemType Directory -Force -Path (Join-Path $metaSkillRoot "scripts") | Out-Null
+    New-Item -ItemType Directory -Force -Path (Join-Path $metaSourceRoot "docs") | Out-Null
+    [System.IO.File]::WriteAllText(
+        (Join-Path $metaSourceRoot "README.md"),
+        "# Meta Quest Agent Workflow`n",
+        (New-Object System.Text.UTF8Encoding($false))
+    )
+    [System.IO.File]::WriteAllText(
+        (Join-Path $metaSourceRoot "docs\playbook-index.md"),
+        "# Playbook Index`n",
+        (New-Object System.Text.UTF8Encoding($false))
+    )
     [System.IO.File]::WriteAllText(
         (Join-Path $metaSkillRoot "SKILL.md"),
-        "---`nname: meta-quest-workflow`ndescription: 'Canonical external test skill.'`n---`n`n# Meta Quest Workflow`n`nOptional local metadata: references/local-work-environment.json`n",
+        "---`nname: meta-quest-workflow`ndescription: 'Canonical external test skill.'`n---`n`n# Meta Quest Workflow`n`nOptional local metadata: references/local-work-environment.json and references/local-meta-quest-playbooks.json`n",
         (New-Object System.Text.UTF8Encoding($false))
     )
     [System.IO.File]::WriteAllText(
         (Join-Path $metaSkillRoot "agents\openai.yaml"),
         "interface:`n  display_name: `"Meta Quest Workflow`"`n  short_description: `"Quest ecosystem routing and validation`"`n  default_prompt: `"Use `$meta-quest-workflow for the narrowest provider.`"`n",
+        (New-Object System.Text.UTF8Encoding($false))
+    )
+    [System.IO.File]::WriteAllText(
+        (Join-Path $metaSkillRoot "scripts\Resolve-PlaybookSource.ps1"),
+        "param([string]`$SkillRoot = '', [switch]`$Json)`n",
         (New-Object System.Text.UTF8Encoding($false))
     )
     & git -C $metaSourceRoot init -q -b main
@@ -136,6 +153,7 @@ try {
 
     Assert-IgnoredMetaRequiredFileRejected -RelativePath "skills/meta-quest-workflow/SKILL.md"
     Assert-IgnoredMetaRequiredFileRejected -RelativePath "skills/meta-quest-workflow/agents/openai.yaml"
+    Assert-IgnoredMetaRequiredFileRejected -RelativePath "skills/meta-quest-workflow/scripts/Resolve-PlaybookSource.ps1"
 
     Invoke-InstallerChild -Arguments @("-RepoRoot", $installerSourceRoot, "-TargetRoot", $targetRoot, "-Action", "Plan", "-SkillId", "meta-quest-workflow", "-Json") -ExpectedExit 1 -NoMetaSource | Out-Null
 
@@ -170,10 +188,26 @@ try {
             $metaCommit = ([string](git -C $metaSourceRoot rev-parse HEAD)).Trim()
             Assert-True -Condition ($metadata.source_repository -eq "https://github.com/MesmerPrism/meta-quest-agent-workflow.git") -Message "Meta Quest skill provenance does not name the canonical repository."
             Assert-True -Condition ($metadata.source_commit -eq $metaCommit) -Message "Meta Quest skill provenance does not bind the canonical source commit."
+            Assert-True -Condition (@($metadata.source_files | Where-Object {
+                ([string]$_.path).Replace("\", "/") -ceq "scripts/Resolve-PlaybookSource.ps1"
+            }).Count -eq 1) -Message "Meta Quest skill provenance does not bind the playbook resolver."
             $locator = Get-Content -Raw -LiteralPath (Join-Path $skillRoot "references\local-work-environment.json") | ConvertFrom-Json
             $workEnvironmentCommit = ([string](git -C $installerSourceRoot rev-parse HEAD)).Trim()
             Assert-True -Condition ($locator.source_repository -eq "https://example.invalid/rusty-morphospace-work-environment.git") -Message "Meta Quest locator does not retain Work Environment provenance."
             Assert-True -Condition ($locator.source_commit -eq $workEnvironmentCommit) -Message "Meta Quest locator does not bind the Work Environment commit."
+            $playbookLocatorPath = Join-Path $skillRoot "references\local-meta-quest-playbooks.json"
+            Assert-True -Condition (Test-Path -LiteralPath $playbookLocatorPath -PathType Leaf) -Message "Meta Quest playbook locator is missing."
+            $playbookLocator = Get-Content -Raw -LiteralPath $playbookLocatorPath | ConvertFrom-Json
+            $metaTree = ([string](git -C $metaSourceRoot rev-parse 'HEAD^{tree}')).Trim()
+            Assert-True -Condition ($playbookLocator.schema -eq "rusty.quest.workflow.local_playbook_source.v1") -Message "Meta Quest playbook locator schema is wrong."
+            Assert-True -Condition ($playbookLocator.repository_root -eq $metaSourceRoot) -Message "Meta Quest playbook locator root is wrong."
+            Assert-True -Condition ($playbookLocator.source_commit -eq $metaCommit) -Message "Meta Quest playbook locator commit is wrong."
+            Assert-True -Condition ($playbookLocator.source_tree -eq $metaTree) -Message "Meta Quest playbook locator tree is wrong."
+            Assert-True -Condition (-not [bool]$playbookLocator.source_worktree_dirty) -Message "Meta Quest playbook locator reported a dirty source."
+            Assert-True -Condition ($playbookLocator.source_status_fingerprint -eq "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855") -Message "Meta Quest playbook locator clean fingerprint is wrong."
+            Assert-True -Condition ($playbookLocator.readme_path -eq (Join-Path $metaSourceRoot "README.md")) -Message "Meta Quest playbook README path is wrong."
+            Assert-True -Condition ($playbookLocator.docs_root -eq (Join-Path $metaSourceRoot "docs")) -Message "Meta Quest playbook docs root is wrong."
+            Assert-True -Condition ($playbookLocator.playbook_index_path -eq (Join-Path $metaSourceRoot "docs\playbook-index.md")) -Message "Meta Quest playbook index path is wrong."
         }
         if ($skill -in @("rusty-morphospace", "rusty-morphospace-context")) {
             Assert-True -Condition (Test-Path -LiteralPath (Join-Path $skillRoot "agents\openai.yaml")) -Message "$skill agents/openai.yaml is missing."
@@ -182,6 +216,33 @@ try {
             }).Count -eq 1) -Message "$skill provenance does not bind agents/openai.yaml."
         }
     }
+
+    $installedPlaybookLocatorPath = Join-Path $targetRoot "meta-quest-workflow\references\local-meta-quest-playbooks.json"
+    $originalPlaybookLocator = [System.IO.File]::ReadAllText($installedPlaybookLocatorPath)
+    $damagedPlaybookLocator = $originalPlaybookLocator | ConvertFrom-Json
+    $damagedPlaybookLocator.source_tree = "0" * 40
+    [System.IO.File]::WriteAllText(
+        $installedPlaybookLocatorPath,
+        ($damagedPlaybookLocator | ConvertTo-Json -Depth 12) + [Environment]::NewLine,
+        (New-Object System.Text.UTF8Encoding($false))
+    )
+    $damagedLocatorText = Invoke-InstallerChild -Arguments @("-RepoRoot", $installerSourceRoot, "-TargetRoot", $targetRoot, "-Action", "Verify", "-SkillId", "meta-quest-workflow", "-Json") -ExpectedExit 1
+    $damagedLocator = $damagedLocatorText | ConvertFrom-Json
+    Assert-True -Condition ($damagedLocator[0].action -eq "verification-failed") -Message "Damaged Meta Quest playbook locator was not rejected."
+    [System.IO.File]::WriteAllText(
+        $installedPlaybookLocatorPath,
+        $originalPlaybookLocator,
+        (New-Object System.Text.UTF8Encoding($false))
+    )
+
+    Remove-Item -LiteralPath $installedPlaybookLocatorPath -Force
+    $missingLocatorText = Invoke-InstallerChild -Arguments @("-RepoRoot", $installerSourceRoot, "-TargetRoot", $targetRoot, "-Action", "Verify", "-SkillId", "meta-quest-workflow", "-Json") -ExpectedExit 1
+    $missingLocator = $missingLocatorText | ConvertFrom-Json
+    Assert-True -Condition ($missingLocator[0].action -eq "verification-failed") -Message "Missing Meta Quest playbook locator was not rejected."
+    $locatorMigrationText = Invoke-InstallerChild -Arguments @("-RepoRoot", $installerSourceRoot, "-TargetRoot", $targetRoot, "-BackupRoot", $backupRoot, "-Action", "Update", "-SkillId", "meta-quest-workflow", "-Execute", "-Json")
+    $locatorMigration = $locatorMigrationText | ConvertFrom-Json
+    Assert-True -Condition ($locatorMigration[0].action -eq "updated") -Message "Explicit Update did not migrate an older Meta Quest installation."
+    Assert-True -Condition (Test-Path -LiteralPath $installedPlaybookLocatorPath -PathType Leaf) -Message "Meta Quest locator migration did not restore the generated locator."
 
     $verifyText = Invoke-InstallerChild -Arguments @("-RepoRoot", $installerSourceRoot, "-TargetRoot", $targetRoot, "-Action", "Verify", "-Json")
     $verified = $verifyText | ConvertFrom-Json
