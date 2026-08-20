@@ -95,6 +95,41 @@
             }
           }
         },
+        "source_composition": {
+          "description": "Optional exact source and external-owner composition lock for host-only preflight. It remains advisory and does not authorize a build, device action, acceptance, or publication.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source", "external_sources"],
+          "properties": {
+            "source": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["git_revision", "git_tree", "require_clean"],
+              "properties": {
+                "git_revision": { "pattern": "^[a-f0-9]{40}$" },
+                "git_tree": { "pattern": "^[a-f0-9]{40}$" },
+                "require_clean": { "type": "boolean" }
+              }
+            },
+            "external_sources": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 16,
+              "uniqueItems": true,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["source_id", "binding_id", "git_revision", "git_tree"],
+                "properties": {
+                  "source_id": { "pattern": "^[a-z0-9][a-z0-9._-]{0,95}$" },
+                  "binding_id": { "pattern": "^[a-z0-9][a-z0-9._-]{0,95}$" },
+                  "git_revision": { "pattern": "^[a-f0-9]{40}$" },
+                  "git_tree": { "pattern": "^[a-f0-9]{40}$" }
+                }
+              }
+            }
+          }
+        },
         "output": {
           "type": "object",
           "additionalProperties": false,

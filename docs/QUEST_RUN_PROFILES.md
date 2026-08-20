@@ -21,6 +21,15 @@ to files or directories; Git-backed directories can require an exact clean
 revision and tree. The receipt records only the variable, binding ID, kind, and
 Git identity. A nonzero build retains both streams and a typed failure receipt.
 
+An optional `preflight.source_composition` adds an exact lock for the host
+source revision/tree and named external source bindings such as the Quest File
+Manager source. Each external lock names the local binding ID and its expected
+clean revision/tree; the local binding file supplies the private path. This is
+host-only composition evidence, not permission to inspect, deploy, invoke ADB,
+or otherwise act in the external owner's lane. The later single-APK terminal
+proof remains one digest-bound `single-base-apk` result, and any QFM-specific
+inspection remains QFM-owned.
+
 The build profile removes recurring Gradle/PowerShell command reconstruction.
 The run request does not contain an arbitrary device command. A private Hostess
 provider map resolves the hash-pinned File Manager deployment wrapper, File
@@ -48,14 +57,28 @@ WorkUnit candidate fingerprint. The owning workflow may associate its existing
 Inspect-created candidate fingerprint only after an explicit binding check.
 Build paths add `failed`, `timed_out`, and `cancelled` as applicable, retain
 raw stdout/stderr as separately digest-bound byte evidence, and publish at most
-one atomic terminal result. Child environments begin empty, so inherited
-control variables such as `GIT_PAGER` cannot affect the execution.
+one atomic terminal result. The terminal result records the explicit timeout,
+typed child-process outcome/cancellation/process-tree termination evidence, and
+the digest of the deliberately constructed child environment. If profile or
+execution resolution fails before a child environment exists, that digest is
+explicitly null with count zero and the child is `not-started`. Child
+environments otherwise begin empty and receive only reviewed projection values
+plus wrapper-derived values, so inherited control variables such as `GIT_PAGER`
+cannot affect execution. A profile that prohibits an ambient `GIT_PAGER`
+therefore fails closed at preflight rather than silently sanitizing the
+contradiction away.
 
 Candidate output requires an observable clean source tree and
-`content-addressed` collision policy. Warm output remains a deliberately
-separate mutable lane. This observation is not an admission gate: a later
-locked trust-root change may consume it only after adopted-main evidence and
-the existing external validation-authority procedure.
+`content-addressed` collision policy. Its APK `relative_path` contains exactly
+one `{content_sha256}` marker, which the wrapper replaces with the deterministic
+preflight binding digest before it starts the child; the derived effective path
+and derivation digest are retained in the terminal receipt. Warm output remains
+a deliberately separate mutable lane. `created_at` remains receipt telemetry;
+`content_sha256` is the stable semantic observation identity and excludes that
+timestamp, while the terminal observation hash still binds the complete
+timestamped receipt. This observation is not an admission gate: a later locked
+trust-root change may consume it only after adopted-main evidence and the
+existing external validation-authority procedure.
 
 Start from
 [`quest-build-profile.example.json`](../templates/quest-build-profile.example.json)

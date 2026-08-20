@@ -36,6 +36,18 @@ function ConvertTo-CompactJson {
     return $Value | ConvertTo-Json -Depth 64 -Compress
 }
 
+function Get-ChildEnvironmentSha256 {
+    param([hashtable]$Values)
+    $canonical = [ordered]@{
+        variables = @(
+            $Values.Keys |
+                Sort-Object |
+                ForEach-Object { [ordered]@{ name = [string]$_; value = [string]$Values[$_] } }
+        )
+    }
+    return Get-StringSha256 (ConvertTo-CompactJson $canonical)
+}
+
 function Assert-PropertySet {
     param([object]$Value, [string[]]$Required, [string[]]$Optional, [string]$Location)
     $actual = if ($Value -is [System.Collections.IDictionary]) { @($Value.Keys | ForEach-Object { [string]$_ } | Sort-Object) } else { @($Value.PSObject.Properties.Name | Sort-Object) }
@@ -91,12 +103,13 @@ function Read-BuildProfile {
     if ((@($document.arguments)).Count -gt 128 -or (@($document.arguments | Where-Object { $_ -isnot [string] -or $_.Length -gt 1024 })).Count -gt 0) { throw "Build profile arguments are invalid." }
     Assert-PropertySet $document.artifact @("relative_path", "kind") @() "Build profile artifact"
     if ([string]$document.artifact.kind -cne "single-base-apk") { throw "Build profile artifact kind is invalid." }
-    $artifact = Resolve-ContainedPath $Root ([string]$document.artifact.relative_path) "artifact.relative_path"
+    $artifactRelativePath = [string]$document.artifact.relative_path
+    $artifact = Resolve-ContainedPath $Root $artifactRelativePath "artifact.relative_path"
     if ([System.IO.Path]::GetExtension($artifact) -cne ".apk") { throw "Build profile artifact must be one APK." }
     if ($null -eq $document.environment -or (@($document.environment.PSObject.Properties)).Count -gt 32 -or (@($document.environment.PSObject.Properties | Where-Object { $_.Name -cnotmatch "^[A-Z][A-Z0-9_]{0,63}$" -or [string]$_.Value -cnotmatch "^[a-z0-9][a-z0-9._-]{0,95}$" })).Count -gt 0) { throw "Build profile environment bindings are invalid." }
     $preflight = Get-OptionalProperty $document "preflight"
-    if ($null -ne $preflight) { Assert-PropertySet $preflight @() @("manifest_relative_dependencies", "lockfiles", "toolchain", "identity", "environment_projection", "output") "Build profile preflight" }
-    return [pscustomobject]@{ Document = $document; Path = $fullPath; Sha256 = $actualSha256; Root = $Root; WorkingDirectory = $workingDirectory; ProfileExecutable = $profileExecutable; ExternalToolId = $externalToolId; Artifact = $artifact; Preflight = $preflight }
+    if ($null -ne $preflight) { Assert-PropertySet $preflight @() @("manifest_relative_dependencies", "lockfiles", "toolchain", "identity", "environment_projection", "source_composition", "output") "Build profile preflight" }
+    return [pscustomobject]@{ Document = $document; Path = $fullPath; Sha256 = $actualSha256; Root = $Root; WorkingDirectory = $workingDirectory; ProfileExecutable = $profileExecutable; ExternalToolId = $externalToolId; Artifact = $artifact; ArtifactRelativePath = $artifactRelativePath; Preflight = $preflight }
 }
 
 function Resolve-EnvironmentBindings {
@@ -141,7 +154,7 @@ function Resolve-EnvironmentBindings {
         $values[[string]$requirement.Name] = $binding.Path
         $evidence += [ordered]@{ variable = [string]$requirement.Name; binding_id = $bindingId; kind = $binding.Kind; value_sha256 = Get-StringSha256 $binding.Path; git_revision = if ($binding.Revision) { $binding.Revision } else { $null }; git_tree = if ($binding.Tree) { $binding.Tree } else { $null } }
     }
-    return [pscustomobject]@{ Values = $values; Evidence = @($evidence | Sort-Object variable) }
+    return [pscustomobject]@{ Values = $values; Evidence = @($evidence | Sort-Object variable); Bindings = $byId }
 }
 
 function Resolve-Execution {
@@ -213,6 +226,51 @@ function Get-ChildEnvironmentProjection {
         $evidence += [ordered]@{ variable = $name; source = "profile-binding"; present = $true; value_sha256 = Get-StringSha256 ([string]$BindingValues[$name]) }
     }
     return [pscustomobject]@{ Values = $child; Evidence = @($evidence | Sort-Object variable, source) }
+}
+
+function Get-SourceCompositionLock {
+    param([object]$Preflight, [object]$Source, [object]$Environment, [System.Collections.Generic.List[object]]$Checks)
+    $composition = if ($null -eq $Preflight) { $null } else { Get-OptionalProperty $Preflight "source_composition" }
+    if ($null -eq $composition) { return [ordered]@{ source = $null; external_sources = @() } }
+    Assert-PropertySet $composition @("source", "external_sources") @() "Source composition"
+    Assert-PropertySet $composition.source @("git_revision", "git_tree", "require_clean") @() "Source composition source"
+    $sourceRevision = [string]$composition.source.git_revision
+    $sourceTree = [string]$composition.source.git_tree
+    if ($sourceRevision -cnotmatch "^[a-f0-9]{40}$" -or $sourceTree -cnotmatch "^[a-f0-9]{40}$") { throw "Source composition source Git identity is invalid." }
+    $sourceLock = [ordered]@{ git_revision = $sourceRevision; git_tree = $sourceTree; require_clean = [bool]$composition.source.require_clean }
+    if (-not $Source.git_available) {
+        Add-PreflightCheck $Checks "source-composition.source" "incomplete" "source-composition-git-unavailable" "The locked source Git identity could not be observed."
+    } elseif ($Source.revision -cne $sourceRevision -or $Source.tree -cne $sourceTree) {
+        Add-PreflightCheck $Checks "source-composition.source" "contradiction" "source-composition-source-mismatch" "The observed source revision/tree differs from the declared composition lock."
+    } elseif ($sourceLock.require_clean -and $Source.dirty) {
+        Add-PreflightCheck $Checks "source-composition.source" "contradiction" "source-composition-source-dirty" "The declared source composition requires a clean source tree."
+    } else {
+        Add-PreflightCheck $Checks "source-composition.source" "passed" "" "The source revision/tree matches the declared composition lock."
+    }
+    $rows = [System.Collections.Generic.List[object]]::new()
+    $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    foreach ($external in @($composition.external_sources | Sort-Object source_id)) {
+        Assert-PropertySet $external @("source_id", "binding_id", "git_revision", "git_tree") @() "External source composition entry"
+        $sourceId = [string]$external.source_id
+        $bindingId = [string]$external.binding_id
+        $revision = [string]$external.git_revision
+        $tree = [string]$external.git_tree
+        if ($sourceId -cnotmatch "^[a-z0-9][a-z0-9._-]{0,95}$" -or -not $seen.Add($sourceId) -or $bindingId -cnotmatch "^[a-z0-9][a-z0-9._-]{0,95}$" -or $revision -cnotmatch "^[a-f0-9]{40}$" -or $tree -cnotmatch "^[a-f0-9]{40}$") {
+            throw "External source composition entry is invalid or duplicated."
+        }
+        $rows.Add([ordered]@{ source_id = $sourceId; binding_id = $bindingId; git_revision = $revision; git_tree = $tree })
+        if (-not $Environment.Bindings.ContainsKey($bindingId)) {
+            Add-PreflightCheck $Checks "source-composition.external.$sourceId" "incomplete" "external-source-binding-missing" "The declared external source binding is unavailable."
+            continue
+        }
+        $binding = $Environment.Bindings[$bindingId]
+        if ($binding.Kind -cne "directory" -or $binding.Revision -cne $revision -or $binding.Tree -cne $tree) {
+            Add-PreflightCheck $Checks "source-composition.external.$sourceId" "contradiction" "external-source-composition-mismatch" "The external source binding differs from the declared exact composition lock."
+        } else {
+            Add-PreflightCheck $Checks "source-composition.external.$sourceId" "passed" "" "The external source binding matches the declared exact composition lock."
+        }
+    }
+    return [ordered]@{ source = $sourceLock; external_sources = @($rows.ToArray()) }
 }
 
 function Read-SignerObservation {
@@ -344,6 +402,7 @@ function Invoke-QuestBuildPreflight {
         }
     }
     $projectedEnvironment = Get-ChildEnvironmentProjection $preflight $Environment.Values $checks
+    $sourceComposition = Get-SourceCompositionLock $preflight $source $Environment $checks
     $identity = Read-SignerObservation $preflight $SignerPath $SignerSha256 $checks
     $outputConfig = if ($null -eq $preflight) { $null } else { Get-OptionalProperty $preflight "output" }
     if ($null -ne $outputConfig) { Assert-PropertySet $outputConfig @() @("lane", "collision_policy", "allow_source_root") "Output preflight" }
@@ -351,6 +410,11 @@ function Invoke-QuestBuildPreflight {
     $collisionPolicy = if ($null -ne $outputConfig -and $null -ne (Get-OptionalProperty $outputConfig "collision_policy")) { [string]$outputConfig.collision_policy } else { "new-only" }
     $allowSourceRoot = if ($null -ne $outputConfig -and $null -ne (Get-OptionalProperty $outputConfig "allow_source_root")) { [bool]$outputConfig.allow_source_root } else { $true }
     if ($lane -cnotin @("warm", "candidate") -or $collisionPolicy -cnotin @("new-only", "content-addressed")) { throw "Output preflight is invalid." }
+    $contentAddressMarker = "{content_sha256}"
+    $contentAddressMarkerCount = [regex]::Matches([string]$Profile.ArtifactRelativePath, [regex]::Escape($contentAddressMarker)).Count
+    $contentAddressed = $collisionPolicy -ceq "content-addressed"
+    if ($contentAddressed -and $contentAddressMarkerCount -ne 1) { throw "Content-addressed output requires exactly one {content_sha256} artifact marker." }
+    if (-not $contentAddressed -and $contentAddressMarkerCount -ne 0) { throw "Only content-addressed output may use the {content_sha256} artifact marker." }
     if ($lane -ceq "candidate") {
         if (-not $source.git_available) {
             Add-PreflightCheck $checks "output.candidate-source" "incomplete" "candidate-source-git-unavailable" "Candidate output requires an observable source revision and tree."
@@ -361,13 +425,27 @@ function Invoke-QuestBuildPreflight {
         }
         Add-PreflightCheck $checks "output.candidate-collision-policy" $(if ($collisionPolicy -eq "content-addressed") { "passed" } else { "contradiction" }) $(if ($collisionPolicy -eq "content-addressed") { "" } else { "candidate-output-not-content-addressed" }) "Candidate output collision policy is $(if ($collisionPolicy -eq "content-addressed") { 'content-addressed' } else { 'not content-addressed' })."
     }
-    $insideSource = -not [System.IO.Path]::IsPathRooted([System.IO.Path]::GetRelativePath($Profile.Root, $Profile.Artifact))
+    $binding = [ordered]@{ profile_sha256 = $Profile.Sha256; profile_id = [string]$Profile.Document.profile_id; executable = [ordered]@{ profile_path = $Execution.BoundToolPath; profile_sha256 = $Execution.BoundToolSha256; child_path = $Execution.FileName; child_sha256 = Get-Sha256 $Execution.FileName; arguments = @($Execution.Arguments) }; source = $source; source_composition = $sourceComposition; manifest_relative_dependencies = @($dependencies); lockfiles = @($lockfiles); toolchain = @($toolchain); environment = @($projectedEnvironment.Evidence); identity = $identity; output = [ordered]@{ lane = $lane; collision_policy = $collisionPolicy; allow_source_root = $allowSourceRoot; artifact_template = [string]$Profile.ArtifactRelativePath; content_addressed = $contentAddressed } }
+    $bindingSha256 = Get-StringSha256 (ConvertTo-CompactJson $binding)
+    $effectiveArtifact = if ($contentAddressed) {
+        Resolve-ContainedPath $Profile.Root ([string]$Profile.ArtifactRelativePath).Replace($contentAddressMarker, $bindingSha256) "content-addressed artifact path"
+    } else {
+        $Profile.Artifact
+    }
+    $childEnvironment = @{}
+    foreach ($name in $projectedEnvironment.Values.Keys) { $childEnvironment[$name] = [string]$projectedEnvironment.Values[$name] }
+    $environmentEvidence = @($projectedEnvironment.Evidence)
+    if ($contentAddressed) {
+        $childEnvironment["MORPHOSPACE_CONTENT_ADDRESSED_ARTIFACT"] = $effectiveArtifact
+        $environmentEvidence += [ordered]@{ variable = "MORPHOSPACE_CONTENT_ADDRESSED_ARTIFACT"; source = "wrapper-derived"; present = $true; value_sha256 = Get-StringSha256 $effectiveArtifact }
+    }
+    $childEnvironmentSha256 = Get-ChildEnvironmentSha256 $childEnvironment
+    $insideSource = -not [System.IO.Path]::IsPathRooted([System.IO.Path]::GetRelativePath($Profile.Root, $effectiveArtifact))
     $sourceRootPolicyPasses = $allowSourceRoot -or -not $insideSource
     Add-PreflightCheck $checks "output.source-root" $(if ($sourceRootPolicyPasses) { "passed" } else { "contradiction" }) $(if ($sourceRootPolicyPasses) { "" } else { "output-inside-source-root" }) "Output source-root policy is satisfied."
-    $outputExists = Test-Path -LiteralPath $Profile.Artifact
+    $outputExists = Test-Path -LiteralPath $effectiveArtifact
     Add-PreflightCheck $checks "output.collision" $(if ($outputExists) { "contradiction" } else { "passed" }) $(if ($outputExists) { "output-collision" } else { "" }) "Declared output is $(if ($outputExists) { 'already present' } else { 'available' })."
-    $binding = [ordered]@{ profile_sha256 = $Profile.Sha256; profile_id = [string]$Profile.Document.profile_id; executable = [ordered]@{ profile_path = $Execution.BoundToolPath; profile_sha256 = $Execution.BoundToolSha256; child_path = $Execution.FileName; child_sha256 = Get-Sha256 $Execution.FileName; arguments = @($Execution.Arguments) }; source = $source; manifest_relative_dependencies = @($dependencies); lockfiles = @($lockfiles); toolchain = @($toolchain); environment = @($projectedEnvironment.Evidence); identity = $identity; output = [ordered]@{ lane = $lane; collision_policy = $collisionPolicy; allow_source_root = $allowSourceRoot; path = $Profile.Artifact } }
-    $bindingSha256 = Get-StringSha256 (ConvertTo-CompactJson $binding)
+    $Profile.Artifact = $effectiveArtifact
     $status = if ((@($checks | Where-Object { $_.status -eq "contradiction" })).Count -gt 0) { "contradiction" } elseif ((@($checks | Where-Object { $_.status -eq "incomplete" })).Count -gt 0) { "incomplete" } else { "passed" }
     $reasonCodes = @($checks | Where-Object { $_.reason_code } | ForEach-Object { [string]$_.reason_code } | Sort-Object -Unique)
     $values = @(
@@ -375,6 +453,7 @@ function Invoke-QuestBuildPreflight {
         [ordered]@{ key = "quest-build.profile-sha256"; value = $Profile.Sha256 },
         [ordered]@{ key = "quest-build.invocation-binding-sha256"; value = $bindingSha256 },
         [ordered]@{ key = "quest-build.executable-sha256"; value = $Execution.BoundToolSha256 },
+        [ordered]@{ key = "quest-build.child-environment-sha256"; value = $childEnvironmentSha256 },
         [ordered]@{ key = "quest-build.arguments-sha256"; value = Get-StringSha256 ((@($Execution.Arguments) -join "`u{001F}")) },
         [ordered]@{ key = "quest-build.output-lane"; value = $lane },
         [ordered]@{ key = "quest-build.output-collision-policy"; value = $collisionPolicy }
@@ -386,9 +465,20 @@ function Invoke-QuestBuildPreflight {
     foreach ($entry in @($toolchain | Where-Object { $_.kind -eq "repository-file" -and $_.declared_rust_channel })) {
         $values += [ordered]@{ key = "quest-build.declared-rust-channel.$([System.IO.Path]::GetFileName([string]$entry.relative_path).ToLowerInvariant())"; value = [string]$entry.declared_rust_channel }
     }
-    $observation = [ordered]@{ schema = "rusty.morphospace.workflow.execution_preflight_observation.v1"; observation_id = "quest-build-preflight-$bindingSha256"; created_at = [DateTime]::UtcNow.ToString("o"); subject = "quest-build-profile"; values = @($values | Sort-Object key); capabilities = @($checks | Sort-Object capability_id | ForEach-Object { [ordered]@{ capability_id = $_.capability_id; available = $_.status -eq "passed"; detail = if ($_.reason_code) { $_.reason_code } else { $_.detail } } }) }
-    $payload = [ordered]@{ artifact = $null; source = $source; lockfiles = @($lockfiles); toolchain = @($toolchain); environment = @($projectedEnvironment.Evidence); identity = $identity; output = $binding.output; execution_preflight_observation = $observation }
-    return [pscustomobject]@{ Status = $status; ReasonCodes = $reasonCodes; Binding = $binding; BindingSha256 = $bindingSha256; Observation = $observation; ObservationSha256 = Get-StringSha256 (ConvertTo-CompactJson $observation); ChildEnvironment = $projectedEnvironment.Values; Payload = $payload }
+    $capabilities = @(
+        $checks | Sort-Object capability_id | ForEach-Object {
+            [ordered]@{
+                capability_id = $_.capability_id
+                available = $_.status -eq "passed"
+                detail = if ($_.reason_code) { $_.reason_code } else { $_.detail }
+            }
+        }
+    )
+    $observationContent = [ordered]@{ schema = "rusty.morphospace.workflow.execution_preflight_observation.v1"; observation_id = "quest-build-preflight-$bindingSha256"; subject = "quest-build-profile"; values = @($values | Sort-Object key); capabilities = $capabilities }
+    $observation = [ordered]@{ schema = $observationContent.schema; observation_id = $observationContent.observation_id; created_at = [DateTime]::UtcNow.ToString("o"); subject = $observationContent.subject; values = $observationContent.values; capabilities = $observationContent.capabilities; content_sha256 = Get-StringSha256 (ConvertTo-CompactJson $observationContent) }
+    $outputEvidence = [ordered]@{ lane = $lane; collision_policy = $collisionPolicy; allow_source_root = $allowSourceRoot; artifact_template = [string]$Profile.ArtifactRelativePath; effective_artifact = $effectiveArtifact; content_addressed = $contentAddressed; derivation_binding_sha256 = if ($contentAddressed) { $bindingSha256 } else { $null } }
+    $payload = [ordered]@{ artifact = $null; source = $source; source_composition = $sourceComposition; lockfiles = @($lockfiles); toolchain = @($toolchain); environment = @($environmentEvidence | Sort-Object variable, source); identity = $identity; output = $outputEvidence; execution_preflight_observation = $observation }
+    return [pscustomobject]@{ Status = $status; ReasonCodes = $reasonCodes; Binding = $binding; BindingSha256 = $bindingSha256; Observation = $observation; ObservationSha256 = Get-StringSha256 (ConvertTo-CompactJson $observation); ChildEnvironment = $childEnvironment; ChildEnvironmentSha256 = $childEnvironmentSha256; Artifact = $effectiveArtifact; Payload = $payload }
 }
 
 function Invoke-ChildProcess {
@@ -427,8 +517,10 @@ function Invoke-ChildProcess {
             $stderrTask = $process.StandardError.BaseStream.CopyToAsync($stderrStream)
             $timer = [System.Diagnostics.Stopwatch]::StartNew()
             $status = "passed"
+            $cancellation = "not-requested"
             while (-not $process.WaitForExit(50)) {
-                if ($script:cancelRequested -or ($CancelAfterMilliseconds -gt 0 -and $timer.ElapsedMilliseconds -ge $CancelAfterMilliseconds)) { $status = "cancelled"; break }
+                if ($script:cancelRequested) { $status = "cancelled"; $cancellation = "console-cancel"; break }
+                if ($CancelAfterMilliseconds -gt 0 -and $timer.ElapsedMilliseconds -ge $CancelAfterMilliseconds) { $status = "cancelled"; $cancellation = "test-cancel"; break }
                 if ($timer.Elapsed.TotalSeconds -ge $DeadlineSeconds) { $status = "timed_out"; break }
             }
             if ($status -ne "passed") {
@@ -448,7 +540,20 @@ function Invoke-ChildProcess {
         }
         [System.IO.File]::Move($stdoutTemp, $stdoutFinal)
         [System.IO.File]::Move($stderrTemp, $stderrFinal)
-        return [pscustomobject]@{ Status = $status; ExitCode = [int]$process.ExitCode; Streams = [ordered]@{ captured = $true; stdout = [ordered]@{ path = $stdoutFinal; sha256 = Get-Sha256 $stdoutFinal; size_bytes = (Get-Item -LiteralPath $stdoutFinal).Length }; stderr = [ordered]@{ path = $stderrFinal; sha256 = Get-Sha256 $stderrFinal; size_bytes = (Get-Item -LiteralPath $stderrFinal).Length } } }
+        return [pscustomobject]@{
+            Status = $status
+            ExitCode = [int]$process.ExitCode
+            Streams = [ordered]@{ captured = $true; stdout = [ordered]@{ path = $stdoutFinal; sha256 = Get-Sha256 $stdoutFinal; size_bytes = (Get-Item -LiteralPath $stdoutFinal).Length }; stderr = [ordered]@{ path = $stderrFinal; sha256 = Get-Sha256 $stderrFinal; size_bytes = (Get-Item -LiteralPath $stderrFinal).Length } }
+            ChildProcess = [ordered]@{
+                started = $true
+                outcome = $status
+                timeout_seconds = $DeadlineSeconds
+                elapsed_milliseconds = [int][Math]::Ceiling($timer.Elapsed.TotalMilliseconds)
+                cancellation = $cancellation
+                process_tree_terminated = $true
+                exit_code = [int]$process.ExitCode
+            }
+        }
     } finally {
         try { [Console]::remove_CancelKeyPress($cancelHandler) } catch { }
         if ($started -and -not $process.HasExited) {
@@ -462,35 +567,44 @@ function Invoke-ChildProcess {
 
 function Assert-TerminalResult {
     param([object]$Result)
-    Assert-PropertySet $Result @("schema", "operation", "terminal_status", "profile", "invocation", "observation", "reason_codes", "streams", "owner_payload") @() "Terminal result"
+    Assert-PropertySet $Result @("schema", "operation", "terminal_status", "profile", "invocation", "observation", "reason_codes", "child_process", "streams", "owner_payload") @() "Terminal result"
     if ([string]$Result.schema -cne "rusty.morphospace.quest_build_terminal_result.v1" -or [string]$Result.operation -cnotin @("preflight", "build")) { throw "Terminal result identity is invalid." }
     $preflightStatuses = @("passed", "contradiction", "incomplete")
     $buildStatuses = @($preflightStatuses + @("failed", "timed_out", "cancelled"))
     if ([string]$Result.terminal_status -cnotin $buildStatuses -or ([string]$Result.operation -ceq "preflight" -and [string]$Result.terminal_status -cnotin $preflightStatuses)) { throw "Terminal result status is invalid." }
     Assert-PropertySet $Result.profile @("profile_id", "profile_sha256") @() "Terminal result profile"
-    Assert-PropertySet $Result.invocation @("binding_sha256", "executable", "arguments") @() "Terminal result invocation"
-    Assert-PropertySet $Result.observation @("observation_id", "sha256") @() "Terminal result observation"
+    Assert-PropertySet $Result.invocation @("binding_sha256", "executable", "arguments", "timeout_seconds", "child_environment_sha256", "child_environment_variable_count") @() "Terminal result invocation"
+    Assert-PropertySet $Result.observation @("observation_id", "sha256", "content_sha256") @() "Terminal result observation"
+    Assert-PropertySet $Result.child_process @("started", "outcome", "timeout_seconds", "elapsed_milliseconds", "cancellation", "process_tree_terminated", "exit_code") @() "Terminal child process"
+    if ([string]$Result.child_process.outcome -cnotin @("not-started", "passed", "failed", "timed_out", "cancelled") -or [int]$Result.child_process.timeout_seconds -lt 1 -or [int]$Result.child_process.elapsed_milliseconds -lt 0 -or [string]$Result.child_process.cancellation -cnotin @("not-requested", "console-cancel", "test-cancel")) { throw "Terminal child-process evidence is invalid." }
     Assert-PropertySet $Result.streams @("captured", "stdout", "stderr") @() "Terminal result streams"
-    Assert-PropertySet $Result.owner_payload @("artifact", "source", "lockfiles", "toolchain", "environment", "identity", "output", "execution_preflight_observation") @() "Terminal result owner payload"
+    Assert-PropertySet $Result.owner_payload @("artifact", "source", "source_composition", "lockfiles", "toolchain", "environment", "identity", "output", "execution_preflight_observation") @() "Terminal result owner payload"
     if ($null -ne $Result.owner_payload.execution_preflight_observation) {
         $embeddedObservation = $Result.owner_payload.execution_preflight_observation
-        Assert-PropertySet $embeddedObservation @("schema", "observation_id", "created_at", "subject", "values", "capabilities") @() "Embedded execution preflight observation"
-        if ([string]$embeddedObservation.schema -cne "rusty.morphospace.workflow.execution_preflight_observation.v1" -or [string]$embeddedObservation.observation_id -cne [string]$Result.observation.observation_id -or (Get-StringSha256 (ConvertTo-CompactJson $embeddedObservation)) -cne [string]$Result.observation.sha256) { throw "Terminal result does not bind its embedded execution preflight observation." }
+        Assert-PropertySet $embeddedObservation @("schema", "observation_id", "created_at", "subject", "values", "capabilities", "content_sha256") @() "Embedded execution preflight observation"
+        if ([string]$embeddedObservation.schema -cne "rusty.morphospace.workflow.execution_preflight_observation.v1" -or [string]$embeddedObservation.observation_id -cne [string]$Result.observation.observation_id -or [string]$embeddedObservation.content_sha256 -cne [string]$Result.observation.content_sha256 -or (Get-StringSha256 (ConvertTo-CompactJson $embeddedObservation)) -cne [string]$Result.observation.sha256) { throw "Terminal result does not bind its embedded execution preflight observation." }
     }
 }
 
 function New-TerminalResult {
-    param([string]$Operation, [string]$Status, [object]$Profile, [object]$Execution, [object]$Preflight, [string[]]$ReasonCodes, [object]$Streams, [object]$Payload)
+    param([string]$Operation, [string]$Status, [object]$Profile, [object]$Execution, [object]$Preflight, [string[]]$ReasonCodes, [object]$Streams, [object]$Payload, [int]$TimeoutSeconds, [object]$ChildProcess)
+    $evidenceTimeoutSeconds = if ($TimeoutSeconds -ge 1 -and $TimeoutSeconds -le 3600) { $TimeoutSeconds } else { 1 }
+    $childProcessEvidence = if ($null -ne $ChildProcess) {
+        $ChildProcess
+    } else {
+        [ordered]@{ started = $false; outcome = "not-started"; timeout_seconds = $evidenceTimeoutSeconds; elapsed_milliseconds = 0; cancellation = "not-requested"; process_tree_terminated = $true; exit_code = $null }
+    }
     $result = [ordered]@{
         schema = "rusty.morphospace.quest_build_terminal_result.v1"
         operation = $Operation
         terminal_status = $Status
         profile = [ordered]@{ profile_id = if ($null -ne $Profile) { [string]$Profile.Document.profile_id } else { $null }; profile_sha256 = if ($null -ne $Profile) { [string]$Profile.Sha256 } else { $null } }
-        invocation = [ordered]@{ binding_sha256 = if ($null -ne $Preflight) { [string]$Preflight.BindingSha256 } else { Get-StringSha256 "quest-build-terminal-result-empty-binding-v1" }; executable = if ($null -ne $Execution) { [string]$Execution.FileName } else { $null }; arguments = if ($null -ne $Execution) { @($Execution.Arguments) } else { @() } }
-        observation = [ordered]@{ observation_id = if ($null -ne $Preflight) { [string]$Preflight.Observation.observation_id } else { $null }; sha256 = if ($null -ne $Preflight) { [string]$Preflight.ObservationSha256 } else { $null } }
+        invocation = [ordered]@{ binding_sha256 = if ($null -ne $Preflight) { [string]$Preflight.BindingSha256 } else { Get-StringSha256 "quest-build-terminal-result-empty-binding-v1" }; executable = if ($null -ne $Execution) { [string]$Execution.FileName } else { $null }; arguments = if ($null -ne $Execution) { @($Execution.Arguments) } else { @() }; timeout_seconds = $evidenceTimeoutSeconds; child_environment_sha256 = if ($null -ne $Preflight) { [string]$Preflight.ChildEnvironmentSha256 } else { $null }; child_environment_variable_count = if ($null -ne $Preflight) { @($Preflight.ChildEnvironment.Keys).Count } else { 0 } }
+        observation = [ordered]@{ observation_id = if ($null -ne $Preflight) { [string]$Preflight.Observation.observation_id } else { $null }; sha256 = if ($null -ne $Preflight) { [string]$Preflight.ObservationSha256 } else { $null }; content_sha256 = if ($null -ne $Preflight) { [string]$Preflight.Observation.content_sha256 } else { $null } }
         reason_codes = @($ReasonCodes | Where-Object { $_ } | Sort-Object -Unique)
+        child_process = $childProcessEvidence
         streams = if ($null -ne $Streams) { $Streams } else { [ordered]@{ captured = $false; stdout = $null; stderr = $null } }
-        owner_payload = if ($null -ne $Payload) { $Payload } else { [ordered]@{ artifact = $null; source = $null; lockfiles = @(); toolchain = @(); environment = @(); identity = [ordered]@{}; output = [ordered]@{}; execution_preflight_observation = $null } }
+        owner_payload = if ($null -ne $Payload) { $Payload } else { [ordered]@{ artifact = $null; source = $null; source_composition = [ordered]@{ source = $null; external_sources = @() }; lockfiles = @(); toolchain = @(); environment = @(); identity = [ordered]@{}; output = [ordered]@{}; execution_preflight_observation = $null } }
     }
     Assert-TerminalResult $result
     return $result
@@ -549,10 +663,10 @@ try {
     $environment = Resolve-EnvironmentBindings $profile.Document $EnvironmentBindingsPath $EnvironmentBindingsSha256
     $preflight = Invoke-QuestBuildPreflight $profile $execution $environment $SignerObservationPath $SignerObservationSha256
     if ($operation -ceq "preflight") {
-        $terminal = New-TerminalResult "preflight" $preflight.Status $profile $execution $preflight $preflight.ReasonCodes $null $preflight.Payload
+        $terminal = New-TerminalResult "preflight" $preflight.Status $profile $execution $preflight $preflight.ReasonCodes $null $preflight.Payload $TimeoutSeconds $null
         $exitCode = if ($preflight.Status -eq "passed") { 0 } elseif ($preflight.Status -eq "contradiction") { 2 } else { 3 }
     } elseif ($preflight.Status -ne "passed") {
-        $terminal = New-TerminalResult "build" $preflight.Status $profile $execution $preflight $preflight.ReasonCodes $null $preflight.Payload
+        $terminal = New-TerminalResult "build" $preflight.Status $profile $execution $preflight $preflight.ReasonCodes $null $preflight.Payload $TimeoutSeconds $null
         $exitCode = if ($preflight.Status -eq "contradiction") { 2 } else { 3 }
     } else {
         if (-not $ReceiptPath) { throw "ReceiptPath is required for Build mode." }
@@ -563,25 +677,25 @@ try {
         $child = $childResults[0]
         $payload = $preflight.Payload
         if ($child.Status -eq "passed") {
-            if (-not (Test-Path -LiteralPath $profile.Artifact -PathType Leaf)) { $terminal = New-TerminalResult "build" "failed" $profile $execution $preflight @("artifact-missing") $child.Streams $payload }
+            if (-not (Test-Path -LiteralPath $profile.Artifact -PathType Leaf)) { $terminal = New-TerminalResult "build" "failed" $profile $execution $preflight @("artifact-missing") $child.Streams $payload $TimeoutSeconds $child.ChildProcess }
             else {
                 $artifactInfo = Get-Item -LiteralPath $profile.Artifact
-                if ($artifactInfo.Length -le 0) { $terminal = New-TerminalResult "build" "failed" $profile $execution $preflight @("artifact-empty") $child.Streams $payload }
+                if ($artifactInfo.Length -le 0) { $terminal = New-TerminalResult "build" "failed" $profile $execution $preflight @("artifact-empty") $child.Streams $payload $TimeoutSeconds $child.ChildProcess }
                 else {
-                    $payload.artifact = [ordered]@{ path = $profile.Artifact; sha256 = Get-Sha256 $profile.Artifact; size_bytes = $artifactInfo.Length }
-                    $terminal = New-TerminalResult "build" "passed" $profile $execution $preflight @() $child.Streams $payload
+                    $payload.artifact = [ordered]@{ kind = "single-base-apk"; path = $profile.Artifact; sha256 = Get-Sha256 $profile.Artifact; size_bytes = $artifactInfo.Length }
+                    $terminal = New-TerminalResult "build" "passed" $profile $execution $preflight @() $child.Streams $payload $TimeoutSeconds $child.ChildProcess
                 }
             }
         } else {
             $reason = switch ($child.Status) { "timed_out" { "child-timeout" } "cancelled" { "child-cancelled" } default { "child-exit-nonzero" } }
-            $terminal = New-TerminalResult "build" $child.Status $profile $execution $preflight @($reason) $child.Streams $payload
+            $terminal = New-TerminalResult "build" $child.Status $profile $execution $preflight @($reason) $child.Streams $payload $TimeoutSeconds $child.ChildProcess
         }
         $exitCode = if ($terminal.terminal_status -eq "passed") { 0 } else { 1 }
     }
 } catch {
     $terminalStatus = if ($operation -eq "preflight") { "contradiction" } else { "failed" }
     $reasonCode = if ($operation -eq "preflight") { "preflight-input-invalid" } else { "wrapper-error" }
-    $terminal = New-TerminalResult $operation $terminalStatus $profile $execution $preflight @($reasonCode) $null $null
+    $terminal = New-TerminalResult $operation $terminalStatus $profile $execution $preflight @($reasonCode) $null $null $TimeoutSeconds $null
     $exitCode = if ($operation -eq "preflight") { 2 } else { 1 }
 }
 
