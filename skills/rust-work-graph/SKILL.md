@@ -347,6 +347,16 @@ completion node. For raw active/validating historical instruction debt, retain
 the debt nodes until an exact authenticated supersession edge discharges only
 their evolving policy diagnostics; malformed or absent edges leave the debt
 live.
+For a non-terminal compatibility projection, graph one atomic receipt node to
+both immutable historical targets, their raw/canonical hashes, the exact
+Ready-to-WithdrawReady and v2 supersession transaction nodes, the registered
+profile contract, and the current tail-only projection event. Add no unit
+mutation, completion, execution, validation, acceptance, or publication edge.
+If the authority later closes locally, graph only the exact contiguous owner
+instruction-completion, `BeginValidation`, deep-pass `RecordValidation`, and
+`Accept` transaction nodes through final live state. Keep the receipt's
+authority skill-action mapping interpretive; lifecycle edges come only from
+those authenticated transactions.
 For a replacement that later terminates blocked, add separate nodes for the
 v2 supersession intent/completion and target, directly chained
 BeginValidation/fail intents and completions, same-unit fail receipt,

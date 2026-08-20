@@ -465,13 +465,26 @@ defer only evolving instruction-policy failures and discharge them only through
 the exact canonical supersession edge authenticated later in the same aggregate
 pass; structural and current-unit rules remain immediate.
 
+Where a separately locked repair must project exact current semantics over a
+non-current/non-next in-flight historical pair, require one closed atomic
+compatibility receipt authenticating Ready/WithdrawReady and v2 supersession
+provenance. Bind raw/canonical units and exact mapping values, change only the
+state tail, and make completion, execution, validation, status, acceptance, and
+publication inference structurally impossible.
+If the same authority later closes locally, admit only a fully chained owner
+instruction-completion, `BeginValidation`, deep-pass `RecordValidation`, and
+`Accept` suffix with exact receipts, state/unit targets, and final live
+derivation. Keep the compatibility mapping interpretive; the transactions own
+every lifecycle outcome.
+
 Model a blocked supersession replacement as valid only when its exact
 v2 supersession transaction target directly chains into the historical
 `BeginValidation` to `validation-fail` owner transactions, which bind the
 same-unit fail receipt, blocker/checkpoint, blocked unit, cleared current/next
 state, and unchanged acceptance projection. Validate subsequent owner
-transactions as a derivation of live state and unit bytes. Preserve v1 and v2
-semantics; a later v3 transaction is valid only with the exact known property
+transactions as a derivation of live state and unit bytes. Preserve v1
+semantics; admit a later v2 only as the exact owner-produced old-to-ready-
+replacement supersession projection; a later v3 transaction is valid only with the exact known property
 set, one or two canonical ordered project/lock projections, an unchanged first
 anchor or prior-target-to-next-preimage chain, exact artifacts and completion,
 and final-live derivation. It must retain the active captain, status, readiness,

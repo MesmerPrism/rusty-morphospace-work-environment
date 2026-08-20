@@ -238,6 +238,25 @@ function Add-LaterUnit {
     }
 }
 
+function Add-OwnerV2SupersessionContinuation {
+    param([string]$Workspace)
+    $oldId='later-current-owner';$newId='later-v2-owner';$timestamp='2026-01-02T03:09:00.0000000Z'
+    Write-FixtureJson -Path (Join-Path $Workspace "iteration-units\$newId.json") -Value (New-FixtureUnit -UnitId $newId -Status 'proposed')
+    Invoke-OwnerAction -Workspace $Workspace -Action Ready -UnitId $newId -Timestamp '2026-01-02T03:08:00.0000000Z'
+    $statePath=Join-Path $Workspace 'workspace.state.json';$eventsPath=Join-Path $Workspace 'iteration-events.jsonl'
+    $oldPath=Join-Path $Workspace "iteration-units\$oldId.json";$newPath=Join-Path $Workspace "iteration-units\$newId.json"
+    $state=Read-FixtureJson $statePath;$old=Read-FixtureJson $oldPath;$ready=Read-FixtureJson $newPath
+    $tail=ConvertFrom-FixtureJsonText -Text ([string](Get-Content $eventsPath|Where-Object{$_}|Select-Object -Last 1)) -Context 'v2 continuation tail'
+    $eventId="$oldId-superseded-by-$newId";$targetState=Copy-FixtureValue $state;$targetState.current_unit=$newId;$targetState.next_ready_unit=$null;$targetState.last_event_id=$eventId
+    $active=Copy-FixtureValue $ready;$active.status='active'
+    $event=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.iteration_event.v1';event_id=$eventId;sequence=[int]$tail.sequence+1;timestamp=$timestamp;project_id=$projectId;unit_id=$oldId;event_type='state-transition';summary='The exact owner-produced v2 fixture replacement supersedes its authenticated predecessor.';receipts=@()}
+    Start-MorphospaceTransitionLedger -WorkspaceRoot $Workspace -TransactionId "$eventId-transition" -StatePath 'workspace.state.json' -UnitPath "iteration-units/$newId.json" -EventsPath 'iteration-events.jsonl' `
+        -TargetState $targetState -TargetUnit $active -Event $event -ExpectedStateSha256 (Get-MorphospaceCanonicalJsonSha256 $state) -ExpectedUnitSha256 (Get-MorphospaceCanonicalJsonSha256 $ready) `
+        -ExpectedEventTailId ([string]$tail.event_id) -ExpectedEventsSha256 (Get-MorphospaceFileSha256 $eventsPath) -ExpectedEventsLength ([IO.FileInfo]::new($eventsPath).Length) `
+        -ExpectedSupersededUnitSha256 (Get-MorphospaceCanonicalJsonSha256 $old)|Out-Null
+    [pscustomobject][ordered]@{event_id=$eventId;old_id=$oldId;new_id=$newId}
+}
+
 function Add-OwnerActiveWriteScopeAmendment {
     param([string]$Workspace, [string]$UnitId, [string]$Timestamp)
     $projectPath = Join-Path $Workspace 'project.spec.json'
@@ -456,6 +475,27 @@ try {
     Assert-HelperPasses -Workspace $laterActiveWorkspace -Name 'historical-later-current-positive' -ContinuationCount 2
     Invoke-WorkflowContract -Workspace $laterActiveWorkspace | Out-Null
     Assert-Passed $true 'historical-later-current-aggregate'
+
+    $ownerV2Workspace = Copy-FixtureWorkspace -Source $baselineWorkspace -Name 'positive-owner-v2-supersession-continuation'
+    Add-LaterUnit -Workspace $ownerV2Workspace
+    $ownerV2=Add-OwnerV2SupersessionContinuation -Workspace $ownerV2Workspace
+    Assert-HelperPasses -Workspace $ownerV2Workspace -Name 'owner-produced-v2-supersession-continuation-positive' -ContinuationCount 4
+    Invoke-WorkflowContract -Workspace $ownerV2Workspace | Out-Null
+    Assert-Passed $true 'owner-produced-v2-supersession-continuation-aggregate'
+    Assert-HelperRejects -Template $ownerV2Workspace -Name 'v2-continuation-missing-intent' -Mutation {param($case)Remove-Item -LiteralPath (Join-Path $case "receipts\transactions\$($ownerV2.event_id)-transition.intent.json")}
+    Assert-HelperRejects -Template $ownerV2Workspace -Name 'v2-continuation-missing-completion' -Mutation {param($case)Remove-Item -LiteralPath (Join-Path $case "receipts\transactions\$($ownerV2.event_id)-transition.completion.json")}
+    Assert-HelperRejects -Template $ownerV2Workspace -Name 'v2-continuation-unknown-property' -Mutation {
+        param($case);Update-FixtureJson (Join-Path $case "receipts\transactions\$($ownerV2.event_id)-transition.intent.json") {param($i)$i|Add-Member -NotePropertyName unknown_v2_policy -NotePropertyValue 'forbidden'};Rebind-FixtureTransaction -Workspace $case -EventId $ownerV2.event_id
+    }
+    Assert-HelperRejects -Template $ownerV2Workspace -Name 'v2-continuation-endpoint-detachment' -Mutation {
+        param($case);Update-FixtureJson (Join-Path $case "receipts\transactions\$($ownerV2.event_id)-transition.intent.json") {param($i)$i.supersession.old_unit_id='unrelated-owner'};Rebind-FixtureTransaction -Workspace $case -EventId $ownerV2.event_id
+    }
+    Assert-HelperRejects -Template $ownerV2Workspace -Name 'v2-continuation-status-inference' -Mutation {
+        param($case);Update-FixtureJson (Join-Path $case "receipts\transactions\$($ownerV2.event_id)-transition.intent.json") {param($i)$i.target.unit.document.status='accepted'};Rebind-FixtureTransaction -Workspace $case -EventId $ownerV2.event_id
+    }
+    Assert-HelperRejects -Template $ownerV2Workspace -Name 'v2-continuation-state-inference' -Mutation {
+        param($case);Update-FixtureJson (Join-Path $case "receipts\transactions\$($ownerV2.event_id)-transition.intent.json") {param($i)$i.target.state.document.last_accepted_receipt='receipts/fabricated.json'};Rebind-FixtureTransaction -Workspace $case -EventId $ownerV2.event_id
+    }
 
     $laterAcceptedWorkspace = Copy-FixtureWorkspace -Source $baselineWorkspace -Name 'positive-later-accepted'
     Add-LaterUnit -Workspace $laterAcceptedWorkspace -Accept

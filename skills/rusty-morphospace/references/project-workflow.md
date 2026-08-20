@@ -84,6 +84,17 @@ prefix, preserve current authority and the historical Ready event, change only
 `ready` to `proposed`, and deterministically recompute the queue. A withdrawn
 identity is not eligible for Ready again; a revised proposal needs a new ID.
 
+An immutable non-current/non-next in-flight pair may be interpreted through
+`historical_unit_compatibility_projection.v1` only when the typed
+`RecordHistoricalUnitCompatibilityProjection` action authenticates the exact
+Ready/WithdrawReady and v2 supersession chains. Its mappings are closed and
+tail-only; raw unit actions and commands remain unchanged, and no completion,
+execution, validation, acceptance, or publication is inferred.
+An exact later local closure is valid only when the owner-generated
+instruction-completion, `BeginValidation`, deep-pass `RecordValidation`, and
+`Accept` transactions form the complete contiguous suffix and derive the live
+terminal state. The compatibility receipt never substitutes for those actions.
+
 For an exact `<old>-superseded-by-<new>` event, bind old independently from
 event `unit_id` and new independently from target-state `current_unit`; treat
 the event ID only as their exact rendering and reject delimiter ambiguity.
@@ -102,7 +113,9 @@ intent/completion and target, then the directly chained
 `BeginValidation`/`validation-fail` intent and completion chains, same-unit fail
 receipt, blocker/checkpoint, and terminal state/unit targets. Authenticate all
 later owner transactions as a derivable suffix rather than requiring the fail
-event to remain the live tail. Preserve strict v1 suffix handling. A later v3
+event to remain the live tail. Preserve strict v1 suffix handling. A later v2
+is admissible only as the exact owner-produced old-to-ready-replacement
+supersession. A later v3
 transaction must be owner-produced, non-superseding, exact-property, and bind
 one or two canonical ordered project/lock projections. First-seen projection
 paths must be unchanged anchors; changed paths must chain an earlier target to
