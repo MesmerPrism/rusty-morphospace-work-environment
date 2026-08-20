@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/historical-unit-compatibility-projection-v1.schema.json",
+  "title": "Authenticated historical work-unit compatibility projection",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema","receipt_id","project_id","authority_unit_id","created_at","expected","registered_host_profile","authority_instruction_actions","targets","projection_event","limitations"],
+  "properties": {
+    "schema": {"const":"rusty.morphospace.workflow.historical_unit_compatibility_projection.v1"},
+    "receipt_id": {"$ref":"#/$defs/id"},
+    "project_id": {"$ref":"#/$defs/id"},
+    "authority_unit_id": {"$ref":"#/$defs/id"},
+    "created_at": {"type":"string","format":"date-time"},
+    "expected": {
+      "type":"object","additionalProperties":false,
+      "required":["project_sha256","state_sha256","authority_unit_sha256","events_sha256","events_length","event_tail_id","current_unit","next_ready_unit"],
+      "properties": {
+        "project_sha256":{"$ref":"#/$defs/hash"},"state_sha256":{"$ref":"#/$defs/hash"},"authority_unit_sha256":{"$ref":"#/$defs/hash"},
+        "events_sha256":{"$ref":"#/$defs/hash"},"events_length":{"type":"integer","minimum":1,"maximum":67108864},"event_tail_id":{"$ref":"#/$defs/id"},
+        "current_unit":{"$ref":"#/$defs/id"},"next_ready_unit":{"type":"null"}
+      }
+    },
+    "registered_host_profile": {
+      "type":"object","additionalProperties":false,
+      "required":["profile_id","profile_sha256"],
+      "properties":{"profile_id":{"const":"host"},"profile_sha256":{"$ref":"#/$defs/hash"}}
+    },
+    "authority_instruction_actions": {
+      "type":"array","minItems":2,"maxItems":2,"prefixItems":[
+        {"type":"object","additionalProperties":false,"required":["skill_id","raw_action","effective_action","retained_status"],"properties":{"skill_id":{"const":"rusty-morphospace"},"raw_action":{"const":"review-no-change"},"effective_action":{"const":"update"},"retained_status":{"const":"planned"}}},
+        {"type":"object","additionalProperties":false,"required":["skill_id","raw_action","effective_action","retained_status"],"properties":{"skill_id":{"const":"system-engineering"},"raw_action":{"const":"review-no-change"},"effective_action":{"const":"update"},"retained_status":{"const":"planned"}}}
+      ],"items":false
+    },
+    "targets": {
+      "type":"array","minItems":2,"maxItems":2,
+      "prefixItems":[
+        {"$ref":"#/$defs/validation_target"},
+        {"$ref":"#/$defs/instruction_target"}
+      ],
+      "items":false
+    },
+    "projection_event": {
+      "type":"object","additionalProperties":false,
+      "required":["event_id","sequence","timestamp","receipt_path"],
+      "properties":{"event_id":{"$ref":"#/$defs/id"},"sequence":{"type":"integer","minimum":1},"timestamp":{"type":"string","format":"date-time"},"receipt_path":{"$ref":"#/$defs/receipt_path"}}
+    },
+    "limitations": {
+      "type":"object","additionalProperties":false,
+      "required":["historical_bytes_mutated","status_inferred","instruction_completion_inferred","instruction_execution_inferred","validation_inferred","acceptance_inferred","publication_authority"],
+      "properties": {
+        "historical_bytes_mutated":{"const":false},"status_inferred":{"const":false},"instruction_completion_inferred":{"const":false},
+        "instruction_execution_inferred":{"const":false},"validation_inferred":{"const":false},"acceptance_inferred":{"const":false},"publication_authority":{"const":false}
+      }
+    }
+  },
+  "$defs": {
+    "id":{"type":"string","pattern":"^[a-z0-9][a-z0-9-]{1,127}$"},
+    "hash":{"type":"string","pattern":"^[0-9a-f]{64}$"},
+    "unit_path":{"type":"string","pattern":"^iteration-units/[a-z0-9][a-z0-9-]{1,127}\\.json$"},
+    "receipt_path":{"type":"string","pattern":"^receipts/[a-z0-9][a-z0-9-]{1,127}\\.json$"},
+    "transaction_path":{"type":"string","pattern":"^receipts/transactions/[a-z0-9][a-z0-9-]{1,127}-transition\\.(intent|completion)\\.json$"},
+    "event_binding": {
+      "type":"object","additionalProperties":false,
+      "required":["event_id","sequence","event_sha256","intent_path","intent_sha256","completion_path","completion_sha256"],
+      "properties": {
+        "event_id":{"$ref":"#/$defs/id"},"sequence":{"type":"integer","minimum":1},"event_sha256":{"$ref":"#/$defs/hash"},
+        "intent_path":{"$ref":"#/$defs/transaction_path"},"intent_sha256":{"$ref":"#/$defs/hash"},
+        "completion_path":{"$ref":"#/$defs/transaction_path"},"completion_sha256":{"$ref":"#/$defs/hash"}
+      }
+    },
+    "unit_binding": {
+      "type":"object","additionalProperties":false,
+      "required":["unit_id","unit_path","unit_raw_sha256","unit_canonical_sha256"],
+      "properties":{"unit_id":{"$ref":"#/$defs/id"},"unit_path":{"$ref":"#/$defs/unit_path"},"unit_raw_sha256":{"$ref":"#/$defs/hash"},"unit_canonical_sha256":{"$ref":"#/$defs/hash"}}
+    },
+    "validation_target": {
+      "type":"object","additionalProperties":false,
+      "required":["unit_id","unit_path","unit_raw_sha256","unit_canonical_sha256","projection_kind","supersession","validation_profiles"],
+      "properties": {
+           "unit_id":{"$ref":"#/$defs/id"},"unit_path":{"$ref":"#/$defs/unit_path"},"unit_raw_sha256":{"$ref":"#/$defs/hash"},"unit_canonical_sha256":{"$ref":"#/$defs/hash"},
+           "projection_kind":{"const":"validation-profile-compatibility"},"supersession":{"$ref":"#/$defs/event_binding"},
+           "validation_profiles":{"type":"array","minItems":2,"maxItems":2,"prefixItems":[
+             {"type":"object","additionalProperties":false,"required":["legacy","current","command_sha256"],"properties":{"legacy":{"const":"focused"},"current":{"const":"host"},"command_sha256":{"$ref":"#/$defs/hash"}}},
+             {"type":"object","additionalProperties":false,"required":["legacy","current","command_sha256"],"properties":{"legacy":{"const":"windows-integration"},"current":{"const":"host"},"command_sha256":{"$ref":"#/$defs/hash"}}}
+           ],"items":false}
+      }
+    },
+    "instruction_target": {
+      "type":"object","additionalProperties":false,
+      "required":["unit_id","unit_path","unit_raw_sha256","unit_canonical_sha256","projection_kind","ready","withdraw_ready","instruction_actions"],
+      "properties": {
+           "unit_id":{"$ref":"#/$defs/id"},"unit_path":{"$ref":"#/$defs/unit_path"},"unit_raw_sha256":{"$ref":"#/$defs/hash"},"unit_canonical_sha256":{"$ref":"#/$defs/hash"},
+           "projection_kind":{"const":"instruction-action-compatibility"},"ready":{"$ref":"#/$defs/event_binding"},"withdraw_ready":{"$ref":"#/$defs/event_binding"},
+           "instruction_actions":{"type":"array","minItems":2,"maxItems":2,"prefixItems":[
+             {"type":"object","additionalProperties":false,"required":["skill_id","raw_action","effective_action","retained_status"],"properties":{"skill_id":{"const":"rusty-morphospace"},"raw_action":{"const":"review-no-change"},"effective_action":{"const":"update"},"retained_status":{"const":"planned"}}},
+             {"type":"object","additionalProperties":false,"required":["skill_id","raw_action","effective_action","retained_status"],"properties":{"skill_id":{"const":"system-engineering"},"raw_action":{"const":"review-no-change"},"effective_action":{"const":"update"},"retained_status":{"const":"planned"}}}
+           ],"items":false}
+      }
+    }
+  }
+}

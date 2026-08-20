@@ -562,22 +562,48 @@ function Test-MorphospaceBlockedSupersessionTerminalValidation {
         $row = $ledger.rows[$ordinal]
         $eventUnitId = [string]$row.document.unit_id
         if (-not $eventUnitId) { throw "Later event '$([string]$row.document.event_id)' lacks a unit identity required for historical derivation." }
-        $knownUnitSha = if ($unitProjection.ContainsKey($eventUnitId)) { [string]$unitProjection[$eventUnitId].sha256 } else { '' }
         $laterEventId = [string]$row.document.event_id
         $laterIntent = Read-MorphospaceBlockedSupersessionJson -WorkspaceRoot $workspace -RelativePath "receipts/transactions/$laterEventId-transition.intent.json" -Context "later transition intent '$laterEventId' schema dispatch"
         $laterIntentSchema = [string]$laterIntent.document.schema
         if ($laterIntentSchema -cnotin @(
             'rusty.morphospace.workflow.transition_ledger_intent.v1',
+            'rusty.morphospace.workflow.transition_ledger_intent.v2',
             'rusty.morphospace.workflow.transition_ledger_intent.v3'
         )) {
             throw "Later transition '$laterEventId' uses an unsupported owner-intent schema."
         }
+        $transitionUnitId = $eventUnitId
+        if ($laterIntentSchema -ceq 'rusty.morphospace.workflow.transition_ledger_intent.v2') {
+            $delimiter = '-superseded-by-'
+            $firstDelimiter = $laterEventId.IndexOf($delimiter,[StringComparison]::Ordinal)
+            if ($firstDelimiter -lt 1 -or $firstDelimiter -ne $laterEventId.LastIndexOf($delimiter,[StringComparison]::Ordinal)) {
+                throw "Later transition intent v2 '$laterEventId' is not one exact supersession identity."
+            }
+            if ($null -eq $laterIntent.document.PSObject.Properties['supersession']) {
+                throw "Later transition intent v2 '$laterEventId' lacks its owner supersession binding."
+            }
+            $transitionUnitId = [string]$laterIntent.document.supersession.new_unit_id
+            if (-not $transitionUnitId -or [string]$laterIntent.document.supersession.old_unit_id -cne $eventUnitId -or
+                $laterEventId -cne "$eventUnitId$delimiter$transitionUnitId") {
+                throw "Later transition intent v2 '$laterEventId' detaches its old or replacement identity."
+            }
+        }
+        $knownUnitSha = if ($unitProjection.ContainsKey($transitionUnitId)) { [string]$unitProjection[$transitionUnitId].sha256 } else { '' }
         if ($laterIntentSchema -ceq 'rusty.morphospace.workflow.transition_ledger_intent.v3' -and -not $knownUnitSha) {
             throw "Later transition intent v3 '$laterEventId' does not continue a previously authenticated unit projection."
         }
+        if ($laterIntentSchema -ceq 'rusty.morphospace.workflow.transition_ledger_intent.v2' -and
+            (-not $knownUnitSha -or -not $unitProjection.ContainsKey($eventUnitId))) {
+            throw "Later transition intent v2 '$laterEventId' does not continue authenticated old and replacement unit projections."
+        }
         $priorStateProjection = $stateProjection
-        $priorUnitProjection = if ($unitProjection.ContainsKey($eventUnitId)) { $unitProjection[$eventUnitId].document } else { $null }
-        $transition = Test-MorphospaceBlockedSupersessionTransaction -WorkspaceRoot $workspace -Ledger $ledger -Row $row -ProjectId $ProjectId -ExpectedPreStateSha256 $stateProjectionSha256 -ExpectedPreUnitSha256 $knownUnitSha -ExpectedIntentSchema $laterIntentSchema
+        $priorUnitProjection = if ($unitProjection.ContainsKey($transitionUnitId)) { $unitProjection[$transitionUnitId].document } else { $null }
+        $transitionArguments = @{
+            WorkspaceRoot=$workspace;Ledger=$ledger;Row=$row;ProjectId=$ProjectId
+            ExpectedPreStateSha256=$stateProjectionSha256;ExpectedPreUnitSha256=$knownUnitSha;ExpectedIntentSchema=$laterIntentSchema
+        }
+        if ($laterIntentSchema -ceq 'rusty.morphospace.workflow.transition_ledger_intent.v2') { $transitionArguments.ExpectedTargetUnitId = $transitionUnitId }
+        $transition = Test-MorphospaceBlockedSupersessionTransaction @transitionArguments
         if ($laterIntentSchema -ceq 'rusty.morphospace.workflow.transition_ledger_intent.v3') {
             if ($null -eq $priorUnitProjection -or
                 [string]$priorUnitProjection.status -cne 'active' -or
@@ -608,10 +634,30 @@ function Test-MorphospaceBlockedSupersessionTerminalValidation {
                     sha256 = [string]$projection.target_sha256
                 }
             }
+        } elseif ($laterIntentSchema -ceq 'rusty.morphospace.workflow.transition_ledger_intent.v2') {
+            $priorOldUnit = $unitProjection[$eventUnitId].document
+            if ([string]$priorOldUnit.status -cnotin @('active','validating') -or
+                [string]$priorUnitProjection.status -cne 'ready' -or
+                [string]$priorStateProjection.current_unit -cne $eventUnitId -or
+                [string]$priorStateProjection.next_ready_unit -cne $transitionUnitId -or
+                [string]$transition.state_document.current_unit -cne $transitionUnitId -or
+                $null -ne $transition.state_document.next_ready_unit -or
+                [string]$transition.unit_document.unit_id -cne $transitionUnitId -or
+                [string]$transition.unit_document.status -cne 'active' -or
+                [string]$transition.state_document.last_accepted_receipt -cne [string]$priorStateProjection.last_accepted_receipt) {
+                throw "Later transition intent v2 '$laterEventId' changed status, readiness, endpoints, or acceptance beyond exact supersession."
+            }
+            $expectedState = $priorStateProjection | ConvertTo-Json -Depth 64 | ConvertFrom-Json
+            $expectedState.current_unit = $transitionUnitId
+            $expectedState.next_ready_unit = $null
+            $expectedState.last_event_id = $laterEventId
+            if ((Get-MorphospaceCanonicalJsonSha256 -Value $expectedState) -cne [string]$transition.state_sha256) {
+                throw "Later transition intent v2 '$laterEventId' changed workspace state beyond exact supersession."
+            }
         }
         $stateProjection = $transition.state_document
         $stateProjectionSha256 = $transition.state_sha256
-        $unitProjection[$eventUnitId] = [pscustomobject][ordered]@{ document = $transition.unit_document; sha256 = $transition.unit_sha256 }
+        $unitProjection[$transitionUnitId] = [pscustomobject][ordered]@{ document = $transition.unit_document; sha256 = $transition.unit_sha256 }
         $continuationCount++
     }
 

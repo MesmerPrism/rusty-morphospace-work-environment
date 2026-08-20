@@ -198,13 +198,29 @@ receipt: defer only its evolving instruction-policy failures, and discharge
 them only after the same aggregate pass authenticates its exact canonical
 supersession event. Structural, registry, event, and current-unit checks remain
 immediate.
+For one non-current/non-next in-flight historical pair whose immutable bytes
+cannot use terminal adoption, use only the project-owned
+`historical_unit_compatibility_projection.v1` and
+`RecordHistoricalUnitCompatibilityProjection`. It authenticates the exact
+Ready-to-WithdrawReady and v2 supersession transactions, projects only its
+closed profile/action mappings, preserves the raw units and current authority,
+and changes only the compact-state event tail. It never records an instruction
+edit, completion, validation, acceptance, or publication authority.
+If that authority later closes locally, authenticate only its exact owner-
+produced instruction-completion, `BeginValidation`, deep passing
+`RecordValidation`, and `Accept` transaction suffix. The receipt may preserve
+the raw `review-no-change` skill actions while projecting their current
+`update` compatibility; only those owner transactions establish completion,
+validation, or acceptance.
 An exact supersession replacement may remain honestly `blocked` after typed
 validation failure only when aggregate validation authenticates its historical
 v2 supersession intent/completion and its immediately chained
 `BeginValidation` and `validation-fail` intents, completions, events, same-unit
 fail receipt, blocker/checkpoint, and terminal blocked/current-null projection.
 Every later ledger event must extend those owner transaction preimages and
-derive the live state and touched unit bytes. A later v3 projection transaction
+derive the live state and touched unit bytes. A later v2 transaction is valid
+only as the exact owner-produced old-to-ready-replacement supersession. A later
+v3 projection transaction
 is valid only with its exact owner property set, one or two canonical ordered
 `feature.lock.json`/`project.spec.json` projections, unchanged first-seen
 anchors, prior-target-to-next-preimage chaining for a changed anchored path,

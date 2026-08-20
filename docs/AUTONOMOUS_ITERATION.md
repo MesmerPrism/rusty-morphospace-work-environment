@@ -280,6 +280,20 @@ active/validating old-unit path/document. Completion accepts an applied target
 only from that binding and validates it before torn-tail repair or projection
 mutation; legacy supersession intents fail closed.
 
+If immutable non-current/non-next in-flight history contains exactly the
+closed compatibility debt defined by
+`historical_unit_compatibility_projection.v1`, generate the receipt with
+`New-HistoricalUnitCompatibilityProjection.ps1` and record it through
+`RecordHistoricalUnitCompatibilityProjection`. The owner action authenticates
+the exact Ready-to-WithdrawReady and v2 supersession chains, preserves both raw
+units and every state field except `last_event_id`, and projects no completion,
+execution, validation, acceptance, currentness, or publication authority.
+After recording, an exact local closure may follow only as the contiguous
+owner-produced instruction-completion, `BeginValidation`, deep-pass
+`RecordValidation`, and `Accept` transaction suffix. Authenticate every
+preimage, receipt, event, target, and final live byte; the projection itself
+still infers none of those lifecycle outcomes.
+
 A supersession replacement whose typed validation result is `fail` is a narrow
 historical terminal case, not a generic permitted blocked status. Authenticate
 the exact v2 supersession intent/completion and target state/unit, then require
@@ -289,7 +303,10 @@ same-project/unit fail receipt, validation checkpoint, owner blocker, blocked
 unit target, cleared current/next target, and unchanged acceptance projection.
 Then authenticate each later event transaction as a continuation of the prior
 state target and derive the final live state plus every touched live unit. Keep
-v1 suffix handling unchanged. Admit a suffix intent v3 only after the fail
+v1 suffix handling unchanged. Admit a suffix intent v2 only as the exact
+owner-produced old-to-ready-replacement supersession, with strict state/unit
+preimages, endpoints, target status, and unchanged acceptance. Admit a suffix
+intent v3 only after the fail
 target, never as supersession: require its exact known property set, one or two
 canonical unique ordinal-ordered `feature.lock.json`/`project.spec.json`
 projections, exact embedded schema/project/hash bindings, canonical-base64
@@ -503,6 +520,7 @@ work-unit transitions and preparation artifacts. It supports `Inspect`,
 `Ready`, `WithdrawReady`, `Claim`, `Resume`, `CompleteInstructionSurfaces`,
 `AmendActiveWriteScope`, `CorrectActiveReadOnlyDependencies`,
 `CorrectActiveProjectRepositoryScope`,
+`RecordHistoricalUnitCompatibilityProjection`,
 `BeginValidation`, `ReturnToActive`,
 `RecordValidation`, `Accept`,
 `PreparePush`, `Recover`, `ReconcilePublication`,

@@ -39,6 +39,19 @@ unit's planned surface to complete or claim an edit, validation, acceptance,
 execution, or publication; current portable registries and all current/future
 instruction rules remain closed.
 
+An immutable non-current/non-next in-flight unit pair may use the narrower
+authenticated compatibility projection only for one exact owner Ready-to-
+WithdrawReady history and one exact v2 supersession history. The closed receipt
+projects only its named validation-profile and skill-action meanings while
+leaving raw unit bytes unchanged and changing only the current state's event
+tail. It does not claim instruction work, validation, completion, acceptance,
+or publication. See [historical unit adoption](docs/HISTORICAL_UNIT_ADOPTION.md).
+The projection remains valid after an exact owner-produced local closure only
+when its instruction-completion, `BeginValidation`, deep-pass
+`RecordValidation`, and `Accept` transactions chain without gaps to the live
+terminal state. Those transactions, not the projection, establish completion,
+validation, and acceptance.
+
 For an immutable terminal blocked unit whose bytes wholly omit a currently
 required skill surface, the same receipt may project only the exact missing
 required skill IDs at canonical `<skills-root>/<skill-id>/SKILL.md` paths.
@@ -325,6 +338,10 @@ Ready transaction, changes only `ready` to `proposed`, deterministically
 recomputes the queue, and installs its receipt with the withdrawal event.
 Withdrawn identities cannot be readied again; a revised proposal uses a new
 unit identity.
+Use `-Action RecordHistoricalUnitCompatibilityProjection` only with a
+builder-produced, reviewed SHA-bound closed receipt for the exact historical
+pair. The action is dry-run by default and atomically installs the receipt plus
+one tail-only state event; it never edits either historical unit.
 Run `Inspect` with the exact repository map before Claim. Its embedded
 `claim_preflight` resolves writable repositories, read-only input paths,
 instruction aliases/files, resource declarations, validation tier, and device
