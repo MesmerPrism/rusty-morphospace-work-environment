@@ -8,5 +8,28 @@
   "artifact": {
     "relative_path": "apps/example-android/app/build/outputs/apk/debug/app-debug.apk",
     "kind": "single-base-apk"
+  },
+  "preflight": {
+    "manifest_relative_dependencies": [
+      "apps/example-android/app/src/main/AndroidManifest.xml"
+    ],
+    "lockfiles": ["Cargo.lock"],
+    "toolchain": {
+      "repository_files": ["rust-toolchain.toml"],
+      "required_targets": ["aarch64-linux-android"]
+    },
+    "identity": {
+      "package_id": "org.example.android",
+      "application_id": "org.example.android"
+    },
+    "environment_projection": {
+      "passthrough": ["PATH", "SYSTEMROOT", "TEMP", "TMP"],
+      "prohibited_parent_variables": ["GIT_PAGER"]
+    },
+    "output": {
+      "lane": "warm",
+      "collision_policy": "new-only",
+      "allow_source_root": true
+    }
   }
 }

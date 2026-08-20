@@ -9,7 +9,7 @@ not pin global versions. Source repos may add tighter version requirements.
 | --- | --- | --- |
 | Git | source control, submodules, tags | `git --version` |
 | PowerShell 7.6 LTS+ | authoritative portable workflow host (`pwsh`); Windows PowerShell 5.1 is bootstrap detection only | `pwsh -NoProfile -File ./scripts/Test-PowerShellHost.ps1` |
-| Rustup/Cargo | Rust workspaces and Android target setup | `rustup --version`; `cargo --version` |
+| Rust toolchain (Cargo ships with Rust) | Rust workspaces and Android target setup | `rustc --version`; `cargo --version`; `rustup --version` |
 | Python 3.11+ | schema, docs, graph, and validation helpers | `python --version` |
 | ripgrep | fast source and docs search | `rg --version` |
 
@@ -96,3 +96,6 @@ Preferred portable variable names:
 | `RUSTY_MORPHOSPACE_ARTIFACTS` | local ignored artifact root |
 
 See [local.env.example.ps1](../templates/local.env.example.ps1).
+
+See [Rust Toolchain Policy](RUST_TOOLCHAIN_POLICY.md) for the observed Rust
+1.97.1 baseline and non-authorizing advisory cadence.

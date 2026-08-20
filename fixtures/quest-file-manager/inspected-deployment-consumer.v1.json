@@ -1,0 +1,80 @@
+{
+  "schema": "rusty.morphospace.quest_file_manager_consumer_fixture.v1",
+  "purpose": "Work Environment consumer assertions for the advertised QuestIonAble File Manager inspected-deployment corpus; this fixture neither defines nor upgrades owner-native payloads.",
+  "provider_corpus": {
+    "schema": "questionable.file_manager.inspected_deployment_provider_conformance.v1",
+    "sha256": "285a9d19e72b77bda6a605104a02ee6cc7c101cb579d0569d755d6832a12d78d",
+    "current_main_commit": "a71206a707d2d68046101ec611fb4b3f8120104e",
+    "provider_contract_merge_commit": "3d84835ea213a75bbbfc781e6a1a4409b599bc28",
+    "provider_contract_tree": "5f8d9cb989afe6be59f7ec2c3515728efd21e9bf",
+    "candidate_equal_commit": "2bfdb5d57be3cabef7307e5b9865e98a5a409722"
+  },
+  "native_schema_ids": [
+    "questionable.file_manager.inspected_deployment.v3",
+    "questionable.file_manager.apk_launch_result.v1",
+    "questionable.file_manager.launcher_export_proof.v2",
+    "questionable.file_manager.app_runtime_observation.v2"
+  ],
+  "launch_envelope": {
+    "schema": "questionable.file_manager.apk_launch_result.v1",
+    "success": {
+      "succeeded": true,
+      "mutation": "non-null",
+      "result": "non-null",
+      "failure": "null"
+    },
+    "failure": {
+      "succeeded": false,
+      "mutation": "null",
+      "result": "null",
+      "failure": "non-null"
+    }
+  },
+  "runtime_observation_boundary": {
+    "schema": "questionable.file_manager.app_runtime_observation.v2",
+    "proves": [
+      "android_installed_identity",
+      "android_foreground",
+      "android_top_resumed",
+      "android_process"
+    ],
+    "does_not_prove": [
+      "openxr_readiness",
+      "app_effect",
+      "wearer_visibility"
+    ]
+  },
+  "consumer_wrapper_invariants": {
+    "exactly_one_terminal_json_document": true,
+    "all_outcomes_publish_atomically": true,
+    "raw_streams_must_be_retained_and_digested": true,
+    "failure_classes": [
+      "invocation_failure",
+      "parse_failure",
+      "offline",
+      "timeout",
+      "cancelled",
+      "provider_failure",
+      "internal_failure"
+    ]
+  },
+  "required_case_ids": [
+    "success",
+    "invocation_failure",
+    "parse_failure",
+    "offline",
+    "timeout",
+    "cancelled",
+    "provider_failure",
+    "internal_failure",
+    "zero_stdout",
+    "truncated_stdout",
+    "malformed_stdout",
+    "stderr_only",
+    "atomic_final_file",
+    "raw_stream_retention_and_digest",
+    "process_tree_cancellation",
+    "windows_quoting_and_locale",
+    "automatic_variable_name_hazards"
+  ]
+}
