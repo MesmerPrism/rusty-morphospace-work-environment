@@ -10,6 +10,11 @@
     "schema": { "const": "rusty.morphospace.workflow.execution_preflight_observation.v1" },
     "observation_id": { "$ref": "#/$defs/id" },
     "created_at": { "type": "string", "format": "date-time" },
+    "content_sha256": {
+      "description": "Canonical observation-content digest excluding created_at telemetry. Existing v1 observations without this optional field remain valid.",
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
     "subject": { "type": "string", "minLength": 1 },
     "values": {
       "type": "array",

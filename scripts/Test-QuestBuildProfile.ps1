@@ -7,6 +7,7 @@ $RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
 $runner = Join-Path $RepoRoot "scripts\Invoke-QuestBuildProfile.ps1"
 $testRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("quest-build-profile-corpus-" + [guid]::NewGuid().ToString("N"))
 $profileRoot = "$testRoot-profiles"
+$externalSourceRoot = "$testRoot-qfm-source"
 
 function Assert-True {
     param([bool]$Condition, [string]$Message)
@@ -60,6 +61,8 @@ function Invoke-Runner {
         [string]$Receipt = "",
         [string]$SignerPath = "",
         [string]$SignerSha256 = "",
+        [string]$EnvironmentBindingsPath = "",
+        [string]$EnvironmentBindingsSha256 = "",
         [int]$Timeout = 30,
         [int]$CancelAfterMilliseconds = 0,
         [switch]$Interrupt
@@ -74,6 +77,7 @@ function Invoke-Runner {
     )
     if ($Receipt) { $runnerArguments += @("-ReceiptPath", $Receipt) }
     if ($SignerPath) { $runnerArguments += @("-SignerObservationPath", $SignerPath, "-SignerObservationSha256", $SignerSha256) }
+    if ($EnvironmentBindingsPath) { $runnerArguments += @("-EnvironmentBindingsPath", $EnvironmentBindingsPath, "-EnvironmentBindingsSha256", $EnvironmentBindingsSha256) }
     if ($CancelAfterMilliseconds -gt 0) { $runnerArguments += @("-TestCancelAfterMilliseconds", [string]$CancelAfterMilliseconds) }
     if ($Interrupt) { $runnerArguments += "-TestInterruptBeforePublish" }
     $outputLines = @(& pwsh @runnerArguments 2>&1)
@@ -87,19 +91,27 @@ function Invoke-Runner {
 function Assert-Terminal {
     param([object]$Invocation, [string]$ExpectedOperation, [string]$ExpectedStatus, [int]$ExpectedExit)
     Assert-True ($Invocation.ExitCode -eq $ExpectedExit) "Expected exit $ExpectedExit, got $($Invocation.ExitCode): $($Invocation.Json)"
-    $expectedProperties = @("invocation", "observation", "operation", "owner_payload", "profile", "reason_codes", "schema", "streams", "terminal_status")
+    $expectedProperties = @("child_process", "invocation", "observation", "operation", "owner_payload", "profile", "reason_codes", "schema", "streams", "terminal_status")
     $actualProperties = @($Invocation.Result.PSObject.Properties.Name | Sort-Object)
     Assert-True (($actualProperties -join "|") -ceq ($expectedProperties -join "|")) "Terminal result property set is not exact."
     Assert-True ([string]$Invocation.Result.schema -ceq "rusty.morphospace.quest_build_terminal_result.v1") "Terminal result schema is incorrect."
     Assert-True ([string]$Invocation.Result.operation -ceq $ExpectedOperation) "Terminal operation is incorrect."
     Assert-True ([string]$Invocation.Result.terminal_status -ceq $ExpectedStatus) "Terminal status is incorrect."
     Assert-True ([string]$Invocation.Result.invocation.binding_sha256 -match "^[a-f0-9]{64}$") "Terminal invocation binding digest is missing."
+    Assert-True ([int]$Invocation.Result.invocation.timeout_seconds -ge 1) "Terminal invocation budget is missing."
+    $projectedEnvironment = $null -ne $Invocation.Result.observation.observation_id
+    if ($projectedEnvironment) {
+        Assert-True ([string]$Invocation.Result.invocation.child_environment_sha256 -match "^[a-f0-9]{64}$" -and [int]$Invocation.Result.invocation.child_environment_variable_count -ge 0) "Projected child-environment evidence is missing."
+    } else {
+        Assert-True ($null -eq $Invocation.Result.invocation.child_environment_sha256 -and [int]$Invocation.Result.invocation.child_environment_variable_count -eq 0 -and -not [bool]$Invocation.Result.child_process.started) "No-projection terminal evidence is inconsistent."
+    }
+    Assert-True ([string]$Invocation.Result.child_process.outcome -in @("not-started", "passed", "failed", "timed_out", "cancelled") -and [int]$Invocation.Result.child_process.timeout_seconds -eq [int]$Invocation.Result.invocation.timeout_seconds) "Terminal child-process evidence is invalid."
     $payloadProperties = @($Invocation.Result.owner_payload.PSObject.Properties.Name | Sort-Object)
-    $expectedPayloadProperties = @("artifact", "environment", "execution_preflight_observation", "identity", "lockfiles", "output", "source", "toolchain")
+    $expectedPayloadProperties = @("artifact", "environment", "execution_preflight_observation", "identity", "lockfiles", "output", "source", "source_composition", "toolchain")
     Assert-True (($payloadProperties -join "|") -ceq ($expectedPayloadProperties -join "|")) "Terminal owner payload property set is not exact."
     if ($null -ne $Invocation.Result.owner_payload.execution_preflight_observation) {
         $observation = $Invocation.Result.owner_payload.execution_preflight_observation
-        Assert-True ([string]$observation.schema -ceq "rusty.morphospace.workflow.execution_preflight_observation.v1" -and [string]$observation.observation_id -match "^[a-z0-9][a-z0-9-]{1,127}$" -and [string]$Invocation.Result.observation.observation_id -ceq [string]$observation.observation_id -and [string]$Invocation.Result.observation.sha256 -match "^[a-f0-9]{64}$") "Terminal observation binding is invalid."
+        Assert-True ([string]$observation.schema -ceq "rusty.morphospace.workflow.execution_preflight_observation.v1" -and [string]$observation.observation_id -match "^[a-z0-9][a-z0-9-]{1,127}$" -and [string]$Invocation.Result.observation.observation_id -ceq [string]$observation.observation_id -and [string]$Invocation.Result.observation.sha256 -match "^[a-f0-9]{64}$" -and [string]$Invocation.Result.observation.content_sha256 -match "^[a-f0-9]{64}$" -and [string]$Invocation.Result.observation.content_sha256 -ceq [string]$observation.content_sha256) "Terminal observation binding is invalid."
         foreach ($capability in @($observation.capabilities)) { Assert-True ([string]$capability.capability_id -match "^[a-z0-9][a-z0-9-]{1,127}$") "Observation capability identifier is not schema-valid." }
     }
     if ($ExpectedOperation -eq "preflight") {
@@ -126,7 +138,10 @@ if ($Large) {
         [Console]::Error.Write($chunk)
     }
 }
-[System.IO.File]::WriteAllBytes((Join-Path $PSScriptRoot $Output), [byte[]](1, 2, 3, 4))
+$outputPath = if ($env:MORPHOSPACE_CONTENT_ADDRESSED_ARTIFACT) { $env:MORPHOSPACE_CONTENT_ADDRESSED_ARTIFACT } else { Join-Path $PSScriptRoot $Output }
+$outputParent = Split-Path -Parent $outputPath
+if (-not (Test-Path -LiteralPath $outputParent)) { New-Item -ItemType Directory -Path $outputParent -Force | Out-Null }
+[System.IO.File]::WriteAllBytes($outputPath, [byte[]](1, 2, 3, 4))
 [System.IO.File]::WriteAllText((Join-Path $PSScriptRoot "captured.txt"), "output=$Output|text=$Text|pager=$env:GIT_PAGER", [System.Text.UTF8Encoding]::new($false))
 '@
     & git -C $testRoot init -q
@@ -140,20 +155,65 @@ if ($Large) {
     $beforeStatus = (& git -C $testRoot status --porcelain=v1 -z) -join ""
     $firstPreflight = Invoke-Runner "Preflight" $baseRecord
     Assert-Terminal $firstPreflight "preflight" "passed" 0
+    Start-Sleep -Milliseconds 10
     $secondPreflight = Invoke-Runner "Preflight" $baseRecord
     Assert-Terminal $secondPreflight "preflight" "passed" 0
     Assert-True ($firstPreflight.Result.invocation.binding_sha256 -ceq $secondPreflight.Result.invocation.binding_sha256) "Unchanged preflight invocation digest was not deterministic."
+    Assert-True ($firstPreflight.Result.observation.content_sha256 -ceq $secondPreflight.Result.observation.content_sha256) "Observation content identity changed without a semantic input change."
+    Assert-True ($firstPreflight.Result.observation.sha256 -cne $secondPreflight.Result.observation.sha256) "Timestamped receipt identity did not remain distinct across observations."
     $afterStatus = (& git -C $testRoot status --porcelain=v1 -z) -join ""
     Assert-True ($beforeStatus -ceq $afterStatus) "Preflight changed source bytes or Git state."
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $testRoot "out\fixture.apk"))) "Preflight created the build artifact."
 
+    New-Item -ItemType Directory -Path $externalSourceRoot -Force | Out-Null
+    Write-Utf8 (Join-Path $externalSourceRoot "qfm-marker.txt") "fixture QFM source composition"
+    & git -C $externalSourceRoot init -q
+    & git -C $externalSourceRoot config user.email "fixture-qfm@example.invalid"
+    & git -C $externalSourceRoot config user.name "Quest File Manager Fixture"
+    & git -C $externalSourceRoot add qfm-marker.txt
+    & git -C $externalSourceRoot commit -qm "QFM fixture baseline"
+    $externalRevision = ((& git -C $externalSourceRoot rev-parse HEAD) -join "").Trim()
+    $externalTree = ((& git -C $externalSourceRoot rev-parse "HEAD^{tree}") -join "").Trim()
+    $sourceRevision = ((& git -C $testRoot rev-parse HEAD) -join "").Trim()
+    $sourceTree = ((& git -C $testRoot rev-parse "HEAD^{tree}") -join "").Trim()
+    $environmentBindingsPath = Join-Path $profileRoot "environment-bindings.json"
+    $environmentBindings = [ordered]@{
+        schema = "rusty.morphospace.local_quest_build_environment.v1"
+        bindings = @([ordered]@{ id = "qfm-source"; path = $externalSourceRoot; kind = "directory"; git_revision = $externalRevision; git_tree = $externalTree })
+    }
+    Write-Utf8 $environmentBindingsPath ($environmentBindings | ConvertTo-Json -Depth 16)
+    $twoOwner = New-Profile
+    $twoOwner.environment = [ordered]@{ QFM_SOURCE = "qfm-source" }
+    $twoOwner.preflight.source_composition = [ordered]@{
+        source = [ordered]@{ git_revision = $sourceRevision; git_tree = $sourceTree; require_clean = $true }
+        external_sources = @([ordered]@{ source_id = "quest-file-manager"; binding_id = "qfm-source"; git_revision = $externalRevision; git_tree = $externalTree })
+    }
+    $twoOwnerRecord = Write-Profile $twoOwner
+    $twoOwnerPreflight = Invoke-Runner "Preflight" $twoOwnerRecord -EnvironmentBindingsPath $environmentBindingsPath -EnvironmentBindingsSha256 (Get-Sha $environmentBindingsPath)
+    Assert-Terminal $twoOwnerPreflight "preflight" "passed" 0
+    Assert-True (@($twoOwnerPreflight.Result.owner_payload.source_composition.external_sources).Count -eq 1 -and [string]$twoOwnerPreflight.Result.owner_payload.source_composition.external_sources[0].source_id -ceq "quest-file-manager") "Two-owner source composition evidence is incomplete."
+    $twoOwner.preflight.source_composition.external_sources[0].git_tree = (("0" * 40) -join "")
+    Assert-Terminal (Invoke-Runner "Preflight" (Write-Profile $twoOwner) -EnvironmentBindingsPath $environmentBindingsPath -EnvironmentBindingsSha256 (Get-Sha $environmentBindingsPath)) "preflight" "contradiction" 2
+
     $candidate = New-Profile
     $candidate.preflight.output.lane = "candidate"
     $candidate.preflight.output.collision_policy = "content-addressed"
-    Assert-Terminal (Invoke-Runner "Preflight" (Write-Profile $candidate)) "preflight" "passed" 0
+    $candidate.artifact.relative_path = "out\candidate-{content_sha256}.apk"
+    $candidateRecord = Write-Profile $candidate
+    $candidatePreflight = Invoke-Runner "Preflight" $candidateRecord
+    Assert-Terminal $candidatePreflight "preflight" "passed" 0
+    $candidateReceipt = Join-Path $testRoot "candidate-receipt.json"
+    $candidateBuild = Invoke-Runner "Build" $candidateRecord -Receipt $candidateReceipt
+    Assert-Terminal $candidateBuild "build" "passed" 0
+    $candidateArtifact = [string]$candidateBuild.Result.owner_payload.output.effective_artifact
+    Assert-True ((Split-Path -Leaf $candidateArtifact) -ceq "candidate-$($candidateBuild.Result.invocation.binding_sha256).apk") "Content-addressed output path was not derived from the binding digest."
+    Assert-True ([string]$candidateBuild.Result.owner_payload.artifact.kind -ceq "single-base-apk" -and [string]$candidateBuild.Result.owner_payload.artifact.path -ceq $candidateArtifact -and (Test-Path -LiteralPath $candidateArtifact)) "Candidate build did not retain one derived base APK proof."
     Write-Utf8 (Join-Path $testRoot "candidate-dirty.txt") "candidate source drift"
     Assert-Terminal (Invoke-Runner "Preflight" (Write-Profile $candidate)) "preflight" "contradiction" 2
     Remove-Item -LiteralPath (Join-Path $testRoot "candidate-dirty.txt") -Force
+    foreach ($candidateEphemera in @($candidateArtifact, (Join-Path $testRoot "captured.txt"), $candidateReceipt, "$candidateReceipt.stdout.bin", "$candidateReceipt.stderr.bin")) {
+        if (Test-Path -LiteralPath $candidateEphemera) { Remove-Item -LiteralPath $candidateEphemera -Force }
+    }
 
     $missingApplication = New-Profile
     $missingApplication.preflight.identity.application_id = ""
