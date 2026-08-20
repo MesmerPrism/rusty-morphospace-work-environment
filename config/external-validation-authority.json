@@ -2136,6 +2136,167 @@
         }
       ],
       "status": "approved"
+    },
+    {
+      "approval_id": "workflow-history-compatibility-20260818",
+      "required_ancestor": "d8c57fb5dc7781e8b462cfa661f990c9e5f63603",
+      "changed_paths": [
+        "AGENTS.md",
+        "README.md",
+        "docs/AUTONOMOUS_ITERATION.md",
+        "docs/HISTORICAL_UNIT_ADOPTION.md",
+        "schemas/historical-unit-compatibility-projection-v1.schema.json",
+        "schemas/work-unit-automation-receipt-v2.schema.json",
+        "scripts/HistoricalUnitCompatibilityProjection.psm1",
+        "scripts/Invoke-WorkUnitAutomation.ps1",
+        "scripts/New-HistoricalUnitCompatibilityProjection.ps1",
+        "scripts/Test-BlockedSupersessionTerminalValidation.ps1",
+        "scripts/Test-HistoricalUnitCompatibilityProjection.ps1",
+        "scripts/Test-WorkEnvironment.ps1",
+        "scripts/Test-WorkflowContracts.ps1",
+        "scripts/lib/MorphospaceBlockedSupersessionTerminalValidation.psm1",
+        "scripts/lib/MorphospaceHistoricalUnitCompatibilityProjection.psm1",
+        "skills/rust-work-graph/SKILL.md",
+        "skills/rusty-morphospace/SKILL.md",
+        "skills/rusty-morphospace/references/project-workflow.md",
+        "skills/system-engineering/SKILL.md"
+      ],
+      "artifacts": [
+        {
+          "path": "AGENTS.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 40182,
+          "sha256": "6b356ca9799c70ddeb1e22c2e96d8c085f45d69c6b4cbb249e3e51f78be091a1"
+        },
+        {
+          "path": "README.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 35167,
+          "sha256": "e6c12081098941a5a6fa12ec03e5399947e764cfe1649754f3bd90a56d42d3eb"
+        },
+        {
+          "path": "docs/AUTONOMOUS_ITERATION.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 45311,
+          "sha256": "a66010b8146fb40615617c690e28500dfba8152bc8d3281a4923418556cae3ea"
+        },
+        {
+          "path": "docs/HISTORICAL_UNIT_ADOPTION.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 10224,
+          "sha256": "85284204d0fc31ee6fa3c8ef1dc85d310001804eba2a84548592fb3f8507fc1f"
+        },
+        {
+          "path": "schemas/historical-unit-compatibility-projection-v1.schema.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 7485,
+          "sha256": "6a9fe5ca610e7cd2dfa097b5c37912ae80f04b8b4067b8ea7d67547e111ecf36"
+        },
+        {
+          "path": "schemas/work-unit-automation-receipt-v2.schema.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 2612,
+          "sha256": "6fdfc9a31a950224bce80a0a23cbdf0ec06e2c4f1e7ac10d254756c191ec5f1a"
+        },
+        {
+          "path": "scripts/HistoricalUnitCompatibilityProjection.psm1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 8106,
+          "sha256": "8dee873eb0b9f6a373c153ceea2e8c1bad4f552b1d26ff299559add806432bc7"
+        },
+        {
+          "path": "scripts/Invoke-WorkUnitAutomation.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 14789,
+          "sha256": "3180fe8bbd4a632aed6f1bef7d78e80db68559cdd0c184314dfd4a048cc49e0c"
+        },
+        {
+          "path": "scripts/New-HistoricalUnitCompatibilityProjection.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 1688,
+          "sha256": "371d9035aa0208c3bfb9058b9f71668e9ca948ae85f8a299eb9ab2521e1ddcfe"
+        },
+        {
+          "path": "scripts/Test-BlockedSupersessionTerminalValidation.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 63145,
+          "sha256": "af3d49b1a12d13a4007486425dca12c6ad8cb647f4d18b49670a8dc2d7bc788a"
+        },
+        {
+          "path": "scripts/Test-HistoricalUnitCompatibilityProjection.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 34149,
+          "sha256": "3e05337fb0f7598e2f48d942252b59cb7522d53b7fc83082bae38b97d6478563"
+        },
+        {
+          "path": "scripts/Test-WorkEnvironment.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 27662,
+          "sha256": "ad201e6609aeb54a6c56665e35c86ece85245598e89ae00ca83d7038385d7365"
+        },
+        {
+          "path": "scripts/Test-WorkflowContracts.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 207364,
+          "sha256": "3a13d690182d313f96d986b3c9f125ab28013f52f0a399907122c2b77aa00504"
+        },
+        {
+          "path": "scripts/lib/MorphospaceBlockedSupersessionTerminalValidation.psm1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 45336,
+          "sha256": "5fa575c5a961d506ec21256982f41756d4955a801d7c41925dc854210ac0251b"
+        },
+        {
+          "path": "scripts/lib/MorphospaceHistoricalUnitCompatibilityProjection.psm1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 56860,
+          "sha256": "dbcc84e71aace1dc60bcda516cfb0987f4e5104bdf8216b5874118257732fbcb"
+        },
+        {
+          "path": "skills/rust-work-graph/SKILL.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 22900,
+          "sha256": "d694428515a77fa54c9b2ac0a2989cd8b0508d71f121a38ca88b52eb5d69481f"
+        },
+        {
+          "path": "skills/rusty-morphospace/SKILL.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 7892,
+          "sha256": "389d5c2acaf6f99b3ea9222cf7bf2a08129af8173a30a2845c5fe082ebfd4f8e"
+        },
+        {
+          "path": "skills/rusty-morphospace/references/project-workflow.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 15647,
+          "sha256": "546b951839e5c147ab280781c4b26aa9b328b968e9ec49165d23307f645a8fc4"
+        },
+        {
+          "path": "skills/system-engineering/SKILL.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 33678,
+          "sha256": "99b6613f26700cea390ece56985d1cb185c14a2dc860e3ea3bf142cb27117660"
+        }
+      ],
+      "status": "approved"
     }
   ],
   "status": "active"
