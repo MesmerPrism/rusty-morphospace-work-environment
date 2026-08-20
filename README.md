@@ -112,6 +112,12 @@ its declared repositories and device stages, `labs` for product-authority or
 composition policy changes, and `locked` for releases or workflow trust-root
 changes. Select `risk_tier` independently.
 
+APK build lane is a separate choice. Warm iteration may reuse stable,
+project/lane-scoped compiler and packaging intermediates; Candidate/publication
+freezes exact clean inputs and immutable outputs. Both retain and inspect the
+exact APK. See [Quest APK Workflow](docs/QUEST_APK_WORKFLOW.md) and
+[Project Isolation](docs/PROJECT_ISOLATION.md).
+
 [Direct Work Packages](docs/DIRECT_WORK_PACKAGES.md) provide a lightweight
 front door for ordinary work. A validated `fast` package may proceed directly;
 `labs` (the guarded lane), `locked`, or an under-declared profile graduates to
@@ -195,7 +201,9 @@ pwsh -NoProfile -ExecutionPolicy Bypass `
 
 6. For Quest APK work, read [Quest APK Workflow](docs/QUEST_APK_WORKFLOW.md)
    and use the public Meta Quest workflow repo as the device-operations
-   authority. Routine local work uses a hash-pinned File Manager CLI, Kiosk
+   authority. Select warm iteration or Candidate/publication before building;
+   do not turn content-addressed final outputs into per-edit cold compiler
+   roots. Routine local work uses a hash-pinned File Manager CLI, Kiosk
    launch/foreground control when applicable, and app-owned runtime evidence.
    For OpenXR inspection or interaction, explicitly choose an app-native route,
    a bridge over the existing Spatial SDK session, or a packaged API layer.
