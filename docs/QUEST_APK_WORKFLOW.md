@@ -33,6 +33,13 @@ each cache to one project and lane, separate Android Cargo targets from host
 targets, write generated build inputs only when their bytes change, and record
 native, Android-shell, and package invalidation independently.
 
+Before an expensive build, the owner may run the Work Environment host-only
+build-profile preflight. It is advisory evidence, not a central decision and
+never produces or replaces the Inspect-owned WorkUnit candidate fingerprint.
+It observes the declared build vector and repo-owned toolchain/targets without
+injecting versions or targets; it does no build, device, ADB, lease, source
+mutation, or publication. See [Exact Quest run profiles](QUEST_RUN_PROFILES.md).
+
 Host compilation requires only the relevant build-root coordination. Acquire
 the exact headset claim immediately before an install, launch, or device
 observation. A warm build does not authorize a device mutation.
@@ -86,6 +93,14 @@ and `apk observe`. Kiosk retains catalog, selection, launch, and foreground-
 guard authority even when File Manager or Fleet carries its request. Android
 foreground observation does not replace app-owned OpenXR, renderer, source, or
 feature-lock evidence.
+
+The current File Manager consumer contract preserves its four owner-native
+schema IDs. Its `apk_launch_result.v1` outer envelope is exactly
+`{schema,succeeded,mutation,result,failure}`: success has non-null mutation
+and result with null failure; failure has null mutation/result with non-null
+failure. Runtime v2 establishes Android installed identity, foreground,
+top-resumed, and process facts only. It is not evidence of OpenXR readiness,
+an application effect, or wearer visibility.
 
 For repeatable local work, use the fail-closed wrapper instead of reconstructing
 that sequence from ambient executables. Its default mode resolves the pinned

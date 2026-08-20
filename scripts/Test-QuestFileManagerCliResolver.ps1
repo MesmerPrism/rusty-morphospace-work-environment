@@ -123,6 +123,11 @@ try {
         -File (Join-Path $RepoRoot "scripts\Test-QuestBuildProfile.ps1")
     if ($LASTEXITCODE -ne 0) { throw "Quest build-profile execution test failed." }
 
+    & $hostExecutable -NoProfile -ExecutionPolicy Bypass `
+        -File (Join-Path $RepoRoot "scripts\Test-QuestFileManagerConsumerContract.ps1") `
+        -RepoRoot $RepoRoot
+    if ($LASTEXITCODE -ne 0) { throw "Quest File Manager synthetic consumer contract test failed." }
+
     Write-Host "Quest File Manager CLI resolver and deployment self-tests passed."
 } finally {
     if (Test-Path -LiteralPath $testRoot) {

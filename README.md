@@ -271,6 +271,9 @@ validation without a device.
 - [Project, Build, And Headset Isolation](docs/PROJECT_ISOLATION.md) separates
   concurrent source/build identities while serializing transactional runs on
   one headset.
+- [Rust Toolchain Policy](docs/RUST_TOOLCHAIN_POLICY.md) records the observed
+  Rust 1.97.1 baseline, independent repository declarations, and the monthly
+  advisory/quarterly pinned-refresh cadence without central enforcement.
 - [Instruction Synchronization](docs/INSTRUCTION_SYNCHRONIZATION.md) keeps
   skills, planning instructions, touched-repo `AGENTS.md`, and README/router
   docs aligned without duplicating long recipes.

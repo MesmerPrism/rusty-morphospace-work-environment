@@ -28,6 +28,55 @@ Manager provider config, and verified diagnostic adapter. Hostess plans or runs
 only those adapters, retains foreign receipts by path and SHA-256, and resumes
 only completed hash-valid stages.
 
+## Host-only executable preflight
+
+`Invoke-QuestBuildProfile.ps1 -Mode Preflight` is an advisory producer for the
+same reviewed build-profile resolution path used by `-Mode Build`. It resolves
+the exact child executable and argv, profile/executable/source/lock and
+manifest-relative file hashes, declared repository-owned toolchain files and
+targets, package/application/signer expectations, explicit child-environment
+projection, and warm/Candidate output/collision policy. It emits one
+`execution_preflight_observation.v1`-bound terminal JSON document to stdout in
+seconds; it does not build, mutate source, reserve a resource, call ADB, touch
+a device, or publish a file.
+
+Preflight terminal status is only `passed`, `contradiction`, or `incomplete`.
+The companion owner-local
+`rusty.morphospace.quest_build_terminal_result.v1` carries the exact observation
+identity/hash and a deterministic `binding_sha256`; it does not create a
+WorkUnit candidate fingerprint. The owning workflow may associate its existing
+Inspect-created candidate fingerprint only after an explicit binding check.
+Build paths add `failed`, `timed_out`, and `cancelled` as applicable, retain
+raw stdout/stderr as separately digest-bound byte evidence, and publish at most
+one atomic terminal result. Child environments begin empty, so inherited
+control variables such as `GIT_PAGER` cannot affect the execution.
+
+Candidate output requires an observable clean source tree and
+`content-addressed` collision policy. Warm output remains a deliberately
+separate mutable lane. This observation is not an admission gate: a later
+locked trust-root change may consume it only after adopted-main evidence and
+the existing external validation-authority procedure.
+
+Start from
+[`quest-build-profile.example.json`](../templates/quest-build-profile.example.json)
+and run the non-mutating observation locally:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\Invoke-QuestBuildProfile.ps1 `
+  -Mode Preflight `
+  -ProfilePath <reviewed-profile.json> `
+  -ProfileSha256 <profile-sha256> `
+  -SourceRoot <app-source-root>
+```
+
+The Work Environment consumer fixture binds the accepted QFM corpus only at
+its outer envelope and evidence boundary: `apk_launch_result.v1` success means
+non-null `mutation`/`result` and null `failure`; failure is the inverse.
+`app_runtime_observation.v2` proves Android installed/foreground/top-resumed/
+process facts only—not OpenXR readiness, app effect, or wearer visibility.
+Nested QFM payload meaning remains QFM-owned.
+
 Use `ImmersiveXr` when an app can remain top-resumed while the legacy
 foreground projection is false. This policy still rejects a retained Guardian
 or sensor-lock component. `Android2d` requires both legacy foreground and
