@@ -358,10 +358,12 @@ ancestry consumes the authorization.
   composition lock; use detached clean materializations when working copies
   are changing in parallel. Observed, claimed, validated, and accepted
   revisions are separate state.
-- Parallel APK builds require distinct package/client identities,
-  content-addressed outputs, and complete run capsules. Runs on one headset
-  are serial-scoped transactions that restore exact prior properties and
-  stop only the target package.
+- Parallel APK builds require distinct package/client identities, stable short
+  project/lane-scoped mutable intermediates, immutable content-addressed
+  outputs, explicit native/shell/package invalidation, and complete run
+  capsules. Warm iteration and clean Candidate/publication are separate build
+  lanes. Runs on one headset are serial-scoped transactions that restore exact
+  prior properties and stop only the target package.
 - Machine-local resource claims coordinate repo paths, build outputs, Android
   packages, property/staging namespaces, bridge ports, and headset serials.
   Claims do not activate features or authorize Git/device operations.

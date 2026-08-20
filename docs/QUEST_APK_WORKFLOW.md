@@ -16,12 +16,39 @@ approvals, and coordination correlations in private resolver/run evidence.
 Use direct serial-scoped ADB below as a labeled diagnostic fallback or for
 provider-gap recovery, never as substitute owner acceptance.
 
+## Choose The APK Build Lane
+
+Select the build lane independently from `guard_profile`, `risk_tier`,
+validation tier, and device-operation authorization:
+
+| Lane | Composition contract | Mutable intermediates | Handoff contract |
+| --- | --- | --- | --- |
+| Warm iteration | Declare the live source observation, selected features, toolchain, package/signer policy, and limitations. Do not claim a clean composition. | Reuse a stable, deliberately short project- and lane-scoped Cargo/Gradle/Android-shell/product root with explicit invalidation. | Retain the exact inspected thin-development APK digest, focused-check result, build-phase receipt, and invalidation record. |
+| Candidate/publication | Freeze an exact clean multi-repository composition and feature/runtime lock. Reject ambient inputs. | Use the build owner's Candidate profile and fresh final assembly boundary; identify any retained compiler cache separately. | Retain content-addressed APK, inspection, signer/toolchain evidence, full gates, composition lock, phase receipt, and run capsule. |
+
+Stable mutable caches and immutable outputs are different identities. Do not
+key the whole compiler/Gradle cache by the full APK fingerprint, and do not
+replace an existing content-addressed output with an incremental result. Scope
+each cache to one project and lane, separate Android Cargo targets from host
+targets, write generated build inputs only when their bytes change, and record
+native, Android-shell, and package invalidation independently.
+
+Host compilation requires only the relevant build-root coordination. Acquire
+the exact headset claim immediately before an install, launch, or device
+observation. A warm build does not authorize a device mutation.
+
+The public
+[`Quest APK Build Lanes`](https://github.com/MesmerPrism/meta-quest-agent-workflow/blob/main/docs/quest-apk-build-lanes.md)
+playbook owns the portable procedure. The selected app shell or `rusty-quest`
+adapter owns concrete modes, inputs, tasks, and inspection. These human-readable
+lane names do not import another framework's wrapper schema.
+
 ## Default Ecosystem Loop
 
 For routine local iteration:
 
 ```text
-exact project source + feature lock + content-addressed run capsule
+declared project source + selected build lane + exact APK/run capsule
   -> private hash-pinned File Manager CLI resolution
   -> File Manager artifact inspection and exact-serial install
   -> Kiosk status and typed launch when the app participates
@@ -109,6 +136,8 @@ cleanup, and product improvement follow-up.
 | Surface | Owner |
 | --- | --- |
 | Contracts, schemas, synthetic fixtures | public core or clean Morphospace lane |
+| Project composition, feature lock, build-lane isolation, and run capsule | Work Environment and project workflow |
+| Cargo/Gradle/Android assembly implementation and APK inspection | App shell or Rusty Quest adapter |
 | Android package identity and signing | app shell |
 | Manifest permissions and activity declarations | app shell or Quest build workflow |
 | OpenXR loader, Vulkan/GL setup, swapchains, frame loop | app shell or renderer adapter |
