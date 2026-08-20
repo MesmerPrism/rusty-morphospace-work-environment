@@ -23,6 +23,7 @@ if ($RepositoryMapPath) {
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceCompletedTransitionSemanticCorrection.psm1') -Force
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceHistoricalBlockerResolutionIntentBindingCorrection.psm1') -Force
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceBlockedSupersessionTerminalValidation.psm1') -Force
+Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceHistoricalUnitCompatibilityProjection.psm1') -Force
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceProtocolCommon.psm1') -Force
 
 function Invoke-IsolatedWorkflowSelfTest {
@@ -644,6 +645,16 @@ function Test-ProjectBundle {
     }
 
     $workspaceRoot = Split-Path -Parent $Bundle.StatePath
+    $historicalCompatibilityProjections = @{}
+    $compatibilityLedgerPath = Join-Path $workspaceRoot 'iteration-events.jsonl'
+    if (Test-Path -LiteralPath $compatibilityLedgerPath -PathType Leaf) {
+        try {
+            $historicalCompatibilityProjections = Get-MorphospaceHistoricalUnitCompatibilityProjectionMap `
+                -WorkspaceRoot $workspaceRoot -ProjectId ([string]$spec.project_id)
+        } catch {
+            Add-Failure -Message "$Context historical compatibility projection rejected: $($_.Exception.Message)"
+        }
+    }
     $historicalAdoptions = @{}
     $reconstructionByOriginal = @{}
     $reconstructionReferences = @()
@@ -903,6 +914,8 @@ function Test-ProjectBundle {
         $changeCategories = @($unit.change_categories | ForEach-Object { [string]$_ })
         $unitId = [string]$unit.unit_id
         $adoption = if ($historicalAdoptions.ContainsKey($unitId)) { $historicalAdoptions[$unitId] } else { $null }
+        $compatibilityProjection = if ($historicalCompatibilityProjections.ContainsKey($unitId)) { $historicalCompatibilityProjections[$unitId] } else { $null }
+        Assert-Contract (-not ($null -ne $adoption -and $null -ne $compatibilityProjection)) "$Context historical unit '$unitId' cannot combine adoption and compatibility projections."
         $readOnlyDependencyScopeProjection = $null
         $completedProjectScopeProjection = $null
         if ($null -ne $adoption) {
@@ -1145,6 +1158,16 @@ function Test-ProjectBundle {
                     }
                 }))
             }
+        }
+        if ($null -ne $compatibilityProjection -and [string]$compatibilityProjection.kind -ceq 'instruction') {
+            $effectiveInstructionSurfaces = @($instructionSurfaces | ForEach-Object {
+                $surface = $_ | Select-Object *
+                $mapping = @($compatibilityProjection.mappings | Where-Object {
+                    [string]$surface.surface_kind -ceq 'skill' -and [string]$_.skill_id -ceq [string]$surface.skill_id
+                })
+                if ($mapping.Count -eq 1) { $surface.action = [string]$mapping[0].effective_action }
+                $surface
+            })
         }
 
         if ($effectiveInstructionImpact -eq "none") {
@@ -1455,7 +1478,12 @@ function Test-ProjectBundle {
         }
         Assert-Contract (@($unit.validation).Count -gt 0) "$Context unit '$($unit.unit_id)' needs validation commands."
         foreach ($validation in @($unit.validation)) {
-            if ($null -eq $adoption) { Assert-Contract ($validationProfileIds -contains [string]$validation.profile_id) "$Context unit '$($unit.unit_id)' references unknown validation profile '$($validation.profile_id)'." }
+            $effectiveValidationProfileId = [string]$validation.profile_id
+            if ($null -ne $compatibilityProjection -and [string]$compatibilityProjection.kind -ceq 'validation') {
+                $mapping = @($compatibilityProjection.mappings | Where-Object { [string]$_.legacy -ceq [string]$validation.profile_id })
+                if ($mapping.Count -eq 1) { $effectiveValidationProfileId = [string]$mapping[0].current }
+            }
+            if ($null -eq $adoption) { Assert-Contract ($validationProfileIds -contains $effectiveValidationProfileId) "$Context unit '$($unit.unit_id)' references unknown validation profile '$($validation.profile_id)'." }
             Assert-Contract (Test-Text $validation.command) "$Context unit '$($unit.unit_id)' has an empty validation command."
         }
         if ($null -ne $adoption) {
@@ -1797,7 +1825,7 @@ function Test-ProjectBundle {
                     $null -ne $terminalFailHistory -and
                     $terminalFailHistory.history_present -eq $true -and
                     $terminalFailHistory.authenticated -eq $true
-                ) "$Context supersession replacement '$currentId' is blocked without an authenticated owner validation-fail lifecycle and derivable strict v1/v3 continuation suffix."
+                ) "$Context supersession replacement '$currentId' is blocked without an authenticated owner validation-fail lifecycle and derivable strict v1/v2/v3 continuation suffix."
             } else {
                 Assert-Contract (@("active", "validating", "accepted") -contains $replacementStatus) "$Context supersession replacement '$currentId' is neither current, accepted, nor an authenticated terminal failure."
             }

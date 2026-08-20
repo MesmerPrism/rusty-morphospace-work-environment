@@ -17,6 +17,34 @@ that same unit. Missing, malformed, ambiguous, or misbound supersession restores
 the deferred errors and fails validation. Structural unit checks, closed
 registries, event checks, and the one-current-unit invariant are never deferred.
 
+### Authenticated in-flight compatibility projection
+
+One separately governed exception remains outside terminal adoption. A
+non-current/non-next immutable in-flight unit may receive a current-validation
+projection only through `historical_unit_compatibility_projection.v1` and the
+typed `RecordHistoricalUnitCompatibilityProjection` owner action. The closed
+receipt authenticates one exact v2 old-to-replacement supersession and one
+exact owner Ready-to-WithdrawReady chain, binds raw and canonical unit bytes,
+registered profile semantics, state and event-prefix preimages, and installs
+both target mappings atomically with a tail-only state transition.
+
+The contract is deliberately exact: one historical validation unit may map
+only `focused` and `windows-integration` to registered `host`, while retaining
+every raw command byte; one withdrawn unit may project only the current
+`update` requirement for the `rusty-morphospace` and `system-engineering`
+skill surfaces while retaining raw `review-no-change`/`planned` bytes. It never
+claims a skill edit, instruction completion or execution, validation,
+status/currentness, acceptance, or publication. Missing, extra, reordered,
+detached, current/next, or drifted targets fail closed. This projection does
+not broaden terminal adoption or authorize future compatibility mappings.
+
+The receipt also carries the same exact two skill-action mappings for its
+authority unit so an owner-produced local closure remains readable without
+rewriting that unit. Only a contiguous instruction-completion,
+`BeginValidation`, deep-pass `RecordValidation`, and `Accept` transaction suffix
+may advance the projection to terminal state; those transactions alone prove
+completion, validation, and acceptance.
+
 ## Contract
 
 Each receipt binds the project, source workflow release and commit, and every
@@ -131,6 +159,7 @@ rewrites reject. See
 
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-HistoricalUnitAdoption.ps1 -SelfTest
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-HistoricalUnitCompatibilityProjection.ps1 -SelfTest
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkflowContracts.ps1 -WorkspaceRoot <project-root>\morphospace
 ```
 
