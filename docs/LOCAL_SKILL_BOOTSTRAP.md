@@ -91,6 +91,13 @@ Each installed skill receives:
   dirty-source state, managed-file hashes, and aggregate source fingerprint;
 - `references/local-work-environment.json`: the exact local clone and docs root.
 
+`meta-quest-workflow` additionally receives
+`references/local-meta-quest-playbooks.json`. It binds the exact canonical
+Meta repository path, commit, Git tree, clean status fingerprint, README, docs
+root, and playbook index. Its installed resolver uses that checkout only while
+all identities still validate. Otherwise it returns public raw-file URLs
+pinned to the installed provenance commit, never floating `main`.
+
 Those files are local installation records. Do not copy them back into this
 public repository. For `meta-quest-workflow`, the source record binds the
 canonical Meta repository and commit while the locator independently binds this
@@ -135,10 +142,12 @@ scan scope from the current unit. A tracked-file inventory is the safe default.
 The public `meta-quest-agent-workflow` repo is the canonical tracked skill
 owner. Pass its exact clean checkout through `-MetaQuestWorkflowRepoRoot`; the
 installer copies its skill bytes and records its commit without guessing or
-fetching. This work-environment repo generates only the local locator and does
-not bundle ADB, SDKs, Meta tools, device serials, or a competing headset
-procedure. Installing the skill does not authorize device mutation or require
-a connected headset.
+fetching. This work-environment repo generates separate Work Environment and
+Meta playbook locators; it does not copy the repository-level playbooks into
+the skill or bundle ADB, SDKs, Meta tools, device serials, or a competing
+headset procedure. The Meta locator is accepted only after live Git identity,
+tree, and cleanliness validation. Installing the skill does not authorize
+device mutation or require a connected headset.
 
 For the routine local ecosystem loop, copy
 `templates/quest-file-manager-cli.example.json` to the ignored
@@ -241,7 +250,8 @@ pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Test-LocalSkillBootstrap.ps1
 ```
 
-The test proves plan/install/verify behavior, drift detection, explicit update,
+The test proves plan/install/verify behavior, exact Meta playbook locator
+generation and damage rejection, drift detection, explicit update,
 unmanaged-file reporting and preservation, dry-run and fingerprinted
 backup-first pruning, and final verification for all five skills without
 touching the contributor's real skill directory.

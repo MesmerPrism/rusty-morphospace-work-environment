@@ -132,6 +132,19 @@ function Get-SkillSourceFingerprint {
     return Get-StringSha256 -Text $inputText
 }
 
+function Get-GeneratedLocalMetadataPaths {
+    param([string]$SkillName)
+
+    $paths = @(
+        ".morphospace-skill-source.json",
+        "references/local-work-environment.json"
+    )
+    if ($SkillName -eq "meta-quest-workflow") {
+        $paths += "references/local-meta-quest-playbooks.json"
+    }
+    return $paths
+}
+
 function Assert-RequiredSkillSourceFiles {
     param(
         [string]$SkillName,
@@ -141,17 +154,17 @@ function Assert-RequiredSkillSourceFiles {
     $sourcePaths = @($SourceFiles | ForEach-Object { ([string]$_.path).Replace('\', '/') })
     $requiredPaths = @("SKILL.md")
     if ($SkillName -eq "meta-quest-workflow") {
-        $requiredPaths += "agents/openai.yaml"
+        $requiredPaths += @(
+            "agents/openai.yaml",
+            "scripts/Resolve-PlaybookSource.ps1"
+        )
     }
     foreach ($requiredPath in $requiredPaths) {
         if ($sourcePaths -cnotcontains $requiredPath) {
             throw "Git-owned skill source inventory is missing required path: $SkillName/$requiredPath"
         }
     }
-    foreach ($generatedPath in @(
-        ".morphospace-skill-source.json",
-        "references/local-work-environment.json"
-    )) {
+    foreach ($generatedPath in @(Get-GeneratedLocalMetadataPaths -SkillName $SkillName)) {
         if ($sourcePaths -ccontains $generatedPath) {
             throw "Git-owned skill source inventory contains generated local metadata: $SkillName/$generatedPath"
         }
@@ -198,6 +211,7 @@ function Get-SkillFileInventory {
 
 function Get-UnmanagedSkillFiles {
     param(
+        [string]$SkillName,
         [object[]]$Inventory,
         [object[]]$SourceFiles
     )
@@ -206,8 +220,9 @@ function Get-UnmanagedSkillFiles {
     foreach ($file in $SourceFiles) {
         [void]$managedPaths.Add(([string]$file.path).Replace('\', '/'))
     }
-    [void]$managedPaths.Add(".morphospace-skill-source.json")
-    [void]$managedPaths.Add("references/local-work-environment.json")
+    foreach ($generatedPath in @(Get-GeneratedLocalMetadataPaths -SkillName $SkillName)) {
+        [void]$managedPaths.Add($generatedPath)
+    }
     return @($Inventory | Where-Object { -not $managedPaths.Contains($_.path) })
 }
 
@@ -257,7 +272,11 @@ function Get-SourceRepositoryInfo {
     param([string]$RepositoryRoot)
 
     $git = @(Get-Command git -ErrorAction Stop | Select-Object -First 1)[0].Source
+    $root = [System.IO.Path]::GetFullPath((
+        ([string](& $git -C $RepositoryRoot rev-parse --show-toplevel)).Trim()
+    ))
     $commit = ([string](& $git -C $RepositoryRoot rev-parse HEAD)).Trim()
+    $tree = ([string](& $git -C $RepositoryRoot rev-parse 'HEAD^{tree}')).Trim()
     $remote = ([string](& $git -C $RepositoryRoot remote get-url origin 2>$null)).Trim()
     $dirtyLines = @(& $git -C $RepositoryRoot status --porcelain --untracked-files=normal | Sort-Object -CaseSensitive)
     $statusText = if ($dirtyLines.Count -eq 0) { "" } else { ($dirtyLines -join "`n") + "`n" }
@@ -283,7 +302,9 @@ function Get-SourceRepositoryInfo {
     }
 
     return [pscustomobject]@{
+        root = $root
         commit = $commit
+        tree = $tree
         remote = $remote
         dirty = ($dirtyLines.Count -gt 0)
         status_fingerprint = $statusFingerprint
@@ -300,7 +321,9 @@ function Assert-RepositorySnapshotCurrent {
 
     $freshRepositoryInfo = Get-SourceRepositoryInfo -RepositoryRoot $RepositoryRoot
     if (($RequireClean -and $freshRepositoryInfo.dirty) -or
+        -not $freshRepositoryInfo.root.Equals($ExpectedRepositoryInfo.root, $pathStringComparison) -or
         $freshRepositoryInfo.commit -ne $ExpectedRepositoryInfo.commit -or
+        $freshRepositoryInfo.tree -ne $ExpectedRepositoryInfo.tree -or
         $freshRepositoryInfo.remote -ne $ExpectedRepositoryInfo.remote -or
         [bool]$freshRepositoryInfo.dirty -ne [bool]$ExpectedRepositoryInfo.dirty -or
         $freshRepositoryInfo.status_fingerprint -ne $ExpectedRepositoryInfo.status_fingerprint -or
@@ -361,7 +384,9 @@ function Test-TargetSkill {
     }
 
     $inventory = @(Get-SkillFileInventory -Target $Target)
-    $unmanagedFiles = @(Get-UnmanagedSkillFiles -Inventory $inventory -SourceFiles $SourceFiles)
+    $unmanagedFiles = @(
+        Get-UnmanagedSkillFiles -SkillName $SkillName -Inventory $inventory -SourceFiles $SourceFiles
+    )
     $unmanagedFingerprint = Get-InventoryFingerprint -Files $unmanagedFiles
     $differences = New-Object System.Collections.Generic.List[string]
     foreach ($file in $SourceFiles) {
@@ -378,12 +403,21 @@ function Test-TargetSkill {
 
     $metadataPath = Join-Path $Target ".morphospace-skill-source.json"
     $locatorPath = Join-Path $Target "references\local-work-environment.json"
-    $managed = (Test-Path -LiteralPath $metadataPath -PathType Leaf) -and (Test-Path -LiteralPath $locatorPath -PathType Leaf)
+    $playbookLocatorPath = Join-Path $Target "references\local-meta-quest-playbooks.json"
+    $managed = (Test-Path -LiteralPath $metadataPath -PathType Leaf) -and
+        (Test-Path -LiteralPath $locatorPath -PathType Leaf) -and
+        ($SkillName -ne "meta-quest-workflow" -or
+            (Test-Path -LiteralPath $playbookLocatorPath -PathType Leaf))
 
     if ($managed) {
         try {
             $metadata = Get-Content -Raw -LiteralPath $metadataPath | ConvertFrom-Json
             $locator = Get-Content -Raw -LiteralPath $locatorPath | ConvertFrom-Json
+            $playbookLocator = if ($SkillName -eq "meta-quest-workflow") {
+                Get-Content -Raw -LiteralPath $playbookLocatorPath | ConvertFrom-Json
+            } else {
+                $null
+            }
             $expectedFingerprint = Get-SkillSourceFingerprint -SourceFiles $SourceFiles
             if ($metadata.schema -ne "rusty.morphospace.local_skill_source.v1" -or
                 $metadata.skill_id -ne $SkillName -or
@@ -400,6 +434,19 @@ function Test-TargetSkill {
                 [bool]$locator.source_worktree_dirty -ne [bool]$WorkEnvironmentRepositoryInfo.dirty) { $differences.Add("locator:source-state") }
             if (-not ([string]$locator.work_environment_root).Equals($RepoRoot, $pathStringComparison)) { $differences.Add("locator:work-environment-root") }
             if (-not ([string]$locator.docs_root).Equals((Join-Path $RepoRoot "docs"), $pathStringComparison)) { $differences.Add("locator:docs-root") }
+            if ($SkillName -eq "meta-quest-workflow") {
+                if ($playbookLocator.schema -ne "rusty.quest.workflow.local_playbook_source.v1" -or
+                    $playbookLocator.skill_id -ne $SkillName -or
+                    $playbookLocator.source_repository -ne $SourceRepositoryInfo.remote -or
+                    $playbookLocator.source_commit -ne $SourceRepositoryInfo.commit -or
+                    $playbookLocator.source_tree -ne $SourceRepositoryInfo.tree) { $differences.Add("playbook-locator:identity") }
+                if ([bool]$playbookLocator.source_worktree_dirty -ne [bool]$SourceRepositoryInfo.dirty -or
+                    $playbookLocator.source_status_fingerprint -ne $SourceRepositoryInfo.status_fingerprint) { $differences.Add("playbook-locator:source-state") }
+                if (-not ([string]$playbookLocator.repository_root).Equals($SourceRepositoryInfo.root, $pathStringComparison)) { $differences.Add("playbook-locator:repository-root") }
+                if (-not ([string]$playbookLocator.readme_path).Equals((Join-Path $SourceRepositoryInfo.root "README.md"), $pathStringComparison)) { $differences.Add("playbook-locator:readme") }
+                if (-not ([string]$playbookLocator.docs_root).Equals((Join-Path $SourceRepositoryInfo.root "docs"), $pathStringComparison)) { $differences.Add("playbook-locator:docs-root") }
+                if (-not ([string]$playbookLocator.playbook_index_path).Equals((Join-Path $SourceRepositoryInfo.root "docs\playbook-index.md"), $pathStringComparison)) { $differences.Add("playbook-locator:playbook-index") }
+            }
         } catch {
             $differences.Add("provenance:invalid-json")
         }
@@ -463,6 +510,7 @@ function New-SkillBackup {
 
 function Remove-UnmanagedSkillFiles {
     param(
+        [string]$SkillName,
         [string]$Target,
         [string]$RepositoryRoot,
         [string]$WorkEnvironmentRepositoryRoot,
@@ -479,7 +527,9 @@ function Remove-UnmanagedSkillFiles {
 
     $freshInventory = @(Get-SkillFileInventory -Target $Target)
     Compare-FileInventory -Expected $ExpectedInventory -Actual $freshInventory -Label "Skill target"
-    $freshUnmanagedFiles = @(Get-UnmanagedSkillFiles -Inventory $freshInventory -SourceFiles $SourceFiles)
+    $freshUnmanagedFiles = @(
+        Get-UnmanagedSkillFiles -SkillName $SkillName -Inventory $freshInventory -SourceFiles $SourceFiles
+    )
     $freshFingerprint = Get-InventoryFingerprint -Files $freshUnmanagedFiles
     if ($freshFingerprint -ne $ExpectedFingerprint) {
         throw "Unmanaged skill fingerprint changed before prune."
@@ -577,6 +627,25 @@ function Write-InstallationRecords {
         docs_root = (Join-Path $RepoRoot "docs")
     }
     Write-JsonUtf8NoBom -Path (Join-Path $Target "references\local-work-environment.json") -Value $locator
+
+    if ($SkillName -eq "meta-quest-workflow") {
+        $playbookLocator = [ordered]@{
+            schema = "rusty.quest.workflow.local_playbook_source.v1"
+            skill_id = $SkillName
+            repository_root = $SourceRepositoryInfo.root
+            source_repository = $SourceRepositoryInfo.remote
+            source_commit = $SourceRepositoryInfo.commit
+            source_tree = $SourceRepositoryInfo.tree
+            source_worktree_dirty = [bool]$SourceRepositoryInfo.dirty
+            source_status_fingerprint = $SourceRepositoryInfo.status_fingerprint
+            readme_path = (Join-Path $SourceRepositoryInfo.root "README.md")
+            docs_root = (Join-Path $SourceRepositoryInfo.root "docs")
+            playbook_index_path = (Join-Path $SourceRepositoryInfo.root "docs\playbook-index.md")
+        }
+        Write-JsonUtf8NoBom `
+            -Path (Join-Path $Target "references\local-meta-quest-playbooks.json") `
+            -Value $playbookLocator
+    }
 }
 
 $localSkills = @(
@@ -641,6 +710,16 @@ $skillContexts = @(
         if ($skill.Name -eq $metaSkillId -and
             $sourceRepositoryInfo.remote -notmatch '(?i)(?:github\.com[:/])MesmerPrism/meta-quest-agent-workflow(?:\.git)?$') {
             throw "MetaQuestWorkflowRepoRoot origin is not the canonical Meta Quest workflow repository."
+        }
+        if ($skill.Name -eq $metaSkillId) {
+            foreach ($playbookPath in @(
+                (Join-Path $skill.RepositoryRoot "README.md"),
+                (Join-Path $skill.RepositoryRoot "docs\playbook-index.md")
+            )) {
+                if (-not (Test-Path -LiteralPath $playbookPath -PathType Leaf)) {
+                    throw "Canonical Meta Quest playbook source is missing: $playbookPath"
+                }
+            }
         }
         $sourceFiles = @(Get-SkillSourceFiles -SkillRoot $skill.FullName -RepositoryRoot $skill.RepositoryRoot)
         Assert-RequiredSkillSourceFiles -SkillName $skill.Name -SourceFiles $sourceFiles
@@ -836,6 +915,7 @@ foreach ($context in $skillContexts) {
                 $backup = Join-Path (Join-Path $BackupRoot $timestamp) $skill.Name
                 New-SkillBackup -Target $target -Backup $backup -ExpectedInventory @($inspection.inventory)
                 Remove-UnmanagedSkillFiles `
+                    -SkillName $skill.Name `
                     -Target $target `
                     -RepositoryRoot $skill.RepositoryRoot `
                     -WorkEnvironmentRepositoryRoot $RepoRoot `

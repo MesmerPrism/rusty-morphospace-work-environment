@@ -49,4 +49,8 @@ drift. The separate `PruneUnmanaged` action is dry-run by default and can remove
 only one skill's fingerprinted inventory after a verified complete backup.
 For Meta, `.morphospace-skill-source.json` binds the canonical Meta repository
 and commit while `references/local-work-environment.json` independently binds
-this Work Environment checkout.
+this Work Environment checkout. The additional generated
+`references/local-meta-quest-playbooks.json` binds the exact local Meta
+repository, Git tree, clean status, and docs paths. The installed router uses
+that source only after validation; otherwise it resolves public playbooks at
+the provenance commit rather than floating `main`.
