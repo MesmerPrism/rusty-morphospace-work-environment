@@ -107,7 +107,7 @@ try {
     $unit = [pscustomobject][ordered]@{
         schema='rusty.morphospace.workflow.iteration_unit.v1';unit_id='unit058';project_id='morphovision-unit058';status='active'
         objective='Resume the frozen current feature unit only after its legacy contract shape is corrected.'
-        architecture_decision=$legacyDecision;work_mode='feature';guard_profile='fast';change_categories=@('implementation','validation')
+        architecture_decision=$legacyDecision;work_mode='feature';guard_profile='locked';change_categories=@('implementation','authority','validation','public-private-boundary')
         instruction_impact='update'
         instruction_surfaces=@(
             [pscustomobject][ordered]@{surface_kind='agents';path='<repo-root>/AGENTS.md';owner='fixture-owner';change_reason='Retain the required active-unit instruction entrypoint.';action='update';status='complete';validation='Fixture content observation.';skill_id=$null},
@@ -199,6 +199,12 @@ try {
     $extraSkill = Copy-ActiveUnitContractTestDocument $correction; $extraSkill.required_skill_surfaces += (New-ActiveUnitContractTestSurface 'rusty-morphospace')
     $extraSkillPath = Join-Path $temp 'extra-skill.json'; Write-ActiveUnitContractTestJson $extraSkillPath $extraSkill
     Assert-ActiveUnitContractRejected { Invoke-MorphospaceCorrectActiveUnitContract -WorkspaceRoot $workspace -UnitId 'unit058' -ActiveUnitContractCorrection $extraSkillPath -OutPath $outPath } 'extra or duplicate correction skill surface was accepted'
+    $nonRequiredSkill = Copy-ActiveUnitContractTestDocument $correction
+    $nonRequiredSurface = New-ActiveUnitContractTestSurface 'rusty-morphospace'
+    $nonRequiredSurface.skill_id = 'rust-work-graph'; $nonRequiredSurface.path = '<skills-root>/rust-work-graph/SKILL.md'
+    $nonRequiredSkill.required_skill_surfaces += $nonRequiredSurface
+    $nonRequiredSkillPath = Join-Path $temp 'non-required-skill.json'; Write-ActiveUnitContractTestJson $nonRequiredSkillPath $nonRequiredSkill
+    Assert-ActiveUnitContractRejected { Invoke-MorphospaceCorrectActiveUnitContract -WorkspaceRoot $workspace -UnitId 'unit058' -ActiveUnitContractCorrection $nonRequiredSkillPath -OutPath $outPath } 'non-required correction skill surface was accepted'
     $completedSkill = Copy-ActiveUnitContractTestDocument $correction; $completedSkill.required_skill_surfaces[0].status = 'complete'
     $completedSkillPath = Join-Path $temp 'completed-skill.json'; Write-ActiveUnitContractTestJson $completedSkillPath $completedSkill
     Assert-ActiveUnitContractRejected { Invoke-MorphospaceCorrectActiveUnitContract -WorkspaceRoot $workspace -UnitId 'unit058' -ActiveUnitContractCorrection $completedSkillPath -OutPath $outPath } 'falsely completed skill surface was accepted'
@@ -208,6 +214,15 @@ try {
     $staleState = Copy-ActiveUnitContractTestDocument $correction; $staleState.expected.state_sha256 = '0' * 64
     $staleStatePath = Join-Path $temp 'stale-state.json'; Write-ActiveUnitContractTestJson $staleStatePath $staleState
     Assert-ActiveUnitContractRejected { Invoke-MorphospaceCorrectActiveUnitContract -WorkspaceRoot $workspace -UnitId 'unit058' -ActiveUnitContractCorrection $staleStatePath -OutPath $outPath } 'stale state CAS was accepted'
+    $writableSkillUnit = Copy-ActiveUnitContractTestDocument $unit
+    $writableSkillUnit.allowed_repositories[0].allowed_paths += '<skills-root>/rusty-morphospace/'
+    Write-ActiveUnitContractTestJson $unitPath $writableSkillUnit
+    $writableSkillCorrection = Copy-ActiveUnitContractTestDocument $correction
+    Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
+    Update-ActiveUnitContractTestExpected $writableSkillCorrection $projectPath $statePath $unitPath $eventsPath
+    $writableSkillPath = Join-Path $temp 'writable-skill.json'; Write-ActiveUnitContractTestJson $writableSkillPath $writableSkillCorrection
+    Assert-ActiveUnitContractRejected { Invoke-MorphospaceCorrectActiveUnitContract -WorkspaceRoot $workspace -UnitId 'unit058' -ActiveUnitContractCorrection $writableSkillPath -OutPath $outPath } 'writable correction skill path was accepted'
+    Write-ActiveUnitContractTestJson $unitPath $unit
     Assert-ActiveUnitContractRejected { Invoke-MorphospaceCorrectActiveUnitContract -WorkspaceRoot $workspace -UnitId 'unit058' -ActiveUnitContractCorrection $correctionPath -OutPath $outPath -Execute } 'execute without a caller-pinned dry-run hash was accepted'
 
     $correctionHash = Get-ActiveUnitContractTestFileSha256 $correctionPath

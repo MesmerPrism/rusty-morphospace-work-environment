@@ -2,6 +2,7 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceActiveUnitContractReviewCompatibility.psm1') -Force
 
 function Copy-ActiveUnitContractDocument {
     param([Parameter(Mandatory)][object]$Value)
@@ -71,36 +72,6 @@ function Assert-ActiveUnitContractExactSkillSurfaces {
     }
 }
 
-function Test-ActiveUnitContractPathInScope {
-    param([Parameter(Mandatory)][string]$Candidate,[Parameter(Mandatory)][object[]]$AllowedPaths)
-    $candidatePath = $Candidate.Replace('\', '/').TrimEnd('/')
-    foreach ($allowedRaw in @($AllowedPaths)) {
-        $allowed = ([string]$allowedRaw).Replace('\', '/').TrimEnd('/')
-        if (-not $allowed) { return $true }
-        if ($candidatePath.Equals($allowed, [StringComparison]::OrdinalIgnoreCase) -or
-            $candidatePath.StartsWith($allowed + '/', [StringComparison]::OrdinalIgnoreCase)) { return $true }
-    }
-    return $false
-}
-
-function Test-ActiveUnitContractSkillReviewCompatibility {
-    param(
-        [Parameter(Mandatory)][object]$Unit,
-        [Parameter(Mandatory)][object]$State,
-        [Parameter(Mandatory)][string[]]$EffectiveChangeCategories,
-        [Parameter(Mandatory)][object[]]$AllowedRepositories,
-        [Parameter(Mandatory)][object]$SkillSurface
-    )
-    if (-not ($Unit.PSObject.Properties.Name -contains 'work_mode') -or
-        [string]$Unit.work_mode -cne 'feature' -or [string]$Unit.status -cne 'active' -or
-        [string]$State.current_unit -cne [string]$Unit.unit_id -or
-        [string]$SkillSurface.action -cne 'review-no-change') { return $false }
-    $portablePolicyCategories = @('authority', 'module-layout', 'feature-activation', 'device-policy', 'repo-routing', 'public-private-boundary', 'workflow-automation', 'state-machine', 'validation-routing', 'recovery')
-    if (@($EffectiveChangeCategories | Where-Object { $portablePolicyCategories -ccontains [string]$_ }).Count -gt 0) { return $false }
-    $writablePaths = @($AllowedRepositories | ForEach-Object { @($_.allowed_paths | ForEach-Object { [string]$_ }) })
-    return -not (Test-ActiveUnitContractPathInScope -Candidate ([string]$SkillSurface.path) -AllowedPaths $writablePaths)
-}
-
 function Assert-ActiveUnitContractCurrentSkillRules {
     param(
         [Parameter(Mandatory)][object]$Unit,
@@ -115,27 +86,6 @@ function Assert-ActiveUnitContractCurrentSkillRules {
     }
     if ([string]$Unit.instruction_impact -cne 'update') { throw 'Corrected active feature unit must retain update instruction impact.' }
 
-    $aliases = @{}
-    foreach ($alias in @($lifecycle.change_category_aliases)) { $aliases[[string]$alias.alias] = [string]$alias.canonical }
-    $effectiveCategories = @($Unit.change_categories | ForEach-Object {
-        $category = [string]$_
-        if ($aliases.ContainsKey($category)) { $aliases[$category] } else { $category }
-    })
-    $triggerCategories = @($lifecycle.instruction_sync.trigger_categories | ForEach-Object { [string]$_ })
-    $triggered = @($effectiveCategories | Where-Object { $triggerCategories -ccontains $_ } | Sort-Object -Unique -CaseSensitive)
-    $requiredSkillIds = [Collections.Generic.List[string]]::new()
-    foreach ($category in $triggered) {
-        $route = @($lifecycle.instruction_sync.skill_routing | Where-Object { [string]$_.change_category -ceq $category })
-        if ($route.Count -ne 1) { throw "Current skill routing for '$category' is absent or ambiguous." }
-        foreach ($skillId in @($route[0].skill_ids | ForEach-Object { [string]$_ })) {
-            if (-not $requiredSkillIds.Contains($skillId)) { $requiredSkillIds.Add($skillId) | Out-Null }
-        }
-    }
-    $expectedSkillIds = @('rusty-morphospace', 'system-engineering')
-    if ((@($requiredSkillIds.ToArray() | Sort-Object -CaseSensitive) -join '|') -cne ($expectedSkillIds -join '|')) {
-        throw 'CorrectActiveUnitContract applies only when current routing requires exactly rusty-morphospace and system-engineering.'
-    }
-
     $surfaces = @($Unit.instruction_surfaces)
     $paths = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach ($surface in $surfaces) {
@@ -147,12 +97,8 @@ function Assert-ActiveUnitContractCurrentSkillRules {
     foreach ($surface in @($agents + $routers)) {
         if ([string]$surface.action -cne 'update') { throw "Corrected active unit required instruction surface '$([string]$surface.path)' must retain update action." }
     }
-    foreach ($skillId in $expectedSkillIds) {
-        $matches = @($surfaces | Where-Object { [string]$_.surface_kind -ceq 'skill' -and [string]$_.skill_id -ceq $skillId })
-        if ($matches.Count -ne 1) { throw "Corrected active unit needs exactly one '$skillId' skill surface." }
-        if (-not (Test-ActiveUnitContractSkillReviewCompatibility -Unit $Unit -State $State -EffectiveChangeCategories $effectiveCategories -AllowedRepositories @($Unit.allowed_repositories) -SkillSurface $matches[0])) {
-            throw "Corrected active unit skill '$skillId' is not eligible for current review-no-change compatibility."
-        }
+    if (-not (Test-MorphospaceActiveUnitContractReviewCompatibility -Unit $Unit -State $State -Lifecycle $lifecycle)) {
+        throw 'CorrectActiveUnitContract requires exact lifecycle-routed, canonical, non-writable review-no-change skill surfaces.'
     }
 }
 
