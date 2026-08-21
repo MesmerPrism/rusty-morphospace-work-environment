@@ -519,7 +519,7 @@ successful push is not proof that the whole batch is complete.
 work-unit transitions and preparation artifacts. It supports `Inspect`,
 `Ready`, `WithdrawReady`, `Claim`, `Resume`, `CompleteInstructionSurfaces`,
 `AmendActiveWriteScope`, `CorrectActiveReadOnlyDependencies`,
-`CorrectActiveProjectRepositoryScope`,
+`CorrectActiveProjectRepositoryScope`, `CorrectActiveUnitContract`,
 `RecordHistoricalUnitCompatibilityProjection`,
 `BeginValidation`, `ReturnToActive`,
 `RecordValidation`, `Accept`,
@@ -546,6 +546,11 @@ The CLI is deliberately narrower than an autonomous coding agent:
   can add only exact paths already declared by the active unit; its v3 journal
   synchronizes project, feature lock, and workspace registry while preserving
   the unit;
+- active-unit contract correction requires the exact current active feature
+  unit, project/state/raw-and-canonical-unit/ledger CAS, one legacy
+  architecture-decision conversion, and only the two fixed planned skill
+  surfaces; it cannot change source scope, execute validation, complete
+  instructions, or authorize acceptance or publication;
 - active write-scope amendment requires the exact current active feature unit,
   project/state/unit/event CAS, complete before/after paths, at least one
   project-approved addition, and dry-run input-hash replay; it retains captain,
@@ -647,6 +652,15 @@ broaden a unit path, and carries the project spec plus feature lock as
 recoverable transition-ledger v3 projections. See
 [Active Project Repository Scope Correction](ACTIVE_PROJECT_REPOSITORY_SCOPE_CORRECTION.md)
 for its exact-CAS input and dry-run hash replay.
+
+When one exact current active feature unit has a legacy string or absent
+architecture decision and wholly lacks the currently required
+`rusty-morphospace` and `system-engineering` skill surfaces, use the separate
+two-phase `CorrectActiveUnitContract` action. It preserves the legacy selected
+string verbatim, adds only fixed `review-no-change`/`planned` records, and
+requires the existing current-unit compatibility rule before transaction. See
+[Active Unit Contract Correction](ACTIVE_UNIT_CONTRACT_CORRECTION.md) for its
+strict input, raw/canonical CAS, and dry-run hash replay.
 
 When the same active feature work discovers another writable path or
 repository that the project already authorizes, use the separate two-phase

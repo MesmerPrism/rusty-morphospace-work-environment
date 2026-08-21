@@ -39,6 +39,13 @@ unit's planned surface to complete or claim an edit, validation, acceptance,
 execution, or publication; current portable registries and all current/future
 instruction rules remain closed.
 
+One exact current active feature unit may correct only its legacy
+`architecture_decision` shape and wholly absent required
+`rusty-morphospace`/`system-engineering` surface records through the
+[active unit contract correction](docs/ACTIVE_UNIT_CONTRACT_CORRECTION.md).
+It is a caller-pinned transactional repair, not a generic unit editor or an
+instruction-completion, validation, acceptance, or publication route.
+
 An immutable non-current/non-next in-flight unit pair may use the narrower
 authenticated compatibility projection only for one exact owner Ready-to-
 WithdrawReady history and one exact v2 supersession history. The closed receipt

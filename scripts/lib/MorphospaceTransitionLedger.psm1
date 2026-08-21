@@ -637,6 +637,7 @@ function Start-MorphospaceTransitionLedger {
         [ValidateSet('none','after-intent','after-artifact','after-projection','after-event')][string]$FaultAfter='none',
         [string]$ExpectedPreStateSha256 = '',
         [string]$ExpectedPreUnitSha256 = '',
+        [string]$ExpectedPreUnitRawSha256 = '',
         [string]$ExpectedStateSha256 = '',
         [string]$ExpectedUnitSha256 = '',
         [AllowNull()][string]$ExpectedEventTailId,
@@ -649,7 +650,7 @@ function Start-MorphospaceTransitionLedger {
     $workspace=[IO.Path]::GetFullPath($WorkspaceRoot);$lock=Enter-MorphospaceWorkspaceMutex -WorkspaceRoot $workspace
     try {
         Assert-MorphospaceNoOutstandingTransitionIntent $workspace $TransactionId
-        $state=Read-MorphospaceProtocolJson -Path (Resolve-MorphospaceWorkspacePath $workspace $StatePath -RequireLeaf);$unit=Read-MorphospaceProtocolJson -Path (Resolve-MorphospaceWorkspacePath $workspace $UnitPath -RequireLeaf)
+        $state=Read-MorphospaceProtocolJson -Path (Resolve-MorphospaceWorkspacePath $workspace $StatePath -RequireLeaf);$unitAbsolute=Resolve-MorphospaceWorkspacePath $workspace $UnitPath -RequireLeaf;$unit=Read-MorphospaceProtocolJson -Path $unitAbsolute
         $preStateSha256=Get-MorphospaceLedgerDocumentHash $state;$preUnitSha256=Get-MorphospaceLedgerDocumentHash $unit
         if($ExpectedStateSha256-and$ExpectedPreStateSha256-and$ExpectedStateSha256-cne$ExpectedPreStateSha256){throw 'Conflicting expected pre-state SHA-256 values.'}
         if($ExpectedUnitSha256-and$ExpectedPreUnitSha256-and$ExpectedUnitSha256-cne$ExpectedPreUnitSha256){throw 'Conflicting expected pre-unit SHA-256 values.'}
@@ -662,6 +663,11 @@ function Start-MorphospaceTransitionLedger {
             if([string]::IsNullOrEmpty([string]$expectation.expected)){continue}
             if([string]$expectation.expected-cnotmatch'^[0-9a-f]{64}$'){throw "Expected $([string]$expectation.name) SHA-256 is not canonical lowercase hex."}
             if([string]$expectation.expected-cne[string]$expectation.actual){throw "Transition $TransactionId expected $([string]$expectation.name) SHA-256 does not match the mutex-protected current document."}
+        }
+        if($ExpectedPreUnitRawSha256){
+            if($ExpectedPreUnitRawSha256-cnotmatch'^[0-9a-f]{64}$'){throw 'Expected pre-unit raw SHA-256 is not canonical lowercase hex.'}
+            $preUnitRawSha256=Get-MorphospaceFileSha256 $unitAbsolute
+            if($ExpectedPreUnitRawSha256-cne$preUnitRawSha256){throw "Transition $TransactionId expected pre-unit raw SHA-256 does not match the mutex-protected current document bytes."}
         }
         $supersessionOldUnitBinding=Assert-MorphospaceSupersessionWorkspacePreflight `
             -Workspace $workspace `

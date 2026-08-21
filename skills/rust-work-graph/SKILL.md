@@ -114,6 +114,16 @@ paths as additional read-only scan edges. Preserve writable/read-only edge
 distinction, bind each read-only edge to its corrected full commit/tree, and do
 not infer that the action materialized or validated those repositories.
 
+For `CorrectActiveUnitContract`, graph one self-edge on the exact current
+active feature-unit node only: it binds the project revision/hash, state, raw
+and canonical unit identities, and ledger hash/length/tail to one correction
+receipt plus intent/completion/event suffix. Relabel only the legacy
+architecture-decision node and append the two fixed planned skill nodes; retain
+all source, writable/read-only, validation, acceptance, publication, and
+device edges unchanged and disconnected from the correction. A missing,
+duplicate, non-required, completed, in-scope, or stale skill node is a
+rejection edge, not a general unit-edit route.
+
 For concurrent multi-repo work, graph the exact source-composition lock as the
 revision authority and live working-copy heads as observations. Keep claimed,
 validated, and accepted revision edges distinct. Include materialization,

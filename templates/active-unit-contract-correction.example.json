@@ -1,0 +1,51 @@
+{
+  "$schema": "../schemas/active-unit-contract-correction-v1.schema.json",
+  "schema": "rusty.morphospace.workflow.active_unit_contract_correction.v1",
+  "correction_id": "unit-example-001-contract",
+  "project_id": "example-project",
+  "unit_id": "unit-example-001",
+  "reason": "Correct one legacy architecture-decision shape and two wholly absent required skill surfaces without changing active feature scope.",
+  "expected": {
+    "project_revision": 1,
+    "project_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "status": "active",
+    "current_unit": "unit-example-001",
+    "state_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "unit_raw_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+    "unit_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+    "events_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+    "events_length": 1,
+    "event_tail_id": "unit-example-001-claimed-0001"
+  },
+  "architecture_decision": {
+    "selected": "Retain the legacy selected decision verbatim when correcting this exact unit.",
+    "material_advance": "Correct only the active-unit contract so existing validation can resume.",
+    "deferred": "No source, build, device, validation, or publication work is performed by this correction.",
+    "deferred_reason": "Those activities remain separate owner actions after the corrected unit passes ordinary workflow checks."
+  },
+  "required_skill_surfaces": [
+    {
+      "surface_kind": "skill",
+      "path": "<skills-root>/rusty-morphospace/SKILL.md",
+      "owner": "workflow-maintainer",
+      "change_reason": "Correct the current active-unit contract without claiming an instruction update.",
+      "action": "review-no-change",
+      "status": "planned",
+      "validation": "CompleteInstructionSurfaces must observe and complete this declared surface separately.",
+      "skill_id": "rusty-morphospace"
+    },
+    {
+      "surface_kind": "skill",
+      "path": "<skills-root>/system-engineering/SKILL.md",
+      "owner": "workflow-maintainer",
+      "change_reason": "Correct the current active-unit contract without claiming an instruction update.",
+      "action": "review-no-change",
+      "status": "planned",
+      "validation": "CompleteInstructionSurfaces must observe and complete this declared surface separately.",
+      "skill_id": "system-engineering"
+    }
+  ],
+  "does_not_prove": [
+    "Does not execute validation, mutate source or Git state, touch a device, contact a remote, or authorize acceptance or publication."
+  ]
+}

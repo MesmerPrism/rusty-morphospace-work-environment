@@ -168,6 +168,18 @@ transaction instead of editing workflow JSON. Require exact state/unit/event
 CAS, complete before/after sets, project-declared non-writable paths, and full
 commit/tree identity resolution. Keep worktree materialization, build execution,
 validation, acceptance, and publication outside that correction transaction.
+For the exact current active feature unit whose only contract debt is a legacy
+string or absent `architecture_decision` plus wholly absent required
+`rusty-morphospace` and `system-engineering` surfaces, use only the typed
+`CorrectActiveUnitContract` transaction. Bind exact project revision/hash,
+state, raw and canonical unit bytes, and ledger hash/length/tail; retain a
+legacy selected string verbatim; append only the fixed planned
+`review-no-change` records; and preserve every other unit/state projection
+except `last_event_id`. Recheck the existing active-feature review compatibility
+and current schema before the atomic receipt/intent/completion/event
+transaction. It does not complete instruction work, run validation, mutate
+source/Git/remotes/devices, accept, or publish. Route detail to
+`docs/ACTIVE_UNIT_CONTRACT_CORRECTION.md`.
 `RecordValidation` and `Accept` must validate a workspace-local
 `validation_receipt.v1`: exact acceptance/gate coverage, artifact hashes,
 current heads/branches, ancestor bases, exact in-scope changed paths, and—when

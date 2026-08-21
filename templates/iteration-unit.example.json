@@ -5,6 +5,12 @@
   "project_id": "example-project",
   "status": "active",
   "objective": "Validate the neutral particle-field contract and its explicit project activation.",
+  "architecture_decision": {
+    "selected": "Keep the particle-field contract in the Matter lane with project activation as an adapter concern.",
+    "material_advance": "The unit can validate the selected contract without broadening Matter ownership.",
+    "deferred": "Renderer, package, and private product policy remain outside this unit.",
+    "deferred_reason": "Those choices belong to their existing owners and require separate acceptance evidence."
+  },
   "work_mode": "feature",
   "guard_profile": "labs",
   "tags": ["particle", "contract-extraction"],

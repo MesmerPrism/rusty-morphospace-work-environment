@@ -5,6 +5,12 @@
   "project_id": "example-project",
   "status": "ready",
   "objective": "Validate the exact frozen application artifact on its required host and serial-scoped device surfaces without changing production content.",
+  "architecture_decision": {
+    "selected": "Retain the previously accepted application architecture while this unit validates its frozen artifact.",
+    "material_advance": "The validation unit adds only bounded evidence for the existing selected architecture.",
+    "deferred": "Production, packaging, and architecture changes remain outside this validation-only unit.",
+    "deferred_reason": "A validation-only unit cannot claim a product or reusable workflow change."
+  },
   "work_mode": "validation-only",
   "guard_profile": "labs",
   "change_categories": ["validation"],

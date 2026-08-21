@@ -415,6 +415,18 @@ ancestry consumes the authorization.
   `read_only_dependencies` plus `state.last_event_id`; it never materializes a
   worktree or runs a build. Route the full procedure to
   `docs/ACTIVE_READ_ONLY_DEPENDENCY_CORRECTION.md`.
+- Correct the exact current active feature unit's legacy string or absent
+  `architecture_decision` only through `CorrectActiveUnitContract` and the
+  `active_unit_contract_correction.v1` input. Bind exact project revision and
+  canonical hash, state, raw and canonical unit bytes, and event-ledger
+  hash/length/tail; add only the fixed `rusty-morphospace` and
+  `system-engineering` `review-no-change`/`planned` skill records. Preserve
+  every other unit field and state field except `last_event_id`, retain a
+  legacy selected string verbatim, require current feature compatibility before
+  transaction, and install the correction receipt plus intent/completion/event
+  atomically. Never use it as a generic editor, instruction completion,
+  validation, acceptance, source, Git, remote, or device route. See
+  `docs/ACTIVE_UNIT_CONTRACT_CORRECTION.md`.
 - Correct an omitted project repository allow-list path only through
   `CorrectActiveProjectRepositoryScope` and the exact
   `active_project_repository_scope_correction.v1` contract. Require an exact
@@ -610,6 +622,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkUnitAutomation.
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkUnitHandoff.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-CorrectActiveReadOnlyDependencies.ps1 -SelfTest
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-CorrectActiveProjectRepositoryScope.ps1 -SelfTest
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-CorrectActiveUnitContract.ps1 -SelfTest
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-EventLedgerPrefixNormalization.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-CompletedTransitionSemanticCorrection.ps1 -SelfTest
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-HistoricalBlockerResolutionIntentBindingCorrection.ps1 -SelfTest

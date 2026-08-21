@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/active-unit-contract-correction-v1.schema.json",
+  "title": "Exact correction of an active feature-unit contract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "correction_id",
+    "project_id",
+    "unit_id",
+    "reason",
+    "expected",
+    "architecture_decision",
+    "required_skill_surfaces",
+    "does_not_prove"
+  ],
+  "properties": {
+    "$schema": { "type": "string", "minLength": 1, "maxLength": 1024 },
+    "schema": { "const": "rusty.morphospace.workflow.active_unit_contract_correction.v1" },
+    "correction_id": { "$ref": "#/$defs/shortId" },
+    "project_id": { "$ref": "#/$defs/id" },
+    "unit_id": { "$ref": "#/$defs/id" },
+    "reason": { "type": "string", "minLength": 1, "maxLength": 4096 },
+    "expected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "project_revision",
+        "project_sha256",
+        "status",
+        "current_unit",
+        "state_sha256",
+        "unit_raw_sha256",
+        "unit_sha256",
+        "events_sha256",
+        "events_length",
+        "event_tail_id"
+      ],
+      "properties": {
+        "project_revision": { "type": "integer", "minimum": 1 },
+        "project_sha256": { "$ref": "#/$defs/hash" },
+        "status": { "const": "active" },
+        "current_unit": { "$ref": "#/$defs/id" },
+        "state_sha256": { "$ref": "#/$defs/hash" },
+        "unit_raw_sha256": { "$ref": "#/$defs/hash" },
+        "unit_sha256": { "$ref": "#/$defs/hash" },
+        "events_sha256": { "$ref": "#/$defs/hash" },
+        "events_length": { "type": "integer", "minimum": 1 },
+        "event_tail_id": { "$ref": "#/$defs/id" }
+      }
+    },
+    "architecture_decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["selected", "material_advance", "deferred", "deferred_reason"],
+      "properties": {
+        "selected": { "$ref": "#/$defs/boundedText" },
+        "material_advance": { "$ref": "#/$defs/boundedText" },
+        "deferred": { "$ref": "#/$defs/boundedText" },
+        "deferred_reason": { "$ref": "#/$defs/boundedText" }
+      }
+    },
+    "required_skill_surfaces": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "uniqueItems": true,
+      "items": {
+        "oneOf": [
+          { "$ref": "#/$defs/rustyMorphospaceSurface" },
+          { "$ref": "#/$defs/systemEngineeringSurface" }
+        ]
+      }
+    },
+    "does_not_prove": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/boundedText" }
+    }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" },
+    "shortId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,95}$" },
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "boundedText": { "type": "string", "minLength": 1, "maxLength": 4096 },
+    "rustyMorphospaceSurface": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["surface_kind", "path", "owner", "change_reason", "action", "status", "validation", "skill_id"],
+      "properties": {
+        "surface_kind": { "const": "skill" },
+        "path": { "const": "<skills-root>/rusty-morphospace/SKILL.md" },
+        "owner": { "const": "workflow-maintainer" },
+        "change_reason": { "const": "Correct the current active-unit contract without claiming an instruction update." },
+        "action": { "const": "review-no-change" },
+        "status": { "const": "planned" },
+        "validation": { "const": "CompleteInstructionSurfaces must observe and complete this declared surface separately." },
+        "skill_id": { "const": "rusty-morphospace" }
+      }
+    },
+    "systemEngineeringSurface": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["surface_kind", "path", "owner", "change_reason", "action", "status", "validation", "skill_id"],
+      "properties": {
+        "surface_kind": { "const": "skill" },
+        "path": { "const": "<skills-root>/system-engineering/SKILL.md" },
+        "owner": { "const": "workflow-maintainer" },
+        "change_reason": { "const": "Correct the current active-unit contract without claiming an instruction update." },
+        "action": { "const": "review-no-change" },
+        "status": { "const": "planned" },
+        "validation": { "const": "CompleteInstructionSurfaces must observe and complete this declared surface separately." },
+        "skill_id": { "const": "system-engineering" }
+      }
+    }
+  }
+}
