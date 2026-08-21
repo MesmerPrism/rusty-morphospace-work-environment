@@ -10,7 +10,9 @@ Import-Module (Join-Path $PSScriptRoot 'lib\MorphospacePlannedPublication.psm1')
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospacePlanningSuffixRewrite.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospacePublishedPrerequisiteSuffix.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceExecutedPreparedPublication.psm1') -Force
-Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceActiveUnitContractReviewCompatibility.psm1') -Force
+# Retain the aggregate's public binding for this shared predicate. A private
+# force reload unloads that binding even though this module can still call it.
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceActiveUnitContractReviewCompatibility.psm1')
 
 function Read-MorphospaceJson {
     param([Parameter(Mandatory = $true)][string]$Path)

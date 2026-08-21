@@ -25,7 +25,9 @@ Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceHistoricalBlockerReso
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceBlockedSupersessionTerminalValidation.psm1') -Force
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceHistoricalUnitCompatibilityProjection.psm1') -Force
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceProtocolCommon.psm1') -Force
-Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceActiveUnitContractReviewCompatibility.psm1') -Force
+# Keep one stable shared-predicate module instance through nested owner tests.
+# A force reload can remove this script's exported command binding mid-run.
+Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceActiveUnitContractReviewCompatibility.psm1')
 
 function Invoke-IsolatedWorkflowSelfTest {
     param(

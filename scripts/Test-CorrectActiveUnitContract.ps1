@@ -74,6 +74,16 @@ function Update-ActiveUnitContractTestExpected {
     $Correction.expected.event_tail_id = [string]$events[-1].event_id
 }
 
+function Get-ActiveUnitContractTestFeatureLockFingerprint {
+    param([object]$Lock)
+    $copy = $Lock | ConvertTo-Json -Depth 48 | ConvertFrom-Json
+    $copy.lock_fingerprint = '0' * 64
+    $bytes = [Text.UTF8Encoding]::new($false).GetBytes(($copy | ConvertTo-Json -Depth 48 -Compress))
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { return (($sha.ComputeHash($bytes) | ForEach-Object { $_.ToString('x2') }) -join '') }
+    finally { $sha.Dispose() }
+}
+
 $temp = Join-Path ([IO.Path]::GetTempPath()) ("workenv-active-unit-contract-" + [guid]::NewGuid().ToString('N'))
 try {
     $workspace = Join-Path $temp 'morphospace'
@@ -134,10 +144,13 @@ try {
     $unitPath = Join-Path $workspace 'iteration-units\unit058.json'
     $eventsPath = Join-Path $workspace 'iteration-events.jsonl'
     Write-ActiveUnitContractTestJson $projectPath $project
+    $emptyEffects = [pscustomobject][ordered]@{ permissions=@();services=@();activities=@();queries=@();tools=@();assets=@();shaders=@();native_libraries=@();commands=@();routes=@();streams=@();inputs=@();scenes=@();markers=@() }
     $featureLock = [pscustomobject][ordered]@{
-        schema='rusty.morphospace.workflow.feature_lock.v1';project_id='morphovision-unit058';revision=58
-        default_activation='disabled';features=@()
+        schema='rusty.morphospace.workflow.feature_lock.v2';project_id='morphovision-unit058';project_revision=58;revision=58
+        generated_at='2026-08-21T00:00:00Z';resolver_version='rusty-morphospace-feature-resolver/2';lock_fingerprint='0' * 64
+        default_activation='disabled';activation_rule='selected-lock-and-runtime-input';selected_features=@();denied_features=@();features=@();effect_union=$emptyEffects
     }
+    $featureLock.lock_fingerprint = Get-ActiveUnitContractTestFeatureLockFingerprint $featureLock
     Write-ActiveUnitContractTestJson $featureLockPath $featureLock
     Write-ActiveUnitContractTestJson $statePath $state
     Write-ActiveUnitContractTestJson $unitPath $unit
@@ -255,7 +268,11 @@ try {
     Assert-ActiveUnitContractTest ([IO.File]::Exists((Join-Path $workspace 'receipts\transactions\unit058-contract-recorded-transition.intent.json')) -and [IO.File]::Exists((Join-Path $workspace 'receipts\transactions\unit058-contract-recorded-transition.completion.json'))) 'atomic intent or completion projection is missing'
     Assert-ActiveUnitContractTest (([IO.File]::ReadAllBytes($eventsPath)[0..($eventsBytes.Length - 1)] -join ',') -ceq ($eventsBytes -join ',')) 'existing ledger prefix was rewritten'
 
-    & (Join-Path $PSScriptRoot 'Test-WorkflowContracts.ps1') -RepoRoot $repoRoot -WorkspaceRoot $workspace -CurrentUnitInstructionOnly
+    # Exercise the full workspace-contract path from the enclosing cold
+    # Test-WorkEnvironment aggregate, which has already run preceding owner
+    # self-tests. Skip only nested owner self-tests to avoid recursive
+    # re-entry; this still reaches the real active-unit compatibility branch.
+    & (Join-Path $PSScriptRoot 'Test-WorkflowContracts.ps1') -RepoRoot $repoRoot -WorkspaceRoot $workspace -SkipOwnerSelfTests
     $repoMap = [pscustomobject][ordered]@{schema='rusty.morphospace.workflow.repository_map.v1';repositories=@(
         [pscustomobject]@{repo_id='project-shell';path=$ownerRoot;role='planning';aliases=@('repo-root')},
         [pscustomobject]@{repo_id='skill-surfaces';path=$skillsRoot;role='source';aliases=@('skills-root')}

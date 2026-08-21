@@ -2,7 +2,10 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1') -Force
-Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceActiveUnitContractReviewCompatibility.psm1') -Force
+# This shared predicate may be imported by the aggregate before this owner
+# module. Do not force-reload it: a private force reload removes the caller's
+# exported command binding while leaving this module's private binding alive.
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceActiveUnitContractReviewCompatibility.psm1')
 
 function Copy-ActiveUnitContractDocument {
     param([Parameter(Mandatory)][object]$Value)
