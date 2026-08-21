@@ -278,3 +278,15 @@ before/after dependency sets, state/unit/event-ledger CAS, and one resolvable
 full commit/tree for every resulting dependency. It may update only existing
 verification text or add declared non-writable dependency paths; materializing
 the resulting siblings and validating them remain separate owner steps.
+
+Do not hand-edit the exact current active feature unit when one legacy string
+or absent `architecture_decision` and exactly the required
+`rusty-morphospace`/`system-engineering` surfaces prevent current validation.
+Use only `CorrectActiveUnitContract` with its strict correction document,
+project/state/raw-and-canonical-unit/ledger CAS, caller-pinned dry-run hash,
+and atomic receipt/intent/completion/event transaction. Retain a legacy
+selected string verbatim; add only the fixed planned `review-no-change` skill
+records; preserve every other unit field and state field except the event tail.
+The action does not complete instructions, execute validation, mutate source or
+Git, touch a device, or authorize acceptance or publication. Route detail to
+`docs/ACTIVE_UNIT_CONTRACT_CORRECTION.md`.
