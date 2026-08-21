@@ -147,6 +147,7 @@ function Test-MorphospaceValidatorTrustAnchorMigration {
         'scripts/WorkUnitAutomation.psm1',
         'scripts/lib/MorphospaceAuthorityReadiness.psm1',
         'scripts/lib/MorphospaceContentObservation.psm1',
+        'scripts/lib/MorphospaceActiveUnitContractReviewCompatibility.psm1',
         'scripts/lib/MorphospaceOwnership.psm1',
         'scripts/lib/MorphospaceProtocolCommon.psm1',
         'scripts/lib/MorphospaceTransitionLedger.psm1',
