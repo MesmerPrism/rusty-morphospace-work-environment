@@ -39,10 +39,12 @@ The only added instruction records are the fixed, ordered
 `rusty-morphospace` and `system-engineering` skill surfaces. Both use the
 canonical `<skills-root>/<skill-id>/SKILL.md` path,
 `review-no-change`, and `planned`. The current-unit rule is rechecked before
-the transaction: the unit must be ordinary feature validation work, those skill
-paths must be outside its writable scope, and no portable authority, routing,
-module, policy, state-machine, recovery, or validation-routing category may be
-present. Any extra, reordered, duplicate, non-required, or already-present
+the transaction: the unit must be the current feature unit, those skill paths
+must be outside its writable scope, and the current lifecycle routing result
+for its unchanged categories must be exactly those two skills. This is a
+semantic routing equivalence, not a category allowlist: authority and
+public/private-boundary categories receive no general exemption. Any extra,
+reordered, duplicate, non-required, non-canonical, writable, or already-present
 skill surface rejects.
 
 The target unit must satisfy the current iteration-unit schema and current

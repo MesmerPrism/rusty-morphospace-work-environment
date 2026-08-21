@@ -500,6 +500,49 @@ try {
     $receiptRoot = Join-Path $workspace "receipts"
     $fixed = "2026-01-02T03:04:05Z"
 
+    # The exact current-feature shape that needs a schema-only correction may
+    # retain two non-writable lifecycle-routed skill reviews. Inspect must use
+    # the same bounded semantic as the correction and contract validator.
+    $reviewCompatibilityUnitId = "unit-current-review-compatibility"
+    $reviewCompatibilityWorkspace = New-TestWorkspace -Root (Join-Path $testRoot "current-review-compatibility") -ProjectId "current-review-compatibility" -UnitId $reviewCompatibilityUnitId
+    $reviewCompatibilityUnitPath = Join-Path $reviewCompatibilityWorkspace "iteration-units\$reviewCompatibilityUnitId.json"
+    $reviewCompatibilityUnit = Get-Content -LiteralPath $reviewCompatibilityUnitPath -Raw | ConvertFrom-Json
+    $reviewCompatibilityUnit.status = "active"
+    $reviewCompatibilityUnit | Add-Member -NotePropertyName work_mode -NotePropertyValue "feature"
+    $reviewCompatibilityUnit | Add-Member -NotePropertyName guard_profile -NotePropertyValue "locked"
+    $reviewCompatibilityUnit.change_categories = @("implementation", "authority", "validation", "public-private-boundary")
+    $reviewCompatibilityUnit.instruction_impact = "update"
+    [void]$reviewCompatibilityUnit.PSObject.Properties.Remove("instruction_none_justification")
+    $reviewCompatibilityUnit.instruction_surfaces = @(
+        [pscustomobject][ordered]@{ surface_kind = "agents"; path = "<project-shell>/AGENTS.md"; owner = "project-shell"; change_reason = "Retain the required current-unit entrypoint."; action = "update"; status = "planned"; validation = "Synthetic current-unit instruction fixture."; skill_id = $null },
+        [pscustomobject][ordered]@{ surface_kind = "router-doc"; path = "<project-shell>/docs/workflow.md"; owner = "project-shell"; change_reason = "Retain the required current-unit router."; action = "update"; status = "planned"; validation = "Synthetic current-unit instruction fixture."; skill_id = $null },
+        [pscustomobject][ordered]@{ surface_kind = "skill"; path = "<skills-root>/rusty-morphospace/SKILL.md"; owner = "workflow-maintainer"; change_reason = "Correct the current active-unit contract without claiming an instruction update."; action = "review-no-change"; status = "planned"; validation = "CompleteInstructionSurfaces must observe and complete this declared surface separately."; skill_id = "rusty-morphospace" },
+        [pscustomobject][ordered]@{ surface_kind = "skill"; path = "<skills-root>/system-engineering/SKILL.md"; owner = "workflow-maintainer"; change_reason = "Correct the current active-unit contract without claiming an instruction update."; action = "review-no-change"; status = "planned"; validation = "CompleteInstructionSurfaces must observe and complete this declared surface separately."; skill_id = "system-engineering" }
+    )
+    Write-TestJson -Path $reviewCompatibilityUnitPath -Value $reviewCompatibilityUnit
+    $reviewCompatibilityStatePath = Join-Path $reviewCompatibilityWorkspace "workspace.state.json"
+    $reviewCompatibilityState = Get-Content -LiteralPath $reviewCompatibilityStatePath -Raw | ConvertFrom-Json
+    $reviewCompatibilityState.current_unit = $reviewCompatibilityUnitId
+    $reviewCompatibilityState.next_ready_unit = $null
+    Write-TestJson -Path $reviewCompatibilityStatePath -Value $reviewCompatibilityState
+    $reviewCompatibilityInspect = Invoke-MorphospaceWorkUnitAutomation -Action Inspect -WorkspaceRoot $reviewCompatibilityWorkspace -UnitId $reviewCompatibilityUnitId -RepoMapPath $repoMapPath -Timestamp $fixed
+    $reviewCompatibilityCheck = @($reviewCompatibilityInspect.claim_preflight.coverage.checks | Where-Object { [string]$_.check_id -ceq "instruction-action-compatibility" })
+    Assert-Automation ($reviewCompatibilityCheck.Count -eq 1 -and [string]$reviewCompatibilityCheck[0].outcome -ceq "pass") "current lifecycle-routed skill reviews did not pass Inspect instruction compatibility"
+
+    $extraReviewUnit = $reviewCompatibilityUnit | ConvertTo-Json -Depth 32 | ConvertFrom-Json
+    $extraReviewUnit.instruction_surfaces += [pscustomobject][ordered]@{ surface_kind = "skill"; path = "<skills-root>/rust-work-graph/SKILL.md"; owner = "workflow-maintainer"; change_reason = "Negative extra skill fixture."; action = "review-no-change"; status = "planned"; validation = "Must reject as non-required."; skill_id = "rust-work-graph" }
+    Write-TestJson -Path $reviewCompatibilityUnitPath -Value $extraReviewUnit
+    $extraReviewInspect = Invoke-MorphospaceWorkUnitAutomation -Action Inspect -WorkspaceRoot $reviewCompatibilityWorkspace -UnitId $reviewCompatibilityUnitId -RepoMapPath $repoMapPath -Timestamp $fixed
+    $extraReviewCheck = @($extraReviewInspect.claim_preflight.coverage.checks | Where-Object { [string]$_.check_id -ceq "instruction-action-compatibility" })
+    Assert-Automation ($extraReviewCheck.Count -eq 1 -and [string]$extraReviewCheck[0].outcome -ceq "fail" -and @($extraReviewCheck[0].reason_codes) -contains "instruction-action-mode-mismatch") "non-required review skill weakened Inspect compatibility"
+
+    $writableReviewUnit = $reviewCompatibilityUnit | ConvertTo-Json -Depth 32 | ConvertFrom-Json
+    $writableReviewUnit.allowed_repositories[0].allowed_paths += "<skills-root>/rusty-morphospace/"
+    Write-TestJson -Path $reviewCompatibilityUnitPath -Value $writableReviewUnit
+    $writableReviewInspect = Invoke-MorphospaceWorkUnitAutomation -Action Inspect -WorkspaceRoot $reviewCompatibilityWorkspace -UnitId $reviewCompatibilityUnitId -RepoMapPath $repoMapPath -Timestamp $fixed
+    $writableReviewCheck = @($writableReviewInspect.claim_preflight.coverage.checks | Where-Object { [string]$_.check_id -ceq "instruction-action-compatibility" })
+    Assert-Automation ($writableReviewCheck.Count -eq 1 -and [string]$writableReviewCheck[0].outcome -ceq "fail" -and @($writableReviewCheck[0].reason_codes) -contains "instruction-action-mode-mismatch") "writable review skill weakened Inspect compatibility"
+
     # PRE-001 keeps Claim behavior unchanged while making Inspect coverage
     # explicit and machine-readable. The named shapes are synthetic; they
     # contain no private workspace evidence.

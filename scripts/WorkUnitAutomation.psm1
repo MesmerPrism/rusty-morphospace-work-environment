@@ -10,6 +10,7 @@ Import-Module (Join-Path $PSScriptRoot 'lib\MorphospacePlannedPublication.psm1')
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospacePlanningSuffixRewrite.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospacePublishedPrerequisiteSuffix.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceExecutedPreparedPublication.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceActiveUnitContractReviewCompatibility.psm1') -Force
 
 function Read-MorphospaceJson {
     param([Parameter(Mandatory = $true)][string]$Path)
@@ -300,6 +301,7 @@ function New-MorphospaceGraphScope {
 function New-MorphospaceClaimPreflight {
     param(
         [Parameter(Mandatory = $true)][object]$Unit,
+        [Parameter(Mandatory = $true)][object]$State,
         [Parameter(Mandatory = $true)][object]$Spec,
         [Parameter(Mandatory = $true)][hashtable]$RepositoryMap,
         [Parameter(Mandatory = $true)][object[]]$RepositoryStates,
@@ -309,21 +311,21 @@ function New-MorphospaceClaimPreflight {
 
     $issues = New-Object System.Collections.Generic.List[string]
     $stateMap = @{}
-    foreach ($state in @($RepositoryStates)) { $stateMap[[string]$state.repo_id] = $state }
+    foreach ($repositoryState in @($RepositoryStates)) { $stateMap[[string]$repositoryState.repo_id] = $repositoryState }
 
     $writable = New-Object System.Collections.Generic.List[object]
     foreach ($repo in @($Unit.allowed_repositories | Sort-Object repo_id)) {
         $repoId = [string]$repo.repo_id
         $mapped = $RepositoryMap.ContainsKey($repoId)
-        $state = if ($stateMap.ContainsKey($repoId)) { $stateMap[$repoId] } else { $null }
-        $available = $mapped -and $null -ne $state -and $state.available -eq $true
+        $repositoryState = if ($stateMap.ContainsKey($repoId)) { $stateMap[$repoId] } else { $null }
+        $available = $mapped -and $null -ne $repositoryState -and $repositoryState.available -eq $true
         if (-not $mapped) { $issues.Add("Writable repository '$repoId' is absent from the repository map.") | Out-Null }
         elseif (-not $available) { $issues.Add("Writable repository '$repoId' is not available at its mapped path.") | Out-Null }
         $writable.Add([pscustomobject][ordered]@{
             repo_id = $repoId; mapped = $mapped; available = $available
-            is_git = if ($null -ne $state -and $state.PSObject.Properties.Name -contains 'is_git') { $state.is_git } else { $null }
-            head = if ($null -ne $state -and $state.PSObject.Properties.Name -contains 'head') { $state.head } else { $null }
-            tree = if ($null -ne $state -and $state.PSObject.Properties.Name -contains 'tree') { $state.tree } else { $null }
+            is_git = if ($null -ne $repositoryState -and $repositoryState.PSObject.Properties.Name -contains 'is_git') { $repositoryState.is_git } else { $null }
+            head = if ($null -ne $repositoryState -and $repositoryState.PSObject.Properties.Name -contains 'head') { $repositoryState.head } else { $null }
+            tree = if ($null -ne $repositoryState -and $repositoryState.PSObject.Properties.Name -contains 'tree') { $repositoryState.tree } else { $null }
             allowed_paths = @($repo.allowed_paths | ForEach-Object { ([string]$_).Replace('\', '/') } | Sort-Object -Unique)
         }) | Out-Null
     }
@@ -332,7 +334,7 @@ function New-MorphospaceClaimPreflight {
     foreach ($dependency in @($(if ($Unit.PSObject.Properties.Name -contains 'read_only_dependencies') { @($Unit.read_only_dependencies) } else { @() }) | Sort-Object repo_id)) {
         $repoId = [string]$dependency.repo_id
         $mapped = $RepositoryMap.ContainsKey($repoId)
-        $state = if ($stateMap.ContainsKey($repoId)) { $stateMap[$repoId] } else { $null }
+        $repositoryState = if ($stateMap.ContainsKey($repoId)) { $stateMap[$repoId] } else { $null }
         if (-not $mapped) {
             $issues.Add("Read-only dependency repository '$repoId' is absent from the repository map.") | Out-Null
         }
@@ -355,8 +357,8 @@ function New-MorphospaceClaimPreflight {
             $dependencies.Add([pscustomobject][ordered]@{
                 repo_id = $repoId; path = ([string]$declaredPath).Replace('\', '/'); mapped = $mapped
                 exists = $exists; kind = $kind
-                head = if ($null -ne $state -and $state.PSObject.Properties.Name -contains 'head') { $state.head } else { $null }
-                tree = if ($null -ne $state -and $state.PSObject.Properties.Name -contains 'tree') { $state.tree } else { $null }
+                head = if ($null -ne $repositoryState -and $repositoryState.PSObject.Properties.Name -contains 'head') { $repositoryState.head } else { $null }
+                tree = if ($null -ne $repositoryState -and $repositoryState.PSObject.Properties.Name -contains 'tree') { $repositoryState.tree } else { $null }
             }) | Out-Null
         }
     }
@@ -671,8 +673,11 @@ function New-MorphospaceClaimPreflight {
         $expectedImpact = if ($workMode -eq 'validation-only') { 'review' } else { 'update' }
         $expectedAction = if ($workMode -eq 'validation-only') { 'review-no-change' } else { 'update' }
         if ([string]$Unit.instruction_impact -ne $expectedImpact) { $instructionReasons.Add('instruction-impact-mode-mismatch') | Out-Null }
+        $activeContractReviewCompatible = Test-MorphospaceActiveUnitContractReviewCompatibility -Unit $Unit -State $State -Lifecycle $lifecycle
         foreach ($surface in @($Unit.instruction_surfaces)) {
-            if ([string]$surface.action -ne $expectedAction) { $instructionReasons.Add('instruction-action-mode-mismatch') | Out-Null }
+            if ([string]$surface.action -ne $expectedAction -and -not $activeContractReviewCompatible) {
+                $instructionReasons.Add('instruction-action-mode-mismatch') | Out-Null
+            }
         }
         if ($instructionReasons.Count -gt 0) {
             & $addCheck 'instruction-action-compatibility' 'fail' 'completed' @($instructionReasons.ToArray())
@@ -1768,7 +1773,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
     $repoStatesArray = @($repositoryStates.ToArray())
     $validationMatrix = @(New-MorphospaceValidationMatrix -Unit $unit -DeviceSerials $DeviceSerials)
     $graphScope = New-MorphospaceGraphScope -Unit $unit
-    $claimPreflight = New-MorphospaceClaimPreflight -Unit $unit -Spec $spec -RepositoryMap $repoMap -RepositoryStates $repoStatesArray -ValidationMatrix $validationMatrix -ValidationTier $ValidationTier
+    $claimPreflight = New-MorphospaceClaimPreflight -Unit $unit -State $state -Spec $spec -RepositoryMap $repoMap -RepositoryStates $repoStatesArray -ValidationMatrix $validationMatrix -ValidationTier $ValidationTier
     $beforeStatus = [string]$unit.status
     $beforeCurrent = $state.current_unit
     $expectedPreStateSha256 = Get-MorphospaceCanonicalJsonSha256 $state
