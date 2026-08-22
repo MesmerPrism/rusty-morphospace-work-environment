@@ -89,11 +89,22 @@ try {
     Assert-True ((@($scriptPlan.selected_checks | Where-Object check_id -ceq 'work-unit-automation').reasons) -clike 'consumer-of:workflow-contracts:*') 'Automation consumer lacks transitive consumer reason.'
     Assert-True ($scriptPlan.effective_tier -ceq 'standard') 'Script change did not escalate to Standard.'
 
+    Write-Utf8 (Join-Path $fixture 'scripts/Test-DocumentationLinks.ps1') "# changed documentation owner`n"
+    Write-Utf8 (Join-Path $fixture 'scripts/Test-SkillTemplates.ps1') "# changed skill owner`n"
+    [void](Invoke-TestGit $fixture @('add', 'scripts/Test-DocumentationLinks.ps1', 'scripts/Test-SkillTemplates.ps1'))
+    [void](Invoke-TestGit $fixture @('commit', '-m', 'owner commands'))
+    $commandHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
+    $commandPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $scriptHead -HeadRevision $commandHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+    foreach ($ownerId in @('documentation-links', 'skill-templates')) {
+        Assert-True ((@($commandPlan.selected_checks.check_id) -ccontains $ownerId)) "Changed command did not select owning check '$ownerId'."
+        Assert-True ((@($commandPlan.selected_checks | Where-Object check_id -ceq $ownerId).reasons -ccontains 'command-path-changed')) "Changed command lacks owning reason for '$ownerId'."
+    }
+
     Write-Utf8 (Join-Path $fixture 'unknown.bin') "unknown`n"
     [void](Invoke-TestGit $fixture @('add', 'unknown.bin'))
     [void](Invoke-TestGit $fixture @('commit', '-m', 'unknown'))
     $unknownHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
-    $unknownPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $scriptHead -HeadRevision $unknownHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+    $unknownPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $commandHead -HeadRevision $unknownHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
     Assert-True ($unknownPlan.selection_mode -ceq 'full-deep') 'Unmapped change did not fail closed to Deep.'
     Assert-True (@($unknownPlan.reason_codes) -ccontains 'unmapped-path') 'Unmapped change lacks reason code.'
     Assert-True (@($unknownPlan.selected_checks).Count -eq @($registry.checks).Count) 'Deep fallback did not select every check.'

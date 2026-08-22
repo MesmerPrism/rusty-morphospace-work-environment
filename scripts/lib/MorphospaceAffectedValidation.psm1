@@ -345,6 +345,13 @@ function Resolve-MorphospaceAffectedValidation {
             foreach ($pathSetId in @($check.trigger_path_sets)) {
                 if ($matchedPathSets.Contains([string]$pathSetId)) { Add-AffectedSelection ([string]$check.check_id) "path-set:$pathSetId" }
             }
+            $commandPath = [string]$check.command_path
+            foreach ($change in $changes) {
+                if (($null -ne $change.old_path -and [string]$change.old_path -ceq $commandPath) -or
+                    ($null -ne $change.new_path -and [string]$change.new_path -ceq $commandPath)) {
+                    Add-AffectedSelection ([string]$check.check_id) 'command-path-changed'
+                }
+            }
         }
     }
     $changed = $true
