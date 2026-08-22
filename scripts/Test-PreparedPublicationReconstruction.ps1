@@ -598,10 +598,14 @@ try{
     $leaseModule=Get-Module PreparedPublicationReconstruction
     $inputLease=& $leaseModule {param($path) Open-ReconstructionProtocolSnapshot $path '' 'lease-test'} $input
     try{
-        $leaseBlockedOverwrite=$false
-        try{[IO.File]::WriteAllText($input,'{"schema":"swapped"}',[Text.UTF8Encoding]::new($false))}catch{$leaseBlockedOverwrite=$true}
-        Assert-Reconstruction $leaseBlockedOverwrite 'retained protocol snapshot allowed an in-place binding swap'
-    }finally{$inputLease.stream.Dispose()}
+        $inputLease.stream.Dispose()
+        [IO.File]::WriteAllText($input,'{"schema":"swapped"}',[Text.UTF8Encoding]::new($false))
+        $leaseTamperDetected=& $leaseModule {param($snapshot)try{Assert-ReconstructionSnapshotStillCurrent $snapshot 'lease-test';$false}catch{$true}} $inputLease
+        Assert-Reconstruction $leaseTamperDetected 'retained protocol snapshot did not fail closed after an in-place binding swap'
+    }finally{
+        $inputLease.stream.Dispose()
+        Write-ReconstructionJson $input $document
+    }
     $fabricated=$validation|ConvertTo-Json -Depth 20|ConvertFrom-Json;$fabricated.PSObject.Properties.Remove('criteria');Write-ReconstructionJson (Join-Path $workspace ($validationRelative-replace'/','\')) $fabricated
     $fabricatedDocument=$document|ConvertTo-Json -Depth 40|ConvertFrom-Json;$fabricatedDocument.validation_receipt.sha256=Get-MorphospaceFileSha256 (Join-Path $workspace ($validationRelative-replace'/','\'));Write-ReconstructionJson $input $fabricatedDocument
     $fabricatedRejected=$false;try{Invoke-MorphospacePreparedPublicationReconstruction -WorkspaceRoot $workspace -UnitId 'unit-reconstruction' -RepoMapPath $mapPath -ReconstructionReceipt $input|Out-Null}catch{$fabricatedRejected=$true}
