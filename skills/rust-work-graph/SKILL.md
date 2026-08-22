@@ -346,6 +346,12 @@ not create an authority edge for current work. Model retired `publication` to
 as a publication edge. If it normalizes a blocked skill
 surface action, retain the `planned` node and do not add completion or execution
 edges.
+Graph a historical validation-debt baseline as an immutable, unresolved
+evidence node bound to validator/source/state/event-prefix/current-unit and the
+canonical failure-set digest. Link its independent authorization and
+debt-bearing result, but never turn that subgraph into a clean-workspace,
+current-validation, acceptance, source, instruction, or publication authority
+edge. Any changed failure-set or anchor is a rejecting drift edge.
 If a terminal blocked unit wholly lacks a required skill node, add only the
 exact current-validation projection edges from its bound unit, blocker event,
 and terminal receipt to the required canonical skill nodes. Keep those nodes

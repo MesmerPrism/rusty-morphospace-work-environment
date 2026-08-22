@@ -2,6 +2,7 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = "Stop"
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceValidationAuthority.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceHistoricalValidationDebtBaseline.psm1')
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceContentObservation.psm1') -Force -DisableNameChecking
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospacePublicationRecovery.psm1') -Force
@@ -1265,6 +1266,18 @@ function Test-MorphospaceValidationReceipt {
     }
     if ([string]$receipt.result -ne $ExpectedResult -or [string]$receipt.tier -ne $ExpectedTier) {
         throw "Validation receipt result/tier does not match the requested checkpoint."
+    }
+    $requiredDebtBinding = Assert-MorphospaceHistoricalValidationDebtReceiptRequirement -WorkspaceRoot $WorkspaceRoot -CurrentUnit $Unit -Receipt $receipt
+    if ($receipt.PSObject.Properties.Name -contains 'historical_validation_debt') {
+        $debtResult = Test-MorphospaceHistoricalValidationDebtReceiptBinding -WorkspaceRoot $WorkspaceRoot -Binding $receipt.historical_validation_debt
+        $currentUnitPath = Join-Path $WorkspaceRoot ("iteration-units/{0}.json" -f [string]$Unit.unit_id)
+        if ([string]$debtResult.project_id -cne [string]$Spec.project_id -or
+            [string]$debtResult.current_unit.unit_id -cne [string]$Unit.unit_id -or
+            -not (Test-Path -LiteralPath $currentUnitPath -PathType Leaf) -or
+            [string]$debtResult.current_unit.raw_sha256 -cne (Get-MorphospaceFileSha256 -Path $currentUnitPath) -or
+            [string]$debtResult.current_unit.canonical_sha256 -cne (Get-MorphospaceCanonicalJsonSha256 -Value $Unit)) {
+            throw 'Validation receipt historical-debt binding does not match the exact current unit.'
+        }
     }
 
     $artifactMap = @{}

@@ -95,6 +95,17 @@ instruction-completion, `BeginValidation`, deep-pass `RecordValidation`, and
 `Accept` transactions form the complete contiguous suffix and derive the live
 terminal state. The compatibility receipt never substitutes for those actions.
 
+When a cold aggregate has immutable terminal metadata debt but the current
+feature contract is sound, use only the project-local,
+independently-signed `historical_validation_debt_baseline.v1` ratchet. Bind the
+validator's closed dependency manifest, source composition, state/event prefix,
+current bytes, and the exact sorted failure set; materialize the
+content-addressed result and bind it into the validation receipt; report
+debt-bearing success rather than a clean workspace.
+Never baseline current, instruction, source-scope, validation, acceptance, or
+tool/transport failures. Route detail to
+`docs/HISTORICAL_VALIDATION_DEBT_BASELINE.md`.
+
 For an exact `<old>-superseded-by-<new>` event, bind old independently from
 event `unit_id` and new independently from target-state `current_unit`; treat
 the event ID only as their exact rendering and reject delimiter ambiguity.

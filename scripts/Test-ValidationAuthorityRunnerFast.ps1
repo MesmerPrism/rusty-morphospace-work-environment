@@ -263,7 +263,11 @@ try {
         'scripts/lib/MorphospaceOwnership.psm1','scripts/lib/MorphospacePlannedPublication.psm1','scripts/lib/MorphospacePlanningProjection.psm1',
         'scripts/lib/MorphospacePlanningSuffixRewrite.psm1','scripts/lib/MorphospaceProtocolCommon.psm1','scripts/lib/MorphospacePublicationRecovery.psm1',
         'scripts/lib/MorphospaceExecutedPreparedPublication.psm1','scripts/lib/MorphospacePublishedPlanningAuthorityAdoption.psm1','scripts/lib/MorphospacePublishedPrerequisiteSuffix.psm1',
-        'scripts/lib/MorphospaceTransitionLedger.psm1','scripts/lib/MorphospaceValidationAuthority.psm1'
+        'scripts/lib/MorphospaceTransitionLedger.psm1','scripts/lib/MorphospaceValidationAuthority.psm1',
+        # WorkUnitAutomation imports this baseline verifier even when the fixture
+        # does not exercise a debt-bearing receipt. Keep the clean-room copy
+        # closed over that module and its canonical external-owner verifier.
+        'scripts/lib/MorphospaceHistoricalValidationDebtBaseline.psm1','scripts/lib/ExternalOwnerAuthorization.psm1'
     )
     $validatorPath = 'scripts/Invoke-Wf005OwnerValidator.ps1'
     foreach ($relative in $authorityPaths) {

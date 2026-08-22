@@ -39,6 +39,12 @@ unit's planned surface to complete or claim an edit, validation, acceptance,
 execution, or publication; current portable registries and all current/future
 instruction rules remain closed.
 
+When immutable historical metadata prevents a complete aggregate while the
+current feature still validates, use only the independently signed,
+[historical validation-debt baseline](docs/HISTORICAL_VALIDATION_DEBT_BASELINE.md).
+It ratchets one exact unresolved failure set and reports debt-bearing success;
+it does not repair history or claim a clean workspace.
+
 One exact current active feature unit may correct only its legacy
 `architecture_decision` shape and wholly absent required
 `rusty-morphospace`/`system-engineering` surface records through the

@@ -1,0 +1,188 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/historical-validation-debt-baseline-v1.schema.json",
+  "title": "Immutable historical validation-debt baseline v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "baseline_id", "created_at", "status", "project_id", "validator",
+    "workspace_anchor", "source_composition", "current_unit", "failure_records",
+    "failure_set", "authorization"
+  ],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.workflow.historical_validation_debt_baseline.v1" },
+    "baseline_id": { "$ref": "#/$defs/id" },
+    "created_at": { "$ref": "#/$defs/utc" },
+    "status": { "const": "unresolved" },
+    "project_id": { "$ref": "#/$defs/id" },
+    "validator": { "$ref": "#/$defs/validator" },
+    "workspace_anchor": { "$ref": "#/$defs/workspaceAnchor" },
+    "source_composition": { "$ref": "#/$defs/sourceComposition" },
+    "current_unit": { "$ref": "#/$defs/currentUnit" },
+    "failure_records": {
+      "type": "array", "minItems": 1, "maxItems": 4096,
+      "items": { "$ref": "#/$defs/failureRecord" }
+    },
+    "failure_set": { "$ref": "#/$defs/failureSet" },
+    "authorization": { "$ref": "#/$defs/authorizationReference" }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{7,127}$" },
+    "unitId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" },
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "tree": { "type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$" },
+    "utc": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{7}Z$" },
+    "relativePath": { "type": "string", "pattern": "^(?![A-Za-z]:|/|.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9_.@ -]+(?:/[A-Za-z0-9_.@ -]+)*$" },
+    "fileReference": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256", "length"],
+      "properties": {
+        "path": { "$ref": "#/$defs/relativePath" },
+        "sha256": { "$ref": "#/$defs/hash" },
+        "length": { "type": "integer", "minimum": 0, "maximum": 16777216 }
+      }
+    },
+    "workspaceStateReference": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256", "length", "canonical_sha256"],
+      "properties": {
+        "path": { "const": "workspace.state.json" },
+        "sha256": { "$ref": "#/$defs/hash" },
+        "length": { "type": "integer", "minimum": 0, "maximum": 16777216 },
+        "canonical_sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "validatorFile": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/relativePath" },
+        "sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "validator": {
+      "type": "object", "additionalProperties": false,
+      "required": ["environment_commit", "environment_tree", "files", "identity_sha256"],
+      "properties": {
+        "environment_commit": { "$ref": "#/$defs/commit" },
+        "environment_tree": { "$ref": "#/$defs/tree" },
+        "files": { "type": "array", "minItems": 1, "maxItems": 512, "items": { "$ref": "#/$defs/validatorFile" } },
+        "identity_sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "eventPrefix": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256", "length", "tail_event_id", "tail_event_sha256"],
+      "properties": {
+        "path": { "const": "iteration-events.jsonl" },
+        "sha256": { "$ref": "#/$defs/hash" },
+        "length": { "type": "integer", "minimum": 0, "maximum": 16777216 },
+        "tail_event_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" },
+        "tail_event_sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "workspaceAnchor": {
+      "type": "object", "additionalProperties": false,
+      "required": ["planning_state", "event_ledger_prefix", "identity_sha256"],
+      "properties": {
+        "planning_state": { "$ref": "#/$defs/workspaceStateReference" },
+        "event_ledger_prefix": { "$ref": "#/$defs/eventPrefix" },
+        "identity_sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "sourceLock": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256", "revision"],
+      "properties": {
+        "path": { "const": "feature.lock.json" },
+        "sha256": { "$ref": "#/$defs/hash" },
+        "revision": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "projectSpec": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256", "revision"],
+      "properties": {
+        "path": { "const": "project.spec.json" },
+        "sha256": { "$ref": "#/$defs/hash" },
+        "revision": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "repositoryMap": {
+      "type": "object", "additionalProperties": false,
+      "required": ["sha256", "repository_ids_sha256"],
+      "properties": {
+        "sha256": { "$ref": "#/$defs/hash" },
+        "repository_ids_sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "sourceComposition": {
+      "type": "object", "additionalProperties": false,
+      "required": ["project_spec", "source_lock", "repository_map", "identity_sha256"],
+      "properties": {
+        "project_spec": { "$ref": "#/$defs/projectSpec" },
+        "source_lock": { "$ref": "#/$defs/sourceLock" },
+        "repository_map": { "$ref": "#/$defs/repositoryMap" },
+        "identity_sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "currentUnit": {
+      "type": "object", "additionalProperties": false,
+      "required": ["unit_id", "status", "path", "raw_sha256", "canonical_sha256"],
+      "properties": {
+        "unit_id": { "$ref": "#/$defs/unitId" },
+        "status": { "enum": ["active", "validating"] },
+        "path": { "type": "string", "pattern": "^iteration-units/[a-z0-9][a-z0-9-]{1,127}\\.json$" },
+        "raw_sha256": { "$ref": "#/$defs/hash" },
+        "canonical_sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "historicalUnitLocus": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "unit_id", "path", "raw_sha256", "canonical_sha256"],
+      "properties": {
+        "kind": { "const": "historical-unit" },
+        "unit_id": { "$ref": "#/$defs/unitId" },
+        "path": { "type": "string", "pattern": "^iteration-units/[a-z0-9][a-z0-9-]{1,127}\\.json$" },
+        "raw_sha256": { "$ref": "#/$defs/hash" },
+        "canonical_sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "legacyWorkspaceStateLocus": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "path", "raw_sha256", "canonical_sha256"],
+      "properties": {
+        "kind": { "const": "legacy-workspace-state" },
+        "path": { "const": "workspace.state.json" },
+        "raw_sha256": { "$ref": "#/$defs/hash" },
+        "canonical_sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "failureRecord": {
+      "type": "object", "additionalProperties": false,
+      "required": ["failure_code", "locus", "message_sha256", "evidence_sha256", "record_sha256"],
+      "properties": {
+        "failure_code": { "enum": ["historical-unit-contract", "legacy-workspace-state-contract"] },
+        "locus": { "oneOf": [{ "$ref": "#/$defs/historicalUnitLocus" }, { "$ref": "#/$defs/legacyWorkspaceStateLocus" }] },
+        "message_sha256": { "$ref": "#/$defs/hash" },
+        "evidence_sha256": { "$ref": "#/$defs/hash" },
+        "record_sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "failureSet": {
+      "type": "object", "additionalProperties": false,
+      "required": ["count", "sha256"],
+      "properties": { "count": { "type": "integer", "minimum": 1, "maximum": 4096 }, "sha256": { "$ref": "#/$defs/hash" } }
+    },
+    "authorizationReference": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "schema", "required"],
+      "properties": {
+        "path": { "type": "string", "pattern": "^receipts/historical-validation-debt/[a-z0-9][a-z0-9-]{7,127}/authorization\\.json$" },
+        "schema": { "const": "rusty.morphospace.workflow.historical_validation_debt_baseline_authorization.v1" },
+        "required": { "const": true }
+      }
+    }
+  }
+}

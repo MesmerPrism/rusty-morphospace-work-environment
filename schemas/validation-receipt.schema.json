@@ -28,6 +28,7 @@
     "created_at": { "type": "string", "format": "date-time" },
     "tier": { "enum": ["quick", "standard", "deep"] },
     "result": { "enum": ["pass", "partial", "fail", "blocked"] },
+    "historical_validation_debt": { "$ref": "#/$defs/historicalValidationDebtBinding" },
     "repository_revisions": {
       "type": "array",
       "items": {
@@ -145,6 +146,51 @@
     "sha": {
       "type": "string",
       "pattern": "^[0-9a-fA-F]{40}$"
+    },
+    "historicalDebtReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "path", "schema", "sha256"],
+      "properties": {
+        "role": {
+          "enum": [
+            "historical-validation-debt-baseline",
+            "historical-validation-debt-authorization",
+            "historical-validation-debt-result"
+          ]
+        },
+        "path": {
+          "type": "string",
+          "pattern": "^receipts/historical-validation-debt/[a-z0-9][a-z0-9-]{7,127}/(?:baseline|authorization)\\.json$|^receipts/historical-validation-debt/[a-z0-9][a-z0-9-]{7,127}/results/[0-9a-f]{64}\\.json$"
+        },
+        "schema": { "type": "string", "pattern": "^rusty\\.morphospace\\.workflow\\.historical_validation_debt_[a-z0-9_]+\\.v1$" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "historicalValidationDebtBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["baseline", "authorization", "result"],
+      "properties": {
+        "baseline": {
+          "allOf": [
+            { "$ref": "#/$defs/historicalDebtReference" },
+            { "properties": { "role": { "const": "historical-validation-debt-baseline" }, "schema": { "const": "rusty.morphospace.workflow.historical_validation_debt_baseline.v1" } } }
+          ]
+        },
+        "authorization": {
+          "allOf": [
+            { "$ref": "#/$defs/historicalDebtReference" },
+            { "properties": { "role": { "const": "historical-validation-debt-authorization" }, "schema": { "const": "rusty.morphospace.workflow.historical_validation_debt_baseline_authorization.v1" } } }
+          ]
+        },
+        "result": {
+          "allOf": [
+            { "$ref": "#/$defs/historicalDebtReference" },
+            { "properties": { "role": { "const": "historical-validation-debt-result" }, "schema": { "const": "rusty.morphospace.workflow.historical_validation_debt_result.v1" } } }
+          ]
+        }
+      }
     }
   }
 }
