@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/validation-check-proof-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "check_id", "result", "proof_key_sha256", "input_closure_sha256", "registry_sha256", "check_entry_sha256", "command_sha256", "platform", "architecture", "toolchain_sha256", "environment_sha256", "runner_sha256", "exit_code", "elapsed_ms", "stdout_sha256", "stderr_sha256", "created_at", "reusable", "claims"],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.workflow.validation_check_proof.v1" },
+    "check_id": { "$ref": "#/$defs/id" },
+    "result": { "enum": ["pass", "fail"] },
+    "proof_key_sha256": { "$ref": "#/$defs/hash" },
+    "input_closure_sha256": { "$ref": "#/$defs/hash" },
+    "registry_sha256": { "$ref": "#/$defs/hash" },
+    "check_entry_sha256": { "$ref": "#/$defs/hash" },
+    "command_sha256": { "$ref": "#/$defs/hash" },
+    "platform": { "enum": ["windows", "linux"] },
+    "architecture": { "type": "string", "minLength": 1 },
+    "toolchain_sha256": { "$ref": "#/$defs/hash" },
+    "environment_sha256": { "$ref": "#/$defs/hash" },
+    "runner_sha256": { "$ref": "#/$defs/hash" },
+    "exit_code": { "type": "integer" },
+    "elapsed_ms": { "type": "integer", "minimum": 0 },
+    "stdout_sha256": { "$ref": "#/$defs/hash" },
+    "stderr_sha256": { "$ref": "#/$defs/hash" },
+    "created_at": { "type": "string" },
+    "reusable": { "const": false },
+    "claims": { "type": "object", "additionalProperties": false, "required": ["execution_attested", "acceptance_authority", "publication_authority"], "properties": { "execution_attested": { "const": false }, "acceptance_authority": { "const": false }, "publication_authority": { "const": false } } }
+  },
+  "allOf": [
+    { "if": { "properties": { "result": { "const": "pass" } } }, "then": { "properties": { "exit_code": { "const": 0 } } } },
+    { "if": { "properties": { "result": { "const": "fail" } } }, "then": { "properties": { "exit_code": { "not": { "const": 0 } } } } }
+  ],
+  "$defs": { "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }, "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,95}$" } }
+}

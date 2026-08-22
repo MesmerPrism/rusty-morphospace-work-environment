@@ -1,0 +1,29 @@
+{
+  "schema": "rusty.morphospace.workflow.affected_validation_registry.v1",
+  "registry_id": "work-environment-shadow-v1",
+  "repository_id": "MesmerPrism/rusty-morphospace-work-environment",
+  "revision": 1,
+  "path_sets": [
+    { "path_set_id": "affected-selector", "patterns": ["schemas/affected-validation-*.schema.json", "schemas/validation-check-proof-v1.schema.json", "manifests/affected-validation-registry.json", "scripts/Resolve-AffectedValidation.ps1", "scripts/Test-AffectedValidation.ps1", "scripts/lib/MorphospaceAffectedValidation.psm1", "docs/AFFECTED_VALIDATION.md"] },
+    { "path_set_id": "canonicalization-core", "patterns": ["scripts/lib/MorphospaceProtocolCommon.psm1", ".gitattributes"] },
+    { "path_set_id": "ci-and-aggregate", "patterns": [".github/workflows/**", "scripts/Test-WorkEnvironment.ps1", "scripts/Test-WorkflowContracts.ps1", "scripts/Test-WorkUnitAutomation.ps1"] },
+    { "path_set_id": "external-authority", "patterns": ["config/external-validation-authority.json", "config/external-owner-authorization.json", "scripts/*ExternalValidationAuthority*.ps1", "scripts/lib/ExternalOwnerAuthorization.psm1", "schemas/external-*.schema.json"] },
+    { "path_set_id": "documentation", "patterns": ["AGENTS.md", "README.md", "docs/**"] },
+    { "path_set_id": "portable-skills", "patterns": ["skills/**"] },
+    { "path_set_id": "schemas", "patterns": ["schemas/**"] },
+    { "path_set_id": "manifests", "patterns": ["manifests/**", "templates/**"] },
+    { "path_set_id": "scripts", "patterns": ["scripts/**"] }
+  ],
+  "checks": [
+    { "check_id": "affected-selector-selftest", "command_path": "scripts/Test-AffectedValidation.ps1", "arguments": [], "platforms": ["windows", "linux"], "minimum_tier": "quick", "trigger_path_sets": ["affected-selector"], "consume_path_sets": ["affected-selector"], "prerequisite_checks": [], "provides_contracts": ["affected-selection"], "consumes_contracts": [], "always_run": true, "authority_class": "trust-root", "cache_policy": "disabled", "budget_seconds": 30, "external_state": "none" },
+    { "check_id": "public-boundary", "command_path": "scripts/Test-PublicBoundary.ps1", "arguments": [], "platforms": ["windows", "linux"], "minimum_tier": "quick", "trigger_path_sets": ["documentation", "portable-skills", "schemas", "manifests", "scripts"], "consume_path_sets": ["documentation", "portable-skills", "schemas", "manifests", "scripts"], "prerequisite_checks": [], "provides_contracts": ["public-boundary"], "consumes_contracts": [], "always_run": false, "authority_class": "ordinary", "cache_policy": "portable", "budget_seconds": 20, "external_state": "none" },
+    { "check_id": "documentation-links", "command_path": "scripts/Test-DocumentationLinks.ps1", "arguments": [], "platforms": ["windows", "linux"], "minimum_tier": "quick", "trigger_path_sets": ["documentation"], "consume_path_sets": ["documentation"], "prerequisite_checks": ["public-boundary"], "provides_contracts": ["documentation-routing"], "consumes_contracts": [], "always_run": false, "authority_class": "ordinary", "cache_policy": "portable", "budget_seconds": 20, "external_state": "none" },
+    { "check_id": "skill-templates", "command_path": "scripts/Test-SkillTemplates.ps1", "arguments": [], "platforms": ["windows", "linux"], "minimum_tier": "quick", "trigger_path_sets": ["portable-skills"], "consume_path_sets": ["portable-skills"], "prerequisite_checks": ["public-boundary"], "provides_contracts": ["skill-routing"], "consumes_contracts": [], "always_run": false, "authority_class": "ordinary", "cache_policy": "portable", "budget_seconds": 30, "external_state": "none" },
+    { "check_id": "workflow-contracts", "command_path": "scripts/Test-WorkflowContracts.ps1", "arguments": ["-SkipOwnerSelfTests"], "platforms": ["windows", "linux"], "minimum_tier": "standard", "trigger_path_sets": ["schemas", "manifests", "scripts"], "consume_path_sets": ["schemas", "manifests", "scripts"], "prerequisite_checks": ["public-boundary"], "provides_contracts": ["workflow-contracts"], "consumes_contracts": [], "always_run": false, "authority_class": "integration", "cache_policy": "portable", "budget_seconds": 180, "external_state": "none" },
+    { "check_id": "work-unit-automation", "command_path": "scripts/Test-WorkUnitAutomation.ps1", "arguments": [], "platforms": ["windows"], "minimum_tier": "standard", "trigger_path_sets": ["ci-and-aggregate"], "consume_path_sets": ["schemas", "manifests", "scripts"], "prerequisite_checks": ["workflow-contracts"], "provides_contracts": ["automation-integration"], "consumes_contracts": ["workflow-contracts"], "always_run": false, "authority_class": "integration", "cache_policy": "exact-host", "budget_seconds": 900, "external_state": "none" },
+    { "check_id": "work-environment-deep", "command_path": "scripts/Test-WorkEnvironment.ps1", "arguments": ["-SelfTest", "-Tier", "Deep"], "platforms": ["windows", "linux"], "minimum_tier": "deep", "trigger_path_sets": ["affected-selector", "canonicalization-core", "ci-and-aggregate", "external-authority"], "consume_path_sets": ["documentation", "portable-skills", "schemas", "manifests", "scripts"], "prerequisite_checks": ["workflow-contracts", "work-unit-automation"], "provides_contracts": ["deep-aggregate"], "consumes_contracts": [], "always_run": false, "authority_class": "trust-root", "cache_policy": "disabled", "budget_seconds": 7200, "external_state": "none" }
+  ],
+  "always_run_check_ids": ["affected-selector-selftest"],
+  "deep_escalation_path_sets": ["affected-selector", "canonicalization-core", "ci-and-aggregate", "external-authority"],
+  "claims": { "shadow_only": true, "executes_checks": false, "skips_required_checks": false, "acceptance_authority": false, "publication_authority": false }
+}
