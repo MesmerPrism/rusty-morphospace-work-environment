@@ -3,7 +3,10 @@ param(
     [string]$WorkspaceRoot = "",
     [string]$RepositoryMapPath = "",
     [switch]$CurrentUnitInstructionOnly,
-    [switch]$SkipOwnerSelfTests
+    [switch]$SkipOwnerSelfTests,
+    [string]$HistoricalValidationDebtBaselinePath = "",
+    [string]$HistoricalValidationDebtResultPath = "",
+    [switch]$EmitHistoricalValidationDebtCapture
 )
 
 $ErrorActionPreference = "Stop"
@@ -14,6 +17,12 @@ if (-not $RepoRoot) {
 
 $RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
 $script:Failures = New-Object System.Collections.Generic.List[string]
+$script:FailureRecords = New-Object System.Collections.Generic.List[object]
+$script:FailureAttribution = [pscustomobject][ordered]@{
+    failure_code = 'unclassified-contract'
+    locus = [pscustomobject][ordered]@{ kind='unclassified' }
+    evidence = [pscustomobject][ordered]@{ kind='unclassified' }
+}
 $script:PortableIdPattern = "^[a-z0-9][a-z0-9-]{1,127}$"
 $script:LocalRepositoryMap = @{}
 if ($RepositoryMapPath) {
@@ -25,6 +34,7 @@ Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceHistoricalBlockerReso
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceBlockedSupersessionTerminalValidation.psm1') -Force
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceHistoricalUnitCompatibilityProjection.psm1') -Force
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceProtocolCommon.psm1') -Force
+Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceHistoricalValidationDebtBaseline.psm1') -Force
 # Keep one stable shared-predicate module instance through nested owner tests.
 # A force reload can remove this script's exported command binding mid-run.
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceActiveUnitContractReviewCompatibility.psm1')
@@ -59,9 +69,120 @@ function Invoke-IsolatedWorkflowSelfTest {
 }
 
 function Add-Failure {
-    param([string]$Message)
+    param(
+        [Parameter(Mandatory = $true)][string]$Message,
+        [object]$Attribution = $script:FailureAttribution
+    )
 
     $script:Failures.Add($Message) | Out-Null
+    $normalizedMessage = ([regex]::Replace($Message.Trim(), '\s+', ' '))
+    $failureCode = if ($null -ne $Attribution) { [string]$Attribution.failure_code } else { 'unclassified-contract' }
+    $locus = if ($null -ne $Attribution) { $Attribution.locus } else { [pscustomobject][ordered]@{ kind='unclassified' } }
+    $evidence = if ($null -ne $Attribution -and $null -ne $Attribution.evidence) { $Attribution.evidence } else { $locus }
+    $core = [ordered]@{
+        failure_code = $failureCode
+        locus = $locus
+        message_sha256 = Get-MorphospaceSha256Bytes -Bytes ([Text.UTF8Encoding]::new($false).GetBytes($normalizedMessage))
+        evidence_sha256 = Get-MorphospaceCanonicalJsonSha256 -Value $evidence
+    }
+    $script:FailureRecords.Add([pscustomobject][ordered]@{
+        failure_code = $core.failure_code
+        locus = $core.locus
+        message_sha256 = $core.message_sha256
+        evidence_sha256 = $core.evidence_sha256
+        record_sha256 = Get-MorphospaceCanonicalJsonSha256 -Value $core
+    }) | Out-Null
+}
+
+function New-HistoricalDebtUnitFailureAttribution {
+    param(
+        [Parameter(Mandatory = $true)][object]$Unit,
+        [Parameter(Mandatory = $true)][string]$UnitPath,
+        [Parameter(Mandatory = $true)][object]$State,
+        [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
+        [switch]$EligibleHistoricalDebt,
+        [object]$Event = $null
+    )
+
+    $unitId = [string]$Unit.unit_id
+    $relativePath = Normalize-RelativePath ([IO.Path]::GetRelativePath($WorkspaceRoot, $UnitPath))
+    $isCanonicalUnit = $unitId -match $script:PortableIdPattern -and $relativePath -ceq "iteration-units/$unitId.json"
+    $isCurrent = $isCanonicalUnit -and $null -ne $State.current_unit -and [string]$State.current_unit -ceq $unitId
+    $isHistoricalTerminal = $isCanonicalUnit -and @('accepted','blocked') -ccontains [string]$Unit.status
+    if (-not $isCurrent -and (-not $isHistoricalTerminal -or -not $EligibleHistoricalDebt)) {
+        return [pscustomobject][ordered]@{
+            failure_code = 'unclassified-contract'
+            locus = [pscustomobject][ordered]@{ kind='unclassified' }
+            evidence = [pscustomobject][ordered]@{ kind='unclassified'; unit_id=$unitId }
+        }
+    }
+    $locus = [pscustomobject][ordered]@{
+        kind = if ($isCurrent) { 'current-unit' } else { 'historical-unit' }
+        unit_id = $unitId
+        path = $relativePath
+        raw_sha256 = Get-MorphospaceFileSha256 -Path $UnitPath
+        canonical_sha256 = Get-MorphospaceCanonicalJsonSha256 -Value $Unit
+    }
+    $evidence = [ordered]@{ locus=$locus }
+    if ($null -ne $Event) {
+        $evidence.event = [ordered]@{
+            event_id = [string]$Event.event_id
+            sequence = [int]$Event.sequence
+            line_sha256 = [string]$Event.__line_sha256
+        }
+    }
+    return [pscustomobject][ordered]@{
+        failure_code = if ($isCurrent) { 'current-unit-contract' } else { 'historical-unit-contract' }
+        locus = $locus
+        evidence = $evidence
+    }
+}
+
+function New-HistoricalDebtWorkspaceStateFailureAttribution {
+    param(
+        [Parameter(Mandatory = $true)][object]$State,
+        [Parameter(Mandatory = $true)][string]$StatePath,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$Units,
+        [switch]$EligibleHistoricalDebt
+    )
+
+    if (-not $EligibleHistoricalDebt) {
+        return [pscustomobject][ordered]@{
+            failure_code = 'unclassified-contract'
+            locus = [pscustomobject][ordered]@{ kind='unclassified' }
+            evidence = [pscustomobject][ordered]@{ kind='unclassified'; path='workspace.state.json' }
+        }
+    }
+    $locus = [pscustomobject][ordered]@{
+        kind = 'legacy-workspace-state'
+        path = 'workspace.state.json'
+        raw_sha256 = Get-MorphospaceFileSha256 -Path $StatePath
+        canonical_sha256 = Get-MorphospaceCanonicalJsonSha256 -Value $State
+    }
+    return [pscustomobject][ordered]@{
+        failure_code = 'legacy-workspace-state-contract'
+        locus = $locus
+        evidence = [ordered]@{ locus=$locus }
+    }
+}
+
+function Get-CanonicalHistoricalDebtFailureRecords {
+    $rows = @($script:FailureRecords.ToArray())
+    $indexed = [Collections.Generic.List[object]]::new()
+    foreach ($row in $rows) {
+        $locus = $row.locus
+        $locusIdentity = if ([string]$locus.kind -ceq 'historical-unit') { [string]$locus.unit_id } else { [string]$locus.raw_sha256 }
+        $indexed.Add([pscustomobject][ordered]@{
+            key = "$([string]$row.failure_code)|$([string]$locus.kind)|$locusIdentity|$([string]$row.message_sha256)|$([string]$row.evidence_sha256)"
+            row = $row
+        }) | Out-Null
+    }
+    [object[]]$ordered = $indexed.ToArray()
+    [Array]::Sort($ordered, [Comparison[object]]{
+        param($left, $right)
+        return [string]::Compare([string]$left.key, [string]$right.key, [StringComparison]::Ordinal)
+    })
+    return @($ordered | ForEach-Object { $_.row })
 }
 
 function Assert-Contract {
@@ -81,6 +202,7 @@ function Assert-EvolvingInstructionPolicy {
         [Parameter(Mandatory = $true)][object]$Unit,
         [Parameter(Mandatory = $true)][object]$State,
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][Collections.Generic.List[object]]$DeferredSupersededFailures,
+        [object]$FailureAttribution = $script:FailureAttribution,
         [Parameter(Mandatory = $true)][string]$Message
     )
 
@@ -94,11 +216,12 @@ function Assert-EvolvingInstructionPolicy {
         $DeferredSupersededFailures.Add([pscustomobject][ordered]@{
             unit_id = $unitId
             message = $Message
+            failure_attribution = $FailureAttribution
         }) | Out-Null
         return
     }
 
-    Add-Failure -Message $Message
+    Add-Failure -Message $Message -Attribution $FailureAttribution
 }
 
 function Test-Text {
@@ -858,6 +981,7 @@ function Test-ProjectBundle {
     }
 
     $units = New-Object System.Collections.Generic.List[object]
+    $unitPathMap = @{}
     $legacySkillReviewCandidates = New-Object System.Collections.Generic.List[object]
     $deferredSupersededInstructionFailures = New-Object System.Collections.Generic.List[object]
     foreach ($path in @($Bundle.UnitPaths)) {
@@ -865,6 +989,18 @@ function Test-ProjectBundle {
         $unit = Read-JsonDocument -Path $path -Context "$Context iteration unit"
         if ($null -eq $unit) { continue }
         $units.Add($unit) | Out-Null
+        $unitId = [string]$unit.unit_id
+        if (-not $unitPathMap.ContainsKey($unitId)) { $unitPathMap[$unitId] = $path }
+        $priorFailureAttribution = $script:FailureAttribution
+        $historicalDebtEligibleAttribution = New-HistoricalDebtUnitFailureAttribution `
+            -Unit $unit -UnitPath $path -State $state -WorkspaceRoot $workspaceRoot -EligibleHistoricalDebt
+        $historicalDebtIneligibleAttribution = New-HistoricalDebtUnitFailureAttribution `
+            -Unit $unit -UnitPath $path -State $state -WorkspaceRoot $workspaceRoot
+        # A terminal unit may contribute debt only after its identity and
+        # lifecycle vocabulary have survived current-contract validation.
+        # Unknown work modes/categories are not historical debt and must not
+        # be captured for an otherwise valid-looking baseline request.
+        $script:FailureAttribution = $historicalDebtIneligibleAttribution
         Assert-Contract ([string]$unit.unit_id -match $script:PortableIdPattern) "$Context unit has invalid unit_id '$($unit.unit_id)'."
         Assert-Contract ($unit.schema -eq "rusty.morphospace.workflow.iteration_unit.v1") "$Context unit '$($unit.unit_id)' has the wrong schema ID."
         Assert-Contract ($unit.project_id -eq $spec.project_id) "$Context unit '$($unit.unit_id)' project_id does not match."
@@ -884,7 +1020,6 @@ function Test-ProjectBundle {
         }
 
         $changeCategories = @($unit.change_categories | ForEach-Object { [string]$_ })
-        $unitId = [string]$unit.unit_id
         $adoption = if ($historicalAdoptions.ContainsKey($unitId)) { $historicalAdoptions[$unitId] } else { $null }
         $compatibilityProjection = if ($historicalCompatibilityProjections.ContainsKey($unitId)) { $historicalCompatibilityProjections[$unitId] } else { $null }
         Assert-Contract (-not ($null -ne $adoption -and $null -ne $compatibilityProjection)) "$Context historical unit '$unitId' cannot combine adoption and compatibility projections."
@@ -967,6 +1102,11 @@ function Test-ProjectBundle {
             }
         }
 
+        $script:FailureAttribution = $historicalDebtEligibleAttribution
+
+        # Scope, source-composition, and instruction-surface failures cannot
+        # be baseline debt; retain normal hard-failure attribution for them.
+        $script:FailureAttribution = $historicalDebtIneligibleAttribution
         $effectiveAllowedRepositories = @($unit.allowed_repositories)
         if ($null -ne $completedProjectScopeProjection) {
             $projectionProperties = @($completedProjectScopeProjection.PSObject.Properties.Name | Sort-Object)
@@ -1211,6 +1351,7 @@ function Test-ProjectBundle {
                             action = [string]$skillSurface.action
                             status = [string]$skillSurface.status
                             work_mode_explicit = $false
+                            failure_attribution = $script:FailureAttribution
                         }) | Out-Null
                     } else {
                         Assert-EvolvingInstructionPolicy `
@@ -1404,6 +1545,7 @@ function Test-ProjectBundle {
                 Assert-Contract ((Test-Text $composition.lock_path) -and (Test-Text $composition.materialization_receipt)) "$Context unit '$($unit.unit_id)' exact materialization needs both lock and materialization receipt."
             }
         }
+        $script:FailureAttribution = $historicalDebtEligibleAttribution
         if ($unit.PSObject.Properties.Name -contains "resource_requirements") {
             $resourceKeys = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
             foreach ($requirement in @($unit.resource_requirements)) {
@@ -1423,11 +1565,13 @@ function Test-ProjectBundle {
             }
         }
         Test-NonEmptyTextArray -Value $unit.non_scope -Context "$Context unit '$($unit.unit_id)' non_scope"
+        $script:FailureAttribution = $historicalDebtIneligibleAttribution
         Assert-Contract (@($unit.acceptance).Count -gt 0) "$Context unit '$($unit.unit_id)' needs acceptance proofs."
         Test-UniqueProperty -Items @($unit.acceptance) -Property "acceptance_id" -Context "$Context unit '$($unit.unit_id)' acceptance"
         foreach ($acceptance in @($unit.acceptance)) {
             Assert-Contract ((Test-Text $acceptance.proof) -and (Test-Text $acceptance.command)) "$Context unit '$($unit.unit_id)' has incomplete acceptance proof."
         }
+        $script:FailureAttribution = $historicalDebtEligibleAttribution
         Assert-Contract ($script:RiskTiers -contains [string]$unit.risk_tier) "$Context unit '$($unit.unit_id)' has unknown risk tier."
         Assert-Contract ($script:DeviceRequirements -contains [string]$unit.device_requirement) "$Context unit '$($unit.unit_id)' has unknown device requirement."
         Assert-Contract ($script:PushCheckpoints -contains [string]$unit.push_checkpoint) "$Context unit '$($unit.unit_id)' has unknown push checkpoint."
@@ -1445,6 +1589,7 @@ function Test-ProjectBundle {
             }
             Assert-Contract ([int]$guardRanks[$guardProfile] -ge $minimumGuardRank) "$Context unit '$($unit.unit_id)' guard profile '$guardProfile' is below the required authority level."
         }
+        $script:FailureAttribution = $historicalDebtIneligibleAttribution
         Assert-Contract (@($unit.validation).Count -gt 0) "$Context unit '$($unit.unit_id)' needs validation commands."
         foreach ($validation in @($unit.validation)) {
             $effectiveValidationProfileId = [string]$validation.profile_id
@@ -1461,8 +1606,10 @@ function Test-ProjectBundle {
             $unknownResources = if ($unit.PSObject.Properties.Name -contains "resource_requirements") { @($unit.resource_requirements | ForEach-Object { [string]$_.resource_kind } | Where-Object { $script:ResourceKinds -notcontains $_ }) } else { @() }
             Test-ExactLegacyMappings -UnknownValues $unknownResources -Mappings @($adoption.normalization.resource_kinds) -CurrentValues $script:ResourceKinds -Context "$Context historical unit '$unitId' resource-kind" -AllowHistoricalOnly $true
         }
+        $script:FailureAttribution = $historicalDebtEligibleAttribution
         Test-NonEmptyTextArray -Value $unit.outputs -Context "$Context unit '$($unit.unit_id)' outputs"
         Assert-Contract (Test-Text $unit.commit_policy) "$Context unit '$($unit.unit_id)' needs a commit policy."
+        $script:FailureAttribution = $priorFailureAttribution
     }
     Test-UniqueProperty -Items ($units.ToArray()) -Property "unit_id" -Context "$Context iteration units"
     $unitMap = @{}
@@ -1485,6 +1632,19 @@ function Test-ProjectBundle {
     $previousEvent = $null
     foreach ($event in $events) {
         $eventId = [string]$event.event_id
+        $priorFailureAttribution = $script:FailureAttribution
+        if ($null -ne $event.unit_id -and $unitMap.ContainsKey([string]$event.unit_id) -and $unitPathMap.ContainsKey([string]$event.unit_id)) {
+            $script:FailureAttribution = New-HistoricalDebtUnitFailureAttribution `
+                -Unit $unitMap[[string]$event.unit_id] `
+                -UnitPath ([string]$unitPathMap[[string]$event.unit_id]) `
+                -State $state -WorkspaceRoot $workspaceRoot -Event $event
+        } else {
+            $script:FailureAttribution = [pscustomobject][ordered]@{
+                failure_code = 'unclassified-contract'
+                locus = [pscustomobject][ordered]@{ kind='unclassified' }
+                evidence = [pscustomobject][ordered]@{ kind='unclassified'; event_id=$eventId }
+            }
+        }
         if (Test-Text $eventId) { $eventMap[$eventId] = $event }
         $isEventV2=[string]$event.schema-eq'rusty.morphospace.workflow.iteration_event.v2'
         Assert-Contract ($isEventV2-or[string]$event.schema-eq'rusty.morphospace.workflow.iteration_event.v1') "$Context event '$eventId' has the wrong schema ID."
@@ -1496,6 +1656,7 @@ function Test-ProjectBundle {
         if ($null -ne $event.unit_id) {
             Assert-Contract ($unitMap.ContainsKey([string]$event.unit_id)) "$Context event '$eventId' references missing unit '$($event.unit_id)'."
         }
+        $script:FailureAttribution = $priorFailureAttribution
     }
     foreach ($adoptedUnitId in @($historicalAdoptions.Keys)) {
         $entry = $historicalAdoptions[$adoptedUnitId]
@@ -1805,15 +1966,20 @@ function Test-ProjectBundle {
         [void]$supersededInFlightIds.Add($oldId)
     }
     foreach ($candidate in $deferredSupersededInstructionFailures.ToArray()) {
-        Assert-Contract ($supersededInFlightIds.Contains([string]$candidate.unit_id)) ([string]$candidate.message)
+        if (-not $supersededInFlightIds.Contains([string]$candidate.unit_id)) {
+            Add-Failure -Message ([string]$candidate.message) -Attribution $candidate.failure_attribution
+        }
     }
     foreach ($candidate in $legacySkillReviewCandidates.ToArray()) {
-        Assert-Contract (Test-LegacySkillReviewCompatibility `
+        $legacyCompatible = Test-LegacySkillReviewCompatibility `
             -Candidate $candidate `
             -UnitMap $unitMap `
             -EventMap $eventMap `
             -SupersededInFlightIds $supersededInFlightIds `
-            -State $state) "$Context legacy unit '$($candidate.unit_id)' relevant skill '$($candidate.skill_id)' review-no-change is not eligible for the canonical legacy terminal skill-review compatibility projection."
+            -State $state
+        if (-not $legacyCompatible) {
+            Add-Failure -Message "$Context legacy unit '$($candidate.unit_id)' relevant skill '$($candidate.skill_id)' review-no-change is not eligible for the canonical legacy terminal skill-review compatibility projection." -Attribution $candidate.failure_attribution
+        }
     }
     $activeUnits = @($units | Where-Object {
         $_.status -eq "active" -and -not $supersededInFlightIds.Contains([string]$_.unit_id)
@@ -1825,10 +1991,18 @@ function Test-ProjectBundle {
     })
     Assert-Contract ($inFlightUnits.Count -le 1) "$Context has more than one effective in-flight iteration unit."
 
+    $priorFailureAttribution = $script:FailureAttribution
+    $historicalDebtEligibleStateAttribution = New-HistoricalDebtWorkspaceStateFailureAttribution `
+        -State $state -StatePath $Bundle.StatePath -Units @($units.ToArray()) -EligibleHistoricalDebt
+    $historicalDebtIneligibleStateAttribution = New-HistoricalDebtWorkspaceStateFailureAttribution `
+        -State $state -StatePath $Bundle.StatePath -Units @($units.ToArray())
+    $script:FailureAttribution = $historicalDebtIneligibleStateAttribution
     $isStateV2 = [string]$state.schema -eq "rusty.morphospace.workflow.workspace_state.v2"
     Assert-Contract (($isProjectV2 -and $isStateV2) -or (-not $isProjectV2 -and $state.schema -eq "rusty.morphospace.workflow.workspace_state.v1")) "$Context workspace state schema must match the project protocol version."
     Assert-Contract ($state.project_id -eq $spec.project_id) "$Context workspace state project_id does not match."
+    $script:FailureAttribution = $historicalDebtEligibleStateAttribution
     Assert-Contract ([int]$state.plan_revision -ge 1) "$Context workspace plan revision must be at least 1."
+    $script:FailureAttribution = $historicalDebtIneligibleStateAttribution
     if ($null -eq $state.current_unit) {
         Assert-Contract ($inFlightUnits.Count -eq 0) "$Context has an in-flight unit but workspace state has no current_unit."
     } else {
@@ -1902,6 +2076,7 @@ function Test-ProjectBundle {
         }
     }
 
+    $script:FailureAttribution = $priorFailureAttribution
     $reviews = New-Object System.Collections.Generic.List[object]
     foreach ($path in @($Bundle.ReviewPaths)) {
         if (-not (Test-Text $path)) { continue }
@@ -2067,6 +2242,9 @@ $requiredSchemaNames = @(
     "historical-release-closure-receipt.schema.json",
     "historical-unit-adoption-receipt.schema.json",
     "historical-unit-adoption-reconstruction.schema.json",
+    "historical-validation-debt-baseline-v1.schema.json",
+    "historical-validation-debt-baseline-authorization-v1.schema.json",
+    "historical-validation-debt-result-v1.schema.json",
     "feature-descriptor.schema.json",
     "feature-lock.schema.json",
     "feature-lock-v2.schema.json",
@@ -2459,6 +2637,47 @@ if ($WorkspaceRoot) {
         -ReviewPaths (Get-JsonFiles (Join-Path $resolvedWorkspace "promotion-reviews")) `
         -EventsPath (Join-Path $resolvedWorkspace "iteration-events.jsonl")
     Test-ProjectBundle -Bundle $workspaceBundle -Context "project workspace"
+}
+
+$historicalDebtResult = $null
+if ($HistoricalValidationDebtBaselinePath) {
+    if (-not $WorkspaceRoot) { throw 'Historical validation-debt ratcheting requires a project workspace.' }
+    if (-not $RepositoryMapPath) { throw 'Historical validation-debt ratcheting requires an exact repository-map path.' }
+    if (-not $HistoricalValidationDebtResultPath) { throw 'Historical validation-debt ratcheting requires an exact content-addressed result path for the validation receipt handoff.' }
+    try {
+        $historicalDebtResult = Test-MorphospaceHistoricalValidationDebtBaseline `
+            -WorkspaceRoot $WorkspaceRoot `
+            -RepoRoot $RepoRoot `
+            -RepositoryMapPath $RepositoryMapPath `
+            -BaselinePath $HistoricalValidationDebtBaselinePath `
+            -FailureRecords (Get-CanonicalHistoricalDebtFailureRecords)
+    } catch {
+        Add-Failure -Message "Historical validation-debt baseline rejected: $($_.Exception.Message)"
+        $historicalDebtResult = $null
+    }
+}
+
+$historicalDebtCapture = [pscustomobject][ordered]@{
+    schema = 'rusty.morphospace.workflow.historical_validation_debt_capture.v1'
+    failure_records = @(Get-CanonicalHistoricalDebtFailureRecords)
+}
+if ($EmitHistoricalValidationDebtCapture) {
+    $captureBytes = [Text.UTF8Encoding]::new($false).GetBytes((ConvertTo-MorphospaceCanonicalJson -Value $historicalDebtCapture))
+    Write-Output ("historical_validation_debt_capture_base64=" + [Convert]::ToBase64String($captureBytes))
+}
+
+if ($null -ne $historicalDebtResult) {
+    if ($script:Failures.Count -ne @($historicalDebtResult.recomputed_failure_set.count)) {
+        throw 'Historical validation-debt ratchet did not account for every validator failure.'
+    }
+    $resultRelative = ConvertTo-MorphospaceProtocolRelativePath -Path $HistoricalValidationDebtResultPath
+    $expectedResultRelative = "receipts/historical-validation-debt/$([string]$historicalDebtResult.historical_debt.baseline_id)/results/$([string]$historicalDebtResult.current_unit.raw_sha256).json"
+    if ($resultRelative -cne $expectedResultRelative) {
+        throw 'Historical validation-debt result path is not the exact content-addressed path for this baseline and current-unit bytes.'
+    }
+    Write-MorphospaceManagedProtocolJsonAtomic -WorkspaceRoot $WorkspaceRoot -RelativePath $resultRelative -Value $historicalDebtResult -NoOverwrite
+    $script:Failures.Clear()
+    Write-Host "Workflow contract validation passed with unresolved historical debt: baseline=$([string]$historicalDebtResult.historical_debt.baseline_id); count=$([int]$historicalDebtResult.historical_debt.count); sha256=$([string]$historicalDebtResult.historical_debt.sha256); current_validation=passed."
 }
 
 if ($script:Failures.Count -gt 0) {

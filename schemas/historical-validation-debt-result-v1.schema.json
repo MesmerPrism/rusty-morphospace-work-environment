@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/historical-validation-debt-result-v1.schema.json",
+  "title": "Historical validation-debt ratchet result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "project_id", "current_unit", "baseline", "authorization", "validator_identity_sha256",
+    "current_validation", "historical_debt_present", "historical_debt", "recomputed_failure_set", "status"
+  ],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.workflow.historical_validation_debt_result.v1" },
+    "project_id": { "$ref": "#/$defs/id" },
+    "current_unit": { "$ref": "#/$defs/currentUnit" },
+    "baseline": { "$ref": "#/$defs/baselineReference" },
+    "authorization": { "$ref": "#/$defs/authorizationReference" },
+    "validator_identity_sha256": { "$ref": "#/$defs/hash" },
+    "current_validation": { "const": "passed" },
+    "historical_debt_present": { "const": true },
+    "historical_debt": { "$ref": "#/$defs/debt" },
+    "recomputed_failure_set": { "$ref": "#/$defs/failureSet" },
+    "status": { "const": "debt-bearing-success" }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" },
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "currentUnit": {
+      "type": "object", "additionalProperties": false,
+      "required": ["unit_id", "status", "path", "raw_sha256", "canonical_sha256"],
+      "properties": {
+        "unit_id": { "$ref": "#/$defs/id" },
+        "status": { "enum": ["active", "validating"] },
+        "path": { "type": "string", "pattern": "^iteration-units/[a-z0-9][a-z0-9-]{1,127}\\.json$" },
+        "raw_sha256": { "$ref": "#/$defs/hash" },
+        "canonical_sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "baselineReference": {
+      "type": "object", "additionalProperties": false,
+      "required": ["role", "path", "schema", "sha256"],
+      "properties": {
+        "role": { "const": "historical-validation-debt-baseline" },
+        "path": { "type": "string", "pattern": "^receipts/historical-validation-debt/[a-z0-9][a-z0-9-]{7,127}/baseline\\.json$" },
+        "schema": { "const": "rusty.morphospace.workflow.historical_validation_debt_baseline.v1" },
+        "sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "authorizationReference": {
+      "type": "object", "additionalProperties": false,
+      "required": ["role", "path", "schema", "sha256"],
+      "properties": {
+        "role": { "const": "historical-validation-debt-authorization" },
+        "path": { "type": "string", "pattern": "^receipts/historical-validation-debt/[a-z0-9][a-z0-9-]{7,127}/authorization\\.json$" },
+        "schema": { "const": "rusty.morphospace.workflow.historical_validation_debt_baseline_authorization.v1" },
+        "sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "debt": {
+      "type": "object", "additionalProperties": false,
+      "required": ["baseline_id", "count", "sha256", "status"],
+      "properties": {
+        "baseline_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{7,127}$" },
+        "count": { "type": "integer", "minimum": 1, "maximum": 4096 },
+        "sha256": { "$ref": "#/$defs/hash" },
+        "status": { "const": "unresolved" }
+      }
+    },
+    "failureSet": {
+      "type": "object", "additionalProperties": false,
+      "required": ["count", "sha256"],
+      "properties": { "count": { "type": "integer", "minimum": 1, "maximum": 4096 }, "sha256": { "$ref": "#/$defs/hash" } }
+    }
+  }
+}

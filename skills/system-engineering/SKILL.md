@@ -185,6 +185,14 @@ source/Git/remotes/devices, accept, or publish. Route detail to
 current heads/branches, ancestor bases, exact in-scope changed paths, and—when
 device-gated—explicit serials, cleanup, and zero bounded package/system fatals.
 Revalidate at acceptance so post-validation drift rejects.
+If immutable historical metadata makes the whole cold aggregate fail while the
+current unit remains sound, model it only as a separately owner-signed exact
+historical-validation-debt baseline and ratchet. Bind validator/source/state/
+ledger/current-unit identities and exact sorted failure-set evidence; require
+the content-addressed result binding in every receipt for that ratcheted
+current unit. It neither repairs
+history nor permits current, instruction, scope, validation, acceptance, or
+tool failures. See `docs/HISTORICAL_VALIDATION_DEBT_BASELINE.md`.
 For long-running promotion or validation-authority work, run a fail-fast
 preflight in the exact execution environment first. Bind it to immutable
 inputs, runner/tool release, host capabilities, materialized-workspace

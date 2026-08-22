@@ -225,4 +225,70 @@ function Test-ExternalOwnerAuthorizationComments {
     return $document.payload
 }
 
-Export-ModuleMember -Function Get-CanonicalAuthorizationBytes, ConvertFrom-ExternalOwnerJsonStrict, Read-ExternalOwnerAuthorizationPolicy, Get-ExternalOwnerSha256, New-ExternalOwnerAuthorizationRequest, New-ExternalOwnerAuthorizationPayload, Test-ExternalOwnerAuthorizationComments
+function Test-ExternalOwnerSignedPayload {
+    <#
+    .SYNOPSIS
+    Verifies one non-comment external-owner signed payload against exact,
+    caller-supplied evidence.  This deliberately reuses the pinned policy and
+    canonical RSA-PSS implementation but does not grant comment/PR authority.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$DocumentText,
+        [Parameter(Mandatory)][object]$ExpectedPayload,
+        [Parameter(Mandatory)][object]$Policy,
+        [Parameter(Mandatory)][string]$SchemaPath,
+        [datetimeoffset]$Now = [datetimeoffset]::UtcNow
+    )
+
+    Initialize-ExternalOwnerAuthorizationTypes
+    [byte[]]$rawCanonical = [RustyMorphospace.ExternalOwnerCrypto]::Canonicalize($DocumentText)
+    $document = ConvertFrom-ExternalOwnerJsonStrict -Json $DocumentText
+    $roundTripText = $document | ConvertTo-Json -Depth 32 -Compress
+    [byte[]]$roundTripCanonical = [RustyMorphospace.ExternalOwnerCrypto]::Canonicalize($roundTripText)
+    if (-not [Security.Cryptography.CryptographicOperations]::FixedTimeEquals($rawCanonical, $roundTripCanonical)) {
+        throw 'Signed authorization JSON is not losslessly representable.'
+    }
+    if (-not (Test-Json -Json ([Text.Encoding]::UTF8.GetString($roundTripCanonical)) -SchemaFile $SchemaPath -ErrorAction Stop)) {
+        throw 'Signed authorization document failed its schema.'
+    }
+    if ([string]$document.payload.issuer_id -cne [string]$Policy.issuer_id) {
+        throw 'Signed authorization issuer is not pinned.'
+    }
+    if ([string]$document.signature.algorithm -cne 'RSA-PSS-SHA256') {
+        throw 'Signed authorization algorithm is not supported.'
+    }
+    if ([string]$document.signature.public_key_spki_sha256 -cne [string]$Policy.public_key_spki_sha256) {
+        throw 'Signed authorization key fingerprint is not pinned.'
+    }
+    if ([RustyMorphospace.ExternalOwnerCrypto]::SpkiSha256([string]$Policy.public_key_pem) -cne [string]$Policy.public_key_spki_sha256) {
+        throw 'Configured external-owner public key fingerprint is inconsistent.'
+    }
+    [byte[]]$actualCanonical = Get-CanonicalAuthorizationBytes -Payload $document.payload
+    [byte[]]$expectedCanonical = Get-CanonicalAuthorizationBytes -Payload $ExpectedPayload
+    if (-not [Security.Cryptography.CryptographicOperations]::FixedTimeEquals($actualCanonical, $expectedCanonical)) {
+        throw 'Signed authorization payload does not equal the exact expected evidence.'
+    }
+    $issued = [datetimeoffset]::ParseExact([string]$document.payload.issued_at, "yyyy-MM-dd'T'HH:mm:ss'Z'", [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AssumeUniversal)
+    $expires = [datetimeoffset]::ParseExact([string]$document.payload.expires_at, "yyyy-MM-dd'T'HH:mm:ss'Z'", [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AssumeUniversal)
+    if ($issued -gt $Now.AddSeconds([int]$Policy.max_future_skew_seconds)) {
+        throw 'Signed authorization was issued too far in the future.'
+    }
+    if ($issued -lt $Now.AddSeconds(-[int]$Policy.max_authorization_age_seconds)) {
+        throw 'Signed authorization is stale.'
+    }
+    if ($expires -le $Now -or $expires -le $issued -or $expires -gt $issued.AddSeconds([int]$Policy.max_authorization_age_seconds)) {
+        throw 'Signed authorization expiry is invalid.'
+    }
+    try { [byte[]]$signature = [Convert]::FromBase64String([string]$document.signature.value_base64) }
+    catch { throw 'Signed authorization signature is not canonical base64.' }
+    if ([Convert]::ToBase64String($signature) -cne [string]$document.signature.value_base64) {
+        throw 'Signed authorization signature is not canonical base64.'
+    }
+    if (-not [RustyMorphospace.ExternalOwnerCrypto]::Verify([string]$Policy.public_key_pem, $actualCanonical, $signature)) {
+        throw 'Signed authorization signature verification failed.'
+    }
+    return $document.payload
+}
+
+Export-ModuleMember -Function Get-CanonicalAuthorizationBytes, ConvertFrom-ExternalOwnerJsonStrict, Read-ExternalOwnerAuthorizationPolicy, Get-ExternalOwnerSha256, New-ExternalOwnerAuthorizationRequest, New-ExternalOwnerAuthorizationPayload, Test-ExternalOwnerAuthorizationComments, Test-ExternalOwnerSignedPayload

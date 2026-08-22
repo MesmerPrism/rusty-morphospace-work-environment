@@ -127,6 +127,20 @@ Exactly one external signing source is required. Private keys and production
 certificate thumbprints never belong in portable configuration; tests create
 ephemeral RSA keys in process memory.
 
+### Historical validation-debt authorization
+
+The same pinned canonical RSA-PSS primitive may authorize an immutable
+project-local historical validation-debt baseline, but it is a separate typed
+payload and sibling receipt, not a pull-request comment or publication grant.
+It binds the exact baseline bytes, validator identity including its closed
+aggregate dependency manifest, workspace/state/ledger anchor, source
+composition, current-unit identity, and canonical failure-set
+digest/count with unique audit identity and expiry. The owner signature admits
+only read-only ratchet verification of those unchanged bytes. It grants no
+current validation, acceptance, source/workspace mutation, merge, or
+publication authority. See
+[Historical Validation-Debt Baseline](HISTORICAL_VALIDATION_DEBT_BASELINE.md).
+
 ## Portable Command
 
 Fetch the candidate commit into a clean base checkout without checking it out,
