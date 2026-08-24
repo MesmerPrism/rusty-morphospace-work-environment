@@ -56,7 +56,7 @@ For routine local iteration:
 
 ```text
 declared project source + selected build lane + exact APK/run capsule
-  -> private hash-pinned File Manager CLI resolution
+  -> private hash-pinned File Manager distribution-closure resolution
   -> File Manager artifact inspection and exact-serial install
   -> Kiosk status and typed launch when the app participates
   -> File Manager bounded Android observation
@@ -129,7 +129,10 @@ pwsh -NoProfile -ExecutionPolicy Bypass `
 `Install` and `Deploy` fail if File Manager returns anything short of exact
 headset-confirmed artifact readback. Every device mode requires a new
 run-owned evidence directory, makes content-addressed read-locked copies of
-both the APK and hash-pinned provider, and retains provider resolution plus
+the APK and the complete hash-pinned provider closure (entry point plus every
+declared runtime sibling), and retains the provider source commit/tree,
+distribution-manifest digest, closure digest, staged relative entry point, and
+provider resolution plus
 exact JSON and execution evidence for each attempted typed step. In-repository
 evidence is accepted only below ignored `local/` or `artifacts/`. Use
 `-Mode Install`, then Kiosk's typed status/launch route, for an app whose launch

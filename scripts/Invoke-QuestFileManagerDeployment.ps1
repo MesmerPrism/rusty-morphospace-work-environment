@@ -17,6 +17,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+$MaximumProviderClosurePathLength = 240
 
 function Get-StepArguments {
     param(
@@ -218,10 +219,12 @@ function Invoke-Step {
         [string]$EvidenceRoot,
         [string]$EvidenceName = "",
         [string]$ExpectedExecutableSha256,
+        [object]$ProviderClosure = $null,
         [int]$DeadlineSeconds
     )
 
     $arguments = Get-StepArguments -Step $Step -Artifact $Artifact -TargetSerial $TargetSerial
+    if ($null -ne $ProviderClosure) { Test-LockedProviderClosure -Closure $ProviderClosure }
     $beforeSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $Executable).Hash.ToLowerInvariant()
     if ($beforeSha256 -cne $ExpectedExecutableSha256) {
         throw "$Step refused an executable whose SHA-256 no longer matches provider resolution."
@@ -235,6 +238,7 @@ function Invoke-Step {
     if ($afterSha256 -cne $ExpectedExecutableSha256) {
         throw "$Step executable changed during the typed invocation."
     }
+    if ($null -ne $ProviderClosure) { Test-LockedProviderClosure -Closure $ProviderClosure }
     if ($execution.FailureCode) {
         throw "$Step process failed before a normal exit; retained execution evidence records the failure."
     }
@@ -289,6 +293,87 @@ function New-LockedRunCopy {
         Path = $retained
         Sha256 = $sha256
         Lock = $lock
+    }
+}
+
+function Get-ProviderClosureFilePath {
+    param([string]$Root, [string]$RelativePath)
+
+    $candidate = [System.IO.Path]::GetFullPath((Join-Path $Root $RelativePath.Replace('/', [System.IO.Path]::DirectorySeparatorChar)))
+    $relative = [System.IO.Path]::GetRelativePath($Root, $candidate)
+    if ([System.IO.Path]::IsPathRooted($relative) -or $relative -eq '..' -or
+        $relative.StartsWith("..$([System.IO.Path]::DirectorySeparatorChar)", [StringComparison]::Ordinal)) {
+        throw "Provider closure path escapes its declared root: $RelativePath"
+    }
+    return $candidate
+}
+
+function Test-LockedProviderClosure {
+    param([object]$Closure)
+
+    $actualRelativePaths = @(
+        Get-ChildItem -LiteralPath $Closure.Root -Recurse -File | ForEach-Object {
+            [System.IO.Path]::GetRelativePath($Closure.Root, $_.FullName).Replace('\\', '/')
+        } | Sort-Object)
+    $expectedRelativePaths = @($Closure.Files | ForEach-Object { [string]$_.relative_path } | Sort-Object)
+    if (($actualRelativePaths -join "`n") -cne ($expectedRelativePaths -join "`n")) {
+        throw "Staged provider closure contains a missing or undeclared runtime file."
+    }
+    foreach ($file in @($Closure.Files)) {
+        $path = Get-ProviderClosureFilePath -Root $Closure.Root -RelativePath ([string]$file.relative_path)
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Staged provider runtime file is missing: $($file.relative_path)" }
+        $item = Get-Item -LiteralPath $path
+        $sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant()
+        if ($item.Length -ne [long]$file.size_bytes -or $sha256 -cne [string]$file.sha256) {
+            throw "Staged provider runtime file changed: $($file.relative_path)"
+        }
+    }
+}
+
+function New-LockedProviderClosure {
+    param([object]$Resolution, [string]$Directory)
+
+    $closureDigest = [string]$Resolution.closure_sha256
+    if ($closureDigest -cnotmatch '^[a-f0-9]{64}$') { throw "Provider resolution did not return a valid closure digest." }
+    $staging = Join-Path $Directory (".provider-closure-staging-" + [Guid]::NewGuid().ToString('N'))
+    $retained = Join-Path $Directory ("provider-closure-" + $closureDigest)
+    if (Test-Path -LiteralPath $retained) { throw "Content-addressed provider closure root already exists for this run." }
+    New-Item -ItemType Directory -Path $staging | Out-Null
+    $leases = [Collections.Generic.List[object]]::new()
+    try {
+        foreach ($file in @($Resolution.closure_files | Sort-Object relative_path)) {
+            $source = Get-ProviderClosureFilePath -Root ([string]$Resolution.runtime_root) -RelativePath ([string]$file.relative_path)
+            if ($source.Length -gt $MaximumProviderClosurePathLength) {
+                throw "Provider source closure path exceeds the $MaximumProviderClosurePathLength-character run bound: $($file.relative_path)"
+            }
+            if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "Provider source closure is missing: $($file.relative_path)" }
+            $destination = Get-ProviderClosureFilePath -Root $staging -RelativePath ([string]$file.relative_path)
+            if ($destination.Length -gt $MaximumProviderClosurePathLength) {
+                throw "Provider staged closure path exceeds the $MaximumProviderClosurePathLength-character run bound: $($file.relative_path)"
+            }
+            New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
+            Copy-Item -LiteralPath $source -Destination $destination -ErrorAction Stop
+            $item = Get-Item -LiteralPath $destination
+            $sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $destination).Hash.ToLowerInvariant()
+            if ($item.Length -ne [long]$file.size_bytes -or $sha256 -cne [string]$file.sha256) {
+                throw "Partial or changed provider runtime copy: $($file.relative_path)"
+            }
+        }
+        $closure = [pscustomobject]@{ Root = $staging; Files = @($Resolution.closure_files); ClosureSha256 = $closureDigest }
+        Test-LockedProviderClosure -Closure $closure
+        Move-Item -LiteralPath $staging -Destination $retained
+        $closure.Root = $retained
+        foreach ($file in @($closure.Files)) {
+            $leases.Add([System.IO.File]::Open((Get-ProviderClosureFilePath -Root $retained -RelativePath ([string]$file.relative_path)), [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)) | Out-Null
+        }
+        Test-LockedProviderClosure -Closure $closure
+        $closure | Add-Member -NotePropertyName EntryPointPath -NotePropertyValue (Get-ProviderClosureFilePath -Root $retained -RelativePath ([string]$Resolution.entry_point_relative_path))
+        $closure | Add-Member -NotePropertyName Locks -NotePropertyValue $leases
+        return $closure
+    } catch {
+        foreach ($lease in $leases) { $lease.Dispose() }
+        if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
+        throw
     }
 }
 
@@ -362,6 +447,7 @@ function Invoke-SelfTest {
         "rusty-qfm-deployment-self-test-$([Guid]::NewGuid().ToString('N'))"
     New-Item -ItemType Directory -Path $temporaryRoot | Out-Null
     $lockedCopy = $null
+    $providerClosure = $null
     $hostReadLockEnforced = $false
     $portableContentAddressingVerified = $false
     try {
@@ -381,6 +467,40 @@ function Invoke-SelfTest {
             throw "Self-test did not retain an exact content-addressed run copy."
         }
         $portableContentAddressingVerified = $true
+
+        $providerRoot = Join-Path $temporaryRoot 'provider runtime with spaces'
+        New-Item -ItemType Directory -Path (Join-Path $providerRoot 'runtimes\win-x64') -Force | Out-Null
+        $providerEntry = Join-Path $providerRoot 'questionable-file-manager.exe'
+        $providerSibling = Join-Path $providerRoot 'runtimes\win-x64\hostfxr.dll'
+        [System.IO.File]::WriteAllBytes($providerEntry, [byte[]](9, 8, 7, 6))
+        [System.IO.File]::WriteAllBytes($providerSibling, [byte[]](6, 7, 8, 9))
+        $duplicateSibling = Join-Path $providerRoot 'plugins\hostfxr.dll'
+        New-Item -ItemType Directory -Path (Split-Path -Parent $duplicateSibling) -Force | Out-Null
+        [System.IO.File]::WriteAllBytes($duplicateSibling, [byte[]](5, 5, 5, 5))
+        $providerFiles = @($providerEntry, $providerSibling, $duplicateSibling | ForEach-Object { $_ }) | ForEach-Object {
+            $relative = [System.IO.Path]::GetRelativePath($providerRoot, $_).Replace('\\', '/')
+            [pscustomobject]@{ relative_path = $relative; size_bytes = (Get-Item -LiteralPath $_).Length; sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $_).Hash.ToLowerInvariant() }
+        }
+        $providerClosure = New-LockedProviderClosure -Resolution ([pscustomobject]@{
+            closure_sha256 = ('b' * 64); runtime_root = $providerRoot; closure_files = $providerFiles; entry_point_relative_path = 'questionable-file-manager.exe'
+        }) -Directory $temporaryRoot
+        Test-LockedProviderClosure -Closure $providerClosure
+        foreach ($lease in $providerClosure.Locks) { $lease.Dispose() }
+        $providerClosure.Locks = @()
+        Remove-Item -LiteralPath (Get-ProviderClosureFilePath -Root $providerClosure.Root -RelativePath 'runtimes/win-x64/hostfxr.dll') -Force
+        $missingSiblingRejected = $false
+        try { Test-LockedProviderClosure -Closure $providerClosure } catch { $missingSiblingRejected = $true }
+        if (-not $missingSiblingRejected) { throw "Self-test did not reject a missing staged provider runtime sibling." }
+        $longPathRejected = $false
+        $overlongRelativePath = [string]::Concat(('bounded/' * 40)) + 'hostfxr.dll'
+        try {
+            New-LockedProviderClosure -Resolution ([pscustomobject]@{
+                closure_sha256 = ('c' * 64); runtime_root = $providerRoot
+                closure_files = @([pscustomobject]@{ relative_path = $overlongRelativePath; size_bytes = 1; sha256 = ('0' * 64) })
+                entry_point_relative_path = $overlongRelativePath
+            }) -Directory $temporaryRoot | Out-Null
+        } catch { $longPathRejected = $true }
+        if (-not $longPathRejected) { throw "Self-test did not reject an overlong provider closure path before copy." }
 
         if ($IsWindows) {
             $mutationRejected = $false
@@ -410,6 +530,9 @@ function Invoke-SelfTest {
         if ($null -ne $lockedCopy) {
             $lockedCopy.Lock.Dispose()
         }
+        if ($null -ne $providerClosure) {
+            foreach ($lease in $providerClosure.Locks) { $lease.Dispose() }
+        }
         [System.IO.Directory]::Delete($temporaryRoot, $true)
     }
     [ordered]@{
@@ -421,6 +544,10 @@ function Invoke-SelfTest {
         portable_content_addressing_verified = $portableContentAddressingVerified
         host_read_lock_enforced = $hostReadLockEnforced
         process_failure_retained = $true
+        provider_runtime_closure = $true
+        missing_runtime_sibling_rejected = $true
+        duplicate_runtime_filenames_preserved = $true
+        windows_path_bound_enforced = $true
         immersive_runtime_policy = $true
         blocking_system_component_rejected = $true
     } | ConvertTo-Json -Depth 4
@@ -486,24 +613,29 @@ if ($deviceMode) {
 }
 
 $providerRunCopy = $null
+$providerClosure = $null
 $artifactRunCopy = $null
 $executionProvider = [string]$resolution.executable_path
 $executionArtifact = $artifactPath
 $inspection = $null
 try {
     if ($deviceMode) {
-        $providerRunCopy = New-LockedRunCopy `
-            -Source ([string]$resolution.executable_path) `
-            -Directory $evidenceRoot `
-            -Prefix "provider" `
-            -Extension ".exe" `
-            -ExpectedSha256 ([string]$resolution.executable_sha256)
+        $providerClosure = New-LockedProviderClosure -Resolution $resolution -Directory $evidenceRoot
+        [ordered]@{
+            schema = "rusty.morphospace.quest_file_manager_provider_closure.v1"
+            source_revision = [string]$resolution.source_revision
+            source_tree = [string]$resolution.source_tree
+            distribution_manifest_sha256 = [string]$resolution.distribution_manifest_sha256
+            closure_sha256 = [string]$resolution.closure_sha256
+            entry_point_relative_path = [string]$resolution.entry_point_relative_path
+            files = @($resolution.closure_files)
+        } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $evidenceRoot "provider-closure-manifest.json") -Encoding utf8NoBOM
         $artifactRunCopy = New-LockedRunCopy `
             -Source $artifactPath `
             -Directory $evidenceRoot `
             -Prefix "artifact" `
             -Extension ".apk"
-        $executionProvider = $providerRunCopy.Path
+        $executionProvider = $providerClosure.EntryPointPath
         $executionArtifact = $artifactRunCopy.Path
     }
 
@@ -514,6 +646,7 @@ try {
         -TargetSerial $Serial `
         -EvidenceRoot $evidenceRoot `
         -ExpectedExecutableSha256 ([string]$resolution.executable_sha256) `
+        -ProviderClosure $providerClosure `
         -DeadlineSeconds $TimeoutSeconds
     if ($deviceMode -and [string]$inspection.Sha256 -cne $artifactRunCopy.Sha256) {
         throw "File Manager inspection does not match the immutable run-owned APK copy."
@@ -527,6 +660,7 @@ try {
             -TargetSerial $Serial `
             -EvidenceRoot $evidenceRoot `
             -ExpectedExecutableSha256 ([string]$resolution.executable_sha256) `
+            -ProviderClosure $providerClosure `
             -DeadlineSeconds $TimeoutSeconds
         Assert-InstalledArtifact -Expected $inspection -Installed $observation.Installed -ExpectedSerial $Serial -Step Observe
         Assert-RuntimeObservation `
@@ -543,6 +677,7 @@ try {
             -TargetSerial $Serial `
             -EvidenceRoot $evidenceRoot `
             -ExpectedExecutableSha256 ([string]$resolution.executable_sha256) `
+            -ProviderClosure $providerClosure `
             -DeadlineSeconds $TimeoutSeconds
         Assert-MutationConfirmed -Envelope $install -Step Install
         $postInstallObservation = Invoke-Step `
@@ -553,6 +688,7 @@ try {
             -EvidenceRoot $evidenceRoot `
             -EvidenceName "post-install-observe" `
             -ExpectedExecutableSha256 ([string]$resolution.executable_sha256) `
+            -ProviderClosure $providerClosure `
             -DeadlineSeconds $TimeoutSeconds
         Assert-InstalledArtifact `
             -Expected $inspection `
@@ -570,6 +706,7 @@ try {
             -EvidenceRoot $evidenceRoot `
             -EvidenceName "launch" `
             -ExpectedExecutableSha256 ([string]$resolution.executable_sha256) `
+            -ProviderClosure $providerClosure `
             -DeadlineSeconds $TimeoutSeconds
         Assert-LaunchAdmitted -Envelope $launch
         Assert-InstalledArtifact -Expected $inspection -Installed $launch.result.Installed -ExpectedSerial $Serial -Step Launch
@@ -587,6 +724,7 @@ try {
                 -EvidenceRoot $evidenceRoot `
                 -EvidenceName ("post-launch-observe-{0:d2}" -f $observationAttempt) `
                 -ExpectedExecutableSha256 ([string]$resolution.executable_sha256) `
+                -ProviderClosure $providerClosure `
                 -DeadlineSeconds $TimeoutSeconds
             Assert-InstalledArtifact -Expected $inspection -Installed $observation.Installed -ExpectedSerial $Serial -Step Observe
             try {
@@ -612,6 +750,9 @@ try {
     if ($null -ne $providerRunCopy) {
         $providerRunCopy.Lock.Dispose()
     }
+    if ($null -ne $providerClosure) {
+        foreach ($lease in $providerClosure.Locks) { $lease.Dispose() }
+    }
 }
 
 [ordered]@{
@@ -620,6 +761,10 @@ try {
     mode = $Mode.ToLowerInvariant()
     provider_sha256 = [string]$resolution.executable_sha256
     provider_source_revision = [string]$resolution.source_revision
+    provider_source_tree = [string]$resolution.source_tree
+    provider_distribution_manifest_sha256 = [string]$resolution.distribution_manifest_sha256
+    provider_closure_sha256 = [string]$resolution.closure_sha256
+    provider_staged_entry_point = [string]$resolution.entry_point_relative_path
     artifact_sha256 = [string]$inspection.Sha256
     artifact_size_bytes = [long]$inspection.SizeBytes
     evidence_directory = $evidenceRoot

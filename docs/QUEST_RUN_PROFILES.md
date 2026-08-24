@@ -32,8 +32,9 @@ inspection remains QFM-owned.
 
 The build profile removes recurring Gradle/PowerShell command reconstruction.
 The run request does not contain an arbitrary device command. A private Hostess
-provider map resolves the hash-pinned File Manager deployment wrapper, File
-Manager provider config, and verified diagnostic adapter. Hostess plans or runs
+provider map resolves the hash-pinned File Manager deployment wrapper, a complete
+provider distribution closure (not a lone executable), File Manager provider
+config, and verified diagnostic adapter. Hostess plans or runs
 only those adapters, retains foreign receipts by path and SHA-256, and resumes
 only completed hash-valid stages.
 

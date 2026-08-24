@@ -15,6 +15,7 @@ $tempBase = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
 $testRoot = Join-Path $tempBase ("rusty-morphospace-qfm-resolver-" + [guid]::NewGuid().ToString("N"))
 $configPath = Join-Path $testRoot "resolver.json"
 $fixtureExecutable = Join-Path $testRoot "questionable-file-manager.exe"
+$fixtureSibling = Join-Path $testRoot "runtime\hostfxr.dll"
 $invalidExtensionFixture = Join-Path $testRoot "questionable-file-manager.bin"
 
 function Write-JsonUtf8NoBom {
@@ -25,6 +26,17 @@ function Write-JsonUtf8NoBom {
         $Path,
         $json + [Environment]::NewLine,
         [System.Text.UTF8Encoding]::new($false))
+}
+
+function Get-DistributionManifestSha256 {
+    param([string]$EntryPoint, [object[]]$Files)
+    $lines = @("rusty.morphospace.quest_file_manager_distribution_manifest.v1", "entry_point=$EntryPoint")
+    foreach ($file in @($Files | Sort-Object relative_path)) {
+        $lines += "file=$($file.relative_path)`t$($file.size_bytes)`t$($file.sha256)"
+    }
+    $bytes = [Text.UTF8Encoding]::new($false).GetBytes((($lines -join "`n") + "`n"))
+    try { return ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes))).ToLowerInvariant() }
+    finally { [Array]::Clear($bytes, 0, $bytes.Length) }
 }
 
 function Invoke-ResolverChild {
@@ -49,16 +61,28 @@ try {
     $fixtureBytes = [System.Text.UTF8Encoding]::new($false).GetBytes(
         "portable Quest File Manager resolver fixture`n")
     [System.IO.File]::WriteAllBytes($fixtureExecutable, $fixtureBytes)
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $fixtureSibling) | Out-Null
+    [System.IO.File]::WriteAllBytes($fixtureSibling, [byte[]](1, 2, 3, 4))
     [System.IO.File]::WriteAllBytes($invalidExtensionFixture, $fixtureBytes)
     $fixtureSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $fixtureExecutable).Hash.ToLowerInvariant()
+    $distributionFiles = @($fixtureExecutable, $fixtureSibling | ForEach-Object { $_ }) | ForEach-Object {
+        [pscustomobject]@{
+            relative_path = [System.IO.Path]::GetRelativePath($testRoot, $_).Replace('\\', '/')
+            size_bytes = (Get-Item -LiteralPath $_).Length
+            sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $_).Hash.ToLowerInvariant()
+        }
+    }
     $config = [ordered]@{
-        schema = "rusty.morphospace.local_quest_file_manager_cli.v3"
+        schema = "rusty.morphospace.local_quest_file_manager_cli.v4"
         provider_id = "file-manager-local"
-        executable_path = $fixtureExecutable
-        executable_sha256 = $fixtureSha256
+        runtime_root = $testRoot
+        entry_point_relative_path = "questionable-file-manager.exe"
+        distribution_manifest_sha256 = Get-DistributionManifestSha256 -EntryPoint "questionable-file-manager.exe" -Files $distributionFiles
+        distribution_files = $distributionFiles
         source_kind = "source-build"
         source_version = "0.1.0-dev"
         source_revision = ("a" * 40)
+        source_tree = ("b" * 40)
         inspected_deployment_contract = "questionable.file_manager.inspected_deployment.v3"
         apk_launch_result_contract = "questionable.file_manager.apk_launch_result.v1"
         launcher_export_proof_contract = "questionable.file_manager.launcher_export_proof.v2"
@@ -75,11 +99,11 @@ try {
         throw "Resolver did not return the expected hash-pinned ready result."
     }
 
-    $config.executable_sha256 = ("0" * 64)
+    $config.distribution_files[0].sha256 = ("0" * 64)
     Write-JsonUtf8NoBom -Path $configPath -Value $config
     Invoke-ResolverChild -ExpectedExit 1 | Out-Null
 
-    $config.executable_sha256 = $fixtureSha256
+    $config.distribution_files[0].sha256 = $fixtureSha256
     $config.apk_launch_result_contract = "questionable.file_manager.apk_launch_result.v0"
     Write-JsonUtf8NoBom -Path $configPath -Value $config
     Invoke-ResolverChild -ExpectedExit 1 | Out-Null
@@ -105,6 +129,10 @@ try {
     if ($deploymentResult.status -cne "passed" -or
         -not $deploymentResult.immutable_run_copy -or
         -not $deploymentResult.portable_content_addressing_verified -or
+        -not $deploymentResult.provider_runtime_closure -or
+        -not $deploymentResult.missing_runtime_sibling_rejected -or
+        -not $deploymentResult.duplicate_runtime_filenames_preserved -or
+        -not $deploymentResult.windows_path_bound_enforced -or
         ($IsWindows -and -not $deploymentResult.host_read_lock_enforced) -or
         (-not $IsWindows -and $deploymentResult.host_read_lock_enforced) -or
         -not $deploymentResult.process_failure_retained) {

@@ -216,7 +216,10 @@ pwsh -NoProfile -ExecutionPolicy Bypass `
    and use the public Meta Quest workflow repo as the device-operations
    authority. Select warm iteration or Candidate/publication before building;
    do not turn content-addressed final outputs into per-edit cold compiler
-   roots. Routine local work uses a hash-pinned File Manager CLI, Kiosk
+   roots. Routine local work uses a complete hash-pinned File Manager provider
+   closure (entry point plus declared runtime siblings), staged in a
+   content-addressed run root and recorded without local paths; it does not use
+   a lone copied executable. Kiosk
    launch/foreground control when applicable, and app-owned runtime evidence.
    For OpenXR inspection or interaction, explicitly choose an app-native route,
    a bridge over the existing Spatial SDK session, or a packaged API layer.

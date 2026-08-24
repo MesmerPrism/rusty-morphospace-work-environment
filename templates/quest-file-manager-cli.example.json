@@ -1,11 +1,17 @@
 {
-  "schema": "rusty.morphospace.local_quest_file_manager_cli.v3",
+  "schema": "rusty.morphospace.local_quest_file_manager_cli.v4",
   "provider_id": "file-manager-local",
-  "executable_path": "<absolute-file-manager-cli-path>",
-  "executable_sha256": "<lowercase-file-manager-cli-sha256>",
+  "runtime_root": "<absolute-file-manager-runtime-root>",
+  "entry_point_relative_path": "questionable-file-manager.exe",
+  "distribution_manifest_sha256": "<lowercase-closure-manifest-sha256>",
+  "distribution_files": [
+    { "relative_path": "questionable-file-manager.exe", "size_bytes": 0, "sha256": "<lowercase-entrypoint-sha256>" },
+    { "relative_path": "required-runtime-sibling.dll", "size_bytes": 0, "sha256": "<lowercase-runtime-sibling-sha256>" }
+  ],
   "source_kind": "source-build",
   "source_version": "<file-manager-semantic-version>",
   "source_revision": "<full-file-manager-source-commit>",
+  "source_tree": "<full-file-manager-source-tree>",
   "inspected_deployment_contract": "questionable.file_manager.inspected_deployment.v3",
   "apk_launch_result_contract": "questionable.file_manager.apk_launch_result.v1",
   "launcher_export_proof_contract": "questionable.file_manager.launcher_export_proof.v2",
