@@ -83,10 +83,17 @@ try {
         source_version = "0.1.0-dev"
         source_revision = ("a" * 40)
         source_tree = ("b" * 40)
-        inspected_deployment_contract = "questionable.file_manager.inspected_deployment.v3"
+        inspected_deployment_contract = "questionable.file_manager.inspected_deployment.v5"
+        apk_preflight_result_contract = "questionable.file_manager.apk_preflight_result.v1"
+        apk_deploy_result_contract = "questionable.file_manager.apk_deploy_result.v1"
+        apk_diagnostic_result_contract = "questionable.file_manager.apk_diagnostic_result.v3"
+        apk_diagnostic_bundle_contract = "questionable.file_manager.apk_diagnostic_bundle.v3"
+        apk_stop_result_contract = "questionable.file_manager.apk_stop_result.v1"
+        adb_forward_inventory_result_contract = "questionable.file_manager.adb_forward_inventory_result.v1"
         apk_launch_result_contract = "questionable.file_manager.apk_launch_result.v1"
         launcher_export_proof_contract = "questionable.file_manager.launcher_export_proof.v2"
-        runtime_observation_contract = "questionable.file_manager.app_runtime_observation.v2"
+        runtime_observation_contract = "questionable.file_manager.app_runtime_observation.v5"
+        global_focus_observation_contract = "questionable.file_manager.android_global_focus_observation.v1"
     }
     Write-JsonUtf8NoBom -Path $configPath -Value $config
 

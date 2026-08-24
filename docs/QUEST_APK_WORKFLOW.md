@@ -76,9 +76,11 @@ Copy
 to the ignored `local/quest-file-manager-cli.json`, bind the exact executable
 SHA-256 and source revision, and retain the complete inspected-deployment
 contract set from that template. The resolver rejects older provider pins that
-do not advertise immutable v3 deployment admission, one typed JSON launch
-envelope on success or failure, the current-Quest launcher-export proof, and
-v2 runtime observation. Resolve the provider without touching a headset:
+do not advertise QFM v5 inspected deployment, preflight/deploy, bounded
+diagnostic result/bundle, typed stop, shared-forward inventory, one typed JSON
+launch envelope on success or failure, the current-Quest launcher-export proof,
+runtime observation v5, and global-focus observation v1. Resolve the provider
+without touching a headset:
 
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass `
@@ -94,13 +96,16 @@ guard authority even when File Manager or Fleet carries its request. Android
 foreground observation does not replace app-owned OpenXR, renderer, source, or
 feature-lock evidence.
 
-The current File Manager consumer contract preserves its four owner-native
-schema IDs. Its `apk_launch_result.v1` outer envelope is exactly
+The current File Manager consumer contract preserves owner-native result
+schemas rather than wrapping their payloads. Its `apk_launch_result.v1` outer envelope is exactly
 `{schema,succeeded,mutation,result,failure}`: success has non-null mutation
 and result with null failure; failure has null mutation/result with non-null
-failure. Runtime v2 establishes Android installed identity, foreground,
-top-resumed, and process facts only. It is not evidence of OpenXR readiness,
-an application effect, or wearer visibility.
+failure. Explicit legacy-v3, legacy-v4, and current-v5 adapters keep installed
+identity, process, task/top-resumed, and global Android focus distinct. Runtime
+v5 adds bounded `mCurrentFocus`/`mFocusedApp` facts through global-focus v1;
+these remain raw Android observations. Neither a PID, process liveness,
+top-resumed state, target focus, nor FocusPlaceholder state establishes
+application/OpenXR readiness, an application effect, or wearer visibility.
 
 For repeatable local work, use the fail-closed wrapper instead of reconstructing
 that sequence from ambient executables. Its default mode resolves the pinned

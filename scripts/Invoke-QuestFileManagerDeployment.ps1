@@ -18,6 +18,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $MaximumProviderClosurePathLength = 240
+Import-Module (Join-Path $PSScriptRoot 'lib\QuestFileManagerRuntimeObservationAdapter.psm1') -Force
 
 function Get-StepArguments {
     param(
@@ -159,27 +160,14 @@ function Assert-RuntimeObservation {
         [string]$Component = ""
     )
 
-    if ([string]$Observation.ObservationContract -cne
-        "questionable.file_manager.app_runtime_observation.v2") {
-        throw "Runtime observation does not implement the required v2 fact contract."
+    $adapted = Convert-QfmRuntimeObservation -Observation $Observation
+    if ([string]$adapted.status -ne 'supported') {
+        throw "Runtime observation uses an unsupported QFM fact contract: $($adapted.input_contract)"
     }
-    if (-not [bool]$Observation.ProcessAlive -or @($Observation.ProcessIds).Count -eq 0) {
-        throw "Runtime observation did not confirm a live package process."
-    }
-    if ($Shape -ceq "Android2d" -and
-        (-not [bool]$Observation.IsForeground -or -not [bool]$Observation.IsTopResumed)) {
-        throw "Android2d runtime policy requires foreground and top-resumed package facts."
-    }
-    if ($Shape -ceq "ImmersiveXr" -and -not [bool]$Observation.IsTopResumed) {
-        throw "ImmersiveXr runtime policy requires a top-resumed package fact."
-    }
-    if ($Shape -cne "ProcessAlive" -and @($Observation.BlockingSystemComponents).Count -gt 0) {
-        throw "Runtime observation contains a blocking Quest system component."
-    }
-    if (-not [string]::IsNullOrWhiteSpace($Component) -and
-        @($Observation.TopResumedComponents) -cnotcontains $Component) {
-        throw "Runtime observation did not contain the exact expected top-resumed component."
-    }
+    # RuntimeShape and Component remain accepted legacy request inputs, but are
+    # never readiness assertions. Process, task, and focus remain raw facts;
+    # application/OpenXR readiness stays unknown until app-owned evidence exists.
+    return $adapted
 }
 
 function Write-StepEvidence {
@@ -387,7 +375,7 @@ function Invoke-SelfTest {
     }
     Assert-InstalledArtifact -Expected $artifact -Installed $installed -ExpectedSerial "QUEST123" -Step "self-test"
     $immersiveObservation = [pscustomobject]@{
-        ObservationContract = "questionable.file_manager.app_runtime_observation.v2"
+        ObservationContract = "questionable.file_manager.app_runtime_observation.v5"
         IsForeground = $false
         IsTopResumed = $true
         ProcessAlive = $true
@@ -395,7 +383,7 @@ function Invoke-SelfTest {
         TopResumedComponents = @("com.example.app/com.example.app.Main")
         BlockingSystemComponents = @()
     }
-    Assert-RuntimeObservation `
+    $adaptedObservation = Assert-RuntimeObservation `
         -Observation $immersiveObservation `
         -Shape ImmersiveXr `
         -Component "com.example.app/com.example.app.Main"
@@ -405,28 +393,9 @@ function Invoke-SelfTest {
         mutation = [pscustomobject]@{ Stage = "pending" }
         result = [pscustomobject]@{ CommandResult = [pscustomobject]@{ Succeeded = $true } }
     })
-    $android2dRejected = $false
-    try {
-        Assert-RuntimeObservation -Observation $immersiveObservation -Shape Android2d
-    } catch {
-        $android2dRejected = $true
-    }
-    if (-not $android2dRejected) {
-        throw "Self-test did not distinguish Android2d from immersive runtime facts."
-    }
-    $blockedRejected = $false
-    try {
-        Assert-RuntimeObservation `
-            -Observation ($immersiveObservation | Select-Object *, @{
-                Name = "BlockingSystemComponents"
-                Expression = { @("com.oculus.systemux/com.oculus.systemux.SensorLockActivity") }
-            }) `
-            -Shape ImmersiveXr
-    } catch {
-        $blockedRejected = $true
-    }
-    if (-not $blockedRejected) {
-        throw "Self-test did not reject a blocking Quest system component."
+    if ($adaptedObservation.fact_families.application_evidence.application_readiness -cne 'unknown' -or
+        $adaptedObservation.fact_families.application_evidence.openxr_readiness -cne 'unknown') {
+        throw "Self-test allowed Android transport facts to become application or OpenXR readiness."
     }
     $rejected = $false
     try {
@@ -548,8 +517,7 @@ function Invoke-SelfTest {
         missing_runtime_sibling_rejected = $true
         duplicate_runtime_filenames_preserved = $true
         windows_path_bound_enforced = $true
-        immersive_runtime_policy = $true
-        blocking_system_component_rejected = $true
+        runtime_facts_do_not_establish_readiness = $true
     } | ConvertTo-Json -Depth 4
 }
 
@@ -710,38 +678,18 @@ try {
             -DeadlineSeconds $TimeoutSeconds
         Assert-LaunchAdmitted -Envelope $launch
         Assert-InstalledArtifact -Expected $inspection -Installed $launch.result.Installed -ExpectedSerial $Serial -Step Launch
-        $launchDeadline = [DateTime]::UtcNow.AddSeconds($LaunchWaitSeconds)
-        $observationAttempt = 0
-        $runtimeConfirmed = $false
-        $lastRuntimeFailure = "No post-launch observation was attempted."
-        do {
-            $observationAttempt++
-            $observation = Invoke-Step `
-                -Executable $executionProvider `
-                -Step Observe `
-                -Artifact $executionArtifact `
-                -TargetSerial $Serial `
-                -EvidenceRoot $evidenceRoot `
-                -EvidenceName ("post-launch-observe-{0:d2}" -f $observationAttempt) `
-                -ExpectedExecutableSha256 ([string]$resolution.executable_sha256) `
-                -ProviderClosure $providerClosure `
-                -DeadlineSeconds $TimeoutSeconds
-            Assert-InstalledArtifact -Expected $inspection -Installed $observation.Installed -ExpectedSerial $Serial -Step Observe
-            try {
-                Assert-RuntimeObservation `
-                    -Observation $observation `
-                    -Shape $RuntimeShape `
-                    -Component $ExpectedComponent
-                $runtimeConfirmed = $true
-                break
-            } catch {
-                $lastRuntimeFailure = $_.Exception.Message
-            }
-            if ([DateTime]::UtcNow -lt $launchDeadline) { Start-Sleep -Milliseconds 500 }
-        } while ([DateTime]::UtcNow -lt $launchDeadline)
-        if (-not $runtimeConfirmed) {
-            throw "Post-launch runtime policy was not satisfied within $LaunchWaitSeconds seconds: $lastRuntimeFailure"
-        }
+        $observation = Invoke-Step `
+            -Executable $executionProvider `
+            -Step Observe `
+            -Artifact $executionArtifact `
+            -TargetSerial $Serial `
+            -EvidenceRoot $evidenceRoot `
+            -EvidenceName 'post-launch-observe' `
+            -ExpectedExecutableSha256 ([string]$resolution.executable_sha256) `
+            -ProviderClosure $providerClosure `
+            -DeadlineSeconds $TimeoutSeconds
+        Assert-InstalledArtifact -Expected $inspection -Installed $observation.Installed -ExpectedSerial $Serial -Step Observe
+        Assert-RuntimeObservation -Observation $observation -Shape $RuntimeShape -Component $ExpectedComponent | Out-Null
     }
 } finally {
     if ($null -ne $artifactRunCopy) {
@@ -770,4 +718,5 @@ try {
     evidence_directory = $evidenceRoot
     runtime_shape = $RuntimeShape
     expected_component = if ([string]::IsNullOrWhiteSpace($ExpectedComponent)) { $null } else { $ExpectedComponent }
+    runtime_observation_interpretation = 'android-facts-only'
 } | ConvertTo-Json -Depth 6

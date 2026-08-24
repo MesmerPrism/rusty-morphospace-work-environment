@@ -154,17 +154,32 @@ Assert-ExactProperties -Value $config -Expected @(
     "source_revision",
     "source_tree",
     "inspected_deployment_contract",
+    "apk_preflight_result_contract",
+    "apk_deploy_result_contract",
+    "apk_diagnostic_result_contract",
+    "apk_diagnostic_bundle_contract",
+    "apk_stop_result_contract",
+    "adb_forward_inventory_result_contract",
     "apk_launch_result_contract",
     "launcher_export_proof_contract",
-    "runtime_observation_contract"
+    "runtime_observation_contract",
+    "global_focus_observation_contract"
 ) -Location "resolver config"
 
 if ($config.schema -cne "rusty.morphospace.local_quest_file_manager_cli.v4") {
     throw "Unsupported Quest File Manager CLI resolver schema."
 }
 if ($config.inspected_deployment_contract -cne
-    "questionable.file_manager.inspected_deployment.v3") {
-    throw "inspected_deployment_contract must require the QFM v3 deployment contract."
+    "questionable.file_manager.inspected_deployment.v5") {
+    throw "inspected_deployment_contract must require the QFM v5 deployment contract."
+}
+if ($config.apk_preflight_result_contract -cne "questionable.file_manager.apk_preflight_result.v1" -or
+    $config.apk_deploy_result_contract -cne "questionable.file_manager.apk_deploy_result.v1" -or
+    $config.apk_diagnostic_result_contract -cne "questionable.file_manager.apk_diagnostic_result.v3" -or
+    $config.apk_diagnostic_bundle_contract -cne "questionable.file_manager.apk_diagnostic_bundle.v3" -or
+    $config.apk_stop_result_contract -cne "questionable.file_manager.apk_stop_result.v1" -or
+    $config.adb_forward_inventory_result_contract -cne "questionable.file_manager.adb_forward_inventory_result.v1") {
+    throw "Resolver config does not pin the adopted QFM deployment, diagnostic, stop, and forward contracts."
 }
 if ($config.apk_launch_result_contract -cne
     "questionable.file_manager.apk_launch_result.v1") {
@@ -175,8 +190,12 @@ if ($config.launcher_export_proof_contract -cne
     throw "launcher_export_proof_contract must require the QFM v2 launcher proof contract."
 }
 if ($config.runtime_observation_contract -cne
-    "questionable.file_manager.app_runtime_observation.v2") {
-    throw "runtime_observation_contract must require the QFM v2 fact contract."
+    "questionable.file_manager.app_runtime_observation.v5") {
+    throw "runtime_observation_contract must require the QFM v5 fact contract."
+}
+if ($config.global_focus_observation_contract -cne
+    "questionable.file_manager.android_global_focus_observation.v1") {
+    throw "global_focus_observation_contract must require QFM global-focus observation v1."
 }
 if ($config.provider_id -cne "file-manager-local") {
     throw "Quest File Manager CLI resolver provider_id must be file-manager-local."
@@ -264,12 +283,11 @@ $entryPointDeclaration = @($distributionFiles | Where-Object { $_.relative_path 
 if ($entryPointDeclaration.Count -ne 1 -or $actualSha256 -cne [string]$entryPointDeclaration[0].sha256) { throw "Resolved entry point does not match its declared closure digest." }
 
 $requiredRoutes = @(
-    "apk inspect --file",
-    "apk install --serial",
-    "apk launch --serial",
-    "apk observe --serial",
-    "kiosk status --serial",
-    "kiosk command --serial"
+    "apk preflight --serial",
+    "apk deploy --serial",
+    "apk diagnose --serial",
+    "apk stop --serial",
+    "adb forwards --serial"
 )
 $probeStatus = "skipped"
 $identityStatus = "skipped"
@@ -307,6 +325,11 @@ if (-not $SkipExecutableProbe) {
     if ([string]$contracts.schema -cne "questionable.file_manager.operator_actions.v1" -or
         [string]$contracts.contracts.inspectedDeployment -cne
             [string]$config.inspected_deployment_contract -or
+        [string]$contracts.contracts.apkPreflightResult -cne [string]$config.apk_preflight_result_contract -or
+        [string]$contracts.contracts.apkDeployResult -cne [string]$config.apk_deploy_result_contract -or
+        [string]$contracts.contracts.apkDiagnosticResult -cne [string]$config.apk_diagnostic_result_contract -or
+        [string]$contracts.contracts.apkStopResult -cne [string]$config.apk_stop_result_contract -or
+        [string]$contracts.contracts.adbForwardInventoryResult -cne [string]$config.adb_forward_inventory_result_contract -or
         [string]$contracts.contracts.apkLaunchResult -cne
             [string]$config.apk_launch_result_contract -or
         [string]$contracts.contracts.launcherExportProof -cne
@@ -338,9 +361,16 @@ $result = [ordered]@{
     command_probe = $probeStatus
     required_routes = $requiredRoutes
     inspected_deployment_contract = [string]$config.inspected_deployment_contract
+    apk_preflight_result_contract = [string]$config.apk_preflight_result_contract
+    apk_deploy_result_contract = [string]$config.apk_deploy_result_contract
+    apk_diagnostic_result_contract = [string]$config.apk_diagnostic_result_contract
+    apk_diagnostic_bundle_contract = [string]$config.apk_diagnostic_bundle_contract
+    apk_stop_result_contract = [string]$config.apk_stop_result_contract
+    adb_forward_inventory_result_contract = [string]$config.adb_forward_inventory_result_contract
     apk_launch_result_contract = [string]$config.apk_launch_result_contract
     launcher_export_proof_contract = [string]$config.launcher_export_proof_contract
     runtime_observation_contract = [string]$config.runtime_observation_contract
+    global_focus_observation_contract = [string]$config.global_focus_observation_contract
 }
 
 if ($Json) {
