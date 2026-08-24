@@ -19,6 +19,10 @@ foreach ($case in @($fixture.cases)) {
             throw 'FocusPlaceholder fixture did not preserve the stable global Android foreground fact.'
         }
     }
+    if ($case.id -eq 'minimal-v5-unavailable-families' -and
+        ($adapted.fact_families.process.status -ne 'unavailable' -or $adapted.fact_families.task_top_resumed.status -ne 'unavailable')) {
+        throw 'Incomplete v5 observations fabricated process or task facts.'
+    }
 }
 
 $unknown = Convert-QfmRuntimeObservation -Observation ([pscustomobject]@{ ObservationContract = 'questionable.file_manager.app_runtime_observation.v99' })
