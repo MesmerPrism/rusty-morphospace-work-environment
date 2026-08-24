@@ -138,6 +138,8 @@ try {
         -not $deploymentResult.portable_content_addressing_verified -or
         -not $deploymentResult.provider_runtime_closure -or
         -not $deploymentResult.missing_runtime_sibling_rejected -or
+        -not $deploymentResult.changed_runtime_sibling_rejected -or
+        -not $deploymentResult.partial_runtime_copy_rejected -or
         -not $deploymentResult.duplicate_runtime_filenames_preserved -or
         -not $deploymentResult.windows_path_bound_enforced -or
         ($IsWindows -and -not $deploymentResult.host_read_lock_enforced) -or

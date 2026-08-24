@@ -9,6 +9,17 @@ function Get-QfmProperty {
     return $property.Value
 }
 
+function Test-QfmPropertyPresent {
+    param([object]$Value, [string[]]$Names)
+
+    if ($null -eq $Value) { return $false }
+    foreach ($name in $Names) {
+        $property = $Value.PSObject.Properties[$name]
+        if ($null -ne $property -and $null -ne $property.Value) { return $true }
+    }
+    return $false
+}
+
 function Get-QfmObservationContract {
     param([object]$Observation)
 
@@ -42,6 +53,10 @@ function Convert-QfmRuntimeObservation {
     if ($null -eq $focusedApp) { $focusedApp = Get-QfmProperty -Value $Observation -Name 'focusedApp' }
     $globalFocus = Get-QfmProperty -Value $Observation -Name 'GlobalFocus'
     if ($null -eq $globalFocus) { $globalFocus = Get-QfmProperty -Value $Observation -Name 'globalFocus' }
+    $processReported = Test-QfmPropertyPresent -Value $Observation -Names @('ProcessIds', 'processIds', 'ProcessObservationQuality', 'processObservationQuality', 'ProcessObservationSource', 'processObservationSource')
+    $taskReported = Test-QfmPropertyPresent -Value $Observation -Names @('IsForeground', 'isForeground', 'IsTopResumed', 'isTopResumed', 'ForegroundComponents', 'foregroundComponents', 'TopResumedComponents', 'topResumedComponents')
+    $installed = Get-QfmProperty -Value $Observation -Name 'Installed'
+    if ($null -eq $installed) { $installed = Get-QfmProperty -Value $Observation -Name 'installed' }
 
     [pscustomobject][ordered]@{
         schema = 'rusty.morphospace.qfm_runtime_observation_adapter.v1'
@@ -50,17 +65,17 @@ function Convert-QfmRuntimeObservation {
         status = if ($isSupported) { 'supported' } else { 'unknown' }
         fact_families = [pscustomobject][ordered]@{
             installed_identity = [pscustomobject]@{
-                status = if ($null -ne (Get-QfmProperty -Value $Observation -Name 'Installed')) { 'reported' } else { 'unavailable' }
-                value = Get-QfmProperty -Value $Observation -Name 'Installed'
+                status = if ($null -ne $installed) { 'reported' } else { 'unavailable' }
+                value = $installed
             }
             process = [pscustomobject]@{
-                status = if ($null -eq $Observation) { 'unavailable' } else { 'reported' }
+                status = if ($processReported) { 'reported' } else { 'unavailable' }
                 process_ids = @($processIds)
                 quality = (Get-QfmProperty -Value $Observation -Name 'ProcessObservationQuality')
                 source = (Get-QfmProperty -Value $Observation -Name 'ProcessObservationSource')
             }
             task_top_resumed = [pscustomobject]@{
-                status = if ($null -eq $Observation) { 'unavailable' } else { 'reported' }
+                status = if ($taskReported) { 'reported' } else { 'unavailable' }
                 is_foreground = Get-QfmProperty -Value $Observation -Name 'IsForeground'
                 is_top_resumed = Get-QfmProperty -Value $Observation -Name 'IsTopResumed'
                 foreground_components = @($foregroundComponents)

@@ -456,10 +456,24 @@ function Invoke-SelfTest {
         Test-LockedProviderClosure -Closure $providerClosure
         foreach ($lease in $providerClosure.Locks) { $lease.Dispose() }
         $providerClosure.Locks = @()
+        $changedSiblingRejected = $false
+        [System.IO.File]::WriteAllBytes(
+            (Get-ProviderClosureFilePath -Root $providerClosure.Root -RelativePath 'plugins/hostfxr.dll'),
+            [byte[]](0, 0, 0, 0))
+        try { Test-LockedProviderClosure -Closure $providerClosure } catch { $changedSiblingRejected = $true }
+        if (-not $changedSiblingRejected) { throw "Self-test did not reject a changed staged provider runtime sibling." }
         Remove-Item -LiteralPath (Get-ProviderClosureFilePath -Root $providerClosure.Root -RelativePath 'runtimes/win-x64/hostfxr.dll') -Force
         $missingSiblingRejected = $false
         try { Test-LockedProviderClosure -Closure $providerClosure } catch { $missingSiblingRejected = $true }
         if (-not $missingSiblingRejected) { throw "Self-test did not reject a missing staged provider runtime sibling." }
+        $partialCopyRejected = $false
+        [System.IO.File]::WriteAllBytes($providerSibling, [byte[]](6, 7))
+        try {
+            New-LockedProviderClosure -Resolution ([pscustomobject]@{
+                closure_sha256 = ('d' * 64); runtime_root = $providerRoot; closure_files = $providerFiles; entry_point_relative_path = 'questionable-file-manager.exe'
+            }) -Directory $temporaryRoot | Out-Null
+        } catch { $partialCopyRejected = $true }
+        if (-not $partialCopyRejected) { throw "Self-test did not reject a partial provider runtime copy." }
         $longPathRejected = $false
         $overlongRelativePath = [string]::Concat(('bounded/' * 40)) + 'hostfxr.dll'
         try {
@@ -513,10 +527,12 @@ function Invoke-SelfTest {
         portable_content_addressing_verified = $portableContentAddressingVerified
         host_read_lock_enforced = $hostReadLockEnforced
         process_failure_retained = $true
-        provider_runtime_closure = $true
-        missing_runtime_sibling_rejected = $true
-        duplicate_runtime_filenames_preserved = $true
-        windows_path_bound_enforced = $true
+        provider_runtime_closure = ($null -ne $providerClosure)
+        missing_runtime_sibling_rejected = $missingSiblingRejected
+        changed_runtime_sibling_rejected = $changedSiblingRejected
+        partial_runtime_copy_rejected = $partialCopyRejected
+        duplicate_runtime_filenames_preserved = ($providerFiles.Count -eq 3)
+        windows_path_bound_enforced = $longPathRejected
         runtime_facts_do_not_establish_readiness = $true
     } | ConvertTo-Json -Depth 4
 }
