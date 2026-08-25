@@ -309,7 +309,8 @@ function New-MorphospaceClaimPreflight {
         [Parameter(Mandatory = $true)][hashtable]$RepositoryMap,
         [Parameter(Mandatory = $true)][object[]]$RepositoryStates,
         [Parameter(Mandatory = $true)][object[]]$ValidationMatrix,
-        [Parameter(Mandatory = $true)][string]$ValidationTier
+        [Parameter(Mandatory = $true)][string]$ValidationTier,
+        [Parameter(Mandatory = $true)][string]$Action
     )
 
     $issues = New-Object System.Collections.Generic.List[string]
@@ -367,6 +368,7 @@ function New-MorphospaceClaimPreflight {
     }
 
     $instructionObservations = @()
+    $instructionObservationFailed = $false
     if ([string]$Unit.instruction_impact -ne 'none') {
         try {
             $instructionRepositoryMap = @{}
@@ -379,6 +381,7 @@ function New-MorphospaceClaimPreflight {
             foreach ($surface in @($instructionUnit.instruction_surfaces)) { $surface.status = 'complete' }
             $instructionObservations = @(Get-MorphospaceInstructionObservation -Unit $instructionUnit -RepositoryMap $instructionRepositoryMap)
         } catch {
+            $instructionObservationFailed = $true
             $issues.Add("Instruction surface preflight failed: $($_.Exception.Message)") | Out-Null
         }
     }
@@ -676,7 +679,28 @@ function New-MorphospaceClaimPreflight {
         $expectedImpact = if ($workMode -eq 'validation-only') { 'review' } else { 'update' }
         $expectedAction = if ($workMode -eq 'validation-only') { 'review-no-change' } else { 'update' }
         if ([string]$Unit.instruction_impact -ne $expectedImpact) { $instructionReasons.Add('instruction-impact-mode-mismatch') | Out-Null }
-        $activeContractReviewCompatible = Test-MorphospaceActiveUnitContractReviewCompatibility -Unit $Unit -State $State -Lifecycle $lifecycle
+        if (-not $instructionObservationFailed) {
+            foreach ($surface in @($Unit.instruction_surfaces | Where-Object { [string]$_.action -ceq 'update' })) {
+                $matches = @($instructionObservations | Where-Object { [string]$_.path -ceq ([string]$surface.path).Replace('\', '/') })
+                if ($matches.Count -ne 1) {
+                    $instructionReasons.Add('instruction-surface-unresolved') | Out-Null
+                    continue
+                }
+                $observation = $matches[0]
+                $allowedRepository = @($Unit.allowed_repositories | Where-Object { [string]$_.repo_id -ceq [string]$observation.repo_id })
+                if ($allowedRepository.Count -ne 1 -or -not (Test-MorphospacePathAllowed -Path ([string]$observation.relative_path) -AllowedPaths @($allowedRepository[0].allowed_paths))) {
+                    $instructionReasons.Add('instruction-update-outside-write-scope') | Out-Null
+                }
+            }
+        }
+        # The action preflight is shared by lifecycle actions that are not
+        # themselves instruction-admission transitions.  Keep those actions
+        # on the aggregate contract branch; only Ready, Inspect, and Claim
+        # need their transition-specific status assertions.
+        $instructionCompatibilityPhase = if ($Action -in @('Inspect', 'Ready', 'Claim')) { $Action } else { 'Aggregate' }
+        $activeContractReviewCompatible = Test-MorphospaceActiveUnitContractReviewCompatibility `
+            -Unit $Unit -State $State -Lifecycle $lifecycle -Phase $instructionCompatibilityPhase -RepositoryMap $RepositoryMap
+        if ($instructionObservationFailed) { $instructionReasons.Add('instruction-surface-unresolved') | Out-Null }
         foreach ($surface in @($Unit.instruction_surfaces)) {
             if ([string]$surface.action -ne $expectedAction -and -not $activeContractReviewCompatible) {
                 $instructionReasons.Add('instruction-action-mode-mismatch') | Out-Null
@@ -1788,7 +1812,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
     $repoStatesArray = @($repositoryStates.ToArray())
     $validationMatrix = @(New-MorphospaceValidationMatrix -Unit $unit -DeviceSerials $DeviceSerials)
     $graphScope = New-MorphospaceGraphScope -Unit $unit
-    $claimPreflight = New-MorphospaceClaimPreflight -Unit $unit -State $state -Spec $spec -RepositoryMap $repoMap -RepositoryStates $repoStatesArray -ValidationMatrix $validationMatrix -ValidationTier $ValidationTier
+    $claimPreflight = New-MorphospaceClaimPreflight -Unit $unit -State $state -Spec $spec -RepositoryMap $repoMap -RepositoryStates $repoStatesArray -ValidationMatrix $validationMatrix -ValidationTier $ValidationTier -Action $Action
     $beforeStatus = [string]$unit.status
     $beforeCurrent = $state.current_unit
     $expectedPreStateSha256 = Get-MorphospaceCanonicalJsonSha256 $state
@@ -1827,6 +1851,10 @@ function Invoke-MorphospaceWorkUnitAutomation {
                     throw "Ready refuses withdrawn unit identity '$UnitId'; revise the proposal under a new unit identity."
                 }
                 Test-MorphospacePrerequisites -Unit $unit -UnitMap $unitMap
+                $readyInstructionCheck = @($claimPreflight.coverage.checks | Where-Object { [string]$_.check_id -ceq 'instruction-action-compatibility' })
+                if ($readyInstructionCheck.Count -ne 1 -or [string]$readyInstructionCheck[0].outcome -cne 'pass') {
+                    throw "Ready preflight blocked: instruction action $(@($readyInstructionCheck[0].reason_codes) -join ' ')"
+                }
                 if ($state.current_unit) {
                     try {
                         [void](Get-MorphospaceSupersessionEventId -OldUnitId ([string]$state.current_unit) -ReplacementUnitId $UnitId)
@@ -1883,6 +1911,10 @@ function Invoke-MorphospaceWorkUnitAutomation {
                 if ($beforeStatus -ne "ready") { throw "Claim requires ready status; '$UnitId' is '$beforeStatus'." }
                 if ($state.current_unit) { throw "Workspace already has current unit '$($state.current_unit)'." }
                 Test-MorphospacePrerequisites -Unit $unit -UnitMap $unitMap
+                $claimInstructionCheck = @($claimPreflight.coverage.checks | Where-Object { [string]$_.check_id -ceq 'instruction-action-compatibility' })
+                if ($claimInstructionCheck.Count -ne 1 -or [string]$claimInstructionCheck[0].outcome -cne 'pass') {
+                    throw "Claim preflight blocked: instruction action $(@($claimInstructionCheck[0].reason_codes) -join ' ')"
+                }
                 if (-not $claimPreflight.ready_to_claim) {
                     throw "Claim preflight blocked: $(@($claimPreflight.issues) -join ' ')"
                 }

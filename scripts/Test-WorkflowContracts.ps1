@@ -532,6 +532,7 @@ function Invoke-CurrentInstructionSurfacePolicySelfTest {
     )
 
     $fixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ("morphospace-current-instruction-" + [guid]::NewGuid().ToString("N"))
+    $skillSurfaceRoot = $null
     [IO.Directory]::CreateDirectory((Join-Path $fixtureRoot "iteration-units")) | Out-Null
     try {
         $unit = Read-JsonDocument -Path (Join-Path $TemplateRoot "iteration-unit.example.json") -Context "current instruction fixture unit source"
@@ -552,6 +553,18 @@ function Invoke-CurrentInstructionSurfacePolicySelfTest {
         )
         $state.current_unit = [string]$unit.unit_id
         $state.project_id = [string]$unit.project_id
+        $skillSurfaceRoot = Join-Path ([IO.Path]::GetTempPath()) ("morphospace-current-instruction-skills-" + [guid]::NewGuid().ToString("N"))
+        $canonicalSkillRoot = Join-Path $RepoRoot 'skills'
+        foreach ($skillId in @('rusty-morphospace', 'system-engineering')) {
+            [IO.Directory]::CreateDirectory((Join-Path $skillSurfaceRoot $skillId)) | Out-Null
+            [IO.File]::WriteAllBytes((Join-Path $skillSurfaceRoot "$skillId\SKILL.md"), [IO.File]::ReadAllBytes((Join-Path $canonicalSkillRoot "$skillId\SKILL.md")))
+        }
+        $aggregateRepositoryMap = @{}
+        foreach ($allowedRepository in @($unit.allowed_repositories)) {
+            $repoId = [string]$allowedRepository.repo_id
+            $aggregateRepositoryMap[$repoId] = [pscustomobject]@{ repo_id=$repoId; path=$fixtureRoot; role='source'; aliases=@() }
+        }
+        $aggregateRepositoryMap['skill-surfaces'] = [pscustomobject]@{ repo_id='skill-surfaces'; path=$skillSurfaceRoot; role='source'; aliases=@('skills-root') }
 
         $unitJson = $unit | ConvertTo-Json -Depth 40
         Assert-Contract ($unitJson | Test-Json -SchemaFile $SchemaPath -ErrorAction Stop) "Synthetic current update unit with compatibility and roadmap documents was rejected."
@@ -561,25 +574,51 @@ function Invoke-CurrentInstructionSurfacePolicySelfTest {
         Test-CurrentUnitInstructionWorkspace -Root $fixtureRoot -SchemaPath $SchemaPath -Context "synthetic current instruction fixture"
 
         $unit.change_categories = @("implementation", "authority", "validation", "public-private-boundary")
-        Assert-Contract (Test-MorphospaceActiveUnitContractReviewCompatibility -Unit $unit -State $state -Lifecycle $script:WorkflowLifecycle) "Lifecycle-routed current skill reviews were rejected."
+        Assert-Contract (Test-MorphospaceActiveUnitContractReviewCompatibility -Unit $unit -State $state -Lifecycle $script:WorkflowLifecycle -RepositoryMap $aggregateRepositoryMap) "Lifecycle-routed current skill reviews were rejected."
+        Assert-Contract (Test-MorphospaceActiveUnitContractReviewCompatibility -Unit $unit -State $state -Lifecycle $script:WorkflowLifecycle) "Mapless aggregate compatibility lost its diagnostic-only projection."
+        Assert-Contract (-not (Test-MorphospaceActiveUnitContractReviewCompatibility -Unit $unit -State $state -Lifecycle $script:WorkflowLifecycle -Phase Inspect)) "Mapless Inspect gained instruction-admission authority."
+        [IO.File]::AppendAllText((Join-Path $skillSurfaceRoot "rusty-morphospace\SKILL.md"), "damage`n", [Text.UTF8Encoding]::new($false))
+        Assert-Contract (-not (Test-MorphospaceActiveUnitContractReviewCompatibility -Unit $unit -State $state -Lifecycle $script:WorkflowLifecycle -RepositoryMap $aggregateRepositoryMap)) "Changed bytes under the canonical skill-surfaces identity weakened the routed-skill rule."
+        [IO.File]::WriteAllBytes((Join-Path $skillSurfaceRoot "rusty-morphospace\SKILL.md"), [IO.File]::ReadAllBytes((Join-Path $canonicalSkillRoot "rusty-morphospace\SKILL.md")))
+        $aggregateRepositoryMap['skill-surfaces'].aliases = @('skills-root', 'extra-root')
+        Assert-Contract (-not (Test-MorphospaceActiveUnitContractReviewCompatibility -Unit $unit -State $state -Lifecycle $script:WorkflowLifecycle -RepositoryMap $aggregateRepositoryMap)) "Extra skill-surfaces alias weakened the routed-skill rule."
+        $aggregateRepositoryMap['skill-surfaces'].aliases = @('skills-root')
+        $aggregateRepositoryMap['skill-surfaces'].path = $fixtureRoot
+        foreach ($skillId in @('rusty-morphospace', 'system-engineering')) {
+            [IO.Directory]::CreateDirectory((Join-Path $fixtureRoot $skillId)) | Out-Null
+            [IO.File]::WriteAllBytes((Join-Path $fixtureRoot "$skillId\SKILL.md"), [IO.File]::ReadAllBytes((Join-Path $canonicalSkillRoot "$skillId\SKILL.md")))
+        }
+        Assert-Contract (-not (Test-MorphospaceActiveUnitContractReviewCompatibility -Unit $unit -State $state -Lifecycle $script:WorkflowLifecycle -RepositoryMap $aggregateRepositoryMap)) "Skill root equal to a writable aggregate fixture root weakened the routed-skill rule."
+        $aggregateRepositoryMap['skill-surfaces'].path = $skillSurfaceRoot
         foreach ($surface in @($unit.instruction_surfaces | Where-Object { [string]$_.surface_kind -ceq "skill" })) { $surface.status = "complete" }
-        Assert-Contract (Test-MorphospaceActiveUnitContractReviewCompatibility -Unit $unit -State $state -Lifecycle $script:WorkflowLifecycle) "Completed lifecycle-routed current skill reviews were rejected."
+        Assert-Contract (Test-MorphospaceActiveUnitContractReviewCompatibility -Unit $unit -State $state -Lifecycle $script:WorkflowLifecycle -RepositoryMap $aggregateRepositoryMap) "Completed lifecycle-routed current skill reviews were rejected."
         foreach ($surface in @($unit.instruction_surfaces | Where-Object { [string]$_.surface_kind -ceq "skill" })) { $surface.status = "planned" }
+        $proposedState = $state | ConvertTo-Json -Depth 40 | ConvertFrom-Json -Depth 40
+        $proposedState.current_unit = $null
+        $proposedState.next_ready_unit = $null
+        $unit.status = 'proposed'
+        Assert-Contract (-not (Test-MorphospaceActiveUnitContractReviewCompatibility -Unit $unit -State $proposedState -Lifecycle $script:WorkflowLifecycle -Phase Ready)) "Mapless Ready gained instruction-admission authority."
+        Assert-Contract (Test-MorphospaceActiveUnitContractReviewCompatibility -Unit $unit -State $proposedState -Lifecycle $script:WorkflowLifecycle -RepositoryMap $aggregateRepositoryMap) "Proposed feature skill reviews were rejected before Ready."
+        $unit.status = 'ready'
+        $proposedState.next_ready_unit = [string]$unit.unit_id
+        Assert-Contract (-not (Test-MorphospaceActiveUnitContractReviewCompatibility -Unit $unit -State $proposedState -Lifecycle $script:WorkflowLifecycle -Phase Claim)) "Mapless Claim gained instruction-admission authority."
+        Assert-Contract (Test-MorphospaceActiveUnitContractReviewCompatibility -Unit $unit -State $proposedState -Lifecycle $script:WorkflowLifecycle -Phase Claim -RepositoryMap $aggregateRepositoryMap) "Ready feature skill reviews were rejected before Claim."
+        $unit.status = 'active'
         $nonRequiredReview = [pscustomobject][ordered]@{ surface_kind="skill"; path="<skills-root>/rust-work-graph/SKILL.md"; owner="workflow-maintainer"; change_reason="Negative routing fixture."; action="review-no-change"; status="planned"; validation="Must reject as non-required."; skill_id="rust-work-graph" }
         $unit.instruction_surfaces += $nonRequiredReview
-        Assert-Contract (-not (Test-MorphospaceActiveUnitContractReviewCompatibility -Unit $unit -State $state -Lifecycle $script:WorkflowLifecycle)) "Extra non-required current skill review weakened the routed-skill rule."
+        Assert-Contract (-not (Test-MorphospaceActiveUnitContractReviewCompatibility -Unit $unit -State $state -Lifecycle $script:WorkflowLifecycle -RepositoryMap $aggregateRepositoryMap)) "Extra non-required current skill review weakened the routed-skill rule."
         $unit.instruction_surfaces = @($unit.instruction_surfaces | Where-Object { [string]$_.skill_id -cne "rust-work-graph" })
         $unit.change_categories = @("implementation", "authority", "validation", "public-private-boundary", "module-layout")
-        Assert-Contract (-not (Test-MorphospaceActiveUnitContractReviewCompatibility -Unit $unit -State $state -Lifecycle $script:WorkflowLifecycle)) "A changed lifecycle routing result weakened the routed-skill rule."
+        Assert-Contract (-not (Test-MorphospaceActiveUnitContractReviewCompatibility -Unit $unit -State $state -Lifecycle $script:WorkflowLifecycle -RepositoryMap $aggregateRepositoryMap)) "A changed lifecycle routing result weakened the routed-skill rule."
         $unit.change_categories = @("implementation", "authority", "validation", "public-private-boundary")
         $writableSkillScope = @([pscustomobject]@{ repo_id="workflow-owner"; allowed_paths=@("<skills-root>/rusty-morphospace/SKILL.md") })
         $originalAllowedRepositories = $unit.allowed_repositories
         $unit.allowed_repositories = $writableSkillScope
-        Assert-Contract (-not (Test-MorphospaceActiveUnitContractReviewCompatibility -Unit $unit -State $state -Lifecycle $script:WorkflowLifecycle)) "Writable current skill path weakened the routed-skill rule."
+        Assert-Contract (-not (Test-MorphospaceActiveUnitContractReviewCompatibility -Unit $unit -State $state -Lifecycle $script:WorkflowLifecycle -RepositoryMap $aggregateRepositoryMap)) "Writable current skill path weakened the routed-skill rule."
         $unit.allowed_repositories = $originalAllowedRepositories
         $otherState = $state | ConvertTo-Json -Depth 40 | ConvertFrom-Json -Depth 40
         $otherState.current_unit = "different-current-unit"
-        Assert-Contract (-not (Test-MorphospaceActiveUnitContractReviewCompatibility -Unit $unit -State $otherState -Lifecycle $script:WorkflowLifecycle)) "Non-current unit used current skill-review compatibility."
+        Assert-Contract (-not (Test-MorphospaceActiveUnitContractReviewCompatibility -Unit $unit -State $otherState -Lifecycle $script:WorkflowLifecycle -RepositoryMap $aggregateRepositoryMap)) "Non-current unit used current skill-review compatibility."
 
         $unknownUnit = $unitJson | ConvertFrom-Json -Depth 40
         @($unknownUnit.instruction_surfaces | Where-Object { [string]$_.surface_kind -ceq "compatibility-doc" })[0].surface_kind = "unknown-doc"
@@ -587,6 +626,7 @@ function Invoke-CurrentInstructionSurfacePolicySelfTest {
         Assert-Contract ($script:InstructionSurfaceKinds -cnotcontains "unknown-doc") "Unknown instruction surface kind entered the lifecycle manifest."
     } finally {
         if ([IO.Directory]::Exists($fixtureRoot)) { [IO.Directory]::Delete($fixtureRoot, $true) }
+        if ($skillSurfaceRoot -and [IO.Directory]::Exists($skillSurfaceRoot)) { [IO.Directory]::Delete($skillSurfaceRoot, $true) }
     }
 }
 

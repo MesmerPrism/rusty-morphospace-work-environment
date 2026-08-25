@@ -54,15 +54,24 @@ routed AGENTS, README/router, validation document, and skill surface as
 `review-no-change`. Discovering a needed content change ends that unit; it does
 not convert the review record into an update claim.
 
-A second, narrower current-unit compatibility rule applies only to an explicit
-feature unit doing ordinary validation work. A relevant skill may be recorded
-as `review-no-change` only while that exact skill path is outside the unit's
-writable scope and the unit changes no portable authority, module layout,
-feature activation, device policy, repository routing, public/private rule,
-workflow/state machine, validation routing, or recovery policy. A writable
-skill path or any such policy category still requires `update`. This rule does
-not apply to accepted, blocked, superseded, or other historical units and does
-not reclassify their diagnostics.
+A second, closed explicit-feature compatibility rule applies while a feature
+unit is proposed, ready, active, or validating. It permits exactly the
+currently lifecycle-routed `rusty-morphospace` and `system-engineering` skill
+surfaces to remain `review-no-change` only when every other instruction surface
+uses `update`, the routed-skill union is exactly that pair, and the local
+repository map registers their canonical `<skills-root>/<skill-id>/SKILL.md`
+files under one distinct external `skill-surfaces` source. The alias set is
+exactly `skills-root`; each installed file must SHA-256 match this revision's
+tracked `skills/<skill-id>/SKILL.md` router file; and the resolved skill root
+must neither equal, contain, nor be contained by a writable mapped repository.
+Ready, Inspect, and Claim use that bound preflight as admission authority.
+Mapless aggregate/current-unit compatibility remains diagnostic-only and cannot
+Ready or Claim; aggregate fixtures that supply a repository map apply the same
+trusted-byte rule. An extra alias or skill, wrong category, unresolved alias,
+path-shaped or byte-different lookalike, writable/overlapping skill root, or
+update outside the declared repository write scope fails closed. This rule
+does not apply to accepted, blocked, superseded, or other historical units and
+does not reclassify their diagnostics.
 
 An immutable unit that predates `work_mode` may retain a completed relevant-
 skill `review-no-change` only when the append-only ledger proves that unit is
