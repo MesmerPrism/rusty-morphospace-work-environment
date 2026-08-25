@@ -435,6 +435,15 @@ try {
     Invoke-TestGit -Path $repo -Arguments @("add", "AGENTS.md", "docs/workflow.md", "docs/compatibility.md", "docs/roadmap.md") | Out-Null
     Invoke-TestGit -Path $repo -Arguments @("commit", "-m", "add instruction surfaces") | Out-Null
     Invoke-TestGit -Path $repo -Arguments @("push", "origin", "main") | Out-Null
+    $skillsRoot = Join-Path $testRoot 'registered-skill-surfaces'
+    $canonicalSkillRoot = Join-Path (Split-Path -Parent $PSScriptRoot) 'skills'
+    foreach ($skillId in @('rusty-morphospace', 'system-engineering')) {
+        $skillDirectory = Join-Path $skillsRoot $skillId
+        [System.IO.Directory]::CreateDirectory($skillDirectory) | Out-Null
+        # The registered external copy must bind to this source revision's
+        # tracked router bytes, not merely look like the expected path.
+        [System.IO.File]::WriteAllBytes((Join-Path $skillDirectory 'SKILL.md'), [System.IO.File]::ReadAllBytes((Join-Path $canonicalSkillRoot "$skillId\SKILL.md")))
+    }
     $executionObservationPath = Join-Path $repo "src\execution-preflight.json"
     Write-TestJson -Path $executionObservationPath -Value ([ordered]@{
         '$schema' = "../schemas/execution-preflight-observation.schema.json"
@@ -482,6 +491,7 @@ try {
     })
     $instructionUnit.instruction_impact = "update"
     [void]$instructionUnit.PSObject.Properties.Remove("instruction_none_justification")
+    $instructionUnit.allowed_repositories[0].allowed_paths += "AGENTS.md"
     $instructionUnit.instruction_surfaces = @(
         [pscustomobject][ordered]@{ surface_kind = "agents"; path = "<project-shell>/AGENTS.md"; owner = "project-shell"; change_reason = "Exercise exact agent-entrypoint completion."; action = "update"; status = "planned"; validation = "Review the stable observed file hash."; skill_id = $null },
         [pscustomobject][ordered]@{ surface_kind = "router-doc"; path = "<project-shell>/docs/workflow.md"; owner = "project-shell"; change_reason = "Exercise exact router completion."; action = "update"; status = "planned"; validation = "Review the stable observed file hash."; skill_id = $null },
@@ -495,7 +505,8 @@ try {
     $repoMapPath = Join-Path $testRoot "repo-map.json"
     Write-TestJson -Path $repoMapPath -Value ([ordered]@{ schema = "rusty.morphospace.workflow.repository_map.v1"; repositories = @(
         [ordered]@{ repo_id = "project-shell"; path = $repo; role = "source" },
-        [ordered]@{ repo_id = "workflow-planning"; path = $planningRepo; role = "planning" }
+        [ordered]@{ repo_id = "workflow-planning"; path = $planningRepo; role = "planning" },
+        [ordered]@{ repo_id = "skill-surfaces"; path = $skillsRoot; role = "source"; aliases = @("skills-root") }
     ) })
     $receiptRoot = Join-Path $workspace "receipts"
     $fixed = "2026-01-02T03:04:05Z"
@@ -512,6 +523,7 @@ try {
     $reviewCompatibilityUnit | Add-Member -NotePropertyName guard_profile -NotePropertyValue "locked"
     $reviewCompatibilityUnit.change_categories = @("implementation", "authority", "validation", "public-private-boundary")
     $reviewCompatibilityUnit.instruction_impact = "update"
+    $reviewCompatibilityUnit.allowed_repositories[0].allowed_paths += "AGENTS.md"
     [void]$reviewCompatibilityUnit.PSObject.Properties.Remove("instruction_none_justification")
     $reviewCompatibilityUnit.instruction_surfaces = @(
         [pscustomobject][ordered]@{ surface_kind = "agents"; path = "<project-shell>/AGENTS.md"; owner = "project-shell"; change_reason = "Retain the required current-unit entrypoint."; action = "update"; status = "planned"; validation = "Synthetic current-unit instruction fixture."; skill_id = $null },
@@ -542,6 +554,139 @@ try {
     $writableReviewInspect = Invoke-MorphospaceWorkUnitAutomation -Action Inspect -WorkspaceRoot $reviewCompatibilityWorkspace -UnitId $reviewCompatibilityUnitId -RepoMapPath $repoMapPath -Timestamp $fixed
     $writableReviewCheck = @($writableReviewInspect.claim_preflight.coverage.checks | Where-Object { [string]$_.check_id -ceq "instruction-action-compatibility" })
     Assert-Automation ($writableReviewCheck.Count -eq 1 -and [string]$writableReviewCheck[0].outcome -ceq "fail" -and @($writableReviewCheck[0].reason_codes) -contains "instruction-action-mode-mismatch") "writable review skill weakened Inspect compatibility"
+
+    # This portable fixture has the same public structural shape as the parked
+    # persistent Float32 inlet proposal: one source repository can update its
+    # own instructions, while the exact lifecycle-routed installed skills are
+    # registered separately and remain review-only. It contains no live plan,
+    # proposal digest, host path, or private planning evidence.
+    $portableProposalId = 'portable-inlet-instruction-preflight'
+    $portableWorkspace = New-TestWorkspace -Root (Join-Path $testRoot 'portable-inlet-instruction-preflight') -ProjectId 'portable-inlet-instruction-preflight' -UnitId $portableProposalId
+    $portableUnitPath = Join-Path $portableWorkspace "iteration-units\$portableProposalId.json"
+    $portableUnit = Get-Content -LiteralPath $portableUnitPath -Raw | ConvertFrom-Json
+    $portableUnit.status = 'proposed'
+    $portableUnit | Add-Member -NotePropertyName work_mode -NotePropertyValue 'feature'
+    $portableUnit | Add-Member -NotePropertyName guard_profile -NotePropertyValue 'locked'
+    $portableUnit | Add-Member -NotePropertyName claim_requirements -NotePropertyValue ([pscustomobject][ordered]@{
+        minimum_free_disk_mib = 1; required_tools = @(); product_inputs = @()
+    })
+    $portableUnit.change_categories = @('state-machine', 'validation-routing')
+    $portableUnit.instruction_impact = 'update'
+    [void]$portableUnit.PSObject.Properties.Remove('instruction_none_justification')
+    $portableUnit.allowed_repositories[0].allowed_paths = @('AGENTS.md', 'docs/workflow.md', 'src/', 'morphospace/')
+    $portableUnit.instruction_surfaces = @(
+        [pscustomobject][ordered]@{ surface_kind='agents'; path='<project-shell>/AGENTS.md'; owner='project-shell'; change_reason='Update the repository-owned validation entrypoint.'; action='update'; status='planned'; validation='Synthetic Ready/Inspect/Claim parity fixture.'; skill_id=$null },
+        [pscustomobject][ordered]@{ surface_kind='router-doc'; path='<project-shell>/docs/workflow.md'; owner='project-shell'; change_reason='Update the repository-owned validation router.'; action='update'; status='planned'; validation='Synthetic Ready/Inspect/Claim parity fixture.'; skill_id=$null },
+        [pscustomobject][ordered]@{ surface_kind='skill'; path='<skills-root>/rusty-morphospace/SKILL.md'; owner='workflow-maintainer'; change_reason='Review the registered external lifecycle skill without claiming a repository edit.'; action='review-no-change'; status='planned'; validation='Bound repository-map skill registration.'; skill_id='rusty-morphospace' },
+        [pscustomobject][ordered]@{ surface_kind='skill'; path='<skills-root>/system-engineering/SKILL.md'; owner='workflow-maintainer'; change_reason='Review the registered external lifecycle skill without claiming a repository edit.'; action='review-no-change'; status='planned'; validation='Bound repository-map skill registration.'; skill_id='system-engineering' }
+    )
+    Write-TestJson -Path $portableUnitPath -Value $portableUnit
+    $portableStatePath = Join-Path $portableWorkspace 'workspace.state.json'
+    $portableState = Get-Content -LiteralPath $portableStatePath -Raw | ConvertFrom-Json
+    $portableState.next_ready_unit = $null
+    Write-TestJson -Path $portableStatePath -Value $portableState
+    $portableInspect = Invoke-MorphospaceWorkUnitAutomation -Action Inspect -WorkspaceRoot $portableWorkspace -UnitId $portableProposalId -RepoMapPath $repoMapPath -Timestamp $fixed
+    $portableInspectCheck = @($portableInspect.claim_preflight.coverage.checks | Where-Object { [string]$_.check_id -ceq 'instruction-action-compatibility' })
+    Assert-Automation ($portableInspect.claim_preflight.ready_to_claim -and $portableInspectCheck.Count -eq 1 -and [string]$portableInspectCheck[0].outcome -ceq 'pass') 'proposed feature review compatibility did not pass Inspect'
+    $portableReady = Invoke-MorphospaceWorkUnitAutomation -Action Ready -WorkspaceRoot $portableWorkspace -UnitId $portableProposalId -RepoMapPath $repoMapPath -Timestamp $fixed -Execute
+    Assert-Automation ($portableReady.transition -eq 'proposed-to-ready' -and [string](Get-Content -LiteralPath $portableUnitPath -Raw | ConvertFrom-Json).status -eq 'ready') 'Ready rejected the registered external-skill review shape'
+    $portableReadyInspect = Invoke-MorphospaceWorkUnitAutomation -Action Inspect -WorkspaceRoot $portableWorkspace -UnitId $portableProposalId -RepoMapPath $repoMapPath -Timestamp $fixed
+    $portableClaim = Invoke-MorphospaceWorkUnitAutomation -Action Claim -WorkspaceRoot $portableWorkspace -UnitId $portableProposalId -RepoMapPath $repoMapPath -Timestamp $fixed -Execute
+    Assert-Automation ($portableReadyInspect.claim_preflight.ready_to_claim -and $portableClaim.transition -eq 'ready-to-active') 'Ready, Inspect, and Claim did not agree on the registered external-skill review shape'
+
+    $portableDamageRoot = Join-Path $testRoot 'unregistered-skill-lookalike'
+    foreach ($skillId in @('rusty-morphospace', 'system-engineering')) {
+        [System.IO.Directory]::CreateDirectory((Join-Path $portableDamageRoot $skillId)) | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path $portableDamageRoot "$skillId\SKILL.md"), "# lookalike $skillId`n", $encoding)
+    }
+    $unregisteredMapPath = Join-Path $testRoot 'unregistered-skill-map.json'
+    $unregisteredMap = Get-Content -LiteralPath $repoMapPath -Raw | ConvertFrom-Json
+    $unregisteredMap.repositories = @($unregisteredMap.repositories | Where-Object { [string]$_.repo_id -cne 'skill-surfaces' }) + @([pscustomobject][ordered]@{ repo_id='lookalike-skill-root'; path=$portableDamageRoot; role='source'; aliases=@('skills-root') })
+    Write-TestJson -Path $unregisteredMapPath -Value $unregisteredMap
+    $unregisteredUnit = $portableUnit | ConvertTo-Json -Depth 32 | ConvertFrom-Json
+    Write-TestJson -Path $portableUnitPath -Value $unregisteredUnit
+    $unregisteredInspect = Invoke-MorphospaceWorkUnitAutomation -Action Inspect -WorkspaceRoot $portableWorkspace -UnitId $portableProposalId -RepoMapPath $unregisteredMapPath -Timestamp $fixed
+    $unregisteredCheck = @($unregisteredInspect.claim_preflight.coverage.checks | Where-Object { [string]$_.check_id -ceq 'instruction-action-compatibility' })
+    Assert-Automation ($unregisteredCheck.Count -eq 1 -and [string]$unregisteredCheck[0].outcome -ceq 'fail') 'an arbitrary external path that resembles a skill surface passed compatibility'
+
+    $byteDamagedMapPath = Join-Path $testRoot 'byte-damaged-skill-map.json'
+    $byteDamagedMap = Get-Content -LiteralPath $repoMapPath -Raw | ConvertFrom-Json
+    $byteDamagedMap.repositories = @($byteDamagedMap.repositories | ForEach-Object {
+        if ([string]$_.repo_id -ceq 'skill-surfaces') {
+            [pscustomobject][ordered]@{ repo_id='skill-surfaces'; path=$portableDamageRoot; role='source'; aliases=@('skills-root') }
+        } else { $_ }
+    })
+    Write-TestJson -Path $byteDamagedMapPath -Value $byteDamagedMap
+    Write-TestJson -Path $portableUnitPath -Value ($portableUnit | ConvertTo-Json -Depth 32 | ConvertFrom-Json)
+    $byteDamagedInspect = Invoke-MorphospaceWorkUnitAutomation -Action Inspect -WorkspaceRoot $portableWorkspace -UnitId $portableProposalId -RepoMapPath $byteDamagedMapPath -Timestamp $fixed
+    $byteDamagedCheck = @($byteDamagedInspect.claim_preflight.coverage.checks | Where-Object { [string]$_.check_id -ceq 'instruction-action-compatibility' })
+    Assert-Automation ($byteDamagedCheck.Count -eq 1 -and [string]$byteDamagedCheck[0].outcome -ceq 'fail' -and @($byteDamagedCheck[0].reason_codes) -contains 'instruction-action-mode-mismatch') 'changed bytes under the registered skill-surfaces identity passed compatibility'
+
+    $extraAliasMapPath = Join-Path $testRoot 'extra-alias-skill-map.json'
+    $extraAliasMap = Get-Content -LiteralPath $repoMapPath -Raw | ConvertFrom-Json
+    @($extraAliasMap.repositories | Where-Object { [string]$_.repo_id -ceq 'skill-surfaces' })[0].aliases = @('skills-root', 'extra-root')
+    Write-TestJson -Path $extraAliasMapPath -Value $extraAliasMap
+    $extraAliasInspect = Invoke-MorphospaceWorkUnitAutomation -Action Inspect -WorkspaceRoot $portableWorkspace -UnitId $portableProposalId -RepoMapPath $extraAliasMapPath -Timestamp $fixed
+    $extraAliasCheck = @($extraAliasInspect.claim_preflight.coverage.checks | Where-Object { [string]$_.check_id -ceq 'instruction-action-compatibility' })
+    Assert-Automation ($extraAliasCheck.Count -eq 1 -and [string]$extraAliasCheck[0].outcome -ceq 'fail') 'extra skill-surfaces alias passed compatibility'
+
+    $sameRootMapPath = Join-Path $testRoot 'same-root-skill-map.json'
+    foreach ($skillId in @('rusty-morphospace', 'system-engineering')) {
+        $sameRootDirectory = Join-Path $repo $skillId
+        [System.IO.Directory]::CreateDirectory($sameRootDirectory) | Out-Null
+        [System.IO.File]::WriteAllBytes((Join-Path $sameRootDirectory 'SKILL.md'), [System.IO.File]::ReadAllBytes((Join-Path $canonicalSkillRoot "$skillId\SKILL.md")))
+    }
+    $sameRootMap = Get-Content -LiteralPath $repoMapPath -Raw | ConvertFrom-Json
+    @($sameRootMap.repositories | Where-Object { [string]$_.repo_id -ceq 'skill-surfaces' })[0].path = $repo
+    Write-TestJson -Path $sameRootMapPath -Value $sameRootMap
+    $sameRootInspect = Invoke-MorphospaceWorkUnitAutomation -Action Inspect -WorkspaceRoot $portableWorkspace -UnitId $portableProposalId -RepoMapPath $sameRootMapPath -Timestamp $fixed
+    $sameRootCheck = @($sameRootInspect.claim_preflight.coverage.checks | Where-Object { [string]$_.check_id -ceq 'instruction-action-compatibility' })
+    Assert-Automation ($sameRootCheck.Count -eq 1 -and [string]$sameRootCheck[0].outcome -ceq 'fail') 'skill root equal to a writable repository passed compatibility'
+
+    $containedRoot = Join-Path $repo 'registered-skill-surfaces'
+    foreach ($skillId in @('rusty-morphospace', 'system-engineering')) {
+        $containedDirectory = Join-Path $containedRoot $skillId
+        [System.IO.Directory]::CreateDirectory($containedDirectory) | Out-Null
+        [System.IO.File]::WriteAllBytes((Join-Path $containedDirectory 'SKILL.md'), [System.IO.File]::ReadAllBytes((Join-Path $canonicalSkillRoot "$skillId\SKILL.md")))
+    }
+    $containedRootMapPath = Join-Path $testRoot 'contained-root-skill-map.json'
+    $containedRootMap = Get-Content -LiteralPath $repoMapPath -Raw | ConvertFrom-Json
+    @($containedRootMap.repositories | Where-Object { [string]$_.repo_id -ceq 'skill-surfaces' })[0].path = $containedRoot
+    Write-TestJson -Path $containedRootMapPath -Value $containedRootMap
+    $containedRootInspect = Invoke-MorphospaceWorkUnitAutomation -Action Inspect -WorkspaceRoot $portableWorkspace -UnitId $portableProposalId -RepoMapPath $containedRootMapPath -Timestamp $fixed
+    $containedRootCheck = @($containedRootInspect.claim_preflight.coverage.checks | Where-Object { [string]$_.check_id -ceq 'instruction-action-compatibility' })
+    Assert-Automation ($containedRootCheck.Count -eq 1 -and [string]$containedRootCheck[0].outcome -ceq 'fail') 'skill root contained by a writable repository passed compatibility'
+    # These paths belong only to this damage fixture. Restore its shared
+    # synthetic repository before later cases require a clean source state.
+    foreach ($skillId in @('rusty-morphospace', 'system-engineering')) {
+        $sameRootDirectory = Join-Path $repo $skillId
+        if ([IO.Directory]::Exists($sameRootDirectory)) { [IO.Directory]::Delete($sameRootDirectory, $true) }
+    }
+    if ([IO.Directory]::Exists($containedRoot)) { [IO.Directory]::Delete($containedRoot, $true) }
+
+    $writableSkillUnit = $portableUnit | ConvertTo-Json -Depth 32 | ConvertFrom-Json
+    $writableSkillUnit.allowed_repositories += [pscustomobject][ordered]@{ repo_id='skill-surfaces'; allowed_paths=@('rusty-morphospace/', 'system-engineering/') }
+    Assert-Automation (@($writableSkillUnit.allowed_repositories | Where-Object { [string]$_.repo_id -ceq 'skill-surfaces' }).Count -eq 1) 'writable registered-skill damage fixture did not declare the external repository'
+    Write-TestJson -Path $portableUnitPath -Value $writableSkillUnit
+    $writableSkillInspect = Invoke-MorphospaceWorkUnitAutomation -Action Inspect -WorkspaceRoot $portableWorkspace -UnitId $portableProposalId -RepoMapPath $repoMapPath -Timestamp $fixed
+    $writableSkillCheck = @($writableSkillInspect.claim_preflight.coverage.checks | Where-Object { [string]$_.check_id -ceq 'instruction-action-compatibility' })
+    Assert-Automation ($writableSkillCheck.Count -eq 1 -and [string]$writableSkillCheck[0].outcome -ceq 'fail' -and @($writableSkillCheck[0].reason_codes) -contains 'instruction-action-mode-mismatch') 'review-no-change on a writable registered skill surface passed compatibility'
+
+    $wrongCategoryUnit = $portableUnit | ConvertTo-Json -Depth 32 | ConvertFrom-Json
+    $wrongCategoryUnit.change_categories += 'module-layout'
+    Write-TestJson -Path $portableUnitPath -Value $wrongCategoryUnit
+    $wrongCategoryInspect = Invoke-MorphospaceWorkUnitAutomation -Action Inspect -WorkspaceRoot $portableWorkspace -UnitId $portableProposalId -RepoMapPath $repoMapPath -Timestamp $fixed
+    $wrongCategoryCheck = @($wrongCategoryInspect.claim_preflight.coverage.checks | Where-Object { [string]$_.check_id -ceq 'instruction-action-compatibility' })
+    Assert-Automation ($wrongCategoryCheck.Count -eq 1 -and [string]$wrongCategoryCheck[0].outcome -ceq 'fail' -and @($wrongCategoryCheck[0].reason_codes) -contains 'instruction-action-mode-mismatch') 'a category requiring an unreviewed third skill passed compatibility'
+
+    $outsideUpdateUnit = $portableUnit | ConvertTo-Json -Depth 32 | ConvertFrom-Json
+    @($outsideUpdateUnit.instruction_surfaces | Where-Object { [string]$_.surface_kind -ceq 'skill' })[0].action = 'update'
+    Write-TestJson -Path $portableUnitPath -Value $outsideUpdateUnit
+    $outsideUpdateInspect = Invoke-MorphospaceWorkUnitAutomation -Action Inspect -WorkspaceRoot $portableWorkspace -UnitId $portableProposalId -RepoMapPath $repoMapPath -Timestamp $fixed
+    $outsideUpdateCheck = @($outsideUpdateInspect.claim_preflight.coverage.checks | Where-Object { [string]$_.check_id -ceq 'instruction-action-compatibility' })
+    Assert-Automation ([string]$outsideUpdateCheck[0].outcome -ceq 'fail' -and @($outsideUpdateCheck[0].reason_codes) -contains 'instruction-update-outside-write-scope') 'an update outside declared repository write scope passed compatibility'
+
+    Write-TestJson -Path $portableUnitPath -Value $portableUnit
 
     # PRE-001 keeps Claim behavior unchanged while making Inspect coverage
     # explicit and machine-readable. The named shapes are synthetic; they

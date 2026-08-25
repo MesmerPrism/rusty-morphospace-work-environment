@@ -375,7 +375,11 @@ one tail-only state event; it never edits either historical unit.
 Run `Inspect` with the exact repository map before Claim. Its embedded
 `claim_preflight` resolves writable repositories, read-only input paths,
 instruction aliases/files, resource declarations, validation tier, and device
-selection. Claim repeats the check and does not change state unless it passes.
+selection. Ready and Claim use the same instruction-action result. A feature
+unit may retain only the closed lifecycle-routed external skill reviews; its
+repository-owned instruction surfaces remain updates, and the local map must
+register the canonical `<skills-root>` surface separately from writable source
+authority. Claim does not change state unless the preflight passes.
 The preflight also reports whether the unit's explicit `fast`, `labs`, or
 `locked` guard is sufficient. Immutable older units remain readable through
 risk-tier inference, while new units declare the guard.

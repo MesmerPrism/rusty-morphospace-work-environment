@@ -81,10 +81,26 @@ function New-HucOwnerFixture {
     $statePath=Join-Path $workspace 'workspace.state.json';$state=Read-MorphospaceProtocolJson $statePath;$state.current_unit=$oldId;$state.next_ready_unit=$null;$state.last_event_id=$null;Write-HucTestJson $statePath $state
     $eventsPath=Join-Path $workspace 'iteration-events.jsonl';[IO.File]::WriteAllBytes($eventsPath,[byte[]]::new(0))
     $fixed='2026-01-02T03:04:05.0000000Z'
-    Invoke-MorphospaceWorkUnitAutomation -Action Ready -WorkspaceRoot $workspace -UnitId $withdrawId -Timestamp $fixed -Execute|Out-Null
+    # These two Ready records are immutable pre-W-013 history.  Build their
+    # authenticated ledger transitions directly; fixture construction grants
+    # no current admission authority.  Today's Ready must still reject this
+    # deliberately unresolved legacy instruction shape.
+    $rejectedReadyPaths=@($statePath,(Join-Path $workspace "iteration-units\\$withdrawId.json"),$eventsPath)
+    $rejectedReadyBefore=@($rejectedReadyPaths|ForEach-Object{[pscustomobject]@{path=$_;sha256=Get-MorphospaceFileSha256 $_}})
+    $transactionRoot=Join-Path $workspace 'receipts\transactions'
+    $rejectedReadyInventory=if(Test-Path $transactionRoot){@([IO.Directory]::EnumerateFiles($transactionRoot,'*',[IO.SearchOption]::AllDirectories)|ForEach-Object{[pscustomobject]@{path=$_.FullName.Substring($transactionRoot.Length);sha256=Get-MorphospaceFileSha256 $_.FullName}}|Sort-Object path)}else{@()}
+    Assert-HucRejected { Invoke-MorphospaceWorkUnitAutomation -Action Ready -WorkspaceRoot $workspace -UnitId $withdrawId -Timestamp $fixed -Execute } 'Ready preflight blocked: instruction action instruction-action-mode-mismatch instruction-surface-unresolved' 'current Ready rejects unresolved legacy instruction surfaces with both closed action reasons'
+    $rejectedReadyAfter=@($rejectedReadyPaths|ForEach-Object{[pscustomobject]@{path=$_;sha256=Get-MorphospaceFileSha256 $_}})
+    $rejectedReadyInventoryAfter=if(Test-Path $transactionRoot){@([IO.Directory]::EnumerateFiles($transactionRoot,'*',[IO.SearchOption]::AllDirectories)|ForEach-Object{[pscustomobject]@{path=$_.FullName.Substring($transactionRoot.Length);sha256=Get-MorphospaceFileSha256 $_.FullName}}|Sort-Object path)}else{@()}
+    Assert-HucTest ((($rejectedReadyBefore|ConvertTo-Json -Compress)-ceq($rejectedReadyAfter|ConvertTo-Json -Compress)) -and (($rejectedReadyInventory|ConvertTo-Json -Compress)-ceq($rejectedReadyInventoryAfter|ConvertTo-Json -Compress))) 'rejected current Ready preserves state, unresolved unit, ledger bytes, and transaction inventory'
+    $withdrawTarget=Copy-HucTestValue (Read-MorphospaceProtocolJson (Join-Path $workspace "iteration-units\\$withdrawId.json"));$withdrawTarget.status='ready'
+    $withdrawState=Copy-HucTestValue (Read-MorphospaceProtocolJson $statePath);$withdrawState.next_ready_unit=$withdrawId
+    Add-HucTestTransition -Workspace $workspace -UnitId $withdrawId -EventId "$withdrawId-ready-0001" -Timestamp $fixed -EventType state-transition -Summary 'Reviewed the bounded proposal and made it claimable without expanding its repositories, paths, or prerequisites.' -TargetState $withdrawState -TargetUnit $withdrawTarget
     $withdrawReceipt=Join-Path $workspace 'receipts\withdrawn-validator-unit-withdraw-ready.json'
     Invoke-MorphospaceWorkUnitAutomation -Action WithdrawReady -WorkspaceRoot $workspace -UnitId $withdrawId -Timestamp '2026-01-02T03:05:05.0000000Z' -OutPath $withdrawReceipt -Execute|Out-Null
-    Invoke-MorphospaceWorkUnitAutomation -Action Ready -WorkspaceRoot $workspace -UnitId $currentId -Timestamp '2026-01-02T03:06:05.0000000Z' -Execute|Out-Null
+    $currentTarget=Copy-HucTestValue (Read-MorphospaceProtocolJson (Join-Path $workspace "iteration-units\\$currentId.json"));$currentTarget.status='ready'
+    $currentReadyState=Copy-HucTestValue (Read-MorphospaceProtocolJson $statePath);$currentReadyState.next_ready_unit=$currentId
+    Add-HucTestTransition -Workspace $workspace -UnitId $currentId -EventId "$currentId-ready-0003" -Timestamp '2026-01-02T03:06:05.0000000Z' -EventType state-transition -Summary 'Reviewed the bounded proposal and made it claimable without expanding its repositories, paths, or prerequisites.' -TargetState $currentReadyState -TargetUnit $currentTarget
     $state=Read-MorphospaceProtocolJson $statePath;$current=Read-MorphospaceProtocolJson (Join-Path $workspace "iteration-units\$currentId.json");$old=Read-MorphospaceProtocolJson (Join-Path $workspace "iteration-units\$oldId.json")
     $eventId="$oldId-superseded-by-$currentId";$targetState=Copy-HucTestValue $state;$targetState.current_unit=$currentId;$targetState.next_ready_unit=$null;$targetState.last_event_id=$eventId
     $targetUnit=Copy-HucTestValue $current;$targetUnit.status='active'

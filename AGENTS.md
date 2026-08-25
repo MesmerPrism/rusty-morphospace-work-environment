@@ -170,6 +170,14 @@ freeze and control-plane budget in `docs/AUTONOMOUS_ITERATION.md`. Its
 `pass`/`fail`/`incomplete` result is diagnostic only; it does not replace
 `ready_to_claim`, mutate workflow state, or authorize Claim.
 
+For the closed explicit-feature instruction compatibility, Ready, Inspect, and
+Claim must use the same bound repository-map preflight. Repository-owned
+required instruction surfaces use `update`. Only the exact lifecycle-routed
+`rusty-morphospace` and `system-engineering` installed surfaces may remain
+`review-no-change`, and only when the map registers their canonical
+`<skills-root>` root as the distinct external `skill-surfaces` source. A
+path-shaped or writable lookalike is not external authority.
+
 The work-environment repo owns portable schemas, examples, and validators. A
 project owns its instantiated `morphospace/` directory. Do not copy live state,
 private evidence, or machine paths back into this repository.
