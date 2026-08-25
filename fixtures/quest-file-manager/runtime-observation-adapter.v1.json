@@ -1,0 +1,13 @@
+{
+  "schema": "rusty.morphospace.qfm_runtime_observation_adapter_fixture.v1",
+  "purpose": "Consumer adapters preserve QFM Android fact families without producing application or OpenXR readiness.",
+  "cases": [
+    { "id": "legacy-v3", "observation": { "ObservationContract": "questionable.file_manager.app_runtime_observation.v3", "Installed": { "Identity": { "PackageName": "com.example.app" } }, "ProcessIds": [456], "IsForeground": true, "IsTopResumed": true } },
+    { "id": "legacy-v4", "observation": { "ObservationContract": "questionable.file_manager.app_runtime_observation.v4", "Installed": { "Identity": { "PackageName": "com.example.app" } }, "ProcessIds": [456], "IsForeground": true, "IsTopResumed": true, "CurrentFocus": { "State": "Observed", "Component": "com.example.app/com.example.app.Main" }, "FocusedApp": { "State": "Observed", "Component": "com.example.app/com.example.app.Main" } } },
+    { "id": "minimal-v5-unavailable-families", "observation": { "ObservationContract": "questionable.file_manager.app_runtime_observation.v5" } },
+    { "id": "focus-placeholder-after-brief-app-focus", "frames": [
+      { "ObservationContract": "questionable.file_manager.app_runtime_observation.v5", "Installed": { "Identity": { "PackageName": "com.example.app" } }, "ProcessIds": [456], "IsForeground": true, "IsTopResumed": true, "GlobalFocus": { "ObservationContract": "questionable.file_manager.android_global_focus_observation.v1", "CurrentFocus": { "State": "Reported", "Components": ["com.example.app/com.example.app.Main"] }, "FocusedApp": { "State": "Reported", "Components": ["com.example.app/com.example.app.Main"] } } },
+      { "ObservationContract": "questionable.file_manager.app_runtime_observation.v5", "Installed": { "Identity": { "PackageName": "com.example.app" } }, "ProcessIds": [456], "IsForeground": true, "IsTopResumed": true, "GlobalFocus": { "ObservationContract": "questionable.file_manager.android_global_focus_observation.v1", "CurrentFocus": { "State": "Reported", "Components": ["com.oculus.vrshell/com.oculus.vrshell.FocusPlaceholderActivity"] }, "FocusedApp": { "State": "Reported", "Components": ["com.oculus.vrshell/com.oculus.vrshell.FocusPlaceholderActivity"] } } }
+    ] }
+  ]
+}

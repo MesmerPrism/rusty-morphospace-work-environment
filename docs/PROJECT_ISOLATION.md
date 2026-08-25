@@ -79,7 +79,12 @@ claim or mutex.
 Locked Candidate/publication builds reject ambient feature variables, require
 an exact clean source commit/tree, write immutable content-addressed output,
 and emit a run capsule that hashes the APK, build manifest, feature lock,
-effective runtime profile, and property manifest. Reusing or replacing that
+effective runtime profile, property manifest, and—when QFM is used—the provider
+source commit/tree, portable distribution-manifest digest, closure digest, and
+staged relative entry point. A provider closure is the declared entry point
+plus every required relative runtime file with its size and SHA-256; its staged
+run root is content-addressed and verified before and after each typed use.
+No public capsule records a machine-local provider path. Reusing or replacing that
 content address is an explicit error, not an incremental-build shortcut. This
 immutability rule applies to the final output and evidence, not to a separately
 declared compiler cache.

@@ -32,8 +32,9 @@ inspection remains QFM-owned.
 
 The build profile removes recurring Gradle/PowerShell command reconstruction.
 The run request does not contain an arbitrary device command. A private Hostess
-provider map resolves the hash-pinned File Manager deployment wrapper, File
-Manager provider config, and verified diagnostic adapter. Hostess plans or runs
+provider map resolves the hash-pinned File Manager deployment wrapper, a complete
+provider distribution closure (not a lone executable), File Manager provider
+config, and verified diagnostic adapter. Hostess plans or runs
 only those adapters, retains foreign receipts by path and SHA-256, and resumes
 only completed hash-valid stages.
 
@@ -93,16 +94,16 @@ pwsh -NoProfile -ExecutionPolicy Bypass `
   -SourceRoot <app-source-root>
 ```
 
-The Work Environment consumer fixture binds the accepted QFM corpus only at
-its outer envelope and evidence boundary: `apk_launch_result.v1` success means
-non-null `mutation`/`result` and null `failure`; failure is the inverse.
-`app_runtime_observation.v2` proves Android installed/foreground/top-resumed/
-process facts only—not OpenXR readiness, app effect, or wearer visibility.
-Nested QFM payload meaning remains QFM-owned.
-
-Use `ImmersiveXr` when an app can remain top-resumed while the legacy
-foreground projection is false. This policy still rejects a retained Guardian
-or sensor-lock component. `Android2d` requires both legacy foreground and
-top-resumed facts. `ProcessAlive` is diagnostic-only and proves no visible or
-effective app state. The app oracle remains the authority for effective app
-readiness.
+The Work Environment consumer fixture targets QFM
+`app_runtime_observation.v5` plus
+`android_global_focus_observation.v1`, plus the separate read-only
+`apk_permission_observation.v1`, while retaining named legacy-v3 and legacy-v4
+adapters. It preserves installed identity, process, task/top-resumed, global
+Android focus, package permission declarations, reported grant bits, and app-op
+modes as separate fact families. Its app-evidence family is
+always explicit `unknown` until an app-owned receipt arrives: PID/process,
+top-resumed, or raw focus—including a brief app-focused frame followed by
+Meta `FocusPlaceholderActivity`—cannot become application/OpenXR readiness.
+Permission observation likewise cannot establish permission policy, grantability,
+feature use, readiness, or wearer visibility. Unknown and unavailable provider
+facts remain explicit rather than being silently converted to success or failure.
