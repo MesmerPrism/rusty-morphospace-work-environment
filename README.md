@@ -219,9 +219,10 @@ pwsh -NoProfile -ExecutionPolicy Bypass `
    roots. Routine local work uses a complete hash-pinned File Manager provider
    closure (entry point plus declared runtime siblings), staged in a
    content-addressed run root and recorded without local paths; it does not use
-   a lone copied executable. QFM runtime v5/global-focus v1 data remains
-   distinct Android fact families; only an app-owned receipt can establish
-   application or OpenXR readiness. Kiosk
+   a lone copied executable. QFM runtime v5/global-focus v1 data and the
+   separate read-only permission-observation v1 facts remain distinct; only
+   an app-owned receipt can establish application or OpenXR readiness, and no
+   QFM permission fact establishes policy or feature use. Kiosk
    launch/foreground control when applicable, and app-owned runtime evidence.
    For OpenXR inspection or interaction, explicitly choose an app-native route,
    a bridge over the existing Spatial SDK session, or a packaged API layer.

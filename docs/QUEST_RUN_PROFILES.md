@@ -96,11 +96,14 @@ pwsh -NoProfile -ExecutionPolicy Bypass `
 
 The Work Environment consumer fixture targets QFM
 `app_runtime_observation.v5` plus
-`android_global_focus_observation.v1`, while retaining named legacy-v3 and
-legacy-v4 adapters. It preserves installed identity, process, task/top-resumed,
-and global Android focus as separate fact families. Its app-evidence family is
+`android_global_focus_observation.v1`, plus the separate read-only
+`apk_permission_observation.v1`, while retaining named legacy-v3 and legacy-v4
+adapters. It preserves installed identity, process, task/top-resumed, global
+Android focus, package permission declarations, reported grant bits, and app-op
+modes as separate fact families. Its app-evidence family is
 always explicit `unknown` until an app-owned receipt arrives: PID/process,
 top-resumed, or raw focus—including a brief app-focused frame followed by
 Meta `FocusPlaceholderActivity`—cannot become application/OpenXR readiness.
-Unknown and unavailable provider facts remain explicit rather than being
-silently converted to success or failure.
+Permission observation likewise cannot establish permission policy, grantability,
+feature use, readiness, or wearer visibility. Unknown and unavailable provider
+facts remain explicit rather than being silently converted to success or failure.

@@ -159,6 +159,7 @@ Assert-ExactProperties -Value $config -Expected @(
     "apk_diagnostic_result_contract",
     "apk_diagnostic_bundle_contract",
     "apk_stop_result_contract",
+    "apk_permission_observation_contract",
     "adb_forward_inventory_result_contract",
     "apk_launch_result_contract",
     "launcher_export_proof_contract",
@@ -178,8 +179,9 @@ if ($config.apk_preflight_result_contract -cne "questionable.file_manager.apk_pr
     $config.apk_diagnostic_result_contract -cne "questionable.file_manager.apk_diagnostic_result.v3" -or
     $config.apk_diagnostic_bundle_contract -cne "questionable.file_manager.apk_diagnostic_bundle.v3" -or
     $config.apk_stop_result_contract -cne "questionable.file_manager.apk_stop_result.v1" -or
+    $config.apk_permission_observation_contract -cne "questionable.file_manager.apk_permission_observation.v1" -or
     $config.adb_forward_inventory_result_contract -cne "questionable.file_manager.adb_forward_inventory_result.v1") {
-    throw "Resolver config does not pin the adopted QFM deployment, diagnostic, stop, and forward contracts."
+    throw "Resolver config does not pin the adopted QFM deployment, diagnostic, stop, permission-observation, and forward contracts."
 }
 if ($config.apk_launch_result_contract -cne
     "questionable.file_manager.apk_launch_result.v1") {
@@ -287,6 +289,7 @@ $requiredRoutes = @(
     "apk deploy --serial",
     "apk diagnose --serial",
     "apk stop --serial",
+    "apk permissions --serial",
     "adb forwards --serial"
 )
 $probeStatus = "skipped"
@@ -329,6 +332,7 @@ if (-not $SkipExecutableProbe) {
         [string]$contracts.contracts.apkDeployResult -cne [string]$config.apk_deploy_result_contract -or
         [string]$contracts.contracts.apkDiagnosticResult -cne [string]$config.apk_diagnostic_result_contract -or
         [string]$contracts.contracts.apkStopResult -cne [string]$config.apk_stop_result_contract -or
+        [string]$contracts.contracts.apkPermissionObservation -cne [string]$config.apk_permission_observation_contract -or
         [string]$contracts.contracts.adbForwardInventoryResult -cne [string]$config.adb_forward_inventory_result_contract -or
         [string]$contracts.contracts.apkLaunchResult -cne
             [string]$config.apk_launch_result_contract -or
@@ -366,6 +370,7 @@ $result = [ordered]@{
     apk_diagnostic_result_contract = [string]$config.apk_diagnostic_result_contract
     apk_diagnostic_bundle_contract = [string]$config.apk_diagnostic_bundle_contract
     apk_stop_result_contract = [string]$config.apk_stop_result_contract
+    apk_permission_observation_contract = [string]$config.apk_permission_observation_contract
     adb_forward_inventory_result_contract = [string]$config.adb_forward_inventory_result_contract
     apk_launch_result_contract = [string]$config.apk_launch_result_contract
     launcher_export_proof_contract = [string]$config.launcher_export_proof_contract

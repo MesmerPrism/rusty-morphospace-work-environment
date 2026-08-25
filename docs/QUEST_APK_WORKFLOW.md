@@ -79,7 +79,8 @@ contract set from that template. The resolver rejects older provider pins that
 do not advertise QFM v5 inspected deployment, preflight/deploy, bounded
 diagnostic result/bundle, typed stop, shared-forward inventory, one typed JSON
 launch envelope on success or failure, the current-Quest launcher-export proof,
-runtime observation v5, and global-focus observation v1. Resolve the provider
+runtime observation v5, global-focus observation v1, and read-only permission
+observation v1. Resolve the provider
 without touching a headset:
 
 ```powershell
@@ -106,6 +107,10 @@ v5 adds bounded `mCurrentFocus`/`mFocusedApp` facts through global-focus v1;
 these remain raw Android observations. Neither a PID, process liveness,
 top-resumed state, target focus, nor FocusPlaceholder state establishes
 application/OpenXR readiness, an application effect, or wearer visibility.
+`apk permissions` is a separate exact-package, read-only fact family for
+manifest declarations, reported grant bits, and app-op modes. It never grants
+or revokes permission and cannot establish permission policy, feature use, or
+application/OpenXR readiness.
 
 For repeatable local work, use the fail-closed wrapper instead of reconstructing
 that sequence from ambient executables. Its default mode resolves the pinned

@@ -1,0 +1,63 @@
+{
+  "schema": "rusty.morphospace.qfm_permission_observation_adapter_fixture.v1",
+  "purpose": "QFM permission observations retain bounded Android facts without inferring policy, feature use, app readiness, or OpenXR readiness.",
+  "cases": [
+    {
+      "id": "reported-grant-and-denied-app-op",
+      "envelope": {
+        "schema": "questionable.file_manager.apk_permission_observation.v1",
+        "succeeded": true,
+        "result": {
+          "PackageName": "com.example.app",
+          "PackageState": "reported",
+          "ManifestDeclaredPermissionsState": "reported",
+          "ManifestDeclaredPermissions": [{ "Name": "android.permission.CAMERA" }],
+          "EffectiveGrantState": "reported",
+          "EffectiveGrants": [{ "Name": "android.permission.CAMERA", "Granted": true, "Source": "runtime" }],
+          "AppOpState": "reported",
+          "AppOps": [{ "Operation": "CAMERA", "Mode": "deny" }],
+          "Provider": { "Id": "questionable-file-manager", "Version": "0.1.0", "SourceRepository": "https://example.invalid/qfm", "Distribution": "portable_cli" }
+        },
+        "failure": null
+      }
+    },
+    {
+      "id": "package-not-installed",
+      "envelope": {
+        "schema": "questionable.file_manager.apk_permission_observation.v1",
+        "succeeded": true,
+        "result": {
+          "PackageName": "com.example.app",
+          "PackageState": "packageNotInstalled",
+          "ManifestDeclaredPermissionsState": "packageNotInstalled",
+          "ManifestDeclaredPermissions": [],
+          "EffectiveGrantState": "packageNotInstalled",
+          "EffectiveGrants": [],
+          "AppOpState": "packageNotInstalled",
+          "AppOps": [],
+          "Provider": { "Id": "questionable-file-manager", "Version": "0.1.0", "SourceRepository": "https://example.invalid/qfm", "Distribution": "portable_cli" }
+        },
+        "failure": null
+      }
+    },
+    {
+      "id": "failed-envelope-with-result-is-rejected",
+      "envelope": {
+        "schema": "questionable.file_manager.apk_permission_observation.v1",
+        "succeeded": false,
+        "result": {
+          "PackageName": "com.example.app",
+          "PackageState": "reported",
+          "ManifestDeclaredPermissionsState": "reported",
+          "ManifestDeclaredPermissions": [{ "Name": "android.permission.CAMERA" }],
+          "EffectiveGrantState": "reported",
+          "EffectiveGrants": [{ "Name": "android.permission.CAMERA", "Granted": true, "Source": "runtime" }],
+          "AppOpState": "reported",
+          "AppOps": [{ "Operation": "CAMERA", "Mode": "allow" }],
+          "Provider": { "Id": "questionable-file-manager", "Version": "0.1.0", "SourceRepository": "https://example.invalid/qfm", "Distribution": "portable_cli" }
+        },
+        "failure": { "code": "permission_observation_output_rejected", "state_change_possible": false }
+      }
+    }
+  ]
+}

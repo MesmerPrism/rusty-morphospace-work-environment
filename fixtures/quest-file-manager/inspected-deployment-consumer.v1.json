@@ -1,9 +1,9 @@
 {
-  "schema": "rusty.morphospace.quest_file_manager_consumer_fixture.v2",
-  "purpose": "Work Environment consumes QFM v5 and global-focus v1 as separate Android fact families; it never manufactures app or OpenXR readiness.",
+  "schema": "rusty.morphospace.quest_file_manager_consumer_fixture.v3",
+  "purpose": "Work Environment consumes QFM v5, global-focus v1, and read-only permission observation v1 as separate Android fact families; it never manufactures policy, app, or OpenXR readiness.",
   "provider_corpus": {
-    "current_main_commit": "8b4cab16f8142793683694c2a6abcfc3931cdf1e",
-    "current_main_tree": "c2bc3009a041ce12cb5ed32f2ef119cc526f6413",
+    "current_main_commit": "d8ea42f0a45d942962d002aa451bc88a52666b73",
+    "current_main_tree": "aa9253f5fc4f2b9d83b76896fd3ad6b54aeef417",
     "historical_candidate_evidence": ["e4a9eaaa68c1c3368082584fcb9dfd74c9f99036", "914ec6ac38693869fbaeceb2150383df8b1f6024"]
   },
   "native_schema_ids": [
@@ -13,6 +13,7 @@
     "questionable.file_manager.apk_diagnostic_result.v3",
     "questionable.file_manager.apk_diagnostic_bundle.v3",
     "questionable.file_manager.apk_stop_result.v1",
+    "questionable.file_manager.apk_permission_observation.v1",
     "questionable.file_manager.adb_forward_inventory_result.v1",
     "questionable.file_manager.apk_launch_result.v1",
     "questionable.file_manager.launcher_export_proof.v2",
@@ -23,6 +24,11 @@
     "schema": "questionable.file_manager.app_runtime_observation.v5",
     "fact_families": ["installed_identity", "process", "task_top_resumed", "global_android_focus", "application_evidence"],
     "does_not_prove": ["openxr_readiness", "app_effect", "wearer_visibility", "panel_paused_state", "advancing_focused_or_submitted_frames", "app_owned_handoff_marker"]
+  },
+  "permission_observation_boundary": {
+    "schema": "questionable.file_manager.apk_permission_observation.v1",
+    "fact_families": ["package_identity", "manifest_declarations", "effective_grants", "app_ops", "provider_identity", "application_evidence"],
+    "does_not_prove": ["permission_policy", "permission_grantability", "feature_use", "app_readiness", "openxr_readiness", "wearer_visibility"]
   },
   "consumer_wrapper_invariants": {
     "exactly_one_terminal_json_document": true,

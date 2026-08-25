@@ -18,6 +18,7 @@
   "apk_diagnostic_result_contract": "questionable.file_manager.apk_diagnostic_result.v3",
   "apk_diagnostic_bundle_contract": "questionable.file_manager.apk_diagnostic_bundle.v3",
   "apk_stop_result_contract": "questionable.file_manager.apk_stop_result.v1",
+  "apk_permission_observation_contract": "questionable.file_manager.apk_permission_observation.v1",
   "adb_forward_inventory_result_contract": "questionable.file_manager.adb_forward_inventory_result.v1",
   "apk_launch_result_contract": "questionable.file_manager.apk_launch_result.v1",
   "launcher_export_proof_contract": "questionable.file_manager.launcher_export_proof.v2",

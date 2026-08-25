@@ -89,6 +89,7 @@ try {
         apk_diagnostic_result_contract = "questionable.file_manager.apk_diagnostic_result.v3"
         apk_diagnostic_bundle_contract = "questionable.file_manager.apk_diagnostic_bundle.v3"
         apk_stop_result_contract = "questionable.file_manager.apk_stop_result.v1"
+        apk_permission_observation_contract = "questionable.file_manager.apk_permission_observation.v1"
         adb_forward_inventory_result_contract = "questionable.file_manager.adb_forward_inventory_result.v1"
         apk_launch_result_contract = "questionable.file_manager.apk_launch_result.v1"
         launcher_export_proof_contract = "questionable.file_manager.launcher_export_proof.v2"
@@ -102,7 +103,8 @@ try {
         $result.provider_id -cne "file-manager-local" -or
         $result.identity_probe -cne "skipped" -or
         $result.command_probe -cne "skipped" -or
-        $result.executable_sha256 -cne $fixtureSha256) {
+        $result.executable_sha256 -cne $fixtureSha256 -or
+        $result.apk_permission_observation_contract -cne "questionable.file_manager.apk_permission_observation.v1") {
         throw "Resolver did not return the expected hash-pinned ready result."
     }
 
@@ -116,6 +118,11 @@ try {
     Invoke-ResolverChild -ExpectedExit 1 | Out-Null
 
     $config.apk_launch_result_contract = "questionable.file_manager.apk_launch_result.v1"
+    $config.apk_permission_observation_contract = "questionable.file_manager.apk_permission_observation.v0"
+    Write-JsonUtf8NoBom -Path $configPath -Value $config
+    Invoke-ResolverChild -ExpectedExit 1 | Out-Null
+
+    $config.apk_permission_observation_contract = "questionable.file_manager.apk_permission_observation.v1"
     $config.executable_path = $invalidExtensionFixture
     Write-JsonUtf8NoBom -Path $configPath -Value $config
     Invoke-ResolverChild -ExpectedExit 1 | Out-Null
