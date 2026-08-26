@@ -454,6 +454,12 @@ ancestry consumes the authorization.
   authority, change captain/status, or perform source, Git, build, validation,
   device, or remote work. Route the procedure to
   `docs/ACTIVE_WRITE_SCOPE_AMENDMENT.md`.
+- Begin a later feature in an idle accepted project only through
+  `AdmitDevelopmentUnit`, binding the project, feature lock, source composition,
+  repository map, state, and ledger preimages to its bounded agent assessment.
+  The resulting proposal still follows ordinary Ready/Inspect/Claim. An
+  admitted active unit must use `FreezeCandidate` before BeginValidation;
+  historical units without the admission marker retain their existing route.
 - Resolve one exact current active-unit blocker only through product-neutral
   `blocker_resolution_receipt.v1` and `ResolveBlocker`: revalidate its passing
   hash-bound evidence, attached-branch or exact detached repository heads, and

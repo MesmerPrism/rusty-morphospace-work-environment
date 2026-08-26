@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/agent-scope-assessment-v1.schema.json",
+  "title": "Bounded agent-authored development scope assessment",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "objective", "owner_repositories", "public_private_boundary", "allowed_change_categories", "allowed_effect_categories", "allowed_permission_categories", "build_envelope", "device_envelope", "non_scope", "prerequisites", "validation_class", "evidence_expectations", "cleanup_expectations"],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.workflow.agent_scope_assessment.v1" },
+    "objective": { "type": "string", "minLength": 8, "maxLength": 1024 },
+    "owner_repositories": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "object", "additionalProperties": false, "required": ["repo_id", "source_roots"], "properties": { "repo_id": { "$ref": "#/$defs/id" }, "source_roots": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/path" } } } } },
+    "public_private_boundary": { "enum": ["public", "private", "mixed"] },
+    "allowed_change_categories": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "enum": ["implementation", "authority", "module-layout", "feature-activation", "validation", "device-policy", "repo-routing", "public-private-boundary", "workflow-automation", "state-machine", "validation-routing", "recovery", "documentation-only"] } },
+    "allowed_effect_categories": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "enum": ["none", "filesystem", "build", "network", "device"] } },
+    "allowed_permission_categories": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 128 } },
+    "build_envelope": { "type": "object", "additionalProperties": false, "required": ["class", "allowed_profiles"], "properties": { "class": { "enum": ["none", "host", "product"] }, "allowed_profiles": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/id" } } } },
+    "device_envelope": { "type": "object", "additionalProperties": false, "required": ["requirement", "allowed_kinds"], "properties": { "requirement": { "enum": ["forbidden", "none", "optional", "required"] }, "allowed_kinds": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 128 } } } },
+    "non_scope": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+    "prerequisites": { "type": "array", "items": { "$ref": "#/$defs/id" }, "uniqueItems": true },
+    "validation_class": { "enum": ["quick", "standard", "deep"] },
+    "evidence_expectations": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+    "cleanup_expectations": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" },
+    "path": { "type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*/?$" }
+  }
+}

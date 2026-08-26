@@ -420,6 +420,11 @@ active feature unit, retains its captain and status, and mutex-binds the
 unchanged project spec. It never edits project authority or performs source,
 Git, build, validation, device, or remote work. See
 [Active Write-Scope Amendment](docs/ACTIVE_WRITE_SCOPE_AMENDMENT.md).
+
+For an idle existing project, start the next feature only through the bounded
+owner [development-unit admission and candidate-freeze contract](docs/DEVELOPMENT_UNIT_ADMISSION.md).
+It supports agent-led discovery inside a declared envelope, then freezes exact
+candidate identity before normal validation.
 `CorrectCompletedTransitionSemantics` is not a compatibility mode for malformed
 events. Its builder derives the old and replacement from current retained
 state/unit evidence, requires the original event receipts and legacy-v1 intent

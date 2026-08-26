@@ -142,6 +142,18 @@ function Invoke-MorphospaceAmendActiveWriteScope {
         [string]$unit.status -cne 'active' -or $workMode -cne 'feature') {
         throw 'AmendActiveWriteScope requires the exact current active feature unit.'
     }
+    $enveloped = $unit.PSObject.Properties.Name -contains 'agent_scope_assessment'
+    if ($unit.PSObject.Properties.Name -contains 'candidate_freeze') { throw 'AmendActiveWriteScope is forbidden after FreezeCandidate.' }
+    $assessmentRows = @()
+    if ($enveloped) {
+        foreach($field in @('semantic_rationale','ownership_proof','source_composition')) { if(-not($amendment.PSObject.Properties.Name -contains $field)){throw "Admitted-unit amendment requires $field."} }
+        if ([string]$amendment.ownership_proof.repo_id -cne [string]$amendment.repository_id) { throw 'Amendment ownership proof repository must match the amended repository.' }
+        $assessmentRows = @($unit.agent_scope_assessment.owner_repositories | Where-Object { [string]$_.repo_id -ceq [string]$amendment.repository_id })
+        if ($assessmentRows.Count -ne 1) { throw 'Amendment repository is outside the admitted owner envelope.' }
+        if ([string]$unit.source_composition.mode -cne [string]$amendment.source_composition.mode -or [string]$unit.source_composition.lock_path -cne [string]$amendment.source_composition.lock_path) { throw 'Amendment source-composition mode or lock path is incompatible with admission.' }
+        $lockPath = Resolve-MorphospaceWorkspacePath $workspace ([string]$amendment.source_composition.lock_path) -RequireLeaf
+        if ((Get-MorphospaceFileSha256 $lockPath) -cne [string]$amendment.source_composition.lock_sha256) { throw 'Amendment source-composition lock hash drifted.' }
+    }
 
     $projectHash = Get-MorphospaceCanonicalJsonSha256 $project
     $stateHash = Get-MorphospaceCanonicalJsonSha256 $state
@@ -182,6 +194,7 @@ function Invoke-MorphospaceAmendActiveWriteScope {
         if (-not (Test-ActiveWriteScopePathAllowed $path @($projectMatches[0].allowed_paths))) {
             throw "Amended write path '$path' is outside project repository scope."
         }
+        if($enveloped){$inAssessment = @($assessmentRows[0].source_roots | Where-Object { $path.TrimEnd('/') -eq ([string]$_).TrimEnd('/') -or $path.TrimEnd('/').StartsWith(([string]$_).TrimEnd('/') + '/', [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0;$tracked = @($amendment.ownership_proof.tracked_paths | Where-Object { [string]$_ -ceq $path }).Count -eq 1;if (-not $inAssessment -or -not $tracked) { throw "Amended path '$path' lacks tracked owner proof within the admitted source root." }}
     }
 
     if (-not $Timestamp) { $Timestamp = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffffffZ') }

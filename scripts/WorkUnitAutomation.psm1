@@ -5,6 +5,7 @@ Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Fo
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceHistoricalValidationDebtBaseline.psm1')
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceContentObservation.psm1') -Force -DisableNameChecking
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'CandidateFreeze.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospacePublicationRecovery.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospacePublishedPlanningAuthorityAdoption.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospacePlannedPublication.psm1') -Force
@@ -1990,6 +1991,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
                 $transition = "idempotent"
             } else {
                 if ($beforeStatus -ne "active" -or [string]$state.current_unit -ne $UnitId) { throw "BeginValidation requires the matching active unit." }
+                [void](Test-MorphospaceFrozenCandidate -WorkspaceRoot $resolvedWorkspace -Unit $unit)
                 $requiredDeviceBlock = @($validationMatrix | Where-Object { $_.kind -eq "device" -and $_.disposition -eq "blocked-missing-serials" })
                 if ($requiredDeviceBlock.Count -gt 0) { throw "Required device validation has no explicit serials." }
                 $transition = "active-to-validating"
