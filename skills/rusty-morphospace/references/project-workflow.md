@@ -246,6 +246,11 @@ Require validation evidence to bind exact criteria, artifacts, repository
 revisions, ancestor bases, and in-scope changed paths. Revalidate before
 acceptance so drift rejects. Keep acceptance under the workflow owner.
 
+For repository CI, route proportional selection and exact-tree artifact reuse
+through [Affected Validation](../../../docs/AFFECTED_VALIDATION.md). A missing
+or stale reuse receipt falls back only to the current delta; Deep history stays
+scheduled/manual and `pending-infra` never proves a candidate.
+
 If a change modifies its own validation authority, use the two-PR external
 validation-authority boundary. The trusted base first approves the exact
 reviewed ancestor, complete path set, sizes, and hashes. A base-owned static

@@ -2,94 +2,270 @@ name: validate
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   pull_request:
+  schedule:
+    - cron: '17 3 * * *'
   workflow_dispatch:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: validate-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  quick-windows:
-    runs-on: windows-latest
+  infrastructure:
+    runs-on: ubuntu-latest
+    outputs:
+      classification: ${{ steps.classify.outputs.classification }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
-        with:
-          python-version: "3.11"
-      - name: Ensure ripgrep
+      - name: Classify pre-job infrastructure with one bounded retry
+        id: classify
         shell: pwsh
         run: |
-          if (-not (Get-Command rg -ErrorAction SilentlyContinue)) {
-            choco install ripgrep -y --no-progress
+          ./scripts/Test-AffectedValidationInfrastructure.ps1 -Attempt 0 -OutPath "$env:RUNNER_TEMP/infrastructure.json"
+          $result = Get-Content -LiteralPath "$env:RUNNER_TEMP/infrastructure.json" -Raw | ConvertFrom-Json
+          if ($result.classification -ceq 'pending-infra') {
+            Start-Sleep -Seconds 10
+            ./scripts/Test-AffectedValidationInfrastructure.ps1 -Attempt 1 -OutPath "$env:RUNNER_TEMP/infrastructure-retry.json"
+            $result = Get-Content -LiteralPath "$env:RUNNER_TEMP/infrastructure-retry.json" -Raw | ConvertFrom-Json
           }
-      - name: Quick portable validation
+          "classification=$($result.classification)" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+          if ($result.classification -ceq 'pending-infra') { throw 'Infrastructure remains pending after its single bounded retry.' }
+
+  select:
+    needs: infrastructure
+    if: (github.event_name == 'pull_request' || github.event_name == 'push') && needs.infrastructure.outputs.classification == 'ready'
+    runs-on: ubuntu-latest
+    outputs:
+      linux: ${{ steps.plan.outputs.linux }}
+      windows: ${{ steps.plan.outputs.windows }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Resolve exact affected-validation plan
+        id: plan
         shell: pwsh
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
         run: |
           ./scripts/Test-PowerShellHost.ps1 -SelfTest
-          ./scripts/Test-WorkEnvironment.ps1 -SelfTest -Tier Quick
-          git diff --check
+          $base = if ($env:GITHUB_EVENT_NAME -eq 'pull_request') { $env:PR_BASE } else { $env:PUSH_BEFORE }
+          $head = if ($env:GITHUB_EVENT_NAME -eq 'pull_request') { $env:PR_HEAD } else { $env:GITHUB_SHA }
+          if ([string]::IsNullOrWhiteSpace($base) -or $base -match '^0+$' -or $head -notmatch '^[0-9a-f]{40}$') { throw 'Affected validation requires exact nonzero event base and head identities.' }
+          git cat-file -e "$base^{commit}"; if ($LASTEXITCODE -ne 0) { throw 'Event base commit is unavailable.' }
+          if ((git rev-parse HEAD) -cne $head) { throw 'Checkout does not equal the event head SHA.' }
+          ./scripts/Resolve-AffectedValidation.ps1 -RepositoryRoot . -BaseCommit $base -HeadCommit $head -OutPath "$env:RUNNER_TEMP/affected-plan.json"
+          $plan = Get-Content -LiteralPath "$env:RUNNER_TEMP/affected-plan.json" -Raw | ConvertFrom-Json -Depth 64
+          "plan_sha256=$($plan.plan_sha256)" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+          $linux = @($plan.selected_checks | Where-Object { @($_.platforms) -ccontains 'linux' }).Count -gt 0
+          $windows = @($plan.selected_checks | Where-Object { @($_.platforms) -ccontains 'windows' }).Count -gt 0
+          "linux=$($linux.ToString().ToLowerInvariant())" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+          "windows=$($windows.ToString().ToLowerInvariant())" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+      - name: Preserve canonical-digest affected plan
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: affected-plan-${{ steps.plan.outputs.plan_sha256 }}
+          path: ${{ runner.temp }}/affected-plan.json
+          if-no-files-found: error
+          retention-days: 7
 
-  quick-linux:
+  affected-linux:
+    needs: select
+    if: github.event_name == 'pull_request' && needs.select.outputs.linux == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
         with:
-          python-version: "3.11"
-      - name: Ensure ripgrep
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Run affected Linux Quick evidence
+        id: execute
         shell: pwsh
-        run: |
-          if (-not (Get-Command rg -ErrorAction SilentlyContinue)) {
-            sudo apt-get update
-            sudo apt-get install -y ripgrep
-          }
-      - name: Quick portable validation
-        shell: pwsh
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           ./scripts/Test-PowerShellHost.ps1 -SelfTest
-          ./scripts/Test-WorkEnvironment.ps1 -SelfTest -Tier Quick
-          git diff --check
+          if ((git rev-parse HEAD) -cne $env:PR_HEAD) { throw 'Checkout does not equal the PR event head SHA.' }
+          ./scripts/Resolve-AffectedValidation.ps1 -RepositoryRoot . -BaseCommit $env:PR_BASE -HeadCommit $env:PR_HEAD -OutPath "$env:RUNNER_TEMP/affected-plan.json"
+          $failure = $null
+          try { & ./scripts/Invoke-AffectedValidation.ps1 -RepositoryRoot . -BaseCommit $env:PR_BASE -HeadCommit $env:PR_HEAD -PlanPath "$env:RUNNER_TEMP/affected-plan.json" -Platform linux -OutPath "$env:RUNNER_TEMP/affected-linux-evidence.json" } catch { $failure = $_ }
+          if (-not (Test-Path -LiteralPath "$env:RUNNER_TEMP/affected-linux-evidence.json")) { throw 'Affected Linux execution failed before producing typed evidence.' }
+          "evidence_sha256=$((Get-FileHash -LiteralPath "$env:RUNNER_TEMP/affected-linux-evidence.json" -Algorithm SHA256).Hash.ToLowerInvariant())" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+          if ($null -ne $failure) { throw $failure }
+          git diff --check "$env:PR_BASE" "$env:PR_HEAD"; if ($LASTEXITCODE -ne 0) { throw 'PR Linux delta has whitespace errors.' }
+      - name: Preserve content-addressed Linux evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: affected-linux-${{ steps.execute.outputs.evidence_sha256 }}
+          path: ${{ runner.temp }}/affected-linux-evidence.json
+          if-no-files-found: error
+          retention-days: 7
 
-  standard-windows:
+  affected-windows:
+    needs: select
+    if: github.event_name == 'pull_request' && needs.select.outputs.windows == 'true'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
         with:
-          python-version: "3.11"
-      - name: Ensure ripgrep
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Run affected Windows Standard evidence
+        id: execute
         shell: pwsh
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
-          if (-not (Get-Command rg -ErrorAction SilentlyContinue)) {
-            choco install ripgrep -y --no-progress
-          }
-      - name: Standard portable validation delta
+          ./scripts/Test-PowerShellHost.ps1 -SelfTest
+          if ((git rev-parse HEAD) -cne $env:PR_HEAD) { throw 'Checkout does not equal the PR event head SHA.' }
+          ./scripts/Resolve-AffectedValidation.ps1 -RepositoryRoot . -BaseCommit $env:PR_BASE -HeadCommit $env:PR_HEAD -OutPath "$env:RUNNER_TEMP/affected-plan.json"
+          $failure = $null
+          try { & ./scripts/Invoke-AffectedValidation.ps1 -RepositoryRoot . -BaseCommit $env:PR_BASE -HeadCommit $env:PR_HEAD -PlanPath "$env:RUNNER_TEMP/affected-plan.json" -Platform windows -OutPath "$env:RUNNER_TEMP/affected-windows-evidence.json" } catch { $failure = $_ }
+          if (-not (Test-Path -LiteralPath "$env:RUNNER_TEMP/affected-windows-evidence.json")) { throw 'Affected Windows execution failed before producing typed evidence.' }
+          "evidence_sha256=$((Get-FileHash -LiteralPath "$env:RUNNER_TEMP/affected-windows-evidence.json" -Algorithm SHA256).Hash.ToLowerInvariant())" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+          if ($null -ne $failure) { throw $failure }
+          git diff --check "$env:PR_BASE" "$env:PR_HEAD"; if ($LASTEXITCODE -ne 0) { throw 'PR Windows delta has whitespace errors.' }
+      - name: Preserve content-addressed Windows evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: affected-windows-${{ steps.execute.outputs.evidence_sha256 }}
+          path: ${{ runner.temp }}/affected-windows-evidence.json
+          if-no-files-found: error
+          retention-days: 7
+
+  post-merge-attestation:
+    if: github.event_name == 'push'
+    needs: select
+    runs-on: ubuntu-latest
+    outputs:
+      execution_mode: ${{ steps.attest.outputs.execution_mode }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Authenticate exact-tree reuse or require current delta
+        id: attest
         shell: pwsh
+        env:
+          PUSH_BEFORE: ${{ github.event.before }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          ./scripts/Test-WorkUnitAutomation.ps1
+          $executionMode = 'current-delta'
+          try {
+            $topology = ./scripts/Test-AffectedValidationTopology.ps1 -RepositoryRoot . -BeforeCommit $env:PUSH_BEFORE -HeadCommit $env:GITHUB_SHA
+            if ($topology.mode -ceq 'exact-tree-premerge-reuse') {
+              $candidate = $topology.candidate.commit
+              $pulls = gh api "/repos/$env:GITHUB_REPOSITORY/commits/$candidate/pulls" | ConvertFrom-Json -Depth 64
+              $pull = @($pulls | Where-Object { $_.merged_at -and $_.merge_commit_sha -ceq $env:GITHUB_SHA -and $_.head.sha -ceq $candidate }) | Select-Object -First 1
+              if ($null -eq $pull) { throw 'No merged PR binds the candidate event head to this merge commit.' }
+              $runs = (gh api "/repos/$env:GITHUB_REPOSITORY/actions/runs?head_sha=$candidate&event=pull_request&per_page=100" | ConvertFrom-Json -Depth 64).workflow_runs
+              $run = @($runs | Where-Object { $_.name -ceq 'validate' -and $_.event -ceq 'pull_request' -and $_.head_sha -ceq $candidate -and $_.status -ceq 'completed' -and $_.conclusion -ceq 'success' } | Sort-Object created_at -Descending | Select-Object -First 1)
+              if ($null -eq $run) { throw 'No successful candidate PR validate run is available for reuse.' }
+              $workflowPath = '.github/workflows/validate.yml'
+              if ([string]$run.path -notmatch '^\.github/workflows/validate\.yml@') { throw 'Candidate run is not bound to the validate workflow path.' }
+              $jobs = (gh api "/repos/$env:GITHUB_REPOSITORY/actions/runs/$($run.id)/jobs?per_page=100" | ConvertFrom-Json -Depth 64).jobs
+              $remoteArtifacts = (gh api "/repos/$env:GITHUB_REPOSITORY/actions/runs/$($run.id)/artifacts?per_page=100" | ConvertFrom-Json -Depth 64).artifacts
+              $artifactRoot = Join-Path $env:RUNNER_TEMP 'premerge-artifacts'; [IO.Directory]::CreateDirectory($artifactRoot) | Out-Null
+              $bound = [Collections.Generic.List[object]]::new()
+              foreach ($remote in @($remoteArtifacts | Where-Object { $_.name -like 'affected-*' })) {
+                $kind = if ($remote.name -match '^affected-plan-[0-9a-f]{64}$') { 'plan' } elseif ($remote.name -match '^affected-linux-[0-9a-f]{64}$') { 'linux' } elseif ($remote.name -match '^affected-windows-[0-9a-f]{64}$') { 'windows' } else { throw "Unexpected affected-validation artifact name '$($remote.name)'." }
+                $fileName = if ($kind -ceq 'plan') { 'affected-plan.json' } else { "affected-$kind-evidence.json" }
+                $zip = Join-Path $artifactRoot ("$($remote.id).zip")
+                Invoke-WebRequest -Uri ([string]$remote.archive_download_url) -Headers @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json' } -OutFile $zip
+                $zipBytes = [IO.File]::ReadAllBytes($zip)
+                if ($zipBytes.Length -lt 4 -or $zipBytes[0] -ne 0x50 -or $zipBytes[1] -ne 0x4b) { throw "Artifact '$($remote.name)' download is not a ZIP byte stream." }
+                $archive = [IO.Compression.ZipFile]::OpenRead($zip)
+                try {
+                  $entries = @($archive.Entries | Where-Object { $_.FullName -ceq $fileName })
+                  if ($entries.Count -ne 1 -or @($archive.Entries | Where-Object { -not $_.FullName.EndsWith('/') }).Count -ne 1) { throw "Artifact '$($remote.name)' has an unexpected payload inventory." }
+                  $target = Join-Path $artifactRoot $fileName
+                  if ([IO.File]::Exists($target)) { throw "Duplicate evidence file '$fileName' in PR artifacts." }
+                  $input = $entries[0].Open(); $output = [IO.File]::Open($target, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write)
+                  try { $input.CopyTo($output) } finally { $output.Dispose(); $input.Dispose() }
+                } finally { $archive.Dispose() }
+                $bound.Add([pscustomobject][ordered]@{id=[long]$remote.id;remote_name=[string]$remote.name;name=$fileName;platform=$kind;sha256=(Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant();size=[long](Get-Item -LiteralPath $target).Length;expires_utc=[string]$remote.expires_at})
+              }
+              $planFile = Join-Path $artifactRoot 'affected-plan.json'; if (-not [IO.File]::Exists($planFile)) { throw 'PR artifacts do not contain the plan.' }
+              $plan = Get-Content -LiteralPath $planFile -Raw | ConvertFrom-Json -Depth 64
+              $registry = Get-Content -LiteralPath manifests/affected-validation-registry.json -Raw | ConvertFrom-Json -Depth 64
+              $checkMap = @{}; foreach ($check in @($registry.checks)) { $checkMap[[string]$check.check_id] = $check }
+              $coverage = [Collections.Generic.List[object]]::new()
+              foreach ($platform in @('linux','windows')) { foreach ($selected in @($plan.selected_checks | Where-Object { @($_.platforms) -ccontains $platform })) { $check = $checkMap[[string]$selected.check_id]; if ($null -eq $check) { throw "Plan selects unknown check '$($selected.check_id)'." }; $commandPath = [string]$check.command_path; $commandBlob = (git rev-parse "${candidate}:$commandPath").Trim(); if ($LASTEXITCODE -ne 0 -or $commandBlob -notmatch '^[0-9a-f]{40}$') { throw "Candidate command is not an exact Git blob: $commandPath" }; $coverage.Add([pscustomobject][ordered]@{platform=$platform;check_id=[string]$selected.check_id;command_path=$commandPath;command_blob_sha1=$commandBlob}) } }
+              $workflowBlob = (git rev-parse "${candidate}:$workflowPath").Trim(); if ($LASTEXITCODE -ne 0 -or $workflowBlob -notmatch '^[0-9a-f]{40}$') { throw 'Candidate validate workflow is not an exact Git blob.' }
+              $receipt = [pscustomobject][ordered]@{
+                schema='rusty.morphospace.workflow.affected_validation_reuse.v1'; repository=$env:GITHUB_REPOSITORY
+                event=[pscustomobject][ordered]@{name='pull_request';head_sha=[string]$pull.head.sha;base_sha=[string]$pull.base.sha}
+                pull_request=[pscustomobject][ordered]@{number=[long]$pull.number;head_sha=[string]$pull.head.sha;base_sha=[string]$pull.base.sha}
+                run=[pscustomobject][ordered]@{id=[long]$run.id;attempt=[long]$run.run_attempt;event=[string]$run.event;head_sha=[string]$run.head_sha;workflow_id=[long]$run.workflow_id;check_names=@($jobs | Where-Object { $_.conclusion -ceq 'success' } | ForEach-Object name | Sort-Object -Unique)}
+                base=$plan.base;head=$plan.head;tree=$topology.candidate.tree
+                workflow=[pscustomobject][ordered]@{id=[long]$run.workflow_id;path=$workflowPath;blob_sha1=$workflowBlob}
+                plan=[pscustomobject][ordered]@{artifact_name="affected-plan-$($plan.plan_sha256)";file_sha256=(Get-FileHash -LiteralPath $planFile -Algorithm SHA256).Hash.ToLowerInvariant();canonical_sha256=[string]$plan.plan_sha256}
+                artifacts=@($bound.ToArray());coverage=@($coverage.ToArray());freshness=[pscustomobject][ordered]@{created_utc=[string]$run.updated_at;max_age_minutes=1440}
+                claims=[pscustomobject][ordered]@{historical_aggregate_reused=$false;acceptance_authority=$false;publication_authority=$false}
+              }
+              $receiptPath = Join-Path $artifactRoot 'reuse.json'; [IO.File]::WriteAllText($receiptPath,($receipt | ConvertTo-Json -Depth 64 -Compress)+[Environment]::NewLine,[Text.UTF8Encoding]::new($false))
+              ./scripts/Test-AffectedValidationReuse.ps1 -RepositoryRoot . -BeforeCommit $env:PUSH_BEFORE -HeadCommit $env:GITHUB_SHA -ReusePath $receiptPath -ArtifactDirectory $artifactRoot | Out-Null
+              $executionMode = 'authenticated-reuse'
+            }
+          } catch { Write-Warning "Pre-merge evidence is unavailable or unauthenticated; current push deltas remain required. $($_.Exception.Message)" }
+          "execution_mode=$executionMode" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+          git diff --check "$env:PUSH_BEFORE" "$env:GITHUB_SHA"; if ($LASTEXITCODE -ne 0) { throw 'Push delta has whitespace errors.' }
+
+  main-linux-delta:
+    if: github.event_name == 'push' && needs.select.outputs.linux == 'true' && needs.post-merge-attestation.outputs.execution_mode == 'current-delta'
+    needs: [select, post-merge-attestation]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: { fetch-depth: 0 }
+      - name: Run current Linux delta when authenticated reuse is unavailable
+        shell: pwsh
+        env:
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          ./scripts/Resolve-AffectedValidation.ps1 -RepositoryRoot . -BaseCommit $env:PUSH_BEFORE -HeadCommit $env:GITHUB_SHA -OutPath "$env:RUNNER_TEMP/affected-plan.json"
+          ./scripts/Invoke-AffectedValidation.ps1 -RepositoryRoot . -BaseCommit $env:PUSH_BEFORE -HeadCommit $env:GITHUB_SHA -PlanPath "$env:RUNNER_TEMP/affected-plan.json" -Platform linux -OutPath "$env:RUNNER_TEMP/affected-linux-evidence.json"
+
+  main-windows-delta:
+    if: github.event_name == 'push' && needs.select.outputs.windows == 'true' && needs.post-merge-attestation.outputs.execution_mode == 'current-delta'
+    needs: [select, post-merge-attestation]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: { fetch-depth: 0 }
+      - name: Run current Windows delta when authenticated reuse is unavailable
+        shell: pwsh
+        env:
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          ./scripts/Resolve-AffectedValidation.ps1 -RepositoryRoot . -BaseCommit $env:PUSH_BEFORE -HeadCommit $env:GITHUB_SHA -OutPath "$env:RUNNER_TEMP/affected-plan.json"
+          ./scripts/Invoke-AffectedValidation.ps1 -RepositoryRoot . -BaseCommit $env:PUSH_BEFORE -HeadCommit $env:GITHUB_SHA -PlanPath "$env:RUNNER_TEMP/affected-plan.json" -Platform windows -OutPath "$env:RUNNER_TEMP/affected-windows-evidence.json"
 
   deep:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
         with:
-          python-version: "3.11"
-      - name: Ensure ripgrep
+          fetch-depth: 0
+      - name: Run full-history Deep aggregate without reusable baseline evidence
         shell: pwsh
         run: |
-          if (-not (Get-Command rg -ErrorAction SilentlyContinue)) {
-            choco install ripgrep -y --no-progress
-          }
-      - name: Deep authority validation
-        shell: pwsh
-        run: |
-          ./scripts/Test-PowerShellHost.ps1
-          ./scripts/Test-WorkEnvironment.ps1 -SelfTest -Tier Deep
+          $aggregate = Get-Content -LiteralPath manifests/affected-validation-registry.json -Raw | ConvertFrom-Json -Depth 16
+          if ($aggregate.historical_aggregate.tier -cne 'deep' -or [bool]$aggregate.historical_aggregate.reusable_evidence -or -not [bool]$aggregate.historical_aggregate.full_history_required) { throw 'Deep requires the typed no-reuse full-history aggregate policy.' }
+          $shallow = git rev-parse --is-shallow-repository; if ($LASTEXITCODE -ne 0 -or $shallow.Trim() -cne 'false') { throw 'Deep requires a complete Git history.' }
+          ./scripts/Test-PowerShellHost.ps1; if ($LASTEXITCODE -ne 0) { throw 'PowerShell host validation failed.' }
+          ./scripts/Test-WorkEnvironment.ps1 -SelfTest -Tier Deep; if ($LASTEXITCODE -ne 0) { throw 'Deep aggregate returned a nonzero native exit.' }

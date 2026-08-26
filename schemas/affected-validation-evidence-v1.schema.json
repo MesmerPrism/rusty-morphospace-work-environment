@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/affected-validation-evidence-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "repository", "base", "head", "plan_sha256", "platform", "runner", "check_results", "result", "claims"],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.workflow.affected_validation_evidence.v1" },
+    "repository": { "type": "string", "minLength": 3, "maxLength": 256 },
+    "base": { "$ref": "#/$defs/gitIdentity" },
+    "head": { "$ref": "#/$defs/gitIdentity" },
+    "plan_sha256": { "$ref": "#/$defs/hash" },
+    "platform": { "enum": ["windows", "linux"] },
+    "runner": {
+      "type": "object", "additionalProperties": false, "required": ["os_description", "powershell_version"],
+      "properties": { "os_description": { "type": "string", "minLength": 1, "maxLength": 512 }, "powershell_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[A-Za-z0-9.-]+)?$" } }
+    },
+    "check_results": {
+      "type": "array", "minItems": 1, "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["check_id", "command_path", "command_blob_sha1", "result", "exit_code", "timed_out", "output_truncated", "post_kill_drain_timed_out", "stdout_sha256", "stderr_sha256", "stdout_bytes", "stderr_bytes"],
+        "properties": {
+          "check_id": { "$ref": "#/$defs/id" }, "command_path": { "$ref": "#/$defs/path" }, "command_blob_sha1": { "$ref": "#/$defs/commit" },
+          "result": { "enum": ["pass", "code-fail", "infra-fail"] },
+          "exit_code": { "anyOf": [{ "type": "integer", "minimum": -2147483648, "maximum": 2147483647 }, { "type": "null" }] },
+          "timed_out": { "type": "boolean" }, "output_truncated": { "type": "boolean" }, "post_kill_drain_timed_out": { "type": "boolean" }, "stdout_sha256": { "$ref": "#/$defs/hash" }, "stderr_sha256": { "$ref": "#/$defs/hash" },
+          "stdout_bytes": { "type": "integer", "minimum": 0, "maximum": 10485760 }, "stderr_bytes": { "type": "integer", "minimum": 0, "maximum": 10485760 }
+        },
+        "allOf": [
+          { "if": { "properties": { "result": { "const": "pass" } }, "required": ["result"] }, "then": { "properties": { "exit_code": { "const": 0 }, "timed_out": { "const": false }, "output_truncated": { "const": false }, "post_kill_drain_timed_out": { "const": false } } } },
+          { "if": { "properties": { "result": { "const": "code-fail" } }, "required": ["result"] }, "then": { "anyOf": [ { "properties": { "exit_code": { "type": "integer", "not": { "const": 0 } } }, "required": ["exit_code"] }, { "properties": { "timed_out": { "const": true } }, "required": ["timed_out"] }, { "properties": { "output_truncated": { "const": true } }, "required": ["output_truncated"] }, { "properties": { "post_kill_drain_timed_out": { "const": true } }, "required": ["post_kill_drain_timed_out"] } ] } },
+          { "if": { "properties": { "result": { "const": "infra-fail" } }, "required": ["result"] }, "then": { "properties": { "timed_out": { "const": false }, "output_truncated": { "const": false }, "post_kill_drain_timed_out": { "const": false } } } }
+        ]
+      }
+    },
+    "result": { "enum": ["pass", "code-fail", "infra-fail"] },
+    "claims": {
+      "type": "object", "additionalProperties": false, "required": ["historical_aggregate_reused", "acceptance_authority", "publication_authority"],
+      "properties": { "historical_aggregate_reused": { "const": false }, "acceptance_authority": { "const": false }, "publication_authority": { "const": false } }
+    }
+  },
+  "allOf": [
+    { "if": { "properties": { "result": { "const": "pass" } }, "required": ["result"] }, "then": { "properties": { "check_results": { "not": { "contains": { "properties": { "result": { "not": { "const": "pass" } } }, "required": ["result"] } } } } } },
+    { "if": { "properties": { "result": { "const": "code-fail" } }, "required": ["result"] }, "then": { "properties": { "check_results": { "allOf": [{ "contains": { "properties": { "result": { "const": "code-fail" } }, "required": ["result"] } }, { "not": { "contains": { "properties": { "result": { "const": "infra-fail" } }, "required": ["result"] } } }] } } } },
+    { "if": { "properties": { "result": { "const": "infra-fail" } }, "required": ["result"] }, "then": { "properties": { "check_results": { "contains": { "properties": { "result": { "const": "infra-fail" } }, "required": ["result"] } } } } }
+  ],
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }, "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,95}$" },
+    "path": { "type": "string", "pattern": "^(?!/)(?!.*\\\\)(?!.*:)[^\\\\\u0000-\u001f\u007f]+$" },
+    "gitIdentity": { "type": "object", "additionalProperties": false, "required": ["commit", "tree"], "properties": { "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" }, "tree": { "type": "string", "pattern": "^[0-9a-f]{40}$" } } }
+  }
+}

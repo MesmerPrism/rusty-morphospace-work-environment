@@ -1,0 +1,13 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/affected-validation-infrastructure-v1.schema.json",
+  "type":"object","additionalProperties":false,
+  "required":["schema","attempt","classification","tools","claims"],
+  "properties":{
+    "schema":{"const":"rusty.morphospace.workflow.affected_validation_infrastructure.v1"},
+    "attempt":{"type":"integer","minimum":0,"maximum":1},
+    "classification":{"enum":["ready","pending-infra"]},
+    "tools":{"type":"array","minItems":3,"maxItems":3,"items":{"type":"object","additionalProperties":false,"required":["name","available"],"properties":{"name":{"enum":["git","pwsh","rg"]},"available":{"type":"boolean"}}}},
+    "claims":{"type":"object","additionalProperties":false,"required":["acceptance_authority","publication_authority"],"properties":{"acceptance_authority":{"const":false},"publication_authority":{"const":false}}}
+  }
+}

@@ -48,6 +48,12 @@ such a unit can become `accepted`, the nearest repo `AGENTS.md`, a README or
 router doc, and every relevant skill named by the synchronization matrix must
 have complete update records.
 
+Validation-authority promotion additionally updates the detailed validation
+runbook. It distinguishes current-delta evidence from scheduled Deep history,
+records artifact/reuse invalidators, and treats `pending-infra` as a
+non-promotional operational state. It never converts a candidate receipt into
+acceptance or publication authority.
+
 An idle-project envelope is a project-level authority change: document the
 preparation action, then require later unit admission to bind its receipt and
 source lock. A preparation receipt never itself authorizes a future unit,
