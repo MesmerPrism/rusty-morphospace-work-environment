@@ -427,6 +427,11 @@ contract, then start the next feature through the bound
 [development-unit admission and candidate-freeze contract](docs/DEVELOPMENT_UNIT_ADMISSION.md).
 It supports agent-led discovery inside a declared envelope, then freezes exact
 candidate identity before normal validation.
+When a ready unit carries sealed evidence from an out-of-scope prior task,
+`Claim` binds it as historical evidence only. The owner must then materialize
+and verify a task-local reference before source work; the raw patch is never
+applied or made a product input. See [Inherited Candidate
+Materialization](docs/INHERITED_CANDIDATE_MATERIALIZATION.md).
 `CorrectCompletedTransitionSemantics` is not a compatibility mode for malformed
 events. Its builder derives the old and replacement from current retained
 state/unit evidence, requires the original event receipts and legacy-v1 intent

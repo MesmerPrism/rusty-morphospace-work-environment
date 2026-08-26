@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/inherited-candidate-file-inventory-v1.schema.json",
+  "title": "Exact task-local inherited-candidate archive inventory",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "binding_id", "files"],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.workflow.inherited_candidate_file_inventory.v1" },
+    "binding_id": { "$ref": "#/$defs/id" },
+    "files": {
+      "type": "array", "minItems": 1, "maxItems": 512,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["ordinal", "path", "sha256", "length", "file_mode"],
+        "properties": {
+          "ordinal": { "type": "integer", "minimum": 0 },
+          "path": { "$ref": "#/$defs/entryPath" },
+          "sha256": { "$ref": "#/$defs/hash" },
+          "length": { "type": "integer", "minimum": 0, "maximum": 16777216 },
+          "file_mode": { "enum": ["100644", "100755"] }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" },
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "entryPath": { "type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$" }
+  }
+}

@@ -518,7 +518,8 @@ successful push is not proof that the whole batch is complete.
 `scripts/Invoke-WorkUnitAutomation.ps1` is the portable owner for mechanical
 work-unit transitions and preparation artifacts. It supports `Inspect`,
 `Ready`, `WithdrawReady`, `Claim`, `Resume`, `CompleteInstructionSurfaces`,
-`AdmitDevelopmentUnit`, `AmendActiveWriteScope`, `FreezeCandidate`, `CorrectActiveReadOnlyDependencies`,
+`AdmitDevelopmentUnit`, `AmendActiveWriteScope`, `FreezeCandidate`,
+`MaterializeInheritedCandidate`, `CorrectActiveReadOnlyDependencies`,
 `CorrectActiveProjectRepositoryScope`, `CorrectActiveUnitContract`,
 `RecordHistoricalUnitCompatibilityProjection`,
 `BeginValidation`, `ReturnToActive`,
