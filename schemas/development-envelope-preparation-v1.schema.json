@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/development-envelope-preparation-v1.schema.json",
+  "title": "Idle-project development envelope preparation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "preparation_id", "project_id", "predecessor_unit_id", "envelope", "expected", "does_not_prove"],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.workflow.development_envelope_preparation.v1" },
+    "preparation_id": { "$ref": "#/$defs/id" },
+    "project_id": { "$ref": "#/$defs/id" },
+    "predecessor_unit_id": { "$ref": "#/$defs/id" },
+    "envelope": {
+      "type": "object", "additionalProperties": false,
+      "required": ["project", "feature_lock", "owner_repositories", "public_private_boundary", "allowed_change_categories", "allowed_effect_categories", "allowed_permission_categories", "build_envelope", "device_envelope", "source_composition"],
+      "properties": {
+        "project": { "type": "object" },
+        "feature_lock": { "type": "object" },
+        "owner_repositories": { "$ref": "#/$defs/ownerRepositories" },
+        "public_private_boundary": { "enum": ["public", "private", "mixed"] },
+        "allowed_change_categories": { "$ref": "#/$defs/nonEmptyStrings" },
+        "allowed_effect_categories": { "$ref": "#/$defs/nonEmptyStrings" },
+        "allowed_permission_categories": { "$ref": "#/$defs/nonEmptyStrings" },
+        "build_envelope": { "$ref": "#/$defs/buildEnvelope" },
+        "device_envelope": { "$ref": "#/$defs/deviceEnvelope" },
+        "source_composition": {
+          "type": "object", "additionalProperties": false,
+          "required": ["path", "repository_ids"],
+          "properties": {
+            "path": { "$ref": "#/$defs/path" },
+            "repository_ids": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/id" } }
+          }
+        }
+      }
+    },
+    "expected": {
+      "type": "object", "additionalProperties": false,
+      "required": ["project_sha256", "state_sha256", "feature_lock_sha256", "repository_map_path", "repository_map_sha256", "predecessor_unit_path", "predecessor_unit_sha256", "events_sha256", "events_length", "event_tail_id"],
+      "properties": {
+        "project_sha256": { "$ref": "#/$defs/hash" }, "state_sha256": { "$ref": "#/$defs/hash" }, "feature_lock_sha256": { "$ref": "#/$defs/hash" },
+        "repository_map_path": { "$ref": "#/$defs/path" }, "repository_map_sha256": { "$ref": "#/$defs/hash" },
+        "predecessor_unit_path": { "$ref": "#/$defs/path" }, "predecessor_unit_sha256": { "$ref": "#/$defs/hash" },
+        "events_sha256": { "$ref": "#/$defs/hash" }, "events_length": { "type": "integer", "minimum": 1 }, "event_tail_id": { "$ref": "#/$defs/id" }
+      }
+    },
+    "does_not_prove": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" },
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "path": { "type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$" },
+    "nonEmptyStrings": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 128 } },
+    "ownerRepositories": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "object", "additionalProperties": false, "required": ["repo_id", "source_roots"], "properties": { "repo_id": { "$ref": "#/$defs/id" }, "source_roots": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*/?$" } } } } },
+    "buildEnvelope": { "type": "object", "additionalProperties": false, "required": ["class", "allowed_profiles"], "properties": { "class": { "enum": ["none", "host", "product"] }, "allowed_profiles": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/id" } } } },
+    "deviceEnvelope": { "type": "object", "additionalProperties": false, "required": ["requirement", "allowed_kinds"], "properties": { "requirement": { "enum": ["forbidden", "none", "optional", "required"] }, "allowed_kinds": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 128 } } } }
+  }
+}

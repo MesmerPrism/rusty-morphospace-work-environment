@@ -1,11 +1,21 @@
 # Development-Unit Admission and Candidate Freeze
 
-`AdmitDevelopmentUnit` is the only owner action that begins a later feature in
-an idle existing project. It accepts a bounded `agent_scope_assessment.v1`, an
+`PrepareDevelopmentEnvelope` is the only owner action that changes an idle
+existing project's future development envelope. It atomically advances only
+the additive project/repository-root and feature/effect/permission/build/device
+ceilings, emits its own typed intent/completion/receipt/event, and creates a
+preparation-owned source-composition lock from the repository map without a
+future unit document. It preserves accepted history and an idle state. See
+[Development Envelope Preparation](DEVELOPMENT_ENVELOPE_PREPARATION.md).
+
+`AdmitDevelopmentUnit` is the only owner action that begins that later feature.
+It must bind the exact preparation receipt and preparation-owned source lock,
+then accepts a bounded `agent_scope_assessment.v1`, an
 exact proposed unit, and CAS bindings for project, feature lock, source
 composition, repository map, state, and event ledger. Admission binds the
-existing project and feature lock as immutable preimages: it never accepts a
-projection of either document and may not rewrite project or feature authority.
+prepared project and feature lock as immutable preimages: it never accepts a
+projection of either document and may not rewrite project, feature, root,
+effect, permission, build, or device authority.
 The transaction creates the unit and receipt together through the standard
 typed transition-ledger intent/completion shape; its durable intent may be
 completed after an interruption. Exact replays are idempotent, while a reused
@@ -36,3 +46,8 @@ entire transition before it consumes the marker. Repeating
 the exact freeze is idempotent; a different freeze is rejected. Units that
 predate the admission marker retain their existing historical compatibility
 rules and are not silently migrated.
+
+Admission consumes the canonical preparation result once per exact unit input.
+Exact replay and owner recovery revalidate that result; stale or conflicting
+evidence stops for independent rescue. A successful admission resumes the
+ordinary agent lifecycle rather than creating a preparation-only route.

@@ -2,6 +2,7 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference='Stop'
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'DevelopmentEnvelopeProvenance.psm1') -Force
 
 function Invoke-MorphospaceCandidateGit {
     param([string]$Repository,[string[]]$Arguments,[string]$Context)
@@ -34,12 +35,27 @@ function Get-MorphospaceCandidateRepositoryMap {
     }
     return $map
 }
+function Get-MorphospaceCandidatePreparationProvenance {
+    param([string]$Workspace,[string]$UnitId)
+    $repoRoot=Split-Path $PSScriptRoot -Parent;$matches=@();foreach($file in @(Get-ChildItem -LiteralPath (Join-Path $Workspace 'receipts') -Filter '*.json' -File)){$doc=Read-MorphospaceProtocolJson $file.FullName;if([string]$doc.schema-ceq'rusty.morphospace.workflow.development_unit_admission.v1'-and[string]$doc.unit_id-ceq$UnitId){if(-not(Test-Json -Json (Get-Content -Raw -LiteralPath $file.FullName) -SchemaFile (Join-Path $repoRoot 'schemas\development-unit-admission-v1.schema.json'))){throw 'Preparation-owned source composition admission receipt is malformed.'};$matches+=,[pscustomobject]@{path=('receipts/'+$file.Name);document=$doc;sha256=(Get-MorphospaceFileSha256 $file.FullName)}}}
+    if($matches.Count-ne1){throw 'Preparation-owned source composition requires exactly one authenticated admission receipt.'};return $matches[0]
+}
 function Get-MorphospaceCandidateSourceComposition {
     param([string]$Workspace,[string]$RelativePath,[string]$ProjectId,[string]$UnitId)
     $path=Resolve-MorphospaceWorkspacePath $Workspace $RelativePath -RequireLeaf
     $repoRoot=Split-Path $PSScriptRoot -Parent
-    if(-not(Test-Json -Json (Get-Content -Raw -LiteralPath $path) -SchemaFile (Join-Path $repoRoot 'schemas\source-composition-lock.schema.json'))){throw 'Frozen candidate source composition is not an exact source-composition lock.'}
     $composition=Read-MorphospaceProtocolJson $path
+    if([string]$composition.schema-ceq'rusty.morphospace.workflow.development_envelope_source_composition.v1'){
+        if(-not(Test-Json -Json (Get-Content -Raw -LiteralPath $path) -SchemaFile (Join-Path $repoRoot 'schemas\development-envelope-source-composition-v1.schema.json'))){throw 'Frozen candidate preparation-owned source composition is malformed.'}
+        $admission=Get-MorphospaceCandidatePreparationProvenance $Workspace $UnitId;$preparation=$admission.document.preparation;[void](Test-MorphospacePreparedDevelopmentEnvelope -WorkspaceRoot $Workspace -Admission $admission.document -Phase Freeze)
+        if([string]$preparation.source_composition_path-cne$RelativePath-or[string]$preparation.source_composition_sha256-cne(Get-MorphospaceFileSha256 $path)){throw 'Frozen candidate preparation source lock is not the exact admitted lock.'}
+        $receiptPath=Resolve-MorphospaceWorkspacePath $Workspace ([string]$preparation.receipt_path) -RequireLeaf
+        if((Get-MorphospaceFileSha256 $receiptPath)-cne[string]$preparation.receipt_sha256-or-not(Test-Json -Json (Get-Content -Raw -LiteralPath $receiptPath) -SchemaFile (Join-Path $repoRoot 'schemas\development-envelope-preparation-receipt-v1.schema.json'))){throw 'Frozen candidate preparation receipt provenance is invalid.'}
+        $receipt=Read-MorphospaceProtocolJson $receiptPath
+        if([string]$receipt.project_id-cne$ProjectId-or[string]$receipt.preparation_id-cne[string]$composition.preparation_id-or[string]$receipt.source_composition.path-cne$RelativePath-or[string]$receipt.source_composition.sha256-cne[string]$preparation.source_composition_sha256){throw 'Frozen candidate preparation receipt does not authenticate this source lock.'}
+        return $composition
+    }
+    if(-not(Test-Json -Json (Get-Content -Raw -LiteralPath $path) -SchemaFile (Join-Path $repoRoot 'schemas\source-composition-lock.schema.json'))){throw 'Frozen candidate source composition is not an exact source-composition lock.'}
     if([string]$composition.project_id-cne$ProjectId-or[string]$composition.unit_id-cne$UnitId){throw 'Frozen candidate source composition project or unit identity differs from the candidate.'}
     return $composition
 }
