@@ -26,6 +26,17 @@ function Get-TestNullableCanonicalHash {
     return Get-TestCanonicalHash $Value
 }
 
+function Get-TestFileHash {
+    param([string]$Path)
+    return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+
+function Read-TestProtocolJson {
+    param([string]$Path)
+    $module = Get-Module WorkUnitAutomation
+    return & $module { param($DocumentPath) Read-MorphospaceProtocolJson -Path $DocumentPath } $Path
+}
+
 # Exercise the public script in a fresh pwsh process so action/parameter routing
 # cannot pass merely because this test imported the module in-process.
 $freshStdout = [IO.Path]::GetTempFileName()
@@ -509,7 +520,7 @@ try {
         [ordered]@{ repo_id = "skill-surfaces"; path = $skillsRoot; role = "source"; aliases = @("skills-root") }
     ) })
     $receiptRoot = Join-Path $workspace "receipts"
-    $fixed = "2026-01-02T03:04:05Z"
+    $fixed = "2026-01-02T03:04:05.0000000Z"
 
     # The exact current-feature shape that needs a schema-only correction may
     # retain two non-writable lifecycle-routed skill reviews. Inspect must use
@@ -593,6 +604,119 @@ try {
     $portableReadyInspect = Invoke-MorphospaceWorkUnitAutomation -Action Inspect -WorkspaceRoot $portableWorkspace -UnitId $portableProposalId -RepoMapPath $repoMapPath -Timestamp $fixed
     $portableClaim = Invoke-MorphospaceWorkUnitAutomation -Action Claim -WorkspaceRoot $portableWorkspace -UnitId $portableProposalId -RepoMapPath $repoMapPath -Timestamp $fixed -Execute
     Assert-Automation ($portableReadyInspect.claim_preflight.ready_to_claim -and $portableClaim.transition -eq 'ready-to-active') 'Ready, Inspect, and Claim did not agree on the registered external-skill review shape'
+
+    # W-014 begins a successor only through the public owner action.  Keep this
+    # fixture on the established repository-map/guard path; no synthetic
+    # canonicalization or direct state transition is used here.
+    $envelopeWorkspace = New-TestWorkspace -Root (Join-Path $testRoot 'development-envelope-admission') -ProjectId 'development-envelope-admission' -UnitId 'u001'
+    $envelopeUnitPath = Join-Path $envelopeWorkspace 'iteration-units\u001.json'
+    $envelopeUnit = Get-Content -Raw -LiteralPath $envelopeUnitPath | ConvertFrom-Json
+    $envelopeUnit.status = 'accepted'
+    Write-TestJson -Path $envelopeUnitPath -Value $envelopeUnit
+    $envelopeStatePath = Join-Path $envelopeWorkspace 'workspace.state.json'
+    $envelopeState = Get-Content -Raw -LiteralPath $envelopeStatePath | ConvertFrom-Json
+    $envelopeState.current_unit = $null; $envelopeState.next_ready_unit = $null; $envelopeState.last_accepted_receipt = 'receipts/u001-accepted.json'; $envelopeState.last_event_id = 'u001-accepted'
+    Write-TestJson -Path $envelopeStatePath -Value $envelopeState
+    $envelopeEventsPath = Join-Path $envelopeWorkspace 'iteration-events.jsonl'
+    [IO.File]::WriteAllText($envelopeEventsPath, (([ordered]@{ schema='rusty.morphospace.workflow.iteration_event.v1'; event_id='u001-accepted'; sequence=1; timestamp=$fixed; project_id='development-envelope-admission'; unit_id='u001'; event_type='state-transition'; summary='Accepted predecessor.'; receipts=@('receipts/u001-accepted.json') } | ConvertTo-Json -Compress) + [Environment]::NewLine), $encoding)
+    $envelopeSourceCommit = (@(Invoke-TestGit -Path $repo -Arguments @('rev-parse','HEAD'))[0]).Trim().ToLowerInvariant()
+    $envelopeSourceTree = (@(Invoke-TestGit -Path $repo -Arguments @('rev-parse','HEAD^{tree}'))[0]).Trim().ToLowerInvariant()
+    $envelopeSourceRow = [ordered]@{ repo_id='project-shell'; role='source'; commit=$envelopeSourceCommit; tree=$envelopeSourceTree; branch='main'; remote_url=$remote; materialization_path='project-repo'; tracked_worktree_clean=$true }
+    $envelopeSourceIdentity = [ordered]@{ schema='rusty.morphospace.workflow.source_composition_identity.v1'; project_id='development-envelope-admission'; unit_id='u002'; repositories=@($envelopeSourceRow) }
+    Write-TestJson -Path (Join-Path $envelopeWorkspace 'source-composition.json') -Value ([ordered]@{ schema='rusty.morphospace.workflow.source_composition_lock.v1'; lock_id='u002-source-fixture'; created_at=$fixed; project_id='development-envelope-admission'; unit_id='u002'; fingerprint=(Get-TestCanonicalHash ([pscustomobject]$envelopeSourceIdentity)); repositories=@($envelopeSourceRow); status='locked'; does_not_prove=@('Fixture-only exact source lock.') })
+    Copy-Item -LiteralPath $repoMapPath -Destination (Join-Path $envelopeWorkspace 'repository-map.json')
+    $envelopeScope = [ordered]@{ schema='rusty.morphospace.workflow.agent_scope_assessment.v1'; objective='Add one bounded successor without declaring every discovered path.'; owner_repositories=@([ordered]@{repo_id='project-shell';source_roots=@('docs/','src/')}); public_private_boundary='public'; allowed_change_categories=@('implementation'); allowed_effect_categories=@('none'); allowed_permission_categories=@('none'); build_envelope=[ordered]@{class='none';allowed_profiles=@('workflow')}; device_envelope=[ordered]@{requirement='forbidden';allowed_kinds=@()}; non_scope=@('Devices.'); prerequisites=@('u001'); validation_class='quick'; evidence_expectations=@('receipt'); cleanup_expectations=@('no residue') }
+    $envelopeU002 = $envelopeUnit | ConvertTo-Json -Depth 64 | ConvertFrom-Json
+    $envelopeU002.unit_id='u002'; $envelopeU002.status='proposed'; $envelopeU002.prerequisites=@('u001'); $envelopeU002.allowed_repositories[0].allowed_paths=@('docs/')
+    $envelopeU002 | Add-Member -NotePropertyName agent_scope_assessment -NotePropertyValue ([pscustomobject]$envelopeScope)
+    $envelopeU002 | Add-Member -NotePropertyName source_composition -NotePropertyValue ([pscustomobject][ordered]@{mode='exact-lock';lock_path='source-composition.json';materialization_receipt=$null})
+    $envelopeProject = Read-TestProtocolJson (Join-Path $envelopeWorkspace 'project.spec.json')
+    $envelopeStateForAdmission = Read-TestProtocolJson $envelopeStatePath
+    $envelopeFeatureLock = Read-TestProtocolJson (Join-Path $envelopeWorkspace 'feature.lock.json')
+    $envelopeProjectHash = Get-TestCanonicalHash $envelopeProject
+    $envelopeStateHash = Get-TestCanonicalHash $envelopeStateForAdmission
+    $envelopeFeatureLockHash = Get-TestCanonicalHash $envelopeFeatureLock
+    $envelopeAdmission=[ordered]@{ schema='rusty.morphospace.workflow.development_unit_admission.v1'; admission_id='u002-admission'; project_id='development-envelope-admission'; unit_id='u002'; agent_scope_assessment=$envelopeScope; unit=$envelopeU002; expected=[ordered]@{ project_sha256=$envelopeProjectHash; state_sha256=$envelopeStateHash; feature_lock_sha256=$envelopeFeatureLockHash; source_composition_path='source-composition.json';source_composition_sha256=(Get-TestFileHash (Join-Path $envelopeWorkspace 'source-composition.json'));repository_map_path='repository-map.json';repository_map_sha256=(Get-TestFileHash (Join-Path $envelopeWorkspace 'repository-map.json'));events_sha256=(Get-TestFileHash $envelopeEventsPath);events_length=([IO.FileInfo]$envelopeEventsPath).Length;event_tail_id='u001-accepted'}; does_not_prove=@('Does not claim, validate, accept, or publish.') }
+    $envelopeAdmissionPath=Join-Path $testRoot 'development-envelope-admission.json'; $envelopeAdmissionOut=Join-Path $envelopeWorkspace 'receipts\u002-admission.json'; Write-TestJson -Path $envelopeAdmissionPath -Value $envelopeAdmission
+    $envelopeAdmissionDry=& (Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1') -Action AdmitDevelopmentUnit -WorkspaceRoot $envelopeWorkspace -DevelopmentUnitAdmission $envelopeAdmissionPath -OutPath $envelopeAdmissionOut -Timestamp $fixed | ConvertFrom-Json
+    $envelopeAdmissionRun=& (Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1') -Action AdmitDevelopmentUnit -WorkspaceRoot $envelopeWorkspace -DevelopmentUnitAdmission $envelopeAdmissionPath -ExpectedDevelopmentUnitAdmissionSha256 $envelopeAdmissionDry.audit_receipt.sha256 -OutPath $envelopeAdmissionOut -Timestamp $fixed -Execute | ConvertFrom-Json
+    Assert-Automation ($envelopeAdmissionRun.transition -eq 'development-unit-admitted' -and (Test-Path -LiteralPath (Join-Path $envelopeWorkspace 'iteration-units\u002.json')) -and (Test-Path -LiteralPath $envelopeAdmissionOut)) 'public AdmitDevelopmentUnit did not atomically admit the accepted-predecessor successor'
+    $envelopeReady = & (Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1') -Action Ready -WorkspaceRoot $envelopeWorkspace -UnitId 'u002' -RepoMapPath $repoMapPath -Timestamp $fixed -Execute | ConvertFrom-Json
+    $envelopeInspect = & (Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1') -Action Inspect -WorkspaceRoot $envelopeWorkspace -UnitId 'u002' -RepoMapPath $repoMapPath -Timestamp $fixed | ConvertFrom-Json
+    $envelopeClaim = & (Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1') -Action Claim -WorkspaceRoot $envelopeWorkspace -UnitId 'u002' -RepoMapPath $repoMapPath -Timestamp $fixed -Execute | ConvertFrom-Json
+    Assert-Automation ($envelopeReady.transition -eq 'proposed-to-ready' -and $envelopeInspect.claim_preflight.ready_to_claim -and $envelopeClaim.transition -eq 'ready-to-active') 'admitted successor did not traverse normal Ready, Inspect, and Claim routes'
+    $envelopeU002Path=Join-Path $envelopeWorkspace 'iteration-units\u002.json'
+    $envelopeAmendment=[ordered]@{schema='rusty.morphospace.workflow.active_write_scope_amendment.v1';amendment_id='u002-discovered';project_id='development-envelope-admission';unit_id='u002';repository_id='project-shell';reason='The discovered documentation path is semantically related to the admitted objective.';semantic_rationale='The discovered path completes the bounded successor without widening its envelope.';ownership_proof=[ordered]@{repo_id='project-shell';source_roots=@('docs/','src/');tracked_paths=@('docs/','src/')};source_composition=[ordered]@{mode='exact-lock';lock_path='source-composition.json';lock_sha256=(Get-TestFileHash (Join-Path $envelopeWorkspace 'source-composition.json'))};expected=[ordered]@{status='active';current_unit='u002';project_revision=1;project_sha256=(Get-TestCanonicalHash (Read-TestProtocolJson (Join-Path $envelopeWorkspace 'project.spec.json')));state_sha256=(Get-TestCanonicalHash (Read-TestProtocolJson $envelopeStatePath));unit_sha256=(Get-TestCanonicalHash (Read-TestProtocolJson $envelopeU002Path));events_sha256=(Get-TestFileHash $envelopeEventsPath);events_length=([IO.FileInfo]$envelopeEventsPath).Length;event_tail_id=(Read-TestProtocolJson $envelopeStatePath).last_event_id};before_allowed_paths=@('docs/');after_allowed_paths=@('docs/','src/');does_not_prove=@('Does not validate, accept, or publish.')}
+    $envelopeAmendmentPath=Join-Path $testRoot 'development-envelope-amendment.json';$envelopeAmendmentOut=Join-Path $envelopeWorkspace 'receipts\u002-discovered.json';Write-TestJson -Path $envelopeAmendmentPath -Value $envelopeAmendment
+    $envelopeAmendmentDry=& (Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1') -Action AmendActiveWriteScope -WorkspaceRoot $envelopeWorkspace -UnitId 'u002' -ActiveWriteScopeAmendment $envelopeAmendmentPath -OutPath $envelopeAmendmentOut -Timestamp $fixed | ConvertFrom-Json
+    $envelopeAmendmentRun=& (Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1') -Action AmendActiveWriteScope -WorkspaceRoot $envelopeWorkspace -UnitId 'u002' -ActiveWriteScopeAmendment $envelopeAmendmentPath -ExpectedActiveWriteScopeAmendmentSha256 $envelopeAmendmentDry.audit_receipt.sha256 -OutPath $envelopeAmendmentOut -Timestamp $fixed -Execute | ConvertFrom-Json
+    Assert-Automation ($envelopeAmendmentRun.transition -eq 'active-write-scope-amended' -and (@((Get-Content -Raw $envelopeU002Path|ConvertFrom-Json).allowed_repositories[0].allowed_paths) -join '|') -eq 'docs/|src/' -and (Test-Path -LiteralPath $envelopeAmendmentOut)) 'public admitted-unit amendment did not preserve bounded CAS receipt semantics'
+
+    # The same public path must bind the exact frozen closure before validation.
+    $envelopeUnitBeforeFreeze = Read-TestProtocolJson $envelopeU002Path
+    $envelopeStateBeforeFreeze = Read-TestProtocolJson $envelopeStatePath
+    $envelopeLockBeforeFreeze = Read-TestProtocolJson (Join-Path $envelopeWorkspace 'feature.lock.json')
+    $envelopeFreeze = [ordered]@{
+        schema='rusty.morphospace.workflow.candidate_freeze.v1'; freeze_id='u002-freeze'; project_id='development-envelope-admission'; unit_id='u002'
+        expected=[ordered]@{
+            project_sha256=(Get-TestCanonicalHash (Read-TestProtocolJson (Join-Path $envelopeWorkspace 'project.spec.json'))); state_sha256=(Get-TestCanonicalHash $envelopeStateBeforeFreeze); unit_sha256=(Get-TestCanonicalHash $envelopeUnitBeforeFreeze); feature_lock_sha256=(Get-TestCanonicalHash $envelopeLockBeforeFreeze)
+            source_composition_path='source-composition.json'; source_composition_sha256=(Get-TestFileHash (Join-Path $envelopeWorkspace 'source-composition.json')); repository_map_path='repository-map.json'; repository_map_sha256=(Get-TestFileHash (Join-Path $envelopeWorkspace 'repository-map.json')); events_sha256=(Get-TestFileHash $envelopeEventsPath); events_length=([IO.FileInfo]$envelopeEventsPath).Length; event_tail_id=$envelopeStateBeforeFreeze.last_event_id
+        }
+        final_repositories=@([ordered]@{repo_id='project-shell';commit=$envelopeSourceCommit;tree=$envelopeSourceTree}); changed_paths=@([ordered]@{repo_id='project-shell';paths=@('docs/','src/')}); cleanliness_policy='clean-only'
+        instruction_surfaces=@([ordered]@{path='README.md';disposition='reviewed-no-change'}); feature_lock=[ordered]@{revision=$envelopeLockBeforeFreeze.revision;sha256=(Get-TestCanonicalHash $envelopeLockBeforeFreeze)}; effects=@('none'); permissions=@('none'); device_use=@('none')
+        test_matrix=@([ordered]@{test_id='quick';command='Test-WorkUnitAutomation.ps1'}); cleanup_evidence=@('Synthetic workspace cleanup is owned by the fixture finally block.'); source_composition=[ordered]@{path='source-composition.json';sha256=(Get-TestFileHash (Join-Path $envelopeWorkspace 'source-composition.json'))}; does_not_prove=@('Does not validate, accept, or publish.')
+    }
+    $envelopeFreezePath=Join-Path $testRoot 'development-envelope-freeze.json'; $envelopeFreezeOut=Join-Path $envelopeWorkspace 'receipts\u002-freeze.json'; Write-TestJson -Path $envelopeFreezePath -Value $envelopeFreeze
+    $envelopeFreezeDry=& (Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1') -Action FreezeCandidate -WorkspaceRoot $envelopeWorkspace -UnitId 'u002' -CandidateFreeze $envelopeFreezePath -OutPath $envelopeFreezeOut -Timestamp $fixed | ConvertFrom-Json
+    $envelopeFreezeRun=& (Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1') -Action FreezeCandidate -WorkspaceRoot $envelopeWorkspace -UnitId 'u002' -CandidateFreeze $envelopeFreezePath -ExpectedCandidateFreezeSha256 $envelopeFreezeDry.audit_receipt.sha256 -OutPath $envelopeFreezeOut -Timestamp $fixed -Execute | ConvertFrom-Json
+    $envelopeFrozenUnit=Read-TestProtocolJson $envelopeU002Path; $envelopeFrozenState=Read-TestProtocolJson $envelopeStatePath
+    $envelopeFreezeIntent=Join-Path $envelopeWorkspace 'receipts\transactions\u002-freeze-recorded-transition.intent.json'; $envelopeFreezeCompletion=Join-Path $envelopeWorkspace 'receipts\transactions\u002-freeze-recorded-transition.completion.json'
+    $envelopeFreezeEvents=@(Get-Content -LiteralPath $envelopeEventsPath | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json })
+    $automationReceiptV2=Join-Path $RepoRoot 'schemas\work-unit-automation-receipt-v2.schema.json'
+    Assert-Automation (
+        $envelopeFreezeRun.transition -eq 'candidate-frozen' -and $envelopeFreezeRun.status_before -eq 'active' -and $envelopeFreezeRun.status_after -eq 'active' -and $envelopeFreezeRun.current_unit_before -eq 'u002' -and $envelopeFreezeRun.current_unit_after -eq 'u002' -and
+        (Test-Json -Json ($envelopeFreezeRun | ConvertTo-Json -Depth 32) -SchemaFile $automationReceiptV2) -and
+        $envelopeFrozenState.current_unit -eq 'u002' -and $envelopeFrozenState.last_event_id -eq 'u002-freeze-recorded' -and $envelopeFrozenUnit.status -eq 'active' -and $envelopeFrozenUnit.candidate_freeze.freeze_id -eq 'u002-freeze' -and $envelopeFrozenUnit.candidate_freeze.receipt_path -eq 'receipts/u002-freeze.json' -and $envelopeFrozenUnit.candidate_freeze.receipt_sha256 -eq $envelopeFreezeDry.audit_receipt.sha256 -and
+        (Get-TestFileHash $envelopeFreezeOut) -eq $envelopeFreezeDry.audit_receipt.sha256 -and (Test-Path -LiteralPath $envelopeFreezeIntent) -and (Test-Path -LiteralPath $envelopeFreezeCompletion) -and
+        (@($envelopeFreezeEvents | Where-Object { $_.event_id -eq 'u002-freeze-recorded' -and $_.unit_id -eq 'u002' -and @($_.receipts) -contains 'receipts/u002-freeze.json' }).Count -eq 1)
+    ) 'public FreezeCandidate did not preserve exact receipt, state, event, CAS, and transition evidence'
+    $envelopeFreezeReplay=& (Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1') -Action FreezeCandidate -WorkspaceRoot $envelopeWorkspace -UnitId 'u002' -CandidateFreeze $envelopeFreezePath -ExpectedCandidateFreezeSha256 $envelopeFreezeDry.audit_receipt.sha256 -OutPath $envelopeFreezeOut -Timestamp $fixed -Execute | ConvertFrom-Json
+    Assert-Automation ($envelopeFreezeReplay.transition -eq 'candidate-already-frozen' -and (Get-TestFileHash $envelopeFreezeOut) -eq $envelopeFreezeDry.audit_receipt.sha256) 'identical public FreezeCandidate replay was not idempotent'
+    Remove-Module CandidateFreeze -Force -ErrorAction SilentlyContinue
+    Import-Module (Join-Path $PSScriptRoot 'CandidateFreeze.psm1') -Force
+    Assert-Automation (Test-MorphospaceFrozenCandidate -WorkspaceRoot $envelopeWorkspace -Unit (Read-TestProtocolJson $envelopeU002Path)) 'frozen candidate did not survive a verifier module reload'
+
+    # A freeze is a live validation gate, not merely a marker: every frozen
+    # authority input and the assessment-derived instruction/effect/device
+    # envelope must reject drift before the public BeginValidation transition.
+    $freezeDrifts = @(
+        [pscustomobject]@{ name='project'; mutate={ param($root) $p=Join-Path $root 'project.spec.json'; $d=Read-TestProtocolJson $p; $d.revision=[int]$d.revision+1; Write-TestJson $p $d } },
+        [pscustomobject]@{ name='feature-lock'; mutate={ param($root) $p=Join-Path $root 'feature.lock.json'; $d=Read-TestProtocolJson $p; $d.revision=[int]$d.revision+1; Write-TestJson $p $d } },
+        [pscustomobject]@{ name='source-composition'; mutate={ param($root) $p=Join-Path $root 'source-composition.json'; [IO.File]::AppendAllText($p," `n",$encoding) } },
+        [pscustomobject]@{ name='repository-map'; mutate={ param($root) $p=Join-Path $root 'repository-map.json'; [IO.File]::AppendAllText($p," `n",$encoding) } },
+        [pscustomobject]@{ name='state-transition'; mutate={ param($root) $p=Join-Path $root 'workspace.state.json'; $d=Read-TestProtocolJson $p; $d.last_accepted_receipt='receipts/substituted.json'; Write-TestJson $p $d } },
+        [pscustomobject]@{ name='ledger-transition'; mutate={ param($root) $p=Join-Path $root 'iteration-events.jsonl'; [IO.File]::AppendAllText($p,((@{schema='rusty.morphospace.workflow.iteration_event.v1';event_id='u002-post-freeze';sequence=5;timestamp=$fixed;project_id='development-envelope-admission';unit_id='u002';event_type='state-transition';summary='Injected post-freeze ledger drift.';receipts=@()}|ConvertTo-Json -Compress)+"`n"),$encoding) } },
+        [pscustomobject]@{ name='instruction-surface'; mutate={ param($root) $p=Join-Path $root 'iteration-units\u002.json'; $d=Read-TestProtocolJson $p; $d.instruction_none_justification='Changed instruction evidence after freeze.'; Write-TestJson $p $d } },
+        [pscustomobject]@{ name='effect-envelope'; mutate={ param($root) $p=Join-Path $root 'iteration-units\u002.json'; $d=Read-TestProtocolJson $p; $d.agent_scope_assessment.allowed_effect_categories=@('filesystem'); Write-TestJson $p $d } },
+        [pscustomobject]@{ name='permission-envelope'; mutate={ param($root) $p=Join-Path $root 'iteration-units\u002.json'; $d=Read-TestProtocolJson $p; $d.agent_scope_assessment.allowed_permission_categories=@('filesystem-write'); Write-TestJson $p $d } },
+        [pscustomobject]@{ name='device-envelope'; mutate={ param($root) $p=Join-Path $root 'iteration-units\u002.json'; $d=Read-TestProtocolJson $p; $d.agent_scope_assessment.device_envelope.requirement='required'; Write-TestJson $p $d } },
+        [pscustomobject]@{ name='candidate-identity'; mutate={ param($root) $p=Join-Path $root 'iteration-units\u002.json'; $d=Read-TestProtocolJson $p; $d.candidate_freeze.freeze_id='u002-wrong-freeze'; Write-TestJson $p $d } }
+    )
+    foreach($drift in $freezeDrifts) {
+        $driftWorkspace=Copy-TestWorkspace -Source $envelopeWorkspace -Destination (Join-Path $testRoot "development-envelope-freeze-drift-$($drift.name)")
+        & $drift.mutate $driftWorkspace
+        $driftRejected=$false
+        try { & (Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1') -Action BeginValidation -WorkspaceRoot $driftWorkspace -UnitId 'u002' -RepoMapPath $repoMapPath -Timestamp $fixed -Execute | Out-Null } catch { $driftRejected=$true }
+        Assert-Automation $driftRejected "BeginValidation accepted post-freeze $($drift.name) drift"
+    }
+    $envelopeBeginValidation=& (Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1') -Action BeginValidation -WorkspaceRoot $envelopeWorkspace -UnitId 'u002' -RepoMapPath $repoMapPath -Timestamp $fixed -Execute | ConvertFrom-Json
+    $envelopeValidatingUnit=Read-TestProtocolJson $envelopeU002Path
+    Assert-Automation ($envelopeBeginValidation.transition -eq 'active-to-validating' -and $envelopeValidatingUnit.status -eq 'validating' -and (Read-TestProtocolJson $envelopeStatePath).current_unit -eq 'u002') 'BeginValidation did not consume the exact frozen admitted candidate through the public router'
+    # Public-router force imports intentionally refresh their nested helper
+    # modules. Restore this aggregate fixture's independently declared planning
+    # helper before its later adoption coverage consumes that exported command.
+    Import-Module (Join-Path $PSScriptRoot 'lib\MorphospacePlanningProjection.psm1') -Force
+    Assert-Automation ($null -ne (Get-Command Get-GitWorkspaceInventory -ErrorAction SilentlyContinue)) 'public W-014 router exercise did not restore the later adoption helper'
 
     $portableDamageRoot = Join-Path $testRoot 'unregistered-skill-lookalike'
     foreach ($skillId in @('rusty-morphospace', 'system-engineering')) {

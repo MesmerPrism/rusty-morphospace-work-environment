@@ -48,6 +48,16 @@
         "deferred_reason": { "type": "string", "minLength": 1 }
       }
     },
+    "agent_scope_assessment": { "type": "object" },
+    "candidate_freeze": {
+      "type": "object", "additionalProperties": false,
+      "required": ["freeze_id", "receipt_path", "receipt_sha256"],
+      "properties": {
+        "freeze_id": { "$ref": "#/$defs/id" },
+        "receipt_path": { "type": "string", "pattern": "^receipts/[a-z0-9][a-z0-9-]{1,127}\\.json$" },
+        "receipt_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
     "work_mode": { "enum": ["feature", "validation-only"] },
     "guard_profile": { "enum": ["fast", "labs", "locked"] },
     "tags": {
