@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/development-envelope-preparation-intent-v1.schema.json",
+  "title": "Development envelope preparation intent",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema", "transaction_id", "created_at", "pre", "target", "artifacts", "event", "status"],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.workflow.development_envelope_preparation_intent.v1" },
+    "transaction_id": { "$ref": "#/$defs/id" }, "created_at": { "type": "string", "format": "date-time" },
+    "pre": { "$ref": "#/$defs/binding" }, "target": { "$ref": "#/$defs/binding" },
+    "artifacts": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "$ref": "#/$defs/artifact" } },
+    "event": { "type": "object" }, "status": { "const": "prepared" }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" }, "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "path": { "type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$" },
+    "document": { "type": "object" },
+    "binding": { "type": "object", "additionalProperties": false, "required": ["project", "state", "feature_lock", "predecessor_unit", "events", "repository_map"], "properties": { "project": { "$ref": "#/$defs/documentBinding" }, "state": { "$ref": "#/$defs/documentBinding" }, "feature_lock": { "$ref": "#/$defs/documentBinding" }, "predecessor_unit": { "$ref": "#/$defs/documentBinding" }, "events": { "$ref": "#/$defs/fileBinding" }, "repository_map": { "$ref": "#/$defs/fileBinding" } } },
+    "documentBinding": { "type": "object", "additionalProperties": false, "required": ["path", "sha256", "document"], "properties": { "path": { "$ref": "#/$defs/path" }, "sha256": { "$ref": "#/$defs/hash" }, "document": { "$ref": "#/$defs/document" } } },
+    "fileBinding": { "type": "object", "additionalProperties": false, "required": ["path", "sha256"], "properties": { "path": { "$ref": "#/$defs/path" }, "sha256": { "$ref": "#/$defs/hash" } } },
+    "artifact": { "type": "object", "additionalProperties": false, "required": ["path", "sha256", "bytes_base64"], "properties": { "path": { "$ref": "#/$defs/path" }, "sha256": { "$ref": "#/$defs/hash" }, "bytes_base64": { "type": "string", "minLength": 4 } } }
+  }
+}

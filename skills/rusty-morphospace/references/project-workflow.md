@@ -22,6 +22,11 @@ authority. Treat `feature.lock.json` as the closed permitted feature and effect
 set. Treat `workspace.state.json` as a resume projection, not a replacement for
 the immutable unit, event, and receipt evidence.
 
+For an idle accepted project whose next feature needs new bounded composition,
+use the dedicated preparation transaction before admission. It may add only a
+typed project-level envelope and a repository-map-derived source lock; the
+later unit admission must bind those artifacts and may not rediscover authority.
+
 Work only in repositories and paths allowed by both the project and current
 unit. Stop when the required change falls outside that intersection. Preserve
 dirty, detached, divergent, blocked, interrupted, and historical state rather

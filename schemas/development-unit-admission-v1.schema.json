@@ -4,10 +4,11 @@
   "title": "Owner admission of a successive development unit",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "admission_id", "project_id", "unit_id", "agent_scope_assessment", "unit", "expected", "does_not_prove"],
+  "required": ["schema", "admission_id", "project_id", "unit_id", "preparation", "agent_scope_assessment", "unit", "expected", "does_not_prove"],
   "properties": {
     "schema": { "const": "rusty.morphospace.workflow.development_unit_admission.v1" },
     "admission_id": { "$ref": "#/$defs/id" }, "project_id": { "$ref": "#/$defs/id" }, "unit_id": { "$ref": "#/$defs/id" },
+    "preparation": { "type": "object", "additionalProperties": false, "required": ["preparation_id", "receipt_path", "receipt_sha256", "source_composition_path", "source_composition_sha256"], "properties": { "preparation_id": { "$ref": "#/$defs/id" }, "receipt_path": { "$ref": "#/$defs/path" }, "receipt_sha256": { "$ref": "#/$defs/hash" }, "source_composition_path": { "$ref": "#/$defs/path" }, "source_composition_sha256": { "$ref": "#/$defs/hash" } } },
     "agent_scope_assessment": { "type": "object" },
     "unit": { "type": "object" },
     "expected": { "type": "object", "additionalProperties": false, "required": ["project_sha256", "state_sha256", "feature_lock_sha256", "source_composition_path", "source_composition_sha256", "repository_map_path", "repository_map_sha256", "events_sha256", "events_length", "event_tail_id"], "properties": {

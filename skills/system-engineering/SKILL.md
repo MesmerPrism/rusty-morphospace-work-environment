@@ -115,6 +115,10 @@ exact current project/state/unit/event identities, prove the complete
 before/after set stays within project authority, mutex-bind the unchanged
 project document, retain captain/status, and separate authorization from any
 source, Git, build, validation, device, or remote execution.
+For an idle project, make a separate typed preparation transaction before a
+future unit exists when the project-level envelope must grow. Its receipt and
+source lock become immutable admission inputs; it never becomes execution or
+future-unit authority.
 Before expensive execution, prefer a hash-bound, project-produced
 `execution_preflight_observation.v1` for exact package/application, signer,
 grant, toolchain, source-lock, or bridge/port facts. The workflow may compare

@@ -421,8 +421,10 @@ unchanged project spec. It never edits project authority or performs source,
 Git, build, validation, device, or remote work. See
 [Active Write-Scope Amendment](docs/ACTIVE_WRITE_SCOPE_AMENDMENT.md).
 
-For an idle existing project, start the next feature only through the bounded
-owner [development-unit admission and candidate-freeze contract](docs/DEVELOPMENT_UNIT_ADMISSION.md).
+For an idle existing project, first use the bounded owner
+[development-envelope preparation](docs/DEVELOPMENT_ENVELOPE_PREPARATION.md)
+contract, then start the next feature through the bound
+[development-unit admission and candidate-freeze contract](docs/DEVELOPMENT_UNIT_ADMISSION.md).
 It supports agent-led discovery inside a declared envelope, then freezes exact
 candidate identity before normal validation.
 `CorrectCompletedTransitionSemantics` is not a compatibility mode for malformed

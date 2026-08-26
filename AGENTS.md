@@ -454,9 +454,16 @@ ancestry consumes the authorization.
   authority, change captain/status, or perform source, Git, build, validation,
   device, or remote work. Route the procedure to
   `docs/ACTIVE_WRITE_SCOPE_AMENDMENT.md`.
-- Begin a later feature in an idle accepted project only through
-  `AdmitDevelopmentUnit`, binding the project, feature lock, source composition,
+- Prepare a later feature envelope in an idle accepted project only through
+  `PrepareDevelopmentEnvelope`, binding additive project/repository-root and
+  feature/effect/permission/build/device ceilings plus a preparation-owned
+  source-composition lock from the repository map. It never admits a future
+  unit or performs source, build, device, or Git-remote work. Begin the feature
+  only through `AdmitDevelopmentUnit`, binding that exact preparation receipt,
+  prepared project, feature lock, source composition,
   repository map, state, and ledger preimages to its bounded agent assessment.
+  Exact replay revalidates the same result; an interrupted owner transaction
+  may recover it, while stale/conflicting evidence awaits independent rescue.
   The resulting proposal still follows ordinary Ready/Inspect/Claim. An
   admitted active unit must use `FreezeCandidate` before BeginValidation;
   historical units without the admission marker retain their existing route.
