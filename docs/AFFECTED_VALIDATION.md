@@ -21,10 +21,12 @@ receipt is reusable: scheduled/manual Deep checks out full history and runs the
 current Deep aggregate. Neither evidence shape is publication or acceptance
 authority.
 
-The pre-job infrastructure classifier retries once. A second unavailable tool
-state fails as `pending-infra`; the workflow records no false success. Hosted
-zero-job/startup incidents are observed externally and handed off read-only,
-because no job can reliably observe its own absence. See
+The pre-job infrastructure classifier observes the closed `git`, `pwsh`, and
+`rg` set, but requires only `git` and `pwsh` for the registered PR commands.
+`rg` is optional at this boundary. A second missing required tool state fails
+as `pending-infra`; the workflow records no false success. Hosted zero-job/startup
+incidents are observed externally and handed off read-only, because no job can
+reliably observe its own absence. See
 `scripts/Test-AffectedValidation.ps1` for portable damage fixtures. Selector
 trust-root PRs also run the bounded topology and reuse self-tests through the
 same affected-validation executor.
