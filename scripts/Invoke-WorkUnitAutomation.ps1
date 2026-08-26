@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("Inspect", "PrepareDevelopmentEnvelope", "AdmitDevelopmentUnit", "Ready", "WithdrawReady", "Claim", "Resume", "CompleteInstructionSurfaces", "AmendActiveWriteScope", "FreezeCandidate", "CorrectActiveReadOnlyDependencies", "CorrectActiveProjectRepositoryScope", "CorrectActiveUnitContract", "RecordHistoricalUnitCompatibilityProjection", "BeginValidation", "ReturnToActive", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RetirePreparedPush", "ReconcilePreparedPublication", "ReconcilePreparedPushTransactionSuffix", "ResolveBlocker", "CorrectResolvedBlockerEvidence", "CorrectHistoricalBlockerResolutionIntentBinding", "CorrectCompletedTransitionSemantics", "NormalizeEventLedgerPrefix", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix", "ReconcileExecutedPreparedPublication")]
+    [ValidateSet("Inspect", "PrepareDevelopmentEnvelope", "AdmitDevelopmentUnit", "Ready", "WithdrawReady", "Claim", "Resume", "CompleteInstructionSurfaces", "AmendActiveWriteScope", "FreezeCandidate", "MaterializeInheritedCandidate", "CorrectActiveReadOnlyDependencies", "CorrectActiveProjectRepositoryScope", "CorrectActiveUnitContract", "RecordHistoricalUnitCompatibilityProjection", "BeginValidation", "ReturnToActive", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RetirePreparedPush", "ReconcilePreparedPublication", "ReconcilePreparedPushTransactionSuffix", "ResolveBlocker", "CorrectResolvedBlockerEvidence", "CorrectHistoricalBlockerResolutionIntentBinding", "CorrectCompletedTransitionSemantics", "NormalizeEventLedgerPrefix", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix", "ReconcileExecutedPreparedPublication")]
     [string]$Action,
     [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
     [string]$UnitId = "",
@@ -39,6 +39,7 @@ param(
     [string]$ExpectedDevelopmentEnvelopePreparationSha256 = "",
     [string]$CandidateFreeze = "",
     [string]$ExpectedCandidateFreezeSha256 = "",
+    [string]$MaterializationRoot = "",
     [string]$HistoricalUnitCompatibilityProjection = "",
     [string]$ExpectedHistoricalUnitCompatibilityProjectionSha256 = "",
     [string]$LedgerPrefixNormalizationId = "",
@@ -82,6 +83,12 @@ if ($Action -eq "FreezeCandidate") {
     if (-not $CandidateFreeze -or -not $OutPath) { throw "FreezeCandidate requires CandidateFreeze and OutPath." }
     Import-Module (Join-Path $PSScriptRoot "CandidateFreeze.psm1") -Force
     Invoke-MorphospaceFreezeCandidate -WorkspaceRoot $WorkspaceRoot -UnitId $UnitId -CandidateFreeze $CandidateFreeze -ExpectedCandidateFreezeSha256 $ExpectedCandidateFreezeSha256 -Timestamp $Timestamp -OutPath $OutPath -Execute:$Execute | ConvertTo-Json -Depth 32
+    return
+}
+if ($Action -eq "MaterializeInheritedCandidate") {
+    if (-not $RepoMapPath -or -not $MaterializationRoot -or -not $OutPath) { throw "MaterializeInheritedCandidate requires RepoMapPath, MaterializationRoot, and OutPath." }
+    Import-Module (Join-Path $PSScriptRoot "InheritedCandidateMaterialization.psm1") -Force
+    Invoke-MorphospaceMaterializeInheritedCandidate -WorkspaceRoot $WorkspaceRoot -UnitId $UnitId -RepoMapPath $RepoMapPath -MaterializationRoot $MaterializationRoot -Timestamp $Timestamp -OutPath $OutPath -Execute:$Execute | ConvertTo-Json -Depth 32
     return
 }
 

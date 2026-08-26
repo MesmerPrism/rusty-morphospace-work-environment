@@ -58,6 +58,23 @@
         "receipt_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
       }
     },
+    "inherited_candidate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["binding_path", "binding_sha256"],
+      "properties": {
+        "binding_path": { "type": "string", "pattern": "^inherited-candidates/[a-z0-9][a-z0-9-]{1,127}/[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$" },
+        "binding_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "inherited_candidate_materialization": {
+      "type": "object", "additionalProperties": false,
+      "required": ["materialization_id", "marker_path", "marker_sha256"],
+      "properties": {
+        "materialization_id": { "$ref": "#/$defs/id" },
+        "marker_path": { "type": "string", "pattern": "^receipts/[a-z0-9][a-z0-9-]{1,127}\\.json$" },
+        "marker_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
     "work_mode": { "enum": ["feature", "validation-only"] },
     "guard_profile": { "enum": ["fast", "labs", "locked"] },
     "tags": {
@@ -389,6 +406,10 @@
     {
       "if": { "required": ["work_mode"] },
       "then": { "required": ["claim_requirements"] }
+    },
+    {
+      "if": { "required": ["inherited_candidate_materialization"] },
+      "then": { "required": ["inherited_candidate"] }
     },
     {
       "if": {

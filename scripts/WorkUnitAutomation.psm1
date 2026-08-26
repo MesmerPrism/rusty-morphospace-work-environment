@@ -5,6 +5,7 @@ Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Fo
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceHistoricalValidationDebtBaseline.psm1')
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceContentObservation.psm1') -Force -DisableNameChecking
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'InheritedCandidateMaterialization.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'CandidateFreeze.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospacePublicationRecovery.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospacePublishedPlanningAuthorityAdoption.psm1') -Force
@@ -1833,6 +1834,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
     $publicationOrderingInterruptionBinding = $null
     $instructionSurfaceCompletionBinding = $null
     $readyWithdrawalBinding = $null
+    $inheritedCandidateEvidence = $null
     $transitionEventSnapshot = $null
 
     switch ($Action) {
@@ -1906,6 +1908,10 @@ function Invoke-MorphospaceWorkUnitAutomation {
             }
         }
         "Claim" {
+            # An inherited candidate is historical evidence only.  Claim binds
+            # every declared byte before changing ownership, but cannot make
+            # those bytes product inputs or authorize validation/acceptance.
+            $inheritedCandidateEvidence = Test-MorphospaceInheritedCandidateEvidenceBinding -WorkspaceRoot $resolvedWorkspace -Unit $unit
             if ($beforeStatus -eq "active" -and [string]$state.current_unit -eq $UnitId) {
                 $transition = "idempotent"
             } else {
@@ -1933,7 +1939,9 @@ function Invoke-MorphospaceWorkUnitAutomation {
                     $unit.status = "active"; $state.current_unit = $UnitId
                     if ([string]$state.next_ready_unit -eq $UnitId) { $state.next_ready_unit = $null }
                     $summary = if ($adoptionReference) { "Claimed one ready iteration unit with an exact hashed receipt for in-flight work that began before protocol v2." } else { "Claimed one ready iteration unit without expanding repository or path scope." }
-                    $event = New-MorphospaceEvent -State $state -Events $events -UnitId $UnitId -ActionSlug "claimed" -Timestamp $Timestamp -EventType "state-transition" -Summary $summary -Receipts @($adoptionReference | Where-Object { $_ })
+                    $claimReceipts = @($adoptionReference | Where-Object { $_ })
+                    if ($inheritedCandidateEvidence.declared) { $claimReceipts += [string]$inheritedCandidateEvidence.binding_path }
+                    $event = New-MorphospaceEvent -State $state -Events $events -UnitId $UnitId -ActionSlug "claimed" -Timestamp $Timestamp -EventType "state-transition" -Summary $summary -Receipts $claimReceipts
                 }
             }
         }
