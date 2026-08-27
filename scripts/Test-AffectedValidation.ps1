@@ -102,9 +102,9 @@ try {
     foreach ($directory in @('docs', 'scripts', 'scripts/lib', 'schemas', 'manifests', 'skills/example')) { [void][System.IO.Directory]::CreateDirectory((Join-Path $fixture $directory)) }
     foreach ($command in @($registry.checks.command_path | Sort-Object -Unique)) { $target = Join-Path $fixture ([string]$command); [void][System.IO.Directory]::CreateDirectory([System.IO.Path]::GetDirectoryName($target)); Write-Utf8 $target "# fixture`n" }
     $fixtureRegistry = Read-MorphospaceProtocolJson -Path $registryPath
-    # Keep the timeout damage cell bounded while preserving the production
-    # selector's independently reviewed three-minute self-test budget.
-    $fixtureRegistry.checks | Where-Object { $_.check_id -ceq 'public-boundary' } | ForEach-Object { $_.budget_seconds = 1 }
+    # Keep the timeout damage cell bounded while allowing one child PowerShell
+    # startup; the deliberate three-second command below must still time out.
+    $fixtureRegistry.checks | Where-Object { $_.check_id -ceq 'public-boundary' } | ForEach-Object { $_.budget_seconds = 2 }
     Write-Utf8 (Join-Path $fixture 'manifests/affected-validation-registry.json') ((ConvertTo-MorphospaceCanonicalJson -Value $fixtureRegistry) + "`n")
     Copy-Item -LiteralPath (Join-Path $repoRoot 'schemas/affected-validation-registry-v1.schema.json') -Destination (Join-Path $fixture 'schemas/affected-validation-registry-v1.schema.json')
     Copy-Item -LiteralPath (Join-Path $repoRoot 'schemas/history-archive-root-v1.schema.json') -Destination (Join-Path $fixture 'schemas/history-archive-root-v1.schema.json')
@@ -350,6 +350,29 @@ try {
     foreach ($checkId in @('public-boundary','workflow-contracts','history-archive-checkpoint','work-unit-automation')) { Assert-True (@($archiveRouterPlan.selected_checks.check_id) -ccontains $checkId) "History archive router change did not retain bounded '$checkId' coverage." }
     foreach ($checkId in @('affected-selector-selftest','affected-topology-selftest','affected-reuse-selftest','work-environment-deep')) { Assert-True (@($archiveRouterPlan.selected_checks.check_id) -cnotcontains $checkId) "History archive router change incorrectly selected '$checkId'." }
     Assert-True (@($archiveRouterPlan.reason_codes) -cnotcontains 'ambiguous-path-mapping') 'History archive router change became ambiguous.'
+
+    # These shared owner schemas and the Work Environment selector exercise the
+    # archive contract together.  The Work Environment command remains its
+    # direct bounded Deep route; selection itself must remain affected-only.
+    $combinedArchivePaths = @(
+        'schemas/validation-receipt.schema.json',
+        'schemas/work-unit-automation-receipt-v2.schema.json',
+        'schemas/workspace-state-v2.schema.json',
+        'scripts/Test-WorkEnvironment.ps1'
+    )
+    foreach ($relativePath in $combinedArchivePaths) { Write-Utf8 (Join-Path $fixture $relativePath) "combined archive base`n" }
+    [void](Invoke-TestGit $fixture (@('add') + $combinedArchivePaths))
+    [void](Invoke-TestGit $fixture @('commit', '-m', 'history archive shared contract base'))
+    $combinedArchiveBase = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
+    foreach ($relativePath in $combinedArchivePaths) { Write-Utf8 (Join-Path $fixture $relativePath) "combined archive change`n" }
+    [void](Invoke-TestGit $fixture (@('add') + $combinedArchivePaths))
+    [void](Invoke-TestGit $fixture @('commit', '-m', 'history archive shared contract change'))
+    $combinedArchiveHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
+    $combinedArchivePlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $combinedArchiveBase -HeadRevision $combinedArchiveHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier standard
+    Assert-True ($combinedArchivePlan.selection_mode -ceq 'affected') 'Combined history archive contract change did not retain affected selection.'
+    foreach ($checkId in @('public-boundary','workflow-contracts','history-archive-checkpoint','work-unit-automation','work-environment-deep')) { Assert-True (@($combinedArchivePlan.selected_checks.check_id) -ccontains $checkId) "Combined history archive contract change did not retain bounded '$checkId' coverage." }
+    foreach ($checkId in @('affected-selector-selftest','affected-topology-selftest','affected-reuse-selftest')) { Assert-True (@($combinedArchivePlan.selected_checks.check_id) -cnotcontains $checkId) "Combined history archive contract change incorrectly selected '$checkId'." }
+    foreach ($reasonCode in @('ambiguous-path-mapping','unmapped-path')) { Assert-True (@($combinedArchivePlan.reason_codes) -cnotcontains $reasonCode) "Combined history archive contract change retained '$reasonCode'." }
 
     $collisionBlobPath = Join-Path $fixture 'collision-blob.txt'
     Write-Utf8 $collisionBlobPath "collision`n"
