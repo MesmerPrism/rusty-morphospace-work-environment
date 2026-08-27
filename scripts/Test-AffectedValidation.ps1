@@ -241,14 +241,60 @@ try {
     [void](Invoke-TestGit $fixture @('commit', '-m', 'selector self change'))
     $selectorHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
     $selectorPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $deleteHead -HeadRevision $selectorHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
-    Assert-True ($selectorPlan.selection_mode -ceq 'full-deep') 'Selector self-change did not fail closed to Deep.'
-    Assert-True (@($selectorPlan.reason_codes) -ccontains 'trust-root-path-changed') 'Selector self-change lacks its trust-root reason.'
-    Assert-True (@($selectorPlan.selected_checks).Count -eq @($registry.checks).Count) 'Selector self-change did not select every check.'
+    Assert-True ($selectorPlan.selection_mode -ceq 'affected') 'Selector self-change did not retain current-delta selection.'
+    Assert-True (@($selectorPlan.selected_checks.check_id) -ccontains 'affected-selector-selftest') 'Selector self-change did not retain the selector self-test.'
+    Assert-True (@($selectorPlan.selected_checks.check_id) -cnotcontains 'work-environment-deep') 'Selector self-change incorrectly selected the historical Deep aggregate.'
+    Assert-True (@($selectorPlan.reason_codes) -cnotcontains 'trust-root-path-changed') 'Selector self-change incorrectly recorded a Deep-escalation reason.'
     foreach ($selfTestId in @('affected-selector-selftest','affected-topology-selftest','affected-reuse-selftest')) { Assert-True (@($selectorPlan.selected_checks.check_id) -ccontains $selfTestId) "Selector trust-root change does not execute '$selfTestId' through the PR-owned selection path." }
     Write-Utf8 $planPath ((ConvertTo-MorphospaceCanonicalJson -Value $selectorPlan) + "`n")
     $selectorEvidence = & (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $deleteHead -HeadCommit $selectorHead -PlanPath $planPath -Platform linux -OutPath (Join-Path $fixture 'selector-evidence.json')
     Assert-True ($selectorEvidence.result -ceq 'pass') 'Actual bounded executor did not complete the trust-root self-test closure.'
     foreach ($selfTestId in @('affected-selector-selftest','affected-topology-selftest','affected-reuse-selftest')) { Assert-True (@($selectorEvidence.check_results.check_id) -ccontains $selfTestId) "Actual bounded executor did not run '$selfTestId'." }
+    Write-Utf8 (Join-Path $fixture 'scripts/Test-AffectedValidationInfrastructure.ps1') "# changed infrastructure classifier`n"
+    [void](Invoke-TestGit $fixture @('add', 'scripts/Test-AffectedValidationInfrastructure.ps1'))
+    [void](Invoke-TestGit $fixture @('commit', '-m', 'infrastructure classifier'))
+    $infrastructureHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
+    $infrastructurePlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $selectorHead -HeadRevision $infrastructureHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+    Assert-True ($infrastructurePlan.selection_mode -ceq 'affected' -and @($infrastructurePlan.selected_checks.check_id) -ccontains 'affected-selector-selftest') 'Infrastructure classifier change did not retain bounded selector coverage.'
+
+    $contractRegistry = Read-MorphospaceProtocolJson -Path (Join-Path $fixture 'manifests/affected-validation-registry.json')
+    $contractRegistry.revision = [long]$contractRegistry.revision + 1
+    Write-Utf8 (Join-Path $fixture 'manifests/affected-validation-registry.json') ((ConvertTo-MorphospaceCanonicalJson -Value $contractRegistry) + "`n")
+    [void](Invoke-TestGit $fixture @('add', 'manifests/affected-validation-registry.json'))
+    [void](Invoke-TestGit $fixture @('commit', '-m', 'affected validation registry contract'))
+    $registryContractHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
+    $registryContractPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $infrastructureHead -HeadRevision $registryContractHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+    Assert-True ($registryContractPlan.selection_mode -ceq 'affected' -and @($registryContractPlan.selected_checks.check_id) -ccontains 'workflow-contracts') 'Affected-validation registry change did not retain workflow-contract coverage.'
+    foreach ($checkId in @('affected-selector-selftest','affected-topology-selftest','affected-reuse-selftest')) { Assert-True (@($registryContractPlan.selected_checks.check_id) -ccontains $checkId) "Affected-validation registry change did not retain '$checkId'." }
+    Assert-True (@($registryContractPlan.selected_checks.check_id) -cnotcontains 'work-environment-deep' -and @($registryContractPlan.reason_codes) -cnotcontains 'ambiguous-path-mapping') 'Affected-validation registry change incorrectly selected historical Deep or became ambiguous.'
+
+    $affectedSchemaPath = Join-Path $fixture 'schemas/affected-validation-registry-v1.schema.json'
+    Write-Utf8 $affectedSchemaPath ((Get-Content -LiteralPath $affectedSchemaPath -Raw) + "`n")
+    [void](Invoke-TestGit $fixture @('add', 'schemas/affected-validation-registry-v1.schema.json'))
+    [void](Invoke-TestGit $fixture @('commit', '-m', 'affected validation schema contract'))
+    $schemaContractHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
+    $schemaContractPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $registryContractHead -HeadRevision $schemaContractHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+    Assert-True ($schemaContractPlan.selection_mode -ceq 'affected' -and @($schemaContractPlan.selected_checks.check_id) -ccontains 'workflow-contracts') 'Affected-validation schema change did not retain workflow-contract coverage.'
+    foreach ($checkId in @('affected-selector-selftest','affected-topology-selftest','affected-reuse-selftest')) { Assert-True (@($schemaContractPlan.selected_checks.check_id) -ccontains $checkId) "Affected-validation schema change did not retain '$checkId'." }
+    Assert-True (@($schemaContractPlan.selected_checks.check_id) -cnotcontains 'work-environment-deep' -and @($schemaContractPlan.reason_codes) -cnotcontains 'ambiguous-path-mapping') 'Affected-validation schema change incorrectly selected historical Deep or became ambiguous.'
+
+    Write-Utf8 (Join-Path $fixture 'schemas/work-unit-event.schema.json') "{} `n"
+    [void](Invoke-TestGit $fixture @('add', 'schemas/work-unit-event.schema.json'))
+    [void](Invoke-TestGit $fixture @('commit', '-m', 'ordinary schema contract'))
+    $ordinarySchemaHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
+    $ordinarySchemaPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $schemaContractHead -HeadRevision $ordinarySchemaHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+    Assert-True ($ordinarySchemaPlan.selection_mode -ceq 'affected' -and @($ordinarySchemaPlan.selected_checks.check_id) -ccontains 'workflow-contracts' -and @($ordinarySchemaPlan.selected_checks.check_id) -ccontains 'public-boundary') 'Ordinary schema change did not retain bounded workflow-contract/public-boundary routing.'
+    foreach ($checkId in @('affected-selector-selftest','affected-topology-selftest','affected-reuse-selftest','work-environment-deep')) { Assert-True (@($ordinarySchemaPlan.selected_checks.check_id) -cnotcontains $checkId) "Ordinary schema change incorrectly selected '$checkId'." }
+    Assert-True (@($ordinarySchemaPlan.reason_codes) -cnotcontains 'ambiguous-path-mapping') 'Ordinary schema change became ambiguous.'
+
+    Write-Utf8 (Join-Path $fixture 'manifests/public-action-policy.json') "{} `n"
+    [void](Invoke-TestGit $fixture @('add', 'manifests/public-action-policy.json'))
+    [void](Invoke-TestGit $fixture @('commit', '-m', 'ordinary manifest contract'))
+    $ordinaryManifestHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
+    $ordinaryManifestPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $ordinarySchemaHead -HeadRevision $ordinaryManifestHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+    Assert-True ($ordinaryManifestPlan.selection_mode -ceq 'affected' -and @($ordinaryManifestPlan.selected_checks.check_id) -ccontains 'workflow-contracts' -and @($ordinaryManifestPlan.selected_checks.check_id) -ccontains 'public-boundary') 'Ordinary manifest change did not retain bounded workflow-contract/public-boundary routing.'
+    foreach ($checkId in @('affected-selector-selftest','affected-topology-selftest','affected-reuse-selftest','work-environment-deep')) { Assert-True (@($ordinaryManifestPlan.selected_checks.check_id) -cnotcontains $checkId) "Ordinary manifest change incorrectly selected '$checkId'." }
+    Assert-True (@($ordinaryManifestPlan.reason_codes) -cnotcontains 'ambiguous-path-mapping') 'Ordinary manifest change became ambiguous.'
 
     $collisionBlobPath = Join-Path $fixture 'collision-blob.txt'
     Write-Utf8 $collisionBlobPath "collision`n"
