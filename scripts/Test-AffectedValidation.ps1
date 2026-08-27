@@ -351,28 +351,44 @@ try {
     foreach ($checkId in @('affected-selector-selftest','affected-topology-selftest','affected-reuse-selftest','work-environment-deep')) { Assert-True (@($archiveRouterPlan.selected_checks.check_id) -cnotcontains $checkId) "History archive router change incorrectly selected '$checkId'." }
     Assert-True (@($archiveRouterPlan.reason_codes) -cnotcontains 'ambiguous-path-mapping') 'History archive router change became ambiguous.'
 
-    # These shared owner schemas and the Work Environment selector exercise the
-    # archive contract together.  The Work Environment command remains its
-    # direct bounded Deep route; selection itself must remain affected-only.
-    $combinedArchivePaths = @(
+    # A W-017B-shaped archive/schema/router change remains ordinary affected
+    # Standard work: shared archive owner schemas plus the automation router
+    # must retain their bounded closure without selecting the aggregate Deep
+    # command.
+    $archiveEnvelopePaths = @(
         'schemas/validation-receipt.schema.json',
         'schemas/work-unit-automation-receipt-v2.schema.json',
-        'schemas/workspace-state-v2.schema.json',
-        'scripts/Test-WorkEnvironment.ps1'
+        'schemas/workspace-state-v2.schema.json'
     )
-    foreach ($relativePath in $combinedArchivePaths) { Write-Utf8 (Join-Path $fixture $relativePath) "combined archive base`n" }
-    [void](Invoke-TestGit $fixture (@('add') + $combinedArchivePaths))
+    foreach ($relativePath in $archiveEnvelopePaths) { Write-Utf8 (Join-Path $fixture $relativePath) "archive envelope base`n" }
+    [void](Invoke-TestGit $fixture (@('add') + $archiveEnvelopePaths))
     [void](Invoke-TestGit $fixture @('commit', '-m', 'history archive shared contract base'))
-    $combinedArchiveBase = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
-    foreach ($relativePath in $combinedArchivePaths) { Write-Utf8 (Join-Path $fixture $relativePath) "combined archive change`n" }
-    [void](Invoke-TestGit $fixture (@('add') + $combinedArchivePaths))
-    [void](Invoke-TestGit $fixture @('commit', '-m', 'history archive shared contract change'))
-    $combinedArchiveHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
-    $combinedArchivePlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $combinedArchiveBase -HeadRevision $combinedArchiveHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier standard
-    Assert-True ($combinedArchivePlan.selection_mode -ceq 'affected') 'Combined history archive contract change did not retain affected selection.'
-    foreach ($checkId in @('public-boundary','workflow-contracts','history-archive-checkpoint','work-unit-automation','work-environment-deep')) { Assert-True (@($combinedArchivePlan.selected_checks.check_id) -ccontains $checkId) "Combined history archive contract change did not retain bounded '$checkId' coverage." }
-    foreach ($checkId in @('affected-selector-selftest','affected-topology-selftest','affected-reuse-selftest')) { Assert-True (@($combinedArchivePlan.selected_checks.check_id) -cnotcontains $checkId) "Combined history archive contract change incorrectly selected '$checkId'." }
-    foreach ($reasonCode in @('ambiguous-path-mapping','unmapped-path')) { Assert-True (@($combinedArchivePlan.reason_codes) -cnotcontains $reasonCode) "Combined history archive contract change retained '$reasonCode'." }
+    $archiveEnvelopeBase = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
+    foreach ($relativePath in $archiveEnvelopePaths) { Write-Utf8 (Join-Path $fixture $relativePath) "archive envelope change`n" }
+    Write-Utf8 $archiveRouterPath "# archive router envelope change`n"
+    [void](Invoke-TestGit $fixture (@('add') + $archiveEnvelopePaths + @('scripts/Invoke-WorkUnitAutomation.ps1')))
+    [void](Invoke-TestGit $fixture @('commit', '-m', 'history archive sealed envelope change'))
+    $archiveEnvelopeHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
+    $archiveEnvelopePlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $archiveEnvelopeBase -HeadRevision $archiveEnvelopeHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier standard
+    Assert-True ($archiveEnvelopePlan.selection_mode -ceq 'affected') 'W-017B-shaped archive envelope change did not retain affected selection.'
+    Assert-True ($archiveEnvelopePlan.effective_tier -ceq 'standard') 'W-017B-shaped archive envelope change did not retain Standard effective tier.'
+    foreach ($checkId in @('public-boundary','workflow-contracts','history-archive-checkpoint','work-unit-automation')) { Assert-True (@($archiveEnvelopePlan.selected_checks.check_id) -ccontains $checkId) "W-017B-shaped archive envelope change did not retain bounded '$checkId' coverage." }
+    foreach ($checkId in @('affected-selector-selftest','affected-topology-selftest','affected-reuse-selftest','work-environment-deep')) { Assert-True (@($archiveEnvelopePlan.selected_checks.check_id) -cnotcontains $checkId) "W-017B-shaped archive envelope change incorrectly selected '$checkId'." }
+    foreach ($reasonCode in @('ambiguous-path-mapping','unmapped-path')) { Assert-True (@($archiveEnvelopePlan.reason_codes) -cnotcontains $reasonCode) "W-017B-shaped archive envelope change retained '$reasonCode'." }
+
+    # The aggregate command is itself a distinct bounded path set.  Its direct
+    # change must still select the registered Deep aggregate route without an
+    # ambiguous or unmapped fallback.
+    $workEnvironmentAggregateBase = $archiveEnvelopeHead
+    Write-Utf8 (Join-Path $fixture 'scripts/Test-WorkEnvironment.ps1') "# work environment aggregate change`n"
+    [void](Invoke-TestGit $fixture @('add', 'scripts/Test-WorkEnvironment.ps1'))
+    [void](Invoke-TestGit $fixture @('commit', '-m', 'work environment aggregate change'))
+    $workEnvironmentAggregateHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
+    $workEnvironmentAggregatePlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $workEnvironmentAggregateBase -HeadRevision $workEnvironmentAggregateHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier standard
+    Assert-True ($workEnvironmentAggregatePlan.selection_mode -ceq 'affected') 'Work Environment aggregate change did not retain affected selection.'
+    Assert-True ($workEnvironmentAggregatePlan.effective_tier -ceq 'deep') 'Work Environment aggregate change did not select its registered Deep tier.'
+    foreach ($checkId in @('public-boundary','workflow-contracts','work-unit-automation','work-environment-deep')) { Assert-True (@($workEnvironmentAggregatePlan.selected_checks.check_id) -ccontains $checkId) "Work Environment aggregate change did not retain '$checkId' coverage." }
+    foreach ($reasonCode in @('ambiguous-path-mapping','unmapped-path')) { Assert-True (@($workEnvironmentAggregatePlan.reason_codes) -cnotcontains $reasonCode) "Work Environment aggregate change retained '$reasonCode'." }
 
     $collisionBlobPath = Join-Path $fixture 'collision-blob.txt'
     Write-Utf8 $collisionBlobPath "collision`n"
