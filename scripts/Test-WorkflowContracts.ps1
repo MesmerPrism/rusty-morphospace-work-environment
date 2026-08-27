@@ -2571,8 +2571,20 @@ foreach ($candidateContract in $candidateContracts) {
         }
     }
 }
+$historyArchiveContracts = @(
+    'schemas/history-archive-root-v1.schema.json',
+    'schemas/history-archive-checkpoint-v1.schema.json',
+    'schemas/history-archive-validation-result-v1.schema.json',
+    'scripts/lib/MorphospaceHistoryArchive.psm1',
+    'scripts/HistoryArchiveCheckpoint.psm1',
+    'scripts/Test-HistoryArchiveCheckpoint.ps1',
+    'scripts/Test-HistoryArchiveValidation.ps1'
+)
+foreach ($historyArchiveContract in $historyArchiveContracts) {
+    Assert-Contract (Test-Path -LiteralPath (Join-Path $RepoRoot $historyArchiveContract) -PathType Leaf) "Required history archive contract is missing: $historyArchiveContract"
+}
 if (-not $SkipOwnerSelfTests) {
-    foreach ($selfTest in @("Test-LegacyEmbeddedPushPlanCompatibility.ps1","Test-PreparedPublicationReconstruction.ps1","Test-ResolveBlocker.ps1","Test-CorrectResolvedBlockerEvidence.ps1","Test-HistoricalBlockerResolutionIntentBindingCorrection.ps1","Test-CorrectActiveReadOnlyDependencies.ps1","Test-CorrectActiveProjectRepositoryScope.ps1","Test-ActiveWriteScopeAmendment.ps1","Test-DevelopmentUnitAdmission.ps1","Test-CompletedTransitionSemanticCorrection.ps1","Test-TransitionLedger.ps1")) {
+    foreach ($selfTest in @("Test-LegacyEmbeddedPushPlanCompatibility.ps1","Test-PreparedPublicationReconstruction.ps1","Test-ResolveBlocker.ps1","Test-CorrectResolvedBlockerEvidence.ps1","Test-HistoricalBlockerResolutionIntentBindingCorrection.ps1","Test-CorrectActiveReadOnlyDependencies.ps1","Test-CorrectActiveProjectRepositoryScope.ps1","Test-ActiveWriteScopeAmendment.ps1","Test-DevelopmentUnitAdmission.ps1","Test-CompletedTransitionSemanticCorrection.ps1","Test-TransitionLedger.ps1","Test-HistoryArchiveValidation.ps1")) {
         try { Invoke-IsolatedWorkflowSelfTest -Path (Join-Path $RepoRoot "scripts\$selfTest") }
         catch { Add-Failure -Message "$selfTest failed: $($_.Exception.Message)" }
     }

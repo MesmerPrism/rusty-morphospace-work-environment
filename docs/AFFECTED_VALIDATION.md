@@ -30,3 +30,17 @@ reliably observe its own absence. See
 `scripts/Test-AffectedValidation.ps1` for portable damage fixtures. Selector
 trust-root PRs also run the bounded topology and reuse self-tests through the
 same affected-validation executor.
+
+History-archive contract changes select bounded public-boundary,
+workflow-contract, and archive-checkpoint validation without selecting the
+historical Deep aggregate. Quick verifies an installed checkpoint's root,
+raw-object hashes, ledger prefix, carry-forward references, and live tail;
+damage or an unknown pre-checkpoint reference requires archived replay. Deep,
+audit, and migration select that replay. This mechanism does not create or
+reuse a historical-validation-debt baseline. See
+[History Archive Checkpoints](HISTORY_ARCHIVE_CHECKPOINTS.md).
+
+The archive public-router paths select the same archive checkpoint closure plus
+the ordinary automation integration check. They remain a distinct path set, so
+they cannot be mistaken for generic automation or cause an ambiguous Deep
+escalation.

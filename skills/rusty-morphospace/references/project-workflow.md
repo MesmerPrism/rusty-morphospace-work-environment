@@ -27,6 +27,19 @@ use the dedicated preparation transaction before admission. It may add only a
 typed project-level envelope and a repository-map-derived source lock; the
 later unit admission must bind those artifacts and may not rediscover authority.
 
+For an idle project with terminal historical units, use only the dedicated
+`ArchiveHistoryCheckpoint` owner action to add a raw-byte archive root. It
+copies source bytes into content-addressed objects without deleting, moving,
+rewriting, normalizing, or substituting the live history. The request binds the
+exact project/state/event prefix and tail; the receipt, intent, completion,
+root, carry-forward references, and compact-state binding make interrupted or
+conflicting replays fail closed. Quick validates current authority, root,
+prefix, carry-forward, and the live tail. Deep, audit, migration, damage, or
+an unknown pre-checkpoint reference select archived replay. This does not
+create historical-validation-debt evidence or authorize acceptance,
+publication, source work, build, or device operation. See
+[History Archive Checkpoints](../../../docs/HISTORY_ARCHIVE_CHECKPOINTS.md).
+
 Work only in repositories and paths allowed by both the project and current
 unit. Stop when the required change falls outside that intersection. Preserve
 dirty, detached, divergent, blocked, interrupted, and historical state rather

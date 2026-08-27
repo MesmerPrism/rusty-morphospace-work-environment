@@ -59,6 +59,13 @@ preparation action, then require later unit admission to bind its receipt and
 source lock. A preparation receipt never itself authorizes a future unit,
 source mutation, build, device operation, or publication.
 
+History archive/checkpoint changes update the detailed archive runbook, the
+affected-validation runbook, README/router, and the routed project-workflow
+reference. The documented route must preserve raw historical bytes, keep
+historical-debt baselines separate, and distinguish Quick checkpoint/tail
+integrity from Deep/audit/migration archived replay. Candidate evidence remains
+dynamic only and does not replace the external validation-authority boundary.
+
 An explicitly declared `work_mode: validation-only` unit changes no product or
 reusable workflow behavior, uses `instruction_impact: review`, and records each
 routed AGENTS, README/router, validation document, and skill surface as

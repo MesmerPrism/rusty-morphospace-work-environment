@@ -299,6 +299,9 @@ validation without a device.
 - [Affected Validation](docs/AFFECTED_VALIDATION.md) defines exact-tree
   current-delta selection, content-addressed evidence reuse, full-history Deep,
   and fail-closed infrastructure handling for CI.
+- [History Archive Checkpoints](docs/HISTORY_ARCHIVE_CHECKPOINTS.md) defines
+  additive raw-byte history checkpoints, bounded live tails, and the distinct
+  Quick versus Deep/audit/migration replay routes.
 - [Release Capsules And Historical Closure](docs/RELEASE_CAPSULE_AND_HISTORICAL_CLOSURE.md)
   separates an exact candidate cut from later ancestry-based audit closure, so
   normal post-release commits and dirty local work do not rewrite a release.

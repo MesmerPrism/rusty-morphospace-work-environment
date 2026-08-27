@@ -105,6 +105,22 @@
           "sha256": { "$ref": "#/$defs/hash" }
         }
       }
+    },
+    "history_archive": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["checkpoint_id", "root_path", "root_sha256", "source_prefix_sha256", "source_prefix_length"],
+          "properties": {
+            "checkpoint_id": { "$ref": "#/$defs/id" },
+            "root_path": { "type": "string", "pattern": "^history-archive/roots/[0-9a-f]{64}\\.json$" },
+            "root_sha256": { "$ref": "#/$defs/hash" },
+            "source_prefix_sha256": { "$ref": "#/$defs/hash" },
+            "source_prefix_length": { "type": "integer", "minimum": 1 }
+          }
+        }
+      ]
     }
   },
   "$defs": {

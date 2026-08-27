@@ -8,9 +8,9 @@
   "properties": {
     "schema": {"const":"rusty.morphospace.workflow.work_unit_automation_receipt.v2"},
     "project_id":{"$ref":"#/$defs/id"},"unit_id":{"$ref":"#/$defs/id"},
-    "action":{"enum":["RetirePreparedPush","ReconcilePreparedPublication","ReconcilePreparedPushTransactionSuffix","ResolveBlocker","CorrectResolvedBlockerEvidence","CorrectHistoricalBlockerResolutionIntentBinding","CorrectCompletedTransitionSemantics","CorrectActiveReadOnlyDependencies","CorrectActiveProjectRepositoryScope","CorrectActiveUnitContract","AmendActiveWriteScope","RecordHistoricalUnitCompatibilityProjection","PrepareDevelopmentEnvelope","AdmitDevelopmentUnit","FreezeCandidate","MaterializeInheritedCandidate"]},
+    "action":{"enum":["RetirePreparedPush","ReconcilePreparedPublication","ReconcilePreparedPushTransactionSuffix","ResolveBlocker","CorrectResolvedBlockerEvidence","CorrectHistoricalBlockerResolutionIntentBinding","CorrectCompletedTransitionSemantics","CorrectActiveReadOnlyDependencies","CorrectActiveProjectRepositoryScope","CorrectActiveUnitContract","AmendActiveWriteScope","RecordHistoricalUnitCompatibilityProjection","PrepareDevelopmentEnvelope","AdmitDevelopmentUnit","FreezeCandidate","MaterializeInheritedCandidate","ArchiveHistoryCheckpoint"]},
     "timestamp":{"type":"string","format":"date-time"},"executed":{"type":"boolean"},
-    "transition":{"enum":["prepared-push-retired","prepared-publication-reconstructed","prepared-push-transaction-suffix-reconciled","blocker-resolved","blocker-resolution-corrected","historical-blocker-resolution-intent-binding-corrected","completed-transition-semantics-corrected","active-read-only-dependencies-corrected","active-project-repository-scope-corrected","active-unit-contract-corrected","active-write-scope-amended","historical-unit-compatibility-projected","idle-project-envelope-prepared","development-unit-admitted","development-unit-already-admitted","candidate-frozen","candidate-already-frozen","inherited-candidate-materialized","inherited-candidate-already-materialized"]},
+    "transition":{"enum":["prepared-push-retired","prepared-publication-reconstructed","prepared-push-transaction-suffix-reconciled","blocker-resolved","blocker-resolution-corrected","historical-blocker-resolution-intent-binding-corrected","completed-transition-semantics-corrected","active-read-only-dependencies-corrected","active-project-repository-scope-corrected","active-unit-contract-corrected","active-write-scope-amended","historical-unit-compatibility-projected","idle-project-envelope-prepared","development-unit-admitted","development-unit-already-admitted","candidate-frozen","candidate-already-frozen","inherited-candidate-materialized","inherited-candidate-already-materialized","history-archive-checkpointed"]},
     "status_before":{"$ref":"#/$defs/id"},"status_after":{"$ref":"#/$defs/id"},
     "current_unit_before":{"oneOf":[{"$ref":"#/$defs/id"},{"type":"null"}]},
     "current_unit_after":{"oneOf":[{"$ref":"#/$defs/id"},{"type":"null"}]},
@@ -18,5 +18,5 @@
     "audit_receipt":{"type":"object","additionalProperties":false,"required":["path","sha256"],"properties":{"path":{"$ref":"#/$defs/path"},"sha256":{"$ref":"#/$defs/hash"}}},
     "event_id":{"oneOf":[{"$ref":"#/$defs/id"},{"type":"null"}]}
   },
-  "$defs":{"id":{"type":"string","pattern":"^[a-z0-9][a-z0-9-]{1,127}$"},"hash":{"type":"string","pattern":"^[0-9a-f]{64}$"},"path":{"type":"string","pattern":"^receipts/[a-z0-9][a-z0-9-]{1,127}\\.json$"}}
+  "$defs":{"id":{"type":"string","pattern":"^[a-z0-9][a-z0-9-]{1,127}$"},"hash":{"type":"string","pattern":"^[0-9a-f]{64}$"},"path":{"type":"string","pattern":"^(?:receipts/[a-z0-9][a-z0-9-]{1,127}\\.json|history-archive/checkpoints/[a-z0-9][a-z0-9-]{1,109}\\.json)$"}}
 }

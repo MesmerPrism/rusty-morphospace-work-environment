@@ -1,0 +1,141 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/history-archive-checkpoint-v1.schema.json",
+  "title": "History archive checkpoint transaction v1",
+  "type": "object",
+  "oneOf": [
+    { "$ref": "#/$defs/request" },
+    { "$ref": "#/$defs/intent" },
+    { "$ref": "#/$defs/completion" },
+    { "$ref": "#/$defs/receipt" }
+  ],
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" },
+    "checkpointId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,109}$" },
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "archivePath": { "type": "string", "pattern": "^history-archive/(?:roots/[0-9a-f]{64}\\.json|checkpoints/[a-z0-9][a-z0-9-]{1,127}\\.json|transactions/[a-z0-9][a-z0-9-]{1,127}\\.(?:intent|completion)\\.json)$" },
+    "statePath": { "const": "workspace.state.json" },
+    "projectPath": { "const": "project.spec.json" },
+    "eventsPath": { "const": "iteration-events.jsonl" },
+    "fileBinding": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": { "path": { "type": "string", "minLength": 1 }, "sha256": { "$ref": "#/$defs/hash" } }
+    },
+    "requestBinding": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": { "path": { "type": "string", "pattern": "^history-archive/requests/[a-z0-9][a-z0-9-]{1,109}\\.json$" }, "sha256": { "$ref": "#/$defs/hash" } }
+    },
+    "stateBinding": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256", "document"],
+      "properties": { "path": { "$ref": "#/$defs/statePath" }, "sha256": { "$ref": "#/$defs/hash" }, "document": { "$ref": "#/$defs/workspaceStateDocument" } }
+    },
+    "workspaceStateDocument": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "project_id", "plan_revision", "current_unit", "next_ready_unit", "last_event_id", "last_accepted_receipt", "repository_heads", "module_registry", "capability_registry", "dirty_repositories", "blockers", "validation_checkpoint", "pending_push_bundle"],
+      "properties": {
+        "$schema": { "type": "string" }, "schema": { "const": "rusty.morphospace.workflow.workspace_state.v2" }, "project_id": { "$ref": "#/$defs/id" }, "plan_revision": { "type": "integer", "minimum": 1 },
+        "current_unit": { "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] }, "next_ready_unit": { "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] }, "last_event_id": { "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] }, "last_accepted_receipt": { "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }] },
+        "repository_heads": { "type": "array", "items": { "type": "object", "additionalProperties": false, "required": ["repo_id", "head", "branch", "dirty_fingerprint"], "properties": { "repo_id": { "$ref": "#/$defs/id" }, "head": { "type": "string", "pattern": "^[0-9a-fA-F]{40}$" }, "branch": { "type": ["string", "null"] }, "dirty_fingerprint": { "type": ["string", "null"], "pattern": "^[0-9a-fA-F]{64}$" } } } },
+        "repository_checkpoints": { "type": "array", "items": { "type": "object", "additionalProperties": false, "required": ["repo_id", "observed_head", "claimed_head", "validated_head", "accepted_head", "composition_fingerprint"], "properties": { "repo_id": { "$ref": "#/$defs/id" }, "observed_head": { "oneOf": [{ "type": "string", "pattern": "^[0-9a-fA-F]{40}$" }, { "type": "null" }] }, "claimed_head": { "oneOf": [{ "type": "string", "pattern": "^[0-9a-fA-F]{40}$" }, { "type": "null" }] }, "validated_head": { "oneOf": [{ "type": "string", "pattern": "^[0-9a-fA-F]{40}$" }, { "type": "null" }] }, "accepted_head": { "oneOf": [{ "type": "string", "pattern": "^[0-9a-fA-F]{40}$" }, { "type": "null" }] }, "composition_fingerprint": { "oneOf": [{ "$ref": "#/$defs/hash" }, { "type": "null" }] } } } },
+        "module_registry": { "type": "object", "additionalProperties": false, "required": ["lock_revision", "lock_fingerprint", "modules"], "properties": { "lock_revision": { "type": ["integer", "null"], "minimum": 1 }, "lock_fingerprint": { "type": ["string", "null"], "pattern": "^[0-9a-fA-F]{64}$" }, "modules": { "type": "array", "items": { "type": "object", "additionalProperties": false, "required": ["module_id", "owner_repo", "maturity", "contract", "contract_revision"], "properties": { "module_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]{2,127}$" }, "owner_repo": { "$ref": "#/$defs/id" }, "maturity": { "$ref": "#/$defs/id" }, "contract": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]{2,127}$" }, "contract_revision": { "type": "string", "minLength": 1 } } } } } },
+        "capability_registry": { "type": "array", "items": { "type": "object", "additionalProperties": false, "required": ["capability_id", "owner", "state", "revision"], "properties": { "capability_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]{2,127}$" }, "owner": { "$ref": "#/$defs/id" }, "state": { "$ref": "#/$defs/id" }, "revision": { "type": "string", "minLength": 1 } } } },
+        "dirty_repositories": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/id" } }, "blockers": { "type": "array", "items": { "type": "object", "additionalProperties": false, "required": ["blocker_id", "condition", "resume_when"], "properties": { "blocker_id": { "$ref": "#/$defs/id" }, "condition": { "type": "string", "minLength": 1 }, "resume_when": { "type": "string", "minLength": 1 } } } },
+        "validation_checkpoint": { "oneOf": [{ "type": "null" }, { "type": "object", "additionalProperties": false, "required": ["tier", "receipt", "result"], "properties": { "tier": { "enum": ["quick", "standard", "deep"] }, "receipt": { "type": "string", "minLength": 1 }, "result": { "enum": ["pass", "partial", "fail", "blocked"] } } }] },
+        "pending_push_bundle": { "oneOf": [{ "type": "null" }, { "type": "object", "additionalProperties": false, "required": ["bundle_id", "unit_ids", "repo_ids", "ready"], "properties": { "bundle_id": { "$ref": "#/$defs/id" }, "unit_ids": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/id" } }, "repo_ids": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/id" } }, "planning_transport_repo_id": { "$ref": "#/$defs/id" }, "ready": { "type": "boolean" } } }] },
+        "historical_unit_adoption_receipts": { "$ref": "#/$defs/historicalReceiptArray" }, "historical_unit_adoption_reconstructions": { "$ref": "#/$defs/historicalReceiptArray" },
+        "history_archive": { "oneOf": [{ "type": "null" }, { "type": "object", "additionalProperties": false, "required": ["checkpoint_id", "root_path", "root_sha256", "source_prefix_sha256", "source_prefix_length"], "properties": { "checkpoint_id": { "$ref": "#/$defs/id" }, "root_path": { "type": "string", "pattern": "^history-archive/roots/[0-9a-f]{64}\\.json$" }, "root_sha256": { "$ref": "#/$defs/hash" }, "source_prefix_sha256": { "$ref": "#/$defs/hash" }, "source_prefix_length": { "type": "integer", "minimum": 1 } } }] }
+      }
+    },
+    "historicalReceiptArray": {
+      "type": "array", "uniqueItems": true, "items": { "type": "object", "additionalProperties": false, "required": ["path", "sha256"], "properties": { "path": { "type": "string", "pattern": "^receipts/[a-z0-9][a-z0-9-]{1,127}\\.json$" }, "sha256": { "$ref": "#/$defs/hash" } } }
+    },
+    "projectBinding": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": { "path": { "$ref": "#/$defs/projectPath" }, "sha256": { "$ref": "#/$defs/hash" } }
+    },
+    "eventsBinding": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256", "byte_length", "tail_event_id"],
+      "properties": { "path": { "$ref": "#/$defs/eventsPath" }, "sha256": { "$ref": "#/$defs/hash" }, "byte_length": { "type": "integer", "minimum": 1 }, "tail_event_id": { "$ref": "#/$defs/id" } }
+    },
+    "rootBinding": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": { "path": { "type": "string", "pattern": "^history-archive/roots/[0-9a-f]{64}\\.json$" }, "sha256": { "$ref": "#/$defs/hash" } }
+    },
+    "rootIntentBinding": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256", "document"],
+      "properties": { "path": { "type": "string", "pattern": "^history-archive/roots/[0-9a-f]{64}\\.json$" }, "sha256": { "$ref": "#/$defs/hash" }, "document": { "type": "object" } }
+    },
+    "receiptIntentBinding": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256", "document"],
+      "properties": { "path": { "type": "string", "pattern": "^history-archive/checkpoints/[a-z0-9][a-z0-9-]{1,127}\\.json$" }, "sha256": { "$ref": "#/$defs/hash" }, "document": { "type": "object" } }
+    },
+    "event": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "event_id", "sequence", "timestamp", "project_id", "unit_id", "event_type", "summary", "receipts"],
+      "properties": {
+        "schema": { "const": "rusty.morphospace.workflow.iteration_event.v1" }, "event_id": { "$ref": "#/$defs/id" }, "sequence": { "type": "integer", "minimum": 1 }, "timestamp": { "type": "string", "format": "date-time" },
+        "project_id": { "$ref": "#/$defs/id" }, "unit_id": { "$ref": "#/$defs/id" },
+        "event_type": { "const": "decision" }, "summary": { "type": "string", "minLength": 1 },
+        "receipts": { "type": "array", "minItems": 1, "maxItems": 1, "items": { "type": "string", "pattern": "^history-archive/checkpoints/[a-z0-9][a-z0-9-]{1,127}\\.json$" } }
+      }
+    },
+    "request": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "record_kind", "checkpoint_id", "project_id", "expected", "does_not_prove"],
+      "properties": {
+        "schema": { "const": "rusty.morphospace.workflow.history_archive_checkpoint.v1" }, "record_kind": { "const": "request" },
+        "checkpoint_id": { "$ref": "#/$defs/checkpointId" }, "project_id": { "$ref": "#/$defs/id" },
+        "expected": {
+          "type": "object", "additionalProperties": false,
+          "required": ["project_sha256", "state_sha256", "events_sha256", "events_length", "event_tail_id", "source_inventory_sha256"],
+          "properties": {
+            "project_sha256": { "$ref": "#/$defs/hash" }, "state_sha256": { "$ref": "#/$defs/hash" }, "events_sha256": { "$ref": "#/$defs/hash" },
+            "events_length": { "type": "integer", "minimum": 1 }, "event_tail_id": { "$ref": "#/$defs/id" }, "source_inventory_sha256": { "$ref": "#/$defs/hash" }
+          }
+        },
+        "does_not_prove": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "intent": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "record_kind", "transaction_id", "created_at", "checkpoint_id", "project_id", "request", "pre", "target", "root", "objects", "event", "receipt", "status"],
+      "properties": {
+        "schema": { "const": "rusty.morphospace.workflow.history_archive_checkpoint.v1" }, "record_kind": { "const": "intent" },
+        "transaction_id": { "$ref": "#/$defs/id" }, "created_at": { "type": "string", "format": "date-time" }, "checkpoint_id": { "$ref": "#/$defs/checkpointId" }, "project_id": { "$ref": "#/$defs/id" },
+        "request": { "$ref": "#/$defs/requestBinding" },
+        "pre": { "type": "object", "additionalProperties": false, "required": ["project", "state", "events"], "properties": { "project": { "$ref": "#/$defs/projectBinding" }, "state": { "$ref": "#/$defs/stateBinding" }, "events": { "$ref": "#/$defs/eventsBinding" } } },
+        "target": { "type": "object", "additionalProperties": false, "required": ["state"], "properties": { "state": { "$ref": "#/$defs/stateBinding" } } },
+        "root": { "$ref": "#/$defs/rootIntentBinding" },
+        "objects": { "type": "array", "minItems": 2, "items": { "type": "object", "additionalProperties": false, "required": ["source_path", "object_path", "sha256", "byte_length"], "properties": { "source_path": { "type": "string", "minLength": 1 }, "object_path": { "type": "string", "pattern": "^history-archive/objects/sha256/[0-9a-f]{64}\\.blob$" }, "sha256": { "$ref": "#/$defs/hash" }, "byte_length": { "type": "integer", "minimum": 1 } } } },
+        "event": { "$ref": "#/$defs/event" }, "receipt": { "$ref": "#/$defs/receiptIntentBinding" }, "status": { "const": "prepared" }
+      }
+    },
+    "completion": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "record_kind", "transaction_id", "completed_at", "intent", "checkpoint_id", "project_id", "root", "target_state_sha256", "event_id", "status"],
+      "properties": {
+        "schema": { "const": "rusty.morphospace.workflow.history_archive_checkpoint.v1" }, "record_kind": { "const": "completion" },
+        "transaction_id": { "$ref": "#/$defs/id" }, "completed_at": { "type": "string", "format": "date-time" }, "intent": { "$ref": "#/$defs/fileBinding" }, "checkpoint_id": { "$ref": "#/$defs/checkpointId" }, "project_id": { "$ref": "#/$defs/id" },
+        "root": { "$ref": "#/$defs/rootBinding" }, "target_state_sha256": { "$ref": "#/$defs/hash" }, "event_id": { "$ref": "#/$defs/id" }, "status": { "const": "committed" }
+      }
+    },
+    "receipt": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "record_kind", "checkpoint_id", "project_id", "input", "root", "source_prefix", "state", "event", "preservation", "does_not_prove"],
+      "properties": {
+        "schema": { "const": "rusty.morphospace.workflow.history_archive_checkpoint.v1" }, "record_kind": { "const": "receipt" }, "checkpoint_id": { "$ref": "#/$defs/checkpointId" }, "project_id": { "$ref": "#/$defs/id" },
+        "input": { "$ref": "#/$defs/requestBinding" }, "root": { "$ref": "#/$defs/rootBinding" }, "source_prefix": { "$ref": "#/$defs/eventsBinding" }, "state": { "$ref": "#/$defs/stateBinding" }, "event": { "$ref": "#/$defs/event" },
+        "preservation": { "type": "object", "additionalProperties": false, "required": ["git_mutation_performed", "device_mutation_performed", "remote_mutation_performed", "history_bytes_moved", "history_bytes_deleted", "history_bytes_rewritten"], "properties": { "git_mutation_performed": { "const": false }, "device_mutation_performed": { "const": false }, "remote_mutation_performed": { "const": false }, "history_bytes_moved": { "const": false }, "history_bytes_deleted": { "const": false }, "history_bytes_rewritten": { "const": false } } },
+        "does_not_prove": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
+      }
+    }
+  }
+}
