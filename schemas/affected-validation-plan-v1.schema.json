@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/affected-validation-plan-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "repository", "base", "head", "registry", "changed_paths", "changed_paths_sha256", "requested_tier", "effective_tier", "selection_mode", "reason_codes", "selected_checks", "skipped_checks", "estimated_budget_seconds", "plan_sha256", "claims"],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.workflow.affected_validation_plan.v1" },
+    "repository": { "type": "string", "minLength": 1 },
+    "base": { "$ref": "#/$defs/gitIdentity" },
+    "head": { "$ref": "#/$defs/gitIdentity" },
+    "registry": { "$ref": "#/$defs/fileIdentity" },
+    "changed_paths": { "type": "array", "maxItems": 4096, "items": { "$ref": "#/$defs/change" } },
+    "changed_paths_sha256": { "$ref": "#/$defs/hash" },
+    "requested_tier": { "$ref": "#/$defs/tier" },
+    "effective_tier": { "$ref": "#/$defs/tier" },
+    "selection_mode": { "enum": ["affected", "full-deep"] },
+    "reason_codes": { "type": "array", "items": { "$ref": "#/$defs/id" } },
+    "selected_checks": { "type": "array", "items": { "$ref": "#/$defs/checkSelection" } },
+    "skipped_checks": { "type": "array", "items": { "$ref": "#/$defs/checkSelection" } },
+    "estimated_budget_seconds": { "type": "integer", "minimum": 0 },
+    "plan_sha256": { "$ref": "#/$defs/hash" },
+    "claims": {
+      "type": "object", "additionalProperties": false,
+      "required": ["selection_only", "checks_executed", "acceptance_authority", "publication_authority"],
+      "properties": {
+        "selection_only": { "const": true },
+        "checks_executed": { "const": false },
+        "acceptance_authority": { "const": false },
+        "publication_authority": { "const": false }
+      }
+    }
+  },
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,95}$" },
+    "tier": { "enum": ["quick", "standard", "deep"] },
+    "gitIdentity": { "type": "object", "additionalProperties": false, "required": ["commit", "tree"], "properties": { "commit": { "$ref": "#/$defs/commit" }, "tree": { "$ref": "#/$defs/commit" } } },
+    "fileIdentity": { "type": "object", "additionalProperties": false, "required": ["schema", "registry_id", "revision", "sha256"], "properties": { "schema": { "const": "rusty.morphospace.workflow.affected_validation_registry.v1" }, "registry_id": { "$ref": "#/$defs/id" }, "revision": { "type": "integer", "minimum": 1 }, "sha256": { "$ref": "#/$defs/hash" } } },
+    "change": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "old_path", "new_path", "old_mode", "new_mode", "old_blob", "new_blob"],
+      "properties": {
+        "status": { "type": "string", "pattern": "^(?:[ADMT]|[RC](?:[0-9]{1,2}|100))$" },
+        "old_path": { "anyOf": [{ "$ref": "#/$defs/path" }, { "type": "null" }] },
+        "new_path": { "anyOf": [{ "$ref": "#/$defs/path" }, { "type": "null" }] },
+        "old_mode": { "anyOf": [{ "$ref": "#/$defs/mode" }, { "type": "null" }] },
+        "new_mode": { "anyOf": [{ "$ref": "#/$defs/mode" }, { "type": "null" }] },
+        "old_blob": { "anyOf": [{ "$ref": "#/$defs/commit" }, { "type": "null" }] },
+        "new_blob": { "anyOf": [{ "$ref": "#/$defs/commit" }, { "type": "null" }] }
+      },
+      "allOf": [
+        { "if": { "properties": { "status": { "pattern": "^A" } } }, "then": { "properties": { "old_path": { "type": "null" }, "old_mode": { "type": "null" }, "old_blob": { "type": "null" }, "new_path": { "$ref": "#/$defs/path" }, "new_mode": { "$ref": "#/$defs/mode" }, "new_blob": { "$ref": "#/$defs/commit" } } } },
+        { "if": { "properties": { "status": { "pattern": "^D" } } }, "then": { "properties": { "new_path": { "type": "null" }, "new_mode": { "type": "null" }, "new_blob": { "type": "null" }, "old_path": { "$ref": "#/$defs/path" }, "old_mode": { "$ref": "#/$defs/mode" }, "old_blob": { "$ref": "#/$defs/commit" } } } },
+        { "if": { "properties": { "status": { "pattern": "^[CMRT]" } } }, "then": { "properties": { "old_path": { "$ref": "#/$defs/path" }, "old_mode": { "$ref": "#/$defs/mode" }, "old_blob": { "$ref": "#/$defs/commit" }, "new_path": { "$ref": "#/$defs/path" }, "new_mode": { "$ref": "#/$defs/mode" }, "new_blob": { "$ref": "#/$defs/commit" } } } }
+      ]
+    },
+    "checkSelection": { "type": "object", "additionalProperties": false, "required": ["check_id", "platforms", "minimum_tier", "reasons", "budget_seconds", "cache_policy"], "properties": { "check_id": { "$ref": "#/$defs/id" }, "platforms": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "enum": ["windows", "linux"] } }, "minimum_tier": { "$ref": "#/$defs/tier" }, "reasons": { "type": "array", "minItems": 1, "items": { "type": "string" } }, "budget_seconds": { "type": "integer", "minimum": 1 }, "cache_policy": { "enum": ["disabled", "exact-host", "portable"] } } },
+    "path": { "type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^(?!\\s*$)(?!/)(?!.*\\/$)(?!.*//)(?!\\.{1,2}(?:/|$))(?!.*\\/\\.{1,2}(?:/|$))[^\\\\:\\u0000-\\u001f\\u007f]+$" },
+    "mode": { "enum": ["100644", "100755", "120000", "160000"] }
+  }
+}

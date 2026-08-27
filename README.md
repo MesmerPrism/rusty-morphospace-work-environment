@@ -296,6 +296,9 @@ validation without a device.
 - [Instruction Synchronization](docs/INSTRUCTION_SYNCHRONIZATION.md) keeps
   skills, planning instructions, touched-repo `AGENTS.md`, and README/router
   docs aligned without duplicating long recipes.
+- [Affected Validation](docs/AFFECTED_VALIDATION.md) defines exact-tree
+  current-delta selection, content-addressed evidence reuse, full-history Deep,
+  and fail-closed infrastructure handling for CI.
 - [Release Capsules And Historical Closure](docs/RELEASE_CAPSULE_AND_HISTORICAL_CLOSURE.md)
   separates an exact candidate cut from later ancestry-based audit closure, so
   normal post-release commits and dirty local work do not rewrite a release.

@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/affected-validation-topology-attestation-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "before", "head", "mode", "candidate", "claims"],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.workflow.affected_validation_topology_attestation.v1" },
+    "before": { "$ref": "#/$defs/identity" },
+    "head": { "$ref": "#/$defs/identity" },
+    "mode": { "enum": ["exact-tree-premerge-reuse", "main-delta"] },
+    "candidate": { "anyOf": [{ "$ref": "#/$defs/identity" }, { "type": "null" }] },
+    "claims": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reuse_eligible", "historical_aggregate_reused", "acceptance_authority", "publication_authority"],
+      "properties": {
+        "reuse_eligible": { "type": "boolean" },
+        "historical_aggregate_reused": { "const": false },
+        "acceptance_authority": { "const": false },
+        "publication_authority": { "const": false }
+      }
+    }
+  },
+  "$defs": {
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commit", "tree"],
+      "properties": {
+        "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "tree": { "type": "string", "pattern": "^[0-9a-f]{40}$" }
+      }
+    }
+  }
+}

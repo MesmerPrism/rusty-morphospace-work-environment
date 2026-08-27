@@ -1,0 +1,25 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/affected-validation-reuse-v1.schema.json",
+  "type":"object","additionalProperties":false,
+  "required":["schema","repository","event","pull_request","run","base","head","tree","workflow","plan","artifacts","coverage","freshness","claims"],
+  "properties":{
+    "schema":{"const":"rusty.morphospace.workflow.affected_validation_reuse.v1"},
+    "repository":{"type":"string","pattern":"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$"},
+    "event":{"type":"object","additionalProperties":false,"required":["name","head_sha","base_sha"],"properties":{"name":{"const":"pull_request"},"head_sha":{"$ref":"#/$defs/commit"},"base_sha":{"$ref":"#/$defs/commit"}}},
+    "pull_request":{"type":"object","additionalProperties":false,"required":["number","head_sha","base_sha"],"properties":{"number":{"type":"integer","minimum":1},"head_sha":{"$ref":"#/$defs/commit"},"base_sha":{"$ref":"#/$defs/commit"}}},
+    "run":{"type":"object","additionalProperties":false,"required":["id","attempt","event","head_sha","workflow_id","check_names"],"properties":{"id":{"type":"integer","minimum":1},"attempt":{"type":"integer","minimum":1},"event":{"const":"pull_request"},"head_sha":{"$ref":"#/$defs/commit"},"workflow_id":{"type":"integer","minimum":1},"check_names":{"type":"array","minItems":1,"uniqueItems":true,"items":{"type":"string","minLength":1,"maxLength":256}}}},
+    "base":{"$ref":"#/$defs/identity"},"head":{"$ref":"#/$defs/identity"},"tree":{"$ref":"#/$defs/commit"},
+    "workflow":{"type":"object","additionalProperties":false,"required":["id","path","blob_sha1"],"properties":{"id":{"type":"integer","minimum":1},"path":{"const":".github/workflows/validate.yml"},"blob_sha1":{"$ref":"#/$defs/commit"}}},
+    "plan":{"type":"object","additionalProperties":false,"required":["artifact_name","file_sha256","canonical_sha256"],"properties":{"artifact_name":{"type":"string","pattern":"^affected-plan-[0-9a-f]{64}$"},"file_sha256":{"$ref":"#/$defs/hash"},"canonical_sha256":{"$ref":"#/$defs/hash"}}},
+    "artifacts":{"type":"array","minItems":2,"maxItems":3,"items":{"type":"object","additionalProperties":false,"required":["id","remote_name","name","platform","sha256","size","expires_utc"],"properties":{"id":{"type":"integer","minimum":1},"remote_name":{"type":"string","pattern":"^[A-Za-z0-9._-]{1,255}$"},"name":{"enum":["affected-plan.json","affected-linux-evidence.json","affected-windows-evidence.json"]},"platform":{"enum":["plan","linux","windows"]},"sha256":{"$ref":"#/$defs/hash"},"size":{"type":"integer","minimum":1},"expires_utc":{"type":"string","format":"date-time"}}}},
+    "coverage":{"type":"array","minItems":1,"maxItems":512,"items":{"type":"object","additionalProperties":false,"required":["platform","check_id","command_path","command_blob_sha1"],"properties":{"platform":{"enum":["linux","windows"]},"check_id":{"$ref":"#/$defs/id"},"command_path":{"$ref":"#/$defs/path"},"command_blob_sha1":{"$ref":"#/$defs/commit"}}}},
+    "freshness":{"type":"object","additionalProperties":false,"required":["created_utc","max_age_minutes"],"properties":{"created_utc":{"type":"string","format":"date-time"},"max_age_minutes":{"type":"integer","minimum":1,"maximum":10080}}},
+    "claims":{"type":"object","additionalProperties":false,"required":["historical_aggregate_reused","acceptance_authority","publication_authority"],"properties":{"historical_aggregate_reused":{"const":false},"acceptance_authority":{"const":false},"publication_authority":{"const":false}}}
+  },
+  "$defs":{
+    "hash":{"type":"string","pattern":"^[0-9a-f]{64}$"},"commit":{"type":"string","pattern":"^[0-9a-f]{40}$"},"id":{"type":"string","pattern":"^[a-z0-9][a-z0-9-]{1,95}$"},
+    "path":{"type":"string","pattern":"^(?!/)(?!.*\\\\)(?!.*:)[^\\\\\u0000-\u001f\u007f]+$"},
+    "identity":{"type":"object","additionalProperties":false,"required":["commit","tree"],"properties":{"commit":{"$ref":"#/$defs/commit"},"tree":{"$ref":"#/$defs/commit"}}}
+  }
+}

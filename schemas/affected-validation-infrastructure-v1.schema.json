@@ -1,0 +1,14 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/affected-validation-infrastructure-v1.schema.json",
+  "type":"object","additionalProperties":false,
+  "required":["schema","attempt","classification","tools","claims"],
+  "properties":{
+    "schema":{"const":"rusty.morphospace.workflow.affected_validation_infrastructure.v1"},
+    "attempt":{"type":"integer","minimum":0,"maximum":1},
+    "classification":{"enum":["ready","pending-infra"]},
+    "tools":{"type":"array","minItems":3,"maxItems":3,"prefixItems":[{"type":"object","additionalProperties":false,"required":["name","required","available"],"properties":{"name":{"const":"git"},"required":{"const":true},"available":{"type":"boolean"}}},{"type":"object","additionalProperties":false,"required":["name","required","available"],"properties":{"name":{"const":"pwsh"},"required":{"const":true},"available":{"type":"boolean"}}},{"type":"object","additionalProperties":false,"required":["name","required","available"],"properties":{"name":{"const":"rg"},"required":{"const":false},"available":{"type":"boolean"}}}],"items":false},
+    "claims":{"type":"object","additionalProperties":false,"required":["acceptance_authority","publication_authority"],"properties":{"acceptance_authority":{"const":false},"publication_authority":{"const":false}}}
+  },
+  "allOf":[{"if":{"properties":{"tools":{"contains":{"properties":{"required":{"const":true},"available":{"const":false}},"required":["required","available"]}}},"required":["tools"]},"then":{"properties":{"classification":{"const":"pending-infra"}}},"else":{"properties":{"classification":{"const":"ready"}}}}]
+}
