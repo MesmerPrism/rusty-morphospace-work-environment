@@ -106,6 +106,11 @@ instruction impact. They cannot become `accepted` until the nearest touched
 repo `AGENTS.md`, a README or router doc, and relevant skills are updated and
 validated.
 
+Derive a complete but minimum surface set from the unit's routing. Do not churn
+every installed skill because one router changed; use `instruction_impact: none`
+or an exact `review-no-change` surface when the unit does not change that
+owner's instruction contract.
+
 For an implementation-only unit with no instruction change, use
 `instruction_impact: none`, leave `instruction_surfaces` empty, and record a
 specific justification. See
@@ -352,6 +357,10 @@ ignore list and cannot admit an in-flight or newly authored unit.
 Live headset work is a separate device gate. A source-only unit must not claim
 device acceptance. Validation tiers do not grant authority: select authority
 with `guard_profile` and evidence depth with `risk_tier`.
+
+Run focused checks first, then only the Quick and Standard delta selected by
+[Affected Validation](AFFECTED_VALIDATION.md). The hosted-observer boundary is
+defined once in [Autonomous Liveness And Hosted Execution](#autonomous-liveness-and-hosted-execution).
 
 ## Git Checkpoint Policy
 
@@ -811,6 +820,62 @@ and a derived v2 receipt; caller-authored receipts and ordinary v1 validation
 cannot substitute. Preflight is admission only, not owner evidence or
 acceptance. Read [Advanced Validation Authority](VALIDATION_AUTHORITY_ADVANCED.md)
 before changing this path or running its Deep tests.
+
+## Autonomous Liveness And Hosted Execution
+
+Inspection, a progress update, and a partial fixture are intermediate evidence,
+not a terminal outcome. When the next action is already authorized and remains
+inside the current unit, take the least-risk action first: read-only work, then
+bounded version-control-recoverable work. Re-prompt only for a new scope or
+authority, destructive or unbounded remote change, private/public uncertainty,
+wrong or unapproved device/owner, or ambiguous or fabricated evidence.
+
+Use established fixture helpers rather than a standalone synthetic harness that
+can shadow canonical resolvers. If a public fixture unloads a test-local module,
+re-import it and assert helper availability before the aggregate. A wrapper for
+a locally launched child retains its terminal result and output and owns that
+child to terminal; hosted observation is not local-child ownership.
+
+The authoritative affected-validation owner for this observer contract is the
+adopted commit `939df8405f26f695978c69d56ef0d7f60071fbde`, tree
+`2f1f5c23ae38e8dce2e8adf152f6912a02db688f`:
+
+- owner documentation `docs/AFFECTED_VALIDATION.md`, Git blob
+  `314bee780e1630fc74a374d39e82045f6f99c4de`, raw SHA-256
+  `3f70a39eb475e9a53ec8cd84eff659432fa171205a01c2b7e636338f1e3da43c`;
+- schema `schemas/affected-validation-infrastructure-v1.schema.json`, identity
+  `rusty.morphospace.workflow.affected_validation_infrastructure.v1`, Git blob
+  `4d5e64b24241860c4fb5b5ceb7569a7a7364c225`, raw SHA-256
+  `b6169f58d6199c306a748d0ca8712ca9a74805b111fba56434077e862c1bf27e`;
+- producer-validator `scripts/Test-AffectedValidationInfrastructure.ps1`, Git
+  blob `e0646acd6f33467922f2cf0aeee249c5c56e265e`, raw SHA-256
+  `01fcee6043c0f20ee27357300ca5d5c96f87d167f32093896cb5586bfe1f5f33`.
+
+Those owner bytes, not this runbook, define classification and evidence
+semantics. The infrastructure record permits only `ready` or `pending-infra` at
+pre-job attempts 0 or 1. `infra-fail` and `code-fail` belong only to bounded-child
+evidence after the affected-validation owner executes a bound check. Observer
+routing neither relabels hosted observations nor invents `unknown` or terminal
+states. Queued or zero-job observation is not a pass, failure, rerun, or
+full-history substitute. A later owner revision must replace the complete
+documentation/schema/producer binding; matching paths alone are insufficient.
+
+Before observing an external run, fix a finite per-observer deadline or maximum
+poll count and a total observer-chain limit of two observers. A `pending-infra`
+transfer is valid only when it binds all three canonical owner identities above;
+the unique replay identity
+`repository/run-id/run-attempt/infrastructure-attempt`; and the observed
+state/timestamps plus next observer. The receiver rejects a repeated replay
+identity, a non-`pending-infra` record, missing validation binding, or a chain
+index outside 0–1. Each transfer consumes one of the two total observer slots;
+it cannot reset another observer's elapsed budget. Observer routing does not
+extend the affected-validation evidence schema: absent a host-owner typed
+envelope that binds this identity and validates the canonical record, stop
+rather than transfer. A valid routing record is only an observation cue: it
+claims neither pass/fail, rerun, full-history reuse, acceptance, nor publication.
+On expiry, preserve the exact run identity and request the typed next observation;
+do not speculate with comments, settings, branch changes, or reruns. These
+liveness rules do not relax the hard stops below.
 
 ## Stop Conditions
 

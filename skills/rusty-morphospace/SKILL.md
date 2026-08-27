@@ -28,8 +28,7 @@ named by the user or ask for its location; never guess a machine path.
 
 - Invoke `$system-engineering` for authority design, contracts, interfaces,
   observability, validation scorecards, or mitigation maps.
-- Invoke `$rust-work-graph` before broad inventories, source-root maps,
-  dependency or instruction-surface audits, and refactor impact graphs.
+- Invoke `$rust-work-graph` for inventories, source roots, dependency or instruction-surface audits, and refactor impact graphs.
 - Route shared Android WebSocket hardening to Rusty Quest: consolidate
   standalone and embedded placements behind one bounded RFC6455 core, keep
   JSON/Binder/Manifold/effect/media authority separate, and require host
@@ -59,8 +58,9 @@ two-step trust-root procedure to
 substitutes for dynamic validation or publication authority.
 Only its exact protected-without-base-approval result may route to the pinned
 external-owner signed-comment gate, which can issue only the bound assessment.
-
 ## Authority Limits
+
+Inspection is nonterminal: continue authorized read-only or bounded recoverable work; own locally launched children to terminal, and route hosted observation to the single canonical owner binding in `docs/AUTONOMOUS_ITERATION.md`. This grants no Git, settings, device, private-data, or publication authority.
 
 For an immutable terminal unit, normalize an outdated skill action only through
 the exact hash-bound historical adoption receipt. Preserve `planned` as

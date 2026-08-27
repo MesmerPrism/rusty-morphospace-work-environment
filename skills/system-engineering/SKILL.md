@@ -76,6 +76,13 @@ one descriptor-approved runtime input; the consuming runtime receipt binds
 project, feature, lock revision/fingerprint, and applied or rejected state.
 Work only within the repository and path scope declared by the current unit.
 
+For active delegated work, an inspection or plan is not a stop. Briefly report,
+then take the next already-authorized read-only or bounded recoverable action.
+Own locally launched children to terminal; route hosted-state classification and
+its typed bounded observer transfer to the Autonomous Iteration runbook and the
+adopted affected-validation owner bound there; do not duplicate that definition.
+Re-prompt only at a genuine authority or safety boundary.
+
 For concurrent projects, separate the source, build, and run authorities. Bind
 cross-repository work to exact clean commits/trees and use detached
 materializations when live checkouts are moving. Give every APK an app-specific
