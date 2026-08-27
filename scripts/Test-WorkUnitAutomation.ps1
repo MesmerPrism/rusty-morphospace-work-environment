@@ -37,6 +37,25 @@ function Read-TestProtocolJson {
     return & $module { param($DocumentPath) Read-MorphospaceProtocolJson -Path $DocumentPath } $Path
 }
 
+# Exercise the public archive action in a fresh process: parameter routing must
+# reach the owner adapter before any workspace-dependent preflight can run.
+$archiveStdout = [IO.Path]::GetTempFileName()
+$archiveStderr = [IO.Path]::GetTempFileName()
+$archiveProbe = $null
+try {
+    $freshPwsh = (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source
+    $archiveProbe = Start-Process -FilePath $freshPwsh -ArgumentList @(
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1'),
+        '-Action', 'ArchiveHistoryCheckpoint', '-WorkspaceRoot', (Join-Path ([IO.Path]::GetTempPath()) 'missing-history-archive-workspace')
+    ) -NoNewWindow -Wait -PassThru -RedirectStandardOutput $archiveStdout -RedirectStandardError $archiveStderr
+    $archiveText = ((Get-Content -Raw $archiveStdout -ErrorAction SilentlyContinue) + (Get-Content -Raw $archiveStderr -ErrorAction SilentlyContinue))
+    Assert-Automation ($archiveProbe.ExitCode -ne 0) 'fresh-process archive action probe unexpectedly succeeded'
+    Assert-Automation ($archiveText -match 'ArchiveHistoryCheckpoint requires HistoryArchiveCheckpoint and OutPath' -and $archiveText -notmatch "Cannot validate argument on parameter 'Action'") 'public Invoke entrypoint does not route ArchiveHistoryCheckpoint to its typed owner adapter'
+} finally {
+    if ($null -ne $archiveProbe) { $archiveProbe.Dispose() }
+    Remove-Item -LiteralPath $archiveStdout,$archiveStderr -Force -ErrorAction SilentlyContinue
+}
+
 # Exercise the public script in a fresh pwsh process so action/parameter routing
 # cannot pass merely because this test imported the module in-process.
 $freshStdout = [IO.Path]::GetTempFileName()

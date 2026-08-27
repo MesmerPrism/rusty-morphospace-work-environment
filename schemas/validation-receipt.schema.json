@@ -29,6 +29,7 @@
     "tier": { "enum": ["quick", "standard", "deep"] },
     "result": { "enum": ["pass", "partial", "fail", "blocked"] },
     "historical_validation_debt": { "$ref": "#/$defs/historicalValidationDebtBinding" },
+    "history_archive_validation": { "$ref": "#/$defs/historyArchiveValidationBinding" },
     "repository_revisions": {
       "type": "array",
       "items": {
@@ -189,6 +190,38 @@
             { "$ref": "#/$defs/historicalDebtReference" },
             { "properties": { "role": { "const": "historical-validation-debt-result" }, "schema": { "const": "rusty.morphospace.workflow.historical_validation_debt_result.v1" } } }
           ]
+        }
+      }
+    },
+    "historyArchiveValidationBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root", "result"],
+      "properties": {
+        "root": {
+          "type": "object", "additionalProperties": false,
+          "required": ["path", "sha256", "schema"],
+          "properties": {
+            "path": { "type": "string", "pattern": "^history-archive/roots/[0-9a-f]{64}\\.json$" },
+            "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "schema": { "const": "rusty.morphospace.workflow.history_archive_root.v1" }
+          }
+        },
+        "result": {
+          "type": "object", "additionalProperties": false,
+          "required": ["schema", "validation_id", "project_id", "tier", "mode", "status", "checkpoint", "source_prefix", "carry_forward", "reason_codes", "does_not_prove"],
+          "properties": {
+            "schema": { "const": "rusty.morphospace.workflow.history_archive_validation_result.v1" },
+            "validation_id": { "$ref": "#/$defs/id" }, "project_id": { "$ref": "#/$defs/id" },
+            "tier": { "enum": ["quick", "deep", "audit", "migration"] },
+            "mode": { "enum": ["tail-only", "archive-replay-required", "archive-replay"] },
+            "status": { "enum": ["pass", "replay-required", "fail"] },
+            "checkpoint": { "type": "object", "additionalProperties": false, "required": ["checkpoint_id", "root_path", "root_sha256"], "properties": { "checkpoint_id": { "$ref": "#/$defs/id" }, "root_path": { "type": "string", "pattern": "^history-archive/roots/[0-9a-f]{64}\\.json$" }, "root_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" } } },
+            "source_prefix": { "type": "object", "additionalProperties": false, "required": ["matches", "byte_length", "sha256"], "properties": { "matches": { "type": "boolean" }, "byte_length": { "type": "integer", "minimum": 1 }, "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" } } },
+            "carry_forward": { "type": "object", "additionalProperties": false, "required": ["complete", "checked_paths"], "properties": { "complete": { "type": "boolean" }, "checked_paths": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } } } },
+            "reason_codes": { "type": "array", "uniqueItems": true, "items": { "enum": ["none", "missing-checkpoint", "incomplete-transaction", "unregistered-checkpoint", "root-tamper", "object-tamper", "source-prefix-drift", "unknown-precheckpoint-reference", "carry-forward-drift", "archive-event-missing", "archive-event-tamper", "archive-receipt-tamper", "archive-receipt-document-tamper", "archive-event-reference-tamper", "archive-tail-drift", "state-tail-drift", "archive-replay-selected"] } },
+            "does_not_prove": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
+          }
         }
       }
     }

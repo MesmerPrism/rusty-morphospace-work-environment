@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("Inspect", "PrepareDevelopmentEnvelope", "AdmitDevelopmentUnit", "Ready", "WithdrawReady", "Claim", "Resume", "CompleteInstructionSurfaces", "AmendActiveWriteScope", "FreezeCandidate", "MaterializeInheritedCandidate", "CorrectActiveReadOnlyDependencies", "CorrectActiveProjectRepositoryScope", "CorrectActiveUnitContract", "RecordHistoricalUnitCompatibilityProjection", "BeginValidation", "ReturnToActive", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RetirePreparedPush", "ReconcilePreparedPublication", "ReconcilePreparedPushTransactionSuffix", "ResolveBlocker", "CorrectResolvedBlockerEvidence", "CorrectHistoricalBlockerResolutionIntentBinding", "CorrectCompletedTransitionSemantics", "NormalizeEventLedgerPrefix", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix", "ReconcileExecutedPreparedPublication")]
+    [ValidateSet("Inspect", "PrepareDevelopmentEnvelope", "ArchiveHistoryCheckpoint", "AdmitDevelopmentUnit", "Ready", "WithdrawReady", "Claim", "Resume", "CompleteInstructionSurfaces", "AmendActiveWriteScope", "FreezeCandidate", "MaterializeInheritedCandidate", "CorrectActiveReadOnlyDependencies", "CorrectActiveProjectRepositoryScope", "CorrectActiveUnitContract", "RecordHistoricalUnitCompatibilityProjection", "BeginValidation", "ReturnToActive", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RetirePreparedPush", "ReconcilePreparedPublication", "ReconcilePreparedPushTransactionSuffix", "ResolveBlocker", "CorrectResolvedBlockerEvidence", "CorrectHistoricalBlockerResolutionIntentBinding", "CorrectCompletedTransitionSemantics", "NormalizeEventLedgerPrefix", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix", "ReconcileExecutedPreparedPublication")]
     [string]$Action,
     [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
     [string]$UnitId = "",
@@ -37,6 +37,8 @@ param(
     [string]$ExpectedDevelopmentUnitAdmissionSha256 = "",
     [string]$DevelopmentEnvelopePreparation = "",
     [string]$ExpectedDevelopmentEnvelopePreparationSha256 = "",
+    [string]$HistoryArchiveCheckpoint = "",
+    [string]$ExpectedHistoryArchiveCheckpointSha256 = "",
     [string]$CandidateFreeze = "",
     [string]$ExpectedCandidateFreezeSha256 = "",
     [string]$MaterializationRoot = "",
@@ -71,6 +73,12 @@ if ($Action -eq "PrepareDevelopmentEnvelope") {
     if (-not $DevelopmentEnvelopePreparation -or -not $OutPath) { throw "PrepareDevelopmentEnvelope requires DevelopmentEnvelopePreparation and OutPath." }
     Import-Module (Join-Path $PSScriptRoot "DevelopmentEnvelopePreparation.psm1") -Force
     Invoke-MorphospacePrepareDevelopmentEnvelope -WorkspaceRoot $WorkspaceRoot -DevelopmentEnvelopePreparation $DevelopmentEnvelopePreparation -ExpectedDevelopmentEnvelopePreparationSha256 $ExpectedDevelopmentEnvelopePreparationSha256 -Timestamp $Timestamp -OutPath $OutPath -Execute:$Execute | ConvertTo-Json -Depth 32
+    return
+}
+if ($Action -eq "ArchiveHistoryCheckpoint") {
+    if (-not $HistoryArchiveCheckpoint -or -not $OutPath) { throw "ArchiveHistoryCheckpoint requires HistoryArchiveCheckpoint and OutPath." }
+    Import-Module (Join-Path $PSScriptRoot "HistoryArchiveCheckpoint.psm1") -Force
+    Invoke-MorphospaceHistoryArchiveCheckpoint -WorkspaceRoot $WorkspaceRoot -HistoryArchiveCheckpoint $HistoryArchiveCheckpoint -ExpectedHistoryArchiveCheckpointSha256 $ExpectedHistoryArchiveCheckpointSha256 -Timestamp $Timestamp -OutPath $OutPath -Execute:$Execute | ConvertTo-Json -Depth 32
     return
 }
 if ($Action -eq "AdmitDevelopmentUnit") {
