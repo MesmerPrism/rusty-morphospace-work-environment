@@ -43,6 +43,22 @@ function Invoke-TestGitInput([string]$Root, [string[]]$Arguments, [string]$Input
     } finally { $process.Dispose() }
 }
 function Write-Utf8([string]$Path, [string]$Text) { [System.IO.File]::WriteAllText($Path, $Text, [System.Text.UTF8Encoding]::new($false)) }
+function Invoke-WorkflowSelectionGate([string]$JobBody, [string]$SelectionVariable, [string]$SelectionValue) {
+    $run = [regex]::Match($JobBody, '(?ms)^        run: \|\r?\n(?<script>.*?)(?=^      - |\z)')
+    if (-not $run.Success) { throw 'Workflow job lacks a first run script.' }
+    $lines = @($run.Groups['script'].Value -split "`r?`n" | Select-Object -First 3)
+    if ($lines.Count -ne 3) { throw 'Workflow job lacks the closed selection gate.' }
+    $gate = ($lines -join [Environment]::NewLine).Replace('exit 0', 'return')
+    $saved = @{}
+    foreach ($name in @('INFRA_RESULT','SELECT_RESULT',$SelectionVariable)) { $saved[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
+    try {
+        $env:INFRA_RESULT = 'success'; $env:SELECT_RESULT = 'success'
+        [Environment]::SetEnvironmentVariable($SelectionVariable, $SelectionValue, 'Process')
+        & ([scriptblock]::Create($gate))
+    } finally {
+        foreach ($name in @('INFRA_RESULT','SELECT_RESULT',$SelectionVariable)) { [Environment]::SetEnvironmentVariable($name, $saved[$name], 'Process') }
+    }
+}
 
     $registryPath = Join-Path $repoRoot 'manifests/affected-validation-registry.json'
     $registry = Read-MorphospaceProtocolJson -Path $registryPath
@@ -50,6 +66,24 @@ function Write-Utf8([string]$Path, [string]$Text) { [System.IO.File]::WriteAllTe
     $selectorBudget = @($registry.checks | Where-Object { $_.check_id -ceq 'affected-selector-selftest' })[0].budget_seconds
     Assert-True ([int]$selectorBudget -eq 180) 'Selector self-test lacks its independently measured three-minute budget.'
     $workflowSource = Get-Content -LiteralPath (Join-Path $repoRoot '.github/workflows/validate.yml') -Raw
+    $workflowJobs = @{}
+    foreach ($match in [regex]::Matches($workflowSource, '(?ms)^  (?<id>[a-z0-9-]+):\r?\n(?<body>.*?)(?=^  [a-z0-9-]+:|\z)')) { $workflowJobs[[string]$match.Groups['id'].Value] = [string]$match.Groups['body'].Value }
+    foreach ($requiredContext in @('quick-linux','quick-windows','standard-windows')) { Assert-True $workflowJobs.ContainsKey($requiredContext) "PR workflow lacks the required '$requiredContext' context." }
+    foreach ($selectedContext in @(@{ id = 'quick-linux'; selected = 'LINUX_SELECTED' }, @{ id = 'standard-windows'; selected = 'WINDOWS_SELECTED' })) {
+        $body = [string]$workflowJobs[[string]$selectedContext.id]
+        Assert-True ($body -match '(?m)^    needs: \[infrastructure, select\]$' -and $body -match "\`$env:$($selectedContext.selected) -cnotin @\('true','false'\)" -and $body -match "\`$env:$($selectedContext.selected) -ceq 'false'") "Required '$($selectedContext.id)' context does not close its platform-selection domain."
+        Assert-True ($body -match "\`$env:INFRA_RESULT -cne 'success'" -and $body -match "\`$env:SELECT_RESULT -cne 'success'") "Required '$($selectedContext.id)' context can bypass failed selection prerequisites."
+        foreach ($selectionValue in @('', 'unexpected')) {
+            $rejected = $false
+            try { Invoke-WorkflowSelectionGate -JobBody $body -SelectionVariable ([string]$selectedContext.selected) -SelectionValue $selectionValue } catch { $rejected = $_.Exception.Message -like '*must be exactly true or false*' }
+            Assert-True $rejected "Required '$($selectedContext.id)' context accepted '$selectionValue' as a platform selection."
+        }
+        Invoke-WorkflowSelectionGate -JobBody $body -SelectionVariable ([string]$selectedContext.selected) -SelectionValue 'true'
+        Invoke-WorkflowSelectionGate -JobBody $body -SelectionVariable ([string]$selectedContext.selected) -SelectionValue 'false'
+    }
+    $quickWindowsBody = [string]$workflowJobs['quick-windows']
+    Assert-True ($quickWindowsBody -match '(?m)^    needs: \[infrastructure, select, standard-windows\]$' -and $quickWindowsBody -match "\`$env:STANDARD_RESULT -cne 'success'") 'Required quick-windows context is not bound to the selected Windows result.'
+    Assert-True ($quickWindowsBody -notmatch 'Invoke-AffectedValidation') 'Required quick-windows context replays the selected Windows suite.'
     foreach ($platform in @('linux','windows')) {
         $artifactMarker = "affected-$platform-evidence.json"
         $artifactIndex = $workflowSource.IndexOf($artifactMarker, [StringComparison]::Ordinal)

@@ -78,9 +78,9 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  affected-linux:
-    needs: select
-    if: github.event_name == 'pull_request' && needs.select.outputs.linux == 'true'
+  quick-linux:
+    needs: [infrastructure, select]
+    if: always() && github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -93,7 +93,13 @@ jobs:
         env:
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          INFRA_RESULT: ${{ needs.infrastructure.result }}
+          SELECT_RESULT: ${{ needs.select.result }}
+          LINUX_SELECTED: ${{ needs.select.outputs.linux }}
         run: |
+          if ($env:INFRA_RESULT -cne 'success' -or $env:SELECT_RESULT -cne 'success') { throw 'Required Linux selection prerequisites did not succeed.' }
+          if ($env:LINUX_SELECTED -cnotin @('true','false')) { throw 'Required Linux selection output must be exactly true or false.' }
+          if ($env:LINUX_SELECTED -ceq 'false') { Write-Host 'No affected Linux check is selected.'; exit 0 }
           ./scripts/Test-PowerShellHost.ps1 -SelfTest
           if ((git rev-parse HEAD) -cne $env:PR_HEAD) { throw 'Checkout does not equal the PR event head SHA.' }
           ./scripts/Resolve-AffectedValidation.ps1 -RepositoryRoot . -BaseCommit $env:PR_BASE -HeadCommit $env:PR_HEAD -OutPath "$env:RUNNER_TEMP/affected-plan.json"
@@ -104,7 +110,7 @@ jobs:
           if ($null -ne $failure) { throw $failure }
           git diff --check "$env:PR_BASE" "$env:PR_HEAD"; if ($LASTEXITCODE -ne 0) { throw 'PR Linux delta has whitespace errors.' }
       - name: Preserve content-addressed Linux evidence
-        if: always()
+        if: always() && needs.select.outputs.linux == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: affected-linux-${{ steps.execute.outputs.evidence_sha256 }}
@@ -112,9 +118,9 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  affected-windows:
-    needs: select
-    if: github.event_name == 'pull_request' && needs.select.outputs.windows == 'true'
+  standard-windows:
+    needs: [infrastructure, select]
+    if: always() && github.event_name == 'pull_request'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -127,7 +133,13 @@ jobs:
         env:
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          INFRA_RESULT: ${{ needs.infrastructure.result }}
+          SELECT_RESULT: ${{ needs.select.result }}
+          WINDOWS_SELECTED: ${{ needs.select.outputs.windows }}
         run: |
+          if ($env:INFRA_RESULT -cne 'success' -or $env:SELECT_RESULT -cne 'success') { throw 'Required Windows selection prerequisites did not succeed.' }
+          if ($env:WINDOWS_SELECTED -cnotin @('true','false')) { throw 'Required Windows selection output must be exactly true or false.' }
+          if ($env:WINDOWS_SELECTED -ceq 'false') { Write-Host 'No affected Windows check is selected.'; exit 0 }
           ./scripts/Test-PowerShellHost.ps1 -SelfTest
           if ((git rev-parse HEAD) -cne $env:PR_HEAD) { throw 'Checkout does not equal the PR event head SHA.' }
           ./scripts/Resolve-AffectedValidation.ps1 -RepositoryRoot . -BaseCommit $env:PR_BASE -HeadCommit $env:PR_HEAD -OutPath "$env:RUNNER_TEMP/affected-plan.json"
@@ -138,13 +150,30 @@ jobs:
           if ($null -ne $failure) { throw $failure }
           git diff --check "$env:PR_BASE" "$env:PR_HEAD"; if ($LASTEXITCODE -ne 0) { throw 'PR Windows delta has whitespace errors.' }
       - name: Preserve content-addressed Windows evidence
-        if: always()
+        if: always() && needs.select.outputs.windows == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: affected-windows-${{ steps.execute.outputs.evidence_sha256 }}
           path: ${{ runner.temp }}/affected-windows-evidence.json
           if-no-files-found: error
           retention-days: 7
+
+  quick-windows:
+    needs: [infrastructure, select, standard-windows]
+    if: always() && github.event_name == 'pull_request'
+    runs-on: windows-latest
+    steps:
+      - name: Bind required Windows Quick context to the exact selected result
+        shell: pwsh
+        env:
+          INFRA_RESULT: ${{ needs.infrastructure.result }}
+          SELECT_RESULT: ${{ needs.select.result }}
+          STANDARD_RESULT: ${{ needs.standard-windows.result }}
+        run: |
+          if ($env:INFRA_RESULT -cne 'success' -or $env:SELECT_RESULT -cne 'success' -or $env:STANDARD_RESULT -cne 'success') { throw 'Required Windows Quick compatibility prerequisites did not succeed.' }
+          # standard-windows owns the exact selected Windows commands. This retained
+          # required context only binds their result and never replays an unaffected suite.
+          Write-Host 'The required quick-windows context is bound to the successful selected Windows result.'
 
   post-merge-attestation:
     if: github.event_name == 'push'
