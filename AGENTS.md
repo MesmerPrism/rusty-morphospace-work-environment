@@ -101,6 +101,15 @@ For live headset work, prefer the public `meta-quest-agent-workflow` repository
 as the device-operation source of truth. This repo may point to that workflow,
 but it should not fork a competing Quest procedure.
 
+For an active, explicitly scoped task, inspection and a progress report are
+nonterminal: continue with the next already-authorized read-only or bounded
+version-control-recoverable action. Own only locally launched children to a
+terminal result. For hosted runs, use the single canonical owner binding and
+bounded `pending-infra` handoff in `docs/AUTONOMOUS_ITERATION.md`; queued or
+zero-job observation is never a pass, failure, rerun, or historical-validation
+substitute. Re-prompt only for a real scope, authority, safety, or evidence
+boundary.
+
 ## Public Boundary
 
 Use placeholders in public docs:
@@ -626,6 +635,8 @@ ancestry consumes the authorization.
   policy, repo routing, or public/private boundaries must synchronize the
   nearest repo instructions, a README/router doc, and relevant skills before
   acceptance.
+- Derive the complete minimum instruction-surface set from the unit's routing;
+  do not update unrelated skills merely because one router changed.
 - Keep `AGENTS.md` and `SKILL.md` as routing indexes. Put long recipes in linked
   docs or runbooks.
 

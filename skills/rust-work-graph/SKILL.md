@@ -74,6 +74,12 @@ Use it to find:
 - source files mixing independent authority;
 - validation gaps.
 
+Return the complete minimum affected instruction-surface set, not every
+installed skill. Route affected-validation state, reuse, and invalidators to
+`docs/AFFECTED_VALIDATION.md`, and hosted observation to the single canonical
+binding in `docs/AUTONOMOUS_ITERATION.md`; do not duplicate either definition.
+Keep only already-authorized, non-conflicting work inside the current scope.
+
 Then route portable ownership and workflow questions through
 `rusty-morphospace`, and authority design through `system-engineering`. Use
 `rusty-morphospace-context` only when an explicit machine-local environment
