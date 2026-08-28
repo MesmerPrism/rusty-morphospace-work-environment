@@ -73,6 +73,18 @@ test matrix, cleanup/evidence roots, and source-composition closure. Each
 final repository must resolve through the bound repository map and exact source
 composition lock; duplicate IDs, substituted commit/tree identities, dirty
 clean-only worktrees, and changed paths outside the declared closure reject.
+The final-repository and changed-path sets must exactly equal the active unit's
+writable repository set. The preparation-owned source composition may be a
+strict superset because it also locks read-only project dependencies. Every
+composition entry must resolve through the same repository map role, and every
+writable repository must be present in that composition. Read-only dependencies
+retain their exact locked live commit/tree. A writable final identity may
+advance only as a Git descendant of its locked baseline and must equal the live
+candidate commit/tree. Its committed baseline-to-final delta must remain inside
+both the declared candidate closure and the active write scope. Read-only source
+dependencies must remain tracked-clean; planning repositories may retain their
+owner-managed lifecycle state. Observing either dependency type never grants
+authority to modify it.
 The freeze transition binds the exact pre-state and ledger prefix plus its
 target state/unit, event, intent, and completion; BeginValidation rechecks that
 entire transition before it consumes the marker. Repeating
