@@ -95,14 +95,36 @@ function Assert-MorphospaceCandidateRepositoryClosure {
         if(-not$id-or$compositionById.ContainsKey($id)){throw "Frozen candidate source composition repeats or omits '$id'."}
         $compositionById[$id]=$row
     }
-    if($finalById.Count-ne$scopeById.Count-or$changedById.Count-ne$scopeById.Count-or$compositionById.Count-ne$scopeById.Count){throw 'Frozen candidate repository, changed-path, source-composition, and active-scope sets must be exact.'}
+    if($finalById.Count-ne$scopeById.Count-or$changedById.Count-ne$scopeById.Count){throw 'Frozen candidate repository and changed-path sets must exactly equal the active writable scope.'}
+    foreach($id in @($compositionById.Keys|Sort-Object)){
+        if(-not$map.ContainsKey($id)){throw "Frozen candidate source-composition repository '$id' is absent from the repository map."}
+        $bound=$compositionById[$id];$entry=$map[$id]
+        if([string]$bound.role-cne[string]$entry.role){throw "Frozen candidate source-composition role differs from the repository map for '$id'."}
+        $lockedCommit=(@(Invoke-MorphospaceCandidateGit $entry.path @('rev-parse',"$([string]$bound.commit)^{commit}") 'source-composition commit-object observation')[0]).Trim().ToLowerInvariant()
+        $lockedTree=(@(Invoke-MorphospaceCandidateGit $entry.path @('rev-parse',"$([string]$bound.commit)^{tree}") 'source-composition tree-object observation')[0]).Trim().ToLowerInvariant()
+        if($lockedCommit-cne[string]$bound.commit-or$lockedTree-cne[string]$bound.tree){throw "Frozen candidate source-composition object identity differs for '$id'."}
+        if(-not$scopeById.ContainsKey($id)){
+            $head=(@(Invoke-MorphospaceCandidateGit $entry.path @('rev-parse','HEAD') 'read-only dependency commit observation')[0]).Trim().ToLowerInvariant()
+            $tree=(@(Invoke-MorphospaceCandidateGit $entry.path @('rev-parse','HEAD^{tree}') 'read-only dependency tree observation')[0]).Trim().ToLowerInvariant()
+            if($head-cne[string]$bound.commit-or$tree-cne[string]$bound.tree){throw "Frozen candidate live read-only dependency identity drifted for '$id'."}
+            if([string]$entry.role-ceq'source'){
+                $tracked=@(Invoke-MorphospaceCandidateGit $entry.path @('status','--porcelain=v1','--untracked-files=no') 'read-only dependency tracked-cleanliness observation')
+                if($tracked.Count-ne0){throw "Frozen candidate read-only source dependency '$id' is not tracked-clean."}
+            }
+        }
+    }
     foreach($id in @($scopeById.Keys|Sort-Object)){
         if(-not$finalById.ContainsKey($id)-or-not$changedById.ContainsKey($id)-or-not$compositionById.ContainsKey($id)-or-not$map.ContainsKey($id)){throw "Frozen candidate closure is incomplete for '$id'."}
         $final=$finalById[$id];$bound=$compositionById[$id];$entry=$map[$id]
-        if([string]$bound.role-cne[string]$entry.role-or[string]$final.commit-cne[string]$bound.commit-or[string]$final.tree-cne[string]$bound.tree){throw "Frozen candidate source composition or repository-map identity differs for '$id'."}
-        $head=(@(Invoke-MorphospaceCandidateGit $entry.path @('rev-parse','HEAD') "commit observation")[0]).Trim().ToLowerInvariant()
-        $tree=(@(Invoke-MorphospaceCandidateGit $entry.path @('rev-parse','HEAD^{tree}') "tree observation")[0]).Trim().ToLowerInvariant()
-        if($head-cne[string]$final.commit-or$tree-cne[string]$final.tree){throw "Frozen candidate live repository identity drifted for '$id'."}
+        $head=(@(Invoke-MorphospaceCandidateGit $entry.path @('rev-parse','HEAD') 'writable candidate commit observation')[0]).Trim().ToLowerInvariant()
+        $tree=(@(Invoke-MorphospaceCandidateGit $entry.path @('rev-parse','HEAD^{tree}') 'writable candidate tree observation')[0]).Trim().ToLowerInvariant()
+        if($head-cne[string]$final.commit-or$tree-cne[string]$final.tree){throw "Frozen candidate live writable repository identity drifted for '$id'."}
+        [void](Invoke-MorphospaceCandidateGit $entry.path @('merge-base','--is-ancestor',[string]$bound.commit,[string]$final.commit) 'baseline-to-candidate ancestry observation')
+        $committed=@(Invoke-MorphospaceCandidateGit $entry.path @('diff','--name-only','--no-renames',"$([string]$bound.commit)..$([string]$final.commit)",'--') 'baseline-to-candidate changed-path observation'|Where-Object{$_}|Sort-Object -Unique)
+        foreach($path in $committed){
+            if(-not(Test-MorphospaceCandidatePathAllowed $path @($changedById[$id].paths))){throw "Frozen candidate committed path '$id/$path' is outside its declared changed-path closure."}
+            if(-not(Test-MorphospaceCandidatePathAllowed $path @($scopeById[$id].allowed_paths))){throw "Frozen candidate committed path '$id/$path' exceeds the active scope."}
+        }
         if([string]$Candidate.cleanliness_policy-ceq'clean-only'){
             $observed=@(Invoke-MorphospaceCandidateGit $entry.path @('status','--porcelain=v1','--untracked-files=all') 'cleanliness observation')
             if($observed.Count-ne0){throw "Frozen candidate clean-only repository '$id' is dirty."}

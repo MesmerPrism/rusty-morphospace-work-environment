@@ -59,3 +59,18 @@ active projection. It does not accept an arbitrary later state merely because
 the replacement admission was once valid; any intervening event, damaged
 transaction, different unit, adoption-bearing Claim, or non-active tail fails
 closed.
+
+The preparation-owned source composition is a project-envelope lock, not a
+writable-scope declaration. It may contain read-only dependencies in addition
+to the repositories the later unit is permitted to change. Freeze keeps the
+unit's final-repository and changed-path sets exactly equal to that writable
+scope, while requiring every writable repository to be present in the source
+composition. Every source-composition repository must still resolve through
+the authenticated repository map with the same role. Read-only dependencies
+must remain at their exact locked commit/tree. A writable candidate may advance
+from its locked baseline only through proven Git ancestry, and its live
+commit/tree must equal the final identity recorded by Freeze. The committed
+baseline-to-candidate path delta must remain inside both the candidate closure
+and active write scope. Read-only source dependencies remain tracked-clean;
+workflow-owned planning dirt is not mistaken for source input. Neither
+dependency cleanliness nor observation is promoted into mutation authority.
