@@ -8,12 +8,12 @@
   "properties": {
     "schema": { "const": "rusty.morphospace.workflow.development_unit_admission.v1" },
     "admission_id": { "$ref": "#/$defs/id" }, "project_id": { "$ref": "#/$defs/id" }, "unit_id": { "$ref": "#/$defs/id" },
-    "preparation": { "type": "object", "additionalProperties": false, "required": ["preparation_id", "receipt_path", "receipt_sha256", "source_composition_path", "source_composition_sha256"], "properties": { "preparation_id": { "$ref": "#/$defs/id" }, "receipt_path": { "$ref": "#/$defs/path" }, "receipt_sha256": { "$ref": "#/$defs/hash" }, "source_composition_path": { "$ref": "#/$defs/path" }, "source_composition_sha256": { "$ref": "#/$defs/hash" } } },
+    "preparation": { "type": "object", "additionalProperties": false, "required": ["preparation_id", "receipt_path", "receipt_sha256", "source_composition_path", "source_composition_sha256"], "properties": { "preparation_id": { "$ref": "#/$defs/id" }, "receipt_path": { "$ref": "#/$defs/path" }, "receipt_sha256": { "$ref": "#/$defs/hash" }, "source_composition_path": { "$ref": "#/$defs/path" }, "source_composition_sha256": { "$ref": "#/$defs/hash", "description": "Raw-file SHA-256 of the exact live source-composition bytes; this is distinct from the preparation receipt's canonical-JSON hash." } } },
     "agent_scope_assessment": { "type": "object" },
     "unit": { "type": "object" },
     "expected": { "type": "object", "additionalProperties": false, "required": ["project_sha256", "state_sha256", "feature_lock_sha256", "source_composition_path", "source_composition_sha256", "repository_map_path", "repository_map_sha256", "events_sha256", "events_length", "event_tail_id"], "properties": {
       "project_sha256": { "$ref": "#/$defs/hash" }, "state_sha256": { "$ref": "#/$defs/hash" }, "feature_lock_sha256": { "$ref": "#/$defs/hash" },
-      "source_composition_path": { "$ref": "#/$defs/path" }, "source_composition_sha256": { "$ref": "#/$defs/hash" },
+      "source_composition_path": { "$ref": "#/$defs/path" }, "source_composition_sha256": { "$ref": "#/$defs/hash", "description": "Raw-file SHA-256 of the exact live source-composition bytes." },
       "repository_map_path": { "$ref": "#/$defs/path" }, "repository_map_sha256": { "$ref": "#/$defs/hash" },
       "events_sha256": { "$ref": "#/$defs/hash" }, "events_length": { "type": "integer", "minimum": 1 }, "event_tail_id": { "$ref": "#/$defs/id" }
     } },

@@ -376,13 +376,17 @@ try {
     foreach ($checkId in @('affected-selector-selftest','affected-topology-selftest','affected-reuse-selftest','work-environment-deep')) { Assert-True (@($archiveEnvelopePlan.selected_checks.check_id) -cnotcontains $checkId) "W-017B-shaped archive envelope change incorrectly selected '$checkId'." }
     foreach ($reasonCode in @('ambiguous-path-mapping','unmapped-path')) { Assert-True (@($archiveEnvelopePlan.reason_codes) -cnotcontains $reasonCode) "W-017B-shaped archive envelope change retained '$reasonCode'." }
 
-    # Development-envelope owner and focused test changes must select their
-    # direct contract/integration closure without paying the historical Deep
-    # aggregate. This is the exact W-019 candidate shape.
+    # Development-envelope preparation, provenance, admission, freeze, and
+    # focused test changes must select their direct contract/integration
+    # closure without paying the historical Deep aggregate.
     $developmentEnvelopeBase = $archiveEnvelopeHead
+    Write-Utf8 (Join-Path $fixture 'scripts/CandidateFreeze.psm1') "# preparation-owned candidate freeze change`n"
     Write-Utf8 (Join-Path $fixture 'scripts/DevelopmentEnvelopePreparation.psm1') "# development envelope owner change`n"
+    Write-Utf8 (Join-Path $fixture 'scripts/DevelopmentEnvelopeProvenance.psm1') "# prepared envelope provenance change`n"
+    Write-Utf8 (Join-Path $fixture 'scripts/DevelopmentUnitAdmission.psm1') "# development unit admission change`n"
     Write-Utf8 (Join-Path $fixture 'scripts/Test-DevelopmentEnvelopePreparation.ps1') "# development envelope focused test change`n"
-    [void](Invoke-TestGit $fixture @('add', 'scripts/DevelopmentEnvelopePreparation.psm1', 'scripts/Test-DevelopmentEnvelopePreparation.ps1'))
+    Write-Utf8 (Join-Path $fixture 'scripts/Test-DevelopmentUnitAdmission.ps1') "# development unit admission test change`n"
+    [void](Invoke-TestGit $fixture @('add', 'scripts/CandidateFreeze.psm1', 'scripts/DevelopmentEnvelopePreparation.psm1', 'scripts/DevelopmentEnvelopeProvenance.psm1', 'scripts/DevelopmentUnitAdmission.psm1', 'scripts/Test-DevelopmentEnvelopePreparation.ps1', 'scripts/Test-DevelopmentUnitAdmission.ps1'))
     [void](Invoke-TestGit $fixture @('commit', '-m', 'development envelope preparation change'))
     $developmentEnvelopeHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
     $developmentEnvelopePlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $developmentEnvelopeBase -HeadRevision $developmentEnvelopeHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick

@@ -53,7 +53,7 @@ function Get-MorphospaceCandidateSourceComposition {
         $receiptPath=Resolve-MorphospaceWorkspacePath $Workspace ([string]$preparation.receipt_path) -RequireLeaf
         if((Get-MorphospaceFileSha256 $receiptPath)-cne[string]$preparation.receipt_sha256-or-not(Test-Json -Json (Get-Content -Raw -LiteralPath $receiptPath) -SchemaFile (Join-Path $repoRoot 'schemas\development-envelope-preparation-receipt-v1.schema.json'))){throw 'Frozen candidate preparation receipt provenance is invalid.'}
         $receipt=Read-MorphospaceProtocolJson $receiptPath
-        if([string]$receipt.project_id-cne$ProjectId-or[string]$receipt.preparation_id-cne[string]$composition.preparation_id-or[string]$receipt.source_composition.path-cne$RelativePath-or[string]$receipt.source_composition.sha256-cne[string]$preparation.source_composition_sha256){throw 'Frozen candidate preparation receipt does not authenticate this source lock.'}
+        if([string]$receipt.project_id-cne$ProjectId-or[string]$receipt.preparation_id-cne[string]$composition.preparation_id-or[string]$receipt.source_composition.path-cne$RelativePath-or[string]$receipt.source_composition.sha256-cne(Get-MorphospaceCanonicalJsonSha256 $composition)){throw 'Frozen candidate preparation receipt does not authenticate this source lock.'}
         return $composition
     }
     if(-not(Test-Json -Json (Get-Content -Raw -LiteralPath $path) -SchemaFile (Join-Path $repoRoot 'schemas\source-composition-lock.schema.json'))){throw 'Frozen candidate source composition is not an exact source-composition lock.'}
