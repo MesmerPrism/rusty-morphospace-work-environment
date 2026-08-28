@@ -4,6 +4,21 @@ Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Fo
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1') -Force
 function Assert-PreparationProvenanceJson { param([string]$Path,[string]$Schema,[string]$Message) if(-not(Test-Json -Json (Get-Content -Raw -LiteralPath $Path) -SchemaFile $Schema)){throw $Message} }
 function Get-PreparationProvenanceCanonicalHash { param([object]$Value,[string]$Context) try{return Get-MorphospaceCanonicalJsonSha256 $Value}catch{throw "$Context canonical identity is invalid. $($_.Exception.Message)"} }
+function Assert-PreparationProvenanceCommittedTransaction {
+ param([string]$Workspace,[string]$TransactionId)
+ $ledgerPath=Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1';$ledger=@(Get-Module -All|Where-Object{$_.Path-eq$ledgerPath}|Select-Object -Last 1)[0]
+ if($null-eq$ledger){throw 'Prepared-envelope transition-ledger validator is unavailable.'}
+ $lock=Enter-MorphospaceWorkspaceMutex -WorkspaceRoot $Workspace
+ try{
+  &$ledger {
+   param($root,$id)
+   $workspace=[IO.Path]::GetFullPath($root);$intentRelative=Get-MorphospaceLedgerPath $workspace $id intent;$completionRelative=Get-MorphospaceLedgerPath $workspace $id completion
+   $intentAbsolute=Resolve-MorphospaceWorkspacePath $workspace $intentRelative -RequireLeaf;$completionAbsolute=Resolve-MorphospaceWorkspacePath $workspace $completionRelative -RequireLeaf
+   $intent=Read-MorphospaceLedgerJson $intentAbsolute;Assert-MorphospaceLedgerIntent $intent $id;Assert-MorphospaceLedgerArtifactNamespace $workspace $id $intent
+   Assert-MorphospaceLedgerCommittedCompletion $workspace $id $intentRelative $intentAbsolute $intent $completionAbsolute
+  } $Workspace $TransactionId
+ }finally{Exit-MorphospaceWorkspaceMutex $lock}
+}
 function Test-MorphospacePreparedEnvelopeReplacementSuffix {
  [CmdletBinding()]param(
   [Parameter(Mandatory)][string]$Workspace,
@@ -50,8 +65,7 @@ function Test-MorphospacePreparedEnvelopeReplacementSuffix {
  $retirementTransactionId="$([string]$retirementEvent.event_id)-transition"
  $retirementIntentPath=Resolve-MorphospaceWorkspacePath $Workspace "receipts/transactions/$retirementTransactionId.intent.json" -RequireLeaf
  $retirementCompletionPath=Resolve-MorphospaceWorkspacePath $Workspace "receipts/transactions/$retirementTransactionId.completion.json" -RequireLeaf
- $retirementAuthentication=Complete-MorphospaceTransitionLedger -WorkspaceRoot $Workspace -TransactionId $retirementTransactionId
- if([string]$retirementAuthentication.status-cne'already-committed'){throw 'Prepared-envelope replacement retirement transaction is incomplete.'}
+ Assert-PreparationProvenanceCommittedTransaction -Workspace $Workspace -TransactionId $retirementTransactionId
  $retirementIntent=Read-MorphospaceProtocolJson $retirementIntentPath;$retirementCompletion=Read-MorphospaceProtocolJson $retirementCompletionPath
  $retiredUnitPath=Resolve-MorphospaceWorkspacePath $Workspace "iteration-units/$([string]$retirementReceipt.unit_id).json" -RequireLeaf
  $retiredUnit=Read-MorphospaceProtocolJson $retiredUnitPath
@@ -73,8 +87,7 @@ function Test-MorphospacePreparedEnvelopeReplacementSuffix {
  $oldAdmissionCompletionPath=Resolve-MorphospaceWorkspacePath $Workspace ([string]$authenticatedAdmission.transaction.completion.path) -RequireLeaf
  if((Get-MorphospaceFileSha256 $oldAdmissionIntentPath)-cne[string]$authenticatedAdmission.transaction.intent.sha256-or
     (Get-MorphospaceFileSha256 $oldAdmissionCompletionPath)-cne[string]$authenticatedAdmission.transaction.completion.sha256){throw 'Prepared-envelope replacement predecessor admission transaction bytes drifted.'}
- $oldAdmissionAuthentication=Complete-MorphospaceTransitionLedger -WorkspaceRoot $Workspace -TransactionId $oldAdmissionTransactionId
- if([string]$oldAdmissionAuthentication.status-cne'already-committed'){throw 'Prepared-envelope replacement predecessor admission transaction is incomplete.'}
+ Assert-PreparationProvenanceCommittedTransaction -Workspace $Workspace -TransactionId $oldAdmissionTransactionId
  $oldAdmissionIntent=Read-MorphospaceProtocolJson $oldAdmissionIntentPath;$oldAdmissionCompletion=Read-MorphospaceProtocolJson $oldAdmissionCompletionPath
  if([string]$oldAdmission.admission_id-cne[string]$authenticatedAdmission.admission_id-or
     [string]$oldAdmission.project_id-cne[string]$Admission.project_id-or
@@ -117,9 +130,13 @@ function Test-MorphospacePreparedDevelopmentEnvelope {
  $receiptBytesBase64=[Convert]::ToBase64String([IO.File]::ReadAllBytes($admissionPath));$sourceBytesBase64=[Convert]::ToBase64String([IO.File]::ReadAllBytes($sourcePath))
  if([string]$receipt.preparation_id-cne[string]$p.preparation_id-or[string]$source.preparation_id-cne[string]$p.preparation_id-or[string]$receipt.source_composition.path-cne[string]$p.source_composition_path-or[string]$receipt.source_composition.sha256-cne$sourceCanonicalJsonSha256-or[string]$p.source_composition_sha256-cne$sourceRawFileSha256-or[string]$intent.transaction_id-cne$tx-or[string]$completion.transaction_id-cne$tx-or[string]$completion.intent_sha256-cne(Get-MorphospaceFileSha256 $intentPath)-or$receiptArtifact.Count-ne1-or$sourceArtifact.Count-ne1-or[string]$receiptArtifact[0].sha256-cne$receiptCanonicalJsonSha256-or[string]$sourceArtifact[0].sha256-cne$sourceCanonicalJsonSha256-or[string]$receiptArtifact[0].bytes_base64-cne$receiptBytesBase64-or[string]$sourceArtifact[0].bytes_base64-cne$sourceBytesBase64){throw 'Prepared-envelope artifact provenance is not exact.'}
  if([string]$intent.target.project.sha256-cne(Get-MorphospaceCanonicalJsonSha256 $project)-or[string]$intent.target.feature_lock.sha256-cne(Get-MorphospaceCanonicalJsonSha256 $lock)-or[string]$completion.target_project_sha256-cne[string]$intent.target.project.sha256-or[string]$completion.target_feature_lock_sha256-cne[string]$intent.target.feature_lock.sha256-or[string]$completion.target_state_sha256-cne[string]$intent.target.state.sha256){throw 'Prepared-envelope completion target bytes drifted.'}
- $events=@(Get-Content -LiteralPath (Resolve-MorphospaceWorkspacePath $workspace 'iteration-events.jsonl' -RequireLeaf)|Where-Object{$_}|ForEach-Object{ConvertFrom-MorphospaceProtocolJsonBytes -Bytes ([Text.UTF8Encoding]::new($false).GetBytes([string]$_)) -Context 'prepared-envelope event ledger'});$event=@($events|Where-Object{[string]$_.event_id-ceq[string]$completion.event_id});if($event.Count-ne1-or[string]$event[0].project_id-cne[string]$Admission.project_id-or[string]$event[0].unit_id-cne[string]$receipt.predecessor_unit_id-or[string]$event[0].event_id-cne[string]$intent.event.event_id){throw 'Prepared-envelope event provenance is invalid.'}
- if($Phase-ceq'Admission'-and[string]$intent.target.state.sha256-cne(Get-MorphospaceCanonicalJsonSha256 $state)){
-  try{[void](Test-MorphospacePreparedEnvelopeReplacementSuffix -Workspace $workspace -RepoRoot $repoRoot -Admission $Admission -PreparationIntent $intent -PreparationCompletion $completion -State $state -Events $events)}catch{throw "Prepared-envelope admission state drifted before unit admission. $($_.Exception.Message)"}
+ $events=@(Get-Content -LiteralPath (Resolve-MorphospaceWorkspacePath $workspace 'iteration-events.jsonl' -RequireLeaf)|Where-Object{$_}|ForEach-Object{ConvertFrom-MorphospaceProtocolJsonBytes -Bytes ([Text.UTF8Encoding]::new($false).GetBytes([string]$_)) -Context 'prepared-envelope event ledger'});$event=@($events|Where-Object{[string]$_.event_id-ceq[string]$completion.event_id});if($event.Count-ne1-or[string]$event[0].project_id-cne[string]$Admission.project_id-or[string]$event[0].unit_id-cne[string]$receipt.predecessor_unit_id-or[string]$event[0].event_id-cne[string]$intent.event.event_id-or(Get-PreparationProvenanceCanonicalHash $event[0] 'Prepared-envelope live preparation event')-cne(Get-PreparationProvenanceCanonicalHash $intent.event 'Prepared-envelope intent event')){throw 'Prepared-envelope event provenance is invalid.'}
+ if($Phase-ceq'Admission'){
+  $preparedStateExact=[string]$intent.target.state.sha256-ceq(Get-MorphospaceCanonicalJsonSha256 $state)
+  $preparationOwnsTail=$events.Count-gt0-and[string]$events[-1].event_id-ceq[string]$event[0].event_id-and[string]$state.last_event_id-ceq[string]$event[0].event_id
+  if(-not($preparedStateExact-and$preparationOwnsTail)){
+   try{[void](Test-MorphospacePreparedEnvelopeReplacementSuffix -Workspace $workspace -RepoRoot $repoRoot -Admission $Admission -PreparationIntent $intent -PreparationCompletion $completion -State $state -Events $events)}catch{throw "Prepared-envelope admission state or event tail drifted before unit admission. $($_.Exception.Message)"}
+  }
  }
  return [pscustomobject]@{receipt=$receipt;intent=$intent;completion=$completion;source_lock=$source;project=$project;feature_lock=$lock;state=$state}
 }
