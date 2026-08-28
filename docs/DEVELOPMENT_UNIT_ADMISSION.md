@@ -80,6 +80,19 @@ the exact freeze is idempotent; a different freeze is rejected. Units that
 predate the admission marker retain their existing historical compatibility
 rules and are not silently migrated.
 
+When the admitted unit is the exact replacement named by `RetireProposed`,
+Freeze revalidates the preparation, predecessor admission, retirement, and
+replacement admission chains, followed by exactly one ordinary owner-produced
+Ready transaction and one ordinary owner-produced Claim transaction. Those two
+transactions must be contiguous, same-project and same-unit, hash-chain their
+state projections, own the exact live active unit/state and ledger tail, and
+contain no adoption receipts or intervening event. This is not general
+post-admission drift tolerance: a missing/damaged transaction, alternate
+lifecycle suffix, extra event, or non-active projection rejects.
+The resulting frozen candidate is also exercised through the public
+`BeginValidation` consumer so this contract is not considered complete at the
+receipt-production boundary alone.
+
 Admission consumes the canonical preparation result once per exact unit input.
 Exact replay and owner recovery revalidate that result; stale or conflicting
 evidence stops for independent rescue. A successful admission resumes the

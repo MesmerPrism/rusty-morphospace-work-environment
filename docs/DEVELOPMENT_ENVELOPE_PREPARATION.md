@@ -50,3 +50,12 @@ repeated lifecycle transitions require a new owner decision. A durable first
 admission intent consumes ordinary use even if the state and event ledger are
 jointly rolled back, and replacement recovery/replay continues to revalidate
 the exact predecessor chain after its own intent exists.
+
+For the replacement's later candidate Freeze, the preparation binding remains
+valid only through the exact contiguous owner lifecycle: replacement Admission,
+ordinary Ready, then ordinary Claim. Freeze authenticates each committed
+intent/completion/event and their state/unit hash chain through the exact live
+active projection. It does not accept an arbitrary later state merely because
+the replacement admission was once valid; any intervening event, damaged
+transaction, different unit, adoption-bearing Claim, or non-active tail fails
+closed.
