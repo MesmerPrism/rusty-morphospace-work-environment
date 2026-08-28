@@ -2058,7 +2058,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
                     -ActionSlug 'proposal-retired' `
                     -Timestamp $Timestamp `
                     -EventType 'state-transition' `
-                    -Summary "Retired the exact admitted proposed unit because its contract is invalid; preserved its admission chain and reserved replacement identity '$ReplacementUnitId' for separate admission." `
+                    -Summary "Retired the exact admitted proposed unit because its contract is invalid; preserved its admission chain and recorded intended replacement identity '$ReplacementUnitId' for separate admission." `
                     -Receipts @($receiptReference)
             }
         }
