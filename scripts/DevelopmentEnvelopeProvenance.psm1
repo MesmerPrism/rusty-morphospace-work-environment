@@ -15,7 +15,11 @@ function Assert-PreparationProvenanceCommittedTransaction {
    $workspace=[IO.Path]::GetFullPath($root);$intentRelative=Get-MorphospaceLedgerPath $workspace $id intent;$completionRelative=Get-MorphospaceLedgerPath $workspace $id completion
    $intentAbsolute=Resolve-MorphospaceWorkspacePath $workspace $intentRelative -RequireLeaf;$completionAbsolute=Resolve-MorphospaceWorkspacePath $workspace $completionRelative
    $intent=Read-MorphospaceLedgerJson $intentAbsolute;Assert-MorphospaceLedgerIntent $intent $id;Assert-MorphospaceLedgerArtifactNamespace $workspace $id $intent
-   if(-not[IO.File]::Exists($completionAbsolute)){if($incomplete){return};throw 'Prepared-envelope transition completion is missing.'}
+   if(-not[IO.File]::Exists($completionAbsolute)){
+    if(-not$incomplete){throw 'Prepared-envelope transition completion is missing.'}
+    for($artifactIndex=0;$artifactIndex-lt@($intent.artifacts).Count;$artifactIndex++){$artifact=@($intent.artifacts)[$artifactIndex];$stageRelative=Get-MorphospaceLedgerArtifactStagePath $id $artifactIndex;$stageAbsolute=Resolve-MorphospaceWorkspacePath $workspace $stageRelative;$targetAbsolute=Resolve-MorphospaceWorkspacePath $workspace ([string]$artifact.path);$stagePresent=[IO.File]::Exists($stageAbsolute);$targetPresent=[IO.File]::Exists($targetAbsolute);if($stagePresent-eq$targetPresent){throw 'Prepared-envelope incomplete transition does not own exactly one staged or installed artifact projection.'};$ownedArtifact=if($stagePresent){$stageAbsolute}else{$targetAbsolute};if((Get-MorphospaceFileSha256 $ownedArtifact)-cne[string]$artifact.sha256){throw 'Prepared-envelope incomplete transition artifact differs from its intent.'}}
+    return
+   }
    if($null-eq$successor-and-not$historical){Assert-MorphospaceLedgerCommittedCompletion $workspace $id $intentRelative $intentAbsolute $intent $completionAbsolute;return}
    $completion=Read-MorphospaceLedgerJson $completionAbsolute;Assert-MorphospaceExactPropertySet $completion @('schema','transaction_id','completed_at','intent','state_sha256','unit_sha256','event_id','status') @() 'Prepared-envelope historical transition completion';Assert-MorphospaceExactPropertySet $completion.intent @('role','path','schema','sha256') @() 'Prepared-envelope historical transition completion intent reference'
    if([string]$completion.schema-cne'rusty.morphospace.workflow.transition_ledger_completion.v1'-or[string]$completion.transaction_id-cne$id-or[string]$completion.status-cne'committed'-or[string]$completion.intent.role-cne'transition-ledger-intent'-or[string]$completion.intent.path-cne$intentRelative-or[string]$completion.intent.schema-cne[string]$intent.schema-or[string]$completion.intent.sha256-cne(Get-MorphospaceFileSha256 $intentAbsolute)-or[string]$completion.state_sha256-cne[string]$intent.target.state.sha256-or[string]$completion.unit_sha256-cne[string]$intent.target.unit.sha256-or[string]$completion.event_id-cne[string]$intent.event.event_id){throw 'Prepared-envelope historical transition completion is not bound to its exact intent.'}
@@ -34,6 +38,7 @@ function Test-PreparationProvenanceHasAdmissionConsumer {
  )
  $transactionRoot=Resolve-MorphospaceWorkspacePath $Workspace 'receipts/transactions'
  if(-not[IO.Directory]::Exists($transactionRoot)){return $false}
+ $directConsumers=0
  foreach($intentFile in @(Get-ChildItem -LiteralPath $transactionRoot -File -Filter '*-admitted-transition.intent.json')){
   $transactionId=$intentFile.Name.Substring(0,$intentFile.Name.Length-'.intent.json'.Length)
   Assert-PreparationProvenanceCommittedTransaction -Workspace $Workspace -TransactionId $transactionId -AllowHistorical -AllowIncomplete
@@ -42,15 +47,17 @@ function Test-PreparationProvenanceHasAdmissionConsumer {
   if(@($consumerIntent.artifacts).Count-ne1){throw 'Prepared-envelope admission consumer does not own exactly one admission artifact.'}
   try{$consumer=ConvertFrom-MorphospaceProtocolJsonBytes -Bytes ([Convert]::FromBase64String([string]$consumerIntent.artifacts[0].bytes_base64)) -Context 'prepared-envelope admission consumer'}catch{throw "Prepared-envelope admission consumer artifact is invalid. $($_.Exception.Message)"}
   if([string]$consumer.schema-cne'rusty.morphospace.workflow.development_unit_admission.v1'){throw 'Prepared-envelope admission consumer artifact has an unexpected schema.'}
-  if((Get-PreparationProvenanceCanonicalHash $consumer.preparation 'Prepared-envelope admission consumer preparation')-cne(Get-PreparationProvenanceCanonicalHash $Admission.preparation 'Requested prepared-envelope admission preparation')){continue}
-  if([string]$consumer.project_id-cne[string]$Admission.project_id-or
-     [string]$consumerIntent.event.project_id-cne[string]$Admission.project_id-or
-     [string]$consumerIntent.expected.event_tail_id-cne[string]$PreparationIntent.event.event_id-or
-     [string]$consumerIntent.pre.state.sha256-cne[string]$PreparationIntent.target.state.sha256-or
-     [int]$consumerIntent.event.sequence-ne([int]$PreparationIntent.event.sequence+1)){throw 'Prepared-envelope admission consumer does not bind the exact preparation transition.'}
-  return $true
+  $completionPath=Resolve-MorphospaceWorkspacePath $Workspace "receipts/transactions/$transactionId.completion.json";$completed=[IO.File]::Exists($completionPath)
+  $preparationMatches=(Get-PreparationProvenanceCanonicalHash $consumer.preparation 'Prepared-envelope admission consumer preparation')-ceq(Get-PreparationProvenanceCanonicalHash $Admission.preparation 'Requested prepared-envelope admission preparation')
+  if(-not$completed){if([string]$consumer.admission_id-cne[string]$Admission.admission_id){throw 'A different incomplete development-unit admission already owns workspace transition authority.'};if(-not$preparationMatches){throw 'The current incomplete development-unit admission contradicts its requested preparation identity.'}}
+  $directTopology=[string]$consumerIntent.event.project_id-ceq[string]$Admission.project_id-and[string]$consumerIntent.expected.event_tail_id-ceq[string]$PreparationIntent.event.event_id-and[string]$consumerIntent.pre.state.sha256-ceq[string]$PreparationIntent.target.state.sha256-and[int]$consumerIntent.event.sequence-eq([int]$PreparationIntent.event.sequence+1)
+  if(-not$preparationMatches){if($directTopology){throw 'Prepared-envelope admission consumer artifact contradicts its direct preparation topology.'};continue}
+  if([string]$consumer.project_id-cne[string]$Admission.project_id-or[string]$consumerIntent.event.project_id-cne[string]$Admission.project_id){throw 'Prepared-envelope admission consumer uses the wrong project identity.'}
+  if($directTopology){$directConsumers++;continue}
+  if([string]$consumer.admission_id-cne[string]$Admission.admission_id){throw 'Prepared-envelope replacement admission is already reserved by a different admission identity.'}
  }
- return $false
+ if($directConsumers-gt1){throw 'Prepared envelope has more than one direct admission consumer.'}
+ return $directConsumers-eq1
 }
 function Get-PreparationProvenanceAdmissionPrefix {
  [CmdletBinding()]param(
