@@ -21,6 +21,13 @@ Preparation uses its own v1 intent, completion, receipt, and event. Each binds
 the complete multi-document CAS set. A matching interrupted transaction may
 resume; a changed input, preimage, artifact, event prefix, or target rejects.
 
+The v1 preparation receipt and intent bind the source-composition document by
+canonical JSON SHA-256, because that identity remains stable across harmless
+JSON serialization differences. The transaction artifact also retains the
+exact authored bytes. These are distinct from the raw-file SHA-256 that a later
+admission supplies for its live workspace preimage; neither hash domain may be
+substituted for the other.
+
 `AdmitDevelopmentUnit` subsequently binds this exact receipt and its generated
 source-composition lock. It may only prove that the authored future unit is a
 subset of the already prepared envelope; it must not discover or project new

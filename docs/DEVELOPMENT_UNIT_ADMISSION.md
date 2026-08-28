@@ -16,6 +16,12 @@ composition, repository map, state, and event ledger. Admission binds the
 prepared project and feature lock as immutable preimages: it never accepts a
 projection of either document and may not rewrite project, feature, root,
 effect, permission, build, or device authority.
+For the prepared source composition, `preparation.source_composition_sha256`
+and `expected.source_composition_sha256` are raw-file SHA-256 bindings to the
+exact live workspace bytes. The preparation receipt and intent artifact retain
+their canonical-JSON SHA-256 identity separately. Admission must verify both
+domains plus the intent's exact base64 bytes; canonical and raw hashes are not
+interchangeable.
 The transaction creates the unit and receipt together through the standard
 typed transition-ledger intent/completion shape; its durable intent may be
 completed after an interruption. Exact replays are idempotent, while a reused

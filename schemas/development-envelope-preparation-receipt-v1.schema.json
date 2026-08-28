@@ -8,7 +8,7 @@
     "schema": { "const": "rusty.morphospace.workflow.development_envelope_preparation_receipt.v1" },
     "preparation_id": { "$ref": "#/$defs/id" }, "project_id": { "$ref": "#/$defs/id" }, "predecessor_unit_id": { "$ref": "#/$defs/id" }, "input_sha256": { "$ref": "#/$defs/hash" },
     "envelope": { "type": "object" }, "project_sha256": { "$ref": "#/$defs/hash" }, "feature_lock_sha256": { "$ref": "#/$defs/hash" },
-    "source_composition": { "type": "object", "additionalProperties": false, "required": ["path", "sha256"], "properties": { "path": { "$ref": "#/$defs/path" }, "sha256": { "$ref": "#/$defs/hash" } } },
+    "source_composition": { "type": "object", "additionalProperties": false, "required": ["path", "sha256"], "properties": { "path": { "$ref": "#/$defs/path" }, "sha256": { "$ref": "#/$defs/hash", "description": "Canonical-JSON SHA-256 of the prepared source-composition document; this is not its raw-file hash." } } },
     "does_not_prove": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
   },
   "$defs": { "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" }, "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }, "path": { "type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$" } }
