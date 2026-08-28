@@ -8,6 +8,42 @@ $script:MorphospaceTransitionIntentV3 = 'rusty.morphospace.workflow.transition_l
 function Get-MorphospaceLedgerDocumentHash { param([object]$Value) Get-MorphospaceCanonicalJsonSha256 $Value }
 function Get-MorphospaceLedgerPath { param([string]$WorkspaceRoot,[string]$TransactionId,[ValidateSet('intent','completion')][string]$Kind) "receipts/transactions/$TransactionId.$Kind.json" }
 function Read-MorphospaceLedgerJson { param([string]$Path) if(-not[IO.File]::Exists($Path)){throw "Transition artifact is missing: $Path"};Read-MorphospaceProtocolJson -Path $Path }
+function Get-MorphospaceLedgerReceiptBoundPreUnitRawSha256 {
+    param([object]$Intent)
+    $unitId=[string]$Intent.event.unit_id
+    $eventId=[string]$Intent.event.event_id
+    if(-not$unitId-or$eventId-cnotmatch("^"+[regex]::Escape("$unitId-proposal-retired-")+"[0-9]{4}$")){return ''}
+    if([string]$Intent.schema-cne$script:MorphospaceTransitionIntentV1-or
+       [string]$Intent.event.event_type-cne'state-transition'-or
+       @($Intent.event.receipts).Count-ne1-or@($Intent.artifacts).Count-ne1-or
+       [string]$Intent.event.receipts[0]-cne[string]$Intent.artifacts[0].path){
+        throw 'Proposed-unit retirement transition lacks its exact receipt artifact binding.'
+    }
+    try{$receiptBytes=[Convert]::FromBase64String([string]$Intent.artifacts[0].bytes_base64)}
+    catch{throw 'Proposed-unit retirement transition receipt payload is not valid base64.'}
+    try{$receipt=ConvertFrom-MorphospaceProtocolJsonBytes -Bytes $receiptBytes -Context 'proposed-unit retirement transition receipt'}
+    catch{throw "Proposed-unit retirement transition receipt is invalid: $($_.Exception.Message)"}
+    $receiptSchema=Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'schemas\work-unit-automation-receipt.schema.json'
+    if(-not(Test-Json -Json ($receipt|ConvertTo-Json -Depth 64 -Compress) -SchemaFile $receiptSchema)){
+        throw 'Proposed-unit retirement transition receipt does not satisfy its public schema.'
+    }
+    $pre=$receipt.proposed_retirement.authenticated_preimage
+    if([string]$receipt.action-cne'RetireProposed'-or$receipt.executed-ne$true-or
+       [string]$receipt.transition-cne'proposed-to-superseded-retired'-or
+       [string]$receipt.project_id-cne[string]$Intent.event.project_id-or
+       [string]$receipt.unit_id-cne$unitId-or[string]$receipt.event_id-cne$eventId-or
+       [string]$receipt.status_before-cne'proposed'-or[string]$receipt.status_after-cne'superseded'-or
+       $null-ne$receipt.current_unit_before-or$null-ne$receipt.current_unit_after-or
+       [string]$pre.state_sha256-cne[string]$Intent.pre.state.sha256-or
+       [string]$pre.unit_sha256-cne[string]$Intent.pre.unit.sha256-or
+       [string]$pre.events_sha256-cne[string]$Intent.expected.events_sha256-or
+       [int64]$pre.events_length-ne[int64]$Intent.expected.events_length-or
+       [string]$pre.event_tail_id-cne[string]$Intent.expected.event_tail_id-or
+       [string]$pre.unit_raw_sha256-cnotmatch'^[0-9a-f]{64}$'){
+        throw 'Proposed-unit retirement transition receipt does not bind its exact authenticated preimage.'
+    }
+    return [string]$pre.unit_raw_sha256
+}
 function Write-MorphospaceLedgerProjection { param([string]$WorkspaceRoot,[string]$RelativePath,[object]$Document) Write-MorphospaceManagedProtocolJsonAtomic -WorkspaceRoot $WorkspaceRoot -RelativePath $RelativePath -Value $Document }
 function Get-MorphospaceLedgerEventLineBytes { param([object]$Event)
     [Text.UTF8Encoding]::new($false).GetBytes(($Event|ConvertTo-Json -Depth 32 -Compress)+"`n")
@@ -568,6 +604,11 @@ function Complete-MorphospaceTransitionLedger {
         $currentUnit=Read-MorphospaceProtocolJson -Path $unitAbsolute
         $currentStateHash=Get-MorphospaceLedgerDocumentHash $currentState
         $currentUnitHash=Get-MorphospaceLedgerDocumentHash $currentUnit
+        $receiptBoundPreUnitRawSha256=Get-MorphospaceLedgerReceiptBoundPreUnitRawSha256 $intent
+        if($receiptBoundPreUnitRawSha256-and$currentUnitHash-ceq[string]$intent.pre.unit.sha256-and
+           (Get-MorphospaceFileSha256 $unitAbsolute)-cne$receiptBoundPreUnitRawSha256){
+            throw "Transition $TransactionId failed durable raw pre-unit byte-hash CAS."
+        }
         if($intent.PSObject.Properties.Name-contains'expected'){
             $allowedStateHashes=@([string]$intent.expected.state_sha256,[string]$intent.target.state.sha256)
             $allowedUnitHashes=@([string]$intent.expected.unit_sha256,[string]$intent.target.unit.sha256)
@@ -664,6 +705,7 @@ function Start-MorphospaceTransitionLedger {
             if([string]$expectation.expected-cnotmatch'^[0-9a-f]{64}$'){throw "Expected $([string]$expectation.name) SHA-256 is not canonical lowercase hex."}
             if([string]$expectation.expected-cne[string]$expectation.actual){throw "Transition $TransactionId expected $([string]$expectation.name) SHA-256 does not match the mutex-protected current document."}
         }
+        $preUnitRawSha256=''
         if($ExpectedPreUnitRawSha256){
             if($ExpectedPreUnitRawSha256-cnotmatch'^[0-9a-f]{64}$'){throw 'Expected pre-unit raw SHA-256 is not canonical lowercase hex.'}
             $preUnitRawSha256=Get-MorphospaceFileSha256 $unitAbsolute
@@ -745,6 +787,9 @@ function Start-MorphospaceTransitionLedger {
             if($artifact.sha256-and$hash-cne[string]$artifact.sha256){throw "Transition artifact input hash mismatch: $source"}
             $ownedArtifacts+=,[pscustomobject][ordered]@{path=(ConvertTo-MorphospaceProtocolRelativePath ([string]$artifact.path));sha256=$hash;bytes_base64=[Convert]::ToBase64String($bytes)}
         }
+        if($ExpectedPreUnitRawSha256-and($null-ne$supersessionOldUnitBinding-or@($ownedProjections).Count)){
+            throw 'Raw pre-unit-bound transitions may not combine supersession or additional projections.'
+        }
         $intentRelative=Get-MorphospaceLedgerPath $workspace $TransactionId intent
         $intentFields=[ordered]@{
             schema=$(if($null-ne$supersessionOldUnitBinding){$script:MorphospaceTransitionIntentV2}elseif(@($ownedProjections).Count){$script:MorphospaceTransitionIntentV3}else{$script:MorphospaceTransitionIntentV1})
@@ -780,6 +825,9 @@ function Start-MorphospaceTransitionLedger {
         $intentFields.status='prepared'
         $intent=[pscustomobject]$intentFields
         Assert-MorphospaceLedgerIntent $intent $TransactionId
+        if($ExpectedPreUnitRawSha256-and(Get-MorphospaceLedgerReceiptBoundPreUnitRawSha256 $intent)-cne$ExpectedPreUnitRawSha256){
+            throw 'Raw pre-unit CAS is not durably bound by the transition-owned receipt artifact.'
+        }
         Assert-MorphospaceLedgerArtifactNamespace $workspace $TransactionId $intent
         [void](Assert-MorphospaceLedgerEventPlacement $eventsAbsolute $intent)
         $stagePaths=@()
