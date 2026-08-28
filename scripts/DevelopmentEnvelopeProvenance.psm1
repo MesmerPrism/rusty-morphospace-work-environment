@@ -66,20 +66,78 @@ function Get-PreparationProvenanceAdmissionPrefix {
   [Parameter(Mandatory)][object]$State
  )
  $stateHash=Get-PreparationProvenanceCanonicalHash $State 'Prepared-envelope replacement recovery state'
- if(@([string]$AdmissionIntent.pre.state.sha256,[string]$AdmissionIntent.target.state.sha256)-cnotcontains$stateHash){throw 'Prepared-envelope replacement recovery state is outside its admission intent.'}
+ $admissionBoundary=@([string]$AdmissionIntent.pre.state.sha256,[string]$AdmissionIntent.target.state.sha256)-ccontains$stateHash
  $ledgerPath=Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1';$ledger=@(Get-Module -All|Where-Object{$_.Path-eq$ledgerPath}|Select-Object -Last 1)[0]
  if($null-eq$ledger){throw 'Prepared-envelope transition-ledger validator is unavailable.'}
  $lock=Enter-MorphospaceWorkspaceMutex -WorkspaceRoot $Workspace
  try{
-  return &$ledger {
-   param($root,$intent)
+  $projection=&$ledger {
+   param($root,$intent,$historical)
    $workspace=[IO.Path]::GetFullPath($root);$eventsPath=Resolve-MorphospaceWorkspacePath $workspace 'iteration-events.jsonl' -RequireLeaf
    Assert-MorphospaceLedgerIntent $intent ([string]$intent.transaction_id);Assert-MorphospaceLedgerArtifactNamespace $workspace ([string]$intent.transaction_id) $intent
-   $present=Assert-MorphospaceLedgerEventPlacement $eventsPath $intent;$snapshot=Get-MorphospaceLedgerSnapshot $eventsPath;$events=@($snapshot.events)
+   $present=if($historical){Assert-MorphospaceLedgerEventPlacement $eventsPath $intent -AllowHistorical -RequirePresent}else{Assert-MorphospaceLedgerEventPlacement $eventsPath $intent};$snapshot=Get-MorphospaceLedgerSnapshot $eventsPath;$events=@($snapshot.events)
    $prefix=if($present-and$events.Count-gt1){@($events[0..($events.Count-2)])}elseif($present){@()}else{@($events)}
-   [pscustomobject]@{events=$prefix;event_present=[bool]$present}
-  } $Workspace $AdmissionIntent
+   [pscustomobject]@{events=$events;prefix=$prefix;event_present=[bool]$present}
+  } $Workspace $AdmissionIntent (-not$admissionBoundary)
  }finally{Exit-MorphospaceWorkspaceMutex $lock}
+
+ if($admissionBoundary){
+  return [pscustomobject]@{events=@($projection.prefix);event_present=[bool]$projection.event_present}
+ }
+
+ if(-not[bool]$projection.event_present){throw 'Prepared-envelope replacement recovery state is outside its admission intent.'}
+ $events=@($projection.events);$admissionEventId=[string]$AdmissionIntent.event.event_id;$admissionIndexes=@(for($index=0;$index-lt$events.Count;$index++){if([string]$events[$index].event_id-ceq$admissionEventId){$index}})
+ if($admissionIndexes.Count-ne1){throw 'Prepared-envelope replacement admission event placement is ambiguous.'}
+ $admissionIndex=[int]$admissionIndexes[0]
+ $suffixCount=$events.Count-($admissionIndex+1)
+ if($suffixCount-notin@(2,3)){throw 'Prepared-envelope replacement Freeze requires exactly the owner-produced Ready and Claim suffix, optionally followed by its own Freeze.'}
+
+ $admissionEvent=$events[$admissionIndex];$readyEvent=$events[$admissionIndex+1];$claimEvent=$events[$admissionIndex+2]
+ $unitId=[string]$AdmissionIntent.event.unit_id;$projectId=[string]$AdmissionIntent.event.project_id;$escapedUnitId=[regex]::Escape($unitId)
+ if([string]$readyEvent.project_id-cne$projectId-or[string]$readyEvent.unit_id-cne$unitId-or[string]$readyEvent.event_type-cne'state-transition'-or
+    [string]$readyEvent.event_id-cnotmatch"^$escapedUnitId-ready-[0-9]{4}$"-or[int]$readyEvent.sequence-ne([int]$admissionEvent.sequence+1)-or
+    [string]$readyEvent.summary-cne'Reviewed the bounded proposal and made it claimable without expanding its repositories, paths, or prerequisites.'-or@($readyEvent.receipts).Count-ne0){throw 'Prepared-envelope replacement Ready event is not exact.'}
+ if([string]$claimEvent.project_id-cne$projectId-or[string]$claimEvent.unit_id-cne$unitId-or[string]$claimEvent.event_type-cne'state-transition'-or
+    [string]$claimEvent.event_id-cnotmatch"^$escapedUnitId-claimed-[0-9]{4}$"-or[int]$claimEvent.sequence-ne([int]$readyEvent.sequence+1)-or
+    [string]$claimEvent.summary-cne'Claimed one ready iteration unit without expanding repository or path scope.'-or@($claimEvent.receipts).Count-ne0){throw 'Prepared-envelope replacement Claim event is not exact.'}
+
+ $readyTransactionId="$([string]$readyEvent.event_id)-transition";$claimTransactionId="$([string]$claimEvent.event_id)-transition"
+ $readyIntent=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $Workspace "receipts/transactions/$readyTransactionId.intent.json" -RequireLeaf)
+ $claimIntent=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $Workspace "receipts/transactions/$claimTransactionId.intent.json" -RequireLeaf)
+ $unitRelative="iteration-units/$unitId.json";$liveUnit=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $Workspace $unitRelative -RequireLeaf)
+ $freezeEvent=if($suffixCount-eq3){$events[$admissionIndex+3]}else{$null};$freezeIntent=$null
+ Assert-PreparationProvenanceCommittedTransaction -Workspace $Workspace -TransactionId ([string]$AdmissionIntent.transaction_id) -SuccessorIntent $readyIntent
+ Assert-PreparationProvenanceCommittedTransaction -Workspace $Workspace -TransactionId $readyTransactionId -SuccessorIntent $claimIntent
+ if($null-eq$freezeEvent){
+  Assert-PreparationProvenanceCommittedTransaction -Workspace $Workspace -TransactionId $claimTransactionId
+ }else{
+  if(-not($liveUnit.PSObject.Properties.Name-contains'candidate_freeze')){throw 'Prepared-envelope replacement post-Claim event is not an owned candidate Freeze.'}
+  $freezeId=[string]$liveUnit.candidate_freeze.freeze_id;$freezeReceipt=[string]$liveUnit.candidate_freeze.receipt_path
+  if([string]$freezeEvent.project_id-cne$projectId-or[string]$freezeEvent.unit_id-cne$unitId-or[string]$freezeEvent.event_type-cne'state-transition'-or
+     [string]$freezeEvent.event_id-cne"$freezeId-recorded"-or[int]$freezeEvent.sequence-ne([int]$claimEvent.sequence+1)-or
+     [string]$freezeEvent.summary-cne'Froze the exact candidate closure before validation.'-or@($freezeEvent.receipts).Count-ne1-or[string]$freezeEvent.receipts[0]-cne$freezeReceipt){throw 'Prepared-envelope replacement candidate Freeze event is not exact.'}
+  $freezeTransactionId="$([string]$freezeEvent.event_id)-transition";$freezeIntent=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $Workspace "receipts/transactions/$freezeTransactionId.intent.json" -RequireLeaf)
+  Assert-PreparationProvenanceCommittedTransaction -Workspace $Workspace -TransactionId $claimTransactionId -SuccessorIntent $freezeIntent
+  Assert-PreparationProvenanceCommittedTransaction -Workspace $Workspace -TransactionId $freezeTransactionId
+ }
+
+ if([string]$readyIntent.unit.path-cne$unitRelative-or[string]$claimIntent.unit.path-cne$unitRelative-or
+    (Get-PreparationProvenanceCanonicalHash $readyIntent.event 'Prepared-envelope replacement Ready intent event')-cne(Get-PreparationProvenanceCanonicalHash $readyEvent 'Prepared-envelope replacement live Ready event')-or
+    (Get-PreparationProvenanceCanonicalHash $claimIntent.event 'Prepared-envelope replacement Claim intent event')-cne(Get-PreparationProvenanceCanonicalHash $claimEvent 'Prepared-envelope replacement live Claim event')-or
+    [string]$readyIntent.target.unit.document.status-cne'ready'-or[string]$readyIntent.target.state.document.next_ready_unit-cne$unitId-or
+    [string]$claimIntent.target.unit.document.status-cne'active'-or[string]$claimIntent.target.state.document.current_unit-cne$unitId-or$null-ne$claimIntent.target.state.document.next_ready_unit-or
+    [string]$liveUnit.status-cne'active'-or[string]$liveUnit.unit_id-cne$unitId){throw 'Prepared-envelope replacement Ready and Claim transactions do not own the exact live projection.'}
+ $terminalEvent=if($null-ne$freezeEvent){$freezeEvent}else{$claimEvent};$terminalIntent=if($null-ne$freezeIntent){$freezeIntent}else{$claimIntent}
+ if([string]$State.project_id-cne$projectId-or[string]$State.current_unit-cne$unitId-or$null-ne$State.next_ready_unit-or[string]$State.last_event_id-cne[string]$terminalEvent.event_id-or
+    [string]$terminalIntent.target.state.sha256-cne$stateHash-or[string]$terminalIntent.target.unit.sha256-cne(Get-PreparationProvenanceCanonicalHash $liveUnit 'Prepared-envelope replacement live terminal unit')){throw 'Prepared-envelope replacement live ownership does not match its exact owner suffix.'}
+ if($null-ne$freezeIntent-and([string]$freezeIntent.unit.path-cne$unitRelative-or
+    (Get-PreparationProvenanceCanonicalHash $freezeIntent.event 'Prepared-envelope replacement Freeze intent event')-cne(Get-PreparationProvenanceCanonicalHash $freezeEvent 'Prepared-envelope replacement live Freeze event')-or
+    [string]$freezeIntent.target.unit.document.candidate_freeze.freeze_id-cne[string]$liveUnit.candidate_freeze.freeze_id-or
+    [string]$freezeIntent.target.unit.document.candidate_freeze.receipt_path-cne[string]$liveUnit.candidate_freeze.receipt_path-or
+    [string]$freezeIntent.target.unit.document.candidate_freeze.receipt_sha256-cne[string]$liveUnit.candidate_freeze.receipt_sha256)){throw 'Prepared-envelope replacement Freeze transaction does not own the exact candidate marker.'}
+
+ $prefix=if($admissionIndex-gt0){@($events[0..($admissionIndex-1)])}else{@()}
+ return [pscustomobject]@{events=$prefix;event_present=$true}
 }
 function Test-MorphospacePreparedEnvelopeReplacementSuffix {
  [CmdletBinding()]param(
@@ -92,7 +150,8 @@ function Test-MorphospacePreparedEnvelopeReplacementSuffix {
   [Parameter(Mandatory)][object[]]$Events,
   [object]$AdmissionIntent=$null
  )
- if($null-ne$State.current_unit-or$null-ne$State.next_ready_unit){throw 'Prepared-envelope replacement admission requires an idle project.'}
+ $claimedReplacement=$null-ne$AdmissionIntent-and[string]$State.current_unit-ceq[string]$Admission.unit_id-and$null-eq$State.next_ready_unit
+ if(-not$claimedReplacement-and($null-ne$State.current_unit-or$null-ne$State.next_ready_unit)){throw 'Prepared-envelope replacement admission requires an idle project.'}
  if($Events.Count-lt3){throw 'Prepared-envelope replacement admission lacks its exact transition suffix.'}
 
  $preparationEvent=$Events[$Events.Count-3];$admissionEvent=$Events[$Events.Count-2];$retirementEvent=$Events[$Events.Count-1]
