@@ -46,4 +46,7 @@ reuse this preparation only when the live ledger has the exact contiguous
 preparation, first-admission, and retirement suffix, the state remains idle,
 and both completed transition chains plus the original preparation/source
 identity validate. This is not a general stale-state waiver: intervening or
-repeated lifecycle transitions require a new owner decision.
+repeated lifecycle transitions require a new owner decision. A durable first
+admission intent consumes ordinary use even if the state and event ledger are
+jointly rolled back, and replacement recovery/replay continues to revalidate
+the exact predecessor chain after its own intent exists.

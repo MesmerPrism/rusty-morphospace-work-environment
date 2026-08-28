@@ -53,7 +53,10 @@ the superseded unit, an idle live state, and the unchanged preparation/source
 identity. Any intervening event, missing or damaged evidence, different named
 replacement, changed project/feature/source binding, or a second retirement
 chain rejects. Ordinary admission retains strict equality with the original
-prepared state.
+prepared state, and a durable admission intent remains consumption evidence
+even if both live state and event projections are rolled back. Replacement
+recovery and replay revalidate the complete predecessor admission/retirement
+chain at every partial and completed transaction boundary.
 `RetireProposed` cannot withdraw a Ready unit, retire an active unit, repair a
 candidate in place, create the replacement, or authorize source/build/device
 mutation.
