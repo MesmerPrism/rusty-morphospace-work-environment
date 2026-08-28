@@ -376,10 +376,26 @@ try {
     foreach ($checkId in @('affected-selector-selftest','affected-topology-selftest','affected-reuse-selftest','work-environment-deep')) { Assert-True (@($archiveEnvelopePlan.selected_checks.check_id) -cnotcontains $checkId) "W-017B-shaped archive envelope change incorrectly selected '$checkId'." }
     foreach ($reasonCode in @('ambiguous-path-mapping','unmapped-path')) { Assert-True (@($archiveEnvelopePlan.reason_codes) -cnotcontains $reasonCode) "W-017B-shaped archive envelope change retained '$reasonCode'." }
 
+    # Development-envelope owner and focused test changes must select their
+    # direct contract/integration closure without paying the historical Deep
+    # aggregate. This is the exact W-019 candidate shape.
+    $developmentEnvelopeBase = $archiveEnvelopeHead
+    Write-Utf8 (Join-Path $fixture 'scripts/DevelopmentEnvelopePreparation.psm1') "# development envelope owner change`n"
+    Write-Utf8 (Join-Path $fixture 'scripts/Test-DevelopmentEnvelopePreparation.ps1') "# development envelope focused test change`n"
+    [void](Invoke-TestGit $fixture @('add', 'scripts/DevelopmentEnvelopePreparation.psm1', 'scripts/Test-DevelopmentEnvelopePreparation.ps1'))
+    [void](Invoke-TestGit $fixture @('commit', '-m', 'development envelope preparation change'))
+    $developmentEnvelopeHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
+    $developmentEnvelopePlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $developmentEnvelopeBase -HeadRevision $developmentEnvelopeHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+    Assert-True ($developmentEnvelopePlan.selection_mode -ceq 'affected') 'Development-envelope preparation change did not retain affected selection.'
+    Assert-True ($developmentEnvelopePlan.effective_tier -ceq 'standard') 'Development-envelope preparation change did not retain Standard effective tier.'
+    foreach ($checkId in @('public-boundary','workflow-contracts','development-envelope-preparation','work-unit-automation')) { Assert-True (@($developmentEnvelopePlan.selected_checks.check_id) -ccontains $checkId) "Development-envelope preparation change did not retain bounded '$checkId' coverage." }
+    Assert-True (@($developmentEnvelopePlan.selected_checks.check_id) -cnotcontains 'work-environment-deep') "Development-envelope preparation change incorrectly selected 'work-environment-deep'."
+    foreach ($reasonCode in @('ambiguous-path-mapping','unmapped-path')) { Assert-True (@($developmentEnvelopePlan.reason_codes) -cnotcontains $reasonCode) "Development-envelope preparation change retained '$reasonCode'." }
+
     # The aggregate command is itself a distinct bounded path set.  Its direct
     # change must still select the registered Deep aggregate route without an
     # ambiguous or unmapped fallback.
-    $workEnvironmentAggregateBase = $archiveEnvelopeHead
+    $workEnvironmentAggregateBase = $developmentEnvelopeHead
     Write-Utf8 (Join-Path $fixture 'scripts/Test-WorkEnvironment.ps1') "# work environment aggregate change`n"
     [void](Invoke-TestGit $fixture @('add', 'scripts/Test-WorkEnvironment.ps1'))
     [void](Invoke-TestGit $fixture @('commit', '-m', 'work environment aggregate change'))
