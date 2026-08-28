@@ -44,7 +44,19 @@ admission artifact hashes, a distinct absent replacement identity, and one
 binding hash. Execution must replay every identity, writes its receipt through
 the transition ledger, changes only the old unit to `superseded`, and appends
 one retirement event. The original admission bytes and event remain immutable;
-the replacement is separately authored and admitted under a new unit ID.
+the replacement is separately authored and admitted under a new unit ID. That
+replacement may consume the same preparation only through one exact direct
+suffix: the preparation event, its first admission event, and the completed
+`RetireProposed` event naming the replacement. Admission authenticates both
+transition-ledger intent/completion pairs, the retirement receipt and binding,
+the superseded unit, an idle live state, and the unchanged preparation/source
+identity. Any intervening event, missing or damaged evidence, different named
+replacement, changed project/feature/source binding, or a second retirement
+chain rejects. Ordinary admission retains strict equality with the original
+prepared state, and a durable admission intent remains consumption evidence
+even if both live state and event projections are rolled back. Replacement
+recovery and replay revalidate the complete predecessor admission/retirement
+chain at every partial and completed transaction boundary.
 `RetireProposed` cannot withdraw a Ready unit, retire an active unit, repair a
 candidate in place, create the replacement, or authorize source/build/device
 mutation.

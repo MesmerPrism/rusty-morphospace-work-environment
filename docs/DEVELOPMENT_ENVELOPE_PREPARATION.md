@@ -39,4 +39,14 @@ that result. Exact replay revalidates the same durable result; an interrupted
 owner transaction resumes only its own intent/completion path. A conflicting
 replay, stale target, changed source lock, or changed repository-role set fails
 closed for independent owner rescue, not an agent-made rewrite. Once bound, the
-agent continues through ordinary Ready/Inspect/Claim and Freeze.
+agent continues through ordinary Ready/Inspect/Claim and Freeze. If that first
+immutable proposal is rejected before Ready, one completed `RetireProposed`
+transaction may name a separately authored replacement. The replacement may
+reuse this preparation only when the live ledger has the exact contiguous
+preparation, first-admission, and retirement suffix, the state remains idle,
+and both completed transition chains plus the original preparation/source
+identity validate. This is not a general stale-state waiver: intervening or
+repeated lifecycle transitions require a new owner decision. A durable first
+admission intent consumes ordinary use even if the state and event ledger are
+jointly rolled back, and replacement recovery/replay continues to revalidate
+the exact predecessor chain after its own intent exists.
