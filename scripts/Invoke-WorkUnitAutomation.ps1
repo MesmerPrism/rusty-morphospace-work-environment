@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("Inspect", "PrepareDevelopmentEnvelope", "ArchiveHistoryCheckpoint", "AdmitDevelopmentUnit", "Ready", "WithdrawReady", "Claim", "Resume", "CompleteInstructionSurfaces", "AmendActiveWriteScope", "FreezeCandidate", "MaterializeInheritedCandidate", "CorrectActiveReadOnlyDependencies", "CorrectActiveProjectRepositoryScope", "CorrectActiveUnitContract", "RecordHistoricalUnitCompatibilityProjection", "BeginValidation", "ReturnToActive", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RetirePreparedPush", "ReconcilePreparedPublication", "ReconcilePreparedPushTransactionSuffix", "ResolveBlocker", "CorrectResolvedBlockerEvidence", "CorrectHistoricalBlockerResolutionIntentBinding", "CorrectCompletedTransitionSemantics", "NormalizeEventLedgerPrefix", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix", "ReconcileExecutedPreparedPublication")]
+    [ValidateSet("Inspect", "PrepareDevelopmentEnvelope", "ArchiveHistoryCheckpoint", "AdmitDevelopmentUnit", "RetireProposed", "Ready", "WithdrawReady", "Claim", "Resume", "CompleteInstructionSurfaces", "AmendActiveWriteScope", "FreezeCandidate", "MaterializeInheritedCandidate", "CorrectActiveReadOnlyDependencies", "CorrectActiveProjectRepositoryScope", "CorrectActiveUnitContract", "RecordHistoricalUnitCompatibilityProjection", "BeginValidation", "ReturnToActive", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RetirePreparedPush", "ReconcilePreparedPublication", "ReconcilePreparedPushTransactionSuffix", "ResolveBlocker", "CorrectResolvedBlockerEvidence", "CorrectHistoricalBlockerResolutionIntentBinding", "CorrectCompletedTransitionSemantics", "NormalizeEventLedgerPrefix", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix", "ReconcileExecutedPreparedPublication")]
     [string]$Action,
     [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
     [string]$UnitId = "",
@@ -49,9 +49,13 @@ param(
     [string]$ExpectedProjectSha256 = "",
     [string]$ExpectedStateSha256 = "",
     [string]$ExpectedUnitSha256 = "",
+    [string]$ExpectedUnitRawSha256 = "",
     [string]$ExpectedEventsSha256 = "",
     [long]$ExpectedEventsLength = -1,
     [string]$ExpectedEventTailId = "",
+    [string]$ReplacementUnitId = "",
+    [ValidateSet("contract-invalid")][string]$RetirementReason = "contract-invalid",
+    [string]$ExpectedProposedRetirementBindingSha256 = "",
     [string]$ExpectedIntentSha256 = "",
     [string]$AdoptionReceipt = "",
     [string]$InstructionCompletionId = "",
@@ -276,6 +280,14 @@ $arguments = @{
     InstructionCompletionId = $InstructionCompletionId
     InstructionSurfaceIds = $InstructionSurfaceIds
     ExpectedUnitSha256 = $ExpectedUnitSha256
+    ExpectedUnitRawSha256 = $ExpectedUnitRawSha256
+    ExpectedStateSha256 = $ExpectedStateSha256
+    ExpectedEventsSha256 = $ExpectedEventsSha256
+    ExpectedEventsLength = $ExpectedEventsLength
+    ExpectedEventTailId = $ExpectedEventTailId
+    ReplacementUnitId = $ReplacementUnitId
+    RetirementReason = $RetirementReason
+    ExpectedProposedRetirementBindingSha256 = $ExpectedProposedRetirementBindingSha256
     ExpectedInstructionObservationSha256 = $ExpectedInstructionObservationSha256
     ValidationTier = $ValidationTier
     DeviceSerials = $DeviceSerials

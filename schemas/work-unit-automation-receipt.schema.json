@@ -9,7 +9,7 @@
     "schema": { "const": "rusty.morphospace.workflow.work_unit_automation_receipt.v1" },
     "project_id": { "$ref": "#/$defs/id" },
     "unit_id": { "$ref": "#/$defs/id" },
-    "action": { "enum": ["Inspect", "Claim", "Resume", "Ready", "WithdrawReady", "CompleteInstructionSurfaces", "BeginValidation", "ReturnToActive", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix", "ReconcileExecutedPreparedPublication"] },
+    "action": { "enum": ["Inspect", "RetireProposed", "Claim", "Resume", "Ready", "WithdrawReady", "CompleteInstructionSurfaces", "BeginValidation", "ReturnToActive", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix", "ReconcileExecutedPreparedPublication"] },
     "timestamp": { "type": "string", "format": "date-time" },
     "executed": { "type": "boolean" },
     "transition": { "type": "string", "minLength": 1 },
@@ -310,10 +310,82 @@
         { "type": "null" }
       ]
     },
+    "proposed_retirement": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["replacement_unit_id", "reason", "authenticated_admission", "authenticated_preimage", "replacement_identity_absent", "current_unit_absent", "next_ready_unit_absent", "original_admission_preserved", "binding_sha256"],
+          "properties": {
+            "replacement_unit_id": { "$ref": "#/$defs/id" },
+            "reason": { "const": "contract-invalid" },
+            "authenticated_admission": {
+              "type": "object", "additionalProperties": false,
+              "required": ["admission_id", "event", "receipt", "transaction"],
+              "properties": {
+                "admission_id": { "$ref": "#/$defs/id" },
+                "event": {
+                  "type": "object", "additionalProperties": false,
+                  "required": ["event_id", "sequence", "sha256"],
+                  "properties": {
+                    "event_id": { "$ref": "#/$defs/id" },
+                    "sequence": { "type": "integer", "minimum": 1 },
+                    "sha256": { "$ref": "#/$defs/sha256" }
+                  }
+                },
+                "receipt": { "$ref": "#/$defs/path_hash" },
+                "transaction": {
+                  "type": "object", "additionalProperties": false,
+                  "required": ["transaction_id", "intent", "completion", "target_state_sha256", "target_unit_sha256"],
+                  "properties": {
+                    "transaction_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,191}$" },
+                    "intent": { "$ref": "#/$defs/path_hash" },
+                    "completion": { "$ref": "#/$defs/path_hash" },
+                    "target_state_sha256": { "$ref": "#/$defs/sha256" },
+                    "target_unit_sha256": { "$ref": "#/$defs/sha256" }
+                  }
+                }
+              }
+            },
+            "authenticated_preimage": {
+              "type": "object", "additionalProperties": false,
+              "required": ["state_sha256", "unit_sha256", "unit_raw_sha256", "events_sha256", "events_length", "event_tail_id"],
+              "properties": {
+                "state_sha256": { "$ref": "#/$defs/sha256" },
+                "unit_sha256": { "$ref": "#/$defs/sha256" },
+                "unit_raw_sha256": { "$ref": "#/$defs/sha256" },
+                "events_sha256": { "$ref": "#/$defs/sha256" },
+                "events_length": { "type": "integer", "minimum": 0, "maximum": 67108864 },
+                "event_tail_id": { "$ref": "#/$defs/id" }
+              }
+            },
+            "replacement_identity_absent": { "const": true },
+            "current_unit_absent": { "const": true },
+            "next_ready_unit_absent": { "const": true },
+            "original_admission_preserved": { "const": true },
+            "binding_sha256": { "$ref": "#/$defs/sha256" }
+          }
+        },
+        { "type": "null" }
+      ]
+    },
     "push_plan": { "oneOf": [{ "type": "object" }, { "type": "null" }] },
     "event_id": { "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] }
   },
   "allOf": [
+    {
+      "if": {
+        "properties": { "action": { "const": "RetireProposed" } },
+        "required": ["action"]
+      },
+      "then": {
+        "required": ["proposed_retirement"],
+        "properties": { "proposed_retirement": { "type": "object" } }
+      },
+      "else": {
+        "properties": { "proposed_retirement": { "type": "null" } }
+      }
+    },
     {
       "if": {
         "properties": { "action": { "const": "WithdrawReady" } },

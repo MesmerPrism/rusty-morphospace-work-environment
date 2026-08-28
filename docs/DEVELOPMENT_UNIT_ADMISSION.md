@@ -34,6 +34,21 @@ permission ceilings, build and device envelope, non-scope, prerequisites,
 validation class, and evidence/cleanup expectations. It never substitutes a
 complete changed-file list for bounded exploration.
 
+If Ready exposes a defect in the immutable admitted contract itself,
+`RetireProposed` is the only owner route that can close that identity before
+Claim. It requires `status=proposed`, an idle project with no current or
+next-ready unit, the exact admission event as the ledger tail, and the complete
+committed admission receipt/intent/completion chain. Its dry run returns the
+canonical state/unit hashes, raw unit-byte hash, ledger hash/length/tail,
+admission artifact hashes, a distinct absent replacement identity, and one
+binding hash. Execution must replay every identity, writes its receipt through
+the transition ledger, changes only the old unit to `superseded`, and appends
+one retirement event. The original admission bytes and event remain immutable;
+the replacement is separately authored and admitted under a new unit ID.
+`RetireProposed` cannot withdraw a Ready unit, retire an active unit, repair a
+candidate in place, create the replacement, or authorize source/build/device
+mutation.
+
 An admitted active unit may use `AmendActiveWriteScope` only for a discovered,
 tracked path inside its original repository/root envelope. The amendment binds
 semantic rationale, source-composition identity, and ownership proof; it cannot
