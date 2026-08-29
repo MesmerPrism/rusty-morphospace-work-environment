@@ -91,6 +91,18 @@ projection before it records one intent, one completion, one correction receipt,
 and one appended event. Existing outputs, event replay, stale bindings, and
 transaction faults fail closed.
 
+Because this action combines a raw-byte unit CAS with an authenticated project
+projection, its transition intent is v4. The v4 intent adds the exact
+`pre_unit_raw` path/SHA-256 binding to the v3 projection contract; it keeps one
+or two canonical, unique, ordinal `feature.lock.json`/`project.spec.json`
+projections and never carries supersession. Completion recovery accepts the
+raw preimage only until the authenticated unit target is already applied, then
+derives replay from the intent targets. Direct consumers must revalidate the
+exact v4 root property set, raw path equality and lowercase hash, closed
+projection set/order/hashes/project identity, and absence of unknown or
+supersession fields before trusting a self-hashed intent/completion pair. V1
+retirement and existing v2/v3 semantics are unchanged.
+
 The correction does not run validation, complete instruction surfaces, create
 or modify a Git worktree, build, contact a remote, touch a device, accept the
 unit, or authorize publication. After a successful correction, the ordinary
