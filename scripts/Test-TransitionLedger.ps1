@@ -1299,10 +1299,19 @@ try {
 
     $projectionWorkspace=Join-Path $workspace 'additional-projection-repair'
     Initialize-LedgerFixture $projectionWorkspace $state $unit
-    $projectBefore=[pscustomobject][ordered]@{schema='test';project_id='ledger-test';revision=1}
-    $projectAfter=[pscustomobject][ordered]@{schema='test';project_id='ledger-test';revision=2}
-    $lockBefore=[pscustomobject][ordered]@{schema='test';project_id='ledger-test';revision=4}
-    $lockAfter=[pscustomobject][ordered]@{schema='test';project_id='ledger-test';revision=5}
+    $projectBefore=[pscustomobject][ordered]@{
+        schema='rusty.morphospace.workflow.project_spec.v1';project_id='ledger-test';revision=1
+        purpose='Exercise authenticated transition-ledger projections.'
+        activation_model=[pscustomobject][ordered]@{default='disabled';unlisted_modules='inert'}
+        authority_map=@([pscustomobject][ordered]@{parameter='test.parameter';owner='test-owner';adapters=@('test-adapter')})
+        repositories=@([pscustomobject][ordered]@{repo_id='planning-owner';role='planning';path='.';allowed_paths=@('morphospace')})
+        modules=@();non_scope=@('No product behavior.')
+        validation_profiles=@([pscustomobject][ordered]@{profile_id='test-profile';commands=@('pwsh -File test.ps1')})
+        public_boundary=[pscustomobject][ordered]@{mode='private';private_overlay='test-overlay';prohibited_evidence=@()}
+    }
+    $projectAfter=$projectBefore|ConvertTo-Json -Depth 32|ConvertFrom-Json;$projectAfter.revision=2
+    $lockBefore=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.feature_lock.v1';project_id='ledger-test';revision=4;default_activation='disabled';features=@()}
+    $lockAfter=$lockBefore|ConvertTo-Json -Depth 32|ConvertFrom-Json;$lockAfter.revision=5
     Write-Json (Join-Path $projectionWorkspace 'project.spec.json') $projectBefore
     Write-Json (Join-Path $projectionWorkspace 'feature.lock.json') $lockBefore
     $projectionInterrupted=$false
@@ -1492,6 +1501,34 @@ try {
         param($caseWorkspace,$intent)
         $projection = @($intent.additional_projections | Where-Object { [string]$_.path -ceq 'project.spec.json' })[0]
         $projection.document.project_id = 'substituted-project'
+        $projection.target_sha256 = Get-LedgerDocumentHash $projection.document
+        Write-Json -Path (Join-Path $caseWorkspace 'project.spec.json') -Value $projection.document
+    }
+    Assert-LedgerCommittedV4DamageRejected -TemplateWorkspace $projectedRawWorkspace -PlanningRoot $workspace -Name 'projection-missing-project-identity' -Mutation {
+        param($caseWorkspace,$intent)
+        $projection = @($intent.additional_projections | Where-Object { [string]$_.path -ceq 'project.spec.json' })[0]
+        $projection.document.PSObject.Properties.Remove('project_id')
+        $projection.target_sha256 = Get-LedgerDocumentHash $projection.document
+        Write-Json -Path (Join-Path $caseWorkspace 'project.spec.json') -Value $projection.document
+    }
+    Assert-LedgerCommittedV4DamageRejected -TemplateWorkspace $projectedRawWorkspace -PlanningRoot $workspace -Name 'projection-unsupported-schema' -Mutation {
+        param($caseWorkspace,$intent)
+        $projection = @($intent.additional_projections | Where-Object { [string]$_.path -ceq 'project.spec.json' })[0]
+        $projection.document.schema = 'rusty.morphospace.workflow.project_spec.v99'
+        $projection.target_sha256 = Get-LedgerDocumentHash $projection.document
+        Write-Json -Path (Join-Path $caseWorkspace 'project.spec.json') -Value $projection.document
+    }
+    Assert-LedgerCommittedV4DamageRejected -TemplateWorkspace $projectedRawWorkspace -PlanningRoot $workspace -Name 'projection-schema-path-substitution' -Mutation {
+        param($caseWorkspace,$intent)
+        $projection = @($intent.additional_projections | Where-Object { [string]$_.path -ceq 'project.spec.json' })[0]
+        $projection.document.schema = 'rusty.morphospace.workflow.feature_lock.v1'
+        $projection.target_sha256 = Get-LedgerDocumentHash $projection.document
+        Write-Json -Path (Join-Path $caseWorkspace 'project.spec.json') -Value $projection.document
+    }
+    Assert-LedgerCommittedV4DamageRejected -TemplateWorkspace $projectedRawWorkspace -PlanningRoot $workspace -Name 'projection-schema-invalid-document' -Mutation {
+        param($caseWorkspace,$intent)
+        $projection = @($intent.additional_projections | Where-Object { [string]$_.path -ceq 'project.spec.json' })[0]
+        $projection.document.PSObject.Properties.Remove('purpose')
         $projection.target_sha256 = Get-LedgerDocumentHash $projection.document
         Write-Json -Path (Join-Path $caseWorkspace 'project.spec.json') -Value $projection.document
     }

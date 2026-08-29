@@ -320,6 +320,44 @@ function Test-MorphospaceOwnerValidatorAdmissionProbeV1 {
     return $Probe
 }
 
+function Assert-MorphospaceCommittedTransitionProjectionDocument {
+    param(
+        [Parameter(Mandatory = $true)][string]$ProjectionPath,
+        [Parameter(Mandatory = $true)][object]$Document,
+        [Parameter(Mandatory = $true)][string]$ProjectId
+    )
+
+    $context = "Committed transition v4 additional projection '$ProjectionPath'"
+    $schemaName = switch ([string]$Document.schema) {
+        'rusty.morphospace.workflow.feature_lock.v1' {
+            if ($ProjectionPath -cne 'feature.lock.json') { throw "$context uses a feature-lock schema on the wrong path." }
+            'feature-lock.schema.json'
+        }
+        'rusty.morphospace.workflow.feature_lock.v2' {
+            if ($ProjectionPath -cne 'feature.lock.json') { throw "$context uses a feature-lock schema on the wrong path." }
+            'feature-lock-v2.schema.json'
+        }
+        'rusty.morphospace.workflow.project_spec.v1' {
+            if ($ProjectionPath -cne 'project.spec.json') { throw "$context uses a project-spec schema on the wrong path." }
+            'project-spec.schema.json'
+        }
+        'rusty.morphospace.workflow.project_spec.v2' {
+            if ($ProjectionPath -cne 'project.spec.json') { throw "$context uses a project-spec schema on the wrong path." }
+            'project-spec-v2.schema.json'
+        }
+        default { throw "$context uses an unsupported projection-document schema." }
+    }
+    if (-not ($Document.PSObject.Properties.Name -ccontains 'project_id') -or
+        [string]$Document.project_id -cne $ProjectId) {
+        throw "$context has a missing or mismatched project identity."
+    }
+    $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+    $schemaPath = Join-Path $repositoryRoot "schemas\$schemaName"
+    if (-not (Test-Json -Json ($Document | ConvertTo-Json -Depth 64) -SchemaFile $schemaPath)) {
+        throw "$context does not satisfy '$schemaName'."
+    }
+}
+
 function Assert-MorphospaceCommittedTransitionIntentV4 {
     param([Parameter(Mandatory = $true)][object]$Intent)
 
@@ -359,10 +397,10 @@ function Assert-MorphospaceCommittedTransitionIntentV4 {
             (Get-MorphospaceCanonicalJsonSha256 $projection.document) -cne [string]$projection.target_sha256) {
             throw "Committed transition v4 additional projection '$projectionPath' has invalid or inconsistent hashes."
         }
-        if ($projection.document.PSObject.Properties.Name -contains 'project_id' -and
-            [string]$projection.document.project_id -cne [string]$Intent.event.project_id) {
-            throw "Committed transition v4 additional projection '$projectionPath' has a substituted project identity."
-        }
+        Assert-MorphospaceCommittedTransitionProjectionDocument `
+            -ProjectionPath $projectionPath `
+            -Document $projection.document `
+            -ProjectId ([string]$Intent.event.project_id)
     }
 }
 
