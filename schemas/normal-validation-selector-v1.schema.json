@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/normal-validation-selector-v1.schema.json",
+  "title": "Exact normal-validation selector",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "selector_id", "project", "unit", "declared_gate", "candidate_freeze", "selection", "does_not_authorize"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schema": { "const": "rusty.morphospace.workflow.normal_validation_selector.v1" },
+    "selector_id": { "$ref": "#/$defs/id" },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id", "spec_path", "spec_raw_sha256"],
+      "properties": {
+        "project_id": { "$ref": "#/$defs/id" },
+        "spec_path": { "const": "project.spec.json" },
+        "spec_raw_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "unit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["unit_id", "path", "raw_sha256", "contract_sha256"],
+      "properties": {
+        "unit_id": { "$ref": "#/$defs/id" },
+        "path": { "type": "string", "pattern": "^iteration-units/[a-z0-9][a-z0-9-]{1,127}\\.json$" },
+        "raw_sha256": { "$ref": "#/$defs/sha256" },
+        "contract_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "declared_gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profile_id", "command_sha256"],
+      "properties": {
+        "profile_id": { "$ref": "#/$defs/id" },
+        "command_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "candidate_freeze": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["freeze_id", "receipt_path", "receipt_sha256", "final_repositories"],
+      "properties": {
+        "freeze_id": { "$ref": "#/$defs/id" },
+        "receipt_path": { "type": "string", "pattern": "^receipts/[a-z0-9][a-z0-9-]{1,127}\\.json$" },
+        "receipt_sha256": { "$ref": "#/$defs/sha256" },
+        "final_repositories": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["repo_id", "commit", "tree"],
+            "properties": {
+              "repo_id": { "$ref": "#/$defs/id" },
+              "commit": { "$ref": "#/$defs/git_sha1" },
+              "tree": { "$ref": "#/$defs/git_sha1" }
+            }
+          }
+        }
+      }
+    },
+    "selection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tier", "producer", "output_evidence"],
+      "properties": {
+        "tier": { "const": "quick" },
+        "producer": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "path", "sha256"],
+          "properties": {
+            "kind": { "const": "workspace-powershell-evidence-v1" },
+            "path": { "type": "string", "pattern": "^tools/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\\.ps1$" },
+            "sha256": { "$ref": "#/$defs/sha256" }
+          }
+        },
+        "output_evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["file_name", "schema", "canonical_path_sha256", "requires_create_new"],
+          "properties": {
+            "file_name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9.-]{1,127}\\.json$" },
+            "schema": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]{2,191}$" },
+            "canonical_path_sha256": { "$ref": "#/$defs/sha256" },
+            "requires_create_new": { "const": true }
+          }
+        }
+      }
+    },
+    "does_not_authorize": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 512 }
+    }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "git_sha1": { "type": "string", "pattern": "^[0-9a-f]{40}$" }
+  }
+}

@@ -73,6 +73,7 @@
       "type": "object", "additionalProperties": false, "required": ["blocker_id", "condition", "resume_when"],
       "properties": { "blocker_id": { "$ref": "#/$defs/id" }, "condition": { "type": "string", "minLength": 1 }, "resume_when": { "type": "string", "minLength": 1 } }
     } },
+    "normal_validation_selection": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/normalValidationSelection" }] },
     "validation_checkpoint": { "oneOf": [{ "type": "null" }, {
       "type": "object", "additionalProperties": false, "required": ["tier", "receipt", "result"],
       "properties": { "tier": { "enum": ["quick", "standard", "deep"] }, "receipt": { "type": "string", "minLength": 1 }, "result": { "enum": ["pass", "partial", "fail", "blocked"] } }
@@ -127,6 +128,20 @@
     "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" },
     "dottedId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]{2,127}$" },
     "sha": { "type": "string", "pattern": "^[0-9a-fA-F]{40}$" },
-    "hash": { "type": "string", "pattern": "^[0-9a-fA-F]{64}$" }
+    "hash": { "type": "string", "pattern": "^[0-9a-fA-F]{64}$" },
+    "normalValidationSelection": {
+      "type": "object", "additionalProperties": false,
+      "required": ["unit_id", "unit_raw_sha256", "unit_contract_sha256", "tier", "selector_id", "selector_path", "selector_sha256", "evidence_path_sha256"],
+      "properties": {
+        "unit_id": { "$ref": "#/$defs/id" },
+        "unit_raw_sha256": { "$ref": "#/$defs/hash" },
+        "unit_contract_sha256": { "$ref": "#/$defs/hash" },
+        "tier": { "const": "quick" },
+        "selector_id": { "$ref": "#/$defs/id" },
+        "selector_path": { "type": "string", "pattern": "^validation-authority/selectors/[a-z0-9][a-z0-9-]{1,127}\\.json$" },
+        "selector_sha256": { "$ref": "#/$defs/hash" },
+        "evidence_path_sha256": { "$ref": "#/$defs/hash" }
+      }
+    }
   }
 }

@@ -307,6 +307,17 @@ ID is audit identity, not mutable replay state: exact-candidate reruns are
 idempotent within freshness, changed evidence rejects, and trusted-base
 ancestry consumes the authorization.
 
+An immutable frozen unit may select a separately reviewed external Quick
+evidence producer only through the data-only contract in
+`docs/NORMAL_VALIDATION_SELECTOR.md`. The normal `BeginValidation` consumer must
+bind exact raw project/unit bytes, the original declared gate command, freeze
+receipt and ordered final candidate repositories, producer bytes, and an
+external canonical create-new evidence identity. Persist only the exact
+selector/evidence hashes needed to reconstruct receipt-consuming lifecycle
+actions; never persist or accept a selector-carried command, change the unit
+gate identity, execute the producer inside the consumer, or fall back after
+selector or evidence damage.
+
 ## Authority Rules
 
 - Rusty Morphospace names the ecosystem; concrete authority stays in lanes
@@ -476,6 +487,12 @@ ancestry consumes the authorization.
   The resulting proposal still follows ordinary Ready/Inspect/Claim. An
   admitted active unit must use `FreezeCandidate` before BeginValidation;
   historical units without the admission marker retain their existing route.
+- A frozen unit's validation array remains immutable. If a separately reviewed
+  planning authority needs a Quick evidence route, use only the exact external
+  normal-validation selector described in `docs/NORMAL_VALIDATION_SELECTOR.md`;
+  it is Quick-only, data-only, hash-bound, and phase-aware across dispatch and
+  receipt consumption. It authorizes no producer, product, build, or device
+  execution; normal lifecycle state/ledger transactions retain only its hashes.
 - Resolve one exact current active-unit blocker only through product-neutral
   `blocker_resolution_receipt.v1` and `ResolveBlocker`: revalidate its passing
   hash-bound evidence, attached-branch or exact detached repository heads, and
