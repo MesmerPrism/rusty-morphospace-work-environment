@@ -43,7 +43,10 @@ When immutable historical metadata prevents a complete aggregate while the
 current feature still validates, use only the independently signed,
 [historical validation-debt baseline](docs/HISTORICAL_VALIDATION_DEBT_BASELINE.md).
 It ratchets one exact unresolved failure set and reports debt-bearing success;
-it does not repair history or claim a clean workspace.
+it does not repair history or claim a clean workspace. Its focused self-test
+uses create-new phase receipts, bounded streamed diagnostics, finite child-tree
+timeouts, and one exact baseline-evidence reuse key; a history-archive
+checkpoint remains separate and cannot satisfy historical debt.
 
 One exact current active feature unit may correct only its legacy
 `architecture_decision` shape and wholly absent required
