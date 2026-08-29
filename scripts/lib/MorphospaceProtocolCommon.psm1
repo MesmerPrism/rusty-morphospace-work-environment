@@ -90,6 +90,12 @@ function ConvertTo-MorphospaceCanonicalJson {
     return $builder.ToString()
 }
 
+function ConvertTo-MorphospaceProtocolJsonBytes {
+    param([Parameter(Mandatory = $true)][object]$Value)
+    $encoding = [System.Text.UTF8Encoding]::new($false, $true)
+    return [byte[]]$encoding.GetBytes((ConvertTo-MorphospaceCanonicalJson -Value $Value) + [char]10)
+}
+
 function Get-MorphospaceCanonicalJsonSha256 {
     param([Parameter(Mandatory = $true)][object]$Value)
 
@@ -214,8 +220,7 @@ function Write-MorphospaceProtocolJsonAtomicInternal {
         throw "Managed control artifact already exists and will not be overwritten: $Path"
     }
 
-    $encoding = [System.Text.UTF8Encoding]::new($false)
-    $bytes = $encoding.GetBytes((ConvertTo-MorphospaceCanonicalJson -Value $Value) + "`n")
+    $bytes = ConvertTo-MorphospaceProtocolJsonBytes -Value $Value
     if ($bytes.Length -gt 16777216) { throw "Managed protocol JSON exceeds 16 MiB: $Path" }
     if ($NoOverwrite) {
         $priorPending = Get-MorphospacePendingSiblingClassificationInternal -TargetPath $Path
@@ -559,8 +564,7 @@ function Repair-MorphospaceDeterministicCanonicalJsonInternal {
     $parent = [System.IO.Path]::GetDirectoryName($path)
     if (-not [System.IO.Directory]::Exists($parent)) { [void][System.IO.Directory]::CreateDirectory($parent) }
     Assert-MorphospaceNoReparseAncestor -Root ([System.IO.Path]::GetFullPath($WorkspaceRoot)) -Candidate $path
-    $encoding = [System.Text.UTF8Encoding]::new($false)
-    $expectedBytes = $encoding.GetBytes((ConvertTo-MorphospaceCanonicalJson -Value $Value) + "`n")
+    $expectedBytes = ConvertTo-MorphospaceProtocolJsonBytes -Value $Value
     if ($expectedBytes.Length -gt 16777216) { throw "Deterministic authority artifact exceeds 16 MiB: $relative" }
     $expectedHash = Get-MorphospaceSha256Bytes -Bytes $expectedBytes
     $stream = $null
@@ -842,7 +846,7 @@ function Invoke-MorphospacePendingQuarantineRecovery {
 
 Microsoft.PowerShell.Core\Export-ModuleMember -Function `
     Get-MorphospaceSha256Bytes, Get-MorphospaceFileSha256, Get-MorphospaceStreamSha256, `
-    ConvertTo-MorphospaceCanonicalJson, Get-MorphospaceCanonicalJsonSha256, `
+    ConvertTo-MorphospaceCanonicalJson, ConvertTo-MorphospaceProtocolJsonBytes, Get-MorphospaceCanonicalJsonSha256, `
         Read-MorphospaceProtocolJson, ConvertFrom-MorphospaceProtocolJsonBytes, Write-MorphospaceManagedProtocolJsonAtomic, `
     ConvertTo-MorphospaceProtocolRelativePath, Resolve-MorphospaceWorkspacePath, `
     Get-MorphospaceManagedControlPath, ConvertTo-MorphospaceUtcTimestamp, `

@@ -511,6 +511,12 @@ ancestry consumes the authorization.
   hashes, current repo heads/branches, ancestor bases, exact changed paths, and
   required device cleanup plus zero bounded fatals. Reject missing, stale,
   spoofed, or out-of-scope evidence.
+- Historical validation-debt self-tests must run direct child phases through
+  create-new start/terminal/raw-stream evidence with finite child-tree cleanup
+  and bounded diagnostics. Reuse only an exact baseline-evidence key binding
+  validator, workspace/ledger anchor, source composition, current raw unit, and
+  failure set. A history-archive checkpoint is integrity evidence only and
+  never satisfies or authenticates historical validation debt.
 - Recovery from a declared partial cross-repo commit, interrupted build, or
   interrupted device run requires `interruption_receipt.v1`. It must hash its
   evidence and prove preserved repo checkpoints plus safe build/device cleanup;
