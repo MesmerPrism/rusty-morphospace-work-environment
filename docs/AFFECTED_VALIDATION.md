@@ -61,8 +61,9 @@ Changes to the affected-validation registry or its schemas require one-time
 Deep admission because that trust root cannot proportionally approve
 itself. After adoption, the authority and historical-debt paths named in the
 registry stay proportional: direct test changes select their owning leaf;
-historical phase receipt/runner changes also select the baseline and automation
-consumers; ownership and validation-authority module changes select their
+historical phase receipt/module changes select the focused phase-runner,
+baseline, and automation consumers, while a phase-runner test change selects
+only its direct focused leaf; ownership and validation-authority module changes select their
 direct authority consumers; and the shared protocol module selects every
 transitive Work Environment owner consumer through an independently derived
 tracked-byte graph. The audit AST-classifies both direct invocations and

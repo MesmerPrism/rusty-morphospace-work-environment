@@ -937,7 +937,7 @@ function Get-AffectedProtocolCommonOwnerChecks([string]$Root, [object]$Registry)
 }
 function Invoke-AffectedGraphIndexSelfTest([string]$Root,[object]$Registry) {
     $audit = Get-AffectedProtocolCommonOwnerChecks -Root $Root -Registry $Registry
-    Assert-True ($audit.owner_entrypoints -eq 47 -and $audit.tracked_graph_nodes -eq 122 -and $audit.protocol_consumers -eq 29) "Real-tree ProtocolCommon graph identity changed: roots=$($audit.owner_entrypoints) nodes=$($audit.tracked_graph_nodes) consumers=$($audit.protocol_consumers)."
+    Assert-True ($audit.owner_entrypoints -eq 48 -and $audit.tracked_graph_nodes -eq 123 -and $audit.protocol_consumers -eq 30) "Real-tree ProtocolCommon graph identity changed: roots=$($audit.owner_entrypoints) nodes=$($audit.tracked_graph_nodes) consumers=$($audit.protocol_consumers)."
     Assert-True ($audit.adjacency_sha256 -cmatch '^[0-9a-f]{64}$' -and $audit.consumer_sha256 -cmatch '^[0-9a-f]{64}$') 'Real-tree ProtocolCommon graph did not emit deterministic adjacency/consumer digests.'
     Assert-True ([long]$audit.total_elapsed_ms -le 45000) "ProtocolCommon transitive owner audit exceeded its measured 45-second bound: $($audit.total_elapsed_ms)ms."
 
@@ -1151,7 +1151,7 @@ if ($runTrustPhase) {
     $graphOutput = Read-MorphospaceProtocolJson -Path $graphOutputPath
     Assert-AffectedScenarioProperties -Value $graphOutput -Expected @('schema','owner_entrypoints','tracked_graph_nodes','protocol_consumers','adjacency_sha256','consumer_sha256','check_ids') -Context 'Graph/import-closure output'
     Assert-True ([string]$graphOutput.schema -ceq 'rusty.morphospace.diagnostic.affected_validation_graph_output.v1') 'Trust/mapping phase rejected the graph output schema.'
-    Assert-True ([int]$graphOutput.owner_entrypoints -eq 47 -and [int]$graphOutput.tracked_graph_nodes -eq 122 -and [int]$graphOutput.protocol_consumers -eq 29) 'Trust/mapping phase rejected the graph output identity.'
+    Assert-True ([int]$graphOutput.owner_entrypoints -eq 48 -and [int]$graphOutput.tracked_graph_nodes -eq 123 -and [int]$graphOutput.protocol_consumers -eq 30) 'Trust/mapping phase rejected the graph output identity.'
     Assert-True ([string]$graphOutput.adjacency_sha256 -cmatch '^[0-9a-f]{64}$' -and [string]$graphOutput.consumer_sha256 -cmatch '^[0-9a-f]{64}$') 'Trust/mapping phase rejected graph output digests.'
     $protocolCommonConsumerChecks = @($graphOutput.check_ids)
 }
@@ -1673,15 +1673,15 @@ try {
     # single exact owner class.  Test each path independently so command-path
     # selection cannot conceal an unmapped or ambiguous shared-module route.
     $proportionalMappings = @(
-        [pscustomobject]@{ path='schemas/historical-validation-debt-phase-receipt-v1.schema.json'; checks=@('historical-validation-debt-baseline','work-unit-automation') },
+        [pscustomobject]@{ path='schemas/historical-validation-debt-phase-receipt-v1.schema.json'; checks=@('historical-validation-debt-baseline','historical-validation-debt-phase-runner','work-unit-automation') },
         [pscustomobject]@{ path='scripts/Test-BlockedSupersessionTerminalValidation.ps1'; checks=@('blocked-supersession-terminal-validation') },
         [pscustomobject]@{ path='scripts/Test-CorrectActiveUnitContract.ps1'; checks=@('correct-active-unit-contract') },
         [pscustomobject]@{ path='scripts/Test-HistoricalValidationDebtBaseline.ps1'; checks=@('historical-validation-debt-baseline') },
-        [pscustomobject]@{ path='scripts/Test-HistoricalValidationDebtPhaseRunner.ps1'; checks=@('historical-validation-debt-baseline') },
+        [pscustomobject]@{ path='scripts/Test-HistoricalValidationDebtPhaseRunner.ps1'; checks=@('historical-validation-debt-phase-runner') },
         [pscustomobject]@{ path='scripts/Test-OwnershipAuthority.ps1'; checks=@('ownership-authority') },
         [pscustomobject]@{ path='scripts/Test-TransitionLedger.ps1'; checks=@('transition-ledger') },
         [pscustomobject]@{ path='scripts/lib/MorphospaceBlockedSupersessionTerminalValidation.psm1'; checks=@('blocked-supersession-terminal-validation','workflow-contracts') },
-        [pscustomobject]@{ path='scripts/lib/MorphospaceHistoricalValidationDebtPhaseRunner.psm1'; checks=@('historical-validation-debt-baseline','work-unit-automation') },
+        [pscustomobject]@{ path='scripts/lib/MorphospaceHistoricalValidationDebtPhaseRunner.psm1'; checks=@('historical-validation-debt-baseline','historical-validation-debt-phase-runner','work-unit-automation') },
         [pscustomobject]@{ path='scripts/lib/MorphospaceOwnership.psm1'; checks=@('authority-record-readiness','authority-runner-fast','ownership-authority','validation-execution-authority','work-unit-automation') },
         [pscustomobject]@{ path='scripts/lib/MorphospaceProtocolCommon.psm1'; checks=$protocolCommonConsumerChecks },
         [pscustomobject]@{ path='scripts/lib/MorphospaceValidationAuthority.psm1'; checks=@('authority-record-readiness','authority-runner-fast','authority-runner-handoff','transition-ledger','trust-migration-authority','validation-authority-launcher','validation-execution-authority','work-unit-automation') }
