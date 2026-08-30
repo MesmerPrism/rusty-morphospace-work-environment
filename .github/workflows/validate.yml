@@ -117,6 +117,14 @@ jobs:
           path: ${{ runner.temp }}/affected-linux-evidence.json
           if-no-files-found: error
           retention-days: 7
+      - name: Preserve resumable selector phase evidence
+        if: always() && needs.select.outputs.linux == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: selector-phases-linux-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/affected-selector-phases-*-linux
+          if-no-files-found: warn
+          retention-days: 7
 
   standard-windows:
     needs: [infrastructure, select]

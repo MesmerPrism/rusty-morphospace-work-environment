@@ -37,6 +37,109 @@ function Invoke-TestGit {
     return [string]($output -join '')
 }
 
+function Get-RunnerFastFixtureModuleClosure {
+    param(
+        [string]$Git,
+        [string]$SourceRoot,
+        [string[]]$SeedPaths
+    )
+
+    $root = [IO.Path]::GetFullPath($SourceRoot).TrimEnd('\','/')
+    $rootPrefix = $root + [IO.Path]::DirectorySeparatorChar
+    $paths = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $pending = [Collections.Generic.Queue[string]]::new()
+    $auditedDynamicImportCounts = @{
+        # These two imports are literal child-fixture bodies that intentionally
+        # receive a temporary damage-test module path at runtime. They are not
+        # repository module edges, and their exact file/variable/count is part
+        # of this clean-room closure contract.
+        'scripts/Test-TransitionLedger.ps1|ModulePath' = 2
+    }
+    $observedAuditedDynamicImports = @{}
+
+    function Add-RunnerFastFixturePath {
+        param([string]$RelativePath)
+
+        $normalized = $RelativePath.Replace('\','/')
+        if ($normalized -notmatch '^(?:scripts|schemas)/[^:]+$' -or $normalized -match '(?:^|/)\.\.?/') {
+            throw "Authority runner fixture import path is not repository-relative: $RelativePath"
+        }
+        $absolute = [IO.Path]::GetFullPath((Join-Path $root $normalized))
+        if (-not $absolute.StartsWith($rootPrefix,[StringComparison]::OrdinalIgnoreCase)) {
+            throw "Authority runner fixture import escapes the repository: $RelativePath"
+        }
+        if (-not [IO.File]::Exists($absolute)) {
+            throw "Authority runner fixture import is absent: $normalized"
+        }
+        $tracked = @(& $Git -C $root ls-files --error-unmatch -- $normalized 2>&1)
+        if ($LASTEXITCODE -ne 0) {
+            throw "Authority runner fixture import is not tracked: $normalized $($tracked -join ' ')"
+        }
+        if ($paths.Add($normalized) -and
+            ($normalized.EndsWith('.psm1',[StringComparison]::OrdinalIgnoreCase) -or
+             $normalized.EndsWith('.ps1',[StringComparison]::OrdinalIgnoreCase))) {
+            $pending.Enqueue($normalized)
+        }
+    }
+
+    foreach ($seed in @($SeedPaths)) { Add-RunnerFastFixturePath $seed }
+    $importPattern = '[''"](?<path>[^''"]+\.psm1)[''"]'
+    while ($pending.Count -gt 0) {
+        $modulePath = $pending.Dequeue()
+        $moduleAbsolute = Join-Path $root $modulePath
+        $moduleDirectory = [IO.Path]::GetDirectoryName($moduleAbsolute)
+        $lines = [IO.File]::ReadAllLines($moduleAbsolute,[Text.UTF8Encoding]::new($false,$true))
+        $literalVariables = @{}
+        $assignmentPattern = '^\s*\$(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:Join-Path\s+\$PSScriptRoot\s+|\[IO\.Path\]::Combine\(\$PSScriptRoot\s*,\s*)[''"](?<path>[^''"]+\.psm1)[''"]\)?'
+        foreach ($line in $lines) {
+            $assignment = [regex]::Match($line,$assignmentPattern,[Text.RegularExpressions.RegexOptions]::IgnoreCase)
+            if ($assignment.Success) { $literalVariables[[string]$assignment.Groups['name'].Value] = [string]$assignment.Groups['path'].Value }
+        }
+        foreach ($line in $lines) {
+            if ($line -notmatch '(?i)\bImport-Module\b') { continue }
+            $matches = [regex]::Matches($line,$importPattern,[Text.RegularExpressions.RegexOptions]::IgnoreCase)
+            $importPath = $null
+            if ($matches.Count -eq 1) {
+                $importPath = [string]$matches[0].Groups['path'].Value
+            } elseif ($matches.Count -eq 0) {
+                $variableImport = [regex]::Match($line,'(?i)\bImport-Module\s+\$(?<name>[A-Za-z_][A-Za-z0-9_]*)\b')
+                if (-not $variableImport.Success) { throw "Authority runner fixture import is not one closed literal or audited variable edge: $modulePath" }
+                $variableName = [string]$variableImport.Groups['name'].Value
+                if ($literalVariables.ContainsKey($variableName)) {
+                    $importPath = [string]$literalVariables[$variableName]
+                } else {
+                    $auditKey = "$modulePath|$variableName"
+                    if (-not $auditedDynamicImportCounts.ContainsKey($auditKey)) {
+                        throw "Authority runner fixture import has no audited dynamic declaration: $auditKey"
+                    }
+                    $observedAuditedDynamicImports[$auditKey] = 1 + $(if ($observedAuditedDynamicImports.ContainsKey($auditKey)) { [int]$observedAuditedDynamicImports[$auditKey] } else { 0 })
+                    continue
+                }
+            } else {
+                throw "Authority runner fixture import contains multiple module paths: $modulePath"
+            }
+            $importAbsolute = [IO.Path]::GetFullPath((Join-Path $moduleDirectory $importPath))
+            if (-not $importAbsolute.StartsWith($rootPrefix,[StringComparison]::OrdinalIgnoreCase)) {
+                throw "Authority runner fixture module import escapes the repository: $modulePath"
+            }
+            $importRelative = [IO.Path]::GetRelativePath($root,$importAbsolute).Replace('\','/')
+            Add-RunnerFastFixturePath $importRelative
+        }
+    }
+    foreach ($auditKey in @($auditedDynamicImportCounts.Keys)) {
+        $auditPath = $auditKey.Substring(0,$auditKey.LastIndexOf('|',[StringComparison]::Ordinal))
+        if (-not $paths.Contains($auditPath)) { continue }
+        $observedCount = if ($observedAuditedDynamicImports.ContainsKey($auditKey)) { [int]$observedAuditedDynamicImports[$auditKey] } else { 0 }
+        if ($observedCount -ne [int]$auditedDynamicImportCounts[$auditKey]) {
+            throw "Authority runner fixture audited dynamic import count changed: $auditKey expected=$($auditedDynamicImportCounts[$auditKey]) observed=$observedCount"
+        }
+    }
+
+    $result = @($paths)
+    [Array]::Sort($result,[StringComparer]::Ordinal)
+    return $result
+}
+
 function Initialize-TestGitRepository {
     param([string]$Git,[string]$Repository,[string]$Message)
     Invoke-TestGit $Git $Repository @('init','--quiet') | Out-Null
@@ -249,6 +352,21 @@ $capsuleSha256 = ''
 $reportRoots = [Collections.Generic.List[string]]::new()
 try {
     $git = (Get-MorphospaceBoundExecutable git).path
+    $closureFixture = Join-Path $root 'module-closure'
+    [IO.Directory]::CreateDirectory((Join-Path $closureFixture 'scripts')) | Out-Null
+    Write-TestText (Join-Path $closureFixture 'scripts\root.ps1') "Import-Module (Join-Path `$PSScriptRoot 'middle.psm1') -Force`n"
+    Write-TestText (Join-Path $closureFixture 'scripts\middle.psm1') "Import-Module (Join-Path `$PSScriptRoot 'leaf.psm1') -Force`n"
+    Write-TestText (Join-Path $closureFixture 'scripts\leaf.psm1') "Set-StrictMode -Version 2.0`n"
+    Write-TestText (Join-Path $closureFixture 'scripts\missing-entry.ps1') "Import-Module (Join-Path `$PSScriptRoot 'absent.psm1') -Force`n"
+    Write-TestText (Join-Path $closureFixture 'scripts\dynamic-entry.ps1') "`$module = 'leaf.psm1'`nImport-Module `$module -Force`n"
+    Initialize-TestGitRepository $git $closureFixture 'fixture module closure'
+    $closureProbe = @(Get-RunnerFastFixtureModuleClosure -Git $git -SourceRoot $closureFixture -SeedPaths @('scripts/root.ps1'))
+    Assert-RunnerFast (($closureProbe -join ',') -ceq 'scripts/leaf.psm1,scripts/middle.psm1,scripts/root.ps1') 'tracked entrypoint and module import closure was not derived exactly'
+    foreach ($damagePath in @('scripts/missing-entry.ps1','scripts/dynamic-entry.ps1')) {
+        $damageRejected = $false
+        try { [void](Get-RunnerFastFixtureModuleClosure -Git $git -SourceRoot $closureFixture -SeedPaths @($damagePath)) } catch { $damageRejected = $true }
+        Assert-RunnerFast $damageRejected "module import closure accepted damaged edge '$damagePath'"
+    }
     $planning = Join-Path $root 'planning'
     $quest = Join-Path $root 'quest'
     $workEnvironment = Join-Path $root 'work-environment'
@@ -256,7 +374,7 @@ try {
     $workspace = Join-Path $planning ($workspaceRelative.Replace('/','\'))
     foreach ($directory in @($planning,$quest,$workEnvironment,$workspace,(Join-Path $quest 'fixture'))) { [IO.Directory]::CreateDirectory($directory) | Out-Null }
 
-    $authorityPaths = @(
+    $authoritySeedPaths = @(
         'scripts/Invoke-MorphospaceValidationAuthority.ps1','scripts/Invoke-WorkUnitAutomation.ps1','scripts/Invoke-Wf005OwnerValidator.ps1','scripts/Test-ValidationAuthorityLauncher.ps1',
         'scripts/Test-AuthorityRunnerHandoff.ps1','scripts/Test-AuthorityRecordReadiness.ps1','scripts/Test-TrustMigrationAuthority.ps1','scripts/Test-ValidationExecutionAuthority.ps1',
         'scripts/Test-TransitionLedger.ps1','scripts/WorkUnitAutomation.psm1','scripts/lib/MorphospaceAuthorityReadiness.psm1','scripts/lib/MorphospaceContentObservation.psm1','scripts/lib/MorphospaceActiveUnitContractReviewCompatibility.psm1',
@@ -269,6 +387,10 @@ try {
         # closed over that module and its canonical external-owner verifier.
         'scripts/lib/MorphospaceHistoricalValidationDebtBaseline.psm1','scripts/lib/ExternalOwnerAuthorization.psm1'
     )
+    $authorityPaths = @(Get-RunnerFastFixtureModuleClosure -Git $git -SourceRoot $repoRoot -SeedPaths $authoritySeedPaths)
+    foreach ($requiredClosurePath in @('scripts/InheritedCandidateMaterialization.psm1','scripts/CandidateFreeze.psm1','scripts/DevelopmentEnvelopeProvenance.psm1')) {
+        Assert-RunnerFast ($authorityPaths -ccontains $requiredClosurePath) "derived clean-room closure omitted '$requiredClosurePath'"
+    }
     $validatorPath = 'scripts/Invoke-Wf005OwnerValidator.ps1'
     foreach ($relative in $authorityPaths) {
         $source = Join-Path $repoRoot $relative
