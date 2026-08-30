@@ -112,7 +112,21 @@ function Invoke-AffectedValidationCheck([object]$Check, [string]$Command) {
     $budget = [Math]::Min([Math]::Max([int]$Check.budget_seconds, 1), 7200)
     $arguments = [Collections.Generic.List[string]]::new()
     foreach ($argument in @('-NoProfile', '-NonInteractive', '-File', $Command) + @($Check.arguments)) { [void]$arguments.Add([string]$argument) }
-    $child = [W017BoundedChildCapture]::Run((Get-Process -Id $PID).Path, $root, @($arguments.ToArray()), $budget, 10485760, 15000)
+    $projectedNames = @('RUSTY_AFFECTED_VALIDATION_PHASE_ROOT','RUSTY_AFFECTED_VALIDATION_BASE_COMMIT','RUSTY_AFFECTED_VALIDATION_HEAD_COMMIT','RUSTY_AFFECTED_VALIDATION_PLAN_SHA256','RUSTY_AFFECTED_VALIDATION_PLATFORM','RUSTY_AFFECTED_VALIDATION_CHECK_ID','GIT_PAGER')
+    $savedEnvironment = @{}
+    foreach ($name in $projectedNames) { $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name,'Process') }
+    try {
+        [Environment]::SetEnvironmentVariable('RUSTY_AFFECTED_VALIDATION_PHASE_ROOT',$phaseEvidenceRoot,'Process')
+        [Environment]::SetEnvironmentVariable('RUSTY_AFFECTED_VALIDATION_BASE_COMMIT',$BaseCommit,'Process')
+        [Environment]::SetEnvironmentVariable('RUSTY_AFFECTED_VALIDATION_HEAD_COMMIT',$HeadCommit,'Process')
+        [Environment]::SetEnvironmentVariable('RUSTY_AFFECTED_VALIDATION_PLAN_SHA256',[string]$plan.plan_sha256,'Process')
+        [Environment]::SetEnvironmentVariable('RUSTY_AFFECTED_VALIDATION_PLATFORM',$Platform,'Process')
+        [Environment]::SetEnvironmentVariable('RUSTY_AFFECTED_VALIDATION_CHECK_ID',[string]$Check.check_id,'Process')
+        [Environment]::SetEnvironmentVariable('GIT_PAGER',$null,'Process')
+        $child = [W017BoundedChildCapture]::Run((Get-Process -Id $PID).Path, $root, @($arguments.ToArray()), $budget, 10485760, 15000)
+    } finally {
+        foreach ($name in $projectedNames) { [Environment]::SetEnvironmentVariable($name,$savedEnvironment[$name],'Process') }
+    }
     $stdout = [byte[]]$child.Stdout
     $stderr = [byte[]]$child.Stderr
     if (-not [string]::IsNullOrWhiteSpace([string]$child.Error)) { $stderr = [Text.UTF8Encoding]::new($false).GetBytes([string]$child.Error) }
@@ -134,6 +148,11 @@ $planRaw = Get-Content -LiteralPath $planFull -Raw
 $planSchema = Join-Path $repoRoot 'schemas/affected-validation-plan-v1.schema.json'
 if (-not (Test-Json -Json $planRaw -SchemaFile $planSchema -ErrorAction Stop)) { throw 'Affected-validation plan fails its closed schema.' }
 $plan = Read-MorphospaceProtocolJson -Path $planFull
+$output = [IO.Path]::GetFullPath($OutPath)
+$parent = [IO.Path]::GetDirectoryName($output)
+if ([IO.File]::Exists($output)) { throw 'Affected-validation evidence output already exists.' }
+if (-not [IO.Directory]::Exists($parent)) { [void][IO.Directory]::CreateDirectory($parent) }
+$phaseEvidenceRoot = Join-Path $parent ("affected-selector-phases-$([string]$plan.plan_sha256)-$Platform")
 $registryPath = Join-Path $root 'manifests/affected-validation-registry.json'
 $recomputed = Resolve-MorphospaceAffectedValidation -RepositoryRoot $root -BaseRevision $BaseCommit -HeadRevision $HeadCommit -RegistryPath $registryPath -RequestedTier ([string]$plan.requested_tier)
 if ((Get-MorphospaceCanonicalJsonSha256 -Value $recomputed) -cne (Get-MorphospaceCanonicalJsonSha256 -Value $plan) -or [string]$plan.plan_sha256 -cne [string]$recomputed.plan_sha256) { throw 'Affected-validation plan differs from the exact current base/head/registry selection.' }
@@ -148,7 +167,11 @@ foreach ($selectedCheck in $selected) {
     if ($null -eq $check) { throw "Affected-validation selected an unknown check '$($selectedCheck.check_id)'." }
     $command = Join-Path $root (([string]$check.command_path) -replace '/', [IO.Path]::DirectorySeparatorChar)
     if (-not [IO.File]::Exists($command)) { throw "Affected-validation command is absent: $($check.command_path)" }
-    $results.Add((Invoke-AffectedValidationCheck -Check $check -Command $command))
+    $checkResult = Invoke-AffectedValidationCheck -Check $check -Command $command
+    $results.Add($checkResult)
+    if (([string]$check.check_id).StartsWith('affected-selector-', [StringComparison]::Ordinal) -and [string]$checkResult.result -cne 'pass') {
+        break
+    }
 }
 $resultValues = @($results | ForEach-Object result)
 $overall = if ($resultValues -ccontains 'infra-fail') { 'infra-fail' } elseif ($resultValues -ccontains 'code-fail') { 'code-fail' } else { 'pass' }
@@ -161,9 +184,6 @@ $evidence = [pscustomobject][ordered]@{
 $evidenceSchema = Join-Path $repoRoot 'schemas/affected-validation-evidence-v1.schema.json'
 $evidenceJson = ConvertTo-MorphospaceCanonicalJson -Value $evidence
 if (-not (Test-Json -Json $evidenceJson -SchemaFile $evidenceSchema -ErrorAction Stop)) { throw 'Affected-validation evidence fails its closed schema.' }
-$output = [IO.Path]::GetFullPath($OutPath); $parent = [IO.Path]::GetDirectoryName($output)
-if (-not [IO.Directory]::Exists($parent)) { [void][IO.Directory]::CreateDirectory($parent) }
-if ([IO.File]::Exists($output)) { throw 'Affected-validation evidence output already exists.' }
 [IO.File]::WriteAllText($output, $evidenceJson + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
 if ($overall -cne 'pass') { throw "Affected-validation execution failed with '$overall'; typed evidence was written to '$output'." }
 $evidence

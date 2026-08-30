@@ -650,6 +650,13 @@ ancestry consumes the authorization.
 
 ## Validation
 
+Affected-selector trust-root validation must use the registry-owned phased
+runner and exact phase terminals described in `docs/AFFECTED_VALIDATION.md`.
+Do not replace a failed phase with the legacy cumulative selector, raise a
+phase budget to hide a blocker, or replay an already authenticated passing
+phase. Preserve the deterministic phase directory with hosted evidence and
+continue only from exact dependency- and runner-bound receipts.
+
 Before committing, run:
 
 ```powershell

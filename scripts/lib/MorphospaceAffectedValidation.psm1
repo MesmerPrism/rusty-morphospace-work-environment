@@ -8,6 +8,7 @@ function Invoke-MorphospaceAffectedGit {
     param(
         [Parameter(Mandatory = $true)][string]$RepositoryRoot,
         [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [AllowNull()][string]$StandardInputText = $null,
         [switch]$AllowFailure
     )
 
@@ -18,7 +19,9 @@ function Invoke-MorphospaceAffectedGit {
     $start.CreateNoWindow = $true
     $start.RedirectStandardOutput = $true
     $start.RedirectStandardError = $true
+    $start.RedirectStandardInput = $null -ne $StandardInputText
     $strictUtf8 = [System.Text.UTF8Encoding]::new($false, $true)
+    if ($start.RedirectStandardInput) { $start.StandardInputEncoding = $strictUtf8 }
     $start.StandardOutputEncoding = $strictUtf8
     $start.StandardErrorEncoding = $strictUtf8
     foreach ($argument in $Arguments) { [void]$start.ArgumentList.Add($argument) }
@@ -28,6 +31,10 @@ function Invoke-MorphospaceAffectedGit {
         if (-not $process.Start()) { throw 'git did not start.' }
         $stdoutTask = $process.StandardOutput.ReadToEndAsync()
         $stderrTask = $process.StandardError.ReadToEndAsync()
+        if ($start.RedirectStandardInput) {
+            $process.StandardInput.Write($StandardInputText)
+            $process.StandardInput.Close()
+        }
         if (-not $process.WaitForExit(30000)) {
             try { $process.Kill($true) } catch {}
             throw "git timed out: $($Arguments -join ' ')"
@@ -53,6 +60,169 @@ function ConvertTo-MorphospaceAffectedPath {
         if ($segment -eq '' -or $segment -eq '.' -or $segment -eq '..') { throw "Git path contains a prohibited segment: $Path" }
     }
     return $Path
+}
+
+function ConvertFrom-MorphospaceAffectedTreeInventoryOutput {
+    param([Parameter(Mandatory = $true)][string]$Stdout, [Parameter(Mandatory = $true)][string]$Commit)
+
+    if ($Commit -cnotmatch '^[0-9a-f]{40}$') { throw 'Affected-validation tree inventory requires a full lowercase commit identity.' }
+    $records = [System.Collections.Generic.List[object]]::new()
+    $byPath = [System.Collections.Generic.Dictionary[string,object]]::new([System.StringComparer]::Ordinal)
+    $casePaths = [System.Collections.Generic.Dictionary[string,string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $caseCollision = $false
+    if ($Stdout.Length -ne 0) {
+        if ($Stdout[$Stdout.Length - 1] -ne [char]0) { throw 'Affected-validation tree inventory lacks its exact terminal NUL record boundary.' }
+        $tokens = @($Stdout.Split([char]0, [System.StringSplitOptions]::None))
+        if ($tokens.Count -lt 2 -or $tokens[-1] -cne '') { throw 'Affected-validation tree inventory has an invalid terminal record.' }
+        $tokens = @($tokens[0..($tokens.Count - 2)])
+        $previousPath = $null
+        foreach ($token in $tokens) {
+            if ([string]::IsNullOrEmpty([string]$token) -or [string]$token -cnotmatch '^(?<mode>[0-9]{6}) (?<type>blob|commit) (?<blob>[0-9a-f]{40})\t(?<path>.+)$') {
+                throw 'Affected-validation tree inventory contains a malformed or empty record.'
+            }
+            $mode = [string]$Matches.mode
+            $type = [string]$Matches.type
+            $blob = [string]$Matches.blob
+            $path = ConvertTo-MorphospaceAffectedPath -Path ([string]$Matches.path)
+            if (($type -ceq 'blob' -and @('100644','100755','120000') -cnotcontains $mode) -or
+                ($type -ceq 'commit' -and $mode -cne '160000')) {
+                throw "Affected-validation tree inventory contains an unsupported mode/type pair for '$path'."
+            }
+            if ($null -ne $previousPath -and [System.StringComparer]::Ordinal.Compare([string]$previousPath, $path) -ge 0) {
+                throw 'Affected-validation tree inventory is not in strict ordinal path order.'
+            }
+            if ($byPath.ContainsKey($path)) { throw "Affected-validation tree inventory repeats exact path '$path'." }
+            if ($casePaths.ContainsKey($path) -and $casePaths[$path] -cne $path) { $caseCollision = $true }
+            else { $casePaths[$path] = $path }
+            $record = [pscustomobject][ordered]@{ path=$path; mode=$mode; type=$type; blob=$blob; ordinal=$records.Count }
+            $records.Add($record)
+            $byPath.Add($path,$record)
+            $previousPath = $path
+        }
+    }
+    return [pscustomobject][ordered]@{ commit=$Commit; count=$records.Count; records=@($records.ToArray()); by_path=$byPath; case_collision=$caseCollision }
+}
+
+function Get-MorphospaceAffectedTreeInventory {
+    param([Parameter(Mandatory = $true)][string]$RepositoryRoot, [Parameter(Mandatory = $true)][string]$Commit)
+
+    $result = Invoke-MorphospaceAffectedGit -RepositoryRoot $RepositoryRoot -Arguments @('ls-tree','-r','-z','--full-tree',$Commit)
+    if ($result.stderr.Length -ne 0) { throw 'Affected-validation exact-head tree inventory emitted unexpected stderr.' }
+    return ConvertFrom-MorphospaceAffectedTreeInventoryOutput -Stdout $result.stdout -Commit $Commit
+}
+
+function Get-MorphospaceAffectedInventoryEntry {
+    param([Parameter(Mandatory = $true)][object]$Inventory, [AllowNull()][string]$Path)
+
+    if ([string]::IsNullOrEmpty($Path)) { return $null }
+    if ($Inventory.by_path.ContainsKey($Path)) { return $Inventory.by_path[$Path] }
+    return $null
+}
+
+function Get-MorphospaceAffectedWorktreeObservation {
+    param([Parameter(Mandatory = $true)][string]$RepositoryRoot)
+
+    $root = [System.IO.Path]::GetFullPath($RepositoryRoot).TrimEnd([System.IO.Path]::DirectorySeparatorChar,[System.IO.Path]::AltDirectorySeparatorChar)
+    $identity = Invoke-MorphospaceAffectedGit -RepositoryRoot $root -Arguments @('rev-parse','--show-toplevel','HEAD^{commit}','HEAD^{tree}')
+    if ($identity.stderr.Length -ne 0) { throw 'Affected-validation worktree identity emitted unexpected stderr.' }
+    $lines = @($identity.stdout.Split([char]10,[System.StringSplitOptions]::RemoveEmptyEntries) | ForEach-Object { ([string]$_).TrimEnd([char]13) })
+    if ($lines.Count -ne 3 -or [string]$lines[1] -cnotmatch '^[0-9a-f]{40}$' -or [string]$lines[2] -cnotmatch '^[0-9a-f]{40}$') {
+        throw 'Affected-validation worktree identity has malformed root/commit/tree output.'
+    }
+    $observedRoot = [System.IO.Path]::GetFullPath([string]$lines[0]).TrimEnd([System.IO.Path]::DirectorySeparatorChar,[System.IO.Path]::AltDirectorySeparatorChar)
+    $rootComparison = if ([System.IO.Path]::DirectorySeparatorChar -eq '\') { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
+    if (-not $observedRoot.Equals($root,$rootComparison)) { throw 'Affected-validation repository root changed across its Git observation.' }
+    $status = Invoke-MorphospaceAffectedGit -RepositoryRoot $root -Arguments @('status','--porcelain=v1','--untracked-files=no')
+    if ($status.stderr.Length -ne 0) { throw 'Affected-validation tracked-dirty observation emitted unexpected stderr.' }
+    return [pscustomobject][ordered]@{ repository_root=$observedRoot; head_commit=[string]$lines[1]; head_tree=[string]$lines[2]; tracked_status=[string]$status.stdout; clean=($status.stdout.Length -eq 0) }
+}
+
+function Assert-MorphospaceAffectedStableObservation {
+    param(
+        [Parameter(Mandatory = $true)][object]$Before,
+        [Parameter(Mandatory = $true)][object]$After,
+        [Parameter(Mandatory = $true)][object]$ExpectedHead
+    )
+
+    $rootComparison = if ([System.IO.Path]::DirectorySeparatorChar -eq '\') { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
+    if (-not [bool]$Before.clean -or -not [bool]$After.clean -or [string]$Before.tracked_status -cne '' -or [string]$After.tracked_status -cne '') {
+        throw 'Affected-validation batched observation encountered tracked worktree dirt.'
+    }
+    if (-not ([string]$Before.repository_root).Equals([string]$After.repository_root,$rootComparison)) { throw 'Affected-validation repository root drifted during batched observation.' }
+    if ([string]$Before.head_commit -cne [string]$After.head_commit -or [string]$Before.head_tree -cne [string]$After.head_tree) { throw 'Affected-validation HEAD commit/tree drifted during batched observation.' }
+    if ([string]$Before.head_commit -cne [string]$ExpectedHead.commit -or [string]$Before.head_tree -cne [string]$ExpectedHead.tree) { throw 'Affected-validation batched observation is not bound to the exact requested head.' }
+}
+
+function ConvertTo-MorphospaceAffectedBatchPathSet {
+    param([Parameter(Mandatory = $true)][object[]]$Paths)
+
+    $exact = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    $casePaths = [System.Collections.Generic.Dictionary[string,string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($candidate in @($Paths)) {
+        $path = ConvertTo-MorphospaceAffectedPath -Path ([string]$candidate)
+        if (-not $exact.Add($path)) { throw "Affected-validation batch path set repeats exact path '$path'." }
+        if ($casePaths.ContainsKey($path) -and $casePaths[$path] -cne $path) { throw "Affected-validation batch path set contains case-colliding path '$path'." }
+        $casePaths[$path] = $path
+    }
+    [string[]]$result = @($exact)
+    [System.Array]::Sort($result,[System.StringComparer]::Ordinal)
+    return $result
+}
+
+function ConvertFrom-MorphospaceAffectedBatchHashOutput {
+    param(
+        [Parameter(Mandatory = $true)][string]$Stdout,
+        [Parameter(Mandatory = $true)][string[]]$Paths,
+        [Parameter(Mandatory = $true)][object]$Inventory
+    )
+
+    if ($Paths.Count -eq 0) { throw 'Affected-validation working-byte hash batch is empty.' }
+    if (-not $Stdout.EndsWith("`n",[System.StringComparison]::Ordinal)) { throw 'Affected-validation working-byte hash batch lacks its terminal LF.' }
+    $lines = @($Stdout.Split([char]10,[System.StringSplitOptions]::None))
+    if ($lines.Count -ne $Paths.Count + 1 -or $lines[-1] -cne '') { throw 'Affected-validation working-byte hash batch returned a missing or extra record.' }
+    $records = [System.Collections.Generic.List[object]]::new()
+    for ($index=0; $index -lt $Paths.Count; $index++) {
+        $hash = ([string]$lines[$index]).TrimEnd([char]13)
+        $path = [string]$Paths[$index]
+        if ($hash -cnotmatch '^[0-9a-f]{40}$') { throw "Affected-validation working-byte hash batch returned a malformed hash for '$path'." }
+        $entry = Get-MorphospaceAffectedInventoryEntry -Inventory $Inventory -Path $path
+        if ($null -eq $entry) { throw "Affected-validation batch path is missing from the exact-head tree inventory: $path" }
+        if ([string]$entry.type -cne 'blob' -or [string]$entry.blob -cne $hash) { throw "Affected-validation working bytes do not match the exact-head blob for '$path'." }
+        $records.Add([pscustomobject][ordered]@{ ordinal=$index; path=$path; mode=[string]$entry.mode; tree_blob=[string]$entry.blob; working_blob=$hash })
+    }
+    return @($records.ToArray())
+}
+
+function Assert-MorphospaceAffectedBatchedWorkingBytes {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][object]$ExpectedHead,
+        [Parameter(Mandatory = $true)][object]$Inventory,
+        [Parameter(Mandatory = $true)][object[]]$Paths
+    )
+
+    if ([string]$Inventory.commit -cne [string]$ExpectedHead.commit) { throw 'Affected-validation tree inventory is not bound to the exact requested head.' }
+    [string[]]$orderedPaths = @(ConvertTo-MorphospaceAffectedBatchPathSet -Paths $Paths)
+    foreach ($path in $orderedPaths) {
+        $entry = Get-MorphospaceAffectedInventoryEntry -Inventory $Inventory -Path $path
+        if ($null -eq $entry -or [string]$entry.type -cne 'blob' -or @('100644','100755') -cnotcontains [string]$entry.mode) {
+            throw "Affected-validation batch path is not a tracked regular file in the exact head: $path"
+        }
+        $fullPath = Join-Path ([System.IO.Path]::GetFullPath($RepositoryRoot)) $path
+        if (-not [System.IO.File]::Exists($fullPath)) { throw "Affected-validation batch path is absent from the exact checkout: $path" }
+    }
+    $before = Get-MorphospaceAffectedWorktreeObservation -RepositoryRoot $RepositoryRoot
+    $inputText = ($orderedPaths -join "`n") + "`n"
+    $hashResult = Invoke-MorphospaceAffectedGit -RepositoryRoot $RepositoryRoot -Arguments @('hash-object','--stdin-paths') -StandardInputText $inputText
+    if ($hashResult.stderr.Length -ne 0) { throw 'Affected-validation working-byte hash batch emitted unexpected stderr.' }
+    $records = @(ConvertFrom-MorphospaceAffectedBatchHashOutput -Stdout $hashResult.stdout -Paths $orderedPaths -Inventory $Inventory)
+    if ($records.Count -ne $orderedPaths.Count) { throw 'Affected-validation working-byte hash batch record count changed after parsing.' }
+    for ($index=0; $index -lt $records.Count; $index++) {
+        if ([long]$records[$index].ordinal -ne $index -or [string]$records[$index].path -cne [string]$orderedPaths[$index]) { throw 'Affected-validation working-byte hash batch record order/path identity drifted.' }
+    }
+    $after = Get-MorphospaceAffectedWorktreeObservation -RepositoryRoot $RepositoryRoot
+    Assert-MorphospaceAffectedStableObservation -Before $before -After $after -ExpectedHead $ExpectedHead
+    return [pscustomobject][ordered]@{ before=$before; after=$after; path_count=$orderedPaths.Count; paths=@($orderedPaths); records=@($records) }
 }
 
 function ConvertTo-MorphospaceAffectedGlobRegex {
@@ -104,6 +274,7 @@ function Test-MorphospaceAffectedValidationRegistry {
 
     Assert-MorphospaceAffectedUniqueIds -Values @($Registry.path_sets) -Property path_set_id -Context 'Affected-validation path sets'
     Assert-MorphospaceAffectedUniqueIds -Values @($Registry.checks) -Property check_id -Context 'Affected-validation checks'
+    $invocationSet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
     $pathSetMap = @{}
     foreach ($pathSet in @($Registry.path_sets)) {
         if (@($pathSet.patterns).Count -eq 0) { throw "Path set '$($pathSet.path_set_id)' has no patterns." }
@@ -120,7 +291,9 @@ function Test-MorphospaceAffectedValidationRegistry {
         if (@('quick', 'standard', 'deep') -cnotcontains [string]$check.minimum_tier) { throw "Check '$checkId' has invalid tier." }
         if (@('disabled', 'exact-host', 'portable') -cnotcontains [string]$check.cache_policy) { throw "Check '$checkId' has invalid cache policy." }
         if ([long]$check.budget_seconds -lt 1 -or [long]$check.budget_seconds -gt 86400) { throw "Check '$checkId' has invalid budget." }
-        [void](ConvertTo-MorphospaceAffectedPath -Path ([string]$check.command_path))
+        $commandPath = ConvertTo-MorphospaceAffectedPath -Path ([string]$check.command_path)
+        $invocationIdentity = Get-MorphospaceCanonicalJsonSha256 -Value ([pscustomobject][ordered]@{command_path=$commandPath;arguments=@($check.arguments)})
+        if (-not $invocationSet.Add($invocationIdentity)) { throw "Affected-validation checks repeat exact command/argument invocation '$commandPath'." }
         foreach ($field in @('trigger_path_sets', 'consume_path_sets')) {
             foreach ($pathSetId in @($check.$field)) { if (-not $pathSetMap.ContainsKey([string]$pathSetId)) { throw "Check '$checkId' references unknown path set '$pathSetId'." } }
         }
@@ -270,9 +443,8 @@ function Test-MorphospaceAffectedTreeCaseCollision {
         [Parameter(Mandatory = $true)][string]$Commit
     )
 
-    $result = Invoke-MorphospaceAffectedGit -RepositoryRoot $RepositoryRoot -Arguments @('ls-tree', '-r', '-z', '--name-only', $Commit)
-    $paths = @($result.stdout.Split([char]0, [System.StringSplitOptions]::RemoveEmptyEntries))
-    return Test-MorphospaceAffectedPathCaseCollision -Paths $paths
+    $inventory = Get-MorphospaceAffectedTreeInventory -RepositoryRoot $RepositoryRoot -Commit $Commit
+    return [bool]$inventory.case_collision
 }
 
 function Test-MorphospaceAffectedPathSetMatch {
@@ -291,14 +463,11 @@ function Resolve-MorphospaceAffectedValidation {
     )
 
     $root = [System.IO.Path]::GetFullPath($RepositoryRoot)
-    if (-not [System.IO.Directory]::Exists((Join-Path $root '.git')) -and
-        (Invoke-MorphospaceAffectedGit -RepositoryRoot $root -Arguments @('rev-parse', '--is-inside-work-tree') -AllowFailure).exit_code -ne 0) { throw 'RepositoryRoot is not a Git worktree.' }
-    $dirty = (Invoke-MorphospaceAffectedGit -RepositoryRoot $root -Arguments @('status', '--porcelain=v1', '--untracked-files=no')).stdout
-    if ($dirty.Length -ne 0) { throw 'Affected validation requires a clean tracked source worktree.' }
+    $initialObservation = Get-MorphospaceAffectedWorktreeObservation -RepositoryRoot $root
+    if (-not [bool]$initialObservation.clean) { throw 'Affected validation requires a clean tracked source worktree.' }
     $base = Get-MorphospaceAffectedGitIdentity -RepositoryRoot $root -Revision $BaseRevision
     $head = Get-MorphospaceAffectedGitIdentity -RepositoryRoot $root -Revision $HeadRevision
-    $current = Get-MorphospaceAffectedGitIdentity -RepositoryRoot $root -Revision 'HEAD'
-    if ($current.commit -cne $head.commit -or $current.tree -cne $head.tree) { throw 'Affected validation requires the clean worktree HEAD to equal the observed head identity.' }
+    if ([string]$initialObservation.head_commit -cne $head.commit -or [string]$initialObservation.head_tree -cne $head.tree) { throw 'Affected validation requires the clean worktree HEAD to equal the observed head identity.' }
     $ancestry = Invoke-MorphospaceAffectedGit -RepositoryRoot $root -Arguments @('merge-base', '--is-ancestor', $base.commit, $head.commit) -AllowFailure
     if ($ancestry.exit_code -ne 0) { throw 'Affected validation requires base to be an ancestor of head.' }
 
@@ -306,31 +475,38 @@ function Resolve-MorphospaceAffectedValidation {
     $rootPrefix = $root.TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
     if (-not $registryFullPath.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) { throw 'Affected-validation registry must be inside RepositoryRoot.' }
     $registryRelativePath = ConvertTo-MorphospaceAffectedPath -Path ([System.IO.Path]::GetRelativePath($root, $registryFullPath).Replace('\', '/'))
-    $registryTreeEntry = Get-MorphospaceAffectedTreeEntry -RepositoryRoot $root -Commit $head.commit -Path $registryRelativePath
+    $inventory = Get-MorphospaceAffectedTreeInventory -RepositoryRoot $root -Commit $head.commit
+    $registryTreeEntry = Get-MorphospaceAffectedInventoryEntry -Inventory $inventory -Path $registryRelativePath
     if ($null -eq $registryTreeEntry -or [string]$registryTreeEntry.mode -cne '100644') { throw 'Affected-validation registry must be a tracked regular file in the exact head.' }
-    $registryWorktreeBlob = (Invoke-MorphospaceAffectedGit -RepositoryRoot $root -Arguments @('hash-object', "--path=$registryRelativePath", $registryFullPath)).stdout.Trim()
-    if ($registryWorktreeBlob -cne [string]$registryTreeEntry.blob) { throw 'Affected-validation registry working bytes do not match the exact head blob after Git filters.' }
+    $registryBytesBefore = [System.IO.File]::ReadAllBytes($registryFullPath)
     $registry = Read-MorphospaceProtocolJson -Path $registryFullPath
     $registrySchemaPath = Join-Path $root 'schemas/affected-validation-registry-v1.schema.json'
-    $registrySchemaEntry = Get-MorphospaceAffectedTreeEntry -RepositoryRoot $root -Commit $head.commit -Path 'schemas/affected-validation-registry-v1.schema.json'
+    $registrySchemaRelativePath = 'schemas/affected-validation-registry-v1.schema.json'
+    $registrySchemaEntry = Get-MorphospaceAffectedInventoryEntry -Inventory $inventory -Path $registrySchemaRelativePath
     if ($null -eq $registrySchemaEntry -or [string]$registrySchemaEntry.mode -cne '100644' -or -not [System.IO.File]::Exists($registrySchemaPath)) { throw 'Affected-validation registry schema must be a tracked regular file in the exact head.' }
-    $compiled = Test-MorphospaceAffectedValidationRegistry -Registry $registry -RepositoryRoot $root -SchemaPath $registrySchemaPath
+    $commandPaths = [System.Collections.Generic.List[string]]::new()
+    $commandPathSet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
     foreach ($check in @($registry.checks)) {
         $commandRelative = ConvertTo-MorphospaceAffectedPath -Path ([string]$check.command_path)
-        $commandEntry = Get-MorphospaceAffectedTreeEntry -RepositoryRoot $root -Commit $head.commit -Path $commandRelative
-        if ($null -eq $commandEntry -or [string]$commandEntry.mode -cnotmatch '^100(?:644|755)$') { throw "Check '$($check.check_id)' command must be a tracked regular file in the exact head: $commandRelative" }
-        $commandFull = Join-Path $root $commandRelative
-        if (-not [System.IO.File]::Exists($commandFull)) { throw "Check '$($check.check_id)' command is absent from the exact checkout: $commandRelative" }
-        $commandWorktreeBlob = (Invoke-MorphospaceAffectedGit -RepositoryRoot $root -Arguments @('hash-object', "--path=$commandRelative", $commandFull)).stdout.Trim()
-        if ($commandWorktreeBlob -cne [string]$commandEntry.blob) { throw "Check '$($check.check_id)' command working bytes do not match the exact head blob: $commandRelative" }
+        if ($commandPathSet.Add($commandRelative)) { $commandPaths.Add($commandRelative) }
     }
+    $batchPaths = [System.Collections.Generic.List[object]]::new()
+    [void]$batchPaths.Add($registryRelativePath)
+    [void]$batchPaths.Add($registrySchemaRelativePath)
+    foreach ($commandPath in $commandPaths) { [void]$batchPaths.Add($commandPath) }
+    $workingBatch = Assert-MorphospaceAffectedBatchedWorkingBytes -RepositoryRoot $root -ExpectedHead $head -Inventory $inventory -Paths @($batchPaths.ToArray())
+    $registryBytesAfter = [System.IO.File]::ReadAllBytes($registryFullPath)
+    if (-not [System.Linq.Enumerable]::SequenceEqual[byte]($registryBytesBefore,$registryBytesAfter)) { throw 'Affected-validation registry raw bytes drifted across the exact working-byte batch.' }
+    $compiled = Test-MorphospaceAffectedValidationRegistry -Registry $registry -RepositoryRoot $root -SchemaPath $registrySchemaPath
+    $compiledObservation = Get-MorphospaceAffectedWorktreeObservation -RepositoryRoot $root
+    Assert-MorphospaceAffectedStableObservation -Before $workingBatch.after -After $compiledObservation -ExpectedHead $head
     $changes = @(Get-MorphospaceAffectedChanges -RepositoryRoot $root -BaseCommit $base.commit -HeadCommit $head.commit)
     $changedPathValues = [System.Collections.Generic.List[object]]::new()
     foreach ($change in $changes) {
         if ($null -ne $change.old_path) { [void]$changedPathValues.Add($change.old_path) }
         if ($null -ne $change.new_path) { [void]$changedPathValues.Add($change.new_path) }
     }
-    $caseCollision = (Test-MorphospaceAffectedTreeCaseCollision -RepositoryRoot $root -Commit $head.commit) -or
+    $caseCollision = [bool]$inventory.case_collision -or
         (Test-MorphospaceAffectedPathCaseCollision -Paths @($changedPathValues.ToArray()))
     $matchedPathSets = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
     $unmapped = $false
@@ -447,6 +623,8 @@ function Resolve-MorphospaceAffectedValidation {
         claims = [pscustomobject][ordered]@{ selection_only=$true; checks_executed=$false; acceptance_authority=$false; publication_authority=$false }
     }
     $planHash = Get-MorphospaceCanonicalJsonSha256 -Value $planWithoutHash
+    $finalObservation = Get-MorphospaceAffectedWorktreeObservation -RepositoryRoot $root
+    Assert-MorphospaceAffectedStableObservation -Before $compiledObservation -After $finalObservation -ExpectedHead $head
     return [pscustomobject][ordered]@{
         schema = $planWithoutHash.schema
         repository = $planWithoutHash.repository

@@ -300,8 +300,17 @@ validation without a device.
   skills, planning instructions, touched-repo `AGENTS.md`, and README/router
   docs aligned without duplicating long recipes.
 - [Affected Validation](docs/AFFECTED_VALIDATION.md) defines exact-tree
-  current-delta selection, content-addressed evidence reuse, full-history Deep,
-  and fail-closed infrastructure handling for CI.
+  current-delta selection, proportional workflow-authority leaf routing,
+  current-byte-bound ordinal transitive owner/import/invocation coverage with
+  one path/SHA-bound per-file edge index, deterministic adjacency/consumer
+  digests, and memoized reachability, one recursive tree inventory and
+  one batched filtered working-byte proof per selection, an ordered
+  finite-budget selector phase DAG with exact dependency- and runner-bound
+  terminal-receipt reuse and
+  fail-fast continuation, resumable non-authoritative selector scenarios,
+  content-addressed evidence reuse,
+  one-time trust-root/full-history Deep, and fail-closed infrastructure handling
+  for CI.
 - [History Archive Checkpoints](docs/HISTORY_ARCHIVE_CHECKPOINTS.md) defines
   additive raw-byte history checkpoints, bounded live tails, and the distinct
   Quick versus Deep/audit/migration replay routes.
