@@ -37,6 +37,8 @@ public sealed class W017BoundedChildResult {
     public bool PostKillDrainTimedOut;
     public bool ChildTreeCleanupAttempted;
     public bool ChildTreeCleanupSucceeded;
+    public bool ContainmentCleanupSucceeded;
+    public bool SupervisorEvidenceCleanupSucceeded;
     public string Error;
     public byte[] Stdout = new byte[0];
     public byte[] Stderr = new byte[0];
@@ -495,6 +497,40 @@ public static class W017SupervisorInnerJob {
         }
         return RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? GetJobActiveProcessCount(job) == 0 : (kill(-processGroupId, 0) != 0 && Marshal.GetLastWin32Error() == 3);
     }
+    private static void NormalizeOwnedSupervisorTreeForDeletion(string root) {
+        var pending = new System.Collections.Generic.Stack<string>();
+        var directories = new System.Collections.Generic.List<string>();
+        pending.Push(root);
+        while (pending.Count > 0) {
+            var directory = pending.Pop(); directories.Add(directory);
+            foreach (var path in Directory.GetFileSystemEntries(directory)) {
+                var attributes = File.GetAttributes(path);
+                if ((attributes & FileAttributes.ReparsePoint) != 0) { throw new InvalidOperationException("owned validation supervisor evidence contains a reparse point"); }
+                if ((attributes & FileAttributes.Directory) != 0) { pending.Push(path); continue; }
+                if ((attributes & FileAttributes.ReadOnly) != 0) { File.SetAttributes(path, attributes & ~FileAttributes.ReadOnly); }
+            }
+        }
+        directories.Sort((left, right) => right.Length.CompareTo(left.Length));
+        foreach (var directory in directories) {
+            var attributes = File.GetAttributes(directory);
+            if ((attributes & FileAttributes.ReparsePoint) != 0) { throw new InvalidOperationException("owned validation supervisor evidence contains a reparse point"); }
+            if ((attributes & FileAttributes.ReadOnly) != 0) { File.SetAttributes(directory, attributes & ~FileAttributes.ReadOnly); }
+        }
+    }
+    private static void DeleteOwnedSupervisorDirectory(string directory, int milliseconds) {
+        if (!Directory.Exists(directory) && !File.Exists(directory)) { return; }
+        var deadline = DateTime.UtcNow.AddMilliseconds(milliseconds);
+        Exception last = null;
+        while (true) {
+            try { NormalizeOwnedSupervisorTreeForDeletion(directory); Directory.Delete(directory, true); return; }
+            catch (Exception exception) when (exception is IOException || exception is UnauthorizedAccessException) {
+                last = exception;
+                if (DateTime.UtcNow >= deadline) { break; }
+                Thread.Sleep(25);
+            }
+        }
+        throw new InvalidOperationException("owned validation supervisor evidence remained undeletable after its bounded cleanup deadline: " + last.Message, last);
+    }
     private static W017BoundedChildResult RunCore(string executable, string workingDirectory, string[] arguments, string[] environmentNamesToRemove, int budgetSeconds, int outputLimitBytes, int postKillDrainMilliseconds, string setupDamage) {
         var result = new W017BoundedChildResult();
         var output = new MemoryStream();
@@ -643,13 +679,19 @@ public static class W017SupervisorInnerJob {
                 } catch (Exception exception) { AppendError(result, "owned validation supervisor stderr is not strict UTF-8: " + exception.Message); }
             }
             result.Stdout = output.ToArray(); result.Stderr = error.ToArray();
+            result.ContainmentCleanupSucceeded = cleanupSucceeded;
+            if (job != IntPtr.Zero) { CloseHandle(job); job = IntPtr.Zero; }
+            if (process != null) { process.Dispose(); process = null; }
+            if (completionPipe != null) { completionPipe.Dispose(); completionPipe = null; }
+            var evidenceCleanupSucceeded = supervisorDirectory == null;
             if (supervisorDirectory != null) {
-                try { if (Directory.Exists(supervisorDirectory)) { Directory.Delete(supervisorDirectory, true); } }
-                catch (Exception exception) { AppendError(result, "owned validation supervisor evidence cleanup failed: " + exception.Message); cleanupSucceeded = false; }
-                if (Directory.Exists(supervisorDirectory) || File.Exists(supervisorDirectory)) { AppendError(result, "owned validation supervisor evidence cleanup readback failed"); cleanupSucceeded = false; }
+                try { DeleteOwnedSupervisorDirectory(supervisorDirectory, postKillDrainMilliseconds); evidenceCleanupSucceeded = true; }
+                catch (Exception exception) { AppendError(result, "owned validation supervisor evidence cleanup failed: " + exception.Message); }
+                if (Directory.Exists(supervisorDirectory) || File.Exists(supervisorDirectory)) { AppendError(result, "owned validation supervisor evidence cleanup readback failed"); evidenceCleanupSucceeded = false; }
             }
-            result.ChildTreeCleanupSucceeded = cleanupSucceeded;
-            if (result.Started && !cleanupSucceeded) { AppendError(result, "complete owned validation child-tree cleanup/readback did not succeed"); }
+            result.SupervisorEvidenceCleanupSucceeded = evidenceCleanupSucceeded;
+            result.ChildTreeCleanupSucceeded = cleanupSucceeded && evidenceCleanupSucceeded;
+            if (result.Started && !result.ChildTreeCleanupSucceeded) { AppendError(result, "complete owned validation child-tree cleanup/readback did not succeed"); }
             if (job != IntPtr.Zero) { CloseHandle(job); }
             if (process != null) { process.Dispose(); }
             if (completionPipe != null) { completionPipe.Dispose(); }
@@ -684,6 +726,16 @@ public static class W017SupervisorInnerJob {
         } finally {
             try { if (Directory.Exists(root)) { Directory.Delete(root, true); } } catch { }
         }
+    }
+    public static void RunOwnedSupervisorDeletionSelfTests() {
+        var root = Path.Combine(Path.GetTempPath(), "w7-" + Guid.NewGuid().ToString("N"));
+        var objectDirectory = Path.Combine(root, "l", "fixture", ".git", "objects", "aa");
+        var objectPath = Path.Combine(objectDirectory, "b3bcd923e45600fe0cde641c463ebcaae63a66");
+        Directory.CreateDirectory(objectDirectory);
+        File.WriteAllText(objectPath, "owned", new UTF8Encoding(false));
+        File.SetAttributes(objectPath, File.GetAttributes(objectPath) | FileAttributes.ReadOnly);
+        DeleteOwnedSupervisorDirectory(root, 1000);
+        if (Directory.Exists(root) || File.Exists(root)) { throw new InvalidOperationException("read-only owned supervisor evidence survived cleanup self-test"); }
     }
     public static W017BoundedChildResult Run(string executable, string workingDirectory, string[] arguments, string[] environmentNamesToRemove, int budgetSeconds, int outputLimitBytes, int postKillDrainMilliseconds) {
         return RunCore(executable, workingDirectory, arguments, environmentNamesToRemove, budgetSeconds, outputLimitBytes, postKillDrainMilliseconds, null);
@@ -724,7 +776,7 @@ function Invoke-AffectedValidationCheck([object]$Check, [string]$Command, [strin
         try { [void](Assert-MorphospaceAffectedBatchedWorkingBytes -RepositoryRoot $root -ExpectedHead $plan.head -Inventory $Inventory -Paths $IntegrityPaths) } catch { $integrityError = "Pre-execution affected-check input integrity failed: $($_.Exception.Message)" }
         if ($null -eq $integrityError) {
             $child = [W017BoundedChildCapture]::Run((Get-Process -Id $PID).Path, $root, @($arguments.ToArray()), @('GITHUB_OUTPUT','GITHUB_ENV','GITHUB_PATH','GITHUB_STEP_SUMMARY'), $budget, 10485760, 15000)
-            if ($child.Started -and (-not $child.ChildTreeCleanupAttempted -or -not $child.ChildTreeCleanupSucceeded)) {
+            if ($child.Started -and (-not $child.ChildTreeCleanupAttempted -or -not $child.ContainmentCleanupSucceeded)) {
                 $integrityError = 'Post-execution affected-check child-tree cleanup/readback did not succeed.'
             }
             try { [void](Assert-MorphospaceAffectedBatchedWorkingBytes -RepositoryRoot $root -ExpectedHead $plan.head -Inventory $Inventory -Paths $IntegrityPaths) } catch {
