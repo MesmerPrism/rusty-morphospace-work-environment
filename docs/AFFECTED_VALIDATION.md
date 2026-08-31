@@ -89,11 +89,14 @@ stdout/stderr pipes, assigns it to a non-breakaway inner job, and resumes it.
 It streams at most 10 MiB combined while the leaf runs, terminates the job at
 the first excess byte, and reads back zero job members before publishing the
 tagged result. It never stages unbounded output files or performs an unbounded
-post-run allocation. On Linux, the supervisor
-runs the real leaf as PID 1 in a fresh user/PID namespace through `unshare`;
-session or process-group changes remain inside that namespace, whose teardown
-kills descendants before the stream pumps must drain. Missing namespace support
-is an infrastructure failure before candidate execution. The outer Windows job
+post-run allocation. On Linux, the supervisor uses noninteractive trusted-host
+elevation only to create a fresh PID namespace through `unshare`, then `setpriv`
+immediately returns the real leaf to the original UID/GID with `no_new_privs`;
+the leaf runs as PID 1 and cannot regain the namespace creator's privilege.
+Session or process-group changes remain inside that namespace, whose teardown
+kills descendants before the stream pumps must drain. Missing `sudo`, `unshare`,
+`setpriv`, noninteractive elevation, namespace support, or privilege-drop
+support is an infrastructure failure before candidate execution. The outer Windows job
 or Linux supervisor group plus a direct process-tree kill/readback is retained
 as a setup- and timeout-failure fallback. No passing terminal is possible until
 the contained descendants are gone and both leaf streams are complete. The

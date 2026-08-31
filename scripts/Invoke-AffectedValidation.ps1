@@ -159,6 +159,12 @@ function Initialize-LeafWritableRoot([string]$Path) {
     if(-not[IO.Directory]::Exists($full)){[void][IO.Directory]::CreateDirectory($full)}
     if(([IO.File]::GetAttributes($full)-band[IO.FileAttributes]::ReparsePoint)-ne0){throw 'leaf writable root is a reparse point'}
 }
+function Resolve-ExactApplication([string]$Name) {
+    $paths=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach($command in @(Get-Command $Name -CommandType Application -ErrorAction SilentlyContinue)){$path=[IO.Path]::GetFullPath([string]$command.Source);if(-not[IO.File]::Exists($path)){throw ""resolved $Name executable does not exist""};[void]$paths.Add($path)}
+    if($paths.Count-eq0){throw ""required $Name executable is unavailable for isolated Linux validation""}
+    [string[]]$ordered=@($paths);[Array]::Sort($ordered,[StringComparer]::Ordinal);return $ordered[0]
+}
 function Start-Pump([Diagnostics.ProcessStartInfo]$Start) {
     $process = [Diagnostics.Process]::new(); $process.StartInfo = $Start
     if (-not $process.Start()) { throw 'owned validation inner process did not start' }
@@ -267,7 +273,7 @@ public static class W017SupervisorProtection {
         $leafTemp=Join-Path ([IO.Path]::GetDirectoryName($ReadyPath)) 'leaf-temp';Initialize-LeafWritableRoot $leafTemp;$env:TEMP=$leafTemp;$env:TMP=$leafTemp
         $phaseRoot=[Environment]::GetEnvironmentVariable('RUSTY_AFFECTED_VALIDATION_PHASE_ROOT','Process');if(-not[string]::IsNullOrWhiteSpace($phaseRoot)){Initialize-LeafWritableRoot $phaseRoot}
     } else {
-        Add-Type -TypeDefinition 'using System.Runtime.InteropServices; public static class W017UnixProcessGroup { [DllImport(""libc"", SetLastError=true)] public static extern int setpgid(int pid, int pgid); [DllImport(""libc"", SetLastError=true)] public static extern int fcntl(int fd, int command, int value); }'
+        Add-Type -TypeDefinition 'using System.Runtime.InteropServices; public static class W017UnixProcessGroup { [DllImport(""libc"", SetLastError=true)] public static extern int setpgid(int pid, int pgid); [DllImport(""libc"", SetLastError=true)] public static extern int fcntl(int fd, int command, int value); [DllImport(""libc"")] public static extern uint geteuid(); [DllImport(""libc"")] public static extern uint getegid(); }'
         if ([W017UnixProcessGroup]::fcntl([int]$completion.SafePipeHandle.DangerousGetHandle(),2,1) -ne 0) { throw ""unable to make the completion pipe close-on-exec: $([Runtime.InteropServices.Marshal]::GetLastWin32Error())"" }
         if ([W017UnixProcessGroup]::setpgid(0,0) -ne 0) { throw ""unable to establish owned supervisor process group: $([Runtime.InteropServices.Marshal]::GetLastWin32Error())"" }
     }
@@ -357,12 +363,10 @@ public static class W017SupervisorInnerJob {
         try{$innerResult=[W017SupervisorInnerJob]::Run($Executable,$ChildWorkingDirectory,$childArguments,$OutputLimitBytes,$trustedAncestors.ToArray())}finally{if($ancestorProtection-ne$null){$ancestorProtection.Dispose();$ancestorProtection=$null}}
         $exitCode=$innerResult.ExitCode;$outputTruncated=[bool]$innerResult.Truncated
     } else {
-        $unsharePaths=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-        foreach($unshare in @(Get-Command unshare -CommandType Application -ErrorAction SilentlyContinue)){$unsharePath=[IO.Path]::GetFullPath([string]$unshare.Source);if(-not[IO.File]::Exists($unsharePath)){throw 'resolved unshare executable does not exist'};[void]$unsharePaths.Add($unsharePath)}
-        if($unsharePaths.Count-eq0){throw 'required unshare executable is unavailable for isolated Linux validation'}
-        [string[]]$orderedUnsharePaths=@($unsharePaths);[Array]::Sort($orderedUnsharePaths,[StringComparer]::Ordinal);$unsharePath=$orderedUnsharePaths[0]
-        $start=[Diagnostics.ProcessStartInfo]::new($unsharePath);$start.WorkingDirectory=$ChildWorkingDirectory;$start.UseShellExecute=$false;$start.CreateNoWindow=$true;$start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
-        foreach($argument in @('--user','--map-root-user','--pid','--fork','--kill-child=KILL','--mount-proc',$Executable)+@($childArguments)){[void]$start.ArgumentList.Add([string]$argument)}
+        $sudoPath=Resolve-ExactApplication 'sudo';$unsharePath=Resolve-ExactApplication 'unshare';$setprivPath=Resolve-ExactApplication 'setpriv'
+        $uid=[W017UnixProcessGroup]::geteuid();$gid=[W017UnixProcessGroup]::getegid()
+        $start=[Diagnostics.ProcessStartInfo]::new($sudoPath);$start.WorkingDirectory=$ChildWorkingDirectory;$start.UseShellExecute=$false;$start.CreateNoWindow=$true;$start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
+        foreach($argument in @('--non-interactive','--preserve-env','--',$unsharePath,'--pid','--fork','--kill-child=KILL','--mount-proc',$setprivPath,(""--reuid={0}"" -f $uid),(""--regid={0}"" -f $gid),'--keep-groups','--no-new-privs',$Executable)+@($childArguments)){[void]$start.ArgumentList.Add([string]$argument)}
         $pump=Start-Pump $start;$pump.process.WaitForExit();$exitCode=$pump.process.ExitCode;Complete-Pump $pump;$outputTruncated=$false
     }
     Publish-Completion (""leaf:{0}:{1}`n"" -f $exitCode,([int]$outputTruncated))
