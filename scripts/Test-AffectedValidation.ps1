@@ -28,6 +28,11 @@ $selectorPhaseCheckIds = @(
 $selectorTrustRootCheckIds = @($selectorPhaseCheckIds + @('affected-topology-selftest','affected-reuse-selftest'))
 
 function Assert-True([bool]$Condition, [string]$Message) { if (-not $Condition) { throw $Message } }
+function Get-AffectedSupervisorResidueIdentity {
+    [string[]]$paths = @(Get-ChildItem -LiteralPath ([IO.Path]::GetTempPath()) -Directory -Filter 'w017-affected-child-*' | ForEach-Object { [IO.Path]::GetFullPath($_.FullName) })
+    if ($paths.Count -gt 1) { [Array]::Sort($paths,[StringComparer]::Ordinal) }
+    return ($paths -join "`0")
+}
 function Invoke-TestGit([string]$Root, [string[]]$Arguments) {
     $result = & git -C $Root @Arguments 2>&1
     if ($LASTEXITCODE -ne 0) { throw "git test fixture failed: $($Arguments -join ' ')`n$($result -join "`n")" }
@@ -1643,6 +1648,7 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value ([pscust
     }
 
     if ($runFullSelector -or $runExecutorDamagePhase) {
+    $supervisorResidueBaseline = Get-AffectedSupervisorResidueIdentity
     Write-Utf8 (Join-Path $fixture 'scripts/Test-PublicBoundary.ps1') "exit 17`n"
     [void](Invoke-TestGit $fixture @('add', 'scripts/Test-PublicBoundary.ps1'))
     [void](Invoke-TestGit $fixture @('commit', '-m', 'failing affected command'))
@@ -1783,7 +1789,7 @@ exit 91
     $protectedParentObserved = if ($null -eq $protectedParentFailure) { '<no exception>' } else { "$($protectedParentFailure.Exception.ToString())`n$([string]$protectedParentFailure.ScriptStackTrace)" }
     Assert-True ([IO.File]::Exists($protectedParentEvidencePath)) "Protected-ancestor damage execution did not publish typed evidence. Observed: $protectedParentObserved"
     $protectedParentEvidence = Read-MorphospaceProtocolJson -Path $protectedParentEvidencePath
-    Assert-True ($null -ne $protectedParentFailure -and $protectedParentEvidence.result -ceq 'code-fail' -and @($protectedParentEvidence.check_results | Where-Object { $_.check_id -ceq 'public-boundary' -and $_.exit_code -eq 91 -and $_.result -ceq 'code-fail' }).Count -eq 1 -and @(Get-ChildItem -LiteralPath ([IO.Path]::GetTempPath()) -Directory -Filter 'w017-affected-child-*').Count -eq 0) 'A Windows leaf retained process or thread owner/DACL rewrite, terminate/suspend/context/impersonation, handle duplication, process-query/token-open, or privilege re-enable access—including the post-probe sentinel thread—or forged completion/left residue.'
+    Assert-True ($null -ne $protectedParentFailure -and $protectedParentEvidence.result -ceq 'code-fail' -and @($protectedParentEvidence.check_results | Where-Object { $_.check_id -ceq 'public-boundary' -and $_.exit_code -eq 91 -and $_.result -ceq 'code-fail' }).Count -eq 1 -and (Get-AffectedSupervisorResidueIdentity) -ceq $supervisorResidueBaseline) 'A Windows leaf retained process or thread owner/DACL rewrite, terminate/suspend/context/impersonation, handle duplication, process-query/token-open, or privilege re-enable access—including the post-probe sentinel thread—or changed the enclosing supervisor-residue identity.'
     $failingHead = $protectedParentHead
 
     Write-Utf8 (Join-Path $fixture 'scripts/Test-PublicBoundary.ps1') "exit 125`n"
@@ -1838,7 +1844,7 @@ throw 'sustained output unexpectedly reached its natural terminal'
     Assert-True $oversizedFailed 'Affected executor accepted an over-ceiling child output.'
     $oversizedEvidence = Read-MorphospaceProtocolJson -Path $oversizedEvidencePath
     $oversizedObserved = @($oversizedEvidence.check_results | ForEach-Object { "$($_.check_id):result=$($_.result),exit=$($_.exit_code),timeout=$($_.timed_out),truncated=$($_.output_truncated),drain=$($_.post_kill_drain_timed_out),stdout=$($_.stdout_bytes),stderr=$($_.stderr_bytes)" }) -join '; '
-    Assert-True ($oversizedEvidence.result -ceq 'code-fail' -and @($oversizedEvidence.check_results | Where-Object { $_.result -ceq 'code-fail' -and $_.output_truncated -and ($_.stdout_bytes + $_.stderr_bytes) -le 10485760 }).Count -eq 1 -and @(Get-ChildItem -LiteralPath ([IO.Path]::GetTempPath()) -Directory -Filter 'w017-affected-child-*').Count -eq 0) "Affected executor did not enforce the combined live output ceiling without unbounded staging or residue. Observed: $oversizedObserved"
+    Assert-True ($oversizedEvidence.result -ceq 'code-fail' -and @($oversizedEvidence.check_results | Where-Object { $_.result -ceq 'code-fail' -and $_.output_truncated -and ($_.stdout_bytes + $_.stderr_bytes) -le 10485760 }).Count -eq 1 -and (Get-AffectedSupervisorResidueIdentity) -ceq $supervisorResidueBaseline) "Affected executor did not enforce the combined live output ceiling without unbounded staging or a changed enclosing supervisor-residue identity. Observed: $oversizedObserved"
     Write-Utf8 (Join-Path $fixture 'scripts/Test-PublicBoundary.ps1') "Start-Sleep -Seconds 12`n"
     [void](Invoke-TestGit $fixture @('add', 'scripts/Test-PublicBoundary.ps1'))
     [void](Invoke-TestGit $fixture @('commit', '-m', 'timed-out affected command'))
