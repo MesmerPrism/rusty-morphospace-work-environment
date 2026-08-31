@@ -961,7 +961,7 @@ function Get-AffectedProtocolCommonOwnerChecks([string]$Root, [object]$Registry)
         [Array]::Sort($missing,[StringComparer]::Ordinal)
         throw "ProtocolCommon transitive Work Environment owners lack registered focused checks: $($missing -join ',')"
     }
-    foreach ($required in @('scripts/Test-PublishedPrerequisiteSuffixReconciliation.ps1','scripts/Test-UnplannedPublicationClosure.ps1','scripts/Test-InheritedCandidateMaterialization.ps1','scripts/Test-DevelopmentUnitAdmission.ps1')) {
+    foreach ($required in @('scripts/Test-PublishedPrerequisiteSuffixReconciliation.ps1','scripts/Test-UnplannedPublicationClosure.ps1','scripts/Test-InheritedCandidateMaterialization.ps1','scripts/Test-DevelopmentUnitAdmission.ps1','scripts/Test-NormalValidationSelector.ps1')) {
         if (-not $consumers.Contains($required)) { throw "Known ProtocolCommon transitive owner is absent from the derived closure: $required" }
     }
     $result = @(ConvertTo-AffectedOrdinalUniqueStrings @($consumerCheckIds.ToArray()))
@@ -981,7 +981,7 @@ function Get-AffectedProtocolCommonOwnerChecks([string]$Root, [object]$Registry)
 }
 function Invoke-AffectedGraphIndexSelfTest([string]$Root,[object]$Registry) {
     $audit = Get-AffectedProtocolCommonOwnerChecks -Root $Root -Registry $Registry
-    Assert-True ($audit.owner_entrypoints -eq 48 -and $audit.tracked_graph_nodes -eq 123 -and $audit.protocol_consumers -eq 30) "Real-tree ProtocolCommon graph identity changed: roots=$($audit.owner_entrypoints) nodes=$($audit.tracked_graph_nodes) consumers=$($audit.protocol_consumers)."
+    Assert-True ($audit.owner_entrypoints -eq 49 -and $audit.tracked_graph_nodes -eq 125 -and $audit.protocol_consumers -eq 31) "Real-tree ProtocolCommon graph identity changed: roots=$($audit.owner_entrypoints) nodes=$($audit.tracked_graph_nodes) consumers=$($audit.protocol_consumers)."
     Assert-True ($audit.adjacency_sha256 -cmatch '^[0-9a-f]{64}$' -and $audit.consumer_sha256 -cmatch '^[0-9a-f]{64}$') 'Real-tree ProtocolCommon graph did not emit deterministic adjacency/consumer digests.'
     Assert-True ([long]$audit.total_elapsed_ms -le 45000) "ProtocolCommon transitive owner audit exceeded its measured 45-second bound: $($audit.total_elapsed_ms)ms."
 
