@@ -30,12 +30,46 @@ function Get-LedgerDocumentHash {
     } $Value
 }
 
+function Get-LedgerFileHash {
+    param([string]$Path)
+    [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([IO.File]::ReadAllBytes($Path))).ToLowerInvariant()
+}
+
 function Get-LedgerCommittedTransitionPaths {
     param([string]$WorkspaceRoot,[object[]]$AutomationOutputs,[hashtable]$RepositoryMap)
     & $script:validationAuthorityModule {
         param($Workspace,$Outputs,$Map)
         Get-MorphospaceCommittedTransitionPaths -WorkspaceRoot $Workspace -AutomationOutputs $Outputs -RepositoryMap $Map
     } $WorkspaceRoot $AutomationOutputs $RepositoryMap
+}
+
+function Assert-LedgerCommittedV4DamageRejected {
+    param(
+        [string]$TemplateWorkspace,
+        [string]$PlanningRoot,
+        [string]$Name,
+        [scriptblock]$Mutation
+    )
+    $caseWorkspace = Join-Path $PlanningRoot "validation-authority-v4-$Name"
+    Copy-Item -LiteralPath $TemplateWorkspace -Destination $caseWorkspace -Recurse
+    $transactionId = 'projected-raw-recovery-transition'
+    $intentPath = Join-Path $caseWorkspace "receipts\transactions\$transactionId.intent.json"
+    $completionPath = Join-Path $caseWorkspace "receipts\transactions\$transactionId.completion.json"
+    $intent = Get-Content -Raw -LiteralPath $intentPath | ConvertFrom-Json
+    & $Mutation $caseWorkspace $intent
+    Write-Json -Path $intentPath -Value $intent
+    $completion = Get-Content -Raw -LiteralPath $completionPath | ConvertFrom-Json
+    $completion.intent.sha256 = Get-LedgerFileHash $intentPath
+    Write-Json -Path $completionPath -Value $completion
+    $completionRelative = [IO.Path]::GetRelativePath($PlanningRoot, $completionPath).Replace('\','/')
+    $rejected = $false
+    try {
+        Get-LedgerCommittedTransitionPaths `
+            -WorkspaceRoot $caseWorkspace `
+            -AutomationOutputs @([pscustomobject]@{ phase='transition'; role='transition-ledger-completion'; path=$completionRelative }) `
+            -RepositoryMap @{ planning=[pscustomobject]@{ path=$PlanningRoot } } | Out-Null
+    } catch { $rejected = $true }
+    Assert-Ledger $rejected "validation authority accepted self-hashed malformed v4 intent: $Name"
 }
 
 function New-LedgerEvent {
@@ -1265,10 +1299,19 @@ try {
 
     $projectionWorkspace=Join-Path $workspace 'additional-projection-repair'
     Initialize-LedgerFixture $projectionWorkspace $state $unit
-    $projectBefore=[pscustomobject][ordered]@{schema='test';project_id='ledger-test';revision=1}
-    $projectAfter=[pscustomobject][ordered]@{schema='test';project_id='ledger-test';revision=2}
-    $lockBefore=[pscustomobject][ordered]@{schema='test';project_id='ledger-test';revision=4}
-    $lockAfter=[pscustomobject][ordered]@{schema='test';project_id='ledger-test';revision=5}
+    $projectBefore=[pscustomobject][ordered]@{
+        schema='rusty.morphospace.workflow.project_spec.v1';project_id='ledger-test';revision=1
+        purpose='Exercise authenticated transition-ledger projections.'
+        activation_model=[pscustomobject][ordered]@{default='disabled';unlisted_modules='inert'}
+        authority_map=@([pscustomobject][ordered]@{parameter='test.parameter';owner='test-owner';adapters=@('test-adapter')})
+        repositories=@([pscustomobject][ordered]@{repo_id='planning-owner';role='planning';path='.';allowed_paths=@('morphospace')})
+        modules=@();non_scope=@('No product behavior.')
+        validation_profiles=@([pscustomobject][ordered]@{profile_id='test-profile';commands=@('pwsh -File test.ps1')})
+        public_boundary=[pscustomobject][ordered]@{mode='private';private_overlay='test-overlay';prohibited_evidence=@()}
+    }
+    $projectAfter=$projectBefore|ConvertTo-Json -Depth 32|ConvertFrom-Json;$projectAfter.revision=2
+    $lockBefore=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.feature_lock.v1';project_id='ledger-test';revision=4;default_activation='disabled';features=@()}
+    $lockAfter=$lockBefore|ConvertTo-Json -Depth 32|ConvertFrom-Json;$lockAfter.revision=5
     Write-Json (Join-Path $projectionWorkspace 'project.spec.json') $projectBefore
     Write-Json (Join-Path $projectionWorkspace 'feature.lock.json') $lockBefore
     $projectionInterrupted=$false
@@ -1299,6 +1342,257 @@ try {
     $projectionCompletionRelative=[IO.Path]::GetRelativePath($workspace,(Join-Path $projectionWorkspace 'receipts\transactions\additional-projection-repair-transition.completion.json')).Replace('\','/')
     $projectionPaths=@(Get-LedgerCommittedTransitionPaths -WorkspaceRoot $projectionWorkspace -AutomationOutputs @([pscustomobject]@{phase='transition';role='transition-ledger-completion';path=$projectionCompletionRelative}) -RepositoryMap @{planning=[pscustomobject]@{path=$workspace}})
     Assert-Ledger ($projectionPaths.Count-eq5-and@($projectionPaths|Where-Object{$_-like'*/feature.lock.json'}).Count-eq1-and@($projectionPaths|Where-Object{$_-like'*/project.spec.json'}).Count-eq1) 'validation authority did not bind both committed v3 additional projections'
+
+    $wrongRawWorkspace=Join-Path $workspace 'projected-raw-wrong-preflight'
+    Initialize-LedgerFixture $wrongRawWorkspace $state $unit
+    Write-Json (Join-Path $wrongRawWorkspace 'project.spec.json') $projectBefore
+    $wrongRawUnitPath=Join-Path $wrongRawWorkspace 'iteration-units\unit.json'
+    $wrongRawUnitBefore=[IO.File]::ReadAllBytes($wrongRawUnitPath)
+    $wrongRawRejected=$false
+    try{
+        Start-MorphospaceTransitionLedger `
+            -WorkspaceRoot $wrongRawWorkspace `
+            -TransactionId 'projected-raw-wrong-preflight-transition' `
+            -StatePath 'workspace.state.json' `
+            -UnitPath 'iteration-units/unit.json' `
+            -EventsPath 'iteration-events.jsonl' `
+            -TargetState $targetState `
+            -TargetUnit $targetUnit `
+            -Event (New-LedgerEvent 'projected-raw-wrong-preflight' 1) `
+            -ExpectedPreUnitRawSha256 ('0'*64) `
+            -AdditionalProjections @([pscustomobject]@{path='project.spec.json';expected_sha256=(Get-LedgerDocumentHash $projectBefore);document=$projectAfter}) | Out-Null
+    }catch{$wrongRawRejected=$_.Exception.Message-like'*expected pre-unit raw SHA-256*'}
+    Assert-Ledger ($wrongRawRejected-and
+        [Convert]::ToHexString([IO.File]::ReadAllBytes($wrongRawUnitPath))-ceq[Convert]::ToHexString($wrongRawUnitBefore)-and
+        -not[IO.File]::Exists((Join-Path $wrongRawWorkspace 'receipts\transactions\projected-raw-wrong-preflight-transition.intent.json'))
+    ) 'wrong projected raw pre-unit SHA reached intent publication or mutated the unit'
+
+    $retirementProjectionWorkspace=Join-Path $workspace 'retirement-v1-projection-rejection'
+    Initialize-LedgerFixture $retirementProjectionWorkspace $state $unit
+    Write-Json (Join-Path $retirementProjectionWorkspace 'project.spec.json') $projectBefore
+    $retirementProjectionEvent=New-LedgerEvent 'unit-test-proposal-retired-0001' 1
+    $retirementProjectionRejected=$false
+    try{
+        Start-MorphospaceTransitionLedger `
+            -WorkspaceRoot $retirementProjectionWorkspace `
+            -TransactionId 'unit-test-proposal-retired-0001-transition' `
+            -StatePath 'workspace.state.json' `
+            -UnitPath 'iteration-units/unit.json' `
+            -EventsPath 'iteration-events.jsonl' `
+            -TargetState $targetState `
+            -TargetUnit $targetUnit `
+            -Event $retirementProjectionEvent `
+            -ExpectedPreUnitRawSha256 (Get-LedgerFileHash (Join-Path $retirementProjectionWorkspace 'iteration-units\unit.json')) `
+            -AdditionalProjections @([pscustomobject]@{path='project.spec.json';expected_sha256=(Get-LedgerDocumentHash $projectBefore);document=$projectAfter}) | Out-Null
+    }catch{$retirementProjectionRejected=$_.Exception.Message-like'*may not replace proposed-unit retirement v1 receipt binding*'}
+    Assert-Ledger ($retirementProjectionRejected-and
+        -not[IO.File]::Exists((Join-Path $retirementProjectionWorkspace 'receipts\transactions\unit-test-proposal-retired-0001-transition.intent.json'))-and
+        [IO.File]::ReadAllBytes((Join-Path $retirementProjectionWorkspace 'iteration-events.jsonl')).Length-eq0
+    ) 'projected raw v4 path changed proposed-unit retirement v1 semantics'
+
+    $rawDriftWorkspace=Join-Path $workspace 'projected-raw-normalization-drift'
+    Initialize-LedgerFixture $rawDriftWorkspace $state $unit
+    Write-Json (Join-Path $rawDriftWorkspace 'project.spec.json') $projectBefore
+    $rawDriftUnitPath=Join-Path $rawDriftWorkspace 'iteration-units\unit.json'
+    $rawDriftHash=Get-LedgerFileHash $rawDriftUnitPath
+    try{
+        Start-MorphospaceTransitionLedger `
+            -WorkspaceRoot $rawDriftWorkspace `
+            -TransactionId 'projected-raw-normalization-drift-transition' `
+            -StatePath 'workspace.state.json' `
+            -UnitPath 'iteration-units/unit.json' `
+            -EventsPath 'iteration-events.jsonl' `
+            -TargetState $targetState `
+            -TargetUnit $targetUnit `
+            -Event (New-LedgerEvent 'projected-raw-normalization-drift' 1) `
+            -ExpectedPreUnitRawSha256 $rawDriftHash `
+            -AdditionalProjections @([pscustomobject]@{path='project.spec.json';expected_sha256=(Get-LedgerDocumentHash $projectBefore);document=$projectAfter}) `
+            -FaultAfter after-intent | Out-Null
+    }catch{}
+    $rawDriftProjectBefore=[IO.File]::ReadAllBytes((Join-Path $rawDriftWorkspace 'project.spec.json'))
+    $rawDriftStateBefore=[IO.File]::ReadAllBytes((Join-Path $rawDriftWorkspace 'workspace.state.json'))
+    $rawDriftSameUnit=Get-Content -Raw $rawDriftUnitPath|ConvertFrom-Json
+    [IO.File]::WriteAllText($rawDriftUnitPath,($rawDriftSameUnit|ConvertTo-Json -Depth 20),[Text.UTF8Encoding]::new($false))
+    Assert-Ledger ((Get-LedgerDocumentHash (Get-Content -Raw $rawDriftUnitPath|ConvertFrom-Json))-ceq(Get-LedgerDocumentHash $unit)-and(Get-LedgerFileHash $rawDriftUnitPath)-cne$rawDriftHash) 'normalization-drift fixture did not retain canonical identity while changing raw bytes'
+    $rawDriftRejected=$false
+    try{Complete-MorphospaceTransitionLedger -WorkspaceRoot $rawDriftWorkspace -TransactionId 'projected-raw-normalization-drift-transition' -Repair|Out-Null}catch{$rawDriftRejected=$_.Exception.Message-like'*durable raw pre-unit byte-hash CAS*'}
+    Assert-Ledger ($rawDriftRejected-and
+        [Convert]::ToHexString([IO.File]::ReadAllBytes((Join-Path $rawDriftWorkspace 'project.spec.json')))-ceq[Convert]::ToHexString($rawDriftProjectBefore)-and
+        [Convert]::ToHexString([IO.File]::ReadAllBytes((Join-Path $rawDriftWorkspace 'workspace.state.json')))-ceq[Convert]::ToHexString($rawDriftStateBefore)-and
+        [IO.File]::ReadAllBytes((Join-Path $rawDriftWorkspace 'iteration-events.jsonl')).Length-eq0-and
+        -not[IO.File]::Exists((Join-Path $rawDriftWorkspace 'receipts\transactions\projected-raw-normalization-drift-transition.completion.json'))
+    ) 'normalization-equivalent raw-unit drift reached a projection, event, or completion'
+
+    $projectedRawWorkspace=Join-Path $workspace 'projected-raw-recovery'
+    Initialize-LedgerFixture $projectedRawWorkspace $state $unit
+    Write-Json (Join-Path $projectedRawWorkspace 'project.spec.json') $projectBefore
+    Write-Json (Join-Path $projectedRawWorkspace 'feature.lock.json') $lockBefore
+    $projectedRawUnitPath=Join-Path $projectedRawWorkspace 'iteration-units\unit.json'
+    $projectedRawHash=Get-LedgerFileHash $projectedRawUnitPath
+    $projectedRawInterrupted=$false
+    try{
+        Start-MorphospaceTransitionLedger `
+            -WorkspaceRoot $projectedRawWorkspace `
+            -TransactionId 'projected-raw-recovery-transition' `
+            -StatePath 'workspace.state.json' `
+            -UnitPath 'iteration-units/unit.json' `
+            -EventsPath 'iteration-events.jsonl' `
+            -TargetState $targetState `
+            -TargetUnit $targetUnit `
+            -Event (New-LedgerEvent 'projected-raw-recovery' 1) `
+            -ExpectedPreUnitRawSha256 $projectedRawHash `
+            -AdditionalProjections @(
+                [pscustomobject]@{path='feature.lock.json';expected_sha256=(Get-LedgerDocumentHash $lockBefore);document=$lockAfter},
+                [pscustomobject]@{path='project.spec.json';expected_sha256=(Get-LedgerDocumentHash $projectBefore);document=$projectAfter}
+            ) `
+            -FaultAfter after-projection | Out-Null
+    }catch{$projectedRawInterrupted=$_.Exception.Message-like'*Injected interruption after projections*'}
+    $projectedRawIntent=Get-Content -Raw (Join-Path $projectedRawWorkspace 'receipts\transactions\projected-raw-recovery-transition.intent.json')|ConvertFrom-Json
+    Assert-Ledger ($projectedRawInterrupted-and
+        [string]$projectedRawIntent.schema-ceq'rusty.morphospace.workflow.transition_ledger_intent.v4'-and
+        [string]$projectedRawIntent.pre_unit_raw.path-ceq'iteration-units/unit.json'-and
+        [string]$projectedRawIntent.pre_unit_raw.sha256-ceq$projectedRawHash-and
+        @($projectedRawIntent.additional_projections).Count-eq2
+    ) 'projected raw transition did not publish the closed v4 raw/projection binding'
+    $projectedRawResult=Complete-MorphospaceTransitionLedger -WorkspaceRoot $projectedRawWorkspace -TransactionId 'projected-raw-recovery-transition' -Repair
+    $projectedRawReplay=Complete-MorphospaceTransitionLedger -WorkspaceRoot $projectedRawWorkspace -TransactionId 'projected-raw-recovery-transition'
+    Assert-Ledger ($projectedRawResult.status-eq'committed'-and$projectedRawReplay.status-eq'already-committed'-and
+        (Get-LedgerDocumentHash (Get-Content -Raw (Join-Path $projectedRawWorkspace 'project.spec.json')|ConvertFrom-Json))-ceq(Get-LedgerDocumentHash $projectAfter)-and
+        (Get-LedgerDocumentHash (Get-Content -Raw (Join-Path $projectedRawWorkspace 'feature.lock.json')|ConvertFrom-Json))-ceq(Get-LedgerDocumentHash $lockAfter)-and
+        @(Get-Content (Join-Path $projectedRawWorkspace 'iteration-events.jsonl')|Where-Object{$_}).Count-eq1
+    ) 'projected raw interruption did not recover and replay idempotently'
+    $projectedRawCompletionRelative=[IO.Path]::GetRelativePath($workspace,(Join-Path $projectedRawWorkspace 'receipts\transactions\projected-raw-recovery-transition.completion.json')).Replace('\','/')
+    $projectedRawPaths=@(Get-LedgerCommittedTransitionPaths -WorkspaceRoot $projectedRawWorkspace -AutomationOutputs @([pscustomobject]@{phase='transition';role='transition-ledger-completion';path=$projectedRawCompletionRelative}) -RepositoryMap @{planning=[pscustomobject]@{path=$workspace}})
+    Assert-Ledger ($projectedRawPaths.Count-eq5-and@($projectedRawPaths|Where-Object{$_-like'*/feature.lock.json'}).Count-eq1-and@($projectedRawPaths|Where-Object{$_-like'*/project.spec.json'}).Count-eq1) 'validation authority did not bind the committed v4 projection set'
+
+    Assert-LedgerCommittedV4DamageRejected -TemplateWorkspace $projectedRawWorkspace -PlanningRoot $workspace -Name 'unknown-root' -Mutation {
+        param($caseWorkspace,$intent)
+        $intent | Add-Member -NotePropertyName unknown_policy -NotePropertyValue 'forbidden'
+    }
+    Assert-LedgerCommittedV4DamageRejected -TemplateWorkspace $projectedRawWorkspace -PlanningRoot $workspace -Name 'stray-supersession' -Mutation {
+        param($caseWorkspace,$intent)
+        $intent | Add-Member -NotePropertyName supersession -NotePropertyValue ([pscustomobject]@{ old_unit_id='forbidden' })
+    }
+    Assert-LedgerCommittedV4DamageRejected -TemplateWorkspace $projectedRawWorkspace -PlanningRoot $workspace -Name 'zero-projections' -Mutation {
+        param($caseWorkspace,$intent)
+        $intent.additional_projections = @()
+    }
+    Assert-LedgerCommittedV4DamageRejected -TemplateWorkspace $projectedRawWorkspace -PlanningRoot $workspace -Name 'extra-projection' -Mutation {
+        param($caseWorkspace,$intent)
+        $intent.additional_projections = @($intent.additional_projections[0],$intent.additional_projections[1],$intent.additional_projections[1])
+    }
+    Assert-LedgerCommittedV4DamageRejected -TemplateWorkspace $projectedRawWorkspace -PlanningRoot $workspace -Name 'duplicate-projection' -Mutation {
+        param($caseWorkspace,$intent)
+        $intent.additional_projections[1].path = [string]$intent.additional_projections[0].path
+    }
+    Assert-LedgerCommittedV4DamageRejected -TemplateWorkspace $projectedRawWorkspace -PlanningRoot $workspace -Name 'misordered-projections' -Mutation {
+        param($caseWorkspace,$intent)
+        $intent.additional_projections = @($intent.additional_projections[1],$intent.additional_projections[0])
+    }
+    Assert-LedgerCommittedV4DamageRejected -TemplateWorkspace $projectedRawWorkspace -PlanningRoot $workspace -Name 'unauthorized-projection' -Mutation {
+        param($caseWorkspace,$intent)
+        $intent.additional_projections[0].path = 'unowned.json'
+    }
+    Assert-LedgerCommittedV4DamageRejected -TemplateWorkspace $projectedRawWorkspace -PlanningRoot $workspace -Name 'projection-document-hash' -Mutation {
+        param($caseWorkspace,$intent)
+        $intent.additional_projections[1].document.revision = 99
+    }
+    Assert-LedgerCommittedV4DamageRejected -TemplateWorkspace $projectedRawWorkspace -PlanningRoot $workspace -Name 'projection-project-identity' -Mutation {
+        param($caseWorkspace,$intent)
+        $projection = @($intent.additional_projections | Where-Object { [string]$_.path -ceq 'project.spec.json' })[0]
+        $projection.document.project_id = 'substituted-project'
+        $projection.target_sha256 = Get-LedgerDocumentHash $projection.document
+        Write-Json -Path (Join-Path $caseWorkspace 'project.spec.json') -Value $projection.document
+    }
+    Assert-LedgerCommittedV4DamageRejected -TemplateWorkspace $projectedRawWorkspace -PlanningRoot $workspace -Name 'projection-missing-project-identity' -Mutation {
+        param($caseWorkspace,$intent)
+        $projection = @($intent.additional_projections | Where-Object { [string]$_.path -ceq 'project.spec.json' })[0]
+        $projection.document.PSObject.Properties.Remove('project_id')
+        $projection.target_sha256 = Get-LedgerDocumentHash $projection.document
+        Write-Json -Path (Join-Path $caseWorkspace 'project.spec.json') -Value $projection.document
+    }
+    Assert-LedgerCommittedV4DamageRejected -TemplateWorkspace $projectedRawWorkspace -PlanningRoot $workspace -Name 'projection-unsupported-schema' -Mutation {
+        param($caseWorkspace,$intent)
+        $projection = @($intent.additional_projections | Where-Object { [string]$_.path -ceq 'project.spec.json' })[0]
+        $projection.document.schema = 'rusty.morphospace.workflow.project_spec.v99'
+        $projection.target_sha256 = Get-LedgerDocumentHash $projection.document
+        Write-Json -Path (Join-Path $caseWorkspace 'project.spec.json') -Value $projection.document
+    }
+    Assert-LedgerCommittedV4DamageRejected -TemplateWorkspace $projectedRawWorkspace -PlanningRoot $workspace -Name 'projection-schema-path-substitution' -Mutation {
+        param($caseWorkspace,$intent)
+        $projection = @($intent.additional_projections | Where-Object { [string]$_.path -ceq 'project.spec.json' })[0]
+        $projection.document.schema = 'rusty.morphospace.workflow.feature_lock.v1'
+        $projection.target_sha256 = Get-LedgerDocumentHash $projection.document
+        Write-Json -Path (Join-Path $caseWorkspace 'project.spec.json') -Value $projection.document
+    }
+    Assert-LedgerCommittedV4DamageRejected -TemplateWorkspace $projectedRawWorkspace -PlanningRoot $workspace -Name 'projection-schema-invalid-document' -Mutation {
+        param($caseWorkspace,$intent)
+        $projection = @($intent.additional_projections | Where-Object { [string]$_.path -ceq 'project.spec.json' })[0]
+        $projection.document.PSObject.Properties.Remove('purpose')
+        $projection.target_sha256 = Get-LedgerDocumentHash $projection.document
+        Write-Json -Path (Join-Path $caseWorkspace 'project.spec.json') -Value $projection.document
+    }
+    Assert-LedgerCommittedV4DamageRejected -TemplateWorkspace $projectedRawWorkspace -PlanningRoot $workspace -Name 'projection-unknown-field' -Mutation {
+        param($caseWorkspace,$intent)
+        $intent.additional_projections[0] | Add-Member -NotePropertyName policy -NotePropertyValue 'forbidden'
+    }
+
+    $rawBindingTamperWorkspace=Join-Path $workspace 'projected-raw-binding-tamper'
+    Initialize-LedgerFixture $rawBindingTamperWorkspace $state $unit
+    Write-Json (Join-Path $rawBindingTamperWorkspace 'project.spec.json') $projectBefore
+    $rawBindingTamperHash=Get-LedgerFileHash (Join-Path $rawBindingTamperWorkspace 'iteration-units\unit.json')
+    try{
+        Start-MorphospaceTransitionLedger `
+            -WorkspaceRoot $rawBindingTamperWorkspace `
+            -TransactionId 'projected-raw-binding-tamper-transition' `
+            -StatePath 'workspace.state.json' `
+            -UnitPath 'iteration-units/unit.json' `
+            -EventsPath 'iteration-events.jsonl' `
+            -TargetState $targetState `
+            -TargetUnit $targetUnit `
+            -Event (New-LedgerEvent 'projected-raw-binding-tamper' 1) `
+            -ExpectedPreUnitRawSha256 $rawBindingTamperHash `
+            -AdditionalProjections @([pscustomobject]@{path='project.spec.json';expected_sha256=(Get-LedgerDocumentHash $projectBefore);document=$projectAfter}) `
+            -FaultAfter after-intent | Out-Null
+    }catch{}
+    $rawBindingTamperIntentPath=Join-Path $rawBindingTamperWorkspace 'receipts\transactions\projected-raw-binding-tamper-transition.intent.json'
+    $rawBindingTamperIntent=Get-Content -Raw $rawBindingTamperIntentPath|ConvertFrom-Json
+    $rawBindingTamperIntent.pre_unit_raw.sha256='0'*64
+    Write-Json $rawBindingTamperIntentPath $rawBindingTamperIntent
+    $rawBindingTamperRejected=$false
+    try{Complete-MorphospaceTransitionLedger -WorkspaceRoot $rawBindingTamperWorkspace -TransactionId 'projected-raw-binding-tamper-transition' -Repair|Out-Null}catch{$rawBindingTamperRejected=$_.Exception.Message-like'*durable raw pre-unit byte-hash CAS*'}
+    Assert-Ledger ($rawBindingTamperRejected-and
+        (Get-LedgerDocumentHash (Get-Content -Raw (Join-Path $rawBindingTamperWorkspace 'project.spec.json')|ConvertFrom-Json))-ceq(Get-LedgerDocumentHash $projectBefore)-and
+        (Get-LedgerDocumentHash (Get-Content -Raw (Join-Path $rawBindingTamperWorkspace 'workspace.state.json')|ConvertFrom-Json))-ceq(Get-LedgerDocumentHash $state)-and
+        [IO.File]::ReadAllBytes((Join-Path $rawBindingTamperWorkspace 'iteration-events.jsonl')).Length-eq0
+    ) 'tampered durable v4 raw SHA reached a projection or event mutation'
+
+    $projectedRawTamperWorkspace=Join-Path $workspace 'projected-raw-projection-tamper'
+    Initialize-LedgerFixture $projectedRawTamperWorkspace $state $unit
+    Write-Json (Join-Path $projectedRawTamperWorkspace 'project.spec.json') $projectBefore
+    $projectedRawTamperHash=Get-LedgerFileHash (Join-Path $projectedRawTamperWorkspace 'iteration-units\unit.json')
+    try{
+        Start-MorphospaceTransitionLedger `
+            -WorkspaceRoot $projectedRawTamperWorkspace `
+            -TransactionId 'projected-raw-projection-tamper-transition' `
+            -StatePath 'workspace.state.json' `
+            -UnitPath 'iteration-units/unit.json' `
+            -EventsPath 'iteration-events.jsonl' `
+            -TargetState $targetState `
+            -TargetUnit $targetUnit `
+            -Event (New-LedgerEvent 'projected-raw-projection-tamper' 1) `
+            -ExpectedPreUnitRawSha256 $projectedRawTamperHash `
+            -AdditionalProjections @([pscustomobject]@{path='project.spec.json';expected_sha256=(Get-LedgerDocumentHash $projectBefore);document=$projectAfter}) `
+            -FaultAfter after-intent | Out-Null
+    }catch{}
+    Write-Json (Join-Path $projectedRawTamperWorkspace 'project.spec.json') ([pscustomobject][ordered]@{schema='test';project_id='ledger-test';revision=99})
+    $projectedRawTamperRejected=$false
+    try{Complete-MorphospaceTransitionLedger -WorkspaceRoot $projectedRawTamperWorkspace -TransactionId 'projected-raw-projection-tamper-transition' -Repair|Out-Null}catch{$projectedRawTamperRejected=$_.Exception.Message-like'*additional-projection CAS*'}
+    Assert-Ledger ($projectedRawTamperRejected-and
+        (Get-LedgerDocumentHash (Get-Content -Raw (Join-Path $projectedRawTamperWorkspace 'workspace.state.json')|ConvertFrom-Json))-ceq(Get-LedgerDocumentHash $state)-and
+        (Get-LedgerDocumentHash (Get-Content -Raw (Join-Path $projectedRawTamperWorkspace 'iteration-units\unit.json')|ConvertFrom-Json))-ceq(Get-LedgerDocumentHash $unit)-and
+        [IO.File]::ReadAllBytes((Join-Path $projectedRawTamperWorkspace 'iteration-events.jsonl')).Length-eq0
+    ) 'tampered v4 additional projection reached state, unit, or event mutation'
 
     $projectionTamperWorkspace=Join-Path $workspace 'additional-projection-tamper'
     Initialize-LedgerFixture $projectionTamperWorkspace $state $unit

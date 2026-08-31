@@ -1,10 +1,14 @@
-param([switch]$SelfTest)
+param(
+    [switch]$SelfTest,
+    [string]$EvidenceRoot = ''
+)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceHistoricalValidationDebtBaseline.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceHistoricalValidationDebtPhaseRunner.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib/ExternalOwnerAuthorization.psm1') -Force
 
 function Assert-HistoricalDebt {
@@ -39,19 +43,112 @@ function Get-HistoricalDebtLockFingerprint {
 }
 
 function Get-HistoricalDebtWorkflowCapture {
-    param([string]$Workspace,[string]$MapPath,[switch]$FullAggregate)
+    param(
+        [string]$Workspace,
+        [string]$MapPath,
+        [int]$Sequence,
+        [string]$PhaseId
+    )
     $hostPath = [Environment]::ProcessPath
     if ([string]::IsNullOrWhiteSpace($hostPath) -or -not [IO.File]::Exists($hostPath)) { $hostPath = (Get-Command pwsh -ErrorAction Stop).Source }
     $arguments = [Collections.Generic.List[string]]::new()
     foreach ($argument in @('-RepoRoot',$repoRoot,'-WorkspaceRoot',$Workspace,'-RepositoryMapPath',$MapPath)) { $arguments.Add($argument) | Out-Null }
-    if (-not $FullAggregate) { $arguments.Add('-SkipOwnerSelfTests') | Out-Null }
+    # This focused debt test validates the complete synthetic project history
+    # without replaying the unrelated owner self-test aggregate. The production
+    # baseline action retains its ordinary full cold capture.
+    $arguments.Add('-SkipOwnerSelfTests') | Out-Null
     $arguments.Add('-EmitHistoricalValidationDebtCapture') | Out-Null
-    $output = @(& $hostPath -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $repoRoot 'scripts/Test-WorkflowContracts.ps1') @($arguments.ToArray()) 2>&1)
-    $exitCode = $LASTEXITCODE
-    $lines = @($output | ForEach-Object { [string]$_ } | Where-Object { $_.StartsWith('historical_validation_debt_capture_base64=', [StringComparison]::Ordinal) })
-    if ($lines.Count -ne 1) { throw 'Cold workflow aggregate did not emit exactly one capture record.' }
-    $capture = ConvertFrom-MorphospaceProtocolJsonBytes -Bytes ([Convert]::FromBase64String($lines[0].Substring('historical_validation_debt_capture_base64='.Length))) -Context 'historical-debt cold aggregate capture'
-    return [pscustomobject]@{ exit_code=$exitCode; capture=$capture; output=@($output) }
+    $childArguments = @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',(Join-Path $repoRoot 'scripts/Test-WorkflowContracts.ps1')) + @($arguments.ToArray())
+    $phase = Invoke-MorphospaceHistoricalDebtChildPhase -EvidenceRoot $EvidenceRoot -Sequence $Sequence -PhaseId $PhaseId -FilePath $hostPath -Arguments $childArguments -WorkingDirectory $repoRoot -TimeoutSeconds 300 -ExpectedExitCodes @(0)
+    $stdoutBytes = [IO.File]::ReadAllBytes($phase.stdout_path)
+    $stderrBytes = [IO.File]::ReadAllBytes($phase.stderr_path)
+    $capture = ConvertFrom-HistoricalDebtWorkflowCaptureTransport -Terminal $phase.terminal -StdoutPath $phase.stdout_path -StdoutBytes $stdoutBytes -StderrPath $phase.stderr_path -StderrBytes $stderrBytes -DrainSucceeded $true
+    return [pscustomobject]@{ exit_code=[int]$phase.terminal.exit_code;capture=$capture;stdout_bytes=$stdoutBytes;stderr_bytes=$stderrBytes;phase=$phase }
+}
+
+function ConvertFrom-HistoricalDebtWorkflowCaptureTransport {
+    param(
+        [Parameter(Mandatory)][object]$Terminal,
+        [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string]$StdoutPath,
+        [Parameter(Mandatory)][AllowEmptyCollection()][byte[]]$StdoutBytes,
+        [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string]$StderrPath,
+        [Parameter(Mandatory)][AllowEmptyCollection()][byte[]]$StderrBytes,
+        [Parameter(Mandatory)][bool]$DrainSucceeded
+    )
+    foreach ($stream in @(
+        [pscustomobject]@{name='stdout';path=$StdoutPath;bytes=$StdoutBytes},
+        [pscustomobject]@{name='stderr';path=$StderrPath;bytes=$StderrBytes}
+    )) {
+        $property = $Terminal.PSObject.Properties[[string]$stream.name]
+        if ($null -eq $property -or $null -eq $property.Value) {
+            throw "Historical-debt workflow capture terminal omits the $([string]$stream.name) evidence reference."
+        }
+        $reference = $property.Value
+        foreach ($required in @('path','sha256','length')) {
+            if ($null -eq $reference.PSObject.Properties[$required]) {
+                throw "Historical-debt workflow capture terminal $([string]$stream.name) evidence reference omits $required."
+            }
+        }
+        $expectedLeaf = [string]$reference.path
+        $observedLeaf = [IO.Path]::GetFileName([string]$stream.path)
+        if ([string]::IsNullOrWhiteSpace($expectedLeaf) -or $observedLeaf -cne $expectedLeaf) {
+            throw "Historical-debt workflow capture $([string]$stream.name) evidence leaf identity does not match the terminal reference."
+        }
+        if ([long]$reference.length -ne [long]$stream.bytes.LongLength) {
+            throw "Historical-debt workflow capture $([string]$stream.name) evidence length does not match the terminal reference."
+        }
+        $observedSha256 = Get-MorphospaceSha256Bytes -Bytes $stream.bytes
+        if ([string]$reference.sha256 -cne $observedSha256) {
+            throw "Historical-debt workflow capture $([string]$stream.name) evidence SHA-256 does not match the terminal reference."
+        }
+    }
+    if (-not $DrainSucceeded -or
+        [string]$Terminal.result -cne 'pass' -or
+        [string]$Terminal.category -cne 'completed' -or
+        [int]$Terminal.exit_code -ne 0 -or
+        [bool]$Terminal.timed_out) {
+        throw "Historical-debt workflow capture transport failed: result=$([string]$Terminal.result); category=$([string]$Terminal.category); exit=$([string]$Terminal.exit_code); timed_out=$([bool]$Terminal.timed_out); drain_succeeded=$DrainSucceeded"
+    }
+    if ($StderrBytes.Length -ne 0) { throw 'Historical-debt workflow capture transport emitted stderr failure evidence.' }
+    try { $stdout = [Text.UTF8Encoding]::new($false,$true).GetString($StdoutBytes) }
+    catch { throw "Historical-debt workflow capture stdout is not strict UTF-8. $($_.Exception.Message)" }
+    if ($stdout.IndexOf([char]0) -ge 0) { throw 'Historical-debt workflow capture stdout contains NUL.' }
+    $rawLines = @($stdout -split "`n")
+    $lines = [Collections.Generic.List[string]]::new()
+    foreach ($rawLine in $rawLines) {
+        if ($rawLine.Contains("`r") -and -not $rawLine.EndsWith("`r",[StringComparison]::Ordinal)) {
+            throw 'Historical-debt workflow capture stdout contains a non-terminal carriage return.'
+        }
+        $lines.Add($(if($rawLine.EndsWith("`r",[StringComparison]::Ordinal)){$rawLine.Substring(0,$rawLine.Length-1)}else{$rawLine})) | Out-Null
+    }
+    $prefix = 'historical_validation_debt_capture_base64='
+    $markerIndexes = @()
+    for ($index=0;$index-lt$lines.Count;$index++) {
+        if ($lines[$index].StartsWith($prefix,[StringComparison]::Ordinal)) { $markerIndexes += $index }
+        if ($lines[$index] -ceq 'Workflow contract validation failures:' -or $lines[$index].StartsWith('Exception:',[StringComparison]::Ordinal) -or $lines[$index].StartsWith('OperationStopped:',[StringComparison]::Ordinal)) {
+            throw 'Historical-debt workflow capture success marker is contradicted by validator failure evidence.'
+        }
+    }
+    if ($markerIndexes.Count -ne 1) { throw 'Historical-debt workflow capture did not emit exactly one envelope.' }
+    $lastNonEmpty = -1
+    for ($index=$lines.Count-1;$index-ge0;$index--) { if ($lines[$index].Length -gt 0) { $lastNonEmpty=$index;break } }
+    if ($markerIndexes[0] -ne $lastNonEmpty) { throw 'Historical-debt workflow capture envelope has trailing output.' }
+    $encoded = $lines[$markerIndexes[0]].Substring($prefix.Length)
+    if ($encoded.Length -eq 0 -or $encoded.Length % 4 -ne 0 -or $encoded -cnotmatch '^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$') {
+        throw 'Historical-debt workflow capture envelope is not canonical base64.'
+    }
+    try { [byte[]]$captureBytes=[Convert]::FromBase64String($encoded) }
+    catch { throw "Historical-debt workflow capture envelope base64 is invalid. $($_.Exception.Message)" }
+    $capture = ConvertFrom-MorphospaceProtocolJsonBytes -Bytes $captureBytes -Context 'historical-debt workflow capture envelope'
+    Assert-MorphospaceExactPropertySet $capture @('schema','failure_records') @() 'historical-debt workflow capture envelope'
+    if ([string]$capture.schema -cne 'rusty.morphospace.workflow.historical_validation_debt_capture.v1' -or @($capture.failure_records).Count -eq 0) {
+        throw 'Historical-debt workflow capture envelope identity or failure set is invalid.'
+    }
+    [byte[]]$canonicalBytes=[Text.UTF8Encoding]::new($false,$true).GetBytes((ConvertTo-MorphospaceCanonicalJson -Value $capture))
+    if (-not [Security.Cryptography.CryptographicOperations]::FixedTimeEquals($captureBytes,$canonicalBytes)) {
+        throw 'Historical-debt workflow capture envelope bytes are not canonical.'
+    }
+    return $capture
 }
 
 function New-HistoricalDebtTestPolicy {
@@ -148,9 +245,95 @@ function New-HistoricalDebtUnit {
     }
 }
 
+function Test-HistoricalDebtWorkflowCaptureTransportParser {
+    $record=[ordered]@{
+        failure_code='historical-unit-contract'
+        locus=[ordered]@{kind='historical-unit';unit_id='transport-positive';path='iteration-units/transport-positive.json';raw_sha256='0'*64;canonical_sha256='1'*64}
+        message_sha256='2'*64;evidence_sha256='3'*64;record_sha256='4'*64
+    }
+    $capture=[ordered]@{schema='rusty.morphospace.workflow.historical_validation_debt_capture.v1';failure_records=@($record)}
+    [byte[]]$captureBytes=[Text.UTF8Encoding]::new($false,$true).GetBytes((ConvertTo-MorphospaceCanonicalJson -Value $capture))
+    $marker='historical_validation_debt_capture_base64='+[Convert]::ToBase64String($captureBytes)
+    $encoding=[Text.UTF8Encoding]::new($false,$true)
+    $stdoutLeaf='219-capture.stdout.log'
+    $stderrLeaf='219-capture.stderr.log'
+    function New-HistoricalDebtTestTransportTerminal {
+        param(
+            [Parameter(Mandatory)][string]$Result,
+            [Parameter(Mandatory)][string]$Category,
+            [AllowNull()][object]$ExitCode,
+            [Parameter(Mandatory)][bool]$TimedOut,
+            [Parameter(Mandatory)][AllowEmptyCollection()][byte[]]$StdoutBytes,
+            [Parameter(Mandatory)][AllowEmptyCollection()][byte[]]$StderrBytes
+        )
+        return [pscustomobject]@{
+            result=$Result;category=$Category;exit_code=$ExitCode;timed_out=$TimedOut
+            stdout=[pscustomobject]@{path=$stdoutLeaf;sha256=Get-MorphospaceSha256Bytes -Bytes $StdoutBytes;length=[long]$StdoutBytes.LongLength}
+            stderr=[pscustomobject]@{path=$stderrLeaf;sha256=Get-MorphospaceSha256Bytes -Bytes $StderrBytes;length=[long]$StderrBytes.LongLength}
+        }
+    }
+    function ConvertFrom-HistoricalDebtTestTransport {
+        param(
+            [Parameter(Mandatory)][AllowEmptyCollection()][byte[]]$StdoutBytes,
+            [Parameter(Mandatory)][AllowEmptyCollection()][byte[]]$StderrBytes,
+            [string]$Result='pass',
+            [string]$Category='completed',
+            [AllowNull()][object]$ExitCode=0,
+            [bool]$TimedOut=$false,
+            [bool]$DrainSucceeded=$true
+        )
+        $boundTerminal=New-HistoricalDebtTestTransportTerminal -Result $Result -Category $Category -ExitCode $ExitCode -TimedOut $TimedOut -StdoutBytes $StdoutBytes -StderrBytes $StderrBytes
+        return ConvertFrom-HistoricalDebtWorkflowCaptureTransport -Terminal $boundTerminal -StdoutPath $stdoutLeaf -StdoutBytes $StdoutBytes -StderrPath $stderrLeaf -StderrBytes $StderrBytes -DrainSucceeded $DrainSucceeded
+    }
+    $emptyBytes=[byte[]]::new(0)
+    $positiveLfBytes=$encoding.GetBytes("bounded-prelude`n$marker`n")
+    $positiveLf=ConvertFrom-HistoricalDebtTestTransport -StdoutBytes $positiveLfBytes -StderrBytes $emptyBytes
+    Assert-HistoricalDebt ([string]$positiveLf.schema -ceq [string]$capture.schema -and @($positiveLf.failure_records).Count -eq 1) 'A valid LF capture with one empty trailing record was rejected.'
+    $positiveCrlf=ConvertFrom-HistoricalDebtTestTransport -StdoutBytes $encoding.GetBytes("bounded-prelude`r`n$marker`r`n") -StderrBytes $emptyBytes
+    Assert-HistoricalDebt ([string]$positiveCrlf.schema -ceq [string]$capture.schema -and @($positiveCrlf.failure_records).Count -eq 1) 'A valid CRLF capture with one empty trailing record was rejected.'
+    $positiveFinal=ConvertFrom-HistoricalDebtTestTransport -StdoutBytes $encoding.GetBytes($marker) -StderrBytes $emptyBytes
+    Assert-HistoricalDebt ([string]$positiveFinal.schema -ceq [string]$capture.schema -and @($positiveFinal.failure_records).Count -eq 1) 'One final capture envelope without a trailing record was rejected.'
+
+    $validBytes=$encoding.GetBytes("$marker`n")
+    Assert-HistoricalDebtRejected { ConvertFrom-HistoricalDebtTestTransport -StdoutBytes $validBytes -StderrBytes $emptyBytes -ExitCode 1 } 'A nonzero capture transport was accepted.'
+    Assert-HistoricalDebtRejected { ConvertFrom-HistoricalDebtTestTransport -StdoutBytes $validBytes -StderrBytes $emptyBytes -Result 'fail' -Category 'timeout' -ExitCode -1 -TimedOut $true } 'A timed-out capture transport was accepted.'
+    Assert-HistoricalDebtRejected { ConvertFrom-HistoricalDebtTestTransport -StdoutBytes $emptyBytes -StderrBytes $emptyBytes -Result 'fail' -Category 'process-start-fail' -ExitCode $null } 'A failed capture launch was accepted.'
+    Assert-HistoricalDebtRejected { ConvertFrom-HistoricalDebtTestTransport -StdoutBytes $validBytes -StderrBytes $emptyBytes -DrainSucceeded $false } 'A capture stream drain failure was accepted.'
+    $stderrFailureBytes=$encoding.GetBytes("validator failure`n")
+    Assert-HistoricalDebtRejected { ConvertFrom-HistoricalDebtTestTransport -StdoutBytes $validBytes -StderrBytes $stderrFailureBytes } 'A success marker accompanied by stderr failure evidence was accepted.'
+    Assert-HistoricalDebtRejected { ConvertFrom-HistoricalDebtTestTransport -StdoutBytes $encoding.GetBytes("$marker`n$marker`n") -StderrBytes $emptyBytes } 'Duplicate capture envelopes were accepted.'
+    Assert-HistoricalDebtRejected { ConvertFrom-HistoricalDebtTestTransport -StdoutBytes $encoding.GetBytes("$marker`ntrailing-output`n") -StderrBytes $emptyBytes } 'Trailing capture output was accepted.'
+    Assert-HistoricalDebtRejected { ConvertFrom-HistoricalDebtTestTransport -StdoutBytes $encoding.GetBytes("historical_validation_debt_capture_base64=%%%=`n") -StderrBytes $emptyBytes } 'Malformed capture base64 was accepted.'
+    $malformedPayload=[Convert]::ToBase64String($encoding.GetBytes('{}'))
+    Assert-HistoricalDebtRejected { ConvertFrom-HistoricalDebtTestTransport -StdoutBytes $encoding.GetBytes("historical_validation_debt_capture_base64=$malformedPayload`n") -StderrBytes $emptyBytes } 'Malformed capture envelope JSON was accepted.'
+    Assert-HistoricalDebtRejected { ConvertFrom-HistoricalDebtTestTransport -StdoutBytes $encoding.GetBytes("Workflow contract validation failures:`n$marker`n") -StderrBytes $emptyBytes } 'A success marker contradicted by validator failure output was accepted.'
+
+    $wrongStdoutHash=New-HistoricalDebtTestTransportTerminal -Result 'pass' -Category 'completed' -ExitCode 0 -TimedOut $false -StdoutBytes $validBytes -StderrBytes $emptyBytes
+    $wrongStdoutHash.stdout.sha256='0'*64
+    Assert-HistoricalDebtRejected { ConvertFrom-HistoricalDebtWorkflowCaptureTransport -Terminal $wrongStdoutHash -StdoutPath $stdoutLeaf -StdoutBytes $validBytes -StderrPath $stderrLeaf -StderrBytes $emptyBytes -DrainSucceeded $true } 'Valid-looking capture bytes with the wrong terminal stdout hash were accepted.'
+    $wrongStdoutLength=New-HistoricalDebtTestTransportTerminal -Result 'pass' -Category 'completed' -ExitCode 0 -TimedOut $false -StdoutBytes $validBytes -StderrBytes $emptyBytes
+    $wrongStdoutLength.stdout.length=[long]$validBytes.LongLength+1
+    Assert-HistoricalDebtRejected { ConvertFrom-HistoricalDebtWorkflowCaptureTransport -Terminal $wrongStdoutLength -StdoutPath $stdoutLeaf -StdoutBytes $validBytes -StderrPath $stderrLeaf -StderrBytes $emptyBytes -DrainSucceeded $true } 'Valid-looking capture bytes with the wrong terminal stdout length were accepted.'
+    $wrongStderrLeaf=New-HistoricalDebtTestTransportTerminal -Result 'pass' -Category 'completed' -ExitCode 0 -TimedOut $false -StdoutBytes $validBytes -StderrBytes $emptyBytes
+    $wrongStderrLeaf.stderr.path='219-other.stderr.log'
+    Assert-HistoricalDebtRejected { ConvertFrom-HistoricalDebtWorkflowCaptureTransport -Terminal $wrongStderrLeaf -StdoutPath $stdoutLeaf -StdoutBytes $validBytes -StderrPath $stderrLeaf -StderrBytes $emptyBytes -DrainSucceeded $true } 'A mismatched terminal stderr leaf identity was accepted.'
+    $wrongStderrHash=New-HistoricalDebtTestTransportTerminal -Result 'pass' -Category 'completed' -ExitCode 0 -TimedOut $false -StdoutBytes $validBytes -StderrBytes $emptyBytes
+    $wrongStderrHash.stderr.sha256='0'*64
+    Assert-HistoricalDebtRejected { ConvertFrom-HistoricalDebtWorkflowCaptureTransport -Terminal $wrongStderrHash -StdoutPath $stdoutLeaf -StdoutBytes $validBytes -StderrPath $stderrLeaf -StderrBytes $emptyBytes -DrainSucceeded $true } 'A mismatched terminal stderr SHA-256 was accepted.'
+    $wrongStderrLength=New-HistoricalDebtTestTransportTerminal -Result 'pass' -Category 'completed' -ExitCode 0 -TimedOut $false -StdoutBytes $validBytes -StderrBytes $emptyBytes
+    $wrongStderrLength.stderr.length=1
+    Assert-HistoricalDebtRejected { ConvertFrom-HistoricalDebtWorkflowCaptureTransport -Terminal $wrongStderrLength -StdoutPath $stdoutLeaf -StdoutBytes $validBytes -StderrPath $stderrLeaf -StderrBytes $emptyBytes -DrainSucceeded $true } 'A mismatched terminal stderr length was accepted.'
+}
+
 $temp = Join-Path ([IO.Path]::GetTempPath()) ('historical-validation-debt-' + [guid]::NewGuid().ToString('N'))
+if (-not $EvidenceRoot) {
+    $EvidenceRoot = Join-Path $repoRoot ('local/validation/historical-validation-debt-' + [guid]::NewGuid().ToString('N'))
+}
+$EvidenceRoot = Initialize-MorphospaceHistoricalDebtEvidenceSession -EvidenceRoot $EvidenceRoot
 $rsa = [Security.Cryptography.RSA]::Create(3072)
 try {
+    Test-HistoricalDebtWorkflowCaptureTransportParser
+    Write-Output 'Historical validation-debt capture transport parser tests passed: terminal stream identity/hash/length and exit/drain/stderr/cardinality/trailing/base64/envelope/contradiction damage rejected.'
     $workspace = Join-Path $temp 'workspace'
     [IO.Directory]::CreateDirectory((Join-Path $workspace 'iteration-units')) | Out-Null
     [IO.Directory]::CreateDirectory((Join-Path $workspace 'module-candidates')) | Out-Null
@@ -195,11 +378,23 @@ try {
     $map=[ordered]@{schema='rusty.morphospace.workflow.repository_map.v1';repositories=@([ordered]@{repo_id='project-shell';path=$ownerRoot;role='planning';aliases=@('repo-root')})}
     $mapPath=Join-Path $temp 'repository-map.json'; Write-HistoricalDebtJson $mapPath $map
 
-    $cold = Get-HistoricalDebtWorkflowCapture -Workspace $workspace -MapPath $mapPath -FullAggregate
-    Assert-HistoricalDebt ($cold.exit_code -ne 0) 'Normal full cold-process aggregate passed without an authorized baseline.'
+    $cold = Get-HistoricalDebtWorkflowCapture -Workspace $workspace -MapPath $mapPath -Sequence 10 -PhaseId 'current-history-capture'
+    Assert-HistoricalDebt ($cold.exit_code -eq 0) 'Focused cold-process current-history capture transport did not complete cleanly.'
     Assert-HistoricalDebt (@($cold.capture.failure_records).Count -eq 2 -and @($cold.capture.failure_records | Where-Object { [string]$_.failure_code -ceq 'historical-unit-contract' }).Count -eq 2) 'Synthetic aggregate did not isolate exactly two terminal historical-unit failures.'
+    $records=@($cold.capture.failure_records)
 
-    & (Join-Path $PSScriptRoot 'New-HistoricalValidationDebtBaseline.ps1') -WorkspaceRoot $workspace -RepositoryMapPath $mapPath -RepoRoot $repoRoot -BaselineId 'synthetic-debt-0001' -Execute | Out-Null
+    $baselineEvidencePath = Join-Path $EvidenceRoot 'historical-validation-debt-baseline-evidence.json'
+    $baselineEvidencePhase = Invoke-MorphospaceHistoricalDebtActionPhase -EvidenceRoot $EvidenceRoot -Sequence 11 -PhaseId 'baseline-evidence' -OwnerPath $PSCommandPath -Action {
+        Write-MorphospaceHistoricalDebtBaselineEvidence -EvidencePath $baselineEvidencePath -WorkspaceRoot $workspace -RepoRoot $repoRoot -RepositoryMapPath $mapPath -BaselineId 'synthetic-debt-0001' -FailureRecords $records -CreatedAt ([datetimeoffset]::UtcNow)
+    }
+    Assert-HistoricalDebt ([string]$baselineEvidencePhase.terminal.result -ceq 'pass') 'Exact baseline evidence was not created.'
+    $baselineEvidence = $baselineEvidencePhase.value
+    $baselineReusePhase = Invoke-MorphospaceHistoricalDebtActionPhase -EvidenceRoot $EvidenceRoot -Sequence 12 -PhaseId 'baseline-reuse' -OwnerPath $PSCommandPath -SuccessCategory 'evidence-reused' -Action {
+        Install-MorphospaceHistoricalDebtBaselineEvidence -EvidencePath $baselineEvidencePath -WorkspaceRoot $workspace -RepoRoot $repoRoot -RepositoryMapPath $mapPath -ExpectedEvidenceSha256 ([string]$baselineEvidence.sha256)
+    }
+    Assert-HistoricalDebt ([string]$baselineReusePhase.terminal.result -ceq 'pass' -and [string]$baselineReusePhase.terminal.category -ceq 'evidence-reused') 'Exact baseline evidence was not reused.'
+    $baselineReuse = $baselineReusePhase.value
+    Assert-HistoricalDebt ([string]$baselineReuse.source.sha256 -ceq [string]$baselineReuse.installed.sha256 -and [string]$baselineReuse.reuse_key_sha256 -ceq [string]$baselineEvidence.reuse_key_sha256 -and $baselineReuse.authenticated -eq $false -and $baselineReuse.superseded_history_reconstructed -eq $false) 'Baseline evidence reuse did not preserve exact identity and non-authorizing semantics.'
     $baselineRelative='receipts/historical-validation-debt/synthetic-debt-0001/baseline.json'
     Assert-HistoricalDebt ([IO.File]::Exists((Resolve-MorphospaceWorkspacePath -WorkspaceRoot $workspace -RelativePath $baselineRelative -RequireLeaf))) 'Baseline action did not install its exact immutable request.'
     $policy=New-HistoricalDebtTestPolicy -Root $temp -Rsa $rsa
@@ -246,7 +441,6 @@ try {
     $mismatchedReceipt = [pscustomobject]@{ historical_validation_debt=(Copy-HistoricalDebtValue $debtBinding) };$mismatchedReceipt.historical_validation_debt.result.sha256='0'*64
     Assert-HistoricalDebtRejected { Assert-MorphospaceHistoricalValidationDebtReceiptRequirement -WorkspaceRoot $workspace -CurrentUnit $current -Receipt $mismatchedReceipt -PolicyPath $policy.path -PolicySchemaPath $policy.schema -Now $now } 'A mismatched debt-bearing validation-receipt binding was accepted.'
 
-    $records=@($cold.capture.failure_records)
     Assert-HistoricalDebtRejected { Invoke-HistoricalDebtBaselineVerifier $workspace $mapPath @($records[1],$records[0]) $policy $now } 'A reversed canonical historical failure set was accepted.'
     $extra=Copy-HistoricalDebtValue $records[0];$extra.message_sha256='1'*64;$extra.evidence_sha256='2'*64;$extra.record_sha256=Get-MorphospaceCanonicalJsonSha256 ([ordered]@{failure_code=[string]$extra.failure_code;locus=$extra.locus;message_sha256=[string]$extra.message_sha256;evidence_sha256=[string]$extra.evidence_sha256})
     Assert-HistoricalDebtRejected { Invoke-HistoricalDebtBaselineVerifier $workspace $mapPath @($records + $extra) $policy $now } 'A new post-anchor failure was accepted.'
@@ -292,19 +486,19 @@ try {
 
     $currentPath=Join-Path $workspace 'iteration-units/current-feature.json';$currentOriginal=[IO.File]::ReadAllBytes($currentPath)
     $writableReview=Copy-HistoricalDebtValue $current;$writableReview.allowed_repositories[0].allowed_paths+= '<skills-root>';Write-HistoricalDebtJson $currentPath $writableReview
-    $writableCapture=Get-HistoricalDebtWorkflowCapture -Workspace $workspace -MapPath $mapPath
-    Assert-HistoricalDebt ($writableCapture.exit_code -ne 0 -and @($writableCapture.capture.failure_records|Where-Object{[string]$_.failure_code -ceq 'current-unit-contract'}).Count -gt 0) 'A writable current instruction-surface path was classified as historical debt.'
+    $writableCapture=Get-HistoricalDebtWorkflowCapture -Workspace $workspace -MapPath $mapPath -Sequence 20 -PhaseId 'writable-current-damage'
+    Assert-HistoricalDebt ($writableCapture.exit_code -eq 0 -and @($writableCapture.capture.failure_records|Where-Object{[string]$_.failure_code -ceq 'current-unit-contract'}).Count -gt 0) 'A writable current instruction-surface path was classified as historical debt.'
     [IO.File]::WriteAllBytes($currentPath,$currentOriginal)
     $extraSkill=Copy-HistoricalDebtValue $current;$extraSkill.instruction_surfaces+=,[ordered]@{surface_kind='skill';path='<skills-root>/rust-work-graph/SKILL.md';owner='workflow-maintainer';change_reason='Injected non-required review.';action='review-no-change';status='complete';validation='Synthetic damaged fixture.';skill_id='rust-work-graph'};Write-HistoricalDebtJson $currentPath $extraSkill
-    $extraSkillCapture=Get-HistoricalDebtWorkflowCapture -Workspace $workspace -MapPath $mapPath
-    Assert-HistoricalDebt ($extraSkillCapture.exit_code -ne 0 -and @($extraSkillCapture.capture.failure_records|Where-Object{[string]$_.failure_code -ceq 'current-unit-contract'}).Count -gt 0) 'A non-required current skill surface was classified as historical debt.'
+    $extraSkillCapture=Get-HistoricalDebtWorkflowCapture -Workspace $workspace -MapPath $mapPath -Sequence 21 -PhaseId 'extra-skill-damage'
+    Assert-HistoricalDebt ($extraSkillCapture.exit_code -eq 0 -and @($extraSkillCapture.capture.failure_records|Where-Object{[string]$_.failure_code -ceq 'current-unit-contract'}).Count -gt 0) 'A non-required current skill surface was classified as historical debt.'
     [IO.File]::WriteAllBytes($currentPath,$currentOriginal)
 
     $historicalTwoPath=Join-Path $workspace 'iteration-units/legacy-terminal-two.json';$historicalTwoOriginal=[IO.File]::ReadAllBytes($historicalTwoPath);$validHistoricalTwo=Copy-HistoricalDebtValue $historicalTwo;$validHistoricalTwo.commit_policy='No source commit is made by this synthetic fixture.';Write-HistoricalDebtJson $historicalTwoPath $validHistoricalTwo
     $unknownHistorical=Copy-HistoricalDebtValue $historical;$unknownHistorical.commit_policy='No source commit is made by this synthetic fixture.';$unknownHistorical.change_categories+= 'unknown-legacy-category';Write-HistoricalDebtJson $historicalPath $unknownHistorical
-    $unknownHistoricalCapture=Get-HistoricalDebtWorkflowCapture -Workspace $workspace -MapPath $mapPath
-    Assert-HistoricalDebt ($unknownHistoricalCapture.exit_code -ne 0 -and @($unknownHistoricalCapture.capture.failure_records|Where-Object{[string]$_.failure_code -ceq 'historical-unit-contract'}).Count -eq 0 -and @($unknownHistoricalCapture.capture.failure_records|Where-Object{[string]$_.failure_code -ceq 'unclassified-contract'}).Count -gt 0) 'An unknown historical change category was classified as baseline-eligible debt.'
-    Assert-HistoricalDebtRejected { & (Join-Path $PSScriptRoot 'New-HistoricalValidationDebtBaseline.ps1') -WorkspaceRoot $workspace -RepositoryMapPath $mapPath -RepoRoot $repoRoot -BaselineId 'synthetic-debt-unknown-category' -Execute } 'An unknown historical change category was allowed to produce a baseline.'
+    $unknownHistoricalCapture=Get-HistoricalDebtWorkflowCapture -Workspace $workspace -MapPath $mapPath -Sequence 22 -PhaseId 'unknown-history-damage'
+    Assert-HistoricalDebt ($unknownHistoricalCapture.exit_code -eq 0 -and @($unknownHistoricalCapture.capture.failure_records|Where-Object{[string]$_.failure_code -ceq 'historical-unit-contract'}).Count -eq 0 -and @($unknownHistoricalCapture.capture.failure_records|Where-Object{[string]$_.failure_code -ceq 'unclassified-contract'}).Count -gt 0) 'An unknown historical change category was classified as baseline-eligible debt.'
+    Assert-HistoricalDebtRejected { New-MorphospaceHistoricalValidationDebtBaseline -WorkspaceRoot $workspace -RepoRoot $repoRoot -RepositoryMapPath $mapPath -BaselineId 'synthetic-debt-unknown-category' -FailureRecords @($unknownHistoricalCapture.capture.failure_records) } 'An unknown historical change category was allowed to produce a baseline.'
     [IO.File]::WriteAllBytes($historicalPath,$historicalOriginal);[IO.File]::WriteAllBytes($historicalTwoPath,$historicalTwoOriginal)
 
     $currentDrift=Copy-HistoricalDebtValue $current;$currentDrift.objective='Rewritten current feature fixture after baseline capture.';Write-HistoricalDebtJson $currentPath $currentDrift
@@ -315,12 +509,33 @@ try {
     [IO.File]::WriteAllBytes($noCurrentStatePath,$noCurrentStateOriginal)
 
     $ledgerPath=Join-Path $workspace 'iteration-events.jsonl';$ledgerOriginal=[IO.File]::ReadAllBytes($ledgerPath);$postAnchor=[ordered]@{schema='rusty.morphospace.workflow.iteration_event.v1';event_id='current-feature-invalid-0003';sequence=3;timestamp='2026-08-21T00:02:00Z';project_id='wrong-project';unit_id='current-feature';event_type='state-transition';summary='Damaged post-anchor transition.';receipts=@()};[IO.File]::AppendAllText($ledgerPath,(ConvertTo-MorphospaceCanonicalJson $postAnchor)+"`n",[Text.UTF8Encoding]::new($false))
-    $postAnchorCapture=Get-HistoricalDebtWorkflowCapture -Workspace $workspace -MapPath $mapPath
-    Assert-HistoricalDebtRejected { Invoke-HistoricalDebtBaselineVerifier $workspace $mapPath @($postAnchorCapture.capture.failure_records) $policy $now } 'A damaged post-baseline transition was accepted as historical debt.'
+    $baselineAuthorityRoot=Join-Path $workspace 'receipts/historical-validation-debt'
+    [string[]]$baselineAuthorityBefore=@(Get-ChildItem -LiteralPath $baselineAuthorityRoot -File -Recurse|ForEach-Object{$relative=[IO.Path]::GetRelativePath($baselineAuthorityRoot,$_.FullName).Replace('\','/');"$relative`t$($_.Length)`t$((Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant())"})
+    [Array]::Sort($baselineAuthorityBefore,[StringComparer]::Ordinal)
+    $baselineAuthorityBeforeSha=Get-MorphospaceCanonicalJsonSha256 -Value $baselineAuthorityBefore
+    $postAnchorRejected=$false;$postAnchorReason=''
+    try { $null=Get-HistoricalDebtWorkflowCapture -Workspace $workspace -MapPath $mapPath -Sequence 23 -PhaseId 'post-anchor-damage' }
+    catch { $postAnchorRejected=$true;$postAnchorReason=[string]$_.Exception.Message }
+    Assert-HistoricalDebt ($postAnchorRejected -and $postAnchorReason -ceq 'Historical-debt workflow capture transport failed: result=fail; category=code-fail; exit=1; timed_out=False; drain_succeeded=True') 'A damaged post-baseline transition did not fail as an exact drained code-fail transport.'
+    $postAnchorTerminalPath=Join-Path $EvidenceRoot '023-post-anchor-damage.terminal.json'
+    $postAnchorTerminal=ConvertFrom-MorphospaceProtocolJsonBytes -Bytes ([IO.File]::ReadAllBytes($postAnchorTerminalPath)) -Context 'post-anchor damage terminal receipt'
+    $postAnchorStartPath=Join-Path $EvidenceRoot ([string]$postAnchorTerminal.start_receipt.path)
+    $postAnchorStdoutPath=Join-Path $EvidenceRoot ([string]$postAnchorTerminal.stdout.path)
+    $postAnchorStderrPath=Join-Path $EvidenceRoot ([string]$postAnchorTerminal.stderr.path)
+    [byte[]]$postAnchorStdoutBytes=[IO.File]::ReadAllBytes($postAnchorStdoutPath);[byte[]]$postAnchorStderrBytes=[IO.File]::ReadAllBytes($postAnchorStderrPath)
+    Assert-HistoricalDebt ([string]$postAnchorTerminal.result -ceq 'fail' -and [string]$postAnchorTerminal.category -ceq 'code-fail' -and [int]$postAnchorTerminal.exit_code -eq 1 -and [bool]$postAnchorTerminal.timed_out -eq $false -and [bool]$postAnchorTerminal.child_tree_cleanup.succeeded) 'Post-anchor damage terminal was not typed code-fail/non-timeout with successful cleanup.'
+    Assert-HistoricalDebt ((Get-MorphospaceFileSha256 -Path $postAnchorStartPath) -ceq [string]$postAnchorTerminal.start_receipt.sha256 -and [long]([IO.FileInfo]$postAnchorStartPath).Length -eq [long]$postAnchorTerminal.start_receipt.length) 'Post-anchor damage start receipt identity is unbound.'
+    Assert-HistoricalDebt ((Get-MorphospaceSha256Bytes -Bytes $postAnchorStdoutBytes) -ceq [string]$postAnchorTerminal.stdout.sha256 -and $postAnchorStdoutBytes.Length -eq [long]$postAnchorTerminal.stdout.length -and (Get-MorphospaceSha256Bytes -Bytes $postAnchorStderrBytes) -ceq [string]$postAnchorTerminal.stderr.sha256 -and $postAnchorStderrBytes.Length -eq [long]$postAnchorTerminal.stderr.length) 'Post-anchor damage raw output evidence does not match its terminal receipt.'
+    $postAnchorStdout=[Text.UTF8Encoding]::new($false,$true).GetString($postAnchorStdoutBytes);$postAnchorStderr=[Text.UTF8Encoding]::new($false,$true).GetString($postAnchorStderrBytes)
+    Assert-HistoricalDebt ($postAnchorStdout.IndexOf('historical_validation_debt_capture_base64=',[StringComparison]::Ordinal) -lt 0) 'Post-anchor damage emitted a capture envelope.'
+    Assert-HistoricalDebt ($postAnchorStdout.Contains('Historical compatibility event sequence does not equal physical order.',[StringComparison]::Ordinal) -and $postAnchorStdout.Contains("event 'current-feature-invalid-0003' project_id does not match.",[StringComparison]::Ordinal) -and $postAnchorStdout.Contains('event sequences must be strictly increasing.',[StringComparison]::Ordinal) -and $postAnchorStderr.Contains('Workflow contract validation failed with 5 error(s).',[StringComparison]::Ordinal)) 'Post-anchor damage terminal reason is not bound to the expected parser/ledger output.'
+    [string[]]$baselineAuthorityAfter=@(Get-ChildItem -LiteralPath $baselineAuthorityRoot -File -Recurse|ForEach-Object{$relative=[IO.Path]::GetRelativePath($baselineAuthorityRoot,$_.FullName).Replace('\','/');"$relative`t$($_.Length)`t$((Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant())"})
+    [Array]::Sort($baselineAuthorityAfter,[StringComparer]::Ordinal)
+    Assert-HistoricalDebt ($baselineAuthorityAfter.Count -eq $baselineAuthorityBefore.Count -and (Get-MorphospaceCanonicalJsonSha256 -Value $baselineAuthorityAfter) -ceq $baselineAuthorityBeforeSha) 'Post-anchor damage emitted or altered baseline authority.'
     [IO.File]::WriteAllBytes($ledgerPath,$ledgerOriginal)
 
     [IO.File]::WriteAllText($ledgerPath,'not-a-ledger'+"`n",[Text.UTF8Encoding]::new($false))
-    Assert-HistoricalDebtRejected { & (Join-Path $PSScriptRoot 'New-HistoricalValidationDebtBaseline.ps1') -WorkspaceRoot $workspace -RepositoryMapPath $mapPath -RepoRoot $repoRoot -BaselineId 'synthetic-debt-0002' -Execute } 'A validator transport/capture failure was allowed to generate a baseline.'
+    Assert-HistoricalDebtRejected { Get-HistoricalDebtWorkflowCapture -Workspace $workspace -MapPath $mapPath -Sequence 24 -PhaseId 'ledger-transport-damage' } 'A validator transport/capture failure was allowed to generate a baseline.'
     [IO.File]::WriteAllBytes($ledgerPath,$ledgerOriginal)
 
     $statePath=Join-Path $workspace 'workspace.state.json';$stateOriginal=[IO.File]::ReadAllBytes($statePath);$drift=Copy-HistoricalDebtValue $state;$drift.plan_revision=2;Write-HistoricalDebtJson $statePath $drift
@@ -353,8 +568,13 @@ try {
     Assert-HistoricalDebtRejected { Invoke-HistoricalDebtBaselineVerifier $workspace $mapPath $records $policy $now } 'An unknown/malformed historical-debt failure code was accepted.'
     [IO.File]::WriteAllBytes($baselinePath,$baselineOriginal);Write-HistoricalDebtAuthorization -Workspace $workspace -Rsa $rsa -Policy $policy -Now $now
 
-    Write-Output 'Historical validation-debt baseline tests passed (cold aggregate capture, closed validator manifest, exact ratchet, mandatory signed receipt binding, current-feature success, and altered/new/removed/reordered/duplicate/unknown-category/current/state/source/validator/signature/expiry/audit/transport damage rejection).'
+    Write-Output ("Historical validation-debt baseline tests passed (phase-aware focused current-history capture, exact debt-evidence reuse key {0}, closed validator manifest, exact ratchet, mandatory signed receipt binding, current-feature success, and altered/new/removed/reordered/duplicate/unknown-category/current/state/source/validator/signature/expiry/audit/transport damage rejection). Evidence root: {1}" -f [string]$baselineReuse.reuse_key_sha256,$EvidenceRoot)
 } finally {
     $rsa.Dispose()
-    if ([IO.Directory]::Exists($temp)) { [IO.Directory]::Delete($temp,$true) }
+    $cleanup = Invoke-MorphospaceHistoricalDebtActionPhase -EvidenceRoot $EvidenceRoot -Sequence 999 -PhaseId 'fixture-cleanup' -OwnerPath $PSCommandPath -SuccessCategory 'fixture-cleanup' -FailureCategory 'fixture-cleanup' -Action {
+        if ([IO.Directory]::Exists($temp)) { [IO.Directory]::Delete($temp,$true) }
+        if ([IO.Directory]::Exists($temp)) { throw 'Historical validation-debt fixture still exists after cleanup.' }
+        return [pscustomobject]@{cleanup='complete';path=$temp}
+    }
+    if ([string]$cleanup.terminal.result -cne 'pass') { throw 'Historical validation-debt fixture cleanup failed; see the typed cleanup phase receipt.' }
 }
