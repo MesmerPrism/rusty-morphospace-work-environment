@@ -366,7 +366,7 @@ public static class W017SupervisorInnerJob {
         $sudoPath=Resolve-ExactApplication 'sudo';$unsharePath=Resolve-ExactApplication 'unshare';$setprivPath=Resolve-ExactApplication 'setpriv'
         $uid=[W017UnixProcessGroup]::geteuid();$gid=[W017UnixProcessGroup]::getegid()
         $start=[Diagnostics.ProcessStartInfo]::new($sudoPath);$start.WorkingDirectory=$ChildWorkingDirectory;$start.UseShellExecute=$false;$start.CreateNoWindow=$true;$start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
-        foreach($argument in @('--non-interactive','--preserve-env','--',$unsharePath,'--pid','--fork','--kill-child=KILL','--mount-proc',$setprivPath,(""--reuid={0}"" -f $uid),(""--regid={0}"" -f $gid),'--keep-groups','--no-new-privs',$Executable)+@($childArguments)){[void]$start.ArgumentList.Add([string]$argument)}
+        foreach($argument in @('--non-interactive','--preserve-env','--',$unsharePath,'--pid','--fork','--kill-child=KILL','--mount-proc',$setprivPath,(""--reuid={0}"" -f $uid),(""--regid={0}"" -f $gid),'--keep-groups',$Executable)+@($childArguments)){[void]$start.ArgumentList.Add([string]$argument)}
         $pump=Start-Pump $start;$pump.process.WaitForExit();$exitCode=$pump.process.ExitCode;Complete-Pump $pump;$outputTruncated=$false
     }
     Publish-Completion (""leaf:{0}:{1}`n"" -f $exitCode,([int]$outputTruncated))

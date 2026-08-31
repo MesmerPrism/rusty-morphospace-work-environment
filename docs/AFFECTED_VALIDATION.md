@@ -91,11 +91,13 @@ the first excess byte, and reads back zero job members before publishing the
 tagged result. It never stages unbounded output files or performs an unbounded
 post-run allocation. On Linux, the supervisor uses noninteractive trusted-host
 elevation only to create a fresh PID namespace through `unshare`, then `setpriv`
-immediately returns the real leaf to the original UID/GID with `no_new_privs`;
-the leaf runs as PID 1 and cannot regain the namespace creator's privilege.
+immediately returns the real leaf to the original UID/GID; the leaf runs as PID
+1. The namespace is a bounded process-cleanup boundary, not a privilege authority
+boundary: hosted candidate jobs already have ambient noninteractive `sudo`, and
+nested executor-containment self-tests must be able to create child namespaces.
 Session or process-group changes remain inside that namespace, whose teardown
 kills descendants before the stream pumps must drain. Missing `sudo`, `unshare`,
-`setpriv`, noninteractive elevation, namespace support, or privilege-drop
+`setpriv`, noninteractive elevation, namespace support, or UID/GID-drop
 support is an infrastructure failure before candidate execution. The outer Windows job
 or Linux supervisor group plus a direct process-tree kill/readback is retained
 as a setup- and timeout-failure fallback. No passing terminal is possible until
