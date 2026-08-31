@@ -93,9 +93,9 @@ function Assert-AffectedThrows([scriptblock]$Action,[string]$Pattern,[string]$Me
     if ([string]::IsNullOrWhiteSpace($reason) -or $reason -notlike $Pattern) { throw "$Message :: observed='$reason'" }
 }
 function Assert-AffectedExecutorContainmentSource([string]$Source) {
-    $forbidden = @('TryReadControl','ControlPath','leaf.stdout.bin','leaf.stderr.bin','ReadAllBytes($stdoutPath)','disableMaxPrivilege','0x000f0fff','CreateRestrictedLeafToken','RUSTY_AFFECTED_VALIDATION_RESTRICTING_SIDS','ProcessStartInfo]::new($unshare.Source)','--map-root-user')
+    $forbidden = @('TryReadControl','ControlPath','leaf.stdout.bin','leaf.stderr.bin','ReadAllBytes($stdoutPath)','disableMaxPrivilege','0x000f0fff','CreateRestrictedLeafToken','RUSTY_AFFECTED_VALIDATION_RESTRICTING_SIDS','ProcessStartInfo]::new($unshare.Source)','--map-root-user','ConvertSecurityDescriptorToStringSecurityDescriptor')
     foreach ($fragment in $forbidden) { Assert-True ($Source.IndexOf($fragment,[StringComparison]::Ordinal) -lt 0) "Affected executor retains forbidden containment fragment '$fragment'." }
-    $required = @('AnonymousPipeServerStream','ApplySupervisorCompletion','W017SupervisorProtection','ProtectAncestors','ProtectThreads','SnapshotAncestorSecurity','RestoreProtectedFutureThreads','RetainFutureThread','retainedThreadIds','restoredThreadHandles','RunRestorationCollisionSelfTests','stable residue-free thread set','trusted ancestor fallback process/thread restoration readback differs','trusted ancestor process/thread owner/DACL restoration readback differs','token-default-DACL restoration readback differs','RCWDWO;;;OW','RUSTY_AFFECTED_VALIDATION_GUARD_SID','guard-disabled leaf token did not retain the authority group as deny-only','0x1000','0x2000','OwnerSecurityInformation|DaclSecurityInformation','CreateRestrictedToken','CreatePrivilegeStrippedToken','SetTokenDefaultDacl','OpenThread','Thread32First','RUSTY_AFFECTED_VALIDATION_FUTURE_THREAD_ID','RUSTY_AFFECTED_VALIDATION_PARENT_FUTURE_THREAD_ID','ReadPrivileges','RUSTY_AFFECTED_VALIDATION_REMOVED_PRIVILEGE_LUID','privilege-deleted leaf token retained a non-allowlisted privilege','AssertAncestorIsolation','ImpersonateLoggedOnUser','exact two-process completion authority chain','Initialize-LeafWritableRoot','SetKernelObjectSecurity','W017SupervisorInnerJob','CreatePipe','TerminateJobObject(state.job,1)','function Resolve-ExactApplication','[Array]::Sort($ordered,[StringComparer]::Ordinal)','ProcessStartInfo]::new($sudoPath)',"@('--non-interactive','--preserve-env','--'","'--pid','--fork','--kill-child=KILL','--mount-proc'","'--keep-groups'",'geteuid()','getegid()','Complete-Pump','process.Kill(true)','RunForSetupFailureTest')
+    $required = @('AnonymousPipeServerStream','ApplySupervisorCompletion','W017SupervisorProtection','ProtectAncestors','ProtectThreads','SnapshotAncestorSecurity','RestoreProtectedFutureThreads','RetainFutureThread','retainedThreadIds','restoredThreadHandles','RunRestorationCollisionSelfTests','RunPublishedControlReadSelfTests','TryReadExactPublishedControl','IsPublishedControlReadPending','code == 32 || code == 33','FileShare.Read','SecurityDescriptorOwnerMatchesToken','GetSecurityDescriptorOwner','EqualSid','stable residue-free thread set','trusted ancestor fallback process/thread restoration readback differs','trusted ancestor process/thread owner/DACL restoration readback differs','token-default-DACL restoration readback differs','RCWDWO;;;OW','RUSTY_AFFECTED_VALIDATION_GUARD_SID','guard-disabled leaf token did not retain the authority group as deny-only','0x1000','0x2000','OwnerSecurityInformation|DaclSecurityInformation','CreateRestrictedToken','CreatePrivilegeStrippedToken','SetTokenDefaultDacl','OpenThread','Thread32First','RUSTY_AFFECTED_VALIDATION_FUTURE_THREAD_ID','RUSTY_AFFECTED_VALIDATION_PARENT_FUTURE_THREAD_ID','ReadPrivileges','RUSTY_AFFECTED_VALIDATION_REMOVED_PRIVILEGE_LUID','privilege-deleted leaf token retained a non-allowlisted privilege','AssertAncestorIsolation','ImpersonateLoggedOnUser','exact two-process completion authority chain','Initialize-LeafWritableRoot','SetKernelObjectSecurity','W017SupervisorInnerJob','CreatePipe','TerminateJobObject(state.job,1)','function Resolve-ExactApplication','[Array]::Sort($ordered,[StringComparer]::Ordinal)','ProcessStartInfo]::new($sudoPath)',"@('--non-interactive','--preserve-env','--'","'--pid','--fork','--kill-child=KILL','--mount-proc'","'--keep-groups'",'geteuid()','getegid()','Complete-Pump','process.Kill(true)','RunForSetupFailureTest')
     foreach ($fragment in $required) { Assert-True ($Source.IndexOf($fragment,[StringComparison]::Ordinal) -ge 0) "Affected executor is missing required containment fragment '$fragment'." }
 }
 function Invoke-AffectedBatchSelfTest {
@@ -1678,6 +1678,7 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value ([pscust
     $preContainmentProbe = [W017BoundedChildCapture]::RunForSetupFailureTest($setupProbeExecutable,$fixture,'before-containment',15000)
     Assert-True ($preContainmentProbe.Started -and $preContainmentProbe.ChildTreeCleanupAttempted -and $preContainmentProbe.ChildTreeCleanupSucceeded -and [string]$preContainmentProbe.Error -like '*injected pre-containment setup failure*') 'Pre-containment setup failure did not directly terminate and read back the unassigned supervisor.'
     if ([Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Windows)) {
+        [W017BoundedChildCapture]::RunPublishedControlReadSelfTests()
         $postJobProbe = [W017BoundedChildCapture]::RunForSetupFailureTest($setupProbeExecutable,$fixture,'after-job-create',15000)
         Assert-True ($postJobProbe.Started -and $postJobProbe.ChildTreeCleanupAttempted -and $postJobProbe.ChildTreeCleanupSucceeded -and [string]$postJobProbe.Error -like '*injected post-job-create setup failure*') 'Post-job-create assignment-boundary failure did not directly terminate and read back the unassigned supervisor.'
         $missingCompletionProbe = [W017BoundedChildCapture]::RunForSetupFailureTest($setupProbeExecutable,$fixture,'terminate-supervisor-after-go',15000)
@@ -1914,8 +1915,16 @@ if ([Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropS
     `$start.FileName = `$childExecutable
     `$mode = 'job-descendant'
 } else {
-    `$setsid = Get-Command setsid -CommandType Application -ErrorAction Stop
-    `$start.FileName = `$setsid.Source
+    `$setsidPaths = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach (`$command in @(Get-Command setsid -CommandType Application -ErrorAction SilentlyContinue)) {
+        `$path = [IO.Path]::GetFullPath([string]`$command.Source)
+        if (-not [IO.File]::Exists(`$path)) { throw 'resolved setsid executable does not exist' }
+        [void]`$setsidPaths.Add(`$path)
+    }
+    if (`$setsidPaths.Count -eq 0) { throw 'required setsid executable is unavailable for descendant containment damage' }
+    [string[]]`$orderedSetsidPaths = @(`$setsidPaths)
+    [Array]::Sort(`$orderedSetsidPaths,[StringComparer]::Ordinal)
+    `$start.FileName = `$orderedSetsidPaths[0]
     [void]`$start.ArgumentList.Add(`$childExecutable)
     `$mode = 'setsid-session-escape-attempt'
 }
@@ -1932,6 +1941,7 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
 }
 [Environment]::Exit(0)
 "@
+    Assert-True ($survivorCommand.IndexOf('$setsid.Source',[StringComparison]::Ordinal) -lt 0 -and $survivorCommand.IndexOf('[Array]::Sort($orderedSetsidPaths,[StringComparer]::Ordinal)',[StringComparison]::Ordinal) -ge 0) 'Surviving-descendant fixture does not resolve duplicate setsid applications deterministically.'
     Write-Utf8 (Join-Path $fixture 'scripts/Test-PublicBoundary.ps1') $survivorCommand
     [void](Invoke-TestGit $fixture @('add', 'scripts/Test-PublicBoundary.ps1'))
     [void](Invoke-TestGit $fixture @('commit', '-m', 'surviving descendant cache-tamper damage'))

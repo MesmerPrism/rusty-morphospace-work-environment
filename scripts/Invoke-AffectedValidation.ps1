@@ -205,10 +205,11 @@ public static class W017SupervisorProtection {
     [DllImport(""advapi32.dll"",CharSet=CharSet.Unicode,SetLastError=true)] private static extern bool ConvertStringSecurityDescriptorToSecurityDescriptor(string text,uint revision,out IntPtr descriptor,out uint length);
     [DllImport(""advapi32.dll"",CharSet=CharSet.Unicode,SetLastError=true)] private static extern bool ConvertSidToStringSid(IntPtr sid,out IntPtr text);
     [DllImport(""advapi32.dll"",SetLastError=true)] private static extern bool GetSecurityDescriptorDacl(IntPtr descriptor,out bool present,out IntPtr dacl,out bool defaulted);
+    [DllImport(""advapi32.dll"",SetLastError=true)] private static extern bool GetSecurityDescriptorOwner(IntPtr descriptor,out IntPtr owner,out bool defaulted);
+    [DllImport(""advapi32.dll"",SetLastError=true)] private static extern bool EqualSid(IntPtr left,IntPtr right);
     [DllImport(""advapi32.dll"",SetLastError=true)] private static extern bool SetTokenInformation(IntPtr token,uint information,IntPtr buffer,uint length);
     [DllImport(""advapi32.dll"",SetLastError=true)] private static extern bool SetKernelObjectSecurity(IntPtr handle,uint information,IntPtr descriptor);
     [DllImport(""advapi32.dll"",SetLastError=true)] private static extern bool GetKernelObjectSecurity(IntPtr handle,uint information,IntPtr descriptor,uint length,out uint required);
-    [DllImport(""advapi32.dll"",CharSet=CharSet.Unicode,SetLastError=true)] private static extern bool ConvertSecurityDescriptorToStringSecurityDescriptor(IntPtr descriptor,uint revision,uint information,out IntPtr text,out uint length);
     [DllImport(""kernel32.dll"",SetLastError=true)] private static extern bool SetHandleInformation(IntPtr handle,uint mask,uint flags);
     [DllImport(""kernel32.dll"",SetLastError=true)] private static extern IntPtr OpenProcess(uint access,bool inherit,int processId);
     [DllImport(""kernel32.dll"",SetLastError=true)] private static extern IntPtr OpenThread(uint access,bool inherit,uint threadId);
@@ -219,6 +220,7 @@ public static class W017SupervisorProtection {
     [DllImport(""kernel32.dll"")] private static extern IntPtr LocalFree(IntPtr value);
     private static string RenderSid(IntPtr sid){IntPtr text;if(!ConvertSidToStringSid(sid,out text))throw new InvalidOperationException(""trusted authority SID could not be rendered: ""+Marshal.GetLastWin32Error());try{return Marshal.PtrToStringUni(text);}finally{LocalFree(text);}}
     private static string TokenOwnerSid(IntPtr token){uint required;GetTokenInformation(token,TokenOwner,IntPtr.Zero,0,out required);var buffer=Marshal.AllocHGlobal((int)required);try{if(!GetTokenInformation(token,TokenOwner,buffer,required,out required))throw new InvalidOperationException(""trusted authority token owner could not be read: ""+Marshal.GetLastWin32Error());return RenderSid(((TokenOwnerRecord)Marshal.PtrToStructure(buffer,typeof(TokenOwnerRecord))).sid);}finally{Marshal.FreeHGlobal(buffer);}}
+    private static bool SecurityDescriptorOwnerMatchesToken(IntPtr descriptor,IntPtr token){uint required;GetTokenInformation(token,TokenOwner,IntPtr.Zero,0,out required);if(required<(uint)Marshal.SizeOf(typeof(TokenOwnerRecord)))throw new InvalidOperationException(""trusted authority token owner size could not be read: ""+Marshal.GetLastWin32Error());var buffer=Marshal.AllocHGlobal((int)required);try{if(!GetTokenInformation(token,TokenOwner,buffer,required,out required))throw new InvalidOperationException(""trusted authority token owner could not be read for comparison: ""+Marshal.GetLastWin32Error());var tokenOwner=((TokenOwnerRecord)Marshal.PtrToStructure(buffer,typeof(TokenOwnerRecord))).sid;IntPtr descriptorOwner;bool defaulted;if(!GetSecurityDescriptorOwner(descriptor,out descriptorOwner,out defaulted)||descriptorOwner==IntPtr.Zero)throw new InvalidOperationException(""supervisor process owner readback could not be obtained: ""+Marshal.GetLastWin32Error());return EqualSid(tokenOwner,descriptorOwner);}finally{Marshal.FreeHGlobal(buffer);}}
     private static string GuardSid(IntPtr token){uint required;GetTokenInformation(token,TokenGroups,IntPtr.Zero,0,out required);var buffer=Marshal.AllocHGlobal((int)required);try{if(!GetTokenInformation(token,TokenGroups,buffer,required,out required))throw new InvalidOperationException(""trusted authority token groups could not be read: ""+Marshal.GetLastWin32Error());var count=Marshal.ReadInt32(buffer);var offset=IntPtr.Size==8?8:4;var size=Marshal.SizeOf(typeof(SidAndAttributes));var groups=new System.Collections.Generic.Dictionary<string,uint>(StringComparer.Ordinal);for(var index=0;index<count;index++){var value=(SidAndAttributes)Marshal.PtrToStructure(IntPtr.Add(buffer,offset+index*size),typeof(SidAndAttributes));groups[RenderSid(value.sid)]=value.attributes;}var priority=new string[]{""S-1-5-113"",""S-1-2-0"",""S-1-5-15"",""S-1-5-4"",""S-1-5-11"",""S-1-5-32-545"",""S-1-1-0""};foreach(var sid in priority){uint attributes;if(groups.TryGetValue(sid,out attributes)&&(attributes&4)!=0&&(attributes&16)==0)return sid;}var candidates=new System.Collections.Generic.List<string>();foreach(var pair in groups)if((pair.Value&4)!=0&&(pair.Value&16)==0)candidates.Add(pair.Key);candidates.Sort(StringComparer.Ordinal);if(candidates.Count==0)throw new InvalidOperationException(""trusted authority token has no enabled guard group"");return candidates[0];}finally{Marshal.FreeHGlobal(buffer);}}
     private static IntPtr BuildProtectionDescriptor(IntPtr token,out byte[] protectedDacl,out string guardSid){guardSid=GuardSid(token);var sddl=""O:""+TokenOwnerSid(token)+""D:P(A;;0x1fffff;;;""+guardSid+"")(A;;0x1fffff;;;SY)(D;;RCWDWO;;;OW)"";IntPtr descriptor;uint length;if(!ConvertStringSecurityDescriptorToSecurityDescriptor(sddl,1,out descriptor,out length))throw new InvalidOperationException(""trusted authority protection descriptor could not be created: ""+Marshal.GetLastWin32Error());IntPtr dacl;protectedDacl=DaclBytes(descriptor,out dacl);return descriptor;}
     private static byte[] ReadTokenDefaultDacl(IntPtr token){uint required;GetTokenInformation(token,TokenDefaultDacl,IntPtr.Zero,0,out required);if(required<(uint)Marshal.SizeOf(typeof(TokenDefaultDaclRecord)))throw new InvalidOperationException(""trusted authority token default DACL size could not be read: ""+Marshal.GetLastWin32Error());var buffer=Marshal.AllocHGlobal((int)required);try{if(!GetTokenInformation(token,TokenDefaultDacl,buffer,required,out required))throw new InvalidOperationException(""trusted authority token default DACL could not be read: ""+Marshal.GetLastWin32Error());var record=(TokenDefaultDaclRecord)Marshal.PtrToStructure(buffer,typeof(TokenDefaultDaclRecord));if(record.dacl==IntPtr.Zero)throw new InvalidOperationException(""trusted authority token has a null default DACL"");var length=unchecked((ushort)Marshal.ReadInt16(record.dacl,2));if(length<8)throw new InvalidOperationException(""trusted authority token default DACL is malformed"");var bytes=new byte[length];Marshal.Copy(record.dacl,bytes,0,length);return bytes;}finally{Marshal.FreeHGlobal(buffer);}}
@@ -253,11 +255,11 @@ public static class W017SupervisorProtection {
         IntPtr token=IntPtr.Zero,descriptor=IntPtr.Zero;
         try{
             if(!OpenProcessToken(GetCurrentProcess(),TokenQuery|TokenAdjustDefault,out token))throw new InvalidOperationException(""supervisor token could not be opened: ""+Marshal.GetLastWin32Error());
-            var ownerSid=TokenOwnerSid(token);byte[] protectedDacl;string guardSid;descriptor=BuildProtectionDescriptor(token,out protectedDacl,out guardSid);Environment.SetEnvironmentVariable(""RUSTY_AFFECTED_VALIDATION_GUARD_SID"",guardSid);
+            byte[] protectedDacl;string guardSid;descriptor=BuildProtectionDescriptor(token,out protectedDacl,out guardSid);Environment.SetEnvironmentVariable(""RUSTY_AFFECTED_VALIDATION_GUARD_SID"",guardSid);
             ProtectThreads(GetCurrentProcessId(),descriptor,null);
             if(!SetKernelObjectSecurity(GetCurrentProcess(),OwnerSecurityInformation|DaclSecurityInformation,descriptor))throw new InvalidOperationException(""supervisor process protection could not be installed: ""+Marshal.GetLastWin32Error());
             uint observedLength;GetKernelObjectSecurity(GetCurrentProcess(),OwnerSecurityInformation|DaclSecurityInformation,IntPtr.Zero,0,out observedLength);var observed=Marshal.AllocHGlobal((int)observedLength);
-            try{if(!GetKernelObjectSecurity(GetCurrentProcess(),OwnerSecurityInformation|DaclSecurityInformation,observed,observedLength,out observedLength))throw new InvalidOperationException(""supervisor process protection could not be read back: ""+Marshal.GetLastWin32Error());IntPtr observedDacl;var observedDaclBytes=DaclBytes(observed,out observedDacl);if(!SameSecurity(protectedDacl,observedDaclBytes))throw new InvalidOperationException(""supervisor process DACL readback differs from the exact protected ACL"");IntPtr observedText;uint textLength;if(!ConvertSecurityDescriptorToStringSecurityDescriptor(observed,1,OwnerSecurityInformation,out observedText,out textLength))throw new InvalidOperationException(""supervisor process owner readback could not be rendered: ""+Marshal.GetLastWin32Error());try{var rendered=Marshal.PtrToStringUni(observedText);if(!String.Equals(rendered,""O:""+ownerSid,StringComparison.Ordinal))throw new InvalidOperationException(""supervisor process owner readback differs from the exact protected owner"");}finally{LocalFree(observedText);}}finally{Marshal.FreeHGlobal(observed);}
+            try{if(!GetKernelObjectSecurity(GetCurrentProcess(),OwnerSecurityInformation|DaclSecurityInformation,observed,observedLength,out observedLength))throw new InvalidOperationException(""supervisor process protection could not be read back: ""+Marshal.GetLastWin32Error());IntPtr observedDacl;var observedDaclBytes=DaclBytes(observed,out observedDacl);if(!SameSecurity(protectedDacl,observedDaclBytes))throw new InvalidOperationException(""supervisor process DACL readback differs from the exact protected ACL"");if(!SecurityDescriptorOwnerMatchesToken(observed,token))throw new InvalidOperationException(""supervisor process owner readback differs from the exact protected owner"");}finally{Marshal.FreeHGlobal(observed);}
         }finally{if(descriptor!=IntPtr.Zero)LocalFree(descriptor);if(token!=IntPtr.Zero)CloseHandle(token);}
     }
     public static void ProtectFutureThreads(){IntPtr token=IntPtr.Zero,descriptor=IntPtr.Zero;try{if(!OpenProcessToken(GetCurrentProcess(),TokenQuery|TokenAdjustDefault,out token))throw new InvalidOperationException(""future-thread token could not be opened: ""+Marshal.GetLastWin32Error());byte[] bytes;string guardSid;descriptor=BuildProtectionDescriptor(token,out bytes,out guardSid);if(!String.Equals(guardSid,Environment.GetEnvironmentVariable(""RUSTY_AFFECTED_VALIDATION_GUARD_SID""),StringComparison.Ordinal))throw new InvalidOperationException(""future-thread guard identity differs from the protected supervisor identity"");ProtectThreads(GetCurrentProcessId(),descriptor,null);IntPtr protectedDacl;DaclBytes(descriptor,out protectedDacl);SetTokenDefaultDacl(token,protectedDacl,bytes);}finally{if(token!=IntPtr.Zero)CloseHandle(token);if(descriptor!=IntPtr.Zero)LocalFree(descriptor);}}
@@ -396,6 +398,37 @@ public static class W017SupervisorInnerJob {
             throw;
         }
     }
+    private static bool IsPublishedControlReadPending(IOException exception) {
+        var code = exception.HResult & 0xffff;
+        return code == 32 || code == 33;
+    }
+    private static bool SameBytes(byte[] expected, byte[] observed) {
+        if (expected == null || observed == null || expected.Length != observed.Length) { return false; }
+        for (var index = 0; index < expected.Length; index++) { if (expected[index] != observed[index]) { return false; } }
+        return true;
+    }
+    private static bool TryReadExactPublishedControl(string path, byte[] expected, string malformedMessage) {
+        if (!File.Exists(path)) { return false; }
+        byte[] observed;
+        try {
+            using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read)) {
+                if (stream.Length != expected.Length) { throw new InvalidOperationException(malformedMessage); }
+                observed = new byte[expected.Length];
+                var offset = 0;
+                while (offset < observed.Length) {
+                    var read = stream.Read(observed, offset, observed.Length - offset);
+                    if (read == 0) { throw new InvalidOperationException(malformedMessage); }
+                    offset += read;
+                }
+                if (stream.ReadByte() != -1) { throw new InvalidOperationException(malformedMessage); }
+            }
+        } catch (IOException exception) {
+            if (!IsPublishedControlReadPending(exception)) { throw; }
+            return false;
+        }
+        if (!SameBytes(expected, observed)) { throw new InvalidOperationException(malformedMessage); }
+        return true;
+    }
     private static byte[] ReadBoundedCompletion(Stream source) {
         using (var target = new MemoryStream()) {
             var buffer = new byte[512]; int read;
@@ -510,14 +543,11 @@ public static class W017SupervisorInnerJob {
             stdoutTask = Task.Run(() => Drain(process.StandardOutput.BaseStream, output, state));
             stderrTask = Task.Run(() => Drain(process.StandardError.BaseStream, error, state));
             var startupDeadline = DateTime.UtcNow.AddMilliseconds(postKillDrainMilliseconds);
+            var expectedReady = new UTF8Encoding(false).GetBytes("ready:" + process.Id.ToString(System.Globalization.CultureInfo.InvariantCulture) + "\n");
             var ready = false;
             while (!ready) {
                 if (DateTime.UtcNow >= startupDeadline) { AppendError(result, "owned validation supervisor readiness exceeded its bounded startup deadline"); break; }
-                if (File.Exists(readyPath)) {
-                    var readyText = new UTF8Encoding(false, true).GetString(File.ReadAllBytes(readyPath));
-                    if (!String.Equals(readyText, "ready:" + process.Id.ToString(System.Globalization.CultureInfo.InvariantCulture) + "\n", StringComparison.Ordinal)) { throw new InvalidOperationException("owned validation supervisor readiness is malformed"); }
-                    ready = true; break;
-                }
+                if (TryReadExactPublishedControl(readyPath, expectedReady, "owned validation supervisor readiness is malformed")) { ready = true; break; }
                 if (process.WaitForExit(25)) { result.ExitCode = process.ExitCode; AppendError(result, "owned validation supervisor exited before readiness"); break; }
             }
             if (ready) {
@@ -525,12 +555,11 @@ public static class W017SupervisorInnerJob {
                 WriteCreateNew(goPath, new UTF8Encoding(false).GetBytes("go\n"));
                 if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) {
                     var protectionDeadline = DateTime.UtcNow.AddMilliseconds(postKillDrainMilliseconds);
-                    while (!File.Exists(protectedPath)) {
+                    var expectedProtection = new UTF8Encoding(false).GetBytes("protected\n");
+                    while (!TryReadExactPublishedControl(protectedPath, expectedProtection, "trusted authority protection handshake is malformed")) {
                         if (DateTime.UtcNow >= protectionDeadline) { throw new InvalidOperationException("trusted authority protection handshake exceeded its bounded deadline"); }
                         if (process.WaitForExit(25)) { throw new InvalidOperationException("owned validation supervisor exited before trusted authority protection completed"); }
                     }
-                    var protectedText = new UTF8Encoding(false,true).GetString(File.ReadAllBytes(protectedPath));
-                    if (!String.Equals(protectedText,"protected\n",StringComparison.Ordinal)) { throw new InvalidOperationException("trusted authority protection handshake is malformed"); }
                     parentFutureReady = new ManualResetEventSlim(false); parentFutureStop = new ManualResetEventSlim(false);
                     var futureReady = parentFutureReady; var futureStop = parentFutureStop;
                     parentFutureThread = new Thread(() => { parentFutureThreadId = GetCurrentThreadId(); futureReady.Set(); futureStop.Wait(); });
@@ -623,6 +652,28 @@ public static class W017SupervisorInnerJob {
     private static void WriteExactSecurity(IntPtr handle,byte[] descriptor,string context){var value=Marshal.AllocHGlobal(descriptor.Length);try{Marshal.Copy(descriptor,0,value,descriptor.Length);if(!SetKernelObjectSecurity(handle,5,value))throw new InvalidOperationException(context+": "+Marshal.GetLastWin32Error());}finally{Marshal.FreeHGlobal(value);}}
     private static void RunRestorationCollisionCase(bool sameTemplate){var preReady=new ManualResetEventSlim(false);var lateReady=new ManualResetEventSlim(false);var stop=new ManualResetEventSlim(false);uint preId=0,lateId=0;var preThread=new Thread(()=>{preId=GetCurrentThreadId();preReady.Set();stop.Wait();});var lateThread=new Thread(()=>{lateId=GetCurrentThreadId();lateReady.Set();stop.Wait();});preThread.IsBackground=true;lateThread.IsBackground=true;IntPtr preHandle=IntPtr.Zero,lateHandle=IntPtr.Zero,token=IntPtr.Zero,protectedDescriptor=IntPtr.Zero;byte[] preOriginal=null,lateOriginal=null;try{preThread.Start();lateThread.Start();if(!preReady.Wait(5000)||!lateReady.Wait(5000)||preId==0||lateId==0||preId==lateId)throw new InvalidOperationException("future-thread collision self-test identities are invalid");preHandle=OpenThread(0x000e0000,false,preId);lateHandle=OpenThread(0x000e0000,false,lateId);if(preHandle==IntPtr.Zero||lateHandle==IntPtr.Zero)throw new InvalidOperationException("future-thread collision self-test could not retain its threads: "+Marshal.GetLastWin32Error());preOriginal=ReadAncestorSecurity(preHandle);lateOriginal=ReadAncestorSecurity(lateHandle);if(!OpenProcessToken(GetCurrentProcess(),0x0008,out token))throw new InvalidOperationException("future-thread collision self-test token could not be opened: "+Marshal.GetLastWin32Error());byte[] protectedDacl;protectedDescriptor=BuildProtectionDescriptor(token,out protectedDacl);if(!SetKernelObjectSecurity(preHandle,5,protectedDescriptor)||!SetKernelObjectSecurity(lateHandle,5,protectedDescriptor))throw new InvalidOperationException("future-thread collision self-test protection failed: "+Marshal.GetLastWin32Error());var protectedSecurity=ReadAncestorSecurity(preHandle);var template=sameTemplate?protectedSecurity:lateOriginal;RestoreProtectedFutureThreads(Process.GetCurrentProcess().Id,protectedDacl,template,new System.Collections.Generic.HashSet<uint>{preId});if(!SameSecurity(protectedSecurity,ReadAncestorSecurity(preHandle)))throw new InvalidOperationException("future-thread collision self-test changed an excluded pre-existing descriptor");if(!SameSecurity(template,ReadAncestorSecurity(lateHandle)))throw new InvalidOperationException("future-thread collision self-test did not restore the late-thread template");}finally{if(preHandle!=IntPtr.Zero&&preOriginal!=null)try{WriteExactSecurity(preHandle,preOriginal,"future-thread collision self-test pre-existing cleanup failed");}catch{}if(lateHandle!=IntPtr.Zero&&lateOriginal!=null)try{WriteExactSecurity(lateHandle,lateOriginal,"future-thread collision self-test late cleanup failed");}catch{}stop.Set();preThread.Join(5000);lateThread.Join(5000);if(protectedDescriptor!=IntPtr.Zero)LocalFree(protectedDescriptor);if(token!=IntPtr.Zero)CloseHandle(token);if(preHandle!=IntPtr.Zero)CloseHandle(preHandle);if(lateHandle!=IntPtr.Zero)CloseHandle(lateHandle);preReady.Dispose();lateReady.Dispose();stop.Dispose();}}
     public static void RunRestorationCollisionSelfTests(){RunRestorationCollisionCase(false);RunRestorationCollisionCase(true);}
+    public static void RunPublishedControlReadSelfTests() {
+        var root = Path.Combine(Path.GetTempPath(), "w017-published-control-read-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try {
+            var expected = new UTF8Encoding(false).GetBytes("published\n");
+            var heldPath = Path.Combine(root, "held.control");
+            if (TryReadExactPublishedControl(heldPath, expected, "published-control self-test record is malformed")) { throw new InvalidOperationException("missing published-control self-test record was accepted"); }
+            using (var stream = new FileStream(heldPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 4096, FileOptions.WriteThrough)) {
+                stream.Write(expected, 0, expected.Length); stream.Flush(true);
+                if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) && TryReadExactPublishedControl(heldPath, expected, "published-control self-test record is malformed")) { throw new InvalidOperationException("exclusively held published-control self-test record was accepted as readable"); }
+            }
+            if (!TryReadExactPublishedControl(heldPath, expected, "published-control self-test record is malformed")) { throw new InvalidOperationException("released published-control self-test record was not readable"); }
+            var malformedPath = Path.Combine(root, "malformed.control");
+            WriteCreateNew(malformedPath, new UTF8Encoding(false).GetBytes("damaged\n"));
+            var rejected = false;
+            try { TryReadExactPublishedControl(malformedPath, expected, "published-control self-test record is malformed"); }
+            catch (InvalidOperationException exception) { rejected = String.Equals(exception.Message, "published-control self-test record is malformed", StringComparison.Ordinal); }
+            if (!rejected) { throw new InvalidOperationException("readable malformed published-control self-test record was not rejected exactly"); }
+        } finally {
+            try { if (Directory.Exists(root)) { Directory.Delete(root, true); } } catch { }
+        }
+    }
     public static W017BoundedChildResult Run(string executable, string workingDirectory, string[] arguments, string[] environmentNamesToRemove, int budgetSeconds, int outputLimitBytes, int postKillDrainMilliseconds) {
         return RunCore(executable, workingDirectory, arguments, environmentNamesToRemove, budgetSeconds, outputLimitBytes, postKillDrainMilliseconds, null);
     }
