@@ -1327,6 +1327,12 @@ if ($runFullSelector -or $runExecutorPassPhase) {
     $phaseRunnerSource = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts/Invoke-AffectedValidationSelfTestPhase.ps1') -Raw
     $phaseReceiptSchema = Read-MorphospaceProtocolJson -Path (Join-Path $repoRoot 'schemas/affected-validation-self-test-phase-receipt-v1.schema.json')
     $phaseRunnerSchema = $phaseReceiptSchema.properties.binding.properties.runner
+    $expectedPhaseIds = @('executor-damage','executor-pass-schema','graph-import-closure','selection-scenarios','trust-damage-final','trust-proportional-mappings','trust-routing-contracts','trust-self-executor')
+    $topLevelPhaseIds = @($phaseReceiptSchema.properties.phase_id.enum)
+    $bindingPhaseIds = @($phaseReceiptSchema.properties.binding.properties.phase_id.enum)
+    [Array]::Sort($topLevelPhaseIds,[StringComparer]::Ordinal)
+    [Array]::Sort($bindingPhaseIds,[StringComparer]::Ordinal)
+    Assert-True (($topLevelPhaseIds -join ',') -ceq ($expectedPhaseIds -join ',') -and ($bindingPhaseIds -join ',') -ceq ($expectedPhaseIds -join ',')) 'Affected phase receipt schema does not exactly match the runner phase set.'
     $requiredRunnerFields = @('git_executable_sha256','git_version','os_description','powershell_executable_sha256','powershell_version','process_architecture')
     $observedRunnerFields = @($phaseRunnerSchema.required)
     [Array]::Sort($observedRunnerFields,[StringComparer]::Ordinal)
