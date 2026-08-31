@@ -239,6 +239,16 @@ never execution, acceptance, or publication.
 boundary. A base-owned policy admits an exact reviewed change set without
 checking out or executing candidate content; dynamic validation and
 publication authority remain separate.
+
+For the exceptional case where an already frozen unit must retain its raw
+validation array while a reviewed planning authority supplies a focused Quick
+evidence producer, use the fail-closed
+[Exact normal-validation selector](docs/NORMAL_VALIDATION_SELECTOR.md). It
+binds project, unit, declared gate, freeze receipt, final candidate, producer,
+and canonical output evidence identities; it contains no command. The normal
+consumer returns the dispatch matrix, persists only its exact selector/path
+hashes, and reconstructs that matrix for receipt-consuming validation actions.
+It performs no producer, source, build, device, remote, or publication action.
    Managed target-set work uses Fleet with current authority and effect-owner
    receipts. Local File Manager and managed Fleet contracts remain separate;
    raw ADB requires an explicit bootstrap, provider-gap, diagnostic, or

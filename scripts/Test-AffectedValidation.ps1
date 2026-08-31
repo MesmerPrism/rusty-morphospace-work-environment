@@ -26,6 +26,11 @@ $selectorPhaseCheckIds = @(
     'affected-selector-selftest'
 )
 $selectorTrustRootCheckIds = @($selectorPhaseCheckIds + @('affected-topology-selftest','affected-reuse-selftest'))
+$expectedProtocolCommonGraphIdentity = [pscustomobject][ordered]@{
+    owner_entrypoints = 49
+    tracked_graph_nodes = 125
+    protocol_consumers = 31
+}
 
 function Assert-True([bool]$Condition, [string]$Message) { if (-not $Condition) { throw $Message } }
 function Get-AffectedSupervisorResidueIdentity {
@@ -961,7 +966,7 @@ function Get-AffectedProtocolCommonOwnerChecks([string]$Root, [object]$Registry)
         [Array]::Sort($missing,[StringComparer]::Ordinal)
         throw "ProtocolCommon transitive Work Environment owners lack registered focused checks: $($missing -join ',')"
     }
-    foreach ($required in @('scripts/Test-PublishedPrerequisiteSuffixReconciliation.ps1','scripts/Test-UnplannedPublicationClosure.ps1','scripts/Test-InheritedCandidateMaterialization.ps1','scripts/Test-DevelopmentUnitAdmission.ps1')) {
+    foreach ($required in @('scripts/Test-PublishedPrerequisiteSuffixReconciliation.ps1','scripts/Test-UnplannedPublicationClosure.ps1','scripts/Test-InheritedCandidateMaterialization.ps1','scripts/Test-DevelopmentUnitAdmission.ps1','scripts/Test-NormalValidationSelector.ps1')) {
         if (-not $consumers.Contains($required)) { throw "Known ProtocolCommon transitive owner is absent from the derived closure: $required" }
     }
     $result = @(ConvertTo-AffectedOrdinalUniqueStrings @($consumerCheckIds.ToArray()))
@@ -981,7 +986,11 @@ function Get-AffectedProtocolCommonOwnerChecks([string]$Root, [object]$Registry)
 }
 function Invoke-AffectedGraphIndexSelfTest([string]$Root,[object]$Registry) {
     $audit = Get-AffectedProtocolCommonOwnerChecks -Root $Root -Registry $Registry
-    Assert-True ($audit.owner_entrypoints -eq 48 -and $audit.tracked_graph_nodes -eq 123 -and $audit.protocol_consumers -eq 30) "Real-tree ProtocolCommon graph identity changed: roots=$($audit.owner_entrypoints) nodes=$($audit.tracked_graph_nodes) consumers=$($audit.protocol_consumers)."
+    Assert-True (
+        $audit.owner_entrypoints -eq $expectedProtocolCommonGraphIdentity.owner_entrypoints -and
+        $audit.tracked_graph_nodes -eq $expectedProtocolCommonGraphIdentity.tracked_graph_nodes -and
+        $audit.protocol_consumers -eq $expectedProtocolCommonGraphIdentity.protocol_consumers
+    ) "Real-tree ProtocolCommon graph identity changed: roots=$($audit.owner_entrypoints) nodes=$($audit.tracked_graph_nodes) consumers=$($audit.protocol_consumers)."
     Assert-True ($audit.adjacency_sha256 -cmatch '^[0-9a-f]{64}$' -and $audit.consumer_sha256 -cmatch '^[0-9a-f]{64}$') 'Real-tree ProtocolCommon graph did not emit deterministic adjacency/consumer digests.'
     Assert-True ([long]$audit.total_elapsed_ms -le 45000) "ProtocolCommon transitive owner audit exceeded its measured 45-second bound: $($audit.total_elapsed_ms)ms."
 
@@ -1201,7 +1210,11 @@ if ($runTrustMappingsPhase) {
     $graphOutput = Read-MorphospaceProtocolJson -Path $graphOutputPath
     Assert-AffectedScenarioProperties -Value $graphOutput -Expected @('schema','owner_entrypoints','tracked_graph_nodes','protocol_consumers','adjacency_sha256','consumer_sha256','check_ids') -Context 'Graph/import-closure output'
     Assert-True ([string]$graphOutput.schema -ceq 'rusty.morphospace.diagnostic.affected_validation_graph_output.v1') 'Trust proportional-mapping phase rejected the graph output schema.'
-    Assert-True ([int]$graphOutput.owner_entrypoints -eq 48 -and [int]$graphOutput.tracked_graph_nodes -eq 123 -and [int]$graphOutput.protocol_consumers -eq 30) 'Trust proportional-mapping phase rejected the graph output identity.'
+    Assert-True (
+        [int]$graphOutput.owner_entrypoints -eq $expectedProtocolCommonGraphIdentity.owner_entrypoints -and
+        [int]$graphOutput.tracked_graph_nodes -eq $expectedProtocolCommonGraphIdentity.tracked_graph_nodes -and
+        [int]$graphOutput.protocol_consumers -eq $expectedProtocolCommonGraphIdentity.protocol_consumers
+    ) 'Trust proportional-mapping phase rejected the graph output identity.'
     Assert-True ([string]$graphOutput.adjacency_sha256 -cmatch '^[0-9a-f]{64}$' -and [string]$graphOutput.consumer_sha256 -cmatch '^[0-9a-f]{64}$') 'Trust proportional-mapping phase rejected graph output digests.'
     $protocolCommonConsumerChecks = @($graphOutput.check_ids)
 }

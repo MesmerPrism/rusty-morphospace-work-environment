@@ -13,6 +13,7 @@ Import-Module (Join-Path $PSScriptRoot 'lib\MorphospacePlannedPublication.psm1')
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospacePlanningSuffixRewrite.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospacePublishedPrerequisiteSuffix.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceExecutedPreparedPublication.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceNormalValidationSelector.psm1') -Force
 # Retain the aggregate's public binding for this shared predicate. A private
 # force reload unloads that binding even though this module can still call it.
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceActiveUnitContractReviewCompatibility.psm1')
@@ -1307,6 +1308,7 @@ function Test-MorphospaceValidationReceipt {
     }
 
     $artifactMap = @{}
+    $artifactPathMap = @{}
     $receiptDirectory = Split-Path -Parent $receiptPath
     foreach ($artifact in @($receipt.artifacts)) {
         $artifactId = [string]$artifact.artifact_id
@@ -1320,6 +1322,7 @@ function Test-MorphospaceValidationReceipt {
         $actualHash = Get-MorphospaceAuthoritySha256 $artifactPath
         if ($actualHash -ne ([string]$artifact.sha256).ToLowerInvariant()) { throw "Validation artifact hash mismatch for '$artifactId'." }
         $artifactMap[$artifactId] = $artifact
+        $artifactPathMap[$artifactId] = $artifactPath
     }
     if ($artifactMap.Count -eq 0) { throw "Validation receipt must contain at least one hashed artifact." }
 
@@ -1362,6 +1365,21 @@ function Test-MorphospaceValidationReceipt {
             if (-not $artifactMap.ContainsKey([string]$reference)) { throw "Gate '$($gate.gate_id)' references unknown artifact '$reference'." }
         }
         if (@($gate.evidence_refs).Count -eq 0) { throw "Gate '$($gate.gate_id)' has no evidence references." }
+        if (($definition.PSObject.Properties.Name -contains 'selection_kind') -and [string]$definition.selection_kind -ceq 'exact-external-evidence') {
+            $expectedEvidencePath = [IO.Path]::GetFullPath([string]$definition.selector.evidence.path)
+            $matchingEvidenceReferences = @($gate.evidence_refs | Where-Object {
+                $referenceId = [string]$_
+                $artifactPathMap.ContainsKey($referenceId) -and
+                [string]$artifactPathMap[$referenceId] -ceq $expectedEvidencePath
+            })
+            if ($matchingEvidenceReferences.Count -ne 1) {
+                throw "Selected validation gate '$($gate.gate_id)' must reference exactly its bound external evidence artifact."
+            }
+            $selectedArtifact = $artifactMap[[string]$matchingEvidenceReferences[0]]
+            if ([string]$selectedArtifact.sha256 -cne [string]$definition.selector.evidence.sha256) {
+                throw "Selected validation gate '$($gate.gate_id)' external evidence hash drifted."
+            }
+        }
     }
     if ($unmatchedGateDefinitions.Count -ne 0) { throw "Validation receipt does not cover the exact validation-gate set." }
 
@@ -1886,6 +1904,9 @@ function Invoke-MorphospaceWorkUnitAutomation {
         [string]$ExpectedProposedRetirementBindingSha256 = "",
         [string]$ExpectedInstructionObservationSha256 = "",
         [ValidateSet("quick", "standard", "deep")][string]$ValidationTier = "standard",
+        [string]$ValidationSelector = "",
+        [string]$ExpectedValidationSelectorSha256 = "",
+        [string]$ValidationEvidencePath = "",
         [string[]]$DeviceSerials = @(),
         [string]$AuthorityRunnerPath = "",
         [string[]]$AuthorityRunnerArguments = @(),
@@ -1969,10 +1990,68 @@ function Invoke-MorphospaceWorkUnitAutomation {
         $repositoryStates.Add($planningState) | Out-Null
     }
     $repoStatesArray = @($repositoryStates.ToArray())
+    $beforeStatus = [string]$unit.status
+    $existingValidationSelection = if (
+        ($state.PSObject.Properties.Name -contains 'normal_validation_selection') -and
+        $null -ne $state.normal_validation_selection
+    ) { $state.normal_validation_selection } else { $null }
+    if ($null -ne $existingValidationSelection -and [string]$existingValidationSelection.unit_id -cne $UnitId) {
+        throw 'Workspace state carries a normal-validation selection for a different unit.'
+    }
     $validationMatrix = @(New-MorphospaceValidationMatrix -Unit $unit -DeviceSerials $DeviceSerials)
+    $selectorResult = $null
+    if ($ValidationSelector) {
+        if (-not $ExpectedValidationSelectorSha256 -or -not $ValidationEvidencePath) {
+            throw 'ValidationSelector requires ExpectedValidationSelectorSha256 and ValidationEvidencePath.'
+        }
+        $receiptConsumingSelectorAction = $Action -in @('ReturnToActive', 'RecordValidation', 'Accept')
+        if ($receiptConsumingSelectorAction -and $null -eq $existingValidationSelection) {
+            throw "$Action requires the exact normal-validation selection bound by an executed BeginValidation action."
+        }
+        $boundSelectionForResolution = if (
+            $receiptConsumingSelectorAction -or
+            ($Action -ceq 'BeginValidation' -and $beforeStatus -ceq 'validating' -and $null -ne $existingValidationSelection)
+        ) { $existingValidationSelection } else { $null }
+        $selectorResult = Resolve-MorphospaceNormalValidationSelector `
+            -WorkspaceRoot $resolvedWorkspace `
+            -SelectorReference $ValidationSelector `
+            -ExpectedSelectorSha256 $ExpectedValidationSelectorSha256 `
+            -EvidencePath $ValidationEvidencePath `
+            -Spec $spec `
+            -Unit $unit `
+            -DeclaredValidationMatrix $validationMatrix `
+            -Action $Action `
+            -ValidationTier $ValidationTier `
+            -BoundSelection $boundSelectionForResolution
+        $mustMatchExistingSelection = $receiptConsumingSelectorAction -or (
+            $Action -ceq 'BeginValidation' -and $beforeStatus -ceq 'validating' -and $null -ne $existingValidationSelection
+        )
+        if ($mustMatchExistingSelection) {
+            $observedBinding = $selectorResult.state_binding
+            if (
+                [string]$existingValidationSelection.unit_id -cne [string]$observedBinding.unit_id -or
+                [string]$existingValidationSelection.unit_raw_sha256 -cne [string]$observedBinding.unit_raw_sha256 -or
+                [string]$existingValidationSelection.unit_contract_sha256 -cne [string]$observedBinding.unit_contract_sha256 -or
+                [string]$existingValidationSelection.tier -cne [string]$observedBinding.tier -or
+                [string]$existingValidationSelection.selector_id -cne [string]$observedBinding.selector_id -or
+                [string]$existingValidationSelection.selector_path -cne [string]$observedBinding.selector_path -or
+                [string]$existingValidationSelection.selector_sha256 -cne [string]$observedBinding.selector_sha256 -or
+                [string]$existingValidationSelection.evidence_path_sha256 -cne [string]$observedBinding.evidence_path_sha256
+            ) {
+                throw "$Action normal-validation selection does not match the exact binding established by BeginValidation."
+            }
+        }
+        $validationMatrix = @($selectorResult.validation_matrix)
+    } elseif ($ExpectedValidationSelectorSha256 -or $ValidationEvidencePath) {
+        throw 'ExpectedValidationSelectorSha256 and ValidationEvidencePath are invalid without ValidationSelector.'
+    } elseif (
+        $null -ne $existingValidationSelection -and
+        ($Action -in @('BeginValidation', 'ReturnToActive', 'RecordValidation') -or ($Action -ceq 'Accept' -and $beforeStatus -cne 'accepted'))
+    ) {
+        throw "$Action requires the exact normal-validation selector and evidence path bound in workspace state."
+    }
     $graphScope = New-MorphospaceGraphScope -Unit $unit
     $claimPreflight = New-MorphospaceClaimPreflight -Unit $unit -State $state -Spec $spec -RepositoryMap $repoMap -RepositoryStates $repoStatesArray -ValidationMatrix $validationMatrix -ValidationTier $ValidationTier -Action $Action
-    $beforeStatus = [string]$unit.status
     $beforeCurrent = $state.current_unit
     $expectedPreStateSha256 = Get-MorphospaceCanonicalJsonSha256 $state
     $expectedPreUnitSha256 = Get-MorphospaceCanonicalJsonSha256 $unit
@@ -2217,7 +2296,19 @@ function Invoke-MorphospaceWorkUnitAutomation {
         }
         "BeginValidation" {
             if ($beforeStatus -eq "validating" -and [string]$state.current_unit -eq $UnitId) {
-                $transition = "idempotent"
+                if ($null -ne $selectorResult -and $null -eq $existingValidationSelection) {
+                    $transition = 'validation-selector-bound'
+                    if ($Execute) {
+                        if ($state.PSObject.Properties.Name -contains 'normal_validation_selection') {
+                            $state.normal_validation_selection = $selectorResult.state_binding
+                        } else {
+                            $state | Add-Member -NotePropertyName normal_validation_selection -NotePropertyValue $selectorResult.state_binding
+                        }
+                        $event = New-MorphospaceEvent -State $state -Events $events -UnitId $UnitId -ActionSlug 'validation-selector-bound' -Timestamp $Timestamp -EventType 'validation' -Summary 'Bound an exact external Quick evidence selector to the already-validating frozen unit without executing its producer.'
+                    }
+                } else {
+                    $transition = "idempotent"
+                }
             } else {
                 if ($beforeStatus -ne "active" -or [string]$state.current_unit -ne $UnitId) { throw "BeginValidation requires the matching active unit." }
                 [void](Test-MorphospaceFrozenCandidate -WorkspaceRoot $resolvedWorkspace -Unit $unit)
@@ -2226,6 +2317,13 @@ function Invoke-MorphospaceWorkUnitAutomation {
                 $transition = "active-to-validating"
                 if ($Execute) {
                     $unit.status = "validating"
+                    if ($null -ne $selectorResult) {
+                        if ($state.PSObject.Properties.Name -contains 'normal_validation_selection') {
+                            $state.normal_validation_selection = $selectorResult.state_binding
+                        } else {
+                            $state | Add-Member -NotePropertyName normal_validation_selection -NotePropertyValue $selectorResult.state_binding
+                        }
+                    }
                     $event = New-MorphospaceEvent -State $state -Events $events -UnitId $UnitId -ActionSlug "validating" -Timestamp $Timestamp -EventType "state-transition" -Summary "Entered validation with a deterministic command, instruction, graph, and device-impact plan."
                 }
             }
@@ -2353,6 +2451,9 @@ function Invoke-MorphospaceWorkUnitAutomation {
                 $transition = "validating-to-accepted"
                 if ($Execute) {
                     $unit.status = "accepted"; $state.current_unit = $null
+                    if ($state.PSObject.Properties.Name -contains 'normal_validation_selection') {
+                        $state.normal_validation_selection = $null
+                    }
                     if ([string]$state.schema -eq "rusty.morphospace.workflow.workspace_state.v2") {
                         $state.last_accepted_receipt = [string]$state.validation_checkpoint.receipt
                     }
