@@ -313,7 +313,8 @@ function Add-OwnerProjectionContinuation {
         [string]$EventId,
         [string]$Timestamp,
         [switch]$TwoProjectionAnchor,
-        [switch]$AdvanceProjectProjection
+        [switch]$AdvanceProjectProjection,
+        [switch]$RawBound
     )
     if ($TwoProjectionAnchor -eq $AdvanceProjectProjection) { throw 'Owner projection fixture requires exactly one continuation mode.' }
     $statePath = Join-Path $Workspace 'workspace.state.json'
@@ -357,6 +358,10 @@ function Add-OwnerProjectionContinuation {
         summary = if ($TwoProjectionAnchor) { 'Owner-authenticated the exact feature-lock and project-spec projections without changing their bytes.' } else { 'Owner-authenticated a chained project-spec projection advance from its prior target.' }
         receipts = @()
     }
+    $rawBinding = @{}
+    if ($RawBound) {
+        $rawBinding.ExpectedPreUnitRawSha256 = Get-MorphospaceFileSha256 -Path $unitPath
+    }
     Start-MorphospaceTransitionLedger `
         -WorkspaceRoot $Workspace `
         -TransactionId "$EventId-transition" `
@@ -371,7 +376,8 @@ function Add-OwnerProjectionContinuation {
         -ExpectedEventTailId ([string]$tail.event_id) `
         -ExpectedEventsSha256 (Get-MorphospaceFileSha256 -Path $eventsPath) `
         -ExpectedEventsLength ([IO.FileInfo]::new($eventsPath).Length) `
-        -AdditionalProjections @($requests.ToArray()) | Out-Null
+        -AdditionalProjections @($requests.ToArray()) `
+        @rawBinding | Out-Null
     return $EventId
 }
 
@@ -529,6 +535,50 @@ try {
     Invoke-WorkflowContract -Workspace $ownerProjectionWorkspace | Out-Null
     Assert-Passed $true 'owner-produced-matching-projection-chain-aggregate'
 
+    $ownerV4Workspace = Copy-FixtureWorkspace -Source $baselineWorkspace -Name 'positive-owner-v4-projection-chain'
+    Add-LaterUnit -Workspace $ownerV4Workspace
+    $v4ProjectionEventId = Add-OwnerProjectionContinuation -Workspace $ownerV4Workspace -UnitId 'later-current-owner' -EventId 'later-current-owner-v4-two-projection-anchor-recorded' -Timestamp '2026-01-02T03:08:00.0000000Z' -TwoProjectionAnchor -RawBound
+    Assert-HelperPasses -Workspace $ownerV4Workspace -Name 'owner-produced-v4-two-projection-positive' -ContinuationCount 3 -ProjectionCount 2
+    $v4ProjectionAdvanceEventId = Add-OwnerProjectionContinuation -Workspace $ownerV4Workspace -UnitId 'later-current-owner' -EventId 'later-current-owner-v4-project-projection-advance-recorded' -Timestamp '2026-01-02T03:09:00.0000000Z' -AdvanceProjectProjection -RawBound
+    Assert-HelperPasses -Workspace $ownerV4Workspace -Name 'owner-produced-v4-matching-projection-chain-positive' -ContinuationCount 4 -ProjectionCount 2
+    Invoke-WorkflowContract -Workspace $ownerV4Workspace | Out-Null
+    Assert-Passed $true 'owner-produced-v4-projection-chain-aggregate'
+    Assert-HelperRejects -Template $ownerV4Workspace -Name 'v4-missing-raw-binding' -Mutation {
+        param($case)
+        Update-FixtureJson (Join-Path $case "receipts\transactions\$v4ProjectionEventId-transition.intent.json") { param($i) $i.PSObject.Properties.Remove('pre_unit_raw') }
+        Rebind-FixtureTransaction -Workspace $case -EventId $v4ProjectionEventId
+    }
+    Assert-HelperRejects -Template $ownerV4Workspace -Name 'v4-raw-binding-unknown-field' -Mutation {
+        param($case)
+        Update-FixtureJson (Join-Path $case "receipts\transactions\$v4ProjectionEventId-transition.intent.json") { param($i) $i.pre_unit_raw | Add-Member -NotePropertyName policy -NotePropertyValue 'forbidden' }
+        Rebind-FixtureTransaction -Workspace $case -EventId $v4ProjectionEventId
+    }
+    Assert-HelperRejects -Template $ownerV4Workspace -Name 'v4-raw-binding-path-detachment' -Mutation {
+        param($case)
+        Update-FixtureJson (Join-Path $case "receipts\transactions\$v4ProjectionEventId-transition.intent.json") { param($i) $i.pre_unit_raw.path = "iteration-units/$replacementUnitId.json" }
+        Rebind-FixtureTransaction -Workspace $case -EventId $v4ProjectionEventId
+    }
+    Assert-HelperRejects -Template $ownerV4Workspace -Name 'v4-raw-binding-noncanonical-sha' -Mutation {
+        param($case)
+        Update-FixtureJson (Join-Path $case "receipts\transactions\$v4ProjectionEventId-transition.intent.json") { param($i) $i.pre_unit_raw.sha256 = ([string]$i.pre_unit_raw.sha256).ToUpperInvariant() }
+        Rebind-FixtureTransaction -Workspace $case -EventId $v4ProjectionEventId
+    }
+    Assert-HelperRejects -Template $ownerV4Workspace -Name 'v4-unknown-intent-property' -Mutation {
+        param($case)
+        Update-FixtureJson (Join-Path $case "receipts\transactions\$v4ProjectionEventId-transition.intent.json") { param($i) $i | Add-Member -NotePropertyName unknown_v4_policy -NotePropertyValue 'forbidden' }
+        Rebind-FixtureTransaction -Workspace $case -EventId $v4ProjectionEventId
+    }
+    Assert-HelperRejects -Template $ownerV4Workspace -Name 'v4-acceptance-inference' -Mutation {
+        param($case)
+        Update-FixtureJson (Join-Path $case "receipts\transactions\$v4ProjectionEventId-transition.intent.json") { param($i) $i.target.state.document.last_accepted_receipt = 'receipts/fabricated-v4-acceptance.json' }
+        Rebind-FixtureTransaction -Workspace $case -EventId $v4ProjectionEventId
+    }
+    Assert-HelperRejects -Template $ownerV4Workspace -Name 'v4-chained-projection-preimage-detachment' -Mutation {
+        param($case)
+        Update-FixtureJson (Join-Path $case "receipts\transactions\$v4ProjectionAdvanceEventId-transition.intent.json") { param($i) $i.additional_projections[0].pre_sha256 = ('c' * 64) }
+        Rebind-FixtureTransaction -Workspace $case -EventId $v4ProjectionAdvanceEventId
+    }
+
     Assert-HelperRejects -Template $ownerProjectionWorkspace -Name 'v3-missing-projection-set' -Mutation {
         param($case)
         Update-FixtureJson (Join-Path $case "receipts\transactions\$twoProjectionEventId-transition.intent.json") { param($i) $i.PSObject.Properties.Remove('additional_projections') }
@@ -547,9 +597,14 @@ try {
         Update-FixtureJson (Join-Path $case "receipts\transactions\$twoProjectionEventId-transition.intent.json") { param($i) $i | Add-Member -NotePropertyName unknown_projection_policy -NotePropertyValue 'forbidden' }
         Rebind-FixtureTransaction -Workspace $case -EventId $twoProjectionEventId
     }
-    Assert-HelperRejects -Template $ownerProjectionWorkspace -Name 'v3-unknown-intent-schema' -Mutation {
+    Assert-HelperRejects -Template $ownerProjectionWorkspace -Name 'v4-substitution-without-raw-binding' -Mutation {
         param($case)
         Update-FixtureJson (Join-Path $case "receipts\transactions\$twoProjectionEventId-transition.intent.json") { param($i) $i.schema = 'rusty.morphospace.workflow.transition_ledger_intent.v4' }
+        Rebind-FixtureTransaction -Workspace $case -EventId $twoProjectionEventId
+    }
+    Assert-HelperRejects -Template $ownerProjectionWorkspace -Name 'unknown-later-intent-schema' -Mutation {
+        param($case)
+        Update-FixtureJson (Join-Path $case "receipts\transactions\$twoProjectionEventId-transition.intent.json") { param($i) $i.schema = 'rusty.morphospace.workflow.transition_ledger_intent.v5' }
         Rebind-FixtureTransaction -Workspace $case -EventId $twoProjectionEventId
     }
     Assert-HelperRejects -Template $ownerProjectionWorkspace -Name 'v3-duplicate-projection' -Mutation {

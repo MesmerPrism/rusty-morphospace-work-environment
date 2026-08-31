@@ -237,15 +237,17 @@ fail receipt, blocker/checkpoint, and terminal blocked/current-null projection.
 Every later ledger event must extend those owner transaction preimages and
 derive the live state and touched unit bytes. A later v2 transaction is valid
 only as the exact owner-produced old-to-ready-replacement supersession. A later
-v3 projection transaction
-is valid only with its exact owner property set, one or two canonical ordered
+v3 or v4 projection transaction is valid only with its exact owner property
+set, one or two canonical ordered
 `feature.lock.json`/`project.spec.json` projections, unchanged first-seen
 anchors, prior-target-to-next-preimage chaining for a changed anchored path,
 and final live projection derivation. It may not carry a supersession, change
 captain/status/readiness/acceptance state, or tolerate unknown fields;
 later legitimate units may proceed, but a status-only blocked replacement,
 damaged chain, detached continuation, or inferred acceptance fails closed.
-For v3 artifacts, canonicalize and case-insensitively deduplicate the complete
+V4 additionally requires the exact `pre_unit_raw` property set, canonical unit
+path equality, and lowercase raw SHA-256 binding. For v3/v4 artifacts,
+canonicalize and case-insensitively deduplicate the complete
 target-path set before any live lookup, then validate each unique payload,
 hash, live byte sequence, and event-receipt binding.
 For a terminal blocked validation unit, map an invalid legacy read-only
@@ -509,6 +511,12 @@ ancestry consumes the authorization.
   hashes, current repo heads/branches, ancestor bases, exact changed paths, and
   required device cleanup plus zero bounded fatals. Reject missing, stale,
   spoofed, or out-of-scope evidence.
+- Historical validation-debt self-tests must run direct child phases through
+  create-new start/terminal/raw-stream evidence with finite child-tree cleanup
+  and bounded diagnostics. Reuse only an exact baseline-evidence key binding
+  validator, workspace/ledger anchor, source composition, current raw unit, and
+  failure set. A history-archive checkpoint is integrity evidence only and
+  never satisfies or authenticates historical validation debt.
 - Recovery from a declared partial cross-repo commit, interrupted build, or
   interrupted device run requires `interruption_receipt.v1`. It must hash its
   evidence and prove preserved repo checkpoints plus safe build/device cleanup;
@@ -641,6 +649,13 @@ ancestry consumes the authorization.
   docs or runbooks.
 
 ## Validation
+
+Affected-selector trust-root validation must use the registry-owned phased
+runner and exact phase terminals described in `docs/AFFECTED_VALIDATION.md`.
+Do not replace a failed phase with the legacy cumulative selector, raise a
+phase budget to hide a blocker, or replay an already authenticated passing
+phase. Preserve the deterministic phase directory with hosted evidence and
+continue only from exact dependency- and runner-bound receipts.
 
 Before committing, run:
 

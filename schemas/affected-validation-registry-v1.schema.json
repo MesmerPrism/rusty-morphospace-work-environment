@@ -41,7 +41,8 @@
           "authority_class": { "enum": ["ordinary", "integration", "trust-root"] },
           "cache_policy": { "enum": ["disabled", "exact-host", "portable"] },
           "budget_seconds": { "type": "integer", "minimum": 1, "maximum": 86400 },
-          "external_state": { "enum": ["none", "remote", "device", "attended"] }
+          "external_state": { "enum": ["none", "remote", "device", "attended"] },
+          "aggregate_role": { "const": "work-environment-deep-v1" }
         }
       }
     },

@@ -18,11 +18,9 @@ if (-not $RepoRoot) {
 $RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
 $script:Failures = New-Object System.Collections.Generic.List[string]
 $script:FailureRecords = New-Object System.Collections.Generic.List[object]
-$script:FailureAttribution = [pscustomobject][ordered]@{
-    failure_code = 'unclassified-contract'
-    locus = [pscustomobject][ordered]@{ kind='unclassified' }
-    evidence = [pscustomobject][ordered]@{ kind='unclassified' }
-}
+$script:HistoricalDebtCaptureUnsafeFailures = New-Object System.Collections.Generic.List[string]
+Set-Variable -Scope Script -Name UnattributedFailureAttribution -Value ([object]::new()) -Option ReadOnly
+$script:FailureAttribution = $script:UnattributedFailureAttribution
 $script:PortableIdPattern = "^[a-z0-9][a-z0-9-]{1,127}$"
 $script:LocalRepositoryMap = @{}
 if ($RepositoryMapPath) {
@@ -68,6 +66,12 @@ function Invoke-IsolatedWorkflowSelfTest {
     }
 }
 
+function Test-HistoricalDebtCaptureUnsafeAttribution {
+    param([AllowNull()][object]$Attribution)
+
+    return $null -eq $Attribution -or [object]::ReferenceEquals($Attribution,$script:UnattributedFailureAttribution)
+}
+
 function Add-Failure {
     param(
         [Parameter(Mandatory = $true)][string]$Message,
@@ -76,9 +80,22 @@ function Add-Failure {
 
     $script:Failures.Add($Message) | Out-Null
     $normalizedMessage = ([regex]::Replace($Message.Trim(), '\s+', ' '))
-    $failureCode = if ($null -ne $Attribution) { [string]$Attribution.failure_code } else { 'unclassified-contract' }
-    $locus = if ($null -ne $Attribution) { $Attribution.locus } else { [pscustomobject][ordered]@{ kind='unclassified' } }
-    $evidence = if ($null -ne $Attribution -and $null -ne $Attribution.evidence) { $Attribution.evidence } else { $locus }
+    $captureUnsafe = Test-HistoricalDebtCaptureUnsafeAttribution -Attribution $Attribution
+    if ($EmitHistoricalValidationDebtCapture -and $captureUnsafe) {
+        $script:HistoricalDebtCaptureUnsafeFailures.Add($normalizedMessage) | Out-Null
+    }
+    $effectiveAttribution = if ($captureUnsafe) {
+        [pscustomobject][ordered]@{
+            failure_code = 'unclassified-contract'
+            locus = [pscustomobject][ordered]@{ kind='unclassified' }
+            evidence = [pscustomobject][ordered]@{ kind='unclassified' }
+        }
+    } else {
+        $Attribution
+    }
+    $failureCode = [string]$effectiveAttribution.failure_code
+    $locus = $effectiveAttribution.locus
+    $evidence = if ($null -ne $effectiveAttribution.evidence) { $effectiveAttribution.evidence } else { $locus }
     $core = [ordered]@{
         failure_code = $failureCode
         locus = $locus
@@ -93,6 +110,75 @@ function Add-Failure {
         record_sha256 = Get-MorphospaceCanonicalJsonSha256 -Value $core
     }) | Out-Null
 }
+
+function Invoke-HistoricalDebtCaptureAttributionSelfTest {
+    $initialSentinel = $script:UnattributedFailureAttribution
+    if (-not (Test-HistoricalDebtCaptureUnsafeAttribution -Attribution $initialSentinel)) {
+        throw 'Historical-debt capture attribution self-test failed: the initial sentinel was not capture-unsafe.'
+    }
+    if (-not (Test-HistoricalDebtCaptureUnsafeAttribution -Attribution $null)) {
+        throw 'Historical-debt capture attribution self-test failed: null attribution was not capture-unsafe.'
+    }
+
+    $validHistoricalAttribution = [pscustomobject][ordered]@{
+        failure_code = 'historical-unit-contract'
+        locus = [pscustomobject][ordered]@{ kind='iteration-unit'; unit_id='historical-unit' }
+        evidence = [pscustomobject][ordered]@{ kind='iteration-unit'; unit_id='historical-unit' }
+    }
+    $validCurrentAttribution = [pscustomobject][ordered]@{
+        failure_code = 'current-unit-contract'
+        locus = [pscustomobject][ordered]@{ kind='iteration-unit'; unit_id='current-unit' }
+        evidence = [pscustomobject][ordered]@{ kind='iteration-unit'; unit_id='current-unit' }
+    }
+    $explicitUnclassifiedUnitAttribution = [pscustomobject][ordered]@{
+        failure_code = 'unclassified-contract'
+        locus = [pscustomobject][ordered]@{ kind='unclassified'; unit_id='explicitly-unclassified-unit' }
+        evidence = [pscustomobject][ordered]@{ kind='unclassified'; unit_id='explicitly-unclassified-unit' }
+    }
+    $priorAttribution = $script:FailureAttribution
+    try {
+        $script:FailureAttribution = $validHistoricalAttribution
+        foreach ($safeAttribution in @($validHistoricalAttribution,$validCurrentAttribution,$explicitUnclassifiedUnitAttribution)) {
+            if (Test-HistoricalDebtCaptureUnsafeAttribution -Attribution $safeAttribution) {
+                throw 'Historical-debt capture attribution self-test failed: a rotated or explicit unit attribution was capture-unsafe.'
+            }
+        }
+        if (-not (Test-HistoricalDebtCaptureUnsafeAttribution -Attribution $initialSentinel)) {
+            throw 'Historical-debt capture attribution self-test failed: sequence-024 parser/ledger attribution became safe after rotation.'
+        }
+    } finally {
+        $script:FailureAttribution = $priorAttribution
+    }
+
+    $sentinelAlias = $initialSentinel
+    try {
+        $sentinelAlias | Add-Member -NotePropertyName failure_code -NotePropertyValue 'historical-unit-contract' -Force
+        if (-not (Test-HistoricalDebtCaptureUnsafeAttribution -Attribution $sentinelAlias)) {
+            throw 'Historical-debt capture attribution self-test failed: alias mutation changed sentinel classification.'
+        }
+    } finally {
+        $sentinelAlias.PSObject.Properties.Remove('failure_code')
+    }
+    $sentinelLookalike = [pscustomobject][ordered]@{
+        failure_code = 'unclassified-contract'
+        locus = [pscustomobject][ordered]@{ kind='unclassified' }
+        evidence = [pscustomobject][ordered]@{ kind='unclassified' }
+    }
+    if (Test-HistoricalDebtCaptureUnsafeAttribution -Attribution $sentinelLookalike) {
+        throw 'Historical-debt capture attribution self-test failed: a lookalike attribution forged the sentinel identity.'
+    }
+    $rebindRejected = $false
+    try {
+        Set-Variable -Scope Script -Name UnattributedFailureAttribution -Value ([object]::new()) -ErrorAction Stop
+    } catch {
+        $rebindRejected = $true
+    }
+    if (-not $rebindRejected -or -not [object]::ReferenceEquals($initialSentinel,$script:UnattributedFailureAttribution)) {
+        throw 'Historical-debt capture attribution self-test failed: the stable sentinel binding was mutable.'
+    }
+}
+
+Invoke-HistoricalDebtCaptureAttributionSelfTest
 
 function New-HistoricalDebtUnitFailureAttribution {
     param(
@@ -2285,6 +2371,7 @@ $requiredSchemaNames = @(
     "historical-validation-debt-baseline-v1.schema.json",
     "historical-validation-debt-baseline-authorization-v1.schema.json",
     "historical-validation-debt-result-v1.schema.json",
+    "historical-validation-debt-phase-receipt-v1.schema.json",
     "feature-descriptor.schema.json",
     "feature-lock.schema.json",
     "feature-lock-v2.schema.json",
@@ -2713,9 +2800,10 @@ $historicalDebtCapture = [pscustomobject][ordered]@{
     schema = 'rusty.morphospace.workflow.historical_validation_debt_capture.v1'
     failure_records = @(Get-CanonicalHistoricalDebtFailureRecords)
 }
-if ($EmitHistoricalValidationDebtCapture) {
+if ($EmitHistoricalValidationDebtCapture -and $script:HistoricalDebtCaptureUnsafeFailures.Count -eq 0) {
     $captureBytes = [Text.UTF8Encoding]::new($false).GetBytes((ConvertTo-MorphospaceCanonicalJson -Value $historicalDebtCapture))
     Write-Output ("historical_validation_debt_capture_base64=" + [Convert]::ToBase64String($captureBytes))
+    return
 }
 
 if ($null -ne $historicalDebtResult) {

@@ -265,7 +265,10 @@ try {
     $restoredState = Copy-ActiveUnitContractTestDocument $afterState; $restoredState.last_event_id = $state.last_event_id
     Assert-ActiveUnitContractTest ((Get-MorphospaceCanonicalJsonSha256 $restoredState) -ceq (Get-MorphospaceCanonicalJsonSha256 $state)) 'execute changed workspace state beyond last_event_id'
     Assert-ActiveUnitContractTest ((Get-ActiveUnitContractTestFileSha256 $outPath) -ceq $correctionHash) 'transaction did not install the exact correction input as receipt'
-    Assert-ActiveUnitContractTest ([IO.File]::Exists((Join-Path $workspace 'receipts\transactions\unit058-contract-recorded-transition.intent.json')) -and [IO.File]::Exists((Join-Path $workspace 'receipts\transactions\unit058-contract-recorded-transition.completion.json'))) 'atomic intent or completion projection is missing'
+    $intentPath = Join-Path $workspace 'receipts\transactions\unit058-contract-recorded-transition.intent.json'
+    Assert-ActiveUnitContractTest ([IO.File]::Exists($intentPath) -and [IO.File]::Exists((Join-Path $workspace 'receipts\transactions\unit058-contract-recorded-transition.completion.json'))) 'atomic intent or completion projection is missing'
+    $intent = Read-ActiveUnitContractTestJson $intentPath
+    Assert-ActiveUnitContractTest ([string]$intent.schema -ceq 'rusty.morphospace.workflow.transition_ledger_intent.v4' -and [string]$intent.pre_unit_raw.path -ceq 'iteration-units/unit058.json' -and [string]$intent.pre_unit_raw.sha256 -ceq (Get-ActiveUnitContractTestBytesSha256 $unitBytes) -and @($intent.additional_projections).Count -eq 1 -and [string]$intent.additional_projections[0].path -ceq 'project.spec.json') 'active-unit correction did not bind exact raw pre-unit bytes and the retained project projection in a closed v4 intent'
     Assert-ActiveUnitContractTest (([IO.File]::ReadAllBytes($eventsPath)[0..($eventsBytes.Length - 1)] -join ',') -ceq ($eventsBytes -join ',')) 'existing ledger prefix was rewritten'
 
     # Exercise the full workspace-contract path from the enclosing cold

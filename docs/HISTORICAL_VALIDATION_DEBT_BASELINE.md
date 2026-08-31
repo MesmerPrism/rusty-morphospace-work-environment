@@ -26,6 +26,32 @@ classified legacy workspace-state failures. Current-unit, instruction-surface,
 source-scope, validation, acceptance, unknown, tool, and transport failures are
 not baselineable.
 
+## Focused observability and evidence reuse
+
+The focused owner self-test is not the production baseline action. It runs the
+synthetic workspace/current-history contract in a bounded child with unrelated
+owner self-tests disabled, then constructs one exact baseline-evidence file
+from that capture. The evidence reuse key binds validator identity,
+workspace/event-ledger anchor, source composition, current-unit raw bytes, and
+the canonical failure-set digest. Installing that exact evidence into the
+synthetic workspace does not rerun the superseded-unit capture and does not
+authenticate, authorize, validate, or publish it; the later synthetic
+owner-signature path remains mandatory.
+
+Every directly launched phase writes create-new start and terminal receipts
+plus raw stdout/stderr files. The terminal binds command bytes and arguments,
+elapsed time, exit/timeout state, stream hashes and lengths, bounded diagnostic
+streaming, and child-tree cleanup. Typed results distinguish timeout,
+fixture-cleanup failure, cache miss, code failure, evidence collision, and
+evidence-reuse rejection. A phase collision never overwrites prior bytes.
+
+A history-archive checkpoint is not a reusable historical-debt result. It can
+authenticate archived raw-byte integrity and live-tail closure, but it cannot
+prove that an aggregate or historical-debt ratchet passed. Ordinary production
+capture remains cold and complete; the focused evidence path exists only to
+avoid recursively replaying unrelated owner self-tests inside this damage
+suite.
+
 An independent owner must separately sign the canonical sibling
 `authorization.json` using the pinned external-owner RSA-PSS authority. The
 signed payload binds the exact baseline hash, all validator/workspace/source
@@ -71,3 +97,10 @@ captured request and fresh independent authorization.
 This is validation policy. Candidate dynamic tests are evidence only; protected
 changes still use the external Static Admission route in
 [External Validation Authority](EXTERNAL_VALIDATION_AUTHORITY.md).
+
+Run the focused observability damage suite before the debt leaf:
+
+```powershell
+pwsh -NoProfile -File .\scripts\Test-HistoricalValidationDebtPhaseRunner.ps1 -SelfTest
+pwsh -NoProfile -File .\scripts\Test-HistoricalValidationDebtBaseline.ps1 -SelfTest
+```

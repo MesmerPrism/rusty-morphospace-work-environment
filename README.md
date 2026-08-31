@@ -43,7 +43,10 @@ When immutable historical metadata prevents a complete aggregate while the
 current feature still validates, use only the independently signed,
 [historical validation-debt baseline](docs/HISTORICAL_VALIDATION_DEBT_BASELINE.md).
 It ratchets one exact unresolved failure set and reports debt-bearing success;
-it does not repair history or claim a clean workspace.
+it does not repair history or claim a clean workspace. Its focused self-test
+uses create-new phase receipts, bounded streamed diagnostics, finite child-tree
+timeouts, and one exact baseline-evidence reuse key; a history-archive
+checkpoint remains separate and cannot satisfy historical debt.
 
 One exact current active feature unit may correct only its legacy
 `architecture_decision` shape and wholly absent required
@@ -297,8 +300,34 @@ validation without a device.
   skills, planning instructions, touched-repo `AGENTS.md`, and README/router
   docs aligned without duplicating long recipes.
 - [Affected Validation](docs/AFFECTED_VALIDATION.md) defines exact-tree
-  current-delta selection, content-addressed evidence reuse, full-history Deep,
-  and fail-closed infrastructure handling for CI.
+  current-delta selection, proportional workflow-authority leaf routing,
+  current-byte-bound ordinal transitive owner/import/invocation coverage with
+  one path/SHA-bound per-file edge index, deterministic adjacency/consumer
+  derivation, raw per-check stream receipts, dependency-only failure blocking,
+  complete tracked import/schema/data/runner-source bindings, pre/post exact
+  working-byte checks, non-inherited tagged supervisor-completion pipes,
+  exact `OWNER_RIGHTS`-protected Windows supervisor/direct-parent authority
+  chains with protected existing-thread and future-thread default DACLs,
+  guard-group-deny-only and privilege-deleted allowlist-read-back leaves, exact
+  process/thread denial probes, retained initial-thread identities, and stable
+  late-thread plus byte-exact normal/fallback restoration, nonce-local
+  writable roots, suspended inner jobs, and live combined output bounds,
+  Linux user/PID-namespace containment with direct-kill fallback,
+  complete child-stream cleanup/readback,
+  immutable parent-retained current-run receipts and streams, final-root
+  materialization only after zero contained descendants, exact post-write byte
+  verification plus workflow-bound inventory SHA-256, parent-snapshotted
+  producer inventories, ordinal-unique immutable stream consumption, and
+  finalized-only exact-host leaf plus inner selector-artifact rehydration across
+  corrected PR attempts without treating the cache as authority,
+  digests, and memoized reachability, one recursive tree inventory and
+  one batched filtered working-byte proof per selection, an ordered
+  finite-budget selector phase DAG with exact dependency- and runner-bound
+  terminal-receipt reuse and
+  fail-fast continuation, resumable non-authoritative selector scenarios,
+  content-addressed evidence reuse,
+  one-time trust-root/full-history Deep, and fail-closed infrastructure handling
+  for CI.
 - [History Archive Checkpoints](docs/HISTORY_ARCHIVE_CHECKPOINTS.md) defines
   additive raw-byte history checkpoints, bounded live tails, and the distinct
   Quick versus Deep/audit/migration replay routes.
@@ -339,17 +368,18 @@ from the authenticated v2 supersession transaction and the complete directly
 chained `BeginValidation`/fail transactions, including the same-unit fail
 receipt, blocker/checkpoint, and exact historical state/unit targets. The proof
 remains valid after later legitimate units advance only when every later owner
-transaction derives the live projection. A later intent v3 is admitted only as
-an exact non-supersession suffix transaction with one or two ordered canonical
+transaction derives the live projection. A later intent v3 or v4 is admitted
+only as an exact non-supersession suffix transaction with one or two ordered canonical
 project/lock projections: a first-seen path must be an unchanged anchor, a
 later change must chain its prior target into the next preimage, and the last
 target must equal the live document. Unknown properties, changed unanchored
 paths, captain/status/readiness changes, status-only mutation, damaged history,
-or acceptance inference remain invalid. Run
+or acceptance inference remain invalid. V4 also binds the exact canonical unit
+path and lowercase raw-byte SHA-256 through `pre_unit_raw`. Run
 `scripts/Test-BlockedSupersessionTerminalValidation.ps1` for the neutral
 owner-produced one-projection, two-projection, chained-advance, and adversarial
 fixtures.
-V3 artifact validation resolves portability deterministically: it canonicalizes
+V3/v4 artifact validation resolves portability deterministically: it canonicalizes
 and case-insensitively deduplicates every target path before any filesystem
 lookup, then validates the unique artifacts and their exact receipt set.
 One completed legacy-v1 fault has a separately reviewed append-only repair:
