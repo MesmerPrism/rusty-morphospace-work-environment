@@ -2,7 +2,7 @@
 param(
     [switch]$BatchSelfTestOnly,
     [switch]$GraphSelfTestOnly,
-    [ValidateSet('graph-import-closure','executor-pass-schema','executor-damage','selection-scenarios','trust-mapping-final')]
+    [ValidateSet('graph-import-closure','executor-pass-schema','executor-damage','selection-scenarios','trust-self-executor','trust-routing-contracts','trust-proportional-mappings','trust-damage-final')]
     [string]$SelfTestPhase,
     [string]$SelectionScenarioEvidenceRoot
 )
@@ -12,18 +12,37 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceAffectedValidation.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceAffectedValidationCheckEvidence.psm1') -Force
 
 $selectorPhaseCheckIds = @(
     'affected-selector-graph-import-closure',
     'affected-selector-executor-pass-schema',
     'affected-selector-executor-damage',
     'affected-selector-selection-scenarios',
-    'affected-selector-trust-mapping-final',
+    'affected-selector-trust-self-executor',
+    'affected-selector-trust-routing-contracts',
+    'affected-selector-trust-proportional-mappings',
+    'affected-selector-trust-damage-final',
     'affected-selector-selftest'
 )
 $selectorTrustRootCheckIds = @($selectorPhaseCheckIds + @('affected-topology-selftest','affected-reuse-selftest'))
 
 function Assert-True([bool]$Condition, [string]$Message) { if (-not $Condition) { throw $Message } }
+function Get-AffectedSupervisorResidueIdentity {
+    $roots = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    [void]$roots.Add([IO.Path]::GetFullPath([IO.Path]::GetTempPath()))
+    $runnerTemp = [Environment]::GetEnvironmentVariable('RUNNER_TEMP','Process')
+    if (-not [string]::IsNullOrWhiteSpace($runnerTemp) -and [IO.Path]::IsPathRooted($runnerTemp) -and [IO.Directory]::Exists($runnerTemp)) { [void]$roots.Add([IO.Path]::GetFullPath($runnerTemp)) }
+    $found = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($root in $roots) {
+        foreach ($pattern in @('w017-affected-child-*','w7-*')) {
+            foreach ($path in @(Get-ChildItem -LiteralPath $root -Directory -Filter $pattern -ErrorAction SilentlyContinue)) { [void]$found.Add([IO.Path]::GetFullPath($path.FullName)) }
+        }
+    }
+    [string[]]$paths = @($found)
+    if ($paths.Count -gt 1) { [Array]::Sort($paths,[StringComparer]::Ordinal) }
+    return ($paths -join "`0")
+}
 function Invoke-TestGit([string]$Root, [string[]]$Arguments) {
     $result = & git -C $Root @Arguments 2>&1
     if ($LASTEXITCODE -ne 0) { throw "git test fixture failed: $($Arguments -join ' ')`n$($result -join "`n")" }
@@ -59,10 +78,35 @@ function Invoke-TestGitInput([string]$Root, [string[]]$Arguments, [string]$Input
     } finally { $process.Dispose() }
 }
 function Write-Utf8([string]$Path, [string]$Text) { [System.IO.File]::WriteAllText($Path, $Text, [System.Text.UTF8Encoding]::new($false)) }
+function Update-AffectedInventoryFileRecord([string]$InventoryRoot,[string]$FilePath) {
+    $root = [IO.Path]::GetFullPath($InventoryRoot)
+    $full = [IO.Path]::GetFullPath($FilePath)
+    $relative = [IO.Path]::GetRelativePath($root,$full).Replace('\','/')
+    $inventoryPath = Join-Path $root 'inventory.json'
+    $inventory = Get-Content -LiteralPath $inventoryPath -Raw | ConvertFrom-Json -Depth 64 -DateKind String
+    $matched = 0
+    foreach ($entry in @($inventory.entries)) {
+        foreach ($property in @('receipt','stdout','stderr')) {
+            if ([string]$entry.$property.path -cne $relative) { continue }
+            [byte[]]$bytes = [IO.File]::ReadAllBytes($full)
+            $entry.$property.bytes = [long]$bytes.Length
+            $entry.$property.sha256 = ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes))).ToLowerInvariant()
+            $matched++
+        }
+    }
+    if ($matched -ne 1) { throw "Affected inventory fixture did not bind exactly one file '$relative'." }
+    Write-Utf8 $inventoryPath ((ConvertTo-MorphospaceCanonicalJson -Value $inventory) + "`n")
+}
 function Assert-AffectedThrows([scriptblock]$Action,[string]$Pattern,[string]$Message) {
     $reason = $null
     try { & $Action | Out-Null } catch { $reason = [string]$_.Exception.Message }
     if ([string]::IsNullOrWhiteSpace($reason) -or $reason -notlike $Pattern) { throw "$Message :: observed='$reason'" }
+}
+function Assert-AffectedExecutorContainmentSource([string]$Source) {
+    $forbidden = @('TryReadControl','ControlPath','leaf.stdout.bin','leaf.stderr.bin','ReadAllBytes($stdoutPath)','disableMaxPrivilege','0x000f0fff','CreateRestrictedLeafToken','RUSTY_AFFECTED_VALIDATION_RESTRICTING_SIDS','ProcessStartInfo]::new($unshare.Source)','--map-root-user','ConvertSecurityDescriptorToStringSecurityDescriptor','"w017-affected-child-"','''leaf-temp''')
+    foreach ($fragment in $forbidden) { Assert-True ($Source.IndexOf($fragment,[StringComparison]::Ordinal) -lt 0) "Affected executor retains forbidden containment fragment '$fragment'." }
+    $required = @('AnonymousPipeServerStream','ApplySupervisorCompletion','W017SupervisorProtection','ProtectAncestors','ProtectThreads','SnapshotAncestorSecurity','RestoreProtectedFutureThreads','RetainFutureThread','retainedThreadIds','restoredThreadHandles','RunRestorationCollisionSelfTests','RunPublishedControlReadSelfTests','TryReadExactPublishedControl','IsPublishedControlReadPending','code == 32 || code == 33','FileShare.Read','SecurityDescriptorOwnerMatchesToken','GetSecurityDescriptorOwner','EqualSid','ResolveSupervisorBaseDirectory','GITHUB_ACTIONS','RUNNER_TEMP','FileAttributes.ReparsePoint','"w7-"','''l'';Initialize-LeafWritableRoot','StartsWith(''GIT_'',[StringComparison]::OrdinalIgnoreCase)','Remove-Item -LiteralPath ("Env:$name")','stable residue-free thread set','trusted ancestor fallback process/thread restoration readback differs','trusted ancestor process/thread owner/DACL restoration readback differs','token-default-DACL restoration readback differs','RCWDWO;;;OW','RUSTY_AFFECTED_VALIDATION_GUARD_SID','guard-disabled leaf token did not retain the authority group as deny-only','0x1000','0x2000','OwnerSecurityInformation|DaclSecurityInformation','CreateRestrictedToken','CreatePrivilegeStrippedToken','SetTokenDefaultDacl','OpenThread','Thread32First','RUSTY_AFFECTED_VALIDATION_FUTURE_THREAD_ID','RUSTY_AFFECTED_VALIDATION_PARENT_FUTURE_THREAD_ID','ReadPrivileges','RUSTY_AFFECTED_VALIDATION_REMOVED_PRIVILEGE_LUID','privilege-deleted leaf token retained a non-allowlisted privilege','AssertAncestorIsolation','ImpersonateLoggedOnUser','exact two-process completion authority chain','Initialize-LeafWritableRoot','SetKernelObjectSecurity','W017SupervisorInnerJob','CreatePipe','TerminateJobObject(state.job,1)','function Resolve-ExactApplication','[Array]::Sort($ordered,[StringComparer]::Ordinal)','ProcessStartInfo]::new($sudoPath)',"@('--non-interactive','--preserve-env','--'","'--pid','--fork','--kill-child=KILL','--mount-proc'","'--keep-groups'",'geteuid()','getegid()','Complete-Pump','process.Kill(true)','RunForSetupFailureTest')
+    foreach ($fragment in $required) { Assert-True ($Source.IndexOf($fragment,[StringComparison]::Ordinal) -ge 0) "Affected executor is missing required containment fragment '$fragment'." }
 }
 function Invoke-AffectedBatchSelfTest {
     $fixture = [IO.Path]::GetFullPath((Join-Path ([IO.Path]::GetTempPath()) ('morphospace-affected-batch-' + [guid]::NewGuid().ToString('N'))))
@@ -1115,7 +1159,11 @@ $runGraphPhase = $SelfTestPhase -ceq 'graph-import-closure'
 $runExecutorPassPhase = $SelfTestPhase -ceq 'executor-pass-schema'
 $runExecutorDamagePhase = $SelfTestPhase -ceq 'executor-damage'
 $runSelectionPhase = $SelfTestPhase -ceq 'selection-scenarios'
-$runTrustPhase = $SelfTestPhase -ceq 'trust-mapping-final'
+$runTrustSelfPhase = $SelfTestPhase -ceq 'trust-self-executor'
+$runTrustRoutingPhase = $SelfTestPhase -ceq 'trust-routing-contracts'
+$runTrustMappingsPhase = $SelfTestPhase -ceq 'trust-proportional-mappings'
+$runTrustDamagePhase = $SelfTestPhase -ceq 'trust-damage-final'
+$runTrustPhase = $runTrustSelfPhase -or $runTrustRoutingPhase -or $runTrustMappingsPhase -or $runTrustDamagePhase
 $phaseRoot = [Environment]::GetEnvironmentVariable('RUSTY_AFFECTED_VALIDATION_PHASE_ROOT','Process')
 
 if ($runGraphPhase) {
@@ -1143,16 +1191,18 @@ $selectorSelfTestClock = [Diagnostics.Stopwatch]::StartNew()
 $registryPath = Join-Path $repoRoot 'manifests/affected-validation-registry.json'
 $registry = Read-MorphospaceProtocolJson -Path $registryPath
 [void](Test-MorphospaceAffectedValidationRegistry -Registry $registry -RepositoryRoot $repoRoot -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-registry-v1.schema.json'))
+$executorContainmentSource = if ($runFullSelector -or $runExecutorPassPhase -or $runExecutorDamagePhase) { Get-Content -LiteralPath (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -Raw } else { $null }
+if ($null -ne $executorContainmentSource) { Assert-AffectedExecutorContainmentSource -Source $executorContainmentSource }
 $protocolCommonConsumerChecks = @()
-if ($runTrustPhase) {
-    if ([string]::IsNullOrWhiteSpace($phaseRoot)) { throw 'Trust/mapping phase requires the exact graph-phase evidence root.' }
+if ($runTrustMappingsPhase) {
+    if ([string]::IsNullOrWhiteSpace($phaseRoot)) { throw 'Trust proportional-mapping phase requires the exact graph-phase evidence root.' }
     $graphOutputPath = Join-Path ([IO.Path]::GetFullPath($phaseRoot)) 'graph-import-closure.output.json'
-    if (-not [IO.File]::Exists($graphOutputPath)) { throw 'Trust/mapping phase requires the graph/import-closure output.' }
+    if (-not [IO.File]::Exists($graphOutputPath)) { throw 'Trust proportional-mapping phase requires the graph/import-closure output.' }
     $graphOutput = Read-MorphospaceProtocolJson -Path $graphOutputPath
     Assert-AffectedScenarioProperties -Value $graphOutput -Expected @('schema','owner_entrypoints','tracked_graph_nodes','protocol_consumers','adjacency_sha256','consumer_sha256','check_ids') -Context 'Graph/import-closure output'
-    Assert-True ([string]$graphOutput.schema -ceq 'rusty.morphospace.diagnostic.affected_validation_graph_output.v1') 'Trust/mapping phase rejected the graph output schema.'
-    Assert-True ([int]$graphOutput.owner_entrypoints -eq 48 -and [int]$graphOutput.tracked_graph_nodes -eq 123 -and [int]$graphOutput.protocol_consumers -eq 30) 'Trust/mapping phase rejected the graph output identity.'
-    Assert-True ([string]$graphOutput.adjacency_sha256 -cmatch '^[0-9a-f]{64}$' -and [string]$graphOutput.consumer_sha256 -cmatch '^[0-9a-f]{64}$') 'Trust/mapping phase rejected graph output digests.'
+    Assert-True ([string]$graphOutput.schema -ceq 'rusty.morphospace.diagnostic.affected_validation_graph_output.v1') 'Trust proportional-mapping phase rejected the graph output schema.'
+    Assert-True ([int]$graphOutput.owner_entrypoints -eq 48 -and [int]$graphOutput.tracked_graph_nodes -eq 123 -and [int]$graphOutput.protocol_consumers -eq 30) 'Trust proportional-mapping phase rejected the graph output identity.'
+    Assert-True ([string]$graphOutput.adjacency_sha256 -cmatch '^[0-9a-f]{64}$' -and [string]$graphOutput.consumer_sha256 -cmatch '^[0-9a-f]{64}$') 'Trust proportional-mapping phase rejected graph output digests.'
     $protocolCommonConsumerChecks = @($graphOutput.check_ids)
 }
 
@@ -1287,6 +1337,12 @@ if ($runFullSelector -or $runExecutorPassPhase) {
     $phaseRunnerSource = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts/Invoke-AffectedValidationSelfTestPhase.ps1') -Raw
     $phaseReceiptSchema = Read-MorphospaceProtocolJson -Path (Join-Path $repoRoot 'schemas/affected-validation-self-test-phase-receipt-v1.schema.json')
     $phaseRunnerSchema = $phaseReceiptSchema.properties.binding.properties.runner
+    $expectedPhaseIds = @('executor-damage','executor-pass-schema','graph-import-closure','selection-scenarios','trust-damage-final','trust-proportional-mappings','trust-routing-contracts','trust-self-executor')
+    $topLevelPhaseIds = @($phaseReceiptSchema.properties.phase_id.enum)
+    $bindingPhaseIds = @($phaseReceiptSchema.properties.binding.properties.phase_id.enum)
+    [Array]::Sort($topLevelPhaseIds,[StringComparer]::Ordinal)
+    [Array]::Sort($bindingPhaseIds,[StringComparer]::Ordinal)
+    Assert-True (($topLevelPhaseIds -join ',') -ceq ($expectedPhaseIds -join ',') -and ($bindingPhaseIds -join ',') -ceq ($expectedPhaseIds -join ',')) 'Affected phase receipt schema does not exactly match the runner phase set.'
     $requiredRunnerFields = @('git_executable_sha256','git_version','os_description','powershell_executable_sha256','powershell_version','process_architecture')
     $observedRunnerFields = @($phaseRunnerSchema.required)
     [Array]::Sort($observedRunnerFields,[StringComparer]::Ordinal)
@@ -1317,7 +1373,14 @@ if ($runFullSelector -or $runExecutorPassPhase) {
         $beforeArtifact = $workflowSource.Substring(0, $artifactIndex)
         $afterArtifact = $workflowSource.Substring($artifactIndex)
         Assert-True ($beforeArtifact.LastIndexOf('$failure = $null', [StringComparison]::Ordinal) -ge 0 -and $afterArtifact.IndexOf('if ($null -ne $failure) { throw $failure }', [StringComparison]::Ordinal) -ge 0) "PR workflow can signal $platform execution failure before binding its evidence digest."
+        Assert-True ($workflowSource -match "affected-checks-$platform-" -and $workflowSource -match "affected-check-$platform-pr-") "PR workflow does not preserve and cache exact $platform check streams and receipts."
+        Assert-True ($workflowSource -match "PR_NUMBER: `\$\{\{ github\.event\.pull_request\.number \}\}" -and $workflowSource -match "steps\.execute\.outputs\.cache_ready == 'true'" -and $workflowSource -match "AffectedCacheFinalized") "PR workflow does not bind producer identity and gate cache publication on a parent-finalized inventory."
+        Assert-True ($workflowSource -match 'cache_inventory_sha256' -and $workflowSource -match 'actualInventorySha256 -cne \$inventorySha256') "PR workflow does not require the executor-returned exact inventory SHA-256 before publishing the $platform cache."
     }
+    $executorSource = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -Raw
+    foreach ($environmentName in @('GITHUB_OUTPUT','GITHUB_ENV','GITHUB_PATH','GITHUB_STEP_SUMMARY')) { Assert-True ($executorSource -match [regex]::Escape("'$environmentName'")) "Affected child execution does not remove inherited '$environmentName'." }
+    Assert-True ($executorSource -match 'ChildTreeCleanupAttempted' -and $executorSource -match 'ChildTreeCleanupSucceeded' -and $executorSource -match 'execution\.integrity_failed' -and $executorSource -match 'terminalIntegrityFailure') 'Affected executor does not fail closed from universal child-tree cleanup/readback into cache publication.'
+    Assert-AffectedExecutorContainmentSource -Source $executorSource
 }
 
 $selectionScenarioContext = $null
@@ -1329,23 +1392,72 @@ try {
     [void](Invoke-TestGit $fixture @('config', 'user.email', 'affected-validation@example.invalid'))
     foreach ($directory in @('docs', 'scripts', 'scripts/lib', 'schemas', 'manifests', 'skills/example')) { [void][System.IO.Directory]::CreateDirectory((Join-Path $fixture $directory)) }
     foreach ($command in @(ConvertTo-AffectedOrdinalUniqueStrings @($registry.checks.command_path))) { $target = Join-Path $fixture ([string]$command); [void][System.IO.Directory]::CreateDirectory([System.IO.Path]::GetDirectoryName($target)); Write-Utf8 $target "# fixture`n" }
+    $fixturePhaseRunner = @'
+param([string]$Phase,[int]$BudgetSeconds,[switch]$Verify)
+if ($Verify) { return }
+if ([string]::IsNullOrWhiteSpace($Phase)) { throw 'Fixture phase identity is absent.' }
+$root = [IO.Path]::GetFullPath([string]$env:RUSTY_AFFECTED_VALIDATION_PHASE_ROOT)
+if (-not [IO.Directory]::Exists($root)) { [void][IO.Directory]::CreateDirectory($root) }
+function Write-FixtureBytes([string]$Path,[byte[]]$Bytes) {
+    $stream = [IO.File]::Open($Path,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+    try { $stream.Write($Bytes,0,$Bytes.Length); $stream.Flush($true) } finally { $stream.Dispose() }
+}
+function Write-FixtureJson([string]$Path,[object]$Value) {
+    Write-FixtureBytes -Path $Path -Bytes ([Text.UTF8Encoding]::new($false).GetBytes(($Value | ConvertTo-Json -Depth 16 -Compress) + "`n"))
+}
+$now = [DateTimeOffset]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ',[Globalization.CultureInfo]::InvariantCulture)
+Write-FixtureJson -Path (Join-Path $root "$Phase.start.json") -Value ([pscustomobject][ordered]@{phase_id=$Phase;started_at=$now;budget_seconds=$BudgetSeconds})
+Write-FixtureBytes -Path (Join-Path $root "$Phase.stdout.bin") -Bytes ([byte[]]@())
+Write-FixtureBytes -Path (Join-Path $root "$Phase.stderr.bin") -Bytes ([byte[]]@())
+Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value ([pscustomobject][ordered]@{phase_id=$Phase;result='pass';outputs=@()})
+'@
+    Write-Utf8 (Join-Path $fixture 'scripts/Invoke-AffectedValidationSelfTestPhase.ps1') $fixturePhaseRunner
+    foreach ($runnerSourcePath in @(
+        'schemas/affected-validation-check-evidence-v1.schema.json',
+        'schemas/affected-validation-check-inventory-v1.schema.json',
+        'schemas/affected-validation-registry-v1.schema.json',
+        'scripts/Invoke-AffectedValidation.ps1',
+        'scripts/lib/MorphospaceAffectedValidation.psm1',
+        'scripts/lib/MorphospaceAffectedValidationCheckEvidence.psm1',
+        'scripts/lib/MorphospaceProtocolCommon.psm1'
+    )) {
+        $target = Join-Path $fixture $runnerSourcePath
+        [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target))
+        Copy-Item -LiteralPath (Join-Path $repoRoot $runnerSourcePath) -Destination $target
+    }
+    Write-Utf8 (Join-Path $fixture 'scripts/lib/DocumentationLinksDependency.psm1') "function Get-DocumentationLinksDependency { 'bound' }`nExport-ModuleMember -Function Get-DocumentationLinksDependency`n"
+    Write-Utf8 (Join-Path $fixture 'schemas/DocumentationLinksInput.schema.json') "{}`n"
+    Write-Utf8 (Join-Path $fixture 'schemas/FallbackDynamicInput.schema.json') "{}`n"
+    Write-Utf8 (Join-Path $fixture 'scripts/FallbackDynamicTarget.ps1') "[void](Get-Content -LiteralPath (Join-Path `$PSScriptRoot '../schemas/FallbackDynamicInput.schema.json') -Raw)`n"
+    Write-Utf8 (Join-Path $fixture 'scripts/Test-DocumentationLinks.ps1') "if (@(Get-ChildItem Env: | Where-Object { ([string]`$_.Name).StartsWith('GIT_',[StringComparison]::OrdinalIgnoreCase) }).Count -ne 0) { throw 'Affected child retained an inherited Git environment override.' }`n`$ModulePath = Join-Path `$PSScriptRoot 'lib/DocumentationLinksDependency.psm1'`nImport-Module `$ModulePath -Force`n`$SchemaRoot = Join-Path `$PSScriptRoot '../schemas'`n[void](Join-Path `$SchemaRoot 'DocumentationLinksInput.schema.json')`n[void](Get-DocumentationLinksDependency)`n"
+    Write-Utf8 (Join-Path $fixture 'scripts/Test-PublicBoundary.ps1') "if (-not [string]::IsNullOrWhiteSpace(`$env:RUSTY_TEST_MUTATE_PRIOR)) { [IO.File]::WriteAllText(`$env:RUSTY_TEST_MUTATE_PRIOR,'mutated after parent snapshot',[Text.UTF8Encoding]::new(`$false)) }`n"
     $fixtureRegistry = Read-MorphospaceProtocolJson -Path $registryPath
-    # Keep the timeout damage cell bounded while allowing one child PowerShell
-    # startup; the deliberate three-second command below must still time out.
-    $fixtureRegistry.checks | Where-Object { $_.check_id -ceq 'public-boundary' } | ForEach-Object { $_.budget_seconds = 2 }
+    # Keep the timeout damage cell bounded while allowing one contained child
+    # PowerShell startup on a loaded host; the deliberate twelve-second command
+    # below must still time out under the unchanged ten-second fixture budget.
+    $fixtureRegistry.checks | Where-Object { $_.check_id -ceq 'public-boundary' } | ForEach-Object { $_.budget_seconds = 10 }
     Write-Utf8 (Join-Path $fixture 'manifests/affected-validation-registry.json') ((ConvertTo-MorphospaceCanonicalJson -Value $fixtureRegistry) + "`n")
-    Copy-Item -LiteralPath (Join-Path $repoRoot 'schemas/affected-validation-registry-v1.schema.json') -Destination (Join-Path $fixture 'schemas/affected-validation-registry-v1.schema.json')
     Copy-Item -LiteralPath (Join-Path $repoRoot 'schemas/history-archive-root-v1.schema.json') -Destination (Join-Path $fixture 'schemas/history-archive-root-v1.schema.json')
     Write-Utf8 (Join-Path $fixture 'docs/base.md') "base`n"
     [void](Invoke-TestGit $fixture @('add', '.'))
     [void](Invoke-TestGit $fixture @('commit', '-m', 'base'))
     $base = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
+    $runnerDriftHead = $base
+    $runnerDriftTree = Invoke-TestGit $fixture @('rev-parse', 'HEAD^{tree}')
 
     $docsHead = $base
     $planPath = Join-Path $fixture 'affected-plan.json'
     if ($runFullSelector -or $runExecutorPassPhase -or $runExecutorDamagePhase) {
+        $runnerDriftPath = Join-Path $fixture 'scripts/lib/MorphospaceAffectedValidationCheckEvidence.psm1'
+        [byte[]]$runnerExactBytes = [IO.File]::ReadAllBytes($runnerDriftPath)
+        [IO.File]::WriteAllBytes($runnerDriftPath,([byte[]]($runnerExactBytes + [Text.UTF8Encoding]::new($false).GetBytes("# source-commit drift fixture`n"))))
+        [void](Invoke-TestGit $fixture @('add', 'scripts/lib/MorphospaceAffectedValidationCheckEvidence.psm1'))
+        [void](Invoke-TestGit $fixture @('commit', '-m', 'runner source drift ancestor'))
+        $runnerDriftHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
+        $runnerDriftTree = Invoke-TestGit $fixture @('rev-parse', 'HEAD^{tree}')
+        [IO.File]::WriteAllBytes($runnerDriftPath,$runnerExactBytes)
         Write-Utf8 (Join-Path $fixture 'docs/base.md') "changed`n"
-        [void](Invoke-TestGit $fixture @('add', 'docs/base.md'))
+        [void](Invoke-TestGit $fixture @('add', 'docs/base.md', 'scripts/lib/MorphospaceAffectedValidationCheckEvidence.psm1'))
         [void](Invoke-TestGit $fixture @('commit', '-m', 'docs'))
         $docsHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
         $docsPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $base -HeadRevision $docsHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
@@ -1356,24 +1468,190 @@ try {
             Assert-True (@($docsPlan.selected_checks.check_id) -cnotcontains 'work-unit-automation') 'Unrelated automation check was selected for documentation.'
             Assert-True ([bool]$docsPlan.claims.selection_only -and -not [bool]$docsPlan.claims.checks_executed) 'Selection plan claimed check execution or lifecycle authority.'
             Assert-True (@($docsPlan.selected_checks | Where-Object { @($_.platforms) -ccontains 'windows' }).Count -eq 0) 'Documentation change unnecessarily selected a Windows suite.'
+            $explicitDeepPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $base -HeadRevision $docsHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier deep
+            Assert-True (@($explicitDeepPlan.selected_checks.check_id) -ccontains 'work-environment-deep') 'Explicit Deep request omitted the cumulative aggregate.'
             $evidencePath = Join-Path $fixture 'affected-evidence.json'
-            $evidence = & (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $base -HeadCommit $docsHead -PlanPath $planPath -Platform linux -OutPath $evidencePath
+            $priorCollisionSelfTest = [Environment]::GetEnvironmentVariable('RUSTY_AFFECTED_VALIDATION_RESTORATION_COLLISION_SELFTEST','Process')
+            $priorGitPager = [Environment]::GetEnvironmentVariable('GIT_PAGER','Process')
+            $priorGitTestOverride = [Environment]::GetEnvironmentVariable('GIT_AFFECTED_VALIDATION_TEST','Process')
+            try {
+                if ([Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Windows)) { $env:RUSTY_AFFECTED_VALIDATION_RESTORATION_COLLISION_SELFTEST = '1' }
+                $env:GIT_PAGER = 'affected-parent-pager-must-not-reach-child'
+                $env:GIT_AFFECTED_VALIDATION_TEST = 'affected-parent-git-override-must-not-reach-child'
+                $evidence = & (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $base -HeadCommit $docsHead -PlanPath $planPath -Platform linux -OutPath $evidencePath
+            } finally {
+                [Environment]::SetEnvironmentVariable('RUSTY_AFFECTED_VALIDATION_RESTORATION_COLLISION_SELFTEST',$priorCollisionSelfTest,'Process')
+                if ($null -eq $priorGitPager) { Remove-Item -LiteralPath 'Env:GIT_PAGER' -ErrorAction SilentlyContinue } else { [Environment]::SetEnvironmentVariable('GIT_PAGER',$priorGitPager,'Process') }
+                if ($null -eq $priorGitTestOverride) { Remove-Item -LiteralPath 'Env:GIT_AFFECTED_VALIDATION_TEST' -ErrorAction SilentlyContinue } else { [Environment]::SetEnvironmentVariable('GIT_AFFECTED_VALIDATION_TEST',$priorGitTestOverride,'Process') }
+            }
+            Assert-True ([Environment]::GetEnvironmentVariable('GIT_PAGER','Process') -ceq $priorGitPager -and [Environment]::GetEnvironmentVariable('GIT_AFFECTED_VALIDATION_TEST','Process') -ceq $priorGitTestOverride) 'Affected executor did not restore inherited Git environment overrides exactly.'
+            if ([Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Windows)) { [W017BoundedChildCapture]::RunRestorationCollisionSelfTests() }
             Assert-True ([IO.File]::Exists($evidencePath)) 'Affected executor did not publish evidence.'
             Assert-True ($evidence.result -ceq 'pass' -and @($evidence.check_results).Count -ge 2) 'Affected executor did not bind selected checks into pass evidence.'
             Assert-True (@($evidence.check_results | Where-Object { $_.stdout_sha256 -notmatch '^[0-9a-f]{64}$' -or $_.stderr_sha256 -notmatch '^[0-9a-f]{64}$' -or $_.timed_out -or $_.output_truncated -or $_.post_kill_drain_timed_out }).Count -eq 0) 'Affected executor omitted bounded child-output evidence.'
-            $impossiblePass = $evidence | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64
+            $firstCheckRoot = Join-Path $fixture "affected-check-evidence-$($docsPlan.plan_sha256)-linux"
+            $firstInventoryPath = Join-Path $firstCheckRoot 'inventory.json'
+            Assert-True ([IO.File]::Exists($firstInventoryPath)) 'Affected executor did not finalize a parent-owned check inventory.'
+            Assert-True ([string]$evidence.cache_inventory_sha256 -match '^[0-9a-f]{64}$' -and [string]$evidence.cache_inventory_sha256 -ceq (Get-FileHash -LiteralPath $firstInventoryPath -Algorithm SHA256).Hash.ToLowerInvariant()) 'Passing executor did not return the exact materialized inventory SHA-256.'
+            $firstInventory = Get-Content -LiteralPath $firstInventoryPath -Raw | ConvertFrom-Json -Depth 64 -DateKind String
+            $firstReceipts = @(Get-ChildItem -LiteralPath $firstCheckRoot -Filter receipt.json -File -Recurse)
+            Assert-True ($firstReceipts.Count -eq @($evidence.check_results).Count) 'Affected executor did not preserve one typed leaf receipt per executed check.'
+            Assert-True (@($firstInventory.entries).Count -eq $firstReceipts.Count) 'Affected check inventory does not bind every leaf receipt.'
+            $expectedProducerContext = if ([string][Environment]::GetEnvironmentVariable('GITHUB_ACTIONS','Process') -ceq 'true') { 'github-actions' } else { 'local' }
+            Assert-True ([string]$firstInventory.producer.context -ceq $expectedProducerContext) "Affected check inventory producer context does not match the ambient '$expectedProducerContext' execution context."
+            foreach ($receiptFile in $firstReceipts) {
+                $receipt = Get-Content -LiteralPath $receiptFile.FullName -Raw | ConvertFrom-Json -Depth 64 -DateKind String
+                Assert-True ($receipt.mode -ceq 'executed' -and $receipt.result -ceq 'pass' -and $receipt.binding_sha256 -match '^[0-9a-f]{64}$') 'Initial affected leaf receipt is not exact executed passing evidence.'
+                foreach ($stream in @('stdout','stderr')) { $streamPath = Join-Path $receiptFile.DirectoryName "$stream.bin"; Assert-True ([IO.File]::Exists($streamPath) -and (Get-FileHash -LiteralPath $streamPath -Algorithm SHA256).Hash.ToLowerInvariant() -ceq [string]$receipt.child.$stream.sha256) "Affected leaf $stream bytes are not bound by their receipt." }
+            }
+            $documentationReceipt = @($firstReceipts | Where-Object { (Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json -Depth 64 -DateKind String).binding.check_id -ceq 'documentation-links' })
+            Assert-True ($documentationReceipt.Count -eq 1) 'Documentation leaf receipt identity is not unique.'
+            $documentationReceiptValue = Get-Content -LiteralPath $documentationReceipt[0].FullName -Raw | ConvertFrom-Json -Depth 64 -DateKind String
+            Assert-True (@($documentationReceiptValue.binding.dependency_manifest.path) -ccontains 'scripts/lib/DocumentationLinksDependency.psm1') 'Affected leaf dependency manifest omitted a tracked transitive imported module.'
+            Assert-True (@($documentationReceiptValue.binding.dependency_manifest.path) -ccontains 'schemas/DocumentationLinksInput.schema.json') 'Affected leaf dependency manifest omitted a tracked schema/data input.'
+            Assert-True (@($documentationReceiptValue.binding.dependency_manifest.path) -ccontains 'scripts/Test-PublicBoundary.ps1') 'Dynamic Import-Module did not conservatively bind unresolved tracked PowerShell sources.'
+            Assert-True (@($documentationReceiptValue.binding.dependency_manifest.path) -ccontains 'scripts/FallbackDynamicTarget.ps1' -and @($documentationReceiptValue.binding.dependency_manifest.path) -ccontains 'schemas/FallbackDynamicInput.schema.json') 'Dynamic fallback did not traverse its added target into the tracked non-PowerShell input.'
+            $schemaDamagedBinding = $documentationReceiptValue.binding | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64 -DateKind String
+            $schemaRecord = @($schemaDamagedBinding.dependency_manifest | Where-Object path -ceq 'schemas/FallbackDynamicInput.schema.json')
+            Assert-True ($schemaRecord.Count -eq 1) 'Schema-drift fixture did not resolve one dependency record.'
+            $schemaRecord[0].blob = ('f' * 40)
+            $schemaDamagedSha = Get-MorphospaceCanonicalJsonSha256 -Value $schemaDamagedBinding
+            $schemaReuse = Find-MorphospaceAffectedReusableCheckReceipt -PriorEvidenceDirectory $firstCheckRoot -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json') -ExpectedBinding $schemaDamagedBinding -ExpectedBindingSha256 $schemaDamagedSha -RepositoryRoot $fixture -CurrentHeadCommit $docsHead -CandidateReceiptPaths @($documentationReceipt[0].FullName)
+            Assert-True ($null -eq $schemaReuse) 'Tracked schema/input drift reused evidence from a different dependency binding.'
+            $singleReadInventory = Read-MorphospaceAffectedCheckInventory -EvidenceDirectory $firstCheckRoot -ExpectedProducerContext $firstInventory.producer -InventorySchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-inventory-v1.schema.json')
+            $singleReadDocumentationSnapshot = @($singleReadInventory.candidate_snapshots | Where-Object check_id -ceq 'documentation-links')
+            Assert-True ($singleReadDocumentationSnapshot.Count -eq 1) 'Parent inventory did not snapshot exactly one documentation receipt.'
+            $singleReadValidated = Test-MorphospaceAffectedCheckReceipt -ReceiptPath $documentationReceipt[0].FullName -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json') -ExpectedBinding $documentationReceiptValue.binding -ExpectedBindingSha256 ([string]$documentationReceiptValue.binding_sha256) -RepositoryRoot $fixture -CurrentHeadCommit $docsHead -PriorEvidenceRoot $firstCheckRoot -CandidateSnapshot $singleReadDocumentationSnapshot[0]
+            Assert-True ($null -ne $singleReadValidated -and [string]$singleReadValidated.receipt.binding.check_id -ceq 'documentation-links') 'Inventory-snapshotted receipt did not validate from its already-read bytes.'
+
+            # Current-run evidence stays in immutable parent snapshots until
+            # every child exits.  Mutating the source object after retention
+            # must not turn a captured code failure into a passing cache row.
+            $immutableFailureReceipt = $documentationReceiptValue | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64 -DateKind String
+            $immutableFailureReceipt.mode = 'executed'; $immutableFailureReceipt.result = 'code-fail'; $immutableFailureReceipt.child.exit_code = 17; $immutableFailureReceipt.artifacts = @(); $immutableFailureReceipt.reused_from = $null
+            foreach ($stream in @('stdout','stderr')) { $immutableFailureReceipt.child.$stream.bytes = 0; $immutableFailureReceipt.child.$stream.sha256 = Get-MorphospaceAffectedCheckBytesSha256 ([byte[]]::new(0)) }
+            $immutableSnapshot = New-MorphospaceAffectedCheckSnapshot -Receipt $immutableFailureReceipt -Stdout ([byte[]]::new(0)) -Stderr ([byte[]]::new(0)) -Artifacts @() -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json')
+            $immutableFailureReceipt.result = 'pass'; $immutableFailureReceipt.child.exit_code = 0
+            $immutableRoot = Join-Path $fixture 'affected-check-evidence-parent-snapshot-immutable'
+            [void](Write-MorphospaceAffectedCheckCache -EvidenceDirectory $immutableRoot -Snapshots @($immutableSnapshot) -Producer $firstInventory.producer -Source $firstInventory.source -PlanSha256 ([string]$firstInventory.plan_sha256) -Platform linux -ReceiptSchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json') -InventorySchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-inventory-v1.schema.json'))
+            $immutableMaterialized = Get-Content -LiteralPath (Join-Path $immutableRoot 'documentation-links/receipt.json') -Raw | ConvertFrom-Json -Depth 64 -DateKind String
+            Assert-True ($immutableMaterialized.result -ceq 'code-fail' -and $immutableMaterialized.child.exit_code -eq 17) 'A later mutation changed a parent-retained current-run receipt before cache materialization.'
+
+            # A failed first attempt may retain exact passing selector sibling
+            # artifacts even when its verifier never runs.  A fresh attempt
+            # restores those bound bytes before verifier dispatch.
+            $phaseBinding = [pscustomobject][ordered]@{head_commit=$docsHead;head_tree=(Invoke-TestGit $fixture @('rev-parse','HEAD^{tree}'))}
+            $phaseArtifacts = [Collections.Generic.List[object]]::new()
+            foreach ($phase in @('trust-a','trust-b','trust-c','trust-d')) {
+                $startBytes = [Text.UTF8Encoding]::new($false).GetBytes((ConvertTo-MorphospaceCanonicalJson -Value ([pscustomobject][ordered]@{binding=$phaseBinding;phase_id=$phase})) + "`n")
+                $terminalBytes = [Text.UTF8Encoding]::new($false).GetBytes((ConvertTo-MorphospaceCanonicalJson -Value ([pscustomobject][ordered]@{binding=$phaseBinding;phase_id=$phase;result='pass';outputs=@()})) + "`n")
+                $phaseArtifacts.Add([pscustomobject][ordered]@{path="$phase.start.json";bytes=$startBytes})
+                $phaseArtifacts.Add([pscustomobject][ordered]@{path="$phase.stdout.bin";bytes=[Text.UTF8Encoding]::new($false).GetBytes("$phase stdout")})
+                $phaseArtifacts.Add([pscustomobject][ordered]@{path="$phase.stderr.bin";bytes=[byte[]]::new(0)})
+                $phaseArtifacts.Add([pscustomobject][ordered]@{path="$phase.terminal.json";bytes=$terminalBytes})
+            }
+            $artifactReceipt = $documentationReceiptValue | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64 -DateKind String
+            $artifactReceipt.artifacts = @(Get-MorphospaceAffectedCheckArtifactReferences -Artifacts @($phaseArtifacts.ToArray()))
+            $artifactSnapshot = New-MorphospaceAffectedCheckSnapshot -Receipt $artifactReceipt -Stdout ([IO.File]::ReadAllBytes((Join-Path $documentationReceipt[0].DirectoryName 'stdout.bin'))) -Stderr ([IO.File]::ReadAllBytes((Join-Path $documentationReceipt[0].DirectoryName 'stderr.bin'))) -Artifacts @($phaseArtifacts.ToArray()) -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json')
+            $artifactCacheRoot = Join-Path $fixture 'affected-check-evidence-phase-artifacts-attempt1'
+            [void](Write-MorphospaceAffectedCheckCache -EvidenceDirectory $artifactCacheRoot -Snapshots @($artifactSnapshot) -Producer $firstInventory.producer -Source $firstInventory.source -PlanSha256 ([string]$firstInventory.plan_sha256) -Platform linux -ReceiptSchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json') -InventorySchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-inventory-v1.schema.json'))
+            $artifactInventory = Read-MorphospaceAffectedCheckInventory -EvidenceDirectory $artifactCacheRoot -ExpectedProducerContext $firstInventory.producer -InventorySchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-inventory-v1.schema.json')
+            $artifactReusable = Find-MorphospaceAffectedReusableCheckReceipt -PriorEvidenceDirectory $artifactCacheRoot -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json') -ExpectedBinding $documentationReceiptValue.binding -ExpectedBindingSha256 ([string]$documentationReceiptValue.binding_sha256) -RepositoryRoot $fixture -CurrentHeadCommit $docsHead -CandidateEvidenceSnapshots @($artifactInventory.candidate_snapshots)
+            Assert-True ($null -ne $artifactReusable -and @($artifactReusable.artifacts).Count -eq 16) 'First-attempt selector sibling artifacts were not reusable from immutable inventory snapshots.'
+            $attempt2PhaseRoot = Join-Path $fixture 'affected-selector-phases-attempt2'
+            Restore-MorphospaceAffectedCheckArtifacts -PhaseEvidenceRoot $attempt2PhaseRoot -Artifacts @($artifactReusable.artifacts)
+            foreach ($phase in @('trust-a','trust-b','trust-c','trust-d')) {
+                $terminal = Get-Content -LiteralPath (Join-Path $attempt2PhaseRoot "$phase.terminal.json") -Raw | ConvertFrom-Json -Depth 64 -DateKind String
+                Assert-True ($terminal.phase_id -ceq $phase -and $terminal.result -ceq 'pass' -and $terminal.binding.head_commit -ceq $docsHead) "Attempt-two verifier could not consume rehydrated '$phase' evidence."
+            }
+            $capturedTrustA = @(Get-MorphospaceAffectedCheckPhaseArtifacts -Check ([pscustomobject][ordered]@{command_path='scripts/Invoke-AffectedValidationSelfTestPhase.ps1';arguments=@('-Phase','trust-a','-BudgetSeconds','75')}) -PhaseEvidenceRoot $attempt2PhaseRoot)
+            Assert-True ($capturedTrustA.Count -eq 4 -and @($capturedTrustA.path) -ccontains 'trust-a.terminal.json') 'Outer executor did not capture the exact inner selector phase artifact set.'
+            $collisionPath = Join-Path $attempt2PhaseRoot 'trust-d.stdout.bin'
+            [byte[]]$collisionBytes = [Text.UTF8Encoding]::new($false).GetBytes('collision-preserved')
+            [IO.File]::WriteAllBytes($collisionPath,$collisionBytes)
+            Assert-AffectedThrows { Restore-MorphospaceAffectedCheckArtifacts -PhaseEvidenceRoot $attempt2PhaseRoot -Artifacts @($artifactReusable.artifacts) } '*collision differs*' 'Phase-artifact restoration overwrote a differing existing artifact.'
+            Assert-True ((Get-MorphospaceAffectedCheckBytesSha256 ([IO.File]::ReadAllBytes($collisionPath))) -ceq (Get-MorphospaceAffectedCheckBytesSha256 $collisionBytes)) 'Phase-artifact collision changed existing bytes.'
+            $reuseEvidencePath = Join-Path $fixture 'affected-evidence-reused.json'
+            $reuseCheckRoot = Join-Path $fixture 'affected-check-evidence-reused'
+            $reusedEvidence = & (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $base -HeadCommit $docsHead -PlanPath $planPath -Platform linux -OutPath $reuseEvidencePath -CheckEvidenceDirectory $reuseCheckRoot -PriorEvidenceDirectory $firstCheckRoot
+            Assert-True ($reusedEvidence.result -ceq 'pass') 'Affected executor did not accept exact dependency-bound reusable leaves.'
+            $reusedReceipts = @(Get-ChildItem -LiteralPath $reuseCheckRoot -Filter receipt.json -File -Recurse | ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json -Depth 64 -DateKind String })
+            Assert-True ($reusedReceipts.Count -eq @($reusedEvidence.check_results).Count -and @($reusedReceipts | Where-Object mode -cne 'reused').Count -eq 0) 'Exact unchanged leaf evidence was replayed instead of reused.'
+            Assert-True ([IO.File]::Exists((Join-Path $reuseCheckRoot 'inventory.json'))) 'Fully reused execution did not finalize a new parent-owned inventory.'
+
+            # Snapshot every prior receipt before any child can run.  The first
+            # leaf executes because its prior stream is invalid; that child
+            # then mutates the future documentation receipt on disk.  The
+            # documentation leaf must still consume the immutable in-memory
+            # bytes captured by the parent before the first child started.
+            $snapshotPriorRoot = Join-Path $fixture 'affected-check-evidence-snapshot-prior'
+            Copy-Item -LiteralPath $firstCheckRoot -Destination $snapshotPriorRoot -Recurse
+            $snapshotReceiptFiles = @(Get-ChildItem -LiteralPath $snapshotPriorRoot -Filter receipt.json -File -Recurse)
+            $snapshotPublicReceipt = @($snapshotReceiptFiles | Where-Object { (Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json -Depth 64 -DateKind String).binding.check_id -ceq 'public-boundary' })
+            $snapshotDocumentationReceipt = @($snapshotReceiptFiles | Where-Object { (Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json -Depth 64 -DateKind String).binding.check_id -ceq 'documentation-links' })
+            Assert-True ($snapshotPublicReceipt.Count -eq 1 -and $snapshotDocumentationReceipt.Count -eq 1) 'Prior-snapshot mutation fixture did not resolve its two exact receipts.'
+            $snapshotPublicStream = Join-Path $snapshotPublicReceipt[0].DirectoryName 'stdout.bin'
+            [IO.File]::WriteAllBytes($snapshotPublicStream,[Text.UTF8Encoding]::new($false).GetBytes('force public-boundary execution'))
+            Update-AffectedInventoryFileRecord -InventoryRoot $snapshotPriorRoot -FilePath $snapshotPublicStream
+            $savedMutatePrior = [Environment]::GetEnvironmentVariable('RUSTY_TEST_MUTATE_PRIOR','Process')
+            try {
+                [Environment]::SetEnvironmentVariable('RUSTY_TEST_MUTATE_PRIOR',$snapshotDocumentationReceipt[0].FullName,'Process')
+                $snapshotOutputRoot = Join-Path $fixture 'affected-check-evidence-snapshot-output'
+                $snapshotEvidence = & (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $base -HeadCommit $docsHead -PlanPath $planPath -Platform linux -OutPath (Join-Path $fixture 'affected-evidence-snapshot.json') -CheckEvidenceDirectory $snapshotOutputRoot -PriorEvidenceDirectory $snapshotPriorRoot
+            } finally { [Environment]::SetEnvironmentVariable('RUSTY_TEST_MUTATE_PRIOR',$savedMutatePrior,'Process') }
+            $snapshotOutputReceipts = @(Get-ChildItem -LiteralPath $snapshotOutputRoot -Filter receipt.json -File -Recurse | ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json -Depth 64 -DateKind String })
+            Assert-True ($snapshotEvidence.result -ceq 'pass' -and @($snapshotOutputReceipts | Where-Object { $_.binding.check_id -ceq 'public-boundary' -and $_.mode -ceq 'executed' }).Count -eq 1 -and @($snapshotOutputReceipts | Where-Object { $_.binding.check_id -ceq 'documentation-links' -and $_.mode -ceq 'reused' }).Count -eq 1) 'A child mutation changed a future reuse decision after the parent prior snapshot.'
+            Assert-True ((Get-Content -LiteralPath $snapshotDocumentationReceipt[0].FullName -Raw) -ceq 'mutated after parent snapshot') 'Prior-snapshot fixture did not actually mutate the future on-disk receipt.'
+
+            Assert-AffectedThrows {
+                [void](Find-MorphospaceAffectedReusableCheckReceipt -PriorEvidenceDirectory $firstCheckRoot -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json') -ExpectedBinding $documentationReceiptValue.binding -ExpectedBindingSha256 ([string]$documentationReceiptValue.binding_sha256) -RepositoryRoot $fixture -CurrentHeadCommit $docsHead -CandidateReceiptPaths @($documentationReceipt[0].FullName,$documentationReceipt[0].FullName))
+            } '*duplicate exact-binding*' 'Affected executor selected one of multiple exact-binding reusable receipts.'
+            $sourceDamagedPriorRoot = Join-Path $fixture 'affected-check-evidence-source-damaged-prior'
+            Copy-Item -LiteralPath $firstCheckRoot -Destination $sourceDamagedPriorRoot -Recurse
+            $sourceDamagedReceiptFiles = @(Get-ChildItem -LiteralPath $sourceDamagedPriorRoot -Filter receipt.json -File -Recurse | Where-Object { (Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json -Depth 64 -DateKind String).binding.check_id -ceq 'documentation-links' })
+            Assert-True ($sourceDamagedReceiptFiles.Count -eq 1) 'Source-commit damage fixture did not select one documentation receipt.'
+            $sourceDamagedReceiptPath = $sourceDamagedReceiptFiles[0].FullName
+            $sourceDamagedReceipt = Get-Content -LiteralPath $sourceDamagedReceiptPath -Raw | ConvertFrom-Json -Depth 64 -DateKind String
+            $sourceDamagedReceipt.source.head.commit = $runnerDriftHead
+            $sourceDamagedReceipt.source.head.tree = $runnerDriftTree
+            Write-Utf8 $sourceDamagedReceiptPath ((ConvertTo-MorphospaceCanonicalJson -Value $sourceDamagedReceipt) + "`n")
+            Update-AffectedInventoryFileRecord -InventoryRoot $sourceDamagedPriorRoot -FilePath $sourceDamagedReceiptPath
+            $sourceFallbackEvidence = & (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $base -HeadCommit $docsHead -PlanPath $planPath -Platform linux -OutPath (Join-Path $fixture 'affected-evidence-source-damaged.json') -CheckEvidenceDirectory (Join-Path $fixture 'affected-check-evidence-source-damaged-output') -PriorEvidenceDirectory $sourceDamagedPriorRoot
+            $sourceFallbackReceipts = @(Get-ChildItem -LiteralPath (Join-Path $fixture 'affected-check-evidence-source-damaged-output') -Filter receipt.json -File -Recurse | ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json -Depth 64 -DateKind String })
+            Assert-True ($sourceFallbackEvidence.result -ceq 'pass' -and @($sourceFallbackReceipts | Where-Object mode -ceq 'executed').Count -eq 1 -and @($sourceFallbackReceipts | Where-Object mode -ceq 'reused').Count -eq ($sourceFallbackReceipts.Count - 1)) 'Receipt source-commit blob damage did not rerun only the affected leaf.'
+            $reparsePriorRoot = Join-Path $fixture 'affected-check-evidence-reparse-prior'
+            try {
+                if ($IsWindows) { [void](New-Item -ItemType Junction -Path $reparsePriorRoot -Target $firstCheckRoot) }
+                else { [void](New-Item -ItemType SymbolicLink -Path $reparsePriorRoot -Target $firstCheckRoot) }
+                Assert-AffectedThrows {
+                    [void](Read-MorphospaceAffectedCheckInventory -EvidenceDirectory $reparsePriorRoot -ExpectedProducerContext $firstInventory.producer -InventorySchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-inventory-v1.schema.json'))
+                } '*reparse point*' 'Affected executor accepted reusable evidence through a reparse-point root.'
+            } finally { if ([IO.Directory]::Exists($reparsePriorRoot)) { Remove-Item -LiteralPath $reparsePriorRoot -Force } }
+            $damagedPriorRoot = Join-Path $fixture 'affected-check-evidence-damaged-prior'
+            Copy-Item -LiteralPath $firstCheckRoot -Destination $damagedPriorRoot -Recurse
+            $damagedReceiptPath = @(Get-ChildItem -LiteralPath $damagedPriorRoot -Filter receipt.json -File -Recurse | Sort-Object FullName | Select-Object -First 1).FullName
+            $damagedStreamPath = Join-Path ([IO.Path]::GetDirectoryName($damagedReceiptPath)) 'stdout.bin'
+            [IO.File]::WriteAllBytes($damagedStreamPath,[Text.UTF8Encoding]::new($false).GetBytes('damaged prior stream'))
+            Update-AffectedInventoryFileRecord -InventoryRoot $damagedPriorRoot -FilePath $damagedStreamPath
+            $fallbackEvidencePath = Join-Path $fixture 'affected-evidence-damaged-prior.json'
+            $fallbackCheckRoot = Join-Path $fixture 'affected-check-evidence-damaged-fallback'
+            $fallbackEvidence = & (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $base -HeadCommit $docsHead -PlanPath $planPath -Platform linux -OutPath $fallbackEvidencePath -CheckEvidenceDirectory $fallbackCheckRoot -PriorEvidenceDirectory $damagedPriorRoot
+            $fallbackReceipts = @(Get-ChildItem -LiteralPath $fallbackCheckRoot -Filter receipt.json -File -Recurse | ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json -Depth 64 -DateKind String })
+            Assert-True ($fallbackEvidence.result -ceq 'pass' -and @($fallbackReceipts | Where-Object mode -ceq 'executed').Count -eq 1 -and @($fallbackReceipts | Where-Object mode -ceq 'reused').Count -eq ($fallbackReceipts.Count - 1)) 'Damaged prior stream did not rerun only its exact leaf while reusing unaffected leaves.'
+            $persistedEvidence = Read-MorphospaceProtocolJson -Path $evidencePath
+            $impossiblePass = $persistedEvidence | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64
             $impossiblePass.check_results[0].exit_code = 1
             Assert-True (-not (Test-Json -Json (ConvertTo-MorphospaceCanonicalJson -Value $impossiblePass) -SchemaFile (Join-Path $repoRoot 'schemas/affected-validation-evidence-v1.schema.json') -ErrorAction SilentlyContinue)) 'Evidence schema accepted pass with a nonzero child exit.'
-            $impossibleDrainPass = $evidence | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64
+            $impossibleDrainPass = $persistedEvidence | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64
             $impossibleDrainPass.check_results[0].post_kill_drain_timed_out = $true
             Assert-True (-not (Test-Json -Json (ConvertTo-MorphospaceCanonicalJson -Value $impossibleDrainPass) -SchemaFile (Join-Path $repoRoot 'schemas/affected-validation-evidence-v1.schema.json') -ErrorAction SilentlyContinue)) 'Evidence schema accepted pass with a post-kill drain timeout.'
-            $drainCodeFailure = $evidence | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64
+            $drainCodeFailure = $persistedEvidence | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64
             $drainCodeFailure.result = 'code-fail'; $drainCodeFailure.check_results[0].result = 'code-fail'; $drainCodeFailure.check_results[0].exit_code = $null; $drainCodeFailure.check_results[0].post_kill_drain_timed_out = $true
             Assert-True (Test-Json -Json (ConvertTo-MorphospaceCanonicalJson -Value $drainCodeFailure) -SchemaFile (Join-Path $repoRoot 'schemas/affected-validation-evidence-v1.schema.json') -ErrorAction Stop) 'Evidence schema rejected the required code-fail post-kill drain shape.'
-            $mixedFailure = $evidence | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64
+            $mixedFailure = $persistedEvidence | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64
             $mixedFailure.result = 'code-fail'; $mixedFailure.check_results[0].result = 'code-fail'; $mixedFailure.check_results[0].exit_code = 1; $mixedFailure.check_results[1].result = 'infra-fail'; $mixedFailure.check_results[1].exit_code = $null
             Assert-True (-not (Test-Json -Json (ConvertTo-MorphospaceCanonicalJson -Value $mixedFailure) -SchemaFile (Join-Path $repoRoot 'schemas/affected-validation-evidence-v1.schema.json') -ErrorAction SilentlyContinue)) 'Evidence schema accepted mixed code-fail and infra-fail aggregate precedence.'
-            $impossiblePending = $evidence | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64
+            $impossiblePending = $persistedEvidence | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64
             $impossiblePending.check_results[0].result = 'pending-infra'; $impossiblePending.result = 'pending-infra'
             Assert-True (-not (Test-Json -Json (ConvertTo-MorphospaceCanonicalJson -Value $impossiblePending) -SchemaFile (Join-Path $repoRoot 'schemas/affected-validation-evidence-v1.schema.json') -ErrorAction SilentlyContinue)) 'Check evidence accepted pending-infra outside the typed pre-job classifier.'
             $boundaryIndex = [array]::IndexOf(@($docsPlan.selected_checks.check_id), 'public-boundary')
@@ -1393,6 +1671,7 @@ try {
     }
 
     if ($runFullSelector -or $runExecutorDamagePhase) {
+    $supervisorResidueBaseline = Get-AffectedSupervisorResidueIdentity
     Write-Utf8 (Join-Path $fixture 'scripts/Test-PublicBoundary.ps1') "exit 17`n"
     [void](Invoke-TestGit $fixture @('add', 'scripts/Test-PublicBoundary.ps1'))
     [void](Invoke-TestGit $fixture @('commit', '-m', 'failing affected command'))
@@ -1401,13 +1680,183 @@ try {
     Write-Utf8 $planPath ((ConvertTo-MorphospaceCanonicalJson -Value $failingPlan) + "`n")
     $failingEvidencePath = Join-Path $fixture 'failing-evidence.json'
     $codeFailed = $false
-    try { [void](& (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $docsHead -HeadCommit $failingHead -PlanPath $planPath -Platform linux -OutPath $failingEvidencePath) } catch { $codeFailed = $_.Exception.Message -like '*code-fail*' }
-    Assert-True $codeFailed 'Affected executor swallowed a native nonzero exit.'
+    $codeFailureRecord = $null
+    try { [void](& (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $docsHead -HeadCommit $failingHead -PlanPath $planPath -Platform linux -OutPath $failingEvidencePath) } catch { $codeFailureRecord = $_; $codeFailed = $_.Exception.Message -like '*code-fail*' }
+    $codeFailureObserved = if ($null -eq $codeFailureRecord) { '<no exception>' } else { [string]$codeFailureRecord.Exception.Message }
+    Assert-True $codeFailed "Affected executor swallowed or reclassified a native nonzero exit. Observed: $codeFailureObserved"
     $failingEvidence = Read-MorphospaceProtocolJson -Path $failingEvidencePath
     Assert-True ($failingEvidence.result -ceq 'code-fail' -and @($failingEvidence.check_results | Where-Object { $_.exit_code -eq 17 -and $_.result -ceq 'code-fail' }).Count -eq 1) 'Affected executor did not preserve the native nonzero exit in evidence.'
+    $failingCheckRoot = Join-Path $fixture "affected-check-evidence-$($failingPlan.plan_sha256)-linux"
+    Assert-True ([IO.File]::Exists((Join-Path $failingCheckRoot 'inventory.json')) -and [string]$codeFailureRecord.Exception.Data['AffectedCacheFinalized'] -ceq 'true' -and [string]$codeFailureRecord.Exception.Data['AffectedInventorySha256'] -match '^[0-9a-f]{64}$') 'Ordinary code failure did not finalize independent leaf evidence for a later retry.'
+    $failingReceipts = @(Get-ChildItem -LiteralPath $failingCheckRoot -Filter receipt.json -File -Recurse | ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json -Depth 64 -DateKind String })
+    $executedFailure = @($failingReceipts | Where-Object { $_.mode -ceq 'executed' -and $_.result -ceq 'code-fail' -and $_.child.exit_code -eq 17 })
+    $blockedDependents = @($failingReceipts | Where-Object { $_.mode -ceq 'blocked' -and @($_.blocked_by).Count -gt 0 })
+    Assert-True ($executedFailure.Count -eq 1 -and $blockedDependents.Count -ge 1) 'Affected executor did not preserve the exact failed leaf and dependency-blocked descendants.'
+    $failedReceiptPath = @(Get-ChildItem -LiteralPath $failingCheckRoot -Filter receipt.json -File -Recurse | Where-Object { (Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json -Depth 64 -DateKind String).result -ceq 'code-fail' } | Select-Object -First 1).FullName
+    $failedReceipt = Get-Content -LiteralPath $failedReceiptPath -Raw | ConvertFrom-Json -Depth 64 -DateKind String
+    foreach ($stream in @('stdout','stderr')) { $streamPath = Join-Path ([IO.Path]::GetDirectoryName($failedReceiptPath)) "$stream.bin"; Assert-True ([IO.File]::Exists($streamPath) -and (Get-FileHash -LiteralPath $streamPath -Algorithm SHA256).Hash.ToLowerInvariant() -ceq [string]$failedReceipt.child.$stream.sha256) "Failed leaf $stream bytes are unavailable or not receipt-bound." }
     $failedEvidenceDigest = (Get-FileHash -LiteralPath $failingEvidencePath -Algorithm SHA256).Hash.ToLowerInvariant()
     Assert-True ($failedEvidenceDigest -match '^[0-9a-f]{64}$') 'Failed executor evidence did not receive a content digest.'
-    Write-Utf8 (Join-Path $fixture 'scripts/Test-PublicBoundary.ps1') "[Console]::Out.Write(('x' * 10485761) -join '')`n"
+    $setupProbeExecutable = (Get-Process -Id $PID).Path
+    $preContainmentProbe = [W017BoundedChildCapture]::RunForSetupFailureTest($setupProbeExecutable,$fixture,'before-containment',15000)
+    Assert-True ($preContainmentProbe.Started -and $preContainmentProbe.ChildTreeCleanupAttempted -and $preContainmentProbe.ChildTreeCleanupSucceeded -and [string]$preContainmentProbe.Error -like '*injected pre-containment setup failure*') 'Pre-containment setup failure did not directly terminate and read back the unassigned supervisor.'
+    if ([Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Windows)) {
+        [W017BoundedChildCapture]::RunPublishedControlReadSelfTests()
+        $postJobProbe = [W017BoundedChildCapture]::RunForSetupFailureTest($setupProbeExecutable,$fixture,'after-job-create',15000)
+        Assert-True ($postJobProbe.Started -and $postJobProbe.ChildTreeCleanupAttempted -and $postJobProbe.ChildTreeCleanupSucceeded -and [string]$postJobProbe.Error -like '*injected post-job-create setup failure*') 'Post-job-create assignment-boundary failure did not directly terminate and read back the unassigned supervisor.'
+        $missingCompletionProbe = [W017BoundedChildCapture]::RunForSetupFailureTest($setupProbeExecutable,$fixture,'terminate-supervisor-after-go',15000)
+        $missingCompletionObserved = "started=$($missingCompletionProbe.Started);cleanup_attempted=$($missingCompletionProbe.ChildTreeCleanupAttempted);cleanup_succeeded=$($missingCompletionProbe.ChildTreeCleanupSucceeded);exit=$($missingCompletionProbe.ExitCode);error=$([string]$missingCompletionProbe.Error)"
+        Assert-True ($missingCompletionProbe.Started -and $missingCompletionProbe.ChildTreeCleanupAttempted -and $missingCompletionProbe.ChildTreeCleanupSucceeded -and [string]$missingCompletionProbe.Error -like '*tagged completion*') "A supervisor terminated with exit code zero was accepted without its private tagged completion. Observed: $missingCompletionObserved"
+    }
+
+    $protectedParentSource = @'
+if (-not [Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Windows)) { exit 91 }
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class W017TerminateParentDamage {
+    [StructLayout(LayoutKind.Sequential)] private struct BasicInformation { public IntPtr exitStatus,peb,affinity,basePriority,processId,parentProcessId; }
+    [StructLayout(LayoutKind.Sequential)] private struct Luid { public uint low; public int high; }
+    [StructLayout(LayoutKind.Sequential)] private struct LuidAttributes { public Luid luid; public uint attributes; }
+    [StructLayout(LayoutKind.Sequential)] private struct TokenPrivileges { public uint count; public LuidAttributes privilege; }
+    [StructLayout(LayoutKind.Sequential)] private struct ThreadEntry32 { public uint size,usage,threadId,ownerProcessId; public int basePriority,deltaPriority; public uint flags; }
+    [DllImport("ntdll.dll")] private static extern int NtQueryInformationProcess(IntPtr process,int information,ref BasicInformation value,int length,IntPtr returned);
+    [DllImport("kernel32.dll")] private static extern IntPtr GetCurrentProcess();
+    [DllImport("kernel32.dll",SetLastError=true)] private static extern IntPtr OpenProcess(uint access,bool inherit,int processId);
+    [DllImport("kernel32.dll",SetLastError=true)] private static extern IntPtr OpenThread(uint access,bool inherit,uint threadId);
+    [DllImport("kernel32.dll",SetLastError=true)] private static extern IntPtr CreateToolhelp32Snapshot(uint flags,uint processId);
+    [DllImport("kernel32.dll",SetLastError=true)] private static extern bool Thread32First(IntPtr snapshot,ref ThreadEntry32 entry);
+    [DllImport("kernel32.dll",SetLastError=true)] private static extern bool Thread32Next(IntPtr snapshot,ref ThreadEntry32 entry);
+    [DllImport("kernel32.dll",SetLastError=true)] private static extern bool TerminateProcess(IntPtr process,uint exitCode);
+    [DllImport("kernel32.dll")] private static extern bool CloseHandle(IntPtr handle);
+    [DllImport("advapi32.dll",SetLastError=true)] private static extern bool OpenProcessToken(IntPtr process,uint access,out IntPtr token);
+    [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)] private static extern bool LookupPrivilegeValue(string system,string name,out Luid value);
+    [DllImport("advapi32.dll",SetLastError=true)] private static extern bool AdjustTokenPrivileges(IntPtr token,bool disableAll,ref TokenPrivileges value,uint length,IntPtr previous,IntPtr returned);
+    [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)] private static extern bool ConvertStringSecurityDescriptorToSecurityDescriptor(string text,uint revision,out IntPtr descriptor,out uint length);
+    [DllImport("advapi32.dll",SetLastError=true)] private static extern bool SetKernelObjectSecurity(IntPtr handle,uint information,IntPtr descriptor);
+    [DllImport("kernel32.dll")] private static extern IntPtr LocalFree(IntPtr value);
+    [DllImport("kernel32.dll")] private static extern void SetLastError(uint value);
+    private static int ParentId(){var value=new BasicInformation();if(NtQueryInformationProcess(GetCurrentProcess(),0,ref value,Marshal.SizeOf(typeof(BasicInformation)),IntPtr.Zero)!=0)throw new InvalidOperationException("parent identity unavailable");return value.parentProcessId.ToInt32();}
+    private static bool TryReplace(IntPtr handle,string sddl,uint information){IntPtr descriptor;uint length;if(!ConvertStringSecurityDescriptorToSecurityDescriptor(sddl,1,out descriptor,out length))return false;try{return SetKernelObjectSecurity(handle,information,descriptor);}finally{LocalFree(descriptor);}}
+    private static bool CanEnable(Luid luid){IntPtr token;if(!OpenProcessToken(GetCurrentProcess(),0x28,out token))throw new InvalidOperationException("leaf token unavailable");try{var privileges=new TokenPrivileges{count=1,privilege=new LuidAttributes{luid=luid,attributes=2}};SetLastError(0);if(!AdjustTokenPrivileges(token,false,ref privileges,0,IntPtr.Zero,IntPtr.Zero))return false;return Marshal.GetLastWin32Error()!=1300;}finally{CloseHandle(token);}}
+    private static bool CanEnable(string name){Luid luid;if(!LookupPrivilegeValue(null,name,out luid))throw new InvalidOperationException("privilege identity unavailable: "+name);return CanEnable(luid);}
+    public static bool CanEnableRemoved(string encoded){var parts=(encoded??String.Empty).Split(':');if(parts.Length!=2)throw new InvalidOperationException("removed source privilege identity is malformed");var luid=new Luid{high=int.Parse(parts[0],System.Globalization.CultureInfo.InvariantCulture),low=uint.Parse(parts[1],System.Globalization.CultureInfo.InvariantCulture)};return CanEnable(luid);}
+    public static string TryAttackAncestors(int[] ancestors){
+        var parent=ParentId();
+        if(ancestors==null||ancestors.Length<2||ancestors[0]!=parent)return "ANCESTOR_IDENTITY";
+        uint futureThread,parentFutureThread;
+        if(!uint.TryParse(Environment.GetEnvironmentVariable("RUSTY_AFFECTED_VALIDATION_FUTURE_THREAD_ID"),System.Globalization.NumberStyles.None,System.Globalization.CultureInfo.InvariantCulture,out futureThread)||futureThread==0)return "FUTURE_THREAD_IDENTITY";
+        if(!uint.TryParse(Environment.GetEnvironmentVariable("RUSTY_AFFECTED_VALIDATION_PARENT_FUTURE_THREAD_ID"),System.Globalization.NumberStyles.None,System.Globalization.CultureInfo.InvariantCulture,out parentFutureThread)||parentFutureThread==0)return "PARENT_FUTURE_THREAD_IDENTITY";
+        var seen=new System.Collections.Generic.HashSet<int>();
+        var trusted=new System.Collections.Generic.HashSet<uint>();
+        var ordinal=0;
+        foreach(var target in ancestors){
+            if(target<=0||!seen.Add(target))continue;
+            trusted.Add(unchecked((uint)target));
+            var writeDac=OpenProcess(0x00040000,false,target);
+            if(writeDac!=IntPtr.Zero){try{TryReplace(writeDac,"D:(A;;GA;;;WD)",4);}finally{CloseHandle(writeDac);}return "PID_"+target+"_WRITE_DAC";}
+            var writeOwner=OpenProcess(0x00080000,false,target);
+            if(writeOwner!=IntPtr.Zero){try{TryReplace(writeOwner,"O:WD",1);}finally{CloseHandle(writeOwner);}return "PID_"+target+"_WRITE_OWNER";}
+            var accesses=ordinal++==0?new uint[]{1,2,8,16,32,64,0x200,0x400,0x800,0x1000,0x2000}:new uint[]{1,2,8,32,64,0x200,0x400,0x800,0x1000,0x2000};
+            foreach(var access in accesses){
+                var handle=OpenProcess(access,false,target);
+                if(handle==IntPtr.Zero)continue;
+                try{if(access==0x400||access==0x1000||access==0x2000){foreach(var tokenAccess in new uint[]{0x8,0x2,0x4,0x20,0x2e}){IntPtr targetToken;if(OpenProcessToken(handle,tokenAccess,out targetToken)){CloseHandle(targetToken);return "PID_"+target+"_TOKEN_ACCESS_0x"+tokenAccess.ToString("x8");}}}if(access==1)TerminateProcess(handle,0);}
+                finally{CloseHandle(handle);}
+                return "PID_"+target+"_ACCESS_0x"+access.ToString("x8");
+            }
+        }
+        var snapshot=CreateToolhelp32Snapshot(4,0);
+        if(snapshot==new IntPtr(-1))return "THREAD_SNAPSHOT";
+        var futureSeen=false;
+        var parentFutureSeen=false;
+        try{
+            var entry=new ThreadEntry32();
+            entry.size=(uint)Marshal.SizeOf(typeof(ThreadEntry32));
+            if(Thread32First(snapshot,ref entry)){do{
+                if(trusted.Contains(entry.ownerProcessId)){
+                    if(entry.threadId==futureThread)futureSeen=true;
+                    if(entry.threadId==parentFutureThread)parentFutureSeen=true;
+                    foreach(var access in new uint[]{1,2,8,16,32,64,0x80,0x100,0x200,0x400,0x800,0x00040000,0x00080000}){
+                        var thread=OpenThread(access,false,entry.threadId);
+                        if(thread==IntPtr.Zero)continue;
+                        CloseHandle(thread);
+                        return "TID_"+entry.threadId+"_ACCESS_0x"+access.ToString("x8");
+                    }
+                }
+                entry.size=(uint)Marshal.SizeOf(typeof(ThreadEntry32));
+            }while(Thread32Next(snapshot,ref entry));}
+        }finally{CloseHandle(snapshot);}
+        if(!futureSeen)return "FUTURE_THREAD_NOT_OBSERVED";
+        if(!parentFutureSeen)return "PARENT_FUTURE_THREAD_NOT_OBSERVED";
+        foreach(var privilege in new string[]{"SeDebugPrivilege","SeTakeOwnershipPrivilege","SeRestorePrivilege"})if(CanEnable(privilege))return privilege;
+        return null;
+    }
+}
+"@
+[int[]]$trustedAncestors = @($env:RUSTY_AFFECTED_VALIDATION_TRUSTED_ANCESTORS -split ',' | ForEach-Object { [int]::Parse($_,[Globalization.CultureInfo]::InvariantCulture) })
+$attack = [W017TerminateParentDamage]::TryAttackAncestors($trustedAncestors)
+if (-not [string]::IsNullOrWhiteSpace($attack)) { [Console]::Error.WriteLine("supervisor attack remained available: $attack"); Start-Sleep -Seconds 30; exit 90 }
+$removedPrivilege = [Environment]::GetEnvironmentVariable('RUSTY_AFFECTED_VALIDATION_REMOVED_PRIVILEGE_LUID','Process')
+if ([string]::IsNullOrWhiteSpace($removedPrivilege) -or [W017TerminateParentDamage]::CanEnableRemoved($removedPrivilege)) { [Console]::Error.WriteLine("a privilege enumerated on the source token was not proven irreversibly absent from the leaf token"); exit 90 }
+exit 91
+'@
+    Write-Utf8 (Join-Path $fixture 'scripts/Test-PublicBoundary.ps1') $protectedParentSource
+    [void](Invoke-TestGit $fixture @('add', 'scripts/Test-PublicBoundary.ps1'))
+    [void](Invoke-TestGit $fixture @('commit', '-m', 'supervisor termination damage'))
+    $protectedParentHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
+    $protectedParentPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $failingHead -HeadRevision $protectedParentHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+    Write-Utf8 $planPath ((ConvertTo-MorphospaceCanonicalJson -Value $protectedParentPlan) + "`n")
+    $protectedParentEvidencePath = Join-Path $fixture 'protected-parent-evidence.json'
+    $protectedParentFailure = $null
+    try { [void](& (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $failingHead -HeadCommit $protectedParentHead -PlanPath $planPath -Platform linux -OutPath $protectedParentEvidencePath) } catch { $protectedParentFailure = $_ }
+    $protectedParentObserved = if ($null -eq $protectedParentFailure) { '<no exception>' } else { "$($protectedParentFailure.Exception.ToString())`n$([string]$protectedParentFailure.ScriptStackTrace)" }
+    Assert-True ([IO.File]::Exists($protectedParentEvidencePath)) "Protected-ancestor damage execution did not publish typed evidence. Observed: $protectedParentObserved"
+    $protectedParentEvidence = Read-MorphospaceProtocolJson -Path $protectedParentEvidencePath
+    Assert-True ($null -ne $protectedParentFailure -and $protectedParentEvidence.result -ceq 'code-fail' -and @($protectedParentEvidence.check_results | Where-Object { $_.check_id -ceq 'public-boundary' -and $_.exit_code -eq 91 -and $_.result -ceq 'code-fail' }).Count -eq 1 -and (Get-AffectedSupervisorResidueIdentity) -ceq $supervisorResidueBaseline) 'A Windows leaf retained process or thread owner/DACL rewrite, terminate/suspend/context/impersonation, handle duplication, process-query/token-open, or privilege re-enable access—including the post-probe sentinel thread—or changed the enclosing supervisor-residue identity.'
+    $failingHead = $protectedParentHead
+
+    Write-Utf8 (Join-Path $fixture 'scripts/Test-PublicBoundary.ps1') "exit 125`n"
+    [void](Invoke-TestGit $fixture @('add', 'scripts/Test-PublicBoundary.ps1'))
+    [void](Invoke-TestGit $fixture @('commit', '-m', 'leaf exit 125 damage'))
+    $exit125Head = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
+    $exit125Plan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $failingHead -HeadRevision $exit125Head -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+    Write-Utf8 $planPath ((ConvertTo-MorphospaceCanonicalJson -Value $exit125Plan) + "`n")
+    $exit125EvidencePath = Join-Path $fixture 'exit-125-evidence.json'
+    $exit125Failure = $null
+    try { [void](& (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $failingHead -HeadCommit $exit125Head -PlanPath $planPath -Platform linux -OutPath $exit125EvidencePath) } catch { $exit125Failure = $_ }
+    $exit125Evidence = Read-MorphospaceProtocolJson -Path $exit125EvidencePath
+    Assert-True ($null -ne $exit125Failure -and $exit125Evidence.result -ceq 'code-fail' -and @($exit125Evidence.check_results | Where-Object { $_.check_id -ceq 'public-boundary' -and $_.exit_code -eq 125 -and $_.result -ceq 'code-fail' }).Count -eq 1 -and [string]$exit125Failure.Exception.Message -notlike '*infra-fail*') 'A native leaf exit 125 collided with the supervisor infrastructure-error domain.'
+    $failingHead = $exit125Head
+
+    $forgedTerminalSource = @'
+$supervisorRoot = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($env:TEMP))
+if(-not[IO.File]::Exists((Join-Path $supervisorRoot 'supervisor.ps1'))-or-not[IO.File]::Exists((Join-Path $supervisorRoot 'go.control'))){throw 'forged-terminal fixture did not resolve its exact supervisor directory'}
+$forgedPath = Join-Path $supervisorRoot 'terminal.control'
+[IO.File]::WriteAllText($forgedPath,"exit:0`n",[Text.UTF8Encoding]::new($false))
+exit 23
+'@
+    Write-Utf8 (Join-Path $fixture 'scripts/Test-PublicBoundary.ps1') $forgedTerminalSource
+    [void](Invoke-TestGit $fixture @('add', 'scripts/Test-PublicBoundary.ps1'))
+    [void](Invoke-TestGit $fixture @('commit', '-m', 'forged terminal control damage'))
+    $forgedHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
+    $forgedPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $failingHead -HeadRevision $forgedHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+    Write-Utf8 $planPath ((ConvertTo-MorphospaceCanonicalJson -Value $forgedPlan) + "`n")
+    $forgedEvidencePath = Join-Path $fixture 'forged-terminal-evidence.json'
+    $forgedFailure = $null
+    try { [void](& (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $failingHead -HeadCommit $forgedHead -PlanPath $planPath -Platform linux -OutPath $forgedEvidencePath) } catch { $forgedFailure = $_ }
+    $forgedEvidence = Read-MorphospaceProtocolJson -Path $forgedEvidencePath
+    $forgedObserved = @($forgedEvidence.check_results | ForEach-Object { "$($_.check_id):result=$($_.result),exit=$($_.exit_code),timeout=$($_.timed_out),truncated=$($_.output_truncated),stdout=$($_.stdout_bytes),stderr=$($_.stderr_bytes)" }) -join '; '
+    Assert-True ($null -ne $forgedFailure -and $forgedEvidence.result -ceq 'code-fail' -and @($forgedEvidence.check_results | Where-Object { $_.check_id -ceq 'public-boundary' -and $_.exit_code -eq 23 -and $_.result -ceq 'code-fail' }).Count -eq 1) "A leaf-forged terminal control file produced or obscured the real supervisor terminal. Observed: $forgedObserved"
+    $failingHead = $forgedHead
+    $sustainedOutputSource = @'
+for($index=0;$index-lt 4096;$index++){
+    [Console]::Out.Write(('x'*65536));[Console]::Out.Flush()
+    [Console]::Error.Write(('y'*65536));[Console]::Error.Flush()
+}
+throw 'sustained output unexpectedly reached its natural terminal'
+'@
+    Write-Utf8 (Join-Path $fixture 'scripts/Test-PublicBoundary.ps1') $sustainedOutputSource
     [void](Invoke-TestGit $fixture @('add', 'scripts/Test-PublicBoundary.ps1'))
     [void](Invoke-TestGit $fixture @('commit', '-m', 'oversized affected output'))
     $oversizedHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
@@ -1418,22 +1867,172 @@ try {
     try { [void](& (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $failingHead -HeadCommit $oversizedHead -PlanPath $planPath -Platform linux -OutPath $oversizedEvidencePath) } catch { $oversizedFailed = $_.Exception.Message -like '*code-fail*' }
     Assert-True $oversizedFailed 'Affected executor accepted an over-ceiling child output.'
     $oversizedEvidence = Read-MorphospaceProtocolJson -Path $oversizedEvidencePath
-    Assert-True ($oversizedEvidence.result -ceq 'code-fail' -and @($oversizedEvidence.check_results | Where-Object { $_.result -ceq 'code-fail' -and $_.output_truncated -and $_.stdout_bytes -le 10485760 -and $_.stderr_bytes -le 10485760 }).Count -eq 1) 'Affected executor did not bind the output-ceiling check failure.'
-    Write-Utf8 (Join-Path $fixture 'scripts/Test-PublicBoundary.ps1') "Start-Sleep -Seconds 3`n"
+    $oversizedObserved = @($oversizedEvidence.check_results | ForEach-Object { "$($_.check_id):result=$($_.result),exit=$($_.exit_code),timeout=$($_.timed_out),truncated=$($_.output_truncated),drain=$($_.post_kill_drain_timed_out),stdout=$($_.stdout_bytes),stderr=$($_.stderr_bytes)" }) -join '; '
+    Assert-True ($oversizedEvidence.result -ceq 'code-fail' -and @($oversizedEvidence.check_results | Where-Object { $_.result -ceq 'code-fail' -and $_.output_truncated -and ($_.stdout_bytes + $_.stderr_bytes) -le 10485760 }).Count -eq 1 -and (Get-AffectedSupervisorResidueIdentity) -ceq $supervisorResidueBaseline) "Affected executor did not enforce the combined live output ceiling without unbounded staging or a changed enclosing supervisor-residue identity. Observed: $oversizedObserved"
+    Write-Utf8 (Join-Path $fixture 'scripts/Test-PublicBoundary.ps1') "Start-Sleep -Seconds 12`n"
     [void](Invoke-TestGit $fixture @('add', 'scripts/Test-PublicBoundary.ps1'))
     [void](Invoke-TestGit $fixture @('commit', '-m', 'timed-out affected command'))
     $timeoutHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
     $timeoutPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $oversizedHead -HeadRevision $timeoutHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
     Write-Utf8 $planPath ((ConvertTo-MorphospaceCanonicalJson -Value $timeoutPlan) + "`n")
     $timeoutEvidencePath = Join-Path $fixture 'timeout-evidence.json'
-    $timeoutFailed = $false
-    try { [void](& (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $oversizedHead -HeadCommit $timeoutHead -PlanPath $planPath -Platform linux -OutPath $timeoutEvidencePath) } catch { $timeoutFailed = $_.Exception.Message -like '*code-fail*' }
-    Assert-True $timeoutFailed 'Affected executor accepted a timed-out child.'
+    $timeoutFailed = $false; $timeoutFailure = $null
+    try { [void](& (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $oversizedHead -HeadCommit $timeoutHead -PlanPath $planPath -Platform linux -OutPath $timeoutEvidencePath) } catch { $timeoutFailure = $_; $timeoutFailed = $_.Exception.Message -like '*code-fail*' }
+    $timeoutObserved = if ($null -eq $timeoutFailure) { '<no exception>' } else { [string]$timeoutFailure.Exception.Message }
+    Assert-True $timeoutFailed "Affected executor accepted or misclassified a timed-out child. Observed: $timeoutObserved"
     $timeoutEvidence = Read-MorphospaceProtocolJson -Path $timeoutEvidencePath
     Assert-True ($timeoutEvidence.result -ceq 'code-fail' -and @($timeoutEvidence.check_results | Where-Object { $_.result -ceq 'code-fail' -and $_.timed_out }).Count -eq 1) 'Affected executor did not classify a child timeout as code-fail.'
     Write-Utf8 (Join-Path $fixture 'scripts/Test-PublicBoundary.ps1') "# fixture`n"
     [void](Invoke-TestGit $fixture @('add', 'scripts/Test-PublicBoundary.ps1'))
     [void](Invoke-TestGit $fixture @('commit', '-m', 'restore bounded affected command'))
+    $restoredHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
+
+    $dualStreamSource = @'
+for($index=0;$index-lt 8;$index++){
+    [Console]::Out.Write(('o'*65536));[Console]::Out.Flush()
+    [Console]::Error.Write(('e'*65536));[Console]::Error.Flush()
+    [Threading.Thread]::Sleep(50)
+}
+'@
+    Write-Utf8 (Join-Path $fixture 'scripts/Test-PublicBoundary.ps1') $dualStreamSource
+    [void](Invoke-TestGit $fixture @('add', 'scripts/Test-PublicBoundary.ps1'))
+    [void](Invoke-TestGit $fixture @('commit', '-m', 'bounded dual-stream drain proof'))
+    $dualStreamHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
+    $dualStreamPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $restoredHead -HeadRevision $dualStreamHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+    Write-Utf8 $planPath ((ConvertTo-MorphospaceCanonicalJson -Value $dualStreamPlan) + "`n")
+    $dualStreamCheckRoot = Join-Path $fixture 'affected-check-evidence-dual-stream'
+    $dualStreamEvidence = & (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $restoredHead -HeadCommit $dualStreamHead -PlanPath $planPath -Platform linux -OutPath (Join-Path $fixture 'dual-stream-evidence.json') -CheckEvidenceDirectory $dualStreamCheckRoot
+    [byte[]]$expectedDualStdout = [Text.Encoding]::UTF8.GetBytes(('o' * 524288))
+    [byte[]]$expectedDualStderr = [Text.Encoding]::UTF8.GetBytes(('e' * 524288))
+    $dualStdoutPath = Join-Path $dualStreamCheckRoot 'public-boundary/stdout.bin'; $dualStderrPath = Join-Path $dualStreamCheckRoot 'public-boundary/stderr.bin'
+    Assert-True ($dualStreamEvidence.result -ceq 'pass' -and [IO.File]::Exists($dualStdoutPath) -and [IO.File]::Exists($dualStderrPath) -and (Get-MorphospaceAffectedCheckBytesSha256 ([IO.File]::ReadAllBytes($dualStdoutPath))) -ceq (Get-MorphospaceAffectedCheckBytesSha256 $expectedDualStdout) -and (Get-MorphospaceAffectedCheckBytesSha256 ([IO.File]::ReadAllBytes($dualStderrPath))) -ceq (Get-MorphospaceAffectedCheckBytesSha256 $expectedDualStderr)) 'Passing bounded dual-stream leaf lost or changed stdout/stderr bytes before cache publication.'
+    Write-Utf8 (Join-Path $fixture 'scripts/Test-PublicBoundary.ps1') "# fixture`n"
+    [void](Invoke-TestGit $fixture @('add', 'scripts/Test-PublicBoundary.ps1'))
+    [void](Invoke-TestGit $fixture @('commit', '-m', 'restore after dual-stream proof'))
+    $restoredHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
+
+    $survivorCheckRoot = Join-Path $fixture 'affected-check-evidence-surviving-descendant'
+    $survivorInventoryPath = Join-Path $survivorCheckRoot 'inventory.json'
+    $survivorReadyPath = Join-Path $fixture 'surviving-descendant.ready'
+    $survivorPidPath = Join-Path $fixture 'surviving-descendant.pid'
+    $survivorMarkerPath = Join-Path $fixture 'surviving-descendant.tampered'
+    $survivorRedirectedPath = Join-Path $fixture 'surviving-descendant.redirected'
+    $survivorModePath = Join-Path $fixture 'surviving-descendant.mode'
+    $escapeLiteral = { param([string]$Value) $Value.Replace("'","''") }
+    $descendantSource = @"
+[IO.File]::WriteAllText('$(& $escapeLiteral $survivorReadyPath)','ready',[Text.UTF8Encoding]::new(`$false))
+while (-not [IO.File]::Exists('$(& $escapeLiteral $survivorInventoryPath)')) { [Threading.Thread]::Sleep(20) }
+[IO.File]::WriteAllText('$(& $escapeLiteral $survivorInventoryPath)','tampered',[Text.UTF8Encoding]::new(`$false))
+[IO.File]::WriteAllText('$(& $escapeLiteral $survivorMarkerPath)','tampered',[Text.UTF8Encoding]::new(`$false))
+[Threading.Thread]::Sleep(30000)
+"@
+    $descendantEncoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($descendantSource))
+    $survivorCommand = @"
+`$childExecutable = (Get-Process -Id `$PID).Path
+`$start = [Diagnostics.ProcessStartInfo]::new()
+`$start.UseShellExecute = `$false
+`$start.CreateNoWindow = `$true
+`$start.RedirectStandardOutput = `$true
+`$start.RedirectStandardError = `$true
+if ([Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Windows)) {
+    `$start.FileName = `$childExecutable
+    `$mode = 'job-descendant'
+} else {
+    `$setsidPaths = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach (`$command in @(Get-Command setsid -CommandType Application -ErrorAction SilentlyContinue)) {
+        `$path = [IO.Path]::GetFullPath([string]`$command.Source)
+        if (-not [IO.File]::Exists(`$path)) { throw 'resolved setsid executable does not exist' }
+        [void]`$setsidPaths.Add(`$path)
+    }
+    if (`$setsidPaths.Count -eq 0) { throw 'required setsid executable is unavailable for descendant containment damage' }
+    [string[]]`$orderedSetsidPaths = @(`$setsidPaths)
+    [Array]::Sort(`$orderedSetsidPaths,[StringComparer]::Ordinal)
+    `$start.FileName = `$orderedSetsidPaths[0]
+    [void]`$start.ArgumentList.Add(`$childExecutable)
+    `$mode = 'setsid-session-escape-attempt'
+}
+foreach (`$argument in @('-NoProfile','-NonInteractive','-EncodedCommand','$descendantEncoded')) { [void]`$start.ArgumentList.Add(`$argument) }
+`$process = [Diagnostics.Process]::Start(`$start)
+[IO.File]::WriteAllText('$(& $escapeLiteral $survivorPidPath)',[string]`$process.Id,[Text.UTF8Encoding]::new(`$false))
+[IO.File]::WriteAllText('$(& $escapeLiteral $survivorRedirectedPath)','stdout=true;stderr=true',[Text.UTF8Encoding]::new(`$false))
+[IO.File]::WriteAllText('$(& $escapeLiteral $survivorModePath)',`$mode,[Text.UTF8Encoding]::new(`$false))
+`$deadline = [DateTime]::UtcNow.AddSeconds(5)
+while (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)') -and [DateTime]::UtcNow -lt `$deadline) { [Threading.Thread]::Sleep(20) }
+if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
+    `$childExit = if (`$process.HasExited) { [string]`$process.ExitCode } else { 'running' }
+    throw "surviving descendant did not publish readiness: child_exit=`$childExit"
+}
+[Environment]::Exit(0)
+"@
+    Assert-True ($survivorCommand.IndexOf('$setsid.Source',[StringComparison]::Ordinal) -lt 0 -and $survivorCommand.IndexOf('[Array]::Sort($orderedSetsidPaths,[StringComparer]::Ordinal)',[StringComparison]::Ordinal) -ge 0) 'Surviving-descendant fixture does not resolve duplicate setsid applications deterministically.'
+    Write-Utf8 (Join-Path $fixture 'scripts/Test-PublicBoundary.ps1') $survivorCommand
+    [void](Invoke-TestGit $fixture @('add', 'scripts/Test-PublicBoundary.ps1'))
+    [void](Invoke-TestGit $fixture @('commit', '-m', 'surviving descendant cache-tamper damage'))
+    $survivorHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
+    $survivorPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $restoredHead -HeadRevision $survivorHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+    Write-Utf8 $planPath ((ConvertTo-MorphospaceCanonicalJson -Value $survivorPlan) + "`n")
+    $survivorEvidencePath = Join-Path $fixture 'surviving-descendant-evidence.json'
+    $survivorFailure = $null
+    try {
+        $survivorEvidence = & (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $restoredHead -HeadCommit $survivorHead -PlanPath $planPath -Platform linux -OutPath $survivorEvidencePath -CheckEvidenceDirectory $survivorCheckRoot
+    } catch {
+        $survivorFailure = $_
+        if ([IO.File]::Exists($survivorEvidencePath)) { $survivorEvidence = Read-MorphospaceProtocolJson -Path $survivorEvidencePath }
+    }
+    $survivorCacheStderrPath = Join-Path $survivorCheckRoot 'public-boundary/stderr.bin'
+    $survivorStderrText = if ([IO.File]::Exists($survivorCacheStderrPath)) { [Text.UTF8Encoding]::new($false,$true).GetString([IO.File]::ReadAllBytes($survivorCacheStderrPath)).Trim() } else { '<absent>' }
+    $survivorObserved = if ($null -eq $survivorEvidence) { 'no evidence' } else { @($survivorEvidence.check_results | ForEach-Object { "$($_.check_id):result=$($_.result),exit=$($_.exit_code),timeout=$($_.timed_out),truncated=$($_.output_truncated),drain=$($_.post_kill_drain_timed_out),stdout=$($_.stdout_bytes)/$($_.stdout_sha256),stderr=$($_.stderr_bytes)/$($_.stderr_sha256),stderr_text=$survivorStderrText" }) -join '; ' }
+    Assert-True ($null -eq $survivorFailure -and $null -ne $survivorEvidence -and $survivorEvidence.result -ceq 'pass') "Surviving-descendant fixture did not complete its parent leaf successfully. Observed: $survivorObserved"
+    [Threading.Thread]::Sleep(250)
+    $survivorPid = [int](Get-Content -LiteralPath $survivorPidPath -Raw)
+    $survivorProcess = Get-Process -Id $survivorPid -ErrorAction SilentlyContinue
+    Assert-True ([IO.File]::Exists($survivorReadyPath) -and [IO.File]::Exists($survivorRedirectedPath) -and (Get-Content -LiteralPath $survivorRedirectedPath -Raw) -ceq 'stdout=true;stderr=true') 'Surviving-descendant fixture did not establish a privately redirected live child before the leaf exited.'
+    $expectedSurvivorMode = if ([Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Windows)) { 'job-descendant' } else { 'setsid-session-escape-attempt' }
+    Assert-True ([IO.File]::Exists($survivorModePath) -and (Get-Content -LiteralPath $survivorModePath -Raw) -ceq $expectedSurvivorMode) 'Surviving-descendant fixture did not exercise the expected platform containment escape attempt.'
+    Assert-True ($null -eq $survivorProcess -and -not [IO.File]::Exists($survivorMarkerPath)) 'A descendant survived universal child-tree cleanup and reached the later cache materialization.'
+    Assert-True ($survivorEvidence.result -ceq 'pass' -and [string]$survivorEvidence.cache_inventory_sha256 -ceq (Get-FileHash -LiteralPath $survivorInventoryPath -Algorithm SHA256).Hash.ToLowerInvariant()) 'Surviving-descendant damage did not retain an exact executor-bound cache inventory.'
+    $survivorInventory = Get-Content -LiteralPath $survivorInventoryPath -Raw | ConvertFrom-Json -Depth 64 -DateKind String
+    Assert-True ([string]$survivorInventory.schema -ceq 'rusty.morphospace.workflow.affected_validation_check_inventory.v1') 'Surviving-descendant damage changed the parent-owned inventory bytes.'
+    Write-Utf8 (Join-Path $fixture 'scripts/Test-PublicBoundary.ps1') "# fixture`n"
+    [void](Invoke-TestGit $fixture @('add', 'scripts/Test-PublicBoundary.ps1'))
+    [void](Invoke-TestGit $fixture @('commit', '-m', 'restore after surviving descendant damage'))
+    $restoredHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
+
+    [byte[]]$protocolBytesBeforeIntegrityDamage = [IO.File]::ReadAllBytes((Join-Path $fixture 'scripts/lib/MorphospaceProtocolCommon.psm1'))
+    Write-Utf8 (Join-Path $fixture 'scripts/Test-PublicBoundary.ps1') "[IO.File]::AppendAllText((Join-Path `$PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1'),'# child mutation',[Text.UTF8Encoding]::new(`$false))`n"
+    [void](Invoke-TestGit $fixture @('add', 'scripts/Test-PublicBoundary.ps1'))
+    [void](Invoke-TestGit $fixture @('commit', '-m', 'post-execution integrity damage'))
+    $integrityDamageHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
+    $integrityDamagePlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $restoredHead -HeadRevision $integrityDamageHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+    Write-Utf8 $planPath ((ConvertTo-MorphospaceCanonicalJson -Value $integrityDamagePlan) + "`n")
+    $integrityDamageRoot = Join-Path $fixture 'affected-check-evidence-integrity-damage'
+    $integrityFailure = $null
+    try { [void](& (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $restoredHead -HeadCommit $integrityDamageHead -PlanPath $planPath -Platform linux -OutPath (Join-Path $fixture 'integrity-damage-evidence.json') -CheckEvidenceDirectory $integrityDamageRoot) } catch { $integrityFailure = $_ }
+    Assert-True ($null -ne $integrityFailure -and [string]$integrityFailure.Exception.Message -like '*Post-execution affected-check input integrity failed*') 'Tracked child source mutation was not classified as a typed post-execution integrity failure.'
+    $integrityEvidence = Read-MorphospaceProtocolJson -Path (Join-Path $fixture 'integrity-damage-evidence.json')
+    Assert-True ($integrityEvidence.result -ceq 'infra-fail' -and -not [IO.File]::Exists((Join-Path $integrityDamageRoot 'inventory.json')) -and [string]$integrityFailure.Exception.Data['AffectedCacheFinalized'] -cne 'true') 'Input-integrity failure published a reusable cache inventory.'
+    [IO.File]::WriteAllBytes((Join-Path $fixture 'scripts/lib/MorphospaceProtocolCommon.psm1'),$protocolBytesBeforeIntegrityDamage)
+    Write-Utf8 (Join-Path $fixture 'scripts/Test-PublicBoundary.ps1') "# fixture`n"
+    [void](Invoke-TestGit $fixture @('add', 'scripts/Test-PublicBoundary.ps1'))
+    [void](Invoke-TestGit $fixture @('commit', '-m', 'restore after integrity damage'))
+    $restoredHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
+
+    $precreatedRoot = Join-Path $fixture 'affected-check-evidence-precreated-output'
+    $precreatedLeaf = Join-Path $precreatedRoot 'public-boundary'
+    $escapedPrecreatedLeaf = $precreatedLeaf.Replace("'","''")
+    Write-Utf8 (Join-Path $fixture 'scripts/Test-PublicBoundary.ps1') "[void][IO.Directory]::CreateDirectory('$escapedPrecreatedLeaf')`n"
+    [void](Invoke-TestGit $fixture @('add', 'scripts/Test-PublicBoundary.ps1'))
+    [void](Invoke-TestGit $fixture @('commit', '-m', 'future receipt collision damage'))
+    $precreatedHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
+    $precreatedPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $restoredHead -HeadRevision $precreatedHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+    Write-Utf8 $planPath ((ConvertTo-MorphospaceCanonicalJson -Value $precreatedPlan) + "`n")
+    $precreatedFailure = $null
+    try { [void](& (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $restoredHead -HeadCommit $precreatedHead -PlanPath $planPath -Platform linux -OutPath (Join-Path $fixture 'precreated-evidence.json') -CheckEvidenceDirectory $precreatedRoot) } catch { $precreatedFailure = $_ }
+    Assert-True ($null -ne $precreatedFailure -and [string]$precreatedFailure.Exception.Message -like '*already exists*' -and -not [IO.File]::Exists((Join-Path $precreatedRoot 'inventory.json')) -and [string]$precreatedFailure.Exception.Data['AffectedCacheFinalized'] -cne 'true') 'Child precreation/collision was published as a reusable cache.'
+    if ([IO.Directory]::Exists($precreatedRoot)) { Remove-Item -LiteralPath $precreatedRoot -Recurse -Force }
+    Write-Utf8 (Join-Path $fixture 'scripts/Test-PublicBoundary.ps1') "# fixture`n"
+    [void](Invoke-TestGit $fixture @('add', 'scripts/Test-PublicBoundary.ps1'))
+    [void](Invoke-TestGit $fixture @('commit', '-m', 'restore after receipt collision'))
     $restoredHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
     } else {
         $restoredHead = $docsHead
@@ -1495,7 +2094,8 @@ try {
         $plan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $commandHead -HeadRevision $unknownHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
         Assert-True ($plan.selection_mode -ceq 'full-deep') 'Unmapped change did not fail closed to Deep.'
         Assert-True (@($plan.reason_codes) -ccontains 'unmapped-path') 'Unmapped change lacks reason code.'
-        Assert-True (@($plan.selected_checks).Count -eq @($registry.checks).Count) 'Deep fallback did not select every check.'
+        $ordinaryDeepCount = @($registry.checks | Where-Object { $null -eq $_.PSObject.Properties['aggregate_role'] }).Count
+        Assert-True (@($plan.selected_checks).Count -eq $ordinaryDeepCount -and @($plan.selected_checks.check_id) -cnotcontains 'work-environment-deep') 'Deep fallback did not select every independent leaf or selected the redundant cumulative aggregate.'
         return $plan
     })
 
@@ -1544,6 +2144,8 @@ try {
     }
 
     if ($runFullSelector -or $runTrustPhase) {
+    if ($runFullSelector -or $runTrustSelfPhase) {
+    $trustSegmentClock = [Diagnostics.Stopwatch]::StartNew()
     Write-Utf8 (Join-Path $fixture 'scripts/Test-AffectedValidation.ps1') "# selector changed`n"
     [void](Invoke-TestGit $fixture @('add', 'scripts/Test-AffectedValidation.ps1'))
     [void](Invoke-TestGit $fixture @('commit', '-m', 'selector self change'))
@@ -1564,17 +2166,22 @@ try {
     $infrastructureHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
     $infrastructurePlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $selectorHead -HeadRevision $infrastructureHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
     Assert-True ($infrastructurePlan.selection_mode -ceq 'affected' -and @($infrastructurePlan.selected_checks.check_id) -ccontains 'affected-selector-selftest') 'Infrastructure classifier change did not retain bounded selector coverage.'
+    Write-Host "Trust self/executor checks passed in $([long]$trustSegmentClock.Elapsed.TotalMilliseconds)ms."
+    }
 
+    if ($runFullSelector -or $runTrustRoutingPhase) {
+    $trustSegmentClock = [Diagnostics.Stopwatch]::StartNew()
+    $routingBaseHead = if ($runFullSelector) { $infrastructureHead } else { $deleteHead }
     $contractRegistry = Read-MorphospaceProtocolJson -Path (Join-Path $fixture 'manifests/affected-validation-registry.json')
     $contractRegistry.revision = [long]$contractRegistry.revision + 1
     Write-Utf8 (Join-Path $fixture 'manifests/affected-validation-registry.json') ((ConvertTo-MorphospaceCanonicalJson -Value $contractRegistry) + "`n")
     [void](Invoke-TestGit $fixture @('add', 'manifests/affected-validation-registry.json'))
     [void](Invoke-TestGit $fixture @('commit', '-m', 'affected validation registry contract'))
     $registryContractHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
-    $registryContractPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $infrastructureHead -HeadRevision $registryContractHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+    $registryContractPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $routingBaseHead -HeadRevision $registryContractHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
     Assert-True ($registryContractPlan.selection_mode -ceq 'full-deep' -and @($registryContractPlan.selected_checks.check_id) -ccontains 'workflow-contracts') 'Affected-validation registry change did not retain its one-time Deep workflow-contract coverage.'
     foreach ($checkId in $selectorTrustRootCheckIds) { Assert-True (@($registryContractPlan.selected_checks.check_id) -ccontains $checkId) "Affected-validation registry change did not retain '$checkId'." }
-    Assert-True (@($registryContractPlan.selected_checks.check_id) -ccontains 'work-environment-deep' -and @($registryContractPlan.reason_codes) -ccontains 'trust-root-path-changed' -and @($registryContractPlan.reason_codes) -cnotcontains 'ambiguous-path-mapping') 'Affected-validation registry change did not fail closed to one-time Deep or became ambiguous.'
+    Assert-True (@($registryContractPlan.selected_checks.check_id) -cnotcontains 'work-environment-deep' -and @($registryContractPlan.reason_codes) -ccontains 'trust-root-path-changed' -and @($registryContractPlan.reason_codes) -cnotcontains 'ambiguous-path-mapping') 'Affected-validation registry change did not retain independent-leaf Deep escalation or selected the redundant aggregate.'
 
     $affectedSchemaPath = Join-Path $fixture 'schemas/affected-validation-registry-v1.schema.json'
     Write-Utf8 $affectedSchemaPath ((Get-Content -LiteralPath $affectedSchemaPath -Raw) + "`n")
@@ -1584,7 +2191,7 @@ try {
     $schemaContractPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $registryContractHead -HeadRevision $schemaContractHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
     Assert-True ($schemaContractPlan.selection_mode -ceq 'full-deep' -and @($schemaContractPlan.selected_checks.check_id) -ccontains 'workflow-contracts') 'Affected-validation schema change did not retain its one-time Deep workflow-contract coverage.'
     foreach ($checkId in $selectorTrustRootCheckIds) { Assert-True (@($schemaContractPlan.selected_checks.check_id) -ccontains $checkId) "Affected-validation schema change did not retain '$checkId'." }
-    Assert-True (@($schemaContractPlan.selected_checks.check_id) -ccontains 'work-environment-deep' -and @($schemaContractPlan.reason_codes) -ccontains 'trust-root-path-changed' -and @($schemaContractPlan.reason_codes) -cnotcontains 'ambiguous-path-mapping') 'Affected-validation schema change did not fail closed to one-time Deep or became ambiguous.'
+    Assert-True (@($schemaContractPlan.selected_checks.check_id) -cnotcontains 'work-environment-deep' -and @($schemaContractPlan.reason_codes) -ccontains 'trust-root-path-changed' -and @($schemaContractPlan.reason_codes) -cnotcontains 'ambiguous-path-mapping') 'Affected-validation schema change did not retain independent-leaf Deep escalation or selected the redundant aggregate.'
 
     Write-Utf8 (Join-Path $fixture 'schemas/work-unit-event.schema.json') "{} `n"
     [void](Invoke-TestGit $fixture @('add', 'schemas/work-unit-event.schema.json'))
@@ -1668,7 +2275,11 @@ try {
     foreach ($checkId in @('public-boundary','workflow-contracts','development-envelope-preparation','work-unit-automation')) { Assert-True (@($developmentEnvelopePlan.selected_checks.check_id) -ccontains $checkId) "Development-envelope preparation change did not retain bounded '$checkId' coverage." }
     Assert-True (@($developmentEnvelopePlan.selected_checks.check_id) -cnotcontains 'work-environment-deep') "Development-envelope preparation change incorrectly selected 'work-environment-deep'."
     foreach ($reasonCode in @('ambiguous-path-mapping','unmapped-path')) { Assert-True (@($developmentEnvelopePlan.reason_codes) -cnotcontains $reasonCode) "Development-envelope preparation change retained '$reasonCode'." }
+    Write-Host "Trust routing-contract checks passed in $([long]$trustSegmentClock.Elapsed.TotalMilliseconds)ms."
+    }
 
+    if ($runFullSelector -or $runTrustMappingsPhase) {
+    $trustSegmentClock = [Diagnostics.Stopwatch]::StartNew()
     # Every path from the combined raw-CAS and historical-debt candidate has a
     # single exact owner class.  Test each path independently so command-path
     # selection cannot conceal an unmapped or ambiguous shared-module route.
@@ -1712,11 +2323,15 @@ try {
         foreach ($checkId in @($mapping.checks)) { Assert-True (@($mappingPlan.selected_checks.check_id) -ccontains [string]$checkId) "Proportional mapping for '$($mapping.path)' omitted '$checkId'." }
         $proportionalMappingHead = $nextMappingHead
     }
+    Write-Host "Trust proportional-mapping checks passed in $([long]$trustSegmentClock.Elapsed.TotalMilliseconds)ms."
+    }
 
+    if ($runFullSelector -or $runTrustDamagePhase) {
+    $trustSegmentClock = [Diagnostics.Stopwatch]::StartNew()
     # The aggregate command is itself a distinct bounded path set.  Its direct
     # change must still select the registered Deep aggregate route without an
     # ambiguous or unmapped fallback.
-    $workEnvironmentAggregateBase = $proportionalMappingHead
+    $workEnvironmentAggregateBase = if ($runFullSelector) { $proportionalMappingHead } else { $deleteHead }
     Write-Utf8 (Join-Path $fixture 'scripts/Test-WorkEnvironment.ps1') "# work environment aggregate change`n"
     [void](Invoke-TestGit $fixture @('add', 'scripts/Test-WorkEnvironment.ps1'))
     [void](Invoke-TestGit $fixture @('commit', '-m', 'work environment aggregate change'))
@@ -1732,7 +2347,7 @@ try {
     $collisionBlob = Invoke-TestGit $fixture @('hash-object', '-w', '--no-filters', $collisionBlobPath)
     $collisionBaseDocsTree = Invoke-TestGitInput $fixture @('mktree') "100644 blob $collisionBlob`tcollision.md`n"
     $collisionBaseTree = Invoke-TestGitInput $fixture @('mktree') "040000 tree $collisionBaseDocsTree`tdocs`n"
-    $collisionBase = Invoke-TestGit $fixture @('commit-tree', $collisionBaseTree, '-p', $selectorHead, '-m', 'collision base')
+    $collisionBase = Invoke-TestGit $fixture @('commit-tree', $collisionBaseTree, '-p', $workEnvironmentAggregateBase, '-m', 'collision base')
     $collisionHeadDocsTree = Invoke-TestGitInput $fixture @('mktree') "100644 blob $collisionBlob`tCollision.md`n100644 blob $collisionBlob`tcollision.md`n"
     $collisionHeadTree = Invoke-TestGitInput $fixture @('mktree') "040000 tree $collisionHeadDocsTree`tdocs`n"
     $collisionHead = Invoke-TestGit $fixture @('commit-tree', $collisionHeadTree, '-p', $collisionBase, '-m', 'collision head')
@@ -1752,6 +2367,12 @@ try {
     $duplicateInvocationFailed = $false
     try { [void](Test-MorphospaceAffectedValidationRegistry -Registry $duplicateInvocation -RepositoryRoot $fixture -SchemaPath (Join-Path $fixture 'schemas/affected-validation-registry-v1.schema.json')) } catch { $duplicateInvocationFailed = $_.Exception.Message -like '*repeat exact command/argument invocation*' }
     Assert-True $duplicateInvocationFailed 'Registry accepted a duplicate exact command/argument invocation.'
+
+    $aggregateRoleDamage = Read-MorphospaceProtocolJson -Path (Join-Path $fixture 'manifests/affected-validation-registry.json')
+    $aggregateRoleDamage.checks | Where-Object { $_.check_id -ceq 'documentation-links' } | ForEach-Object { $_ | Add-Member -NotePropertyName aggregate_role -NotePropertyValue 'work-environment-deep-v1' }
+    $aggregateRoleFailed = $false
+    try { [void](Test-MorphospaceAffectedValidationRegistry -Registry $aggregateRoleDamage -RepositoryRoot $fixture -SchemaPath (Join-Path $fixture 'schemas/affected-validation-registry-v1.schema.json')) } catch { $aggregateRoleFailed = $_.Exception.Message -like '*exact closed Work Environment Deep aggregate*' }
+    Assert-True $aggregateRoleFailed 'Registry allowed an independent leaf to impersonate the cumulative Deep aggregate role.'
 
     $crossPlatform = Read-MorphospaceProtocolJson -Path (Join-Path $fixture 'manifests/affected-validation-registry.json')
     $crossPlatform.checks | Where-Object { $_.check_id -ceq 'work-unit-automation' } | ForEach-Object { $_.prerequisite_checks = @('documentation-links') }
@@ -1788,10 +2409,10 @@ try {
     try {
         [System.Globalization.CultureInfo]::CurrentCulture = [System.Globalization.CultureInfo]::GetCultureInfo('en-US')
         [System.Globalization.CultureInfo]::CurrentUICulture = [System.Globalization.CultureInfo]::GetCultureInfo('en-US')
-        $englishPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $selectorHead -HeadRevision $cultureHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+        $englishPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $workEnvironmentAggregateBase -HeadRevision $cultureHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
         [System.Globalization.CultureInfo]::CurrentCulture = [System.Globalization.CultureInfo]::GetCultureInfo('sv-SE')
         [System.Globalization.CultureInfo]::CurrentUICulture = [System.Globalization.CultureInfo]::GetCultureInfo('sv-SE')
-        $swedishPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $selectorHead -HeadRevision $cultureHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+        $swedishPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $workEnvironmentAggregateBase -HeadRevision $cultureHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
         Assert-True ($englishPlan.plan_sha256 -ceq $swedishPlan.plan_sha256) 'Unicode path plan changed with host culture.'
         $englishPlanBytes = [System.Text.UTF8Encoding]::new($false).GetBytes((ConvertTo-MorphospaceCanonicalJson -Value $englishPlan) + "`n")
         $swedishPlanBytes = [System.Text.UTF8Encoding]::new($false).GetBytes((ConvertTo-MorphospaceCanonicalJson -Value $swedishPlan) + "`n")
@@ -1817,7 +2438,7 @@ try {
     Assert-True (@($ambiguousPlan.reason_codes) -ccontains 'ambiguous-path-mapping') 'Ambiguous path-set mapping lacks its explicit reason.'
 
     $headDriftFailed = $false
-    try { [void](Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $deleteHead -HeadRevision $selectorHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick) } catch { $headDriftFailed = $_.Exception.Message -like '*worktree HEAD*' }
+    try { [void](Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $deleteHead -HeadRevision $workEnvironmentAggregateBase -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick) } catch { $headDriftFailed = $_.Exception.Message -like '*worktree HEAD*' }
     Assert-True $headDriftFailed 'Clean worktree HEAD drift was not rejected explicitly.'
 
     [void](Invoke-TestGit $fixture @('checkout', '--detach', $base))
@@ -1828,6 +2449,8 @@ try {
     $nonAncestorFailed = $false
     try { [void](Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $ambiguousHead -HeadRevision $sideHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick) } catch { $nonAncestorFailed = $_.Exception.Message -like '*base to be an ancestor*' }
     Assert-True $nonAncestorFailed 'Non-ancestor comparison was not rejected.'
+    Write-Host "Trust damage/culture checks passed in $([long]$trustSegmentClock.Elapsed.TotalMilliseconds)ms."
+    }
     }
 } finally {
     if ([System.IO.Directory]::Exists($fixture)) { Remove-Item -LiteralPath $fixture -Recurse -Force }

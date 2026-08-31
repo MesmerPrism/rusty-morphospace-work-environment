@@ -82,6 +82,9 @@ function Invoke-EnvironmentChild {
 
 try {
     New-Item -ItemType Directory -Force -Path $testRoot | Out-Null
+    $requiredCommandRoot = Join-Path $testRoot 'required-commands'
+    New-Item -ItemType Directory -Force -Path $requiredCommandRoot | Out-Null
+    Write-FakeCommand -Directory $requiredCommandRoot -Name 'rg' -Output 'ripgrep 99.0.0 (environment-validation fixture)'
     $valid = [ordered]@{
         schema = "rusty.morphospace.work_environment.local_paths.v1"
         workspace_root = $testRoot
@@ -100,29 +103,29 @@ try {
 
     $validPath = Join-Path $testRoot "valid.json"
     Write-Config -Path $validPath -Value $valid
-    Invoke-EnvironmentChild -ConfigPath $validPath -Profile "Core" -ExpectedExit 0 -ExpectedText "Environment check complete."
+    Invoke-EnvironmentChild -ConfigPath $validPath -Profile "Core" -ExpectedExit 0 -ExpectedText "Environment check complete." -PathPrefix $requiredCommandRoot
 
     $placeholder = $valid | ConvertTo-Json -Depth 8 | ConvertFrom-Json
     $placeholder.workspace_root = "<workspace-root>"
     $placeholderPath = Join-Path $testRoot "placeholder.json"
     Write-Config -Path $placeholderPath -Value $placeholder
-    Invoke-EnvironmentChild -ConfigPath $placeholderPath -Profile "Core" -ExpectedExit 1 -ExpectedText "workspace_root"
+    Invoke-EnvironmentChild -ConfigPath $placeholderPath -Profile "Core" -ExpectedExit 1 -ExpectedText "workspace_root" -PathPrefix $requiredCommandRoot
 
     $missingRepo = $valid | ConvertTo-Json -Depth 8 | ConvertFrom-Json
     $missingRepo.repos.example_repo = Join-Path $testRoot "does-not-exist"
     $missingRepoPath = Join-Path $testRoot "missing-repo.json"
     Write-Config -Path $missingRepoPath -Value $missingRepo
-    Invoke-EnvironmentChild -ConfigPath $missingRepoPath -Profile "Core" -ExpectedExit 1 -ExpectedText "repos.example_repo"
+    Invoke-EnvironmentChild -ConfigPath $missingRepoPath -Profile "Core" -ExpectedExit 1 -ExpectedText "repos.example_repo" -PathPrefix $requiredCommandRoot
 
     $oldPythonRoot = Join-Path $testRoot "old-python"
     New-Item -ItemType Directory -Force -Path $oldPythonRoot | Out-Null
     Write-FakeCommand -Directory $oldPythonRoot -Name "python" -Output "Python 3.10.9"
-    Invoke-EnvironmentChild -ConfigPath $validPath -Profile "Core" -ExpectedExit 1 -ExpectedText "version-too-old" -PathPrefix $oldPythonRoot
+    Invoke-EnvironmentChild -ConfigPath $validPath -Profile "Core" -ExpectedExit 1 -ExpectedText "version-too-old" -PathPrefix ($oldPythonRoot + [IO.Path]::PathSeparator + $requiredCommandRoot)
 
     $oldJavaRoot = Join-Path $testRoot "old-java"
     New-Item -ItemType Directory -Force -Path $oldJavaRoot | Out-Null
     Write-FakeCommand -Directory $oldJavaRoot -Name "java" -Output "openjdk version 16.0.2" -StandardError
-    Invoke-EnvironmentChild -ConfigPath $validPath -Profile "Quest" -ExpectedExit 1 -ExpectedText "version-too-old" -PathPrefix $oldJavaRoot
+    Invoke-EnvironmentChild -ConfigPath $validPath -Profile "Quest" -ExpectedExit 1 -ExpectedText "version-too-old" -PathPrefix ($oldJavaRoot + [IO.Path]::PathSeparator + $requiredCommandRoot)
 
     Write-Host "Environment validation regression tests passed."
 } finally {

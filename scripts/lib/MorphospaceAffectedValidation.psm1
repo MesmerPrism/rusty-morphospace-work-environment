@@ -291,6 +291,13 @@ function Test-MorphospaceAffectedValidationRegistry {
         if (@('quick', 'standard', 'deep') -cnotcontains [string]$check.minimum_tier) { throw "Check '$checkId' has invalid tier." }
         if (@('disabled', 'exact-host', 'portable') -cnotcontains [string]$check.cache_policy) { throw "Check '$checkId' has invalid cache policy." }
         if ([long]$check.budget_seconds -lt 1 -or [long]$check.budget_seconds -gt 86400) { throw "Check '$checkId' has invalid budget." }
+        if ($null -ne $check.PSObject.Properties['aggregate_role']) {
+            $exactArguments = @($check.arguments).Count -eq 3 -and [string]$check.arguments[0] -ceq '-SelfTest' -and [string]$check.arguments[1] -ceq '-Tier' -and [string]$check.arguments[2] -ceq 'Deep'
+            $exactPlatforms = @($check.platforms).Count -eq 1 -and [string]$check.platforms[0] -ceq 'windows'
+            if ([string]$check.aggregate_role -cne 'work-environment-deep-v1' -or $checkId -cne 'work-environment-deep' -or [string]$check.command_path -cne 'scripts/Test-WorkEnvironment.ps1' -or -not $exactArguments -or -not $exactPlatforms -or [string]$check.minimum_tier -cne 'deep' -or [string]$check.cache_policy -cne 'disabled' -or [string]$check.external_state -cne 'none' -or [bool]$check.always_run) {
+                throw "Aggregate role '$([string]$check.aggregate_role)' is not the exact closed Work Environment Deep aggregate."
+            }
+        }
         $commandPath = ConvertTo-MorphospaceAffectedPath -Path ([string]$check.command_path)
         $invocationIdentity = Get-MorphospaceCanonicalJsonSha256 -Value ([pscustomobject][ordered]@{command_path=$commandPath;arguments=@($check.arguments)})
         if (-not $invocationSet.Add($invocationIdentity)) { throw "Affected-validation checks repeat exact command/argument invocation '$commandPath'." }
@@ -544,7 +551,23 @@ function Resolve-MorphospaceAffectedValidation {
     }
     foreach ($id in @($registry.always_run_check_ids)) { Add-AffectedSelection ([string]$id) 'always-run' }
     if ($fullDeep) {
-        foreach ($check in @($registry.checks)) { Add-AffectedSelection ([string]$check.check_id) 'full-deep' }
+        foreach ($check in @($registry.checks)) {
+            $isAggregateOnly = $null -ne $check.PSObject.Properties['aggregate_role'] -and [string]$check.aggregate_role -ceq 'work-environment-deep-v1'
+            if ($isAggregateOnly -and $RequestedTier -cne 'deep') { continue }
+            Add-AffectedSelection ([string]$check.check_id) 'full-deep'
+        }
+        foreach ($check in @($registry.checks | Where-Object { $null -ne $_.PSObject.Properties['aggregate_role'] -and [string]$_.aggregate_role -ceq 'work-environment-deep-v1' })) {
+            foreach ($pathSetId in @($check.trigger_path_sets)) {
+                if ($matchedPathSets.Contains([string]$pathSetId)) { Add-AffectedSelection ([string]$check.check_id) "path-set:$pathSetId" }
+            }
+            $commandPath = [string]$check.command_path
+            foreach ($change in $changes) {
+                if (($null -ne $change.old_path -and [string]$change.old_path -ceq $commandPath) -or
+                    ($null -ne $change.new_path -and [string]$change.new_path -ceq $commandPath)) {
+                    Add-AffectedSelection ([string]$check.check_id) 'command-path-changed'
+                }
+            }
+        }
     } else {
         foreach ($check in @($registry.checks)) {
             foreach ($pathSetId in @($check.trigger_path_sets)) {
@@ -645,4 +668,4 @@ function Resolve-MorphospaceAffectedValidation {
     }
 }
 
-Microsoft.PowerShell.Core\Export-ModuleMember -Function Test-MorphospaceAffectedValidationRegistry, Resolve-MorphospaceAffectedValidation
+Microsoft.PowerShell.Core\Export-ModuleMember -Function Test-MorphospaceAffectedValidationRegistry, Resolve-MorphospaceAffectedValidation, Get-MorphospaceAffectedTreeInventory, Assert-MorphospaceAffectedBatchedWorkingBytes

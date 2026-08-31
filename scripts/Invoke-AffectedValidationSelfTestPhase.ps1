@@ -1,7 +1,7 @@
 [CmdletBinding(DefaultParameterSetName='Phase')]
 param(
     [Parameter(Mandatory=$true,ParameterSetName='Phase')]
-    [ValidateSet('graph-import-closure','executor-pass-schema','executor-damage','selection-scenarios','trust-mapping-final')]
+    [ValidateSet('graph-import-closure','executor-pass-schema','executor-damage','selection-scenarios','trust-self-executor','trust-routing-contracts','trust-proportional-mappings','trust-damage-final')]
     [string]$Phase,
     [Parameter(Mandatory=$true,ParameterSetName='Phase')][ValidateRange(1,600)][int]$BudgetSeconds,
     [Parameter(Mandatory=$true,ParameterSetName='Verify')][switch]$Verify
@@ -13,13 +13,16 @@ $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceAffectedValidation.psm1') -Force
 
-$phaseIds = @('graph-import-closure','executor-pass-schema','executor-damage','selection-scenarios','trust-mapping-final')
+$phaseIds = @('graph-import-closure','executor-pass-schema','executor-damage','selection-scenarios','trust-self-executor','trust-routing-contracts','trust-proportional-mappings','trust-damage-final')
 $checkIds = [ordered]@{
     'graph-import-closure'='affected-selector-graph-import-closure'
     'executor-pass-schema'='affected-selector-executor-pass-schema'
     'executor-damage'='affected-selector-executor-damage'
     'selection-scenarios'='affected-selector-selection-scenarios'
-    'trust-mapping-final'='affected-selector-trust-mapping-final'
+    'trust-self-executor'='affected-selector-trust-self-executor'
+    'trust-routing-contracts'='affected-selector-trust-routing-contracts'
+    'trust-proportional-mappings'='affected-selector-trust-proportional-mappings'
+    'trust-damage-final'='affected-selector-trust-damage-final'
 }
 $dependencyPaths = @(
     'manifests/affected-validation-registry.json',
