@@ -705,7 +705,10 @@ function Invoke-AffectedValidationCheck([object]$Check, [string]$Command, [strin
     $budget = [Math]::Min([Math]::Max([int]$Check.budget_seconds, 1), 7200)
     $arguments = [Collections.Generic.List[string]]::new()
     foreach ($argument in @('-NoProfile', '-NonInteractive', '-File', $Command) + @($Check.arguments)) { [void]$arguments.Add([string]$argument) }
-    $projectedNames = @('RUSTY_AFFECTED_VALIDATION_PHASE_ROOT','RUSTY_AFFECTED_VALIDATION_BASE_COMMIT','RUSTY_AFFECTED_VALIDATION_HEAD_COMMIT','RUSTY_AFFECTED_VALIDATION_PLAN_SHA256','RUSTY_AFFECTED_VALIDATION_PLATFORM','RUSTY_AFFECTED_VALIDATION_CHECK_ID','GIT_PAGER')
+    $projectedNames = @('RUSTY_AFFECTED_VALIDATION_PHASE_ROOT','RUSTY_AFFECTED_VALIDATION_BASE_COMMIT','RUSTY_AFFECTED_VALIDATION_HEAD_COMMIT','RUSTY_AFFECTED_VALIDATION_PLAN_SHA256','RUSTY_AFFECTED_VALIDATION_PLATFORM','RUSTY_AFFECTED_VALIDATION_CHECK_ID')
+    [string[]]$gitEnvironmentNames = @(Get-ChildItem Env: | Where-Object { ([string]$_.Name).StartsWith('GIT_',[StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { [string]$_.Name })
+    if ($gitEnvironmentNames.Count -gt 1) { [Array]::Sort($gitEnvironmentNames,[StringComparer]::Ordinal) }
+    $projectedNames = @($projectedNames + $gitEnvironmentNames)
     $savedEnvironment = @{}
     foreach ($name in $projectedNames) { $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name,'Process') }
     try {
@@ -715,7 +718,7 @@ function Invoke-AffectedValidationCheck([object]$Check, [string]$Command, [strin
         [Environment]::SetEnvironmentVariable('RUSTY_AFFECTED_VALIDATION_PLAN_SHA256',[string]$plan.plan_sha256,'Process')
         [Environment]::SetEnvironmentVariable('RUSTY_AFFECTED_VALIDATION_PLATFORM',$Platform,'Process')
         [Environment]::SetEnvironmentVariable('RUSTY_AFFECTED_VALIDATION_CHECK_ID',[string]$Check.check_id,'Process')
-        [Environment]::SetEnvironmentVariable('GIT_PAGER',$null,'Process')
+        foreach ($name in $gitEnvironmentNames) { Remove-Item -LiteralPath ("Env:$name") -ErrorAction Stop }
         $child = [W017BoundedChildResult]::new()
         $integrityError = $null
         try { [void](Assert-MorphospaceAffectedBatchedWorkingBytes -RepositoryRoot $root -ExpectedHead $plan.head -Inventory $Inventory -Paths $IntegrityPaths) } catch { $integrityError = "Pre-execution affected-check input integrity failed: $($_.Exception.Message)" }
@@ -731,7 +734,10 @@ function Invoke-AffectedValidationCheck([object]$Check, [string]$Command, [strin
         }
         if ($null -ne $integrityError) { $child.Error = if ([string]::IsNullOrWhiteSpace([string]$child.Error)) { $integrityError } else { ([string]$child.Error + [Environment]::NewLine + $integrityError) } }
     } finally {
-        foreach ($name in $projectedNames) { [Environment]::SetEnvironmentVariable($name,$savedEnvironment[$name],'Process') }
+        foreach ($name in $projectedNames) {
+            if ($null -eq $savedEnvironment[$name]) { Remove-Item -LiteralPath ("Env:$name") -ErrorAction SilentlyContinue }
+            else { [Environment]::SetEnvironmentVariable($name,[string]$savedEnvironment[$name],'Process') }
+        }
     }
     $stdout = [byte[]]$child.Stdout
     $stderr = [byte[]]$child.Stderr
