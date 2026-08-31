@@ -357,9 +357,11 @@ public static class W017SupervisorInnerJob {
         try{$innerResult=[W017SupervisorInnerJob]::Run($Executable,$ChildWorkingDirectory,$childArguments,$OutputLimitBytes,$trustedAncestors.ToArray())}finally{if($ancestorProtection-ne$null){$ancestorProtection.Dispose();$ancestorProtection=$null}}
         $exitCode=$innerResult.ExitCode;$outputTruncated=[bool]$innerResult.Truncated
     } else {
-        $unshare = Get-Command unshare -CommandType Application -ErrorAction SilentlyContinue
-        if($null-eq$unshare){throw 'required unshare executable is unavailable for isolated Linux validation'}
-        $start=[Diagnostics.ProcessStartInfo]::new($unshare.Source);$start.WorkingDirectory=$ChildWorkingDirectory;$start.UseShellExecute=$false;$start.CreateNoWindow=$true;$start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
+        $unsharePaths=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        foreach($unshare in @(Get-Command unshare -CommandType Application -ErrorAction SilentlyContinue)){$unsharePath=[IO.Path]::GetFullPath([string]$unshare.Source);if(-not[IO.File]::Exists($unsharePath)){throw 'resolved unshare executable does not exist'};[void]$unsharePaths.Add($unsharePath)}
+        if($unsharePaths.Count-eq0){throw 'required unshare executable is unavailable for isolated Linux validation'}
+        [string[]]$orderedUnsharePaths=@($unsharePaths);[Array]::Sort($orderedUnsharePaths,[StringComparer]::Ordinal);$unsharePath=$orderedUnsharePaths[0]
+        $start=[Diagnostics.ProcessStartInfo]::new($unsharePath);$start.WorkingDirectory=$ChildWorkingDirectory;$start.UseShellExecute=$false;$start.CreateNoWindow=$true;$start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
         foreach($argument in @('--user','--map-root-user','--pid','--fork','--kill-child=KILL','--mount-proc',$Executable)+@($childArguments)){[void]$start.ArgumentList.Add([string]$argument)}
         $pump=Start-Pump $start;$pump.process.WaitForExit();$exitCode=$pump.process.ExitCode;Complete-Pump $pump;$outputTruncated=$false
     }
