@@ -183,6 +183,10 @@ failures cannot publish reusable bytes. A main push
 may reuse them only when its ordered merge parents, exact candidate tree,
 workflow bytes, ancestor base, PR/run/check identities, artifact bytes, and
 freshness all authenticate through `Test-AffectedValidationReuse.ps1`.
+The authenticated successful-job set is exactly `infrastructure`,
+`quick-linux`, `quick-windows`, `select`, and `standard-windows`; artifact
+aliases such as `affected-linux` and `affected-windows` never substitute for
+GitHub job identities.
 Otherwise the main job runs only its current delta. No historical aggregate
 receipt is reusable: scheduled/manual Deep checks out full history and runs the
 current Deep aggregate. Neither evidence shape is publication or acceptance
