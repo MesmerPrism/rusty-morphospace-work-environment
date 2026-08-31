@@ -369,6 +369,21 @@
         { "type": "null" }
       ]
     },
+    "terminal_validation_selection_release": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "sha256", "terminal_unit_id"],
+          "properties": {
+            "path": { "type": "string", "pattern": "^receipts/[a-z0-9][a-z0-9-]{1,127}-terminal-validation-selection-release\\.json$" },
+            "sha256": { "$ref": "#/$defs/sha256" },
+            "terminal_unit_id": { "$ref": "#/$defs/id" }
+          }
+        },
+        { "type": "null" }
+      ]
+    },
     "push_plan": { "oneOf": [{ "type": "object" }, { "type": "null" }] },
     "event_id": { "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] }
   },
@@ -397,6 +412,15 @@
       },
       "else": {
         "properties": { "ready_withdrawal": { "type": "null" } }
+      }
+    },
+    {
+      "if": {
+        "properties": { "action": { "const": "Ready" } },
+        "required": ["action"]
+      },
+      "else": {
+        "properties": { "terminal_validation_selection_release": { "type": "null" } }
       }
     },
     {

@@ -53,6 +53,29 @@ without fallback. A returned or blocked attempt needs a fresh exact selector
 and create-new evidence path for its next dispatch; replaying an existing path
 is a collision.
 
+An executed non-passing `RecordValidation` terminally blocks the unit and clears
+its consumed selector binding in the same transaction. `ReturnToActive` instead
+retains the binding because the same unit and attempt continue. For workspaces
+written by the earlier consumer, `Ready` may clear a different unit's stale
+binding only for a proposed successor when there is no current unit, both the
+selector and checkpoint are Quick, and every selected-unit repository has an
+available explicit mapping plus an exact clean Git observation. The selected
+unit contract, reconstructed
+selector/evidence binding, fully revalidated same-unit non-passing receipt,
+unique exact blocker, physical ledger-tail event, and canonical read-only
+committed-transition verifier must all authenticate the unchanged terminal
+blocked state at the exact live state, unit, and event-ledger paths. Because the
+old transition did not bind the receipt and external evidence bytes, the
+successor `Ready` transition creates a closed
+`terminal_validation_selection_release.v1` proof that hashes those current
+bytes, each repository HEAD/tree/branch and empty dirty fingerprint,
+blocker/event, selector binding,
+and old intent/completion. The new transition intent embeds that proof as a
+create-new artifact and the Ready event names it. The dry run reports the proof
+identity but creates neither it nor any state change.
+Missing, ambiguous, altered, non-terminal, or non-`Ready` cross-unit bindings
+continue to reject.
+
 The normal consumer does not execute the producer and does not create evidence.
 It changes no source, unit, freeze, repository, device, or remote bytes. Normal
 executed lifecycle actions transactionally bind/consume/clear the hash-only
@@ -69,8 +92,9 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/Test-NormalValidationSelec
 
 The suite proves unchanged ordinary behavior without a selector, exact positive
 matrix selection without producer execution, pass/fail/return/accept lifecycle
-reconstruction, and negative selector/hash/project/unit/gate/freeze/repository/
-producer/evidence/action/tier/omission/replay cases. It is candidate-side
+reconstruction, hash-bound terminal recovery, and negative selector/hash/
+project/unit/gate/freeze/repository/path-shadow/producer/evidence/action/tier/
+omission/replay cases. It is candidate-side
 dynamic evidence only. Changes to this consumer, schema, test, or routing still
 require the repository's independent base-owned validation-authority review
 before commit, adoption, or use against a live workflow.

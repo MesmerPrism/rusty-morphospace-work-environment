@@ -318,7 +318,19 @@ external canonical create-new evidence identity. Persist only the exact
 selector/evidence hashes needed to reconstruct receipt-consuming lifecycle
 actions; never persist or accept a selector-carried command, change the unit
 gate identity, execute the producer inside the consumer, or fall back after
-selector or evidence damage.
+selector or evidence damage. Clear the binding in the same transaction as a
+terminal non-passing record. Retain it for `ReturnToActive`; release a stale
+cross-unit binding during `Ready` only when the selected blocked unit, exact
+Quick selector/evidence, Quick checkpoint, complete repository map, fully
+clean Git observations for every mapped repository, fully revalidated
+non-passing receipt, unique exact generated blocker, physical
+ledger-tail event, and canonical read-only verification of the committed
+transition at the exact live state/unit/events paths prove the unchanged old
+terminal state and the successor is still proposed. Since the old transition
+did not hash the receipt/evidence bytes, bind a closed release proof containing
+their current hashes plus repository, blocker/event, selector, and old-
+transaction identities as a create-new artifact of the successor Ready
+transaction.
 
 ## Authority Rules
 
@@ -494,7 +506,11 @@ selector or evidence damage.
   normal-validation selector described in `docs/NORMAL_VALIDATION_SELECTOR.md`;
   it is Quick-only, data-only, hash-bound, and phase-aware across dispatch and
   receipt consumption. It authorizes no producer, product, build, or device
-  execution; normal lifecycle state/ledger transactions retain only its hashes.
+  execution; normal lifecycle state/ledger transactions retain only its hashes,
+  clear them on terminal recording, and fail closed on unproven cross-unit
+  release. Historical release requires Quick/Quick tier identity, complete
+  repository mappings, canonical live-path transaction verification, and a
+  create-new recovery proof hash-bound by the successor Ready transaction.
 - Resolve one exact current active-unit blocker only through product-neutral
   `blocker_resolution_receipt.v1` and `ResolveBlocker`: revalidate its passing
   hash-bound evidence, attached-branch or exact detached repository heads, and

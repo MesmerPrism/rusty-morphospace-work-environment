@@ -2413,6 +2413,7 @@ $requiredSchemaNames = @(
     "validation-receipt-v2.schema.json",
     "validator-trust-anchor-migration.schema.json",
     "timestamp-anomaly-projection.schema.json",
+    "terminal-validation-selection-release-v1.schema.json",
     "unplanned-publication-closure.schema.json",
     "unplanned-publication-closure-v2.schema.json",
     "work-unit-automation-receipt.schema.json",

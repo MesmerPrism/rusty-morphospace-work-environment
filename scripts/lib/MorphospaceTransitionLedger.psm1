@@ -604,6 +604,50 @@ function Assert-MorphospaceLedgerCommittedCompletion {
         }
     }
 }
+function Test-MorphospaceCommittedTransitionLedger {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)][string]$WorkspaceRoot,
+        [Parameter(Mandatory=$true)][string]$TransactionId,
+        [string]$ExpectedStatePath='',
+        [string]$ExpectedUnitPath='',
+        [string]$ExpectedEventsPath='',
+        [switch]$RequireTail
+    )
+    $workspace=[IO.Path]::GetFullPath($WorkspaceRoot)
+    $intentRelative=Get-MorphospaceLedgerPath $workspace $TransactionId intent
+    $completionRelative=Get-MorphospaceLedgerPath $workspace $TransactionId completion
+    $lock=Enter-MorphospaceWorkspaceMutex -WorkspaceRoot $workspace
+    try {
+        $intentAbsolute=Resolve-MorphospaceWorkspacePath -WorkspaceRoot $workspace -RelativePath $intentRelative -RequireLeaf
+        $completionAbsolute=Resolve-MorphospaceWorkspacePath -WorkspaceRoot $workspace -RelativePath $completionRelative -RequireLeaf
+        $intent=Read-MorphospaceLedgerJson $intentAbsolute
+        Assert-MorphospaceLedgerIntent $intent $TransactionId
+        foreach($expected in @(
+            [pscustomobject]@{name='state';supplied=$ExpectedStatePath;actual=[string]$intent.state.path},
+            [pscustomobject]@{name='unit';supplied=$ExpectedUnitPath;actual=[string]$intent.unit.path},
+            [pscustomobject]@{name='events';supplied=$ExpectedEventsPath;actual=[string]$intent.events.path}
+        )){
+            if([string]$expected.supplied-and[string]$expected.actual-cne[string]$expected.supplied){
+                throw "Committed transition $([string]$expected.name) path differs from the required live workspace projection."
+            }
+        }
+        Assert-MorphospaceLedgerArtifactNamespace $workspace $TransactionId $intent
+        Assert-MorphospaceLedgerCommittedCompletion $workspace $TransactionId $intentRelative $intentAbsolute $intent $completionAbsolute
+        $eventsAbsolute=Resolve-MorphospaceWorkspacePath -WorkspaceRoot $workspace -RelativePath ([string]$intent.events.path) -RequireLeaf
+        $tailId=[string](Get-MorphospaceLedgerEventTail $eventsAbsolute)
+        if($RequireTail-and$tailId-cne[string]$intent.event.event_id){
+            throw 'Committed transition event is not the physical ledger tail.'
+        }
+        return [pscustomobject][ordered]@{
+            transaction_id=$TransactionId
+            status='committed'
+            intent=$intent
+            completion=Read-MorphospaceLedgerJson $completionAbsolute
+            event_tail_id=$tailId
+        }
+    } finally {Exit-MorphospaceWorkspaceMutex $lock}
+}
 function Complete-MorphospaceTransitionLedger {
     param([string]$WorkspaceRoot,[string]$TransactionId,[switch]$Repair,[ValidateSet('none','after-intent','after-artifact','after-projection','after-event')][string]$FaultAfter='none')
     $workspace=[IO.Path]::GetFullPath($WorkspaceRoot);$intentRelative=Get-MorphospaceLedgerPath $workspace $TransactionId intent;$completionRelative=Get-MorphospaceLedgerPath $workspace $TransactionId completion
@@ -884,4 +928,4 @@ function Start-MorphospaceTransitionLedger {
     } finally {Exit-MorphospaceWorkspaceMutex $lock}
     Complete-MorphospaceTransitionLedger -WorkspaceRoot $workspace -TransactionId $TransactionId -FaultAfter $FaultAfter
 }
-Export-ModuleMember -Function Start-MorphospaceTransitionLedger,Complete-MorphospaceTransitionLedger,Get-MorphospaceSupersessionEventId
+Export-ModuleMember -Function Start-MorphospaceTransitionLedger,Complete-MorphospaceTransitionLedger,Test-MorphospaceCommittedTransitionLedger,Get-MorphospaceSupersessionEventId
