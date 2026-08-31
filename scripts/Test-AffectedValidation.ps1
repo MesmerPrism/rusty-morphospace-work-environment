@@ -1468,7 +1468,9 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value ([pscust
             $firstInventory = Get-Content -LiteralPath $firstInventoryPath -Raw | ConvertFrom-Json -Depth 64 -DateKind String
             $firstReceipts = @(Get-ChildItem -LiteralPath $firstCheckRoot -Filter receipt.json -File -Recurse)
             Assert-True ($firstReceipts.Count -eq @($evidence.check_results).Count) 'Affected executor did not preserve one typed leaf receipt per executed check.'
-            Assert-True (@($firstInventory.entries).Count -eq $firstReceipts.Count -and [string]$firstInventory.producer.context -ceq 'local') 'Affected check inventory does not bind every leaf to its producer context.'
+            Assert-True (@($firstInventory.entries).Count -eq $firstReceipts.Count) 'Affected check inventory does not bind every leaf receipt.'
+            $expectedProducerContext = if ([string][Environment]::GetEnvironmentVariable('GITHUB_ACTIONS','Process') -ceq 'true') { 'github-actions' } else { 'local' }
+            Assert-True ([string]$firstInventory.producer.context -ceq $expectedProducerContext) "Affected check inventory producer context does not match the ambient '$expectedProducerContext' execution context."
             foreach ($receiptFile in $firstReceipts) {
                 $receipt = Get-Content -LiteralPath $receiptFile.FullName -Raw | ConvertFrom-Json -Depth 64 -DateKind String
                 Assert-True ($receipt.mode -ceq 'executed' -and $receipt.result -ceq 'pass' -and $receipt.binding_sha256 -match '^[0-9a-f]{64}$') 'Initial affected leaf receipt is not exact executed passing evidence.'
