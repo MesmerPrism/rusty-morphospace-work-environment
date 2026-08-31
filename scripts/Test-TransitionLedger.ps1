@@ -22,6 +22,18 @@ function Write-Json {
     )
 }
 
+function Read-TestProtocolJson {
+    param([string]$Path)
+    $value = Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json -DateKind String
+    foreach ($timestampName in @('created_at', 'completed_at')) {
+        if (($value.PSObject.Properties.Name -contains $timestampName) -and
+            $value.$timestampName -isnot [string]) {
+            throw "Transition-ledger test fixture coerced '$timestampName' away from its exact protocol string."
+        }
+    }
+    return $value
+}
+
 function Get-LedgerDocumentHash {
     param([object]$Value)
     & $script:transitionModule {
@@ -55,10 +67,10 @@ function Assert-LedgerCommittedV4DamageRejected {
     $transactionId = 'projected-raw-recovery-transition'
     $intentPath = Join-Path $caseWorkspace "receipts\transactions\$transactionId.intent.json"
     $completionPath = Join-Path $caseWorkspace "receipts\transactions\$transactionId.completion.json"
-    $intent = Get-Content -Raw -LiteralPath $intentPath | ConvertFrom-Json
+    $intent = Read-TestProtocolJson $intentPath
     & $Mutation $caseWorkspace $intent
     Write-Json -Path $intentPath -Value $intent
-    $completion = Get-Content -Raw -LiteralPath $completionPath | ConvertFrom-Json
+    $completion = Read-TestProtocolJson $completionPath
     $completion.intent.sha256 = Get-LedgerFileHash $intentPath
     Write-Json -Path $completionPath -Value $completion
     $completionRelative = [IO.Path]::GetRelativePath($PlanningRoot, $completionPath).Replace('\','/')
@@ -583,7 +595,7 @@ try {
     $legacyProjectedWorkspace = Join-Path $workspace 'supersession-legacy-projected-target'
     $legacyProjected = Initialize-SupersessionLedgerFixture $legacyProjectedWorkspace $unit036 $unit037
     $legacyIntentPath = Publish-SupersessionIntent $legacyProjected
-    $legacyIntent = Get-Content -LiteralPath $legacyIntentPath -Raw | ConvertFrom-Json -DateKind String
+    $legacyIntent = Read-TestProtocolJson $legacyIntentPath
     $legacyIntent.schema = 'rusty.morphospace.workflow.transition_ledger_intent.v1'
     $legacyIntent.PSObject.Properties.Remove('supersession')
     Write-Json $legacyIntentPath $legacyIntent
@@ -629,7 +641,7 @@ try {
     $pathMutationWorkspace = Join-Path $workspace 'supersession-intent-path-mutated'
     $pathMutation = Initialize-SupersessionLedgerFixture $pathMutationWorkspace $unit036 $unit037
     $pathMutationIntentPath = Publish-SupersessionIntent $pathMutation
-    $pathMutationIntent = Get-Content -LiteralPath $pathMutationIntentPath -Raw | ConvertFrom-Json -DateKind String
+    $pathMutationIntent = Read-TestProtocolJson $pathMutationIntentPath
     $pathMutationIntent.unit.path = [string]$pathMutationIntent.supersession.old_unit.path
     Write-Json $pathMutationIntentPath $pathMutationIntent
     $pathMutationRejected = $false
@@ -641,7 +653,7 @@ try {
     $tornBindingWorkspace = Join-Path $workspace 'supersession-torn-tail-invalid-binding'
     $tornBinding = Initialize-SupersessionLedgerFixture $tornBindingWorkspace $unit036 $unit037
     $tornBindingIntentPath = Publish-SupersessionIntent $tornBinding
-    $tornBindingIntent = Get-Content -LiteralPath $tornBindingIntentPath -Raw | ConvertFrom-Json -DateKind String
+    $tornBindingIntent = Read-TestProtocolJson $tornBindingIntentPath
     $tornBindingIntent.supersession.pre_state.document.current_unit = $unit037
     Write-Json $tornBindingIntentPath $tornBindingIntent
     $tornLedgerPath = Join-Path $tornBindingWorkspace 'iteration-events.jsonl'
@@ -740,7 +752,7 @@ try {
     }catch{}
     $preplantedWorkspace=Join-Path $workspace 'preplanted-intent'
     Initialize-LedgerFixture $preplantedWorkspace $state $unit
-    $preplantedIntent=Get-Content -Raw (Join-Path $preplantedSourceWorkspace 'receipts\transactions\preplanted-source-event-transition.intent.json')|ConvertFrom-Json
+    $preplantedIntent=Read-TestProtocolJson (Join-Path $preplantedSourceWorkspace 'receipts\transactions\preplanted-source-event-transition.intent.json')
     $preplantedIntent.transaction_id='preplanted-intent-0001-transition'
     $preplantedIntentPath=Join-Path $preplantedWorkspace 'receipts\transactions\preplanted-intent-0001-transition.intent.json'
     Write-Json $preplantedIntentPath $preplantedIntent
@@ -1556,7 +1568,7 @@ try {
             -FaultAfter after-intent | Out-Null
     }catch{}
     $rawBindingTamperIntentPath=Join-Path $rawBindingTamperWorkspace 'receipts\transactions\projected-raw-binding-tamper-transition.intent.json'
-    $rawBindingTamperIntent=Get-Content -Raw $rawBindingTamperIntentPath|ConvertFrom-Json
+    $rawBindingTamperIntent=Read-TestProtocolJson $rawBindingTamperIntentPath
     $rawBindingTamperIntent.pre_unit_raw.sha256='0'*64
     Write-Json $rawBindingTamperIntentPath $rawBindingTamperIntent
     $rawBindingTamperRejected=$false
