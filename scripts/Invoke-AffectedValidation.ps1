@@ -272,7 +272,7 @@ public static class W017SupervisorProtection {
         if ([Environment]::GetEnvironmentVariable('RUSTY_AFFECTED_VALIDATION_RESTORATION_COLLISION_SELFTEST','Process') -ceq '1') { [W017SupervisorProtection]::RunRestorationCollisionSelfTests() }
         [W017SupervisorProtection]::Protect($completion.SafePipeHandle.DangerousGetHandle())
         $env:RUSTY_AFFECTED_VALIDATION_TRUSTED_ANCESTORS=($trustedAncestors -join ',')
-        $leafTemp=Join-Path ([IO.Path]::GetDirectoryName($ReadyPath)) 'leaf-temp';Initialize-LeafWritableRoot $leafTemp;$env:TEMP=$leafTemp;$env:TMP=$leafTemp
+        $leafTemp=Join-Path ([IO.Path]::GetDirectoryName($ReadyPath)) 'l';Initialize-LeafWritableRoot $leafTemp;$env:TEMP=$leafTemp;$env:TMP=$leafTemp
         $phaseRoot=[Environment]::GetEnvironmentVariable('RUSTY_AFFECTED_VALIDATION_PHASE_ROOT','Process');if(-not[string]::IsNullOrWhiteSpace($phaseRoot)){Initialize-LeafWritableRoot $phaseRoot}
     } else {
         Add-Type -TypeDefinition 'using System.Runtime.InteropServices; public static class W017UnixProcessGroup { [DllImport(""libc"", SetLastError=true)] public static extern int setpgid(int pid, int pgid); [DllImport(""libc"", SetLastError=true)] public static extern int fcntl(int fd, int command, int value); [DllImport(""libc"")] public static extern uint geteuid(); [DllImport(""libc"")] public static extern uint getegid(); }'
@@ -468,6 +468,17 @@ public static class W017SupervisorInnerJob {
             return job;
         } catch { CloseHandle(job); throw; } finally { Marshal.FreeHGlobal(pointer); }
     }
+    private static string ResolveSupervisorBaseDirectory() {
+        var root = Path.GetFullPath(Path.GetTempPath());
+        if (String.Equals(Environment.GetEnvironmentVariable("GITHUB_ACTIONS"), "true", StringComparison.Ordinal)) {
+            var runnerRoot = Environment.GetEnvironmentVariable("RUNNER_TEMP");
+            if (String.IsNullOrWhiteSpace(runnerRoot) || !Path.IsPathRooted(runnerRoot)) { throw new InvalidOperationException("GitHub Actions runner temporary root is absent or not absolute"); }
+            root = Path.GetFullPath(runnerRoot);
+        }
+        if (!Directory.Exists(root)) { throw new InvalidOperationException("owned validation supervisor temporary root does not exist"); }
+        if ((File.GetAttributes(root) & FileAttributes.ReparsePoint) != 0) { throw new InvalidOperationException("owned validation supervisor temporary root is a reparse point"); }
+        return root;
+    }
     private static uint GetJobActiveProcessCount(IntPtr job) {
         var size = Marshal.SizeOf(typeof(JOBOBJECT_BASIC_ACCOUNTING_INFORMATION)); var pointer = Marshal.AllocHGlobal(size);
         try {
@@ -503,7 +514,7 @@ public static class W017SupervisorInnerJob {
         uint parentFutureThreadId = 0;
         IntPtr parentFutureVerificationHandle = IntPtr.Zero;
         try {
-            supervisorDirectory = Path.Combine(Path.GetTempPath(), "w017-affected-child-" + Guid.NewGuid().ToString("N"));
+            supervisorDirectory = Path.Combine(ResolveSupervisorBaseDirectory(), "w7-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(supervisorDirectory);
             var supervisorPath = Path.Combine(supervisorDirectory, "supervisor.ps1");
             var readyPath = Path.Combine(supervisorDirectory, "ready.control");
