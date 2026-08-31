@@ -811,10 +811,18 @@ function Invoke-AffectedValidationCheck([object]$Check, [string]$Command, [strin
 function Get-AffectedValidationProducerBinding {
     $github = [string][Environment]::GetEnvironmentVariable('GITHUB_ACTIONS','Process') -ceq 'true'
     if ($github) {
-        $required = @('GITHUB_REPOSITORY','GITHUB_EVENT_NAME','GITHUB_RUN_ID','GITHUB_RUN_ATTEMPT','GITHUB_WORKFLOW_REF','GITHUB_JOB','PR_NUMBER')
+        $required = @('GITHUB_REPOSITORY','GITHUB_EVENT_NAME','GITHUB_RUN_ID','GITHUB_RUN_ATTEMPT','GITHUB_WORKFLOW_REF','GITHUB_JOB')
         foreach ($name in $required) { if ([string]::IsNullOrWhiteSpace([string][Environment]::GetEnvironmentVariable($name,'Process'))) { throw "Affected check producer environment is incomplete: $name" } }
-        if ([string]$env:GITHUB_REPOSITORY -cne [string]$plan.repository -or [string]$env:GITHUB_EVENT_NAME -cne 'pull_request' -or [string]$env:GITHUB_WORKFLOW_REF -cnotmatch '^MesmerPrism/rusty-morphospace-work-environment/\.github/workflows/validate\.yml@') { throw 'Affected check producer GitHub workflow identity is invalid.' }
-        return [pscustomobject][ordered]@{context='github-actions';execution_id=[guid]::NewGuid().ToString('N');repository=[string]$plan.repository;event_name='pull_request';pull_request_number=[int]$env:PR_NUMBER;run_id=[string]$env:GITHUB_RUN_ID;run_attempt=[int]$env:GITHUB_RUN_ATTEMPT;workflow_path='.github/workflows/validate.yml';job=[string]$env:GITHUB_JOB}
+        $eventName = [string]$env:GITHUB_EVENT_NAME
+        if ([string]$env:GITHUB_REPOSITORY -cne [string]$plan.repository -or @('pull_request','push') -cnotcontains $eventName -or [string]$env:GITHUB_WORKFLOW_REF -cnotmatch '^MesmerPrism/rusty-morphospace-work-environment/\.github/workflows/validate\.yml@') { throw 'Affected check producer GitHub workflow identity is invalid.' }
+        $pullRequestNumber = 0
+        if ($eventName -ceq 'pull_request') {
+            $rawPullRequestNumber = [string][Environment]::GetEnvironmentVariable('PR_NUMBER','Process')
+            if ([string]::IsNullOrWhiteSpace($rawPullRequestNumber) -or -not [int]::TryParse($rawPullRequestNumber,[ref]$pullRequestNumber) -or $pullRequestNumber -le 0) { throw 'Affected check producer pull-request identity is incomplete.' }
+        } elseif (-not [string]::IsNullOrWhiteSpace([string][Environment]::GetEnvironmentVariable('PR_NUMBER','Process'))) {
+            throw 'Affected check push producer unexpectedly inherited a pull-request number.'
+        }
+        return [pscustomobject][ordered]@{context='github-actions';execution_id=[guid]::NewGuid().ToString('N');repository=[string]$plan.repository;event_name=$eventName;pull_request_number=$pullRequestNumber;run_id=[string]$env:GITHUB_RUN_ID;run_attempt=[int]$env:GITHUB_RUN_ATTEMPT;workflow_path='.github/workflows/validate.yml';job=[string]$env:GITHUB_JOB}
     }
     return [pscustomobject][ordered]@{context='local';execution_id=[guid]::NewGuid().ToString('N');repository=[string]$plan.repository;event_name='local';pull_request_number=0;run_id='local';run_attempt=0;workflow_path='local';job='local'}
 }

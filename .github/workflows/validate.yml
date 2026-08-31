@@ -312,7 +312,7 @@ jobs:
               $run = @($runs | Where-Object { $_.name -ceq 'validate' -and $_.event -ceq 'pull_request' -and $_.head_sha -ceq $candidate -and $_.status -ceq 'completed' -and $_.conclusion -ceq 'success' } | Sort-Object created_at -Descending | Select-Object -First 1)
               if ($null -eq $run) { throw 'No successful candidate PR validate run is available for reuse.' }
               $workflowPath = '.github/workflows/validate.yml'
-              if ([string]$run.path -notmatch '^\.github/workflows/validate\.yml@') { throw 'Candidate run is not bound to the validate workflow path.' }
+              if ([string]$run.path -cne $workflowPath) { throw 'Candidate run is not bound to the exact validate workflow path.' }
               $jobs = (gh api "/repos/$env:GITHUB_REPOSITORY/actions/runs/$($run.id)/jobs?per_page=100" | ConvertFrom-Json -Depth 64).jobs
               $remoteArtifacts = (gh api "/repos/$env:GITHUB_REPOSITORY/actions/runs/$($run.id)/artifacts?per_page=100" | ConvertFrom-Json -Depth 64).artifacts
               $artifactRoot = Join-Path $env:RUNNER_TEMP 'premerge-artifacts'; [IO.Directory]::CreateDirectory($artifactRoot) | Out-Null

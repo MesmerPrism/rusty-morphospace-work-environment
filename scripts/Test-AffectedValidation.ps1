@@ -1366,6 +1366,8 @@ if ($runFullSelector -or $runExecutorPassPhase) {
     $quickWindowsBody = [string]$workflowJobs['quick-windows']
     Assert-True ($quickWindowsBody -match '(?m)^    needs: \[infrastructure, select, standard-windows\]$' -and $quickWindowsBody -match "\`$env:STANDARD_RESULT -cne 'success'") 'Required quick-windows context is not bound to the selected Windows result.'
     Assert-True ($quickWindowsBody -notmatch 'Invoke-AffectedValidation') 'Required quick-windows context replays the selected Windows suite.'
+    $postMergeBody = [string]$workflowJobs['post-merge-attestation']
+    Assert-True ($postMergeBody.Contains("if ([string]`$run.path -cne `$workflowPath)")) 'Post-merge evidence reuse does not bind the exact GitHub workflow path representation.'
     foreach ($platform in @('linux','windows')) {
         $artifactMarker = "affected-$platform-evidence.json"
         $artifactIndex = $workflowSource.IndexOf($artifactMarker, [StringComparison]::Ordinal)
@@ -1378,6 +1380,50 @@ if ($runFullSelector -or $runExecutorPassPhase) {
         Assert-True ($workflowSource -match 'cache_inventory_sha256' -and $workflowSource -match 'actualInventorySha256 -cne \$inventorySha256') "PR workflow does not require the executor-returned exact inventory SHA-256 before publishing the $platform cache."
     }
     $executorSource = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -Raw
+    $inventorySchema = Get-Content -LiteralPath (Join-Path $repoRoot 'schemas/affected-validation-check-inventory-v1.schema.json') -Raw | ConvertFrom-Json -Depth 64
+    $producerEvents = @($inventorySchema.properties.producer.properties.event_name.enum)
+    [Array]::Sort($producerEvents,[StringComparer]::Ordinal)
+    Assert-True (($producerEvents -join ',') -ceq 'local,pull_request,push') 'Affected check inventory does not close the exact local/PR/push producer event domain.'
+    Assert-True ($executorSource.Contains("@('pull_request','push') -cnotcontains `$eventName") -and $executorSource.Contains("Affected check push producer unexpectedly inherited a pull-request number.")) 'Affected executor does not distinguish closed PR and push producer identities.'
+    $producerTokens = $null
+    $producerParseErrors = $null
+    $executorAst = [Management.Automation.Language.Parser]::ParseInput($executorSource,[ref]$producerTokens,[ref]$producerParseErrors)
+    Assert-True (@($producerParseErrors).Count -eq 0) 'Affected executor producer-binding source does not parse.'
+    $producerFunctions = @($executorAst.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Get-AffectedValidationProducerBinding' },$true))
+    Assert-True ($producerFunctions.Count -eq 1) 'Affected executor does not define exactly one producer-binding function.'
+    . ([scriptblock]::Create($producerFunctions[0].Extent.Text))
+    $producerEnvironmentNames = @('GITHUB_ACTIONS','GITHUB_REPOSITORY','GITHUB_EVENT_NAME','GITHUB_RUN_ID','GITHUB_RUN_ATTEMPT','GITHUB_WORKFLOW_REF','GITHUB_JOB','PR_NUMBER')
+    $producerEnvironmentBefore = @{}
+    foreach ($name in $producerEnvironmentNames) { $producerEnvironmentBefore[$name] = [Environment]::GetEnvironmentVariable($name,'Process') }
+    $priorPlanVariable = Get-Variable -Name plan -Scope Script -ErrorAction SilentlyContinue
+    try {
+        $script:plan = [pscustomobject]@{repository='MesmerPrism/rusty-morphospace-work-environment'}
+        $env:GITHUB_ACTIONS = 'true'
+        $env:GITHUB_REPOSITORY = 'MesmerPrism/rusty-morphospace-work-environment'
+        $env:GITHUB_RUN_ID = '1234'
+        $env:GITHUB_RUN_ATTEMPT = '1'
+        $env:GITHUB_WORKFLOW_REF = 'MesmerPrism/rusty-morphospace-work-environment/.github/workflows/validate.yml@refs/heads/main'
+        $env:GITHUB_JOB = 'main-linux-delta'
+        $env:GITHUB_EVENT_NAME = 'push'
+        Remove-Item -LiteralPath 'Env:PR_NUMBER' -ErrorAction SilentlyContinue
+        $pushProducer = Get-AffectedValidationProducerBinding
+        Assert-True ($pushProducer.context -ceq 'github-actions' -and $pushProducer.event_name -ceq 'push' -and [int]$pushProducer.pull_request_number -eq 0) 'Affected executor did not emit a closed push producer identity without PR_NUMBER.'
+        $env:PR_NUMBER = '128'
+        Assert-AffectedThrows { Get-AffectedValidationProducerBinding | Out-Null } '*unexpectedly inherited a pull-request number*' 'Affected executor accepted a push producer with PR_NUMBER.'
+        $env:GITHUB_EVENT_NAME = 'pull_request'
+        Remove-Item -LiteralPath 'Env:PR_NUMBER' -ErrorAction SilentlyContinue
+        Assert-AffectedThrows { Get-AffectedValidationProducerBinding | Out-Null } '*pull-request identity is incomplete*' 'Affected executor accepted a pull-request producer without PR_NUMBER.'
+        $env:PR_NUMBER = '128'
+        $pullProducer = Get-AffectedValidationProducerBinding
+        Assert-True ($pullProducer.event_name -ceq 'pull_request' -and [int]$pullProducer.pull_request_number -eq 128) 'Affected executor did not retain the exact pull-request producer identity.'
+    } finally {
+        foreach ($name in $producerEnvironmentNames) {
+            $before = $producerEnvironmentBefore[$name]
+            if ($null -eq $before) { Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue } else { [Environment]::SetEnvironmentVariable($name,[string]$before,'Process') }
+        }
+        if ($null -eq $priorPlanVariable) { Remove-Variable -Name plan -Scope Script -ErrorAction SilentlyContinue } else { $script:plan = $priorPlanVariable.Value }
+        Remove-Item -LiteralPath Function:Get-AffectedValidationProducerBinding -ErrorAction SilentlyContinue
+    }
     foreach ($environmentName in @('GITHUB_OUTPUT','GITHUB_ENV','GITHUB_PATH','GITHUB_STEP_SUMMARY')) { Assert-True ($executorSource -match [regex]::Escape("'$environmentName'")) "Affected child execution does not remove inherited '$environmentName'." }
     Assert-True ($executorSource -match 'ChildTreeCleanupAttempted' -and $executorSource -match 'ChildTreeCleanupSucceeded' -and $executorSource -match 'execution\.integrity_failed' -and $executorSource -match 'terminalIntegrityFailure') 'Affected executor does not fail closed from universal child-tree cleanup/readback into cache publication.'
     Assert-AffectedExecutorContainmentSource -Source $executorSource
