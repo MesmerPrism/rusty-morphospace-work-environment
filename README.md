@@ -303,6 +303,23 @@ validation without a device.
   current-delta selection, proportional workflow-authority leaf routing,
   current-byte-bound ordinal transitive owner/import/invocation coverage with
   one path/SHA-bound per-file edge index, deterministic adjacency/consumer
+  derivation, raw per-check stream receipts, dependency-only failure blocking,
+  complete tracked import/schema/data/runner-source bindings, pre/post exact
+  working-byte checks, non-inherited tagged supervisor-completion pipes,
+  exact `OWNER_RIGHTS`-protected Windows supervisor/direct-parent authority
+  chains with protected existing-thread and future-thread default DACLs,
+  guard-group-deny-only and privilege-deleted allowlist-read-back leaves, exact
+  process/thread denial probes, retained initial-thread identities, and stable
+  late-thread plus byte-exact normal/fallback restoration, nonce-local
+  writable roots, suspended inner jobs, and live combined output bounds,
+  Linux user/PID-namespace containment with direct-kill fallback,
+  complete child-stream cleanup/readback,
+  immutable parent-retained current-run receipts and streams, final-root
+  materialization only after zero contained descendants, exact post-write byte
+  verification plus workflow-bound inventory SHA-256, parent-snapshotted
+  producer inventories, ordinal-unique immutable stream consumption, and
+  finalized-only exact-host leaf plus inner selector-artifact rehydration across
+  corrected PR attempts without treating the cache as authority,
   digests, and memoized reachability, one recursive tree inventory and
   one batched filtered working-byte proof per selection, an ordered
   finite-budget selector phase DAG with exact dependency- and runner-bound

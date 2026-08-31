@@ -87,12 +87,20 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha }}
+      - name: Restore prior exact-check cache
+        uses: actions/cache/restore@1bd1e32a3bdc45362d1e726936510720a7c30a57
+        with:
+          path: ${{ runner.temp }}/affected-check-cache-linux/current
+          key: affected-check-linux-pr-${{ github.event.pull_request.number }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            affected-check-linux-pr-${{ github.event.pull_request.number }}-
       - name: Run affected Linux Quick evidence
         id: execute
         shell: pwsh
         env:
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           INFRA_RESULT: ${{ needs.infrastructure.result }}
           SELECT_RESULT: ${{ needs.select.result }}
           LINUX_SELECTED: ${{ needs.select.outputs.linux }}
@@ -103,10 +111,38 @@ jobs:
           ./scripts/Test-PowerShellHost.ps1 -SelfTest
           if ((git rev-parse HEAD) -cne $env:PR_HEAD) { throw 'Checkout does not equal the PR event head SHA.' }
           ./scripts/Resolve-AffectedValidation.ps1 -RepositoryRoot . -BaseCommit $env:PR_BASE -HeadCommit $env:PR_HEAD -OutPath "$env:RUNNER_TEMP/affected-plan.json"
+          $cacheRoot = Join-Path $env:RUNNER_TEMP 'affected-check-cache-linux'
+          $priorRoot = Join-Path $cacheRoot 'prior'
+          $currentRoot = Join-Path $cacheRoot 'current'
+          if (Test-Path -LiteralPath $priorRoot) { Remove-Item -LiteralPath $priorRoot -Recurse -Force }
+          if (Test-Path -LiteralPath $currentRoot) { Move-Item -LiteralPath $currentRoot -Destination $priorRoot }
           $failure = $null
-          try { & ./scripts/Invoke-AffectedValidation.ps1 -RepositoryRoot . -BaseCommit $env:PR_BASE -HeadCommit $env:PR_HEAD -PlanPath "$env:RUNNER_TEMP/affected-plan.json" -Platform linux -OutPath "$env:RUNNER_TEMP/affected-linux-evidence.json" } catch { $failure = $_ }
+          $cacheReady = $false
+          $inventorySha256 = $null
+          try {
+            $execution = & ./scripts/Invoke-AffectedValidation.ps1 -RepositoryRoot . -BaseCommit $env:PR_BASE -HeadCommit $env:PR_HEAD -PlanPath "$env:RUNNER_TEMP/affected-plan.json" -Platform linux -OutPath "$env:RUNNER_TEMP/affected-linux-evidence.json" -CheckEvidenceDirectory $currentRoot -PriorEvidenceDirectory $priorRoot
+            $inventorySha256 = [string]$execution.cache_inventory_sha256
+            if ($inventorySha256 -notmatch '^[0-9a-f]{64}$') { throw 'Passing Linux executor did not return its exact finalized inventory SHA-256.' }
+            $cacheReady = $true
+          } catch {
+            $failure = $_
+            if ([string]$_.Exception.Data['AffectedCacheFinalized'] -ceq 'true') {
+              $inventorySha256 = [string]$_.Exception.Data['AffectedInventorySha256']
+              if ($inventorySha256 -notmatch '^[0-9a-f]{64}$') { throw 'Failing Linux executor did not bind its exact finalized inventory SHA-256.' }
+              $cacheReady = $true
+            }
+          }
+          if (Test-Path -LiteralPath $priorRoot) { Remove-Item -LiteralPath $priorRoot -Recurse -Force }
           if (-not (Test-Path -LiteralPath "$env:RUNNER_TEMP/affected-linux-evidence.json")) { throw 'Affected Linux execution failed before producing typed evidence.' }
           "evidence_sha256=$((Get-FileHash -LiteralPath "$env:RUNNER_TEMP/affected-linux-evidence.json" -Algorithm SHA256).Hash.ToLowerInvariant())" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+          if ($cacheReady) {
+            $inventoryPath = Join-Path $currentRoot 'inventory.json'
+            if (-not (Test-Path -LiteralPath $inventoryPath -PathType Leaf)) { throw 'Finalized Linux check cache lacks its parent-owned inventory.' }
+            $actualInventorySha256 = (Get-FileHash -LiteralPath $inventoryPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actualInventorySha256 -cne $inventorySha256) { throw 'Finalized Linux check cache inventory differs from the executor receipt.' }
+            "cache_ready=true" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+            "inventory_sha256=$actualInventorySha256" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+          }
           if ($null -ne $failure) { throw $failure }
           git diff --check "$env:PR_BASE" "$env:PR_HEAD"; if ($LASTEXITCODE -ne 0) { throw 'PR Linux delta has whitespace errors.' }
       - name: Preserve content-addressed Linux evidence
@@ -117,6 +153,20 @@ jobs:
           path: ${{ runner.temp }}/affected-linux-evidence.json
           if-no-files-found: error
           retention-days: 7
+      - name: Preserve exact Linux check streams and receipts
+        if: always() && needs.select.outputs.linux == 'true' && steps.execute.outputs.cache_ready == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: affected-checks-linux-${{ github.event.pull_request.head.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/affected-check-cache-linux/current
+          if-no-files-found: error
+          retention-days: 7
+      - name: Save resumable Linux check cache
+        if: always() && needs.select.outputs.linux == 'true' && steps.execute.outputs.cache_ready == 'true'
+        uses: actions/cache/save@1bd1e32a3bdc45362d1e726936510720a7c30a57
+        with:
+          path: ${{ runner.temp }}/affected-check-cache-linux/current
+          key: affected-check-linux-pr-${{ github.event.pull_request.number }}-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Preserve resumable selector phase evidence
         if: always() && needs.select.outputs.linux == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -135,12 +185,20 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha }}
+      - name: Restore prior exact-check cache
+        uses: actions/cache/restore@1bd1e32a3bdc45362d1e726936510720a7c30a57
+        with:
+          path: ${{ runner.temp }}/affected-check-cache-windows/current
+          key: affected-check-windows-pr-${{ github.event.pull_request.number }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            affected-check-windows-pr-${{ github.event.pull_request.number }}-
       - name: Run affected Windows Standard evidence
         id: execute
         shell: pwsh
         env:
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           INFRA_RESULT: ${{ needs.infrastructure.result }}
           SELECT_RESULT: ${{ needs.select.result }}
           WINDOWS_SELECTED: ${{ needs.select.outputs.windows }}
@@ -151,10 +209,38 @@ jobs:
           ./scripts/Test-PowerShellHost.ps1 -SelfTest
           if ((git rev-parse HEAD) -cne $env:PR_HEAD) { throw 'Checkout does not equal the PR event head SHA.' }
           ./scripts/Resolve-AffectedValidation.ps1 -RepositoryRoot . -BaseCommit $env:PR_BASE -HeadCommit $env:PR_HEAD -OutPath "$env:RUNNER_TEMP/affected-plan.json"
+          $cacheRoot = Join-Path $env:RUNNER_TEMP 'affected-check-cache-windows'
+          $priorRoot = Join-Path $cacheRoot 'prior'
+          $currentRoot = Join-Path $cacheRoot 'current'
+          if (Test-Path -LiteralPath $priorRoot) { Remove-Item -LiteralPath $priorRoot -Recurse -Force }
+          if (Test-Path -LiteralPath $currentRoot) { Move-Item -LiteralPath $currentRoot -Destination $priorRoot }
           $failure = $null
-          try { & ./scripts/Invoke-AffectedValidation.ps1 -RepositoryRoot . -BaseCommit $env:PR_BASE -HeadCommit $env:PR_HEAD -PlanPath "$env:RUNNER_TEMP/affected-plan.json" -Platform windows -OutPath "$env:RUNNER_TEMP/affected-windows-evidence.json" } catch { $failure = $_ }
+          $cacheReady = $false
+          $inventorySha256 = $null
+          try {
+            $execution = & ./scripts/Invoke-AffectedValidation.ps1 -RepositoryRoot . -BaseCommit $env:PR_BASE -HeadCommit $env:PR_HEAD -PlanPath "$env:RUNNER_TEMP/affected-plan.json" -Platform windows -OutPath "$env:RUNNER_TEMP/affected-windows-evidence.json" -CheckEvidenceDirectory $currentRoot -PriorEvidenceDirectory $priorRoot
+            $inventorySha256 = [string]$execution.cache_inventory_sha256
+            if ($inventorySha256 -notmatch '^[0-9a-f]{64}$') { throw 'Passing Windows executor did not return its exact finalized inventory SHA-256.' }
+            $cacheReady = $true
+          } catch {
+            $failure = $_
+            if ([string]$_.Exception.Data['AffectedCacheFinalized'] -ceq 'true') {
+              $inventorySha256 = [string]$_.Exception.Data['AffectedInventorySha256']
+              if ($inventorySha256 -notmatch '^[0-9a-f]{64}$') { throw 'Failing Windows executor did not bind its exact finalized inventory SHA-256.' }
+              $cacheReady = $true
+            }
+          }
+          if (Test-Path -LiteralPath $priorRoot) { Remove-Item -LiteralPath $priorRoot -Recurse -Force }
           if (-not (Test-Path -LiteralPath "$env:RUNNER_TEMP/affected-windows-evidence.json")) { throw 'Affected Windows execution failed before producing typed evidence.' }
           "evidence_sha256=$((Get-FileHash -LiteralPath "$env:RUNNER_TEMP/affected-windows-evidence.json" -Algorithm SHA256).Hash.ToLowerInvariant())" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+          if ($cacheReady) {
+            $inventoryPath = Join-Path $currentRoot 'inventory.json'
+            if (-not (Test-Path -LiteralPath $inventoryPath -PathType Leaf)) { throw 'Finalized Windows check cache lacks its parent-owned inventory.' }
+            $actualInventorySha256 = (Get-FileHash -LiteralPath $inventoryPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actualInventorySha256 -cne $inventorySha256) { throw 'Finalized Windows check cache inventory differs from the executor receipt.' }
+            "cache_ready=true" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+            "inventory_sha256=$actualInventorySha256" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+          }
           if ($null -ne $failure) { throw $failure }
           git diff --check "$env:PR_BASE" "$env:PR_HEAD"; if ($LASTEXITCODE -ne 0) { throw 'PR Windows delta has whitespace errors.' }
       - name: Preserve content-addressed Windows evidence
@@ -165,6 +251,20 @@ jobs:
           path: ${{ runner.temp }}/affected-windows-evidence.json
           if-no-files-found: error
           retention-days: 7
+      - name: Preserve exact Windows check streams and receipts
+        if: always() && needs.select.outputs.windows == 'true' && steps.execute.outputs.cache_ready == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: affected-checks-windows-${{ github.event.pull_request.head.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/affected-check-cache-windows/current
+          if-no-files-found: error
+          retention-days: 7
+      - name: Save resumable Windows check cache
+        if: always() && needs.select.outputs.windows == 'true' && steps.execute.outputs.cache_ready == 'true'
+        uses: actions/cache/save@1bd1e32a3bdc45362d1e726936510720a7c30a57
+        with:
+          path: ${{ runner.temp }}/affected-check-cache-windows/current
+          key: affected-check-windows-pr-${{ github.event.pull_request.number }}-${{ github.run_id }}-${{ github.run_attempt }}
 
   quick-windows:
     needs: [infrastructure, select, standard-windows]
@@ -217,7 +317,7 @@ jobs:
               $remoteArtifacts = (gh api "/repos/$env:GITHUB_REPOSITORY/actions/runs/$($run.id)/artifacts?per_page=100" | ConvertFrom-Json -Depth 64).artifacts
               $artifactRoot = Join-Path $env:RUNNER_TEMP 'premerge-artifacts'; [IO.Directory]::CreateDirectory($artifactRoot) | Out-Null
               $bound = [Collections.Generic.List[object]]::new()
-              foreach ($remote in @($remoteArtifacts | Where-Object { $_.name -like 'affected-*' })) {
+              foreach ($remote in @($remoteArtifacts | Where-Object { $_.name -match '^affected-(?:plan|linux|windows)-' })) {
                 $kind = if ($remote.name -match '^affected-plan-[0-9a-f]{64}$') { 'plan' } elseif ($remote.name -match '^affected-linux-[0-9a-f]{64}$') { 'linux' } elseif ($remote.name -match '^affected-windows-[0-9a-f]{64}$') { 'windows' } else { throw "Unexpected affected-validation artifact name '$($remote.name)'." }
                 $fileName = if ($kind -ceq 'plan') { 'affected-plan.json' } else { "affected-$kind-evidence.json" }
                 $zip = Join-Path $artifactRoot ("$($remote.id).zip")
