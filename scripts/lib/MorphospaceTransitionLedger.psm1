@@ -892,9 +892,32 @@ function Start-MorphospaceTransitionLedger {
         if($ExpectedPreUnitRawSha256-and$null-ne$supersessionOldUnitBinding){
             throw 'Raw pre-unit-bound transitions may not combine supersession.'
         }
+        $isProposedRetirementV1 = (
+            $ExpectedPreUnitRawSha256 -and
+            @($ownedProjections).Count -eq 0 -and
+            @($ownedArtifacts).Count -eq 1 -and
+            [string]$Event.event_type -ceq 'state-transition' -and
+            -not [string]::IsNullOrEmpty([string]$Event.unit_id) -and
+            [string]$Event.event_id -cmatch ('^' + [regex]::Escape("$([string]$Event.unit_id)-proposal-retired-") + '[0-9]{4}$') -and
+            @($Event.receipts).Count -eq 1 -and
+            [string]$Event.receipts[0] -ceq [string]$ownedArtifacts[0].path
+        )
+        $intentSchema = if($null-ne$supersessionOldUnitBinding){
+            $script:MorphospaceTransitionIntentV2
+        }elseif($ExpectedPreUnitRawSha256-and@($ownedProjections).Count){
+            $script:MorphospaceTransitionIntentV4
+        }elseif(@($ownedProjections).Count){
+            $script:MorphospaceTransitionIntentV3
+        }elseif($isProposedRetirementV1){
+            $script:MorphospaceTransitionIntentV1
+        }elseif($ExpectedPreUnitRawSha256){
+            $script:MorphospaceTransitionIntentV5
+        }else{
+            $script:MorphospaceTransitionIntentV1
+        }
         $intentRelative=Get-MorphospaceLedgerPath $workspace $TransactionId intent
         $intentFields=[ordered]@{
-            schema=$(if($null-ne$supersessionOldUnitBinding){$script:MorphospaceTransitionIntentV2}elseif($ExpectedPreUnitRawSha256-and@($ownedProjections).Count){$script:MorphospaceTransitionIntentV4}elseif(@($ownedProjections).Count){$script:MorphospaceTransitionIntentV3}elseif($ExpectedPreUnitRawSha256){$script:MorphospaceTransitionIntentV5}else{$script:MorphospaceTransitionIntentV1})
+            schema=$intentSchema
             transaction_id=$TransactionId
             created_at=[DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffffffZ')
             state=[pscustomobject]@{path=(ConvertTo-MorphospaceProtocolRelativePath -Path $StatePath)}
@@ -906,7 +929,7 @@ function Start-MorphospaceTransitionLedger {
             artifacts=@($ownedArtifacts)
             event=$Event
         }
-        if($ExpectedPreUnitRawSha256){
+        if($intentSchema-cin@($script:MorphospaceTransitionIntentV4,$script:MorphospaceTransitionIntentV5)){
             $intentFields.pre_unit_raw=[pscustomobject][ordered]@{
                 path=(ConvertTo-MorphospaceProtocolRelativePath -Path $UnitPath)
                 sha256=$preUnitRawSha256

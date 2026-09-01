@@ -1738,10 +1738,53 @@ try {
     $rawArtifactDriftRejected=$false;try{Complete-MorphospaceTransitionLedger -WorkspaceRoot $rawArtifactDriftWorkspace -TransactionId 'raw-artifact-byte-drift-transition' -Repair|Out-Null}catch{$rawArtifactDriftRejected=$_.Exception.Message-like'*durable raw pre-unit byte-hash CAS*'}
     Assert-Ledger ($rawArtifactDriftRejected-and-not(Test-Path (Join-Path $rawArtifactDriftWorkspace 'receipts\raw-artifact.json'))-and[IO.File]::ReadAllBytes((Join-Path $rawArtifactDriftWorkspace 'iteration-events.jsonl')).Length-eq0) 'v5 raw byte drift reached artifact or event mutation'
 
-    $retirementV5Workspace=Join-Path $workspace 'retirement-v1-v5-rejection';Initialize-LedgerFixture $retirementV5Workspace $rawArtifactState $unit;$retirementV5Event=New-LedgerEvent 'unit-test-proposal-retired-0002' 1;$retirementV5Event.receipts=@('receipts/raw-artifact.json');$retirementV5Rejected=$false
-    $retirementV5TargetState=New-LedgerTailOnlyTargetState -PreState $rawArtifactState -EventId $retirementV5Event.event_id
-    try{Start-MorphospaceTransitionLedger -WorkspaceRoot $retirementV5Workspace -TransactionId 'unit-test-proposal-retired-0002-transition' -StatePath 'workspace.state.json' -UnitPath 'iteration-units/unit.json' -EventsPath 'iteration-events.jsonl' -TargetState $retirementV5TargetState -TargetUnit $unit -Event $retirementV5Event -ExpectedPreUnitRawSha256 (Get-LedgerFileHash (Join-Path $retirementV5Workspace 'iteration-units\unit.json')) -Artifacts @([pscustomobject]@{bytes_base64=[Convert]::ToBase64String($receiptBytes);path='receipts/raw-artifact.json';sha256=$receiptHash})|Out-Null}catch{$retirementV5Rejected=$_.Exception.Message-like'*may not replace proposed-unit retirement v1 receipt binding*'}
-    Assert-Ledger ($retirementV5Rejected-and-not(Test-Path (Join-Path $retirementV5Workspace 'receipts\transactions\unit-test-proposal-retired-0002-transition.intent.json'))) 'v5 replaced proposed-unit retirement v1 semantics'
+    $retirementV1Workspace=Join-Path $workspace 'retirement-v1-recovery'
+    $retirementV1State=[pscustomobject][ordered]@{schema='test';project_id='ledger-test';current_unit=$null;last_event_id='unit-test-admitted'}
+    $retirementV1Unit=[pscustomobject][ordered]@{schema='test';project_id='ledger-test';unit_id='unit-test';status='proposed'}
+    Initialize-LedgerFixture $retirementV1Workspace $retirementV1State $retirementV1Unit
+    $retirementV1Bootstrap=New-LedgerEvent 'unit-test-admitted' 1 'Admitted the proposed-unit retirement fixture.'
+    Write-Json (Join-Path $retirementV1Workspace 'iteration-events.jsonl') $retirementV1Bootstrap
+    $retirementV1Event=New-LedgerEvent 'unit-test-proposal-retired-0002' 2
+    $retirementV1Event.receipts=@('receipts/unit-test-contract-retirement.json')
+    $retirementV1TargetState=New-LedgerTailOnlyTargetState -PreState $retirementV1State -EventId $retirementV1Event.event_id
+    $retirementV1TargetUnit=$retirementV1Unit|ConvertTo-Json -Depth 20|ConvertFrom-Json -Depth 20 -DateKind String
+    $retirementV1TargetUnit.status='superseded'
+    $retirementV1UnitPath=Join-Path $retirementV1Workspace 'iteration-units\unit.json'
+    $retirementV1EventsPath=Join-Path $retirementV1Workspace 'iteration-events.jsonl'
+    $retirementV1UnitRawSha256=Get-LedgerFileHash $retirementV1UnitPath
+    $retirementV1EventsSha256=Get-LedgerFileHash $retirementV1EventsPath
+    $retirementV1EventsLength=[IO.FileInfo]::new($retirementV1EventsPath).Length
+    $retirementV1Receipt=[pscustomobject][ordered]@{
+        schema='rusty.morphospace.workflow.work_unit_automation_receipt.v1';project_id='ledger-test';unit_id='unit-test';action='RetireProposed'
+        timestamp='2026-01-01T00:00:01.0000000Z';executed=$true;transition='proposed-to-superseded-retired';status_before='proposed';status_after='superseded'
+        current_unit_before=$null;current_unit_after=$null
+        preservation=[pscustomobject][ordered]@{git_mutation_performed=$false;device_mutation_performed=$false;force_push_allowed=$false;repository_states=@()}
+        validation_matrix=@();graph_scope=[pscustomobject]@{}
+        claim_preflight=[pscustomobject][ordered]@{version='v1';ready_to_claim=$false;validation_tier='quick';requirements_declared=$false;disk=@();tools=@();product_inputs=@();writable_repositories=@();read_only_dependencies=@();instruction_surfaces=@();resources=@();validation_matrix=@();issues=@('Retirement ledger fixture only.')}
+        adoption_receipt=$null;publication_closure=$null;published_planning_authority_adoption=$null;planned_publication=$null;planning_suffix_rewrite_recovery=$null
+        published_prerequisite_suffix_reconciliation=$null;executed_prepared_publication_reconciliation=$null;push_plan=$null;event_id=[string]$retirementV1Event.event_id
+        proposed_retirement=[pscustomobject][ordered]@{
+            replacement_unit_id='unit-next';reason='contract-invalid'
+            authenticated_admission=[pscustomobject][ordered]@{
+                admission_id='unit-test-admission';event=[pscustomobject][ordered]@{event_id='unit-test-admitted';sequence=1;sha256=('1'*64)}
+                receipt=[pscustomobject][ordered]@{path='receipts/unit-test-admission.json';sha256=('2'*64)}
+                transaction=[pscustomobject][ordered]@{transaction_id='unit-test-admission-admitted-transition';intent=[pscustomobject][ordered]@{path='receipts/transactions/unit-test-admission-admitted-transition.intent.json';sha256=('3'*64)};completion=[pscustomobject][ordered]@{path='receipts/transactions/unit-test-admission-admitted-transition.completion.json';sha256=('4'*64)};target_state_sha256=('5'*64);target_unit_sha256=('6'*64)}
+            }
+            authenticated_preimage=[pscustomobject][ordered]@{state_sha256=(Get-LedgerDocumentHash $retirementV1State);unit_sha256=(Get-LedgerDocumentHash $retirementV1Unit);unit_raw_sha256=$retirementV1UnitRawSha256;events_sha256=$retirementV1EventsSha256;events_length=$retirementV1EventsLength;event_tail_id='unit-test-admitted'}
+            replacement_identity_absent=$true;current_unit_absent=$true;next_ready_unit_absent=$true;original_admission_preserved=$true;binding_sha256=('7'*64)
+        }
+    }
+    $retirementV1ReceiptBytes=[Text.UTF8Encoding]::new($false).GetBytes(($retirementV1Receipt|ConvertTo-Json -Depth 64 -Compress)+"`n")
+    $retirementV1ReceiptSha256=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($retirementV1ReceiptBytes)).ToLowerInvariant()
+    $retirementV1Interrupted=$false
+    try{
+        Start-MorphospaceTransitionLedger -WorkspaceRoot $retirementV1Workspace -TransactionId 'unit-test-proposal-retired-0002-transition' -StatePath 'workspace.state.json' -UnitPath 'iteration-units/unit.json' -EventsPath 'iteration-events.jsonl' -TargetState $retirementV1TargetState -TargetUnit $retirementV1TargetUnit -Event $retirementV1Event -ExpectedPreUnitRawSha256 $retirementV1UnitRawSha256 -Artifacts @([pscustomobject]@{bytes_base64=[Convert]::ToBase64String($retirementV1ReceiptBytes);path='receipts/unit-test-contract-retirement.json';sha256=$retirementV1ReceiptSha256}) -FaultAfter after-intent|Out-Null
+    }catch{$retirementV1Interrupted=$_.Exception.Message-like'*Injected interruption after intent publication*'}
+    $retirementV1Intent=Read-TestProtocolJson (Join-Path $retirementV1Workspace 'receipts\transactions\unit-test-proposal-retired-0002-transition.intent.json')
+    Assert-Ledger ($retirementV1Interrupted-and[string]$retirementV1Intent.schema-ceq'rusty.morphospace.workflow.transition_ledger_intent.v1'-and-not($retirementV1Intent.PSObject.Properties.Name-contains'pre_unit_raw')-and@($retirementV1Intent.artifacts).Count-eq1-and[string]$retirementV1Intent.artifacts[0].path-ceq[string]$retirementV1Event.receipts[0]) 'exact receipt-bound proposed retirement did not remain transition intent v1 without pre_unit_raw'
+    $retirementV1Recovered=Complete-MorphospaceTransitionLedger -WorkspaceRoot $retirementV1Workspace -TransactionId 'unit-test-proposal-retired-0002-transition' -Repair
+    $retirementV1Replay=Complete-MorphospaceTransitionLedger -WorkspaceRoot $retirementV1Workspace -TransactionId 'unit-test-proposal-retired-0002-transition'
+    Assert-Ledger ($retirementV1Recovered.status-eq'committed'-and$retirementV1Replay.status-eq'already-committed'-and[string](Read-TestProtocolJson $retirementV1UnitPath).status-ceq'superseded'-and@(Get-Content $retirementV1EventsPath|Where-Object{$_}).Count-eq2-and(Get-LedgerFileHash (Join-Path $retirementV1Workspace 'receipts\unit-test-contract-retirement.json'))-ceq$retirementV1ReceiptSha256) 'receipt-bound v1 proposed retirement did not recover and replay idempotently'
 
     $rawBindingTamperWorkspace=Join-Path $workspace 'projected-raw-binding-tamper'
     Initialize-LedgerFixture $rawBindingTamperWorkspace $state $unit
