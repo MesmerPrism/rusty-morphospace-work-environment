@@ -2031,7 +2031,13 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value $termina
             $schemaReuse = Find-MorphospaceAffectedReusableCheckReceipt -PriorEvidenceDirectory $firstCheckRoot -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json') -ExpectedBinding $schemaDamagedBinding -ExpectedBindingSha256 $schemaDamagedSha -RepositoryRoot $fixture -CurrentHeadCommit $docsHead -CandidateReceiptPaths @($documentationReceipt[0].FullName)
             Assert-True ($null -eq $schemaReuse) 'Tracked schema/input drift reused evidence from a different dependency binding.'
             $resolutionDamagedBinding = $documentationReceiptValue.binding | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64 -DateKind String
-            $resolutionDamagedBinding.dependency_resolution.fallback_reasons[0].kind = 'unresolved-invocation'
+            $resolutionDamageTargets = @($resolutionDamagedBinding.dependency_resolution.fallback_reasons | Where-Object {
+                [string]$_.importer -ceq 'scripts/Test-DocumentationLinks.ps1' -and
+                [string]$_.variable -ceq 'UnresolvedModulePath' -and
+                [string]$_.kind -ceq 'unresolved-import'
+            })
+            Assert-True ($resolutionDamageTargets.Count -eq 1) 'Dynamic dependency-resolution damage fixture did not select exactly one keyed fallback reason.'
+            $resolutionDamageTargets[0].kind = 'unresolved-invocation'
             $resolutionDamagedSha = Get-MorphospaceCanonicalJsonSha256 -Value $resolutionDamagedBinding
             $resolutionReuse = Find-MorphospaceAffectedReusableCheckReceipt -PriorEvidenceDirectory $firstCheckRoot -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json') -ExpectedBinding $resolutionDamagedBinding -ExpectedBindingSha256 $resolutionDamagedSha -RepositoryRoot $fixture -CurrentHeadCommit $docsHead -CandidateReceiptPaths @($documentationReceipt[0].FullName)
             Assert-True ($null -eq $resolutionReuse) 'Dynamic dependency-resolution reason drift reused evidence from a different binding.'
