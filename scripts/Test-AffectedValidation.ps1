@@ -1474,6 +1474,7 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value ([pscust
     foreach ($runnerSourcePath in @(
         'schemas/affected-validation-check-evidence-v1.schema.json',
         'schemas/affected-validation-check-inventory-v1.schema.json',
+        'schemas/affected-validation-plan-v1.schema.json',
         'schemas/affected-validation-registry-v1.schema.json',
         'scripts/Invoke-AffectedValidation.ps1',
         'scripts/lib/MorphospaceAffectedValidation.psm1',
@@ -1489,8 +1490,15 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value ([pscust
     Write-Utf8 (Join-Path $fixture 'schemas/FallbackDynamicInput.schema.json') "{}`n"
     Write-Utf8 (Join-Path $fixture 'scripts/FallbackDynamicTarget.ps1') "[void](Get-Content -LiteralPath (Join-Path `$PSScriptRoot '../schemas/FallbackDynamicInput.schema.json') -Raw)`n"
     Write-Utf8 (Join-Path $fixture 'scripts/Test-DocumentationLinks.ps1') "if (@(Get-ChildItem Env: | Where-Object { ([string]`$_.Name).StartsWith('GIT_',[StringComparison]::OrdinalIgnoreCase) }).Count -ne 0) { throw 'Affected child retained an inherited Git environment override.' }`n`$ModulePath = Join-Path `$PSScriptRoot 'lib/DocumentationLinksDependency.psm1'`nImport-Module `$ModulePath -Force`n`$SchemaRoot = Join-Path `$PSScriptRoot '../schemas'`n[void](Join-Path `$SchemaRoot 'DocumentationLinksInput.schema.json')`n[void](Get-DocumentationLinksDependency)`n"
+    Write-Utf8 (Join-Path $fixture 'scripts/Test-AffectedLeafBindingFixture.ps1') "'leaf binding fixture'`n"
     Write-Utf8 (Join-Path $fixture 'scripts/Test-PublicBoundary.ps1') "if (-not [string]::IsNullOrWhiteSpace(`$env:RUSTY_TEST_MUTATE_PRIOR)) { [IO.File]::WriteAllText(`$env:RUSTY_TEST_MUTATE_PRIOR,'mutated after parent snapshot',[Text.UTF8Encoding]::new(`$false)) }`n"
     $fixtureRegistry = Read-MorphospaceProtocolJson -Path $registryPath
+    $leafBindingCheck = @($fixtureRegistry.checks | Where-Object check_id -ceq 'documentation-links')[0] | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64 -DateKind String
+    $leafBindingCheck.check_id = 'leaf-binding-fixture'
+    $leafBindingCheck.command_path = 'scripts/Test-AffectedLeafBindingFixture.ps1'
+    $leafBindingCheck.provides_contracts = @()
+    $fixtureRegistry.checks = @($fixtureRegistry.checks) + @($leafBindingCheck)
+    $fixtureRegistry.path_sets | Where-Object path_set_id -ceq 'documentation' | ForEach-Object { $_.patterns = @($_.patterns) + @('scripts/Test-AffectedLeafBindingFixture.ps1') }
     # Keep the timeout damage cell bounded while allowing one contained child
     # PowerShell startup on a loaded host; the deliberate twelve-second command
     # below must still time out under the unchanged ten-second fixture budget.
@@ -1524,6 +1532,9 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value ([pscust
         if ($runFullSelector -or $runExecutorPassPhase) {
             Assert-True ($docsPlan.selection_mode -ceq 'affected') 'Documentation change did not remain affected-only.'
             Assert-True (@($docsPlan.selected_checks.check_id) -ccontains 'documentation-links') 'Documentation check was not selected.'
+            $docsBoundaryIndex = [array]::IndexOf(@($docsPlan.selected_checks.check_id), 'public-boundary')
+            $docsLinksIndex = [array]::IndexOf(@($docsPlan.selected_checks.check_id), 'documentation-links')
+            Assert-True ($docsBoundaryIndex -ge 0 -and $docsLinksIndex -gt $docsBoundaryIndex) 'Execution-order dependency did not order two independently selected checks.'
             Assert-True (@($docsPlan.selected_checks.check_id) -cnotcontains 'work-unit-automation') 'Unrelated automation check was selected for documentation.'
             Assert-True ([bool]$docsPlan.claims.selection_only -and -not [bool]$docsPlan.claims.checks_executed) 'Selection plan claimed check execution or lifecycle authority.'
             Assert-True (@($docsPlan.selected_checks | Where-Object { @($_.platforms) -ccontains 'windows' }).Count -eq 0) 'Documentation change unnecessarily selected a Windows suite.'
@@ -1563,9 +1574,84 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value ([pscust
                 Assert-True ($receipt.mode -ceq 'executed' -and $receipt.result -ceq 'pass' -and $receipt.binding_sha256 -match '^[0-9a-f]{64}$') 'Initial affected leaf receipt is not exact executed passing evidence.'
                 foreach ($stream in @('stdout','stderr')) { $streamPath = Join-Path $receiptFile.DirectoryName "$stream.bin"; Assert-True ([IO.File]::Exists($streamPath) -and (Get-FileHash -LiteralPath $streamPath -Algorithm SHA256).Hash.ToLowerInvariant() -ceq [string]$receipt.child.$stream.sha256) "Affected leaf $stream bytes are not bound by their receipt." }
             }
+            $publicBoundaryReceipt = @($firstReceipts | Where-Object { (Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json -Depth 64 -DateKind String).binding.check_id -ceq 'public-boundary' })
             $documentationReceipt = @($firstReceipts | Where-Object { (Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json -Depth 64 -DateKind String).binding.check_id -ceq 'documentation-links' })
-            Assert-True ($documentationReceipt.Count -eq 1) 'Documentation leaf receipt identity is not unique.'
+            $leafBindingReceipt = @($firstReceipts | Where-Object { (Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json -Depth 64 -DateKind String).binding.check_id -ceq 'leaf-binding-fixture' })
+            Assert-True ($publicBoundaryReceipt.Count -eq 1 -and $documentationReceipt.Count -eq 1 -and $leafBindingReceipt.Count -eq 1) 'Documentation/order-anchor/leaf-binding receipt identities are not unique.'
+            $publicBoundaryReceiptValue = Get-Content -LiteralPath $publicBoundaryReceipt[0].FullName -Raw | ConvertFrom-Json -Depth 64 -DateKind String
             $documentationReceiptValue = Get-Content -LiteralPath $documentationReceipt[0].FullName -Raw | ConvertFrom-Json -Depth 64 -DateKind String
+            $leafBindingReceiptValue = Get-Content -LiteralPath $leafBindingReceipt[0].FullName -Raw | ConvertFrom-Json -Depth 64 -DateKind String
+            Assert-True (@($documentationReceiptValue.binding.prerequisite_bindings).Count -eq 0) 'Execution-order dependency entered the reusable documentation evidence binding.'
+            Assert-True (@($leafBindingReceiptValue.binding.prerequisite_bindings).Count -eq 0) 'Execution-order dependency entered the reusable focused leaf evidence binding.'
+            Assert-True (@($leafBindingReceiptValue.binding.runner_source_manifest.path) -cnotcontains 'manifests/affected-validation-registry.json' -and @($leafBindingReceiptValue.binding.runner_source_manifest.path) -ccontains 'schemas/affected-validation-plan-v1.schema.json') 'Leaf runner-source binding retained raw registry bytes or omitted the consumed plan schema.'
+            $originalRegistry = Read-MorphospaceProtocolJson -Path (Join-Path $fixture 'manifests/affected-validation-registry.json')
+            $originalReceiptSha256 = Get-MorphospaceAffectedCheckBytesSha256 ([IO.File]::ReadAllBytes($leafBindingReceipt[0].FullName))
+            try {
+                [void](Invoke-TestGit $fixture @('checkout','-b','leaf-binding-two-head-fixture'))
+                $schedulingRegistry = $originalRegistry | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64 -DateKind String
+                $schedulingRegistry.checks | Where-Object check_id -ceq 'leaf-binding-fixture' | ForEach-Object { $_.execution_after_checks = @() }
+                Write-Utf8 (Join-Path $fixture 'manifests/affected-validation-registry.json') ((ConvertTo-MorphospaceCanonicalJson -Value $schedulingRegistry) + "`n")
+                [void](Invoke-TestGit $fixture @('add','manifests/affected-validation-registry.json'))
+                [void](Invoke-TestGit $fixture @('commit','-m','scheduling metadata only'))
+                $schedulingHead = Invoke-TestGit $fixture @('rev-parse','HEAD')
+                $schedulingTree = Invoke-TestGit $fixture @('rev-parse','HEAD^{tree}')
+                $docsTree = Invoke-TestGit $fixture @('rev-parse',"$docsHead^{tree}")
+                $schedulingPaths = @((Invoke-TestGit $fixture @('diff','--name-only',$docsHead,$schedulingHead)).Split("`n",[StringSplitOptions]::RemoveEmptyEntries))
+                Assert-True ($schedulingHead -cne $docsHead -and $schedulingTree -cne $docsTree -and $schedulingPaths.Count -eq 1 -and $schedulingPaths[0] -ceq 'manifests/affected-validation-registry.json') 'Scheduling-only fixture did not create two distinct heads/trees with exactly one registry path change.'
+                $expectedSchedulingRegistry = $originalRegistry | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64 -DateKind String
+                $expectedSchedulingRegistry.checks | Where-Object check_id -ceq 'leaf-binding-fixture' | ForEach-Object { $_.execution_after_checks = @() }
+                Assert-True ((ConvertTo-MorphospaceCanonicalJson -Value $schedulingRegistry) -ceq (ConvertTo-MorphospaceCanonicalJson -Value $expectedSchedulingRegistry)) 'Scheduling fixture changed more than execution_after_checks metadata.'
+                $schedulingPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $docsHead -HeadRevision $schedulingHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+                Assert-True ([string]$schedulingPlan.registry.sha256 -cne [string]$docsPlan.registry.sha256 -and [string]$schedulingPlan.plan_sha256 -cne [string]$docsPlan.plan_sha256) 'Full plan validation did not retain the changed raw registry identity.'
+                $schedulingCompiled = Test-MorphospaceAffectedValidationRegistry -Registry $schedulingRegistry -RepositoryRoot $fixture -SchemaPath (Join-Path $fixture 'schemas/affected-validation-registry-v1.schema.json')
+                $schedulingInventory = Get-MorphospaceAffectedTreeInventory -RepositoryRoot $fixture -Commit $schedulingHead
+                $schedulingRunnerManifest = @(Get-MorphospaceAffectedCheckRunnerSourceManifest -Inventory $schedulingInventory)
+                $schedulingLeafCheck = @($schedulingRegistry.checks | Where-Object check_id -ceq 'leaf-binding-fixture')[0]
+                $schedulingDependencyManifest = @(Get-MorphospaceAffectedCheckDependencyManifest -Check $schedulingLeafCheck -CompiledRegistry $schedulingCompiled -Inventory $schedulingInventory -RepositoryRoot $fixture)
+                $schedulingBinding = New-MorphospaceAffectedCheckBinding -Repository ([string]$leafBindingReceiptValue.binding.repository) -Platform ([string]$leafBindingReceiptValue.binding.platform) -Check $schedulingLeafCheck -Runner $leafBindingReceiptValue.binding.runner -RunnerSourceManifest $schedulingRunnerManifest -DependencyManifest $schedulingDependencyManifest -PrerequisiteBindings @()
+                $schedulingBindingSha256 = Get-MorphospaceCanonicalJsonSha256 -Value $schedulingBinding
+                Assert-True ((ConvertTo-MorphospaceCanonicalJson -Value $schedulingRunnerManifest) -ceq (ConvertTo-MorphospaceCanonicalJson -Value @($leafBindingReceiptValue.binding.runner_source_manifest))) 'Scheduling-only second head changed the rebuilt leaf-compatible runner manifest.'
+                Assert-True ((ConvertTo-MorphospaceCanonicalJson -Value $schedulingDependencyManifest) -ceq (ConvertTo-MorphospaceCanonicalJson -Value @($leafBindingReceiptValue.binding.dependency_manifest))) 'Scheduling-only second head changed the rebuilt leaf dependency manifest.'
+                Assert-True ($schedulingBindingSha256 -ceq [string]$leafBindingReceiptValue.binding_sha256) 'Scheduling-only second head changed the complete rebuilt leaf binding.'
+                $schedulingReuse = Find-MorphospaceAffectedReusableCheckReceipt -PriorEvidenceDirectory $firstCheckRoot -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json') -ExpectedBinding $schedulingBinding -ExpectedBindingSha256 $schedulingBindingSha256 -RepositoryRoot $fixture -CurrentHeadCommit $schedulingHead -CandidateReceiptPaths @($leafBindingReceipt[0].FullName)
+                Assert-True ($null -ne $schedulingReuse -and [string]$schedulingReuse.receipt_sha256 -ceq $originalReceiptSha256) 'Scheduling-only second head/tree did not reuse the same complete passing receipt.'
+
+                $semanticRegistry = $schedulingRegistry | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64 -DateKind String
+                $semanticRegistry.checks | Where-Object check_id -ceq 'leaf-binding-fixture' | ForEach-Object { $_.prerequisite_checks = @('public-boundary') }
+                Write-Utf8 (Join-Path $fixture 'manifests/affected-validation-registry.json') ((ConvertTo-MorphospaceCanonicalJson -Value $semanticRegistry) + "`n")
+                [void](Invoke-TestGit $fixture @('add','manifests/affected-validation-registry.json'))
+                [void](Invoke-TestGit $fixture @('commit','-m','semantic prerequisite metadata'))
+                $semanticHead = Invoke-TestGit $fixture @('rev-parse','HEAD')
+                $semanticExpectedCheck = $schedulingLeafCheck | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64 -DateKind String
+                $semanticExpectedCheck.prerequisite_checks = @('public-boundary')
+                $semanticLeafCheck = @($semanticRegistry.checks | Where-Object check_id -ceq 'leaf-binding-fixture')[0]
+                Assert-True ((ConvertTo-MorphospaceCanonicalJson -Value $semanticLeafCheck) -ceq (ConvertTo-MorphospaceCanonicalJson -Value $semanticExpectedCheck)) 'Semantic two-head fixture changed more than prerequisite_checks.'
+                $semanticCompiled = Test-MorphospaceAffectedValidationRegistry -Registry $semanticRegistry -RepositoryRoot $fixture -SchemaPath (Join-Path $fixture 'schemas/affected-validation-registry-v1.schema.json')
+                $semanticInventory = Get-MorphospaceAffectedTreeInventory -RepositoryRoot $fixture -Commit $semanticHead
+                $semanticBinding = New-MorphospaceAffectedCheckBinding -Repository ([string]$leafBindingReceiptValue.binding.repository) -Platform ([string]$leafBindingReceiptValue.binding.platform) -Check $semanticLeafCheck -Runner $leafBindingReceiptValue.binding.runner -RunnerSourceManifest @(Get-MorphospaceAffectedCheckRunnerSourceManifest -Inventory $semanticInventory) -DependencyManifest @(Get-MorphospaceAffectedCheckDependencyManifest -Check $semanticLeafCheck -CompiledRegistry $semanticCompiled -Inventory $semanticInventory -RepositoryRoot $fixture) -PrerequisiteBindings @([pscustomobject][ordered]@{check_id='public-boundary';binding_sha256=[string]$publicBoundaryReceiptValue.binding_sha256})
+                $semanticBindingSha256 = Get-MorphospaceCanonicalJsonSha256 -Value $semanticBinding
+                $semanticReuse = Find-MorphospaceAffectedReusableCheckReceipt -PriorEvidenceDirectory $firstCheckRoot -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json') -ExpectedBinding $semanticBinding -ExpectedBindingSha256 $semanticBindingSha256 -RepositoryRoot $fixture -CurrentHeadCommit $semanticHead -CandidateReceiptPaths @($leafBindingReceipt[0].FullName)
+                Assert-True ($semanticBindingSha256 -cne [string]$leafBindingReceiptValue.binding_sha256 -and $null -eq $semanticReuse) 'Semantic prerequisite change at a second head reused earlier leaf evidence.'
+
+                $executionRegistry = $schedulingRegistry | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64 -DateKind String
+                $executionRegistry.checks | Where-Object check_id -ceq 'leaf-binding-fixture' | ForEach-Object { $_.budget_seconds = [long]$_.budget_seconds + 1 }
+                Write-Utf8 (Join-Path $fixture 'manifests/affected-validation-registry.json') ((ConvertTo-MorphospaceCanonicalJson -Value $executionRegistry) + "`n")
+                [void](Invoke-TestGit $fixture @('add','manifests/affected-validation-registry.json'))
+                [void](Invoke-TestGit $fixture @('commit','-m','execution relevant check metadata'))
+                $executionHead = Invoke-TestGit $fixture @('rev-parse','HEAD')
+                $executionExpectedCheck = $schedulingLeafCheck | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64 -DateKind String
+                $executionExpectedCheck.budget_seconds = [long]$executionExpectedCheck.budget_seconds + 1
+                $executionLeafCheck = @($executionRegistry.checks | Where-Object check_id -ceq 'leaf-binding-fixture')[0]
+                Assert-True ((ConvertTo-MorphospaceCanonicalJson -Value $executionLeafCheck) -ceq (ConvertTo-MorphospaceCanonicalJson -Value $executionExpectedCheck)) 'Execution-relevant two-head fixture changed more than budget_seconds from the scheduling head.'
+                $executionCompiled = Test-MorphospaceAffectedValidationRegistry -Registry $executionRegistry -RepositoryRoot $fixture -SchemaPath (Join-Path $fixture 'schemas/affected-validation-registry-v1.schema.json')
+                $executionInventory = Get-MorphospaceAffectedTreeInventory -RepositoryRoot $fixture -Commit $executionHead
+                $executionBinding = New-MorphospaceAffectedCheckBinding -Repository ([string]$leafBindingReceiptValue.binding.repository) -Platform ([string]$leafBindingReceiptValue.binding.platform) -Check $executionLeafCheck -Runner $leafBindingReceiptValue.binding.runner -RunnerSourceManifest @(Get-MorphospaceAffectedCheckRunnerSourceManifest -Inventory $executionInventory) -DependencyManifest @(Get-MorphospaceAffectedCheckDependencyManifest -Check $executionLeafCheck -CompiledRegistry $executionCompiled -Inventory $executionInventory -RepositoryRoot $fixture) -PrerequisiteBindings @()
+                $executionBindingSha256 = Get-MorphospaceCanonicalJsonSha256 -Value $executionBinding
+                $executionReuse = Find-MorphospaceAffectedReusableCheckReceipt -PriorEvidenceDirectory $firstCheckRoot -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json') -ExpectedBinding $executionBinding -ExpectedBindingSha256 $executionBindingSha256 -RepositoryRoot $fixture -CurrentHeadCommit $executionHead -CandidateReceiptPaths @($leafBindingReceipt[0].FullName)
+                Assert-True ($executionBindingSha256 -cne [string]$leafBindingReceiptValue.binding_sha256 -and $null -eq $executionReuse) 'Execution-relevant change at a second head reused earlier leaf evidence.'
+            } finally {
+                [void](Invoke-TestGit $fixture @('checkout','main'))
+            }
             Assert-True (@($documentationReceiptValue.binding.dependency_manifest.path) -ccontains 'scripts/lib/DocumentationLinksDependency.psm1') 'Affected leaf dependency manifest omitted a tracked transitive imported module.'
             Assert-True (@($documentationReceiptValue.binding.dependency_manifest.path) -ccontains 'schemas/DocumentationLinksInput.schema.json') 'Affected leaf dependency manifest omitted a tracked schema/data input.'
             Assert-True (@($documentationReceiptValue.binding.dependency_manifest.path) -ccontains 'scripts/Test-PublicBoundary.ps1') 'Dynamic Import-Module did not conservatively bind unresolved tracked PowerShell sources.'
@@ -1735,12 +1821,13 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value ([pscust
     [void](Invoke-TestGit $fixture @('add', 'scripts/Test-PublicBoundary.ps1'))
     [void](Invoke-TestGit $fixture @('commit', '-m', 'failing affected command'))
     $failingHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
-    $failingPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $docsHead -HeadRevision $failingHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+    $failingPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $base -HeadRevision $failingHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+    Assert-True (@($failingPlan.selected_checks.check_id) -ccontains 'documentation-links') 'Combined documentation/boundary fixture did not select the independent documentation check.'
     Write-Utf8 $planPath ((ConvertTo-MorphospaceCanonicalJson -Value $failingPlan) + "`n")
     $failingEvidencePath = Join-Path $fixture 'failing-evidence.json'
     $codeFailed = $false
     $codeFailureRecord = $null
-    try { [void](& (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $docsHead -HeadCommit $failingHead -PlanPath $planPath -Platform linux -OutPath $failingEvidencePath) } catch { $codeFailureRecord = $_; $codeFailed = $_.Exception.Message -like '*code-fail*' }
+    try { [void](& (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $base -HeadCommit $failingHead -PlanPath $planPath -Platform linux -OutPath $failingEvidencePath) } catch { $codeFailureRecord = $_; $codeFailed = $_.Exception.Message -like '*code-fail*' }
     $codeFailureObserved = if ($null -eq $codeFailureRecord) { '<no exception>' } else { [string]$codeFailureRecord.Exception.Message }
     Assert-True $codeFailed "Affected executor swallowed or reclassified a native nonzero exit. Observed: $codeFailureObserved"
     $failingEvidence = Read-MorphospaceProtocolJson -Path $failingEvidencePath
@@ -1750,7 +1837,10 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value ([pscust
     $failingReceipts = @(Get-ChildItem -LiteralPath $failingCheckRoot -Filter receipt.json -File -Recurse | ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json -Depth 64 -DateKind String })
     $executedFailure = @($failingReceipts | Where-Object { $_.mode -ceq 'executed' -and $_.result -ceq 'code-fail' -and $_.child.exit_code -eq 17 })
     $blockedDependents = @($failingReceipts | Where-Object { $_.mode -ceq 'blocked' -and @($_.blocked_by).Count -gt 0 })
-    Assert-True ($executedFailure.Count -eq 1 -and $blockedDependents.Count -ge 1) 'Affected executor did not preserve the exact failed leaf and dependency-blocked descendants.'
+    Assert-True ($executedFailure.Count -eq 1) 'Affected executor did not preserve the exact failed leaf.'
+    Assert-True ($blockedDependents.Count -eq 0) 'Execution-order-only anchor failure produced semantic blocked descendants.'
+    $independentDocumentation = @($failingReceipts | Where-Object { $_.binding.check_id -ceq 'documentation-links' })
+    Assert-True ($independentDocumentation.Count -eq 1 -and $independentDocumentation[0].mode -ceq 'executed' -and $independentDocumentation[0].result -ceq 'pass' -and @($independentDocumentation[0].blocked_by).Count -eq 0) 'Failed execution-order anchor blocked an independent documentation leaf.'
     $failedReceiptPath = @(Get-ChildItem -LiteralPath $failingCheckRoot -Filter receipt.json -File -Recurse | Where-Object { (Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json -Depth 64 -DateKind String).result -ceq 'code-fail' } | Select-Object -First 1).FullName
     $failedReceipt = Get-Content -LiteralPath $failedReceiptPath -Raw | ConvertFrom-Json -Depth 64 -DateKind String
     foreach ($stream in @('stdout','stderr')) { $streamPath = Join-Path ([IO.Path]::GetDirectoryName($failedReceiptPath)) "$stream.bin"; Assert-True ([IO.File]::Exists($streamPath) -and (Get-FileHash -LiteralPath $streamPath -Algorithm SHA256).Hash.ToLowerInvariant() -ceq [string]$failedReceipt.child.$stream.sha256) "Failed leaf $stream bytes are unavailable or not receipt-bound." }
@@ -2154,7 +2244,7 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
         $plan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $commandHead -HeadRevision $unknownHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
         Assert-True ($plan.selection_mode -ceq 'full-deep') 'Unmapped change did not fail closed to Deep.'
         Assert-True (@($plan.reason_codes) -ccontains 'unmapped-path') 'Unmapped change lacks reason code.'
-        $ordinaryDeepCount = @($registry.checks | Where-Object { $null -eq $_.PSObject.Properties['aggregate_role'] }).Count
+        $ordinaryDeepCount = @($fixtureRegistry.checks | Where-Object { $null -eq $_.PSObject.Properties['aggregate_role'] }).Count
         Assert-True (@($plan.selected_checks).Count -eq $ordinaryDeepCount -and @($plan.selected_checks.check_id) -cnotcontains 'work-environment-deep') 'Deep fallback did not select every independent leaf or selected the redundant cumulative aggregate.'
         return $plan
     })
@@ -2440,6 +2530,34 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     $crossPlatformFailed = $false
     try { [void](Test-MorphospaceAffectedValidationRegistry -Registry $crossPlatform -RepositoryRoot $fixture -SchemaPath (Join-Path $fixture 'schemas/affected-validation-registry-v1.schema.json')) } catch { $crossPlatformFailed = $_.Exception.Message -like '*cross-platform*' }
     Assert-True $crossPlatformFailed 'Registry accepted an unsatisfied cross-platform prerequisite.'
+
+    $unknownExecutionOrder = Read-MorphospaceProtocolJson -Path (Join-Path $fixture 'manifests/affected-validation-registry.json')
+    $unknownExecutionOrder.checks | Where-Object { $_.check_id -ceq 'documentation-links' } | ForEach-Object { $_.execution_after_checks = @('missing-order-anchor') }
+    Assert-AffectedThrows { [void](Test-MorphospaceAffectedValidationRegistry -Registry $unknownExecutionOrder -RepositoryRoot $fixture -SchemaPath (Join-Path $fixture 'schemas/affected-validation-registry-v1.schema.json')) } '*unknown execution-order dependency*' 'Registry accepted an unknown execution-order dependency.'
+
+    $crossPlatformExecutionOrder = Read-MorphospaceProtocolJson -Path (Join-Path $fixture 'manifests/affected-validation-registry.json')
+    $crossPlatformExecutionOrder.checks | Where-Object { $_.check_id -ceq 'work-unit-automation' } | ForEach-Object { $_ | Add-Member -NotePropertyName execution_after_checks -NotePropertyValue @('documentation-links') }
+    Assert-AffectedThrows { [void](Test-MorphospaceAffectedValidationRegistry -Registry $crossPlatformExecutionOrder -RepositoryRoot $fixture -SchemaPath (Join-Path $fixture 'schemas/affected-validation-registry-v1.schema.json')) } '*cross-platform execution-order dependency*' 'Registry accepted an unsatisfied cross-platform execution-order dependency.'
+
+    $duplicateExecutionOrder = Read-MorphospaceProtocolJson -Path (Join-Path $fixture 'manifests/affected-validation-registry.json')
+    $duplicateExecutionOrder.checks | Where-Object { $_.check_id -ceq 'documentation-links' } | ForEach-Object { $_.execution_after_checks = @('public-boundary','public-boundary') }
+    Assert-AffectedThrows { [void](Test-MorphospaceAffectedValidationRegistry -Registry $duplicateExecutionOrder -RepositoryRoot $fixture -SchemaPath (Join-Path $fixture 'schemas/affected-validation-registry-v1.schema.json')) } '*repeats execution-order dependency*' 'Registry accepted a duplicate execution-order dependency.'
+
+    $executionOrderSelf = Read-MorphospaceProtocolJson -Path (Join-Path $fixture 'manifests/affected-validation-registry.json')
+    $executionOrderSelf.checks | Where-Object { $_.check_id -ceq 'documentation-links' } | ForEach-Object { $_.execution_after_checks = @('documentation-links') }
+    Assert-AffectedThrows { [void](Test-MorphospaceAffectedValidationRegistry -Registry $executionOrderSelf -RepositoryRoot $fixture -SchemaPath (Join-Path $fixture 'schemas/affected-validation-registry-v1.schema.json')) } '*cannot depend on itself*' 'Registry accepted a self-referential execution-order dependency.'
+
+    $duplicateDependencyKind = Read-MorphospaceProtocolJson -Path (Join-Path $fixture 'manifests/affected-validation-registry.json')
+    $duplicateDependencyKind.checks | Where-Object { $_.check_id -ceq 'documentation-links' } | ForEach-Object { $_.prerequisite_checks = @('public-boundary') }
+    Assert-AffectedThrows { [void](Test-MorphospaceAffectedValidationRegistry -Registry $duplicateDependencyKind -RepositoryRoot $fixture -SchemaPath (Join-Path $fixture 'schemas/affected-validation-registry-v1.schema.json')) } '*both a semantic prerequisite and an execution-order dependency*' 'Registry accepted the same dependency in both semantic and execution-order fields.'
+
+    $contractMislabel = Read-MorphospaceProtocolJson -Path (Join-Path $fixture 'manifests/affected-validation-registry.json')
+    $contractMislabel.checks | Where-Object { $_.check_id -ceq 'documentation-links' } | ForEach-Object { $_.consumes_contracts = @('public-boundary') }
+    Assert-AffectedThrows { [void](Test-MorphospaceAffectedValidationRegistry -Registry $contractMislabel -RepositoryRoot $fixture -SchemaPath (Join-Path $fixture 'schemas/affected-validation-registry-v1.schema.json')) } '*must be a semantic prerequisite*' 'Registry accepted a contract-carrying dependency as execution order only.'
+
+    $executionOrderCycle = Read-MorphospaceProtocolJson -Path (Join-Path $fixture 'manifests/affected-validation-registry.json')
+    $executionOrderCycle.checks | Where-Object { $_.check_id -ceq 'public-boundary' } | ForEach-Object { $_ | Add-Member -NotePropertyName execution_after_checks -NotePropertyValue @('documentation-links') }
+    Assert-AffectedThrows { [void](Test-MorphospaceAffectedValidationRegistry -Registry $executionOrderCycle -RepositoryRoot $fixture -SchemaPath (Join-Path $fixture 'schemas/affected-validation-registry-v1.schema.json')) } '*cycle*' 'Registry accepted a cycle spanning execution-order dependencies.'
 
     $uncovered = Read-MorphospaceProtocolJson -Path (Join-Path $fixture 'manifests/affected-validation-registry.json')
     $uncovered.checks | Where-Object { $_.check_id -ceq 'public-boundary' } | ForEach-Object { $_.consume_path_sets = @($_.consume_path_sets | Where-Object { $_ -cne 'automation' }) }

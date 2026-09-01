@@ -1,8 +1,8 @@
 # Affected Validation
 
 `validate.yml` resolves a closed, exact-base/current-head plan before running
-candidate validation. The registry owns canonical path classes, prerequisite
-order, platform applicability, and the exact Git blob identities that evidence
+candidate validation. The registry owns canonical path classes, semantic
+dependencies, execution order, platform applicability, and the exact Git blob identities that evidence
 must bind. Unmapped paths, case collisions, selector/workflow changes, and external
 authority changes fail closed to Deep; they do not silently widen a Quick run.
 
@@ -22,8 +22,11 @@ stderr bytes plus a closed receipt binding their lengths and hashes, command
 and arguments, the command's tracked transitive PowerShell import/invocation
 closure, conservatively resolved dynamic imports, tracked schema/manifest/data
 inputs, declared consumed exact-head Git blobs, the exact executor/evidence
-module/schema source set, registry check definition, runner executable bytes
-and versions, and prerequisite binding identities. A
+module/schema source set including the consumed plan schema, the projected
+evidence-relevant check definition, runner executable bytes and versions, and
+prerequisite binding identities. The raw registry remains bound by full plan
+selection validation; scheduling-only `execution_after_checks` metadata is the
+only check-definition field omitted from a reusable leaf binding. A
 zero-check platform request is invalid. A nonzero exit, timeout, output flood,
 or post-kill drain overrun is `code-fail`; `infra-fail` is reserved for a
 process-start or host fault. Both write typed leaf and aggregate evidence
@@ -137,7 +140,15 @@ removed from the child process. Source drift is a typed infrastructure failure:
 remaining leaves do not start and no reusable inventory is finalized. A
 create-new collision or incomplete execution likewise publishes no cache.
 
-Checks execute in prerequisite order. A failed leaf blocks only its transitive
+Checks execute in deterministic dependency order. `prerequisite_checks` are
+semantic evidence dependencies: they are selected with their consumer, enter
+the consumer binding, and block the consumer when they fail.
+`execution_after_checks` are scheduling edges only: they order two checks when
+both are already selected, but they neither select the later check nor enter
+its reusable-evidence binding, and a failed ordering anchor does not block it.
+The registry rejects unknown, cross-platform, duplicate, cyclic, self, or
+contract-carrying scheduling edges; a consumed contract must remain a semantic
+prerequisite. A failed leaf therefore blocks only its transitive semantic
 dependents, which receive explicit create-new `blocked` receipts; independent
 leaves continue and preserve their evidence. A corrected attempt may then
 reuse every still-valid independent pass instead of replaying the entire

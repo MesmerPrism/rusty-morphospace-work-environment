@@ -27,4 +27,3 @@ Run these proportional checks for contract changes:
 - `scripts/Test-OwnershipAuthority.ps1`
 - `scripts/Test-BlockedSupersessionTerminalValidation.ps1`
 - `scripts/Test-CorrectActiveUnitContract.ps1 -SelfTest`
-
