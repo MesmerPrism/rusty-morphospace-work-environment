@@ -492,6 +492,16 @@ function Assert-MorphospaceLedgerIntent {
         if([string]$Intent.pre.unit.sha256-cne[string]$Intent.target.unit.sha256){
             throw 'Transition ledger intent v5 may not change the canonical unit projection.'
         }
+        $targetState=$Intent.target.state.document
+        if($null-eq$targetState.PSObject.Properties['last_event_id']-or
+           [string]$targetState.last_event_id-cne[string]$Intent.event.event_id){
+            throw 'Transition ledger intent v5 target state does not advance to its exact event tail.'
+        }
+        $preEventState=$targetState|ConvertTo-Json -Depth 64|ConvertFrom-Json -Depth 64 -DateKind String
+        $preEventState.last_event_id=$Intent.expected.event_tail_id
+        if((Get-MorphospaceLedgerDocumentHash $preEventState)-cne[string]$Intent.pre.state.sha256){
+            throw 'Transition ledger intent v5 may not change workspace state beyond its event tail.'
+        }
         $artifacts=@($Intent.artifacts)
         if($artifacts.Count-lt1-or$artifacts.Count-gt2){throw 'Transition ledger intent v5 requires one or two owned artifacts.'}
         $receipts=@($Intent.event.receipts)

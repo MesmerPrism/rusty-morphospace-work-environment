@@ -429,6 +429,16 @@ function Assert-MorphospaceCommittedTransitionIntentV5 {
     if ([string]$Intent.pre.unit.sha256 -cne [string]$Intent.target.unit.sha256) {
         throw 'Committed transition v5 changes the canonical unit projection.'
     }
+    $targetState = $Intent.target.state.document
+    if ($null -eq $targetState.PSObject.Properties['last_event_id'] -or
+        [string]$targetState.last_event_id -cne $eventId) {
+        throw 'Committed transition v5 target state does not advance to its exact event tail.'
+    }
+    $preEventState = $targetState | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64 -DateKind String
+    $preEventState.last_event_id = $Intent.expected.event_tail_id
+    if ((Get-MorphospaceCanonicalJsonSha256 $preEventState) -cne [string]$Intent.pre.state.sha256) {
+        throw 'Committed transition v5 changes workspace state beyond its event tail.'
+    }
     $artifacts = @($Intent.artifacts)
     $receipts = @($Intent.event.receipts)
     if ($artifacts.Count -lt 1 -or $artifacts.Count -gt 2 -or $receipts.Count -ne $artifacts.Count) {
