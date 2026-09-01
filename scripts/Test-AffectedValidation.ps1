@@ -1739,20 +1739,81 @@ try {
 param([string]$Phase,[int]$BudgetSeconds,[switch]$Verify)
 if ($Verify) { return }
 if ([string]::IsNullOrWhiteSpace($Phase)) { throw 'Fixture phase identity is absent.' }
+Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1') -Force
 $root = [IO.Path]::GetFullPath([string]$env:RUSTY_AFFECTED_VALIDATION_PHASE_ROOT)
 if (-not [IO.Directory]::Exists($root)) { [void][IO.Directory]::CreateDirectory($root) }
+function Get-FixtureSha256([byte[]]$Bytes) { ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($Bytes))).ToLowerInvariant() }
+function Get-FixtureEnvironment([string]$Name,[string]$Pattern) {
+    $value = [string][Environment]::GetEnvironmentVariable($Name,'Process')
+    if ([string]::IsNullOrWhiteSpace($value) -or $value -cnotmatch $Pattern) { throw "Fixture phase environment is invalid: $Name" }
+    return $value
+}
 function Write-FixtureBytes([string]$Path,[byte[]]$Bytes) {
     $stream = [IO.File]::Open($Path,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
     try { $stream.Write($Bytes,0,$Bytes.Length); $stream.Flush($true) } finally { $stream.Dispose() }
 }
 function Write-FixtureJson([string]$Path,[object]$Value) {
-    Write-FixtureBytes -Path $Path -Bytes ([Text.UTF8Encoding]::new($false).GetBytes(($Value | ConvertTo-Json -Depth 16 -Compress) + "`n"))
+    Write-FixtureBytes -Path $Path -Bytes ([Text.UTF8Encoding]::new($false).GetBytes((ConvertTo-MorphospaceCanonicalJson -Value $Value) + "`n"))
 }
+function Get-FixtureFileReference([string]$Path) {
+    [byte[]]$bytes = [IO.File]::ReadAllBytes((Join-Path $root $Path))
+    return [pscustomobject][ordered]@{path=$Path;bytes=[long]$bytes.Length;sha256=Get-FixtureSha256 $bytes}
+}
+$baseCommit = Get-FixtureEnvironment 'RUSTY_AFFECTED_VALIDATION_BASE_COMMIT' '^[0-9a-f]{40}$'
+$headCommit = Get-FixtureEnvironment 'RUSTY_AFFECTED_VALIDATION_HEAD_COMMIT' '^[0-9a-f]{40}$'
+$planSha256 = Get-FixtureEnvironment 'RUSTY_AFFECTED_VALIDATION_PLAN_SHA256' '^[0-9a-f]{64}$'
+$platform = Get-FixtureEnvironment 'RUSTY_AFFECTED_VALIDATION_PLATFORM' '^(windows|linux)$'
+$checkId = Get-FixtureEnvironment 'RUSTY_AFFECTED_VALIDATION_CHECK_ID' '^[a-z0-9][a-z0-9-]{1,95}$'
+$projectionPath = Get-FixtureEnvironment 'RUSTY_AFFECTED_VALIDATION_DEPENDENCY_PROJECTION_PATH' '^.+$'
+$projectionSha256 = Get-FixtureEnvironment 'RUSTY_AFFECTED_VALIDATION_DEPENDENCY_PROJECTION_SHA256' '^[0-9a-f]{64}$'
+[byte[]]$projectionBytes = [IO.File]::ReadAllBytes($projectionPath)
+if ((Get-FixtureSha256 $projectionBytes) -cne $projectionSha256) { throw 'Fixture phase dependency projection differs from its parent hash.' }
+$projection = [Text.UTF8Encoding]::new($false,$true).GetString($projectionBytes) | ConvertFrom-Json -Depth 64 -DateKind String
+if ([string]$projection.repository -cne 'MesmerPrism/rusty-morphospace-work-environment' -or [string]$projection.head_commit -cne $headCommit -or [string]$projection.check_id -cne $checkId) { throw 'Fixture phase dependency projection identity is invalid.' }
+$powerShellPath = [IO.Path]::GetFullPath((Get-Process -Id $PID).Path)
+$gitCommand = Get-Command git -CommandType Application -ErrorAction Stop | Select-Object -First 1
+$gitPath = [IO.Path]::GetFullPath([string]$gitCommand.Source)
+$gitVersion = (& $gitPath --version).Trim()
+$runner = [pscustomobject][ordered]@{
+    os_description=[Runtime.InteropServices.RuntimeInformation]::OSDescription
+    process_architecture=[Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString().ToLowerInvariant()
+    powershell_version=$PSVersionTable.PSVersion.ToString()
+    powershell_executable_sha256=Get-FixtureSha256 ([IO.File]::ReadAllBytes($powerShellPath))
+    git_version=$gitVersion
+    git_executable_sha256=Get-FixtureSha256 ([IO.File]::ReadAllBytes($gitPath))
+}
+$binding = [pscustomobject][ordered]@{
+    repository='MesmerPrism/rusty-morphospace-work-environment'
+    base_commit=$baseCommit
+    head_commit=$headCommit
+    head_tree=[string]$projection.head_tree
+    plan_sha256=$planSha256
+    platform=$platform
+    check_id=$checkId
+    phase_id=$Phase
+    runner=$runner
+    dependency_manifest=@($projection.dependency_manifest)
+}
+$bindingSha256 = Get-MorphospaceCanonicalJsonSha256 -Value $binding
 $now = [DateTimeOffset]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ',[Globalization.CultureInfo]::InvariantCulture)
-Write-FixtureJson -Path (Join-Path $root "$Phase.start.json") -Value ([pscustomobject][ordered]@{phase_id=$Phase;started_at=$now;budget_seconds=$BudgetSeconds})
+Write-FixtureJson -Path (Join-Path $root "$Phase.start.json") -Value ([pscustomobject][ordered]@{schema='rusty.morphospace.workflow.affected_validation_self_test_phase_start.v1';phase_id=$Phase;binding=$binding;binding_sha256=$bindingSha256;started_at=$now;budget_seconds=$BudgetSeconds})
 Write-FixtureBytes -Path (Join-Path $root "$Phase.stdout.bin") -Bytes ([byte[]]@())
 Write-FixtureBytes -Path (Join-Path $root "$Phase.stderr.bin") -Bytes ([byte[]]@())
-Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value ([pscustomobject][ordered]@{phase_id=$Phase;result='pass';outputs=@()})
+$terminal = [pscustomobject][ordered]@{
+    schema='rusty.morphospace.workflow.affected_validation_self_test_phase_receipt.v1'
+    phase_id=$Phase
+    binding=$binding
+    binding_sha256=$bindingSha256
+    started_at=$now
+    ended_at=$now
+    budget_seconds=$BudgetSeconds
+    elapsed_ms=0
+    result='pass'
+    child=[pscustomobject][ordered]@{started=$true;exit_code=0;timed_out=$false;post_kill_drain_timed_out=$false;stdout=Get-FixtureFileReference "$Phase.stdout.bin";stderr=Get-FixtureFileReference "$Phase.stderr.bin"}
+    outputs=@()
+    claims=[pscustomobject][ordered]@{phase_only=$true;candidate_admission=$false;acceptance_authority=$false;publication_authority=$false;device_used=$false}
+}
+Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value $terminal
 '@
     Write-Utf8 (Join-Path $fixture 'scripts/Invoke-AffectedValidationSelfTestPhase.ps1') $fixturePhaseRunner
     foreach ($runnerSourcePath in @(
@@ -1760,6 +1821,7 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value ([pscust
         'schemas/affected-validation-check-inventory-v1.schema.json',
         'schemas/affected-validation-plan-v1.schema.json',
         'schemas/affected-validation-registry-v1.schema.json',
+        'schemas/affected-validation-self-test-phase-receipt-v1.schema.json',
         'schemas/development-unit-admission-v1.schema.json',
         'scripts/Invoke-AffectedValidation.ps1',
         'scripts/lib/MorphospaceAffectedValidation.psm1',
@@ -2777,6 +2839,74 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     if ($runFullSelector -or $runTrustPhase) {
     if ($runFullSelector -or $runTrustSelfPhase) {
     $trustSegmentClock = [Diagnostics.Stopwatch]::StartNew()
+    $fixtureContractPhase = 'trust-self-executor'
+    $fixtureContractCheckId = 'affected-selector-trust-self-executor'
+    $fixtureContractPlanSha256 = 'a' * 64
+    $fixtureContractTree = Invoke-TestGit $fixture @('rev-parse', "$deleteHead^{tree}")
+    $fixtureContractCommandPath = 'scripts/Invoke-AffectedValidationSelfTestPhase.ps1'
+    $fixtureContractManifest = @([pscustomobject][ordered]@{
+        path=$fixtureContractCommandPath
+        mode='100644'
+        blob=Invoke-TestGit $fixture @('rev-parse', "${deleteHead}:$fixtureContractCommandPath")
+    })
+    $fixtureContractProjection = [pscustomobject][ordered]@{
+        schema='rusty.morphospace.workflow.affected_validation_self_test_dependency_projection.v1'
+        repository='MesmerPrism/rusty-morphospace-work-environment'
+        head_commit=$deleteHead
+        head_tree=$fixtureContractTree
+        registry_sha256=Get-MorphospaceCanonicalJsonSha256 -Value $fixtureRegistry
+        check_id=$fixtureContractCheckId
+        command_path=$fixtureContractCommandPath
+        consume_path_sets=@('affected-validation-contract')
+        dependency_manifest=$fixtureContractManifest
+    }
+    $fixtureContractProjectionPath = Join-Path $fixture 'fixture-phase-projection.json'
+    [byte[]]$fixtureContractProjectionBytes = [Text.UTF8Encoding]::new($false,$true).GetBytes((ConvertTo-MorphospaceCanonicalJson -Value $fixtureContractProjection) + "`n")
+    [IO.File]::WriteAllBytes($fixtureContractProjectionPath,$fixtureContractProjectionBytes)
+    $fixtureContractProjectionSha256 = ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($fixtureContractProjectionBytes))).ToLowerInvariant()
+    $fixtureContractPhaseRoot = Join-Path $fixture 'fixture-phase-contract'
+    [void][IO.Directory]::CreateDirectory($fixtureContractPhaseRoot)
+    $fixtureContractEnvironment = [ordered]@{
+        RUSTY_AFFECTED_VALIDATION_PHASE_ROOT=$fixtureContractPhaseRoot
+        RUSTY_AFFECTED_VALIDATION_BASE_COMMIT=$deleteHead
+        RUSTY_AFFECTED_VALIDATION_HEAD_COMMIT=$deleteHead
+        RUSTY_AFFECTED_VALIDATION_PLAN_SHA256=$fixtureContractPlanSha256
+        RUSTY_AFFECTED_VALIDATION_PLATFORM=$(if($IsWindows){'windows'}else{'linux'})
+        RUSTY_AFFECTED_VALIDATION_CHECK_ID=$fixtureContractCheckId
+        RUSTY_AFFECTED_VALIDATION_DEPENDENCY_PROJECTION_PATH=$fixtureContractProjectionPath
+        RUSTY_AFFECTED_VALIDATION_DEPENDENCY_PROJECTION_SHA256=$fixtureContractProjectionSha256
+    }
+    $fixtureContractEnvironmentBefore = @{}
+    try {
+        foreach ($entry in $fixtureContractEnvironment.GetEnumerator()) {
+            $fixtureContractEnvironmentBefore[[string]$entry.Key] = [Environment]::GetEnvironmentVariable([string]$entry.Key,'Process')
+            [Environment]::SetEnvironmentVariable([string]$entry.Key,[string]$entry.Value,'Process')
+        }
+        $fixtureContractOutput = @(& (Get-Process -Id $PID).Path -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $fixture $fixtureContractCommandPath) -Phase $fixtureContractPhase -BudgetSeconds 75 2>&1)
+        Assert-True ($LASTEXITCODE -eq 0) "Schema-valid fixture phase runner failed: $($fixtureContractOutput -join ' ')"
+    } finally {
+        foreach ($entry in $fixtureContractEnvironment.GetEnumerator()) {
+            $before = $fixtureContractEnvironmentBefore[[string]$entry.Key]
+            if ($null -eq $before) { [Environment]::SetEnvironmentVariable([string]$entry.Key,$null,'Process') }
+            else { [Environment]::SetEnvironmentVariable([string]$entry.Key,[string]$before,'Process') }
+        }
+    }
+    $fixtureContractArtifacts = [Collections.Generic.List[object]]::new()
+    foreach ($suffix in @('start.json','stdout.bin','stderr.bin','terminal.json')) {
+        $relative = "$fixtureContractPhase.$suffix"
+        $fixtureContractArtifacts.Add([pscustomobject][ordered]@{path=$relative;bytes=[IO.File]::ReadAllBytes((Join-Path $fixtureContractPhaseRoot $relative))})
+    }
+    $fixtureContractRunner = Get-MorphospaceAffectedCheckRunnerBinding
+    $fixtureContractExpectedBinding = [pscustomobject][ordered]@{repository='MesmerPrism/rusty-morphospace-work-environment';platform=$(if($IsWindows){'windows'}else{'linux'});check_id=$fixtureContractCheckId;runner=$fixtureContractRunner;dependency_manifest=$fixtureContractManifest}
+    $fixtureContractExpectedSource = [pscustomobject][ordered]@{base=[pscustomobject][ordered]@{commit=$deleteHead;tree=$fixtureContractTree};head=[pscustomobject][ordered]@{commit=$deleteHead;tree=$fixtureContractTree}}
+    $fixtureContractEvidenceModule = Get-Module MorphospaceAffectedValidationCheckEvidence
+    [void](& $fixtureContractEvidenceModule {
+        param($Artifacts,$Phase,$Binding,$Source,$PlanSha256,$SchemaPath)
+        Assert-MorphospaceAffectedCheckPhaseArtifactSet -Artifacts $Artifacts -Phase $Phase -ExpectedBinding $Binding -ExpectedSource $Source -ExpectedPlanSha256 $PlanSha256 -PhaseReceiptSchemaPath $SchemaPath
+    } @($fixtureContractArtifacts.ToArray()) $fixtureContractPhase $fixtureContractExpectedBinding $fixtureContractExpectedSource $fixtureContractPlanSha256 (Join-Path $repoRoot 'schemas/affected-validation-self-test-phase-receipt-v1.schema.json'))
+    Remove-Item -LiteralPath $fixtureContractProjectionPath -Force
+    Remove-Item -LiteralPath $fixtureContractPhaseRoot -Recurse -Force
+    Write-Host 'Schema-valid fixture phase receipt and artifact-set contract passed.'
     Write-Utf8 (Join-Path $fixture 'scripts/Test-AffectedValidation.ps1') "# selector changed`n"
     [void](Invoke-TestGit $fixture @('add', 'scripts/Test-AffectedValidation.ps1'))
     [void](Invoke-TestGit $fixture @('commit', '-m', 'selector self change'))
