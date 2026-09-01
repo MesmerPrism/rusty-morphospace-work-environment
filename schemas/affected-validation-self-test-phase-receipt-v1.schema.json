@@ -35,17 +35,16 @@
         },
         "dependency_manifest": {
           "type": "array",
-          "minItems": 7,
-          "maxItems": 16,
+          "minItems": 1,
+          "maxItems": 2048,
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["path", "blob", "bytes", "sha256"],
+            "required": ["path", "mode", "blob"],
             "properties": {
               "path": { "$ref": "#/$defs/path" },
-              "blob": { "$ref": "#/$defs/sha1" },
-              "bytes": { "type": "integer", "minimum": 1 },
-              "sha256": { "$ref": "#/$defs/sha256" }
+              "mode": { "enum": ["100644", "100755"] },
+              "blob": { "$ref": "#/$defs/sha1" }
             }
           }
         }
@@ -90,7 +89,7 @@
   },
   "$defs": {
     "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,95}$" },
-    "path": { "type": "string", "minLength": 1, "maxLength": 512, "pattern": "^[^\\\\:]+$" },
+    "path": { "type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^(?!/)(?!.*\\\\)(?!.*:)[^\\\\\u0000-\u001f\u007f]+$" },
     "sha1": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
     "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "timestamp": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$" },

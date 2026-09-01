@@ -174,7 +174,7 @@ try {
     Assert-InheritedCandidateTest (Test-Json -Json (Get-Content -LiteralPath $unitPath -Raw) -SchemaFile (Join-Path $repoRoot 'schemas\iteration-unit.schema.json')) 'materialized inherited-candidate unit did not satisfy the strict iteration-unit schema'
     Assert-InheritedCandidateTest (Test-MorphospaceInheritedCandidateMaterializationGate -WorkspaceRoot $workspace -Unit (Get-Content -LiteralPath $unitPath -Raw | ConvertFrom-Json)) 'exact marker did not satisfy the source-work gate'
     $replay = & (Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1') -Action MaterializeInheritedCandidate -WorkspaceRoot $workspace -UnitId $unitId -RepoMapPath $repoMapPath -MaterializationRoot $materializationRoot -OutPath $markerPath -Timestamp '2030-01-02T03:04:07.0000000Z' -Execute | ConvertFrom-Json
-    Assert-InheritedCandidateTest ($replay.transition -eq 'inherited-candidate-already-materialized') 'exact replay was not idempotent'
+    Assert-InheritedCandidateTest ($replay.transition -eq 'inherited-candidate-already-materialized' -and $null -eq $replay.event_id -and (Test-Json -Json ($replay | ConvertTo-Json -Depth 32) -SchemaFile (Join-Path $repoRoot 'schemas\work-unit-automation-receipt-v2.schema.json'))) 'exact replay was not schema-valid and idempotent'
     [IO.File]::AppendAllText((Join-Path $materialized 'src\lib.rs'), 'damage', [Text.UTF8Encoding]::new($false))
     $doubleMaterializationRejected = $false
     try { Invoke-MorphospaceMaterializeInheritedCandidate -WorkspaceRoot $workspace -UnitId $unitId -RepoMapPath $repoMapPath -MaterializationRoot $materializationRoot -OutPath $markerPath -Execute | Out-Null } catch { $doubleMaterializationRejected = $_.Exception.Message -like 'Inherited-candidate materialized file differs*' }

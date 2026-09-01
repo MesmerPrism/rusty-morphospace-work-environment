@@ -4,7 +4,8 @@ param(
     [ValidateSet('graph-import-closure','executor-pass-schema','executor-damage','selection-scenarios','trust-self-executor','trust-routing-contracts','trust-proportional-mappings','trust-damage-final')]
     [string]$Phase,
     [Parameter(Mandatory=$true,ParameterSetName='Phase')][ValidateRange(1,600)][int]$BudgetSeconds,
-    [Parameter(Mandatory=$true,ParameterSetName='Verify')][switch]$Verify
+    [Parameter(Mandatory=$true,ParameterSetName='Verify')][switch]$Verify,
+    [Parameter(Mandatory=$true,ParameterSetName='BindingSelfTest')][switch]$BindingSelfTest
 )
 
 Set-StrictMode -Version 2.0
@@ -24,16 +25,6 @@ $checkIds = [ordered]@{
     'trust-proportional-mappings'='affected-selector-trust-proportional-mappings'
     'trust-damage-final'='affected-selector-trust-damage-final'
 }
-$dependencyPaths = @(
-    'manifests/affected-validation-registry.json',
-    'schemas/affected-validation-registry-v1.schema.json',
-    'schemas/affected-validation-self-test-phase-receipt-v1.schema.json',
-    'scripts/Invoke-AffectedValidationSelfTestPhase.ps1',
-    'scripts/Test-AffectedValidation.ps1',
-    'scripts/lib/MorphospaceAffectedValidation.psm1',
-    'scripts/lib/MorphospaceProtocolCommon.psm1'
-)
-
 function Get-RequiredEnvironment([string]$Name,[string]$Pattern) {
     $value = [Environment]::GetEnvironmentVariable($Name,'Process')
     if ([string]::IsNullOrWhiteSpace($value) -or $value -cnotmatch $Pattern) { throw "Affected phase runner requires canonical environment '$Name'." }
@@ -67,20 +58,47 @@ function Write-NewJson([string]$Path,[object]$Value) {
     $bytes = [Text.UTF8Encoding]::new($false,$true).GetBytes((ConvertTo-MorphospaceCanonicalJson -Value $Value) + "`n")
     Write-NewBytes -Path $Path -Bytes $bytes
 }
-function Get-DependencyManifest([string]$ExpectedHead,[string]$ExpectedTree) {
+function Read-DependencyProjectionFile([string]$Path,[string]$ExpectedSha256) {
+    $full=[IO.Path]::GetFullPath($Path)
+    if(-not[IO.File]::Exists($full)){throw 'Affected phase dependency projection file is absent.'}
+    $info=[IO.FileInfo]::new($full)
+    if($info.Length -le 0 -or $info.Length -gt 134217728){throw 'Affected phase dependency projection file exceeds its bound.'}
+    [byte[]]$bytes=[IO.File]::ReadAllBytes($full)
+    if((Get-Sha256 $bytes)-cne$ExpectedSha256){throw 'Affected phase dependency projection file differs from its parent-owned hash.'}
+    try { $json = [Text.UTF8Encoding]::new($false,$true).GetString($bytes) } catch { throw 'Affected phase dependency projection is not strict UTF-8.' }
+    $schemaPath = Join-Path $repoRoot 'schemas/affected-validation-self-test-dependency-projection-v1.schema.json'
+    if (-not (Test-Json -Json $json -SchemaFile $schemaPath -ErrorAction Stop)) { throw 'Affected phase dependency projection fails its closed schema.' }
+    return $json | ConvertFrom-Json -Depth 64 -DateKind String
+}
+function Get-DependencyProjection([string]$ExpectedHead,[string]$ExpectedTree,[string]$ExpectedCheckId) {
+    $projection = Read-DependencyProjectionFile -Path (Get-RequiredEnvironment 'RUSTY_AFFECTED_VALIDATION_DEPENDENCY_PROJECTION_PATH' '^.+$') -ExpectedSha256 (Get-RequiredEnvironment 'RUSTY_AFFECTED_VALIDATION_DEPENDENCY_PROJECTION_SHA256' '^[0-9a-f]{64}$')
     $module = Get-Module MorphospaceAffectedValidation
     $head = & $module { param($Root) Get-MorphospaceAffectedGitIdentity -RepositoryRoot $Root -Revision HEAD } $repoRoot
     if ([string]$head.commit -cne $ExpectedHead -or [string]$head.tree -cne $ExpectedTree) { throw 'Affected phase repository HEAD/tree differs from the managed execution identity.' }
     $inventory = & $module { param($Root,$Commit) Get-MorphospaceAffectedTreeInventory -RepositoryRoot $Root -Commit $Commit } $repoRoot $ExpectedHead
-    [void](& $module { param($Root,$Head,$Inventory,$Paths) Assert-MorphospaceAffectedBatchedWorkingBytes -RepositoryRoot $Root -ExpectedHead $Head -Inventory $Inventory -Paths $Paths } $repoRoot $head $inventory $dependencyPaths)
-    $records = [Collections.Generic.List[object]]::new()
-    foreach ($path in $dependencyPaths) {
-        $entry = $inventory.by_path[$path]
-        if ($null -eq $entry) { throw "Affected phase dependency is absent from the exact head: $path" }
-        $bytes = [IO.File]::ReadAllBytes((Join-Path $repoRoot ($path.Replace('/',[IO.Path]::DirectorySeparatorChar))))
-        $records.Add([pscustomobject][ordered]@{path=$path;blob=[string]$entry.blob;bytes=[long]$bytes.Length;sha256=Get-Sha256 $bytes})
+    $registry = Read-MorphospaceProtocolJson -Path (Join-Path $repoRoot 'manifests/affected-validation-registry.json')
+    $compiledRegistry = Test-MorphospaceAffectedValidationRegistry -Registry $registry -RepositoryRoot $repoRoot -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-registry-v1.schema.json')
+    $registrySha = Get-MorphospaceCanonicalJsonSha256 -Value $registry
+    $check = $compiledRegistry.checks[$ExpectedCheckId]
+    if ($null -eq $check -or [string]$check.command_path -cne 'scripts/Invoke-AffectedValidationSelfTestPhase.ps1') { throw 'Affected phase dependency projection does not resolve its exact managed check.' }
+    $commonInputSha = Get-MorphospaceCanonicalJsonSha256 -Value ([pscustomobject][ordered]@{command_path=[string]$check.command_path;consume_path_sets=@($check.consume_path_sets | ForEach-Object { [string]$_ })})
+    foreach ($selectorCheckId in @(@($checkIds.Values) + @('affected-selector-selftest'))) {
+        $selectorCheck = $compiledRegistry.checks[[string]$selectorCheckId]
+        if ($null -eq $selectorCheck) { throw 'Affected phase selector checks do not share one exact dependency-closure input.' }
+        $selectorInputSha = Get-MorphospaceCanonicalJsonSha256 -Value ([pscustomobject][ordered]@{command_path=[string]$selectorCheck.command_path;consume_path_sets=@($selectorCheck.consume_path_sets | ForEach-Object { [string]$_ })})
+        if ($selectorInputSha -cne $commonInputSha) { throw 'Affected phase selector checks do not share one exact dependency-closure input.' }
     }
-    return @($records.ToArray())
+    if ([string]$projection.repository -cne 'MesmerPrism/rusty-morphospace-work-environment' -or [string]$projection.head_commit -cne $ExpectedHead -or [string]$projection.head_tree -cne $ExpectedTree -or [string]$projection.registry_sha256 -cne $registrySha -or [string]$projection.check_id -cne $ExpectedCheckId -or [string]$projection.command_path -cne [string]$check.command_path -or (Get-MorphospaceCanonicalJsonSha256 -Value @($projection.consume_path_sets)) -cne (Get-MorphospaceCanonicalJsonSha256 -Value @($check.consume_path_sets))) { throw 'Affected phase dependency projection differs from its exact current head/registry/check input.' }
+    $previous = $null
+    foreach ($record in @($projection.dependency_manifest)) {
+        $path = [string]$record.path
+        if ($null -ne $previous -and [StringComparer]::Ordinal.Compare($previous,$path) -ge 0) { throw 'Affected phase dependency projection manifest is not unique and ordinal sorted.' }
+        $entry = $inventory.by_path[$path]
+        if ($null -eq $entry -or [string]$entry.type -cne 'blob' -or [string]$entry.mode -cne [string]$record.mode -or [string]$entry.blob -cne [string]$record.blob) { throw "Affected phase dependency projection differs from the exact-head tree: $path" }
+        $previous = $path
+    }
+    [void](& $module { param($Root,$Head,$Inventory,$Paths) Assert-MorphospaceAffectedBatchedWorkingBytes -RepositoryRoot $Root -ExpectedHead $Head -Inventory $Inventory -Paths $Paths } $repoRoot $head $inventory @($projection.dependency_manifest.path))
+    return $projection
 }
 function Get-RunnerBinding {
     $powerShellPath = [IO.Path]::GetFullPath((Get-Process -Id $PID).Path)
@@ -101,19 +119,116 @@ function Get-RunnerBinding {
 function Get-Binding([string]$PhaseId,[string]$CheckId,[string]$Base,[string]$Head,[string]$Tree,[string]$Plan,[string]$Platform,[object[]]$Manifest,[object]$Runner) {
     return [pscustomobject][ordered]@{repository='MesmerPrism/rusty-morphospace-work-environment';base_commit=$Base;head_commit=$Head;head_tree=$Tree;plan_sha256=$Plan;platform=$Platform;check_id=$CheckId;phase_id=$PhaseId;runner=$Runner;dependency_manifest=@($Manifest)}
 }
-function Test-Terminal([string]$Root,[string]$Path,[object]$ExpectedBinding,[string]$ExpectedBindingSha,[bool]$RequirePass) {
+function Assert-ReusableBinding([string]$RepositoryRoot,[object]$Observed,[object]$Expected) {
+    foreach ($name in @('repository','platform','check_id','phase_id')) {
+        if ([string]$Observed.$name -cne [string]$Expected.$name) { throw "Affected phase ancestor binding changed '$name'." }
+    }
+    if ((Get-MorphospaceCanonicalJsonSha256 -Value $Observed.runner) -cne (Get-MorphospaceCanonicalJsonSha256 -Value $Expected.runner)) { throw 'Affected phase ancestor binding changed the exact runner identity.' }
+    if ((Get-MorphospaceCanonicalJsonSha256 -Value @($Observed.dependency_manifest)) -cne (Get-MorphospaceCanonicalJsonSha256 -Value @($Expected.dependency_manifest))) { throw 'Affected phase ancestor binding changed the exact dependency manifest.' }
+    $observedTree = (& git -C $RepositoryRoot rev-parse "$([string]$Observed.head_commit)^{tree}" 2>$null).Trim()
+    if ($LASTEXITCODE -ne 0 -or $observedTree -cne [string]$Observed.head_tree) { throw 'Affected phase ancestor binding source tree is invalid.' }
+    $expectedTree = (& git -C $RepositoryRoot rev-parse "$([string]$Expected.head_commit)^{tree}" 2>$null).Trim()
+    if ($LASTEXITCODE -ne 0 -or $expectedTree -cne [string]$Expected.head_tree) { throw 'Affected phase current binding tree is invalid.' }
+    & git -C $RepositoryRoot merge-base --is-ancestor ([string]$Observed.base_commit) ([string]$Observed.head_commit) 2>$null
+    if ($LASTEXITCODE -ne 0) { throw 'Affected phase ancestor binding base is not an ancestor of its source head.' }
+    & git -C $RepositoryRoot merge-base --is-ancestor ([string]$Observed.head_commit) ([string]$Expected.head_commit) 2>$null
+    if ($LASTEXITCODE -ne 0) { throw 'Affected phase source head is not an ancestor of the current head.' }
+}
+function Test-Terminal([string]$Root,[string]$Path,[object]$ExpectedBinding,[string]$ExpectedBindingSha,[bool]$RequirePass,[switch]$AllowCompatibleAncestor) {
     $schemaPath = Join-Path $repoRoot 'schemas/affected-validation-self-test-phase-receipt-v1.schema.json'
     $raw = [IO.File]::ReadAllText($Path,[Text.UTF8Encoding]::new($false,$true))
     if (-not (Test-Json -Json $raw -SchemaFile $schemaPath -ErrorAction Stop)) { throw 'Affected phase terminal fails its closed schema.' }
     $terminal = Read-MorphospaceProtocolJson -Path $Path
     if ((Get-MorphospaceCanonicalJsonSha256 -Value $terminal.binding) -cne [string]$terminal.binding_sha256) { throw 'Affected phase terminal binding hash is damaged.' }
-    if ([string]$terminal.binding_sha256 -cne $ExpectedBindingSha -or (Get-MorphospaceCanonicalJsonSha256 -Value $terminal.binding) -cne (Get-MorphospaceCanonicalJsonSha256 -Value $ExpectedBinding)) { throw 'Affected phase terminal does not match the exact current binding.' }
+    $observedBindingSha = Get-MorphospaceCanonicalJsonSha256 -Value $terminal.binding
+    $expectedCanonicalSha = Get-MorphospaceCanonicalJsonSha256 -Value $ExpectedBinding
+    if ([string]$terminal.binding_sha256 -cne $ExpectedBindingSha -or $observedBindingSha -cne $expectedCanonicalSha) {
+        if (-not $AllowCompatibleAncestor) { throw 'Affected phase terminal does not match the exact current binding.' }
+        Assert-ReusableBinding -RepositoryRoot $repoRoot -Observed $terminal.binding -Expected $ExpectedBinding
+    }
     Assert-FileReference -Root $Root -Reference $terminal.child.stdout
     Assert-FileReference -Root $Root -Reference $terminal.child.stderr
     foreach ($output in @($terminal.outputs)) { Assert-FileReference -Root $Root -Reference $output }
     if ($RequirePass -and [string]$terminal.result -cne 'pass') { throw "Affected phase terminal is not passing: $($terminal.phase_id)=$($terminal.result)" }
     return $terminal
 }
+
+function Invoke-BindingCompatibilitySelfTest {
+    $fixture = Join-Path ([IO.Path]::GetTempPath()) ('affected-phase-binding-' + [Guid]::NewGuid().ToString('N'))
+    [void][IO.Directory]::CreateDirectory($fixture)
+    function Invoke-FixtureGit([string[]]$Arguments) {
+        $output = @(& git -C $fixture @Arguments 2>&1)
+        if ($LASTEXITCODE -ne 0) { throw "Affected phase binding fixture Git failed: git $($Arguments -join ' ') :: $($output -join ' ')" }
+        return ($output -join "`n").Trim()
+    }
+    function Write-Fixture([string]$Path,[string]$Value) { [IO.File]::WriteAllText((Join-Path $fixture $Path),$Value,[Text.UTF8Encoding]::new($false)) }
+    function Copy-Binding([object]$Value) { $Value | ConvertTo-Json -Depth 32 | ConvertFrom-Json -Depth 32 -DateKind String }
+    function Assert-Rejected([scriptblock]$Action,[string]$Pattern,[string]$Context) { $rejected=$false;try{&$Action}catch{$rejected=[string]$_.Exception.Message-like$Pattern};if(-not$rejected){throw $Context} }
+    function Write-FixtureProjection([object]$Value,[string]$Leaf) {
+        $path=Join-Path $fixture $Leaf
+        [byte[]]$bytes=[Text.UTF8Encoding]::new($false,$true).GetBytes((ConvertTo-MorphospaceCanonicalJson -Value $Value)+"`n")
+        [IO.File]::WriteAllBytes($path,$bytes)
+        return [pscustomobject][ordered]@{path=$path;sha256=Get-Sha256 $bytes}
+    }
+    try {
+        [void](Invoke-FixtureGit @('init','--initial-branch=main'))
+        [void](Invoke-FixtureGit @('config','user.name','Affected Phase Binding Test'))
+        [void](Invoke-FixtureGit @('config','user.email','affected-phase-binding@example.invalid'))
+        Write-Fixture 'fixture.txt' "base`n";[void](Invoke-FixtureGit @('add','fixture.txt'));[void](Invoke-FixtureGit @('commit','-m','base'))
+        $base=Invoke-FixtureGit @('rev-parse','HEAD')
+        Write-Fixture 'source.txt' "source`n";[void](Invoke-FixtureGit @('add','source.txt'));[void](Invoke-FixtureGit @('commit','-m','source'))
+        $source=Invoke-FixtureGit @('rev-parse','HEAD');$sourceTree=Invoke-FixtureGit @('rev-parse','HEAD^{tree}')
+        [void](Invoke-FixtureGit @('branch','nonancestor',$base))
+        Write-Fixture 'unrelated.txt' "current`n";[void](Invoke-FixtureGit @('add','unrelated.txt'));[void](Invoke-FixtureGit @('commit','-m','unrelated descendant'))
+        $current=Invoke-FixtureGit @('rev-parse','HEAD');$currentTree=Invoke-FixtureGit @('rev-parse','HEAD^{tree}')
+        [void](Invoke-FixtureGit @('checkout','nonancestor'));Write-Fixture 'sibling.txt' "sibling`n";[void](Invoke-FixtureGit @('add','sibling.txt'));[void](Invoke-FixtureGit @('commit','-m','nonancestor sibling'))
+        $sibling=Invoke-FixtureGit @('rev-parse','HEAD');$siblingTree=Invoke-FixtureGit @('rev-parse','HEAD^{tree}');[void](Invoke-FixtureGit @('checkout','main'))
+        $runner=[pscustomobject][ordered]@{os_description='fixture';process_architecture='x64';powershell_version='7.5.0';powershell_executable_sha256=('1'*64);git_version='git version 2.50.0';git_executable_sha256=('2'*64)}
+        $manifestPaths=@(
+            '.github/workflows/validate.yml',
+            'manifests/affected-validation-registry.json',
+            'schemas/affected-validation-check-evidence-v1.schema.json',
+            'schemas/affected-validation-check-inventory-v1.schema.json',
+            'schemas/affected-validation-plan-v1.schema.json',
+            'scripts/Invoke-AffectedValidation.ps1',
+            'scripts/Invoke-AffectedValidationSelfTestPhase.ps1',
+            'scripts/Test-AffectedValidation.ps1',
+            'scripts/lib/MorphospaceAffectedValidationCheckEvidence.psm1',
+            'scripts/lib/MorphospaceAffectedValidationDependencyClosure.psm1'
+        )
+        $manifest=[Collections.Generic.List[object]]::new()
+        for($manifestIndex=0;$manifestIndex -lt $manifestPaths.Count;$manifestIndex++){
+            $hex=('{0:x}' -f (($manifestIndex % 14)+1))
+            $manifest.Add([pscustomobject][ordered]@{path=[string]$manifestPaths[$manifestIndex];mode='100644';blob=($hex*40)})
+        }
+        $manifest=@($manifest.ToArray())
+        $projection=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.affected_validation_self_test_dependency_projection.v1';repository='MesmerPrism/rusty-morphospace-work-environment';head_commit=$current;head_tree=$currentTree;registry_sha256=('4'*64);check_id='affected-selector-trust-self-executor';command_path='scripts/Invoke-AffectedValidationSelfTestPhase.ps1';consume_path_sets=@('affected-validation-contract','protocol-common','selector-trust-root');dependency_manifest=$manifest}
+        $projectionFile=Write-FixtureProjection $projection 'projection.json'
+        $projectionRoundTrip=Read-DependencyProjectionFile -Path $projectionFile.path -ExpectedSha256 $projectionFile.sha256
+        if((Get-MorphospaceCanonicalJsonSha256 -Value $projectionRoundTrip)-cne(Get-MorphospaceCanonicalJsonSha256 -Value $projection)){throw 'Affected phase dependency projection transport roundtrip changed canonical bytes.'}
+        Assert-Rejected {Read-DependencyProjectionFile -Path $projectionFile.path -ExpectedSha256 ('f'*64)} '*parent-owned hash*' 'Affected phase dependency projection accepted a wrong parent hash.'
+        $schemaDamage=Copy-Binding $projection;$schemaDamage.repository='Different/Repository';$schemaDamageFile=Write-FixtureProjection $schemaDamage 'projection-damage.json';Assert-Rejected {Read-DependencyProjectionFile -Path $schemaDamageFile.path -ExpectedSha256 $schemaDamageFile.sha256} '*' 'Affected phase dependency projection accepted a schema-invalid payload.'
+        $observed=Get-Binding -PhaseId 'trust-self-executor' -CheckId 'affected-selector-trust-self-executor' -Base $base -Head $source -Tree $sourceTree -Plan ('5'*64) -Platform linux -Manifest $manifest -Runner $runner
+        $expected=Get-Binding -PhaseId 'trust-self-executor' -CheckId 'affected-selector-trust-self-executor' -Base $base -Head $current -Tree $currentTree -Plan ('6'*64) -Platform linux -Manifest $manifest -Runner $runner
+        Assert-ReusableBinding -RepositoryRoot $fixture -Observed $observed -Expected $expected
+        Assert-ReusableBinding -RepositoryRoot $fixture -Observed $expected -Expected $expected
+        $runnerDamage=Copy-Binding $observed;$runnerDamage.runner.git_executable_sha256=('f'*64);Assert-Rejected {Assert-ReusableBinding -RepositoryRoot $fixture -Observed $runnerDamage -Expected $expected} '*runner identity*' 'Affected phase binding self-test accepted runner drift.'
+        foreach ($dependencyPath in @($manifest.path)) {
+            $dependencyDamage=Copy-Binding $observed
+            $dependencyRecord=@($dependencyDamage.dependency_manifest | Where-Object path -CEQ $dependencyPath)
+            if ($dependencyRecord.Count -ne 1) { throw "Affected phase binding self-test lacks exact dependency damage target: $dependencyPath" }
+            $dependencyRecord[0].blob=('f'*40)
+            Assert-Rejected {Assert-ReusableBinding -RepositoryRoot $fixture -Observed $dependencyDamage -Expected $expected} '*dependency manifest*' "Affected phase binding self-test accepted dependency drift for $dependencyPath."
+        }
+        $omissionDamage=Copy-Binding $observed;$omissionDamage.dependency_manifest=@($omissionDamage.dependency_manifest | Select-Object -SkipLast 1);Assert-Rejected {Assert-ReusableBinding -RepositoryRoot $fixture -Observed $omissionDamage -Expected $expected} '*dependency manifest*' 'Affected phase binding self-test accepted a dependency omission.'
+        $additionDamage=Copy-Binding $observed;$additionDamage.dependency_manifest=@($additionDamage.dependency_manifest)+@([pscustomobject][ordered]@{path='scripts/z-extra.ps1';mode='100644';blob=('e'*40)});Assert-Rejected {Assert-ReusableBinding -RepositoryRoot $fixture -Observed $additionDamage -Expected $expected} '*dependency manifest*' 'Affected phase binding self-test accepted a dependency addition.'
+        $treeDamage=Copy-Binding $observed;$treeDamage.head_tree=('f'*40);Assert-Rejected {Assert-ReusableBinding -RepositoryRoot $fixture -Observed $treeDamage -Expected $expected} '*source tree*' 'Affected phase binding self-test accepted a wrong source tree.'
+        $nonancestorDamage=Copy-Binding $observed;$nonancestorDamage.head_commit=$sibling;$nonancestorDamage.head_tree=$siblingTree;Assert-Rejected {Assert-ReusableBinding -RepositoryRoot $fixture -Observed $nonancestorDamage -Expected $expected} '*not an ancestor of the current head*' 'Affected phase binding self-test accepted a nonancestor source.'
+        Write-Output 'Affected-validation phase ancestor-binding compatibility self-test passed.'
+    } finally { if([IO.Directory]::Exists($fixture)){Remove-Item -LiteralPath $fixture -Recurse -Force} }
+}
+
+if($BindingSelfTest){Invoke-BindingCompatibilitySelfTest;return}
 
 $evidenceRoot = [IO.Path]::GetFullPath((Get-RequiredEnvironment 'RUSTY_AFFECTED_VALIDATION_PHASE_ROOT' '^.+$'))
 $baseCommit = Get-RequiredEnvironment 'RUSTY_AFFECTED_VALIDATION_BASE_COMMIT' '^[0-9a-f]{40}$'
@@ -122,12 +237,13 @@ $planSha256 = Get-RequiredEnvironment 'RUSTY_AFFECTED_VALIDATION_PLAN_SHA256' '^
 $platform = Get-RequiredEnvironment 'RUSTY_AFFECTED_VALIDATION_PLATFORM' '^(windows|linux)$'
 $headTree = (& git -C $repoRoot rev-parse "$headCommit^{tree}").Trim()
 if ($LASTEXITCODE -ne 0 -or $headTree -cnotmatch '^[0-9a-f]{40}$') { throw 'Affected phase runner could not resolve the exact head tree.' }
-$dependencyManifest = Get-DependencyManifest -ExpectedHead $headCommit -ExpectedTree $headTree
 $runnerBinding = Get-RunnerBinding
 
 if ($Verify) {
     $managedVerifierCheckId = Get-RequiredEnvironment 'RUSTY_AFFECTED_VALIDATION_CHECK_ID' '^[a-z0-9][a-z0-9-]{1,95}$'
     if ($managedVerifierCheckId -cne 'affected-selector-selftest') { throw "Affected phase verifier/check routing mismatch: $managedVerifierCheckId" }
+    $dependencyProjection = Get-DependencyProjection -ExpectedHead $headCommit -ExpectedTree $headTree -ExpectedCheckId $managedVerifierCheckId
+    $dependencyManifest = @($dependencyProjection.dependency_manifest)
     $terminalFiles = @(Get-ChildItem -LiteralPath $evidenceRoot -File -Filter '*.terminal.json' -ErrorAction SilentlyContinue)
     if ($terminalFiles.Count -ne $phaseIds.Count) { throw 'Affected phase verifier requires exactly one terminal for every phase.' }
     foreach ($phaseId in $phaseIds) {
@@ -135,8 +251,12 @@ if ($Verify) {
         if (-not [IO.File]::Exists($terminalPath)) { throw "Affected phase verifier is missing '$phaseId'." }
         $binding = Get-Binding -PhaseId $phaseId -CheckId ([string]$checkIds[$phaseId]) -Base $baseCommit -Head $headCommit -Tree $headTree -Plan $planSha256 -Platform $platform -Manifest $dependencyManifest -Runner $runnerBinding
         $bindingSha = Get-MorphospaceCanonicalJsonSha256 -Value $binding
-        [void](Test-Terminal -Root $evidenceRoot -Path $terminalPath -ExpectedBinding $binding -ExpectedBindingSha $bindingSha -RequirePass $true)
+        [void](Test-Terminal -Root $evidenceRoot -Path $terminalPath -ExpectedBinding $binding -ExpectedBindingSha $bindingSha -RequirePass $true -AllowCompatibleAncestor)
     }
+    $module = Get-Module MorphospaceAffectedValidation
+    $inventory = & $module { param($Root,$Commit) Get-MorphospaceAffectedTreeInventory -RepositoryRoot $Root -Commit $Commit } $repoRoot $headCommit
+    $head = [pscustomobject][ordered]@{commit=$headCommit;tree=$headTree}
+    [void](& $module { param($Root,$Head,$Inventory,$Paths) Assert-MorphospaceAffectedBatchedWorkingBytes -RepositoryRoot $Root -ExpectedHead $Head -Inventory $Inventory -Paths $Paths } $repoRoot $head $inventory @($dependencyManifest.path))
     Write-Host 'Affected-validation phased selector receipt set passed without replay.'
     return
 }
@@ -144,6 +264,8 @@ if ($Verify) {
 $expectedCheckId = [string]$checkIds[$Phase]
 $managedCheckId = Get-RequiredEnvironment 'RUSTY_AFFECTED_VALIDATION_CHECK_ID' '^[a-z0-9][a-z0-9-]{1,95}$'
 if ($managedCheckId -cne $expectedCheckId) { throw "Affected phase/check routing mismatch: phase=$Phase check=$managedCheckId expected=$expectedCheckId" }
+$dependencyProjection = Get-DependencyProjection -ExpectedHead $headCommit -ExpectedTree $headTree -ExpectedCheckId $managedCheckId
+$dependencyManifest = @($dependencyProjection.dependency_manifest)
 $binding = Get-Binding -PhaseId $Phase -CheckId $managedCheckId -Base $baseCommit -Head $headCommit -Tree $headTree -Plan $planSha256 -Platform $platform -Manifest $dependencyManifest -Runner $runnerBinding
 $bindingSha = Get-MorphospaceCanonicalJsonSha256 -Value $binding
 $terminalPath = Join-Path $evidenceRoot "$Phase.terminal.json"

@@ -30,7 +30,7 @@ $selectorPhaseCheckIds = @(
 $selectorTrustRootCheckIds = @($selectorPhaseCheckIds + @('affected-topology-selftest','affected-reuse-selftest'))
 $expectedProtocolCommonGraphIdentity = [pscustomobject][ordered]@{
     owner_entrypoints = 49
-    tracked_graph_nodes = 125
+    tracked_graph_nodes = 127
     protocol_consumers = 31
 }
 
@@ -114,6 +114,11 @@ function Assert-AffectedExecutorContainmentSource([string]$Source) {
     foreach ($fragment in $forbidden) { Assert-True ($Source.IndexOf($fragment,[StringComparison]::Ordinal) -lt 0) "Affected executor retains forbidden containment fragment '$fragment'." }
     $required = @('AnonymousPipeServerStream','ApplySupervisorCompletion','W017SupervisorProtection','ProtectAncestors','ProtectThreads','SnapshotAncestorSecurity','RestoreProtectedFutureThreads','RetainFutureThread','retainedThreadIds','restoredThreadHandles','RunRestorationCollisionSelfTests','RunPublishedControlReadSelfTests','RunOwnedSupervisorDeletionSelfTests','DeleteOwnedSupervisorDirectory','FileAttributes.ReadOnly','ContainmentCleanupSucceeded','SupervisorEvidenceCleanupSucceeded','TryReadExactPublishedControl','IsPublishedControlReadPending','code == 32 || code == 33','FileShare.Read','SecurityDescriptorOwnerMatchesToken','GetSecurityDescriptorOwner','EqualSid','ResolveSupervisorBaseDirectory','GITHUB_ACTIONS','RUNNER_TEMP','FileAttributes.ReparsePoint','"w7-"','''l'';Initialize-LeafWritableRoot','StartsWith(''GIT_'',[StringComparison]::OrdinalIgnoreCase)','Remove-Item -LiteralPath ("Env:$name")','stable residue-free thread set','trusted ancestor fallback process/thread restoration readback differs','trusted ancestor process/thread owner/DACL restoration readback differs','token-default-DACL restoration readback differs','RCWDWO;;;OW','RUSTY_AFFECTED_VALIDATION_GUARD_SID','guard-disabled leaf token did not retain the authority group as deny-only','0x1000','0x2000','OwnerSecurityInformation|DaclSecurityInformation','CreateRestrictedToken','CreatePrivilegeStrippedToken','SetTokenDefaultDacl','OpenThread','Thread32First','RUSTY_AFFECTED_VALIDATION_FUTURE_THREAD_ID','RUSTY_AFFECTED_VALIDATION_PARENT_FUTURE_THREAD_ID','ReadPrivileges','RUSTY_AFFECTED_VALIDATION_REMOVED_PRIVILEGE_LUID','privilege-deleted leaf token retained a non-allowlisted privilege','AssertAncestorIsolation','ImpersonateLoggedOnUser','exact two-process completion authority chain','Initialize-LeafWritableRoot','SetKernelObjectSecurity','W017SupervisorInnerJob','CreatePipe','TerminateJobObject(state.job,1)','function Resolve-ExactApplication','[Array]::Sort($ordered,[StringComparer]::Ordinal)','ProcessStartInfo]::new($sudoPath)',"@('--non-interactive','--preserve-env','--'","'--pid','--fork','--kill-child=KILL','--mount-proc'","'--keep-groups'",'geteuid()','getegid()','Complete-Pump','process.Kill(true)','RunForSetupFailureTest')
     foreach ($fragment in $required) { Assert-True ($Source.IndexOf($fragment,[StringComparison]::Ordinal) -ge 0) "Affected executor is missing required containment fragment '$fragment'." }
+    Assert-True ([regex]::Matches($Source,'private static bool IsTransientThreadOpenError\(int error\)').Count -eq 2) 'Affected executor does not define the closed transient thread-open classifier in both embedded containment classes.'
+    Assert-True ([regex]::Matches($Source,'public static void RunTransientThreadOpenErrorSelfTests\(\)').Count -eq 2) 'Affected executor does not exercise both embedded transient thread-open classifiers.'
+    Assert-True ([regex]::Matches($Source,'if\(IsTransientThreadOpenError\(error\)\)continue;').Count -eq 2) 'Affected executor cleanup loops do not both use the closed transient thread-open classifier.'
+    Assert-True ([regex]::Matches($Source,'if\(IsTransientThreadOpenError\(error\)\)\{entry\.').Count -eq 2) 'Affected executor initial thread snapshots do not both use the closed transient thread-open classifier.'
+    Assert-True ([regex]::Matches($Source,'if\(count==0\)throw new InvalidOperationException').Count -eq 2) 'Affected executor lost the nonempty retained/protected thread requirement.'
 }
 function Invoke-AffectedBatchSelfTest {
     $fixture = [IO.Path]::GetFullPath((Join-Path ([IO.Path]::GetTempPath()) ('morphospace-affected-batch-' + [guid]::NewGuid().ToString('N'))))
@@ -1157,10 +1162,127 @@ function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]
         $fallback = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
         Assert-True ([string]$fallback.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($fallback.paths).Count -eq 5) 'Unknown per-check dispatch did not conservatively bind every tracked script.'
         Assert-True (@($fallback.resolution.fallback_reasons | Where-Object { [string]$_.importer -ceq 'scripts/Fallback.ps1' -and [string]$_.variable -ceq 'UnknownRunner' -and [string]$_.kind -ceq 'unresolved-invocation' }).Count -eq 1) 'Unknown per-check dispatch did not publish its exact fallback reason.'
+
+        Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "`$Runner = 'Static.psm1'`n`$Runner = `$RuntimePath`n& `$Runner`n"
+        $mixed = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
+        Assert-True ([string]$mixed.resolution.mode -ceq 'all-tracked-scripts-fallback' -and ($mixed.paths -join ',') -ceq 'scripts/Dynamic.psm1,scripts/Entry.ps1,scripts/Fallback.ps1,scripts/Static.psm1,scripts/Unrelated.ps1') 'Mixed literal and unclassified assignment under-bound the imported-byte closure.'
+        Assert-True (@($mixed.resolution.fallback_reasons | Where-Object { [string]$_.importer -ceq 'scripts/Fallback.ps1' -and [string]$_.variable -ceq 'Runner' -and [string]$_.kind -ceq 'ambiguous-static-binding' }).Count -eq 1) 'Mixed literal and unclassified assignment did not publish its conservative ambiguity reason.'
+
+        Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "`$Runner = 'Static.psm1'`nfunction Invoke-Mixed {`n    `$Runner = `$RuntimePath`n    & `$Runner`n}`nInvoke-Mixed`n"
+        $nestedInnerDynamic = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
+        Assert-True ([string]$nestedInnerDynamic.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($nestedInnerDynamic.paths).Count -eq 5) 'Nested unclassified assignment over an outer literal under-bound the imported-byte closure.'
+
+        Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "`$Runner = `$RuntimePath`nfunction Invoke-Mixed {`n    `$Runner = 'Static.psm1'`n    & `$Runner`n}`nInvoke-Mixed`n"
+        $nestedOuterDynamic = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
+        Assert-True ([string]$nestedOuterDynamic.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($nestedOuterDynamic.paths).Count -eq 5) 'Outer unclassified assignment below a nested literal under-bound the imported-byte closure.'
+
+        Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "`$Runner = 'Static.psm1'`n& `$rUnNeR`n"
+        $caseVariantExact = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
+        Assert-True ([string]$caseVariantExact.resolution.mode -ceq 'exact' -and ($caseVariantExact.paths -join ',') -ceq 'scripts/Fallback.ps1,scripts/Static.psm1') 'Case-variant assignment and invocation did not retain one PowerShell variable identity.'
+
+        Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "`$Runner = 'Static.psm1'`n`$rUNNER = `$RuntimePath`n& `$runner`n"
+        $caseVariantMixed = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
+        Assert-True ([string]$caseVariantMixed.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($caseVariantMixed.paths).Count -eq 5) 'Case-variant mixed assignments under-bound one PowerShell variable identity.'
+
+        Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "`$rUnNeR = @('Static.psm1', `$RuntimePath)`n& `$RUNNER`n"
+        $singleRhsMixed = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
+        Assert-True ([string]$singleRhsMixed.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($singleRhsMixed.paths).Count -eq 5) 'One RHS containing a literal path and unknown expression under-bound the imported-byte closure.'
+
+        $singleRhsIncompleteDeclaration = [pscustomobject][ordered]@{importer='scripts/Fallback.ps1';variable='runner';count=1;target_paths=@('scripts/Dynamic.psm1')}
+        Assert-AffectedThrows { Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @($singleRhsIncompleteDeclaration) } '*omits observed static target*' 'Incomplete declaration omitted the literal member of a mixed single-RHS dispatch.'
+        $singleRhsCompleteDeclaration = [pscustomobject][ordered]@{importer='scripts/Fallback.ps1';variable='RUNNER';count=1;target_paths=@('scripts/Dynamic.psm1','scripts/Static.psm1')}
+        $singleRhsDeclared = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @($singleRhsCompleteDeclaration)
+        Assert-True ([string]$singleRhsDeclared.resolution.mode -ceq 'exact' -and ($singleRhsDeclared.paths -join ',') -ceq 'scripts/Dynamic.psm1,scripts/Fallback.ps1,scripts/Static.psm1') 'Complete declaration did not retain the literal and dynamic members of a mixed single-RHS dispatch.'
+
+        Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "`$Runner = @('Static.psm1', `$RuntimePath)`nfunction Invoke-Mixed {`n    & `$rUnNeR`n}`nInvoke-Mixed`n"
+        $nestedSingleRhsMixed = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
+        Assert-True ([string]$nestedSingleRhsMixed.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($nestedSingleRhsMixed.paths).Count -eq 5) 'Nested invocation ignored a case-variant outer mixed RHS assignment.'
+        $nestedSingleRhsDeclared = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @($singleRhsCompleteDeclaration)
+        Assert-True ([string]$nestedSingleRhsDeclared.resolution.mode -ceq 'exact' -and ($nestedSingleRhsDeclared.paths -join ',') -ceq 'scripts/Dynamic.psm1,scripts/Fallback.ps1,scripts/Static.psm1') 'Complete declaration did not resolve the entire nested mixed dispatch.'
+
+        Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "function Invoke-Typed([scriptblock]`$Action) { & `$aCtIoN }`nInvoke-Typed { 'typed' | Out-Null }`n"
+        $typedCaseVariant = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
+        Assert-True ([string]$typedCaseVariant.resolution.mode -ceq 'exact' -and ($typedCaseVariant.paths -join ',') -ceq 'scripts/Fallback.ps1') 'Case-variant typed-scriptblock lookup lost its exact callable classification.'
+
+        Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "`$Runner = 'Static.psm1'`n& `$Runner`n`$Runner = 'Dynamic.psm1'`n"
+        $afterUseAssignment = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
+        Assert-True ([string]$afterUseAssignment.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($afterUseAssignment.paths).Count -eq 5) 'Assignment after invocation was treated as a definitely prior dispatch binding.'
+
+        Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "function Invoke-Conditional(`$Condition) {`n    if (`$Condition) { `$Runner = 'Static.psm1' }`n    & `$runner`n}`nInvoke-Conditional `$true`n"
+        $conditionalAssignment = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
+        Assert-True ([string]$conditionalAssignment.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($conditionalAssignment.paths).Count -eq 5) 'Conditional assignment was treated as an unconditional dispatch binding.'
+
+        Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "try {`n    `$Runner = 'Static.psm1'`n    & `$runner`n} finally {}`n"
+        $sameBlockAssignment = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
+        Assert-True ([string]$sameBlockAssignment.resolution.mode -ceq 'exact' -and ($sameBlockAssignment.paths -join ',') -ceq 'scripts/Fallback.ps1,scripts/Static.psm1') 'A definitely prior assignment in the invocation block was treated as conditional or out of scope.'
+
+        Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "`$script:Runner = 'Static.psm1'`nfunction Invoke-RootScriptRunner { & `$script:runner }`nInvoke-RootScriptRunner`n"
+        $rootScriptAssignment = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
+        Assert-True ([string]$rootScriptAssignment.resolution.mode -ceq 'exact' -and ($rootScriptAssignment.paths -join ',') -ceq 'scripts/Fallback.ps1,scripts/Static.psm1') 'A definitely prior root script-scoped assignment did not bind the same explicitly script-scoped function invocation.'
+
+        Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "function Invoke-Parameter(`$Command) { & `$cOmMaNd }`nInvoke-Parameter 'Static.psm1'`n"
+        $untypedCommandParameter = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
+        Assert-True ([string]$untypedCommandParameter.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($untypedCommandParameter.paths).Count -eq 5) 'Untyped Command parameter received name-only external-command trust.'
+        $untypedCommandDeclaration = [pscustomobject][ordered]@{importer='scripts/Fallback.ps1';variable='command';count=1;target_paths=@('scripts/Static.psm1')}
+        $declaredUntypedCommand = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @($untypedCommandDeclaration)
+        Assert-True ([string]$declaredUntypedCommand.resolution.mode -ceq 'exact' -and ($declaredUntypedCommand.paths -join ',') -ceq 'scripts/Fallback.ps1,scripts/Static.psm1') 'Closed declaration did not resolve an untyped case-variant Command parameter.'
+
+        Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "`$Runner = Get-Command 'Static.psm1'`n& `$runner`n"
+        $literalGetCommand = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
+        Assert-True ([string]$literalGetCommand.resolution.mode -ceq 'exact' -and ($literalGetCommand.paths -join ',') -ceq 'scripts/Fallback.ps1,scripts/Static.psm1') 'Literal tracked Get-Command assignment did not retain its script dependency.'
+        Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "`$Runner = Get-Command `$RuntimePath`n& `$runner`n"
+        $dynamicGetCommand = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
+        Assert-True ([string]$dynamicGetCommand.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($dynamicGetCommand.paths).Count -eq 5) 'Dynamic Get-Command assignment received an unconditional non-path exemption.'
+        $dynamicGetCommandDeclaration = [pscustomobject][ordered]@{importer='scripts/Fallback.ps1';variable='runner';count=1;target_paths=@('scripts/Dynamic.psm1')}
+        $declaredDynamicGetCommand = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @($dynamicGetCommandDeclaration)
+        Assert-True ([string]$declaredDynamicGetCommand.resolution.mode -ceq 'exact' -and ($declaredDynamicGetCommand.paths -join ',') -ceq 'scripts/Dynamic.psm1,scripts/Fallback.ps1') 'Closed declaration did not resolve a dynamic Get-Command assignment.'
+
+        Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "& (Get-Command (Join-Path `$PSScriptRoot 'Static.psm1')).Source`n"
+        $literalGetCommandMember = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
+        Assert-True ([string]$literalGetCommandMember.resolution.mode -ceq 'exact' -and ($literalGetCommandMember.paths -join ',') -ceq 'scripts/Fallback.ps1,scripts/Static.psm1') 'Direct Get-Command.Source literal invocation omitted its tracked script dependency.'
+        Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "& (Get-Command `$RuntimePath).Source`n"
+        $dynamicGetCommandMember = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
+        Assert-True ([string]$dynamicGetCommandMember.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($dynamicGetCommandMember.paths).Count -eq 5) 'Direct dynamic Get-Command.Source invocation bypassed conservative closure.'
+        $dynamicGetCommandMemberDeclaration = [pscustomobject][ordered]@{importer='scripts/Fallback.ps1';variable='runtimepath';count=1;target_paths=@('scripts/Dynamic.psm1')}
+        $declaredDynamicGetCommandMember = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @($dynamicGetCommandMemberDeclaration)
+        Assert-True ([string]$declaredDynamicGetCommandMember.resolution.mode -ceq 'exact' -and ($declaredDynamicGetCommandMember.paths -join ',') -ceq 'scripts/Dynamic.psm1,scripts/Fallback.ps1') 'Closed declaration did not resolve a direct dynamic Get-Command.Source invocation.'
+
+        Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "`$first = @{ script = { 'safe' | Out-Null } }`n`$second = @{ other = { 'other' | Out-Null } }`n& `$first.script`n"
+        $exactMemberReceiver = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
+        Assert-True ([string]$exactMemberReceiver.resolution.mode -ceq 'exact' -and ($exactMemberReceiver.paths -join ',') -ceq 'scripts/Fallback.ps1') 'Exact receiver/member scriptblock proof was not retained.'
+        Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "`$first = @{ script = { 'safe' | Out-Null } }`n`$second = @{ script = `$RuntimePath }`n& `$second.script`n"
+        $memberReceiverCollision = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
+        Assert-True ([string]$memberReceiverCollision.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($memberReceiverCollision.paths).Count -eq 5) 'Unrelated receiver with the same member name inherited another receiver scriptblock exemption.'
+
+        Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "`$Runner = 'Static.psm1'`n`$Runner = `$RuntimePath`n& `$Runner`n"
+        $mixedDeclaration = [pscustomobject][ordered]@{importer='scripts/Fallback.ps1';variable='Runner';count=1;target_paths=@('scripts/Dynamic.psm1','scripts/Static.psm1')}
+        $declaredMixed = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @($mixedDeclaration)
+        Assert-True ([string]$declaredMixed.resolution.mode -ceq 'exact' -and ($declaredMixed.paths -join ',') -ceq 'scripts/Dynamic.psm1,scripts/Fallback.ps1,scripts/Static.psm1' -and @($declaredMixed.resolution.used_declarations).Count -eq 1) 'Closed mixed-dispatch declaration did not retain the exact complete imported-byte closure.'
+
+        Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "& `$ArgumentRunner { 'argument' | Out-Null }`n"
+        $scriptBlockArgumentFallback = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
+        Assert-True ([string]$scriptBlockArgumentFallback.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($scriptBlockArgumentFallback.paths).Count -eq 5) 'Variable invocation with a scriptblock argument bypassed conservative dependency fallback.'
+        Assert-True (@($scriptBlockArgumentFallback.resolution.fallback_reasons | Where-Object { [string]$_.importer -ceq 'scripts/Fallback.ps1' -and [string]$_.variable -ceq 'ArgumentRunner' -and [string]$_.kind -ceq 'unresolved-invocation' }).Count -eq 1) 'Variable invocation with a scriptblock argument omitted its exact fallback reason.'
+
+        $scriptBlockArgumentDeclaration = [pscustomobject][ordered]@{importer='scripts/Fallback.ps1';variable='ArgumentRunner';count=1;target_paths=@('scripts/Dynamic.psm1')}
+        $declaredScriptBlockArgument = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @($scriptBlockArgumentDeclaration)
+        Assert-True ([string]$declaredScriptBlockArgument.resolution.mode -ceq 'exact' -and ($declaredScriptBlockArgument.paths -join ',') -ceq 'scripts/Dynamic.psm1,scripts/Fallback.ps1' -and @($declaredScriptBlockArgument.resolution.used_declarations).Count -eq 1) 'Closed variable invocation declaration with a scriptblock argument did not retain its exact imported-byte closure.'
+
+        Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "& { 'literal command target' | Out-Null } 'argument'`n"
+        $literalScriptBlockTarget = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
+        Assert-True ([string]$literalScriptBlockTarget.resolution.mode -ceq 'exact' -and ($literalScriptBlockTarget.paths -join ',') -ceq 'scripts/Fallback.ps1') 'Literal scriptblock command target lost its exact non-importing exemption.'
+
+        Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "& `$UnknownRunner`n"
         $countDamage = $declaration | ConvertTo-Json -Depth 8 | ConvertFrom-Json -Depth 8 -DateKind String; $countDamage.count = 2
         Assert-AffectedThrows { Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @($countDamage) } '*declaration count changed*' 'Per-check dependency closure accepted dynamic declaration count drift.'
         $duplicateDamage = @($declaration,$declaration)
         Assert-AffectedThrows { Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations $duplicateDamage } '*invalid or duplicate identity*' 'Per-check dependency closure accepted a duplicate dynamic declaration.'
+        $aliasDeclaration = $declaration | ConvertTo-Json -Depth 8 | ConvertFrom-Json -Depth 8 -DateKind String; $aliasDeclaration.variable = 'dynamicpath'
+        $aliasExact = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @($aliasDeclaration)
+        Assert-True ([string]$aliasExact.resolution.mode -ceq 'exact' -and ($aliasExact.paths -join ',') -ceq 'scripts/Dynamic.psm1,scripts/Entry.ps1,scripts/Static.psm1' -and @($aliasExact.resolution.used_declarations).Count -eq 1) 'Case-variant declaration alias did not resolve the PowerShell variable invocation.'
+        $aliasCountDamage = $aliasDeclaration | ConvertTo-Json -Depth 8 | ConvertFrom-Json -Depth 8 -DateKind String; $aliasCountDamage.count = 2
+        Assert-AffectedThrows { Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @($aliasCountDamage) } '*declaration count changed*' 'Case-variant declaration alias bypassed exact observation count validation.'
+        Assert-AffectedThrows { Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @($declaration,$aliasDeclaration) } '*invalid or duplicate identity*' 'Case-variant duplicate declarations were treated as distinct PowerShell variable identities.'
 
         $compiled = Test-MorphospaceAffectedValidationRegistry -Registry $Registry -RepositoryRoot $Root -SchemaPath (Join-Path $Root 'schemas/affected-validation-registry-v1.schema.json')
         $head = (& git -C $Root rev-parse HEAD).Trim()
@@ -1417,8 +1539,11 @@ $checks = @(
 
 if ($runFullSelector -or $runExecutorPassPhase) {
     $workflowSource = Get-Content -LiteralPath (Join-Path $repoRoot '.github/workflows/validate.yml') -Raw
+    $executorSource = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -Raw
     $phaseRunnerSource = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts/Invoke-AffectedValidationSelfTestPhase.ps1') -Raw
     $phaseReceiptSchema = Read-MorphospaceProtocolJson -Path (Join-Path $repoRoot 'schemas/affected-validation-self-test-phase-receipt-v1.schema.json')
+    $phaseProjectionSchema = Read-MorphospaceProtocolJson -Path (Join-Path $repoRoot 'schemas/affected-validation-self-test-dependency-projection-v1.schema.json')
+    $checkEvidenceSchema = Read-MorphospaceProtocolJson -Path (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json')
     $phaseRunnerSchema = $phaseReceiptSchema.properties.binding.properties.runner
     $expectedPhaseIds = @('executor-damage','executor-pass-schema','graph-import-closure','selection-scenarios','trust-damage-final','trust-proportional-mappings','trust-routing-contracts','trust-self-executor')
     $topLevelPhaseIds = @($phaseReceiptSchema.properties.phase_id.enum)
@@ -1430,7 +1555,45 @@ if ($runFullSelector -or $runExecutorPassPhase) {
     $observedRunnerFields = @($phaseRunnerSchema.required)
     [Array]::Sort($observedRunnerFields,[StringComparer]::Ordinal)
     Assert-True (@($phaseReceiptSchema.properties.binding.required) -ccontains 'runner' -and ($observedRunnerFields -join ',') -ceq ($requiredRunnerFields -join ',')) 'Affected phase schema does not require the exact closed runner identity.'
+    Assert-True ([int]$phaseReceiptSchema.properties.binding.properties.dependency_manifest.maxItems -eq 2048 -and [int]$phaseProjectionSchema.properties.dependency_manifest.maxItems -eq 2048) 'Affected phase schemas do not share the bounded outer dependency-manifest capacity.'
+    $phaseManifestCanonicalUpperBound = ([long]2048 * (([long]4096 * 12) + 256)) + 1048576
+    Assert-True ([long]$checkEvidenceSchema.'$defs'.artifact.properties.bytes.maximum -eq 134217728 -and [long]$checkEvidenceSchema.'$defs'.artifact.properties.bytes.maximum -gt $phaseManifestCanonicalUpperBound -and [int]$checkEvidenceSchema.'$defs'.artifact.allOf[0].else.properties.bytes.maximum -eq 10485760) 'Outer evidence does not cover the maximum escaped-Unicode phase receipt domain while retaining the ordinary artifact ceiling.'
+    Assert-True (@($checkEvidenceSchema.required) -ccontains 'plan_sha256') 'Affected check evidence does not retain the original plan identity required by inner phase artifacts.'
+    foreach ($manifestSchema in @($phaseReceiptSchema.properties.binding.properties.dependency_manifest.items,$phaseProjectionSchema.'$defs'.manifestRecord)) {
+        $manifestFields=@($manifestSchema.required);[Array]::Sort($manifestFields,[StringComparer]::Ordinal)
+        Assert-True (($manifestFields -join ',') -ceq 'blob,mode,path') 'Affected phase dependency manifest does not retain the exact outer tree-record shape.'
+    }
     Assert-True ($phaseRunnerSource -match 'function Get-RunnerBinding' -and $phaseRunnerSource -match 'powershell_executable_sha256=Get-Sha256' -and $phaseRunnerSource -match 'git_executable_sha256=Get-Sha256' -and $phaseRunnerSource -match 'phase_id=\$PhaseId;runner=\$Runner;dependency_manifest=') 'Affected phase runner does not bind exact PowerShell/Git executable identities into phase reuse.'
+    Assert-True ($phaseRunnerSource -match 'function Assert-ReusableBinding' -and $phaseRunnerSource -match 'merge-base --is-ancestor' -and $phaseRunnerSource -match 'changed the exact runner identity' -and $phaseRunnerSource -match 'changed the exact dependency manifest' -and $phaseRunnerSource -match 'source tree is invalid') 'Affected phase verifier does not retain the closed ancestor-source compatibility boundary.'
+    Assert-True ($phaseRunnerSource -notmatch [regex]::Escape("Import-Module (Join-Path `$PSScriptRoot 'lib/MorphospaceAffectedValidationCheckEvidence.psm1') -Force") -and $phaseRunnerSource -notmatch 'Get-MorphospaceAffectedCheckDependencyClosure' -and $phaseRunnerSource -match 'function Read-DependencyProjectionFile' -and $phaseRunnerSource -match 'function Get-DependencyProjection' -and $phaseRunnerSource -match 'Assert-MorphospaceAffectedBatchedWorkingBytes') 'Affected phase runner re-analyzes dependency closure or omits validation of its parent-projected closure.'
+    Assert-True ($executorSource -match 'function New-AffectedValidationDependencyProjectionFile' -and $executorSource -match 'RUSTY_AFFECTED_VALIDATION_DEPENDENCY_PROJECTION_PATH' -and $executorSource -match 'RUSTY_AFFECTED_VALIDATION_DEPENDENCY_PROJECTION_SHA256' -and $executorSource -match 'FileShare\]::Read' -and $executorSource -match 'DependencyManifest @\(\$binding\.dependency_manifest\)') 'Affected executor does not publish and project its exact parent-held dependency closure to phase children.'
+    Assert-True ($executorSource -match '\.rusty-affected-dependency-projection-.*\$PID' -and $executorSource -match 'projectionCleanupError' -and $executorSource -match 'publicationCleanupError' -and $executorSource -match 'publication failed and cleanup did not complete' -and $executorSource -match 'dependency projection file cleanup failed' -and $executorSource -match 'Remove-Item -LiteralPath (?:\$path|\(\[string\]\$dependencyProjectionFile\.path\)) -Force -ErrorAction Stop') 'Affected executor does not use an owner-identifiable projection path or fail closed on projection cleanup at both publication and post-child boundaries.'
+    $checkEvidenceSource = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts/lib/MorphospaceAffectedValidationCheckEvidence.psm1') -Raw
+    Assert-True ($checkEvidenceSource -match '\(\?:start\|terminal\)' -and $checkEvidenceSource -match '134217728' -and $checkEvidenceSource -match '10485760') 'Affected evidence implementation does not align maximum-domain phase receipts with the ordinary artifact bound.'
+    Assert-True ($executorSource -match 'function Get-AffectedValidationDependencyClosureCacheKey' -and $executorSource -match '\$dependencyClosuresByInput\.ContainsKey\(\$dependencyClosureKey\)' -and $executorSource -match 'head_tree=\[string\]\$plan\.head\.tree' -and $executorSource -match 'registry_sha256=\[string\]\$registrySha256') 'Affected executor does not reuse exact identical closure inputs inside one bounded process.'
+    Assert-True ($phaseRunnerSource -notmatch '(?m)^\$dependencyPaths\s*=\s*@\(') 'Affected phase runner retains a manually enumerated dependency manifest.'
+    $phaseCompiledRegistry = Test-MorphospaceAffectedValidationRegistry -Registry $registry -RepositoryRoot $repoRoot -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-registry-v1.schema.json')
+    $phaseHead = (& git -C $repoRoot rev-parse HEAD).Trim()
+    $phaseTree = (& git -C $repoRoot rev-parse 'HEAD^{tree}').Trim()
+    $phaseInventory = Get-MorphospaceAffectedTreeInventory -RepositoryRoot $repoRoot -Commit $phaseHead
+    $selectorPhaseCheckIds=@('affected-selector-graph-import-closure','affected-selector-executor-pass-schema','affected-selector-executor-damage','affected-selector-selection-scenarios','affected-selector-trust-self-executor','affected-selector-trust-routing-contracts','affected-selector-trust-proportional-mappings','affected-selector-trust-damage-final','affected-selector-selftest')
+    $phaseDependencyInput=$null
+    foreach($phaseCheckId in $selectorPhaseCheckIds){
+        $phaseCheck=$phaseCompiledRegistry.checks[$phaseCheckId]
+        Assert-True ($null-ne$phaseCheck) "Affected phase registry omits '$phaseCheckId'."
+        $candidateInput=Get-MorphospaceCanonicalJsonSha256 -Value ([pscustomobject][ordered]@{command_path=[string]$phaseCheck.command_path;consume_path_sets=@($phaseCheck.consume_path_sets|ForEach-Object{[string]$_})})
+        if($null-eq$phaseDependencyInput){$phaseDependencyInput=$candidateInput}else{Assert-True ($candidateInput-ceq$phaseDependencyInput) "Affected phase '$phaseCheckId' does not share the exact projected closure input."}
+    }
+    $derivedPhaseManifest=@($phaseInventory.records | Where-Object { [string]$_.type -ceq 'blob' -and @('100644','100755') -ccontains [string]$_.mode } | Select-Object -First 24 | ForEach-Object { [pscustomobject][ordered]@{path=[string]$_.path;mode=[string]$_.mode;blob=[string]$_.blob} })
+    Assert-True ($derivedPhaseManifest.Count -gt 16 -and $derivedPhaseManifest.Count -le 2048) 'Representative exact-head phase closure does not fit the closed bounded phase-manifest domain.'
+    $derivedProjection=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.affected_validation_self_test_dependency_projection.v1';repository='MesmerPrism/rusty-morphospace-work-environment';head_commit=$phaseHead;head_tree=$phaseTree;registry_sha256=Get-MorphospaceCanonicalJsonSha256 -Value $registry;check_id='affected-selector-executor-pass-schema';command_path='scripts/Invoke-AffectedValidationSelfTestPhase.ps1';consume_path_sets=@($phaseCompiledRegistry.checks['affected-selector-executor-pass-schema'].consume_path_sets);dependency_manifest=$derivedPhaseManifest}
+    Assert-True (Test-Json -Json (ConvertTo-MorphospaceCanonicalJson -Value $derivedProjection) -SchemaFile (Join-Path $repoRoot 'schemas/affected-validation-self-test-dependency-projection-v1.schema.json') -ErrorAction Stop) 'Representative exact-head dependency projection does not validate through its closed schema.'
+    $derivedPhaseRunner = [pscustomobject][ordered]@{os_description='schema-positive';process_architecture='x64';powershell_version='7.5.0';powershell_executable_sha256=('b'*64);git_version='git version 2.50.0';git_executable_sha256=('c'*64)}
+    $derivedPhaseBinding = [pscustomobject][ordered]@{repository='MesmerPrism/rusty-morphospace-work-environment';base_commit=$phaseHead;head_commit=$phaseHead;head_tree=$phaseTree;plan_sha256=('d'*64);platform='linux';check_id='affected-selector-executor-pass-schema';phase_id='executor-pass-schema';runner=$derivedPhaseRunner;dependency_manifest=$derivedPhaseManifest}
+    $derivedPhaseTerminal = [pscustomobject][ordered]@{schema='rusty.morphospace.workflow.affected_validation_self_test_phase_receipt.v1';phase_id='executor-pass-schema';binding=$derivedPhaseBinding;binding_sha256=Get-MorphospaceCanonicalJsonSha256 -Value $derivedPhaseBinding;started_at='2026-09-01T00:00:00Z';ended_at='2026-09-01T00:00:01Z';budget_seconds=60;elapsed_ms=1000;result='pass';child=[pscustomobject][ordered]@{started=$true;exit_code=0;timed_out=$false;post_kill_drain_timed_out=$false;stdout=[pscustomobject][ordered]@{path='executor-pass-schema.stdout.bin';bytes=0;sha256=('e'*64)};stderr=[pscustomobject][ordered]@{path='executor-pass-schema.stderr.bin';bytes=0;sha256=('e'*64)}};outputs=@();claims=[pscustomobject][ordered]@{phase_only=$true;candidate_admission=$false;acceptance_authority=$false;publication_authority=$false;device_used=$false}}
+    Assert-True (Test-Json -Json (ConvertTo-MorphospaceCanonicalJson -Value $derivedPhaseTerminal) -SchemaFile (Join-Path $repoRoot 'schemas/affected-validation-self-test-phase-receipt-v1.schema.json') -ErrorAction Stop) 'Actual registry-derived phase manifest does not validate through the closed phase receipt schema.'
+    $bindingCompatibilityOutput = @(& (Join-Path $repoRoot 'scripts/Invoke-AffectedValidationSelfTestPhase.ps1') -BindingSelfTest)
+    Assert-True (@($bindingCompatibilityOutput | Where-Object { [string]$_ -ceq 'Affected-validation phase ancestor-binding compatibility self-test passed.' }).Count -eq 1) 'Affected phase ancestor-binding positive/damage self-test did not pass exactly once.'
     $workflowJobs = @{}
     foreach ($match in [regex]::Matches($workflowSource, '(?ms)^  (?<id>[a-z0-9-]+):\r?\n(?<body>.*?)(?=^  [a-z0-9-]+:|\z)')) { $workflowJobs[[string]$match.Groups['id'].Value] = [string]$match.Groups['body'].Value }
     foreach ($requiredContext in @('quick-linux','quick-windows','standard-windows')) { Assert-True $workflowJobs.ContainsKey($requiredContext) "PR workflow lacks the required '$requiredContext' context." }
@@ -1467,7 +1630,24 @@ if ($runFullSelector -or $runExecutorPassPhase) {
     $producerEvents = @($inventorySchema.properties.producer.properties.event_name.enum)
     [Array]::Sort($producerEvents,[StringComparer]::Ordinal)
     Assert-True (($producerEvents -join ',') -ceq 'local,pull_request,push') 'Affected check inventory does not close the exact local/PR/push producer event domain.'
+    Assert-True ([int64]$inventorySchema.'$defs'.artifactFile.properties.bytes.maximum -eq 134217728) 'Affected check inventory does not admit the reviewed phase-receipt size ceiling.'
+    Assert-True ([int64]$inventorySchema.'$defs'.artifactFile.allOf[0].else.properties.bytes.maximum -eq 10485760) 'Affected check inventory widened ordinary artifact files beyond 10 MiB.'
+    $artifactFileSchemaWrapper = [ordered]@{}
+    $artifactFileSchemaWrapper.Add('$schema','https://json-schema.org/draft/2020-12/schema')
+    $artifactFileSchemaWrapper.Add('$defs',$inventorySchema.'$defs')
+    $artifactFileSchemaWrapper.Add('$ref','#/$defs/artifactFile')
+    $artifactFileSchemaJson = ConvertTo-MorphospaceCanonicalJson -Value $artifactFileSchemaWrapper
+    $maximumPhaseInventoryArtifact = [pscustomobject][ordered]@{phase_path='trust-self-executor.start.json';path='affected-selector/artifacts/trust-self-executor.start.json';bytes=134217728;sha256=('0' * 64)}
+    Assert-True (Test-Json -Json (ConvertTo-MorphospaceCanonicalJson -Value $maximumPhaseInventoryArtifact) -Schema $artifactFileSchemaJson) 'Affected check inventory rejected a phase artifact at the reviewed 128 MiB ceiling.'
+    $oversizedOrdinaryInventoryArtifact = $maximumPhaseInventoryArtifact | ConvertTo-Json -Depth 16 | ConvertFrom-Json -Depth 16 -DateKind String
+    $oversizedOrdinaryInventoryArtifact.phase_path = 'trust-self-executor.output.bin'
+    $oversizedOrdinaryInventoryArtifact.bytes = 10485761
+    Assert-True (-not (Test-Json -Json (ConvertTo-MorphospaceCanonicalJson -Value $oversizedOrdinaryInventoryArtifact) -Schema $artifactFileSchemaJson -ErrorAction SilentlyContinue)) 'Affected check inventory admitted an ordinary artifact above 10 MiB.'
+    $oversizedPhaseInventoryArtifact = $maximumPhaseInventoryArtifact | ConvertTo-Json -Depth 16 | ConvertFrom-Json -Depth 16 -DateKind String
+    $oversizedPhaseInventoryArtifact.bytes = 134217729
+    Assert-True (-not (Test-Json -Json (ConvertTo-MorphospaceCanonicalJson -Value $oversizedPhaseInventoryArtifact) -Schema $artifactFileSchemaJson -ErrorAction SilentlyContinue)) 'Affected check inventory admitted a phase artifact above 128 MiB.'
     Assert-True ($executorSource.Contains("@('pull_request','push') -cnotcontains `$eventName") -and $executorSource.Contains("Affected check push producer unexpectedly inherited a pull-request number.")) 'Affected executor does not distinguish closed PR and push producer identities.'
+    Assert-True ($executorSource.Contains("source=`$reusable.receipt.source;plan_sha256=[string]`$reusable.receipt.plan_sha256;binding=`$binding") -and $executorSource.Contains("plan_sha256=[string]`$plan.plan_sha256;binding=`$binding")) 'Affected executor does not preserve the original receipt source and plan transitively when materializing reused evidence.'
     $producerTokens = $null
     $producerParseErrors = $null
     $executorAst = [Management.Automation.Language.Parser]::ParseInput($executorSource,[ref]$producerTokens,[ref]$producerParseErrors)
@@ -1546,6 +1726,7 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value ([pscust
         'schemas/affected-validation-check-inventory-v1.schema.json',
         'schemas/affected-validation-plan-v1.schema.json',
         'schemas/affected-validation-registry-v1.schema.json',
+        'schemas/development-unit-admission-v1.schema.json',
         'scripts/Invoke-AffectedValidation.ps1',
         'scripts/lib/MorphospaceAffectedValidation.psm1',
         'scripts/lib/MorphospaceAffectedValidationCheckEvidence.psm1',
@@ -1577,10 +1758,11 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value ([pscust
         $_.consume_path_sets = @($_.consume_path_sets) + @('leaf-binding-fixture')
     }
     $fixtureRegistry.path_sets | Where-Object path_set_id -ceq 'documentation' | ForEach-Object { $_.patterns = @($_.patterns) + @('scripts/Test-AffectedLeafBindingFixture.ps1') }
-    # Keep the timeout damage cell bounded while allowing one contained child
-    # PowerShell startup on a loaded host; the deliberate twelve-second command
-    # below must still time out under the unchanged ten-second fixture budget.
-    $fixtureRegistry.checks | Where-Object { $_.check_id -ceq 'public-boundary' } | ForEach-Object { $_.budget_seconds = 10 }
+    # Keep the timeout damage cell bounded while leaving headroom above the
+    # executor's 15-second containment/drain contract. The deliberate
+    # twenty-five-second command below must still time out under this exact
+    # twenty-second fixture budget.
+    $fixtureRegistry.checks | Where-Object { $_.check_id -ceq 'public-boundary' } | ForEach-Object { $_.budget_seconds = 20 }
     Write-Utf8 (Join-Path $fixture 'manifests/affected-validation-registry.json') ((ConvertTo-MorphospaceCanonicalJson -Value $fixtureRegistry) + "`n")
     Copy-Item -LiteralPath (Join-Path $repoRoot 'schemas/history-archive-root-v1.schema.json') -Destination (Join-Path $fixture 'schemas/history-archive-root-v1.schema.json')
     Write-Utf8 (Join-Path $fixture 'docs/base.md') "base`n"
@@ -1622,6 +1804,9 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value ([pscust
             $priorCollisionSelfTest = [Environment]::GetEnvironmentVariable('RUSTY_AFFECTED_VALIDATION_RESTORATION_COLLISION_SELFTEST','Process')
             $priorGitPager = [Environment]::GetEnvironmentVariable('GIT_PAGER','Process')
             $priorGitTestOverride = [Environment]::GetEnvironmentVariable('GIT_AFFECTED_VALIDATION_TEST','Process')
+            $projectionResiduePattern = ".rusty-affected-dependency-projection-$PID-*.json"
+            [string[]]$projectionResidueBefore = @(Get-ChildItem -LiteralPath ([IO.Path]::GetTempPath()) -File -Filter $projectionResiduePattern -ErrorAction SilentlyContinue | ForEach-Object { [IO.Path]::GetFullPath($_.FullName) })
+            if ($projectionResidueBefore.Count -gt 1) { [Array]::Sort($projectionResidueBefore,[StringComparer]::Ordinal) }
             try {
                 if ([Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Windows)) { $env:RUSTY_AFFECTED_VALIDATION_RESTORATION_COLLISION_SELFTEST = '1' }
                 $env:GIT_PAGER = 'affected-parent-pager-must-not-reach-child'
@@ -1633,6 +1818,9 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value ([pscust
                 if ($null -eq $priorGitTestOverride) { Remove-Item -LiteralPath 'Env:GIT_AFFECTED_VALIDATION_TEST' -ErrorAction SilentlyContinue } else { [Environment]::SetEnvironmentVariable('GIT_AFFECTED_VALIDATION_TEST',$priorGitTestOverride,'Process') }
             }
             Assert-True ([Environment]::GetEnvironmentVariable('GIT_PAGER','Process') -ceq $priorGitPager -and [Environment]::GetEnvironmentVariable('GIT_AFFECTED_VALIDATION_TEST','Process') -ceq $priorGitTestOverride) 'Affected executor did not restore inherited Git environment overrides exactly.'
+            [string[]]$projectionResidueAfter = @(Get-ChildItem -LiteralPath ([IO.Path]::GetTempPath()) -File -Filter $projectionResiduePattern -ErrorAction SilentlyContinue | ForEach-Object { [IO.Path]::GetFullPath($_.FullName) })
+            if ($projectionResidueAfter.Count -gt 1) { [Array]::Sort($projectionResidueAfter,[StringComparer]::Ordinal) }
+            Assert-True (($projectionResidueAfter -join "`0") -ceq ($projectionResidueBefore -join "`0")) 'Affected executor left an owned dependency-projection file after successful child execution.'
             if ([Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Windows)) { [W017BoundedChildCapture]::RunRestorationCollisionSelfTests() }
             Assert-True ([IO.File]::Exists($evidencePath)) 'Affected executor did not publish evidence.'
             Assert-True ($evidence.result -ceq 'pass' -and @($evidence.check_results).Count -ge 2) 'Affected executor did not bind selected checks into pass evidence.'
@@ -1769,18 +1957,28 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value ([pscust
             [void](Write-MorphospaceAffectedCheckCache -EvidenceDirectory $immutableRoot -Snapshots @($immutableSnapshot) -Producer $firstInventory.producer -Source $firstInventory.source -PlanSha256 ([string]$firstInventory.plan_sha256) -Platform linux -ReceiptSchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json') -InventorySchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-inventory-v1.schema.json'))
             $immutableMaterialized = Get-Content -LiteralPath (Join-Path $immutableRoot 'documentation-links/receipt.json') -Raw | ConvertFrom-Json -Depth 64 -DateKind String
             Assert-True ($immutableMaterialized.result -ceq 'code-fail' -and $immutableMaterialized.child.exit_code -eq 17) 'A later mutation changed a parent-retained current-run receipt before cache materialization.'
+            $wrongPlanReceipt = $documentationReceiptValue | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64 -DateKind String
+            $wrongPlanReceipt.plan_sha256 = ('f' * 64)
+            $wrongPlanSnapshot = New-MorphospaceAffectedCheckSnapshot -Receipt $wrongPlanReceipt -Stdout ([IO.File]::ReadAllBytes((Join-Path $documentationReceipt[0].DirectoryName 'stdout.bin'))) -Stderr ([IO.File]::ReadAllBytes((Join-Path $documentationReceipt[0].DirectoryName 'stderr.bin'))) -Artifacts @() -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json')
+            Assert-AffectedThrows { [void](Write-MorphospaceAffectedCheckCache -EvidenceDirectory (Join-Path $fixture 'affected-check-evidence-wrong-fresh-plan') -Snapshots @($wrongPlanSnapshot) -Producer $firstInventory.producer -Source $firstInventory.source -PlanSha256 ([string]$firstInventory.plan_sha256) -Platform linux -ReceiptSchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json') -InventorySchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-inventory-v1.schema.json')) } '*fresh receipt plan identity differs*' 'A fresh receipt with a different plan identity was materialized under the current inventory plan.'
 
             # A failed first attempt may retain exact passing selector sibling
             # artifacts even when its verifier never runs.  A fresh attempt
             # restores those bound bytes before verifier dispatch.
-            $phaseBinding = [pscustomobject][ordered]@{head_commit=$docsHead;head_tree=(Invoke-TestGit $fixture @('rev-parse','HEAD^{tree}'))}
             $phaseArtifacts = [Collections.Generic.List[object]]::new()
-            foreach ($phase in @('trust-a','trust-b','trust-c','trust-d')) {
-                $startBytes = [Text.UTF8Encoding]::new($false).GetBytes((ConvertTo-MorphospaceCanonicalJson -Value ([pscustomobject][ordered]@{binding=$phaseBinding;phase_id=$phase})) + "`n")
-                $terminalBytes = [Text.UTF8Encoding]::new($false).GetBytes((ConvertTo-MorphospaceCanonicalJson -Value ([pscustomobject][ordered]@{binding=$phaseBinding;phase_id=$phase;result='pass';outputs=@()})) + "`n")
+            foreach ($phase in @('trust-self-executor','trust-routing-contracts','trust-proportional-mappings','trust-damage-final')) {
+                $phaseBinding = [pscustomobject][ordered]@{repository=[string]$documentationReceiptValue.binding.repository;base_commit=[string]$documentationReceiptValue.source.base.commit;head_commit=$docsHead;head_tree=(Invoke-TestGit $fixture @('rev-parse','HEAD^{tree}'));plan_sha256=[string]$documentationReceiptValue.plan_sha256;platform=[string]$documentationReceiptValue.binding.platform;check_id=[string]$documentationReceiptValue.binding.check_id;phase_id=$phase;runner=$documentationReceiptValue.binding.runner;dependency_manifest=@($documentationReceiptValue.binding.dependency_manifest)}
+                $phaseBindingSha = Get-MorphospaceCanonicalJsonSha256 -Value $phaseBinding
+                $phaseStdoutBytes=[Text.UTF8Encoding]::new($false).GetBytes("$phase stdout")
+                $phaseStderrBytes=[byte[]]::new(0)
+                $phaseStarted='2026-09-01T00:00:00Z'
+                $startDocument=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.affected_validation_self_test_phase_start.v1';phase_id=$phase;binding=$phaseBinding;binding_sha256=$phaseBindingSha;started_at=$phaseStarted;budget_seconds=75}
+                $terminalDocument=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.affected_validation_self_test_phase_receipt.v1';phase_id=$phase;binding=$phaseBinding;binding_sha256=$phaseBindingSha;started_at=$phaseStarted;ended_at='2026-09-01T00:00:01Z';budget_seconds=75;elapsed_ms=1000;result='pass';child=[pscustomobject][ordered]@{started=$true;exit_code=0;timed_out=$false;post_kill_drain_timed_out=$false;stdout=[pscustomobject][ordered]@{path="$phase.stdout.bin";bytes=[long]$phaseStdoutBytes.Length;sha256=Get-MorphospaceAffectedCheckBytesSha256 $phaseStdoutBytes};stderr=[pscustomobject][ordered]@{path="$phase.stderr.bin";bytes=0;sha256=Get-MorphospaceAffectedCheckBytesSha256 $phaseStderrBytes}};outputs=@();claims=[pscustomobject][ordered]@{phase_only=$true;candidate_admission=$false;acceptance_authority=$false;publication_authority=$false;device_used=$false}}
+                $startBytes = [Text.UTF8Encoding]::new($false).GetBytes((ConvertTo-MorphospaceCanonicalJson -Value $startDocument) + "`n")
+                $terminalBytes = [Text.UTF8Encoding]::new($false).GetBytes((ConvertTo-MorphospaceCanonicalJson -Value $terminalDocument) + "`n")
                 $phaseArtifacts.Add([pscustomobject][ordered]@{path="$phase.start.json";bytes=$startBytes})
-                $phaseArtifacts.Add([pscustomobject][ordered]@{path="$phase.stdout.bin";bytes=[Text.UTF8Encoding]::new($false).GetBytes("$phase stdout")})
-                $phaseArtifacts.Add([pscustomobject][ordered]@{path="$phase.stderr.bin";bytes=[byte[]]::new(0)})
+                $phaseArtifacts.Add([pscustomobject][ordered]@{path="$phase.stdout.bin";bytes=$phaseStdoutBytes})
+                $phaseArtifacts.Add([pscustomobject][ordered]@{path="$phase.stderr.bin";bytes=$phaseStderrBytes})
                 $phaseArtifacts.Add([pscustomobject][ordered]@{path="$phase.terminal.json";bytes=$terminalBytes})
             }
             $artifactReceipt = $documentationReceiptValue | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64 -DateKind String
@@ -1791,19 +1989,148 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value ([pscust
             $artifactInventory = Read-MorphospaceAffectedCheckInventory -EvidenceDirectory $artifactCacheRoot -ExpectedProducerContext $firstInventory.producer -InventorySchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-inventory-v1.schema.json')
             $artifactReusable = Find-MorphospaceAffectedReusableCheckReceipt -PriorEvidenceDirectory $artifactCacheRoot -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json') -ExpectedBinding $documentationReceiptValue.binding -ExpectedBindingSha256 ([string]$documentationReceiptValue.binding_sha256) -RepositoryRoot $fixture -CurrentHeadCommit $docsHead -CandidateEvidenceSnapshots @($artifactInventory.candidate_snapshots)
             Assert-True ($null -ne $artifactReusable -and @($artifactReusable.artifacts).Count -eq 16) 'First-attempt selector sibling artifacts were not reusable from immutable inventory snapshots.'
+            $phaseEvidenceModule = Get-Module -Name MorphospaceAffectedValidationCheckEvidence | Select-Object -First 1
+            Assert-True ($null -ne $phaseEvidenceModule) 'Affected phase-artifact verifier module is not loaded for focused damage validation.'
+            $phaseReceiptSchemaPath = Join-Path $repoRoot 'schemas/affected-validation-self-test-phase-receipt-v1.schema.json'
+            $trustPhaseArtifacts = [Collections.Generic.List[object]]::new()
+            foreach ($phaseArtifact in @($phaseArtifacts.ToArray() | Where-Object { [string]$_.path -like 'trust-self-executor.*' })) { $trustPhaseArtifacts.Add([pscustomobject][ordered]@{path=[string]$phaseArtifact.path;bytes=[byte[]]([byte[]]$phaseArtifact.bytes).Clone()}) }
+            [void](& $phaseEvidenceModule { param($Artifacts,$Binding,$Source,$PlanSha256,$SchemaPath) Assert-MorphospaceAffectedCheckPhaseArtifactSet -Artifacts $Artifacts -Phase 'trust-self-executor' -ExpectedBinding $Binding -ExpectedSource $Source -ExpectedPlanSha256 $PlanSha256 -PhaseReceiptSchemaPath $SchemaPath } @($trustPhaseArtifacts.ToArray()) $documentationReceiptValue.binding $documentationReceiptValue.source $documentationReceiptValue.plan_sha256 $phaseReceiptSchemaPath)
+            Assert-AffectedThrows { [void](& $phaseEvidenceModule { param($Artifacts,$Binding,$Source,$PlanSha256,$SchemaPath) Assert-MorphospaceAffectedCheckPhaseArtifactSet -Artifacts $Artifacts -Phase 'trust-self-executor' -ExpectedBinding $Binding -ExpectedSource $Source -ExpectedPlanSha256 $PlanSha256 -PhaseReceiptSchemaPath $SchemaPath } @($trustPhaseArtifacts.ToArray()) $documentationReceiptValue.binding $documentationReceiptValue.source ('f'*64) $phaseReceiptSchemaPath) } '*original plan identity*' 'Phase-artifact verifier accepted a phase receipt under a different enclosing original plan.'
+
+            $chronologyDamagedPhaseArtifacts = [Collections.Generic.List[object]]::new()
+            foreach ($phaseArtifact in @($trustPhaseArtifacts.ToArray())) {
+                [byte[]]$phaseBytes = [byte[]]([byte[]]$phaseArtifact.bytes).Clone()
+                if ([string]$phaseArtifact.path -ceq 'trust-self-executor.terminal.json') {
+                    $chronologyDamage = [Text.UTF8Encoding]::new($false,$true).GetString($phaseBytes) | ConvertFrom-Json -Depth 64 -DateKind String
+                    $chronologyDamage.ended_at = '2025-12-31T23:59:59Z'
+                    $phaseBytes = [Text.UTF8Encoding]::new($false).GetBytes((ConvertTo-MorphospaceCanonicalJson -Value $chronologyDamage) + "`n")
+                }
+                $chronologyDamagedPhaseArtifacts.Add([pscustomobject][ordered]@{path=[string]$phaseArtifact.path;bytes=$phaseBytes})
+            }
+            Assert-AffectedThrows { [void](& $phaseEvidenceModule { param($Artifacts,$Binding,$Source,$PlanSha256,$SchemaPath) Assert-MorphospaceAffectedCheckPhaseArtifactSet -Artifacts $Artifacts -Phase 'trust-self-executor' -ExpectedBinding $Binding -ExpectedSource $Source -ExpectedPlanSha256 $PlanSha256 -PhaseReceiptSchemaPath $SchemaPath } @($chronologyDamagedPhaseArtifacts.ToArray()) $documentationReceiptValue.binding $documentationReceiptValue.source $documentationReceiptValue.plan_sha256 $phaseReceiptSchemaPath) } '*chronology or budget*' 'Phase-artifact verifier accepted an impossible terminal chronology.'
+
+            $streamDamagedPhaseArtifacts = [Collections.Generic.List[object]]::new()
+            foreach ($phaseArtifact in @($trustPhaseArtifacts.ToArray())) {
+                [byte[]]$phaseBytes = [byte[]]([byte[]]$phaseArtifact.bytes).Clone()
+                if ([string]$phaseArtifact.path -ceq 'trust-self-executor.stdout.bin') { $phaseBytes = @($phaseBytes + [byte]33) }
+                $streamDamagedPhaseArtifacts.Add([pscustomobject][ordered]@{path=[string]$phaseArtifact.path;bytes=$phaseBytes})
+            }
+            Assert-AffectedThrows { [void](& $phaseEvidenceModule { param($Artifacts,$Binding,$Source,$PlanSha256,$SchemaPath) Assert-MorphospaceAffectedCheckPhaseArtifactSet -Artifacts $Artifacts -Phase 'trust-self-executor' -ExpectedBinding $Binding -ExpectedSource $Source -ExpectedPlanSha256 $PlanSha256 -PhaseReceiptSchemaPath $SchemaPath } @($streamDamagedPhaseArtifacts.ToArray()) $documentationReceiptValue.binding $documentationReceiptValue.source $documentationReceiptValue.plan_sha256 $phaseReceiptSchemaPath) } '*terminal reference differs from artifact bytes*' 'Phase-artifact verifier accepted stream bytes that differ from the inner terminal reference.'
+
+            $startDamagedPhaseArtifacts = [Collections.Generic.List[object]]::new()
+            foreach ($phaseArtifact in @($trustPhaseArtifacts.ToArray())) {
+                [byte[]]$phaseBytes = [byte[]]([byte[]]$phaseArtifact.bytes).Clone()
+                if ([string]$phaseArtifact.path -ceq 'trust-self-executor.start.json') {
+                    $startDamage = [Text.UTF8Encoding]::new($false,$true).GetString($phaseBytes) | ConvertFrom-Json -Depth 64 -DateKind String
+                    $startDamage | Add-Member -NotePropertyName unexpected -NotePropertyValue $true
+                    $phaseBytes = [Text.UTF8Encoding]::new($false).GetBytes((ConvertTo-MorphospaceCanonicalJson -Value $startDamage) + "`n")
+                }
+                $startDamagedPhaseArtifacts.Add([pscustomobject][ordered]@{path=[string]$phaseArtifact.path;bytes=$phaseBytes})
+            }
+            Assert-AffectedThrows { [void](& $phaseEvidenceModule { param($Artifacts,$Binding,$Source,$PlanSha256,$SchemaPath) Assert-MorphospaceAffectedCheckPhaseArtifactSet -Artifacts $Artifacts -Phase 'trust-self-executor' -ExpectedBinding $Binding -ExpectedSource $Source -ExpectedPlanSha256 $PlanSha256 -PhaseReceiptSchemaPath $SchemaPath } @($startDamagedPhaseArtifacts.ToArray()) $documentationReceiptValue.binding $documentationReceiptValue.source $documentationReceiptValue.plan_sha256 $phaseReceiptSchemaPath) } '*exact closed shape*' 'Phase-artifact verifier accepted an unknown start-receipt field.'
+
+            $terminalDamagedPhaseArtifacts = [Collections.Generic.List[object]]::new()
+            foreach ($phaseArtifact in @($trustPhaseArtifacts.ToArray())) {
+                [byte[]]$phaseBytes = [byte[]]([byte[]]$phaseArtifact.bytes).Clone()
+                if ([string]$phaseArtifact.path -ceq 'trust-self-executor.terminal.json') {
+                    $terminalDamage = [Text.UTF8Encoding]::new($false,$true).GetString($phaseBytes) | ConvertFrom-Json -Depth 64 -DateKind String
+                    $terminalDamage.claims.candidate_admission = $true
+                    $phaseBytes = [Text.UTF8Encoding]::new($false).GetBytes((ConvertTo-MorphospaceCanonicalJson -Value $terminalDamage) + "`n")
+                }
+                $terminalDamagedPhaseArtifacts.Add([pscustomobject][ordered]@{path=[string]$phaseArtifact.path;bytes=$phaseBytes})
+            }
+            Assert-AffectedThrows { [void](& $phaseEvidenceModule { param($Artifacts,$Binding,$Source,$PlanSha256,$SchemaPath) Assert-MorphospaceAffectedCheckPhaseArtifactSet -Artifacts $Artifacts -Phase 'trust-self-executor' -ExpectedBinding $Binding -ExpectedSource $Source -ExpectedPlanSha256 $PlanSha256 -PhaseReceiptSchemaPath $SchemaPath } @($terminalDamagedPhaseArtifacts.ToArray()) $documentationReceiptValue.binding $documentationReceiptValue.source $documentationReceiptValue.plan_sha256 $phaseReceiptSchemaPath) } '*schema*' 'Phase-artifact verifier accepted a terminal that claimed candidate admission.'
+
+            $orphanPhaseArtifacts = [Collections.Generic.List[object]]::new()
+            foreach ($phaseArtifact in @($trustPhaseArtifacts.ToArray())) { $orphanPhaseArtifacts.Add([pscustomobject][ordered]@{path=[string]$phaseArtifact.path;bytes=[byte[]]([byte[]]$phaseArtifact.bytes).Clone()}) }
+            $orphanPhaseArtifacts.Add([pscustomobject][ordered]@{path='trust-self-executor.orphan.bin';bytes=[Text.UTF8Encoding]::new($false).GetBytes('orphan')})
+            Assert-AffectedThrows { [void](& $phaseEvidenceModule { param($Artifacts,$Binding,$Source,$PlanSha256,$SchemaPath) Assert-MorphospaceAffectedCheckPhaseArtifactSet -Artifacts $Artifacts -Phase 'trust-self-executor' -ExpectedBinding $Binding -ExpectedSource $Source -ExpectedPlanSha256 $PlanSha256 -PhaseReceiptSchemaPath $SchemaPath } @($orphanPhaseArtifacts.ToArray()) $documentationReceiptValue.binding $documentationReceiptValue.source $documentationReceiptValue.plan_sha256 $phaseReceiptSchemaPath) } '*unreferenced bytes*' 'Phase-artifact verifier accepted an artifact not referenced by the inner terminal.'
+            $artifactCrossHeadReusable = Find-MorphospaceAffectedReusableCheckReceipt -PriorEvidenceDirectory $artifactCacheRoot -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json') -ExpectedBinding $documentationReceiptValue.binding -ExpectedBindingSha256 ([string]$documentationReceiptValue.binding_sha256) -RepositoryRoot $fixture -CurrentHeadCommit $schedulingHead -CandidateEvidenceSnapshots @($artifactInventory.candidate_snapshots)
+            Assert-True ($null -ne $artifactCrossHeadReusable -and @($artifactCrossHeadReusable.artifacts).Count -eq 16) 'Scheduling-only descendant head did not reuse phase artifacts bound to the exact receipt source head.'
+            $generation2Receipt = $artifactCrossHeadReusable.receipt | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64 -DateKind String
+            $generation2Receipt.mode = 'reused'
+            $generation2Receipt.elapsed_ms = 0
+            $generation2Receipt.result = 'pass'
+            $generation2Receipt.blocked_by = @()
+            $generation2Receipt.child.started = $false
+            $generation2Receipt.child.exit_code = 0
+            $generation2Receipt.child.timed_out = $false
+            $generation2Receipt.child.output_truncated = $false
+            $generation2Receipt.child.post_kill_drain_timed_out = $false
+            $generation2Receipt.source = $artifactCrossHeadReusable.receipt.source
+            $generation2Receipt.reused_from = [pscustomobject][ordered]@{receipt_sha256=[string]$artifactCrossHeadReusable.receipt_sha256;source_head=$artifactCrossHeadReusable.receipt.source.head}
+            $generation2Snapshot = New-MorphospaceAffectedCheckSnapshot -Receipt $generation2Receipt -Stdout ([byte[]]$artifactCrossHeadReusable.stdout) -Stderr ([byte[]]$artifactCrossHeadReusable.stderr) -Artifacts @($artifactCrossHeadReusable.artifacts) -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json')
+            $generation2Root = Join-Path $fixture 'affected-check-evidence-phase-artifacts-attempt2'
+            [void](Write-MorphospaceAffectedCheckCache -EvidenceDirectory $generation2Root -Snapshots @($generation2Snapshot) -Producer $firstInventory.producer -Source ([pscustomobject][ordered]@{base=$schedulingPlan.base;head=$schedulingPlan.head}) -PlanSha256 ([string]$schedulingPlan.plan_sha256) -Platform linux -ReceiptSchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json') -InventorySchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-inventory-v1.schema.json'))
+            $generation2Inventory = Read-MorphospaceAffectedCheckInventory -EvidenceDirectory $generation2Root -ExpectedProducerContext $firstInventory.producer -InventorySchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-inventory-v1.schema.json')
+            $generation3Reusable = Find-MorphospaceAffectedReusableCheckReceipt -PriorEvidenceDirectory $generation2Root -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json') -ExpectedBinding $documentationReceiptValue.binding -ExpectedBindingSha256 ([string]$documentationReceiptValue.binding_sha256) -RepositoryRoot $fixture -CurrentHeadCommit $semanticHead -CandidateEvidenceSnapshots @($generation2Inventory.candidate_snapshots)
+            Assert-True ($null -ne $generation3Reusable -and [string]$generation3Reusable.receipt.mode -ceq 'reused' -and [string]$generation3Reusable.receipt.source.head.commit -ceq $docsHead -and @($generation3Reusable.artifacts).Count -eq 16) 'A second-generation reused receipt relabeled ancestor phase artifacts or could not be reused by a third descendant generation.'
+            $wrongHeadPhaseArtifacts = [Collections.Generic.List[object]]::new()
+            foreach ($phaseArtifact in @($phaseArtifacts.ToArray())) {
+                [byte[]]$wrongHeadBytes = [byte[]]$phaseArtifact.bytes
+                if ([string]$phaseArtifact.path -match '\.(?:start|terminal)\.json$') {
+                    $wrongHeadDocument = [Text.UTF8Encoding]::new($false,$true).GetString($wrongHeadBytes) | ConvertFrom-Json -Depth 64 -DateKind String
+                    $wrongHeadDocument.binding.head_commit = $schedulingHead
+                    $wrongHeadDocument.binding.head_tree = $schedulingTree
+                    $wrongHeadBytes = [Text.UTF8Encoding]::new($false).GetBytes((ConvertTo-MorphospaceCanonicalJson -Value $wrongHeadDocument) + "`n")
+                }
+                $wrongHeadPhaseArtifacts.Add([pscustomobject][ordered]@{path=[string]$phaseArtifact.path;bytes=$wrongHeadBytes})
+            }
+            $wrongHeadArtifactReceipt = $documentationReceiptValue | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64 -DateKind String
+            $wrongHeadArtifactReceipt.artifacts = @(Get-MorphospaceAffectedCheckArtifactReferences -Artifacts @($wrongHeadPhaseArtifacts.ToArray()))
+            $wrongHeadArtifactSnapshot = New-MorphospaceAffectedCheckSnapshot -Receipt $wrongHeadArtifactReceipt -Stdout ([IO.File]::ReadAllBytes((Join-Path $documentationReceipt[0].DirectoryName 'stdout.bin'))) -Stderr ([IO.File]::ReadAllBytes((Join-Path $documentationReceipt[0].DirectoryName 'stderr.bin'))) -Artifacts @($wrongHeadPhaseArtifacts.ToArray()) -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json')
+            $wrongHeadArtifactCacheRoot = Join-Path $fixture 'affected-check-evidence-phase-artifacts-wrong-source-head'
+            [void](Write-MorphospaceAffectedCheckCache -EvidenceDirectory $wrongHeadArtifactCacheRoot -Snapshots @($wrongHeadArtifactSnapshot) -Producer $firstInventory.producer -Source $firstInventory.source -PlanSha256 ([string]$firstInventory.plan_sha256) -Platform linux -ReceiptSchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json') -InventorySchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-inventory-v1.schema.json'))
+            $wrongHeadArtifactInventory = Read-MorphospaceAffectedCheckInventory -EvidenceDirectory $wrongHeadArtifactCacheRoot -ExpectedProducerContext $firstInventory.producer -InventorySchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-inventory-v1.schema.json')
+            $wrongHeadArtifactReuse = Find-MorphospaceAffectedReusableCheckReceipt -PriorEvidenceDirectory $wrongHeadArtifactCacheRoot -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json') -ExpectedBinding $documentationReceiptValue.binding -ExpectedBindingSha256 ([string]$documentationReceiptValue.binding_sha256) -RepositoryRoot $fixture -CurrentHeadCommit $schedulingHead -CandidateEvidenceSnapshots @($wrongHeadArtifactInventory.candidate_snapshots)
+            Assert-True ($null -eq $wrongHeadArtifactReuse) 'Phase artifacts rebound to a descendant current head were accepted under an older receipt source identity.'
             $attempt2PhaseRoot = Join-Path $fixture 'affected-selector-phases-attempt2'
             Restore-MorphospaceAffectedCheckArtifacts -PhaseEvidenceRoot $attempt2PhaseRoot -Artifacts @($artifactReusable.artifacts)
-            foreach ($phase in @('trust-a','trust-b','trust-c','trust-d')) {
+            foreach ($phase in @('trust-self-executor','trust-routing-contracts','trust-proportional-mappings','trust-damage-final')) {
                 $terminal = Get-Content -LiteralPath (Join-Path $attempt2PhaseRoot "$phase.terminal.json") -Raw | ConvertFrom-Json -Depth 64 -DateKind String
                 Assert-True ($terminal.phase_id -ceq $phase -and $terminal.result -ceq 'pass' -and $terminal.binding.head_commit -ceq $docsHead) "Attempt-two verifier could not consume rehydrated '$phase' evidence."
             }
-            $capturedTrustA = @(Get-MorphospaceAffectedCheckPhaseArtifacts -Check ([pscustomobject][ordered]@{command_path='scripts/Invoke-AffectedValidationSelfTestPhase.ps1';arguments=@('-Phase','trust-a','-BudgetSeconds','75')}) -PhaseEvidenceRoot $attempt2PhaseRoot)
-            Assert-True ($capturedTrustA.Count -eq 4 -and @($capturedTrustA.path) -ccontains 'trust-a.terminal.json') 'Outer executor did not capture the exact inner selector phase artifact set.'
-            $collisionPath = Join-Path $attempt2PhaseRoot 'trust-d.stdout.bin'
+            $capturedTrustA = @(Get-MorphospaceAffectedCheckPhaseArtifacts -Check ([pscustomobject][ordered]@{command_path='scripts/Invoke-AffectedValidationSelfTestPhase.ps1';arguments=@('-Phase','trust-self-executor','-BudgetSeconds','75')}) -PhaseEvidenceRoot $attempt2PhaseRoot -ExpectedBinding $documentationReceiptValue.binding -ExpectedSource $documentationReceiptValue.source -ExpectedPlanSha256 ([string]$documentationReceiptValue.plan_sha256))
+            Assert-True ($capturedTrustA.Count -eq 4 -and @($capturedTrustA.path) -ccontains 'trust-self-executor.terminal.json') 'Outer executor did not capture the exact inner selector phase artifact set.'
+            $collisionPath = Join-Path $attempt2PhaseRoot 'trust-damage-final.stdout.bin'
             [byte[]]$collisionBytes = [Text.UTF8Encoding]::new($false).GetBytes('collision-preserved')
             [IO.File]::WriteAllBytes($collisionPath,$collisionBytes)
             Assert-AffectedThrows { Restore-MorphospaceAffectedCheckArtifacts -PhaseEvidenceRoot $attempt2PhaseRoot -Artifacts @($artifactReusable.artifacts) } '*collision differs*' 'Phase-artifact restoration overwrote a differing existing artifact.'
             Assert-True ((Get-MorphospaceAffectedCheckBytesSha256 ([IO.File]::ReadAllBytes($collisionPath))) -ceq (Get-MorphospaceAffectedCheckBytesSha256 $collisionBytes)) 'Phase-artifact collision changed existing bytes.'
+            $restoreEscapeBytes = [Text.UTF8Encoding]::new($false).GetBytes('must-not-escape')
+            $restoreOutsideRoot = Join-Path $fixture 'affected-selector-phase-restore-outside'
+            [void][IO.Directory]::CreateDirectory($restoreOutsideRoot)
+            $restoreRootLink = Join-Path $fixture 'affected-selector-phase-restore-root-link'
+            try {
+                if ($IsWindows) { [void](New-Item -ItemType Junction -Path $restoreRootLink -Target $restoreOutsideRoot) }
+                else { [void](New-Item -ItemType SymbolicLink -Path $restoreRootLink -Target $restoreOutsideRoot) }
+                Assert-AffectedThrows {
+                    Restore-MorphospaceAffectedCheckArtifacts -PhaseEvidenceRoot $restoreRootLink -Artifacts @([pscustomobject][ordered]@{path='root-escape.bin';bytes=$restoreEscapeBytes})
+                } '*reparse point*' 'Phase-artifact restoration accepted a reparse-point evidence root.'
+                Assert-True (-not [IO.File]::Exists((Join-Path $restoreOutsideRoot 'root-escape.bin'))) 'Phase-artifact restoration wrote through a reparse-point evidence root.'
+            } finally { if ([IO.Directory]::Exists($restoreRootLink)) { Remove-Item -LiteralPath $restoreRootLink -Force } }
+            $restoreSafeRoot = Join-Path $fixture 'affected-selector-phase-restore-safe-root'
+            [void][IO.Directory]::CreateDirectory($restoreSafeRoot)
+            $restoreParentLink = Join-Path $restoreSafeRoot 'nested'
+            try {
+                if ($IsWindows) { [void](New-Item -ItemType Junction -Path $restoreParentLink -Target $restoreOutsideRoot) }
+                else { [void](New-Item -ItemType SymbolicLink -Path $restoreParentLink -Target $restoreOutsideRoot) }
+                Assert-AffectedThrows {
+                    Restore-MorphospaceAffectedCheckArtifacts -PhaseEvidenceRoot $restoreSafeRoot -Artifacts @([pscustomobject][ordered]@{path='nested/parent-escape.bin';bytes=$restoreEscapeBytes})
+                } '*reparse point*' 'Phase-artifact restoration accepted a reparse-point destination parent.'
+                Assert-True (-not [IO.File]::Exists((Join-Path $restoreOutsideRoot 'parent-escape.bin'))) 'Phase-artifact restoration wrote through a reparse-point destination parent.'
+            } finally { if ([IO.Directory]::Exists($restoreParentLink)) { Remove-Item -LiteralPath $restoreParentLink -Force } }
+            $restoreAncestorLink = Join-Path $fixture 'affected-selector-phase-restore-ancestor-link'
+            $restoreMissingRoot = Join-Path $restoreAncestorLink 'missing-root'
+            try {
+                if ($IsWindows) { [void](New-Item -ItemType Junction -Path $restoreAncestorLink -Target $restoreOutsideRoot) }
+                else { [void](New-Item -ItemType SymbolicLink -Path $restoreAncestorLink -Target $restoreOutsideRoot) }
+                Assert-AffectedThrows {
+                    Restore-MorphospaceAffectedCheckArtifacts -PhaseEvidenceRoot $restoreMissingRoot -Artifacts @([pscustomobject][ordered]@{path='ancestor-escape.bin';bytes=$restoreEscapeBytes})
+                } '*reparse point*' 'Phase-artifact restoration created a missing evidence root through a reparse-point ancestor.'
+                Assert-True (-not [IO.Directory]::Exists((Join-Path $restoreOutsideRoot 'missing-root'))) 'Phase-artifact restoration created a missing root through a reparse-point ancestor.'
+                Assert-True (-not [IO.File]::Exists((Join-Path $restoreOutsideRoot 'missing-root/ancestor-escape.bin'))) 'Phase-artifact restoration wrote through a reparse-point ancestor outside its evidence root.'
+            } finally { if ([IO.Directory]::Exists($restoreAncestorLink)) { Remove-Item -LiteralPath $restoreAncestorLink -Force } }
             $reuseEvidencePath = Join-Path $fixture 'affected-evidence-reused.json'
             $reuseCheckRoot = Join-Path $fixture 'affected-check-evidence-reused'
             $reusedEvidence = & (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $base -HeadCommit $docsHead -PlanPath $planPath -Platform linux -OutPath $reuseEvidencePath -CheckEvidenceDirectory $reuseCheckRoot -PriorEvidenceDirectory $firstCheckRoot
@@ -2107,7 +2434,7 @@ throw 'sustained output unexpectedly reached its natural terminal'
     $oversizedEvidence = Read-MorphospaceProtocolJson -Path $oversizedEvidencePath
     $oversizedObserved = @($oversizedEvidence.check_results | ForEach-Object { "$($_.check_id):result=$($_.result),exit=$($_.exit_code),timeout=$($_.timed_out),truncated=$($_.output_truncated),drain=$($_.post_kill_drain_timed_out),stdout=$($_.stdout_bytes),stderr=$($_.stderr_bytes)" }) -join '; '
     Assert-True ($oversizedEvidence.result -ceq 'code-fail' -and @($oversizedEvidence.check_results | Where-Object { $_.result -ceq 'code-fail' -and $_.output_truncated -and ($_.stdout_bytes + $_.stderr_bytes) -le 10485760 }).Count -eq 1 -and (Get-AffectedSupervisorResidueIdentity) -ceq $supervisorResidueBaseline) "Affected executor did not enforce the combined live output ceiling without unbounded staging or a changed enclosing supervisor-residue identity. Observed: $oversizedObserved"
-    Write-Utf8 (Join-Path $fixture 'scripts/Test-PublicBoundary.ps1') "Start-Sleep -Seconds 12`n"
+    Write-Utf8 (Join-Path $fixture 'scripts/Test-PublicBoundary.ps1') "Start-Sleep -Seconds 25`n"
     [void](Invoke-TestGit $fixture @('add', 'scripts/Test-PublicBoundary.ps1'))
     [void](Invoke-TestGit $fixture @('commit', '-m', 'timed-out affected command'))
     $timeoutHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
@@ -2460,14 +2787,14 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     Assert-True (@($archiveSchemaPlan.reason_codes) -cnotcontains 'ambiguous-path-mapping') 'History archive schema change became ambiguous.'
 
     $archiveRouterPath = Join-Path $fixture 'scripts/Invoke-WorkUnitAutomation.ps1'
-    Write-Utf8 $archiveRouterPath "# archive router contract`n"
+    Write-Utf8 $archiveRouterPath "# public automation router contract`n"
     [void](Invoke-TestGit $fixture @('add', 'scripts/Invoke-WorkUnitAutomation.ps1'))
     [void](Invoke-TestGit $fixture @('commit', '-m', 'history archive router contract'))
     $archiveRouterHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
     $archiveRouterPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $archiveSchemaHead -HeadRevision $archiveRouterHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier standard
     foreach ($checkId in @('public-boundary','workflow-contracts','history-archive-checkpoint','work-unit-automation')) { Assert-True (@($archiveRouterPlan.selected_checks.check_id) -ccontains $checkId) "History archive router change did not retain bounded '$checkId' coverage." }
-    foreach ($checkId in @($selectorTrustRootCheckIds + @('work-environment-deep'))) { Assert-True (@($archiveRouterPlan.selected_checks.check_id) -cnotcontains $checkId) "History archive router change incorrectly selected '$checkId'." }
-    Assert-True (@($archiveRouterPlan.reason_codes) -cnotcontains 'ambiguous-path-mapping') 'History archive router change became ambiguous.'
+    foreach ($checkId in @($selectorTrustRootCheckIds + @('active-unit-supersession','blocked-successor-preparation','work-environment-deep'))) { Assert-True (@($archiveRouterPlan.selected_checks.check_id) -cnotcontains $checkId) "Public automation router change incorrectly selected '$checkId'." }
+    Assert-True (@($archiveRouterPlan.reason_codes) -cnotcontains 'ambiguous-path-mapping') 'Public automation router change became ambiguous.'
 
     # A W-017B-shaped archive/schema/router change remains ordinary affected
     # Standard work: shared archive owner schemas plus the automation router
@@ -2494,25 +2821,96 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     foreach ($checkId in @($selectorTrustRootCheckIds + @('work-environment-deep'))) { Assert-True (@($archiveEnvelopePlan.selected_checks.check_id) -cnotcontains $checkId) "W-017B-shaped archive envelope change incorrectly selected '$checkId'." }
     foreach ($reasonCode in @('ambiguous-path-mapping','unmapped-path')) { Assert-True (@($archiveEnvelopePlan.reason_codes) -cnotcontains $reasonCode) "W-017B-shaped archive envelope change retained '$reasonCode'." }
 
-    # Development-envelope preparation, provenance, admission, freeze, and
-    # focused test changes must select their direct contract/integration
-    # closure without paying the historical Deep aggregate.
+    # Development-envelope preparation, provenance, freeze, and its focused
+    # test select their direct contract/integration closure without paying the
+    # historical Deep aggregate or the independent admission owner.
     $developmentEnvelopeBase = $archiveEnvelopeHead
     Write-Utf8 (Join-Path $fixture 'scripts/CandidateFreeze.psm1') "# preparation-owned candidate freeze change`n"
     Write-Utf8 (Join-Path $fixture 'scripts/DevelopmentEnvelopePreparation.psm1') "# development envelope owner change`n"
     Write-Utf8 (Join-Path $fixture 'scripts/DevelopmentEnvelopeProvenance.psm1') "# prepared envelope provenance change`n"
-    Write-Utf8 (Join-Path $fixture 'scripts/DevelopmentUnitAdmission.psm1') "# development unit admission change`n"
     Write-Utf8 (Join-Path $fixture 'scripts/Test-DevelopmentEnvelopePreparation.ps1') "# development envelope focused test change`n"
-    Write-Utf8 (Join-Path $fixture 'scripts/Test-DevelopmentUnitAdmission.ps1') "# development unit admission test change`n"
-    [void](Invoke-TestGit $fixture @('add', 'scripts/CandidateFreeze.psm1', 'scripts/DevelopmentEnvelopePreparation.psm1', 'scripts/DevelopmentEnvelopeProvenance.psm1', 'scripts/DevelopmentUnitAdmission.psm1', 'scripts/Test-DevelopmentEnvelopePreparation.ps1', 'scripts/Test-DevelopmentUnitAdmission.ps1'))
+    [void](Invoke-TestGit $fixture @('add', 'scripts/CandidateFreeze.psm1', 'scripts/DevelopmentEnvelopePreparation.psm1', 'scripts/DevelopmentEnvelopeProvenance.psm1', 'scripts/Test-DevelopmentEnvelopePreparation.ps1'))
     [void](Invoke-TestGit $fixture @('commit', '-m', 'development envelope preparation change'))
     $developmentEnvelopeHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
     $developmentEnvelopePlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $developmentEnvelopeBase -HeadRevision $developmentEnvelopeHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
     Assert-True ($developmentEnvelopePlan.selection_mode -ceq 'affected') 'Development-envelope preparation change did not retain affected selection.'
     Assert-True ($developmentEnvelopePlan.effective_tier -ceq 'standard') 'Development-envelope preparation change did not retain Standard effective tier.'
     foreach ($checkId in @('public-boundary','workflow-contracts','development-envelope-preparation','work-unit-automation')) { Assert-True (@($developmentEnvelopePlan.selected_checks.check_id) -ccontains $checkId) "Development-envelope preparation change did not retain bounded '$checkId' coverage." }
-    Assert-True (@($developmentEnvelopePlan.selected_checks.check_id) -cnotcontains 'work-environment-deep') "Development-envelope preparation change incorrectly selected 'work-environment-deep'."
+    foreach ($checkId in @('development-unit-admission','work-environment-deep')) { Assert-True (@($developmentEnvelopePlan.selected_checks.check_id) -cnotcontains $checkId) "Development-envelope preparation change incorrectly selected '$checkId'." }
     foreach ($reasonCode in @('ambiguous-path-mapping','unmapped-path')) { Assert-True (@($developmentEnvelopePlan.reason_codes) -cnotcontains $reasonCode) "Development-envelope preparation change retained '$reasonCode'." }
+
+    # Development-unit admission owns its schema, module, and focused test as
+    # one exact path class.  Admission-only changes must run that owner without
+    # replaying the neighboring envelope-preparation integration.
+    $developmentAdmissionBase = $developmentEnvelopeHead
+    $developmentAdmissionSchemaPath = Join-Path $fixture 'schemas/development-unit-admission-v1.schema.json'
+    Write-Utf8 $developmentAdmissionSchemaPath ((Get-Content -LiteralPath $developmentAdmissionSchemaPath -Raw).TrimEnd() + "`n `n")
+    Write-Utf8 (Join-Path $fixture 'scripts/DevelopmentUnitAdmission.psm1') "# development unit admission change`n"
+    Write-Utf8 (Join-Path $fixture 'scripts/Test-DevelopmentUnitAdmission.ps1') "# development unit admission test change`n"
+    [void](Invoke-TestGit $fixture @('add', 'schemas/development-unit-admission-v1.schema.json', 'scripts/DevelopmentUnitAdmission.psm1', 'scripts/Test-DevelopmentUnitAdmission.ps1'))
+    [void](Invoke-TestGit $fixture @('commit', '-m', 'development unit admission change'))
+    $developmentAdmissionHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
+    $developmentAdmissionPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $developmentAdmissionBase -HeadRevision $developmentAdmissionHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+    Assert-True ($developmentAdmissionPlan.selection_mode -ceq 'affected') 'Development-unit admission change did not retain affected selection.'
+    Assert-True ($developmentAdmissionPlan.effective_tier -ceq 'standard') 'Development-unit admission change did not retain Standard effective tier.'
+    foreach ($checkId in @('public-boundary','development-unit-admission')) { Assert-True (@($developmentAdmissionPlan.selected_checks.check_id) -ccontains $checkId) "Development-unit admission change did not retain bounded '$checkId' coverage." }
+    foreach ($checkId in @('development-envelope-preparation','work-environment-deep')) { Assert-True (@($developmentAdmissionPlan.selected_checks.check_id) -cnotcontains $checkId) "Development-unit admission change incorrectly selected '$checkId'." }
+    foreach ($reasonCode in @('ambiguous-path-mapping','unmapped-path')) { Assert-True (@($developmentAdmissionPlan.reason_codes) -cnotcontains $reasonCode) "Development-unit admission change retained '$reasonCode'." }
+
+    # The shared v2 automation receipt has a fast direct compatibility owner,
+    # not a history-archive or cumulative automation owner.  A receipt-only
+    # change must run the exact corpus/Ready-dispatch check without paying for
+    # unrelated integration or cumulative Deep gates.
+    $automationReceiptPath = Join-Path $fixture 'schemas/work-unit-automation-receipt-v2.schema.json'
+    Write-Utf8 $automationReceiptPath ((Get-Content -LiteralPath $automationReceiptPath -Raw).TrimEnd() + "`n `n")
+    [void](Invoke-TestGit $fixture @('add', 'schemas/work-unit-automation-receipt-v2.schema.json'))
+    [void](Invoke-TestGit $fixture @('commit', '-m', 'shared automation receipt contract'))
+    $automationReceiptHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
+    $automationReceiptPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $developmentAdmissionHead -HeadRevision $automationReceiptHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+    $automationReceiptExpectedChecks = @('automation-receipt-v2-compatibility','public-boundary')
+    $automationReceiptActualChecks = @($automationReceiptPlan.selected_checks.check_id); [Array]::Sort($automationReceiptActualChecks, [System.StringComparer]::Ordinal)
+    Assert-True (($automationReceiptActualChecks -join ',') -ceq ($automationReceiptExpectedChecks -join ',')) "Shared automation receipt selected the wrong exact closure: $($automationReceiptActualChecks -join ',')."
+    foreach ($checkId in @('history-archive-checkpoint','history-archive-checkpoint-selftest','normal-validation-selector','work-unit-automation','workflow-contracts','work-environment-deep')) { Assert-True (@($automationReceiptPlan.selected_checks.check_id) -cnotcontains $checkId) "Shared automation receipt change incorrectly selected '$checkId'." }
+    $retiredArchiveSelection = @($automationReceiptPlan.selected_checks | Where-Object { [string]$_.check_id -ceq 'history-archive-checkpoint' })
+    $retiredArchiveSkip = @($automationReceiptPlan.skipped_checks | Where-Object { [string]$_.check_id -ceq 'history-archive-checkpoint' })
+    $retiredHistoryExpansionReasons = @($automationReceiptPlan.selected_checks | Where-Object { @($_.reasons) -ccontains 'consumer-of:workflow-contracts:workflow-contracts' })
+    Assert-True ($retiredArchiveSelection.Count -eq 0 -and $retiredArchiveSkip.Count -eq 1 -and (@($retiredArchiveSkip[0].reasons) -join ',') -ceq 'not-selected') 'Shared automation receipt allowed the retired archive path to reappear through selection expansion.'
+    Assert-True ($retiredHistoryExpansionReasons.Count -eq 0) 'Shared automation receipt retained the retired workflow-contract consumer expansion reason.'
+    foreach ($reasonCode in @('ambiguous-path-mapping','unmapped-path')) { Assert-True (@($automationReceiptPlan.reason_codes) -cnotcontains $reasonCode) "Shared automation receipt change retained '$reasonCode'." }
+
+    # The generic active-supersession and blocked-successor owners remain
+    # independent focused Standard leaves.  Both consume the ordinary
+    # automation integration contract; the blocked successor additionally
+    # consumes the development-envelope and exact normal-selector contracts.
+    $activeLifecyclePaths = @('schemas/active-unit-supersession-v1.schema.json','scripts/ActiveUnitSupersession.psm1','scripts/Test-ActiveUnitSupersession.ps1')
+    foreach ($relativePath in $activeLifecyclePaths) { Write-Utf8 (Join-Path $fixture $relativePath) $(if ($relativePath -like '*.json') { "{}`n" } else { "# active-unit supersession fixture`n" }) }
+    [void](Invoke-TestGit $fixture (@('add') + $activeLifecyclePaths))
+    [void](Invoke-TestGit $fixture @('commit', '-m', 'active unit supersession contract'))
+    $activeLifecycleHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
+    $activeLifecyclePlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $automationReceiptHead -HeadRevision $activeLifecycleHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+    foreach ($checkId in @('public-boundary','workflow-contracts','work-unit-automation','active-unit-supersession')) { Assert-True (@($activeLifecyclePlan.selected_checks.check_id) -ccontains $checkId) "Active-unit supersession change did not retain bounded '$checkId' coverage." }
+    foreach ($checkId in @('blocked-successor-preparation','work-environment-deep')) { Assert-True (@($activeLifecyclePlan.selected_checks.check_id) -cnotcontains $checkId) "Active-unit supersession change incorrectly selected '$checkId'." }
+    foreach ($reasonCode in @('ambiguous-path-mapping','unmapped-path')) { Assert-True (@($activeLifecyclePlan.reason_codes) -cnotcontains $reasonCode) "Active-unit supersession change retained '$reasonCode'." }
+
+    $blockedLifecyclePaths = @('schemas/blocked-successor-preparation-receipt-v1.schema.json','schemas/blocked-successor-preparation-v1.schema.json','scripts/BlockedSuccessorPreparation.psm1','scripts/Test-BlockedSuccessorPreparation.ps1')
+    foreach ($relativePath in $blockedLifecyclePaths) { Write-Utf8 (Join-Path $fixture $relativePath) $(if ($relativePath -like '*.json') { "{}`n" } else { "# blocked-successor preparation fixture`n" }) }
+    [void](Invoke-TestGit $fixture (@('add') + $blockedLifecyclePaths))
+    [void](Invoke-TestGit $fixture @('commit', '-m', 'blocked successor preparation contract'))
+    $blockedLifecycleHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
+    $blockedLifecyclePlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $activeLifecycleHead -HeadRevision $blockedLifecycleHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+    foreach ($checkId in @('public-boundary','workflow-contracts','development-envelope-preparation','normal-validation-selector','work-unit-automation','blocked-successor-preparation')) { Assert-True (@($blockedLifecyclePlan.selected_checks.check_id) -ccontains $checkId) "Blocked-successor preparation change did not retain bounded '$checkId' coverage." }
+    foreach ($checkId in @('active-unit-supersession','work-environment-deep')) { Assert-True (@($blockedLifecyclePlan.selected_checks.check_id) -cnotcontains $checkId) "Blocked-successor preparation change incorrectly selected '$checkId'." }
+    foreach ($reasonCode in @('ambiguous-path-mapping','unmapped-path')) { Assert-True (@($blockedLifecyclePlan.reason_codes) -cnotcontains $reasonCode) "Blocked-successor preparation change retained '$reasonCode'." }
+
+    $releaseV2Path = Join-Path $fixture 'schemas/terminal-validation-selection-release-v2.schema.json'
+    Write-Utf8 $releaseV2Path "{}`n"
+    [void](Invoke-TestGit $fixture @('add', 'schemas/terminal-validation-selection-release-v2.schema.json'))
+    [void](Invoke-TestGit $fixture @('commit', '-m', 'terminal validation selection release v2'))
+    $releaseV2Head = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
+    $releaseV2Plan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $blockedLifecycleHead -HeadRevision $releaseV2Head -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+    foreach ($checkId in @('public-boundary','workflow-contracts','normal-validation-selector')) { Assert-True (@($releaseV2Plan.selected_checks.check_id) -ccontains $checkId) "Terminal validation-selection release v2 change did not retain bounded '$checkId' coverage." }
+    foreach ($reasonCode in @('ambiguous-path-mapping','unmapped-path')) { Assert-True (@($releaseV2Plan.reason_codes) -cnotcontains $reasonCode) "Terminal validation-selection release v2 change retained '$reasonCode'." }
+    Assert-True (@($releaseV2Plan.selected_checks.check_id) -cnotcontains 'work-environment-deep') 'Terminal validation-selection release v2 change selected the cumulative Deep aggregate.'
     Write-Host "Trust routing-contract checks passed in $([long]$trustSegmentClock.Elapsed.TotalMilliseconds)ms."
     }
 
@@ -2525,10 +2923,24 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
         [pscustomobject]@{ path='schemas/historical-validation-debt-phase-receipt-v1.schema.json'; checks=@('historical-validation-debt-baseline','historical-validation-debt-phase-runner','work-unit-automation') },
         [pscustomobject]@{ path='scripts/Test-BlockedSupersessionTerminalValidation.ps1'; checks=@('blocked-supersession-terminal-validation') },
         [pscustomobject]@{ path='scripts/Test-CorrectActiveUnitContract.ps1'; checks=@('correct-active-unit-contract') },
+        [pscustomobject]@{ path='schemas/active-unit-supersession-v1.schema.json'; checks=@('active-unit-supersession','work-unit-automation') },
+        [pscustomobject]@{ path='scripts/ActiveUnitSupersession.psm1'; checks=@('active-unit-supersession','work-unit-automation') },
+        [pscustomobject]@{ path='scripts/Test-ActiveUnitSupersession.ps1'; checks=@('active-unit-supersession','work-unit-automation') },
+        [pscustomobject]@{ path='schemas/blocked-successor-preparation-receipt-v1.schema.json'; checks=@('blocked-successor-preparation','work-unit-automation') },
+        [pscustomobject]@{ path='schemas/blocked-successor-preparation-v1.schema.json'; checks=@('blocked-successor-preparation','work-unit-automation') },
+        [pscustomobject]@{ path='scripts/BlockedSuccessorPreparation.psm1'; checks=@('blocked-successor-preparation','work-unit-automation') },
+        [pscustomobject]@{ path='scripts/Test-BlockedSuccessorPreparation.ps1'; checks=@('blocked-successor-preparation','work-unit-automation') },
+        [pscustomobject]@{ path='schemas/terminal-validation-selection-release-v2.schema.json'; checks=@('normal-validation-selector') },
+        [pscustomobject]@{ path='schemas/work-unit-automation-receipt-v2.schema.json'; checks=@('automation-receipt-v2-compatibility') },
+        [pscustomobject]@{ path='scripts/Test-AutomationReceiptV2Compatibility.ps1'; checks=@('automation-receipt-v2-compatibility') },
+        [pscustomobject]@{ path='scripts/WorkUnitAutomation.psm1'; checks=@('automation-receipt-v2-compatibility','normal-validation-selector','work-unit-automation','workflow-contracts') },
         [pscustomobject]@{ path='scripts/Test-HistoricalValidationDebtBaseline.ps1'; checks=@('historical-validation-debt-baseline') },
         [pscustomobject]@{ path='scripts/Test-HistoricalValidationDebtPhaseRunner.ps1'; checks=@('historical-validation-debt-phase-runner') },
         [pscustomobject]@{ path='scripts/Test-OwnershipAuthority.ps1'; checks=@('ownership-authority') },
         [pscustomobject]@{ path='scripts/Test-TransitionLedger.ps1'; checks=@('transition-ledger') },
+        [pscustomobject]@{ path='schemas/development-unit-admission-v1.schema.json'; checks=@('development-unit-admission') },
+        [pscustomobject]@{ path='scripts/DevelopmentUnitAdmission.psm1'; checks=@('development-unit-admission') },
+        [pscustomobject]@{ path='scripts/Test-DevelopmentUnitAdmission.ps1'; checks=@('development-unit-admission') },
         [pscustomobject]@{ path='scripts/lib/MorphospaceBlockedSupersessionTerminalValidation.psm1'; checks=@('blocked-supersession-terminal-validation','workflow-contracts') },
         [pscustomobject]@{ path='scripts/lib/MorphospaceHistoricalValidationDebtPhaseRunner.psm1'; checks=@('historical-validation-debt-baseline','historical-validation-debt-phase-runner','work-unit-automation') },
         [pscustomobject]@{ path='scripts/lib/MorphospaceOwnership.psm1'; checks=@('authority-record-readiness','authority-runner-fast','ownership-authority','validation-execution-authority','work-unit-automation') },

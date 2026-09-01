@@ -400,7 +400,11 @@ function Invoke-ActiveSupersessionExistingIntent {
         [void](Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $Workspace -TransactionId $TransactionId -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath ([string]$Request.replacement_unit.path) -ExpectedEventsPath 'iteration-events.jsonl')
         $outAbsolute=Resolve-MorphospaceWorkspacePath $Workspace $OutPath -RequireLeaf
         if((Get-MorphospaceFileSha256 $outAbsolute)-cne[string]$recovery.intent.artifacts[0].sha256){throw 'Active-unit supersession committed receipt bytes differ from the exact intent.'}
-        return $recovery.receipt
+        if($Execute){return $recovery.receipt}
+        $observation=New-ActiveSupersessionResult $Request $RequestPath $RequestSha256 ([string]$recovery.receipt.timestamp) $false $null
+        $receiptSchema=Join-Path (Split-Path $PSScriptRoot -Parent) 'schemas\work-unit-automation-receipt-v2.schema.json'
+        if(-not(Test-Json -Json ($observation|ConvertTo-Json -Depth 32 -Compress) -SchemaFile $receiptSchema)){throw 'SupersedeActive completed dry observation does not satisfy the automation receipt contract.'}
+        return $observation
     }
     if(-not$Execute){throw 'Active-unit supersession has an outstanding exact intent; Execute is required to repair it.'}
     $project=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $Workspace 'project.spec.json' -RequireLeaf);$state=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $Workspace 'workspace.state.json' -RequireLeaf)

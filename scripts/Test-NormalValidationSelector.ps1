@@ -764,6 +764,29 @@ throw 'The selector consumer must never execute the evidence producer.'
     } finally {
         if ([IO.File]::Exists($terminalUntrackedPath)) { [IO.File]::Delete($terminalUntrackedPath) }
     }
+    $automationModule = Get-Module WorkUnitAutomation
+    $legacyReleaseRoute = & $automationModule {
+        param($arguments)
+        Get-MorphospaceReadyTerminalReleaseRoute @arguments
+    } @{
+        WorkspaceRoot = $terminalWorkspace
+        UnitId = $successorId
+        Events = @(Get-Content -LiteralPath $terminalEventsPath | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json -DateKind String })
+    }
+    Assert-SelectorTest ([string]$legacyReleaseRoute -ceq 'legacy-v1') 'ordinary stale-selector Ready was routed through blocked-successor release-v2'
+
+    $ordinaryReadyWorkspace = Join-Path $testRoot 'ordinary-ready-no-selector'
+    Copy-Item -LiteralPath $terminalWorkspace -Destination $ordinaryReadyWorkspace -Recurse
+    $ordinaryReadyStatePath = Join-Path $ordinaryReadyWorkspace 'workspace.state.json'
+    $ordinaryReadyState = Get-Content -Raw -LiteralPath $ordinaryReadyStatePath | ConvertFrom-Json -DateKind String
+    $ordinaryReadyState.normal_validation_selection = $null
+    Write-TestJson $ordinaryReadyStatePath $ordinaryReadyState
+    $ordinaryReady = Invoke-MorphospaceWorkUnitAutomation -Action Ready -WorkspaceRoot $ordinaryReadyWorkspace -UnitId $successorId -RepoMapPath $terminalRepoMapPath -Timestamp $fixed
+    Assert-SelectorTest (
+        [string]$ordinaryReady.transition -ceq 'proposed-to-ready' -and
+        $null -eq $ordinaryReady.terminal_validation_selection_release
+    ) 'ordinary no-selector Ready evaluated or emitted a terminal release provider'
+
     $terminalReadyDryRun = Invoke-MorphospaceWorkUnitAutomation -Action Ready -WorkspaceRoot $terminalWorkspace -UnitId $successorId -RepoMapPath $terminalRepoMapPath -Timestamp $fixed
     $automationReceiptSchemaPath = Join-Path $repoRoot 'schemas\work-unit-automation-receipt.schema.json'
     $terminalReleaseSchemaPath = Join-Path $repoRoot 'schemas\terminal-validation-selection-release-v1.schema.json'

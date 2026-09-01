@@ -11,12 +11,41 @@
     "action":{"enum":["RetirePreparedPush","ReconcilePreparedPublication","ReconcilePreparedPushTransactionSuffix","ResolveBlocker","CorrectResolvedBlockerEvidence","CorrectHistoricalBlockerResolutionIntentBinding","CorrectCompletedTransitionSemantics","CorrectActiveReadOnlyDependencies","CorrectActiveProjectRepositoryScope","CorrectActiveUnitContract","AmendActiveWriteScope","RecordHistoricalUnitCompatibilityProjection","PrepareDevelopmentEnvelope","PrepareBlockedSuccessor","SupersedeActive","AdmitDevelopmentUnit","FreezeCandidate","MaterializeInheritedCandidate","ArchiveHistoryCheckpoint"]},
     "timestamp":{"type":"string","format":"date-time"},"executed":{"type":"boolean"},
     "transition":{"enum":["prepared-push-retired","prepared-publication-reconstructed","prepared-push-transaction-suffix-reconciled","blocker-resolved","blocker-resolution-corrected","historical-blocker-resolution-intent-binding-corrected","completed-transition-semantics-corrected","active-read-only-dependencies-corrected","active-project-repository-scope-corrected","active-unit-contract-corrected","active-write-scope-amended","historical-unit-compatibility-projected","idle-project-envelope-prepared","blocked-successor-prepared","active-superseded-by-proposed-to-active","development-unit-admitted","development-unit-already-admitted","candidate-frozen","candidate-already-frozen","inherited-candidate-materialized","inherited-candidate-already-materialized","history-archive-checkpointed"]},
-    "status_before":{"$ref":"#/$defs/id"},"status_after":{"$ref":"#/$defs/id"},
+    "status_before":{"oneOf":[{"$ref":"#/$defs/id"},{"type":"null"}]},"status_after":{"$ref":"#/$defs/id"},
     "current_unit_before":{"oneOf":[{"$ref":"#/$defs/id"},{"type":"null"}]},
     "current_unit_after":{"oneOf":[{"$ref":"#/$defs/id"},{"type":"null"}]},
     "preservation":{"type":"object","additionalProperties":false,"required":["git_mutation_performed","device_mutation_performed","remote_mutation_performed"],"properties":{"git_mutation_performed":{"const":false},"device_mutation_performed":{"const":false},"remote_mutation_performed":{"const":false}}},
     "audit_receipt":{"type":"object","additionalProperties":false,"required":["path","sha256"],"properties":{"path":{"$ref":"#/$defs/path"},"sha256":{"$ref":"#/$defs/hash"}}},
     "event_id":{"oneOf":[{"$ref":"#/$defs/id"},{"type":"null"}]}
   },
+  "allOf": [
+    {
+      "oneOf": [
+      {"properties":{"action":{"const":"RetirePreparedPush"},"transition":{"const":"prepared-push-retired"},"status_before":{"$ref":"#/$defs/id"}}},
+      {"properties":{"action":{"const":"ReconcilePreparedPublication"},"transition":{"const":"prepared-publication-reconstructed"},"status_before":{"$ref":"#/$defs/id"}}},
+      {"properties":{"action":{"const":"ReconcilePreparedPushTransactionSuffix"},"transition":{"const":"prepared-push-transaction-suffix-reconciled"},"status_before":{"$ref":"#/$defs/id"}}},
+      {"properties":{"action":{"const":"ResolveBlocker"},"transition":{"const":"blocker-resolved"},"status_before":{"$ref":"#/$defs/id"}}},
+      {"properties":{"action":{"const":"CorrectResolvedBlockerEvidence"},"transition":{"const":"blocker-resolution-corrected"},"status_before":{"$ref":"#/$defs/id"}}},
+      {"properties":{"action":{"const":"CorrectHistoricalBlockerResolutionIntentBinding"},"transition":{"const":"historical-blocker-resolution-intent-binding-corrected"},"status_before":{"$ref":"#/$defs/id"}}},
+      {"properties":{"action":{"const":"CorrectCompletedTransitionSemantics"},"transition":{"const":"completed-transition-semantics-corrected"},"status_before":{"$ref":"#/$defs/id"}}},
+      {"properties":{"action":{"const":"CorrectActiveReadOnlyDependencies"},"transition":{"const":"active-read-only-dependencies-corrected"},"status_before":{"$ref":"#/$defs/id"}}},
+      {"properties":{"action":{"const":"CorrectActiveProjectRepositoryScope"},"transition":{"const":"active-project-repository-scope-corrected"},"status_before":{"$ref":"#/$defs/id"}}},
+      {"properties":{"action":{"const":"CorrectActiveUnitContract"},"transition":{"const":"active-unit-contract-corrected"},"status_before":{"$ref":"#/$defs/id"}}},
+      {"properties":{"action":{"const":"AmendActiveWriteScope"},"transition":{"const":"active-write-scope-amended"},"status_before":{"$ref":"#/$defs/id"}}},
+      {"properties":{"action":{"const":"RecordHistoricalUnitCompatibilityProjection"},"transition":{"const":"historical-unit-compatibility-projected"},"status_before":{"$ref":"#/$defs/id"}}},
+      {"properties":{"action":{"const":"PrepareDevelopmentEnvelope"},"transition":{"const":"idle-project-envelope-prepared"},"status_before":{"$ref":"#/$defs/id"}}},
+      {"properties":{"action":{"const":"PrepareBlockedSuccessor"},"transition":{"const":"blocked-successor-prepared"},"status_before":{"$ref":"#/$defs/id"}}},
+      {"properties":{"action":{"const":"SupersedeActive"},"transition":{"const":"active-superseded-by-proposed-to-active"},"status_before":{"$ref":"#/$defs/id"}}},
+      {"properties":{"action":{"const":"AdmitDevelopmentUnit"},"transition":{"enum":["development-unit-admitted","development-unit-already-admitted"]},"status_before":{"type":"null"}}},
+      {"properties":{"action":{"const":"FreezeCandidate"},"transition":{"enum":["candidate-frozen","candidate-already-frozen"]},"status_before":{"$ref":"#/$defs/id"}}},
+      {"properties":{"action":{"const":"MaterializeInheritedCandidate"},"transition":{"enum":["inherited-candidate-materialized","inherited-candidate-already-materialized"]},"status_before":{"$ref":"#/$defs/id"}}},
+      {"properties":{"action":{"const":"ArchiveHistoryCheckpoint"},"transition":{"const":"history-archive-checkpointed"},"status_before":{"$ref":"#/$defs/id"}}}
+      ]
+    },
+    {
+      "if": {"properties":{"executed":{"const":false}},"required":["executed"]},
+      "then": {"properties":{"event_id":{"type":"null"}}}
+    }
+  ],
   "$defs":{"id":{"type":"string","pattern":"^[a-z0-9][a-z0-9-]{1,127}$"},"hash":{"type":"string","pattern":"^[0-9a-f]{64}$"},"path":{"type":"string","pattern":"^(?:receipts/[a-z0-9][a-z0-9-]{1,127}\\.json|history-archive/checkpoints/[a-z0-9][a-z0-9-]{1,109}\\.json)$"}}
 }

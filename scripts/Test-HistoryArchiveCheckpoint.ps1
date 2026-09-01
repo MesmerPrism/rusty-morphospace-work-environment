@@ -72,21 +72,24 @@ try {
     [void](New-ArchiveRequest $workspace $requestPath)
     $outPath = Join-Path $workspace 'history-archive\checkpoints\archive-001.json'
     $dry = Invoke-MorphospaceArchiveHistoryCheckpoint -WorkspaceRoot $workspace -HistoryArchiveCheckpoint $requestPath -OutPath $outPath -Timestamp '2026-08-27T00:01:00.0000000Z'
-    Assert-Archive (-not $dry.executed -and $dry.action -ceq 'ArchiveHistoryCheckpoint' -and $dry.transition -ceq 'history-archive-checkpointed') 'dry run did not produce the typed automation receipt'
+    $automationReceiptV2 = Join-Path $repoRoot 'schemas\work-unit-automation-receipt-v2.schema.json'
+    Assert-Archive (-not $dry.executed -and $null -eq $dry.event_id -and $dry.action -ceq 'ArchiveHistoryCheckpoint' -and $dry.transition -ceq 'history-archive-checkpointed' -and (Test-Json -Json ($dry | ConvertTo-Json -Depth 32) -SchemaFile $automationReceiptV2)) 'dry run did not produce the schema-valid typed automation receipt'
     $requestHash = Get-MorphospaceFileSha256 $requestPath
     $run = Invoke-MorphospaceArchiveHistoryCheckpoint -WorkspaceRoot $workspace -HistoryArchiveCheckpoint $requestPath -ExpectedHistoryArchiveCheckpointSha256 $requestHash -OutPath $outPath -Timestamp '2026-08-27T00:01:00.0000000Z' -Execute
     Assert-Archive ($run.executed -and (Test-Path -LiteralPath $outPath) -and (Test-Path -LiteralPath (Join-Path $workspace 'history-archive\transactions\archive-001-archive-transition.completion.json'))) 'executed checkpoint did not materialize its typed transaction'
     $state = Read-MorphospaceProtocolJson (Join-Path $workspace 'workspace.state.json')
     Assert-Archive ($null -eq $state.current_unit -and $null -eq $state.next_ready_unit -and $state.history_archive.checkpoint_id -ceq 'archive-001') 'checkpoint did not preserve the idle project state'
-    Assert-Archive ((Test-Json -Json ($run | ConvertTo-Json -Depth 32) -SchemaFile (Join-Path $repoRoot 'schemas\work-unit-automation-receipt-v2.schema.json'))) 'automation receipt did not satisfy receipt-v2'
+    Assert-Archive ($null -ne $run.event_id -and (Test-Json -Json ($run | ConvertTo-Json -Depth 32) -SchemaFile $automationReceiptV2)) 'automation receipt did not satisfy receipt-v2'
     $quick = Test-MorphospaceHistoryArchive -WorkspaceRoot $workspace -Tier quick
     $deep = Test-MorphospaceHistoryArchive -WorkspaceRoot $workspace -Tier deep
     Assert-Archive ($quick.status -ceq 'pass' -and $quick.mode -ceq 'tail-only') 'Quick did not validate the intact root, prefix, carry-forward, and live tail'
     Assert-Archive ((Test-Json -Json ($quick | ConvertTo-Json -Depth 32) -SchemaFile (Join-Path $repoRoot 'schemas\history-archive-validation-result-v1.schema.json'))) 'Quick archive validation result did not satisfy its typed schema'
     Assert-Archive ($deep.status -ceq 'pass' -and $deep.mode -ceq 'archive-replay' -and $deep.reason_codes -ccontains 'archive-replay-selected') 'Deep did not select archived replay'
     $receiptHashBeforeReplay = Get-MorphospaceFileSha256 $outPath
+    $dryReplay = Invoke-MorphospaceArchiveHistoryCheckpoint -WorkspaceRoot $workspace -HistoryArchiveCheckpoint $requestPath -ExpectedHistoryArchiveCheckpointSha256 $requestHash -OutPath $outPath -Timestamp '2026-08-27T00:01:01.0000000Z'
+    Assert-Archive (-not $dryReplay.executed -and $null -eq $dryReplay.event_id -and (Test-Json -Json ($dryReplay | ConvertTo-Json -Depth 32) -SchemaFile $automationReceiptV2)) 'existing-intent dry archive replay claimed an event or failed receipt-v2'
     $replay = Invoke-MorphospaceArchiveHistoryCheckpoint -WorkspaceRoot $workspace -HistoryArchiveCheckpoint $requestPath -ExpectedHistoryArchiveCheckpointSha256 $requestHash -OutPath $outPath -Timestamp '2026-08-27T00:01:01.0000000Z' -Execute
-    Assert-Archive ($replay.executed -and $receiptHashBeforeReplay -ceq (Get-MorphospaceFileSha256 $outPath)) 'exact completed replay was not byte-equivalent'
+    Assert-Archive ($replay.executed -and $null -ne $replay.event_id -and (Test-Json -Json ($replay | ConvertTo-Json -Depth 32) -SchemaFile $automationReceiptV2) -and $receiptHashBeforeReplay -ceq (Get-MorphospaceFileSha256 $outPath)) 'exact completed replay was not schema-valid and byte-equivalent'
     $routerReplay = & (Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1') -Action ArchiveHistoryCheckpoint -WorkspaceRoot $workspace -HistoryArchiveCheckpoint $requestPath -ExpectedHistoryArchiveCheckpointSha256 $requestHash -OutPath $outPath -Timestamp '2026-08-27T00:01:02.0000000Z' -Execute | ConvertFrom-Json
     Assert-Archive ($routerReplay.action -ceq 'ArchiveHistoryCheckpoint' -and $routerReplay.transition -ceq 'history-archive-checkpointed' -and $routerReplay.executed) 'public router did not preserve the typed archive receipt'
     Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceHistoryArchive.psm1') -Force

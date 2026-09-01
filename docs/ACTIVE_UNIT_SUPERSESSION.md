@@ -22,7 +22,9 @@ one exact automation receipt and one canonical supersession event. If an exact
 intent already exists, authenticate its request, paths, endpoints, preimages,
 target transform, artifact, and repository observation before completing it
 with ledger repair. Orphaned or conflicting intent/completion/event evidence
-fails closed. Completed replay returns the original transaction-owned receipt.
+fails closed. Completed `-Execute` replay returns the original
+transaction-owned receipt; completed no-Execute returns a schema-valid,
+nonmutating observation with no new event identity.
 
 ## Terminal blocked successor
 

@@ -1,4 +1,4 @@
-param()
+param([switch]$LifecycleRouterSelfTestOnly)
 
 $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
@@ -36,6 +36,81 @@ function Read-TestProtocolJson {
     $module = Get-Module WorkUnitAutomation
     return & $module { param($DocumentPath) Read-MorphospaceProtocolJson -Path $DocumentPath } $Path
 }
+
+# Exercise the two lifecycle branches through the exact public script while
+# replacing only their already independently tested owner modules with a
+# closed capture seam. This keeps wrapper-only changes cheap while proving
+# parameter forwarding, dry/execute switch projection, replay stability, and
+# absence of wrapper-owned workspace/output mutation.
+$lifecycleRouterRoot = Join-Path ([IO.Path]::GetTempPath()) ('work-unit-lifecycle-router-' + [Guid]::NewGuid().ToString('N'))
+try {
+    [void][IO.Directory]::CreateDirectory($lifecycleRouterRoot)
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1') -Destination (Join-Path $lifecycleRouterRoot 'Invoke-WorkUnitAutomation.ps1')
+    [IO.File]::WriteAllText((Join-Path $lifecycleRouterRoot 'WorkUnitAutomation.psm1'),"# lifecycle router capture seam`n",[Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText((Join-Path $lifecycleRouterRoot 'BlockedSuccessorPreparation.psm1'),@'
+function Invoke-MorphospacePrepareBlockedSuccessor {
+    [CmdletBinding()]param([string]$WorkspaceRoot,[string]$BlockedSuccessorPreparation,[string]$ExpectedBlockedSuccessorPreparationSha256,[string]$Timestamp,[string]$OutPath,[switch]$Execute)
+    [pscustomobject][ordered]@{action='PrepareBlockedSuccessor';workspace_root=$WorkspaceRoot;request=$BlockedSuccessorPreparation;expected_sha256=$ExpectedBlockedSuccessorPreparationSha256;timestamp=$Timestamp;out_path=$OutPath;executed=$Execute.IsPresent}
+}
+Export-ModuleMember -Function Invoke-MorphospacePrepareBlockedSuccessor
+'@,[Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText((Join-Path $lifecycleRouterRoot 'ActiveUnitSupersession.psm1'),@'
+function Invoke-MorphospaceSupersedeActive {
+    [CmdletBinding()]param([string]$WorkspaceRoot,[string]$UnitId,[string]$RepoMapPath,[string]$ActiveUnitSupersession,[string]$ExpectedActiveUnitSupersessionSha256,[string]$Timestamp,[string]$OutPath,[switch]$Execute)
+    [pscustomobject][ordered]@{action='SupersedeActive';workspace_root=$WorkspaceRoot;unit_id=$UnitId;repository_map=$RepoMapPath;request=$ActiveUnitSupersession;expected_sha256=$ExpectedActiveUnitSupersessionSha256;timestamp=$Timestamp;out_path=$OutPath;executed=$Execute.IsPresent}
+}
+Export-ModuleMember -Function Invoke-MorphospaceSupersedeActive
+'@,[Text.UTF8Encoding]::new($false))
+    $lifecycleWorkspace = Join-Path $lifecycleRouterRoot 'workspace'
+    [void][IO.Directory]::CreateDirectory($lifecycleWorkspace)
+    $lifecycleMarker = Join-Path $lifecycleWorkspace 'marker.txt'
+    [IO.File]::WriteAllText($lifecycleMarker,"unchanged`n",[Text.UTF8Encoding]::new($false))
+    $blockedRequest = Join-Path $lifecycleRouterRoot 'blocked-request.json'
+    $activeRequest = Join-Path $lifecycleRouterRoot 'active-request.json'
+    $routerRepoMap = Join-Path $lifecycleRouterRoot 'repository-map.json'
+    foreach ($path in @($blockedRequest,$activeRequest,$routerRepoMap)) { [IO.File]::WriteAllText($path,"{}`n",[Text.UTF8Encoding]::new($false)) }
+    $blockedOut = Join-Path $lifecycleWorkspace 'blocked-result.json'
+    $activeOut = Join-Path $lifecycleWorkspace 'active-result.json'
+    $blockedHash = Get-TestFileHash $blockedRequest
+    $activeHash = Get-TestFileHash $activeRequest
+    $markerHash = Get-TestFileHash $lifecycleMarker
+    $routerScript = Join-Path $lifecycleRouterRoot 'Invoke-WorkUnitAutomation.ps1'
+    $freshPwsh = (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source
+    function Invoke-LifecycleRouterCapture([string[]]$Arguments) {
+        $raw = @(& $freshPwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $routerScript @Arguments 2>&1)
+        if ($LASTEXITCODE -ne 0) { throw "Lifecycle router capture failed: $($raw -join [Environment]::NewLine)" }
+        return (($raw -join [Environment]::NewLine) | ConvertFrom-Json -Depth 32 -DateKind String)
+    }
+    $blockedArguments = @('-Action','PrepareBlockedSuccessor','-WorkspaceRoot',$lifecycleWorkspace,'-BlockedSuccessorPreparation',$blockedRequest,'-ExpectedBlockedSuccessorPreparationSha256',$blockedHash,'-Timestamp','2026-09-01T00:03:00.0000000Z','-OutPath',$blockedOut)
+    $blockedDry = Invoke-LifecycleRouterCapture $blockedArguments
+    $blockedRun = Invoke-LifecycleRouterCapture (@($blockedArguments) + '-Execute')
+    $blockedReplay = Invoke-LifecycleRouterCapture (@($blockedArguments) + '-Execute')
+    $blockedExpectedDry = [pscustomobject][ordered]@{action='PrepareBlockedSuccessor';workspace_root=$lifecycleWorkspace;request=$blockedRequest;expected_sha256=$blockedHash;timestamp='2026-09-01T00:03:00.0000000Z';out_path=$blockedOut;executed=$false}
+    $blockedExpectedRun = $blockedExpectedDry | ConvertTo-Json -Depth 8 | ConvertFrom-Json -Depth 8 -DateKind String
+    $blockedExpectedRun.executed = $true
+    Assert-Automation (
+        (Get-TestCanonicalHash $blockedDry) -ceq (Get-TestCanonicalHash $blockedExpectedDry) -and
+        (Get-TestCanonicalHash $blockedRun) -ceq (Get-TestCanonicalHash $blockedExpectedRun) -and
+        (Get-TestCanonicalHash $blockedReplay) -ceq (Get-TestCanonicalHash $blockedExpectedRun)
+    ) 'public PrepareBlockedSuccessor wrapper did not preserve exact dry/execute/replay forwarding'
+    $activeArguments = @('-Action','SupersedeActive','-WorkspaceRoot',$lifecycleWorkspace,'-UnitId','replacement-unit','-RepoMapPath',$routerRepoMap,'-ActiveUnitSupersession',$activeRequest,'-ExpectedActiveUnitSupersessionSha256',$activeHash,'-Timestamp','2026-09-01T00:04:00.0000000Z','-OutPath',$activeOut)
+    $activeDry = Invoke-LifecycleRouterCapture $activeArguments
+    $activeRun = Invoke-LifecycleRouterCapture (@($activeArguments) + '-Execute')
+    $activeReplay = Invoke-LifecycleRouterCapture (@($activeArguments) + '-Execute')
+    $activeExpectedDry = [pscustomobject][ordered]@{action='SupersedeActive';workspace_root=$lifecycleWorkspace;unit_id='replacement-unit';repository_map=$routerRepoMap;request=$activeRequest;expected_sha256=$activeHash;timestamp='2026-09-01T00:04:00.0000000Z';out_path=$activeOut;executed=$false}
+    $activeExpectedRun = $activeExpectedDry | ConvertTo-Json -Depth 8 | ConvertFrom-Json -Depth 8 -DateKind String
+    $activeExpectedRun.executed = $true
+    Assert-Automation (
+        (Get-TestCanonicalHash $activeDry) -ceq (Get-TestCanonicalHash $activeExpectedDry) -and
+        (Get-TestCanonicalHash $activeRun) -ceq (Get-TestCanonicalHash $activeExpectedRun) -and
+        (Get-TestCanonicalHash $activeReplay) -ceq (Get-TestCanonicalHash $activeExpectedRun)
+    ) 'public SupersedeActive wrapper did not preserve exact dry/execute/replay forwarding'
+    Assert-Automation ((Get-TestFileHash $lifecycleMarker) -ceq $markerHash -and -not (Test-Path -LiteralPath $blockedOut) -and -not (Test-Path -LiteralPath $activeOut)) 'public lifecycle wrapper capture seam mutated workspace or output bytes'
+} finally {
+    Remove-Item Function:Invoke-LifecycleRouterCapture -ErrorAction SilentlyContinue
+    if ([IO.Directory]::Exists($lifecycleRouterRoot)) { Remove-Item -LiteralPath $lifecycleRouterRoot -Recurse -Force }
+}
+if ($LifecycleRouterSelfTestOnly) { Write-Host 'Work-unit lifecycle router focused self-test passed.'; return }
 
 # Exercise the public archive action in a fresh process: parameter routing must
 # reach the owner adapter before any workspace-dependent preflight can run.
@@ -670,7 +745,18 @@ try {
     $envelopeAdmissionPath=Join-Path $testRoot 'development-envelope-admission.json'; $envelopeAdmissionOut=Join-Path $envelopeWorkspace 'receipts\u002-admission.json'; Write-TestJson -Path $envelopeAdmissionPath -Value $envelopeAdmission
     $envelopeAdmissionDry=& (Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1') -Action AdmitDevelopmentUnit -WorkspaceRoot $envelopeWorkspace -DevelopmentUnitAdmission $envelopeAdmissionPath -OutPath $envelopeAdmissionOut -Timestamp $fixed | ConvertFrom-Json
     $envelopeAdmissionRun=& (Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1') -Action AdmitDevelopmentUnit -WorkspaceRoot $envelopeWorkspace -DevelopmentUnitAdmission $envelopeAdmissionPath -ExpectedDevelopmentUnitAdmissionSha256 $envelopeAdmissionDry.audit_receipt.sha256 -OutPath $envelopeAdmissionOut -Timestamp $fixed -Execute | ConvertFrom-Json
-    Assert-Automation ($envelopeAdmissionRun.transition -eq 'development-unit-admitted' -and (Test-Path -LiteralPath (Join-Path $envelopeWorkspace 'iteration-units\u002.json')) -and (Test-Path -LiteralPath $envelopeAdmissionOut)) 'public AdmitDevelopmentUnit did not atomically admit the accepted-predecessor successor'
+    $envelopeAdmissionReplay=& (Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1') -Action AdmitDevelopmentUnit -WorkspaceRoot $envelopeWorkspace -DevelopmentUnitAdmission $envelopeAdmissionPath -ExpectedDevelopmentUnitAdmissionSha256 $envelopeAdmissionDry.audit_receipt.sha256 -OutPath $envelopeAdmissionOut -Timestamp $fixed -Execute | ConvertFrom-Json
+    $automationReceiptV2 = Join-Path $RepoRoot 'schemas\work-unit-automation-receipt-v2.schema.json'
+    Assert-Automation (
+        (Test-Json -Json ($envelopeAdmissionDry | ConvertTo-Json -Depth 32 -Compress) -SchemaFile $automationReceiptV2) -and
+        (Test-Json -Json ($envelopeAdmissionRun | ConvertTo-Json -Depth 32 -Compress) -SchemaFile $automationReceiptV2) -and
+        (Test-Json -Json ($envelopeAdmissionReplay | ConvertTo-Json -Depth 32 -Compress) -SchemaFile $automationReceiptV2) -and
+        $null -eq $envelopeAdmissionDry.status_before -and $null -eq $envelopeAdmissionDry.event_id -and
+        $envelopeAdmissionRun.transition -eq 'development-unit-admitted' -and $null -ne $envelopeAdmissionRun.event_id -and
+        $envelopeAdmissionReplay.transition -eq 'development-unit-already-admitted' -and $null -eq $envelopeAdmissionReplay.event_id -and
+        (Test-Path -LiteralPath (Join-Path $envelopeWorkspace 'iteration-units\u002.json')) -and
+        (Test-Path -LiteralPath $envelopeAdmissionOut)
+    ) 'public AdmitDevelopmentUnit did not emit schema-valid dry/executed receipts or atomically admit the accepted-predecessor successor'
     $envelopeReady = & (Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1') -Action Ready -WorkspaceRoot $envelopeWorkspace -UnitId 'u002' -RepoMapPath $repoMapPath -Timestamp $fixed -Execute | ConvertFrom-Json
     $envelopeInspect = & (Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1') -Action Inspect -WorkspaceRoot $envelopeWorkspace -UnitId 'u002' -RepoMapPath $repoMapPath -Timestamp $fixed | ConvertFrom-Json
     $envelopeClaim = & (Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1') -Action Claim -WorkspaceRoot $envelopeWorkspace -UnitId 'u002' -RepoMapPath $repoMapPath -Timestamp $fixed -Execute | ConvertFrom-Json
@@ -702,16 +788,16 @@ try {
     $envelopeFrozenUnit=Read-TestProtocolJson $envelopeU002Path; $envelopeFrozenState=Read-TestProtocolJson $envelopeStatePath
     $envelopeFreezeIntent=Join-Path $envelopeWorkspace 'receipts\transactions\u002-freeze-recorded-transition.intent.json'; $envelopeFreezeCompletion=Join-Path $envelopeWorkspace 'receipts\transactions\u002-freeze-recorded-transition.completion.json'
     $envelopeFreezeEvents=@(Get-Content -LiteralPath $envelopeEventsPath | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json })
-    $automationReceiptV2=Join-Path $RepoRoot 'schemas\work-unit-automation-receipt-v2.schema.json'
     Assert-Automation (
         $envelopeFreezeRun.transition -eq 'candidate-frozen' -and $envelopeFreezeRun.status_before -eq 'active' -and $envelopeFreezeRun.status_after -eq 'active' -and $envelopeFreezeRun.current_unit_before -eq 'u002' -and $envelopeFreezeRun.current_unit_after -eq 'u002' -and
-        (Test-Json -Json ($envelopeFreezeRun | ConvertTo-Json -Depth 32) -SchemaFile $automationReceiptV2) -and
+        (Test-Json -Json ($envelopeFreezeDry | ConvertTo-Json -Depth 32) -SchemaFile $automationReceiptV2) -and $null -eq $envelopeFreezeDry.event_id -and
+        (Test-Json -Json ($envelopeFreezeRun | ConvertTo-Json -Depth 32) -SchemaFile $automationReceiptV2) -and $null -ne $envelopeFreezeRun.event_id -and
         $envelopeFrozenState.current_unit -eq 'u002' -and $envelopeFrozenState.last_event_id -eq 'u002-freeze-recorded' -and $envelopeFrozenUnit.status -eq 'active' -and $envelopeFrozenUnit.candidate_freeze.freeze_id -eq 'u002-freeze' -and $envelopeFrozenUnit.candidate_freeze.receipt_path -eq 'receipts/u002-freeze.json' -and $envelopeFrozenUnit.candidate_freeze.receipt_sha256 -eq $envelopeFreezeDry.audit_receipt.sha256 -and
         (Get-TestFileHash $envelopeFreezeOut) -eq $envelopeFreezeDry.audit_receipt.sha256 -and (Test-Path -LiteralPath $envelopeFreezeIntent) -and (Test-Path -LiteralPath $envelopeFreezeCompletion) -and
         (@($envelopeFreezeEvents | Where-Object { $_.event_id -eq 'u002-freeze-recorded' -and $_.unit_id -eq 'u002' -and @($_.receipts) -contains 'receipts/u002-freeze.json' }).Count -eq 1)
     ) 'public FreezeCandidate did not preserve exact receipt, state, event, CAS, and transition evidence'
     $envelopeFreezeReplay=& (Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1') -Action FreezeCandidate -WorkspaceRoot $envelopeWorkspace -UnitId 'u002' -CandidateFreeze $envelopeFreezePath -ExpectedCandidateFreezeSha256 $envelopeFreezeDry.audit_receipt.sha256 -OutPath $envelopeFreezeOut -Timestamp $fixed -Execute | ConvertFrom-Json
-    Assert-Automation ($envelopeFreezeReplay.transition -eq 'candidate-already-frozen' -and (Get-TestFileHash $envelopeFreezeOut) -eq $envelopeFreezeDry.audit_receipt.sha256) 'identical public FreezeCandidate replay was not idempotent'
+    Assert-Automation ($envelopeFreezeReplay.transition -eq 'candidate-already-frozen' -and $null -eq $envelopeFreezeReplay.event_id -and (Test-Json -Json ($envelopeFreezeReplay | ConvertTo-Json -Depth 32) -SchemaFile $automationReceiptV2) -and (Get-TestFileHash $envelopeFreezeOut) -eq $envelopeFreezeDry.audit_receipt.sha256) 'identical public FreezeCandidate replay was not schema-valid and idempotent'
     Remove-Module CandidateFreeze -Force -ErrorAction SilentlyContinue
     Import-Module (Join-Path $PSScriptRoot 'CandidateFreeze.psm1') -Force
     Assert-Automation (Test-MorphospaceFrozenCandidate -WorkspaceRoot $envelopeWorkspace -Unit (Read-TestProtocolJson $envelopeU002Path)) 'frozen candidate did not survive a verifier module reload'

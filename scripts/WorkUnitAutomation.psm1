@@ -1734,6 +1734,131 @@ function Get-MorphospaceBlockedSuccessorTerminalRelease {
     return $proof
 }
 
+function Get-MorphospaceReadyTerminalReleaseRoute {
+    param(
+        [Parameter(Mandatory)][string]$WorkspaceRoot,
+        [Parameter(Mandatory)][string]$UnitId,
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Events
+    )
+    $admissionCandidates = [System.Collections.Generic.List[object]]::new()
+    foreach ($candidateEvent in $Events) {
+        $candidateMatch = [regex]::Match([string]$candidateEvent.event_id, '^(?<admission>[a-z0-9][a-z0-9-]{1,127})-admitted$')
+        if (-not $candidateMatch.Success) {
+            continue
+        }
+        $candidateTargetsUnit = [string]$candidateEvent.unit_id -ceq $UnitId
+        if (-not $candidateTargetsUnit -and @($candidateEvent.receipts).Count -eq 1) {
+            $candidateAdmissionId = [string]$candidateMatch.Groups['admission'].Value
+            $candidateRelative = "receipts/$candidateAdmissionId.json"
+            if ([string]$candidateEvent.receipts[0] -ceq $candidateRelative) {
+                try {
+                    $candidatePath = Resolve-MorphospaceWorkspacePath $WorkspaceRoot $candidateRelative -RequireLeaf
+                    $candidateAdmission = Read-MorphospaceProtocolJson $candidatePath
+                    $candidateTargetsUnit =
+                        [string]$candidateAdmission.unit_id -ceq $UnitId -or
+                        (
+                            $candidateAdmission.PSObject.Properties.Name -contains 'unit' -and
+                            $null -ne $candidateAdmission.unit -and
+                            [string]$candidateAdmission.unit.unit_id -ceq $UnitId
+                        )
+                } catch {
+                    $candidateTargetsUnit = $false
+                }
+            }
+        }
+        if ($candidateTargetsUnit) {
+            $admissionCandidates.Add($candidateEvent) | Out-Null
+        }
+    }
+    if ($admissionCandidates.Count -eq 0) {
+        if (
+            $Events.Count -gt 0 -and
+            [regex]::IsMatch([string]$Events[-1].event_id, '^[a-z0-9][a-z0-9-]{1,127}-admitted$')
+        ) {
+            throw 'Ready target has a malformed or ambiguous latest admission event.'
+        }
+        return 'legacy-v1'
+    }
+    if ($admissionCandidates.Count -ne 1) {
+        throw 'Ready target has a malformed or ambiguous admission chain.'
+    }
+
+    $admissionEvent = $admissionCandidates[0]
+    $admissionMatch = [regex]::Match([string]$admissionEvent.event_id, '^(?<admission>[a-z0-9][a-z0-9-]{1,127})-admitted$')
+    if (
+        -not $admissionMatch.Success -or
+        [string]$admissionEvent.unit_id -cne $UnitId -or
+        [string]$admissionEvent.event_type -cne 'state-transition' -or
+        @($admissionEvent.receipts).Count -ne 1
+    ) {
+        throw 'Ready target has a malformed or ambiguous latest admission event.'
+    }
+
+    $admissionId = [string]$admissionMatch.Groups['admission'].Value
+    $admissionRelative = "receipts/$admissionId.json"
+    if ([string]$admissionEvent.receipts[0] -cne $admissionRelative) {
+        throw 'Ready target latest admission event references a different receipt.'
+    }
+    $admissionPath = Resolve-MorphospaceWorkspacePath $WorkspaceRoot $admissionRelative -RequireLeaf
+    $admissionSchema = Join-Path (Split-Path $PSScriptRoot -Parent) 'schemas\development-unit-admission-v1.schema.json'
+    if (-not (Test-Json -Json (Get-Content -Raw -LiteralPath $admissionPath) -SchemaFile $admissionSchema)) {
+        throw 'Ready target latest admission receipt is invalid.'
+    }
+    $admission = Read-MorphospaceProtocolJson $admissionPath
+    if (
+        [string]$admission.admission_id -cne $admissionId -or
+        [string]$admission.unit_id -cne $UnitId -or
+        $null -eq $admission.unit -or
+        [string]$admission.unit.unit_id -cne $UnitId
+    ) {
+        throw 'Ready target latest admission receipt identity is not exact.'
+    }
+    $kind = Get-MorphospaceDevelopmentAdmissionKind $admission
+    switch -CaseSensitive ($kind) {
+        'ordinary' { return 'legacy-v1' }
+        'blocked-successor' { return 'blocked-successor-v2' }
+        default { throw "Ready target latest admission kind '$kind' is unsupported." }
+    }
+}
+
+function Get-MorphospaceTerminalSelectionReleaseUnitId {
+    param([Parameter(Mandatory)][object]$Proof)
+    $unitId = switch -CaseSensitive ([string]$Proof.schema) {
+        'rusty.morphospace.workflow.terminal_validation_selection_release.v1' {
+            [string]$Proof.terminal.unit_id
+            break
+        }
+        'rusty.morphospace.workflow.terminal_validation_selection_release.v2' {
+            [string]$Proof.terminal.binding.unit_id
+            break
+        }
+        default {
+            throw "Unsupported terminal validation selection release schema '$([string]$Proof.schema)'."
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace($unitId)) {
+        throw 'Terminal validation selection release proof lacks its exact terminal unit identity.'
+    }
+    return $unitId
+}
+
+function Assert-MorphospaceReadyTerminalReleaseSelectorBinding {
+    param(
+        [Parameter(Mandatory)][string]$Route,
+        [Parameter(Mandatory)][string]$UnitId,
+        [Parameter()][AllowNull()][object]$Selection
+    )
+    if ($Route -cne 'blocked-successor-v2') {
+        return
+    }
+    if ($null -eq $Selection) {
+        throw 'Blocked-successor Ready requires the preserved differing terminal selector binding.'
+    }
+    if ([string]$Selection.unit_id -ceq $UnitId) {
+        throw 'Blocked-successor Ready rejects a selector binding rebound to the successor.'
+    }
+}
+
 function Get-MorphospaceProposedRetirementBinding {
     param(
         [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
@@ -2056,6 +2181,9 @@ function Invoke-MorphospaceWorkUnitAutomation {
     }
     $repoStatesArray = @($repositoryStates.ToArray())
     $beforeStatus = [string]$unit.status
+    $terminalReleaseRoute = if ($Action -ceq 'Ready' -and $beforeStatus -ceq 'proposed') {
+        Get-MorphospaceReadyTerminalReleaseRoute -WorkspaceRoot $resolvedWorkspace -UnitId $UnitId -Events $events
+    } else { 'legacy-v1' }
     $existingValidationSelection = if (
         ($state.PSObject.Properties.Name -contains 'normal_validation_selection') -and
         $null -ne $state.normal_validation_selection
@@ -2063,6 +2191,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
     $releaseTerminalValidationSelection = $false
     $terminalSelectionReleaseProof = $null
     $terminalSelectionReleaseProofReference = ''
+    Assert-MorphospaceReadyTerminalReleaseSelectorBinding -Route $terminalReleaseRoute -UnitId $UnitId -Selection $existingValidationSelection
     if ($null -ne $existingValidationSelection -and [string]$existingValidationSelection.unit_id -cne $UnitId) {
         $selectedUnitId = [string]$existingValidationSelection.unit_id
         $selectedUnitEntry = if ($unitMap.ContainsKey($selectedUnitId)) { $unitMap[$selectedUnitId] } else { $null }
@@ -2091,14 +2220,17 @@ function Invoke-MorphospaceWorkUnitAutomation {
         $terminalReceiptValid = $false
         $terminalReceiptFailure = 'not-evaluated'
         $terminalReleaseV2Failure = 'not-applicable'
-        if($Action-ceq'Ready'-and$beforeStatus-ceq'proposed'-and$null-ne$selectedUnitEntry){
+        if($terminalReleaseRoute-ceq'blocked-successor-v2'){
             try{
                 $successorRelativePath=$unitEntry.path.Substring(($resolvedWorkspace.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar).Length).Replace('\', '/')
                 $terminalSelectionReleaseProof=Get-MorphospaceBlockedSuccessorTerminalRelease -WorkspaceRoot $resolvedWorkspace -UnitId $UnitId -Unit $unit -UnitRelativePath $successorRelativePath -SelectedUnitEntry $selectedUnitEntry -State $state -Events $events -Selection $existingValidationSelection -RepositoryMap $repoMap -Timestamp $Timestamp
                 $terminalSelectionReleaseProofReference="receipts/$UnitId-terminal-validation-selection-release.json"
                 $releaseTerminalValidationSelection=$true
                 $terminalReleaseV2Failure=''
-            }catch{$terminalReleaseV2Failure=$_.Exception.Message}
+            }catch{
+                $terminalReleaseV2Failure=$_.Exception.Message
+                throw "Blocked-successor terminal selector release failed: $terminalReleaseV2Failure"
+            }
         }
         if (
             -not $releaseTerminalValidationSelection -and
@@ -3101,7 +3233,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
                 [pscustomobject][ordered]@{
                     path = $terminalSelectionReleaseProofReference
                     sha256 = Get-MorphospaceSha256Bytes -Bytes (ConvertTo-MorphospaceProtocolJsonBytes -Value $terminalSelectionReleaseProof)
-                    terminal_unit_id = [string]$terminalSelectionReleaseProof.terminal.binding.unit_id
+                    terminal_unit_id = Get-MorphospaceTerminalSelectionReleaseUnitId -Proof $terminalSelectionReleaseProof
                 }
             } else { $null }
             push_plan = $pushPlan

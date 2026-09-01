@@ -3,13 +3,14 @@
   "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/affected-validation-check-evidence-v1.schema.json",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "source", "binding", "binding_sha256", "mode", "started_at", "ended_at", "elapsed_ms", "result", "blocked_by", "child", "artifacts", "reused_from", "claims"],
+  "required": ["schema", "source", "plan_sha256", "binding", "binding_sha256", "mode", "started_at", "ended_at", "elapsed_ms", "result", "blocked_by", "child", "artifacts", "reused_from", "claims"],
   "properties": {
     "schema": { "const": "rusty.morphospace.workflow.affected_validation_check_evidence.v1" },
     "source": {
       "type": "object", "additionalProperties": false, "required": ["base", "head"],
       "properties": { "base": { "$ref": "#/$defs/gitIdentity" }, "head": { "$ref": "#/$defs/gitIdentity" } }
     },
+    "plan_sha256": { "$ref": "#/$defs/sha256" },
     "binding": {
       "type": "object", "additionalProperties": false,
       "required": ["repository", "platform", "check_id", "command_path", "command_blob_sha1", "arguments", "check_definition_sha256", "cache_policy", "external_state", "runner", "runner_source_manifest", "dependency_manifest", "dependency_resolution", "prerequisite_bindings"],
@@ -201,7 +202,13 @@
     },
     "artifact": {
       "type": "object", "additionalProperties": false, "required": ["path", "bytes", "sha256"],
-      "properties": { "path": { "$ref": "#/$defs/path" }, "bytes": { "type": "integer", "minimum": 0, "maximum": 10485760 }, "sha256": { "$ref": "#/$defs/sha256" } }
+      "properties": { "path": { "$ref": "#/$defs/path" }, "bytes": { "type": "integer", "minimum": 0, "maximum": 134217728 }, "sha256": { "$ref": "#/$defs/sha256" } },
+      "allOf": [
+        {
+          "if": { "properties": { "path": { "pattern": "^[a-z0-9][a-z0-9-]{1,95}\\.(?:start|terminal)\\.json$" } }, "required": ["path"] },
+          "else": { "properties": { "bytes": { "maximum": 10485760 } } }
+        }
+      ]
     }
   }
 }

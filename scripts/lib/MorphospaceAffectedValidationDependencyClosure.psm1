@@ -13,6 +13,16 @@ function ConvertTo-MorphospaceAffectedDependencyPath {
     return $normalized
 }
 
+function Get-MorphospaceAffectedDependencyDeclarationKey {
+    param(
+        [Parameter(Mandatory = $true)][string]$Importer,
+        [Parameter(Mandatory = $true)][string]$Variable
+    )
+    # Repository paths remain ordinal. PowerShell variable identity is
+    # case-insensitive, so only the variable component is canonicalized.
+    return "$Importer|$($Variable.ToLowerInvariant())"
+}
+
 function Get-MorphospaceAffectedDependencyDeclarations {
     param([Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$Declarations)
     $map = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
@@ -24,8 +34,9 @@ function Get-MorphospaceAffectedDependencyDeclarations {
         if (-not $targetShape -and -not $classificationShape) { throw 'Affected dependency declaration does not use one closed importer/variable/count/target_paths-or-classification shape.' }
         $importer = ConvertTo-MorphospaceAffectedDependencyPath -Path ([string]$declaration.importer)
         $variable = [string]$declaration.variable
-        $key = "$importer|$variable"
-        if ($importer -cnotmatch '^scripts/.+\.ps(?:m)?1$' -or $variable -cnotmatch '^[A-Za-z_][A-Za-z0-9_:.-]*$' -or [int]$declaration.count -lt 1 -or $map.ContainsKey($key)) { throw "Affected dependency declaration has an invalid or duplicate identity: $key" }
+        $identity = "$importer|$variable"
+        $key = Get-MorphospaceAffectedDependencyDeclarationKey -Importer $importer -Variable $variable
+        if ($importer -cnotmatch '^scripts/.+\.ps(?:m)?1$' -or $variable -cnotmatch '^[A-Za-z_][A-Za-z0-9_:.-]*$' -or [int]$declaration.count -lt 1 -or $map.ContainsKey($key)) { throw "Affected dependency declaration has an invalid or duplicate identity: $identity" }
         if ($targetShape) {
             $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
             $targets = [Collections.Generic.List[string]]::new()
@@ -73,6 +84,36 @@ function Get-MorphospaceAffectedDependencyScopeChain {
     return $result.ToArray()
 }
 
+function Test-MorphospaceAffectedDependencyAssignmentDefinite {
+    param(
+        [Parameter(Mandatory = $true)][Management.Automation.Language.AssignmentStatementAst]$Assignment,
+        [Parameter(Mandatory = $true)][object]$AssignmentScope,
+        [Parameter(Mandatory = $true)][Management.Automation.Language.CommandAst]$Invocation,
+        [Parameter(Mandatory = $true)][object]$InvocationScope
+    )
+    $sameLexicalScope = [object]::ReferenceEquals($AssignmentScope,$InvocationScope)
+    $explicitRootScriptScope =
+        [string]$Assignment.Left.VariablePath.UserPath -imatch '^script:' -and
+        $AssignmentScope -is [Management.Automation.Language.ScriptBlockAst]
+    if ((-not $sameLexicalScope -and -not $explicitRootScriptScope) -or [int]$Assignment.Extent.EndOffset -gt [int]$Invocation.Extent.StartOffset) { return $false }
+
+    # PowerShell executes statements in one StatementBlock/NamedBlock in source
+    # order. The assignment is therefore definite for a later invocation in
+    # that block or any of its nested blocks. An assignment made in a sibling
+    # or nested conditional block is not definite for an invocation outside
+    # that block and must use a declaration or the conservative fallback.
+    $assignmentContainer = $Assignment.Parent
+    while ($null -ne $assignmentContainer -and
+        $assignmentContainer -isnot [Management.Automation.Language.StatementBlockAst] -and
+        $assignmentContainer -isnot [Management.Automation.Language.NamedBlockAst]) {
+        $assignmentContainer = $assignmentContainer.Parent
+    }
+    if ($null -eq $assignmentContainer) { return $false }
+    $current = $Invocation
+    while ($null -ne $current -and -not [object]::ReferenceEquals($current,$assignmentContainer)) { $current = $current.Parent }
+    return $null -ne $current
+}
+
 function Resolve-MorphospaceAffectedCheckDependencyClosure {
     param(
         [Parameter(Mandatory = $true)][string]$RepositoryRoot,
@@ -118,10 +159,23 @@ function Resolve-MorphospaceAffectedCheckDependencyClosure {
         $key = "$Importer|$Variable|$Kind"
         if (-not $fallbackReasons.ContainsKey($key)) { $fallbackReasons[$key] = [pscustomobject][ordered]@{importer=$Importer;variable=$Variable;kind=$Kind} }
     }
-    function Use-MorphospaceDeclaration([string]$Importer,[string]$Variable) {
-        $key = "$Importer|$Variable"
+    function Use-MorphospaceDeclaration(
+        [string]$Importer,
+        [string]$Variable,
+        [AllowEmptyCollection()][string[]]$ObservedBoundPaths = @()
+    ) {
+        $key = Get-MorphospaceAffectedDependencyDeclarationKey -Importer $Importer -Variable $Variable
         if (-not $declarations.ContainsKey($key)) { return $false }
         $declaration = $declarations[$key]
+        if (@($ObservedBoundPaths).Count -ne 0) {
+            if ($declaration.PSObject.Properties.Name -cnotcontains 'target_paths') { throw "Affected dependency declaration does not bind observed static targets: $Importer|$Variable" }
+            $declaredTargets = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+            foreach ($target in @($declaration.target_paths)) { [void]$declaredTargets.Add([string]$target) }
+            foreach ($observed in @($ObservedBoundPaths)) {
+                $observedPath = Add-MorphospaceTrackedDependencyPath -Importer $Importer -Value ([string]$observed)
+                if ($null -eq $observedPath -or -not $declaredTargets.Contains([string]$observedPath)) { throw "Affected dependency declaration omits observed static target: $Importer|$Variable -> $observed" }
+            }
+        }
         $observedDeclarations[$key] = 1 + $(if ($observedDeclarations.ContainsKey($key)) { [int]$observedDeclarations[$key] } else { 0 })
         $usedDeclarations[$key] = $declaration
         if ($declaration.PSObject.Properties.Name -ccontains 'target_paths') {
@@ -153,28 +207,51 @@ function Resolve-MorphospaceAffectedCheckDependencyClosure {
             foreach ($assignment in @($ast.FindAll({ param($node) $node -is [Management.Automation.Language.AssignmentStatementAst] -and $node.Left -is [Management.Automation.Language.VariableExpressionAst] },$true))) {
                 $variable = [string]$assignment.Left.VariablePath.UserPath
                 $scope = Get-MorphospaceAffectedDependencyLexicalScope -Node $assignment
-                if (-not $assignmentsByScope.ContainsKey($scope)) { $assignmentsByScope[$scope] = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal) }
+                if (-not $assignmentsByScope.ContainsKey($scope)) { $assignmentsByScope[$scope] = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::OrdinalIgnoreCase) }
                 $assignments = $assignmentsByScope[$scope]
                 if (-not $assignments.ContainsKey($variable)) { $assignments[$variable] = [Collections.Generic.List[object]]::new() }
                 $pathValues = @($assignment.Right.FindAll({ param($node) $node -is [Management.Automation.Language.StringConstantExpressionAst] -and [string]$node.Value -match '(?i)\.ps(?:m)?1$' },$true) | ForEach-Object { [string]$_.Value })
                 $rightText = [string]$assignment.Right.Extent.Text
-                $nonPath = $rightText -match '(?i)\b(?:Get-Module|Import-Module|Get-Command|Get-Process)\b'
+                $nonPath = $rightText -match '(?i)\b(?:Get-Module|Import-Module|Get-Process)\b'
                 if (-not $nonPath -and $rightText.Contains('{')) { $nonPath = @($assignment.Right.FindAll({ param($node) $node -is [Management.Automation.Language.ScriptBlockExpressionAst] },$true)).Count -ne 0 }
-                [void]([Collections.Generic.List[object]]$assignments[$variable]).Add([pscustomobject][ordered]@{paths=$pathValues;non_path=$nonPath})
-            }
-            $scriptBlockMembers = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-            foreach ($hashtable in @($ast.FindAll({ param($node) $node -is [Management.Automation.Language.HashtableAst] },$true))) {
-                foreach ($pair in @($hashtable.KeyValuePairs)) {
-                    $memberName = ([string]$pair.Item1.Extent.Text).Trim("'",'"')
-                    $valueText = [string]$pair.Item2.Extent.Text
-                    if ($valueText.Contains('{') -and @($pair.Item2.FindAll({ param($node) $node -is [Management.Automation.Language.ScriptBlockExpressionAst] },$true)).Count -eq 1 -and $valueText -notmatch '(?i)\.ps(?:m)?1') { [void]$scriptBlockMembers.Add($memberName) }
+                $unknownVariables = @($assignment.Right.FindAll({
+                    param($node)
+                    $node -is [Management.Automation.Language.VariableExpressionAst] -and
+                    @('PSScriptRoot','true','false','null') -inotcontains [string]$node.VariablePath.UserPath
+                },$true)).Count -ne 0
+                $unknownCommands = $false
+                foreach ($rightCommand in @($assignment.Right.FindAll({ param($node) $node -is [Management.Automation.Language.CommandAst] },$true))) {
+                    $name = [string]$rightCommand.GetCommandName()
+                    if ($name -imatch '(?:^|\\)Join-Path$') { continue }
+                    if ($name -imatch '(?:^|\\)Get-Command$' -and @($pathValues).Count -ne 0 -and -not $unknownVariables) { continue }
+                    $unknownCommands = $true
                 }
+                $unclassifiedBinding = -not $nonPath -and (@($pathValues).Count -eq 0 -or $unknownVariables -or $unknownCommands)
+                $scriptBlockMembers = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+                foreach ($hashtable in @($assignment.Right.FindAll({ param($node) $node -is [Management.Automation.Language.HashtableAst] },$true))) {
+                    foreach ($pair in @($hashtable.KeyValuePairs)) {
+                        $memberName = ([string]$pair.Item1.Extent.Text).Trim("'",'"')
+                        $valueText = [string]$pair.Item2.Extent.Text
+                        if ($valueText.Contains('{') -and @($pair.Item2.FindAll({ param($node) $node -is [Management.Automation.Language.ScriptBlockExpressionAst] },$true)).Count -eq 1 -and $valueText -notmatch '(?i)\.ps(?:m)?1') { [void]$scriptBlockMembers.Add($memberName) }
+                    }
+                }
+                [void]([Collections.Generic.List[object]]$assignments[$variable]).Add([pscustomobject][ordered]@{ast=$assignment;scope=$scope;paths=$pathValues;non_path=$nonPath;unclassified_binding=$unclassifiedBinding;scriptblock_members=$scriptBlockMembers})
             }
             $typedScriptBlocksByScope = [Collections.Generic.Dictionary[object,object]]::new([Collections.Generic.ReferenceEqualityComparer]::Instance)
+            $untypedParametersByScope = [Collections.Generic.Dictionary[object,object]]::new([Collections.Generic.ReferenceEqualityComparer]::Instance)
             foreach ($parameter in @($ast.FindAll({ param($node) $node -is [Management.Automation.Language.ParameterAst] -and $node.StaticType -eq [scriptblock] },$true))) {
                 $scope = Get-MorphospaceAffectedDependencyLexicalScope -Node $parameter
-                if (-not $typedScriptBlocksByScope.ContainsKey($scope)) { $typedScriptBlocksByScope[$scope] = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal) }
+                if (-not $typedScriptBlocksByScope.ContainsKey($scope)) { $typedScriptBlocksByScope[$scope] = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase) }
                 [void]$typedScriptBlocksByScope[$scope].Add([string]$parameter.Name.VariablePath.UserPath)
+            }
+            foreach ($parameter in @($ast.FindAll({
+                param($node)
+                $node -is [Management.Automation.Language.ParameterAst] -and
+                @($node.Attributes | Where-Object { $_ -is [Management.Automation.Language.TypeConstraintAst] }).Count -eq 0
+            },$true))) {
+                $scope = Get-MorphospaceAffectedDependencyLexicalScope -Node $parameter
+                if (-not $untypedParametersByScope.ContainsKey($scope)) { $untypedParametersByScope[$scope] = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase) }
+                [void]$untypedParametersByScope[$scope].Add([string]$parameter.Name.VariablePath.UserPath)
             }
             foreach ($command in @($ast.FindAll({ param($node) $node -is [Management.Automation.Language.CommandAst] },$true))) {
                 $isImport = [string]$command.GetCommandName() -match '(?i)(?:^|\\)Import-Module$'
@@ -185,10 +262,34 @@ function Resolve-MorphospaceAffectedCheckDependencyClosure {
                 $elements = @($command.CommandElements); $first = $elements[0]
                 if ($isImport -and @($elements | Select-Object -Skip 1).Count -eq 1 -and $elements[1] -is [Management.Automation.Language.StringConstantExpressionAst] -and [string]$elements[1].Value -notmatch '[\\/]|(?i)\.psm1$') { continue }
                 if ($isInvocation -and ($first -is [Management.Automation.Language.StringConstantExpressionAst] -or $first -is [Management.Automation.Language.ScriptBlockExpressionAst])) { continue }
-                if ($isInvocation -and @($elements | Where-Object { $_ -is [Management.Automation.Language.ScriptBlockExpressionAst] }).Count -ne 0) { continue }
-                if ($isInvocation -and $first -is [Management.Automation.Language.MemberExpressionAst] -and $first.Member -is [Management.Automation.Language.StringConstantExpressionAst] -and $scriptBlockMembers.Contains([string]$first.Member.Value)) { continue }
                 $variable = $null
-                if ($first -is [Management.Automation.Language.VariableExpressionAst]) { $variable = [string]$first.VariablePath.UserPath }
+                $memberInvocationUnclassified = $false
+                if ($isInvocation -and $first -is [Management.Automation.Language.MemberExpressionAst] -and [string]$first.Extent.Text -match '(?i)\.Source$') {
+                    $getCommandNodes = @($first.FindAll({ param($node) $node -is [Management.Automation.Language.CommandAst] -and [string]$node.GetCommandName() -imatch '(?:^|\\)Get-Command$' },$true))
+                    if ($getCommandNodes.Count -eq 1) {
+                        $variableNodes = @($getCommandNodes[0].FindAll({ param($node) $node -is [Management.Automation.Language.VariableExpressionAst] -and [string]$node.VariablePath.UserPath -ine 'PSScriptRoot' },$true))
+                        if ($variableNodes.Count -eq 1) { $variable = [string]$variableNodes[0].VariablePath.UserPath; $memberInvocationUnclassified = $true }
+                        elseif ($variableNodes.Count -eq 0 -and @($getCommandNodes[0].FindAll({ param($node) $node -is [Management.Automation.Language.StringConstantExpressionAst] -and [string]$node.Value -match '(?i)\.ps(?:m)?1$' },$true)).Count -eq 0) { continue }
+                    }
+                }
+                if ($null -eq $variable -and $isInvocation -and $first -is [Management.Automation.Language.MemberExpressionAst] -and $first.Expression -is [Management.Automation.Language.VariableExpressionAst] -and $first.Member -is [Management.Automation.Language.StringConstantExpressionAst]) {
+                    $receiverVariable = [string]$first.Expression.VariablePath.UserPath
+                    $memberName = [string]$first.Member.Value
+                    $memberProven = $false
+                    $memberAmbiguous = $false
+                    $invocationScope = Get-MorphospaceAffectedDependencyLexicalScope -Node $command
+                    foreach ($scope in @(Get-MorphospaceAffectedDependencyScopeChain -Scope $invocationScope)) {
+                        if (-not $assignmentsByScope.ContainsKey($scope) -or -not $assignmentsByScope[$scope].ContainsKey($receiverVariable)) { continue }
+                        foreach ($record in @($assignmentsByScope[$scope][$receiverVariable])) {
+                            if (-not (Test-MorphospaceAffectedDependencyAssignmentDefinite -Assignment $record.ast -AssignmentScope $record.scope -Invocation $command -InvocationScope $invocationScope) -or -not $record.scriptblock_members.Contains($memberName)) { $memberAmbiguous = $true }
+                            else { $memberProven = $true }
+                        }
+                    }
+                    if ($memberProven -and -not $memberAmbiguous) { continue }
+                    $variable = $receiverVariable
+                    $memberInvocationUnclassified = $true
+                }
+                if ($null -eq $variable -and $first -is [Management.Automation.Language.VariableExpressionAst]) { $variable = [string]$first.VariablePath.UserPath }
                 elseif ($isImport) {
                     $variableNodes = @($command.FindAll({ param($node) $node -is [Management.Automation.Language.VariableExpressionAst] -and [string]$node.VariablePath.UserPath -cne 'PSScriptRoot' },$true))
                     if ($variableNodes.Count -eq 1) { $variable = [string]$variableNodes[0].VariablePath.UserPath }
@@ -196,25 +297,42 @@ function Resolve-MorphospaceAffectedCheckDependencyClosure {
                 if (-not [string]::IsNullOrWhiteSpace($variable)) {
                     $boundPaths = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
                     $nonPath = $false
+                    $unclassifiedBinding = $memberInvocationUnclassified
                     $typedScriptBlock = $false
-                    foreach ($scope in @(Get-MorphospaceAffectedDependencyScopeChain -Scope (Get-MorphospaceAffectedDependencyLexicalScope -Node $command))) {
+                    $invocationScope = Get-MorphospaceAffectedDependencyLexicalScope -Node $command
+                    foreach ($scope in @(Get-MorphospaceAffectedDependencyScopeChain -Scope $invocationScope)) {
                         if ($assignmentsByScope.ContainsKey($scope)) {
                             $scopeAssignments = $assignmentsByScope[$scope]
                             if ($scopeAssignments.ContainsKey($variable)) {
-                                foreach ($record in @($scopeAssignments[$variable])) { foreach ($value in @($record.paths)) { [void]$boundPaths.Add([string]$value) }; if ([bool]$record.non_path) { $nonPath=$true } }
+                                foreach ($record in @($scopeAssignments[$variable])) {
+                                    foreach ($value in @($record.paths)) { [void]$boundPaths.Add([string]$value) }
+                                    if ([bool]$record.non_path) { $nonPath=$true }
+                                    if ([bool]$record.unclassified_binding) { $unclassifiedBinding=$true }
+                                    if (-not (Test-MorphospaceAffectedDependencyAssignmentDefinite -Assignment $record.ast -AssignmentScope $record.scope -Invocation $command -InvocationScope $invocationScope)) { $unclassifiedBinding=$true }
+                                }
                             }
                         }
                         if ($typedScriptBlocksByScope.ContainsKey($scope) -and $typedScriptBlocksByScope[$scope].Contains($variable)) { $typedScriptBlock=$true }
+                        if ($untypedParametersByScope.ContainsKey($scope) -and $untypedParametersByScope[$scope].Contains($variable)) { $unclassifiedBinding=$true }
+                    }
+                    # A literal assignment cannot make a variable invocation exact when
+                    # another applicable assignment has no classified path or callable
+                    # shape. A closed declaration may bind that whole dispatch; absent
+                    # one, bind every tracked script so reuse cannot omit the unknown
+                    # target's imported bytes.
+                    if ($unclassifiedBinding) {
+                        [string[]]$observedBoundPaths = @($boundPaths | ForEach-Object { [string]$_ })
+                        if (Use-MorphospaceDeclaration -Importer $importer -Variable $variable -ObservedBoundPaths $observedBoundPaths) { continue }
+                        Add-MorphospaceFallback -Importer $importer -Variable $variable -Kind $(if($boundPaths.Count -eq 0){$(if($isImport){'unresolved-import'}else{'unresolved-invocation'})}else{'ambiguous-static-binding'})
+                        continue
                     }
                     if ($boundPaths.Count -eq 1) { [void](Add-MorphospaceTrackedDependencyPath -Importer $importer -Value ([string]@($boundPaths)[0])); continue }
                     if ($boundPaths.Count -gt 1) { Add-MorphospaceFallback -Importer $importer -Variable $variable -Kind 'ambiguous-static-binding'; continue }
-                    if ($nonPath -or $typedScriptBlock -or $variable -match '(?i)(?:git|pwsh|powershell|python|executable|command)$') { continue }
+                    if ($nonPath -or $typedScriptBlock) { continue }
                     if (Use-MorphospaceDeclaration -Importer $importer -Variable $variable) { continue }
                     Add-MorphospaceFallback -Importer $importer -Variable $variable -Kind $(if($isImport){'unresolved-import'}else{'unresolved-invocation'})
                     continue
                 }
-                $getCommandMember = $isInvocation -and [string]$first.Extent.Text -match '(?i)\.Source$' -and [string]$command.Extent.Text -match '(?i)Get-Command'
-                if ($getCommandMember) { continue }
                 Add-MorphospaceFallback -Importer $importer -Variable ([string]$first.Extent.Text) -Kind $(if($isImport){'unresolved-import'}else{'unresolved-invocation'})
             }
             [byte[]]$afterBytes = [IO.File]::ReadAllBytes($absolute)

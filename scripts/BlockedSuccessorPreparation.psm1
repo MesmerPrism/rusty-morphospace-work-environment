@@ -259,7 +259,7 @@ function Invoke-MorphospacePrepareBlockedSuccessor {
             [void](Complete-MorphospaceTransitionLedger -WorkspaceRoot $workspace -TransactionId $transactionId -Repair -FaultAfter $FaultAfter)
             [void](Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $workspace -TransactionId $transactionId -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath ([string]$request.terminal.unit_path) -ExpectedEventsPath 'iteration-events.jsonl')
         }
-        return New-BlockedSuccessorAutomationResult $request ([string]$recovery.intent.event.timestamp) ($completed-or$Execute.IsPresent) $receiptRelative $inputHash
+        return New-BlockedSuccessorAutomationResult $request ([string]$recovery.intent.event.timestamp) $Execute.IsPresent $receiptRelative $inputHash
     }
     if([IO.File]::Exists($completionPath)-or$matchingEvents.Count-or[IO.File]::Exists($expectedOut)-or[IO.File]::Exists((Resolve-MorphospaceWorkspacePath $workspace $sourceRelative))){throw 'Blocked-successor preparation found orphaned transaction evidence without its exact intent.'}
     $projectPath=Resolve-MorphospaceWorkspacePath $workspace 'project.spec.json' -RequireLeaf;$statePath=Resolve-MorphospaceWorkspacePath $workspace 'workspace.state.json' -RequireLeaf;$lockPath=Resolve-MorphospaceWorkspacePath $workspace 'feature.lock.json' -RequireLeaf;$eventsPath=Resolve-MorphospaceWorkspacePath $workspace 'iteration-events.jsonl' -RequireLeaf;$mapPath=Resolve-MorphospaceWorkspacePath $workspace ([string]$request.expected.repository_map_path) -RequireLeaf

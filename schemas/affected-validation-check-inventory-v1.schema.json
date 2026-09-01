@@ -45,6 +45,20 @@
     "sha1": { "type": "string", "pattern": "^[0-9a-f]{40}$" }, "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "gitIdentity": { "type": "object", "additionalProperties": false, "required": ["commit", "tree"], "properties": { "commit": { "$ref": "#/$defs/sha1" }, "tree": { "$ref": "#/$defs/sha1" } } },
     "file": { "type": "object", "additionalProperties": false, "required": ["path", "bytes", "sha256"], "properties": { "path": { "$ref": "#/$defs/path" }, "bytes": { "type": "integer", "minimum": 0, "maximum": 10485760 }, "sha256": { "$ref": "#/$defs/sha256" } } },
-    "artifactFile": { "type": "object", "additionalProperties": false, "required": ["phase_path", "path", "bytes", "sha256"], "properties": { "phase_path": { "$ref": "#/$defs/path" }, "path": { "$ref": "#/$defs/path" }, "bytes": { "type": "integer", "minimum": 0, "maximum": 10485760 }, "sha256": { "$ref": "#/$defs/sha256" } } }
+    "artifactFile": {
+      "type": "object", "additionalProperties": false,
+      "required": ["phase_path", "path", "bytes", "sha256"],
+      "properties": {
+        "phase_path": { "$ref": "#/$defs/path" }, "path": { "$ref": "#/$defs/path" },
+        "bytes": { "type": "integer", "minimum": 0, "maximum": 134217728 },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "phase_path": { "pattern": "^[a-z0-9][a-z0-9-]{1,95}\\.(?:start|terminal)\\.json$" } }, "required": ["phase_path"] },
+          "else": { "properties": { "bytes": { "maximum": 10485760 } } }
+        }
+      ]
+    }
   }
 }
