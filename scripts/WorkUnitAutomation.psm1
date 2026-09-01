@@ -1995,8 +1995,243 @@ function Invoke-MorphospaceWorkUnitAutomation {
         ($state.PSObject.Properties.Name -contains 'normal_validation_selection') -and
         $null -ne $state.normal_validation_selection
     ) { $state.normal_validation_selection } else { $null }
+    $releaseTerminalValidationSelection = $false
+    $terminalSelectionReleaseProof = $null
+    $terminalSelectionReleaseProofReference = ''
     if ($null -ne $existingValidationSelection -and [string]$existingValidationSelection.unit_id -cne $UnitId) {
-        throw 'Workspace state carries a normal-validation selection for a different unit.'
+        $selectedUnitId = [string]$existingValidationSelection.unit_id
+        $selectedUnitEntry = if ($unitMap.ContainsKey($selectedUnitId)) { $unitMap[$selectedUnitId] } else { $null }
+        $checkpoint = if ($state.PSObject.Properties.Name -contains 'validation_checkpoint') { $state.validation_checkpoint } else { $null }
+        $checkpointResult = if ($null -ne $checkpoint) { [string]$checkpoint.result } else { '' }
+        $checkpointReceipt = if ($null -ne $checkpoint) { [string]$checkpoint.receipt } else { '' }
+        $expectedBlockerId = "$selectedUnitId-validation-$checkpointResult"
+        $expectedBlockerCondition = "Validation result is $checkpointResult in $checkpointReceipt."
+        $expectedBlockerResume = 'Correct the failure and explicitly resume the unit.'
+        $terminalBlockersById = @($state.blockers | Where-Object { [string]$_.blocker_id -ceq $expectedBlockerId })
+        $matchingTerminalBlockers = @($terminalBlockersById | Where-Object {
+            [string]$_.condition -ceq $expectedBlockerCondition -and
+            [string]$_.resume_when -ceq $expectedBlockerResume
+        })
+        $selectedUnitContract = if ($null -ne $selectedUnitEntry) {
+            (($selectedUnitEntry.document | ConvertTo-Json -Depth 100) | ConvertFrom-Json)
+        } else { $null }
+        if ($null -ne $selectedUnitContract -and $selectedUnitContract.PSObject.Properties.Name -contains 'status') {
+            $selectedUnitContract.PSObject.Properties.Remove('status')
+        }
+        $selectedUnitContractSha256 = if ($null -ne $selectedUnitContract) { Get-MorphospaceCanonicalJsonSha256 $selectedUnitContract } else { '' }
+        $terminalReceipt = $null
+        $terminalEvent = $null
+        $terminalLedgerValid = $false
+        $terminalLedgerFailure = 'not-evaluated'
+        $terminalReceiptValid = $false
+        $terminalReceiptFailure = 'not-evaluated'
+        if (
+            $Action -ceq 'Ready' -and
+            $beforeStatus -ceq 'proposed' -and
+            [string]$checkpoint.tier -ceq 'quick' -and
+            [string]$existingValidationSelection.tier -ceq 'quick' -and
+            -not [string]::IsNullOrWhiteSpace($checkpointReceipt) -and
+            $checkpointReceipt -cmatch '^receipts/[a-z0-9][a-z0-9._-]{1,191}\.json$'
+        ) {
+            try {
+                $terminalReceiptPath = Resolve-MorphospaceReceiptPath -WorkspaceRoot $resolvedWorkspace -ReceiptReference $checkpointReceipt
+                $terminalReceipt = Read-MorphospaceProtocolJson -Path $terminalReceiptPath
+                $terminalEvent = if ($events.Count -gt 0) { $events[-1] } else { $null }
+                $terminalEventMatches = $null -ne $terminalEvent -and
+                    [string]$terminalEvent.unit_id -ceq $selectedUnitId -and
+                    [string]$terminalEvent.event_type -ceq 'blocker' -and
+                    [string]$terminalEvent.event_id -cmatch "^$([regex]::Escape($selectedUnitId))-validation-$([regex]::Escape($checkpointResult))-[0-9]{4}$" -and
+                    @($terminalEvent.receipts).Count -eq 1 -and
+                    [string]@($terminalEvent.receipts)[0] -ceq $checkpointReceipt
+                if ($terminalEventMatches -and [string]$state.last_event_id -ceq [string]$terminalEvent.event_id) {
+                    $transactionId = "$([string]$terminalEvent.event_id)-transition"
+                    $selectedUnitRelativePath = $selectedUnitEntry.path.Substring(($resolvedWorkspace.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar).Length).Replace('\', '/')
+                    $terminalLedgerFailure = 'canonical-committed-transition'
+                    $terminalLedger = Test-MorphospaceCommittedTransitionLedger `
+                        -WorkspaceRoot $resolvedWorkspace `
+                        -TransactionId $transactionId `
+                        -ExpectedStatePath 'workspace.state.json' `
+                        -ExpectedUnitPath $selectedUnitRelativePath `
+                        -ExpectedEventsPath 'iteration-events.jsonl' `
+                        -RequireTail
+                    $terminalLedgerValid = $true
+                    $terminalLedgerFailure = ''
+
+                    $terminalReceiptFailure = 'selector-evidence-binding'
+                    $selectorPath = Resolve-MorphospaceReceiptPath -WorkspaceRoot $resolvedWorkspace -ReceiptReference ([string]$existingValidationSelection.selector_path)
+                    $selector = Read-MorphospaceProtocolJson -Path $selectorPath
+                    $expectedEvidenceLeaf = [string]$selector.selection.output_evidence.file_name
+                    $terminalReceiptDirectory = Split-Path -Parent $terminalReceiptPath
+                    $terminalEvidenceCandidates = @(@($terminalReceipt.artifacts) | ForEach-Object {
+                        $artifactPath = if ([IO.Path]::IsPathRooted([string]$_.path)) {
+                            [IO.Path]::GetFullPath([string]$_.path)
+                        } else {
+                            [IO.Path]::GetFullPath((Join-Path $terminalReceiptDirectory ([string]$_.path)))
+                        }
+                        if ([IO.Path]::GetFileName($artifactPath) -ceq $expectedEvidenceLeaf) { $artifactPath }
+                    })
+                    if ($terminalEvidenceCandidates.Count -ne 1) {
+                        throw 'Terminal validation receipt does not identify exactly one selector evidence artifact.'
+                    }
+                    $terminalDeclaredMatrix = @(New-MorphospaceValidationMatrix -Unit $selectedUnitEntry.document)
+                    $terminalSelectorResult = Resolve-MorphospaceNormalValidationSelector `
+                        -WorkspaceRoot $resolvedWorkspace `
+                        -SelectorReference ([string]$existingValidationSelection.selector_path) `
+                        -ExpectedSelectorSha256 ([string]$existingValidationSelection.selector_sha256) `
+                        -EvidencePath ([string]$terminalEvidenceCandidates[0]) `
+                        -Spec $spec `
+                        -Unit $selectedUnitEntry.document `
+                        -DeclaredValidationMatrix $terminalDeclaredMatrix `
+                        -Action RecordValidation `
+                        -ValidationTier quick `
+                        -BoundSelection $existingValidationSelection
+                    $missingTerminalRepositoryMappings = @($selectedUnitEntry.document.allowed_repositories | Where-Object {
+                        -not $repoMap.ContainsKey([string]$_.repo_id)
+                    } | ForEach-Object { [string]$_.repo_id } | Sort-Object -Unique)
+                    if ($missingTerminalRepositoryMappings.Count -ne 0) {
+                        throw "Terminal selector release requires complete repository mappings: $($missingTerminalRepositoryMappings -join ', ')."
+                    }
+                    $terminalRepositoryStates = New-Object System.Collections.Generic.List[object]
+                    foreach ($repo in @($selectedUnitEntry.document.allowed_repositories | Sort-Object repo_id)) {
+                        $repoId = [string]$repo.repo_id
+                        if ($repoMap.ContainsKey($repoId)) {
+                            $terminalRepositoryStates.Add((Get-MorphospaceRepositoryState -RepoId $repoId -Path ([string]$repoMap[$repoId].path))) | Out-Null
+                        }
+                    }
+                    $invalidTerminalRepositories = @($terminalRepositoryStates.ToArray() | Where-Object {
+                        -not [bool]$_.available -or -not [bool]$_.is_git
+                    } | ForEach-Object { [string]$_.repo_id })
+                    if ($invalidTerminalRepositories.Count -ne 0) {
+                        throw "Terminal selector release requires exact Git repository observations: $($invalidTerminalRepositories -join ', ')."
+                    }
+                    $dirtyTerminalRepositories = @($terminalRepositoryStates.ToArray() | Where-Object {
+                        [bool]$_.dirty -or @($_.status_porcelain).Count -ne 0
+                    } | ForEach-Object { [string]$_.repo_id })
+                    if ($dirtyTerminalRepositories.Count -ne 0) {
+                        throw "Terminal selector release requires exact clean Git repository observations: $($dirtyTerminalRepositories -join ', ')."
+                    }
+                    $terminalReceiptFailure = 'validation-receipt-contract'
+                    $null = Test-MorphospaceValidationReceipt `
+                        -WorkspaceRoot $resolvedWorkspace `
+                        -ReceiptReference $checkpointReceipt `
+                        -Spec $spec `
+                        -Unit $selectedUnitEntry.document `
+                        -RepositoryMap $repoMap `
+                        -RepositoryStates @($terminalRepositoryStates.ToArray()) `
+                        -ValidationMatrix @($terminalSelectorResult.validation_matrix) `
+                        -ExpectedResult $checkpointResult `
+                        -ExpectedTier ([string]$checkpoint.tier)
+                    $terminalReceiptValid = $true
+                    $terminalReceiptFailure = ''
+
+                    $terminalEvidencePath = [string]$terminalEvidenceCandidates[0]
+                    $terminalEvidenceArtifact = @($terminalReceipt.artifacts | Where-Object {
+                        $candidateArtifactPath = if ([IO.Path]::IsPathRooted([string]$_.path)) {
+                            [IO.Path]::GetFullPath([string]$_.path)
+                        } else {
+                            [IO.Path]::GetFullPath((Join-Path $terminalReceiptDirectory ([string]$_.path)))
+                        }
+                        $candidateArtifactPath -ceq $terminalEvidencePath
+                    })
+                    if ($terminalEvidenceArtifact.Count -ne 1) {
+                        throw 'Terminal validation receipt evidence artifact binding is ambiguous.'
+                    }
+                    $terminalSelectionReleaseProofReference = "receipts/$UnitId-terminal-validation-selection-release.json"
+                    $terminalEventDocument = (($terminalEvent | ConvertTo-Json -Depth 32 -Compress) | ConvertFrom-Json -DateKind String)
+                    $terminalSelectionReleaseProof = [pscustomobject][ordered]@{
+                        schema = 'rusty.morphospace.workflow.terminal_validation_selection_release.v1'
+                        release_id = "$UnitId-terminal-validation-selection-release"
+                        created_at = $Timestamp
+                        project_id = [string]$state.project_id
+                        successor = [pscustomobject][ordered]@{
+                            unit_id = $UnitId
+                            path = $unitEntry.path.Substring(($resolvedWorkspace.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar).Length).Replace('\', '/')
+                            raw_sha256 = Get-MorphospaceFileSha256 $unitEntry.path
+                            canonical_sha256 = Get-MorphospaceCanonicalJsonSha256 $unit
+                        }
+                        terminal = [pscustomobject][ordered]@{
+                            unit_id = $selectedUnitId
+                            path = $selectedUnitRelativePath
+                            raw_sha256 = Get-MorphospaceFileSha256 $selectedUnitEntry.path
+                            canonical_sha256 = Get-MorphospaceCanonicalJsonSha256 $selectedUnitEntry.document
+                            contract_sha256 = $selectedUnitContractSha256
+                            selector_binding_sha256 = Get-MorphospaceCanonicalJsonSha256 $existingValidationSelection
+                            checkpoint = [pscustomobject][ordered]@{
+                                tier = [string]$checkpoint.tier
+                                result = $checkpointResult
+                                receipt_path = $checkpointReceipt
+                                receipt_sha256 = Get-MorphospaceFileSha256 $terminalReceiptPath
+                            }
+                            evidence = [pscustomobject][ordered]@{
+                                artifact_id = [string]$terminalEvidenceArtifact[0].artifact_id
+                                canonical_path_sha256 = [string]$existingValidationSelection.evidence_path_sha256
+                                sha256 = Get-MorphospaceFileSha256 $terminalEvidencePath
+                            }
+                            blocker_sha256 = Get-MorphospaceCanonicalJsonSha256 $matchingTerminalBlockers[0]
+                            event_id = [string]$terminalEvent.event_id
+                            event_sha256 = Get-MorphospaceCanonicalJsonSha256 $terminalEventDocument
+                            transaction = [pscustomobject][ordered]@{
+                                transaction_id = $transactionId
+                                intent_path = "receipts/transactions/$transactionId.intent.json"
+                                intent_sha256 = Get-MorphospaceFileSha256 (Join-Path $resolvedWorkspace "receipts/transactions/$transactionId.intent.json")
+                                completion_path = "receipts/transactions/$transactionId.completion.json"
+                                completion_sha256 = Get-MorphospaceFileSha256 (Join-Path $resolvedWorkspace "receipts/transactions/$transactionId.completion.json")
+                            }
+                            repositories = @($terminalRepositoryStates.ToArray() | Sort-Object repo_id | ForEach-Object {
+                                [pscustomobject][ordered]@{
+                                    repo_id = [string]$_.repo_id
+                                    available = [bool]$_.available
+                                    is_git = [bool]$_.is_git
+                                    dirty = [bool]$_.dirty
+                                    dirty_fingerprint = Get-MorphospaceDirtyFingerprint -State $_
+                                    head = if (($_.PSObject.Properties.Name -contains 'head') -and -not [string]::IsNullOrWhiteSpace([string]$_.head)) { [string]$_.head } else { $null }
+                                    tree = if (($_.PSObject.Properties.Name -contains 'tree') -and -not [string]::IsNullOrWhiteSpace([string]$_.tree)) { [string]$_.tree } else { $null }
+                                    branch = if (($_.PSObject.Properties.Name -contains 'branch') -and -not [string]::IsNullOrWhiteSpace([string]$_.branch)) { [string]$_.branch } else { $null }
+                                }
+                            })
+                        }
+                        does_not_authorize = @('The proof authorizes only release of the exact stale selector binding in this Ready transition; it authorizes no source, build, device, acceptance, or publication action.')
+                    }
+                    $terminalReleaseSchema = Join-Path (Split-Path $PSScriptRoot -Parent) 'schemas\terminal-validation-selection-release-v1.schema.json'
+                    if (-not (Test-Json -Json ($terminalSelectionReleaseProof | ConvertTo-Json -Depth 32 -Compress) -SchemaFile $terminalReleaseSchema)) {
+                        throw 'Terminal validation selection release proof does not satisfy its exact schema.'
+                    }
+                }
+            } catch {
+                if (-not $terminalLedgerValid) {
+                    $terminalLedgerFailure = "$terminalLedgerFailure`:$($_.Exception.Message)"
+                } else {
+                    $terminalReceiptValid = $false
+                    $terminalReceiptFailure = "$terminalReceiptFailure`:$($_.Exception.Message)"
+                }
+            }
+        }
+        $terminalReleaseChecks = [ordered]@{
+            action_ready = $Action -ceq 'Ready'
+            target_proposed = $beforeStatus -ceq 'proposed'
+            no_current_unit = -not $state.current_unit
+            selected_unit_exists = $null -ne $selectedUnitEntry
+            selected_unit_blocked = $null -ne $selectedUnitEntry -and [string]$selectedUnitEntry.document.status -ceq 'blocked'
+            selected_unit_contract = [string]$existingValidationSelection.unit_contract_sha256 -ceq $selectedUnitContractSha256
+            selection_tier = [string]$existingValidationSelection.tier -ceq 'quick' -and [string]$checkpoint.tier -ceq 'quick'
+            checkpoint_result = $checkpointResult -in @('partial', 'fail', 'blocked')
+            checkpoint_receipt = -not [string]::IsNullOrWhiteSpace($checkpointReceipt)
+            blocker_unique = $terminalBlockersById.Count -eq 1
+            blocker_exact = $matchingTerminalBlockers.Count -eq 1
+            receipt_contract = $terminalReceiptValid
+            terminal_ledger = $terminalLedgerValid
+            release_proof = $null -ne $terminalSelectionReleaseProof
+        }
+        $failedTerminalReleaseChecks = @($terminalReleaseChecks.Keys | Where-Object { $terminalReleaseChecks[$_] -ne $true })
+        $releaseTerminalValidationSelection = $failedTerminalReleaseChecks.Count -eq 0
+        if (-not $releaseTerminalValidationSelection) {
+            $terminalReleaseDetail = @($failedTerminalReleaseChecks | ForEach-Object {
+                if ($_ -ceq 'terminal_ledger') { "terminal_ledger[$terminalLedgerFailure]" }
+                elseif ($_ -ceq 'receipt_contract') { "receipt_contract[$terminalReceiptFailure]" }
+                else { $_ }
+            })
+            throw "Workspace state carries a normal-validation selection for a different unit; terminal release proof failed: $($terminalReleaseDetail -join ', ')."
+        }
     }
     $validationMatrix = @(New-MorphospaceValidationMatrix -Unit $unit -DeviceSerials $DeviceSerials)
     $selectorResult = $null
@@ -2167,10 +2402,22 @@ function Invoke-MorphospaceWorkUnitAutomation {
                 }
                 $transition = "proposed-to-ready"
                 if ($Execute) {
+                    if ($releaseTerminalValidationSelection) {
+                        $state.normal_validation_selection = $null
+                    }
                     $unit.status = "ready"
                     $nextReady = @(Get-MorphospaceNextReadyUnit -UnitMap $unitMap)
                     $state.next_ready_unit = if ($nextReady.Count -gt 0) { [string]$nextReady[0] } else { $UnitId }
-                    $event = New-MorphospaceEvent -State $state -Events $events -UnitId $UnitId -ActionSlug "ready" -Timestamp $Timestamp -EventType "state-transition" -Summary "Reviewed the bounded proposal and made it claimable without expanding its repositories, paths, or prerequisites."
+                    $readyReceipts = @()
+                    if ($releaseTerminalValidationSelection) {
+                        $readyReceipts = @($terminalSelectionReleaseProofReference)
+                    }
+                    $readySummary = if ($releaseTerminalValidationSelection) {
+                        'Reviewed the bounded successor proposal, transactionally released one hash-bound terminal selector binding, and made the successor claimable without expanding its repositories, paths, or prerequisites.'
+                    } else {
+                        'Reviewed the bounded proposal and made it claimable without expanding its repositories, paths, or prerequisites.'
+                    }
+                    $event = New-MorphospaceEvent -State $state -Events $events -UnitId $UnitId -ActionSlug "ready" -Timestamp $Timestamp -EventType "state-transition" -Summary $readySummary -Receipts $readyReceipts
                 }
             }
         }
@@ -2417,6 +2664,9 @@ function Invoke-MorphospaceWorkUnitAutomation {
                 }
                 if ($ValidationResult -ne "pass") {
                     $unit.status = "blocked"; $state.current_unit = $null
+                    if ($state.PSObject.Properties.Name -contains 'normal_validation_selection') {
+                        $state.normal_validation_selection = $null
+                    }
                     $blockerId = "$UnitId-validation-$ValidationResult"
                     if (@($state.blockers | Where-Object { [string]$_.blocker_id -eq $blockerId }).Count -eq 0) {
                         $state.blockers = @($state.blockers) + [pscustomobject][ordered]@{
@@ -2769,6 +3019,13 @@ function Invoke-MorphospaceWorkUnitAutomation {
             instruction_surface_completion = $instructionSurfaceCompletionBinding
             ready_withdrawal = $readyWithdrawalBinding
             proposed_retirement = $proposedRetirementBinding
+            terminal_validation_selection_release = if ($null -ne $terminalSelectionReleaseProof) {
+                [pscustomobject][ordered]@{
+                    path = $terminalSelectionReleaseProofReference
+                    sha256 = Get-MorphospaceSha256Bytes -Bytes (ConvertTo-MorphospaceProtocolJsonBytes -Value $terminalSelectionReleaseProof)
+                    terminal_unit_id = [string]$terminalSelectionReleaseProof.terminal.unit_id
+                }
+            } else { $null }
             push_plan = $pushPlan
             event_id = if ($event) { [string]$event.event_id } else { $null }
         }
@@ -2833,6 +3090,14 @@ function Invoke-MorphospaceWorkUnitAutomation {
                 sha256 = Get-MorphospaceSha256Bytes -Bytes $receiptBytes
             })
             $transitionOwnsOutPath = $true
+        }
+        if ($Action -ceq 'Ready' -and $releaseTerminalValidationSelection) {
+            $releaseBytes = ConvertTo-MorphospaceProtocolJsonBytes -Value $terminalSelectionReleaseProof
+            $transitionArtifacts = @([pscustomobject][ordered]@{
+                bytes_base64 = [Convert]::ToBase64String($releaseBytes)
+                path = $terminalSelectionReleaseProofReference
+                sha256 = Get-MorphospaceSha256Bytes -Bytes $releaseBytes
+            })
         }
         $transactionId = "$([string]$event.event_id)-transition"
         $unitRelativePath = $unitEntry.path.Substring(($resolvedWorkspace.TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar).Length).Replace('\', '/')

@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/terminal-validation-selection-release-v1.schema.json",
+  "title": "Terminal validation selection release proof",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "release_id", "created_at", "project_id", "successor", "terminal", "does_not_authorize"],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.workflow.terminal_validation_selection_release.v1" },
+    "release_id": { "$ref": "#/$defs/id" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "project_id": { "$ref": "#/$defs/id" },
+    "successor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["unit_id", "path", "raw_sha256", "canonical_sha256"],
+      "properties": {
+        "unit_id": { "$ref": "#/$defs/id" },
+        "path": { "$ref": "#/$defs/unit_path" },
+        "raw_sha256": { "$ref": "#/$defs/sha256" },
+        "canonical_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "terminal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["unit_id", "path", "raw_sha256", "canonical_sha256", "contract_sha256", "selector_binding_sha256", "checkpoint", "evidence", "blocker_sha256", "event_id", "event_sha256", "transaction", "repositories"],
+      "properties": {
+        "unit_id": { "$ref": "#/$defs/id" },
+        "path": { "$ref": "#/$defs/unit_path" },
+        "raw_sha256": { "$ref": "#/$defs/sha256" },
+        "canonical_sha256": { "$ref": "#/$defs/sha256" },
+        "contract_sha256": { "$ref": "#/$defs/sha256" },
+        "selector_binding_sha256": { "$ref": "#/$defs/sha256" },
+        "checkpoint": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["tier", "result", "receipt_path", "receipt_sha256"],
+          "properties": {
+            "tier": { "const": "quick" },
+            "result": { "enum": ["partial", "fail", "blocked"] },
+            "receipt_path": { "type": "string", "pattern": "^receipts/[a-z0-9][a-z0-9._-]{1,191}\\.json$" },
+            "receipt_sha256": { "$ref": "#/$defs/sha256" }
+          }
+        },
+        "evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["artifact_id", "canonical_path_sha256", "sha256"],
+          "properties": {
+            "artifact_id": { "$ref": "#/$defs/id" },
+            "canonical_path_sha256": { "$ref": "#/$defs/sha256" },
+            "sha256": { "$ref": "#/$defs/sha256" }
+          }
+        },
+        "blocker_sha256": { "$ref": "#/$defs/sha256" },
+        "event_id": { "$ref": "#/$defs/id" },
+        "event_sha256": { "$ref": "#/$defs/sha256" },
+        "transaction": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["transaction_id", "intent_path", "intent_sha256", "completion_path", "completion_sha256"],
+          "properties": {
+            "transaction_id": { "$ref": "#/$defs/id" },
+            "intent_path": { "type": "string", "pattern": "^receipts/transactions/[a-z0-9][a-z0-9-]{1,191}\\.intent\\.json$" },
+            "intent_sha256": { "$ref": "#/$defs/sha256" },
+            "completion_path": { "type": "string", "pattern": "^receipts/transactions/[a-z0-9][a-z0-9-]{1,191}\\.completion\\.json$" },
+            "completion_sha256": { "$ref": "#/$defs/sha256" }
+          }
+        },
+        "repositories": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["repo_id", "available", "is_git", "dirty", "dirty_fingerprint", "head", "tree", "branch"],
+            "properties": {
+              "repo_id": { "$ref": "#/$defs/id" },
+              "available": { "const": true },
+              "is_git": { "const": true },
+              "dirty": { "const": false },
+              "dirty_fingerprint": { "$ref": "#/$defs/sha256" },
+              "head": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+              "tree": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+              "branch": { "type": ["string", "null"], "minLength": 1, "maxLength": 255 }
+            }
+          }
+        }
+      }
+    },
+    "does_not_authorize": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 4,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 512 }
+    }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,191}$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "unit_path": { "type": "string", "pattern": "^iteration-units/[a-z0-9][a-z0-9-]{1,127}\\.json$" }
+  }
+}

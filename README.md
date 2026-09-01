@@ -248,6 +248,12 @@ binds project, unit, declared gate, freeze receipt, final candidate, producer,
 and canonical output evidence identities; it contains no command. The normal
 consumer returns the dispatch matrix, persists only its exact selector/path
 hashes, and reconstructs that matrix for receipt-consuming validation actions.
+Terminal non-passing recording clears the consumed binding; `ReturnToActive`
+retains it. Exact blocked-state recovery may release only an older Quick
+binding with complete repository mappings, clean Git observations, and
+canonical live-path transaction verification, while the successor Ready
+transaction creates and hash-binds a
+closed proof of the current receipt/evidence and old terminal identities.
 It performs no producer, source, build, device, remote, or publication action.
    Managed target-set work uses Fleet with current authority and effect-owner
    receipts. Local File Manager and managed Fleet contracts remain separate;

@@ -39,6 +39,18 @@ function Get-TestUnitContractSha256([object]$Unit) {
     return Get-MorphospaceCanonicalJsonSha256 $copy
 }
 
+function Invoke-TestGit {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryPath,
+        [Parameter(Mandatory = $true)][string[]]$Arguments
+    )
+    $output = @(& git -C $RepositoryPath @Arguments 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw "Test Git command failed: git -C '$RepositoryPath' $($Arguments -join ' '): $($output -join ' ')"
+    }
+    return ($output -join "`n").Trim()
+}
+
 function Write-TestCreateNewJson([string]$Path, [object]$Value) {
     $bytes = [Text.UTF8Encoding]::new($false).GetBytes((($Value | ConvertTo-Json -Depth 32) + "`n"))
     $stream = [IO.File]::Open($Path, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
@@ -53,12 +65,15 @@ function New-SelectorValidationReceipt {
         [ValidateSet('pass', 'fail')][string]$Result,
         [object]$MatrixRow,
         [string]$EvidencePath,
-        [string]$ReceiptLeaf
+        [string]$ReceiptLeaf,
+        [object]$RepositoryRevision = $null
     )
 
     $status = if ($Result -ceq 'pass') { 'pass' } else { 'fail' }
     $evidenceHash = (Get-FileHash -LiteralPath $EvidencePath -Algorithm SHA256).Hash.ToLowerInvariant()
     $receiptPath = Join-Path (Join-Path $Workspace 'receipts') $ReceiptLeaf
+    $repositoryRevisions = @()
+    if ($null -ne $RepositoryRevision) { $repositoryRevisions = @([pscustomobject]$RepositoryRevision) }
     Write-TestJson $receiptPath ([ordered]@{
         '$schema' = '../schemas/validation-receipt.schema.json'
         schema = 'rusty.morphospace.workflow.validation_receipt.v1'
@@ -68,7 +83,7 @@ function New-SelectorValidationReceipt {
         created_at = '2026-08-29T06:00:00Z'
         tier = 'quick'
         result = $Result
-        repository_revisions = @()
+        repository_revisions = $repositoryRevisions
         changed_paths = @()
         artifacts = @([ordered]@{
             artifact_id = 'selected-quick-evidence'
@@ -465,6 +480,342 @@ throw 'The selector consumer must never execute the evidence producer.'
     $nonPassingRecord = Invoke-MorphospaceWorkUnitAutomation -Action RecordValidation -WorkspaceRoot $workspace -UnitId $unitId -ValidationTier quick -ValidationResult fail -ValidationReceipt 'receipts/unit-selector-003-fail-validation.json' `
         -ValidationSelector $selectorRelative -ExpectedValidationSelectorSha256 $selectorSha256 -ValidationEvidencePath $evidencePath -Timestamp $fixed
     Assert-SelectorTest ($nonPassingRecord.transition -ceq 'validation-fail' -and -not $nonPassingRecord.executed) 'non-passing RecordValidation did not consume the exact selected matrix'
+
+    $terminalProjectRoot = Join-Path $testRoot 'terminal-project'
+    $terminalWorkspace = Join-Path $terminalProjectRoot 'morphospace'
+    $terminalRepoMapPath = Join-Path $terminalProjectRoot 'repository-map.json'
+    $terminalMappedRepoRoot = Join-Path $testRoot 'terminal-mapped-repository'
+    $terminalTrackedPath = Join-Path $terminalMappedRepoRoot 'morphospace\tracked-input.txt'
+    [IO.Directory]::CreateDirectory($terminalProjectRoot) | Out-Null
+    [IO.Directory]::CreateDirectory((Split-Path -Parent $terminalTrackedPath)) | Out-Null
+    [IO.File]::WriteAllText($terminalTrackedPath, "terminal repository baseline`n", [Text.UTF8Encoding]::new($false))
+    Invoke-TestGit -RepositoryPath $terminalMappedRepoRoot -Arguments @('init', '--quiet') | Out-Null
+    Invoke-TestGit -RepositoryPath $terminalMappedRepoRoot -Arguments @('branch', '-M', 'main') | Out-Null
+    Invoke-TestGit -RepositoryPath $terminalMappedRepoRoot -Arguments @('add', '--', 'morphospace/tracked-input.txt') | Out-Null
+    Invoke-TestGit -RepositoryPath $terminalMappedRepoRoot -Arguments @('-c', 'user.name=Morphospace Test', '-c', 'user.email=morphospace-test@example.invalid', 'commit', '--quiet', '-m', 'Create terminal selector fixture') | Out-Null
+    $terminalRepoHead = Invoke-TestGit -RepositoryPath $terminalMappedRepoRoot -Arguments @('rev-parse', 'HEAD')
+    $terminalRepoTree = Invoke-TestGit -RepositoryPath $terminalMappedRepoRoot -Arguments @('rev-parse', 'HEAD^{tree}')
+    $terminalRepositoryRevision = [ordered]@{
+        repo_id = 'project-shell'
+        branch = 'main'
+        base_revision = $terminalRepoHead
+        head_revision = $terminalRepoHead
+        tree = $terminalRepoTree
+    }
+    Copy-Item -LiteralPath $workspace -Destination $terminalWorkspace -Recurse
+    Write-TestJson $terminalRepoMapPath ([ordered]@{
+        schema = 'rusty.morphospace.workflow.repository_map.v1'
+        repositories = @([ordered]@{ repo_id = 'project-shell'; path = $terminalMappedRepoRoot; role = 'planning' })
+    })
+    $terminalStatePath = Join-Path $terminalWorkspace 'workspace.state.json'
+    $terminalUnitPath = Join-Path $terminalWorkspace ($unitRelative -replace '/', '\')
+    $terminalSelection = (Get-Content -Raw -LiteralPath $terminalStatePath | ConvertFrom-Json).normal_validation_selection
+    $terminalMatrixRow = $boundDispatch.validation_matrix[0] | Select-Object *
+    $terminalMatrixRow.command = ([string]$terminalMatrixRow.command).Replace(
+        [IO.Path]::GetFullPath($workspace),
+        [IO.Path]::GetFullPath($terminalWorkspace),
+        [StringComparison]::OrdinalIgnoreCase
+    )
+    New-SelectorValidationReceipt -Workspace $terminalWorkspace -UnitId $unitId -Result fail -MatrixRow $terminalMatrixRow -EvidencePath $evidencePath -ReceiptLeaf 'unit-selector-003-fail-validation.json' -RepositoryRevision $terminalRepositoryRevision | Out-Null
+    $terminalRecord = Invoke-MorphospaceWorkUnitAutomation -Action RecordValidation -WorkspaceRoot $terminalWorkspace -UnitId $unitId -ValidationTier quick -ValidationResult fail -ValidationReceipt 'receipts/unit-selector-003-fail-validation.json' `
+        -ValidationSelector $selectorRelative -ExpectedValidationSelectorSha256 $selectorSha256 -ValidationEvidencePath $evidencePath -Timestamp $fixed -Execute
+    $terminalState = Get-Content -Raw -LiteralPath $terminalStatePath | ConvertFrom-Json
+    $terminalUnit = Get-Content -Raw -LiteralPath $terminalUnitPath | ConvertFrom-Json
+    Assert-SelectorTest (
+        $terminalRecord.transition -ceq 'validation-fail' -and
+        $terminalRecord.executed -and
+        [string]$terminalUnit.status -ceq 'blocked' -and
+        $null -eq $terminalState.current_unit -and
+        $null -eq $terminalState.normal_validation_selection
+    ) 'executed non-passing RecordValidation did not terminally clear the consumed selector binding'
+
+    $successorId = 'unit-selector-004'
+    $successorPath = Join-Path $terminalWorkspace "iteration-units\$successorId.json"
+    $successor = Get-Content -Raw -LiteralPath $terminalUnitPath | ConvertFrom-Json
+    $successor.unit_id = $successorId
+    $successor.status = 'proposed'
+    $successor.objective = 'Prove exact recovery of a historical terminal selector binding.'
+    if ($successor.PSObject.Properties.Name -contains 'candidate_freeze') {
+        $successor.PSObject.Properties.Remove('candidate_freeze')
+    }
+    Write-TestJson $successorPath $successor
+
+    # Recreate only the exact stale state produced by the prior consumer: the old
+    # unit is blocked and its checkpoint/blocker are terminal, but its selector
+    # binding was not cleared.
+    $terminalState.normal_validation_selection = $terminalSelection
+    Write-TestJson $terminalStatePath $terminalState
+    $terminalEventsPath = Join-Path $terminalWorkspace 'iteration-events.jsonl'
+    $terminalEvent = Get-Content -LiteralPath $terminalEventsPath | Select-Object -Last 1 | ConvertFrom-Json -DateKind String
+    $terminalTransactionId = "$([string]$terminalEvent.event_id)-transition"
+    $terminalIntentPath = Join-Path $terminalWorkspace "receipts/transactions/$terminalTransactionId.intent.json"
+    $terminalCompletionPath = Join-Path $terminalWorkspace "receipts/transactions/$terminalTransactionId.completion.json"
+    $terminalIntent = Read-MorphospaceProtocolJson -Path $terminalIntentPath
+    $terminalCompletion = Read-MorphospaceProtocolJson -Path $terminalCompletionPath
+    $terminalStateSha256 = Get-MorphospaceCanonicalJsonSha256 $terminalState
+    $terminalUnitSha256 = Get-MorphospaceCanonicalJsonSha256 $terminalUnit
+    $terminalIntent.target.state.document = $terminalState
+    $terminalIntent.target.state.sha256 = $terminalStateSha256
+    $terminalIntent.target.unit.document = $terminalUnit
+    $terminalIntent.target.unit.sha256 = $terminalUnitSha256
+    Write-TestJson $terminalIntentPath $terminalIntent
+    $terminalCompletion.state_sha256 = $terminalStateSha256
+    $terminalCompletion.unit_sha256 = $terminalUnitSha256
+    $terminalCompletion.intent.sha256 = (Get-FileHash -LiteralPath $terminalIntentPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    Write-TestJson $terminalCompletionPath $terminalCompletion
+    $terminalEventsBytes = [IO.File]::ReadAllBytes($terminalEventsPath)
+    $terminalIntentBytes = [IO.File]::ReadAllBytes($terminalIntentPath)
+    $terminalCompletionBytes = [IO.File]::ReadAllBytes($terminalCompletionPath)
+    Assert-Rejected 'terminal selector release on a non-Ready action' '*normal-validation selection for a different unit*' {
+        Invoke-MorphospaceWorkUnitAutomation -Action Claim -WorkspaceRoot $terminalWorkspace -UnitId $successorId -Timestamp $fixed
+    }
+
+    $terminalStateBytes = [IO.File]::ReadAllBytes($terminalStatePath)
+    try {
+        $damagedTerminalState = Get-Content -Raw -LiteralPath $terminalStatePath | ConvertFrom-Json
+        $damagedTerminalState.validation_checkpoint.result = 'pass'
+        Write-TestJson $terminalStatePath $damagedTerminalState
+        Assert-Rejected 'terminal selector release with a nonterminal checkpoint' '*normal-validation selection for a different unit*' {
+            Invoke-MorphospaceWorkUnitAutomation -Action Ready -WorkspaceRoot $terminalWorkspace -UnitId $successorId -RepoMapPath $terminalRepoMapPath -Timestamp $fixed
+        }
+    } finally { [IO.File]::WriteAllBytes($terminalStatePath, $terminalStateBytes) }
+
+    try {
+        $damagedTerminalState = Get-Content -Raw -LiteralPath $terminalStatePath | ConvertFrom-Json
+        $damagedTerminalState.validation_checkpoint.tier = 'standard'
+        Write-TestJson $terminalStatePath $damagedTerminalState
+        Assert-Rejected 'terminal selector release with checkpoint tier drift' '*normal-validation selection for a different unit*' {
+            Invoke-MorphospaceWorkUnitAutomation -Action Ready -WorkspaceRoot $terminalWorkspace -UnitId $successorId -RepoMapPath $terminalRepoMapPath -Timestamp $fixed
+        }
+    } finally { [IO.File]::WriteAllBytes($terminalStatePath, $terminalStateBytes) }
+
+    try {
+        $laterEvent = (($terminalEvent | ConvertTo-Json -Depth 32) | ConvertFrom-Json -DateKind String)
+        $laterEvent.event_id = "$unitId-unrelated-checkpoint-0003"
+        $laterEvent.sequence = [int]$laterEvent.sequence + 1
+        $laterEvent.event_type = 'checkpoint'
+        $laterEvent.summary = 'Unrelated later event used to prove physical-tail binding.'
+        $laterEvent.receipts = @()
+        $laterLine = ($laterEvent | ConvertTo-Json -Depth 32 -Compress) + "`n"
+        $laterBytes = [Text.UTF8Encoding]::new($false).GetBytes($laterLine)
+        $damagedEvents = [byte[]]::new($terminalEventsBytes.Length + $laterBytes.Length)
+        [Array]::Copy($terminalEventsBytes, 0, $damagedEvents, 0, $terminalEventsBytes.Length)
+        [Array]::Copy($laterBytes, 0, $damagedEvents, $terminalEventsBytes.Length, $laterBytes.Length)
+        [IO.File]::WriteAllBytes($terminalEventsPath, $damagedEvents)
+        Assert-Rejected 'terminal selector release when the blocker is not the physical ledger tail' '*normal-validation selection for a different unit*' {
+            Invoke-MorphospaceWorkUnitAutomation -Action Ready -WorkspaceRoot $terminalWorkspace -UnitId $successorId -RepoMapPath $terminalRepoMapPath -Timestamp $fixed
+        }
+    } finally { [IO.File]::WriteAllBytes($terminalEventsPath, $terminalEventsBytes) }
+
+    foreach ($intentDamage in @(
+        [pscustomobject]@{ name = 'event-schema'; apply = { param($value) $value.event.schema = 'rusty.morphospace.workflow.iteration_event.v9' } },
+        [pscustomobject]@{ name = 'event-timestamp'; apply = { param($value) $value.event.timestamp = 'not-a-timestamp' } },
+        [pscustomobject]@{ name = 'extra-root-property'; apply = { param($value) $value | Add-Member -NotePropertyName unauthorized -NotePropertyValue $true } },
+        [pscustomobject]@{ name = 'state-path'; apply = { param($value) $value.state.path = 'receipts/substituted-state.json' } }
+    )) {
+        try {
+            $damagedIntent = Read-MorphospaceProtocolJson -Path $terminalIntentPath
+            & $intentDamage.apply $damagedIntent
+            Write-TestJson $terminalIntentPath $damagedIntent
+            $damagedCompletion = Read-MorphospaceProtocolJson -Path $terminalCompletionPath
+            $damagedCompletion.intent.sha256 = (Get-FileHash -LiteralPath $terminalIntentPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            Write-TestJson $terminalCompletionPath $damagedCompletion
+            Assert-Rejected "terminal selector release with $([string]$intentDamage.name) intent damage" '*normal-validation selection for a different unit*' {
+                Invoke-MorphospaceWorkUnitAutomation -Action Ready -WorkspaceRoot $terminalWorkspace -UnitId $successorId -RepoMapPath $terminalRepoMapPath -Timestamp $fixed
+            }
+        } finally {
+            [IO.File]::WriteAllBytes($terminalIntentPath, $terminalIntentBytes)
+            [IO.File]::WriteAllBytes($terminalCompletionPath, $terminalCompletionBytes)
+        }
+    }
+
+    $shadowStateRelative = 'receipts/shadow-workspace.state.json'
+    $shadowUnitRelative = 'receipts/shadow-terminal-unit.json'
+    $shadowEventsRelative = 'receipts/shadow-iteration-events.jsonl'
+    $shadowStatePath = Join-Path $terminalWorkspace ($shadowStateRelative -replace '/', '\')
+    $shadowUnitPath = Join-Path $terminalWorkspace ($shadowUnitRelative -replace '/', '\')
+    $shadowEventsPath = Join-Path $terminalWorkspace ($shadowEventsRelative -replace '/', '\')
+    [IO.File]::WriteAllBytes($shadowStatePath, $terminalStateBytes)
+    [IO.File]::WriteAllBytes($shadowUnitPath, [IO.File]::ReadAllBytes($terminalUnitPath))
+    [IO.File]::WriteAllBytes($shadowEventsPath, $terminalEventsBytes)
+    try {
+        $shadowIntent = Read-MorphospaceProtocolJson -Path $terminalIntentPath
+        $shadowIntent.state.path = $shadowStateRelative
+        $shadowIntent.unit.path = $shadowUnitRelative
+        $shadowIntent.events.path = $shadowEventsRelative
+        Write-TestJson $terminalIntentPath $shadowIntent
+        $shadowCompletion = Read-MorphospaceProtocolJson -Path $terminalCompletionPath
+        $shadowCompletion.intent.sha256 = (Get-FileHash -LiteralPath $terminalIntentPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        Write-TestJson $terminalCompletionPath $shadowCompletion
+        Assert-Rejected 'terminal selector release through internally consistent shadow workspace paths' '*normal-validation selection for a different unit*' {
+            Invoke-MorphospaceWorkUnitAutomation -Action Ready -WorkspaceRoot $terminalWorkspace -UnitId $successorId -RepoMapPath $terminalRepoMapPath -Timestamp $fixed
+        }
+    } finally {
+        [IO.File]::WriteAllBytes($terminalIntentPath, $terminalIntentBytes)
+        [IO.File]::WriteAllBytes($terminalCompletionPath, $terminalCompletionBytes)
+    }
+
+    foreach ($completionDamage in @(
+        [pscustomobject]@{ name = 'intent-role'; apply = { param($value) $value.intent.role = 'substituted-intent' } },
+        [pscustomobject]@{ name = 'intent-schema'; apply = { param($value) $value.intent.schema = 'rusty.morphospace.workflow.transition_ledger_intent.v9' } },
+        [pscustomobject]@{ name = 'extra-root-property'; apply = { param($value) $value | Add-Member -NotePropertyName unauthorized -NotePropertyValue $true } }
+    )) {
+        try {
+            $damagedCompletion = Read-MorphospaceProtocolJson -Path $terminalCompletionPath
+            & $completionDamage.apply $damagedCompletion
+            Write-TestJson $terminalCompletionPath $damagedCompletion
+            Assert-Rejected "terminal selector release with $([string]$completionDamage.name) completion damage" '*normal-validation selection for a different unit*' {
+                Invoke-MorphospaceWorkUnitAutomation -Action Ready -WorkspaceRoot $terminalWorkspace -UnitId $successorId -RepoMapPath $terminalRepoMapPath -Timestamp $fixed
+            }
+        } finally { [IO.File]::WriteAllBytes($terminalCompletionPath, $terminalCompletionBytes) }
+    }
+
+    try {
+        $damagedTerminalState = Get-Content -Raw -LiteralPath $terminalStatePath | ConvertFrom-Json
+        $damagedTerminalState.normal_validation_selection.unit_contract_sha256 = '0' * 64
+        Write-TestJson $terminalStatePath $damagedTerminalState
+        Assert-Rejected 'terminal selector release with unit-contract drift' '*normal-validation selection for a different unit*' {
+            Invoke-MorphospaceWorkUnitAutomation -Action Ready -WorkspaceRoot $terminalWorkspace -UnitId $successorId -RepoMapPath $terminalRepoMapPath -Timestamp $fixed
+        }
+    } finally { [IO.File]::WriteAllBytes($terminalStatePath, $terminalStateBytes) }
+
+    try {
+        $damagedTerminalState = Get-Content -Raw -LiteralPath $terminalStatePath | ConvertFrom-Json
+        $damagedTerminalState.blockers[0].resume_when = 'Damaged recovery condition.'
+        Write-TestJson $terminalStatePath $damagedTerminalState
+        Assert-Rejected 'terminal selector release with blocker drift' '*normal-validation selection for a different unit*' {
+            Invoke-MorphospaceWorkUnitAutomation -Action Ready -WorkspaceRoot $terminalWorkspace -UnitId $successorId -RepoMapPath $terminalRepoMapPath -Timestamp $fixed
+        }
+    } finally { [IO.File]::WriteAllBytes($terminalStatePath, $terminalStateBytes) }
+
+    try {
+        $damagedTerminalState = Get-Content -Raw -LiteralPath $terminalStatePath | ConvertFrom-Json
+        $damagedTerminalState.blockers = @($damagedTerminalState.blockers) + (($damagedTerminalState.blockers[0] | ConvertTo-Json -Depth 8) | ConvertFrom-Json)
+        Write-TestJson $terminalStatePath $damagedTerminalState
+        Assert-Rejected 'terminal selector release with a duplicate blocker ID' '*normal-validation selection for a different unit*' {
+            Invoke-MorphospaceWorkUnitAutomation -Action Ready -WorkspaceRoot $terminalWorkspace -UnitId $successorId -RepoMapPath $terminalRepoMapPath -Timestamp $fixed
+        }
+    } finally { [IO.File]::WriteAllBytes($terminalStatePath, $terminalStateBytes) }
+
+    $terminalReceiptPath = Join-Path $terminalWorkspace 'receipts/unit-selector-003-fail-validation.json'
+    $terminalReceiptBytes = [IO.File]::ReadAllBytes($terminalReceiptPath)
+    try {
+        $damagedTerminalReceipt = Get-Content -Raw -LiteralPath $terminalReceiptPath | ConvertFrom-Json
+        $damagedTerminalReceipt.unit_id = $successorId
+        Write-TestJson $terminalReceiptPath $damagedTerminalReceipt
+        Assert-Rejected 'terminal selector release with a foreign validation receipt' '*normal-validation selection for a different unit*' {
+            Invoke-MorphospaceWorkUnitAutomation -Action Ready -WorkspaceRoot $terminalWorkspace -UnitId $successorId -RepoMapPath $terminalRepoMapPath -Timestamp $fixed
+        }
+    } finally { [IO.File]::WriteAllBytes($terminalReceiptPath, $terminalReceiptBytes) }
+
+    try {
+        $damagedTerminalReceipt = Get-Content -Raw -LiteralPath $terminalReceiptPath | ConvertFrom-Json
+        $damagedTerminalReceipt.schema = 'rusty.morphospace.workflow.validation_receipt.v9'
+        Write-TestJson $terminalReceiptPath $damagedTerminalReceipt
+        Assert-Rejected 'terminal selector release with unsupported validation receipt schema' '*normal-validation selection for a different unit*' {
+            Invoke-MorphospaceWorkUnitAutomation -Action Ready -WorkspaceRoot $terminalWorkspace -UnitId $successorId -RepoMapPath $terminalRepoMapPath -Timestamp $fixed
+        }
+    } finally { [IO.File]::WriteAllBytes($terminalReceiptPath, $terminalReceiptBytes) }
+
+    $terminalUnitBytes = [IO.File]::ReadAllBytes($terminalUnitPath)
+    try {
+        $damagedTerminalUnit = Get-Content -Raw -LiteralPath $terminalUnitPath | ConvertFrom-Json
+        $damagedTerminalUnit.status = 'active'
+        Write-TestJson $terminalUnitPath $damagedTerminalUnit
+        Assert-Rejected 'terminal selector release with a nonblocked selected unit' '*normal-validation selection for a different unit*' {
+            Invoke-MorphospaceWorkUnitAutomation -Action Ready -WorkspaceRoot $terminalWorkspace -UnitId $successorId -RepoMapPath $terminalRepoMapPath -Timestamp $fixed
+        }
+    } finally { [IO.File]::WriteAllBytes($terminalUnitPath, $terminalUnitBytes) }
+
+    $successorBytes = [IO.File]::ReadAllBytes($successorPath)
+    try {
+        $damagedSuccessor = Get-Content -Raw -LiteralPath $successorPath | ConvertFrom-Json
+        $damagedSuccessor.status = 'ready'
+        Write-TestJson $successorPath $damagedSuccessor
+        Assert-Rejected 'terminal selector release to an already-ready successor' '*normal-validation selection for a different unit*' {
+            Invoke-MorphospaceWorkUnitAutomation -Action Ready -WorkspaceRoot $terminalWorkspace -UnitId $successorId -RepoMapPath $terminalRepoMapPath -Timestamp $fixed
+        }
+    } finally { [IO.File]::WriteAllBytes($successorPath, $successorBytes) }
+
+    Assert-Rejected 'terminal selector release without complete repository mappings' '*complete repository mappings*' {
+        Invoke-MorphospaceWorkUnitAutomation -Action Ready -WorkspaceRoot $terminalWorkspace -UnitId $successorId -Timestamp $fixed
+    }
+    $unavailableRepoMapPath = Join-Path $terminalProjectRoot 'repository-map-unavailable.json'
+    Write-TestJson $unavailableRepoMapPath ([ordered]@{
+        schema = 'rusty.morphospace.workflow.repository_map.v1'
+        repositories = @([ordered]@{ repo_id = 'project-shell'; path = (Join-Path $terminalProjectRoot 'missing-project-shell'); role = 'planning' })
+    })
+    Assert-Rejected 'terminal selector release with unavailable repository mapping' '*normal-validation selection for a different unit*' {
+        Invoke-MorphospaceWorkUnitAutomation -Action Ready -WorkspaceRoot $terminalWorkspace -UnitId $successorId -RepoMapPath $unavailableRepoMapPath -Timestamp $fixed
+    }
+    $terminalTrackedBytes = [IO.File]::ReadAllBytes($terminalTrackedPath)
+    try {
+        [IO.File]::AppendAllText($terminalTrackedPath, "tracked drift`n", [Text.UTF8Encoding]::new($false))
+        Assert-Rejected 'terminal selector release with tracked repository drift' '*exact clean Git repository observations*' {
+            Invoke-MorphospaceWorkUnitAutomation -Action Ready -WorkspaceRoot $terminalWorkspace -UnitId $successorId -RepoMapPath $terminalRepoMapPath -Timestamp $fixed
+        }
+    } finally { [IO.File]::WriteAllBytes($terminalTrackedPath, $terminalTrackedBytes) }
+    $terminalUntrackedPath = Join-Path $terminalMappedRepoRoot 'morphospace\untracked-input.txt'
+    try {
+        [IO.File]::WriteAllText($terminalUntrackedPath, "untracked drift`n", [Text.UTF8Encoding]::new($false))
+        Assert-Rejected 'terminal selector release with untracked repository drift' '*exact clean Git repository observations*' {
+            Invoke-MorphospaceWorkUnitAutomation -Action Ready -WorkspaceRoot $terminalWorkspace -UnitId $successorId -RepoMapPath $terminalRepoMapPath -Timestamp $fixed
+        }
+    } finally {
+        if ([IO.File]::Exists($terminalUntrackedPath)) { [IO.File]::Delete($terminalUntrackedPath) }
+    }
+    $terminalReadyDryRun = Invoke-MorphospaceWorkUnitAutomation -Action Ready -WorkspaceRoot $terminalWorkspace -UnitId $successorId -RepoMapPath $terminalRepoMapPath -Timestamp $fixed
+    $automationReceiptSchemaPath = Join-Path $repoRoot 'schemas\work-unit-automation-receipt.schema.json'
+    $terminalReleaseSchemaPath = Join-Path $repoRoot 'schemas\terminal-validation-selection-release-v1.schema.json'
+    Assert-SelectorTest (
+        Test-Json -Json ($terminalReadyDryRun | ConvertTo-Json -Depth 100) -SchemaFile $automationReceiptSchemaPath
+    ) 'terminal selector recovery dry-run receipt failed its public schema'
+    $terminalStateAfterDryRun = Get-Content -Raw -LiteralPath $terminalStatePath | ConvertFrom-Json
+    $terminalReleaseReference = "receipts/$successorId-terminal-validation-selection-release.json"
+    $terminalReleasePath = Join-Path $terminalWorkspace ($terminalReleaseReference -replace '/', '\')
+    Assert-SelectorTest (
+        $terminalReadyDryRun.transition -ceq 'proposed-to-ready' -and
+        -not $terminalReadyDryRun.executed -and
+        $null -ne $terminalStateAfterDryRun.normal_validation_selection -and
+        $null -ne $terminalReadyDryRun.terminal_validation_selection_release -and
+        [string]$terminalReadyDryRun.terminal_validation_selection_release.path -ceq $terminalReleaseReference -and
+        [string]$terminalReadyDryRun.terminal_validation_selection_release.terminal_unit_id -ceq $unitId -and
+        -not [IO.File]::Exists($terminalReleasePath)
+    ) 'terminal selector recovery dry run changed state or failed to plan Ready'
+    $terminalReady = Invoke-MorphospaceWorkUnitAutomation -Action Ready -WorkspaceRoot $terminalWorkspace -UnitId $successorId -RepoMapPath $terminalRepoMapPath -Timestamp $fixed -Execute
+    $terminalStateAfterReady = Get-Content -Raw -LiteralPath $terminalStatePath | ConvertFrom-Json
+    $terminalReleaseProof = Read-MorphospaceProtocolJson -Path $terminalReleasePath
+    Assert-SelectorTest (
+        Test-Json -Json ($terminalReady | ConvertTo-Json -Depth 100) -SchemaFile $automationReceiptSchemaPath
+    ) 'executed terminal selector recovery receipt failed its public schema'
+    Assert-SelectorTest (
+        Test-Json -Json ($terminalReleaseProof | ConvertTo-Json -Depth 100) -SchemaFile $terminalReleaseSchemaPath
+    ) 'terminal selector release proof failed its public schema'
+    $terminalReleaseSha256 = (Get-FileHash -LiteralPath $terminalReleasePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $readyEvent = Get-Content -LiteralPath $terminalEventsPath | Select-Object -Last 1 | ConvertFrom-Json -DateKind String
+    $readyIntentPath = Join-Path $terminalWorkspace "receipts/transactions/$([string]$readyEvent.event_id)-transition.intent.json"
+    $readyIntent = Read-MorphospaceProtocolJson -Path $readyIntentPath
+    $readyProofArtifacts = @($readyIntent.artifacts | Where-Object {
+        [string]$_.path -ceq $terminalReleaseReference -and [string]$_.sha256 -ceq $terminalReleaseSha256
+    })
+    Assert-SelectorTest (
+        $terminalReady.transition -ceq 'proposed-to-ready' -and
+        $terminalReady.executed -and
+        $null -eq $terminalStateAfterReady.normal_validation_selection -and
+        [string]$terminalReady.terminal_validation_selection_release.sha256 -ceq $terminalReleaseSha256 -and
+        [string]$terminalReleaseProof.schema -ceq 'rusty.morphospace.workflow.terminal_validation_selection_release.v1' -and
+        [string]$terminalReleaseProof.terminal.checkpoint.receipt_sha256 -ceq ((Get-FileHash -LiteralPath $terminalReceiptPath -Algorithm SHA256).Hash.ToLowerInvariant()) -and
+        [string]$terminalReleaseProof.terminal.evidence.sha256 -ceq ((Get-FileHash -LiteralPath $evidencePath -Algorithm SHA256).Hash.ToLowerInvariant()) -and
+        [string]$terminalReleaseProof.terminal.transaction.intent_sha256 -ceq ((Get-FileHash -LiteralPath $terminalIntentPath -Algorithm SHA256).Hash.ToLowerInvariant()) -and
+        [string]$terminalReleaseProof.terminal.transaction.completion_sha256 -ceq ((Get-FileHash -LiteralPath $terminalCompletionPath -Algorithm SHA256).Hash.ToLowerInvariant()) -and
+        @($terminalReleaseProof.terminal.repositories).Count -eq 1 -and
+        [bool]$terminalReleaseProof.terminal.repositories[0].is_git -and
+        -not [bool]$terminalReleaseProof.terminal.repositories[0].dirty -and
+        [string]$terminalReleaseProof.terminal.repositories[0].dirty_fingerprint -ceq (Get-TestTextSha256 '') -and
+        @($readyEvent.receipts).Count -eq 1 -and [string]$readyEvent.receipts[0] -ceq $terminalReleaseReference -and
+        $readyProofArtifacts.Count -eq 1
+    ) 'executed Ready did not transactionally clear the exact historical terminal selector binding'
+
     Assert-Rejected 'selector omission at ReturnToActive' '*requires the exact normal-validation selector and evidence path bound in workspace state*' {
         Invoke-MorphospaceWorkUnitAutomation -Action ReturnToActive -WorkspaceRoot $workspace -UnitId $unitId -ValidationTier quick -ValidationResult fail -ValidationReceipt 'receipts/unit-selector-003-fail-validation.json' -Timestamp $fixed
     }
@@ -534,7 +885,8 @@ throw 'The selector consumer must never execute the evidence producer.'
             'missing-binding', 'orphaned-evidence', 'selector-hash', 'wrong-tier', 'wrong-action', 'selector-location', 'selector-alias', 'selector-duplicate',
             'project-drift', 'unit-drift', 'freeze-receipt-drift', 'producer-drift', 'declared-gate-drift',
             'frozen-repository-drift', 'arbitrary-command', 'evidence-leaf', 'evidence-parent', 'evidence-missing', 'evidence-schema', 'evidence-drift', 'evidence-collision',
-            'selector-lifecycle-drift', 'selector-omission', 'return-to-active', 'record-validation-pass-fail', 'accept', 'replay'
+            'selector-lifecycle-drift', 'selector-omission', 'return-to-active', 'terminal-selector-release', 'terminal-selector-release-damage',
+            'record-validation-pass-fail', 'accept', 'replay'
         )
         producer_executed = $false
         fixture_workflow_lifecycle_mutated = $true
