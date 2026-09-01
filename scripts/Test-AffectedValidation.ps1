@@ -2445,6 +2445,7 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
         [pscustomobject]@{ path='scripts/lib/MorphospaceHistoricalValidationDebtPhaseRunner.psm1'; checks=@('historical-validation-debt-baseline','historical-validation-debt-phase-runner','work-unit-automation') },
         [pscustomobject]@{ path='scripts/lib/MorphospaceOwnership.psm1'; checks=@('authority-record-readiness','authority-runner-fast','ownership-authority','validation-execution-authority','work-unit-automation') },
         [pscustomobject]@{ path='scripts/lib/MorphospaceProtocolCommon.psm1'; checks=$protocolCommonConsumerChecks },
+        [pscustomobject]@{ path='scripts/lib/MorphospaceTransitionLedger.psm1'; checks=@('blocked-supersession-terminal-validation','correct-active-unit-contract','development-unit-admission','transition-ledger','work-unit-automation') },
         [pscustomobject]@{ path='scripts/lib/MorphospaceValidationAuthority.psm1'; checks=@('authority-record-readiness','authority-runner-fast','authority-runner-handoff','transition-ledger','trust-migration-authority','validation-authority-launcher','validation-execution-authority','work-unit-automation') }
     )
     foreach ($mapping in $proportionalMappings) {

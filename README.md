@@ -398,6 +398,11 @@ fixtures.
 V3/v4 artifact validation resolves portability deterministically: it canonicalizes
 and case-insensitively deduplicates every target path before any filesystem
 lookup, then validates the unique artifacts and their exact receipt set.
+Intent v5 is the separate zero-projection route for an unchanged canonical
+unit plus exact raw pre-unit bytes, an event-tail-only state advance, and one
+or two immutable ordered event artifacts. It cannot carry supersession or
+stand in for receipt-bound proposed-unit retirement. See
+[Raw-Bound Artifact Transition](docs/RAW_BOUND_ARTIFACT_TRANSITION.md).
 One completed legacy-v1 fault has a separately reviewed append-only repair:
 an otherwise exact `<old>-superseded-by-<replacement>` event that recorded the
 replacement in `event.unit_id`. Use only the derived

@@ -47,6 +47,16 @@ function Get-LedgerFileHash {
     [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([IO.File]::ReadAllBytes($Path))).ToLowerInvariant()
 }
 
+function New-LedgerTailOnlyTargetState {
+    param([object]$PreState,[string]$EventId)
+    $target = $PreState | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64 -DateKind String
+    if ($null -eq $target.PSObject.Properties['last_event_id']) {
+        $target | Add-Member -NotePropertyName last_event_id -NotePropertyValue $null
+    }
+    $target.last_event_id = $EventId
+    return $target
+}
+
 function Get-LedgerCommittedTransitionPaths {
     param([string]$WorkspaceRoot,[object[]]$AutomationOutputs,[hashtable]$RepositoryMap)
     & $script:validationAuthorityModule {
@@ -82,6 +92,78 @@ function Assert-LedgerCommittedV4DamageRejected {
             -RepositoryMap @{ planning=[pscustomobject]@{ path=$PlanningRoot } } | Out-Null
     } catch { $rejected = $true }
     Assert-Ledger $rejected "validation authority accepted self-hashed malformed v4 intent: $Name"
+}
+
+function Assert-LedgerCommittedV5DamageRejected {
+    param(
+        [string]$TemplateWorkspace,
+        [string]$PlanningRoot,
+        [string]$Name,
+        [scriptblock]$Mutation
+    )
+    $caseWorkspace = Join-Path $PlanningRoot "validation-authority-v5-$Name"
+    Copy-Item -LiteralPath $TemplateWorkspace -Destination $caseWorkspace -Recurse
+    $transactionId = 'raw-artifact-recovery-transition'
+    $intentPath = Join-Path $caseWorkspace "receipts\transactions\$transactionId.intent.json"
+    $completionPath = Join-Path $caseWorkspace "receipts\transactions\$transactionId.completion.json"
+    $intent = Read-TestProtocolJson $intentPath
+    & $Mutation $caseWorkspace $intent
+    Write-Json -Path $intentPath -Value $intent
+    $completion = Read-TestProtocolJson $completionPath
+    $completion.intent.sha256 = Get-LedgerFileHash $intentPath
+    $completion.intent.schema = [string]$intent.schema
+    Write-Json -Path $completionPath -Value $completion
+    $completionRelative = [IO.Path]::GetRelativePath($PlanningRoot, $completionPath).Replace('\','/')
+    $rejected = $false
+    try {
+        Get-LedgerCommittedTransitionPaths `
+            -WorkspaceRoot $caseWorkspace `
+            -AutomationOutputs @([pscustomobject]@{ phase='transition'; role='transition-ledger-completion'; path=$completionRelative }) `
+            -RepositoryMap @{ planning=[pscustomobject]@{ path=$PlanningRoot } } | Out-Null
+    } catch { $rejected = $true }
+    Assert-Ledger $rejected "validation authority accepted self-hashed malformed v5 intent: $Name"
+}
+
+function Assert-LedgerCommittedV5ReservedEventRejected {
+    param(
+        [string]$TemplateWorkspace,
+        [string]$PlanningRoot,
+        [string]$Name,
+        [string]$EventId
+    )
+    $caseWorkspace = Join-Path $PlanningRoot "validation-authority-v5-$Name"
+    Copy-Item -LiteralPath $TemplateWorkspace -Destination $caseWorkspace -Recurse
+    $oldTransactionId = 'raw-artifact-recovery-transition'
+    $newTransactionId = "$EventId-transition"
+    $oldIntentPath = Join-Path $caseWorkspace "receipts\transactions\$oldTransactionId.intent.json"
+    $oldCompletionPath = Join-Path $caseWorkspace "receipts\transactions\$oldTransactionId.completion.json"
+    $newIntentPath = Join-Path $caseWorkspace "receipts\transactions\$newTransactionId.intent.json"
+    $newCompletionPath = Join-Path $caseWorkspace "receipts\transactions\$newTransactionId.completion.json"
+    $intent = Read-TestProtocolJson $oldIntentPath
+    $completion = Read-TestProtocolJson $oldCompletionPath
+    $intent.transaction_id = $newTransactionId
+    $intent.event.event_id = $EventId
+    Write-Json -Path $newIntentPath -Value $intent
+    $completion.transaction_id = $newTransactionId
+    $completion.event_id = $EventId
+    $completion.intent.path = "receipts/transactions/$newTransactionId.intent.json"
+    $completion.intent.schema = [string]$intent.schema
+    $completion.intent.sha256 = Get-LedgerFileHash $newIntentPath
+    Write-Json -Path $newCompletionPath -Value $completion
+    Remove-Item -LiteralPath $oldIntentPath,$oldCompletionPath
+    $eventsPath = Join-Path $caseWorkspace 'iteration-events.jsonl'
+    $event = Read-TestProtocolJson $eventsPath
+    $event.event_id = $EventId
+    Write-Json -Path $eventsPath -Value $event
+    $completionRelative = [IO.Path]::GetRelativePath($PlanningRoot, $newCompletionPath).Replace('\','/')
+    $rejected = $false
+    try {
+        Get-LedgerCommittedTransitionPaths `
+            -WorkspaceRoot $caseWorkspace `
+            -AutomationOutputs @([pscustomobject]@{ phase='transition'; role='transition-ledger-completion'; path=$completionRelative }) `
+            -RepositoryMap @{ planning=[pscustomobject]@{ path=$PlanningRoot } } | Out-Null
+    } catch { $rejected = $true }
+    Assert-Ledger $rejected "validation authority accepted internally rehashed reserved v5 event identity: $Name"
 }
 
 function New-LedgerEvent {
@@ -1548,6 +1630,161 @@ try {
         param($caseWorkspace,$intent)
         $intent.additional_projections[0] | Add-Member -NotePropertyName policy -NotePropertyValue 'forbidden'
     }
+
+    $rawArtifactState=[pscustomobject][ordered]@{schema='test';stage='before';last_event_id=$null}
+    $rawArtifactWorkspace=Join-Path $workspace 'raw-artifact-recovery'
+    Initialize-LedgerFixture $rawArtifactWorkspace $rawArtifactState $unit
+    $rawArtifactUnitPath=Join-Path $rawArtifactWorkspace 'iteration-units\unit.json'
+    $rawArtifactUnitBytes=[IO.File]::ReadAllBytes($rawArtifactUnitPath)
+    $rawArtifactUnitHash=Get-LedgerFileHash $rawArtifactUnitPath
+    $receiptBytes=[Text.UTF8Encoding]::new($false).GetBytes('raw artifact receipt')
+    $sourceBytes=[Text.UTF8Encoding]::new($false).GetBytes('raw artifact source composition')
+    $receiptHash=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($receiptBytes)).ToLowerInvariant()
+    $sourceHash=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($sourceBytes)).ToLowerInvariant()
+    $rawArtifactEvent=New-LedgerEvent 'raw-artifact-recovery' 1
+    $rawArtifactEvent.receipts=@('receipts/raw-artifact-receipt.json','source-composition/raw-artifact-source.json')
+    $rawArtifactTargetState=New-LedgerTailOnlyTargetState -PreState $rawArtifactState -EventId $rawArtifactEvent.event_id
+    $rawArtifactInterrupted=$false
+    try{
+        Start-MorphospaceTransitionLedger `
+            -WorkspaceRoot $rawArtifactWorkspace `
+            -TransactionId 'raw-artifact-recovery-transition' `
+            -StatePath 'workspace.state.json' `
+            -UnitPath 'iteration-units/unit.json' `
+            -EventsPath 'iteration-events.jsonl' `
+            -TargetState $rawArtifactTargetState `
+            -TargetUnit $unit `
+            -Event $rawArtifactEvent `
+            -ExpectedPreUnitRawSha256 $rawArtifactUnitHash `
+            -Artifacts @(
+                [pscustomobject]@{bytes_base64=[Convert]::ToBase64String($receiptBytes);path='receipts/raw-artifact-receipt.json';sha256=$receiptHash},
+                [pscustomobject]@{bytes_base64=[Convert]::ToBase64String($sourceBytes);path='source-composition/raw-artifact-source.json';sha256=$sourceHash}
+            ) `
+            -FaultAfter after-intent | Out-Null
+    }catch{$rawArtifactInterrupted=$_.Exception.Message-like'*Injected interruption after intent publication*'}
+    $rawArtifactIntent=Read-TestProtocolJson (Join-Path $rawArtifactWorkspace 'receipts\transactions\raw-artifact-recovery-transition.intent.json')
+    Assert-Ledger ($rawArtifactInterrupted-and
+        [string]$rawArtifactIntent.schema-ceq'rusty.morphospace.workflow.transition_ledger_intent.v5'-and
+        [string]$rawArtifactIntent.pre_unit_raw.path-ceq'iteration-units/unit.json'-and
+        [string]$rawArtifactIntent.pre_unit_raw.sha256-ceq$rawArtifactUnitHash-and
+        [string]$rawArtifactIntent.target.state.document.stage-ceq'before'-and
+        [string]$rawArtifactIntent.target.state.document.last_event_id-ceq[string]$rawArtifactEvent.event_id-and
+        $null-eq$rawArtifactIntent.expected.event_tail_id-and
+        [string]$rawArtifactIntent.pre.state.sha256-ceq(Get-LedgerDocumentHash $rawArtifactState)-and
+        -not($rawArtifactIntent.PSObject.Properties.Name-contains'additional_projections')-and
+        @($rawArtifactIntent.artifacts).Count-eq2
+    ) 'raw artifact transition did not publish the closed v5 binding'
+    $rawArtifactResult=Complete-MorphospaceTransitionLedger -WorkspaceRoot $rawArtifactWorkspace -TransactionId 'raw-artifact-recovery-transition' -Repair
+    $rawArtifactReplay=Complete-MorphospaceTransitionLedger -WorkspaceRoot $rawArtifactWorkspace -TransactionId 'raw-artifact-recovery-transition'
+    Assert-Ledger ($rawArtifactResult.status-eq'committed'-and$rawArtifactReplay.status-eq'already-committed'-and
+        [Convert]::ToHexString([IO.File]::ReadAllBytes($rawArtifactUnitPath))-ceq[Convert]::ToHexString($rawArtifactUnitBytes)-and
+        (Get-LedgerDocumentHash (Read-TestProtocolJson (Join-Path $rawArtifactWorkspace 'workspace.state.json')))-ceq[string]$rawArtifactIntent.target.state.sha256-and
+        @(Get-Content (Join-Path $rawArtifactWorkspace 'iteration-events.jsonl')|Where-Object{$_}).Count-eq1-and
+        (Get-LedgerFileHash (Join-Path $rawArtifactWorkspace 'receipts\raw-artifact-receipt.json'))-ceq$receiptHash-and
+        (Get-LedgerFileHash (Join-Path $rawArtifactWorkspace 'source-composition\raw-artifact-source.json'))-ceq$sourceHash
+    ) 'v5 repair/replay did not preserve exact unit/artifact bytes and one event'
+    $rawArtifactCompletionRelative=[IO.Path]::GetRelativePath($workspace,(Join-Path $rawArtifactWorkspace 'receipts\transactions\raw-artifact-recovery-transition.completion.json')).Replace('\','/')
+    $rawArtifactPaths=@(Get-LedgerCommittedTransitionPaths -WorkspaceRoot $rawArtifactWorkspace -AutomationOutputs @([pscustomobject]@{phase='transition';role='transition-ledger-completion';path=$rawArtifactCompletionRelative}) -RepositoryMap @{planning=[pscustomobject]@{path=$workspace}})
+    Assert-Ledger ($rawArtifactPaths.Count-eq5-and@($rawArtifactPaths|Where-Object{$_-like'*/raw-artifact-receipt.json'}).Count-eq1-and@($rawArtifactPaths|Where-Object{$_-like'*/raw-artifact-source.json'}).Count-eq1) 'validation authority did not bind the committed v5 artifact set'
+
+    $rawArtifactStateDeltaWorkspace=Join-Path $workspace 'raw-artifact-state-delta-prepublication'
+    Initialize-LedgerFixture $rawArtifactStateDeltaWorkspace $rawArtifactState $unit
+    $rawArtifactStateDeltaEvent=New-LedgerEvent 'raw-artifact-state-delta-prepublication' 1
+    $rawArtifactStateDeltaEvent.receipts=@('receipts/raw-artifact.json')
+    $rawArtifactStateDeltaTarget=New-LedgerTailOnlyTargetState -PreState $rawArtifactState -EventId $rawArtifactStateDeltaEvent.event_id
+    $rawArtifactStateDeltaTarget.stage='after'
+    $rawArtifactStateDeltaRejected=$false
+    try{
+        Start-MorphospaceTransitionLedger -WorkspaceRoot $rawArtifactStateDeltaWorkspace -TransactionId 'raw-artifact-state-delta-prepublication-transition' -StatePath 'workspace.state.json' -UnitPath 'iteration-units/unit.json' -EventsPath 'iteration-events.jsonl' -TargetState $rawArtifactStateDeltaTarget -TargetUnit $unit -Event $rawArtifactStateDeltaEvent -ExpectedPreUnitRawSha256 (Get-LedgerFileHash (Join-Path $rawArtifactStateDeltaWorkspace 'iteration-units\unit.json')) -Artifacts @([pscustomobject]@{bytes_base64=[Convert]::ToBase64String($receiptBytes);path='receipts/raw-artifact.json';sha256=$receiptHash})|Out-Null
+    }catch{$rawArtifactStateDeltaRejected=$_.Exception.Message-like'*may not change workspace state beyond its event tail*'}
+    Assert-Ledger ($rawArtifactStateDeltaRejected-and
+        -not(Test-Path (Join-Path $rawArtifactStateDeltaWorkspace 'receipts\transactions\raw-artifact-state-delta-prepublication-transition.intent.json'))-and
+        [IO.File]::ReadAllBytes((Join-Path $rawArtifactStateDeltaWorkspace 'iteration-events.jsonl')).Length-eq0
+    ) 'v5 owner accepted a pre-publication state delta beyond the exact event tail'
+
+    foreach($fault in @('after-artifact','after-event')){
+        $case=Join-Path $workspace "raw-artifact-$fault"
+        Initialize-LedgerFixture $case $rawArtifactState $unit
+        $caseEvent=New-LedgerEvent "raw-artifact-$fault" 1;$caseEvent.receipts=@('receipts/raw-artifact.json')
+        $caseTargetState=New-LedgerTailOnlyTargetState -PreState $rawArtifactState -EventId $caseEvent.event_id
+        try{Start-MorphospaceTransitionLedger -WorkspaceRoot $case -TransactionId "raw-artifact-$fault-transition" -StatePath 'workspace.state.json' -UnitPath 'iteration-units/unit.json' -EventsPath 'iteration-events.jsonl' -TargetState $caseTargetState -TargetUnit $unit -Event $caseEvent -ExpectedPreUnitRawSha256 (Get-LedgerFileHash (Join-Path $case 'iteration-units\unit.json')) -Artifacts @([pscustomobject]@{bytes_base64=[Convert]::ToBase64String($receiptBytes);path='receipts/raw-artifact.json';sha256=$receiptHash}) -FaultAfter $fault|Out-Null}catch{}
+        $repaired=Complete-MorphospaceTransitionLedger -WorkspaceRoot $case -TransactionId "raw-artifact-$fault-transition" -Repair
+        $replayed=Complete-MorphospaceTransitionLedger -WorkspaceRoot $case -TransactionId "raw-artifact-$fault-transition"
+        Assert-Ledger ($repaired.status-eq'committed'-and$replayed.status-eq'already-committed'-and@(Get-Content (Join-Path $case 'iteration-events.jsonl')|Where-Object{$_}).Count-eq1) "v5 $fault repair was not exact and idempotent"
+    }
+
+    foreach($damage in @(
+        [pscustomobject]@{name='unknown-root';mutate={param($case,$i)$i|Add-Member unknown_policy forbidden}},
+        [pscustomobject]@{name='missing-raw';mutate={param($case,$i)$i.PSObject.Properties.Remove('pre_unit_raw')}},
+        [pscustomobject]@{name='uppercase-raw';mutate={param($case,$i)$i.pre_unit_raw.sha256=([string]$i.pre_unit_raw.sha256).ToUpperInvariant()}},
+        [pscustomobject]@{name='wrong-raw-path';mutate={param($case,$i)$i.pre_unit_raw.path='iteration-units/other.json'}},
+        [pscustomobject]@{name='stray-projection';mutate={param($case,$i)$i|Add-Member additional_projections @()}},
+        [pscustomobject]@{name='stray-supersession';mutate={param($case,$i)$i|Add-Member supersession ([pscustomobject]@{old_unit_id='forbidden'})}},
+        [pscustomobject]@{name='zero-artifacts';mutate={param($case,$i)$i.artifacts=@();$i.event.receipts=@()}},
+        [pscustomobject]@{name='misordered-artifacts';mutate={param($case,$i)$i.artifacts=@($i.artifacts[1],$i.artifacts[0]);$i.event.receipts=@([string]$i.artifacts[0].path,[string]$i.artifacts[1].path)}},
+        [pscustomobject]@{name='receipt-mismatch';mutate={param($case,$i)$i.event.receipts[1]='source-composition/substituted.json'}},
+        [pscustomobject]@{name='unit-change';mutate={param($case,$i)$i.target.unit.document.status='accepted';$i.target.unit.sha256=Get-LedgerDocumentHash $i.target.unit.document;$completionPath=Join-Path $case 'receipts\transactions\raw-artifact-recovery-transition.completion.json';$completion=Read-TestProtocolJson $completionPath;$completion.unit_sha256=[string]$i.target.unit.sha256;Write-Json $completionPath $completion;Write-Json (Join-Path $case 'iteration-units\unit.json') $i.target.unit.document}},
+        [pscustomobject]@{name='state-delta';mutate={param($case,$i)$i.target.state.document.stage='after';$i.target.state.sha256=Get-LedgerDocumentHash $i.target.state.document;$completionPath=Join-Path $case 'receipts\transactions\raw-artifact-recovery-transition.completion.json';$completion=Read-TestProtocolJson $completionPath;$completion.state_sha256=[string]$i.target.state.sha256;Write-Json $completionPath $completion;Write-Json (Join-Path $case 'workspace.state.json') $i.target.state.document}}
+    )){Assert-LedgerCommittedV5DamageRejected -TemplateWorkspace $rawArtifactWorkspace -PlanningRoot $workspace -Name $damage.name -Mutation $damage.mutate}
+    Assert-LedgerCommittedV5ReservedEventRejected -TemplateWorkspace $rawArtifactWorkspace -PlanningRoot $workspace -Name 'reserved-supersession-delimiter' -EventId 'unit-test-superseded-by-forbidden'
+    Assert-LedgerCommittedV5ReservedEventRejected -TemplateWorkspace $rawArtifactWorkspace -PlanningRoot $workspace -Name 'reserved-proposed-retirement' -EventId 'unit-test-proposal-retired-0002'
+
+    $rawArtifactDriftWorkspace=Join-Path $workspace 'raw-artifact-byte-drift'
+    Initialize-LedgerFixture $rawArtifactDriftWorkspace $rawArtifactState $unit
+    $driftPath=Join-Path $rawArtifactDriftWorkspace 'iteration-units\unit.json';$driftHash=Get-LedgerFileHash $driftPath;$driftEvent=New-LedgerEvent 'raw-artifact-byte-drift' 1;$driftEvent.receipts=@('receipts/raw-artifact.json')
+    $driftTargetState=New-LedgerTailOnlyTargetState -PreState $rawArtifactState -EventId $driftEvent.event_id
+    try{Start-MorphospaceTransitionLedger -WorkspaceRoot $rawArtifactDriftWorkspace -TransactionId 'raw-artifact-byte-drift-transition' -StatePath 'workspace.state.json' -UnitPath 'iteration-units/unit.json' -EventsPath 'iteration-events.jsonl' -TargetState $driftTargetState -TargetUnit $unit -Event $driftEvent -ExpectedPreUnitRawSha256 $driftHash -Artifacts @([pscustomobject]@{bytes_base64=[Convert]::ToBase64String($receiptBytes);path='receipts/raw-artifact.json';sha256=$receiptHash}) -FaultAfter after-intent|Out-Null}catch{}
+    [IO.File]::WriteAllText($driftPath,((Get-Content -Raw $driftPath|ConvertFrom-Json)|ConvertTo-Json -Depth 20),[Text.UTF8Encoding]::new($false))
+    $rawArtifactDriftRejected=$false;try{Complete-MorphospaceTransitionLedger -WorkspaceRoot $rawArtifactDriftWorkspace -TransactionId 'raw-artifact-byte-drift-transition' -Repair|Out-Null}catch{$rawArtifactDriftRejected=$_.Exception.Message-like'*durable raw pre-unit byte-hash CAS*'}
+    Assert-Ledger ($rawArtifactDriftRejected-and-not(Test-Path (Join-Path $rawArtifactDriftWorkspace 'receipts\raw-artifact.json'))-and[IO.File]::ReadAllBytes((Join-Path $rawArtifactDriftWorkspace 'iteration-events.jsonl')).Length-eq0) 'v5 raw byte drift reached artifact or event mutation'
+
+    $retirementV1Workspace=Join-Path $workspace 'retirement-v1-recovery'
+    $retirementV1State=[pscustomobject][ordered]@{schema='test';project_id='ledger-test';current_unit=$null;last_event_id='unit-test-admitted'}
+    $retirementV1Unit=[pscustomobject][ordered]@{schema='test';project_id='ledger-test';unit_id='unit-test';status='proposed'}
+    Initialize-LedgerFixture $retirementV1Workspace $retirementV1State $retirementV1Unit
+    $retirementV1Bootstrap=New-LedgerEvent 'unit-test-admitted' 1 'Admitted the proposed-unit retirement fixture.'
+    Write-Json (Join-Path $retirementV1Workspace 'iteration-events.jsonl') $retirementV1Bootstrap
+    $retirementV1Event=New-LedgerEvent 'unit-test-proposal-retired-0002' 2
+    $retirementV1Event.receipts=@('receipts/unit-test-contract-retirement.json')
+    $retirementV1TargetState=New-LedgerTailOnlyTargetState -PreState $retirementV1State -EventId $retirementV1Event.event_id
+    $retirementV1TargetUnit=$retirementV1Unit|ConvertTo-Json -Depth 20|ConvertFrom-Json -Depth 20 -DateKind String
+    $retirementV1TargetUnit.status='superseded'
+    $retirementV1UnitPath=Join-Path $retirementV1Workspace 'iteration-units\unit.json'
+    $retirementV1EventsPath=Join-Path $retirementV1Workspace 'iteration-events.jsonl'
+    $retirementV1UnitRawSha256=Get-LedgerFileHash $retirementV1UnitPath
+    $retirementV1EventsSha256=Get-LedgerFileHash $retirementV1EventsPath
+    $retirementV1EventsLength=[IO.FileInfo]::new($retirementV1EventsPath).Length
+    $retirementV1Receipt=[pscustomobject][ordered]@{
+        schema='rusty.morphospace.workflow.work_unit_automation_receipt.v1';project_id='ledger-test';unit_id='unit-test';action='RetireProposed'
+        timestamp='2026-01-01T00:00:01.0000000Z';executed=$true;transition='proposed-to-superseded-retired';status_before='proposed';status_after='superseded'
+        current_unit_before=$null;current_unit_after=$null
+        preservation=[pscustomobject][ordered]@{git_mutation_performed=$false;device_mutation_performed=$false;force_push_allowed=$false;repository_states=@()}
+        validation_matrix=@();graph_scope=[pscustomobject]@{}
+        claim_preflight=[pscustomobject][ordered]@{version='v1';ready_to_claim=$false;validation_tier='quick';requirements_declared=$false;disk=@();tools=@();product_inputs=@();writable_repositories=@();read_only_dependencies=@();instruction_surfaces=@();resources=@();validation_matrix=@();issues=@('Retirement ledger fixture only.')}
+        adoption_receipt=$null;publication_closure=$null;published_planning_authority_adoption=$null;planned_publication=$null;planning_suffix_rewrite_recovery=$null
+        published_prerequisite_suffix_reconciliation=$null;executed_prepared_publication_reconciliation=$null;push_plan=$null;event_id=[string]$retirementV1Event.event_id
+        proposed_retirement=[pscustomobject][ordered]@{
+            replacement_unit_id='unit-next';reason='contract-invalid'
+            authenticated_admission=[pscustomobject][ordered]@{
+                admission_id='unit-test-admission';event=[pscustomobject][ordered]@{event_id='unit-test-admitted';sequence=1;sha256=('1'*64)}
+                receipt=[pscustomobject][ordered]@{path='receipts/unit-test-admission.json';sha256=('2'*64)}
+                transaction=[pscustomobject][ordered]@{transaction_id='unit-test-admission-admitted-transition';intent=[pscustomobject][ordered]@{path='receipts/transactions/unit-test-admission-admitted-transition.intent.json';sha256=('3'*64)};completion=[pscustomobject][ordered]@{path='receipts/transactions/unit-test-admission-admitted-transition.completion.json';sha256=('4'*64)};target_state_sha256=('5'*64);target_unit_sha256=('6'*64)}
+            }
+            authenticated_preimage=[pscustomobject][ordered]@{state_sha256=(Get-LedgerDocumentHash $retirementV1State);unit_sha256=(Get-LedgerDocumentHash $retirementV1Unit);unit_raw_sha256=$retirementV1UnitRawSha256;events_sha256=$retirementV1EventsSha256;events_length=$retirementV1EventsLength;event_tail_id='unit-test-admitted'}
+            replacement_identity_absent=$true;current_unit_absent=$true;next_ready_unit_absent=$true;original_admission_preserved=$true;binding_sha256=('7'*64)
+        }
+    }
+    $retirementV1ReceiptBytes=[Text.UTF8Encoding]::new($false).GetBytes(($retirementV1Receipt|ConvertTo-Json -Depth 64 -Compress)+"`n")
+    $retirementV1ReceiptSha256=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($retirementV1ReceiptBytes)).ToLowerInvariant()
+    $retirementV1Interrupted=$false
+    try{
+        Start-MorphospaceTransitionLedger -WorkspaceRoot $retirementV1Workspace -TransactionId 'unit-test-proposal-retired-0002-transition' -StatePath 'workspace.state.json' -UnitPath 'iteration-units/unit.json' -EventsPath 'iteration-events.jsonl' -TargetState $retirementV1TargetState -TargetUnit $retirementV1TargetUnit -Event $retirementV1Event -ExpectedPreUnitRawSha256 $retirementV1UnitRawSha256 -Artifacts @([pscustomobject]@{bytes_base64=[Convert]::ToBase64String($retirementV1ReceiptBytes);path='receipts/unit-test-contract-retirement.json';sha256=$retirementV1ReceiptSha256}) -FaultAfter after-intent|Out-Null
+    }catch{$retirementV1Interrupted=$_.Exception.Message-like'*Injected interruption after intent publication*'}
+    $retirementV1Intent=Read-TestProtocolJson (Join-Path $retirementV1Workspace 'receipts\transactions\unit-test-proposal-retired-0002-transition.intent.json')
+    Assert-Ledger ($retirementV1Interrupted-and[string]$retirementV1Intent.schema-ceq'rusty.morphospace.workflow.transition_ledger_intent.v1'-and-not($retirementV1Intent.PSObject.Properties.Name-contains'pre_unit_raw')-and@($retirementV1Intent.artifacts).Count-eq1-and[string]$retirementV1Intent.artifacts[0].path-ceq[string]$retirementV1Event.receipts[0]) 'exact receipt-bound proposed retirement did not remain transition intent v1 without pre_unit_raw'
+    $retirementV1Recovered=Complete-MorphospaceTransitionLedger -WorkspaceRoot $retirementV1Workspace -TransactionId 'unit-test-proposal-retired-0002-transition' -Repair
+    $retirementV1Replay=Complete-MorphospaceTransitionLedger -WorkspaceRoot $retirementV1Workspace -TransactionId 'unit-test-proposal-retired-0002-transition'
+    Assert-Ledger ($retirementV1Recovered.status-eq'committed'-and$retirementV1Replay.status-eq'already-committed'-and[string](Read-TestProtocolJson $retirementV1UnitPath).status-ceq'superseded'-and@(Get-Content $retirementV1EventsPath|Where-Object{$_}).Count-eq2-and(Get-LedgerFileHash (Join-Path $retirementV1Workspace 'receipts\unit-test-contract-retirement.json'))-ceq$retirementV1ReceiptSha256) 'receipt-bound v1 proposed retirement did not recover and replay idempotently'
 
     $rawBindingTamperWorkspace=Join-Path $workspace 'projected-raw-binding-tamper'
     Initialize-LedgerFixture $rawBindingTamperWorkspace $state $unit
