@@ -254,6 +254,12 @@ function Assert-MorphospaceAffectedUniqueIds {
     }
 }
 
+function Get-MorphospaceAffectedExecutionAfterChecks {
+    param([Parameter(Mandatory = $true)][object]$Check)
+    if ($null -eq $Check.PSObject.Properties['execution_after_checks']) { return @() }
+    return @($Check.execution_after_checks | ForEach-Object { [string]$_ })
+}
+
 function Test-MorphospaceAffectedValidationRegistry {
     param(
         [Parameter(Mandatory = $true)][object]$Registry,
@@ -309,10 +315,30 @@ function Test-MorphospaceAffectedValidationRegistry {
     foreach ($id in @($Registry.always_run_check_ids)) { if (-not $checkMap.ContainsKey([string]$id)) { throw "Unknown always-run check '$id'." } }
     foreach ($id in @($Registry.deep_escalation_path_sets)) { if (-not $pathSetMap.ContainsKey([string]$id)) { throw "Unknown deep-escalation path set '$id'." } }
     foreach ($check in @($Registry.checks)) {
-        foreach ($id in @($check.prerequisite_checks)) {
-            if (-not $checkMap.ContainsKey([string]$id)) { throw "Check '$($check.check_id)' references unknown prerequisite '$id'." }
-            foreach ($platform in @($check.platforms)) {
-                if (@($checkMap[[string]$id].platforms) -cnotcontains [string]$platform) { throw "Check '$($check.check_id)' has an unsatisfied cross-platform prerequisite '$id'." }
+        $checkId = [string]$check.check_id
+        $semanticDependencies = @($check.prerequisite_checks | ForEach-Object { [string]$_ })
+        $executionDependencies = @(Get-MorphospaceAffectedExecutionAfterChecks -Check $check)
+        $semanticSet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+        $executionSet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+        foreach ($dependencyKind in @(
+            [pscustomobject]@{ name='prerequisite'; values=$semanticDependencies; seen=$semanticSet },
+            [pscustomobject]@{ name='execution-order dependency'; values=$executionDependencies; seen=$executionSet }
+        )) {
+            foreach ($id in @($dependencyKind.values)) {
+                if ([string]$id -ceq $checkId) { throw "Check '$checkId' cannot depend on itself." }
+                if (-not $dependencyKind.seen.Add([string]$id)) { throw "Check '$checkId' repeats $($dependencyKind.name) '$id'." }
+                if (-not $checkMap.ContainsKey([string]$id)) { throw "Check '$checkId' references unknown $($dependencyKind.name) '$id'." }
+                foreach ($platform in @($check.platforms)) {
+                    if (@($checkMap[[string]$id].platforms) -cnotcontains [string]$platform) { throw "Check '$checkId' has an unsatisfied cross-platform $($dependencyKind.name) '$id'." }
+                }
+            }
+        }
+        foreach ($id in $executionDependencies) {
+            if ($semanticSet.Contains([string]$id)) { throw "Check '$checkId' lists '$id' as both a semantic prerequisite and an execution-order dependency." }
+            $providedContracts = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+            foreach ($contract in @($checkMap[[string]$id].provides_contracts)) { [void]$providedContracts.Add([string]$contract) }
+            foreach ($contract in @($check.consumes_contracts)) {
+                if ($providedContracts.Contains([string]$contract)) { throw "Check '$checkId' consumes contract '$contract' from execution-order dependency '$id'; it must be a semantic prerequisite." }
             }
         }
         if ([bool]$check.always_run -and @($Registry.always_run_check_ids) -cnotcontains [string]$check.check_id) { throw "Check '$($check.check_id)' is locally always-run but absent from the registry always-run list." }
@@ -329,7 +355,7 @@ function Test-MorphospaceAffectedValidationRegistry {
     function Visit-AffectedCheck([string]$Id) {
         if ($visited.Contains($Id)) { return }
         if (-not $visiting.Add($Id)) { throw "Affected-validation prerequisite cycle contains '$Id'." }
-        foreach ($dependency in @($checkMap[$Id].prerequisite_checks)) { Visit-AffectedCheck ([string]$dependency) }
+        foreach ($dependency in @(@($checkMap[$Id].prerequisite_checks) + @(Get-MorphospaceAffectedExecutionAfterChecks -Check $checkMap[$Id]))) { Visit-AffectedCheck ([string]$dependency) }
         [void]$visiting.Remove($Id)
         [void]$visited.Add($Id)
     }
@@ -345,7 +371,11 @@ function Get-MorphospaceAffectedTopologicalOrder {
     while ($pending.Count -gt 0) {
         $ready = [System.Collections.Generic.List[string]]::new()
         foreach ($id in @($pending)) {
-            $dependencies = @($Checks[$id].prerequisite_checks | ForEach-Object { [string]$_ })
+            $dependencies = [System.Collections.Generic.List[string]]::new()
+            foreach ($dependency in @($Checks[$id].prerequisite_checks)) { [void]$dependencies.Add([string]$dependency) }
+            foreach ($dependency in @(Get-MorphospaceAffectedExecutionAfterChecks -Check $Checks[$id])) {
+                if ($SelectedReasons.ContainsKey([string]$dependency)) { [void]$dependencies.Add([string]$dependency) }
+            }
             if (@($dependencies | Where-Object { -not $ordered.Contains($_) }).Count -eq 0) { [void]$ready.Add($id) }
         }
         if ($ready.Count -eq 0) { throw 'Affected-validation selected closure has no topologically ready check.' }

@@ -35,6 +35,7 @@
           "trigger_path_sets": { "$ref": "#/$defs/idArray" },
           "consume_path_sets": { "$ref": "#/$defs/idArray" },
           "prerequisite_checks": { "$ref": "#/$defs/idArray" },
+          "execution_after_checks": { "$ref": "#/$defs/idArray" },
           "provides_contracts": { "$ref": "#/$defs/idArray" },
           "consumes_contracts": { "$ref": "#/$defs/idArray" },
           "always_run": { "type": "boolean" },
