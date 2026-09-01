@@ -7,8 +7,9 @@
   "required": ["schema", "admission_id", "project_id", "unit_id", "preparation", "agent_scope_assessment", "unit", "expected", "does_not_prove"],
   "properties": {
     "schema": { "const": "rusty.morphospace.workflow.development_unit_admission.v1" },
+    "admission_kind": { "enum": ["ordinary", "blocked-successor"] },
     "admission_id": { "$ref": "#/$defs/id" }, "project_id": { "$ref": "#/$defs/id" }, "unit_id": { "$ref": "#/$defs/id" },
-    "preparation": { "type": "object", "additionalProperties": false, "required": ["preparation_id", "receipt_path", "receipt_sha256", "source_composition_path", "source_composition_sha256"], "properties": { "preparation_id": { "$ref": "#/$defs/id" }, "receipt_path": { "$ref": "#/$defs/path" }, "receipt_sha256": { "$ref": "#/$defs/hash" }, "source_composition_path": { "$ref": "#/$defs/path" }, "source_composition_sha256": { "$ref": "#/$defs/hash", "description": "Raw-file SHA-256 of the exact live source-composition bytes; this is distinct from the preparation receipt's canonical-JSON hash." } } },
+    "preparation": { "type": "object", "additionalProperties": false, "required": ["preparation_id", "receipt_path", "receipt_sha256", "source_composition_path", "source_composition_sha256"], "properties": { "preparation_id": { "$ref": "#/$defs/id" }, "receipt_path": { "$ref": "#/$defs/path" }, "receipt_sha256": { "$ref": "#/$defs/hash" }, "source_composition_path": { "$ref": "#/$defs/path" }, "source_composition_sha256": { "$ref": "#/$defs/hash", "description": "Raw-file SHA-256 of the exact live source-composition bytes; this is distinct from the preparation receipt's canonical-JSON hash." }, "terminal_binding_sha256": { "$ref": "#/$defs/hash", "description": "Required only for blocked-successor admission; binds the preparation receipt's exact immutable terminal predecessor and repair slice." } } },
     "agent_scope_assessment": { "type": "object" },
     "unit": { "type": "object" },
     "expected": { "type": "object", "additionalProperties": false, "required": ["project_sha256", "state_sha256", "feature_lock_sha256", "source_composition_path", "source_composition_sha256", "repository_map_path", "repository_map_sha256", "events_sha256", "events_length", "event_tail_id"], "properties": {
@@ -17,7 +18,19 @@
       "repository_map_path": { "$ref": "#/$defs/path" }, "repository_map_sha256": { "$ref": "#/$defs/hash" },
       "events_sha256": { "$ref": "#/$defs/hash" }, "events_length": { "type": "integer", "minimum": 1 }, "event_tail_id": { "$ref": "#/$defs/id" }
     } },
+    "blocked_successor": {
+      "type": "object", "additionalProperties": false,
+      "required": ["terminal_unit_id", "terminal_binding_sha256"],
+      "properties": { "terminal_unit_id": { "$ref": "#/$defs/id" }, "terminal_binding_sha256": { "$ref": "#/$defs/hash" } }
+    },
     "does_not_prove": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
   },
+  "allOf": [
+    {
+      "if": { "properties": { "admission_kind": { "const": "blocked-successor" } }, "required": ["admission_kind"] },
+      "then": { "required": ["blocked_successor"], "properties": { "preparation": { "required": ["terminal_binding_sha256"] } } },
+      "else": { "not": { "required": ["blocked_successor"] }, "properties": { "preparation": { "not": { "required": ["terminal_binding_sha256"] } } } }
+    }
+  ],
   "$defs": { "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" }, "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }, "path": { "type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$" } }
 }

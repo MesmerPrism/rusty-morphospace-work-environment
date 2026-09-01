@@ -7,6 +7,7 @@ Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceContentObservation.psm1')
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'InheritedCandidateMaterialization.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'CandidateFreeze.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'DevelopmentEnvelopeProvenance.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospacePublicationRecovery.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospacePublishedPlanningAuthorityAdoption.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospacePlannedPublication.psm1') -Force
@@ -25,7 +26,7 @@ function Read-MorphospaceJson {
         throw "Required JSON file is missing: $Path"
     }
     try {
-        return Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+        return Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -DateKind String
     } catch {
         throw "Invalid JSON in '$Path': $($_.Exception.Message)"
     }
@@ -66,7 +67,7 @@ function Read-MorphospaceEvents {
         $lineNumber++
         if ([string]::IsNullOrWhiteSpace($line)) { continue }
         try {
-            $events.Add(($line | ConvertFrom-Json)) | Out-Null
+            $events.Add(($line | ConvertFrom-Json -DateKind String)) | Out-Null
         } catch {
             throw "Invalid JSON in '$Path' at line $lineNumber`: $($_.Exception.Message)"
         }
@@ -1669,6 +1670,70 @@ function Get-MorphospaceReadyWithdrawalBinding {
     }
 }
 
+function Get-MorphospaceBlockedSuccessorTerminalRelease {
+    param(
+        [Parameter(Mandatory)][string]$WorkspaceRoot,
+        [Parameter(Mandatory)][string]$UnitId,
+        [Parameter(Mandatory)][object]$Unit,
+        [Parameter(Mandatory)][string]$UnitRelativePath,
+        [Parameter(Mandatory)][object]$SelectedUnitEntry,
+        [Parameter(Mandatory)][object]$State,
+        [Parameter(Mandatory)][object[]]$Events,
+        [Parameter(Mandatory)][object]$Selection,
+        [Parameter(Mandatory)][hashtable]$RepositoryMap,
+        [Parameter(Mandatory)][string]$Timestamp
+    )
+    if([string]$Unit.status-cne'proposed'-or$Events.Count-lt3-or[string]$State.last_event_id-cne[string]$Events[-1].event_id){throw 'Blocked-successor Ready requires its proposed unit and exact admission tail.'}
+    $admissionEvent=$Events[-1];$admissionMatch=[regex]::Match([string]$admissionEvent.event_id,'^(?<admission>[a-z0-9][a-z0-9-]{1,127})-admitted$')
+    if(-not$admissionMatch.Success-or[string]$admissionEvent.unit_id-cne$UnitId-or[string]$admissionEvent.event_type-cne'state-transition'-or@($admissionEvent.receipts).Count-ne1){throw 'Blocked-successor Ready lacks its exact admission event.'}
+    $admissionId=[string]$admissionMatch.Groups['admission'].Value;$admissionRelative="receipts/$admissionId.json"
+    if([string]$admissionEvent.receipts[0]-cne$admissionRelative){throw 'Blocked-successor admission event references a different receipt.'}
+    $admissionPath=Resolve-MorphospaceWorkspacePath $WorkspaceRoot $admissionRelative -RequireLeaf
+    $admissionSchema=Join-Path (Split-Path $PSScriptRoot -Parent) 'schemas\development-unit-admission-v1.schema.json'
+    if(-not(Test-Json -Json (Get-Content -Raw -LiteralPath $admissionPath) -SchemaFile $admissionSchema)){throw 'Blocked-successor admission receipt is invalid.'}
+    $admission=Read-MorphospaceProtocolJson $admissionPath
+    if((Get-MorphospaceDevelopmentAdmissionKind $admission)-cne'blocked-successor'-or[string]$admission.unit_id-cne$UnitId-or(Get-MorphospaceCanonicalJsonSha256 $admission.unit)-cne(Get-MorphospaceCanonicalJsonSha256 $Unit)){throw 'Ready target is not the exact blocked-successor admission.'}
+    $provenance=Test-MorphospaceDevelopmentUnitPreparation -WorkspaceRoot $WorkspaceRoot -Admission $admission -Phase Release
+    $preparation=$provenance.receipt;$terminal=$preparation.terminal;$verifiedTerminal=$provenance.terminal_observation
+    if($null-eq$verifiedTerminal-or(Get-MorphospaceCanonicalJsonSha256 $verifiedTerminal.unit)-cne(Get-MorphospaceCanonicalJsonSha256 $SelectedUnitEntry.document)-or(Get-MorphospaceFileSha256 $SelectedUnitEntry.path)-cne[string]$terminal.unit_raw_sha256-or[string]$verifiedTerminal.event.event_id-cne[string]$terminal.event_id){throw 'Blocked-successor Ready did not consume the exact verified terminal observation.'}
+    if([string]$Selection.unit_id-cne[string]$terminal.unit_id-or(Get-MorphospaceCanonicalJsonSha256 $Selection)-cne[string]$terminal.selector_binding_sha256-or[string]$Selection.tier-cne'quick'){throw 'Blocked-successor Ready stale selector binding drifted.'}
+    if([string]$SelectedUnitEntry.document.status-cne'blocked'-or[string]$SelectedUnitEntry.document.unit_id-cne[string]$terminal.unit_id){throw 'Blocked-successor Ready terminal unit is absent or no longer blocked.'}
+    if($Events.Count-lt3){throw 'Blocked-successor Ready lacks its exact three-event suffix.'}
+    $terminalEvent=$Events[-3];$preparationEvent=$Events[-2]
+    if([string]$terminalEvent.event_id-cne[string]$terminal.event_id-or(Get-MorphospaceCanonicalJsonSha256 $terminalEvent)-cne[string]$terminal.event_sha256-or[string]$preparationEvent.event_id-cne"$([string]$preparation.preparation_id)-prepared"-or[string]$provenance.preparation_event.event_id-cne[string]$preparationEvent.event_id-or[int]$preparationEvent.sequence-ne([int]$terminalEvent.sequence+1)-or[int]$admissionEvent.sequence-ne([int]$preparationEvent.sequence+1)){throw 'Blocked-successor Ready terminal/preparation/admission suffix is not contiguous and exact.'}
+    $checkpoint=$State.validation_checkpoint
+    if($null-eq$checkpoint-or[string]$checkpoint.tier-cne'standard'-or[string]$checkpoint.result-cne[string]$terminal.checkpoint.result-or[string]$checkpoint.receipt-cne[string]$terminal.checkpoint.receipt_path){throw 'Blocked-successor Ready Standard checkpoint drifted.'}
+    $blocker=@($State.blockers|Where-Object{[string]$_.blocker_id-ceq"$([string]$terminal.unit_id)-validation-$([string]$terminal.checkpoint.result)"})
+    if($blocker.Count-ne1-or(Get-MorphospaceCanonicalJsonSha256 $blocker[0])-cne[string]$terminal.blocker_sha256){throw 'Blocked-successor Ready terminal blocker drifted.'}
+    $admissionTx="$admissionId-admitted-transition";[void](Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $WorkspaceRoot -TransactionId $admissionTx -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath $UnitRelativePath -ExpectedEventsPath 'iteration-events.jsonl' -RequireTail)
+    foreach($sourceRepo in @($provenance.source_lock.repositories)){
+        $id=[string]$sourceRepo.repo_id;if(-not$RepositoryMap.ContainsKey($id)){throw "Blocked-successor Ready source repository '$id' is unmapped."}
+        $observed=Get-MorphospaceRepositoryState -RepoId $id -Path ([string]$RepositoryMap[$id].path)
+        if(-not[bool]$observed.available-or-not[bool]$observed.is_git-or[bool]$observed.dirty-or@($observed.status_porcelain).Count-ne0-or[string]$observed.head-cne[string]$sourceRepo.commit-or[string]$observed.tree-cne[string]$sourceRepo.tree){throw "Blocked-successor Ready source repository '$id' drifted from its prepared clean lock."}
+    }
+    $proof=[pscustomobject][ordered]@{
+        schema='rusty.morphospace.workflow.terminal_validation_selection_release.v2'
+        release_id="$UnitId-terminal-validation-selection-release"
+        created_at=$Timestamp
+        project_id=[string]$State.project_id
+        successor=[pscustomobject][ordered]@{
+            unit_id=$UnitId;path=$UnitRelativePath;raw_sha256=Get-MorphospaceFileSha256 (Resolve-MorphospaceWorkspacePath $WorkspaceRoot $UnitRelativePath -RequireLeaf);canonical_sha256=Get-MorphospaceCanonicalJsonSha256 $Unit
+            admission_id=$admissionId;admission_receipt_path=$admissionRelative;admission_receipt_sha256=Get-MorphospaceFileSha256 $admissionPath;terminal_binding_sha256=[string]$preparation.terminal_binding_sha256
+        }
+        terminal=[pscustomobject][ordered]@{
+            binding=$terminal
+            preparation=[pscustomobject][ordered]@{preparation_id=[string]$preparation.preparation_id;receipt_path=[string]$admission.preparation.receipt_path;receipt_sha256=[string]$admission.preparation.receipt_sha256;event_id=[string]$preparationEvent.event_id;transaction_id="$([string]$preparation.preparation_id)-prepared-transition"}
+            admission=[pscustomobject][ordered]@{event_id=[string]$admissionEvent.event_id;transaction_id=$admissionTx}
+        }
+        selector_evidence_verified=$false
+        selector_evidence_reused=$false
+        does_not_authorize=@('Releases only the exact stale Quick selector during Ready of the authenticated bounded successor; no selector evidence is claimed, verified, or reused, and no source, build, device, acceptance, or publication action is authorized.')
+    }
+    $schema=Join-Path (Split-Path $PSScriptRoot -Parent) 'schemas\terminal-validation-selection-release-v2.schema.json'
+    if(-not(Test-Json -Json ($proof|ConvertTo-Json -Depth 100 -Compress) -SchemaFile $schema)){throw 'Blocked-successor terminal selector release does not satisfy release-v2.'}
+    return $proof
+}
+
 function Get-MorphospaceProposedRetirementBinding {
     param(
         [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
@@ -2025,7 +2090,18 @@ function Invoke-MorphospaceWorkUnitAutomation {
         $terminalLedgerFailure = 'not-evaluated'
         $terminalReceiptValid = $false
         $terminalReceiptFailure = 'not-evaluated'
+        $terminalReleaseV2Failure = 'not-applicable'
+        if($Action-ceq'Ready'-and$beforeStatus-ceq'proposed'-and$null-ne$selectedUnitEntry){
+            try{
+                $successorRelativePath=$unitEntry.path.Substring(($resolvedWorkspace.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar).Length).Replace('\', '/')
+                $terminalSelectionReleaseProof=Get-MorphospaceBlockedSuccessorTerminalRelease -WorkspaceRoot $resolvedWorkspace -UnitId $UnitId -Unit $unit -UnitRelativePath $successorRelativePath -SelectedUnitEntry $selectedUnitEntry -State $state -Events $events -Selection $existingValidationSelection -RepositoryMap $repoMap -Timestamp $Timestamp
+                $terminalSelectionReleaseProofReference="receipts/$UnitId-terminal-validation-selection-release.json"
+                $releaseTerminalValidationSelection=$true
+                $terminalReleaseV2Failure=''
+            }catch{$terminalReleaseV2Failure=$_.Exception.Message}
+        }
         if (
+            -not $releaseTerminalValidationSelection -and
             $Action -ceq 'Ready' -and
             $beforeStatus -ceq 'proposed' -and
             [string]$checkpoint.tier -ceq 'quick' -and
@@ -2206,6 +2282,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
                 }
             }
         }
+        if(-not$releaseTerminalValidationSelection){
         $terminalReleaseChecks = [ordered]@{
             action_ready = $Action -ceq 'Ready'
             target_proposed = $beforeStatus -ceq 'proposed'
@@ -2230,7 +2307,8 @@ function Invoke-MorphospaceWorkUnitAutomation {
                 elseif ($_ -ceq 'receipt_contract') { "receipt_contract[$terminalReceiptFailure]" }
                 else { $_ }
             })
-            throw "Workspace state carries a normal-validation selection for a different unit; terminal release proof failed: $($terminalReleaseDetail -join ', ')."
+            throw "Workspace state carries a normal-validation selection for a different unit; terminal release proof failed: $($terminalReleaseDetail -join ', '); blocked-successor-v2[$terminalReleaseV2Failure]."
+        }
         }
     }
     $validationMatrix = @(New-MorphospaceValidationMatrix -Unit $unit -DeviceSerials $DeviceSerials)
@@ -3023,7 +3101,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
                 [pscustomobject][ordered]@{
                     path = $terminalSelectionReleaseProofReference
                     sha256 = Get-MorphospaceSha256Bytes -Bytes (ConvertTo-MorphospaceProtocolJsonBytes -Value $terminalSelectionReleaseProof)
-                    terminal_unit_id = [string]$terminalSelectionReleaseProof.terminal.unit_id
+                    terminal_unit_id = [string]$terminalSelectionReleaseProof.terminal.binding.unit_id
                 }
             } else { $null }
             push_plan = $pushPlan

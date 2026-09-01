@@ -507,6 +507,26 @@ transaction.
   The resulting proposal still follows ordinary Ready/Inspect/Claim. An
   admitted active unit must use `FreezeCandidate` before BeginValidation;
   historical units without the admission marker retain their existing route.
+- Replace a stale current active unit only through the reviewed
+  `active_unit_supersession.v1` request and `SupersedeActive`. Bind the exact
+  old and replacement unit bytes, project/state/ledger/map preimages, and the
+  complete dirty overlay. Any companion proposal is overlay-only: its exact
+  proposed bytes and paths may complete the overlay partition, but it remains
+  proposed and gains no current, Ready, Claim, validation, or acceptance
+  authority. Every old-unit repository is observed; omitted scope must be
+  clean. Recover an interrupted transaction only from its exact authenticated
+  ledger intent. Route detail to `docs/ACTIVE_UNIT_SUPERSESSION.md`.
+- For an immutable terminal validation-blocked unit whose bounded repair lies
+  inside its existing project and agent envelope but outside its frozen write
+  scope, use only `PrepareBlockedSuccessor`, then `AdmitDevelopmentUnit`, then
+  ordinary successor `Ready`. Preparation preserves the terminal unit and
+  creates a two-artifact source/preparation binding; admission permits exactly
+  the evidenced one-path repair. Release-v2 may clear only the authenticated
+  stale selector during that Ready transaction and must claim neither verified
+  nor reused selector evidence. It grants no source, build, device,
+  validation, acceptance, or publication authority. Interrupted preparation
+  resumes only from its exact ledger intent. See
+  `docs/ACTIVE_UNIT_SUPERSESSION.md`.
 - A frozen unit's validation array remains immutable. If a separately reviewed
   planning authority needs a Quick evidence route, use only the exact external
   normal-validation selector described in `docs/NORMAL_VALIDATION_SELECTOR.md`;

@@ -141,12 +141,12 @@ function Invoke-MorphospaceAdmitDevelopmentUnit {
     $targetState=Copy-AdmissionValue $state;$eventId=Get-AdmissionEventId ([string]$admission.admission_id);$targetState.last_event_id=$eventId;$transactionId=Get-AdmissionTransactionId ([string]$admission.admission_id)
     $intentPath=Invoke-AdmissionLedger { param($Root,$Id) Resolve-MorphospaceWorkspacePath $Root (Get-MorphospaceLedgerPath $Root $Id intent) } @($workspace,$transactionId)
     if([IO.File]::Exists($intentPath)){
-        [void](Test-MorphospacePreparedDevelopmentEnvelope -WorkspaceRoot $workspace -Admission $admission -Phase Freeze)
+        [void](Test-MorphospaceDevelopmentUnitPreparation -WorkspaceRoot $workspace -Admission $admission -Phase Freeze)
         $binding=Get-MorphospaceAdmissionIntentBinding $workspace $admission $inputHash $targetState $project $lockDoc;$completed=[IO.File]::Exists($binding.completion_absolute)
         if($Execute){[void](Complete-MorphospaceDevelopmentUnitAdmission $workspace $admission $inputHash $targetState $project $lockDoc -FaultAfter $FaultAfter)}
         return [pscustomobject][ordered]@{schema='rusty.morphospace.workflow.work_unit_automation_receipt.v2';project_id=$admission.project_id;unit_id=$admission.unit_id;action='AdmitDevelopmentUnit';timestamp=$Timestamp;executed=$Execute.IsPresent;transition=$(if($completed){'development-unit-already-admitted'}else{'development-unit-admitted'});status_before=$null;status_after='proposed';current_unit_before=$null;current_unit_after=$null;preservation=[ordered]@{git_mutation_performed=$false;device_mutation_performed=$false;remote_mutation_performed=$false};audit_receipt=[ordered]@{path=$outRelative;sha256=$inputHash};event_id=$(if($completed){$null}else{$eventId})}
     }
-    [void](Test-MorphospacePreparedDevelopmentEnvelope -WorkspaceRoot $workspace -Admission $admission -Phase Admission)
+    [void](Test-MorphospaceDevelopmentUnitPreparation -WorkspaceRoot $workspace -Admission $admission -Phase Admission)
     if($null -ne $state.current_unit -or $null -ne $state.next_ready_unit){throw 'Admission requires an idle project with no current or ready unit.'}
     if(-not $state.last_accepted_receipt){throw 'Admission requires preserved accepted predecessor evidence.'}
     foreach($check in @(@{v=$expected.state_sha256;a=(Get-MorphospaceCanonicalJsonSha256 $state);n='state'},@{v=$expected.events_sha256;a=(Get-MorphospaceFileSha256 $eventPath);n='ledger'})){if([string]$check.v -cne [string]$check.a){throw "Admission stale $($check.n) preimage."}}
