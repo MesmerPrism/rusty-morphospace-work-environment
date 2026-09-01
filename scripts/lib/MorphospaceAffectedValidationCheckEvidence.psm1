@@ -1,5 +1,6 @@
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot 'MorphospaceAffectedValidationDependencyClosure.psm1') -Force
 
 function Get-MorphospaceAffectedCheckBytesSha256 {
     param([Parameter(Mandatory = $true)][AllowEmptyCollection()][byte[]]$Bytes)
@@ -147,6 +148,7 @@ function Get-MorphospaceAffectedCheckRunnerSourceManifest {
         'scripts/Invoke-AffectedValidation.ps1',
         'scripts/lib/MorphospaceAffectedValidation.psm1',
         'scripts/lib/MorphospaceAffectedValidationCheckEvidence.psm1',
+        'scripts/lib/MorphospaceAffectedValidationDependencyClosure.psm1',
         'scripts/lib/MorphospaceProtocolCommon.psm1'
     ))
 }
@@ -159,8 +161,19 @@ function Get-MorphospaceAffectedCheckDependencyManifest {
         [Parameter(Mandatory = $true)][string]$RepositoryRoot
     )
 
+    return @((Get-MorphospaceAffectedCheckDependencyClosure -Check $Check -CompiledRegistry $CompiledRegistry -Inventory $Inventory -RepositoryRoot $RepositoryRoot).manifest)
+}
+
+function Get-MorphospaceAffectedCheckDependencyClosure {
+    param(
+        [Parameter(Mandatory = $true)][object]$Check,
+        [Parameter(Mandatory = $true)][object]$CompiledRegistry,
+        [Parameter(Mandatory = $true)][object]$Inventory,
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot
+    )
     $paths = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-    foreach ($path in @(Get-MorphospaceAffectedCheckStaticClosurePaths -RepositoryRoot $RepositoryRoot -Entrypoint ([string]$Check.command_path) -Inventory $Inventory)) { [void]$paths.Add([string]$path) }
+    $static = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $RepositoryRoot -Entrypoint ([string]$Check.command_path) -Inventory $Inventory -DynamicDeclarations @($CompiledRegistry.dependency_declarations)
+    foreach ($path in @($static.paths)) { [void]$paths.Add([string]$path) }
     foreach ($entry in @($Inventory.records)) {
         if ([string]$entry.type -cne 'blob' -or @('100644','100755') -cnotcontains [string]$entry.mode) { continue }
         foreach ($pathSetId in @($Check.consume_path_sets)) {
@@ -170,7 +183,10 @@ function Get-MorphospaceAffectedCheckDependencyManifest {
             if ($paths.Contains([string]$entry.path)) { break }
         }
     }
-    return @(Get-MorphospaceAffectedCheckManifestRecords -Inventory $Inventory -Paths @($paths) -Context 'Affected check dependency')
+    return [pscustomobject][ordered]@{
+        manifest=@(Get-MorphospaceAffectedCheckManifestRecords -Inventory $Inventory -Paths @($paths) -Context 'Affected check dependency')
+        resolution=$static.resolution
+    }
 }
 
 function Get-MorphospaceAffectedCheckEvidenceDefinition {
@@ -191,6 +207,7 @@ function New-MorphospaceAffectedCheckBinding {
         [Parameter(Mandatory = $true)][object]$Runner,
         [Parameter(Mandatory = $true)][object[]]$RunnerSourceManifest,
         [Parameter(Mandatory = $true)][object[]]$DependencyManifest,
+        [Parameter(Mandatory = $true)][object]$DependencyResolution,
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$PrerequisiteBindings
     )
     $prerequisites = @($PrerequisiteBindings)
@@ -210,6 +227,7 @@ function New-MorphospaceAffectedCheckBinding {
         runner=$Runner
         runner_source_manifest=@($RunnerSourceManifest)
         dependency_manifest=@($DependencyManifest)
+        dependency_resolution=$DependencyResolution
         prerequisite_bindings=@($prerequisites)
     }
 }
@@ -759,4 +777,4 @@ function Read-MorphospaceAffectedCheckInventory {
     return [pscustomobject][ordered]@{inventory=$inventory;inventory_sha256=Get-MorphospaceAffectedCheckBytesSha256 $inventoryBytes;candidate_snapshots=@($candidateSnapshots.ToArray())}
 }
 
-Export-ModuleMember -Function Get-MorphospaceAffectedCheckBytesSha256, Get-MorphospaceAffectedCheckRunnerBinding, Get-MorphospaceAffectedCheckRunnerSourceManifest, Get-MorphospaceAffectedCheckDependencyManifest, New-MorphospaceAffectedCheckBinding, Get-MorphospaceAffectedCheckArtifactReferences, New-MorphospaceAffectedCheckSnapshot, Get-MorphospaceAffectedCheckPhaseArtifacts, Restore-MorphospaceAffectedCheckArtifacts, Test-MorphospaceAffectedCheckReceipt, Find-MorphospaceAffectedReusableCheckReceipt, Write-MorphospaceAffectedCheckReceipt, Write-MorphospaceAffectedCheckCache, Write-MorphospaceAffectedCheckInventory, Read-MorphospaceAffectedCheckInventory
+Export-ModuleMember -Function Get-MorphospaceAffectedCheckBytesSha256, Get-MorphospaceAffectedCheckRunnerBinding, Get-MorphospaceAffectedCheckRunnerSourceManifest, Get-MorphospaceAffectedCheckDependencyManifest, Get-MorphospaceAffectedCheckDependencyClosure, New-MorphospaceAffectedCheckBinding, Get-MorphospaceAffectedCheckArtifactReferences, New-MorphospaceAffectedCheckSnapshot, Get-MorphospaceAffectedCheckPhaseArtifacts, Restore-MorphospaceAffectedCheckArtifacts, Test-MorphospaceAffectedCheckReceipt, Find-MorphospaceAffectedReusableCheckReceipt, Write-MorphospaceAffectedCheckReceipt, Write-MorphospaceAffectedCheckCache, Write-MorphospaceAffectedCheckInventory, Read-MorphospaceAffectedCheckInventory

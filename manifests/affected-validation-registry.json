@@ -2,10 +2,17 @@
   "schema": "rusty.morphospace.workflow.affected_validation_registry.v1",
   "registry_id": "work-environment-current-delta-v1",
   "repository_id": "MesmerPrism/rusty-morphospace-work-environment",
-  "revision": 3,
+  "revision": 4,
   "historical_aggregate": { "tier": "deep", "reusable_evidence": false, "full_history_required": true },
+  "dependency_declarations": [
+    { "importer": "scripts/Invoke-AffectedValidationSelfTestPhase.ps1", "variable": "gitPath", "count": 1, "classification": "authenticated-external-command" },
+    { "importer": "scripts/Invoke-ExternalValidationAuthorityForGitHub.ps1", "variable": "verifierFullPath", "count": 1, "classification": "authenticated-external-command" },
+    { "importer": "scripts/Test-AffectedValidationReuse.ps1", "variable": "PSCommandPath", "count": 9, "target_paths": ["scripts/Test-AffectedValidationReuse.ps1"] },
+    { "importer": "scripts/Test-TransitionLedger.ps1", "variable": "ModulePath", "count": 2, "target_paths": ["scripts/lib/MorphospaceTransitionLedger.psm1"] },
+    { "importer": "scripts/Test-WorkflowContracts.ps1", "variable": "focusedRecoveryPath", "count": 1, "target_paths": ["scripts/Test-HistoricalUnitAdoptionReconstruction.ps1", "scripts/Test-PlanningWorkspaceProjection.ps1", "scripts/Test-PublishedPlanningAuthorityAdoption.ps1"] }
+  ],
   "path_sets": [
-    { "path_set_id": "selector-trust-root", "patterns": ["scripts/Resolve-AffectedValidation.ps1", "scripts/Invoke-AffectedValidation.ps1", "scripts/Invoke-AffectedValidationSelfTestPhase.ps1", "scripts/Test-AffectedValidation.ps1", "scripts/Test-AffectedValidationInfrastructure.ps1", "scripts/Test-AffectedValidationTopology.ps1", "scripts/Test-AffectedValidationReuse.ps1", "scripts/lib/MorphospaceAffectedValidation.psm1", "scripts/lib/MorphospaceAffectedValidationCheckEvidence.psm1", ".github/workflows/**", ".gitattributes"] },
+    { "path_set_id": "selector-trust-root", "patterns": ["scripts/Resolve-AffectedValidation.ps1", "scripts/Invoke-AffectedValidation.ps1", "scripts/Invoke-AffectedValidationSelfTestPhase.ps1", "scripts/Test-AffectedValidation.ps1", "scripts/Test-AffectedValidationInfrastructure.ps1", "scripts/Test-AffectedValidationTopology.ps1", "scripts/Test-AffectedValidationReuse.ps1", "scripts/lib/MorphospaceAffectedValidation.psm1", "scripts/lib/MorphospaceAffectedValidationCheckEvidence.psm1", "scripts/lib/MorphospaceAffectedValidationDependencyClosure.psm1", ".github/workflows/**", ".gitattributes"] },
     { "path_set_id": "affected-validation-contract", "patterns": ["schemas/affected-validation-*.schema.json", "manifests/affected-validation-registry.json"] },
     { "path_set_id": "authority-runner-fast-fixture", "patterns": ["scripts/Test-ValidationAuthorityRunnerFast.ps1"] },
     { "path_set_id": "blocked-supersession-validation-test", "patterns": ["scripts/Test-BlockedSupersessionTerminalValidation.ps1"] },

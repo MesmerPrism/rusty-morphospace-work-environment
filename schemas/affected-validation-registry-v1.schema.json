@@ -3,13 +3,40 @@
   "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/affected-validation-registry-v1.schema.json",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "registry_id", "repository_id", "revision", "historical_aggregate", "path_sets", "checks", "always_run_check_ids", "deep_escalation_path_sets", "claims"],
+  "required": ["schema", "registry_id", "repository_id", "revision", "historical_aggregate", "dependency_declarations", "path_sets", "checks", "always_run_check_ids", "deep_escalation_path_sets", "claims"],
   "properties": {
     "schema": { "const": "rusty.morphospace.workflow.affected_validation_registry.v1" },
     "registry_id": { "$ref": "#/$defs/id" },
     "repository_id": { "type": "string", "minLength": 3, "maxLength": 256, "pattern": "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$" },
     "revision": { "type": "integer", "minimum": 1 },
     "historical_aggregate": { "type": "object", "additionalProperties": false, "required": ["tier", "reusable_evidence", "full_history_required"], "properties": { "tier": { "const": "deep" }, "reusable_evidence": { "const": false }, "full_history_required": { "const": true } } },
+    "dependency_declarations": {
+      "type": "array", "maxItems": 256,
+      "items": {
+        "oneOf": [
+          {
+            "type": "object", "additionalProperties": false,
+            "required": ["importer", "variable", "count", "target_paths"],
+            "properties": {
+              "importer": { "$ref": "#/$defs/scriptPath" },
+              "variable": { "$ref": "#/$defs/variable" },
+              "count": { "type": "integer", "minimum": 1, "maximum": 256 },
+              "target_paths": { "type": "array", "minItems": 1, "maxItems": 256, "uniqueItems": true, "items": { "$ref": "#/$defs/scriptPath" } }
+            }
+          },
+          {
+            "type": "object", "additionalProperties": false,
+            "required": ["importer", "variable", "count", "classification"],
+            "properties": {
+              "importer": { "$ref": "#/$defs/scriptPath" },
+              "variable": { "$ref": "#/$defs/variable" },
+              "count": { "type": "integer", "minimum": 1, "maximum": 256 },
+              "classification": { "const": "authenticated-external-command" }
+            }
+          }
+        ]
+      }
+    },
     "path_sets": {
       "type": "array", "minItems": 1, "maxItems": 256,
       "items": {
@@ -64,6 +91,8 @@
     "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,95}$" },
     "idArray": { "type": "array", "maxItems": 256, "items": { "$ref": "#/$defs/id" } },
     "path": { "type": "string", "minLength": 1, "maxLength": 512, "pattern": "^[^\\\\:]+$" },
+    "scriptPath": { "type": "string", "minLength": 12, "maxLength": 512, "pattern": "^scripts/[^\\\\:]+\\.ps(?:m)?1$" },
+    "variable": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z_][A-Za-z0-9_:.-]*$" },
     "pattern": { "type": "string", "minLength": 1, "maxLength": 512, "pattern": "^[^\\\\:]+$" }
   }
 }

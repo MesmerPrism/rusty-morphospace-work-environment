@@ -291,6 +291,25 @@ function Test-MorphospaceAffectedValidationRegistry {
         }
         $pathSetMap[[string]$pathSet.path_set_id] = @($patternList.ToArray())
     }
+    $declarationKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    $previousDeclarationKey = $null
+    foreach ($declaration in @($Registry.dependency_declarations)) {
+        $importer = ConvertTo-MorphospaceAffectedPath -Path ([string]$declaration.importer)
+        $variable = [string]$declaration.variable
+        $key = "$importer|$variable"
+        if ($importer -cnotmatch '^scripts/.+\.ps(?:m)?1$' -or $variable -cnotmatch '^[A-Za-z_][A-Za-z0-9_:.-]*$' -or [int]$declaration.count -lt 1 -or -not $declarationKeys.Add($key)) { throw "Affected-validation dependency declaration has an invalid or duplicate identity: $key" }
+        if ($null -ne $previousDeclarationKey -and [StringComparer]::Ordinal.Compare($previousDeclarationKey,$key) -ge 0) { throw 'Affected-validation dependency declarations are not in strict ordinal order.' }
+        if (-not [IO.File]::Exists((Join-Path $RepositoryRoot $importer))) { throw "Affected-validation dependency declaration importer is absent: $importer" }
+        if ($null -ne $declaration.PSObject.Properties['target_paths']) {
+            $previousTarget = $null
+            foreach ($targetValue in @($declaration.target_paths)) {
+                $target = ConvertTo-MorphospaceAffectedPath -Path ([string]$targetValue)
+                if ($target -cnotmatch '^scripts/.+\.ps(?:m)?1$' -or ($null -ne $previousTarget -and [StringComparer]::Ordinal.Compare($previousTarget,$target) -ge 0) -or -not [IO.File]::Exists((Join-Path $RepositoryRoot $target))) { throw "Affected-validation dependency declaration target is absent, duplicate, or not ordinal: $key -> $target" }
+                $previousTarget = $target
+            }
+        } elseif ([string]$declaration.classification -cne 'authenticated-external-command') { throw "Affected-validation dependency declaration classification is unsupported: $key" }
+        $previousDeclarationKey = $key
+    }
     $checkMap = @{}
     foreach ($check in @($Registry.checks)) {
         $checkId = [string]$check.check_id
@@ -360,7 +379,7 @@ function Test-MorphospaceAffectedValidationRegistry {
         [void]$visited.Add($Id)
     }
     foreach ($id in @($checkMap.Keys)) { Visit-AffectedCheck ([string]$id) }
-    return [pscustomobject]@{ path_sets = $pathSetMap; checks = $checkMap }
+    return [pscustomobject]@{ path_sets = $pathSetMap; checks = $checkMap; dependency_declarations = @($Registry.dependency_declarations) }
 }
 
 function Get-MorphospaceAffectedTopologicalOrder {

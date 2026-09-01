@@ -868,8 +868,9 @@ foreach ($selectedCheck in $selected) {
         if (-not $bindings.ContainsKey($prerequisite)) { throw "Affected-validation selected order omitted prerequisite binding '$prerequisite' before '$($check.check_id)'." }
         $prerequisiteBindings.Add([pscustomobject][ordered]@{check_id=$prerequisite;binding_sha256=[string]$bindings[$prerequisite]})
     }
-    $dependencyManifest = @(Get-MorphospaceAffectedCheckDependencyManifest -Check $check -CompiledRegistry $compiledRegistry -Inventory $inventory -RepositoryRoot $root)
-    $binding = New-MorphospaceAffectedCheckBinding -Repository ([string]$plan.repository) -Platform $Platform -Check $check -Runner $runnerBinding -RunnerSourceManifest $runnerSourceManifest -DependencyManifest $dependencyManifest -PrerequisiteBindings @($prerequisiteBindings.ToArray())
+    $dependencyClosure = Get-MorphospaceAffectedCheckDependencyClosure -Check $check -CompiledRegistry $compiledRegistry -Inventory $inventory -RepositoryRoot $root
+    $dependencyManifest = @($dependencyClosure.manifest)
+    $binding = New-MorphospaceAffectedCheckBinding -Repository ([string]$plan.repository) -Platform $Platform -Check $check -Runner $runnerBinding -RunnerSourceManifest $runnerSourceManifest -DependencyManifest $dependencyManifest -DependencyResolution $dependencyClosure.resolution -PrerequisiteBindings @($prerequisiteBindings.ToArray())
     $bindingSha = Get-MorphospaceCanonicalJsonSha256 -Value $binding
     $bindings[[string]$check.check_id] = $bindingSha
     $integrityPathSet = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)

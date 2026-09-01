@@ -2,6 +2,7 @@
 param(
     [switch]$BatchSelfTestOnly,
     [switch]$GraphSelfTestOnly,
+    [switch]$DependencyClosureSelfTestOnly,
     [ValidateSet('graph-import-closure','executor-pass-schema','executor-damage','selection-scenarios','trust-self-executor','trust-routing-contracts','trust-proportional-mappings','trust-damage-final')]
     [string]$SelfTestPhase,
     [string]$SelectionScenarioEvidenceRoot
@@ -13,6 +14,7 @@ $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceAffectedValidation.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceAffectedValidationCheckEvidence.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceAffectedValidationDependencyClosure.psm1') -Force
 
 $selectorPhaseCheckIds = @(
     'affected-selector-graph-import-closure',
@@ -1135,6 +1137,67 @@ $checks = @(
     }
     return $audit
 }
+function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]$Registry) {
+    $fixture = Join-Path ([IO.Path]::GetTempPath()) ('morphospace-affected-per-check-closure-' + [guid]::NewGuid().ToString('N'))
+    [void][IO.Directory]::CreateDirectory((Join-Path $fixture 'scripts'))
+    try {
+        Write-Utf8 (Join-Path $fixture 'scripts/Entry.ps1') "Import-Module (Join-Path `$PSScriptRoot 'Static.psm1') -Force`nif (`$true) { Import-Module `$DynamicPath -Force }`n"
+        Write-Utf8 (Join-Path $fixture 'scripts/Static.psm1') "Set-StrictMode -Version 2.0`n"
+        Write-Utf8 (Join-Path $fixture 'scripts/Dynamic.psm1') "Set-StrictMode -Version 2.0`n"
+        Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "& `$UnknownRunner`n"
+        Write-Utf8 (Join-Path $fixture 'scripts/Unrelated.ps1') "'unrelated'`n"
+        $records = @('scripts/Dynamic.psm1','scripts/Entry.ps1','scripts/Fallback.ps1','scripts/Static.psm1','scripts/Unrelated.ps1') | ForEach-Object {
+            [pscustomobject][ordered]@{mode='100644';type='blob';blob=('0' * 40);path=$_}
+        }
+        $inventory = [pscustomobject][ordered]@{records=@($records)}
+        $declaration = [pscustomobject][ordered]@{importer='scripts/Entry.ps1';variable='DynamicPath';count=1;target_paths=@('scripts/Dynamic.psm1')}
+        $exact = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @($declaration)
+        Assert-True (($exact.paths -join ',') -ceq 'scripts/Dynamic.psm1,scripts/Entry.ps1,scripts/Static.psm1') 'Per-check dependency closure did not retain only its exact static and declared dynamic script closure.'
+        Assert-True ([string]$exact.resolution.mode -ceq 'exact' -and @($exact.resolution.used_declarations).Count -eq 1 -and @($exact.resolution.fallback_reasons).Count -eq 0) 'Per-check exact dependency resolution did not bind its used declaration and empty fallback reason set.'
+        $fallback = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
+        Assert-True ([string]$fallback.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($fallback.paths).Count -eq 5) 'Unknown per-check dispatch did not conservatively bind every tracked script.'
+        Assert-True (@($fallback.resolution.fallback_reasons | Where-Object { [string]$_.importer -ceq 'scripts/Fallback.ps1' -and [string]$_.variable -ceq 'UnknownRunner' -and [string]$_.kind -ceq 'unresolved-invocation' }).Count -eq 1) 'Unknown per-check dispatch did not publish its exact fallback reason.'
+        $countDamage = $declaration | ConvertTo-Json -Depth 8 | ConvertFrom-Json -Depth 8 -DateKind String; $countDamage.count = 2
+        Assert-AffectedThrows { Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @($countDamage) } '*declaration count changed*' 'Per-check dependency closure accepted dynamic declaration count drift.'
+        $duplicateDamage = @($declaration,$declaration)
+        Assert-AffectedThrows { Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations $duplicateDamage } '*invalid or duplicate identity*' 'Per-check dependency closure accepted a duplicate dynamic declaration.'
+
+        $compiled = Test-MorphospaceAffectedValidationRegistry -Registry $Registry -RepositoryRoot $Root -SchemaPath (Join-Path $Root 'schemas/affected-validation-registry-v1.schema.json')
+        $head = (& git -C $Root rev-parse HEAD).Trim()
+        if ($LASTEXITCODE -ne 0 -or $head -cnotmatch '^[0-9a-f]{40}$') { throw 'Per-check PR134 regression could not resolve the exact adopted HEAD.' }
+        $realInventory = Get-MorphospaceAffectedTreeInventory -RepositoryRoot $Root -Commit $head
+        $ledgerCorrectionPaths = @(
+            'scripts/Test-BlockedSupersessionTerminalValidation.ps1',
+            'scripts/Test-OwnershipAuthority.ps1',
+            'scripts/Test-TransitionLedger.ps1',
+            'scripts/lib/MorphospaceBlockedSupersessionTerminalValidation.psm1',
+            'scripts/lib/MorphospaceOwnership.psm1',
+            'scripts/lib/MorphospaceTransitionLedger.psm1',
+            'scripts/lib/MorphospaceValidationAuthority.psm1'
+        )
+        $safeIds = @('project-isolation','protocol-foundation','skill-templates')
+        $digests = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        $timings = [Collections.Generic.List[object]]::new()
+        foreach ($checkId in $safeIds) {
+            $clock = [Diagnostics.Stopwatch]::StartNew()
+            $closure = Get-MorphospaceAffectedCheckDependencyClosure -Check $compiled.checks[$checkId] -CompiledRegistry $compiled -Inventory $realInventory -RepositoryRoot $Root
+            $clock.Stop()
+            $intersection = @($closure.manifest.path | Where-Object { $ledgerCorrectionPaths -ccontains [string]$_ })
+            Assert-True ($intersection.Count -eq 0 -and [string]$closure.resolution.mode -ceq 'exact' -and @($closure.manifest).Count -lt 50) "PR134-style ledger-only correction over-invalidated unchanged check '$checkId'."
+            [void]$digests.Add((Get-MorphospaceCanonicalJsonSha256 -Value @($closure.manifest)))
+            [void]$timings.Add([pscustomobject][ordered]@{check_id=$checkId;elapsed_ms=[long]$clock.Elapsed.TotalMilliseconds;dependency_count=@($closure.manifest).Count})
+        }
+        Assert-True ($digests.Count -eq $safeIds.Count) 'Per-check safe corpus collapsed to one common aggregate dependency identity.'
+        $consumerClock = [Diagnostics.Stopwatch]::StartNew()
+        $consumer = Get-MorphospaceAffectedCheckDependencyClosure -Check $compiled.checks['ownership-authority'] -CompiledRegistry $compiled -Inventory $realInventory -RepositoryRoot $Root
+        $consumerClock.Stop()
+        Assert-True (@($consumer.manifest.path | Where-Object { $ledgerCorrectionPaths -ccontains [string]$_ }).Count -ge 2) 'A real ownership consumer did not invalidate for the PR134-style ledger/authority correction.'
+        [void]$timings.Add([pscustomobject][ordered]@{check_id='ownership-authority';elapsed_ms=[long]$consumerClock.Elapsed.TotalMilliseconds;dependency_count=@($consumer.manifest).Count})
+        Write-Host "Per-check dependency closure passed: corpus=$((@($timings | ForEach-Object { "$($_.check_id):$($_.dependency_count):$($_.elapsed_ms)ms" }) -join ','))"
+    } finally {
+        if ([IO.Directory]::Exists($fixture)) { Remove-Item -LiteralPath $fixture -Recurse -Force }
+    }
+}
 function Invoke-WorkflowSelectionGate([string]$JobBody, [string]$SelectionVariable, [string]$SelectionValue) {
     $run = [regex]::Match($JobBody, '(?ms)^        run: \|\r?\n(?<script>.*?)(?=^      - |\z)')
     if (-not $run.Success) { throw 'Workflow job lacks a first run script.' }
@@ -1156,10 +1219,16 @@ if ($BatchSelfTestOnly) {
     Invoke-AffectedBatchSelfTest
     return
 }
+if ($DependencyClosureSelfTestOnly) {
+    $focusedRegistry = Read-MorphospaceProtocolJson -Path (Join-Path $repoRoot 'manifests/affected-validation-registry.json')
+    Invoke-AffectedPerCheckDependencyClosureSelfTest -Root $repoRoot -Registry $focusedRegistry
+    return
+}
 if ($GraphSelfTestOnly) {
     $focusedRegistry = Read-MorphospaceProtocolJson -Path (Join-Path $repoRoot 'manifests/affected-validation-registry.json')
     [void](Test-MorphospaceAffectedValidationRegistry -Registry $focusedRegistry -RepositoryRoot $repoRoot -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-registry-v1.schema.json'))
     [void](Invoke-AffectedGraphIndexSelfTest -Root $repoRoot -Registry $focusedRegistry)
+    Invoke-AffectedPerCheckDependencyClosureSelfTest -Root $repoRoot -Registry $focusedRegistry
     return
 }
 
@@ -1179,6 +1248,7 @@ if ($runGraphPhase) {
     $focusedRegistry = Read-MorphospaceProtocolJson -Path (Join-Path $repoRoot 'manifests/affected-validation-registry.json')
     [void](Test-MorphospaceAffectedValidationRegistry -Registry $focusedRegistry -RepositoryRoot $repoRoot -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-registry-v1.schema.json'))
     $focusedAudit = Invoke-AffectedGraphIndexSelfTest -Root $repoRoot -Registry $focusedRegistry
+    Invoke-AffectedPerCheckDependencyClosureSelfTest -Root $repoRoot -Registry $focusedRegistry
     if (-not [string]::IsNullOrWhiteSpace($phaseRoot)) {
         $phaseRoot = [IO.Path]::GetFullPath($phaseRoot)
         if (-not [IO.Directory]::Exists($phaseRoot)) { [void][IO.Directory]::CreateDirectory($phaseRoot) }
@@ -1479,6 +1549,7 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value ([pscust
         'scripts/Invoke-AffectedValidation.ps1',
         'scripts/lib/MorphospaceAffectedValidation.psm1',
         'scripts/lib/MorphospaceAffectedValidationCheckEvidence.psm1',
+        'scripts/lib/MorphospaceAffectedValidationDependencyClosure.psm1',
         'scripts/lib/MorphospaceProtocolCommon.psm1'
     )) {
         $target = Join-Path $fixture $runnerSourcePath
@@ -1489,15 +1560,22 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value ([pscust
     Write-Utf8 (Join-Path $fixture 'schemas/DocumentationLinksInput.schema.json') "{}`n"
     Write-Utf8 (Join-Path $fixture 'schemas/FallbackDynamicInput.schema.json') "{}`n"
     Write-Utf8 (Join-Path $fixture 'scripts/FallbackDynamicTarget.ps1') "[void](Get-Content -LiteralPath (Join-Path `$PSScriptRoot '../schemas/FallbackDynamicInput.schema.json') -Raw)`n"
-    Write-Utf8 (Join-Path $fixture 'scripts/Test-DocumentationLinks.ps1') "if (@(Get-ChildItem Env: | Where-Object { ([string]`$_.Name).StartsWith('GIT_',[StringComparison]::OrdinalIgnoreCase) }).Count -ne 0) { throw 'Affected child retained an inherited Git environment override.' }`n`$ModulePath = Join-Path `$PSScriptRoot 'lib/DocumentationLinksDependency.psm1'`nImport-Module `$ModulePath -Force`n`$SchemaRoot = Join-Path `$PSScriptRoot '../schemas'`n[void](Join-Path `$SchemaRoot 'DocumentationLinksInput.schema.json')`n[void](Get-DocumentationLinksDependency)`n"
+    Write-Utf8 (Join-Path $fixture 'scripts/Test-DocumentationLinks.ps1') "param([string]`$UnresolvedModulePath)`nif (@(Get-ChildItem Env: | Where-Object { ([string]`$_.Name).StartsWith('GIT_',[StringComparison]::OrdinalIgnoreCase) }).Count -ne 0) { throw 'Affected child retained an inherited Git environment override.' }`n`$ModulePath = Join-Path `$PSScriptRoot 'lib/DocumentationLinksDependency.psm1'`nImport-Module `$ModulePath -Force`nif (-not [string]::IsNullOrWhiteSpace(`$UnresolvedModulePath)) { Import-Module `$UnresolvedModulePath -Force }`n`$SchemaRoot = Join-Path `$PSScriptRoot '../schemas'`n[void](Join-Path `$SchemaRoot 'DocumentationLinksInput.schema.json')`n[void](Get-DocumentationLinksDependency)`n"
     Write-Utf8 (Join-Path $fixture 'scripts/Test-AffectedLeafBindingFixture.ps1') "'leaf binding fixture'`n"
     Write-Utf8 (Join-Path $fixture 'scripts/Test-PublicBoundary.ps1') "if (-not [string]::IsNullOrWhiteSpace(`$env:RUSTY_TEST_MUTATE_PRIOR)) { [IO.File]::WriteAllText(`$env:RUSTY_TEST_MUTATE_PRIOR,'mutated after parent snapshot',[Text.UTF8Encoding]::new(`$false)) }`n"
     $fixtureRegistry = Read-MorphospaceProtocolJson -Path $registryPath
+    $fixtureRegistry.dependency_declarations = @()
     $leafBindingCheck = @($fixtureRegistry.checks | Where-Object check_id -ceq 'documentation-links')[0] | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64 -DateKind String
     $leafBindingCheck.check_id = 'leaf-binding-fixture'
     $leafBindingCheck.command_path = 'scripts/Test-AffectedLeafBindingFixture.ps1'
+    $leafBindingCheck.consume_path_sets = @('leaf-binding-fixture')
     $leafBindingCheck.provides_contracts = @()
+    $fixtureRegistry.path_sets = @($fixtureRegistry.path_sets) + @([pscustomobject][ordered]@{path_set_id='leaf-binding-fixture';patterns=@('scripts/Test-AffectedLeafBindingFixture.ps1')})
     $fixtureRegistry.checks = @($fixtureRegistry.checks) + @($leafBindingCheck)
+    $fixtureRegistry.checks | Where-Object check_id -ceq 'public-boundary' | ForEach-Object {
+        $_.trigger_path_sets = @($_.trigger_path_sets) + @('leaf-binding-fixture')
+        $_.consume_path_sets = @($_.consume_path_sets) + @('leaf-binding-fixture')
+    }
     $fixtureRegistry.path_sets | Where-Object path_set_id -ceq 'documentation' | ForEach-Object { $_.patterns = @($_.patterns) + @('scripts/Test-AffectedLeafBindingFixture.ps1') }
     # Keep the timeout damage cell bounded while allowing one contained child
     # PowerShell startup on a loaded host; the deliberate twelve-second command
@@ -1583,6 +1661,7 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value ([pscust
             $leafBindingReceiptValue = Get-Content -LiteralPath $leafBindingReceipt[0].FullName -Raw | ConvertFrom-Json -Depth 64 -DateKind String
             Assert-True (@($documentationReceiptValue.binding.prerequisite_bindings).Count -eq 0) 'Execution-order dependency entered the reusable documentation evidence binding.'
             Assert-True (@($leafBindingReceiptValue.binding.prerequisite_bindings).Count -eq 0) 'Execution-order dependency entered the reusable focused leaf evidence binding.'
+            Assert-True ([string]$leafBindingReceiptValue.binding.dependency_resolution.mode -ceq 'exact' -and @($leafBindingReceiptValue.binding.dependency_resolution.fallback_reasons).Count -eq 0 -and @($leafBindingReceiptValue.binding.dependency_manifest.path) -cnotcontains 'scripts/Test-PublicBoundary.ps1') 'Independent leaf binding retained the aggregate all-scripts closure.'
             Assert-True (@($leafBindingReceiptValue.binding.runner_source_manifest.path) -cnotcontains 'manifests/affected-validation-registry.json' -and @($leafBindingReceiptValue.binding.runner_source_manifest.path) -ccontains 'schemas/affected-validation-plan-v1.schema.json') 'Leaf runner-source binding retained raw registry bytes or omitted the consumed plan schema.'
             $originalRegistry = Read-MorphospaceProtocolJson -Path (Join-Path $fixture 'manifests/affected-validation-registry.json')
             $originalReceiptSha256 = Get-MorphospaceAffectedCheckBytesSha256 ([IO.File]::ReadAllBytes($leafBindingReceipt[0].FullName))
@@ -1607,8 +1686,9 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value ([pscust
                 $schedulingInventory = Get-MorphospaceAffectedTreeInventory -RepositoryRoot $fixture -Commit $schedulingHead
                 $schedulingRunnerManifest = @(Get-MorphospaceAffectedCheckRunnerSourceManifest -Inventory $schedulingInventory)
                 $schedulingLeafCheck = @($schedulingRegistry.checks | Where-Object check_id -ceq 'leaf-binding-fixture')[0]
-                $schedulingDependencyManifest = @(Get-MorphospaceAffectedCheckDependencyManifest -Check $schedulingLeafCheck -CompiledRegistry $schedulingCompiled -Inventory $schedulingInventory -RepositoryRoot $fixture)
-                $schedulingBinding = New-MorphospaceAffectedCheckBinding -Repository ([string]$leafBindingReceiptValue.binding.repository) -Platform ([string]$leafBindingReceiptValue.binding.platform) -Check $schedulingLeafCheck -Runner $leafBindingReceiptValue.binding.runner -RunnerSourceManifest $schedulingRunnerManifest -DependencyManifest $schedulingDependencyManifest -PrerequisiteBindings @()
+                $schedulingDependencyClosure = Get-MorphospaceAffectedCheckDependencyClosure -Check $schedulingLeafCheck -CompiledRegistry $schedulingCompiled -Inventory $schedulingInventory -RepositoryRoot $fixture
+                $schedulingDependencyManifest = @($schedulingDependencyClosure.manifest)
+                $schedulingBinding = New-MorphospaceAffectedCheckBinding -Repository ([string]$leafBindingReceiptValue.binding.repository) -Platform ([string]$leafBindingReceiptValue.binding.platform) -Check $schedulingLeafCheck -Runner $leafBindingReceiptValue.binding.runner -RunnerSourceManifest $schedulingRunnerManifest -DependencyManifest $schedulingDependencyManifest -DependencyResolution $schedulingDependencyClosure.resolution -PrerequisiteBindings @()
                 $schedulingBindingSha256 = Get-MorphospaceCanonicalJsonSha256 -Value $schedulingBinding
                 Assert-True ((ConvertTo-MorphospaceCanonicalJson -Value $schedulingRunnerManifest) -ceq (ConvertTo-MorphospaceCanonicalJson -Value @($leafBindingReceiptValue.binding.runner_source_manifest))) 'Scheduling-only second head changed the rebuilt leaf-compatible runner manifest.'
                 Assert-True ((ConvertTo-MorphospaceCanonicalJson -Value $schedulingDependencyManifest) -ceq (ConvertTo-MorphospaceCanonicalJson -Value @($leafBindingReceiptValue.binding.dependency_manifest))) 'Scheduling-only second head changed the rebuilt leaf dependency manifest.'
@@ -1628,7 +1708,8 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value ([pscust
                 Assert-True ((ConvertTo-MorphospaceCanonicalJson -Value $semanticLeafCheck) -ceq (ConvertTo-MorphospaceCanonicalJson -Value $semanticExpectedCheck)) 'Semantic two-head fixture changed more than prerequisite_checks.'
                 $semanticCompiled = Test-MorphospaceAffectedValidationRegistry -Registry $semanticRegistry -RepositoryRoot $fixture -SchemaPath (Join-Path $fixture 'schemas/affected-validation-registry-v1.schema.json')
                 $semanticInventory = Get-MorphospaceAffectedTreeInventory -RepositoryRoot $fixture -Commit $semanticHead
-                $semanticBinding = New-MorphospaceAffectedCheckBinding -Repository ([string]$leafBindingReceiptValue.binding.repository) -Platform ([string]$leafBindingReceiptValue.binding.platform) -Check $semanticLeafCheck -Runner $leafBindingReceiptValue.binding.runner -RunnerSourceManifest @(Get-MorphospaceAffectedCheckRunnerSourceManifest -Inventory $semanticInventory) -DependencyManifest @(Get-MorphospaceAffectedCheckDependencyManifest -Check $semanticLeafCheck -CompiledRegistry $semanticCompiled -Inventory $semanticInventory -RepositoryRoot $fixture) -PrerequisiteBindings @([pscustomobject][ordered]@{check_id='public-boundary';binding_sha256=[string]$publicBoundaryReceiptValue.binding_sha256})
+                $semanticDependencyClosure = Get-MorphospaceAffectedCheckDependencyClosure -Check $semanticLeafCheck -CompiledRegistry $semanticCompiled -Inventory $semanticInventory -RepositoryRoot $fixture
+                $semanticBinding = New-MorphospaceAffectedCheckBinding -Repository ([string]$leafBindingReceiptValue.binding.repository) -Platform ([string]$leafBindingReceiptValue.binding.platform) -Check $semanticLeafCheck -Runner $leafBindingReceiptValue.binding.runner -RunnerSourceManifest @(Get-MorphospaceAffectedCheckRunnerSourceManifest -Inventory $semanticInventory) -DependencyManifest @($semanticDependencyClosure.manifest) -DependencyResolution $semanticDependencyClosure.resolution -PrerequisiteBindings @([pscustomobject][ordered]@{check_id='public-boundary';binding_sha256=[string]$publicBoundaryReceiptValue.binding_sha256})
                 $semanticBindingSha256 = Get-MorphospaceCanonicalJsonSha256 -Value $semanticBinding
                 $semanticReuse = Find-MorphospaceAffectedReusableCheckReceipt -PriorEvidenceDirectory $firstCheckRoot -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json') -ExpectedBinding $semanticBinding -ExpectedBindingSha256 $semanticBindingSha256 -RepositoryRoot $fixture -CurrentHeadCommit $semanticHead -CandidateReceiptPaths @($leafBindingReceipt[0].FullName)
                 Assert-True ($semanticBindingSha256 -cne [string]$leafBindingReceiptValue.binding_sha256 -and $null -eq $semanticReuse) 'Semantic prerequisite change at a second head reused earlier leaf evidence.'
@@ -1645,7 +1726,8 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value ([pscust
                 Assert-True ((ConvertTo-MorphospaceCanonicalJson -Value $executionLeafCheck) -ceq (ConvertTo-MorphospaceCanonicalJson -Value $executionExpectedCheck)) 'Execution-relevant two-head fixture changed more than budget_seconds from the scheduling head.'
                 $executionCompiled = Test-MorphospaceAffectedValidationRegistry -Registry $executionRegistry -RepositoryRoot $fixture -SchemaPath (Join-Path $fixture 'schemas/affected-validation-registry-v1.schema.json')
                 $executionInventory = Get-MorphospaceAffectedTreeInventory -RepositoryRoot $fixture -Commit $executionHead
-                $executionBinding = New-MorphospaceAffectedCheckBinding -Repository ([string]$leafBindingReceiptValue.binding.repository) -Platform ([string]$leafBindingReceiptValue.binding.platform) -Check $executionLeafCheck -Runner $leafBindingReceiptValue.binding.runner -RunnerSourceManifest @(Get-MorphospaceAffectedCheckRunnerSourceManifest -Inventory $executionInventory) -DependencyManifest @(Get-MorphospaceAffectedCheckDependencyManifest -Check $executionLeafCheck -CompiledRegistry $executionCompiled -Inventory $executionInventory -RepositoryRoot $fixture) -PrerequisiteBindings @()
+                $executionDependencyClosure = Get-MorphospaceAffectedCheckDependencyClosure -Check $executionLeafCheck -CompiledRegistry $executionCompiled -Inventory $executionInventory -RepositoryRoot $fixture
+                $executionBinding = New-MorphospaceAffectedCheckBinding -Repository ([string]$leafBindingReceiptValue.binding.repository) -Platform ([string]$leafBindingReceiptValue.binding.platform) -Check $executionLeafCheck -Runner $leafBindingReceiptValue.binding.runner -RunnerSourceManifest @(Get-MorphospaceAffectedCheckRunnerSourceManifest -Inventory $executionInventory) -DependencyManifest @($executionDependencyClosure.manifest) -DependencyResolution $executionDependencyClosure.resolution -PrerequisiteBindings @()
                 $executionBindingSha256 = Get-MorphospaceCanonicalJsonSha256 -Value $executionBinding
                 $executionReuse = Find-MorphospaceAffectedReusableCheckReceipt -PriorEvidenceDirectory $firstCheckRoot -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json') -ExpectedBinding $executionBinding -ExpectedBindingSha256 $executionBindingSha256 -RepositoryRoot $fixture -CurrentHeadCommit $executionHead -CandidateReceiptPaths @($leafBindingReceipt[0].FullName)
                 Assert-True ($executionBindingSha256 -cne [string]$leafBindingReceiptValue.binding_sha256 -and $null -eq $executionReuse) 'Execution-relevant change at a second head reused earlier leaf evidence.'
@@ -1654,6 +1736,7 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value ([pscust
             }
             Assert-True (@($documentationReceiptValue.binding.dependency_manifest.path) -ccontains 'scripts/lib/DocumentationLinksDependency.psm1') 'Affected leaf dependency manifest omitted a tracked transitive imported module.'
             Assert-True (@($documentationReceiptValue.binding.dependency_manifest.path) -ccontains 'schemas/DocumentationLinksInput.schema.json') 'Affected leaf dependency manifest omitted a tracked schema/data input.'
+            Assert-True ([string]$documentationReceiptValue.binding.dependency_resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($documentationReceiptValue.binding.dependency_resolution.fallback_reasons | Where-Object { $_.importer -ceq 'scripts/Test-DocumentationLinks.ps1' -and $_.variable -ceq 'UnresolvedModulePath' -and $_.kind -ceq 'unresolved-import' }).Count -eq 1) 'Unknown dynamic Import-Module did not bind its exact all-scripts fallback reason.'
             Assert-True (@($documentationReceiptValue.binding.dependency_manifest.path) -ccontains 'scripts/Test-PublicBoundary.ps1') 'Dynamic Import-Module did not conservatively bind unresolved tracked PowerShell sources.'
             Assert-True (@($documentationReceiptValue.binding.dependency_manifest.path) -ccontains 'scripts/FallbackDynamicTarget.ps1' -and @($documentationReceiptValue.binding.dependency_manifest.path) -ccontains 'schemas/FallbackDynamicInput.schema.json') 'Dynamic fallback did not traverse its added target into the tracked non-PowerShell input.'
             $schemaDamagedBinding = $documentationReceiptValue.binding | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64 -DateKind String
@@ -1663,6 +1746,11 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value ([pscust
             $schemaDamagedSha = Get-MorphospaceCanonicalJsonSha256 -Value $schemaDamagedBinding
             $schemaReuse = Find-MorphospaceAffectedReusableCheckReceipt -PriorEvidenceDirectory $firstCheckRoot -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json') -ExpectedBinding $schemaDamagedBinding -ExpectedBindingSha256 $schemaDamagedSha -RepositoryRoot $fixture -CurrentHeadCommit $docsHead -CandidateReceiptPaths @($documentationReceipt[0].FullName)
             Assert-True ($null -eq $schemaReuse) 'Tracked schema/input drift reused evidence from a different dependency binding.'
+            $resolutionDamagedBinding = $documentationReceiptValue.binding | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64 -DateKind String
+            $resolutionDamagedBinding.dependency_resolution.fallback_reasons[0].kind = 'unresolved-invocation'
+            $resolutionDamagedSha = Get-MorphospaceCanonicalJsonSha256 -Value $resolutionDamagedBinding
+            $resolutionReuse = Find-MorphospaceAffectedReusableCheckReceipt -PriorEvidenceDirectory $firstCheckRoot -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json') -ExpectedBinding $resolutionDamagedBinding -ExpectedBindingSha256 $resolutionDamagedSha -RepositoryRoot $fixture -CurrentHeadCommit $docsHead -CandidateReceiptPaths @($documentationReceipt[0].FullName)
+            Assert-True ($null -eq $resolutionReuse) 'Dynamic dependency-resolution reason drift reused evidence from a different binding.'
             $singleReadInventory = Read-MorphospaceAffectedCheckInventory -EvidenceDirectory $firstCheckRoot -ExpectedProducerContext $firstInventory.producer -InventorySchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-inventory-v1.schema.json')
             $singleReadDocumentationSnapshot = @($singleReadInventory.candidate_snapshots | Where-Object check_id -ceq 'documentation-links')
             Assert-True ($singleReadDocumentationSnapshot.Count -eq 1) 'Parent inventory did not snapshot exactly one documentation receipt.'

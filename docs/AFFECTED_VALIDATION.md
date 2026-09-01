@@ -32,6 +32,20 @@ or post-kill drain overrun is `code-fail`; `infra-fail` is reserved for a
 process-start or host fault. Both write typed leaf and aggregate evidence
 before the job fails.
 
+The dependency closure is derived separately for each check. Its binding
+records the entrypoint, exact ordinal static import/invocation closure, only the
+dynamic declarations actually consumed, and any conservative fallback reason.
+Dynamic declarations are closed importer/variable/count records and drift in
+their count, target, classification, or exact source bytes rejects the leaf.
+An invocation that cannot be resolved safely does not borrow another check's
+closure: that one leaf binds every tracked PowerShell source and records the
+unresolved importer, variable, and kind. Declared consume path sets, runner and
+schema sources, prerequisite bindings, and the pre/post source-byte checks stay
+independent and exact. This prevents an unrelated ledger-only correction from
+invalidating otherwise reusable documentation, skill, or protocol-foundation
+leaves while retaining invalidation for real ownership, ledger, and authority
+consumers.
+
 Current-run leaf bytes are retained as canonical parent-owned in-memory
 snapshots only after the executor's supervisor has published one tagged result
 through a parent-created anonymous completion pipe, terminated its complete
