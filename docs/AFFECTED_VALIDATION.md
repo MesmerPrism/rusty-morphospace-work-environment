@@ -171,9 +171,10 @@ leaves continue and preserve their evidence. A corrected attempt may then
 reuse every still-valid independent pass instead of replaying the entire
 platform gate.
 
-Selector trust-root validation is a finite eight-phase DAG: graph/import
-closure, executor pass/schema, executor damage, selection scenarios, then four
-independent trust leaves for self/executor closure, routing contracts,
+Selector trust-root validation is a finite nine-phase DAG: graph/import
+closure, independently reusable per-check dependency-closure damage, executor
+pass/schema, executor damage, selection scenarios, then four independent trust
+leaves for self/executor closure, routing contracts,
 proportional mappings, and damage/culture finalization. Each phase has its own
 finite child budget and exact-host cache policy, so a later failure in one
 trust leaf does not invalidate completed sibling evidence. Every phase has a
@@ -187,7 +188,7 @@ only its path and parent-computed SHA-256, then validates the projection schema,
 current head/tree, registry and check identity, ordinal tree records, and
 working bytes; it never repeats the import-graph analysis. The parent rechecks
 the held projection after the child and removes it during bounded cleanup.
-The registry contract requires all eight phase checks and their verifier to
+The registry contract requires all nine phase checks and their verifier to
 share that exact command and consumed-path-set input. Each phase still receives
 and verifies its own check identity and binding, and the grouped working-byte
 set is rechecked after all terminals are consumed. Runner identity additionally

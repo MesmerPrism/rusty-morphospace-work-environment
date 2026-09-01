@@ -3,7 +3,7 @@ param(
     [switch]$BatchSelfTestOnly,
     [switch]$GraphSelfTestOnly,
     [switch]$DependencyClosureSelfTestOnly,
-    [ValidateSet('graph-import-closure','executor-pass-schema','executor-damage','selection-scenarios','trust-self-executor','trust-routing-contracts','trust-proportional-mappings','trust-damage-final')]
+    [ValidateSet('graph-import-closure','dependency-closure','executor-pass-schema','executor-damage','selection-scenarios','trust-self-executor','trust-routing-contracts','trust-proportional-mappings','trust-damage-final')]
     [string]$SelfTestPhase,
     [string]$SelectionScenarioEvidenceRoot
 )
@@ -18,6 +18,7 @@ Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceAffectedValidationDepende
 
 $selectorPhaseCheckIds = @(
     'affected-selector-graph-import-closure',
+    'affected-selector-dependency-closure',
     'affected-selector-executor-pass-schema',
     'affected-selector-executor-damage',
     'affected-selector-selection-scenarios',
@@ -1310,11 +1311,17 @@ function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]
             [void]$timings.Add([pscustomobject][ordered]@{check_id=$checkId;elapsed_ms=[long]$clock.Elapsed.TotalMilliseconds;dependency_count=@($closure.manifest).Count})
         }
         Assert-True ($digests.Count -eq $safeIds.Count) 'Per-check safe corpus collapsed to one common aggregate dependency identity.'
-        $consumerClock = [Diagnostics.Stopwatch]::StartNew()
-        $consumer = Get-MorphospaceAffectedCheckDependencyClosure -Check $compiled.checks['ownership-authority'] -CompiledRegistry $compiled -Inventory $realInventory -RepositoryRoot $Root
-        $consumerClock.Stop()
-        Assert-True (@($consumer.manifest.path | Where-Object { $ledgerCorrectionPaths -ccontains [string]$_ }).Count -ge 2) 'A real ownership consumer did not invalidate for the PR134-style ledger/authority correction.'
-        [void]$timings.Add([pscustomobject][ordered]@{check_id='ownership-authority';elapsed_ms=[long]$consumerClock.Elapsed.TotalMilliseconds;dependency_count=@($consumer.manifest).Count})
+        $ledgerCheck = @($Registry.checks | Where-Object { [string]$_.check_id -ceq 'transition-ledger' })
+        Assert-True ($ledgerCheck.Count -eq 1) 'The PR134-style correction proof lacks one transition-ledger check.'
+        $triggerPatterns = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        foreach ($pathSetId in @($ledgerCheck[0].trigger_path_sets)) {
+            foreach ($pathSet in @($Registry.path_sets | Where-Object { [string]$_.path_set_id -ceq [string]$pathSetId })) {
+                foreach ($pattern in @($pathSet.patterns)) { [void]$triggerPatterns.Add([string]$pattern) }
+            }
+        }
+        $directlyMappedCorrectionPaths = @($ledgerCorrectionPaths | Where-Object { $triggerPatterns.Contains([string]$_) })
+        Assert-True ($directlyMappedCorrectionPaths.Count -ge 3) 'The transition-ledger owner lost direct path-set invalidation for the PR134-style ledger/authority correction.'
+        [void]$timings.Add([pscustomobject][ordered]@{check_id='transition-ledger-direct-map';elapsed_ms=0;dependency_count=$directlyMappedCorrectionPaths.Count})
         Write-Host "Per-check dependency closure passed: corpus=$((@($timings | ForEach-Object { "$($_.check_id):$($_.dependency_count):$($_.elapsed_ms)ms" }) -join ','))"
     } finally {
         if ([IO.Directory]::Exists($fixture)) { Remove-Item -LiteralPath $fixture -Recurse -Force }
@@ -1356,6 +1363,7 @@ if ($GraphSelfTestOnly) {
 
 $runFullSelector = [string]::IsNullOrWhiteSpace($SelfTestPhase)
 $runGraphPhase = $SelfTestPhase -ceq 'graph-import-closure'
+$runDependencyClosurePhase = $SelfTestPhase -ceq 'dependency-closure'
 $runExecutorPassPhase = $SelfTestPhase -ceq 'executor-pass-schema'
 $runExecutorDamagePhase = $SelfTestPhase -ceq 'executor-damage'
 $runSelectionPhase = $SelfTestPhase -ceq 'selection-scenarios'
@@ -1370,7 +1378,6 @@ if ($runGraphPhase) {
     $focusedRegistry = Read-MorphospaceProtocolJson -Path (Join-Path $repoRoot 'manifests/affected-validation-registry.json')
     [void](Test-MorphospaceAffectedValidationRegistry -Registry $focusedRegistry -RepositoryRoot $repoRoot -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-registry-v1.schema.json'))
     $focusedAudit = Invoke-AffectedGraphIndexSelfTest -Root $repoRoot -Registry $focusedRegistry
-    Invoke-AffectedPerCheckDependencyClosureSelfTest -Root $repoRoot -Registry $focusedRegistry
     if (-not [string]::IsNullOrWhiteSpace($phaseRoot)) {
         $phaseRoot = [IO.Path]::GetFullPath($phaseRoot)
         if (-not [IO.Directory]::Exists($phaseRoot)) { [void][IO.Directory]::CreateDirectory($phaseRoot) }
@@ -1385,6 +1392,13 @@ if ($runGraphPhase) {
             check_ids=@($focusedAudit.check_ids)
         })
     }
+    return
+}
+
+if ($runDependencyClosurePhase) {
+    $focusedRegistry = Read-MorphospaceProtocolJson -Path (Join-Path $repoRoot 'manifests/affected-validation-registry.json')
+    [void](Test-MorphospaceAffectedValidationRegistry -Registry $focusedRegistry -RepositoryRoot $repoRoot -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-registry-v1.schema.json'))
+    Invoke-AffectedPerCheckDependencyClosureSelfTest -Root $repoRoot -Registry $focusedRegistry
     return
 }
 
@@ -1416,6 +1430,7 @@ if ($runFullSelector) {
     Assert-True ([long]$protocolCommonAudit.total_elapsed_ms -le 45000) "ProtocolCommon transitive owner audit exceeded its measured 45-second bound: $($protocolCommonAudit.total_elapsed_ms)ms."
     $protocolCommonConsumerChecks = @($protocolCommonAudit.check_ids)
     Write-Host "ProtocolCommon owner graph passed: roots=$($protocolCommonAudit.owner_entrypoints) nodes=$($protocolCommonAudit.tracked_graph_nodes) consumers=$($protocolCommonAudit.protocol_consumers) graph_ms=$($protocolCommonAudit.graph_elapsed_ms) total_ms=$($protocolCommonAudit.total_elapsed_ms)."
+    Invoke-AffectedPerCheckDependencyClosureSelfTest -Root $repoRoot -Registry $registry
 
     $savedOrdinalCulture = [Globalization.CultureInfo]::CurrentCulture
     try {
@@ -1545,7 +1560,7 @@ if ($runFullSelector -or $runExecutorPassPhase) {
     $phaseProjectionSchema = Read-MorphospaceProtocolJson -Path (Join-Path $repoRoot 'schemas/affected-validation-self-test-dependency-projection-v1.schema.json')
     $checkEvidenceSchema = Read-MorphospaceProtocolJson -Path (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json')
     $phaseRunnerSchema = $phaseReceiptSchema.properties.binding.properties.runner
-    $expectedPhaseIds = @('executor-damage','executor-pass-schema','graph-import-closure','selection-scenarios','trust-damage-final','trust-proportional-mappings','trust-routing-contracts','trust-self-executor')
+    $expectedPhaseIds = @('dependency-closure','executor-damage','executor-pass-schema','graph-import-closure','selection-scenarios','trust-damage-final','trust-proportional-mappings','trust-routing-contracts','trust-self-executor')
     $topLevelPhaseIds = @($phaseReceiptSchema.properties.phase_id.enum)
     $bindingPhaseIds = @($phaseReceiptSchema.properties.binding.properties.phase_id.enum)
     [Array]::Sort($topLevelPhaseIds,[StringComparer]::Ordinal)
@@ -1576,7 +1591,7 @@ if ($runFullSelector -or $runExecutorPassPhase) {
     $phaseHead = (& git -C $repoRoot rev-parse HEAD).Trim()
     $phaseTree = (& git -C $repoRoot rev-parse 'HEAD^{tree}').Trim()
     $phaseInventory = Get-MorphospaceAffectedTreeInventory -RepositoryRoot $repoRoot -Commit $phaseHead
-    $selectorPhaseCheckIds=@('affected-selector-graph-import-closure','affected-selector-executor-pass-schema','affected-selector-executor-damage','affected-selector-selection-scenarios','affected-selector-trust-self-executor','affected-selector-trust-routing-contracts','affected-selector-trust-proportional-mappings','affected-selector-trust-damage-final','affected-selector-selftest')
+    $selectorPhaseCheckIds=@('affected-selector-graph-import-closure','affected-selector-dependency-closure','affected-selector-executor-pass-schema','affected-selector-executor-damage','affected-selector-selection-scenarios','affected-selector-trust-self-executor','affected-selector-trust-routing-contracts','affected-selector-trust-proportional-mappings','affected-selector-trust-damage-final','affected-selector-selftest')
     $phaseDependencyInput=$null
     foreach($phaseCheckId in $selectorPhaseCheckIds){
         $phaseCheck=$phaseCompiledRegistry.checks[$phaseCheckId]
