@@ -171,10 +171,13 @@ leaves continue and preserve their evidence. A corrected attempt may then
 reuse every still-valid independent pass instead of replaying the entire
 platform gate.
 
-Selector trust-root validation is a finite nine-phase DAG: graph/import
+Selector trust-root validation is a finite eighteen-phase DAG: graph/import
 closure, independently reusable per-check dependency-closure damage, executor
-pass/schema, executor damage, selection scenarios, then four independent trust
-leaves for self/executor closure, routing contracts,
+pass/schema, ten independent executor-damage leaves for native failure,
+native exit 125, forged terminal control, parent containment, descendant
+containment, output ceiling, timeout, dual-stream draining, source integrity,
+and publication collision,
+selection scenarios, then four independent trust leaves for self/executor closure, routing contracts,
 proportional mappings, and damage/culture finalization. Each phase has its own
 finite child budget and exact-host cache policy, so a later failure in one
 trust leaf does not invalidate completed sibling evidence. Every phase has a
@@ -188,7 +191,7 @@ only its path and parent-computed SHA-256, then validates the projection schema,
 current head/tree, registry and check identity, ordinal tree records, and
 working bytes; it never repeats the import-graph analysis. The parent rechecks
 the held projection after the child and removes it during bounded cleanup.
-The registry contract requires all nine phase checks and their verifier to
+The registry contract requires all eighteen phase checks and their verifier to
 share that exact command and consumed-path-set input. Each phase still receives
 and verifies its own check identity and binding, and the grouped working-byte
 set is rechecked after all terminals are consumed. Runner identity additionally
@@ -203,7 +206,10 @@ equal. Omission, addition, order, tree, working-byte, registry, or check-input
 drift fails before phase evidence can be accepted.
 The terminal verifier
 accepts only the complete exact passing receipt set and never replays a phase.
-The executor stops at the first failed selector phase. A later attempt may
+Each executor-damage leaf begins from the same immutable fixture head and has
+no sibling mutation dependency. Selection consumes all ten contracts, while
+an individual failure leaves completed sibling receipts reusable. The executor
+stops at the first failed selector phase. A later attempt may
 reuse an exact passing terminal already materialized under the deterministic
 plan/platform phase root; drift, collision, malformed evidence, missing raw
 streams, or a changed dependency binding fails closed. This is iterative

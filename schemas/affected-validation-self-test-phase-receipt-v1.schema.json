@@ -6,7 +6,7 @@
   "required": ["schema", "phase_id", "binding", "binding_sha256", "started_at", "ended_at", "budget_seconds", "elapsed_ms", "result", "child", "outputs", "claims"],
   "properties": {
     "schema": { "const": "rusty.morphospace.workflow.affected_validation_self_test_phase_receipt.v1" },
-    "phase_id": { "enum": ["graph-import-closure", "dependency-closure", "executor-pass-schema", "executor-damage", "selection-scenarios", "trust-self-executor", "trust-routing-contracts", "trust-proportional-mappings", "trust-damage-final"] },
+    "phase_id": { "enum": ["graph-import-closure", "dependency-closure", "executor-pass-schema", "executor-native-failure-damage", "executor-native-exit125-damage", "executor-forged-terminal-damage", "executor-parent-containment-damage", "executor-descendant-containment-damage", "executor-output-ceiling-damage", "executor-timeout-damage", "executor-dual-stream-damage", "executor-source-integrity-damage", "executor-publication-collision-damage", "selection-scenarios", "trust-self-executor", "trust-routing-contracts", "trust-proportional-mappings", "trust-damage-final"] },
     "binding": {
       "type": "object",
       "additionalProperties": false,
@@ -19,7 +19,7 @@
         "plan_sha256": { "$ref": "#/$defs/sha256" },
         "platform": { "enum": ["windows", "linux"] },
         "check_id": { "$ref": "#/$defs/id" },
-        "phase_id": { "enum": ["graph-import-closure", "dependency-closure", "executor-pass-schema", "executor-damage", "selection-scenarios", "trust-self-executor", "trust-routing-contracts", "trust-proportional-mappings", "trust-damage-final"] },
+        "phase_id": { "enum": ["graph-import-closure", "dependency-closure", "executor-pass-schema", "executor-native-failure-damage", "executor-native-exit125-damage", "executor-forged-terminal-damage", "executor-parent-containment-damage", "executor-descendant-containment-damage", "executor-output-ceiling-damage", "executor-timeout-damage", "executor-dual-stream-damage", "executor-source-integrity-damage", "executor-publication-collision-damage", "selection-scenarios", "trust-self-executor", "trust-routing-contracts", "trust-proportional-mappings", "trust-damage-final"] },
         "runner": {
           "type": "object",
           "additionalProperties": false,

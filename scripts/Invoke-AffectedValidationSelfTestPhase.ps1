@@ -1,7 +1,7 @@
 [CmdletBinding(DefaultParameterSetName='Phase')]
 param(
     [Parameter(Mandatory=$true,ParameterSetName='Phase')]
-    [ValidateSet('graph-import-closure','dependency-closure','executor-pass-schema','executor-damage','selection-scenarios','trust-self-executor','trust-routing-contracts','trust-proportional-mappings','trust-damage-final')]
+    [ValidateSet('graph-import-closure','dependency-closure','executor-pass-schema','executor-native-failure-damage','executor-native-exit125-damage','executor-forged-terminal-damage','executor-parent-containment-damage','executor-descendant-containment-damage','executor-output-ceiling-damage','executor-timeout-damage','executor-dual-stream-damage','executor-source-integrity-damage','executor-publication-collision-damage','selection-scenarios','trust-self-executor','trust-routing-contracts','trust-proportional-mappings','trust-damage-final')]
     [string]$Phase,
     [Parameter(Mandatory=$true,ParameterSetName='Phase')][ValidateRange(1,600)][int]$BudgetSeconds,
     [Parameter(Mandatory=$true,ParameterSetName='Verify')][switch]$Verify,
@@ -14,12 +14,21 @@ $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceAffectedValidation.psm1') -Force
 
-$phaseIds = @('graph-import-closure','dependency-closure','executor-pass-schema','executor-damage','selection-scenarios','trust-self-executor','trust-routing-contracts','trust-proportional-mappings','trust-damage-final')
+$phaseIds = @('graph-import-closure','dependency-closure','executor-pass-schema','executor-native-failure-damage','executor-native-exit125-damage','executor-forged-terminal-damage','executor-parent-containment-damage','executor-descendant-containment-damage','executor-output-ceiling-damage','executor-timeout-damage','executor-dual-stream-damage','executor-source-integrity-damage','executor-publication-collision-damage','selection-scenarios','trust-self-executor','trust-routing-contracts','trust-proportional-mappings','trust-damage-final')
 $checkIds = [ordered]@{
     'graph-import-closure'='affected-selector-graph-import-closure'
     'dependency-closure'='affected-selector-dependency-closure'
     'executor-pass-schema'='affected-selector-executor-pass-schema'
-    'executor-damage'='affected-selector-executor-damage'
+    'executor-native-failure-damage'='affected-selector-executor-native-failure-damage'
+    'executor-native-exit125-damage'='affected-selector-executor-native-exit125-damage'
+    'executor-forged-terminal-damage'='affected-selector-executor-forged-terminal-damage'
+    'executor-parent-containment-damage'='affected-selector-executor-parent-containment-damage'
+    'executor-descendant-containment-damage'='affected-selector-executor-descendant-containment-damage'
+    'executor-output-ceiling-damage'='affected-selector-executor-output-ceiling-damage'
+    'executor-timeout-damage'='affected-selector-executor-timeout-damage'
+    'executor-dual-stream-damage'='affected-selector-executor-dual-stream-damage'
+    'executor-source-integrity-damage'='affected-selector-executor-source-integrity-damage'
+    'executor-publication-collision-damage'='affected-selector-executor-publication-collision-damage'
     'selection-scenarios'='affected-selector-selection-scenarios'
     'trust-self-executor'='affected-selector-trust-self-executor'
     'trust-routing-contracts'='affected-selector-trust-routing-contracts'

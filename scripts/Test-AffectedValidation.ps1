@@ -3,7 +3,7 @@ param(
     [switch]$BatchSelfTestOnly,
     [switch]$GraphSelfTestOnly,
     [switch]$DependencyClosureSelfTestOnly,
-    [ValidateSet('graph-import-closure','dependency-closure','executor-pass-schema','executor-damage','selection-scenarios','trust-self-executor','trust-routing-contracts','trust-proportional-mappings','trust-damage-final')]
+    [ValidateSet('graph-import-closure','dependency-closure','executor-pass-schema','executor-native-failure-damage','executor-native-exit125-damage','executor-forged-terminal-damage','executor-parent-containment-damage','executor-descendant-containment-damage','executor-output-ceiling-damage','executor-timeout-damage','executor-dual-stream-damage','executor-source-integrity-damage','executor-publication-collision-damage','selection-scenarios','trust-self-executor','trust-routing-contracts','trust-proportional-mappings','trust-damage-final')]
     [string]$SelfTestPhase,
     [string]$SelectionScenarioEvidenceRoot
 )
@@ -20,7 +20,16 @@ $selectorPhaseCheckIds = @(
     'affected-selector-graph-import-closure',
     'affected-selector-dependency-closure',
     'affected-selector-executor-pass-schema',
-    'affected-selector-executor-damage',
+    'affected-selector-executor-native-failure-damage',
+    'affected-selector-executor-native-exit125-damage',
+    'affected-selector-executor-forged-terminal-damage',
+    'affected-selector-executor-parent-containment-damage',
+    'affected-selector-executor-descendant-containment-damage',
+    'affected-selector-executor-output-ceiling-damage',
+    'affected-selector-executor-timeout-damage',
+    'affected-selector-executor-dual-stream-damage',
+    'affected-selector-executor-source-integrity-damage',
+    'affected-selector-executor-publication-collision-damage',
     'affected-selector-selection-scenarios',
     'affected-selector-trust-self-executor',
     'affected-selector-trust-routing-contracts',
@@ -1365,7 +1374,17 @@ $runFullSelector = [string]::IsNullOrWhiteSpace($SelfTestPhase)
 $runGraphPhase = $SelfTestPhase -ceq 'graph-import-closure'
 $runDependencyClosurePhase = $SelfTestPhase -ceq 'dependency-closure'
 $runExecutorPassPhase = $SelfTestPhase -ceq 'executor-pass-schema'
-$runExecutorDamagePhase = $SelfTestPhase -ceq 'executor-damage'
+$runExecutorNativeFailureDamagePhase = $SelfTestPhase -ceq 'executor-native-failure-damage'
+$runExecutorNativeExit125DamagePhase = $SelfTestPhase -ceq 'executor-native-exit125-damage'
+$runExecutorForgedTerminalDamagePhase = $SelfTestPhase -ceq 'executor-forged-terminal-damage'
+$runExecutorParentContainmentDamagePhase = $SelfTestPhase -ceq 'executor-parent-containment-damage'
+$runExecutorDescendantContainmentDamagePhase = $SelfTestPhase -ceq 'executor-descendant-containment-damage'
+$runExecutorOutputCeilingDamagePhase = $SelfTestPhase -ceq 'executor-output-ceiling-damage'
+$runExecutorTimeoutDamagePhase = $SelfTestPhase -ceq 'executor-timeout-damage'
+$runExecutorDualStreamDamagePhase = $SelfTestPhase -ceq 'executor-dual-stream-damage'
+$runExecutorSourceIntegrityDamagePhase = $SelfTestPhase -ceq 'executor-source-integrity-damage'
+$runExecutorPublicationCollisionDamagePhase = $SelfTestPhase -ceq 'executor-publication-collision-damage'
+$runExecutorDamagePhase = $runExecutorNativeFailureDamagePhase -or $runExecutorNativeExit125DamagePhase -or $runExecutorForgedTerminalDamagePhase -or $runExecutorParentContainmentDamagePhase -or $runExecutorDescendantContainmentDamagePhase -or $runExecutorOutputCeilingDamagePhase -or $runExecutorTimeoutDamagePhase -or $runExecutorDualStreamDamagePhase -or $runExecutorSourceIntegrityDamagePhase -or $runExecutorPublicationCollisionDamagePhase
 $runSelectionPhase = $SelfTestPhase -ceq 'selection-scenarios'
 $runTrustSelfPhase = $SelfTestPhase -ceq 'trust-self-executor'
 $runTrustRoutingPhase = $SelfTestPhase -ceq 'trust-routing-contracts'
@@ -1560,7 +1579,7 @@ if ($runFullSelector -or $runExecutorPassPhase) {
     $phaseProjectionSchema = Read-MorphospaceProtocolJson -Path (Join-Path $repoRoot 'schemas/affected-validation-self-test-dependency-projection-v1.schema.json')
     $checkEvidenceSchema = Read-MorphospaceProtocolJson -Path (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json')
     $phaseRunnerSchema = $phaseReceiptSchema.properties.binding.properties.runner
-    $expectedPhaseIds = @('dependency-closure','executor-damage','executor-pass-schema','graph-import-closure','selection-scenarios','trust-damage-final','trust-proportional-mappings','trust-routing-contracts','trust-self-executor')
+    $expectedPhaseIds = @('dependency-closure','executor-descendant-containment-damage','executor-dual-stream-damage','executor-forged-terminal-damage','executor-native-exit125-damage','executor-native-failure-damage','executor-output-ceiling-damage','executor-parent-containment-damage','executor-pass-schema','executor-publication-collision-damage','executor-source-integrity-damage','executor-timeout-damage','graph-import-closure','selection-scenarios','trust-damage-final','trust-proportional-mappings','trust-routing-contracts','trust-self-executor')
     $topLevelPhaseIds = @($phaseReceiptSchema.properties.phase_id.enum)
     $bindingPhaseIds = @($phaseReceiptSchema.properties.binding.properties.phase_id.enum)
     [Array]::Sort($topLevelPhaseIds,[StringComparer]::Ordinal)
@@ -1591,7 +1610,7 @@ if ($runFullSelector -or $runExecutorPassPhase) {
     $phaseHead = (& git -C $repoRoot rev-parse HEAD).Trim()
     $phaseTree = (& git -C $repoRoot rev-parse 'HEAD^{tree}').Trim()
     $phaseInventory = Get-MorphospaceAffectedTreeInventory -RepositoryRoot $repoRoot -Commit $phaseHead
-    $selectorPhaseCheckIds=@('affected-selector-graph-import-closure','affected-selector-dependency-closure','affected-selector-executor-pass-schema','affected-selector-executor-damage','affected-selector-selection-scenarios','affected-selector-trust-self-executor','affected-selector-trust-routing-contracts','affected-selector-trust-proportional-mappings','affected-selector-trust-damage-final','affected-selector-selftest')
+    $selectorPhaseCheckIds=@('affected-selector-graph-import-closure','affected-selector-dependency-closure','affected-selector-executor-pass-schema','affected-selector-executor-native-failure-damage','affected-selector-executor-native-exit125-damage','affected-selector-executor-forged-terminal-damage','affected-selector-executor-parent-containment-damage','affected-selector-executor-descendant-containment-damage','affected-selector-executor-output-ceiling-damage','affected-selector-executor-timeout-damage','affected-selector-executor-dual-stream-damage','affected-selector-executor-source-integrity-damage','affected-selector-executor-publication-collision-damage','affected-selector-selection-scenarios','affected-selector-trust-self-executor','affected-selector-trust-routing-contracts','affected-selector-trust-proportional-mappings','affected-selector-trust-damage-final','affected-selector-selftest')
     $phaseDependencyInput=$null
     foreach($phaseCheckId in $selectorPhaseCheckIds){
         $phaseCheck=$phaseCompiledRegistry.checks[$phaseCheckId]
@@ -2245,19 +2264,20 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value ([pscust
         }
     }
 
-    if ($runFullSelector -or $runExecutorDamagePhase) {
-    $supervisorResidueBaseline = Get-AffectedSupervisorResidueIdentity
+    if ($runFullSelector -or $runExecutorNativeFailureDamagePhase) {
+    [void](Invoke-TestGit $fixture @('checkout','--detach',$docsHead))
     Write-Utf8 (Join-Path $fixture 'scripts/Test-PublicBoundary.ps1') "exit 17`n"
-    [void](Invoke-TestGit $fixture @('add', 'scripts/Test-PublicBoundary.ps1'))
+    Write-Utf8 (Join-Path $fixture 'docs/executor-terminal-independent.md') "independent terminal-damage sibling`n"
+    [void](Invoke-TestGit $fixture @('add', 'scripts/Test-PublicBoundary.ps1', 'docs/executor-terminal-independent.md'))
     [void](Invoke-TestGit $fixture @('commit', '-m', 'failing affected command'))
     $failingHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
-    $failingPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $base -HeadRevision $failingHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+    $failingPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $docsHead -HeadRevision $failingHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
     Assert-True (@($failingPlan.selected_checks.check_id) -ccontains 'documentation-links') 'Combined documentation/boundary fixture did not select the independent documentation check.'
     Write-Utf8 $planPath ((ConvertTo-MorphospaceCanonicalJson -Value $failingPlan) + "`n")
     $failingEvidencePath = Join-Path $fixture 'failing-evidence.json'
     $codeFailed = $false
     $codeFailureRecord = $null
-    try { [void](& (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $base -HeadCommit $failingHead -PlanPath $planPath -Platform linux -OutPath $failingEvidencePath) } catch { $codeFailureRecord = $_; $codeFailed = $_.Exception.Message -like '*code-fail*' }
+    try { [void](& (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $docsHead -HeadCommit $failingHead -PlanPath $planPath -Platform linux -OutPath $failingEvidencePath) } catch { $codeFailureRecord = $_; $codeFailed = $_.Exception.Message -like '*code-fail*' }
     $codeFailureObserved = if ($null -eq $codeFailureRecord) { '<no exception>' } else { [string]$codeFailureRecord.Exception.Message }
     Assert-True $codeFailed "Affected executor swallowed or reclassified a native nonzero exit. Observed: $codeFailureObserved"
     $failingEvidence = Read-MorphospaceProtocolJson -Path $failingEvidencePath
@@ -2276,19 +2296,11 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value ([pscust
     foreach ($stream in @('stdout','stderr')) { $streamPath = Join-Path ([IO.Path]::GetDirectoryName($failedReceiptPath)) "$stream.bin"; Assert-True ([IO.File]::Exists($streamPath) -and (Get-FileHash -LiteralPath $streamPath -Algorithm SHA256).Hash.ToLowerInvariant() -ceq [string]$failedReceipt.child.$stream.sha256) "Failed leaf $stream bytes are unavailable or not receipt-bound." }
     $failedEvidenceDigest = (Get-FileHash -LiteralPath $failingEvidencePath -Algorithm SHA256).Hash.ToLowerInvariant()
     Assert-True ($failedEvidenceDigest -match '^[0-9a-f]{64}$') 'Failed executor evidence did not receive a content digest.'
-    $setupProbeExecutable = (Get-Process -Id $PID).Path
-    $preContainmentProbe = [W017BoundedChildCapture]::RunForSetupFailureTest($setupProbeExecutable,$fixture,'before-containment',15000)
-    Assert-True ($preContainmentProbe.Started -and $preContainmentProbe.ChildTreeCleanupAttempted -and $preContainmentProbe.ChildTreeCleanupSucceeded -and [string]$preContainmentProbe.Error -like '*injected pre-containment setup failure*') 'Pre-containment setup failure did not directly terminate and read back the unassigned supervisor.'
-    if ([Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Windows)) {
-        [W017BoundedChildCapture]::RunPublishedControlReadSelfTests()
-        [W017BoundedChildCapture]::RunOwnedSupervisorDeletionSelfTests()
-        $postJobProbe = [W017BoundedChildCapture]::RunForSetupFailureTest($setupProbeExecutable,$fixture,'after-job-create',15000)
-        Assert-True ($postJobProbe.Started -and $postJobProbe.ChildTreeCleanupAttempted -and $postJobProbe.ChildTreeCleanupSucceeded -and [string]$postJobProbe.Error -like '*injected post-job-create setup failure*') 'Post-job-create assignment-boundary failure did not directly terminate and read back the unassigned supervisor.'
-        $missingCompletionProbe = [W017BoundedChildCapture]::RunForSetupFailureTest($setupProbeExecutable,$fixture,'terminate-supervisor-after-go',15000)
-        $missingCompletionObserved = "started=$($missingCompletionProbe.Started);cleanup_attempted=$($missingCompletionProbe.ChildTreeCleanupAttempted);cleanup_succeeded=$($missingCompletionProbe.ChildTreeCleanupSucceeded);exit=$($missingCompletionProbe.ExitCode);error=$([string]$missingCompletionProbe.Error)"
-        Assert-True ($missingCompletionProbe.Started -and $missingCompletionProbe.ChildTreeCleanupAttempted -and $missingCompletionProbe.ChildTreeCleanupSucceeded -and [string]$missingCompletionProbe.Error -like '*tagged completion*') "A supervisor terminated with exit code zero was accepted without its private tagged completion. Observed: $missingCompletionObserved"
     }
 
+    if ($runFullSelector -or $runExecutorParentContainmentDamagePhase) {
+    [void](Invoke-TestGit $fixture @('checkout','--detach',$docsHead))
+    $supervisorResidueBaseline = Get-AffectedSupervisorResidueIdentity
     $protectedParentSource = @'
 if (-not [Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Windows)) { exit 91 }
 Add-Type -TypeDefinition @"
@@ -2385,30 +2397,46 @@ exit 91
     [void](Invoke-TestGit $fixture @('add', 'scripts/Test-PublicBoundary.ps1'))
     [void](Invoke-TestGit $fixture @('commit', '-m', 'supervisor termination damage'))
     $protectedParentHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
-    $protectedParentPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $failingHead -HeadRevision $protectedParentHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+    $protectedParentPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $docsHead -HeadRevision $protectedParentHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
     Write-Utf8 $planPath ((ConvertTo-MorphospaceCanonicalJson -Value $protectedParentPlan) + "`n")
     $protectedParentEvidencePath = Join-Path $fixture 'protected-parent-evidence.json'
     $protectedParentFailure = $null
-    try { [void](& (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $failingHead -HeadCommit $protectedParentHead -PlanPath $planPath -Platform linux -OutPath $protectedParentEvidencePath) } catch { $protectedParentFailure = $_ }
+    try { [void](& (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $docsHead -HeadCommit $protectedParentHead -PlanPath $planPath -Platform linux -OutPath $protectedParentEvidencePath) } catch { $protectedParentFailure = $_ }
     $protectedParentObserved = if ($null -eq $protectedParentFailure) { '<no exception>' } else { "$($protectedParentFailure.Exception.ToString())`n$([string]$protectedParentFailure.ScriptStackTrace)" }
     Assert-True ([IO.File]::Exists($protectedParentEvidencePath)) "Protected-ancestor damage execution did not publish typed evidence. Observed: $protectedParentObserved"
     $protectedParentEvidence = Read-MorphospaceProtocolJson -Path $protectedParentEvidencePath
     Assert-True ($null -ne $protectedParentFailure -and $protectedParentEvidence.result -ceq 'code-fail' -and @($protectedParentEvidence.check_results | Where-Object { $_.check_id -ceq 'public-boundary' -and $_.exit_code -eq 91 -and $_.result -ceq 'code-fail' }).Count -eq 1 -and (Get-AffectedSupervisorResidueIdentity) -ceq $supervisorResidueBaseline) 'A Windows leaf retained process or thread owner/DACL rewrite, terminate/suspend/context/impersonation, handle duplication, process-query/token-open, or privilege re-enable access—including the post-probe sentinel thread—or changed the enclosing supervisor-residue identity.'
-    $failingHead = $protectedParentHead
+    $setupProbeExecutable = (Get-Process -Id $PID).Path
+    $preContainmentProbe = [W017BoundedChildCapture]::RunForSetupFailureTest($setupProbeExecutable,$fixture,'before-containment',15000)
+    Assert-True ($preContainmentProbe.Started -and $preContainmentProbe.ChildTreeCleanupAttempted -and $preContainmentProbe.ChildTreeCleanupSucceeded -and [string]$preContainmentProbe.Error -like '*injected pre-containment setup failure*') 'Pre-containment setup failure did not directly terminate and read back the unassigned supervisor.'
+    if ([Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Windows)) {
+        [W017BoundedChildCapture]::RunPublishedControlReadSelfTests()
+        [W017BoundedChildCapture]::RunOwnedSupervisorDeletionSelfTests()
+        $postJobProbe = [W017BoundedChildCapture]::RunForSetupFailureTest($setupProbeExecutable,$fixture,'after-job-create',15000)
+        Assert-True ($postJobProbe.Started -and $postJobProbe.ChildTreeCleanupAttempted -and $postJobProbe.ChildTreeCleanupSucceeded -and [string]$postJobProbe.Error -like '*injected post-job-create setup failure*') 'Post-job-create assignment-boundary failure did not directly terminate and read back the unassigned supervisor.'
+        $missingCompletionProbe = [W017BoundedChildCapture]::RunForSetupFailureTest($setupProbeExecutable,$fixture,'terminate-supervisor-after-go',15000)
+        $missingCompletionObserved = "started=$($missingCompletionProbe.Started);cleanup_attempted=$($missingCompletionProbe.ChildTreeCleanupAttempted);cleanup_succeeded=$($missingCompletionProbe.ChildTreeCleanupSucceeded);exit=$($missingCompletionProbe.ExitCode);error=$([string]$missingCompletionProbe.Error)"
+        Assert-True ($missingCompletionProbe.Started -and $missingCompletionProbe.ChildTreeCleanupAttempted -and $missingCompletionProbe.ChildTreeCleanupSucceeded -and [string]$missingCompletionProbe.Error -like '*tagged completion*') "A supervisor terminated with exit code zero was accepted without its private tagged completion. Observed: $missingCompletionObserved"
+    }
+    }
 
+    if ($runFullSelector -or $runExecutorNativeExit125DamagePhase) {
+    [void](Invoke-TestGit $fixture @('checkout','--detach',$docsHead))
     Write-Utf8 (Join-Path $fixture 'scripts/Test-PublicBoundary.ps1') "exit 125`n"
     [void](Invoke-TestGit $fixture @('add', 'scripts/Test-PublicBoundary.ps1'))
     [void](Invoke-TestGit $fixture @('commit', '-m', 'leaf exit 125 damage'))
     $exit125Head = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
-    $exit125Plan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $failingHead -HeadRevision $exit125Head -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+    $exit125Plan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $docsHead -HeadRevision $exit125Head -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
     Write-Utf8 $planPath ((ConvertTo-MorphospaceCanonicalJson -Value $exit125Plan) + "`n")
     $exit125EvidencePath = Join-Path $fixture 'exit-125-evidence.json'
     $exit125Failure = $null
-    try { [void](& (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $failingHead -HeadCommit $exit125Head -PlanPath $planPath -Platform linux -OutPath $exit125EvidencePath) } catch { $exit125Failure = $_ }
+    try { [void](& (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $docsHead -HeadCommit $exit125Head -PlanPath $planPath -Platform linux -OutPath $exit125EvidencePath) } catch { $exit125Failure = $_ }
     $exit125Evidence = Read-MorphospaceProtocolJson -Path $exit125EvidencePath
     Assert-True ($null -ne $exit125Failure -and $exit125Evidence.result -ceq 'code-fail' -and @($exit125Evidence.check_results | Where-Object { $_.check_id -ceq 'public-boundary' -and $_.exit_code -eq 125 -and $_.result -ceq 'code-fail' }).Count -eq 1 -and [string]$exit125Failure.Exception.Message -notlike '*infra-fail*') 'A native leaf exit 125 collided with the supervisor infrastructure-error domain.'
-    $failingHead = $exit125Head
+    }
 
+    if ($runFullSelector -or $runExecutorForgedTerminalDamagePhase) {
+    [void](Invoke-TestGit $fixture @('checkout','--detach',$docsHead))
     $forgedTerminalSource = @'
 $supervisorRoot = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($env:TEMP))
 if(-not[IO.File]::Exists((Join-Path $supervisorRoot 'supervisor.ps1'))-or-not[IO.File]::Exists((Join-Path $supervisorRoot 'go.control'))){throw 'forged-terminal fixture did not resolve its exact supervisor directory'}
@@ -2420,15 +2448,19 @@ exit 23
     [void](Invoke-TestGit $fixture @('add', 'scripts/Test-PublicBoundary.ps1'))
     [void](Invoke-TestGit $fixture @('commit', '-m', 'forged terminal control damage'))
     $forgedHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
-    $forgedPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $failingHead -HeadRevision $forgedHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+    $forgedPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $docsHead -HeadRevision $forgedHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
     Write-Utf8 $planPath ((ConvertTo-MorphospaceCanonicalJson -Value $forgedPlan) + "`n")
     $forgedEvidencePath = Join-Path $fixture 'forged-terminal-evidence.json'
     $forgedFailure = $null
-    try { [void](& (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $failingHead -HeadCommit $forgedHead -PlanPath $planPath -Platform linux -OutPath $forgedEvidencePath) } catch { $forgedFailure = $_ }
+    try { [void](& (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $docsHead -HeadCommit $forgedHead -PlanPath $planPath -Platform linux -OutPath $forgedEvidencePath) } catch { $forgedFailure = $_ }
     $forgedEvidence = Read-MorphospaceProtocolJson -Path $forgedEvidencePath
     $forgedObserved = @($forgedEvidence.check_results | ForEach-Object { "$($_.check_id):result=$($_.result),exit=$($_.exit_code),timeout=$($_.timed_out),truncated=$($_.output_truncated),stdout=$($_.stdout_bytes),stderr=$($_.stderr_bytes)" }) -join '; '
     Assert-True ($null -ne $forgedFailure -and $forgedEvidence.result -ceq 'code-fail' -and @($forgedEvidence.check_results | Where-Object { $_.check_id -ceq 'public-boundary' -and $_.exit_code -eq 23 -and $_.result -ceq 'code-fail' }).Count -eq 1) "A leaf-forged terminal control file produced or obscured the real supervisor terminal. Observed: $forgedObserved"
-    $failingHead = $forgedHead
+    }
+
+    if ($runFullSelector -or $runExecutorOutputCeilingDamagePhase) {
+    [void](Invoke-TestGit $fixture @('checkout','--detach',$docsHead))
+    $supervisorResidueBaseline = Get-AffectedSupervisorResidueIdentity
     $sustainedOutputSource = @'
 for($index=0;$index-lt 4096;$index++){
     [Console]::Out.Write(('x'*65536));[Console]::Out.Flush()
@@ -2440,33 +2472,37 @@ throw 'sustained output unexpectedly reached its natural terminal'
     [void](Invoke-TestGit $fixture @('add', 'scripts/Test-PublicBoundary.ps1'))
     [void](Invoke-TestGit $fixture @('commit', '-m', 'oversized affected output'))
     $oversizedHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
-    $oversizedPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $failingHead -HeadRevision $oversizedHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+    $oversizedPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $docsHead -HeadRevision $oversizedHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
     Write-Utf8 $planPath ((ConvertTo-MorphospaceCanonicalJson -Value $oversizedPlan) + "`n")
     $oversizedEvidencePath = Join-Path $fixture 'oversized-evidence.json'
     $oversizedFailed = $false
-    try { [void](& (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $failingHead -HeadCommit $oversizedHead -PlanPath $planPath -Platform linux -OutPath $oversizedEvidencePath) } catch { $oversizedFailed = $_.Exception.Message -like '*code-fail*' }
+    try { [void](& (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $docsHead -HeadCommit $oversizedHead -PlanPath $planPath -Platform linux -OutPath $oversizedEvidencePath) } catch { $oversizedFailed = $_.Exception.Message -like '*code-fail*' }
     Assert-True $oversizedFailed 'Affected executor accepted an over-ceiling child output.'
     $oversizedEvidence = Read-MorphospaceProtocolJson -Path $oversizedEvidencePath
     $oversizedObserved = @($oversizedEvidence.check_results | ForEach-Object { "$($_.check_id):result=$($_.result),exit=$($_.exit_code),timeout=$($_.timed_out),truncated=$($_.output_truncated),drain=$($_.post_kill_drain_timed_out),stdout=$($_.stdout_bytes),stderr=$($_.stderr_bytes)" }) -join '; '
     Assert-True ($oversizedEvidence.result -ceq 'code-fail' -and @($oversizedEvidence.check_results | Where-Object { $_.result -ceq 'code-fail' -and $_.output_truncated -and ($_.stdout_bytes + $_.stderr_bytes) -le 10485760 }).Count -eq 1 -and (Get-AffectedSupervisorResidueIdentity) -ceq $supervisorResidueBaseline) "Affected executor did not enforce the combined live output ceiling without unbounded staging or a changed enclosing supervisor-residue identity. Observed: $oversizedObserved"
+    }
+
+    if ($runFullSelector -or $runExecutorTimeoutDamagePhase) {
+    [void](Invoke-TestGit $fixture @('checkout','--detach',$docsHead))
     Write-Utf8 (Join-Path $fixture 'scripts/Test-PublicBoundary.ps1') "Start-Sleep -Seconds 25`n"
     [void](Invoke-TestGit $fixture @('add', 'scripts/Test-PublicBoundary.ps1'))
     [void](Invoke-TestGit $fixture @('commit', '-m', 'timed-out affected command'))
     $timeoutHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
-    $timeoutPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $oversizedHead -HeadRevision $timeoutHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+    $timeoutPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $docsHead -HeadRevision $timeoutHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
     Write-Utf8 $planPath ((ConvertTo-MorphospaceCanonicalJson -Value $timeoutPlan) + "`n")
     $timeoutEvidencePath = Join-Path $fixture 'timeout-evidence.json'
     $timeoutFailed = $false; $timeoutFailure = $null
-    try { [void](& (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $oversizedHead -HeadCommit $timeoutHead -PlanPath $planPath -Platform linux -OutPath $timeoutEvidencePath) } catch { $timeoutFailure = $_; $timeoutFailed = $_.Exception.Message -like '*code-fail*' }
+    try { [void](& (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $docsHead -HeadCommit $timeoutHead -PlanPath $planPath -Platform linux -OutPath $timeoutEvidencePath) } catch { $timeoutFailure = $_; $timeoutFailed = $_.Exception.Message -like '*code-fail*' }
     $timeoutObserved = if ($null -eq $timeoutFailure) { '<no exception>' } else { [string]$timeoutFailure.Exception.Message }
     Assert-True $timeoutFailed "Affected executor accepted or misclassified a timed-out child. Observed: $timeoutObserved"
     $timeoutEvidence = Read-MorphospaceProtocolJson -Path $timeoutEvidencePath
     Assert-True ($timeoutEvidence.result -ceq 'code-fail' -and @($timeoutEvidence.check_results | Where-Object { $_.result -ceq 'code-fail' -and $_.timed_out }).Count -eq 1) 'Affected executor did not classify a child timeout as code-fail.'
-    Write-Utf8 (Join-Path $fixture 'scripts/Test-PublicBoundary.ps1') "# fixture`n"
-    [void](Invoke-TestGit $fixture @('add', 'scripts/Test-PublicBoundary.ps1'))
-    [void](Invoke-TestGit $fixture @('commit', '-m', 'restore bounded affected command'))
-    $restoredHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
+    }
 
+    if ($runFullSelector -or $runExecutorDualStreamDamagePhase) {
+    [void](Invoke-TestGit $fixture @('checkout','--detach',$docsHead))
+    $restoredHead = $docsHead
     $dualStreamSource = @'
 for($index=0;$index-lt 8;$index++){
     [Console]::Out.Write(('o'*65536));[Console]::Out.Flush()
@@ -2490,7 +2526,11 @@ for($index=0;$index-lt 8;$index++){
     [void](Invoke-TestGit $fixture @('add', 'scripts/Test-PublicBoundary.ps1'))
     [void](Invoke-TestGit $fixture @('commit', '-m', 'restore after dual-stream proof'))
     $restoredHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
+    }
 
+    if ($runFullSelector -or $runExecutorDescendantContainmentDamagePhase) {
+    [void](Invoke-TestGit $fixture @('checkout','--detach',$docsHead))
+    $restoredHead = $docsHead
     $survivorCheckRoot = Join-Path $fixture 'affected-check-evidence-surviving-descendant'
     $survivorInventoryPath = Join-Path $survivorCheckRoot 'inventory.json'
     $survivorReadyPath = Join-Path $fixture 'surviving-descendant.ready'
@@ -2563,9 +2603,13 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     $survivorStderrText = if ([IO.File]::Exists($survivorCacheStderrPath)) { [Text.UTF8Encoding]::new($false,$true).GetString([IO.File]::ReadAllBytes($survivorCacheStderrPath)).Trim() } else { '<absent>' }
     $survivorObserved = if ($null -eq $survivorEvidence) { 'no evidence' } else { @($survivorEvidence.check_results | ForEach-Object { "$($_.check_id):result=$($_.result),exit=$($_.exit_code),timeout=$($_.timed_out),truncated=$($_.output_truncated),drain=$($_.post_kill_drain_timed_out),stdout=$($_.stdout_bytes)/$($_.stdout_sha256),stderr=$($_.stderr_bytes)/$($_.stderr_sha256),stderr_text=$survivorStderrText" }) -join '; ' }
     Assert-True ($null -eq $survivorFailure -and $null -ne $survivorEvidence -and $survivorEvidence.result -ceq 'pass') "Surviving-descendant fixture did not complete its parent leaf successfully. Observed: $survivorObserved"
-    [Threading.Thread]::Sleep(250)
     $survivorPid = [int](Get-Content -LiteralPath $survivorPidPath -Raw)
-    $survivorProcess = Get-Process -Id $survivorPid -ErrorAction SilentlyContinue
+    $survivorExitDeadline = [DateTimeOffset]::UtcNow.AddSeconds(5)
+    do {
+        $survivorProcess = Get-Process -Id $survivorPid -ErrorAction SilentlyContinue
+        if ($null -eq $survivorProcess -and -not [IO.File]::Exists($survivorMarkerPath)) { break }
+        [Threading.Thread]::Sleep(20)
+    } while ([DateTimeOffset]::UtcNow -lt $survivorExitDeadline)
     Assert-True ([IO.File]::Exists($survivorReadyPath) -and [IO.File]::Exists($survivorRedirectedPath) -and (Get-Content -LiteralPath $survivorRedirectedPath -Raw) -ceq 'stdout=true;stderr=true') 'Surviving-descendant fixture did not establish a privately redirected live child before the leaf exited.'
     $expectedSurvivorMode = if ([Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Windows)) { 'job-descendant' } else { 'setsid-session-escape-attempt' }
     Assert-True ([IO.File]::Exists($survivorModePath) -and (Get-Content -LiteralPath $survivorModePath -Raw) -ceq $expectedSurvivorMode) 'Surviving-descendant fixture did not exercise the expected platform containment escape attempt.'
@@ -2577,7 +2621,11 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     [void](Invoke-TestGit $fixture @('add', 'scripts/Test-PublicBoundary.ps1'))
     [void](Invoke-TestGit $fixture @('commit', '-m', 'restore after surviving descendant damage'))
     $restoredHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
+    }
 
+    if ($runFullSelector -or $runExecutorSourceIntegrityDamagePhase) {
+    [void](Invoke-TestGit $fixture @('checkout','--detach',$docsHead))
+    $restoredHead = $docsHead
     [byte[]]$protocolBytesBeforeIntegrityDamage = [IO.File]::ReadAllBytes((Join-Path $fixture 'scripts/lib/MorphospaceProtocolCommon.psm1'))
     Write-Utf8 (Join-Path $fixture 'scripts/Test-PublicBoundary.ps1') "[IO.File]::AppendAllText((Join-Path `$PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1'),'# child mutation',[Text.UTF8Encoding]::new(`$false))`n"
     [void](Invoke-TestGit $fixture @('add', 'scripts/Test-PublicBoundary.ps1'))
@@ -2596,7 +2644,11 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     [void](Invoke-TestGit $fixture @('add', 'scripts/Test-PublicBoundary.ps1'))
     [void](Invoke-TestGit $fixture @('commit', '-m', 'restore after integrity damage'))
     $restoredHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
+    }
 
+    if ($runFullSelector -or $runExecutorPublicationCollisionDamagePhase) {
+    [void](Invoke-TestGit $fixture @('checkout','--detach',$docsHead))
+    $restoredHead = $docsHead
     $precreatedRoot = Join-Path $fixture 'affected-check-evidence-precreated-output'
     $precreatedLeaf = Join-Path $precreatedRoot 'public-boundary'
     $escapedPrecreatedLeaf = $precreatedLeaf.Replace("'","''")
@@ -2614,9 +2666,8 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     [void](Invoke-TestGit $fixture @('add', 'scripts/Test-PublicBoundary.ps1'))
     [void](Invoke-TestGit $fixture @('commit', '-m', 'restore after receipt collision'))
     $restoredHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
-    } else {
-        $restoredHead = $docsHead
     }
+    $restoredHead = $docsHead
     if ($runFullSelector -or $runExecutorPassPhase) {
         foreach ($invalidPath in @('docs/', '   ')) {
             $damagedPlan = ConvertFrom-Json -InputObject (ConvertTo-MorphospaceCanonicalJson -Value $docsPlan) -Depth 64
