@@ -140,9 +140,9 @@ function Get-MorphospaceAffectedCheckStaticClosurePaths {
 function Get-MorphospaceAffectedCheckRunnerSourceManifest {
     param([Parameter(Mandatory = $true)][object]$Inventory)
     return @(Get-MorphospaceAffectedCheckManifestRecords -Inventory $Inventory -Context 'Affected check runner source' -Paths @(
-        'manifests/affected-validation-registry.json',
         'schemas/affected-validation-check-evidence-v1.schema.json',
         'schemas/affected-validation-check-inventory-v1.schema.json',
+        'schemas/affected-validation-plan-v1.schema.json',
         'schemas/affected-validation-registry-v1.schema.json',
         'scripts/Invoke-AffectedValidation.ps1',
         'scripts/lib/MorphospaceAffectedValidation.psm1',
@@ -173,6 +173,16 @@ function Get-MorphospaceAffectedCheckDependencyManifest {
     return @(Get-MorphospaceAffectedCheckManifestRecords -Inventory $Inventory -Paths @($paths) -Context 'Affected check dependency')
 }
 
+function Get-MorphospaceAffectedCheckEvidenceDefinition {
+    param([Parameter(Mandatory = $true)][object]$Check)
+    $definition = [ordered]@{}
+    foreach ($property in @($Check.PSObject.Properties)) {
+        if ([string]$property.Name -ceq 'execution_after_checks') { continue }
+        $definition[[string]$property.Name] = $property.Value
+    }
+    return [pscustomobject]$definition
+}
+
 function New-MorphospaceAffectedCheckBinding {
     param(
         [Parameter(Mandatory = $true)][string]$Repository,
@@ -194,7 +204,7 @@ function New-MorphospaceAffectedCheckBinding {
         command_path=[string]$Check.command_path
         command_blob_sha1=[string]$DependencyManifest[$commandIndex].blob
         arguments=@($Check.arguments | ForEach-Object { [string]$_ })
-        check_definition_sha256=Get-MorphospaceCanonicalJsonSha256 -Value $Check
+        check_definition_sha256=Get-MorphospaceCanonicalJsonSha256 -Value (Get-MorphospaceAffectedCheckEvidenceDefinition -Check $Check)
         cache_policy=[string]$Check.cache_policy
         external_state=[string]$Check.external_state
         runner=$Runner
