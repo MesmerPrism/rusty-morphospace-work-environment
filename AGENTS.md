@@ -250,6 +250,12 @@ path equality, and lowercase raw SHA-256 binding. For v3/v4 artifacts,
 canonicalize and case-insensitively deduplicate the complete
 target-path set before any live lookup, then validate each unique payload,
 hash, live byte sequence, and event-receipt binding.
+Use intent v5 only for an exact raw-pre-unit CAS transition that leaves the
+canonical unit unchanged, advances state solely through the event tail, and
+creates one or two canonical ordinal event artifacts. V5 has no additional
+projection or supersession field, may not replace proposed-unit retirement v1,
+and must revalidate its raw binding, live artifact bytes, completion, and
+idempotent recovery. See `docs/RAW_BOUND_ARTIFACT_TRANSITION.md`.
 For a terminal blocked validation unit, map an invalid legacy read-only
 directory only to every exact closure-derived current project leaf. A completed
 planning scope precursor may retain external rows only as hash-bound evidence

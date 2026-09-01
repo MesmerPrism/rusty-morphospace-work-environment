@@ -214,7 +214,9 @@ registry stay proportional: direct test changes select their owning leaf;
 historical phase receipt/module changes select the focused phase-runner,
 baseline, and automation consumers, while a phase-runner test change selects
 only its direct focused leaf; ownership and validation-authority module changes select their
-direct authority consumers; and the shared protocol module selects every
+direct authority consumers; the transition-ledger module has its own exact
+path set and selects its focused ledger, blocked-terminal, active-unit, and
+ordinary automation consumers without overlapping generic automation; and the shared protocol module selects every
 transitive Work Environment owner consumer through an independently derived
 tracked-byte graph. The audit AST-classifies both direct invocations and
 table/list `script` entries, closes conditional literal and statically bound

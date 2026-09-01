@@ -211,6 +211,33 @@ function Rebind-FixtureTransaction {
     Write-FixtureJson -Path $completionPath -Value $completion
 }
 
+function Rewrite-FixtureTransactionEventIdentity {
+    param([string]$Workspace, [string]$OldEventId, [string]$NewEventId)
+    $oldTransactionId = "$OldEventId-transition"
+    $newTransactionId = "$NewEventId-transition"
+    $oldIntentPath = Join-Path $Workspace "receipts\transactions\$oldTransactionId.intent.json"
+    $oldCompletionPath = Join-Path $Workspace "receipts\transactions\$oldTransactionId.completion.json"
+    $newIntentPath = Join-Path $Workspace "receipts\transactions\$newTransactionId.intent.json"
+    $newCompletionPath = Join-Path $Workspace "receipts\transactions\$newTransactionId.completion.json"
+    $intent = Read-FixtureJson -Path $oldIntentPath
+    $completion = Read-FixtureJson -Path $oldCompletionPath
+    $intent.transaction_id = $newTransactionId
+    $intent.event.event_id = $NewEventId
+    $intent.target.state.document.last_event_id = $NewEventId
+    $intent.target.state.sha256 = Get-MorphospaceCanonicalJsonSha256 -Value $intent.target.state.document
+    Write-FixtureJson -Path $newIntentPath -Value $intent
+    $completion.transaction_id = $newTransactionId
+    $completion.event_id = $NewEventId
+    $completion.state_sha256 = [string]$intent.target.state.sha256
+    $completion.intent.path = "receipts/transactions/$newTransactionId.intent.json"
+    $completion.intent.schema = [string]$intent.schema
+    $completion.intent.sha256 = Get-MorphospaceFileSha256 -Path $newIntentPath
+    Write-FixtureJson -Path $newCompletionPath -Value $completion
+    Remove-Item -LiteralPath $oldIntentPath,$oldCompletionPath
+    Update-FixtureLedgerEvent -Workspace $Workspace -EventId $OldEventId -Mutation { param($event) $event.event_id = $NewEventId }
+    Update-FixtureJson (Join-Path $Workspace 'workspace.state.json') { param($state) $state.last_event_id = $NewEventId }
+}
+
 function Update-FixtureLedgerEvent {
     param([string]$Workspace, [string]$EventId, [scriptblock]$Mutation)
     $path = Join-Path $Workspace 'iteration-events.jsonl'
@@ -378,6 +405,58 @@ function Add-OwnerProjectionContinuation {
         -ExpectedEventsLength ([IO.FileInfo]::new($eventsPath).Length) `
         -AdditionalProjections @($requests.ToArray()) `
         @rawBinding | Out-Null
+    return $EventId
+}
+
+function Add-OwnerRawArtifactContinuation {
+    param(
+        [string]$Workspace,
+        [string]$UnitId,
+        [string]$EventId,
+        [string]$Timestamp
+    )
+    $statePath = Join-Path $Workspace 'workspace.state.json'
+    $unitPath = Join-Path $Workspace "iteration-units\$UnitId.json"
+    $eventsPath = Join-Path $Workspace 'iteration-events.jsonl'
+    $state = Read-FixtureJson -Path $statePath
+    $unit = Read-FixtureJson -Path $unitPath
+    $tail = ConvertFrom-FixtureJsonText -Text ([string](Get-Content -LiteralPath $eventsPath | Where-Object { $_ } | Select-Object -Last 1)) -Context 'fixture raw-artifact event tail'
+    $targetState = Copy-FixtureValue $state
+    $targetState.last_event_id = $EventId
+    $targetUnit = Copy-FixtureValue $unit
+    $receiptBytes = $encoding.GetBytes("owner-authenticated raw-artifact receipt`n")
+    $sourceBytes = $encoding.GetBytes("owner-authenticated raw-artifact source composition`n")
+    $artifacts = @(
+        [pscustomobject][ordered]@{ bytes_base64 = [Convert]::ToBase64String($receiptBytes); path = 'receipts/later-current-owner-raw-artifact.json'; sha256 = Get-MorphospaceSha256Bytes -Bytes $receiptBytes },
+        [pscustomobject][ordered]@{ bytes_base64 = [Convert]::ToBase64String($sourceBytes); path = 'source-composition/later-current-owner-raw-artifact.json'; sha256 = Get-MorphospaceSha256Bytes -Bytes $sourceBytes }
+    )
+    $event = [pscustomobject][ordered]@{
+        schema = 'rusty.morphospace.workflow.iteration_event.v1'
+        event_id = $EventId
+        sequence = [int]$tail.sequence + 1
+        timestamp = $Timestamp
+        project_id = $projectId
+        unit_id = $UnitId
+        event_type = 'state-transition'
+        summary = 'Owner-authenticated exact raw unit bytes and two immutable event artifacts without changing the unit projection.'
+        receipts = @($artifacts.path)
+    }
+    Start-MorphospaceTransitionLedger `
+        -WorkspaceRoot $Workspace `
+        -TransactionId "$EventId-transition" `
+        -StatePath 'workspace.state.json' `
+        -UnitPath "iteration-units/$UnitId.json" `
+        -EventsPath 'iteration-events.jsonl' `
+        -TargetState $targetState `
+        -TargetUnit $targetUnit `
+        -Event $event `
+        -ExpectedPreStateSha256 (Get-MorphospaceCanonicalJsonSha256 -Value $state) `
+        -ExpectedPreUnitSha256 (Get-MorphospaceCanonicalJsonSha256 -Value $unit) `
+        -ExpectedPreUnitRawSha256 (Get-MorphospaceFileSha256 -Path $unitPath) `
+        -ExpectedEventTailId ([string]$tail.event_id) `
+        -ExpectedEventsSha256 (Get-MorphospaceFileSha256 -Path $eventsPath) `
+        -ExpectedEventsLength ([IO.FileInfo]::new($eventsPath).Length) `
+        -Artifacts $artifacts | Out-Null
     return $EventId
 }
 
@@ -579,6 +658,75 @@ try {
         Rebind-FixtureTransaction -Workspace $case -EventId $v4ProjectionAdvanceEventId
     }
 
+    $ownerV5Workspace = Copy-FixtureWorkspace -Source $baselineWorkspace -Name 'positive-owner-v5-raw-artifact-continuation'
+    Add-LaterUnit -Workspace $ownerV5Workspace
+    $v5EventId = Add-OwnerRawArtifactContinuation -Workspace $ownerV5Workspace -UnitId 'later-current-owner' -EventId 'later-current-owner-raw-artifact-recorded' -Timestamp '2026-01-02T03:08:00.0000000Z'
+    Assert-HelperPasses -Workspace $ownerV5Workspace -Name 'owner-produced-v5-raw-artifact-positive' -ContinuationCount 3 -ProjectionCount 0
+    Invoke-WorkflowContract -Workspace $ownerV5Workspace | Out-Null
+    Assert-Passed $true 'owner-produced-v5-raw-artifact-aggregate'
+    Assert-HelperRejects -Template $ownerV5Workspace -Name 'v5-missing-raw-binding' -Mutation {
+        param($case)
+        Update-FixtureJson (Join-Path $case "receipts\transactions\$v5EventId-transition.intent.json") { param($i) $i.PSObject.Properties.Remove('pre_unit_raw') }
+        Rebind-FixtureTransaction -Workspace $case -EventId $v5EventId
+    }
+    Assert-HelperRejects -Template $ownerV5Workspace -Name 'v5-raw-binding-path-detachment' -Mutation {
+        param($case)
+        Update-FixtureJson (Join-Path $case "receipts\transactions\$v5EventId-transition.intent.json") { param($i) $i.pre_unit_raw.path = "iteration-units/$replacementUnitId.json" }
+        Rebind-FixtureTransaction -Workspace $case -EventId $v5EventId
+    }
+    Assert-HelperRejects -Template $ownerV5Workspace -Name 'v5-raw-binding-noncanonical-sha' -Mutation {
+        param($case)
+        Update-FixtureJson (Join-Path $case "receipts\transactions\$v5EventId-transition.intent.json") { param($i) $i.pre_unit_raw.sha256 = ([string]$i.pre_unit_raw.sha256).ToUpperInvariant() }
+        Rebind-FixtureTransaction -Workspace $case -EventId $v5EventId
+    }
+    Assert-HelperRejects -Template $ownerV5Workspace -Name 'v5-stray-additional-projection' -Mutation {
+        param($case)
+        Update-FixtureJson (Join-Path $case "receipts\transactions\$v5EventId-transition.intent.json") { param($i) $i | Add-Member -NotePropertyName additional_projections -NotePropertyValue @() }
+        Rebind-FixtureTransaction -Workspace $case -EventId $v5EventId
+    }
+    Assert-HelperRejects -Template $ownerV5Workspace -Name 'v5-unit-target-drift' -Mutation {
+        param($case)
+        Update-FixtureJson (Join-Path $case "receipts\transactions\$v5EventId-transition.intent.json") { param($i) $i.target.unit.document.objective = 'forged changed unit target' }
+        Rebind-FixtureTransaction -Workspace $case -EventId $v5EventId
+    }
+    Assert-HelperRejects -Template $ownerV5Workspace -Name 'v5-state-change-beyond-event-tail' -Mutation {
+        param($case)
+        Update-FixtureJson (Join-Path $case "receipts\transactions\$v5EventId-transition.intent.json") { param($i) $i.target.state.document.last_accepted_receipt = 'receipts/forged-v5-acceptance.json' }
+        Rebind-FixtureTransaction -Workspace $case -EventId $v5EventId
+    }
+    Assert-HelperRejects -Template $ownerV5Workspace -Name 'v5-zero-artifacts' -Mutation {
+        param($case)
+        Update-FixtureJson (Join-Path $case "receipts\transactions\$v5EventId-transition.intent.json") { param($i) $i.artifacts = @(); $i.event.receipts = @() }
+        Rebind-FixtureTransaction -Workspace $case -EventId $v5EventId
+    }
+    Assert-HelperRejects -Template $ownerV5Workspace -Name 'v5-misordered-artifacts' -Mutation {
+        param($case)
+        Update-FixtureJson (Join-Path $case "receipts\transactions\$v5EventId-transition.intent.json") { param($i) $i.artifacts = @($i.artifacts[1], $i.artifacts[0]) }
+        Rebind-FixtureTransaction -Workspace $case -EventId $v5EventId
+    }
+    Assert-HelperRejects -Template $ownerV5Workspace -Name 'v5-event-receipt-mismatch' -Mutation {
+        param($case)
+        Update-FixtureJson (Join-Path $case "receipts\transactions\$v5EventId-transition.intent.json") { param($i) $i.event.receipts[0] = 'receipts/not-the-bound-artifact.json' }
+        Rebind-FixtureTransaction -Workspace $case -EventId $v5EventId
+    }
+    Assert-HelperRejects -Template $ownerV5Workspace -Name 'v5-live-artifact-drift' -Mutation {
+        param($case)
+        [IO.File]::WriteAllText((Join-Path $case 'receipts\later-current-owner-raw-artifact.json'), "drifted raw-artifact receipt`n", $encoding)
+    }
+    Assert-HelperRejects -Template $ownerV5Workspace -Name 'v5-chain-preimage-detachment' -Mutation {
+        param($case)
+        Update-FixtureJson (Join-Path $case "receipts\transactions\$v5EventId-transition.intent.json") { param($i) $i.pre.state.sha256 = ('c' * 64) }
+        Rebind-FixtureTransaction -Workspace $case -EventId $v5EventId
+    }
+    Assert-HelperRejects -Template $ownerV5Workspace -Name 'v5-reserved-supersession-delimiter' -Mutation {
+        param($case)
+        Rewrite-FixtureTransactionEventIdentity -Workspace $case -OldEventId $v5EventId -NewEventId 'later-current-owner-superseded-by-forbidden'
+    }
+    Assert-HelperRejects -Template $ownerV5Workspace -Name 'v5-reserved-proposed-retirement' -Mutation {
+        param($case)
+        Rewrite-FixtureTransactionEventIdentity -Workspace $case -OldEventId $v5EventId -NewEventId 'later-current-owner-proposal-retired-0001'
+    }
+
     Assert-HelperRejects -Template $ownerProjectionWorkspace -Name 'v3-missing-projection-set' -Mutation {
         param($case)
         Update-FixtureJson (Join-Path $case "receipts\transactions\$twoProjectionEventId-transition.intent.json") { param($i) $i.PSObject.Properties.Remove('additional_projections') }
@@ -602,7 +750,7 @@ try {
         Update-FixtureJson (Join-Path $case "receipts\transactions\$twoProjectionEventId-transition.intent.json") { param($i) $i.schema = 'rusty.morphospace.workflow.transition_ledger_intent.v4' }
         Rebind-FixtureTransaction -Workspace $case -EventId $twoProjectionEventId
     }
-    Assert-HelperRejects -Template $ownerProjectionWorkspace -Name 'unknown-later-intent-schema' -Mutation {
+    Assert-HelperRejects -Template $ownerProjectionWorkspace -Name 'v5-substitution-with-projection-shape' -Mutation {
         param($case)
         Update-FixtureJson (Join-Path $case "receipts\transactions\$twoProjectionEventId-transition.intent.json") { param($i) $i.schema = 'rusty.morphospace.workflow.transition_ledger_intent.v5' }
         Rebind-FixtureTransaction -Workspace $case -EventId $twoProjectionEventId

@@ -5,13 +5,14 @@ $script:MorphospaceTransitionIntentV1 = 'rusty.morphospace.workflow.transition_l
 $script:MorphospaceTransitionIntentV2 = 'rusty.morphospace.workflow.transition_ledger_intent.v2'
 $script:MorphospaceTransitionIntentV3 = 'rusty.morphospace.workflow.transition_ledger_intent.v3'
 $script:MorphospaceTransitionIntentV4 = 'rusty.morphospace.workflow.transition_ledger_intent.v4'
+$script:MorphospaceTransitionIntentV5 = 'rusty.morphospace.workflow.transition_ledger_intent.v5'
 
 function Get-MorphospaceLedgerDocumentHash { param([object]$Value) Get-MorphospaceCanonicalJsonSha256 $Value }
 function Get-MorphospaceLedgerPath { param([string]$WorkspaceRoot,[string]$TransactionId,[ValidateSet('intent','completion')][string]$Kind) "receipts/transactions/$TransactionId.$Kind.json" }
 function Read-MorphospaceLedgerJson { param([string]$Path) if(-not[IO.File]::Exists($Path)){throw "Transition artifact is missing: $Path"};Read-MorphospaceProtocolJson -Path $Path }
 function Get-MorphospaceLedgerBoundPreUnitRawSha256 {
     param([object]$Intent)
-    if([string]$Intent.schema-ceq$script:MorphospaceTransitionIntentV4){
+    if([string]$Intent.schema-cin@($script:MorphospaceTransitionIntentV4,$script:MorphospaceTransitionIntentV5)){
         return [string]$Intent.pre_unit_raw.sha256
     }
     $unitId=[string]$Intent.event.unit_id
@@ -340,6 +341,8 @@ function Assert-MorphospaceLedgerIntent {
         Assert-MorphospaceExactPropertySet $Intent @('schema','transaction_id','created_at','state','unit','events','pre','target','expected','additional_projections','artifacts','event','status') @() 'Transition ledger intent'
     }elseif($schema-ceq$script:MorphospaceTransitionIntentV4){
         Assert-MorphospaceExactPropertySet $Intent @('schema','transaction_id','created_at','state','unit','events','pre','target','expected','pre_unit_raw','additional_projections','artifacts','event','status') @() 'Transition ledger intent'
+    }elseif($schema-ceq$script:MorphospaceTransitionIntentV5){
+        Assert-MorphospaceExactPropertySet $Intent @('schema','transaction_id','created_at','state','unit','events','pre','target','expected','pre_unit_raw','artifacts','event','status') @() 'Transition ledger intent'
     }else{throw 'Transition ledger intent schema is unsupported.'}
     if([string]$Intent.status-cne'prepared'-or[string]$Intent.transaction_id-cne$TransactionId){throw 'Transition ledger intent identity/status is invalid.'}
     [void](Test-MorphospaceStrictUtcTimestamp ([string]$Intent.created_at))
@@ -430,11 +433,11 @@ function Assert-MorphospaceLedgerIntent {
     if($null-eq$supersession-and$Intent.target.unit.document.PSObject.Properties.Name-contains'unit_id'){
         if([string]$Intent.target.unit.document.unit_id-cne[string]$Intent.event.unit_id){throw 'Transition ledger target unit identity differs from its event.'}
     }
-    if($schema-ceq$script:MorphospaceTransitionIntentV4){
+    if($schema-cin@($script:MorphospaceTransitionIntentV4,$script:MorphospaceTransitionIntentV5)){
         $rawBindingUnitId=[string]$Intent.event.unit_id
         $rawBindingEventId=[string]$Intent.event.event_id
         if($rawBindingUnitId-and$rawBindingEventId-cmatch("^"+[regex]::Escape("$rawBindingUnitId-proposal-retired-")+"[0-9]{4}$")){
-            throw 'Transition ledger intent v4 may not replace proposed-unit retirement v1 receipt binding.'
+            throw "Transition ledger intent $($schema.Substring($schema.LastIndexOf('.')+1)) may not replace proposed-unit retirement v1 receipt binding."
         }
         Assert-MorphospaceExactPropertySet $Intent.pre_unit_raw @('path','sha256') @() 'Transition ledger raw pre-unit binding'
         $rawUnitPath=ConvertTo-MorphospaceProtocolRelativePath ([string]$Intent.pre_unit_raw.path)
@@ -484,6 +487,27 @@ function Assert-MorphospaceLedgerIntent {
         if([Convert]::ToBase64String($bytes)-cne[string]$artifact.bytes_base64){throw 'Transition ledger intent artifact payload is not canonical base64.'}
         $hash=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
         if($hash-cne[string]$artifact.sha256){throw 'Transition ledger intent artifact payload hash is inconsistent.'}
+    }
+    if($schema-ceq$script:MorphospaceTransitionIntentV5){
+        if([string]$Intent.pre.unit.sha256-cne[string]$Intent.target.unit.sha256){
+            throw 'Transition ledger intent v5 may not change the canonical unit projection.'
+        }
+        $artifacts=@($Intent.artifacts)
+        if($artifacts.Count-lt1-or$artifacts.Count-gt2){throw 'Transition ledger intent v5 requires one or two owned artifacts.'}
+        $receipts=@($Intent.event.receipts)
+        if($receipts.Count-ne$artifacts.Count){throw 'Transition ledger intent v5 event receipts do not exactly match its owned artifacts.'}
+        $previousArtifactPath=$null
+        for($index=0;$index-lt$artifacts.Count;$index++){
+            $artifactPath=ConvertTo-MorphospaceProtocolRelativePath ([string]$artifacts[$index].path)
+            if([string]$artifacts[$index].path-cne$artifactPath-or
+               ($null-ne$previousArtifactPath-and[StringComparer]::Ordinal.Compare([string]$previousArtifactPath,$artifactPath)-ge0)){
+                throw 'Transition ledger intent v5 artifacts are not canonical and ordinal sorted.'
+            }
+            if($receipts[$index]-isnot[string]-or[string]$receipts[$index]-cne$artifactPath){
+                throw 'Transition ledger intent v5 event receipts do not exactly match its owned artifacts.'
+            }
+            $previousArtifactPath=$artifactPath
+        }
     }
 }
 function Assert-MorphospaceNoOutstandingTransitionIntent {
@@ -852,12 +876,15 @@ function Start-MorphospaceTransitionLedger {
             if($artifact.sha256-and$hash-cne[string]$artifact.sha256){throw "Transition artifact input hash mismatch: $source"}
             $ownedArtifacts+=,[pscustomobject][ordered]@{path=(ConvertTo-MorphospaceProtocolRelativePath ([string]$artifact.path));sha256=$hash;bytes_base64=[Convert]::ToBase64String($bytes)}
         }
+        if($ExpectedPreUnitRawSha256-and@($ownedProjections).Count-eq0-and(@($ownedArtifacts).Count-lt1-or@($ownedArtifacts).Count-gt2)){
+            throw 'Raw pre-unit artifact transition requires one or two owned artifacts.'
+        }
         if($ExpectedPreUnitRawSha256-and$null-ne$supersessionOldUnitBinding){
             throw 'Raw pre-unit-bound transitions may not combine supersession.'
         }
         $intentRelative=Get-MorphospaceLedgerPath $workspace $TransactionId intent
         $intentFields=[ordered]@{
-            schema=$(if($null-ne$supersessionOldUnitBinding){$script:MorphospaceTransitionIntentV2}elseif($ExpectedPreUnitRawSha256-and@($ownedProjections).Count){$script:MorphospaceTransitionIntentV4}elseif(@($ownedProjections).Count){$script:MorphospaceTransitionIntentV3}else{$script:MorphospaceTransitionIntentV1})
+            schema=$(if($null-ne$supersessionOldUnitBinding){$script:MorphospaceTransitionIntentV2}elseif($ExpectedPreUnitRawSha256-and@($ownedProjections).Count){$script:MorphospaceTransitionIntentV4}elseif(@($ownedProjections).Count){$script:MorphospaceTransitionIntentV3}elseif($ExpectedPreUnitRawSha256){$script:MorphospaceTransitionIntentV5}else{$script:MorphospaceTransitionIntentV1})
             transaction_id=$TransactionId
             created_at=[DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffffffZ')
             state=[pscustomobject]@{path=(ConvertTo-MorphospaceProtocolRelativePath -Path $StatePath)}
@@ -869,7 +896,7 @@ function Start-MorphospaceTransitionLedger {
             artifacts=@($ownedArtifacts)
             event=$Event
         }
-        if($ExpectedPreUnitRawSha256-and@($ownedProjections).Count){
+        if($ExpectedPreUnitRawSha256){
             $intentFields.pre_unit_raw=[pscustomobject][ordered]@{
                 path=(ConvertTo-MorphospaceProtocolRelativePath -Path $UnitPath)
                 sha256=$preUnitRawSha256

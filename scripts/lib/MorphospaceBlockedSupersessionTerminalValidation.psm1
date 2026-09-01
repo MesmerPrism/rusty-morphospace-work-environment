@@ -180,7 +180,8 @@ function Test-MorphospaceBlockedSupersessionTransaction {
             'rusty.morphospace.workflow.transition_ledger_intent.v1',
             'rusty.morphospace.workflow.transition_ledger_intent.v2',
             'rusty.morphospace.workflow.transition_ledger_intent.v3',
-            'rusty.morphospace.workflow.transition_ledger_intent.v4'
+            'rusty.morphospace.workflow.transition_ledger_intent.v4',
+            'rusty.morphospace.workflow.transition_ledger_intent.v5'
         )][string]$ExpectedIntentSchema = 'rusty.morphospace.workflow.transition_ledger_intent.v1'
     )
 
@@ -199,11 +200,14 @@ function Test-MorphospaceBlockedSupersessionTransaction {
         'rusty.morphospace.workflow.transition_ledger_intent.v3',
         'rusty.morphospace.workflow.transition_ledger_intent.v4'
     )
+    $isRawArtifactIntent = $ExpectedIntentSchema -ceq 'rusty.morphospace.workflow.transition_ledger_intent.v5'
     $projectionIntentVersion = if ($ExpectedIntentSchema -ceq 'rusty.morphospace.workflow.transition_ledger_intent.v4') { 'v4' } else { 'v3' }
     if ($ExpectedIntentSchema -ceq 'rusty.morphospace.workflow.transition_ledger_intent.v2') {
         $intentProperties += 'supersession'
     } elseif ($ExpectedIntentSchema -ceq 'rusty.morphospace.workflow.transition_ledger_intent.v4') {
         $intentProperties += @('pre_unit_raw','additional_projections')
+    } elseif ($isRawArtifactIntent) {
+        $intentProperties += 'pre_unit_raw'
     } elseif ($isProjectionIntent) {
         $intentProperties += 'additional_projections'
     }
@@ -224,13 +228,14 @@ function Test-MorphospaceBlockedSupersessionTransaction {
     if (-not $eventUnitId -or -not $targetUnitId -or [string]$intent.unit.path -cne "iteration-units/$targetUnitId.json") {
         throw "Transition intent '$eventId' does not target its exact unit path."
     }
-    if ($ExpectedIntentSchema -ceq 'rusty.morphospace.workflow.transition_ledger_intent.v4') {
-        Assert-MorphospaceExactPropertySet $intent.pre_unit_raw @('path','sha256') @() "transition intent v4 '$eventId' raw pre-unit binding"
+    if ($ExpectedIntentSchema -cin @('rusty.morphospace.workflow.transition_ledger_intent.v4','rusty.morphospace.workflow.transition_ledger_intent.v5')) {
+        $rawIntentVersion = if ($isRawArtifactIntent) { 'v5' } else { 'v4' }
+        Assert-MorphospaceExactPropertySet $intent.pre_unit_raw @('path','sha256') @() "transition intent $rawIntentVersion '$eventId' raw pre-unit binding"
         $rawUnitPath = ConvertTo-MorphospaceProtocolRelativePath -Path ([string]$intent.pre_unit_raw.path)
         if ([string]$intent.pre_unit_raw.path -cne $rawUnitPath -or
             $rawUnitPath -cne [string]$intent.unit.path -or
             [string]$intent.pre_unit_raw.sha256 -cnotmatch '^[0-9a-f]{64}$') {
-            throw "Transition intent v4 '$eventId' raw pre-unit binding is malformed or detached."
+            throw "Transition intent $rawIntentVersion '$eventId' raw pre-unit binding is malformed or detached."
         }
     }
 
@@ -375,6 +380,30 @@ function Test-MorphospaceBlockedSupersessionTransaction {
             -Artifact $record.artifact `
             -CanonicalPath ([string]$record.path) `
             -Context ([string]$record.context))
+    }
+    if ($isRawArtifactIntent) {
+        $eventUnitId = [string]$event.unit_id
+        if ($eventId.Contains('-superseded-by-', [StringComparison]::Ordinal)) {
+            throw "Transition intent v5 '$eventId' may not authenticate a supersession identity."
+        }
+        if ($eventUnitId -and $eventId -cmatch ('^' + [regex]::Escape("$eventUnitId-proposal-retired-") + '[0-9]{4}$')) {
+            throw "Transition intent v5 '$eventId' may not replace proposed-unit retirement v1 receipt binding."
+        }
+        if ([string]$intent.pre.unit.sha256 -cne [string]$intent.target.unit.sha256) {
+            throw "Transition intent v5 '$eventId' changed the canonical unit projection."
+        }
+        if ($artifactRecords.Count -lt 1 -or $artifactRecords.Count -gt 2 -or @($event.receipts).Count -ne $artifactRecords.Count) {
+            throw "Transition intent v5 '$eventId' must bind one or two exact event artifacts."
+        }
+        $previousArtifactPath = $null
+        for ($artifactIndex = 0; $artifactIndex -lt $artifactRecords.Count; $artifactIndex++) {
+            $artifactPath = [string]$artifactRecords[$artifactIndex].path
+            if (($null -ne $previousArtifactPath -and [StringComparer]::Ordinal.Compare([string]$previousArtifactPath, $artifactPath) -ge 0) -or
+                @($event.receipts)[$artifactIndex] -isnot [string] -or [string]@($event.receipts)[$artifactIndex] -cne $artifactPath) {
+                throw "Transition intent v5 '$eventId' artifacts and event receipts are not exact and ordinal sorted."
+            }
+            $previousArtifactPath = $artifactPath
+        }
     }
     if ($isProjectionIntent) {
         $eventReceiptPaths = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
@@ -586,7 +615,8 @@ function Test-MorphospaceBlockedSupersessionTerminalValidation {
             'rusty.morphospace.workflow.transition_ledger_intent.v1',
             'rusty.morphospace.workflow.transition_ledger_intent.v2',
             'rusty.morphospace.workflow.transition_ledger_intent.v3',
-            'rusty.morphospace.workflow.transition_ledger_intent.v4'
+            'rusty.morphospace.workflow.transition_ledger_intent.v4',
+            'rusty.morphospace.workflow.transition_ledger_intent.v5'
         )) {
             throw "Later transition '$laterEventId' uses an unsupported owner-intent schema."
         }
@@ -611,8 +641,9 @@ function Test-MorphospaceBlockedSupersessionTerminalValidation {
             'rusty.morphospace.workflow.transition_ledger_intent.v3',
             'rusty.morphospace.workflow.transition_ledger_intent.v4'
         )
+        $laterRawArtifactIntent = $laterIntentSchema -ceq 'rusty.morphospace.workflow.transition_ledger_intent.v5'
         $laterProjectionVersion = if ($laterIntentSchema -ceq 'rusty.morphospace.workflow.transition_ledger_intent.v4') { 'v4' } else { 'v3' }
-        if ($laterProjectionIntent -and -not $knownUnitSha) {
+        if (($laterProjectionIntent -or $laterRawArtifactIntent) -and -not $knownUnitSha) {
             throw "Later transition intent $laterProjectionVersion '$laterEventId' does not continue a previously authenticated unit projection."
         }
         if ($laterIntentSchema -ceq 'rusty.morphospace.workflow.transition_ledger_intent.v2' -and
@@ -656,6 +687,15 @@ function Test-MorphospaceBlockedSupersessionTerminalValidation {
                     document = $projection.document
                     sha256 = [string]$projection.target_sha256
                 }
+            }
+        } elseif ($laterRawArtifactIntent) {
+            if ($null -eq $priorUnitProjection -or [string]$transition.unit_sha256 -cne $knownUnitSha) {
+                throw "Later transition intent v5 '$laterEventId' changed or detached its authenticated unit projection."
+            }
+            $expectedState = $priorStateProjection | ConvertTo-Json -Depth 64 | ConvertFrom-Json
+            $expectedState.last_event_id = $laterEventId
+            if ((Get-MorphospaceCanonicalJsonSha256 -Value $expectedState) -cne [string]$transition.state_sha256) {
+                throw "Later transition intent v5 '$laterEventId' changed workspace state beyond its authenticated event tail."
             }
         } elseif ($laterIntentSchema -ceq 'rusty.morphospace.workflow.transition_ledger_intent.v2') {
             $priorOldUnit = $unitProjection[$eventUnitId].document
