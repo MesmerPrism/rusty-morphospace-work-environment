@@ -38,11 +38,6 @@ $selectorPhaseCheckIds = @(
     'affected-selector-selftest'
 )
 $selectorTrustRootCheckIds = @($selectorPhaseCheckIds + @('affected-topology-selftest','affected-reuse-selftest'))
-$expectedProtocolCommonGraphIdentity = [pscustomobject][ordered]@{
-    owner_entrypoints = 50
-    tracked_graph_nodes = 129
-    protocol_consumers = 32
-}
 
 function Assert-True([bool]$Condition, [string]$Message) { if (-not $Condition) { throw $Message } }
 function Get-AffectedSupervisorResidueIdentity {
@@ -885,7 +880,7 @@ function New-AffectedTrackedImportGraph([string]$Root, [string[]]$Entrypoints, [
     [Array]::Sort($orderedNodes,[StringComparer]::Ordinal)
     return [pscustomobject][ordered]@{ nodes=$orderedNodes; edges=$edges; sha256_by_path=$identities }
 }
-function Get-AffectedGraphAdjacencySha256([object]$Graph) {
+function Get-AffectedGraphAdjacencyRecords([object]$Graph) {
     $records = [Collections.Generic.List[object]]::new()
     $orderedNodes = @(ConvertTo-AffectedOrdinalUniqueStrings @($Graph.nodes))
     if ($orderedNodes.Count -ne @($Graph.nodes).Count) { throw 'Owner import graph digest input repeats an ordinal node identity.' }
@@ -895,13 +890,51 @@ function Get-AffectedGraphAdjacencySha256([object]$Graph) {
         if ($orderedEdges.Count -ne @($Graph.edges[[string]$node]).Count) { throw "Owner import graph digest input repeats an ordinal edge: $node" }
         $records.Add([pscustomobject][ordered]@{ path=[string]$node; imports=$orderedEdges }) | Out-Null
     }
-    return Get-MorphospaceCanonicalJsonSha256 -Value ([pscustomobject][ordered]@{ schema='affected_owner_adjacency.v1'; nodes=$records.ToArray() })
+    return @($records.ToArray())
+}
+function Get-AffectedGraphAdjacencySha256([object]$Graph) {
+    return Get-MorphospaceCanonicalJsonSha256 -Value ([pscustomobject][ordered]@{ schema='affected_owner_adjacency.v1'; nodes=@(Get-AffectedGraphAdjacencyRecords $Graph) })
 }
 function Get-AffectedProtocolConsumerSha256([string[]]$Consumers,[string[]]$CheckIds) {
     $orderedConsumers = @(ConvertTo-AffectedOrdinalUniqueStrings @($Consumers))
     $orderedChecks = @(ConvertTo-AffectedOrdinalUniqueStrings @($CheckIds))
     if ($orderedConsumers.Count -ne @($Consumers).Count -or $orderedChecks.Count -ne @($CheckIds).Count) { throw 'ProtocolCommon consumer digest input repeats an ordinal identity.' }
     return Get-MorphospaceCanonicalJsonSha256 -Value ([pscustomobject][ordered]@{ schema='protocol_common_owner_consumers.v1'; consumers=$orderedConsumers; check_ids=$orderedChecks })
+}
+function Assert-AffectedProtocolCommonGraphProjection([object]$Value,[string]$Context) {
+    $ownerPaths = @(ConvertTo-AffectedOrdinalUniqueStrings @($Value.owner_entrypoint_paths))
+    Assert-True ($ownerPaths.Count -eq @($Value.owner_entrypoint_paths).Count -and ($ownerPaths -join "`n") -ceq (@($Value.owner_entrypoint_paths) -join "`n")) "$Context owner entrypoints are not ordinal, unique, and canonical."
+    Assert-True ([int]$Value.owner_entrypoints -eq $ownerPaths.Count) "$Context owner-entrypoint count does not match its canonical paths."
+
+    $adjacencyRecords = @($Value.tracked_graph_adjacency)
+    $nodePaths = [Collections.Generic.List[string]]::new()
+    $edges = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+    foreach ($record in $adjacencyRecords) {
+        Assert-AffectedScenarioProperties -Value $record -Expected @('path','imports') -Context "$Context adjacency record"
+        $path = [string]$record.path
+        if ([string]::IsNullOrWhiteSpace($path) -or $edges.ContainsKey($path)) { throw "$Context adjacency repeats or omits a node path." }
+        $imports = @(ConvertTo-AffectedOrdinalUniqueStrings @($record.imports))
+        Assert-True ($imports.Count -eq @($record.imports).Count -and ($imports -join "`n") -ceq (@($record.imports) -join "`n")) "$Context adjacency imports are not ordinal, unique, and canonical: $path"
+        $nodePaths.Add($path) | Out-Null
+        $edges[$path] = $imports
+    }
+    $orderedNodes = @(ConvertTo-AffectedOrdinalUniqueStrings @($nodePaths.ToArray()))
+    Assert-True ($orderedNodes.Count -eq $nodePaths.Count -and ($orderedNodes -join "`n") -ceq ($nodePaths.ToArray() -join "`n")) "$Context adjacency nodes are not ordinal, unique, and canonical."
+    Assert-True ([int]$Value.tracked_graph_nodes -eq $orderedNodes.Count) "$Context tracked-node count does not match its canonical adjacency."
+    foreach ($path in $orderedNodes) {
+        foreach ($import in @($edges[$path])) { if ($orderedNodes -cnotcontains [string]$import) { throw "$Context adjacency imports an absent node: $path -> $import" } }
+    }
+    foreach ($owner in $ownerPaths) { if ($orderedNodes -cnotcontains $owner) { throw "$Context owner entrypoint is absent from its adjacency: $owner" } }
+    $projectionGraph = [pscustomobject][ordered]@{ nodes=$orderedNodes; edges=$edges }
+    Assert-True ((Get-AffectedGraphAdjacencySha256 $projectionGraph) -ceq [string]$Value.adjacency_sha256) "$Context canonical adjacency digest does not match its records."
+
+    $consumerPaths = @(ConvertTo-AffectedOrdinalUniqueStrings @($Value.protocol_consumer_paths))
+    $checkIds = @(ConvertTo-AffectedOrdinalUniqueStrings @($Value.check_ids))
+    Assert-True ($consumerPaths.Count -eq @($Value.protocol_consumer_paths).Count -and ($consumerPaths -join "`n") -ceq (@($Value.protocol_consumer_paths) -join "`n")) "$Context consumer paths are not ordinal, unique, and canonical."
+    Assert-True ($checkIds.Count -eq @($Value.check_ids).Count -and ($checkIds -join "`n") -ceq (@($Value.check_ids) -join "`n")) "$Context check IDs are not ordinal, unique, and canonical."
+    Assert-True ([int]$Value.protocol_consumers -eq $consumerPaths.Count) "$Context consumer count does not match its canonical paths."
+    foreach ($consumer in $consumerPaths) { if ($orderedNodes -cnotcontains $consumer) { throw "$Context ProtocolCommon consumer is absent from its tracked adjacency: $consumer" } }
+    Assert-True ((Get-AffectedProtocolConsumerSha256 -Consumers $consumerPaths -CheckIds $checkIds) -ceq [string]$Value.consumer_sha256) "$Context canonical consumer digest does not match its paths/checks."
 }
 function Get-AffectedGraphReachability([object]$Graph, [string]$Entrypoint, [Collections.Generic.Dictionary[string,object]]$Cache) {
     if ($Cache.ContainsKey($Entrypoint)) { return @($Cache[$Entrypoint]) }
@@ -987,14 +1020,19 @@ function Get-AffectedProtocolCommonOwnerChecks([string]$Root, [object]$Registry)
         if (-not $consumers.Contains($required)) { throw "Known ProtocolCommon transitive owner is absent from the derived closure: $required" }
     }
     $result = @(ConvertTo-AffectedOrdinalUniqueStrings @($consumerCheckIds.ToArray()))
+    $orderedOwnerEntrypoints = @(ConvertTo-AffectedOrdinalUniqueStrings @($ownerEntrypoints))
     $orderedConsumers = @($consumers)
     [Array]::Sort($orderedConsumers,[StringComparer]::Ordinal)
+    $adjacencyRecords = @(Get-AffectedGraphAdjacencyRecords $graph)
     $auditClock.Stop()
     return [pscustomobject][ordered]@{
         check_ids = $result
-        owner_entrypoints = $ownerEntrypoints.Count
+        owner_entrypoints = $orderedOwnerEntrypoints.Count
+        owner_entrypoint_paths = $orderedOwnerEntrypoints
         tracked_graph_nodes = @($graph.nodes).Count
+        tracked_graph_adjacency = $adjacencyRecords
         protocol_consumers = $consumers.Count
+        protocol_consumer_paths = $orderedConsumers
         adjacency_sha256 = Get-AffectedGraphAdjacencySha256 $graph
         consumer_sha256 = Get-AffectedProtocolConsumerSha256 -Consumers $orderedConsumers -CheckIds $result
         graph_elapsed_ms = [long]$graphClock.Elapsed.TotalMilliseconds
@@ -1003,12 +1041,10 @@ function Get-AffectedProtocolCommonOwnerChecks([string]$Root, [object]$Registry)
 }
 function Invoke-AffectedGraphIndexSelfTest([string]$Root,[object]$Registry) {
     $audit = Get-AffectedProtocolCommonOwnerChecks -Root $Root -Registry $Registry
-    Assert-True (
-        $audit.owner_entrypoints -eq $expectedProtocolCommonGraphIdentity.owner_entrypoints -and
-        $audit.tracked_graph_nodes -eq $expectedProtocolCommonGraphIdentity.tracked_graph_nodes -and
-        $audit.protocol_consumers -eq $expectedProtocolCommonGraphIdentity.protocol_consumers
-    ) "Real-tree ProtocolCommon graph identity changed: roots=$($audit.owner_entrypoints) nodes=$($audit.tracked_graph_nodes) consumers=$($audit.protocol_consumers)."
-    Assert-True ($audit.adjacency_sha256 -cmatch '^[0-9a-f]{64}$' -and $audit.consumer_sha256 -cmatch '^[0-9a-f]{64}$') 'Real-tree ProtocolCommon graph did not emit deterministic adjacency/consumer digests.'
+    Assert-AffectedProtocolCommonGraphProjection -Value $audit -Context 'Real-tree ProtocolCommon graph'
+    foreach ($requiredNode in @('scripts/New-ValidatingCandidateRematerializationInput.ps1','scripts/Test-ValidatingCandidateRematerialization.ps1','scripts/ValidatingCandidateRematerialization.psm1','scripts/lib/MorphospaceSourceCompositionIdentity.psm1')) {
+        Assert-True (@($audit.tracked_graph_adjacency.path) -ccontains $requiredNode) "Real-tree ProtocolCommon graph omitted the rematerialization node: $requiredNode"
+    }
     Assert-True ([long]$audit.total_elapsed_ms -le 45000) "ProtocolCommon transitive owner audit exceeded its measured 45-second bound: $($audit.total_elapsed_ms)ms."
 
     $fixture = Join-Path ([IO.Path]::GetTempPath()) ('morphospace-affected-index-' + [guid]::NewGuid().ToString('N'))
@@ -1081,6 +1117,12 @@ $checks = @(
         $expectedAdjacencySha256 = Get-MorphospaceCanonicalJsonSha256 -Value $expectedAdjacency
         $observedAdjacencySha256 = Get-AffectedGraphAdjacencySha256 $graph
         Assert-True ($observedAdjacencySha256 -ceq $expectedAdjacencySha256) "Focused index adjacency digest changed: expected=$expectedAdjacencySha256 observed=$observedAdjacencySha256."
+
+        $swappedEdges = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+        foreach ($node in @($graph.nodes)) { $swappedEdges[[string]$node] = @($graph.edges[[string]$node]) }
+        $swappedEdges['scripts/Test-Conditional.ps1'] = @('scripts/Test-Inner.ps1','scripts/Test-Invoked.ps1','scripts/middle.psm1')
+        $sameCardinalitySwap = [pscustomobject][ordered]@{ nodes=@($graph.nodes); edges=$swappedEdges }
+        Assert-True ((Get-AffectedGraphAdjacencySha256 $sameCardinalitySwap) -cne $observedAdjacencySha256) 'Cardinality-preserving owner-edge substitution retained the canonical adjacency digest.'
 
         $scopePath = Join-Path $fixture 'scripts/Test-Scope.ps1'
         $scopeSha256 = Get-AffectedOwnerFileSha256 $scopePath
@@ -1430,8 +1472,11 @@ if ($runGraphPhase) {
         Write-AffectedScenarioJsonCreateNew -Path $graphOutputPath -Value ([pscustomobject][ordered]@{
             schema='rusty.morphospace.diagnostic.affected_validation_graph_output.v1'
             owner_entrypoints=[int]$focusedAudit.owner_entrypoints
+            owner_entrypoint_paths=@($focusedAudit.owner_entrypoint_paths)
             tracked_graph_nodes=[int]$focusedAudit.tracked_graph_nodes
+            tracked_graph_adjacency=@($focusedAudit.tracked_graph_adjacency)
             protocol_consumers=[int]$focusedAudit.protocol_consumers
+            protocol_consumer_paths=@($focusedAudit.protocol_consumer_paths)
             adjacency_sha256=[string]$focusedAudit.adjacency_sha256
             consumer_sha256=[string]$focusedAudit.consumer_sha256
             check_ids=@($focusedAudit.check_ids)
@@ -1459,14 +1504,9 @@ if ($runTrustMappingsPhase) {
     $graphOutputPath = Join-Path ([IO.Path]::GetFullPath($phaseRoot)) 'graph-import-closure.output.json'
     if (-not [IO.File]::Exists($graphOutputPath)) { throw 'Trust proportional-mapping phase requires the graph/import-closure output.' }
     $graphOutput = Read-MorphospaceProtocolJson -Path $graphOutputPath
-    Assert-AffectedScenarioProperties -Value $graphOutput -Expected @('schema','owner_entrypoints','tracked_graph_nodes','protocol_consumers','adjacency_sha256','consumer_sha256','check_ids') -Context 'Graph/import-closure output'
+    Assert-AffectedScenarioProperties -Value $graphOutput -Expected @('schema','owner_entrypoints','owner_entrypoint_paths','tracked_graph_nodes','tracked_graph_adjacency','protocol_consumers','protocol_consumer_paths','adjacency_sha256','consumer_sha256','check_ids') -Context 'Graph/import-closure output'
     Assert-True ([string]$graphOutput.schema -ceq 'rusty.morphospace.diagnostic.affected_validation_graph_output.v1') 'Trust proportional-mapping phase rejected the graph output schema.'
-    Assert-True (
-        [int]$graphOutput.owner_entrypoints -eq $expectedProtocolCommonGraphIdentity.owner_entrypoints -and
-        [int]$graphOutput.tracked_graph_nodes -eq $expectedProtocolCommonGraphIdentity.tracked_graph_nodes -and
-        [int]$graphOutput.protocol_consumers -eq $expectedProtocolCommonGraphIdentity.protocol_consumers
-    ) 'Trust proportional-mapping phase rejected the graph output identity.'
-    Assert-True ([string]$graphOutput.adjacency_sha256 -cmatch '^[0-9a-f]{64}$' -and [string]$graphOutput.consumer_sha256 -cmatch '^[0-9a-f]{64}$') 'Trust proportional-mapping phase rejected graph output digests.'
+    Assert-AffectedProtocolCommonGraphProjection -Value $graphOutput -Context 'Trust proportional-mapping graph output'
     $protocolCommonConsumerChecks = @($graphOutput.check_ids)
 }
 
