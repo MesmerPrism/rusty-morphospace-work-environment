@@ -19,6 +19,11 @@ The caller materializes, outside the workspace transaction targets:
 2. one closed `candidate_freeze.v2` document produced from that lock and the
    live planning preimage.
 
+When `-OutPath` is used, its existing parent chain and the planning-workspace
+chain must contain no symlink, junction, mount-point, or other reparse-point
+alias. This makes the outside-workspace boundary physical as well as lexical;
+the producer rejects an alias before opening or creating the output file.
+
 Do not hand-author the v2 authority document. First produce the target lock
 with every and only the product repositories in scope, then derive the v2
 input without mutating planning or Git state:

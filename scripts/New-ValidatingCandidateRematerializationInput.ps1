@@ -89,6 +89,35 @@ function Get-RematerializationInputRelativePath {
     return ConvertTo-RematerializationInputProtocolRelativePath $relative
 }
 
+function Assert-RematerializationInputNonReparseDirectoryChain {
+    param([Parameter(Mandatory)][string]$Path,[Parameter(Mandatory)][string]$Label)
+    $current = [IO.Path]::GetFullPath($Path)
+    while (-not [string]::IsNullOrWhiteSpace($current)) {
+        if (-not [IO.Directory]::Exists($current)) { throw "$Label directory chain is incomplete: $current" }
+        $item = Get-Item -LiteralPath $current -Force
+        if (-not $item.PSIsContainer) { throw "$Label path component is not a directory: $current" }
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "$Label directory chain contains a reparse point: $current" }
+        $parent = [IO.Directory]::GetParent($current)
+        if ($null -eq $parent) { break }
+        $current = $parent.FullName
+    }
+}
+
+function Assert-RematerializationInputExternalOutputPath {
+    param([Parameter(Mandatory)][string]$Workspace,[Parameter(Mandatory)][string]$Output)
+    $workspaceFull = [IO.Path]::GetFullPath($Workspace).TrimEnd([IO.Path]::DirectorySeparatorChar,[IO.Path]::AltDirectorySeparatorChar)
+    $outputFull = [IO.Path]::GetFullPath($Output)
+    $comparison = if ($IsWindows) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+    $workspacePrefix = $workspaceFull + [IO.Path]::DirectorySeparatorChar
+    if ($outputFull.Equals($workspaceFull,$comparison) -or $outputFull.StartsWith($workspacePrefix,$comparison)) { throw 'Rematerialization input output must remain outside the planning workspace transaction targets.' }
+    $parent = [IO.Path]::GetDirectoryName($outputFull)
+    if ([string]::IsNullOrWhiteSpace($parent) -or -not [IO.Directory]::Exists($parent)) { throw 'Rematerialization input output parent must already exist.' }
+    # Requiring both existing chains to be link-free makes the lexical outside-workspace
+    # check authoritative: neither side can alias through a symlink, junction, or mount point.
+    Assert-RematerializationInputNonReparseDirectoryChain -Path $workspaceFull -Label 'Planning workspace'
+    Assert-RematerializationInputNonReparseDirectoryChain -Path $parent -Label 'Rematerialization input output'
+}
+
 function Get-RematerializationInputEvents {
     param([Parameter(Mandatory)][string]$Path)
     $events = [Collections.Generic.List[object]]::new()
@@ -300,10 +329,7 @@ foreach ($binding in @(
 
 if (-not [string]::IsNullOrWhiteSpace($OutPath)) {
     $output = [IO.Path]::GetFullPath($OutPath)
-    $workspacePrefix = $workspace.TrimEnd([IO.Path]::DirectorySeparatorChar,[IO.Path]::AltDirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
-    if ($output.StartsWith($workspacePrefix,[StringComparison]::OrdinalIgnoreCase)) { throw 'Rematerialization input output must remain outside the planning workspace transaction targets.' }
-    $parent = [IO.Path]::GetDirectoryName($output)
-    if (-not [IO.Directory]::Exists($parent)) { throw 'Rematerialization input output parent must already exist.' }
+    Assert-RematerializationInputExternalOutputPath -Workspace $workspace -Output $output
     $bytes = [Text.UTF8Encoding]::new($false).GetBytes($candidateJson + "`n")
     $stream = [IO.FileStream]::new($output,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None,4096,[IO.FileOptions]::WriteThrough)
     try { $stream.Write($bytes,0,$bytes.Length); $stream.Flush($true) } finally { $stream.Dispose() }

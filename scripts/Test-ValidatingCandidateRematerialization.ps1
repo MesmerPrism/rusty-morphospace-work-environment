@@ -183,6 +183,16 @@ try{
     $candidateBytesBefore=Get-RematerializationTestFileSha256 $positive.candidate_path
     Assert-RematerializationThrows {Invoke-RematerializationInputProducer @{WorkspaceRoot=$positive.workspace;UnitId='unit-remat-001';RepositoryMapPath=$positive.map_path;TargetSourceCompositionLock=$positive.source_lock_path;FreezeId='new-candidate-positive';RematerializationId='rematerialize-positive';RepoId=@('source-repo');OutPath=$positive.candidate_path}} '*exists*'
     if((Get-RematerializationTestFileSha256 $positive.candidate_path)-cne$candidateBytesBefore){throw'Rematerialization input collision changed existing bytes.'};$assertions++
+    $workspaceAlias=Join-Path (Split-Path -Parent $positive.workspace) 'workspace-output-alias'
+    $aliasedTarget=Join-Path $positive.workspace 'receipts\aliased-candidate-freeze-v2.json'
+    try{
+        $aliasItemType=if($IsWindows){'Junction'}else{'SymbolicLink'}
+        [void](New-Item -ItemType $aliasItemType -Path $workspaceAlias -Target (Join-Path $positive.workspace 'receipts') -ErrorAction Stop)
+        Assert-RematerializationThrows {Invoke-RematerializationInputProducer @{WorkspaceRoot=$positive.workspace;UnitId='unit-remat-001';RepositoryMapPath=$positive.map_path;TargetSourceCompositionLock=$positive.source_lock_path;FreezeId='new-candidate-positive';RematerializationId='rematerialize-positive';RepoId=@('source-repo');OutPath=(Join-Path $workspaceAlias 'aliased-candidate-freeze-v2.json')}} '*contains a reparse point*'
+        if([IO.File]::Exists($aliasedTarget)){throw'Rematerialization input reparse-alias rejection created planning workspace bytes.'};$assertions++
+    }finally{
+        if([IO.Directory]::Exists($workspaceAlias)){Remove-Item -LiteralPath $workspaceAlias -Force}
+    }
     Assert-RematerializationThrows {Invoke-RematerializationInputProducer @{WorkspaceRoot=$positive.workspace;UnitId='unit-remat-001';RepositoryMapPath=$positive.map_path;TargetSourceCompositionLock=$positive.source_lock_path;FreezeId='new-candidate-positive';RematerializationId='rematerialize-positive';RepoId=@('other-repo')}} '*explicit rematerialization repository set*';$assertions++
     $untracked=Join-Path $positive.source 'untracked.tmp';[IO.File]::WriteAllText($untracked,'untracked',[Text.UTF8Encoding]::new($false))
     Assert-RematerializationThrows {Invoke-RematerializationSourceLockProducer @{WorkspaceRoot=$positive.workspace;UnitId='unit-remat-001';RepositoryMapPath=$positive.map_path;RepoId=@('source-repo')}} '*not completely clean*'
