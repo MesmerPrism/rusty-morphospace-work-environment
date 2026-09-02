@@ -3160,18 +3160,21 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     foreach ($reasonCode in @('ambiguous-path-mapping','unmapped-path')) { Assert-True (@($developmentAdmissionPlan.reason_codes) -cnotcontains $reasonCode) "Development-unit admission change retained '$reasonCode'." }
 
     # The validating-candidate input producer is a non-mutating authority
-    # constructor. A producer-only change must retain its five-check focused
-    # Standard closure and must never route through the cumulative Deep gate.
+    # constructor. A producer-only change must retain its six-check focused
+    # Standard closure, including the declared WorkUnitAutomation consumer of
+    # the shared workflow contract, and must never route through cumulative Deep.
     $rematerializationProducerBase = $developmentAdmissionHead
     Write-Utf8 (Join-Path $fixture 'scripts/New-ValidatingCandidateRematerializationInput.ps1') "# validating-candidate rematerialization input producer change`n"
     [void](Invoke-TestGit $fixture @('add', 'scripts/New-ValidatingCandidateRematerializationInput.ps1'))
     [void](Invoke-TestGit $fixture @('commit', '-m', 'validating candidate input producer change'))
     $rematerializationProducerHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
     $rematerializationProducerPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $rematerializationProducerBase -HeadRevision $rematerializationProducerHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
-    $rematerializationExpectedChecks = @('automation-receipt-v2-compatibility','normal-validation-selector','public-boundary','validating-candidate-rematerialization','workflow-contracts')
+    $rematerializationExpectedChecks = @('automation-receipt-v2-compatibility','normal-validation-selector','public-boundary','validating-candidate-rematerialization','work-unit-automation','workflow-contracts')
     $rematerializationActualChecks = @($rematerializationProducerPlan.selected_checks.check_id); [Array]::Sort($rematerializationActualChecks, [StringComparer]::Ordinal)
     Assert-True ($rematerializationProducerPlan.selection_mode -ceq 'affected' -and $rematerializationProducerPlan.effective_tier -ceq 'standard') 'Validating-candidate input producer change did not retain affected Standard selection.'
     Assert-True (($rematerializationActualChecks -join ',') -ceq ($rematerializationExpectedChecks -join ',')) "Validating-candidate input producer selected the wrong exact closure: $($rematerializationActualChecks -join ',')."
+    $rematerializationWorkflowConsumerReasons = @($rematerializationProducerPlan.selected_checks | Where-Object { [string]$_.check_id -ceq 'work-unit-automation' -and @($_.reasons) -ccontains 'consumer-of:workflow-contracts:workflow-contracts' })
+    Assert-True ($rematerializationWorkflowConsumerReasons.Count -eq 1) 'Validating-candidate input producer lost the intended work-unit-automation workflow-contract consumer reason.'
     Assert-True (@($rematerializationProducerPlan.selected_checks.check_id) -cnotcontains 'work-environment-deep') 'Validating-candidate input producer selected the cumulative Deep aggregate.'
     foreach ($reasonCode in @('ambiguous-path-mapping','unmapped-path')) { Assert-True (@($rematerializationProducerPlan.reason_codes) -cnotcontains $reasonCode) "Validating-candidate input producer change retained '$reasonCode'." }
 
