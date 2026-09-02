@@ -85,9 +85,11 @@ It changes only:
   selector to `null`;
 - `last_event_id` and one appended state-transition event; and
 - exactly one existing repository-head row for each writable predecessor. The
-  complete predecessor row (`head`, `branch`, and clean
-  `dirty_fingerprint`) is bound and replaced by the complete target row
-  observed from the clean mapped repository.
+  complete predecessor row (`head`, `branch`, and the canonical SHA-256 of
+  empty status porcelain, `e3b0c442...b855`, as `dirty_fingerprint`) is bound
+  and replaced by the complete target row carrying that same canonical clean
+  fingerprint and observed from the clean mapped repository. `null` and any
+  non-empty-status fingerprint reject before projection.
 
 The current unit, `validating` status, validation checkpoint, blockers, pending
 state, work scope, instruction surfaces, validation/acceptance declarations,

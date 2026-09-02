@@ -183,7 +183,7 @@
       "properties": {
         "head": { "$ref": "#/$defs/oid" },
         "branch": { "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }] },
-        "dirty_fingerprint": { "oneOf": [{ "$ref": "#/$defs/hash" }, { "type": "null" }] }
+        "dirty_fingerprint": { "$ref": "#/$defs/hash" }
       }
     },
     "normalValidationSelection": {

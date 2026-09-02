@@ -4,7 +4,6 @@ description: 'Route public-safe Rusty Morphospace architecture and project work:
 ---
 
 # Rusty Morphospace
-
 Use this skill as the portable first hop for Rusty Morphospace architecture,
 composition, and project-workflow questions. Keep current project state in the
 project-owned `morphospace/` workspace; never encode live units or local

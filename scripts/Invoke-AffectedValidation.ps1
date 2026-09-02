@@ -754,6 +754,21 @@ public static class W017SupervisorInnerJob {
 }
 
 function Get-AffectedValidationBytesHash([byte[]]$Bytes) { ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($Bytes))).ToLowerInvariant() }
+function Get-AffectedValidationDependencyProjectionIOException([Exception]$Exception) {
+    $current = $Exception
+    for ($depth = 0; $depth -lt 8 -and $null -ne $current; $depth++) {
+        if ($current -is [IO.IOException]) { return [IO.IOException]$current }
+        if ([object]::ReferenceEquals($current,$current.InnerException)) { break }
+        $current = $current.InnerException
+    }
+    return $null
+}
+function Test-AffectedValidationDependencyProjectionSharingViolation([int]$NativeCode,[string]$Platform) {
+    if ($Platform -ceq 'windows') { return @(32,33) -ccontains $NativeCode }
+    if ($Platform -ceq 'linux') { return $NativeCode -eq 11 }
+    if ($Platform -ceq 'unsupported') { return $false }
+    throw 'Affected-validation dependency projection sharing platform is invalid.'
+}
 function Read-AffectedValidationDependencyProjectionFile([string]$Path,[long]$ExpectedLength,[int]$SharingRetryMilliseconds=1000) {
     if ($ExpectedLength -lt 0 -or $ExpectedLength -gt 134217728) { throw 'Affected-validation dependency projection expected length is outside its publication bound.' }
     if ($SharingRetryMilliseconds -lt 1 -or $SharingRetryMilliseconds -gt 5000) { throw 'Affected-validation dependency projection sharing retry bound is invalid.' }
@@ -775,9 +790,12 @@ function Read-AffectedValidationDependencyProjectionFile([string]$Path,[long]$Ex
                 }
                 return $bytes
             } finally { $readStream.Dispose() }
-        } catch [IO.IOException] {
-            $nativeCode = $_.Exception.HResult -band 0xffff
-            if (@(32,33) -cnotcontains $nativeCode) { throw }
+        } catch {
+            $ioException = Get-AffectedValidationDependencyProjectionIOException -Exception $_.Exception
+            if ($null -eq $ioException) { throw }
+            $nativeCode = $ioException.HResult -band 0xffff
+            $sharingPlatform = if ([OperatingSystem]::IsWindows()) { 'windows' } elseif ([OperatingSystem]::IsLinux()) { 'linux' } else { 'unsupported' }
+            if (-not (Test-AffectedValidationDependencyProjectionSharingViolation -NativeCode $nativeCode -Platform $sharingPlatform)) { throw }
             $remainingMilliseconds = [long]$SharingRetryMilliseconds - [long]$retryClock.ElapsedMilliseconds
             if ($remainingMilliseconds -le 0) { throw "Affected-validation dependency projection remained sharing-locked after bounded ${SharingRetryMilliseconds}ms post-child readback." }
             [Threading.Thread]::Sleep([Math]::Min(10,[int]$remainingMilliseconds))

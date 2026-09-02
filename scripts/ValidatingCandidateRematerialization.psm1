@@ -4,6 +4,8 @@ $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1') -Force
 
+$script:ValidatingCandidateCleanDirtyFingerprint = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+
 function Copy-ValidatingCandidateDocument {
     param([Parameter(Mandatory)][object]$Value)
     return ($Value | ConvertTo-Json -Depth 96 | ConvertFrom-Json -Depth 96 -DateKind String)
@@ -242,8 +244,11 @@ function Assert-ValidatingCandidateRepositoryClosure {
         }
         if (-not $headProjections.ContainsKey($id)) { throw "Rematerialization repository-head projection is absent for '$id'." }
         $projection=$headProjections[$id];$targetCompositionRow=$newComposition[$id]
-        if ([string]$projection.predecessor.head-cne[string]$oldFinal[$id].commit-or$null-ne$projection.predecessor.dirty_fingerprint-or
-            [string]$projection.target.head-cne[string]$newFinal[$id].commit-or[string]$projection.target.branch-cne[string]$targetCompositionRow.branch-or$null-ne$projection.target.dirty_fingerprint) {
+        if ([string]$projection.predecessor.head-cne[string]$oldFinal[$id].commit-or
+            [string]$projection.predecessor.dirty_fingerprint-cne$script:ValidatingCandidateCleanDirtyFingerprint-or
+            [string]$projection.target.head-cne[string]$newFinal[$id].commit-or
+            [string]$projection.target.branch-cne[string]$targetCompositionRow.branch-or
+            [string]$projection.target.dirty_fingerprint-cne$script:ValidatingCandidateCleanDirtyFingerprint) {
             throw "Rematerialization repository-head predecessor or clean target identity differs for '$id'."
         }
     }
