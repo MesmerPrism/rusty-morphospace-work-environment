@@ -1,0 +1,246 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/active-unit-supersession-v1.schema.json",
+  "title": "Authenticated active-unit supersession request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "supersession_id",
+    "project_id",
+    "old_unit",
+    "replacement_unit",
+    "companion_units",
+    "expected",
+    "repositories",
+    "does_not_authorize"
+  ],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.workflow.active_unit_supersession.v1" },
+    "supersession_id": { "$ref": "#/$defs/id" },
+    "project_id": { "$ref": "#/$defs/id" },
+    "old_unit": { "$ref": "#/$defs/unitBinding" },
+    "replacement_unit": { "$ref": "#/$defs/unitBinding" },
+    "companion_units": {
+      "type": "array",
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/companionUnitBinding" }
+    },
+    "expected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "project_raw_sha256",
+        "project_canonical_sha256",
+        "state_raw_sha256",
+        "state_canonical_sha256",
+        "events_sha256",
+        "events_length",
+        "event_tail_id",
+        "repository_map_sha256"
+      ],
+      "properties": {
+        "project_raw_sha256": { "$ref": "#/$defs/hash" },
+        "project_canonical_sha256": { "$ref": "#/$defs/hash" },
+        "state_raw_sha256": { "$ref": "#/$defs/hash" },
+        "state_canonical_sha256": { "$ref": "#/$defs/hash" },
+        "events_sha256": { "$ref": "#/$defs/hash" },
+        "events_length": { "type": "integer", "minimum": 0, "maximum": 67108864 },
+        "event_tail_id": {
+          "oneOf": [
+            { "$ref": "#/$defs/id" },
+            { "type": "null" }
+          ]
+        },
+        "repository_map_sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "repositories": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "repo_id",
+          "head",
+          "tree",
+          "branch",
+          "dirty_fingerprint",
+          "scope_disposition",
+          "ownership_scopes",
+          "allowed_paths",
+          "overlay"
+        ],
+        "properties": {
+          "repo_id": { "$ref": "#/$defs/id" },
+          "head": { "$ref": "#/$defs/gitHash" },
+          "tree": { "$ref": "#/$defs/gitHash" },
+          "branch": {
+            "oneOf": [
+              { "type": "string", "minLength": 1 },
+              { "type": "null" }
+            ]
+          },
+          "dirty_fingerprint": { "$ref": "#/$defs/hash" },
+          "scope_disposition": { "enum": ["owned", "omitted-clean"] },
+          "ownership_scopes": {
+            "type": "array",
+            "maxItems": 33,
+            "uniqueItems": true,
+            "items": { "$ref": "#/$defs/ownershipScope" }
+          },
+          "allowed_paths": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "$ref": "#/$defs/sourcePath" }
+          },
+          "overlay": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "status_line",
+                "path",
+                "source_path",
+                "owner_unit_id",
+                "present",
+                "sha256"
+              ],
+              "properties": {
+                "status_line": { "type": "string", "minLength": 4 },
+                "path": { "$ref": "#/$defs/sourcePath" },
+                "source_path": {
+                  "oneOf": [
+                    { "$ref": "#/$defs/sourcePath" },
+                    { "type": "null" }
+                  ]
+                },
+                "owner_unit_id": { "$ref": "#/$defs/id" },
+                "present": { "type": "boolean" },
+                "sha256": {
+                  "oneOf": [
+                    { "$ref": "#/$defs/hash" },
+                    { "type": "null" }
+                  ]
+                }
+              },
+              "allOf": [
+                {
+                  "if": { "properties": { "present": { "const": true } }, "required": ["present"] },
+                  "then": { "properties": { "sha256": { "$ref": "#/$defs/hash" } } },
+                  "else": { "properties": { "sha256": { "type": "null" } } }
+                }
+              ]
+            }
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": { "scope_disposition": { "const": "owned" } },
+              "required": ["scope_disposition"]
+            },
+            "then": {
+              "properties": {
+                "ownership_scopes": { "minItems": 1 },
+                "allowed_paths": { "minItems": 1 }
+              }
+            },
+            "else": {
+              "properties": {
+                "ownership_scopes": { "maxItems": 0 },
+                "allowed_paths": { "maxItems": 0 },
+                "overlay": { "maxItems": 0 }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "does_not_authorize": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,127}$"
+    },
+    "hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "gitHash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "protocolPath": {
+      "type": "string",
+      "pattern": "^iteration-units/[A-Za-z0-9._-]+\\.json$"
+    },
+    "sourcePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"
+    },
+    "unitBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "unit_id",
+        "path",
+        "raw_sha256",
+        "canonical_sha256",
+        "status"
+      ],
+      "properties": {
+        "unit_id": { "$ref": "#/$defs/id" },
+        "path": { "$ref": "#/$defs/protocolPath" },
+        "raw_sha256": { "$ref": "#/$defs/hash" },
+        "canonical_sha256": { "$ref": "#/$defs/hash" },
+        "status": { "enum": ["active", "proposed"] }
+      }
+    },
+    "companionUnitBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "unit_id",
+        "path",
+        "raw_sha256",
+        "canonical_sha256",
+        "status",
+        "lifecycle_effect"
+      ],
+      "properties": {
+        "unit_id": { "$ref": "#/$defs/id" },
+        "path": { "$ref": "#/$defs/protocolPath" },
+        "raw_sha256": { "$ref": "#/$defs/hash" },
+        "canonical_sha256": { "$ref": "#/$defs/hash" },
+        "status": { "const": "proposed" },
+        "lifecycle_effect": { "const": "preserve-proposed" }
+      }
+    },
+    "ownershipScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["unit_id", "role", "allowed_paths"],
+      "properties": {
+        "unit_id": { "$ref": "#/$defs/id" },
+        "role": { "enum": ["replacement", "companion-overlay-only"] },
+        "allowed_paths": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/sourcePath" }
+        }
+      }
+    }
+  }
+}

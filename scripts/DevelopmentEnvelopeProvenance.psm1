@@ -2,6 +2,7 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference='Stop'
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'BlockedSuccessorPreparation.psm1') -Force
 function Assert-PreparationProvenanceJson { param([string]$Path,[string]$Schema,[string]$Message) if(-not(Test-Json -Json (Get-Content -Raw -LiteralPath $Path) -SchemaFile $Schema)){throw $Message} }
 function Get-PreparationProvenanceCanonicalHash { param([object]$Value,[string]$Context) try{return Get-MorphospaceCanonicalJsonSha256 $Value}catch{throw "$Context canonical identity is invalid. $($_.Exception.Message)"} }
 function Assert-PreparationProvenanceCommittedTransaction {
@@ -273,4 +274,20 @@ function Test-MorphospacePreparedDevelopmentEnvelope {
  }
  return [pscustomobject]@{receipt=$receipt;intent=$intent;completion=$completion;source_lock=$source;project=$project;feature_lock=$lock;state=$state}
 }
-Export-ModuleMember -Function Test-MorphospacePreparedDevelopmentEnvelope
+function Get-MorphospaceDevelopmentAdmissionKind {
+ [CmdletBinding()]param([Parameter(Mandatory)][object]$Admission)
+ if($Admission.PSObject.Properties.Name-contains'admission_kind'){return [string]$Admission.admission_kind}
+ return 'ordinary'
+}
+function Test-MorphospaceDevelopmentUnitPreparation {
+ [CmdletBinding()]param([Parameter(Mandatory)][string]$WorkspaceRoot,[Parameter(Mandatory)][object]$Admission,[ValidateSet('Admission','Freeze','Release')][string]$Phase='Admission')
+ $kind=Get-MorphospaceDevelopmentAdmissionKind $Admission
+ if($kind-ceq'ordinary'){
+  if($Admission.PSObject.Properties.Name-contains'blocked_successor'){throw 'Ordinary admission may not carry blocked-successor provenance.'}
+  return Test-MorphospacePreparedDevelopmentEnvelope -WorkspaceRoot $WorkspaceRoot -Admission $Admission -Phase $(if($Phase-ceq'Release'){'Freeze'}else{$Phase})
+ }
+ if($kind-cne'blocked-successor'){throw "Unknown development admission kind '$kind'."}
+ if(-not($Admission.PSObject.Properties.Name-contains'blocked_successor')){throw 'Blocked-successor admission lacks its closed terminal binding.'}
+ return Test-MorphospaceBlockedSuccessorPreparation -WorkspaceRoot $WorkspaceRoot -Admission $Admission -Phase $Phase
+}
+Export-ModuleMember -Function Test-MorphospacePreparedDevelopmentEnvelope,Get-MorphospaceDevelopmentAdmissionKind,Test-MorphospaceDevelopmentUnitPreparation

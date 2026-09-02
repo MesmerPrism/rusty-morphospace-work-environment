@@ -1,5 +1,6 @@
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot 'MorphospaceAffectedValidationDependencyClosure.psm1') -Force
 
 function Get-MorphospaceAffectedCheckBytesSha256 {
     param([Parameter(Mandatory = $true)][AllowEmptyCollection()][byte[]]$Bytes)
@@ -147,6 +148,7 @@ function Get-MorphospaceAffectedCheckRunnerSourceManifest {
         'scripts/Invoke-AffectedValidation.ps1',
         'scripts/lib/MorphospaceAffectedValidation.psm1',
         'scripts/lib/MorphospaceAffectedValidationCheckEvidence.psm1',
+        'scripts/lib/MorphospaceAffectedValidationDependencyClosure.psm1',
         'scripts/lib/MorphospaceProtocolCommon.psm1'
     ))
 }
@@ -159,8 +161,19 @@ function Get-MorphospaceAffectedCheckDependencyManifest {
         [Parameter(Mandatory = $true)][string]$RepositoryRoot
     )
 
+    return @((Get-MorphospaceAffectedCheckDependencyClosure -Check $Check -CompiledRegistry $CompiledRegistry -Inventory $Inventory -RepositoryRoot $RepositoryRoot).manifest)
+}
+
+function Get-MorphospaceAffectedCheckDependencyClosure {
+    param(
+        [Parameter(Mandatory = $true)][object]$Check,
+        [Parameter(Mandatory = $true)][object]$CompiledRegistry,
+        [Parameter(Mandatory = $true)][object]$Inventory,
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot
+    )
     $paths = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-    foreach ($path in @(Get-MorphospaceAffectedCheckStaticClosurePaths -RepositoryRoot $RepositoryRoot -Entrypoint ([string]$Check.command_path) -Inventory $Inventory)) { [void]$paths.Add([string]$path) }
+    $static = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $RepositoryRoot -Entrypoint ([string]$Check.command_path) -Inventory $Inventory -DynamicDeclarations @($CompiledRegistry.dependency_declarations)
+    foreach ($path in @($static.paths)) { [void]$paths.Add([string]$path) }
     foreach ($entry in @($Inventory.records)) {
         if ([string]$entry.type -cne 'blob' -or @('100644','100755') -cnotcontains [string]$entry.mode) { continue }
         foreach ($pathSetId in @($Check.consume_path_sets)) {
@@ -170,7 +183,10 @@ function Get-MorphospaceAffectedCheckDependencyManifest {
             if ($paths.Contains([string]$entry.path)) { break }
         }
     }
-    return @(Get-MorphospaceAffectedCheckManifestRecords -Inventory $Inventory -Paths @($paths) -Context 'Affected check dependency')
+    return [pscustomobject][ordered]@{
+        manifest=@(Get-MorphospaceAffectedCheckManifestRecords -Inventory $Inventory -Paths @($paths) -Context 'Affected check dependency')
+        resolution=$static.resolution
+    }
 }
 
 function Get-MorphospaceAffectedCheckEvidenceDefinition {
@@ -191,6 +207,7 @@ function New-MorphospaceAffectedCheckBinding {
         [Parameter(Mandatory = $true)][object]$Runner,
         [Parameter(Mandatory = $true)][object[]]$RunnerSourceManifest,
         [Parameter(Mandatory = $true)][object[]]$DependencyManifest,
+        [Parameter(Mandatory = $true)][object]$DependencyResolution,
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$PrerequisiteBindings
     )
     $prerequisites = @($PrerequisiteBindings)
@@ -210,6 +227,7 @@ function New-MorphospaceAffectedCheckBinding {
         runner=$Runner
         runner_source_manifest=@($RunnerSourceManifest)
         dependency_manifest=@($DependencyManifest)
+        dependency_resolution=$DependencyResolution
         prerequisite_bindings=@($prerequisites)
     }
 }
@@ -235,22 +253,24 @@ function Assert-MorphospaceAffectedCheckNoReparsePath {
     $rootFull = [IO.Path]::GetFullPath($Root).TrimEnd([IO.Path]::DirectorySeparatorChar,[IO.Path]::AltDirectorySeparatorChar)
     $pathFull = [IO.Path]::GetFullPath($Path)
     $prefix = $rootFull + [IO.Path]::DirectorySeparatorChar
-    if (-not $pathFull.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)) { throw 'Affected check evidence path escapes its prior-evidence root.' }
+    if (-not $pathFull.Equals($rootFull,[StringComparison]::OrdinalIgnoreCase) -and -not $pathFull.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)) { throw 'Affected check evidence path escapes its prior-evidence root.' }
     $cursor = $pathFull
-    while ($cursor.Length -ge $rootFull.Length) {
-        if (([IO.File]::GetAttributes($cursor) -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Affected check evidence path contains a reparse point.' }
-        if ($cursor.Equals($rootFull,[StringComparison]::OrdinalIgnoreCase)) { break }
+    $reachedRoot = $false
+    while ($true) {
+        if (([IO.File]::Exists($cursor) -or [IO.Directory]::Exists($cursor)) -and ([IO.File]::GetAttributes($cursor) -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Affected check evidence path contains a reparse point.' }
+        if ($cursor.Equals($rootFull,[StringComparison]::OrdinalIgnoreCase)) { $reachedRoot = $true }
         $parent = [IO.Path]::GetDirectoryName($cursor)
-        if ([string]::IsNullOrWhiteSpace($parent) -or $parent -ceq $cursor) { throw 'Affected check evidence path ancestry is invalid.' }
+        if ([string]::IsNullOrWhiteSpace($parent) -or $parent -ceq $cursor) { break }
         $cursor = $parent
     }
+    if (-not $reachedRoot) { throw 'Affected check evidence path ancestry is invalid.' }
 }
 
 function Read-MorphospaceAffectedCheckStableBytes {
     param([Parameter(Mandatory = $true)][string]$Path)
     $stream = [IO.File]::Open([IO.Path]::GetFullPath($Path),[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
     try {
-        if ($stream.Length -gt 10485760) { throw 'Affected check evidence file exceeds the bounded size.' }
+        if ($stream.Length -gt 134217728) { throw 'Affected check evidence file exceeds the bounded size.' }
         $bytes = [byte[]]::new([int]$stream.Length)
         $offset = 0
         while ($offset -lt $bytes.Length) {
@@ -279,12 +299,81 @@ function Get-MorphospaceAffectedCheckArtifactReferences {
         $path = ConvertTo-MorphospaceAffectedCheckArtifactPath -Path ([string]$artifact.path)
         if (-not $seen.Add($path)) { throw 'Affected check artifact paths are not unique.' }
         [byte[]]$bytes = [byte[]]$artifact.bytes
-        if ($bytes.Length -gt 10485760) { throw 'Affected check artifact exceeds the bounded size.' }
+        $artifactBound = if ($path -match '^[a-z0-9][a-z0-9-]{1,95}\.(?:start|terminal)\.json$') { 134217728 } else { 10485760 }
+        if ($bytes.Length -gt $artifactBound) { throw 'Affected check artifact exceeds the bounded size.' }
         $records.Add([pscustomobject][ordered]@{path=$path;bytes=[long]$bytes.Length;sha256=Get-MorphospaceAffectedCheckBytesSha256 $bytes})
     }
     $ordered = @($records.ToArray())
     if ($ordered.Count -gt 1) { [Array]::Sort($ordered,[Collections.Generic.Comparer[object]]::Create({ param($left,$right) [StringComparer]::Ordinal.Compare([string]$left.path,[string]$right.path) })) }
     return @($ordered)
+}
+
+function ConvertFrom-MorphospaceAffectedCanonicalPhaseJson {
+    param([Parameter(Mandatory=$true)][byte[]]$Bytes,[Parameter(Mandatory=$true)][string]$Context)
+    if($Bytes.Length -lt 3 -or $Bytes[$Bytes.Length-1] -ne 10 -or ($Bytes.Length -ge 2 -and $Bytes[$Bytes.Length-2] -eq 13)){throw "$Context is not canonical UTF-8/LF JSON."}
+    try{$raw=[Text.UTF8Encoding]::new($false,$true).GetString($Bytes)}catch{throw "$Context is not strict UTF-8."}
+    $json=$raw.Substring(0,$raw.Length-1)
+    try{$value=$json|ConvertFrom-Json -Depth 64 -DateKind String}catch{throw "$Context is not valid JSON."}
+    if((ConvertTo-MorphospaceCanonicalJson -Value $value)-cne$json){throw "$Context is not canonical JSON."}
+    return $value
+}
+
+function Assert-MorphospaceAffectedCheckPhaseArtifactSet {
+    param(
+        [Parameter(Mandatory=$true)][object[]]$Artifacts,
+        [Parameter(Mandatory=$true)][string]$Phase,
+        [Parameter(Mandatory=$true)][object]$ExpectedBinding,
+        [Parameter(Mandatory=$true)][object]$ExpectedSource,
+        [Parameter(Mandatory=$true)][string]$ExpectedPlanSha256,
+        [Parameter(Mandatory=$true)][string]$PhaseReceiptSchemaPath
+    )
+    $byPath=@{}
+    foreach($artifact in @($Artifacts)){
+        $path=ConvertTo-MorphospaceAffectedCheckArtifactPath -Path ([string]$artifact.path)
+        if($byPath.ContainsKey($path)){throw 'Affected check phase artifact set repeats a path.'}
+        $byPath[$path]=[byte[]]$artifact.bytes
+    }
+    $startPath="$Phase.start.json";$terminalPath="$Phase.terminal.json";$stdoutPath="$Phase.stdout.bin";$stderrPath="$Phase.stderr.bin"
+    foreach($requiredPath in @($startPath,$stdoutPath,$stderrPath,$terminalPath)){if(-not$byPath.ContainsKey($requiredPath)){throw "Affected check phase artifact set omits '$requiredPath'."}}
+    $terminalBytes=[byte[]]$byPath[$terminalPath]
+    try{$terminalRaw=[Text.UTF8Encoding]::new($false,$true).GetString($terminalBytes)}catch{throw 'Affected check phase terminal is not strict UTF-8.'}
+    if(-not(Test-Json -Json $terminalRaw -SchemaFile $PhaseReceiptSchemaPath -ErrorAction Stop)){throw 'Affected check phase terminal fails its closed schema.'}
+    $terminal=ConvertFrom-MorphospaceAffectedCanonicalPhaseJson -Bytes $terminalBytes -Context 'Affected check phase terminal'
+    $start=ConvertFrom-MorphospaceAffectedCanonicalPhaseJson -Bytes ([byte[]]$byPath[$startPath]) -Context 'Affected check phase start'
+    [string[]]$startProperties=@($start.PSObject.Properties.Name);[Array]::Sort($startProperties,[StringComparer]::Ordinal)
+    if(($startProperties-join',')-cne'binding,binding_sha256,budget_seconds,phase_id,schema,started_at' -or [string]$start.schema-cne'rusty.morphospace.workflow.affected_validation_self_test_phase_start.v1'){throw 'Affected check phase start does not have its exact closed shape.'}
+    if([string]$terminal.phase_id-cne$Phase -or [string]$terminal.binding.phase_id-cne$Phase -or [string]$terminal.result-cne'pass' -or [string]$start.phase_id-cne$Phase){throw 'Affected check phase artifact identity or result is invalid.'}
+    $bindingSha=Get-MorphospaceCanonicalJsonSha256 -Value $terminal.binding
+    if([string]$terminal.binding_sha256-cne$bindingSha -or [string]$start.binding_sha256-cne$bindingSha -or (Get-MorphospaceCanonicalJsonSha256 -Value $start.binding)-cne$bindingSha){throw 'Affected check phase artifact binding hash is invalid.'}
+    if([string]$terminal.binding.repository-cne[string]$ExpectedBinding.repository -or [string]$terminal.binding.platform-cne[string]$ExpectedBinding.platform -or [string]$terminal.binding.check_id-cne[string]$ExpectedBinding.check_id -or [string]$terminal.binding.head_commit-cne[string]$ExpectedSource.head.commit -or [string]$terminal.binding.head_tree-cne[string]$ExpectedSource.head.tree -or [string]$terminal.binding.base_commit-cne[string]$ExpectedSource.base.commit){throw 'Affected check phase artifact differs from its enclosing source or check identity.'}
+    if([string]$terminal.binding.plan_sha256-cne$ExpectedPlanSha256){throw 'Affected check phase artifact differs from its enclosing original plan identity.'}
+    if((Get-MorphospaceCanonicalJsonSha256 -Value $terminal.binding.runner)-cne(Get-MorphospaceCanonicalJsonSha256 -Value $ExpectedBinding.runner) -or (Get-MorphospaceCanonicalJsonSha256 -Value @($terminal.binding.dependency_manifest))-cne(Get-MorphospaceCanonicalJsonSha256 -Value @($ExpectedBinding.dependency_manifest))){throw 'Affected check phase artifact differs from its enclosing runner or dependency binding.'}
+    if([string]$start.started_at-cne[string]$terminal.started_at -or [int]$start.budget_seconds-ne[int]$terminal.budget_seconds -or [int]$start.budget_seconds-lt 1 -or [int]$start.budget_seconds-gt 600){throw 'Affected check phase start differs from its terminal timing contract.'}
+    try {
+        $startedAt=[DateTimeOffset]::ParseExact([string]$terminal.started_at,'yyyy-MM-ddTHH:mm:ssZ',[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::AssumeUniversal)
+        $endedAt=[DateTimeOffset]::ParseExact([string]$terminal.ended_at,'yyyy-MM-ddTHH:mm:ssZ',[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::AssumeUniversal)
+    } catch { throw 'Affected check phase terminal chronology is invalid.' }
+    $serializedElapsed=[long]($endedAt-$startedAt).TotalMilliseconds
+    if($serializedElapsed-lt 0 -or [Math]::Abs($serializedElapsed-[long]$terminal.elapsed_ms)-gt 1000 -or [long]$terminal.elapsed_ms-gt(([long]$terminal.budget_seconds*1000)+1000)){throw 'Affected check phase terminal chronology or budget is invalid.'}
+    if([string]$terminal.child.stdout.path-cne$stdoutPath -or [string]$terminal.child.stderr.path-cne$stderrPath){throw 'Affected check phase terminal stream paths are invalid.'}
+    $expectedPaths=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach($path in @($startPath,$stdoutPath,$stderrPath,$terminalPath)){[void]$expectedPaths.Add($path)}
+    foreach($reference in @($terminal.child.stdout,$terminal.child.stderr)){
+        $path=ConvertTo-MorphospaceAffectedCheckArtifactPath -Path ([string]$reference.path)
+        if(-not$byPath.ContainsKey($path)){throw "Affected check phase terminal references an absent artifact: $path"}
+        [byte[]]$bytes=[byte[]]$byPath[$path]
+        if([long]$bytes.Length-ne[long]$reference.bytes -or (Get-MorphospaceAffectedCheckBytesSha256 $bytes)-cne[string]$reference.sha256){throw "Affected check phase terminal reference differs from artifact bytes: $path"}
+    }
+    foreach($reference in @($terminal.outputs)){
+        $path=ConvertTo-MorphospaceAffectedCheckArtifactPath -Path ([string]$reference.path)
+        if(-not$expectedPaths.Add($path)){throw "Affected check phase terminal repeats or aliases an artifact reference: $path"}
+        if(-not$byPath.ContainsKey($path)){throw "Affected check phase terminal references an absent artifact: $path"}
+        [byte[]]$bytes=[byte[]]$byPath[$path]
+        if([long]$bytes.Length-ne[long]$reference.bytes -or (Get-MorphospaceAffectedCheckBytesSha256 $bytes)-cne[string]$reference.sha256){throw "Affected check phase terminal reference differs from artifact bytes: $path"}
+    }
+    if($byPath.Count-ne$expectedPaths.Count){throw 'Affected check phase artifact set contains unreferenced bytes.'}
+    foreach($path in @($byPath.Keys)){if(-not$expectedPaths.Contains([string]$path)){throw "Affected check phase artifact set contains unreferenced bytes: $path"}}
+    return $terminal
 }
 
 function New-MorphospaceAffectedCheckSnapshot {
@@ -318,7 +407,10 @@ function New-MorphospaceAffectedCheckSnapshot {
 function Get-MorphospaceAffectedCheckPhaseArtifacts {
     param(
         [Parameter(Mandatory = $true)][object]$Check,
-        [Parameter(Mandatory = $true)][string]$PhaseEvidenceRoot
+        [Parameter(Mandatory = $true)][string]$PhaseEvidenceRoot,
+        [Parameter(Mandatory = $true)][object]$ExpectedBinding,
+        [Parameter(Mandatory = $true)][object]$ExpectedSource,
+        [Parameter(Mandatory = $true)][string]$ExpectedPlanSha256
     )
     if ([string]$Check.command_path -cne 'scripts/Invoke-AffectedValidationSelfTestPhase.ps1') { return @() }
     [string[]]$arguments = @($Check.arguments | ForEach-Object { [string]$_ })
@@ -335,8 +427,9 @@ function Get-MorphospaceAffectedCheckPhaseArtifacts {
     Assert-MorphospaceAffectedCheckNoReparsePath -Root $root -Path $terminalPath
     [byte[]]$terminalBytes = Read-MorphospaceAffectedCheckStableBytes -Path $terminalPath
     $terminalRaw = [Text.UTF8Encoding]::new($false,$true).GetString($terminalBytes)
-    $terminal = $terminalRaw | ConvertFrom-Json -Depth 64 -DateKind String
-    if ([string]$terminal.phase_id -cne $phase -or [string]$terminal.result -cne 'pass') { throw 'Affected check passing phase terminal identity or result is invalid.' }
+    $phaseReceiptSchemaPath=[IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $PSScriptRoot) '../schemas/affected-validation-self-test-phase-receipt-v1.schema.json'))
+    if(-not(Test-Json -Json $terminalRaw -SchemaFile $phaseReceiptSchemaPath -ErrorAction Stop)){throw 'Affected check passing phase terminal fails its closed schema.'}
+    $terminal=$terminalRaw|ConvertFrom-Json -Depth 64 -DateKind String
     foreach ($output in @($terminal.outputs)) { $paths.Add((ConvertTo-MorphospaceAffectedCheckArtifactPath -Path ([string]$output.path))) }
     $pathSet = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($candidatePath in @($paths)) { if (-not $pathSet.Add((ConvertTo-MorphospaceAffectedCheckArtifactPath -Path ([string]$candidatePath)))) { throw 'Affected check phase terminal repeats an artifact path.' } }
@@ -354,6 +447,7 @@ function Get-MorphospaceAffectedCheckPhaseArtifacts {
         $match = @($artifacts | Where-Object path -CEQ ([string]$output.path))
         if ($match.Count -ne 1 -or [long]$match[0].bytes.Length -ne [long]$output.bytes -or (Get-MorphospaceAffectedCheckBytesSha256 ([byte[]]$match[0].bytes)) -cne [string]$output.sha256) { throw 'Affected check phase output differs from its terminal reference.' }
     }
+    [void](Assert-MorphospaceAffectedCheckPhaseArtifactSet -Artifacts @($artifacts.ToArray()) -Phase $phase -ExpectedBinding $ExpectedBinding -ExpectedSource $ExpectedSource -ExpectedPlanSha256 $ExpectedPlanSha256 -PhaseReceiptSchemaPath $phaseReceiptSchemaPath)
     return @($artifacts.ToArray())
 }
 
@@ -363,7 +457,9 @@ function Restore-MorphospaceAffectedCheckArtifacts {
         [AllowNull()][AllowEmptyCollection()][object[]]$Artifacts
     )
     $root = [IO.Path]::GetFullPath($PhaseEvidenceRoot)
+    Assert-MorphospaceAffectedCheckNoReparsePath -Root $root -Path $root
     if (-not [IO.Directory]::Exists($root)) { [void][IO.Directory]::CreateDirectory($root) }
+    Assert-MorphospaceAffectedCheckNoReparsePath -Root $root -Path $root
     $writes = [Collections.Generic.List[object]]::new()
     foreach ($artifact in @($Artifacts)) {
         if ($null -eq $artifact) { continue }
@@ -372,9 +468,10 @@ function Restore-MorphospaceAffectedCheckArtifacts {
         $path = Join-Path $root $relative
         $parent = [IO.Path]::GetDirectoryName($path)
         if (-not $parent.StartsWith(($root + [IO.Path]::DirectorySeparatorChar),[StringComparison]::OrdinalIgnoreCase) -and $parent -cne $root) { throw 'Affected check artifact restoration escaped its phase root.' }
+        Assert-MorphospaceAffectedCheckNoReparsePath -Root $root -Path $path
         if (-not [IO.Directory]::Exists($parent)) { [void][IO.Directory]::CreateDirectory($parent) }
+        Assert-MorphospaceAffectedCheckNoReparsePath -Root $root -Path $path
         if ([IO.File]::Exists($path)) {
-            Assert-MorphospaceAffectedCheckNoReparsePath -Root $root -Path $path
             [byte[]]$existing = Read-MorphospaceAffectedCheckStableBytes -Path $path
             if ($existing.Length -ne $bytes.Length -or (Get-MorphospaceAffectedCheckBytesSha256 $existing) -cne (Get-MorphospaceAffectedCheckBytesSha256 $bytes)) { throw 'Affected check phase artifact collision differs from the reusable snapshot.' }
             continue
@@ -384,6 +481,7 @@ function Restore-MorphospaceAffectedCheckArtifacts {
     foreach ($write in @($writes.ToArray())) {
         [byte[]]$bytes = [byte[]]$write.bytes
         $path = [string]$write.path
+        Assert-MorphospaceAffectedCheckNoReparsePath -Root $root -Path $path
         $stream = [IO.File]::Open($path,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
         try { $stream.Write($bytes,0,$bytes.Length);$stream.Flush($true) } finally { $stream.Dispose() }
     }
@@ -441,7 +539,6 @@ function Test-MorphospaceAffectedCheckReceipt {
     }
     $artifactBytes = [Collections.Generic.List[object]]::new()
     $snapshotArtifacts = @(if ($null -ne $CandidateSnapshot) { @($CandidateSnapshot.artifacts) })
-    $currentHeadTree = $null
     $previousArtifact = $null
     foreach ($artifact in @($receipt.artifacts)) {
         $phasePath = ConvertTo-MorphospaceAffectedCheckArtifactPath -Path ([string]$artifact.path)
@@ -459,21 +556,29 @@ function Test-MorphospaceAffectedCheckReceipt {
             $bytes = [Convert]::FromBase64String([string]$matched[0].bytes_base64)
         }
         if ([long]$bytes.Length -ne [long]$artifact.bytes -or (Get-MorphospaceAffectedCheckBytesSha256 $bytes) -cne [string]$artifact.sha256) { throw 'Affected check phase artifact differs from its receipt.' }
-        if ($phasePath -match '\.(?:start|terminal)\.json$') {
-            $artifactRaw = [Text.UTF8Encoding]::new($false,$true).GetString($bytes)
-            $artifactDocument = $artifactRaw | ConvertFrom-Json -Depth 64 -DateKind String
-            if ($null -eq $artifactDocument.binding -or [string]$artifactDocument.binding.head_commit -cne $CurrentHeadCommit) { throw 'Affected check phase artifact does not bind the exact current head.' }
-            if ($null -eq $currentHeadTree) {
-                $currentHeadTree = (& git -C $RepositoryRoot rev-parse "$CurrentHeadCommit^{tree}").Trim()
-                if ($LASTEXITCODE -ne 0 -or $currentHeadTree -notmatch '^[0-9a-f]{40}$') { throw 'Affected check phase artifact current tree could not be resolved.' }
-            }
-            if ([string]$artifactDocument.binding.head_tree -cne $currentHeadTree) { throw 'Affected check phase artifact does not bind the exact current tree.' }
-        }
         $artifactBytes.Add([pscustomobject][ordered]@{path=$phasePath;bytes=$bytes})
         $previousArtifact = $phasePath
     }
     if ($snapshotArtifacts.Count -ne @($receipt.artifacts).Count) { throw 'Affected check inventory snapshot contains unbound phase artifacts.' }
-    return [pscustomobject][ordered]@{receipt=$receipt;receipt_path=$receiptFull;receipt_sha256=(Get-MorphospaceAffectedCheckBytesSha256 $receiptBytes);stdout=[byte[]]$streamBytes.stdout;stderr=[byte[]]$streamBytes.stderr;artifacts=@($artifactBytes.ToArray())}
+    $artifactArray=@($artifactBytes.ToArray())
+    if($artifactArray.Count -gt 0){
+        $phaseReceiptSchemaPath=[IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $PSScriptRoot) '../schemas/affected-validation-self-test-phase-receipt-v1.schema.json'))
+        $covered=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        $terminalArtifacts=@($artifactArray|Where-Object{[string]$_.path-match'^(?<phase>[a-z0-9][a-z0-9-]{1,95})\.terminal\.json$'})
+        if($terminalArtifacts.Count -eq 0){throw 'Affected check phase artifacts contain no terminal.'}
+        foreach($terminalArtifact in $terminalArtifacts){
+            $phase=[regex]::Match([string]$terminalArtifact.path,'^(?<phase>[a-z0-9][a-z0-9-]{1,95})\.terminal\.json$').Groups['phase'].Value
+            $terminalDocument=ConvertFrom-MorphospaceAffectedCanonicalPhaseJson -Bytes ([byte[]]$terminalArtifact.bytes) -Context 'Affected check phase terminal'
+            $phasePaths=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+            foreach($path in @("$phase.start.json","$phase.stdout.bin","$phase.stderr.bin","$phase.terminal.json")){[void]$phasePaths.Add($path)}
+            foreach($output in @($terminalDocument.outputs)){[void]$phasePaths.Add((ConvertTo-MorphospaceAffectedCheckArtifactPath -Path ([string]$output.path)))}
+            $phaseArtifacts=@($artifactArray|Where-Object{$phasePaths.Contains([string]$_.path)})
+            [void](Assert-MorphospaceAffectedCheckPhaseArtifactSet -Artifacts $phaseArtifacts -Phase $phase -ExpectedBinding $receipt.binding -ExpectedSource $receipt.source -ExpectedPlanSha256 ([string]$receipt.plan_sha256) -PhaseReceiptSchemaPath $phaseReceiptSchemaPath)
+            foreach($path in @($phasePaths)){if(-not$covered.Add([string]$path)){throw 'Affected check phase artifact groups overlap.'}}
+        }
+        if($covered.Count-ne$artifactArray.Count){throw 'Affected check receipt contains orphan phase artifacts.'}
+    }
+    return [pscustomobject][ordered]@{receipt=$receipt;receipt_path=$receiptFull;receipt_sha256=(Get-MorphospaceAffectedCheckBytesSha256 $receiptBytes);stdout=[byte[]]$streamBytes.stdout;stderr=[byte[]]$streamBytes.stderr;artifacts=$artifactArray}
 }
 
 function Find-MorphospaceAffectedReusableCheckReceipt {
@@ -567,6 +672,7 @@ function Write-MorphospaceAffectedCheckCache {
         if ($checkId -notmatch '^[a-z0-9][a-z0-9-]{1,95}$' -or [string]$snapshot.receipt.binding.check_id -cne $checkId) { throw 'Affected check parent snapshot identity is invalid.' }
         $receiptRaw = [Text.UTF8Encoding]::new($false,$true).GetString([byte[]]$snapshot.receipt_bytes)
         if (-not (Test-Json -Json $receiptRaw -SchemaFile $ReceiptSchemaPath -ErrorAction Stop)) { throw 'Affected check parent snapshot receipt fails its closed schema at materialization.' }
+        if ([string]$snapshot.receipt.mode -cne 'reused' -and [string]$snapshot.receipt.plan_sha256 -cne $PlanSha256) { throw 'Affected check fresh receipt plan identity differs from its enclosing inventory plan.' }
         $directory = Join-Path $root $checkId
         [void][IO.Directory]::CreateDirectory($directory)
         $files = @(
@@ -654,6 +760,7 @@ function Write-MorphospaceAffectedCheckInventory {
         $receiptRaw = [Text.UTF8Encoding]::new($false,$true).GetString($receiptBytes)
         if (-not (Test-Json -Json $receiptRaw -SchemaFile $ReceiptSchemaPath -ErrorAction Stop)) { throw 'Affected check evidence inventory found a receipt outside its closed schema.' }
         $receipt = $receiptRaw | ConvertFrom-Json -Depth 64 -DateKind String
+        if ([string]$receipt.mode -cne 'reused' -and [string]$receipt.plan_sha256 -cne $PlanSha256) { throw 'Affected check fresh receipt plan identity differs from its enclosing inventory plan.' }
         $directory = [IO.Path]::GetDirectoryName($receiptPath)
         $records = @{}
         foreach ($leaf in @('stdout.bin','stderr.bin')) {
@@ -733,6 +840,7 @@ function Read-MorphospaceAffectedCheckInventory {
         }
         $receiptRaw = [Text.UTF8Encoding]::new($false,$true).GetString([byte[]]$entryBytes.receipt)
         $receipt = $receiptRaw | ConvertFrom-Json -Depth 64 -DateKind String
+        if ([string]$receipt.mode -cne 'reused' -and [string]$receipt.plan_sha256 -cne [string]$inventory.plan_sha256) { throw 'Affected check prior fresh receipt plan identity differs from its finalized inventory plan.' }
         if ([string]$receipt.binding.check_id -cne $checkId) { throw 'Affected check prior inventory entry and receipt identities differ.' }
         $artifactSnapshots = [Collections.Generic.List[object]]::new()
         $entryArtifacts = @($entry.artifacts)
@@ -759,4 +867,4 @@ function Read-MorphospaceAffectedCheckInventory {
     return [pscustomobject][ordered]@{inventory=$inventory;inventory_sha256=Get-MorphospaceAffectedCheckBytesSha256 $inventoryBytes;candidate_snapshots=@($candidateSnapshots.ToArray())}
 }
 
-Export-ModuleMember -Function Get-MorphospaceAffectedCheckBytesSha256, Get-MorphospaceAffectedCheckRunnerBinding, Get-MorphospaceAffectedCheckRunnerSourceManifest, Get-MorphospaceAffectedCheckDependencyManifest, New-MorphospaceAffectedCheckBinding, Get-MorphospaceAffectedCheckArtifactReferences, New-MorphospaceAffectedCheckSnapshot, Get-MorphospaceAffectedCheckPhaseArtifacts, Restore-MorphospaceAffectedCheckArtifacts, Test-MorphospaceAffectedCheckReceipt, Find-MorphospaceAffectedReusableCheckReceipt, Write-MorphospaceAffectedCheckReceipt, Write-MorphospaceAffectedCheckCache, Write-MorphospaceAffectedCheckInventory, Read-MorphospaceAffectedCheckInventory
+Export-ModuleMember -Function Get-MorphospaceAffectedCheckBytesSha256, Get-MorphospaceAffectedCheckRunnerBinding, Get-MorphospaceAffectedCheckRunnerSourceManifest, Get-MorphospaceAffectedCheckDependencyManifest, Get-MorphospaceAffectedCheckDependencyClosure, New-MorphospaceAffectedCheckBinding, Get-MorphospaceAffectedCheckArtifactReferences, New-MorphospaceAffectedCheckSnapshot, Get-MorphospaceAffectedCheckPhaseArtifacts, Restore-MorphospaceAffectedCheckArtifacts, Test-MorphospaceAffectedCheckReceipt, Find-MorphospaceAffectedReusableCheckReceipt, Write-MorphospaceAffectedCheckReceipt, Write-MorphospaceAffectedCheckCache, Write-MorphospaceAffectedCheckInventory, Read-MorphospaceAffectedCheckInventory

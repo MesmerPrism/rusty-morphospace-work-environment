@@ -415,6 +415,17 @@ authenticated. See [Completed-Transition Semantic Correction](docs/COMPLETED_TRA
 The automation CLI inspects or plans by default. `-Execute` is required for a
 workspace-state transition; it still does not run Git push, force-push,
 checkout/reset/stash, validation commands, or live device commands.
+When later owner work has cleanly superseded a stale current active unit, use
+the exact [active-unit supersession and blocked-successor recovery](docs/ACTIVE_UNIT_SUPERSESSION.md)
+routes instead of hand-editing compact state. `SupersedeActive` authenticates
+the complete overlay partition across one active replacement and any
+overlay-only companion proposals, observes omitted old scope as clean, and
+preserves companion proposal bytes and status. A terminal validation-blocked
+unit uses the narrower `PrepareBlockedSuccessor` → `AdmitDevelopmentUnit` →
+ordinary `Ready` route; release-v2 clears only its authenticated stale selector
+and explicitly claims no selector evidence. Both actions recover only from
+their exact transaction intent and grant no source, build, device, validation,
+acceptance, publication, or companion lifecycle authority.
 Use `-Action Ready -Execute` to review a bounded `proposed` unit into the
 claimable queue after its prerequisites are accepted; this replaces manual
 status/state/event edits. If another unit is current, Ready uses the same

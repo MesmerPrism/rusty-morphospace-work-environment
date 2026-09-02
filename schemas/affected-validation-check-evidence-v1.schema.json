@@ -3,16 +3,17 @@
   "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/affected-validation-check-evidence-v1.schema.json",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "source", "binding", "binding_sha256", "mode", "started_at", "ended_at", "elapsed_ms", "result", "blocked_by", "child", "artifacts", "reused_from", "claims"],
+  "required": ["schema", "source", "plan_sha256", "binding", "binding_sha256", "mode", "started_at", "ended_at", "elapsed_ms", "result", "blocked_by", "child", "artifacts", "reused_from", "claims"],
   "properties": {
     "schema": { "const": "rusty.morphospace.workflow.affected_validation_check_evidence.v1" },
     "source": {
       "type": "object", "additionalProperties": false, "required": ["base", "head"],
       "properties": { "base": { "$ref": "#/$defs/gitIdentity" }, "head": { "$ref": "#/$defs/gitIdentity" } }
     },
+    "plan_sha256": { "$ref": "#/$defs/sha256" },
     "binding": {
       "type": "object", "additionalProperties": false,
-      "required": ["repository", "platform", "check_id", "command_path", "command_blob_sha1", "arguments", "check_definition_sha256", "cache_policy", "external_state", "runner", "runner_source_manifest", "dependency_manifest", "prerequisite_bindings"],
+      "required": ["repository", "platform", "check_id", "command_path", "command_blob_sha1", "arguments", "check_definition_sha256", "cache_policy", "external_state", "runner", "runner_source_manifest", "dependency_manifest", "dependency_resolution", "prerequisite_bindings"],
       "properties": {
         "repository": { "const": "MesmerPrism/rusty-morphospace-work-environment" },
         "platform": { "enum": ["windows", "linux"] },
@@ -32,6 +33,7 @@
           "type": "array", "minItems": 1, "maxItems": 2048,
           "items": { "$ref": "#/$defs/manifestRecord" }
         },
+        "dependency_resolution": { "$ref": "#/$defs/dependencyResolution" },
         "prerequisite_bindings": {
           "type": "array", "maxItems": 64,
           "items": {
@@ -137,6 +139,51 @@
       "type": "object", "additionalProperties": false, "required": ["path", "mode", "blob"],
       "properties": { "path": { "$ref": "#/$defs/path" }, "mode": { "enum": ["100644", "100755"] }, "blob": { "$ref": "#/$defs/sha1" } }
     },
+    "dependencyDeclaration": {
+      "oneOf": [
+        {
+          "type": "object", "additionalProperties": false, "required": ["importer", "variable", "count", "target_paths"],
+          "properties": {
+            "importer": { "$ref": "#/$defs/scriptPath" }, "variable": { "$ref": "#/$defs/variable" }, "count": { "type": "integer", "minimum": 1, "maximum": 256 },
+            "target_paths": { "type": "array", "minItems": 1, "maxItems": 256, "uniqueItems": true, "items": { "$ref": "#/$defs/scriptPath" } }
+          }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["importer", "variable", "count", "classification"],
+          "properties": {
+            "importer": { "$ref": "#/$defs/scriptPath" }, "variable": { "$ref": "#/$defs/variable" }, "count": { "type": "integer", "minimum": 1, "maximum": 256 },
+            "classification": { "const": "authenticated-external-command" }
+          }
+        }
+      ]
+    },
+    "dependencyResolution": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "algorithm", "mode", "entrypoint", "used_declarations", "fallback_reasons"],
+      "properties": {
+        "schema": { "const": "rusty.morphospace.workflow.affected_validation_dependency_resolution.v1" },
+        "algorithm": { "const": "indexed-static-closure-v1" },
+        "mode": { "enum": ["exact", "all-tracked-scripts-fallback"] },
+        "entrypoint": { "$ref": "#/$defs/scriptPath" },
+        "used_declarations": { "type": "array", "maxItems": 256, "items": { "$ref": "#/$defs/dependencyDeclaration" } },
+        "fallback_reasons": {
+          "type": "array", "maxItems": 256,
+          "items": {
+            "type": "object", "additionalProperties": false, "required": ["importer", "variable", "kind"],
+            "properties": {
+              "importer": { "$ref": "#/$defs/scriptPath" }, "variable": { "type": "string", "minLength": 1, "maxLength": 512 },
+              "kind": { "enum": ["unresolved-import", "unresolved-invocation", "ambiguous-static-binding"] }
+            }
+          }
+        }
+      },
+      "allOf": [
+        { "if": { "properties": { "mode": { "const": "exact" } } }, "then": { "properties": { "fallback_reasons": { "maxItems": 0 } } } },
+        { "if": { "properties": { "mode": { "const": "all-tracked-scripts-fallback" } } }, "then": { "properties": { "fallback_reasons": { "minItems": 1 } } } }
+      ]
+    },
+    "scriptPath": { "type": "string", "minLength": 12, "maxLength": 4096, "pattern": "^scripts/[^\\\\:\u0000-\u001f\u007f]+\\.ps(?:m)?1$" },
+    "variable": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z_][A-Za-z0-9_:.-]*$" },
     "runner": {
       "type": "object", "additionalProperties": false,
       "required": ["os_description", "process_architecture", "powershell_version", "powershell_executable_sha256", "git_version", "git_executable_sha256"],
@@ -155,7 +202,13 @@
     },
     "artifact": {
       "type": "object", "additionalProperties": false, "required": ["path", "bytes", "sha256"],
-      "properties": { "path": { "$ref": "#/$defs/path" }, "bytes": { "type": "integer", "minimum": 0, "maximum": 10485760 }, "sha256": { "$ref": "#/$defs/sha256" } }
+      "properties": { "path": { "$ref": "#/$defs/path" }, "bytes": { "type": "integer", "minimum": 0, "maximum": 134217728 }, "sha256": { "$ref": "#/$defs/sha256" } },
+      "allOf": [
+        {
+          "if": { "properties": { "path": { "pattern": "^[a-z0-9][a-z0-9-]{1,95}\\.(?:start|terminal)\\.json$" } }, "required": ["path"] },
+          "else": { "properties": { "bytes": { "maximum": 10485760 } } }
+        }
+      ]
     }
   }
 }

@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/affected-validation-self-test-dependency-projection-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "repository", "head_commit", "head_tree", "registry_sha256", "check_id", "command_path", "consume_path_sets", "dependency_manifest"],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.workflow.affected_validation_self_test_dependency_projection.v1" },
+    "repository": { "const": "MesmerPrism/rusty-morphospace-work-environment" },
+    "head_commit": { "$ref": "#/$defs/sha1" },
+    "head_tree": { "$ref": "#/$defs/sha1" },
+    "registry_sha256": { "$ref": "#/$defs/sha256" },
+    "check_id": { "$ref": "#/$defs/id" },
+    "command_path": { "const": "scripts/Invoke-AffectedValidationSelfTestPhase.ps1" },
+    "consume_path_sets": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/id" }
+    },
+    "dependency_manifest": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 2048,
+      "items": { "$ref": "#/$defs/manifestRecord" }
+    }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,95}$" },
+    "path": { "type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^(?!/)(?!.*\\\\)(?!.*:)[^\\\\\u0000-\u001f\u007f]+$" },
+    "sha1": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "manifestRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "mode", "blob"],
+      "properties": {
+        "path": { "$ref": "#/$defs/path" },
+        "mode": { "enum": ["100644", "100755"] },
+        "blob": { "$ref": "#/$defs/sha1" }
+      }
+    }
+  }
+}

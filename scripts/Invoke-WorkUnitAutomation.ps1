@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("Inspect", "PrepareDevelopmentEnvelope", "ArchiveHistoryCheckpoint", "AdmitDevelopmentUnit", "RetireProposed", "Ready", "WithdrawReady", "Claim", "Resume", "CompleteInstructionSurfaces", "AmendActiveWriteScope", "FreezeCandidate", "MaterializeInheritedCandidate", "CorrectActiveReadOnlyDependencies", "CorrectActiveProjectRepositoryScope", "CorrectActiveUnitContract", "RecordHistoricalUnitCompatibilityProjection", "BeginValidation", "ReturnToActive", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RetirePreparedPush", "ReconcilePreparedPublication", "ReconcilePreparedPushTransactionSuffix", "ResolveBlocker", "CorrectResolvedBlockerEvidence", "CorrectHistoricalBlockerResolutionIntentBinding", "CorrectCompletedTransitionSemantics", "NormalizeEventLedgerPrefix", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix", "ReconcileExecutedPreparedPublication")]
+    [ValidateSet("Inspect", "PrepareDevelopmentEnvelope", "PrepareBlockedSuccessor", "SupersedeActive", "ArchiveHistoryCheckpoint", "AdmitDevelopmentUnit", "RetireProposed", "Ready", "WithdrawReady", "Claim", "Resume", "CompleteInstructionSurfaces", "AmendActiveWriteScope", "FreezeCandidate", "MaterializeInheritedCandidate", "CorrectActiveReadOnlyDependencies", "CorrectActiveProjectRepositoryScope", "CorrectActiveUnitContract", "RecordHistoricalUnitCompatibilityProjection", "BeginValidation", "ReturnToActive", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RetirePreparedPush", "ReconcilePreparedPublication", "ReconcilePreparedPushTransactionSuffix", "ResolveBlocker", "CorrectResolvedBlockerEvidence", "CorrectHistoricalBlockerResolutionIntentBinding", "CorrectCompletedTransitionSemantics", "NormalizeEventLedgerPrefix", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix", "ReconcileExecutedPreparedPublication")]
     [string]$Action,
     [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
     [string]$UnitId = "",
@@ -37,6 +37,10 @@ param(
     [string]$ExpectedDevelopmentUnitAdmissionSha256 = "",
     [string]$DevelopmentEnvelopePreparation = "",
     [string]$ExpectedDevelopmentEnvelopePreparationSha256 = "",
+    [string]$BlockedSuccessorPreparation = "",
+    [string]$ExpectedBlockedSuccessorPreparationSha256 = "",
+    [string]$ActiveUnitSupersession = "",
+    [string]$ExpectedActiveUnitSupersessionSha256 = "",
     [string]$HistoryArchiveCheckpoint = "",
     [string]$ExpectedHistoryArchiveCheckpointSha256 = "",
     [string]$CandidateFreeze = "",
@@ -80,6 +84,18 @@ if ($Action -eq "PrepareDevelopmentEnvelope") {
     if (-not $DevelopmentEnvelopePreparation -or -not $OutPath) { throw "PrepareDevelopmentEnvelope requires DevelopmentEnvelopePreparation and OutPath." }
     Import-Module (Join-Path $PSScriptRoot "DevelopmentEnvelopePreparation.psm1") -Force
     Invoke-MorphospacePrepareDevelopmentEnvelope -WorkspaceRoot $WorkspaceRoot -DevelopmentEnvelopePreparation $DevelopmentEnvelopePreparation -ExpectedDevelopmentEnvelopePreparationSha256 $ExpectedDevelopmentEnvelopePreparationSha256 -Timestamp $Timestamp -OutPath $OutPath -Execute:$Execute | ConvertTo-Json -Depth 32
+    return
+}
+if ($Action -eq "PrepareBlockedSuccessor") {
+    if (-not $BlockedSuccessorPreparation -or -not $OutPath) { throw "PrepareBlockedSuccessor requires BlockedSuccessorPreparation and OutPath." }
+    Import-Module (Join-Path $PSScriptRoot "BlockedSuccessorPreparation.psm1") -Force
+    Invoke-MorphospacePrepareBlockedSuccessor -WorkspaceRoot $WorkspaceRoot -BlockedSuccessorPreparation $BlockedSuccessorPreparation -ExpectedBlockedSuccessorPreparationSha256 $ExpectedBlockedSuccessorPreparationSha256 -Timestamp $Timestamp -OutPath $OutPath -Execute:$Execute | ConvertTo-Json -Depth 64
+    return
+}
+if ($Action -eq "SupersedeActive") {
+    if (-not $ActiveUnitSupersession -or -not $RepoMapPath -or -not $OutPath) { throw "SupersedeActive requires ActiveUnitSupersession, RepoMapPath, and OutPath." }
+    Import-Module (Join-Path $PSScriptRoot "ActiveUnitSupersession.psm1") -Force
+    Invoke-MorphospaceSupersedeActive -WorkspaceRoot $WorkspaceRoot -UnitId $UnitId -RepoMapPath $RepoMapPath -ActiveUnitSupersession $ActiveUnitSupersession -ExpectedActiveUnitSupersessionSha256 $ExpectedActiveUnitSupersessionSha256 -Timestamp $Timestamp -OutPath $OutPath -Execute:$Execute | ConvertTo-Json -Depth 64
     return
 }
 if ($Action -eq "ArchiveHistoryCheckpoint") {

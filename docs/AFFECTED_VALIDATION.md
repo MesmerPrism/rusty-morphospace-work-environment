@@ -32,6 +32,23 @@ or post-kill drain overrun is `code-fail`; `infra-fail` is reserved for a
 process-start or host fault. Both write typed leaf and aggregate evidence
 before the job fails.
 
+The dependency closure is derived separately for each distinct exact check
+input. Checks in the same bounded executor process share the result only when
+their head commit/tree, registry digest, command path, and consumed path sets
+are identical. Its binding
+records the entrypoint, exact ordinal static import/invocation closure, only the
+dynamic declarations actually consumed, and any conservative fallback reason.
+Dynamic declarations are closed importer/variable/count records and drift in
+their count, target, classification, or exact source bytes rejects the leaf.
+An invocation that cannot be resolved safely does not borrow another check's
+closure: that one leaf binds every tracked PowerShell source and records the
+unresolved importer, variable, and kind. Declared consume path sets, runner and
+schema sources, prerequisite bindings, and the pre/post source-byte checks stay
+independent and exact. This prevents an unrelated ledger-only correction from
+invalidating otherwise reusable documentation, skill, or protocol-foundation
+leaves while retaining invalidation for real ownership, ledger, and authority
+consumers.
+
 Current-run leaf bytes are retained as canonical parent-owned in-memory
 snapshots only after the executor's supervisor has published one tagged result
 through a parent-created anonymous completion pipe, terminated its complete
@@ -154,19 +171,45 @@ leaves continue and preserve their evidence. A corrected attempt may then
 reuse every still-valid independent pass instead of replaying the entire
 platform gate.
 
-Selector trust-root validation is a finite eight-phase DAG: graph/import
-closure, executor pass/schema, executor damage, selection scenarios, then four
-independent trust leaves for self/executor closure, routing contracts,
+Selector trust-root validation is a finite eighteen-phase DAG: graph/import
+closure, independently reusable per-check dependency-closure damage, executor
+pass/schema, ten independent executor-damage leaves for native failure,
+native exit 125, forged terminal control, parent containment, descendant
+containment, output ceiling, timeout, dual-stream draining, source integrity,
+and publication collision,
+selection scenarios, then four independent trust leaves for self/executor closure, routing contracts,
 proportional mappings, and damage/culture finalization. Each phase has its own
 finite child budget and exact-host cache policy, so a later failure in one
 trust leaf does not invalidate completed sibling evidence. Every phase has a
 create-new terminal receipt bound to the exact repository commit/tree,
-registry, schema, runner, selector, affected-validation module, shared
-protocol module, plan, platform, check identity, and current OS/process
-architecture plus the exact PowerShell and Git executable bytes and versions.
+plan, platform, check identity, and exact dependency manifest. The outer
+executor derives and batch-verifies that registry-owned transitive closure once
+per identical head/tree, registry, command, and consumed-path-set input group,
+then publishes its canonical bytes through a create-new temporary file held
+read-only by the parent for the complete child lifetime. The child receives
+only its path and parent-computed SHA-256, then validates the projection schema,
+current head/tree, registry and check identity, ordinal tree records, and
+working bytes; it never repeats the import-graph analysis. The parent rechecks
+the held projection after the child and removes it during bounded cleanup.
+The registry contract requires all eighteen phase checks and their verifier to
+share that exact command and consumed-path-set input. Each phase still receives
+and verifies its own check identity and binding, and the grouped working-byte
+set is rechecked after all terminals are consumed. Runner identity additionally
+binds the current OS/process architecture plus exact PowerShell and Git
+executable bytes and versions.
+The outer executor is the sole completeness owner for this projection: it
+passes the same manifest already committed to the enclosing leaf binding, and
+the phase child may validate but never add, omit, or substitute records. A
+phase terminal is therefore non-authoritative on its own and is consumable only
+through an enclosing affected-check receipt whose exact dependency manifest is
+equal. Omission, addition, order, tree, working-byte, registry, or check-input
+drift fails before phase evidence can be accepted.
 The terminal verifier
 accepts only the complete exact passing receipt set and never replays a phase.
-The executor stops at the first failed selector phase. A later attempt may
+Each executor-damage leaf begins from the same immutable fixture head and has
+no sibling mutation dependency. Selection consumes all ten contracts, while
+an individual failure leaves completed sibling receipts reusable. The executor
+stops at the first failed selector phase. A later attempt may
 reuse an exact passing terminal already materialized under the deterministic
 plan/platform phase root; drift, collision, malformed evidence, missing raw
 streams, or a changed dependency binding fails closed. This is iterative
@@ -175,12 +218,19 @@ escalation and evidence reuse, not a larger cumulative timeout.
 For an exact-host selector phase, the outer leaf receipt and inventory also
 bind the phase start, terminal, raw streams, and every terminal-referenced
 output as closed inner artifacts. A fresh retry snapshots these bytes from the
-prior parent inventory, requires their exact current head/tree binding, and
-rehydrates missing phase files with create-new writes before the terminal
-verifier runs. Existing identical bytes are accepted; differing collisions are
-preserved and fail closed. The verifier can therefore consume unaffected
-siblings after one branch failed without relying on an un-restored workspace
-directory or replaying those siblings.
+prior parent inventory, requires their exact authenticated receipt-source
+head/tree binding, and rehydrates missing phase files with create-new writes
+only after the complete existing destination ancestry up to the volume root is
+free of reparse points. The verifier accepts an ancestor-source
+phase only when its repository/platform/check/phase identity, exact runner,
+and complete dependency manifest equal the current expectation and Git proves
+both its source tree and ancestry. The enclosing receipt's required
+`plan_sha256` is the phase's original plan identity, not the retry's scheduling
+plan; plan and head provenance therefore remain the original source evidence. A reused receipt retains that original evidence source
+transitively while the enclosing inventory records the current run. Runner/dependency drift, a wrong tree, a nonancestor, or a
+differing collision is preserved and fails closed. The verifier can therefore
+consume unaffected siblings after one branch failed without relying on an
+un-restored workspace directory or replaying those siblings.
 
 PR runs preserve content-addressed plan and aggregate evidence, the complete
 parent-materialized per-check stream/receipt/inner-artifact directory, and the selector phase directory. The
@@ -286,3 +336,69 @@ The archive public-router paths select the same archive checkpoint closure plus
 the ordinary automation integration check. They remain a distinct path set, so
 they cannot be mistaken for generic automation or cause an ambiguous Deep
 escalation.
+
+Active-unit supersession and blocked-successor preparation each have one
+closed, non-overlapping path set for their request/receipt schemas, owner
+module, and focused self-test. Both select the ordinary workflow-contract and
+work-unit-automation prerequisites before their Windows Standard owner leaf.
+The blocked-successor leaf additionally requires the development-envelope and
+normal-validation-selector leaves because it authenticates a prepared
+successor and releases only the exact terminal Quick selection. These routes
+remain independent checks: a failure blocks only its semantic dependents, and
+unchanged passing prerequisites remain eligible for exact dependency-closure
+reuse. Prerequisites bind those exact receipts without registering every
+dependent as an unconditional reverse consumer of a shared contract; a generic
+workflow or automation change therefore cannot fan out into inactive lifecycle
+owners. The shared lifecycle routing document remains in the existing
+`documentation` path set rather than acquiring a second owner.
+The public automation router is covered by a low-cost capture seam in the
+ordinary automation integration test. It proves exact dry/execute/replay
+forwarding for both lifecycle actions without replaying either focused owner;
+the focused owners remain responsible for the real state-transition and
+idempotence semantics. Local development can invoke only that seam with
+`Test-WorkUnitAutomation.ps1 -LifecycleRouterSelfTestOnly`; the registered
+owner still runs the complete integration test once for final admission.
+
+`terminal-validation-selection-release-v2.schema.json` belongs to the normal
+validation selector path set. The shared
+`work-unit-automation-receipt-v2.schema.json` and its focused compatibility
+test have one separate, non-overlapping path set; generic automation contains
+only `WorkUnitAutomation.psm1`. Either path set selects the fast
+`automation-receipt-v2-compatibility` check. That check keeps an exact closed
+action-to-transition corpus for all v2 schema values, binds every action to its
+tracked producer and focused owner test, and schema-validates a producer-shaped
+canonical receipt for every allowed pair. The shape table preserves the sole
+absent pre-status (`AdmitDevelopmentUnit`), idle/blocked/archive null-current
+forms, the supersession dry-run form, and ordinary receipt versus archive
+checkpoint paths. Valid-schema cross-pair and nullability damage must still be
+rejected by the compatibility owner. The check also invokes the private Ready dispatcher
+and selector-binding guard for ordinary-v1, blocked-successor-v2, malformed,
+ambiguous, absent-selector, and self-bound-selector cases. A receipt-schema-only
+change therefore selects that focused owner and public-boundary validation,
+without selecting the normal selector, full automation integration, an archive
+checkpoint, development-envelope owner, inactive lifecycle owner, or cumulative
+Deep. A `WorkUnitAutomation.psm1` change still selects its existing integration
+consumers as well as the fast compatibility owner.
+Archive schemas and the archive router still trigger the W-017B archive
+checkpoint directly, so retiring reverse workflow-contract expansion does not
+weaken the separate archive-envelope route. The
+blocked-successor test's retained-module invocations are closed by one
+case-insensitive PowerShell-variable declaration with exact ordinal target
+paths for its preparation, protocol, and transition-ledger modules. Its actual
+dry-run/generated/executed v2 results are checked against the shared receipt
+schema. Active-unit supersession also validates its emitted result before
+returning; development-envelope preparation and development-unit admission
+validate their real dry/executed receipts in their owner suites. The fast
+compatibility check does not claim to execute unchanged historical producers:
+producer source changes continue to select their focused owners, while a
+schema-only change gets a bounded complete producer-shape compatibility pass.
+The active-supersession test resolves its literal
+module bindings without a dynamic declaration. Every lifecycle path therefore
+has one ordinal owner and avoids unmapped or ambiguous Deep fallback.
+
+Development-unit admission has a dedicated, non-overlapping path set for its
+schema, module, and focused self-test. Direct changes to any of those paths
+select the admission owner and public-boundary validation, but do not replay
+development-envelope preparation or the cumulative Deep aggregate. Shared
+protocol or transition-ledger changes still select admission through its
+declared consumed dependencies.
