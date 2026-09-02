@@ -38,8 +38,13 @@ pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\New-SourceCompositionLock.ps1 `
   -WorkspaceRoot <project-root>\morphospace `
   -UnitId <unit-id> `
-  -RepositoryMapPath <local-repository-map>
+  -RepositoryMapPath <local-repository-map> `
+  -RepoId <product-repo-id>
 ```
+
+Pass every intended product repository ID explicitly. Repository-map entries
+that provide tooling, device access, or validation evidence must not enter a
+source lock merely because they are locally available.
 
 The command plans by default. Add `-Execute` only after reviewing the full
 commit/tree set. For the strongest isolation, materialize the lock as detached

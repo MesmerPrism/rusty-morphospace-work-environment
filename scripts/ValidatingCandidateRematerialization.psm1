@@ -1,6 +1,7 @@
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceSourceCompositionIdentity.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1') -Force
 
@@ -116,8 +117,8 @@ function Get-ValidatingCandidateSourceComposition {
         default { throw "Unsupported source-composition schema '$([string]$document.schema)'." }
     }
     if ($Target) {
-        $fingerprintDocument = [pscustomobject][ordered]@{ project_id=$ProjectId; unit_id=$UnitId; repositories=@($document.repositories) }
-        if ([string]$document.fingerprint -cne (Get-MorphospaceCanonicalJsonSha256 $fingerprintDocument)) {
+        $expectedFingerprint = Get-MorphospaceSourceCompositionFingerprint -ProjectId $ProjectId -UnitId $UnitId -Repositories @($document.repositories)
+        if ([string]$document.fingerprint -cne $expectedFingerprint) {
             throw 'Target source-composition fingerprint does not bind its exact project, unit, and repositories.'
         }
     }

@@ -12,10 +12,44 @@ device, validation, acceptance, or publication work.
 
 ## Inputs
 
-The caller prepares, outside the workspace transaction targets:
+The caller materializes, outside the workspace transaction targets:
 
-1. one closed `candidate_freeze.v2` document; and
-2. one closed `source_composition_lock.v1` document.
+1. one closed `source_composition_lock.v1` document produced from an explicit
+   exact `-RepoId` set; and
+2. one closed `candidate_freeze.v2` document produced from that lock and the
+   live planning preimage.
+
+Do not hand-author the v2 authority document. First produce the target lock
+with every and only the product repositories in scope, then derive the v2
+input without mutating planning or Git state:
+
+```powershell
+pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass `
+  -File .\scripts\New-SourceCompositionLock.ps1 `
+  -WorkspaceRoot <project-root>/morphospace `
+  -UnitId <unit-id> `
+  -RepositoryMapPath <project-root>/morphospace/repository-map.json `
+  -RepoId <product-repo-id> `
+  > <operator-evidence-root>/target-source-lock.json
+
+pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass `
+  -File .\scripts\New-ValidatingCandidateRematerializationInput.ps1 `
+  -WorkspaceRoot <project-root>/morphospace `
+  -UnitId <unit-id> `
+  -RepositoryMapPath <project-root>/morphospace/repository-map.json `
+  -TargetSourceCompositionLock <operator-evidence-root>/target-source-lock.json `
+  -FreezeId <new-freeze-id> `
+  -RematerializationId <rematerialization-id> `
+  -RepoId <product-repo-id> `
+  -OutPath <operator-evidence-root>/candidate-freeze-v2.json
+```
+
+Repeat `-RepoId` (or pass an explicit PowerShell array) for a multi-repository
+product. The exact set must equal the predecessor composition, predecessor
+freeze, changed-path closure, and target lock. Extra repository-map entries do
+not enter the product composition implicitly. For Morphovision, name
+`morphovision-public-development` explicitly; never rely on selecting every
+entry from the local map.
 
 The v2 freeze retains every v1 candidate field. Its lineage additionally binds
 the predecessor freeze and source-lock bytes, three distinct repository
@@ -34,7 +68,8 @@ The target lock may contain exactly the predecessor product-composition
 repository set. QFM and other external validation or device providers are
 evidence providers, not product source-composition repositories.
 
-All mapped repositories must already exist at the requested clean commit/tree.
+All selected mapped repositories must already exist at the requested clean
+commit/tree, including no untracked files.
 The action observes them only through `git --no-optional-locks`, preventing
 even an optional index refresh. It never fetches, checks out, resets, cleans,
 or otherwise changes Git state.
@@ -73,8 +108,8 @@ canonical preimages for the unchanged `feature.lock.json` and
 `project.spec.json` projections. The transaction owns exactly two create-new
 artifacts in ordinal path order:
 
-- `receipts/<freeze-id>.json` — the exact caller-authored v2 freeze;
-- `source-compositions/<lock-id>.lock.json` — the exact caller-authored source
+- `receipts/<freeze-id>.json` — the exact producer-authored v2 freeze;
+- `source-compositions/<lock-id>.lock.json` — the exact producer-authored source
   lock.
 
 It changes only:

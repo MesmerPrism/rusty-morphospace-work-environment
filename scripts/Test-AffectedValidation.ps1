@@ -3110,7 +3110,9 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     foreach ($checkId in @('history-archive-checkpoint','history-archive-checkpoint-selftest','work-environment-deep')) { Assert-True (@($automationReceiptPlan.selected_checks.check_id) -cnotcontains $checkId) "Shared automation receipt change incorrectly selected '$checkId'." }
     $retiredArchiveSelection = @($automationReceiptPlan.selected_checks | Where-Object { [string]$_.check_id -ceq 'history-archive-checkpoint' })
     $retiredArchiveSkip = @($automationReceiptPlan.skipped_checks | Where-Object { [string]$_.check_id -ceq 'history-archive-checkpoint' })
-    $retiredHistoryExpansionReasons = @($automationReceiptPlan.selected_checks | Where-Object { @($_.reasons) -ccontains 'consumer-of:workflow-contracts:workflow-contracts' })
+    $intendedWorkflowConsumerReasons = @($automationReceiptPlan.selected_checks | Where-Object { [string]$_.check_id -ceq 'work-unit-automation' -and @($_.reasons) -ccontains 'consumer-of:workflow-contracts:workflow-contracts' })
+    Assert-True ($intendedWorkflowConsumerReasons.Count -eq 1) 'Shared automation receipt lost the intended work-unit-automation workflow-contract consumer reason.'
+    $retiredHistoryExpansionReasons = @($automationReceiptPlan.selected_checks | Where-Object { @('history-archive-checkpoint','historical-validation-debt-baseline') -ccontains [string]$_.check_id -and @($_.reasons) -ccontains 'consumer-of:workflow-contracts:workflow-contracts' })
     Assert-True ($retiredArchiveSelection.Count -eq 0 -and $retiredArchiveSkip.Count -eq 1 -and (@($retiredArchiveSkip[0].reasons) -join ',') -ceq 'not-selected') 'Shared automation receipt allowed the retired archive path to reappear through selection expansion.'
     Assert-True ($retiredHistoryExpansionReasons.Count -eq 0) 'Shared automation receipt retained the retired workflow-contract consumer expansion reason.'
     foreach ($reasonCode in @('ambiguous-path-mapping','unmapped-path')) { Assert-True (@($automationReceiptPlan.reason_codes) -cnotcontains $reasonCode) "Shared automation receipt change retained '$reasonCode'." }

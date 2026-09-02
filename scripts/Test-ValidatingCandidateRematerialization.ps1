@@ -3,7 +3,6 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference='Stop'
 
 $repoRoot=Split-Path $PSScriptRoot -Parent
-Import-Module (Join-Path $PSScriptRoot 'WorkUnitAutomation.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'CandidateFreeze.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'ValidatingCandidateRematerialization.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
@@ -15,6 +14,8 @@ $expectedProtocolModulePath=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'lib
 $protocolModules=@(Get-Module MorphospaceProtocolCommon|Where-Object{[IO.Path]::GetFullPath([string]$_.Path)-ceq$expectedProtocolModulePath})
 if($protocolModules.Count-ne1){throw"Expected exactly one public MorphospaceProtocolCommon module at '$expectedProtocolModulePath', observed $($protocolModules.Count)."}
 $script:RematerializationProtocolModule=$protocolModules[0]
+$script:RematerializationSourceLockProducerPath=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'New-SourceCompositionLock.ps1'))
+$script:RematerializationInputProducerPath=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'New-ValidatingCandidateRematerializationInput.ps1'))
 function Read-MorphospaceProtocolJson {param([Parameter(Mandatory,Position=0)][string]$Path)& $script:RematerializationProtocolModule {param($InputPath) Read-MorphospaceProtocolJson -Path $InputPath} $Path}
 function Get-MorphospaceFileSha256 {param([Parameter(Mandatory,Position=0)][string]$Path)& $script:RematerializationProtocolModule {param($InputPath) Get-MorphospaceFileSha256 -Path $InputPath} $Path}
 function Get-MorphospaceCanonicalJsonSha256 {param([Parameter(Mandatory,Position=0)][object]$Value)& $script:RematerializationProtocolModule {param($InputValue) Get-MorphospaceCanonicalJsonSha256 -Value $InputValue} $Value}
@@ -31,6 +32,14 @@ function Invoke-MorphospaceRematerializeValidatingCandidate {
 function Test-MorphospaceRematerializedCandidate {
     [CmdletBinding()]param([Parameter(Mandatory,Position=0)][string]$WorkspaceRoot,[Parameter(Mandatory,Position=1)][object]$Unit)
     & $script:RematerializationOwnerModule {param($Root,$CandidateUnit) Test-MorphospaceRematerializedCandidate -WorkspaceRoot $Root -Unit $CandidateUnit} $WorkspaceRoot $Unit
+}
+function Invoke-RematerializationSourceLockProducer {
+    param([hashtable]$Arguments)
+    & $script:RematerializationSourceLockProducerPath @Arguments
+}
+function Invoke-RematerializationInputProducer {
+    param([hashtable]$Arguments)
+    & $script:RematerializationInputProducerPath @Arguments
 }
 
 function Write-RematerializationTestJson {
@@ -61,7 +70,7 @@ function Test-RematerializationCandidateFreezeDispatch {
 }
 function Get-RematerializationSourceFingerprint {
     param([string]$ProjectId,[string]$UnitId,[object[]]$Repositories)
-    Get-MorphospaceCanonicalJsonSha256 ([pscustomobject][ordered]@{project_id=$ProjectId;unit_id=$UnitId;repositories=@($Repositories)})
+    Get-MorphospaceCanonicalJsonSha256 ([pscustomobject][ordered]@{schema='rusty.morphospace.workflow.source_composition_identity.v1';project_id=$ProjectId;unit_id=$UnitId;repositories=@($Repositories)})
 }
 function Get-RematerializationGitMetadataSnapshot {
     param([string]$Root)
@@ -77,38 +86,21 @@ function Get-RematerializationGitMetadataSnapshot {
         refs=@($ordered|ForEach-Object{$path=$_;$absolute=Join-Path $gitRoot $path.Replace('/','\');[pscustomobject][ordered]@{path=$path;length=[IO.FileInfo]::new($absolute).Length;sha256=(Get-MorphospaceFileSha256 $absolute)}})
     }
 }
+function Get-RematerializationFileTreeSnapshot {
+    param([string]$Root)
+    $rows=[Collections.Generic.List[object]]::new()
+    foreach($file in @(Get-ChildItem -LiteralPath $Root -File -Recurse -Force)){
+        $relative=[IO.Path]::GetRelativePath($Root,$file.FullName).Replace('\','/')
+        [void]$rows.Add([pscustomobject][ordered]@{path=$relative;length=[long]$file.Length;sha256=(Get-MorphospaceFileSha256 $file.FullName)})
+    }
+    $ordered=@($rows.ToArray()|Sort-Object path -CaseSensitive)
+    return $ordered
+}
 function Get-RematerializationTextSha256 {
     param([string]$Value)
     [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.UTF8Encoding]::new($false).GetBytes($Value))).ToLowerInvariant()
 }
 $script:RematerializationCleanDirtyFingerprint=Get-RematerializationTextSha256 ''
-function Get-RematerializationUnitContractSha256 {
-    param([object]$Unit)
-    $copy=Copy-RematerializationTestValue $Unit
-    if($copy.PSObject.Properties.Name-contains'status'){$copy.PSObject.Properties.Remove('status')}
-    Get-MorphospaceCanonicalJsonSha256 $copy
-}
-function New-RematerializationValidationSelector {
-    param([object]$Fixture)
-    $unit=Read-MorphospaceProtocolJson $Fixture.unit_path;$projectPath=Join-Path $Fixture.workspace 'project.spec.json';$freezePath=Join-Path $Fixture.workspace ([string]$unit.candidate_freeze.receipt_path).Replace('/','\');$freeze=Read-MorphospaceProtocolJson $freezePath
-    $selectorId='rematerialized-selector';$selectorRelative="validation-authority/selectors/$selectorId.json";$selectorPath=Join-Path $Fixture.workspace $selectorRelative.Replace('/','\')
-    $producerRelative='tools/Test-RematerializedQuickEvidence.ps1';$producerPath=Join-Path $Fixture.workspace $producerRelative.Replace('/','\');[IO.Directory]::CreateDirectory((Split-Path -Parent $producerPath))|Out-Null;[IO.File]::WriteAllText($producerPath,"param([string]`$WorkspaceRoot,[string]`$EvidencePath)`n",[Text.UTF8Encoding]::new($false))
-    $evidenceParent=Join-Path $Fixture.root 'external-evidence';[IO.Directory]::CreateDirectory($evidenceParent)|Out-Null;$evidenceName='rematerialized-quick-evidence.json';$evidencePath=Join-Path $evidenceParent $evidenceName
-    $evidenceIdentity=[IO.Path]::GetFullPath($evidencePath).Replace('/','\').ToUpperInvariant();$declared=@($unit.validation|Where-Object{[string]$_.profile_id-ceq'quick'})
-    if($declared.Count-ne1){throw'Rematerialization selector bridge requires exactly one Quick command.'}
-    $selector=[pscustomobject][ordered]@{
-        '$schema'='https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/normal-validation-selector-v1.schema.json';schema='rusty.morphospace.workflow.normal_validation_selector.v1';selector_id=$selectorId
-        project=[pscustomobject][ordered]@{project_id='test-project';spec_path='project.spec.json';spec_raw_sha256=(Get-MorphospaceFileSha256 $projectPath)}
-        unit=[pscustomobject][ordered]@{unit_id='unit-remat-001';path='iteration-units/unit-remat-001.json';raw_sha256=(Get-MorphospaceFileSha256 $Fixture.unit_path);contract_sha256=(Get-RematerializationUnitContractSha256 $unit)}
-        declared_gate=[pscustomobject][ordered]@{profile_id='quick';command_sha256=(Get-RematerializationTextSha256 ([string]$declared[0].command))}
-        candidate_freeze=[pscustomobject][ordered]@{freeze_id=[string]$freeze.freeze_id;receipt_path=[string]$unit.candidate_freeze.receipt_path;receipt_sha256=[string]$unit.candidate_freeze.receipt_sha256;final_repositories=@(Copy-RematerializationTestValue $freeze.final_repositories)}
-        selection=[pscustomobject][ordered]@{tier='quick';producer=[pscustomobject][ordered]@{kind='workspace-powershell-evidence-v1';path=$producerRelative;sha256=(Get-MorphospaceFileSha256 $producerPath)};output_evidence=[pscustomobject][ordered]@{file_name=$evidenceName;schema='rusty.morphospace.test.rematerialized.quick-evidence.v1';canonical_path_sha256=(Get-RematerializationTextSha256 $evidenceIdentity);requires_create_new=$true}}
-        does_not_authorize=@('The selector does not authorize producer execution, validation, acceptance, or publication.')
-    }
-    Write-RematerializationTestJson $selectorPath $selector
-    [pscustomobject]@{relative=$selectorRelative;path=$selectorPath;sha256=(Get-MorphospaceFileSha256 $selectorPath);evidence_path=$evidencePath;binding=[pscustomobject][ordered]@{unit_id='unit-remat-001';unit_raw_sha256=[string]$selector.unit.raw_sha256;unit_contract_sha256=[string]$selector.unit.contract_sha256;tier='quick';selector_id=$selectorId;selector_path=$selectorRelative;selector_sha256=(Get-MorphospaceFileSha256 $selectorPath);evidence_path_sha256=[string]$selector.selection.output_evidence.canonical_path_sha256}}
-}
-
 function New-RematerializationFixture {
     param([string]$Name,[switch]$BlobDrift,[switch]$NonAncestor,[switch]$BaselineNonAncestor,[string]$RepoId='source-repo')
     $root=Join-Path ([IO.Path]::GetTempPath()) "validating-candidate-rematerialization-$Name-$([guid]::NewGuid().ToString('N'))"
@@ -171,6 +163,15 @@ function New-RematerializationFixture {
     $newLockRelative="source-compositions/$($newLock.lock_id).lock.json"
     $candidate=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.candidate_freeze.v2';freeze_id="new-candidate-$Name";project_id='test-project';unit_id='unit-remat-001';expected=[pscustomobject][ordered]@{project_sha256=(Get-MorphospaceCanonicalJsonSha256 $project);project_raw_sha256=(Get-MorphospaceFileSha256 $projectPath);state_sha256=(Get-MorphospaceCanonicalJsonSha256 $state);state_raw_sha256=(Get-MorphospaceFileSha256 $statePath);unit_sha256=(Get-MorphospaceCanonicalJsonSha256 $unit);unit_raw_sha256=(Get-MorphospaceFileSha256 $unitPath);feature_lock_sha256=(Get-MorphospaceCanonicalJsonSha256 $feature);feature_lock_raw_sha256=(Get-MorphospaceFileSha256 $featurePath);source_composition_path=$oldLockRelative;source_composition_sha256=(Get-MorphospaceFileSha256 $oldLockPath);repository_map_path='repository-map.json';repository_map_sha256=(Get-MorphospaceFileSha256 $mapPath);repository_map_canonical_sha256=(Get-MorphospaceCanonicalJsonSha256 $map);events_sha256=(Get-MorphospaceFileSha256 $eventsPath);events_length=[IO.FileInfo]::new($eventsPath).Length;event_tail_id='remat-seed-0001'};final_repositories=@([pscustomobject][ordered]@{repo_id=$RepoId;commit=$newCommit;tree=$newTree});changed_paths=@(Copy-RematerializationTestValue $oldFreeze.changed_paths);cleanliness_policy='clean-only';instruction_surfaces=@(Copy-RematerializationTestValue $oldFreeze.instruction_surfaces);feature_lock=(Copy-RematerializationTestValue $oldFreeze.feature_lock);effects=@($oldFreeze.effects);permissions=@($oldFreeze.permissions);device_use=@($oldFreeze.device_use);test_matrix=@(Copy-RematerializationTestValue $oldFreeze.test_matrix);cleanup_evidence=@($oldFreeze.cleanup_evidence);source_composition=[pscustomobject][ordered]@{path=$newLockRelative;sha256=$newLockHash};lineage=[pscustomobject][ordered]@{rematerialization_id="rematerialize-$Name";predecessor_freeze=[pscustomobject][ordered]@{freeze_id='old-candidate-freeze';receipt_path=$oldFreezeRelative;receipt_sha256=$oldFreezeHash};predecessor_source_composition=[pscustomobject][ordered]@{path=$oldLockRelative;sha256=(Get-MorphospaceFileSha256 $oldLockPath)};predecessor_final_repositories=@(Copy-RematerializationTestValue $oldFreeze.final_repositories);invalidated_normal_validation_selection=(Copy-RematerializationTestValue $selector);repositories=@([pscustomobject][ordered]@{repo_id=$RepoId;role='source';source_baseline_commit=$baselineCommit;source_baseline_tree=$baselineTree;predecessor_commit=$predecessorCommit;predecessor_tree=$predecessorTree;target_commit=$newCommit;target_tree=$newTree;carried_paths=@([pscustomobject][ordered]@{path='app.txt';predecessor_blob=$predecessorBlob;target_blob=$newBlob})});repository_head_projections=@([pscustomobject][ordered]@{repo_id=$RepoId;predecessor=[pscustomobject][ordered]@{head=$predecessorCommit;branch=$predecessorBranch;dirty_fingerprint=$script:RematerializationCleanDirtyFingerprint};target=[pscustomobject][ordered]@{head=$newCommit;branch=$targetBranch;dirty_fingerprint=$script:RematerializationCleanDirtyFingerprint}});target_source_composition=[pscustomobject][ordered]@{path=$newLockRelative;sha256=$newLockHash}};does_not_prove=@('Does not prove source mutation, validation, build, device behavior, acceptance, or publication.')}
     $candidatePath=Join-Path $inputs 'candidate-freeze-v2.json';Write-RematerializationTestJson $candidatePath $candidate
+    if($Name-ceq'positive'){
+        Remove-Item -LiteralPath $newLockPath,$candidatePath -Force
+        $producedLockJson=(@(Invoke-RematerializationSourceLockProducer @{WorkspaceRoot=$workspace;UnitId='unit-remat-001';RepositoryMapPath=$mapPath;RepoId=@($RepoId)}) -join "`n")
+        $producedLock=$producedLockJson|ConvertFrom-Json -Depth 96 -DateKind String
+        Write-RematerializationTestJson $newLockPath $producedLock
+        $newLock=Read-MorphospaceProtocolJson $newLockPath;$newLockRelative="source-compositions/$($newLock.lock_id).lock.json"
+        [void](Invoke-RematerializationInputProducer @{WorkspaceRoot=$workspace;UnitId='unit-remat-001';RepositoryMapPath=$mapPath;TargetSourceCompositionLock=$newLockPath;FreezeId="new-candidate-$Name";RematerializationId="rematerialize-$Name";RepoId=@($RepoId);OutPath=$candidatePath})
+        $candidate=Read-MorphospaceProtocolJson $candidatePath
+    }
     [pscustomobject]@{root=$root;source=$source;workspace=$workspace;candidate_path=$candidatePath;source_lock_path=$newLockPath;map_path=$mapPath;out_path=(Join-Path $workspace "receipts\$($candidate.freeze_id).json");candidate=$candidate;state_path=$statePath;unit_path=$unitPath;new_lock_relative=$newLockRelative}
 }
 
@@ -178,6 +179,17 @@ if(-not$SelfTest){throw 'Test-ValidatingCandidateRematerialization.ps1 requires 
 $fixtures=[Collections.Generic.List[string]]::new();$assertions=0
 try{
     $positive=New-RematerializationFixture 'positive';$fixtures.Add($positive.root)|Out-Null
+    $workspaceBefore=Get-RematerializationFileTreeSnapshot $positive.workspace
+    $reproduced=@(Invoke-RematerializationInputProducer @{WorkspaceRoot=$positive.workspace;UnitId='unit-remat-001';RepositoryMapPath=$positive.map_path;TargetSourceCompositionLock=$positive.source_lock_path;FreezeId='new-candidate-positive';RematerializationId='rematerialize-positive';RepoId=@('source-repo')})[-1]
+    Assert-RematerializationEquivalent $positive.candidate $reproduced 'Stdout-only production did not reproduce the exact candidate-freeze v2 document.'
+    Assert-RematerializationEquivalent $workspaceBefore (Get-RematerializationFileTreeSnapshot $positive.workspace) 'Stdout-only rematerialization input production changed planning workspace bytes.';$assertions++
+    $candidateBytesBefore=Get-MorphospaceFileSha256 $positive.candidate_path
+    Assert-RematerializationThrows {Invoke-RematerializationInputProducer @{WorkspaceRoot=$positive.workspace;UnitId='unit-remat-001';RepositoryMapPath=$positive.map_path;TargetSourceCompositionLock=$positive.source_lock_path;FreezeId='new-candidate-positive';RematerializationId='rematerialize-positive';RepoId=@('source-repo');OutPath=$positive.candidate_path}} '*exists*'
+    if((Get-MorphospaceFileSha256 $positive.candidate_path)-cne$candidateBytesBefore){throw'Rematerialization input collision changed existing bytes.'};$assertions++
+    Assert-RematerializationThrows {Invoke-RematerializationInputProducer @{WorkspaceRoot=$positive.workspace;UnitId='unit-remat-001';RepositoryMapPath=$positive.map_path;TargetSourceCompositionLock=$positive.source_lock_path;FreezeId='new-candidate-positive';RematerializationId='rematerialize-positive';RepoId=@('other-repo')}} '*explicit rematerialization repository set*';$assertions++
+    $untracked=Join-Path $positive.source 'untracked.tmp';[IO.File]::WriteAllText($untracked,'untracked',[Text.UTF8Encoding]::new($false))
+    Assert-RematerializationThrows {Invoke-RematerializationSourceLockProducer @{WorkspaceRoot=$positive.workspace;UnitId='unit-remat-001';RepositoryMapPath=$positive.map_path;RepoId=@('source-repo')}} '*not completely clean*'
+    Remove-Item -LiteralPath $untracked -Force;$assertions++
     $gitMetadataBefore=Get-RematerializationGitMetadataSnapshot $positive.source
     $dry=Invoke-MorphospaceRematerializeValidatingCandidate -WorkspaceRoot $positive.workspace -UnitId 'unit-remat-001' -CandidateFreeze $positive.candidate_path -SourceCompositionLock $positive.source_lock_path -RepoMapPath $positive.map_path -OutPath $positive.out_path -Timestamp '2026-09-02T00:02:00.0000000Z'
     if($dry.executed-or$dry.transition-cne'validating-candidate-rematerialized'-or[IO.File]::Exists($positive.out_path)){throw'Dry run mutated or returned the wrong transition.'};$assertions++
@@ -190,13 +202,7 @@ try{
     $replay=Invoke-MorphospaceRematerializeValidatingCandidate -WorkspaceRoot $positive.workspace -UnitId 'unit-remat-001' -CandidateFreeze $positive.candidate_path -SourceCompositionLock $positive.source_lock_path -RepoMapPath $positive.map_path -OutPath $positive.out_path -ExpectedCandidateFreezeSha256 $candidateHash -Timestamp '2026-09-02T00:02:00.0000000Z' -Execute
     if($replay.transition-cne'validating-candidate-already-rematerialized'){throw'Exact replay was not idempotent.'};$assertions++
     $bridgeUnit=Read-MorphospaceProtocolJson $positive.unit_path
-    if(-not(Test-RematerializationCandidateFreezeDispatch -WorkspaceRoot $positive.workspace -Unit $bridgeUnit)){throw'CandidateFreeze v2 dispatch did not verify the rematerialized candidate.'}
-    $selector=New-RematerializationValidationSelector $positive
-    $selectorDry=Invoke-MorphospaceWorkUnitAutomation -Action BeginValidation -WorkspaceRoot $positive.workspace -UnitId 'unit-remat-001' -RepoMapPath $positive.map_path -ValidationTier quick -ValidationSelector $selector.relative -ExpectedValidationSelectorSha256 $selector.sha256 -ValidationEvidencePath $selector.evidence_path -Timestamp '2026-09-02T00:03:00.0000000Z'
-    if($selectorDry.executed-or$selectorDry.transition-cne'validation-selector-bound'-or$null-ne(Read-MorphospaceProtocolJson (Join-Path $positive.workspace 'workspace.state.json')).normal_validation_selection){throw'Already-validating BeginValidation dry run mutated or skipped the verified v2 selector route.'};$assertions++
-    $selectorExecute=Invoke-MorphospaceWorkUnitAutomation -Action BeginValidation -WorkspaceRoot $positive.workspace -UnitId 'unit-remat-001' -RepoMapPath $positive.map_path -ValidationTier quick -ValidationSelector $selector.relative -ExpectedValidationSelectorSha256 $selector.sha256 -ValidationEvidencePath $selector.evidence_path -Timestamp '2026-09-02T00:03:00.0000000Z' -Execute
-    $selectorState=Read-MorphospaceProtocolJson (Join-Path $positive.workspace 'workspace.state.json')
-    if(-not$selectorExecute.executed-or$selectorExecute.transition-cne'validation-selector-bound'-or$null-eq$selectorState.normal_validation_selection){throw'Already-validating BeginValidation did not bind the fresh selector after v2 verification.'};Assert-RematerializationEquivalent $selector.binding $selectorState.normal_validation_selection 'BeginValidation fresh selector binding differs after v2 verification.';$assertions++
+    if(-not(Test-RematerializationCandidateFreezeDispatch -WorkspaceRoot $positive.workspace -Unit $bridgeUnit)){throw'CandidateFreeze v2 dispatch did not verify the rematerialized candidate.'};$assertions++
     $oldReceipt=Join-Path $positive.workspace ([string]$positive.candidate.lineage.predecessor_freeze.receipt_path).Replace('/','\');[IO.File]::AppendAllText($oldReceipt,' ',[Text.UTF8Encoding]::new($false))
     Assert-RematerializationThrows {Invoke-MorphospaceRematerializeValidatingCandidate -WorkspaceRoot $positive.workspace -UnitId 'unit-remat-001' -CandidateFreeze $positive.candidate_path -SourceCompositionLock $positive.source_lock_path -RepoMapPath $positive.map_path -OutPath $positive.out_path -ExpectedCandidateFreezeSha256 $candidateHash -Timestamp '2026-09-02T00:02:00.0000000Z' -Execute} '*Predecessor candidate-freeze bytes drifted*';$assertions++
 
