@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/apk-run-transaction-v1.schema.json",
+  "title": "Advisory resumable APK run transaction",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "transaction_id",
+    "created_at",
+    "run_identity",
+    "phase_receipts",
+    "does_not_authorize"
+  ],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schema": { "const": "rusty.morphospace.quest.apk_run_transaction.v1" },
+    "transaction_id": { "$ref": "#/$defs/id" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "run_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_kind",
+        "source_identity_sha256",
+        "build_lane",
+        "package",
+        "activity"
+      ],
+      "properties": {
+        "source_kind": { "enum": ["composition-lock", "overlay-manifest"] },
+        "source_identity_sha256": { "$ref": "#/$defs/sha256" },
+        "build_lane": { "enum": ["warm-iteration", "candidate"] },
+        "package": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*)+$"
+        },
+        "activity": { "type": "string", "minLength": 1 }
+      }
+    },
+    "phase_receipts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "host_validation",
+        "snapshot",
+        "build",
+        "inspect",
+        "install",
+        "launch",
+        "app_ready",
+        "wearer_acceptance",
+        "cleanup"
+      ],
+      "properties": {
+        "host_validation": { "$ref": "#/$defs/receiptLeaf" },
+        "snapshot": { "$ref": "#/$defs/receiptLeaf" },
+        "build": { "$ref": "#/$defs/receiptLeaf" },
+        "inspect": { "$ref": "#/$defs/receiptLeaf" },
+        "install": { "$ref": "#/$defs/receiptLeaf" },
+        "launch": { "$ref": "#/$defs/receiptLeaf" },
+        "app_ready": { "$ref": "#/$defs/receiptLeaf" },
+        "wearer_acceptance": { "$ref": "#/$defs/receiptLeaf" },
+        "cleanup": { "$ref": "#/$defs/receiptLeaf" }
+      }
+    },
+    "does_not_authorize": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,127}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "receiptLeaf": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,127}\\.json$"
+    }
+  }
+}
