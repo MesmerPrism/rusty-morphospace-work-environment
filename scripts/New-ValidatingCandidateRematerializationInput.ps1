@@ -13,16 +13,16 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = Split-Path $PSScriptRoot -Parent
-Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceSourceCompositionIdentity.psm1') -Force
-Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Scope Local
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceSourceCompositionIdentity.psm1') -Scope Local
 
-function ConvertTo-MorphospaceProtocolRelativePath { param([string]$Path) MorphospaceProtocolCommon\ConvertTo-MorphospaceProtocolRelativePath -Path $Path }
-function Resolve-MorphospaceWorkspacePath { param([string]$WorkspaceRoot,[string]$RelativePath,[switch]$RequireLeaf) MorphospaceProtocolCommon\Resolve-MorphospaceWorkspacePath -WorkspaceRoot $WorkspaceRoot -RelativePath $RelativePath -RequireLeaf:$RequireLeaf }
-function Get-MorphospaceFileSha256 { param([string]$Path) MorphospaceProtocolCommon\Get-MorphospaceFileSha256 -Path $Path }
-function Read-MorphospaceProtocolJson { param([string]$Path) MorphospaceProtocolCommon\Read-MorphospaceProtocolJson -Path $Path }
-function Get-MorphospaceCanonicalJsonSha256 { param([object]$Value) MorphospaceProtocolCommon\Get-MorphospaceCanonicalJsonSha256 -Value $Value }
-function ConvertTo-MorphospaceCanonicalJson { param([object]$Value) MorphospaceProtocolCommon\ConvertTo-MorphospaceCanonicalJson -Value $Value }
-function Get-MorphospaceSourceCompositionFingerprint { param([string]$ProjectId,[string]$UnitId,[object[]]$Repositories) MorphospaceSourceCompositionIdentity\Get-MorphospaceSourceCompositionFingerprint -ProjectId $ProjectId -UnitId $UnitId -Repositories @($Repositories) }
+function ConvertTo-RematerializationInputProtocolRelativePath { param([string]$Path) MorphospaceProtocolCommon\ConvertTo-MorphospaceProtocolRelativePath -Path $Path }
+function Resolve-RematerializationInputWorkspacePath { param([string]$WorkspaceRoot,[string]$RelativePath,[switch]$RequireLeaf) MorphospaceProtocolCommon\Resolve-MorphospaceWorkspacePath -WorkspaceRoot $WorkspaceRoot -RelativePath $RelativePath -RequireLeaf:$RequireLeaf }
+function Get-RematerializationInputFileSha256 { param([string]$Path) MorphospaceProtocolCommon\Get-MorphospaceFileSha256 -Path $Path }
+function Read-RematerializationInputProtocolJson { param([string]$Path) MorphospaceProtocolCommon\Read-MorphospaceProtocolJson -Path $Path }
+function Get-RematerializationInputCanonicalJsonSha256 { param([object]$Value) MorphospaceProtocolCommon\Get-MorphospaceCanonicalJsonSha256 -Value $Value }
+function ConvertTo-RematerializationInputCanonicalJson { param([object]$Value) MorphospaceProtocolCommon\ConvertTo-MorphospaceCanonicalJson -Value $Value }
+function Get-RematerializationInputSourceCompositionFingerprint { param([string]$ProjectId,[string]$UnitId,[object[]]$Repositories) MorphospaceSourceCompositionIdentity\Get-MorphospaceSourceCompositionFingerprint -ProjectId $ProjectId -UnitId $UnitId -Repositories @($Repositories) }
 
 $cleanDirtyFingerprint = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
 
@@ -86,7 +86,7 @@ function Get-RematerializationInputRelativePath {
     $full = [IO.Path]::GetFullPath($Path)
     $relative = [IO.Path]::GetRelativePath($Workspace,$full).Replace('\','/')
     if ($relative -eq '..' -or $relative.StartsWith('../',[StringComparison]::Ordinal)) { throw "$Label must be inside the planning workspace." }
-    return ConvertTo-MorphospaceProtocolRelativePath $relative
+    return ConvertTo-RematerializationInputProtocolRelativePath $relative
 }
 
 function Get-RematerializationInputEvents {
@@ -102,30 +102,30 @@ function Get-RematerializationInputEvents {
 }
 
 $workspace = [IO.Path]::GetFullPath((Resolve-Path -LiteralPath $WorkspaceRoot).Path)
-$projectPath = Resolve-MorphospaceWorkspacePath $workspace 'project.spec.json' -RequireLeaf
-$featurePath = Resolve-MorphospaceWorkspacePath $workspace 'feature.lock.json' -RequireLeaf
-$statePath = Resolve-MorphospaceWorkspacePath $workspace 'workspace.state.json' -RequireLeaf
+$projectPath = Resolve-RematerializationInputWorkspacePath $workspace 'project.spec.json' -RequireLeaf
+$featurePath = Resolve-RematerializationInputWorkspacePath $workspace 'feature.lock.json' -RequireLeaf
+$statePath = Resolve-RematerializationInputWorkspacePath $workspace 'workspace.state.json' -RequireLeaf
 $unitRelative = "iteration-units/$UnitId.json"
-$unitPath = Resolve-MorphospaceWorkspacePath $workspace $unitRelative -RequireLeaf
-$eventsPath = Resolve-MorphospaceWorkspacePath $workspace 'iteration-events.jsonl' -RequireLeaf
+$unitPath = Resolve-RematerializationInputWorkspacePath $workspace $unitRelative -RequireLeaf
+$eventsPath = Resolve-RematerializationInputWorkspacePath $workspace 'iteration-events.jsonl' -RequireLeaf
 $mapPath = [IO.Path]::GetFullPath((Resolve-Path -LiteralPath $RepositoryMapPath).Path)
 $mapRelative = Get-RematerializationInputRelativePath -Workspace $workspace -Path $mapPath -Label 'Repository map'
 $targetSourcePath = [IO.Path]::GetFullPath((Resolve-Path -LiteralPath $TargetSourceCompositionLock).Path)
 
-$projectRaw = Get-MorphospaceFileSha256 $projectPath
-$featureRaw = Get-MorphospaceFileSha256 $featurePath
-$stateRaw = Get-MorphospaceFileSha256 $statePath
-$unitRaw = Get-MorphospaceFileSha256 $unitPath
-$eventsRaw = Get-MorphospaceFileSha256 $eventsPath
-$mapRaw = Get-MorphospaceFileSha256 $mapPath
-$targetSourceRaw = Get-MorphospaceFileSha256 $targetSourcePath
+$projectRaw = Get-RematerializationInputFileSha256 $projectPath
+$featureRaw = Get-RematerializationInputFileSha256 $featurePath
+$stateRaw = Get-RematerializationInputFileSha256 $statePath
+$unitRaw = Get-RematerializationInputFileSha256 $unitPath
+$eventsRaw = Get-RematerializationInputFileSha256 $eventsPath
+$mapRaw = Get-RematerializationInputFileSha256 $mapPath
+$targetSourceRaw = Get-RematerializationInputFileSha256 $targetSourcePath
 
-$project = Read-MorphospaceProtocolJson $projectPath
-$feature = Read-MorphospaceProtocolJson $featurePath
-$state = Read-MorphospaceProtocolJson $statePath
-$unit = Read-MorphospaceProtocolJson $unitPath
-$repositoryMap = Read-MorphospaceProtocolJson $mapPath
-$targetSource = Read-MorphospaceProtocolJson $targetSourcePath
+$project = Read-RematerializationInputProtocolJson $projectPath
+$feature = Read-RematerializationInputProtocolJson $featurePath
+$state = Read-RematerializationInputProtocolJson $statePath
+$unit = Read-RematerializationInputProtocolJson $unitPath
+$repositoryMap = Read-RematerializationInputProtocolJson $mapPath
+$targetSource = Read-RematerializationInputProtocolJson $targetSourcePath
 
 $projectSchema = if ([string]$project.schema -ceq 'rusty.morphospace.workflow.project_spec.v2') { 'project-spec-v2.schema.json' } else { 'project-spec.schema.json' }
 $stateSchema = if ([string]$state.schema -ceq 'rusty.morphospace.workflow.workspace_state.v2') { 'workspace-state-v2.schema.json' } else { 'workspace-state.schema.json' }
@@ -156,24 +156,24 @@ foreach ($id in @($RepoId)) {
 [string[]]$requestedIds = @($requested); [Array]::Sort($requestedIds,[StringComparer]::Ordinal)
 if ($requestedIds.Count -eq 0) { throw 'Rematerialization input requires at least one explicit RepoId.' }
 
-$predecessorFreezeRelative = ConvertTo-MorphospaceProtocolRelativePath ([string]$unit.candidate_freeze.receipt_path)
-$predecessorFreezePath = Resolve-MorphospaceWorkspacePath $workspace $predecessorFreezeRelative -RequireLeaf
-$predecessorFreezeRaw = Get-MorphospaceFileSha256 $predecessorFreezePath
+$predecessorFreezeRelative = ConvertTo-RematerializationInputProtocolRelativePath ([string]$unit.candidate_freeze.receipt_path)
+$predecessorFreezePath = Resolve-RematerializationInputWorkspacePath $workspace $predecessorFreezeRelative -RequireLeaf
+$predecessorFreezeRaw = Get-RematerializationInputFileSha256 $predecessorFreezePath
 if ($predecessorFreezeRaw -cne [string]$unit.candidate_freeze.receipt_sha256) { throw 'Rematerialization predecessor freeze bytes differ from the live unit marker.' }
 Assert-RematerializationInputSchema $predecessorFreezePath 'candidate-freeze-v1.schema.json' 'Rematerialization predecessor freeze is malformed.'
-$predecessorFreeze = Read-MorphospaceProtocolJson $predecessorFreezePath
+$predecessorFreeze = Read-RematerializationInputProtocolJson $predecessorFreezePath
 if ([string]$predecessorFreeze.freeze_id -cne [string]$unit.candidate_freeze.freeze_id -or [string]$predecessorFreeze.project_id -cne [string]$project.project_id -or [string]$predecessorFreeze.unit_id -cne $UnitId) {
     throw 'Rematerialization predecessor freeze identity differs from the live unit marker.'
 }
 
-$predecessorSourceRelative = ConvertTo-MorphospaceProtocolRelativePath ([string]$unit.source_composition.lock_path)
-$predecessorSourcePath = Resolve-MorphospaceWorkspacePath $workspace $predecessorSourceRelative -RequireLeaf
-$predecessorSourceRaw = Get-MorphospaceFileSha256 $predecessorSourcePath
+$predecessorSourceRelative = ConvertTo-RematerializationInputProtocolRelativePath ([string]$unit.source_composition.lock_path)
+$predecessorSourcePath = Resolve-RematerializationInputWorkspacePath $workspace $predecessorSourceRelative -RequireLeaf
+$predecessorSourceRaw = Get-RematerializationInputFileSha256 $predecessorSourcePath
 if ([string]$predecessorFreeze.expected.source_composition_path -cne $predecessorSourceRelative -or [string]$predecessorFreeze.expected.source_composition_sha256 -cne $predecessorSourceRaw -or
     [string]$predecessorFreeze.source_composition.path -cne $predecessorSourceRelative -or [string]$predecessorFreeze.source_composition.sha256 -cne $predecessorSourceRaw) {
     throw 'Rematerialization predecessor source-composition binding differs from its freeze.'
 }
-$predecessorSource = Read-MorphospaceProtocolJson $predecessorSourcePath
+$predecessorSource = Read-RematerializationInputProtocolJson $predecessorSourcePath
 switch ([string]$predecessorSource.schema) {
     'rusty.morphospace.workflow.source_composition_lock.v1' {
         Assert-RematerializationInputSchema $predecessorSourcePath 'source-composition-lock.schema.json' 'Rematerialization predecessor source lock is malformed.'
@@ -187,7 +187,7 @@ switch ([string]$predecessorSource.schema) {
 }
 
 if ([string]$targetSource.project_id -cne [string]$project.project_id -or [string]$targetSource.unit_id -cne $UnitId) { throw 'Rematerialization target source-lock identity differs.' }
-$targetFingerprint = Get-MorphospaceSourceCompositionFingerprint -ProjectId ([string]$project.project_id) -UnitId $UnitId -Repositories @($targetSource.repositories)
+$targetFingerprint = Get-RematerializationInputSourceCompositionFingerprint -ProjectId ([string]$project.project_id) -UnitId $UnitId -Repositories @($targetSource.repositories)
 if ([string]$targetSource.fingerprint -cne $targetFingerprint) { throw 'Rematerialization target source-lock fingerprint is not canonical.' }
 Assert-RematerializationInputIdSet $requestedIds @($predecessorSource.repositories) 'Predecessor source composition'
 Assert-RematerializationInputIdSet $requestedIds @($targetSource.repositories) 'Target source composition'
@@ -229,7 +229,7 @@ foreach ($id in $requestedIds) {
         (Invoke-RematerializationInputGit $root @('merge-base','--is-ancestor',[string]$frozen.commit,[string]$target.commit) "target ancestry for '$id'" -AllowFailure).code -ne 0) {
         throw "Rematerialization ancestry differs for '$id'."
     }
-    [string[]]$paths = @($changed.paths | ForEach-Object { ConvertTo-MorphospaceProtocolRelativePath ([string]$_) })
+    [string[]]$paths = @($changed.paths | ForEach-Object { ConvertTo-RematerializationInputProtocolRelativePath ([string]$_) })
     [Array]::Sort($paths,[StringComparer]::Ordinal)
     $carried = [Collections.Generic.List[object]]::new()
     $seenPaths = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
@@ -263,12 +263,12 @@ $targetSourceRelative = "source-compositions/$([string]$targetSource.lock_id).lo
 $candidate = [pscustomobject][ordered]@{
     schema='rusty.morphospace.workflow.candidate_freeze.v2'; freeze_id=$FreezeId; project_id=[string]$project.project_id; unit_id=$UnitId
     expected=[pscustomobject][ordered]@{
-        project_sha256=(Get-MorphospaceCanonicalJsonSha256 $project); project_raw_sha256=$projectRaw
-        state_sha256=(Get-MorphospaceCanonicalJsonSha256 $state); state_raw_sha256=$stateRaw
-        unit_sha256=(Get-MorphospaceCanonicalJsonSha256 $unit); unit_raw_sha256=$unitRaw
-        feature_lock_sha256=(Get-MorphospaceCanonicalJsonSha256 $feature); feature_lock_raw_sha256=$featureRaw
+        project_sha256=(Get-RematerializationInputCanonicalJsonSha256 $project); project_raw_sha256=$projectRaw
+        state_sha256=(Get-RematerializationInputCanonicalJsonSha256 $state); state_raw_sha256=$stateRaw
+        unit_sha256=(Get-RematerializationInputCanonicalJsonSha256 $unit); unit_raw_sha256=$unitRaw
+        feature_lock_sha256=(Get-RematerializationInputCanonicalJsonSha256 $feature); feature_lock_raw_sha256=$featureRaw
         source_composition_path=$predecessorSourceRelative; source_composition_sha256=$predecessorSourceRaw
-        repository_map_path=$mapRelative; repository_map_sha256=$mapRaw; repository_map_canonical_sha256=(Get-MorphospaceCanonicalJsonSha256 $repositoryMap)
+        repository_map_path=$mapRelative; repository_map_sha256=$mapRaw; repository_map_canonical_sha256=(Get-RematerializationInputCanonicalJsonSha256 $repositoryMap)
         events_sha256=$eventsRaw; events_length=[IO.FileInfo]::new($eventsPath).Length; event_tail_id=[string]$tail.event_id
     }
     final_repositories=@($finalRows.ToArray()); changed_paths=@(Copy-RematerializationInputValue $predecessorFreeze.changed_paths)
@@ -288,14 +288,14 @@ $candidate = [pscustomobject][ordered]@{
     does_not_prove=@('Does not prove source mutation, validation, build, device behavior, acceptance, or publication.')
 }
 
-$candidateJson = ConvertTo-MorphospaceCanonicalJson $candidate
+$candidateJson = ConvertTo-RematerializationInputCanonicalJson $candidate
 if (-not (Test-Json -Json $candidateJson -SchemaFile (Join-Path $repositoryRoot 'schemas\candidate-freeze-v2.schema.json'))) { throw 'Produced rematerialization input does not satisfy candidate-freeze-v2.schema.json.' }
 foreach ($binding in @(
     @{path=$projectPath;hash=$projectRaw},@{path=$featurePath;hash=$featureRaw},@{path=$statePath;hash=$stateRaw},@{path=$unitPath;hash=$unitRaw},
     @{path=$eventsPath;hash=$eventsRaw},@{path=$mapPath;hash=$mapRaw},@{path=$targetSourcePath;hash=$targetSourceRaw},
     @{path=$predecessorFreezePath;hash=$predecessorFreezeRaw},@{path=$predecessorSourcePath;hash=$predecessorSourceRaw}
 )) {
-    if ((Get-MorphospaceFileSha256 ([string]$binding.path)) -cne [string]$binding.hash) { throw "Rematerialization input source bytes changed during production: $([string]$binding.path)" }
+    if ((Get-RematerializationInputFileSha256 ([string]$binding.path)) -cne [string]$binding.hash) { throw "Rematerialization input source bytes changed during production: $([string]$binding.path)" }
 }
 
 if (-not [string]::IsNullOrWhiteSpace($OutPath)) {

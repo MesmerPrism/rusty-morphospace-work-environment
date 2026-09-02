@@ -25,6 +25,12 @@ function Get-MorphospaceSourceCompositionFingerprint {
         [Parameter(Mandatory)][string]$UnitId,
         [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Repositories
     )
+    # Callers can load this small identity module beside larger workflow
+    # modules that refresh ProtocolCommon in their own scopes. Re-import the
+    # exact static dependency into this module scope before resolving the
+    # canonical serializer so the fingerprint never depends on ambient module
+    # load order.
+    Import-Module (Join-Path $PSScriptRoot 'MorphospaceProtocolCommon.psm1')
     return Get-MorphospaceCanonicalJsonSha256 -Value (New-MorphospaceSourceCompositionIdentity -ProjectId $ProjectId -UnitId $UnitId -Repositories @($Repositories))
 }
 

@@ -1,9 +1,9 @@
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
-Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceSourceCompositionIdentity.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceSourceCompositionIdentity.psm1') -Force
 
 $script:ValidatingCandidateCleanDirtyFingerprint = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
 

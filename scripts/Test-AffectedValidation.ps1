@@ -1320,6 +1320,32 @@ function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]
             [void]$timings.Add([pscustomobject][ordered]@{check_id=$checkId;elapsed_ms=[long]$clock.Elapsed.TotalMilliseconds;dependency_count=@($closure.manifest).Count})
         }
         Assert-True ($digests.Count -eq $safeIds.Count) 'Per-check safe corpus collapsed to one common aggregate dependency identity.'
+
+        # Validating-candidate rematerialization is deliberately a focused
+        # producer/consumer owner. Its test loads the two owner modules through
+        # script-scoped variables, so those invocations must remain completely
+        # and exactly declared instead of falling back to every tracked script.
+        $rematerializationClock = [Diagnostics.Stopwatch]::StartNew()
+        $rematerializationClosure = Get-MorphospaceAffectedCheckDependencyClosure -Check $compiled.checks['validating-candidate-rematerialization'] -CompiledRegistry $compiled -Inventory $realInventory -RepositoryRoot $Root
+        $rematerializationClock.Stop()
+        $rematerializationPaths = @($rematerializationClosure.manifest.path)
+        $rematerializationDeclarations = @($rematerializationClosure.resolution.used_declarations)
+        $rematerializationDeclarationIdentities = @($rematerializationDeclarations | ForEach-Object { "$([string]$_.importer)|$([string]$_.variable)|$([int]$_.count)|$(@($_.target_paths) -join ',')" })
+        Assert-True ([string]$rematerializationClosure.resolution.mode -ceq 'exact' -and @($rematerializationClosure.resolution.fallback_reasons).Count -eq 0) 'Validating-candidate rematerialization did not retain exact dependency resolution with no fallback.'
+        Assert-True (($rematerializationDeclarationIdentities -join ';') -ceq 'scripts/Test-ValidatingCandidateRematerialization.ps1|script:RematerializationOwnerModule|2|scripts/ValidatingCandidateRematerialization.psm1') 'Validating-candidate rematerialization did not consume exactly its one remaining dynamic owner declaration.'
+        foreach ($requiredPath in @(
+            'schemas/candidate-freeze-v2.schema.json',
+            'scripts/New-SourceCompositionLock.ps1',
+            'scripts/New-ValidatingCandidateRematerializationInput.ps1',
+            'scripts/Test-ValidatingCandidateRematerialization.ps1',
+            'scripts/ValidatingCandidateRematerialization.psm1',
+            'scripts/lib/MorphospaceSourceCompositionIdentity.psm1'
+        )) {
+            Assert-True ($rematerializationPaths -ccontains $requiredPath) "Validating-candidate rematerialization dependency closure omitted '$requiredPath'."
+        }
+        Assert-True ($rematerializationPaths -cnotcontains 'scripts/Test-WorkEnvironment.ps1') 'Validating-candidate rematerialization dependency closure expanded into the cumulative Work Environment aggregate.'
+        [void]$timings.Add([pscustomobject][ordered]@{check_id='validating-candidate-rematerialization';elapsed_ms=[long]$rematerializationClock.Elapsed.TotalMilliseconds;dependency_count=@($rematerializationClosure.manifest).Count})
+
         $ledgerCheck = @($Registry.checks | Where-Object { [string]$_.check_id -ceq 'transition-ledger' })
         Assert-True ($ledgerCheck.Count -eq 1) 'The PR134-style correction proof lacks one transition-ledger check.'
         $triggerPatterns = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
@@ -3093,6 +3119,22 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     foreach ($checkId in @('development-envelope-preparation','work-environment-deep')) { Assert-True (@($developmentAdmissionPlan.selected_checks.check_id) -cnotcontains $checkId) "Development-unit admission change incorrectly selected '$checkId'." }
     foreach ($reasonCode in @('ambiguous-path-mapping','unmapped-path')) { Assert-True (@($developmentAdmissionPlan.reason_codes) -cnotcontains $reasonCode) "Development-unit admission change retained '$reasonCode'." }
 
+    # The validating-candidate input producer is a non-mutating authority
+    # constructor. A producer-only change must retain its five-check focused
+    # Standard closure and must never route through the cumulative Deep gate.
+    $rematerializationProducerBase = $developmentAdmissionHead
+    Write-Utf8 (Join-Path $fixture 'scripts/New-ValidatingCandidateRematerializationInput.ps1') "# validating-candidate rematerialization input producer change`n"
+    [void](Invoke-TestGit $fixture @('add', 'scripts/New-ValidatingCandidateRematerializationInput.ps1'))
+    [void](Invoke-TestGit $fixture @('commit', '-m', 'validating candidate input producer change'))
+    $rematerializationProducerHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
+    $rematerializationProducerPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $rematerializationProducerBase -HeadRevision $rematerializationProducerHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+    $rematerializationExpectedChecks = @('automation-receipt-v2-compatibility','normal-validation-selector','public-boundary','validating-candidate-rematerialization','workflow-contracts')
+    $rematerializationActualChecks = @($rematerializationProducerPlan.selected_checks.check_id); [Array]::Sort($rematerializationActualChecks, [StringComparer]::Ordinal)
+    Assert-True ($rematerializationProducerPlan.selection_mode -ceq 'affected' -and $rematerializationProducerPlan.effective_tier -ceq 'standard') 'Validating-candidate input producer change did not retain affected Standard selection.'
+    Assert-True (($rematerializationActualChecks -join ',') -ceq ($rematerializationExpectedChecks -join ',')) "Validating-candidate input producer selected the wrong exact closure: $($rematerializationActualChecks -join ',')."
+    Assert-True (@($rematerializationProducerPlan.selected_checks.check_id) -cnotcontains 'work-environment-deep') 'Validating-candidate input producer selected the cumulative Deep aggregate.'
+    foreach ($reasonCode in @('ambiguous-path-mapping','unmapped-path')) { Assert-True (@($rematerializationProducerPlan.reason_codes) -cnotcontains $reasonCode) "Validating-candidate input producer change retained '$reasonCode'." }
+
     # The shared v2 automation receipt has a fast direct compatibility owner
     # and is also consumed by validating-candidate rematerialization.  A
     # receipt-only change must therefore retain its exact compatibility and
@@ -3103,7 +3145,7 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     [void](Invoke-TestGit $fixture @('add', 'schemas/work-unit-automation-receipt-v2.schema.json'))
     [void](Invoke-TestGit $fixture @('commit', '-m', 'shared automation receipt contract'))
     $automationReceiptHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
-    $automationReceiptPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $developmentAdmissionHead -HeadRevision $automationReceiptHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+    $automationReceiptPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $rematerializationProducerHead -HeadRevision $automationReceiptHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
     $automationReceiptExpectedChecks = @('automation-receipt-v2-compatibility','normal-validation-selector','public-boundary','validating-candidate-rematerialization','work-unit-automation','workflow-contracts')
     $automationReceiptActualChecks = @($automationReceiptPlan.selected_checks.check_id); [Array]::Sort($automationReceiptActualChecks, [System.StringComparer]::Ordinal)
     Assert-True (($automationReceiptActualChecks -join ',') -ceq ($automationReceiptExpectedChecks -join ',')) "Shared automation receipt selected the wrong exact closure: $($automationReceiptActualChecks -join ',')."

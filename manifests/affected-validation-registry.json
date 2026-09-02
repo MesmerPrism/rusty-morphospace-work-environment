@@ -11,7 +11,6 @@
     { "importer": "scripts/Test-BlockedSuccessorPreparation.ps1", "variable": "module", "count": 5, "target_paths": ["scripts/BlockedSuccessorPreparation.psm1", "scripts/lib/MorphospaceProtocolCommon.psm1", "scripts/lib/MorphospaceTransitionLedger.psm1"] },
     { "importer": "scripts/Test-TransitionLedger.ps1", "variable": "ModulePath", "count": 2, "target_paths": ["scripts/lib/MorphospaceTransitionLedger.psm1"] },
     { "importer": "scripts/Test-ValidatingCandidateRematerialization.ps1", "variable": "script:RematerializationOwnerModule", "count": 2, "target_paths": ["scripts/ValidatingCandidateRematerialization.psm1"] },
-    { "importer": "scripts/Test-ValidatingCandidateRematerialization.ps1", "variable": "script:RematerializationProtocolModule", "count": 3, "target_paths": ["scripts/lib/MorphospaceProtocolCommon.psm1"] },
     { "importer": "scripts/Test-WorkflowContracts.ps1", "variable": "focusedRecoveryPath", "count": 1, "target_paths": ["scripts/Test-HistoricalUnitAdoptionReconstruction.ps1", "scripts/Test-PlanningWorkspaceProjection.ps1", "scripts/Test-PublishedPlanningAuthorityAdoption.ps1"] }
   ],
   "path_sets": [

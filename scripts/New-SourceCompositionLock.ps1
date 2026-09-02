@@ -8,8 +8,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-Import-Module (Join-Path $PSScriptRoot "lib\MorphospaceSourceCompositionIdentity.psm1") -Force
-Import-Module (Join-Path $PSScriptRoot "lib\MorphospaceProtocolCommon.psm1") -Force
+Import-Module (Join-Path $PSScriptRoot "lib\MorphospaceProtocolCommon.psm1") -Scope Local
+Import-Module (Join-Path $PSScriptRoot "lib\MorphospaceSourceCompositionIdentity.psm1") -Scope Local
 
 function Invoke-ExactGit { param([string]$Root,[string[]]$Arguments) $out=@(& git --no-optional-locks --no-pager --no-replace-objects -c core.pager=cat -C $Root @Arguments 2>&1|ForEach-Object{[string]$_});if($LASTEXITCODE-ne0){throw "Git query failed in '$Root': git $($Arguments -join ' ')"};return @($out) }
 
