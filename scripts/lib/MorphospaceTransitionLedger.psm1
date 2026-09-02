@@ -6,13 +6,14 @@ $script:MorphospaceTransitionIntentV2 = 'rusty.morphospace.workflow.transition_l
 $script:MorphospaceTransitionIntentV3 = 'rusty.morphospace.workflow.transition_ledger_intent.v3'
 $script:MorphospaceTransitionIntentV4 = 'rusty.morphospace.workflow.transition_ledger_intent.v4'
 $script:MorphospaceTransitionIntentV5 = 'rusty.morphospace.workflow.transition_ledger_intent.v5'
+$script:MorphospaceTransitionIntentV6 = 'rusty.morphospace.workflow.transition_ledger_intent.v6'
 
 function Get-MorphospaceLedgerDocumentHash { param([object]$Value) Get-MorphospaceCanonicalJsonSha256 $Value }
 function Get-MorphospaceLedgerPath { param([string]$WorkspaceRoot,[string]$TransactionId,[ValidateSet('intent','completion')][string]$Kind) "receipts/transactions/$TransactionId.$Kind.json" }
 function Read-MorphospaceLedgerJson { param([string]$Path) if(-not[IO.File]::Exists($Path)){throw "Transition artifact is missing: $Path"};Read-MorphospaceProtocolJson -Path $Path }
 function Get-MorphospaceLedgerBoundPreUnitRawSha256 {
     param([object]$Intent)
-    if([string]$Intent.schema-cin@($script:MorphospaceTransitionIntentV4,$script:MorphospaceTransitionIntentV5)){
+    if([string]$Intent.schema-cin@($script:MorphospaceTransitionIntentV4,$script:MorphospaceTransitionIntentV5,$script:MorphospaceTransitionIntentV6)){
         return [string]$Intent.pre_unit_raw.sha256
     }
     $unitId=[string]$Intent.event.unit_id
@@ -343,6 +344,8 @@ function Assert-MorphospaceLedgerIntent {
         Assert-MorphospaceExactPropertySet $Intent @('schema','transaction_id','created_at','state','unit','events','pre','target','expected','pre_unit_raw','additional_projections','artifacts','event','status') @() 'Transition ledger intent'
     }elseif($schema-ceq$script:MorphospaceTransitionIntentV5){
         Assert-MorphospaceExactPropertySet $Intent @('schema','transaction_id','created_at','state','unit','events','pre','target','expected','pre_unit_raw','artifacts','event','status') @() 'Transition ledger intent'
+    }elseif($schema-ceq$script:MorphospaceTransitionIntentV6){
+        Assert-MorphospaceExactPropertySet $Intent @('schema','transaction_id','created_at','state','unit','events','pre','target','expected','pre_state_raw','pre_unit_raw','additional_projections','artifacts','event','status') @() 'Transition ledger intent'
     }else{throw 'Transition ledger intent schema is unsupported.'}
     if([string]$Intent.status-cne'prepared'-or[string]$Intent.transaction_id-cne$TransactionId){throw 'Transition ledger intent identity/status is invalid.'}
     [void](Test-MorphospaceStrictUtcTimestamp ([string]$Intent.created_at))
@@ -433,7 +436,7 @@ function Assert-MorphospaceLedgerIntent {
     if($null-eq$supersession-and$Intent.target.unit.document.PSObject.Properties.Name-contains'unit_id'){
         if([string]$Intent.target.unit.document.unit_id-cne[string]$Intent.event.unit_id){throw 'Transition ledger target unit identity differs from its event.'}
     }
-    if($schema-cin@($script:MorphospaceTransitionIntentV4,$script:MorphospaceTransitionIntentV5)){
+    if($schema-cin@($script:MorphospaceTransitionIntentV4,$script:MorphospaceTransitionIntentV5,$script:MorphospaceTransitionIntentV6)){
         $rawBindingUnitId=[string]$Intent.event.unit_id
         $rawBindingEventId=[string]$Intent.event.event_id
         if($rawBindingUnitId-and$rawBindingEventId-cmatch("^"+[regex]::Escape("$rawBindingUnitId-proposal-retired-")+"[0-9]{4}$")){
@@ -447,15 +450,25 @@ function Assert-MorphospaceLedgerIntent {
             throw 'Transition ledger raw pre-unit binding is invalid or does not identify the unit projection.'
         }
     }
-    if($schema-ceq$script:MorphospaceTransitionIntentV3-or$schema-ceq$script:MorphospaceTransitionIntentV4){
-        $projectionIntentVersion=if($schema-ceq$script:MorphospaceTransitionIntentV3){'v3'}else{'v4'}
+    if($schema-ceq$script:MorphospaceTransitionIntentV6){
+        Assert-MorphospaceExactPropertySet $Intent.pre_state_raw @('path','sha256') @() 'Transition ledger raw pre-state binding'
+        $rawStatePath=ConvertTo-MorphospaceProtocolRelativePath ([string]$Intent.pre_state_raw.path)
+        if([string]$Intent.pre_state_raw.path-cne$rawStatePath-or
+           $rawStatePath-cne[string]$Intent.state.path-or
+           [string]$Intent.pre_state_raw.sha256-cnotmatch'^[0-9a-f]{64}$'){
+            throw 'Transition ledger raw pre-state binding is invalid or does not identify the state projection.'
+        }
+    }
+    if($schema-cin@($script:MorphospaceTransitionIntentV3,$script:MorphospaceTransitionIntentV4,$script:MorphospaceTransitionIntentV6)){
+        $projectionIntentVersion=if($schema-ceq$script:MorphospaceTransitionIntentV3){'v3'}elseif($schema-ceq$script:MorphospaceTransitionIntentV4){'v4'}else{'v6'}
         if(@($Intent.additional_projections).Count-lt1-or@($Intent.additional_projections).Count-gt2){
             throw "Transition ledger intent $projectionIntentVersion requires one or two additional projections."
         }
         $projectionPaths=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
         $previousProjectionPath=$null
         foreach($projection in @($Intent.additional_projections)){
-            Assert-MorphospaceExactPropertySet $projection @('path','pre_sha256','target_sha256','document') @() 'Transition ledger additional projection'
+            $requiredProjectionProperties=if($schema-ceq$script:MorphospaceTransitionIntentV6){@('path','pre_sha256','pre_raw_sha256','target_sha256','document')}else{@('path','pre_sha256','target_sha256','document')}
+            Assert-MorphospaceExactPropertySet $projection $requiredProjectionProperties @() 'Transition ledger additional projection'
             $projectionPath=ConvertTo-MorphospaceProtocolRelativePath ([string]$projection.path)
             if([string]$projection.path-cne$projectionPath-or-not$projectionPaths.Add($projectionPath)){
                 throw "Transition ledger intent $projectionIntentVersion repeats or mis-canonicalizes an additional projection path."
@@ -468,6 +481,7 @@ function Assert-MorphospaceLedgerIntent {
             }
             $previousProjectionPath=$projectionPath
             if([string]$projection.pre_sha256-cnotmatch'^[0-9a-f]{64}$'-or
+               ($schema-ceq$script:MorphospaceTransitionIntentV6-and[string]$projection.pre_raw_sha256-cnotmatch'^[0-9a-f]{64}$')-or
                [string]$projection.target_sha256-cnotmatch'^[0-9a-f]{64}$'-or
                (Get-MorphospaceLedgerDocumentHash $projection.document)-cne[string]$projection.target_sha256){
                 throw "Transition ledger additional projection '$projectionPath' has invalid or inconsistent hashes."
@@ -515,6 +529,23 @@ function Assert-MorphospaceLedgerIntent {
             }
             if($receipts[$index]-isnot[string]-or[string]$receipts[$index]-cne$artifactPath){
                 throw 'Transition ledger intent v5 event receipts do not exactly match its owned artifacts.'
+            }
+            $previousArtifactPath=$artifactPath
+        }
+    }
+    if($schema-ceq$script:MorphospaceTransitionIntentV6){
+        $artifacts=@($Intent.artifacts)
+        $receipts=@($Intent.event.receipts)
+        if($artifacts.Count-gt2-or$receipts.Count-ne$artifacts.Count){throw 'Transition ledger intent v6 must bind zero, one, or two exact event artifacts.'}
+        $previousArtifactPath=$null
+        for($index=0;$index-lt$artifacts.Count;$index++){
+            $artifactPath=ConvertTo-MorphospaceProtocolRelativePath ([string]$artifacts[$index].path)
+            if([string]$artifacts[$index].path-cne$artifactPath-or
+               ($null-ne$previousArtifactPath-and[StringComparer]::Ordinal.Compare([string]$previousArtifactPath,$artifactPath)-ge0)){
+                throw 'Transition ledger intent v6 artifacts are not canonical and ordinal sorted.'
+            }
+            if($receipts[$index]-isnot[string]-or[string]$receipts[$index]-cne$artifactPath){
+                throw 'Transition ledger intent v6 event receipts do not exactly match its owned artifacts.'
             }
             $previousArtifactPath=$artifactPath
         }
@@ -703,8 +734,14 @@ function Complete-MorphospaceTransitionLedger {
         $currentUnit=Read-MorphospaceProtocolJson -Path $unitAbsolute
         $currentStateHash=Get-MorphospaceLedgerDocumentHash $currentState
         $currentUnitHash=Get-MorphospaceLedgerDocumentHash $currentUnit
+        $isRawPreimageV6=[string]$intent.schema-ceq$script:MorphospaceTransitionIntentV6
+        if($isRawPreimageV6-and$currentStateHash-ceq[string]$intent.pre.state.sha256-and
+           (Get-MorphospaceFileSha256 $stateAbsolute)-cne[string]$intent.pre_state_raw.sha256){
+            throw "Transition $TransactionId failed durable raw pre-state byte-hash CAS."
+        }
         $boundPreUnitRawSha256=Get-MorphospaceLedgerBoundPreUnitRawSha256 $intent
-        if($boundPreUnitRawSha256-and$currentUnitHash-ceq[string]$intent.pre.unit.sha256-and
+        $requiresRawUnitPreimage=$boundPreUnitRawSha256-and$currentUnitHash-ceq[string]$intent.pre.unit.sha256
+        if($requiresRawUnitPreimage-and
            (Get-MorphospaceFileSha256 $unitAbsolute)-cne$boundPreUnitRawSha256){
             throw "Transition $TransactionId failed durable raw pre-unit byte-hash CAS."
         }
@@ -715,8 +752,13 @@ function Complete-MorphospaceTransitionLedger {
             if($allowedUnitHashes-notcontains$currentUnitHash){throw "Transition $TransactionId failed expected pre-unit CAS."}
         }
         foreach($projection in @($(if($intent.PSObject.Properties.Name-contains'additional_projections'){$intent.additional_projections}else{@()}))){
-            $current=Read-MorphospaceProtocolJson -Path (Resolve-MorphospaceWorkspacePath $workspace ([string]$projection.path) -RequireLeaf)
+            $projectionAbsolute=Resolve-MorphospaceWorkspacePath $workspace ([string]$projection.path) -RequireLeaf
+            $current=Read-MorphospaceProtocolJson -Path $projectionAbsolute
             $actual=Get-MorphospaceLedgerDocumentHash $current
+            if($isRawPreimageV6-and$actual-ceq[string]$projection.pre_sha256-and
+               (Get-MorphospaceFileSha256 $projectionAbsolute)-cne[string]$projection.pre_raw_sha256){
+                throw "Transition $TransactionId failed durable raw additional-projection byte-hash CAS for '$($projection.path)'."
+            }
             if(@([string]$projection.pre_sha256,[string]$projection.target_sha256)-notcontains$actual){
                 throw "Transition $TransactionId failed additional-projection CAS for '$($projection.path)'."
             }
@@ -776,6 +818,7 @@ function Start-MorphospaceTransitionLedger {
         [object]$Event,
         [ValidateSet('none','after-intent','after-artifact','after-projection','after-event')][string]$FaultAfter='none',
         [string]$ExpectedPreStateSha256 = '',
+        [string]$ExpectedPreStateRawSha256 = '',
         [string]$ExpectedPreUnitSha256 = '',
         [string]$ExpectedPreUnitRawSha256 = '',
         [string]$ExpectedStateSha256 = '',
@@ -790,7 +833,7 @@ function Start-MorphospaceTransitionLedger {
     $workspace=[IO.Path]::GetFullPath($WorkspaceRoot);$lock=Enter-MorphospaceWorkspaceMutex -WorkspaceRoot $workspace
     try {
         Assert-MorphospaceNoOutstandingTransitionIntent $workspace $TransactionId
-        $state=Read-MorphospaceProtocolJson -Path (Resolve-MorphospaceWorkspacePath $workspace $StatePath -RequireLeaf);$unitAbsolute=Resolve-MorphospaceWorkspacePath $workspace $UnitPath -RequireLeaf;$unit=Read-MorphospaceProtocolJson -Path $unitAbsolute
+        $stateAbsolute=Resolve-MorphospaceWorkspacePath $workspace $StatePath -RequireLeaf;$state=Read-MorphospaceProtocolJson -Path $stateAbsolute;$unitAbsolute=Resolve-MorphospaceWorkspacePath $workspace $UnitPath -RequireLeaf;$unit=Read-MorphospaceProtocolJson -Path $unitAbsolute
         $preStateSha256=Get-MorphospaceLedgerDocumentHash $state;$preUnitSha256=Get-MorphospaceLedgerDocumentHash $unit
         if($ExpectedStateSha256-and$ExpectedPreStateSha256-and$ExpectedStateSha256-cne$ExpectedPreStateSha256){throw 'Conflicting expected pre-state SHA-256 values.'}
         if($ExpectedUnitSha256-and$ExpectedPreUnitSha256-and$ExpectedUnitSha256-cne$ExpectedPreUnitSha256){throw 'Conflicting expected pre-unit SHA-256 values.'}
@@ -803,6 +846,12 @@ function Start-MorphospaceTransitionLedger {
             if([string]::IsNullOrEmpty([string]$expectation.expected)){continue}
             if([string]$expectation.expected-cnotmatch'^[0-9a-f]{64}$'){throw "Expected $([string]$expectation.name) SHA-256 is not canonical lowercase hex."}
             if([string]$expectation.expected-cne[string]$expectation.actual){throw "Transition $TransactionId expected $([string]$expectation.name) SHA-256 does not match the mutex-protected current document."}
+        }
+        $preStateRawSha256=''
+        if($ExpectedPreStateRawSha256){
+            if($ExpectedPreStateRawSha256-cnotmatch'^[0-9a-f]{64}$'){throw 'Expected pre-state raw SHA-256 is not canonical lowercase hex.'}
+            $preStateRawSha256=Get-MorphospaceFileSha256 $stateAbsolute
+            if($ExpectedPreStateRawSha256-cne$preStateRawSha256){throw "Transition $TransactionId expected pre-state raw SHA-256 does not match the mutex-protected current document bytes."}
         }
         $preUnitRawSha256=''
         if($ExpectedPreUnitRawSha256){
@@ -843,7 +892,7 @@ function Start-MorphospaceTransitionLedger {
         $projectionPaths=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
         $previousProjectionPath=$null
         foreach($projection in @($AdditionalProjections)){
-            Assert-MorphospaceExactPropertySet $projection @('path','expected_sha256','document') @() 'Transition additional projection request'
+            Assert-MorphospaceExactPropertySet $projection @('path','expected_sha256','document') @('expected_raw_sha256') 'Transition additional projection request'
             $projectionPath=ConvertTo-MorphospaceProtocolRelativePath ([string]$projection.path)
             if([string]$projection.path-cne$projectionPath-or-not$projectionPaths.Add($projectionPath)){
                 throw 'Transition additional projection request repeats or mis-canonicalizes a path.'
@@ -855,19 +904,31 @@ function Start-MorphospaceTransitionLedger {
                 throw 'Transition additional projection requests are not in canonical path order.'
             }
             $previousProjectionPath=$projectionPath
-            $current=Read-MorphospaceProtocolJson -Path (Resolve-MorphospaceWorkspacePath $workspace $projectionPath -RequireLeaf)
+            $projectionAbsolute=Resolve-MorphospaceWorkspacePath $workspace $projectionPath -RequireLeaf
+            $current=Read-MorphospaceProtocolJson -Path $projectionAbsolute
             $currentHash=Get-MorphospaceLedgerDocumentHash $current
             if([string]$projection.expected_sha256-cnotmatch'^[0-9a-f]{64}$'-or[string]$projection.expected_sha256-cne$currentHash){
                 throw "Transition $TransactionId expected additional-projection SHA-256 does not match '$projectionPath'."
             }
             try{$targetProjectionHash=Get-MorphospaceLedgerDocumentHash $projection.document}
             catch{throw "Transition $TransactionId additional-projection target '$projectionPath' is not a bounded protocol document: $($_.Exception.Message)"}
-            $ownedProjections+=,[pscustomobject][ordered]@{
+            $ownedProjection=[ordered]@{
                 path=$projectionPath
                 pre_sha256=$currentHash
                 target_sha256=$targetProjectionHash
                 document=$projection.document
             }
+            if($null-ne$projection.PSObject.Properties['expected_raw_sha256']){
+                if([string]$projection.expected_raw_sha256-cnotmatch'^[0-9a-f]{64}$'){
+                    throw "Transition additional projection request raw SHA-256 is invalid for '$projectionPath'."
+                }
+                $currentRawHash=Get-MorphospaceFileSha256 $projectionAbsolute
+                if([string]$projection.expected_raw_sha256-cne$currentRawHash){
+                    throw "Transition $TransactionId expected additional-projection raw SHA-256 does not match '$projectionPath'."
+                }
+                $ownedProjection.pre_raw_sha256=$currentRawHash
+            }
+            $ownedProjections+=,[pscustomobject]$ownedProjection
         }
         $ownedArtifacts=@()
         foreach($artifact in @($Artifacts)){
@@ -892,6 +953,11 @@ function Start-MorphospaceTransitionLedger {
         if($ExpectedPreUnitRawSha256-and$null-ne$supersessionOldUnitBinding){
             throw 'Raw pre-unit-bound transitions may not combine supersession.'
         }
+        $rawProjectionCount=@($ownedProjections|Where-Object{$null-ne$_.PSObject.Properties['pre_raw_sha256']}).Count
+        $hasCompleteV6Shape=($ExpectedPreStateRawSha256-and$ExpectedPreUnitRawSha256-and@($ownedProjections).Count-gt0-and$rawProjectionCount-eq@($ownedProjections).Count)
+        if(($ExpectedPreStateRawSha256-or$rawProjectionCount-gt0)-and-not$hasCompleteV6Shape){
+            throw 'Raw state/projection preimages require the complete v6 raw state, raw unit, and raw additional-projection binding.'
+        }
         $isProposedRetirementV1 = (
             $ExpectedPreUnitRawSha256 -and
             @($ownedProjections).Count -eq 0 -and
@@ -904,6 +970,8 @@ function Start-MorphospaceTransitionLedger {
         )
         $intentSchema = if($null-ne$supersessionOldUnitBinding){
             $script:MorphospaceTransitionIntentV2
+        }elseif($hasCompleteV6Shape){
+            $script:MorphospaceTransitionIntentV6
         }elseif($ExpectedPreUnitRawSha256-and@($ownedProjections).Count){
             $script:MorphospaceTransitionIntentV4
         }elseif(@($ownedProjections).Count){
@@ -929,7 +997,13 @@ function Start-MorphospaceTransitionLedger {
             artifacts=@($ownedArtifacts)
             event=$Event
         }
-        if($intentSchema-cin@($script:MorphospaceTransitionIntentV4,$script:MorphospaceTransitionIntentV5)){
+        if($intentSchema-ceq$script:MorphospaceTransitionIntentV6){
+            $intentFields.pre_state_raw=[pscustomobject][ordered]@{
+                path=(ConvertTo-MorphospaceProtocolRelativePath -Path $StatePath)
+                sha256=$preStateRawSha256
+            }
+        }
+        if($intentSchema-cin@($script:MorphospaceTransitionIntentV4,$script:MorphospaceTransitionIntentV5,$script:MorphospaceTransitionIntentV6)){
             $intentFields.pre_unit_raw=[pscustomobject][ordered]@{
                 path=(ConvertTo-MorphospaceProtocolRelativePath -Path $UnitPath)
                 sha256=$preUnitRawSha256
@@ -958,6 +1032,9 @@ function Start-MorphospaceTransitionLedger {
         Assert-MorphospaceLedgerIntent $intent $TransactionId
         if($ExpectedPreUnitRawSha256-and(Get-MorphospaceLedgerBoundPreUnitRawSha256 $intent)-cne$ExpectedPreUnitRawSha256){
             throw 'Raw pre-unit CAS is not durably bound by the transition-owned receipt artifact.'
+        }
+        if($ExpectedPreStateRawSha256-and[string]$intent.pre_state_raw.sha256-cne$ExpectedPreStateRawSha256){
+            throw 'Raw pre-state CAS is not durably bound by the transition intent.'
         }
         Assert-MorphospaceLedgerArtifactNamespace $workspace $TransactionId $intent
         [void](Assert-MorphospaceLedgerEventPlacement $eventsAbsolute $intent)

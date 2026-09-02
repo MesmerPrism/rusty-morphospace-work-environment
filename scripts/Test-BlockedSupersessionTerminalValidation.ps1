@@ -1,4 +1,4 @@
-param([switch]$KeepFixture)
+param([switch]$KeepFixture, [switch]$RematerializationV6Only)
 
 $ErrorActionPreference = 'Stop'
 $RepoRoot = Split-Path -Parent $PSScriptRoot
@@ -7,6 +7,11 @@ Import-Module (Join-Path $PSScriptRoot 'ActiveWriteScopeAmendment.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceBlockedSupersessionTerminalValidation.psm1') -Force
+if ($RematerializationV6Only) {
+    Import-Module (Join-Path $PSScriptRoot 'CandidateFreeze.psm1') -Force
+    Import-Module (Join-Path $PSScriptRoot 'ValidatingCandidateRematerialization.psm1') -Force
+    Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force -Global
+}
 
 $encoding = [Text.UTF8Encoding]::new($false)
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) ('morphospace-blocked-supersession-' + [guid]::NewGuid().ToString('N'))
@@ -37,6 +42,54 @@ function Read-FixtureJson { param([string]$Path) return Read-MorphospaceProtocol
 function Copy-FixtureValue {
     param([object]$Value)
     return ConvertFrom-FixtureJsonText -Text ($Value | ConvertTo-Json -Depth 64 -Compress) -Context 'fixture value clone'
+}
+
+function Import-RematerializationV6FixtureDefinitions {
+    $fixtureSource = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'Test-ValidatingCandidateRematerialization.ps1'))
+    $definitionStart = $fixtureSource.IndexOf('function Write-RematerializationTestJson', [StringComparison]::Ordinal)
+    $definitionEnd = $fixtureSource.IndexOf("if(-not`$SelfTest)", [StringComparison]::Ordinal)
+    if ($definitionStart -lt 0 -or $definitionEnd -le $definitionStart) {
+        throw 'The validating-candidate rematerialization fixture-definition boundary is unavailable.'
+    }
+    return $fixtureSource.Substring($definitionStart, $definitionEnd - $definitionStart)
+}
+
+function Get-RematerializationV6Transition {
+    param([string]$Workspace, [string]$EventId, [string]$PriorStateSha256, [string]$PriorUnitSha256)
+    $module = Get-Module MorphospaceBlockedSupersessionTerminalValidation
+    if ($null -eq $module) { throw 'Blocked-supersession terminal validation module is unavailable.' }
+    return & $module {
+        param($Workspace, $EventId, $PriorStateSha256, $PriorUnitSha256)
+        $ledger = Get-MorphospaceBlockedSupersessionLedger -WorkspaceRoot $Workspace
+        $row = @($ledger.rows | Where-Object { [string]$_.document.event_id -ceq $EventId })
+        if ($row.Count -ne 1) { throw "Targeted rematerialization fixture lacks exactly one '$EventId' event." }
+        Test-MorphospaceBlockedSupersessionTransaction -WorkspaceRoot $Workspace -Ledger $ledger -Row $row[0] -ProjectId 'test-project' `
+            -ExpectedPreStateSha256 $PriorStateSha256 -ExpectedPreUnitSha256 $PriorUnitSha256 `
+            -ExpectedIntentSchema 'rusty.morphospace.workflow.transition_ledger_intent.v6'
+    } $Workspace $EventId $PriorStateSha256 $PriorUnitSha256
+}
+
+function Test-RematerializationV6TransitionDirect {
+    param([string]$Workspace, [object]$Transition, [object]$PriorState, [string]$PriorStateSha256, [object]$PriorUnit, [string]$PriorUnitSha256)
+    $module = Get-Module MorphospaceBlockedSupersessionTerminalValidation
+    & $module {
+        param($Workspace, $Transition, $PriorState, $PriorStateSha256, $PriorUnit, $PriorUnitSha256)
+        Test-MorphospaceBlockedSupersessionRematerializationV6 -WorkspaceRoot $Workspace -ProjectId 'test-project' -UnitId 'unit-remat-001' `
+            -Transition $Transition -PriorState $PriorState -PriorStateSha256 $PriorStateSha256 -PriorUnit $PriorUnit -PriorUnitSha256 $PriorUnitSha256
+    } $Workspace $Transition $PriorState $PriorStateSha256 $PriorUnit $PriorUnitSha256
+}
+
+function Assert-RematerializationV6DirectRejects {
+    param([string]$Workspace, [object]$Transition, [object]$PriorState, [string]$PriorStateSha256, [object]$PriorUnit, [string]$PriorUnitSha256, [scriptblock]$Mutation, [string]$ExpectedMessage)
+    $damaged = Copy-FixtureValue $Transition
+    & $Mutation $damaged
+    $message = ''
+    try {
+        Test-RematerializationV6TransitionDirect -Workspace $Workspace -Transition $damaged -PriorState $PriorState -PriorStateSha256 $PriorStateSha256 -PriorUnit $PriorUnit -PriorUnitSha256 $PriorUnitSha256
+    } catch { $message = [string]$_.Exception.Message }
+    if (-not $message -or -not $message.Contains($ExpectedMessage, [StringComparison]::Ordinal)) {
+        throw "Expected rematerialization v6 rejection containing '$ExpectedMessage', got '$message'."
+    }
 }
 
 function Invoke-FixtureGit {
@@ -341,9 +394,11 @@ function Add-OwnerProjectionContinuation {
         [string]$Timestamp,
         [switch]$TwoProjectionAnchor,
         [switch]$AdvanceProjectProjection,
-        [switch]$RawBound
+        [switch]$RawBound,
+        [switch]$RawPreimages
     )
     if ($TwoProjectionAnchor -eq $AdvanceProjectProjection) { throw 'Owner projection fixture requires exactly one continuation mode.' }
+    if ($RawBound -and $RawPreimages) { throw 'Owner projection fixture may select only one raw-binding version.' }
     $statePath = Join-Path $Workspace 'workspace.state.json'
     $unitPath = Join-Path $Workspace "iteration-units\$UnitId.json"
     $eventsPath = Join-Path $Workspace 'iteration-events.jsonl'
@@ -386,7 +441,13 @@ function Add-OwnerProjectionContinuation {
         receipts = @()
     }
     $rawBinding = @{}
-    if ($RawBound) {
+    if ($RawPreimages) {
+        $rawBinding.ExpectedPreStateRawSha256 = Get-MorphospaceFileSha256 -Path $statePath
+        $rawBinding.ExpectedPreUnitRawSha256 = Get-MorphospaceFileSha256 -Path $unitPath
+        foreach ($request in $requests) {
+            $request | Add-Member -NotePropertyName expected_raw_sha256 -NotePropertyValue (Get-MorphospaceFileSha256 -Path (Join-Path $Workspace ([string]$request.path)))
+        }
+    } elseif ($RawBound) {
         $rawBinding.ExpectedPreUnitRawSha256 = Get-MorphospaceFileSha256 -Path $unitPath
     }
     Start-MorphospaceTransitionLedger `
@@ -458,6 +519,61 @@ function Add-OwnerRawArtifactContinuation {
         -ExpectedEventsLength ([IO.FileInfo]::new($eventsPath).Length) `
         -Artifacts $artifacts | Out-Null
     return $EventId
+}
+
+if ($RematerializationV6Only) {
+    $blockedModuleSource = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'lib\MorphospaceBlockedSupersessionTerminalValidation.psm1'))
+    if (-not $blockedModuleSource.Contains("'schemas\candidate-freeze-v1.schema.json'", [StringComparison]::Ordinal) -or
+        $blockedModuleSource.Contains("'schemas\candidate-freeze.schema.json'", [StringComparison]::Ordinal)) {
+        throw 'The targeted blocked-history validator does not bind the exact candidate-freeze v1 schema path.'
+    }
+    Invoke-Expression (Import-RematerializationV6FixtureDefinitions)
+    $targetedFixture = New-RematerializationFixture 'blocked-history-v6'
+    try {
+        $priorState = Read-MorphospaceProtocolJson $targetedFixture.state_path
+        $priorUnit = Read-MorphospaceProtocolJson $targetedFixture.unit_path
+        $priorStateSha256 = Get-MorphospaceCanonicalJsonSha256 $priorState
+        $priorUnitSha256 = Get-MorphospaceCanonicalJsonSha256 $priorUnit
+        $candidateSha256 = Get-MorphospaceFileSha256 $targetedFixture.candidate_path
+        $executed = Invoke-MorphospaceRematerializeValidatingCandidate -WorkspaceRoot $targetedFixture.workspace -UnitId 'unit-remat-001' `
+            -CandidateFreeze $targetedFixture.candidate_path -SourceCompositionLock $targetedFixture.source_lock_path `
+            -RepoMapPath $targetedFixture.map_path -OutPath $targetedFixture.out_path -ExpectedCandidateFreezeSha256 $candidateSha256 `
+            -Timestamp '2026-09-02T00:02:00.0000000Z' -Execute
+        if (-not $executed.executed -or [string]$executed.transition -cne 'validating-candidate-rematerialized') {
+            throw 'The targeted fixture did not execute the real validating-candidate rematerialization action.'
+        }
+        $eventId = "rematerialize-blocked-history-v6-recorded"
+        $transition = Get-RematerializationV6Transition -Workspace $targetedFixture.workspace -EventId $eventId -PriorStateSha256 $priorStateSha256 -PriorUnitSha256 $priorUnitSha256
+        Test-RematerializationV6TransitionDirect -Workspace $targetedFixture.workspace -Transition $transition -PriorState $priorState -PriorStateSha256 $priorStateSha256 -PriorUnit $priorUnit -PriorUnitSha256 $priorUnitSha256
+
+        Assert-RematerializationV6DirectRejects $targetedFixture.workspace $transition $priorState $priorStateSha256 $priorUnit $priorUnitSha256 `
+            { param($t) $t.event.summary = 'A near-miss generic v6 continuation.' } 'not the exact validating-candidate rematerialization action'
+        Assert-RematerializationV6DirectRejects $targetedFixture.workspace $transition $priorState $priorStateSha256 $priorUnit $priorUnitSha256 `
+            { param($t) $t.unit_document.status = 'active' } 'does not preserve the validating captain'
+        Assert-RematerializationV6DirectRejects $targetedFixture.workspace $transition $priorState $priorStateSha256 $priorUnit $priorUnitSha256 `
+            { param($t) $t.unit_document.objective = 'forged scope expansion' } 'changed the unit outside exact source/freeze replacement'
+        Assert-RematerializationV6DirectRejects $targetedFixture.workspace $transition $priorState $priorStateSha256 $priorUnit $priorUnitSha256 `
+            { param($t) $t.state_document.last_accepted_receipt = 'receipts/forged.json' } 'changed state outside event tail, selector invalidation, and exact repository-head projection'
+        Assert-RematerializationV6DirectRejects $targetedFixture.workspace $transition $priorState $priorStateSha256 $priorUnit $priorUnitSha256 `
+            { param($t) $t.state_document.normal_validation_selection = $t.intent.target.state.document.normal_validation_selection = $t.event.receipts[0] } 'does not preserve the validating captain'
+        Assert-RematerializationV6DirectRejects $targetedFixture.workspace $transition $priorState $priorStateSha256 $priorUnit $priorUnitSha256 `
+            { param($t) $t.intent.artifacts = @($t.intent.artifacts[1],$t.intent.artifacts[0]); $t.event.receipts = @($t.event.receipts[1],$t.event.receipts[0]) } 'artifacts and receipts are not ordinal sorted'
+
+        [pscustomobject][ordered]@{
+            schema = 'rusty.morphospace.workflow.blocked_supersession_rematerialization_v6_targeted_test.v1'
+            result = 'pass'
+            real_action_executed = $true
+            exact_damage_cases = 6
+            generic_v6_fixture_preserved = $true
+            build_or_device_used = $false
+        } | ConvertTo-Json -Compress
+    } finally {
+        if ($null -ne $targetedFixture -and [IO.Directory]::Exists($targetedFixture.root)) {
+            Get-ChildItem -LiteralPath $targetedFixture.root -Force -Recurse -ErrorAction SilentlyContinue | ForEach-Object { try { $_.Attributes = $_.Attributes -band (-bnot [IO.FileAttributes]::ReadOnly) } catch {} }
+            Remove-Item -LiteralPath $targetedFixture.root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+    return
 }
 
 try {
@@ -656,6 +772,40 @@ try {
         param($case)
         Update-FixtureJson (Join-Path $case "receipts\transactions\$v4ProjectionAdvanceEventId-transition.intent.json") { param($i) $i.additional_projections[0].pre_sha256 = ('c' * 64) }
         Rebind-FixtureTransaction -Workspace $case -EventId $v4ProjectionAdvanceEventId
+    }
+
+    $ownerV6Workspace = Copy-FixtureWorkspace -Source $baselineWorkspace -Name 'positive-owner-v6-projection-chain'
+    Add-LaterUnit -Workspace $ownerV6Workspace
+    $v6ProjectionEventId = Add-OwnerProjectionContinuation -Workspace $ownerV6Workspace -UnitId 'later-current-owner' -EventId 'later-current-owner-v6-two-projection-anchor-recorded' -Timestamp '2026-01-02T03:08:00.0000000Z' -TwoProjectionAnchor -RawPreimages
+    Assert-HelperPasses -Workspace $ownerV6Workspace -Name 'owner-produced-v6-two-projection-positive' -ContinuationCount 3 -ProjectionCount 2
+    $v6ProjectionAdvanceEventId = Add-OwnerProjectionContinuation -Workspace $ownerV6Workspace -UnitId 'later-current-owner' -EventId 'later-current-owner-v6-project-projection-advance-recorded' -Timestamp '2026-01-02T03:09:00.0000000Z' -AdvanceProjectProjection -RawPreimages
+    Assert-HelperPasses -Workspace $ownerV6Workspace -Name 'owner-produced-v6-matching-projection-chain-positive' -ContinuationCount 4 -ProjectionCount 2
+    Invoke-WorkflowContract -Workspace $ownerV6Workspace | Out-Null
+    Assert-Passed $true 'owner-produced-v6-projection-chain-aggregate'
+    Assert-HelperRejects -Template $ownerV6Workspace -Name 'v6-missing-raw-state-binding' -Mutation {
+        param($case)
+        Update-FixtureJson (Join-Path $case "receipts\transactions\$v6ProjectionEventId-transition.intent.json") { param($i) $i.PSObject.Properties.Remove('pre_state_raw') }
+        Rebind-FixtureTransaction -Workspace $case -EventId $v6ProjectionEventId
+    }
+    Assert-HelperRejects -Template $ownerV6Workspace -Name 'v6-raw-state-path-detachment' -Mutation {
+        param($case)
+        Update-FixtureJson (Join-Path $case "receipts\transactions\$v6ProjectionEventId-transition.intent.json") { param($i) $i.pre_state_raw.path = 'project.spec.json' }
+        Rebind-FixtureTransaction -Workspace $case -EventId $v6ProjectionEventId
+    }
+    Assert-HelperRejects -Template $ownerV6Workspace -Name 'v6-raw-state-noncanonical-sha' -Mutation {
+        param($case)
+        Update-FixtureJson (Join-Path $case "receipts\transactions\$v6ProjectionEventId-transition.intent.json") { param($i) $i.pre_state_raw.sha256 = ([string]$i.pre_state_raw.sha256).ToUpperInvariant() }
+        Rebind-FixtureTransaction -Workspace $case -EventId $v6ProjectionEventId
+    }
+    Assert-HelperRejects -Template $ownerV6Workspace -Name 'v6-missing-projection-raw-binding' -Mutation {
+        param($case)
+        Update-FixtureJson (Join-Path $case "receipts\transactions\$v6ProjectionEventId-transition.intent.json") { param($i) $i.additional_projections[0].PSObject.Properties.Remove('pre_raw_sha256') }
+        Rebind-FixtureTransaction -Workspace $case -EventId $v6ProjectionEventId
+    }
+    Assert-HelperRejects -Template $ownerV6Workspace -Name 'v6-projection-raw-noncanonical-sha' -Mutation {
+        param($case)
+        Update-FixtureJson (Join-Path $case "receipts\transactions\$v6ProjectionAdvanceEventId-transition.intent.json") { param($i) $i.additional_projections[0].pre_raw_sha256 = ([string]$i.additional_projections[0].pre_raw_sha256).ToUpperInvariant() }
+        Rebind-FixtureTransaction -Workspace $case -EventId $v6ProjectionAdvanceEventId
     }
 
     $ownerV5Workspace = Copy-FixtureWorkspace -Source $baselineWorkspace -Name 'positive-owner-v5-raw-artifact-continuation'

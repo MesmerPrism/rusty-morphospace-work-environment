@@ -167,6 +167,184 @@ function Test-MorphospaceBlockedSupersessionArtifact {
     return [pscustomobject][ordered]@{ path = $CanonicalPath; sha256 = $embeddedHash }
 }
 
+function Test-MorphospaceBlockedSupersessionRematerializationV6 {
+    param(
+        [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
+        [Parameter(Mandatory = $true)][string]$ProjectId,
+        [Parameter(Mandatory = $true)][string]$UnitId,
+        [Parameter(Mandatory = $true)][object]$Transition,
+        [Parameter(Mandatory = $true)][object]$PriorState,
+        [Parameter(Mandatory = $true)][string]$PriorStateSha256,
+        [Parameter(Mandatory = $true)][object]$PriorUnit,
+        [Parameter(Mandatory = $true)][string]$PriorUnitSha256
+    )
+    $intent = $Transition.intent
+    $event = $Transition.event
+    $eventId = [string]$event.event_id
+    $summary = 'Rematerialized only the exact source and candidate-freeze bindings of the current validating unit while invalidating its stale selector.'
+    if ([string]$event.event_type -cne 'state-transition' -or [string]$event.summary -cne $summary -or
+        [string]$event.project_id -cne $ProjectId -or [string]$event.unit_id -cne $UnitId) {
+        throw "Transition intent v6 '$eventId' is not the exact validating-candidate rematerialization action."
+    }
+
+    $artifacts = @($intent.artifacts)
+    $receipts = @($event.receipts)
+    if ($artifacts.Count -ne 2 -or $receipts.Count -ne 2) {
+        throw "Rematerialization v6 '$eventId' must bind exactly two artifacts and receipts."
+    }
+    $candidate = $null
+    $candidateArtifact = $null
+    $source = $null
+    $sourceArtifact = $null
+    $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+    for ($index = 0; $index -lt 2; $index++) {
+        $artifact = $artifacts[$index]
+        if ([string]$receipts[$index] -cne [string]$artifact.path) {
+            throw "Rematerialization v6 '$eventId' artifact/receipt order drifted."
+        }
+        $bytes = try { [Convert]::FromBase64String([string]$artifact.bytes_base64) } catch { throw "Rematerialization v6 '$eventId' artifact bytes are invalid." }
+        $document = ConvertFrom-MorphospaceProtocolJsonBytes -Bytes $bytes -Context "rematerialization v6 '$eventId' artifact '$([string]$artifact.path)'"
+        switch ([string]$document.schema) {
+            'rusty.morphospace.workflow.candidate_freeze.v2' {
+                if ($null -ne $candidate) { throw "Rematerialization v6 '$eventId' repeats its candidate-freeze artifact." }
+                if (-not (Test-Json -Json ([Text.UTF8Encoding]::new($false,$true).GetString($bytes)) -SchemaFile (Join-Path $repositoryRoot 'schemas\candidate-freeze-v2.schema.json'))) {
+                    throw "Rematerialization v6 '$eventId' candidate-freeze artifact fails its owner schema."
+                }
+                $candidate = $document
+                $candidateArtifact = $artifact
+            }
+            'rusty.morphospace.workflow.source_composition_lock.v1' {
+                if ($null -ne $source) { throw "Rematerialization v6 '$eventId' repeats its source-composition artifact." }
+                if (-not (Test-Json -Json ([Text.UTF8Encoding]::new($false,$true).GetString($bytes)) -SchemaFile (Join-Path $repositoryRoot 'schemas\source-composition-lock.schema.json'))) {
+                    throw "Rematerialization v6 '$eventId' source-composition artifact fails its owner schema."
+                }
+                $source = $document
+                $sourceArtifact = $artifact
+            }
+            default { throw "Rematerialization v6 '$eventId' owns an unsupported artifact schema." }
+        }
+    }
+    if ($null -eq $candidate -or $null -eq $source) { throw "Rematerialization v6 '$eventId' lacks its exact candidate/source artifact pair." }
+    if ([StringComparer]::Ordinal.Compare([string]$artifacts[0].path, [string]$artifacts[1].path) -ge 0) {
+        throw "Rematerialization v6 '$eventId' artifacts and receipts are not ordinal sorted."
+    }
+
+    $candidatePath = "receipts/$([string]$candidate.freeze_id).json"
+    $sourcePath = "source-compositions/$([string]$source.lock_id).lock.json"
+    if ([string]$candidateArtifact.path -cne $candidatePath -or [string]$sourceArtifact.path -cne $sourcePath -or
+        [string]$candidate.project_id -cne $ProjectId -or [string]$candidate.unit_id -cne $UnitId -or
+        [string]$source.project_id -cne $ProjectId -or [string]$source.unit_id -cne $UnitId -or
+        $eventId -cne "$([string]$candidate.lineage.rematerialization_id)-recorded" -or
+        [string]$candidate.source_composition.path -cne $sourcePath -or [string]$candidate.source_composition.sha256 -cne [string]$sourceArtifact.sha256 -or
+        [string]$candidate.lineage.target_source_composition.path -cne $sourcePath -or [string]$candidate.lineage.target_source_composition.sha256 -cne [string]$sourceArtifact.sha256) {
+        throw "Rematerialization v6 '$eventId' artifact identity or target-source binding drifted."
+    }
+    if ([string]$candidate.expected.state_sha256 -cne $PriorStateSha256 -or [string]$candidate.expected.unit_sha256 -cne $PriorUnitSha256 -or
+        [string]$candidate.expected.state_raw_sha256 -cne [string]$intent.pre_state_raw.sha256 -or
+        [string]$candidate.expected.unit_raw_sha256 -cne [string]$intent.pre_unit_raw.sha256 -or
+        [string]$candidate.expected.events_sha256 -cne [string]$intent.expected.events_sha256 -or
+        [int64]$candidate.expected.events_length -ne [int64]$intent.expected.events_length -or
+        [string]$candidate.expected.event_tail_id -cne [string]$intent.expected.event_tail_id) {
+        throw "Rematerialization v6 '$eventId' candidate preimage binding drifted."
+    }
+    if ([string]$candidate.expected.source_composition_path -cne [string]$candidate.lineage.predecessor_source_composition.path -or
+        [string]$candidate.expected.source_composition_sha256 -cne [string]$candidate.lineage.predecessor_source_composition.sha256) {
+        throw "Rematerialization v6 '$eventId' candidate predecessor-source binding drifted."
+    }
+
+    $projectionMap = @{}
+    foreach ($projection in @($intent.additional_projections)) { $projectionMap[[string]$projection.path] = $projection }
+    if ($projectionMap.Count -ne 2 -or -not $projectionMap.ContainsKey('feature.lock.json') -or -not $projectionMap.ContainsKey('project.spec.json')) {
+        throw "Rematerialization v6 '$eventId' lacks its exact feature/project projection pair."
+    }
+    foreach ($binding in @(
+        [pscustomobject]@{ path='feature.lock.json'; canonical=[string]$candidate.expected.feature_lock_sha256; raw=[string]$candidate.expected.feature_lock_raw_sha256 },
+        [pscustomobject]@{ path='project.spec.json'; canonical=[string]$candidate.expected.project_sha256; raw=[string]$candidate.expected.project_raw_sha256 }
+    )) {
+        $projection = $projectionMap[[string]$binding.path]
+        if ([string]$projection.pre_sha256 -cne [string]$binding.canonical -or [string]$projection.target_sha256 -cne [string]$binding.canonical -or
+            [string]$projection.pre_raw_sha256 -cne [string]$binding.raw) {
+            throw "Rematerialization v6 '$eventId' projection '$([string]$binding.path)' is not an unchanged canonical raw-bound preimage."
+        }
+    }
+
+    if ([string]$PriorUnit.status -cne 'validating' -or [string]$Transition.unit_document.status -cne 'validating' -or
+        [string]$PriorState.current_unit -cne $UnitId -or [string]$Transition.state_document.current_unit -cne $UnitId -or
+        $null -eq $PriorState.normal_validation_selection -or $null -ne $Transition.state_document.normal_validation_selection) {
+        throw "Rematerialization v6 '$eventId' does not preserve the validating captain while clearing exactly one stale selector."
+    }
+    if ((Get-MorphospaceCanonicalJsonSha256 -Value $candidate.lineage.invalidated_normal_validation_selection) -cne
+        (Get-MorphospaceCanonicalJsonSha256 -Value $PriorState.normal_validation_selection)) {
+        throw "Rematerialization v6 '$eventId' candidate does not bind the invalidated selector preimage."
+    }
+    if ($null -eq $PriorUnit.candidate_freeze -or $null -eq $PriorUnit.source_composition -or
+        (Get-MorphospaceCanonicalJsonSha256 -Value $candidate.lineage.predecessor_freeze) -cne (Get-MorphospaceCanonicalJsonSha256 -Value $PriorUnit.candidate_freeze) -or
+        [string]$candidate.lineage.predecessor_source_composition.path -cne [string]$PriorUnit.source_composition.lock_path) {
+        throw "Rematerialization v6 '$eventId' candidate does not bind the predecessor unit source/freeze markers."
+    }
+    $predecessorFreeze = Read-MorphospaceBlockedSupersessionJson -WorkspaceRoot $WorkspaceRoot -RelativePath ([string]$candidate.lineage.predecessor_freeze.receipt_path) -Context "rematerialization v6 '$eventId' predecessor freeze"
+    $predecessorSource = Read-MorphospaceBlockedSupersessionJson -WorkspaceRoot $WorkspaceRoot -RelativePath ([string]$candidate.lineage.predecessor_source_composition.path) -Context "rematerialization v6 '$eventId' predecessor source"
+    if ($predecessorFreeze.sha256 -cne [string]$candidate.lineage.predecessor_freeze.receipt_sha256 -or
+        $predecessorSource.sha256 -cne [string]$candidate.lineage.predecessor_source_composition.sha256) {
+        throw "Rematerialization v6 '$eventId' predecessor artifact bytes drifted."
+    }
+    $predecessorFreezeSchema = [string]$predecessorFreeze.document.schema
+    if ($predecessorFreezeSchema -cnotin @('rusty.morphospace.workflow.candidate_freeze.v1','rusty.morphospace.workflow.candidate_freeze.v2')) {
+        throw "Rematerialization v6 '$eventId' predecessor freeze has an unsupported schema."
+    }
+    $predecessorFreezeSchemaPath = if ($predecessorFreezeSchema -ceq 'rusty.morphospace.workflow.candidate_freeze.v2') { 'schemas\candidate-freeze-v2.schema.json' } else { 'schemas\candidate-freeze-v1.schema.json' }
+    if (-not (Test-Json -Json ([Text.UTF8Encoding]::new($false,$true).GetString($predecessorFreeze.bytes)) -SchemaFile (Join-Path $repositoryRoot $predecessorFreezeSchemaPath))) {
+        throw "Rematerialization v6 '$eventId' predecessor freeze fails its owner schema."
+    }
+    if ([string]$predecessorSource.document.schema -cnotin @('rusty.morphospace.workflow.source_composition_lock.v1','rusty.morphospace.workflow.development_envelope_source_composition.v1')) {
+        throw "Rematerialization v6 '$eventId' predecessor source has an unsupported schema."
+    }
+    $predecessorSourceSchemaPath = if ([string]$predecessorSource.document.schema -ceq 'rusty.morphospace.workflow.source_composition_lock.v1') { 'schemas\source-composition-lock.schema.json' } else { 'schemas\development-envelope-source-composition-v1.schema.json' }
+    if (-not (Test-Json -Json ([Text.UTF8Encoding]::new($false,$true).GetString($predecessorSource.bytes)) -SchemaFile (Join-Path $repositoryRoot $predecessorSourceSchemaPath))) {
+        throw "Rematerialization v6 '$eventId' predecessor source fails its owner schema."
+    }
+
+    $restoredUnit = $Transition.unit_document | ConvertTo-Json -Depth 96 | ConvertFrom-Json -Depth 96 -DateKind String
+    $restoredUnit.candidate_freeze = $PriorUnit.candidate_freeze
+    $restoredUnit.source_composition = $PriorUnit.source_composition
+    if ([string]$Transition.unit_document.candidate_freeze.freeze_id -cne [string]$candidate.freeze_id -or
+        [string]$Transition.unit_document.candidate_freeze.receipt_path -cne $candidatePath -or
+        [string]$Transition.unit_document.candidate_freeze.receipt_sha256 -cne [string]$candidateArtifact.sha256 -or
+        [string]$Transition.unit_document.source_composition.mode -cne 'exact-lock' -or
+        [string]$Transition.unit_document.source_composition.lock_path -cne $sourcePath -or
+        $null -ne $Transition.unit_document.source_composition.materialization_receipt -or
+        (Get-MorphospaceCanonicalJsonSha256 -Value $restoredUnit) -cne $PriorUnitSha256) {
+        throw "Rematerialization v6 '$eventId' changed the unit outside exact source/freeze replacement."
+    }
+
+    $restoredState = $Transition.state_document | ConvertTo-Json -Depth 96 | ConvertFrom-Json -Depth 96 -DateKind String
+    $restoredState.last_event_id = [string]$intent.expected.event_tail_id
+    $restoredState.normal_validation_selection = $candidate.lineage.invalidated_normal_validation_selection
+    $headProjectionMap = @{}
+    foreach ($projection in @($candidate.lineage.repository_head_projections)) {
+        $repoId = [string]$projection.repo_id
+        if (-not $repoId -or $headProjectionMap.ContainsKey($repoId)) { throw "Rematerialization v6 '$eventId' repeats a repository-head projection." }
+        $headProjectionMap[$repoId] = $projection
+    }
+    foreach ($head in @($restoredState.repository_heads)) {
+        $repoId = [string]$head.repo_id
+        if (-not $headProjectionMap.ContainsKey($repoId)) { continue }
+        $projection = $headProjectionMap[$repoId]
+        $targetHead = @($Transition.state_document.repository_heads | Where-Object { [string]$_.repo_id -ceq $repoId })
+        if ($targetHead.Count -ne 1 -or
+            (Get-MorphospaceCanonicalJsonSha256 -Value $targetHead[0]) -cne (Get-MorphospaceCanonicalJsonSha256 -Value ([pscustomobject][ordered]@{repo_id=$repoId;head=[string]$projection.target.head;branch=$projection.target.branch;dirty_fingerprint=$projection.target.dirty_fingerprint}))) {
+            throw "Rematerialization v6 '$eventId' target repository-head projection '$repoId' drifted."
+        }
+        $head.head = [string]$projection.predecessor.head
+        $head.branch = $projection.predecessor.branch
+        $head.dirty_fingerprint = $projection.predecessor.dirty_fingerprint
+        [void]$headProjectionMap.Remove($repoId)
+    }
+    if ($headProjectionMap.Count -ne 0 -or (Get-MorphospaceCanonicalJsonSha256 -Value $restoredState) -cne $PriorStateSha256) {
+        throw "Rematerialization v6 '$eventId' changed state outside event tail, selector invalidation, and exact repository-head projection."
+    }
+}
+
 function Test-MorphospaceBlockedSupersessionTransaction {
     param(
         [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
@@ -181,7 +359,8 @@ function Test-MorphospaceBlockedSupersessionTransaction {
             'rusty.morphospace.workflow.transition_ledger_intent.v2',
             'rusty.morphospace.workflow.transition_ledger_intent.v3',
             'rusty.morphospace.workflow.transition_ledger_intent.v4',
-            'rusty.morphospace.workflow.transition_ledger_intent.v5'
+            'rusty.morphospace.workflow.transition_ledger_intent.v5',
+            'rusty.morphospace.workflow.transition_ledger_intent.v6'
         )][string]$ExpectedIntentSchema = 'rusty.morphospace.workflow.transition_ledger_intent.v1'
     )
 
@@ -198,12 +377,16 @@ function Test-MorphospaceBlockedSupersessionTransaction {
     $intentProperties = @('artifacts','created_at','event','events','expected','pre','schema','state','status','target','transaction_id','unit')
     $isProjectionIntent = $ExpectedIntentSchema -cin @(
         'rusty.morphospace.workflow.transition_ledger_intent.v3',
-        'rusty.morphospace.workflow.transition_ledger_intent.v4'
+        'rusty.morphospace.workflow.transition_ledger_intent.v4',
+        'rusty.morphospace.workflow.transition_ledger_intent.v6'
     )
     $isRawArtifactIntent = $ExpectedIntentSchema -ceq 'rusty.morphospace.workflow.transition_ledger_intent.v5'
-    $projectionIntentVersion = if ($ExpectedIntentSchema -ceq 'rusty.morphospace.workflow.transition_ledger_intent.v4') { 'v4' } else { 'v3' }
+    $isRawPreimageProjectionIntent = $ExpectedIntentSchema -ceq 'rusty.morphospace.workflow.transition_ledger_intent.v6'
+    $projectionIntentVersion = if ($isRawPreimageProjectionIntent) { 'v6' } elseif ($ExpectedIntentSchema -ceq 'rusty.morphospace.workflow.transition_ledger_intent.v4') { 'v4' } else { 'v3' }
     if ($ExpectedIntentSchema -ceq 'rusty.morphospace.workflow.transition_ledger_intent.v2') {
         $intentProperties += 'supersession'
+    } elseif ($isRawPreimageProjectionIntent) {
+        $intentProperties += @('pre_state_raw','pre_unit_raw','additional_projections')
     } elseif ($ExpectedIntentSchema -ceq 'rusty.morphospace.workflow.transition_ledger_intent.v4') {
         $intentProperties += @('pre_unit_raw','additional_projections')
     } elseif ($isRawArtifactIntent) {
@@ -228,14 +411,23 @@ function Test-MorphospaceBlockedSupersessionTransaction {
     if (-not $eventUnitId -or -not $targetUnitId -or [string]$intent.unit.path -cne "iteration-units/$targetUnitId.json") {
         throw "Transition intent '$eventId' does not target its exact unit path."
     }
-    if ($ExpectedIntentSchema -cin @('rusty.morphospace.workflow.transition_ledger_intent.v4','rusty.morphospace.workflow.transition_ledger_intent.v5')) {
-        $rawIntentVersion = if ($isRawArtifactIntent) { 'v5' } else { 'v4' }
+    if ($ExpectedIntentSchema -cin @('rusty.morphospace.workflow.transition_ledger_intent.v4','rusty.morphospace.workflow.transition_ledger_intent.v5','rusty.morphospace.workflow.transition_ledger_intent.v6')) {
+        $rawIntentVersion = if ($isRawArtifactIntent) { 'v5' } elseif ($isRawPreimageProjectionIntent) { 'v6' } else { 'v4' }
         Assert-MorphospaceExactPropertySet $intent.pre_unit_raw @('path','sha256') @() "transition intent $rawIntentVersion '$eventId' raw pre-unit binding"
         $rawUnitPath = ConvertTo-MorphospaceProtocolRelativePath -Path ([string]$intent.pre_unit_raw.path)
         if ([string]$intent.pre_unit_raw.path -cne $rawUnitPath -or
             $rawUnitPath -cne [string]$intent.unit.path -or
             [string]$intent.pre_unit_raw.sha256 -cnotmatch '^[0-9a-f]{64}$') {
             throw "Transition intent $rawIntentVersion '$eventId' raw pre-unit binding is malformed or detached."
+        }
+    }
+    if ($isRawPreimageProjectionIntent) {
+        Assert-MorphospaceExactPropertySet $intent.pre_state_raw @('path','sha256') @() "transition intent v6 '$eventId' raw pre-state binding"
+        $rawStatePath = ConvertTo-MorphospaceProtocolRelativePath -Path ([string]$intent.pre_state_raw.path)
+        if ([string]$intent.pre_state_raw.path -cne $rawStatePath -or
+            $rawStatePath -cne [string]$intent.state.path -or
+            [string]$intent.pre_state_raw.sha256 -cnotmatch '^[0-9a-f]{64}$') {
+            throw "Transition intent v6 '$eventId' raw pre-state binding is malformed or detached."
         }
     }
 
@@ -344,7 +536,8 @@ function Test-MorphospaceBlockedSupersessionTransaction {
         $projectionPaths = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
         $previousProjectionPath = $null
         foreach ($projection in $projections) {
-            Assert-MorphospaceExactPropertySet $projection @('document','path','pre_sha256','target_sha256') @() "transition intent '$eventId' additional projection"
+            $projectionProperties = if ($isRawPreimageProjectionIntent) { @('document','path','pre_raw_sha256','pre_sha256','target_sha256') } else { @('document','path','pre_sha256','target_sha256') }
+            Assert-MorphospaceExactPropertySet $projection $projectionProperties @() "transition intent '$eventId' additional projection"
             $projectionPath = ConvertTo-MorphospaceProtocolRelativePath -Path ([string]$projection.path)
             if ([string]$projection.path -cne $projectionPath -or -not $projectionPaths.Add($projectionPath)) {
                 throw "Transition intent $projectionIntentVersion '$eventId' repeats or mis-canonicalizes an additional projection path."
@@ -357,6 +550,9 @@ function Test-MorphospaceBlockedSupersessionTransaction {
             }
             $previousProjectionPath = $projectionPath
             Assert-MorphospaceBlockedSupersessionHash $projection.pre_sha256 "Transition intent $projectionIntentVersion '$eventId' projection preimage"
+            if ($isRawPreimageProjectionIntent) {
+                Assert-MorphospaceBlockedSupersessionHash $projection.pre_raw_sha256 "Transition intent v6 '$eventId' projection raw preimage"
+            }
             Assert-MorphospaceBlockedSupersessionHash $projection.target_sha256 "Transition intent $projectionIntentVersion '$eventId' projection target"
             if ((Get-MorphospaceCanonicalJsonSha256 -Value $projection.document) -cne [string]$projection.target_sha256) {
                 throw "Transition intent $projectionIntentVersion '$eventId' projection '$projectionPath' target document hash drifted."
@@ -616,7 +812,8 @@ function Test-MorphospaceBlockedSupersessionTerminalValidation {
             'rusty.morphospace.workflow.transition_ledger_intent.v2',
             'rusty.morphospace.workflow.transition_ledger_intent.v3',
             'rusty.morphospace.workflow.transition_ledger_intent.v4',
-            'rusty.morphospace.workflow.transition_ledger_intent.v5'
+            'rusty.morphospace.workflow.transition_ledger_intent.v5',
+            'rusty.morphospace.workflow.transition_ledger_intent.v6'
         )) {
             throw "Later transition '$laterEventId' uses an unsupported owner-intent schema."
         }
@@ -639,10 +836,22 @@ function Test-MorphospaceBlockedSupersessionTerminalValidation {
         $knownUnitSha = if ($unitProjection.ContainsKey($transitionUnitId)) { [string]$unitProjection[$transitionUnitId].sha256 } else { '' }
         $laterProjectionIntent = $laterIntentSchema -cin @(
             'rusty.morphospace.workflow.transition_ledger_intent.v3',
-            'rusty.morphospace.workflow.transition_ledger_intent.v4'
+            'rusty.morphospace.workflow.transition_ledger_intent.v4',
+            'rusty.morphospace.workflow.transition_ledger_intent.v6'
+        )
+        $laterArtifactPaths = @($laterIntent.document.artifacts | ForEach-Object { [string]$_.path })
+        $laterRematerializationArtifactShape = (
+            $laterArtifactPaths.Count -eq 2 -and
+            @($laterArtifactPaths | Where-Object { $_ -cmatch '^receipts/[^/]+\.json$' }).Count -eq 1 -and
+            @($laterArtifactPaths | Where-Object { $_ -cmatch '^source-compositions/[^/]+\.lock\.json$' }).Count -eq 1
+        )
+        $laterRematerializationV6 = (
+            $laterIntentSchema -ceq 'rusty.morphospace.workflow.transition_ledger_intent.v6' -and
+            ($laterRematerializationArtifactShape -or
+             [string]$row.document.summary -ceq 'Rematerialized only the exact source and candidate-freeze bindings of the current validating unit while invalidating its stale selector.')
         )
         $laterRawArtifactIntent = $laterIntentSchema -ceq 'rusty.morphospace.workflow.transition_ledger_intent.v5'
-        $laterProjectionVersion = if ($laterIntentSchema -ceq 'rusty.morphospace.workflow.transition_ledger_intent.v4') { 'v4' } else { 'v3' }
+        $laterProjectionVersion = if ($laterIntentSchema -ceq 'rusty.morphospace.workflow.transition_ledger_intent.v6') { 'v6' } elseif ($laterIntentSchema -ceq 'rusty.morphospace.workflow.transition_ledger_intent.v4') { 'v4' } else { 'v3' }
         if (($laterProjectionIntent -or $laterRawArtifactIntent) -and -not $knownUnitSha) {
             throw "Later transition intent $laterProjectionVersion '$laterEventId' does not continue a previously authenticated unit projection."
         }
@@ -658,7 +867,28 @@ function Test-MorphospaceBlockedSupersessionTerminalValidation {
         }
         if ($laterIntentSchema -ceq 'rusty.morphospace.workflow.transition_ledger_intent.v2') { $transitionArguments.ExpectedTargetUnitId = $transitionUnitId }
         $transition = Test-MorphospaceBlockedSupersessionTransaction @transitionArguments
-        if ($laterProjectionIntent) {
+        if ($laterRematerializationV6) {
+            if ($null -eq $priorUnitProjection) {
+                throw "Rematerialization v6 '$laterEventId' does not continue an authenticated validating unit projection."
+            }
+            Test-MorphospaceBlockedSupersessionRematerializationV6 -WorkspaceRoot $workspace -ProjectId $ProjectId -UnitId $eventUnitId `
+                -Transition $transition -PriorState $priorStateProjection -PriorStateSha256 $stateProjectionSha256 `
+                -PriorUnit $priorUnitProjection -PriorUnitSha256 $knownUnitSha
+            foreach ($projection in @($transition.additional_projections)) {
+                $projectionPath = [string]$projection.path
+                if ($additionalProjection.ContainsKey($projectionPath)) {
+                    if ([string]$projection.pre_sha256 -cne [string]$additionalProjection[$projectionPath].sha256) {
+                        throw "Rematerialization v6 '$laterEventId' detaches projection '$projectionPath' from its authenticated predecessor target."
+                    }
+                } elseif ([string]$projection.pre_sha256 -cne [string]$projection.target_sha256) {
+                    throw "Rematerialization v6 '$laterEventId' changes unanchored projection '$projectionPath'."
+                }
+                $additionalProjection[$projectionPath] = [pscustomobject][ordered]@{
+                    document = $projection.document
+                    sha256 = [string]$projection.target_sha256
+                }
+            }
+        } elseif ($laterProjectionIntent) {
             if ($null -eq $priorUnitProjection -or
                 [string]$priorUnitProjection.status -cne 'active' -or
                 [string]$transition.unit_document.status -cne [string]$priorUnitProjection.status -or

@@ -197,6 +197,7 @@
     "Guard profile and validation risk tier are independent: guard profile controls change authority while risk tier controls evidence depth.",
     "Explicit fast units may span their declared repositories and device stages; product-authority changes require labs or locked guard, while releases and workflow trust-root changes require locked guard.",
     "A validating feature unit may return directly to active only through a typed action that validates and retains the non-passing attempt receipt.",
+    "A validating feature unit may remain validating while replacing an obsolete adopted-source candidate only through a typed rematerialization action that preserves predecessor evidence, atomically clears the stale selector, binds a distinct exact successor freeze, and makes no validation, build, device, acceptance, or publication claim.",
     "Every mutable parameter has one authority owner.",
     "Unlisted modules and features are inert.",
     "Stable modules pass every promotion gate.",

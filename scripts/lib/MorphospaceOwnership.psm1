@@ -285,7 +285,8 @@ function Get-MorphospaceAutomationOutputContract {
             'rusty.morphospace.workflow.transition_ledger_intent.v2',
             'rusty.morphospace.workflow.transition_ledger_intent.v3',
             'rusty.morphospace.workflow.transition_ledger_intent.v4',
-            'rusty.morphospace.workflow.transition_ledger_intent.v5'
+            'rusty.morphospace.workflow.transition_ledger_intent.v5',
+            'rusty.morphospace.workflow.transition_ledger_intent.v6'
         )}else{@([string]$rule.schema)}
         if([string]$output.phase-cne[string]$rule.phase-or$allowedSchemas-cnotcontains[string]$output.schema){throw "Automation output phase/schema is not canonical: $repoId/$path"}
         $validatorId=[string]$output.validator_id

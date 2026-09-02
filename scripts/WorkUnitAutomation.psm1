@@ -2754,6 +2754,11 @@ function Invoke-MorphospaceWorkUnitAutomation {
         "BeginValidation" {
             if ($beforeStatus -eq "validating" -and [string]$state.current_unit -eq $UnitId) {
                 if ($null -ne $selectorResult -and $null -eq $existingValidationSelection) {
+                    $selectorFreezePath = Resolve-MorphospaceWorkspacePath $resolvedWorkspace ([string]$unit.candidate_freeze.receipt_path) -RequireLeaf
+                    $selectorFreezeReceipt = Read-MorphospaceProtocolJson $selectorFreezePath
+                    if ([string]$selectorFreezeReceipt.schema -ceq 'rusty.morphospace.workflow.candidate_freeze.v2') {
+                        [void](Test-MorphospaceFrozenCandidate -WorkspaceRoot $resolvedWorkspace -Unit $unit)
+                    }
                     $transition = 'validation-selector-bound'
                     if ($Execute) {
                         if ($state.PSObject.Properties.Name -contains 'normal_validation_selection') {

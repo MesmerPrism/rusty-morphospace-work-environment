@@ -507,6 +507,16 @@ transaction.
   The resulting proposal still follows ordinary Ready/Inspect/Claim. An
   admitted active unit must use `FreezeCandidate` before BeginValidation;
   historical units without the admission marker retain their existing route.
+- If an already-validating admitted unit's frozen product candidate is
+  superseded by an independently adopted descendant, use only
+  `RematerializeValidatingCandidate`. It requires an already-present clean
+  exact repository mapping, preserves `validating` and all predecessor
+  evidence, installs a distinct lineage-bound source lock and candidate
+  freeze, and atomically clears the old normal-validation selector. It never
+  fetches, checks out, builds, touches a device, or reuses old validation/APK
+  evidence. A fresh selector may be bound afterward through the existing
+  already-validating `BeginValidation` route. See
+  `docs/VALIDATING_CANDIDATE_REMATERIALIZATION.md`.
 - Replace a stale current active unit only through the reviewed
   `active_unit_supersession.v1` request and `SupersedeActive`. Bind the exact
   old and replacement unit bytes, project/state/ledger/map preimages, and the

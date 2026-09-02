@@ -38,11 +38,6 @@ $selectorPhaseCheckIds = @(
     'affected-selector-selftest'
 )
 $selectorTrustRootCheckIds = @($selectorPhaseCheckIds + @('affected-topology-selftest','affected-reuse-selftest'))
-$expectedProtocolCommonGraphIdentity = [pscustomobject][ordered]@{
-    owner_entrypoints = 49
-    tracked_graph_nodes = 127
-    protocol_consumers = 31
-}
 
 function Assert-True([bool]$Condition, [string]$Message) { if (-not $Condition) { throw $Message } }
 function Get-AffectedSupervisorResidueIdentity {
@@ -885,7 +880,7 @@ function New-AffectedTrackedImportGraph([string]$Root, [string[]]$Entrypoints, [
     [Array]::Sort($orderedNodes,[StringComparer]::Ordinal)
     return [pscustomobject][ordered]@{ nodes=$orderedNodes; edges=$edges; sha256_by_path=$identities }
 }
-function Get-AffectedGraphAdjacencySha256([object]$Graph) {
+function Get-AffectedGraphAdjacencyRecords([object]$Graph) {
     $records = [Collections.Generic.List[object]]::new()
     $orderedNodes = @(ConvertTo-AffectedOrdinalUniqueStrings @($Graph.nodes))
     if ($orderedNodes.Count -ne @($Graph.nodes).Count) { throw 'Owner import graph digest input repeats an ordinal node identity.' }
@@ -895,13 +890,51 @@ function Get-AffectedGraphAdjacencySha256([object]$Graph) {
         if ($orderedEdges.Count -ne @($Graph.edges[[string]$node]).Count) { throw "Owner import graph digest input repeats an ordinal edge: $node" }
         $records.Add([pscustomobject][ordered]@{ path=[string]$node; imports=$orderedEdges }) | Out-Null
     }
-    return Get-MorphospaceCanonicalJsonSha256 -Value ([pscustomobject][ordered]@{ schema='affected_owner_adjacency.v1'; nodes=$records.ToArray() })
+    return @($records.ToArray())
+}
+function Get-AffectedGraphAdjacencySha256([object]$Graph) {
+    return Get-MorphospaceCanonicalJsonSha256 -Value ([pscustomobject][ordered]@{ schema='affected_owner_adjacency.v1'; nodes=@(Get-AffectedGraphAdjacencyRecords $Graph) })
 }
 function Get-AffectedProtocolConsumerSha256([string[]]$Consumers,[string[]]$CheckIds) {
     $orderedConsumers = @(ConvertTo-AffectedOrdinalUniqueStrings @($Consumers))
     $orderedChecks = @(ConvertTo-AffectedOrdinalUniqueStrings @($CheckIds))
     if ($orderedConsumers.Count -ne @($Consumers).Count -or $orderedChecks.Count -ne @($CheckIds).Count) { throw 'ProtocolCommon consumer digest input repeats an ordinal identity.' }
     return Get-MorphospaceCanonicalJsonSha256 -Value ([pscustomobject][ordered]@{ schema='protocol_common_owner_consumers.v1'; consumers=$orderedConsumers; check_ids=$orderedChecks })
+}
+function Assert-AffectedProtocolCommonGraphProjection([object]$Value,[string]$Context) {
+    $ownerPaths = @(ConvertTo-AffectedOrdinalUniqueStrings @($Value.owner_entrypoint_paths))
+    Assert-True ($ownerPaths.Count -eq @($Value.owner_entrypoint_paths).Count -and ($ownerPaths -join "`n") -ceq (@($Value.owner_entrypoint_paths) -join "`n")) "$Context owner entrypoints are not ordinal, unique, and canonical."
+    Assert-True ([int]$Value.owner_entrypoints -eq $ownerPaths.Count) "$Context owner-entrypoint count does not match its canonical paths."
+
+    $adjacencyRecords = @($Value.tracked_graph_adjacency)
+    $nodePaths = [Collections.Generic.List[string]]::new()
+    $edges = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+    foreach ($record in $adjacencyRecords) {
+        Assert-AffectedScenarioProperties -Value $record -Expected @('path','imports') -Context "$Context adjacency record"
+        $path = [string]$record.path
+        if ([string]::IsNullOrWhiteSpace($path) -or $edges.ContainsKey($path)) { throw "$Context adjacency repeats or omits a node path." }
+        $imports = @(ConvertTo-AffectedOrdinalUniqueStrings @($record.imports))
+        Assert-True ($imports.Count -eq @($record.imports).Count -and ($imports -join "`n") -ceq (@($record.imports) -join "`n")) "$Context adjacency imports are not ordinal, unique, and canonical: $path"
+        $nodePaths.Add($path) | Out-Null
+        $edges[$path] = $imports
+    }
+    $orderedNodes = @(ConvertTo-AffectedOrdinalUniqueStrings @($nodePaths.ToArray()))
+    Assert-True ($orderedNodes.Count -eq $nodePaths.Count -and ($orderedNodes -join "`n") -ceq ($nodePaths.ToArray() -join "`n")) "$Context adjacency nodes are not ordinal, unique, and canonical."
+    Assert-True ([int]$Value.tracked_graph_nodes -eq $orderedNodes.Count) "$Context tracked-node count does not match its canonical adjacency."
+    foreach ($path in $orderedNodes) {
+        foreach ($import in @($edges[$path])) { if ($orderedNodes -cnotcontains [string]$import) { throw "$Context adjacency imports an absent node: $path -> $import" } }
+    }
+    foreach ($owner in $ownerPaths) { if ($orderedNodes -cnotcontains $owner) { throw "$Context owner entrypoint is absent from its adjacency: $owner" } }
+    $projectionGraph = [pscustomobject][ordered]@{ nodes=$orderedNodes; edges=$edges }
+    Assert-True ((Get-AffectedGraphAdjacencySha256 $projectionGraph) -ceq [string]$Value.adjacency_sha256) "$Context canonical adjacency digest does not match its records."
+
+    $consumerPaths = @(ConvertTo-AffectedOrdinalUniqueStrings @($Value.protocol_consumer_paths))
+    $checkIds = @(ConvertTo-AffectedOrdinalUniqueStrings @($Value.check_ids))
+    Assert-True ($consumerPaths.Count -eq @($Value.protocol_consumer_paths).Count -and ($consumerPaths -join "`n") -ceq (@($Value.protocol_consumer_paths) -join "`n")) "$Context consumer paths are not ordinal, unique, and canonical."
+    Assert-True ($checkIds.Count -eq @($Value.check_ids).Count -and ($checkIds -join "`n") -ceq (@($Value.check_ids) -join "`n")) "$Context check IDs are not ordinal, unique, and canonical."
+    Assert-True ([int]$Value.protocol_consumers -eq $consumerPaths.Count) "$Context consumer count does not match its canonical paths."
+    foreach ($consumer in $consumerPaths) { if ($orderedNodes -cnotcontains $consumer) { throw "$Context ProtocolCommon consumer is absent from its tracked adjacency: $consumer" } }
+    Assert-True ((Get-AffectedProtocolConsumerSha256 -Consumers $consumerPaths -CheckIds $checkIds) -ceq [string]$Value.consumer_sha256) "$Context canonical consumer digest does not match its paths/checks."
 }
 function Get-AffectedGraphReachability([object]$Graph, [string]$Entrypoint, [Collections.Generic.Dictionary[string,object]]$Cache) {
     if ($Cache.ContainsKey($Entrypoint)) { return @($Cache[$Entrypoint]) }
@@ -987,14 +1020,19 @@ function Get-AffectedProtocolCommonOwnerChecks([string]$Root, [object]$Registry)
         if (-not $consumers.Contains($required)) { throw "Known ProtocolCommon transitive owner is absent from the derived closure: $required" }
     }
     $result = @(ConvertTo-AffectedOrdinalUniqueStrings @($consumerCheckIds.ToArray()))
+    $orderedOwnerEntrypoints = @(ConvertTo-AffectedOrdinalUniqueStrings @($ownerEntrypoints))
     $orderedConsumers = @($consumers)
     [Array]::Sort($orderedConsumers,[StringComparer]::Ordinal)
+    $adjacencyRecords = @(Get-AffectedGraphAdjacencyRecords $graph)
     $auditClock.Stop()
     return [pscustomobject][ordered]@{
         check_ids = $result
-        owner_entrypoints = $ownerEntrypoints.Count
+        owner_entrypoints = $orderedOwnerEntrypoints.Count
+        owner_entrypoint_paths = $orderedOwnerEntrypoints
         tracked_graph_nodes = @($graph.nodes).Count
+        tracked_graph_adjacency = $adjacencyRecords
         protocol_consumers = $consumers.Count
+        protocol_consumer_paths = $orderedConsumers
         adjacency_sha256 = Get-AffectedGraphAdjacencySha256 $graph
         consumer_sha256 = Get-AffectedProtocolConsumerSha256 -Consumers $orderedConsumers -CheckIds $result
         graph_elapsed_ms = [long]$graphClock.Elapsed.TotalMilliseconds
@@ -1003,12 +1041,10 @@ function Get-AffectedProtocolCommonOwnerChecks([string]$Root, [object]$Registry)
 }
 function Invoke-AffectedGraphIndexSelfTest([string]$Root,[object]$Registry) {
     $audit = Get-AffectedProtocolCommonOwnerChecks -Root $Root -Registry $Registry
-    Assert-True (
-        $audit.owner_entrypoints -eq $expectedProtocolCommonGraphIdentity.owner_entrypoints -and
-        $audit.tracked_graph_nodes -eq $expectedProtocolCommonGraphIdentity.tracked_graph_nodes -and
-        $audit.protocol_consumers -eq $expectedProtocolCommonGraphIdentity.protocol_consumers
-    ) "Real-tree ProtocolCommon graph identity changed: roots=$($audit.owner_entrypoints) nodes=$($audit.tracked_graph_nodes) consumers=$($audit.protocol_consumers)."
-    Assert-True ($audit.adjacency_sha256 -cmatch '^[0-9a-f]{64}$' -and $audit.consumer_sha256 -cmatch '^[0-9a-f]{64}$') 'Real-tree ProtocolCommon graph did not emit deterministic adjacency/consumer digests.'
+    Assert-AffectedProtocolCommonGraphProjection -Value $audit -Context 'Real-tree ProtocolCommon graph'
+    foreach ($requiredNode in @('scripts/New-ValidatingCandidateRematerializationInput.ps1','scripts/Test-ValidatingCandidateRematerialization.ps1','scripts/ValidatingCandidateRematerialization.psm1','scripts/lib/MorphospaceSourceCompositionIdentity.psm1')) {
+        Assert-True (@($audit.tracked_graph_adjacency.path) -ccontains $requiredNode) "Real-tree ProtocolCommon graph omitted the rematerialization node: $requiredNode"
+    }
     Assert-True ([long]$audit.total_elapsed_ms -le 45000) "ProtocolCommon transitive owner audit exceeded its measured 45-second bound: $($audit.total_elapsed_ms)ms."
 
     $fixture = Join-Path ([IO.Path]::GetTempPath()) ('morphospace-affected-index-' + [guid]::NewGuid().ToString('N'))
@@ -1081,6 +1117,12 @@ $checks = @(
         $expectedAdjacencySha256 = Get-MorphospaceCanonicalJsonSha256 -Value $expectedAdjacency
         $observedAdjacencySha256 = Get-AffectedGraphAdjacencySha256 $graph
         Assert-True ($observedAdjacencySha256 -ceq $expectedAdjacencySha256) "Focused index adjacency digest changed: expected=$expectedAdjacencySha256 observed=$observedAdjacencySha256."
+
+        $swappedEdges = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+        foreach ($node in @($graph.nodes)) { $swappedEdges[[string]$node] = @($graph.edges[[string]$node]) }
+        $swappedEdges['scripts/Test-Conditional.ps1'] = @('scripts/Test-Inner.ps1','scripts/Test-Invoked.ps1','scripts/middle.psm1')
+        $sameCardinalitySwap = [pscustomobject][ordered]@{ nodes=@($graph.nodes); edges=$swappedEdges }
+        Assert-True ((Get-AffectedGraphAdjacencySha256 $sameCardinalitySwap) -cne $observedAdjacencySha256) 'Cardinality-preserving owner-edge substitution retained the canonical adjacency digest.'
 
         $scopePath = Join-Path $fixture 'scripts/Test-Scope.ps1'
         $scopeSha256 = Get-AffectedOwnerFileSha256 $scopePath
@@ -1320,6 +1362,32 @@ function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]
             [void]$timings.Add([pscustomobject][ordered]@{check_id=$checkId;elapsed_ms=[long]$clock.Elapsed.TotalMilliseconds;dependency_count=@($closure.manifest).Count})
         }
         Assert-True ($digests.Count -eq $safeIds.Count) 'Per-check safe corpus collapsed to one common aggregate dependency identity.'
+
+        # Validating-candidate rematerialization is deliberately a focused
+        # producer/consumer owner. Its test loads the two owner modules through
+        # script-scoped variables, so those invocations must remain completely
+        # and exactly declared instead of falling back to every tracked script.
+        $rematerializationClock = [Diagnostics.Stopwatch]::StartNew()
+        $rematerializationClosure = Get-MorphospaceAffectedCheckDependencyClosure -Check $compiled.checks['validating-candidate-rematerialization'] -CompiledRegistry $compiled -Inventory $realInventory -RepositoryRoot $Root
+        $rematerializationClock.Stop()
+        $rematerializationPaths = @($rematerializationClosure.manifest.path)
+        $rematerializationDeclarations = @($rematerializationClosure.resolution.used_declarations)
+        $rematerializationDeclarationIdentities = @($rematerializationDeclarations | ForEach-Object { "$([string]$_.importer)|$([string]$_.variable)|$([int]$_.count)|$(@($_.target_paths) -join ',')" })
+        Assert-True ([string]$rematerializationClosure.resolution.mode -ceq 'exact' -and @($rematerializationClosure.resolution.fallback_reasons).Count -eq 0) 'Validating-candidate rematerialization did not retain exact dependency resolution with no fallback.'
+        Assert-True (($rematerializationDeclarationIdentities -join ';') -ceq 'scripts/Test-ValidatingCandidateRematerialization.ps1|script:RematerializationOwnerModule|2|scripts/ValidatingCandidateRematerialization.psm1') 'Validating-candidate rematerialization did not consume exactly its one remaining dynamic owner declaration.'
+        foreach ($requiredPath in @(
+            'schemas/candidate-freeze-v2.schema.json',
+            'scripts/New-SourceCompositionLock.ps1',
+            'scripts/New-ValidatingCandidateRematerializationInput.ps1',
+            'scripts/Test-ValidatingCandidateRematerialization.ps1',
+            'scripts/ValidatingCandidateRematerialization.psm1',
+            'scripts/lib/MorphospaceSourceCompositionIdentity.psm1'
+        )) {
+            Assert-True ($rematerializationPaths -ccontains $requiredPath) "Validating-candidate rematerialization dependency closure omitted '$requiredPath'."
+        }
+        Assert-True ($rematerializationPaths -cnotcontains 'scripts/Test-WorkEnvironment.ps1') 'Validating-candidate rematerialization dependency closure expanded into the cumulative Work Environment aggregate.'
+        [void]$timings.Add([pscustomobject][ordered]@{check_id='validating-candidate-rematerialization';elapsed_ms=[long]$rematerializationClock.Elapsed.TotalMilliseconds;dependency_count=@($rematerializationClosure.manifest).Count})
+
         $ledgerCheck = @($Registry.checks | Where-Object { [string]$_.check_id -ceq 'transition-ledger' })
         Assert-True ($ledgerCheck.Count -eq 1) 'The PR134-style correction proof lacks one transition-ledger check.'
         $triggerPatterns = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
@@ -1404,8 +1472,11 @@ if ($runGraphPhase) {
         Write-AffectedScenarioJsonCreateNew -Path $graphOutputPath -Value ([pscustomobject][ordered]@{
             schema='rusty.morphospace.diagnostic.affected_validation_graph_output.v1'
             owner_entrypoints=[int]$focusedAudit.owner_entrypoints
+            owner_entrypoint_paths=@($focusedAudit.owner_entrypoint_paths)
             tracked_graph_nodes=[int]$focusedAudit.tracked_graph_nodes
+            tracked_graph_adjacency=@($focusedAudit.tracked_graph_adjacency)
             protocol_consumers=[int]$focusedAudit.protocol_consumers
+            protocol_consumer_paths=@($focusedAudit.protocol_consumer_paths)
             adjacency_sha256=[string]$focusedAudit.adjacency_sha256
             consumer_sha256=[string]$focusedAudit.consumer_sha256
             check_ids=@($focusedAudit.check_ids)
@@ -1433,14 +1504,9 @@ if ($runTrustMappingsPhase) {
     $graphOutputPath = Join-Path ([IO.Path]::GetFullPath($phaseRoot)) 'graph-import-closure.output.json'
     if (-not [IO.File]::Exists($graphOutputPath)) { throw 'Trust proportional-mapping phase requires the graph/import-closure output.' }
     $graphOutput = Read-MorphospaceProtocolJson -Path $graphOutputPath
-    Assert-AffectedScenarioProperties -Value $graphOutput -Expected @('schema','owner_entrypoints','tracked_graph_nodes','protocol_consumers','adjacency_sha256','consumer_sha256','check_ids') -Context 'Graph/import-closure output'
+    Assert-AffectedScenarioProperties -Value $graphOutput -Expected @('schema','owner_entrypoints','owner_entrypoint_paths','tracked_graph_nodes','tracked_graph_adjacency','protocol_consumers','protocol_consumer_paths','adjacency_sha256','consumer_sha256','check_ids') -Context 'Graph/import-closure output'
     Assert-True ([string]$graphOutput.schema -ceq 'rusty.morphospace.diagnostic.affected_validation_graph_output.v1') 'Trust proportional-mapping phase rejected the graph output schema.'
-    Assert-True (
-        [int]$graphOutput.owner_entrypoints -eq $expectedProtocolCommonGraphIdentity.owner_entrypoints -and
-        [int]$graphOutput.tracked_graph_nodes -eq $expectedProtocolCommonGraphIdentity.tracked_graph_nodes -and
-        [int]$graphOutput.protocol_consumers -eq $expectedProtocolCommonGraphIdentity.protocol_consumers
-    ) 'Trust proportional-mapping phase rejected the graph output identity.'
-    Assert-True ([string]$graphOutput.adjacency_sha256 -cmatch '^[0-9a-f]{64}$' -and [string]$graphOutput.consumer_sha256 -cmatch '^[0-9a-f]{64}$') 'Trust proportional-mapping phase rejected graph output digests.'
+    Assert-AffectedProtocolCommonGraphProjection -Value $graphOutput -Context 'Trust proportional-mapping graph output'
     $protocolCommonConsumerChecks = @($graphOutput.check_ids)
 }
 
@@ -1602,6 +1668,40 @@ if ($runFullSelector -or $runExecutorPassPhase) {
     Assert-True ($phaseRunnerSource -notmatch [regex]::Escape("Import-Module (Join-Path `$PSScriptRoot 'lib/MorphospaceAffectedValidationCheckEvidence.psm1') -Force") -and $phaseRunnerSource -notmatch 'Get-MorphospaceAffectedCheckDependencyClosure' -and $phaseRunnerSource -match 'function Read-DependencyProjectionFile' -and $phaseRunnerSource -match 'function Get-DependencyProjection' -and $phaseRunnerSource -match 'Assert-MorphospaceAffectedBatchedWorkingBytes') 'Affected phase runner re-analyzes dependency closure or omits validation of its parent-projected closure.'
     Assert-True ($executorSource -match 'function New-AffectedValidationDependencyProjectionFile' -and $executorSource -match 'RUSTY_AFFECTED_VALIDATION_DEPENDENCY_PROJECTION_PATH' -and $executorSource -match 'RUSTY_AFFECTED_VALIDATION_DEPENDENCY_PROJECTION_SHA256' -and $executorSource -match 'FileShare\]::Read' -and $executorSource -match 'DependencyManifest @\(\$binding\.dependency_manifest\)') 'Affected executor does not publish and project its exact parent-held dependency closure to phase children.'
     Assert-True ($executorSource -match '\.rusty-affected-dependency-projection-.*\$PID' -and $executorSource -match 'projectionCleanupError' -and $executorSource -match 'publicationCleanupError' -and $executorSource -match 'publication failed and cleanup did not complete' -and $executorSource -match 'dependency projection file cleanup failed' -and $executorSource -match 'Remove-Item -LiteralPath (?:\$path|\(\[string\]\$dependencyProjectionFile\.path\)) -Force -ErrorAction Stop') 'Affected executor does not use an owner-identifiable projection path or fail closed on projection cleanup at both publication and post-child boundaries.'
+    Assert-True ($executorSource -match 'function Get-AffectedValidationDependencyProjectionIOException' -and $executorSource -match 'function Test-AffectedValidationDependencyProjectionSharingViolation' -and $executorSource -match 'function Read-AffectedValidationDependencyProjectionFile' -and $executorSource -match '\[Diagnostics\.Stopwatch\]::StartNew\(\)' -and $executorSource -match 'Platform -ceq ''windows''.*@\(32,33\) -ccontains \$NativeCode' -and $executorSource -match 'Platform -ceq ''linux''.*NativeCode -eq 11' -and $executorSource -match '\[OperatingSystem\]::IsWindows\(\)' -and $executorSource -match '\[OperatingSystem\]::IsLinux\(\)' -and $executorSource -match '\$remainingMilliseconds = \[long\]\$SharingRetryMilliseconds - \[long\]\$retryClock\.ElapsedMilliseconds' -and $executorSource -match '\[Math\]::Min\(10,\[int\]\$remainingMilliseconds\)' -and $executorSource -match 'sharing-locked after bounded \$\{SharingRetryMilliseconds\}ms post-child readback' -and $executorSource -match '\$dependencyProjectionFile\.stream\.Dispose\(\); \$dependencyProjectionFile\.stream = \$null' -and $executorSource -match 'Read-AffectedValidationDependencyProjectionFile -Path') 'Affected executor does not close its publisher handle and use a cross-platform monotonic bounded sharing-aware post-child projection readback.'
+    $executorAst = [Management.Automation.Language.Parser]::ParseInput($executorSource,[ref]$null,[ref]$null)
+    $projectionIoFunction = @($executorAst.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Get-AffectedValidationDependencyProjectionIOException' },$true))
+    $projectionSharingFunction = @($executorAst.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Test-AffectedValidationDependencyProjectionSharingViolation' },$true))
+    $projectionReadFunction = @($executorAst.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Read-AffectedValidationDependencyProjectionFile' },$true))
+    Assert-True ($projectionIoFunction.Count -eq 1 -and $projectionSharingFunction.Count -eq 1) 'Affected executor does not define exactly one closed sharing-exception classifier pair.'
+    Assert-True ($projectionReadFunction.Count -eq 1) 'Affected executor does not define exactly one dependency-projection readback function.'
+    . ([scriptblock]::Create([string]$projectionIoFunction[0].Extent.Text))
+    . ([scriptblock]::Create([string]$projectionSharingFunction[0].Extent.Text))
+    . ([scriptblock]::Create([string]$projectionReadFunction[0].Extent.Text))
+    $innerProjectionIoException = [IO.IOException]::new('inner sharing failure')
+    $wrappedProjectionIoException = [Exception]::new('PowerShell invocation wrapper',$innerProjectionIoException)
+    Assert-True ([object]::ReferenceEquals((Get-AffectedValidationDependencyProjectionIOException -Exception $wrappedProjectionIoException),$innerProjectionIoException)) 'Affected dependency-projection readback does not unwrap a genuine nested IOException.'
+    Assert-True ($null -eq (Get-AffectedValidationDependencyProjectionIOException -Exception ([Exception]::new('not I/O')))) 'Affected dependency-projection readback classified a non-I/O exception as retryable.'
+    Assert-True ((Test-AffectedValidationDependencyProjectionSharingViolation -NativeCode 32 -Platform windows) -and (Test-AffectedValidationDependencyProjectionSharingViolation -NativeCode 33 -Platform windows) -and -not (Test-AffectedValidationDependencyProjectionSharingViolation -NativeCode 11 -Platform windows) -and -not (Test-AffectedValidationDependencyProjectionSharingViolation -NativeCode 13 -Platform windows)) 'Affected dependency-projection Windows sharing classifier is not closed to sharing/lock violations.'
+    Assert-True ((Test-AffectedValidationDependencyProjectionSharingViolation -NativeCode 11 -Platform linux) -and -not (Test-AffectedValidationDependencyProjectionSharingViolation -NativeCode 32 -Platform linux) -and -not (Test-AffectedValidationDependencyProjectionSharingViolation -NativeCode 33 -Platform linux) -and -not (Test-AffectedValidationDependencyProjectionSharingViolation -NativeCode 13 -Platform linux)) 'Affected dependency-projection Linux sharing classifier is not closed to EAGAIN/EWOULDBLOCK.'
+    Assert-True (-not (Test-AffectedValidationDependencyProjectionSharingViolation -NativeCode 11 -Platform unsupported)) 'Affected dependency-projection sharing classifier retries on an unsupported platform.'
+    Assert-AffectedThrows { Test-AffectedValidationDependencyProjectionSharingViolation -NativeCode 11 -Platform invalid } '*sharing platform is invalid*' 'Affected dependency-projection sharing classifier accepted an unknown platform.'
+    $projectionReadbackFixture = Join-Path ([IO.Path]::GetTempPath()) ('.rusty-affected-dependency-projection-readback-test-' + [Guid]::NewGuid().ToString('N') + '.json')
+    [byte[]]$projectionReadbackBytes = [Text.UTF8Encoding]::new($false).GetBytes("projection-readback`n")
+    [IO.File]::WriteAllBytes($projectionReadbackFixture,$projectionReadbackBytes)
+    try {
+        $projectionLock = [IO.FileStream]::new($projectionReadbackFixture,[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
+        $projectionLockClock = [Diagnostics.Stopwatch]::StartNew()
+        try {
+            Assert-AffectedThrows { Read-AffectedValidationDependencyProjectionFile -Path $projectionReadbackFixture -ExpectedLength $projectionReadbackBytes.Length -SharingRetryMilliseconds 30 } '*remained sharing-locked after bounded 30ms post-child readback*' 'Affected dependency-projection readback did not fail closed after its finite sharing retry bound.'
+        } finally { $projectionLockClock.Stop(); $projectionLock.Dispose() }
+        Assert-True ($projectionLockClock.ElapsedMilliseconds -le 1000) "Affected dependency-projection sharing-lock rejection exceeded its practical bounded tolerance: $($projectionLockClock.ElapsedMilliseconds)ms."
+        [byte[]]$projectionReadback = Read-AffectedValidationDependencyProjectionFile -Path $projectionReadbackFixture -ExpectedLength $projectionReadbackBytes.Length -SharingRetryMilliseconds 30
+        Assert-True ((Get-MorphospaceAffectedCheckBytesSha256 $projectionReadback) -ceq (Get-MorphospaceAffectedCheckBytesSha256 $projectionReadbackBytes)) 'Affected dependency-projection readback changed bytes after sharing-lock release.'
+        Assert-AffectedThrows { Read-AffectedValidationDependencyProjectionFile -Path $projectionReadbackFixture -ExpectedLength ($projectionReadbackBytes.Length+1) -SharingRetryMilliseconds 30 } '*byte length changed*' 'Affected dependency-projection readback accepted an unexpected byte length.'
+    } finally {
+        if ([IO.File]::Exists($projectionReadbackFixture)) { Remove-Item -LiteralPath $projectionReadbackFixture -Force }
+    }
     $checkEvidenceSource = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts/lib/MorphospaceAffectedValidationCheckEvidence.psm1') -Raw
     Assert-True ($checkEvidenceSource -match '\(\?:start\|terminal\)' -and $checkEvidenceSource -match '134217728' -and $checkEvidenceSource -match '10485760') 'Affected evidence implementation does not align maximum-domain phase receipts with the ordinary artifact bound.'
     Assert-True ($executorSource -match 'function Get-AffectedValidationDependencyClosureCacheKey' -and $executorSource -match '\$dependencyClosuresByInput\.ContainsKey\(\$dependencyClosureKey\)' -and $executorSource -match 'head_tree=\[string\]\$plan\.head\.tree' -and $executorSource -match 'registry_sha256=\[string\]\$registrySha256') 'Affected executor does not reuse exact identical closure inputs inside one bounded process.'
@@ -3059,23 +3159,45 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     foreach ($checkId in @('development-envelope-preparation','work-environment-deep')) { Assert-True (@($developmentAdmissionPlan.selected_checks.check_id) -cnotcontains $checkId) "Development-unit admission change incorrectly selected '$checkId'." }
     foreach ($reasonCode in @('ambiguous-path-mapping','unmapped-path')) { Assert-True (@($developmentAdmissionPlan.reason_codes) -cnotcontains $reasonCode) "Development-unit admission change retained '$reasonCode'." }
 
-    # The shared v2 automation receipt has a fast direct compatibility owner,
-    # not a history-archive or cumulative automation owner.  A receipt-only
-    # change must run the exact corpus/Ready-dispatch check without paying for
-    # unrelated integration or cumulative Deep gates.
+    # The validating-candidate input producer is a non-mutating authority
+    # constructor. A producer-only change must retain its six-check focused
+    # Standard closure, including the declared WorkUnitAutomation consumer of
+    # the shared workflow contract, and must never route through cumulative Deep.
+    $rematerializationProducerBase = $developmentAdmissionHead
+    Write-Utf8 (Join-Path $fixture 'scripts/New-ValidatingCandidateRematerializationInput.ps1') "# validating-candidate rematerialization input producer change`n"
+    [void](Invoke-TestGit $fixture @('add', 'scripts/New-ValidatingCandidateRematerializationInput.ps1'))
+    [void](Invoke-TestGit $fixture @('commit', '-m', 'validating candidate input producer change'))
+    $rematerializationProducerHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
+    $rematerializationProducerPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $rematerializationProducerBase -HeadRevision $rematerializationProducerHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+    $rematerializationExpectedChecks = @('automation-receipt-v2-compatibility','normal-validation-selector','public-boundary','validating-candidate-rematerialization','work-unit-automation','workflow-contracts')
+    $rematerializationActualChecks = @($rematerializationProducerPlan.selected_checks.check_id); [Array]::Sort($rematerializationActualChecks, [StringComparer]::Ordinal)
+    Assert-True ($rematerializationProducerPlan.selection_mode -ceq 'affected' -and $rematerializationProducerPlan.effective_tier -ceq 'standard') 'Validating-candidate input producer change did not retain affected Standard selection.'
+    Assert-True (($rematerializationActualChecks -join ',') -ceq ($rematerializationExpectedChecks -join ',')) "Validating-candidate input producer selected the wrong exact closure: $($rematerializationActualChecks -join ',')."
+    $rematerializationWorkflowConsumerReasons = @($rematerializationProducerPlan.selected_checks | Where-Object { [string]$_.check_id -ceq 'work-unit-automation' -and @($_.reasons) -ccontains 'consumer-of:workflow-contracts:workflow-contracts' })
+    Assert-True ($rematerializationWorkflowConsumerReasons.Count -eq 1) 'Validating-candidate input producer lost the intended work-unit-automation workflow-contract consumer reason.'
+    Assert-True (@($rematerializationProducerPlan.selected_checks.check_id) -cnotcontains 'work-environment-deep') 'Validating-candidate input producer selected the cumulative Deep aggregate.'
+    foreach ($reasonCode in @('ambiguous-path-mapping','unmapped-path')) { Assert-True (@($rematerializationProducerPlan.reason_codes) -cnotcontains $reasonCode) "Validating-candidate input producer change retained '$reasonCode'." }
+
+    # The shared v2 automation receipt has a fast direct compatibility owner
+    # and is also consumed by validating-candidate rematerialization.  A
+    # receipt-only change must therefore retain its exact compatibility and
+    # dependent selector/workflow closure, without paying for history or the
+    # cumulative Deep gate.
     $automationReceiptPath = Join-Path $fixture 'schemas/work-unit-automation-receipt-v2.schema.json'
     Write-Utf8 $automationReceiptPath ((Get-Content -LiteralPath $automationReceiptPath -Raw).TrimEnd() + "`n `n")
     [void](Invoke-TestGit $fixture @('add', 'schemas/work-unit-automation-receipt-v2.schema.json'))
     [void](Invoke-TestGit $fixture @('commit', '-m', 'shared automation receipt contract'))
     $automationReceiptHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
-    $automationReceiptPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $developmentAdmissionHead -HeadRevision $automationReceiptHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
-    $automationReceiptExpectedChecks = @('automation-receipt-v2-compatibility','public-boundary')
+    $automationReceiptPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $rematerializationProducerHead -HeadRevision $automationReceiptHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+    $automationReceiptExpectedChecks = @('automation-receipt-v2-compatibility','normal-validation-selector','public-boundary','validating-candidate-rematerialization','work-unit-automation','workflow-contracts')
     $automationReceiptActualChecks = @($automationReceiptPlan.selected_checks.check_id); [Array]::Sort($automationReceiptActualChecks, [System.StringComparer]::Ordinal)
     Assert-True (($automationReceiptActualChecks -join ',') -ceq ($automationReceiptExpectedChecks -join ',')) "Shared automation receipt selected the wrong exact closure: $($automationReceiptActualChecks -join ',')."
-    foreach ($checkId in @('history-archive-checkpoint','history-archive-checkpoint-selftest','normal-validation-selector','work-unit-automation','workflow-contracts','work-environment-deep')) { Assert-True (@($automationReceiptPlan.selected_checks.check_id) -cnotcontains $checkId) "Shared automation receipt change incorrectly selected '$checkId'." }
+    foreach ($checkId in @('history-archive-checkpoint','history-archive-checkpoint-selftest','work-environment-deep')) { Assert-True (@($automationReceiptPlan.selected_checks.check_id) -cnotcontains $checkId) "Shared automation receipt change incorrectly selected '$checkId'." }
     $retiredArchiveSelection = @($automationReceiptPlan.selected_checks | Where-Object { [string]$_.check_id -ceq 'history-archive-checkpoint' })
     $retiredArchiveSkip = @($automationReceiptPlan.skipped_checks | Where-Object { [string]$_.check_id -ceq 'history-archive-checkpoint' })
-    $retiredHistoryExpansionReasons = @($automationReceiptPlan.selected_checks | Where-Object { @($_.reasons) -ccontains 'consumer-of:workflow-contracts:workflow-contracts' })
+    $intendedWorkflowConsumerReasons = @($automationReceiptPlan.selected_checks | Where-Object { [string]$_.check_id -ceq 'work-unit-automation' -and @($_.reasons) -ccontains 'consumer-of:workflow-contracts:workflow-contracts' })
+    Assert-True ($intendedWorkflowConsumerReasons.Count -eq 1) 'Shared automation receipt lost the intended work-unit-automation workflow-contract consumer reason.'
+    $retiredHistoryExpansionReasons = @($automationReceiptPlan.selected_checks | Where-Object { @('history-archive-checkpoint','historical-validation-debt-baseline') -ccontains [string]$_.check_id -and @($_.reasons) -ccontains 'consumer-of:workflow-contracts:workflow-contracts' })
     Assert-True ($retiredArchiveSelection.Count -eq 0 -and $retiredArchiveSkip.Count -eq 1 -and (@($retiredArchiveSkip[0].reasons) -join ',') -ceq 'not-selected') 'Shared automation receipt allowed the retired archive path to reappear through selection expansion.'
     Assert-True ($retiredHistoryExpansionReasons.Count -eq 0) 'Shared automation receipt retained the retired workflow-contract consumer expansion reason.'
     foreach ($reasonCode in @('ambiguous-path-mapping','unmapped-path')) { Assert-True (@($automationReceiptPlan.reason_codes) -cnotcontains $reasonCode) "Shared automation receipt change retained '$reasonCode'." }

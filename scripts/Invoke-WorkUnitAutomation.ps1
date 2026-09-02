@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("Inspect", "PrepareDevelopmentEnvelope", "PrepareBlockedSuccessor", "SupersedeActive", "ArchiveHistoryCheckpoint", "AdmitDevelopmentUnit", "RetireProposed", "Ready", "WithdrawReady", "Claim", "Resume", "CompleteInstructionSurfaces", "AmendActiveWriteScope", "FreezeCandidate", "MaterializeInheritedCandidate", "CorrectActiveReadOnlyDependencies", "CorrectActiveProjectRepositoryScope", "CorrectActiveUnitContract", "RecordHistoricalUnitCompatibilityProjection", "BeginValidation", "ReturnToActive", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RetirePreparedPush", "ReconcilePreparedPublication", "ReconcilePreparedPushTransactionSuffix", "ResolveBlocker", "CorrectResolvedBlockerEvidence", "CorrectHistoricalBlockerResolutionIntentBinding", "CorrectCompletedTransitionSemantics", "NormalizeEventLedgerPrefix", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix", "ReconcileExecutedPreparedPublication")]
+    [ValidateSet("Inspect", "PrepareDevelopmentEnvelope", "PrepareBlockedSuccessor", "SupersedeActive", "ArchiveHistoryCheckpoint", "AdmitDevelopmentUnit", "RetireProposed", "Ready", "WithdrawReady", "Claim", "Resume", "CompleteInstructionSurfaces", "AmendActiveWriteScope", "FreezeCandidate", "RematerializeValidatingCandidate", "MaterializeInheritedCandidate", "CorrectActiveReadOnlyDependencies", "CorrectActiveProjectRepositoryScope", "CorrectActiveUnitContract", "RecordHistoricalUnitCompatibilityProjection", "BeginValidation", "ReturnToActive", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RetirePreparedPush", "ReconcilePreparedPublication", "ReconcilePreparedPushTransactionSuffix", "ResolveBlocker", "CorrectResolvedBlockerEvidence", "CorrectHistoricalBlockerResolutionIntentBinding", "CorrectCompletedTransitionSemantics", "NormalizeEventLedgerPrefix", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix", "ReconcileExecutedPreparedPublication")]
     [string]$Action,
     [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
     [string]$UnitId = "",
@@ -45,6 +45,9 @@ param(
     [string]$ExpectedHistoryArchiveCheckpointSha256 = "",
     [string]$CandidateFreeze = "",
     [string]$ExpectedCandidateFreezeSha256 = "",
+    [string]$ValidatingCandidateRematerialization = "",
+    [string]$ExpectedValidatingCandidateRematerializationSha256 = "",
+    [string]$ReplacementSourceComposition = "",
     [string]$MaterializationRoot = "",
     [string]$HistoricalUnitCompatibilityProjection = "",
     [string]$ExpectedHistoricalUnitCompatibilityProjectionSha256 = "",
@@ -114,6 +117,19 @@ if ($Action -eq "FreezeCandidate") {
     if (-not $CandidateFreeze -or -not $OutPath) { throw "FreezeCandidate requires CandidateFreeze and OutPath." }
     Import-Module (Join-Path $PSScriptRoot "CandidateFreeze.psm1") -Force
     Invoke-MorphospaceFreezeCandidate -WorkspaceRoot $WorkspaceRoot -UnitId $UnitId -CandidateFreeze $CandidateFreeze -ExpectedCandidateFreezeSha256 $ExpectedCandidateFreezeSha256 -Timestamp $Timestamp -OutPath $OutPath -Execute:$Execute | ConvertTo-Json -Depth 32
+    return
+}
+if ($Action -eq "RematerializeValidatingCandidate") {
+    if (-not $ValidatingCandidateRematerialization -or -not $ReplacementSourceComposition -or -not $RepoMapPath -or -not $OutPath) {
+        throw "RematerializeValidatingCandidate requires ValidatingCandidateRematerialization, ReplacementSourceComposition, RepoMapPath, and OutPath."
+    }
+    Import-Module (Join-Path $PSScriptRoot "ValidatingCandidateRematerialization.psm1") -Force
+    Invoke-MorphospaceRematerializeValidatingCandidate -WorkspaceRoot $WorkspaceRoot -UnitId $UnitId `
+        -RepoMapPath $RepoMapPath -CandidateFreeze $ValidatingCandidateRematerialization `
+        -SourceCompositionLock $ReplacementSourceComposition `
+        -ExpectedCandidateFreezeSha256 $ExpectedValidatingCandidateRematerializationSha256 `
+        -Timestamp $Timestamp -OutPath $OutPath -Execute:$Execute |
+        ConvertTo-Json -Depth 64
     return
 }
 if ($Action -eq "MaterializeInheritedCandidate") {

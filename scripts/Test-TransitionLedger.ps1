@@ -124,6 +124,36 @@ function Assert-LedgerCommittedV5DamageRejected {
     Assert-Ledger $rejected "validation authority accepted self-hashed malformed v5 intent: $Name"
 }
 
+function Assert-LedgerCommittedV6DamageRejected {
+    param(
+        [string]$TemplateWorkspace,
+        [string]$PlanningRoot,
+        [string]$Name,
+        [scriptblock]$Mutation
+    )
+    $caseWorkspace = Join-Path $PlanningRoot "committed-v6-$Name"
+    Copy-Item -LiteralPath $TemplateWorkspace -Destination $caseWorkspace -Recurse
+    $transactionId = 'raw-preimage-v6-recovery-transition'
+    $intentPath = Join-Path $caseWorkspace "receipts\transactions\$transactionId.intent.json"
+    $completionPath = Join-Path $caseWorkspace "receipts\transactions\$transactionId.completion.json"
+    $intent = Read-TestProtocolJson $intentPath
+    & $Mutation $caseWorkspace $intent
+    Write-Json -Path $intentPath -Value $intent
+    $completion = Read-TestProtocolJson $completionPath
+    $completion.intent.sha256 = Get-LedgerFileHash $intentPath
+    $completion.intent.schema = [string]$intent.schema
+    Write-Json -Path $completionPath -Value $completion
+    $completionRelative = [IO.Path]::GetRelativePath($PlanningRoot, $completionPath).Replace('\','/')
+    $rejected = $false
+    try {
+        Get-LedgerCommittedTransitionPaths `
+            -WorkspaceRoot $caseWorkspace `
+            -AutomationOutputs @([pscustomobject]@{ phase='transition'; role='transition-ledger-completion'; path=$completionRelative }) `
+            -RepositoryMap @{ planning=[pscustomobject]@{ path=$PlanningRoot } } | Out-Null
+    } catch { $rejected = $true }
+    Assert-Ledger $rejected "validation authority accepted self-hashed malformed v6 intent: $Name"
+}
+
 function Assert-LedgerCommittedV5ReservedEventRejected {
     param(
         [string]$TemplateWorkspace,
@@ -1629,6 +1659,157 @@ try {
     Assert-LedgerCommittedV4DamageRejected -TemplateWorkspace $projectedRawWorkspace -PlanningRoot $workspace -Name 'projection-unknown-field' -Mutation {
         param($caseWorkspace,$intent)
         $intent.additional_projections[0] | Add-Member -NotePropertyName policy -NotePropertyValue 'forbidden'
+    }
+
+    Assert-Ledger (
+        -not($projectedRawIntent.PSObject.Properties.Name-contains'pre_state_raw')-and
+        @($projectedRawIntent.additional_projections|Where-Object{$_.PSObject.Properties.Name-contains'pre_raw_sha256'}).Count-eq0
+    ) 'v4 compatibility gained v6 raw-state or raw-projection fields'
+
+    $v6Workspace=Join-Path $workspace 'raw-preimage-v6-recovery'
+    Initialize-LedgerFixture $v6Workspace $state $unit
+    Write-Json (Join-Path $v6Workspace 'project.spec.json') $projectBefore
+    Write-Json (Join-Path $v6Workspace 'feature.lock.json') $lockBefore
+    $v6StatePath=Join-Path $v6Workspace 'workspace.state.json'
+    $v6UnitPath=Join-Path $v6Workspace 'iteration-units\unit.json'
+    $v6ProjectPath=Join-Path $v6Workspace 'project.spec.json'
+    $v6LockPath=Join-Path $v6Workspace 'feature.lock.json'
+    $v6StateRawHash=Get-LedgerFileHash $v6StatePath
+    $v6UnitRawHash=Get-LedgerFileHash $v6UnitPath
+    $v6ProjectRawHash=Get-LedgerFileHash $v6ProjectPath
+    $v6LockRawHash=Get-LedgerFileHash $v6LockPath
+    $v6ReceiptBytes=[Text.UTF8Encoding]::new($false).GetBytes('v6 rematerialization receipt')
+    $v6SourceBytes=[Text.UTF8Encoding]::new($false).GetBytes('v6 replacement source composition')
+    $v6ReceiptHash=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($v6ReceiptBytes)).ToLowerInvariant()
+    $v6SourceHash=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($v6SourceBytes)).ToLowerInvariant()
+    $v6Event=New-LedgerEvent 'raw-preimage-v6-recovery' 1
+    $v6Event.receipts=@('receipts/v6-rematerialization.json','source-compositions/v6-source.json')
+    $v6Interrupted=$false
+    try{
+        Start-MorphospaceTransitionLedger `
+            -WorkspaceRoot $v6Workspace `
+            -TransactionId 'raw-preimage-v6-recovery-transition' `
+            -StatePath 'workspace.state.json' `
+            -UnitPath 'iteration-units/unit.json' `
+            -EventsPath 'iteration-events.jsonl' `
+            -TargetState $targetState `
+            -TargetUnit $targetUnit `
+            -Event $v6Event `
+            -ExpectedPreStateRawSha256 $v6StateRawHash `
+            -ExpectedPreUnitRawSha256 $v6UnitRawHash `
+            -AdditionalProjections @(
+                [pscustomobject]@{path='feature.lock.json';expected_sha256=(Get-LedgerDocumentHash $lockBefore);expected_raw_sha256=$v6LockRawHash;document=$lockAfter},
+                [pscustomobject]@{path='project.spec.json';expected_sha256=(Get-LedgerDocumentHash $projectBefore);expected_raw_sha256=$v6ProjectRawHash;document=$projectAfter}
+            ) `
+            -Artifacts @(
+                [pscustomobject]@{bytes_base64=[Convert]::ToBase64String($v6ReceiptBytes);path='receipts/v6-rematerialization.json';sha256=$v6ReceiptHash},
+                [pscustomobject]@{bytes_base64=[Convert]::ToBase64String($v6SourceBytes);path='source-compositions/v6-source.json';sha256=$v6SourceHash}
+            ) `
+            -FaultAfter after-intent | Out-Null
+    }catch{$v6Interrupted=$_.Exception.Message-like'*Injected interruption after intent publication*'}
+    $v6IntentPath=Join-Path $v6Workspace 'receipts\transactions\raw-preimage-v6-recovery-transition.intent.json'
+    $v6Intent=Read-TestProtocolJson $v6IntentPath
+    Assert-Ledger ($v6Interrupted-and
+        [string]$v6Intent.schema-ceq'rusty.morphospace.workflow.transition_ledger_intent.v6'-and
+        [string]$v6Intent.pre_state_raw.path-ceq'workspace.state.json'-and
+        [string]$v6Intent.pre_state_raw.sha256-ceq$v6StateRawHash-and
+        [string]$v6Intent.pre_unit_raw.path-ceq'iteration-units/unit.json'-and
+        [string]$v6Intent.pre_unit_raw.sha256-ceq$v6UnitRawHash-and
+        @($v6Intent.additional_projections).Count-eq2-and
+        [string]$v6Intent.additional_projections[0].pre_raw_sha256-ceq$v6LockRawHash-and
+        [string]$v6Intent.additional_projections[1].pre_raw_sha256-ceq$v6ProjectRawHash-and
+        @($v6Intent.artifacts).Count-eq2-and
+        [string]$v6Intent.event.receipts[0]-ceq[string]$v6Intent.artifacts[0].path-and
+        [string]$v6Intent.event.receipts[1]-ceq[string]$v6Intent.artifacts[1].path
+    ) 'complete raw state/unit/projection request did not publish the closed v6 binding'
+
+    foreach($rawDriftCase in @(
+        [pscustomobject]@{name='state';path='workspace.state.json';document=$state;message='*durable raw pre-state byte-hash CAS*'},
+        [pscustomobject]@{name='feature';path='feature.lock.json';document=$lockBefore;message='*durable raw additional-projection byte-hash CAS*'},
+        [pscustomobject]@{name='project';path='project.spec.json';document=$projectBefore;message='*durable raw additional-projection byte-hash CAS*'}
+    )){
+        $caseWorkspace=Join-Path $workspace "raw-preimage-v6-$([string]$rawDriftCase.name)-drift"
+        Copy-Item -LiteralPath $v6Workspace -Destination $caseWorkspace -Recurse
+        $casePath=Join-Path $caseWorkspace ([string]$rawDriftCase.path)
+        $beforeRawHash=Get-LedgerFileHash $casePath
+        [IO.File]::WriteAllText($casePath,($rawDriftCase.document|ConvertTo-Json -Depth 64),[Text.UTF8Encoding]::new($false))
+        Assert-Ledger ((Get-LedgerDocumentHash (Read-TestProtocolJson $casePath))-ceq(Get-LedgerDocumentHash $rawDriftCase.document)-and(Get-LedgerFileHash $casePath)-cne$beforeRawHash) "v6 $([string]$rawDriftCase.name) drift fixture did not change only raw bytes"
+        $rejected=$false
+        try{Complete-MorphospaceTransitionLedger -WorkspaceRoot $caseWorkspace -TransactionId 'raw-preimage-v6-recovery-transition' -Repair|Out-Null}catch{$rejected=$_.Exception.Message-like[string]$rawDriftCase.message}
+        Assert-Ledger ($rejected-and
+            [IO.File]::ReadAllBytes((Join-Path $caseWorkspace 'iteration-events.jsonl')).Length-eq0-and
+            -not[IO.File]::Exists((Join-Path $caseWorkspace 'receipts\transactions\raw-preimage-v6-recovery-transition.completion.json'))
+        ) "raw-only v6 $([string]$rawDriftCase.name) drift reached event or completion publication"
+    }
+
+    $v6UnchangedProjectionWorkspace=Join-Path $workspace 'raw-preimage-v6-unchanged-projection-drift'
+    Initialize-LedgerFixture $v6UnchangedProjectionWorkspace $state $unit
+    Write-Json (Join-Path $v6UnchangedProjectionWorkspace 'project.spec.json') $projectBefore
+    try{
+        Start-MorphospaceTransitionLedger -WorkspaceRoot $v6UnchangedProjectionWorkspace -TransactionId 'raw-preimage-v6-unchanged-projection-drift-transition' -StatePath 'workspace.state.json' -UnitPath 'iteration-units/unit.json' -EventsPath 'iteration-events.jsonl' -TargetState $targetState -TargetUnit $targetUnit -Event (New-LedgerEvent 'raw-preimage-v6-unchanged-projection-drift' 1) -ExpectedPreStateRawSha256 (Get-LedgerFileHash (Join-Path $v6UnchangedProjectionWorkspace 'workspace.state.json')) -ExpectedPreUnitRawSha256 (Get-LedgerFileHash (Join-Path $v6UnchangedProjectionWorkspace 'iteration-units\unit.json')) -AdditionalProjections @([pscustomobject]@{path='project.spec.json';expected_sha256=(Get-LedgerDocumentHash $projectBefore);expected_raw_sha256=(Get-LedgerFileHash (Join-Path $v6UnchangedProjectionWorkspace 'project.spec.json'));document=$projectBefore}) -FaultAfter after-intent|Out-Null
+    }catch{}
+    $v6UnchangedProjectionPath=Join-Path $v6UnchangedProjectionWorkspace 'project.spec.json'
+    [IO.File]::WriteAllText($v6UnchangedProjectionPath,($projectBefore|ConvertTo-Json -Depth 64),[Text.UTF8Encoding]::new($false))
+    $v6UnchangedProjectionRejected=$false
+    try{Complete-MorphospaceTransitionLedger -WorkspaceRoot $v6UnchangedProjectionWorkspace -TransactionId 'raw-preimage-v6-unchanged-projection-drift-transition' -Repair|Out-Null}catch{$v6UnchangedProjectionRejected=$_.Exception.Message-like'*durable raw additional-projection byte-hash CAS*'}
+    Assert-Ledger ($v6UnchangedProjectionRejected-and[IO.File]::ReadAllBytes((Join-Path $v6UnchangedProjectionWorkspace 'iteration-events.jsonl')).Length-eq0) 'raw-only drift of a canonically unchanged v6 projection bypassed its durable preimage CAS'
+
+    $v6PartialWorkspace=Join-Path $workspace 'raw-preimage-v6-partial-rejection'
+    Initialize-LedgerFixture $v6PartialWorkspace $state $unit
+    Write-Json (Join-Path $v6PartialWorkspace 'project.spec.json') $projectBefore
+    $v6PartialRejected=$false
+    try{
+        Start-MorphospaceTransitionLedger -WorkspaceRoot $v6PartialWorkspace -TransactionId 'raw-preimage-v6-partial-rejection-transition' -StatePath 'workspace.state.json' -UnitPath 'iteration-units/unit.json' -EventsPath 'iteration-events.jsonl' -TargetState $targetState -TargetUnit $targetUnit -Event (New-LedgerEvent 'raw-preimage-v6-partial-rejection' 1) -ExpectedPreStateRawSha256 (Get-LedgerFileHash (Join-Path $v6PartialWorkspace 'workspace.state.json')) -ExpectedPreUnitRawSha256 (Get-LedgerFileHash (Join-Path $v6PartialWorkspace 'iteration-units\unit.json')) -AdditionalProjections @([pscustomobject]@{path='project.spec.json';expected_sha256=(Get-LedgerDocumentHash $projectBefore);document=$projectAfter})|Out-Null
+    }catch{$v6PartialRejected=$_.Exception.Message-like'*complete v6 raw state, raw unit, and raw additional-projection binding*'}
+    Assert-Ledger ($v6PartialRejected-and-not[IO.File]::Exists((Join-Path $v6PartialWorkspace 'receipts\transactions\raw-preimage-v6-partial-rejection-transition.intent.json'))) 'partial v6 raw binding reached intent publication'
+
+    $v6Result=Complete-MorphospaceTransitionLedger -WorkspaceRoot $v6Workspace -TransactionId 'raw-preimage-v6-recovery-transition' -Repair
+    $v6Replay=Complete-MorphospaceTransitionLedger -WorkspaceRoot $v6Workspace -TransactionId 'raw-preimage-v6-recovery-transition'
+    $v6Committed=Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $v6Workspace -TransactionId 'raw-preimage-v6-recovery-transition' -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath 'iteration-units/unit.json' -ExpectedEventsPath 'iteration-events.jsonl' -RequireTail
+    $v6CompletionRelative=[IO.Path]::GetRelativePath($workspace,(Join-Path $v6Workspace 'receipts\transactions\raw-preimage-v6-recovery-transition.completion.json')).Replace('\','/')
+    $v6Paths=@(Get-LedgerCommittedTransitionPaths -WorkspaceRoot $v6Workspace -AutomationOutputs @([pscustomobject]@{phase='transition';role='transition-ledger-completion';path=$v6CompletionRelative}) -RepositoryMap @{planning=[pscustomobject]@{path=$workspace}})
+    Assert-Ledger ($v6Result.status-eq'committed'-and$v6Replay.status-eq'already-committed'-and[string]$v6Committed.intent.schema-ceq'rusty.morphospace.workflow.transition_ledger_intent.v6'-and$v6Paths.Count-eq7-and@($v6Paths|Where-Object{$_-like'*/feature.lock.json'}).Count-eq1-and@($v6Paths|Where-Object{$_-like'*/project.spec.json'}).Count-eq1-and@($v6Paths|Where-Object{$_-like'*/v6-rematerialization.json'}).Count-eq1-and@($v6Paths|Where-Object{$_-like'*/v6-source.json'}).Count-eq1) 'v6 recovery, replay, committed verification, or validation-authority projection/artifact binding failed'
+
+    Assert-LedgerCommittedV6DamageRejected -TemplateWorkspace $v6Workspace -PlanningRoot $workspace -Name 'missing-pre-state-raw' -Mutation {
+        param($caseWorkspace,$intent)
+        $intent.PSObject.Properties.Remove('pre_state_raw')
+    }
+    Assert-LedgerCommittedV6DamageRejected -TemplateWorkspace $v6Workspace -PlanningRoot $workspace -Name 'malformed-pre-state-raw' -Mutation {
+        param($caseWorkspace,$intent)
+        $intent.pre_state_raw.sha256='BAD'
+    }
+    Assert-LedgerCommittedV6DamageRejected -TemplateWorkspace $v6Workspace -PlanningRoot $workspace -Name 'missing-project-pre-raw' -Mutation {
+        param($caseWorkspace,$intent)
+        @($intent.additional_projections|Where-Object{[string]$_.path-ceq'project.spec.json'})[0].PSObject.Properties.Remove('pre_raw_sha256')
+    }
+    Assert-LedgerCommittedV6DamageRejected -TemplateWorkspace $v6Workspace -PlanningRoot $workspace -Name 'malformed-feature-pre-raw' -Mutation {
+        param($caseWorkspace,$intent)
+        @($intent.additional_projections|Where-Object{[string]$_.path-ceq'feature.lock.json'})[0].pre_raw_sha256='BAD'
+    }
+    Assert-LedgerCommittedV6DamageRejected -TemplateWorkspace $v6Workspace -PlanningRoot $workspace -Name 'artifact-unknown-field' -Mutation {
+        param($caseWorkspace,$intent)
+        $intent.artifacts[0]|Add-Member policy forbidden
+    }
+    Assert-LedgerCommittedV6DamageRejected -TemplateWorkspace $v6Workspace -PlanningRoot $workspace -Name 'artifact-invalid-base64' -Mutation {
+        param($caseWorkspace,$intent)
+        $intent.artifacts[0].bytes_base64='***'
+    }
+    Assert-LedgerCommittedV6DamageRejected -TemplateWorkspace $v6Workspace -PlanningRoot $workspace -Name 'artifact-hash-drift' -Mutation {
+        param($caseWorkspace,$intent)
+        $intent.artifacts[0].sha256=('0'*64)
+    }
+    Assert-LedgerCommittedV6DamageRejected -TemplateWorkspace $v6Workspace -PlanningRoot $workspace -Name 'artifact-order' -Mutation {
+        param($caseWorkspace,$intent)
+        $intent.artifacts=@($intent.artifacts[1],$intent.artifacts[0])
+        $intent.event.receipts=@([string]$intent.artifacts[0].path,[string]$intent.artifacts[1].path)
+    }
+    Assert-LedgerCommittedV6DamageRejected -TemplateWorkspace $v6Workspace -PlanningRoot $workspace -Name 'artifact-receipt-mismatch' -Mutation {
+        param($caseWorkspace,$intent)
+        $intent.event.receipts[0]='receipts/substituted.json'
+    }
+    Assert-LedgerCommittedV6DamageRejected -TemplateWorkspace $v6Workspace -PlanningRoot $workspace -Name 'live-artifact-drift' -Mutation {
+        param($caseWorkspace,$intent)
+        [IO.File]::WriteAllText((Join-Path $caseWorkspace 'receipts/v6-rematerialization.json'),'drift',[Text.UTF8Encoding]::new($false))
     }
 
     $rawArtifactState=[pscustomobject][ordered]@{schema='test';stage='before';last_event_id=$null}

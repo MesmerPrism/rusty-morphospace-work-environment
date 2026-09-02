@@ -528,6 +528,7 @@ successful push is not proof that the whole batch is complete.
 work-unit transitions and preparation artifacts. It supports `Inspect`,
 `Ready`, `WithdrawReady`, `Claim`, `Resume`, `CompleteInstructionSurfaces`,
 `AdmitDevelopmentUnit`, `AmendActiveWriteScope`, `FreezeCandidate`,
+`RematerializeValidatingCandidate`,
 `MaterializeInheritedCandidate`, `CorrectActiveReadOnlyDependencies`,
 `CorrectActiveProjectRepositoryScope`, `CorrectActiveUnitContract`,
 `RecordHistoricalUnitCompatibilityProjection`,
@@ -543,6 +544,11 @@ record in a protocol-v2 workspace.
 The CLI is deliberately narrower than an autonomous coding agent:
 
 - inspection and plans are the default; state changes require `-Execute`;
+- validating-candidate rematerialization requires a clean exact pre-existing
+  repository mapping, full raw/canonical workspace and predecessor CAS, and a
+  distinct lineage-bound source lock/freeze. It preserves validating/current
+  ownership, clears only the stale selector, and performs no Git, build,
+  device, validation, acceptance, or publication work;
 - instruction completion is available only to the matching active or
   validating unit; it
   requires the exact full set of currently planned surface IDs, a caller-
@@ -779,6 +785,18 @@ blockers and prior validation evidence. `Resume` is the explicit transition
 out of `blocked`. `ReturnToActive` is the distinct same-owner transition from
 `validating` to `active`; it requires a non-passing exact-scope validation
 receipt and preserves that attempt without manufacturing a blocker.
+
+`RematerializeValidatingCandidate` is a same-state correction for an exact
+already-validating admitted unit whose frozen product source was superseded by
+an independently adopted descendant. It keeps the unit and captain
+`validating`, retains every predecessor byte, installs exactly one successor
+source lock and one lineage-bearing candidate freeze through the transition
+ledger, and atomically removes the stale normal-validation selection. The
+repository map must already resolve clean exact commit/tree materializations;
+the action never fetches or checks out. A later already-validating
+`BeginValidation` may bind a new create-new Quick selector only after the full
+successor freeze is revalidated. See
+[Validating Candidate Rematerialization](VALIDATING_CANDIDATE_REMATERIALIZATION.md).
 
 `ResolveBlocker` is a separate product-neutral action for one exact blocker on
 the current active unit. It validates `blocker_resolution_receipt.v1`, rechecks

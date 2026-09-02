@@ -513,6 +513,14 @@ For a non-passing feature attempt that remains in scope, `ReturnToActive`
 retains the same receipt and returns `validating` to `active` without releasing
 the captain or creating a blocker. Non-passing `RecordValidation` remains the
 stop-and-release path.
+When the source candidate of an already-validating admitted unit is superseded
+by a separately adopted descendant, use the distinct
+[validating-candidate rematerialization](docs/VALIDATING_CANDIDATE_REMATERIALIZATION.md)
+route. It keeps the unit validating, preserves the predecessor freeze and
+source lineage, installs a new exact freeze from an already-present clean
+materialization, clears the stale selector, and makes no validation, build,
+device, acceptance, or publication claim. Bind a fresh selector afterward;
+never carry forward old Quick, APK, or device evidence by prose.
 One exact active-unit blocker may be cleared through the additive,
 product-neutral `ResolveBlocker` route. Its strict receipt binds the blocker,
 passing evidence, current attached-branch or exact detached repository heads,
