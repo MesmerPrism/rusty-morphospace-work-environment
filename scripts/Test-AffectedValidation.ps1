@@ -39,9 +39,9 @@ $selectorPhaseCheckIds = @(
 )
 $selectorTrustRootCheckIds = @($selectorPhaseCheckIds + @('affected-topology-selftest','affected-reuse-selftest'))
 $expectedProtocolCommonGraphIdentity = [pscustomobject][ordered]@{
-    owner_entrypoints = 49
-    tracked_graph_nodes = 127
-    protocol_consumers = 31
+    owner_entrypoints = 50
+    tracked_graph_nodes = 129
+    protocol_consumers = 32
 }
 
 function Assert-True([bool]$Condition, [string]$Message) { if (-not $Condition) { throw $Message } }
@@ -1602,6 +1602,27 @@ if ($runFullSelector -or $runExecutorPassPhase) {
     Assert-True ($phaseRunnerSource -notmatch [regex]::Escape("Import-Module (Join-Path `$PSScriptRoot 'lib/MorphospaceAffectedValidationCheckEvidence.psm1') -Force") -and $phaseRunnerSource -notmatch 'Get-MorphospaceAffectedCheckDependencyClosure' -and $phaseRunnerSource -match 'function Read-DependencyProjectionFile' -and $phaseRunnerSource -match 'function Get-DependencyProjection' -and $phaseRunnerSource -match 'Assert-MorphospaceAffectedBatchedWorkingBytes') 'Affected phase runner re-analyzes dependency closure or omits validation of its parent-projected closure.'
     Assert-True ($executorSource -match 'function New-AffectedValidationDependencyProjectionFile' -and $executorSource -match 'RUSTY_AFFECTED_VALIDATION_DEPENDENCY_PROJECTION_PATH' -and $executorSource -match 'RUSTY_AFFECTED_VALIDATION_DEPENDENCY_PROJECTION_SHA256' -and $executorSource -match 'FileShare\]::Read' -and $executorSource -match 'DependencyManifest @\(\$binding\.dependency_manifest\)') 'Affected executor does not publish and project its exact parent-held dependency closure to phase children.'
     Assert-True ($executorSource -match '\.rusty-affected-dependency-projection-.*\$PID' -and $executorSource -match 'projectionCleanupError' -and $executorSource -match 'publicationCleanupError' -and $executorSource -match 'publication failed and cleanup did not complete' -and $executorSource -match 'dependency projection file cleanup failed' -and $executorSource -match 'Remove-Item -LiteralPath (?:\$path|\(\[string\]\$dependencyProjectionFile\.path\)) -Force -ErrorAction Stop') 'Affected executor does not use an owner-identifiable projection path or fail closed on projection cleanup at both publication and post-child boundaries.'
+    Assert-True ($executorSource -match 'function Read-AffectedValidationDependencyProjectionFile' -and $executorSource -match '\[Diagnostics\.Stopwatch\]::StartNew\(\)' -and $executorSource -match '@\(32,33\) -cnotcontains \$nativeCode' -and $executorSource -match '\$remainingMilliseconds = \[long\]\$SharingRetryMilliseconds - \[long\]\$retryClock\.ElapsedMilliseconds' -and $executorSource -match '\[Math\]::Min\(10,\[int\]\$remainingMilliseconds\)' -and $executorSource -match 'sharing-locked after bounded \$\{SharingRetryMilliseconds\}ms post-child readback' -and $executorSource -match '\$dependencyProjectionFile\.stream\.Dispose\(\); \$dependencyProjectionFile\.stream = \$null' -and $executorSource -match 'Read-AffectedValidationDependencyProjectionFile -Path') 'Affected executor does not close its publisher handle and use a monotonic bounded sharing-aware post-child projection readback.'
+    $executorAst = [Management.Automation.Language.Parser]::ParseInput($executorSource,[ref]$null,[ref]$null)
+    $projectionReadFunction = @($executorAst.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Read-AffectedValidationDependencyProjectionFile' },$true))
+    Assert-True ($projectionReadFunction.Count -eq 1) 'Affected executor does not define exactly one dependency-projection readback function.'
+    . ([scriptblock]::Create([string]$projectionReadFunction[0].Extent.Text))
+    $projectionReadbackFixture = Join-Path ([IO.Path]::GetTempPath()) ('.rusty-affected-dependency-projection-readback-test-' + [Guid]::NewGuid().ToString('N') + '.json')
+    [byte[]]$projectionReadbackBytes = [Text.UTF8Encoding]::new($false).GetBytes("projection-readback`n")
+    [IO.File]::WriteAllBytes($projectionReadbackFixture,$projectionReadbackBytes)
+    try {
+        $projectionLock = [IO.FileStream]::new($projectionReadbackFixture,[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
+        $projectionLockClock = [Diagnostics.Stopwatch]::StartNew()
+        try {
+            Assert-AffectedThrows { Read-AffectedValidationDependencyProjectionFile -Path $projectionReadbackFixture -ExpectedLength $projectionReadbackBytes.Length -SharingRetryMilliseconds 30 } '*remained sharing-locked after bounded 30ms post-child readback*' 'Affected dependency-projection readback did not fail closed after its finite sharing retry bound.'
+        } finally { $projectionLockClock.Stop(); $projectionLock.Dispose() }
+        Assert-True ($projectionLockClock.ElapsedMilliseconds -le 1000) "Affected dependency-projection sharing-lock rejection exceeded its practical bounded tolerance: $($projectionLockClock.ElapsedMilliseconds)ms."
+        [byte[]]$projectionReadback = Read-AffectedValidationDependencyProjectionFile -Path $projectionReadbackFixture -ExpectedLength $projectionReadbackBytes.Length -SharingRetryMilliseconds 30
+        Assert-True ((Get-MorphospaceAffectedCheckBytesSha256 $projectionReadback) -ceq (Get-MorphospaceAffectedCheckBytesSha256 $projectionReadbackBytes)) 'Affected dependency-projection readback changed bytes after sharing-lock release.'
+        Assert-AffectedThrows { Read-AffectedValidationDependencyProjectionFile -Path $projectionReadbackFixture -ExpectedLength ($projectionReadbackBytes.Length+1) -SharingRetryMilliseconds 30 } '*byte length changed*' 'Affected dependency-projection readback accepted an unexpected byte length.'
+    } finally {
+        if ([IO.File]::Exists($projectionReadbackFixture)) { Remove-Item -LiteralPath $projectionReadbackFixture -Force }
+    }
     $checkEvidenceSource = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts/lib/MorphospaceAffectedValidationCheckEvidence.psm1') -Raw
     Assert-True ($checkEvidenceSource -match '\(\?:start\|terminal\)' -and $checkEvidenceSource -match '134217728' -and $checkEvidenceSource -match '10485760') 'Affected evidence implementation does not align maximum-domain phase receipts with the ordinary artifact bound.'
     Assert-True ($executorSource -match 'function Get-AffectedValidationDependencyClosureCacheKey' -and $executorSource -match '\$dependencyClosuresByInput\.ContainsKey\(\$dependencyClosureKey\)' -and $executorSource -match 'head_tree=\[string\]\$plan\.head\.tree' -and $executorSource -match 'registry_sha256=\[string\]\$registrySha256') 'Affected executor does not reuse exact identical closure inputs inside one bounded process.'

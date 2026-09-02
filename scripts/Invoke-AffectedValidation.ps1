@@ -754,6 +754,36 @@ public static class W017SupervisorInnerJob {
 }
 
 function Get-AffectedValidationBytesHash([byte[]]$Bytes) { ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($Bytes))).ToLowerInvariant() }
+function Read-AffectedValidationDependencyProjectionFile([string]$Path,[long]$ExpectedLength,[int]$SharingRetryMilliseconds=1000) {
+    if ($ExpectedLength -lt 0 -or $ExpectedLength -gt 134217728) { throw 'Affected-validation dependency projection expected length is outside its publication bound.' }
+    if ($SharingRetryMilliseconds -lt 1 -or $SharingRetryMilliseconds -gt 5000) { throw 'Affected-validation dependency projection sharing retry bound is invalid.' }
+    $retryClock = [Diagnostics.Stopwatch]::StartNew()
+    $firstAttempt = $true
+    while ($true) {
+        if (-not $firstAttempt -and $retryClock.ElapsedMilliseconds -ge $SharingRetryMilliseconds) { throw "Affected-validation dependency projection remained sharing-locked after bounded ${SharingRetryMilliseconds}ms post-child readback." }
+        $firstAttempt = $false
+        try {
+            $readStream = [IO.FileStream]::new($Path,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
+            try {
+                if ($readStream.Length -ne $ExpectedLength) { throw 'Affected-validation dependency projection byte length changed.' }
+                [byte[]]$bytes = [byte[]]::new([int]$ExpectedLength)
+                $offset = 0
+                while ($offset -lt $bytes.Length) {
+                    $read = $readStream.Read($bytes,$offset,$bytes.Length-$offset)
+                    if ($read -le 0) { throw 'Affected-validation dependency projection ended before its expected byte length.' }
+                    $offset += $read
+                }
+                return $bytes
+            } finally { $readStream.Dispose() }
+        } catch [IO.IOException] {
+            $nativeCode = $_.Exception.HResult -band 0xffff
+            if (@(32,33) -cnotcontains $nativeCode) { throw }
+            $remainingMilliseconds = [long]$SharingRetryMilliseconds - [long]$retryClock.ElapsedMilliseconds
+            if ($remainingMilliseconds -le 0) { throw "Affected-validation dependency projection remained sharing-locked after bounded ${SharingRetryMilliseconds}ms post-child readback." }
+            [Threading.Thread]::Sleep([Math]::Min(10,[int]$remainingMilliseconds))
+        }
+    }
+}
 function Get-AffectedValidationCommandBlob([string]$Path) { $blob = (& git -C $root rev-parse "${HeadCommit}:$Path").Trim(); if ($LASTEXITCODE -ne 0 -or $blob -notmatch '^[0-9a-f]{40}$') { throw "Affected-validation command is not an exact head blob: $Path" }; return $blob }
 function New-AffectedValidationDependencyProjectionFile([object]$Check,[object[]]$DependencyManifest) {
     if ([string]$Check.command_path -cne 'scripts/Invoke-AffectedValidationSelfTestPhase.ps1') { return $null }
@@ -830,6 +860,9 @@ function Invoke-AffectedValidationCheck([object]$Check, [string]$Command, [strin
         try { [void](Assert-MorphospaceAffectedBatchedWorkingBytes -RepositoryRoot $root -ExpectedHead $plan.head -Inventory $Inventory -Paths $IntegrityPaths) } catch { $integrityError = "Pre-execution affected-check input integrity failed: $($_.Exception.Message)" }
         if ($null -eq $integrityError) {
             $child = [W017BoundedChildCapture]::Run((Get-Process -Id $PID).Path, $root, @($arguments.ToArray()), @('GITHUB_OUTPUT','GITHUB_ENV','GITHUB_PATH','GITHUB_STEP_SUMMARY'), $budget, 10485760, 15000)
+            if ($null -ne $dependencyProjectionFile -and $null -ne $dependencyProjectionFile.stream) {
+                try { $dependencyProjectionFile.stream.Dispose(); $dependencyProjectionFile.stream = $null } catch { $integrityError = "Post-execution affected-check dependency projection publisher-handle cleanup failed: $($_.Exception.Message)" }
+            }
             if ($child.Started -and (-not $child.ChildTreeCleanupAttempted -or -not $child.ContainmentCleanupSucceeded)) {
                 $integrityError = 'Post-execution affected-check child-tree cleanup/readback did not succeed.'
             }
@@ -840,7 +873,7 @@ function Invoke-AffectedValidationCheck([object]$Check, [string]$Command, [strin
             if ($null -ne $dependencyProjectionFile) {
                 try {
                     if (-not [IO.File]::Exists([string]$dependencyProjectionFile.path)) { throw 'projection path is absent' }
-                    [byte[]]$projectionReadback = [IO.File]::ReadAllBytes([string]$dependencyProjectionFile.path)
+                    [byte[]]$projectionReadback = Read-AffectedValidationDependencyProjectionFile -Path ([string]$dependencyProjectionFile.path) -ExpectedLength ([long]([byte[]]$dependencyProjectionFile.bytes).Length)
                     if ($projectionReadback.Length -ne ([byte[]]$dependencyProjectionFile.bytes).Length -or (Get-AffectedValidationBytesHash $projectionReadback) -cne [string]$dependencyProjectionFile.sha256) { throw 'projection bytes changed' }
                 } catch {
                     $postIntegrityError = "Post-execution affected-check dependency projection failed readback: $($_.Exception.Message)"
@@ -855,7 +888,7 @@ function Invoke-AffectedValidationCheck([object]$Check, [string]$Command, [strin
             else { [Environment]::SetEnvironmentVariable($name,[string]$savedEnvironment[$name],'Process') }
         }
         if ($null -ne $dependencyProjectionFile) {
-            try { $dependencyProjectionFile.stream.Dispose() } catch { $projectionCleanupError = "Affected-check dependency projection handle cleanup failed: $($_.Exception.Message)" }
+            try { if ($null -ne $dependencyProjectionFile.stream) { $dependencyProjectionFile.stream.Dispose(); $dependencyProjectionFile.stream = $null } } catch { $projectionCleanupError = "Affected-check dependency projection handle cleanup failed: $($_.Exception.Message)" }
             finally {
                 try {
                     Remove-Item -LiteralPath ([string]$dependencyProjectionFile.path) -Force -ErrorAction Stop

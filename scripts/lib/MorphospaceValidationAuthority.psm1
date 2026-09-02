@@ -324,10 +324,11 @@ function Assert-MorphospaceCommittedTransitionProjectionDocument {
     param(
         [Parameter(Mandatory = $true)][string]$ProjectionPath,
         [Parameter(Mandatory = $true)][object]$Document,
-        [Parameter(Mandatory = $true)][string]$ProjectId
+        [Parameter(Mandatory = $true)][string]$ProjectId,
+        [ValidateSet('v4','v6')][string]$IntentVersion = 'v4'
     )
 
-    $context = "Committed transition v4 additional projection '$ProjectionPath'"
+    $context = "Committed transition $IntentVersion additional projection '$ProjectionPath'"
     $schemaName = switch ([string]$Document.schema) {
         'rusty.morphospace.workflow.feature_lock.v1' {
             if ($ProjectionPath -cne 'feature.lock.json') { throw "$context uses a feature-lock schema on the wrong path." }
@@ -464,15 +465,92 @@ function Assert-MorphospaceCommittedTransitionIntentV5 {
     }
 }
 
+function Assert-MorphospaceCommittedTransitionIntentV6 {
+    param([Parameter(Mandatory = $true)][object]$Intent)
+
+    Assert-MorphospaceExactPropertySet $Intent @(
+        'schema','transaction_id','created_at','state','unit','events','pre','target','expected',
+        'pre_state_raw','pre_unit_raw','additional_projections','artifacts','event','status'
+    ) @() 'Committed transition v6 intent'
+    foreach ($rawBinding in @(
+        [pscustomobject]@{ name='state'; value=$Intent.pre_state_raw; path=[string]$Intent.state.path },
+        [pscustomobject]@{ name='unit'; value=$Intent.pre_unit_raw; path=[string]$Intent.unit.path }
+    )) {
+        Assert-MorphospaceExactPropertySet $rawBinding.value @('path','sha256') @() "Committed transition v6 raw pre-$([string]$rawBinding.name) binding"
+        $rawPath = ConvertTo-MorphospaceProtocolRelativePath ([string]$rawBinding.value.path)
+        if ([string]$rawBinding.value.path -cne $rawPath -or
+            $rawPath -cne [string]$rawBinding.path -or
+            [string]$rawBinding.value.sha256 -cnotmatch '^[0-9a-f]{64}$') {
+            throw "Committed transition v6 raw pre-$([string]$rawBinding.name) binding is malformed or substituted."
+        }
+    }
+
+    $projections = @($Intent.additional_projections)
+    if ($projections.Count -lt 1 -or $projections.Count -gt 2) {
+        throw 'Committed transition v6 intent must bind one or two additional projections.'
+    }
+    $projectionPaths = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $previousProjectionPath = $null
+    foreach ($projection in $projections) {
+        Assert-MorphospaceExactPropertySet $projection @('path','pre_sha256','pre_raw_sha256','target_sha256','document') @() 'Committed transition v6 additional projection'
+        $projectionPath = ConvertTo-MorphospaceProtocolRelativePath ([string]$projection.path)
+        if ([string]$projection.path -cne $projectionPath -or -not $projectionPaths.Add($projectionPath)) {
+            throw 'Committed transition v6 intent repeats or mis-canonicalizes an additional projection path.'
+        }
+        if (@('feature.lock.json','project.spec.json') -cnotcontains $projectionPath) {
+            throw "Committed transition v6 intent does not authorize additional projection '$projectionPath'."
+        }
+        if ($null -ne $previousProjectionPath -and [StringComparer]::Ordinal.Compare([string]$previousProjectionPath, $projectionPath) -ge 0) {
+            throw 'Committed transition v6 additional projections are not in canonical path order.'
+        }
+        $previousProjectionPath = $projectionPath
+        if ([string]$projection.pre_sha256 -cnotmatch '^[0-9a-f]{64}$' -or
+            [string]$projection.pre_raw_sha256 -cnotmatch '^[0-9a-f]{64}$' -or
+            [string]$projection.target_sha256 -cnotmatch '^[0-9a-f]{64}$' -or
+            (Get-MorphospaceCanonicalJsonSha256 $projection.document) -cne [string]$projection.target_sha256) {
+            throw "Committed transition v6 additional projection '$projectionPath' has invalid or inconsistent hashes."
+        }
+        Assert-MorphospaceCommittedTransitionProjectionDocument `
+            -ProjectionPath $projectionPath `
+            -Document $projection.document `
+            -ProjectId ([string]$Intent.event.project_id) `
+            -IntentVersion v6
+    }
+
+    $artifacts = @($Intent.artifacts)
+    $receipts = @($Intent.event.receipts)
+    if ($artifacts.Count -gt 2 -or $receipts.Count -ne $artifacts.Count) {
+        throw 'Committed transition v6 must bind zero, one, or two exact event artifacts.'
+    }
+    $previousArtifactPath = $null
+    for ($index = 0; $index -lt $artifacts.Count; $index++) {
+        $artifact = $artifacts[$index]
+        Assert-MorphospaceExactPropertySet $artifact @('path','sha256','bytes_base64') @() 'Committed transition v6 artifact'
+        $artifactPath = ConvertTo-MorphospaceProtocolRelativePath ([string]$artifact.path)
+        if ([string]$artifact.path -cne $artifactPath -or
+            ($null -ne $previousArtifactPath -and [StringComparer]::Ordinal.Compare([string]$previousArtifactPath, $artifactPath) -ge 0) -or
+            $receipts[$index] -isnot [string] -or [string]$receipts[$index] -cne $artifactPath) {
+            throw 'Committed transition v6 artifacts and event receipts are not exact and ordinal sorted.'
+        }
+        try { $artifactBytes = [Convert]::FromBase64String([string]$artifact.bytes_base64) }
+        catch { throw 'Committed transition v6 artifact payload is not valid base64.' }
+        if ([Convert]::ToBase64String($artifactBytes) -cne [string]$artifact.bytes_base64 -or
+            (Get-MorphospaceSha256Bytes -Bytes $artifactBytes) -cne [string]$artifact.sha256) {
+            throw 'Committed transition v6 artifact payload is noncanonical or hash-drifted.'
+        }
+        $previousArtifactPath = $artifactPath
+    }
+}
+
 function Get-MorphospaceCommittedTransitionPaths {
     param([Parameter(Mandatory = $true)][string]$WorkspaceRoot,[Parameter(Mandatory = $true)][object[]]$AutomationOutputs,[Parameter(Mandatory = $true)][hashtable]$RepositoryMap)
     $workspace=[IO.Path]::GetFullPath($WorkspaceRoot).TrimEnd('\','/');$planningRoot=[IO.Path]::GetFullPath([string]$RepositoryMap['planning'].path).TrimEnd('\','/');if(-not$workspace.StartsWith($planningRoot+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw 'Authority workspace is not contained by the planning repository.'};$prefix=$workspace.Substring($planningRoot.Length).TrimStart('\','/').Replace('\','/')
     $paths=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach($completionOutput in @($AutomationOutputs|Where-Object{[string]$_.phase-ceq'transition'-and[string]$_.role-ceq'transition-ledger-completion'})){
-        $completionAbsolute=[IO.Path]::GetFullPath((Join-Path $planningRoot ([string]$completionOutput.path)));if(-not[IO.File]::Exists($completionAbsolute)){continue};$completion=Read-MorphospaceAuthorityJson $completionAbsolute;if([string]$completion.schema-cne'rusty.morphospace.workflow.transition_ledger_completion.v1'-or[string]$completion.status-cne'committed'){throw 'Committed transition completion is malformed.'};$intentRelative=([string]$completion.intent.path);$intentAbsolute=Resolve-MorphospaceAuthorityPath $workspace $intentRelative;$intent=Read-MorphospaceAuthorityJson $intentAbsolute;$intentSchemas=@('rusty.morphospace.workflow.transition_ledger_intent.v1','rusty.morphospace.workflow.transition_ledger_intent.v2','rusty.morphospace.workflow.transition_ledger_intent.v3','rusty.morphospace.workflow.transition_ledger_intent.v4','rusty.morphospace.workflow.transition_ledger_intent.v5');if($intentSchemas-cnotcontains[string]$intent.schema-or[string]$intent.status-cne'prepared'-or[string]$intent.transaction_id-cne[string]$completion.transaction_id-or[string]$completion.intent.schema-cne[string]$intent.schema-or(Get-MorphospaceAuthoritySha256 $intentAbsolute)-cne[string]$completion.intent.sha256){throw 'Committed transition intent is malformed or substituted.'};if([string]$intent.schema-ceq'rusty.morphospace.workflow.transition_ledger_intent.v4'){Assert-MorphospaceCommittedTransitionIntentV4 -Intent $intent}elseif([string]$intent.schema-ceq'rusty.morphospace.workflow.transition_ledger_intent.v5'){Assert-MorphospaceCommittedTransitionIntentV5 -Intent $intent}
+        $completionAbsolute=[IO.Path]::GetFullPath((Join-Path $planningRoot ([string]$completionOutput.path)));if(-not[IO.File]::Exists($completionAbsolute)){continue};$completion=Read-MorphospaceAuthorityJson $completionAbsolute;if([string]$completion.schema-cne'rusty.morphospace.workflow.transition_ledger_completion.v1'-or[string]$completion.status-cne'committed'){throw 'Committed transition completion is malformed.'};$intentRelative=([string]$completion.intent.path);$intentAbsolute=Resolve-MorphospaceAuthorityPath $workspace $intentRelative;$intent=Read-MorphospaceAuthorityJson $intentAbsolute;$intentSchemas=@('rusty.morphospace.workflow.transition_ledger_intent.v1','rusty.morphospace.workflow.transition_ledger_intent.v2','rusty.morphospace.workflow.transition_ledger_intent.v3','rusty.morphospace.workflow.transition_ledger_intent.v4','rusty.morphospace.workflow.transition_ledger_intent.v5','rusty.morphospace.workflow.transition_ledger_intent.v6');if($intentSchemas-cnotcontains[string]$intent.schema-or[string]$intent.status-cne'prepared'-or[string]$intent.transaction_id-cne[string]$completion.transaction_id-or[string]$completion.intent.schema-cne[string]$intent.schema-or(Get-MorphospaceAuthoritySha256 $intentAbsolute)-cne[string]$completion.intent.sha256){throw 'Committed transition intent is malformed or substituted.'};if([string]$intent.schema-ceq'rusty.morphospace.workflow.transition_ledger_intent.v4'){Assert-MorphospaceCommittedTransitionIntentV4 -Intent $intent}elseif([string]$intent.schema-ceq'rusty.morphospace.workflow.transition_ledger_intent.v5'){Assert-MorphospaceCommittedTransitionIntentV5 -Intent $intent}elseif([string]$intent.schema-ceq'rusty.morphospace.workflow.transition_ledger_intent.v6'){Assert-MorphospaceCommittedTransitionIntentV6 -Intent $intent}
         foreach($projection in @('state','unit')){$relative=[string]$intent.$projection.path;$absolute=Resolve-MorphospaceAuthorityPath $workspace $relative;$live=Read-MorphospaceAuthorityJson $absolute;if((Get-MorphospaceCanonicalJsonSha256 $live)-cne[string]$intent.target.$projection.sha256-or[string]$completion."$($projection)_sha256"-cne[string]$intent.target.$projection.sha256){throw "Committed transition $projection projection drifted."};[void]$paths.Add("planning/$prefix/$relative")}
         foreach($projection in @($(if($intent.PSObject.Properties.Name-contains'additional_projections'){$intent.additional_projections}else{@()}))){$relative=[string]$projection.path;$absolute=Resolve-MorphospaceAuthorityPath $workspace $relative;$live=Read-MorphospaceAuthorityJson $absolute;if((Get-MorphospaceCanonicalJsonSha256 $live)-cne[string]$projection.target_sha256){throw "Committed transition additional projection drifted: $relative"};[void]$paths.Add("planning/$prefix/$relative")}
-        if([string]$intent.schema-ceq'rusty.morphospace.workflow.transition_ledger_intent.v5'){foreach($artifact in @($intent.artifacts)){$relative=[string]$artifact.path;$absolute=Resolve-MorphospaceAuthorityPath $workspace $relative;if(-not[IO.File]::Exists($absolute)-or(Get-MorphospaceAuthoritySha256 $absolute)-cne[string]$artifact.sha256){throw "Committed transition v5 artifact drifted: $relative"};[void]$paths.Add("planning/$prefix/$relative")}}
+        if([string]$intent.schema-cin@('rusty.morphospace.workflow.transition_ledger_intent.v5','rusty.morphospace.workflow.transition_ledger_intent.v6')){$intentVersion=if([string]$intent.schema-ceq'rusty.morphospace.workflow.transition_ledger_intent.v5'){'v5'}else{'v6'};foreach($artifact in @($intent.artifacts)){$relative=[string]$artifact.path;$absolute=Resolve-MorphospaceAuthorityPath $workspace $relative;if(-not[IO.File]::Exists($absolute)-or(Get-MorphospaceAuthoritySha256 $absolute)-cne[string]$artifact.sha256){throw "Committed transition $intentVersion artifact drifted: $relative"};[void]$paths.Add("planning/$prefix/$relative")}}
         $eventsAbsolute=Resolve-MorphospaceAuthorityPath $workspace ([string]$intent.events.path);$eventId=[regex]::Escape([string]$intent.event.event_id);$matches=@(Get-Content -LiteralPath $eventsAbsolute|Where-Object{$_ -match ('"event_id"\s*:\s*"'+$eventId+'"')});$expectedEvent=($intent.event|ConvertTo-Json -Depth 32 -Compress);if($matches.Count-ne1-or$matches[0].Trim()-cne$expectedEvent-or[string]$completion.event_id-cne[string]$intent.event.event_id){throw 'Committed transition event is missing, duplicated, or substituted.'};[void]$paths.Add("planning/$prefix/$([string]$intent.events.path)")
     }
     return @($paths|Sort-Object)

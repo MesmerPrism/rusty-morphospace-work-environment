@@ -192,7 +192,7 @@ function Resolve-MorphospaceNormalValidationSelector {
         throw 'Normal-validation selector candidate-freeze receipt bytes drifted.'
     }
     $freezeReceipt = Read-MorphospaceProtocolJson $freezePath
-    if ([string]$freezeReceipt.schema -cne 'rusty.morphospace.workflow.candidate_freeze.v1' -or
+    if (@('rusty.morphospace.workflow.candidate_freeze.v1','rusty.morphospace.workflow.candidate_freeze.v2') -cnotcontains [string]$freezeReceipt.schema -or
         [string]$freezeReceipt.project_id -cne [string]$Spec.project_id -or
         [string]$freezeReceipt.unit_id -cne [string]$Unit.unit_id -or
         [string]$freezeReceipt.freeze_id -cne [string]$unitFreeze.freeze_id) {

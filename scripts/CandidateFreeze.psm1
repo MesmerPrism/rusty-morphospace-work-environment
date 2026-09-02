@@ -172,8 +172,13 @@ function Test-MorphospaceFrozenCandidate {
     $workspace=[IO.Path]::GetFullPath($WorkspaceRoot);$freeze=$Unit.candidate_freeze;$path=Resolve-MorphospaceWorkspacePath $workspace ([string]$freeze.receipt_path) -RequireLeaf
     if((Get-MorphospaceFileSha256 $path) -cne [string]$freeze.receipt_sha256){throw 'Frozen candidate receipt hash drifted.'}
     $repoRoot=Split-Path $PSScriptRoot -Parent
-    if(-not(Test-Json -Json (Get-Content -Raw $path) -SchemaFile (Join-Path $repoRoot 'schemas\candidate-freeze-v1.schema.json'))){throw 'Frozen candidate receipt is malformed.'}
     $candidate=Read-MorphospaceProtocolJson $path
+    if([string]$candidate.schema-ceq'rusty.morphospace.workflow.candidate_freeze.v2'){
+        if(-not(Test-Json -Json (Get-Content -Raw $path) -SchemaFile (Join-Path $repoRoot 'schemas\candidate-freeze-v2.schema.json'))){throw 'Rematerialized frozen candidate receipt is malformed.'}
+        Import-Module (Join-Path $PSScriptRoot 'ValidatingCandidateRematerialization.psm1') -Force
+        return [bool](Test-MorphospaceRematerializedCandidate -WorkspaceRoot $workspace -Unit $Unit)
+    }
+    if([string]$candidate.schema-cne'rusty.morphospace.workflow.candidate_freeze.v1'-or-not(Test-Json -Json (Get-Content -Raw $path) -SchemaFile (Join-Path $repoRoot 'schemas\candidate-freeze-v1.schema.json'))){throw 'Frozen candidate receipt is malformed.'}
     if([string]$candidate.freeze_id -cne [string]$freeze.freeze_id -or [string]$candidate.unit_id -cne [string]$Unit.unit_id){throw 'Frozen candidate receipt identity does not match its unit marker.'}
     $unitPath="iteration-units/$([string]$Unit.unit_id).json";$liveUnit=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace $unitPath -RequireLeaf)
     $project=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace 'project.spec.json' -RequireLeaf);$state=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace 'workspace.state.json' -RequireLeaf);$featureLock=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace 'feature.lock.json' -RequireLeaf)

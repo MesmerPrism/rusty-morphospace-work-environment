@@ -61,18 +61,29 @@ function Invoke-MorphospaceSupersedeActive {
 }
 Export-ModuleMember -Function Invoke-MorphospaceSupersedeActive
 '@,[Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText((Join-Path $lifecycleRouterRoot 'ValidatingCandidateRematerialization.psm1'),@'
+function Invoke-MorphospaceRematerializeValidatingCandidate {
+    [CmdletBinding()]param([string]$WorkspaceRoot,[string]$UnitId,[string]$RepoMapPath,[string]$CandidateFreeze,[string]$SourceCompositionLock,[string]$ExpectedCandidateFreezeSha256,[string]$Timestamp,[string]$OutPath,[switch]$Execute)
+    [pscustomobject][ordered]@{action='RematerializeValidatingCandidate';workspace_root=$WorkspaceRoot;unit_id=$UnitId;repository_map=$RepoMapPath;request=$CandidateFreeze;source_composition=$SourceCompositionLock;expected_sha256=$ExpectedCandidateFreezeSha256;timestamp=$Timestamp;out_path=$OutPath;executed=$Execute.IsPresent}
+}
+Export-ModuleMember -Function Invoke-MorphospaceRematerializeValidatingCandidate
+'@,[Text.UTF8Encoding]::new($false))
     $lifecycleWorkspace = Join-Path $lifecycleRouterRoot 'workspace'
     [void][IO.Directory]::CreateDirectory($lifecycleWorkspace)
     $lifecycleMarker = Join-Path $lifecycleWorkspace 'marker.txt'
     [IO.File]::WriteAllText($lifecycleMarker,"unchanged`n",[Text.UTF8Encoding]::new($false))
     $blockedRequest = Join-Path $lifecycleRouterRoot 'blocked-request.json'
     $activeRequest = Join-Path $lifecycleRouterRoot 'active-request.json'
+    $rematerializationRequest = Join-Path $lifecycleRouterRoot 'rematerialization-request.json'
+    $replacementSourceComposition = Join-Path $lifecycleRouterRoot 'replacement-source-composition.json'
     $routerRepoMap = Join-Path $lifecycleRouterRoot 'repository-map.json'
-    foreach ($path in @($blockedRequest,$activeRequest,$routerRepoMap)) { [IO.File]::WriteAllText($path,"{}`n",[Text.UTF8Encoding]::new($false)) }
+    foreach ($path in @($blockedRequest,$activeRequest,$rematerializationRequest,$replacementSourceComposition,$routerRepoMap)) { [IO.File]::WriteAllText($path,"{}`n",[Text.UTF8Encoding]::new($false)) }
     $blockedOut = Join-Path $lifecycleWorkspace 'blocked-result.json'
     $activeOut = Join-Path $lifecycleWorkspace 'active-result.json'
+    $rematerializationOut = Join-Path $lifecycleWorkspace 'rematerialization-result.json'
     $blockedHash = Get-TestFileHash $blockedRequest
     $activeHash = Get-TestFileHash $activeRequest
+    $rematerializationHash = Get-TestFileHash $rematerializationRequest
     $markerHash = Get-TestFileHash $lifecycleMarker
     $routerScript = Join-Path $lifecycleRouterRoot 'Invoke-WorkUnitAutomation.ps1'
     $freshPwsh = (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source
@@ -105,7 +116,19 @@ Export-ModuleMember -Function Invoke-MorphospaceSupersedeActive
         (Get-TestCanonicalHash $activeRun) -ceq (Get-TestCanonicalHash $activeExpectedRun) -and
         (Get-TestCanonicalHash $activeReplay) -ceq (Get-TestCanonicalHash $activeExpectedRun)
     ) 'public SupersedeActive wrapper did not preserve exact dry/execute/replay forwarding'
-    Assert-Automation ((Get-TestFileHash $lifecycleMarker) -ceq $markerHash -and -not (Test-Path -LiteralPath $blockedOut) -and -not (Test-Path -LiteralPath $activeOut)) 'public lifecycle wrapper capture seam mutated workspace or output bytes'
+    $rematerializationArguments = @('-Action','RematerializeValidatingCandidate','-WorkspaceRoot',$lifecycleWorkspace,'-UnitId','validating-unit','-RepoMapPath',$routerRepoMap,'-ValidatingCandidateRematerialization',$rematerializationRequest,'-ReplacementSourceComposition',$replacementSourceComposition,'-ExpectedValidatingCandidateRematerializationSha256',$rematerializationHash,'-Timestamp','2026-09-02T00:05:00.0000000Z','-OutPath',$rematerializationOut)
+    $rematerializationDry = Invoke-LifecycleRouterCapture $rematerializationArguments
+    $rematerializationRun = Invoke-LifecycleRouterCapture (@($rematerializationArguments) + '-Execute')
+    $rematerializationReplay = Invoke-LifecycleRouterCapture (@($rematerializationArguments) + '-Execute')
+    $rematerializationExpectedDry = [pscustomobject][ordered]@{action='RematerializeValidatingCandidate';workspace_root=$lifecycleWorkspace;unit_id='validating-unit';repository_map=$routerRepoMap;request=$rematerializationRequest;source_composition=$replacementSourceComposition;expected_sha256=$rematerializationHash;timestamp='2026-09-02T00:05:00.0000000Z';out_path=$rematerializationOut;executed=$false}
+    $rematerializationExpectedRun = $rematerializationExpectedDry | ConvertTo-Json -Depth 8 | ConvertFrom-Json -Depth 8 -DateKind String
+    $rematerializationExpectedRun.executed = $true
+    Assert-Automation (
+        (Get-TestCanonicalHash $rematerializationDry) -ceq (Get-TestCanonicalHash $rematerializationExpectedDry) -and
+        (Get-TestCanonicalHash $rematerializationRun) -ceq (Get-TestCanonicalHash $rematerializationExpectedRun) -and
+        (Get-TestCanonicalHash $rematerializationReplay) -ceq (Get-TestCanonicalHash $rematerializationExpectedRun)
+    ) 'public RematerializeValidatingCandidate wrapper did not preserve exact dry/execute/replay forwarding'
+    Assert-Automation ((Get-TestFileHash $lifecycleMarker) -ceq $markerHash -and -not (Test-Path -LiteralPath $blockedOut) -and -not (Test-Path -LiteralPath $activeOut) -and -not (Test-Path -LiteralPath $rematerializationOut)) 'public lifecycle wrapper capture seam mutated workspace or output bytes'
 } finally {
     Remove-Item Function:Invoke-LifecycleRouterCapture -ErrorAction SilentlyContinue
     if ([IO.Directory]::Exists($lifecycleRouterRoot)) { Remove-Item -LiteralPath $lifecycleRouterRoot -Recurse -Force }
