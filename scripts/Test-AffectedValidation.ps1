@@ -3093,20 +3093,21 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     foreach ($checkId in @('development-envelope-preparation','work-environment-deep')) { Assert-True (@($developmentAdmissionPlan.selected_checks.check_id) -cnotcontains $checkId) "Development-unit admission change incorrectly selected '$checkId'." }
     foreach ($reasonCode in @('ambiguous-path-mapping','unmapped-path')) { Assert-True (@($developmentAdmissionPlan.reason_codes) -cnotcontains $reasonCode) "Development-unit admission change retained '$reasonCode'." }
 
-    # The shared v2 automation receipt has a fast direct compatibility owner,
-    # not a history-archive or cumulative automation owner.  A receipt-only
-    # change must run the exact corpus/Ready-dispatch check without paying for
-    # unrelated integration or cumulative Deep gates.
+    # The shared v2 automation receipt has a fast direct compatibility owner
+    # and is also consumed by validating-candidate rematerialization.  A
+    # receipt-only change must therefore retain its exact compatibility and
+    # dependent selector/workflow closure, without paying for history or the
+    # cumulative Deep gate.
     $automationReceiptPath = Join-Path $fixture 'schemas/work-unit-automation-receipt-v2.schema.json'
     Write-Utf8 $automationReceiptPath ((Get-Content -LiteralPath $automationReceiptPath -Raw).TrimEnd() + "`n `n")
     [void](Invoke-TestGit $fixture @('add', 'schemas/work-unit-automation-receipt-v2.schema.json'))
     [void](Invoke-TestGit $fixture @('commit', '-m', 'shared automation receipt contract'))
     $automationReceiptHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
     $automationReceiptPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $developmentAdmissionHead -HeadRevision $automationReceiptHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
-    $automationReceiptExpectedChecks = @('automation-receipt-v2-compatibility','public-boundary')
+    $automationReceiptExpectedChecks = @('automation-receipt-v2-compatibility','normal-validation-selector','public-boundary','validating-candidate-rematerialization','work-unit-automation','workflow-contracts')
     $automationReceiptActualChecks = @($automationReceiptPlan.selected_checks.check_id); [Array]::Sort($automationReceiptActualChecks, [System.StringComparer]::Ordinal)
     Assert-True (($automationReceiptActualChecks -join ',') -ceq ($automationReceiptExpectedChecks -join ',')) "Shared automation receipt selected the wrong exact closure: $($automationReceiptActualChecks -join ',')."
-    foreach ($checkId in @('history-archive-checkpoint','history-archive-checkpoint-selftest','normal-validation-selector','work-unit-automation','workflow-contracts','work-environment-deep')) { Assert-True (@($automationReceiptPlan.selected_checks.check_id) -cnotcontains $checkId) "Shared automation receipt change incorrectly selected '$checkId'." }
+    foreach ($checkId in @('history-archive-checkpoint','history-archive-checkpoint-selftest','work-environment-deep')) { Assert-True (@($automationReceiptPlan.selected_checks.check_id) -cnotcontains $checkId) "Shared automation receipt change incorrectly selected '$checkId'." }
     $retiredArchiveSelection = @($automationReceiptPlan.selected_checks | Where-Object { [string]$_.check_id -ceq 'history-archive-checkpoint' })
     $retiredArchiveSkip = @($automationReceiptPlan.skipped_checks | Where-Object { [string]$_.check_id -ceq 'history-archive-checkpoint' })
     $retiredHistoryExpansionReasons = @($automationReceiptPlan.selected_checks | Where-Object { @($_.reasons) -ccontains 'consumer-of:workflow-contracts:workflow-contracts' })
