@@ -267,9 +267,12 @@ is reusable: scheduled/manual Deep checks out full history, executes every
 independent leaf through fresh segments, and verifies their exact union.
 Neither evidence shape is publication or acceptance authority.
 
-Workflow concurrency has three closed identities: a cancelable per-PR group, a
-noncanceling main-ref group, and one shared noncanceling scheduled/manual Deep
-group. Every job has an explicit outer timeout. Segment matrices derive their
+Workflow concurrency has four closed identities: a cancelable per-PR group, a
+noncanceling main-ref group, a stable noncanceling scheduled Deep group, and a
+unique noncanceling manual Deep group bound to `github.run_id`. GitHub may
+coalesce an older pending main or scheduled run, while an explicitly requested
+manual frozen-candidate Deep run is never replaced and may overlap another run.
+Every job has an explicit outer timeout. Segment matrices derive their
 timeout from the exact segment estimated budget plus 900 seconds of bounded
 setup/cleanup overhead and reject any value reaching GitHub's six-hour ceiling.
 Setup, plan, and main-delta pre-evidence failures write create-new diagnostics
@@ -399,8 +402,12 @@ ordinary automation integration test. It proves exact dry/execute/replay
 forwarding for both lifecycle actions without replaying either focused owner;
 the focused owners remain responsible for the real state-transition and
 idempotence semantics. Local development can invoke only that seam with
-`Test-WorkUnitAutomation.ps1 -LifecycleRouterSelfTestOnly`; the registered
-owner still runs the complete integration test once for final admission.
+`Test-WorkUnitAutomation.ps1 -LifecycleRouterSelfTestOnly` only as a strict
+low-level diagnostic from an already-closed process environment; the
+registered owner still runs the complete integration test once for final
+admission. The public local Standard route is
+`Test-WorkflowContracts.ps1 -StandardDeltaOnly`, whose launcher constructs
+that closed child environment without changing its caller.
 
 `terminal-validation-selection-release-v2.schema.json` belongs to the normal
 validation selector path set. The shared

@@ -86,6 +86,6 @@ Validate with:
 
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ExecutedPreparedPublicationReconciliation.ps1 -SelfTest
-pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkUnitAutomation.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkflowContracts.ps1 -StandardDeltaOnly
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkflowContracts.ps1
 ```

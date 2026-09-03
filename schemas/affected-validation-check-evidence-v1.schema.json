@@ -89,7 +89,7 @@
   "allOf": [
     {
       "if": { "properties": { "mode": { "const": "executed" } }, "required": ["mode"] },
-      "then": { "properties": { "blocked_by": { "maxItems": 0 }, "reused_from": { "type": "null" } } }
+      "then": { "properties": { "result": { "enum": ["pass", "code-fail", "infra-fail"] }, "blocked_by": { "maxItems": 0 }, "reused_from": { "type": "null" }, "environment": { "properties": { "projected": { "const": true } } } } }
     },
     {
       "if": { "properties": { "mode": { "const": "reused" } }, "required": ["mode"] },
@@ -99,6 +99,7 @@
           "blocked_by": { "maxItems": 0 },
           "elapsed_ms": { "const": 0 },
           "reused_from": { "type": "object" },
+          "environment": { "properties": { "projected": { "const": true }, "leaf_variable_count": { "minimum": 1 }, "leaf_sha256": { "$ref": "#/$defs/sha256" }, "leaf_variables": { "minItems": 1 } } },
           "child": { "properties": { "started": { "const": false }, "exit_code": { "const": 0 }, "failure_kind": { "type": "null" }, "timed_out": { "const": false }, "output_truncated": { "const": false }, "post_kill_drain_timed_out": { "const": false } } }
         }
       }
@@ -128,35 +129,47 @@
       }
     },
     {
+      "if": { "properties": { "mode": { "const": "executed" }, "result": { "const": "pass" } }, "required": ["mode", "result"] },
+      "then": { "properties": { "child": { "properties": { "started": { "const": true } } }, "environment": { "properties": { "leaf_variable_count": { "minimum": 1 }, "leaf_sha256": { "$ref": "#/$defs/sha256" }, "leaf_variables": { "minItems": 1 } } } } }
+    },
+    {
       "if": { "properties": { "result": { "const": "pass" } }, "required": ["result"] },
-      "then": { "properties": { "child": { "properties": { "exit_code": { "const": 0 }, "failure_kind": { "type": "null" }, "timed_out": { "const": false }, "output_truncated": { "const": false }, "post_kill_drain_timed_out": { "const": false } } } } }
+      "then": { "properties": { "mode": { "enum": ["executed", "reused"] }, "child": { "properties": { "exit_code": { "const": 0 }, "failure_kind": { "type": "null" }, "timed_out": { "const": false }, "output_truncated": { "const": false }, "post_kill_drain_timed_out": { "const": false } } } } }
     },
     {
       "if": { "properties": { "result": { "const": "code-fail" } }, "required": ["result"] },
-      "then": { "properties": { "child": { "properties": { "failure_kind": { "enum": ["timeout", "output-limit", "drain-timeout", "exit-code"] } } } } }
+      "then": { "properties": { "mode": { "const": "executed" }, "child": { "properties": { "failure_kind": { "enum": ["timeout", "output-limit", "drain-timeout", "exit-code"] } } } } }
     },
     {
       "if": { "properties": { "result": { "const": "infra-fail" } }, "required": ["result"] },
-      "then": { "properties": { "child": { "properties": { "failure_kind": { "enum": ["launch", "infrastructure"] } } } } }
+      "then": { "properties": { "mode": { "const": "executed" }, "child": { "properties": { "failure_kind": { "enum": ["launch", "infrastructure"] } } } } }
+    },
+    {
+      "if": { "properties": { "result": { "const": "blocked" } }, "required": ["result"] },
+      "then": { "properties": { "mode": { "const": "blocked" } } }
+    },
+    {
+      "if": { "properties": { "child": { "properties": { "failure_kind": { "const": "launch" } }, "required": ["failure_kind"] } }, "required": ["child"] },
+      "then": { "properties": { "result": { "const": "infra-fail" }, "child": { "properties": { "started": { "const": false }, "exit_code": { "type": "null" }, "timed_out": { "const": false }, "output_truncated": { "const": false }, "post_kill_drain_timed_out": { "const": false } } } } }
     },
     {
       "if": { "properties": { "child": { "properties": { "failure_kind": { "const": "timeout" } }, "required": ["failure_kind"] } }, "required": ["child"] },
-      "then": { "properties": { "result": { "const": "code-fail" }, "child": { "properties": { "timed_out": { "const": true } } } } }
+      "then": { "properties": { "result": { "const": "code-fail" }, "child": { "properties": { "started": { "const": true }, "timed_out": { "const": true } } } } }
     },
     {
       "if": { "properties": { "child": { "properties": { "failure_kind": { "const": "output-limit" } }, "required": ["failure_kind"] } }, "required": ["child"] },
-      "then": { "properties": { "result": { "const": "code-fail" }, "child": { "properties": { "output_truncated": { "const": true } } } } }
+      "then": { "properties": { "result": { "const": "code-fail" }, "child": { "properties": { "started": { "const": true }, "timed_out": { "const": false }, "output_truncated": { "const": true } } } } }
     },
     {
       "if": { "properties": { "child": { "properties": { "failure_kind": { "const": "drain-timeout" } }, "required": ["failure_kind"] } }, "required": ["child"] },
-      "then": { "properties": { "result": { "const": "code-fail" }, "child": { "properties": { "post_kill_drain_timed_out": { "const": true } } } } }
+      "then": { "properties": { "result": { "const": "code-fail" }, "child": { "properties": { "started": { "const": true }, "timed_out": { "const": false }, "output_truncated": { "const": false }, "post_kill_drain_timed_out": { "const": true } } } } }
     },
     {
       "if": { "properties": { "child": { "properties": { "failure_kind": { "const": "exit-code" } }, "required": ["failure_kind"] } }, "required": ["child"] },
-      "then": { "properties": { "result": { "const": "code-fail" }, "child": { "properties": { "exit_code": { "type": "integer", "not": { "const": 0 } } } } } }
+      "then": { "properties": { "result": { "const": "code-fail" }, "child": { "properties": { "started": { "const": true }, "exit_code": { "type": "integer", "not": { "const": 0 } }, "timed_out": { "const": false }, "output_truncated": { "const": false }, "post_kill_drain_timed_out": { "const": false } } } } }
     },
     {
-      "if": { "properties": { "child": { "properties": { "failure_kind": { "enum": ["launch", "infrastructure"] } }, "required": ["failure_kind"] } }, "required": ["child"] },
+      "if": { "properties": { "child": { "properties": { "failure_kind": { "const": "infrastructure" } }, "required": ["failure_kind"] } }, "required": ["child"] },
       "then": { "properties": { "result": { "const": "infra-fail" }, "child": { "properties": { "timed_out": { "const": false }, "output_truncated": { "const": false }, "post_kill_drain_timed_out": { "const": false } } } } }
     }
   ],

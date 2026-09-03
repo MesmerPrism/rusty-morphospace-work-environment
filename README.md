@@ -156,7 +156,8 @@ only the additional work-unit automation gate. During local iteration, use
 focused checks; freeze and commit the candidate before its one risk-selected
 handoff aggregate. A dirty aggregate is diagnostic and is not a prerequisite
 for a matching clean receipt. For a local Standard handoff, run Quick once and
-then run `scripts/Test-WorkUnitAutomation.ps1` as the delta. Do not follow Quick
+then run `scripts/Test-WorkflowContracts.ps1 -StandardDeltaOnly` as the
+closed-child Work Unit Automation delta. Do not follow Quick
 with cumulative `Test-WorkEnvironment.ps1 -Tier Standard`, which replays the
 Quick suite for compatibility.
 
