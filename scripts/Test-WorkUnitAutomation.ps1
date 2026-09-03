@@ -14,6 +14,8 @@ function Assert-Automation {
     if (-not $Condition) { throw "Automation self-test failed: $Message" }
 }
 
+$automationEntry=Get-Command (Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1');$actionSet=@($automationEntry.Parameters['Action'].Attributes|Where-Object{$_-is[Management.Automation.ValidateSetAttribute]}|ForEach-Object{$_.ValidValues});Assert-Automation ($actionSet-ccontains'ReprepareRetiredDevelopmentEnvelope') 'public automation entrypoint does not register ReprepareRetiredDevelopmentEnvelope'
+
 function Get-TestCanonicalHash {
     param([object]$Value)
     $module = Get-Module WorkUnitAutomation

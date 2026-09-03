@@ -509,6 +509,13 @@ transaction.
   repository map, state, and ledger preimages to its bounded agent assessment.
   Exact replay revalidates the same result; an interrupted owner transaction
   may recover it, while stale/conflicting evidence awaits independent rescue.
+  Preparation validates the zeroed-field feature-lock fingerprint, derives the
+  matching module registry when the lock changes, and permits only additive
+  validation-profile registration. After an exact `RetireProposed` suffix, the
+  lock/registry defect may be repaired only through
+  `ReprepareRetiredDevelopmentEnvelope`; it preserves every old evidence byte,
+  produces a fresh preparation, and leaves the distinct replacement absent for
+  ordinary admission.
   The resulting proposal still follows ordinary Ready/Inspect/Claim. An
   admitted active unit must use `FreezeCandidate` before BeginValidation;
   historical units without the admission marker retain their existing route.

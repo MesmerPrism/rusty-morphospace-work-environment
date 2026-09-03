@@ -24,6 +24,17 @@ function Assert-AdmissionPaths {
             if(-not $inProject -or -not $inScope){throw "Admitted write path '$id/$canonical' exceeds project or agent source-root authority."}
         }
     }
+    foreach($dependency in @($(if($Unit.PSObject.Properties.Name-contains'read_only_dependencies'){@($Unit.read_only_dependencies)}else{@()}))){
+        $id=[string]$dependency.repo_id
+        if(-not$projectById.ContainsKey($id)-or-not$scopeById.ContainsKey($id)){throw "Admitted read-only dependency repository '$id' is undeclared by project or assessment."}
+        foreach($path in @($dependency.paths)){
+            $rawPath=[string]$path;$directory=$rawPath.EndsWith('/');$body=if($directory){$rawPath.TrimEnd('/')}else{$rawPath};$canonical=ConvertTo-MorphospaceProtocolRelativePath $body;if($directory){$canonical+='/' }
+            if($canonical-cne$rawPath){throw "Admitted read-only path '$id/$rawPath' is not canonical."}
+            $inProject=@($projectById[$id].allowed_paths|Where-Object{$canonical-ceq[string]$_-or$canonical.StartsWith(([string]$_).TrimEnd('/')+'/',[StringComparison]::OrdinalIgnoreCase)}).Count-gt0
+            $inScope=@($scopeById[$id].source_roots|Where-Object{$canonical-ceq[string]$_-or$canonical.StartsWith(([string]$_).TrimEnd('/')+'/',[StringComparison]::OrdinalIgnoreCase)}).Count-gt0
+            if(-not$inProject-or-not$inScope){throw "Admitted read-only path '$id/$canonical' exceeds project or agent source-root authority."}
+        }
+    }
     foreach($category in @($Unit.change_categories)){if(@($Assessment.allowed_change_categories)-cnotcontains [string]$category){throw "Unit change category '$category' exceeds admitted agent scope."}}
     if([string]$Unit.device_requirement -eq 'required' -and [string]$Assessment.device_envelope.requirement -in @('forbidden','none')){throw 'Unit device requirement exceeds the admitted device envelope.'}
 }

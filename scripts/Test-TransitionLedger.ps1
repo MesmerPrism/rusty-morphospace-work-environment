@@ -2073,6 +2073,7 @@ try {
         -DriftTarget unit `
         -TransitionModulePath $transitionModulePath
 
+    foreach($recoverySchema in @('development-envelope-repreparation-v1.schema.json','development-envelope-repreparation-receipt-v1.schema.json','development-envelope-repreparation-intent-v1.schema.json','development-envelope-repreparation-completion-v1.schema.json','development-envelope-source-composition-v2.schema.json')){$schemaPath=Join-Path $root "schemas\$recoverySchema";$schema=Get-Content -Raw -LiteralPath $schemaPath|ConvertFrom-Json;Assert-Ledger ($schema.type-ceq'object'-and$schema.additionalProperties-eq$false) "repreparation schema '$recoverySchema' is not a closed transaction surface"}
     Write-Host 'Transition-ledger self-test passed.'
 } finally {
     if ([IO.Directory]::Exists($workspace)) { [IO.Directory]::Delete($workspace, $true) }
