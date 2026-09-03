@@ -10,7 +10,7 @@ concise; link to detailed runbooks instead of copying long recipes into them.
 | Surface | Update when | Keep in the entrypoint |
 | --- | --- | --- |
 | `rusty-morphospace` | Public repo lanes, naming, project/module lifecycle, feature activation, validation selection, agent routing, or public/private rules change. | Portable first-hop routing and links to detailed skill references. |
-| `rusty-morphospace-context` | Machine-local work-environment resolution or installed provenance routing changes. | Explicit locator read, portable-skill handoff, and authority limits. |
+| `rusty-morphospace-context` | Machine-local work-environment resolution or installed provenance routing changes. | Locator read, portable-skill handoff, and authority limits. |
 | `system-engineering` | Authority, contracts, manifests, module kinds, observability, validation gates, or mitigation structure changes. | Architecture questions, invariants, output shape, and links. |
 | `meta-quest-workflow` (canonical source: `meta-quest-agent-workflow`) | Device policy, provider selection, ADB, APK build lane, runtime validation, QCL, sidecar, capture, signal, or evidence rules change. | Typed-provider preference, build-lane and fallback labels, device-operation gates, stop rules, evidence boundary, and links. |
 | `rust-work-graph` | Repo inventory, source roots, module layout, instruction-surface audits, graph cadence, or impact analysis changes. | Scan order, graph interpretation rules, scope limits, and links. |

@@ -117,12 +117,12 @@ and contains no machine paths or live state.
 
 ### rusty-morphospace-context
 
-Invoke this resolver explicitly when a task needs the installed
-work-environment clone. It reads the generated locator, then hands portable
-guidance to `rusty-morphospace`. Its `agents/openai.yaml` keeps
-`allow_implicit_invocation: false`; it contains no architecture copy, live
-unit, or release-candidate status. Private planning workspaces may add a
-stricter state-first read order in their own `AGENTS.md`.
+Use this resolver when a task needs the installed work-environment clone. It
+reads the generated locator, then hands portable guidance to
+`rusty-morphospace`. Its `agents/openai.yaml` keeps
+`allow_implicit_invocation: true`; it contains no architecture copy, live unit,
+or release-candidate status. Private planning workspaces may add a stricter
+state-first read order in their own `AGENTS.md`.
 
 ### system-engineering
 

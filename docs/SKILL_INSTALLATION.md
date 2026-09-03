@@ -8,7 +8,7 @@ do not copy skills by hand or place contributor paths in committed templates.
 | Skill | Primary use |
 | --- | --- |
 | `rusty-morphospace` | Public architecture, ownership, project workflow, validation, boundaries, and agent routing. |
-| `rusty-morphospace-context` | Explicit machine-local work-environment and installed-provenance resolution. |
+| `rusty-morphospace-context` | Machine-local work-environment and installed-provenance resolution. |
 | `system-engineering` | Authority, contracts, interfaces, observability, and validation. |
 | `rust-work-graph` | Bounded inventories, dependency/diff maps, and graph receipts. |
 | `meta-quest-workflow` (external canonical source) | Live Quest/ADB/APK/evidence routing to the public device workflow. |

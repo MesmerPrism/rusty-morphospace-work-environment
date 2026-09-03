@@ -25,7 +25,7 @@ preserve them. Only the explicit, fingerprint-bound, backup-first
 
 The public `rusty-morphospace` and `system-engineering` templates route project
 work through the portable project spec, feature lock, module lifecycle, and
-autonomous iteration protocol in `docs/`. The explicit
+autonomous iteration protocol in `docs/`. The focused
 `rusty-morphospace-context` template resolves an installed machine-local clone
 and hands portable guidance to `rusty-morphospace`. All five templates follow
 the instruction synchronization matrix so durable routing changes stay aligned
