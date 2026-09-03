@@ -933,7 +933,7 @@ function ConvertFrom-AffectedValidationLeafEnvironmentProof([string]$Proof) {
 }
 function Get-AffectedValidationFailureKind([string]$Result,[object]$Child,[AllowNull()][string]$IntegrityError) {
     if($Result-ceq'pass'){return $null}
-    if($Result-ceq'infra-fail'-and$null-ne$IntegrityError){return 'infrastructure'}
+    if($Result-ceq'infra-fail'-and-not[string]::IsNullOrWhiteSpace([string]$IntegrityError)){return 'infrastructure'}
     if(-not[bool]$Child.Started){return 'launch'}
     if([bool]$Child.TimedOut){return 'timeout'}
     if([bool]$Child.OutputTruncated){return 'output-limit'}
