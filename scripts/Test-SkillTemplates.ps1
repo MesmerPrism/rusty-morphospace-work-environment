@@ -129,8 +129,8 @@ foreach ($agentPath in @($publicAgentPath, $contextAgentPath)) {
 if ((Get-Content -Raw -LiteralPath $publicAgentPath) -notmatch "allow_implicit_invocation:\s*true") {
     throw "The public Morphospace skill must allow implicit invocation."
 }
-if ((Get-Content -Raw -LiteralPath $contextAgentPath) -notmatch "allow_implicit_invocation:\s*false") {
-    throw "The local context resolver must require explicit invocation."
+if ((Get-Content -Raw -LiteralPath $contextAgentPath) -notmatch "allow_implicit_invocation:\s*true") {
+    throw "The local context resolver must remain implicitly discoverable."
 }
 
 $lifecycle = Get-Content -Raw -LiteralPath (

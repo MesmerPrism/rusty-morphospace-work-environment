@@ -1,12 +1,13 @@
 ---
 name: rusty-morphospace-context
-description: 'Explicitly resolve a machine-local Rusty Morphospace work-environment clone and its installed provenance before handing portable architecture, ownership, project-workflow, or boundary guidance to $rusty-morphospace.'
+description: 'Resolve a machine-local Rusty Morphospace work-environment clone and its installed provenance before handing portable architecture, ownership, project-workflow, or boundary guidance to $rusty-morphospace.'
 ---
 
 # Rusty Morphospace Context
 
-Use this skill only as an explicit machine-local resolver. Do not copy portable
-architecture or project-workflow guidance into this skill.
+Use this skill as the machine-local resolver when a request needs exact
+work-environment provenance or paths. Do not copy portable architecture or
+project-workflow guidance into this skill.
 
 ## Resolve The Work Environment
 
