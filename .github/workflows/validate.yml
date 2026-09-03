@@ -82,7 +82,7 @@ jobs:
             "${platform}_matrix=$(($matrix | ConvertTo-Json -Depth 4 -Compress))" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
           }
       - name: Preserve canonical-digest affected plan
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: affected-plan-${{ steps.plan.outputs.plan_sha256 }}
           path: ${{ runner.temp }}/affected-plan.json
@@ -104,7 +104,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Restore prior exact-check cache
         if: github.event_name == 'pull_request'
-        uses: actions/cache/restore@1bd1e32a3bdc45362d1e726936510720a7c30a57
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: ${{ runner.temp }}/affected-check-cache-${{ matrix.segment_id }}/current
           key: affected-check-${{ matrix.segment_id }}-pr-${{ github.event.pull_request.number }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -167,7 +167,7 @@ jobs:
           git diff --check $base $head; if ($LASTEXITCODE -ne 0) { throw 'Linux event delta has whitespace errors.' }
       - name: Preserve content-addressed Linux segment evidence
         if: always() && needs.select.outputs.linux == 'true'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: affected-segment-${{ matrix.segment_id }}-${{ steps.execute.outputs.evidence_sha256 }}
           path: ${{ runner.temp }}/${{ matrix.segment_id }}.json
@@ -175,7 +175,7 @@ jobs:
           retention-days: 7
       - name: Preserve exact Linux check streams and receipts
         if: always() && needs.select.outputs.linux == 'true' && steps.execute.outputs.cache_ready == 'true'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: affected-checks-${{ matrix.segment_id }}-${{ github.sha }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/affected-check-cache-${{ matrix.segment_id }}/current
@@ -183,13 +183,13 @@ jobs:
           retention-days: 7
       - name: Save resumable Linux check cache
         if: always() && github.event_name == 'pull_request' && needs.select.outputs.linux == 'true' && steps.execute.outputs.cache_ready == 'true'
-        uses: actions/cache/save@1bd1e32a3bdc45362d1e726936510720a7c30a57
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: ${{ runner.temp }}/affected-check-cache-${{ matrix.segment_id }}/current
           key: affected-check-${{ matrix.segment_id }}-pr-${{ github.event.pull_request.number }}-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Preserve resumable selector phase evidence
         if: always() && needs.select.outputs.linux == 'true'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: selector-phases-${{ matrix.segment_id }}-${{ github.sha }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/affected-selector-phases-*-${{ matrix.segment_id }}
@@ -218,7 +218,7 @@ jobs:
           if ($env:LINUX_SELECTED -ceq 'true' -and $env:SEGMENT_RESULT -cne 'success') { throw 'One or more required Linux segments did not succeed.' }
       - name: Download Linux segment evidence
         if: needs.select.outputs.linux == 'true'
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           pattern: affected-segment-linux-*
           path: ${{ runner.temp }}/affected-linux-segments
@@ -239,7 +239,7 @@ jobs:
           "evidence_sha256=$((Get-FileHash -LiteralPath "$env:RUNNER_TEMP/affected-linux-evidence.json" -Algorithm SHA256).Hash.ToLowerInvariant())" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
       - name: Preserve content-addressed Linux evidence
         if: needs.select.outputs.linux == 'true'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: affected-linux-${{ steps.merge.outputs.evidence_sha256 }}
           path: ${{ runner.temp }}/affected-linux-evidence.json
@@ -261,7 +261,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Restore prior exact-check cache
         if: github.event_name == 'pull_request'
-        uses: actions/cache/restore@1bd1e32a3bdc45362d1e726936510720a7c30a57
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: ${{ runner.temp }}/affected-check-cache-${{ matrix.segment_id }}/current
           key: affected-check-${{ matrix.segment_id }}-pr-${{ github.event.pull_request.number }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -324,7 +324,7 @@ jobs:
           git diff --check $base $head; if ($LASTEXITCODE -ne 0) { throw 'Windows event delta has whitespace errors.' }
       - name: Preserve content-addressed Windows segment evidence
         if: always() && needs.select.outputs.windows == 'true'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: affected-segment-${{ matrix.segment_id }}-${{ steps.execute.outputs.evidence_sha256 }}
           path: ${{ runner.temp }}/${{ matrix.segment_id }}.json
@@ -332,7 +332,7 @@ jobs:
           retention-days: 7
       - name: Preserve exact Windows check streams and receipts
         if: always() && needs.select.outputs.windows == 'true' && steps.execute.outputs.cache_ready == 'true'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: affected-checks-${{ matrix.segment_id }}-${{ github.sha }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/affected-check-cache-${{ matrix.segment_id }}/current
@@ -340,7 +340,7 @@ jobs:
           retention-days: 7
       - name: Save resumable Windows check cache
         if: always() && github.event_name == 'pull_request' && needs.select.outputs.windows == 'true' && steps.execute.outputs.cache_ready == 'true'
-        uses: actions/cache/save@1bd1e32a3bdc45362d1e726936510720a7c30a57
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: ${{ runner.temp }}/affected-check-cache-${{ matrix.segment_id }}/current
           key: affected-check-${{ matrix.segment_id }}-pr-${{ github.event.pull_request.number }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -367,7 +367,7 @@ jobs:
           if ($env:WINDOWS_SELECTED -ceq 'true' -and $env:SEGMENT_RESULT -cne 'success') { throw 'One or more required Windows segments did not succeed.' }
       - name: Download Windows segment evidence
         if: needs.select.outputs.windows == 'true'
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           pattern: affected-segment-windows-*
           path: ${{ runner.temp }}/affected-windows-segments
@@ -388,7 +388,7 @@ jobs:
           "evidence_sha256=$((Get-FileHash -LiteralPath "$env:RUNNER_TEMP/affected-windows-evidence.json" -Algorithm SHA256).Hash.ToLowerInvariant())" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
       - name: Preserve content-addressed Windows evidence
         if: needs.select.outputs.windows == 'true'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: affected-windows-${{ steps.merge.outputs.evidence_sha256 }}
           path: ${{ runner.temp }}/affected-windows-evidence.json
@@ -513,7 +513,7 @@ jobs:
           ./scripts/Invoke-AffectedValidation.ps1 -RepositoryRoot . -BaseCommit $env:PUSH_BEFORE -HeadCommit $env:GITHUB_SHA -PlanPath "$env:RUNNER_TEMP/affected-plan.json" -Platform linux -SegmentId $env:SEGMENT_ID -OutPath $evidencePath | Out-Null
           "evidence_sha256=$((Get-FileHash -LiteralPath $evidencePath -Algorithm SHA256).Hash.ToLowerInvariant())" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
       - name: Preserve current Linux delta segment
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: affected-segment-${{ matrix.segment_id }}-${{ steps.execute.outputs.evidence_sha256 }}
           path: ${{ runner.temp }}/${{ matrix.segment_id }}.json
@@ -543,7 +543,7 @@ jobs:
           ./scripts/Invoke-AffectedValidation.ps1 -RepositoryRoot . -BaseCommit $env:PUSH_BEFORE -HeadCommit $env:GITHUB_SHA -PlanPath "$env:RUNNER_TEMP/affected-plan.json" -Platform windows -SegmentId $env:SEGMENT_ID -OutPath $evidencePath | Out-Null
           "evidence_sha256=$((Get-FileHash -LiteralPath $evidencePath -Algorithm SHA256).Hash.ToLowerInvariant())" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
       - name: Preserve current Windows delta segment
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: affected-segment-${{ matrix.segment_id }}-${{ steps.execute.outputs.evidence_sha256 }}
           path: ${{ runner.temp }}/${{ matrix.segment_id }}.json
@@ -558,7 +558,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with: { fetch-depth: 0 }
       - name: Download current Linux delta segment evidence
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           pattern: affected-segment-linux-*
           path: ${{ runner.temp }}/affected-linux-segments
@@ -579,7 +579,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with: { fetch-depth: 0 }
       - name: Download current Windows delta segment evidence
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           pattern: affected-segment-windows-*
           path: ${{ runner.temp }}/affected-windows-segments

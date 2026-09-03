@@ -1711,6 +1711,9 @@ if ($runFullSelector -or $runExecutorPassPhase) {
     $phaseHead = (& git -C $repoRoot rev-parse HEAD).Trim()
     $phaseTree = (& git -C $repoRoot rev-parse 'HEAD^{tree}').Trim()
     $phaseInventory = Get-MorphospaceAffectedTreeInventory -RepositoryRoot $repoRoot -Commit $phaseHead
+    foreach($trustCheckId in $selectorTrustRootCheckIds){
+        Assert-True ([string]$phaseCompiledRegistry.checks[$trustCheckId].cache_policy -ceq 'exact-host') "Deterministic selector trust check '$trustCheckId' is not eligible for exact-host reuse."
+    }
     $selectorPhaseCheckIds=@('affected-selector-graph-import-closure','affected-selector-dependency-closure','affected-selector-executor-pass-schema','affected-selector-executor-native-failure-damage','affected-selector-executor-native-exit125-damage','affected-selector-executor-forged-terminal-damage','affected-selector-executor-parent-containment-damage','affected-selector-executor-descendant-containment-damage','affected-selector-executor-output-ceiling-damage','affected-selector-executor-timeout-damage','affected-selector-executor-dual-stream-damage','affected-selector-executor-source-integrity-damage','affected-selector-executor-publication-collision-damage','affected-selector-selection-scenarios','affected-selector-trust-self-executor','affected-selector-trust-routing-contracts','affected-selector-trust-proportional-mappings','affected-selector-trust-damage-final','affected-selector-selftest')
     $phaseDependencyInput=$null
     foreach($phaseCheckId in $selectorPhaseCheckIds){
@@ -1729,6 +1732,21 @@ if ($runFullSelector -or $runExecutorPassPhase) {
     Assert-True (Test-Json -Json (ConvertTo-MorphospaceCanonicalJson -Value $derivedPhaseTerminal) -SchemaFile (Join-Path $repoRoot 'schemas/affected-validation-self-test-phase-receipt-v1.schema.json') -ErrorAction Stop) 'Actual registry-derived phase manifest does not validate through the closed phase receipt schema.'
     $bindingCompatibilityOutput = @(& (Join-Path $repoRoot 'scripts/Invoke-AffectedValidationSelfTestPhase.ps1') -BindingSelfTest)
     Assert-True (@($bindingCompatibilityOutput | Where-Object { [string]$_ -ceq 'Affected-validation phase ancestor-binding compatibility self-test passed.' }).Count -eq 1) 'Affected phase ancestor-binding positive/damage self-test did not pass exactly once.'
+    $hostedActionPins = @{
+        'actions/checkout'='3d3c42e5aac5ba805825da76410c181273ba90b1'
+        'actions/upload-artifact'='043fb46d1a93c77aae656e7c1c64a875d1fc6a0a'
+        'actions/download-artifact'='3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c'
+        'actions/cache/restore'='55cc8345863c7cc4c66a329aec7e433d2d1c52a9'
+        'actions/cache/save'='55cc8345863c7cc4c66a329aec7e433d2d1c52a9'
+    }
+    $hostedActionUses = @([regex]::Matches($workflowSource,'(?m)^\s+-?\s*uses:\s+(?<action>actions/[a-z0-9-]+(?:/[a-z0-9-]+)?)@(?<commit>[0-9a-f]{40})\s*$'))
+    Assert-True ($hostedActionUses.Count -gt 0) 'Workflow contains no immutable hosted action references.'
+    foreach($use in $hostedActionUses){
+        $action=[string]$use.Groups['action'].Value
+        $commit=[string]$use.Groups['commit'].Value
+        Assert-True ($hostedActionPins.ContainsKey($action) -and [string]$hostedActionPins[$action] -ceq $commit) "Workflow action '$action@$commit' is outside the exact Node 24 action set."
+    }
+    foreach($action in $hostedActionPins.Keys){ Assert-True (@($hostedActionUses | Where-Object { [string]$_.Groups['action'].Value -ceq $action }).Count -gt 0) "Workflow does not exercise the pinned '$action' action." }
     $workflowJobs = @{}
     foreach ($match in [regex]::Matches($workflowSource, '(?ms)^  (?<id>[a-z0-9-]+):\r?\n(?<body>.*?)(?=^  [a-z0-9-]+:|\z)')) { $workflowJobs[[string]$match.Groups['id'].Value] = [string]$match.Groups['body'].Value }
     foreach ($requiredContext in @('quick-linux','quick-windows','standard-windows')) { Assert-True $workflowJobs.ContainsKey($requiredContext) "PR workflow lacks the required '$requiredContext' context." }

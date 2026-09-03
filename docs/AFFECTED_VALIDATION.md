@@ -254,6 +254,15 @@ is reusable: scheduled/manual Deep checks out full history, executes every
 independent leaf through fresh segments, and verifies their exact union.
 Neither evidence shape is publication or acceptance authority.
 
+Every JavaScript action in this workflow is pinned to an immutable Node 24
+release commit. Artifact upload keeps the default archived transport, and all
+downloads use the existing name/pattern and merged-directory modes; the action
+upgrade does not opt into direct-file upload or change the evidence filenames,
+payloads, or repository-computed digests. The cache key and cached-directory
+contracts are likewise unchanged. These jobs use GitHub-hosted runners, which
+satisfy the Node 24 action runner floor; adding a self-hosted runner requires a
+separate compatibility decision.
+
 The pre-job infrastructure classifier observes the closed `git`, `pwsh`, and
 `rg` set, but requires only `git` and `pwsh` for the registered PR commands.
 `rg` is optional at this boundary. A second missing required tool state fails
