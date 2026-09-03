@@ -164,7 +164,7 @@
         "schema": { "const": "rusty.morphospace.workflow.affected_validation_dependency_resolution.v1" },
         "algorithm": { "const": "indexed-static-closure-v1" },
         "mode": { "enum": ["exact", "all-tracked-scripts-fallback"] },
-        "entrypoint": { "$ref": "#/$defs/scriptPath" },
+        "entrypoint": { "$ref": "#/$defs/checkEntrypointPath" },
         "used_declarations": { "type": "array", "maxItems": 256, "items": { "$ref": "#/$defs/dependencyDeclaration" } },
         "fallback_reasons": {
           "type": "array", "maxItems": 256,
@@ -182,6 +182,7 @@
         { "if": { "properties": { "mode": { "const": "all-tracked-scripts-fallback" } } }, "then": { "properties": { "fallback_reasons": { "minItems": 1 } } } }
       ]
     },
+    "checkEntrypointPath": { "type": "string", "minLength": 12, "maxLength": 4096, "pattern": "^(?:scripts|tools)/[^\\\\:\u0000-\u001f\u007f]+\\.ps(?:m)?1$" },
     "scriptPath": { "type": "string", "minLength": 12, "maxLength": 4096, "pattern": "^scripts/[^\\\\:\u0000-\u001f\u007f]+\\.ps(?:m)?1$" },
     "variable": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z_][A-Za-z0-9_:.-]*$" },
     "runner": {

@@ -1664,6 +1664,9 @@ if ($runFullSelector -or $runExecutorPassPhase) {
     $phaseManifestCanonicalUpperBound = ([long]2048 * (([long]4096 * 12) + 256)) + 1048576
     Assert-True ([long]$checkEvidenceSchema.'$defs'.artifact.properties.bytes.maximum -eq 134217728 -and [long]$checkEvidenceSchema.'$defs'.artifact.properties.bytes.maximum -gt $phaseManifestCanonicalUpperBound -and [int]$checkEvidenceSchema.'$defs'.artifact.allOf[0].else.properties.bytes.maximum -eq 10485760) 'Outer evidence does not cover the maximum escaped-Unicode phase receipt domain while retaining the ordinary artifact ceiling.'
     Assert-True (@($checkEvidenceSchema.required) -ccontains 'plan_sha256') 'Affected check evidence does not retain the original plan identity required by inner phase artifacts.'
+    $checkEntrypointPattern = [string]$checkEvidenceSchema.'$defs'.checkEntrypointPath.pattern
+    $declarationScriptPattern = [string]$checkEvidenceSchema.'$defs'.scriptPath.pattern
+    Assert-True ([string]$checkEvidenceSchema.'$defs'.dependencyResolution.properties.entrypoint.'$ref' -ceq '#/$defs/checkEntrypointPath' -and $checkEntrypointPattern.StartsWith('^(?:scripts|tools)/',[StringComparison]::Ordinal) -and $checkEntrypointPattern.Replace('^(?:scripts|tools)/','^scripts/') -ceq $declarationScriptPattern) 'Affected check evidence does not distinguish tracked script/tool entrypoints from scripts-only dynamic declarations.'
     foreach ($manifestSchema in @($phaseReceiptSchema.properties.binding.properties.dependency_manifest.items,$phaseProjectionSchema.'$defs'.manifestRecord)) {
         $manifestFields=@($manifestSchema.required);[Array]::Sort($manifestFields,[StringComparer]::Ordinal)
         Assert-True (($manifestFields -join ',') -ceq 'blob,mode,path') 'Affected phase dependency manifest does not retain the exact outer tree-record shape.'
