@@ -121,9 +121,11 @@ function Assert-PreparationEnvelope {
     if(@($Preparation.envelope.allowed_change_categories).Count-eq0-or@($Preparation.envelope.allowed_effect_categories).Count-eq0){throw 'Preparation requires closed change and effect ceilings.'}
     if([string]$targetLock.lock_fingerprint-cne(Get-PreparationLockFingerprint $targetLock)){throw 'Preparation target feature-lock fingerprint is stale or damaged.'}
     $registeredProfiles=@($targetProject.validation_profiles|ForEach-Object{[string]$_.profile_id})
-    foreach($profile in @($Preparation.envelope.build_envelope.allowed_profiles)){
+    $declaredProfiles=@($Preparation.envelope.build_envelope.allowed_profiles|ForEach-Object{[string]$_}|Sort-Object -Unique)
+    foreach($profile in $declaredProfiles){
         if($registeredProfiles-cnotcontains[string]$profile){throw "Preparation build profile '$profile' is not registered in the target project validation profiles."}
     }
+    $currentProfiles=@($Project.validation_profiles|ForEach-Object{[string]$_.profile_id});foreach($profile in @($registeredProfiles|Where-Object{$currentProfiles-cnotcontains$_})){if($declaredProfiles-cnotcontains$profile){throw "Preparation adds validation profile '$profile' outside the declared build profile ceiling."}}
 }
 function Complete-MorphospaceDevelopmentEnvelopePreparation {
     param([string]$Workspace,[string]$RepoRoot,[string]$IntentRelative,[string]$CompletionRelative,[ValidateSet('none','after-artifacts','after-project','after-lock','after-state','after-event')][string]$FaultAfter='none')

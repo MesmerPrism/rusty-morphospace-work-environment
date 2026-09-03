@@ -24,8 +24,8 @@ canonical compact UTF-8 JSON projection. The current workspace module registry m
 match the current lock and selected project modules. Whenever the lock changes,
 preparation derives and CAS-installs the target registry from the target lock
 revision/fingerprint and selected modules. Prepared build profiles must be
-registered in the target project; existing validation profiles are immutable
-and only new registrations may be added.
+registered in the target project; existing validation profiles are immutable,
+and every new registration must be named by the declared build-profile ceiling.
 
 An optional `schema_pin_revision` permits the same owner transaction to advance
 the project, feature-lock, and workspace-state `$schema` pins. The three live
@@ -106,7 +106,11 @@ After an exact `RetireProposed` transaction, a preparation affected by the
 lock-fingerprint/module-registry defect is not reusable. The narrow
 `ReprepareRetiredDevelopmentEnvelope` action authenticates the contiguous old
 preparation, admission, and retirement suffix and a distinct absent replacement
-identity, then atomically installs a corrected additive project/lock/state
+identity. Its project, feature-lock, and raw repository-map preimages must equal
+the original preparation intent targets, and its idle state preimage must equal
+the retirement intent target. Resumed intent/completion timestamps must use the
+strict seven-digit UTC form and the completion cannot predate the intent. The
+action then atomically installs a corrected additive project/lock/state
 triple plus a fresh preparation receipt and source-composition v2 lock. It
 preserves the retired unit and all older artifacts byte-for-byte. Its source
 observation accepts only exact, hash-enumerated workflow-owned dirt in planning
