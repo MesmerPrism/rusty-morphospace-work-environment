@@ -1197,13 +1197,15 @@ $checks = @(
 function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]$Registry) {
     $fixture = Join-Path ([IO.Path]::GetTempPath()) ('morphospace-affected-per-check-closure-' + [guid]::NewGuid().ToString('N'))
     [void][IO.Directory]::CreateDirectory((Join-Path $fixture 'scripts'))
+    [void][IO.Directory]::CreateDirectory((Join-Path $fixture 'tools'))
     try {
         Write-Utf8 (Join-Path $fixture 'scripts/Entry.ps1') "Import-Module (Join-Path `$PSScriptRoot 'Static.psm1') -Force`nif (`$true) { Import-Module `$DynamicPath -Force }`n"
         Write-Utf8 (Join-Path $fixture 'scripts/Static.psm1') "Set-StrictMode -Version 2.0`n"
         Write-Utf8 (Join-Path $fixture 'scripts/Dynamic.psm1') "Set-StrictMode -Version 2.0`n"
         Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "& `$UnknownRunner`n"
         Write-Utf8 (Join-Path $fixture 'scripts/Unrelated.ps1') "'unrelated'`n"
-        $records = @('scripts/Dynamic.psm1','scripts/Entry.ps1','scripts/Fallback.ps1','scripts/Static.psm1','scripts/Unrelated.ps1') | ForEach-Object {
+        Write-Utf8 (Join-Path $fixture 'tools/Test-Tool.ps1') "Import-Module 'scripts/Static.psm1' -Force`n"
+        $records = @('scripts/Dynamic.psm1','scripts/Entry.ps1','scripts/Fallback.ps1','scripts/Static.psm1','scripts/Unrelated.ps1','tools/Test-Tool.ps1') | ForEach-Object {
             [pscustomobject][ordered]@{mode='100644';type='blob';blob=('0' * 40);path=$_}
         }
         $inventory = [pscustomobject][ordered]@{records=@($records)}
@@ -1211,22 +1213,24 @@ function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]
         $exact = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @($declaration)
         Assert-True (($exact.paths -join ',') -ceq 'scripts/Dynamic.psm1,scripts/Entry.ps1,scripts/Static.psm1') 'Per-check dependency closure did not retain only its exact static and declared dynamic script closure.'
         Assert-True ([string]$exact.resolution.mode -ceq 'exact' -and @($exact.resolution.used_declarations).Count -eq 1 -and @($exact.resolution.fallback_reasons).Count -eq 0) 'Per-check exact dependency resolution did not bind its used declaration and empty fallback reason set.'
+        $toolExact = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'tools/Test-Tool.ps1' -Inventory $inventory -DynamicDeclarations @()
+        Assert-True (($toolExact.paths -join ',') -ceq 'scripts/Static.psm1,tools/Test-Tool.ps1' -and [string]$toolExact.resolution.mode -ceq 'exact') 'Tracked tools entrypoint did not retain its exact static script closure.'
         $fallback = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
-        Assert-True ([string]$fallback.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($fallback.paths).Count -eq 5) 'Unknown per-check dispatch did not conservatively bind every tracked script.'
+        Assert-True ([string]$fallback.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($fallback.paths).Count -eq 6) 'Unknown per-check dispatch did not conservatively bind every tracked script.'
         Assert-True (@($fallback.resolution.fallback_reasons | Where-Object { [string]$_.importer -ceq 'scripts/Fallback.ps1' -and [string]$_.variable -ceq 'UnknownRunner' -and [string]$_.kind -ceq 'unresolved-invocation' }).Count -eq 1) 'Unknown per-check dispatch did not publish its exact fallback reason.'
 
         Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "`$Runner = 'Static.psm1'`n`$Runner = `$RuntimePath`n& `$Runner`n"
         $mixed = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
-        Assert-True ([string]$mixed.resolution.mode -ceq 'all-tracked-scripts-fallback' -and ($mixed.paths -join ',') -ceq 'scripts/Dynamic.psm1,scripts/Entry.ps1,scripts/Fallback.ps1,scripts/Static.psm1,scripts/Unrelated.ps1') 'Mixed literal and unclassified assignment under-bound the imported-byte closure.'
+        Assert-True ([string]$mixed.resolution.mode -ceq 'all-tracked-scripts-fallback' -and ($mixed.paths -join ',') -ceq 'scripts/Dynamic.psm1,scripts/Entry.ps1,scripts/Fallback.ps1,scripts/Static.psm1,scripts/Unrelated.ps1,tools/Test-Tool.ps1') 'Mixed literal and unclassified assignment under-bound the imported-byte closure.'
         Assert-True (@($mixed.resolution.fallback_reasons | Where-Object { [string]$_.importer -ceq 'scripts/Fallback.ps1' -and [string]$_.variable -ceq 'Runner' -and [string]$_.kind -ceq 'ambiguous-static-binding' }).Count -eq 1) 'Mixed literal and unclassified assignment did not publish its conservative ambiguity reason.'
 
         Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "`$Runner = 'Static.psm1'`nfunction Invoke-Mixed {`n    `$Runner = `$RuntimePath`n    & `$Runner`n}`nInvoke-Mixed`n"
         $nestedInnerDynamic = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
-        Assert-True ([string]$nestedInnerDynamic.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($nestedInnerDynamic.paths).Count -eq 5) 'Nested unclassified assignment over an outer literal under-bound the imported-byte closure.'
+        Assert-True ([string]$nestedInnerDynamic.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($nestedInnerDynamic.paths).Count -eq 6) 'Nested unclassified assignment over an outer literal under-bound the imported-byte closure.'
 
         Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "`$Runner = `$RuntimePath`nfunction Invoke-Mixed {`n    `$Runner = 'Static.psm1'`n    & `$Runner`n}`nInvoke-Mixed`n"
         $nestedOuterDynamic = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
-        Assert-True ([string]$nestedOuterDynamic.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($nestedOuterDynamic.paths).Count -eq 5) 'Outer unclassified assignment below a nested literal under-bound the imported-byte closure.'
+        Assert-True ([string]$nestedOuterDynamic.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($nestedOuterDynamic.paths).Count -eq 6) 'Outer unclassified assignment below a nested literal under-bound the imported-byte closure.'
 
         Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "`$Runner = 'Static.psm1'`n& `$rUnNeR`n"
         $caseVariantExact = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
@@ -1234,11 +1238,11 @@ function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]
 
         Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "`$Runner = 'Static.psm1'`n`$rUNNER = `$RuntimePath`n& `$runner`n"
         $caseVariantMixed = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
-        Assert-True ([string]$caseVariantMixed.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($caseVariantMixed.paths).Count -eq 5) 'Case-variant mixed assignments under-bound one PowerShell variable identity.'
+        Assert-True ([string]$caseVariantMixed.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($caseVariantMixed.paths).Count -eq 6) 'Case-variant mixed assignments under-bound one PowerShell variable identity.'
 
         Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "`$rUnNeR = @('Static.psm1', `$RuntimePath)`n& `$RUNNER`n"
         $singleRhsMixed = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
-        Assert-True ([string]$singleRhsMixed.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($singleRhsMixed.paths).Count -eq 5) 'One RHS containing a literal path and unknown expression under-bound the imported-byte closure.'
+        Assert-True ([string]$singleRhsMixed.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($singleRhsMixed.paths).Count -eq 6) 'One RHS containing a literal path and unknown expression under-bound the imported-byte closure.'
 
         $singleRhsIncompleteDeclaration = [pscustomobject][ordered]@{importer='scripts/Fallback.ps1';variable='runner';count=1;target_paths=@('scripts/Dynamic.psm1')}
         Assert-AffectedThrows { Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @($singleRhsIncompleteDeclaration) } '*omits observed static target*' 'Incomplete declaration omitted the literal member of a mixed single-RHS dispatch.'
@@ -1248,7 +1252,7 @@ function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]
 
         Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "`$Runner = @('Static.psm1', `$RuntimePath)`nfunction Invoke-Mixed {`n    & `$rUnNeR`n}`nInvoke-Mixed`n"
         $nestedSingleRhsMixed = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
-        Assert-True ([string]$nestedSingleRhsMixed.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($nestedSingleRhsMixed.paths).Count -eq 5) 'Nested invocation ignored a case-variant outer mixed RHS assignment.'
+        Assert-True ([string]$nestedSingleRhsMixed.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($nestedSingleRhsMixed.paths).Count -eq 6) 'Nested invocation ignored a case-variant outer mixed RHS assignment.'
         $nestedSingleRhsDeclared = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @($singleRhsCompleteDeclaration)
         Assert-True ([string]$nestedSingleRhsDeclared.resolution.mode -ceq 'exact' -and ($nestedSingleRhsDeclared.paths -join ',') -ceq 'scripts/Dynamic.psm1,scripts/Fallback.ps1,scripts/Static.psm1') 'Complete declaration did not resolve the entire nested mixed dispatch.'
 
@@ -1258,11 +1262,11 @@ function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]
 
         Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "`$Runner = 'Static.psm1'`n& `$Runner`n`$Runner = 'Dynamic.psm1'`n"
         $afterUseAssignment = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
-        Assert-True ([string]$afterUseAssignment.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($afterUseAssignment.paths).Count -eq 5) 'Assignment after invocation was treated as a definitely prior dispatch binding.'
+        Assert-True ([string]$afterUseAssignment.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($afterUseAssignment.paths).Count -eq 6) 'Assignment after invocation was treated as a definitely prior dispatch binding.'
 
         Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "function Invoke-Conditional(`$Condition) {`n    if (`$Condition) { `$Runner = 'Static.psm1' }`n    & `$runner`n}`nInvoke-Conditional `$true`n"
         $conditionalAssignment = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
-        Assert-True ([string]$conditionalAssignment.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($conditionalAssignment.paths).Count -eq 5) 'Conditional assignment was treated as an unconditional dispatch binding.'
+        Assert-True ([string]$conditionalAssignment.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($conditionalAssignment.paths).Count -eq 6) 'Conditional assignment was treated as an unconditional dispatch binding.'
 
         Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "try {`n    `$Runner = 'Static.psm1'`n    & `$runner`n} finally {}`n"
         $sameBlockAssignment = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
@@ -1274,7 +1278,7 @@ function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]
 
         Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "function Invoke-Parameter(`$Command) { & `$cOmMaNd }`nInvoke-Parameter 'Static.psm1'`n"
         $untypedCommandParameter = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
-        Assert-True ([string]$untypedCommandParameter.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($untypedCommandParameter.paths).Count -eq 5) 'Untyped Command parameter received name-only external-command trust.'
+        Assert-True ([string]$untypedCommandParameter.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($untypedCommandParameter.paths).Count -eq 6) 'Untyped Command parameter received name-only external-command trust.'
         $untypedCommandDeclaration = [pscustomobject][ordered]@{importer='scripts/Fallback.ps1';variable='command';count=1;target_paths=@('scripts/Static.psm1')}
         $declaredUntypedCommand = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @($untypedCommandDeclaration)
         Assert-True ([string]$declaredUntypedCommand.resolution.mode -ceq 'exact' -and ($declaredUntypedCommand.paths -join ',') -ceq 'scripts/Fallback.ps1,scripts/Static.psm1') 'Closed declaration did not resolve an untyped case-variant Command parameter.'
@@ -1284,7 +1288,7 @@ function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]
         Assert-True ([string]$literalGetCommand.resolution.mode -ceq 'exact' -and ($literalGetCommand.paths -join ',') -ceq 'scripts/Fallback.ps1,scripts/Static.psm1') 'Literal tracked Get-Command assignment did not retain its script dependency.'
         Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "`$Runner = Get-Command `$RuntimePath`n& `$runner`n"
         $dynamicGetCommand = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
-        Assert-True ([string]$dynamicGetCommand.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($dynamicGetCommand.paths).Count -eq 5) 'Dynamic Get-Command assignment received an unconditional non-path exemption.'
+        Assert-True ([string]$dynamicGetCommand.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($dynamicGetCommand.paths).Count -eq 6) 'Dynamic Get-Command assignment received an unconditional non-path exemption.'
         $dynamicGetCommandDeclaration = [pscustomobject][ordered]@{importer='scripts/Fallback.ps1';variable='runner';count=1;target_paths=@('scripts/Dynamic.psm1')}
         $declaredDynamicGetCommand = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @($dynamicGetCommandDeclaration)
         Assert-True ([string]$declaredDynamicGetCommand.resolution.mode -ceq 'exact' -and ($declaredDynamicGetCommand.paths -join ',') -ceq 'scripts/Dynamic.psm1,scripts/Fallback.ps1') 'Closed declaration did not resolve a dynamic Get-Command assignment.'
@@ -1294,7 +1298,7 @@ function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]
         Assert-True ([string]$literalGetCommandMember.resolution.mode -ceq 'exact' -and ($literalGetCommandMember.paths -join ',') -ceq 'scripts/Fallback.ps1,scripts/Static.psm1') 'Direct Get-Command.Source literal invocation omitted its tracked script dependency.'
         Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "& (Get-Command `$RuntimePath).Source`n"
         $dynamicGetCommandMember = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
-        Assert-True ([string]$dynamicGetCommandMember.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($dynamicGetCommandMember.paths).Count -eq 5) 'Direct dynamic Get-Command.Source invocation bypassed conservative closure.'
+        Assert-True ([string]$dynamicGetCommandMember.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($dynamicGetCommandMember.paths).Count -eq 6) 'Direct dynamic Get-Command.Source invocation bypassed conservative closure.'
         $dynamicGetCommandMemberDeclaration = [pscustomobject][ordered]@{importer='scripts/Fallback.ps1';variable='runtimepath';count=1;target_paths=@('scripts/Dynamic.psm1')}
         $declaredDynamicGetCommandMember = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @($dynamicGetCommandMemberDeclaration)
         Assert-True ([string]$declaredDynamicGetCommandMember.resolution.mode -ceq 'exact' -and ($declaredDynamicGetCommandMember.paths -join ',') -ceq 'scripts/Dynamic.psm1,scripts/Fallback.ps1') 'Closed declaration did not resolve a direct dynamic Get-Command.Source invocation.'
@@ -1304,7 +1308,7 @@ function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]
         Assert-True ([string]$exactMemberReceiver.resolution.mode -ceq 'exact' -and ($exactMemberReceiver.paths -join ',') -ceq 'scripts/Fallback.ps1') 'Exact receiver/member scriptblock proof was not retained.'
         Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "`$first = @{ script = { 'safe' | Out-Null } }`n`$second = @{ script = `$RuntimePath }`n& `$second.script`n"
         $memberReceiverCollision = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
-        Assert-True ([string]$memberReceiverCollision.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($memberReceiverCollision.paths).Count -eq 5) 'Unrelated receiver with the same member name inherited another receiver scriptblock exemption.'
+        Assert-True ([string]$memberReceiverCollision.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($memberReceiverCollision.paths).Count -eq 6) 'Unrelated receiver with the same member name inherited another receiver scriptblock exemption.'
 
         Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "`$Runner = 'Static.psm1'`n`$Runner = `$RuntimePath`n& `$Runner`n"
         $mixedDeclaration = [pscustomobject][ordered]@{importer='scripts/Fallback.ps1';variable='Runner';count=1;target_paths=@('scripts/Dynamic.psm1','scripts/Static.psm1')}
@@ -1313,7 +1317,7 @@ function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]
 
         Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "& `$ArgumentRunner { 'argument' | Out-Null }`n"
         $scriptBlockArgumentFallback = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
-        Assert-True ([string]$scriptBlockArgumentFallback.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($scriptBlockArgumentFallback.paths).Count -eq 5) 'Variable invocation with a scriptblock argument bypassed conservative dependency fallback.'
+        Assert-True ([string]$scriptBlockArgumentFallback.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($scriptBlockArgumentFallback.paths).Count -eq 6) 'Variable invocation with a scriptblock argument bypassed conservative dependency fallback.'
         Assert-True (@($scriptBlockArgumentFallback.resolution.fallback_reasons | Where-Object { [string]$_.importer -ceq 'scripts/Fallback.ps1' -and [string]$_.variable -ceq 'ArgumentRunner' -and [string]$_.kind -ceq 'unresolved-invocation' }).Count -eq 1) 'Variable invocation with a scriptblock argument omitted its exact fallback reason.'
 
         $scriptBlockArgumentDeclaration = [pscustomobject][ordered]@{importer='scripts/Fallback.ps1';variable='ArgumentRunner';count=1;target_paths=@('scripts/Dynamic.psm1')}

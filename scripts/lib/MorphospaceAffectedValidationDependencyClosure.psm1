@@ -128,7 +128,7 @@ function Resolve-MorphospaceAffectedCheckDependencyClosure {
     foreach ($entry in @($Inventory.records)) {
         if ([string]$entry.type -cne 'blob' -or @('100644','100755') -cnotcontains [string]$entry.mode) { continue }
         [void]$trackedFiles.Add([string]$entry.path)
-        if ([string]$entry.path -match '^scripts/.+\.ps(?:m)?1$') { [void]$trackedScripts.Add([string]$entry.path) }
+        if ([string]$entry.path -match '^(?:scripts|tools)/.+\.ps(?:m)?1$') { [void]$trackedScripts.Add([string]$entry.path) }
     }
     $declarations = Get-MorphospaceAffectedDependencyDeclarations -Declarations @($DynamicDeclarations)
     $observedDeclarations = [Collections.Generic.Dictionary[string,int]]::new([StringComparer]::Ordinal)
@@ -142,7 +142,7 @@ function Resolve-MorphospaceAffectedCheckDependencyClosure {
         $normalized = $Value.Replace('\','/')
         $importerDirectory = [IO.Path]::GetDirectoryName((Join-Path $root $Importer))
         $candidates = [Collections.Generic.List[string]]::new()
-        if ($normalized -match '^(?:scripts|schemas|manifests|docs|templates|config|skills)/') { [void]$candidates.Add([IO.Path]::GetFullPath((Join-Path $root $normalized))) }
+        if ($normalized -match '^(?:scripts|tools|schemas|manifests|docs|templates|config|skills)/') { [void]$candidates.Add([IO.Path]::GetFullPath((Join-Path $root $normalized))) }
         [void]$candidates.Add([IO.Path]::GetFullPath((Join-Path $importerDirectory $normalized)))
         [void]$candidates.Add([IO.Path]::GetFullPath((Join-Path $root $normalized)))
         if ($normalized -notmatch '/') { foreach ($directory in @('schemas','manifests','config','templates')) { [void]$candidates.Add([IO.Path]::GetFullPath((Join-Path $root (Join-Path $directory $normalized)))) } }
