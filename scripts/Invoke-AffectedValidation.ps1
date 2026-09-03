@@ -7,7 +7,8 @@ param(
     [Parameter(Mandatory = $true)][ValidateSet('windows', 'linux')][string]$Platform,
     [Parameter(Mandatory = $true)][string]$OutPath,
     [string]$CheckEvidenceDirectory,
-    [string]$PriorEvidenceDirectory
+    [string]$PriorEvidenceDirectory,
+    [ValidatePattern('^(?:windows|linux)-[0-9]{3}$')][string]$SegmentId
 )
 
 Set-StrictMode -Version 2.0
@@ -945,13 +946,13 @@ function Get-AffectedValidationProducerBinding {
         $required = @('GITHUB_REPOSITORY','GITHUB_EVENT_NAME','GITHUB_RUN_ID','GITHUB_RUN_ATTEMPT','GITHUB_WORKFLOW_REF','GITHUB_JOB')
         foreach ($name in $required) { if ([string]::IsNullOrWhiteSpace([string][Environment]::GetEnvironmentVariable($name,'Process'))) { throw "Affected check producer environment is incomplete: $name" } }
         $eventName = [string]$env:GITHUB_EVENT_NAME
-        if ([string]$env:GITHUB_REPOSITORY -cne [string]$plan.repository -or @('pull_request','push') -cnotcontains $eventName -or [string]$env:GITHUB_WORKFLOW_REF -cnotmatch '^MesmerPrism/rusty-morphospace-work-environment/\.github/workflows/validate\.yml@') { throw 'Affected check producer GitHub workflow identity is invalid.' }
+        if ([string]$env:GITHUB_REPOSITORY -cne [string]$plan.repository -or @('pull_request','push','schedule','workflow_dispatch') -cnotcontains $eventName -or [string]$env:GITHUB_WORKFLOW_REF -cnotmatch '^MesmerPrism/rusty-morphospace-work-environment/\.github/workflows/validate\.yml@') { throw 'Affected check producer GitHub workflow identity is invalid.' }
         $pullRequestNumber = 0
         if ($eventName -ceq 'pull_request') {
             $rawPullRequestNumber = [string][Environment]::GetEnvironmentVariable('PR_NUMBER','Process')
             if ([string]::IsNullOrWhiteSpace($rawPullRequestNumber) -or -not [int]::TryParse($rawPullRequestNumber,[ref]$pullRequestNumber) -or $pullRequestNumber -le 0) { throw 'Affected check producer pull-request identity is incomplete.' }
         } elseif (-not [string]::IsNullOrWhiteSpace([string][Environment]::GetEnvironmentVariable('PR_NUMBER','Process'))) {
-            throw 'Affected check push producer unexpectedly inherited a pull-request number.'
+            throw 'Affected check non-pull-request producer unexpectedly inherited a pull-request number.'
         }
         return [pscustomobject][ordered]@{context='github-actions';execution_id=[guid]::NewGuid().ToString('N');repository=[string]$plan.repository;event_name=$eventName;pull_request_number=$pullRequestNumber;run_id=[string]$env:GITHUB_RUN_ID;run_attempt=[int]$env:GITHUB_RUN_ATTEMPT;workflow_path='.github/workflows/validate.yml';job=[string]$env:GITHUB_JOB}
     }
@@ -968,18 +969,30 @@ $output = [IO.Path]::GetFullPath($OutPath)
 $parent = [IO.Path]::GetDirectoryName($output)
 if ([IO.File]::Exists($output)) { throw 'Affected-validation evidence output already exists.' }
 if (-not [IO.Directory]::Exists($parent)) { [void][IO.Directory]::CreateDirectory($parent) }
-$checkEvidenceRoot = if ([string]::IsNullOrWhiteSpace($CheckEvidenceDirectory)) { Join-Path $parent ("affected-check-evidence-$([string]$plan.plan_sha256)-$Platform") } else { [IO.Path]::GetFullPath($CheckEvidenceDirectory) }
+$executionSuffix = if ([string]::IsNullOrWhiteSpace($SegmentId)) { $Platform } else { $SegmentId }
+$checkEvidenceRoot = if ([string]::IsNullOrWhiteSpace($CheckEvidenceDirectory)) { Join-Path $parent ("affected-check-evidence-$([string]$plan.plan_sha256)-$executionSuffix") } else { [IO.Path]::GetFullPath($CheckEvidenceDirectory) }
 if ([IO.Directory]::Exists($checkEvidenceRoot) -or [IO.File]::Exists($checkEvidenceRoot)) { throw 'Affected-validation check evidence root already exists.' }
-$phaseEvidenceRoot = Join-Path $parent ("affected-selector-phases-$([string]$plan.plan_sha256)-$Platform")
+$phaseEvidenceRoot = Join-Path $parent ("affected-selector-phases-$([string]$plan.plan_sha256)-$executionSuffix")
 $registryPath = Join-Path $root 'manifests/affected-validation-registry.json'
 $recomputed = Resolve-MorphospaceAffectedValidation -RepositoryRoot $root -BaseRevision $BaseCommit -HeadRevision $HeadCommit -RegistryPath $registryPath -RequestedTier ([string]$plan.requested_tier)
 if ((Get-MorphospaceCanonicalJsonSha256 -Value $recomputed) -cne (Get-MorphospaceCanonicalJsonSha256 -Value $plan) -or [string]$plan.plan_sha256 -cne [string]$recomputed.plan_sha256) { throw 'Affected-validation plan differs from the exact current base/head/registry selection.' }
-$selected = @($plan.selected_checks | Where-Object { @($_.platforms) -ccontains $Platform })
-if ($selected.Count -eq 0) { throw "Affected-validation execution rejects an empty '$Platform' selection." }
+$platformSelected = @($plan.selected_checks | Where-Object { @($_.platforms) -ccontains $Platform })
+if ($platformSelected.Count -eq 0) { throw "Affected-validation execution rejects an empty '$Platform' selection." }
 $registry = Read-MorphospaceProtocolJson -Path $registryPath
 $compiledRegistry = Test-MorphospaceAffectedValidationRegistry -Registry $registry -RepositoryRoot $root -SchemaPath (Join-Path $root 'schemas/affected-validation-registry-v1.schema.json')
 $registrySha256 = Get-MorphospaceCanonicalJsonSha256 -Value $registry
 $checkMap = @{}; foreach ($check in @($registry.checks)) { $checkMap[[string]$check.check_id] = $check }
+$selected = $platformSelected
+if (-not [string]::IsNullOrWhiteSpace($SegmentId)) {
+    if (-not $SegmentId.StartsWith("$Platform-", [StringComparison]::Ordinal)) { throw 'Affected-validation segment ID differs from its requested platform.' }
+    $segments = @(Get-MorphospaceAffectedValidationSegments -Plan $plan -Registry $registry -Platform $Platform)
+    $segment = @($segments | Where-Object { [string]$_.segment_id -ceq $SegmentId })
+    if ($segment.Count -ne 1) { throw "Affected-validation segment ID is not present in the exact plan partition: $SegmentId" }
+    $segmentSet = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($id in @($segment[0].check_ids)) { [void]$segmentSet.Add([string]$id) }
+    $selected = @($platformSelected | Where-Object { $segmentSet.Contains([string]$_.check_id) })
+    if ($selected.Count -ne @($segment[0].check_ids).Count) { throw 'Affected-validation segment selection differs from its exact partition.' }
+}
 $inventory = Get-MorphospaceAffectedTreeInventory -RepositoryRoot $root -Commit ([string]$plan.head.commit)
 $runnerBinding = Get-MorphospaceAffectedCheckRunnerBinding
 $runnerSourceManifest = @(Get-MorphospaceAffectedCheckRunnerSourceManifest -Inventory $inventory)

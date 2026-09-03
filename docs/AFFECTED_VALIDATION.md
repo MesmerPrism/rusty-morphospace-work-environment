@@ -245,13 +245,23 @@ may reuse them only when its ordered merge parents, exact candidate tree,
 workflow bytes, ancestor base, PR/run/check identities, artifact bytes, and
 freshness all authenticate through `Test-AffectedValidationReuse.ps1`.
 The authenticated successful-job set is exactly `infrastructure`,
-`quick-linux`, `quick-windows`, `select`, and `standard-windows`; artifact
-aliases such as `affected-linux` and `affected-windows` never substitute for
-GitHub job identities.
-Otherwise the main job runs only its current delta. No historical aggregate
-receipt is reusable: scheduled/manual Deep checks out full history and runs the
-current Deep aggregate. Neither evidence shape is publication or acceptance
-authority.
+`quick-linux`, `quick-windows`, `select`, `standard-windows`, and the
+deterministically recomputed `segment-<platform>-<ordinal>` jobs for selected
+platforms; artifact aliases such as `affected-linux` and `affected-windows`
+never substitute for GitHub job identities. Otherwise the main job runs its
+current delta through the same segment partition. No historical Deep receipt
+is reusable: scheduled/manual Deep checks out full history, executes every
+independent leaf through fresh segments, and verifies their exact union.
+Neither evidence shape is publication or acceptance authority.
+
+Every JavaScript action in this workflow is pinned to an immutable Node 24
+release commit. Artifact upload keeps the default archived transport, and all
+downloads use the existing name/pattern and merged-directory modes; the action
+upgrade does not opt into direct-file upload or change the evidence filenames,
+payloads, or repository-computed digests. The cache key and cached-directory
+contracts are likewise unchanged. These jobs use GitHub-hosted runners, which
+satisfy the Node 24 action runner floor; adding a self-hosted runner requires a
+separate compatibility decision.
 
 The pre-job infrastructure classifier observes the closed `git`, `pwsh`, and
 `rg` set, but requires only `git` and `pwsh` for the registered PR commands.
@@ -269,8 +279,18 @@ itself. The cumulative `Test-WorkEnvironment -Tier Deep` check has the closed
 `aggregate_role: work-environment-deep-v1`; no other check identity or command
 may use that role. Trust-root fallback does not run it after selecting all of
 its independently evidenced leaves. It remains selected when its own command
-or aggregate path changes and for an explicit Deep aggregate request. After
-adoption, the authority and historical-debt paths named in the
+or aggregate path changes; an explicit Deep request selects the independent
+leaves and does not replay that cumulative aggregate. Hosted execution packs
+dependency-connected checks into deterministic, non-overlapping segments with
+a one-hour estimated target, runs independent segments concurrently, and then
+verifies their exact union into the existing platform evidence shape. A single
+dependency component may exceed the target but must remain below the five-hour
+hard ceiling, so no admitted segment can exceed the hosted six-hour job limit.
+After
+adoption, changes limited to either APK run-transaction schema or its audit
+tool select the portable Quick `apk-run-transaction` leaf plus the public
+boundary, without selecting the cumulative Deep aggregate. The authority and
+historical-debt paths named in the
 registry stay proportional: direct test changes select their owning leaf;
 historical phase receipt/module changes select the focused phase-runner,
 baseline, and automation consumers, while a phase-runner test change selects

@@ -13,7 +13,7 @@
         "context": { "enum": ["github-actions", "local"] },
         "execution_id": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
         "repository": { "const": "MesmerPrism/rusty-morphospace-work-environment" },
-        "event_name": { "enum": ["pull_request", "push", "local"] },
+        "event_name": { "enum": ["pull_request", "push", "schedule", "workflow_dispatch", "local"] },
         "pull_request_number": { "type": "integer", "minimum": 0 },
         "run_id": { "type": "string", "pattern": "^(?:local|[1-9][0-9]*)$" },
         "run_attempt": { "type": "integer", "minimum": 0 },

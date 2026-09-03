@@ -64,6 +64,11 @@ declared project source + selected build lane + exact APK/run capsule
   -> owner-specific cleanup readback
 ```
 
+For a long or interruption-prone run, bind those stages through the read-only
+[resumable APK run transaction](APK_RUN_TRANSACTION.md). It audits create-new
+phase receipts and selects the first missing phase; it never executes a phase
+or grants build, device, acceptance, cleanup, Git, or publication authority.
+
 For enrolled managed targets, replace the local File Manager operation with a
 Fleet request over one immutable target snapshot. Require current operator
 policy, Manifold authority when applicable, effect-owner delivery/receipts,

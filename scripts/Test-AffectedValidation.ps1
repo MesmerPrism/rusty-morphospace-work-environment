@@ -1197,13 +1197,15 @@ $checks = @(
 function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]$Registry) {
     $fixture = Join-Path ([IO.Path]::GetTempPath()) ('morphospace-affected-per-check-closure-' + [guid]::NewGuid().ToString('N'))
     [void][IO.Directory]::CreateDirectory((Join-Path $fixture 'scripts'))
+    [void][IO.Directory]::CreateDirectory((Join-Path $fixture 'tools'))
     try {
         Write-Utf8 (Join-Path $fixture 'scripts/Entry.ps1') "Import-Module (Join-Path `$PSScriptRoot 'Static.psm1') -Force`nif (`$true) { Import-Module `$DynamicPath -Force }`n"
         Write-Utf8 (Join-Path $fixture 'scripts/Static.psm1') "Set-StrictMode -Version 2.0`n"
         Write-Utf8 (Join-Path $fixture 'scripts/Dynamic.psm1') "Set-StrictMode -Version 2.0`n"
         Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "& `$UnknownRunner`n"
         Write-Utf8 (Join-Path $fixture 'scripts/Unrelated.ps1') "'unrelated'`n"
-        $records = @('scripts/Dynamic.psm1','scripts/Entry.ps1','scripts/Fallback.ps1','scripts/Static.psm1','scripts/Unrelated.ps1') | ForEach-Object {
+        Write-Utf8 (Join-Path $fixture 'tools/Test-Tool.ps1') "Import-Module 'scripts/Static.psm1' -Force`n"
+        $records = @('scripts/Dynamic.psm1','scripts/Entry.ps1','scripts/Fallback.ps1','scripts/Static.psm1','scripts/Unrelated.ps1','tools/Test-Tool.ps1') | ForEach-Object {
             [pscustomobject][ordered]@{mode='100644';type='blob';blob=('0' * 40);path=$_}
         }
         $inventory = [pscustomobject][ordered]@{records=@($records)}
@@ -1211,22 +1213,28 @@ function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]
         $exact = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @($declaration)
         Assert-True (($exact.paths -join ',') -ceq 'scripts/Dynamic.psm1,scripts/Entry.ps1,scripts/Static.psm1') 'Per-check dependency closure did not retain only its exact static and declared dynamic script closure.'
         Assert-True ([string]$exact.resolution.mode -ceq 'exact' -and @($exact.resolution.used_declarations).Count -eq 1 -and @($exact.resolution.fallback_reasons).Count -eq 0) 'Per-check exact dependency resolution did not bind its used declaration and empty fallback reason set.'
+        $toolExact = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'tools/Test-Tool.ps1' -Inventory $inventory -DynamicDeclarations @()
+        Assert-True (($toolExact.paths -join ',') -ceq 'scripts/Static.psm1,tools/Test-Tool.ps1' -and [string]$toolExact.resolution.mode -ceq 'exact') 'Tracked tools entrypoint did not retain its exact static script closure.'
+        Write-Utf8 (Join-Path $fixture 'tools/Test-Tool.ps1') "& `$UnknownToolRunner`n"
+        $toolFallback = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'tools/Test-Tool.ps1' -Inventory $inventory -DynamicDeclarations @()
+        Assert-True ([string]$toolFallback.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($toolFallback.resolution.fallback_reasons | Where-Object { [string]$_.importer -ceq 'tools/Test-Tool.ps1' -and [string]$_.variable -ceq 'UnknownToolRunner' }).Count -eq 1) 'Tracked tools fallback omitted its tool-origin reason.'
+        Write-Utf8 (Join-Path $fixture 'tools/Test-Tool.ps1') "Import-Module 'scripts/Static.psm1' -Force`n"
         $fallback = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
-        Assert-True ([string]$fallback.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($fallback.paths).Count -eq 5) 'Unknown per-check dispatch did not conservatively bind every tracked script.'
+        Assert-True ([string]$fallback.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($fallback.paths).Count -eq 6) 'Unknown per-check dispatch did not conservatively bind every tracked script.'
         Assert-True (@($fallback.resolution.fallback_reasons | Where-Object { [string]$_.importer -ceq 'scripts/Fallback.ps1' -and [string]$_.variable -ceq 'UnknownRunner' -and [string]$_.kind -ceq 'unresolved-invocation' }).Count -eq 1) 'Unknown per-check dispatch did not publish its exact fallback reason.'
 
         Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "`$Runner = 'Static.psm1'`n`$Runner = `$RuntimePath`n& `$Runner`n"
         $mixed = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
-        Assert-True ([string]$mixed.resolution.mode -ceq 'all-tracked-scripts-fallback' -and ($mixed.paths -join ',') -ceq 'scripts/Dynamic.psm1,scripts/Entry.ps1,scripts/Fallback.ps1,scripts/Static.psm1,scripts/Unrelated.ps1') 'Mixed literal and unclassified assignment under-bound the imported-byte closure.'
+        Assert-True ([string]$mixed.resolution.mode -ceq 'all-tracked-scripts-fallback' -and ($mixed.paths -join ',') -ceq 'scripts/Dynamic.psm1,scripts/Entry.ps1,scripts/Fallback.ps1,scripts/Static.psm1,scripts/Unrelated.ps1,tools/Test-Tool.ps1') 'Mixed literal and unclassified assignment under-bound the imported-byte closure.'
         Assert-True (@($mixed.resolution.fallback_reasons | Where-Object { [string]$_.importer -ceq 'scripts/Fallback.ps1' -and [string]$_.variable -ceq 'Runner' -and [string]$_.kind -ceq 'ambiguous-static-binding' }).Count -eq 1) 'Mixed literal and unclassified assignment did not publish its conservative ambiguity reason.'
 
         Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "`$Runner = 'Static.psm1'`nfunction Invoke-Mixed {`n    `$Runner = `$RuntimePath`n    & `$Runner`n}`nInvoke-Mixed`n"
         $nestedInnerDynamic = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
-        Assert-True ([string]$nestedInnerDynamic.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($nestedInnerDynamic.paths).Count -eq 5) 'Nested unclassified assignment over an outer literal under-bound the imported-byte closure.'
+        Assert-True ([string]$nestedInnerDynamic.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($nestedInnerDynamic.paths).Count -eq 6) 'Nested unclassified assignment over an outer literal under-bound the imported-byte closure.'
 
         Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "`$Runner = `$RuntimePath`nfunction Invoke-Mixed {`n    `$Runner = 'Static.psm1'`n    & `$Runner`n}`nInvoke-Mixed`n"
         $nestedOuterDynamic = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
-        Assert-True ([string]$nestedOuterDynamic.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($nestedOuterDynamic.paths).Count -eq 5) 'Outer unclassified assignment below a nested literal under-bound the imported-byte closure.'
+        Assert-True ([string]$nestedOuterDynamic.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($nestedOuterDynamic.paths).Count -eq 6) 'Outer unclassified assignment below a nested literal under-bound the imported-byte closure.'
 
         Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "`$Runner = 'Static.psm1'`n& `$rUnNeR`n"
         $caseVariantExact = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
@@ -1234,11 +1242,11 @@ function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]
 
         Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "`$Runner = 'Static.psm1'`n`$rUNNER = `$RuntimePath`n& `$runner`n"
         $caseVariantMixed = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
-        Assert-True ([string]$caseVariantMixed.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($caseVariantMixed.paths).Count -eq 5) 'Case-variant mixed assignments under-bound one PowerShell variable identity.'
+        Assert-True ([string]$caseVariantMixed.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($caseVariantMixed.paths).Count -eq 6) 'Case-variant mixed assignments under-bound one PowerShell variable identity.'
 
         Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "`$rUnNeR = @('Static.psm1', `$RuntimePath)`n& `$RUNNER`n"
         $singleRhsMixed = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
-        Assert-True ([string]$singleRhsMixed.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($singleRhsMixed.paths).Count -eq 5) 'One RHS containing a literal path and unknown expression under-bound the imported-byte closure.'
+        Assert-True ([string]$singleRhsMixed.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($singleRhsMixed.paths).Count -eq 6) 'One RHS containing a literal path and unknown expression under-bound the imported-byte closure.'
 
         $singleRhsIncompleteDeclaration = [pscustomobject][ordered]@{importer='scripts/Fallback.ps1';variable='runner';count=1;target_paths=@('scripts/Dynamic.psm1')}
         Assert-AffectedThrows { Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @($singleRhsIncompleteDeclaration) } '*omits observed static target*' 'Incomplete declaration omitted the literal member of a mixed single-RHS dispatch.'
@@ -1248,7 +1256,7 @@ function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]
 
         Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "`$Runner = @('Static.psm1', `$RuntimePath)`nfunction Invoke-Mixed {`n    & `$rUnNeR`n}`nInvoke-Mixed`n"
         $nestedSingleRhsMixed = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
-        Assert-True ([string]$nestedSingleRhsMixed.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($nestedSingleRhsMixed.paths).Count -eq 5) 'Nested invocation ignored a case-variant outer mixed RHS assignment.'
+        Assert-True ([string]$nestedSingleRhsMixed.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($nestedSingleRhsMixed.paths).Count -eq 6) 'Nested invocation ignored a case-variant outer mixed RHS assignment.'
         $nestedSingleRhsDeclared = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @($singleRhsCompleteDeclaration)
         Assert-True ([string]$nestedSingleRhsDeclared.resolution.mode -ceq 'exact' -and ($nestedSingleRhsDeclared.paths -join ',') -ceq 'scripts/Dynamic.psm1,scripts/Fallback.ps1,scripts/Static.psm1') 'Complete declaration did not resolve the entire nested mixed dispatch.'
 
@@ -1258,11 +1266,11 @@ function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]
 
         Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "`$Runner = 'Static.psm1'`n& `$Runner`n`$Runner = 'Dynamic.psm1'`n"
         $afterUseAssignment = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
-        Assert-True ([string]$afterUseAssignment.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($afterUseAssignment.paths).Count -eq 5) 'Assignment after invocation was treated as a definitely prior dispatch binding.'
+        Assert-True ([string]$afterUseAssignment.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($afterUseAssignment.paths).Count -eq 6) 'Assignment after invocation was treated as a definitely prior dispatch binding.'
 
         Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "function Invoke-Conditional(`$Condition) {`n    if (`$Condition) { `$Runner = 'Static.psm1' }`n    & `$runner`n}`nInvoke-Conditional `$true`n"
         $conditionalAssignment = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
-        Assert-True ([string]$conditionalAssignment.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($conditionalAssignment.paths).Count -eq 5) 'Conditional assignment was treated as an unconditional dispatch binding.'
+        Assert-True ([string]$conditionalAssignment.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($conditionalAssignment.paths).Count -eq 6) 'Conditional assignment was treated as an unconditional dispatch binding.'
 
         Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "try {`n    `$Runner = 'Static.psm1'`n    & `$runner`n} finally {}`n"
         $sameBlockAssignment = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
@@ -1274,7 +1282,7 @@ function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]
 
         Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "function Invoke-Parameter(`$Command) { & `$cOmMaNd }`nInvoke-Parameter 'Static.psm1'`n"
         $untypedCommandParameter = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
-        Assert-True ([string]$untypedCommandParameter.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($untypedCommandParameter.paths).Count -eq 5) 'Untyped Command parameter received name-only external-command trust.'
+        Assert-True ([string]$untypedCommandParameter.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($untypedCommandParameter.paths).Count -eq 6) 'Untyped Command parameter received name-only external-command trust.'
         $untypedCommandDeclaration = [pscustomobject][ordered]@{importer='scripts/Fallback.ps1';variable='command';count=1;target_paths=@('scripts/Static.psm1')}
         $declaredUntypedCommand = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @($untypedCommandDeclaration)
         Assert-True ([string]$declaredUntypedCommand.resolution.mode -ceq 'exact' -and ($declaredUntypedCommand.paths -join ',') -ceq 'scripts/Fallback.ps1,scripts/Static.psm1') 'Closed declaration did not resolve an untyped case-variant Command parameter.'
@@ -1284,7 +1292,7 @@ function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]
         Assert-True ([string]$literalGetCommand.resolution.mode -ceq 'exact' -and ($literalGetCommand.paths -join ',') -ceq 'scripts/Fallback.ps1,scripts/Static.psm1') 'Literal tracked Get-Command assignment did not retain its script dependency.'
         Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "`$Runner = Get-Command `$RuntimePath`n& `$runner`n"
         $dynamicGetCommand = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
-        Assert-True ([string]$dynamicGetCommand.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($dynamicGetCommand.paths).Count -eq 5) 'Dynamic Get-Command assignment received an unconditional non-path exemption.'
+        Assert-True ([string]$dynamicGetCommand.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($dynamicGetCommand.paths).Count -eq 6) 'Dynamic Get-Command assignment received an unconditional non-path exemption.'
         $dynamicGetCommandDeclaration = [pscustomobject][ordered]@{importer='scripts/Fallback.ps1';variable='runner';count=1;target_paths=@('scripts/Dynamic.psm1')}
         $declaredDynamicGetCommand = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @($dynamicGetCommandDeclaration)
         Assert-True ([string]$declaredDynamicGetCommand.resolution.mode -ceq 'exact' -and ($declaredDynamicGetCommand.paths -join ',') -ceq 'scripts/Dynamic.psm1,scripts/Fallback.ps1') 'Closed declaration did not resolve a dynamic Get-Command assignment.'
@@ -1294,7 +1302,7 @@ function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]
         Assert-True ([string]$literalGetCommandMember.resolution.mode -ceq 'exact' -and ($literalGetCommandMember.paths -join ',') -ceq 'scripts/Fallback.ps1,scripts/Static.psm1') 'Direct Get-Command.Source literal invocation omitted its tracked script dependency.'
         Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "& (Get-Command `$RuntimePath).Source`n"
         $dynamicGetCommandMember = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
-        Assert-True ([string]$dynamicGetCommandMember.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($dynamicGetCommandMember.paths).Count -eq 5) 'Direct dynamic Get-Command.Source invocation bypassed conservative closure.'
+        Assert-True ([string]$dynamicGetCommandMember.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($dynamicGetCommandMember.paths).Count -eq 6) 'Direct dynamic Get-Command.Source invocation bypassed conservative closure.'
         $dynamicGetCommandMemberDeclaration = [pscustomobject][ordered]@{importer='scripts/Fallback.ps1';variable='runtimepath';count=1;target_paths=@('scripts/Dynamic.psm1')}
         $declaredDynamicGetCommandMember = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @($dynamicGetCommandMemberDeclaration)
         Assert-True ([string]$declaredDynamicGetCommandMember.resolution.mode -ceq 'exact' -and ($declaredDynamicGetCommandMember.paths -join ',') -ceq 'scripts/Dynamic.psm1,scripts/Fallback.ps1') 'Closed declaration did not resolve a direct dynamic Get-Command.Source invocation.'
@@ -1304,7 +1312,7 @@ function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]
         Assert-True ([string]$exactMemberReceiver.resolution.mode -ceq 'exact' -and ($exactMemberReceiver.paths -join ',') -ceq 'scripts/Fallback.ps1') 'Exact receiver/member scriptblock proof was not retained.'
         Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "`$first = @{ script = { 'safe' | Out-Null } }`n`$second = @{ script = `$RuntimePath }`n& `$second.script`n"
         $memberReceiverCollision = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
-        Assert-True ([string]$memberReceiverCollision.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($memberReceiverCollision.paths).Count -eq 5) 'Unrelated receiver with the same member name inherited another receiver scriptblock exemption.'
+        Assert-True ([string]$memberReceiverCollision.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($memberReceiverCollision.paths).Count -eq 6) 'Unrelated receiver with the same member name inherited another receiver scriptblock exemption.'
 
         Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "`$Runner = 'Static.psm1'`n`$Runner = `$RuntimePath`n& `$Runner`n"
         $mixedDeclaration = [pscustomobject][ordered]@{importer='scripts/Fallback.ps1';variable='Runner';count=1;target_paths=@('scripts/Dynamic.psm1','scripts/Static.psm1')}
@@ -1313,7 +1321,7 @@ function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]
 
         Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "& `$ArgumentRunner { 'argument' | Out-Null }`n"
         $scriptBlockArgumentFallback = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
-        Assert-True ([string]$scriptBlockArgumentFallback.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($scriptBlockArgumentFallback.paths).Count -eq 5) 'Variable invocation with a scriptblock argument bypassed conservative dependency fallback.'
+        Assert-True ([string]$scriptBlockArgumentFallback.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($scriptBlockArgumentFallback.paths).Count -eq 6) 'Variable invocation with a scriptblock argument bypassed conservative dependency fallback.'
         Assert-True (@($scriptBlockArgumentFallback.resolution.fallback_reasons | Where-Object { [string]$_.importer -ceq 'scripts/Fallback.ps1' -and [string]$_.variable -ceq 'ArgumentRunner' -and [string]$_.kind -ceq 'unresolved-invocation' }).Count -eq 1) 'Variable invocation with a scriptblock argument omitted its exact fallback reason.'
 
         $scriptBlockArgumentDeclaration = [pscustomobject][ordered]@{importer='scripts/Fallback.ps1';variable='ArgumentRunner';count=1;target_paths=@('scripts/Dynamic.psm1')}
@@ -1404,20 +1412,21 @@ function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]
         if ([IO.Directory]::Exists($fixture)) { Remove-Item -LiteralPath $fixture -Recurse -Force }
     }
 }
-function Invoke-WorkflowSelectionGate([string]$JobBody, [string]$SelectionVariable, [string]$SelectionValue) {
+function Invoke-WorkflowSelectionGate([string]$JobBody, [string]$SelectionVariable, [string]$SelectionValue, [string]$SegmentResultVariable) {
     $run = [regex]::Match($JobBody, '(?ms)^        run: \|\r?\n(?<script>.*?)(?=^      - |\z)')
     if (-not $run.Success) { throw 'Workflow job lacks a first run script.' }
     $lines = @($run.Groups['script'].Value -split "`r?`n" | Select-Object -First 3)
     if ($lines.Count -ne 3) { throw 'Workflow job lacks the closed selection gate.' }
     $gate = ($lines -join [Environment]::NewLine).Replace('exit 0', 'return')
     $saved = @{}
-    foreach ($name in @('INFRA_RESULT','SELECT_RESULT',$SelectionVariable)) { $saved[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
+    foreach ($name in @('INFRA_RESULT','SELECT_RESULT',$SelectionVariable,$SegmentResultVariable)) { $saved[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
     try {
         $env:INFRA_RESULT = 'success'; $env:SELECT_RESULT = 'success'
         [Environment]::SetEnvironmentVariable($SelectionVariable, $SelectionValue, 'Process')
+        [Environment]::SetEnvironmentVariable($SegmentResultVariable, 'success', 'Process')
         & ([scriptblock]::Create($gate))
     } finally {
-        foreach ($name in @('INFRA_RESULT','SELECT_RESULT',$SelectionVariable)) { [Environment]::SetEnvironmentVariable($name, $saved[$name], 'Process') }
+        foreach ($name in @('INFRA_RESULT','SELECT_RESULT',$SelectionVariable,$SegmentResultVariable)) { [Environment]::SetEnvironmentVariable($name, $saved[$name], 'Process') }
     }
 }
 
@@ -1659,6 +1668,9 @@ if ($runFullSelector -or $runExecutorPassPhase) {
     $phaseManifestCanonicalUpperBound = ([long]2048 * (([long]4096 * 12) + 256)) + 1048576
     Assert-True ([long]$checkEvidenceSchema.'$defs'.artifact.properties.bytes.maximum -eq 134217728 -and [long]$checkEvidenceSchema.'$defs'.artifact.properties.bytes.maximum -gt $phaseManifestCanonicalUpperBound -and [int]$checkEvidenceSchema.'$defs'.artifact.allOf[0].else.properties.bytes.maximum -eq 10485760) 'Outer evidence does not cover the maximum escaped-Unicode phase receipt domain while retaining the ordinary artifact ceiling.'
     Assert-True (@($checkEvidenceSchema.required) -ccontains 'plan_sha256') 'Affected check evidence does not retain the original plan identity required by inner phase artifacts.'
+    $trackedPowerShellPattern = [string]$checkEvidenceSchema.'$defs'.trackedPowerShellPath.pattern
+    $declarationScriptPattern = [string]$checkEvidenceSchema.'$defs'.scriptPath.pattern
+    Assert-True ([string]$checkEvidenceSchema.'$defs'.dependencyResolution.properties.entrypoint.'$ref' -ceq '#/$defs/trackedPowerShellPath' -and [string]$checkEvidenceSchema.'$defs'.dependencyResolution.properties.fallback_reasons.items.properties.importer.'$ref' -ceq '#/$defs/trackedPowerShellPath' -and $trackedPowerShellPattern.StartsWith('^(?:scripts|tools)/',[StringComparison]::Ordinal) -and $trackedPowerShellPattern.Replace('^(?:scripts|tools)/','^scripts/') -ceq $declarationScriptPattern) 'Affected check evidence does not distinguish tracked script/tool closure paths from scripts-only dynamic declarations.'
     foreach ($manifestSchema in @($phaseReceiptSchema.properties.binding.properties.dependency_manifest.items,$phaseProjectionSchema.'$defs'.manifestRecord)) {
         $manifestFields=@($manifestSchema.required);[Array]::Sort($manifestFields,[StringComparer]::Ordinal)
         Assert-True (($manifestFields -join ',') -ceq 'blob,mode,path') 'Affected phase dependency manifest does not retain the exact outer tree-record shape.'
@@ -1710,6 +1722,9 @@ if ($runFullSelector -or $runExecutorPassPhase) {
     $phaseHead = (& git -C $repoRoot rev-parse HEAD).Trim()
     $phaseTree = (& git -C $repoRoot rev-parse 'HEAD^{tree}').Trim()
     $phaseInventory = Get-MorphospaceAffectedTreeInventory -RepositoryRoot $repoRoot -Commit $phaseHead
+    foreach($trustCheckId in $selectorTrustRootCheckIds){
+        Assert-True ([string]$phaseCompiledRegistry.checks[$trustCheckId].cache_policy -ceq 'exact-host') "Deterministic selector trust check '$trustCheckId' is not eligible for exact-host reuse."
+    }
     $selectorPhaseCheckIds=@('affected-selector-graph-import-closure','affected-selector-dependency-closure','affected-selector-executor-pass-schema','affected-selector-executor-native-failure-damage','affected-selector-executor-native-exit125-damage','affected-selector-executor-forged-terminal-damage','affected-selector-executor-parent-containment-damage','affected-selector-executor-descendant-containment-damage','affected-selector-executor-output-ceiling-damage','affected-selector-executor-timeout-damage','affected-selector-executor-dual-stream-damage','affected-selector-executor-source-integrity-damage','affected-selector-executor-publication-collision-damage','affected-selector-selection-scenarios','affected-selector-trust-self-executor','affected-selector-trust-routing-contracts','affected-selector-trust-proportional-mappings','affected-selector-trust-damage-final','affected-selector-selftest')
     $phaseDependencyInput=$null
     foreach($phaseCheckId in $selectorPhaseCheckIds){
@@ -1728,20 +1743,93 @@ if ($runFullSelector -or $runExecutorPassPhase) {
     Assert-True (Test-Json -Json (ConvertTo-MorphospaceCanonicalJson -Value $derivedPhaseTerminal) -SchemaFile (Join-Path $repoRoot 'schemas/affected-validation-self-test-phase-receipt-v1.schema.json') -ErrorAction Stop) 'Actual registry-derived phase manifest does not validate through the closed phase receipt schema.'
     $bindingCompatibilityOutput = @(& (Join-Path $repoRoot 'scripts/Invoke-AffectedValidationSelfTestPhase.ps1') -BindingSelfTest)
     Assert-True (@($bindingCompatibilityOutput | Where-Object { [string]$_ -ceq 'Affected-validation phase ancestor-binding compatibility self-test passed.' }).Count -eq 1) 'Affected phase ancestor-binding positive/damage self-test did not pass exactly once.'
+    $hostedActionPins = @{
+        'actions/checkout'='3d3c42e5aac5ba805825da76410c181273ba90b1'
+        'actions/upload-artifact'='043fb46d1a93c77aae656e7c1c64a875d1fc6a0a'
+        'actions/download-artifact'='3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c'
+        'actions/cache/restore'='55cc8345863c7cc4c66a329aec7e433d2d1c52a9'
+        'actions/cache/save'='55cc8345863c7cc4c66a329aec7e433d2d1c52a9'
+    }
+    $hostedActionUses = @([regex]::Matches($workflowSource,'(?m)^\s+-?\s*uses:\s+(?<action>actions/[a-z0-9-]+(?:/[a-z0-9-]+)?)@(?<commit>[0-9a-f]{40})\s*$'))
+    Assert-True ($hostedActionUses.Count -gt 0) 'Workflow contains no immutable hosted action references.'
+    foreach($use in $hostedActionUses){
+        $action=[string]$use.Groups['action'].Value
+        $commit=[string]$use.Groups['commit'].Value
+        Assert-True ($hostedActionPins.ContainsKey($action) -and [string]$hostedActionPins[$action] -ceq $commit) "Workflow action '$action@$commit' is outside the exact Node 24 action set."
+    }
+    foreach($action in $hostedActionPins.Keys){ Assert-True (@($hostedActionUses | Where-Object { [string]$_.Groups['action'].Value -ceq $action }).Count -gt 0) "Workflow does not exercise the pinned '$action' action." }
     $workflowJobs = @{}
     foreach ($match in [regex]::Matches($workflowSource, '(?ms)^  (?<id>[a-z0-9-]+):\r?\n(?<body>.*?)(?=^  [a-z0-9-]+:|\z)')) { $workflowJobs[[string]$match.Groups['id'].Value] = [string]$match.Groups['body'].Value }
+    $assertPreEvidenceFailureContract = {
+        param([string]$JobBody,[string]$Platform)
+        $label = [Globalization.CultureInfo]::InvariantCulture.TextInfo.ToTitleCase($Platform)
+        foreach ($required in @(
+            '$capturedExecutorFailure = $null -ne $failure',
+            'rusty.morphospace.diagnostic.affected_validation_pre_evidence_failure.v1',
+            "platform='$Platform'",
+            '[IO.FileMode]::CreateNew',
+            '$diagnosticBytes.Length -gt 65536',
+            'captured_executor_exception=$capturedExecutorFailure',
+            'fully_qualified_error_id=& $bounded $failure.FullyQualifiedErrorId',
+            '$errorDetails = $failure.ErrorDetails',
+            "error_details=if (`$null -eq `$errorDetails) { '' } else { & `$bounded `$errorDetails.Message }",
+            '$invocationInfo = $failure.InvocationInfo',
+            "position_message=if (`$null -eq `$invocationInfo) { '' } else { & `$bounded `$invocationInfo.PositionMessage }",
+            'script_stack_trace=& $bounded $failure.ScriptStackTrace',
+            '"pre_evidence_failure=true" | Add-Content -LiteralPath $env:GITHUB_OUTPUT',
+            "name: affected-pre-evidence-`${{ matrix.segment_id }}-`${{ github.sha }}-`${{ github.run_attempt }}",
+            "path: `${{ runner.temp }}/pre-evidence-`${{ matrix.segment_id }}.json",
+            "steps.execute.outputs.pre_evidence_failure == 'true'",
+            "steps.execute.outputs.evidence_ready == 'true'"
+        )) {
+            if (-not $JobBody.Contains($required)) { throw "Workflow $Platform segment pre-evidence contract is missing '$required'." }
+        }
+        $orderedTokens = @(
+            'if (-not (Test-Path -LiteralPath $evidencePath -PathType Leaf))',
+            '$capturedExecutorFailure = $null -ne $failure',
+            "[InvalidOperationException]::new('Affected $label segment returned without producing typed evidence.')",
+            'rusty.morphospace.diagnostic.affected_validation_pre_evidence_failure.v1',
+            '"pre_evidence_failure=true" | Add-Content -LiteralPath $env:GITHUB_OUTPUT',
+            'throw $failure',
+            '"evidence_ready=true" | Add-Content -LiteralPath $env:GITHUB_OUTPUT',
+            '"evidence_sha256=$((Get-FileHash'
+        )
+        $cursor = 0
+        foreach ($token in $orderedTokens) {
+            $index = $JobBody.IndexOf($token,$cursor,[StringComparison]::Ordinal)
+            if ($index -lt 0) { throw "Workflow $Platform segment can mask a captured executor exception or bind successful evidence out of order at '$token'." }
+            $cursor = $index + $token.Length
+        }
+    }
     foreach ($requiredContext in @('quick-linux','quick-windows','standard-windows')) { Assert-True $workflowJobs.ContainsKey($requiredContext) "PR workflow lacks the required '$requiredContext' context." }
-    foreach ($selectedContext in @(@{ id = 'quick-linux'; selected = 'LINUX_SELECTED' }, @{ id = 'standard-windows'; selected = 'WINDOWS_SELECTED' })) {
+    foreach ($segmentJobId in @('affected-linux-segments','affected-windows-segments','main-linux-segments','main-windows-segments')) { Assert-True $workflowJobs.ContainsKey($segmentJobId) "Workflow lacks the required '$segmentJobId' segmented execution job." }
+    foreach ($selectedContext in @(
+        @{ id = 'quick-linux'; selected = 'LINUX_SELECTED'; segment_result = 'SEGMENT_RESULT'; segment_job = 'affected-linux-segments'; platform = 'linux' },
+        @{ id = 'standard-windows'; selected = 'WINDOWS_SELECTED'; segment_result = 'SEGMENT_RESULT'; segment_job = 'affected-windows-segments'; platform = 'windows' }
+    )) {
         $body = [string]$workflowJobs[[string]$selectedContext.id]
-        Assert-True ($body -match '(?m)^    needs: \[infrastructure, select\]$' -and $body -match "\`$env:$($selectedContext.selected) -cnotin @\('true','false'\)" -and $body -match "\`$env:$($selectedContext.selected) -ceq 'false'") "Required '$($selectedContext.id)' context does not close its platform-selection domain."
+        Assert-True ($body -match "(?m)^    needs: \[infrastructure, select, $([regex]::Escape([string]$selectedContext.segment_job))\]$" -and $body -match "\`$env:$($selectedContext.selected) -cnotin @\('true','false'\)" -and $body -match "\`$env:$($selectedContext.selected) -ceq 'true'.*\`$env:$($selectedContext.segment_result) -cne 'success'") "Required '$($selectedContext.id)' context does not close its platform-selection and segment-result domains."
         Assert-True ($body -match "\`$env:INFRA_RESULT -cne 'success'" -and $body -match "\`$env:SELECT_RESULT -cne 'success'") "Required '$($selectedContext.id)' context can bypass failed selection prerequisites."
         foreach ($selectionValue in @('', 'unexpected')) {
             $rejected = $false
-            try { Invoke-WorkflowSelectionGate -JobBody $body -SelectionVariable ([string]$selectedContext.selected) -SelectionValue $selectionValue } catch { $rejected = $_.Exception.Message -like '*must be exactly true or false*' }
+            try { Invoke-WorkflowSelectionGate -JobBody $body -SelectionVariable ([string]$selectedContext.selected) -SelectionValue $selectionValue -SegmentResultVariable ([string]$selectedContext.segment_result) } catch { $rejected = $_.Exception.Message -like '*must be exactly true or false*' }
             Assert-True $rejected "Required '$($selectedContext.id)' context accepted '$selectionValue' as a platform selection."
         }
-        Invoke-WorkflowSelectionGate -JobBody $body -SelectionVariable ([string]$selectedContext.selected) -SelectionValue 'true'
-        Invoke-WorkflowSelectionGate -JobBody $body -SelectionVariable ([string]$selectedContext.selected) -SelectionValue 'false'
+        Invoke-WorkflowSelectionGate -JobBody $body -SelectionVariable ([string]$selectedContext.selected) -SelectionValue 'true' -SegmentResultVariable ([string]$selectedContext.segment_result)
+        Invoke-WorkflowSelectionGate -JobBody $body -SelectionVariable ([string]$selectedContext.selected) -SelectionValue 'false' -SegmentResultVariable ([string]$selectedContext.segment_result)
+        $segmentBody = [string]$workflowJobs[[string]$selectedContext.segment_job]
+        & $assertPreEvidenceFailureContract $segmentBody ([string]$selectedContext.platform)
+        Assert-AffectedThrows { & $assertPreEvidenceFailureContract ($segmentBody.Replace('[IO.FileMode]::CreateNew','[IO.FileMode]::Create')) ([string]$selectedContext.platform) } '*CreateNew*' "Workflow '$($selectedContext.segment_job)' damage test accepted overwrite-capable diagnostic publication."
+        Assert-AffectedThrows { & $assertPreEvidenceFailureContract ($segmentBody.Replace('$capturedExecutorFailure = $null -ne $failure','$capturedExecutorFailure = $false')) ([string]$selectedContext.platform) } '*capturedExecutorFailure*' "Workflow '$($selectedContext.segment_job)' damage test accepted loss of captured-exception classification."
+        Assert-AffectedThrows { & $assertPreEvidenceFailureContract ($segmentBody.Replace('throw $failure','throw ''masked failure''')) ([string]$selectedContext.platform) } '*mask a captured executor exception*' "Workflow '$($selectedContext.segment_job)' damage test accepted captured-exception replacement."
+        Assert-AffectedThrows { & $assertPreEvidenceFailureContract ($segmentBody.Replace('$diagnosticBytes.Length -gt 65536','$diagnosticBytes.Length -gt 65537')) ([string]$selectedContext.platform) } '*65536*' "Workflow '$($selectedContext.segment_job)' damage test accepted a widened diagnostic byte ceiling."
+        Assert-True ($segmentBody.Contains('name: segment-${{ matrix.segment_id }}') -and $segmentBody.Contains("matrix: `${{ fromJSON(needs.select.outputs.$($selectedContext.platform)_matrix) }}") -and $segmentBody.Contains('-SegmentId $env:SEGMENT_ID')) "Workflow '$($selectedContext.segment_job)' does not execute the deterministic $($selectedContext.platform) segment matrix."
+        Assert-True ($segmentBody.Contains('affected-checks-${{ matrix.segment_id }}-') -and $segmentBody.Contains('affected-check-${{ matrix.segment_id }}-pr-')) "Workflow '$($selectedContext.segment_job)' does not preserve segment-scoped exact-check streams and caches."
+        $digestIndex = $segmentBody.IndexOf('"evidence_sha256=$((Get-FileHash', [StringComparison]::Ordinal)
+        $throwIndex = $segmentBody.IndexOf('if ($null -ne $failure) { throw $failure }', [StringComparison]::Ordinal)
+        Assert-True ($segmentBody.Contains('$failure = $null') -and $digestIndex -ge 0 -and $throwIndex -gt $digestIndex) "Workflow '$($selectedContext.segment_job)' can signal execution failure before binding its segment evidence digest."
+        Assert-True ($segmentBody.Contains('PR_NUMBER: ${{ github.event.pull_request.number }}') -and $segmentBody.Contains("steps.execute.outputs.cache_ready == 'true'") -and $segmentBody.Contains('AffectedCacheFinalized') -and $segmentBody.Contains('actualInventorySha256 -cne $inventorySha256')) "Workflow '$($selectedContext.segment_job)' does not retain exact producer and parent-finalized cache binding."
+        Assert-True ($body.Contains('Merge-AffectedValidationSegments.ps1') -and $body.Contains("-Platform $($selectedContext.platform)")) "Required '$($selectedContext.id)' context does not verify the exact $($selectedContext.platform) segment union."
     }
     $quickWindowsBody = [string]$workflowJobs['quick-windows']
     Assert-True ($quickWindowsBody -match '(?m)^    needs: \[infrastructure, select, standard-windows\]$' -and $quickWindowsBody -match "\`$env:STANDARD_RESULT -cne 'success'") 'Required quick-windows context is not bound to the selected Windows result.'
@@ -1752,18 +1840,23 @@ if ($runFullSelector -or $runExecutorPassPhase) {
         $artifactMarker = "affected-$platform-evidence.json"
         $artifactIndex = $workflowSource.IndexOf($artifactMarker, [StringComparison]::Ordinal)
         Assert-True ($artifactIndex -ge 0) "PR workflow lacks the $platform evidence artifact."
-        $beforeArtifact = $workflowSource.Substring(0, $artifactIndex)
-        $afterArtifact = $workflowSource.Substring($artifactIndex)
-        Assert-True ($beforeArtifact.LastIndexOf('$failure = $null', [StringComparison]::Ordinal) -ge 0 -and $afterArtifact.IndexOf('if ($null -ne $failure) { throw $failure }', [StringComparison]::Ordinal) -ge 0) "PR workflow can signal $platform execution failure before binding its evidence digest."
-        Assert-True ($workflowSource -match "affected-checks-$platform-" -and $workflowSource -match "affected-check-$platform-pr-") "PR workflow does not preserve and cache exact $platform check streams and receipts."
-        Assert-True ($workflowSource -match "PR_NUMBER: `\$\{\{ github\.event\.pull_request\.number \}\}" -and $workflowSource -match "steps\.execute\.outputs\.cache_ready == 'true'" -and $workflowSource -match "AffectedCacheFinalized") "PR workflow does not bind producer identity and gate cache publication on a parent-finalized inventory."
-        Assert-True ($workflowSource -match 'cache_inventory_sha256' -and $workflowSource -match 'actualInventorySha256 -cne \$inventorySha256') "PR workflow does not require the executor-returned exact inventory SHA-256 before publishing the $platform cache."
+        Assert-True ($workflowSource.Contains("pattern: affected-segment-$platform-*") -and $workflowSource.Contains("-Platform $platform -SegmentEvidenceDirectory")) "PR workflow does not download and merge the exact $platform segment evidence set."
     }
+    foreach ($platform in @('linux','windows')) {
+        $mainSegmentBody = [string]$workflowJobs["main-$platform-segments"]
+        $mainFinalBody = [string]$workflowJobs["main-$platform-delta"]
+        Assert-True ($mainSegmentBody.Contains("matrix: `${{ fromJSON(needs.select.outputs.$($platform)_matrix) }}") -and $mainSegmentBody.Contains('-SegmentId $env:SEGMENT_ID')) "Post-merge $platform fallback is not segmented."
+        Assert-True ($mainFinalBody.Contains("needs: [select, post-merge-attestation, main-$platform-segments]") -and $mainFinalBody.Contains('Merge-AffectedValidationSegments.ps1')) "Post-merge $platform final context does not require and verify its exact segment union."
+    }
+    $deepBody = [string]$workflowJobs['deep']
+    Assert-True ($deepBody.Contains('needs: [infrastructure, select, quick-linux, standard-windows]') -and $deepBody.Contains('full-history segmented Deep evidence') -and $deepBody -notmatch 'Test-WorkEnvironment') 'Scheduled/manual Deep does not bind the fresh segmented leaf evidence or still reruns the cumulative aggregate.'
+    $selectBody = [string]$workflowJobs['select']
+    Assert-True ($selectBody.Contains("'schedule','workflow_dispatch'") -and $selectBody.Contains("{ 'Deep' }") -and $selectBody.Contains('Get-MorphospaceAffectedValidationSegments')) 'Schedule/manual selection does not resolve the complete Deep plan and deterministic segment matrices.'
     $executorSource = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -Raw
     $inventorySchema = Get-Content -LiteralPath (Join-Path $repoRoot 'schemas/affected-validation-check-inventory-v1.schema.json') -Raw | ConvertFrom-Json -Depth 64
     $producerEvents = @($inventorySchema.properties.producer.properties.event_name.enum)
     [Array]::Sort($producerEvents,[StringComparer]::Ordinal)
-    Assert-True (($producerEvents -join ',') -ceq 'local,pull_request,push') 'Affected check inventory does not close the exact local/PR/push producer event domain.'
+    Assert-True (($producerEvents -join ',') -ceq 'local,pull_request,push,schedule,workflow_dispatch') 'Affected check inventory does not close the exact local/PR/push/schedule/manual producer event domain.'
     Assert-True ([int64]$inventorySchema.'$defs'.artifactFile.properties.bytes.maximum -eq 134217728) 'Affected check inventory does not admit the reviewed phase-receipt size ceiling.'
     Assert-True ([int64]$inventorySchema.'$defs'.artifactFile.allOf[0].else.properties.bytes.maximum -eq 10485760) 'Affected check inventory widened ordinary artifact files beyond 10 MiB.'
     $artifactFileSchemaWrapper = [ordered]@{}
@@ -1780,7 +1873,7 @@ if ($runFullSelector -or $runExecutorPassPhase) {
     $oversizedPhaseInventoryArtifact = $maximumPhaseInventoryArtifact | ConvertTo-Json -Depth 16 | ConvertFrom-Json -Depth 16 -DateKind String
     $oversizedPhaseInventoryArtifact.bytes = 134217729
     Assert-True (-not (Test-Json -Json (ConvertTo-MorphospaceCanonicalJson -Value $oversizedPhaseInventoryArtifact) -Schema $artifactFileSchemaJson -ErrorAction SilentlyContinue)) 'Affected check inventory admitted a phase artifact above 128 MiB.'
-    Assert-True ($executorSource.Contains("@('pull_request','push') -cnotcontains `$eventName") -and $executorSource.Contains("Affected check push producer unexpectedly inherited a pull-request number.")) 'Affected executor does not distinguish closed PR and push producer identities.'
+    Assert-True ($executorSource.Contains("@('pull_request','push','schedule','workflow_dispatch') -cnotcontains `$eventName") -and $executorSource.Contains("Affected check non-pull-request producer unexpectedly inherited a pull-request number.")) 'Affected executor does not distinguish the closed PR/push/schedule/manual producer identities.'
     Assert-True ($executorSource.Contains("source=`$reusable.receipt.source;plan_sha256=[string]`$reusable.receipt.plan_sha256;binding=`$binding") -and $executorSource.Contains("plan_sha256=[string]`$plan.plan_sha256;binding=`$binding")) 'Affected executor does not preserve the original receipt source and plan transitively when materializing reused evidence.'
     $producerTokens = $null
     $producerParseErrors = $null
@@ -1813,6 +1906,14 @@ if ($runFullSelector -or $runExecutorPassPhase) {
         $env:PR_NUMBER = '128'
         $pullProducer = Get-AffectedValidationProducerBinding
         Assert-True ($pullProducer.event_name -ceq 'pull_request' -and [int]$pullProducer.pull_request_number -eq 128) 'Affected executor did not retain the exact pull-request producer identity.'
+        foreach ($eventName in @('schedule','workflow_dispatch')) {
+            $env:GITHUB_EVENT_NAME = $eventName
+            Remove-Item -LiteralPath 'Env:PR_NUMBER' -ErrorAction SilentlyContinue
+            $deepProducer = Get-AffectedValidationProducerBinding
+            Assert-True ($deepProducer.event_name -ceq $eventName -and [int]$deepProducer.pull_request_number -eq 0) "Affected executor did not emit a closed $eventName producer identity without PR_NUMBER."
+            $env:PR_NUMBER = '128'
+            Assert-AffectedThrows { Get-AffectedValidationProducerBinding | Out-Null } '*non-pull-request producer unexpectedly inherited*' "Affected executor accepted a $eventName producer with PR_NUMBER."
+        }
     } finally {
         foreach ($name in $producerEnvironmentNames) {
             $before = $producerEnvironmentBefore[$name]
@@ -1994,8 +2095,12 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value $termina
             Assert-True (@($docsPlan.selected_checks.check_id) -cnotcontains 'work-unit-automation') 'Unrelated automation check was selected for documentation.'
             Assert-True ([bool]$docsPlan.claims.selection_only -and -not [bool]$docsPlan.claims.checks_executed) 'Selection plan claimed check execution or lifecycle authority.'
             Assert-True (@($docsPlan.selected_checks | Where-Object { @($_.platforms) -ccontains 'windows' }).Count -eq 0) 'Documentation change unnecessarily selected a Windows suite.'
+            $docsSegments = @(Get-MorphospaceAffectedValidationSegments -Plan $docsPlan -Registry $fixtureRegistry -Platform linux)
+            Assert-True ($docsSegments.Count -eq 1 -and [string]$docsSegments[0].segment_id -ceq 'linux-001' -and (Get-MorphospaceCanonicalJsonSha256 -Value @($docsSegments[0].check_ids)) -ceq (Get-MorphospaceCanonicalJsonSha256 -Value @($docsPlan.selected_checks.check_id))) 'Documentation selection did not produce one exact deterministic Linux segment.'
             $explicitDeepPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $base -HeadRevision $docsHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier deep
-            Assert-True (@($explicitDeepPlan.selected_checks.check_id) -ccontains 'work-environment-deep') 'Explicit Deep request omitted the cumulative aggregate.'
+            Assert-True ($explicitDeepPlan.selection_mode -ceq 'full-deep' -and @($explicitDeepPlan.reason_codes) -ccontains 'deep-requested' -and @($explicitDeepPlan.selected_checks.check_id) -cnotcontains 'work-environment-deep') 'Explicit Deep request did not select independent leaves or retained the redundant cumulative aggregate.'
+            Assert-AffectedThrows { & (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $base -HeadCommit $docsHead -PlanPath $planPath -Platform linux -SegmentId 'windows-001' -OutPath (Join-Path $fixture 'affected-evidence-wrong-platform.json') | Out-Null } '*differs from its requested platform*' 'Affected executor accepted a segment ID for another platform.'
+            Assert-AffectedThrows { & (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $base -HeadCommit $docsHead -PlanPath $planPath -Platform linux -SegmentId 'linux-999' -OutPath (Join-Path $fixture 'affected-evidence-unknown-segment.json') | Out-Null } '*not present in the exact plan partition*' 'Affected executor accepted a segment ID outside the exact partition.'
             $evidencePath = Join-Path $fixture 'affected-evidence.json'
             $priorCollisionSelfTest = [Environment]::GetEnvironmentVariable('RUSTY_AFFECTED_VALIDATION_RESTORATION_COLLISION_SELFTEST','Process')
             $priorGitPager = [Environment]::GetEnvironmentVariable('GIT_PAGER','Process')
@@ -2007,7 +2112,7 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value $termina
                 if ([Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Windows)) { $env:RUSTY_AFFECTED_VALIDATION_RESTORATION_COLLISION_SELFTEST = '1' }
                 $env:GIT_PAGER = 'affected-parent-pager-must-not-reach-child'
                 $env:GIT_AFFECTED_VALIDATION_TEST = 'affected-parent-git-override-must-not-reach-child'
-                $evidence = & (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $base -HeadCommit $docsHead -PlanPath $planPath -Platform linux -OutPath $evidencePath
+                $evidence = & (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $base -HeadCommit $docsHead -PlanPath $planPath -Platform linux -SegmentId ([string]$docsSegments[0].segment_id) -OutPath $evidencePath
             } finally {
                 [Environment]::SetEnvironmentVariable('RUSTY_AFFECTED_VALIDATION_RESTORATION_COLLISION_SELFTEST',$priorCollisionSelfTest,'Process')
                 if ($null -eq $priorGitPager) { Remove-Item -LiteralPath 'Env:GIT_PAGER' -ErrorAction SilentlyContinue } else { [Environment]::SetEnvironmentVariable('GIT_PAGER',$priorGitPager,'Process') }
@@ -2021,7 +2126,7 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value $termina
             Assert-True ([IO.File]::Exists($evidencePath)) 'Affected executor did not publish evidence.'
             Assert-True ($evidence.result -ceq 'pass' -and @($evidence.check_results).Count -ge 2) 'Affected executor did not bind selected checks into pass evidence.'
             Assert-True (@($evidence.check_results | Where-Object { $_.stdout_sha256 -notmatch '^[0-9a-f]{64}$' -or $_.stderr_sha256 -notmatch '^[0-9a-f]{64}$' -or $_.timed_out -or $_.output_truncated -or $_.post_kill_drain_timed_out }).Count -eq 0) 'Affected executor omitted bounded child-output evidence.'
-            $firstCheckRoot = Join-Path $fixture "affected-check-evidence-$($docsPlan.plan_sha256)-linux"
+            $firstCheckRoot = Join-Path $fixture "affected-check-evidence-$($docsPlan.plan_sha256)-linux-001"
             $firstInventoryPath = Join-Path $firstCheckRoot 'inventory.json'
             Assert-True ([IO.File]::Exists($firstInventoryPath)) 'Affected executor did not finalize a parent-owned check inventory.'
             Assert-True ([string]$evidence.cache_inventory_sha256 -match '^[0-9a-f]{64}$' -and [string]$evidence.cache_inventory_sha256 -ceq (Get-FileHash -LiteralPath $firstInventoryPath -Algorithm SHA256).Hash.ToLowerInvariant()) 'Passing executor did not return the exact materialized inventory SHA-256.'
@@ -3049,6 +3154,69 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     Assert-True ($registryContractPlan.selection_mode -ceq 'full-deep' -and @($registryContractPlan.selected_checks.check_id) -ccontains 'workflow-contracts') 'Affected-validation registry change did not retain its one-time Deep workflow-contract coverage.'
     foreach ($checkId in $selectorTrustRootCheckIds) { Assert-True (@($registryContractPlan.selected_checks.check_id) -ccontains $checkId) "Affected-validation registry change did not retain '$checkId'." }
     Assert-True (@($registryContractPlan.selected_checks.check_id) -cnotcontains 'work-environment-deep' -and @($registryContractPlan.reason_codes) -ccontains 'trust-root-path-changed' -and @($registryContractPlan.reason_codes) -cnotcontains 'ambiguous-path-mapping') 'Affected-validation registry change did not retain independent-leaf Deep escalation or selected the redundant aggregate.'
+    $segmentOwner = @{}
+    foreach ($platform in @('linux','windows')) {
+        $platformSelections = @($registryContractPlan.selected_checks | Where-Object { @($_.platforms) -ccontains $platform })
+        $segments = @(Get-MorphospaceAffectedValidationSegments -Plan $registryContractPlan -Registry $contractRegistry -Platform $platform)
+        Assert-True ($segments.Count -gt 0 -and ($platform -cne 'windows' -or $segments.Count -gt 1)) "Affected-validation $platform Deep partition did not produce its bounded segment set."
+        $covered = [Collections.Generic.List[string]]::new()
+        foreach ($segment in $segments) {
+            Assert-True ([long]$segment.estimated_budget_seconds -le 3600 -and [int]$segment.segment_count -eq $segments.Count -and @($segment.check_ids).Count -gt 0) "Affected-validation segment '$($segment.segment_id)' exceeds its one-hour target or has invalid cardinality."
+            foreach ($id in @($segment.check_ids)) {
+                $ownerKey = "$platform/$id"
+                Assert-True (-not $segmentOwner.ContainsKey($ownerKey)) "Affected-validation $platform segment partition repeats '$id'."
+                $segmentOwner[$ownerKey] = [string]$segment.segment_id
+                $covered.Add([string]$id)
+            }
+        }
+        Assert-True ((Get-MorphospaceCanonicalJsonSha256 -Value @($covered.ToArray() | Sort-Object)) -ceq (Get-MorphospaceCanonicalJsonSha256 -Value @($platformSelections.check_id | Sort-Object))) "Affected-validation $platform segments do not cover the exact platform selection."
+    }
+    $contractCheckMap = @{}; foreach ($check in @($contractRegistry.checks)) { $contractCheckMap[[string]$check.check_id] = $check }
+    foreach ($selection in @($registryContractPlan.selected_checks)) {
+        $id = [string]$selection.check_id
+        $executionAfter = if ($null -eq $contractCheckMap[$id].PSObject.Properties['execution_after_checks']) { @() } else { @($contractCheckMap[$id].execution_after_checks) }
+        foreach ($platform in @($selection.platforms)) {
+            $ownerKey = "$platform/$id"
+            foreach ($dependency in @(@($contractCheckMap[$id].prerequisite_checks) + @($executionAfter))) {
+                $dependencyKey = "$platform/$dependency"
+                if ($segmentOwner.ContainsKey($dependencyKey)) { Assert-True ([string]$segmentOwner[$ownerKey] -ceq [string]$segmentOwner[$dependencyKey]) "Affected-validation $platform segment split ordered dependency '$dependency' from '$id'." }
+            }
+        }
+    }
+
+    $segmentMergeRoot = Join-Path ([IO.Path]::GetTempPath()) ('morphospace-affected-segment-merge-' + [Guid]::NewGuid().ToString('N'))
+    [void][IO.Directory]::CreateDirectory($segmentMergeRoot)
+    try {
+        $segmentPlanPath = Join-Path $segmentMergeRoot 'affected-plan.json'
+        Write-Utf8 $segmentPlanPath ((ConvertTo-MorphospaceCanonicalJson -Value $registryContractPlan) + "`n")
+        $segmentInventory = Get-MorphospaceAffectedTreeInventory -RepositoryRoot $fixture -Commit $registryContractHead
+        $segmentRunner = [pscustomobject][ordered]@{os_description='segment-merge-self-test';powershell_version='7.6.0'}
+        foreach ($platform in @('linux','windows')) {
+            $platformSegments = @(Get-MorphospaceAffectedValidationSegments -Plan $registryContractPlan -Registry $contractRegistry -Platform $platform)
+            $segmentEvidenceRoot = Join-Path $segmentMergeRoot "$platform-segments"
+            [void][IO.Directory]::CreateDirectory($segmentEvidenceRoot)
+            foreach ($segment in $platformSegments) {
+                $segmentResults = [Collections.Generic.List[object]]::new()
+                foreach ($id in @($segment.check_ids)) {
+                    $commandPath = [string]$contractCheckMap[[string]$id].command_path
+                    $entry = $segmentInventory.by_path[$commandPath]
+                    Assert-True ($null -ne $entry -and [string]$entry.type -ceq 'blob') "Segment merge fixture lacks exact command blob '$commandPath'."
+                    $segmentResults.Add([pscustomobject][ordered]@{check_id=[string]$id;command_path=$commandPath;command_blob_sha1=[string]$entry.blob;result='pass';exit_code=0;timed_out=$false;output_truncated=$false;post_kill_drain_timed_out=$false;stdout_sha256=('0'*64);stderr_sha256=('0'*64);stdout_bytes=0;stderr_bytes=0})
+                }
+                $segmentEvidence = [pscustomobject][ordered]@{schema='rusty.morphospace.workflow.affected_validation_evidence.v1';repository=[string]$registryContractPlan.repository;base=$registryContractPlan.base;head=$registryContractPlan.head;plan_sha256=[string]$registryContractPlan.plan_sha256;platform=$platform;runner=$segmentRunner;check_results=@($segmentResults.ToArray());result='pass';claims=[pscustomobject][ordered]@{historical_aggregate_reused=$false;acceptance_authority=$false;publication_authority=$false}}
+                Write-Utf8 (Join-Path $segmentEvidenceRoot "$([string]$segment.segment_id).json") ((ConvertTo-MorphospaceCanonicalJson -Value $segmentEvidence) + "`n")
+            }
+            $mergedPath = Join-Path $segmentMergeRoot "$platform-merged.json"
+            $merged = & (Join-Path $repoRoot 'scripts/Merge-AffectedValidationSegments.ps1') -RepositoryRoot $fixture -BaseCommit $routingBaseHead -HeadCommit $registryContractHead -PlanPath $segmentPlanPath -Platform $platform -SegmentEvidenceDirectory $segmentEvidenceRoot -OutPath $mergedPath
+            $expectedPlatformIds = @($registryContractPlan.selected_checks | Where-Object { @($_.platforms) -ccontains $platform } | ForEach-Object { [string]$_.check_id })
+            Assert-True ([string]$merged.result -ceq 'pass' -and (Get-MorphospaceCanonicalJsonSha256 -Value @($merged.check_results.check_id)) -ceq (Get-MorphospaceCanonicalJsonSha256 -Value $expectedPlatformIds)) "Affected-validation $platform segment merger did not emit the exact ordered platform union."
+            $firstSegmentFile = Get-ChildItem -LiteralPath $segmentEvidenceRoot -File | Sort-Object Name | Select-Object -First 1
+            Remove-Item -LiteralPath $firstSegmentFile.FullName -Force
+            Assert-AffectedThrows { & (Join-Path $repoRoot 'scripts/Merge-AffectedValidationSegments.ps1') -RepositoryRoot $fixture -BaseCommit $routingBaseHead -HeadCommit $registryContractHead -PlanPath $segmentPlanPath -Platform $platform -SegmentEvidenceDirectory $segmentEvidenceRoot -OutPath (Join-Path $segmentMergeRoot "$platform-damaged.json") | Out-Null } '*inventory is not exact*' "Affected-validation $platform segment merger accepted an incomplete evidence inventory."
+        }
+    } finally {
+        if ([IO.Directory]::Exists($segmentMergeRoot)) { Remove-Item -LiteralPath $segmentMergeRoot -Recurse -Force }
+    }
 
     $affectedSchemaPath = Join-Path $fixture 'schemas/affected-validation-registry-v1.schema.json'
     Write-Utf8 $affectedSchemaPath ((Get-Content -LiteralPath $affectedSchemaPath -Raw) + "`n")
@@ -3255,6 +3423,9 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
         [pscustomobject]@{ path='scripts/BlockedSuccessorPreparation.psm1'; checks=@('blocked-successor-preparation','work-unit-automation') },
         [pscustomobject]@{ path='scripts/Test-BlockedSuccessorPreparation.ps1'; checks=@('blocked-successor-preparation','work-unit-automation') },
         [pscustomobject]@{ path='schemas/terminal-validation-selection-release-v2.schema.json'; checks=@('normal-validation-selector') },
+        [pscustomobject]@{ path='schemas/apk-run-phase-receipt-v1.schema.json'; checks=@('apk-run-transaction'); expected_tier='quick' },
+        [pscustomobject]@{ path='schemas/apk-run-transaction-v1.schema.json'; checks=@('apk-run-transaction'); expected_tier='quick' },
+        [pscustomobject]@{ path='tools/Test-ApkRunTransaction.ps1'; checks=@('apk-run-transaction'); expected_tier='quick' },
         [pscustomobject]@{ path='schemas/work-unit-automation-receipt-v2.schema.json'; checks=@('automation-receipt-v2-compatibility') },
         [pscustomobject]@{ path='scripts/Test-AutomationReceiptV2Compatibility.ps1'; checks=@('automation-receipt-v2-compatibility') },
         [pscustomobject]@{ path='scripts/WorkUnitAutomation.psm1'; checks=@('automation-receipt-v2-compatibility','normal-validation-selector','work-unit-automation','workflow-contracts') },
@@ -3292,7 +3463,9 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
         [void](Invoke-TestGit $fixture @('commit', '-m', "proportional mapping $mappingOrdinal"))
         $nextMappingHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
         $mappingPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $proportionalMappingHead -HeadRevision $nextMappingHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
-        Assert-True ($mappingPlan.selection_mode -ceq 'affected' -and $mappingPlan.effective_tier -ceq 'standard') "Proportional mapping for '$($mapping.path)' did not remain affected Standard."
+        $expectedTierProperty = $mapping.PSObject.Properties['expected_tier']
+        $expectedMappingTier = if ($null -eq $expectedTierProperty -or [string]::IsNullOrWhiteSpace([string]$expectedTierProperty.Value)) { 'standard' } else { [string]$expectedTierProperty.Value }
+        Assert-True ($mappingPlan.selection_mode -ceq 'affected' -and $mappingPlan.effective_tier -ceq $expectedMappingTier) "Proportional mapping for '$($mapping.path)' did not remain affected $expectedMappingTier."
         foreach ($reasonCode in @('ambiguous-path-mapping','unmapped-path','trust-root-path-changed')) { Assert-True (@($mappingPlan.reason_codes) -cnotcontains $reasonCode) "Proportional mapping for '$($mapping.path)' retained '$reasonCode'." }
         Assert-True (@($mappingPlan.selected_checks.check_id) -cnotcontains 'work-environment-deep') "Proportional mapping for '$($mapping.path)' selected the cumulative Deep aggregate."
         foreach ($checkId in @($mapping.checks)) { Assert-True (@($mappingPlan.selected_checks.check_id) -ccontains [string]$checkId) "Proportional mapping for '$($mapping.path)' omitted '$checkId'." }
