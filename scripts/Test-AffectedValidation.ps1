@@ -1749,6 +1749,47 @@ if ($runFullSelector -or $runExecutorPassPhase) {
     foreach($action in $hostedActionPins.Keys){ Assert-True (@($hostedActionUses | Where-Object { [string]$_.Groups['action'].Value -ceq $action }).Count -gt 0) "Workflow does not exercise the pinned '$action' action." }
     $workflowJobs = @{}
     foreach ($match in [regex]::Matches($workflowSource, '(?ms)^  (?<id>[a-z0-9-]+):\r?\n(?<body>.*?)(?=^  [a-z0-9-]+:|\z)')) { $workflowJobs[[string]$match.Groups['id'].Value] = [string]$match.Groups['body'].Value }
+    $assertPreEvidenceFailureContract = {
+        param([string]$JobBody,[string]$Platform)
+        $label = [Globalization.CultureInfo]::InvariantCulture.TextInfo.ToTitleCase($Platform)
+        foreach ($required in @(
+            '$capturedExecutorFailure = $null -ne $failure',
+            'rusty.morphospace.diagnostic.affected_validation_pre_evidence_failure.v1',
+            "platform='$Platform'",
+            '[IO.FileMode]::CreateNew',
+            '$diagnosticBytes.Length -gt 65536',
+            'captured_executor_exception=$capturedExecutorFailure',
+            'fully_qualified_error_id=& $bounded $failure.FullyQualifiedErrorId',
+            '$errorDetails = $failure.ErrorDetails',
+            "error_details=if (`$null -eq `$errorDetails) { '' } else { & `$bounded `$errorDetails.Message }",
+            '$invocationInfo = $failure.InvocationInfo',
+            "position_message=if (`$null -eq `$invocationInfo) { '' } else { & `$bounded `$invocationInfo.PositionMessage }",
+            'script_stack_trace=& $bounded $failure.ScriptStackTrace',
+            '"pre_evidence_failure=true" | Add-Content -LiteralPath $env:GITHUB_OUTPUT',
+            "name: affected-pre-evidence-`${{ matrix.segment_id }}-`${{ github.sha }}-`${{ github.run_attempt }}",
+            "path: `${{ runner.temp }}/pre-evidence-`${{ matrix.segment_id }}.json",
+            "steps.execute.outputs.pre_evidence_failure == 'true'",
+            "steps.execute.outputs.evidence_ready == 'true'"
+        )) {
+            if (-not $JobBody.Contains($required)) { throw "Workflow $Platform segment pre-evidence contract is missing '$required'." }
+        }
+        $orderedTokens = @(
+            'if (-not (Test-Path -LiteralPath $evidencePath -PathType Leaf))',
+            '$capturedExecutorFailure = $null -ne $failure',
+            "[InvalidOperationException]::new('Affected $label segment returned without producing typed evidence.')",
+            'rusty.morphospace.diagnostic.affected_validation_pre_evidence_failure.v1',
+            '"pre_evidence_failure=true" | Add-Content -LiteralPath $env:GITHUB_OUTPUT',
+            'throw $failure',
+            '"evidence_ready=true" | Add-Content -LiteralPath $env:GITHUB_OUTPUT',
+            '"evidence_sha256=$((Get-FileHash'
+        )
+        $cursor = 0
+        foreach ($token in $orderedTokens) {
+            $index = $JobBody.IndexOf($token,$cursor,[StringComparison]::Ordinal)
+            if ($index -lt 0) { throw "Workflow $Platform segment can mask a captured executor exception or bind successful evidence out of order at '$token'." }
+            $cursor = $index + $token.Length
+        }
+    }
     foreach ($requiredContext in @('quick-linux','quick-windows','standard-windows')) { Assert-True $workflowJobs.ContainsKey($requiredContext) "PR workflow lacks the required '$requiredContext' context." }
     foreach ($segmentJobId in @('affected-linux-segments','affected-windows-segments','main-linux-segments','main-windows-segments')) { Assert-True $workflowJobs.ContainsKey($segmentJobId) "Workflow lacks the required '$segmentJobId' segmented execution job." }
     foreach ($selectedContext in @(
@@ -1766,6 +1807,11 @@ if ($runFullSelector -or $runExecutorPassPhase) {
         Invoke-WorkflowSelectionGate -JobBody $body -SelectionVariable ([string]$selectedContext.selected) -SelectionValue 'true' -SegmentResultVariable ([string]$selectedContext.segment_result)
         Invoke-WorkflowSelectionGate -JobBody $body -SelectionVariable ([string]$selectedContext.selected) -SelectionValue 'false' -SegmentResultVariable ([string]$selectedContext.segment_result)
         $segmentBody = [string]$workflowJobs[[string]$selectedContext.segment_job]
+        & $assertPreEvidenceFailureContract $segmentBody ([string]$selectedContext.platform)
+        Assert-AffectedThrows { & $assertPreEvidenceFailureContract ($segmentBody.Replace('[IO.FileMode]::CreateNew','[IO.FileMode]::Create')) ([string]$selectedContext.platform) } '*CreateNew*' "Workflow '$($selectedContext.segment_job)' damage test accepted overwrite-capable diagnostic publication."
+        Assert-AffectedThrows { & $assertPreEvidenceFailureContract ($segmentBody.Replace('$capturedExecutorFailure = $null -ne $failure','$capturedExecutorFailure = $false')) ([string]$selectedContext.platform) } '*capturedExecutorFailure*' "Workflow '$($selectedContext.segment_job)' damage test accepted loss of captured-exception classification."
+        Assert-AffectedThrows { & $assertPreEvidenceFailureContract ($segmentBody.Replace('throw $failure','throw ''masked failure''')) ([string]$selectedContext.platform) } '*mask a captured executor exception*' "Workflow '$($selectedContext.segment_job)' damage test accepted captured-exception replacement."
+        Assert-AffectedThrows { & $assertPreEvidenceFailureContract ($segmentBody.Replace('$diagnosticBytes.Length -gt 65536','$diagnosticBytes.Length -gt 65537')) ([string]$selectedContext.platform) } '*65536*' "Workflow '$($selectedContext.segment_job)' damage test accepted a widened diagnostic byte ceiling."
         Assert-True ($segmentBody.Contains('name: segment-${{ matrix.segment_id }}') -and $segmentBody.Contains("matrix: `${{ fromJSON(needs.select.outputs.$($selectedContext.platform)_matrix) }}") -and $segmentBody.Contains('-SegmentId $env:SEGMENT_ID')) "Workflow '$($selectedContext.segment_job)' does not execute the deterministic $($selectedContext.platform) segment matrix."
         Assert-True ($segmentBody.Contains('affected-checks-${{ matrix.segment_id }}-') -and $segmentBody.Contains('affected-check-${{ matrix.segment_id }}-pr-')) "Workflow '$($selectedContext.segment_job)' does not preserve segment-scoped exact-check streams and caches."
         $digestIndex = $segmentBody.IndexOf('"evidence_sha256=$((Get-FileHash', [StringComparison]::Ordinal)
