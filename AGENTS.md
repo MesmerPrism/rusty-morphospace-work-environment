@@ -496,9 +496,13 @@ transaction.
   `docs/ACTIVE_WRITE_SCOPE_AMENDMENT.md`.
 - Prepare a later feature envelope in an idle accepted project only through
   `PrepareDevelopmentEnvelope`, binding additive project/repository-root and
-  feature/effect/permission/build/device ceilings plus a preparation-owned
-  source-composition lock from the repository map. It never admits a future
-  unit or performs source, build, device, or Git-remote work. Begin the feature
+  zero-or-more project-generic feature/effect/permission/build/device ceilings
+  plus a preparation-owned source-composition lock from the repository map.
+  An optional exact adopted schema-pin revision may advance the project,
+  feature-lock, and workspace-state pins in that same CAS transaction; it is
+  caller-supplied, never derived from candidate `HEAD`, and grants no approval.
+  Preparation never admits a future unit or performs source, build, device, or
+  Git-remote work. Begin the feature
   only through `AdmitDevelopmentUnit`, binding that exact preparation receipt,
   prepared project, feature lock, source composition,
   repository map, state, and ledger preimages to its bounded agent assessment.

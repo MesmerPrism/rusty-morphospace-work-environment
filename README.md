@@ -493,6 +493,9 @@ For an idle existing project, first use the bounded owner
 [development-envelope preparation](docs/DEVELOPMENT_ENVELOPE_PREPARATION.md)
 contract, then start the next feature through the bound
 [development-unit admission and candidate-freeze contract](docs/DEVELOPMENT_UNIT_ADMISSION.md).
+Preparation supports zero or more project-generic additive feature bindings and
+may CAS-advance all three schema pins to one caller-supplied exact adopted
+revision without approving that revision or deriving it from candidate `HEAD`.
 It supports agent-led discovery inside a declared envelope, then freezes exact
 candidate identity before normal validation.
 When a ready unit carries sealed evidence from an out-of-scope prior task,
