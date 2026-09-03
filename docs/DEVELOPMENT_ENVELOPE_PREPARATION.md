@@ -8,14 +8,32 @@ action.
 The action accepts a typed preparation input and exact preimages for the
 project, idle workspace state, feature lock, repository map, accepted
 predecessor unit, and event ledger. It may atomically add bounded project
-repositories and roots, the corresponding feature/effect/permission ceiling,
-and the build/device envelope. It resolves the exact feature lock and records
-a preparation-owned source-composition lock from clean repository-map
-observations without requiring an iteration-unit document for the future unit.
+repositories and roots, zero or more project-generic feature bindings, the
+corresponding effect/permission ceiling, and the build/device envelope. Every
+existing feature remains byte-identical. Every added feature ID must be added
+to both project composition and the feature lock, selected, default-disabled,
+and runtime-input activated. The declared permission ceiling must equal both
+the project and lock unions; `none` is the sole sentinel for an empty union.
+Preparation records a preparation-owned source-composition lock from clean
+repository-map observations without requiring an iteration-unit document for
+the future unit.
+
+An optional `schema_pin_revision` permits the same owner transaction to advance
+the project, feature-lock, and workspace-state `$schema` pins. The three live
+documents must already share one exact pinned Work Environment revision, the
+field must name one different lowercase 40-hex revision, and the authored
+project and feature-lock URLs must be the canonical URLs for that exact target;
+the workspace-state URL is derived from the same value. The value is supplied
+by the independently reviewed caller rather than discovered from the candidate
+checkout or its `HEAD`. Preparation validates and CAS-commits the binding, but
+does not approve or adopt that Work Environment revision. Without the optional
+field, every schema pin remains byte-identical.
 
 The project identity and accepted predecessor bytes remain unchanged. The
 target state remains idle (`current_unit` and `next_ready_unit` are null); no
-source, Git remote, build, APK, or device mutation is performed.
+source, Git remote, build, APK, or device mutation is performed. A preparation
+receipt explicitly proves neither schema-revision approval nor any later
+lifecycle authority.
 
 Preparation uses its own v1 intent, completion, receipt, and event. Each binds
 the complete multi-document CAS set. A matching interrupted transaction may
