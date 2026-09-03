@@ -18,18 +18,27 @@
     "check_results": {
       "type": "array", "minItems": 1, "items": {
         "type": "object", "additionalProperties": false,
-        "required": ["check_id", "command_path", "command_blob_sha1", "result", "exit_code", "timed_out", "output_truncated", "post_kill_drain_timed_out", "stdout_sha256", "stderr_sha256", "stdout_bytes", "stderr_bytes"],
+        "required": ["check_id", "command_path", "command_blob_sha1", "mode", "result", "started", "failure_kind", "exit_code", "timed_out", "output_truncated", "post_kill_drain_timed_out", "stdout_sha256", "stderr_sha256", "stdout_bytes", "stderr_bytes"],
         "properties": {
           "check_id": { "$ref": "#/$defs/id" }, "command_path": { "$ref": "#/$defs/path" }, "command_blob_sha1": { "$ref": "#/$defs/commit" },
-          "result": { "enum": ["pass", "code-fail", "infra-fail"] },
+          "mode": { "enum": ["executed", "reused"] }, "result": { "enum": ["pass", "code-fail", "infra-fail"] }, "started": { "type": "boolean" },
+          "failure_kind": { "enum": [null, "launch", "timeout", "output-limit", "drain-timeout", "infrastructure", "exit-code"] },
           "exit_code": { "anyOf": [{ "type": "integer", "minimum": -2147483648, "maximum": 2147483647 }, { "type": "null" }] },
           "timed_out": { "type": "boolean" }, "output_truncated": { "type": "boolean" }, "post_kill_drain_timed_out": { "type": "boolean" }, "stdout_sha256": { "$ref": "#/$defs/hash" }, "stderr_sha256": { "$ref": "#/$defs/hash" },
           "stdout_bytes": { "type": "integer", "minimum": 0, "maximum": 10485760 }, "stderr_bytes": { "type": "integer", "minimum": 0, "maximum": 10485760 }
         },
         "allOf": [
-          { "if": { "properties": { "result": { "const": "pass" } }, "required": ["result"] }, "then": { "properties": { "exit_code": { "const": 0 }, "timed_out": { "const": false }, "output_truncated": { "const": false }, "post_kill_drain_timed_out": { "const": false } } } },
-          { "if": { "properties": { "result": { "const": "code-fail" } }, "required": ["result"] }, "then": { "anyOf": [ { "properties": { "exit_code": { "type": "integer", "not": { "const": 0 } } }, "required": ["exit_code"] }, { "properties": { "timed_out": { "const": true } }, "required": ["timed_out"] }, { "properties": { "output_truncated": { "const": true } }, "required": ["output_truncated"] }, { "properties": { "post_kill_drain_timed_out": { "const": true } }, "required": ["post_kill_drain_timed_out"] } ] } },
-          { "if": { "properties": { "result": { "const": "infra-fail" } }, "required": ["result"] }, "then": { "properties": { "timed_out": { "const": false }, "output_truncated": { "const": false }, "post_kill_drain_timed_out": { "const": false } } } }
+          { "if": { "properties": { "mode": { "const": "reused" } }, "required": ["mode"] }, "then": { "properties": { "result": { "const": "pass" }, "started": { "const": false }, "failure_kind": { "type": "null" }, "exit_code": { "const": 0 }, "timed_out": { "const": false }, "output_truncated": { "const": false }, "post_kill_drain_timed_out": { "const": false } } } },
+          { "if": { "properties": { "mode": { "const": "executed" }, "result": { "const": "pass" } }, "required": ["mode", "result"] }, "then": { "properties": { "started": { "const": true } } } },
+          { "if": { "properties": { "result": { "const": "pass" } }, "required": ["result"] }, "then": { "properties": { "failure_kind": { "type": "null" }, "exit_code": { "const": 0 }, "timed_out": { "const": false }, "output_truncated": { "const": false }, "post_kill_drain_timed_out": { "const": false } } } },
+          { "if": { "properties": { "result": { "const": "code-fail" } }, "required": ["result"] }, "then": { "properties": { "mode": { "const": "executed" }, "failure_kind": { "enum": ["timeout", "output-limit", "drain-timeout", "exit-code"] } } } },
+          { "if": { "properties": { "result": { "const": "infra-fail" } }, "required": ["result"] }, "then": { "properties": { "mode": { "const": "executed" }, "failure_kind": { "enum": ["launch", "infrastructure"] } } } },
+          { "if": { "properties": { "failure_kind": { "const": "launch" } }, "required": ["failure_kind"] }, "then": { "properties": { "result": { "const": "infra-fail" }, "started": { "const": false }, "exit_code": { "type": "null" }, "timed_out": { "const": false }, "output_truncated": { "const": false }, "post_kill_drain_timed_out": { "const": false } } } },
+          { "if": { "properties": { "failure_kind": { "const": "timeout" } }, "required": ["failure_kind"] }, "then": { "properties": { "result": { "const": "code-fail" }, "started": { "const": true }, "timed_out": { "const": true } } } },
+          { "if": { "properties": { "failure_kind": { "const": "output-limit" } }, "required": ["failure_kind"] }, "then": { "properties": { "result": { "const": "code-fail" }, "started": { "const": true }, "timed_out": { "const": false }, "output_truncated": { "const": true } } } },
+          { "if": { "properties": { "failure_kind": { "const": "drain-timeout" } }, "required": ["failure_kind"] }, "then": { "properties": { "result": { "const": "code-fail" }, "started": { "const": true }, "timed_out": { "const": false }, "output_truncated": { "const": false }, "post_kill_drain_timed_out": { "const": true } } } },
+          { "if": { "properties": { "failure_kind": { "const": "infrastructure" } }, "required": ["failure_kind"] }, "then": { "properties": { "result": { "const": "infra-fail" }, "timed_out": { "const": false }, "output_truncated": { "const": false }, "post_kill_drain_timed_out": { "const": false } } } },
+          { "if": { "properties": { "failure_kind": { "const": "exit-code" } }, "required": ["failure_kind"] }, "then": { "properties": { "result": { "const": "code-fail" }, "started": { "const": true }, "exit_code": { "type": "integer", "not": { "const": 0 } }, "timed_out": { "const": false }, "output_truncated": { "const": false }, "post_kill_drain_timed_out": { "const": false } } } }
         ]
       }
     },

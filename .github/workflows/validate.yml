@@ -13,12 +13,13 @@ permissions:
   actions: read
 
 concurrency:
-  group: validate-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.event_name == 'pull_request' && format('validate-pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && format('validate-main-{0}', github.ref) || github.event_name == 'schedule' && 'validate-deep-schedule' || format('validate-deep-manual-{0}', github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   infrastructure:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       classification: ${{ steps.classify.outputs.classification }}
     steps:
@@ -27,20 +28,36 @@ jobs:
         id: classify
         shell: pwsh
         run: |
-          ./scripts/Test-AffectedValidationInfrastructure.ps1 -Attempt 0 -OutPath "$env:RUNNER_TEMP/infrastructure.json"
-          $result = Get-Content -LiteralPath "$env:RUNNER_TEMP/infrastructure.json" -Raw | ConvertFrom-Json
-          if ($result.classification -ceq 'pending-infra') {
-            Start-Sleep -Seconds 10
-            ./scripts/Test-AffectedValidationInfrastructure.ps1 -Attempt 1 -OutPath "$env:RUNNER_TEMP/infrastructure-retry.json"
-            $result = Get-Content -LiteralPath "$env:RUNNER_TEMP/infrastructure-retry.json" -Raw | ConvertFrom-Json
+          try {
+            ./scripts/Test-AffectedValidationInfrastructure.ps1 -Attempt 0 -OutPath "$env:RUNNER_TEMP/infrastructure.json"
+            $result = Get-Content -LiteralPath "$env:RUNNER_TEMP/infrastructure.json" -Raw | ConvertFrom-Json
+            if ($result.classification -ceq 'pending-infra') {
+              Start-Sleep -Seconds 10
+              ./scripts/Test-AffectedValidationInfrastructure.ps1 -Attempt 1 -OutPath "$env:RUNNER_TEMP/infrastructure-retry.json"
+              $result = Get-Content -LiteralPath "$env:RUNNER_TEMP/infrastructure-retry.json" -Raw | ConvertFrom-Json
+            }
+            "classification=$($result.classification)" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+            if ($result.classification -ceq 'pending-infra') { throw 'Infrastructure remains pending after its single bounded retry.' }
+          } catch {
+            $message=[string]$_.Exception.Message;if($message.Length-gt2048){$message=$message.Substring(0,2048)}
+            $diagnostic=[pscustomobject][ordered]@{schema='rusty.morphospace.diagnostic.affected_validation_pre_evidence_failure.v1';authority='non-authoritative-terminal-diagnostic';phase='setup';result='infra-fail';failure=[pscustomobject][ordered]@{failure_kind='setup';exception_type=$_.Exception.GetType().FullName;exception_message=$message};claims=[pscustomobject][ordered]@{typed_aggregate_evidence_produced=$false;acceptance_authority=$false;publication_authority=$false}}
+            [byte[]]$bytes=[Text.UTF8Encoding]::new($false).GetBytes(($diagnostic|ConvertTo-Json -Depth 6 -Compress)+"`n");if($bytes.Length-gt65536){throw 'Bounded setup diagnostic exceeded 65536 bytes.'};$stream=[IO.File]::Open("$env:RUNNER_TEMP/affected-setup-diagnostic.json",[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None);try{$stream.Write($bytes,0,$bytes.Length)}finally{$stream.Dispose()};'diagnostic_ready=true'|Add-Content -LiteralPath $env:GITHUB_OUTPUT
+            throw
           }
-          "classification=$($result.classification)" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
-          if ($result.classification -ceq 'pending-infra') { throw 'Infrastructure remains pending after its single bounded retry.' }
+      - name: Preserve bounded setup diagnostic
+        if: always() && steps.classify.outputs.diagnostic_ready == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: affected-setup-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/affected-setup-diagnostic.json
+          if-no-files-found: error
+          retention-days: 7
 
   select:
     needs: infrastructure
     if: needs.infrastructure.outputs.classification == 'ready'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     outputs:
       linux: ${{ steps.plan.outputs.linux }}
       windows: ${{ steps.plan.outputs.windows }}
@@ -59,6 +76,8 @@ jobs:
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
           PUSH_BEFORE: ${{ github.event.before }}
         run: |
+          $planFailure=$null
+          try {
           ./scripts/Test-PowerShellHost.ps1 -SelfTest
           $base = if ($env:GITHUB_EVENT_NAME -eq 'pull_request') { $env:PR_BASE } elseif ($env:GITHUB_EVENT_NAME -eq 'push') { $env:PUSH_BEFORE } else { (git rev-parse HEAD^).Trim() }
           $head = if ($env:GITHUB_EVENT_NAME -eq 'pull_request') { $env:PR_HEAD } else { $env:GITHUB_SHA }
@@ -77,10 +96,20 @@ jobs:
           $registry = Get-Content -LiteralPath manifests/affected-validation-registry.json -Raw | ConvertFrom-Json -Depth 64
           foreach ($platform in @('linux','windows')) {
             $segments = @(Get-MorphospaceAffectedValidationSegments -Plan $plan -Registry $registry -Platform $platform)
-            $include = if ($segments.Count -eq 0) { @([pscustomobject][ordered]@{segment_id="$platform-000"}) } else { @($segments | ForEach-Object { [pscustomobject][ordered]@{segment_id=[string]$_.segment_id} }) }
+            $include = if ($segments.Count -eq 0) { @([pscustomobject][ordered]@{segment_id="$platform-000";timeout_minutes=5}) } else { @($segments | ForEach-Object { $outer=[int][Math]::Ceiling(([long]$_.estimated_budget_seconds+900)/60.0);if($outer-ge360){throw 'Affected-validation segment plus bounded setup/cleanup overhead reaches the GitHub six-hour ceiling.'};[pscustomobject][ordered]@{segment_id=[string]$_.segment_id;timeout_minutes=$outer} }) }
             $matrix = [pscustomobject][ordered]@{include=@($include)}
             "${platform}_matrix=$(($matrix | ConvertTo-Json -Depth 4 -Compress))" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
           }
+          } catch {$planFailure=$_}
+          if($null-ne$planFailure){$message=[string]$planFailure.Exception.Message;if($message.Length-gt2048){$message=$message.Substring(0,2048)};$diagnostic=[pscustomobject][ordered]@{schema='rusty.morphospace.diagnostic.affected_validation_pre_evidence_failure.v1';authority='non-authoritative-terminal-diagnostic';phase='plan';result='code-fail';failure=[pscustomobject][ordered]@{failure_kind='plan';exception_type=$planFailure.Exception.GetType().FullName;exception_message=$message};claims=[pscustomobject][ordered]@{typed_aggregate_evidence_produced=$false;acceptance_authority=$false;publication_authority=$false}};[byte[]]$bytes=[Text.UTF8Encoding]::new($false).GetBytes(($diagnostic|ConvertTo-Json -Depth 6 -Compress)+"`n");if($bytes.Length-gt65536){throw 'Bounded plan diagnostic exceeded 65536 bytes.'};$stream=[IO.File]::Open("$env:RUNNER_TEMP/affected-plan-diagnostic.json",[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None);try{$stream.Write($bytes,0,$bytes.Length)}finally{$stream.Dispose()};'diagnostic_ready=true'|Add-Content -LiteralPath $env:GITHUB_OUTPUT;throw $planFailure}
+      - name: Preserve bounded plan diagnostic
+        if: always() && steps.plan.outputs.diagnostic_ready == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: affected-plan-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/affected-plan-diagnostic.json
+          if-no-files-found: error
+          retention-days: 7
       - name: Preserve canonical-digest affected plan
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -94,6 +123,7 @@ jobs:
     needs: [infrastructure, select]
     if: always() && (github.event_name == 'pull_request' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && needs.select.outputs.linux == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: ${{ matrix.timeout_minutes }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.select.outputs.linux_matrix) }}
@@ -262,6 +292,7 @@ jobs:
 
   quick-linux:
     needs: [infrastructure, select, affected-linux-segments]
+    timeout-minutes: 20
     if: always() && (github.event_name == 'pull_request' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     steps:
@@ -315,6 +346,7 @@ jobs:
     needs: [infrastructure, select]
     if: always() && (github.event_name == 'pull_request' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && needs.select.outputs.windows == 'true'
     runs-on: windows-latest
+    timeout-minutes: ${{ matrix.timeout_minutes }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.select.outputs.windows_matrix) }}
@@ -475,6 +507,7 @@ jobs:
 
   standard-windows:
     needs: [infrastructure, select, affected-windows-segments]
+    timeout-minutes: 20
     if: always() && (github.event_name == 'pull_request' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     runs-on: windows-latest
     steps:
@@ -525,6 +558,7 @@ jobs:
 
   quick-windows:
     needs: [infrastructure, select, standard-windows]
+    timeout-minutes: 10
     if: always() && github.event_name == 'pull_request'
     runs-on: windows-latest
     steps:
@@ -543,6 +577,7 @@ jobs:
   post-merge-attestation:
     if: github.event_name == 'push'
     needs: select
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     outputs:
       execution_mode: ${{ steps.attest.outputs.execution_mode }}
@@ -623,6 +658,7 @@ jobs:
     if: github.event_name == 'push' && needs.select.outputs.linux == 'true' && needs.post-merge-attestation.outputs.execution_mode == 'current-delta'
     needs: [select, post-merge-attestation]
     runs-on: ubuntu-latest
+    timeout-minutes: ${{ matrix.timeout_minutes }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.select.outputs.linux_matrix) }}
@@ -636,11 +672,22 @@ jobs:
           PUSH_BEFORE: ${{ github.event.before }}
           SEGMENT_ID: ${{ matrix.segment_id }}
         run: |
-          ./scripts/Resolve-AffectedValidation.ps1 -RepositoryRoot . -BaseCommit $env:PUSH_BEFORE -HeadCommit $env:GITHUB_SHA -OutPath "$env:RUNNER_TEMP/affected-plan.json"
-          $evidencePath = Join-Path $env:RUNNER_TEMP "$env:SEGMENT_ID.json"
-          ./scripts/Invoke-AffectedValidation.ps1 -RepositoryRoot . -BaseCommit $env:PUSH_BEFORE -HeadCommit $env:GITHUB_SHA -PlanPath "$env:RUNNER_TEMP/affected-plan.json" -Platform linux -SegmentId $env:SEGMENT_ID -OutPath $evidencePath | Out-Null
+          $evidencePath = Join-Path $env:RUNNER_TEMP "$env:SEGMENT_ID.json";$failure=$null
+          try { ./scripts/Resolve-AffectedValidation.ps1 -RepositoryRoot . -BaseCommit $env:PUSH_BEFORE -HeadCommit $env:GITHUB_SHA -OutPath "$env:RUNNER_TEMP/affected-plan.json"; ./scripts/Invoke-AffectedValidation.ps1 -RepositoryRoot . -BaseCommit $env:PUSH_BEFORE -HeadCommit $env:GITHUB_SHA -PlanPath "$env:RUNNER_TEMP/affected-plan.json" -Platform linux -SegmentId $env:SEGMENT_ID -OutPath $evidencePath | Out-Null } catch {$failure=$_}
+          if($null-eq$failure-and-not(Test-Path -LiteralPath $evidencePath -PathType Leaf)){$failure=[Management.Automation.ErrorRecord]::new([IO.InvalidDataException]::new('Affected-validation executor returned without its required aggregate evidence.'),'AffectedValidationMissingEvidence',[Management.Automation.ErrorCategory]::InvalidData,$evidencePath)}
+          if($null-ne$failure-and-not(Test-Path -LiteralPath $evidencePath -PathType Leaf)){$message=[string]$failure.Exception.Message;if($message.Length-gt2048){$message=$message.Substring(0,2048)};$diagnostic=[pscustomobject][ordered]@{schema='rusty.morphospace.diagnostic.affected_validation_pre_evidence_failure.v1';authority='non-authoritative-terminal-diagnostic';phase='main-fallback';result='code-fail';platform='linux';segment_id=$env:SEGMENT_ID;failure=[pscustomobject][ordered]@{failure_kind='pre-evidence';exception_type=$failure.Exception.GetType().FullName;exception_message=$message};claims=[pscustomobject][ordered]@{typed_aggregate_evidence_produced=$false;acceptance_authority=$false;publication_authority=$false}};[byte[]]$bytes=[Text.UTF8Encoding]::new($false).GetBytes(($diagnostic|ConvertTo-Json -Depth 6 -Compress)+"`n");if($bytes.Length-gt65536){throw 'Bounded main fallback diagnostic exceeded 65536 bytes.'};$path="$env:RUNNER_TEMP/main-fallback-$env:SEGMENT_ID.json";$stream=[IO.File]::Open($path,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None);try{$stream.Write($bytes,0,$bytes.Length)}finally{$stream.Dispose()};'pre_evidence_failure=true'|Add-Content -LiteralPath $env:GITHUB_OUTPUT}
+          if($null-ne$failure){if(Test-Path -LiteralPath $evidencePath -PathType Leaf){"evidence_sha256=$((Get-FileHash -LiteralPath $evidencePath -Algorithm SHA256).Hash.ToLowerInvariant())"|Add-Content -LiteralPath $env:GITHUB_OUTPUT};throw $failure}
           "evidence_sha256=$((Get-FileHash -LiteralPath $evidencePath -Algorithm SHA256).Hash.ToLowerInvariant())" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+      - name: Preserve bounded current Linux fallback diagnostic
+        if: always() && steps.execute.outputs.pre_evidence_failure == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: main-fallback-${{ matrix.segment_id }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/main-fallback-${{ matrix.segment_id }}.json
+          if-no-files-found: error
+          retention-days: 7
       - name: Preserve current Linux delta segment
+        if: always() && steps.execute.outputs.evidence_sha256 != ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: affected-segment-${{ matrix.segment_id }}-${{ steps.execute.outputs.evidence_sha256 }}
@@ -653,6 +700,7 @@ jobs:
     if: github.event_name == 'push' && needs.select.outputs.windows == 'true' && needs.post-merge-attestation.outputs.execution_mode == 'current-delta'
     needs: [select, post-merge-attestation]
     runs-on: windows-latest
+    timeout-minutes: ${{ matrix.timeout_minutes }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.select.outputs.windows_matrix) }}
@@ -666,11 +714,22 @@ jobs:
           PUSH_BEFORE: ${{ github.event.before }}
           SEGMENT_ID: ${{ matrix.segment_id }}
         run: |
-          ./scripts/Resolve-AffectedValidation.ps1 -RepositoryRoot . -BaseCommit $env:PUSH_BEFORE -HeadCommit $env:GITHUB_SHA -OutPath "$env:RUNNER_TEMP/affected-plan.json"
-          $evidencePath = Join-Path $env:RUNNER_TEMP "$env:SEGMENT_ID.json"
-          ./scripts/Invoke-AffectedValidation.ps1 -RepositoryRoot . -BaseCommit $env:PUSH_BEFORE -HeadCommit $env:GITHUB_SHA -PlanPath "$env:RUNNER_TEMP/affected-plan.json" -Platform windows -SegmentId $env:SEGMENT_ID -OutPath $evidencePath | Out-Null
+          $evidencePath = Join-Path $env:RUNNER_TEMP "$env:SEGMENT_ID.json";$failure=$null
+          try { ./scripts/Resolve-AffectedValidation.ps1 -RepositoryRoot . -BaseCommit $env:PUSH_BEFORE -HeadCommit $env:GITHUB_SHA -OutPath "$env:RUNNER_TEMP/affected-plan.json"; ./scripts/Invoke-AffectedValidation.ps1 -RepositoryRoot . -BaseCommit $env:PUSH_BEFORE -HeadCommit $env:GITHUB_SHA -PlanPath "$env:RUNNER_TEMP/affected-plan.json" -Platform windows -SegmentId $env:SEGMENT_ID -OutPath $evidencePath | Out-Null } catch {$failure=$_}
+          if($null-eq$failure-and-not(Test-Path -LiteralPath $evidencePath -PathType Leaf)){$failure=[Management.Automation.ErrorRecord]::new([IO.InvalidDataException]::new('Affected-validation executor returned without its required aggregate evidence.'),'AffectedValidationMissingEvidence',[Management.Automation.ErrorCategory]::InvalidData,$evidencePath)}
+          if($null-ne$failure-and-not(Test-Path -LiteralPath $evidencePath -PathType Leaf)){$message=[string]$failure.Exception.Message;if($message.Length-gt2048){$message=$message.Substring(0,2048)};$diagnostic=[pscustomobject][ordered]@{schema='rusty.morphospace.diagnostic.affected_validation_pre_evidence_failure.v1';authority='non-authoritative-terminal-diagnostic';phase='main-fallback';result='code-fail';platform='windows';segment_id=$env:SEGMENT_ID;failure=[pscustomobject][ordered]@{failure_kind='pre-evidence';exception_type=$failure.Exception.GetType().FullName;exception_message=$message};claims=[pscustomobject][ordered]@{typed_aggregate_evidence_produced=$false;acceptance_authority=$false;publication_authority=$false}};[byte[]]$bytes=[Text.UTF8Encoding]::new($false).GetBytes(($diagnostic|ConvertTo-Json -Depth 6 -Compress)+"`n");if($bytes.Length-gt65536){throw 'Bounded main fallback diagnostic exceeded 65536 bytes.'};$path="$env:RUNNER_TEMP/main-fallback-$env:SEGMENT_ID.json";$stream=[IO.File]::Open($path,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None);try{$stream.Write($bytes,0,$bytes.Length)}finally{$stream.Dispose()};'pre_evidence_failure=true'|Add-Content -LiteralPath $env:GITHUB_OUTPUT}
+          if($null-ne$failure){if(Test-Path -LiteralPath $evidencePath -PathType Leaf){"evidence_sha256=$((Get-FileHash -LiteralPath $evidencePath -Algorithm SHA256).Hash.ToLowerInvariant())"|Add-Content -LiteralPath $env:GITHUB_OUTPUT};throw $failure}
           "evidence_sha256=$((Get-FileHash -LiteralPath $evidencePath -Algorithm SHA256).Hash.ToLowerInvariant())" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+      - name: Preserve bounded current Windows fallback diagnostic
+        if: always() && steps.execute.outputs.pre_evidence_failure == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: main-fallback-${{ matrix.segment_id }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/main-fallback-${{ matrix.segment_id }}.json
+          if-no-files-found: error
+          retention-days: 7
       - name: Preserve current Windows delta segment
+        if: always() && steps.execute.outputs.evidence_sha256 != ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: affected-segment-${{ matrix.segment_id }}-${{ steps.execute.outputs.evidence_sha256 }}
@@ -682,6 +741,7 @@ jobs:
     if: github.event_name == 'push' && needs.select.outputs.linux == 'true' && needs.post-merge-attestation.outputs.execution_mode == 'current-delta'
     needs: [select, post-merge-attestation, main-linux-segments]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with: { fetch-depth: 0 }
@@ -703,6 +763,7 @@ jobs:
     if: github.event_name == 'push' && needs.select.outputs.windows == 'true' && needs.post-merge-attestation.outputs.execution_mode == 'current-delta'
     needs: [select, post-merge-attestation, main-windows-segments]
     runs-on: windows-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with: { fetch-depth: 0 }
@@ -724,6 +785,7 @@ jobs:
     if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     needs: [infrastructure, select, quick-linux, standard-windows]
     runs-on: windows-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:

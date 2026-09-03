@@ -3,7 +3,7 @@
   "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/affected-validation-check-evidence-v1.schema.json",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "source", "plan_sha256", "binding", "binding_sha256", "mode", "started_at", "ended_at", "elapsed_ms", "result", "blocked_by", "child", "artifacts", "reused_from", "claims"],
+  "required": ["schema", "source", "plan_sha256", "binding", "binding_sha256", "mode", "started_at", "ended_at", "elapsed_ms", "result", "blocked_by", "child", "environment", "artifacts", "reused_from", "claims"],
   "properties": {
     "schema": { "const": "rusty.morphospace.workflow.affected_validation_check_evidence.v1" },
     "source": {
@@ -52,10 +52,11 @@
     "blocked_by": { "type": "array", "maxItems": 64, "uniqueItems": true, "items": { "$ref": "#/$defs/id" } },
     "child": {
       "type": "object", "additionalProperties": false,
-      "required": ["started", "exit_code", "timed_out", "output_truncated", "post_kill_drain_timed_out", "stdout", "stderr"],
+      "required": ["started", "exit_code", "failure_kind", "timed_out", "output_truncated", "post_kill_drain_timed_out", "stdout", "stderr"],
       "properties": {
         "started": { "type": "boolean" },
         "exit_code": { "type": ["integer", "null"] },
+        "failure_kind": { "enum": [null, "blocked", "launch", "timeout", "output-limit", "drain-timeout", "infrastructure", "exit-code"] },
         "timed_out": { "type": "boolean" },
         "output_truncated": { "type": "boolean" },
         "post_kill_drain_timed_out": { "type": "boolean" },
@@ -63,6 +64,7 @@
         "stderr": { "$ref": "#/$defs/stream" }
       }
     },
+    "environment": { "$ref": "#/$defs/environmentProjection" },
     "artifacts": {
       "type": "array", "maxItems": 32,
       "items": { "$ref": "#/$defs/artifact" }
@@ -87,7 +89,7 @@
   "allOf": [
     {
       "if": { "properties": { "mode": { "const": "executed" } }, "required": ["mode"] },
-      "then": { "properties": { "blocked_by": { "maxItems": 0 }, "reused_from": { "type": "null" } } }
+      "then": { "properties": { "result": { "enum": ["pass", "code-fail", "infra-fail"] }, "blocked_by": { "maxItems": 0 }, "reused_from": { "type": "null" }, "environment": { "properties": { "projected": { "const": true } } } } }
     },
     {
       "if": { "properties": { "mode": { "const": "reused" } }, "required": ["mode"] },
@@ -97,7 +99,8 @@
           "blocked_by": { "maxItems": 0 },
           "elapsed_ms": { "const": 0 },
           "reused_from": { "type": "object" },
-          "child": { "properties": { "started": { "const": false }, "exit_code": { "const": 0 }, "timed_out": { "const": false }, "output_truncated": { "const": false }, "post_kill_drain_timed_out": { "const": false } } }
+          "environment": { "properties": { "projected": { "const": true }, "leaf_variable_count": { "minimum": 1 }, "leaf_sha256": { "$ref": "#/$defs/sha256" }, "leaf_variables": { "minItems": 1 } } },
+          "child": { "properties": { "started": { "const": false }, "exit_code": { "const": 0 }, "failure_kind": { "type": "null" }, "timed_out": { "const": false }, "output_truncated": { "const": false }, "post_kill_drain_timed_out": { "const": false } } }
         }
       }
     },
@@ -113,19 +116,61 @@
             "properties": {
               "started": { "const": false },
               "exit_code": { "type": "null" },
+              "failure_kind": { "const": "blocked" },
               "timed_out": { "const": false },
               "output_truncated": { "const": false },
               "post_kill_drain_timed_out": { "const": false },
               "stdout": { "properties": { "bytes": { "const": 0 }, "sha256": { "const": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" } } },
               "stderr": { "properties": { "bytes": { "const": 0 }, "sha256": { "const": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" } } }
             }
-          }
+          },
+          "environment": { "properties": { "projected": { "const": false }, "parent_variable_count_before": { "const": 0 }, "parent_sha256_before": { "type": "null" }, "parent_variable_count_after": { "const": 0 }, "parent_sha256_after": { "type": "null" }, "supervisor_variable_count": { "const": 0 }, "supervisor_sha256": { "type": "null" }, "supervisor_variables": { "maxItems": 0 }, "leaf_variable_count": { "const": 0 }, "leaf_sha256": { "type": "null" }, "leaf_variables": { "maxItems": 0 } } }
         }
       }
     },
     {
+      "if": { "properties": { "mode": { "const": "executed" }, "result": { "const": "pass" } }, "required": ["mode", "result"] },
+      "then": { "properties": { "child": { "properties": { "started": { "const": true } } }, "environment": { "properties": { "leaf_variable_count": { "minimum": 1 }, "leaf_sha256": { "$ref": "#/$defs/sha256" }, "leaf_variables": { "minItems": 1 } } } } }
+    },
+    {
       "if": { "properties": { "result": { "const": "pass" } }, "required": ["result"] },
-      "then": { "properties": { "child": { "properties": { "exit_code": { "const": 0 }, "timed_out": { "const": false }, "output_truncated": { "const": false }, "post_kill_drain_timed_out": { "const": false } } } } }
+      "then": { "properties": { "mode": { "enum": ["executed", "reused"] }, "child": { "properties": { "exit_code": { "const": 0 }, "failure_kind": { "type": "null" }, "timed_out": { "const": false }, "output_truncated": { "const": false }, "post_kill_drain_timed_out": { "const": false } } } } }
+    },
+    {
+      "if": { "properties": { "result": { "const": "code-fail" } }, "required": ["result"] },
+      "then": { "properties": { "mode": { "const": "executed" }, "child": { "properties": { "failure_kind": { "enum": ["timeout", "output-limit", "drain-timeout", "exit-code"] } } } } }
+    },
+    {
+      "if": { "properties": { "result": { "const": "infra-fail" } }, "required": ["result"] },
+      "then": { "properties": { "mode": { "const": "executed" }, "child": { "properties": { "failure_kind": { "enum": ["launch", "infrastructure"] } } } } }
+    },
+    {
+      "if": { "properties": { "result": { "const": "blocked" } }, "required": ["result"] },
+      "then": { "properties": { "mode": { "const": "blocked" } } }
+    },
+    {
+      "if": { "properties": { "child": { "properties": { "failure_kind": { "const": "launch" } }, "required": ["failure_kind"] } }, "required": ["child"] },
+      "then": { "properties": { "result": { "const": "infra-fail" }, "child": { "properties": { "started": { "const": false }, "exit_code": { "type": "null" }, "timed_out": { "const": false }, "output_truncated": { "const": false }, "post_kill_drain_timed_out": { "const": false } } } } }
+    },
+    {
+      "if": { "properties": { "child": { "properties": { "failure_kind": { "const": "timeout" } }, "required": ["failure_kind"] } }, "required": ["child"] },
+      "then": { "properties": { "result": { "const": "code-fail" }, "child": { "properties": { "started": { "const": true }, "timed_out": { "const": true } } } } }
+    },
+    {
+      "if": { "properties": { "child": { "properties": { "failure_kind": { "const": "output-limit" } }, "required": ["failure_kind"] } }, "required": ["child"] },
+      "then": { "properties": { "result": { "const": "code-fail" }, "child": { "properties": { "started": { "const": true }, "timed_out": { "const": false }, "output_truncated": { "const": true } } } } }
+    },
+    {
+      "if": { "properties": { "child": { "properties": { "failure_kind": { "const": "drain-timeout" } }, "required": ["failure_kind"] } }, "required": ["child"] },
+      "then": { "properties": { "result": { "const": "code-fail" }, "child": { "properties": { "started": { "const": true }, "timed_out": { "const": false }, "output_truncated": { "const": false }, "post_kill_drain_timed_out": { "const": true } } } } }
+    },
+    {
+      "if": { "properties": { "child": { "properties": { "failure_kind": { "const": "exit-code" } }, "required": ["failure_kind"] } }, "required": ["child"] },
+      "then": { "properties": { "result": { "const": "code-fail" }, "child": { "properties": { "started": { "const": true }, "exit_code": { "type": "integer", "not": { "const": 0 } }, "timed_out": { "const": false }, "output_truncated": { "const": false }, "post_kill_drain_timed_out": { "const": false } } } } }
+    },
+    {
+      "if": { "properties": { "child": { "properties": { "failure_kind": { "const": "infrastructure" } }, "required": ["failure_kind"] } }, "required": ["child"] },
+      "then": { "properties": { "result": { "const": "infra-fail" }, "child": { "properties": { "timed_out": { "const": false }, "output_truncated": { "const": false }, "post_kill_drain_timed_out": { "const": false } } } } }
     }
   ],
   "$defs": {
@@ -138,6 +183,34 @@
     "manifestRecord": {
       "type": "object", "additionalProperties": false, "required": ["path", "mode", "blob"],
       "properties": { "path": { "$ref": "#/$defs/path" }, "mode": { "enum": ["100644", "100755"] }, "blob": { "$ref": "#/$defs/sha1" } }
+    },
+    "environmentVariable": {
+      "type": "object", "additionalProperties": false, "required": ["name", "source", "value_sha256"],
+      "properties": { "name": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^=\\u0000-\\u001f\\u007f]+$" }, "source": { "enum": ["host-runtime", "launcher-owned", "hosted-producer"] }, "value_sha256": { "$ref": "#/$defs/sha256" } }
+    },
+    "environmentProjection": {
+      "type": "object", "additionalProperties": false,
+      "required": ["projected", "parent_variable_count_before", "parent_sha256_before", "parent_variable_count_after", "parent_sha256_after", "parent_environment_unchanged", "supervisor_variable_count", "supervisor_sha256", "supervisor_variables", "leaf_variable_count", "leaf_sha256", "leaf_variables"],
+      "properties": {
+        "projected": { "type": "boolean" }, "parent_variable_count_before": { "type": "integer", "minimum": 0, "maximum": 4096 }, "parent_sha256_before": { "anyOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }] }, "parent_variable_count_after": { "type": "integer", "minimum": 0, "maximum": 4096 }, "parent_sha256_after": { "anyOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }] }, "parent_environment_unchanged": { "const": true },
+        "supervisor_variable_count": { "type": "integer", "minimum": 0, "maximum": 64 }, "supervisor_sha256": { "anyOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }] }, "supervisor_variables": { "type": "array", "maxItems": 64, "items": { "$ref": "#/$defs/environmentVariable" } },
+        "leaf_variable_count": { "type": "integer", "minimum": 0, "maximum": 64 }, "leaf_sha256": { "anyOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }] }, "leaf_variables": { "type": "array", "maxItems": 64, "items": { "$ref": "#/$defs/environmentVariable" } }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "projected": { "const": false } }, "required": ["projected"] },
+          "then": { "properties": { "parent_variable_count_before": { "const": 0 }, "parent_sha256_before": { "type": "null" }, "parent_variable_count_after": { "const": 0 }, "parent_sha256_after": { "type": "null" }, "supervisor_variable_count": { "const": 0 }, "supervisor_sha256": { "type": "null" }, "supervisor_variables": { "maxItems": 0 }, "leaf_variable_count": { "const": 0 }, "leaf_sha256": { "type": "null" }, "leaf_variables": { "maxItems": 0 } } }
+        },
+        {
+          "if": { "properties": { "projected": { "const": true } }, "required": ["projected"] },
+          "then": { "properties": { "parent_sha256_before": { "$ref": "#/$defs/sha256" }, "parent_sha256_after": { "$ref": "#/$defs/sha256" }, "supervisor_variable_count": { "minimum": 1 }, "supervisor_sha256": { "$ref": "#/$defs/sha256" }, "supervisor_variables": { "minItems": 1 } } }
+        },
+        {
+          "if": { "properties": { "leaf_variable_count": { "const": 0 } }, "required": ["leaf_variable_count"] },
+          "then": { "properties": { "leaf_sha256": { "type": "null" }, "leaf_variables": { "maxItems": 0 } } },
+          "else": { "properties": { "leaf_sha256": { "$ref": "#/$defs/sha256" }, "leaf_variables": { "minItems": 1 } } }
+        }
+      ]
     },
     "dependencyDeclaration": {
       "oneOf": [

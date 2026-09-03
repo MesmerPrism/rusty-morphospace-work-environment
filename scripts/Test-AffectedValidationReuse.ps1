@@ -39,7 +39,7 @@ if ($SelfTest) {
         $artifacts = Join-Path $fixture 'artifacts'; [void][IO.Directory]::CreateDirectory($artifacts); $planPath = Join-Path $artifacts 'affected-plan.json'; Write-ReuseSelfUtf8 $planPath ((ConvertTo-MorphospaceCanonicalJson -Value $plan) + "`n")
         $checkMap = @{}; foreach ($check in @($registry.checks)) { $checkMap[[string]$check.check_id] = $check }
         $results = [Collections.Generic.List[object]]::new(); $coverage = [Collections.Generic.List[object]]::new()
-        foreach ($selected in @($plan.selected_checks | Where-Object { @($_.platforms) -ccontains 'linux' })) { $check = $checkMap[[string]$selected.check_id]; $blob = Invoke-ReuseSelfGit $fixture @('rev-parse', "${candidate}:$($check.command_path)"); $results.Add([pscustomobject][ordered]@{check_id=[string]$check.check_id;command_path=[string]$check.command_path;command_blob_sha1=$blob;result='pass';exit_code=0;timed_out=$false;output_truncated=$false;post_kill_drain_timed_out=$false;stdout_sha256=('0'*64);stderr_sha256=('0'*64);stdout_bytes=0;stderr_bytes=0}); $coverage.Add([pscustomobject][ordered]@{platform='linux';check_id=[string]$check.check_id;command_path=[string]$check.command_path;command_blob_sha1=$blob}) }
+        foreach ($selected in @($plan.selected_checks | Where-Object { @($_.platforms) -ccontains 'linux' })) { $check = $checkMap[[string]$selected.check_id]; $blob = Invoke-ReuseSelfGit $fixture @('rev-parse', "${candidate}:$($check.command_path)"); $results.Add([pscustomobject][ordered]@{check_id=[string]$check.check_id;command_path=[string]$check.command_path;command_blob_sha1=$blob;mode='executed';result='pass';started=$true;failure_kind=$null;exit_code=0;timed_out=$false;output_truncated=$false;post_kill_drain_timed_out=$false;stdout_sha256=('0'*64);stderr_sha256=('0'*64);stdout_bytes=0;stderr_bytes=0}); $coverage.Add([pscustomobject][ordered]@{platform='linux';check_id=[string]$check.check_id;command_path=[string]$check.command_path;command_blob_sha1=$blob}) }
         if ($results.Count -eq 0) { throw 'Reuse self-test expected a Linux candidate selection.' }
         $candidateIdentity = [pscustomobject][ordered]@{commit=$candidate;tree=(Invoke-ReuseSelfGit $fixture @('rev-parse',"$candidate^{tree}"))}; $baseIdentity = [pscustomobject][ordered]@{commit=$base;tree=(Invoke-ReuseSelfGit $fixture @('rev-parse',"$base^{tree}"))}
         $evidence = [pscustomobject][ordered]@{schema='rusty.morphospace.workflow.affected_validation_evidence.v1';repository=[string]$plan.repository;base=$baseIdentity;head=$candidateIdentity;plan_sha256=[string]$plan.plan_sha256;platform='linux';runner=[pscustomobject][ordered]@{os_description='synthetic';powershell_version='7.6.0'};check_results=@($results.ToArray());result='pass';claims=[pscustomobject][ordered]@{historical_aggregate_reused=$false;acceptance_authority=$false;publication_authority=$false}}
@@ -78,6 +78,8 @@ if ($SelfTest) {
         Assert-ReuseSelfEvidenceBindingRejected -Name 'platform' -Mutate { param($value) $value.platform = 'windows' }
         Assert-ReuseSelfEvidenceBindingRejected -Name 'base tree' -Mutate { param($value) $value.base.tree = ('0' * 40) }
         Assert-ReuseSelfEvidenceBindingRejected -Name 'head tree' -Mutate { param($value) $value.head.tree = ('1' * 40) }
+        Assert-ReuseSelfEvidenceBindingRejected -Name 'typed failure inconsistency' -Mutate { param($value) $value.check_results[0].failure_kind = 'exit-code' }
+        Assert-ReuseSelfEvidenceBindingRejected -Name 'combined stream ceiling' -Mutate { param($value) $value.check_results[0].stdout_bytes = 6291456; $value.check_results[0].stderr_bytes = 5242880 }
         $baseTreeReceipt = $receipt | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64; $baseTreeReceipt.base.tree = ('0' * 40); Write-ReuseSelfUtf8 $receiptPath (($baseTreeReceipt | ConvertTo-Json -Depth 64 -Compress) + "`n")
         $baseTreeRejected = $false; try { [void](& $PSCommandPath -RepositoryRoot $fixture -BeforeCommit $base -HeadCommit $merge -ReusePath $receiptPath -ArtifactDirectory $artifacts) } catch { $baseTreeRejected = $true }; if (-not $baseTreeRejected) { throw 'Reuse self-test accepted receipt base-tree drift.' }
         Write-ReuseSelfUtf8 $receiptPath (($receipt | ConvertTo-Json -Depth 64 -Compress) + "`n")
@@ -223,6 +225,7 @@ try {
             foreach ($result in @($evidence.check_results)) {
                 $check = $checkMap[[string]$result.check_id]
                 if ($null -eq $check) { throw "Reuse '$platform' result names an unknown check." }
+                if ([long]$result.stdout_bytes + [long]$result.stderr_bytes -gt 10485760) { throw "Reuse '$platform' result exceeds the combined stream bound." }
                 Assert-ReusePassingCheck -Result $result -Platform $platform
                 $commandBlob = Invoke-ReuseGit @('rev-parse', "$($candidate.commit):$($check.command_path)")
                 if ($result.command_path -cne $check.command_path -or $result.command_blob_sha1 -cne $commandBlob) { throw "Reuse '$platform' command identity drifted." }

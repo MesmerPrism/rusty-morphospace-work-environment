@@ -376,6 +376,50 @@ function Assert-MorphospaceAffectedCheckPhaseArtifactSet {
     return $terminal
 }
 
+function Assert-MorphospaceAffectedCheckEnvironmentEvidence {
+    param(
+        [Parameter(Mandatory = $true)][object]$Evidence,
+        [Parameter(Mandatory = $true)][bool]$RequireProjection,
+        [bool]$RequireLeafProof = $false
+    )
+    if ([bool]$Evidence.projected -ne $RequireProjection) { throw 'Affected check environment projection mode is inconsistent.' }
+    if (-not [bool]$Evidence.parent_environment_unchanged) { throw 'Affected check parent environment was not preserved.' }
+    $runtime = @('COMSPEC','HOME','PATH','PATHEXT','SYSTEMROOT','TEMP','TMP','TMPDIR','WINDIR','RUNNER_TEMP','PSExecutionPolicyPreference','PSModulePath')
+    $hosted = @('GITHUB_ACTIONS','GITHUB_REPOSITORY','GITHUB_EVENT_NAME','GITHUB_RUN_ID','GITHUB_RUN_ATTEMPT','GITHUB_WORKFLOW_REF','GITHUB_JOB','PR_NUMBER')
+    $owned = @('RUSTY_AFFECTED_VALIDATION_PHASE_ROOT','RUSTY_AFFECTED_VALIDATION_BASE_COMMIT','RUSTY_AFFECTED_VALIDATION_HEAD_COMMIT','RUSTY_AFFECTED_VALIDATION_PLAN_SHA256','RUSTY_AFFECTED_VALIDATION_PLATFORM','RUSTY_AFFECTED_VALIDATION_CHECK_ID','RUSTY_AFFECTED_VALIDATION_DEPENDENCY_PROJECTION_PATH','RUSTY_AFFECTED_VALIDATION_DEPENDENCY_PROJECTION_SHA256','RUSTY_AFFECTED_VALIDATION_RESTORATION_COLLISION_SELFTEST','RUSTY_AFFECTED_VALIDATION_GUARD_SID','RUSTY_AFFECTED_VALIDATION_TRUSTED_ANCESTORS','RUSTY_AFFECTED_VALIDATION_PARENT_FUTURE_THREAD_ID','RUSTY_AFFECTED_VALIDATION_REMOVED_PRIVILEGE_LUID','RUSTY_AFFECTED_VALIDATION_FUTURE_THREAD_ID')
+    foreach ($hop in @('supervisor','leaf')) {
+        $variables = @($Evidence."${hop}_variables")
+        if ([int]$Evidence."${hop}_variable_count" -ne $variables.Count) { throw "Affected check $hop environment count is inconsistent." }
+        $previous = $null
+        foreach ($record in $variables) {
+            $name = [string]$record.name
+            $source = [string]$record.source
+            if ($null -ne $previous -and [StringComparer]::Ordinal.Compare($previous,$name) -ge 0) { throw "Affected check $hop environment is not unique and ordinal sorted." }
+            $valid = ($source -ceq 'host-runtime' -and $runtime -ccontains $name) -or ($source -ceq 'hosted-producer' -and $hosted -ccontains $name) -or ($source -ceq 'launcher-owned' -and $owned -ccontains $name)
+            if (-not $valid) { throw "Affected check $hop environment contains an unreviewed variable: $name ($source)." }
+            $previous = $name
+        }
+    }
+    if ($RequireProjection) {
+        if ([string]$Evidence.parent_sha256_before -cne [string]$Evidence.parent_sha256_after -or [int]$Evidence.parent_variable_count_before -ne [int]$Evidence.parent_variable_count_after -or [string]$Evidence.supervisor_sha256 -cne (Get-MorphospaceCanonicalJsonSha256 -Value @($Evidence.supervisor_variables))) { throw 'Affected check projected environment hashes are incomplete or inconsistent.' }
+        $leafVariables = @($Evidence.leaf_variables)
+        if ($leafVariables.Count -eq 0) {
+            if ($RequireLeafProof) { throw 'Affected check reusable pass omits its required leaf environment proof.' }
+            if ($null -ne $Evidence.leaf_sha256 -or [int]$Evidence.leaf_variable_count -ne 0) { throw 'Affected check pre-leaf projection evidence is not null/zero.' }
+        } else {
+            if ([string]$Evidence.leaf_sha256 -cne (Get-MorphospaceCanonicalJsonSha256 -Value $leafVariables)) { throw 'Affected check leaf environment hash is absent or inconsistent.' }
+            $leafByName = @{}
+            foreach ($record in $leafVariables) { $leafByName[[string]$record.name] = $record }
+            foreach ($record in @($Evidence.supervisor_variables | Where-Object { $_.source -ceq 'hosted-producer' -or $_.source -ceq 'launcher-owned' })) {
+                $name = [string]$record.name
+                if (-not $leafByName.ContainsKey($name) -or [string]$leafByName[$name].source -cne [string]$record.source -or [string]$leafByName[$name].value_sha256 -cne [string]$record.value_sha256) { throw "Affected check second-hop environment changed exact projected variable '$name'." }
+            }
+        }
+    } elseif ([int]$Evidence.supervisor_variable_count -ne 0 -or $null -ne $Evidence.supervisor_sha256 -or @($Evidence.supervisor_variables).Count -ne 0 -or [int]$Evidence.leaf_variable_count -ne 0 -or $null -ne $Evidence.leaf_sha256 -or @($Evidence.leaf_variables).Count -ne 0) {
+        throw 'Affected check preprojection environment evidence is not null/zero.'
+    }
+}
+
 function New-MorphospaceAffectedCheckSnapshot {
     param(
         [Parameter(Mandatory = $true)][object]$Receipt,
@@ -384,6 +428,8 @@ function New-MorphospaceAffectedCheckSnapshot {
         [AllowNull()][AllowEmptyCollection()][object[]]$Artifacts,
         [Parameter(Mandatory = $true)][string]$SchemaPath
     )
+    Assert-MorphospaceAffectedCheckEnvironmentEvidence -Evidence $Receipt.environment -RequireProjection ([bool]$Receipt.environment.projected) -RequireLeafProof ([string]$Receipt.result -ceq 'pass' -and @('executed','reused') -ccontains [string]$Receipt.mode)
+    if ([long]$Stdout.Length + [long]$Stderr.Length -gt 10485760) { throw 'Affected check combined stdout/stderr exceeds its closed 10 MiB bound.' }
     $artifactBytes = [Collections.Generic.List[object]]::new()
     foreach ($artifact in @($Artifacts)) { if ($null -ne $artifact) { $artifactBytes.Add([pscustomobject][ordered]@{path=ConvertTo-MorphospaceAffectedCheckArtifactPath -Path ([string]$artifact.path);bytes=[byte[]]$artifact.bytes}) } }
     $orderedArtifacts = @($artifactBytes.ToArray())
@@ -507,6 +553,7 @@ function Test-MorphospaceAffectedCheckReceipt {
     $raw = [Text.UTF8Encoding]::new($false,$true).GetString($receiptBytes)
     if (-not (Test-Json -Json $raw -SchemaFile $SchemaPath -ErrorAction Stop)) { throw 'Affected check receipt fails its closed schema.' }
     $receipt = $raw | ConvertFrom-Json -Depth 64 -DateKind String
+    Assert-MorphospaceAffectedCheckEnvironmentEvidence -Evidence $receipt.environment -RequireProjection $true -RequireLeafProof $true
     if ([string]$receipt.binding_sha256 -cne $ExpectedBindingSha256 -or (Get-MorphospaceCanonicalJsonSha256 -Value $receipt.binding) -cne $ExpectedBindingSha256) { throw 'Affected check receipt binding differs from the exact current check binding.' }
     if ((Get-MorphospaceCanonicalJsonSha256 -Value $receipt.binding) -cne (Get-MorphospaceCanonicalJsonSha256 -Value $ExpectedBinding)) { throw 'Affected check receipt contains a noncanonical binding collision.' }
     if ([string]$receipt.result -cne 'pass' -or @('executed','reused') -cnotcontains [string]$receipt.mode) { throw 'Affected check receipt is not reusable passing evidence.' }
@@ -537,6 +584,7 @@ function Test-MorphospaceAffectedCheckReceipt {
         if ([long]$bytes.Length -ne [long]$stream.bytes -or (Get-MorphospaceAffectedCheckBytesSha256 $bytes) -cne [string]$stream.sha256) { throw "Affected check $streamName stream differs from its receipt." }
         $streamBytes[$streamName] = $bytes
     }
+    if ([long]([byte[]]$streamBytes.stdout).Length + [long]([byte[]]$streamBytes.stderr).Length -gt 10485760) { throw 'Affected check combined stdout/stderr exceeds its closed 10 MiB bound.' }
     $artifactBytes = [Collections.Generic.List[object]]::new()
     $snapshotArtifacts = @(if ($null -ne $CandidateSnapshot) { @($CandidateSnapshot.artifacts) })
     $previousArtifact = $null
@@ -634,6 +682,8 @@ function Write-MorphospaceAffectedCheckReceipt {
     $receiptPath = Join-Path $root 'receipt.json'
     $json = ConvertTo-MorphospaceCanonicalJson -Value $Receipt
     if (-not (Test-Json -Json $json -SchemaFile $SchemaPath -ErrorAction Stop)) { throw 'Affected check receipt fails its closed schema before publication.' }
+    Assert-MorphospaceAffectedCheckEnvironmentEvidence -Evidence $Receipt.environment -RequireProjection ([bool]$Receipt.environment.projected) -RequireLeafProof ([string]$Receipt.result -ceq 'pass' -and @('executed','reused') -ccontains [string]$Receipt.mode)
+    if ([long]$Stdout.Length + [long]$Stderr.Length -gt 10485760) { throw 'Affected check combined stdout/stderr exceeds its closed 10 MiB bound.' }
     foreach ($record in @(
         [pscustomobject]@{path=$stdoutPath;bytes=$Stdout},
         [pscustomobject]@{path=$stderrPath;bytes=$Stderr},
@@ -672,6 +722,8 @@ function Write-MorphospaceAffectedCheckCache {
         if ($checkId -notmatch '^[a-z0-9][a-z0-9-]{1,95}$' -or [string]$snapshot.receipt.binding.check_id -cne $checkId) { throw 'Affected check parent snapshot identity is invalid.' }
         $receiptRaw = [Text.UTF8Encoding]::new($false,$true).GetString([byte[]]$snapshot.receipt_bytes)
         if (-not (Test-Json -Json $receiptRaw -SchemaFile $ReceiptSchemaPath -ErrorAction Stop)) { throw 'Affected check parent snapshot receipt fails its closed schema at materialization.' }
+        Assert-MorphospaceAffectedCheckEnvironmentEvidence -Evidence $snapshot.receipt.environment -RequireProjection ([bool]$snapshot.receipt.environment.projected) -RequireLeafProof ([string]$snapshot.receipt.result -ceq 'pass' -and @('executed','reused') -ccontains [string]$snapshot.receipt.mode)
+        if ([long]([byte[]]$snapshot.stdout).Length + [long]([byte[]]$snapshot.stderr).Length -gt 10485760) { throw 'Affected check parent snapshot combined stdout/stderr exceeds its closed 10 MiB bound.' }
         if ([string]$snapshot.receipt.mode -cne 'reused' -and [string]$snapshot.receipt.plan_sha256 -cne $PlanSha256) { throw 'Affected check fresh receipt plan identity differs from its enclosing inventory plan.' }
         $directory = Join-Path $root $checkId
         [void][IO.Directory]::CreateDirectory($directory)
@@ -867,4 +919,4 @@ function Read-MorphospaceAffectedCheckInventory {
     return [pscustomobject][ordered]@{inventory=$inventory;inventory_sha256=Get-MorphospaceAffectedCheckBytesSha256 $inventoryBytes;candidate_snapshots=@($candidateSnapshots.ToArray())}
 }
 
-Export-ModuleMember -Function Get-MorphospaceAffectedCheckBytesSha256, Get-MorphospaceAffectedCheckRunnerBinding, Get-MorphospaceAffectedCheckRunnerSourceManifest, Get-MorphospaceAffectedCheckDependencyManifest, Get-MorphospaceAffectedCheckDependencyClosure, New-MorphospaceAffectedCheckBinding, Get-MorphospaceAffectedCheckArtifactReferences, New-MorphospaceAffectedCheckSnapshot, Get-MorphospaceAffectedCheckPhaseArtifacts, Restore-MorphospaceAffectedCheckArtifacts, Test-MorphospaceAffectedCheckReceipt, Find-MorphospaceAffectedReusableCheckReceipt, Write-MorphospaceAffectedCheckReceipt, Write-MorphospaceAffectedCheckCache, Write-MorphospaceAffectedCheckInventory, Read-MorphospaceAffectedCheckInventory
+Export-ModuleMember -Function Get-MorphospaceAffectedCheckBytesSha256, Get-MorphospaceAffectedCheckRunnerBinding, Get-MorphospaceAffectedCheckRunnerSourceManifest, Get-MorphospaceAffectedCheckDependencyManifest, Get-MorphospaceAffectedCheckDependencyClosure, New-MorphospaceAffectedCheckBinding, Get-MorphospaceAffectedCheckArtifactReferences, Assert-MorphospaceAffectedCheckEnvironmentEvidence, New-MorphospaceAffectedCheckSnapshot, Get-MorphospaceAffectedCheckPhaseArtifacts, Restore-MorphospaceAffectedCheckArtifacts, Test-MorphospaceAffectedCheckReceipt, Find-MorphospaceAffectedReusableCheckReceipt, Write-MorphospaceAffectedCheckReceipt, Write-MorphospaceAffectedCheckCache, Write-MorphospaceAffectedCheckInventory, Read-MorphospaceAffectedCheckInventory

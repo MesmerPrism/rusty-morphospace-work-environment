@@ -906,7 +906,8 @@ Stop and record a blocker when:
 - validation would require unapproved device mutation or external authority;
 - existing user changes overlap the unit and cannot be preserved safely.
 
-Run `scripts/Test-WorkUnitAutomation.ps1` after changing automation behavior.
+Run `scripts/Test-WorkflowContracts.ps1 -StandardDeltaOnly` after changing
+automation behavior.
 Its temporary repositories exercise clean, dirty, hash-bound in-flight
 adoption, post-receipt tampering, untracked, detached, ahead, divergent,
 blocked, resumed, and interrupted states and verify that push preparation

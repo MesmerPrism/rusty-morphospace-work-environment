@@ -8,7 +8,8 @@ param(
     [Parameter(Mandatory = $true)][string]$OutPath,
     [string]$CheckEvidenceDirectory,
     [string]$PriorEvidenceDirectory,
-    [ValidatePattern('^(?:windows|linux)-[0-9]{3}$')][string]$SegmentId
+    [ValidatePattern('^(?:windows|linux)-[0-9]{3}$')][string]$SegmentId,
+    [switch]$RunRestorationCollisionSelfTest
 )
 
 Set-StrictMode -Version 2.0
@@ -26,6 +27,7 @@ using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -41,6 +43,7 @@ public sealed class W017BoundedChildResult {
     public bool ContainmentCleanupSucceeded;
     public bool SupervisorEvidenceCleanupSucceeded;
     public string Error;
+    public string LeafEnvironmentProof;
     public byte[] Stdout = new byte[0];
     public byte[] Stderr = new byte[0];
 }
@@ -169,6 +172,13 @@ function Resolve-ExactApplication([string]$Name) {
     foreach($command in @(Get-Command $Name -CommandType Application -ErrorAction SilentlyContinue)){$path=[IO.Path]::GetFullPath([string]$command.Source);if(-not[IO.File]::Exists($path)){throw ""resolved $Name executable does not exist""};[void]$paths.Add($path)}
     if($paths.Count-eq0){throw ""required $Name executable is unavailable for isolated Linux validation""}
     [string[]]$ordered=@($paths);[Array]::Sort($ordered,[StringComparer]::Ordinal);return $ordered[0]
+}
+function Get-EnvironmentProof {
+    $records=[Collections.Generic.List[string]]::new()
+    [string[]]$names=@([Environment]::GetEnvironmentVariables('Process').Keys | ForEach-Object {[string]$_})
+    if($names.Count-gt1){[Array]::Sort($names,[StringComparer]::Ordinal)}
+    foreach($name in $names){if($name-cmatch '[\x00\r\n=]' ){throw 'leaf environment contains an invalid variable name'};$value=[string][Environment]::GetEnvironmentVariable($name,'Process');$hash=([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.UTF8Encoding]::new($false).GetBytes($value)))).ToLowerInvariant();$records.Add(""$name`t$hash"")}
+    return (($records.ToArray()-join ""`n"")+""`n"")
 }
 function Start-Pump([Diagnostics.ProcessStartInfo]$Start) {
     $process = [Diagnostics.Process]::new(); $process.StartInfo = $Start
@@ -304,6 +314,7 @@ using System;
 using System.IO;
 using Microsoft.Win32.SafeHandles;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -317,6 +328,7 @@ public static class W017SupervisorInnerJob {
     [StructLayout(LayoutKind.Sequential)] private struct BasicAccounting { public long a,b,c,d; public uint e,f,active,h; }
     [StructLayout(LayoutKind.Sequential)] private struct SecurityAttributes { public int length; public IntPtr descriptor; public int inherit; }
     [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Unicode)] private struct StartupInfo { public int cb; public string reserved; public string desktop; public string title; public int x,y,xSize,ySize,xChars,yChars,fill,flags; public short show; public short reserved2; public IntPtr reservedPtr; public IntPtr stdin,stdout,stderr; }
+    [StructLayout(LayoutKind.Sequential)] private struct StartupInfoEx { public StartupInfo startup; public IntPtr attributeList; }
     [StructLayout(LayoutKind.Sequential)] private struct ProcessInformation { public IntPtr process,thread; public int processId,threadId; }
     [StructLayout(LayoutKind.Sequential)] private struct Luid { public uint low; public int high; }
     [StructLayout(LayoutKind.Sequential)] private struct LuidAttributes { public Luid luid; public uint attributes; }
@@ -330,6 +342,10 @@ public static class W017SupervisorInnerJob {
     [DllImport(""kernel32.dll"",SetLastError=true)] public static extern bool CloseHandle(IntPtr handle);
     [DllImport(""kernel32.dll"",SetLastError=true)] private static extern bool CreatePipe(out IntPtr read,out IntPtr write,ref SecurityAttributes attributes,uint size);
     [DllImport(""kernel32.dll"",SetLastError=true)] private static extern bool SetHandleInformation(IntPtr handle,uint mask,uint flags);
+    [DllImport(""kernel32.dll"",SetLastError=true)] private static extern bool GetHandleInformation(IntPtr handle,out uint flags);
+    [DllImport(""kernel32.dll"",SetLastError=true)] private static extern bool InitializeProcThreadAttributeList(IntPtr list,int count,int flags,ref UIntPtr size);
+    [DllImport(""kernel32.dll"",SetLastError=true)] private static extern bool UpdateProcThreadAttribute(IntPtr list,uint flags,IntPtr attribute,IntPtr value,UIntPtr size,IntPtr previous,IntPtr returned);
+    [DllImport(""kernel32.dll"")] private static extern void DeleteProcThreadAttributeList(IntPtr list);
     [DllImport(""kernel32.dll"",CharSet=CharSet.Unicode,SetLastError=true)] private static extern bool CreateProcess(string application,StringBuilder command,IntPtr processAttributes,IntPtr threadAttributes,bool inherit,uint flags,IntPtr environment,string directory,ref StartupInfo startup,out ProcessInformation information);
     [DllImport(""kernel32.dll"")] private static extern IntPtr GetCurrentProcess();
     [DllImport(""advapi32.dll"",SetLastError=true)] private static extern bool OpenProcessToken(IntPtr process,uint access,out IntPtr token);
@@ -341,7 +357,7 @@ public static class W017SupervisorInnerJob {
     [DllImport(""advapi32.dll"",SetLastError=true)] private static extern bool DuplicateTokenEx(IntPtr existing,uint access,IntPtr attributes,int impersonationLevel,int tokenType,out IntPtr token);
     [DllImport(""advapi32.dll"",SetLastError=true)] private static extern bool ImpersonateLoggedOnUser(IntPtr token);
     [DllImport(""advapi32.dll"",SetLastError=true)] private static extern bool RevertToSelf();
-    [DllImport(""advapi32.dll"",CharSet=CharSet.Unicode,SetLastError=true)] private static extern bool CreateProcessAsUser(IntPtr token,string application,StringBuilder command,IntPtr processAttributes,IntPtr threadAttributes,bool inherit,uint flags,IntPtr environment,string directory,ref StartupInfo startup,out ProcessInformation information);
+    [DllImport(""advapi32.dll"",EntryPoint=""CreateProcessAsUserW"",CharSet=CharSet.Unicode,SetLastError=true)] private static extern bool CreateProcessAsUserNative(IntPtr token,string application,StringBuilder command,IntPtr processAttributes,IntPtr threadAttributes,bool inherit,uint flags,IntPtr environment,string directory,ref StartupInfoEx startup,out ProcessInformation information);
     [DllImport(""kernel32.dll"",SetLastError=true)] private static extern IntPtr OpenProcess(uint access,bool inherit,int processId);
     [DllImport(""kernel32.dll"",SetLastError=true)] private static extern IntPtr OpenThread(uint access,bool inherit,uint threadId);
     [DllImport(""kernel32.dll"",SetLastError=true)] private static extern IntPtr CreateToolhelp32Snapshot(uint flags,uint processId);
@@ -354,7 +370,7 @@ public static class W017SupervisorInnerJob {
     [DllImport(""kernel32.dll"",SetLastError=true)] private static extern bool TerminateProcess(IntPtr process,uint code);
     [DllImport(""kernel32.dll"")] private static extern IntPtr GetStdHandle(int handle);
     [DllImport(""kernel32.dll"")] private static extern IntPtr LocalFree(IntPtr value);
-    public sealed class RunResult { public int ExitCode; public bool Truncated; }
+    public sealed class RunResult { public int ExitCode; public bool Truncated; public string EnvironmentProof; }
     private sealed class OutputState { public readonly int limit; public readonly IntPtr job; public long seen; public int truncated; public OutputState(int value,IntPtr handle){limit=value;job=handle;} }
     public static IntPtr Create(){var job=CreateJobObject(IntPtr.Zero,null);if(job==IntPtr.Zero)throw new InvalidOperationException(""inner job create failed: ""+Marshal.GetLastWin32Error());var value=new ExtendedLimit();value.basic.flags=KillOnClose;var size=Marshal.SizeOf(typeof(ExtendedLimit));var pointer=Marshal.AllocHGlobal(size);try{Marshal.StructureToPtr(value,pointer,false);if(!SetInformationJobObject(job,Extended,pointer,(uint)size))throw new InvalidOperationException(""inner job policy failed: ""+Marshal.GetLastWin32Error());return job;}catch{CloseHandle(job);throw;}finally{Marshal.FreeHGlobal(pointer);}}
     public static uint Active(IntPtr job){var size=Marshal.SizeOf(typeof(BasicAccounting));var pointer=Marshal.AllocHGlobal(size);try{if(!QueryInformationJobObject(job,Accounting,pointer,(uint)size,IntPtr.Zero))throw new InvalidOperationException(""inner job readback failed: ""+Marshal.GetLastWin32Error());return ((BasicAccounting)Marshal.PtrToStructure(pointer,typeof(BasicAccounting))).active;}finally{Marshal.FreeHGlobal(pointer);}}
@@ -362,23 +378,45 @@ public static class W017SupervisorInnerJob {
     private static void Forward(IntPtr readHandle,Stream target,OutputState state){using(var source=new FileStream(new SafeFileHandle(readHandle,true),FileAccess.Read,8192,false)){var buffer=new byte[8192];int read;while((read=source.Read(buffer,0,buffer.Length))>0){var before=Interlocked.Add(ref state.seen,read)-read;var remaining=state.limit-before;var captured=remaining<=0?0:(int)Math.Min((long)read,remaining);if(captured>0){target.Write(buffer,0,captured);target.Flush();}if(captured!=read&&Interlocked.Exchange(ref state.truncated,1)==0){TerminateJobObject(state.job,1);}}}}
     private static void ProtectFutureThreads(){Type type=null;foreach(var assembly in AppDomain.CurrentDomain.GetAssemblies()){type=assembly.GetType(""W017SupervisorProtection"",false,false);if(type!=null)break;}if(type==null)throw new InvalidOperationException(""future-thread protection type is unavailable"");var method=type.GetMethod(""ProtectFutureThreads"",System.Reflection.BindingFlags.Public|System.Reflection.BindingFlags.Static);if(method==null)throw new InvalidOperationException(""future-thread protection method is unavailable"");try{method.Invoke(null,null);}catch(System.Reflection.TargetInvocationException exception){throw new InvalidOperationException(""future-thread protection failed"",exception.InnerException??exception);}}
     private static bool SameLuid(Luid left,Luid right){return left.low==right.low&&left.high==right.high;}
+    private static string EnvironmentProof(){var names=new System.Collections.Generic.List<string>();foreach(System.Collections.DictionaryEntry entry in Environment.GetEnvironmentVariables())names.Add((string)entry.Key);names.Sort(StringComparer.Ordinal);var text=new StringBuilder();using(var sha=SHA256.Create()){foreach(var name in names){if(name.IndexOfAny(new char[]{'\0','\r','\n','='})>=0)throw new InvalidOperationException(""leaf environment contains an invalid variable name"");var value=Environment.GetEnvironmentVariable(name)??String.Empty;var hash=sha.ComputeHash(new UTF8Encoding(false).GetBytes(value));text.Append(name);text.Append('\t');foreach(var octet in hash)text.Append(octet.ToString(""x2"",System.Globalization.CultureInfo.InvariantCulture));text.Append('\n');}}return text.ToString();}
+    private static void AssertInheritableHandle(IntPtr handle,string name){uint flags;if(handle==IntPtr.Zero||handle==new IntPtr(-1)||!GetHandleInformation(handle,out flags)||(flags&1)==0)throw new InvalidOperationException(""intended inner ""+name+"" handle is not valid and inheritable"");}
+    private static bool CreateProcessAsUser(IntPtr token,string application,StringBuilder command,IntPtr processAttributes,IntPtr threadAttributes,bool inherit,uint flags,IntPtr environment,string directory,ref StartupInfo startup,out ProcessInformation information){
+        const uint ExtendedStartupInfoPresent=0x00080000;var security=new SecurityAttributes{length=Marshal.SizeOf(typeof(SecurityAttributes)),inherit=1};IntPtr stdinRead=IntPtr.Zero,stdinWrite=IntPtr.Zero,list=IntPtr.Zero,handles=IntPtr.Zero;var initialized=false;information=new ProcessInformation();
+        try{
+            if(!inherit)throw new InvalidOperationException(""closed inner process launch requires explicit intended-handle inheritance"");
+            if(!CreatePipe(out stdinRead,out stdinWrite,ref security,0))throw new InvalidOperationException(""closed inner stdin pipe create failed: ""+Marshal.GetLastWin32Error());
+            if(!SetHandleInformation(stdinWrite,1,0))throw new InvalidOperationException(""closed inner stdin writer protection failed: ""+Marshal.GetLastWin32Error());
+            if(!CloseHandle(stdinWrite))throw new InvalidOperationException(""closed inner stdin writer cleanup failed: ""+Marshal.GetLastWin32Error());stdinWrite=IntPtr.Zero;startup.stdin=stdinRead;
+            AssertInheritableHandle(stdinRead,""stdin"");AssertInheritableHandle(startup.stdout,""stdout"");AssertInheritableHandle(startup.stderr,""stderr"");
+            UIntPtr size=UIntPtr.Zero;InitializeProcThreadAttributeList(IntPtr.Zero,1,0,ref size);if(size==UIntPtr.Zero)throw new InvalidOperationException(""closed inner handle-list size query failed: ""+Marshal.GetLastWin32Error());
+            list=Marshal.AllocHGlobal(checked((int)size.ToUInt64()));if(!InitializeProcThreadAttributeList(list,1,0,ref size))throw new InvalidOperationException(""closed inner handle-list initialization failed: ""+Marshal.GetLastWin32Error());initialized=true;
+            handles=Marshal.AllocHGlobal(IntPtr.Size*3);Marshal.WriteIntPtr(handles,0,stdinRead);Marshal.WriteIntPtr(handles,IntPtr.Size,startup.stdout);Marshal.WriteIntPtr(handles,IntPtr.Size*2,startup.stderr);
+            if(!UpdateProcThreadAttribute(list,0,new IntPtr(0x00020002),handles,new UIntPtr(unchecked((uint)(IntPtr.Size*3))),IntPtr.Zero,IntPtr.Zero))throw new InvalidOperationException(""closed inner handle-list update failed: ""+Marshal.GetLastWin32Error());
+            var extended=new StartupInfoEx{startup=startup,attributeList=list};extended.startup.cb=Marshal.SizeOf(typeof(StartupInfoEx));
+            if(!CreateProcessAsUserNative(token,application,command,processAttributes,threadAttributes,true,flags|ExtendedStartupInfoPresent,environment,directory,ref extended,out information))throw new InvalidOperationException(""privilege-deleted inner process create failed: ""+Marshal.GetLastWin32Error());
+            return true;
+        }finally{if(initialized)DeleteProcThreadAttributeList(list);if(list!=IntPtr.Zero)Marshal.FreeHGlobal(list);if(handles!=IntPtr.Zero)Marshal.FreeHGlobal(handles);if(stdinRead!=IntPtr.Zero)CloseHandle(stdinRead);if(stdinWrite!=IntPtr.Zero)CloseHandle(stdinWrite);}
+    }
     private static LuidAttributes[] ReadPrivileges(IntPtr token){uint required;GetTokenInformation(token,3,IntPtr.Zero,0,out required);if(required<4)throw new InvalidOperationException(""token privilege size could not be read: ""+Marshal.GetLastWin32Error());var buffer=Marshal.AllocHGlobal((int)required);try{if(!GetTokenInformation(token,3,buffer,required,out required))throw new InvalidOperationException(""token privileges could not be read: ""+Marshal.GetLastWin32Error());var count=Marshal.ReadInt32(buffer);if(count<0||4L+(long)count*Marshal.SizeOf(typeof(LuidAttributes))>required)throw new InvalidOperationException(""token privilege payload is malformed"");var result=new LuidAttributes[count];var size=Marshal.SizeOf(typeof(LuidAttributes));for(var index=0;index<count;index++)result[index]=(LuidAttributes)Marshal.PtrToStructure(IntPtr.Add(buffer,4+index*size),typeof(LuidAttributes));return result;}finally{Marshal.FreeHGlobal(buffer);}}
     private static uint ReadGroupAttributes(IntPtr token,IntPtr sid){uint required;GetTokenInformation(token,2,IntPtr.Zero,0,out required);if(required<4)throw new InvalidOperationException(""token group size could not be read: ""+Marshal.GetLastWin32Error());var buffer=Marshal.AllocHGlobal((int)required);try{if(!GetTokenInformation(token,2,buffer,required,out required))throw new InvalidOperationException(""token groups could not be read: ""+Marshal.GetLastWin32Error());var count=Marshal.ReadInt32(buffer);var offset=IntPtr.Size==8?8:4;var size=Marshal.SizeOf(typeof(SidAndAttributes));for(var index=0;index<count;index++){var value=(SidAndAttributes)Marshal.PtrToStructure(IntPtr.Add(buffer,offset+index*size),typeof(SidAndAttributes));if(EqualSid(value.sid,sid))return value.attributes;}throw new InvalidOperationException(""trusted authority guard SID is absent from the token"");}finally{Marshal.FreeHGlobal(buffer);}}
     private static IntPtr CreatePrivilegeStrippedToken(IntPtr sourceToken){Luid allowed;if(!LookupPrivilegeValue(null,""SeChangeNotifyPrivilege"",out allowed))throw new InvalidOperationException(""allowlisted privilege identity could not be resolved: ""+Marshal.GetLastWin32Error());var source=ReadPrivileges(sourceToken);var deleted=new System.Collections.Generic.List<LuidAttributes>();foreach(var privilege in source)if(!SameLuid(privilege.luid,allowed))deleted.Add(new LuidAttributes{luid=privilege.luid,attributes=0});var guardText=Environment.GetEnvironmentVariable(""RUSTY_AFFECTED_VALIDATION_GUARD_SID"");if(String.IsNullOrWhiteSpace(guardText))throw new InvalidOperationException(""trusted authority guard identity is absent"");IntPtr deleteBuffer=IntPtr.Zero,disableBuffer=IntPtr.Zero,guardSid=IntPtr.Zero,restricted=IntPtr.Zero;try{if(!ConvertStringSidToSid(guardText,out guardSid))throw new InvalidOperationException(""trusted authority guard SID could not be parsed: ""+Marshal.GetLastWin32Error());var sourceGuardAttributes=ReadGroupAttributes(sourceToken,guardSid);if((sourceGuardAttributes&4)==0||(sourceGuardAttributes&16)!=0)throw new InvalidOperationException(""trusted authority guard SID is not enabled on the source token"");disableBuffer=Marshal.AllocHGlobal(Marshal.SizeOf(typeof(SidAndAttributes)));Marshal.StructureToPtr(new SidAndAttributes{sid=guardSid,attributes=0},disableBuffer,false);if(deleted.Count>0){var size=Marshal.SizeOf(typeof(LuidAttributes));deleteBuffer=Marshal.AllocHGlobal(size*deleted.Count);for(var index=0;index<deleted.Count;index++)Marshal.StructureToPtr(deleted[index],IntPtr.Add(deleteBuffer,index*size),false);}Environment.SetEnvironmentVariable(""RUSTY_AFFECTED_VALIDATION_REMOVED_PRIVILEGE_LUID"",deleted.Count==0?null:(deleted[0].luid.high.ToString(System.Globalization.CultureInfo.InvariantCulture)+"":""+deleted[0].luid.low.ToString(System.Globalization.CultureInfo.InvariantCulture)));if(!CreateRestrictedToken(sourceToken,0,1,disableBuffer,(uint)deleted.Count,deleteBuffer,0,IntPtr.Zero,out restricted))throw new InvalidOperationException(""guard-disabled privilege-deleted leaf token creation failed: ""+Marshal.GetLastWin32Error());var observedGuardAttributes=ReadGroupAttributes(restricted,guardSid);if((observedGuardAttributes&16)==0||(observedGuardAttributes&4)!=0)throw new InvalidOperationException(""guard-disabled leaf token did not retain the authority group as deny-only"");var observed=ReadPrivileges(restricted);foreach(var privilege in observed)if(!SameLuid(privilege.luid,allowed))throw new InvalidOperationException(""privilege-deleted leaf token retained a non-allowlisted privilege"");if(deleted.Count>0)foreach(var privilege in observed)if(SameLuid(privilege.luid,deleted[0].luid))throw new InvalidOperationException(""privilege-deleted leaf token retained the source privilege selected for irreversible-removal proof"");return restricted;}catch{if(restricted!=IntPtr.Zero)CloseHandle(restricted);throw;}finally{if(deleteBuffer!=IntPtr.Zero)Marshal.FreeHGlobal(deleteBuffer);if(disableBuffer!=IntPtr.Zero)Marshal.FreeHGlobal(disableBuffer);if(guardSid!=IntPtr.Zero)LocalFree(guardSid);}}
     private static void AssertAncestorIsolation(IntPtr restrictedToken,int[] trustedPids){IntPtr impersonation=IntPtr.Zero,snapshot=IntPtr.Zero;try{if(!DuplicateTokenEx(restrictedToken,0x000c,IntPtr.Zero,2,2,out impersonation))throw new InvalidOperationException(""restricted impersonation token creation failed: ""+Marshal.GetLastWin32Error());if(!ImpersonateLoggedOnUser(impersonation))throw new InvalidOperationException(""restricted ancestor-isolation impersonation failed: ""+Marshal.GetLastWin32Error());var seen=new System.Collections.Generic.HashSet<int>();var trusted=new System.Collections.Generic.HashSet<uint>();foreach(var pid in trustedPids??new int[0]){if(pid<=0||!seen.Add(pid))continue;trusted.Add(unchecked((uint)pid));var accesses=new uint[]{0x0001,0x0002,0x0008,0x0010,0x0020,0x0040,0x0200,0x0400,0x0800,0x1000,0x2000,0x00040000,0x00080000};foreach(var access in accesses){var forbidden=OpenProcess(access,false,pid);if(forbidden!=IntPtr.Zero){CloseHandle(forbidden);throw new InvalidOperationException(""privilege-deleted leaf token can target or query a trusted ancestor process: pid=""+pid+"" access=0x""+access.ToString(""x8""));}}}snapshot=CreateToolhelp32Snapshot(4,0);if(snapshot==new IntPtr(-1))throw new InvalidOperationException(""trusted ancestor thread snapshot failed: ""+Marshal.GetLastWin32Error());var entry=new ThreadEntry32();entry.size=(uint)Marshal.SizeOf(typeof(ThreadEntry32));if(Thread32First(snapshot,ref entry)){do{if(trusted.Contains(entry.ownerProcessId)){foreach(var access in new uint[]{0x0001,0x0002,0x0008,0x0010,0x0020,0x0040,0x0080,0x0100,0x0200,0x0400,0x0800,0x00040000,0x00080000}){var forbidden=OpenThread(access,false,entry.threadId);if(forbidden!=IntPtr.Zero){CloseHandle(forbidden);throw new InvalidOperationException(""privilege-deleted leaf token can target or query a trusted ancestor thread: tid=""+entry.threadId+"" access=0x""+access.ToString(""x8""));}}}entry.size=(uint)Marshal.SizeOf(typeof(ThreadEntry32));}while(Thread32Next(snapshot,ref entry));}}finally{RevertToSelf();if(snapshot!=IntPtr.Zero&&snapshot!=new IntPtr(-1))CloseHandle(snapshot);if(impersonation!=IntPtr.Zero)CloseHandle(impersonation);}}
-    public static RunResult Run(string executable,string directory,string[] arguments,int outputLimitBytes,int[] trustedPids){const uint suspended=4,noWindow=0x08000000,infinite=0xffffffff,inheritFlag=1,tokenAccess=0x008b;var security=new SecurityAttributes{length=Marshal.SizeOf(typeof(SecurityAttributes)),inherit=1};IntPtr stdoutRead=IntPtr.Zero,stdoutWrite=IntPtr.Zero,stderrRead=IntPtr.Zero,stderrWrite=IntPtr.Zero,job=IntPtr.Zero,sourceToken=IntPtr.Zero,restrictedToken=IntPtr.Zero;var information=new ProcessInformation();Task stdoutTask=null,stderrTask=null;ManualResetEventSlim futureReady=null,futureStop=null;Thread futureThread=null;try{if(!CreatePipe(out stdoutRead,out stdoutWrite,ref security,0))throw new InvalidOperationException(""stdout pipe create failed: ""+Marshal.GetLastWin32Error());if(!SetHandleInformation(stdoutRead,inheritFlag,0))throw new InvalidOperationException(""stdout pipe protection failed: ""+Marshal.GetLastWin32Error());if(!CreatePipe(out stderrRead,out stderrWrite,ref security,0))throw new InvalidOperationException(""stderr pipe create failed: ""+Marshal.GetLastWin32Error());if(!SetHandleInformation(stderrRead,inheritFlag,0))throw new InvalidOperationException(""stderr pipe protection failed: ""+Marshal.GetLastWin32Error());if(!OpenProcessToken(GetCurrentProcess(),tokenAccess,out sourceToken))throw new InvalidOperationException(""source token open failed: ""+Marshal.GetLastWin32Error());restrictedToken=CreatePrivilegeStrippedToken(sourceToken);job=Create();ProtectFutureThreads();AssertAncestorIsolation(restrictedToken,trustedPids);futureReady=new ManualResetEventSlim(false);futureStop=new ManualResetEventSlim(false);futureThread=new Thread(()=>{Environment.SetEnvironmentVariable(""RUSTY_AFFECTED_VALIDATION_FUTURE_THREAD_ID"",GetCurrentThreadId().ToString(System.Globalization.CultureInfo.InvariantCulture));futureReady.Set();futureStop.Wait();});futureThread.IsBackground=true;futureThread.Start();if(!futureReady.Wait(5000))throw new InvalidOperationException(""future trusted-thread sentinel did not publish its identity"");var startup=new StartupInfo{cb=Marshal.SizeOf(typeof(StartupInfo)),flags=0x100,stdin=GetStdHandle(-10),stdout=stdoutWrite,stderr=stderrWrite};var command=new StringBuilder(Quote(executable));foreach(var argument in arguments){command.Append(' ');command.Append(Quote(argument));}if(!CreateProcessAsUser(restrictedToken,executable,command,IntPtr.Zero,IntPtr.Zero,true,suspended|noWindow,IntPtr.Zero,directory,ref startup,out information))throw new InvalidOperationException(""privilege-deleted inner process create failed: ""+Marshal.GetLastWin32Error());if(!AssignProcessToJobObject(job,information.process))throw new InvalidOperationException(""inner job assignment failed: ""+Marshal.GetLastWin32Error());var state=new OutputState(outputLimitBytes,job);var stdoutTarget=Console.OpenStandardOutput();var stderrTarget=Console.OpenStandardError();var stdoutReadForTask=stdoutRead;stdoutTask=Task.Run(()=>Forward(stdoutReadForTask,stdoutTarget,state));stdoutRead=IntPtr.Zero;var stderrReadForTask=stderrRead;stderrTask=Task.Run(()=>Forward(stderrReadForTask,stderrTarget,state));stderrRead=IntPtr.Zero;if(ResumeThread(information.thread)==0xffffffff)throw new InvalidOperationException(""inner process resume failed: ""+Marshal.GetLastWin32Error());CloseHandle(stdoutWrite);stdoutWrite=IntPtr.Zero;CloseHandle(stderrWrite);stderrWrite=IntPtr.Zero;if(WaitForSingleObject(information.process,infinite)!=0)throw new InvalidOperationException(""inner process wait failed: ""+Marshal.GetLastWin32Error());uint exitCode;if(!GetExitCodeProcess(information.process,out exitCode))throw new InvalidOperationException(""inner exit read failed: ""+Marshal.GetLastWin32Error());if(!TerminateJobObject(job,1))throw new InvalidOperationException(""inner job termination failed: ""+Marshal.GetLastWin32Error());var deadline=DateTime.UtcNow.AddSeconds(15);while(Active(job)!=0&&DateTime.UtcNow<deadline)Thread.Sleep(25);if(Active(job)!=0)throw new InvalidOperationException(""inner job retained processes"");if(!Task.WaitAll(new Task[]{stdoutTask,stderrTask},15000))throw new InvalidOperationException(""inner output pipes did not drain completely"");return new RunResult{ExitCode=unchecked((int)exitCode),Truncated=Volatile.Read(ref state.truncated)!=0};}finally{var futureStopped=true;if(futureStop!=null)futureStop.Set();if(futureThread!=null)futureStopped=futureThread.Join(5000);Environment.SetEnvironmentVariable(""RUSTY_AFFECTED_VALIDATION_FUTURE_THREAD_ID"",null);if(information.process!=IntPtr.Zero){TerminateProcess(information.process,1);CloseHandle(information.process);}if(information.thread!=IntPtr.Zero)CloseHandle(information.thread);if(job!=IntPtr.Zero){TerminateJobObject(job,1);CloseHandle(job);}if(restrictedToken!=IntPtr.Zero)CloseHandle(restrictedToken);if(sourceToken!=IntPtr.Zero)CloseHandle(sourceToken);if(stdoutRead!=IntPtr.Zero)CloseHandle(stdoutRead);if(stdoutWrite!=IntPtr.Zero)CloseHandle(stdoutWrite);if(stderrRead!=IntPtr.Zero)CloseHandle(stderrRead);if(stderrWrite!=IntPtr.Zero)CloseHandle(stderrWrite);if(futureReady!=null)futureReady.Dispose();if(futureStop!=null)futureStop.Dispose();if(!futureStopped)throw new InvalidOperationException(""future trusted-thread sentinel did not stop"");}}
+    public static RunResult Run(string executable,string directory,string[] arguments,int outputLimitBytes,int[] trustedPids){const uint suspended=4,noWindow=0x08000000,infinite=0xffffffff,inheritFlag=1,tokenAccess=0x008b;var security=new SecurityAttributes{length=Marshal.SizeOf(typeof(SecurityAttributes)),inherit=1};IntPtr stdoutRead=IntPtr.Zero,stdoutWrite=IntPtr.Zero,stderrRead=IntPtr.Zero,stderrWrite=IntPtr.Zero,job=IntPtr.Zero,sourceToken=IntPtr.Zero,restrictedToken=IntPtr.Zero;var information=new ProcessInformation();Task stdoutTask=null,stderrTask=null;ManualResetEventSlim futureReady=null,futureStop=null;Thread futureThread=null;try{if(!CreatePipe(out stdoutRead,out stdoutWrite,ref security,0))throw new InvalidOperationException(""stdout pipe create failed: ""+Marshal.GetLastWin32Error());if(!SetHandleInformation(stdoutRead,inheritFlag,0))throw new InvalidOperationException(""stdout pipe protection failed: ""+Marshal.GetLastWin32Error());if(!CreatePipe(out stderrRead,out stderrWrite,ref security,0))throw new InvalidOperationException(""stderr pipe create failed: ""+Marshal.GetLastWin32Error());if(!SetHandleInformation(stderrRead,inheritFlag,0))throw new InvalidOperationException(""stderr pipe protection failed: ""+Marshal.GetLastWin32Error());if(!OpenProcessToken(GetCurrentProcess(),tokenAccess,out sourceToken))throw new InvalidOperationException(""source token open failed: ""+Marshal.GetLastWin32Error());restrictedToken=CreatePrivilegeStrippedToken(sourceToken);job=Create();ProtectFutureThreads();AssertAncestorIsolation(restrictedToken,trustedPids);futureReady=new ManualResetEventSlim(false);futureStop=new ManualResetEventSlim(false);futureThread=new Thread(()=>{Environment.SetEnvironmentVariable(""RUSTY_AFFECTED_VALIDATION_FUTURE_THREAD_ID"",GetCurrentThreadId().ToString(System.Globalization.CultureInfo.InvariantCulture));futureReady.Set();futureStop.Wait();});futureThread.IsBackground=true;futureThread.Start();if(!futureReady.Wait(5000))throw new InvalidOperationException(""future trusted-thread sentinel did not publish its identity"");var environmentProof=EnvironmentProof();var startup=new StartupInfo{cb=Marshal.SizeOf(typeof(StartupInfo)),flags=0x100,stdin=GetStdHandle(-10),stdout=stdoutWrite,stderr=stderrWrite};var command=new StringBuilder(Quote(executable));foreach(var argument in arguments){command.Append(' ');command.Append(Quote(argument));}if(!CreateProcessAsUser(restrictedToken,executable,command,IntPtr.Zero,IntPtr.Zero,true,suspended|noWindow,IntPtr.Zero,directory,ref startup,out information))throw new InvalidOperationException(""privilege-deleted inner process create failed: ""+Marshal.GetLastWin32Error());if(!AssignProcessToJobObject(job,information.process))throw new InvalidOperationException(""inner job assignment failed: ""+Marshal.GetLastWin32Error());var state=new OutputState(outputLimitBytes,job);var stdoutTarget=Console.OpenStandardOutput();var stderrTarget=Console.OpenStandardError();var stdoutReadForTask=stdoutRead;stdoutTask=Task.Run(()=>Forward(stdoutReadForTask,stdoutTarget,state));stdoutRead=IntPtr.Zero;var stderrReadForTask=stderrRead;stderrTask=Task.Run(()=>Forward(stderrReadForTask,stderrTarget,state));stderrRead=IntPtr.Zero;if(ResumeThread(information.thread)==0xffffffff)throw new InvalidOperationException(""inner process resume failed: ""+Marshal.GetLastWin32Error());CloseHandle(stdoutWrite);stdoutWrite=IntPtr.Zero;CloseHandle(stderrWrite);stderrWrite=IntPtr.Zero;if(WaitForSingleObject(information.process,infinite)!=0)throw new InvalidOperationException(""inner process wait failed: ""+Marshal.GetLastWin32Error());uint exitCode;if(!GetExitCodeProcess(information.process,out exitCode))throw new InvalidOperationException(""inner exit read failed: ""+Marshal.GetLastWin32Error());if(!TerminateJobObject(job,1))throw new InvalidOperationException(""inner job termination failed: ""+Marshal.GetLastWin32Error());var deadline=DateTime.UtcNow.AddSeconds(15);while(Active(job)!=0&&DateTime.UtcNow<deadline)Thread.Sleep(25);if(Active(job)!=0)throw new InvalidOperationException(""inner job retained processes"");if(!Task.WaitAll(new Task[]{stdoutTask,stderrTask},15000))throw new InvalidOperationException(""inner output pipes did not drain completely"");return new RunResult{ExitCode=unchecked((int)exitCode),Truncated=Volatile.Read(ref state.truncated)!=0,EnvironmentProof=environmentProof};}finally{var futureStopped=true;if(futureStop!=null)futureStop.Set();if(futureThread!=null)futureStopped=futureThread.Join(5000);Environment.SetEnvironmentVariable(""RUSTY_AFFECTED_VALIDATION_FUTURE_THREAD_ID"",null);if(information.process!=IntPtr.Zero){TerminateProcess(information.process,1);CloseHandle(information.process);}if(information.thread!=IntPtr.Zero)CloseHandle(information.thread);if(job!=IntPtr.Zero){TerminateJobObject(job,1);CloseHandle(job);}if(restrictedToken!=IntPtr.Zero)CloseHandle(restrictedToken);if(sourceToken!=IntPtr.Zero)CloseHandle(sourceToken);if(stdoutRead!=IntPtr.Zero)CloseHandle(stdoutRead);if(stdoutWrite!=IntPtr.Zero)CloseHandle(stdoutWrite);if(stderrRead!=IntPtr.Zero)CloseHandle(stderrRead);if(stderrWrite!=IntPtr.Zero)CloseHandle(stderrWrite);if(futureReady!=null)futureReady.Dispose();if(futureStop!=null)futureStop.Dispose();if(!futureStopped)throw new InvalidOperationException(""future trusted-thread sentinel did not stop"");}}
 }
 ""@
         try{$innerResult=[W017SupervisorInnerJob]::Run($Executable,$ChildWorkingDirectory,$childArguments,$OutputLimitBytes,$trustedAncestors.ToArray())}finally{if($ancestorProtection-ne$null){$ancestorProtection.Dispose();$ancestorProtection=$null}}
-        $exitCode=$innerResult.ExitCode;$outputTruncated=[bool]$innerResult.Truncated
+        $exitCode=$innerResult.ExitCode;$outputTruncated=[bool]$innerResult.Truncated;$environmentProof=[string]$innerResult.EnvironmentProof
     } else {
-        $sudoPath=Resolve-ExactApplication 'sudo';$unsharePath=Resolve-ExactApplication 'unshare';$setprivPath=Resolve-ExactApplication 'setpriv'
+        $sudoPath=Resolve-ExactApplication 'sudo';$unsharePath=Resolve-ExactApplication 'unshare';$setprivPath=Resolve-ExactApplication 'setpriv';$envPath=Resolve-ExactApplication 'env'
         $uid=[W017UnixProcessGroup]::geteuid();$gid=[W017UnixProcessGroup]::getegid()
         $start=[Diagnostics.ProcessStartInfo]::new($sudoPath);$start.WorkingDirectory=$ChildWorkingDirectory;$start.UseShellExecute=$false;$start.CreateNoWindow=$true;$start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
-        foreach($argument in @('--non-interactive','--preserve-env','--',$unsharePath,'--pid','--fork','--kill-child=KILL','--mount-proc',$setprivPath,(""--reuid={0}"" -f $uid),(""--regid={0}"" -f $gid),'--keep-groups',$Executable)+@($childArguments)){[void]$start.ArgumentList.Add([string]$argument)}
+        $environmentProof=Get-EnvironmentProof
+        $leafEnvironment=@([Environment]::GetEnvironmentVariables('Process').Keys|ForEach-Object{[string]$_}|Sort-Object|ForEach-Object{""$_=$([Environment]::GetEnvironmentVariable($_,'Process'))""})
+        foreach($argument in @('--non-interactive','--',$unsharePath,'--pid','--fork','--kill-child=KILL','--mount-proc',$setprivPath,(""--reuid={0}"" -f $uid),(""--regid={0}"" -f $gid),'--keep-groups',$envPath,'-i')+@($leafEnvironment)+@($Executable)+@($childArguments)){[void]$start.ArgumentList.Add([string]$argument)}
         $pump=Start-Pump $start;$pump.process.WaitForExit();$exitCode=$pump.process.ExitCode;Complete-Pump $pump;$outputTruncated=$false
     }
-    Publish-Completion (""leaf:{0}:{1}`n"" -f $exitCode,([int]$outputTruncated))
+    $proofBase64=[Convert]::ToBase64String([Text.UTF8Encoding]::new($false).GetBytes($environmentProof))
+    Publish-Completion (""leaf:{0}:{1}:{2}`n"" -f $exitCode,([int]$outputTruncated),$proofBase64)
     exit 0
 } catch {
     $encoded=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$_.Exception.Message))
@@ -452,8 +490,12 @@ public static class W017SupervisorInnerJob {
         catch (Exception exception) { throw new InvalidOperationException("owned validation supervisor completion is not strict UTF-8: " + exception.Message); }
         if (record.StartsWith("leaf:", StringComparison.Ordinal) && record.EndsWith("\n", StringComparison.Ordinal)) {
             var fields = record.Substring(0, record.Length - 1).Split(':'); int exitCode, truncated;
-            if (fields.Length != 3 || !Int32.TryParse(fields[1], System.Globalization.NumberStyles.AllowLeadingSign, System.Globalization.CultureInfo.InvariantCulture, out exitCode) || !Int32.TryParse(fields[2], out truncated) || (truncated != 0 && truncated != 1)) { throw new InvalidOperationException("owned validation leaf completion is malformed"); }
-            result.ExitCode = exitCode; result.OutputTruncated = truncated == 1; return;
+            if (fields.Length != 4 || !Int32.TryParse(fields[1], System.Globalization.NumberStyles.AllowLeadingSign, System.Globalization.CultureInfo.InvariantCulture, out exitCode) || !Int32.TryParse(fields[2], out truncated) || (truncated != 0 && truncated != 1)) { throw new InvalidOperationException("owned validation leaf completion is malformed"); }
+            string proof;
+            try { proof = new UTF8Encoding(false, true).GetString(Convert.FromBase64String(fields[3])); }
+            catch (Exception exception) { throw new InvalidOperationException("owned validation leaf environment proof is malformed: " + exception.Message); }
+            if (String.IsNullOrWhiteSpace(proof) || proof.Length > 4096) { throw new InvalidOperationException("owned validation leaf environment proof is outside its closed bound"); }
+            result.ExitCode = exitCode; result.OutputTruncated = truncated == 1; result.LeafEnvironmentProof = proof; return;
         }
         if (record.StartsWith("infra:", StringComparison.Ordinal) && record.EndsWith("\n", StringComparison.Ordinal)) {
             try {
@@ -536,7 +578,7 @@ public static class W017SupervisorInnerJob {
         }
         throw new InvalidOperationException("owned validation supervisor evidence remained undeletable after its bounded cleanup deadline: " + last.Message, last);
     }
-    private static W017BoundedChildResult RunCore(string executable, string workingDirectory, string[] arguments, string[] environmentNamesToRemove, int budgetSeconds, int outputLimitBytes, int postKillDrainMilliseconds, string setupDamage) {
+    private static W017BoundedChildResult RunCore(string executable, string workingDirectory, string[] arguments, string[] environmentNames, string[] environmentValues, int budgetSeconds, int outputLimitBytes, int postKillDrainMilliseconds, string setupDamage) {
         var result = new W017BoundedChildResult();
         var output = new MemoryStream();
         var error = new MemoryStream();
@@ -578,7 +620,13 @@ public static class W017SupervisorInnerJob {
             start.CreateNoWindow = true;
             start.RedirectStandardOutput = true;
             start.RedirectStandardError = true;
-            foreach (var name in environmentNamesToRemove) { start.Environment.Remove(name); }
+            if (environmentNames == null || environmentValues == null || environmentNames.Length != environmentValues.Length) { throw new InvalidOperationException("owned validation supervisor environment projection is malformed"); }
+            start.Environment.Clear();
+            for (var environmentIndex = 0; environmentIndex < environmentNames.Length; environmentIndex++) {
+                var name = environmentNames[environmentIndex]; var value = environmentValues[environmentIndex];
+                if (String.IsNullOrWhiteSpace(name) || name.IndexOf('=') >= 0 || name.IndexOf('\0') >= 0 || value == null || value.IndexOf('\0') >= 0 || start.Environment.ContainsKey(name)) { throw new InvalidOperationException("owned validation supervisor environment projection is not closed and unique"); }
+                start.Environment.Add(name, value);
+            }
             foreach (var argument in new string[] { "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", supervisorPath, "-Executable", executable, "-ChildWorkingDirectory", workingDirectory, "-ReadyPath", readyPath, "-GoPath", goPath, "-ProtectedPath", protectedPath, "-FutureThreadPath", futureThreadPath, "-AncestorTemplatePath", ancestorTemplatePath, "-ArgumentsBase64", argumentPayload, "-CompletionHandle", completionHandle, "-OutputLimitBytes", outputLimitBytes.ToString(System.Globalization.CultureInfo.InvariantCulture) }) { start.ArgumentList.Add(argument); }
             process = new Process(); process.StartInfo = start;
             if (!process.Start()) { throw new InvalidOperationException("owned validation supervisor did not start"); }
@@ -742,13 +790,15 @@ public static class W017SupervisorInnerJob {
         DeleteOwnedSupervisorDirectory(root, 1000);
         if (Directory.Exists(root) || File.Exists(root)) { throw new InvalidOperationException("read-only owned supervisor evidence survived cleanup self-test"); }
     }
-    public static W017BoundedChildResult Run(string executable, string workingDirectory, string[] arguments, string[] environmentNamesToRemove, int budgetSeconds, int outputLimitBytes, int postKillDrainMilliseconds) {
-        return RunCore(executable, workingDirectory, arguments, environmentNamesToRemove, budgetSeconds, outputLimitBytes, postKillDrainMilliseconds, null);
+    public static W017BoundedChildResult Run(string executable, string workingDirectory, string[] arguments, string[] environmentNames, string[] environmentValues, int budgetSeconds, int outputLimitBytes, int postKillDrainMilliseconds) {
+        return RunCore(executable, workingDirectory, arguments, environmentNames, environmentValues, budgetSeconds, outputLimitBytes, postKillDrainMilliseconds, null);
     }
     public static W017BoundedChildResult RunForSetupFailureTest(string executable, string workingDirectory, string setupDamage, int postKillDrainMilliseconds) {
         if (!String.Equals(setupDamage, "before-containment", StringComparison.Ordinal) && !String.Equals(setupDamage, "after-job-create", StringComparison.Ordinal) && !String.Equals(setupDamage, "terminate-supervisor-after-go", StringComparison.Ordinal)) { throw new ArgumentException("unknown setup damage", "setupDamage"); }
         var arguments = String.Equals(setupDamage, "terminate-supervisor-after-go", StringComparison.Ordinal) ? new string[] { "-NoProfile", "-NonInteractive", "-File", Path.Combine(workingDirectory, "scripts", "Test-PublicBoundary.ps1") } : new string[0];
-        return RunCore(executable, workingDirectory, arguments, new string[0], 5, 1024, postKillDrainMilliseconds, setupDamage);
+        var keep = new System.Collections.Generic.List<string>(); var values = new System.Collections.Generic.List<string>();
+        foreach (var name in new string[] { "COMSPEC", "HOME", "PATH", "PATHEXT", "SYSTEMROOT", "TEMP", "TMP", "TMPDIR", "WINDIR" }) { var value = Environment.GetEnvironmentVariable(name); if (value != null) { keep.Add(name); values.Add(value); } }
+        return RunCore(executable, workingDirectory, arguments, keep.ToArray(), values.ToArray(), 5, 1024, postKillDrainMilliseconds, setupDamage);
     }
 }
 '@
@@ -849,36 +899,71 @@ function Get-AffectedValidationDependencyClosureCacheKey([object]$Check) {
         consume_path_sets=@($Check.consume_path_sets | ForEach-Object { [string]$_ })
     })
 }
+function Get-AffectedValidationEnvironmentState {
+    [string[]]$names = @([Environment]::GetEnvironmentVariables('Process').Keys | ForEach-Object { [string]$_ })
+    if ($names.Count -gt 1) { [Array]::Sort($names,[StringComparer]::Ordinal) }
+    $records = [Collections.Generic.List[object]]::new()
+    $canonical = [Text.StringBuilder]::new()
+    foreach ($name in $names) {
+        if ($name -cmatch '[\x00\r\n=]') { throw "Process environment contains an invalid variable name: $name" }
+        $value = [string][Environment]::GetEnvironmentVariable($name,'Process')
+        [void]$canonical.Append($name); [void]$canonical.Append("`0"); [void]$canonical.Append($value); [void]$canonical.Append("`0")
+        $records.Add([pscustomobject][ordered]@{name=$name;value=$value;value_sha256=Get-AffectedValidationBytesHash ([Text.UTF8Encoding]::new($false).GetBytes($value))})
+    }
+    return [pscustomobject][ordered]@{count=$records.Count;sha256=Get-AffectedValidationBytesHash ([Text.UTF8Encoding]::new($false).GetBytes($canonical.ToString()));records=@($records.ToArray())}
+}
+function Get-AffectedValidationChildEnvironmentProjection([hashtable]$LauncherValues) {
+    $sources = @{}
+    foreach ($name in @('COMSPEC','HOME','PATH','PATHEXT','SYSTEMROOT','TEMP','TMP','TMPDIR','WINDIR','RUNNER_TEMP')) { $sources[$name]='host-runtime' }
+    if ([string][Environment]::GetEnvironmentVariable('GITHUB_ACTIONS','Process') -ceq 'true') {
+        foreach ($name in @('GITHUB_ACTIONS','GITHUB_REPOSITORY','GITHUB_EVENT_NAME','GITHUB_RUN_ID','GITHUB_RUN_ATTEMPT','GITHUB_WORKFLOW_REF','GITHUB_JOB')) { $sources[$name]='hosted-producer' }
+        if ([string][Environment]::GetEnvironmentVariable('GITHUB_EVENT_NAME','Process') -ceq 'pull_request') { $sources['PR_NUMBER']='hosted-producer' }
+    }
+    foreach ($name in $LauncherValues.Keys) { if (-not ([string]$name).StartsWith('RUSTY_AFFECTED_VALIDATION_',[StringComparison]::Ordinal)) { throw "Launcher environment variable is outside the owned namespace: $name" }; $sources[[string]$name]='launcher-owned' }
+    [string[]]$names=@($sources.Keys | ForEach-Object {[string]$_}); if($names.Count-gt1){[Array]::Sort($names,[StringComparer]::Ordinal)}
+    $values=[Collections.Generic.List[string]]::new();$evidence=[Collections.Generic.List[object]]::new()
+    foreach($name in $names){$rawValue=if($LauncherValues.ContainsKey($name)){$LauncherValues[$name]}else{[Environment]::GetEnvironmentVariable($name,'Process')};if($null-eq$rawValue){continue};$value=[string]$rawValue;$values.Add($value);$hash=Get-AffectedValidationBytesHash ([Text.UTF8Encoding]::new($false).GetBytes($value));$evidence.Add([pscustomobject][ordered]@{name=$name;source=[string]$sources[$name];value_sha256=$hash})}
+    [string[]]$projectedNames=@($evidence.ToArray()|ForEach-Object{[string]$_.name})
+    return [pscustomobject][ordered]@{names=$projectedNames;values=@($values.ToArray());evidence=@($evidence.ToArray());count=$projectedNames.Count;sha256=Get-MorphospaceCanonicalJsonSha256 -Value @($evidence.ToArray())}
+}
+function ConvertFrom-AffectedValidationLeafEnvironmentProof([string]$Proof) {
+    $records=[Collections.Generic.List[object]]::new();$previous=$null
+    foreach($line in @($Proof -split "`n" | Where-Object { $_ -cne '' })){$fields=$line -split "`t",2;if($fields.Count-ne2-or$fields[0]-cnotmatch '^[^=\x00-\x1f\x7f]+$'-or$fields[1]-cnotmatch '^[0-9a-f]{64}$'){throw 'Affected-validation leaf environment proof is malformed.'};if($null-ne$previous-and[StringComparer]::Ordinal.Compare($previous,$fields[0])-ge0){throw 'Affected-validation leaf environment proof is not unique and ordinal sorted.'};$source=if($fields[0].StartsWith('RUSTY_AFFECTED_VALIDATION_',[StringComparison]::Ordinal)){'launcher-owned'}elseif($fields[0].StartsWith('GITHUB_',[StringComparison]::Ordinal)-or$fields[0]-ceq'PR_NUMBER'){'hosted-producer'}else{'host-runtime'};$records.Add([pscustomobject][ordered]@{name=$fields[0];source=$source;value_sha256=$fields[1]});$previous=$fields[0]}
+    return @($records.ToArray())
+}
+function Get-AffectedValidationFailureKind([string]$Result,[object]$Child,[AllowNull()][string]$IntegrityError) {
+    if($Result-ceq'pass'){return $null}
+    if($Result-ceq'infra-fail'-and-not[string]::IsNullOrWhiteSpace([string]$IntegrityError)){return 'infrastructure'}
+    if(-not[bool]$Child.Started){return 'launch'}
+    if([bool]$Child.TimedOut){return 'timeout'}
+    if([bool]$Child.OutputTruncated){return 'output-limit'}
+    if([bool]$Child.PostKillDrainTimedOut){return 'drain-timeout'}
+    if(-not[string]::IsNullOrWhiteSpace([string]$Child.Error)){return 'infrastructure'}
+    return 'exit-code'
+}
 function Invoke-AffectedValidationCheck([object]$Check, [string]$Command, [string[]]$IntegrityPaths, [object]$Inventory, [object[]]$DependencyManifest) {
     $started = [DateTimeOffset]::UtcNow
     $clock = [Diagnostics.Stopwatch]::StartNew()
     $budget = [Math]::Min([Math]::Max([int]$Check.budget_seconds, 1), 7200)
     $arguments = [Collections.Generic.List[string]]::new()
     foreach ($argument in @('-NoProfile', '-NonInteractive', '-File', $Command) + @($Check.arguments)) { [void]$arguments.Add([string]$argument) }
-    $projectedNames = @('RUSTY_AFFECTED_VALIDATION_PHASE_ROOT','RUSTY_AFFECTED_VALIDATION_BASE_COMMIT','RUSTY_AFFECTED_VALIDATION_HEAD_COMMIT','RUSTY_AFFECTED_VALIDATION_PLAN_SHA256','RUSTY_AFFECTED_VALIDATION_PLATFORM','RUSTY_AFFECTED_VALIDATION_CHECK_ID','RUSTY_AFFECTED_VALIDATION_DEPENDENCY_PROJECTION_PATH','RUSTY_AFFECTED_VALIDATION_DEPENDENCY_PROJECTION_SHA256')
-    [string[]]$gitEnvironmentNames = @(Get-ChildItem Env: | Where-Object { ([string]$_.Name).StartsWith('GIT_',[StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { [string]$_.Name })
-    if ($gitEnvironmentNames.Count -gt 1) { [Array]::Sort($gitEnvironmentNames,[StringComparer]::Ordinal) }
-    $projectedNames = @($projectedNames + $gitEnvironmentNames)
-    $savedEnvironment = @{}
-    foreach ($name in $projectedNames) { $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name,'Process') }
+    $parentEnvironmentBefore = Get-AffectedValidationEnvironmentState
     $dependencyProjectionFile = $null
+    $environmentProjection = $null
     $child = [W017BoundedChildResult]::new()
     $integrityError = $null
     $projectionCleanupError = $null
     try {
-        [Environment]::SetEnvironmentVariable('RUSTY_AFFECTED_VALIDATION_PHASE_ROOT',$phaseEvidenceRoot,'Process')
-        [Environment]::SetEnvironmentVariable('RUSTY_AFFECTED_VALIDATION_BASE_COMMIT',$BaseCommit,'Process')
-        [Environment]::SetEnvironmentVariable('RUSTY_AFFECTED_VALIDATION_HEAD_COMMIT',$HeadCommit,'Process')
-        [Environment]::SetEnvironmentVariable('RUSTY_AFFECTED_VALIDATION_PLAN_SHA256',[string]$plan.plan_sha256,'Process')
-        [Environment]::SetEnvironmentVariable('RUSTY_AFFECTED_VALIDATION_PLATFORM',$Platform,'Process')
-        [Environment]::SetEnvironmentVariable('RUSTY_AFFECTED_VALIDATION_CHECK_ID',[string]$Check.check_id,'Process')
         $dependencyProjectionFile = New-AffectedValidationDependencyProjectionFile -Check $Check -DependencyManifest @($DependencyManifest)
-        [Environment]::SetEnvironmentVariable('RUSTY_AFFECTED_VALIDATION_DEPENDENCY_PROJECTION_PATH',$(if($null-eq$dependencyProjectionFile){$null}else{[string]$dependencyProjectionFile.path}),'Process')
-        [Environment]::SetEnvironmentVariable('RUSTY_AFFECTED_VALIDATION_DEPENDENCY_PROJECTION_SHA256',$(if($null-eq$dependencyProjectionFile){$null}else{[string]$dependencyProjectionFile.sha256}),'Process')
-        foreach ($name in $gitEnvironmentNames) { Remove-Item -LiteralPath ("Env:$name") -ErrorAction Stop }
+        $launcherValues=@{
+            RUSTY_AFFECTED_VALIDATION_PHASE_ROOT=$phaseEvidenceRoot;RUSTY_AFFECTED_VALIDATION_BASE_COMMIT=$BaseCommit;RUSTY_AFFECTED_VALIDATION_HEAD_COMMIT=$HeadCommit;RUSTY_AFFECTED_VALIDATION_PLAN_SHA256=[string]$plan.plan_sha256;RUSTY_AFFECTED_VALIDATION_PLATFORM=$Platform;RUSTY_AFFECTED_VALIDATION_CHECK_ID=[string]$Check.check_id
+        }
+        if($RunRestorationCollisionSelfTest){$launcherValues.RUSTY_AFFECTED_VALIDATION_RESTORATION_COLLISION_SELFTEST='1'}
+        if($null-ne$dependencyProjectionFile){$launcherValues.RUSTY_AFFECTED_VALIDATION_DEPENDENCY_PROJECTION_PATH=[string]$dependencyProjectionFile.path;$launcherValues.RUSTY_AFFECTED_VALIDATION_DEPENDENCY_PROJECTION_SHA256=[string]$dependencyProjectionFile.sha256}
+        $environmentProjection=Get-AffectedValidationChildEnvironmentProjection -LauncherValues $launcherValues
         try { [void](Assert-MorphospaceAffectedBatchedWorkingBytes -RepositoryRoot $root -ExpectedHead $plan.head -Inventory $Inventory -Paths $IntegrityPaths) } catch { $integrityError = "Pre-execution affected-check input integrity failed: $($_.Exception.Message)" }
         if ($null -eq $integrityError) {
-            $child = [W017BoundedChildCapture]::Run((Get-Process -Id $PID).Path, $root, @($arguments.ToArray()), @('GITHUB_OUTPUT','GITHUB_ENV','GITHUB_PATH','GITHUB_STEP_SUMMARY'), $budget, 10485760, 15000)
+            $child = [W017BoundedChildCapture]::Run((Get-Process -Id $PID).Path, $root, @($arguments.ToArray()), @($environmentProjection.names), @($environmentProjection.values), $budget, 10485760, 15000)
             if ($null -ne $dependencyProjectionFile -and $null -ne $dependencyProjectionFile.stream) {
                 try { $dependencyProjectionFile.stream.Dispose(); $dependencyProjectionFile.stream = $null } catch { $integrityError = "Post-execution affected-check dependency projection publisher-handle cleanup failed: $($_.Exception.Message)" }
             }
@@ -902,10 +987,6 @@ function Invoke-AffectedValidationCheck([object]$Check, [string]$Command, [strin
         }
         if ($null -ne $integrityError) { $child.Error = if ([string]::IsNullOrWhiteSpace([string]$child.Error)) { $integrityError } else { ([string]$child.Error + [Environment]::NewLine + $integrityError) } }
     } finally {
-        foreach ($name in $projectedNames) {
-            if ($null -eq $savedEnvironment[$name]) { Remove-Item -LiteralPath ("Env:$name") -ErrorAction SilentlyContinue }
-            else { [Environment]::SetEnvironmentVariable($name,[string]$savedEnvironment[$name],'Process') }
-        }
         if ($null -ne $dependencyProjectionFile) {
             try { if ($null -ne $dependencyProjectionFile.stream) { $dependencyProjectionFile.stream.Dispose(); $dependencyProjectionFile.stream = $null } } catch { $projectionCleanupError = "Affected-check dependency projection handle cleanup failed: $($_.Exception.Message)" }
             finally {
@@ -919,6 +1000,11 @@ function Invoke-AffectedValidationCheck([object]$Check, [string]$Command, [strin
             }
         }
     }
+    $parentEnvironmentAfter = Get-AffectedValidationEnvironmentState
+    $parentEnvironmentUnchanged = $parentEnvironmentBefore.count -eq $parentEnvironmentAfter.count -and $parentEnvironmentBefore.sha256 -ceq $parentEnvironmentAfter.sha256
+    if(-not$parentEnvironmentUnchanged){$integrityError='Affected-validation parent environment changed across child execution.';$child.Error=if([string]::IsNullOrWhiteSpace([string]$child.Error)){$integrityError}else{[string]$child.Error+[Environment]::NewLine+$integrityError}}
+    $leafEnvironment=@(if([string]::IsNullOrWhiteSpace([string]$child.LeafEnvironmentProof)){@()}else{ConvertFrom-AffectedValidationLeafEnvironmentProof ([string]$child.LeafEnvironmentProof)})
+    $environmentEvidence=[pscustomobject][ordered]@{projected=($null-ne$environmentProjection);parent_variable_count_before=[int]$parentEnvironmentBefore.count;parent_sha256_before=[string]$parentEnvironmentBefore.sha256;parent_variable_count_after=[int]$parentEnvironmentAfter.count;parent_sha256_after=[string]$parentEnvironmentAfter.sha256;parent_environment_unchanged=[bool]$parentEnvironmentUnchanged;supervisor_variable_count=if($null-eq$environmentProjection){0}else{[int]$environmentProjection.count};supervisor_sha256=if($null-eq$environmentProjection){$null}else{[string]$environmentProjection.sha256};supervisor_variables=@(if($null-eq$environmentProjection){@()}else{@($environmentProjection.evidence)});leaf_variable_count=$leafEnvironment.Count;leaf_sha256=if($leafEnvironment.Count-eq0){$null}else{Get-MorphospaceCanonicalJsonSha256 -Value @($leafEnvironment)};leaf_variables=@($leafEnvironment)}
     if ($null -ne $projectionCleanupError) {
         $integrityError = if ($null -eq $integrityError) { $projectionCleanupError } else { "$integrityError $projectionCleanupError" }
         $child.Error = if ([string]::IsNullOrWhiteSpace([string]$child.Error)) { $integrityError } else { ([string]$child.Error + [Environment]::NewLine + $projectionCleanupError) }
@@ -930,14 +1016,15 @@ function Invoke-AffectedValidationCheck([object]$Check, [string]$Command, [strin
     # check failure.  `infra-fail` is reserved for a host/process-start fault;
     # pre-job availability uses the separate typed pending-infrastructure gate.
     $result = if (-not $child.Started) { 'infra-fail' } elseif ($child.TimedOut -or $child.OutputTruncated -or $child.PostKillDrainTimedOut) { 'code-fail' } elseif (-not [string]::IsNullOrWhiteSpace([string]$child.Error)) { 'infra-fail' } elseif ([int]$child.ExitCode -eq 0) { 'pass' } else { 'code-fail' }
+    $failureKind=Get-AffectedValidationFailureKind -Result $result -Child $child -IntegrityError $integrityError
     $clock.Stop()
     $aggregate = [pscustomobject][ordered]@{
         check_id=[string]$Check.check_id; command_path=[string]$Check.command_path; command_blob_sha1=Get-AffectedValidationCommandBlob ([string]$Check.command_path)
-        result=$result; exit_code=$child.ExitCode; timed_out=[bool]$child.TimedOut; output_truncated=[bool]$child.OutputTruncated; post_kill_drain_timed_out=[bool]$child.PostKillDrainTimedOut
+        mode='executed'; result=$result; started=[bool]$child.Started; failure_kind=$failureKind; exit_code=$child.ExitCode; timed_out=[bool]$child.TimedOut; output_truncated=[bool]$child.OutputTruncated; post_kill_drain_timed_out=[bool]$child.PostKillDrainTimedOut
         stdout_sha256=Get-AffectedValidationBytesHash $stdout; stderr_sha256=Get-AffectedValidationBytesHash $stderr
         stdout_bytes=[long]$stdout.Length; stderr_bytes=[long]$stderr.Length
     }
-    return [pscustomobject][ordered]@{aggregate=$aggregate;child=$child;stdout=$stdout;stderr=$stderr;started=$started;ended=[DateTimeOffset]::UtcNow;elapsed_ms=[long]$clock.Elapsed.TotalMilliseconds;integrity_failed=($null -ne $integrityError)}
+    return [pscustomobject][ordered]@{aggregate=$aggregate;child=$child;environment=$environmentEvidence;stdout=$stdout;stderr=$stderr;started=$started;ended=[DateTimeOffset]::UtcNow;elapsed_ms=[long]$clock.Elapsed.TotalMilliseconds;integrity_failed=($null -ne $integrityError)}
 }
 
 function Get-AffectedValidationProducerBinding {
@@ -1064,10 +1151,12 @@ foreach ($record in @($bindingRecords.ToArray())) {
         $blockedReceipt = [pscustomobject][ordered]@{
             schema='rusty.morphospace.workflow.affected_validation_check_evidence.v1';source=[pscustomobject][ordered]@{base=$plan.base;head=$plan.head};plan_sha256=[string]$plan.plan_sha256;binding=$binding;binding_sha256=$bindingSha
             mode='blocked';started_at=$now;ended_at=$now;elapsed_ms=0;result='blocked';blocked_by=@($blockedIds)
-            child=[pscustomobject][ordered]@{started=$false;exit_code=$null;timed_out=$false;output_truncated=$false;post_kill_drain_timed_out=$false;stdout=[pscustomobject][ordered]@{path='stdout.bin';bytes=0;sha256=Get-AffectedValidationBytesHash $emptyBytes};stderr=[pscustomobject][ordered]@{path='stderr.bin';bytes=0;sha256=Get-AffectedValidationBytesHash $emptyBytes}}
+            child=[pscustomobject][ordered]@{started=$false;exit_code=$null;failure_kind='blocked';timed_out=$false;output_truncated=$false;post_kill_drain_timed_out=$false;stdout=[pscustomobject][ordered]@{path='stdout.bin';bytes=0;sha256=Get-AffectedValidationBytesHash $emptyBytes};stderr=[pscustomobject][ordered]@{path='stderr.bin';bytes=0;sha256=Get-AffectedValidationBytesHash $emptyBytes}}
+            environment=[pscustomobject][ordered]@{projected=$false;parent_variable_count_before=0;parent_sha256_before=$null;parent_variable_count_after=0;parent_sha256_after=$null;parent_environment_unchanged=$true;supervisor_variable_count=0;supervisor_sha256=$null;supervisor_variables=@();leaf_variable_count=0;leaf_sha256=$null;leaf_variables=@()}
             artifacts=@()
             reused_from=$null;claims=[pscustomobject][ordered]@{check_only=$true;candidate_admission=$false;acceptance_authority=$false;publication_authority=$false;device_used=$false}
         }
+        Assert-MorphospaceAffectedCheckEnvironmentEvidence -Evidence $blockedReceipt.environment -RequireProjection $false
         $parentSnapshots.Add((New-MorphospaceAffectedCheckSnapshot -Receipt $blockedReceipt -Stdout $emptyBytes -Stderr $emptyBytes -Artifacts @() -SchemaPath $checkReceiptSchema))
         $outcomes[[string]$check.check_id] = 'blocked'
         continue
@@ -1083,12 +1172,14 @@ foreach ($record in @($bindingRecords.ToArray())) {
         $reusedReceipt = [pscustomobject][ordered]@{
             schema='rusty.morphospace.workflow.affected_validation_check_evidence.v1';source=$reusable.receipt.source;plan_sha256=[string]$reusable.receipt.plan_sha256;binding=$binding;binding_sha256=$bindingSha
             mode='reused';started_at=$now;ended_at=$now;elapsed_ms=0;result='pass';blocked_by=@()
-            child=[pscustomobject][ordered]@{started=$false;exit_code=0;timed_out=$false;output_truncated=$false;post_kill_drain_timed_out=$false;stdout=[pscustomobject][ordered]@{path='stdout.bin';bytes=[long]$stdout.Length;sha256=Get-AffectedValidationBytesHash $stdout};stderr=[pscustomobject][ordered]@{path='stderr.bin';bytes=[long]$stderr.Length;sha256=Get-AffectedValidationBytesHash $stderr}}
+            child=[pscustomobject][ordered]@{started=$false;exit_code=0;failure_kind=$null;timed_out=$false;output_truncated=$false;post_kill_drain_timed_out=$false;stdout=[pscustomobject][ordered]@{path='stdout.bin';bytes=[long]$stdout.Length;sha256=Get-AffectedValidationBytesHash $stdout};stderr=[pscustomobject][ordered]@{path='stderr.bin';bytes=[long]$stderr.Length;sha256=Get-AffectedValidationBytesHash $stderr}}
+            environment=$reusable.receipt.environment
             artifacts=@($artifactReferences)
             reused_from=[pscustomobject][ordered]@{receipt_sha256=[string]$reusable.receipt_sha256;source_head=$reusable.receipt.source.head};claims=[pscustomobject][ordered]@{check_only=$true;candidate_admission=$false;acceptance_authority=$false;publication_authority=$false;device_used=$false}
         }
+        Assert-MorphospaceAffectedCheckEnvironmentEvidence -Evidence $reusedReceipt.environment -RequireProjection $true
         $parentSnapshots.Add((New-MorphospaceAffectedCheckSnapshot -Receipt $reusedReceipt -Stdout $stdout -Stderr $stderr -Artifacts $artifacts -SchemaPath $checkReceiptSchema))
-        $aggregate = [pscustomobject][ordered]@{check_id=[string]$check.check_id;command_path=[string]$check.command_path;command_blob_sha1=[string]$binding.command_blob_sha1;result='pass';exit_code=0;timed_out=$false;output_truncated=$false;post_kill_drain_timed_out=$false;stdout_sha256=Get-AffectedValidationBytesHash $stdout;stderr_sha256=Get-AffectedValidationBytesHash $stderr;stdout_bytes=[long]$stdout.Length;stderr_bytes=[long]$stderr.Length}
+        $aggregate = [pscustomobject][ordered]@{check_id=[string]$check.check_id;command_path=[string]$check.command_path;command_blob_sha1=[string]$binding.command_blob_sha1;mode='reused';result='pass';started=$false;failure_kind=$null;exit_code=0;timed_out=$false;output_truncated=$false;post_kill_drain_timed_out=$false;stdout_sha256=Get-AffectedValidationBytesHash $stdout;stderr_sha256=Get-AffectedValidationBytesHash $stderr;stdout_bytes=[long]$stdout.Length;stderr_bytes=[long]$stderr.Length}
         $results.Add($aggregate); $outcomes[[string]$check.check_id] = 'pass'
         continue
     }
@@ -1101,16 +1192,18 @@ foreach ($record in @($bindingRecords.ToArray())) {
     $executedReceipt = [pscustomobject][ordered]@{
         schema='rusty.morphospace.workflow.affected_validation_check_evidence.v1';source=[pscustomobject][ordered]@{base=$plan.base;head=$plan.head};plan_sha256=[string]$plan.plan_sha256;binding=$binding;binding_sha256=$bindingSha
         mode='executed';started_at=$execution.started.ToString('yyyy-MM-ddTHH:mm:ssZ',[Globalization.CultureInfo]::InvariantCulture);ended_at=$execution.ended.ToString('yyyy-MM-ddTHH:mm:ssZ',[Globalization.CultureInfo]::InvariantCulture);elapsed_ms=[long]$execution.elapsed_ms;result=[string]$checkResult.result;blocked_by=@()
-        child=[pscustomobject][ordered]@{started=[bool]$execution.child.Started;exit_code=$execution.child.ExitCode;timed_out=[bool]$execution.child.TimedOut;output_truncated=[bool]$execution.child.OutputTruncated;post_kill_drain_timed_out=[bool]$execution.child.PostKillDrainTimedOut;stdout=[pscustomobject][ordered]@{path='stdout.bin';bytes=[long]$execution.stdout.Length;sha256=[string]$checkResult.stdout_sha256};stderr=[pscustomobject][ordered]@{path='stderr.bin';bytes=[long]$execution.stderr.Length;sha256=[string]$checkResult.stderr_sha256}}
+        child=[pscustomobject][ordered]@{started=[bool]$checkResult.started;exit_code=$checkResult.exit_code;failure_kind=$checkResult.failure_kind;timed_out=[bool]$checkResult.timed_out;output_truncated=[bool]$checkResult.output_truncated;post_kill_drain_timed_out=[bool]$checkResult.post_kill_drain_timed_out;stdout=[pscustomobject][ordered]@{path='stdout.bin';bytes=[long]$execution.stdout.Length;sha256=[string]$checkResult.stdout_sha256};stderr=[pscustomobject][ordered]@{path='stderr.bin';bytes=[long]$execution.stderr.Length;sha256=[string]$checkResult.stderr_sha256}}
+        environment=$execution.environment
         artifacts=@($artifactReferences)
         reused_from=$null;claims=[pscustomobject][ordered]@{check_only=$true;candidate_admission=$false;acceptance_authority=$false;publication_authority=$false;device_used=$false}
     }
+    Assert-MorphospaceAffectedCheckEnvironmentEvidence -Evidence $executedReceipt.environment -RequireProjection ([bool]$executedReceipt.environment.projected)
     $parentSnapshots.Add((New-MorphospaceAffectedCheckSnapshot -Receipt $executedReceipt -Stdout $execution.stdout -Stderr $execution.stderr -Artifacts $artifacts -SchemaPath $checkReceiptSchema))
     $results.Add($checkResult); $outcomes[[string]$check.check_id] = [string]$checkResult.result
     if ([string]$checkResult.result -ceq 'infra-fail') {
         $reason = if ([string]::IsNullOrWhiteSpace([string]$execution.child.Error)) { 'child process did not start without a typed launch reason' } else { ([string]$execution.child.Error).Replace("`r",' ').Replace("`n",' ') }
         if ($reason.Length -gt 1024) { $reason = $reason.Substring(0,1024) }
-        $infrastructureReasons.Add("$([string]$check.check_id): $reason")
+        $infrastructureReasons.Add("$([string]$check.check_id): kind=$([string]$checkResult.failure_kind); stdout=$([string]$checkResult.stdout_sha256); stderr=$([string]$checkResult.stderr_sha256); $reason")
     }
     if ([string]$checkResult.result -ceq 'code-fail') {
         $terminalBytes = if ($execution.stderr.Length -gt 0) { [byte[]]$execution.stderr } else { [byte[]]$execution.stdout }
@@ -1118,7 +1211,7 @@ foreach ($record in @($bindingRecords.ToArray())) {
         $terminal = $terminal.Replace("`r",' ').Replace("`n",' ').Trim()
         if ($terminal.Length -gt 1024) { $terminal = $terminal.Substring($terminal.Length-1024) }
         if ([string]::IsNullOrWhiteSpace($terminal)) { $terminal = "<empty terminal; exit=$($execution.child.ExitCode)>" }
-        $codeFailureReasons.Add("$([string]$check.check_id): exit=$($execution.child.ExitCode); $terminal")
+        $codeFailureReasons.Add("$([string]$check.check_id): kind=$([string]$checkResult.failure_kind); exit=$($execution.child.ExitCode); stdout=$([string]$checkResult.stdout_sha256); stderr=$([string]$checkResult.stderr_sha256); $terminal")
     }
     if ([bool]$execution.integrity_failed) { $terminalIntegrityFailure = $true; break }
 }
@@ -1146,7 +1239,8 @@ $evidenceStream = [IO.File]::Open($output,[IO.FileMode]::CreateNew,[IO.FileAcces
 try { $evidenceStream.Write($evidenceBytes,0,$evidenceBytes.Length);$evidenceStream.Flush($true) } finally { $evidenceStream.Dispose() }
 if ($overall -cne 'pass') {
     $reasonParts = @($infrastructureReasons.ToArray()) + @($codeFailureReasons.ToArray())
-    $reasonSuffix = if ($reasonParts.Count -eq 0) { '' } else { " Terminal reason(s): $($reasonParts -join ' | ')" }
+    $reasonText=$reasonParts -join ' | ';if($reasonText.Length-gt8192){$reasonText=$reasonText.Substring(0,8192)}
+    $reasonSuffix = if ($reasonParts.Count -eq 0) { '' } else { " Terminal reason(s): $reasonText" }
     $exception = [InvalidOperationException]::new("Affected-validation execution failed with '$overall'; typed evidence was written to '$output'.$reasonSuffix")
     if ($inventoryFinalized) { $exception.Data['AffectedCacheFinalized'] = 'true'; $exception.Data['AffectedInventorySha256'] = [string]$inventoryReceipt.sha256 }
     throw $exception

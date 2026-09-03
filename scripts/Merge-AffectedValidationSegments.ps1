@@ -60,6 +60,7 @@ foreach ($segment in $segments) {
     if ((Get-MorphospaceCanonicalJsonSha256 -Value $actualIds) -cne (Get-MorphospaceCanonicalJsonSha256 -Value $expectedIds)) { throw "Affected-validation segment check coverage or order is invalid: $fileName" }
     foreach ($result in @($evidence.check_results)) {
         $id = [string]$result.check_id
+        if ([long]$result.stdout_bytes + [long]$result.stderr_bytes -gt 10485760) { throw "Affected-validation segment result exceeds the combined stream bound: $id" }
         if ($resultMap.ContainsKey($id) -or -not $checkMap.ContainsKey($id)) { throw "Affected-validation segment repeats or invents check '$id'." }
         $check = $checkMap[$id]
         $entry = $inventory.by_path[[string]$check.command_path]

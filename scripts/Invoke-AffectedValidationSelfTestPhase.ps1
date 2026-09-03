@@ -298,7 +298,14 @@ $startInfo.UseShellExecute = $false
 $startInfo.CreateNoWindow = $true
 $startInfo.RedirectStandardOutput = $true
 $startInfo.RedirectStandardError = $true
-[void]$startInfo.Environment.Remove('GIT_PAGER')
+$phaseChildEnvironment = @{}
+foreach ($name in @('COMSPEC','HOME','PATH','PATHEXT','SYSTEMROOT','TEMP','TMP','TMPDIR','WINDIR','GITHUB_ACTIONS','GITHUB_REPOSITORY','GITHUB_EVENT_NAME','GITHUB_RUN_ID','GITHUB_RUN_ATTEMPT','GITHUB_WORKFLOW_REF','GITHUB_JOB','RUNNER_TEMP','PR_NUMBER','RUSTY_AFFECTED_VALIDATION_PHASE_ROOT','RUSTY_AFFECTED_VALIDATION_BASE_COMMIT','RUSTY_AFFECTED_VALIDATION_HEAD_COMMIT','RUSTY_AFFECTED_VALIDATION_PLAN_SHA256','RUSTY_AFFECTED_VALIDATION_PLATFORM','RUSTY_AFFECTED_VALIDATION_CHECK_ID','RUSTY_AFFECTED_VALIDATION_DEPENDENCY_PROJECTION_PATH','RUSTY_AFFECTED_VALIDATION_DEPENDENCY_PROJECTION_SHA256','RUSTY_AFFECTED_VALIDATION_GUARD_SID','RUSTY_AFFECTED_VALIDATION_TRUSTED_ANCESTORS','RUSTY_AFFECTED_VALIDATION_PARENT_FUTURE_THREAD_ID','RUSTY_AFFECTED_VALIDATION_REMOVED_PRIVILEGE_LUID','RUSTY_AFFECTED_VALIDATION_FUTURE_THREAD_ID')) {
+    $value = [Environment]::GetEnvironmentVariable($name,'Process')
+    if ($null -ne $value) { $phaseChildEnvironment[$name] = $value }
+}
+$startInfo.Environment.Clear()
+[string[]]$phaseChildNames=@($phaseChildEnvironment.Keys);if($phaseChildNames.Count-gt1){[Array]::Sort($phaseChildNames,[StringComparer]::Ordinal)}
+foreach($name in $phaseChildNames){$startInfo.Environment.Add($name,[string]$phaseChildEnvironment[$name])}
 foreach ($argument in @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',(Join-Path $PSScriptRoot 'Test-AffectedValidation.ps1'),'-SelfTestPhase',$Phase)) { [void]$startInfo.ArgumentList.Add($argument) }
 if ($Phase -ceq 'selection-scenarios') { [void]$startInfo.ArgumentList.Add('-SelectionScenarioEvidenceRoot'); [void]$startInfo.ArgumentList.Add((Join-Path $evidenceRoot 'selection-scenarios')) }
 $process = [Diagnostics.Process]::new(); $process.StartInfo = $startInfo

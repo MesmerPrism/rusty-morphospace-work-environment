@@ -143,7 +143,8 @@ iteration, read in this order:
 
 For broad local validation, run
 `Test-WorkEnvironment.ps1 -SelfTest -Tier Quick` once, then invoke
-`Test-WorkUnitAutomation.ps1` only when the Standard delta is required. The
+`Test-WorkflowContracts.ps1 -StandardDeltaOnly` only when the Standard delta is
+required. The
 cumulative `-Tier Standard` form remains a compatibility aggregate for callers
 that have not already run Quick; do not run it after a Quick checkpoint.
 Use Deep only when the risk warrants it. A single failed child check fails the
@@ -738,7 +739,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-PublicBoundary.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkEnvironment.ps1 -SelfTest
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkflowContracts.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\New-ProjectWorkspace.ps1 -SelfTest
-pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkUnitAutomation.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkflowContracts.ps1 -StandardDeltaOnly
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkUnitHandoff.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-CorrectActiveReadOnlyDependencies.ps1 -SelfTest
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-CorrectActiveProjectRepositoryScope.ps1 -SelfTest

@@ -29,7 +29,10 @@ selection validation; scheduling-only `execution_after_checks` metadata is the
 only check-definition field omitted from a reusable leaf binding. A
 zero-check platform request is invalid. A nonzero exit, timeout, output flood,
 or post-kill drain overrun is `code-fail`; `infra-fail` is reserved for a
-process-start or host fault. Both write typed leaf and aggregate evidence
+process-start or host fault. Each failed child carries one closed
+`failure_kind` (`launch`, `timeout`, `output-limit`, `drain-timeout`,
+`infrastructure`, or `exit-code`), and both raw streams remain length- and
+SHA-256-bound. Both write typed leaf and aggregate evidence
 before the job fails.
 
 The dependency closure is derived separately for each distinct exact check
@@ -152,8 +155,18 @@ The current artifact therefore remains sufficient even if the cache expires.
 
 Immediately before and after every executed child, the parent verifies a clean
 exact HEAD and batch-hashes the complete runner and leaf dependency set back to
-the bound Git blobs. GitHub output/environment/path/summary channels are
-removed from the child process. Source drift is a typed infrastructure failure:
+the bound Git blobs. It never edits the process-global environment. Instead it
+hashes the complete parent name/value byte projection before and after launch,
+builds the supervisor environment from empty, and admits only reviewed
+OS/runtime variables, launcher-owned `RUSTY_AFFECTED_VALIDATION_*` variables,
+and the exact read-only hosted producer identity. `GIT_*`, GitHub command-file
+channels, unrelated `RUSTY_*`, and all other ambient variables are absent. The
+phase runner independently clears and rebuilds its own child environment, and
+the Linux privileged namespace path uses `env -i`, so neither second hop can
+re-expand ambient state. Each executed receipt binds ordinal variable names,
+sources, per-value hashes, counts, supervisor projection hash, observed leaf
+projection hash, and equal parent before/after hashes; a pre-projection or
+blocked path binds null hashes, zero counts, and empty lists. Source drift is a typed infrastructure failure:
 remaining leaves do not start and no reusable inventory is finalized. A
 create-new collision or incomplete execution likewise publishes no cache.
 
@@ -254,6 +267,18 @@ is reusable: scheduled/manual Deep checks out full history, executes every
 independent leaf through fresh segments, and verifies their exact union.
 Neither evidence shape is publication or acceptance authority.
 
+Workflow concurrency has four closed identities: a cancelable per-PR group, a
+noncanceling main-ref group, a stable noncanceling scheduled Deep group, and a
+unique noncanceling manual Deep group bound to `github.run_id`. GitHub may
+coalesce an older pending main or scheduled run, while an explicitly requested
+manual frozen-candidate Deep run is never replaced and may overlap another run.
+Every job has an explicit outer timeout. Segment matrices derive their
+timeout from the exact segment estimated budget plus 900 seconds of bounded
+setup/cleanup overhead and reject any value reaching GitHub's six-hour ceiling.
+Setup, plan, and main-delta pre-evidence failures write create-new diagnostics
+bounded to 64 KiB and upload them under the existing pinned artifact action;
+they remain explicitly non-authoritative.
+
 Every JavaScript action in this workflow is pinned to an immutable Node 24
 release commit. Artifact upload keeps the default archived transport, and all
 downloads use the existing name/pattern and merged-directory modes; the action
@@ -285,7 +310,8 @@ dependency-connected checks into deterministic, non-overlapping segments with
 a one-hour estimated target, runs independent segments concurrently, and then
 verifies their exact union into the existing platform evidence shape. A single
 dependency component may exceed the target but must remain below the five-hour
-hard ceiling, so no admitted segment can exceed the hosted six-hour job limit.
+hard ceiling; the explicit 15-minute outer overhead keeps every admitted
+segment below the hosted six-hour job limit.
 After
 adoption, changes limited to either APK run-transaction schema or its audit
 tool select the portable Quick `apk-run-transaction` leaf plus the public
@@ -376,8 +402,12 @@ ordinary automation integration test. It proves exact dry/execute/replay
 forwarding for both lifecycle actions without replaying either focused owner;
 the focused owners remain responsible for the real state-transition and
 idempotence semantics. Local development can invoke only that seam with
-`Test-WorkUnitAutomation.ps1 -LifecycleRouterSelfTestOnly`; the registered
-owner still runs the complete integration test once for final admission.
+`Test-WorkUnitAutomation.ps1 -LifecycleRouterSelfTestOnly` only as a strict
+low-level diagnostic from an already-closed process environment; the
+registered owner still runs the complete integration test once for final
+admission. The public local Standard route is
+`Test-WorkflowContracts.ps1 -StandardDeltaOnly`, whose launcher constructs
+that closed child environment without changing its caller.
 
 `terminal-validation-selection-release-v2.schema.json` belongs to the normal
 validation selector path set. The shared

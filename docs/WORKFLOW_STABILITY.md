@@ -128,9 +128,10 @@ cancel a `main` readback run merely because another merge arrives.
 
 Keep Linux Quick, Windows Quick, and Windows Standard as separate required
 contexts. Quick owns the common portable suite. Standard runs only the
-additional `Test-WorkUnitAutomation.ps1` delta and relies on the required Quick
+additional Work Unit Automation delta and relies on the required Quick
 contexts; it must not replay the complete Quick tier. Use the same split
-locally: run Quick once, then invoke `Test-WorkUnitAutomation.ps1` only when the
+locally: run Quick once, then invoke
+`Test-WorkflowContracts.ps1 -StandardDeltaOnly` only when the
 Standard delta is warranted. Preserve cumulative `Test-WorkEnvironment.ps1
 -Tier Standard` only as a compatibility aggregate for callers that have not
 already run Quick. Pin third-party actions to reviewed full commits and update
