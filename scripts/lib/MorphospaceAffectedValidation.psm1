@@ -404,6 +404,97 @@ function Get-MorphospaceAffectedTopologicalOrder {
     return @($ordered.ToArray())
 }
 
+function Get-MorphospaceAffectedValidationSegments {
+    param(
+        [Parameter(Mandatory = $true)][object]$Plan,
+        [Parameter(Mandatory = $true)][object]$Registry,
+        [Parameter(Mandatory = $true)][ValidateSet('windows', 'linux')][string]$Platform,
+        [ValidateRange(60, 18000)][int]$TargetBudgetSeconds = 3600,
+        [ValidateRange(60, 21600)][int]$MaximumSegmentBudgetSeconds = 18000
+    )
+    if ($TargetBudgetSeconds -gt $MaximumSegmentBudgetSeconds) { throw 'Affected-validation segment target exceeds its hard maximum.' }
+
+    $checkMap = @{}
+    foreach ($check in @($Registry.checks)) { $checkMap[[string]$check.check_id] = $check }
+    $selected = @($Plan.selected_checks | Where-Object { @($_.platforms) -ccontains $Platform })
+    if ($selected.Count -eq 0) { return @() }
+
+    $selectedSet = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    for ($index = 0; $index -lt $selected.Count; $index++) {
+        $id = [string]$selected[$index].check_id
+        if (-not $selectedSet.Add($id)) { throw "Affected-validation segment input repeats selected check '$id'." }
+        if (-not $checkMap.ContainsKey($id)) { throw "Affected-validation segment input names unknown check '$id'." }
+        if ([long]$selected[$index].budget_seconds -ne [long]$checkMap[$id].budget_seconds) { throw "Affected-validation segment input budget differs from registry check '$id'." }
+    }
+
+    $adjacency = @{}
+    foreach ($id in @($selectedSet)) { $adjacency[$id] = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal) }
+    foreach ($id in @($selectedSet)) {
+        $check = $checkMap[$id]
+        foreach ($dependencyValue in @(@($check.prerequisite_checks) + @(Get-MorphospaceAffectedExecutionAfterChecks -Check $check))) {
+            $dependency = [string]$dependencyValue
+            if (-not $selectedSet.Contains($dependency)) {
+                if (@($check.prerequisite_checks) -ccontains $dependency) { throw "Affected-validation segment input omits prerequisite '$dependency' for '$id'." }
+                continue
+            }
+            [void]$adjacency[$id].Add($dependency)
+            [void]$adjacency[$dependency].Add($id)
+        }
+    }
+
+    $components = [Collections.Generic.List[object]]::new()
+    $visited = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($seed in @($selected | ForEach-Object { [string]$_.check_id })) {
+        if ($visited.Contains($seed)) { continue }
+        $queue = [Collections.Generic.Queue[string]]::new()
+        $queue.Enqueue($seed)
+        $members = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        while ($queue.Count -gt 0) {
+            $current = $queue.Dequeue()
+            if (-not $visited.Add($current)) { continue }
+            [void]$members.Add($current)
+            foreach ($neighbor in @($adjacency[$current])) { if (-not $visited.Contains($neighbor)) { $queue.Enqueue($neighbor) } }
+        }
+        $orderedMembers = @($selected | Where-Object { $members.Contains([string]$_.check_id) } | ForEach-Object { [string]$_.check_id })
+        $componentBudget = [long](@($orderedMembers | ForEach-Object { [long]$checkMap[$_].budget_seconds }) | Measure-Object -Sum).Sum
+        if ($componentBudget -gt $MaximumSegmentBudgetSeconds) { throw "Affected-validation dependency component '$($orderedMembers[0])' exceeds the hosted segment maximum: $componentBudget > $MaximumSegmentBudgetSeconds seconds." }
+        $components.Add([pscustomobject][ordered]@{ key=[string]$orderedMembers[0]; budget_seconds=$componentBudget; check_ids=@($orderedMembers) })
+    }
+
+    $bins = [Collections.Generic.List[object]]::new()
+    $orderedComponents = @($components.ToArray() | Sort-Object @{Expression={ [long]$_.budget_seconds };Descending=$true}, @{Expression={ [string]$_.key };Ascending=$true})
+    foreach ($component in $orderedComponents) {
+        $destination = $null
+        if ([long]$component.budget_seconds -le $TargetBudgetSeconds) {
+            foreach ($candidate in @($bins.ToArray())) {
+                if ([long]$candidate.budget_seconds + [long]$component.budget_seconds -le $TargetBudgetSeconds) { $destination = $candidate; break }
+            }
+        }
+        if ($null -eq $destination) {
+            $destination = [pscustomobject][ordered]@{ budget_seconds=[long]0; check_ids=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal) }
+            $bins.Add($destination)
+        }
+        $destination.budget_seconds = [long]$destination.budget_seconds + [long]$component.budget_seconds
+        foreach ($id in @($component.check_ids)) { if (-not $destination.check_ids.Add([string]$id)) { throw "Affected-validation segment packing repeated '$id'." } }
+    }
+
+    $segments = [Collections.Generic.List[object]]::new()
+    for ($index = 0; $index -lt $bins.Count; $index++) {
+        $bin = $bins[$index]
+        $ids = @($selected | Where-Object { $bin.check_ids.Contains([string]$_.check_id) } | ForEach-Object { [string]$_.check_id })
+        $segments.Add([pscustomobject][ordered]@{
+            segment_id = ('{0}-{1:d3}' -f $Platform, ($index + 1))
+            platform = $Platform
+            ordinal = $index + 1
+            segment_count = $bins.Count
+            target_budget_seconds = $TargetBudgetSeconds
+            estimated_budget_seconds = [long]$bin.budget_seconds
+            check_ids = @($ids)
+        })
+    }
+    return @($segments.ToArray())
+}
+
 function Get-MorphospaceAffectedGitIdentity {
     param([string]$RepositoryRoot, [string]$Revision)
     $commit = (Invoke-MorphospaceAffectedGit -RepositoryRoot $RepositoryRoot -Arguments @('rev-parse', '--verify', "$Revision^{commit}")).stdout.Trim()
@@ -602,7 +693,7 @@ function Resolve-MorphospaceAffectedValidation {
     if ($fullDeep) {
         foreach ($check in @($registry.checks)) {
             $isAggregateOnly = $null -ne $check.PSObject.Properties['aggregate_role'] -and [string]$check.aggregate_role -ceq 'work-environment-deep-v1'
-            if ($isAggregateOnly -and $RequestedTier -cne 'deep') { continue }
+            if ($isAggregateOnly) { continue }
             Add-AffectedSelection ([string]$check.check_id) 'full-deep'
         }
         foreach ($check in @($registry.checks | Where-Object { $null -ne $_.PSObject.Properties['aggregate_role'] -and [string]$_.aggregate_role -ceq 'work-environment-deep-v1' })) {
@@ -717,4 +808,4 @@ function Resolve-MorphospaceAffectedValidation {
     }
 }
 
-Microsoft.PowerShell.Core\Export-ModuleMember -Function Test-MorphospaceAffectedValidationRegistry, Resolve-MorphospaceAffectedValidation, Get-MorphospaceAffectedTreeInventory, Assert-MorphospaceAffectedBatchedWorkingBytes
+Microsoft.PowerShell.Core\Export-ModuleMember -Function Test-MorphospaceAffectedValidationRegistry, Resolve-MorphospaceAffectedValidation, Get-MorphospaceAffectedValidationSegments, Get-MorphospaceAffectedTreeInventory, Assert-MorphospaceAffectedBatchedWorkingBytes

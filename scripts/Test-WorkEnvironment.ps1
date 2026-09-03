@@ -286,13 +286,6 @@ if ($SelfTest) {
         Add-CheckResult -Name "scaffold:project-workspace" -Status "missing" -Required $true -Detail $_.Exception.Message
     }
 
-    try {
-        & (Join-Path $RepoRoot "tools\Test-ApkRunTransaction.ps1") -SelfTest
-        Add-CheckResult -Name "workflow:apk-run-transaction" -Status "ok" -Detail "Validated receipt-chain resume, terminal failure, cleanup, full success, and damaged-evidence rejection without executing an APK phase."
-    } catch {
-        Add-CheckResult -Name "workflow:apk-run-transaction" -Status "missing" -Required $true -Detail $_.Exception.Message
-    }
-
     foreach ($quickTest in @(
         [pscustomobject]@{ name = "workflow:public-boundary"; script = "Test-PublicBoundary.ps1"; detail = "Validated the portable public/private boundary." },
         [pscustomobject]@{ name = "workflow:documentation-links"; script = "Test-DocumentationLinks.ps1"; detail = "Validated relative Markdown links." },

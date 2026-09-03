@@ -69,3 +69,10 @@ pwsh -NoProfile -ExecutionPolicy Bypass `
 It covers an empty run, prefix resume, pre-install blocking, post-install
 failure followed by cleanup, full success, missing-phase rejection, and
 predecessor, manifest, and artifact-hash tampering.
+
+After the affected-validation registry revision that admits this contract,
+changes limited to either run-transaction schema or the audit tool select this
+portable Quick self-test and the public boundary. The cumulative Deep aggregate
+is still required when its own command changes. A validation trust-root change
+or explicit Deep request instead selects the independent leaves through the
+segmented Deep path.
