@@ -3463,7 +3463,8 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
         [void](Invoke-TestGit $fixture @('commit', '-m', "proportional mapping $mappingOrdinal"))
         $nextMappingHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
         $mappingPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $proportionalMappingHead -HeadRevision $nextMappingHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
-        $expectedMappingTier = if ([string]::IsNullOrWhiteSpace([string]$mapping.expected_tier)) { 'standard' } else { [string]$mapping.expected_tier }
+        $expectedTierProperty = $mapping.PSObject.Properties['expected_tier']
+        $expectedMappingTier = if ($null -eq $expectedTierProperty -or [string]::IsNullOrWhiteSpace([string]$expectedTierProperty.Value)) { 'standard' } else { [string]$expectedTierProperty.Value }
         Assert-True ($mappingPlan.selection_mode -ceq 'affected' -and $mappingPlan.effective_tier -ceq $expectedMappingTier) "Proportional mapping for '$($mapping.path)' did not remain affected $expectedMappingTier."
         foreach ($reasonCode in @('ambiguous-path-mapping','unmapped-path','trust-root-path-changed')) { Assert-True (@($mappingPlan.reason_codes) -cnotcontains $reasonCode) "Proportional mapping for '$($mapping.path)' retained '$reasonCode'." }
         Assert-True (@($mappingPlan.selected_checks.check_id) -cnotcontains 'work-environment-deep') "Proportional mapping for '$($mapping.path)' selected the cumulative Deep aggregate."
