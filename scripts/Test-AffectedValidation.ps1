@@ -1958,6 +1958,22 @@ Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1') -Fo
 $root = [IO.Path]::GetFullPath([string]$env:RUSTY_AFFECTED_VALIDATION_PHASE_ROOT)
 if (-not [IO.Directory]::Exists($root)) { [void][IO.Directory]::CreateDirectory($root) }
 function Get-FixtureSha256([byte[]]$Bytes) { ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($Bytes))).ToLowerInvariant() }
+function Read-FixtureProjectionBytes([string]$Path) {
+    $stream = [IO.FileStream]::new($Path,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::ReadWrite)
+    try {
+        $length = $stream.Length
+        if ($length -le 0 -or $length -gt 134217728) { throw 'Fixture phase dependency projection exceeds its byte bound.' }
+        [byte[]]$bytes = [byte[]]::new([int]$length)
+        $offset = 0
+        while ($offset -lt $bytes.Length) {
+            $read = $stream.Read($bytes,$offset,$bytes.Length-$offset)
+            if ($read -le 0) { throw 'Fixture phase dependency projection ended before its declared length.' }
+            $offset += $read
+        }
+        if ($stream.Length -ne $length) { throw 'Fixture phase dependency projection length changed during read.' }
+        return $bytes
+    } finally { $stream.Dispose() }
+}
 function Get-FixtureEnvironment([string]$Name,[string]$Pattern) {
     $value = [string][Environment]::GetEnvironmentVariable($Name,'Process')
     if ([string]::IsNullOrWhiteSpace($value) -or $value -cnotmatch $Pattern) { throw "Fixture phase environment is invalid: $Name" }
@@ -1981,7 +1997,7 @@ $platform = Get-FixtureEnvironment 'RUSTY_AFFECTED_VALIDATION_PLATFORM' '^(windo
 $checkId = Get-FixtureEnvironment 'RUSTY_AFFECTED_VALIDATION_CHECK_ID' '^[a-z0-9][a-z0-9-]{1,95}$'
 $projectionPath = Get-FixtureEnvironment 'RUSTY_AFFECTED_VALIDATION_DEPENDENCY_PROJECTION_PATH' '^.+$'
 $projectionSha256 = Get-FixtureEnvironment 'RUSTY_AFFECTED_VALIDATION_DEPENDENCY_PROJECTION_SHA256' '^[0-9a-f]{64}$'
-[byte[]]$projectionBytes = [IO.File]::ReadAllBytes($projectionPath)
+[byte[]]$projectionBytes = Read-FixtureProjectionBytes $projectionPath
 if ((Get-FixtureSha256 $projectionBytes) -cne $projectionSha256) { throw 'Fixture phase dependency projection differs from its parent hash.' }
 $projection = [Text.UTF8Encoding]::new($false,$true).GetString($projectionBytes) | ConvertFrom-Json -Depth 64 -DateKind String
 if ([string]$projection.repository -cne 'MesmerPrism/rusty-morphospace-work-environment' -or [string]$projection.head_commit -cne $headCommit -or [string]$projection.check_id -cne $checkId) { throw 'Fixture phase dependency projection identity is invalid.' }
@@ -3459,15 +3475,13 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     foreach ($checkId in @($selectorTrustRootCheckIds + @('work-environment-deep'))) { Assert-True (@($archiveEnvelopePlan.selected_checks.check_id) -cnotcontains $checkId) "W-017B-shaped archive envelope change incorrectly selected '$checkId'." }
     foreach ($reasonCode in @('ambiguous-path-mapping','unmapped-path')) { Assert-True (@($archiveEnvelopePlan.reason_codes) -cnotcontains $reasonCode) "W-017B-shaped archive envelope change retained '$reasonCode'." }
 
-    # Development-envelope preparation, provenance, freeze, and its focused
-    # test select their direct contract/integration closure without paying the
-    # historical Deep aggregate or the independent admission owner.
+    # Preparation-only files retain their exact owner without pulling in the
+    # neighboring admission owner or the historical Deep aggregate.
     $developmentEnvelopeBase = $archiveEnvelopeHead
     Write-Utf8 (Join-Path $fixture 'scripts/CandidateFreeze.psm1') "# preparation-owned candidate freeze change`n"
     Write-Utf8 (Join-Path $fixture 'scripts/DevelopmentEnvelopePreparation.psm1') "# development envelope owner change`n"
-    Write-Utf8 (Join-Path $fixture 'scripts/DevelopmentEnvelopeProvenance.psm1') "# prepared envelope provenance change`n"
     Write-Utf8 (Join-Path $fixture 'scripts/Test-DevelopmentEnvelopePreparation.ps1') "# development envelope focused test change`n"
-    [void](Invoke-TestGit $fixture @('add', 'scripts/CandidateFreeze.psm1', 'scripts/DevelopmentEnvelopePreparation.psm1', 'scripts/DevelopmentEnvelopeProvenance.psm1', 'scripts/Test-DevelopmentEnvelopePreparation.ps1'))
+    [void](Invoke-TestGit $fixture @('add', 'scripts/CandidateFreeze.psm1', 'scripts/DevelopmentEnvelopePreparation.psm1', 'scripts/Test-DevelopmentEnvelopePreparation.ps1'))
     [void](Invoke-TestGit $fixture @('commit', '-m', 'development envelope preparation change'))
     $developmentEnvelopeHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
     $developmentEnvelopePlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $developmentEnvelopeBase -HeadRevision $developmentEnvelopeHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
@@ -3477,10 +3491,23 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     foreach ($checkId in @('development-unit-admission','work-environment-deep')) { Assert-True (@($developmentEnvelopePlan.selected_checks.check_id) -cnotcontains $checkId) "Development-envelope preparation change incorrectly selected '$checkId'." }
     foreach ($reasonCode in @('ambiguous-path-mapping','unmapped-path')) { Assert-True (@($developmentEnvelopePlan.reason_codes) -cnotcontains $reasonCode) "Development-envelope preparation change retained '$reasonCode'." }
 
+    # The shared provenance module has one unique path class and triggers both
+    # consumers without making every admission-only change a preparation change.
+    $developmentProvenanceBase = $developmentEnvelopeHead
+    Write-Utf8 (Join-Path $fixture 'scripts/DevelopmentEnvelopeProvenance.psm1') "# shared development envelope provenance change`n"
+    [void](Invoke-TestGit $fixture @('add', 'scripts/DevelopmentEnvelopeProvenance.psm1'))
+    [void](Invoke-TestGit $fixture @('commit', '-m', 'development envelope provenance change'))
+    $developmentProvenanceHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
+    $developmentProvenancePlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $developmentProvenanceBase -HeadRevision $developmentProvenanceHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+    Assert-True ($developmentProvenancePlan.selection_mode -ceq 'affected' -and $developmentProvenancePlan.effective_tier -ceq 'standard') 'Development-envelope provenance change did not retain affected Standard selection.'
+    foreach ($checkId in @('public-boundary','workflow-contracts','development-envelope-preparation','development-unit-admission','work-unit-automation')) { Assert-True (@($developmentProvenancePlan.selected_checks.check_id) -ccontains $checkId) "Development-envelope provenance change did not retain bounded '$checkId' coverage." }
+    Assert-True (@($developmentProvenancePlan.selected_checks.check_id) -cnotcontains 'work-environment-deep') 'Development-envelope provenance change selected the cumulative Deep aggregate.'
+    foreach ($reasonCode in @('ambiguous-path-mapping','unmapped-path')) { Assert-True (@($developmentProvenancePlan.reason_codes) -cnotcontains $reasonCode) "Development-envelope provenance change retained '$reasonCode'." }
+
     # Development-unit admission owns its schema, module, and focused test as
     # one exact path class.  Admission-only changes must run that owner without
     # replaying the neighboring envelope-preparation integration.
-    $developmentAdmissionBase = $developmentEnvelopeHead
+    $developmentAdmissionBase = $developmentProvenanceHead
     $developmentAdmissionSchemaPath = Join-Path $fixture 'schemas/development-unit-admission-v1.schema.json'
     Write-Utf8 $developmentAdmissionSchemaPath ((Get-Content -LiteralPath $developmentAdmissionSchemaPath -Raw).TrimEnd() + "`n `n")
     Write-Utf8 (Join-Path $fixture 'scripts/DevelopmentUnitAdmission.psm1') "# development unit admission change`n"
@@ -3597,6 +3624,7 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
         [pscustomobject]@{ path='schemas/work-unit-automation-receipt-v2.schema.json'; checks=@('automation-receipt-v2-compatibility') },
         [pscustomobject]@{ path='scripts/Test-AutomationReceiptV2Compatibility.ps1'; checks=@('automation-receipt-v2-compatibility') },
         [pscustomobject]@{ path='scripts/WorkUnitAutomation.psm1'; checks=@('automation-receipt-v2-compatibility','normal-validation-selector','work-unit-automation','workflow-contracts') },
+        [pscustomobject]@{ path='scripts/DevelopmentEnvelopeProvenance.psm1'; checks=@('development-envelope-preparation','development-unit-admission','public-boundary','workflow-contracts','work-unit-automation') },
         [pscustomobject]@{ path='scripts/DevelopmentEnvelopeRepreparation.psm1'; checks=@('automation-receipt-v2-compatibility','development-unit-admission','public-boundary','workflow-contracts','development-envelope-preparation','normal-validation-selector','work-unit-automation','validating-candidate-rematerialization') },
         [pscustomobject]@{ path='scripts/Test-HistoricalValidationDebtBaseline.ps1'; checks=@('historical-validation-debt-baseline') },
         [pscustomobject]@{ path='scripts/Test-HistoricalValidationDebtPhaseRunner.ps1'; checks=@('historical-validation-debt-phase-runner') },
@@ -3626,9 +3654,11 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
         $mappingOrdinal++
         $mappingPath = Join-Path $fixture ([string]$mapping.path)
         $mappingBytes = Get-Content -LiteralPath $mappingPath -Raw
-        if ([string]$mapping.path -like '*.json') { Write-Utf8 $mappingPath ($mappingBytes.TrimEnd() + "`n `n") }
+        if ([string]$mapping.path -like '*.json') { Write-Utf8 $mappingPath ($mappingBytes.TrimEnd() + "`n$(' ' * ($mappingOrdinal + 1))`n") }
         else { Write-Utf8 $mappingPath ($mappingBytes + "# proportional mapping probe $mappingOrdinal`n") }
         [void](Invoke-TestGit $fixture @('add', [string]$mapping.path))
+        $stagedMappingPath = Invoke-TestGit $fixture @('diff', '--cached', '--name-only', '--')
+        Assert-True ($stagedMappingPath -ceq [string]$mapping.path) "Proportional mapping probe '$mappingOrdinal' did not create one exact staged path: $stagedMappingPath"
         [void](Invoke-TestGit $fixture @('commit', '-m', "proportional mapping $mappingOrdinal"))
         $nextMappingHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
         $mappingPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $proportionalMappingHead -HeadRevision $nextMappingHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick

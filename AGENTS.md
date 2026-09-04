@@ -515,7 +515,10 @@ transaction.
   lock/registry defect may be repaired only through
   `ReprepareRetiredDevelopmentEnvelope`; it preserves every old evidence byte,
   produces a fresh preparation, and leaves the distinct replacement absent for
-  ordinary admission.
+  ordinary admission. Its repository-map path is the exact safe project-relative
+  path authenticated by the original preparation and predecessor admission, not
+  a fixed root filename; recovery and later admission must bind that same path
+  and SHA-256.
   The resulting proposal still follows ordinary Ready/Inspect/Claim. An
   admitted active unit must use `FreezeCandidate` before BeginValidation;
   historical units without the admission marker retain their existing route.

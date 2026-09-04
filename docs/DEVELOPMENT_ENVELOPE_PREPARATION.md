@@ -107,8 +107,12 @@ lock-fingerprint/module-registry defect is not reusable. The narrow
 `ReprepareRetiredDevelopmentEnvelope` action authenticates the contiguous old
 preparation, admission, and retirement suffix and a distinct absent replacement
 identity. Its project, feature-lock, and raw repository-map preimages must equal
-the original preparation intent targets, and its idle state preimage must equal
-the retirement intent target. Resumed intent/completion timestamps must use the
+the original preparation intent targets. The repository-map path is derived
+from the original preparation's equal pre/target bindings, must also equal the
+predecessor admission and recovery path/hash binding, and is resolved beneath
+the workspace with the ordinary confinement and reparse checks; it is not
+restricted to a root filename. Its idle state preimage must equal the retirement
+intent target. Resumed intent/completion timestamps must use the
 strict seven-digit UTC form and the completion cannot predate the intent. The
 action then atomically installs a corrected additive project/lock/state
 triple plus a fresh preparation receipt and source-composition v2 lock. It
