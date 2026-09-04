@@ -23,6 +23,12 @@ function Write-HscTestJson([string]$Path,[object]$Value){[IO.Directory]::CreateD
 function Get-HscTestBytes([object]$Value){[Text.UTF8Encoding]::new($false).GetBytes((ConvertTo-MorphospaceCanonicalJson $Value)+"`n")}
 function Invoke-HscTestGit([string]$Root,[string[]]$Arguments){$output=@(& git -C $Root @Arguments 2>&1);if($LASTEXITCODE-ne0){throw "Fixture Git failed: git $($Arguments-join' ')`n$($output-join"`n")"};@($output)}
 function Assert-HscRejected([scriptblock]$Action,[string]$Label){$rejected=$false;try{&$Action|Out-Null}catch{$rejected=$true};Assert-HscTest $rejected "accepted $Label damage"}
+function Update-HscLegacyIntentCompletion([string]$Workspace,[scriptblock]$Mutation){
+    $intentPath=Join-Path $Workspace 'receipts\transactions\unit011-superseded-by-unit013-transition.intent.json'
+    $completionPath=Join-Path $Workspace 'receipts\transactions\unit011-superseded-by-unit013-transition.completion.json'
+    $intent=Read-MorphospaceProtocolJson $intentPath;&$Mutation $intent;Write-HscTestJson $intentPath $intent
+    $completion=Read-MorphospaceProtocolJson $completionPath;$completion.intent.sha256=Get-MorphospaceFileSha256 $intentPath;Write-HscTestJson $completionPath $completion
+}
 
 function New-HscUnit([string]$Id,[string]$Status,[string]$LockPath){
     $unit=Read-MorphospaceProtocolJson (Join-Path $repoRoot 'templates\iteration-unit.example.json')
@@ -156,9 +162,21 @@ try{
         [pscustomobject]@{name='normalization-intent';action={param($w)$p=Join-Path $w 'receipts\transactions\ledger-normalized-0003-normalization.intent.json';$d=Read-MorphospaceProtocolJson $p;$d.project.document_sha256='0'*64;Write-HscTestJson $p $d}},
         [pscustomobject]@{name='missing-normalization-completion';action={param($w)Remove-Item (Join-Path $w 'receipts\transactions\ledger-normalized-0003-normalization.completion.json')}},
         [pscustomobject]@{name='legacy-successor-intent';action={param($w)$p=Join-Path $w 'receipts\transactions\unit011-superseded-by-unit013-transition.intent.json';$d=Read-MorphospaceProtocolJson $p;$d.pre.state.sha256='0'*64;Write-HscTestJson $p $d}},
+        [pscustomobject]@{name='legacy-events-sha';action={param($w)Update-HscLegacyIntentCompletion $w {param($d)$d.expected.events_sha256='0'*64}}},
+        [pscustomobject]@{name='legacy-events-length';action={param($w)Update-HscLegacyIntentCompletion $w {param($d)$d.expected.events_length=[int64]$d.expected.events_length+1}}},
+        [pscustomobject]@{name='missing-source-composition';action={param($w)Remove-Item (Join-Path $w 'source-compositions\unit013-source.lock.json')}},
+        [pscustomobject]@{name='tampered-source-composition';action={param($w)$p=Join-Path $w 'source-compositions\unit013-source.lock.json';$d=Read-MorphospaceProtocolJson $p;$d.fingerprint='0'*64;Write-HscTestJson $p $d}},
+        [pscustomobject]@{name='legacy-artifact-order';action={param($w)Update-HscLegacyIntentCompletion $w {param($d)$first=$d.artifacts[0];$d.artifacts[0]=$d.artifacts[1];$d.artifacts[1]=$first}}},
         [pscustomobject]@{name='missing-compatibility-completion';action={param($w)Remove-Item (Join-Path $w 'receipts\transactions\historical-supersession-compatible-0006-transition.completion.json')}},
         [pscustomobject]@{name='fabricated-missing-intent';action={param($w)Write-HscTestJson (Join-Path $w 'receipts\transactions\unit010-superseded-by-unit011-transition.intent.json') ([pscustomobject]@{fabricated=$true})}}
     )
     foreach($case in $damageCases){$copy=Join-Path $temp "damage-$($case.name)";Copy-Item $fixture.repository $copy -Recurse;$workspace=Join-Path $copy 'morphospace';&$case.action $workspace;Assert-HscRejected {Test-MorphospaceHistoricalSupersessionCompatibility -WorkspaceRoot $workspace -ReceiptPath (Join-Path $workspace 'receipts\historical-supersession-compatible-0006.json') -Mode PostApply} $case.name}
+
+    $laterState=Read-MorphospaceProtocolJson (Join-Path $fixture.workspace 'workspace.state.json');$laterUnit=Read-MorphospaceProtocolJson (Join-Path $fixture.workspace 'iteration-units\unit010.json')
+    $laterTargetState=Copy-HscTest $laterState;$laterTargetState.last_event_id='later-owner-transition-0007'
+    $laterEvent=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.iteration_event.v1';event_id='later-owner-transition-0007';sequence=7;timestamp='2026-01-07T00:00:00.0000000Z';project_id='hsc-project';unit_id='unit010';event_type='state-transition';summary='Appended a later valid owner transition after the compatibility proof.';receipts=@()}
+    Invoke-HscOwnerTransition @{WorkspaceRoot=$fixture.workspace;TransactionId='later-owner-transition-0007-transition';StatePath='workspace.state.json';UnitPath='iteration-units/unit010.json';EventsPath='iteration-events.jsonl';TargetState=$laterTargetState;TargetUnit=$laterUnit;Event=$laterEvent;ExpectedPreStateSha256=Get-MorphospaceCanonicalJsonSha256 $laterState;ExpectedPreUnitSha256=Get-MorphospaceCanonicalJsonSha256 $laterUnit}|Out-Null
+    $historicalMap=Get-MorphospaceHistoricalSupersessionCompatibilityMap -WorkspaceRoot $fixture.workspace -ProjectId 'hsc-project'
+    Assert-HscTest ($historicalMap.Count-eq2-and$historicalMap.ContainsKey('unit010')-and$historicalMap.ContainsKey('unit011')) 'later valid transition made the historical compatibility map unusable'
     Write-Host 'Historical supersession compatibility self-test passed.'
 }finally{if(Test-Path $temp){Remove-Item -LiteralPath $temp -Recurse -Force}}

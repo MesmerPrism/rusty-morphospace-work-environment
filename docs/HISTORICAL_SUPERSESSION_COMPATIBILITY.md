@@ -23,8 +23,12 @@ immediate predecessor and that no files have been fabricated for its absent
 transaction. The legacy-v1 successor must consume the normalization's exact
 target state and ledger identities, preserve the old unit projection, create
 exactly the active successor unit plus its source-composition lock, and retain
-its original completion. Finally, the ordinary transition owner must
-authenticate the accepted endpoint.
+its original completion. The verifier requires the legacy intent's ledger
+SHA-256 and length to equal the normalization target exactly, byte-compares
+the retained live source-composition lock with the embedded artifact, and
+connects the embedded successor unit's immutable source composition to the
+live accepted unit. Finally, the ordinary transition owner must authenticate
+the accepted endpoint.
 
 The normalization may preserve historical CRLF-framed ledger bytes while a
 Git checkout presents equivalent LF-framed rows. Raw hashes therefore bind
@@ -84,9 +88,13 @@ and deterministic event prefix. Any altered unit, normalization artifact,
 legacy-v1 successor, accepted endpoint, proof receipt, transaction suffix, or
 live preimage fails closed.
 
-After installation, development-envelope preparation may consume the receipt
-as exactly two historical closure edges: the proved transactionless edge and
-the proved legacy-v1 successor edge. No other owner or validator receives a
+After installation, development-envelope preparation revalidates the proof as
+historical committed evidence rather than requiring its event to remain the
+physical ledger tail. Later valid transitions therefore do not invalidate the
+proof. Preparation may consume the receipt as exactly two historical closure
+edges: the proved transactionless edge and the proved legacy-v1 successor
+edge. Immediate post-apply validation still requires the proof event and its
+tail-only state target to be live. No other owner or validator receives a
 general compatibility exemption.
 
 ## Validation authority

@@ -277,6 +277,12 @@ function Get-HscLegacyV1SupersessionBinding {
     if([string]$sourceArtifact.project_id-cne[string]$intent.event.project_id-or[string]$sourceArtifact.unit_id-cne$ReplacementUnitId-or[string]$sourceArtifact.status-cne'locked'){
         throw 'Historical compatibility legacy-v1 successor source-composition artifact identity is invalid.'
     }
+    $liveSourcePath=Resolve-MorphospaceWorkspacePath $Workspace ([string]$artifacts[1].path) -RequireLeaf
+    $liveSourceBytes=[IO.File]::ReadAllBytes($liveSourcePath)
+    if((Get-HscHashBytes $liveSourceBytes)-cne[string]$artifacts[1].sha256-or
+       [Convert]::ToBase64String($liveSourceBytes)-cne[string]$artifacts[1].bytes_base64){
+        throw 'Historical compatibility legacy-v1 successor live source-composition bytes differ from the authenticated artifact.'
+    }
     [void](Test-MorphospaceStrictUtcTimestamp ([string]$intent.created_at))
     [void](Test-MorphospaceStrictUtcTimestamp ([string]$intent.event.timestamp))
     Test-HscSchema $intent.event 'iteration-event.schema.json' 'Historical compatibility legacy-v1 successor event'
@@ -285,7 +291,8 @@ function Get-HscLegacyV1SupersessionBinding {
        [string]$intent.expected.state_sha256-cne[string]$intent.pre.state.sha256-or
        [string]$intent.pre.unit.sha256-cne(Get-MorphospaceCanonicalJsonSha256 $oldUnit)-or[string]$intent.expected.unit_sha256-cne[string]$intent.pre.unit.sha256-or
        [string]$intent.expected.event_tail_id-cne[string]$Normalization.intent.event.event_id-or
-       [string]$intent.expected.events_sha256-cnotmatch'^[0-9a-f]{64}$'-or[int64]$intent.expected.events_length-lt1){
+       [string]$intent.expected.events_sha256-cne[string]$Normalization.intent.target.events_sha256-or
+       [int64]$intent.expected.events_length-ne[int64]$Normalization.intent.target.events_length){
         throw 'Historical compatibility legacy-v1 successor preimage is detached from the normalization target.'
     }
     $expectedTargetState=Copy-HscDocument $Normalization.intent.target_state
@@ -316,6 +323,8 @@ function Get-HscLegacyV1SupersessionBinding {
     [pscustomobject][ordered]@{
         transition=[pscustomobject][ordered]@{intent=$intent;completion=$completion};event_id=$eventId;sequence=[int]$Row.document.sequence
         intent_path=$intentRelative;intent_sha256=$intentSnapshot.sha256;completion_path=$completionRelative;completion_sha256=$completionSnapshot.sha256
+        replacement_artifact=$replacementArtifact;replacement_artifact_path=[string]$artifacts[0].path;replacement_artifact_sha256=[string]$artifacts[0].sha256
+        source_artifact=$sourceArtifact;source_artifact_path=[string]$artifacts[1].path;source_artifact_sha256=[string]$artifacts[1].sha256
     }
 }
 
@@ -376,6 +385,11 @@ function Get-HscHistoricalEvidence {
     }
     $acceptedSnapshot = Read-HscJsonSnapshot (Resolve-MorphospaceWorkspacePath $Workspace $acceptedPath -RequireLeaf) '' 'Historical compatibility accepted endpoint unit'
     Assert-HscSameDocument $accepted.transition.intent.target.unit.document $acceptedSnapshot.document 'Historical compatibility accepted endpoint unit'
+    if ([string]$successor.replacement_artifact_path -cne $acceptedPath -or
+        [string]$successor.replacement_artifact.unit_id -cne $acceptedUnitId -or
+        (Get-MorphospaceCanonicalJsonSha256 $successor.replacement_artifact.source_composition) -cne (Get-MorphospaceCanonicalJsonSha256 $acceptedSnapshot.document.source_composition)) {
+        throw 'Historical compatibility legacy-v1 replacement artifact is not connected to the live accepted endpoint.'
+    }
     [pscustomobject][ordered]@{
         project=$project;state=$state;old=$old;replacement=$replacement;normalization=$normalization;legacy=$legacy
         successor=$successor;successor_row=$successorRow;accepted=$accepted;accepted_row=$acceptedRow;accepted_unit_id=$acceptedUnitId;accepted_snapshot=$acceptedSnapshot
@@ -503,7 +517,7 @@ function Test-MorphospaceHistoricalSupersessionCompatibility {
     [CmdletBinding()]param(
         [Parameter(Mandatory)][string]$WorkspaceRoot,
         [Parameter(Mandatory)][string]$ReceiptPath,
-        [ValidateSet('PreApply','PostApply')][string]$Mode = 'PreApply'
+        [ValidateSet('PreApply','PostApply','Historical')][string]$Mode = 'PreApply'
     )
     $workspace=(Resolve-Path -LiteralPath $WorkspaceRoot).Path
     $snapshot=Read-MorphospaceHistoricalSupersessionCompatibility $ReceiptPath
@@ -534,7 +548,7 @@ function Test-MorphospaceHistoricalSupersessionCompatibility {
         if($eventCollision.Count-ne0){throw 'Historical supersession compatibility event already exists before apply.'}
     } else {
         $transition=Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $workspace -TransactionId "$([string]$receipt.compatibility_id)-transition" `
-            -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath ([string]$receipt.old_unit.path) -ExpectedEventsPath 'iteration-events.jsonl' -RequireTail
+            -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath ([string]$receipt.old_unit.path) -ExpectedEventsPath 'iteration-events.jsonl' -RequireTail:($Mode-ceq'PostApply')
         $intent=$transition.intent
         if ([string]$intent.schema -cne 'rusty.morphospace.workflow.transition_ledger_intent.v5' -or
             [string]$intent.pre.state.sha256 -cne [string]$receipt.expected.state_sha256 -or [string]$intent.pre.unit.sha256 -cne [string]$receipt.expected.old_unit_sha256 -or
@@ -545,9 +559,11 @@ function Test-MorphospaceHistoricalSupersessionCompatibility {
             throw 'Historical supersession compatibility action transaction detached from its receipt preimages.'
         }
         Assert-HscSameDocument $evidence.old.document $intent.target.unit.document 'Historical supersession compatibility action target unit'
-        Assert-HscStateTailOnly $intent.target.state.document $evidence.state.document ([string]$receipt.compatibility_id) 'Historical supersession compatibility live state'
         $preState=Copy-HscDocument $intent.target.state.document;$preState.last_event_id=[string]$receipt.expected.event_tail_id
         if((Get-MorphospaceCanonicalJsonSha256 $preState)-cne[string]$receipt.expected.state_sha256){throw 'Historical supersession compatibility action changed state beyond last_event_id.'}
+        if($Mode-ceq'PostApply'){
+            Assert-HscStateTailOnly $intent.target.state.document $evidence.state.document ([string]$receipt.compatibility_id) 'Historical supersession compatibility live state'
+        }
         $transitionEvent=$intent.event
         if([string]$transitionEvent.event_id-cne[string]$receipt.compatibility_id-or[int]$transitionEvent.sequence-ne[int]$receipt.compatibility_event.sequence-or
            [string]$transitionEvent.timestamp-cne[string]$receipt.created_at-or[string]$transitionEvent.project_id-cne[string]$receipt.project_id-or
@@ -661,7 +677,7 @@ function Get-MorphospaceHistoricalSupersessionCompatibilityMap {
     foreach($row in @($rows|Where-Object{[string]$_.document.summary-ceq$script:HscSummary})){
         if([string]$row.document.project_id-cne$ProjectId-or[string]$row.document.event_type-cne'state-transition'-or@($row.document.receipts).Count-ne1){throw 'Historical supersession compatibility map event is malformed.'}
         $relative=[string]$row.document.receipts[0]
-        $validated=Test-MorphospaceHistoricalSupersessionCompatibility -WorkspaceRoot $workspace -ReceiptPath (Resolve-MorphospaceWorkspacePath $workspace $relative -RequireLeaf) -Mode PostApply
+        $validated=Test-MorphospaceHistoricalSupersessionCompatibility -WorkspaceRoot $workspace -ReceiptPath (Resolve-MorphospaceWorkspacePath $workspace $relative -RequireLeaf) -Mode Historical
         $oldId=[string]$validated.receipt.old_unit.unit_id
         if($map.ContainsKey($oldId)){throw "Historical supersession compatibility unit '$oldId' has more than one proof."}
         $map[$oldId]=[pscustomobject][ordered]@{
