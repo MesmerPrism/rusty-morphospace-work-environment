@@ -1,6 +1,7 @@
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1')
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1')
 
 function Get-PreparationHash { param([object]$Value) Get-MorphospaceCanonicalJsonSha256 $Value }
 function Get-PreparationFileHash { param([string]$Path) Get-MorphospaceFileSha256 $Path }
@@ -8,6 +9,56 @@ function Copy-PreparationValue { param([object]$Value) $Value | ConvertTo-Json -
 function Get-PreparationPath { param([string]$Root,[string]$Relative) Resolve-MorphospaceWorkspacePath $Root $Relative }
 function Get-PreparationTransactionId { param([string]$Id) "$Id-prepared-transition" }
 function Get-PreparationEventId { param([string]$Id) "$Id-prepared" }
+function Assert-PreparationHistoricalSupersessionClosure {
+    param([string]$Workspace)
+    $state=Read-MorphospaceProtocolJson (Get-PreparationPath $Workspace 'workspace.state.json')
+    $unitDirectory=Get-PreparationPath $Workspace 'iteration-units'
+    $units=@{};$paths=@{}
+    foreach($unitFile in @(Get-ChildItem -LiteralPath $unitDirectory -Filter '*.json' -File)){
+        $unit=Read-MorphospaceProtocolJson $unitFile.FullName;$unitId=[string]$unit.unit_id
+        if($unitId-cnotmatch'^[a-z0-9][a-z0-9-]{1,127}$'-or$units.ContainsKey($unitId)){throw 'Preparation unit history contains a missing, nonportable, or repeated unit identity.'}
+        $relative="iteration-units/$unitId.json"
+        if([IO.Path]::GetFullPath($unitFile.FullName)-cne(Get-PreparationPath $Workspace $relative)){throw "Preparation unit '$unitId' is not stored at its canonical path."}
+        $units[$unitId]=$unit;$paths[$unitId]=$relative
+    }
+    $historical=@($units.Keys|Where-Object{[string]$units[$_].status-cne'accepted'})
+    if($historical.Count-eq0){return}
+    if($null-ne$state.current_unit-or$null-ne$state.next_ready_unit){throw 'Preparation rejects current or next-ready unit authority.'}
+    foreach($unitId in $historical){if(@('active','validating')-cnotcontains[string]$units[$unitId].status){throw 'Preparation rejects future, terminal, or otherwise nonaccepted unit documents outside authenticated historical supersession.'}}
+    $events=@(Get-Content -LiteralPath (Get-PreparationPath $Workspace 'iteration-events.jsonl')|Where-Object{$_}|ForEach-Object{$_|ConvertFrom-Json -DateKind String})
+    foreach($historicalId in $historical){
+        $cursor=[string]$historicalId;$visited=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal);$event=$null
+        while([string]$units[$cursor].status-cne'accepted'){
+            if(-not$visited.Add($cursor)){throw "Preparation historical supersession chain for '$historicalId' is cyclic."}
+            if(@('active','validating')-cnotcontains[string]$units[$cursor].status){throw "Preparation historical supersession chain for '$historicalId' does not terminate in accepted history."}
+            $prefix="$cursor-superseded-by-"
+            $matches=@($events|Where-Object{[string]$_.unit_id-ceq$cursor-and([string]$_.event_id).StartsWith($prefix,[StringComparison]::Ordinal)})
+            if($matches.Count-ne1){throw "Preparation historical unit '$cursor' lacks exactly one canonical supersession event."}
+            $event=$matches[0];$replacementId=([string]$event.event_id).Substring($prefix.Length)
+            $expectedEventId=Get-MorphospaceSupersessionEventId -OldUnitId $cursor -ReplacementUnitId $replacementId
+            if([string]$event.event_id-cne$expectedEventId-or[string]$event.event_type-cne'state-transition'-or-not$units.ContainsKey($replacementId)){throw "Preparation historical unit '$cursor' has a damaged or orphaned supersession replacement."}
+            $committed=Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $Workspace -TransactionId "$expectedEventId-transition" -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath ([string]$paths[$replacementId]) -ExpectedEventsPath 'iteration-events.jsonl'
+            $binding=$committed.intent.supersession
+            if([string]$committed.intent.schema-cne'rusty.morphospace.workflow.transition_ledger_intent.v2'-or
+               [string]$binding.old_unit_id-cne$cursor-or[string]$binding.new_unit_id-cne$replacementId-or
+               [string]$binding.old_unit.path-cne[string]$paths[$cursor]-or
+               [string]$binding.old_unit.sha256-cne(Get-PreparationHash $units[$cursor])-or
+               (Get-PreparationHash $binding.old_unit.document)-cne(Get-PreparationHash $units[$cursor])){
+                throw "Preparation historical unit '$cursor' differs from its authenticated supersession binding."
+            }
+            $cursor=$replacementId
+        }
+        $acceptPattern='^'+[regex]::Escape($cursor)+'-accepted-[0-9]{4,}$'
+        $acceptEvents=@($events|Where-Object{[string]$_.unit_id-ceq$cursor-and[string]$_.event_type-ceq'state-transition'-and[string]$_.event_id-cmatch$acceptPattern})
+        if($acceptEvents.Count-ne1){throw "Preparation historical supersession chain for '$historicalId' lacks exactly one accepted-history transition."}
+        $acceptEvent=$acceptEvents[0]
+        if([int]$acceptEvent.sequence-le[int]$event.sequence){throw "Preparation historical supersession chain for '$historicalId' does not precede its accepted-history transition."}
+        $accepted=Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $Workspace -TransactionId "$([string]$acceptEvent.event_id)-transition" -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath ([string]$paths[$cursor]) -ExpectedEventsPath 'iteration-events.jsonl'
+        if([string]$accepted.intent.target.unit.document.status-cne'accepted'-or
+           (Get-PreparationHash $accepted.intent.target.unit.document)-cne(Get-PreparationHash $units[$cursor])-or
+           $null-ne$accepted.intent.target.state.document.current_unit){throw "Preparation historical supersession chain for '$historicalId' has an unauthenticated accepted endpoint."}
+    }
+}
 function Get-PreparationSchemaPin {
     param([string]$Revision,[string]$SchemaFile)
     "https://raw.githubusercontent.com/MesmerPrism/rusty-morphospace-work-environment/$Revision/schemas/$SchemaFile"
@@ -161,7 +212,7 @@ function Invoke-MorphospacePrepareDevelopmentEnvelope {
  if($Execute-and-not$ExpectedDevelopmentEnvelopePreparationSha256){throw 'Executed preparation requires the dry-run preparation SHA-256.'};if($ExpectedDevelopmentEnvelopePreparationSha256-and$ExpectedDevelopmentEnvelopePreparationSha256-cne$inputHash){throw 'Expected preparation hash does not match input.'};if(-not$Timestamp){$Timestamp=[DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffffffZ')};if(-not(Test-MorphospaceStrictUtcTimestamp $Timestamp)){throw 'Preparation timestamp must be strict UTC.'}
  $receiptRelative="receipts/$($p.preparation_id).json";$sourceRelative=[string]$p.envelope.source_composition.path;$eventId=Get-PreparationEventId $p.preparation_id;$transactionId=Get-PreparationTransactionId $p.preparation_id;$intentRelative="receipts/transactions/$transactionId.intent.json";$completionRelative="receipts/transactions/$transactionId.completion.json"
  if([IO.Path]::GetFullPath($OutPath)-cne(Get-PreparationPath $workspace $receiptRelative)){throw "Preparation output must be '$receiptRelative'."}
- foreach($unitFile in @(Get-ChildItem -LiteralPath (Join-Path $workspace 'iteration-units') -Filter '*.json' -File)){$unitDoc=Read-MorphospaceProtocolJson $unitFile.FullName;if([string]$unitDoc.status-cne'accepted'){throw 'Preparation rejects any future or nonaccepted unit document.'}}
+  Assert-PreparationHistoricalSupersessionClosure $workspace
  $earlyIntent=Get-PreparationPath $workspace $intentRelative
  if([IO.File]::Exists($earlyIntent)){$intent=Read-MorphospaceProtocolJson $earlyIntent;$receiptArtifact=@($intent.artifacts|Where-Object{[string]$_.path-ceq$receiptRelative});if($receiptArtifact.Count-ne1){throw 'Preparation replay intent lacks its exact receipt artifact.'};$intentReceipt=([Text.UTF8Encoding]::new($false).GetString([Convert]::FromBase64String([string]$receiptArtifact[0].bytes_base64))|ConvertFrom-Json);if([string]$intent.transaction_id-cne$transactionId-or[string]$intentReceipt.input_sha256-cne$inputHash-or(Get-PreparationHash $intent.target.project.document)-cne(Get-PreparationHash $p.envelope.project)-or(Get-PreparationHash $intent.target.feature_lock.document)-cne(Get-PreparationHash $p.envelope.feature_lock)){throw 'Preparation replay conflicts with its published intent.'};$liveState=Read-MorphospaceProtocolJson (Get-PreparationPath $workspace 'workspace.state.json');if($Execute){$mutex=Enter-MorphospaceWorkspaceMutex $workspace;try{[void](Complete-MorphospaceDevelopmentEnvelopePreparation $workspace $repoRoot $intentRelative $completionRelative -FaultAfter $FaultAfter)}finally{Exit-MorphospaceWorkspaceMutex $mutex}};return (New-PreparationAutomationReceipt $p $Timestamp $Execute.IsPresent 'idle-project-envelope-prepared' $receiptRelative $inputHash $liveState $(if($Execute){$eventId}else{$null}))}
  $projectPath=Get-PreparationPath $workspace 'project.spec.json';$statePath=Get-PreparationPath $workspace 'workspace.state.json';$lockPath=Get-PreparationPath $workspace 'feature.lock.json';$eventsPath=Get-PreparationPath $workspace 'iteration-events.jsonl';$mapPath=Get-PreparationPath $workspace ([string]$p.expected.repository_map_path);$prePath=Get-PreparationPath $workspace ([string]$p.expected.predecessor_unit_path)
@@ -169,7 +220,7 @@ function Invoke-MorphospacePrepareDevelopmentEnvelope {
  Assert-PreparationSchema $repoRoot $projectPath 'project-spec-v2.schema.json' 'Preparation current project does not satisfy the owner schema.';Assert-PreparationSchema $repoRoot $lockPath 'feature-lock-v2.schema.json' 'Preparation current feature lock does not satisfy the owner schema.'
  Assert-PreparationSchema $repoRoot $mapPath 'repository-map.schema.json' 'Preparation repository map does not satisfy the closed owner schema.'
  if([string]$project.project_id-cne[string]$p.project_id-or[string]$state.project_id-cne[string]$p.project_id-or[string]$pre.project_id-cne[string]$p.project_id-or[string]$pre.unit_id-cne[string]$p.predecessor_unit_id-or[string]$pre.status-cne'accepted'){throw 'Preparation project/predecessor identity or acceptance is invalid.'};if($null-ne$state.current_unit-or$null-ne$state.next_ready_unit){throw 'Preparation requires an idle project with null current and ready units.'};Assert-PreparationLockAndRegistry $project $lock $state 'current'
- foreach($unitFile in @(Get-ChildItem -LiteralPath (Join-Path $workspace 'iteration-units') -Filter '*.json' -File)){$unitDoc=Read-MorphospaceProtocolJson $unitFile.FullName;if([string]$unitDoc.status-cne'accepted'){throw 'Preparation rejects any future or nonaccepted unit document.'}}
+  Assert-PreparationHistoricalSupersessionClosure $workspace
  foreach($check in @(@{e=$p.expected.project_sha256;a=(Get-PreparationHash $project);n='project'},@{e=$p.expected.state_sha256;a=(Get-PreparationHash $state);n='state'},@{e=$p.expected.feature_lock_sha256;a=(Get-PreparationHash $lock);n='feature lock'},@{e=$p.expected.repository_map_sha256;a=(Get-PreparationFileHash $mapPath);n='repository map'},@{e=$p.expected.predecessor_unit_sha256;a=(Get-PreparationHash $pre);n='predecessor unit'},@{e=$p.expected.events_sha256;a=(Get-PreparationFileHash $eventsPath);n='ledger'})){if([string]$check.e-cne[string]$check.a){throw "Preparation stale $($check.n) preimage."}}
  if([int64]$p.expected.events_length-ne$eventBytes.LongLength-or[string]$p.expected.event_tail_id-cne[string]$tail.event_id){throw 'Preparation ledger predecessor is stale.'};$map=@{};foreach($entry in @($mapDoc.repositories)){$id=[string]$entry.repo_id;if($map.ContainsKey($id)){throw "Preparation repository map repeats '$id' case-insensitively."};$map[$id]=$entry}
  if(-not(Test-Json -Json ($p.envelope.project|ConvertTo-Json -Depth 64) -SchemaFile (Join-Path $repoRoot 'schemas\project-spec-v2.schema.json'))){throw 'Preparation target project does not satisfy the owner schema.'};if(-not(Test-Json -Json ($p.envelope.feature_lock|ConvertTo-Json -Depth 64) -SchemaFile (Join-Path $repoRoot 'schemas\feature-lock-v2.schema.json'))){throw 'Preparation target feature lock does not satisfy the owner schema.'}

@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/admission-completion-timestamp-recovery-result-v1.schema.json",
+  "title": "Admission completion timestamp recovery automation result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "project_id", "unit_id", "action", "timestamp", "executed", "transition", "status_before", "status_after", "current_unit_before", "current_unit_after", "preservation", "audit_receipt", "event_id"],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.workflow.work_unit_automation_receipt.v2" },
+    "project_id": { "$ref": "#/$defs/id" },
+    "unit_id": { "$ref": "#/$defs/id" },
+    "action": { "const": "RecoverAdmissionCompletionTimestamp" },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "executed": { "type": "boolean" },
+    "transition": { "const": "admission-completion-timestamp-recovered" },
+    "status_before": { "const": "proposed" },
+    "status_after": { "const": "proposed" },
+    "current_unit_before": { "type": "null" },
+    "current_unit_after": { "type": "null" },
+    "preservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["git_mutation_performed", "device_mutation_performed", "remote_mutation_performed"],
+      "properties": {
+        "git_mutation_performed": { "const": false },
+        "device_mutation_performed": { "const": false },
+        "remote_mutation_performed": { "const": false }
+      }
+    },
+    "audit_receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "type": "string", "pattern": "^receipts/admission-completion-timestamp-recovered-[0-9]{4,}\\.json$" },
+        "sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "event_id": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "string", "pattern": "^admission-completion-timestamp-recovered-[0-9]{4,}$" }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "executed": { "const": false } }, "required": ["executed"] },
+      "then": { "properties": { "event_id": { "type": "null" } } }
+    }
+  ],
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" },
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  }
+}

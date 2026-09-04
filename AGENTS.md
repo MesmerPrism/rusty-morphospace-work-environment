@@ -514,7 +514,12 @@ transaction.
   may recover it, while stale/conflicting evidence awaits independent rescue.
   Preparation validates the zeroed-field feature-lock fingerprint, derives the
   matching module registry when the lock changes, and permits only additive
-  validation-profile registration. After an exact `RetireProposed` suffix, the
+  validation-profile registration. Retained non-current/non-next
+  `active`/`validating` unit bytes are eligible only when the shared committed-
+  transition validator authenticates each exact v2 supersession edge and the
+  chain's exact acceptance transition; all future, orphaned, ambiguous,
+  rewritten, or transaction-damaged unit histories remain rejected. After an
+  exact `RetireProposed` suffix, the
   lock/registry defect may be repaired only through
   `ReprepareRetiredDevelopmentEnvelope`; it preserves every old evidence byte,
   produces a fresh preparation, and leaves the distinct replacement absent for
@@ -525,6 +530,14 @@ transaction.
   The resulting proposal still follows ordinary Ready/Inspect/Claim. An
   admitted active unit must use `FreezeCandidate` before BeginValidation;
   historical units without the admission marker retain their existing route.
+- Recover an otherwise fully committed ordinary admission whose sole defect is
+  `completion.completed_at < intent.created_at` only through
+  `RecoverAdmissionCompletionTimestamp`. Require exact raw/canonical bindings
+  for its preparation/admission chain and live project, lock, state, unit, and
+  ledger preimages; preserve the malformed completion byte-for-byte; and append
+  only the owner correction plus `last_event_id`. Reject any second defect or
+  alternate chronology. Route the procedure to
+  `docs/ADMISSION_COMPLETION_TIMESTAMP_RECOVERY.md`.
 - If an already-validating admitted unit's frozen product candidate is
   superseded by an independently adopted descendant, use only
   `RematerializeValidatingCandidate`. It requires an already-present clean

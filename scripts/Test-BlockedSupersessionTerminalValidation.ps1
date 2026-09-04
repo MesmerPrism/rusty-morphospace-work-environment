@@ -5,12 +5,26 @@ $RepoRoot = Split-Path -Parent $PSScriptRoot
 Import-Module (Join-Path $PSScriptRoot 'WorkUnitAutomation.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'ActiveWriteScopeAmendment.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
-Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1') -Force
+$ledgerModule = Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1') -Force -PassThru
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceBlockedSupersessionTerminalValidation.psm1') -Force
 if ($RematerializationV6Only) {
     Import-Module (Join-Path $PSScriptRoot 'CandidateFreeze.psm1') -Force
     Import-Module (Join-Path $PSScriptRoot 'ValidatingCandidateRematerialization.psm1') -Force
     Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force -Global
+}
+
+function Start-MorphospaceTransitionLedger {
+    param(
+        [string]$WorkspaceRoot, [string]$TransactionId, [string]$StatePath, [string]$UnitPath, [string]$EventsPath,
+        [object]$TargetState, [object]$TargetUnit, [object]$Event,
+        [ValidateSet('none','after-intent','after-artifact','after-projection','after-event')][string]$FaultAfter = 'none',
+        [string]$ExpectedPreStateSha256 = '', [string]$ExpectedPreStateRawSha256 = '',
+        [string]$ExpectedPreUnitSha256 = '', [string]$ExpectedPreUnitRawSha256 = '',
+        [string]$ExpectedStateSha256 = '', [string]$ExpectedUnitSha256 = '', [AllowNull()][string]$ExpectedEventTailId,
+        [string]$ExpectedEventsSha256 = '', [int64]$ExpectedEventsLength = -1, [string]$ExpectedSupersededUnitSha256 = '',
+        [object[]]$AdditionalProjections = @(), [object[]]$Artifacts = @()
+    )
+    & $ledgerModule { param($Arguments) Start-MorphospaceTransitionLedger @Arguments } $PSBoundParameters
 }
 
 $encoding = [Text.UTF8Encoding]::new($false)

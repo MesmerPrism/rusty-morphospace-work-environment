@@ -10,6 +10,20 @@ $ledgerModule = Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitio
 $encoding = [Text.UTF8Encoding]::new($false)
 $assertions = [Collections.Generic.List[string]]::new()
 
+function Start-MorphospaceTransitionLedger {
+    param(
+        [string]$WorkspaceRoot, [string]$TransactionId, [string]$StatePath, [string]$UnitPath, [string]$EventsPath,
+        [object]$TargetState, [object]$TargetUnit, [object]$Event,
+        [ValidateSet('none','after-intent','after-artifact','after-projection','after-event')][string]$FaultAfter = 'none',
+        [string]$ExpectedPreStateSha256 = '', [string]$ExpectedPreStateRawSha256 = '',
+        [string]$ExpectedPreUnitSha256 = '', [string]$ExpectedPreUnitRawSha256 = '',
+        [string]$ExpectedStateSha256 = '', [string]$ExpectedUnitSha256 = '', [AllowNull()][string]$ExpectedEventTailId,
+        [string]$ExpectedEventsSha256 = '', [int64]$ExpectedEventsLength = -1, [string]$ExpectedSupersededUnitSha256 = '',
+        [object[]]$AdditionalProjections = @(), [object[]]$Artifacts = @()
+    )
+    & $ledgerModule { param($Arguments) Start-MorphospaceTransitionLedger @Arguments } $PSBoundParameters
+}
+
 function Assert-HucTest { param([bool]$Condition,[string]$Message) if(-not $Condition){throw "Historical compatibility self-test failed: $Message"};$assertions.Add($Message)|Out-Null }
 function ConvertFrom-HucCliOutput { param([object[]]$Lines,[string]$Context) $text=@($Lines|ForEach-Object{[string]$_})-join"`n";$start=$text.IndexOf('{',[StringComparison]::Ordinal);if($start-lt0){throw "$Context emitted no JSON."};$text.Substring($start)|ConvertFrom-Json }
 function Write-HucTestJson { param([string]$Path,[object]$Value) $parent=Split-Path $Path -Parent;if($parent){[IO.Directory]::CreateDirectory($parent)|Out-Null};[IO.File]::WriteAllText($Path,(ConvertTo-MorphospaceCanonicalJson $Value)+"`n",$encoding) }
