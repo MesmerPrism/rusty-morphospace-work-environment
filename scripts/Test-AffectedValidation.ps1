@@ -3597,6 +3597,7 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
         [pscustomobject]@{ path='schemas/work-unit-automation-receipt-v2.schema.json'; checks=@('automation-receipt-v2-compatibility') },
         [pscustomobject]@{ path='scripts/Test-AutomationReceiptV2Compatibility.ps1'; checks=@('automation-receipt-v2-compatibility') },
         [pscustomobject]@{ path='scripts/WorkUnitAutomation.psm1'; checks=@('automation-receipt-v2-compatibility','normal-validation-selector','work-unit-automation','workflow-contracts') },
+        [pscustomobject]@{ path='scripts/DevelopmentEnvelopeRepreparation.psm1'; checks=@('automation-receipt-v2-compatibility','development-unit-admission','public-boundary','workflow-contracts','development-envelope-preparation','normal-validation-selector','work-unit-automation','validating-candidate-rematerialization') },
         [pscustomobject]@{ path='scripts/Test-HistoricalValidationDebtBaseline.ps1'; checks=@('historical-validation-debt-baseline') },
         [pscustomobject]@{ path='scripts/Test-HistoricalValidationDebtPhaseRunner.ps1'; checks=@('historical-validation-debt-phase-runner') },
         [pscustomobject]@{ path='scripts/Test-OwnershipAuthority.ps1'; checks=@('ownership-authority') },

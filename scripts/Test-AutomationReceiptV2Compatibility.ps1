@@ -169,6 +169,7 @@ $corpus = [ordered]@{
     AmendActiveWriteScope = @('active-write-scope-amended')
     RecordHistoricalUnitCompatibilityProjection = @('historical-unit-compatibility-projected')
     PrepareDevelopmentEnvelope = @('idle-project-envelope-prepared')
+    ReprepareRetiredDevelopmentEnvelope = @('retired-envelope-reprepared')
     PrepareBlockedSuccessor = @('blocked-successor-prepared')
     SupersedeActive = @('active-superseded-by-proposed-to-active')
     AdmitDevelopmentUnit = @('development-unit-admitted', 'development-unit-already-admitted')
@@ -192,6 +193,7 @@ $producerContracts = [ordered]@{
     AmendActiveWriteScope = [ordered]@{ producer='scripts/ActiveWriteScopeAmendment.psm1'; owner_test='scripts/Test-ActiveWriteScopeAmendment.ps1' }
     RecordHistoricalUnitCompatibilityProjection = [ordered]@{ producer='scripts/HistoricalUnitCompatibilityProjection.psm1'; owner_test='scripts/Test-HistoricalUnitCompatibilityProjection.ps1' }
     PrepareDevelopmentEnvelope = [ordered]@{ producer='scripts/DevelopmentEnvelopePreparation.psm1'; owner_test='scripts/Test-DevelopmentEnvelopePreparation.ps1' }
+    ReprepareRetiredDevelopmentEnvelope = [ordered]@{ producer='scripts/DevelopmentEnvelopeRepreparation.psm1'; owner_test='scripts/Test-DevelopmentUnitAdmission.ps1' }
     PrepareBlockedSuccessor = [ordered]@{ producer='scripts/BlockedSuccessorPreparation.psm1'; owner_test='scripts/Test-BlockedSuccessorPreparation.ps1' }
     SupersedeActive = [ordered]@{ producer='scripts/ActiveUnitSupersession.psm1'; owner_test='scripts/Test-ActiveUnitSupersession.ps1' }
     AdmitDevelopmentUnit = [ordered]@{ producer='scripts/DevelopmentUnitAdmission.psm1'; owner_test='scripts/Test-DevelopmentUnitAdmission.ps1' }
@@ -214,6 +216,7 @@ foreach ($action in @($corpus.Keys)) {
     }
 }
 $receiptShapes['idle-project-envelope-prepared'] = [ordered]@{status_before='accepted';status_after='accepted';current_unit_before=$null;current_unit_after=$null;audit_path_kind='receipt'}
+$receiptShapes['retired-envelope-reprepared'] = [ordered]@{status_before='superseded';status_after='superseded';current_unit_before=$null;current_unit_after=$null;audit_path_kind='receipt'}
 $receiptShapes['blocked-successor-prepared'] = [ordered]@{status_before='blocked';status_after='blocked';current_unit_before=$null;current_unit_after=$null;audit_path_kind='receipt'}
 $receiptShapes['active-superseded-by-proposed-to-active'] = [ordered]@{status_before='proposed';status_after='proposed';current_unit_before='terminal-unit';current_unit_after='terminal-unit';audit_path_kind='receipt'}
 $receiptShapes['development-unit-admitted'] = [ordered]@{status_before=$null;status_after='proposed';current_unit_before=$null;current_unit_after=$null;audit_path_kind='receipt'}
@@ -248,7 +251,7 @@ foreach ($action in @($corpus.Keys)) {
         $validatedPairCount++
     }
 }
-Assert-AutomationReceiptCompatibility ($validatedPairCount -eq 24) "expected 24 canonical action/transition receipts, observed $validatedPairCount"
+Assert-AutomationReceiptCompatibility ($validatedPairCount -eq 25) "expected 25 canonical action/transition receipts, observed $validatedPairCount"
 
 $admissionShapeDamage = New-CanonicalAutomationReceipt -Action 'AdmitDevelopmentUnit' -Transition 'development-unit-admitted'
 Assert-AutomationReceiptCompatibility (-not (Test-AutomationReceiptSchema -Receipt $admissionShapeDamage)) 'schema accepted an admission receipt with a fabricated prior status'
