@@ -2,6 +2,7 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1')
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1')
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceHistoricalSupersessionCompatibility.psm1')
 
 function Get-PreparationHash { param([object]$Value) Get-MorphospaceCanonicalJsonSha256 $Value }
 function Get-PreparationFileHash { param([string]$Path) Get-MorphospaceFileSha256 $Path }
@@ -26,6 +27,7 @@ function Assert-PreparationHistoricalSupersessionClosure {
     if($null-ne$state.current_unit-or$null-ne$state.next_ready_unit){throw 'Preparation rejects current or next-ready unit authority.'}
     foreach($unitId in $historical){if(@('active','validating')-cnotcontains[string]$units[$unitId].status){throw 'Preparation rejects future, terminal, or otherwise nonaccepted unit documents outside authenticated historical supersession.'}}
     $events=@(Get-Content -LiteralPath (Get-PreparationPath $Workspace 'iteration-events.jsonl')|Where-Object{$_}|ForEach-Object{$_|ConvertFrom-Json -DateKind String})
+    $compatibility=Get-MorphospaceHistoricalSupersessionCompatibilityMap -WorkspaceRoot $Workspace -ProjectId ([string]$state.project_id)
     foreach($historicalId in $historical){
         $cursor=[string]$historicalId;$visited=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal);$event=$null
         while([string]$units[$cursor].status-cne'accepted'){
@@ -37,14 +39,36 @@ function Assert-PreparationHistoricalSupersessionClosure {
             $event=$matches[0];$replacementId=([string]$event.event_id).Substring($prefix.Length)
             $expectedEventId=Get-MorphospaceSupersessionEventId -OldUnitId $cursor -ReplacementUnitId $replacementId
             if([string]$event.event_id-cne$expectedEventId-or[string]$event.event_type-cne'state-transition'-or-not$units.ContainsKey($replacementId)){throw "Preparation historical unit '$cursor' has a damaged or orphaned supersession replacement."}
-            $committed=Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $Workspace -TransactionId "$expectedEventId-transition" -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath ([string]$paths[$replacementId]) -ExpectedEventsPath 'iteration-events.jsonl'
-            $binding=$committed.intent.supersession
-            if([string]$committed.intent.schema-cne'rusty.morphospace.workflow.transition_ledger_intent.v2'-or
-               [string]$binding.old_unit_id-cne$cursor-or[string]$binding.new_unit_id-cne$replacementId-or
-               [string]$binding.old_unit.path-cne[string]$paths[$cursor]-or
-               [string]$binding.old_unit.sha256-cne(Get-PreparationHash $units[$cursor])-or
-               (Get-PreparationHash $binding.old_unit.document)-cne(Get-PreparationHash $units[$cursor])){
-                throw "Preparation historical unit '$cursor' differs from its authenticated supersession binding."
+            $transactionId="$expectedEventId-transition"
+            $intentPath=Get-PreparationPath $Workspace "receipts/transactions/$transactionId.intent.json"
+            $completionPath=Get-PreparationPath $Workspace "receipts/transactions/$transactionId.completion.json"
+            $hasIntent=[IO.File]::Exists($intentPath);$hasCompletion=[IO.File]::Exists($completionPath)
+            $compatibilityEdge=$(if($compatibility.ContainsKey($cursor)){$compatibility[$cursor]}else{$null})
+            if($hasIntent-or$hasCompletion){
+                if(-not$hasIntent-or-not$hasCompletion){throw "Preparation historical unit '$cursor' has an incomplete supersession transaction."}
+                $intentDocument=Read-MorphospaceProtocolJson $intentPath
+                if([string]$intentDocument.schema-ceq'rusty.morphospace.workflow.transition_ledger_intent.v2'){
+                    $committed=Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $Workspace -TransactionId $transactionId -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath ([string]$paths[$replacementId]) -ExpectedEventsPath 'iteration-events.jsonl'
+                    $binding=$committed.intent.supersession
+                    if([string]$binding.old_unit_id-cne$cursor-or[string]$binding.new_unit_id-cne$replacementId-or
+                       [string]$binding.old_unit.path-cne[string]$paths[$cursor]-or
+                       [string]$binding.old_unit.sha256-cne(Get-PreparationHash $units[$cursor])-or
+                       (Get-PreparationHash $binding.old_unit.document)-cne(Get-PreparationHash $units[$cursor])){
+                        throw "Preparation historical unit '$cursor' differs from its authenticated supersession binding."
+                    }
+                }elseif($null-eq$compatibilityEdge-or[string]$compatibilityEdge.transaction_kind-cne'legacy-v1'){
+                    throw "Preparation historical unit '$cursor' has an unsupported supersession transaction schema."
+                }
+            }else{
+                if($null-eq$compatibilityEdge-or[string]$compatibilityEdge.transaction_kind-cne'absent'){throw "Preparation historical unit '$cursor' lacks its supersession transaction and exact compatibility proof."}
+            }
+            if($null-ne$compatibilityEdge-and([string]$compatibilityEdge.transaction_kind-ceq$(if($hasIntent){'legacy-v1'}else{'absent'}))){
+                if([string]$compatibilityEdge.old_unit_id-cne$cursor-or[string]$compatibilityEdge.replacement_unit_id-cne$replacementId-or
+                   [string]$compatibilityEdge.event_id-cne$expectedEventId-or[int]$compatibilityEdge.sequence-ne[int]$event.sequence-or
+                   [string]$compatibilityEdge.old_document_sha256-cne(Get-PreparationHash $units[$cursor])-or
+                   [string]$compatibilityEdge.replacement_document_sha256-cne(Get-PreparationHash $units[$replacementId])){
+                    throw "Preparation historical unit '$cursor' differs from its exact compatibility proof."
+                }
             }
             $cursor=$replacementId
         }

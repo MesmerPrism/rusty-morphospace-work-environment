@@ -409,6 +409,16 @@ dependent as an unconditional reverse consumer of a shared contract; a generic
 workflow or automation change therefore cannot fan out into inactive lifecycle
 owners. The shared lifecycle routing document remains in the existing
 `documentation` path set rather than acquiring a second owner.
+Historical supersession compatibility has its own closed path set for the v1
+proof schema, builder, action module, verifier, and focused self-test. It
+selects the fast automation-receipt compatibility and workflow-contract
+prerequisites before its Windows Standard owner leaf. Its positive fixture
+uses the separately mapped event-ledger normalization owner; that dependency
+does not place normalization under compatibility ownership. Development-envelope
+preparation consumes that leaf because it is the only downstream owner allowed
+to interpret an installed proof as the exact transactionless and legacy-v1
+two-edge closure. Changes to unrelated lifecycle owners do not select this
+exception, while changes to the exception cannot bypass preparation coverage.
 The public automation router is covered by a low-cost capture seam in the
 ordinary automation integration test. It proves exact dry/execute/replay
 forwarding for both lifecycle actions without replaying either focused owner;

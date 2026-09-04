@@ -227,6 +227,15 @@ Ready-to-WithdrawReady and v2 supersession transactions, projects only its
 closed profile/action mappings, preserves the raw units and current authority,
 and changes only the compact-state event tail. It never records an instruction
 edit, completion, validation, acceptance, or publication authority.
+For one idle workspace whose retained supersession chain has exactly one
+transactionless edge followed immediately by its authentic prefix
+normalization and one legacy-v1 successor into an authenticated accepted unit,
+use only `historical_supersession_compatibility.v1` and
+`RecordHistoricalSupersessionCompatibility`. Require the builder-produced,
+reviewed SHA-bound receipt; preserve every historical file; append only its
+typed proof event and `last_event_id`; and keep all ordinary and future
+supersessions strict v2. Route the procedure to
+`docs/HISTORICAL_SUPERSESSION_COMPATIBILITY.md`.
 If that authority later closes locally, authenticate only its exact owner-
 produced instruction-completion, `BeginValidation`, deep passing
 `RecordValidation`, and `Accept` transaction suffix. The receipt may preserve
@@ -517,8 +526,11 @@ transaction.
   validation-profile registration. Retained non-current/non-next
   `active`/`validating` unit bytes are eligible only when the shared committed-
   transition validator authenticates each exact v2 supersession edge and the
-  chain's exact acceptance transition; all future, orphaned, ambiguous,
-  rewritten, or transaction-damaged unit histories remain rejected. After an
+  chain's exact acceptance transition. The sole exception is an installed,
+  owner-authenticated historical-supersession compatibility receipt for its
+  exact transactionless-normalized and legacy-v1 two-edge chain; all other
+  future, orphaned, ambiguous, rewritten, or transaction-damaged unit
+  histories remain rejected. After an
   exact `RetireProposed` suffix, the
   lock/registry defect may be repaired only through
   `ReprepareRetiredDevelopmentEnvelope`; it preserves every old evidence byte,

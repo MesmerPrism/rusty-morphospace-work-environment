@@ -49,10 +49,14 @@ earlier superseded units. Preparation accepts those documents only when the
 shared committed-transition verifier authenticates every exact v2
 old-to-replacement supersession intent, completion, event, artifact, and bound
 old-unit hash, and the resulting chain ends at one exact committed acceptance
-transition. The live state must still be idle. Proposed, ready, blocked,
-current, next-ready, orphaned, ambiguous, rewritten, or transaction-damaged
-units remain rejected; this compatibility rule never rewrites historical
-bytes or treats status text alone as acceptance evidence.
+transition. The sole non-v2 exception is an installed, PostApply-valid
+`historical_supersession_compatibility.v1` receipt. It may contribute only its
+exact transactionless old-to-replacement edge and immediate legacy-v1
+replacement-to-successor edge, both closed by the receipt's authenticated
+normalization and accepted endpoint. The live state must still be idle.
+Proposed, ready, blocked, current, next-ready, orphaned, ambiguous, rewritten,
+or otherwise transaction-damaged units remain rejected; compatibility never
+rewrites historical bytes or treats status text alone as acceptance evidence.
 
 Preparation uses its own v1 intent, completion, receipt, and event. Each binds
 the complete multi-document CAS set. A matching interrupted transaction may

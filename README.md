@@ -460,6 +460,12 @@ Use `-Action RecordHistoricalUnitCompatibilityProjection` only with a
 builder-produced, reviewed SHA-bound closed receipt for the exact historical
 pair. The action is dry-run by default and atomically installs the receipt plus
 one tail-only state event; it never edits either historical unit.
+Use `RecordHistoricalSupersessionCompatibility` only for the exact
+transactionless-supersession, immediate normalization, immediate legacy-v1
+successor, and authenticated accepted-endpoint chain. Its reviewed receipt
+proves those two otherwise unsupported historical edges without creating or
+rewriting their files; ordinary and future supersessions remain strict v2. See
+[Historical Supersession Compatibility](docs/HISTORICAL_SUPERSESSION_COMPATIBILITY.md).
 Run `Inspect` with the exact repository map before Claim. Its embedded
 `claim_preflight` resolves writable repositories, read-only input paths,
 instruction aliases/files, resource declarations, validation tier, and device
@@ -518,8 +524,10 @@ may CAS-advance all three schema pins to one caller-supplied exact adopted
 revision without approving that revision or deriving it from candidate `HEAD`.
 An idle workspace may retain immutable active/validating historical unit files
 only through their exact committed supersession chain into an authenticated
-accepted endpoint; status text, missing transactions, or ambiguous/orphaned
-replacement edges never qualify.
+accepted endpoint. The sole missing/legacy transaction exception is an
+installed, owner-authenticated historical-supersession compatibility receipt
+for its exact two-edge normalized chain; status text, other missing
+transactions, or ambiguous/orphaned replacement edges never qualify.
 It supports agent-led discovery inside a declared envelope, then freezes exact
 candidate identity before normal validation.
 When a ready unit carries sealed evidence from an out-of-scope prior task,
