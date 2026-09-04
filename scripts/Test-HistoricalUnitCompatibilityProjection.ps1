@@ -24,6 +24,14 @@ function Start-MorphospaceTransitionLedger {
     & $ledgerModule { param($Arguments) Start-MorphospaceTransitionLedger @Arguments } $PSBoundParameters
 }
 
+function Complete-MorphospaceTransitionLedger {
+    param(
+        [string]$WorkspaceRoot, [string]$TransactionId, [switch]$Repair,
+        [ValidateSet('none','after-intent','after-artifact','after-projection','after-event')][string]$FaultAfter = 'none'
+    )
+    & $ledgerModule { param($Arguments) Complete-MorphospaceTransitionLedger @Arguments } $PSBoundParameters
+}
+
 function Assert-HucTest { param([bool]$Condition,[string]$Message) if(-not $Condition){throw "Historical compatibility self-test failed: $Message"};$assertions.Add($Message)|Out-Null }
 function ConvertFrom-HucCliOutput { param([object[]]$Lines,[string]$Context) $text=@($Lines|ForEach-Object{[string]$_})-join"`n";$start=$text.IndexOf('{',[StringComparison]::Ordinal);if($start-lt0){throw "$Context emitted no JSON."};$text.Substring($start)|ConvertFrom-Json }
 function Write-HucTestJson { param([string]$Path,[object]$Value) $parent=Split-Path $Path -Parent;if($parent){[IO.Directory]::CreateDirectory($parent)|Out-Null};[IO.File]::WriteAllText($Path,(ConvertTo-MorphospaceCanonicalJson $Value)+"`n",$encoding) }

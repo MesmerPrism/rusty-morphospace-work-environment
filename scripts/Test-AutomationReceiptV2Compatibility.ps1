@@ -173,6 +173,7 @@ $corpus = [ordered]@{
     PrepareBlockedSuccessor = @('blocked-successor-prepared')
     SupersedeActive = @('active-superseded-by-proposed-to-active')
     AdmitDevelopmentUnit = @('development-unit-admitted', 'development-unit-already-admitted')
+    RecoverAdmissionCompletionTimestamp = @('admission-completion-timestamp-recovered')
     FreezeCandidate = @('candidate-frozen', 'candidate-already-frozen')
     RematerializeValidatingCandidate = @('validating-candidate-rematerialized', 'validating-candidate-already-rematerialized')
     MaterializeInheritedCandidate = @('inherited-candidate-materialized', 'inherited-candidate-already-materialized')
@@ -197,6 +198,7 @@ $producerContracts = [ordered]@{
     PrepareBlockedSuccessor = [ordered]@{ producer='scripts/BlockedSuccessorPreparation.psm1'; owner_test='scripts/Test-BlockedSuccessorPreparation.ps1' }
     SupersedeActive = [ordered]@{ producer='scripts/ActiveUnitSupersession.psm1'; owner_test='scripts/Test-ActiveUnitSupersession.ps1' }
     AdmitDevelopmentUnit = [ordered]@{ producer='scripts/DevelopmentUnitAdmission.psm1'; owner_test='scripts/Test-DevelopmentUnitAdmission.ps1' }
+    RecoverAdmissionCompletionTimestamp = [ordered]@{ producer='scripts/AdmissionCompletionTimestampRecovery.psm1'; owner_test='scripts/Test-AdmissionCompletionTimestampRecovery.ps1' }
     FreezeCandidate = [ordered]@{ producer='scripts/CandidateFreeze.psm1'; owner_test='scripts/Test-WorkUnitAutomation.ps1' }
     RematerializeValidatingCandidate = [ordered]@{ producer='scripts/ValidatingCandidateRematerialization.psm1'; owner_test='scripts/Test-ValidatingCandidateRematerialization.ps1' }
     MaterializeInheritedCandidate = [ordered]@{ producer='scripts/InheritedCandidateMaterialization.psm1'; owner_test='scripts/Test-WorkUnitAutomation.ps1' }
@@ -221,6 +223,7 @@ $receiptShapes['blocked-successor-prepared'] = [ordered]@{status_before='blocked
 $receiptShapes['active-superseded-by-proposed-to-active'] = [ordered]@{status_before='proposed';status_after='proposed';current_unit_before='terminal-unit';current_unit_after='terminal-unit';audit_path_kind='receipt'}
 $receiptShapes['development-unit-admitted'] = [ordered]@{status_before=$null;status_after='proposed';current_unit_before=$null;current_unit_after=$null;audit_path_kind='receipt'}
 $receiptShapes['development-unit-already-admitted'] = [ordered]@{status_before=$null;status_after='proposed';current_unit_before=$null;current_unit_after=$null;audit_path_kind='receipt'}
+$receiptShapes['admission-completion-timestamp-recovered'] = [ordered]@{status_before='proposed';status_after='proposed';current_unit_before=$null;current_unit_after=$null;audit_path_kind='receipt'}
 $receiptShapes['validating-candidate-rematerialized'] = [ordered]@{status_before='validating';status_after='validating';current_unit_before='compatibility-unit';current_unit_after='compatibility-unit';audit_path_kind='receipt'}
 $receiptShapes['validating-candidate-already-rematerialized'] = [ordered]@{status_before='validating';status_after='validating';current_unit_before='compatibility-unit';current_unit_after='compatibility-unit';audit_path_kind='receipt'}
 $receiptShapes['history-archive-checkpointed'] = [ordered]@{status_before='accepted';status_after='accepted';current_unit_before=$null;current_unit_after=$null;audit_path_kind='history-archive'}
@@ -251,7 +254,7 @@ foreach ($action in @($corpus.Keys)) {
         $validatedPairCount++
     }
 }
-Assert-AutomationReceiptCompatibility ($validatedPairCount -eq 25) "expected 25 canonical action/transition receipts, observed $validatedPairCount"
+Assert-AutomationReceiptCompatibility ($validatedPairCount -eq 26) "expected 26 canonical action/transition receipts, observed $validatedPairCount"
 
 $admissionShapeDamage = New-CanonicalAutomationReceipt -Action 'AdmitDevelopmentUnit' -Transition 'development-unit-admitted'
 Assert-AutomationReceiptCompatibility (-not (Test-AutomationReceiptSchema -Receipt $admissionShapeDamage)) 'schema accepted an admission receipt with a fabricated prior status'
