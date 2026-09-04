@@ -3320,6 +3320,17 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     Assert-True ($registryContractPlan.selection_mode -ceq 'full-deep' -and @($registryContractPlan.selected_checks.check_id) -ccontains 'workflow-contracts') 'Affected-validation registry change did not retain its one-time Deep workflow-contract coverage.'
     foreach ($checkId in $selectorTrustRootCheckIds) { Assert-True (@($registryContractPlan.selected_checks.check_id) -ccontains $checkId) "Affected-validation registry change did not retain '$checkId'." }
     Assert-True (@($registryContractPlan.selected_checks.check_id) -cnotcontains 'work-environment-deep' -and @($registryContractPlan.reason_codes) -ccontains 'trust-root-path-changed' -and @($registryContractPlan.reason_codes) -cnotcontains 'ambiguous-path-mapping') 'Affected-validation registry change did not retain independent-leaf Deep escalation or selected the redundant aggregate.'
+    $oversizedComponentRegistry = [pscustomobject][ordered]@{checks=@(
+        [pscustomobject][ordered]@{check_id='oversized-a';budget_seconds=2000;prerequisite_checks=@()},
+        [pscustomobject][ordered]@{check_id='oversized-b';budget_seconds=2000;prerequisite_checks=@('oversized-a')}
+    )}
+    $oversizedComponentPlan = [pscustomobject][ordered]@{selected_checks=@(
+        [pscustomobject][ordered]@{check_id='oversized-a';budget_seconds=2000;platforms=@('windows')},
+        [pscustomobject][ordered]@{check_id='oversized-b';budget_seconds=2000;platforms=@('windows')}
+    )}
+    $oversizedComponentSegments = @(Get-MorphospaceAffectedValidationSegments -Plan $oversizedComponentPlan -Registry $oversizedComponentRegistry -Platform windows)
+    Assert-True ($oversizedComponentSegments.Count -eq 1 -and [long]$oversizedComponentSegments[0].target_budget_seconds -eq 3600 -and [long]$oversizedComponentSegments[0].maximum_budget_seconds -eq 18000 -and [long]$oversizedComponentSegments[0].estimated_budget_seconds -eq 4000 -and [int]$oversizedComponentSegments[0].dependency_component_count -eq 1) 'Affected-validation segmentation did not preserve one irreducible dependency component above the soft target and below the hard maximum.'
+    Assert-AffectedThrows { Get-MorphospaceAffectedValidationSegments -Plan $oversizedComponentPlan -Registry $oversizedComponentRegistry -Platform windows -MaximumSegmentBudgetSeconds 3600 | Out-Null } '*exceeds the hosted segment maximum: 4000 > 3600 seconds*' 'Affected-validation segmentation admitted an irreducible dependency component above the hard maximum.'
     $segmentOwner = @{}
     foreach ($platform in @('linux','windows')) {
         $platformSelections = @($registryContractPlan.selected_checks | Where-Object { @($_.platforms) -ccontains $platform })
@@ -3327,7 +3338,8 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
         Assert-True ($segments.Count -gt 0 -and ($platform -cne 'windows' -or $segments.Count -gt 1)) "Affected-validation $platform Deep partition did not produce its bounded segment set."
         $covered = [Collections.Generic.List[string]]::new()
         foreach ($segment in $segments) {
-            Assert-True ([long]$segment.estimated_budget_seconds -le 3600 -and [int]$segment.segment_count -eq $segments.Count -and @($segment.check_ids).Count -gt 0) "Affected-validation segment '$($segment.segment_id)' exceeds its one-hour target or has invalid cardinality."
+            Assert-True ([long]$segment.target_budget_seconds -eq 3600 -and [long]$segment.maximum_budget_seconds -eq 18000 -and [long]$segment.estimated_budget_seconds -le [long]$segment.maximum_budget_seconds -and [int]$segment.dependency_component_count -gt 0 -and [int]$segment.segment_count -eq $segments.Count -and @($segment.check_ids).Count -gt 0) "Affected-validation segment '$($segment.segment_id)' exceeds its hard maximum or has invalid target/cardinality metadata."
+            if ([long]$segment.estimated_budget_seconds -gt [long]$segment.target_budget_seconds) { Assert-True ([int]$segment.dependency_component_count -eq 1) "Affected-validation segment '$($segment.segment_id)' exceeds its soft target without being one irreducible dependency component." }
             foreach ($id in @($segment.check_ids)) {
                 $ownerKey = "$platform/$id"
                 Assert-True (-not $segmentOwner.ContainsKey($ownerKey)) "Affected-validation $platform segment partition repeats '$id'."
