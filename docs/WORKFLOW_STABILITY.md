@@ -125,6 +125,14 @@ branch push and its pull request. Retain `main` push validation as post-merge
 readback and keep manual dispatch for deliberate Deep runs. Group candidate
 runs by pull request so a newer revision cancels its superseded run; never
 cancel a `main` readback run merely because another merge arrives.
+Use `!cancelled()` on the 21 job or step guards that must remain eligible after
+an ordinary prerequisite or step failure. It preserves their required binding,
+diagnostic, evidence, and cache paths but becomes false on cancellation so the
+segmented graph can stop. Main segment and delta job conditions retain implicit
+`success()` semantics and remain failure-sensitive. Request ordinary
+cancellation first; force-cancel only a legacy or already-started run that
+remains alive, accepting that its terminal
+evidence may be incomplete and cannot count as a pass.
 
 Keep Linux Quick, Windows Quick, and Windows Standard as separate required
 contexts. Quick owns the common portable suite. Standard runs only the

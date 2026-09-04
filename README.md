@@ -151,6 +151,9 @@ trusted-base policy decision plus independent static and dynamic validation.
 Repository CI runs feature-branch validation from pull-request events, keeps a
 post-merge `main` readback, and cancels superseded runs within the same pull
 request without cancelling `main` readback.
+The 21 job or step guards that must remain eligible after ordinary failure use
+`!cancelled()` and stop after cancellation. Main segment and delta job guards
+retain implicit `success()` semantics so they remain failure-sensitive.
 The required Quick jobs own shared coverage; the Windows Standard job executes
 only the additional work-unit automation gate. During local iteration, use
 focused checks; freeze and commit the candidate before its one risk-selected
@@ -432,7 +435,9 @@ module registry must first be closed with `RetireProposed`. The separate
 `ReprepareRetiredDevelopmentEnvelope` action then authenticates that completed
 suffix, preserves the old unit and evidence byte-for-byte, and atomically
 installs a corrected additive project/lock/state triple plus a fresh preparation
-and source lock. It does not create or admit the named replacement.
+and source lock. It reuses only the original preparation and predecessor
+admission's exact safe project-relative repository-map path and SHA-256. It does
+not create or admit the named replacement.
 Use `-Action Ready -Execute` to review a bounded `proposed` unit into the
 claimable queue after its prerequisites are accepted; this replaces manual
 status/state/event edits. If another unit is current, Ready uses the same

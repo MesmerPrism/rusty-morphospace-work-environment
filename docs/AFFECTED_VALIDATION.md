@@ -272,6 +272,18 @@ noncanceling main-ref group, a stable noncanceling scheduled Deep group, and a
 unique noncanceling manual Deep group bound to `github.run_id`. GitHub may
 coalesce an older pending main or scheduled run, while an explicitly requested
 manual frozen-candidate Deep run is never replaced and may overlap another run.
+Exactly the 21 job and step guards that must remain eligible after an ordinary
+prerequisite or step failure use `!cancelled()`: admission of the
+`affected-linux-segments` and `affected-windows-segments` jobs,
+Quick/Standard/Deep binding or reduction, and conditional diagnostic, evidence,
+or cache preservation. Cancellation makes those guards false so no unrelated
+segment or reducer is launched or retained. The
+`main-linux-segments`, `main-windows-segments`, `main-linux-delta`, and
+`main-windows-delta` job conditions retain implicit `success()` semantics and
+remain failure-sensitive; they do not use a `!cancelled()` job override. Cancel
+a run normally first. Force-cancel only a legacy or already-started run that
+does not stop after bounded observation; force-cancel may prevent terminal
+evidence upload, and missing evidence never becomes pass or reusable evidence.
 Every job has an explicit outer timeout. Segment matrices derive their
 timeout from the exact segment estimated budget plus 900 seconds of bounded
 setup/cleanup overhead and reject any value reaching GitHub's six-hour ceiling.

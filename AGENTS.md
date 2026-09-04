@@ -152,8 +152,11 @@ selected aggregate. These tiers never authorize device work.
 Repository CI executes candidate Quick and Standard-delta jobs only for pull
 requests, retains the same matrix as post-merge `main` readback, and cancels
 superseded runs within the same pull request without cancelling `main`
-readback. The required Quick jobs own the shared Quick coverage;
-`standard-windows` runs only `Test-WorkUnitAutomation.ps1`.
+readback. Cancellation-sensitive jobs and failure-evidence steps use
+`!cancelled()` so ordinary failures still reach their evidence/reduction path
+while a cancelled run cannot retain or launch that work. The required Quick
+jobs own the shared Quick coverage; `standard-windows` runs only
+`Test-WorkUnitAutomation.ps1`.
 Use focused checks on dirty source, then freeze and commit the candidate before
 one risk-selected handoff aggregate. Do not require matching dirty and clean
 aggregate receipts; a dirty aggregate is explicit diagnostic evidence.
@@ -515,7 +518,10 @@ transaction.
   lock/registry defect may be repaired only through
   `ReprepareRetiredDevelopmentEnvelope`; it preserves every old evidence byte,
   produces a fresh preparation, and leaves the distinct replacement absent for
-  ordinary admission.
+  ordinary admission. Its repository-map path is the exact safe project-relative
+  path authenticated by the original preparation and predecessor admission, not
+  a fixed root filename; recovery and later admission must bind that same path
+  and SHA-256.
   The resulting proposal still follows ordinary Ready/Inspect/Claim. An
   admitted active unit must use `FreezeCandidate` before BeginValidation;
   historical units without the admission marker retain their existing route.

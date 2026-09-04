@@ -16,6 +16,9 @@ composition, repository map, state, and event ledger. Admission binds the
 prepared project and feature lock as immutable preimages: it never accepts a
 projection of either document and may not rewrite project, feature, root,
 effect, permission, build, or device authority.
+Its repository-map path and raw SHA-256 must equal the selected ordinary
+preparation or recovered-repreparation intent preimage, preventing a
+self-consistent alternate map from replacing the prepared authority.
 For the prepared source composition, `preparation.source_composition_sha256`
 and `expected.source_composition_sha256` are raw-file SHA-256 bindings to the
 exact live workspace bytes. The preparation receipt and intent artifact retain
