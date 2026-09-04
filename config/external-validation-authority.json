@@ -185,6 +185,7 @@
         "scripts/Invoke-WorkUnitAutomation.ps1",
         "scripts/New-AdmissionCompletionTimestampRecovery.ps1",
         "scripts/Test-AdmissionCompletionTimestampRecovery.ps1",
+        "scripts/Test-AutomationReceiptV2Compatibility.ps1",
         "scripts/Test-BlockedSupersessionTerminalValidation.ps1",
         "scripts/Test-DevelopmentEnvelopeHistoricalSupersession.ps1",
         "scripts/Test-DevelopmentEnvelopePreparation.ps1",
@@ -297,6 +298,13 @@
           "sha256": "5debf5a2a1ae442cdb43beb2caa59137513758a2e44158f2bfd9298558a44525"
         },
         {
+          "path": "scripts/Test-AutomationReceiptV2Compatibility.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 26492,
+          "sha256": "314a963a4d49b296f67b9e5766b3c650d9b62780294eed349880464e1a6937a0"
+        },
+        {
           "path": "scripts/Test-BlockedSupersessionTerminalValidation.ps1",
           "state": "present",
           "mode": "100644",
@@ -328,8 +336,8 @@
           "path": "scripts/Test-HistoricalUnitCompatibilityProjection.ps1",
           "state": "present",
           "mode": "100644",
-          "size_bytes": 38094,
-          "sha256": "0d78f5edfd5bc144f8a519813f3c8280c6ec2569d9223d0e0ff282dc1451c06e"
+          "size_bytes": 38467,
+          "sha256": "bb81b106d4b537a03cbc7a86c39129c6507ea6f04bbc233da522b648353b6f8c"
         },
         {
           "path": "scripts/Test-WorkUnitAutomation.ps1",
