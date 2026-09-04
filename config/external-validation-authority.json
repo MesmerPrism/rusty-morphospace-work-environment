@@ -168,6 +168,215 @@
       "status": "approved"
     },
     {
+      "approval_id": "admission-chronology-historical-preparation-20260904",
+      "required_ancestor": "63c3eda9be1bc7dc7a0bb75d6429f5d67daff926",
+      "changed_paths": [
+        "AGENTS.md",
+        "README.md",
+        "docs/ADMISSION_COMPLETION_TIMESTAMP_RECOVERY.md",
+        "docs/DEVELOPMENT_ENVELOPE_PREPARATION.md",
+        "manifests/affected-validation-registry.json",
+        "schemas/admission-completion-timestamp-recovery-result-v1.schema.json",
+        "schemas/admission-completion-timestamp-recovery-v1.schema.json",
+        "schemas/work-unit-automation-receipt-v2.schema.json",
+        "scripts/AdmissionCompletionTimestampRecovery.psm1",
+        "scripts/DevelopmentEnvelopePreparation.psm1",
+        "scripts/DevelopmentUnitAdmission.psm1",
+        "scripts/Invoke-WorkUnitAutomation.ps1",
+        "scripts/New-AdmissionCompletionTimestampRecovery.ps1",
+        "scripts/Test-AdmissionCompletionTimestampRecovery.ps1",
+        "scripts/Test-BlockedSupersessionTerminalValidation.ps1",
+        "scripts/Test-DevelopmentEnvelopeHistoricalSupersession.ps1",
+        "scripts/Test-DevelopmentEnvelopePreparation.ps1",
+        "scripts/Test-DevelopmentUnitAdmission.ps1",
+        "scripts/Test-HistoricalUnitCompatibilityProjection.ps1",
+        "scripts/Test-WorkUnitAutomation.ps1",
+        "scripts/Test-WorkflowContracts.ps1",
+        "skills/rust-work-graph/SKILL.md",
+        "skills/rusty-morphospace/SKILL.md",
+        "skills/rusty-morphospace/references/project-workflow.md",
+        "skills/system-engineering/SKILL.md"
+      ],
+      "artifacts": [
+        {
+          "path": "AGENTS.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 51511,
+          "sha256": "7d37d38aa21f2581aded76eeaa067edeb8f66a6f82c01fd34fb6e6bb3a3c63f0"
+        },
+        {
+          "path": "README.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 45444,
+          "sha256": "c3fe9c670fb2a688e6e62b5a770c32934957475ee14f61f9e41746c52c682b3f"
+        },
+        {
+          "path": "docs/ADMISSION_COMPLETION_TIMESTAMP_RECOVERY.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 3683,
+          "sha256": "c5034645d0092cf9024d0d97a4f7c690f6ab8c6091e15c747fba76135419ca72"
+        },
+        {
+          "path": "docs/DEVELOPMENT_ENVELOPE_PREPARATION.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 8737,
+          "sha256": "abbb2de1219af311465dd00194ab9bcebb9114e3c2d0446bf22ed4f4b502d982"
+        },
+        {
+          "path": "manifests/affected-validation-registry.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 66445,
+          "sha256": "d534e55fb4575a49bcbfbb9529380912c9b151138b73d4247007dd729e90ccee"
+        },
+        {
+          "path": "schemas/admission-completion-timestamp-recovery-result-v1.schema.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 2414,
+          "sha256": "284bfad1e53d9b34e31cec4b5e433290c21550744ef2beff434304f177537c50"
+        },
+        {
+          "path": "schemas/admission-completion-timestamp-recovery-v1.schema.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 5739,
+          "sha256": "246205e8e5022f784e83db51d4f745e2fcd4e28a6f6d0d50e78c2604e8a9da8b"
+        },
+        {
+          "path": "schemas/work-unit-automation-receipt-v2.schema.json",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 7823,
+          "sha256": "9b43d669e460caed9dcbbe3e9ad33fac2440f6be3b0d7499b9258e4716d5d76e"
+        },
+        {
+          "path": "scripts/AdmissionCompletionTimestampRecovery.psm1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 41864,
+          "sha256": "8cd62338b3da7b3dca2d41f9b61764a75650fad3a1db30f826cf9aa6ba8052a8"
+        },
+        {
+          "path": "scripts/DevelopmentEnvelopePreparation.psm1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 39953,
+          "sha256": "d5c6325fec60d313654f0abdb26f0ed2117e2dd47fd106c4302675354d3aa17d"
+        },
+        {
+          "path": "scripts/DevelopmentUnitAdmission.psm1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 25234,
+          "sha256": "21d0fc0f401e921594c4e4ccbb198a27843b80fbb6fd8226caad60d931504089"
+        },
+        {
+          "path": "scripts/Invoke-WorkUnitAutomation.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 24461,
+          "sha256": "9a7664e8c7de378f6c30e34e4733f1fef4053926fa61b3a52bd28e518b3314b1"
+        },
+        {
+          "path": "scripts/New-AdmissionCompletionTimestampRecovery.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 1448,
+          "sha256": "cad63e95baa388643061b1642aa957f621e94ba4b3a1c275762f666b5d0c9c5c"
+        },
+        {
+          "path": "scripts/Test-AdmissionCompletionTimestampRecovery.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 17529,
+          "sha256": "5debf5a2a1ae442cdb43beb2caa59137513758a2e44158f2bfd9298558a44525"
+        },
+        {
+          "path": "scripts/Test-BlockedSupersessionTerminalValidation.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 90990,
+          "sha256": "1d96230851d3c126fb387caefd81f2f8e96a4e96e670779f4e6e8de3b5654af5"
+        },
+        {
+          "path": "scripts/Test-DevelopmentEnvelopeHistoricalSupersession.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 8690,
+          "sha256": "26bf4e024964b470eb082ffd3a1bb4e1dda0cf27611cb66783ac316bdb9941c5"
+        },
+        {
+          "path": "scripts/Test-DevelopmentEnvelopePreparation.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 25332,
+          "sha256": "2538b2e418fbe851ee808a1042c8491b66a4dc49beb3141ebf9e7977eb9a876a"
+        },
+        {
+          "path": "scripts/Test-DevelopmentUnitAdmission.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 173933,
+          "sha256": "79dbac2ac89b0a81f660266a5f2ba0ec56e2761d0bbf45e0343a2a0a176cf802"
+        },
+        {
+          "path": "scripts/Test-HistoricalUnitCompatibilityProjection.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 38094,
+          "sha256": "0d78f5edfd5bc144f8a519813f3c8280c6ec2569d9223d0e0ff282dc1451c06e"
+        },
+        {
+          "path": "scripts/Test-WorkUnitAutomation.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 280449,
+          "sha256": "15104d67c86ef2f6c0ae02c570b748bc1a01d282aff35f44ac06aa14246cc17f"
+        },
+        {
+          "path": "scripts/Test-WorkflowContracts.ps1",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 244091,
+          "sha256": "147e89d140798f84263f1659f34a473f7d4e68a9c49f8bbc1634f57fbb5a1692"
+        },
+        {
+          "path": "skills/rust-work-graph/SKILL.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 25052,
+          "sha256": "fc12827ab4461ae5e604e528cf30f505a2967677eb26019f556f977bb79aa5a0"
+        },
+        {
+          "path": "skills/rusty-morphospace/SKILL.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 9172,
+          "sha256": "da7c248d8f434192fe96c67691b9023920212b77f743c43caefdf83ed024c046"
+        },
+        {
+          "path": "skills/rusty-morphospace/references/project-workflow.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 19376,
+          "sha256": "848e5966653f52c45916b6a42c176b8d4640a0d4aa80999970217dc68b7f36d9"
+        },
+        {
+          "path": "skills/system-engineering/SKILL.md",
+          "state": "present",
+          "mode": "100644",
+          "size_bytes": 36485,
+          "sha256": "5871753925b106074572f153655bed27b25f878161d49504ba2132594ffe8bb6"
+        }
+      ],
+      "status": "approved"
+    },
+    {
       "approval_id": "blocked-supersession-terminal-validation-20260817",
       "required_ancestor": "5864142caa8e938d485825d806822d5afd07437f",
       "changed_paths": [
