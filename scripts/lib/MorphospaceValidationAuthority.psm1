@@ -2,6 +2,7 @@ Microsoft.PowerShell.Core\Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
 Microsoft.PowerShell.Core\Import-Module ([IO.Path]::Combine($PSScriptRoot, 'MorphospaceProtocolCommon.psm1')) -Force
+Microsoft.PowerShell.Core\Import-Module ([IO.Path]::Combine($PSScriptRoot, 'MorphospaceAuthorityProcess.psm1')) -Force
 Microsoft.PowerShell.Core\Import-Module ([IO.Path]::Combine($PSScriptRoot, 'MorphospaceOwnership.psm1')) -Force
 
 function Read-MorphospaceAuthorityJson {
@@ -39,16 +40,11 @@ function Invoke-MorphospacePinnedValidator {
     $host = [IO.Path]::GetFullPath([string]$hostCommand.Source)
     $arguments = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $ValidatorPath, '-WorkspaceRoot', $Workspace, '-QuestRoot', $Quest, '-RoadmapPath', $Roadmap, '-UnitId', $Unit, '-OutPath', $OwnerOut)
     if ($ProbeOnly) { $arguments += '-ProbeOnly' }
-    $process = Start-Process -FilePath $host -ArgumentList $arguments -PassThru -WindowStyle Hidden -RedirectStandardOutput $StdoutPath -RedirectStandardError $StderrPath
-    try {
-        if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
-            try { $process.Kill() } catch {}
-            throw "Pinned validator exceeded its registry timeout of $TimeoutSeconds seconds."
-        }
-        $stdout = if (Test-Path -LiteralPath $StdoutPath -PathType Leaf) { [IO.File]::ReadAllText($StdoutPath, [Text.UTF8Encoding]::new($false)) } else { '' }
-        $stderr = if (Test-Path -LiteralPath $StderrPath -PathType Leaf) { [IO.File]::ReadAllText($StderrPath, [Text.UTF8Encoding]::new($false)) } else { '' }
-        return [pscustomobject][ordered]@{ exit_code = [int]$process.ExitCode; stdout = $stdout; stderr = $stderr }
-    } finally { $process.Dispose() }
+    try { $capture = Invoke-MorphospaceCapturedProcess -FilePath $host -Arguments $arguments -StdoutPath $StdoutPath -StderrPath $StderrPath -TimeoutMilliseconds ($TimeoutSeconds * 1000) }
+    catch [TimeoutException] { throw "Pinned validator exceeded its registry timeout of $TimeoutSeconds seconds." }
+    $stdout = if (Test-Path -LiteralPath $StdoutPath -PathType Leaf) { [IO.File]::ReadAllText($StdoutPath, [Text.UTF8Encoding]::new($false)) } else { '' }
+    $stderr = if (Test-Path -LiteralPath $StderrPath -PathType Leaf) { [IO.File]::ReadAllText($StderrPath, [Text.UTF8Encoding]::new($false)) } else { '' }
+    return [pscustomobject][ordered]@{ exit_code = [int]$capture.exit_code; stdout = $stdout; stderr = $stderr }
 }
 
 function Resolve-MorphospaceAuthorityPath {
@@ -145,6 +141,7 @@ function Test-MorphospaceValidatorTrustAnchorMigration {
         'scripts/Test-ValidationExecutionAuthority.ps1',
         'scripts/Test-TransitionLedger.ps1',
         'scripts/WorkUnitAutomation.psm1',
+        'scripts/lib/MorphospaceAuthorityProcess.psm1',
         'scripts/lib/MorphospaceAuthorityReadiness.psm1',
         'scripts/lib/MorphospaceContentObservation.psm1',
         'scripts/lib/MorphospaceActiveUnitContractReviewCompatibility.psm1',

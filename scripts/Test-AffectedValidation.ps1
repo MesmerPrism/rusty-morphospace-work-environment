@@ -971,6 +971,7 @@ function Get-AffectedProtocolCommonOwnerChecks([string]$Root, [object]$Registry)
     }
     $ownerEntrypoints = @(Get-AffectedWorkEnvironmentOwnerEntrypoints -Root $Root -TrackedPaths $trackedPaths)
     $dynamicImports = @(
+        [pscustomobject][ordered]@{ importer='scripts/Test-AuthorityRecordReadiness.ps1'; variable='processModule'; count=1; import_path='scripts/lib/MorphospaceAuthorityProcess.psm1' },
         [pscustomobject][ordered]@{ importer='scripts/Test-TransitionLedger.ps1'; variable='ModulePath'; count=2; import_path='scripts/lib/MorphospaceTransitionLedger.psm1' },
         [pscustomobject][ordered]@{ importer='scripts/Test-WorkflowContracts.ps1'; variable='focusedRecoveryPath'; count=1; import_paths=@('scripts/Test-HistoricalUnitAdoptionReconstruction.ps1','scripts/Test-PlanningWorkspaceProjection.ps1','scripts/Test-PublishedPlanningAuthorityAdoption.ps1') },
         [pscustomobject][ordered]@{ importer='scripts/Test-WorkEnvironment.ps1'; variable='quickTestPath'; count=3; import_paths=$ownerEntrypoints },
@@ -3618,6 +3619,7 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     # Every path from the combined raw-CAS and historical-debt candidate has a
     # single exact owner class.  Test each path independently so command-path
     # selection cannot conceal an unmapped or ambiguous shared-module route.
+    $validationAuthorityClosureChecks=@('authority-record-readiness','authority-runner-fast','authority-runner-handoff','transition-ledger','trust-migration-authority','validation-authority-launcher','validation-execution-authority','work-unit-automation','public-boundary','workflow-contracts','automation-receipt-v2-compatibility','normal-validation-selector','validating-candidate-rematerialization')
     $proportionalMappings = @(
         [pscustomobject]@{ path='schemas/historical-validation-debt-phase-receipt-v1.schema.json'; checks=@('historical-validation-debt-baseline','historical-validation-debt-phase-runner','work-unit-automation') },
         [pscustomobject]@{ path='scripts/Test-BlockedSupersessionTerminalValidation.ps1'; checks=@('blocked-supersession-terminal-validation') },
@@ -3650,7 +3652,13 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
         [pscustomobject]@{ path='scripts/lib/MorphospaceOwnership.psm1'; checks=@('authority-record-readiness','authority-runner-fast','ownership-authority','validation-execution-authority','work-unit-automation') },
         [pscustomobject]@{ path='scripts/lib/MorphospaceProtocolCommon.psm1'; checks=$protocolCommonConsumerChecks },
         [pscustomobject]@{ path='scripts/lib/MorphospaceTransitionLedger.psm1'; checks=@('blocked-supersession-terminal-validation','correct-active-unit-contract','development-unit-admission','transition-ledger','work-unit-automation') },
-        [pscustomobject]@{ path='scripts/lib/MorphospaceValidationAuthority.psm1'; checks=@('authority-record-readiness','authority-runner-fast','authority-runner-handoff','transition-ledger','trust-migration-authority','validation-authority-launcher','validation-execution-authority','work-unit-automation') }
+        [pscustomobject]@{ path='scripts/Invoke-MorphospaceValidationAuthority.ps1'; checks=$validationAuthorityClosureChecks; exact_checks=$true },
+        [pscustomobject]@{ path='scripts/lib/MorphospaceAuthorityProcess.psm1'; checks=$validationAuthorityClosureChecks; exact_checks=$true },
+        [pscustomobject]@{ path='scripts/lib/MorphospaceAuthorityReadiness.psm1'; checks=$validationAuthorityClosureChecks; exact_checks=$true },
+        [pscustomobject]@{ path='scripts/lib/MorphospaceValidationAuthority.psm1'; checks=$validationAuthorityClosureChecks; exact_checks=$true },
+        [pscustomobject]@{ path='scripts/Test-AuthorityRecordReadiness.ps1'; checks=$validationAuthorityClosureChecks; exact_checks=$true },
+        [pscustomobject]@{ path='scripts/Test-TrustMigrationAuthority.ps1'; checks=$validationAuthorityClosureChecks; exact_checks=$true },
+        [pscustomobject]@{ path='scripts/Test-ValidationAuthorityLauncher.ps1'; checks=$validationAuthorityClosureChecks; exact_checks=$true }
     )
     foreach ($mapping in $proportionalMappings) {
         $mappingPath = Join-Path $fixture ([string]$mapping.path)
@@ -3680,6 +3688,7 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
         foreach ($reasonCode in @('ambiguous-path-mapping','unmapped-path','trust-root-path-changed')) { Assert-True (@($mappingPlan.reason_codes) -cnotcontains $reasonCode) "Proportional mapping for '$($mapping.path)' retained '$reasonCode'." }
         Assert-True (@($mappingPlan.selected_checks.check_id) -cnotcontains 'work-environment-deep') "Proportional mapping for '$($mapping.path)' selected the cumulative Deep aggregate."
         foreach ($checkId in @($mapping.checks)) { Assert-True (@($mappingPlan.selected_checks.check_id) -ccontains [string]$checkId) "Proportional mapping for '$($mapping.path)' omitted '$checkId'." }
+        if($null-ne$mapping.PSObject.Properties['exact_checks']-and[bool]$mapping.exact_checks){$actualChecks=@($mappingPlan.selected_checks.check_id|Sort-Object);$expectedChecks=@($mapping.checks|Sort-Object);Assert-True (($actualChecks-join'|')-ceq($expectedChecks-join'|')) "Proportional mapping for '$($mapping.path)' expanded beyond the exact validation-authority closure."}
         $proportionalMappingHead = $nextMappingHead
     }
     Write-Host "Trust proportional-mapping checks passed in $([long]$trustSegmentClock.Elapsed.TotalMilliseconds)ms."

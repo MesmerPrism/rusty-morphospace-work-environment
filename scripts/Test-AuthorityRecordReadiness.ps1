@@ -6,15 +6,61 @@ $script:OwnershipModule=Get-Module MorphospaceOwnership
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceAuthorityReadiness.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceValidationAuthority.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceAuthorityProcess.psm1') -Force
 
 function Assert-Readiness {param([bool]$Condition,[string]$Message)if(-not$Condition){throw "Authority-readiness self-test failed: $Message"}}
 function Assert-Rejected {param([scriptblock]$Action,[string]$Message)$rejected=$false;try{&$Action}catch{$rejected=$true};Assert-Readiness $rejected $Message}
 function Write-TestText {param([string]$Path,[string]$Text)$parent=[IO.Path]::GetDirectoryName($Path);if(-not[IO.Directory]::Exists($parent)){[IO.Directory]::CreateDirectory($parent)|Out-Null};[IO.File]::WriteAllText($Path,$Text,[Text.UTF8Encoding]::new($false))}
 function Get-TestSha {param([string]$Text)$sha=[Security.Cryptography.SHA256]::Create();try{return ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($Text)))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}}
+function Get-TestEncodedCommand {param([string]$Text)return [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($Text))}
+function Assert-TestCaptureUnlocked {
+    param([string[]]$Paths)
+    foreach($path in $Paths){$stream=[IO.FileStream]::new($path,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::None);$stream.Dispose()}
+}
 
 $temp=Join-Path ([IO.Path]::GetTempPath()) ('morphospace-readiness-test-'+[guid]::NewGuid().ToString('N'))
 try{
     [IO.Directory]::CreateDirectory($temp)|Out-Null
+
+    $hostCommand=Get-Command pwsh -CommandType Application -ErrorAction Stop|Where-Object{[IO.File]::Exists([string]$_.Source)}|Sort-Object -Property @{Expression={[version]$_.Version};Descending=$true},@{Expression={[string]$_.Source};Descending=$false}|Select-Object -First 1
+    Assert-Readiness ($null-ne$hostCommand) 'PowerShell 7 capture-test host is unavailable'
+    $hostPath=[IO.Path]::GetFullPath([string]$hostCommand.Source)
+
+    $successRoot=Join-Path $temp 'capture-success';[IO.Directory]::CreateDirectory($successRoot)|Out-Null;$successOut=Join-Path $successRoot 'stdout.bin';$successErr=Join-Path $successRoot 'stderr.bin'
+    $success=Invoke-MorphospaceCapturedProcess -FilePath $hostPath -Arguments @('-NoProfile','-NonInteractive','-EncodedCommand',(Get-TestEncodedCommand "[Console]::Out.Write('capture-out');[Console]::Error.Write('capture-err')")) -StdoutPath $successOut -StderrPath $successErr -TimeoutMilliseconds 30000
+    Assert-Readiness ([int]$success.exit_code-eq0-and[IO.File]::ReadAllText($successOut)-ceq'capture-out'-and[IO.File]::ReadAllText($successErr)-ceq'capture-err') 'bounded process capture lost successful stdout/stderr'
+    Assert-TestCaptureUnlocked @($successOut,$successErr);[IO.Directory]::Delete($successRoot,$true);Assert-Readiness (-not[IO.Directory]::Exists($successRoot)) 'successful process capture was not immediately cleanable'
+
+    $nonzeroRoot=Join-Path $temp 'capture-nonzero';[IO.Directory]::CreateDirectory($nonzeroRoot)|Out-Null;$nonzeroOut=Join-Path $nonzeroRoot 'stdout.bin';$nonzeroErr=Join-Path $nonzeroRoot 'stderr.bin'
+    $nonzero=Invoke-MorphospaceCapturedProcess -FilePath $hostPath -Arguments @('-NoProfile','-NonInteractive','-EncodedCommand',(Get-TestEncodedCommand "[Console]::Out.Write('nonzero-out');[Console]::Error.Write('nonzero-err');exit 23")) -StdoutPath $nonzeroOut -StderrPath $nonzeroErr -TimeoutMilliseconds 30000
+    Assert-Readiness ([int]$nonzero.exit_code-eq23-and[IO.File]::ReadAllText($nonzeroOut)-ceq'nonzero-out'-and[IO.File]::ReadAllText($nonzeroErr)-ceq'nonzero-err') 'bounded process capture lost nonzero-exit output'
+    Assert-TestCaptureUnlocked @($nonzeroOut,$nonzeroErr);[IO.Directory]::Delete($nonzeroRoot,$true)
+
+    $drainRoot=Join-Path $temp 'capture-drain';[IO.Directory]::CreateDirectory($drainRoot)|Out-Null;$drainOut=Join-Path $drainRoot 'stdout.bin';$drainErr=Join-Path $drainRoot 'stderr.bin'
+    $drain=Invoke-MorphospaceCapturedProcess -FilePath $hostPath -Arguments @('-NoProfile','-NonInteractive','-EncodedCommand',(Get-TestEncodedCommand "[Console]::Out.Write(('o'*262144));[Console]::Error.Write(('e'*262144))")) -StdoutPath $drainOut -StderrPath $drainErr -TimeoutMilliseconds 30000
+    Assert-Readiness ([int]$drain.exit_code-eq0-and([IO.FileInfo]$drainOut).Length-eq262144-and([IO.FileInfo]$drainErr).Length-eq262144) 'bounded process capture returned before both streams drained'
+    Assert-TestCaptureUnlocked @($drainOut,$drainErr);[IO.Directory]::Delete($drainRoot,$true)
+
+    $treeChildEncoded=Get-TestEncodedCommand "[Console]::Error.Write('tree-child-ready');[Console]::Error.Flush();[Threading.ManualResetEventSlim]::new(`$false).Wait()"
+    $treeBody=@"
+`$child=Start-Process -FilePath ([Environment]::ProcessPath) -ArgumentList @('-NoProfile','-NonInteractive','-EncodedCommand','$treeChildEncoded') -NoNewWindow -PassThru
+[Console]::Out.WriteLine(`$child.Id);[Console]::Out.Flush();[Threading.ManualResetEventSlim]::new(`$false).Wait()
+"@
+    $timeoutRoot=Join-Path $temp 'capture-timeout';[IO.Directory]::CreateDirectory($timeoutRoot)|Out-Null;$timeoutOut=Join-Path $timeoutRoot 'stdout.bin';$timeoutErr=Join-Path $timeoutRoot 'stderr.bin';$timedOut=$false
+    try{Invoke-MorphospaceCapturedProcess -FilePath $hostPath -Arguments @('-NoProfile','-NonInteractive','-EncodedCommand',(Get-TestEncodedCommand $treeBody)) -StdoutPath $timeoutOut -StderrPath $timeoutErr -TimeoutMilliseconds 3000|Out-Null}catch [TimeoutException]{$timedOut=$true}
+    $treePidText=[IO.File]::ReadAllText($timeoutOut).Trim();Assert-Readiness ($timedOut-and$treePidText-match'^[0-9]+$') 'bounded process capture did not report the expected tree timeout'
+    $treeAlive=$false;$treeProcess=$null;try{$treeProcess=[Diagnostics.Process]::GetProcessById([int]$treePidText);$treeAlive=-not$treeProcess.HasExited}catch{}finally{if($null-ne$treeProcess){$treeProcess.Dispose()}}
+    Assert-Readiness (-not$treeAlive) 'timed-out process descendant survived tree termination and stream drain'
+    Assert-Readiness ([IO.File]::ReadAllText($timeoutErr)-ceq'tree-child-ready') 'timed-out descendant stderr did not drain before return'
+    Assert-TestCaptureUnlocked @($timeoutOut,$timeoutErr);[IO.Directory]::Delete($timeoutRoot,$true);Assert-Readiness (-not[IO.Directory]::Exists($timeoutRoot)) 'timed-out process capture was not immediately cleanable'
+
+    $stressText="[Console]::Out.Write('stress-out');[Console]::Error.Write('stress-err')";$stressEncoded=Get-TestEncodedCommand $stressText;$processModule=(Resolve-Path (Join-Path $PSScriptRoot 'lib\MorphospaceAuthorityProcess.psm1')).Path
+    $stressCount=24;if(-not[string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable('MORPHOSPACE_AUTHORITY_CAPTURE_STRESS_COUNT'))){$stressCount=[int][Environment]::GetEnvironmentVariable('MORPHOSPACE_AUTHORITY_CAPTURE_STRESS_COUNT')};Assert-Readiness ($stressCount-ge1-and$stressCount-le256) 'capture stress count is outside 1..256'
+    $stressThrottle=[Math]::Min(8,$stressCount);$stressResults=1..$stressCount|ForEach-Object -Parallel {
+        Import-Module $using:processModule -Force;$captureRoot=Join-Path $using:temp ('capture-stress-'+[guid]::NewGuid().ToString('N'));[IO.Directory]::CreateDirectory($captureRoot)|Out-Null;$stdout=Join-Path $captureRoot 'stdout.bin';$stderr=Join-Path $captureRoot 'stderr.bin'
+        try{$capture=Invoke-MorphospaceCapturedProcess -FilePath $using:hostPath -Arguments @('-NoProfile','-NonInteractive','-EncodedCommand',$using:stressEncoded) -StdoutPath $stdout -StderrPath $stderr -TimeoutMilliseconds 30000;$ok=([int]$capture.exit_code-eq0-and[IO.File]::ReadAllText($stdout)-ceq'stress-out'-and[IO.File]::ReadAllText($stderr)-ceq'stress-err');foreach($path in @($stdout,$stderr)){$stream=[IO.FileStream]::new($path,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::None);$stream.Dispose()};[IO.Directory]::Delete($captureRoot,$true);[pscustomobject]@{ok=$ok;message=''}}catch{[pscustomobject]@{ok=$false;message=[string]$_.Exception.Message}}
+    } -ThrottleLimit $stressThrottle
+    $stressFailures=@($stressResults|Where-Object{-not$_.ok});Assert-Readiness ($stressFailures.Count-eq0) "bounded process capture stress failed: $([string]($stressFailures.message|Select-Object -First 1))"
 
     $hostProbe=Invoke-MorphospaceAuthorityHostProbe -RequiredCommands @('git.exe')
     Test-MorphospaceAuthorityHostCapabilitiesV1 $hostProbe @('git.exe')|Out-Null
@@ -71,13 +117,17 @@ try{
     $forgedAdmission=($probeDocument|ConvertTo-Json -Depth 20|ConvertFrom-Json);$forgedAdmission.acceptance_bindings[0].command_id='missing-command'
     Assert-Rejected {Test-MorphospaceOwnerValidatorAdmissionProbeV1 $forgedAdmission $validator $probeUnit|Out-Null} 'admission probe accepted an unbound command'
 
-    $context=New-MorphospaceAuthorityReportContext 'readiness-test' 'unit-test' 'attempt-test' preflight
-    try{throw 'nested readiness failure'}catch{$report=Write-MorphospaceAuthorityFailureReport $context 'sealed-validator-admission' $_ ([DateTime]::UtcNow);Write-MorphospaceAuthorityStageResult $context 'sealed-validator-admission' fail ([DateTime]::UtcNow) -FailureReportPath $context.failure_report|Out-Null}
-    Assert-Readiness ([IO.File]::Exists($context.failure_report)-and[IO.File]::Exists($context.stage_result)) 'typed failure/stage reports were not retained'
-    Assert-Rejected {Write-MorphospaceAuthorityStageResult $context 'sealed-validator-admission' fail ([DateTime]::UtcNow)|Out-Null} 'stage result overwrite was accepted'
+    $context=New-MorphospaceAuthorityReportContext 'readiness-test' 'unit-test' 'attempt-test' preflight;$contextRoot=[string]$context.root
+    try{
+        try{throw 'nested readiness failure'}catch{$report=Write-MorphospaceAuthorityFailureReport $context 'sealed-validator-admission' $_ ([DateTime]::UtcNow);Write-MorphospaceAuthorityStageResult $context 'sealed-validator-admission' fail ([DateTime]::UtcNow) -FailureReportPath $context.failure_report|Out-Null}
+        Assert-Readiness ([IO.File]::Exists($context.failure_report)-and[IO.File]::Exists($context.stage_result)) 'typed failure/stage reports were not retained'
+        Assert-Rejected {Write-MorphospaceAuthorityStageResult $context 'sealed-validator-admission' fail ([DateTime]::UtcNow)|Out-Null} 'stage result overwrite was accepted'
+    }finally{if([IO.Directory]::Exists($contextRoot)){[IO.Directory]::Delete($contextRoot,$true)}}
+    Assert-Readiness (-not[IO.Directory]::Exists($contextRoot)) 'readiness report-context fixture left its owned run directory behind'
 
-    $authoritySources=@('scripts/Invoke-MorphospaceValidationAuthority.ps1','scripts/WorkUnitAutomation.psm1','scripts/lib/MorphospaceOwnership.psm1','scripts/lib/MorphospaceValidationAuthority.psm1','scripts/lib/MorphospaceAuthorityReadiness.psm1')
+    $authoritySources=@('scripts/Invoke-MorphospaceValidationAuthority.ps1','scripts/WorkUnitAutomation.psm1','scripts/lib/MorphospaceAuthorityProcess.psm1','scripts/lib/MorphospaceOwnership.psm1','scripts/lib/MorphospaceValidationAuthority.psm1','scripts/lib/MorphospaceAuthorityReadiness.psm1')
     foreach($relative in $authoritySources){$path=Join-Path $root $relative;$tokens=$null;$errors=$null;$ast=[Management.Automation.Language.Parser]::ParseFile($path,[ref]$tokens,[ref]$errors);if($errors){throw "Authority source does not parse: $relative"};$ambient=@($ast.FindAll({param($node)$node-is[Management.Automation.Language.CommandAst]-and[string]$node.GetCommandName()-ceq'Get-FileHash'},$true));Assert-Readiness ($ambient.Count-eq0) "authority source uses ambient Get-FileHash: $relative"}
+    foreach($relative in @('scripts/Invoke-MorphospaceValidationAuthority.ps1','scripts/lib/MorphospaceValidationAuthority.psm1','scripts/lib/MorphospaceAuthorityReadiness.psm1')){$text=Get-Content -LiteralPath (Join-Path $root $relative) -Raw;Assert-Readiness (-not($text.Contains('Start-Process')-and$text.Contains('RedirectStandardOutput'))) "timed authority launcher still delegates capture-file lifetime to Start-Process: $relative"}
     $runnerText=Get-Content -LiteralPath (Join-Path $root 'scripts\Invoke-MorphospaceValidationAuthority.ps1') -Raw
     Assert-Readiness ($runnerText.Contains('function Invoke-MorphospaceIsolatedAuthoritySelfTest')-and@([regex]::Matches($runnerText,'Invoke-MorphospaceIsolatedAuthoritySelfTest -Migration \$migration')).Count-eq3) 'record self-tests are not isolated child processes'
     Assert-Readiness ($runnerText.Contains('-ProbeOnly')-and$runnerText.Contains('Test-MorphospaceOwnerValidatorAdmissionProbeV1')) 'preflight does not use the bounded typed validator admission probe'
