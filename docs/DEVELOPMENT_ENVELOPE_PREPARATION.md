@@ -44,6 +44,16 @@ source, Git remote, build, APK, or device mutation is performed. A preparation
 receipt explicitly proves neither schema-revision approval nor any later
 lifecycle authority.
 
+An idle project may retain immutable `active` or `validating` documents from
+earlier superseded units. Preparation accepts those documents only when the
+shared committed-transition verifier authenticates every exact v2
+old-to-replacement supersession intent, completion, event, artifact, and bound
+old-unit hash, and the resulting chain ends at one exact committed acceptance
+transition. The live state must still be idle. Proposed, ready, blocked,
+current, next-ready, orphaned, ambiguous, rewritten, or transaction-damaged
+units remain rejected; this compatibility rule never rewrites historical
+bytes or treats status text alone as acceptance evidence.
+
 Preparation uses its own v1 intent, completion, receipt, and event. Each binds
 the complete multi-document CAS set. A matching interrupted transaction may
 resume; a changed input, preimage, artifact, event prefix, or target rejects.

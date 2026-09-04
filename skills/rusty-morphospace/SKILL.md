@@ -56,7 +56,7 @@ two-step trust-root procedure to
 `docs/EXTERNAL_VALIDATION_AUTHORITY.md`. Static base-owned admission never
 substitutes for dynamic validation or publication authority.
 Only its exact protected-without-base-approval result may route to the pinned
-external-owner signed-comment gate, which can issue only the bound assessment.
+external-owner signed-comment gate, which can issue only the bound assessment. Route ordinary-admission chronology repair only to `RecoverAdmissionCompletionTimestamp`: preserve all malformed admission bytes, require exact raw/canonical live bindings, and append only the typed correction plus `last_event_id`; any second defect stays blocked and no authority is added.
 ## Authority Limits
 
 Inspection is nonterminal: continue authorized read-only or bounded recoverable work; own locally launched children to terminal, and route hosted observation to the single canonical owner binding in `docs/AUTONOMOUS_ITERATION.md`. This grants no Git, settings, device, private-data, or publication authority.

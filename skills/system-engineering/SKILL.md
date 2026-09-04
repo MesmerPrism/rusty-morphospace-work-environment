@@ -97,10 +97,19 @@ originating app remains evidence, not module authority.
 
 Use one fail-closed owner for unit state transitions. Inspection and planning
 are non-mutating; execution is explicit. Derive validation and graph scope
-from the unit, keep acceptance separate from a pass receipt, preserve blockers
-through resume/recovery, and report dirty, detached, ahead/behind, or divergent
-Git states without rewriting them. Push preparation records exact source-first,
-planning-last revisions but does not commit, push, or force-push.
+from the unit, keep acceptance separate from a pass receipt, and preserve
+blockers through resume/recovery. Treat idle-envelope preparation over retained
+active/validating history as valid only when shared transition-ledger
+verification closes every exact supersession edge into an authenticated
+accepted endpoint. A status label alone is never historical closure. Preserve
+the historical files byte-exact. Report dirty, detached, ahead/behind, or
+divergent Git states without rewriting them. Push preparation records exact
+source-first, planning-last revisions but does not commit, push, or force-push.
+Treat a completion timestamp before its immutable future-dated admission intent
+as a narrowly recoverable owner-ledger defect only when every other admission
+field, artifact, projection, raw byte binding, and live preimage verifies.
+Preserve the malformed completion and append a typed last-event-only correction;
+never weaken the generic ledger chronology rule or infer lifecycle authority.
 Select the unit's guard authority separately from validation depth: `fast` for
 bounded product iteration across declared repositories and device stages,
 `labs` for composition and product-authority work, and `locked` for releases or

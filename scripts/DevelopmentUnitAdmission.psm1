@@ -92,7 +92,8 @@ function Complete-MorphospaceDevelopmentUnitAdmission {
         if(-not$present){Invoke-AdmissionLedger { param($Path,$Event) Add-MorphospaceLedgerEvent $Path $Event } @($eventsPath,$intent.event)}
         Invoke-AdmissionLedger { param($Path,$Intent) [void](Assert-MorphospaceLedgerEventPlacement $Path $Intent) } @($eventsPath,$intent)
         if($FaultAfter-eq'after-event'){throw 'Injected admission interruption after event append.'}
-        $completion=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.transition_ledger_completion.v1';transaction_id=$transactionId;completed_at=[DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffffffZ');intent=[pscustomobject]@{role='transition-ledger-intent';path=$binding.intent_relative;schema=$intent.schema;sha256=(Get-MorphospaceFileSha256 $binding.intent_absolute)};state_sha256=[string]$intent.target.state.sha256;unit_sha256=[string]$intent.target.unit.sha256;event_id=[string]$intent.event.event_id;status='committed'}
+        $intentAt=Test-MorphospaceStrictUtcTimestamp ([string]$intent.created_at);$completedAt=[DateTimeOffset]::UtcNow;if($completedAt-lt$intentAt){$completedAt=$intentAt}
+        $completion=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.transition_ledger_completion.v1';transaction_id=$transactionId;completed_at=$completedAt.ToString('yyyy-MM-ddTHH:mm:ss.fffffffZ');intent=[pscustomobject]@{role='transition-ledger-intent';path=$binding.intent_relative;schema=$intent.schema;sha256=(Get-MorphospaceFileSha256 $binding.intent_absolute)};state_sha256=[string]$intent.target.state.sha256;unit_sha256=[string]$intent.target.unit.sha256;event_id=[string]$intent.event.event_id;status='committed'}
         Write-MorphospaceManagedProtocolJsonAtomic $workspace $binding.completion_relative $completion -NoOverwrite
         Invoke-AdmissionLedger {
             param($Root,$Id,$IntentRelative,$IntentAbsolute,$Intent,$Completion)

@@ -1,0 +1,148 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/admission-completion-timestamp-recovery-v1.schema.json",
+  "title": "Exact append-only recovery for one malformed admission completion timestamp",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "recovery_id",
+    "project_id",
+    "unit_id",
+    "admission_id",
+    "fault_kind",
+    "evidence",
+    "chronology",
+    "correction_event",
+    "preservation"
+  ],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.workflow.admission_completion_timestamp_recovery.v1" },
+    "recovery_id": { "$ref": "#/$defs/id" },
+    "project_id": { "$ref": "#/$defs/id" },
+    "unit_id": { "$ref": "#/$defs/id" },
+    "admission_id": { "$ref": "#/$defs/id" },
+    "fault_kind": { "const": "admission-completion-precedes-future-intent" },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "admission_request",
+        "repreparation_receipt",
+        "preparation_receipt",
+        "source_composition",
+        "repository_map",
+        "admission_receipt",
+        "admission_intent",
+        "malformed_completion",
+        "project",
+        "feature_lock",
+        "state",
+        "unit",
+        "event_ledger",
+        "admission_event"
+      ],
+      "properties": {
+        "admission_request": { "$ref": "#/$defs/jsonBinding" },
+        "repreparation_receipt": { "$ref": "#/$defs/jsonBinding" },
+        "preparation_receipt": { "$ref": "#/$defs/jsonBinding" },
+        "source_composition": { "$ref": "#/$defs/jsonBinding" },
+        "repository_map": { "$ref": "#/$defs/jsonBinding" },
+        "admission_receipt": { "$ref": "#/$defs/jsonBinding" },
+        "admission_intent": { "$ref": "#/$defs/jsonBinding" },
+        "malformed_completion": { "$ref": "#/$defs/jsonBinding" },
+        "project": { "$ref": "#/$defs/jsonBinding" },
+        "feature_lock": { "$ref": "#/$defs/jsonBinding" },
+        "state": { "$ref": "#/$defs/jsonBinding" },
+        "unit": { "$ref": "#/$defs/jsonBinding" },
+        "event_ledger": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "raw_sha256", "length", "tail_event_id", "tail_event_sha256"],
+          "properties": {
+            "path": { "const": "iteration-events.jsonl" },
+            "raw_sha256": { "$ref": "#/$defs/hash" },
+            "length": { "type": "integer", "minimum": 1, "maximum": 67108864 },
+            "tail_event_id": { "$ref": "#/$defs/id" },
+            "tail_event_sha256": { "$ref": "#/$defs/hash" }
+          }
+        },
+        "admission_event": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["event_id", "sequence", "canonical_sha256"],
+          "properties": {
+            "event_id": { "$ref": "#/$defs/id" },
+            "sequence": { "type": "integer", "minimum": 1 },
+            "canonical_sha256": { "$ref": "#/$defs/hash" }
+          }
+        }
+      }
+    },
+    "chronology": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["intent_created_at", "malformed_completed_at", "recovery_timestamp", "disposition"],
+      "properties": {
+        "intent_created_at": { "type": "string", "format": "date-time" },
+        "malformed_completed_at": { "type": "string", "format": "date-time" },
+        "recovery_timestamp": { "type": "string", "format": "date-time" },
+        "disposition": { "const": "preserve-original-and-append-owner-correction" }
+      }
+    },
+    "correction_event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event_id", "sequence", "timestamp", "unit_id", "receipt_path"],
+      "properties": {
+        "event_id": { "type": "string", "pattern": "^admission-completion-timestamp-recovered-[0-9]{4,}$" },
+        "sequence": { "type": "integer", "minimum": 2 },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "unit_id": { "$ref": "#/$defs/id" },
+        "receipt_path": { "type": "string", "pattern": "^receipts/admission-completion-timestamp-recovered-[0-9]{4,}\\.json$" }
+      }
+    },
+    "preservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "malformed_completion_bytes_retained",
+        "admission_transaction_bytes_retained",
+        "admission_receipt_bytes_retained",
+        "unit_bytes_retained",
+        "project_and_lock_bytes_retained",
+        "state_change",
+        "authority_granted"
+      ],
+      "properties": {
+        "malformed_completion_bytes_retained": { "const": true },
+        "admission_transaction_bytes_retained": { "const": true },
+        "admission_receipt_bytes_retained": { "const": true },
+        "unit_bytes_retained": { "const": true },
+        "project_and_lock_bytes_retained": { "const": true },
+        "state_change": { "const": "last_event_id-only" },
+        "authority_granted": { "const": "none" }
+      }
+    }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" },
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$"
+    },
+    "jsonBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "raw_sha256", "canonical_sha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/path" },
+        "raw_sha256": { "$ref": "#/$defs/hash" },
+        "canonical_sha256": { "$ref": "#/$defs/hash" }
+      }
+    }
+  }
+}

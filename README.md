@@ -438,6 +438,14 @@ installs a corrected additive project/lock/state triple plus a fresh preparation
 and source lock. It reuses only the original preparation and predecessor
 admission's exact safe project-relative repository-map path and SHA-256. It does
 not create or admit the named replacement.
+If an otherwise fully committed ordinary admission has the sole historical
+defect that its completion timestamp precedes an immutable future-dated intent,
+use only `RecoverAdmissionCompletionTimestamp`. It binds the complete
+preparation/admission chain and live project, lock, state, unit, and ledger
+preimages by raw and canonical hash, preserves the malformed completion
+byte-for-byte, and appends one last-event-only correction. It grants no
+lifecycle or product authority. See
+`docs/ADMISSION_COMPLETION_TIMESTAMP_RECOVERY.md`.
 Use `-Action Ready -Execute` to review a bounded `proposed` unit into the
 claimable queue after its prerequisites are accepted; this replaces manual
 status/state/event edits. If another unit is current, Ready uses the same
@@ -508,6 +516,10 @@ contract, then start the next feature through the bound
 Preparation supports zero or more project-generic additive feature bindings and
 may CAS-advance all three schema pins to one caller-supplied exact adopted
 revision without approving that revision or deriving it from candidate `HEAD`.
+An idle workspace may retain immutable active/validating historical unit files
+only through their exact committed supersession chain into an authenticated
+accepted endpoint; status text, missing transactions, or ambiguous/orphaned
+replacement edges never qualify.
 It supports agent-led discovery inside a declared envelope, then freezes exact
 candidate identity before normal validation.
 When a ready unit carries sealed evidence from an out-of-scope prior task,

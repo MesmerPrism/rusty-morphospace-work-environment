@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("Inspect", "PrepareDevelopmentEnvelope", "ReprepareRetiredDevelopmentEnvelope", "PrepareBlockedSuccessor", "SupersedeActive", "ArchiveHistoryCheckpoint", "AdmitDevelopmentUnit", "RetireProposed", "Ready", "WithdrawReady", "Claim", "Resume", "CompleteInstructionSurfaces", "AmendActiveWriteScope", "FreezeCandidate", "RematerializeValidatingCandidate", "MaterializeInheritedCandidate", "CorrectActiveReadOnlyDependencies", "CorrectActiveProjectRepositoryScope", "CorrectActiveUnitContract", "RecordHistoricalUnitCompatibilityProjection", "BeginValidation", "ReturnToActive", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RetirePreparedPush", "ReconcilePreparedPublication", "ReconcilePreparedPushTransactionSuffix", "ResolveBlocker", "CorrectResolvedBlockerEvidence", "CorrectHistoricalBlockerResolutionIntentBinding", "CorrectCompletedTransitionSemantics", "NormalizeEventLedgerPrefix", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix", "ReconcileExecutedPreparedPublication")]
+    [ValidateSet("Inspect", "PrepareDevelopmentEnvelope", "ReprepareRetiredDevelopmentEnvelope", "PrepareBlockedSuccessor", "SupersedeActive", "ArchiveHistoryCheckpoint", "AdmitDevelopmentUnit", "RecoverAdmissionCompletionTimestamp", "RetireProposed", "Ready", "WithdrawReady", "Claim", "Resume", "CompleteInstructionSurfaces", "AmendActiveWriteScope", "FreezeCandidate", "RematerializeValidatingCandidate", "MaterializeInheritedCandidate", "CorrectActiveReadOnlyDependencies", "CorrectActiveProjectRepositoryScope", "CorrectActiveUnitContract", "RecordHistoricalUnitCompatibilityProjection", "BeginValidation", "ReturnToActive", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RetirePreparedPush", "ReconcilePreparedPublication", "ReconcilePreparedPushTransactionSuffix", "ResolveBlocker", "CorrectResolvedBlockerEvidence", "CorrectHistoricalBlockerResolutionIntentBinding", "CorrectCompletedTransitionSemantics", "NormalizeEventLedgerPrefix", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix", "ReconcileExecutedPreparedPublication")]
     [string]$Action,
     [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
     [string]$UnitId = "",
@@ -35,6 +35,8 @@ param(
     [string]$ExpectedActiveWriteScopeAmendmentSha256 = "",
     [string]$DevelopmentUnitAdmission = "",
     [string]$ExpectedDevelopmentUnitAdmissionSha256 = "",
+    [string]$AdmissionCompletionTimestampRecovery = "",
+    [string]$ExpectedAdmissionCompletionTimestampRecoverySha256 = "",
     [string]$DevelopmentEnvelopePreparation = "",
     [string]$ExpectedDevelopmentEnvelopePreparationSha256 = "",
     [string]$DevelopmentEnvelopeRepreparation = "",
@@ -119,6 +121,17 @@ if ($Action -eq "AdmitDevelopmentUnit") {
     if (-not $DevelopmentUnitAdmission -or -not $OutPath) { throw "AdmitDevelopmentUnit requires DevelopmentUnitAdmission and OutPath." }
     Import-Module (Join-Path $PSScriptRoot "DevelopmentUnitAdmission.psm1") -Force
     Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $WorkspaceRoot -DevelopmentUnitAdmission $DevelopmentUnitAdmission -ExpectedDevelopmentUnitAdmissionSha256 $ExpectedDevelopmentUnitAdmissionSha256 -Timestamp $Timestamp -OutPath $OutPath -Execute:$Execute | ConvertTo-Json -Depth 32
+    return
+}
+if ($Action -eq "RecoverAdmissionCompletionTimestamp") {
+    if (-not $AdmissionCompletionTimestampRecovery -or -not $OutPath) { throw "RecoverAdmissionCompletionTimestamp requires AdmissionCompletionTimestampRecovery and OutPath." }
+    if ($Execute -and -not $ExpectedAdmissionCompletionTimestampRecoverySha256) { throw "Executed RecoverAdmissionCompletionTimestamp requires ExpectedAdmissionCompletionTimestampRecoverySha256 from its dry run." }
+    Import-Module (Join-Path $PSScriptRoot "AdmissionCompletionTimestampRecovery.psm1") -Force
+    Invoke-MorphospaceAdmissionCompletionTimestampRecovery -WorkspaceRoot $WorkspaceRoot `
+        -Recovery $AdmissionCompletionTimestampRecovery `
+        -ExpectedRecoverySha256 $ExpectedAdmissionCompletionTimestampRecoverySha256 `
+        -OutPath $OutPath -Execute:$Execute |
+        ConvertTo-Json -Depth 32
     return
 }
 if ($Action -eq "FreezeCandidate") {

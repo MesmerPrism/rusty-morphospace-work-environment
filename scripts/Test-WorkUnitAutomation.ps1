@@ -14,7 +14,7 @@ function Assert-Automation {
     if (-not $Condition) { throw "Automation self-test failed: $Message" }
 }
 
-$automationEntry=Get-Command (Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1');$actionSet=@($automationEntry.Parameters['Action'].Attributes|Where-Object{$_-is[Management.Automation.ValidateSetAttribute]}|ForEach-Object{$_.ValidValues});Assert-Automation ($actionSet-ccontains'ReprepareRetiredDevelopmentEnvelope') 'public automation entrypoint does not register ReprepareRetiredDevelopmentEnvelope'
+$automationEntry=Get-Command (Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1');$actionSet=@($automationEntry.Parameters['Action'].Attributes|Where-Object{$_-is[Management.Automation.ValidateSetAttribute]}|ForEach-Object{$_.ValidValues});Assert-Automation ($actionSet-ccontains'ReprepareRetiredDevelopmentEnvelope') 'public automation entrypoint does not register ReprepareRetiredDevelopmentEnvelope';Assert-Automation ($actionSet-ccontains'RecoverAdmissionCompletionTimestamp') 'public automation entrypoint does not register RecoverAdmissionCompletionTimestamp'
 
 function Get-TestCanonicalHash {
     param([object]$Value)
@@ -63,6 +63,13 @@ function Invoke-MorphospaceReprepareRetiredDevelopmentEnvelope {
 }
 Export-ModuleMember -Function Invoke-MorphospaceReprepareRetiredDevelopmentEnvelope
 '@,[Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText((Join-Path $lifecycleRouterRoot 'AdmissionCompletionTimestampRecovery.psm1'),@'
+function Invoke-MorphospaceAdmissionCompletionTimestampRecovery {
+    [CmdletBinding()]param([string]$WorkspaceRoot,[string]$Recovery,[string]$ExpectedRecoverySha256,[string]$OutPath,[switch]$Execute)
+    [pscustomobject][ordered]@{action='RecoverAdmissionCompletionTimestamp';workspace_root=$WorkspaceRoot;request=$Recovery;expected_sha256=$ExpectedRecoverySha256;out_path=$OutPath;executed=$Execute.IsPresent}
+}
+Export-ModuleMember -Function Invoke-MorphospaceAdmissionCompletionTimestampRecovery
+'@,[Text.UTF8Encoding]::new($false))
     [IO.File]::WriteAllText((Join-Path $lifecycleRouterRoot 'ActiveUnitSupersession.psm1'),@'
 function Invoke-MorphospaceSupersedeActive {
     [CmdletBinding()]param([string]$WorkspaceRoot,[string]$UnitId,[string]$RepoMapPath,[string]$ActiveUnitSupersession,[string]$ExpectedActiveUnitSupersessionSha256,[string]$Timestamp,[string]$OutPath,[switch]$Execute)
@@ -83,17 +90,20 @@ Export-ModuleMember -Function Invoke-MorphospaceRematerializeValidatingCandidate
     [IO.File]::WriteAllText($lifecycleMarker,"unchanged`n",[Text.UTF8Encoding]::new($false))
     $blockedRequest = Join-Path $lifecycleRouterRoot 'blocked-request.json'
     $repreparationRequest = Join-Path $lifecycleRouterRoot 'repreparation-request.json'
+    $admissionRecoveryRequest = Join-Path $lifecycleRouterRoot 'admission-recovery-request.json'
     $activeRequest = Join-Path $lifecycleRouterRoot 'active-request.json'
     $rematerializationRequest = Join-Path $lifecycleRouterRoot 'rematerialization-request.json'
     $replacementSourceComposition = Join-Path $lifecycleRouterRoot 'replacement-source-composition.json'
     $routerRepoMap = Join-Path $lifecycleRouterRoot 'repository-map.json'
-    foreach ($path in @($blockedRequest,$repreparationRequest,$activeRequest,$rematerializationRequest,$replacementSourceComposition,$routerRepoMap)) { [IO.File]::WriteAllText($path,"{}`n",[Text.UTF8Encoding]::new($false)) }
+    foreach ($path in @($blockedRequest,$repreparationRequest,$admissionRecoveryRequest,$activeRequest,$rematerializationRequest,$replacementSourceComposition,$routerRepoMap)) { [IO.File]::WriteAllText($path,"{}`n",[Text.UTF8Encoding]::new($false)) }
     $blockedOut = Join-Path $lifecycleWorkspace 'blocked-result.json'
     $repreparationOut = Join-Path $lifecycleWorkspace 'repreparation-result.json'
+    $admissionRecoveryOut = Join-Path $lifecycleWorkspace 'admission-recovery-result.json'
     $activeOut = Join-Path $lifecycleWorkspace 'active-result.json'
     $rematerializationOut = Join-Path $lifecycleWorkspace 'rematerialization-result.json'
     $blockedHash = Get-TestFileHash $blockedRequest
     $repreparationHash = Get-TestFileHash $repreparationRequest
+    $admissionRecoveryHash = Get-TestFileHash $admissionRecoveryRequest
     $activeHash = Get-TestFileHash $activeRequest
     $rematerializationHash = Get-TestFileHash $rematerializationRequest
     $markerHash = Get-TestFileHash $lifecycleMarker
@@ -128,6 +138,18 @@ Export-ModuleMember -Function Invoke-MorphospaceRematerializeValidatingCandidate
         (Get-TestCanonicalHash $repreparationRun) -ceq (Get-TestCanonicalHash $repreparationExpectedRun) -and
         (Get-TestCanonicalHash $repreparationReplay) -ceq (Get-TestCanonicalHash $repreparationExpectedRun)
     ) 'public ReprepareRetiredDevelopmentEnvelope wrapper did not preserve exact dry/execute/replay forwarding'
+    $admissionRecoveryArguments = @('-Action','RecoverAdmissionCompletionTimestamp','-WorkspaceRoot',$lifecycleWorkspace,'-AdmissionCompletionTimestampRecovery',$admissionRecoveryRequest,'-ExpectedAdmissionCompletionTimestampRecoverySha256',$admissionRecoveryHash,'-OutPath',$admissionRecoveryOut)
+    $admissionRecoveryDry = Invoke-LifecycleRouterCapture $admissionRecoveryArguments
+    $admissionRecoveryRun = Invoke-LifecycleRouterCapture (@($admissionRecoveryArguments) + '-Execute')
+    $admissionRecoveryReplay = Invoke-LifecycleRouterCapture (@($admissionRecoveryArguments) + '-Execute')
+    $admissionRecoveryExpectedDry = [pscustomobject][ordered]@{action='RecoverAdmissionCompletionTimestamp';workspace_root=$lifecycleWorkspace;request=$admissionRecoveryRequest;expected_sha256=$admissionRecoveryHash;out_path=$admissionRecoveryOut;executed=$false}
+    $admissionRecoveryExpectedRun = $admissionRecoveryExpectedDry | ConvertTo-Json -Depth 8 | ConvertFrom-Json -Depth 8 -DateKind String
+    $admissionRecoveryExpectedRun.executed = $true
+    Assert-Automation (
+        (Get-TestCanonicalHash $admissionRecoveryDry) -ceq (Get-TestCanonicalHash $admissionRecoveryExpectedDry) -and
+        (Get-TestCanonicalHash $admissionRecoveryRun) -ceq (Get-TestCanonicalHash $admissionRecoveryExpectedRun) -and
+        (Get-TestCanonicalHash $admissionRecoveryReplay) -ceq (Get-TestCanonicalHash $admissionRecoveryExpectedRun)
+    ) 'public RecoverAdmissionCompletionTimestamp wrapper did not preserve exact dry/execute/replay forwarding'
     $activeArguments = @('-Action','SupersedeActive','-WorkspaceRoot',$lifecycleWorkspace,'-UnitId','replacement-unit','-RepoMapPath',$routerRepoMap,'-ActiveUnitSupersession',$activeRequest,'-ExpectedActiveUnitSupersessionSha256',$activeHash,'-Timestamp','2026-09-01T00:04:00.0000000Z','-OutPath',$activeOut)
     $activeDry = Invoke-LifecycleRouterCapture $activeArguments
     $activeRun = Invoke-LifecycleRouterCapture (@($activeArguments) + '-Execute')
@@ -152,7 +174,7 @@ Export-ModuleMember -Function Invoke-MorphospaceRematerializeValidatingCandidate
         (Get-TestCanonicalHash $rematerializationRun) -ceq (Get-TestCanonicalHash $rematerializationExpectedRun) -and
         (Get-TestCanonicalHash $rematerializationReplay) -ceq (Get-TestCanonicalHash $rematerializationExpectedRun)
     ) 'public RematerializeValidatingCandidate wrapper did not preserve exact dry/execute/replay forwarding'
-    Assert-Automation ((Get-TestFileHash $lifecycleMarker) -ceq $markerHash -and -not (Test-Path -LiteralPath $blockedOut) -and -not (Test-Path -LiteralPath $repreparationOut) -and -not (Test-Path -LiteralPath $activeOut) -and -not (Test-Path -LiteralPath $rematerializationOut)) 'public lifecycle wrapper capture seam mutated workspace or output bytes'
+    Assert-Automation ((Get-TestFileHash $lifecycleMarker) -ceq $markerHash -and -not (Test-Path -LiteralPath $blockedOut) -and -not (Test-Path -LiteralPath $repreparationOut) -and -not (Test-Path -LiteralPath $admissionRecoveryOut) -and -not (Test-Path -LiteralPath $activeOut) -and -not (Test-Path -LiteralPath $rematerializationOut)) 'public lifecycle wrapper capture seam mutated workspace or output bytes'
 } finally {
     Remove-Item Function:Invoke-LifecycleRouterCapture -ErrorAction SilentlyContinue
     if ([IO.Directory]::Exists($lifecycleRouterRoot)) { Remove-Item -LiteralPath $lifecycleRouterRoot -Recurse -Force }

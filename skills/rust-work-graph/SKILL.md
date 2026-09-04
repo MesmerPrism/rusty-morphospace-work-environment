@@ -88,7 +88,15 @@ must be resolved.
 When a project uses the portable `morphospace/` workflow, compare graph
 findings with the project spec and current iteration-unit scope. A graph can
 identify pressure; it does not authorize edits outside the declared repos or
-paths.
+paths. For idle-envelope preparation, graph retained active/validating units as
+historical only after exact committed v2 supersession edges reach an exact
+accepted transition; flag missing, repeated, orphaned, or hash-drifted edges as
+blocking damage rather than inferring closure from status labels.
+Graph admission completion-timestamp recovery as a distinct append-only owner
+correction whose inputs retain the malformed completion and exact raw/canonical
+preparation, admission, project, lock, state, unit, and ledger identities. Only
+the correction event and `last_event_id` may advance; keep Ready, Claim,
+validation, acceptance, source, device, Git, and publication edges disconnected.
 
 If work-unit automation emits a `graph_scope`, use its sorted repositories,
 normalized allowed paths, and change categories as the maximum scan envelope.

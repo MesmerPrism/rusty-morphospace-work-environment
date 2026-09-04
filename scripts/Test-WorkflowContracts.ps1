@@ -29,6 +29,7 @@ if ($RepositoryMapPath) {
     foreach ($entry in @($mapDocument.repositories)) { $script:LocalRepositoryMap[[string]$entry.repo_id] = [string]$entry.path }
 }
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceCompletedTransitionSemanticCorrection.psm1') -Force
+Import-Module (Join-Path $RepoRoot 'scripts\AdmissionCompletionTimestampRecovery.psm1') -Force
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceHistoricalBlockerResolutionIntentBindingCorrection.psm1') -Force
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceBlockedSupersessionTerminalValidation.psm1') -Force
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceHistoricalUnitCompatibilityProjection.psm1') -Force
@@ -2101,6 +2102,31 @@ function Test-ProjectBundle {
         }
     }
 
+    # Authenticate the one admission-specific chronology recovery. The shared
+    # verifier accepts only a fully derivable ordinary admission whose sole
+    # retained defect is completion.completed_at preceding its immutable
+    # future intent; the correction never rewrites that completion.
+    $admissionRecoveryPrefix = 'admission-completion-timestamp-recovered-'
+    foreach ($candidateRecoveryEvent in @($events | Where-Object { ([string]$_.event_id).StartsWith($admissionRecoveryPrefix, [StringComparison]::Ordinal) })) {
+        $candidateId = [string]$candidateRecoveryEvent.event_id
+        try {
+            if ($candidateId -cnotmatch '^admission-completion-timestamp-recovered-[0-9]{4,}$' -or
+                [string]$candidateRecoveryEvent.schema -cne 'rusty.morphospace.workflow.iteration_event.v1' -or
+                [string]$candidateRecoveryEvent.event_type -cne 'state-transition' -or
+                @($candidateRecoveryEvent.receipts).Count -ne 1 -or
+                @($candidateRecoveryEvent.receipts)[0] -isnot [string]) {
+                throw "Admission recovery event '$candidateId' does not have its exact v1 event shape."
+            }
+            $receiptAbsolute = Resolve-MorphospaceWorkspacePath -WorkspaceRoot $workspaceRoot -RelativePath ([string]@($candidateRecoveryEvent.receipts)[0]) -RequireLeaf
+            $strictBytes = [Text.UTF8Encoding]::new($false).GetBytes(($candidateRecoveryEvent | ConvertTo-Json -Depth 32 -Compress))
+            $strictEvent = ConvertFrom-MorphospaceProtocolJsonBytes -Bytes $strictBytes -Context "admission recovery event '$candidateId'"
+            [void]$strictEvent.PSObject.Properties.Remove('__line_sha256')
+            [void](Test-MorphospaceAdmissionCompletionTimestampRecovery -WorkspaceRoot $workspaceRoot -RecoveryPath $receiptAbsolute -Mode Projection -CorrectionEvent $strictEvent)
+        } catch {
+            Add-Failure -Message "$Context admission completion timestamp recovery '$candidateId' is unauthenticated: $($_.Exception.Message)"
+        }
+    }
+
     # A corrective unit may supersede an immutable historical active/validating
     # unit without rewriting that unit artifact or its earlier event prefix.
     # The additive state-transition event is the projection override and must
@@ -2756,7 +2782,7 @@ foreach ($historyArchiveContract in $historyArchiveContracts) {
     Assert-Contract (Test-Path -LiteralPath (Join-Path $RepoRoot $historyArchiveContract) -PathType Leaf) "Required history archive contract is missing: $historyArchiveContract"
 }
 if (-not $SkipOwnerSelfTests) {
-    foreach ($selfTest in @("Test-LegacyEmbeddedPushPlanCompatibility.ps1","Test-PreparedPublicationReconstruction.ps1","Test-ResolveBlocker.ps1","Test-CorrectResolvedBlockerEvidence.ps1","Test-HistoricalBlockerResolutionIntentBindingCorrection.ps1","Test-CorrectActiveReadOnlyDependencies.ps1","Test-CorrectActiveProjectRepositoryScope.ps1","Test-ActiveWriteScopeAmendment.ps1","Test-DevelopmentUnitAdmission.ps1","Test-CompletedTransitionSemanticCorrection.ps1","Test-TransitionLedger.ps1","Test-HistoryArchiveValidation.ps1")) {
+    foreach ($selfTest in @("Test-LegacyEmbeddedPushPlanCompatibility.ps1","Test-PreparedPublicationReconstruction.ps1","Test-ResolveBlocker.ps1","Test-CorrectResolvedBlockerEvidence.ps1","Test-HistoricalBlockerResolutionIntentBindingCorrection.ps1","Test-CorrectActiveReadOnlyDependencies.ps1","Test-CorrectActiveProjectRepositoryScope.ps1","Test-ActiveWriteScopeAmendment.ps1","Test-DevelopmentUnitAdmission.ps1","Test-CompletedTransitionSemanticCorrection.ps1","Test-AdmissionCompletionTimestampRecovery.ps1","Test-TransitionLedger.ps1","Test-HistoryArchiveValidation.ps1")) {
         try { [void](Invoke-IsolatedWorkflowSelfTest -Path (Join-Path $RepoRoot "scripts\$selfTest")) }
         catch { Add-Failure -Message "$selfTest failed: $($_.Exception.Message)" }
     }

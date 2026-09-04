@@ -26,6 +26,19 @@ For an idle accepted project whose next feature needs new bounded composition,
 use the dedicated preparation transaction before admission. It may add only a
 typed project-level envelope and a repository-map-derived source lock; the
 later unit admission must bind those artifacts and may not rediscover authority.
+Retained non-current/non-next active or validating unit files qualify as
+historical only when the shared committed-transition verifier authenticates
+every exact v2 supersession edge and the exact accepted endpoint. Reject
+status-only, future, ambiguous, orphaned, rewritten, or damaged chains, and
+never rewrite the retained units.
+
+If an ordinary admission is otherwise fully committed but its completion
+timestamp precedes its immutable future-dated intent, use only
+`RecoverAdmissionCompletionTimestamp`. Bind the exact raw and canonical
+preparation/admission chain plus live project, lock, state, unit, and ledger;
+preserve every malformed admission byte; append only the typed correction and
+the state's `last_event_id`; and reject any second defect or alternate
+chronology.
 
 For an idle project with terminal historical units, use only the dedicated
 `ArchiveHistoryCheckpoint` owner action to add a raw-byte archive root. It
