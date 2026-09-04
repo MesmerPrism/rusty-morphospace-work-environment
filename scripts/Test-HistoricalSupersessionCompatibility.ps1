@@ -57,7 +57,8 @@ function Install-HscLegacySuccessor {
     $targetState=Copy-HscTest $state;$targetState.current_unit=$newId;$targetState.next_ready_unit=$null;$targetState.last_event_id=$eventId;$targetState.plan_revision=[int]$targetState.plan_revision+1
     $targetOld=Copy-HscTest $old
     $transitionEvent=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.iteration_event.v1';event_id=$eventId;sequence=4;timestamp='2026-01-04T00:00:00.0000000Z';project_id='hsc-project';unit_id=$oldId;event_type='state-transition';summary='Legacy owner moved authority to the exact successor artifacts.';receipts=@()}
-    $eventsPath=Join-Path $Workspace 'iteration-events.jsonl';$eventsBytes=[IO.File]::ReadAllBytes($eventsPath)
+    $eventsPath=Join-Path $Workspace 'iteration-events.jsonl';$eventsText=[Text.UTF8Encoding]::new($false,$true).GetString([IO.File]::ReadAllBytes($eventsPath))
+    $eventsBytes=[Text.UTF8Encoding]::new($false).GetBytes(([regex]::Replace($eventsText,"\r?\n","`r`n")));[IO.File]::WriteAllBytes($eventsPath,$eventsBytes)
     $unitBytes=Get-HscTestBytes $new;$lockBytes=Get-HscTestBytes $lock
     $intent=[pscustomobject][ordered]@{
         schema='rusty.morphospace.workflow.transition_ledger_intent.v1';transaction_id=$transactionId;created_at='2026-01-04T00:00:00.0000000Z'

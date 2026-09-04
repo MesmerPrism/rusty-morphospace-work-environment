@@ -23,18 +23,21 @@ immediate predecessor and that no files have been fabricated for its absent
 transaction. The legacy-v1 successor must consume the normalization's exact
 target state and ledger identities, preserve the old unit projection, create
 exactly the active successor unit plus its source-composition lock, and retain
-its original completion. The verifier requires the legacy intent's ledger
-SHA-256 and length to equal the normalization target exactly, byte-compares
-the retained live source-composition lock with the embedded artifact, and
-connects the embedded successor unit's immutable source composition to the
-live accepted unit. Finally, the ordinary transition owner must authenticate
-the accepted endpoint.
+its original completion. The verifier derives the legacy producer's exact
+canonical all-CRLF presentation from the authenticated normalization target
+rows and requires the legacy intent's ledger SHA-256 and length to equal those
+bytes. It byte-compares the retained live source-composition lock with the
+embedded artifact and connects the embedded successor unit's immutable source
+composition to the live accepted unit. Finally, the ordinary transition owner
+must authenticate the accepted endpoint.
 
 The normalization may preserve historical CRLF-framed ledger bytes while a
 Git checkout presents equivalent LF-framed rows. Raw hashes therefore bind
 each preserved byte source in its own domain; canonical document hashes prove
 that every historical and live event row is identical in meaning. Raw and
-document hashes are never substituted for each other.
+document hashes are never substituted for each other. The legacy producer's
+deterministic all-CRLF preimage is independently re-derived from those exact
+authenticated documents rather than inferred from either current raw domain.
 
 ## Build, review, dry run, and execute
 

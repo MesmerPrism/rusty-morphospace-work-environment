@@ -287,12 +287,14 @@ function Get-HscLegacyV1SupersessionBinding {
     [void](Test-MorphospaceStrictUtcTimestamp ([string]$intent.event.timestamp))
     Test-HscSchema $intent.event 'iteration-event.schema.json' 'Historical compatibility legacy-v1 successor event'
     $oldUnit=$Normalization.replacement_snapshot.document
+    $legacyPreimageText=(@($Normalization.after_rows|ForEach-Object{ConvertTo-MorphospaceCanonicalJson $_.document})-join"`r`n")+"`r`n"
+    $legacyPreimageBytes=[Text.UTF8Encoding]::new($false).GetBytes($legacyPreimageText)
     if([string]$intent.pre.state.sha256-cne(Get-MorphospaceCanonicalJsonSha256 $Normalization.intent.target_state)-or
        [string]$intent.expected.state_sha256-cne[string]$intent.pre.state.sha256-or
        [string]$intent.pre.unit.sha256-cne(Get-MorphospaceCanonicalJsonSha256 $oldUnit)-or[string]$intent.expected.unit_sha256-cne[string]$intent.pre.unit.sha256-or
        [string]$intent.expected.event_tail_id-cne[string]$Normalization.intent.event.event_id-or
-       [string]$intent.expected.events_sha256-cne[string]$Normalization.intent.target.events_sha256-or
-       [int64]$intent.expected.events_length-ne[int64]$Normalization.intent.target.events_length){
+       [string]$intent.expected.events_sha256-cne(Get-HscHashBytes $legacyPreimageBytes)-or
+       [int64]$intent.expected.events_length-ne[int64]$legacyPreimageBytes.LongLength){
         throw 'Historical compatibility legacy-v1 successor preimage is detached from the normalization target.'
     }
     $expectedTargetState=Copy-HscDocument $Normalization.intent.target_state
