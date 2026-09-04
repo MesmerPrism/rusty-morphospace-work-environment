@@ -45,7 +45,7 @@ jobs:
             throw
           }
       - name: Preserve bounded setup diagnostic
-        if: always() && steps.classify.outputs.diagnostic_ready == 'true'
+        if: ${{ !cancelled() && steps.classify.outputs.diagnostic_ready == 'true' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: affected-setup-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}
@@ -103,7 +103,7 @@ jobs:
           } catch {$planFailure=$_}
           if($null-ne$planFailure){$message=[string]$planFailure.Exception.Message;if($message.Length-gt2048){$message=$message.Substring(0,2048)};$diagnostic=[pscustomobject][ordered]@{schema='rusty.morphospace.diagnostic.affected_validation_pre_evidence_failure.v1';authority='non-authoritative-terminal-diagnostic';phase='plan';result='code-fail';failure=[pscustomobject][ordered]@{failure_kind='plan';exception_type=$planFailure.Exception.GetType().FullName;exception_message=$message};claims=[pscustomobject][ordered]@{typed_aggregate_evidence_produced=$false;acceptance_authority=$false;publication_authority=$false}};[byte[]]$bytes=[Text.UTF8Encoding]::new($false).GetBytes(($diagnostic|ConvertTo-Json -Depth 6 -Compress)+"`n");if($bytes.Length-gt65536){throw 'Bounded plan diagnostic exceeded 65536 bytes.'};$stream=[IO.File]::Open("$env:RUNNER_TEMP/affected-plan-diagnostic.json",[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None);try{$stream.Write($bytes,0,$bytes.Length)}finally{$stream.Dispose()};'diagnostic_ready=true'|Add-Content -LiteralPath $env:GITHUB_OUTPUT;throw $planFailure}
       - name: Preserve bounded plan diagnostic
-        if: always() && steps.plan.outputs.diagnostic_ready == 'true'
+        if: ${{ !cancelled() && steps.plan.outputs.diagnostic_ready == 'true' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: affected-plan-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}
@@ -121,7 +121,7 @@ jobs:
   affected-linux-segments:
     name: segment-${{ matrix.segment_id }}
     needs: [infrastructure, select]
-    if: always() && (github.event_name == 'pull_request' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && needs.select.outputs.linux == 'true'
+    if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && needs.select.outputs.linux == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: ${{ matrix.timeout_minutes }}
     strategy:
@@ -252,7 +252,7 @@ jobs:
           if ($null -ne $failure) { throw $failure }
           git diff --check $base $head; if ($LASTEXITCODE -ne 0) { throw 'Linux event delta has whitespace errors.' }
       - name: Preserve content-addressed Linux segment evidence
-        if: always() && needs.select.outputs.linux == 'true' && steps.execute.outputs.evidence_ready == 'true'
+        if: ${{ !cancelled() && needs.select.outputs.linux == 'true' && steps.execute.outputs.evidence_ready == 'true' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: affected-segment-${{ matrix.segment_id }}-${{ steps.execute.outputs.evidence_sha256 }}
@@ -260,7 +260,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Preserve bounded Linux pre-evidence failure diagnostic
-        if: always() && needs.select.outputs.linux == 'true' && steps.execute.outputs.pre_evidence_failure == 'true'
+        if: ${{ !cancelled() && needs.select.outputs.linux == 'true' && steps.execute.outputs.pre_evidence_failure == 'true' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: affected-pre-evidence-${{ matrix.segment_id }}-${{ github.sha }}-${{ github.run_attempt }}
@@ -268,7 +268,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Preserve exact Linux check streams and receipts
-        if: always() && needs.select.outputs.linux == 'true' && steps.execute.outputs.cache_ready == 'true'
+        if: ${{ !cancelled() && needs.select.outputs.linux == 'true' && steps.execute.outputs.cache_ready == 'true' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: affected-checks-${{ matrix.segment_id }}-${{ github.sha }}-${{ github.run_attempt }}
@@ -276,13 +276,13 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Save resumable Linux check cache
-        if: always() && github.event_name == 'pull_request' && needs.select.outputs.linux == 'true' && steps.execute.outputs.cache_ready == 'true'
+        if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.select.outputs.linux == 'true' && steps.execute.outputs.cache_ready == 'true' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: ${{ runner.temp }}/affected-check-cache-${{ matrix.segment_id }}/current
           key: affected-check-${{ matrix.segment_id }}-pr-${{ github.event.pull_request.number }}-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Preserve resumable selector phase evidence
-        if: always() && needs.select.outputs.linux == 'true'
+        if: ${{ !cancelled() && needs.select.outputs.linux == 'true' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: selector-phases-${{ matrix.segment_id }}-${{ github.sha }}-${{ github.run_attempt }}
@@ -293,7 +293,7 @@ jobs:
   quick-linux:
     needs: [infrastructure, select, affected-linux-segments]
     timeout-minutes: 20
-    if: always() && (github.event_name == 'pull_request' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -344,7 +344,7 @@ jobs:
   affected-windows-segments:
     name: segment-${{ matrix.segment_id }}
     needs: [infrastructure, select]
-    if: always() && (github.event_name == 'pull_request' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && needs.select.outputs.windows == 'true'
+    if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && needs.select.outputs.windows == 'true' }}
     runs-on: windows-latest
     timeout-minutes: ${{ matrix.timeout_minutes }}
     strategy:
@@ -475,7 +475,7 @@ jobs:
           if ($null -ne $failure) { throw $failure }
           git diff --check $base $head; if ($LASTEXITCODE -ne 0) { throw 'Windows event delta has whitespace errors.' }
       - name: Preserve content-addressed Windows segment evidence
-        if: always() && needs.select.outputs.windows == 'true' && steps.execute.outputs.evidence_ready == 'true'
+        if: ${{ !cancelled() && needs.select.outputs.windows == 'true' && steps.execute.outputs.evidence_ready == 'true' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: affected-segment-${{ matrix.segment_id }}-${{ steps.execute.outputs.evidence_sha256 }}
@@ -483,7 +483,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Preserve bounded Windows pre-evidence failure diagnostic
-        if: always() && needs.select.outputs.windows == 'true' && steps.execute.outputs.pre_evidence_failure == 'true'
+        if: ${{ !cancelled() && needs.select.outputs.windows == 'true' && steps.execute.outputs.pre_evidence_failure == 'true' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: affected-pre-evidence-${{ matrix.segment_id }}-${{ github.sha }}-${{ github.run_attempt }}
@@ -491,7 +491,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Preserve exact Windows check streams and receipts
-        if: always() && needs.select.outputs.windows == 'true' && steps.execute.outputs.cache_ready == 'true'
+        if: ${{ !cancelled() && needs.select.outputs.windows == 'true' && steps.execute.outputs.cache_ready == 'true' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: affected-checks-${{ matrix.segment_id }}-${{ github.sha }}-${{ github.run_attempt }}
@@ -499,7 +499,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Save resumable Windows check cache
-        if: always() && github.event_name == 'pull_request' && needs.select.outputs.windows == 'true' && steps.execute.outputs.cache_ready == 'true'
+        if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.select.outputs.windows == 'true' && steps.execute.outputs.cache_ready == 'true' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: ${{ runner.temp }}/affected-check-cache-${{ matrix.segment_id }}/current
@@ -508,7 +508,7 @@ jobs:
   standard-windows:
     needs: [infrastructure, select, affected-windows-segments]
     timeout-minutes: 20
-    if: always() && (github.event_name == 'pull_request' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -559,7 +559,7 @@ jobs:
   quick-windows:
     needs: [infrastructure, select, standard-windows]
     timeout-minutes: 10
-    if: always() && github.event_name == 'pull_request'
+    if: ${{ !cancelled() && github.event_name == 'pull_request' }}
     runs-on: windows-latest
     steps:
       - name: Bind required Windows Quick context to the exact selected result
@@ -679,7 +679,7 @@ jobs:
           if($null-ne$failure){if(Test-Path -LiteralPath $evidencePath -PathType Leaf){"evidence_sha256=$((Get-FileHash -LiteralPath $evidencePath -Algorithm SHA256).Hash.ToLowerInvariant())"|Add-Content -LiteralPath $env:GITHUB_OUTPUT};throw $failure}
           "evidence_sha256=$((Get-FileHash -LiteralPath $evidencePath -Algorithm SHA256).Hash.ToLowerInvariant())" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
       - name: Preserve bounded current Linux fallback diagnostic
-        if: always() && steps.execute.outputs.pre_evidence_failure == 'true'
+        if: ${{ !cancelled() && steps.execute.outputs.pre_evidence_failure == 'true' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: main-fallback-${{ matrix.segment_id }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -687,7 +687,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Preserve current Linux delta segment
-        if: always() && steps.execute.outputs.evidence_sha256 != ''
+        if: ${{ !cancelled() && steps.execute.outputs.evidence_sha256 != '' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: affected-segment-${{ matrix.segment_id }}-${{ steps.execute.outputs.evidence_sha256 }}
@@ -721,7 +721,7 @@ jobs:
           if($null-ne$failure){if(Test-Path -LiteralPath $evidencePath -PathType Leaf){"evidence_sha256=$((Get-FileHash -LiteralPath $evidencePath -Algorithm SHA256).Hash.ToLowerInvariant())"|Add-Content -LiteralPath $env:GITHUB_OUTPUT};throw $failure}
           "evidence_sha256=$((Get-FileHash -LiteralPath $evidencePath -Algorithm SHA256).Hash.ToLowerInvariant())" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
       - name: Preserve bounded current Windows fallback diagnostic
-        if: always() && steps.execute.outputs.pre_evidence_failure == 'true'
+        if: ${{ !cancelled() && steps.execute.outputs.pre_evidence_failure == 'true' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: main-fallback-${{ matrix.segment_id }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -729,7 +729,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Preserve current Windows delta segment
-        if: always() && steps.execute.outputs.evidence_sha256 != ''
+        if: ${{ !cancelled() && steps.execute.outputs.evidence_sha256 != '' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: affected-segment-${{ matrix.segment_id }}-${{ steps.execute.outputs.evidence_sha256 }}
@@ -782,7 +782,7 @@ jobs:
           ./scripts/Merge-AffectedValidationSegments.ps1 -RepositoryRoot . -BaseCommit $env:PUSH_BEFORE -HeadCommit $env:GITHUB_SHA -PlanPath "$env:RUNNER_TEMP/affected-plan.json" -Platform windows -SegmentEvidenceDirectory "$env:RUNNER_TEMP/affected-windows-segments" -OutPath "$env:RUNNER_TEMP/affected-windows-evidence.json" | Out-Null
 
   deep:
-    if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    if: ${{ !cancelled() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
     needs: [infrastructure, select, quick-linux, standard-windows]
     runs-on: windows-latest
     timeout-minutes: 15

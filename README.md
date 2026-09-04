@@ -151,6 +151,9 @@ trusted-base policy decision plus independent static and dynamic validation.
 Repository CI runs feature-branch validation from pull-request events, keeps a
 post-merge `main` readback, and cancels superseded runs within the same pull
 request without cancelling `main` readback.
+The 21 job or step guards that must remain eligible after ordinary failure use
+`!cancelled()` and stop after cancellation. Main segment and delta job guards
+retain implicit `success()` semantics so they remain failure-sensitive.
 The required Quick jobs own shared coverage; the Windows Standard job executes
 only the additional work-unit automation gate. During local iteration, use
 focused checks; freeze and commit the candidate before its one risk-selected
