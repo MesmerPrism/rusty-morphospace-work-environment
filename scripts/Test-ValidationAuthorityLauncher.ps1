@@ -4,8 +4,9 @@ Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceValidationAuthority.psm1'
 
 function Assert-Launcher { param([bool]$Condition,[string]$Message) if(-not $Condition){throw "Authority-launcher self-test failed: $Message"} }
 function Assert-Rejected { param([scriptblock]$Action,[string]$Message) $rejected=$false;try{&$Action}catch{$rejected=$true};Assert-Launcher $rejected $Message }
+function Assert-LauncherProcessTerminal { param([int]$ProcessId,[string]$Message) $alive=$false;$process=$null;try{$process=[Diagnostics.Process]::GetProcessById($ProcessId);$alive=-not$process.HasExited}catch [ArgumentException]{}finally{if($null-ne$process){$process.Dispose()}};Assert-Launcher (-not$alive) $Message }
 
-$temp=Join-Path ([IO.Path]::GetTempPath()) ('morphospace-authority-launcher-'+[guid]::NewGuid().ToString('N'))
+$temp=Join-Path ([IO.Path]::GetTempPath()) ('morphospace-authority-launcher-'+[guid]::NewGuid().ToString('N'));$timeoutPid=0;$timeoutStderr=''
 try {
     [IO.Directory]::CreateDirectory($temp)|Out-Null
     $validator=Join-Path $temp 'fixture-validator.ps1'
@@ -24,12 +25,19 @@ Write-Output 'fixture-validator-ran'
 
     $timeoutRoot=Join-Path $temp 'timeout';[IO.Directory]::CreateDirectory($timeoutRoot)|Out-Null
     $timeoutValidator=Join-Path $timeoutRoot 'hanging-validator.ps1'
-    [IO.File]::WriteAllText($timeoutValidator,"param([string]`$WorkspaceRoot,[string]`$QuestRoot,[string]`$RoadmapPath,[string]`$UnitId,[string]`$OutPath)`n[Console]::Error.Write('hanging-validator-ready');[Console]::Error.Flush();[Threading.ManualResetEventSlim]::new(`$false).Wait()",[Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText($timeoutValidator,"param([string]`$WorkspaceRoot,[string]`$QuestRoot,[string]`$RoadmapPath,[string]`$UnitId,[string]`$OutPath)`n[Console]::Error.Write(('hanging-validator-ready:{0}:{1}'-f[Environment]::ProcessId,[Diagnostics.Stopwatch]::GetTimestamp()));[Console]::Error.Flush();[Threading.ManualResetEventSlim]::new(`$false).Wait(300000)",[Text.UTF8Encoding]::new($false))
     $timeoutOwner=Join-Path $timeoutRoot 'owner.json';$timeoutStdout=Join-Path $timeoutRoot 'stdout.txt';$timeoutStderr=Join-Path $timeoutRoot 'stderr.txt';$timeoutMessage=''
-    try{Invoke-MorphospacePinnedValidator -ValidatorPath $timeoutValidator -Workspace 'workspace-marker' -Quest 'quest-marker' -Roadmap 'roadmap-marker' -Unit 'unit-marker' -OwnerOut $timeoutOwner -StdoutPath $timeoutStdout -StderrPath $timeoutStderr -TimeoutSeconds 1|Out-Null}catch{$timeoutMessage=[string]$_.Exception.Message}
+    $timeoutReturnedAt=0L;$timeoutClock=[Diagnostics.Stopwatch]::StartNew();try{Invoke-MorphospacePinnedValidator -ValidatorPath $timeoutValidator -Workspace 'workspace-marker' -Quest 'quest-marker' -Roadmap 'roadmap-marker' -Unit 'unit-marker' -OwnerOut $timeoutOwner -StdoutPath $timeoutStdout -StderrPath $timeoutStderr -TimeoutSeconds 1|Out-Null}catch{$timeoutMessage=[string]$_.Exception.Message}finally{$timeoutClock.Stop();$timeoutReturnedAt=[Diagnostics.Stopwatch]::GetTimestamp()}
     Assert-Launcher ($timeoutMessage-ceq'Pinned validator exceeded its registry timeout of 1 seconds.') 'pinned validator did not preserve its domain timeout failure'
-    Assert-Launcher ([IO.File]::ReadAllText($timeoutStderr)-ceq'hanging-validator-ready') 'timed-out validator stderr did not drain before return'
+    Assert-Launcher ($timeoutClock.Elapsed.TotalSeconds-lt15) 'one-second validator timeout did not complete within its bounded launch, termination, and drain allowance'
+    $timeoutStderrText=[IO.File]::ReadAllText($timeoutStderr);$timeoutReadyToReturnSeconds=[double]::PositiveInfinity;if($timeoutStderrText-match'^hanging-validator-ready:([0-9]+):([0-9]+)$'){$timeoutPid=[int]$Matches[1];$timeoutReadyToReturnSeconds=($timeoutReturnedAt-[long]$Matches[2])/[double][Diagnostics.Stopwatch]::Frequency};Assert-Launcher ($timeoutPid-gt0) 'timed-out validator stderr did not drain before return'
+    Assert-Launcher ($timeoutReadyToReturnSeconds-ge0-and$timeoutReadyToReturnSeconds-lt5) 'one-second validator deadline was not enforced within five seconds of target readiness'
+    Assert-LauncherProcessTerminal $timeoutPid 'timed-out validator remained alive after authority process cleanup'
     foreach($capturePath in @($timeoutStdout,$timeoutStderr)){$capture=[IO.FileStream]::new($capturePath,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::None);$capture.Dispose()}
     [IO.Directory]::Delete($timeoutRoot,$true);Assert-Launcher (-not[IO.Directory]::Exists($timeoutRoot)) 'timed-out validator captures were not immediately cleanable'
     Write-Host 'Authority-launcher self-test passed.'
-} finally { if([IO.Directory]::Exists($temp)){[IO.Directory]::Delete($temp,$true)} }
+} finally {
+    if($timeoutPid-eq0-and-not[string]::IsNullOrWhiteSpace($timeoutStderr)-and[IO.File]::Exists($timeoutStderr)){$timeoutText=[IO.File]::ReadAllText($timeoutStderr);if($timeoutText-match'^hanging-validator-ready:([0-9]+):[0-9]+$'){$timeoutPid=[int]$Matches[1]}}
+    if($timeoutPid-gt0){$timeoutProcess=$null;try{$timeoutProcess=[Diagnostics.Process]::GetProcessById($timeoutPid);if(-not$timeoutProcess.HasExited){$timeoutProcess.Kill($true);if(-not$timeoutProcess.WaitForExit(10000)){throw "Hanging validator did not terminate during cleanup: $timeoutPid"}}}catch [ArgumentException]{}finally{if($null-ne$timeoutProcess){$timeoutProcess.Dispose()}}}
+    if([IO.Directory]::Exists($temp)){[IO.Directory]::Delete($temp,$true)}
+}
