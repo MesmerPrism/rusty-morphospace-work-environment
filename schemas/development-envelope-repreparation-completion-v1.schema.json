@@ -1,0 +1,6 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema","$id":"https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/development-envelope-repreparation-completion-v1.schema.json",
+  "type":"object","additionalProperties":false,"required":["schema","transaction_id","completed_at","intent_sha256","target_project_sha256","target_state_sha256","target_feature_lock_sha256","repreparation_receipt_sha256","event_id","status"],
+  "properties":{"schema":{"const":"rusty.morphospace.workflow.development_envelope_repreparation_completion.v1"},"transaction_id":{"$ref":"#/$defs/id"},"completed_at":{"type":"string","format":"date-time"},"intent_sha256":{"$ref":"#/$defs/hash"},"target_project_sha256":{"$ref":"#/$defs/hash"},"target_state_sha256":{"$ref":"#/$defs/hash"},"target_feature_lock_sha256":{"$ref":"#/$defs/hash"},"repreparation_receipt_sha256":{"$ref":"#/$defs/hash"},"event_id":{"$ref":"#/$defs/id"},"status":{"const":"committed"}},
+  "$defs":{"id":{"type":"string","pattern":"^[a-z0-9][a-z0-9-]{1,191}$"},"hash":{"type":"string","pattern":"^[0-9a-f]{64}$"}}
+}

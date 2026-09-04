@@ -61,6 +61,16 @@ chain at every partial and completed transaction boundary.
 candidate in place, create the replacement, or authorize source/build/device
 mutation.
 
+A recovery-created preparation is identified by
+`preparation_kind=recovered` and exact recovery-receipt path/hash fields.
+Admission verifies the recovery receipt, its three-artifact intent, completion,
+fresh source-composition v2 lock, and preparation event before admitting the
+distinct replacement normally. Each unit validation profile must be present in
+the project registry and in both assessed and prepared build ceilings. Every
+read-only dependency repository must occur in the exact project, assessment,
+preparation, and source-composition intersection, and each dependency path must
+fit the project allowed paths plus both assessed and prepared roots.
+
 An admitted active unit may use `AmendActiveWriteScope` only for a discovered,
 tracked path inside its original repository/root envelope. The amendment binds
 semantic rationale, source-composition identity, and ownership proof; it cannot

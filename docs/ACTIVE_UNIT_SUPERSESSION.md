@@ -17,6 +17,12 @@ overlay-only bindings: they stay byte-identical `proposed` units and gain no
 Ready, Claim, validation, acceptance, publication, or current-unit authority.
 The old unit remains byte-identical historical evidence.
 
+The v1/v2 compact-state contract intentionally permits the optional
+`normal_validation_selection` property to be absent as a no-selector state;
+supersession treats that absence exactly like an explicit `null`.
+Any present non-null value still fails closed before mutation so supersession
+cannot orphan a malformed or conflicting selector binding.
+
 Execution requires the reviewed request SHA-256. A fresh transaction creates
 one exact automation receipt and one canonical supersession event. If an exact
 intent already exists, authenticate its request, paths, endpoints, preimages,

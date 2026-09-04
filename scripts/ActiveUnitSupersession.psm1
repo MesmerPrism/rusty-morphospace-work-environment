@@ -283,7 +283,8 @@ function Get-ActiveSupersessionBinding {
         if([string]$unit.project_id-cne[string]$project.project_id-or[string]$unit.project_id-cne[string]$state.project_id){throw 'SupersedeActive project identities do not agree.'}
     }
     if($null-ne$state.next_ready_unit-and[string]$state.next_ready_unit-cne$ReplacementUnitId){throw 'SupersedeActive rejects a different next-ready unit.'}
-    if($null-ne$state.normal_validation_selection){throw 'SupersedeActive refuses to orphan a normal-validation selector binding.'}
+    $normalValidationSelectionProperty=$state.PSObject.Properties['normal_validation_selection']
+    if($null-ne$normalValidationSelectionProperty-and$null-ne$normalValidationSelectionProperty.Value){throw 'SupersedeActive refuses to orphan a normal-validation selector binding.'}
     Assert-ActiveSupersessionNoSourceWidening $old.document $replacement.document
     $companions=Get-ActiveSupersessionCompanionBindings $workspace @($Request.companion_units) $project $state $oldId $ReplacementUnitId
     $ownershipUnits=@([pscustomobject]@{unit_id=$ReplacementUnitId;role='replacement';document=$replacement.document;binding=$replacement})+@($companions)

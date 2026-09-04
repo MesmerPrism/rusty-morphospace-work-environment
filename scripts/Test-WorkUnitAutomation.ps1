@@ -14,6 +14,8 @@ function Assert-Automation {
     if (-not $Condition) { throw "Automation self-test failed: $Message" }
 }
 
+$automationEntry=Get-Command (Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1');$actionSet=@($automationEntry.Parameters['Action'].Attributes|Where-Object{$_-is[Management.Automation.ValidateSetAttribute]}|ForEach-Object{$_.ValidValues});Assert-Automation ($actionSet-ccontains'ReprepareRetiredDevelopmentEnvelope') 'public automation entrypoint does not register ReprepareRetiredDevelopmentEnvelope'
+
 function Get-TestCanonicalHash {
     param([object]$Value)
     $module = Get-Module WorkUnitAutomation
@@ -37,7 +39,7 @@ function Read-TestProtocolJson {
     return & $module { param($DocumentPath) Read-MorphospaceProtocolJson -Path $DocumentPath } $Path
 }
 
-# Exercise the two lifecycle branches through the exact public script while
+# Exercise the lifecycle branches through the exact public script while
 # replacing only their already independently tested owner modules with a
 # closed capture seam. This keeps wrapper-only changes cheap while proving
 # parameter forwarding, dry/execute switch projection, replay stability, and
@@ -53,6 +55,13 @@ function Invoke-MorphospacePrepareBlockedSuccessor {
     [pscustomobject][ordered]@{action='PrepareBlockedSuccessor';workspace_root=$WorkspaceRoot;request=$BlockedSuccessorPreparation;expected_sha256=$ExpectedBlockedSuccessorPreparationSha256;timestamp=$Timestamp;out_path=$OutPath;executed=$Execute.IsPresent}
 }
 Export-ModuleMember -Function Invoke-MorphospacePrepareBlockedSuccessor
+'@,[Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText((Join-Path $lifecycleRouterRoot 'DevelopmentEnvelopeRepreparation.psm1'),@'
+function Invoke-MorphospaceReprepareRetiredDevelopmentEnvelope {
+    [CmdletBinding()]param([string]$WorkspaceRoot,[string]$DevelopmentEnvelopeRepreparation,[string]$ExpectedDevelopmentEnvelopeRepreparationSha256,[string]$Timestamp,[string]$OutPath,[switch]$Execute)
+    [pscustomobject][ordered]@{action='ReprepareRetiredDevelopmentEnvelope';workspace_root=$WorkspaceRoot;request=$DevelopmentEnvelopeRepreparation;expected_sha256=$ExpectedDevelopmentEnvelopeRepreparationSha256;timestamp=$Timestamp;out_path=$OutPath;executed=$Execute.IsPresent}
+}
+Export-ModuleMember -Function Invoke-MorphospaceReprepareRetiredDevelopmentEnvelope
 '@,[Text.UTF8Encoding]::new($false))
     [IO.File]::WriteAllText((Join-Path $lifecycleRouterRoot 'ActiveUnitSupersession.psm1'),@'
 function Invoke-MorphospaceSupersedeActive {
@@ -73,15 +82,18 @@ Export-ModuleMember -Function Invoke-MorphospaceRematerializeValidatingCandidate
     $lifecycleMarker = Join-Path $lifecycleWorkspace 'marker.txt'
     [IO.File]::WriteAllText($lifecycleMarker,"unchanged`n",[Text.UTF8Encoding]::new($false))
     $blockedRequest = Join-Path $lifecycleRouterRoot 'blocked-request.json'
+    $repreparationRequest = Join-Path $lifecycleRouterRoot 'repreparation-request.json'
     $activeRequest = Join-Path $lifecycleRouterRoot 'active-request.json'
     $rematerializationRequest = Join-Path $lifecycleRouterRoot 'rematerialization-request.json'
     $replacementSourceComposition = Join-Path $lifecycleRouterRoot 'replacement-source-composition.json'
     $routerRepoMap = Join-Path $lifecycleRouterRoot 'repository-map.json'
-    foreach ($path in @($blockedRequest,$activeRequest,$rematerializationRequest,$replacementSourceComposition,$routerRepoMap)) { [IO.File]::WriteAllText($path,"{}`n",[Text.UTF8Encoding]::new($false)) }
+    foreach ($path in @($blockedRequest,$repreparationRequest,$activeRequest,$rematerializationRequest,$replacementSourceComposition,$routerRepoMap)) { [IO.File]::WriteAllText($path,"{}`n",[Text.UTF8Encoding]::new($false)) }
     $blockedOut = Join-Path $lifecycleWorkspace 'blocked-result.json'
+    $repreparationOut = Join-Path $lifecycleWorkspace 'repreparation-result.json'
     $activeOut = Join-Path $lifecycleWorkspace 'active-result.json'
     $rematerializationOut = Join-Path $lifecycleWorkspace 'rematerialization-result.json'
     $blockedHash = Get-TestFileHash $blockedRequest
+    $repreparationHash = Get-TestFileHash $repreparationRequest
     $activeHash = Get-TestFileHash $activeRequest
     $rematerializationHash = Get-TestFileHash $rematerializationRequest
     $markerHash = Get-TestFileHash $lifecycleMarker
@@ -104,6 +116,18 @@ Export-ModuleMember -Function Invoke-MorphospaceRematerializeValidatingCandidate
         (Get-TestCanonicalHash $blockedRun) -ceq (Get-TestCanonicalHash $blockedExpectedRun) -and
         (Get-TestCanonicalHash $blockedReplay) -ceq (Get-TestCanonicalHash $blockedExpectedRun)
     ) 'public PrepareBlockedSuccessor wrapper did not preserve exact dry/execute/replay forwarding'
+    $repreparationArguments = @('-Action','ReprepareRetiredDevelopmentEnvelope','-WorkspaceRoot',$lifecycleWorkspace,'-DevelopmentEnvelopeRepreparation',$repreparationRequest,'-ExpectedDevelopmentEnvelopeRepreparationSha256',$repreparationHash,'-Timestamp','2026-09-01T00:03:30.0000000Z','-OutPath',$repreparationOut)
+    $repreparationDry = Invoke-LifecycleRouterCapture $repreparationArguments
+    $repreparationRun = Invoke-LifecycleRouterCapture (@($repreparationArguments) + '-Execute')
+    $repreparationReplay = Invoke-LifecycleRouterCapture (@($repreparationArguments) + '-Execute')
+    $repreparationExpectedDry = [pscustomobject][ordered]@{action='ReprepareRetiredDevelopmentEnvelope';workspace_root=$lifecycleWorkspace;request=$repreparationRequest;expected_sha256=$repreparationHash;timestamp='2026-09-01T00:03:30.0000000Z';out_path=$repreparationOut;executed=$false}
+    $repreparationExpectedRun = $repreparationExpectedDry | ConvertTo-Json -Depth 8 | ConvertFrom-Json -Depth 8 -DateKind String
+    $repreparationExpectedRun.executed = $true
+    Assert-Automation (
+        (Get-TestCanonicalHash $repreparationDry) -ceq (Get-TestCanonicalHash $repreparationExpectedDry) -and
+        (Get-TestCanonicalHash $repreparationRun) -ceq (Get-TestCanonicalHash $repreparationExpectedRun) -and
+        (Get-TestCanonicalHash $repreparationReplay) -ceq (Get-TestCanonicalHash $repreparationExpectedRun)
+    ) 'public ReprepareRetiredDevelopmentEnvelope wrapper did not preserve exact dry/execute/replay forwarding'
     $activeArguments = @('-Action','SupersedeActive','-WorkspaceRoot',$lifecycleWorkspace,'-UnitId','replacement-unit','-RepoMapPath',$routerRepoMap,'-ActiveUnitSupersession',$activeRequest,'-ExpectedActiveUnitSupersessionSha256',$activeHash,'-Timestamp','2026-09-01T00:04:00.0000000Z','-OutPath',$activeOut)
     $activeDry = Invoke-LifecycleRouterCapture $activeArguments
     $activeRun = Invoke-LifecycleRouterCapture (@($activeArguments) + '-Execute')
@@ -128,7 +152,7 @@ Export-ModuleMember -Function Invoke-MorphospaceRematerializeValidatingCandidate
         (Get-TestCanonicalHash $rematerializationRun) -ceq (Get-TestCanonicalHash $rematerializationExpectedRun) -and
         (Get-TestCanonicalHash $rematerializationReplay) -ceq (Get-TestCanonicalHash $rematerializationExpectedRun)
     ) 'public RematerializeValidatingCandidate wrapper did not preserve exact dry/execute/replay forwarding'
-    Assert-Automation ((Get-TestFileHash $lifecycleMarker) -ceq $markerHash -and -not (Test-Path -LiteralPath $blockedOut) -and -not (Test-Path -LiteralPath $activeOut) -and -not (Test-Path -LiteralPath $rematerializationOut)) 'public lifecycle wrapper capture seam mutated workspace or output bytes'
+    Assert-Automation ((Get-TestFileHash $lifecycleMarker) -ceq $markerHash -and -not (Test-Path -LiteralPath $blockedOut) -and -not (Test-Path -LiteralPath $repreparationOut) -and -not (Test-Path -LiteralPath $activeOut) -and -not (Test-Path -LiteralPath $rematerializationOut)) 'public lifecycle wrapper capture seam mutated workspace or output bytes'
 } finally {
     Remove-Item Function:Invoke-LifecycleRouterCapture -ErrorAction SilentlyContinue
     if ([IO.Directory]::Exists($lifecycleRouterRoot)) { Remove-Item -LiteralPath $lifecycleRouterRoot -Recurse -Force }

@@ -46,8 +46,9 @@ function Get-MorphospaceCandidateSourceComposition {
     $path=Resolve-MorphospaceWorkspacePath $Workspace $RelativePath -RequireLeaf
     $repoRoot=Split-Path $PSScriptRoot -Parent
     $composition=Read-MorphospaceProtocolJson $path
-    if([string]$composition.schema-ceq'rusty.morphospace.workflow.development_envelope_source_composition.v1'){
-        if(-not(Test-Json -Json (Get-Content -Raw -LiteralPath $path) -SchemaFile (Join-Path $repoRoot 'schemas\development-envelope-source-composition-v1.schema.json'))){throw 'Frozen candidate preparation-owned source composition is malformed.'}
+    if([string]$composition.schema-cin@('rusty.morphospace.workflow.development_envelope_source_composition.v1','rusty.morphospace.workflow.development_envelope_source_composition.v2')){
+        $schemaFile=if([string]$composition.schema-ceq'rusty.morphospace.workflow.development_envelope_source_composition.v2'){'development-envelope-source-composition-v2.schema.json'}else{'development-envelope-source-composition-v1.schema.json'}
+        if(-not(Test-Json -Json (Get-Content -Raw -LiteralPath $path) -SchemaFile (Join-Path $repoRoot "schemas\$schemaFile"))){throw 'Frozen candidate preparation-owned source composition is malformed.'}
         $admission=Get-MorphospaceCandidatePreparationProvenance $Workspace $UnitId;$preparation=$admission.document.preparation;[void](Test-MorphospaceDevelopmentUnitPreparation -WorkspaceRoot $Workspace -Admission $admission.document -Phase Freeze)
         if([string]$preparation.source_composition_path-cne$RelativePath-or[string]$preparation.source_composition_sha256-cne(Get-MorphospaceFileSha256 $path)){throw 'Frozen candidate preparation source lock is not the exact admitted lock.'}
         $receiptPath=Resolve-MorphospaceWorkspacePath $Workspace ([string]$preparation.receipt_path) -RequireLeaf

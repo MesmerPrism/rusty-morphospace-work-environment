@@ -2905,6 +2905,10 @@ if ($null -ne $historicalDebtResult) {
     Write-Host "Workflow contract validation passed with unresolved historical debt: baseline=$([string]$historicalDebtResult.historical_debt.baseline_id); count=$([int]$historicalDebtResult.historical_debt.count); sha256=$([string]$historicalDebtResult.historical_debt.sha256); current_validation=passed."
 }
 
+$recoveryActionSchema=Read-JsonDocument -Path (Join-Path $RepoRoot 'schemas\work-unit-automation-receipt-v2.schema.json') -Context 'repreparation automation registration'
+if($null-ne$recoveryActionSchema-and@($recoveryActionSchema.properties.action.enum)-cnotcontains'ReprepareRetiredDevelopmentEnvelope'){Add-Failure -Message 'ReprepareRetiredDevelopmentEnvelope is absent from the v2 automation receipt action set.'}
+foreach($recoveryContract in @('schemas/development-envelope-repreparation-v1.schema.json','schemas/development-envelope-repreparation-receipt-v1.schema.json','schemas/development-envelope-repreparation-intent-v1.schema.json','schemas/development-envelope-repreparation-completion-v1.schema.json','schemas/development-envelope-source-composition-v2.schema.json','scripts/DevelopmentEnvelopeRepreparation.psm1')){if(-not(Test-Path -LiteralPath (Join-Path $RepoRoot $recoveryContract))){Add-Failure -Message "Repreparation contract surface is absent: $recoveryContract"}}
+
 if ($script:Failures.Count -gt 0) {
     Write-Host "Workflow contract validation failures:"
     foreach ($failure in $script:Failures) {

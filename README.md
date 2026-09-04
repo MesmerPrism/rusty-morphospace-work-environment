@@ -427,6 +427,12 @@ ordinary `Ready` route; release-v2 clears only its authenticated stale selector
 and explicitly claims no selector evidence. Both actions recover only from
 their exact transaction intent and grant no source, build, device, validation,
 acceptance, publication, or companion lifecycle authority.
+An admitted proposal prepared with a stale lock fingerprint or mismatched
+module registry must first be closed with `RetireProposed`. The separate
+`ReprepareRetiredDevelopmentEnvelope` action then authenticates that completed
+suffix, preserves the old unit and evidence byte-for-byte, and atomically
+installs a corrected additive project/lock/state triple plus a fresh preparation
+and source lock. It does not create or admit the named replacement.
 Use `-Action Ready -Execute` to review a bounded `proposed` unit into the
 claimable queue after its prerequisites are accepted; this replaces manual
 status/state/event edits. If another unit is current, Ready uses the same
