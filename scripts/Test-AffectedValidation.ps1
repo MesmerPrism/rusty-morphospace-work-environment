@@ -3789,8 +3789,10 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     Assert-True $untriggeredFailed 'Registry accepted automation outside public-boundary triggers.'
 
     $cycle = Read-MorphospaceProtocolJson -Path (Join-Path $fixture 'manifests/affected-validation-registry.json')
-    $cycle.checks[0].prerequisite_checks = @([string]$cycle.checks[1].check_id)
-    $cycle.checks[1].prerequisite_checks = @([string]$cycle.checks[0].check_id)
+    # Select the same-platform fixture by identity; registry insertion order
+    # must not turn the intended cycle into an earlier cross-platform error.
+    $cycle.checks | Where-Object { $_.check_id -ceq 'affected-selector-graph-import-closure' } | ForEach-Object { $_.prerequisite_checks = @('affected-selector-dependency-closure') }
+    $cycle.checks | Where-Object { $_.check_id -ceq 'affected-selector-dependency-closure' } | ForEach-Object { $_.prerequisite_checks = @('affected-selector-graph-import-closure') }
     $cycleFailed = $false
     try { [void](Test-MorphospaceAffectedValidationRegistry -Registry $cycle -RepositoryRoot $fixture -SchemaPath (Join-Path $fixture 'schemas/affected-validation-registry-v1.schema.json')) } catch { $cycleFailed = $_.Exception.Message -like '*cycle*' }
     Assert-True $cycleFailed 'Prerequisite cycle was not rejected.'
