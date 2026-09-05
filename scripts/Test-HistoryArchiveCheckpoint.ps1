@@ -5,6 +5,7 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceHistoryArchive.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceCurrentWorkHistory.psm1')
 
 function Assert-Archive([bool]$Condition, [string]$Message) {
     if (-not $Condition) { throw "History archive checkpoint self-test failed: $Message" }
@@ -106,6 +107,10 @@ try {
         try { Invoke-MorphospaceArchiveHistoryCheckpoint -WorkspaceRoot $recoveryWorkspace -HistoryArchiveCheckpoint $recoveryRequest -ExpectedHistoryArchiveCheckpointSha256 (Get-MorphospaceFileSha256 $recoveryRequest) -OutPath $recoveryOut -Timestamp '2026-08-27T00:01:00.0000000Z' -Execute -FaultAfter $cut | Out-Null } catch { $interrupted = $true }
         $incomplete = Test-MorphospaceHistoryArchive -WorkspaceRoot $recoveryWorkspace -Tier quick
         Assert-Archive ($incomplete.status -ceq 'replay-required' -and $incomplete.reason_codes -ccontains 'incomplete-transaction') "recovery cut '$cut' incorrectly passed Quick before typed recovery"
+        $currentWorkRejected=$false
+        try { [void](Get-MorphospaceCurrentWorkHistory -WorkspaceRoot $recoveryWorkspace -RequireIdle) }
+        catch { $currentWorkRejected=$_.Exception.Message -ceq 'Current-work archive checkpoint is incomplete or unauthenticated.' }
+        Assert-Archive $currentWorkRejected "recovery cut '$cut' allowed current work over an incomplete archive writer"
         $resumed = Invoke-MorphospaceArchiveHistoryCheckpoint -WorkspaceRoot $recoveryWorkspace -HistoryArchiveCheckpoint $recoveryRequest -ExpectedHistoryArchiveCheckpointSha256 (Get-MorphospaceFileSha256 $recoveryRequest) -OutPath $recoveryOut -Timestamp '2026-08-27T00:01:01.0000000Z' -Execute
         Assert-Archive ($interrupted -and $resumed.executed -and (Test-Path -LiteralPath $recoveryOut) -and (Test-MorphospaceHistoryArchive -WorkspaceRoot $recoveryWorkspace -Tier quick).status -ceq 'pass') "recovery cut '$cut' did not finish the exact durable transaction"
     }

@@ -10,6 +10,14 @@ function Get-MorphospaceCurrentWorkHistory {
     param([Parameter(Mandatory)][string]$WorkspaceRoot, [switch]$RequireIdle)
     $workspace = [IO.Path]::GetFullPath($WorkspaceRoot)
     $state = Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace 'workspace.state.json' -RequireLeaf)
+    $archive = $null
+    $archiveTransactions = Join-Path $workspace 'history-archive/transactions'
+    if (($state.PSObject.Properties.Name -contains 'history_archive' -and $null -ne $state.history_archive) -or
+        ([IO.Directory]::Exists($archiveTransactions) -and @(Get-ChildItem -LiteralPath $archiveTransactions -File).Count -gt 0)) {
+        Import-Module (Join-Path $PSScriptRoot 'MorphospaceHistoryArchive.psm1')
+        $archive = Test-MorphospaceHistoryArchive -WorkspaceRoot $workspace -Tier quick
+        if ([string]$archive.status -cne 'pass') { throw 'Current-work archive checkpoint is incomplete or unauthenticated.' }
+    }
     if ($RequireIdle) {
         if ($null -ne $state.current_unit -or $null -ne $state.next_ready_unit -or
             ($state.PSObject.Properties.Name -contains 'blockers' -and @($state.blockers).Count -gt 0) -or
@@ -73,9 +81,7 @@ function Get-MorphospaceCurrentWorkHistory {
         $intentPath = Resolve-MorphospaceWorkspacePath $workspace "receipts/transactions/$id.intent.json"
         if (-not [IO.File]::Exists($intentPath) -and $state.PSObject.Properties.Name -contains 'history_archive' -and $null -ne $state.history_archive) {
             # Archive checkpoints have their own existing transaction namespace.
-            Import-Module (Join-Path $PSScriptRoot 'MorphospaceHistoryArchive.psm1')
-            $archive = Test-MorphospaceHistoryArchive -WorkspaceRoot $workspace -Tier quick
-            if ([string]$archive.status -cne 'pass') { throw 'Current-work archive checkpoint is not authenticated.' }
+            if ($null -eq $archive -or [string]$archive.status -cne 'pass') { throw 'Current-work archive checkpoint is not authenticated.' }
             $intentPath = Resolve-MorphospaceWorkspacePath $workspace "history-archive/transactions/$($archive.checkpoint.checkpoint_id)-archive-transition.intent.json" -RequireLeaf
             $intent = Read-MorphospaceProtocolJson $intentPath
             if ((Get-MorphospaceCanonicalJsonSha256 $intent.event) -cne (Get-MorphospaceCanonicalJsonSha256 $event)) { throw 'Current-work archive event is detached.' }
@@ -86,13 +92,19 @@ function Get-MorphospaceCurrentWorkHistory {
         if ([string]$intent.schema -ceq 'rusty.morphospace.workflow.development_envelope_preparation_intent.v1') {
             Assert-CurrentWorkPreparationStep $workspace $intentPath $intent $events $event
             foreach ($name in @('project','feature_lock')) {
-                $projectionHashes[[string]$intent.target.$name.path] = [string]$intent.target.$name.sha256
+                $path = [string]$intent.target.$name.path
+                if ($projectionHashes.ContainsKey($path) -and [string]$intent.pre.$name.sha256 -cne $projectionHashes[$path]) { throw 'Current-work preparation projection preimage is detached.' }
+                $projectionHashes[$path] = [string]$intent.target.$name.sha256
             }
         } elseif (-not $authenticatedArchiveStep) {
             $step = Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $workspace -TransactionId $id -ExpectedStatePath 'workspace.state.json' -ExpectedEventsPath 'iteration-events.jsonl'
             $intent = $step.intent
             if ($intent.PSObject.Properties.Name -contains 'additional_projections') {
-                foreach ($projection in $intent.additional_projections) { $projectionHashes[[string]$projection.path] = [string]$projection.target_sha256 }
+                foreach ($projection in $intent.additional_projections) {
+                    $path = [string]$projection.path
+                    if ($projectionHashes.ContainsKey($path) -and [string]$projection.pre_sha256 -cne $projectionHashes[$path]) { throw 'Current-work additional projection preimage is detached.' }
+                    $projectionHashes[$path] = [string]$projection.target_sha256
+                }
             }
         }
         if ([string]$intent.pre.state.sha256 -cne $priorStateHash) {
