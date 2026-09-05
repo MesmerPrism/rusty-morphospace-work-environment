@@ -4,6 +4,7 @@ param(
     [string]$RepositoryMapPath = "",
     [switch]$CurrentUnitInstructionOnly,
     [switch]$SkipOwnerSelfTests,
+    [switch]$CurrentWorkOnly,
     [switch]$StandardDeltaOnly,
     [string]$HistoricalValidationDebtBaselinePath = "",
     [string]$HistoricalValidationDebtResultPath = "",
@@ -34,6 +35,7 @@ Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceHistoricalBlockerReso
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceBlockedSupersessionTerminalValidation.psm1') -Force
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceHistoricalUnitCompatibilityProjection.psm1') -Force
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceProtocolCommon.psm1') -Force
+Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceCurrentWorkHistory.psm1')
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceHistoricalValidationDebtBaseline.psm1') -Force
 # Keep one stable shared-predicate module instance through nested owner tests.
 # A force reload can remove this script's exported command binding mid-run.
@@ -797,17 +799,7 @@ function Invoke-CurrentInstructionSurfacePolicySelfTest {
     }
 }
 
-function Get-FeatureLockFingerprint {
-    param([object]$Lock)
 
-    $copy = ($Lock | ConvertTo-Json -Depth 48 | ConvertFrom-Json)
-    $copy.lock_fingerprint = "0" * 64
-    $json = $copy | ConvertTo-Json -Depth 48 -Compress
-    $bytes = (New-Object System.Text.UTF8Encoding($false)).GetBytes($json)
-    $sha = [System.Security.Cryptography.SHA256]::Create()
-    try { return (($sha.ComputeHash($bytes) | ForEach-Object { $_.ToString("x2") }) -join "") }
-    finally { $sha.Dispose() }
-}
 
 function Get-FileSha256 {
     param([string]$Path)
@@ -947,9 +939,19 @@ function Test-ProjectBundle {
     }
 
     $workspaceRoot = Split-Path -Parent $Bundle.StatePath
+    $currentHistory = $null
+    if ($CurrentWorkOnly -and $script:WorkspaceRoot -and
+        [IO.Path]::GetFullPath($workspaceRoot) -ceq [IO.Path]::GetFullPath($script:WorkspaceRoot)) {
+        if ($HistoricalValidationDebtBaselinePath -or $HistoricalValidationDebtResultPath -or $EmitHistoricalValidationDebtCapture) {
+            throw 'Current-work validation cannot create or consume full historical-audit debt evidence.'
+        }
+        $currentHistory = Get-MorphospaceCurrentWorkHistory -WorkspaceRoot $workspaceRoot
+        Write-Host ('Historical audit retained separately; current policy not reapplied to: ' + (($currentHistory.audit_only | ForEach-Object { $_.unit_id }) -join ', '))
+    }
+    $historicalAuditRequired = $null -eq $currentHistory -or -not $currentHistory.authenticated
     $historicalCompatibilityProjections = @{}
     $compatibilityLedgerPath = Join-Path $workspaceRoot 'iteration-events.jsonl'
-    if (Test-Path -LiteralPath $compatibilityLedgerPath -PathType Leaf) {
+    if ($historicalAuditRequired -and (Test-Path -LiteralPath $compatibilityLedgerPath -PathType Leaf)) {
         try {
             $historicalCompatibilityProjections = Get-MorphospaceHistoricalUnitCompatibilityProjectionMap `
                 -WorkspaceRoot $workspaceRoot -ProjectId ([string]$spec.project_id)
@@ -960,7 +962,7 @@ function Test-ProjectBundle {
     $historicalAdoptions = @{}
     $reconstructionByOriginal = @{}
     $reconstructionReferences = @()
-    if ($state.PSObject.Properties.Name -contains "historical_unit_adoption_reconstructions") { $reconstructionReferences = @($state.historical_unit_adoption_reconstructions) }
+    if ($historicalAuditRequired -and $state.PSObject.Properties.Name -contains "historical_unit_adoption_reconstructions") { $reconstructionReferences = @($state.historical_unit_adoption_reconstructions) }
     Test-UniqueProperty -Items $reconstructionReferences -Property "path" -Context "$Context historical-unit adoption reconstruction references"
     if ($reconstructionReferences.Count -gt 0) {
         Import-Module (Join-Path $RepoRoot "scripts/lib/MorphospaceHistoricalAdoptionReconstruction.psm1") -Force
@@ -988,7 +990,7 @@ function Test-ProjectBundle {
     }
     $adoptionReferences = @()
     $consumedReconstructions = @{}
-    if ($state.PSObject.Properties.Name -contains "historical_unit_adoption_receipts") { $adoptionReferences = @($state.historical_unit_adoption_receipts) }
+    if ($historicalAuditRequired -and $state.PSObject.Properties.Name -contains "historical_unit_adoption_receipts") { $adoptionReferences = @($state.historical_unit_adoption_receipts) }
     Test-UniqueProperty -Items $adoptionReferences -Property "path" -Context "$Context historical-unit adoption references"
     foreach ($reference in $adoptionReferences) {
         $relativePath = Normalize-RelativePath ([string]$reference.path)
@@ -1095,7 +1097,7 @@ function Test-ProjectBundle {
     if ($isLockV2) {
         Assert-Contract ([int]$lock.project_revision -eq [int]$spec.revision) "$Context feature_lock.v2 project revision drifted."
         Assert-Contract ($lock.activation_rule -eq "selected-lock-and-runtime-input") "$Context feature_lock.v2 activation rule drifted."
-        Assert-Contract ([string]$lock.lock_fingerprint -eq (Get-FeatureLockFingerprint -Lock $lock)) "$Context feature_lock.v2 fingerprint is stale or damaged."
+        Assert-Contract (Test-MorphospaceFeatureLockFingerprint -Lock (Read-MorphospaceProtocolJson $Bundle.LockPath)) "$Context feature_lock.v2 fingerprint is stale or damaged."
         $selectedLockIds = @($lock.selected_features | ForEach-Object { [string]$_ } | Sort-Object)
         $featureIds = @($features | ForEach-Object { [string]$_.feature_id } | Sort-Object)
         Assert-Contract (($selectedLockIds -join "|") -eq ($featureIds -join "|")) "$Context feature_lock.v2 selected_features must exactly match feature entries."
@@ -1198,6 +1200,13 @@ function Test-ProjectBundle {
         $units.Add($unit) | Out-Null
         $unitId = [string]$unit.unit_id
         if (-not $unitPathMap.ContainsKey($unitId)) { $unitPathMap[$unitId] = $path }
+        if ($null -ne $currentHistory -and $currentHistory.historical_ids.Contains($unitId)) {
+            # Identity/lifecycle and carried evidence remain checked. A past
+            # unit does not acquire today's skill, scope or vocabulary duties.
+            Assert-Contract ([string]$unit.schema -ceq 'rusty.morphospace.workflow.iteration_unit.v1') "$Context historical unit '$unitId' has a damaged schema identity."
+            Assert-Contract (@('active','validating','accepted') -ccontains [string]$unit.status) "$Context historical unit '$unitId' has a damaged lifecycle identity."
+            continue
+        }
         $priorFailureAttribution = $script:FailureAttribution
         $historicalDebtEligibleAttribution = New-HistoricalDebtUnitFailureAttribution `
             -Unit $unit -UnitPath $path -State $state -WorkspaceRoot $workspaceRoot -EligibleHistoricalDebt
@@ -1824,6 +1833,7 @@ function Test-ProjectBundle {
         $unitMap[[string]$unit.unit_id] = $unit
     }
     foreach ($unit in $units.ToArray()) {
+        if ($null -ne $currentHistory -and $currentHistory.historical_ids.Contains([string]$unit.unit_id)) { continue }
         foreach ($prerequisite in @($unit.prerequisites)) {
             Assert-Contract ($unitMap.ContainsKey([string]$prerequisite)) "$Context unit '$($unit.unit_id)' references missing prerequisite '$prerequisite'."
         }
@@ -2058,7 +2068,8 @@ function Test-ProjectBundle {
     # correction, or correction transaction whose current-unit CAS is not
     # recoverable from its immutable intent.
     try {
-        [void](Get-MorphospaceHistoricalBlockerResolutionIntentBindingCorrectionIndex -WorkspaceRoot $workspaceRoot -Events $events)
+        $authorityEvents = @($events | Where-Object { $historicalAuditRequired -or [int]$_.sequence -gt [int]$currentHistory.sequence })
+        [void](Get-MorphospaceHistoricalBlockerResolutionIntentBindingCorrectionIndex -WorkspaceRoot $workspaceRoot -Events $authorityEvents)
     } catch {
         Add-Failure -Message "$Context historical blocker-resolution intent-binding correction is unauthenticated: $($_.Exception.Message)"
     }
@@ -2071,7 +2082,7 @@ function Test-ProjectBundle {
     # intent/completion before returning the effective endpoint.
     $completedTransitionCorrections = @{}
     $correctionEventPrefix = 'completed-transition-semantics-corrected-'
-    foreach ($candidateCorrectionEvent in @($events | Where-Object { ([string]$_.event_id).StartsWith($correctionEventPrefix, [StringComparison]::Ordinal) })) {
+    foreach ($candidateCorrectionEvent in @($authorityEvents | Where-Object { ([string]$_.event_id).StartsWith($correctionEventPrefix, [StringComparison]::Ordinal) })) {
         $candidateId = [string]$candidateCorrectionEvent.event_id
         try {
             if ($candidateId -cnotmatch '^completed-transition-semantics-corrected-[0-9]{4,}$' -or
@@ -2107,7 +2118,7 @@ function Test-ProjectBundle {
     # retained defect is completion.completed_at preceding its immutable
     # future intent; the correction never rewrites that completion.
     $admissionRecoveryPrefix = 'admission-completion-timestamp-recovered-'
-    foreach ($candidateRecoveryEvent in @($events | Where-Object { ([string]$_.event_id).StartsWith($admissionRecoveryPrefix, [StringComparison]::Ordinal) })) {
+    foreach ($candidateRecoveryEvent in @($authorityEvents | Where-Object { ([string]$_.event_id).StartsWith($admissionRecoveryPrefix, [StringComparison]::Ordinal) })) {
         $candidateId = [string]$candidateRecoveryEvent.event_id
         try {
             if ($candidateId -cnotmatch '^admission-completion-timestamp-recovered-[0-9]{4,}$' -or
@@ -2174,11 +2185,13 @@ function Test-ProjectBundle {
             $replacementStatus = [string]$unitMap[$currentId].status
             $terminalFailHistory = $null
             try {
-                $terminalFailHistory = Test-MorphospaceBlockedSupersessionTerminalValidation `
+                if ($historicalAuditRequired -or [int]$event.sequence -gt [int]$currentHistory.sequence) {
+                    $terminalFailHistory = Test-MorphospaceBlockedSupersessionTerminalValidation `
                     -WorkspaceRoot $workspaceRoot `
                     -ProjectId ([string]$spec.project_id) `
                     -SupersessionEventId $eventId `
                     -ReplacementUnitId $currentId
+                }
             } catch {
                 Assert-Contract $false "$Context supersession replacement '$currentId' has unauthenticated terminal-fail or owner-projection continuation history: $($_.Exception.Message)"
             }

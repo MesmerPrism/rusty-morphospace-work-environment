@@ -23,6 +23,12 @@ function Add-AcceptedTransition([string]$root,[string]$unitId,[int]$sequence){
     Start-MorphospaceTransitionLedger -WorkspaceRoot $root -TransactionId "$eventId-transition" -StatePath 'workspace.state.json' -UnitPath $unitPath -EventsPath 'iteration-events.jsonl' -TargetState $targetState -TargetUnit $targetUnit -Event $event -ExpectedPreStateSha256 (Get-MorphospaceCanonicalJsonSha256 $state) -ExpectedPreUnitSha256 (Get-MorphospaceCanonicalJsonSha256 $unit)|Out-Null
 }
 function Assert-Closure([string]$root){&$preparationModule {param($workspace)Assert-PreparationHistoricalSupersessionClosure $workspace} $root}
+function Assert-AuditRejected([string]$template,[string]$name,[scriptblock]$damage){
+    $root=Join-Path $temp $name;Copy-Item $template $root -Recurse;&$damage $root
+    Assert-Closure $root
+    $rejected=$false;try{&$preparationModule {param($workspace)Assert-PreparationHistoricalSupersessionAudit $workspace} $root}catch{$rejected=$true}
+    Assert-History $rejected "historical audit did not retain $name damage"
+}
 function Assert-Rejected([string]$template,[string]$name,[scriptblock]$damage){$root=Join-Path $temp $name;Copy-Item $template $root -Recurse;&$damage $root;$rejected=$false;try{Assert-Closure $root}catch{$rejected=$true};Assert-History $rejected "accepted $name damage"}
 $temp=Join-Path ([IO.Path]::GetTempPath()) ('workenv-preparation-history-'+[guid]::NewGuid().ToString('N'))
 try{
@@ -42,11 +48,22 @@ try{
     Assert-History (($before-join"`n")-ceq($after-join"`n")) 'positive validation rewrote immutable workspace bytes'
     Assert-Rejected $workspace 'future-proposed' {param($r)Write-HistoryJson (Join-Path $r 'iteration-units\unit014.json') ([ordered]@{unit_id='unit014';status='proposed'})}
     Assert-Rejected $workspace 'current-authority' {param($r)$p=Join-Path $r 'workspace.state.json';$d=Read-MorphospaceProtocolJson $p;$d.current_unit='unit013';Write-HistoryJson $p $d}
-    Assert-Rejected $workspace 'missing-supersession-completion' {param($r)Remove-Item -LiteralPath (Join-Path $r 'receipts\transactions\unit009-superseded-by-unit010-transition.completion.json')}
-    Assert-Rejected $workspace 'damaged-supersession-intent' {param($r)$p=Join-Path $r 'receipts\transactions\unit009-superseded-by-unit010-transition.intent.json';$d=Read-MorphospaceProtocolJson $p;$d.supersession.old_unit.sha256='0'*64;Write-HistoryJson $p $d}
-    Assert-Rejected $workspace 'rewritten-historical-unit' {param($r)$p=Join-Path $r 'iteration-units\unit009.json';$d=Read-MorphospaceProtocolJson $p;$d|Add-Member -NotePropertyName objective -NotePropertyValue 'rewritten';Write-HistoryJson $p $d}
+    Assert-AuditRejected $workspace 'missing-supersession-completion' {param($r)Remove-Item -LiteralPath (Join-Path $r 'receipts\transactions\unit009-superseded-by-unit010-transition.completion.json')}
+    Assert-AuditRejected $workspace 'damaged-supersession-intent' {param($r)$p=Join-Path $r 'receipts\transactions\unit009-superseded-by-unit010-transition.intent.json';$d=Read-MorphospaceProtocolJson $p;$d.supersession.old_unit.sha256='0'*64;Write-HistoryJson $p $d}
+    Assert-AuditRejected $workspace 'rewritten-historical-unit' {param($r)$p=Join-Path $r 'iteration-units\unit009.json';$d=Read-MorphospaceProtocolJson $p;$d|Add-Member -NotePropertyName objective -NotePropertyValue 'rewritten';Write-HistoryJson $p $d}
+    Assert-Rejected $workspace 'rewritten-accepted-unit' {param($r)$p=Join-Path $r 'iteration-units\unit013.json';$d=Read-MorphospaceProtocolJson $p;$d|Add-Member -NotePropertyName objective -NotePropertyValue 'forged accepted endpoint';Write-HistoryJson $p $d}
     Assert-Rejected $workspace 'orphan-replacement' {param($r)Remove-Item -LiteralPath (Join-Path $r 'iteration-units\unit010.json')}
     Assert-Rejected $workspace 'missing-acceptance-completion' {param($r)Remove-Item -LiteralPath (Join-Path $r 'receipts\transactions\unit013-accepted-0004-transition.completion.json')}
+    Assert-Rejected $workspace 'pending-publication' {param($r)$p=Join-Path $r 'workspace.state.json';$d=Read-MorphospaceProtocolJson $p;$d|Add-Member pending_push_bundle 'pending';Write-HistoryJson $p $d}
+    Assert-Rejected $workspace 'live-blocker' {param($r)$p=Join-Path $r 'workspace.state.json';$d=Read-MorphospaceProtocolJson $p;$d|Add-Member blockers @('unresolved');Write-HistoryJson $p $d}
+    Assert-Rejected $workspace 'current-intent-under-old-name' {param($r)
+        $p=Join-Path $r 'receipts\transactions\unit009-superseded-by-unit010-transition.intent.json'
+        Remove-Item -LiteralPath ($p -replace '\.intent\.json$','.completion.json')
+        $d=Read-MorphospaceProtocolJson $p;$d.pre.state.sha256=Get-MorphospaceCanonicalJsonSha256 (Read-MorphospaceProtocolJson (Join-Path $r 'workspace.state.json'));Write-HistoryJson $p $d
+    }
+    Assert-Rejected $workspace 'required-retired-unit' {param($r)
+        Write-HistoryJson (Join-Path $r 'iteration-units\unit014.json') ([ordered]@{schema='rusty.morphospace.workflow.iteration_unit.v1';project_id='morphovision-shaped';unit_id='unit014';status='proposed';prerequisites=@('unit009')})
+    }
     Assert-Rejected $workspace 'ambiguous-supersession' {param($r)$p=Join-Path $r 'iteration-events.jsonl';$e=[ordered]@{schema='rusty.morphospace.workflow.iteration_event.v1';event_id='unit009-superseded-by-unit013';sequence=5;timestamp='2026-09-04T00:05:00.0000000Z';project_id='morphovision-shaped';unit_id='unit009';event_type='state-transition';summary='Counterfeit alternate replacement.';receipts=@()};[IO.File]::AppendAllText($p,(($e|ConvertTo-Json -Compress)+"`n"),[Text.UTF8Encoding]::new($false))}
     Write-Host 'Development-envelope historical-supersession self-test passed.'
-}finally{if(Test-Path $temp){Remove-Item -LiteralPath $temp -Recurse -Force}}
+}finally{if(Test-Path $temp){$resolved=[IO.Path]::GetFullPath($temp);if(-not $resolved.StartsWith([IO.Path]::GetFullPath([IO.Path]::GetTempPath()),[StringComparison]::OrdinalIgnoreCase)-or[IO.Path]::GetFileName($resolved)-notlike'workenv-preparation-history-*'){throw 'Unsafe self-test cleanup target.'};Remove-Item -LiteralPath $resolved -Recurse -Force}}

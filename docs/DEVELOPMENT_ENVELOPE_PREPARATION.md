@@ -45,20 +45,14 @@ receipt explicitly proves neither schema-revision approval nor any later
 lifecycle authority.
 
 An idle project may retain immutable `active` or `validating` documents from
-earlier superseded units. Preparation accepts those documents only when the
-shared committed-transition verifier authenticates every exact v2
-old-to-replacement supersession intent, completion, event, artifact, and bound
-old-unit hash, and the resulting chain ends at one exact committed acceptance
-transition. The sole non-v2 exception is an installed, historically valid
-`historical_supersession_compatibility.v1` receipt whose own committed action
-first passed immediate post-apply validation. It may contribute only its exact
-transactionless old-to-replacement edge and immediate legacy-v1
-replacement-to-successor edge, both closed by the receipt's authenticated
-normalization and accepted endpoint. Later valid events do not detach that
-historical proof, while the live state must still be idle.
-Proposed, ready, blocked, current, next-ready, orphaned, ambiguous, rewritten,
-or otherwise transaction-damaged units remain rejected; compatibility never
-rewrites historical bytes or treats status text alone as acceptance evidence.
+earlier superseded units. Preparation uses the shared
+[current-work boundary](CURRENT_WORK_VALIDATION.md): authenticate the accepted
+checkpoint and current suffix, then recognize canonical retirement chains in
+the sealed prefix. Do not require old edges to acquire newer proof versions or
+skill declarations. Preserve historical bytes and audit findings separately.
+Current or queued work, blockers, pending publication, ambiguous/orphaned chains,
+damaged acceptance evidence, stale preimages, and incomplete current transactions
+remain admission failures. Explicit prerequisites retain their own evidence.
 
 Preparation uses its own v1 intent, completion, receipt, and event. Each binds
 the complete multi-document CAS set. A matching interrupted transaction may

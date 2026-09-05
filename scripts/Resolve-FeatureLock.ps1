@@ -8,6 +8,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1')
 $EffectNames = @(
     "permissions", "services", "activities", "queries", "tools", "assets",
     "shaders", "native_libraries", "commands", "routes", "streams", "inputs",
@@ -29,16 +30,7 @@ function Assert-UniqueStrings {
     return $strings
 }
 
-function Get-ObjectFingerprint {
-    param([object]$Value)
-    $copy = ($Value | ConvertTo-Json -Depth 48 | ConvertFrom-Json)
-    $copy.lock_fingerprint = "0" * 64
-    $json = $copy | ConvertTo-Json -Depth 48 -Compress
-    $bytes = (New-Object System.Text.UTF8Encoding($false)).GetBytes($json)
-    $sha = [System.Security.Cryptography.SHA256]::Create()
-    try { return (($sha.ComputeHash($bytes) | ForEach-Object { $_.ToString("x2") }) -join "") }
-    finally { $sha.Dispose() }
-}
+
 
 function Get-PortableDescriptorReference {
     param(
@@ -213,7 +205,7 @@ $lock = [pscustomobject][ordered]@{
     features = @($lockFeatures.ToArray())
     effect_union = [pscustomobject]$union
 }
-$lock.lock_fingerprint = Get-ObjectFingerprint -Value $lock
+$lock.lock_fingerprint = Get-MorphospaceFeatureLockFingerprint -Lock $lock
 
 if ($Execute) {
     if (-not $OutPath) { throw "OutPath is required with -Execute." }

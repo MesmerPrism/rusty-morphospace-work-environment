@@ -121,6 +121,25 @@ try {
     catch { $wrongInputRejected = $_.Exception.Message -like "Runtime input 'property:ambient' is not accepted*" }
     Assert-FeatureLock $wrongInputRejected "ambient runtime input"
 
+    foreach ($timestamp in @('2026-01-02T03:04:05.1234000Z','2026-01-02T04:04:05+01:00')) {
+        $candidate=Read-MorphospaceProtocolJson $lockPath
+        $candidate.generated_at=$timestamp
+        $candidate.lock_fingerprint=Get-MorphospaceFeatureLockFingerprint $candidate
+        $candidatePath=Join-Path $root 'timestamp-lock.json'
+        Write-Json $candidatePath $candidate
+        $before=Get-MorphospaceFileSha256 $candidatePath
+        $decision=& (Join-Path $PSScriptRoot 'Test-FeatureActivationAgainstLock.ps1') -LockPath $candidatePath -FeatureId 'feature-app' -RuntimeInput 'profile:conformance'
+        Assert-FeatureLock ($decision.accepted-and$before-ceq(Get-MorphospaceFileSha256 $candidatePath)) 'canonical timestamp spelling or validation immutability'
+        $legacy=$candidate|ConvertTo-Json -Depth 48|ConvertFrom-Json
+        $legacy.lock_fingerprint='0'*64
+        $candidate.lock_fingerprint=Get-MorphospaceSha256Bytes ([Text.UTF8Encoding]::new($false).GetBytes(($legacy|ConvertTo-Json -Depth 48 -Compress)))
+        Write-Json $candidatePath $candidate
+        $decision=& (Join-Path $PSScriptRoot 'Test-FeatureActivationAgainstLock.ps1') -LockPath $candidatePath -FeatureId 'feature-app' -RuntimeInput 'profile:conformance'
+        Assert-FeatureLock $decision.accepted 'existing resolver fingerprint rejected'
+        $candidate.selected_features+=,'tampered-feature'
+        Assert-FeatureLock (-not(Test-MorphospaceFeatureLockFingerprint $candidate)) 'changed legacy payload accepted'
+    }
+
     $damaged = Get-Content -LiteralPath $lockPath -Raw | ConvertFrom-Json
     $damaged.effect_union.permissions = @("android.permission.CAMERA")
     Write-Json -Path $lockPath -Value $damaged

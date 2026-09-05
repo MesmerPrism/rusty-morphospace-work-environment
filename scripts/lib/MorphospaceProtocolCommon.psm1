@@ -103,6 +103,24 @@ function Get-MorphospaceCanonicalJsonSha256 {
     return Get-MorphospaceSha256Bytes -Bytes $encoding.GetBytes((ConvertTo-MorphospaceCanonicalJson -Value $Value))
 }
 
+function Get-MorphospaceFeatureLockFingerprint {
+    param([Parameter(Mandatory)][object]$Lock)
+    $copy=$Lock|ConvertTo-Json -Depth 64|ConvertFrom-Json -DateKind String
+    $copy.lock_fingerprint='0'*64
+    Get-MorphospaceCanonicalJsonSha256 $copy
+}
+
+function Test-MorphospaceFeatureLockFingerprint {
+    param([Parameter(Mandatory)][object]$Lock)
+    if ([string]$Lock.lock_fingerprint -ceq (Get-MorphospaceFeatureLockFingerprint $Lock)) { return $true }
+    # Existing resolver v2 output used PowerShell's ordered compressed JSON.
+    # Verify that exact producer format; never reinterpret an arbitrary hash.
+    $copy=$Lock|ConvertTo-Json -Depth 48|ConvertFrom-Json
+    $copy.lock_fingerprint='0'*64
+    $bytes=[Text.UTF8Encoding]::new($false).GetBytes(($copy|ConvertTo-Json -Depth 48 -Compress))
+    return [string]$Lock.lock_fingerprint -ceq (Get-MorphospaceSha256Bytes $bytes)
+}
+
 function Skip-MorphospaceJsonWhitespace {
     param([string]$Text,[ref]$Index)
     while($Index.Value-lt$Text.Length-and(' ',"`t","`r","`n")-contains[string]$Text[$Index.Value]){$Index.Value++}
@@ -847,6 +865,7 @@ function Invoke-MorphospacePendingQuarantineRecovery {
 Microsoft.PowerShell.Core\Export-ModuleMember -Function `
     Get-MorphospaceSha256Bytes, Get-MorphospaceFileSha256, Get-MorphospaceStreamSha256, `
     ConvertTo-MorphospaceCanonicalJson, ConvertTo-MorphospaceProtocolJsonBytes, Get-MorphospaceCanonicalJsonSha256, `
+    Get-MorphospaceFeatureLockFingerprint, Test-MorphospaceFeatureLockFingerprint, `
         Read-MorphospaceProtocolJson, ConvertFrom-MorphospaceProtocolJsonBytes, Write-MorphospaceManagedProtocolJsonAtomic, `
     ConvertTo-MorphospaceProtocolRelativePath, Resolve-MorphospaceWorkspacePath, `
     Get-MorphospaceManagedControlPath, ConvertTo-MorphospaceUtcTimestamp, `

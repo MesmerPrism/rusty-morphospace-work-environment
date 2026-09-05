@@ -25,6 +25,13 @@ named by the user or ask for its location; never guess a machine path.
 
 ## Route Specialized Work
 
+For ordinary continuation, use the authenticated current-work boundary in
+`<work-environment>/docs/CURRENT_WORK_VALIDATION.md`. Retired units do not acquire
+new proof or skill requirements. Keep current authority, transaction suffixes,
+and explicit prerequisites strict. Use `-CurrentWorkOnly -SkipOwnerSelfTests`
+for an unchanged adopted workflow consumer. Historical repair recipes below
+apply to explicit historical audits or migrations, not routine admission.
+
 - Invoke `$system-engineering` for authority design, contracts, interfaces,
   observability, validation scorecards, or mitigation maps.
 - Invoke `$rust-work-graph` for inventories, source roots, dependency or instruction-surface audits, and refactor impact graphs.

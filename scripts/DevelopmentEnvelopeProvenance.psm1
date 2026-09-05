@@ -61,10 +61,19 @@ function Test-PreparationProvenanceHasAdmissionConsumer {
  $transactionRoot=Resolve-MorphospaceWorkspacePath $Workspace 'receipts/transactions'
  if(-not[IO.Directory]::Exists($transactionRoot)){return $false}
  $directConsumers=0
+ $sealedSequence=0
+ $events=@(Get-Content -LiteralPath (Resolve-MorphospaceWorkspacePath $Workspace 'iteration-events.jsonl')|Where-Object{$_}|ForEach-Object{$_|ConvertFrom-Json -DateKind String})
+ $accepted=@($events|Where-Object{[int]$_.sequence-lt[int]$PreparationIntent.event.sequence-and@($_.receipts)-ccontains[string]$PreparationIntent.pre.state.document.last_accepted_receipt-and[string]$_.event_id-cmatch('^'+[regex]::Escape([string]$_.unit_id)+'-accepted-[0-9]{4,}$')})
+ if($accepted.Count-eq1){
+  $checkpoint=Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $Workspace -TransactionId "$($accepted[0].event_id)-transition" -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath "iteration-units/$($accepted[0].unit_id).json" -ExpectedEventsPath 'iteration-events.jsonl'
+  if([string]$checkpoint.intent.target.unit.document.status-ceq'accepted'){$sealedSequence=[int]$accepted[0].sequence}
+ }
  foreach($intentFile in @(Get-ChildItem -LiteralPath $transactionRoot -File -Filter '*-admitted-transition.intent.json')){
   $transactionId=$intentFile.Name.Substring(0,$intentFile.Name.Length-'.intent.json'.Length)
-  Assert-PreparationProvenanceCommittedTransaction -Workspace $Workspace -TransactionId $transactionId -AllowHistorical -AllowIncomplete
   $consumerIntent=Read-MorphospaceProtocolJson $intentFile.FullName
+  $sealed=@($events|Where-Object{[int]$_.sequence-lt$sealedSequence-and"$($_.event_id)-transition"-ceq$transactionId})
+  if($sealed.Count-eq1-and(Get-MorphospaceCanonicalJsonSha256 $consumerIntent.event)-ceq(Get-MorphospaceCanonicalJsonSha256 $sealed[0])-and[string]$consumerIntent.pre.state.sha256-cne[string]$PreparationIntent.target.state.sha256){continue}
+  Assert-PreparationProvenanceCommittedTransaction -Workspace $Workspace -TransactionId $transactionId -AllowHistorical -AllowIncomplete
   if([string]$consumerIntent.schema-cne'rusty.morphospace.workflow.transition_ledger_intent.v1'){throw 'Prepared-envelope admission-consumer intent has an unexpected schema.'}
   if(@($consumerIntent.artifacts).Count-ne1){throw 'Prepared-envelope admission consumer does not own exactly one admission artifact.'}
   try{$consumer=ConvertFrom-MorphospaceProtocolJsonBytes -Bytes ([Convert]::FromBase64String([string]$consumerIntent.artifacts[0].bytes_base64)) -Context 'prepared-envelope admission consumer'}catch{throw "Prepared-envelope admission consumer artifact is invalid. $($_.Exception.Message)"}

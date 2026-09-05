@@ -6,20 +6,11 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$lock = Get-Content -LiteralPath $LockPath -Raw | ConvertFrom-Json
+Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1')
+$lock = Read-MorphospaceProtocolJson $LockPath
 if ([string]$lock.schema -ne "rusty.morphospace.workflow.feature_lock.v2") { throw "Runtime activation requires feature_lock.v2." }
-function Get-LockFingerprint {
-    param([object]$Value)
-    $copy = ($Value | ConvertTo-Json -Depth 48 | ConvertFrom-Json)
-    $copy.lock_fingerprint = "0" * 64
-    $json = $copy | ConvertTo-Json -Depth 48 -Compress
-    $bytes = (New-Object System.Text.UTF8Encoding($false)).GetBytes($json)
-    $sha = [System.Security.Cryptography.SHA256]::Create()
-    try { return (($sha.ComputeHash($bytes) | ForEach-Object { $_.ToString("x2") }) -join "") }
-    finally { $sha.Dispose() }
-}
-$actualFingerprint = Get-LockFingerprint -Value $lock
-if ([string]$lock.lock_fingerprint -ne $actualFingerprint) { throw "Feature lock fingerprint is stale or damaged." }
+
+if (-not(Test-MorphospaceFeatureLockFingerprint $lock)) { throw "Feature lock fingerprint is stale or damaged." }
 if ($ExpectedFingerprint -and [string]$lock.lock_fingerprint -ne $ExpectedFingerprint) { throw "Runtime lock fingerprint does not match the expected project lock." }
 $feature = @($lock.features | Where-Object { [string]$_.feature_id -eq $FeatureId } | Select-Object -First 1)
 if ($feature.Count -ne 1 -or $feature[0].selected -ne $true -or @($lock.selected_features) -notcontains $FeatureId) {
