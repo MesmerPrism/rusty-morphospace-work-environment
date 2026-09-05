@@ -25,6 +25,13 @@ named by the user or ask for its location; never guess a machine path.
 
 ## Route Specialized Work
 
+For ordinary continuation, use the authenticated current-work boundary in
+`<work-environment>/docs/CURRENT_WORK_VALIDATION.md`. Retired units do not acquire
+new proof or skill requirements. Keep current authority, transaction suffixes,
+and explicit prerequisites strict. Use `-CurrentWorkOnly -SkipOwnerSelfTests`
+for an unchanged adopted workflow consumer. Historical repair recipes below
+apply to explicit historical audits or migrations, not routine admission.
+
 - Invoke `$system-engineering` for authority design, contracts, interfaces,
   observability, validation scorecards, or mitigation maps.
 - Invoke `$rust-work-graph` for inventories, source roots, dependency or instruction-surface audits, and refactor impact graphs.
@@ -61,16 +68,8 @@ external-owner signed-comment gate, which can issue only the bound assessment. R
 
 Inspection is nonterminal: continue authorized read-only or bounded recoverable work; own locally launched children to terminal, and route hosted observation to the single canonical owner binding in `docs/AUTONOMOUS_ITERATION.md`. This grants no Git, settings, device, private-data, or publication authority.
 
-For an immutable terminal unit, normalize an outdated skill action only through
-the exact hash-bound historical adoption receipt. Preserve `planned` as
-`planned`; never infer instruction completion or validation execution.
-If a terminal blocked unit wholly omits a currently required skill surface,
-project only the exact required skill IDs and canonical `<skills-root>` paths;
-retain `planned` and bind exact blocker-event and receipt hashes.
-For an accepted unit missing a later skill route, require exact `later_required_skill_surfaces` evidence and never synthesize completion.
-A blocked supersession replacement requires its exact v2 supersession transaction and directly chained owner `BeginValidation`-to-`validation-fail` transactions, same-unit fail receipt and blocker/checkpoint, plus a derivable later transaction suffix. In that suffix, preserve strict v1 handling; admit v2 only as an exact owner-produced old-to-ready-replacement supersession; and admit v3 only with one or two exact ordered project/lock projections: unchanged first anchors, chained later advances, exact artifacts/completion, and final-live derivation. Canonicalize and case-insensitively deduplicate the complete v3 artifact-target set before any live lookup, then validate each unique artifact and its receipt binding. Never admit v3 supersession or unknown fields, broaden `blocked`, or infer acceptance.
-For a separately locked non-current/non-next in-flight compatibility repair, use only `historical_unit_compatibility_projection.v1` plus `RecordHistoricalUnitCompatibilityProjection`. Bind exact Ready/WithdrawReady and v2 supersession provenance, raw/canonical unit bytes, the closed profile/action mappings, and tail-only state change; never rewrite history or claim instruction work, validation, acceptance, or publication. If its authority later closes locally, authenticate only the contiguous owner instruction-completion, `BeginValidation`, deep-pass `RecordValidation`, and `Accept` suffix; those transactions, not the projection, establish terminal outcomes.
-For an idle retained-history chain with exactly one transactionless supersession immediately followed by its authentic prefix normalization and one legacy-v1 successor into an authenticated accepted unit, use only a reviewed `historical_supersession_compatibility.v1` receipt and `RecordHistoricalSupersessionCompatibility`. Preserve all historical files, append only its proof event and state tail, and keep every ordinary or future supersession strict v2; route details to `<work-environment>/docs/HISTORICAL_SUPERSESSION_COMPATIBILITY.md`.
+For an explicitly selected historical audit or migration, follow the compatibility
+and adoption contracts in references/project-workflow.md; preserve original bytes.
 For an already-validating admitted unit whose frozen product source was superseded by an independently adopted descendant, use only `RematerializeValidatingCandidate`. Require a clean exact pre-existing repository mapping, raw/canonical workspace and predecessor CAS, immutable predecessor freeze/source lineage, and a distinct successor source lock/freeze. Preserve validating/current ownership and prior evidence, clear the stale normal-validation selector atomically, and claim no fetch, checkout, Git mutation, build, device, validation, acceptance, or publication. Bind a fresh selector afterward through already-validating `BeginValidation`; never reuse old Quick, APK, or device evidence.
 Defer stale in-flight instruction-policy errors only through the same pass's exact canonical supersession; never defer structural, current-unit, registry, or event errors. Before Ready writes with another current unit, use the ledger's shared v2 supersession-ID constructor and its 128-character contract. Use `WithdrawReady`, never JSON editing, for the exact next-ready unit: bind its unique Ready transaction and current ledger preimage, preserve current authority/event, derive the queue, and bind the receipt atomically; use a new identity to re-enter Ready.
 Normalize retired `publication` to `feature` only for an exact blocked unit

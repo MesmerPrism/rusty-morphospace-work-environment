@@ -563,6 +563,17 @@ function Assert-MorphospaceNoOutstandingTransitionIntent {
         $pendingTransaction=[string]$Matches.transaction
         $completion=Resolve-MorphospaceWorkspacePath -WorkspaceRoot $Workspace -RelativePath (Get-MorphospaceLedgerPath $Workspace $pendingTransaction completion)
         if(-not[IO.File]::Exists($completion)){
+            # An incomplete record sealed before an accepted checkpoint is
+            # historical audit debt, not an outstanding current transaction.
+            Import-Module (Join-Path $PSScriptRoot 'MorphospaceCurrentWorkHistory.psm1')
+            try {
+                $boundary=Get-MorphospaceCurrentWorkHistory -WorkspaceRoot $Workspace
+            } catch {
+                throw "Workspace has an outstanding transition intent requiring repair: $pendingTransaction. Historical boundary authentication failed: $($_.Exception.Message)"
+            }
+            $sealedEventId=$pendingTransaction -creplace '-transition$',''
+            $sealed=@($boundary.events|Where-Object{[string]$_.event_id-ceq$sealedEventId-and[int]$_.sequence-lt[int]$boundary.sequence})
+            if($boundary.authenticated-and$sealed.Count-eq1){continue}
             throw "Workspace has an outstanding transition intent requiring repair: $pendingTransaction"
         }
     }

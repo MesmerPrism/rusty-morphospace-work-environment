@@ -1,4 +1,5 @@
 Set-StrictMode -Version 2.0
+Import-Module (Join-Path $PSScriptRoot 'MorphospaceCurrentWorkHistory.psm1')
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'MorphospaceProtocolCommon.psm1') -Force
 
@@ -111,8 +112,12 @@ function Get-HistoryArchivePathReferences {
 }
 
 function Get-HistoryArchiveSourceInventory {
-    param([string]$Workspace,[object]$State,[byte[]]$EventPrefixBytes=$null)
+    param([string]$Workspace,[object]$State,[byte[]]$EventPrefixBytes=$null,[switch]$AuthenticatedReplay)
     $records = [Collections.Generic.List[object]]::new()
+    $currentHistory = $null
+    if (-not $AuthenticatedReplay -and $State.PSObject.Properties.Name -contains 'last_accepted_receipt' -and $State.last_accepted_receipt) {
+        $currentHistory = Get-MorphospaceCurrentWorkHistory -WorkspaceRoot $Workspace -RequireIdle
+    }
     $eventsPath = Get-HistoryArchivePath $Workspace 'iteration-events.jsonl' -RequireLeaf
     $eventBytes = if ($null -ne $EventPrefixBytes) { $EventPrefixBytes } else { [IO.File]::ReadAllBytes($eventsPath) }
     $eventPrefix = Get-HistoryArchiveEventPrefix -Bytes $eventBytes
@@ -120,7 +125,8 @@ function Get-HistoryArchiveSourceInventory {
     foreach ($relative in @(Get-HistoryArchiveDirectoryFiles $Workspace 'iteration-units')) {
         $path = Get-HistoryArchivePath $Workspace $relative -RequireLeaf
         $unit = Read-MorphospaceProtocolJson -Path $path
-        if ([string]$unit.status -notin @('accepted','blocked','superseded')) { throw "History archive requires terminal units; '$relative' is '$([string]$unit.status)'." }
+        if (-not $AuthenticatedReplay -and [string]$unit.status -notin @('accepted','blocked','superseded') -and
+            ($null -eq $currentHistory -or -not $currentHistory.retired_ids.Contains([string]$unit.unit_id))) { throw "History archive requires terminal units; '$relative' is '$([string]$unit.status)'." }
         $records.Add([pscustomobject][ordered]@{ source_path=$relative; kind='terminal-unit'; sha256=(Get-HistoryArchiveFileHash $path); byte_length=[long]([IO.FileInfo]$path).Length }) | Out-Null
     }
     foreach ($relative in @(Get-HistoryArchiveDirectoryFiles $Workspace 'receipts')) {
@@ -364,7 +370,9 @@ function Complete-MorphospaceHistoryArchiveCheckpoint {
         $preexistingTail=@(Get-HistoryArchiveTailEvents $liveEventBytes ([long]$intent.pre.events.byte_length))
         if($preexistingTail.Count -ne 1 -or (Get-HistoryArchiveHash $preexistingTail[0]) -cne (Get-HistoryArchiveHash $intent.event) -or [string]$fullEvents.tail.event_id -cne [string]$intent.event.event_id){throw 'History archive target state conflicts with the exact live ledger tail before persistence.'}
     }
-    $sourceInventory=Get-HistoryArchiveSourceInventory -Workspace $Workspace -State $intent.pre.state.document -EventPrefixBytes $prefix
+    # The authenticated intent already admitted this exact inventory. Recovery
+    # compares its bytes instead of readmitting an intermediate live state.
+    $sourceInventory=Get-HistoryArchiveSourceInventory -Workspace $Workspace -State $intent.pre.state.document -EventPrefixBytes $prefix -AuthenticatedReplay
     $sourceCommitment=Get-HistoryArchiveInventoryCommitment -Records @($sourceInventory.records) -Context 'History archive recovery observed source inventory'
     if((Get-HistoryArchiveHash $sourceCommitment) -cne [string]$request.expected.source_inventory_sha256){throw 'History archive recovery source inventory drifted from the caller-pinned preimage.'}
     $sourceObjects=@($sourceInventory.records|ForEach-Object{[pscustomobject][ordered]@{source_path=[string]$_.source_path;object_path=(Get-HistoryArchiveRawObjectPath ([string]$_.sha256));sha256=[string]$_.sha256;byte_length=[long]$_.byte_length}})

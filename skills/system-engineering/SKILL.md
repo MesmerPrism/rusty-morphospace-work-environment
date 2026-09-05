@@ -98,10 +98,14 @@ originating app remains evidence, not module authority.
 Use one fail-closed owner for unit state transitions. Inspection and planning
 are non-mutating; execution is explicit. Derive validation and graph scope
 from the unit, keep acceptance separate from a pass receipt, and preserve
-blockers through resume/recovery. Treat idle-envelope preparation over retained
-active/validating history as valid only when shared transition-ledger
-verification closes every exact supersession edge into an authenticated
-accepted endpoint. A status label alone is never historical closure. Preserve
+blockers through resume/recovery. For idle-envelope preparation, use the shared
+current-work boundary: canonical retirement chains sealed by an authenticated
+accepted checkpoint, strict current suffix and explicit prerequisite evidence.
+Do not retrofit old proof versions, skill lists, or scope policy onto unrelated
+retired units. Full historical auditing remains separately available; its repair
+recipes below are not ordinary continuation gates. For unchanged adopted owner
+tooling, use `-CurrentWorkOnly -SkipOwnerSelfTests`; owner changes retain their
+own final matrix. See `<work-environment>/docs/CURRENT_WORK_VALIDATION.md`. Preserve
 the historical files byte-exact. Report dirty, detached, ahead/behind, or
 divergent Git states without rewriting them. Push preparation records exact
 source-first, planning-last revisions but does not commit, push, or force-push.

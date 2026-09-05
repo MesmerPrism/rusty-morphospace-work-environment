@@ -26,11 +26,14 @@ For an idle accepted project whose next feature needs new bounded composition,
 use the dedicated preparation transaction before admission. It may add only a
 typed project-level envelope and a repository-map-derived source lock; the
 later unit admission must bind those artifacts and may not rediscover authority.
-Retained non-current/non-next active or validating unit files qualify as
-historical only when the shared committed-transition verifier authenticates
-every exact v2 supersession edge and the exact accepted endpoint. Reject
-status-only, future, ambiguous, orphaned, rewritten, or damaged chains, and
-never rewrite the retained units.
+Retained non-current/non-next active or validating files qualify as historical
+through canonical retirement chains sealed by an authenticated accepted
+checkpoint. Validate the current transaction suffix and explicit prerequisites;
+do not retrofit old proof versions or instruction policy. Preserve the retained
+bytes. For unchanged adopted workflow tooling, register the consumer command
+with `-CurrentWorkOnly -SkipOwnerSelfTests`. Full historical audit and shared
+owner self-tests are separate choices. See
+[Current Work Validation](../../../docs/CURRENT_WORK_VALIDATION.md).
 
 If an ordinary admission is otherwise fully committed but its completion
 timestamp precedes its immutable future-dated intent, use only

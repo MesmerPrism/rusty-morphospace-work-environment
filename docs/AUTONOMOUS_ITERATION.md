@@ -179,6 +179,11 @@ candidate, and run the owner-required final matrix once. Any later code or
 contract-byte revision invalidates that matrix and requires a newly justified
 run.
 
+Ordinary consumers of unchanged adopted tooling use the current-work command
+in [Current Work Validation](CURRENT_WORK_VALIDATION.md). Historical auditing
+and shared owner self-tests are separate validation scopes. Historical repair
+recipes in this document do not create prerequisites for unrelated new work.
+
 Do not turn a one-consumer recovery into shared infrastructure without a
 second independent consumer, a neutral conformance harness, or an explicit
 owner decision. A product-critical path may acquire at most one newly reviewed

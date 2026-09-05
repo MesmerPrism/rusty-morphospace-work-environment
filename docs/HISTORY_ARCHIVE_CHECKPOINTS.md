@@ -9,7 +9,10 @@ normalizes, substitutes, accepts, builds, deploys, or publishes anything.
 The request binds the current project, compact state, event-ledger byte length,
 event-ledger SHA-256, exact tail event, and a canonical raw-byte source-inventory
 SHA-256. The owner action requires an idle project with no current/ready unit,
-blocker, pending push, nonterminal unit, or previous archive binding. It creates
+blocker, pending push, nonterminal current unit, or previous archive binding.
+Raw active/validating units retired by the authenticated
+[current-work boundary](CURRENT_WORK_VALIDATION.md) are eligible without changing
+their bytes or adding a compatibility receipt. It creates
 a typed intent, raw objects, immutable root, receipt, state binding, one
 appended event, and completion. A replay may continue only the same request hash
 and durable intent; conflicting, interrupted, tampered, partial, reparse,

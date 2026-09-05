@@ -195,7 +195,14 @@ The work-environment repo owns portable schemas, examples, and validators. A
 project owns its instantiated `morphospace/` directory. Do not copy live state,
 private evidence, or machine paths back into this repository.
 
-Immutable accepted or blocked units may retain legacy workflow vocabulary only
+For ordinary continuation, use the current-work boundary and consumer command
+in `docs/CURRENT_WORK_VALIDATION.md`. An authenticated accepted checkpoint seals
+retired history; current and future work stays strict. Do not require a new
+compatibility, adoption, or recovery receipt for an unrelated retired unit.
+The historical recipes below apply to an explicitly selected full historical
+audit or migration, not as additional current-work admission gates.
+
+In a full historical audit, immutable accepted or blocked units may retain legacy workflow vocabulary only
 through a project-owned hash-bound historical-unit adoption receipt. Current
 and future units remain strict. A blocked retired `publication` unit may map
 only to `feature` with exact terminal event and receipt hashes. Exact legacy
@@ -524,13 +531,11 @@ transaction.
   Preparation validates the zeroed-field feature-lock fingerprint, derives the
   matching module registry when the lock changes, and permits only additive
   validation-profile registration. Retained non-current/non-next
-  `active`/`validating` unit bytes are eligible only when the shared committed-
-  transition validator authenticates each exact v2 supersession edge and the
-  chain's exact acceptance transition. The sole exception is an installed,
-  owner-authenticated historical-supersession compatibility receipt for its
-  exact transactionless-normalized and legacy-v1 two-edge chain; all other
-  future, orphaned, ambiguous, rewritten, or transaction-damaged unit
-  histories remain rejected. After an
+  `active`/`validating` units use the shared current-work history boundary:
+  authenticate the accepted checkpoint, canonical retirement chain, and current
+  suffix without retrofitting old transactions or instruction policy. Keep
+  carried prerequisite evidence and all current checks strict; preserve history
+  byte-exact. See `docs/CURRENT_WORK_VALIDATION.md`. After an
   exact `RetireProposed` suffix, the
   lock/registry defect may be repaired only through
   `ReprepareRetiredDevelopmentEnvelope`; it preserves every old evidence byte,

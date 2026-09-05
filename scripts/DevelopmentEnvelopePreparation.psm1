@@ -3,6 +3,7 @@ $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1')
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1')
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceHistoricalSupersessionCompatibility.psm1')
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceCurrentWorkHistory.psm1')
 
 function Get-PreparationHash { param([object]$Value) Get-MorphospaceCanonicalJsonSha256 $Value }
 function Get-PreparationFileHash { param([string]$Path) Get-MorphospaceFileSha256 $Path }
@@ -10,7 +11,7 @@ function Copy-PreparationValue { param([object]$Value) $Value | ConvertTo-Json -
 function Get-PreparationPath { param([string]$Root,[string]$Relative) Resolve-MorphospaceWorkspacePath $Root $Relative }
 function Get-PreparationTransactionId { param([string]$Id) "$Id-prepared-transition" }
 function Get-PreparationEventId { param([string]$Id) "$Id-prepared" }
-function Assert-PreparationHistoricalSupersessionClosure {
+function Assert-PreparationHistoricalSupersessionAudit {
     param([string]$Workspace)
     $state=Read-MorphospaceProtocolJson (Get-PreparationPath $Workspace 'workspace.state.json')
     $unitDirectory=Get-PreparationPath $Workspace 'iteration-units'
@@ -83,6 +84,20 @@ function Assert-PreparationHistoricalSupersessionClosure {
            $null-ne$accepted.intent.target.state.document.current_unit){throw "Preparation historical supersession chain for '$historicalId' has an unauthenticated accepted endpoint."}
     }
 }
+function Assert-PreparationHistoricalSupersessionClosure {
+    param([string]$Workspace)
+    $history = Get-MorphospaceCurrentWorkHistory -WorkspaceRoot $Workspace -RequireIdle
+    if (-not $history.authenticated) {
+        # Existing bootstrap workspaces have no exemption from ordinary rules.
+        Assert-PreparationHistoricalSupersessionAudit $Workspace
+        return
+    }
+    foreach ($id in $history.units.Keys) {
+        if ([string]$history.units[$id].status -cne 'accepted' -and -not $history.retired_ids.Contains($id)) {
+            throw "Preparation rejects nonhistorical unit '$id' outside idle accepted authority."
+        }
+    }
+}
 function Get-PreparationSchemaPin {
     param([string]$Revision,[string]$SchemaFile)
     "https://raw.githubusercontent.com/MesmerPrism/rusty-morphospace-work-environment/$Revision/schemas/$SchemaFile"
@@ -95,9 +110,7 @@ function Get-PreparationPinnedRevision {
 }
 function Get-PreparationLockFingerprint {
     param([object]$Lock)
-    $copy=Copy-PreparationValue $Lock
-    $copy.lock_fingerprint='0'*64
-    Get-PreparationHash $copy
+    Get-MorphospaceFeatureLockFingerprint $Lock
 }
 function Get-PreparationModuleRegistry {
     param([object]$Project,[object]$FeatureLock)
@@ -117,8 +130,7 @@ function Get-PreparationModuleRegistry {
 }
 function Assert-PreparationLockAndRegistry {
     param([object]$Project,[object]$FeatureLock,[object]$State,[string]$Context)
-    $fingerprint=Get-PreparationLockFingerprint $FeatureLock
-    if([string]$FeatureLock.lock_fingerprint-cne$fingerprint){throw "Preparation $Context feature-lock fingerprint is stale or damaged."}
+    if(-not(Test-MorphospaceFeatureLockFingerprint $FeatureLock)){throw "Preparation $Context feature-lock fingerprint is stale or damaged."}
     $expectedRegistry=Get-PreparationModuleRegistry $Project $FeatureLock
     if((Get-PreparationHash $State.module_registry)-cne(Get-PreparationHash $expectedRegistry)){throw "Preparation $Context workspace module registry does not match the feature lock and selected modules."}
 }
@@ -203,17 +215,18 @@ function Assert-PreparationEnvelope {
     $currentProfiles=@($Project.validation_profiles|ForEach-Object{[string]$_.profile_id});foreach($profile in @($registeredProfiles|Where-Object{$currentProfiles-cnotcontains$_})){if($declaredProfiles-cnotcontains$profile){throw "Preparation adds validation profile '$profile' outside the declared build profile ceiling."}}
 }
 function Complete-MorphospaceDevelopmentEnvelopePreparation {
-    param([string]$Workspace,[string]$RepoRoot,[string]$IntentRelative,[string]$CompletionRelative,[ValidateSet('none','after-artifacts','after-project','after-lock','after-state','after-event')][string]$FaultAfter='none')
+    param([string]$Workspace,[string]$RepoRoot,[string]$IntentRelative,[string]$CompletionRelative,[switch]$CheckOnly,[ValidateSet('none','after-artifacts','after-project','after-lock','after-state','after-event')][string]$FaultAfter='none')
     $intentPath=Get-PreparationPath $Workspace $IntentRelative;Assert-PreparationSchema $RepoRoot $intentPath 'development-envelope-preparation-intent-v1.schema.json' 'Preparation intent is invalid.';$intent=Read-MorphospaceProtocolJson $intentPath
     $completionPath=Get-PreparationPath $Workspace $CompletionRelative;$completion=$null;if([IO.File]::Exists($completionPath)){Assert-PreparationSchema $RepoRoot $completionPath 'development-envelope-preparation-completion-v1.schema.json' 'Preparation completion is invalid.';$completion=Read-MorphospaceProtocolJson $completionPath}
     foreach($name in @('project','state','feature_lock','predecessor_unit')){$binding=$intent.pre.$name;$target=$intent.target.$name;$current=Read-MorphospaceProtocolJson (Get-PreparationPath $Workspace ([string]$binding.path));$hash=Get-PreparationHash $current;if(@([string]$binding.sha256,[string]$target.sha256)-cnotcontains$hash){throw "Preparation recovery $name CAS is stale or conflicting."}}
     if((Get-PreparationFileHash (Get-PreparationPath $Workspace ([string]$intent.pre.repository_map.path)))-cne[string]$intent.pre.repository_map.sha256){throw 'Preparation recovery repository map preimage is stale.'}
-    foreach($artifact in @($intent.artifacts)){$path=Get-PreparationPath $Workspace ([string]$artifact.path);if([IO.File]::Exists($path)){if((Get-PreparationHash (Read-MorphospaceProtocolJson $path))-cne[string]$artifact.sha256){throw "Preparation artifact '$($artifact.path)' conflicts with intent."}}else{$bytes=[Convert]::FromBase64String([string]$artifact.bytes_base64);[IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($path))|Out-Null;[IO.File]::WriteAllBytes($path,$bytes)}}
+    foreach($artifact in @($intent.artifacts)){$path=Get-PreparationPath $Workspace ([string]$artifact.path);if([IO.File]::Exists($path)){if((Get-PreparationHash (Read-MorphospaceProtocolJson $path))-cne[string]$artifact.sha256){throw "Preparation artifact '$($artifact.path)' conflicts with intent."}}elseif(-not$CheckOnly){$bytes=[Convert]::FromBase64String([string]$artifact.bytes_base64);[IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($path))|Out-Null;[IO.File]::WriteAllBytes($path,$bytes)}}
     if($FaultAfter-eq'after-artifacts'){throw 'Injected preparation interruption after artifacts.'}
-    foreach($name in @('project','feature_lock','state')){$binding=$intent.pre.$name;$target=$intent.target.$name;$current=Read-MorphospaceProtocolJson (Get-PreparationPath $Workspace ([string]$binding.path));if((Get-PreparationHash $current)-cne[string]$target.sha256){Write-MorphospaceManagedProtocolJsonAtomic $Workspace ([string]$target.path) $target.document};if($FaultAfter-eq("after-"+$name.Replace('feature_lock','lock'))){throw "Injected preparation interruption after $name."}}
-    $eventsPath=Get-PreparationPath $Workspace ([string]$intent.pre.events.path);$events=@(Get-Content -LiteralPath $eventsPath|Where-Object{$_}|ForEach-Object{$_|ConvertFrom-Json});$same=@($events|Where-Object{[string]$_.event_id-ceq[string]$intent.event.event_id});if($same.Count-gt1-or($same.Count-eq1-and(([int]$same[0].sequence-ne[int]$intent.event.sequence-or[string]$same[0].project_id-cne[string]$intent.event.project_id-or[string]$same[0].unit_id-cne[string]$intent.event.unit_id-or[string]$same[0].event_type-cne[string]$intent.event.event_type-or[string]$same[0].summary-cne[string]$intent.event.summary-or@($same[0].receipts).Count-ne1-or[string]@($same[0].receipts)[0]-cne[string]@($intent.event.receipts)[0])-or[string]$events[-1].event_id-cne[string]$intent.event.event_id))){throw 'Preparation event placement conflicts with intent.'};if($same.Count-eq0){if((Get-PreparationFileHash $eventsPath)-cne[string]$intent.pre.events.sha256-or[int]$events[-1].sequence+1-ne[int]$intent.event.sequence){throw 'Preparation event predecessor is stale.'};[IO.File]::AppendAllText($eventsPath,(($intent.event|ConvertTo-Json -Compress)+"`n"),[Text.UTF8Encoding]::new($false))}
+    foreach($name in @('project','feature_lock','state')){$binding=$intent.pre.$name;$target=$intent.target.$name;$current=Read-MorphospaceProtocolJson (Get-PreparationPath $Workspace ([string]$binding.path));if(-not$CheckOnly-and(Get-PreparationHash $current)-cne[string]$target.sha256){Write-MorphospaceManagedProtocolJsonAtomic $Workspace ([string]$target.path) $target.document};if($FaultAfter-eq("after-"+$name.Replace('feature_lock','lock'))){throw "Injected preparation interruption after $name."}}
+    $eventsPath=Get-PreparationPath $Workspace ([string]$intent.pre.events.path);$events=@(Get-Content -LiteralPath $eventsPath|Where-Object{$_}|ForEach-Object{$_|ConvertFrom-Json});$same=@($events|Where-Object{[string]$_.event_id-ceq[string]$intent.event.event_id});if($same.Count-gt1-or($same.Count-eq1-and(([int]$same[0].sequence-ne[int]$intent.event.sequence-or[string]$same[0].project_id-cne[string]$intent.event.project_id-or[string]$same[0].unit_id-cne[string]$intent.event.unit_id-or[string]$same[0].event_type-cne[string]$intent.event.event_type-or[string]$same[0].summary-cne[string]$intent.event.summary-or@($same[0].receipts).Count-ne1-or[string]@($same[0].receipts)[0]-cne[string]@($intent.event.receipts)[0])-or[string]$events[-1].event_id-cne[string]$intent.event.event_id))){throw 'Preparation event placement conflicts with intent.'};if($same.Count-eq0){if((Get-PreparationFileHash $eventsPath)-cne[string]$intent.pre.events.sha256-or[int]$events[-1].sequence+1-ne[int]$intent.event.sequence){throw 'Preparation event predecessor is stale.'};if(-not$CheckOnly){[IO.File]::AppendAllText($eventsPath,(($intent.event|ConvertTo-Json -Compress)+"`n"),[Text.UTF8Encoding]::new($false))}}
     if($FaultAfter-eq'after-event'){throw 'Injected preparation interruption after event.'}
     if($null-ne$completion){if([string]$completion.transaction_id-cne[string]$intent.transaction_id-or[string]$completion.intent_sha256-cne(Get-PreparationFileHash $intentPath)-or[string]$completion.target_project_sha256-cne[string]$intent.target.project.sha256-or[string]$completion.target_state_sha256-cne[string]$intent.target.state.sha256-or[string]$completion.target_feature_lock_sha256-cne[string]$intent.target.feature_lock.sha256-or[string]$completion.event_id-cne[string]$intent.event.event_id){throw 'Preparation completion no longer authenticates its exact transaction.'};return 'already-committed'}
+    if($CheckOnly){return 'recoverable'}
     $completion=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.development_envelope_preparation_completion.v1';transaction_id=$intent.transaction_id;completed_at=[DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffffffZ');intent_sha256=(Get-PreparationFileHash $intentPath);target_project_sha256=$intent.target.project.sha256;target_state_sha256=$intent.target.state.sha256;target_feature_lock_sha256=$intent.target.feature_lock.sha256;event_id=$intent.event.event_id;status='committed'};Write-MorphospaceManagedProtocolJsonAtomic $Workspace $CompletionRelative $completion -NoOverwrite;return 'committed'
 }
 function Get-PreparationSourceComposition {
@@ -236,9 +249,8 @@ function Invoke-MorphospacePrepareDevelopmentEnvelope {
  if($Execute-and-not$ExpectedDevelopmentEnvelopePreparationSha256){throw 'Executed preparation requires the dry-run preparation SHA-256.'};if($ExpectedDevelopmentEnvelopePreparationSha256-and$ExpectedDevelopmentEnvelopePreparationSha256-cne$inputHash){throw 'Expected preparation hash does not match input.'};if(-not$Timestamp){$Timestamp=[DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffffffZ')};if(-not(Test-MorphospaceStrictUtcTimestamp $Timestamp)){throw 'Preparation timestamp must be strict UTC.'}
  $receiptRelative="receipts/$($p.preparation_id).json";$sourceRelative=[string]$p.envelope.source_composition.path;$eventId=Get-PreparationEventId $p.preparation_id;$transactionId=Get-PreparationTransactionId $p.preparation_id;$intentRelative="receipts/transactions/$transactionId.intent.json";$completionRelative="receipts/transactions/$transactionId.completion.json"
  if([IO.Path]::GetFullPath($OutPath)-cne(Get-PreparationPath $workspace $receiptRelative)){throw "Preparation output must be '$receiptRelative'."}
-  Assert-PreparationHistoricalSupersessionClosure $workspace
  $earlyIntent=Get-PreparationPath $workspace $intentRelative
- if([IO.File]::Exists($earlyIntent)){$intent=Read-MorphospaceProtocolJson $earlyIntent;$receiptArtifact=@($intent.artifacts|Where-Object{[string]$_.path-ceq$receiptRelative});if($receiptArtifact.Count-ne1){throw 'Preparation replay intent lacks its exact receipt artifact.'};$intentReceipt=([Text.UTF8Encoding]::new($false).GetString([Convert]::FromBase64String([string]$receiptArtifact[0].bytes_base64))|ConvertFrom-Json);if([string]$intent.transaction_id-cne$transactionId-or[string]$intentReceipt.input_sha256-cne$inputHash-or(Get-PreparationHash $intent.target.project.document)-cne(Get-PreparationHash $p.envelope.project)-or(Get-PreparationHash $intent.target.feature_lock.document)-cne(Get-PreparationHash $p.envelope.feature_lock)){throw 'Preparation replay conflicts with its published intent.'};$liveState=Read-MorphospaceProtocolJson (Get-PreparationPath $workspace 'workspace.state.json');if($Execute){$mutex=Enter-MorphospaceWorkspaceMutex $workspace;try{[void](Complete-MorphospaceDevelopmentEnvelopePreparation $workspace $repoRoot $intentRelative $completionRelative -FaultAfter $FaultAfter)}finally{Exit-MorphospaceWorkspaceMutex $mutex}};return (New-PreparationAutomationReceipt $p $Timestamp $Execute.IsPresent 'idle-project-envelope-prepared' $receiptRelative $inputHash $liveState $(if($Execute){$eventId}else{$null}))}
+ if([IO.File]::Exists($earlyIntent)){$intent=Read-MorphospaceProtocolJson $earlyIntent;$receiptArtifact=@($intent.artifacts|Where-Object{[string]$_.path-ceq$receiptRelative});if($receiptArtifact.Count-ne1){throw 'Preparation replay intent lacks its exact receipt artifact.'};$intentReceipt=([Text.UTF8Encoding]::new($false).GetString([Convert]::FromBase64String([string]$receiptArtifact[0].bytes_base64))|ConvertFrom-Json);if([string]$intent.transaction_id-cne$transactionId-or[string]$intentReceipt.input_sha256-cne$inputHash-or(Get-PreparationHash $intent.target.project.document)-cne(Get-PreparationHash $p.envelope.project)-or(Get-PreparationHash $intent.target.feature_lock.document)-cne(Get-PreparationHash $p.envelope.feature_lock)){throw 'Preparation replay conflicts with its published intent.'};[void](Complete-MorphospaceDevelopmentEnvelopePreparation $workspace $repoRoot $intentRelative $completionRelative -CheckOnly);if([IO.File]::Exists((Get-PreparationPath $workspace $completionRelative))){Assert-PreparationHistoricalSupersessionClosure $workspace};$liveState=Read-MorphospaceProtocolJson (Get-PreparationPath $workspace 'workspace.state.json');if($Execute){$mutex=Enter-MorphospaceWorkspaceMutex $workspace;try{[void](Complete-MorphospaceDevelopmentEnvelopePreparation $workspace $repoRoot $intentRelative $completionRelative -FaultAfter $FaultAfter)}finally{Exit-MorphospaceWorkspaceMutex $mutex}};return (New-PreparationAutomationReceipt $p $Timestamp $Execute.IsPresent 'idle-project-envelope-prepared' $receiptRelative $inputHash $liveState $(if($Execute){$eventId}else{$null}))}
  $projectPath=Get-PreparationPath $workspace 'project.spec.json';$statePath=Get-PreparationPath $workspace 'workspace.state.json';$lockPath=Get-PreparationPath $workspace 'feature.lock.json';$eventsPath=Get-PreparationPath $workspace 'iteration-events.jsonl';$mapPath=Get-PreparationPath $workspace ([string]$p.expected.repository_map_path);$prePath=Get-PreparationPath $workspace ([string]$p.expected.predecessor_unit_path)
  $project=Read-MorphospaceProtocolJson $projectPath;$state=Read-MorphospaceProtocolJson $statePath;$lock=Read-MorphospaceProtocolJson $lockPath;$mapDoc=Read-MorphospaceProtocolJson $mapPath;$pre=Read-MorphospaceProtocolJson $prePath;$eventBytes=[IO.File]::ReadAllBytes($eventsPath);$events=@(Get-Content $eventsPath|Where-Object{$_}|ForEach-Object{$_|ConvertFrom-Json});if($events.Count-eq0){throw 'Preparation requires a predecessor event.'};$tail=$events[-1]
  Assert-PreparationSchema $repoRoot $projectPath 'project-spec-v2.schema.json' 'Preparation current project does not satisfy the owner schema.';Assert-PreparationSchema $repoRoot $lockPath 'feature-lock-v2.schema.json' 'Preparation current feature lock does not satisfy the owner schema.'
