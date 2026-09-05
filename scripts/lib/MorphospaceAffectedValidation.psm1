@@ -471,10 +471,11 @@ function Get-MorphospaceAffectedValidationSegments {
             }
         }
         if ($null -eq $destination) {
-            $destination = [pscustomobject][ordered]@{ budget_seconds=[long]0; check_ids=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal) }
+            $destination = [pscustomobject][ordered]@{ budget_seconds=[long]0; dependency_component_count=[int]0; check_ids=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal) }
             $bins.Add($destination)
         }
         $destination.budget_seconds = [long]$destination.budget_seconds + [long]$component.budget_seconds
+        $destination.dependency_component_count = [int]$destination.dependency_component_count + 1
         foreach ($id in @($component.check_ids)) { if (-not $destination.check_ids.Add([string]$id)) { throw "Affected-validation segment packing repeated '$id'." } }
     }
 
@@ -488,7 +489,9 @@ function Get-MorphospaceAffectedValidationSegments {
             ordinal = $index + 1
             segment_count = $bins.Count
             target_budget_seconds = $TargetBudgetSeconds
+            maximum_budget_seconds = $MaximumSegmentBudgetSeconds
             estimated_budget_seconds = [long]$bin.budget_seconds
+            dependency_component_count = [int]$bin.dependency_component_count
             check_ids = @($ids)
         })
     }

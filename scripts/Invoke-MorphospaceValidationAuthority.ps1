@@ -23,6 +23,7 @@ try {
     Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceOwnership.psm1') -Force
     Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceAuthorityReadiness.psm1') -Force
     Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
+    Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceAuthorityProcess.psm1') -Force
 } finally {
     $WarningPreference = $warningPreferenceBeforeImports
 }
@@ -99,11 +100,10 @@ function Invoke-MorphospaceIsolatedAuthoritySelfTest {
     [IO.Directory]::CreateDirectory($captureRoot) | Out-Null
     $stdoutPath = Join-Path $captureRoot 'stdout.txt'; $stderrPath = Join-Path $captureRoot 'stderr.txt'
     try {
-        $process = Start-Process -FilePath $hostPath -ArgumentList @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$path) -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
         try {
-            if (-not $process.WaitForExit($TimeoutSeconds * 1000)) { try { $process.Kill() } catch {}; throw "Authority self-test timed out: $RelativePath" }
-            $exitCode = [int]$process.ExitCode
-        } finally { $process.Dispose() }
+            $capture = Invoke-MorphospaceCapturedProcess -FilePath $hostPath -Arguments @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$path) -StdoutPath $stdoutPath -StderrPath $stderrPath -TimeoutMilliseconds ($TimeoutSeconds * 1000)
+        } catch [TimeoutException] { throw "Authority self-test timed out: $RelativePath" }
+        $exitCode = [int]$capture.exit_code
         $stdout = if ([IO.File]::Exists($stdoutPath)) { [IO.File]::ReadAllText($stdoutPath, [Text.UTF8Encoding]::new($false)) } else { '' }
         $stderr = if ([IO.File]::Exists($stderrPath)) { [IO.File]::ReadAllText($stderrPath, [Text.UTF8Encoding]::new($false)) } else { '' }
         if (([Text.Encoding]::UTF8.GetByteCount($stdout) + [Text.Encoding]::UTF8.GetByteCount($stderr)) -gt 1048576) { throw "Authority self-test output exceeded 1 MiB: $RelativePath" }

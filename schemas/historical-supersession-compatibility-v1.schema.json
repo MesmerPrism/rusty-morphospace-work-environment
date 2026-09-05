@@ -1,0 +1,157 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/historical-supersession-compatibility-v1.schema.json",
+  "title": "Authenticated compatibility evidence for one transactionless historical supersession",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "compatibility_id", "created_at", "project_id",
+    "old_unit", "replacement_unit", "accepted_unit", "legacy_supersession", "normalization",
+    "successor_supersession", "accepted_endpoint", "expected",
+    "compatibility_event", "guarantees", "status"
+  ],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.workflow.historical_supersession_compatibility.v1" },
+    "compatibility_id": { "$ref": "#/$defs/id" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "project_id": { "$ref": "#/$defs/id" },
+    "old_unit": { "$ref": "#/$defs/unit" },
+    "replacement_unit": { "$ref": "#/$defs/unit" },
+    "accepted_unit": { "$ref": "#/$defs/accepted_unit" },
+    "legacy_supersession": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event_id", "sequence", "event_document_sha256", "event_line_sha256", "normalized_prefix_sha256", "normalized_prefix_length"],
+      "properties": {
+        "event_id": { "$ref": "#/$defs/id" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "event_document_sha256": { "$ref": "#/$defs/hash" },
+        "event_line_sha256": { "$ref": "#/$defs/hash" },
+        "normalized_prefix_sha256": { "$ref": "#/$defs/hash" },
+        "normalized_prefix_length": { "type": "integer", "minimum": 1, "maximum": 1048574 }
+      }
+    },
+    "normalization": { "$ref": "#/$defs/transaction" },
+    "successor_supersession": { "$ref": "#/$defs/successor_transition" },
+    "accepted_endpoint": { "$ref": "#/$defs/transition" },
+    "expected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_sha256", "state_sha256", "old_unit_sha256", "old_unit_raw_sha256", "events_sha256", "events_length", "event_tail_id"],
+      "properties": {
+        "project_sha256": { "$ref": "#/$defs/hash" },
+        "state_sha256": { "$ref": "#/$defs/hash" },
+        "old_unit_sha256": { "$ref": "#/$defs/hash" },
+        "old_unit_raw_sha256": { "$ref": "#/$defs/hash" },
+        "events_sha256": { "$ref": "#/$defs/hash" },
+        "events_length": { "type": "integer", "minimum": 1, "maximum": 67108864 },
+        "event_tail_id": { "$ref": "#/$defs/id" }
+      }
+    },
+    "compatibility_event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event_id", "sequence", "timestamp", "receipt_path"],
+      "properties": {
+        "event_id": { "$ref": "#/$defs/id" },
+        "sequence": { "type": "integer", "minimum": 2 },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "receipt_path": { "$ref": "#/$defs/receipt_path" }
+      }
+    },
+    "guarantees": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "historical_files_created", "historical_files_rewritten",
+        "old_unit_bytes_preserved", "replacement_unit_bytes_preserved",
+        "state_change_limited_to_last_event_id", "git_mutation_performed",
+        "device_mutation_performed", "remote_mutation_performed"
+      ],
+      "properties": {
+        "historical_files_created": { "const": false },
+        "historical_files_rewritten": { "const": false },
+        "old_unit_bytes_preserved": { "const": true },
+        "replacement_unit_bytes_preserved": { "const": true },
+        "state_change_limited_to_last_event_id": { "const": true },
+        "git_mutation_performed": { "const": false },
+        "device_mutation_performed": { "const": false },
+        "remote_mutation_performed": { "const": false }
+      }
+    },
+    "status": { "const": "compatible" }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" },
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "path": { "type": "string", "pattern": "^[a-z0-9][a-z0-9./-]{1,255}$" },
+    "receipt_path": { "type": "string", "pattern": "^receipts/[a-z0-9][a-z0-9-]{1,127}\\.json$" },
+    "unit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["unit_id", "path", "raw_sha256", "document_sha256", "status"],
+      "properties": {
+        "unit_id": { "$ref": "#/$defs/id" },
+        "path": { "type": "string", "pattern": "^iteration-units/[a-z0-9][a-z0-9-]{1,127}\\.json$" },
+        "raw_sha256": { "$ref": "#/$defs/hash" },
+        "document_sha256": { "$ref": "#/$defs/hash" },
+        "status": { "enum": ["active", "validating"] }
+      }
+    },
+    "transaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event_id", "sequence", "intent_path", "intent_sha256", "completion_path", "completion_sha256", "receipt_path", "receipt_sha256"],
+      "properties": {
+        "event_id": { "$ref": "#/$defs/id" },
+        "sequence": { "type": "integer", "minimum": 2 },
+        "intent_path": { "$ref": "#/$defs/path" },
+        "intent_sha256": { "$ref": "#/$defs/hash" },
+        "completion_path": { "$ref": "#/$defs/path" },
+        "completion_sha256": { "$ref": "#/$defs/hash" },
+        "receipt_path": { "$ref": "#/$defs/receipt_path" },
+        "receipt_sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "transition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event_id", "sequence", "intent_path", "intent_sha256", "completion_path", "completion_sha256"],
+      "properties": {
+        "event_id": { "$ref": "#/$defs/id" },
+        "sequence": { "type": "integer", "minimum": 2 },
+        "intent_path": { "$ref": "#/$defs/path" },
+        "intent_sha256": { "$ref": "#/$defs/hash" },
+        "completion_path": { "$ref": "#/$defs/path" },
+        "completion_sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "successor_transition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event_id", "sequence", "accepted_unit_id", "intent_schema", "intent_path", "intent_sha256", "completion_path", "completion_sha256"],
+      "properties": {
+        "event_id": { "$ref": "#/$defs/id" },
+        "sequence": { "type": "integer", "minimum": 2 },
+        "accepted_unit_id": { "$ref": "#/$defs/id" },
+        "intent_schema": { "const": "rusty.morphospace.workflow.transition_ledger_intent.v1" },
+        "intent_path": { "$ref": "#/$defs/path" },
+        "intent_sha256": { "$ref": "#/$defs/hash" },
+        "completion_path": { "$ref": "#/$defs/path" },
+        "completion_sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "accepted_unit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["unit_id", "path", "raw_sha256", "document_sha256", "status"],
+      "properties": {
+        "unit_id": { "$ref": "#/$defs/id" },
+        "path": { "type": "string", "pattern": "^iteration-units/[a-z0-9][a-z0-9-]{1,127}\\.json$" },
+        "raw_sha256": { "$ref": "#/$defs/hash" },
+        "document_sha256": { "$ref": "#/$defs/hash" },
+        "status": { "const": "accepted" }
+      }
+    }
+  }
+}

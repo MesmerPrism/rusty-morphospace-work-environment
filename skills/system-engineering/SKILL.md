@@ -511,6 +511,13 @@ compatibility receipt authenticating Ready/WithdrawReady and v2 supersession
 provenance. Bind raw/canonical units and exact mapping values, change only the
 state tail, and make completion, execution, validation, status, acceptance, and
 publication inference structurally impossible.
+For the distinct idle-history exception, admit only one reviewed
+`historical_supersession_compatibility.v1` proof covering a transactionless
+edge, its immediate authentic normalization, one immediate legacy-v1 successor,
+and an authenticated accepted endpoint. The owner may append only the proof
+event and state tail; it may not synthesize transactions or relax v2 for any
+other supersession. Route the contract to
+`docs/HISTORICAL_SUPERSESSION_COMPATIBILITY.md`.
 If the same authority later closes locally, admit only a fully chained owner
 instruction-completion, `BeginValidation`, deep-pass `RecordValidation`, and
 `Accept` suffix with exact receipts, state/unit targets, and final live

@@ -14,7 +14,7 @@ function Assert-Automation {
     if (-not $Condition) { throw "Automation self-test failed: $Message" }
 }
 
-$automationEntry=Get-Command (Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1');$actionSet=@($automationEntry.Parameters['Action'].Attributes|Where-Object{$_-is[Management.Automation.ValidateSetAttribute]}|ForEach-Object{$_.ValidValues});Assert-Automation ($actionSet-ccontains'ReprepareRetiredDevelopmentEnvelope') 'public automation entrypoint does not register ReprepareRetiredDevelopmentEnvelope';Assert-Automation ($actionSet-ccontains'RecoverAdmissionCompletionTimestamp') 'public automation entrypoint does not register RecoverAdmissionCompletionTimestamp'
+$automationEntry=Get-Command (Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1');$actionSet=@($automationEntry.Parameters['Action'].Attributes|Where-Object{$_-is[Management.Automation.ValidateSetAttribute]}|ForEach-Object{$_.ValidValues});Assert-Automation ($actionSet-ccontains'ReprepareRetiredDevelopmentEnvelope') 'public automation entrypoint does not register ReprepareRetiredDevelopmentEnvelope';Assert-Automation ($actionSet-ccontains'RecoverAdmissionCompletionTimestamp') 'public automation entrypoint does not register RecoverAdmissionCompletionTimestamp';Assert-Automation ($actionSet-ccontains'RecordHistoricalSupersessionCompatibility') 'public automation entrypoint does not register RecordHistoricalSupersessionCompatibility'
 
 function Get-TestCanonicalHash {
     param([object]$Value)

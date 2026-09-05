@@ -382,6 +382,13 @@ both immutable historical targets, their raw/canonical hashes, the exact
 Ready-to-WithdrawReady and v2 supersession transaction nodes, the registered
 profile contract, and the current tail-only projection event. Add no unit
 mutation, completion, execution, validation, acceptance, or publication edge.
+For an idle historical-supersession compatibility proof, graph one receipt node
+across the transactionless edge, its immediate normalization, the immediate
+legacy-v1 successor, and the authenticated accepted endpoint. Distinguish raw
+historical and live ledger byte hashes from row-document equivalence, add only
+the proof event/state-tail edge, and leave all other missing or non-v2
+transactions blocking. Route details to
+`<work-environment>/docs/HISTORICAL_SUPERSESSION_COMPATIBILITY.md`.
 If the authority later closes locally, graph only the exact contiguous owner
 instruction-completion, `BeginValidation`, deep-pass `RecordValidation`, and
 `Accept` transaction nodes through final live state. Keep the receipt's

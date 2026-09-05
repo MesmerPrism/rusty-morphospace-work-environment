@@ -54,6 +54,8 @@ function Get-RunnerFastFixtureModuleClosure {
         # repository module edges, and their exact file/variable/count is part
         # of this clean-room closure contract.
         'scripts/Test-TransitionLedger.ps1|ModulePath' = 2
+        # The compact scanner captures the scope prefix from `$using:processModule`.
+        'scripts/Test-AuthorityRecordReadiness.ps1|using' = 1
     }
     $observedAuditedDynamicImports = @{}
 
@@ -388,7 +390,7 @@ try {
         'scripts/lib/MorphospaceHistoricalValidationDebtBaseline.psm1','scripts/lib/ExternalOwnerAuthorization.psm1'
     )
     $authorityPaths = @(Get-RunnerFastFixtureModuleClosure -Git $git -SourceRoot $repoRoot -SeedPaths $authoritySeedPaths)
-    foreach ($requiredClosurePath in @('scripts/InheritedCandidateMaterialization.psm1','scripts/CandidateFreeze.psm1','scripts/DevelopmentEnvelopeProvenance.psm1')) {
+    foreach ($requiredClosurePath in @('scripts/InheritedCandidateMaterialization.psm1','scripts/CandidateFreeze.psm1','scripts/DevelopmentEnvelopeProvenance.psm1','scripts/lib/MorphospaceAuthorityProcess.psm1')) {
         Assert-RunnerFast ($authorityPaths -ccontains $requiredClosurePath) "derived clean-room closure omitted '$requiredClosurePath'"
     }
     $validatorPath = 'scripts/Invoke-Wf005OwnerValidator.ps1'

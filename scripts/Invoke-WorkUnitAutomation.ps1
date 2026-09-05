@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("Inspect", "PrepareDevelopmentEnvelope", "ReprepareRetiredDevelopmentEnvelope", "PrepareBlockedSuccessor", "SupersedeActive", "ArchiveHistoryCheckpoint", "AdmitDevelopmentUnit", "RecoverAdmissionCompletionTimestamp", "RetireProposed", "Ready", "WithdrawReady", "Claim", "Resume", "CompleteInstructionSurfaces", "AmendActiveWriteScope", "FreezeCandidate", "RematerializeValidatingCandidate", "MaterializeInheritedCandidate", "CorrectActiveReadOnlyDependencies", "CorrectActiveProjectRepositoryScope", "CorrectActiveUnitContract", "RecordHistoricalUnitCompatibilityProjection", "BeginValidation", "ReturnToActive", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RetirePreparedPush", "ReconcilePreparedPublication", "ReconcilePreparedPushTransactionSuffix", "ResolveBlocker", "CorrectResolvedBlockerEvidence", "CorrectHistoricalBlockerResolutionIntentBinding", "CorrectCompletedTransitionSemantics", "NormalizeEventLedgerPrefix", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix", "ReconcileExecutedPreparedPublication")]
+    [ValidateSet("Inspect", "PrepareDevelopmentEnvelope", "ReprepareRetiredDevelopmentEnvelope", "PrepareBlockedSuccessor", "SupersedeActive", "ArchiveHistoryCheckpoint", "AdmitDevelopmentUnit", "RecoverAdmissionCompletionTimestamp", "RetireProposed", "Ready", "WithdrawReady", "Claim", "Resume", "CompleteInstructionSurfaces", "AmendActiveWriteScope", "FreezeCandidate", "RematerializeValidatingCandidate", "MaterializeInheritedCandidate", "CorrectActiveReadOnlyDependencies", "CorrectActiveProjectRepositoryScope", "CorrectActiveUnitContract", "RecordHistoricalUnitCompatibilityProjection", "RecordHistoricalSupersessionCompatibility", "BeginValidation", "ReturnToActive", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RetirePreparedPush", "ReconcilePreparedPublication", "ReconcilePreparedPushTransactionSuffix", "ResolveBlocker", "CorrectResolvedBlockerEvidence", "CorrectHistoricalBlockerResolutionIntentBinding", "CorrectCompletedTransitionSemantics", "NormalizeEventLedgerPrefix", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix", "ReconcileExecutedPreparedPublication")]
     [string]$Action,
     [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
     [string]$UnitId = "",
@@ -55,6 +55,8 @@ param(
     [string]$MaterializationRoot = "",
     [string]$HistoricalUnitCompatibilityProjection = "",
     [string]$ExpectedHistoricalUnitCompatibilityProjectionSha256 = "",
+    [string]$HistoricalSupersessionCompatibility = "",
+    [string]$ExpectedHistoricalSupersessionCompatibilitySha256 = "",
     [string]$LedgerPrefixNormalizationId = "",
     [string]$ExpectedRepositoryHead = "",
     [string]$ExpectedProjectSha256 = "",
@@ -285,6 +287,16 @@ if ($Action -eq "RecordHistoricalUnitCompatibilityProjection") {
     Invoke-MorphospaceHistoricalUnitCompatibilityProjection -WorkspaceRoot $WorkspaceRoot -UnitId $UnitId `
         -CompatibilityProjection $HistoricalUnitCompatibilityProjection `
         -ExpectedCompatibilityProjectionSha256 $ExpectedHistoricalUnitCompatibilityProjectionSha256 `
+        -OutPath $OutPath -Execute:$Execute |
+        ConvertTo-Json -Depth 32
+    return
+}
+if ($Action -eq "RecordHistoricalSupersessionCompatibility") {
+    if (-not $HistoricalSupersessionCompatibility -or -not $OutPath) { throw "RecordHistoricalSupersessionCompatibility requires HistoricalSupersessionCompatibility and OutPath." }
+    Import-Module (Join-Path $PSScriptRoot "HistoricalSupersessionCompatibility.psm1") -Force
+    Invoke-MorphospaceHistoricalSupersessionCompatibility -WorkspaceRoot $WorkspaceRoot `
+        -CompatibilityReceipt $HistoricalSupersessionCompatibility `
+        -ExpectedCompatibilityReceiptSha256 $ExpectedHistoricalSupersessionCompatibilitySha256 `
         -OutPath $OutPath -Execute:$Execute |
         ConvertTo-Json -Depth 32
     return

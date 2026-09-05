@@ -971,6 +971,7 @@ function Get-AffectedProtocolCommonOwnerChecks([string]$Root, [object]$Registry)
     }
     $ownerEntrypoints = @(Get-AffectedWorkEnvironmentOwnerEntrypoints -Root $Root -TrackedPaths $trackedPaths)
     $dynamicImports = @(
+        [pscustomobject][ordered]@{ importer='scripts/Test-AuthorityRecordReadiness.ps1'; variable='processModule'; count=1; import_path='scripts/lib/MorphospaceAuthorityProcess.psm1' },
         [pscustomobject][ordered]@{ importer='scripts/Test-TransitionLedger.ps1'; variable='ModulePath'; count=2; import_path='scripts/lib/MorphospaceTransitionLedger.psm1' },
         [pscustomobject][ordered]@{ importer='scripts/Test-WorkflowContracts.ps1'; variable='focusedRecoveryPath'; count=1; import_paths=@('scripts/Test-HistoricalUnitAdoptionReconstruction.ps1','scripts/Test-PlanningWorkspaceProjection.ps1','scripts/Test-PublishedPlanningAuthorityAdoption.ps1') },
         [pscustomobject][ordered]@{ importer='scripts/Test-WorkEnvironment.ps1'; variable='quickTestPath'; count=3; import_paths=$ownerEntrypoints },
@@ -3320,6 +3321,17 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     Assert-True ($registryContractPlan.selection_mode -ceq 'full-deep' -and @($registryContractPlan.selected_checks.check_id) -ccontains 'workflow-contracts') 'Affected-validation registry change did not retain its one-time Deep workflow-contract coverage.'
     foreach ($checkId in $selectorTrustRootCheckIds) { Assert-True (@($registryContractPlan.selected_checks.check_id) -ccontains $checkId) "Affected-validation registry change did not retain '$checkId'." }
     Assert-True (@($registryContractPlan.selected_checks.check_id) -cnotcontains 'work-environment-deep' -and @($registryContractPlan.reason_codes) -ccontains 'trust-root-path-changed' -and @($registryContractPlan.reason_codes) -cnotcontains 'ambiguous-path-mapping') 'Affected-validation registry change did not retain independent-leaf Deep escalation or selected the redundant aggregate.'
+    $oversizedComponentRegistry = [pscustomobject][ordered]@{checks=@(
+        [pscustomobject][ordered]@{check_id='oversized-a';budget_seconds=2000;prerequisite_checks=@()},
+        [pscustomobject][ordered]@{check_id='oversized-b';budget_seconds=2000;prerequisite_checks=@('oversized-a')}
+    )}
+    $oversizedComponentPlan = [pscustomobject][ordered]@{selected_checks=@(
+        [pscustomobject][ordered]@{check_id='oversized-a';budget_seconds=2000;platforms=@('windows')},
+        [pscustomobject][ordered]@{check_id='oversized-b';budget_seconds=2000;platforms=@('windows')}
+    )}
+    $oversizedComponentSegments = @(Get-MorphospaceAffectedValidationSegments -Plan $oversizedComponentPlan -Registry $oversizedComponentRegistry -Platform windows)
+    Assert-True ($oversizedComponentSegments.Count -eq 1 -and [long]$oversizedComponentSegments[0].target_budget_seconds -eq 3600 -and [long]$oversizedComponentSegments[0].maximum_budget_seconds -eq 18000 -and [long]$oversizedComponentSegments[0].estimated_budget_seconds -eq 4000 -and [int]$oversizedComponentSegments[0].dependency_component_count -eq 1) 'Affected-validation segmentation did not preserve one irreducible dependency component above the soft target and below the hard maximum.'
+    Assert-AffectedThrows { Get-MorphospaceAffectedValidationSegments -Plan $oversizedComponentPlan -Registry $oversizedComponentRegistry -Platform windows -MaximumSegmentBudgetSeconds 3600 | Out-Null } '*exceeds the hosted segment maximum: 4000 > 3600 seconds*' 'Affected-validation segmentation admitted an irreducible dependency component above the hard maximum.'
     $segmentOwner = @{}
     foreach ($platform in @('linux','windows')) {
         $platformSelections = @($registryContractPlan.selected_checks | Where-Object { @($_.platforms) -ccontains $platform })
@@ -3327,7 +3339,8 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
         Assert-True ($segments.Count -gt 0 -and ($platform -cne 'windows' -or $segments.Count -gt 1)) "Affected-validation $platform Deep partition did not produce its bounded segment set."
         $covered = [Collections.Generic.List[string]]::new()
         foreach ($segment in $segments) {
-            Assert-True ([long]$segment.estimated_budget_seconds -le 3600 -and [int]$segment.segment_count -eq $segments.Count -and @($segment.check_ids).Count -gt 0) "Affected-validation segment '$($segment.segment_id)' exceeds its one-hour target or has invalid cardinality."
+            Assert-True ([long]$segment.target_budget_seconds -eq 3600 -and [long]$segment.maximum_budget_seconds -eq 18000 -and [long]$segment.estimated_budget_seconds -le [long]$segment.maximum_budget_seconds -and [int]$segment.dependency_component_count -gt 0 -and [int]$segment.segment_count -eq $segments.Count -and @($segment.check_ids).Count -gt 0) "Affected-validation segment '$($segment.segment_id)' exceeds its hard maximum or has invalid target/cardinality metadata."
+            if ([long]$segment.estimated_budget_seconds -gt [long]$segment.target_budget_seconds) { Assert-True ([int]$segment.dependency_component_count -eq 1) "Affected-validation segment '$($segment.segment_id)' exceeds its soft target without being one irreducible dependency component." }
             foreach ($id in @($segment.check_ids)) {
                 $ownerKey = "$platform/$id"
                 Assert-True (-not $segmentOwner.ContainsKey($ownerKey)) "Affected-validation $platform segment partition repeats '$id'."
@@ -3606,6 +3619,7 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     # Every path from the combined raw-CAS and historical-debt candidate has a
     # single exact owner class.  Test each path independently so command-path
     # selection cannot conceal an unmapped or ambiguous shared-module route.
+    $validationAuthorityClosureChecks=@('authority-record-readiness','authority-runner-fast','authority-runner-handoff','transition-ledger','trust-migration-authority','validation-authority-launcher','validation-execution-authority','work-unit-automation','public-boundary','workflow-contracts','automation-receipt-v2-compatibility','normal-validation-selector','validating-candidate-rematerialization')
     $proportionalMappings = @(
         [pscustomobject]@{ path='schemas/historical-validation-debt-phase-receipt-v1.schema.json'; checks=@('historical-validation-debt-baseline','historical-validation-debt-phase-runner','work-unit-automation') },
         [pscustomobject]@{ path='scripts/Test-BlockedSupersessionTerminalValidation.ps1'; checks=@('blocked-supersession-terminal-validation') },
@@ -3638,7 +3652,13 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
         [pscustomobject]@{ path='scripts/lib/MorphospaceOwnership.psm1'; checks=@('authority-record-readiness','authority-runner-fast','ownership-authority','validation-execution-authority','work-unit-automation') },
         [pscustomobject]@{ path='scripts/lib/MorphospaceProtocolCommon.psm1'; checks=$protocolCommonConsumerChecks },
         [pscustomobject]@{ path='scripts/lib/MorphospaceTransitionLedger.psm1'; checks=@('blocked-supersession-terminal-validation','correct-active-unit-contract','development-unit-admission','transition-ledger','work-unit-automation') },
-        [pscustomobject]@{ path='scripts/lib/MorphospaceValidationAuthority.psm1'; checks=@('authority-record-readiness','authority-runner-fast','authority-runner-handoff','transition-ledger','trust-migration-authority','validation-authority-launcher','validation-execution-authority','work-unit-automation') }
+        [pscustomobject]@{ path='scripts/Invoke-MorphospaceValidationAuthority.ps1'; checks=$validationAuthorityClosureChecks; exact_checks=$true },
+        [pscustomobject]@{ path='scripts/lib/MorphospaceAuthorityProcess.psm1'; checks=$validationAuthorityClosureChecks; exact_checks=$true },
+        [pscustomobject]@{ path='scripts/lib/MorphospaceAuthorityReadiness.psm1'; checks=$validationAuthorityClosureChecks; exact_checks=$true },
+        [pscustomobject]@{ path='scripts/lib/MorphospaceValidationAuthority.psm1'; checks=$validationAuthorityClosureChecks; exact_checks=$true },
+        [pscustomobject]@{ path='scripts/Test-AuthorityRecordReadiness.ps1'; checks=$validationAuthorityClosureChecks; exact_checks=$true },
+        [pscustomobject]@{ path='scripts/Test-TrustMigrationAuthority.ps1'; checks=$validationAuthorityClosureChecks; exact_checks=$true },
+        [pscustomobject]@{ path='scripts/Test-ValidationAuthorityLauncher.ps1'; checks=$validationAuthorityClosureChecks; exact_checks=$true }
     )
     foreach ($mapping in $proportionalMappings) {
         $mappingPath = Join-Path $fixture ([string]$mapping.path)
@@ -3668,6 +3688,7 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
         foreach ($reasonCode in @('ambiguous-path-mapping','unmapped-path','trust-root-path-changed')) { Assert-True (@($mappingPlan.reason_codes) -cnotcontains $reasonCode) "Proportional mapping for '$($mapping.path)' retained '$reasonCode'." }
         Assert-True (@($mappingPlan.selected_checks.check_id) -cnotcontains 'work-environment-deep') "Proportional mapping for '$($mapping.path)' selected the cumulative Deep aggregate."
         foreach ($checkId in @($mapping.checks)) { Assert-True (@($mappingPlan.selected_checks.check_id) -ccontains [string]$checkId) "Proportional mapping for '$($mapping.path)' omitted '$checkId'." }
+        if($null-ne$mapping.PSObject.Properties['exact_checks']-and[bool]$mapping.exact_checks){$actualChecks=@($mappingPlan.selected_checks.check_id|Sort-Object);$expectedChecks=@($mapping.checks|Sort-Object);Assert-True (($actualChecks-join'|')-ceq($expectedChecks-join'|')) "Proportional mapping for '$($mapping.path)' expanded beyond the exact validation-authority closure."}
         $proportionalMappingHead = $nextMappingHead
     }
     Write-Host "Trust proportional-mapping checks passed in $([long]$trustSegmentClock.Elapsed.TotalMilliseconds)ms."
