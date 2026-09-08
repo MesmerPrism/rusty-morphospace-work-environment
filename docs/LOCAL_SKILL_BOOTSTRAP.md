@@ -115,7 +115,10 @@ composition, activation, source locks, work-unit lifecycle, validation,
 boundary, and instruction-routing questions. It is eligible for implicit use
 and contains no machine paths or live state. For normal installed use it reads
 the generated local locator itself, then follows the owning project and
-current-work contracts.
+current-work contracts. A locator is provenance and path resolution only: when
+current source adoption matters, report its `source_commit` and
+`source_worktree_dirty` fields and run the installer `Verify` action before
+claiming that the source is current.
 
 ### rusty-morphospace-context
 

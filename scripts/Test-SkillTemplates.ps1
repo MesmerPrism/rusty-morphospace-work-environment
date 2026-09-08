@@ -86,6 +86,8 @@ foreach ($name in @("rusty-morphospace", "system-engineering", "rust-work-graph"
 Assert-Contains $contentByName["rusty-morphospace"] '$system-engineering' "The normal router must route authority decisions."
 Assert-Contains $contentByName["rusty-morphospace"] '$rust-work-graph' "The normal router must route inventories and impact."
 Assert-Contains $contentByName["rusty-morphospace"] '$meta-quest-workflow' "The normal router must route live device work."
+Assert-Contains $contentByName["rusty-morphospace"] 'source_commit' "The normal router must report locator source provenance before adoption."
+Assert-Contains $contentByName["rusty-morphospace"] 'Install-LocalSkills.ps1 -Action' "The normal router must route currentness checks through the managed verifier."
 Assert-Contains $contentByName["rusty-morphospace-context"] '$rusty-morphospace' "The compatibility locator must hand portable work to the normal router."
 Assert-Contains $contentByName["system-engineering"] '$meta-quest-workflow' "System engineering must route live device work."
 Assert-Contains $contentByName["rust-work-graph"] '$system-engineering' "The graph skill must route authority decisions."
@@ -97,6 +99,10 @@ foreach ($reference in @("references/ownership-map.md", "references/project-work
     if (-not (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $publicPath) $reference) -PathType Leaf)) {
         throw "The normal router is missing $reference."
     }
+}
+$workflowReference = Join-Path (Split-Path -Parent $publicPath) "references\project-workflow.md"
+if ((Get-Item -LiteralPath $workflowReference).Length -gt 8KB) {
+    throw "The project-workflow reference exceeds its progressive-disclosure budget."
 }
 
 $lifecycle = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot "manifests/workflow-lifecycle.portable.json") | ConvertFrom-Json -Depth 100

@@ -14,6 +14,9 @@ local configuration, never in this skill.
 When installed, read `references/local-work-environment.json` to resolve the
 exact work-environment clone and documentation. If it is absent, use the
 repository named by the user or ask for its location; never guess a path.
+Before claiming current adoption from that clone, report its `source_commit`
+and `source_worktree_dirty` state and run `Install-LocalSkills.ps1 -Action
+Verify`; a locator resolves provenance and paths, not currentness.
 
 For ordinary continuation, read the resolved project's nearest instructions
 and `<work-environment>/docs/CURRENT_WORK_VALIDATION.md`. Preserve the current

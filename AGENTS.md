@@ -8,7 +8,7 @@ local configuration; do not copy them here.
 ## Always apply
 
 - Keep committed content public and portable. Use placeholders in public docs;
-  keep paths, repository names, device serials, package identities, credentials,
+  keep machine paths, private repository names, device serials, package identities, credentials,
   pairing material, logs, screenshots, APKs, and private payloads in ignored
   `local/` or `artifacts/` locations.
 - Use PowerShell 7.6 LTS or newer through `pwsh` for authoritative workflows,
