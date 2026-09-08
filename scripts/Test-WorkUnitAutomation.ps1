@@ -14,7 +14,7 @@ function Assert-Automation {
     if (-not $Condition) { throw "Automation self-test failed: $Message" }
 }
 
-$automationEntry=Get-Command (Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1');$actionSet=@($automationEntry.Parameters['Action'].Attributes|Where-Object{$_-is[Management.Automation.ValidateSetAttribute]}|ForEach-Object{$_.ValidValues});Assert-Automation ($actionSet-ccontains'ReprepareRetiredDevelopmentEnvelope') 'public automation entrypoint does not register ReprepareRetiredDevelopmentEnvelope';Assert-Automation ($actionSet-ccontains'RecoverAdmissionCompletionTimestamp') 'public automation entrypoint does not register RecoverAdmissionCompletionTimestamp';Assert-Automation ($actionSet-ccontains'RecordHistoricalSupersessionCompatibility') 'public automation entrypoint does not register RecordHistoricalSupersessionCompatibility'
+$automationEntry=Get-Command (Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1');$actionSet=@($automationEntry.Parameters['Action'].Attributes|Where-Object{$_-is[Management.Automation.ValidateSetAttribute]}|ForEach-Object{$_.ValidValues});Assert-Automation ($actionSet-ccontains'ReprepareRetiredDevelopmentEnvelope') 'public automation entrypoint does not register ReprepareRetiredDevelopmentEnvelope';Assert-Automation ($actionSet-ccontains'RecoverAdmissionCompletionTimestamp') 'public automation entrypoint does not register RecoverAdmissionCompletionTimestamp';Assert-Automation ($actionSet-ccontains'RecordHistoricalSupersessionCompatibility') 'public automation entrypoint does not register RecordHistoricalSupersessionCompatibility';Assert-Automation ($actionSet-ccontains'PrepareSourceOnlyPublication') 'public automation entrypoint does not register PrepareSourceOnlyPublication';Assert-Automation ($actionSet-ccontains'RecordSourceOnlyPublication') 'public automation entrypoint does not register RecordSourceOnlyPublication'
 
 function Get-TestCanonicalHash {
     param([object]$Value)
@@ -84,6 +84,17 @@ function Invoke-MorphospaceRematerializeValidatingCandidate {
 }
 Export-ModuleMember -Function Invoke-MorphospaceRematerializeValidatingCandidate
 '@,[Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText((Join-Path $lifecycleRouterRoot 'SourceOnlyPublication.psm1'),@'
+function Invoke-MorphospacePrepareSourceOnlyPublication {
+    [CmdletBinding()]param([string]$WorkspaceRoot,[string]$UnitId,[string]$RepoMapPath,[string]$SourceOnlyPublicationPlan,[string]$ExpectedSourceOnlyPublicationPlanSha256,[string]$Timestamp,[string]$OutPath,[switch]$Execute)
+    [pscustomobject][ordered]@{action='PrepareSourceOnlyPublication';workspace_root=$WorkspaceRoot;unit_id=$UnitId;repository_map=$RepoMapPath;plan=$SourceOnlyPublicationPlan;expected_sha256=$ExpectedSourceOnlyPublicationPlanSha256;timestamp=$Timestamp;out_path=$OutPath;executed=$Execute.IsPresent}
+}
+function Invoke-MorphospaceRecordSourceOnlyPublication {
+    [CmdletBinding()]param([string]$WorkspaceRoot,[string]$UnitId,[string]$RepoMapPath,[string]$SourceOnlyPublicationExecution,[string]$ExpectedSourceOnlyPublicationExecutionSha256,[string]$Timestamp,[string]$OutPath,[switch]$Execute)
+    [pscustomobject][ordered]@{action='RecordSourceOnlyPublication';workspace_root=$WorkspaceRoot;unit_id=$UnitId;repository_map=$RepoMapPath;execution=$SourceOnlyPublicationExecution;expected_sha256=$ExpectedSourceOnlyPublicationExecutionSha256;timestamp=$Timestamp;out_path=$OutPath;executed=$Execute.IsPresent}
+}
+Export-ModuleMember -Function Invoke-MorphospacePrepareSourceOnlyPublication,Invoke-MorphospaceRecordSourceOnlyPublication
+'@,[Text.UTF8Encoding]::new($false))
     $lifecycleWorkspace = Join-Path $lifecycleRouterRoot 'workspace'
     [void][IO.Directory]::CreateDirectory($lifecycleWorkspace)
     $lifecycleMarker = Join-Path $lifecycleWorkspace 'marker.txt'
@@ -94,18 +105,24 @@ Export-ModuleMember -Function Invoke-MorphospaceRematerializeValidatingCandidate
     $activeRequest = Join-Path $lifecycleRouterRoot 'active-request.json'
     $rematerializationRequest = Join-Path $lifecycleRouterRoot 'rematerialization-request.json'
     $replacementSourceComposition = Join-Path $lifecycleRouterRoot 'replacement-source-composition.json'
+    $sourceOnlyPlan = Join-Path $lifecycleRouterRoot 'source-only-plan.json'
+    $sourceOnlyExecution = Join-Path $lifecycleRouterRoot 'source-only-execution.json'
     $routerRepoMap = Join-Path $lifecycleRouterRoot 'repository-map.json'
-    foreach ($path in @($blockedRequest,$repreparationRequest,$admissionRecoveryRequest,$activeRequest,$rematerializationRequest,$replacementSourceComposition,$routerRepoMap)) { [IO.File]::WriteAllText($path,"{}`n",[Text.UTF8Encoding]::new($false)) }
+    foreach ($path in @($blockedRequest,$repreparationRequest,$admissionRecoveryRequest,$activeRequest,$rematerializationRequest,$replacementSourceComposition,$sourceOnlyPlan,$sourceOnlyExecution,$routerRepoMap)) { [IO.File]::WriteAllText($path,"{}`n",[Text.UTF8Encoding]::new($false)) }
     $blockedOut = Join-Path $lifecycleWorkspace 'blocked-result.json'
     $repreparationOut = Join-Path $lifecycleWorkspace 'repreparation-result.json'
     $admissionRecoveryOut = Join-Path $lifecycleWorkspace 'admission-recovery-result.json'
     $activeOut = Join-Path $lifecycleWorkspace 'active-result.json'
     $rematerializationOut = Join-Path $lifecycleWorkspace 'rematerialization-result.json'
+    $sourceOnlyPrepareOut = Join-Path $lifecycleWorkspace 'source-only-prepare-result.json'
+    $sourceOnlyRecordOut = Join-Path $lifecycleWorkspace 'source-only-record-result.json'
     $blockedHash = Get-TestFileHash $blockedRequest
     $repreparationHash = Get-TestFileHash $repreparationRequest
     $admissionRecoveryHash = Get-TestFileHash $admissionRecoveryRequest
     $activeHash = Get-TestFileHash $activeRequest
     $rematerializationHash = Get-TestFileHash $rematerializationRequest
+    $sourceOnlyPlanHash = Get-TestFileHash $sourceOnlyPlan
+    $sourceOnlyExecutionHash = Get-TestFileHash $sourceOnlyExecution
     $markerHash = Get-TestFileHash $lifecycleMarker
     $routerScript = Join-Path $lifecycleRouterRoot 'Invoke-WorkUnitAutomation.ps1'
     $freshPwsh = (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source
@@ -174,7 +191,27 @@ Export-ModuleMember -Function Invoke-MorphospaceRematerializeValidatingCandidate
         (Get-TestCanonicalHash $rematerializationRun) -ceq (Get-TestCanonicalHash $rematerializationExpectedRun) -and
         (Get-TestCanonicalHash $rematerializationReplay) -ceq (Get-TestCanonicalHash $rematerializationExpectedRun)
     ) 'public RematerializeValidatingCandidate wrapper did not preserve exact dry/execute/replay forwarding'
-    Assert-Automation ((Get-TestFileHash $lifecycleMarker) -ceq $markerHash -and -not (Test-Path -LiteralPath $blockedOut) -and -not (Test-Path -LiteralPath $repreparationOut) -and -not (Test-Path -LiteralPath $admissionRecoveryOut) -and -not (Test-Path -LiteralPath $activeOut) -and -not (Test-Path -LiteralPath $rematerializationOut)) 'public lifecycle wrapper capture seam mutated workspace or output bytes'
+    $sourceOnlyPrepareArguments = @('-Action','PrepareSourceOnlyPublication','-WorkspaceRoot',$lifecycleWorkspace,'-UnitId','source-only-unit','-RepoMapPath',$routerRepoMap,'-SourceOnlyPublicationPlan',$sourceOnlyPlan,'-ExpectedSourceOnlyPublicationPlanSha256',$sourceOnlyPlanHash,'-Timestamp','2026-09-03T00:06:00.0000000Z','-OutPath',$sourceOnlyPrepareOut)
+    $sourceOnlyPrepareDry = Invoke-LifecycleRouterCapture $sourceOnlyPrepareArguments
+    $sourceOnlyPrepareRun = Invoke-LifecycleRouterCapture (@($sourceOnlyPrepareArguments) + '-Execute')
+    $sourceOnlyPrepareExpectedDry = [pscustomobject][ordered]@{action='PrepareSourceOnlyPublication';workspace_root=$lifecycleWorkspace;unit_id='source-only-unit';repository_map=$routerRepoMap;plan=$sourceOnlyPlan;expected_sha256=$sourceOnlyPlanHash;timestamp='2026-09-03T00:06:00.0000000Z';out_path=$sourceOnlyPrepareOut;executed=$false}
+    $sourceOnlyPrepareExpectedRun = $sourceOnlyPrepareExpectedDry | ConvertTo-Json -Depth 8 | ConvertFrom-Json -Depth 8 -DateKind String
+    $sourceOnlyPrepareExpectedRun.executed = $true
+    Assert-Automation (
+        (Get-TestCanonicalHash $sourceOnlyPrepareDry) -ceq (Get-TestCanonicalHash $sourceOnlyPrepareExpectedDry) -and
+        (Get-TestCanonicalHash $sourceOnlyPrepareRun) -ceq (Get-TestCanonicalHash $sourceOnlyPrepareExpectedRun)
+    ) 'public PrepareSourceOnlyPublication wrapper did not preserve exact dry/execute forwarding'
+    $sourceOnlyRecordArguments = @('-Action','RecordSourceOnlyPublication','-WorkspaceRoot',$lifecycleWorkspace,'-UnitId','source-only-unit','-RepoMapPath',$routerRepoMap,'-SourceOnlyPublicationExecution',$sourceOnlyExecution,'-ExpectedSourceOnlyPublicationExecutionSha256',$sourceOnlyExecutionHash,'-Timestamp','2026-09-03T00:07:00.0000000Z','-OutPath',$sourceOnlyRecordOut)
+    $sourceOnlyRecordDry = Invoke-LifecycleRouterCapture $sourceOnlyRecordArguments
+    $sourceOnlyRecordRun = Invoke-LifecycleRouterCapture (@($sourceOnlyRecordArguments) + '-Execute')
+    $sourceOnlyRecordExpectedDry = [pscustomobject][ordered]@{action='RecordSourceOnlyPublication';workspace_root=$lifecycleWorkspace;unit_id='source-only-unit';repository_map=$routerRepoMap;execution=$sourceOnlyExecution;expected_sha256=$sourceOnlyExecutionHash;timestamp='2026-09-03T00:07:00.0000000Z';out_path=$sourceOnlyRecordOut;executed=$false}
+    $sourceOnlyRecordExpectedRun = $sourceOnlyRecordExpectedDry | ConvertTo-Json -Depth 8 | ConvertFrom-Json -Depth 8 -DateKind String
+    $sourceOnlyRecordExpectedRun.executed = $true
+    Assert-Automation (
+        (Get-TestCanonicalHash $sourceOnlyRecordDry) -ceq (Get-TestCanonicalHash $sourceOnlyRecordExpectedDry) -and
+        (Get-TestCanonicalHash $sourceOnlyRecordRun) -ceq (Get-TestCanonicalHash $sourceOnlyRecordExpectedRun)
+    ) 'public RecordSourceOnlyPublication wrapper did not preserve exact dry/execute forwarding'
+    Assert-Automation ((Get-TestFileHash $lifecycleMarker) -ceq $markerHash -and -not (Test-Path -LiteralPath $blockedOut) -and -not (Test-Path -LiteralPath $repreparationOut) -and -not (Test-Path -LiteralPath $admissionRecoveryOut) -and -not (Test-Path -LiteralPath $activeOut) -and -not (Test-Path -LiteralPath $rematerializationOut) -and -not (Test-Path -LiteralPath $sourceOnlyPrepareOut) -and -not (Test-Path -LiteralPath $sourceOnlyRecordOut)) 'public lifecycle wrapper capture seam mutated workspace or output bytes'
 } finally {
     Remove-Item Function:Invoke-LifecycleRouterCapture -ErrorAction SilentlyContinue
     if ([IO.Directory]::Exists($lifecycleRouterRoot)) { Remove-Item -LiteralPath $lifecycleRouterRoot -Recurse -Force }

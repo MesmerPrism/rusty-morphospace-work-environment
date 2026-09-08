@@ -1,6 +1,7 @@
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceContentObservation.psm1') -Force -DisableNameChecking
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'WorkUnitAutomation.psm1') -Force
 
@@ -209,7 +210,7 @@ function Get-ActiveSupersessionRepositoryObservation {
             $matching=@($unit.document.allowed_repositories|Where-Object{[string]$_.repo_id-ceq$id})
             if($matching.Count-eq0){continue}
             if($matching.Count-ne1){throw "Successor unit '$([string]$unit.unit_id)' repeats repository '$id'."}
-            $allowed=@($matching[0].allowed_paths|ForEach-Object{ConvertTo-ActiveSupersessionSourcePath ([string]$_)}|Sort-Object -CaseSensitive)
+            $allowed=@(Sort-MorphospaceOrdinalStrings @($matching[0].allowed_paths|ForEach-Object{ConvertTo-ActiveSupersessionSourcePath ([string]$_)}))
             if($allowed.Count-ne@($matching[0].allowed_paths).Count-or$allowed.Count-eq0){throw "Successor repository '$id' has invalid allowed paths."}
             for($index=1;$index-lt$allowed.Count;$index++){if([StringComparer]::Ordinal.Compare($allowed[$index-1],$allowed[$index])-ge0){throw "Successor repository '$id' allowed paths are not unique."}}
             $ownershipScopes+=,[pscustomobject][ordered]@{unit_id=[string]$unit.unit_id;role=[string]$unit.role;allowed_paths=$allowed}
@@ -223,7 +224,7 @@ function Get-ActiveSupersessionRepositoryObservation {
         }
         $allowedSet=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
         foreach($scope in $ownershipScopes){foreach($path in @($scope.allowed_paths)){[void]$allowedSet.Add([string]$path)}}
-        $allowed=@($allowedSet|Sort-Object -CaseSensitive)
+        $allowed=@(Sort-MorphospaceOrdinalStrings @($allowedSet))
         $statusLines=@($state.status_porcelain|ForEach-Object{[string]$_}|Sort-Object -CaseSensitive)
         if($ownershipScopes.Count-eq0-and$statusLines.Count){throw "Active-unit supersession omitted repository '$id' is not clean."}
         $overlay=@()

@@ -43,6 +43,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkflowContracts.p
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-PlannedPublicationAccounting.ps1 -SelfTest
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-PublishedPrerequisiteSuffixReconciliation.ps1 -SelfTest
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ExecutedPreparedPublicationReconciliation.ps1 -SelfTest
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-SourceOnlyPublication.ps1 -SelfTest
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ExternalValidationAuthoritySelfTest.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ExternalOwnerAuthorization.ps1 -SelfTest
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\New-ProjectWorkspace.ps1 -SelfTest
@@ -50,6 +51,13 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-DocumentationLinks.
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-SkillTemplates.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-UnpublishedPlanningAuthorityMaterialization.ps1 -SelfTest
 ```
+
+The source-only publication check is Windows-scoped because it authenticates
+physical directory identity with volume serial and `FileIdInfo`. Its fixture
+also runs `Test-WorkflowContracts.ps1 -CurrentWorkOnly -SkipOwnerSelfTests`
+after both the prepared and recorded transitions. Those current-work checks
+authenticate local ledger, artifact, unit, and state evidence without requiring
+a planning remote or repeating live source publication observations.
 
 Do not execute the same risk-selected aggregate on dirty source and again on
 clean source solely to obtain both receipt shapes. A dirty aggregate is an

@@ -3459,7 +3459,7 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     [void](Invoke-TestGit $fixture @('commit', '-m', 'history archive router contract'))
     $archiveRouterHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
     $archiveRouterPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $archiveSchemaHead -HeadRevision $archiveRouterHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier standard
-    foreach ($checkId in @('public-boundary','workflow-contracts','history-archive-checkpoint','work-unit-automation')) { Assert-True (@($archiveRouterPlan.selected_checks.check_id) -ccontains $checkId) "History archive router change did not retain bounded '$checkId' coverage." }
+    foreach ($checkId in @('public-boundary','workflow-contracts','history-archive-checkpoint','work-unit-automation','source-only-publication')) { Assert-True (@($archiveRouterPlan.selected_checks.check_id) -ccontains $checkId) "History archive router change did not retain bounded '$checkId' coverage." }
     foreach ($checkId in @($selectorTrustRootCheckIds + @('active-unit-supersession','blocked-successor-preparation','work-environment-deep'))) { Assert-True (@($archiveRouterPlan.selected_checks.check_id) -cnotcontains $checkId) "Public automation router change incorrectly selected '$checkId'." }
     Assert-True (@($archiveRouterPlan.reason_codes) -cnotcontains 'ambiguous-path-mapping') 'Public automation router change became ambiguous.'
 

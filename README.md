@@ -674,6 +674,13 @@ bundle are null while the embedded state still carries the source dirty marker
 and a stale projected head, use `planning_workspace_projection.v2` and the
 workflow-only `AdoptPublishedPlanningAuthority` transition instead. See
 [External Planning Projection And Historical Reconstruction](docs/EXTERNAL_PLANNING_AND_HISTORICAL_RECONSTRUCTION.md).
+
+When the distinct planning owner is intentionally local-only and has no
+remote, an accepted `integration-batch` development integration may use the
+source-only plan/record route. It publishes only declared source refs and
+retains planning locally; provider-protected branches use the exact bound
+candidate and verified two-parent merge form. See
+[Source-only publication](docs/SOURCE_ONLY_PUBLICATION.md).
 If planning alone published early while every source remote remains unchanged,
 use the hash-bound publication-ordering interruption input to create a fresh
 plan that preserves the fault and claims no publication or corrected order.

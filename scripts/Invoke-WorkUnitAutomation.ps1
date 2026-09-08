@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("Inspect", "PrepareDevelopmentEnvelope", "ReprepareRetiredDevelopmentEnvelope", "PrepareBlockedSuccessor", "SupersedeActive", "ArchiveHistoryCheckpoint", "AdmitDevelopmentUnit", "RecoverAdmissionCompletionTimestamp", "RetireProposed", "Ready", "WithdrawReady", "Claim", "Resume", "CompleteInstructionSurfaces", "AmendActiveWriteScope", "FreezeCandidate", "RematerializeValidatingCandidate", "MaterializeInheritedCandidate", "CorrectActiveReadOnlyDependencies", "CorrectActiveProjectRepositoryScope", "CorrectActiveUnitContract", "RecordHistoricalUnitCompatibilityProjection", "RecordHistoricalSupersessionCompatibility", "BeginValidation", "ReturnToActive", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "RetirePreparedPush", "ReconcilePreparedPublication", "ReconcilePreparedPushTransactionSuffix", "ResolveBlocker", "CorrectResolvedBlockerEvidence", "CorrectHistoricalBlockerResolutionIntentBinding", "CorrectCompletedTransitionSemantics", "NormalizeEventLedgerPrefix", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix", "ReconcileExecutedPreparedPublication")]
+    [ValidateSet("Inspect", "PrepareDevelopmentEnvelope", "ReprepareRetiredDevelopmentEnvelope", "PrepareBlockedSuccessor", "SupersedeActive", "ArchiveHistoryCheckpoint", "AdmitDevelopmentUnit", "RecoverAdmissionCompletionTimestamp", "RetireProposed", "Ready", "WithdrawReady", "Claim", "Resume", "CompleteInstructionSurfaces", "AmendActiveWriteScope", "FreezeCandidate", "RematerializeValidatingCandidate", "MaterializeInheritedCandidate", "CorrectActiveReadOnlyDependencies", "CorrectActiveProjectRepositoryScope", "CorrectActiveUnitContract", "RecordHistoricalUnitCompatibilityProjection", "RecordHistoricalSupersessionCompatibility", "BeginValidation", "ReturnToActive", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "PrepareSourceOnlyPublication", "RecordSourceOnlyPublication", "RetirePreparedPush", "ReconcilePreparedPublication", "ReconcilePreparedPushTransactionSuffix", "ResolveBlocker", "CorrectResolvedBlockerEvidence", "CorrectHistoricalBlockerResolutionIntentBinding", "CorrectCompletedTransitionSemantics", "NormalizeEventLedgerPrefix", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix", "ReconcileExecutedPreparedPublication")]
     [string]$Action,
     [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
     [string]$UnitId = "",
@@ -16,6 +16,10 @@ param(
     [string]$PublishedPrerequisiteSuffixReconciliation = "",
     [string]$ExecutedPreparedPublicationReconciliation = "",
     [string]$PublicationOrderingInterruption = "",
+    [string]$SourceOnlyPublicationPlan = "",
+    [string]$ExpectedSourceOnlyPublicationPlanSha256 = "",
+    [string]$SourceOnlyPublicationExecution = "",
+    [string]$ExpectedSourceOnlyPublicationExecutionSha256 = "",
     [string]$PreparedPushRetirement = "",
     [string]$PreparedPublicationReconstruction = "",
     [string]$PreparedPushTransactionSuffixReconciliation = "",
@@ -88,6 +92,23 @@ param(
 
 $ErrorActionPreference = "Stop"
 Import-Module (Join-Path $PSScriptRoot "WorkUnitAutomation.psm1") -Force
+
+if ($Action -eq "PrepareSourceOnlyPublication") {
+    if (-not $RepoMapPath -or -not $SourceOnlyPublicationPlan -or -not $OutPath) { throw "PrepareSourceOnlyPublication requires RepoMapPath, SourceOnlyPublicationPlan, and OutPath." }
+    Import-Module (Join-Path $PSScriptRoot "SourceOnlyPublication.psm1") -Force
+    Invoke-MorphospacePrepareSourceOnlyPublication -WorkspaceRoot $WorkspaceRoot -UnitId $UnitId -RepoMapPath $RepoMapPath `
+        -SourceOnlyPublicationPlan $SourceOnlyPublicationPlan -ExpectedSourceOnlyPublicationPlanSha256 $ExpectedSourceOnlyPublicationPlanSha256 `
+        -Timestamp $Timestamp -OutPath $OutPath -Execute:$Execute | ConvertTo-Json -Depth 32
+    return
+}
+if ($Action -eq "RecordSourceOnlyPublication") {
+    if (-not $RepoMapPath -or -not $SourceOnlyPublicationExecution -or -not $OutPath) { throw "RecordSourceOnlyPublication requires RepoMapPath, SourceOnlyPublicationExecution, and OutPath." }
+    Import-Module (Join-Path $PSScriptRoot "SourceOnlyPublication.psm1") -Force
+    Invoke-MorphospaceRecordSourceOnlyPublication -WorkspaceRoot $WorkspaceRoot -UnitId $UnitId -RepoMapPath $RepoMapPath `
+        -SourceOnlyPublicationExecution $SourceOnlyPublicationExecution -ExpectedSourceOnlyPublicationExecutionSha256 $ExpectedSourceOnlyPublicationExecutionSha256 `
+        -Timestamp $Timestamp -OutPath $OutPath -Execute:$Execute | ConvertTo-Json -Depth 32
+    return
+}
 
 if ($Action -eq "PrepareDevelopmentEnvelope") {
     if (-not $DevelopmentEnvelopePreparation -or -not $OutPath) { throw "PrepareDevelopmentEnvelope requires DevelopmentEnvelopePreparation and OutPath." }
