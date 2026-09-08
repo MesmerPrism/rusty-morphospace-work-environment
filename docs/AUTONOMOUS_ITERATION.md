@@ -690,6 +690,12 @@ additive-only, and cannot expand project authority. See
 [Active Write-Scope Amendment](ACTIVE_WRITE_SCOPE_AMENDMENT.md) for the input,
 dry-run replay, transaction, and negative boundaries.
 
+When an active or validating `validation-only` unit overstates its writable
+paths, use `NarrowValidationOnlyWriteScope`. It preserves repository identities
+and exact locked source bytes while allowing a repository row to become empty.
+It is unavailable after a same-unit checkpoint or normal-validation selector
+exists. See [Validation-Only Write-Scope Narrowing](VALIDATION_ONLY_WRITE_SCOPE_NARROWING.md).
+
 Inspection example:
 
 ```powershell

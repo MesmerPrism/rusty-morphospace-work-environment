@@ -520,6 +520,15 @@ transaction.
   authority, change captain/status, or perform source, Git, build, validation,
   device, or remote work. Route the procedure to
   `docs/ACTIVE_WRITE_SCOPE_AMENDMENT.md`.
+- Narrow paths on the exact current active or validating `validation-only` unit
+  only through `NarrowValidationOnlyWriteScope` and the exact
+  `validation_only_write_scope_narrowing.v1` contract. Preserve repository
+  identities and source bytes, require exact clean source-lock observations,
+  and reject a same-unit checkpoint or an existing normal-validation selector.
+  Empty path arrays denote unchanged snapshot observation and should be used
+  directly in new validation-only proposals; do not create dummy write scope
+  merely to narrow it later. Route the procedure to
+  `docs/VALIDATION_ONLY_WRITE_SCOPE_NARROWING.md`.
 - Prepare a later feature envelope in an idle accepted project only through
   `PrepareDevelopmentEnvelope`, binding additive project/repository-root and
   zero-or-more project-generic feature/effect/permission/build/device ceilings

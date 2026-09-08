@@ -167,7 +167,6 @@
           "repo_id": { "$ref": "#/$defs/id" },
           "allowed_paths": {
             "type": "array",
-            "minItems": 1,
             "uniqueItems": true,
             "items": { "type": "string", "minLength": 1 }
           }
@@ -436,6 +435,23 @@
                 "allowed_paths": {
                   "items": { "type": "string", "pattern": "^morphospace(?:/|$)" }
                 }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "work_mode": { "const": "validation-only" } },
+        "required": ["work_mode"]
+      },
+      "else": {
+        "properties": {
+          "allowed_repositories": {
+            "items": {
+              "properties": {
+                "allowed_paths": { "minItems": 1 }
               }
             }
           }
