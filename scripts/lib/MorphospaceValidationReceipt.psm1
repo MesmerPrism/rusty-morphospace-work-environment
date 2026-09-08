@@ -17,7 +17,8 @@ function Invoke-MorphospaceValidationReceiptGit {
     param([string]$RepositoryPath,[string[]]$Arguments,[switch]$AllowFailure)
     $observationModule = Get-Variable -Name MorphospaceValidationReceiptObservationModule -Scope Script -ValueOnly -ErrorAction SilentlyContinue
     if ($null -eq $observationModule) {
-        $expectedModulePath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'MorphospaceContentObservation.psm1'))
+        $expectedModulePath = Join-Path $PSScriptRoot 'MorphospaceContentObservation.psm1'
+        $expectedModulePath = [IO.Path]::GetFullPath($expectedModulePath)
         $exactModule = @(Get-Module | Where-Object { $_.Path -and [IO.Path]::GetFullPath($_.Path).Equals($expectedModulePath,$script:MorphospaceValidationReceiptPathComparison) } | Select-Object -Last 1)
         if ($exactModule.Count -eq 0) {
             $exactModule = @(Import-Module $expectedModulePath -PassThru -DisableNameChecking -Prefix ValidationReceiptDependency)
