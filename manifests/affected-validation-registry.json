@@ -13,8 +13,6 @@
     { "importer": "scripts/Test-SourceOnlyPublication.ps1", "variable": "gitExecutable", "count": 1, "classification": "authenticated-external-command" },
     { "importer": "scripts/Test-TransitionLedger.ps1", "variable": "ModulePath", "count": 2, "target_paths": ["scripts/lib/MorphospaceTransitionLedger.psm1"] },
     { "importer": "scripts/Test-ValidatingCandidateRematerialization.ps1", "variable": "script:RematerializationOwnerModule", "count": 2, "target_paths": ["scripts/ValidatingCandidateRematerialization.psm1"] },
-    { "importer": "scripts/Test-ValidationOnlyWriteScopeNarrowing.ps1", "variable": "script:Protocol", "count": 2, "target_paths": ["scripts/lib/MorphospaceProtocolCommon.psm1"] },
-    { "importer": "scripts/Test-ValidationOnlyWriteScopeNarrowing.ps1", "variable": "script:SourceComposition", "count": 1, "target_paths": ["scripts/lib/MorphospaceSourceCompositionIdentity.psm1"] },
     { "importer": "scripts/Test-WorkflowContracts.ps1", "variable": "focusedRecoveryPath", "count": 1, "target_paths": ["scripts/Test-HistoricalUnitAdoptionReconstruction.ps1", "scripts/Test-PlanningWorkspaceProjection.ps1", "scripts/Test-PublishedPlanningAuthorityAdoption.ps1"] }
   ],
   "path_sets": [
