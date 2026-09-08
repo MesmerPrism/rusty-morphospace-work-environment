@@ -5,6 +5,82 @@ accepted `integration-batch` development integration or snapshot must publish
 its source repositories but the distinct planning owner intentionally has no
 remote. This is an ordinary two-phase publication mode, not recovery.
 
+## Prepare inputs through the owner interface
+
+Use `scripts/New-SourceOnlyPublicationInput.ps1` instead of writing a
+project-specific plan generator. Its actions observe Git and produce create-new
+inputs; the existing automation actions retain lifecycle authority.
+
+1. Run `-Action Readiness -WorkspaceRoot <workspace> -UnitId <unit>
+   -RepoMapPath <map> -PublicationId <id> -OutPath <readiness.json>` before
+   committing to this publication route. Keep that publication ID through a
+   bounded network retry or interrupted preparation/recording.
+2. Produce the validation receipt with `scripts/New-ValidationReceipt.ps1`,
+   supplying the actual validation outcomes in `-EvidencePath`. The builder
+   observes repository revisions, scoped changed paths and artifact hashes;
+   it does not run tests or infer successful outcomes. Evidence contains
+   `receipt_id`, `tier`, `result`, `artifacts`, `criteria`, `gates` and
+   `device_validation`. Each input artifact supplies only `artifact_id`,
+   `kind` and `path`; relative paths resolve from the output receipt directory.
+   Record and accept through the normal owner actions.
+3. Commit the accepted local planning checkpoint, rerun readiness, then use
+   `-Action Plan` with the same workspace, unit, map and publication ID.
+   Pass its output and SHA-256 to `PrepareSourceOnlyPublication`.
+4. For each source in the plan's dependency order, use `-Action StartOperation`
+   with the prepared `-PlanPath` and `-RepoId`. Perform the already-authorized
+   external Git/provider operation, retain its actual outcome evidence, fetch
+   the final target without moving the candidate HEAD, then use
+   `-Action ObserveOperation`. Remote observation alone cannot establish that
+   a particular command ran or that no force option was used.
+5. Use `-Action Execution -PlanPath <prepared-plan>
+   -OperationObservationPaths <ordered-observations> -RepoMapPath <map>
+   -OutPath <execution.json>`. Pass the result and SHA-256 to
+   `RecordSourceOnlyPublication`, then run current-work validation.
+
+Observation requires `-OperationStartPath`, `-OperationEvidencePath` and
+`-ExpectedOperationEvidenceSha256`, alongside the plan and repository map. The
+operation executor supplies this compact evidence from the operation it ran:
+
+```json
+{
+  "schema": "rusty.morphospace.workflow.source_only_publication_operation_evidence.v1",
+  "operation_start_sha256": "<SHA-256 of the start document>",
+  "provider": {"repo_id": "<planned repo ID>", "executor_id": "<operation executor>"},
+  "outcome": {
+    "operation_finished_at": "<actual UTC timestamp>",
+    "push_mode": "fast-forward", "force_used": false, "result": "pass"
+  },
+  "artifact": {"path": "operation.log", "sha256": "<SHA-256 of the retained outcome>"}
+}
+```
+
+Use `false` and `pass` only when the executor's actual command/provider result
+establishes them. This is an explicit executor attestation, not independent
+proof of execution. The builder binds it to the start document, validates its
+artifact relative to the evidence directory, and separately observes the exact
+planned remote, final commit, parents and tree. It rejects absent or unknown
+outcomes. Keep inputs with private repository identities in private planning.
+
+`Readiness` uses the same isolated, hash-bound Git executable and configuration
+environment as the publication observations. It reports repository-local
+normalization, attribute hashes and credential-helper availability without
+recording credential values. It authenticates Windows physical roots and Git
+common directories before reporting a supported layout. A resolver map can
+include external instruction/skill support entries: `project.spec.json`
+defines project membership, and the unit defines published sources and
+read-only dependencies. A support entry does not become a publication target.
+
+`supported` means the inspected layout fits this route; it is not validation,
+acceptance or publication permission. `unsupported` gives the incompatible
+shape before an owner transition. In particular, each published source must
+have a remote delta; declare genuinely unchanged sources as read-only when
+admitting the unit. `unavailable` identifies incomplete remote readback, with
+any separately observed source/evidence problem retained in `reason_codes`.
+Retry the readback with the existing identity; network failure alone is not a
+reason to create a unit or repeat source validation.
+
+## Bound publication contract
+
 The plan binds an authenticated accepted owner transition, its schema-valid
 passing validation receipt and checkpoint, and each candidate to that receipt's
 repository revision snapshot. It also binds the clean local-only planning owner,
@@ -57,3 +133,11 @@ fixture. This check is Windows-only because source/planning alias rejection
 uses volume serial and `FileIdInfo` directory identity. Its affected-validation
 closure includes the transition ledger, content-observation helper, protocol
 common layer, and public automation wrapper.
+
+Also run `scripts/Test-SourceOnlyPublicationInputs.ps1 -SelfTest` when changing
+the builders or their shared receipt contract. This rehearsal uses the receipt
+producer and real RecordValidation, Accept, preparation and recording actions,
+with local-only planning, two ordered source repositories, empty source write
+scope, receipt-relative evidence, provider merges and preserved retired history.
+The focused recovery suite covers every owner interruption boundary. Neither
+fixture turns source publication into build, device, wearer or release evidence.

@@ -1972,6 +1972,26 @@ try {
     $validReceiptPath = New-TestValidationReceipt -Workspace $workspace -ProjectId "automation-test" -UnitId "unit-auto-001" -Tier deep -Result pass -RepositoryRevisions @([ordered]@{
         repo_id = "project-shell"; base_revision = $validationHead; head_revision = $validationHead; branch = $validationBranch
     }) -InstructionSynchronization
+    $validReceiptDocument = Get-Content -LiteralPath $validReceiptPath -Raw | ConvertFrom-Json -DateKind String
+    $malformedRecordReceipt = $validReceiptDocument | ConvertTo-Json -Depth 32 | ConvertFrom-Json -DateKind String
+    $malformedRecordReceipt.criteria[0].evidence_refs = "validation-evidence"
+    Write-TestJson -Path $validReceiptPath -Value $malformedRecordReceipt
+    $recordProjectionPaths = @(
+        (Join-Path $workspace "workspace.state.json"),
+        (Join-Path $workspace "iteration-units\unit-auto-001.json"),
+        (Join-Path $workspace "iteration-events.jsonl")
+    )
+    $recordProjectionBefore = @($recordProjectionPaths | ForEach-Object { Get-TestFileHash $_ })
+    $malformedRecordRejected = $false
+    try {
+        Invoke-MorphospaceWorkUnitAutomation -Action RecordValidation -WorkspaceRoot $workspace -UnitId "unit-auto-001" -RepoMapPath $repoMapPath -ValidationTier deep -ValidationResult pass -ValidationReceipt "receipts/unit-auto-001-pass-validation.json" -Timestamp $fixed -Execute | Out-Null
+    } catch {
+        $malformedRecordRejected = $_.Exception.Message -like "Validation receipt does not satisfy structural schema*"
+    }
+    Assert-Automation $malformedRecordRejected "RecordValidation accepted a scalar criterion evidence_refs value"
+    $recordProjectionAfter = @($recordProjectionPaths | ForEach-Object { Get-TestFileHash $_ })
+    Assert-Automation (($recordProjectionBefore -join '|') -ceq ($recordProjectionAfter -join '|')) "malformed RecordValidation mutated state, unit, or event projections"
+    Write-TestJson -Path $validReceiptPath -Value $validReceiptDocument
     $record = Invoke-MorphospaceWorkUnitAutomation -Action RecordValidation -WorkspaceRoot $workspace -UnitId "unit-auto-001" -RepoMapPath $repoMapPath -ValidationTier deep -ValidationResult pass -ValidationReceipt "receipts/unit-auto-001-pass-validation.json" -Timestamp $fixed -OutPath (Join-Path $receiptRoot "validation.json") -Execute
     Assert-Automation ($record.transition -eq "validation-pass") "passing validation record"
 
@@ -2022,6 +2042,21 @@ try {
         Assert-Automation $damageRejected "duplicate gate $($damageCase.name) damage did not fail closed"
     }
     Write-TestJson -Path $duplicateGateReceiptPath -Value $validDuplicateGateReceipt
+
+    $malformedAcceptReceipt = $validReceiptDocument | ConvertTo-Json -Depth 32 | ConvertFrom-Json -DateKind String
+    $malformedAcceptReceipt.gates[0].evidence_refs = "validation-evidence"
+    Write-TestJson -Path $validReceiptPath -Value $malformedAcceptReceipt
+    $acceptProjectionBefore = @($recordProjectionPaths | ForEach-Object { Get-TestFileHash $_ })
+    $malformedAcceptRejected = $false
+    try {
+        Invoke-MorphospaceWorkUnitAutomation -Action Accept -WorkspaceRoot $workspace -UnitId "unit-auto-001" -RepoMapPath $repoMapPath -Timestamp $fixed -Execute | Out-Null
+    } catch {
+        $malformedAcceptRejected = $_.Exception.Message -like "Validation receipt does not satisfy structural schema*"
+    }
+    Assert-Automation $malformedAcceptRejected "Accept did not structurally recheck a scalar gate evidence_refs value"
+    $acceptProjectionAfter = @($recordProjectionPaths | ForEach-Object { Get-TestFileHash $_ })
+    Assert-Automation (($acceptProjectionBefore -join '|') -ceq ($acceptProjectionAfter -join '|')) "malformed Accept mutated state, unit, or event projections"
+    Write-TestJson -Path $validReceiptPath -Value $validReceiptDocument
 
     $validationEvidencePath = Join-Path $receiptRoot "self-test-evidence.txt"
     [System.IO.File]::WriteAllText($validationEvidencePath, "tampered after validation`n", $encoding)

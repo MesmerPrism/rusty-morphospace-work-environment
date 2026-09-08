@@ -549,6 +549,8 @@ artifacts to be empty, and installs the inspected receipt as the correction
 transition's sole artifact.
 `RecordValidation`, `Accept`, and source-only publication apply the same
 version-aware structural receipt validator before their stage-specific checks.
+`scripts/New-ValidationReceipt.ps1` creates ordinary v1 receipts from explicit
+product criterion/gate evidence while observing repository and artifact identity.
 `RecordValidation` and `Accept` require a local `validation_receipt.v1` whose
 hashed artifacts, exact acceptance/gate coverage, repository revisions,
 changed paths, and required device cleanup/fatal fields still match current
