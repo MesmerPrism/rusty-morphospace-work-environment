@@ -1925,7 +1925,12 @@ function Test-ProjectBundle {
         $readOnlyDependencies = @($effectiveReadOnlyDependencies)
         foreach ($dependency in $readOnlyDependencies) {
             $repoId = [string]$dependency.repo_id
-            Assert-Contract (-not $writeRepositoryIds.Contains($repoId)) "$Context unit '$($unit.unit_id)' cannot make '$repoId' both writable scope and a read-only dependency."
+            $authenticatedSupersededScopeConflict = (
+                $null -ne $currentHistory -and
+                $currentHistory.authenticated -eq $true -and
+                $currentHistory.authenticated_superseded_scope_conflict_ids.Contains([string]$unit.unit_id)
+            )
+            Assert-Contract (-not $writeRepositoryIds.Contains($repoId) -or $authenticatedSupersededScopeConflict) "$Context unit '$($unit.unit_id)' cannot make '$repoId' both writable scope and a read-only dependency."
             Assert-Contract ($repositoryMap.ContainsKey($repoId)) "$Context unit '$($unit.unit_id)' read-only dependency references undeclared repo '$repoId'."
             Test-NonEmptyTextArray -Value $dependency.paths -Context "$Context unit '$($unit.unit_id)' read-only dependency '$repoId' paths"
             Assert-Contract (Test-Text ([string]$dependency.purpose)) "$Context unit '$($unit.unit_id)' read-only dependency '$repoId' needs a purpose."
@@ -2406,6 +2411,11 @@ function Test-ProjectBundle {
     foreach ($candidate in $deferredSupersededInstructionFailures.ToArray()) {
         if (-not $supersededInFlightIds.Contains([string]$candidate.unit_id)) {
             Add-Failure -Message ([string]$candidate.message) -Attribution $candidate.failure_attribution
+        }
+    }
+    if ($null -ne $currentHistory -and $currentHistory.authenticated -eq $true) {
+        foreach ($oldId in @($currentHistory.authenticated_superseded_scope_conflict_ids)) {
+            Assert-Contract ($supersededInFlightIds.Contains([string]$oldId)) "$Context authenticated superseded scope-conflict owner '$oldId' is absent from the canonical supersession classifier."
         }
     }
     foreach ($candidate in $legacySkillReviewCandidates.ToArray()) {

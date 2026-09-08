@@ -5,6 +5,127 @@ Import-Module (Join-Path $PSScriptRoot 'MorphospaceTransitionLedger.psm1')
 
 # A read-only lifecycle projection, not a new receipt or recovery mechanism.
 # Earlier records cannot grant current authority merely by being classified here.
+function Get-MorphospaceAuthenticatedSupersededScopeConflicts {
+    param(
+        [string]$Workspace,
+        [object]$State,
+        [hashtable]$Units,
+        [object[]]$Events,
+        [int]$AcceptedSequence,
+        [hashtable]$SuffixTransitions
+    )
+    $ids = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    if ($AcceptedSequence -le 0 -or -not [string]$State.current_unit -or -not $Units.ContainsKey([string]$State.current_unit) -or
+        @('active','validating') -cnotcontains [string]$Units[[string]$State.current_unit].status) {
+        return [pscustomobject]@{ ids=$ids }
+    }
+    $repository = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+    $delimiter = '-superseded-by-'
+    $edges = @{}
+    foreach ($event in @($Events | Where-Object { [int]$_.sequence -gt $AcceptedSequence -and ([string]$_.event_id).Contains($delimiter,[StringComparison]::Ordinal) })) {
+        $oldId = [string]$event.unit_id
+        $matches = @($Units.Keys | Where-Object { $_ -cne $oldId -and [string]$event.event_id -ceq (Get-MorphospaceSupersessionEventId -OldUnitId $oldId -ReplacementUnitId $_) })
+        if ($matches.Count -ne 1 -or $edges.ContainsKey($oldId) -or -not $SuffixTransitions.ContainsKey([string]$event.event_id)) { continue }
+        $replacementId = [string]$matches[0]
+        $step = $SuffixTransitions[[string]$event.event_id]
+        $intent = $step.intent
+        if ([string]$intent.schema -cne 'rusty.morphospace.workflow.transition_ledger_intent.v2' -or
+            [string]$intent.event.event_id -cne [string]$event.event_id -or
+            (Get-MorphospaceCanonicalJsonSha256 $intent.event) -cne (Get-MorphospaceCanonicalJsonSha256 $event) -or
+            @($event.receipts).Count -ne 1 -or @($intent.artifacts).Count -ne 1 -or
+            [string]$event.receipts[0] -cne [string]$intent.artifacts[0].path -or
+            [string]$intent.supersession.old_unit_id -cne $oldId -or [string]$intent.supersession.new_unit_id -cne $replacementId -or
+            [string]$intent.supersession.old_unit.path -cne "iteration-units/$oldId.json" -or
+            [string]$intent.supersession.target_unit_path -cne "iteration-units/$replacementId.json" -or
+            [string]$intent.unit.path -cne "iteration-units/$replacementId.json" -or
+            [string]$intent.supersession.pre_state.path -cne 'workspace.state.json' -or
+            [string]$intent.supersession.pre_state.document.current_unit -cne $oldId -or
+            [string]$intent.target.state.document.current_unit -cne $replacementId -or
+            $null -ne $intent.target.state.document.next_ready_unit -or
+            [string]$intent.target.state.document.last_event_id -cne [string]$event.event_id -or
+            [string]$intent.target.unit.document.unit_id -cne $replacementId -or [string]$intent.target.unit.document.status -cne 'active') { continue }
+
+        $oldPath = Resolve-MorphospaceWorkspacePath $Workspace "iteration-units/$oldId.json" -RequireLeaf
+        if ([string]$intent.supersession.old_unit.sha256 -cne (Get-MorphospaceCanonicalJsonSha256 $Units[$oldId]) -or
+            [string]$intent.supersession.old_unit.sha256 -cne (Get-MorphospaceCanonicalJsonSha256 $intent.supersession.old_unit.document) -or
+            [string]$intent.pre.state.sha256 -cne [string]$intent.supersession.pre_state.sha256 -or
+            [string]$intent.pre.state.sha256 -cne (Get-MorphospaceCanonicalJsonSha256 $intent.supersession.pre_state.document)) { continue }
+        $expectedTargetState = $intent.supersession.pre_state.document | ConvertTo-Json -Depth 100 | ConvertFrom-Json -DateKind String
+        $expectedTargetState.current_unit = $replacementId
+        $expectedTargetState.next_ready_unit = $null
+        $expectedTargetState.last_event_id = [string]$event.event_id
+        if ((Get-MorphospaceCanonicalJsonSha256 $expectedTargetState) -cne [string]$intent.target.state.sha256 -or
+            (Get-MorphospaceCanonicalJsonSha256 $intent.target.state.document) -cne [string]$intent.target.state.sha256) { continue }
+
+        $receiptPath = Resolve-MorphospaceWorkspacePath $Workspace ([string]$intent.artifacts[0].path) -RequireLeaf
+        $receipt = Read-MorphospaceProtocolJson $receiptPath
+        if (-not (Test-Json -Json (Get-Content -Raw -LiteralPath $receiptPath) -SchemaFile (Join-Path $repository 'schemas/work-unit-automation-receipt-v2.schema.json')) -or
+            [string]$receipt.schema -cne 'rusty.morphospace.workflow.work_unit_automation_receipt.v2' -or [string]$receipt.action -cne 'SupersedeActive' -or
+            -not [bool]$receipt.executed -or [string]$receipt.transition -cne 'active-superseded-by-proposed-to-active' -or
+            [string]$receipt.project_id -cne [string]$State.project_id -or [string]$receipt.unit_id -cne $replacementId -or
+            [string]$receipt.event_id -cne [string]$event.event_id -or [string]$receipt.current_unit_before -cne $oldId -or
+            [string]$receipt.current_unit_after -cne $replacementId -or [string]$receipt.status_before -cne 'proposed' -or [string]$receipt.status_after -cne 'active' -or
+            [string]$receipt.timestamp -cne [string]$event.timestamp -or
+            [bool]$receipt.preservation.git_mutation_performed -or [bool]$receipt.preservation.device_mutation_performed -or [bool]$receipt.preservation.remote_mutation_performed) { continue }
+        $requestPath = Resolve-MorphospaceWorkspacePath $Workspace ([string]$receipt.audit_receipt.path) -RequireLeaf
+        if ((Get-MorphospaceFileSha256 $requestPath) -cne [string]$receipt.audit_receipt.sha256 -or
+            -not (Test-Json -Json (Get-Content -Raw -LiteralPath $requestPath) -SchemaFile (Join-Path $repository 'schemas/active-unit-supersession-v1.schema.json'))) { continue }
+        $request = Read-MorphospaceProtocolJson $requestPath
+        $targetPreimage = $intent.target.unit.document | ConvertTo-Json -Depth 100 | ConvertFrom-Json -DateKind String
+        $targetPreimage.status = 'proposed'
+        if ([string]$request.supersession_id -cne [string]$event.event_id -or [string]$request.project_id -cne [string]$State.project_id -or
+            [string]$request.old_unit.unit_id -cne $oldId -or [string]$request.old_unit.path -cne "iteration-units/$oldId.json" -or
+            [string]$request.old_unit.status -cne 'active' -or [string]$request.old_unit.raw_sha256 -cne (Get-MorphospaceFileSha256 $oldPath) -or
+            [string]$request.old_unit.canonical_sha256 -cne (Get-MorphospaceCanonicalJsonSha256 $Units[$oldId]) -or
+            [string]$request.replacement_unit.unit_id -cne $replacementId -or [string]$request.replacement_unit.path -cne "iteration-units/$replacementId.json" -or
+            [string]$request.replacement_unit.status -cne 'proposed' -or [string]$request.replacement_unit.canonical_sha256 -cne [string]$intent.pre.unit.sha256 -or
+            (Get-MorphospaceCanonicalJsonSha256 $targetPreimage) -cne [string]$intent.pre.unit.sha256 -or
+            [string]$request.expected.state_canonical_sha256 -cne [string]$intent.pre.state.sha256 -or
+            [string]$request.expected.events_sha256 -cne [string]$intent.expected.events_sha256 -or
+            [int64]$request.expected.events_length -ne [int64]$intent.expected.events_length -or
+            [string]$request.expected.event_tail_id -cne [string]$intent.expected.event_tail_id) { continue }
+        $resurrected = @($Events | Where-Object {
+            [int]$_.sequence -gt [int]$event.sequence -and [string]$_.unit_id -ceq $oldId -and
+            [string]$_.event_id -cmatch '-(?:ready|claimed|active|validating|resumed)(?:-|$)'
+        }).Count -ne 0
+        if (-not $resurrected) {
+            foreach ($later in @($Events | Where-Object { [int]$_.sequence -gt [int]$event.sequence })) {
+                if ($SuffixTransitions.ContainsKey([string]$later.event_id) -and [string]$SuffixTransitions[[string]$later.event_id].intent.target.state.document.current_unit -ceq $oldId) {
+                    $resurrected = $true; break
+                }
+            }
+        }
+        if ($resurrected) { continue }
+        $edges[$oldId] = [pscustomobject]@{ replacement=$replacementId; sequence=[int]$event.sequence }
+    }
+
+    $prerequisites = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($unit in $Units.Values) {
+        if ($unit.PSObject.Properties.Name -contains 'prerequisites') { foreach ($id in @($unit.prerequisites)) { [void]$prerequisites.Add([string]$id) } }
+    }
+    $incomingCounts = @{}
+    foreach ($edge in $edges.Values) {
+        $replacementId = [string]$edge.replacement
+        if (-not $incomingCounts.ContainsKey($replacementId)) { $incomingCounts[$replacementId] = 0 }
+        $incomingCounts[$replacementId] = [int]$incomingCounts[$replacementId] + 1
+    }
+    foreach ($oldId in @($edges.Keys)) {
+        if ([string]$State.current_unit -ceq $oldId -or [string]$State.next_ready_unit -ceq $oldId -or $prerequisites.Contains($oldId)) { continue }
+        $cursor = $oldId
+        $visited = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        $priorSequence = 0
+        $ordered = $true
+        while ($edges.ContainsKey($cursor) -and $visited.Add($cursor)) {
+            $edge = $edges[$cursor]
+            if ([int]$edge.sequence -le $priorSequence -or [int]$incomingCounts[[string]$edge.replacement] -ne 1) { $ordered = $false; break }
+            $priorSequence = [int]$edge.sequence
+            $cursor = [string]$edge.replacement
+        }
+        if ($ordered -and $cursor -ceq [string]$State.current_unit -and @('active','validating') -ccontains [string]$Units[$cursor].status) { [void]$ids.Add($oldId) }
+    }
+    return [pscustomobject]@{ ids=$ids }
+}
+
 function Get-MorphospaceCurrentWorkHistory {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$WorkspaceRoot, [switch]$RequireIdle)
@@ -47,6 +168,7 @@ function Get-MorphospaceCurrentWorkHistory {
     if ($events.Count -eq 0 -or [string]$events[-1].event_id -cne [string]$state.last_event_id) { throw 'Current-work state does not match its ledger tail.' }
     $historical = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $retired = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $supersededScopeConflicts = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $accepts = @($events | Where-Object {
         [string]$_.event_type -ceq 'state-transition' -and
         [string]$_.event_id -cmatch ('^' + [regex]::Escape([string]$_.unit_id) + '-accepted-[0-9]{4,}$') -and
@@ -57,7 +179,7 @@ function Get-MorphospaceCurrentWorkHistory {
         foreach ($pending in @(Get-ChildItem -LiteralPath (Join-Path $workspace 'receipts/transactions') -Filter '*.intent.json' -File -ErrorAction SilentlyContinue)) {
             if (-not [IO.File]::Exists(($pending.FullName -creplace '\.intent\.json$','.completion.json'))) { throw 'Current-work has an incomplete transaction without an authenticated historical boundary.' }
         }
-        return [pscustomobject]@{ authenticated=$false; sequence=0; historical_ids=$historical; retired_ids=$retired; units=$units; events=$events; audit_only=@() }
+        return [pscustomobject]@{ authenticated=$false; sequence=0; historical_ids=$historical; retired_ids=$retired; authenticated_superseded_scope_conflict_ids=$supersededScopeConflicts; units=$units; events=$events; audit_only=@() }
     }
     if ($accepts.Count -ne 1) { throw 'Current-work accepted checkpoint is ambiguous.' }
     $acceptedEvent = $accepts[0]
@@ -73,6 +195,7 @@ function Get-MorphospaceCurrentWorkHistory {
     $sequence = [int]$acceptedEvent.sequence
     $priorStateHash = [string]$accepted.intent.target.state.sha256
     $projectionHashes = @{}
+    $suffixTransitions = @{}
     $audit = [Collections.Generic.List[object]]::new()
     # Existing owner transactions fence all changes after the accepted boundary.
     foreach ($event in @($events | Where-Object { [int]$_.sequence -gt $sequence })) {
@@ -99,6 +222,7 @@ function Get-MorphospaceCurrentWorkHistory {
         } elseif (-not $authenticatedArchiveStep) {
             $step = Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $workspace -TransactionId $id -ExpectedStatePath 'workspace.state.json' -ExpectedEventsPath 'iteration-events.jsonl'
             $intent = $step.intent
+            $suffixTransitions[[string]$event.event_id] = $step
             if ($intent.PSObject.Properties.Name -contains 'additional_projections') {
                 foreach ($projection in $intent.additional_projections) {
                     $path = [string]$projection.path
@@ -113,6 +237,8 @@ function Get-MorphospaceCurrentWorkHistory {
         $priorStateHash = [string]$intent.target.state.sha256
     }
     if ($priorStateHash -cne (Get-MorphospaceCanonicalJsonSha256 $state)) { throw 'Current-work transaction suffix does not derive the live state.' }
+    $supersededScopeResult = Get-MorphospaceAuthenticatedSupersededScopeConflicts -Workspace $workspace -State $state -Units $units -Events $events -AcceptedSequence $sequence -SuffixTransitions $suffixTransitions
+    $supersededScopeConflicts = $supersededScopeResult.ids
     foreach ($path in $projectionHashes.Keys) {
         if ((Get-MorphospaceCanonicalJsonSha256 (Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace $path -RequireLeaf))) -cne $projectionHashes[$path]) {
             throw "Current-work live projection '$path' differs from its latest transaction."
@@ -183,7 +309,7 @@ function Get-MorphospaceCurrentWorkHistory {
         $proof = Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $workspace -TransactionId "$($terminal[0].event_id)-transition" -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath "iteration-units/$id.json" -ExpectedEventsPath 'iteration-events.jsonl'
         if ([string]$proof.intent.target.unit.sha256 -cne (Get-MorphospaceCanonicalJsonSha256 $units[$id]) -or [string]$proof.intent.target.unit.document.status -cne 'accepted') { throw "Current-work prerequisite '$id' differs from accepted evidence." }
     }
-    return [pscustomobject]@{ authenticated=$true; sequence=$sequence; accepted_unit_id=$acceptedId; historical_ids=$historical; retired_ids=$retired; units=$units; events=$events; audit_only=@($audit.ToArray()) }
+    return [pscustomobject]@{ authenticated=$true; sequence=$sequence; accepted_unit_id=$acceptedId; historical_ids=$historical; retired_ids=$retired; authenticated_superseded_scope_conflict_ids=$supersededScopeConflicts; units=$units; events=$events; audit_only=@($audit.ToArray()) }
 }
 
 function Assert-CurrentWorkPreparationStep {

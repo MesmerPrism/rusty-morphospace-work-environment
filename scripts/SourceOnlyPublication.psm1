@@ -108,6 +108,13 @@ function Get-SourceOnlyContext {
     return [pscustomobject]@{repo_root=$repoRoot;workspace=$workspace;map=$map;map_path=$mapPath;project=$project;project_path=$projectPath;state=$state;state_path=$statePath;unit=$unit;unit_path=$unitPath;unit_relative=$unitRelative;events_path=$eventsPath;tail=$tail}
 }
 
+function Resolve-SourceOnlyValidationArtifactPath {
+    param([string]$ReceiptPath,[string]$ArtifactPath,[string]$ArtifactId)
+    $resolved=if([IO.Path]::IsPathRooted($ArtifactPath)){[IO.Path]::GetFullPath($ArtifactPath)}else{[IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $ReceiptPath) $ArtifactPath))}
+    if(-not(Test-Path -LiteralPath $resolved -PathType Leaf)){throw "Accepted trigger validation artifact '$ArtifactId' does not exist: $ArtifactPath"}
+    return $resolved
+}
+
 function Test-SourceOnlyCommittedPredecessorTransition {
     param([object]$Context,[string]$TransactionId,[object]$PendingSuccessorIntent)
     try{
@@ -155,7 +162,7 @@ function Assert-SourceOnlyPlan {
     $checkpoint=$acceptedTransition.intent.target.state.document.validation_checkpoint
     if($null-eq$checkpoint-or[string]$checkpoint.receipt-cne[string]$acceptance.validation_receipt.path-or[string]$checkpoint.result-cne'pass'-or[string]$checkpoint.tier-cne[string]$acceptedValidation.tier){throw 'Accepted trigger transition does not bind its exact passing validation checkpoint.'}
     if(@($acceptedValidation.criteria|Where-Object{[string]$_.status-cne'pass'}).Count-ne0-or@($acceptedValidation.gates|Where-Object{[string]$_.status-cne'pass'}).Count-ne0){throw 'Accepted trigger validation receipt contains a failed criterion or gate.'}
-    foreach($artifact in @($acceptedValidation.artifacts)){$artifactPath=Resolve-MorphospaceWorkspacePath $c.workspace ([string]$artifact.path) -RequireLeaf;if((Get-MorphospaceFileSha256 $artifactPath)-cne([string]$artifact.sha256).ToLowerInvariant()){throw "Accepted trigger validation artifact '$($artifact.artifact_id)' drifted."}}
+    foreach($artifact in @($acceptedValidation.artifacts)){$artifactPath=Resolve-SourceOnlyValidationArtifactPath $acceptancePath ([string]$artifact.path) ([string]$artifact.artifact_id);if((Get-MorphospaceFileSha256 $artifactPath)-cne([string]$artifact.sha256).ToLowerInvariant()){throw "Accepted trigger validation artifact '$($artifact.artifact_id)' drifted."}}
     $planning=@($c.map.repositories|Where-Object{[string]$_.role-ceq'planning'});if($planning.Count-ne1-or[string]$planning[0].repo_id-cne[string]$Plan.planning_owner.repo_id){throw 'Repository map must identify exactly the bound planning owner.'}
     $planningRoot=(Resolve-Path ([string]$planning[0].path)).Path
     $top=[IO.Path]::GetFullPath((Get-SourceOnlyGitValue $planningRoot @('rev-parse','--show-toplevel') 'planning owner root observation')).TrimEnd('\','/')

@@ -226,6 +226,12 @@ receipt: defer only its evolving instruction-policy failures, and discharge
 them only after the same aggregate pass authenticates its exact canonical
 supersession event. Structural, registry, event, and current-unit checks remain
 immediate.
+For current-work validation after an authenticated `SupersedeActive`, follow
+`docs/CURRENT_WORK_VALIDATION.md` for the one obsolete writable/read-only
+overlap declaration in the preserved predecessor. Its source roles are no
+longer current; the exact request, old raw bytes, committed handoff and current
+successor must authenticate before that declaration becomes audit-only.
+This leaves every other structural check and all current scope checks strict.
 For one non-current/non-next in-flight historical pair whose immutable bytes
 cannot use terminal adoption, use only the project-owned
 `historical_unit_compatibility_projection.v1` and

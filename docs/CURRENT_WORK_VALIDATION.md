@@ -25,6 +25,19 @@ credit. An orphaned, ambiguous, resurrected, or unaccepted dependency cannot be
 hidden by calling it history. A workspace without an authenticated acceptance
 gets no historical exemption.
 
+A preserved predecessor can retain an obsolete source-scope contradiction
+after a supported handoff. After an exact owner-produced `SupersedeActive` replaces an
+immutable active unit, the old unit's declaration of the same
+repository as both writable and read-only may be ignored while the replacement
+is current and in flight. The current-work reader authenticates the committed
+transaction, its installed automation receipt and original SHA-bound request,
+the byte-exact old unit, the proposed-to-active replacement preimage, and the
+unique chain into the current unit. The old endpoint must be neither current,
+next-ready, nor a prerequisite. This is only a read-only classification of that
+one obsolete scope declaration. It does not make the old unit accepted or
+historical, grant validation credit, defer any other structural error, or relax
+the replacement unit's current scope checks.
+
 Preparation uses this same boundary automatically. Archive checkpoint admission
 also recognizes retired lifecycle identities while copying the original bytes.
 An interrupted current operation still uses its existing exact recovery action.

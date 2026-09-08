@@ -15,6 +15,12 @@ write scope; carried paths stay within the exact project owner scope. A
 carried-only row is valid only when its full candidate diff remains bound to
 the accepted validation snapshot.
 
+The plan's acceptance receipt and validation-evidence references are
+workspace-relative. Within a `validation_receipt.v1`, relative artifact paths
+resolve from the receipt's directory; rooted artifact paths retain their
+declared rooted resolution. Every artifact remains bound by its exact raw
+SHA-256.
+
 `fast-forward` binds the candidate as the final ref. `provider-merge` leaves
 the future merge revision unset in the plan. Recording accepts it only when
 the externally observed merge has exactly two ordered parents: the bound old
