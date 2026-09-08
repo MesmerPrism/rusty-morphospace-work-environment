@@ -1,6 +1,6 @@
 interface:
   display_name: "Rusty Morphospace Context"
-  short_description: "Resolve the local Morphospace environment"
-  default_prompt: "Use $rusty-morphospace-context to resolve the exact local work environment, then hand portable guidance to $rusty-morphospace."
+  short_description: "Compatibility locator for installed Morphospace provenance"
+  default_prompt: "Use $rusty-morphospace-context for an existing caller that needs installed provenance, then hand portable work to $rusty-morphospace."
 policy:
   allow_implicit_invocation: true

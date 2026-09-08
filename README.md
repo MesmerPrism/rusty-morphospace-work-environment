@@ -547,6 +547,8 @@ events. Its builder derives the old and replacement from current retained
 state/unit evidence, requires the original event receipts and legacy-v1 intent
 artifacts to be empty, and installs the inspected receipt as the correction
 transition's sole artifact.
+`RecordValidation`, `Accept`, and source-only publication apply the same
+version-aware structural receipt validator before their stage-specific checks.
 `RecordValidation` and `Accept` require a local `validation_receipt.v1` whose
 hashed artifacts, exact acceptance/gate coverage, repository revisions,
 changed paths, and required device cleanup/fatal fields still match current
