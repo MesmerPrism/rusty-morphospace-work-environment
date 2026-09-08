@@ -494,13 +494,11 @@ throw 'The selector consumer must never execute the evidence producer.'
     Invoke-TestGit -RepositoryPath $terminalMappedRepoRoot -Arguments @('add', '--', 'morphospace/tracked-input.txt') | Out-Null
     Invoke-TestGit -RepositoryPath $terminalMappedRepoRoot -Arguments @('-c', 'user.name=Morphospace Test', '-c', 'user.email=morphospace-test@example.invalid', 'commit', '--quiet', '-m', 'Create terminal selector fixture') | Out-Null
     $terminalRepoHead = Invoke-TestGit -RepositoryPath $terminalMappedRepoRoot -Arguments @('rev-parse', 'HEAD')
-    $terminalRepoTree = Invoke-TestGit -RepositoryPath $terminalMappedRepoRoot -Arguments @('rev-parse', 'HEAD^{tree}')
     $terminalRepositoryRevision = [ordered]@{
         repo_id = 'project-shell'
         branch = 'main'
         base_revision = $terminalRepoHead
         head_revision = $terminalRepoHead
-        tree = $terminalRepoTree
     }
     Copy-Item -LiteralPath $workspace -Destination $terminalWorkspace -Recurse
     Write-TestJson $terminalRepoMapPath ([ordered]@{

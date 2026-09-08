@@ -118,13 +118,18 @@ function Assert-MorphospaceValidationReceiptStructure {
 
     $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
     $schemaPath = Join-Path $repositoryRoot "schemas\$($script:MorphospaceValidationReceiptSchemas[$schemaId])"
+    $schemaErrors = @()
     try {
-        $valid = Test-Json -Json $json -SchemaFile $schemaPath -ErrorAction Stop
+        # A failed oneOf branch can be reported before the actual invalid field.
+        # Retain the complete result and bounded diagnostics from this same check.
+        $valid = Test-Json -Json $json -SchemaFile $schemaPath -ErrorAction SilentlyContinue -ErrorVariable schemaErrors
     } catch {
         throw "Validation receipt does not satisfy structural schema '$schemaId': $($_.Exception.Message)"
     }
     if (-not $valid) {
-        throw "Validation receipt does not satisfy structural schema '$schemaId'."
+        $details = @($schemaErrors | ForEach-Object { $_.Exception.Message } | Select-Object -Unique) -join ' | '
+        if ($details.Length -gt 4096) { $details = $details.Substring(0,4096) + ' [truncated]' }
+        throw "Validation receipt does not satisfy structural schema '$schemaId': $details"
     }
     return $receipt
 }

@@ -59,6 +59,13 @@ $many.gates = @(
 $manyResult = Assert-MorphospaceValidationReceiptStructure -Document $many
 Assert-ReceiptTest (@($manyResult.repository_revisions).Count -eq 2 -and @($manyResult.criteria[0].evidence_refs).Count -eq 2 -and @($manyResult.gates).Count -eq 2) 'valid many-cardinality arrays were not preserved'
 
+$extraRevisionField = Copy-ReceiptTestDocument $many
+$extraRevisionField.repository_revisions[0] | Add-Member -NotePropertyName tree -NotePropertyValue $revision
+$reportedExtraField = $false
+try { Assert-MorphospaceValidationReceiptStructure -Document $extraRevisionField | Out-Null }
+catch { $reportedExtraField = $_.Exception.Message -like '*/repository_revisions/0/tree*' }
+Assert-ReceiptTest ($null -eq $extraRevisionField.device_validation -and $reportedExtraField) 'schema diagnostics hid the invalid revision field behind the legal null device branch'
+
 foreach ($field in @('repository_revisions','changed_paths','artifacts','criteria','gates')) {
     $malformed = Copy-ReceiptTestDocument $v1
     $malformed.$field = 'scalar-value'
