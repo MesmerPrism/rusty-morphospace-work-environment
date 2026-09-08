@@ -2,6 +2,7 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = "Stop"
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceValidationAuthority.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceValidationReceipt.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceHistoricalValidationDebtBaseline.psm1')
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceContentObservation.psm1') -Force -DisableNameChecking
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1') -Force
@@ -982,7 +983,7 @@ function ConvertTo-MorphospaceRelativePath {
 function Test-MorphospacePathAllowed {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
-        [Parameter(Mandatory = $true)][object[]]$AllowedPaths
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$AllowedPaths
     )
 
     $normalized = ConvertTo-MorphospaceRelativePath -Path $Path
@@ -1275,7 +1276,7 @@ function Test-MorphospaceValidationReceipt {
     )
 
     $receiptPath = Resolve-MorphospaceReceiptPath -WorkspaceRoot $WorkspaceRoot -ReceiptReference $ReceiptReference
-    $receipt = Read-MorphospaceJson -Path $receiptPath
+    $receipt = Assert-MorphospaceValidationReceiptStructure -ReceiptPath $receiptPath
     $receiptSecurityUnit = (
         [string]$Unit.project_id -eq 'morphospace-platform-iteration' -and
         [string]$Unit.unit_id -eq 'wf-005'

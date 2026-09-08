@@ -155,58 +155,17 @@ function New-AdmissionEventFixture {
     }
 }
 
-$corpus = [ordered]@{
-    RetirePreparedPush = @('prepared-push-retired')
-    ReconcilePreparedPublication = @('prepared-publication-reconstructed')
-    ReconcilePreparedPushTransactionSuffix = @('prepared-push-transaction-suffix-reconciled')
-    ResolveBlocker = @('blocker-resolved')
-    CorrectResolvedBlockerEvidence = @('blocker-resolution-corrected')
-    CorrectHistoricalBlockerResolutionIntentBinding = @('historical-blocker-resolution-intent-binding-corrected')
-    CorrectCompletedTransitionSemantics = @('completed-transition-semantics-corrected')
-    CorrectActiveReadOnlyDependencies = @('active-read-only-dependencies-corrected')
-    CorrectActiveProjectRepositoryScope = @('active-project-repository-scope-corrected')
-    CorrectActiveUnitContract = @('active-unit-contract-corrected')
-    AmendActiveWriteScope = @('active-write-scope-amended')
-    NarrowValidationOnlyWriteScope = @('validation-only-write-scope-narrowed')
-    RecordHistoricalUnitCompatibilityProjection = @('historical-unit-compatibility-projected')
-    RecordHistoricalSupersessionCompatibility = @('historical-supersession-compatibility-recorded')
-    PrepareDevelopmentEnvelope = @('idle-project-envelope-prepared')
-    ReprepareRetiredDevelopmentEnvelope = @('retired-envelope-reprepared')
-    PrepareBlockedSuccessor = @('blocked-successor-prepared')
-    SupersedeActive = @('active-superseded-by-proposed-to-active')
-    AdmitDevelopmentUnit = @('development-unit-admitted', 'development-unit-already-admitted')
-    RecoverAdmissionCompletionTimestamp = @('admission-completion-timestamp-recovered')
-    FreezeCandidate = @('candidate-frozen', 'candidate-already-frozen')
-    RematerializeValidatingCandidate = @('validating-candidate-rematerialized', 'validating-candidate-already-rematerialized')
-    MaterializeInheritedCandidate = @('inherited-candidate-materialized', 'inherited-candidate-already-materialized')
-    ArchiveHistoryCheckpoint = @('history-archive-checkpointed')
-}
-
-$producerContracts = [ordered]@{
-    RetirePreparedPush = [ordered]@{ producer='scripts/PreparedPushRetirement.psm1'; owner_test='scripts/Test-WorkUnitAutomation.ps1' }
-    ReconcilePreparedPublication = [ordered]@{ producer='scripts/PreparedPublicationReconstruction.psm1'; owner_test='scripts/Test-PreparedPublicationReconstruction.ps1' }
-    ReconcilePreparedPushTransactionSuffix = [ordered]@{ producer='scripts/ReconcilePreparedPushTransactionSuffix.psm1'; owner_test='scripts/Test-PreparedPushTransactionSuffixReconciliation.ps1' }
-    ResolveBlocker = [ordered]@{ producer='scripts/ResolveBlocker.psm1'; owner_test='scripts/Test-ResolveBlocker.ps1' }
-    CorrectResolvedBlockerEvidence = [ordered]@{ producer='scripts/CorrectResolvedBlockerEvidence.psm1'; owner_test='scripts/Test-CorrectResolvedBlockerEvidence.ps1' }
-    CorrectHistoricalBlockerResolutionIntentBinding = [ordered]@{ producer='scripts/CorrectHistoricalBlockerResolutionIntentBinding.psm1'; owner_test='scripts/Test-HistoricalBlockerResolutionIntentBindingCorrection.ps1' }
-    CorrectCompletedTransitionSemantics = [ordered]@{ producer='scripts/CompletedTransitionSemanticCorrection.psm1'; owner_test='scripts/Test-CompletedTransitionSemanticCorrection.ps1' }
-    CorrectActiveReadOnlyDependencies = [ordered]@{ producer='scripts/CorrectActiveReadOnlyDependencies.psm1'; owner_test='scripts/Test-CorrectActiveReadOnlyDependencies.ps1' }
-    CorrectActiveProjectRepositoryScope = [ordered]@{ producer='scripts/CorrectActiveProjectRepositoryScope.psm1'; owner_test='scripts/Test-CorrectActiveProjectRepositoryScope.ps1' }
-    CorrectActiveUnitContract = [ordered]@{ producer='scripts/CorrectActiveUnitContract.psm1'; owner_test='scripts/Test-CorrectActiveUnitContract.ps1' }
-    AmendActiveWriteScope = [ordered]@{ producer='scripts/ActiveWriteScopeAmendment.psm1'; owner_test='scripts/Test-ActiveWriteScopeAmendment.ps1' }
-    NarrowValidationOnlyWriteScope = [ordered]@{ producer='scripts/ValidationOnlyWriteScopeNarrowing.psm1'; owner_test='scripts/Test-ValidationOnlyWriteScopeNarrowing.ps1' }
-    RecordHistoricalUnitCompatibilityProjection = [ordered]@{ producer='scripts/HistoricalUnitCompatibilityProjection.psm1'; owner_test='scripts/Test-HistoricalUnitCompatibilityProjection.ps1' }
-    RecordHistoricalSupersessionCompatibility = [ordered]@{ producer='scripts/HistoricalSupersessionCompatibility.psm1'; owner_test='scripts/Test-HistoricalSupersessionCompatibility.ps1' }
-    PrepareDevelopmentEnvelope = [ordered]@{ producer='scripts/DevelopmentEnvelopePreparation.psm1'; owner_test='scripts/Test-DevelopmentEnvelopePreparation.ps1' }
-    ReprepareRetiredDevelopmentEnvelope = [ordered]@{ producer='scripts/DevelopmentEnvelopeRepreparation.psm1'; owner_test='scripts/Test-DevelopmentUnitAdmission.ps1' }
-    PrepareBlockedSuccessor = [ordered]@{ producer='scripts/BlockedSuccessorPreparation.psm1'; owner_test='scripts/Test-BlockedSuccessorPreparation.ps1' }
-    SupersedeActive = [ordered]@{ producer='scripts/ActiveUnitSupersession.psm1'; owner_test='scripts/Test-ActiveUnitSupersession.ps1' }
-    AdmitDevelopmentUnit = [ordered]@{ producer='scripts/DevelopmentUnitAdmission.psm1'; owner_test='scripts/Test-DevelopmentUnitAdmission.ps1' }
-    RecoverAdmissionCompletionTimestamp = [ordered]@{ producer='scripts/AdmissionCompletionTimestampRecovery.psm1'; owner_test='scripts/Test-AdmissionCompletionTimestampRecovery.ps1' }
-    FreezeCandidate = [ordered]@{ producer='scripts/CandidateFreeze.psm1'; owner_test='scripts/Test-WorkUnitAutomation.ps1' }
-    RematerializeValidatingCandidate = [ordered]@{ producer='scripts/ValidatingCandidateRematerialization.psm1'; owner_test='scripts/Test-ValidatingCandidateRematerialization.ps1' }
-    MaterializeInheritedCandidate = [ordered]@{ producer='scripts/InheritedCandidateMaterialization.psm1'; owner_test='scripts/Test-WorkUnitAutomation.ps1' }
-    ArchiveHistoryCheckpoint = [ordered]@{ producer='scripts/lib/MorphospaceHistoryArchive.psm1'; owner_test='scripts/Test-HistoryArchiveCheckpoint.ps1' }
+# The receipt schema owns action/transition relations and producer registration.
+# Fixtures below independently test legal state shapes and damaged receipts.
+$actionSchema = Get-Content -Raw -LiteralPath $schemaPath | ConvertFrom-Json -DateKind String
+$corpus = [ordered]@{}
+$producerContracts = [ordered]@{}
+foreach ($relation in @($actionSchema.allOf[0].oneOf)) {
+    $action = [string]$relation.properties.action.const
+    Assert-AutomationReceiptCompatibility (-not $corpus.Contains($action)) "duplicate registered action '$action'"
+    $transition = $relation.properties.transition
+    $corpus[$action] = if ($transition.PSObject.Properties['enum']) { @($transition.enum) } else { @([string]$transition.const) }
+    $producerContracts[$action] = $relation.'x-workflow-owner'
 }
 
 $receiptShapes = [ordered]@{}
@@ -260,7 +219,7 @@ foreach ($action in @($corpus.Keys)) {
         $validatedPairCount++
     }
 }
-Assert-AutomationReceiptCompatibility ($validatedPairCount -eq 28) "expected 28 canonical action/transition receipts, observed $validatedPairCount"
+Assert-AutomationReceiptCompatibility ($validatedPairCount -eq @($actionSchema.properties.transition.enum).Count) "not every registered transition received a canonical fixture"
 
 $admissionShapeDamage = New-CanonicalAutomationReceipt -Action 'AdmitDevelopmentUnit' -Transition 'development-unit-admitted'
 Assert-AutomationReceiptCompatibility (-not (Test-AutomationReceiptSchema -Receipt $admissionShapeDamage)) 'schema accepted an admission receipt with a fabricated prior status'

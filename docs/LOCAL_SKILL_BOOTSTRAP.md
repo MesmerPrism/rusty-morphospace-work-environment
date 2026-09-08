@@ -113,16 +113,20 @@ differ.
 Use this as the portable first-hop router for public architecture, ownership,
 composition, activation, source locks, work-unit lifecycle, validation,
 boundary, and instruction-routing questions. It is eligible for implicit use
-and contains no machine paths or live state.
+and contains no machine paths or live state. For normal installed use it reads
+the generated local locator itself, then follows the owning project and
+current-work contracts. A locator is provenance and path resolution only: when
+current source adoption matters, report its `source_commit` and
+`source_worktree_dirty` fields and run the installer `Verify` action before
+claiming that the source is current.
 
 ### rusty-morphospace-context
 
-Use this resolver when a task needs the installed work-environment clone. It
-reads the generated locator, then hands portable guidance to
-`rusty-morphospace`. Its `agents/openai.yaml` keeps
-`allow_implicit_invocation: true`; it contains no architecture copy, live unit,
-or release-candidate status. Private planning workspaces may add a stricter
-state-first read order in their own `AGENTS.md`.
+This is a compatibility locator for existing callers that need the installed
+work-environment clone before handing portable work to `rusty-morphospace`.
+Normal routing does not require this extra hop. It contains no architecture
+copy, live unit, or release-candidate status. Private planning workspaces may
+add a stricter state-first read order in their own `AGENTS.md`.
 
 ### system-engineering
 
@@ -234,7 +238,7 @@ directories, and requires a final current/zero-unmanaged readback.
 
 If an update is unsuitable, stop the agent, compare the timestamped backup with
 the installed directory, and restore only the intended skill. Do not merge old
-transient roadmap state back into `rusty-morphospace-context`.
+transient roadmap state back into either router.
 
 The installer does not provide an uninstall action and never deletes a skill
 directory. `PruneUnmanaged` deletes only its reviewed fingerprinted file

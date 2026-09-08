@@ -94,6 +94,24 @@ function Assert-ReceiptRelativeArtifactBinding {
     }finally{Remove-FixtureRoot $root}
 }
 
+function Assert-ReceiptStructuralRejection {
+    $root=Join-Path ([IO.Path]::GetTempPath())('source-only-receipt-structure-'+[guid]::NewGuid().ToString('N'))
+    try{
+        $f=New-Fixture $root 'fixture-receipt-structure'
+        $validationPath=Join-Path $f.workspace 'receipts/host-pass.json'
+        $validation=Read-Json $validationPath
+        $validation.criteria[0].evidence_refs='host'
+        Write-Json $validationPath $validation
+        $validationHash=Hash $validationPath
+        $plan=Copy-Document $f.plan
+        $plan.acceptance_transition.validation_receipt.sha256=$validationHash
+        $plan.validation_evidence[0].sha256=$validationHash
+        $planPath=Join-Path $f.inputs 'malformed-receipt-plan.json'
+        Write-Json $planPath $plan
+        Assert-Rejected {Invoke-MorphospacePrepareSourceOnlyPublication -WorkspaceRoot $f.workspace -UnitId fixture-unit -RepoMapPath $f.map -SourceOnlyPublicationPlan $planPath -ExpectedSourceOnlyPublicationPlanSha256 (Hash $planPath) -OutPath (Join-Path $f.workspace 'receipts/fixture-receipt-structure-plan.json') -Execute} 'scalar validation evidence_refs' '*does not satisfy structural schema*' $f.workspace $f
+    }finally{Remove-FixtureRoot $root}
+}
+
 
 function Exercise-Recovery($Phase,$Stage){
     $root=Join-Path ([IO.Path]::GetTempPath())("source-only-$Phase-$Stage-"+[guid]::NewGuid().ToString('N'))
@@ -137,6 +155,7 @@ $root=Join-Path ([IO.Path]::GetTempPath())('source-only-publication-'+[guid]::Ne
 try{
     $f=New-Fixture $root 'fixture-source-publication';Assert-Rejected {Invoke-MorphospacePrepareSourceOnlyPublication -WorkspaceRoot $f.workspace -UnitId fixture-unit -RepoMapPath $f.map -SourceOnlyPublicationPlan $f.plan_path -OutPath (Join-Path $f.workspace 'receipts/fixture-source-publication-plan.json') -Execute} 'prepare missing reviewed hash' '*dry-run plan SHA-256*' $f.workspace
     Assert-ReceiptRelativeArtifactBinding
+    Assert-ReceiptStructuralRejection
     $bad=Copy-Document $f.plan;$bad.expected.project_sha256='0'*64;$badPath=Join-Path $f.inputs 'project-drift.json';Write-Json $badPath $bad;Assert-Rejected {Invoke-MorphospacePrepareSourceOnlyPublication -WorkspaceRoot $f.workspace -UnitId fixture-unit -RepoMapPath $f.map -SourceOnlyPublicationPlan $badPath -OutPath (Join-Path $f.workspace 'receipts/fixture-source-publication-plan.json')} 'project drift' '*expected project drifted*' $f.workspace
     $aliasMap=Copy-Document (Read-Json $f.map);$aliasMap.repositories[1].path=$f.public.repo;$aliasMapPath=Join-Path $f.inputs 'physical-source-alias-map.json';Write-Json $aliasMapPath $aliasMap;Assert-Rejected {Invoke-MorphospacePrepareSourceOnlyPublication -WorkspaceRoot $f.workspace -UnitId fixture-unit -RepoMapPath $aliasMapPath -SourceOnlyPublicationPlan $f.plan_path -OutPath (Join-Path $f.workspace 'receipts/fixture-source-publication-plan.json')} 'physical source alias' '*share physical repository or Git authority*' $f.workspace
     Invoke-MorphospacePrepareSourceOnlyPublication -WorkspaceRoot $f.workspace -UnitId fixture-unit -RepoMapPath $f.map -SourceOnlyPublicationPlan $f.plan_path -ExpectedSourceOnlyPublicationPlanSha256 $f.plan_hash -OutPath (Join-Path $f.workspace 'receipts/fixture-source-publication-plan.json') -Timestamp '2026-01-01T00:01:00Z' -Execute|Out-Null

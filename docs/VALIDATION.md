@@ -9,6 +9,32 @@ emit the migration guidance from that check.
 
 ## Work Environment Repo
 
+Before freezing a workflow change, run the touched receipt and action checks:
+
+```powershell
+pwsh -NoProfile -File ./scripts/Test-ValidationReceiptStructure.ps1 -SelfTest
+pwsh -NoProfile -File ./scripts/Test-WorkflowActionRegistry.ps1 -SelfTest
+pwsh -NoProfile -File ./scripts/Test-AutomationReceiptV2Compatibility.ps1 -SelfTest
+```
+
+The v2 receipt schema's action/transition relations are the registration owner.
+Each relation binds its producer and independent owner test in
+`x-workflow-owner`. The compatibility corpus reads that registration; it keeps
+independent state-shape, invalid-pair, drift and preservation tests. To refresh
+the existing enum projections after reviewing a relation change, run
+`Test-WorkflowActionRegistry.ps1 -UpdateGenerated`, then the checks above.
+The registry check also rejects missing CLI actions, absent producers, and tests
+missing from affected validation. Register new imports and test dependencies
+before the graph/import and dependency-closure phases of the final runner.
+Shared consumer expectations in selector scenarios have one explicit fixture
+definition; do not derive those expectations from the selector being tested.
+
+For source publication, also run the complete builder/lifecycle rehearsal in
+`Test-SourceOnlyPublicationInputs.ps1 -SelfTest`. It complements the existing
+source-only recovery test and must pass before a shared candidate is described
+as ready. Focused results on a dirty candidate are diagnostic; the frozen
+candidate still follows the managed phased runner and trust-root admission.
+
 Quick checkpoint:
 
 ```powershell

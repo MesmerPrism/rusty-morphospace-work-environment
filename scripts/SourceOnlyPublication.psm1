@@ -3,6 +3,7 @@ $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceContentObservation.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceValidationReceipt.psm1') -Force
 
 if($IsWindows-and-not('MorphospaceSourceOnlyFileIdentity'-as[type])){Add-Type -TypeDefinition @'
 using System; using System.ComponentModel; using System.IO; using System.Runtime.InteropServices; using Microsoft.Win32.SafeHandles;
@@ -156,9 +157,8 @@ function Assert-SourceOnlyPlan {
     if([string]$acceptance.transaction_id-cne"$([string]$acceptance.event_id)-transition"){throw 'Accepted trigger transaction identity is noncanonical.'}
     $acceptedTransition=Test-SourceOnlyCommittedPredecessorTransition -Context $c -TransactionId ([string]$acceptance.transaction_id) -PendingSuccessorIntent $PendingSuccessorIntent
     if((Get-MorphospaceCanonicalJsonSha256 $acceptedTransition.intent.event)-cne(Get-MorphospaceCanonicalJsonSha256 $acceptanceEvents[0])-or[string]$acceptedTransition.intent.target.unit.document.status-cne'accepted'-or[string]$acceptedTransition.intent.target.unit.sha256-cne(Get-MorphospaceCanonicalJsonSha256 $c.unit)-or$null-ne$acceptedTransition.intent.target.state.document.current_unit){throw 'Accepted trigger owner transition does not authenticate the retained accepted unit.'}
-    $acceptedValidation=Read-MorphospaceProtocolJson $acceptancePath
+    $acceptedValidation=Assert-MorphospaceValidationReceiptStructure -ReceiptPath $acceptancePath -AllowedSchemaIds 'rusty.morphospace.workflow.validation_receipt.v1'
     if([string]$acceptedValidation.unit_id-cne$c.unit.unit_id-or[string]$acceptedValidation.result-cne'pass'){throw 'Accepted trigger validation receipt is not a passing receipt for the trigger unit.'}
-    if(-not(Test-Json -Json (Get-Content -Raw -LiteralPath $acceptancePath) -SchemaFile (Join-Path $repoRoot 'schemas\validation-receipt.schema.json'))){throw 'Accepted trigger validation receipt is not a schema-valid owner receipt.'}
     $checkpoint=$acceptedTransition.intent.target.state.document.validation_checkpoint
     if($null-eq$checkpoint-or[string]$checkpoint.receipt-cne[string]$acceptance.validation_receipt.path-or[string]$checkpoint.result-cne'pass'-or[string]$checkpoint.tier-cne[string]$acceptedValidation.tier){throw 'Accepted trigger transition does not bind its exact passing validation checkpoint.'}
     if(@($acceptedValidation.criteria|Where-Object{[string]$_.status-cne'pass'}).Count-ne0-or@($acceptedValidation.gates|Where-Object{[string]$_.status-cne'pass'}).Count-ne0){throw 'Accepted trigger validation receipt contains a failed criterion or gate.'}
@@ -193,7 +193,10 @@ function Assert-SourceOnlyPlan {
        if((Get-MorphospaceCanonicalJsonSha256 $preparedTransaction.intent.target.state.document)-cne(Get-MorphospaceCanonicalJsonSha256 $c.state)-or[string]$preparedTransaction.intent.target.unit.sha256-cne(Get-MorphospaceCanonicalJsonSha256 $c.unit)-or(Get-MorphospaceCanonicalJsonSha256 $c.project)-cne[string]$Plan.expected.project_sha256-or[string]$c.state.pending_push_bundle.bundle_id-cne[string]$Plan.publication_id){throw 'Live planning state, unit, or project differs from the prepared source-only publication target.'}
        Assert-SourceOnlyPreparedPlanningWorktree $planningRoot $c.workspace ([string]$Plan.publication_id)
     }elseif((Get-MorphospaceCanonicalJsonSha256 $c.project)-cne[string]$Plan.expected.project_sha256){throw 'Source-only recovery project projection drifted.'}
-    $sources=@($c.map.repositories|Where-Object{[string]$_.role-ceq'source'});$planRows=@($Plan.source_repositories);$scopeRows=@($c.unit.allowed_repositories)
+    # A resolver map may also name external instruction/tool support. Project
+    # membership owns source publication; extra map rows gain no authority.
+    $projectSourceIds=@($c.project.repositories.repo_id)
+    $sources=@($c.map.repositories|Where-Object{[string]$_.role-ceq'source'-and[string]$_.repo_id-cin$projectSourceIds});$planRows=@($Plan.source_repositories);$scopeRows=@($c.unit.allowed_repositories)
     $mapIds=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal);foreach($repo in @($c.map.repositories)){if(-not$mapIds.Add([string]$repo.repo_id)){throw 'Repository map repeats a repository identity.'}}
     $planIds=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal);foreach($row in $planRows){if(-not$planIds.Add([string]$row.repo_id)){throw 'Source-only publication plan repeats a source repository.'}}
     Assert-SourceOnlySetEqual @($scopeRows.repo_id) @($planRows.repo_id) 'Publication-plan writable source coverage'

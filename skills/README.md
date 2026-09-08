@@ -23,10 +23,10 @@ Plan and Verify report files outside the managed template inventory. Updates
 preserve them. Only the explicit, fingerprint-bound, backup-first
 `PruneUnmanaged -Execute` action may remove the exact reported files.
 
-The public `rusty-morphospace` and `system-engineering` templates route project
-work through the portable project spec, feature lock, module lifecycle, and
-autonomous iteration protocol in `docs/`. The focused
-`rusty-morphospace-context` template resolves an installed machine-local clone
-and hands portable guidance to `rusty-morphospace`. All five templates follow
+The public `rusty-morphospace` router resolves its installed locator directly,
+then routes project work through the portable project spec, feature lock, module
+lifecycle, and autonomous iteration protocol in `docs/`.
+`rusty-morphospace-context` remains a focused compatibility locator for callers
+that already use it. All five templates follow
 the instruction synchronization matrix so durable routing changes stay aligned
 without copying long recipes into skill entrypoints.
