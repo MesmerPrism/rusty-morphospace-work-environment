@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("Inspect", "PrepareDevelopmentEnvelope", "ReprepareRetiredDevelopmentEnvelope", "PrepareBlockedSuccessor", "SupersedeActive", "ArchiveHistoryCheckpoint", "AdmitDevelopmentUnit", "RecoverAdmissionCompletionTimestamp", "RetireProposed", "Ready", "WithdrawReady", "Claim", "Resume", "CompleteInstructionSurfaces", "AmendActiveWriteScope", "FreezeCandidate", "RematerializeValidatingCandidate", "MaterializeInheritedCandidate", "CorrectActiveReadOnlyDependencies", "CorrectActiveProjectRepositoryScope", "CorrectActiveUnitContract", "RecordHistoricalUnitCompatibilityProjection", "RecordHistoricalSupersessionCompatibility", "BeginValidation", "ReturnToActive", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "PrepareSourceOnlyPublication", "RecordSourceOnlyPublication", "RetirePreparedPush", "ReconcilePreparedPublication", "ReconcilePreparedPushTransactionSuffix", "ResolveBlocker", "CorrectResolvedBlockerEvidence", "CorrectHistoricalBlockerResolutionIntentBinding", "CorrectCompletedTransitionSemantics", "NormalizeEventLedgerPrefix", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix", "ReconcileExecutedPreparedPublication")]
+    [ValidateSet("Inspect", "PrepareDevelopmentEnvelope", "ReprepareRetiredDevelopmentEnvelope", "PrepareBlockedSuccessor", "SupersedeActive", "ArchiveHistoryCheckpoint", "AdmitDevelopmentUnit", "RecoverAdmissionCompletionTimestamp", "RetireProposed", "Ready", "WithdrawReady", "Claim", "Resume", "CompleteInstructionSurfaces", "AmendActiveWriteScope", "NarrowValidationOnlyWriteScope", "FreezeCandidate", "RematerializeValidatingCandidate", "MaterializeInheritedCandidate", "CorrectActiveReadOnlyDependencies", "CorrectActiveProjectRepositoryScope", "CorrectActiveUnitContract", "RecordHistoricalUnitCompatibilityProjection", "RecordHistoricalSupersessionCompatibility", "BeginValidation", "ReturnToActive", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "PrepareSourceOnlyPublication", "RecordSourceOnlyPublication", "RetirePreparedPush", "ReconcilePreparedPublication", "ReconcilePreparedPushTransactionSuffix", "ResolveBlocker", "CorrectResolvedBlockerEvidence", "CorrectHistoricalBlockerResolutionIntentBinding", "CorrectCompletedTransitionSemantics", "NormalizeEventLedgerPrefix", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix", "ReconcileExecutedPreparedPublication")]
     [string]$Action,
     [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
     [string]$UnitId = "",
@@ -37,6 +37,8 @@ param(
     [string]$ExpectedActiveUnitContractCorrectionSha256 = "",
     [string]$ActiveWriteScopeAmendment = "",
     [string]$ExpectedActiveWriteScopeAmendmentSha256 = "",
+    [string]$ValidationOnlyWriteScopeNarrowing = "",
+    [string]$ExpectedValidationOnlyWriteScopeNarrowingSha256 = "",
     [string]$DevelopmentUnitAdmission = "",
     [string]$ExpectedDevelopmentUnitAdmissionSha256 = "",
     [string]$AdmissionCompletionTimestampRecovery = "",
@@ -297,6 +299,16 @@ if ($Action -eq "AmendActiveWriteScope") {
     Invoke-MorphospaceAmendActiveWriteScope -WorkspaceRoot $WorkspaceRoot -UnitId $UnitId `
         -ActiveWriteScopeAmendment $ActiveWriteScopeAmendment `
         -ExpectedActiveWriteScopeAmendmentSha256 $ExpectedActiveWriteScopeAmendmentSha256 `
+        -Timestamp $Timestamp -OutPath $OutPath -Execute:$Execute |
+        ConvertTo-Json -Depth 32
+    return
+}
+if ($Action -eq "NarrowValidationOnlyWriteScope") {
+    if (-not $RepoMapPath -or -not $ValidationOnlyWriteScopeNarrowing -or -not $OutPath) { throw "NarrowValidationOnlyWriteScope requires RepoMapPath, ValidationOnlyWriteScopeNarrowing, and OutPath." }
+    Import-Module (Join-Path $PSScriptRoot "ValidationOnlyWriteScopeNarrowing.psm1") -Force
+    Invoke-MorphospaceNarrowValidationOnlyWriteScope -WorkspaceRoot $WorkspaceRoot -UnitId $UnitId -RepoMapPath $RepoMapPath `
+        -ValidationOnlyWriteScopeNarrowing $ValidationOnlyWriteScopeNarrowing `
+        -ExpectedValidationOnlyWriteScopeNarrowingSha256 $ExpectedValidationOnlyWriteScopeNarrowingSha256 `
         -Timestamp $Timestamp -OutPath $OutPath -Execute:$Execute |
         ConvertTo-Json -Depth 32
     return

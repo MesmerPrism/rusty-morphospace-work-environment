@@ -167,6 +167,7 @@ $corpus = [ordered]@{
     CorrectActiveProjectRepositoryScope = @('active-project-repository-scope-corrected')
     CorrectActiveUnitContract = @('active-unit-contract-corrected')
     AmendActiveWriteScope = @('active-write-scope-amended')
+    NarrowValidationOnlyWriteScope = @('validation-only-write-scope-narrowed')
     RecordHistoricalUnitCompatibilityProjection = @('historical-unit-compatibility-projected')
     RecordHistoricalSupersessionCompatibility = @('historical-supersession-compatibility-recorded')
     PrepareDevelopmentEnvelope = @('idle-project-envelope-prepared')
@@ -193,6 +194,7 @@ $producerContracts = [ordered]@{
     CorrectActiveProjectRepositoryScope = [ordered]@{ producer='scripts/CorrectActiveProjectRepositoryScope.psm1'; owner_test='scripts/Test-CorrectActiveProjectRepositoryScope.ps1' }
     CorrectActiveUnitContract = [ordered]@{ producer='scripts/CorrectActiveUnitContract.psm1'; owner_test='scripts/Test-CorrectActiveUnitContract.ps1' }
     AmendActiveWriteScope = [ordered]@{ producer='scripts/ActiveWriteScopeAmendment.psm1'; owner_test='scripts/Test-ActiveWriteScopeAmendment.ps1' }
+    NarrowValidationOnlyWriteScope = [ordered]@{ producer='scripts/ValidationOnlyWriteScopeNarrowing.psm1'; owner_test='scripts/Test-ValidationOnlyWriteScopeNarrowing.ps1' }
     RecordHistoricalUnitCompatibilityProjection = [ordered]@{ producer='scripts/HistoricalUnitCompatibilityProjection.psm1'; owner_test='scripts/Test-HistoricalUnitCompatibilityProjection.ps1' }
     RecordHistoricalSupersessionCompatibility = [ordered]@{ producer='scripts/HistoricalSupersessionCompatibility.psm1'; owner_test='scripts/Test-HistoricalSupersessionCompatibility.ps1' }
     PrepareDevelopmentEnvelope = [ordered]@{ producer='scripts/DevelopmentEnvelopePreparation.psm1'; owner_test='scripts/Test-DevelopmentEnvelopePreparation.ps1' }
@@ -227,6 +229,7 @@ $receiptShapes['development-unit-admitted'] = [ordered]@{status_before=$null;sta
 $receiptShapes['development-unit-already-admitted'] = [ordered]@{status_before=$null;status_after='proposed';current_unit_before=$null;current_unit_after=$null;audit_path_kind='receipt'}
 $receiptShapes['admission-completion-timestamp-recovered'] = [ordered]@{status_before='proposed';status_after='proposed';current_unit_before=$null;current_unit_after=$null;audit_path_kind='receipt'}
 $receiptShapes['historical-supersession-compatibility-recorded'] = [ordered]@{status_before='active';status_after='active';current_unit_before=$null;current_unit_after=$null;audit_path_kind='receipt'}
+$receiptShapes['validation-only-write-scope-narrowed'] = [ordered]@{status_before='validating';status_after='validating';current_unit_before='compatibility-unit';current_unit_after='compatibility-unit';audit_path_kind='receipt'}
 $receiptShapes['validating-candidate-rematerialized'] = [ordered]@{status_before='validating';status_after='validating';current_unit_before='compatibility-unit';current_unit_after='compatibility-unit';audit_path_kind='receipt'}
 $receiptShapes['validating-candidate-already-rematerialized'] = [ordered]@{status_before='validating';status_after='validating';current_unit_before='compatibility-unit';current_unit_after='compatibility-unit';audit_path_kind='receipt'}
 $receiptShapes['history-archive-checkpointed'] = [ordered]@{status_before='accepted';status_after='accepted';current_unit_before=$null;current_unit_after=$null;audit_path_kind='history-archive'}
@@ -257,7 +260,7 @@ foreach ($action in @($corpus.Keys)) {
         $validatedPairCount++
     }
 }
-Assert-AutomationReceiptCompatibility ($validatedPairCount -eq 27) "expected 27 canonical action/transition receipts, observed $validatedPairCount"
+Assert-AutomationReceiptCompatibility ($validatedPairCount -eq 28) "expected 28 canonical action/transition receipts, observed $validatedPairCount"
 
 $admissionShapeDamage = New-CanonicalAutomationReceipt -Action 'AdmitDevelopmentUnit' -Transition 'development-unit-admitted'
 Assert-AutomationReceiptCompatibility (-not (Test-AutomationReceiptSchema -Receipt $admissionShapeDamage)) 'schema accepted an admission receipt with a fabricated prior status'

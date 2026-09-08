@@ -1915,7 +1915,12 @@ function Test-ProjectBundle {
             $repoId = [string]$allowedRepo.repo_id
             Assert-Contract ($writeRepositoryIds.Add($repoId)) "$Context unit '$($unit.unit_id)' repeats writable repository '$repoId'."
             Assert-Contract ($repositoryMap.ContainsKey($repoId)) "$Context unit '$($unit.unit_id)' references undeclared repo '$repoId'."
-            Test-NonEmptyTextArray -Value $allowedRepo.allowed_paths -Context "$Context unit '$($unit.unit_id)' repo '$repoId' allowed paths"
+            if ($effectiveWorkMode -ceq 'validation-only') {
+                Assert-Contract ($null -ne $allowedRepo.allowed_paths) "$Context validation-only unit '$($unit.unit_id)' repo '$repoId' needs an allowed-path array."
+                foreach ($allowedPath in @($allowedRepo.allowed_paths)) { Assert-Contract (-not [string]::IsNullOrWhiteSpace([string]$allowedPath)) "$Context validation-only unit '$($unit.unit_id)' repo '$repoId' contains an empty allowed path." }
+            } else {
+                Test-NonEmptyTextArray -Value $allowedRepo.allowed_paths -Context "$Context unit '$($unit.unit_id)' repo '$repoId' allowed paths"
+            }
             if ($repositoryMap.ContainsKey($repoId)) {
                 foreach ($candidatePath in @($allowedRepo.allowed_paths)) {
                     Assert-Contract (Test-PathInScope -Candidate ([string]$candidatePath) -Allowed @($repositoryMap[$repoId].allowed_paths)) "$Context unit '$($unit.unit_id)' path '$candidatePath' expands project scope for '$repoId'."

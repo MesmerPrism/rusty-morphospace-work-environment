@@ -514,6 +514,13 @@ active feature unit, retains its captain and status, and mutex-binds the
 unchanged project spec. It never edits project authority or performs source,
 Git, build, validation, device, or remote work. See
 [Active Write-Scope Amendment](docs/ACTIVE_WRITE_SCOPE_AMENDMENT.md).
+For the exact current active or validating `validation-only` unit, use
+`NarrowValidationOnlyWriteScope` to remove declared paths while preserving all
+repository identities and exact clean source bytes. Empty path arrays describe
+read-only snapshot observation and belong directly in new validation-only
+proposals; the corrective action is only for an already active or validating
+overstatement and makes no validation or acceptance claim. See
+[Validation-Only Write-Scope Narrowing](docs/VALIDATION_ONLY_WRITE_SCOPE_NARROWING.md).
 
 For an idle existing project, first use the bounded owner
 [development-envelope preparation](docs/DEVELOPMENT_ENVELOPE_PREPARATION.md)
