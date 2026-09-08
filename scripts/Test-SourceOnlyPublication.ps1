@@ -87,27 +87,40 @@ function New-Execution($f,$publicFinal,$privateFinal){[ordered]@{schema='rusty.m
 
 function Exercise-Recovery($Phase,$Stage){
     $root=Join-Path ([IO.Path]::GetTempPath())("source-only-$Phase-$Stage-"+[guid]::NewGuid().ToString('N'))
+    $f=$null
     try{
         $f=New-Fixture $root "fixture-$Phase-$Stage"
-        $prepare={param($fault,$execute,$hash,$path)Invoke-MorphospacePrepareSourceOnlyPublication -WorkspaceRoot $f.workspace -UnitId fixture-unit -RepoMapPath $f.map -SourceOnlyPublicationPlan $path -ExpectedSourceOnlyPublicationPlanSha256 $hash -OutPath (Join-Path $f.workspace "receipts/$($f.plan.publication_id)-plan.json") -Timestamp '2026-01-01T00:01:00Z' -Execute:$execute -FaultAfter $fault}
+        $prepare={param($fixture,$fault,$execute,$hash,$path)Invoke-MorphospacePrepareSourceOnlyPublication -WorkspaceRoot $fixture.workspace -UnitId fixture-unit -RepoMapPath $fixture.map -SourceOnlyPublicationPlan $path -ExpectedSourceOnlyPublicationPlanSha256 $hash -OutPath (Join-Path $fixture.workspace "receipts/$($fixture.plan.publication_id)-plan.json") -Timestamp '2026-01-01T00:01:00Z' -Execute:$execute -FaultAfter $fault}
         if($Phase -ceq 'prepare'){
-            Assert-Fault {&$prepare $Stage $true $f.plan_hash $f.plan_path} "prepare $Stage" $f
-            Assert-Rejected {&$prepare none $false $f.plan_hash $f.plan_path} 'partial prepare dry replay' '*requires -Execute recovery*' $f.workspace $f
+            Assert-Fault {&$prepare $f $Stage $true $f.plan_hash $f.plan_path} "prepare $Stage" $f
+            Assert-Rejected {&$prepare $f none $false $f.plan_hash $f.plan_path} 'partial prepare dry replay' '*requires -Execute recovery*' $f.workspace $f
             $same=Join-Path $f.inputs 'same-id-plan.json';[IO.File]::WriteAllText($same,(Get-Content -Raw $f.plan_path)+' ',[Text.UTF8Encoding]::new($false))
-            Assert-Rejected {&$prepare none $true (Hash $same) $same} 'partial prepare changed input' '*caller bytes do not match*' $f.workspace $f
-            &$prepare none $true $f.plan_hash $f.plan_path|Out-Null
+            Assert-Rejected {&$prepare $f none $true (Hash $same) $same} 'partial prepare changed input' '*caller bytes do not match*' $f.workspace $f
+            &$prepare $f none $true $f.plan_hash $f.plan_path|Out-Null
             return
         }
-        &$prepare none $true $f.plan_hash $f.plan_path|Out-Null
+        &$prepare $f none $true $f.plan_hash $f.plan_path|Out-Null
         $pub=Publish-Merge $f.public $root;$priv=Publish-Merge $f.private $root
         $executionPath=Join-Path $f.inputs 'execution.json';Write-Json $executionPath (New-Execution $f $pub $priv);$executionHash=Hash $executionPath
-        $record={param($fault,$execute,$hash,$path)Invoke-MorphospaceRecordSourceOnlyPublication -WorkspaceRoot $f.workspace -UnitId fixture-unit -RepoMapPath $f.map -SourceOnlyPublicationExecution $path -ExpectedSourceOnlyPublicationExecutionSha256 $hash -OutPath (Join-Path $f.workspace "receipts/$($f.plan.publication_id)-execution.json") -Timestamp '2026-01-01T00:04:00Z' -Execute:$execute -FaultAfter $fault}
-        Assert-Fault {&$record $Stage $true $executionHash $executionPath} "record $Stage" $f
-        Assert-Rejected {&$record none $false $executionHash $executionPath} 'partial record dry replay' '*requires -Execute recovery*' $f.workspace $f
+        $record={param($fixture,$fault,$execute,$hash,$path)Invoke-MorphospaceRecordSourceOnlyPublication -WorkspaceRoot $fixture.workspace -UnitId fixture-unit -RepoMapPath $fixture.map -SourceOnlyPublicationExecution $path -ExpectedSourceOnlyPublicationExecutionSha256 $hash -OutPath (Join-Path $fixture.workspace "receipts/$($fixture.plan.publication_id)-execution.json") -Timestamp '2026-01-01T00:04:00Z' -Execute:$execute -FaultAfter $fault}
+        Assert-Fault {&$record $f $Stage $true $executionHash $executionPath} "record $Stage" $f
+        Assert-Rejected {&$record $f none $false $executionHash $executionPath} 'partial record dry replay' '*requires -Execute recovery*' $f.workspace $f
         $same=Join-Path $f.inputs 'same-id-execution.json';[IO.File]::WriteAllText($same,(Get-Content -Raw $executionPath)+' ',[Text.UTF8Encoding]::new($false))
-        Assert-Rejected {&$record none $true (Hash $same) $same} 'partial record changed input' '*caller bytes do not match*' $f.workspace $f
-        &$record none $true $executionHash $executionPath|Out-Null
-    }catch{throw "Recovery fixture [$Phase/$Stage] failed: $($_.Exception.Message)"}finally{Remove-FixtureRoot $root}
+        Assert-Rejected {&$record $f none $true (Hash $same) $same} 'partial record changed input' '*caller bytes do not match*' $f.workspace $f
+        &$record $f none $true $executionHash $executionPath|Out-Null
+    }catch{
+        $failureMessage=$_.Exception.Message
+        $planningDiagnostic='fixture creation did not return'
+        if($null -ne $f){
+            try{
+                $planningRoot=Split-Path $f.workspace -Parent
+                $dirtyPaths=@(Git $planningRoot @('status','--porcelain=v1','--untracked-files=all'))
+                $planningDiagnostic="planning=$planningRoot; status=$($dirtyPaths -join ' | ')"
+                if($planningDiagnostic.Length -gt 2048){$planningDiagnostic=$planningDiagnostic.Substring(0,2048)}
+            }catch{$planningDiagnostic='planning status diagnostic unavailable'}
+        }
+        throw "Recovery fixture [$Phase/$Stage] failed: $failureMessage; $planningDiagnostic"
+    }finally{Remove-FixtureRoot $root}
 }
 
 $root=Join-Path ([IO.Path]::GetTempPath())('source-only-publication-'+[guid]::NewGuid().ToString('N'))
