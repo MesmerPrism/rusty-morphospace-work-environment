@@ -33,6 +33,8 @@ or instruction synchronization.
 
 ## Route the work
 
+Select only the specialist routes that match the task:
+
 - Use `$system-engineering` for authority, contracts, interfaces,
   observability, validation design, and cross-repository decisions.
 - Use `$rust-work-graph` for bounded inventories, source roots, dependency or
@@ -43,6 +45,11 @@ or instruction synchronization.
   runbooks: `docs/HISTORICAL_UNIT_ADOPTION.md`,
   `docs/HISTORICAL_SUPERSESSION_COMPATIBILITY.md`, or
   `docs/EXTERNAL_PLANNING_AND_HISTORICAL_RECONSTRUCTION.md` as applicable.
+
+A schema uses `docs/EXTERNAL_VALIDATION_AUTHORITY.md` only when it is a
+validation policy, workflow, schema, or runner that could validate the same
+candidate. An application, packet, or module contract schema stays on the
+ordinary contract and affected-validation route.
 
 The router does not grant repository mutation, publication, device, credential,
 or private-data authority. Follow the owning workflow and user authorization.

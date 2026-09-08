@@ -3,6 +3,8 @@
 Use this reference for ordinary project composition, activation, isolated
 source work, lifecycle, validation, and instruction impact. Detailed recovery
 and audit procedures remain in the resolved work-environment runbooks.
+Here, `<work-environment>` is the locator's `work_environment_root`; read its
+named runbooks under `<work-environment>/docs/`.
 
 ## Resume and scope
 
@@ -18,7 +20,7 @@ intersection of project and current-unit repositories and paths. Preserve
 dirty, detached, divergent, blocked, interrupted, and historical state.
 
 For ordinary continuation, use
-[Current Work Validation](../../../docs/CURRENT_WORK_VALIDATION.md): preserve
+`<work-environment>/docs/CURRENT_WORK_VALIDATION.md`: preserve
 the authenticated current suffix and explicit prerequisites, and do not retrofit
 new proof versions or instruction policy onto retired units. An unchanged
 adopted consumer uses `-CurrentWorkOnly -SkipOwnerSelfTests`. Historical audits
@@ -45,10 +47,10 @@ Separate source, build, run, package, client, marker, property, staging, and
 other mutable identities. Local coordination claims do not activate a feature
 or authorize Git or device work.
 
-For published or deliberately dirty embedded planning authority, use only the
-named owner routes in
-[External Planning and Historical Reconstruction](../../../docs/EXTERNAL_PLANNING_AND_HISTORICAL_RECONSTRUCTION.md)
-or [Unpublished Planning Authority Materialization](../../../docs/UNPUBLISHED_PLANNING_AUTHORITY_MATERIALIZATION.md).
+For published or deliberately dirty embedded planning authority, use only
+`<work-environment>/docs/EXTERNAL_PLANNING_AND_HISTORICAL_RECONSTRUCTION.md`
+or
+`<work-environment>/docs/UNPUBLISHED_PLANNING_AUTHORITY_MATERIALIZATION.md`.
 They preserve source bytes and do not grant Git, validation, acceptance, or
 publication authority.
 
@@ -78,8 +80,8 @@ Select focused or Quick checks while iterating, Standard for coherent handoff,
 and Deep only for the declared broad authority or release risk. Freeze the
 coherent candidate before its final risk-selected aggregate. Route validation
 trust-root changes to
-[External Validation Authority](../../../docs/EXTERNAL_VALIDATION_AUTHORITY.md)
-and affected selection to [Affected Validation](../../../docs/AFFECTED_VALIDATION.md).
+`<work-environment>/docs/EXTERNAL_VALIDATION_AUTHORITY.md` and affected
+selection to `<work-environment>/docs/AFFECTED_VALIDATION.md`.
 Static admission, dynamic validation, acceptance, and publication remain
 separate authorities.
 
@@ -98,7 +100,7 @@ sanitized summary and the owner schema/hash.
 
 For authority, module-layout, activation, validation, device-policy,
 repository-routing, or public/private changes, follow
-[Instruction Synchronization](../../../docs/INSTRUCTION_SYNCHRONIZATION.md).
+`<work-environment>/docs/INSTRUCTION_SYNCHRONIZATION.md`.
 Update only the declared affected instructions, README/router, and skills;
 never hand-edit a unit to mark its instruction surfaces complete.
 
@@ -107,13 +109,13 @@ never hand-edit a unit to mark its instruction surfaces complete.
 Do not turn an ordinary continuation into an audit or repair. Use these
 runbooks only when the request explicitly selects their named condition:
 
-- [Historical Unit Adoption](../../../docs/HISTORICAL_UNIT_ADOPTION.md) for
-  terminal legacy vocabulary and in-flight compatibility projections.
-- [Historical Supersession Compatibility](../../../docs/HISTORICAL_SUPERSESSION_COMPATIBILITY.md)
-  for its one authenticated idle-history shape.
-- [External Planning and Historical Reconstruction](../../../docs/EXTERNAL_PLANNING_AND_HISTORICAL_RECONSTRUCTION.md)
+- `<work-environment>/docs/HISTORICAL_UNIT_ADOPTION.md` for terminal legacy
+  vocabulary and in-flight compatibility projections.
+- `<work-environment>/docs/HISTORICAL_SUPERSESSION_COMPATIBILITY.md` for its
+  one authenticated idle-history shape.
+- `<work-environment>/docs/EXTERNAL_PLANNING_AND_HISTORICAL_RECONSTRUCTION.md`
   for published projections and reconstructions.
-- [Autonomous Iteration](../../../docs/AUTONOMOUS_ITERATION.md) for typed
+- `<work-environment>/docs/AUTONOMOUS_ITERATION.md` for typed
   lifecycle corrections, blocked recovery, active-scope amendments, selectors,
   interruption, and publication-preparation procedures.
 

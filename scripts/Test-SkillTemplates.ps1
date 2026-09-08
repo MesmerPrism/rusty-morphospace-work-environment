@@ -86,6 +86,9 @@ foreach ($name in @("rusty-morphospace", "system-engineering", "rust-work-graph"
 Assert-Contains $contentByName["rusty-morphospace"] '$system-engineering' "The normal router must route authority decisions."
 Assert-Contains $contentByName["rusty-morphospace"] '$rust-work-graph' "The normal router must route inventories and impact."
 Assert-Contains $contentByName["rusty-morphospace"] '$meta-quest-workflow' "The normal router must route live device work."
+Assert-Contains $contentByName["rusty-morphospace"] 'Select only the specialist routes that match the task' "The normal router must keep specialist routing conditional."
+Assert-Contains $contentByName["rusty-morphospace"] 'validation policy, workflow, schema, or runner' "The normal router must identify validation-authority schema changes precisely."
+Assert-Contains $contentByName["rusty-morphospace"] 'application, packet, or module contract schema' "The normal router must keep ordinary contract schemas out of the validation-authority route."
 Assert-Contains $contentByName["rusty-morphospace"] 'source_commit' "The normal router must report locator source provenance before adoption."
 Assert-Contains $contentByName["rusty-morphospace"] 'Install-LocalSkills.ps1 -Action' "The normal router must route currentness checks through the managed verifier."
 Assert-Contains $contentByName["rusty-morphospace-context"] '$rusty-morphospace' "The compatibility locator must hand portable work to the normal router."
@@ -103,6 +106,11 @@ foreach ($reference in @("references/ownership-map.md", "references/project-work
 $workflowReference = Join-Path (Split-Path -Parent $publicPath) "references\project-workflow.md"
 if ((Get-Item -LiteralPath $workflowReference).Length -gt 8KB) {
     throw "The project-workflow reference exceeds its progressive-disclosure budget."
+}
+$workflowContent = Get-Content -Raw -LiteralPath $workflowReference
+Assert-Contains $workflowContent '<work-environment>/docs/' "The project-workflow reference must resolve owner runbooks through the installed locator."
+if ($workflowContent.Contains('](../../../docs/', [System.StringComparison]::Ordinal)) {
+    throw "The project-workflow reference contains source-tree-relative owner-doc links that break after installation."
 }
 
 $lifecycle = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot "manifests/workflow-lifecycle.portable.json") | ConvertFrom-Json -Depth 100
