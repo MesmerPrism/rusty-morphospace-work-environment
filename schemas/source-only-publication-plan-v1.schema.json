@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/source-only-publication-plan-v1.schema.json",
+  "title": "Accepted source-only publication plan for a local-only planning owner",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "publication_id", "project_id", "trigger_unit_id", "trigger", "acceptance_transition", "planning_owner", "expected", "source_repositories", "validation_evidence", "preservation"],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.workflow.source_only_publication_plan.v1" },
+    "publication_id": { "$ref": "#/$defs/publication_id" },
+    "project_id": { "$ref": "#/$defs/id" },
+    "trigger_unit_id": { "$ref": "#/$defs/id" },
+    "trigger": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "accepted_status", "push_checkpoint"],
+      "properties": {
+        "kind": { "enum": ["accepted-development-integration", "accepted-development-snapshot"] },
+        "accepted_status": { "const": "accepted" },
+        "push_checkpoint": { "const": "integration-batch" }
+      }
+    },
+    "acceptance_transition": {
+      "type": "object", "additionalProperties": false,
+      "required": ["event_id", "transaction_id", "validation_receipt"],
+      "properties": {
+        "event_id": { "$ref": "#/$defs/id" }, "transaction_id": { "$ref": "#/$defs/id" },
+        "validation_receipt": { "type": "object", "additionalProperties": false, "required": ["path", "sha256"], "properties": {
+          "path": { "type": "string", "pattern": "^(receipts|validation)/[A-Za-z0-9._/-]+$" }, "sha256": { "$ref": "#/$defs/hash" }
+        }}
+      }
+    },
+    "planning_owner": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repo_id", "branch", "head", "tree", "remote_policy"],
+      "properties": {
+        "repo_id": { "$ref": "#/$defs/id" }, "branch": { "$ref": "#/$defs/ref" },
+        "head": { "$ref": "#/$defs/oid" }, "tree": { "$ref": "#/$defs/oid" },
+        "remote_policy": { "const": "no-configured-remotes" }
+      }
+    },
+    "expected": {
+      "type": "object", "additionalProperties": false,
+      "required": ["project_sha256", "state_sha256", "unit_sha256", "events_sha256", "events_length", "event_tail_id"],
+      "properties": {
+        "project_sha256": { "$ref": "#/$defs/hash" }, "state_sha256": { "$ref": "#/$defs/hash" },
+        "unit_sha256": { "$ref": "#/$defs/hash" }, "events_sha256": { "$ref": "#/$defs/hash" },
+        "events_length": { "type": "integer", "minimum": 1 }, "event_tail_id": { "$ref": "#/$defs/id" }
+      }
+    },
+    "source_repositories": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["dependency_ordinal", "repo_id", "publication_mode", "candidate_branch", "target_branch", "upstream", "remote", "remote_url", "old_revision", "old_tree", "candidate_revision", "candidate_tree", "final_revision", "final_tree", "changed_paths", "trigger_unit_paths", "carried_paths", "validation_refs", "rollback_revision"],
+        "properties": {
+          "dependency_ordinal": { "type": "integer", "minimum": 1 }, "repo_id": { "$ref": "#/$defs/id" },
+          "publication_mode": { "enum": ["fast-forward", "provider-merge"] },
+          "candidate_branch": { "$ref": "#/$defs/ref" }, "target_branch": { "$ref": "#/$defs/ref" }, "upstream": { "$ref": "#/$defs/ref" }, "remote": { "$ref": "#/$defs/ref" }, "remote_url": { "type": "string", "minLength": 1, "maxLength": 2048 },
+          "old_revision": { "$ref": "#/$defs/oid" }, "old_tree": { "$ref": "#/$defs/oid" },
+          "candidate_revision": { "$ref": "#/$defs/oid" }, "candidate_tree": { "$ref": "#/$defs/oid" },
+          "final_revision": { "oneOf": [{ "$ref": "#/$defs/oid" }, { "type": "null" }] }, "final_tree": { "$ref": "#/$defs/oid" },
+          "changed_paths": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/path" } },
+          "trigger_unit_paths": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/path" } },
+          "carried_paths": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/path" } },
+          "validation_refs": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/id" } },
+          "rollback_revision": { "$ref": "#/$defs/oid" }
+        }
+      }
+    },
+    "validation_evidence": {
+      "type": "array", "minItems": 1,
+      "items": { "type": "object", "additionalProperties": false, "required": ["evidence_id", "path", "sha256"], "properties": {
+        "evidence_id": { "$ref": "#/$defs/id" }, "path": { "type": "string", "pattern": "^(receipts|validation)/[A-Za-z0-9._/-]+$" }, "sha256": { "$ref": "#/$defs/hash" }
+      }}
+    },
+    "preservation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source_only", "planning_remote_required", "planning_remote_mutation_claimed", "planning_publication_performed", "unit_statuses_preserved", "acceptance_inferred", "validation_inferred", "wearer_acceptance_inferred", "force_push_allowed"],
+      "properties": {
+        "source_only": { "const": true }, "planning_remote_required": { "const": false }, "planning_remote_mutation_claimed": { "const": false }, "planning_publication_performed": { "const": false },
+        "unit_statuses_preserved": { "const": true }, "acceptance_inferred": { "const": false }, "validation_inferred": { "const": false },
+        "wearer_acceptance_inferred": { "const": false }, "force_push_allowed": { "const": false }
+      }
+    }
+  },
+  "$defs": {
+    "publication_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,91}$" },
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" },
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }, "oid": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "ref": { "type": "string", "pattern": "^[A-Za-z0-9._/-]+$", "minLength": 1 },
+    "path": { "type": "string", "pattern": "^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$" }
+  }
+}

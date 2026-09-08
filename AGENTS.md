@@ -694,6 +694,11 @@ transaction.
   the active project workspace. A source-only same-ref workspace may not claim
   planning-last closure. Its executed receipt output is installed by the same
   transition that appends the preparation event, never by a later overwrite.
+  The distinct local-only source-publication route is limited to accepted
+  `integration-batch` work: bind an authenticated owner validation snapshot,
+  exact remote URL/target readback, no-force source completion, and the
+  source-first/planning-last ledger suffix. Route it through
+  `docs/SOURCE_ONLY_PUBLICATION.md`; it never grants planning publication.
   If a push preceded preparation, preserve chronology
   with `unplanned_publication_closure.v1` and the workflow-only
   `ReconcilePublication` transition; never fabricate a plan or mutate Git from

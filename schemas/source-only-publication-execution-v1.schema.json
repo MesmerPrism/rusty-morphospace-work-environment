@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/source-only-publication-execution-v1.schema.json",
+  "title": "Source-only publication execution receipt",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema", "publication_id", "project_id", "trigger_unit_id", "plan", "started_at", "finished_at", "source_repositories", "rollback", "preservation"],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.workflow.source_only_publication_execution.v1" },
+    "publication_id": { "$ref": "#/$defs/publication_id" }, "project_id": { "$ref": "#/$defs/id" }, "trigger_unit_id": { "$ref": "#/$defs/id" },
+    "plan": { "type": "object", "additionalProperties": false, "required": ["path", "sha256"], "properties": { "path": { "type": "string", "pattern": "^receipts/[a-z0-9][a-z0-9-]{1,127}-plan\\.json$" }, "sha256": { "$ref": "#/$defs/hash" } } },
+    "started_at": { "type": "string", "format": "date-time" }, "finished_at": { "type": "string", "format": "date-time" },
+    "source_repositories": { "type": "array", "minItems": 1, "items": {
+      "type": "object", "additionalProperties": false,
+        "required": ["dependency_ordinal", "repo_id", "publication_mode", "old_revision", "candidate_revision", "final_revision", "remote_readback_revision", "operation_started_at", "remote_readback_at", "push_mode", "force_used", "result"],
+      "properties": {
+        "dependency_ordinal": { "type": "integer", "minimum": 1 }, "repo_id": { "$ref": "#/$defs/id" }, "publication_mode": { "enum": ["fast-forward", "provider-merge"] },
+        "old_revision": { "$ref": "#/$defs/oid" }, "candidate_revision": { "$ref": "#/$defs/oid" }, "final_revision": { "$ref": "#/$defs/oid" }, "remote_readback_revision": { "$ref": "#/$defs/oid" }, "operation_started_at": { "type": "string", "format": "date-time" }, "remote_readback_at": { "type": "string", "format": "date-time" },
+        "push_mode": { "const": "fast-forward" }, "force_used": { "const": false }, "result": { "const": "pass" }
+      }
+    }},
+    "rollback": { "type": "object", "additionalProperties": false, "required": ["reverse_dependency_order", "required"], "properties": {
+      "reverse_dependency_order": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/id" } }, "required": { "const": false }
+    }},
+    "preservation": { "type": "object", "additionalProperties": false, "required": ["planning_remote_mutation_performed", "planning_feature_ref_created", "planning_publication_claimed", "unit_statuses_changed", "acceptance_changed", "validation_changed", "wearer_acceptance_changed", "device_mutation_performed", "release_claimed"], "properties": {
+      "planning_remote_mutation_performed": { "const": false }, "planning_feature_ref_created": { "const": false }, "planning_publication_claimed": { "const": false }, "unit_statuses_changed": { "const": false },
+      "acceptance_changed": { "const": false }, "validation_changed": { "const": false }, "wearer_acceptance_changed": { "const": false }, "device_mutation_performed": { "const": false }, "release_claimed": { "const": false }
+    }}
+  },
+  "$defs": { "publication_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,91}$" }, "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" }, "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }, "oid": { "type": "string", "pattern": "^[0-9a-f]{40}$" } }
+}

@@ -194,6 +194,21 @@ function Add-Failure {
     }) | Out-Null
 }
 
+function Get-HistoricalDebtLocusIdentity {
+    param([Parameter(Mandatory = $true)][object]$Locus)
+    $properties = @($Locus.PSObject.Properties.Name)
+    if ([string]$Locus.kind -ceq 'historical-unit' -and $properties -contains 'unit_id' -and -not [string]::IsNullOrEmpty([string]$Locus.unit_id)) {
+        return [string]$Locus.unit_id
+    }
+    if ($properties -contains 'raw_sha256' -and -not [string]::IsNullOrEmpty([string]$Locus.raw_sha256)) {
+        return [string]$Locus.raw_sha256
+    }
+    if ($properties -contains 'unit_id' -and -not [string]::IsNullOrEmpty([string]$Locus.unit_id)) {
+        return [string]$Locus.unit_id
+    }
+    return Get-MorphospaceCanonicalJsonSha256 -Value $Locus
+}
+
 function Invoke-HistoricalDebtCaptureAttributionSelfTest {
     $initialSentinel = $script:UnattributedFailureAttribution
     if (-not (Test-HistoricalDebtCaptureUnsafeAttribution -Attribution $initialSentinel)) {
@@ -225,6 +240,11 @@ function Invoke-HistoricalDebtCaptureAttributionSelfTest {
             if (Test-HistoricalDebtCaptureUnsafeAttribution -Attribution $safeAttribution) {
                 throw 'Historical-debt capture attribution self-test failed: a rotated or explicit unit attribution was capture-unsafe.'
             }
+        }
+        if ((Get-HistoricalDebtLocusIdentity $validCurrentAttribution.locus) -cne 'current-unit' -or
+            (Get-HistoricalDebtLocusIdentity $explicitUnclassifiedUnitAttribution.locus) -cne 'explicitly-unclassified-unit' -or
+            (Get-HistoricalDebtLocusIdentity ([pscustomobject][ordered]@{kind='unclassified'})) -cne (Get-MorphospaceCanonicalJsonSha256 ([pscustomobject][ordered]@{kind='unclassified'}))) {
+            throw 'Historical-debt capture attribution self-test failed: diagnostic locus ordering requires an absent property.'
         }
         if (-not (Test-HistoricalDebtCaptureUnsafeAttribution -Attribution $initialSentinel)) {
             throw 'Historical-debt capture attribution self-test failed: sequence-024 parser/ledger attribution became safe after rotation.'
@@ -340,7 +360,7 @@ function Get-CanonicalHistoricalDebtFailureRecords {
     $indexed = [Collections.Generic.List[object]]::new()
     foreach ($row in $rows) {
         $locus = $row.locus
-        $locusIdentity = if ([string]$locus.kind -ceq 'historical-unit') { [string]$locus.unit_id } else { [string]$locus.raw_sha256 }
+        $locusIdentity = Get-HistoricalDebtLocusIdentity -Locus $locus
         $indexed.Add([pscustomobject][ordered]@{
             key = "$([string]$row.failure_code)|$([string]$locus.kind)|$locusIdentity|$([string]$row.message_sha256)|$([string]$row.evidence_sha256)"
             row = $row
@@ -897,6 +917,173 @@ function New-Bundle {
         ReviewPaths = @($ReviewPaths)
         EventsPath = $EventsPath
     }
+}
+
+function Get-SourceOnlyPublicationTailProjection {
+    param(
+        [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
+        [Parameter(Mandatory = $true)][object]$State,
+        [Parameter(Mandatory = $true)][hashtable]$UnitMap,
+        [Parameter(Mandatory = $true)][hashtable]$EventMap
+    )
+
+    Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceTransitionLedger.psm1') -Scope Local
+
+    $tailId = [string]$State.last_event_id
+    $phase = if ($tailId.EndsWith('-source-publication-prepared',[StringComparison]::Ordinal)) {
+        'prepared'
+    } elseif ($tailId.EndsWith('-source-publication-recorded',[StringComparison]::Ordinal)) {
+        'recorded'
+    } else {
+        return $null
+    }
+    $suffix = "-source-publication-$phase"
+    $publicationId = $tailId.Substring(0,$tailId.Length-$suffix.Length)
+    if ($publicationId -cnotmatch $script:PortableIdPattern -or -not $EventMap.ContainsKey($tailId)) {
+        throw 'Source-only publication tail has a noncanonical or missing event identity.'
+    }
+    $event = $EventMap[$tailId]
+    if ([string]$event.event_type -cne 'state-transition' -or -not $UnitMap.ContainsKey([string]$event.unit_id) -or
+        [string]$UnitMap[[string]$event.unit_id].status -cne 'accepted' -or @($event.receipts).Count -ne 1) {
+        throw 'Source-only publication tail is not an exact accepted-unit state transition with one receipt.'
+    }
+    $unitId = [string]$event.unit_id
+    $artifactPath = "receipts/$publicationId-$(if($phase -ceq 'prepared'){'plan'}else{'execution'}).json"
+    if ([string](@($event.receipts)[0]) -cne $artifactPath) { throw 'Source-only publication tail does not reference its exact canonical artifact.' }
+    $transaction = Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $WorkspaceRoot -TransactionId "$tailId-transition" `
+        -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath "iteration-units/$unitId.json" -ExpectedEventsPath 'iteration-events.jsonl' -RequireTail
+    $liveUnit = Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $WorkspaceRoot "iteration-units/$unitId.json" -RequireLeaf)
+    if ([string]$transaction.intent.event.event_id -cne $tailId -or
+        [string]$transaction.intent.target.unit.sha256 -cne (Get-MorphospaceCanonicalJsonSha256 $liveUnit)) {
+        throw 'Source-only publication tail is detached from its transaction or retained accepted unit.'
+    }
+    $artifacts = @($transaction.intent.artifacts)
+    $artifactFullPath = Resolve-MorphospaceWorkspacePath $WorkspaceRoot $artifactPath -RequireLeaf
+    if ($artifacts.Count -ne 1 -or [string]$artifacts[0].path -cne $artifactPath -or
+        [string]$artifacts[0].sha256 -cne (Get-MorphospaceFileSha256 $artifactFullPath)) {
+        throw 'Source-only publication transaction does not own its exact live artifact.'
+    }
+    $document = Read-MorphospaceProtocolJson $artifactFullPath
+    $schemaName = if ($phase -ceq 'prepared') {'source-only-publication-plan-v1.schema.json'} else {'source-only-publication-execution-v1.schema.json'}
+    if (-not (Test-Json -Json (Get-Content -Raw -LiteralPath $artifactFullPath) -SchemaFile (Join-Path $RepoRoot "schemas/$schemaName"))) {
+        throw "Source-only publication $phase artifact does not satisfy its schema."
+    }
+    if ([string]$document.publication_id -cne $publicationId -or [string]$document.project_id -cne [string]$State.project_id -or
+        [string]$document.trigger_unit_id -cne $unitId) {
+        throw "Source-only publication $phase artifact identity is detached."
+    }
+
+    $targetState = $transaction.intent.target.state.document
+    $expectedIntentSchema = if ($phase -ceq 'prepared') {'rusty.morphospace.workflow.transition_ledger_intent.v3'} else {'rusty.morphospace.workflow.transition_ledger_intent.v1'}
+    $expectedSummary = if ($phase -ceq 'prepared') {
+        'Prepared exact source-only publication from an accepted trigger; planning remains local-only.'
+    } else {
+        'Recorded ordered source publication and remote readback; planning remains local-only.'
+    }
+    if ([string]$transaction.intent.schema -cne $expectedIntentSchema -or [string]$event.summary -cne $expectedSummary -or
+        [string]$transaction.intent.pre.unit.sha256 -cne [string]$transaction.intent.target.unit.sha256) {
+        throw "Source-only publication $phase transaction is not the exact writer-owned transition shape."
+    }
+    if ($phase -ceq 'prepared') {
+        if ($null -eq $targetState.pending_push_bundle -or [string]$targetState.pending_push_bundle.bundle_id -cne $publicationId -or
+            -not [bool]$targetState.pending_push_bundle.ready -or $targetState.pending_push_bundle.PSObject.Properties.Name -contains 'planning_transport_repo_id') {
+            throw 'Prepared source-only publication does not install its exact local-only pending bundle.'
+        }
+        $sourceIds = @($document.source_repositories | ForEach-Object { [string]$_.repo_id })
+        if (($sourceIds -join "`n") -cne (@($targetState.pending_push_bundle.repo_ids | ForEach-Object { [string]$_ }) -join "`n") -or
+            @($targetState.pending_push_bundle.unit_ids).Count -ne 1 -or [string]$targetState.pending_push_bundle.unit_ids[0] -cne $unitId) {
+            throw 'Prepared source-only publication pending bundle differs from its plan.'
+        }
+        $projections = if ($transaction.intent.PSObject.Properties.Name -contains 'additional_projections') { @($transaction.intent.additional_projections) } else { @() }
+        if ($projections.Count -ne 1 -or [string]$projections[0].path -cne 'project.spec.json' -or
+            [string]$projections[0].pre_sha256 -cne [string]$projections[0].target_sha256) {
+            throw 'Prepared source-only publication must retain exactly one unchanged project projection.'
+        }
+        if ([string]$projections[0].pre_sha256 -cne [string]$document.expected.project_sha256 -or
+            [string]$transaction.intent.pre.state.sha256 -cne [string]$document.expected.state_sha256 -or
+            [string]$transaction.intent.pre.unit.sha256 -cne [string]$document.expected.unit_sha256 -or
+            [string]$transaction.intent.expected.events_sha256 -cne [string]$document.expected.events_sha256 -or
+            [int64]$transaction.intent.expected.events_length -ne [int64]$document.expected.events_length -or
+            [string]$transaction.intent.expected.event_tail_id -cne [string]$document.expected.event_tail_id) {
+            throw 'Prepared source-only publication transaction preimage differs from its plan.'
+        }
+        $reconstructedPre = $targetState | ConvertTo-Json -Depth 64 | ConvertFrom-Json -DateKind String
+        $reconstructedPre.pending_push_bundle = $null
+        $reconstructedPre.last_event_id = [string]$transaction.intent.expected.event_tail_id
+        if ((Get-MorphospaceCanonicalJsonSha256 $reconstructedPre) -cne [string]$transaction.intent.pre.state.sha256) {
+            throw 'Prepared source-only publication changes state outside its pending bundle and event tail.'
+        }
+    } else {
+        $recordProjections = if ($transaction.intent.PSObject.Properties.Name -contains 'additional_projections') { @($transaction.intent.additional_projections) } else { @() }
+        $planPath = [string]$document.plan.path
+        $planFullPath = Resolve-MorphospaceWorkspacePath $WorkspaceRoot $planPath -RequireLeaf
+        if ($planPath -cne "receipts/$publicationId-plan.json" -or (Get-MorphospaceFileSha256 $planFullPath) -cne [string]$document.plan.sha256 -or
+            -not (Test-Json -Json (Get-Content -Raw -LiteralPath $planFullPath) -SchemaFile (Join-Path $RepoRoot 'schemas/source-only-publication-plan-v1.schema.json'))) {
+            throw 'Recorded source-only publication does not retain its exact schema-valid plan.'
+        }
+        $plan = Read-MorphospaceProtocolJson $planFullPath
+        $planIds = @($plan.source_repositories | ForEach-Object { [string]$_.repo_id })
+        $executionIds = @($document.source_repositories | ForEach-Object { [string]$_.repo_id })
+        if ([string]$plan.publication_id -cne $publicationId -or [string]$plan.project_id -cne [string]$document.project_id -or
+            [string]$plan.trigger_unit_id -cne $unitId -or
+            ($planIds -join "`n") -cne ($executionIds -join "`n")) {
+            throw 'Recorded source-only publication identity or source order differs from its prepared plan.'
+        }
+        $preparedId = "$publicationId-source-publication-prepared"
+        if (-not $EventMap.ContainsKey($preparedId)) { throw 'Recorded source-only publication lacks its prepared event.' }
+        $prepared = Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $WorkspaceRoot -TransactionId "$preparedId-transition" `
+            -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath "iteration-units/$unitId.json" -ExpectedEventsPath 'iteration-events.jsonl'
+        $preparedArtifacts = @($prepared.intent.artifacts)
+        $preparedProjections = if ($prepared.intent.PSObject.Properties.Name -contains 'additional_projections') { @($prepared.intent.additional_projections) } else { @() }
+        if ([string]$prepared.intent.schema -cne 'rusty.morphospace.workflow.transition_ledger_intent.v3' -or
+            [string]$prepared.intent.event.event_id -cne $preparedId -or [string]$prepared.intent.event.project_id -cne [string]$plan.project_id -or
+            [string]$prepared.intent.event.unit_id -cne $unitId -or [string]$prepared.intent.event.event_type -cne 'state-transition' -or
+            @($prepared.intent.event.receipts).Count -ne 1 -or [string]$prepared.intent.event.receipts[0] -cne $planPath -or
+            [string]$prepared.intent.event.summary -cne 'Prepared exact source-only publication from an accepted trigger; planning remains local-only.' -or
+            $preparedArtifacts.Count -ne 1 -or [string]$preparedArtifacts[0].path -cne $planPath -or
+            [string]$preparedArtifacts[0].sha256 -cne [string]$document.plan.sha256 -or
+            $preparedProjections.Count -ne 1 -or [string]$preparedProjections[0].path -cne 'project.spec.json' -or
+            [string]$preparedProjections[0].pre_sha256 -cne [string]$preparedProjections[0].target_sha256 -or
+            [string]$preparedProjections[0].pre_sha256 -cne [string]$plan.expected.project_sha256 -or
+            [string]$prepared.intent.pre.state.sha256 -cne [string]$plan.expected.state_sha256 -or
+            [string]$prepared.intent.pre.unit.sha256 -cne [string]$plan.expected.unit_sha256 -or
+            [string]$prepared.intent.pre.unit.sha256 -cne [string]$prepared.intent.target.unit.sha256 -or
+            [string]$prepared.intent.target.unit.sha256 -cne [string]$transaction.intent.pre.unit.sha256 -or
+            [string]$prepared.intent.expected.events_sha256 -cne [string]$plan.expected.events_sha256 -or
+            [int64]$prepared.intent.expected.events_length -ne [int64]$plan.expected.events_length -or
+            [string]$prepared.intent.expected.event_tail_id -cne [string]$plan.expected.event_tail_id) {
+            throw 'Recorded source-only publication is detached from its immutable prepared transaction and plan.'
+        }
+        $preparedState = $prepared.intent.target.state.document
+        $preparedBundleIds = @($preparedState.pending_push_bundle.repo_ids | ForEach-Object { [string]$_ })
+        if ($null -eq $preparedState.pending_push_bundle -or [string]$preparedState.pending_push_bundle.bundle_id -cne $publicationId -or
+            -not [bool]$preparedState.pending_push_bundle.ready -or
+            $preparedState.pending_push_bundle.PSObject.Properties.Name -contains 'planning_transport_repo_id' -or
+            @($preparedState.pending_push_bundle.unit_ids).Count -ne 1 -or [string]$preparedState.pending_push_bundle.unit_ids[0] -cne $unitId -or
+            ($preparedBundleIds -join "`n") -cne ($planIds -join "`n") -or
+            $null -ne $targetState.pending_push_bundle -or $recordProjections.Count -ne 0 -or
+            [string]$transaction.intent.expected.event_tail_id -cne $preparedId -or
+            [string]$transaction.intent.pre.state.sha256 -cne [string]$prepared.intent.target.state.sha256) {
+            throw 'Recorded source-only publication does not consume exactly its authenticated prepared state.'
+        }
+        $preparedPre = $preparedState | ConvertTo-Json -Depth 64 | ConvertFrom-Json -DateKind String
+        $preparedPre.pending_push_bundle = $null
+        $preparedPre.last_event_id = [string]$prepared.intent.expected.event_tail_id
+        if ((Get-MorphospaceCanonicalJsonSha256 $preparedPre) -cne [string]$prepared.intent.pre.state.sha256) {
+            throw 'Recorded source-only publication prepared predecessor changed state outside its pending bundle and event tail.'
+        }
+        $reconstructedPre = $targetState | ConvertTo-Json -Depth 64 | ConvertFrom-Json -DateKind String
+        $reconstructedPre.pending_push_bundle = $preparedState.pending_push_bundle
+        $reconstructedPre.last_event_id = $preparedId
+        if ((Get-MorphospaceCanonicalJsonSha256 $reconstructedPre) -cne [string]$transaction.intent.pre.state.sha256) {
+            throw 'Recorded source-only publication changes state outside its pending bundle and event tail.'
+        }
+    }
+    $liveState = Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $WorkspaceRoot 'workspace.state.json' -RequireLeaf)
+    if ((Get-MorphospaceCanonicalJsonSha256 $targetState) -cne (Get-MorphospaceCanonicalJsonSha256 $liveState)) {
+        throw "Source-only publication $phase transaction does not own the live state."
+    }
+    return [pscustomobject]@{ phase=$phase; publication_id=$publicationId; unit_id=$unitId; artifact_path=$artifactPath }
 }
 
 function Test-ProjectBundle {
@@ -1875,6 +2062,12 @@ function Test-ProjectBundle {
         }
         $script:FailureAttribution = $priorFailureAttribution
     }
+    $sourceOnlyTail = $null
+    try {
+        $sourceOnlyTail = Get-SourceOnlyPublicationTailProjection -WorkspaceRoot $workspaceRoot -State $state -UnitMap $unitMap -EventMap $eventMap
+    } catch {
+        Add-Failure -Message "$Context current source-only publication transition rejected: $($_.Exception.Message)"
+    }
     foreach ($adoptedUnitId in @($historicalAdoptions.Keys)) {
         $entry = $historicalAdoptions[$adoptedUnitId]
         $terminalEventId = [string]$entry.terminal_evidence.event_id
@@ -2312,7 +2505,10 @@ function Test-ProjectBundle {
         }
         $pendingRepoIds = @($state.pending_push_bundle.repo_ids | ForEach-Object { [string]$_ })
         $externalPending = @($pendingRepoIds | Where-Object { -not $repositoryMap.ContainsKey($_) })
-        if ($state.pending_push_bundle.PSObject.Properties.Name -contains "planning_transport_repo_id") {
+        if ($null -ne $sourceOnlyTail -and [string]$sourceOnlyTail.phase -ceq 'prepared') {
+            Assert-Contract ([string]$state.pending_push_bundle.bundle_id -ceq [string]$sourceOnlyTail.publication_id) "$Context source-only pending bundle differs from its authenticated prepared transition."
+            Assert-Contract ($externalPending.Count -eq 0) "$Context source-only pending bundle references undeclared source repository '$($externalPending -join ',')'."
+        } elseif ($state.pending_push_bundle.PSObject.Properties.Name -contains "planning_transport_repo_id") {
             $planningTransportId = [string]$state.pending_push_bundle.planning_transport_repo_id
             Assert-Contract ($externalPending.Count -eq 1 -and $externalPending[0] -ceq $planningTransportId) "$Context pending planned publication must name exactly one external planning transport repository."
             Assert-Contract ($pendingRepoIds[-1] -ceq $planningTransportId) "$Context external planning transport repository must be last."
@@ -2501,6 +2697,8 @@ $requiredSchemaNames = @(
     "event-transaction-intent.schema.json",
     "inflight-adoption-receipt.schema.json",
     "interruption-receipt.schema.json",
+    "source-only-publication-execution-v1.schema.json",
+    "source-only-publication-plan-v1.schema.json",
     "planning-workspace-projection.schema.json",
     "unpublished-workspace-materialization-v1.schema.json",
     "unpublished-planning-authority-receipt-v1.schema.json",
