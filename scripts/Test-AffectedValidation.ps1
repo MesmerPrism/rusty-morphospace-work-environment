@@ -2160,6 +2160,7 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value $termina
         'schemas/affected-validation-registry-v1.schema.json',
         'schemas/affected-validation-self-test-phase-receipt-v1.schema.json',
         'schemas/development-unit-admission-v1.schema.json',
+        'schemas/proposed-unit-retirement-receipt-v1.schema.json',
         'scripts/Invoke-AffectedValidation.ps1',
         'scripts/lib/MorphospaceAffectedValidation.psm1',
         'scripts/lib/MorphospaceAffectedValidationCheckEvidence.psm1',
@@ -3662,7 +3663,7 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     $proposedRetirementOwnerHead = Invoke-TestGit $fixture @('rev-parse','HEAD')
     $proposedRetirementOwnerPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $proposedRetirementOwnerBase -HeadRevision $proposedRetirementOwnerHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
     foreach($checkId in @('proposed-unit-retirement','development-unit-admission','recovered-proposal-continuation','work-unit-automation','workflow-contracts','public-boundary')){Assert-True (@($proposedRetirementOwnerPlan.selected_checks.check_id)-ccontains$checkId) "Proposed-retirement owner change omitted actual consumer or prerequisite '$checkId'."}
-    foreach($checkId in @('work-environment-deep','validation-authority')){Assert-True (@($proposedRetirementOwnerPlan.selected_checks.check_id)-cnotcontains$checkId) "Proposed-retirement owner change selected unrelated '$checkId'."}
+    foreach($checkId in @('work-environment-deep','validation-authority-launcher')){Assert-True (@($proposedRetirementOwnerPlan.selected_checks.check_id)-cnotcontains$checkId) "Proposed-retirement owner change selected unrelated '$checkId'."}
     Assert-True ($proposedRetirementOwnerPlan.selection_mode-ceq'affected'-and$proposedRetirementOwnerPlan.effective_tier-ceq'standard'-and@($proposedRetirementOwnerPlan.reason_codes|Where-Object{$_-in@('ambiguous-path-mapping','unmapped-path')}).Count-eq0) 'Proposed-retirement owner change did not retain bounded zero-fallback Standard selection.'
 
     $proposedRetirementTestBase = $proposedRetirementOwnerHead
@@ -3671,14 +3672,14 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     $proposedRetirementTestHead = Invoke-TestGit $fixture @('rev-parse','HEAD')
     $proposedRetirementTestPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $proposedRetirementTestBase -HeadRevision $proposedRetirementTestHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
     foreach($checkId in @('proposed-unit-retirement','public-boundary')){Assert-True (@($proposedRetirementTestPlan.selected_checks.check_id)-ccontains$checkId) "Proposed-retirement focused test change omitted '$checkId'."}
-    foreach($checkId in @('work-unit-automation','validation-authority','workflow-contracts','work-environment-deep')){Assert-True (@($proposedRetirementTestPlan.selected_checks.check_id)-cnotcontains$checkId) "Proposed-retirement focused test change selected unrelated '$checkId'."}
+    foreach($checkId in @('work-unit-automation','validation-authority-launcher','workflow-contracts','work-environment-deep')){Assert-True (@($proposedRetirementTestPlan.selected_checks.check_id)-cnotcontains$checkId) "Proposed-retirement focused test change selected unrelated '$checkId'."}
     Assert-True ($proposedRetirementTestPlan.selection_mode-ceq'affected'-and@($proposedRetirementTestPlan.reason_codes|Where-Object{$_-in@('ambiguous-path-mapping','unmapped-path')}).Count-eq0) 'Proposed-retirement focused test change did not retain zero-fallback affected selection.'
 
     $unrelatedRetirementBase = $proposedRetirementTestHead
     Write-Utf8 (Join-Path $fixture 'scripts/lib/MorphospaceValidationAuthority.psm1') "# unrelated validation authority change`n";Write-Utf8 (Join-Path $fixture 'scripts/Test-ValidationAuthorityLauncher.ps1') "# unrelated validation authority test change`n"
     [void](Invoke-TestGit $fixture @('add','scripts/lib/MorphospaceValidationAuthority.psm1','scripts/Test-ValidationAuthorityLauncher.ps1'));[void](Invoke-TestGit $fixture @('commit','-m','unrelated validation authority change'))
     $unrelatedRetirementHead=Invoke-TestGit $fixture @('rev-parse','HEAD');$unrelatedRetirementPlan=Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $unrelatedRetirementBase -HeadRevision $unrelatedRetirementHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
-    foreach($checkId in @('validation-authority','public-boundary')){Assert-True (@($unrelatedRetirementPlan.selected_checks.check_id)-ccontains$checkId) "Canonical validation-authority change omitted '$checkId'."}
+    foreach($checkId in @('validation-authority-launcher','public-boundary')){Assert-True (@($unrelatedRetirementPlan.selected_checks.check_id)-ccontains$checkId) "Canonical validation-authority change omitted '$checkId'."}
     Assert-True (@($unrelatedRetirementPlan.selected_checks.check_id)-cnotcontains'proposed-unit-retirement') 'Unrelated validation-authority change selected the proposed-retirement owner.'
     Assert-True ($unrelatedRetirementPlan.selection_mode-ceq'affected'-and@($unrelatedRetirementPlan.reason_codes|Where-Object{$_-in@('ambiguous-path-mapping','unmapped-path')}).Count-eq0) 'Canonical validation-authority change did not retain zero-fallback affected selection.'
 
