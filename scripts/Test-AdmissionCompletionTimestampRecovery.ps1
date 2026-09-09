@@ -3,8 +3,23 @@ param([switch]$SelfTest)
 $ErrorActionPreference = 'Stop'
 if (-not $SelfTest) { throw 'Use -SelfTest.' }
 
-Import-Module (Join-Path $PSScriptRoot 'AdmissionCompletionTimestampRecovery.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
+$preservedCommands = @('Get-MorphospaceCanonicalJsonSha256','Start-MorphospaceTransitionLedger','Complete-MorphospaceTransitionLedger')
+foreach ($commandName in $preservedCommands) {
+    if ($null -eq (Get-Command -Name $commandName -CommandType Function -ErrorAction SilentlyContinue)) {
+        throw "Admission completion timestamp recovery self-test prerequisite command is absent: $commandName"
+    }
+}
+Import-Module (Join-Path $PSScriptRoot 'AdmissionCompletionTimestampRecovery.psm1') -Force
+foreach ($commandName in $preservedCommands) {
+    if ($null -eq (Get-Command -Name $commandName -CommandType Function -ErrorAction SilentlyContinue)) {
+        throw "Admission completion timestamp recovery import removed a caller command: $commandName"
+    }
+}
+if ((Get-MorphospaceCanonicalJsonSha256 ([ordered]@{ import_preservation='verified' })) -cnotmatch '^[0-9a-f]{64}$') {
+    throw 'Admission completion timestamp recovery import left the caller hash command unusable.'
+}
 
 function Assert-RecoveryTest([bool]$Condition, [string]$Message) {
     if (-not $Condition) { throw "Admission completion timestamp recovery self-test failed: $Message" }

@@ -18,6 +18,14 @@ Preparation records a preparation-owned source-composition lock from clean
 repository-map observations without requiring an iteration-unit document for
 the future unit.
 
+An ordinary preparation may also add roots to an existing repository. Every
+other field of that repository record and every existing root remain unchanged.
+Each added root must exactly match a reviewed `owner_repositories.source_roots`
+entry, use a canonical portable path, and neither duplicate nor overlap another
+root. The preparation still observes the repository's exact clean source
+identity. An ancestor directory is not an alternative to the reviewed root.
+Historical repreparation retains its original, narrower repository contract.
+
 Both the current and target feature lock must carry the deterministic
 fingerprint obtained by setting `lock_fingerprint` to 64 zeroes and hashing the
 canonical compact UTF-8 JSON projection. The current workspace module registry must
@@ -87,6 +95,14 @@ repeated lifecycle transitions require a new owner decision. A durable first
 admission intent consumes ordinary use even if the state and event ledger are
 jointly rolled back, and replacement recovery/replay continues to revalidate
 the exact predecessor chain after its own intent exists.
+
+When source revisions or scope must change, ordinary preparation may continue
+from idle history containing authenticated retired proposals. The current-work
+reader proves each completed `RetireProposed` transition, including an exact
+admission timestamp recovery when present. It does not treat an arbitrary
+superseded unit as accepted history. The new preparation binds current source
+identities and ceilings; old admissions, recoveries, and retirements remain
+immutable and confer no validation credit.
 
 For the replacement's later candidate Freeze, the preparation binding remains
 valid only through the exact contiguous owner lifecycle: replacement Admission,

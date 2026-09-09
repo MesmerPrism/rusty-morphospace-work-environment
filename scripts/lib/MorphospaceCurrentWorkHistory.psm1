@@ -2,6 +2,8 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'MorphospaceProtocolCommon.psm1')
 Import-Module (Join-Path $PSScriptRoot 'MorphospaceTransitionLedger.psm1')
+Import-Module (Join-Path $PSScriptRoot 'MorphospaceCurrentWorkCompatibility.psm1')
+Import-Module (Join-Path $PSScriptRoot 'MorphospaceDevelopmentEnvelopeSemantics.psm1')
 
 # A read-only lifecycle projection, not a new receipt or recovery mechanism.
 # Earlier records cannot grant current authority merely by being classified here.
@@ -168,6 +170,8 @@ function Get-MorphospaceCurrentWorkHistory {
     if ($events.Count -eq 0 -or [string]$events[-1].event_id -cne [string]$state.last_event_id) { throw 'Current-work state does not match its ledger tail.' }
     $historical = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $retired = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $historicallyRetiredProposed = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $historicallyRetiredProposedSequences = @{}
     $supersededScopeConflicts = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $accepts = @($events | Where-Object {
         [string]$_.event_type -ceq 'state-transition' -and
@@ -179,13 +183,21 @@ function Get-MorphospaceCurrentWorkHistory {
         foreach ($pending in @(Get-ChildItem -LiteralPath (Join-Path $workspace 'receipts/transactions') -Filter '*.intent.json' -File -ErrorAction SilentlyContinue)) {
             if (-not [IO.File]::Exists(($pending.FullName -creplace '\.intent\.json$','.completion.json'))) { throw 'Current-work has an incomplete transaction without an authenticated historical boundary.' }
         }
-        return [pscustomobject]@{ authenticated=$false; sequence=0; historical_ids=$historical; retired_ids=$retired; authenticated_superseded_scope_conflict_ids=$supersededScopeConflicts; units=$units; events=$events; audit_only=@() }
+        return [pscustomobject]@{ authenticated=$false; sequence=0; historical_ids=$historical; retired_ids=$retired; historically_retired_proposed_ids=$historicallyRetiredProposed; authenticated_superseded_scope_conflict_ids=$supersededScopeConflicts; units=$units; events=$events; audit_only=@() }
     }
     if ($accepts.Count -ne 1) { throw 'Current-work accepted checkpoint is ambiguous.' }
     $acceptedEvent = $accepts[0]
     $acceptedId = [string]$acceptedEvent.unit_id
     if (-not $units.ContainsKey($acceptedId)) { throw 'Current-work accepted checkpoint unit is missing.' }
-    $accepted = Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $workspace -TransactionId "$($acceptedEvent.event_id)-transition" -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath "iteration-units/$acceptedId.json" -ExpectedEventsPath 'iteration-events.jsonl'
+    $acceptedTransactionId = "$($acceptedEvent.event_id)-transition"
+    $acceptedIntentPath = Resolve-MorphospaceWorkspacePath $workspace "receipts/transactions/$acceptedTransactionId.intent.json" -RequireLeaf
+    $acceptedIntent = Read-MorphospaceProtocolJson $acceptedIntentPath
+    $accepted = if ([string]$acceptedIntent.schema -ceq 'rusty.morphospace.workflow.transition_ledger_intent.v1' -and
+        $acceptedIntent.PSObject.Properties.Name -notcontains 'expected' -and $acceptedIntent.PSObject.Properties.Name -notcontains 'artifacts') {
+        Test-MorphospaceHistoricalCommittedTransitionV1 -WorkspaceRoot $workspace -TransactionId $acceptedTransactionId -ExpectedEvent $acceptedEvent
+    } else {
+        Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $workspace -TransactionId $acceptedTransactionId -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath "iteration-units/$acceptedId.json" -ExpectedEventsPath 'iteration-events.jsonl'
+    }
     if ([string]$accepted.intent.target.unit.document.status -cne 'accepted' -or
         [string]$accepted.intent.target.unit.sha256 -cne (Get-MorphospaceCanonicalJsonSha256 $units[$acceptedId]) -or
         $null -ne $accepted.intent.target.state.document.current_unit -or
@@ -197,22 +209,83 @@ function Get-MorphospaceCurrentWorkHistory {
     $projectionHashes = @{}
     $suffixTransitions = @{}
     $audit = [Collections.Generic.List[object]]::new()
+    foreach($retirementEvent in @($events|Where-Object{[int]$_.sequence-le$sequence-and[string]$_.event_type-ceq'state-transition'-and[string]$_.event_id-cmatch('^'+[regex]::Escape([string]$_.unit_id)+'-proposal-retired-[0-9]{4}$')})){
+        $retiredId=[string]$retirementEvent.unit_id
+        if(-not$units.ContainsKey($retiredId)-or[string]$units[$retiredId].status-cne'superseded'){throw 'Current-work accepted prefix contains a proposed-retirement endpoint without its immutable superseded unit.'}
+        $retirementTransaction="$([string]$retirementEvent.event_id)-transition";$retirementStep=Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $workspace -TransactionId $retirementTransaction -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath "iteration-units/$retiredId.json" -ExpectedEventsPath 'iteration-events.jsonl'
+        [void](Test-MorphospaceHistoricalProposedRetirement -WorkspaceRoot $workspace -ExpectedEvent $retirementEvent -CommittedStep $retirementStep)
+        if($historicallyRetiredProposedSequences.ContainsKey($retiredId)){throw 'Current-work proposed retirement identity is ambiguous.'};$historicallyRetiredProposedSequences[$retiredId]=[int]$retirementEvent.sequence;[void]$historicallyRetiredProposed.Add($retiredId)
+    }
+    $recoveryByAdmissionEvent = @{}
+    $recoveryByCorrectionEvent = @{}
+    foreach ($candidate in @($events | Where-Object { [int]$_.sequence -gt $sequence -and @($_.receipts).Count -eq 1 })) {
+        $candidateReceiptPath = Resolve-MorphospaceWorkspacePath $workspace ([string]$candidate.receipts[0])
+        if (-not [IO.File]::Exists($candidateReceiptPath)) { continue }
+        $candidateReceipt = Read-MorphospaceProtocolJson $candidateReceiptPath
+        if ([string]$candidateReceipt.schema -cne 'rusty.morphospace.workflow.admission_completion_timestamp_recovery.v1') { continue }
+        $recovery = Test-MorphospaceHistoricalAdmissionCompletionTimestampRecovery -WorkspaceRoot $workspace -RecoveryPath $candidateReceiptPath -ExpectedEvent $candidate
+        $admissionEventId = "$([string]$candidateReceipt.admission_id)-admitted"
+        $admissionEvent = @($events | Where-Object { [string]$_.event_id -ceq $admissionEventId })
+        if ($admissionEvent.Count -ne 1 -or [int]$admissionEvent[0].sequence + 1 -ne [int]$candidate.sequence -or $recoveryByAdmissionEvent.ContainsKey($admissionEventId) -or $recoveryByCorrectionEvent.ContainsKey([string]$candidate.event_id)) {
+            throw 'Current-work admission recovery does not uniquely and immediately follow its malformed admission.'
+        }
+        $recoveryByAdmissionEvent[$admissionEventId] = $recovery
+        $recoveryByCorrectionEvent[[string]$candidate.event_id] = $recovery
+    }
     # Existing owner transactions fence all changes after the accepted boundary.
     foreach ($event in @($events | Where-Object { [int]$_.sequence -gt $sequence })) {
         $id = "$($event.event_id)-transition"
+        $step = $null
         $authenticatedArchiveStep = $false
         $intentPath = Resolve-MorphospaceWorkspacePath $workspace "receipts/transactions/$id.intent.json"
-        if (-not [IO.File]::Exists($intentPath) -and $state.PSObject.Properties.Name -contains 'history_archive' -and $null -ne $state.history_archive) {
+        $specialStep = $null
+        $eventReceipts = @($event.receipts)
+        if ($recoveryByAdmissionEvent.ContainsKey([string]$event.event_id)) {
+            $recovery = $recoveryByAdmissionEvent[[string]$event.event_id]
+            $specialStep = [pscustomobject]@{ intent=$recovery.original_intent; completion=$recovery.malformed_completion; recovered_by=[string]$recovery.recovery_event.event_id }
+            $intent = $specialStep.intent
+        } elseif ($recoveryByCorrectionEvent.ContainsKey([string]$event.event_id)) {
+            $specialStep = $recoveryByCorrectionEvent[[string]$event.event_id]
+            $intent = $specialStep.intent
+        }
+        if ($null -eq $specialStep -and -not [IO.File]::Exists($intentPath) -and $eventReceipts.Count -eq 2) {
+            $firstReceiptPath = Resolve-MorphospaceWorkspacePath $workspace ([string]$eventReceipts[0])
+            if ([IO.File]::Exists($firstReceiptPath)) {
+                $firstReceipt = Read-MorphospaceProtocolJson $firstReceiptPath
+                if ([string]$firstReceipt.schema -ceq 'rusty.morphospace.workflow.development_envelope_repreparation_receipt.v1') {
+                    $specialStep = Test-MorphospaceCommittedDevelopmentEnvelopeRepreparation -WorkspaceRoot $workspace -ExpectedEvent $event
+                    $intent = $specialStep.intent
+                    $intentPath = Resolve-MorphospaceWorkspacePath $workspace "receipts/transactions/$($specialStep.transaction_id).intent.json" -RequireLeaf
+                }
+            }
+        }
+        if ($null -eq $specialStep -and [IO.File]::Exists($intentPath) -and $eventReceipts.Count -eq 1) {
+            $eventReceiptPath = Resolve-MorphospaceWorkspacePath $workspace ([string]$eventReceipts[0])
+            if ([IO.File]::Exists($eventReceiptPath)) {
+                $eventReceipt = Read-MorphospaceProtocolJson $eventReceiptPath
+                if ([string]$eventReceipt.schema -ceq 'rusty.morphospace.workflow.admission_completion_timestamp_recovery.v1') {
+                    $specialStep = Test-MorphospaceHistoricalAdmissionCompletionTimestampRecovery -WorkspaceRoot $workspace -RecoveryPath $eventReceiptPath -ExpectedEvent $event
+                    $intent = Read-MorphospaceProtocolJson $intentPath
+                }
+            }
+        }
+        if ($null -eq $specialStep -and -not [IO.File]::Exists($intentPath) -and $state.PSObject.Properties.Name -contains 'history_archive' -and $null -ne $state.history_archive) {
             # Archive checkpoints have their own existing transaction namespace.
             if ($null -eq $archive -or [string]$archive.status -cne 'pass') { throw 'Current-work archive checkpoint is not authenticated.' }
             $intentPath = Resolve-MorphospaceWorkspacePath $workspace "history-archive/transactions/$($archive.checkpoint.checkpoint_id)-archive-transition.intent.json" -RequireLeaf
             $intent = Read-MorphospaceProtocolJson $intentPath
             if ((Get-MorphospaceCanonicalJsonSha256 $intent.event) -cne (Get-MorphospaceCanonicalJsonSha256 $event)) { throw 'Current-work archive event is detached.' }
             $authenticatedArchiveStep = $true
-        } else {
+        } elseif ($null -eq $specialStep) {
             $intent = Read-MorphospaceProtocolJson $intentPath
         }
-        if ([string]$intent.schema -ceq 'rusty.morphospace.workflow.development_envelope_preparation_intent.v1') {
+        if ($null -ne $specialStep -and [string]$intent.schema -ceq 'rusty.morphospace.workflow.development_envelope_repreparation_intent.v1') {
+            foreach ($name in @('project','feature_lock')) {
+                $path = [string]$intent.target.$name.path
+                if ($projectionHashes.ContainsKey($path) -and [string]$intent.pre.$name.sha256 -cne $projectionHashes[$path]) { throw 'Current-work repreparation projection preimage is detached.' }
+                $projectionHashes[$path] = [string]$intent.target.$name.sha256
+            }
+        } elseif ([string]$intent.schema -ceq 'rusty.morphospace.workflow.development_envelope_preparation_intent.v1') {
             Assert-CurrentWorkPreparationStep $workspace $intentPath $intent $events $event
             foreach ($name in @('project','feature_lock')) {
                 $path = [string]$intent.target.$name.path
@@ -220,9 +293,9 @@ function Get-MorphospaceCurrentWorkHistory {
                 $projectionHashes[$path] = [string]$intent.target.$name.sha256
             }
         } elseif (-not $authenticatedArchiveStep) {
-            $step = Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $workspace -TransactionId $id -ExpectedStatePath 'workspace.state.json' -ExpectedEventsPath 'iteration-events.jsonl'
+            $step = if ($null -ne $specialStep) { $specialStep } else { Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $workspace -TransactionId $id -ExpectedStatePath 'workspace.state.json' -ExpectedEventsPath 'iteration-events.jsonl' }
             $intent = $step.intent
-            $suffixTransitions[[string]$event.event_id] = $step
+            if ($step.PSObject.Properties.Name -contains 'intent') { $suffixTransitions[[string]$event.event_id] = $step }
             if ($intent.PSObject.Properties.Name -contains 'additional_projections') {
                 foreach ($projection in $intent.additional_projections) {
                     $path = [string]$projection.path
@@ -235,8 +308,25 @@ function Get-MorphospaceCurrentWorkHistory {
             throw 'Current-work transaction suffix has a detached state preimage.'
         }
         $priorStateHash = [string]$intent.target.state.sha256
+        $proposedRetirementPattern = '^' + [regex]::Escape([string]$event.unit_id) + '-proposal-retired-[0-9]{4}$'
+        if ([string]$event.event_type -ceq 'state-transition' -and [string]$event.event_id -cmatch $proposedRetirementPattern -and
+            $units.ContainsKey([string]$event.unit_id) -and [string]$units[[string]$event.unit_id].status -ceq 'superseded' -and
+            [string]$intent.target.unit.document.status -ceq 'superseded' -and
+            [string]$intent.target.unit.sha256 -ceq (Get-MorphospaceCanonicalJsonSha256 $units[[string]$event.unit_id])) {
+            [void](Test-MorphospaceHistoricalProposedRetirement -WorkspaceRoot $workspace -ExpectedEvent $event -CommittedStep $step)
+            $retiredId=[string]$event.unit_id;if($historicallyRetiredProposedSequences.ContainsKey($retiredId)){throw 'Current-work proposed retirement identity is ambiguous.'};$historicallyRetiredProposedSequences[$retiredId]=[int]$event.sequence
+            [void]$historicallyRetiredProposed.Add([string]$event.unit_id)
+        }
     }
     if ($priorStateHash -cne (Get-MorphospaceCanonicalJsonSha256 $state)) { throw 'Current-work transaction suffix does not derive the live state.' }
+    foreach ($id in @($historicallyRetiredProposed)) {
+        $resurrectionPattern='^'+[regex]::Escape($id)+'-(ready|claimed|active|validating|resumed)(?:-|$)'
+        if ([string]$state.current_unit -ceq $id -or [string]$state.next_ready_unit -ceq $id -or
+            @($events | Where-Object { [string]$_.unit_id -ceq $id -and [string]$_.event_id -cmatch $resurrectionPattern -and [int]$_.sequence -gt [int]$historicallyRetiredProposedSequences[$id] }).Count -gt 0) {
+            throw 'Current-work proposed retirement cannot hide a resurrected owner.'
+        }
+        $audit.Add([pscustomobject]@{unit_id=$id; classification='retired-proposed'; current_policy_revalidated=$false; grants_validation_credit=$false})
+    }
     $supersededScopeResult = Get-MorphospaceAuthenticatedSupersededScopeConflicts -Workspace $workspace -State $state -Units $units -Events $events -AcceptedSequence $sequence -SuffixTransitions $suffixTransitions
     $supersededScopeConflicts = $supersededScopeResult.ids
     foreach ($path in $projectionHashes.Keys) {
@@ -299,17 +389,28 @@ function Get-MorphospaceCurrentWorkHistory {
     # though its old instruction vocabulary is not reinterpreted.
     $required = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($id in $units.Keys) {
-        if ($historical.Contains($id) -or $units[$id].PSObject.Properties.Name -notcontains 'prerequisites') { continue }
+        if ($historical.Contains($id) -or $historicallyRetiredProposed.Contains($id) -or $units[$id].PSObject.Properties.Name -notcontains 'prerequisites') { continue }
         foreach ($dependency in $units[$id].prerequisites) { [void]$required.Add([string]$dependency) }
     }
     foreach ($id in $required) {
         if (-not $units.ContainsKey($id) -or [string]$units[$id].status -cne 'accepted') { throw "Current-work prerequisite '$id' is not accepted." }
         $terminal = @($events | Where-Object { [string]$_.unit_id -ceq $id -and [string]$_.event_id -cmatch ('^'+[regex]::Escape($id)+'-accepted-[0-9]{4,}$') })
         if ($terminal.Count -ne 1) { throw "Current-work prerequisite '$id' has no unique accepted evidence." }
-        $proof = Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $workspace -TransactionId "$($terminal[0].event_id)-transition" -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath "iteration-units/$id.json" -ExpectedEventsPath 'iteration-events.jsonl'
+        $proof = if ($id -ceq $acceptedId -and [string]$terminal[0].event_id -ceq [string]$acceptedEvent.event_id) {
+            $accepted
+        } else {
+            $proofTransactionId="$($terminal[0].event_id)-transition"
+            $proofIntent=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace "receipts/transactions/$proofTransactionId.intent.json" -RequireLeaf)
+            if([int]$terminal[0].sequence-le$sequence-and[string]$proofIntent.schema-ceq'rusty.morphospace.workflow.transition_ledger_intent.v1'-and
+                $proofIntent.PSObject.Properties.Name -notcontains 'expected' -and $proofIntent.PSObject.Properties.Name -notcontains 'artifacts'){
+                Test-MorphospaceHistoricalCommittedTransitionV1 -WorkspaceRoot $workspace -TransactionId $proofTransactionId -ExpectedEvent $terminal[0]
+            }else{
+                Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $workspace -TransactionId $proofTransactionId -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath "iteration-units/$id.json" -ExpectedEventsPath 'iteration-events.jsonl'
+            }
+        }
         if ([string]$proof.intent.target.unit.sha256 -cne (Get-MorphospaceCanonicalJsonSha256 $units[$id]) -or [string]$proof.intent.target.unit.document.status -cne 'accepted') { throw "Current-work prerequisite '$id' differs from accepted evidence." }
     }
-    return [pscustomobject]@{ authenticated=$true; sequence=$sequence; accepted_unit_id=$acceptedId; historical_ids=$historical; retired_ids=$retired; authenticated_superseded_scope_conflict_ids=$supersededScopeConflicts; units=$units; events=$events; audit_only=@($audit.ToArray()) }
+    return [pscustomobject]@{ authenticated=$true; sequence=$sequence; accepted_unit_id=$acceptedId; historical_ids=$historical; retired_ids=$retired; historically_retired_proposed_ids=$historicallyRetiredProposed; authenticated_superseded_scope_conflict_ids=$supersededScopeConflicts; units=$units; events=$events; audit_only=@($audit.ToArray()) }
 }
 
 function Assert-CurrentWorkPreparationStep {
@@ -320,7 +421,7 @@ function Assert-CurrentWorkPreparationStep {
         if (-not (Test-Json -Json (Get-Content -LiteralPath $pair[0] -Raw) -SchemaFile (Join-Path $repository "schemas/$($pair[1])"))) { throw 'Current-work preparation suffix schema is invalid.' }
     }
     $completion = Read-MorphospaceProtocolJson $completionPath
-    if ([string]$Intent.transaction_id -cne "$($ExpectedEvent.event_id)-transition" -or
+    if ([string]$Intent.transaction_id -cne "$($ExpectedEvent.event_id)-transition" -or [string]$Intent.created_at -cne [string]$ExpectedEvent.timestamp -or
         [IO.Path]::GetFullPath($IntentPath) -cne (Resolve-MorphospaceWorkspacePath $Workspace "receipts/transactions/$($ExpectedEvent.event_id)-transition.intent.json") -or
         (Get-MorphospaceCanonicalJsonSha256 $Intent.event) -cne (Get-MorphospaceCanonicalJsonSha256 $ExpectedEvent)) { throw 'Current-work preparation transaction identity is detached.' }
     if ([string]$completion.intent_sha256 -cne (Get-MorphospaceFileSha256 $IntentPath) -or [string]$completion.transaction_id -cne [string]$Intent.transaction_id -or [string]$completion.event_id -cne [string]$Intent.event.event_id) { throw 'Current-work preparation completion is detached.' }
@@ -337,10 +438,67 @@ function Assert-CurrentWorkPreparationStep {
         (Get-MorphospaceCanonicalJsonSha256 $Intent.pre.predecessor_unit.document) -cne [string]$Intent.pre.predecessor_unit.sha256 -or
         (Get-MorphospaceCanonicalJsonSha256 $Intent.target.predecessor_unit.document) -cne [string]$Intent.pre.predecessor_unit.sha256 -or
         (Get-MorphospaceCanonicalJsonSha256 (Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $Workspace $predecessorPath -RequireLeaf))) -cne [string]$Intent.pre.predecessor_unit.sha256 -or
-        [string]$Intent.pre.events.path -cne 'iteration-events.jsonl' -or [string]$Intent.target.events.path -cne 'iteration-events.jsonl') { throw 'Current-work preparation predecessor or ledger path is detached.' }
-    foreach ($artifact in $Intent.artifacts) {
+        [string]$Intent.pre.events.path -cne 'iteration-events.jsonl' -or [string]$Intent.target.events.path -cne 'iteration-events.jsonl' -or [string]$Intent.target.events.sha256 -cne [string]$Intent.pre.events.sha256) { throw 'Current-work preparation predecessor or ledger path is detached.' }
+    $artifacts=@($Intent.artifacts)
+    if($artifacts.Count-ne2-or@($ExpectedEvent.receipts).Count-ne1-or-not([string]$ExpectedEvent.event_id).EndsWith('-prepared',[StringComparison]::Ordinal)) { throw 'Current-work preparation does not own its exact receipt and source artifacts.' }
+    $preparationId=([string]$ExpectedEvent.event_id).Substring(0,([string]$ExpectedEvent.event_id).Length-'-prepared'.Length);$receiptRelative="receipts/$preparationId.json";$receiptPath=Resolve-MorphospaceWorkspacePath $Workspace $receiptRelative -RequireLeaf
+    if([string]$ExpectedEvent.receipts[0]-cne$receiptRelative-or[string]$ExpectedEvent.unit_id-cne[string]$Intent.pre.predecessor_unit.document.unit_id-or[string]$ExpectedEvent.event_type-cne'decision'-or[string]$ExpectedEvent.summary-cne'Prepared one bounded idle-project development envelope; future admission remains bind-only.') { throw 'Current-work preparation event semantics are detached.' }
+    if(-not(Test-Json -Json (Get-Content -LiteralPath $receiptPath -Raw) -SchemaFile (Join-Path $repository 'schemas/development-envelope-preparation-receipt-v1.schema.json'))){throw 'Current-work preparation receipt schema is invalid.'};$receipt=Read-MorphospaceProtocolJson $receiptPath
+    $sourceRelative=[string]$receipt.source_composition.path;$sourcePath=Resolve-MorphospaceWorkspacePath $Workspace $sourceRelative -RequireLeaf
+    if(-not(Test-Json -Json (Get-Content -LiteralPath $sourcePath -Raw) -SchemaFile (Join-Path $repository 'schemas/development-envelope-source-composition-v1.schema.json'))){throw 'Current-work preparation source composition schema is invalid.'};$source=Read-MorphospaceProtocolJson $sourcePath
+    $mapRelative=[string]$Intent.pre.repository_map.path;$mapPath=Resolve-MorphospaceWorkspacePath $Workspace $mapRelative -RequireLeaf
+    if([string]$Intent.target.repository_map.path-cne$mapRelative-or[string]$Intent.pre.repository_map.sha256-cne(Get-MorphospaceFileSha256 $mapPath)-or-not(Test-Json -Json (Get-Content -LiteralPath $mapPath -Raw) -SchemaFile (Join-Path $repository 'schemas/repository-map.schema.json'))){throw 'Current-work preparation repository map is detached or invalid.'};$mapDocument=Read-MorphospaceProtocolJson $mapPath
+    if([string]$receipt.preparation_id-cne$preparationId-or[string]$receipt.project_id-cne[string]$ExpectedEvent.project_id-or[string]$receipt.predecessor_unit_id-cne[string]$ExpectedEvent.unit_id-or[string]$receipt.envelope.source_composition.path-cne$sourceRelative-or[string]$receipt.project_sha256-cne(Get-MorphospaceCanonicalJsonSha256 $receipt.envelope.project)-or[string]$receipt.feature_lock_sha256-cne(Get-MorphospaceCanonicalJsonSha256 $receipt.envelope.feature_lock)-or[string]$receipt.project_sha256-cne[string]$Intent.target.project.sha256-or[string]$receipt.feature_lock_sha256-cne[string]$Intent.target.feature_lock.sha256-or[string]$receipt.source_composition.sha256-cne(Get-MorphospaceCanonicalJsonSha256 $source)-or[string]$source.project_id-cne[string]$receipt.project_id-or[string]$source.preparation_id-cne$preparationId-or[string]$source.fingerprint-cne(Get-MorphospaceCanonicalJsonSha256 ([pscustomobject][ordered]@{project_id=[string]$source.project_id;preparation_id=[string]$source.preparation_id;repositories=@($source.repositories)}))-or[string]$source.lock_id-cne"$preparationId-source-$(([string]$source.fingerprint).Substring(0,12))"){throw 'Current-work preparation receipt, envelope, or source composition is detached.'}
+    if([string]$Intent.pre.repository_map.path-cne[string]$Intent.target.repository_map.path-or[string]$Intent.pre.repository_map.sha256-cne[string]$Intent.target.repository_map.sha256){throw 'Current-work preparation repository-map projection is not preserved.'}
+    $ownerIds=@($receipt.envelope.owner_repositories|ForEach-Object{[string]$_.repo_id}|Sort-Object -Unique);$declaredSourceIds=@($receipt.envelope.source_composition.repository_ids|ForEach-Object{[string]$_}|Sort-Object -Unique);$sourceIds=@($source.repositories|ForEach-Object{[string]$_.repo_id}|Sort-Object -Unique);$mapIds=@($mapDocument.repositories|ForEach-Object{[string]$_.repo_id}|Sort-Object -Unique);$targetProjectIds=@($Intent.target.project.document.repositories|ForEach-Object{[string]$_.repo_id}|Sort-Object -Unique)
+    if($ownerIds.Count-ne$declaredSourceIds.Count-or$ownerIds.Count-ne$sourceIds.Count-or$ownerIds.Count-ne$mapIds.Count-or$ownerIds.Count-ne$targetProjectIds.Count-or@($ownerIds|Where-Object{$declaredSourceIds-cnotcontains$_-or$sourceIds-cnotcontains$_-or$mapIds-cnotcontains$_-or$targetProjectIds-cnotcontains$_}).Count-ne0){throw 'Current-work preparation owner, source, map, and target project repository sets differ.'}
+    $mapIndex=@{};foreach($mapRepository in @($mapDocument.repositories)){$mapIndex[[string]$mapRepository.repo_id]=$true};Assert-MorphospaceDevelopmentEnvelopeOwnerRoots @($receipt.envelope.owner_repositories) $Intent.target.project.document $mapIndex
+    foreach($sourceRepository in @($source.repositories)){$mapRepository=@($mapDocument.repositories|Where-Object{[string]$_.repo_id-ceq[string]$sourceRepository.repo_id});if($mapRepository.Count-ne1-or[string]$sourceRepository.role-cne[string]$mapRepository[0].role){throw 'Current-work preparation source role differs from its repository map.'}}
+    Assert-MorphospaceDevelopmentEnvelopeRepositoryRoots @($Intent.pre.project.document.repositories) @($Intent.target.project.document.repositories) @($receipt.envelope.owner_repositories)
+    foreach ($artifact in $artifacts) {
         $path = Resolve-MorphospaceWorkspacePath $Workspace ([string]$artifact.path) -RequireLeaf
         if ([Convert]::ToBase64String([IO.File]::ReadAllBytes($path)) -cne [string]$artifact.bytes_base64 -or (Get-MorphospaceCanonicalJsonSha256 (Read-MorphospaceProtocolJson $path)) -cne [string]$artifact.sha256) { throw 'Current-work preparation artifact is damaged.' }
+    }
+    if([string]$artifacts[0].path-cne$receiptRelative-or[string]$artifacts[1].path-cne$sourceRelative-or[string]$artifacts[0].sha256-cne(Get-MorphospaceCanonicalJsonSha256 $receipt)-or[string]$artifacts[1].sha256-cne(Get-MorphospaceCanonicalJsonSha256 $source)){throw 'Current-work preparation artifact order or identities are detached.'}
+    $preparation=[pscustomobject]@{project_id=[string]$receipt.project_id;envelope=$receipt.envelope}
+    Assert-MorphospaceDevelopmentEnvelopeAdditiveProject $Intent.pre.project.document $Intent.target.project.document $true @($receipt.envelope.owner_repositories)
+    $semanticsAccepted=$true
+    try{
+        Assert-MorphospaceDevelopmentEnvelope $preparation $Intent.pre.project.document $Intent.pre.feature_lock.document
+        $derivedState=Get-MorphospaceDevelopmentEnvelopeTargetState $preparation $Intent.pre.project.document $Intent.pre.feature_lock.document $Intent.pre.state.document;$derivedState.last_event_id=[string]$ExpectedEvent.event_id
+        if((Get-MorphospaceCanonicalJsonSha256 $derivedState)-cne[string]$Intent.target.state.sha256){throw 'Current-work preparation target state is not the exact owner-derived projection.'}
+        Assert-MorphospaceDevelopmentEnvelopeLockAndRegistry $Intent.target.project.document $Intent.target.feature_lock.document $Intent.target.state.document 'historical target'
+    }catch{$semanticsAccepted=$false;$semanticFailure=$_}
+    if(-not$semanticsAccepted){
+        $recoveryEvents=@()
+        foreach($candidate in @($Events|Where-Object{[int]$_.sequence-gt[int]$ExpectedEvent.sequence-and@($_.receipts).Count-eq2})){
+            $candidateRecoveryPath=Resolve-MorphospaceWorkspacePath $Workspace ([string]$candidate.receipts[0]) -RequireLeaf
+            if(-not(Test-Json -Json (Get-Content -LiteralPath $candidateRecoveryPath -Raw) -SchemaFile (Join-Path $repository 'schemas/development-envelope-repreparation-receipt-v1.schema.json'))){continue}
+            $candidateRecovery=Read-MorphospaceProtocolJson $candidateRecoveryPath
+            if([string]$candidateRecovery.original_preparation.event_id-ceq[string]$ExpectedEvent.event_id-and
+               [string]$candidateRecovery.original_preparation.receipt.path-ceq$receiptRelative-and
+               [string]$candidateRecovery.original_preparation.intent.path-ceq("receipts/transactions/{0}.intent.json"-f[string]$Intent.transaction_id)-and
+               [string]$candidateRecovery.original_preparation.completion.path-ceq("receipts/transactions/{0}.completion.json"-f[string]$Intent.transaction_id)-and
+               [string]$candidateRecovery.original_preparation.receipt.sha256-ceq(Get-MorphospaceFileSha256 $receiptPath)-and
+               [string]$candidateRecovery.original_preparation.intent.sha256-ceq(Get-MorphospaceFileSha256 $IntentPath)-and
+               [string]$candidateRecovery.original_preparation.completion.sha256-ceq(Get-MorphospaceFileSha256 $completionPath)){$recoveryEvents+=,$candidate}
+        }
+        if($recoveryEvents.Count-ne1){throw $semanticFailure}
+        $recoveryStep=Test-MorphospaceCommittedDevelopmentEnvelopeRepreparation -WorkspaceRoot $Workspace -ExpectedEvent $recoveryEvents[0]
+        $recoveryReceipt=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $Workspace ([string]$recoveryEvents[0].receipts[0]) -RequireLeaf)
+        if([string]$recoveryReceipt.original_preparation.event_id-cne[string]$ExpectedEvent.event_id-or[string]$recoveryStep.intent.pre.project.sha256-cne[string]$Intent.target.project.sha256-or[string]$recoveryStep.intent.pre.feature_lock.sha256-cne[string]$Intent.target.feature_lock.sha256){throw 'Current-work preparation recovery does not bind the exact defective target.'}
+        Assert-MorphospaceDevelopmentEnvelopeRepreparationDefect $Intent.target.project.document $Intent.target.feature_lock.document $Intent.target.state.document
+        $normalizedLock=$Intent.target.feature_lock.document|ConvertTo-Json -Depth 64|ConvertFrom-Json -DateKind String;$normalizedLock.lock_fingerprint=Get-MorphospaceFeatureLockFingerprint $normalizedLock
+        $oldProfiles=@{};foreach($profile in @($Intent.target.project.document.validation_profiles)){$oldProfiles[[string]$profile.profile_id]=$profile};$recoveredProfiles=@{};foreach($profile in @($recoveryStep.intent.target.project.document.validation_profiles)){$recoveredProfiles[[string]$profile.profile_id]=$profile}
+        foreach($id in $oldProfiles.Keys){if(-not$recoveredProfiles.ContainsKey($id)-or(Get-MorphospaceCanonicalJsonSha256 $oldProfiles[$id])-cne(Get-MorphospaceCanonicalJsonSha256 $recoveredProfiles[$id])){throw 'Current-work preparation recovery rewrites an existing validation profile.'}}
+        $missingDeclared=@($receipt.envelope.build_envelope.allowed_profiles|Where-Object{-not$oldProfiles.ContainsKey([string]$_)}|Sort-Object -Unique);$addedRecovered=@($recoveredProfiles.Keys|Where-Object{-not$oldProfiles.ContainsKey($_)}|Sort-Object -Unique)
+        if((Get-MorphospaceCanonicalJsonSha256 $missingDeclared)-cne(Get-MorphospaceCanonicalJsonSha256 $addedRecovered)){throw 'Current-work preparation recovery changes validation profiles beyond the exact missing declared profiles.'}
+        $normalizedEnvelope=$receipt.envelope|ConvertTo-Json -Depth 64|ConvertFrom-Json -DateKind String;$normalizedEnvelope.feature_lock=$normalizedLock;$normalizedEnvelope.project.validation_profiles=@($Intent.target.project.document.validation_profiles)+@($addedRecovered|ForEach-Object{$recoveredProfiles[$_]});$normalizedPreparation=[pscustomobject]@{project_id=[string]$receipt.project_id;envelope=$normalizedEnvelope}
+        $normalizedTargetState=$Intent.target.state.document|ConvertTo-Json -Depth 64|ConvertFrom-Json -DateKind String;$normalizedTargetState.module_registry=Get-MorphospaceDevelopmentEnvelopeModuleRegistry $Intent.target.project.document $normalizedLock
+        Assert-MorphospaceDevelopmentEnvelope $normalizedPreparation $Intent.pre.project.document $Intent.pre.feature_lock.document
+        $normalizedDerivedState=Get-MorphospaceDevelopmentEnvelopeTargetState $normalizedPreparation $Intent.pre.project.document $Intent.pre.feature_lock.document $Intent.pre.state.document;$normalizedDerivedState.last_event_id=[string]$ExpectedEvent.event_id
+        if((Get-MorphospaceCanonicalJsonSha256 $normalizedDerivedState)-cne(Get-MorphospaceCanonicalJsonSha256 $normalizedTargetState)){throw 'Current-work preparation recovery would conceal damage outside the exact fingerprint and module-registry defect.'}
+        Assert-MorphospaceDevelopmentEnvelopeLockAndRegistry $Intent.target.project.document $normalizedLock $normalizedTargetState 'normalized historical target'
     }
     $row = @($Events | Where-Object { [string]$_.event_id -ceq [string]$Intent.event.event_id })
     if ($row.Count -ne 1 -or (Get-MorphospaceCanonicalJsonSha256 $row[0]) -cne (Get-MorphospaceCanonicalJsonSha256 $Intent.event)) { throw 'Current-work preparation event is detached.' }

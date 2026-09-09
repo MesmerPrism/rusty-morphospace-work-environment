@@ -41,7 +41,12 @@ If Ready exposes a defect in the immutable admitted contract itself,
 `RetireProposed` is the only owner route that can close that identity before
 Claim. It requires `status=proposed`, an idle project with no current or
 next-ready unit, the exact admission event as the ledger tail, and the complete
-committed admission receipt/intent/completion chain. Its dry run returns the
+committed admission receipt/intent/completion chain. An admission followed by
+exactly its owner-produced completion-timestamp recovery can also retire: the
+recovery verifier must authenticate the live tail, original malformed completion,
+and recovered state and unit. No other intervening event is allowed. Retirement
+binds the original admission state separately from its recovered live preimage
+and preserves all original and recovery bytes. Its dry run returns the
 canonical state/unit hashes, raw unit-byte hash, ledger hash/length/tail,
 admission artifact hashes, a distinct absent replacement identity, and one
 binding hash. Execution must replay every identity, writes its receipt through
@@ -63,6 +68,11 @@ chain at every partial and completed transaction boundary.
 `RetireProposed` cannot withdraw a Ready unit, retire an active unit, repair a
 candidate in place, create the replacement, or authorize source/build/device
 mutation.
+
+A recovered proposal's retirement does not enable reuse of its old preparation.
+Use ordinary preparation from the authenticated idle history to bind the new
+source revision and scope, then admit the new proposed identity. Retired
+proposals remain superseded and grant no acceptance or prerequisite credit.
 
 A recovery-created preparation is identified by
 `preparation_kind=recovered` and exact recovery-receipt path/hash fields.

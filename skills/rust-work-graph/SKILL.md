@@ -27,6 +27,8 @@ module/crate, public contract, consumers, declared dependencies, instruction
 surfaces, and validation impact. Compare exact commits or trees when multiple
 repositories are involved. Distinguish observations, proposals, validation,
 acceptance, publication, and device evidence; do not infer one from another.
+When an idle project needs additional roots, route the exact owner inventory to
+`<work-environment>/docs/DEVELOPMENT_ENVELOPE_PREPARATION.md` before unit admission.
 
 Keep private evidence, machine paths, credentials, package identities, and
 device serials out of portable outputs. Route authority or contract decisions

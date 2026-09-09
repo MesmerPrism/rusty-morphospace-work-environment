@@ -70,6 +70,10 @@ units, authenticated transaction suffixes, explicit prerequisites, source locks,
 and scope strict; it does not retrofit newer requirements onto retired units.
 Use `-CurrentWorkOnly -SkipOwnerSelfTests` only for an unchanged adopted
 consumer. Historical recovery is an explicit route and preserves retained bytes.
+For fresh work in an idle project, follow
+[Development Envelope Preparation](docs/DEVELOPMENT_ENVELOPE_PREPARATION.md)
+and [Development Unit Admission](docs/DEVELOPMENT_UNIT_ADMISSION.md), including
+exact owner roots and any retained proposed-unit retirement.
 
 For concurrent work, bind each source, build, and run to its declared exact
 identity. A closed feature lock controls activation; selection alone does not

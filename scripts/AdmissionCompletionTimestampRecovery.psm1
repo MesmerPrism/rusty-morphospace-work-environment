@@ -1,8 +1,8 @@
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
-Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
-Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1')
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1')
 
 $script:RecoverySchema = 'rusty.morphospace.workflow.admission_completion_timestamp_recovery.v1'
 $script:RecoveryFault = 'admission-completion-precedes-future-intent'
@@ -117,6 +117,14 @@ function New-AdmissionRecoveryJsonBinding {
     }
 }
 
+function Get-AdmissionRecoveryHistoricalSnapshot {
+    param([object]$Binding,[object]$Document,[string]$Context,[string]$ExpectedPath,[switch]$PermitBindingMismatch)
+    if([string]$Binding.path-cne$ExpectedPath){throw "$Context historical path differs from the recovery binding."}
+    [byte[]]$bytes=ConvertTo-MorphospaceProtocolJsonBytes $Document;$raw=Get-AdmissionRecoverySha256Bytes $bytes;$canonical=Get-MorphospaceCanonicalJsonSha256 $Document
+    if(-not$PermitBindingMismatch-and([string]$Binding.raw_sha256-cne$raw-or[string]$Binding.canonical_sha256-cne$canonical)){throw "$Context historical bytes differ from the recovery binding."}
+    [pscustomobject]@{path=$ExpectedPath;bytes=$bytes;raw_sha256=$raw;canonical_sha256=$canonical;document=$Document}
+}
+
 function New-AdmissionRecoveryEvent {
     param([object]$Receipt)
     $event = [pscustomobject][ordered]@{
@@ -146,8 +154,9 @@ function Assert-AdmissionRecoveryCore {
         [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
         [Parameter(Mandatory = $true)][object]$Receipt,
         [Parameter(Mandatory = $true)][byte[]]$ReceiptBytes,
-        [ValidateSet('PreApply','Pending','Projection')][string]$Mode,
-        [AllowNull()][object]$CorrectionEvent
+        [ValidateSet('PreApply','Pending','Projection','Historical')][string]$Mode,
+        [AllowNull()][object]$CorrectionEvent,
+        [AllowNull()][object]$HistoricalProjection
     )
     $schemaText = [Text.UTF8Encoding]::new($false, $true).GetString($ReceiptBytes)
     if (-not (Test-Json -Json $schemaText -SchemaFile (Get-AdmissionRecoverySchemaPath))) { throw 'Admission completion timestamp recovery does not satisfy its strict schema.' }
@@ -178,10 +187,18 @@ function Assert-AdmissionRecoveryCore {
     $admissionReceipt = Get-AdmissionRecoveryJsonSnapshot $workspace $Receipt.evidence.admission_receipt 'Admission receipt' $receiptPath
     $intent = Get-AdmissionRecoveryJsonSnapshot $workspace $Receipt.evidence.admission_intent 'Admission intent' $intentPath
     $completion = Get-AdmissionRecoveryJsonSnapshot $workspace $Receipt.evidence.malformed_completion 'Malformed admission completion' $completionPath
-    $project = Get-AdmissionRecoveryJsonSnapshot $workspace $Receipt.evidence.project 'Project specification' 'project.spec.json'
-    $lock = Get-AdmissionRecoveryJsonSnapshot $workspace $Receipt.evidence.feature_lock 'Feature lock' 'feature.lock.json'
-    $unit = Get-AdmissionRecoveryJsonSnapshot $workspace $Receipt.evidence.unit 'Admitted unit' $unitPath
-    $state = Get-AdmissionRecoveryJsonSnapshot $workspace $Receipt.evidence.state 'Workspace state' 'workspace.state.json' -PermitLiveMismatch:($Mode -ne 'PreApply')
+    if ($Mode -eq 'Historical') {
+        if ($null -eq $HistoricalProjection) { throw 'Historical admission recovery requires exact bound projection snapshots.' }
+        $project = Get-AdmissionRecoveryHistoricalSnapshot $Receipt.evidence.project $HistoricalProjection.project 'Project specification' 'project.spec.json'
+        $lock = Get-AdmissionRecoveryHistoricalSnapshot $Receipt.evidence.feature_lock $HistoricalProjection.feature_lock 'Feature lock' 'feature.lock.json'
+        $unit = Get-AdmissionRecoveryHistoricalSnapshot $Receipt.evidence.unit $HistoricalProjection.unit 'Admitted unit' $unitPath
+        $state = Get-AdmissionRecoveryHistoricalSnapshot $Receipt.evidence.state $HistoricalProjection.state 'Workspace state' 'workspace.state.json' -PermitBindingMismatch
+    } else {
+        $project = Get-AdmissionRecoveryJsonSnapshot $workspace $Receipt.evidence.project 'Project specification' 'project.spec.json'
+        $lock = Get-AdmissionRecoveryJsonSnapshot $workspace $Receipt.evidence.feature_lock 'Feature lock' 'feature.lock.json'
+        $unit = Get-AdmissionRecoveryJsonSnapshot $workspace $Receipt.evidence.unit 'Admitted unit' $unitPath
+        $state = Get-AdmissionRecoveryJsonSnapshot $workspace $Receipt.evidence.state 'Workspace state' 'workspace.state.json' -PermitLiveMismatch:($Mode -ne 'PreApply')
+    }
 
     $requestDocument = $request.document
     $intentDocument = $intent.document
@@ -304,7 +321,7 @@ function Assert-AdmissionRecoveryCore {
         [string]$intentDocument.target.state.sha256 -cne (Get-MorphospaceCanonicalJsonSha256 $targetState)) {
         throw 'Admission request, intent preimage, and target-state chain differs.'
     }
-    $expectedLiveStateHash = if ($Mode -eq 'Projection') { Get-MorphospaceCanonicalJsonSha256 (New-AdmissionRecoveryTargetState $targetState $recoveryId) } else { [string]$intentDocument.target.state.sha256 }
+    $expectedLiveStateHash = if ($Mode -in @('Projection','Historical')) { Get-MorphospaceCanonicalJsonSha256 (New-AdmissionRecoveryTargetState $targetState $recoveryId) } else { [string]$intentDocument.target.state.sha256 }
     if ($Mode -eq 'Pending') {
         $allowed = @([string]$intentDocument.target.state.sha256, (Get-MorphospaceCanonicalJsonSha256 (New-AdmissionRecoveryTargetState $targetState $recoveryId)))
         if ($allowed -cnotcontains $state.canonical_sha256) { throw 'Pending recovery state projection is unauthorized.' }
@@ -343,10 +360,10 @@ function Assert-AdmissionRecoveryCore {
 
     $derivedCorrectionEvent = New-AdmissionRecoveryEvent $Receipt
     $derivedTargetState = New-AdmissionRecoveryTargetState $targetState $recoveryId
-    if ($Mode -eq 'Projection') {
+    if ($Mode -in @('Projection','Historical')) {
         if ($null -eq $CorrectionEvent -or (Get-MorphospaceCanonicalJsonSha256 $CorrectionEvent) -cne (Get-MorphospaceCanonicalJsonSha256 $derivedCorrectionEvent)) { throw 'Admission recovery projection event differs from its receipt.' }
         $suffix = Get-AdmissionRecoveryEventLineBytes $derivedCorrectionEvent
-        if ($currentLedgerBytes.LongLength -ne $boundLength + $suffix.LongLength -or -not (Test-AdmissionRecoveryByteRange $currentLedgerBytes $boundLength $suffix)) { throw 'Admission recovery event is not the exact sole append to the malformed admission ledger.' }
+        if (($Mode -eq 'Projection' -and $currentLedgerBytes.LongLength -ne $boundLength + $suffix.LongLength) -or -not (Test-AdmissionRecoveryByteRange $currentLedgerBytes $boundLength $suffix)) { throw 'Admission recovery event is not the exact next append to the malformed admission ledger.' }
     }
     [pscustomobject]@{
         receipt = $Receipt
@@ -408,6 +425,22 @@ function Test-MorphospaceAdmissionCompletionTimestampRecovery {
         }
     }
     $context
+}
+
+function Test-MorphospaceAdmissionCompletionTimestampRecoveryHistoricalProjection {
+    [CmdletBinding()]param(
+        [Parameter(Mandatory=$true)][string]$WorkspaceRoot,
+        [Parameter(Mandatory=$true)][string]$RecoveryPath,
+        [Parameter(Mandatory=$true)][object]$CorrectionEvent,
+        [Parameter(Mandatory=$true)][object]$Project,
+        [Parameter(Mandatory=$true)][object]$FeatureLock,
+        [Parameter(Mandatory=$true)][object]$State,
+        [Parameter(Mandatory=$true)][object]$Unit
+    )
+    $snapshot=Read-MorphospaceAdmissionCompletionTimestampRecovery $RecoveryPath
+    $canonical=Resolve-MorphospaceWorkspacePath $WorkspaceRoot ([string]$snapshot.document.correction_event.receipt_path) -RequireLeaf
+    if(-not$canonical.Equals($snapshot.path,[StringComparison]::OrdinalIgnoreCase)){throw 'Installed historical recovery receipt is not at its canonical workspace path.'}
+    Assert-AdmissionRecoveryCore -WorkspaceRoot $WorkspaceRoot -Receipt $snapshot.document -ReceiptBytes $snapshot.bytes -Mode Historical -CorrectionEvent $CorrectionEvent -HistoricalProjection ([pscustomobject]@{project=$Project;feature_lock=$FeatureLock;state=$State;unit=$Unit})
 }
 
 function New-MorphospaceAdmissionCompletionTimestampRecovery {
@@ -588,4 +621,5 @@ Export-ModuleMember -Function `
     New-MorphospaceAdmissionCompletionTimestampRecovery, `
     Read-MorphospaceAdmissionCompletionTimestampRecovery, `
     Test-MorphospaceAdmissionCompletionTimestampRecovery, `
+    Test-MorphospaceAdmissionCompletionTimestampRecoveryHistoricalProjection, `
     Invoke-MorphospaceAdmissionCompletionTimestampRecovery
