@@ -176,6 +176,12 @@ $ws=$preparedSeed.workspace;$sourceRepo=$preparedSeed.source_repository;$admissi
   $faultReceipt=Copy-Envelope $preparedSeed.preparation_receipt
   $faultReceipt.envelope.feature_lock=$faultLock
   $faultReceipt.feature_lock_sha256=Get-EnvelopeCanonicalJsonSha256 $faultLock
+  $faultRequestPath=Join-Path $temp 'u002-envelope-preparation.json'
+  $faultRequest=Read-EnvelopeProtocolJson $faultRequestPath
+  $faultRequest.envelope.feature_lock=$faultLock
+  Write-EnvelopeJson $faultRequestPath $faultRequest
+  $faultReceipt.input_sha256=Get-EnvelopeFileSha256 $faultRequestPath
+  Assert-Envelope ((Get-EnvelopeCanonicalJsonSha256 $faultReceipt.envelope)-ceq(Get-EnvelopeCanonicalJsonSha256 $faultRequest.envelope)) 'historical preparation fault detached its receipt envelope from the bound input'
   $faultIntent.target.feature_lock.document=$faultLock
   $faultIntent.target.feature_lock.sha256=$faultReceipt.feature_lock_sha256
   $faultIntent.target.state.document=$faultState
