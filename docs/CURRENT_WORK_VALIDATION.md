@@ -111,6 +111,13 @@ matrix. An unchanged consumer must not rerun those owner self-tests at each
 product checkpoint. Current-work success does not claim the full historical
 audit passed.
 
+Preparation and admission-consumer discovery use the same accepted-checkpoint
+proof as current-work history. This permits only that exact pinned old-shape
+accepted predecessor; contemporary accepted checkpoints still use the strict
+ledger validator. A prerequisite can use the finite proof only at or before the
+authenticated current boundary. Current suffix transitions and general ledger
+validation do not gain a compatibility route.
+
 External planning repositories remain the sole current authority after a
 completed materialization/adoption. Embedded source-repository history is a
 retained snapshot. Route through the project's existing local repository map;

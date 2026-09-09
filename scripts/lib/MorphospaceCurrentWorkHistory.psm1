@@ -189,15 +189,7 @@ function Get-MorphospaceCurrentWorkHistory {
     $acceptedEvent = $accepts[0]
     $acceptedId = [string]$acceptedEvent.unit_id
     if (-not $units.ContainsKey($acceptedId)) { throw 'Current-work accepted checkpoint unit is missing.' }
-    $acceptedTransactionId = "$($acceptedEvent.event_id)-transition"
-    $acceptedIntentPath = Resolve-MorphospaceWorkspacePath $workspace "receipts/transactions/$acceptedTransactionId.intent.json" -RequireLeaf
-    $acceptedIntent = Read-MorphospaceProtocolJson $acceptedIntentPath
-    $accepted = if ([string]$acceptedIntent.schema -ceq 'rusty.morphospace.workflow.transition_ledger_intent.v1' -and
-        $acceptedIntent.PSObject.Properties.Name -notcontains 'expected' -and $acceptedIntent.PSObject.Properties.Name -notcontains 'artifacts') {
-        Test-MorphospaceHistoricalCommittedTransitionV1 -WorkspaceRoot $workspace -TransactionId $acceptedTransactionId -ExpectedEvent $acceptedEvent
-    } else {
-        Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $workspace -TransactionId $acceptedTransactionId -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath "iteration-units/$acceptedId.json" -ExpectedEventsPath 'iteration-events.jsonl'
-    }
+    $accepted = Test-MorphospaceAcceptedCheckpointProof -WorkspaceRoot $workspace -ExpectedEvent $acceptedEvent -AllowFiniteHistoricalV1
     if ([string]$accepted.intent.target.unit.document.status -cne 'accepted' -or
         [string]$accepted.intent.target.unit.sha256 -cne (Get-MorphospaceCanonicalJsonSha256 $units[$acceptedId]) -or
         $null -ne $accepted.intent.target.state.document.current_unit -or
@@ -399,14 +391,7 @@ function Get-MorphospaceCurrentWorkHistory {
         $proof = if ($id -ceq $acceptedId -and [string]$terminal[0].event_id -ceq [string]$acceptedEvent.event_id) {
             $accepted
         } else {
-            $proofTransactionId="$($terminal[0].event_id)-transition"
-            $proofIntent=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace "receipts/transactions/$proofTransactionId.intent.json" -RequireLeaf)
-            if([int]$terminal[0].sequence-le$sequence-and[string]$proofIntent.schema-ceq'rusty.morphospace.workflow.transition_ledger_intent.v1'-and
-                $proofIntent.PSObject.Properties.Name -notcontains 'expected' -and $proofIntent.PSObject.Properties.Name -notcontains 'artifacts'){
-                Test-MorphospaceHistoricalCommittedTransitionV1 -WorkspaceRoot $workspace -TransactionId $proofTransactionId -ExpectedEvent $terminal[0]
-            }else{
-                Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $workspace -TransactionId $proofTransactionId -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath "iteration-units/$id.json" -ExpectedEventsPath 'iteration-events.jsonl'
-            }
+            Test-MorphospaceAcceptedCheckpointProof -WorkspaceRoot $workspace -ExpectedEvent $terminal[0] -AllowFiniteHistoricalV1:([int]$terminal[0].sequence-le$sequence)
         }
         if ([string]$proof.intent.target.unit.sha256 -cne (Get-MorphospaceCanonicalJsonSha256 $units[$id]) -or [string]$proof.intent.target.unit.document.status -cne 'accepted') { throw "Current-work prerequisite '$id' differs from accepted evidence." }
     }
