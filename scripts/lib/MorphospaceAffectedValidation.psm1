@@ -404,6 +404,41 @@ function Get-MorphospaceAffectedTopologicalOrder {
     return @($ordered.ToArray())
 }
 
+function Complete-MorphospaceAffectedSelectionClosure {
+    param(
+        [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Checks,
+        [Parameter(Mandatory = $true)][object[]]$RegistryChecks,
+        [Parameter(Mandatory = $true)][System.Collections.IDictionary]$SelectedReasons
+    )
+
+    function Add-ClosureSelection([string]$Id, [string]$Reason) {
+        if (-not $SelectedReasons.Contains($Id)) { $SelectedReasons[$Id] = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal) }
+        [void]$SelectedReasons[$Id].Add($Reason)
+    }
+
+    $changed = $true
+    while ($changed) {
+        $changed = $false
+        [string[]]$selectedIds = @($SelectedReasons.Keys | ForEach-Object { [string]$_ })
+        if ($selectedIds.Count -gt 1) { [Array]::Sort($selectedIds, [System.StringComparer]::Ordinal) }
+        foreach ($id in $selectedIds) {
+            foreach ($dependency in @($Checks[$id].prerequisite_checks)) {
+                $dependencyId = [string]$dependency
+                if (-not $SelectedReasons.Contains($dependencyId)) { Add-ClosureSelection $dependencyId "prerequisite-of:$id"; $changed = $true }
+            }
+            foreach ($contract in @($Checks[$id].provides_contracts)) {
+                foreach ($consumer in $RegistryChecks) {
+                    $consumerId = [string]$consumer.check_id
+                    if (@($consumer.consumes_contracts) -ccontains [string]$contract -and -not $SelectedReasons.Contains($consumerId)) {
+                        Add-ClosureSelection $consumerId "consumer-of:${id}:$contract"
+                        $changed = $true
+                    }
+                }
+            }
+        }
+    }
+}
+
 function Get-MorphospaceAffectedValidationSegments {
     param(
         [Parameter(Mandatory = $true)][object]$Plan,
@@ -725,25 +760,7 @@ function Resolve-MorphospaceAffectedValidation {
             }
         }
     }
-    $changed = $true
-    while ($changed) {
-        $changed = $false
-        foreach ($id in @($selectedReasons.Keys)) {
-            foreach ($dependency in @($compiled.checks[$id].prerequisite_checks)) {
-                $dependencyId = [string]$dependency
-                if (-not $selectedReasons.ContainsKey($dependencyId)) { Add-AffectedSelection $dependencyId "prerequisite-of:$id"; $changed = $true }
-            }
-            foreach ($contract in @($compiled.checks[$id].provides_contracts)) {
-                foreach ($consumer in @($registry.checks)) {
-                    $consumerId = [string]$consumer.check_id
-                    if (@($consumer.consumes_contracts) -ccontains [string]$contract -and -not $selectedReasons.ContainsKey($consumerId)) {
-                        Add-AffectedSelection $consumerId "consumer-of:${id}:$contract"
-                        $changed = $true
-                    }
-                }
-            }
-        }
-    }
+    Complete-MorphospaceAffectedSelectionClosure -Checks $compiled.checks -RegistryChecks @($registry.checks) -SelectedReasons $selectedReasons
 
     $tierRank = @{ quick = 0; standard = 1; deep = 2 }
     $effectiveTier = $RequestedTier

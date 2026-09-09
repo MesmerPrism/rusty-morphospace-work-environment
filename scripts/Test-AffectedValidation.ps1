@@ -43,6 +43,74 @@ $selectorPhaseCheckIds = @(
 $selectorTrustRootCheckIds = @($selectorPhaseCheckIds + @('affected-topology-selftest','affected-reuse-selftest'))
 
 function Assert-True([bool]$Condition, [string]$Message) { if (-not $Condition) { throw $Message } }
+function Invoke-AffectedSelectionClosureDeterminismSelfTest {
+    $affectedModule = Get-Module MorphospaceAffectedValidation
+    $checks = [ordered]@{}
+    foreach ($definition in @(
+        [pscustomobject][ordered]@{check_id='alpha';prerequisite_checks=@('middle','shared');provides_contracts=@();consumes_contracts=@()},
+        [pscustomobject][ordered]@{check_id='consumer-direct';prerequisite_checks=@();provides_contracts=@();consumes_contracts=@('shared-contract')},
+        [pscustomobject][ordered]@{check_id='consumer-leaf';prerequisite_checks=@();provides_contracts=@();consumes_contracts=@()},
+        [pscustomobject][ordered]@{check_id='consumer-m';prerequisite_checks=@('consumer-leaf','leaf');provides_contracts=@();consumes_contracts=@('shared-contract')},
+        [pscustomobject][ordered]@{check_id='leaf';prerequisite_checks=@();provides_contracts=@();consumes_contracts=@()},
+        [pscustomobject][ordered]@{check_id='middle';prerequisite_checks=@('leaf');provides_contracts=@();consumes_contracts=@()},
+        [pscustomobject][ordered]@{check_id='provider-a';prerequisite_checks=@();provides_contracts=@('shared-contract');consumes_contracts=@()},
+        [pscustomobject][ordered]@{check_id='provider-z';prerequisite_checks=@();provides_contracts=@('shared-contract');consumes_contracts=@()},
+        [pscustomobject][ordered]@{check_id='shared';prerequisite_checks=@();provides_contracts=@();consumes_contracts=@()},
+        [pscustomobject][ordered]@{check_id='unused';prerequisite_checks=@();provides_contracts=@();consumes_contracts=@()},
+        [pscustomobject][ordered]@{check_id='zeta';prerequisite_checks=@('shared');provides_contracts=@();consumes_contracts=@()}
+    )) { $checks[[string]$definition.check_id] = $definition }
+    $registryChecks = @($checks.Values)
+    $forward = [ordered]@{}
+    $reverse = [ordered]@{}
+    foreach ($id in @('alpha','consumer-direct','provider-a','provider-z','shared','zeta')) {
+        $forward[$id] = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        [void]$forward[$id].Add('direct')
+    }
+    foreach ($id in @('zeta','shared','provider-z','provider-a','consumer-direct','alpha')) {
+        $reverse[$id] = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        [void]$reverse[$id].Add('direct')
+    }
+    Assert-True ((@($forward.Keys) -join ',') -cne (@($reverse.Keys) -join ',')) 'Closure determinism fixture did not perturb the in-memory selected-key enumeration.'
+    & $affectedModule { param($Checks,$RegistryChecks,$SelectedReasons) Complete-MorphospaceAffectedSelectionClosure -Checks $Checks -RegistryChecks $RegistryChecks -SelectedReasons $SelectedReasons } $checks $registryChecks $forward
+    & $affectedModule { param($Checks,$RegistryChecks,$SelectedReasons) Complete-MorphospaceAffectedSelectionClosure -Checks $Checks -RegistryChecks $RegistryChecks -SelectedReasons $SelectedReasons } $checks $registryChecks $reverse
+
+    $expectedReasons = [ordered]@{
+        alpha=@('direct')
+        'consumer-direct'=@('direct')
+        'consumer-leaf'=@('prerequisite-of:consumer-m')
+        'consumer-m'=@('consumer-of:provider-a:shared-contract')
+        leaf=@('prerequisite-of:consumer-m')
+        middle=@('prerequisite-of:alpha')
+        'provider-a'=@('direct')
+        'provider-z'=@('direct')
+        shared=@('direct')
+        zeta=@('direct')
+    }
+    $expectedOrder = @('consumer-direct','consumer-leaf','leaf','provider-a','provider-z','shared','consumer-m','middle','zeta','alpha')
+    $projections = [Collections.Generic.List[object]]::new()
+    foreach ($selection in @($forward,$reverse)) {
+        $topologicalChecks = @{}
+        foreach ($id in @($checks.Keys)) { $topologicalChecks[[string]$id] = $checks[$id] }
+        $topologicalSelection = @{}
+        foreach ($id in @($selection.Keys)) { $topologicalSelection[[string]$id] = $selection[$id] }
+        $order = @(& $affectedModule { param($Checks,$SelectedReasons) Get-MorphospaceAffectedTopologicalOrder -Checks $Checks -SelectedReasons $SelectedReasons } $topologicalChecks $topologicalSelection)
+        Assert-True (($order -join ',') -ceq ($expectedOrder -join ',')) "Closure projection did not retain deterministic prerequisite-first selected order: $($order -join ',')."
+        $selected = [Collections.Generic.List[object]]::new()
+        foreach ($id in $order) {
+            [string[]]$reasons = @($selection[$id])
+            if ($reasons.Count -gt 1) { [Array]::Sort($reasons,[StringComparer]::Ordinal) }
+            Assert-True (($reasons -join ',') -ceq (@($expectedReasons[$id]) -join ',')) "Closure projection retained an unexpected first-discovery reason for '$id'."
+            $selected.Add([pscustomobject][ordered]@{check_id=$id;reasons=@($reasons)})
+        }
+        $skipped = @($registryChecks | Where-Object { -not $selection.Contains([string]$_.check_id) } | ForEach-Object { [string]$_.check_id })
+        Assert-True (($skipped -join ',') -ceq 'unused') 'Closure projection changed the skipped selection.'
+        $projections.Add([pscustomobject][ordered]@{selected=@($selected.ToArray());skipped=@($skipped)})
+    }
+    $first = ConvertTo-MorphospaceCanonicalJson -Value $projections[0]
+    $second = ConvertTo-MorphospaceCanonicalJson -Value $projections[1]
+    $strictUtf8 = [Text.UTF8Encoding]::new($false,$true)
+    Assert-True ([Linq.Enumerable]::SequenceEqual[byte]($strictUtf8.GetBytes($first),$strictUtf8.GetBytes($second))) 'Closure projection changed canonical UTF-8 output with in-memory key enumeration.'
+}
 function Get-TestEnvironmentDigest { [string[]]$names=@([Environment]::GetEnvironmentVariables('Process').Keys|ForEach-Object{[string]$_});if($names.Count-gt1){[Array]::Sort($names,[StringComparer]::Ordinal)};$text=[Text.StringBuilder]::new();foreach($name in $names){[void]$text.Append($name);[void]$text.Append("`0");[void]$text.Append([string][Environment]::GetEnvironmentVariable($name,'Process'));[void]$text.Append("`0")};return ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.UTF8Encoding]::new($false).GetBytes($text.ToString())))).ToLowerInvariant() }
 function Get-AffectedSupervisorResidueIdentity {
     $roots = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
@@ -63,6 +131,40 @@ function Invoke-TestGit([string]$Root, [string[]]$Arguments) {
     $result = & git -C $Root @Arguments 2>&1
     if ($LASTEXITCODE -ne 0) { throw "git test fixture failed: $($Arguments -join ' ')`n$($result -join "`n")" }
     return ($result -join "`n").Trim()
+}
+function Invoke-FreshAffectedPlanProcess([string]$Fixture,[string]$BaseCommit,[string]$HeadCommit) {
+    $affectedModulePath = Join-Path $repoRoot 'scripts/lib/MorphospaceAffectedValidation.psm1'
+    $protocolModulePath = Join-Path $repoRoot 'scripts/lib/MorphospaceProtocolCommon.psm1'
+    $registryPath = Join-Path $Fixture 'manifests/affected-validation-registry.json'
+    $literal = {
+        param([string]$Value)
+        return "'" + $Value.Replace("'","''") + "'"
+    }
+    $command = 'Import-Module {0} -Force; Import-Module {1} -Force; $plan=Resolve-MorphospaceAffectedValidation -RepositoryRoot {2} -BaseRevision {3} -HeadRevision {4} -RegistryPath {5} -RequestedTier quick; [Console]::Out.Write((ConvertTo-MorphospaceCanonicalJson -Value $plan))' -f
+        (& $literal $protocolModulePath),(& $literal $affectedModulePath),(& $literal $Fixture),(& $literal $BaseCommit),(& $literal $HeadCommit),(& $literal $registryPath)
+    $start = [Diagnostics.ProcessStartInfo]::new()
+    $start.FileName = (Get-Command pwsh -ErrorAction Stop).Source
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    $strictUtf8 = [Text.UTF8Encoding]::new($false,$true)
+    $start.StandardOutputEncoding = $strictUtf8
+    $start.StandardErrorEncoding = $strictUtf8
+    foreach ($argument in @('-NoProfile','-NonInteractive','-Command',$command)) { [void]$start.ArgumentList.Add($argument) }
+    $process = [Diagnostics.Process]::new()
+    $process.StartInfo = $start
+    try {
+        if (-not $process.Start()) { throw 'Fresh affected-plan process did not start.' }
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit(60000)) { try { $process.Kill($true) } catch {}; throw 'Fresh affected-plan process timed out.' }
+        $stdout = $stdoutTask.GetAwaiter().GetResult()
+        $stderr = $stderrTask.GetAwaiter().GetResult()
+        if ($process.ExitCode -ne 0) { throw "Fresh affected-plan process failed with exit $($process.ExitCode): $stderr" }
+        if ([string]::IsNullOrWhiteSpace($stdout)) { throw 'Fresh affected-plan process emitted no canonical plan.' }
+        return $stdout
+    } finally { $process.Dispose() }
 }
 function Invoke-TestGitInput([string]$Root, [string[]]$Arguments, [string]$InputText) {
     $start = [System.Diagnostics.ProcessStartInfo]::new()
@@ -3121,6 +3223,7 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     }
 
     if ($runFullSelector -or $runSelectionPhase) {
+    Invoke-AffectedSelectionClosureDeterminismSelfTest
     $selectionScenarioContext = New-AffectedSelectionScenarioContext -RequestedRoot $SelectionScenarioEvidenceRoot
 
     Write-Utf8 (Join-Path $fixture 'scripts/WorkUnitAutomation.psm1') "# automation`n"
@@ -3519,6 +3622,14 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     foreach ($checkId in @('public-boundary','workflow-contracts','development-envelope-preparation','development-unit-admission','work-unit-automation')) { Assert-True (@($developmentProvenancePlan.selected_checks.check_id) -ccontains $checkId) "Development-envelope provenance change did not retain bounded '$checkId' coverage." }
     Assert-True (@($developmentProvenancePlan.selected_checks.check_id) -cnotcontains 'work-environment-deep') 'Development-envelope provenance change selected the cumulative Deep aggregate.'
     foreach ($reasonCode in @('ambiguous-path-mapping','unmapped-path')) { Assert-True (@($developmentProvenancePlan.reason_codes) -cnotcontains $reasonCode) "Development-envelope provenance change retained '$reasonCode'." }
+    $expectedFreshPlanBytes = ConvertTo-MorphospaceCanonicalJson -Value $developmentProvenancePlan
+    $freshPlanBytesA = Invoke-FreshAffectedPlanProcess -Fixture $fixture -BaseCommit $developmentProvenanceBase -HeadCommit $developmentProvenanceHead
+    $freshPlanBytesB = Invoke-FreshAffectedPlanProcess -Fixture $fixture -BaseCommit $developmentProvenanceBase -HeadCommit $developmentProvenanceHead
+    Assert-True ([StringComparer]::Ordinal.Equals($freshPlanBytesA,$expectedFreshPlanBytes) -and [StringComparer]::Ordinal.Equals($freshPlanBytesB,$expectedFreshPlanBytes)) 'Separate PowerShell processes did not resolve byte-identical plans from one unchanged clean fixture.'
+    $freshPlanA = $freshPlanBytesA | ConvertFrom-Json -Depth 64 -DateKind String
+    $freshPlanB = $freshPlanBytesB | ConvertFrom-Json -Depth 64 -DateKind String
+    Assert-True ([string]$freshPlanA.plan_sha256 -ceq [string]$developmentProvenancePlan.plan_sha256 -and [string]$freshPlanB.plan_sha256 -ceq [string]$developmentProvenancePlan.plan_sha256) 'Separate PowerShell processes changed the exact plan hash.'
+    Assert-True ([string]$freshPlanA.selection_mode -ceq 'affected' -and [string]$freshPlanB.selection_mode -ceq 'affected') 'Fresh-process determinism fixture escaped ordinary affected selection.'
 
     # Development-unit admission owns its schema, module, and focused test as
     # one exact path class.  Admission-only changes must run that owner without
