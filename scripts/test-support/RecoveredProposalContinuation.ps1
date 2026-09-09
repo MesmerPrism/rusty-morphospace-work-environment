@@ -1,5 +1,39 @@
 # Called with an admission produced by the ordinary preparation, retirement,
 # repreparation and admission writers in Test-DevelopmentUnitAdmission.ps1.
+function New-RecoveredProposalContinuationFixture {
+    param([string]$BaseRepository, [string]$FixtureRoot, [object]$RepreparationTemplate, [object]$AdmissionTemplate, [object]$RepreparationModule)
+    $fixture = New-EnvelopeRepreparationFixture $BaseRepository $FixtureRoot $RepreparationTemplate
+    $workspace = $fixture.workspace
+    $repreparationOut = Join-Path $workspace 'receipts/u003-envelope-recovery-repreparation.json'
+    $repreparationHash = Get-EnvelopeFileSha256 $fixture.input_path
+    &$RepreparationModule { param($arguments) Invoke-MorphospaceReprepareRetiredDevelopmentEnvelope @arguments } @{
+        WorkspaceRoot=$workspace; DevelopmentEnvelopeRepreparation=$fixture.input_path
+        ExpectedDevelopmentEnvelopeRepreparationSha256=$repreparationHash; OutPath=$repreparationOut
+        Timestamp='2026-08-25T00:01:40.0000000Z'; Execute=$true
+    } | Out-Null
+    $admission = New-EnvelopeReplacementAdmission -Template $AdmissionTemplate -Workspace $workspace -AdmissionId 'u003-admission' -UnitId 'u003'
+    $admission.preparation = [ordered]@{
+        preparation_kind='recovered'; preparation_id='u003-envelope'; receipt_path='receipts/u003-envelope.json'
+        receipt_sha256=(Get-EnvelopeFileSha256 (Join-Path $workspace 'receipts/u003-envelope.json'))
+        source_composition_path='source-composition-locks/u003-envelope.json'
+        source_composition_sha256=(Get-EnvelopeFileSha256 (Join-Path $workspace 'source-composition-locks/u003-envelope.json'))
+        recovery_receipt_path='receipts/u003-envelope-recovery-repreparation.json'; recovery_receipt_sha256=(Get-EnvelopeFileSha256 $repreparationOut)
+    }
+    $admission.unit.source_composition.lock_path = 'source-composition-locks/u003-envelope.json'
+    $admission.expected.project_sha256 = Get-EnvelopeCanonicalJsonSha256 (Read-EnvelopeProtocolJson (Join-Path $workspace 'project.spec.json'))
+    $admission.expected.feature_lock_sha256 = Get-EnvelopeCanonicalJsonSha256 (Read-EnvelopeProtocolJson (Join-Path $workspace 'feature.lock.json'))
+    $admission.expected.source_composition_path = 'source-composition-locks/u003-envelope.json'
+    $admission.expected.source_composition_sha256 = $admission.preparation.source_composition_sha256
+    $admission.expected.repository_map_sha256 = Get-EnvelopeFileSha256 (Join-Path $workspace 'repository-map.json')
+    $admissionPath = Join-Path $FixtureRoot 'u003-recovered-admission.json'
+    Write-EnvelopeJson $admissionPath $admission
+    $admissionOut = Join-Path $workspace 'receipts/u003-admission.json'
+    $dry = Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $workspace -DevelopmentUnitAdmission $admissionPath -OutPath $admissionOut -Timestamp '2026-08-25T00:01:50.0000000Z'
+    $run = Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $workspace -DevelopmentUnitAdmission $admissionPath -ExpectedDevelopmentUnitAdmissionSha256 $dry.audit_receipt.sha256 -OutPath $admissionOut -Timestamp '2026-08-25T00:01:50.0000000Z' -Execute
+    Assert-Envelope ($run.transition -ceq 'development-unit-admitted' -and (Test-Path (Join-Path $workspace 'iteration-units/u003.json'))) 'isolated continuation fixture did not admit the recovered proposal'
+    [pscustomobject]@{ workspace=$workspace; repository=$fixture.repository; admission=$admission; admission_path=$admissionPath }
+}
+
 function Test-RecoveredProposalRetirement {
     param([string]$AdmittedWorkspace, [string]$TestRoot, [string]$ScriptsRoot)
     Import-Module (Join-Path $PSScriptRoot '../AdmissionCompletionTimestampRecovery.psm1')

@@ -1,8 +1,8 @@
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
-Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
-Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1')
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1')
 
 $script:RecoverySchema = 'rusty.morphospace.workflow.admission_completion_timestamp_recovery.v1'
 $script:RecoveryFault = 'admission-completion-precedes-future-intent'
