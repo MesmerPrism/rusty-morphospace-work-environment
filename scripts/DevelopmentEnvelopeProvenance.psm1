@@ -2,6 +2,7 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference='Stop'
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceCurrentWorkCompatibility.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'BlockedSuccessorPreparation.psm1') -Force
 function Assert-PreparationProvenanceJson { param([string]$Path,[string]$Schema,[string]$Message) if(-not(Test-Json -Json (Get-Content -Raw -LiteralPath $Path) -SchemaFile $Schema)){throw $Message} }
 function Get-PreparationProvenanceCanonicalHash { param([object]$Value,[string]$Context) try{return Get-MorphospaceCanonicalJsonSha256 $Value}catch{throw "$Context canonical identity is invalid. $($_.Exception.Message)"} }
@@ -65,7 +66,7 @@ function Test-PreparationProvenanceHasAdmissionConsumer {
  $events=@(Get-Content -LiteralPath (Resolve-MorphospaceWorkspacePath $Workspace 'iteration-events.jsonl')|Where-Object{$_}|ForEach-Object{$_|ConvertFrom-Json -DateKind String})
  $accepted=@($events|Where-Object{[int]$_.sequence-lt[int]$PreparationIntent.event.sequence-and@($_.receipts)-ccontains[string]$PreparationIntent.pre.state.document.last_accepted_receipt-and[string]$_.event_id-cmatch('^'+[regex]::Escape([string]$_.unit_id)+'-accepted-[0-9]{4,}$')})
  if($accepted.Count-eq1){
-  $checkpoint=Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $Workspace -TransactionId "$($accepted[0].event_id)-transition" -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath "iteration-units/$($accepted[0].unit_id).json" -ExpectedEventsPath 'iteration-events.jsonl'
+  $checkpoint=Test-MorphospaceAcceptedCheckpointProof -WorkspaceRoot $Workspace -ExpectedEvent $accepted[0] -AllowFiniteHistoricalV1
   if([string]$checkpoint.intent.target.unit.document.status-ceq'accepted'){$sealedSequence=[int]$accepted[0].sequence}
  }
  foreach($intentFile in @(Get-ChildItem -LiteralPath $transactionRoot -File -Filter '*-admitted-transition.intent.json')){

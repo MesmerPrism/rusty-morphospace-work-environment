@@ -107,6 +107,33 @@ function Test-MorphospaceHistoricalCommittedTransitionV1 {
     [pscustomobject]@{intent=$intent;completion=$completion;historical_only=$true;producer_commit=$script:LegacyProducerCommit;grants_validation_credit=$false}
 }
 
+function Test-MorphospaceAcceptedCheckpointProof {
+    [CmdletBinding()]param(
+        [Parameter(Mandatory)][string]$WorkspaceRoot,
+        [Parameter(Mandatory)][object]$ExpectedEvent,
+        [switch]$AllowFiniteHistoricalV1
+    )
+    $workspace=[IO.Path]::GetFullPath($WorkspaceRoot);$unitId=[string]$ExpectedEvent.unit_id;$eventId=[string]$ExpectedEvent.event_id
+    if([string]$ExpectedEvent.event_type-cne'state-transition'-or[string]::IsNullOrWhiteSpace($unitId)-or$eventId-cnotmatch('^'+[regex]::Escape($unitId)+'-accepted-[0-9]{4,}$')){
+        throw 'Accepted-checkpoint proof requires an accepted state-transition event.'
+    }
+    $transactionId="$eventId-transition";$intentPath=Resolve-MorphospaceWorkspacePath $workspace "receipts/transactions/$transactionId.intent.json" -RequireLeaf
+    $intent=Read-MorphospaceProtocolJson $intentPath
+    $finiteHistoricalV1=[string]$intent.schema-ceq'rusty.morphospace.workflow.transition_ledger_intent.v1'-and
+        $intent.PSObject.Properties.Name-notcontains'expected'-and$intent.PSObject.Properties.Name-notcontains'artifacts'
+    $proof=if($finiteHistoricalV1-and$AllowFiniteHistoricalV1){
+        Test-MorphospaceHistoricalCommittedTransitionV1 -WorkspaceRoot $workspace -TransactionId $transactionId -ExpectedEvent $ExpectedEvent
+    }else{
+        Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $workspace -TransactionId $transactionId -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath "iteration-units/$unitId.json" -ExpectedEventsPath 'iteration-events.jsonl'
+    }
+    if((Get-MorphospaceCanonicalJsonSha256 $proof.intent.event)-cne(Get-MorphospaceCanonicalJsonSha256 $ExpectedEvent)-or
+        [string]$proof.intent.target.unit.document.unit_id-cne$unitId-or
+        [string]$proof.intent.target.unit.document.status-cne'accepted'){
+        throw 'Accepted-checkpoint proof does not authenticate the expected accepted event and target.'
+    }
+    $proof
+}
+
 function Test-MorphospaceCommittedDevelopmentEnvelopeRepreparation {
     [CmdletBinding()]param([Parameter(Mandatory)][string]$WorkspaceRoot,[Parameter(Mandatory)][object]$ExpectedEvent)
     $workspace=[IO.Path]::GetFullPath($WorkspaceRoot);$refs=@($ExpectedEvent.receipts)
@@ -235,4 +262,4 @@ function Test-MorphospaceHistoricalAdmissionCompletionTimestampRecovery {
     [pscustomobject]@{intent=$recoveryIntent;completion=$recoveryCompletion;receipt=$receipt;receipt_sha256=(Get-MorphospaceSha256Bytes $receiptBytes);original_intent=$originalIntent;malformed_completion=$completion;pre_event_state=$originalIntent.target.state.document;target_state=$targetState;target_unit=$unitDocument;recovery_event=$ExpectedEvent;bound_ledger_length=$boundLength;recovery_ledger_length=($boundLength+$recoveryLine.LongLength);project=$projectDocument;feature_lock=$lockDocument;grants_validation_credit=$false}
 }
 
-Export-ModuleMember -Function Test-MorphospaceHistoricalCommittedTransitionV1,Test-MorphospaceCommittedDevelopmentEnvelopeRepreparation,Test-MorphospaceHistoricalProposedRetirement,Test-MorphospaceHistoricalAdmissionCompletionTimestampRecovery
+Export-ModuleMember -Function Test-MorphospaceHistoricalCommittedTransitionV1,Test-MorphospaceAcceptedCheckpointProof,Test-MorphospaceCommittedDevelopmentEnvelopeRepreparation,Test-MorphospaceHistoricalProposedRetirement,Test-MorphospaceHistoricalAdmissionCompletionTimestampRecovery
