@@ -36,6 +36,7 @@ Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceBlockedSupersessionTe
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceHistoricalUnitCompatibilityProjection.psm1') -Force
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceProtocolCommon.psm1') -Force
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceCurrentWorkHistory.psm1')
+Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceCurrentWorkCompatibility.psm1')
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceHistoricalValidationDebtBaseline.psm1') -Force
 # Keep one stable shared-predicate module instance through nested owner tests.
 # A force reload can remove this script's exported command binding mid-run.
@@ -2342,7 +2343,15 @@ function Test-ProjectBundle {
             $strictBytes = [Text.UTF8Encoding]::new($false).GetBytes(($candidateRecoveryEvent | ConvertTo-Json -Depth 32 -Compress))
             $strictEvent = ConvertFrom-MorphospaceProtocolJsonBytes -Bytes $strictBytes -Context "admission recovery event '$candidateId'"
             [void]$strictEvent.PSObject.Properties.Remove('__line_sha256')
-            [void](Test-MorphospaceAdmissionCompletionTimestampRecovery -WorkspaceRoot $workspaceRoot -RecoveryPath $receiptAbsolute -Mode Projection -CorrectionEvent $strictEvent)
+            if (-not $historicalAuditRequired) {
+                # The authenticated current-work suffix may have retired the
+                # proposal or prepared a later envelope. Verify the recovery's
+                # original producer projection; Get-MorphospaceCurrentWorkHistory
+                # has already bound its subsequent transitions to live state.
+                [void](Test-MorphospaceHistoricalAdmissionCompletionTimestampRecovery -WorkspaceRoot $workspaceRoot -RecoveryPath $receiptAbsolute -ExpectedEvent $strictEvent)
+            } else {
+                [void](Test-MorphospaceAdmissionCompletionTimestampRecovery -WorkspaceRoot $workspaceRoot -RecoveryPath $receiptAbsolute -Mode Projection -CorrectionEvent $strictEvent)
+            }
         } catch {
             Add-Failure -Message "$Context admission completion timestamp recovery '$candidateId' is unauthenticated: $($_.Exception.Message)"
         }
