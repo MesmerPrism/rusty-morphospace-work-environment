@@ -164,6 +164,38 @@ function New-RecoveredProposalContinuationSeed {
 $temp=$Root
 $preparedSeed=New-EnvelopeAdmissionPreparedFixture -Root $temp -RepositoryRoot $RepositoryRoot -TransitionLedgerModule $TransitionLedgerModule -OwnerProducedPreparation
 $ws=$preparedSeed.workspace;$sourceRepo=$preparedSeed.source_repository;$admission=$preparedSeed.admission_template
+  # Reproduce the historical preparation writer's exact stale fingerprint and
+  # registry defect before admission. Start from its complete owner-produced
+  # transaction, retain the valid preimage, and bind only the defective target.
+  # The later real repreparation writer must authenticate and repair this fault.
+  $faultIntent=Copy-Envelope $preparedSeed.preparation_intent
+  $faultLock=Copy-Envelope $preparedSeed.feature_lock
+  $faultLock.lock_fingerprint=[string]$faultIntent.pre.feature_lock.document.lock_fingerprint
+  $faultState=Copy-Envelope $preparedSeed.state
+  $faultState.module_registry=Copy-Envelope $faultIntent.pre.state.document.module_registry
+  $faultReceipt=Copy-Envelope $preparedSeed.preparation_receipt
+  $faultReceipt.envelope.feature_lock=$faultLock
+  $faultReceipt.feature_lock_sha256=Get-EnvelopeCanonicalJsonSha256 $faultLock
+  $faultIntent.target.feature_lock.document=$faultLock
+  $faultIntent.target.feature_lock.sha256=$faultReceipt.feature_lock_sha256
+  $faultIntent.target.state.document=$faultState
+  $faultIntent.target.state.sha256=Get-EnvelopeCanonicalJsonSha256 $faultState
+  $faultReceiptPath=Join-Path $ws 'receipts/u002-envelope.json'
+  Write-EnvelopeJson (Join-Path $ws 'feature.lock.json') $faultLock
+  Write-EnvelopeJson (Join-Path $ws 'workspace.state.json') $faultState
+  Write-EnvelopeJson $faultReceiptPath $faultReceipt
+  $faultIntent.artifacts[0].sha256=Get-EnvelopeCanonicalJsonSha256 $faultReceipt
+  $faultIntent.artifacts[0].bytes_base64=[Convert]::ToBase64String([IO.File]::ReadAllBytes($faultReceiptPath))
+  $faultIntentPath=Join-Path $ws 'receipts/transactions/u002-envelope-prepared-transition.intent.json'
+  Write-EnvelopeJson $faultIntentPath $faultIntent
+  $faultCompletion=Copy-Envelope $preparedSeed.preparation_completion
+  $faultCompletion.intent_sha256=Get-EnvelopeFileSha256 $faultIntentPath
+  $faultCompletion.target_state_sha256=[string]$faultIntent.target.state.sha256
+  $faultCompletion.target_feature_lock_sha256=[string]$faultIntent.target.feature_lock.sha256
+  Write-EnvelopeJson (Join-Path $ws 'receipts/transactions/u002-envelope-prepared-transition.completion.json') $faultCompletion
+  $admission.preparation.receipt_sha256=Get-EnvelopeFileSha256 $faultReceiptPath
+  $admission.expected.state_sha256=[string]$faultIntent.target.state.sha256
+  $admission.expected.feature_lock_sha256=[string]$faultIntent.target.feature_lock.sha256
     $admissionPath=Join-Path $temp 'admission.json';Write-EnvelopeJson $admissionPath $admission;$out=Join-Path $ws 'receipts\u002-admission.json';$dry=Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $ws -DevelopmentUnitAdmission $admissionPath -OutPath $out -Timestamp '2026-08-25T00:01:00.0000000Z';$run=Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $ws -DevelopmentUnitAdmission $admissionPath -ExpectedDevelopmentUnitAdmissionSha256 $dry.audit_receipt.sha256 -OutPath $out -Timestamp '2026-08-25T00:01:00.0000000Z' -Execute;Assert-Envelope ($run.transition -eq 'development-unit-admitted' -and (Test-Path (Join-Path $ws 'iteration-units\u002.json'))) 'admission did not atomically create the successor unit';$replay=Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $ws -DevelopmentUnitAdmission $admissionPath -ExpectedDevelopmentUnitAdmissionSha256 $dry.audit_receipt.sha256 -OutPath $out -Execute;Assert-Envelope ($replay.transition -eq 'development-unit-already-admitted') 'exact admission replay was not idempotent'
 $retiredSeed=New-EnvelopeRetiredRepreparationFixture -Root $temp -RepositoryRoot $RepositoryRoot -Workspace $ws -SourceRepository $sourceRepo -AdmissionTemplate $admission
   [pscustomobject]@{base_repository=$retiredSeed.recovery_repository;repreparation_template=$retiredSeed.repreparation_template;admission_template=$admission}
