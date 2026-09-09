@@ -2628,6 +2628,10 @@ function Invoke-MorphospaceWorkUnitAutomation {
                 if ($readyInstructionCheck.Count -ne 1 -or [string]$readyInstructionCheck[0].outcome -cne 'pass') {
                     throw "Ready preflight blocked: instruction action $(@($readyInstructionCheck[0].reason_codes) -join ' ')"
                 }
+                $readyResourceDeclarationCheck = @($claimPreflight.coverage.checks | Where-Object { [string]$_.check_id -ceq 'resource-declaration-uniqueness' })
+                if ($readyResourceDeclarationCheck.Count -ne 1 -or [string]$readyResourceDeclarationCheck[0].outcome -cne 'pass') {
+                    throw "Ready preflight blocked: resource declaration $(@($readyResourceDeclarationCheck[0].reason_codes) -join ' ')"
+                }
                 if ($state.current_unit) {
                     try {
                         [void](Get-MorphospaceSupersessionEventId -OldUnitId ([string]$state.current_unit) -ReplacementUnitId $UnitId)
