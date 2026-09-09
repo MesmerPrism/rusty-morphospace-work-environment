@@ -65,7 +65,7 @@ During an edit loop, run only the focused owner test for the touched surface,
 for example:
 
 ```powershell
-pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkflowContracts.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkflowContracts.ps1 -SkipOwnerSelfTests
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-PlannedPublicationAccounting.ps1 -SelfTest
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-PublishedPrerequisiteSuffixReconciliation.ps1 -SelfTest
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ExecutedPreparedPublicationReconciliation.ps1 -SelfTest
@@ -92,9 +92,42 @@ then run the smallest sufficient aggregate once against its exact base. If a
 repair changes that commit, rerun the nearest failed check first and execute
 the aggregate once for the repaired candidate.
 
+For example, current skill-review compatibility compares the routed skill to
+the owning repository's exact HEAD blob. Editing that skill can therefore make
+the dirty diagnostic fail even when its structure is valid. Check the changed
+template and links while editing, commit the reviewed bytes, then run the
+exact-head check. Do not weaken its binding or demand a successful pre-commit
+aggregate that depends on the as-yet uncommitted blob.
+This also applies to focused suites that call those reviews, including
+`Test-DevelopmentUnitAdmission.ps1`; a focused entrypoint is not necessarily
+independent of HEAD. A known dirty-binding failure calls for freezing the
+candidate, not another unchanged test attempt. The structural workflow check
+uses `-SkipOwnerSelfTests`; select affected behavioral leaves separately.
+
 Do not append all focused commands to every aggregate run. The aggregate owns
 each expensive owner self-test once; nested temporary workspaces run structural
 contract validation without recursively re-running unrelated owner suites.
+
+Admission and recovered-proposal continuation have separate focused entrypoints:
+
+```powershell
+pwsh -NoProfile -File ./scripts/Test-DevelopmentUnitAdmission.ps1 -SelfTest
+pwsh -NoProfile -File ./scripts/Test-AdmissionCompletionTimestampRecovery.ps1 -SelfTest
+pwsh -NoProfile -File ./scripts/Test-RecoveredProposalContinuation.ps1 -SelfTest
+```
+
+Select the entrypoint affected by the change; this is not a list to run after
+every edit. The continuation case composes owner-written admission, timestamp
+recovery, retirement and fresh preparation in an isolated fixture. It is an
+independent Windows affected-validation leaf with exact-host evidence. Direct
+test edits select that test and public-boundary checks; shared fixture or
+production changes select their actual consumers. A passing old admission
+receipt does not stand in for the newly separated continuation result.
+The explicit full Quick and workflow owner-test aggregates retain the composed
+case once. Affected CI invokes workflow contracts with `-SkipOwnerSelfTests`
+and selects the independent leaf, so a failed continuation can be rerun without
+replaying unrelated passing admission tests. Reuse still requires the existing
+complete input and runner binding; no separate cache or receipt type is added.
 
 Changes to a validation trust root use the separate base-owned static admission
 contract in [External Validation Authority](EXTERNAL_VALIDATION_AUTHORITY.md).

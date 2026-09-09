@@ -110,3 +110,44 @@ After acceptance, retain the package or a concise receipt only when it improves
 future routing. Cleanup and historical extraction are event-driven: revisit old
 worktrees, refs, or artifacts when they obstruct a live task, consume material
 resources, or answer a bounded provenance question.
+
+## Manual Task-Owned Scratch Cleanup
+
+Use this playbook when the user requests cleanup, or to tidy disposable scratch
+created by the current authorized task. It creates no schedule. Empty,
+untracked scratch needs no Git checkpoint, archive or development-unit admission.
+The direct package's source handoff checkpoints above do not apply to it. Keep
+source, accepted evidence, a useful compact result, and any required rollback
+artifact under their existing owner rules. Shared caches, old worktrees and
+session archives use their separate cleanup routes.
+
+1. **Inspect.** Name one exact owned scratch parent and the literal targets.
+   Resolve absolute paths and require every target to be strictly beneath that
+   parent. Check existing ancestors for symlinks/junctions or other reparse
+   points; stop that target if its destination or ownership is ambiguous.
+   Exclude volume/repository roots, Git metadata and worktree administration,
+   tracked files, shared caches and retained results. Inspect hidden entries
+   too. Git does not track empty directories; an empty directory does not need
+   to be committed before removal.
+2. **Establish quiescence.** Confirm the task's writer has exited and no other
+   task is using the target. A zero-byte lock is a file, not proof of idleness:
+   remove it only when its owner is known to have stopped and an exclusive
+   open succeeds. If that cannot be established, retain it and continue other
+   work. Nonempty files require their own explicit disposable classification.
+3. **Execute narrowly.** Recheck the resolved targets and contents immediately
+   before mutation. Remove verified disposable files individually and empty
+   directories from the leaves upward, using native filesystem operations
+   with literal paths and nonrecursive directory removal. Unexpected contents,
+   path changes, locks or access errors leave the affected target in place.
+   Do not use a recursive wildcard sweep or Git cleanup/reset commands.
+4. **Verify.** Confirm the intended targets are absent and retained inputs are
+   unchanged. Keep one short result only if it helps the current handoff; do
+   not create a new cleanup ledger or archive empty scratch.
+
+Distinguish a Git preservation check, filesystem error, owner workflow rule and
+app approval rejection. Record the exact rejected operation and available
+reason. A generic `blocked by policy` message does not identify Git as the cause.
+Do not retry a denied deletion through another shell, API, helper or weakened
+permission setting. Repository guidance cannot override app enforcement;
+resolve that limitation through its actual owner. Leave denied targets intact
+and continue unrelated authorized work.

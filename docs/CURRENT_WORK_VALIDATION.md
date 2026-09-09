@@ -57,6 +57,12 @@ raw evidence, derived correction row, recovery transaction, and subsequent live
 state derivation. The malformed completion remains byte-exact historical
 evidence.
 
+The public current-work validator uses that authenticated producer projection
+when later owner transactions retire the proposal or prepare another envelope.
+It must not require the recovered proposal to remain live or the recovery to
+remain the ledger tail. Recovery execution retains its exact live preconditions;
+the read-only projection applies only after the current-work chain authenticates.
+
 An exact owner-produced proposed-unit retirement is reported separately as
 `retired-proposed`, whether it follows the current accepted boundary or a later
 accepted checkpoint has sealed it into that boundary's prefix. It may allow a later idle

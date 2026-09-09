@@ -33,6 +33,11 @@ or instruction synchronization.
 For a fresh unit in an idle project, use that reference's preparation and
 admission routes, including retained proposal retirements and exact owner roots.
 
+For manual task-owned scratch cleanup, use the resolved owner's
+`docs/DIRECT_WORK_PACKAGES.md#manual-task-owned-scratch-cleanup`. Disposable
+scratch does not acquire source checkpoint or archive prerequisites; app-level
+approval denials retain their own authority.
+
 ## Route the work
 
 Select only the specialist routes that match the task:

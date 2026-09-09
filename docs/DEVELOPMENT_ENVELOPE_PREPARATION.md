@@ -46,6 +46,17 @@ checkout or its `HEAD`. Preparation validates and CAS-commits the binding, but
 does not approve or adopt that Work Environment revision. Without the optional
 field, every schema pin remains byte-identical.
 
+One finite preimage repair is recognized for a project pinned to Work
+Environment revision `f45a7500d0a68b5cea0d910b26010c10ba42705c`: the malformed
+`public_boundary.mode` value `public-source-private-planning` may be projected
+to the schema-defined `mixed` value. The owner validates a clone of the complete
+current project after that single substitution and accepts the projection only
+when the clone satisfies the current closed project schema. The target must
+contain `mixed` itself, and the private overlay and ordered prohibited-evidence
+list remain unchanged. The transaction binds the unmodified current document
+and its preimage hash; the projection is used only to validate this repair and
+compare the target. No other invalid project or boundary value is accepted.
+
 The project identity and accepted predecessor bytes remain unchanged. The
 target state remains idle (`current_unit` and `next_ready_unit` are null); no
 source, Git remote, build, APK, or device mutation is performed. A preparation

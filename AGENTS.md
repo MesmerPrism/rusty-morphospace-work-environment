@@ -60,6 +60,7 @@ remain authoritative.
 | Validation selection, affected checks, and evidence | [Validation](docs/VALIDATION.md), [Affected Validation](docs/AFFECTED_VALIDATION.md) |
 | Validator, policy, runner, or schema trust-root change | [External Validation Authority](docs/EXTERNAL_VALIDATION_AUTHORITY.md) |
 | Repository lifecycle, source-only publication, or planned publication accounting | [Repository Lifecycle](docs/REPOSITORY_LIFECYCLE.md), [Source-Only Publication](docs/SOURCE_ONLY_PUBLICATION.md), [Planned Publication Accounting](docs/PLANNED_PUBLICATION_ACCOUNTING.md) |
+| Manual cleanup of task-owned scratch | [Direct Work Packages](docs/DIRECT_WORK_PACKAGES.md#manual-task-owned-scratch-cleanup) |
 | Published or unpublished planning-authority recovery | [External Planning and Historical Reconstruction](docs/EXTERNAL_PLANNING_AND_HISTORICAL_RECONSTRUCTION.md), [Unpublished Planning Authority Materialization](docs/UNPUBLISHED_PLANNING_AUTHORITY_MATERIALIZATION.md) |
 | Explicit historical audit or compatibility migration | [Historical Unit Adoption](docs/HISTORICAL_UNIT_ADOPTION.md), [Historical Supersession Compatibility](docs/HISTORICAL_SUPERSESSION_COMPATIBILITY.md) |
 | Live Quest package or evidence work | [Quest APK Workflow](docs/QUEST_APK_WORKFLOW.md), then `$meta-quest-workflow` |
@@ -102,11 +103,13 @@ not build, device, validation, acceptance, or publication authority.
 
 ## Validate proportionately
 
-Run focused owner checks while editing. Before a work-environment commit, use
-the Quick checkpoint in [Validation](docs/VALIDATION.md), `git diff --check`,
-and the named owner self-test for the changed contract. Run Standard delta only
-after Quick when its boundary requires it; use Deep only for its declared
-authority risk. A device is not part of these tiers.
+Run focused owner checks and `git diff --check` while editing. Commit a coherent
+candidate before its exact-head aggregate: some checks deliberately bind working
+bytes to HEAD. Then run the smallest sufficient managed checkpoint once against
+its exact base, as described in [Validation](docs/VALIDATION.md). Run Standard
+delta only after Quick when its boundary requires it; use Deep for its declared
+authority risk. Dirty-source checks are diagnostic, and a local commit grants no
+admission or publication authority. A device is not part of these tiers.
 
 Use the exact instruction-synchronization route for changes to authority,
 module layout, activation, validation, device policy, repository routing, or

@@ -36,6 +36,7 @@ Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceBlockedSupersessionTe
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceHistoricalUnitCompatibilityProjection.psm1') -Force
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceProtocolCommon.psm1') -Force
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceCurrentWorkHistory.psm1')
+Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceCurrentWorkCompatibility.psm1')
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceHistoricalValidationDebtBaseline.psm1') -Force
 # Keep one stable shared-predicate module instance through nested owner tests.
 # A force reload can remove this script's exported command binding mid-run.
@@ -2342,7 +2343,15 @@ function Test-ProjectBundle {
             $strictBytes = [Text.UTF8Encoding]::new($false).GetBytes(($candidateRecoveryEvent | ConvertTo-Json -Depth 32 -Compress))
             $strictEvent = ConvertFrom-MorphospaceProtocolJsonBytes -Bytes $strictBytes -Context "admission recovery event '$candidateId'"
             [void]$strictEvent.PSObject.Properties.Remove('__line_sha256')
-            [void](Test-MorphospaceAdmissionCompletionTimestampRecovery -WorkspaceRoot $workspaceRoot -RecoveryPath $receiptAbsolute -Mode Projection -CorrectionEvent $strictEvent)
+            if (-not $historicalAuditRequired) {
+                # The authenticated current-work suffix may have retired the
+                # proposal or prepared a later envelope. Verify the recovery's
+                # original producer projection; Get-MorphospaceCurrentWorkHistory
+                # has already bound its subsequent transitions to live state.
+                [void](Test-MorphospaceHistoricalAdmissionCompletionTimestampRecovery -WorkspaceRoot $workspaceRoot -RecoveryPath $receiptAbsolute -ExpectedEvent $strictEvent)
+            } else {
+                [void](Test-MorphospaceAdmissionCompletionTimestampRecovery -WorkspaceRoot $workspaceRoot -RecoveryPath $receiptAbsolute -Mode Projection -CorrectionEvent $strictEvent)
+            }
         } catch {
             Add-Failure -Message "$Context admission completion timestamp recovery '$candidateId' is unauthenticated: $($_.Exception.Message)"
         }
@@ -2624,8 +2633,11 @@ if ($null -ne $lifecycle) {
     $script:ChangeCategories = @($lifecycle.change_categories | ForEach-Object { [string]$_ })
     Assert-Contract (($script:WorkModes -join "|") -eq "feature|validation-only") "Workflow work modes must expose feature and validation-only in that order."
     Assert-Contract (($script:GuardProfiles -join "|") -eq "fast|labs|locked") "Workflow guard profiles must expose fast, labs, and locked in increasing authority order."
-    Assert-Contract ([int]$lifecycle.workflow_stability.feature_units_before_protocol_change -eq 3) "Workflow stability must freeze protocol changes for three feature units."
-    Assert-Contract ([int]$lifecycle.workflow_stability.target_feature_work_percent -eq 70) "Workflow stability must target seventy percent feature work."
+    $featureUnitTarget = $lifecycle.workflow_stability.feature_units_before_protocol_change
+    $featureEffortTarget = $lifecycle.workflow_stability.target_feature_work_percent
+    Assert-Contract ($lifecycle.workflow_stability.planning_targets_are_advisory -is [bool] -and $lifecycle.workflow_stability.planning_targets_are_advisory) "Workflow planning targets must be explicitly advisory."
+    Assert-Contract (($featureUnitTarget -is [int] -or $featureUnitTarget -is [long]) -and $featureUnitTarget -ge 0) "The advisory feature-unit planning target must be a nonnegative integer."
+    Assert-Contract (($featureEffortTarget -is [int] -or $featureEffortTarget -is [long]) -and $featureEffortTarget -ge 0 -and $featureEffortTarget -le 100) "The advisory feature-effort planning target must be an integer percentage."
     Assert-Contract ([string]$lifecycle.workflow_stability.validation_only_instruction_action -eq "review-no-change") "Validation-only units must use review-no-change instruction handling."
     Assert-Contract ($lifecycle.workflow_stability.unit_captain_through_acceptance -eq $true) "Workflow stability must keep one unit captain through acceptance."
     $script:ChangeCategoryAliases = @{}
@@ -3015,7 +3027,7 @@ foreach ($historyArchiveContract in $historyArchiveContracts) {
     Assert-Contract (Test-Path -LiteralPath (Join-Path $RepoRoot $historyArchiveContract) -PathType Leaf) "Required history archive contract is missing: $historyArchiveContract"
 }
 if (-not $SkipOwnerSelfTests) {
-    foreach ($selfTest in @("Test-LegacyEmbeddedPushPlanCompatibility.ps1","Test-PreparedPublicationReconstruction.ps1","Test-ResolveBlocker.ps1","Test-CorrectResolvedBlockerEvidence.ps1","Test-HistoricalBlockerResolutionIntentBindingCorrection.ps1","Test-CorrectActiveReadOnlyDependencies.ps1","Test-CorrectActiveProjectRepositoryScope.ps1","Test-ActiveWriteScopeAmendment.ps1","Test-DevelopmentUnitAdmission.ps1","Test-CompletedTransitionSemanticCorrection.ps1","Test-AdmissionCompletionTimestampRecovery.ps1","Test-TransitionLedger.ps1","Test-HistoryArchiveValidation.ps1")) {
+    foreach ($selfTest in @("Test-LegacyEmbeddedPushPlanCompatibility.ps1","Test-PreparedPublicationReconstruction.ps1","Test-ResolveBlocker.ps1","Test-CorrectResolvedBlockerEvidence.ps1","Test-HistoricalBlockerResolutionIntentBindingCorrection.ps1","Test-CorrectActiveReadOnlyDependencies.ps1","Test-CorrectActiveProjectRepositoryScope.ps1","Test-ActiveWriteScopeAmendment.ps1","Test-DevelopmentUnitAdmission.ps1","Test-RecoveredProposalContinuation.ps1","Test-CompletedTransitionSemanticCorrection.ps1","Test-AdmissionCompletionTimestampRecovery.ps1","Test-TransitionLedger.ps1","Test-HistoryArchiveValidation.ps1")) {
         try { [void](Invoke-IsolatedWorkflowSelfTest -Path (Join-Path $RepoRoot "scripts\$selfTest")) }
         catch { Add-Failure -Message "$selfTest failed: $($_.Exception.Message)" }
     }

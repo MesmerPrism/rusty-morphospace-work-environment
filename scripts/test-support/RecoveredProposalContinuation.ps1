@@ -1,5 +1,5 @@
-# Called with an admission produced by the ordinary preparation, retirement,
-# repreparation and admission writers in Test-DevelopmentUnitAdmission.ps1.
+# Called with an admission produced by the shared preparation, retirement,
+# repreparation and admission fixture through the ordinary owner writers.
 function New-RecoveredProposalContinuationFixture {
     param([string]$BaseRepository, [string]$FixtureRoot, [object]$RepreparationTemplate, [object]$AdmissionTemplate, [object]$RepreparationModule)
     $fixture = New-EnvelopeRepreparationFixture $BaseRepository $FixtureRoot $RepreparationTemplate
@@ -32,6 +32,23 @@ function New-RecoveredProposalContinuationFixture {
     $run = Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $workspace -DevelopmentUnitAdmission $admissionPath -ExpectedDevelopmentUnitAdmissionSha256 $dry.audit_receipt.sha256 -OutPath $admissionOut -Timestamp '2026-08-25T00:01:50.0000000Z' -Execute
     Assert-Envelope ($run.transition -ceq 'development-unit-admitted' -and (Test-Path (Join-Path $workspace 'iteration-units/u003.json'))) 'isolated continuation fixture did not admit the recovered proposal'
     [pscustomobject]@{ workspace=$workspace; repository=$fixture.repository; admission=$admission; admission_path=$admissionPath }
+}
+
+function Invoke-RecoveredContinuationPublicValidation {
+    param([string]$WorkspaceRoot, [string]$ScriptsRoot)
+    $pwshPath = (Get-Process -Id $PID).Path
+    $validatorPath = Join-Path $ScriptsRoot 'Test-WorkflowContracts.ps1'
+    $repoRoot = Split-Path $ScriptsRoot -Parent
+    $childArguments = @(
+        '-NoProfile', '-File', $validatorPath,
+        '-RepoRoot', $repoRoot,
+        '-WorkspaceRoot', $WorkspaceRoot,
+        '-RepositoryMapPath', (Join-Path $WorkspaceRoot 'repository-map.json'),
+        '-CurrentWorkOnly', '-SkipOwnerSelfTests'
+    )
+    $PSNativeCommandUseErrorActionPreference = $false
+    $output = (& $pwshPath @childArguments 2>&1 | Out-String).Trim()
+    [pscustomobject]@{ exit_code = $LASTEXITCODE; output = $output }
 }
 
 function Test-RecoveredProposalRetirement {
@@ -96,6 +113,14 @@ function Test-RecoveredProposalRetirement {
     $run = & $automation @arguments | ConvertFrom-Json
     Assert-Envelope ($run.transition -ceq 'proposed-to-superseded-retired' -and [string](Read-EnvelopeProtocolJson (Join-Path $workspace 'iteration-units/u003.json')).status -ceq 'superseded') 'recovered proposal did not retire through the ordinary owner writer'
     foreach ($file in $preserved) { Assert-Envelope ((Get-EnvelopeFileSha256 $file.path) -ceq $file.sha256) 'retirement rewrote preserved admission or recovery evidence' }
+    $retiredPublicBefore=Get-EnvelopeWorkspaceByteInventorySha256 $workspace
+    $retiredPublic = Invoke-RecoveredContinuationPublicValidation -WorkspaceRoot $workspace -ScriptsRoot $ScriptsRoot
+    Assert-Envelope ($retiredPublic.exit_code-eq0-and$retiredPublicBefore-ceq(Get-EnvelopeWorkspaceByteInventorySha256 $workspace)) "public current-work validation rejected or mutated the recovered retirement before a later accepted boundary:`n$($retiredPublic.output)"
+    $publicDamageWorkspace=Join-Path $TestRoot 'retired-public-completion-damage';Copy-Item -LiteralPath $workspace -Destination $publicDamageWorkspace -Recurse
+    [IO.File]::AppendAllText((Join-Path $publicDamageWorkspace 'receipts/transactions/u003-admission-admitted-transition.completion.json'), ' ')
+    $publicDamageBefore=Get-EnvelopeWorkspaceByteInventorySha256 $publicDamageWorkspace
+    $publicDamage=Invoke-RecoveredContinuationPublicValidation -WorkspaceRoot $publicDamageWorkspace -ScriptsRoot $ScriptsRoot
+    Assert-Envelope ($publicDamage.exit_code-ne0-and$publicDamage.output-clike'*Admission recovery malformed completion bytes differ from their recovery binding.*'-and$publicDamageBefore-ceq(Get-EnvelopeWorkspaceByteInventorySha256 $publicDamageWorkspace)) "public current-work validation did not reject a damaged retained completion at its exact evidence-hash predicate or mutated the workspace:`n$($publicDamage.output)"
     $transitionModule=Import-Module (Join-Path $PSScriptRoot '../lib/MorphospaceTransitionLedger.psm1') -PassThru
     function Add-ContinuationAcceptedBoundary([string]$Root){$acceptedUnit=Copy-Envelope (Read-EnvelopeProtocolJson (Join-Path $Root 'iteration-units/u001.json'));$acceptedUnit.unit_id='u004';$acceptedUnit.status='proposed';$acceptedUnit.prerequisites=@('u001');$acceptedUnit.objective='Establish a later owner-written accepted boundary for continuation testing.';Write-EnvelopeCanonicalJson (Join-Path $Root 'iteration-units/u004.json') $acceptedUnit;$acceptedSequence=@(Get-Content -LiteralPath (Join-Path $Root 'iteration-events.jsonl')|Where-Object{$_}).Count+1;$acceptedEventId=('u004-accepted-{0:d4}'-f$acceptedSequence);$acceptedReceiptRelative='receipts/u004-accepted.json';Write-EnvelopeJson (Join-Path $Root $acceptedReceiptRelative) ([ordered]@{schema='fixture.owner.validation.v1';result='pass'});$acceptedState=Copy-Envelope (Read-EnvelopeProtocolJson (Join-Path $Root 'workspace.state.json'));$acceptedState.last_accepted_receipt=$acceptedReceiptRelative;$acceptedState.last_event_id=$acceptedEventId;$acceptedUnit.status='accepted';$acceptedEvent=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.iteration_event.v1';event_id=$acceptedEventId;sequence=$acceptedSequence;timestamp='2026-08-25T00:02:02.5000000Z';project_id=[string]$acceptedState.project_id;unit_id='u004';event_type='state-transition';summary='Accepted later continuation checkpoint.';receipts=@($acceptedReceiptRelative)};&$transitionModule {param($root,$targetState,$targetUnit,$event,$transaction)Start-MorphospaceTransitionLedger -WorkspaceRoot $root -TransactionId $transaction -StatePath 'workspace.state.json' -UnitPath 'iteration-units/u004.json' -EventsPath 'iteration-events.jsonl' -TargetState $targetState -TargetUnit $targetUnit -Event $event} $Root $acceptedState $acceptedUnit $acceptedEvent "$acceptedEventId-transition"|Out-Null}
     $resurrectionWorkspace=Join-Path $TestRoot 'retired-proposal-resurrection-before-boundary';Copy-Item -LiteralPath $workspace -Destination $resurrectionWorkspace -Recurse;$resurrectionUnit=Read-EnvelopeProtocolJson (Join-Path $resurrectionWorkspace 'iteration-units/u003.json');$resurrectionState=Copy-Envelope (Read-EnvelopeProtocolJson (Join-Path $resurrectionWorkspace 'workspace.state.json'));$resurrectionSequence=@(Get-Content -LiteralPath (Join-Path $resurrectionWorkspace 'iteration-events.jsonl')|Where-Object{$_}).Count+1;$resurrectionEventId=('u003-ready-{0:d4}'-f$resurrectionSequence);$resurrectionState.last_event_id=$resurrectionEventId;$resurrectionEvent=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.iteration_event.v1';event_id=$resurrectionEventId;sequence=$resurrectionSequence;timestamp='2026-08-25T00:02:02.2500000Z';project_id=[string]$resurrectionState.project_id;unit_id='u003';event_type='state-transition';summary='Damaged resurrection row retained before a later accepted boundary.';receipts=@()};&$transitionModule {param($root,$targetState,$targetUnit,$event,$transaction)Start-MorphospaceTransitionLedger -WorkspaceRoot $root -TransactionId $transaction -StatePath 'workspace.state.json' -UnitPath 'iteration-units/u003.json' -EventsPath 'iteration-events.jsonl' -TargetState $targetState -TargetUnit $targetUnit -Event $event} $resurrectionWorkspace $resurrectionState $resurrectionUnit $resurrectionEvent "$resurrectionEventId-transition"|Out-Null;Add-ContinuationAcceptedBoundary $resurrectionWorkspace
@@ -122,6 +147,9 @@ function Test-RecoveredProposalRetirement {
     Assert-Envelope ($prepared.executed-and@((Read-EnvelopeProtocolJson (Join-Path $workspace 'project.spec.json')).repositories|Where-Object{[string]$_.repo_id-ceq'project-shell'}|ForEach-Object{$_.allowed_paths}|Where-Object{$_-in@('model/','peer/','runtime-host/')}).Count-eq3) 'ordinary preparation did not add the exact owner-declared repository roots'
     $continuedHistory=Get-MorphospaceCurrentWorkHistory -WorkspaceRoot $workspace
     Assert-Envelope ($continuedHistory.historically_retired_proposed_ids.Contains('u003')-and[string](Read-EnvelopeProtocolJson (Join-Path $workspace 'workspace.state.json')).last_event_id-ceq'u005-envelope-prepared') 'current-work reader did not authenticate ordinary preparation after recovered retirement'
+    $preparedPublicBefore=Get-EnvelopeWorkspaceByteInventorySha256 $workspace
+    $preparedPublic = Invoke-RecoveredContinuationPublicValidation -WorkspaceRoot $workspace -ScriptsRoot $ScriptsRoot
+    Assert-Envelope ($preparedPublic.exit_code-eq0-and$preparedPublicBefore-ceq(Get-EnvelopeWorkspaceByteInventorySha256 $workspace)) "public current-work validation rejected or mutated ordinary preparation after recovered retirement:`n$($preparedPublic.output)"
 
     $damageWorkspace=Join-Path $TestRoot 'prepared-root-rewrite-damage';Copy-Item -LiteralPath $workspace -Destination $damageWorkspace -Recurse
     $damageReceiptPath=Join-Path $damageWorkspace 'receipts/u005-envelope.json';$damageReceipt=Read-EnvelopeProtocolJson $damageReceiptPath;$damageRepo=@($damageReceipt.envelope.project.repositories|Where-Object{[string]$_.repo_id-ceq'project-shell'})[0];$damageRepo.allowed_paths=@($damageRepo.allowed_paths|Where-Object{$_-cne'morphospace/'})+@('rewritten/');$damageOwner=@($damageReceipt.envelope.owner_repositories|Where-Object{[string]$_.repo_id-ceq'project-shell'})[0];$damageOwner.source_roots=@($damageRepo.allowed_paths);$damageReceipt.project_sha256=Get-EnvelopeCanonicalJsonSha256 $damageReceipt.envelope.project

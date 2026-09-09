@@ -77,6 +77,7 @@
   ],
   "work_modes": ["feature", "validation-only"],
   "workflow_stability": {
+    "planning_targets_are_advisory": true,
     "feature_units_before_protocol_change": 3,
     "target_feature_work_percent": 70,
     "validation_only_instruction_action": "review-no-change",
