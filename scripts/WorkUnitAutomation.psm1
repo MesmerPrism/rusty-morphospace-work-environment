@@ -1895,15 +1895,37 @@ function Get-MorphospaceProposedRetirementBinding {
     $eventsPath = Join-Path $WorkspaceRoot 'iteration-events.jsonl'
     $ledger = Get-MorphospaceAutomationEventLedgerSnapshot -EventsPath $eventsPath -Events $Events
     $admissionEvent = $Events[-1]
+    $recoveredAdmission = $null
+    $admissionStateSha256 = $ExpectedStateSha256
+    if ([string]$admissionEvent.event_id -cmatch '^admission-completion-timestamp-recovered-[0-9]{4,}$') {
+        # The existing recovery owner authenticates the only permitted intervening
+        # event, including the malformed original bytes and the live projection.
+        # Retirement preserves those bytes and binds the complete recovered tail.
+        if ($Events.Count -lt 2 -or @($admissionEvent.receipts).Count -ne 1) {
+            throw 'RetireProposed requires exactly one authenticated recovery after admission.'
+        }
+        Import-Module (Join-Path $PSScriptRoot 'AdmissionCompletionTimestampRecovery.psm1')
+        $recoveryPath = Resolve-MorphospaceWorkspacePath $WorkspaceRoot ([string]$admissionEvent.receipts[0]) -RequireLeaf
+        $recoveredAdmission = Test-MorphospaceAdmissionCompletionTimestampRecovery -WorkspaceRoot $WorkspaceRoot -RecoveryPath $recoveryPath -Mode Projection -CorrectionEvent $admissionEvent
+        if ((Get-MorphospaceCanonicalJsonSha256 $recoveredAdmission.target_state) -cne $ExpectedStateSha256 -or
+            (Get-MorphospaceCanonicalJsonSha256 $recoveredAdmission.target_unit) -cne $ExpectedUnitSha256 -or
+            [string]$recoveredAdmission.receipt.unit_id -cne $UnitId -or
+            [int]$recoveredAdmission.receipt.evidence.admission_event.sequence -ne [int]$Events[-2].sequence -or
+            [string]$recoveredAdmission.receipt.evidence.admission_event.event_id -cne [string]$Events[-2].event_id) {
+            throw 'RetireProposed recovered admission does not bind the exact proposed unit and tail.'
+        }
+        $admissionEvent = $Events[-2]
+        $admissionStateSha256 = [string]$recoveredAdmission.original_intent.document.target.state.sha256
+    }
     $admissionMatch = [regex]::Match([string]$admissionEvent.event_id, '^(?<admission>[a-z0-9][a-z0-9-]{1,127})-admitted$')
-    if ([string]$LiveState.last_event_id -cne [string]$admissionEvent.event_id -or
+    if ([string]$LiveState.last_event_id -cne [string]$Events[-1].event_id -or
         [string]$admissionEvent.project_id -cne $ProjectId -or
         [string]$admissionEvent.unit_id -cne $UnitId -or
         [string]$admissionEvent.event_type -cne 'state-transition' -or
         [string]$admissionEvent.summary -cne 'Admitted a bounded proposed development unit; normal Ready, Inspect, and Claim remain required.' -or
         -not $admissionMatch.Success -or
         @($admissionEvent.receipts).Count -ne 1) {
-        throw 'RetireProposed requires the admission event to be the exact current ledger tail.'
+        throw 'RetireProposed requires admission at the current ledger tail or immediately before its authenticated timestamp recovery.'
     }
 
     $admissionId = [string]$admissionMatch.Groups['admission'].Value
@@ -1936,9 +1958,11 @@ function Get-MorphospaceProposedRetirementBinding {
     if (-not [IO.File]::Exists($intentPath) -or -not [IO.File]::Exists($completionPath)) {
         throw 'RetireProposed requires a complete admission intent/completion chain.'
     }
-    $authentication = Complete-MorphospaceTransitionLedger -WorkspaceRoot $WorkspaceRoot -TransactionId $transactionId
-    if ([string]$authentication.status -cne 'already-committed') {
-        throw 'RetireProposed requires an already committed admission transaction.'
+    if ($null -eq $recoveredAdmission) {
+        $authentication = Complete-MorphospaceTransitionLedger -WorkspaceRoot $WorkspaceRoot -TransactionId $transactionId
+        if ([string]$authentication.status -cne 'already-committed') {
+            throw 'RetireProposed requires an already committed admission transaction.'
+        }
     }
     $intent = Read-MorphospaceProtocolJson -Path $intentPath
     $completion = Read-MorphospaceProtocolJson -Path $completionPath
@@ -1951,7 +1975,7 @@ function Get-MorphospaceProposedRetirementBinding {
         [string]$intent.events.path -cne 'iteration-events.jsonl' -or
         [string]$intent.event.event_id -cne [string]$admissionEvent.event_id -or
         [int]$intent.event.sequence -ne [int]$admissionEvent.sequence -or
-        [string]$intent.target.state.sha256 -cne $ExpectedStateSha256 -or
+        [string]$intent.target.state.sha256 -cne $admissionStateSha256 -or
         [string]$intent.target.unit.sha256 -cne $ExpectedUnitSha256 -or
         @($intent.artifacts).Count -ne 1 -or
         [string]$intent.artifacts[0].path -cne $receiptRelative -or
@@ -1959,7 +1983,7 @@ function Get-MorphospaceProposedRetirementBinding {
         [string]$intent.artifacts[0].bytes_base64 -cne $receiptBytesBase64 -or
         [string]$completion.transaction_id -cne $transactionId -or
         [string]$completion.event_id -cne [string]$admissionEvent.event_id -or
-        [string]$completion.state_sha256 -cne $ExpectedStateSha256 -or
+        [string]$completion.state_sha256 -cne $admissionStateSha256 -or
         [string]$completion.unit_sha256 -cne $ExpectedUnitSha256) {
         throw 'RetireProposed admission transaction does not bind the exact live state, unit, event, and receipt bytes.'
     }

@@ -17,6 +17,8 @@ Read the target project's nearest instructions and, for ordinary continuation,
 `<work-environment>/docs/CURRENT_WORK_VALIDATION.md`. Current unit scope,
 authenticated transactions, and explicit prerequisites remain strict; retired
 history is an audit concern unless explicitly selected.
+For changes to continuation or recovery, use that runbook's owner transaction
+predicates and validate the next ordinary lifecycle after the recovery itself.
 
 ## Design rules
 

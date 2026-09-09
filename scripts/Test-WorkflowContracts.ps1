@@ -1394,6 +1394,13 @@ function Test-ProjectBundle {
             Assert-Contract (@('active','validating','accepted') -ccontains [string]$unit.status) "$Context historical unit '$unitId' has a damaged lifecycle identity."
             continue
         }
+        if ($null -ne $currentHistory -and $currentHistory.historically_retired_proposed_ids.Contains($unitId)) {
+            # The reader has authenticated this exact owner retirement. Its old
+            # proposal cannot gain current authority or validation credit.
+            Assert-Contract ([string]$unit.schema -ceq 'rusty.morphospace.workflow.iteration_unit.v1') "$Context retired proposed unit '$unitId' has a damaged schema identity."
+            Assert-Contract ([string]$unit.status -ceq 'superseded') "$Context retired proposed unit '$unitId' has a damaged lifecycle identity."
+            continue
+        }
         $priorFailureAttribution = $script:FailureAttribution
         $historicalDebtEligibleAttribution = New-HistoricalDebtUnitFailureAttribution `
             -Unit $unit -UnitPath $path -State $state -WorkspaceRoot $workspaceRoot -EligibleHistoricalDebt
@@ -2030,7 +2037,7 @@ function Test-ProjectBundle {
         $unitMap[[string]$unit.unit_id] = $unit
     }
     foreach ($unit in $units.ToArray()) {
-        if ($null -ne $currentHistory -and $currentHistory.historical_ids.Contains([string]$unit.unit_id)) { continue }
+        if ($null -ne $currentHistory -and ($currentHistory.historical_ids.Contains([string]$unit.unit_id) -or $currentHistory.historically_retired_proposed_ids.Contains([string]$unit.unit_id))) { continue }
         foreach ($prerequisite in @($unit.prerequisites)) {
             Assert-Contract ($unitMap.ContainsKey([string]$prerequisite)) "$Context unit '$($unit.unit_id)' references missing prerequisite '$prerequisite'."
         }

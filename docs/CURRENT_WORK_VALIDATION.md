@@ -25,6 +25,46 @@ credit. An orphaned, ambiguous, resurrected, or unaccepted dependency cannot be
 hidden by calling it history. A workspace without an authenticated acceptance
 gets no historical exemption.
 
+One exact owner-Git accepted checkpoint predates the ledger `expected` and
+`artifacts` bindings. The current-work reader recognizes only that finite
+checkpoint tuple, bound by an opaque pinned consumer commit and a closed digest
+over its intent, completion, event-ledger prefix, unit, and validation receipt.
+It also requires the exact pinned producer commit and source blobs,
+producer-pinned state and unit schemas, strict producer-schema validation, the
+complete record hash chain, identical tuple blobs at the pinned consumer commit,
+and byte-identical live owner-Git copies. Producer-era shape or schema identity
+alone grants no compatibility. The old shape remains forbidden for every other
+checkpoint and every current suffix transition. This classification neither
+reconstructs missing evidence nor upgrades the checkpoint to current validation
+policy.
+
+An explicit prerequisite may continue to name that same finite checkpoint
+after a later ordinary acceptance moves the current boundary forward. The
+reader reuses the closed checkpoint proof only when its terminal event is at or
+before the authenticated current boundary. This preserves an already accepted
+dependency; it does not authorize another old-shape record, reinterpret a
+suffix transition, or grant fresh validation credit.
+
+Current suffix authentication also follows two existing owner-produced
+transaction identities that are not derived directly from their event ids. A
+development-envelope repreparation resolves only through its exact ordered
+repreparation and preparation receipt references, then authenticates the
+producer transaction, ledger predecessor, projections, artifacts, preserved
+evidence, and completion. An admission-completion timestamp recovery resolves
+only through its exact canonical recovery receipt. It authenticates the
+original admission, malformed completion, preparation and repreparation chain,
+raw evidence, derived correction row, recovery transaction, and subsequent live
+state derivation. The malformed completion remains byte-exact historical
+evidence.
+
+An exact owner-produced proposed-unit retirement is reported separately as
+`retired-proposed`, whether it follows the current accepted boundary or a later
+accepted checkpoint has sealed it into that boundary's prefix. It may allow a later idle
+preparation to exclude that superseded proposal from current ownership. It does
+not make the proposal accepted, add it to accepted history, satisfy a
+prerequisite, or grant validation credit; resurrection and live-state checks
+remain strict.
+
 A preserved predecessor can retain an obsolete source-scope contradiction
 after a supported handoff. After an exact owner-produced `SupersedeActive` replaces an
 immutable active unit, the old unit's declaration of the same

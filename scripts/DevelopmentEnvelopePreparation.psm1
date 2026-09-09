@@ -3,7 +3,7 @@ $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1')
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1')
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceHistoricalSupersessionCompatibility.psm1')
-Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceCurrentWorkHistory.psm1')
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceDevelopmentEnvelopeSemantics.psm1')
 
 function Get-PreparationHash { param([object]$Value) Get-MorphospaceCanonicalJsonSha256 $Value }
 function Get-PreparationFileHash { param([string]$Path) Get-MorphospaceFileSha256 $Path }
@@ -86,6 +86,7 @@ function Assert-PreparationHistoricalSupersessionAudit {
 }
 function Assert-PreparationHistoricalSupersessionClosure {
     param([string]$Workspace)
+    if($null-eq(Get-Command Get-MorphospaceCurrentWorkHistory -ErrorAction SilentlyContinue)){Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceCurrentWorkHistory.psm1')}
     $history = Get-MorphospaceCurrentWorkHistory -WorkspaceRoot $Workspace -RequireIdle
     if (-not $history.authenticated) {
         # Existing bootstrap workspaces have no exemption from ordinary rules.
@@ -93,7 +94,9 @@ function Assert-PreparationHistoricalSupersessionClosure {
         return
     }
     foreach ($id in $history.units.Keys) {
-        if ([string]$history.units[$id].status -cne 'accepted' -and -not $history.retired_ids.Contains($id)) {
+        if ([string]$history.units[$id].status -cne 'accepted' -and
+            -not $history.retired_ids.Contains($id) -and
+            -not $history.historically_retired_proposed_ids.Contains($id)) {
             throw "Preparation rejects nonhistorical unit '$id' outside idle accepted authority."
         }
     }
@@ -114,25 +117,11 @@ function Get-PreparationLockFingerprint {
 }
 function Get-PreparationModuleRegistry {
     param([object]$Project,[object]$FeatureLock)
-    [pscustomobject][ordered]@{
-        lock_revision=[int]$FeatureLock.revision
-        lock_fingerprint=[string]$FeatureLock.lock_fingerprint
-        modules=@($Project.modules|Where-Object{$_.selected-eq$true}|Sort-Object module_id|ForEach-Object{
-            [pscustomobject][ordered]@{
-                module_id=[string]$_.module_id
-                owner_repo=[string]$_.source_repo
-                maturity=[string]$_.maturity
-                contract=[string]$_.contract
-                contract_revision=[string]$_.contract_revision
-            }
-        })
-    }
+    Get-MorphospaceDevelopmentEnvelopeModuleRegistry $Project $FeatureLock
 }
 function Assert-PreparationLockAndRegistry {
     param([object]$Project,[object]$FeatureLock,[object]$State,[string]$Context)
-    if(-not(Test-MorphospaceFeatureLockFingerprint $FeatureLock)){throw "Preparation $Context feature-lock fingerprint is stale or damaged."}
-    $expectedRegistry=Get-PreparationModuleRegistry $Project $FeatureLock
-    if((Get-PreparationHash $State.module_registry)-cne(Get-PreparationHash $expectedRegistry)){throw "Preparation $Context workspace module registry does not match the feature lock and selected modules."}
+    Assert-MorphospaceDevelopmentEnvelopeLockAndRegistry $Project $FeatureLock $State $Context
 }
 function New-PreparationAutomationReceipt {
     param([object]$Preparation,[string]$Timestamp,[bool]$Executed,[string]$Transition,[string]$ReceiptPath,[string]$InputHash,[object]$State,[string]$EventId)
@@ -145,74 +134,19 @@ function Assert-PreparationSchema {
 }
 function Assert-PreparationRoots {
     param([object[]]$Rows,[object]$Project,[hashtable]$Map)
-    $projectById=@{};foreach($repo in @($Project.repositories)){$projectById[[string]$repo.repo_id]=$repo}
-    $seen=@{};foreach($row in @($Rows)){
-        $id=[string]$row.repo_id;if(-not$projectById.ContainsKey($id)-or-not$Map.ContainsKey($id)){throw "Preparation repository '$id' is absent from project or repository map."}
-        $roots=@($row.source_roots|ForEach-Object{([string]$_).Replace('\\','/')});if($roots.Count-ne@($roots|Sort-Object -Unique -CaseSensitive).Count){throw "Preparation repeats a source root for '$id'."}
-        foreach($sourceRoot in $roots){$canonical=ConvertTo-MorphospaceProtocolRelativePath $sourceRoot.TrimEnd('/');$canonical=if($sourceRoot.EndsWith('/')){"$canonical/"}else{$canonical};if($canonical-cne$sourceRoot){throw "Preparation source root '$id/$sourceRoot' is not canonical."};foreach($other in @($seen[$id]|Where-Object{$null-ne$_})){if($canonical-eq$other-or$canonical.StartsWith($other.TrimEnd('/')+'/',[StringComparison]::OrdinalIgnoreCase)-or$other.StartsWith($canonical.TrimEnd('/')+'/',[StringComparison]::OrdinalIgnoreCase)){throw "Preparation source roots overlap for '$id'."}};$seen[$id]=@($seen[$id]|Where-Object{$null-ne$_})+$canonical
-            $allowed=@($projectById[$id].allowed_paths|Where-Object{$canonical-eq$_-or$canonical.StartsWith(([string]$_).TrimEnd('/')+'/',[StringComparison]::OrdinalIgnoreCase)});if($allowed.Count-eq0){throw "Preparation root '$id/$canonical' exceeds project authority."}
-        }
-    }
+    Assert-MorphospaceDevelopmentEnvelopeOwnerRoots $Rows $Project $Map
 }
 function Assert-PreparationAdditiveProject {
-    param([object]$Current,[object]$Target,[bool]$AllowSchemaPinAdvance)
-    if([string]$Current.project_id-cne[string]$Target.project_id-or[int]$Target.revision-ne([int]$Current.revision+1)){throw 'Preparation project identity or single revision advance is invalid.'}
-    foreach($property in @('selected_features','denied_features','selected_modules','denied_modules','allowed_permissions','denied_permissions','data_classes')){
-        foreach($value in @($Current.composition.$property)){if(@($Target.composition.$property)-cnotcontains$value){throw "Preparation removes current composition value '$property/$value'."}}
-    }
-    $currentRepos=@{};foreach($repo in @($Current.repositories)){$currentRepos[[string]$repo.repo_id]=$repo};$targetRepos=@{};foreach($repo in @($Target.repositories)){$targetRepos[[string]$repo.repo_id]=$repo}
-    foreach($id in $currentRepos.Keys){if(-not$targetRepos.ContainsKey($id)-or(Get-PreparationHash $currentRepos[$id])-cne(Get-PreparationHash $targetRepos[$id])){throw "Preparation removes or rewrites repository '$id'."}}
-    $currentProfiles=@{};foreach($profile in @($Current.validation_profiles)){$id=[string]$profile.profile_id;if($currentProfiles.ContainsKey($id)){throw "Preparation current project repeats validation profile '$id'."};$currentProfiles[$id]=$profile}
-    $targetProfiles=@{};foreach($profile in @($Target.validation_profiles)){$id=[string]$profile.profile_id;if($targetProfiles.ContainsKey($id)){throw "Preparation target project repeats validation profile '$id'."};$targetProfiles[$id]=$profile}
-    foreach($id in $currentProfiles.Keys){if(-not$targetProfiles.ContainsKey($id)-or(Get-PreparationHash $currentProfiles[$id])-cne(Get-PreparationHash $targetProfiles[$id])){throw "Preparation removes or rewrites validation profile '$id'."}}
-    $mutable=@('revision','composition','repositories','validation_profiles');if($AllowSchemaPinAdvance){$mutable+=,'$schema'}
-    foreach($property in @($Current.psobject.Properties.Name)){if($property -notin $mutable -and (Get-PreparationHash $Current.$property)-cne(Get-PreparationHash $Target.$property)){throw "Preparation rewrites non-envelope project property '$property'."}}
+    param([object]$Current,[object]$Target,[bool]$AllowSchemaPinAdvance,[AllowNull()][object[]]$OwnerRepositories=$null)
+    Assert-MorphospaceDevelopmentEnvelopeAdditiveProject $Current $Target $AllowSchemaPinAdvance $OwnerRepositories
 }
 function Get-PreparationTargetState {
     param([object]$Preparation,[object]$Project,[object]$FeatureLock,[object]$State)
-    $targetState=Copy-PreparationValue $State
-    $pinProperty=$Preparation.envelope.psobject.Properties['schema_pin_revision']
-    if($null-eq$pinProperty){
-        if((Get-PreparationHash $Project.'$schema')-cne(Get-PreparationHash $Preparation.envelope.project.'$schema')-or(Get-PreparationHash $FeatureLock.'$schema')-cne(Get-PreparationHash $Preparation.envelope.feature_lock.'$schema')){throw 'Preparation schema pins may change only through schema_pin_revision.'}
-    }else{
-        $targetRevision=[string]$pinProperty.Value
-        $projectRevision=Get-PreparationPinnedRevision ([string]$Project.'$schema') 'project-spec-v2.schema.json' 'current project'
-        $lockRevision=Get-PreparationPinnedRevision ([string]$FeatureLock.'$schema') 'feature-lock-v2.schema.json' 'current feature-lock'
-        $stateRevision=Get-PreparationPinnedRevision ([string]$State.'$schema') 'workspace-state-v2.schema.json' 'current workspace-state'
-        if($projectRevision-cne$lockRevision-or$projectRevision-cne$stateRevision){throw 'Preparation current schema pins do not share one exact Work Environment revision.'}
-        if($targetRevision-ceq$projectRevision){throw 'Preparation schema pin target must differ from the current Work Environment revision.'}
-        if([string]$Preparation.envelope.project.'$schema'-cne(Get-PreparationSchemaPin $targetRevision 'project-spec-v2.schema.json')-or[string]$Preparation.envelope.feature_lock.'$schema'-cne(Get-PreparationSchemaPin $targetRevision 'feature-lock-v2.schema.json')){throw 'Preparation target project and feature-lock schema pins do not match schema_pin_revision.'}
-        $targetState.'$schema'=Get-PreparationSchemaPin $targetRevision 'workspace-state-v2.schema.json'
-    }
-    if((Get-PreparationHash $FeatureLock)-cne(Get-PreparationHash $Preparation.envelope.feature_lock)){
-        $targetState.module_registry=Get-PreparationModuleRegistry $Preparation.envelope.project $Preparation.envelope.feature_lock
-    }
-    $targetState
+    Get-MorphospaceDevelopmentEnvelopeTargetState $Preparation $Project $FeatureLock $State
 }
 function Assert-PreparationEnvelope {
     param([object]$Preparation,[object]$Project,[object]$FeatureLock)
-    $targetProject=$Preparation.envelope.project;$targetLock=$Preparation.envelope.feature_lock
-    if([string]$targetProject.project_id-cne[string]$Preparation.project_id-or[string]$targetLock.project_id-cne[string]$Preparation.project_id){throw 'Preparation envelope project identities are not exact.'}
-    if([int]$targetLock.project_revision-ne[int]$targetProject.revision){throw 'Preparation feature-lock project revision differs from the target project revision.'}
-    if([int]$targetLock.revision-ne([int]$FeatureLock.revision+1)){throw 'Preparation feature lock must advance exactly one revision.'}
-    $old=@{};foreach($f in @($FeatureLock.features)){$id=[string]$f.feature_id;if($old.ContainsKey($id)){throw "Preparation current feature lock repeats '$id'."};$old[$id]=$f};$new=@{};foreach($f in @($targetLock.features)){$id=[string]$f.feature_id;if($new.ContainsKey($id)){throw "Preparation target feature lock repeats '$id'."};$new[$id]=$f}
-    foreach($id in $old.Keys){if(-not$new.ContainsKey($id)){throw "Preparation removes existing feature '$id'."};if((Get-PreparationHash $old[$id])-cne(Get-PreparationHash $new[$id])){throw "Preparation rewrites existing feature '$id'."}}
-    $added=@($new.Keys|Where-Object{-not$old.ContainsKey($_)}|Sort-Object);foreach($id in $added){$feature=$new[$id];if([string]$feature.run_activation_default-cne'disabled'-or$feature.selected-ne$true){throw "Preparation feature '$id' must be selected and default disabled."};if([string]$feature.activation.rule-cne'selected-lock-and-runtime-input'-or@($feature.activation.runtime_inputs).Count-eq0){throw "Preparation feature '$id' requires selected lock and runtime input."}}
-    $oldLockSelected=@($FeatureLock.selected_features|Sort-Object -Unique);$newLockSelected=@($targetLock.selected_features|Sort-Object -Unique);foreach($id in $oldLockSelected){if($newLockSelected-cnotcontains$id){throw "Preparation removes selected feature '$id'."}}
-    $oldProjectSelected=@($Project.composition.selected_features|Sort-Object -Unique);$newProjectSelected=@($targetProject.composition.selected_features|Sort-Object -Unique);$addedLockSelected=@($newLockSelected|Where-Object{$oldLockSelected-cnotcontains$_}|Sort-Object);$addedProjectSelected=@($newProjectSelected|Where-Object{$oldProjectSelected-cnotcontains$_}|Sort-Object)
-    if((Get-PreparationHash $added)-cne(Get-PreparationHash $addedLockSelected)-or(Get-PreparationHash $added)-cne(Get-PreparationHash $addedProjectSelected)){throw 'Preparation added feature bindings differ between project composition and feature lock.'}
-    foreach($id in @($FeatureLock.denied_features)){if(@($targetLock.denied_features)-cnotcontains$id){throw "Preparation removes denied feature '$id'."}}
-    $declaredPermissions=@($Preparation.envelope.allowed_permission_categories|Sort-Object -Unique);if($declaredPermissions-ccontains'none'){if($declaredPermissions.Count-ne1){throw "Preparation permission ceiling 'none' must be the only declared value."};$declaredPermissions=@()}
-    $permissionUnion=@($targetLock.effect_union.permissions|Sort-Object -Unique);$projectPermissions=@($targetProject.composition.allowed_permissions|Sort-Object -Unique);if((Get-PreparationHash $permissionUnion)-cne(Get-PreparationHash $declaredPermissions)-or(Get-PreparationHash $projectPermissions)-cne(Get-PreparationHash $declaredPermissions)){throw 'Preparation project, feature-lock, and declared permission ceilings differ.'}
-    foreach($permission in @($targetProject.composition.denied_permissions)){if($permissionUnion-ccontains$permission){throw "Preparation permits denied permission '$permission'."}}
-    if(@($Preparation.envelope.allowed_change_categories).Count-eq0-or@($Preparation.envelope.allowed_effect_categories).Count-eq0){throw 'Preparation requires closed change and effect ceilings.'}
-    if([string]$targetLock.lock_fingerprint-cne(Get-PreparationLockFingerprint $targetLock)){throw 'Preparation target feature-lock fingerprint is stale or damaged.'}
-    $registeredProfiles=@($targetProject.validation_profiles|ForEach-Object{[string]$_.profile_id})
-    $declaredProfiles=@($Preparation.envelope.build_envelope.allowed_profiles|ForEach-Object{[string]$_}|Sort-Object -Unique)
-    foreach($profile in $declaredProfiles){
-        if($registeredProfiles-cnotcontains[string]$profile){throw "Preparation build profile '$profile' is not registered in the target project validation profiles."}
-    }
-    $currentProfiles=@($Project.validation_profiles|ForEach-Object{[string]$_.profile_id});foreach($profile in @($registeredProfiles|Where-Object{$currentProfiles-cnotcontains$_})){if($declaredProfiles-cnotcontains$profile){throw "Preparation adds validation profile '$profile' outside the declared build profile ceiling."}}
+    Assert-MorphospaceDevelopmentEnvelope $Preparation $Project $FeatureLock
 }
 function Complete-MorphospaceDevelopmentEnvelopePreparation {
     param([string]$Workspace,[string]$RepoRoot,[string]$IntentRelative,[string]$CompletionRelative,[switch]$CheckOnly,[ValidateSet('none','after-artifacts','after-project','after-lock','after-state','after-event')][string]$FaultAfter='none')
@@ -262,7 +196,7 @@ function Invoke-MorphospacePrepareDevelopmentEnvelope {
  if(-not(Test-Json -Json ($p.envelope.project|ConvertTo-Json -Depth 64) -SchemaFile (Join-Path $repoRoot 'schemas\project-spec-v2.schema.json'))){throw 'Preparation target project does not satisfy the owner schema.'};if(-not(Test-Json -Json ($p.envelope.feature_lock|ConvertTo-Json -Depth 64) -SchemaFile (Join-Path $repoRoot 'schemas\feature-lock-v2.schema.json'))){throw 'Preparation target feature lock does not satisfy the owner schema.'}
  $targetState=Get-PreparationTargetState $p $project $lock $state
  if(-not(Test-Json -Json ($targetState|ConvertTo-Json -Depth 64) -SchemaFile (Join-Path $repoRoot 'schemas\workspace-state-v2.schema.json'))){throw 'Preparation target workspace state does not satisfy the owner schema.'}
- Assert-PreparationAdditiveProject $project $p.envelope.project ($null-ne$p.envelope.psobject.Properties['schema_pin_revision']);Assert-PreparationRoots @($p.envelope.owner_repositories) $p.envelope.project $map;Assert-PreparationEnvelope $p $project $lock;Assert-PreparationLockAndRegistry $p.envelope.project $p.envelope.feature_lock $targetState 'target'
+ Assert-PreparationAdditiveProject $project $p.envelope.project ($null-ne$p.envelope.psobject.Properties['schema_pin_revision']) @($p.envelope.owner_repositories);Assert-PreparationRoots @($p.envelope.owner_repositories) $p.envelope.project $map;Assert-PreparationEnvelope $p $project $lock;Assert-PreparationLockAndRegistry $p.envelope.project $p.envelope.feature_lock $targetState 'target'
  $ownerIds=@($p.envelope.owner_repositories|ForEach-Object{[string]$_.repo_id}|Sort-Object -Unique);$sourceIds=@($p.envelope.source_composition.repository_ids|Sort-Object -Unique);$mapIds=@($map.Keys|Sort-Object -Unique);if($ownerIds.Count-ne$sourceIds.Count-or$ownerIds.Count-ne$mapIds.Count-or(@($ownerIds|Where-Object{$sourceIds-cnotcontains$_-or$mapIds-cnotcontains$_}).Count-ne0)){throw 'Preparation owner repositories, repository map, and source-lock repository sets must agree exactly.'}
  $targetProjectIds=@($p.envelope.project.repositories|ForEach-Object{[string]$_.repo_id}|Sort-Object -Unique);if($targetProjectIds.Count-ne$mapIds.Count-or@($targetProjectIds|Where-Object{$mapIds-cnotcontains$_}).Count-ne0){throw 'Preparation target project repositories must exactly match the validated repository map.'}
  $source=Get-PreparationSourceComposition $p $map;if(-not(Test-Json -Json ($source|ConvertTo-Json -Depth 32) -SchemaFile (Join-Path $repoRoot 'schemas\development-envelope-source-composition-v1.schema.json'))){throw 'Preparation generated source lock does not satisfy its closed schema.'};Assert-PreparationSchema $repoRoot ([string]$input) 'development-envelope-preparation-v1.schema.json' 'Preparation input changed during observation.'

@@ -8,6 +8,12 @@ workflow host. Windows PowerShell 5.1 may run the bootstrap host check, but it
 is not an execution environment for validation, automation, builds, or release
 tooling. PowerShell 7 installs side by side with 5.1 on Windows.
 
+Continue an adopted project through [Current Work Validation](docs/CURRENT_WORK_VALIDATION.md).
+For a fresh unit in an idle project, use [Development Envelope Preparation](docs/DEVELOPMENT_ENVELOPE_PREPARATION.md)
+followed by [Development Unit Admission](docs/DEVELOPMENT_UNIT_ADMISSION.md).
+These routes preserve accepted evidence and authenticate retained retirements
+while preparing only the new unit's bounded owner scope.
+
 Current work-environment protocol release: `0.6.0` (2026-07-23). It adds
 hash-bound adoption of immutable terminal work, exact planned and unplanned
 publication accounting, protected-branch source resolution, and bounded

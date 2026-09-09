@@ -26,6 +26,12 @@ new proof versions or instruction policy onto retired units. An unchanged
 adopted consumer uses `-CurrentWorkOnly -SkipOwnerSelfTests`. Historical audits
 and owner self-tests are separate choices.
 
+Fresh idle-project work uses `docs/DEVELOPMENT_ENVELOPE_PREPARATION.md`, then
+`docs/DEVELOPMENT_UNIT_ADMISSION.md`. Those owner contracts cover exact additive
+source roots, retained proposal retirement, and subsequent ordinary admission.
+The current-work reader keeps authenticated retired proposals separate from
+accepted prerequisites as later acceptances advance the checkpoint.
+
 ## Composition and source identity
 
 Resolve owner-issued descriptors into an exact fingerprinted lock. Descriptor
