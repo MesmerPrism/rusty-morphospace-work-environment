@@ -195,6 +195,17 @@ unrelated suite expansion. The existing per-check dependency closure still binds
 all imported code and consumed data; splitting a trigger does not remove an
 actual input from reusable evidence.
 
+Selection and reuse have different limits. The continuation's generic automation
+route reaches authority-artifact lists that the static scanner conservatively
+treats as script dependencies, including owner tests skipped at runtime. Its
+dependency manifest can therefore retain the all-script fallback even though
+its trigger and execution are separate. This does not expand its trigger sets,
+but can invalidate reuse after an unrelated script edit. Keep that fallback
+until a reviewed scanner or call-boundary change proves narrower inputs; do not
+hide internal dispatch with an external-command declaration or alternate API.
+Preparation's two opaque module-context calls have exact importer, count and
+target declarations, so that check no longer needs the all-script fallback.
+
 The continuation leaf owns the sequence whose steps depend on each other:
 writer-produced admission, timestamp recovery, proposal retirement and fresh
 preparation. A direct rerun reconstructs its required seed without replaying

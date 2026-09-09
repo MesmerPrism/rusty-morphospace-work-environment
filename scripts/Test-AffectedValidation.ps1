@@ -3647,8 +3647,8 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
         [pscustomobject]@{ path='scripts/Test-HistoricalValidationDebtPhaseRunner.ps1'; checks=@('historical-validation-debt-phase-runner') },
         [pscustomobject]@{ path='scripts/Test-OwnershipAuthority.ps1'; checks=@('ownership-authority') },
         [pscustomobject]@{ path='scripts/Test-TransitionLedger.ps1'; checks=@('transition-ledger') },
-        [pscustomobject]@{ path='schemas/development-unit-admission-v1.schema.json'; checks=@('development-unit-admission','recovered-proposal-continuation','workflow-contracts','work-unit-automation','public-boundary'); exact_checks=$true },
-        [pscustomobject]@{ path='scripts/DevelopmentUnitAdmission.psm1'; checks=@('development-unit-admission','recovered-proposal-continuation','workflow-contracts','work-unit-automation','public-boundary'); exact_checks=$true },
+        [pscustomobject]@{ path='schemas/development-unit-admission-v1.schema.json'; checks=@('development-unit-admission','recovered-proposal-continuation') + $workflowConsumerFixtureChecks; exact_checks=$true },
+        [pscustomobject]@{ path='scripts/DevelopmentUnitAdmission.psm1'; checks=@('development-unit-admission','recovered-proposal-continuation') + $workflowConsumerFixtureChecks; exact_checks=$true },
         [pscustomobject]@{ path='scripts/Test-DevelopmentUnitAdmission.ps1'; checks=@('development-unit-admission','public-boundary'); exact_checks=$true },
         [pscustomobject]@{ path='scripts/Test-AdmissionCompletionTimestampRecovery.ps1'; checks=@('admission-completion-timestamp-recovery','public-boundary'); exact_checks=$true },
         [pscustomobject]@{ path='scripts/Test-RecoveredProposalContinuation.ps1'; checks=@('recovered-proposal-continuation','public-boundary'); exact_checks=$true },
@@ -3699,7 +3699,7 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
         foreach ($reasonCode in @('ambiguous-path-mapping','unmapped-path','trust-root-path-changed')) { Assert-True (@($mappingPlan.reason_codes) -cnotcontains $reasonCode) "Proportional mapping for '$($mapping.path)' retained '$reasonCode'." }
         Assert-True (@($mappingPlan.selected_checks.check_id) -cnotcontains 'work-environment-deep') "Proportional mapping for '$($mapping.path)' selected the cumulative Deep aggregate."
         foreach ($checkId in @($mapping.checks)) { Assert-True (@($mappingPlan.selected_checks.check_id) -ccontains [string]$checkId) "Proportional mapping for '$($mapping.path)' omitted '$checkId'." }
-        if($null-ne$mapping.PSObject.Properties['exact_checks']-and[bool]$mapping.exact_checks){$actualChecks=@($mappingPlan.selected_checks.check_id|Sort-Object);$expectedChecks=@($mapping.checks|Sort-Object);Assert-True (($actualChecks-join'|')-ceq($expectedChecks-join'|')) "Proportional mapping for '$($mapping.path)' expanded beyond its declared check closure."}
+        if($null-ne$mapping.PSObject.Properties['exact_checks']-and[bool]$mapping.exact_checks){$actualChecks=@($mappingPlan.selected_checks.check_id|Sort-Object);$expectedChecks=@($mapping.checks|Sort-Object);Assert-True (($actualChecks-join'|')-ceq($expectedChecks-join'|')) "Proportional mapping for '$($mapping.path)' expanded beyond its declared check closure: actual=$($actualChecks-join','); expected=$($expectedChecks-join',')."}
         $proportionalMappingHead = $nextMappingHead
     }
     Write-Host "Trust proportional-mapping checks passed in $([long]$trustSegmentClock.Elapsed.TotalMilliseconds)ms."

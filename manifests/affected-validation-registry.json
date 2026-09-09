@@ -10,6 +10,8 @@
     { "importer": "scripts/Test-AffectedValidationReuse.ps1", "variable": "PSCommandPath", "count": 9, "target_paths": ["scripts/Test-AffectedValidationReuse.ps1"] },
     { "importer": "scripts/Test-AuthorityRecordReadiness.ps1", "variable": "processModule", "count": 1, "target_paths": ["scripts/lib/MorphospaceAuthorityProcess.psm1"] },
     { "importer": "scripts/Test-BlockedSuccessorPreparation.ps1", "variable": "module", "count": 5, "target_paths": ["scripts/BlockedSuccessorPreparation.psm1", "scripts/lib/MorphospaceProtocolCommon.psm1", "scripts/lib/MorphospaceTransitionLedger.psm1"] },
+    { "importer": "scripts/Test-DevelopmentEnvelopeHistoricalSupersession.ps1", "variable": "preparationModule", "count": 2, "target_paths": ["scripts/DevelopmentEnvelopePreparation.psm1"] },
+    { "importer": "scripts/Test-DevelopmentEnvelopePreparation.ps1", "variable": "currentWorkHistory", "count": 1, "target_paths": ["scripts/lib/MorphospaceCurrentWorkHistory.psm1"] },
     { "importer": "scripts/Test-SourceOnlyPublication.ps1", "variable": "gitExecutable", "count": 1, "classification": "authenticated-external-command" },
     { "importer": "scripts/Test-TransitionLedger.ps1", "variable": "ModulePath", "count": 2, "target_paths": ["scripts/lib/MorphospaceTransitionLedger.psm1"] },
     { "importer": "scripts/Test-ValidatingCandidateRematerialization.ps1", "variable": "script:RematerializationOwnerModule", "count": 2, "target_paths": ["scripts/ValidatingCandidateRematerialization.psm1"] },
