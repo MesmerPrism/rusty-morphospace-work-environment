@@ -4,7 +4,7 @@ Import-Module (Join-Path $PSScriptRoot 'MorphospaceProtocolCommon.psm1')
 Import-Module (Join-Path $PSScriptRoot 'MorphospaceTransitionLedger.psm1')
 Import-Module (Join-Path $PSScriptRoot 'MorphospaceDevelopmentEnvelopeSemantics.psm1')
 Import-Module (Join-Path $PSScriptRoot 'MorphospaceRepreparationHistory.psm1')
-Import-Module (Join-Path (Split-Path $PSScriptRoot -Parent) 'AdmissionCompletionTimestampRecovery.psm1')
+Import-Module (Join-Path $PSScriptRoot '../AdmissionCompletionTimestampRecovery.psm1')
 
 $script:LegacyProducerCommit = 'f45a7500d0a68b5cea0d910b26010c10ba42705c'
 $script:LegacyStrengtheningCommit = '70a6129633d38913cfc8907c7937b3b18ad9df54'
