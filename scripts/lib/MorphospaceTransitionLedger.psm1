@@ -29,7 +29,12 @@ function Get-MorphospaceLedgerBoundPreUnitRawSha256 {
     catch{throw 'Proposed-unit retirement transition receipt payload is not valid base64.'}
     try{$receipt=ConvertFrom-MorphospaceProtocolJsonBytes -Bytes $receiptBytes -Context 'proposed-unit retirement transition receipt'}
     catch{throw "Proposed-unit retirement transition receipt is invalid: $($_.Exception.Message)"}
-    $receiptSchema=Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'schemas\work-unit-automation-receipt.schema.json'
+    $receiptSchemaName=switch -CaseSensitive ([string]$receipt.schema){
+        'rusty.morphospace.workflow.work_unit_automation_receipt.v1'{'work-unit-automation-receipt.schema.json'}
+        'rusty.morphospace.workflow.proposed_unit_retirement_receipt.v1'{'proposed-unit-retirement-receipt-v1.schema.json'}
+        default{throw "Proposed-unit retirement transition receipt has unsupported schema '$([string]$receipt.schema)'."}
+    }
+    $receiptSchema=Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) "schemas\$receiptSchemaName"
     if(-not(Test-Json -Json ($receipt|ConvertTo-Json -Depth 64 -Compress) -SchemaFile $receiptSchema)){
         throw 'Proposed-unit retirement transition receipt does not satisfy its public schema.'
     }
@@ -47,6 +52,20 @@ function Get-MorphospaceLedgerBoundPreUnitRawSha256 {
        [string]$pre.event_tail_id-cne[string]$Intent.expected.event_tail_id-or
        [string]$pre.unit_raw_sha256-cnotmatch'^[0-9a-f]{64}$'){
         throw 'Proposed-unit retirement transition receipt does not bind its exact authenticated preimage.'
+    }
+    if([string]$receipt.schema-ceq'rusty.morphospace.workflow.proposed_unit_retirement_receipt.v1'){
+        $transaction=$receipt.transaction
+        if([string]$transaction.transaction_id-cne[string]$Intent.transaction_id-or[string]$transaction.state_path-cne[string]$Intent.state.path-or
+           [string]$transaction.unit_path-cne[string]$Intent.unit.path-or[string]$transaction.events_path-cne[string]$Intent.events.path-or
+           [string]$transaction.receipt_path-cne[string]$Intent.artifacts[0].path-or[string]$transaction.event_id-cne$eventId-or
+           [string]$transaction.expected_pre_state_sha256-cne[string]$Intent.pre.state.sha256-or
+           [string]$transaction.expected_pre_unit_sha256-cne[string]$Intent.pre.unit.sha256-or
+           [string]$transaction.expected_pre_unit_raw_sha256-cne[string]$pre.unit_raw_sha256-or
+           [string]$transaction.expected_events_sha256-cne[string]$Intent.expected.events_sha256-or
+           [int64]$transaction.expected_events_length-ne[int64]$Intent.expected.events_length-or
+           [string]$transaction.expected_event_tail_id-cne[string]$Intent.expected.event_tail_id){
+            throw 'Narrow proposed-unit retirement receipt transaction binding is detached.'
+        }
     }
     return [string]$pre.unit_raw_sha256
 }

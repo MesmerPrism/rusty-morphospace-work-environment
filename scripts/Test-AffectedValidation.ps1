@@ -3649,11 +3649,44 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     foreach ($checkId in @('development-envelope-preparation','work-environment-deep')) { Assert-True (@($developmentAdmissionPlan.selected_checks.check_id) -cnotcontains $checkId) "Development-unit admission change incorrectly selected '$checkId'." }
     foreach ($reasonCode in @('ambiguous-path-mapping','unmapped-path')) { Assert-True (@($developmentAdmissionPlan.reason_codes) -cnotcontains $reasonCode) "Development-unit admission change retained '$reasonCode'." }
 
+    # The retirement owner/schema is consumed by the focused owner, admission
+    # composition, and recovered continuation. Its focused test remains a
+    # separate path class, and unrelated validation-authority edits do not
+    # invalidate or select this retirement contract.
+    $proposedRetirementOwnerBase = $developmentAdmissionHead
+    $proposedRetirementSchemaPath = Join-Path $fixture 'schemas/proposed-unit-retirement-receipt-v1.schema.json'
+    Write-Utf8 $proposedRetirementSchemaPath ((Get-Content -LiteralPath $proposedRetirementSchemaPath -Raw).TrimEnd() + "`n `n")
+    Write-Utf8 (Join-Path $fixture 'scripts/ProposedUnitRetirement.psm1') "# proposed retirement owner change`n"
+    [void](Invoke-TestGit $fixture @('add','schemas/proposed-unit-retirement-receipt-v1.schema.json','scripts/ProposedUnitRetirement.psm1'))
+    [void](Invoke-TestGit $fixture @('commit','-m','proposed retirement owner change'))
+    $proposedRetirementOwnerHead = Invoke-TestGit $fixture @('rev-parse','HEAD')
+    $proposedRetirementOwnerPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $proposedRetirementOwnerBase -HeadRevision $proposedRetirementOwnerHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+    foreach($checkId in @('proposed-unit-retirement','development-unit-admission','recovered-proposal-continuation','work-unit-automation','workflow-contracts','public-boundary')){Assert-True (@($proposedRetirementOwnerPlan.selected_checks.check_id)-ccontains$checkId) "Proposed-retirement owner change omitted actual consumer or prerequisite '$checkId'."}
+    foreach($checkId in @('work-environment-deep','validation-authority')){Assert-True (@($proposedRetirementOwnerPlan.selected_checks.check_id)-cnotcontains$checkId) "Proposed-retirement owner change selected unrelated '$checkId'."}
+    Assert-True ($proposedRetirementOwnerPlan.selection_mode-ceq'affected'-and$proposedRetirementOwnerPlan.effective_tier-ceq'standard'-and@($proposedRetirementOwnerPlan.reason_codes|Where-Object{$_-in@('ambiguous-path-mapping','unmapped-path')}).Count-eq0) 'Proposed-retirement owner change did not retain bounded zero-fallback Standard selection.'
+
+    $proposedRetirementTestBase = $proposedRetirementOwnerHead
+    Write-Utf8 (Join-Path $fixture 'scripts/Test-ProposedUnitRetirement.ps1') "# proposed retirement focused test change`n"
+    [void](Invoke-TestGit $fixture @('add','scripts/Test-ProposedUnitRetirement.ps1'));[void](Invoke-TestGit $fixture @('commit','-m','proposed retirement focused test change'))
+    $proposedRetirementTestHead = Invoke-TestGit $fixture @('rev-parse','HEAD')
+    $proposedRetirementTestPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $proposedRetirementTestBase -HeadRevision $proposedRetirementTestHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+    foreach($checkId in @('proposed-unit-retirement','public-boundary')){Assert-True (@($proposedRetirementTestPlan.selected_checks.check_id)-ccontains$checkId) "Proposed-retirement focused test change omitted '$checkId'."}
+    foreach($checkId in @('work-unit-automation','validation-authority','workflow-contracts','work-environment-deep')){Assert-True (@($proposedRetirementTestPlan.selected_checks.check_id)-cnotcontains$checkId) "Proposed-retirement focused test change selected unrelated '$checkId'."}
+    Assert-True ($proposedRetirementTestPlan.selection_mode-ceq'affected'-and@($proposedRetirementTestPlan.reason_codes|Where-Object{$_-in@('ambiguous-path-mapping','unmapped-path')}).Count-eq0) 'Proposed-retirement focused test change did not retain zero-fallback affected selection.'
+
+    $unrelatedRetirementBase = $proposedRetirementTestHead
+    Write-Utf8 (Join-Path $fixture 'scripts/lib/MorphospaceValidationAuthority.psm1') "# unrelated validation authority change`n";Write-Utf8 (Join-Path $fixture 'scripts/Test-ValidationAuthorityLauncher.ps1') "# unrelated validation authority test change`n"
+    [void](Invoke-TestGit $fixture @('add','scripts/lib/MorphospaceValidationAuthority.psm1','scripts/Test-ValidationAuthorityLauncher.ps1'));[void](Invoke-TestGit $fixture @('commit','-m','unrelated validation authority change'))
+    $unrelatedRetirementHead=Invoke-TestGit $fixture @('rev-parse','HEAD');$unrelatedRetirementPlan=Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $unrelatedRetirementBase -HeadRevision $unrelatedRetirementHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+    foreach($checkId in @('validation-authority','public-boundary')){Assert-True (@($unrelatedRetirementPlan.selected_checks.check_id)-ccontains$checkId) "Canonical validation-authority change omitted '$checkId'."}
+    Assert-True (@($unrelatedRetirementPlan.selected_checks.check_id)-cnotcontains'proposed-unit-retirement') 'Unrelated validation-authority change selected the proposed-retirement owner.'
+    Assert-True ($unrelatedRetirementPlan.selection_mode-ceq'affected'-and@($unrelatedRetirementPlan.reason_codes|Where-Object{$_-in@('ambiguous-path-mapping','unmapped-path')}).Count-eq0) 'Canonical validation-authority change did not retain zero-fallback affected selection.'
+
     # The validating-candidate input producer is a non-mutating authority
     # constructor. A producer-only change must retain its exact focused
     # Standard closure, including the declared WorkUnitAutomation consumer of
     # the shared workflow contract, and must never route through cumulative Deep.
-    $rematerializationProducerBase = $developmentAdmissionHead
+    $rematerializationProducerBase = $unrelatedRetirementHead
     Write-Utf8 (Join-Path $fixture 'scripts/New-ValidatingCandidateRematerializationInput.ps1') "# validating-candidate rematerialization input producer change`n"
     [void](Invoke-TestGit $fixture @('add', 'scripts/New-ValidatingCandidateRematerializationInput.ps1'))
     [void](Invoke-TestGit $fixture @('commit', '-m', 'validating candidate input producer change'))

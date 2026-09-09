@@ -54,6 +54,7 @@ function Invoke-RecoveredContinuationPublicValidation {
 function Test-RecoveredProposalRetirement {
     param([string]$AdmittedWorkspace, [string]$TestRoot, [string]$ScriptsRoot)
     Import-Module (Join-Path $PSScriptRoot '../AdmissionCompletionTimestampRecovery.psm1')
+    Import-Module (Join-Path $PSScriptRoot '../ProposedUnitRetirement.psm1')
     $workspace = Join-Path $TestRoot 'recovered-proposal-retirement'
     Copy-Item -LiteralPath $AdmittedWorkspace -Destination $workspace -Recurse
     $requestPath = Join-Path $workspace 'local/u003-admission.json'
@@ -73,14 +74,13 @@ function Test-RecoveredProposalRetirement {
     $recoveryOut = Join-Path $workspace ([string]$recovery.correction_event.receipt_path)
     $null = Invoke-MorphospaceAdmissionCompletionTimestampRecovery -WorkspaceRoot $workspace -Recovery $recoveryInput -ExpectedRecoverySha256 (Get-EnvelopeFileSha256 $recoveryInput) -OutPath $recoveryOut -Execute
     $preserved = @($intentPath,$completionPath,$requestPath,$recoveryOut | ForEach-Object { [pscustomobject]@{path=$_;sha256=(Get-EnvelopeFileSha256 $_)} })
-    $automation = Join-Path $PSScriptRoot '../Invoke-WorkUnitAutomation.ps1'
     $arguments = @{
-        Action='RetireProposed'; WorkspaceRoot=$workspace; UnitId='u003'; ReplacementUnitId='u004'
+        WorkspaceRoot=$workspace; UnitId='u003'; ReplacementUnitId='u004'
         RetirementReason='contract-invalid'; OutPath=(Join-Path $workspace 'receipts/u003-recovered-retirement.json')
         Timestamp='2026-08-25T00:02:02.0000000Z'
     }
     $before = Get-EnvelopeWorkspaceByteInventorySha256 $workspace
-    $dry = & $automation @arguments | ConvertFrom-Json
+    $dry = Invoke-MorphospaceProposedUnitRetirement @arguments
     Assert-Envelope ($before -ceq (Get-EnvelopeWorkspaceByteInventorySha256 $workspace)) 'recovered proposal retirement dry run mutated bytes'
     Assert-Envelope ([string]$dry.proposed_retirement.authenticated_admission.transaction.target_state_sha256 -cne [string]$dry.proposed_retirement.authenticated_preimage.state_sha256) 'recovered retirement lost the distinct original and recovered state bindings'
     foreach ($damage in @('recovery-receipt','original-completion','intervening-event')) {
@@ -102,7 +102,7 @@ function Test-RecoveredProposalRetirement {
         $damagedArguments.OutPath = Join-Path $damagedWorkspace 'receipts/u003-recovered-retirement.json'
         $damageBefore = Get-EnvelopeWorkspaceByteInventorySha256 $damagedWorkspace
         $rejected = $false
-        try { & $automation @damagedArguments | Out-Null } catch { $rejected = $true }
+        try { Invoke-MorphospaceProposedUnitRetirement @damagedArguments | Out-Null } catch { $rejected = $true }
         Assert-Envelope ($rejected -and $damageBefore -ceq (Get-EnvelopeWorkspaceByteInventorySha256 $damagedWorkspace)) "recovered retirement accepted or mutated $damage"
     }
     $pre = $dry.proposed_retirement.authenticated_preimage
@@ -110,7 +110,7 @@ function Test-RecoveredProposalRetirement {
     $arguments.ExpectedUnitRawSha256=$pre.unit_raw_sha256; $arguments.ExpectedEventsSha256=$pre.events_sha256
     $arguments.ExpectedEventsLength=[long]$pre.events_length; $arguments.ExpectedEventTailId=$pre.event_tail_id
     $arguments.ExpectedProposedRetirementBindingSha256=$dry.proposed_retirement.binding_sha256; $arguments.Execute=$true
-    $run = & $automation @arguments | ConvertFrom-Json
+    $run = Invoke-MorphospaceProposedUnitRetirement @arguments
     Assert-Envelope ($run.transition -ceq 'proposed-to-superseded-retired' -and [string](Read-EnvelopeProtocolJson (Join-Path $workspace 'iteration-units/u003.json')).status -ceq 'superseded') 'recovered proposal did not retire through the ordinary owner writer'
     foreach ($file in $preserved) { Assert-Envelope ((Get-EnvelopeFileSha256 $file.path) -ceq $file.sha256) 'retirement rewrote preserved admission or recovery evidence' }
     $retiredPublicBefore=Get-EnvelopeWorkspaceByteInventorySha256 $workspace
@@ -163,6 +163,6 @@ function Test-RecoveredProposalRetirement {
     $ownerDamageIntentPath=Join-Path $ownerDamageWorkspace 'receipts/transactions/u005-envelope-prepared-transition.intent.json';$ownerDamageIntent=Read-EnvelopeProtocolJson $ownerDamageIntentPath;$ownerDamageIntent.artifacts[0].sha256=Get-EnvelopeCanonicalJsonSha256 $ownerDamageReceipt;$ownerDamageIntent.artifacts[0].bytes_base64=[Convert]::ToBase64String($ownerDamageReceiptBytes);Write-EnvelopeCanonicalJson $ownerDamageIntentPath $ownerDamageIntent;$ownerDamageCompletionPath=Join-Path $ownerDamageWorkspace 'receipts/transactions/u005-envelope-prepared-transition.completion.json';$ownerDamageCompletion=Read-EnvelopeProtocolJson $ownerDamageCompletionPath;$ownerDamageCompletion.intent_sha256=Get-EnvelopeFileSha256 $ownerDamageIntentPath;Write-EnvelopeCanonicalJson $ownerDamageCompletionPath $ownerDamageCompletion
     $ownerDamageMessage='';try{Get-MorphospaceCurrentWorkHistory -WorkspaceRoot $ownerDamageWorkspace|Out-Null}catch{$ownerDamageMessage=$_.Exception.Message};Assert-Envelope ($ownerDamageMessage-ceq"Preparation root 'project-shell/outside/' exceeds project authority.") 'current-work reader did not reject the otherwise coherent preparation at the owner-root authority predicate'
     $replayed = $false
-    try { & $automation @arguments | Out-Null } catch { $replayed = $true }
+    try { Invoke-MorphospaceProposedUnitRetirement @arguments | Out-Null } catch { $replayed = $true }
     Assert-Envelope $replayed 'recovered proposal retirement replay was accepted'
 }

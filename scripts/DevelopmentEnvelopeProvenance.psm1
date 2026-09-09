@@ -199,8 +199,10 @@ function Test-MorphospacePreparedEnvelopeReplacementSuffix {
 
  $retirementReceiptRelative=[string]$retirementEvent.receipts[0]
  $retirementReceiptPath=Resolve-MorphospaceWorkspacePath $Workspace $retirementReceiptRelative -RequireLeaf
- Assert-PreparationProvenanceJson $retirementReceiptPath (Join-Path $RepoRoot 'schemas\work-unit-automation-receipt.schema.json') 'Prepared-envelope replacement retirement receipt is invalid.'
- $retirementReceipt=Read-MorphospaceProtocolJson $retirementReceiptPath;$proposedRetirement=$retirementReceipt.proposed_retirement
+ $retirementReceipt=Read-MorphospaceProtocolJson $retirementReceiptPath
+ $retirementSchemaName=switch -CaseSensitive ([string]$retirementReceipt.schema){'rusty.morphospace.workflow.work_unit_automation_receipt.v1'{'work-unit-automation-receipt.schema.json'}'rusty.morphospace.workflow.proposed_unit_retirement_receipt.v1'{'proposed-unit-retirement-receipt-v1.schema.json'}default{throw "Prepared-envelope replacement retirement receipt schema '$([string]$retirementReceipt.schema)' is unsupported."}}
+ Assert-PreparationProvenanceJson $retirementReceiptPath (Join-Path $RepoRoot "schemas\$retirementSchemaName") 'Prepared-envelope replacement retirement receipt is invalid.'
+ $proposedRetirement=$retirementReceipt.proposed_retirement
  if([string]$retirementReceipt.project_id-cne[string]$Admission.project_id-or
     [string]$retirementReceipt.unit_id-cne[string]$retirementEvent.unit_id-or
     [string]$retirementReceipt.action-cne'RetireProposed'-or-not[bool]$retirementReceipt.executed-or
@@ -233,6 +235,7 @@ function Test-MorphospacePreparedEnvelopeReplacementSuffix {
     [string]$retirementIntent.target.unit.sha256-cne(Get-PreparationProvenanceCanonicalHash $retiredUnit 'Prepared-envelope replacement retired unit')-or
     [string]$retiredUnit.status-cne'superseded'-or[string]$retiredUnit.unit_id-cne[string]$retirementReceipt.unit_id-or
     [string]$retirementCompletion.event_id-cne[string]$retirementEvent.event_id){throw 'Prepared-envelope replacement retirement transaction does not own the live suffix.'}
+ if([string]$retirementReceipt.schema-ceq'rusty.morphospace.workflow.proposed_unit_retirement_receipt.v1'){$transaction=$retirementReceipt.transaction;$pre=$proposedRetirement.authenticated_preimage;if([string]$transaction.transaction_id-cne$retirementTransactionId-or[string]$transaction.state_path-cne[string]$retirementIntent.state.path-or[string]$transaction.unit_path-cne[string]$retirementIntent.unit.path-or[string]$transaction.events_path-cne[string]$retirementIntent.events.path-or[string]$transaction.receipt_path-cne$retirementReceiptRelative-or[string]$transaction.event_id-cne[string]$retirementEvent.event_id-or[string]$transaction.expected_pre_state_sha256-cne[string]$retirementIntent.pre.state.sha256-or[string]$transaction.expected_pre_unit_sha256-cne[string]$retirementIntent.pre.unit.sha256-or[string]$transaction.expected_pre_unit_raw_sha256-cne[string]$pre.unit_raw_sha256-or[string]$transaction.expected_events_sha256-cne[string]$retirementIntent.expected.events_sha256-or[int64]$transaction.expected_events_length-ne[int64]$retirementIntent.expected.events_length-or[string]$transaction.expected_event_tail_id-cne[string]$retirementIntent.expected.event_tail_id){throw 'Prepared-envelope replacement narrow retirement transaction binding is detached.'}}
 
  $authenticatedAdmission=$proposedRetirement.authenticated_admission
  $oldAdmissionReceiptPath=Resolve-MorphospaceWorkspacePath $Workspace ([string]$authenticatedAdmission.receipt.path) -RequireLeaf

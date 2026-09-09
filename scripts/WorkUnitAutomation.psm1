@@ -16,6 +16,7 @@ Import-Module (Join-Path $PSScriptRoot 'lib\MorphospacePlanningSuffixRewrite.psm
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospacePublishedPrerequisiteSuffix.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceExecutedPreparedPublication.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceNormalValidationSelector.psm1') -Force
+$script:ProposedUnitRetirementModule = Import-Module (Join-Path $PSScriptRoot 'ProposedUnitRetirement.psm1') -Force -PassThru
 # Retain the aggregate's public binding for this shared predicate. A private
 # force reload unloads that binding even though this module can still call it.
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceActiveUnitContractReviewCompatibility.psm1')
@@ -1860,179 +1861,6 @@ function Assert-MorphospaceReadyTerminalReleaseSelectorBinding {
     }
 }
 
-function Get-MorphospaceProposedRetirementBinding {
-    param(
-        [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
-        [Parameter(Mandatory = $true)][string]$UnitRelativePath,
-        [Parameter(Mandatory = $true)][string]$UnitId,
-        [Parameter(Mandatory = $true)][string]$ReplacementUnitId,
-        [Parameter(Mandatory = $true)][ValidateSet('contract-invalid')][string]$Reason,
-        [Parameter(Mandatory = $true)][string]$ProjectId,
-        [Parameter(Mandatory = $true)][object]$LiveState,
-        [Parameter(Mandatory = $true)][object]$LiveUnit,
-        [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$Events,
-        [Parameter(Mandatory = $true)][hashtable]$UnitMap,
-        [Parameter(Mandatory = $true)][string]$ExpectedStateSha256,
-        [Parameter(Mandatory = $true)][string]$ExpectedUnitSha256,
-        [Parameter(Mandatory = $true)][string]$ExpectedUnitRawSha256
-    )
-
-    if ([string]$LiveUnit.status -cne 'proposed') {
-        throw "RetireProposed requires proposed status; '$UnitId' is '$([string]$LiveUnit.status)'."
-    }
-    if ($null -ne $LiveState.current_unit -or $null -ne $LiveState.next_ready_unit) {
-        throw 'RetireProposed requires an idle project with no current or next-ready unit.'
-    }
-    foreach ($identity in @($UnitId, $ReplacementUnitId)) {
-        if ($identity -cnotmatch '^[a-z0-9][a-z0-9-]{1,127}$' -or $identity.Contains('-superseded-by-', [StringComparison]::Ordinal)) {
-            throw "RetireProposed received a non-portable or reserved unit identity '$identity'."
-        }
-    }
-    if ($UnitId -ceq $ReplacementUnitId) { throw 'RetireProposed requires a distinct replacement unit identity.' }
-    if ($UnitMap.ContainsKey($ReplacementUnitId)) { throw "RetireProposed replacement identity '$ReplacementUnitId' already exists." }
-    if ($Events.Count -lt 1) { throw 'RetireProposed requires the exact owner-generated admission event.' }
-
-    $eventsPath = Join-Path $WorkspaceRoot 'iteration-events.jsonl'
-    $ledger = Get-MorphospaceAutomationEventLedgerSnapshot -EventsPath $eventsPath -Events $Events
-    $admissionEvent = $Events[-1]
-    $recoveredAdmission = $null
-    $admissionStateSha256 = $ExpectedStateSha256
-    if ([string]$admissionEvent.event_id -cmatch '^admission-completion-timestamp-recovered-[0-9]{4,}$') {
-        # The existing recovery owner authenticates the only permitted intervening
-        # event, including the malformed original bytes and the live projection.
-        # Retirement preserves those bytes and binds the complete recovered tail.
-        if ($Events.Count -lt 2 -or @($admissionEvent.receipts).Count -ne 1) {
-            throw 'RetireProposed requires exactly one authenticated recovery after admission.'
-        }
-        Import-Module (Join-Path $PSScriptRoot 'AdmissionCompletionTimestampRecovery.psm1')
-        $recoveryPath = Resolve-MorphospaceWorkspacePath $WorkspaceRoot ([string]$admissionEvent.receipts[0]) -RequireLeaf
-        $recoveredAdmission = Test-MorphospaceAdmissionCompletionTimestampRecovery -WorkspaceRoot $WorkspaceRoot -RecoveryPath $recoveryPath -Mode Projection -CorrectionEvent $admissionEvent
-        if ((Get-MorphospaceCanonicalJsonSha256 $recoveredAdmission.target_state) -cne $ExpectedStateSha256 -or
-            (Get-MorphospaceCanonicalJsonSha256 $recoveredAdmission.target_unit) -cne $ExpectedUnitSha256 -or
-            [string]$recoveredAdmission.receipt.unit_id -cne $UnitId -or
-            [int]$recoveredAdmission.receipt.evidence.admission_event.sequence -ne [int]$Events[-2].sequence -or
-            [string]$recoveredAdmission.receipt.evidence.admission_event.event_id -cne [string]$Events[-2].event_id) {
-            throw 'RetireProposed recovered admission does not bind the exact proposed unit and tail.'
-        }
-        $admissionEvent = $Events[-2]
-        $admissionStateSha256 = [string]$recoveredAdmission.original_intent.document.target.state.sha256
-    }
-    $admissionMatch = [regex]::Match([string]$admissionEvent.event_id, '^(?<admission>[a-z0-9][a-z0-9-]{1,127})-admitted$')
-    if ([string]$LiveState.last_event_id -cne [string]$Events[-1].event_id -or
-        [string]$admissionEvent.project_id -cne $ProjectId -or
-        [string]$admissionEvent.unit_id -cne $UnitId -or
-        [string]$admissionEvent.event_type -cne 'state-transition' -or
-        [string]$admissionEvent.summary -cne 'Admitted a bounded proposed development unit; normal Ready, Inspect, and Claim remain required.' -or
-        -not $admissionMatch.Success -or
-        @($admissionEvent.receipts).Count -ne 1) {
-        throw 'RetireProposed requires admission at the current ledger tail or immediately before its authenticated timestamp recovery.'
-    }
-
-    $admissionId = [string]$admissionMatch.Groups['admission'].Value
-    $receiptRelative = "receipts/$admissionId.json"
-    if ([string]@($admissionEvent.receipts)[0] -cne $receiptRelative) {
-        throw 'RetireProposed admission event does not reference its exact admission receipt.'
-    }
-    $receiptPath = Join-Path $WorkspaceRoot ($receiptRelative.Replace('/', [IO.Path]::DirectorySeparatorChar))
-    $receiptSchema = Join-Path (Split-Path $PSScriptRoot -Parent) 'schemas\development-unit-admission-v1.schema.json'
-    if (-not [IO.File]::Exists($receiptPath) -or
-        -not (Test-Json -Json (Get-Content -LiteralPath $receiptPath -Raw) -SchemaFile $receiptSchema)) {
-        throw 'RetireProposed admission receipt is absent or invalid.'
-    }
-    $admission = Read-MorphospaceProtocolJson -Path $receiptPath
-    if ([string]$admission.admission_id -cne $admissionId -or
-        [string]$admission.project_id -cne $ProjectId -or
-        [string]$admission.unit_id -cne $UnitId -or
-        [string]$admission.unit.project_id -cne $ProjectId -or
-        [string]$admission.unit.unit_id -cne $UnitId -or
-        [string]$admission.unit.status -cne 'proposed' -or
-        (Get-MorphospaceCanonicalJsonSha256 $admission.unit) -cne $ExpectedUnitSha256) {
-        throw 'RetireProposed admission receipt does not bind the exact live proposed unit.'
-    }
-
-    $transactionId = "$admissionId-admitted-transition"
-    $intentRelative = "receipts/transactions/$transactionId.intent.json"
-    $completionRelative = "receipts/transactions/$transactionId.completion.json"
-    $intentPath = Join-Path $WorkspaceRoot ($intentRelative.Replace('/', [IO.Path]::DirectorySeparatorChar))
-    $completionPath = Join-Path $WorkspaceRoot ($completionRelative.Replace('/', [IO.Path]::DirectorySeparatorChar))
-    if (-not [IO.File]::Exists($intentPath) -or -not [IO.File]::Exists($completionPath)) {
-        throw 'RetireProposed requires a complete admission intent/completion chain.'
-    }
-    if ($null -eq $recoveredAdmission) {
-        $authentication = Complete-MorphospaceTransitionLedger -WorkspaceRoot $WorkspaceRoot -TransactionId $transactionId
-        if ([string]$authentication.status -cne 'already-committed') {
-            throw 'RetireProposed requires an already committed admission transaction.'
-        }
-    }
-    $intent = Read-MorphospaceProtocolJson -Path $intentPath
-    $completion = Read-MorphospaceProtocolJson -Path $completionPath
-    $receiptHash = Get-MorphospaceFileSha256 $receiptPath
-    $receiptBytesBase64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes($receiptPath))
-    if ([string]$intent.schema -cne 'rusty.morphospace.workflow.transition_ledger_intent.v1' -or
-        [string]$intent.transaction_id -cne $transactionId -or
-        [string]$intent.state.path -cne 'workspace.state.json' -or
-        [string]$intent.unit.path -cne $UnitRelativePath -or
-        [string]$intent.events.path -cne 'iteration-events.jsonl' -or
-        [string]$intent.event.event_id -cne [string]$admissionEvent.event_id -or
-        [int]$intent.event.sequence -ne [int]$admissionEvent.sequence -or
-        [string]$intent.target.state.sha256 -cne $admissionStateSha256 -or
-        [string]$intent.target.unit.sha256 -cne $ExpectedUnitSha256 -or
-        @($intent.artifacts).Count -ne 1 -or
-        [string]$intent.artifacts[0].path -cne $receiptRelative -or
-        [string]$intent.artifacts[0].sha256 -cne $receiptHash -or
-        [string]$intent.artifacts[0].bytes_base64 -cne $receiptBytesBase64 -or
-        [string]$completion.transaction_id -cne $transactionId -or
-        [string]$completion.event_id -cne [string]$admissionEvent.event_id -or
-        [string]$completion.state_sha256 -cne $admissionStateSha256 -or
-        [string]$completion.unit_sha256 -cne $ExpectedUnitSha256) {
-        throw 'RetireProposed admission transaction does not bind the exact live state, unit, event, and receipt bytes.'
-    }
-
-    $base = [pscustomobject][ordered]@{
-        replacement_unit_id = $ReplacementUnitId
-        reason = $Reason
-        authenticated_admission = [pscustomobject][ordered]@{
-            admission_id = $admissionId
-            event = [pscustomobject][ordered]@{
-                event_id = [string]$admissionEvent.event_id
-                sequence = [int]$admissionEvent.sequence
-                sha256 = Get-MorphospaceCanonicalJsonSha256 $intent.event
-            }
-            receipt = [pscustomobject][ordered]@{ path = $receiptRelative; sha256 = $receiptHash }
-            transaction = [pscustomobject][ordered]@{
-                transaction_id = $transactionId
-                intent = [pscustomobject][ordered]@{ path = $intentRelative; sha256 = Get-MorphospaceFileSha256 $intentPath }
-                completion = [pscustomobject][ordered]@{ path = $completionRelative; sha256 = Get-MorphospaceFileSha256 $completionPath }
-                target_state_sha256 = [string]$intent.target.state.sha256
-                target_unit_sha256 = [string]$intent.target.unit.sha256
-            }
-        }
-        authenticated_preimage = [pscustomobject][ordered]@{
-            state_sha256 = $ExpectedStateSha256
-            unit_sha256 = $ExpectedUnitSha256
-            unit_raw_sha256 = $ExpectedUnitRawSha256
-            events_sha256 = [string]$ledger.sha256
-            events_length = [int64]$ledger.length
-            event_tail_id = [string]$ledger.tail_id
-        }
-        replacement_identity_absent = $true
-        current_unit_absent = $true
-        next_ready_unit_absent = $true
-        original_admission_preserved = $true
-    }
-    return [pscustomobject][ordered]@{
-        replacement_unit_id = $base.replacement_unit_id
-        reason = $base.reason
-        authenticated_admission = $base.authenticated_admission
-        authenticated_preimage = $base.authenticated_preimage
-        replacement_identity_absent = $base.replacement_identity_absent
-        current_unit_absent = $base.current_unit_absent
-        next_ready_unit_absent = $base.next_ready_unit_absent
-        original_admission_preserved = $base.original_admission_preserved
-        binding_sha256 = Get-MorphospaceCanonicalJsonSha256 $base
-    }
-}
-
 function Invoke-MorphospaceAuthorityRunnerForRecord {
     param(
         [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
@@ -2551,65 +2379,35 @@ function Invoke-MorphospaceWorkUnitAutomation {
         "RetireProposed" {
             if (-not $ReplacementUnitId) { throw 'RetireProposed requires ReplacementUnitId.' }
             if (-not $OutPath) { throw 'RetireProposed requires OutPath for its transaction-owned receipt.' }
-            $unitRelativePath = $unitEntry.path.Substring(($resolvedWorkspace.TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar).Length).Replace('\', '/')
-            $liveUnitRawSha256 = Get-MorphospaceFileSha256 $unitEntry.path
-            $proposedRetirementBinding = Get-MorphospaceProposedRetirementBinding `
-                -WorkspaceRoot $resolvedWorkspace `
-                -UnitRelativePath $unitRelativePath `
-                -UnitId $UnitId `
-                -ReplacementUnitId $ReplacementUnitId `
-                -Reason $RetirementReason `
-                -ProjectId ([string]$spec.project_id) `
-                -LiveState $state `
-                -LiveUnit $unit `
-                -Events $events `
-                -UnitMap $unitMap `
-                -ExpectedStateSha256 $expectedPreStateSha256 `
-                -ExpectedUnitSha256 $expectedPreUnitSha256 `
-                -ExpectedUnitRawSha256 $liveUnitRawSha256
-            foreach ($expectation in @(
-                [pscustomobject]@{ name = 'state'; supplied = $ExpectedStateSha256; actual = $expectedPreStateSha256 },
-                [pscustomobject]@{ name = 'unit'; supplied = $ExpectedUnitSha256; actual = $expectedPreUnitSha256 },
-                [pscustomobject]@{ name = 'unit raw'; supplied = $ExpectedUnitRawSha256; actual = $liveUnitRawSha256 },
-                [pscustomobject]@{ name = 'events'; supplied = $ExpectedEventsSha256; actual = [string]$proposedRetirementBinding.authenticated_preimage.events_sha256 },
-                [pscustomobject]@{ name = 'event tail'; supplied = $ExpectedEventTailId; actual = [string]$proposedRetirementBinding.authenticated_preimage.event_tail_id },
-                [pscustomobject]@{ name = 'retirement binding'; supplied = $ExpectedProposedRetirementBindingSha256; actual = [string]$proposedRetirementBinding.binding_sha256 }
-            )) {
-                if ($expectation.supplied -and [string]$expectation.supplied -cne [string]$expectation.actual) {
-                    throw "RetireProposed expected $([string]$expectation.name) identity does not match the live authenticated boundary."
+            $legacyEnvelopeFactory = {
+                param([Parameter(Mandatory)][object]$owner)
+                [pscustomobject][ordered]@{
+                    schema = 'rusty.morphospace.workflow.work_unit_automation_receipt.v1'
+                    project_id = [string]$owner.project_id; unit_id = [string]$owner.unit_id; action = 'RetireProposed'
+                    timestamp = [string]$owner.timestamp; executed = [bool]$owner.executed; transition = [string]$owner.transition
+                    status_before = [string]$owner.status_before; status_after = [string]$owner.status_after
+                    current_unit_before = $owner.current_unit_before; current_unit_after = $owner.current_unit_after
+                    preservation = [pscustomobject][ordered]@{
+                        git_mutation_performed = $false; device_mutation_performed = $false; force_push_allowed = $false
+                        repository_states = @($repoStatesArray | ForEach-Object { New-MorphospaceRepositorySummary -State $_ })
+                    }
+                    validation_matrix = $validationMatrix; graph_scope = $graphScope; claim_preflight = $claimPreflight
+                    adoption_receipt = $null; publication_closure = $null; published_planning_authority_adoption = $null
+                    planned_publication = $null; planning_suffix_rewrite_recovery = $null; published_prerequisite_suffix_reconciliation = $null
+                    executed_prepared_publication_reconciliation = $null; instruction_surface_completion = $null; ready_withdrawal = $null
+                    proposed_retirement = $owner.proposed_retirement; terminal_validation_selection_release = $null; push_plan = $null
+                    event_id = $owner.event_id
                 }
             }
-            if ($ExpectedEventsLength -ge 0 -and $ExpectedEventsLength -ne [int64]$proposedRetirementBinding.authenticated_preimage.events_length) {
-                throw 'RetireProposed expected event-ledger length does not match the live authenticated boundary.'
+            $ownerArguments = @{
+                ReceiptFormat = 'LegacyAutomationV1'; WorkspaceRoot = $resolvedWorkspace; UnitId = $UnitId; ReplacementUnitId = $ReplacementUnitId
+                RetirementReason = $RetirementReason; Timestamp = $Timestamp; OutPath = $OutPath
+                ExpectedStateSha256 = $ExpectedStateSha256; ExpectedUnitSha256 = $ExpectedUnitSha256; ExpectedUnitRawSha256 = $ExpectedUnitRawSha256
+                ExpectedEventsSha256 = $ExpectedEventsSha256; ExpectedEventsLength = $ExpectedEventsLength; ExpectedEventTailId = $ExpectedEventTailId
+                ExpectedProposedRetirementBindingSha256 = $ExpectedProposedRetirementBindingSha256; TransitionFaultAfter = $TransitionFaultAfter
+                LegacyEnvelopeFactory = $legacyEnvelopeFactory; Execute = $Execute
             }
-            if ($Execute) {
-                foreach ($required in @(
-                    [pscustomobject]@{ name = 'ExpectedStateSha256'; value = $ExpectedStateSha256 },
-                    [pscustomobject]@{ name = 'ExpectedUnitSha256'; value = $ExpectedUnitSha256 },
-                    [pscustomobject]@{ name = 'ExpectedUnitRawSha256'; value = $ExpectedUnitRawSha256 },
-                    [pscustomobject]@{ name = 'ExpectedEventsSha256'; value = $ExpectedEventsSha256 },
-                    [pscustomobject]@{ name = 'ExpectedEventTailId'; value = $ExpectedEventTailId },
-                    [pscustomobject]@{ name = 'ExpectedProposedRetirementBindingSha256'; value = $ExpectedProposedRetirementBindingSha256 }
-                )) {
-                    if (-not [string]$required.value) { throw "Executed RetireProposed requires $([string]$required.name) from its dry run." }
-                }
-                if ($ExpectedEventsLength -lt 0) { throw 'Executed RetireProposed requires ExpectedEventsLength from its dry run.' }
-            }
-            $transitionEventSnapshot = $proposedRetirementBinding.authenticated_preimage
-            $transition = 'proposed-to-superseded-retired'
-            if ($Execute) {
-                $unit.status = 'superseded'
-                $skipAutomaticRepositoryProjection = $true
-                $event = New-MorphospaceEvent `
-                    -State $state `
-                    -Events $events `
-                    -UnitId $UnitId `
-                    -ActionSlug 'proposal-retired' `
-                    -Timestamp $Timestamp `
-                    -EventType 'state-transition' `
-                    -Summary "Retired the exact admitted proposed unit because its contract is invalid; preserved its admission chain and recorded intended replacement identity '$ReplacementUnitId' for separate admission." `
-                    -Receipts @($receiptReference)
-            }
+            return & $script:ProposedUnitRetirementModule { param($arguments) Invoke-MorphospaceProposedUnitRetirementCore @arguments } $ownerArguments
         }
         "Ready" {
             if ($beforeStatus -eq "ready") {
@@ -3323,7 +3121,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
                 }
             }
         }
-        if ($Action -in @("PreparePush", "CompleteInstructionSurfaces", "WithdrawReady", "RetireProposed")) {
+        if ($Action -in @("PreparePush", "CompleteInstructionSurfaces", "WithdrawReady")) {
             $result = & $newAutomationResult
             $receiptBytes = [System.Text.UTF8Encoding]::new($false).GetBytes(
                 (($result | ConvertTo-Json -Depth 32) + [Environment]::NewLine)
@@ -3361,12 +3159,6 @@ function Invoke-MorphospaceWorkUnitAutomation {
         }
         if ($Action -eq 'WithdrawReady') {
             $transitionArguments.ExpectedEventTailId = $transitionEventSnapshot.event_tail_id
-            $transitionArguments.ExpectedEventsSha256 = [string]$transitionEventSnapshot.events_sha256
-            $transitionArguments.ExpectedEventsLength = [int64]$transitionEventSnapshot.events_length
-        }
-        if ($Action -eq 'RetireProposed') {
-            $transitionArguments.ExpectedPreUnitRawSha256 = [string]$transitionEventSnapshot.unit_raw_sha256
-            $transitionArguments.ExpectedEventTailId = [string]$transitionEventSnapshot.event_tail_id
             $transitionArguments.ExpectedEventsSha256 = [string]$transitionEventSnapshot.events_sha256
             $transitionArguments.ExpectedEventsLength = [int64]$transitionEventSnapshot.events_length
         }
