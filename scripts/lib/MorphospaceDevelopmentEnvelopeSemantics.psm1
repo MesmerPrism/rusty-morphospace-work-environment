@@ -15,6 +15,18 @@ function Get-MorphospaceDevelopmentEnvelopePinnedRevision {
     if($Uri-cnotmatch$pattern){throw "Preparation $Context schema pin is not an exact Work Environment revision."}
     $Matches[1]
 }
+function Get-MorphospaceDevelopmentEnvelopeCurrentProjectProjection {
+    param([object]$Project)
+    $schemaPath=Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'schemas\project-spec-v2.schema.json'
+    if(Test-Json -Json ($Project|ConvertTo-Json -Depth 64) -SchemaFile $schemaPath -ErrorAction SilentlyContinue){return $Project}
+    $legacySchema='https://raw.githubusercontent.com/MesmerPrism/rusty-morphospace-work-environment/f45a7500d0a68b5cea0d910b26010c10ba42705c/schemas/project-spec-v2.schema.json'
+    if([string]$Project.'$schema'-ceq$legacySchema-and[string]$Project.public_boundary.mode-ceq'public-source-private-planning'){
+        $projection=Copy-MorphospaceDevelopmentEnvelopeValue $Project
+        $projection.public_boundary.mode='mixed'
+        if(Test-Json -Json ($projection|ConvertTo-Json -Depth 64) -SchemaFile $schemaPath -ErrorAction SilentlyContinue){return $projection}
+    }
+    throw 'Preparation current project does not satisfy the owner schema.'
+}
 function Get-MorphospaceDevelopmentEnvelopeModuleRegistry {
     param([object]$Project,[object]$FeatureLock)
     [pscustomobject][ordered]@{
@@ -47,21 +59,22 @@ function Assert-MorphospaceDevelopmentEnvelopeRepreparationDefect {
 }
 function Assert-MorphospaceDevelopmentEnvelopeAdditiveProject {
     param([object]$Current,[object]$Target,[bool]$AllowSchemaPinAdvance,[AllowNull()][object[]]$OwnerRepositories=$null)
-    if([string]$Current.project_id-cne[string]$Target.project_id-or[int]$Target.revision-ne([int]$Current.revision+1)){throw 'Preparation project identity or single revision advance is invalid.'}
+    $effectiveCurrent=Get-MorphospaceDevelopmentEnvelopeCurrentProjectProjection $Current
+    if([string]$effectiveCurrent.project_id-cne[string]$Target.project_id-or[int]$Target.revision-ne([int]$effectiveCurrent.revision+1)){throw 'Preparation project identity or single revision advance is invalid.'}
     foreach($property in @('selected_features','denied_features','selected_modules','denied_modules','allowed_permissions','denied_permissions','data_classes')){
-        foreach($value in @($Current.composition.$property)){if(@($Target.composition.$property)-cnotcontains$value){throw "Preparation removes current composition value '$property/$value'."}}
+        foreach($value in @($effectiveCurrent.composition.$property)){if(@($Target.composition.$property)-cnotcontains$value){throw "Preparation removes current composition value '$property/$value'."}}
     }
-    $currentRepos=@{};foreach($repo in @($Current.repositories)){$currentRepos[[string]$repo.repo_id]=$repo};$targetRepos=@{};foreach($repo in @($Target.repositories)){$targetRepos[[string]$repo.repo_id]=$repo}
+    $currentRepos=@{};foreach($repo in @($effectiveCurrent.repositories)){$currentRepos[[string]$repo.repo_id]=$repo};$targetRepos=@{};foreach($repo in @($Target.repositories)){$targetRepos[[string]$repo.repo_id]=$repo}
     if ($null -eq $OwnerRepositories) {
         foreach($id in $currentRepos.Keys){if(-not$targetRepos.ContainsKey($id)-or(Get-MorphospaceDevelopmentEnvelopeHash $currentRepos[$id])-cne(Get-MorphospaceDevelopmentEnvelopeHash $targetRepos[$id])){throw "Preparation removes or rewrites repository '$id'."}}
     } else {
-        Assert-MorphospacePreparationRepositoryRoots -CurrentRepositories @($Current.repositories) -TargetRepositories @($Target.repositories) -OwnerRepositories $OwnerRepositories
+        Assert-MorphospacePreparationRepositoryRoots -CurrentRepositories @($effectiveCurrent.repositories) -TargetRepositories @($Target.repositories) -OwnerRepositories $OwnerRepositories
     }
-    $currentProfiles=@{};foreach($profile in @($Current.validation_profiles)){$id=[string]$profile.profile_id;if($currentProfiles.ContainsKey($id)){throw "Preparation current project repeats validation profile '$id'."};$currentProfiles[$id]=$profile}
+    $currentProfiles=@{};foreach($profile in @($effectiveCurrent.validation_profiles)){$id=[string]$profile.profile_id;if($currentProfiles.ContainsKey($id)){throw "Preparation current project repeats validation profile '$id'."};$currentProfiles[$id]=$profile}
     $targetProfiles=@{};foreach($profile in @($Target.validation_profiles)){$id=[string]$profile.profile_id;if($targetProfiles.ContainsKey($id)){throw "Preparation target project repeats validation profile '$id'."};$targetProfiles[$id]=$profile}
     foreach($id in $currentProfiles.Keys){if(-not$targetProfiles.ContainsKey($id)-or(Get-MorphospaceDevelopmentEnvelopeHash $currentProfiles[$id])-cne(Get-MorphospaceDevelopmentEnvelopeHash $targetProfiles[$id])){throw "Preparation removes or rewrites validation profile '$id'."}}
     $mutable=@('revision','composition','repositories','validation_profiles');if($AllowSchemaPinAdvance){$mutable+=,'$schema'}
-    foreach($property in @($Current.psobject.Properties.Name)){if($property -notin $mutable -and (Get-MorphospaceDevelopmentEnvelopeHash $Current.$property)-cne(Get-MorphospaceDevelopmentEnvelopeHash $Target.$property)){throw "Preparation rewrites non-envelope project property '$property'."}}
+    foreach($property in @($effectiveCurrent.psobject.Properties.Name)){if($property -notin $mutable -and (Get-MorphospaceDevelopmentEnvelopeHash $effectiveCurrent.$property)-cne(Get-MorphospaceDevelopmentEnvelopeHash $Target.$property)){throw "Preparation rewrites non-envelope project property '$property'."}}
 }
 function Assert-MorphospaceDevelopmentEnvelopeOwnerRoots {
     param([object[]]$Rows,[object]$Project,[hashtable]$Map)
@@ -123,4 +136,4 @@ function Assert-MorphospaceDevelopmentEnvelope {
     $currentProfiles=@($Project.validation_profiles|ForEach-Object{[string]$_.profile_id});foreach($profile in @($registeredProfiles|Where-Object{$currentProfiles-cnotcontains$_})){if($declaredProfiles-cnotcontains$profile){throw "Preparation adds validation profile '$profile' outside the declared build profile ceiling."}}
 }
 
-Export-ModuleMember -Function Assert-MorphospaceDevelopmentEnvelopeOwnerRoots,Get-MorphospaceDevelopmentEnvelopeModuleRegistry,Assert-MorphospaceDevelopmentEnvelopeLockAndRegistry,Assert-MorphospaceDevelopmentEnvelopeRepreparationDefect,Assert-MorphospaceDevelopmentEnvelopeAdditiveProject,Assert-MorphospaceDevelopmentEnvelopeRepositoryRoots,Get-MorphospaceDevelopmentEnvelopeTargetState,Assert-MorphospaceDevelopmentEnvelope
+Export-ModuleMember -Function Get-MorphospaceDevelopmentEnvelopeCurrentProjectProjection,Assert-MorphospaceDevelopmentEnvelopeOwnerRoots,Get-MorphospaceDevelopmentEnvelopeModuleRegistry,Assert-MorphospaceDevelopmentEnvelopeLockAndRegistry,Assert-MorphospaceDevelopmentEnvelopeRepreparationDefect,Assert-MorphospaceDevelopmentEnvelopeAdditiveProject,Assert-MorphospaceDevelopmentEnvelopeRepositoryRoots,Get-MorphospaceDevelopmentEnvelopeTargetState,Assert-MorphospaceDevelopmentEnvelope

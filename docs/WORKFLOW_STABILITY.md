@@ -97,26 +97,36 @@ If validation discovers a product defect, terminalize the validation-only unit
 truthfully and propose a feature unit. Do not expand the validation-only unit
 into implementation or device work.
 
-## Stability Window
+## Planning Targets And Workflow Evolution
 
-After a workflow-contract change is adopted, complete three feature units
-before proposing another workflow-contract change. Validation-only units do not
-advance or reset that counter. A security or data-loss correction may interrupt
-the window only with explicit owner approval and a narrowly documented reason.
+The portable manifest retains three feature units between workflow changes and
+70 percent feature effort as advisory planning defaults. They are not admission
+prerequisites, an embargo, or a historical counter that agents must reconstruct.
+The existing field names remain compatible; their values may be adjusted as
+planning preferences without changing accepted units or their evidence.
+Validation that directly proves product behavior counts toward that product's
+effort. Use observed costs and blocked work to assess the balance rather than
+create an effort-accounting ledger.
 
-Across a rolling feature cycle, target at least 70 percent of work-unit effort
-on product behavior and content. Validation time counts as feature effort when
-it directly proves the current feature unit; reusable workflow/schema repair
-does not.
+Defer cosmetic workflow changes when they would interrupt useful product work.
+When an obsolete rule blocks authorized work, causes repeated failures, or
+requires disproportionate validation, describe the concrete failure and the
+smallest owner repair. State what invariant the rule protects, which current
+consumers the repair affects, and which checks prove the replacement. Continue
+independent product work on the adopted owner while the repair is reviewed.
 
-During the stability window:
+Use the existing owner route for changes to workflow, validation, publication,
+or privacy authority. Its exact candidate approval remains required where that
+boundary applies; the planning targets add no separate exception request or
+second approval. Ordinary instructions and design preferences should guide
+agent judgment. Hard gates should protect actual authority, unsafe effects,
+concurrent writes, current transaction integrity and required evidence.
 
-- record workflow annoyances as backlog evidence rather than repairing them in
-  the active feature unit;
-- stop after one bounded retry when the same stage fails without new evidence;
-- do not create a successor merely to improve protocol wording, receipts, or
-  instruction metadata;
-- preserve a genuine product blocker as product evidence, not workflow debt.
+After a failure, use a bounded diagnostic attempt that adds information; repeat
+only when new evidence or a changed input makes the attempt useful. Preserve a
+compact failure and the next actionable step. Do not create a successor merely
+to improve wording, or make a retired unit acquire a new feature prerequisite.
+Evaluate current continuation separately from a requested historical audit.
 
 ## CI Execution Budget
 

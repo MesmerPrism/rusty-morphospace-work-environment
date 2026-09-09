@@ -184,6 +184,25 @@ leaves continue and preserve their evidence. A corrected attempt may then
 reuse every still-valid independent pass instead of replaying the entire
 platform gate.
 
+Development admission, admission-timestamp recovery and recovered-proposal
+continuation are separate Windows leaves. Each direct test path selects only
+its owner test and the public boundary; the composed continuation helper has
+that same narrow route. Their plain shared admission fixture selects admission
+and continuation. Production admission and recovery paths remain separate from
+test paths and invalidate their declared consumers. The selector's proportional
+mapping cases assert these exact test-only selections, including rejection of
+unrelated suite expansion. The existing per-check dependency closure still binds
+all imported code and consumed data; splitting a trigger does not remove an
+actual input from reusable evidence.
+
+The continuation leaf owns the sequence whose steps depend on each other:
+writer-produced admission, timestamp recovery, proposal retirement and fresh
+preparation. A direct rerun reconstructs its required seed without replaying
+the other admission tests. Full explicit compatibility aggregates retain that
+case once; affected CI uses its separate result. Keep previous passing leaves
+only through the existing authenticated reuse route, and report a diagnostic
+focused pass separately from a completed frozen-candidate aggregate.
+
 Selector trust-root validation is a finite eighteen-phase DAG: graph/import
 closure, independently reusable per-check dependency-closure damage, executor
 pass/schema, ten independent executor-damage leaves for native failure,

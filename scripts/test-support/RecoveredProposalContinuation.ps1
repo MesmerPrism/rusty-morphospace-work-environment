@@ -1,5 +1,5 @@
-# Called with an admission produced by the ordinary preparation, retirement,
-# repreparation and admission writers in Test-DevelopmentUnitAdmission.ps1.
+# Called with an admission produced by the shared preparation, retirement,
+# repreparation and admission fixture through the ordinary owner writers.
 function New-RecoveredProposalContinuationFixture {
     param([string]$BaseRepository, [string]$FixtureRoot, [object]$RepreparationTemplate, [object]$AdmissionTemplate, [object]$RepreparationModule)
     $fixture = New-EnvelopeRepreparationFixture $BaseRepository $FixtureRoot $RepreparationTemplate
