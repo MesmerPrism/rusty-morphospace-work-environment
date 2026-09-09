@@ -92,6 +92,8 @@ make it claimable. `Ready` does not authorize implementation outside the
 unit's existing repository and path allowlists. When a current unit exists,
 Ready calls the same canonical supersession-ID constructor as the v2 ledger
 and rejects an ID beyond the existing 128-character contract before writing.
+Ready also rejects duplicate resource identities across kinds, while transient
+execution-resource availability remains a Claim concern.
 Use `WithdrawReady` only to return the exact next-ready unit to `proposed`:
 the owner authenticates its unique Ready event and intent/completion, CAS-binds
 the current state/unit/ledger prefix, preserves current authority and the

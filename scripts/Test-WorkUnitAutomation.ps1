@@ -33,6 +33,19 @@ function Get-TestFileHash {
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 
+function Get-TestDirectoryByteFingerprint {
+    param([string]$Path)
+    $root = (Resolve-Path -LiteralPath $Path).Path.TrimEnd('\', '/')
+    return @(
+        Get-ChildItem -LiteralPath $root -File -Recurse |
+            Sort-Object FullName |
+            ForEach-Object {
+                $relative = $_.FullName.Substring($root.Length).TrimStart('\', '/').Replace('\', '/')
+                "$relative`t$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant())"
+            }
+    ) -join "`n"
+}
+
 function Read-TestProtocolJson {
     param([string]$Path)
     $module = Get-Module WorkUnitAutomation
@@ -1541,6 +1554,49 @@ try {
         Invoke-MorphospaceWorkUnitAutomation -Action Ready -WorkspaceRoot $blockedReadyWorkspace -UnitId "unit-blocked-ready-001" -Timestamp $fixed -Execute | Out-Null
     } catch { $blockedReadyRejected = $true }
     Assert-Automation $blockedReadyRejected "proposal review accepted an unmet prerequisite"
+
+    $duplicateResourceReadyWorkspace = New-TestWorkspace -Root (Join-Path $testRoot 'ready-duplicate-resource') -ProjectId 'ready-duplicate-resource' -UnitId 'unit-ready-duplicate-resource'
+    $duplicateResourceReadyPath = Join-Path $duplicateResourceReadyWorkspace 'iteration-units\unit-ready-duplicate-resource.json'
+    $duplicateResourceReadyUnit = Get-Content -LiteralPath $duplicateResourceReadyPath -Raw | ConvertFrom-Json
+    $duplicateResourceReadyUnit.status = 'proposed'
+    $duplicateResourceReadyUnit | Add-Member -NotePropertyName resource_requirements -NotePropertyValue @(
+        [pscustomobject][ordered]@{ resource_kind = 'headset'; resource_id = 'synthetic-shared-resource'; mode = 'exclusive'; claim_timing = 'before-run' },
+        [pscustomobject][ordered]@{ resource_kind = 'bridge-port'; resource_id = 'synthetic-shared-resource'; mode = 'exclusive'; claim_timing = 'before-run' }
+    )
+    Write-TestJson -Path $duplicateResourceReadyPath -Value $duplicateResourceReadyUnit
+    $duplicateResourceBytesBefore = Get-TestDirectoryByteFingerprint $duplicateResourceReadyWorkspace
+    $duplicateResourceDryRejected = $false
+    try {
+        Invoke-MorphospaceWorkUnitAutomation -Action Ready -WorkspaceRoot $duplicateResourceReadyWorkspace -UnitId 'unit-ready-duplicate-resource' -Timestamp $fixed | Out-Null
+    } catch { $duplicateResourceDryRejected = $_.Exception.Message -like 'Ready preflight blocked: resource declaration*resource-declaration-duplicate*' }
+    $duplicateResourceExecuteRejected = $false
+    try {
+        Invoke-MorphospaceWorkUnitAutomation -Action Ready -WorkspaceRoot $duplicateResourceReadyWorkspace -UnitId 'unit-ready-duplicate-resource' -Timestamp $fixed -Execute | Out-Null
+    } catch { $duplicateResourceExecuteRejected = $_.Exception.Message -like 'Ready preflight blocked: resource declaration*resource-declaration-duplicate*' }
+    Assert-Automation (
+        $duplicateResourceDryRejected -and
+        $duplicateResourceExecuteRejected -and
+        $duplicateResourceBytesBefore -ceq (Get-TestDirectoryByteFingerprint $duplicateResourceReadyWorkspace)
+    ) 'Ready accepted duplicate resource_id declarations across resource kinds or mutated workspace bytes while rejecting them'
+
+    $transientToolReadyWorkspace = New-TestWorkspace -Root (Join-Path $testRoot 'ready-transient-tool') -ProjectId 'ready-transient-tool' -UnitId 'unit-ready-transient-tool'
+    $transientToolReadyPath = Join-Path $transientToolReadyWorkspace 'iteration-units\unit-ready-transient-tool.json'
+    $transientToolReadyUnit = Get-Content -LiteralPath $transientToolReadyPath -Raw | ConvertFrom-Json
+    $transientToolReadyUnit.status = 'proposed'
+    $transientToolReadyUnit | Add-Member -NotePropertyName work_mode -NotePropertyValue 'feature'
+    $transientToolReadyUnit | Add-Member -NotePropertyName claim_requirements -NotePropertyValue ([pscustomobject][ordered]@{
+        minimum_free_disk_mib = 0
+        required_tools = @([pscustomobject][ordered]@{ tool_id = 'synthetic-unavailable-tool'; executable = 'synthetic-unavailable-ready-tool'; purpose = 'Exercise a transient Ready preflight condition.' })
+        product_inputs = @()
+    })
+    Write-TestJson -Path $transientToolReadyPath -Value $transientToolReadyUnit
+    $transientToolReady = Invoke-MorphospaceWorkUnitAutomation -Action Ready -WorkspaceRoot $transientToolReadyWorkspace -UnitId 'unit-ready-transient-tool' -Timestamp $fixed -Execute
+    Assert-Automation (
+        $transientToolReady.transition -eq 'proposed-to-ready' -and
+        $transientToolReady.status_after -eq 'ready' -and
+        -not $transientToolReady.claim_preflight.ready_to_claim -and
+        @($transientToolReady.claim_preflight.reason_codes) -contains 'claim-requirement-unavailable'
+    ) 'Ready incorrectly gated the valid proposal on an unavailable transient required tool'
 
     # Ready must prove that the canonical v2 supersession identity remains
     # representable before publishing any ready-state bytes.
