@@ -102,15 +102,10 @@ separate authorities.
 
 Assign every tracked path exactly one affected-validation owner and a focused
 consumer beyond the public-boundary check. When an owner also appears in the
-cumulative Work Environment suite, keep one independently registered leaf with equivalent
-arguments. Run the exact-HEAD ownership audit after freezing the candidate;
-missing or overlapping ownership is a workflow defect, not validation credit.
-
-Assign every tracked path exactly one affected-validation owner and a focused
-consumer beyond the public-boundary check. When an owner also appears in the
-cumulative Work Environment suite, keep one independent leaf with equivalent
-arguments. Run the exact-HEAD ownership audit after freezing the candidate;
-missing or overlapping ownership is a workflow defect, not validation credit.
+cumulative Work Environment suite, keep one independently registered leaf with
+equivalent arguments. Run the exact-HEAD ownership audit after freezing the
+candidate. Missing or overlapping ownership is a workflow defect, not
+validation credit.
 
 ## Boundaries and instruction impact
 

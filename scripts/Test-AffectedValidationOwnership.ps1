@@ -19,6 +19,7 @@ if ($LASTEXITCODE -ne 0 -or $head -cnotmatch '^[0-9a-f]{40}$') { throw 'Affected
 $inventory = Get-MorphospaceAffectedTreeInventory -RepositoryRoot $root -Commit $head
 $audit = Get-MorphospaceAffectedValidationOwnershipAudit -Registry $registry -CompiledRegistry $compiled -Inventory $inventory
 Assert-MorphospaceAffectedValidationOwnershipComplete -Audit $audit
+$aggregateAudit = Assert-MorphospaceAffectedWorkEnvironmentLeafRegistration -Root $root -Registry $registry -Inventory $inventory
 
 if ($SelfTest) {
     function Copy-OwnershipValue([object]$Value) {
@@ -50,6 +51,20 @@ if ($SelfTest) {
     $overlapCompiled = Test-MorphospaceAffectedValidationRegistry -Registry $overlapRegistry -RepositoryRoot $root -SchemaPath $schemaPath
     $overlapAudit = Get-MorphospaceAffectedValidationOwnershipAudit -Registry $overlapRegistry -CompiledRegistry $overlapCompiled -Inventory $inventory
     Assert-OwnershipFailure { Assert-MorphospaceAffectedValidationOwnershipComplete -Audit $overlapAudit } '*ambiguous=1*registered_commands_without_one_owner=1*' 'Ownership audit accepted an overlapping command owner.'
+
+    $missingAggregateRegistry = Copy-OwnershipValue $registry
+    $missingAggregateRegistry.checks = @($missingAggregateRegistry.checks | Where-Object { [string]$_.check_id -cne 'external-owner-authorization' })
+    Assert-OwnershipFailure {
+        Assert-MorphospaceAffectedWorkEnvironmentLeafRegistration -Root $root -Registry $missingAggregateRegistry -Inventory $inventory
+    } '*aggregate owner-entrypoint registration debt changed*' 'Ownership audit accepted a missing aggregate owner registration.'
+
+    $argumentDriftRegistry = Copy-OwnershipValue $registry
+    $powerShellHost = @($argumentDriftRegistry.checks | Where-Object { [string]$_.check_id -ceq 'powershell-host' })
+    if ($powerShellHost.Count -ne 1) { throw 'Ownership self-test could not resolve the PowerShell host leaf.' }
+    $powerShellHost[0].arguments = @('-Quiet')
+    Assert-OwnershipFailure {
+        Assert-MorphospaceAffectedWorkEnvironmentLeafRegistration -Root $root -Registry $argumentDriftRegistry -Inventory $inventory
+    } '*aggregate invocation differs from its focused registration*' 'Ownership audit accepted the ambient PowerShell preflight as the gating self-test.'
 }
 
-Write-Host "Affected-validation ownership is complete: tracked=$($audit.tracked_path_count) digest=$($audit.ownership_sha256)."
+Write-Host "Affected-validation ownership is complete: tracked=$($audit.tracked_path_count) aggregate_owners=$($aggregateAudit.owner_entrypoint_count) digest=$($audit.ownership_sha256)."

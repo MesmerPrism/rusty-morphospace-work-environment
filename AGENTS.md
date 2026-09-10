@@ -112,14 +112,9 @@ delta only after Quick when its boundary requires it; use Deep for its declared
 authority risk. Dirty-source checks are diagnostic, and a local commit grants no
 admission or publication authority. A device is not part of these tiers.
 
-Use the exact instruction-synchronization route for changes to authority,
-module layout, activation, validation, device policy, repository routing, or
-public/private boundaries. Update only the declared affected surfaces. Do not
-run legacy scans or resolve legacy material unless the task explicitly selects
-historical or legacy work.
-
-When adding or moving a tracked file, give it exactly one affected-validation
-path-set owner and a specialized consumer beyond `public-boundary`. Every owner
-invoked by `Test-WorkEnvironment.ps1` must also have one focused registration
-with the same effective arguments. Freeze the candidate before running the
-exact-HEAD ownership audit described in [Affected Validation](docs/AFFECTED_VALIDATION.md).
+Use exact instruction synchronization for authority, module layout, activation,
+validation, device policy, repository routing, or public/private boundaries.
+Update only affected surfaces; do not read legacy unless selected. Give every
+tracked file one affected-validation owner and a specialized consumer beyond
+`public-boundary`; mirror aggregate owners as focused leaves with equal arguments.
+Freeze the candidate before its [exact-HEAD ownership audit](docs/AFFECTED_VALIDATION.md).

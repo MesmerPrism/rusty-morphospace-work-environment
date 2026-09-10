@@ -556,6 +556,25 @@ function Get-AffectedWorkEnvironmentTableInvocationArguments([string]$Root) {
     }
     return $result
 }
+function Test-AffectedAstWithinSelfTestBranch([Management.Automation.Language.Ast]$Node) {
+    $start = [int]$Node.Extent.StartOffset
+    $end = [int]$Node.Extent.EndOffset
+    $current = $Node.Parent
+    while ($null -ne $current) {
+        if ($current -is [Management.Automation.Language.IfStatementAst]) {
+            foreach ($clause in @($current.Clauses)) {
+                $condition = $clause.Item1
+                $body = $clause.Item2
+                if ([string]$condition.Extent.Text.Trim() -ceq '$SelfTest' -and
+                    $start -ge [int]$body.Extent.StartOffset -and $end -le [int]$body.Extent.EndOffset) {
+                    return $true
+                }
+            }
+        }
+        $current = $current.Parent
+    }
+    return $false
+}
 function Get-AffectedWorkEnvironmentDirectInvocationArguments([string]$Root) {
     $ownerPath = Join-Path ([IO.Path]::GetFullPath($Root)) 'scripts/Test-WorkEnvironment.ps1'
     $ast = Get-AffectedPowerShellAst $ownerPath
@@ -572,6 +591,7 @@ function Get-AffectedWorkEnvironmentDirectInvocationArguments([string]$Root) {
         },$true))
         if ($pathValues.Count -eq 0) { continue }
         if ($pathValues.Count -ne 1) { throw "Work Environment direct owner invocation has ambiguous entrypoint text: $($command.Extent.Text)" }
+        if (-not (Test-AffectedAstWithinSelfTestBranch -Node $command)) { continue }
         $commandPath = ConvertTo-AffectedOwnerEntrypoint ([string]$pathValues[0].Value)
         $arguments = [Collections.Generic.List[string]]::new()
         $skipRepoRootValue = $false
@@ -597,32 +617,6 @@ function Get-AffectedWorkEnvironmentDirectInvocationArguments([string]$Root) {
         [void]([Collections.Generic.List[object]]$result[$commandPath]).Add([pscustomobject][ordered]@{arguments=@($arguments.ToArray())})
     }
     return $result
-}
-function Assert-AffectedWorkEnvironmentLeafRegistration([string]$Root, [string[]]$OwnerEntrypoints, [Collections.Generic.Dictionary[string,object]]$RegistryByCommand) {
-    # Test-WorkEnvironment remains a retained compatibility aggregate, while
-    # affected validation executes every owner through an independently
-    # registered leaf with the same effective invocation.
-    $expectedUnregistered = @()
-    $unregistered = @($OwnerEntrypoints | Where-Object { -not $RegistryByCommand.ContainsKey([string]$_) })
-    [Array]::Sort($unregistered,[StringComparer]::Ordinal)
-    Assert-True (($unregistered -join "`n") -ceq ($expectedUnregistered -join "`n")) "Work Environment aggregate owner-entrypoint registration debt changed. Expected=$($expectedUnregistered -join ','); observed=$($unregistered -join ',')."
-
-    $tableInvocations = Get-AffectedWorkEnvironmentTableInvocationArguments -Root $Root
-    $directInvocations = Get-AffectedWorkEnvironmentDirectInvocationArguments -Root $Root
-    foreach ($commandPath in $OwnerEntrypoints) {
-        $registered = @($RegistryByCommand[[string]$commandPath])
-        Assert-True ($registered.Count -eq 1) "Work Environment aggregate owner does not have exactly one focused registration: $commandPath."
-        $registeredArguments = @($registered[0].arguments | ForEach-Object { [string]$_ })
-        $candidateInvocations = [Collections.Generic.List[object]]::new()
-        if ($tableInvocations.ContainsKey($commandPath)) { [void]$candidateInvocations.Add([pscustomobject][ordered]@{arguments=@($tableInvocations[$commandPath])}) }
-        if ($directInvocations.ContainsKey($commandPath)) { foreach ($candidate in @($directInvocations[$commandPath])) { [void]$candidateInvocations.Add($candidate) } }
-        Assert-True ($candidateInvocations.Count -gt 0) "Work Environment aggregate owner has no classified invocation arguments: $commandPath."
-        $matchingInvocation = @($candidateInvocations | Where-Object {
-            $aggregateArguments = @($_.arguments | ForEach-Object { [string]$_ })
-            $aggregateArguments.Count -eq $registeredArguments.Count -and ($aggregateArguments -join "`n") -ceq ($registeredArguments -join "`n")
-        })
-        Assert-True ($matchingInvocation.Count -gt 0) "Work Environment aggregate invocation differs from its focused registration: $commandPath registered=$($registeredArguments -join ',')."
-    }
 }
 function Get-AffectedLexicalImportScope([Management.Automation.Language.Ast]$Node) {
     $current = $Node.Parent
@@ -1166,8 +1160,8 @@ function Get-AffectedProtocolCommonOwnerChecks([string]$Root, [object]$Registry)
         if (-not $registryByCommand.ContainsKey($commandPath)) { $registryByCommand[$commandPath] = [Collections.Generic.List[object]]::new() }
         ([Collections.Generic.List[object]]$registryByCommand[$commandPath]).Add($check)
     }
-    $ownerEntrypoints = @(Get-AffectedWorkEnvironmentOwnerEntrypoints -Root $Root -TrackedPaths $trackedPaths)
-    Assert-AffectedWorkEnvironmentLeafRegistration -Root $Root -OwnerEntrypoints $ownerEntrypoints -RegistryByCommand $registryByCommand
+    $registrationAudit = Assert-MorphospaceAffectedWorkEnvironmentLeafRegistration -Root $Root -Registry $Registry
+    $ownerEntrypoints = @($registrationAudit.owner_entrypoints)
     $dynamicImports = @(
         [pscustomobject][ordered]@{ importer='scripts/Test-AuthorityRecordReadiness.ps1'; variable='processModule'; count=1; import_path='scripts/lib/MorphospaceAuthorityProcess.psm1' },
         [pscustomobject][ordered]@{ importer='scripts/Test-TransitionLedger.ps1'; variable='ModulePath'; count=2; import_path='scripts/lib/MorphospaceTransitionLedger.psm1' },
@@ -2280,6 +2274,7 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value $termina
     $leafBindingCheck = @($fixtureRegistry.checks | Where-Object check_id -ceq 'documentation-links')[0] | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64 -DateKind String
     $leafBindingCheck.check_id = 'leaf-binding-fixture'
     $leafBindingCheck.command_path = 'scripts/Test-AffectedLeafBindingFixture.ps1'
+    $leafBindingCheck.trigger_path_sets = @('leaf-binding-fixture')
     $leafBindingCheck.consume_path_sets = @('leaf-binding-fixture')
     $leafBindingCheck.provides_contracts = @()
     $fixtureRegistry.path_sets = @($fixtureRegistry.path_sets) + @([pscustomobject][ordered]@{path_set_id='leaf-binding-fixture';patterns=@('scripts/Test-AffectedLeafBindingFixture.ps1')})
@@ -3865,6 +3860,39 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     # single exact owner class.  Test each path independently so command-path
     # selection cannot conceal an unmapped or ambiguous shared-module route.
     $validationAuthorityClosureChecks=@('authority-record-readiness','authority-runner-fast','authority-runner-handoff','transition-ledger','trust-migration-authority','validation-authority-launcher','validation-execution-authority') + $workflowConsumerFixtureChecks
+    $preparationRepositoryScopeConsumerChecks=@(
+        'workflow-contracts','normal-validation-selector','active-write-scope-amendment',
+        'completed-transition-semantic-correction','correct-active-project-repository-scope',
+        'correct-active-read-only-dependencies','development-unit-admission',
+        'recovered-proposal-continuation','validating-candidate-rematerialization',
+        'environment-validation','executed-prepared-publication-reconciliation',
+        'historical-blocker-resolution-intent-binding-correction',
+        'historical-unit-compatibility-projection','historical-unit-adoption',
+        'history-archive-checkpoint-selftest','inherited-candidate-materialization',
+        'prepared-push-transaction-suffix-reconciliation',
+        'published-prerequisite-suffix-reconciliation','unplanned-publication-closure',
+        'work-unit-handoff','blocked-supersession-terminal-validation',
+        'correct-active-unit-contract','historical-validation-debt-baseline',
+        'transition-ledger','authority-record-readiness','authority-runner-fast',
+        'authority-runner-handoff','trust-migration-authority',
+        'history-archive-checkpoint','work-unit-automation','project-workspace-scaffold',
+        'development-envelope-preparation','preparation-repository-scope','public-boundary'
+    )
+    $preparationRepositoryScopeSelectionChecks=@(
+        $preparationRepositoryScopeConsumerChecks + @(
+            'automation-receipt-v2-compatibility','historical-supersession-compatibility',
+            'validation-only-write-scope-narrowing','workflow-action-registry'
+        )
+    )
+    $preparationRepositoryScopeTriggers=@($registry.checks | Where-Object {
+        @($_.trigger_path_sets) -ccontains 'preparation-repository-scope'
+    } | ForEach-Object { [string]$_.check_id } | Sort-Object)
+    $preparationRepositoryScopeConsumers=@($registry.checks | Where-Object {
+        @($_.consume_path_sets) -ccontains 'preparation-repository-scope'
+    } | ForEach-Object { [string]$_.check_id } | Sort-Object)
+    $expectedPreparationRepositoryScopeConsumers=@($preparationRepositoryScopeConsumerChecks | Sort-Object)
+    Assert-True (($preparationRepositoryScopeTriggers -join '|') -ceq ($expectedPreparationRepositoryScopeConsumers -join '|')) 'Preparation-repository-scope trigger consumers differ from the exact focused inventory.'
+    Assert-True (($preparationRepositoryScopeConsumers -join '|') -ceq ($expectedPreparationRepositoryScopeConsumers -join '|')) 'Preparation-repository-scope evidence consumers differ from the exact focused inventory.'
     $externalProtectedOwners = [ordered]@{
         '.github/workflows/static-admission.yml' = 'external-validation-adapter'
         '.github/workflows/validate.yml' = 'selector-trust-root'
@@ -3951,6 +3979,7 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
         [pscustomobject]@{ path='scripts/lib/MorphospaceHistoricalValidationDebtPhaseRunner.psm1'; checks=@('historical-validation-debt-baseline','historical-validation-debt-phase-runner','work-unit-automation') },
         [pscustomobject]@{ path='scripts/lib/MorphospaceOwnership.psm1'; checks=@('authority-record-readiness','authority-runner-fast','ownership-authority','validation-execution-authority','work-unit-automation') },
         [pscustomobject]@{ path='scripts/lib/MorphospaceProtocolCommon.psm1'; checks=$protocolCommonConsumerChecks },
+        [pscustomobject]@{ path='scripts/lib/MorphospacePreparationRepositoryScope.psm1'; checks=$preparationRepositoryScopeSelectionChecks; exact_checks=$true },
         [pscustomobject]@{ path='scripts/lib/MorphospaceTransitionLedger.psm1'; checks=@('blocked-supersession-terminal-validation','correct-active-unit-contract','development-unit-admission','transition-ledger','work-unit-automation') },
         [pscustomobject]@{ path='scripts/Invoke-MorphospaceValidationAuthority.ps1'; checks=$validationAuthorityClosureChecks; exact_checks=$true },
         [pscustomobject]@{ path='scripts/lib/MorphospaceAuthorityProcess.psm1'; checks=$validationAuthorityClosureChecks; exact_checks=$true },
