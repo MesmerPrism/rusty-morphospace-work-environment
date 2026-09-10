@@ -96,7 +96,13 @@ Current-work retirement history accepts exactly the closed direct-owner
 same committed retirement semantics and preserved admission evidence. The
 direct format additionally binds its transaction ID, paths, event, and every
 state/unit/event-ledger CAS identity to the transition intent. Format dispatch
-does not convert receipts or rewrite accepted historical bytes.
+does not convert receipts or rewrite accepted historical bytes. An optional
+closed provenance member admits exactly one additional history shape:
+admission, ordinary Ready, WithdrawReady, and retirement in contiguous order.
+The reader replays each committed transaction read-only, rederives the allowed
+status and state projections, authenticates the withdrawal receipt as the sole
+withdrawal artifact, and requires the withdrawal target to equal the retirement
+preimage. The member grants no validation credit or preparation reuse.
 
 Lock validation uses one shared predicate for the two existing owner formats:
 canonical JSON and the original resolver's ordered compressed JSON. Both hash

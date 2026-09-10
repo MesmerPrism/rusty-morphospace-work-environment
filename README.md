@@ -470,7 +470,11 @@ for the exact `next_ready_unit`: it authenticates that unit's unique original
 Ready transaction, changes only `ready` to `proposed`, deterministically
 recomputes the queue, and installs its receipt with the withdrawal event.
 Withdrawn identities cannot be readied again; a revised proposal uses a new
-unit identity.
+unit identity. An idle admitted proposal may then use `RetireProposed` when its
+admission, ordinary Ready, and WithdrawReady events are contiguous and all
+three committed transactions, the withdrawal receipt artifact, and the exact
+state/unit projections authenticate. This path closes the old identity without
+granting validation credit or reusing its preparation for the replacement.
 Use `-Action RecordHistoricalUnitCompatibilityProjection` only with a
 builder-produced, reviewed SHA-bound closed receipt for the exact historical
 pair. The action is dry-run by default and atomically installs the receipt plus

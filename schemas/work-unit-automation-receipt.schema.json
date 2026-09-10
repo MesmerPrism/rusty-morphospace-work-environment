@@ -363,6 +363,7 @@
             "current_unit_absent": { "const": true },
             "next_ready_unit_absent": { "const": true },
             "original_admission_preserved": { "const": true },
+            "authenticated_ready_withdrawal": { "$ref": "#/$defs/readyWithdrawalProvenance" },
             "binding_sha256": { "$ref": "#/$defs/sha256" }
           }
         },
@@ -482,6 +483,28 @@
       "properties": {
         "path": { "type": "string", "minLength": 1 },
         "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "readyWithdrawalProvenance": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "admission", "ready", "withdrawal", "withdrawal_receipt", "admission_ready_withdrawal_contiguous", "ordinary_ready", "withdrawal_target_matches_retirement_preimage"],
+      "properties": {
+        "kind": { "const": "admitted-ready-withdrawn-v1" },
+        "admission": { "$ref": "#/$defs/provenanceTransition" },
+        "ready": { "$ref": "#/$defs/provenanceTransition" },
+        "withdrawal": { "$ref": "#/$defs/provenanceTransition" },
+        "withdrawal_receipt": { "$ref": "#/$defs/path_hash" },
+        "admission_ready_withdrawal_contiguous": { "const": true },
+        "ordinary_ready": { "const": true },
+        "withdrawal_target_matches_retirement_preimage": { "const": true }
+      }
+    },
+    "provenanceTransition": {
+      "type": "object", "additionalProperties": false,
+      "required": ["event", "transaction"],
+      "properties": {
+        "event": { "type": "object", "additionalProperties": false, "required": ["event_id", "sequence", "sha256"], "properties": { "event_id": { "$ref": "#/$defs/id" }, "sequence": { "type": "integer", "minimum": 1 }, "sha256": { "$ref": "#/$defs/sha256" } } },
+        "transaction": { "type": "object", "additionalProperties": false, "required": ["transaction_id", "intent", "completion", "pre_state_sha256", "target_state_sha256", "pre_unit_sha256", "target_unit_sha256"], "properties": { "transaction_id": { "type": "string", "maxLength": 192, "pattern": "^[a-z0-9][a-z0-9-]+$" }, "intent": { "$ref": "#/$defs/path_hash" }, "completion": { "$ref": "#/$defs/path_hash" }, "pre_state_sha256": { "$ref": "#/$defs/sha256" }, "target_state_sha256": { "$ref": "#/$defs/sha256" }, "pre_unit_sha256": { "$ref": "#/$defs/sha256" }, "target_unit_sha256": { "$ref": "#/$defs/sha256" } } }
       }
     }
   }

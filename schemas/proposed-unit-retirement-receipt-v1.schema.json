@@ -96,8 +96,31 @@
             "events_sha256": { "$ref": "#/$defs/sha256" }, "events_length": { "type": "integer", "minimum": 1 }, "event_tail_id": { "$ref": "#/$defs/id" }
           }
         },
+        "authenticated_ready_withdrawal": { "$ref": "#/$defs/readyWithdrawalProvenance" },
         "replacement_identity_absent": { "const": true }, "current_unit_absent": { "const": true }, "next_ready_unit_absent": { "const": true }, "original_admission_preserved": { "const": true },
         "binding_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "readyWithdrawalProvenance": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "admission", "ready", "withdrawal", "withdrawal_receipt", "admission_ready_withdrawal_contiguous", "ordinary_ready", "withdrawal_target_matches_retirement_preimage"],
+      "properties": {
+        "kind": { "const": "admitted-ready-withdrawn-v1" },
+        "admission": { "$ref": "#/$defs/provenanceTransition" },
+        "ready": { "$ref": "#/$defs/provenanceTransition" },
+        "withdrawal": { "$ref": "#/$defs/provenanceTransition" },
+        "withdrawal_receipt": { "$ref": "#/$defs/fileReference" },
+        "admission_ready_withdrawal_contiguous": { "const": true },
+        "ordinary_ready": { "const": true },
+        "withdrawal_target_matches_retirement_preimage": { "const": true }
+      }
+    },
+    "provenanceTransition": {
+      "type": "object", "additionalProperties": false,
+      "required": ["event", "transaction"],
+      "properties": {
+        "event": { "type": "object", "additionalProperties": false, "required": ["event_id", "sequence", "sha256"], "properties": { "event_id": { "$ref": "#/$defs/id" }, "sequence": { "type": "integer", "minimum": 1 }, "sha256": { "$ref": "#/$defs/sha256" } } },
+        "transaction": { "type": "object", "additionalProperties": false, "required": ["transaction_id", "intent", "completion", "pre_state_sha256", "target_state_sha256", "pre_unit_sha256", "target_unit_sha256"], "properties": { "transaction_id": { "$ref": "#/$defs/transactionId" }, "intent": { "$ref": "#/$defs/fileReference" }, "completion": { "$ref": "#/$defs/fileReference" }, "pre_state_sha256": { "$ref": "#/$defs/sha256" }, "target_state_sha256": { "$ref": "#/$defs/sha256" }, "pre_unit_sha256": { "$ref": "#/$defs/sha256" }, "target_unit_sha256": { "$ref": "#/$defs/sha256" } } }
       }
     }
   }

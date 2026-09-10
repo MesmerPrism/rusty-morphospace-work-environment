@@ -104,9 +104,109 @@ function Get-MorphospaceProposedRetirementBinding {
     if ($UnitMap.ContainsKey($ReplacementUnitId)) { throw "RetireProposed replacement identity '$ReplacementUnitId' already exists." }
     if ($events.Count -lt 1) { throw 'RetireProposed requires the exact owner-generated admission event.' }
 
-    $admissionEvent = $events[-1]
+    $readyWithdrawal = $null
+    if ($events.Count -ge 3 -and [string]$events[-1].event_id -cmatch '^' + [regex]::Escape($UnitId) + '-ready-withdrawn-[0-9]{4}$') {
+        $admit = $events[-3]; $ready = $events[-2]; $withdraw = $events[-1]
+        $admitId = [regex]::Match([string]$admit.event_id, '^(?<id>[a-z0-9][a-z0-9-]{1,127})-admitted$').Groups['id'].Value
+        $expectedReadyId = "$UnitId-ready-$('{0:D4}' -f [int]$ready.sequence)"
+        $expectedWithdrawId = "$UnitId-ready-withdrawn-$('{0:D4}' -f [int]$withdraw.sequence)"
+        if (-not $admitId -or [string]$admit.project_id -cne $ProjectId -or [string]$admit.unit_id -cne $UnitId -or
+            [string]$admit.event_type -cne 'state-transition' -or [string]$admit.summary -cne 'Admitted a bounded proposed development unit; normal Ready, Inspect, and Claim remain required.' -or @($admit.receipts).Count -ne 1 -or
+            [string]$ready.project_id -cne $ProjectId -or [string]$ready.unit_id -cne $UnitId -or [string]$ready.event_type -cne 'state-transition' -or
+            [string]$ready.event_id -cne $expectedReadyId -or [string]$ready.summary -cne 'Reviewed the bounded proposal and made it claimable without expanding its repositories, paths, or prerequisites.' -or @($ready.receipts).Count -ne 0 -or
+            [int]$ready.sequence -ne ([int]$admit.sequence + 1) -or [int]$withdraw.sequence -ne ([int]$ready.sequence + 1) -or
+            [string]$withdraw.project_id -cne $ProjectId -or [string]$withdraw.unit_id -cne $UnitId -or [string]$withdraw.event_type -cne 'state-transition' -or
+            [string]$withdraw.event_id -cne $expectedWithdrawId -or [string]$withdraw.summary -cne 'Withdrew the exact next-ready unit through its authenticated Ready transaction while preserving current authority and deterministic queue order.' -or @($withdraw.receipts).Count -ne 1) {
+            throw 'RetireProposed admitted Ready-to-WithdrawReady provenance is not the exact contiguous owner suffix.'
+        }
+        $admitReceiptRelative = "receipts/$admitId.json"
+        if ([string]$admit.receipts[0] -cne $admitReceiptRelative) { throw 'RetireProposed admitted provenance references a different admission receipt.' }
+        $withdrawReceiptRelative = [string]$withdraw.receipts[0]
+        if ($withdrawReceiptRelative -notmatch '^receipts/[a-z0-9][a-z0-9-]{1,127}\.json$') { throw 'RetireProposed admitted provenance withdrawal receipt path is not canonical.' }
+        $withdrawReceiptPath = Resolve-MorphospaceWorkspacePath $WorkspaceRoot $withdrawReceiptRelative -RequireLeaf
+        $withdrawReceiptRaw = [IO.File]::ReadAllText($withdrawReceiptPath, [Text.UTF8Encoding]::new($false, $true))
+        $automationSchema = Join-Path (Split-Path $PSScriptRoot -Parent) 'schemas/work-unit-automation-receipt.schema.json'
+        if (-not (Test-Json -Json $withdrawReceiptRaw -SchemaFile $automationSchema)) { throw 'RetireProposed admitted provenance withdrawal receipt is invalid.' }
+        $withdrawReceipt = Read-MorphospaceProtocolJson -Path $withdrawReceiptPath
+        if ([string]$withdrawReceipt.action -cne 'WithdrawReady' -or -not [bool]$withdrawReceipt.executed -or [string]$withdrawReceipt.project_id -cne $ProjectId -or [string]$withdrawReceipt.unit_id -cne $UnitId -or
+            [string]$withdrawReceipt.transition -cne 'ready-to-proposed-withdrawn' -or [string]$withdrawReceipt.status_before -cne 'ready' -or [string]$withdrawReceipt.status_after -cne 'proposed' -or
+            $null -ne $withdrawReceipt.current_unit_before -or $null -ne $withdrawReceipt.current_unit_after -or [string]$withdrawReceipt.event_id -cne [string]$withdraw.event_id) {
+            throw 'RetireProposed admitted provenance withdrawal receipt has the wrong authority projection.'
+        }
+        $withdrawBinding = $withdrawReceipt.ready_withdrawal
+        if ($null -eq $withdrawBinding -or [string]$withdrawBinding.next_ready_unit_before -cne $UnitId -or $null -ne $withdrawBinding.next_ready_unit_after -or
+            @($withdrawBinding.ready_queue_before).Count -ne 1 -or [string]$withdrawBinding.ready_queue_before[0] -cne $UnitId -or @($withdrawBinding.ready_queue_after).Count -ne 0 -or
+            -not [bool]$withdrawBinding.original_ready_event_preserved -or [string]$withdrawBinding.original_ready_event.event_id -cne [string]$ready.event_id) {
+            throw 'RetireProposed admitted provenance withdrawal receipt does not bind the exact singleton Ready queue.'
+        }
+        function Read-ProvenanceTransition([object]$Event, [string]$TargetStatus, [string]$Label) {
+            $id = "$([string]$Event.event_id)-transition"; $ip = Resolve-MorphospaceWorkspacePath $WorkspaceRoot "receipts/transactions/$id.intent.json" -RequireLeaf; $cp = Resolve-MorphospaceWorkspacePath $WorkspaceRoot "receipts/transactions/$id.completion.json" -RequireLeaf
+            $committed = Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $WorkspaceRoot -TransactionId $id -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath "iteration-units/$UnitId.json" -ExpectedEventsPath 'iteration-events.jsonl'
+            $intent = $committed.intent; $completion = $committed.completion
+            if ([string]$intent.transaction_id -cne $id -or [string]$intent.event.event_id -cne [string]$Event.event_id -or [int]$intent.event.sequence -ne [int]$Event.sequence -or
+                [string]$intent.unit.path -cne "iteration-units/$UnitId.json" -or [string]$intent.events.path -cne 'iteration-events.jsonl' -or
+                (Get-MorphospaceCanonicalJsonSha256 $intent.event) -cne (Get-MorphospaceCanonicalJsonSha256 $Event) -or
+                [string]$intent.target.unit.document.unit_id -cne $UnitId -or [string]$intent.target.unit.document.status -cne $TargetStatus -or
+                [string]$intent.target.state.document.project_id -cne $ProjectId -or
+                [string]$completion.transaction_id -cne $id -or [string]$completion.event_id -cne [string]$Event.event_id -or
+                [string]$completion.state_sha256 -cne [string]$intent.target.state.sha256 -or [string]$completion.unit_sha256 -cne [string]$intent.target.unit.sha256) { throw "RetireProposed admitted provenance $Label transaction is detached." }
+            $binding = [pscustomobject][ordered]@{ event=[pscustomobject][ordered]@{event_id=[string]$Event.event_id;sequence=[int]$Event.sequence;sha256=Get-MorphospaceCanonicalJsonSha256 $Event}; transaction=[pscustomobject][ordered]@{transaction_id=$id;intent=[pscustomobject][ordered]@{path="receipts/transactions/$id.intent.json";sha256=Get-MorphospaceFileSha256 $ip};completion=[pscustomobject][ordered]@{path="receipts/transactions/$id.completion.json";sha256=Get-MorphospaceFileSha256 $cp};pre_state_sha256=[string]$intent.pre.state.sha256;target_state_sha256=[string]$intent.target.state.sha256;pre_unit_sha256=[string]$intent.pre.unit.sha256;target_unit_sha256=[string]$intent.target.unit.sha256} }
+            [pscustomobject]@{ binding=$binding; intent=$intent; completion=$completion }
+        }
+        $admitStep = Read-ProvenanceTransition $admit 'proposed' 'admission'; $readyStep = Read-ProvenanceTransition $ready 'ready' 'Ready'; $withdrawStep = Read-ProvenanceTransition $withdraw 'proposed' 'WithdrawReady'
+        $admitTx = $admitStep.binding; $readyTx = $readyStep.binding; $withdrawTx = $withdrawStep.binding
+        if ([string]$readyTx.transaction.pre_state_sha256 -cne [string]$admitTx.transaction.target_state_sha256 -or [string]$readyTx.transaction.pre_unit_sha256 -cne [string]$admitTx.transaction.target_unit_sha256 -or
+            [string]$withdrawTx.transaction.pre_state_sha256 -cne [string]$readyTx.transaction.target_state_sha256 -or [string]$withdrawTx.transaction.pre_unit_sha256 -cne [string]$readyTx.transaction.target_unit_sha256 -or
+            [string]$withdrawReceipt.ready_withdrawal.original_ready_transaction.intent.sha256 -cne [string]$readyTx.transaction.intent.sha256 -or [string]$withdrawReceipt.ready_withdrawal.original_ready_transaction.completion.sha256 -cne [string]$readyTx.transaction.completion.sha256) {
+            throw 'RetireProposed admitted provenance does not hash-chain admission, Ready, and WithdrawReady.'
+        }
+        $readyAdditionalProjectionCount = if ($readyStep.intent.PSObject.Properties.Name -contains 'additional_projections') { @($readyStep.intent.additional_projections).Count } else { 0 }
+        if (@($readyStep.intent.artifacts).Count -ne 0 -or $readyAdditionalProjectionCount -ne 0 -or [string]$readyStep.intent.expected.event_tail_id -cne [string]$admit.event_id) { throw 'RetireProposed provenance Ready transition is not the exact ordinary zero-artifact successor of admission.' }
+        $withdrawArtifacts = @($withdrawStep.intent.artifacts)
+        $withdrawAdditionalProjectionCount = if ($withdrawStep.intent.PSObject.Properties.Name -contains 'additional_projections') { @($withdrawStep.intent.additional_projections).Count } else { 0 }
+        if ($withdrawArtifacts.Count -ne 1 -or [string]$withdrawArtifacts[0].path -cne $withdrawReceiptRelative -or
+            [string]$withdrawArtifacts[0].sha256 -cne (Get-MorphospaceFileSha256 $withdrawReceiptPath) -or
+            [string]$withdrawArtifacts[0].bytes_base64 -cne [Convert]::ToBase64String([IO.File]::ReadAllBytes($withdrawReceiptPath)) -or
+            $withdrawAdditionalProjectionCount -ne 0 -or [string]$withdrawStep.intent.expected.event_tail_id -cne [string]$ready.event_id) {
+            throw 'RetireProposed provenance WithdrawReady transition does not own its exact receipt and Ready tail.'
+        }
+        $expectedReadyUnit = $admitStep.intent.target.unit.document | ConvertTo-Json -Depth 64 | ConvertFrom-Json -DateKind String; $expectedReadyUnit.status = 'ready'
+        $expectedWithdrawUnit = $readyStep.intent.target.unit.document | ConvertTo-Json -Depth 64 | ConvertFrom-Json -DateKind String; $expectedWithdrawUnit.status = 'proposed'
+        $expectedReadyState = $admitStep.intent.target.state.document | ConvertTo-Json -Depth 64 | ConvertFrom-Json -DateKind String
+        $expectedReadyState.last_event_id = [string]$ready.event_id; $expectedReadyState.next_ready_unit = $UnitId
+        foreach ($field in @('dirty_repositories','repository_heads','module_registry')) { if ($expectedReadyState.PSObject.Properties.Name -contains $field) { $expectedReadyState.$field = $readyStep.intent.target.state.document.$field } }
+        $expectedWithdrawState = $readyStep.intent.target.state.document | ConvertTo-Json -Depth 64 | ConvertFrom-Json -DateKind String
+        $expectedWithdrawState.last_event_id = [string]$withdraw.event_id; $expectedWithdrawState.next_ready_unit = $null
+        if ($null -ne $admitStep.intent.target.state.document.current_unit -or $null -ne $admitStep.intent.target.state.document.next_ready_unit -or
+            $null -ne $readyStep.intent.target.state.document.current_unit -or [string]$readyStep.intent.target.state.document.next_ready_unit -cne $UnitId -or
+            $null -ne $withdrawStep.intent.target.state.document.current_unit -or $null -ne $withdrawStep.intent.target.state.document.next_ready_unit -or
+            (Get-MorphospaceCanonicalJsonSha256 $expectedReadyUnit) -cne [string]$readyStep.intent.target.unit.sha256 -or
+            (Get-MorphospaceCanonicalJsonSha256 $expectedWithdrawUnit) -cne [string]$withdrawStep.intent.target.unit.sha256 -or
+            (Get-MorphospaceCanonicalJsonSha256 $expectedReadyState) -cne [string]$readyStep.intent.target.state.sha256 -or
+            (Get-MorphospaceCanonicalJsonSha256 $expectedWithdrawState) -cne [string]$withdrawStep.intent.target.state.sha256) {
+            throw 'RetireProposed provenance contains a non-owner Ready or WithdrawReady projection.'
+        }
+        $originalReady = $withdrawBinding.original_ready_transaction
+        if ([string]$withdrawBinding.original_ready_event.event_id -cne [string]$ready.event_id -or [int]$withdrawBinding.original_ready_event.sequence -ne [int]$ready.sequence -or
+            [string]$withdrawBinding.original_ready_event.sha256 -cne (Get-MorphospaceCanonicalJsonSha256 $ready) -or [string]$originalReady.transaction_id -cne [string]$readyTx.transaction.transaction_id -or
+            [string]$originalReady.intent.path -cne [string]$readyTx.transaction.intent.path -or [string]$originalReady.intent.sha256 -cne [string]$readyTx.transaction.intent.sha256 -or
+            [string]$originalReady.completion.path -cne [string]$readyTx.transaction.completion.path -or [string]$originalReady.completion.sha256 -cne [string]$readyTx.transaction.completion.sha256 -or
+            [string]$originalReady.target_state_sha256 -cne [string]$readyTx.transaction.target_state_sha256 -or [string]$originalReady.target_unit_sha256 -cne [string]$readyTx.transaction.target_unit_sha256 -or
+            [string]$withdrawBinding.authenticated_preimage.state_sha256 -cne [string]$withdrawTx.transaction.pre_state_sha256 -or [string]$withdrawBinding.authenticated_preimage.unit_sha256 -cne [string]$withdrawTx.transaction.pre_unit_sha256 -or
+            [string]$withdrawBinding.authenticated_preimage.event_tail_id -cne [string]$ready.event_id -or [string]$withdrawBinding.authenticated_preimage.events_sha256 -cne [string]$withdrawStep.intent.expected.events_sha256 -or
+            [int64]$withdrawBinding.authenticated_preimage.events_length -ne [int64]$withdrawStep.intent.expected.events_length) { throw 'RetireProposed withdrawal receipt does not reproduce its Ready and withdrawal preimage authority.' }
+        if ([string]$withdrawTx.transaction.target_state_sha256 -cne $ExpectedStateSha256 -or [string]$withdrawTx.transaction.target_unit_sha256 -cne $ExpectedUnitSha256) { throw 'RetireProposed admitted provenance withdrawal target differs from the live proposed preimage.' }
+        $readyWithdrawal = [pscustomobject][ordered]@{
+            kind='admitted-ready-withdrawn-v1'; admission=$admitTx; ready=$readyTx; withdrawal=$withdrawTx
+            withdrawal_receipt=[pscustomobject][ordered]@{path=$withdrawReceiptRelative;sha256=Get-MorphospaceFileSha256 $withdrawReceiptPath}
+            admission_ready_withdrawal_contiguous=$true; ordinary_ready=$true; withdrawal_target_matches_retirement_preimage=$true
+        }
+    }
+
+    $admissionEvent = if ($null -ne $readyWithdrawal) { $events[-3] } else { $events[-1] }
     $recoveredAdmission = $null
     $admissionStateSha256 = $ExpectedStateSha256
+    if ($null -ne $readyWithdrawal) { $admissionStateSha256 = [string]$readyWithdrawal.admission.transaction.target_state_sha256 }
     if ([string]$admissionEvent.event_id -cmatch '^admission-completion-timestamp-recovered-[0-9]{4,}$') {
         if ($events.Count -lt 2 -or @($admissionEvent.receipts).Count -ne 1) { throw 'RetireProposed requires exactly one authenticated recovery after admission.' }
         $recoveryPath = Resolve-MorphospaceWorkspacePath $WorkspaceRoot ([string]$admissionEvent.receipts[0]) -RequireLeaf
@@ -126,7 +226,7 @@ function Get-MorphospaceProposedRetirementBinding {
         [string]$admissionEvent.unit_id -cne $UnitId -or [string]$admissionEvent.event_type -cne 'state-transition' -or
         [string]$admissionEvent.summary -cne 'Admitted a bounded proposed development unit; normal Ready, Inspect, and Claim remain required.' -or
         -not $admissionMatch.Success -or @($admissionEvent.receipts).Count -ne 1) {
-        throw 'RetireProposed requires admission at the current ledger tail or immediately before its authenticated timestamp recovery.'
+        throw 'RetireProposed requires admission at the current ledger tail, immediately before its authenticated timestamp recovery, or at the start of the exact admitted Ready-to-WithdrawReady suffix.'
     }
     $admissionId = [string]$admissionMatch.Groups['admission'].Value
     $receiptRelative = "receipts/$admissionId.json"
@@ -148,7 +248,7 @@ function Get-MorphospaceProposedRetirementBinding {
     $completionRelative = "receipts/transactions/$admissionTransactionId.completion.json"
     $intentPath = Resolve-MorphospaceWorkspacePath $WorkspaceRoot $intentRelative -RequireLeaf
     $completionPath = Resolve-MorphospaceWorkspacePath $WorkspaceRoot $completionRelative -RequireLeaf
-    if ($null -eq $recoveredAdmission) {
+    if ($null -eq $recoveredAdmission -and $null -eq $readyWithdrawal) {
         $authentication = Complete-MorphospaceTransitionLedger -WorkspaceRoot $WorkspaceRoot -TransactionId $admissionTransactionId
         if ([string]$authentication.status -cne 'already-committed') { throw 'RetireProposed requires an already committed admission transaction.' }
     }
@@ -186,11 +286,14 @@ function Get-MorphospaceProposedRetirementBinding {
         }
         replacement_identity_absent = $true; current_unit_absent = $true; next_ready_unit_absent = $true; original_admission_preserved = $true
     }
-    return [pscustomobject][ordered]@{
+    if ($null -ne $readyWithdrawal) { $base | Add-Member -NotePropertyName authenticated_ready_withdrawal -NotePropertyValue $readyWithdrawal }
+    $result = [pscustomobject][ordered]@{
         replacement_unit_id = $base.replacement_unit_id; reason = $base.reason; authenticated_admission = $base.authenticated_admission; authenticated_preimage = $base.authenticated_preimage
         replacement_identity_absent = $true; current_unit_absent = $true; next_ready_unit_absent = $true; original_admission_preserved = $true
         binding_sha256 = Get-MorphospaceCanonicalJsonSha256 $base
     }
+    if ($null -ne $readyWithdrawal) { $result | Add-Member -NotePropertyName authenticated_ready_withdrawal -NotePropertyValue $readyWithdrawal }
+    return $result
 }
 
 function Assert-MorphospaceLegacyRetirementEnvelope {

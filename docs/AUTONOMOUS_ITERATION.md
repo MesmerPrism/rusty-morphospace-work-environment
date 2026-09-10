@@ -99,6 +99,12 @@ the owner authenticates its unique Ready event and intent/completion, CAS-binds
 the current state/unit/ledger prefix, preserves current authority and the
 original event, then deterministically derives the remaining queue. The
 withdrawn identity is not reusable; create a new identity for a revision.
+When the withdrawn unit came from an ordinary admission and the project is
+idle, `RetireProposed` may close it only by authenticating the exact contiguous
+admission, ordinary Ready, and WithdrawReady transactions. The withdrawal
+receipt must be the withdrawal transaction's sole artifact, and its target must
+equal the retirement preimage. This route grants no historical validation or
+preparation-reuse authority.
 
 ## Instruction Synchronization
 
