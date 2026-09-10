@@ -4,7 +4,8 @@ param(
     [Parameter(Mandatory)][string]$IssuedAt,
     [Parameter(Mandatory)][string]$ExpiresAt,
     [string]$PrivateKeyPemPath = "",
-    [string]$CertificateThumbprint = ""
+    [string]$CertificateThumbprint = "",
+    [string]$OutputPath = ""
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -54,6 +55,55 @@ $document = [ordered]@{
 $documentText = $document | ConvertTo-Json -Depth 30 -Compress
 if (-not (Test-Json -Json $documentText -SchemaFile (Join-Path $root "schemas/external-owner-authorization-v1.schema.json") -ErrorAction Stop)) {
     throw "Generated external owner authorization failed its schema."
+}
+$commentText = [string]$policy.comment_marker + "`n" + $documentText + "`n"
+if ($OutputPath) {
+    $outputFullPath = [IO.Path]::GetFullPath($OutputPath)
+    $outputParent = Split-Path -Parent $outputFullPath
+    if (-not (Test-Path -LiteralPath $outputParent -PathType Container)) {
+        throw "Authorization comment output directory does not exist."
+    }
+    [byte[]]$commentBytes = [Text.UTF8Encoding]::new($false).GetBytes($commentText)
+    $outputStream = [IO.FileStream]::new(
+        $outputFullPath,
+        [IO.FileMode]::CreateNew,
+        [IO.FileAccess]::Write,
+        [IO.FileShare]::None
+    )
+    try {
+        $outputStream.Write($commentBytes, 0, $commentBytes.Length)
+        $outputStream.Flush($true)
+    } finally {
+        $outputStream.Dispose()
+    }
+    [byte[]]$persistedBytes = [IO.File]::ReadAllBytes($outputFullPath)
+    if (
+        $persistedBytes.Length -lt 2 -or
+        $persistedBytes -contains 0x0D -or
+        ($persistedBytes.Length -ge 3 -and $persistedBytes[0] -eq 0xEF -and $persistedBytes[1] -eq 0xBB -and $persistedBytes[2] -eq 0xBF) -or
+        $persistedBytes[$persistedBytes.Length - 1] -ne 0x0A
+    ) {
+        throw "Authorization comment output is not UTF-8-no-BOM LF-only text."
+    }
+    try {
+        $persistedText = [Text.UTF8Encoding]::new($false, $true).GetString($persistedBytes)
+    } catch {
+        throw "Authorization comment output is not valid UTF-8."
+    }
+    if ($persistedText -cne $commentText) {
+        throw "Authorization comment output did not persist byte-exactly."
+    }
+    $frame = Get-ExternalOwnerAuthorizationCommentFrame -Body $persistedText -Marker ([string]$policy.comment_marker)
+    if ($frame.marker_count -ne 1 -or $null -eq $frame.document_text) {
+        throw "Authorization comment output framing is not canonical."
+    }
+    $issued = [datetimeoffset]::ParseExact(
+        (ConvertTo-ExternalOwnerCanonicalUtcSecond -Value ([string]$payload.issued_at) -Label "Authorization issued_at"),
+        "yyyy-MM-dd'T'HH:mm:ss'Z'",
+        [Globalization.CultureInfo]::InvariantCulture,
+        [Globalization.DateTimeStyles]::AssumeUniversal
+    )
+    $null = Test-ExternalOwnerSignedPayload -DocumentText $frame.document_text -ExpectedPayload $payload -Policy $policy -SchemaPath (Join-Path $root "schemas/external-owner-authorization-v1.schema.json") -Now $issued
 }
 Write-Output ([string]$policy.comment_marker)
 Write-Output $documentText

@@ -132,7 +132,13 @@ the same assessment whose hash was signed; the authorization ID remains in the
 signed authorization document as audit identity rather than rewriting those
 assessment bytes.
 
-The safe local helper prints comment text but never publishes it:
+The safe local helper prints comment text but never publishes it. `IssuedAt` and
+`ExpiresAt` must be canonical UTC seconds (`yyyy-MM-ddTHH:mm:ssZ`); offsets,
+fractions, local times, and whitespace are rejected before signing. GitHub
+comment framing accepts LF or CRLF transport, while an edited owner comment is
+always rejected. To retain a ready-to-post file, use `-OutputPath`: it creates
+a new UTF-8-no-BOM, LF-only file and revalidates its framing and signature after
+the Windows write/read round trip.
 
 ```powershell
 pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass `
@@ -140,7 +146,8 @@ pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass `
   -RequestPath <authorization-request.json> `
   -AuthorizationId <unique-audit-id> `
   -IssuedAt <utc-issued-at> -ExpiresAt <utc-expires-at> `
-  -CertificateThumbprint <external-current-user-my-thumbprint>
+  -CertificateThumbprint <external-current-user-my-thumbprint> `
+  -OutputPath <authorization-comment.txt>
 ```
 
 Use `-PrivateKeyPemPath <external-private-key.pem>` instead when appropriate.

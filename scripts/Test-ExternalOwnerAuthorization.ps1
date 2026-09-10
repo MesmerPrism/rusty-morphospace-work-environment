@@ -39,10 +39,19 @@ try {
     $null = Test-ExternalOwnerAuthorizationComments @($positive) $payload $policy $now $schema
     $null = Test-ExternalOwnerAuthorizationComments @($positive) $payload $policy $now $schema
     $null = Test-ExternalOwnerAuthorizationComments @($positive,(New-Comment -Login "Other")) $payload $policy $now $schema
+    $crlfComment = $positive | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30 -DateKind String
+    $crlfComment.body = $crlfComment.body.Replace("`n", "`r`n")
+    $null = Test-ExternalOwnerAuthorizationComments @($crlfComment) $payload $policy $now $schema
+    $editedComment = $positive | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30 -DateKind String
+    $editedComment.updated_at = "2026-08-06T11:59:31Z"
     $cases = @(
-        @{name="missing pinned owner"; comments=@(New-Comment -Login "Other"); expected=$payload; at=$now},
-        @{name="duplicate marker comments"; comments=@($positive,$positive); expected=$payload; at=$now},
-        @{name="changed PR evidence"; comments=@($positive); expected=$payload; at=$now}
+        @{name="missing pinned owner"; comments=@(New-Comment -Login "Other"); expected=$payload; at=$now; rejection="Exactly one pinned-owner authorization marker"},
+        @{name="duplicate marker comments"; comments=@($positive,$positive); expected=$payload; at=$now; rejection="Exactly one pinned-owner authorization marker"},
+        @{name="changed PR evidence"; comments=@($positive); expected=$payload; at=$now; rejection="Authorization payload does not equal the exact expected evidence"},
+        @{name="edited owner comment"; comments=@($editedComment); expected=$payload; at=$now; rejection="Edited authorization comments are ambiguous and forbidden"},
+        @{name="marker with leading whitespace"; comments=@([pscustomobject]@{id=124;created_at="2026-08-06T11:59:30Z";updated_at="2026-08-06T11:59:30Z";user=[pscustomobject]@{login="Owner"};body=(" " + $positive.body)}); expected=$payload; at=$now; rejection="Exactly one pinned-owner authorization marker"},
+        @{name="duplicate marker in one body"; comments=@([pscustomobject]@{id=125;created_at="2026-08-06T11:59:30Z";updated_at="2026-08-06T11:59:30Z";user=[pscustomobject]@{login="Owner"};body=($positive.body + "`n" + $policy.comment_marker)}); expected=$payload; at=$now; rejection="Exactly one pinned-owner authorization marker"},
+        @{name="marker on second line"; comments=@([pscustomobject]@{id=126;created_at="2026-08-06T11:59:30Z";updated_at="2026-08-06T11:59:30Z";user=[pscustomobject]@{login="Owner"};body=("discussion`n" + $positive.body)}); expected=$payload; at=$now; rejection="Authorization marker framing is not canonical"}
     )
     $wrong = $payload | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30 -DateKind String; $wrong.pull_request_number=18
     $cases[2].expected=$wrong
@@ -53,15 +62,29 @@ try {
     $badSignature=New-Comment; $badDoc=($badSignature.body -split "`n",2)[1]|ConvertFrom-Json -Depth 30 -DateKind String; $badDoc.signature.value_base64=([Convert]::ToBase64String([byte[]](1..200))); $badSignature.body=$policy.comment_marker+"`n"+($badDoc|ConvertTo-Json -Depth 30 -Compress)
     $wrongKeyPolicy=$policy.PSObject.Copy(); $wrongKeyPolicy.public_key_spki_sha256=("0"*64)
     $more=@(
-      @{name="stale";comments=@(New-Comment $stale);expected=$stale;at=$now;policy=$policy},
-      @{name="future";comments=@(New-Comment $future);expected=$future;at=$now;policy=$policy},
-      @{name="wrong artifact";comments=@($positive);expected=$wrongArtifact;at=$now;policy=$policy},
-      @{name="wrong assessment";comments=@($positive);expected=$wrongAssessment;at=$now;policy=$policy},
-      @{name="wrong signature";comments=@($badSignature);expected=$payload;at=$now;policy=$policy},
-      @{name="wrong key";comments=@($positive);expected=$payload;at=$now;policy=$wrongKeyPolicy}
+      @{name="stale";comments=@(New-Comment $stale);expected=$stale;at=$now;policy=$policy;rejection="Authorization is stale"},
+      @{name="future";comments=@(New-Comment $future);expected=$future;at=$now;policy=$policy;rejection="Authorization was issued too far in the future"},
+      @{name="wrong artifact";comments=@($positive);expected=$wrongArtifact;at=$now;policy=$policy;rejection="Authorization payload does not equal the exact expected evidence"},
+      @{name="wrong assessment";comments=@($positive);expected=$wrongAssessment;at=$now;policy=$policy;rejection="Authorization payload does not equal the exact expected evidence"},
+      @{name="wrong signature";comments=@($badSignature);expected=$payload;at=$now;policy=$policy;rejection="Authorization signature verification failed"},
+      @{name="wrong key";comments=@($positive);expected=$payload;at=$now;policy=$wrongKeyPolicy;rejection="Authorization key fingerprint is not pinned"}
     )
     $cases += $more
-    foreach($case in $cases){ $failed=$false; try{$p=if($case.policy){$case.policy}else{$policy};$null=Test-ExternalOwnerAuthorizationComments $case.comments $case.expected $p $case.at $schema}catch{$failed=$true};if(-not $failed){throw "Negative case passed: $($case.name)"} }
+    foreach ($case in $cases) {
+        $casePolicy = if ($case.ContainsKey("policy")) { $case.policy } else { $policy }
+        $failure = ""
+        try {
+            $null = Test-ExternalOwnerAuthorizationComments $case.comments $case.expected $casePolicy $case.at $schema
+        } catch {
+            $failure = $_.Exception.Message
+        }
+        if ([string]::IsNullOrEmpty($failure)) {
+            throw "Negative case passed: $($case.name)"
+        }
+        if ($failure -notmatch [string]$case.rejection) {
+            throw "Negative case '$($case.name)' failed for the wrong reason: $failure"
+        }
+    }
     $validPolicyText = $policyDocument|ConvertTo-Json -Depth 10
     $duplicatePolicy = $validPolicyText -replace '("issuer_id"\s*:\s*"test-owner-authority-v1")',('$1,'+"`n"+'  "issuer_id": "test-owner-authority-v1"')
     $alteredPolicy = $validPolicyText|ConvertFrom-Json -Depth 10;$alteredPolicy.issuer_id="altered-owner-authority-v1"
@@ -79,6 +102,14 @@ try {
     $keyOpenIndex = $signingHelper.IndexOf('ImportFromPem',[StringComparison]::Ordinal)
     if ($bytePreflightIndex -lt 0 -or $policyReadIndex -lt 0 -or $keyOpenIndex -lt 0 -or $bytePreflightIndex -gt $policyReadIndex -or $bytePreflightIndex -gt $keyOpenIndex) {
         throw "External owner signing helper must run canonical text-byte preflight before policy or key use."
+    }
+    if (
+        $signingHelper -match '\[IO\.File\]::WriteAllBytes' -or
+        $signingHelper -notmatch '\[IO\.FileStream\]::new' -or
+        $signingHelper -notmatch '\[IO\.FileMode\]::CreateNew' -or
+        $signingHelper -notmatch '\.Flush\(\$true\)'
+    ) {
+        throw "External owner signing helper must publish comment files with an exclusive durable CreateNew FileStream."
     }
     $crlfRequestPath = Join-Path $temp "noncanonical-crlf-request.json"
     [IO.File]::WriteAllBytes($crlfRequestPath, [Text.UTF8Encoding]::new($false).GetBytes("{`r`n}`r`n"))
@@ -118,10 +149,47 @@ try {
         limitations=@("Static admission only; no candidate code was executed.","Execution, tests, acceptance, and publication remain separately authorized.","External owner authorization permits only this base verifier assessment.")
     }
     $request = New-ExternalOwnerAuthorizationRequest $policy.issuer_id "Owner/repo" 17 $requestAssessment.base $requestAssessment.candidate @([ordered]@{path="scripts/gate.ps1";state="present";mode="100644";size_bytes=3;sha256=("a"*64)}) $requestAssessment
+    foreach ($invalidTimestamp in @(
+        "2026-08-06T11:59:00+00:00",
+        "2026-08-06T11:59:00.000Z",
+        "2026-08-06T11:59:00Z ",
+        "2026-08-06 11:59:00Z",
+        "2026-02-30T11:59:00Z"
+    )) {
+        $failed = $false
+        try {
+            $null = New-ExternalOwnerAuthorizationPayload $request "authorization-00000001" $invalidTimestamp "2026-08-06T13:00:00Z"
+        } catch {
+            $failed = $_.Exception.Message -match "canonical UTC-second timestamp"
+        }
+        if (-not $failed) { throw "Noncanonical authorization timestamp was accepted: $invalidTimestamp" }
+    }
     $requestPath = Join-Path $temp "authorization-request.json"
     $helperRequestText = ($request | ConvertTo-Json -Depth 30).Replace("`r`n", "`n").Replace("`r", "`n")
     [IO.File]::WriteAllText($requestPath, ($helperRequestText + "`n"), [Text.UTF8Encoding]::new($false))
     $helperPath = Join-Path $helperRoot "scripts/New-ExternalOwnerAuthorizationComment.ps1"
+    $missingPrivateKeyPath = Join-Path $temp "missing-private-key.pem"
+    foreach ($timestampCase in @(
+        @{ name = "IssuedAt"; issued = "2026-08-06T11:59:00+00:00"; expires = "2026-08-06T13:00:00Z" },
+        @{ name = "ExpiresAt"; issued = "2026-08-06T11:59:00Z"; expires = "2026-08-06T13:00:00.000Z" }
+    )) {
+        $timestampOutput = [Collections.Generic.List[object]]::new()
+        $timestampFailure = ""
+        try {
+            & $helperPath `
+                -RequestPath $requestPath `
+                -AuthorizationId "full-authority-pr157-54753ee7-20260910t094152z" `
+                -IssuedAt ([string]$timestampCase.issued) `
+                -ExpiresAt ([string]$timestampCase.expires) `
+                -PrivateKeyPemPath $missingPrivateKeyPath |
+                ForEach-Object { $timestampOutput.Add($_) }
+        } catch {
+            $timestampFailure = $_.Exception.Message
+        }
+        if ($timestampOutput.Count -ne 0 -or $timestampFailure -notmatch "canonical UTC-second timestamp") {
+            throw "Signing helper did not reject invalid $($timestampCase.name) before key access: output=$($timestampOutput.Count) failure=$timestampFailure"
+        }
+    }
     $invalidOutput = [Collections.Generic.List[object]]::new()
     $invalidIdFailure = ""
     try {
@@ -134,16 +202,52 @@ try {
         throw "Signing helper did not reject the invalid authorization ID before output: output=$($invalidOutput.Count) failure=$invalidIdFailure"
     }
     $validAuthorizationId = "full-authority-pr157-54753ee7-20260910t094152z"
+    $commentOutputPath = Join-Path $temp "authorization-comment.txt"
     $validOutput = @(
         & $helperPath `
             -RequestPath $requestPath `
             -AuthorizationId $validAuthorizationId `
             -IssuedAt "2026-08-06T11:59:00Z" `
             -ExpiresAt "2026-08-06T13:00:00Z" `
-            -PrivateKeyPemPath $privateKeyPath
+            -PrivateKeyPemPath $privateKeyPath `
+            -OutputPath $commentOutputPath
     )
     if ($validOutput.Count -ne 2 -or $validOutput[0] -cne [string]$policy.comment_marker) {
         throw "Signing helper did not emit the canonical two-line authorization comment."
+    }
+    [byte[]]$commentBytes = [IO.File]::ReadAllBytes($commentOutputPath)
+    if (
+        $commentBytes.Length -lt 2 -or
+        $commentBytes -contains 0x0D -or
+        ($commentBytes.Length -ge 3 -and $commentBytes[0] -eq 0xEF -and $commentBytes[1] -eq 0xBB -and $commentBytes[2] -eq 0xBF) -or
+        $commentBytes[$commentBytes.Length - 1] -ne 0x0A
+    ) {
+        throw "Signing helper did not persist UTF-8-no-BOM LF-only comment bytes."
+    }
+    $persistedComment = [Text.UTF8Encoding]::new($false, $true).GetString($commentBytes)
+    if ($persistedComment -cne (([string]$validOutput[0]) + "`n" + ([string]$validOutput[1]) + "`n")) {
+        throw "Signing helper persisted comment bytes differ from emitted comment text."
+    }
+    $sentinelOutputPath = Join-Path $temp "authorization-comment-sentinel.txt"
+    [byte[]]$sentinelBytes = [byte[]](0x73, 0x65, 0x6E, 0x74, 0x69, 0x6E, 0x65, 0x6C)
+    [IO.File]::WriteAllBytes($sentinelOutputPath, $sentinelBytes)
+    $sentinelFailure = ""
+    try {
+        & $helperPath `
+            -RequestPath $requestPath `
+            -AuthorizationId $validAuthorizationId `
+            -IssuedAt "2026-08-06T11:59:00Z" `
+            -ExpiresAt "2026-08-06T13:00:00Z" `
+            -PrivateKeyPemPath $privateKeyPath `
+            -OutputPath $sentinelOutputPath | Out-Null
+    } catch {
+        $sentinelFailure = $_.Exception.Message
+    }
+    if ($sentinelFailure -notmatch "already exists|CreateNew") {
+        throw "Signing helper did not reject an existing output path: $sentinelFailure"
+    }
+    if (([Convert]::ToBase64String([IO.File]::ReadAllBytes($sentinelOutputPath))) -cne [Convert]::ToBase64String($sentinelBytes)) {
+        throw "Signing helper overwrote a pre-existing authorization comment file."
     }
     $validDocument = ConvertFrom-ExternalOwnerJsonStrict -Json ([string]$validOutput[1])
     $expectedHelperPayload = New-ExternalOwnerAuthorizationPayload `
@@ -156,11 +260,11 @@ try {
         created_at = "2026-08-06T11:59:30Z"
         updated_at = "2026-08-06T11:59:30Z"
         user = [pscustomobject]@{ login = "Owner" }
-        body = ([string]$validOutput[0] + "`n" + [string]$validOutput[1])
+        body = $persistedComment.TrimEnd("`n")
     }
     $null = Test-ExternalOwnerAuthorizationComments @($helperComment) $expectedHelperPayload $policy $now $schema
     if ([string]$validDocument.payload.authorization_id -cne $validAuthorizationId) {
         throw "Signing helper changed the valid authorization ID."
     }
-    Write-Output "External owner authorization tests passed (exact-evidence idempotence, final-document helper validation, executed byte-preflight ordering, and changed evidence, policy, identity, time, signature, and key negatives)."
+    Write-Output "External owner authorization tests passed (canonical timestamps, LF/CRLF framing, edited-comment rejection, validated LF-only output persistence, exact evidence, byte-preflight ordering, and identity, time, signature, and key negatives)."
 } finally { $rsa.Dispose(); if(Test-Path $temp){Remove-Item -LiteralPath $temp -Recurse -Force} }

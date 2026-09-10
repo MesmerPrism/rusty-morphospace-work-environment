@@ -111,6 +111,54 @@ function Get-ExternalOwnerSha256 {
     return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($Bytes)).ToLowerInvariant()
 }
 
+function ConvertTo-ExternalOwnerCanonicalUtcSecond {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Value,
+        [string]$Label = "Authorization timestamp"
+    )
+    $format = "yyyy-MM-dd'T'HH:mm:ss'Z'"
+    [datetimeoffset]$parsed = [datetimeoffset]::MinValue
+    if (-not [datetimeoffset]::TryParseExact(
+        $Value,
+        $format,
+        [Globalization.CultureInfo]::InvariantCulture,
+        ([Globalization.DateTimeStyles]::AssumeUniversal -bor [Globalization.DateTimeStyles]::AdjustToUniversal),
+        [ref]$parsed
+    )) {
+        throw "$Label must be a canonical UTC-second timestamp ($format)."
+    }
+    $canonical = $parsed.ToUniversalTime().ToString($format, [Globalization.CultureInfo]::InvariantCulture)
+    if ($Value -cne $canonical) {
+        throw "$Label must be a canonical UTC-second timestamp ($format)."
+    }
+    return $canonical
+}
+
+function Get-ExternalOwnerAuthorizationCommentFrame {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Body,
+        [Parameter(Mandatory)][string]$Marker
+    )
+    # GitHub bodies can arrive with either Windows or Unix line endings.  Only
+    # framing is normalized; the signed JSON remains subject to the existing
+    # canonical payload and signature checks.
+    $normalized = $Body.Replace("`r`n", "`n").Replace("`r", "`n")
+    $markerPattern = "(?m)^$([regex]::Escape($Marker))$"
+    $markerCount = [regex]::Matches($normalized, $markerPattern).Count
+    $lines = $normalized -split "`n", 2
+    $documentText = $null
+    if ($markerCount -eq 1 -and $lines.Count -eq 2 -and $lines[0] -ceq $Marker -and -not [string]::IsNullOrEmpty($lines[1])) {
+        $documentText = [string]$lines[1]
+    }
+    return [pscustomobject]@{
+        marker_count = $markerCount
+        normalized_body = $normalized
+        document_text = $documentText
+    }
+}
+
 function New-ExternalOwnerAuthorizationRequest {
     [CmdletBinding()]
     param(
@@ -151,6 +199,8 @@ function New-ExternalOwnerAuthorizationPayload {
         [Parameter(Mandatory)][string]$IssuedAt,
         [Parameter(Mandatory)][string]$ExpiresAt
     )
+    $canonicalIssuedAt = ConvertTo-ExternalOwnerCanonicalUtcSecond -Value $IssuedAt -Label "Authorization issued_at"
+    $canonicalExpiresAt = ConvertTo-ExternalOwnerCanonicalUtcSecond -Value $ExpiresAt -Label "Authorization expires_at"
     [byte[]]$assessmentBytes = Get-CanonicalAuthorizationBytes -Payload ($Request.assessment)
     if ((Get-ExternalOwnerSha256 $assessmentBytes) -cne [string]$Request.assessment_sha256) { throw "Authorization request assessment hash is inconsistent." }
     [byte[]]$requestBytes = Get-CanonicalAuthorizationBytes $Request
@@ -165,8 +215,8 @@ function New-ExternalOwnerAuthorizationPayload {
         artifacts = @($Request.artifacts)
         assessment_sha256 = [string]$Request.assessment_sha256
         request_sha256 = Get-ExternalOwnerSha256 $requestBytes
-        issued_at = $IssuedAt
-        expires_at = $ExpiresAt
+        issued_at = $canonicalIssuedAt
+        expires_at = $canonicalExpiresAt
         decision = "authorize-static-assessment"
         limitations = @($Request.limitations)
     }
@@ -183,26 +233,25 @@ function Test-ExternalOwnerAuthorizationComments {
     )
     Initialize-ExternalOwnerAuthorizationTypes
     if ($Comments.Count -gt [int]$Policy.maximum_comments) { throw "Comment count exceeds the configured bound." }
-    $markerPattern = "(?m)^$([regex]::Escape([string]$Policy.comment_marker))$"
     $ownerMarkerCount = 0
     $matchedComments = [Collections.Generic.List[object]]::new()
     foreach ($candidateComment in $Comments) {
         if ([string]$candidateComment.user.login -cne [string]$Policy.owner_login) { continue }
         if ($null -eq $candidateComment.id -or $null -eq $candidateComment.created_at -or $null -eq $candidateComment.updated_at) { throw "Comment identity and timestamps are required." }
         if ([string]$candidateComment.created_at -cne [string]$candidateComment.updated_at) { throw "Edited authorization comments are ambiguous and forbidden." }
-        $count = [regex]::Matches([string]$candidateComment.body,$markerPattern).Count
-        $ownerMarkerCount += $count
-        if ($count -gt 0) { $matchedComments.Add($candidateComment) }
+        $frame = Get-ExternalOwnerAuthorizationCommentFrame -Body ([string]$candidateComment.body) -Marker ([string]$Policy.comment_marker)
+        $ownerMarkerCount += [int]$frame.marker_count
+        if ($frame.marker_count -gt 0) { $matchedComments.Add([pscustomobject]@{ comment = $candidateComment; frame = $frame }) }
     }
     $matches = @($matchedComments)
     if ($matches.Count -ne 1 -or $ownerMarkerCount -ne 1) { throw "Exactly one pinned-owner authorization marker is required in exactly one comment." }
-    $comment = $matches[0]
+    $comment = $matches[0].comment
+    $frame = $matches[0].frame
     [string]$body = $comment.body
     if ([Text.Encoding]::UTF8.GetByteCount($body) -gt [int]$Policy.maximum_comment_bytes) { throw "Authorization comment exceeds the size bound." }
-    $lines = $body -split "\r?\n", 2
-    if ($lines.Count -ne 2 -or $lines[0] -cne [string]$Policy.comment_marker) { throw "Authorization marker framing is not canonical." }
-    [byte[]]$rawCanonical = [RustyMorphospace.ExternalOwnerCrypto]::Canonicalize($lines[1])
-    $document = $lines[1] | ConvertFrom-Json -Depth 30 -DateKind String
+    if ($null -eq $frame.document_text) { throw "Authorization marker framing is not canonical." }
+    [byte[]]$rawCanonical = [RustyMorphospace.ExternalOwnerCrypto]::Canonicalize($frame.document_text)
+    $document = $frame.document_text | ConvertFrom-Json -Depth 30 -DateKind String
     $documentJson = $document | ConvertTo-Json -Depth 30 -Compress
     [byte[]]$roundTripCanonical = [RustyMorphospace.ExternalOwnerCrypto]::Canonicalize($documentJson)
     if ([Convert]::ToBase64String($rawCanonical) -cne [Convert]::ToBase64String($roundTripCanonical)) { throw "Authorization JSON is not losslessly representable." }
@@ -214,8 +263,10 @@ function Test-ExternalOwnerAuthorizationComments {
     $actualCanonical = Get-CanonicalAuthorizationBytes $document.payload
     $expectedCanonical = Get-CanonicalAuthorizationBytes $ExpectedPayload
     if (-not [Security.Cryptography.CryptographicOperations]::FixedTimeEquals($actualCanonical,$expectedCanonical)) { throw "Authorization payload does not equal the exact expected evidence." }
-    $issued = [datetimeoffset]::ParseExact([string]$document.payload.issued_at,"yyyy-MM-dd'T'HH:mm:ss'Z'",[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::AssumeUniversal)
-    $expires = [datetimeoffset]::ParseExact([string]$document.payload.expires_at,"yyyy-MM-dd'T'HH:mm:ss'Z'",[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::AssumeUniversal)
+    $issuedText = ConvertTo-ExternalOwnerCanonicalUtcSecond -Value ([string]$document.payload.issued_at) -Label "Authorization issued_at"
+    $expiresText = ConvertTo-ExternalOwnerCanonicalUtcSecond -Value ([string]$document.payload.expires_at) -Label "Authorization expires_at"
+    $issued = [datetimeoffset]::ParseExact($issuedText,"yyyy-MM-dd'T'HH:mm:ss'Z'",[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::AssumeUniversal)
+    $expires = [datetimeoffset]::ParseExact($expiresText,"yyyy-MM-dd'T'HH:mm:ss'Z'",[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::AssumeUniversal)
     if ($issued -gt $Now.AddSeconds([int]$Policy.max_future_skew_seconds)) { throw "Authorization was issued too far in the future." }
     if ($issued -lt $Now.AddSeconds(-[int]$Policy.max_authorization_age_seconds)) { throw "Authorization is stale." }
     if ($expires -le $Now -or $expires -le $issued -or $expires -gt $issued.AddSeconds([int]$Policy.max_authorization_age_seconds)) { throw "Authorization expiry is invalid." }
@@ -269,8 +320,10 @@ function Test-ExternalOwnerSignedPayload {
     if (-not [Security.Cryptography.CryptographicOperations]::FixedTimeEquals($actualCanonical, $expectedCanonical)) {
         throw 'Signed authorization payload does not equal the exact expected evidence.'
     }
-    $issued = [datetimeoffset]::ParseExact([string]$document.payload.issued_at, "yyyy-MM-dd'T'HH:mm:ss'Z'", [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AssumeUniversal)
-    $expires = [datetimeoffset]::ParseExact([string]$document.payload.expires_at, "yyyy-MM-dd'T'HH:mm:ss'Z'", [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AssumeUniversal)
+    $issuedText = ConvertTo-ExternalOwnerCanonicalUtcSecond -Value ([string]$document.payload.issued_at) -Label "Signed authorization issued_at"
+    $expiresText = ConvertTo-ExternalOwnerCanonicalUtcSecond -Value ([string]$document.payload.expires_at) -Label "Signed authorization expires_at"
+    $issued = [datetimeoffset]::ParseExact($issuedText, "yyyy-MM-dd'T'HH:mm:ss'Z'", [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AssumeUniversal)
+    $expires = [datetimeoffset]::ParseExact($expiresText, "yyyy-MM-dd'T'HH:mm:ss'Z'", [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AssumeUniversal)
     if ($issued -gt $Now.AddSeconds([int]$Policy.max_future_skew_seconds)) {
         throw 'Signed authorization was issued too far in the future.'
     }
@@ -291,4 +344,4 @@ function Test-ExternalOwnerSignedPayload {
     return $document.payload
 }
 
-Export-ModuleMember -Function Get-CanonicalAuthorizationBytes, ConvertFrom-ExternalOwnerJsonStrict, Read-ExternalOwnerAuthorizationPolicy, Get-ExternalOwnerSha256, New-ExternalOwnerAuthorizationRequest, New-ExternalOwnerAuthorizationPayload, Test-ExternalOwnerAuthorizationComments, Test-ExternalOwnerSignedPayload
+Export-ModuleMember -Function Get-CanonicalAuthorizationBytes, ConvertFrom-ExternalOwnerJsonStrict, Read-ExternalOwnerAuthorizationPolicy, Get-ExternalOwnerSha256, ConvertTo-ExternalOwnerCanonicalUtcSecond, Get-ExternalOwnerAuthorizationCommentFrame, New-ExternalOwnerAuthorizationRequest, New-ExternalOwnerAuthorizationPayload, Test-ExternalOwnerAuthorizationComments, Test-ExternalOwnerSignedPayload
