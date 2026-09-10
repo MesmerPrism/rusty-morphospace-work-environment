@@ -96,5 +96,71 @@ try {
     if ($crlfFailure -notmatch 'eol002-evidence-crlf') {
         throw "CRLF authorization request was not rejected before signing-key access: $crlfFailure"
     }
-    Write-Output "External owner authorization tests passed (exact-evidence idempotence, executed byte-preflight ordering, and changed evidence, policy, identity, time, signature, and key negatives)."
+    $helperRoot = Join-Path $temp "helper-root"
+    foreach ($directory in @("scripts", "scripts/lib", "schemas", "config")) {
+        [void](New-Item -ItemType Directory -Path (Join-Path $helperRoot $directory) -Force)
+    }
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot "New-ExternalOwnerAuthorizationComment.ps1") -Destination (Join-Path $helperRoot "scripts/New-ExternalOwnerAuthorizationComment.ps1")
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot "Test-CanonicalTextBytes.ps1") -Destination (Join-Path $helperRoot "scripts/Test-CanonicalTextBytes.ps1")
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot "lib/ExternalOwnerAuthorization.psm1") -Destination (Join-Path $helperRoot "scripts/lib/ExternalOwnerAuthorization.psm1")
+    foreach ($schemaName in @("external-owner-authorization-request-v1.schema.json", "external-validation-authority-assessment-v1.schema.json", "external-owner-authorization-v1.schema.json")) {
+        Copy-Item -LiteralPath (Join-Path $root "schemas/$schemaName") -Destination (Join-Path $helperRoot "schemas/$schemaName")
+    }
+    [IO.File]::WriteAllText((Join-Path $helperRoot "schemas/external-owner-authorization-policy-v1.schema.json"),$policySchema,[Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText((Join-Path $helperRoot "config/external-owner-authorization.json"),($policyDocument|ConvertTo-Json -Depth 10),[Text.UTF8Encoding]::new($false))
+    $privateKeyPath = Join-Path $temp "owner-private-key.pem"
+    [IO.File]::WriteAllText($privateKeyPath,$rsa.ExportPkcs8PrivateKeyPem(),[Text.UTF8Encoding]::new($false))
+    $requestAssessment = [ordered]@{
+        schema="rusty.morphospace.workflow.external_validation_authority_assessment.v1";policy_id="test-validation-authority-v1";policy_sha256=("d"*64);repository="Owner/repo"
+        base=[ordered]@{commit=("1"*40);tree=("2"*40)};candidate=[ordered]@{commit=("3"*40);tree=("4"*40)}
+        changed_paths=@("scripts/gate.ps1");protected_paths=@("scripts/gate.ps1");decision="external-owner-authorization";approval_id="external-owner-authorization-required"
+        candidate_code_executed=$false;execution_attested=$false;publication_authority=$false
+        limitations=@("Static admission only; no candidate code was executed.","Execution, tests, acceptance, and publication remain separately authorized.","External owner authorization permits only this base verifier assessment.")
+    }
+    $request = New-ExternalOwnerAuthorizationRequest $policy.issuer_id "Owner/repo" 17 $requestAssessment.base $requestAssessment.candidate @([ordered]@{path="scripts/gate.ps1";state="present";mode="100644";size_bytes=3;sha256=("a"*64)}) $requestAssessment
+    $requestPath = Join-Path $temp "authorization-request.json"
+    $helperRequestText = ($request | ConvertTo-Json -Depth 30).Replace("`r`n", "`n").Replace("`r", "`n")
+    [IO.File]::WriteAllText($requestPath, ($helperRequestText + "`n"), [Text.UTF8Encoding]::new($false))
+    $helperPath = Join-Path $helperRoot "scripts/New-ExternalOwnerAuthorizationComment.ps1"
+    $invalidOutput = [Collections.Generic.List[object]]::new()
+    $invalidIdFailure = ""
+    try {
+        & $helperPath -RequestPath $requestPath -AuthorizationId "full-authority-pr157-54753ee7-20260910T094152Z" -IssuedAt "2026-08-06T11:59:00Z" -ExpiresAt "2026-08-06T13:00:00Z" -PrivateKeyPemPath $privateKeyPath |
+            ForEach-Object { $invalidOutput.Add($_) }
+    } catch {
+        $invalidIdFailure = $_.Exception.Message
+    }
+    if ($invalidOutput.Count -ne 0 -or $invalidIdFailure -notmatch "'/payload/authorization_id'") {
+        throw "Signing helper did not reject the invalid authorization ID before output: output=$($invalidOutput.Count) failure=$invalidIdFailure"
+    }
+    $validAuthorizationId = "full-authority-pr157-54753ee7-20260910t094152z"
+    $validOutput = @(
+        & $helperPath `
+            -RequestPath $requestPath `
+            -AuthorizationId $validAuthorizationId `
+            -IssuedAt "2026-08-06T11:59:00Z" `
+            -ExpiresAt "2026-08-06T13:00:00Z" `
+            -PrivateKeyPemPath $privateKeyPath
+    )
+    if ($validOutput.Count -ne 2 -or $validOutput[0] -cne [string]$policy.comment_marker) {
+        throw "Signing helper did not emit the canonical two-line authorization comment."
+    }
+    $validDocument = ConvertFrom-ExternalOwnerJsonStrict -Json ([string]$validOutput[1])
+    $expectedHelperPayload = New-ExternalOwnerAuthorizationPayload `
+        $request `
+        $validAuthorizationId `
+        "2026-08-06T11:59:00Z" `
+        "2026-08-06T13:00:00Z"
+    $helperComment = [pscustomobject]@{
+        id = 456
+        created_at = "2026-08-06T11:59:30Z"
+        updated_at = "2026-08-06T11:59:30Z"
+        user = [pscustomobject]@{ login = "Owner" }
+        body = ([string]$validOutput[0] + "`n" + [string]$validOutput[1])
+    }
+    $null = Test-ExternalOwnerAuthorizationComments @($helperComment) $expectedHelperPayload $policy $now $schema
+    if ([string]$validDocument.payload.authorization_id -cne $validAuthorizationId) {
+        throw "Signing helper changed the valid authorization ID."
+    }
+    Write-Output "External owner authorization tests passed (exact-evidence idempotence, final-document helper validation, executed byte-preflight ordering, and changed evidence, policy, identity, time, signature, and key negatives)."
 } finally { $rsa.Dispose(); if(Test-Path $temp){Remove-Item -LiteralPath $temp -Recurse -Force} }

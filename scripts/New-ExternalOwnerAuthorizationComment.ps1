@@ -51,5 +51,9 @@ $document = [ordered]@{
     payload = $payload
     signature = [ordered]@{ algorithm="RSA-PSS-SHA256"; public_key_spki_sha256=[string]$policy.public_key_spki_sha256; value_base64=[Convert]::ToBase64String($signature) }
 }
+$documentText = $document | ConvertTo-Json -Depth 30 -Compress
+if (-not (Test-Json -Json $documentText -SchemaFile (Join-Path $root "schemas/external-owner-authorization-v1.schema.json") -ErrorAction Stop)) {
+    throw "Generated external owner authorization failed its schema."
+}
 Write-Output ([string]$policy.comment_marker)
-Write-Output ($document | ConvertTo-Json -Depth 30 -Compress)
+Write-Output $documentText
