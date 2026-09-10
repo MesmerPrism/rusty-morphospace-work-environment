@@ -861,6 +861,19 @@ bounded version-control-recoverable work. Re-prompt only for a new scope or
 authority, destructive or unbounded remote change, private/public uncertainty,
 wrong or unapproved device/owner, or ambiguous or fabricated evidence.
 
+When the user explicitly activates
+[Full Authority Mode](FULL_AUTHORITY_MODE.md), that mode supplies continuing
+user authorization for informed operations inside its declared scope until
+revoked. It does not change the current unit's repository/path write scope,
+state-transition ownership, evidence requirements, resource leases, or
+public/private boundary. Unit preparation and amendments continue through the
+named owner actions; an active mode lets the agent decide and invoke those
+actions without another user prompt. The re-prompt rule above does not apply
+merely because an action is destructive, external, device-affecting, or a
+publication action when the mode's declared scope and owning contract cover
+that bounded action. Missing capabilities, evidence, safe resource ownership,
+or clear scope remain stop conditions.
+
 Use established fixture helpers rather than a standalone synthetic harness that
 can shadow canonical resolvers. If a public fixture unloads a test-local module,
 re-import it and assert helper availability before the aggregate. A wrapper for

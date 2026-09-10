@@ -250,6 +250,13 @@ boundary. A base-owned policy admits an exact reviewed change set without
 checking out or executing candidate content; dynamic validation and
 publication authority remain separate.
 
+[Full Authority Mode](docs/FULL_AUTHORITY_MODE.md) defines an explicit,
+revocable user delegation for one agent task. While active, it lets the agent
+make and execute informed in-scope decisions without repeated prompts,
+including producing a fresh exact external-owner authorization for each
+protected candidate. It does not create wildcard admission or relax the
+owning workflow, evidence, privacy, resource, or platform controls.
+
 For the exceptional case where an already frozen unit must retain its raw
 validation array while a reviewed planning authority supplies a focused Quick
 evidence producer, use the fail-closed
@@ -293,6 +300,8 @@ validation without a device.
 - [Autonomous Iteration](docs/AUTONOMOUS_ITERATION.md) defines work-unit scope,
   compact state, event notes, validation tiers, larger push checkpoints, and
   the optional fail-closed work-unit automation CLI.
+- [Full Authority Mode](docs/FULL_AUTHORITY_MODE.md) defines explicit standing
+  user-to-agent delegation, task scope, continuation, and revocation.
 - [Workflow Stability And Feature Throughput](docs/WORKFLOW_STABILITY.md)
   defines validation-only review units, claim preflight, exact generated
   handoffs, semantic gates, one-captain ownership, and the three-feature-unit

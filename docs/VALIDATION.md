@@ -144,6 +144,14 @@ contract in [External Validation Authority](EXTERNAL_VALIDATION_AUTHORITY.md).
 That verifier examines fetched Git objects only and explicitly does not attest
 candidate execution or authorize publication.
 
+Active [Full Authority Mode](FULL_AUTHORITY_MODE.md) changes the user-to-agent
+decision and prompting boundary, not validation selection or evidence. For a
+protected validation-authority candidate, read both contracts: the delegated
+agent may review, sign, and post each fresh exact owner request without another
+prompt only when the activating user and signing source satisfy the external
+owner policy. The base-owned verifier, selected dynamic checks, acceptance,
+and publication boundaries remain unchanged.
+
 Validate a configured contributor machine separately:
 
 ```powershell

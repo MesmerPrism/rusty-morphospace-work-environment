@@ -32,6 +32,15 @@ source roots, retained proposal retirement, and subsequent ordinary admission.
 The current-work reader keeps authenticated retired proposals separate from
 accepted prerequisites as later acceptances advance the checkpoint.
 
+An explicit user instruction may activate
+`<work-environment>/docs/FULL_AUTHORITY_MODE.md` for the current task and its
+declared project or ecosystem scope. The grant persists until explicit
+revocation and removes repeated user prompts for informed in-scope actions. It
+does not expand current-unit repository/path scope or relax owner transitions,
+evidence, privacy, resource, or platform controls. Preserve activation and
+revocation provenance in private task continuation state; never infer the mode
+from this reference or another task.
+
 ## Composition and source identity
 
 Resolve owner-issued descriptors into an exact fingerprinted lock. Descriptor
