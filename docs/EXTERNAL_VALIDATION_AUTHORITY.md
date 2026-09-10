@@ -21,6 +21,16 @@ complete path/blob set pass the trusted-base static admission route below;
 dynamic success neither replaces that admission nor grants acceptance or
 publication authority.
 
+`manifests/affected-validation-registry.json` is itself mandatory protected
+input. Once this rule is adopted, a registry-only maintenance candidate uses
+its focused ownership, workflow-action-registry, and public-boundary checks
+instead of automatically replaying cumulative Deep validation, while the
+base-owned verifier still requires one exact candidate-bound owner decision.
+Changes to selector code, schemas, workflows, or this admission policy remain
+their broader trust-root class. Removing or weakening a registry mapping is
+therefore reviewable protected work, not a way for candidate selection data to
+authorize itself.
+
 This boundary also applies when extending a trusted historical validator to
 recognize a later owner-ledger schema. Tests must use the existing owner writer
 to create positive transactions; hand-authored events or receipts are only

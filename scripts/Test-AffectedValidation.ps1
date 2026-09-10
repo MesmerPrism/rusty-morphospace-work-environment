@@ -475,7 +475,7 @@ function Get-AffectedPowerShellAst([string]$Path) {
 function ConvertTo-AffectedOwnerEntrypoint([string]$Value) {
     $normalized = $Value.Replace('\','/')
     $leaf = @($normalized.Split('/') | Where-Object { $_ -ne '' })[-1]
-    if ($leaf -cnotmatch '^Test-[A-Za-z0-9-]+\.ps1$') { throw "Work Environment owner entrypoint is not a canonical Test-*.ps1 leaf: $Value" }
+    if ($leaf -cnotmatch '^(?:Test-[A-Za-z0-9-]+|New-ProjectWorkspace)\.ps1$') { throw "Work Environment owner entrypoint is not a recognized owner leaf: $Value" }
     return "scripts/$leaf"
 }
 function Get-AffectedWorkEnvironmentOwnerEntrypoints([string]$Root, [Collections.Generic.HashSet[string]]$TrackedPaths = $null) {
@@ -490,7 +490,7 @@ function Get-AffectedWorkEnvironmentOwnerEntrypoints([string]$Root, [Collections
     $references = @($ast.FindAll({
         param($node)
         $node -is [Management.Automation.Language.StringConstantExpressionAst] -and
-        ([string]$node.Value).Replace('\','/') -match '(?:^|/)Test-[A-Za-z0-9-]+\.ps1$'
+        ([string]$node.Value).Replace('\','/') -match '(?:^|/)(?:Test-[A-Za-z0-9-]+|New-ProjectWorkspace)\.ps1$'
     },$true))
     $classifiedOffsets = [Collections.Generic.HashSet[int]]::new()
     $entrypoints = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
@@ -501,9 +501,9 @@ function Get-AffectedWorkEnvironmentOwnerEntrypoints([string]$Root, [Collections
             $values = @($pair.Item2.FindAll({
                 param($node)
                 $node -is [Management.Automation.Language.StringConstantExpressionAst] -and
-                ([string]$node.Value).Replace('\','/') -match '(?:^|/)Test-[A-Za-z0-9-]+\.ps1$'
+                ([string]$node.Value).Replace('\','/') -match '(?:^|/)(?:Test-[A-Za-z0-9-]+|New-ProjectWorkspace)\.ps1$'
             },$true))
-            if ($values.Count -ne 1) { throw "Work Environment script table entry is not one literal Test-*.ps1 entrypoint: $($pair.Item2.Extent.Text)" }
+            if ($values.Count -ne 1) { throw "Work Environment script table entry is not one literal recognized owner entrypoint: $($pair.Item2.Extent.Text)" }
             [void]$classifiedOffsets.Add([int]$values[0].Extent.StartOffset)
             [void]$entrypoints.Add((ConvertTo-AffectedOwnerEntrypoint ([string]$values[0].Value)))
         }
@@ -522,9 +522,9 @@ function Get-AffectedWorkEnvironmentOwnerEntrypoints([string]$Root, [Collections
         }
     }
     foreach ($reference in $references) {
-        if (-not $classifiedOffsets.Contains([int]$reference.Extent.StartOffset)) { throw "Work Environment Test-*.ps1 reference uses an unclassified invocation form: $($reference.Extent.Text)" }
+        if (-not $classifiedOffsets.Contains([int]$reference.Extent.StartOffset)) { throw "Work Environment owner reference uses an unclassified invocation form: $($reference.Extent.Text)" }
     }
-    if ($entrypoints.Count -eq 0) { throw 'Work Environment owner-entrypoint audit found no Test-*.ps1 invocations.' }
+    if ($entrypoints.Count -eq 0) { throw 'Work Environment owner-entrypoint audit found no recognized invocations.' }
     $result = @($entrypoints)
     [Array]::Sort($result,[StringComparer]::Ordinal)
     foreach ($relative in $result) {
@@ -556,47 +556,67 @@ function Get-AffectedWorkEnvironmentTableInvocationArguments([string]$Root) {
     }
     return $result
 }
-function Assert-AffectedWorkEnvironmentLeafRegistration([string]$Root, [string[]]$OwnerEntrypoints, [Collections.Generic.Dictionary[string,object]]$RegistryByCommand) {
-    # Test-WorkEnvironment remains a retained compatibility aggregate, while
-    # affected validation executes independently registered leaves. Keep the
-    # migration debt explicit so a new aggregate test cannot silently acquire
-    # no focused route, and bind migrated trust-root leaves to the same exact
-    # invocation used by the aggregate.
-    $expectedUnregistered = @(
-        'scripts/Test-ExecutedPushReceipt.ps1',
-        'scripts/Test-LocalSkillBootstrap.ps1',
-        'scripts/Test-PlannedPublicationAccounting.ps1',
-        'scripts/Test-PowerShellHost.ps1',
-        'scripts/Test-PublishedPlanningAuthorityAdoption.ps1',
-        'scripts/Test-QuestFileManagerCliResolver.ps1',
-        'scripts/Test-QuestFileManagerPermissionObservationAdapter.ps1',
-        'scripts/Test-QuestFileManagerRuntimeObservationAdapter.ps1',
-        'scripts/Test-ReleaseCapsule.ps1',
-        'scripts/Test-RepositoryLifecycleInventory.ps1',
-        'scripts/Test-UnpublishedPlanningAuthorityMaterialization.ps1'
-    )
-    $unregistered = @($OwnerEntrypoints | Where-Object { -not $RegistryByCommand.ContainsKey([string]$_) })
-    [Array]::Sort($unregistered,[StringComparer]::Ordinal)
-    Assert-True (($unregistered -join "`n") -ceq ($expectedUnregistered -join "`n")) "Work Environment aggregate owner-entrypoint registration debt changed. Expected=$($expectedUnregistered -join ','); observed=$($unregistered -join ',')."
-
-    $requiredInvocations = @(
-        [pscustomobject][ordered]@{ check_id='canonical-text-bytes'; command_path='scripts/Test-CanonicalTextBytes.ps1'; arguments=@('-SelfTest') },
-        [pscustomobject][ordered]@{ check_id='external-owner-authorization'; command_path='scripts/Test-ExternalOwnerAuthorization.ps1'; arguments=@('-SelfTest') },
-        [pscustomobject][ordered]@{ check_id='external-validation-authority'; command_path='scripts/Test-ExternalValidationAuthoritySelfTest.ps1'; arguments=@() },
-        [pscustomobject][ordered]@{ check_id='external-validation-github-adapter'; command_path='scripts/Test-ExternalValidationAuthorityGitHubAdapterSelfTest.ps1'; arguments=@() }
-    )
-    $aggregateInvocations = Get-AffectedWorkEnvironmentTableInvocationArguments -Root $Root
-    foreach ($expected in $requiredInvocations) {
-        $registered = @($RegistryByCommand[[string]$expected.command_path])
-        Assert-True ($registered.Count -eq 1) "Migrated Work Environment owner does not have exactly one focused registration: $($expected.command_path)."
-        Assert-True ([string]$registered[0].check_id -ceq [string]$expected.check_id) "Migrated Work Environment owner changed focused check identity: $($expected.command_path)."
-        $expectedArguments = @($expected.arguments | ForEach-Object { [string]$_ })
-        Assert-True ($aggregateInvocations.ContainsKey([string]$expected.command_path)) "Migrated Work Environment owner is absent from the aggregate script table: $($expected.command_path)."
-        $aggregateArguments = @($aggregateInvocations[[string]$expected.command_path] | ForEach-Object { [string]$_ })
-        $registeredArguments = @($registered[0].arguments | ForEach-Object { [string]$_ })
-        Assert-True ($aggregateArguments.Count -eq $expectedArguments.Count -and ($aggregateArguments -join "`n") -ceq ($expectedArguments -join "`n")) "Migrated Work Environment owner changed aggregate invocation arguments: $($expected.command_path)."
-        Assert-True ($registeredArguments.Count -eq $expectedArguments.Count -and ($registeredArguments -join "`n") -ceq ($expectedArguments -join "`n")) "Migrated Work Environment owner changed focused invocation arguments: $($expected.command_path)."
+function Test-AffectedAstWithinSelfTestBranch([Management.Automation.Language.Ast]$Node) {
+    $start = [int]$Node.Extent.StartOffset
+    $end = [int]$Node.Extent.EndOffset
+    $current = $Node.Parent
+    while ($null -ne $current) {
+        if ($current -is [Management.Automation.Language.IfStatementAst]) {
+            foreach ($clause in @($current.Clauses)) {
+                $condition = $clause.Item1
+                $body = $clause.Item2
+                if ([string]$condition.Extent.Text.Trim() -ceq '$SelfTest' -and
+                    $start -ge [int]$body.Extent.StartOffset -and $end -le [int]$body.Extent.EndOffset) {
+                    return $true
+                }
+            }
+        }
+        $current = $current.Parent
     }
+    return $false
+}
+function Get-AffectedWorkEnvironmentDirectInvocationArguments([string]$Root) {
+    $ownerPath = Join-Path ([IO.Path]::GetFullPath($Root)) 'scripts/Test-WorkEnvironment.ps1'
+    $ast = Get-AffectedPowerShellAst $ownerPath
+    $result = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+    foreach ($command in @($ast.FindAll({
+        param($node)
+        $node -is [Management.Automation.Language.CommandAst] -and
+        $node.InvocationOperator -eq [Management.Automation.Language.TokenKind]::Ampersand
+    },$true))) {
+        $pathValues = @($command.CommandElements[0].FindAll({
+            param($node)
+            $node -is [Management.Automation.Language.StringConstantExpressionAst] -and
+            ([string]$node.Value).Replace('\','/') -match '(?:^|/)(?:Test-[A-Za-z0-9-]+|New-ProjectWorkspace)\.ps1$'
+        },$true))
+        if ($pathValues.Count -eq 0) { continue }
+        if ($pathValues.Count -ne 1) { throw "Work Environment direct owner invocation has ambiguous entrypoint text: $($command.Extent.Text)" }
+        if (-not (Test-AffectedAstWithinSelfTestBranch -Node $command)) { continue }
+        $commandPath = ConvertTo-AffectedOwnerEntrypoint ([string]$pathValues[0].Value)
+        $arguments = [Collections.Generic.List[string]]::new()
+        $skipRepoRootValue = $false
+        foreach ($element in @($command.CommandElements | Select-Object -Skip 1)) {
+            if ($skipRepoRootValue) {
+                if ($element -isnot [Management.Automation.Language.VariableExpressionAst] -or [string]$element.VariablePath.UserPath -cne 'RepoRoot') { throw "Work Environment -RepoRoot binding is not the canonical local root: $($command.Extent.Text)" }
+                $skipRepoRootValue = $false
+                continue
+            }
+            if ($element -is [Management.Automation.Language.CommandParameterAst]) {
+                if ([string]$element.ParameterName -ceq 'RepoRoot') { $skipRepoRootValue = $true; continue }
+                [void]$arguments.Add("-$([string]$element.ParameterName)")
+                if ($null -ne $element.Argument) {
+                    try { [void]$arguments.Add([string]$element.Argument.SafeGetValue()) } catch { throw "Work Environment direct owner argument is not literal: $($command.Extent.Text)" }
+                }
+                continue
+            }
+            if ($element -is [Management.Automation.Language.StringConstantExpressionAst]) { [void]$arguments.Add([string]$element.Value); continue }
+            throw "Work Environment direct owner argument uses an unclassified form: $($command.Extent.Text)"
+        }
+        if ($skipRepoRootValue) { throw "Work Environment direct owner invocation omits its -RepoRoot value: $($command.Extent.Text)" }
+        if (-not $result.ContainsKey($commandPath)) { $result[$commandPath] = [Collections.Generic.List[object]]::new() }
+        [void]([Collections.Generic.List[object]]$result[$commandPath]).Add([pscustomobject][ordered]@{arguments=@($arguments.ToArray())})
+    }
+    return $result
 }
 function Get-AffectedLexicalImportScope([Management.Automation.Language.Ast]$Node) {
     $current = $Node.Parent
@@ -1140,8 +1160,8 @@ function Get-AffectedProtocolCommonOwnerChecks([string]$Root, [object]$Registry)
         if (-not $registryByCommand.ContainsKey($commandPath)) { $registryByCommand[$commandPath] = [Collections.Generic.List[object]]::new() }
         ([Collections.Generic.List[object]]$registryByCommand[$commandPath]).Add($check)
     }
-    $ownerEntrypoints = @(Get-AffectedWorkEnvironmentOwnerEntrypoints -Root $Root -TrackedPaths $trackedPaths)
-    Assert-AffectedWorkEnvironmentLeafRegistration -Root $Root -OwnerEntrypoints $ownerEntrypoints -RegistryByCommand $registryByCommand
+    $registrationAudit = Assert-MorphospaceAffectedWorkEnvironmentLeafRegistration -Root $Root -Registry $Registry
+    $ownerEntrypoints = @($registrationAudit.owner_entrypoints)
     $dynamicImports = @(
         [pscustomobject][ordered]@{ importer='scripts/Test-AuthorityRecordReadiness.ps1'; variable='processModule'; count=1; import_path='scripts/lib/MorphospaceAuthorityProcess.psm1' },
         [pscustomobject][ordered]@{ importer='scripts/Test-TransitionLedger.ps1'; variable='ModulePath'; count=2; import_path='scripts/lib/MorphospaceTransitionLedger.psm1' },
@@ -2254,6 +2274,7 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value $termina
     $leafBindingCheck = @($fixtureRegistry.checks | Where-Object check_id -ceq 'documentation-links')[0] | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64 -DateKind String
     $leafBindingCheck.check_id = 'leaf-binding-fixture'
     $leafBindingCheck.command_path = 'scripts/Test-AffectedLeafBindingFixture.ps1'
+    $leafBindingCheck.trigger_path_sets = @('documentation','leaf-binding-fixture')
     $leafBindingCheck.consume_path_sets = @('leaf-binding-fixture')
     $leafBindingCheck.provides_contracts = @()
     $fixtureRegistry.path_sets = @($fixtureRegistry.path_sets) + @([pscustomobject][ordered]@{path_set_id='leaf-binding-fixture';patterns=@('scripts/Test-AffectedLeafBindingFixture.ps1')})
@@ -2262,7 +2283,6 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value $termina
         $_.trigger_path_sets = @($_.trigger_path_sets) + @('leaf-binding-fixture')
         $_.consume_path_sets = @($_.consume_path_sets) + @('leaf-binding-fixture')
     }
-    $fixtureRegistry.path_sets | Where-Object path_set_id -ceq 'documentation' | ForEach-Object { $_.patterns = @($_.patterns) + @('scripts/Test-AffectedLeafBindingFixture.ps1') }
     # Keep the timeout damage cell bounded while leaving headroom above the
     # executor's 15-second containment/drain contract. The deliberate
     # twenty-five-second command below must still time out under this exact
@@ -3496,9 +3516,19 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     [void](Invoke-TestGit $fixture @('commit', '-m', 'affected validation registry contract'))
     $registryContractHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
     $registryContractPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $routingBaseHead -HeadRevision $registryContractHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
-    Assert-True ($registryContractPlan.selection_mode -ceq 'full-deep' -and @($registryContractPlan.selected_checks.check_id) -ccontains 'workflow-contracts') 'Affected-validation registry change did not retain its one-time Deep workflow-contract coverage.'
-    foreach ($checkId in $selectorTrustRootCheckIds) { Assert-True (@($registryContractPlan.selected_checks.check_id) -ccontains $checkId) "Affected-validation registry change did not retain '$checkId'." }
-    Assert-True (@($registryContractPlan.selected_checks.check_id) -cnotcontains 'work-environment-deep' -and @($registryContractPlan.reason_codes) -ccontains 'trust-root-path-changed' -and @($registryContractPlan.reason_codes) -cnotcontains 'ambiguous-path-mapping') 'Affected-validation registry change did not retain independent-leaf Deep escalation or selected the redundant aggregate.'
+    $expectedRegistryContractChecks = @('affected-validation-ownership') + $workflowConsumerFixtureChecks
+    $actualRegistryContractChecks = @($registryContractPlan.selected_checks.check_id | Sort-Object)
+    Assert-True ($registryContractPlan.selection_mode -ceq 'affected' -and $registryContractPlan.effective_tier -ceq 'standard' -and ($actualRegistryContractChecks -join '|') -ceq (($expectedRegistryContractChecks | Sort-Object) -join '|')) "Affected-validation registry change did not retain its exact bounded ownership/workflow-action/public-boundary closure: mode=$($registryContractPlan.selection_mode) tier=$($registryContractPlan.effective_tier) checks=$($actualRegistryContractChecks -join ',')."
+    Assert-True (@($registryContractPlan.reason_codes) -ccontains 'affected-path-selection' -and @($registryContractPlan.reason_codes | Where-Object { $_ -in @('ambiguous-path-mapping','unmapped-path','trust-root-path-changed') }).Count -eq 0 -and @($registryContractPlan.selected_checks.check_id) -cnotcontains 'work-environment-deep') 'Affected-validation registry change did not retain bounded non-Deep selection reasons.'
+    $affectedSchemaPath = Join-Path $fixture 'schemas/affected-validation-registry-v1.schema.json'
+    Write-Utf8 $affectedSchemaPath ((Get-Content -LiteralPath $affectedSchemaPath -Raw) + "`n")
+    [void](Invoke-TestGit $fixture @('add', 'schemas/affected-validation-registry-v1.schema.json'))
+    [void](Invoke-TestGit $fixture @('commit', '-m', 'affected validation schema contract'))
+    $schemaContractHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
+    $schemaContractPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $registryContractHead -HeadRevision $schemaContractHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+    Assert-True ($schemaContractPlan.selection_mode -ceq 'full-deep' -and @($schemaContractPlan.selected_checks.check_id) -ccontains 'workflow-contracts') 'Affected-validation schema change did not retain its one-time Deep workflow-contract coverage.'
+    foreach ($checkId in $selectorTrustRootCheckIds) { Assert-True (@($schemaContractPlan.selected_checks.check_id) -ccontains $checkId) "Affected-validation schema change did not retain '$checkId'." }
+    Assert-True (@($schemaContractPlan.selected_checks.check_id) -cnotcontains 'work-environment-deep' -and @($schemaContractPlan.reason_codes) -ccontains 'trust-root-path-changed' -and @($schemaContractPlan.reason_codes) -cnotcontains 'ambiguous-path-mapping') 'Affected-validation schema change did not retain independent-leaf Deep escalation or selected the redundant aggregate.'
     $oversizedComponentRegistry = [pscustomobject][ordered]@{checks=@(
         [pscustomobject][ordered]@{check_id='oversized-a';budget_seconds=2000;prerequisite_checks=@()},
         [pscustomobject][ordered]@{check_id='oversized-b';budget_seconds=2000;prerequisite_checks=@('oversized-a')}
@@ -3512,8 +3542,8 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     Assert-AffectedThrows { Get-MorphospaceAffectedValidationSegments -Plan $oversizedComponentPlan -Registry $oversizedComponentRegistry -Platform windows -MaximumSegmentBudgetSeconds 3600 | Out-Null } '*exceeds the hosted segment maximum: 4000 > 3600 seconds*' 'Affected-validation segmentation admitted an irreducible dependency component above the hard maximum.'
     $segmentOwner = @{}
     foreach ($platform in @('linux','windows')) {
-        $platformSelections = @($registryContractPlan.selected_checks | Where-Object { @($_.platforms) -ccontains $platform })
-        $segments = @(Get-MorphospaceAffectedValidationSegments -Plan $registryContractPlan -Registry $contractRegistry -Platform $platform)
+        $platformSelections = @($schemaContractPlan.selected_checks | Where-Object { @($_.platforms) -ccontains $platform })
+        $segments = @(Get-MorphospaceAffectedValidationSegments -Plan $schemaContractPlan -Registry $contractRegistry -Platform $platform)
         Assert-True ($segments.Count -gt 0 -and ($platform -cne 'windows' -or $segments.Count -gt 1)) "Affected-validation $platform Deep partition did not produce its bounded segment set."
         $covered = [Collections.Generic.List[string]]::new()
         foreach ($segment in $segments) {
@@ -3529,7 +3559,7 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
         Assert-True ((Get-MorphospaceCanonicalJsonSha256 -Value @($covered.ToArray() | Sort-Object)) -ceq (Get-MorphospaceCanonicalJsonSha256 -Value @($platformSelections.check_id | Sort-Object))) "Affected-validation $platform segments do not cover the exact platform selection."
     }
     $contractCheckMap = @{}; foreach ($check in @($contractRegistry.checks)) { $contractCheckMap[[string]$check.check_id] = $check }
-    foreach ($selection in @($registryContractPlan.selected_checks)) {
+    foreach ($selection in @($schemaContractPlan.selected_checks)) {
         $id = [string]$selection.check_id
         $executionAfter = if ($null -eq $contractCheckMap[$id].PSObject.Properties['execution_after_checks']) { @() } else { @($contractCheckMap[$id].execution_after_checks) }
         foreach ($platform in @($selection.platforms)) {
@@ -3545,11 +3575,11 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     [void][IO.Directory]::CreateDirectory($segmentMergeRoot)
     try {
         $segmentPlanPath = Join-Path $segmentMergeRoot 'affected-plan.json'
-        Write-Utf8 $segmentPlanPath ((ConvertTo-MorphospaceCanonicalJson -Value $registryContractPlan) + "`n")
-        $segmentInventory = Get-MorphospaceAffectedTreeInventory -RepositoryRoot $fixture -Commit $registryContractHead
+        Write-Utf8 $segmentPlanPath ((ConvertTo-MorphospaceCanonicalJson -Value $schemaContractPlan) + "`n")
+        $segmentInventory = Get-MorphospaceAffectedTreeInventory -RepositoryRoot $fixture -Commit $schemaContractHead
         $segmentRunner = [pscustomobject][ordered]@{os_description='segment-merge-self-test';powershell_version='7.6.0'}
         foreach ($platform in @('linux','windows')) {
-            $platformSegments = @(Get-MorphospaceAffectedValidationSegments -Plan $registryContractPlan -Registry $contractRegistry -Platform $platform)
+            $platformSegments = @(Get-MorphospaceAffectedValidationSegments -Plan $schemaContractPlan -Registry $contractRegistry -Platform $platform)
             $segmentEvidenceRoot = Join-Path $segmentMergeRoot "$platform-segments"
             [void][IO.Directory]::CreateDirectory($segmentEvidenceRoot)
             foreach ($segment in $platformSegments) {
@@ -3560,48 +3590,38 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
                     Assert-True ($null -ne $entry -and [string]$entry.type -ceq 'blob') "Segment merge fixture lacks exact command blob '$commandPath'."
                     $segmentResults.Add([pscustomobject][ordered]@{check_id=[string]$id;command_path=$commandPath;command_blob_sha1=[string]$entry.blob;mode='executed';result='pass';started=$true;failure_kind=$null;exit_code=0;timed_out=$false;output_truncated=$false;post_kill_drain_timed_out=$false;stdout_sha256=('0'*64);stderr_sha256=('0'*64);stdout_bytes=0;stderr_bytes=0})
                 }
-                $segmentEvidence = [pscustomobject][ordered]@{schema='rusty.morphospace.workflow.affected_validation_evidence.v1';repository=[string]$registryContractPlan.repository;base=$registryContractPlan.base;head=$registryContractPlan.head;plan_sha256=[string]$registryContractPlan.plan_sha256;platform=$platform;runner=$segmentRunner;check_results=@($segmentResults.ToArray());result='pass';claims=[pscustomobject][ordered]@{historical_aggregate_reused=$false;acceptance_authority=$false;publication_authority=$false}}
+                $segmentEvidence = [pscustomobject][ordered]@{schema='rusty.morphospace.workflow.affected_validation_evidence.v1';repository=[string]$schemaContractPlan.repository;base=$schemaContractPlan.base;head=$schemaContractPlan.head;plan_sha256=[string]$schemaContractPlan.plan_sha256;platform=$platform;runner=$segmentRunner;check_results=@($segmentResults.ToArray());result='pass';claims=[pscustomobject][ordered]@{historical_aggregate_reused=$false;acceptance_authority=$false;publication_authority=$false}}
                 Write-Utf8 (Join-Path $segmentEvidenceRoot "$([string]$segment.segment_id).json") ((ConvertTo-MorphospaceCanonicalJson -Value $segmentEvidence) + "`n")
             }
             $mergedPath = Join-Path $segmentMergeRoot "$platform-merged.json"
-            $merged = & (Join-Path $repoRoot 'scripts/Merge-AffectedValidationSegments.ps1') -RepositoryRoot $fixture -BaseCommit $routingBaseHead -HeadCommit $registryContractHead -PlanPath $segmentPlanPath -Platform $platform -SegmentEvidenceDirectory $segmentEvidenceRoot -OutPath $mergedPath
-            $expectedPlatformIds = @($registryContractPlan.selected_checks | Where-Object { @($_.platforms) -ccontains $platform } | ForEach-Object { [string]$_.check_id })
+            $merged = & (Join-Path $repoRoot 'scripts/Merge-AffectedValidationSegments.ps1') -RepositoryRoot $fixture -BaseCommit $registryContractHead -HeadCommit $schemaContractHead -PlanPath $segmentPlanPath -Platform $platform -SegmentEvidenceDirectory $segmentEvidenceRoot -OutPath $mergedPath
+            $expectedPlatformIds = @($schemaContractPlan.selected_checks | Where-Object { @($_.platforms) -ccontains $platform } | ForEach-Object { [string]$_.check_id })
             Assert-True ([string]$merged.result -ceq 'pass' -and (Get-MorphospaceCanonicalJsonSha256 -Value @($merged.check_results.check_id)) -ceq (Get-MorphospaceCanonicalJsonSha256 -Value $expectedPlatformIds)) "Affected-validation $platform segment merger did not emit the exact ordered platform union."
             $firstSegmentFile = Get-ChildItem -LiteralPath $segmentEvidenceRoot -File | Sort-Object Name | Select-Object -First 1
             $firstSegmentOriginal = [IO.File]::ReadAllText($firstSegmentFile.FullName,[Text.UTF8Encoding]::new($false,$true))
             $typedDamage = $firstSegmentOriginal | ConvertFrom-Json -Depth 64 -DateKind String
             $typedDamage.check_results[0].failure_kind = 'exit-code'
             Write-Utf8 $firstSegmentFile.FullName ((ConvertTo-MorphospaceCanonicalJson -Value $typedDamage) + "`n")
-            Assert-AffectedThrows { & (Join-Path $repoRoot 'scripts/Merge-AffectedValidationSegments.ps1') -RepositoryRoot $fixture -BaseCommit $routingBaseHead -HeadCommit $registryContractHead -PlanPath $segmentPlanPath -Platform $platform -SegmentEvidenceDirectory $segmentEvidenceRoot -OutPath (Join-Path $segmentMergeRoot "$platform-typed-damaged.json") | Out-Null } '*not valid with the schema*' "Affected-validation $platform segment merger accepted inconsistent typed failure data."
+            Assert-AffectedThrows { & (Join-Path $repoRoot 'scripts/Merge-AffectedValidationSegments.ps1') -RepositoryRoot $fixture -BaseCommit $registryContractHead -HeadCommit $schemaContractHead -PlanPath $segmentPlanPath -Platform $platform -SegmentEvidenceDirectory $segmentEvidenceRoot -OutPath (Join-Path $segmentMergeRoot "$platform-typed-damaged.json") | Out-Null } '*not valid with the schema*' "Affected-validation $platform segment merger accepted inconsistent typed failure data."
             Write-Utf8 $firstSegmentFile.FullName $firstSegmentOriginal
             $combinedStreamDamage=$firstSegmentOriginal|ConvertFrom-Json -Depth 64 -DateKind String
             $combinedStreamDamage.check_results[0].stdout_bytes=6291456;$combinedStreamDamage.check_results[0].stderr_bytes=5242880
             $combinedStreamDamageJson=ConvertTo-MorphospaceCanonicalJson -Value $combinedStreamDamage
             Assert-True (Test-Json -Json $combinedStreamDamageJson -SchemaFile (Join-Path $repoRoot 'schemas/affected-validation-evidence-v1.schema.json') -ErrorAction Stop) "Affected-validation $platform combined-stream damage is not schema-valid."
             Write-Utf8 $firstSegmentFile.FullName ($combinedStreamDamageJson+"`n")
-            Assert-AffectedThrows { & (Join-Path $repoRoot 'scripts/Merge-AffectedValidationSegments.ps1') -RepositoryRoot $fixture -BaseCommit $routingBaseHead -HeadCommit $registryContractHead -PlanPath $segmentPlanPath -Platform $platform -SegmentEvidenceDirectory $segmentEvidenceRoot -OutPath (Join-Path $segmentMergeRoot "$platform-combined-stream-damaged.json") | Out-Null } '*combined stream bound*' "Affected-validation $platform segment merger accepted evidence above the combined stream bound."
+            Assert-AffectedThrows { & (Join-Path $repoRoot 'scripts/Merge-AffectedValidationSegments.ps1') -RepositoryRoot $fixture -BaseCommit $registryContractHead -HeadCommit $schemaContractHead -PlanPath $segmentPlanPath -Platform $platform -SegmentEvidenceDirectory $segmentEvidenceRoot -OutPath (Join-Path $segmentMergeRoot "$platform-combined-stream-damaged.json") | Out-Null } '*combined stream bound*' "Affected-validation $platform segment merger accepted evidence above the combined stream bound."
             Write-Utf8 $firstSegmentFile.FullName $firstSegmentOriginal
             Copy-Item -LiteralPath $firstSegmentFile.FullName -Destination (Join-Path $segmentEvidenceRoot 'unexpected-segment.json')
-            Assert-AffectedThrows { & (Join-Path $repoRoot 'scripts/Merge-AffectedValidationSegments.ps1') -RepositoryRoot $fixture -BaseCommit $routingBaseHead -HeadCommit $registryContractHead -PlanPath $segmentPlanPath -Platform $platform -SegmentEvidenceDirectory $segmentEvidenceRoot -OutPath (Join-Path $segmentMergeRoot "$platform-invented.json") | Out-Null } '*inventory is not exact*' "Affected-validation $platform segment merger accepted invented segment evidence."
+            Assert-AffectedThrows { & (Join-Path $repoRoot 'scripts/Merge-AffectedValidationSegments.ps1') -RepositoryRoot $fixture -BaseCommit $registryContractHead -HeadCommit $schemaContractHead -PlanPath $segmentPlanPath -Platform $platform -SegmentEvidenceDirectory $segmentEvidenceRoot -OutPath (Join-Path $segmentMergeRoot "$platform-invented.json") | Out-Null } '*inventory is not exact*' "Affected-validation $platform segment merger accepted invented segment evidence."
             Remove-Item -LiteralPath (Join-Path $segmentEvidenceRoot 'unexpected-segment.json') -Force
             $orderDamage = $firstSegmentOriginal | ConvertFrom-Json -Depth 64 -DateKind String
-            if(@($orderDamage.check_results).Count-gt1){$orderDamage.check_results=@($orderDamage.check_results[1..($orderDamage.check_results.Count-1)]+$orderDamage.check_results[0]);Write-Utf8 $firstSegmentFile.FullName ((ConvertTo-MorphospaceCanonicalJson -Value $orderDamage)+"`n");Assert-AffectedThrows { & (Join-Path $repoRoot 'scripts/Merge-AffectedValidationSegments.ps1') -RepositoryRoot $fixture -BaseCommit $routingBaseHead -HeadCommit $registryContractHead -PlanPath $segmentPlanPath -Platform $platform -SegmentEvidenceDirectory $segmentEvidenceRoot -OutPath (Join-Path $segmentMergeRoot "$platform-order-damaged.json") | Out-Null } '*coverage or order is invalid*' "Affected-validation $platform segment merger accepted reordered check evidence.";Write-Utf8 $firstSegmentFile.FullName $firstSegmentOriginal}
+            if(@($orderDamage.check_results).Count-gt1){$orderDamage.check_results=@($orderDamage.check_results[1..($orderDamage.check_results.Count-1)]+$orderDamage.check_results[0]);Write-Utf8 $firstSegmentFile.FullName ((ConvertTo-MorphospaceCanonicalJson -Value $orderDamage)+"`n");Assert-AffectedThrows { & (Join-Path $repoRoot 'scripts/Merge-AffectedValidationSegments.ps1') -RepositoryRoot $fixture -BaseCommit $registryContractHead -HeadCommit $schemaContractHead -PlanPath $segmentPlanPath -Platform $platform -SegmentEvidenceDirectory $segmentEvidenceRoot -OutPath (Join-Path $segmentMergeRoot "$platform-order-damaged.json") | Out-Null } '*coverage or order is invalid*' "Affected-validation $platform segment merger accepted reordered check evidence.";Write-Utf8 $firstSegmentFile.FullName $firstSegmentOriginal}
             Remove-Item -LiteralPath $firstSegmentFile.FullName -Force
-            Assert-AffectedThrows { & (Join-Path $repoRoot 'scripts/Merge-AffectedValidationSegments.ps1') -RepositoryRoot $fixture -BaseCommit $routingBaseHead -HeadCommit $registryContractHead -PlanPath $segmentPlanPath -Platform $platform -SegmentEvidenceDirectory $segmentEvidenceRoot -OutPath (Join-Path $segmentMergeRoot "$platform-damaged.json") | Out-Null } '*inventory is not exact*' "Affected-validation $platform segment merger accepted an incomplete evidence inventory."
+            Assert-AffectedThrows { & (Join-Path $repoRoot 'scripts/Merge-AffectedValidationSegments.ps1') -RepositoryRoot $fixture -BaseCommit $registryContractHead -HeadCommit $schemaContractHead -PlanPath $segmentPlanPath -Platform $platform -SegmentEvidenceDirectory $segmentEvidenceRoot -OutPath (Join-Path $segmentMergeRoot "$platform-damaged.json") | Out-Null } '*inventory is not exact*' "Affected-validation $platform segment merger accepted an incomplete evidence inventory."
         }
     } finally {
         if ([IO.Directory]::Exists($segmentMergeRoot)) { Remove-Item -LiteralPath $segmentMergeRoot -Recurse -Force }
     }
-
-    $affectedSchemaPath = Join-Path $fixture 'schemas/affected-validation-registry-v1.schema.json'
-    Write-Utf8 $affectedSchemaPath ((Get-Content -LiteralPath $affectedSchemaPath -Raw) + "`n")
-    [void](Invoke-TestGit $fixture @('add', 'schemas/affected-validation-registry-v1.schema.json'))
-    [void](Invoke-TestGit $fixture @('commit', '-m', 'affected validation schema contract'))
-    $schemaContractHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
-    $schemaContractPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $registryContractHead -HeadRevision $schemaContractHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
-    Assert-True ($schemaContractPlan.selection_mode -ceq 'full-deep' -and @($schemaContractPlan.selected_checks.check_id) -ccontains 'workflow-contracts') 'Affected-validation schema change did not retain its one-time Deep workflow-contract coverage.'
-    foreach ($checkId in $selectorTrustRootCheckIds) { Assert-True (@($schemaContractPlan.selected_checks.check_id) -ccontains $checkId) "Affected-validation schema change did not retain '$checkId'." }
-    Assert-True (@($schemaContractPlan.selected_checks.check_id) -cnotcontains 'work-environment-deep' -and @($schemaContractPlan.reason_codes) -ccontains 'trust-root-path-changed' -and @($schemaContractPlan.reason_codes) -cnotcontains 'ambiguous-path-mapping') 'Affected-validation schema change did not retain independent-leaf Deep escalation or selected the redundant aggregate.'
 
     Write-Utf8 (Join-Path $fixture 'schemas/work-unit-event.schema.json') "{} `n"
     [void](Invoke-TestGit $fixture @('add', 'schemas/work-unit-event.schema.json'))
@@ -3839,11 +3859,45 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     # single exact owner class.  Test each path independently so command-path
     # selection cannot conceal an unmapped or ambiguous shared-module route.
     $validationAuthorityClosureChecks=@('authority-record-readiness','authority-runner-fast','authority-runner-handoff','transition-ledger','trust-migration-authority','validation-authority-launcher','validation-execution-authority') + $workflowConsumerFixtureChecks
+    $preparationRepositoryScopeConsumerChecks=@(
+        'workflow-contracts','normal-validation-selector','active-write-scope-amendment',
+        'completed-transition-semantic-correction','correct-active-project-repository-scope',
+        'correct-active-read-only-dependencies','development-unit-admission',
+        'recovered-proposal-continuation','validating-candidate-rematerialization',
+        'environment-validation','executed-prepared-publication-reconciliation',
+        'historical-blocker-resolution-intent-binding-correction',
+        'historical-unit-compatibility-projection','historical-unit-adoption',
+        'history-archive-checkpoint-selftest','inherited-candidate-materialization',
+        'prepared-push-transaction-suffix-reconciliation',
+        'published-prerequisite-suffix-reconciliation','unplanned-publication-closure',
+        'work-unit-handoff','blocked-supersession-terminal-validation',
+        'correct-active-unit-contract','historical-validation-debt-baseline',
+        'transition-ledger','authority-record-readiness','authority-runner-fast',
+        'authority-runner-handoff','trust-migration-authority',
+        'history-archive-checkpoint','work-unit-automation','project-workspace-scaffold',
+        'development-envelope-preparation','preparation-repository-scope','public-boundary'
+    )
+    $preparationRepositoryScopeSelectionChecks=@(
+        $preparationRepositoryScopeConsumerChecks + @(
+            'automation-receipt-v2-compatibility','historical-supersession-compatibility',
+            'validation-only-write-scope-narrowing','workflow-action-registry'
+        )
+    )
+    $preparationRepositoryScopeTriggers=@($registry.checks | Where-Object {
+        @($_.trigger_path_sets) -ccontains 'preparation-repository-scope'
+    } | ForEach-Object { [string]$_.check_id } | Sort-Object)
+    $preparationRepositoryScopeConsumers=@($registry.checks | Where-Object {
+        @($_.consume_path_sets) -ccontains 'preparation-repository-scope'
+    } | ForEach-Object { [string]$_.check_id } | Sort-Object)
+    $expectedPreparationRepositoryScopeConsumers=@($preparationRepositoryScopeConsumerChecks | Sort-Object)
+    Assert-True (($preparationRepositoryScopeTriggers -join '|') -ceq ($expectedPreparationRepositoryScopeConsumers -join '|')) 'Preparation-repository-scope trigger consumers differ from the exact focused inventory.'
+    Assert-True (($preparationRepositoryScopeConsumers -join '|') -ceq ($expectedPreparationRepositoryScopeConsumers -join '|')) 'Preparation-repository-scope evidence consumers differ from the exact focused inventory.'
     $externalProtectedOwners = [ordered]@{
         '.github/workflows/static-admission.yml' = 'external-validation-adapter'
         '.github/workflows/validate.yml' = 'selector-trust-root'
         'config/external-owner-authorization.json' = 'external-owner-authorization-core'
         'config/external-validation-authority.json' = 'external-validation-verifier'
+        'manifests/affected-validation-registry.json' = 'affected-validation-registry'
         'schemas/external-owner-authorization-policy-v1.schema.json' = 'external-owner-authorization-core'
         'schemas/external-owner-authorization-request-v1.schema.json' = 'external-owner-authorization-core'
         'schemas/external-owner-authorization-v1.schema.json' = 'external-owner-authorization-core'
@@ -3859,7 +3913,7 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     }
     $externalPolicy = Read-MorphospaceProtocolJson -Path (Join-Path $repoRoot 'config/external-validation-authority.json')
     $mandatoryProtectedPaths = @($externalPolicy.mandatory_protected_paths)
-    Assert-True ($mandatoryProtectedPaths.Count -eq 16) "External validation authority protected-path inventory changed from the expected 16 paths: $($mandatoryProtectedPaths.Count)."
+    Assert-True ($mandatoryProtectedPaths.Count -eq 17) "External validation authority protected-path inventory changed from the expected 17 paths: $($mandatoryProtectedPaths.Count)."
     Assert-True ($externalProtectedOwners.Count -eq $mandatoryProtectedPaths.Count) 'External protected-path ownership fixture does not cover the complete mandatory inventory.'
     $affectedModule = Get-Module MorphospaceAffectedValidation
     foreach ($protectedPath in $mandatoryProtectedPaths) {
@@ -3924,6 +3978,7 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
         [pscustomobject]@{ path='scripts/lib/MorphospaceHistoricalValidationDebtPhaseRunner.psm1'; checks=@('historical-validation-debt-baseline','historical-validation-debt-phase-runner','work-unit-automation') },
         [pscustomobject]@{ path='scripts/lib/MorphospaceOwnership.psm1'; checks=@('authority-record-readiness','authority-runner-fast','ownership-authority','validation-execution-authority','work-unit-automation') },
         [pscustomobject]@{ path='scripts/lib/MorphospaceProtocolCommon.psm1'; checks=$protocolCommonConsumerChecks },
+        [pscustomobject]@{ path='scripts/lib/MorphospacePreparationRepositoryScope.psm1'; checks=$preparationRepositoryScopeSelectionChecks; exact_checks=$true },
         [pscustomobject]@{ path='scripts/lib/MorphospaceTransitionLedger.psm1'; checks=@('blocked-supersession-terminal-validation','correct-active-unit-contract','development-unit-admission','transition-ledger','work-unit-automation') },
         [pscustomobject]@{ path='scripts/Invoke-MorphospaceValidationAuthority.ps1'; checks=$validationAuthorityClosureChecks; exact_checks=$true },
         [pscustomobject]@{ path='scripts/lib/MorphospaceAuthorityProcess.psm1'; checks=$validationAuthorityClosureChecks; exact_checks=$true },
@@ -4096,7 +4151,7 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
 
     $ambiguousRegistry = Read-MorphospaceProtocolJson -Path (Join-Path $fixture 'manifests/affected-validation-registry.json')
     $ambiguousRegistry.path_sets = @($ambiguousRegistry.path_sets) + @([pscustomobject][ordered]@{ path_set_id = 'documentation-overlap'; patterns = @('docs/**') })
-    $ambiguousRegistry.checks | Where-Object { $_.check_id -ceq 'public-boundary' } | ForEach-Object { $_.consume_path_sets = @($_.consume_path_sets) + @('documentation-overlap'); $_.trigger_path_sets = @($_.trigger_path_sets) + @('documentation-overlap') }
+    $ambiguousRegistry.checks | Where-Object { [string]$_.check_id -in @('documentation-links','public-boundary') } | ForEach-Object { $_.consume_path_sets = @($_.consume_path_sets) + @('documentation-overlap'); $_.trigger_path_sets = @($_.trigger_path_sets) + @('documentation-overlap') }
     Write-Utf8 (Join-Path $fixture 'manifests/affected-validation-registry.json') ((ConvertTo-MorphospaceCanonicalJson -Value $ambiguousRegistry) + "`n")
     [void](Invoke-TestGit $fixture @('add', 'manifests/affected-validation-registry.json'))
     [void](Invoke-TestGit $fixture @('commit', '-m', 'ambiguous registry baseline'))

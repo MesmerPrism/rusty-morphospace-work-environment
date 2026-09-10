@@ -3,8 +3,13 @@
 `validate.yml` resolves a closed, exact-base/current-head plan before running
 candidate validation. The registry owns canonical path classes, semantic
 dependencies, execution order, platform applicability, and the exact Git blob identities that evidence
-must bind. Unmapped paths, case collisions, and selector trust-root changes fail
-closed to Deep; they do not silently widen a Quick run.
+must bind. The focused ownership audit independently enumerates the exact HEAD
+tree and requires every tracked path, including every registered command, to
+have one path-set owner. A path set must trigger a specialized check in
+addition to public-boundary validation. Case collisions and changes to the
+affected-validation schemas fail closed to Deep; they do not silently widen a
+Quick run. Selector implementation changes stay affected and execute the full
+bounded selector self-test closure.
 
 External admission remains mandatory and independent of dynamic test
 selection. `.github/workflows/validate.yml` stays in the selector trust root,
@@ -21,26 +26,38 @@ an adapter-only change stays on the adapter self-test. These focused external
 checks are Standard, exact-host trust roots and do not select the cumulative
 Work Environment Deep aggregate. Static Admission still applies its
 protected-artifact and external-owner policy to every candidate regardless of
-the affected-validation plan.
+the affected-validation plan. The registry itself is a mandatory protected
+path. It has a distinct owner from the selector engine: a registry-only change
+requires exact static owner admission and selects the bounded ownership and
+workflow-action registry checks, but does not select the cumulative Deep suite.
+The affected-validation schemas remain the Deep trust root. Selector
+implementation changes execute the full bounded selector self-test closure.
+This keeps routine additive ownership maintenance reviewable without allowing
+candidate-controlled selection data to authorize itself.
 
-The focused external migration does not claim to close the repository-wide
-mapping backlog. The initial structural inventory found 111 tracked paths
-without a registered owner; assigning the signing helper here leaves 110
-unmapped paths and two ambiguous paths. That debt remains a separate follow-up.
-Existing unmapped or ambiguous paths retain the conservative fallback semantics.
+The repository-wide ownership migration covers every exact tracked path without
+`scripts/**`, `Test-*.ps1`, extension-wide, or miscellaneous catch-alls. It
+separates lifecycle corrections, publication owners, Quest adapters, tools,
+repository metadata, and example scaffolding. The former two-way preparation
+scope overlap is resolved in favor of `preparation-repository-scope`. Every one
+of the 22 previously unowned registered commands now belongs to its focused
+owner.
 
-The cumulative `Test-WorkEnvironment.ps1` suite currently invokes eleven owner
-tests that still lack independent affected-validation registrations: executed
-push receipt, local skill bootstrap, planned publication accounting, PowerShell
-host, published planning-authority adoption, the three Quest File Manager
-provider/observation adapters, release capsule, repository lifecycle inventory,
-and unpublished planning-authority materialization. The selector self-test pins
-that exact debt set, so another aggregate owner cannot be added or a focused
-leaf removed silently. It also pins the exact command and argument identities
-for the four canonical/external-authority leaves migrated here. The next
-registry-coverage slice must retire the named debt deliberately, resolve the 22
-registered command paths that have no path-set owner, then close the remaining
-tracked-tree ownership gaps without catch-all patterns.
+Every owner invoked by the cumulative `Test-WorkEnvironment.ps1` suite has an
+independent registration. This includes the eleven previously recorded test
+debts and `New-ProjectWorkspace.ps1 -SelfTest`, which the former `Test-*.ps1`
+inventory silently omitted. The self-test derives table and direct invocations
+from the aggregate AST, normalizes only its local `-RepoRoot` injection, and
+requires one exact registered command/argument match. Adding another aggregate
+owner or drifting its focused arguments therefore fails without updating a
+hand-maintained debt count.
+
+The resolver currently retains its conservative Deep diagnostic plan when a
+changed path has no owner or more than one owner. Deep execution cannot prove
+coverage for an unknown mapping, so the exact-HEAD ownership leaf fails such a
+candidate rather than granting validation credit. With the zero-debt baseline
+adopted, a later selector-engine slice can replace that expensive scheduling
+path with a typed non-executable mapping diagnostic.
 
 Each resolver call binds the canonical repository root, tracked cleanliness,
 HEAD commit/tree, base ancestry, registry/schema identities, and the complete
@@ -376,9 +393,12 @@ reliably observe its own absence. See
 trust-root PRs also run the bounded topology and reuse self-tests through the
 same affected-validation executor.
 
-Changes to the affected-validation registry or its schemas require one-time
-Deep leaf admission because that trust root cannot proportionally approve
-itself. The cumulative `Test-WorkEnvironment -Tier Deep` check has the closed
+Changes limited to the affected-validation registry require its exact external
+static owner admission plus the bounded ownership, workflow-action-registry,
+public-boundary, and dependency closure selected by the candidate registry.
+Changes to the affected-validation schemas still require one-time Deep leaf
+admission because those trust-root contracts cannot proportionally approve
+themselves. The cumulative `Test-WorkEnvironment -Tier Deep` check has the closed
 `aggregate_role: work-environment-deep-v1`; no other check identity or command
 may use that role. Trust-root fallback does not run it after selecting all of
 its independently evidenced leaves. It remains selected when its own command
@@ -434,8 +454,8 @@ currently a `Test-WorkEnvironment.ps1` entrypoint. Exact command/import/input cl
 remains the evidence-reuse boundary, so an unchanged authenticated leaf may be
 reused rather than blindly replayed. The runner-fast clean-room fixture is a
 separate exact path class. None of these mapped paths selects
-`Test-WorkEnvironment.ps1` unless the affected-validation trust root itself
-also changed or Deep was explicitly requested.
+`Test-WorkEnvironment.ps1`; the cumulative aggregate is selected only when its
+own registered command or aggregate path changes.
 
 The selector's automation, unmapped-script, owner-command, unknown-path,
 rename, repeat, no-change, and delete scenarios can emit create-new start,

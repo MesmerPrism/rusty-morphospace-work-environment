@@ -367,6 +367,11 @@ function Test-MorphospaceAffectedValidationRegistry {
     foreach ($pathSetId in @($pathSetMap.Keys)) {
         if (@($publicBoundary.trigger_path_sets) -cnotcontains [string]$pathSetId) { throw "Public-boundary does not trigger for publishable path set '$pathSetId'." }
         if (@($publicBoundary.consume_path_sets) -cnotcontains [string]$pathSetId) { throw "Public-boundary does not cover publishable path set '$pathSetId'." }
+        $specializedChecks = @($Registry.checks | Where-Object {
+            [string]$_.check_id -cne 'public-boundary' -and
+            @($_.trigger_path_sets) -ccontains [string]$pathSetId
+        })
+        if ($specializedChecks.Count -eq 0) { throw "Path set '$pathSetId' has no specialized validation trigger beyond public-boundary." }
     }
 
     $visiting = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
@@ -638,6 +643,257 @@ function Test-MorphospaceAffectedPathSetMatch {
     return $false
 }
 
+function Get-MorphospaceAffectedPowerShellAst([string]$Path) {
+    $tokens = $null
+    $errors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseFile([IO.Path]::GetFullPath($Path),[ref]$tokens,[ref]$errors)
+    if (@($errors).Count -ne 0) { throw "PowerShell owner source does not parse: $Path :: $(@($errors | ForEach-Object Message) -join '; ')" }
+    return $ast
+}
+
+function ConvertTo-MorphospaceAffectedOwnerEntrypoint([string]$Value) {
+    $normalized = $Value.Replace('\','/')
+    $leaf = @($normalized.Split('/') | Where-Object { $_ -ne '' })[-1]
+    if ($leaf -cnotmatch '^(?:Test-[A-Za-z0-9-]+|New-ProjectWorkspace)\.ps1$') { throw "Work Environment owner entrypoint is not recognized: $Value" }
+    return "scripts/$leaf"
+}
+
+function Get-MorphospaceAffectedWorkEnvironmentOwnerEntrypoints {
+    param([string]$Root,[Collections.Generic.HashSet[string]]$TrackedPaths)
+    $ast = Get-MorphospaceAffectedPowerShellAst (Join-Path ([IO.Path]::GetFullPath($Root)) 'scripts/Test-WorkEnvironment.ps1')
+    $references = @($ast.FindAll({
+        param($node)
+        $node -is [Management.Automation.Language.StringConstantExpressionAst] -and
+        ([string]$node.Value).Replace('\','/') -match '(?:^|/)(?:Test-[A-Za-z0-9-]+|New-ProjectWorkspace)\.ps1$'
+    },$true))
+    $classifiedOffsets = [Collections.Generic.HashSet[int]]::new()
+    $entrypoints = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($hashtable in @($ast.FindAll({ param($node) $node -is [Management.Automation.Language.HashtableAst] },$true))) {
+        foreach ($pair in @($hashtable.KeyValuePairs)) {
+            if ([string]$pair.Item1.Extent.Text -cne 'script') { continue }
+            $values = @($pair.Item2.FindAll({
+                param($node)
+                $node -is [Management.Automation.Language.StringConstantExpressionAst] -and
+                ([string]$node.Value).Replace('\','/') -match '(?:^|/)(?:Test-[A-Za-z0-9-]+|New-ProjectWorkspace)\.ps1$'
+            },$true))
+            if ($values.Count -ne 1) { throw "Work Environment script table entry is not one literal recognized owner: $($pair.Item2.Extent.Text)" }
+            [void]$classifiedOffsets.Add([int]$values[0].Extent.StartOffset)
+            [void]$entrypoints.Add((ConvertTo-MorphospaceAffectedOwnerEntrypoint ([string]$values[0].Value)))
+        }
+    }
+    foreach ($reference in $references) {
+        $node = $reference.Parent
+        $direct = $false
+        while ($null -ne $node) {
+            if ($node -is [Management.Automation.Language.CommandAst] -and $node.InvocationOperator -eq [Management.Automation.Language.TokenKind]::Ampersand) { $direct = $true; break }
+            $node = $node.Parent
+        }
+        if ($direct) {
+            [void]$classifiedOffsets.Add([int]$reference.Extent.StartOffset)
+            [void]$entrypoints.Add((ConvertTo-MorphospaceAffectedOwnerEntrypoint ([string]$reference.Value)))
+        }
+    }
+    foreach ($reference in $references) {
+        if (-not $classifiedOffsets.Contains([int]$reference.Extent.StartOffset)) { throw "Work Environment owner reference uses an unclassified invocation form: $($reference.Extent.Text)" }
+    }
+    if ($entrypoints.Count -eq 0) { throw 'Work Environment owner-entrypoint audit found no recognized invocations.' }
+    $result = @($entrypoints)
+    [Array]::Sort($result,[StringComparer]::Ordinal)
+    foreach ($relative in $result) {
+        if (-not $TrackedPaths.Contains($relative) -or -not [IO.File]::Exists((Join-Path $Root $relative))) { throw "Work Environment owner entrypoint is not one tracked regular file: $relative" }
+    }
+    return $result
+}
+
+function Get-MorphospaceAffectedWorkEnvironmentTableInvocations([string]$Root) {
+    $ast = Get-MorphospaceAffectedPowerShellAst (Join-Path ([IO.Path]::GetFullPath($Root)) 'scripts/Test-WorkEnvironment.ps1')
+    $result = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+    foreach ($hashtable in @($ast.FindAll({ param($node) $node -is [Management.Automation.Language.HashtableAst] },$true))) {
+        $pairs = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+        foreach ($pair in @($hashtable.KeyValuePairs)) { $pairs[[string]$pair.Item1.Extent.Text] = $pair.Item2 }
+        if (-not $pairs.ContainsKey('script')) { continue }
+        try { $scriptValue = $pairs['script'].SafeGetValue() } catch { continue }
+        if ($scriptValue -isnot [string] -or [string]$scriptValue -cnotmatch '^Test-[A-Za-z0-9-]+\.ps1$') { continue }
+        $commandPath = ConvertTo-MorphospaceAffectedOwnerEntrypoint ([string]$scriptValue)
+        if ($result.ContainsKey($commandPath)) { throw "Work Environment script table repeats an owner entrypoint: $commandPath" }
+        $arguments = @()
+        if ($pairs.ContainsKey('arguments')) {
+            try { $rawArguments = @($pairs['arguments'].SafeGetValue()) } catch { throw "Work Environment owner arguments are not literal: $commandPath" }
+            foreach ($argument in $rawArguments) { if ($argument -isnot [string]) { throw "Work Environment owner argument is not a literal string: $commandPath" } }
+            $arguments = @($rawArguments | ForEach-Object { [string]$_ })
+        }
+        $result[$commandPath] = $arguments
+    }
+    return $result
+}
+
+function Test-MorphospaceAffectedAstWithinSelfTestBranch([Management.Automation.Language.Ast]$Node) {
+    $start = [int]$Node.Extent.StartOffset
+    $end = [int]$Node.Extent.EndOffset
+    $current = $Node.Parent
+    while ($null -ne $current) {
+        if ($current -is [Management.Automation.Language.IfStatementAst]) {
+            foreach ($clause in @($current.Clauses)) {
+                if ([string]$clause.Item1.Extent.Text.Trim() -ceq '$SelfTest' -and
+                    $start -ge [int]$clause.Item2.Extent.StartOffset -and $end -le [int]$clause.Item2.Extent.EndOffset) { return $true }
+            }
+        }
+        $current = $current.Parent
+    }
+    return $false
+}
+
+function Get-MorphospaceAffectedWorkEnvironmentDirectInvocations([string]$Root) {
+    $ast = Get-MorphospaceAffectedPowerShellAst (Join-Path ([IO.Path]::GetFullPath($Root)) 'scripts/Test-WorkEnvironment.ps1')
+    $result = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+    foreach ($command in @($ast.FindAll({
+        param($node)
+        $node -is [Management.Automation.Language.CommandAst] -and $node.InvocationOperator -eq [Management.Automation.Language.TokenKind]::Ampersand
+    },$true))) {
+        $pathValues = @($command.CommandElements[0].FindAll({
+            param($node)
+            $node -is [Management.Automation.Language.StringConstantExpressionAst] -and
+            ([string]$node.Value).Replace('\','/') -match '(?:^|/)(?:Test-[A-Za-z0-9-]+|New-ProjectWorkspace)\.ps1$'
+        },$true))
+        if ($pathValues.Count -eq 0) { continue }
+        if ($pathValues.Count -ne 1) { throw "Work Environment direct owner invocation has ambiguous entrypoint text: $($command.Extent.Text)" }
+        if (-not (Test-MorphospaceAffectedAstWithinSelfTestBranch -Node $command)) { continue }
+        $commandPath = ConvertTo-MorphospaceAffectedOwnerEntrypoint ([string]$pathValues[0].Value)
+        $arguments = [Collections.Generic.List[string]]::new()
+        $skipRepoRootValue = $false
+        foreach ($element in @($command.CommandElements | Select-Object -Skip 1)) {
+            if ($skipRepoRootValue) {
+                if ($element -isnot [Management.Automation.Language.VariableExpressionAst] -or [string]$element.VariablePath.UserPath -cne 'RepoRoot') { throw "Work Environment -RepoRoot binding is not canonical: $($command.Extent.Text)" }
+                $skipRepoRootValue = $false
+                continue
+            }
+            if ($element -is [Management.Automation.Language.CommandParameterAst]) {
+                if ([string]$element.ParameterName -ceq 'RepoRoot') { $skipRepoRootValue = $true; continue }
+                [void]$arguments.Add("-$([string]$element.ParameterName)")
+                if ($null -ne $element.Argument) {
+                    try { [void]$arguments.Add([string]$element.Argument.SafeGetValue()) } catch { throw "Work Environment direct owner argument is not literal: $($command.Extent.Text)" }
+                }
+                continue
+            }
+            if ($element -is [Management.Automation.Language.StringConstantExpressionAst]) { [void]$arguments.Add([string]$element.Value); continue }
+            throw "Work Environment direct owner argument uses an unclassified form: $($command.Extent.Text)"
+        }
+        if ($skipRepoRootValue) { throw "Work Environment direct owner invocation omits its -RepoRoot value: $($command.Extent.Text)" }
+        if (-not $result.ContainsKey($commandPath)) { $result[$commandPath] = [Collections.Generic.List[object]]::new() }
+        [void]([Collections.Generic.List[object]]$result[$commandPath]).Add([pscustomobject][ordered]@{arguments=@($arguments.ToArray())})
+    }
+    return $result
+}
+
+function Assert-MorphospaceAffectedWorkEnvironmentLeafRegistration {
+    param([string]$Root,[object]$Registry,[object]$Inventory)
+    $trackedPaths = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    if ($null -ne $Inventory) {
+        foreach ($record in @($Inventory.records)) { [void]$trackedPaths.Add([string]$record.path) }
+    } else {
+        foreach ($path in @(& git -C $Root ls-files)) { [void]$trackedPaths.Add(([string]$path).Replace('\','/')) }
+        if ($LASTEXITCODE -ne 0) { throw 'Work Environment owner-entrypoint audit could not enumerate tracked paths.' }
+    }
+    $registryByCommand = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+    foreach ($check in @($Registry.checks)) {
+        $path = [string]$check.command_path
+        if (-not $registryByCommand.ContainsKey($path)) { $registryByCommand[$path] = [Collections.Generic.List[object]]::new() }
+        ([Collections.Generic.List[object]]$registryByCommand[$path]).Add($check)
+    }
+    $ownerEntrypoints = @(Get-MorphospaceAffectedWorkEnvironmentOwnerEntrypoints -Root $Root -TrackedPaths $trackedPaths)
+    $unregistered = @($ownerEntrypoints | Where-Object { -not $registryByCommand.ContainsKey([string]$_) })
+    [Array]::Sort($unregistered,[StringComparer]::Ordinal)
+    if ($unregistered.Count -ne 0) { throw "Work Environment aggregate owner-entrypoint registration debt changed. Expected=; observed=$($unregistered -join ',')." }
+    $tableInvocations = Get-MorphospaceAffectedWorkEnvironmentTableInvocations -Root $Root
+    $directInvocations = Get-MorphospaceAffectedWorkEnvironmentDirectInvocations -Root $Root
+    foreach ($commandPath in $ownerEntrypoints) {
+        $registered = @($registryByCommand[[string]$commandPath])
+        if ($registered.Count -ne 1) { throw "Work Environment aggregate owner does not have exactly one focused registration: $commandPath." }
+        $forms = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+        if ($tableInvocations.ContainsKey($commandPath)) {
+            [string[]]$arguments = @($tableInvocations[$commandPath] | ForEach-Object { [string]$_ })
+            $forms[$arguments -join "`0"] = $arguments
+        }
+        if ($directInvocations.ContainsKey($commandPath)) {
+            foreach ($candidate in @($directInvocations[$commandPath])) {
+                [string[]]$arguments = @($candidate.arguments | ForEach-Object { [string]$_ })
+                $forms[$arguments -join "`0"] = $arguments
+            }
+        }
+        if ($forms.Count -ne 1) { throw "Work Environment aggregate owner does not have one canonical gated invocation: $commandPath forms=$($forms.Count)." }
+        [string[]]$aggregateArguments = @($forms.Values)[0]
+        [string[]]$registeredArguments = @($registered[0].arguments | ForEach-Object { [string]$_ })
+        if ($aggregateArguments.Count -ne $registeredArguments.Count -or ($aggregateArguments -join "`n") -cne ($registeredArguments -join "`n")) {
+            throw "Work Environment aggregate invocation differs from its focused registration: $commandPath registered=$($registeredArguments -join ',')."
+        }
+    }
+    return [pscustomobject][ordered]@{owner_entrypoint_count=$ownerEntrypoints.Count;owner_entrypoints=@($ownerEntrypoints)}
+}
+
+function Get-MorphospaceAffectedValidationOwnershipAudit {
+    param(
+        [Parameter(Mandatory = $true)][object]$Registry,
+        [Parameter(Mandatory = $true)][object]$CompiledRegistry,
+        [Parameter(Mandatory = $true)][object]$Inventory
+    )
+
+    $unmapped = [System.Collections.Generic.List[string]]::new()
+    $ambiguous = [System.Collections.Generic.List[object]]::new()
+    $ownership = [System.Collections.Generic.List[object]]::new()
+    $ownersByPath = [System.Collections.Generic.Dictionary[string,object]]::new([System.StringComparer]::Ordinal)
+    foreach ($entry in @($Inventory.records)) {
+        $path = [string]$entry.path
+        [string[]]$owners = @($CompiledRegistry.path_sets.Keys | Where-Object {
+            Test-MorphospaceAffectedPathSetMatch -Path $path -Patterns @($CompiledRegistry.path_sets[[string]$_])
+        })
+        [Array]::Sort($owners,[StringComparer]::Ordinal)
+        $ownersByPath[$path] = @($owners)
+        if (@($owners).Count -eq 0) { $unmapped.Add($path) }
+        elseif (@($owners).Count -gt 1) { $ambiguous.Add([pscustomobject][ordered]@{path=$path;path_set_ids=@($owners)}) }
+        $ownership.Add([pscustomobject][ordered]@{path=$path;path_set_ids=@($owners)})
+    }
+    $unownedCommands = [System.Collections.Generic.List[object]]::new()
+    foreach ($check in @($Registry.checks | Sort-Object check_id)) {
+        $commandPath = [string]$check.command_path
+        [object[]]$owners = if ($ownersByPath.ContainsKey($commandPath)) { @($ownersByPath[$commandPath]) } else { @() }
+        if (@($owners).Count -ne 1) {
+            $unownedCommands.Add([pscustomobject][ordered]@{check_id=[string]$check.check_id;command_path=$commandPath;path_set_ids=@($owners)})
+        }
+    }
+    $core = [pscustomobject][ordered]@{
+        commit = [string]$Inventory.commit
+        tracked_path_count = [long]@($Inventory.records).Count
+        ownership = @($ownership.ToArray())
+    }
+    return [pscustomobject][ordered]@{
+        schema = 'rusty.morphospace.workflow.affected_validation_ownership_audit.v1'
+        repository = [string]$Registry.repository_id
+        registry_id = [string]$Registry.registry_id
+        registry_revision = [long]$Registry.revision
+        commit = [string]$Inventory.commit
+        tracked_path_count = [long]@($Inventory.records).Count
+        owned_path_count = [long]@($ownership | Where-Object { @($_.path_set_ids).Count -eq 1 }).Count
+        unmapped_paths = @($unmapped.ToArray())
+        ambiguous_paths = @($ambiguous.ToArray())
+        registered_commands_without_one_owner = @($unownedCommands.ToArray())
+        ownership_sha256 = Get-MorphospaceCanonicalJsonSha256 -Value $core
+        claims = [pscustomobject][ordered]@{selection_only=$true;checks_executed=$false;acceptance_authority=$false;publication_authority=$false}
+    }
+}
+
+function Assert-MorphospaceAffectedValidationOwnershipComplete {
+    param([Parameter(Mandatory = $true)][object]$Audit)
+
+    $unmappedCount = @($Audit.unmapped_paths).Count
+    $ambiguousCount = @($Audit.ambiguous_paths).Count
+    $commandCount = @($Audit.registered_commands_without_one_owner).Count
+    if ($unmappedCount -eq 0 -and $ambiguousCount -eq 0 -and $commandCount -eq 0 -and
+        [long]$Audit.owned_path_count -eq [long]$Audit.tracked_path_count) { return }
+    $exception = [InvalidOperationException]::new("Affected-validation ownership is incomplete: unmapped=$unmappedCount ambiguous=$ambiguousCount registered_commands_without_one_owner=$commandCount.")
+    $exception.Data['AffectedValidationOwnershipAudit'] = ConvertTo-MorphospaceCanonicalJson -Value $Audit
+    throw $exception
+}
+
 function Resolve-MorphospaceAffectedValidation {
     param(
         [Parameter(Mandatory = $true)][string]$RepositoryRoot,
@@ -828,4 +1084,4 @@ function Resolve-MorphospaceAffectedValidation {
     }
 }
 
-Microsoft.PowerShell.Core\Export-ModuleMember -Function Test-MorphospaceAffectedValidationRegistry, Resolve-MorphospaceAffectedValidation, Get-MorphospaceAffectedValidationSegments, Get-MorphospaceAffectedTreeInventory, Assert-MorphospaceAffectedBatchedWorkingBytes
+Microsoft.PowerShell.Core\Export-ModuleMember -Function Test-MorphospaceAffectedValidationRegistry, Resolve-MorphospaceAffectedValidation, Get-MorphospaceAffectedValidationSegments, Get-MorphospaceAffectedTreeInventory, Assert-MorphospaceAffectedBatchedWorkingBytes, Get-MorphospaceAffectedValidationOwnershipAudit, Assert-MorphospaceAffectedValidationOwnershipComplete, Assert-MorphospaceAffectedWorkEnvironmentLeafRegistration
