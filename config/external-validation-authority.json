@@ -7,6 +7,7 @@
     ".github/workflows/validate.yml",
     "config/external-owner-authorization.json",
     "config/external-validation-authority.json",
+    "manifests/affected-validation-registry.json",
     "schemas/external-owner-authorization-policy-v1.schema.json",
     "schemas/external-owner-authorization-request-v1.schema.json",
     "schemas/external-owner-authorization-v1.schema.json",

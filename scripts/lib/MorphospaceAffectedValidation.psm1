@@ -367,6 +367,11 @@ function Test-MorphospaceAffectedValidationRegistry {
     foreach ($pathSetId in @($pathSetMap.Keys)) {
         if (@($publicBoundary.trigger_path_sets) -cnotcontains [string]$pathSetId) { throw "Public-boundary does not trigger for publishable path set '$pathSetId'." }
         if (@($publicBoundary.consume_path_sets) -cnotcontains [string]$pathSetId) { throw "Public-boundary does not cover publishable path set '$pathSetId'." }
+        $specializedChecks = @($Registry.checks | Where-Object {
+            [string]$_.check_id -cne 'public-boundary' -and
+            @($_.trigger_path_sets) -ccontains [string]$pathSetId
+        })
+        if ($specializedChecks.Count -eq 0) { throw "Path set '$pathSetId' has no specialized validation trigger beyond public-boundary." }
     }
 
     $visiting = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
@@ -638,6 +643,70 @@ function Test-MorphospaceAffectedPathSetMatch {
     return $false
 }
 
+function Get-MorphospaceAffectedValidationOwnershipAudit {
+    param(
+        [Parameter(Mandatory = $true)][object]$Registry,
+        [Parameter(Mandatory = $true)][object]$CompiledRegistry,
+        [Parameter(Mandatory = $true)][object]$Inventory
+    )
+
+    $unmapped = [System.Collections.Generic.List[string]]::new()
+    $ambiguous = [System.Collections.Generic.List[object]]::new()
+    $ownership = [System.Collections.Generic.List[object]]::new()
+    $ownersByPath = [System.Collections.Generic.Dictionary[string,object]]::new([System.StringComparer]::Ordinal)
+    foreach ($entry in @($Inventory.records)) {
+        $path = [string]$entry.path
+        [string[]]$owners = @($CompiledRegistry.path_sets.Keys | Where-Object {
+            Test-MorphospaceAffectedPathSetMatch -Path $path -Patterns @($CompiledRegistry.path_sets[[string]$_])
+        })
+        [Array]::Sort($owners,[StringComparer]::Ordinal)
+        $ownersByPath[$path] = @($owners)
+        if (@($owners).Count -eq 0) { $unmapped.Add($path) }
+        elseif (@($owners).Count -gt 1) { $ambiguous.Add([pscustomobject][ordered]@{path=$path;path_set_ids=@($owners)}) }
+        $ownership.Add([pscustomobject][ordered]@{path=$path;path_set_ids=@($owners)})
+    }
+    $unownedCommands = [System.Collections.Generic.List[object]]::new()
+    foreach ($check in @($Registry.checks | Sort-Object check_id)) {
+        $commandPath = [string]$check.command_path
+        [object[]]$owners = if ($ownersByPath.ContainsKey($commandPath)) { @($ownersByPath[$commandPath]) } else { @() }
+        if (@($owners).Count -ne 1) {
+            $unownedCommands.Add([pscustomobject][ordered]@{check_id=[string]$check.check_id;command_path=$commandPath;path_set_ids=@($owners)})
+        }
+    }
+    $core = [pscustomobject][ordered]@{
+        commit = [string]$Inventory.commit
+        tracked_path_count = [long]@($Inventory.records).Count
+        ownership = @($ownership.ToArray())
+    }
+    return [pscustomobject][ordered]@{
+        schema = 'rusty.morphospace.workflow.affected_validation_ownership_audit.v1'
+        repository = [string]$Registry.repository_id
+        registry_id = [string]$Registry.registry_id
+        registry_revision = [long]$Registry.revision
+        commit = [string]$Inventory.commit
+        tracked_path_count = [long]@($Inventory.records).Count
+        owned_path_count = [long]@($ownership | Where-Object { @($_.path_set_ids).Count -eq 1 }).Count
+        unmapped_paths = @($unmapped.ToArray())
+        ambiguous_paths = @($ambiguous.ToArray())
+        registered_commands_without_one_owner = @($unownedCommands.ToArray())
+        ownership_sha256 = Get-MorphospaceCanonicalJsonSha256 -Value $core
+        claims = [pscustomobject][ordered]@{selection_only=$true;checks_executed=$false;acceptance_authority=$false;publication_authority=$false}
+    }
+}
+
+function Assert-MorphospaceAffectedValidationOwnershipComplete {
+    param([Parameter(Mandatory = $true)][object]$Audit)
+
+    $unmappedCount = @($Audit.unmapped_paths).Count
+    $ambiguousCount = @($Audit.ambiguous_paths).Count
+    $commandCount = @($Audit.registered_commands_without_one_owner).Count
+    if ($unmappedCount -eq 0 -and $ambiguousCount -eq 0 -and $commandCount -eq 0 -and
+        [long]$Audit.owned_path_count -eq [long]$Audit.tracked_path_count) { return }
+    $exception = [InvalidOperationException]::new("Affected-validation ownership is incomplete: unmapped=$unmappedCount ambiguous=$ambiguousCount registered_commands_without_one_owner=$commandCount.")
+    $exception.Data['AffectedValidationOwnershipAudit'] = ConvertTo-MorphospaceCanonicalJson -Value $Audit
+    throw $exception
+}
+
 function Resolve-MorphospaceAffectedValidation {
     param(
         [Parameter(Mandatory = $true)][string]$RepositoryRoot,
@@ -828,4 +897,4 @@ function Resolve-MorphospaceAffectedValidation {
     }
 }
 
-Microsoft.PowerShell.Core\Export-ModuleMember -Function Test-MorphospaceAffectedValidationRegistry, Resolve-MorphospaceAffectedValidation, Get-MorphospaceAffectedValidationSegments, Get-MorphospaceAffectedTreeInventory, Assert-MorphospaceAffectedBatchedWorkingBytes
+Microsoft.PowerShell.Core\Export-ModuleMember -Function Test-MorphospaceAffectedValidationRegistry, Resolve-MorphospaceAffectedValidation, Get-MorphospaceAffectedValidationSegments, Get-MorphospaceAffectedTreeInventory, Assert-MorphospaceAffectedBatchedWorkingBytes, Get-MorphospaceAffectedValidationOwnershipAudit, Assert-MorphospaceAffectedValidationOwnershipComplete

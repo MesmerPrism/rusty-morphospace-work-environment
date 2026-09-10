@@ -100,6 +100,18 @@ selection to `<work-environment>/docs/AFFECTED_VALIDATION.md`.
 Static admission, dynamic validation, acceptance, and publication remain
 separate authorities.
 
+Assign every tracked path exactly one affected-validation owner and a focused
+consumer beyond the public-boundary check. When an owner also appears in the
+cumulative Work Environment suite, keep one independently registered leaf with equivalent
+arguments. Run the exact-HEAD ownership audit after freezing the candidate;
+missing or overlapping ownership is a workflow defect, not validation credit.
+
+Assign every tracked path exactly one affected-validation owner and a focused
+consumer beyond the public-boundary check. When an owner also appears in the
+cumulative Work Environment suite, keep one independent leaf with equivalent
+arguments. Run the exact-HEAD ownership audit after freezing the candidate;
+missing or overlapping ownership is a workflow defect, not validation credit.
+
 ## Boundaries and instruction impact
 
 One owner controls each runtime parameter and state transition. Adapter

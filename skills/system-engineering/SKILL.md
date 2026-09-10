@@ -39,6 +39,10 @@ replacement for owner contracts or exact evidence.
 - Derive validation from the current unit and keep pass evidence, acceptance,
   publication, and device evidence distinct. Preserve blockers and dirty or
   historical bytes; do not rewrite them to repair an audit.
+- Give every tracked path one affected-validation owner and at least one
+  specialized consumer. Keep cumulative owner invocations registered as
+  focused leaves with equivalent arguments; treat missing or overlapping
+  ownership as an invalid validation plan.
 
 For substantial work, state the decision, scope, ownership, interfaces,
 observability, validation, risks, and next slice in proportion to the change.

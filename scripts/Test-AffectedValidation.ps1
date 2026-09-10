@@ -475,7 +475,7 @@ function Get-AffectedPowerShellAst([string]$Path) {
 function ConvertTo-AffectedOwnerEntrypoint([string]$Value) {
     $normalized = $Value.Replace('\','/')
     $leaf = @($normalized.Split('/') | Where-Object { $_ -ne '' })[-1]
-    if ($leaf -cnotmatch '^Test-[A-Za-z0-9-]+\.ps1$') { throw "Work Environment owner entrypoint is not a canonical Test-*.ps1 leaf: $Value" }
+    if ($leaf -cnotmatch '^(?:Test-[A-Za-z0-9-]+|New-ProjectWorkspace)\.ps1$') { throw "Work Environment owner entrypoint is not a recognized owner leaf: $Value" }
     return "scripts/$leaf"
 }
 function Get-AffectedWorkEnvironmentOwnerEntrypoints([string]$Root, [Collections.Generic.HashSet[string]]$TrackedPaths = $null) {
@@ -490,7 +490,7 @@ function Get-AffectedWorkEnvironmentOwnerEntrypoints([string]$Root, [Collections
     $references = @($ast.FindAll({
         param($node)
         $node -is [Management.Automation.Language.StringConstantExpressionAst] -and
-        ([string]$node.Value).Replace('\','/') -match '(?:^|/)Test-[A-Za-z0-9-]+\.ps1$'
+        ([string]$node.Value).Replace('\','/') -match '(?:^|/)(?:Test-[A-Za-z0-9-]+|New-ProjectWorkspace)\.ps1$'
     },$true))
     $classifiedOffsets = [Collections.Generic.HashSet[int]]::new()
     $entrypoints = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
@@ -501,9 +501,9 @@ function Get-AffectedWorkEnvironmentOwnerEntrypoints([string]$Root, [Collections
             $values = @($pair.Item2.FindAll({
                 param($node)
                 $node -is [Management.Automation.Language.StringConstantExpressionAst] -and
-                ([string]$node.Value).Replace('\','/') -match '(?:^|/)Test-[A-Za-z0-9-]+\.ps1$'
+                ([string]$node.Value).Replace('\','/') -match '(?:^|/)(?:Test-[A-Za-z0-9-]+|New-ProjectWorkspace)\.ps1$'
             },$true))
-            if ($values.Count -ne 1) { throw "Work Environment script table entry is not one literal Test-*.ps1 entrypoint: $($pair.Item2.Extent.Text)" }
+            if ($values.Count -ne 1) { throw "Work Environment script table entry is not one literal recognized owner entrypoint: $($pair.Item2.Extent.Text)" }
             [void]$classifiedOffsets.Add([int]$values[0].Extent.StartOffset)
             [void]$entrypoints.Add((ConvertTo-AffectedOwnerEntrypoint ([string]$values[0].Value)))
         }
@@ -522,9 +522,9 @@ function Get-AffectedWorkEnvironmentOwnerEntrypoints([string]$Root, [Collections
         }
     }
     foreach ($reference in $references) {
-        if (-not $classifiedOffsets.Contains([int]$reference.Extent.StartOffset)) { throw "Work Environment Test-*.ps1 reference uses an unclassified invocation form: $($reference.Extent.Text)" }
+        if (-not $classifiedOffsets.Contains([int]$reference.Extent.StartOffset)) { throw "Work Environment owner reference uses an unclassified invocation form: $($reference.Extent.Text)" }
     }
-    if ($entrypoints.Count -eq 0) { throw 'Work Environment owner-entrypoint audit found no Test-*.ps1 invocations.' }
+    if ($entrypoints.Count -eq 0) { throw 'Work Environment owner-entrypoint audit found no recognized invocations.' }
     $result = @($entrypoints)
     [Array]::Sort($result,[StringComparer]::Ordinal)
     foreach ($relative in $result) {
@@ -556,46 +556,72 @@ function Get-AffectedWorkEnvironmentTableInvocationArguments([string]$Root) {
     }
     return $result
 }
+function Get-AffectedWorkEnvironmentDirectInvocationArguments([string]$Root) {
+    $ownerPath = Join-Path ([IO.Path]::GetFullPath($Root)) 'scripts/Test-WorkEnvironment.ps1'
+    $ast = Get-AffectedPowerShellAst $ownerPath
+    $result = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+    foreach ($command in @($ast.FindAll({
+        param($node)
+        $node -is [Management.Automation.Language.CommandAst] -and
+        $node.InvocationOperator -eq [Management.Automation.Language.TokenKind]::Ampersand
+    },$true))) {
+        $pathValues = @($command.CommandElements[0].FindAll({
+            param($node)
+            $node -is [Management.Automation.Language.StringConstantExpressionAst] -and
+            ([string]$node.Value).Replace('\','/') -match '(?:^|/)(?:Test-[A-Za-z0-9-]+|New-ProjectWorkspace)\.ps1$'
+        },$true))
+        if ($pathValues.Count -eq 0) { continue }
+        if ($pathValues.Count -ne 1) { throw "Work Environment direct owner invocation has ambiguous entrypoint text: $($command.Extent.Text)" }
+        $commandPath = ConvertTo-AffectedOwnerEntrypoint ([string]$pathValues[0].Value)
+        $arguments = [Collections.Generic.List[string]]::new()
+        $skipRepoRootValue = $false
+        foreach ($element in @($command.CommandElements | Select-Object -Skip 1)) {
+            if ($skipRepoRootValue) {
+                if ($element -isnot [Management.Automation.Language.VariableExpressionAst] -or [string]$element.VariablePath.UserPath -cne 'RepoRoot') { throw "Work Environment -RepoRoot binding is not the canonical local root: $($command.Extent.Text)" }
+                $skipRepoRootValue = $false
+                continue
+            }
+            if ($element -is [Management.Automation.Language.CommandParameterAst]) {
+                if ([string]$element.ParameterName -ceq 'RepoRoot') { $skipRepoRootValue = $true; continue }
+                [void]$arguments.Add("-$([string]$element.ParameterName)")
+                if ($null -ne $element.Argument) {
+                    try { [void]$arguments.Add([string]$element.Argument.SafeGetValue()) } catch { throw "Work Environment direct owner argument is not literal: $($command.Extent.Text)" }
+                }
+                continue
+            }
+            if ($element -is [Management.Automation.Language.StringConstantExpressionAst]) { [void]$arguments.Add([string]$element.Value); continue }
+            throw "Work Environment direct owner argument uses an unclassified form: $($command.Extent.Text)"
+        }
+        if ($skipRepoRootValue) { throw "Work Environment direct owner invocation omits its -RepoRoot value: $($command.Extent.Text)" }
+        if (-not $result.ContainsKey($commandPath)) { $result[$commandPath] = [Collections.Generic.List[object]]::new() }
+        [void]([Collections.Generic.List[object]]$result[$commandPath]).Add([pscustomobject][ordered]@{arguments=@($arguments.ToArray())})
+    }
+    return $result
+}
 function Assert-AffectedWorkEnvironmentLeafRegistration([string]$Root, [string[]]$OwnerEntrypoints, [Collections.Generic.Dictionary[string,object]]$RegistryByCommand) {
     # Test-WorkEnvironment remains a retained compatibility aggregate, while
-    # affected validation executes independently registered leaves. Keep the
-    # migration debt explicit so a new aggregate test cannot silently acquire
-    # no focused route, and bind migrated trust-root leaves to the same exact
-    # invocation used by the aggregate.
-    $expectedUnregistered = @(
-        'scripts/Test-ExecutedPushReceipt.ps1',
-        'scripts/Test-LocalSkillBootstrap.ps1',
-        'scripts/Test-PlannedPublicationAccounting.ps1',
-        'scripts/Test-PowerShellHost.ps1',
-        'scripts/Test-PublishedPlanningAuthorityAdoption.ps1',
-        'scripts/Test-QuestFileManagerCliResolver.ps1',
-        'scripts/Test-QuestFileManagerPermissionObservationAdapter.ps1',
-        'scripts/Test-QuestFileManagerRuntimeObservationAdapter.ps1',
-        'scripts/Test-ReleaseCapsule.ps1',
-        'scripts/Test-RepositoryLifecycleInventory.ps1',
-        'scripts/Test-UnpublishedPlanningAuthorityMaterialization.ps1'
-    )
+    # affected validation executes every owner through an independently
+    # registered leaf with the same effective invocation.
+    $expectedUnregistered = @()
     $unregistered = @($OwnerEntrypoints | Where-Object { -not $RegistryByCommand.ContainsKey([string]$_) })
     [Array]::Sort($unregistered,[StringComparer]::Ordinal)
     Assert-True (($unregistered -join "`n") -ceq ($expectedUnregistered -join "`n")) "Work Environment aggregate owner-entrypoint registration debt changed. Expected=$($expectedUnregistered -join ','); observed=$($unregistered -join ',')."
 
-    $requiredInvocations = @(
-        [pscustomobject][ordered]@{ check_id='canonical-text-bytes'; command_path='scripts/Test-CanonicalTextBytes.ps1'; arguments=@('-SelfTest') },
-        [pscustomobject][ordered]@{ check_id='external-owner-authorization'; command_path='scripts/Test-ExternalOwnerAuthorization.ps1'; arguments=@('-SelfTest') },
-        [pscustomobject][ordered]@{ check_id='external-validation-authority'; command_path='scripts/Test-ExternalValidationAuthoritySelfTest.ps1'; arguments=@() },
-        [pscustomobject][ordered]@{ check_id='external-validation-github-adapter'; command_path='scripts/Test-ExternalValidationAuthorityGitHubAdapterSelfTest.ps1'; arguments=@() }
-    )
-    $aggregateInvocations = Get-AffectedWorkEnvironmentTableInvocationArguments -Root $Root
-    foreach ($expected in $requiredInvocations) {
-        $registered = @($RegistryByCommand[[string]$expected.command_path])
-        Assert-True ($registered.Count -eq 1) "Migrated Work Environment owner does not have exactly one focused registration: $($expected.command_path)."
-        Assert-True ([string]$registered[0].check_id -ceq [string]$expected.check_id) "Migrated Work Environment owner changed focused check identity: $($expected.command_path)."
-        $expectedArguments = @($expected.arguments | ForEach-Object { [string]$_ })
-        Assert-True ($aggregateInvocations.ContainsKey([string]$expected.command_path)) "Migrated Work Environment owner is absent from the aggregate script table: $($expected.command_path)."
-        $aggregateArguments = @($aggregateInvocations[[string]$expected.command_path] | ForEach-Object { [string]$_ })
+    $tableInvocations = Get-AffectedWorkEnvironmentTableInvocationArguments -Root $Root
+    $directInvocations = Get-AffectedWorkEnvironmentDirectInvocationArguments -Root $Root
+    foreach ($commandPath in $OwnerEntrypoints) {
+        $registered = @($RegistryByCommand[[string]$commandPath])
+        Assert-True ($registered.Count -eq 1) "Work Environment aggregate owner does not have exactly one focused registration: $commandPath."
         $registeredArguments = @($registered[0].arguments | ForEach-Object { [string]$_ })
-        Assert-True ($aggregateArguments.Count -eq $expectedArguments.Count -and ($aggregateArguments -join "`n") -ceq ($expectedArguments -join "`n")) "Migrated Work Environment owner changed aggregate invocation arguments: $($expected.command_path)."
-        Assert-True ($registeredArguments.Count -eq $expectedArguments.Count -and ($registeredArguments -join "`n") -ceq ($expectedArguments -join "`n")) "Migrated Work Environment owner changed focused invocation arguments: $($expected.command_path)."
+        $candidateInvocations = [Collections.Generic.List[object]]::new()
+        if ($tableInvocations.ContainsKey($commandPath)) { [void]$candidateInvocations.Add([pscustomobject][ordered]@{arguments=@($tableInvocations[$commandPath])}) }
+        if ($directInvocations.ContainsKey($commandPath)) { foreach ($candidate in @($directInvocations[$commandPath])) { [void]$candidateInvocations.Add($candidate) } }
+        Assert-True ($candidateInvocations.Count -gt 0) "Work Environment aggregate owner has no classified invocation arguments: $commandPath."
+        $matchingInvocation = @($candidateInvocations | Where-Object {
+            $aggregateArguments = @($_.arguments | ForEach-Object { [string]$_ })
+            $aggregateArguments.Count -eq $registeredArguments.Count -and ($aggregateArguments -join "`n") -ceq ($registeredArguments -join "`n")
+        })
+        Assert-True ($matchingInvocation.Count -gt 0) "Work Environment aggregate invocation differs from its focused registration: $commandPath registered=$($registeredArguments -join ',')."
     }
 }
 function Get-AffectedLexicalImportScope([Management.Automation.Language.Ast]$Node) {
@@ -3844,6 +3870,7 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
         '.github/workflows/validate.yml' = 'selector-trust-root'
         'config/external-owner-authorization.json' = 'external-owner-authorization-core'
         'config/external-validation-authority.json' = 'external-validation-verifier'
+        'manifests/affected-validation-registry.json' = 'affected-validation-registry'
         'schemas/external-owner-authorization-policy-v1.schema.json' = 'external-owner-authorization-core'
         'schemas/external-owner-authorization-request-v1.schema.json' = 'external-owner-authorization-core'
         'schemas/external-owner-authorization-v1.schema.json' = 'external-owner-authorization-core'
@@ -3859,7 +3886,7 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     }
     $externalPolicy = Read-MorphospaceProtocolJson -Path (Join-Path $repoRoot 'config/external-validation-authority.json')
     $mandatoryProtectedPaths = @($externalPolicy.mandatory_protected_paths)
-    Assert-True ($mandatoryProtectedPaths.Count -eq 16) "External validation authority protected-path inventory changed from the expected 16 paths: $($mandatoryProtectedPaths.Count)."
+    Assert-True ($mandatoryProtectedPaths.Count -eq 17) "External validation authority protected-path inventory changed from the expected 17 paths: $($mandatoryProtectedPaths.Count)."
     Assert-True ($externalProtectedOwners.Count -eq $mandatoryProtectedPaths.Count) 'External protected-path ownership fixture does not cover the complete mandatory inventory.'
     $affectedModule = Get-Module MorphospaceAffectedValidation
     foreach ($protectedPath in $mandatoryProtectedPaths) {
@@ -4096,7 +4123,7 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
 
     $ambiguousRegistry = Read-MorphospaceProtocolJson -Path (Join-Path $fixture 'manifests/affected-validation-registry.json')
     $ambiguousRegistry.path_sets = @($ambiguousRegistry.path_sets) + @([pscustomobject][ordered]@{ path_set_id = 'documentation-overlap'; patterns = @('docs/**') })
-    $ambiguousRegistry.checks | Where-Object { $_.check_id -ceq 'public-boundary' } | ForEach-Object { $_.consume_path_sets = @($_.consume_path_sets) + @('documentation-overlap'); $_.trigger_path_sets = @($_.trigger_path_sets) + @('documentation-overlap') }
+    $ambiguousRegistry.checks | Where-Object { [string]$_.check_id -in @('documentation-links','public-boundary') } | ForEach-Object { $_.consume_path_sets = @($_.consume_path_sets) + @('documentation-overlap'); $_.trigger_path_sets = @($_.trigger_path_sets) + @('documentation-overlap') }
     Write-Utf8 (Join-Path $fixture 'manifests/affected-validation-registry.json') ((ConvertTo-MorphospaceCanonicalJson -Value $ambiguousRegistry) + "`n")
     [void](Invoke-TestGit $fixture @('add', 'manifests/affected-validation-registry.json'))
     [void](Invoke-TestGit $fixture @('commit', '-m', 'ambiguous registry baseline'))

@@ -78,6 +78,24 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-SkillTemplates.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-UnpublishedPlanningAuthorityMaterialization.ps1 -SelfTest
 ```
 
+Affected-validation ownership is a tracked-tree invariant. A coherent frozen
+candidate must give every exact-HEAD path one path-set owner, every path set a
+specialized trigger beyond `public-boundary`, and every registered command one
+owner. It must also preserve exact argument parity between focused leaves and
+the owners invoked by `Test-WorkEnvironment.ps1`. After committing the
+candidate, run:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-AffectedValidationOwnership.ps1 -SelfTest
+```
+
+The affected-validation registry is a mandatory protected path with its own
+focused ownership and workflow-action checks. Selector implementation and
+schema changes remain Deep trust-root work. Unknown or overlapping mappings
+still produce the conservative Deep diagnostic plan, and the ownership leaf
+then fails that candidate; a later engine slice may replace this expensive
+diagnostic route with an early typed non-executable result.
+
 The source-only publication check is Windows-scoped because it authenticates
 physical directory identity with volume serial and `FileIdInfo`. Its fixture
 also runs `Test-WorkflowContracts.ps1 -CurrentWorkOnly -SkipOwnerSelfTests`

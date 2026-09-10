@@ -117,3 +117,9 @@ module layout, activation, validation, device policy, repository routing, or
 public/private boundaries. Update only the declared affected surfaces. Do not
 run legacy scans or resolve legacy material unless the task explicitly selects
 historical or legacy work.
+
+When adding or moving a tracked file, give it exactly one affected-validation
+path-set owner and a specialized consumer beyond `public-boundary`. Every owner
+invoked by `Test-WorkEnvironment.ps1` must also have one focused registration
+with the same effective arguments. Freeze the candidate before running the
+exact-HEAD ownership audit described in [Affected Validation](docs/AFFECTED_VALIDATION.md).
