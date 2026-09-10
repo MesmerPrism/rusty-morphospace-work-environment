@@ -1,10 +1,11 @@
 [CmdletBinding(DefaultParameterSetName='Phase')]
 param(
     [Parameter(Mandatory=$true,ParameterSetName='Phase')]
-    [ValidateSet('graph-import-closure','dependency-closure','executor-pass-schema','executor-native-failure-damage','executor-native-exit125-damage','executor-forged-terminal-damage','executor-parent-containment-damage','executor-descendant-containment-damage','executor-output-ceiling-damage','executor-timeout-damage','executor-dual-stream-damage','executor-source-integrity-damage','executor-publication-collision-damage','selection-scenarios','trust-self-executor','trust-routing-contracts','trust-proportional-mappings','trust-damage-final')]
+    [ValidateSet('graph-import-closure','dependency-closure','executor-pass-schema','executor-native-failure-damage','executor-native-exit125-damage','executor-forged-terminal-damage','executor-parent-containment-damage','executor-descendant-containment-damage','executor-output-ceiling-damage','executor-timeout-damage','executor-dual-stream-damage','executor-source-integrity-damage','executor-publication-collision-damage','selection-scenarios','trust-self-executor','trust-phase-artifact-contract','trust-registry-delta-ownership-obligation','trust-deep-linux-merge-damage','trust-deep-windows-merge-damage','trust-routing-contracts','trust-routing-development-contracts','trust-routing-retirement-contracts','trust-routing-automation-contracts','trust-proportional-mappings','trust-damage-final','affected-reuse-plan-base-admission','affected-reuse-evidence-binding','affected-reuse-run-job-coverage')]
     [string]$Phase,
     [Parameter(Mandatory=$true,ParameterSetName='Phase')][ValidateRange(1,600)][int]$BudgetSeconds,
     [Parameter(Mandatory=$true,ParameterSetName='Verify')][switch]$Verify,
+    [Parameter(Mandatory=$true,ParameterSetName='VerifyComplete')][switch]$VerifyComplete,
     [Parameter(Mandatory=$true,ParameterSetName='BindingSelfTest')][switch]$BindingSelfTest
 )
 
@@ -14,7 +15,8 @@ $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceAffectedValidation.psm1') -Force
 
-$phaseIds = @('graph-import-closure','dependency-closure','executor-pass-schema','executor-native-failure-damage','executor-native-exit125-damage','executor-forged-terminal-damage','executor-parent-containment-damage','executor-descendant-containment-damage','executor-output-ceiling-damage','executor-timeout-damage','executor-dual-stream-damage','executor-source-integrity-damage','executor-publication-collision-damage','selection-scenarios','trust-self-executor','trust-routing-contracts','trust-proportional-mappings','trust-damage-final')
+$legacyPhaseIds = @('graph-import-closure','dependency-closure','executor-pass-schema','executor-native-failure-damage','executor-native-exit125-damage','executor-forged-terminal-damage','executor-parent-containment-damage','executor-descendant-containment-damage','executor-output-ceiling-damage','executor-timeout-damage','executor-dual-stream-damage','executor-source-integrity-damage','executor-publication-collision-damage','selection-scenarios','trust-self-executor','trust-routing-contracts','trust-proportional-mappings','trust-damage-final')
+$phaseIds = @($legacyPhaseIds + @('trust-phase-artifact-contract','trust-registry-delta-ownership-obligation','trust-deep-linux-merge-damage','trust-deep-windows-merge-damage','trust-routing-development-contracts','trust-routing-retirement-contracts','trust-routing-automation-contracts','affected-reuse-plan-base-admission','affected-reuse-evidence-binding','affected-reuse-run-job-coverage'))
 $checkIds = [ordered]@{
     'graph-import-closure'='affected-selector-graph-import-closure'
     'dependency-closure'='affected-selector-dependency-closure'
@@ -31,9 +33,19 @@ $checkIds = [ordered]@{
     'executor-publication-collision-damage'='affected-selector-executor-publication-collision-damage'
     'selection-scenarios'='affected-selector-selection-scenarios'
     'trust-self-executor'='affected-selector-trust-self-executor'
+    'trust-phase-artifact-contract'='affected-selector-trust-phase-artifact-contract'
+    'trust-registry-delta-ownership-obligation'='affected-selector-trust-registry-delta-ownership-obligation'
+    'trust-deep-linux-merge-damage'='affected-selector-trust-deep-linux-merge-damage'
+    'trust-deep-windows-merge-damage'='affected-selector-trust-deep-windows-merge-damage'
     'trust-routing-contracts'='affected-selector-trust-routing-contracts'
+    'trust-routing-development-contracts'='affected-selector-trust-routing-development-contracts'
+    'trust-routing-retirement-contracts'='affected-selector-trust-routing-retirement-contracts'
+    'trust-routing-automation-contracts'='affected-selector-trust-routing-automation-contracts'
     'trust-proportional-mappings'='affected-selector-trust-proportional-mappings'
     'trust-damage-final'='affected-selector-trust-damage-final'
+    'affected-reuse-plan-base-admission'='affected-selector-reuse-plan-base-admission'
+    'affected-reuse-evidence-binding'='affected-selector-reuse-evidence-binding'
+    'affected-reuse-run-job-coverage'='affected-selector-reuse-run-job-coverage'
 }
 function Get-RequiredEnvironment([string]$Name,[string]$Pattern) {
     $value = [Environment]::GetEnvironmentVariable($Name,'Process')
@@ -163,6 +175,18 @@ function Test-Terminal([string]$Root,[string]$Path,[object]$ExpectedBinding,[str
     return $terminal
 }
 
+function Test-CompleteTerminalSet([string]$Root,[string[]]$PhaseIds,[Collections.IDictionary]$CheckIds,[string]$Base,[string]$Head,[string]$Tree,[string]$Plan,[string]$Platform,[object[]]$Manifest,[object]$Runner) {
+    $terminalFiles = @(Get-ChildItem -LiteralPath $Root -File -Filter '*.terminal.json' -ErrorAction SilentlyContinue)
+    if ($terminalFiles.Count -ne $PhaseIds.Count) { throw 'Affected phase complete verifier requires exactly one terminal for every phase.' }
+    foreach ($phaseId in $PhaseIds) {
+        $terminalPath = Join-Path $Root "$phaseId.terminal.json"
+        if (-not [IO.File]::Exists($terminalPath)) { throw "Affected phase verifier is missing '$phaseId'." }
+        $binding = Get-Binding -PhaseId $phaseId -CheckId ([string]$CheckIds[$phaseId]) -Base $Base -Head $Head -Tree $Tree -Plan $Plan -Platform $Platform -Manifest $Manifest -Runner $Runner
+        $bindingSha = Get-MorphospaceCanonicalJsonSha256 -Value $binding
+        [void](Test-Terminal -Root $Root -Path $terminalPath -ExpectedBinding $binding -ExpectedBindingSha $bindingSha -RequirePass $true -AllowCompatibleAncestor)
+    }
+}
+
 function Invoke-BindingCompatibilitySelfTest {
     $fixture = Join-Path ([IO.Path]::GetTempPath()) ('affected-phase-binding-' + [Guid]::NewGuid().ToString('N'))
     [void][IO.Directory]::CreateDirectory($fixture)
@@ -200,6 +224,7 @@ function Invoke-BindingCompatibilitySelfTest {
             'schemas/affected-validation-check-evidence-v1.schema.json',
             'schemas/affected-validation-check-inventory-v1.schema.json',
             'schemas/affected-validation-plan-v1.schema.json',
+            'schemas/affected-validation-plan-v2.schema.json',
             'scripts/Invoke-AffectedValidation.ps1',
             'scripts/Invoke-AffectedValidationSelfTestPhase.ps1',
             'scripts/Test-AffectedValidation.ps1',
@@ -234,6 +259,23 @@ function Invoke-BindingCompatibilitySelfTest {
         $additionDamage=Copy-Binding $observed;$additionDamage.dependency_manifest=@($additionDamage.dependency_manifest)+@([pscustomobject][ordered]@{path='scripts/z-extra.ps1';mode='100644';blob=('e'*40)});Assert-Rejected {Assert-ReusableBinding -RepositoryRoot $fixture -Observed $additionDamage -Expected $expected} '*dependency manifest*' 'Affected phase binding self-test accepted a dependency addition.'
         $treeDamage=Copy-Binding $observed;$treeDamage.head_tree=('f'*40);Assert-Rejected {Assert-ReusableBinding -RepositoryRoot $fixture -Observed $treeDamage -Expected $expected} '*source tree*' 'Affected phase binding self-test accepted a wrong source tree.'
         $nonancestorDamage=Copy-Binding $observed;$nonancestorDamage.head_commit=$sibling;$nonancestorDamage.head_tree=$siblingTree;Assert-Rejected {Assert-ReusableBinding -RepositoryRoot $fixture -Observed $nonancestorDamage -Expected $expected} '*not an ancestor of the current head*' 'Affected phase binding self-test accepted a nonancestor source.'
+        [IO.File]::WriteAllBytes((Join-Path $fixture 'complete.stdout.bin'),[byte[]]@())
+        [IO.File]::WriteAllBytes((Join-Path $fixture 'complete.stderr.bin'),[byte[]]@())
+        $emptySha=Get-Sha256 ([byte[]]@())
+        $completePhaseIds=@('trust-self-executor','trust-phase-artifact-contract','trust-registry-delta-ownership-obligation')
+        $completeCheckIds=[ordered]@{'trust-self-executor'='affected-selector-trust-self-executor';'trust-phase-artifact-contract'='affected-selector-trust-phase-artifact-contract';'trust-registry-delta-ownership-obligation'='affected-selector-trust-registry-delta-ownership-obligation'}
+        function Write-CompleteTerminal([string]$PhaseId,[string]$Result) {
+            $completeBinding=Get-Binding -PhaseId $PhaseId -CheckId ([string]$completeCheckIds[$PhaseId]) -Base $base -Head $current -Tree $currentTree -Plan ('6'*64) -Platform linux -Manifest $manifest -Runner $runner
+            $terminal=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.affected_validation_self_test_phase_receipt.v1';phase_id=$PhaseId;binding=$completeBinding;binding_sha256=Get-MorphospaceCanonicalJsonSha256 -Value $completeBinding;started_at='2026-09-10T12:00:00Z';ended_at='2026-09-10T12:00:01Z';budget_seconds=1;elapsed_ms=1;result=$Result;child=[pscustomobject][ordered]@{started=$true;exit_code=$(if($Result-ceq'pass'){0}else{1});timed_out=$false;post_kill_drain_timed_out=$false;stdout=[pscustomobject][ordered]@{path='complete.stdout.bin';bytes=0;sha256=$emptySha};stderr=[pscustomobject][ordered]@{path='complete.stderr.bin';bytes=0;sha256=$emptySha}};outputs=@();claims=[pscustomobject][ordered]@{phase_only=$true;candidate_admission=$false;acceptance_authority=$false;publication_authority=$false;device_used=$false}}
+            [void](Write-FixtureProjection $terminal "$PhaseId.terminal.json")
+        }
+        Write-CompleteTerminal 'trust-self-executor' 'pass'
+        Write-CompleteTerminal 'trust-registry-delta-ownership-obligation' 'pass'
+        Assert-Rejected {Test-CompleteTerminalSet -Root $fixture -PhaseIds $completePhaseIds -CheckIds $completeCheckIds -Base $base -Head $current -Tree $currentTree -Plan ('6'*64) -Platform linux -Manifest $manifest -Runner $runner} '*requires exactly one terminal for every phase*' 'Affected phase complete-set self-test accepted missing phase-artifact contract evidence.'
+        Write-CompleteTerminal 'trust-phase-artifact-contract' 'code-fail'
+        Assert-Rejected {Test-CompleteTerminalSet -Root $fixture -PhaseIds $completePhaseIds -CheckIds $completeCheckIds -Base $base -Head $current -Tree $currentTree -Plan ('6'*64) -Platform linux -Manifest $manifest -Runner $runner} '*Affected phase terminal is not passing: trust-phase-artifact-contract=code-fail*' 'Affected phase complete-set self-test did not preserve the exact failed phase-artifact terminal reason.'
+        Write-CompleteTerminal 'trust-phase-artifact-contract' 'pass'
+        Test-CompleteTerminalSet -Root $fixture -PhaseIds $completePhaseIds -CheckIds $completeCheckIds -Base $base -Head $current -Tree $currentTree -Plan ('6'*64) -Platform linux -Manifest $manifest -Runner $runner
         Write-Output 'Affected-validation phase ancestor-binding compatibility self-test passed.'
     } finally { if([IO.Directory]::Exists($fixture)){Remove-Item -LiteralPath $fixture -Recurse -Force} }
 }
@@ -249,19 +291,23 @@ $headTree = (& git -C $repoRoot rev-parse "$headCommit^{tree}").Trim()
 if ($LASTEXITCODE -ne 0 -or $headTree -cnotmatch '^[0-9a-f]{40}$') { throw 'Affected phase runner could not resolve the exact head tree.' }
 $runnerBinding = Get-RunnerBinding
 
-if ($Verify) {
+if ($Verify -or $VerifyComplete) {
     $managedVerifierCheckId = Get-RequiredEnvironment 'RUSTY_AFFECTED_VALIDATION_CHECK_ID' '^[a-z0-9][a-z0-9-]{1,95}$'
-    if ($managedVerifierCheckId -cne 'affected-selector-selftest') { throw "Affected phase verifier/check routing mismatch: $managedVerifierCheckId" }
+    $expectedVerifierCheckId = if ($VerifyComplete) { 'affected-selector-complete-selftest' } else { 'affected-selector-selftest' }
+    $verifyPhaseIds = if ($VerifyComplete) { @($phaseIds) } else { @($legacyPhaseIds) }
+    if ($managedVerifierCheckId -cne $expectedVerifierCheckId) { throw "Affected phase verifier/check routing mismatch: $managedVerifierCheckId" }
     $dependencyProjection = Get-DependencyProjection -ExpectedHead $headCommit -ExpectedTree $headTree -ExpectedCheckId $managedVerifierCheckId
     $dependencyManifest = @($dependencyProjection.dependency_manifest)
-    $terminalFiles = @(Get-ChildItem -LiteralPath $evidenceRoot -File -Filter '*.terminal.json' -ErrorAction SilentlyContinue)
-    if ($terminalFiles.Count -ne $phaseIds.Count) { throw 'Affected phase verifier requires exactly one terminal for every phase.' }
-    foreach ($phaseId in $phaseIds) {
-        $terminalPath = Join-Path $evidenceRoot "$phaseId.terminal.json"
-        if (-not [IO.File]::Exists($terminalPath)) { throw "Affected phase verifier is missing '$phaseId'." }
-        $binding = Get-Binding -PhaseId $phaseId -CheckId ([string]$checkIds[$phaseId]) -Base $baseCommit -Head $headCommit -Tree $headTree -Plan $planSha256 -Platform $platform -Manifest $dependencyManifest -Runner $runnerBinding
-        $bindingSha = Get-MorphospaceCanonicalJsonSha256 -Value $binding
-        [void](Test-Terminal -Root $evidenceRoot -Path $terminalPath -ExpectedBinding $binding -ExpectedBindingSha $bindingSha -RequirePass $true -AllowCompatibleAncestor)
+    if ($VerifyComplete) {
+        Test-CompleteTerminalSet -Root $evidenceRoot -PhaseIds $verifyPhaseIds -CheckIds $checkIds -Base $baseCommit -Head $headCommit -Tree $headTree -Plan $planSha256 -Platform $platform -Manifest $dependencyManifest -Runner $runnerBinding
+    } else {
+        foreach ($phaseId in $verifyPhaseIds) {
+            $terminalPath = Join-Path $evidenceRoot "$phaseId.terminal.json"
+            if (-not [IO.File]::Exists($terminalPath)) { throw "Affected phase verifier is missing '$phaseId'." }
+            $binding = Get-Binding -PhaseId $phaseId -CheckId ([string]$checkIds[$phaseId]) -Base $baseCommit -Head $headCommit -Tree $headTree -Plan $planSha256 -Platform $platform -Manifest $dependencyManifest -Runner $runnerBinding
+            $bindingSha = Get-MorphospaceCanonicalJsonSha256 -Value $binding
+            [void](Test-Terminal -Root $evidenceRoot -Path $terminalPath -ExpectedBinding $binding -ExpectedBindingSha $bindingSha -RequirePass $true -AllowCompatibleAncestor)
+        }
     }
     $module = Get-Module MorphospaceAffectedValidation
     $inventory = & $module { param($Root,$Commit) Get-MorphospaceAffectedTreeInventory -RepositoryRoot $Root -Commit $Commit } $repoRoot $headCommit

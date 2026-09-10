@@ -48,6 +48,14 @@ function Invoke-MorphospaceAffectedGit {
     } finally { $process.Dispose() }
 }
 
+function Get-MorphospaceAffectedGitBlobBytes {
+    param([Parameter(Mandatory=$true)][string]$RepositoryRoot,[Parameter(Mandatory=$true)][string]$Blob)
+    if($Blob-cnotmatch'^[0-9a-f]{40}$'){throw 'Affected-validation blob identity is malformed.'}
+    $start=[Diagnostics.ProcessStartInfo]::new();$start.FileName='git';$start.WorkingDirectory=[IO.Path]::GetFullPath($RepositoryRoot);$start.UseShellExecute=$false;$start.CreateNoWindow=$true;$start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true;$start.ArgumentList.Add('cat-file');$start.ArgumentList.Add('blob');$start.ArgumentList.Add($Blob)
+    $process=[Diagnostics.Process]::new();$process.StartInfo=$start;$memory=[IO.MemoryStream]::new()
+    try{if(-not$process.Start()){throw 'git cat-file did not start.'};$stdoutTask=$process.StandardOutput.BaseStream.CopyToAsync($memory);$stderrTask=$process.StandardError.ReadToEndAsync();if(-not$process.WaitForExit(30000)){try{$process.Kill($true)}catch{};throw 'git cat-file timed out.'};[void]$stdoutTask.GetAwaiter().GetResult();$stderr=$stderrTask.GetAwaiter().GetResult();if($process.ExitCode-ne0-or$stderr.Length-ne0){throw "git cat-file failed for blob '$Blob': $stderr"};return $memory.ToArray()}finally{$memory.Dispose();$process.Dispose()}
+}
+
 function ConvertTo-MorphospaceAffectedPath {
     param([Parameter(Mandatory = $true)][string]$Path)
 
@@ -894,6 +902,91 @@ function Assert-MorphospaceAffectedValidationOwnershipComplete {
     throw $exception
 }
 
+function Get-MorphospaceAffectedRegistryAtCommit {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][string]$Commit,
+        [Parameter(Mandatory = $true)][object]$Inventory,
+        [Parameter(Mandatory = $true)][string]$RegistryPath
+    )
+    $schemaPath = 'schemas/affected-validation-registry-v1.schema.json'
+    $registryEntry = Get-MorphospaceAffectedInventoryEntry -Inventory $Inventory -Path $RegistryPath
+    $schemaEntry = Get-MorphospaceAffectedInventoryEntry -Inventory $Inventory -Path $schemaPath
+    if ($null -eq $registryEntry -or [string]$registryEntry.mode -cne '100644' -or $null -eq $schemaEntry -or [string]$schemaEntry.mode -cne '100644') {
+        throw 'Affected-validation registry and schema must be tracked regular files in the exact commit.'
+    }
+    [byte[]]$registryBytes=Get-MorphospaceAffectedGitBlobBytes -RepositoryRoot $RepositoryRoot -Blob ([string]$registryEntry.blob)
+    [byte[]]$schemaBytes=Get-MorphospaceAffectedGitBlobBytes -RepositoryRoot $RepositoryRoot -Blob ([string]$schemaEntry.blob)
+    try{$registryText=[Text.UTF8Encoding]::new($false,$true).GetString($registryBytes);$schemaText=[Text.UTF8Encoding]::new($false,$true).GetString($schemaBytes)}catch{throw 'Affected-validation registry or schema blob is not strict UTF-8.'}
+    try { $registry = $registryText | ConvertFrom-Json -Depth 64 -ErrorAction Stop } catch { throw "Affected-validation registry blob is invalid JSON: $($_.Exception.Message)" }
+    if (-not (Test-Json -Json $registryText -Schema $schemaText -ErrorAction Stop)) { throw 'Affected-validation registry blob fails its exact schema.' }
+    $pathSets = @{}
+    foreach ($pathSet in @($registry.path_sets)) {
+        $patterns = [Collections.Generic.List[object]]::new()
+        foreach ($pattern in @($pathSet.patterns)) { $patterns.Add((ConvertTo-MorphospaceAffectedGlobRegex -Pattern ([string]$pattern))) }
+        $pathSets[[string]$pathSet.path_set_id] = @($patterns.ToArray())
+    }
+    $sha = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($registryBytes)).ToLowerInvariant()
+    return [pscustomobject][ordered]@{
+        registry = $registry
+        compiled_path_sets = $pathSets
+        identity = [pscustomobject][ordered]@{schema=[string]$registry.schema;registry_id=[string]$registry.registry_id;revision=[long]$registry.revision;blob=[string]$registryEntry.blob;sha256=$sha}
+    }
+}
+
+function Test-MorphospaceAffectedPrefixArray {
+    param([object[]]$Base, [object[]]$Candidate)
+    if ($Candidate.Count -lt $Base.Count) { return $false }
+    for ($index=0; $index -lt $Base.Count; $index++) { if ([string]$Base[$index] -cne [string]$Candidate[$index]) { return $false } }
+    return $true
+}
+
+function Get-MorphospaceAffectedRegistryDelta {
+    param([Parameter(Mandatory=$true)][object]$BaseRegistry,[Parameter(Mandatory=$true)][object]$HeadRegistry,[bool]$CandidateOwnershipAudited,[bool]$RegistryBlobChanged)
+    $addedPatterns=[Collections.Generic.List[object]]::new();$addedTriggers=[Collections.Generic.List[object]]::new();$addedConsumes=[Collections.Generic.List[object]]::new()
+    $baseCanonical=$BaseRegistry|ConvertTo-Json -Depth 64 -Compress
+    $headCanonical=$HeadRegistry|ConvertTo-Json -Depth 64 -Compress
+    $revisionIsNext = [long]$HeadRegistry.revision -eq ([long]$BaseRegistry.revision + 1)
+    $classification='structural'
+    if (-not $RegistryBlobChanged -and $baseCanonical -ceq $headCanonical) { $classification='unchanged' }
+    else {
+        $baseClone=$baseCanonical|ConvertFrom-Json -Depth 64;$headClone=$headCanonical|ConvertFrom-Json -Depth 64
+        $baseClone.revision=0;$headClone.revision=0
+        if ($revisionIsNext -and ($baseClone|ConvertTo-Json -Depth 64 -Compress) -ceq ($headClone|ConvertTo-Json -Depth 64 -Compress)) { $classification='revision-only' }
+        else {
+            $safe=$true
+            $baseTop=$baseCanonical|ConvertFrom-Json -Depth 64;$headTop=$headCanonical|ConvertFrom-Json -Depth 64
+            $baseTop.revision=0;$headTop.revision=0;$baseTop.path_sets=@();$headTop.path_sets=@();$baseTop.checks=@();$headTop.checks=@()
+            if (-not $revisionIsNext -or ($baseTop|ConvertTo-Json -Depth 64 -Compress) -cne ($headTop|ConvertTo-Json -Depth 64 -Compress)){$safe=$false}
+            if (@($BaseRegistry.path_sets).Count-ne@($HeadRegistry.path_sets).Count -or @($BaseRegistry.checks).Count-ne@($HeadRegistry.checks).Count){$safe=$false}
+            if($safe){
+                for($i=0;$i-lt@($BaseRegistry.path_sets).Count;$i++){
+                    $b=$BaseRegistry.path_sets[$i];$h=$HeadRegistry.path_sets[$i]
+                    if([string]$b.path_set_id-cne[string]$h.path_set_id -or -not(Test-MorphospaceAffectedPrefixArray @($b.patterns) @($h.patterns))){$safe=$false;break}
+                    foreach($pattern in @($h.patterns)[@($b.patterns).Count..(@($h.patterns).Count-1)]){
+                        if(@($h.patterns).Count-eq@($b.patterns).Count){break}
+                        if(([string]$pattern).IndexOfAny([char[]]'*?')-ge0){$safe=$false;break}
+                        $addedPatterns.Add([pscustomobject][ordered]@{path_set_id=[string]$h.path_set_id;pattern=[string]$pattern})
+                    }
+                }
+            }
+            if($safe){
+                for($i=0;$i-lt@($BaseRegistry.checks).Count;$i++){
+                    $b=$BaseRegistry.checks[$i];$h=$HeadRegistry.checks[$i]
+                    if([string]$b.check_id-cne[string]$h.check_id -or -not(Test-MorphospaceAffectedPrefixArray @($b.trigger_path_sets) @($h.trigger_path_sets)) -or -not(Test-MorphospaceAffectedPrefixArray @($b.consume_path_sets) @($h.consume_path_sets))){$safe=$false;break}
+                    $bc=(ConvertTo-MorphospaceCanonicalJson -Value $b)|ConvertFrom-Json -Depth 64;$hc=(ConvertTo-MorphospaceCanonicalJson -Value $h)|ConvertFrom-Json -Depth 64
+                    $bc.trigger_path_sets=@();$hc.trigger_path_sets=@();$bc.consume_path_sets=@();$hc.consume_path_sets=@()
+                    if(($bc|ConvertTo-Json -Depth 64 -Compress)-cne($hc|ConvertTo-Json -Depth 64 -Compress)){$safe=$false;break}
+                    for($j=@($b.trigger_path_sets).Count;$j-lt@($h.trigger_path_sets).Count;$j++){$addedTriggers.Add([pscustomobject][ordered]@{check_id=[string]$h.check_id;path_set_id=[string]$h.trigger_path_sets[$j]})}
+                    for($j=@($b.consume_path_sets).Count;$j-lt@($h.consume_path_sets).Count;$j++){$addedConsumes.Add([pscustomobject][ordered]@{check_id=[string]$h.check_id;path_set_id=[string]$h.consume_path_sets[$j]})}
+                }
+            }
+            if($safe -and ($addedPatterns.Count+$addedTriggers.Count+$addedConsumes.Count)-gt0){$classification='coverage-expanding'}
+        }
+    }
+    return [pscustomobject][ordered]@{schema='rusty.morphospace.workflow.affected_validation_registry_delta.v1';classification=$classification;candidate_ownership_audited=$CandidateOwnershipAudited;added_patterns=@($addedPatterns.ToArray());added_trigger_references=@($addedTriggers.ToArray());added_consume_references=@($addedConsumes.ToArray())}
+}
+
 function Resolve-MorphospaceAffectedValidation {
     param(
         [Parameter(Mandatory = $true)][string]$RepositoryRoot,
@@ -917,6 +1010,7 @@ function Resolve-MorphospaceAffectedValidation {
     if (-not $registryFullPath.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) { throw 'Affected-validation registry must be inside RepositoryRoot.' }
     $registryRelativePath = ConvertTo-MorphospaceAffectedPath -Path ([System.IO.Path]::GetRelativePath($root, $registryFullPath).Replace('\', '/'))
     $inventory = Get-MorphospaceAffectedTreeInventory -RepositoryRoot $root -Commit $head.commit
+    $baseInventory = Get-MorphospaceAffectedTreeInventory -RepositoryRoot $root -Commit $base.commit
     $registryTreeEntry = Get-MorphospaceAffectedInventoryEntry -Inventory $inventory -Path $registryRelativePath
     if ($null -eq $registryTreeEntry -or [string]$registryTreeEntry.mode -cne '100644') { throw 'Affected-validation registry must be a tracked regular file in the exact head.' }
     $registryBytesBefore = [System.IO.File]::ReadAllBytes($registryFullPath)
@@ -941,7 +1035,30 @@ function Resolve-MorphospaceAffectedValidation {
     $compiled = Test-MorphospaceAffectedValidationRegistry -Registry $registry -RepositoryRoot $root -SchemaPath $registrySchemaPath
     $compiledObservation = Get-MorphospaceAffectedWorktreeObservation -RepositoryRoot $root
     Assert-MorphospaceAffectedStableObservation -Before $workingBatch.after -After $compiledObservation -ExpectedHead $head
+    [byte[]]$headRegistryBlobBytes=Get-MorphospaceAffectedGitBlobBytes -RepositoryRoot $root -Blob ([string]$registryTreeEntry.blob)
+    $headRegistrySha=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($headRegistryBlobBytes)).ToLowerInvariant()
+    $headRegistrySnapshot=[pscustomobject][ordered]@{registry=$registry;compiled_path_sets=$compiled.path_sets;identity=[pscustomobject][ordered]@{schema=[string]$registry.schema;registry_id=[string]$registry.registry_id;revision=[long]$registry.revision;blob=[string]$registryTreeEntry.blob;sha256=$headRegistrySha}}
+    $baseRegistryEntry=Get-MorphospaceAffectedInventoryEntry -Inventory $baseInventory -Path $registryRelativePath
+    if($null-eq$baseRegistryEntry){throw 'Affected-validation base registry is absent.'}
+    $registryChanged=[string]$baseRegistryEntry.blob-cne[string]$registryTreeEntry.blob
+    $baseRegistrySnapshot=if($registryChanged){Get-MorphospaceAffectedRegistryAtCommit -RepositoryRoot $root -Commit $base.commit -Inventory $baseInventory -RegistryPath $registryRelativePath}else{$headRegistrySnapshot}
+    $candidateOwnershipAudited = $false
+    $candidateOwnershipComplete = $true
+    $ownershipAudit = $null
+    if ($registryChanged) {
+        $ownershipAudit = Get-MorphospaceAffectedValidationOwnershipAudit -Registry $registry -CompiledRegistry $compiled -Inventory $inventory
+        $candidateOwnershipAudited = $true
+        $candidateOwnershipComplete = @($ownershipAudit.unmapped_paths).Count -eq 0 -and @($ownershipAudit.ambiguous_paths).Count -eq 0 -and @($ownershipAudit.registered_commands_without_one_owner).Count -eq 0 -and [long]$ownershipAudit.owned_path_count -eq [long]$ownershipAudit.tracked_path_count
+    }
+    $registryDelta = Get-MorphospaceAffectedRegistryDelta -BaseRegistry $baseRegistrySnapshot.registry -HeadRegistry $registry -CandidateOwnershipAudited $candidateOwnershipAudited -RegistryBlobChanged $registryChanged
+    if (-not $candidateOwnershipComplete -and [string]$registryDelta.classification -ceq 'coverage-expanding') { $registryDelta.classification = 'structural' }
+    if ([bool]$registryDelta.candidate_ownership_audited -ne $registryChanged) { throw 'Affected-validation registry delta has an invalid candidate ownership-audit state.' }
     $changes = @(Get-MorphospaceAffectedChanges -RepositoryRoot $root -BaseCommit $base.commit -HeadCommit $head.commit)
+    if([string]$registryDelta.classification-ceq'coverage-expanding'){
+        $newCandidatePaths=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        foreach($change in $changes){if($null-ne$change.new_path-and($null-eq$change.old_path-or[string]$change.old_path-cne[string]$change.new_path)){[void]$newCandidatePaths.Add([string]$change.new_path)}}
+        foreach($addition in @($registryDelta.added_patterns)){if(-not$newCandidatePaths.Contains([string]$addition.pattern)){$registryDelta.classification='structural';$registryDelta.added_patterns=@();$registryDelta.added_trigger_references=@();$registryDelta.added_consume_references=@();break}}
+    }
     $changedPathValues = [System.Collections.Generic.List[object]]::new()
     foreach ($change in $changes) {
         if ($null -ne $change.old_path) { [void]$changedPathValues.Add($change.old_path) }
@@ -950,28 +1067,54 @@ function Resolve-MorphospaceAffectedValidation {
     $caseCollision = [bool]$inventory.case_collision -or
         (Test-MorphospaceAffectedPathCaseCollision -Paths @($changedPathValues.ToArray()))
     $matchedPathSets = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
-    $unmapped = $false
-    $ambiguous = $false
+    $mappingDiagnostics = [System.Collections.Generic.List[object]]::new()
     foreach ($change in $changes) {
-        foreach ($path in @($change.old_path, $change.new_path)) {
+        foreach ($sideRecord in @(
+            [pscustomobject]@{side='old';path=$change.old_path;path_sets=$baseRegistrySnapshot.compiled_path_sets},
+            [pscustomobject]@{side='new';path=$change.new_path;path_sets=$compiled.path_sets}
+        )) {
+            $path = $sideRecord.path
             if ($null -eq $path) { continue }
-            $pathMatchCount = 0
-            foreach ($pathSetId in @($compiled.path_sets.Keys)) {
-                if (Test-MorphospaceAffectedPathSetMatch -Path ([string]$path) -Patterns @($compiled.path_sets[$pathSetId])) {
-                    [void]$matchedPathSets.Add([string]$pathSetId)
-                    $pathMatchCount++
-                }
+            [string[]]$matches = @($sideRecord.path_sets.Keys | Where-Object {
+                Test-MorphospaceAffectedPathSetMatch -Path ([string]$path) -Patterns @($sideRecord.path_sets[[string]$_])
+            })
+            [Array]::Sort($matches,[StringComparer]::Ordinal)
+            foreach($pathSetId in $matches){[void]$matchedPathSets.Add([string]$pathSetId)}
+            if ($matches.Count -ne 1) {
+                $mappingDiagnostics.Add([pscustomobject][ordered]@{path=[string]$path;side=[string]$sideRecord.side;issue_kind=$(if($matches.Count-eq0){'unmapped'}else{'ambiguous'});matching_path_set_ids=@($matches)})
             }
-            if ($pathMatchCount -eq 0) { $unmapped = $true }
-            if ($pathMatchCount -gt 1) { $ambiguous = $true }
         }
     }
+    if ($registryChanged) {
+        $headChecks=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        foreach($check in @($registry.checks)){[void]$headChecks.Add([string]$check.check_id)}
+        foreach($baseCheck in @($baseRegistrySnapshot.registry.checks)){
+            if(-not $headChecks.Contains([string]$baseCheck.check_id)){
+                [string[]]$owners=@($baseRegistrySnapshot.compiled_path_sets.Keys|Where-Object{Test-MorphospaceAffectedPathSetMatch -Path ([string]$baseCheck.command_path) -Patterns @($baseRegistrySnapshot.compiled_path_sets[[string]$_])})
+                [Array]::Sort($owners,[StringComparer]::Ordinal)
+                $mappingDiagnostics.Add([pscustomobject][ordered]@{path=[string]$baseCheck.command_path;side='old';issue_kind='missing-base-check-obligation';matching_path_set_ids=@($owners)})
+            }
+        }
+        foreach($path in @($ownershipAudit.unmapped_paths)){
+            $mappingDiagnostics.Add([pscustomobject][ordered]@{path=[string]$path;side='new';issue_kind='unmapped';matching_path_set_ids=@()})
+        }
+        foreach($entry in @($ownershipAudit.ambiguous_paths)){
+            $mappingDiagnostics.Add([pscustomobject][ordered]@{path=[string]$entry.path;side='new';issue_kind='ambiguous';matching_path_set_ids=@($entry.path_set_ids)})
+        }
+    }
+    $diagnosticByIdentity=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+    foreach($diagnostic in @($mappingDiagnostics.ToArray())){$key="$(ConvertTo-MorphospaceAffectedPath -Path ([string]$diagnostic.path))`0$([string]$diagnostic.side)`0$([string]$diagnostic.issue_kind)";$diagnosticByIdentity[$key]=$diagnostic}
+    [string[]]$diagnosticKeys=@($diagnosticByIdentity.Keys);[Array]::Sort($diagnosticKeys,[StringComparer]::Ordinal)
+    $orderedDiagnostics=@($diagnosticKeys|ForEach-Object{$diagnosticByIdentity[$_]})
 
     $reasonCodes = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
     $fullDeep = $false
-    if ($unmapped) { $fullDeep = $true; [void]$reasonCodes.Add('unmapped-path') }
-    if ($ambiguous) { $fullDeep = $true; [void]$reasonCodes.Add('ambiguous-path-mapping') }
+    $mappingIncomplete = $orderedDiagnostics.Count -gt 0
+    foreach($diagnostic in $orderedDiagnostics){if([string]$diagnostic.issue_kind-ceq'unmapped'){[void]$reasonCodes.Add('unmapped-path')}elseif([string]$diagnostic.issue_kind-ceq'ambiguous'){[void]$reasonCodes.Add('ambiguous-path-mapping')}else{[void]$reasonCodes.Add('missing-base-check-obligation')}}
     if ($caseCollision) { $fullDeep = $true; [void]$reasonCodes.Add('case-colliding-paths') }
+    if ([string]$registryDelta.classification -ceq 'structural') { $fullDeep = $true; [void]$reasonCodes.Add('structural-registry-change') }
+    elseif ([string]$registryDelta.classification -ceq 'coverage-expanding') { [void]$reasonCodes.Add('coverage-expanding-registry-change') }
+    elseif ([string]$registryDelta.classification -ceq 'revision-only') { [void]$reasonCodes.Add('revision-only-registry-change') }
     foreach ($id in @($registry.deep_escalation_path_sets)) {
         if ($matchedPathSets.Contains([string]$id)) { $fullDeep = $true; [void]$reasonCodes.Add('trust-root-path-changed') }
     }
@@ -983,8 +1126,8 @@ function Resolve-MorphospaceAffectedValidation {
         if (-not $selectedReasons.ContainsKey($Id)) { $selectedReasons[$Id] = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal) }
         [void]$selectedReasons[$Id].Add($Reason)
     }
-    foreach ($id in @($registry.always_run_check_ids)) { Add-AffectedSelection ([string]$id) 'always-run' }
-    if ($fullDeep) {
+    if (-not $mappingIncomplete) { foreach ($id in @($registry.always_run_check_ids)) { Add-AffectedSelection ([string]$id) 'always-run' } }
+    if (-not $mappingIncomplete -and $fullDeep) {
         foreach ($check in @($registry.checks)) {
             $isAggregateOnly = $null -ne $check.PSObject.Properties['aggregate_role'] -and [string]$check.aggregate_role -ceq 'work-environment-deep-v1'
             if ($isAggregateOnly) { continue }
@@ -1002,7 +1145,7 @@ function Resolve-MorphospaceAffectedValidation {
                 }
             }
         }
-    } else {
+    } elseif (-not $mappingIncomplete) {
         foreach ($check in @($registry.checks)) {
             foreach ($pathSetId in @($check.trigger_path_sets)) {
                 if ($matchedPathSets.Contains([string]$pathSetId)) { Add-AffectedSelection ([string]$check.check_id) "path-set:$pathSetId" }
@@ -1016,7 +1159,11 @@ function Resolve-MorphospaceAffectedValidation {
             }
         }
     }
-    Complete-MorphospaceAffectedSelectionClosure -Checks $compiled.checks -RegistryChecks @($registry.checks) -SelectedReasons $selectedReasons
+    if(-not$mappingIncomplete-and[string]$registryDelta.classification-ceq'coverage-expanding'){
+        foreach($reference in @($registryDelta.added_trigger_references)){Add-AffectedSelection ([string]$reference.check_id) "registry-delta-trigger:$([string]$reference.path_set_id)"}
+        foreach($reference in @($registryDelta.added_consume_references)){Add-AffectedSelection ([string]$reference.check_id) "registry-delta-consume:$([string]$reference.path_set_id)"}
+    }
+    if(-not $mappingIncomplete){Complete-MorphospaceAffectedSelectionClosure -Checks $compiled.checks -RegistryChecks @($registry.checks) -SelectedReasons $selectedReasons}
 
     $tierRank = @{ quick = 0; standard = 1; deep = 2 }
     $effectiveTier = $RequestedTier
@@ -1024,7 +1171,7 @@ function Resolve-MorphospaceAffectedValidation {
         $tier = [string]$compiled.checks[$id].minimum_tier
         if ($tierRank[$tier] -gt $tierRank[$effectiveTier]) { $effectiveTier = $tier }
     }
-    if ($fullDeep) { $effectiveTier = 'deep' }
+    if ($fullDeep -and -not $mappingIncomplete) { $effectiveTier = 'deep' }
     $selected = [System.Collections.Generic.List[object]]::new()
     $skipped = [System.Collections.Generic.List[object]]::new()
     $budget = [long]0
@@ -1043,22 +1190,25 @@ function Resolve-MorphospaceAffectedValidation {
     if ($reasonCodes.Count -eq 0) { [void]$reasonCodes.Add('affected-path-selection') }
     $reasonArray = @($reasonCodes); [Array]::Sort($reasonArray, [System.StringComparer]::Ordinal)
     $changedPathDigest = Get-MorphospaceCanonicalJsonSha256 -Value @($changes)
-    $registryDigest = Get-MorphospaceCanonicalJsonSha256 -Value $registry
     $planWithoutHash = [pscustomobject][ordered]@{
-        schema = 'rusty.morphospace.workflow.affected_validation_plan.v1'
+        schema = 'rusty.morphospace.workflow.affected_validation_plan.v2'
         repository = [string]$registry.repository_id
         base = $base
         head = $head
-        registry = [pscustomobject][ordered]@{ schema=[string]$registry.schema; registry_id=[string]$registry.registry_id; revision=[long]$registry.revision; sha256=$registryDigest }
+        base_registry = $baseRegistrySnapshot.identity
+        head_registry = $headRegistrySnapshot.identity
+        registry_delta = $registryDelta
         changed_paths = @($changes)
         changed_paths_sha256 = $changedPathDigest
         requested_tier = $RequestedTier
         effective_tier = $effectiveTier
-        selection_mode = $(if ($fullDeep) { 'full-deep' } else { 'affected' })
+        selection_mode = $(if($mappingIncomplete){'mapping-incomplete'}elseif ($fullDeep) { 'full-deep' } else { 'affected' })
+        execution_permitted = (-not $mappingIncomplete)
+        mapping_diagnostics = @($orderedDiagnostics)
         reason_codes = @($reasonArray)
         selected_checks = @($selected.ToArray())
         skipped_checks = @($skipped.ToArray())
-        estimated_budget_seconds = $budget
+        budget = [pscustomobject][ordered]@{actual=$(if($mappingIncomplete){0}else{$budget})}
         claims = [pscustomobject][ordered]@{ selection_only=$true; checks_executed=$false; acceptance_authority=$false; publication_authority=$false }
     }
     $planHash = Get-MorphospaceCanonicalJsonSha256 -Value $planWithoutHash
@@ -1069,16 +1219,20 @@ function Resolve-MorphospaceAffectedValidation {
         repository = $planWithoutHash.repository
         base = $planWithoutHash.base
         head = $planWithoutHash.head
-        registry = $planWithoutHash.registry
+        base_registry = $planWithoutHash.base_registry
+        head_registry = $planWithoutHash.head_registry
+        registry_delta = $planWithoutHash.registry_delta
         changed_paths = $planWithoutHash.changed_paths
         changed_paths_sha256 = $planWithoutHash.changed_paths_sha256
         requested_tier = $planWithoutHash.requested_tier
         effective_tier = $planWithoutHash.effective_tier
         selection_mode = $planWithoutHash.selection_mode
+        execution_permitted = $planWithoutHash.execution_permitted
+        mapping_diagnostics = $planWithoutHash.mapping_diagnostics
         reason_codes = $planWithoutHash.reason_codes
         selected_checks = $planWithoutHash.selected_checks
         skipped_checks = $planWithoutHash.skipped_checks
-        estimated_budget_seconds = $planWithoutHash.estimated_budget_seconds
+        budget = $planWithoutHash.budget
         plan_sha256 = $planHash
         claims = $planWithoutHash.claims
     }

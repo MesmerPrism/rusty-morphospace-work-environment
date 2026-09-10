@@ -143,7 +143,7 @@ function Get-MorphospaceAffectedCheckRunnerSourceManifest {
     return @(Get-MorphospaceAffectedCheckManifestRecords -Inventory $Inventory -Context 'Affected check runner source' -Paths @(
         'schemas/affected-validation-check-evidence-v1.schema.json',
         'schemas/affected-validation-check-inventory-v1.schema.json',
-        'schemas/affected-validation-plan-v1.schema.json',
+        'schemas/affected-validation-plan-v2.schema.json',
         'schemas/affected-validation-registry-v1.schema.json',
         'scripts/Invoke-AffectedValidation.ps1',
         'scripts/lib/MorphospaceAffectedValidation.psm1',
