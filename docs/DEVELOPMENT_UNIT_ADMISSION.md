@@ -40,9 +40,14 @@ complete changed-file list for bounded exploration.
 If Ready exposes a defect in the immutable admitted contract itself,
 `RetireProposed` is the only owner route that can close that identity before
 Claim. It requires `status=proposed`, an idle project with no current or
-next-ready unit, the exact admission event as the ledger tail, and the complete
-committed admission receipt/intent/completion chain. An admission followed by
-exactly its owner-produced completion-timestamp recovery can also retire: the
+next-ready unit, and the complete committed admission receipt/intent/completion
+chain. The ordinary direct route requires the admission event at the ledger
+tail. An admitted proposal that passed ordinary `Ready` may also retire after
+`WithdrawReady` when admission, Ready, and withdrawal are the exact contiguous
+owner-produced suffix. The retirement owner independently authenticates all
+three transaction pairs, the withdrawal receipt as the withdrawal transaction's
+sole artifact, and the exact status, queue, state, unit, and ledger projections.
+An admission followed by exactly its owner-produced completion-timestamp recovery can also retire: the
 recovery verifier must authenticate the live tail, original malformed completion,
 and recovered state and unit. No other intervening event is allowed. Retirement
 binds the original admission state separately from its recovered live preimage
@@ -64,7 +69,9 @@ chain rejects. Ordinary admission retains strict equality with the original
 prepared state, and a durable admission intent remains consumption evidence
 even if both live state and event projections are rolled back. Replacement
 recovery and replay revalidate the complete predecessor admission/retirement
-chain at every partial and completed transaction boundary.
+chain at every partial and completed transaction boundary. The withdrawn route
+does not broaden preparation reuse: a replacement after that route starts from
+a fresh preparation unless a separately adopted owner contract says otherwise.
 `RetireProposed` cannot withdraw a Ready unit, retire an active unit, repair a
 candidate in place, create the replacement, or authorize source/build/device
 mutation.

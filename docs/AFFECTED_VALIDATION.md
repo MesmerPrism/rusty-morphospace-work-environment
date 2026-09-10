@@ -441,6 +441,9 @@ owners. The shared lifecycle routing document remains in the existing
 `documentation` path set rather than acquiring a second owner.
 Proposed-unit retirement has a Windows Standard exact-host leaf for its closed
 receipt schema, typed owner, focused test, and the four retirement readers.
+The focused leaf covers both the unchanged direct admission-tail route and the
+closed admitted `Ready`/`WithdrawReady` provenance route, including historical
+readback and recomputed-hash receipt-ownership forgery rejection.
 The production owner/schema and focused test use separate path sets. An owner
 or schema change selects the focused leaf, admission and recovered-continuation
 consumers, and the broad WorkUnitAutomation consumer with its workflow-contract
