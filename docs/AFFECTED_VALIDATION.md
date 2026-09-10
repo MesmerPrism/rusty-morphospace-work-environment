@@ -3,8 +3,44 @@
 `validate.yml` resolves a closed, exact-base/current-head plan before running
 candidate validation. The registry owns canonical path classes, semantic
 dependencies, execution order, platform applicability, and the exact Git blob identities that evidence
-must bind. Unmapped paths, case collisions, selector/workflow changes, and external
-authority changes fail closed to Deep; they do not silently widen a Quick run.
+must bind. Unmapped paths, case collisions, and selector trust-root changes fail
+closed to Deep; they do not silently widen a Quick run.
+
+External admission remains mandatory and independent of dynamic test
+selection. `.github/workflows/validate.yml` stays in the selector trust root,
+while `.github/workflows/static-admission.yml` belongs to the GitHub adapter
+surface. Canonical-text, authorization-helper, shared authorization-core,
+authorization-test, shared assessment-contract, verifier, and adapter paths
+have disjoint owners. A helper change selects canonical-byte,
+owner-authorization, and public-boundary checks; a shared authorization-core
+change additionally selects the GitHub adapter, historical-debt baseline,
+prepared-push reconciliation, and fast authority runner that consume those
+bytes. An assessment-schema change selects its signing, verifier, and adapter
+consumers. Other verifier changes select verifier and adapter self-tests, while
+an adapter-only change stays on the adapter self-test. These focused external
+checks are Standard, exact-host trust roots and do not select the cumulative
+Work Environment Deep aggregate. Static Admission still applies its
+protected-artifact and external-owner policy to every candidate regardless of
+the affected-validation plan.
+
+The focused external migration does not claim to close the repository-wide
+mapping backlog. The initial structural inventory found 111 tracked paths
+without a registered owner; assigning the signing helper here leaves 110
+unmapped paths and two ambiguous paths. That debt remains a separate follow-up.
+Existing unmapped or ambiguous paths retain the conservative fallback semantics.
+
+The cumulative `Test-WorkEnvironment.ps1` suite currently invokes eleven owner
+tests that still lack independent affected-validation registrations: executed
+push receipt, local skill bootstrap, planned publication accounting, PowerShell
+host, published planning-authority adoption, the three Quest File Manager
+provider/observation adapters, release capsule, repository lifecycle inventory,
+and unpublished planning-authority materialization. The selector self-test pins
+that exact debt set, so another aggregate owner cannot be added or a focused
+leaf removed silently. It also pins the exact command and argument identities
+for the four canonical/external-authority leaves migrated here. The next
+registry-coverage slice must retire the named debt deliberately, resolve the 22
+registered command paths that have no path-set owner, then close the remaining
+tracked-tree ownership gaps without catch-all patterns.
 
 Each resolver call binds the canonical repository root, tracked cleanliness,
 HEAD commit/tree, base ancestry, registry/schema identities, and the complete

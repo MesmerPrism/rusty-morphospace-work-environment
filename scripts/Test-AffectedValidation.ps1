@@ -532,6 +532,72 @@ function Get-AffectedWorkEnvironmentOwnerEntrypoints([string]$Root, [Collections
     }
     return $result
 }
+function Get-AffectedWorkEnvironmentTableInvocationArguments([string]$Root) {
+    $ownerPath = Join-Path ([IO.Path]::GetFullPath($Root)) 'scripts/Test-WorkEnvironment.ps1'
+    $ast = Get-AffectedPowerShellAst $ownerPath
+    $result = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+    foreach ($hashtable in @($ast.FindAll({ param($node) $node -is [Management.Automation.Language.HashtableAst] },$true))) {
+        $pairs = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+        foreach ($pair in @($hashtable.KeyValuePairs)) { $pairs[[string]$pair.Item1.Extent.Text] = $pair.Item2 }
+        if (-not $pairs.ContainsKey('script')) { continue }
+        try { $scriptValue = $pairs['script'].SafeGetValue() } catch { continue }
+        if ($scriptValue -isnot [string] -or [string]$scriptValue -cnotmatch '^Test-[A-Za-z0-9-]+\.ps1$') { continue }
+        $commandPath = ConvertTo-AffectedOwnerEntrypoint ([string]$scriptValue)
+        if ($result.ContainsKey($commandPath)) { throw "Work Environment script table repeats an owner entrypoint: $commandPath" }
+        $arguments = @()
+        if ($pairs.ContainsKey('arguments')) {
+            try { $rawArguments = @($pairs['arguments'].SafeGetValue()) } catch { throw "Work Environment owner arguments are not a literal value: $commandPath" }
+            foreach ($argument in $rawArguments) {
+                if ($argument -isnot [string]) { throw "Work Environment owner argument is not a literal string: $commandPath" }
+            }
+            $arguments = @($rawArguments | ForEach-Object { [string]$_ })
+        }
+        $result[$commandPath] = $arguments
+    }
+    return $result
+}
+function Assert-AffectedWorkEnvironmentLeafRegistration([string]$Root, [string[]]$OwnerEntrypoints, [Collections.Generic.Dictionary[string,object]]$RegistryByCommand) {
+    # Test-WorkEnvironment remains a retained compatibility aggregate, while
+    # affected validation executes independently registered leaves. Keep the
+    # migration debt explicit so a new aggregate test cannot silently acquire
+    # no focused route, and bind migrated trust-root leaves to the same exact
+    # invocation used by the aggregate.
+    $expectedUnregistered = @(
+        'scripts/Test-ExecutedPushReceipt.ps1',
+        'scripts/Test-LocalSkillBootstrap.ps1',
+        'scripts/Test-PlannedPublicationAccounting.ps1',
+        'scripts/Test-PowerShellHost.ps1',
+        'scripts/Test-PublishedPlanningAuthorityAdoption.ps1',
+        'scripts/Test-QuestFileManagerCliResolver.ps1',
+        'scripts/Test-QuestFileManagerPermissionObservationAdapter.ps1',
+        'scripts/Test-QuestFileManagerRuntimeObservationAdapter.ps1',
+        'scripts/Test-ReleaseCapsule.ps1',
+        'scripts/Test-RepositoryLifecycleInventory.ps1',
+        'scripts/Test-UnpublishedPlanningAuthorityMaterialization.ps1'
+    )
+    $unregistered = @($OwnerEntrypoints | Where-Object { -not $RegistryByCommand.ContainsKey([string]$_) })
+    [Array]::Sort($unregistered,[StringComparer]::Ordinal)
+    Assert-True (($unregistered -join "`n") -ceq ($expectedUnregistered -join "`n")) "Work Environment aggregate owner-entrypoint registration debt changed. Expected=$($expectedUnregistered -join ','); observed=$($unregistered -join ',')."
+
+    $requiredInvocations = @(
+        [pscustomobject][ordered]@{ check_id='canonical-text-bytes'; command_path='scripts/Test-CanonicalTextBytes.ps1'; arguments=@('-SelfTest') },
+        [pscustomobject][ordered]@{ check_id='external-owner-authorization'; command_path='scripts/Test-ExternalOwnerAuthorization.ps1'; arguments=@('-SelfTest') },
+        [pscustomobject][ordered]@{ check_id='external-validation-authority'; command_path='scripts/Test-ExternalValidationAuthoritySelfTest.ps1'; arguments=@() },
+        [pscustomobject][ordered]@{ check_id='external-validation-github-adapter'; command_path='scripts/Test-ExternalValidationAuthorityGitHubAdapterSelfTest.ps1'; arguments=@() }
+    )
+    $aggregateInvocations = Get-AffectedWorkEnvironmentTableInvocationArguments -Root $Root
+    foreach ($expected in $requiredInvocations) {
+        $registered = @($RegistryByCommand[[string]$expected.command_path])
+        Assert-True ($registered.Count -eq 1) "Migrated Work Environment owner does not have exactly one focused registration: $($expected.command_path)."
+        Assert-True ([string]$registered[0].check_id -ceq [string]$expected.check_id) "Migrated Work Environment owner changed focused check identity: $($expected.command_path)."
+        $expectedArguments = @($expected.arguments | ForEach-Object { [string]$_ })
+        Assert-True ($aggregateInvocations.ContainsKey([string]$expected.command_path)) "Migrated Work Environment owner is absent from the aggregate script table: $($expected.command_path)."
+        $aggregateArguments = @($aggregateInvocations[[string]$expected.command_path] | ForEach-Object { [string]$_ })
+        $registeredArguments = @($registered[0].arguments | ForEach-Object { [string]$_ })
+        Assert-True ($aggregateArguments.Count -eq $expectedArguments.Count -and ($aggregateArguments -join "`n") -ceq ($expectedArguments -join "`n")) "Migrated Work Environment owner changed aggregate invocation arguments: $($expected.command_path)."
+        Assert-True ($registeredArguments.Count -eq $expectedArguments.Count -and ($registeredArguments -join "`n") -ceq ($expectedArguments -join "`n")) "Migrated Work Environment owner changed focused invocation arguments: $($expected.command_path)."
+    }
+}
 function Get-AffectedLexicalImportScope([Management.Automation.Language.Ast]$Node) {
     $current = $Node.Parent
     if ($Node -is [Management.Automation.Language.ScriptBlockAst] -and $current -is [Management.Automation.Language.ScriptBlockExpressionAst]) { $current = $current.Parent }
@@ -1075,6 +1141,7 @@ function Get-AffectedProtocolCommonOwnerChecks([string]$Root, [object]$Registry)
         ([Collections.Generic.List[object]]$registryByCommand[$commandPath]).Add($check)
     }
     $ownerEntrypoints = @(Get-AffectedWorkEnvironmentOwnerEntrypoints -Root $Root -TrackedPaths $trackedPaths)
+    Assert-AffectedWorkEnvironmentLeafRegistration -Root $Root -OwnerEntrypoints $ownerEntrypoints -RegistryByCommand $registryByCommand
     $dynamicImports = @(
         [pscustomobject][ordered]@{ importer='scripts/Test-AuthorityRecordReadiness.ps1'; variable='processModule'; count=1; import_path='scripts/lib/MorphospaceAuthorityProcess.psm1' },
         [pscustomobject][ordered]@{ importer='scripts/Test-TransitionLedger.ps1'; variable='ModulePath'; count=2; import_path='scripts/lib/MorphospaceTransitionLedger.psm1' },
@@ -1154,6 +1221,10 @@ function Invoke-AffectedGraphIndexSelfTest([string]$Root,[object]$Registry) {
         Assert-True (@($audit.tracked_graph_adjacency.path) -ccontains $requiredNode) "Real-tree ProtocolCommon graph omitted the rematerialization node: $requiredNode"
     }
     Assert-True ([long]$audit.total_elapsed_ms -le 45000) "ProtocolCommon transitive owner audit exceeded its measured 45-second bound: $($audit.total_elapsed_ms)ms."
+
+    $missingFocusedLeaf = $Registry | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64
+    $missingFocusedLeaf.checks = @($missingFocusedLeaf.checks | Where-Object { [string]$_.check_id -cne 'external-owner-authorization' })
+    Assert-AffectedThrows { Get-AffectedProtocolCommonOwnerChecks -Root $Root -Registry $missingFocusedLeaf } '*aggregate owner-entrypoint registration debt changed*' 'Aggregate owner inventory accepted removal of a focused external-authority leaf.'
 
     $fixture = Join-Path ([IO.Path]::GetTempPath()) ('morphospace-affected-index-' + [guid]::NewGuid().ToString('N'))
     [void][IO.Directory]::CreateDirectory((Join-Path $fixture 'scripts/lib'))
@@ -1612,7 +1683,7 @@ if ($runDependencyClosurePhase) {
 $selectorSelfTestClock = [Diagnostics.Stopwatch]::StartNew()
 $registryPath = Join-Path $repoRoot 'manifests/affected-validation-registry.json'
 $registry = Read-MorphospaceProtocolJson -Path $registryPath
-[void](Test-MorphospaceAffectedValidationRegistry -Registry $registry -RepositoryRoot $repoRoot -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-registry-v1.schema.json'))
+$compiledRegistry = Test-MorphospaceAffectedValidationRegistry -Registry $registry -RepositoryRoot $repoRoot -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-registry-v1.schema.json')
 $executorContainmentSource = if ($runFullSelector -or $runExecutorPassPhase -or $runExecutorDamagePhase) { Get-Content -LiteralPath (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -Raw } else { $null }
 if ($null -ne $executorContainmentSource) { Assert-AffectedExecutorContainmentSource -Source $executorContainmentSource }
 $protocolCommonConsumerChecks = @()
@@ -3768,7 +3839,54 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     # single exact owner class.  Test each path independently so command-path
     # selection cannot conceal an unmapped or ambiguous shared-module route.
     $validationAuthorityClosureChecks=@('authority-record-readiness','authority-runner-fast','authority-runner-handoff','transition-ledger','trust-migration-authority','validation-authority-launcher','validation-execution-authority') + $workflowConsumerFixtureChecks
+    $externalProtectedOwners = [ordered]@{
+        '.github/workflows/static-admission.yml' = 'external-validation-adapter'
+        '.github/workflows/validate.yml' = 'selector-trust-root'
+        'config/external-owner-authorization.json' = 'external-owner-authorization-core'
+        'config/external-validation-authority.json' = 'external-validation-verifier'
+        'schemas/external-owner-authorization-policy-v1.schema.json' = 'external-owner-authorization-core'
+        'schemas/external-owner-authorization-request-v1.schema.json' = 'external-owner-authorization-core'
+        'schemas/external-owner-authorization-v1.schema.json' = 'external-owner-authorization-core'
+        'schemas/external-validation-authority-assessment-v1.schema.json' = 'external-validation-assessment-contract'
+        'schemas/external-validation-authority-policy-v1.schema.json' = 'external-validation-verifier'
+        'scripts/Invoke-ExternalValidationAuthorityForGitHub.ps1' = 'external-validation-adapter'
+        'scripts/New-ExternalOwnerAuthorizationComment.ps1' = 'external-owner-authorization-helper'
+        'scripts/Test-ExternalOwnerAuthorization.ps1' = 'external-owner-authorization-test'
+        'scripts/Test-ExternalValidationAuthority.ps1' = 'external-validation-verifier'
+        'scripts/Test-ExternalValidationAuthorityGitHubAdapterSelfTest.ps1' = 'external-validation-adapter'
+        'scripts/Test-ExternalValidationAuthoritySelfTest.ps1' = 'external-validation-verifier'
+        'scripts/lib/ExternalOwnerAuthorization.psm1' = 'external-owner-authorization-core'
+    }
+    $externalPolicy = Read-MorphospaceProtocolJson -Path (Join-Path $repoRoot 'config/external-validation-authority.json')
+    $mandatoryProtectedPaths = @($externalPolicy.mandatory_protected_paths)
+    Assert-True ($mandatoryProtectedPaths.Count -eq 16) "External validation authority protected-path inventory changed from the expected 16 paths: $($mandatoryProtectedPaths.Count)."
+    Assert-True ($externalProtectedOwners.Count -eq $mandatoryProtectedPaths.Count) 'External protected-path ownership fixture does not cover the complete mandatory inventory.'
+    $affectedModule = Get-Module MorphospaceAffectedValidation
+    foreach ($protectedPath in $mandatoryProtectedPaths) {
+        Assert-True ($externalProtectedOwners.Contains([string]$protectedPath)) "Mandatory external protected path '$protectedPath' lacks an expected owner."
+        $matchingPathSets = @(& $affectedModule {
+            param($Path,$PathSets)
+            foreach ($pathSetId in @($PathSets.Keys)) {
+                if (Test-MorphospaceAffectedPathSetMatch -Path $Path -Patterns @($PathSets[$pathSetId])) { [string]$pathSetId }
+            }
+        } ([string]$protectedPath) $compiledRegistry.path_sets)
+        Assert-True ($matchingPathSets.Count -eq 1) "Mandatory external protected path '$protectedPath' must have exactly one path-set owner; found '$($matchingPathSets -join ',')'."
+        $expectedOwner = [string]$externalProtectedOwners[[string]$protectedPath]
+        Assert-True ([string]$matchingPathSets[0] -ceq $expectedOwner) "Mandatory external protected path '$protectedPath' belongs to '$($matchingPathSets[0])' instead of '$expectedOwner'."
+        $specializedCoverage = @($registry.checks | Where-Object {
+            [string]$_.check_id -cne 'public-boundary' -and
+            @($_.trigger_path_sets) -ccontains $expectedOwner
+        })
+        Assert-True ($specializedCoverage.Count -gt 0) "Mandatory external protected path '$protectedPath' has no specialized or selector check coverage through '$expectedOwner'."
+    }
     $proportionalMappings = @(
+        [pscustomobject]@{ path='scripts/Test-CanonicalTextBytes.ps1'; checks=@('canonical-text-bytes','external-owner-authorization','public-boundary'); exact_checks=$true },
+        [pscustomobject]@{ path='scripts/New-ExternalOwnerAuthorizationComment.ps1'; checks=@('canonical-text-bytes','external-owner-authorization','public-boundary'); exact_checks=$true },
+        [pscustomobject]@{ path='scripts/lib/ExternalOwnerAuthorization.psm1'; checks=@('authority-runner-fast','canonical-text-bytes','external-owner-authorization','external-validation-github-adapter','historical-validation-debt-baseline','prepared-push-transaction-suffix-reconciliation','public-boundary'); exact_checks=$true },
+        [pscustomobject]@{ path='scripts/Test-ExternalOwnerAuthorization.ps1'; checks=@('canonical-text-bytes','external-owner-authorization','public-boundary'); exact_checks=$true },
+        [pscustomobject]@{ path='schemas/external-validation-authority-assessment-v1.schema.json'; checks=@('canonical-text-bytes','external-owner-authorization','external-validation-authority','external-validation-github-adapter','public-boundary'); exact_checks=$true },
+        [pscustomobject]@{ path='scripts/Test-ExternalValidationAuthoritySelfTest.ps1'; checks=@('external-validation-authority','external-validation-github-adapter','public-boundary'); exact_checks=$true },
+        [pscustomobject]@{ path='scripts/Test-ExternalValidationAuthorityGitHubAdapterSelfTest.ps1'; checks=@('external-validation-github-adapter','public-boundary'); exact_checks=$true },
         [pscustomobject]@{ path='schemas/historical-validation-debt-phase-receipt-v1.schema.json'; checks=@('historical-validation-debt-baseline','historical-validation-debt-phase-runner','work-unit-automation') },
         [pscustomobject]@{ path='scripts/Test-BlockedSupersessionTerminalValidation.ps1'; checks=@('blocked-supersession-terminal-validation') },
         [pscustomobject]@{ path='scripts/Test-CorrectActiveUnitContract.ps1'; checks=@('correct-active-unit-contract') },
