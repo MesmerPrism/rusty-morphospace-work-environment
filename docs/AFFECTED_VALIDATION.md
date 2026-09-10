@@ -439,6 +439,20 @@ dependent as an unconditional reverse consumer of a shared contract; a generic
 workflow or automation change therefore cannot fan out into inactive lifecycle
 owners. The shared lifecycle routing document remains in the existing
 `documentation` path set rather than acquiring a second owner.
+Proposed-unit retirement has a Windows Standard exact-host leaf for its closed
+receipt schema, typed owner, focused test, and the four retirement readers.
+The production owner/schema and focused test use separate path sets. An owner
+or schema change selects the focused leaf, admission and recovered-continuation
+consumers, and the broad WorkUnitAutomation consumer with its workflow-contract
+prerequisite. A focused-test-only change selects the leaf and public boundary
+without invalidating those consumers. The owner imports only protocol common,
+transition ledger, and admission recovery. It does not import validation
+authority, generic workflow contracts, WF005, or generic automation. The
+generic automation route remains broad because it constructs the legacy
+compatibility envelope before the typed owner validates and commits it; its
+broad test preserves the legacy public timestamp and module/CLI byte contract.
+An unrelated validation-owner or self-test change does not invalidate the
+focused retirement leaf.
 Historical supersession compatibility has its own closed path set for the v1
 proof schema, builder, action module, verifier, and focused self-test. It
 selects the fast automation-receipt compatibility and workflow-contract

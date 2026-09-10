@@ -90,6 +90,14 @@ An interrupted current operation still uses its existing exact recovery action.
 Historical classification is read-only and introduces no receipt schema or
 repair event.
 
+Current-work retirement history accepts exactly the closed direct-owner
+`proposed_unit_retirement_receipt.v1` and the complete legacy
+`work_unit_automation_receipt.v1` compatibility envelope. Both must bind the
+same committed retirement semantics and preserved admission evidence. The
+direct format additionally binds its transaction ID, paths, event, and every
+state/unit/event-ledger CAS identity to the transition intent. Format dispatch
+does not convert receipts or rewrite accepted historical bytes.
+
 Lock validation uses one shared predicate for the two existing owner formats:
 canonical JSON and the original resolver's ordered compressed JSON. Both hash
 the complete document with only `lock_fingerprint` zeroed. The resolver now emits

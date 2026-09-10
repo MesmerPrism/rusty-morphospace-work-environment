@@ -114,6 +114,7 @@ Admission and recovered-proposal continuation have separate focused entrypoints:
 pwsh -NoProfile -File ./scripts/Test-DevelopmentUnitAdmission.ps1 -SelfTest
 pwsh -NoProfile -File ./scripts/Test-AdmissionCompletionTimestampRecovery.ps1 -SelfTest
 pwsh -NoProfile -File ./scripts/Test-RecoveredProposalContinuation.ps1 -SelfTest
+pwsh -NoProfile -File ./scripts/Test-ProposedUnitRetirement.ps1 -SelfTest
 ```
 
 Select the entrypoint affected by the change; this is not a list to run after
@@ -123,6 +124,15 @@ independent Windows affected-validation leaf with exact-host evidence. Direct
 test edits select that test and public-boundary checks; shared fixture or
 production changes select their actual consumers. A passing old admission
 receipt does not stand in for the newly separated continuation result.
+The proposed-unit retirement leaf exercises the direct owner independently,
+including dry/execute parity, authenticated admission recovery, CAS failures,
+fault recovery, replay, strict receipt-format dispatch, preserved evidence,
+transaction-identity bounds, canonical direct-owner timestamps, and hostile
+private legacy-adapter rejection. The broad WorkUnitAutomation test separately
+preserves the public legacy timestamp spelling and exact module/CLI result and
+receipt bytes. Its transition intent/completion comparison normalizes only
+ledger-owned wall-clock fields after independently authenticating each raw
+artifact and completion reference.
 The explicit full Quick and workflow owner-test aggregates retain the composed
 case once. Affected CI invokes workflow contracts with `-SkipOwnerSelfTests`
 and selects the independent leaf, so a failed continuation can be rerun without

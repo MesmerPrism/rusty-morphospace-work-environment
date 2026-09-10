@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/proposed-unit-retirement-receipt-v1.schema.json",
+  "title": "Proposed-unit retirement receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "project_id", "unit_id", "action", "timestamp", "executed", "transition", "status_before", "status_after", "current_unit_before", "current_unit_after", "preservation", "proposed_retirement", "transaction", "event_id"],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.workflow.proposed_unit_retirement_receipt.v1" },
+    "project_id": { "$ref": "#/$defs/id" },
+    "unit_id": { "$ref": "#/$defs/id" },
+    "action": { "const": "RetireProposed" },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "executed": { "type": "boolean" },
+    "transition": { "const": "proposed-to-superseded-retired" },
+    "status_before": { "const": "proposed" },
+    "status_after": { "enum": ["proposed", "superseded"] },
+    "current_unit_before": { "type": "null" },
+    "current_unit_after": { "type": "null" },
+    "preservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["git_mutation_performed", "device_mutation_performed", "force_push_allowed"],
+      "properties": {
+        "git_mutation_performed": { "const": false },
+        "device_mutation_performed": { "const": false },
+        "force_push_allowed": { "const": false }
+      }
+    },
+    "proposed_retirement": { "$ref": "#/$defs/proposedRetirement" },
+    "transaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["transaction_id", "state_path", "unit_path", "events_path", "receipt_path", "event_id", "expected_pre_state_sha256", "expected_pre_unit_sha256", "expected_pre_unit_raw_sha256", "expected_events_sha256", "expected_events_length", "expected_event_tail_id"],
+      "properties": {
+        "transaction_id": { "$ref": "#/$defs/transactionId" },
+        "state_path": { "const": "workspace.state.json" },
+        "unit_path": { "type": "string", "pattern": "^iteration-units/[a-z0-9][a-z0-9-]{1,127}\\.json$" },
+        "events_path": { "const": "iteration-events.jsonl" },
+        "receipt_path": { "type": "string", "pattern": "^receipts/[a-z0-9][a-z0-9-]{1,127}\\.json$" },
+        "event_id": { "$ref": "#/$defs/id" },
+        "expected_pre_state_sha256": { "$ref": "#/$defs/sha256" },
+        "expected_pre_unit_sha256": { "$ref": "#/$defs/sha256" },
+        "expected_pre_unit_raw_sha256": { "$ref": "#/$defs/sha256" },
+        "expected_events_sha256": { "$ref": "#/$defs/sha256" },
+        "expected_events_length": { "type": "integer", "minimum": 0 },
+        "expected_event_tail_id": { "$ref": "#/$defs/id" }
+      }
+    },
+    "event_id": { "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "executed": { "const": true } }, "required": ["executed"] },
+      "then": { "properties": { "status_after": { "const": "superseded" }, "event_id": { "$ref": "#/$defs/id" } } },
+      "else": { "properties": { "status_after": { "const": "proposed" }, "event_id": { "type": "null" } } }
+    }
+  ],
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" },
+    "transactionId": { "type": "string", "maxLength": 192, "pattern": "^[a-z0-9][a-z0-9-]+$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "fileReference": {
+      "type": "object", "additionalProperties": false, "required": ["path", "sha256"],
+      "properties": { "path": { "type": "string", "minLength": 1 }, "sha256": { "$ref": "#/$defs/sha256" } }
+    },
+    "proposedRetirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["replacement_unit_id", "reason", "authenticated_admission", "authenticated_preimage", "replacement_identity_absent", "current_unit_absent", "next_ready_unit_absent", "original_admission_preserved", "binding_sha256"],
+      "properties": {
+        "replacement_unit_id": { "$ref": "#/$defs/id" },
+        "reason": { "const": "contract-invalid" },
+        "authenticated_admission": {
+          "type": "object", "additionalProperties": false, "required": ["admission_id", "event", "receipt", "transaction"],
+          "properties": {
+            "admission_id": { "$ref": "#/$defs/id" },
+            "event": {
+              "type": "object", "additionalProperties": false, "required": ["event_id", "sequence", "sha256"],
+              "properties": { "event_id": { "$ref": "#/$defs/id" }, "sequence": { "type": "integer", "minimum": 1 }, "sha256": { "$ref": "#/$defs/sha256" } }
+            },
+            "receipt": { "$ref": "#/$defs/fileReference" },
+            "transaction": {
+              "type": "object", "additionalProperties": false, "required": ["transaction_id", "intent", "completion", "target_state_sha256", "target_unit_sha256"],
+              "properties": {
+                "transaction_id": { "$ref": "#/$defs/transactionId" }, "intent": { "$ref": "#/$defs/fileReference" }, "completion": { "$ref": "#/$defs/fileReference" },
+                "target_state_sha256": { "$ref": "#/$defs/sha256" }, "target_unit_sha256": { "$ref": "#/$defs/sha256" }
+              }
+            }
+          }
+        },
+        "authenticated_preimage": {
+          "type": "object", "additionalProperties": false, "required": ["state_sha256", "unit_sha256", "unit_raw_sha256", "events_sha256", "events_length", "event_tail_id"],
+          "properties": {
+            "state_sha256": { "$ref": "#/$defs/sha256" }, "unit_sha256": { "$ref": "#/$defs/sha256" }, "unit_raw_sha256": { "$ref": "#/$defs/sha256" },
+            "events_sha256": { "$ref": "#/$defs/sha256" }, "events_length": { "type": "integer", "minimum": 1 }, "event_tail_id": { "$ref": "#/$defs/id" }
+          }
+        },
+        "replacement_identity_absent": { "const": true }, "current_unit_absent": { "const": true }, "next_ready_unit_absent": { "const": true }, "original_admission_preserved": { "const": true },
+        "binding_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    }
+  }
+}

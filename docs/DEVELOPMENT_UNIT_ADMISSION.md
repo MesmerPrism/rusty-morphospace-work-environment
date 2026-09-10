@@ -69,6 +69,17 @@ chain at every partial and completed transaction boundary.
 candidate in place, create the replacement, or authorize source/build/device
 mutation.
 
+The direct retirement owner is `ProposedUnitRetirement.psm1`. It emits the
+closed `proposed_unit_retirement_receipt.v1` format, including the complete
+admission binding and the exact retirement transaction paths and CAS
+identities. The generic `Invoke-WorkUnitAutomation.ps1 -Action RetireProposed`
+route remains a compatibility adapter and emits the complete legacy
+`work_unit_automation_receipt.v1` envelope. Both formats authenticate the same
+preconditions, state/unit projection, event, and preserved admission chain;
+their receipt and transition-artifact bytes are intentionally different.
+Readers dispatch only those two exact schema identifiers. Relabelled, partial,
+hybrid, or unknown receipts are invalid and grant no validation credit.
+
 A recovered proposal's retirement does not enable reuse of its old preparation.
 Use ordinary preparation from the authenticated idle history to bind the new
 source revision and scope, then admit the new proposed identity. Retired
