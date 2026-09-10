@@ -6,8 +6,10 @@ dependencies, execution order, platform applicability, and the exact Git blob id
 must bind. The focused ownership audit independently enumerates the exact HEAD
 tree and requires every tracked path, including every registered command, to
 have one path-set owner. A path set must trigger a specialized check in
-addition to public-boundary validation. Case collisions and selector-engine
-changes fail closed to Deep; they do not silently widen a Quick run.
+addition to public-boundary validation. Case collisions and changes to the
+affected-validation schemas fail closed to Deep; they do not silently widen a
+Quick run. Selector implementation changes stay affected and execute the full
+bounded selector self-test closure.
 
 External admission remains mandatory and independent of dynamic test
 selection. `.github/workflows/validate.yml` stays in the selector trust root,
@@ -28,9 +30,10 @@ the affected-validation plan. The registry itself is a mandatory protected
 path. It has a distinct owner from the selector engine: a registry-only change
 requires exact static owner admission and selects the bounded ownership and
 workflow-action registry checks, but does not select the cumulative Deep suite.
-The affected-validation schemas and selector implementation remain the Deep
-trust root. This keeps routine additive ownership maintenance reviewable without
-allowing candidate-controlled selection data to authorize itself.
+The affected-validation schemas remain the Deep trust root. Selector
+implementation changes execute the full bounded selector self-test closure.
+This keeps routine additive ownership maintenance reviewable without allowing
+candidate-controlled selection data to authorize itself.
 
 The repository-wide ownership migration covers every exact tracked path without
 `scripts/**`, `Test-*.ps1`, extension-wide, or miscellaneous catch-alls. It
@@ -390,9 +393,12 @@ reliably observe its own absence. See
 trust-root PRs also run the bounded topology and reuse self-tests through the
 same affected-validation executor.
 
-Changes to the affected-validation registry or its schemas require one-time
-Deep leaf admission because that trust root cannot proportionally approve
-itself. The cumulative `Test-WorkEnvironment -Tier Deep` check has the closed
+Changes limited to the affected-validation registry require its exact external
+static owner admission plus the bounded ownership, workflow-action-registry,
+public-boundary, and dependency closure selected by the candidate registry.
+Changes to the affected-validation schemas still require one-time Deep leaf
+admission because those trust-root contracts cannot proportionally approve
+themselves. The cumulative `Test-WorkEnvironment -Tier Deep` check has the closed
 `aggregate_role: work-environment-deep-v1`; no other check identity or command
 may use that role. Trust-root fallback does not run it after selecting all of
 its independently evidenced leaves. It remains selected when its own command
@@ -448,8 +454,8 @@ currently a `Test-WorkEnvironment.ps1` entrypoint. Exact command/import/input cl
 remains the evidence-reuse boundary, so an unchanged authenticated leaf may be
 reused rather than blindly replayed. The runner-fast clean-room fixture is a
 separate exact path class. None of these mapped paths selects
-`Test-WorkEnvironment.ps1` unless the affected-validation trust root itself
-also changed or Deep was explicitly requested.
+`Test-WorkEnvironment.ps1`; the cumulative aggregate is selected only when its
+own registered command or aggregate path changes.
 
 The selector's automation, unmapped-script, owner-command, unknown-path,
 rename, repeat, no-change, and delete scenarios can emit create-new start,

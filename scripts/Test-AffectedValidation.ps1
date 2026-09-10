@@ -3516,9 +3516,19 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     [void](Invoke-TestGit $fixture @('commit', '-m', 'affected validation registry contract'))
     $registryContractHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
     $registryContractPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $routingBaseHead -HeadRevision $registryContractHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
-    Assert-True ($registryContractPlan.selection_mode -ceq 'full-deep' -and @($registryContractPlan.selected_checks.check_id) -ccontains 'workflow-contracts') 'Affected-validation registry change did not retain its one-time Deep workflow-contract coverage.'
-    foreach ($checkId in $selectorTrustRootCheckIds) { Assert-True (@($registryContractPlan.selected_checks.check_id) -ccontains $checkId) "Affected-validation registry change did not retain '$checkId'." }
-    Assert-True (@($registryContractPlan.selected_checks.check_id) -cnotcontains 'work-environment-deep' -and @($registryContractPlan.reason_codes) -ccontains 'trust-root-path-changed' -and @($registryContractPlan.reason_codes) -cnotcontains 'ambiguous-path-mapping') 'Affected-validation registry change did not retain independent-leaf Deep escalation or selected the redundant aggregate.'
+    $expectedRegistryContractChecks = @('affected-validation-ownership') + $workflowConsumerFixtureChecks
+    $actualRegistryContractChecks = @($registryContractPlan.selected_checks.check_id | Sort-Object)
+    Assert-True ($registryContractPlan.selection_mode -ceq 'affected' -and $registryContractPlan.effective_tier -ceq 'standard' -and ($actualRegistryContractChecks -join '|') -ceq (($expectedRegistryContractChecks | Sort-Object) -join '|')) "Affected-validation registry change did not retain its exact bounded ownership/workflow-action/public-boundary closure: mode=$($registryContractPlan.selection_mode) tier=$($registryContractPlan.effective_tier) checks=$($actualRegistryContractChecks -join ',')."
+    Assert-True (@($registryContractPlan.reason_codes) -ccontains 'affected-path-selection' -and @($registryContractPlan.reason_codes | Where-Object { $_ -in @('ambiguous-path-mapping','unmapped-path','trust-root-path-changed') }).Count -eq 0 -and @($registryContractPlan.selected_checks.check_id) -cnotcontains 'work-environment-deep') 'Affected-validation registry change did not retain bounded non-Deep selection reasons.'
+    $affectedSchemaPath = Join-Path $fixture 'schemas/affected-validation-registry-v1.schema.json'
+    Write-Utf8 $affectedSchemaPath ((Get-Content -LiteralPath $affectedSchemaPath -Raw) + "`n")
+    [void](Invoke-TestGit $fixture @('add', 'schemas/affected-validation-registry-v1.schema.json'))
+    [void](Invoke-TestGit $fixture @('commit', '-m', 'affected validation schema contract'))
+    $schemaContractHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
+    $schemaContractPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $registryContractHead -HeadRevision $schemaContractHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+    Assert-True ($schemaContractPlan.selection_mode -ceq 'full-deep' -and @($schemaContractPlan.selected_checks.check_id) -ccontains 'workflow-contracts') 'Affected-validation schema change did not retain its one-time Deep workflow-contract coverage.'
+    foreach ($checkId in $selectorTrustRootCheckIds) { Assert-True (@($schemaContractPlan.selected_checks.check_id) -ccontains $checkId) "Affected-validation schema change did not retain '$checkId'." }
+    Assert-True (@($schemaContractPlan.selected_checks.check_id) -cnotcontains 'work-environment-deep' -and @($schemaContractPlan.reason_codes) -ccontains 'trust-root-path-changed' -and @($schemaContractPlan.reason_codes) -cnotcontains 'ambiguous-path-mapping') 'Affected-validation schema change did not retain independent-leaf Deep escalation or selected the redundant aggregate.'
     $oversizedComponentRegistry = [pscustomobject][ordered]@{checks=@(
         [pscustomobject][ordered]@{check_id='oversized-a';budget_seconds=2000;prerequisite_checks=@()},
         [pscustomobject][ordered]@{check_id='oversized-b';budget_seconds=2000;prerequisite_checks=@('oversized-a')}
@@ -3532,8 +3542,8 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     Assert-AffectedThrows { Get-MorphospaceAffectedValidationSegments -Plan $oversizedComponentPlan -Registry $oversizedComponentRegistry -Platform windows -MaximumSegmentBudgetSeconds 3600 | Out-Null } '*exceeds the hosted segment maximum: 4000 > 3600 seconds*' 'Affected-validation segmentation admitted an irreducible dependency component above the hard maximum.'
     $segmentOwner = @{}
     foreach ($platform in @('linux','windows')) {
-        $platformSelections = @($registryContractPlan.selected_checks | Where-Object { @($_.platforms) -ccontains $platform })
-        $segments = @(Get-MorphospaceAffectedValidationSegments -Plan $registryContractPlan -Registry $contractRegistry -Platform $platform)
+        $platformSelections = @($schemaContractPlan.selected_checks | Where-Object { @($_.platforms) -ccontains $platform })
+        $segments = @(Get-MorphospaceAffectedValidationSegments -Plan $schemaContractPlan -Registry $contractRegistry -Platform $platform)
         Assert-True ($segments.Count -gt 0 -and ($platform -cne 'windows' -or $segments.Count -gt 1)) "Affected-validation $platform Deep partition did not produce its bounded segment set."
         $covered = [Collections.Generic.List[string]]::new()
         foreach ($segment in $segments) {
@@ -3549,7 +3559,7 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
         Assert-True ((Get-MorphospaceCanonicalJsonSha256 -Value @($covered.ToArray() | Sort-Object)) -ceq (Get-MorphospaceCanonicalJsonSha256 -Value @($platformSelections.check_id | Sort-Object))) "Affected-validation $platform segments do not cover the exact platform selection."
     }
     $contractCheckMap = @{}; foreach ($check in @($contractRegistry.checks)) { $contractCheckMap[[string]$check.check_id] = $check }
-    foreach ($selection in @($registryContractPlan.selected_checks)) {
+    foreach ($selection in @($schemaContractPlan.selected_checks)) {
         $id = [string]$selection.check_id
         $executionAfter = if ($null -eq $contractCheckMap[$id].PSObject.Properties['execution_after_checks']) { @() } else { @($contractCheckMap[$id].execution_after_checks) }
         foreach ($platform in @($selection.platforms)) {
@@ -3565,11 +3575,11 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     [void][IO.Directory]::CreateDirectory($segmentMergeRoot)
     try {
         $segmentPlanPath = Join-Path $segmentMergeRoot 'affected-plan.json'
-        Write-Utf8 $segmentPlanPath ((ConvertTo-MorphospaceCanonicalJson -Value $registryContractPlan) + "`n")
-        $segmentInventory = Get-MorphospaceAffectedTreeInventory -RepositoryRoot $fixture -Commit $registryContractHead
+        Write-Utf8 $segmentPlanPath ((ConvertTo-MorphospaceCanonicalJson -Value $schemaContractPlan) + "`n")
+        $segmentInventory = Get-MorphospaceAffectedTreeInventory -RepositoryRoot $fixture -Commit $schemaContractHead
         $segmentRunner = [pscustomobject][ordered]@{os_description='segment-merge-self-test';powershell_version='7.6.0'}
         foreach ($platform in @('linux','windows')) {
-            $platformSegments = @(Get-MorphospaceAffectedValidationSegments -Plan $registryContractPlan -Registry $contractRegistry -Platform $platform)
+            $platformSegments = @(Get-MorphospaceAffectedValidationSegments -Plan $schemaContractPlan -Registry $contractRegistry -Platform $platform)
             $segmentEvidenceRoot = Join-Path $segmentMergeRoot "$platform-segments"
             [void][IO.Directory]::CreateDirectory($segmentEvidenceRoot)
             foreach ($segment in $platformSegments) {
@@ -3580,48 +3590,38 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
                     Assert-True ($null -ne $entry -and [string]$entry.type -ceq 'blob') "Segment merge fixture lacks exact command blob '$commandPath'."
                     $segmentResults.Add([pscustomobject][ordered]@{check_id=[string]$id;command_path=$commandPath;command_blob_sha1=[string]$entry.blob;mode='executed';result='pass';started=$true;failure_kind=$null;exit_code=0;timed_out=$false;output_truncated=$false;post_kill_drain_timed_out=$false;stdout_sha256=('0'*64);stderr_sha256=('0'*64);stdout_bytes=0;stderr_bytes=0})
                 }
-                $segmentEvidence = [pscustomobject][ordered]@{schema='rusty.morphospace.workflow.affected_validation_evidence.v1';repository=[string]$registryContractPlan.repository;base=$registryContractPlan.base;head=$registryContractPlan.head;plan_sha256=[string]$registryContractPlan.plan_sha256;platform=$platform;runner=$segmentRunner;check_results=@($segmentResults.ToArray());result='pass';claims=[pscustomobject][ordered]@{historical_aggregate_reused=$false;acceptance_authority=$false;publication_authority=$false}}
+                $segmentEvidence = [pscustomobject][ordered]@{schema='rusty.morphospace.workflow.affected_validation_evidence.v1';repository=[string]$schemaContractPlan.repository;base=$schemaContractPlan.base;head=$schemaContractPlan.head;plan_sha256=[string]$schemaContractPlan.plan_sha256;platform=$platform;runner=$segmentRunner;check_results=@($segmentResults.ToArray());result='pass';claims=[pscustomobject][ordered]@{historical_aggregate_reused=$false;acceptance_authority=$false;publication_authority=$false}}
                 Write-Utf8 (Join-Path $segmentEvidenceRoot "$([string]$segment.segment_id).json") ((ConvertTo-MorphospaceCanonicalJson -Value $segmentEvidence) + "`n")
             }
             $mergedPath = Join-Path $segmentMergeRoot "$platform-merged.json"
-            $merged = & (Join-Path $repoRoot 'scripts/Merge-AffectedValidationSegments.ps1') -RepositoryRoot $fixture -BaseCommit $routingBaseHead -HeadCommit $registryContractHead -PlanPath $segmentPlanPath -Platform $platform -SegmentEvidenceDirectory $segmentEvidenceRoot -OutPath $mergedPath
-            $expectedPlatformIds = @($registryContractPlan.selected_checks | Where-Object { @($_.platforms) -ccontains $platform } | ForEach-Object { [string]$_.check_id })
+            $merged = & (Join-Path $repoRoot 'scripts/Merge-AffectedValidationSegments.ps1') -RepositoryRoot $fixture -BaseCommit $registryContractHead -HeadCommit $schemaContractHead -PlanPath $segmentPlanPath -Platform $platform -SegmentEvidenceDirectory $segmentEvidenceRoot -OutPath $mergedPath
+            $expectedPlatformIds = @($schemaContractPlan.selected_checks | Where-Object { @($_.platforms) -ccontains $platform } | ForEach-Object { [string]$_.check_id })
             Assert-True ([string]$merged.result -ceq 'pass' -and (Get-MorphospaceCanonicalJsonSha256 -Value @($merged.check_results.check_id)) -ceq (Get-MorphospaceCanonicalJsonSha256 -Value $expectedPlatformIds)) "Affected-validation $platform segment merger did not emit the exact ordered platform union."
             $firstSegmentFile = Get-ChildItem -LiteralPath $segmentEvidenceRoot -File | Sort-Object Name | Select-Object -First 1
             $firstSegmentOriginal = [IO.File]::ReadAllText($firstSegmentFile.FullName,[Text.UTF8Encoding]::new($false,$true))
             $typedDamage = $firstSegmentOriginal | ConvertFrom-Json -Depth 64 -DateKind String
             $typedDamage.check_results[0].failure_kind = 'exit-code'
             Write-Utf8 $firstSegmentFile.FullName ((ConvertTo-MorphospaceCanonicalJson -Value $typedDamage) + "`n")
-            Assert-AffectedThrows { & (Join-Path $repoRoot 'scripts/Merge-AffectedValidationSegments.ps1') -RepositoryRoot $fixture -BaseCommit $routingBaseHead -HeadCommit $registryContractHead -PlanPath $segmentPlanPath -Platform $platform -SegmentEvidenceDirectory $segmentEvidenceRoot -OutPath (Join-Path $segmentMergeRoot "$platform-typed-damaged.json") | Out-Null } '*not valid with the schema*' "Affected-validation $platform segment merger accepted inconsistent typed failure data."
+            Assert-AffectedThrows { & (Join-Path $repoRoot 'scripts/Merge-AffectedValidationSegments.ps1') -RepositoryRoot $fixture -BaseCommit $registryContractHead -HeadCommit $schemaContractHead -PlanPath $segmentPlanPath -Platform $platform -SegmentEvidenceDirectory $segmentEvidenceRoot -OutPath (Join-Path $segmentMergeRoot "$platform-typed-damaged.json") | Out-Null } '*not valid with the schema*' "Affected-validation $platform segment merger accepted inconsistent typed failure data."
             Write-Utf8 $firstSegmentFile.FullName $firstSegmentOriginal
             $combinedStreamDamage=$firstSegmentOriginal|ConvertFrom-Json -Depth 64 -DateKind String
             $combinedStreamDamage.check_results[0].stdout_bytes=6291456;$combinedStreamDamage.check_results[0].stderr_bytes=5242880
             $combinedStreamDamageJson=ConvertTo-MorphospaceCanonicalJson -Value $combinedStreamDamage
             Assert-True (Test-Json -Json $combinedStreamDamageJson -SchemaFile (Join-Path $repoRoot 'schemas/affected-validation-evidence-v1.schema.json') -ErrorAction Stop) "Affected-validation $platform combined-stream damage is not schema-valid."
             Write-Utf8 $firstSegmentFile.FullName ($combinedStreamDamageJson+"`n")
-            Assert-AffectedThrows { & (Join-Path $repoRoot 'scripts/Merge-AffectedValidationSegments.ps1') -RepositoryRoot $fixture -BaseCommit $routingBaseHead -HeadCommit $registryContractHead -PlanPath $segmentPlanPath -Platform $platform -SegmentEvidenceDirectory $segmentEvidenceRoot -OutPath (Join-Path $segmentMergeRoot "$platform-combined-stream-damaged.json") | Out-Null } '*combined stream bound*' "Affected-validation $platform segment merger accepted evidence above the combined stream bound."
+            Assert-AffectedThrows { & (Join-Path $repoRoot 'scripts/Merge-AffectedValidationSegments.ps1') -RepositoryRoot $fixture -BaseCommit $registryContractHead -HeadCommit $schemaContractHead -PlanPath $segmentPlanPath -Platform $platform -SegmentEvidenceDirectory $segmentEvidenceRoot -OutPath (Join-Path $segmentMergeRoot "$platform-combined-stream-damaged.json") | Out-Null } '*combined stream bound*' "Affected-validation $platform segment merger accepted evidence above the combined stream bound."
             Write-Utf8 $firstSegmentFile.FullName $firstSegmentOriginal
             Copy-Item -LiteralPath $firstSegmentFile.FullName -Destination (Join-Path $segmentEvidenceRoot 'unexpected-segment.json')
-            Assert-AffectedThrows { & (Join-Path $repoRoot 'scripts/Merge-AffectedValidationSegments.ps1') -RepositoryRoot $fixture -BaseCommit $routingBaseHead -HeadCommit $registryContractHead -PlanPath $segmentPlanPath -Platform $platform -SegmentEvidenceDirectory $segmentEvidenceRoot -OutPath (Join-Path $segmentMergeRoot "$platform-invented.json") | Out-Null } '*inventory is not exact*' "Affected-validation $platform segment merger accepted invented segment evidence."
+            Assert-AffectedThrows { & (Join-Path $repoRoot 'scripts/Merge-AffectedValidationSegments.ps1') -RepositoryRoot $fixture -BaseCommit $registryContractHead -HeadCommit $schemaContractHead -PlanPath $segmentPlanPath -Platform $platform -SegmentEvidenceDirectory $segmentEvidenceRoot -OutPath (Join-Path $segmentMergeRoot "$platform-invented.json") | Out-Null } '*inventory is not exact*' "Affected-validation $platform segment merger accepted invented segment evidence."
             Remove-Item -LiteralPath (Join-Path $segmentEvidenceRoot 'unexpected-segment.json') -Force
             $orderDamage = $firstSegmentOriginal | ConvertFrom-Json -Depth 64 -DateKind String
-            if(@($orderDamage.check_results).Count-gt1){$orderDamage.check_results=@($orderDamage.check_results[1..($orderDamage.check_results.Count-1)]+$orderDamage.check_results[0]);Write-Utf8 $firstSegmentFile.FullName ((ConvertTo-MorphospaceCanonicalJson -Value $orderDamage)+"`n");Assert-AffectedThrows { & (Join-Path $repoRoot 'scripts/Merge-AffectedValidationSegments.ps1') -RepositoryRoot $fixture -BaseCommit $routingBaseHead -HeadCommit $registryContractHead -PlanPath $segmentPlanPath -Platform $platform -SegmentEvidenceDirectory $segmentEvidenceRoot -OutPath (Join-Path $segmentMergeRoot "$platform-order-damaged.json") | Out-Null } '*coverage or order is invalid*' "Affected-validation $platform segment merger accepted reordered check evidence.";Write-Utf8 $firstSegmentFile.FullName $firstSegmentOriginal}
+            if(@($orderDamage.check_results).Count-gt1){$orderDamage.check_results=@($orderDamage.check_results[1..($orderDamage.check_results.Count-1)]+$orderDamage.check_results[0]);Write-Utf8 $firstSegmentFile.FullName ((ConvertTo-MorphospaceCanonicalJson -Value $orderDamage)+"`n");Assert-AffectedThrows { & (Join-Path $repoRoot 'scripts/Merge-AffectedValidationSegments.ps1') -RepositoryRoot $fixture -BaseCommit $registryContractHead -HeadCommit $schemaContractHead -PlanPath $segmentPlanPath -Platform $platform -SegmentEvidenceDirectory $segmentEvidenceRoot -OutPath (Join-Path $segmentMergeRoot "$platform-order-damaged.json") | Out-Null } '*coverage or order is invalid*' "Affected-validation $platform segment merger accepted reordered check evidence.";Write-Utf8 $firstSegmentFile.FullName $firstSegmentOriginal}
             Remove-Item -LiteralPath $firstSegmentFile.FullName -Force
-            Assert-AffectedThrows { & (Join-Path $repoRoot 'scripts/Merge-AffectedValidationSegments.ps1') -RepositoryRoot $fixture -BaseCommit $routingBaseHead -HeadCommit $registryContractHead -PlanPath $segmentPlanPath -Platform $platform -SegmentEvidenceDirectory $segmentEvidenceRoot -OutPath (Join-Path $segmentMergeRoot "$platform-damaged.json") | Out-Null } '*inventory is not exact*' "Affected-validation $platform segment merger accepted an incomplete evidence inventory."
+            Assert-AffectedThrows { & (Join-Path $repoRoot 'scripts/Merge-AffectedValidationSegments.ps1') -RepositoryRoot $fixture -BaseCommit $registryContractHead -HeadCommit $schemaContractHead -PlanPath $segmentPlanPath -Platform $platform -SegmentEvidenceDirectory $segmentEvidenceRoot -OutPath (Join-Path $segmentMergeRoot "$platform-damaged.json") | Out-Null } '*inventory is not exact*' "Affected-validation $platform segment merger accepted an incomplete evidence inventory."
         }
     } finally {
         if ([IO.Directory]::Exists($segmentMergeRoot)) { Remove-Item -LiteralPath $segmentMergeRoot -Recurse -Force }
     }
-
-    $affectedSchemaPath = Join-Path $fixture 'schemas/affected-validation-registry-v1.schema.json'
-    Write-Utf8 $affectedSchemaPath ((Get-Content -LiteralPath $affectedSchemaPath -Raw) + "`n")
-    [void](Invoke-TestGit $fixture @('add', 'schemas/affected-validation-registry-v1.schema.json'))
-    [void](Invoke-TestGit $fixture @('commit', '-m', 'affected validation schema contract'))
-    $schemaContractHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
-    $schemaContractPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $registryContractHead -HeadRevision $schemaContractHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
-    Assert-True ($schemaContractPlan.selection_mode -ceq 'full-deep' -and @($schemaContractPlan.selected_checks.check_id) -ccontains 'workflow-contracts') 'Affected-validation schema change did not retain its one-time Deep workflow-contract coverage.'
-    foreach ($checkId in $selectorTrustRootCheckIds) { Assert-True (@($schemaContractPlan.selected_checks.check_id) -ccontains $checkId) "Affected-validation schema change did not retain '$checkId'." }
-    Assert-True (@($schemaContractPlan.selected_checks.check_id) -cnotcontains 'work-environment-deep' -and @($schemaContractPlan.reason_codes) -ccontains 'trust-root-path-changed' -and @($schemaContractPlan.reason_codes) -cnotcontains 'ambiguous-path-mapping') 'Affected-validation schema change did not retain independent-leaf Deep escalation or selected the redundant aggregate.'
 
     Write-Utf8 (Join-Path $fixture 'schemas/work-unit-event.schema.json') "{} `n"
     [void](Invoke-TestGit $fixture @('add', 'schemas/work-unit-event.schema.json'))
