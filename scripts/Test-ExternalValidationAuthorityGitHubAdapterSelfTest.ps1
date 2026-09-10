@@ -260,6 +260,12 @@ try {
     $valid=New-TestComment
     Invoke-OwnerCase @($valid) $true "exact signed comment"
     Invoke-OwnerCase @($valid) $true "exact signed comment rerun"
+    $crlfValid=$valid|ConvertTo-Json -Depth 30|ConvertFrom-Json -Depth 30 -DateKind String
+    $crlfValid.body=$crlfValid.body.Replace("`n","`r`n")
+    Invoke-OwnerCase @($crlfValid) $true "CRLF-persisted signed comment"
+    $editedValid=$valid|ConvertTo-Json -Depth 30|ConvertFrom-Json -Depth 30 -DateKind String
+    $editedValid.updated_at=([datetimeoffset]::ParseExact([string]$editedValid.created_at,"yyyy-MM-dd'T'HH:mm:ss'Z'",[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::AssumeUniversal).AddSeconds(1).ToString("yyyy-MM-dd'T'HH:mm:ss'Z'"))
+    Invoke-OwnerCase @($editedValid) $false "edited signed comment"
     Invoke-OwnerCase @($valid,(New-TestComment -Login "Other" -Id 92)) $true "foreign marker cannot suppress owner authorization"
     $busy=@($valid);for($i=1;$i -le 150;$i++){$busy += [ordered]@{id=1000+$i;created_at="2026-08-06T00:00:00Z";updated_at="2026-08-06T00:00:00Z";user=[ordered]@{login="Other"};body="unrelated discussion $i"}};Invoke-OwnerCase $busy $true "more than one public API page of unrelated comments"
     Invoke-OwnerCase @(New-TestComment -Login "Other") $false "wrong owner"

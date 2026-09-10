@@ -549,16 +549,25 @@ if($externalOutcome){
     if(-not(Test-Json -Json ($requestAssessment|ConvertTo-Json -Depth 30) -SchemaFile (Join-Path $trusted "schemas/external-validation-authority-assessment-v1.schema.json") -ErrorAction Stop)){throw "Request assessment failed its schema."}
     if(-not(Test-Json -Json $requestText -SchemaFile (Join-Path $trusted "schemas/external-owner-authorization-request-v1.schema.json") -ErrorAction Stop)){throw "External owner authorization request failed its schema."}
     $comments=@(Get-PublicIssueComments $Repository ([int]$PullRequestNumber) $CommentsJsonPath ([int]$ownerPolicy.maximum_comments) ([int]$ownerPolicy.maximum_response_bytes))
-    $markerComments=@($comments|Where-Object{[string]$_.user.login -ceq [string]$ownerPolicy.owner_login -and [regex]::Matches([string]$_.body,"(?m)^$([regex]::Escape([string]$ownerPolicy.comment_marker))$").Count -gt 0})
+    $markerComments = @(
+        foreach ($comment in $comments) {
+            if ([string]$comment.user.login -cne [string]$ownerPolicy.owner_login) { continue }
+            $frame = Get-ExternalOwnerAuthorizationCommentFrame -Body ([string]$comment.body) -Marker ([string]$ownerPolicy.comment_marker)
+            if ($frame.marker_count -gt 0) {
+                [pscustomobject]@{ comment = $comment; frame = $frame }
+            }
+        }
+    )
     $emitRequest={if($AuthorizationRequestPath){if(-not $AllowLocalTestRemote){throw "Authorization request fixture output is test-only."};[IO.File]::WriteAllText($AuthorizationRequestPath,$requestText,[Text.UTF8Encoding]::new($false))};Write-Output $requestText;throw "External owner authorization is required; the canonical request was emitted."}
     if($markerComments.Count -eq 0){& $emitRequest}
     $validAuthorizations=[Collections.Generic.List[object]]::new()
     foreach($markerComment in $markerComments){
         try{
-            $payloadText=([string]$markerComment.body -split "\r?\n",2)[1]
+            if ($null -eq $markerComment.frame.document_text) { throw "Authorization marker framing is not canonical." }
+            $payloadText = [string]$markerComment.frame.document_text
             $payloadDoc=ConvertFrom-ExternalOwnerJsonStrict -Json $payloadText
             $expected=New-ExternalOwnerAuthorizationPayload $request ([string]$payloadDoc.payload.authorization_id) ([string]$payloadDoc.payload.issued_at) ([string]$payloadDoc.payload.expires_at)
-            $verified=Test-ExternalOwnerAuthorizationComments @($markerComment) $expected $ownerPolicy ([datetimeoffset]::UtcNow) (Join-Path $trusted "schemas/external-owner-authorization-v1.schema.json")
+            $verified=Test-ExternalOwnerAuthorizationComments @($markerComment.comment) $expected $ownerPolicy ([datetimeoffset]::UtcNow) (Join-Path $trusted "schemas/external-owner-authorization-v1.schema.json")
             $validAuthorizations.Add($verified)
         }catch{continue}
     }
