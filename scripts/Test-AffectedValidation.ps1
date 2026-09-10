@@ -2274,7 +2274,7 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value $termina
     $leafBindingCheck = @($fixtureRegistry.checks | Where-Object check_id -ceq 'documentation-links')[0] | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64 -DateKind String
     $leafBindingCheck.check_id = 'leaf-binding-fixture'
     $leafBindingCheck.command_path = 'scripts/Test-AffectedLeafBindingFixture.ps1'
-    $leafBindingCheck.trigger_path_sets = @('leaf-binding-fixture')
+    $leafBindingCheck.trigger_path_sets = @('documentation','leaf-binding-fixture')
     $leafBindingCheck.consume_path_sets = @('leaf-binding-fixture')
     $leafBindingCheck.provides_contracts = @()
     $fixtureRegistry.path_sets = @($fixtureRegistry.path_sets) + @([pscustomobject][ordered]@{path_set_id='leaf-binding-fixture';patterns=@('scripts/Test-AffectedLeafBindingFixture.ps1')})
@@ -2283,7 +2283,6 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value $termina
         $_.trigger_path_sets = @($_.trigger_path_sets) + @('leaf-binding-fixture')
         $_.consume_path_sets = @($_.consume_path_sets) + @('leaf-binding-fixture')
     }
-    $fixtureRegistry.path_sets | Where-Object path_set_id -ceq 'documentation' | ForEach-Object { $_.patterns = @($_.patterns) + @('scripts/Test-AffectedLeafBindingFixture.ps1') }
     # Keep the timeout damage cell bounded while leaving headroom above the
     # executor's 15-second containment/drain contract. The deliberate
     # twenty-five-second command below must still time out under this exact
