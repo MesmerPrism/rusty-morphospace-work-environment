@@ -19,6 +19,10 @@ authenticated transactions, and explicit prerequisites remain strict; retired
 history is an audit concern unless explicitly selected.
 For changes to continuation or recovery, use that runbook's owner transaction
 predicates and validate the next ordinary lifecycle after the recovery itself.
+When the user explicitly activates Full Authority Mode, read
+`<work-environment>/docs/FULL_AUTHORITY_MODE.md`; treat it as revocable
+user-to-agent operational delegation within its declared scope, not as a
+replacement for owner contracts or exact evidence.
 
 ## Design rules
 
@@ -43,5 +47,6 @@ Use the resolved owner runbooks for explicit historical recovery or migration:
 `docs/EXTERNAL_PLANNING_AND_HISTORICAL_RECONSTRUCTION.md`, and the relevant
 linked contract. Route live Quest or ADB/APK work to `$meta-quest-workflow`.
 
-This guidance does not authorize repository mutation, publication, device work,
-credentials, or access to private material.
+This guidance itself does not authorize repository mutation, publication,
+device work, credentials, or access to private material. Follow explicit user
+authorization, including an active Full Authority Mode when present.

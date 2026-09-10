@@ -48,6 +48,16 @@ such a unit can become `accepted`, the nearest repo `AGENTS.md`, a README or
 router doc, and every relevant skill named by the synchronization matrix must
 have complete update records.
 
+A Full Authority Mode contract change updates its canonical detailed runbook,
+the nearest `AGENTS.md` and README/router, autonomous-liveness guidance,
+external validation-authority and workflow-stability wording, and the
+`rusty-morphospace` and `system-engineering` skills. The portable policy never
+records an active user's grant; task-local private continuation state carries
+activation, scope, limits, and revocation provenance.
+After the change is adopted, synchronize the managed copies with
+`scripts/Install-LocalSkills.ps1 -Action Update -SkillId @('rusty-morphospace','system-engineering') -Execute`
+and then run the same command with `-Action Verify` and without `-Execute`.
+
 Validation-authority promotion additionally updates the detailed validation
 runbook. It distinguishes current-delta evidence from scheduled Deep history,
 records artifact/reuse invalidators, and treats `pending-infra` as a

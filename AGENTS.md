@@ -59,6 +59,7 @@ remain authoritative.
 | Ordinary continuation from adopted history | [Current Work Validation](docs/CURRENT_WORK_VALIDATION.md) |
 | Validation selection, affected checks, and evidence | [Validation](docs/VALIDATION.md), [Affected Validation](docs/AFFECTED_VALIDATION.md) |
 | Validator, policy, runner, or schema trust-root change | [External Validation Authority](docs/EXTERNAL_VALIDATION_AUTHORITY.md) |
+| Explicit standing user delegation to the current agent | [Full Authority Mode](docs/FULL_AUTHORITY_MODE.md) |
 | Repository lifecycle, source-only publication, or planned publication accounting | [Repository Lifecycle](docs/REPOSITORY_LIFECYCLE.md), [Source-Only Publication](docs/SOURCE_ONLY_PUBLICATION.md), [Planned Publication Accounting](docs/PLANNED_PUBLICATION_ACCOUNTING.md) |
 | Manual cleanup of task-owned scratch | [Direct Work Packages](docs/DIRECT_WORK_PACKAGES.md#manual-task-owned-scratch-cleanup) |
 | Published or unpublished planning-authority recovery | [External Planning and Historical Reconstruction](docs/EXTERNAL_PLANNING_AND_HISTORICAL_RECONSTRUCTION.md), [Unpublished Planning Authority Materialization](docs/UNPUBLISHED_PLANNING_AUTHORITY_MATERIALIZATION.md) |

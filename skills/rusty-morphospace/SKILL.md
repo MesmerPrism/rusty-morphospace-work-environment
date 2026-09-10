@@ -38,6 +38,12 @@ For manual task-owned scratch cleanup, use the resolved owner's
 scratch does not acquire source checkpoint or archive prerequisites; app-level
 approval denials retain their own authority.
 
+If the user explicitly activates Full Authority Mode, read the resolved
+owner's `docs/FULL_AUTHORITY_MODE.md`. Apply its standing delegation only to
+that task and declared scope until explicit revocation. Preserve exact workflow
+evidence and owner actions; another task or agent cannot infer activation from
+the policy or from earlier approvals.
+
 ## Route the work
 
 Select only the specialist routes that match the task:
@@ -58,5 +64,6 @@ validation policy, workflow, schema, or runner that could validate the same
 candidate. An application, packet, or module contract schema stays on the
 ordinary contract and affected-validation route.
 
-The router does not grant repository mutation, publication, device, credential,
-or private-data authority. Follow the owning workflow and user authorization.
+The router itself does not grant repository mutation, publication, device,
+credential, or private-data authority. Follow the owning workflow and user
+authorization, including an explicitly active Full Authority Mode when present.

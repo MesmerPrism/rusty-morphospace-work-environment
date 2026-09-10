@@ -172,15 +172,22 @@ An in-repository policy cannot permanently authorize changes to itself without
 creating a circular trust claim. Before the last exact approval is consumed,
 maintain a separate owner-controlled policy-evolution gate. The gate must run
 base-owned code, bind the exact base/head commit and tree plus the complete
-path/mode/size/hash set, require a human owner decision after that evidence is
-visible, and emit a typed authorization that is idempotent only for the exact
-candidate evidence within freshness and unusable for another candidate. It is
-consumed and inert after its head becomes an ancestor of trusted base.
+path/mode/size/hash set, require a repository-owner authorization decision
+after that evidence is visible, and emit a typed authorization that is
+idempotent only for the exact candidate evidence within freshness and unusable
+for another candidate. The owner may make that decision directly or explicitly
+delegate it to the active agent through
+[Full Authority Mode](FULL_AUTHORITY_MODE.md); the delegated agent still
+reviews and signs each fresh exact request. The authorization is consumed and
+inert after its head becomes an ancestor of trusted base.
 
-That owner authorization is an external trust root. It is not static
-admission, dynamic validation, acceptance, or publication authority. Never
-replace it with a standing bypass actor, a wildcard approval, candidate code,
-or a temporary removal of branch protection.
+That owner authorization is an external trust root. Full Authority Mode is an
+operational delegation that removes repeated chat prompts; it is not the
+static admission itself. Never replace the exact candidate-bound signature
+with a standing bypass actor, a wildcard approval, candidate code, or a
+temporary removal of branch protection. Static admission, dynamic validation,
+acceptance, and publication remain separate facts even when one delegated
+agent is authorized to decide and perform each step.
 
 For the exact protected-without-base-approval result, emit the canonical typed
 owner request before failing when no authorization comment exists. The request

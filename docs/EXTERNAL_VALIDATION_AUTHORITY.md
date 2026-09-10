@@ -64,18 +64,29 @@ outside the policy being changed. The gate must:
 - execute only base-owned code;
 - display and bind the exact base/head commits and trees plus the complete
   candidate path, Git mode, size, and SHA-256 set;
-- require an explicit repository-owner decision after that evidence exists;
+- require a repository-owner authorization decision after that evidence
+  exists, either directly from the owner or from an agent explicitly delegated
+  that decision under active [Full Authority Mode](FULL_AUTHORITY_MODE.md); the
+  agent must review the exact evidence before issuing the candidate-bound
+  authorization;
 - issue a typed authorization with a unique audit identity that is idempotent
   only for the exact repository, pull request, base, head, tree, artifacts, and
   assessment while it remains fresh;
 - retain `candidate_code_executed: false`, `execution_attested: false`, and
   `publication_authority: false` for the static assessment.
 
-This is disclosed external owner authorization, not self-validation. A
-standing bypass actor, wildcard hash, candidate workflow, temporary ruleset
-removal, or authorization inferred from prior approvals is forbidden. Dynamic
-checks, review, acceptance, and publication remain separate. The portable
-contract and rationale are summarized in
+This is disclosed external owner authorization, including an exact decision
+made under the owner's explicit standing delegation in
+[Full Authority Mode](FULL_AUTHORITY_MODE.md), not self-validation. The mode
+permits an authorized agent to review each fresh request, sign its exact
+request-derived payload using the approved external signing source, and post
+the resulting owner comment without another confirmation. It never substitutes
+for a candidate-bound signature, grants wildcard admission, or changes the
+base-owned verifier. A standing bypass actor, wildcard hash, candidate
+workflow, temporary ruleset removal, or delegation inferred from prior
+approvals remains forbidden. Dynamic checks, review, acceptance, and
+publication remain separate. The portable contract and rationale are
+summarized in
 [Workflow Stability And Feature Throughput](WORKFLOW_STABILITY.md).
 
 ### Durable external owner gate
