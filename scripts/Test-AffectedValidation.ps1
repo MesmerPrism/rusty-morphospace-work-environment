@@ -3,7 +3,7 @@ param(
     [switch]$BatchSelfTestOnly,
     [switch]$GraphSelfTestOnly,
     [switch]$DependencyClosureSelfTestOnly,
-    [ValidateSet('graph-import-closure','dependency-closure','executor-pass-schema','executor-native-failure-damage','executor-native-exit125-damage','executor-forged-terminal-damage','executor-parent-containment-damage','executor-descendant-containment-damage','executor-output-ceiling-damage','executor-timeout-damage','executor-dual-stream-damage','executor-source-integrity-damage','executor-publication-collision-damage','selection-scenarios','trust-self-executor','trust-registry-delta-ownership-obligation','trust-deep-linux-merge-damage','trust-deep-windows-merge-damage','trust-routing-contracts','trust-routing-development-contracts','trust-routing-retirement-contracts','trust-routing-automation-contracts','trust-proportional-mappings','trust-damage-final','affected-reuse-plan-base-admission','affected-reuse-evidence-binding','affected-reuse-run-job-coverage')]
+    [ValidateSet('graph-import-closure','dependency-closure','executor-pass-schema','executor-native-failure-damage','executor-native-exit125-damage','executor-forged-terminal-damage','executor-parent-containment-damage','executor-descendant-containment-damage','executor-output-ceiling-damage','executor-timeout-damage','executor-dual-stream-damage','executor-source-integrity-damage','executor-publication-collision-damage','selection-scenarios','trust-self-executor','trust-phase-artifact-contract','trust-registry-delta-ownership-obligation','trust-deep-linux-merge-damage','trust-deep-windows-merge-damage','trust-routing-contracts','trust-routing-development-contracts','trust-routing-retirement-contracts','trust-routing-automation-contracts','trust-proportional-mappings','trust-damage-final','affected-reuse-plan-base-admission','affected-reuse-evidence-binding','affected-reuse-run-job-coverage')]
     [string]$SelfTestPhase,
     [string]$SelectionScenarioEvidenceRoot
 )
@@ -35,6 +35,7 @@ $selectorPhaseCheckIds = @(
     'affected-selector-executor-publication-collision-damage',
     'affected-selector-selection-scenarios',
     'affected-selector-trust-self-executor',
+    'affected-selector-trust-phase-artifact-contract',
     'affected-selector-trust-registry-delta-ownership-obligation',
     'affected-selector-trust-deep-linux-merge-damage',
     'affected-selector-trust-deep-windows-merge-damage',
@@ -1673,6 +1674,7 @@ $runExecutorPublicationCollisionDamagePhase = $SelfTestPhase -ceq 'executor-publ
 $runExecutorDamagePhase = $runExecutorNativeFailureDamagePhase -or $runExecutorNativeExit125DamagePhase -or $runExecutorForgedTerminalDamagePhase -or $runExecutorParentContainmentDamagePhase -or $runExecutorDescendantContainmentDamagePhase -or $runExecutorOutputCeilingDamagePhase -or $runExecutorTimeoutDamagePhase -or $runExecutorDualStreamDamagePhase -or $runExecutorSourceIntegrityDamagePhase -or $runExecutorPublicationCollisionDamagePhase
 $runSelectionPhase = $SelfTestPhase -ceq 'selection-scenarios'
 $runTrustSelfPhase = $SelfTestPhase -ceq 'trust-self-executor'
+$runTrustPhaseArtifactPhase = $SelfTestPhase -ceq 'trust-phase-artifact-contract'
 $runTrustRegistryPhase = $SelfTestPhase -ceq 'trust-registry-delta-ownership-obligation'
 $runTrustDeepLinuxPhase = $SelfTestPhase -ceq 'trust-deep-linux-merge-damage'
 $runTrustDeepWindowsPhase = $SelfTestPhase -ceq 'trust-deep-windows-merge-damage'
@@ -1686,7 +1688,7 @@ $runReusePlanBasePhase = $SelfTestPhase -ceq 'affected-reuse-plan-base-admission
 $runReuseEvidencePhase = $SelfTestPhase -ceq 'affected-reuse-evidence-binding'
 $runReuseRunCoveragePhase = $SelfTestPhase -ceq 'affected-reuse-run-job-coverage'
 $runReusePhase = $runReusePlanBasePhase -or $runReuseEvidencePhase -or $runReuseRunCoveragePhase
-$runTrustPhase = $runTrustSelfPhase -or $runTrustRegistryPhase -or $runTrustDeepLinuxPhase -or $runTrustDeepWindowsPhase -or $runTrustRoutingPhase -or $runTrustRoutingDevelopmentPhase -or $runTrustRoutingRetirementPhase -or $runTrustRoutingAutomationPhase -or $runTrustMappingsPhase -or $runTrustDamagePhase
+$runTrustPhase = $runTrustSelfPhase -or $runTrustPhaseArtifactPhase -or $runTrustRegistryPhase -or $runTrustDeepLinuxPhase -or $runTrustDeepWindowsPhase -or $runTrustRoutingPhase -or $runTrustRoutingDevelopmentPhase -or $runTrustRoutingRetirementPhase -or $runTrustRoutingAutomationPhase -or $runTrustMappingsPhase -or $runTrustDamagePhase
 $phaseRoot = [Environment]::GetEnvironmentVariable('RUSTY_AFFECTED_VALIDATION_PHASE_ROOT','Process')
 
 if ($runReusePhase) {
@@ -1882,7 +1884,7 @@ if ($runFullSelector -or $runExecutorPassPhase) {
     $phaseProjectionSchema = Read-MorphospaceProtocolJson -Path (Join-Path $repoRoot 'schemas/affected-validation-self-test-dependency-projection-v1.schema.json')
     $checkEvidenceSchema = Read-MorphospaceProtocolJson -Path (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json')
     $phaseRunnerSchema = $phaseReceiptSchema.properties.binding.properties.runner
-    $expectedPhaseIds = @('affected-reuse-evidence-binding','affected-reuse-plan-base-admission','affected-reuse-run-job-coverage','dependency-closure','executor-descendant-containment-damage','executor-dual-stream-damage','executor-forged-terminal-damage','executor-native-exit125-damage','executor-native-failure-damage','executor-output-ceiling-damage','executor-parent-containment-damage','executor-pass-schema','executor-publication-collision-damage','executor-source-integrity-damage','executor-timeout-damage','graph-import-closure','selection-scenarios','trust-damage-final','trust-deep-linux-merge-damage','trust-deep-windows-merge-damage','trust-proportional-mappings','trust-registry-delta-ownership-obligation','trust-routing-automation-contracts','trust-routing-contracts','trust-routing-development-contracts','trust-routing-retirement-contracts','trust-self-executor')
+    $expectedPhaseIds = @('affected-reuse-evidence-binding','affected-reuse-plan-base-admission','affected-reuse-run-job-coverage','dependency-closure','executor-descendant-containment-damage','executor-dual-stream-damage','executor-forged-terminal-damage','executor-native-exit125-damage','executor-native-failure-damage','executor-output-ceiling-damage','executor-parent-containment-damage','executor-pass-schema','executor-publication-collision-damage','executor-source-integrity-damage','executor-timeout-damage','graph-import-closure','selection-scenarios','trust-damage-final','trust-deep-linux-merge-damage','trust-deep-windows-merge-damage','trust-phase-artifact-contract','trust-proportional-mappings','trust-registry-delta-ownership-obligation','trust-routing-automation-contracts','trust-routing-contracts','trust-routing-development-contracts','trust-routing-retirement-contracts','trust-self-executor')
     $topLevelPhaseIds = @($phaseReceiptSchema.properties.phase_id.enum)
     $bindingPhaseIds = @($phaseReceiptSchema.properties.binding.properties.phase_id.enum)
     [Array]::Sort($topLevelPhaseIds,[StringComparer]::Ordinal)
@@ -1960,7 +1962,7 @@ if ($runFullSelector -or $runExecutorPassPhase) {
     foreach($trustCheckId in $selectorTrustRootCheckIds){
         Assert-True ([string]$phaseCompiledRegistry.checks[$trustCheckId].cache_policy -ceq 'exact-host') "Deterministic selector trust check '$trustCheckId' is not eligible for exact-host reuse."
     }
-    $selectorPhaseCheckIds=@('affected-selector-graph-import-closure','affected-selector-dependency-closure','affected-selector-executor-pass-schema','affected-selector-executor-native-failure-damage','affected-selector-executor-native-exit125-damage','affected-selector-executor-forged-terminal-damage','affected-selector-executor-parent-containment-damage','affected-selector-executor-descendant-containment-damage','affected-selector-executor-output-ceiling-damage','affected-selector-executor-timeout-damage','affected-selector-executor-dual-stream-damage','affected-selector-executor-source-integrity-damage','affected-selector-executor-publication-collision-damage','affected-selector-selection-scenarios','affected-selector-trust-self-executor','affected-selector-trust-registry-delta-ownership-obligation','affected-selector-trust-deep-linux-merge-damage','affected-selector-trust-deep-windows-merge-damage','affected-selector-trust-routing-contracts','affected-selector-trust-routing-development-contracts','affected-selector-trust-routing-retirement-contracts','affected-selector-trust-routing-automation-contracts','affected-selector-trust-proportional-mappings','affected-selector-trust-damage-final','affected-selector-reuse-plan-base-admission','affected-selector-reuse-evidence-binding','affected-selector-reuse-run-job-coverage','affected-selector-selftest','affected-selector-complete-selftest')
+    $selectorPhaseCheckIds=@('affected-selector-graph-import-closure','affected-selector-dependency-closure','affected-selector-executor-pass-schema','affected-selector-executor-native-failure-damage','affected-selector-executor-native-exit125-damage','affected-selector-executor-forged-terminal-damage','affected-selector-executor-parent-containment-damage','affected-selector-executor-descendant-containment-damage','affected-selector-executor-output-ceiling-damage','affected-selector-executor-timeout-damage','affected-selector-executor-dual-stream-damage','affected-selector-executor-source-integrity-damage','affected-selector-executor-publication-collision-damage','affected-selector-selection-scenarios','affected-selector-trust-self-executor','affected-selector-trust-phase-artifact-contract','affected-selector-trust-registry-delta-ownership-obligation','affected-selector-trust-deep-linux-merge-damage','affected-selector-trust-deep-windows-merge-damage','affected-selector-trust-routing-contracts','affected-selector-trust-routing-development-contracts','affected-selector-trust-routing-retirement-contracts','affected-selector-trust-routing-automation-contracts','affected-selector-trust-proportional-mappings','affected-selector-trust-damage-final','affected-selector-reuse-plan-base-admission','affected-selector-reuse-evidence-binding','affected-selector-reuse-run-job-coverage','affected-selector-selftest','affected-selector-complete-selftest')
     $phaseDependencyInput=$null
     foreach($phaseCheckId in $selectorPhaseCheckIds){
         $phaseCheck=$phaseCompiledRegistry.checks[$phaseCheckId]
@@ -1968,7 +1970,7 @@ if ($runFullSelector -or $runExecutorPassPhase) {
         $candidateInput=Get-MorphospaceCanonicalJsonSha256 -Value ([pscustomobject][ordered]@{command_path=[string]$phaseCheck.command_path;consume_path_sets=@($phaseCheck.consume_path_sets|ForEach-Object{[string]$_})})
         if($null-eq$phaseDependencyInput){$phaseDependencyInput=$candidateInput}else{Assert-True ($candidateInput-ceq$phaseDependencyInput) "Affected phase '$phaseCheckId' does not share the exact projected closure input."}
     }
-    $addedTerminalCheckIds=@('affected-selector-trust-registry-delta-ownership-obligation','affected-selector-trust-deep-linux-merge-damage','affected-selector-trust-deep-windows-merge-damage','affected-selector-trust-routing-development-contracts','affected-selector-trust-routing-retirement-contracts','affected-selector-trust-routing-automation-contracts','affected-selector-reuse-plan-base-admission','affected-selector-reuse-evidence-binding','affected-selector-reuse-run-job-coverage')
+    $addedTerminalCheckIds=@('affected-selector-trust-phase-artifact-contract','affected-selector-trust-registry-delta-ownership-obligation','affected-selector-trust-deep-linux-merge-damage','affected-selector-trust-deep-windows-merge-damage','affected-selector-trust-routing-development-contracts','affected-selector-trust-routing-retirement-contracts','affected-selector-trust-routing-automation-contracts','affected-selector-reuse-plan-base-admission','affected-selector-reuse-evidence-binding','affected-selector-reuse-run-job-coverage')
     $completeVerifier=$phaseCompiledRegistry.checks['affected-selector-complete-selftest']
     Assert-True (($completeVerifier.arguments -join ',') -ceq '-VerifyComplete' -and @($completeVerifier.prerequisite_checks) -ccontains 'affected-selector-selftest') 'Complete affected-phase verifier does not retain the legacy passing-terminal verifier.'
     foreach($addedTerminalCheckId in $addedTerminalCheckIds){
@@ -2319,6 +2321,16 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value $termina
     $leafBindingCheck.trigger_path_sets = @('documentation','leaf-binding-fixture')
     $leafBindingCheck.consume_path_sets = @('leaf-binding-fixture')
     $leafBindingCheck.provides_contracts = @()
+    $phaseIntegrationCheck = @($fixtureRegistry.checks | Where-Object check_id -ceq 'affected-selector-trust-phase-artifact-contract')[0] | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64 -DateKind String
+    $phaseIntegrationCheck.check_id = 'phase-artifact-integration-fixture'
+    $phaseIntegrationCheck.arguments = @('-Phase','trust-phase-artifact-contract','-BudgetSeconds','30')
+    $phaseIntegrationCheck.trigger_path_sets = @('phase-artifact-integration-fixture')
+    $phaseIntegrationCheck.consume_path_sets = @('phase-artifact-integration-fixture')
+    $phaseIntegrationCheck.prerequisite_checks = @('public-boundary')
+    $phaseIntegrationCheck.provides_contracts = @('phase-artifact-integration-fixture')
+    $phaseIntegrationCheck.consumes_contracts = @()
+    $phaseIntegrationCheck.authority_class = 'ordinary'
+    $phaseIntegrationCheck.budget_seconds = 45
     $fixtureRegistry.path_sets = @($fixtureRegistry.path_sets) + @([pscustomobject][ordered]@{path_set_id='leaf-binding-fixture';patterns=@('scripts/Test-AffectedLeafBindingFixture.ps1')})
     $fixtureRegistry.path_sets = @($fixtureRegistry.path_sets) + @([pscustomobject][ordered]@{path_set_id='fixture-support';patterns=@('schemas/DocumentationLinksInput.schema.json','schemas/FallbackDynamicInput.schema.json','scripts/FallbackDynamicTarget.ps1','scripts/lib/DocumentationLinksDependency.psm1')})
     $fixtureRegistry.checks = @($fixtureRegistry.checks) + @($leafBindingCheck)
@@ -3473,8 +3485,8 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     }
 
     if ($runFullSelector -or $runTrustPhase) {
-    if ($runFullSelector -or $runTrustSelfPhase) {
-    $trustSegmentClock = [Diagnostics.Stopwatch]::StartNew()
+    if ($runFullSelector -or $runTrustPhaseArtifactPhase) {
+    $phaseArtifactClock = [Diagnostics.Stopwatch]::StartNew()
     $fixtureContractPhase = 'trust-self-executor'
     $fixtureContractCheckId = 'affected-selector-trust-self-executor'
     $fixtureContractPlanSha256 = 'a' * 64
@@ -3518,6 +3530,7 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
             $fixtureContractEnvironmentBefore[[string]$entry.Key] = [Environment]::GetEnvironmentVariable([string]$entry.Key,'Process')
             [Environment]::SetEnvironmentVariable([string]$entry.Key,[string]$entry.Value,'Process')
         }
+        Assert-True ($fixtureContractPhase -cne $SelfTestPhase) 'Phase-runner artifact contract attempted to launch its own phase recursively.'
         $fixtureContractOutput = @(& (Get-Process -Id $PID).Path -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $fixture $fixtureContractCommandPath) -Phase $fixtureContractPhase -BudgetSeconds 75 2>&1)
         Assert-True ($LASTEXITCODE -eq 0) "Schema-valid fixture phase runner failed: $($fixtureContractOutput -join ' ')"
     } finally {
@@ -3542,28 +3555,96 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     } @($fixtureContractArtifacts.ToArray()) $fixtureContractPhase $fixtureContractExpectedBinding $fixtureContractExpectedSource $fixtureContractPlanSha256 (Join-Path $repoRoot 'schemas/affected-validation-self-test-phase-receipt-v1.schema.json'))
     Remove-Item -LiteralPath $fixtureContractProjectionPath -Force
     Remove-Item -LiteralPath $fixtureContractPhaseRoot -Recurse -Force
-    Write-Host 'Schema-valid fixture phase receipt and artifact-set contract passed.'
+    Write-Host "Schema-valid fixture phase receipt and artifact-set contract passed in $([long]$phaseArtifactClock.Elapsed.TotalMilliseconds)ms."
+    }
+
+    if ($runFullSelector -or $runTrustSelfPhase) {
+    $trustSegmentClock = [Diagnostics.Stopwatch]::StartNew()
     Write-Utf8 (Join-Path $fixture 'scripts/Test-AffectedValidation.ps1') "# selector changed`n"
     [void](Invoke-TestGit $fixture @('add', 'scripts/Test-AffectedValidation.ps1'))
     [void](Invoke-TestGit $fixture @('commit', '-m', 'selector self change'))
     $selectorHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
     $selectorPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $deleteHead -HeadRevision $selectorHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
     Assert-True ($selectorPlan.selection_mode -ceq 'affected') 'Selector self-change did not retain current-delta selection.'
-    Assert-True (@($selectorPlan.selected_checks.check_id) -ccontains 'affected-selector-selftest') 'Selector self-change did not retain the selector self-test.'
     Assert-True (@($selectorPlan.selected_checks.check_id) -cnotcontains 'work-environment-deep') 'Selector self-change incorrectly selected the historical Deep aggregate.'
     Assert-True (@($selectorPlan.reason_codes) -cnotcontains 'trust-root-path-changed') 'Selector self-change incorrectly recorded a Deep-escalation reason.'
-    foreach ($selfTestId in $selectorTrustRootCheckIds) { Assert-True (@($selectorPlan.selected_checks.check_id) -ccontains $selfTestId) "Selector trust-root change does not execute '$selfTestId' through the PR-owned selection path." }
-    Write-Utf8 $planPath ((ConvertTo-MorphospaceCanonicalJson -Value $selectorPlan) + "`n")
-    $selectorEvidence = & (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $deleteHead -HeadCommit $selectorHead -PlanPath $planPath -Platform linux -OutPath (Join-Path $fixture 'selector-evidence.json')
-    Assert-True ($selectorEvidence.result -ceq 'pass') 'Actual bounded executor did not complete the trust-root self-test closure.'
-    foreach ($selfTestId in $selectorTrustRootCheckIds) { Assert-True (@($selectorEvidence.check_results.check_id) -ccontains $selfTestId) "Actual bounded executor did not run '$selfTestId'." }
+    $expectedSelectorCheckIds=@($selectorTrustRootCheckIds+@('affected-validation-ownership','public-boundary')|Sort-Object)
+    $actualSelectorCheckIds=@($selectorPlan.selected_checks.check_id|Sort-Object)
+    Assert-True (($actualSelectorCheckIds-join'|')-ceq($expectedSelectorCheckIds-join'|')) "Selector self-change did not retain the exact complete trust-root check set: $($actualSelectorCheckIds-join',')."
+    foreach($selectedCheckId in $actualSelectorCheckIds){
+        $selectedRegistryCheck=@($fixtureRegistry.checks|Where-Object check_id -ceq $selectedCheckId)[0]
+        Assert-True (@($selectedRegistryCheck.platforms)-ccontains'linux') "Selector self-change selected non-Linux check '$selectedCheckId'."
+        foreach($prerequisiteCheckId in @($selectedRegistryCheck.prerequisite_checks)){Assert-True ($actualSelectorCheckIds-ccontains[string]$prerequisiteCheckId) "Selector self-change omitted prerequisite '$prerequisiteCheckId' for '$selectedCheckId'."}
+        foreach($contractId in @($selectedRegistryCheck.consumes_contracts)){Assert-True (@($fixtureRegistry.checks|Where-Object{@($_.provides_contracts)-ccontains[string]$contractId-and$actualSelectorCheckIds-ccontains[string]$_.check_id}).Count-gt0) "Selector self-change omitted provider for '$selectedCheckId' contract '$contractId'."}
+    }
+    Write-Host "Exact full selector closure passed without execution."
+    $phaseIntegrationFixture=Join-Path $fixture 'phase-integration-repository'
+    try {
+        foreach($directory in @('scripts','scripts/lib','schemas','manifests')){[void][IO.Directory]::CreateDirectory((Join-Path $phaseIntegrationFixture $directory))}
+        Write-Utf8 (Join-Path $phaseIntegrationFixture 'scripts/Invoke-AffectedValidationSelfTestPhase.ps1') $fixturePhaseRunner
+        Write-Utf8 (Join-Path $phaseIntegrationFixture 'scripts/Test-PublicBoundary.ps1') "'public boundary fixture'`n"
+        foreach($runnerSourcePath in @(
+            'scripts/Invoke-AffectedValidation.ps1',
+            'scripts/lib/MorphospaceAffectedValidation.psm1',
+            'scripts/lib/MorphospaceAffectedValidationCheckEvidence.psm1',
+            'scripts/lib/MorphospaceAffectedValidationDependencyClosure.psm1',
+            'scripts/lib/MorphospaceProtocolCommon.psm1'
+        )){Copy-Item -LiteralPath (Join-Path $repoRoot $runnerSourcePath) -Destination (Join-Path $phaseIntegrationFixture $runnerSourcePath)}
+        foreach($schemaName in @(
+            'affected-validation-check-evidence-v1.schema.json',
+            'affected-validation-check-inventory-v1.schema.json',
+            'affected-validation-plan-v1.schema.json',
+            'affected-validation-plan-v2.schema.json',
+            'affected-validation-registry-v1.schema.json',
+            'affected-validation-self-test-dependency-projection-v1.schema.json',
+            'affected-validation-self-test-phase-receipt-v1.schema.json',
+            'development-unit-admission-v1.schema.json',
+            'proposed-unit-retirement-receipt-v1.schema.json'
+        )){Copy-Item -LiteralPath (Join-Path $repoRoot "schemas/$schemaName") -Destination (Join-Path $phaseIntegrationFixture "schemas/$schemaName")}
+        $phasePublicCheck=@($registry.checks|Where-Object check_id -ceq 'public-boundary')[0]|ConvertTo-Json -Depth 64|ConvertFrom-Json -Depth 64 -DateKind String
+        $phasePublicCheck.trigger_path_sets=@('phase-artifact-integration-fixture')
+        $phasePublicCheck.consume_path_sets=@('phase-artifact-integration-fixture')
+        $phasePublicCheck.prerequisite_checks=@()
+        $phasePublicCheck.provides_contracts=@('public-boundary')
+        $phasePublicCheck.consumes_contracts=@()
+        $phaseIntegrationRegistry=$registry|ConvertTo-Json -Depth 64|ConvertFrom-Json -Depth 64 -DateKind String
+        $phaseIntegrationRegistry.dependency_declarations=@()
+        $phaseIntegrationRegistry.path_sets=@([pscustomobject][ordered]@{path_set_id='phase-artifact-integration-fixture';patterns=@('scripts/PhaseArtifactIntegrationInput.txt')})
+        $phaseIntegrationRegistry.checks=@($phasePublicCheck,$phaseIntegrationCheck)
+        $phaseIntegrationRegistry.always_run_check_ids=@()
+        $phaseIntegrationRegistry.deep_escalation_path_sets=@()
+        Write-Utf8 (Join-Path $phaseIntegrationFixture 'manifests/affected-validation-registry.json') ((ConvertTo-MorphospaceCanonicalJson -Value $phaseIntegrationRegistry)+"`n")
+        [void](Invoke-TestGit $phaseIntegrationFixture @('init','--initial-branch=main'))
+        [void](Invoke-TestGit $phaseIntegrationFixture @('config','user.name','Affected Validation Test'))
+        [void](Invoke-TestGit $phaseIntegrationFixture @('config','user.email','affected-validation@example.invalid'))
+        [void](Invoke-TestGit $phaseIntegrationFixture @('add','.'))
+        [void](Invoke-TestGit $phaseIntegrationFixture @('commit','-m','bounded phase integration base'))
+        $phaseIntegrationBase=Invoke-TestGit $phaseIntegrationFixture @('rev-parse','HEAD')
+        Write-Utf8 (Join-Path $phaseIntegrationFixture 'scripts/PhaseArtifactIntegrationInput.txt') "phase artifact integration`n"
+        [void](Invoke-TestGit $phaseIntegrationFixture @('add','scripts/PhaseArtifactIntegrationInput.txt'))
+        [void](Invoke-TestGit $phaseIntegrationFixture @('commit','-m','bounded phase artifact integration'))
+        $phaseIntegrationHead=Invoke-TestGit $phaseIntegrationFixture @('rev-parse','HEAD')
+        $phaseIntegrationPlan=Resolve-MorphospaceAffectedValidation -RepositoryRoot $phaseIntegrationFixture -BaseRevision $phaseIntegrationBase -HeadRevision $phaseIntegrationHead -RegistryPath (Join-Path $phaseIntegrationFixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+        $phaseIntegrationCheckIds=@($phaseIntegrationPlan.selected_checks.check_id|Sort-Object)
+        Assert-True (($phaseIntegrationCheckIds-join'|')-ceq'phase-artifact-integration-fixture|public-boundary') "Bounded phase integration selected an unexpected check set: $($phaseIntegrationCheckIds-join',')."
+        Write-Host "Bounded phase integration selection passed; invoking production executor."
+        Write-Utf8 $planPath ((ConvertTo-MorphospaceCanonicalJson -Value $phaseIntegrationPlan)+"`n")
+        $phaseIntegrationCheckRoot=Join-Path $phaseIntegrationFixture 'phase-check-evidence'
+        $phaseIntegrationEvidence=& (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $phaseIntegrationFixture -BaseCommit $phaseIntegrationBase -HeadCommit $phaseIntegrationHead -PlanPath $planPath -Platform linux -OutPath (Join-Path $phaseIntegrationFixture 'phase-integration-evidence.json') -CheckEvidenceDirectory $phaseIntegrationCheckRoot
+        $phaseIntegrationResult=@($phaseIntegrationEvidence.check_results|Where-Object check_id -ceq 'phase-artifact-integration-fixture')
+        $phaseIntegrationReceiptFiles=@(Get-ChildItem -LiteralPath $phaseIntegrationCheckRoot -Filter receipt.json -File -Recurse|Where-Object{(Read-MorphospaceProtocolJson -Path $_.FullName).binding.check_id -ceq 'phase-artifact-integration-fixture'})
+        Assert-True ($phaseIntegrationReceiptFiles.Count-eq1) 'Bounded production executor did not emit one exact phase-producing leaf receipt.'
+        $phaseIntegrationReceipt=Read-MorphospaceProtocolJson -Path $phaseIntegrationReceiptFiles[0].FullName
+        $expectedPhaseArtifacts=@('trust-phase-artifact-contract.start.json','trust-phase-artifact-contract.stdout.bin','trust-phase-artifact-contract.stderr.bin','trust-phase-artifact-contract.terminal.json')
+        Assert-True ($phaseIntegrationEvidence.result-ceq'pass'-and[string]$phaseIntegrationEvidence.head.commit-ceq$phaseIntegrationHead-and(@($phaseIntegrationEvidence.check_results.check_id|Sort-Object)-join'|')-ceq'phase-artifact-integration-fixture|public-boundary'-and$phaseIntegrationResult.Count-eq1-and[string]$phaseIntegrationReceipt.binding.check_id-ceq'phase-artifact-integration-fixture'-and[string]$phaseIntegrationReceipt.source.head.commit-ceq$phaseIntegrationHead-and(@($phaseIntegrationReceipt.artifacts.path|Sort-Object)-join'|')-ceq(@($expectedPhaseArtifacts|Sort-Object)-join'|')) 'Bounded production executor did not preserve exact prerequisite, phase identity, source, and artifact evidence.'
+    } finally { if([IO.Directory]::Exists($phaseIntegrationFixture)){Remove-Item -LiteralPath $phaseIntegrationFixture -Recurse -Force} }
     Write-Utf8 (Join-Path $fixture 'scripts/Test-AffectedValidationInfrastructure.ps1') "# changed infrastructure classifier`n"
     [void](Invoke-TestGit $fixture @('add', 'scripts/Test-AffectedValidationInfrastructure.ps1'))
     [void](Invoke-TestGit $fixture @('commit', '-m', 'infrastructure classifier'))
     $infrastructureHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
     $infrastructurePlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $selectorHead -HeadRevision $infrastructureHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
     Assert-True ($infrastructurePlan.selection_mode -ceq 'affected' -and @($infrastructurePlan.selected_checks.check_id) -ccontains 'affected-selector-selftest') 'Infrastructure classifier change did not retain bounded selector coverage.'
-    Write-Host "Trust self/executor checks passed in $([long]$trustSegmentClock.Elapsed.TotalMilliseconds)ms."
+    Write-Host "Trust selector completeness and bounded executor integration passed in $([long]$trustSegmentClock.Elapsed.TotalMilliseconds)ms."
     }
 
     if ($runFullSelector -or $runTrustRegistryPhase -or $runTrustDeepLinuxPhase -or $runTrustDeepWindowsPhase -or $runTrustRoutingPhase -or $runTrustRoutingDevelopmentPhase -or $runTrustRoutingRetirementPhase -or $runTrustRoutingAutomationPhase) {

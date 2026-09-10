@@ -1,7 +1,7 @@
 [CmdletBinding(DefaultParameterSetName='Phase')]
 param(
     [Parameter(Mandatory=$true,ParameterSetName='Phase')]
-    [ValidateSet('graph-import-closure','dependency-closure','executor-pass-schema','executor-native-failure-damage','executor-native-exit125-damage','executor-forged-terminal-damage','executor-parent-containment-damage','executor-descendant-containment-damage','executor-output-ceiling-damage','executor-timeout-damage','executor-dual-stream-damage','executor-source-integrity-damage','executor-publication-collision-damage','selection-scenarios','trust-self-executor','trust-registry-delta-ownership-obligation','trust-deep-linux-merge-damage','trust-deep-windows-merge-damage','trust-routing-contracts','trust-routing-development-contracts','trust-routing-retirement-contracts','trust-routing-automation-contracts','trust-proportional-mappings','trust-damage-final','affected-reuse-plan-base-admission','affected-reuse-evidence-binding','affected-reuse-run-job-coverage')]
+    [ValidateSet('graph-import-closure','dependency-closure','executor-pass-schema','executor-native-failure-damage','executor-native-exit125-damage','executor-forged-terminal-damage','executor-parent-containment-damage','executor-descendant-containment-damage','executor-output-ceiling-damage','executor-timeout-damage','executor-dual-stream-damage','executor-source-integrity-damage','executor-publication-collision-damage','selection-scenarios','trust-self-executor','trust-phase-artifact-contract','trust-registry-delta-ownership-obligation','trust-deep-linux-merge-damage','trust-deep-windows-merge-damage','trust-routing-contracts','trust-routing-development-contracts','trust-routing-retirement-contracts','trust-routing-automation-contracts','trust-proportional-mappings','trust-damage-final','affected-reuse-plan-base-admission','affected-reuse-evidence-binding','affected-reuse-run-job-coverage')]
     [string]$Phase,
     [Parameter(Mandatory=$true,ParameterSetName='Phase')][ValidateRange(1,600)][int]$BudgetSeconds,
     [Parameter(Mandatory=$true,ParameterSetName='Verify')][switch]$Verify,
@@ -16,7 +16,7 @@ Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1') -Fo
 Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceAffectedValidation.psm1') -Force
 
 $legacyPhaseIds = @('graph-import-closure','dependency-closure','executor-pass-schema','executor-native-failure-damage','executor-native-exit125-damage','executor-forged-terminal-damage','executor-parent-containment-damage','executor-descendant-containment-damage','executor-output-ceiling-damage','executor-timeout-damage','executor-dual-stream-damage','executor-source-integrity-damage','executor-publication-collision-damage','selection-scenarios','trust-self-executor','trust-routing-contracts','trust-proportional-mappings','trust-damage-final')
-$phaseIds = @($legacyPhaseIds + @('trust-registry-delta-ownership-obligation','trust-deep-linux-merge-damage','trust-deep-windows-merge-damage','trust-routing-development-contracts','trust-routing-retirement-contracts','trust-routing-automation-contracts','affected-reuse-plan-base-admission','affected-reuse-evidence-binding','affected-reuse-run-job-coverage'))
+$phaseIds = @($legacyPhaseIds + @('trust-phase-artifact-contract','trust-registry-delta-ownership-obligation','trust-deep-linux-merge-damage','trust-deep-windows-merge-damage','trust-routing-development-contracts','trust-routing-retirement-contracts','trust-routing-automation-contracts','affected-reuse-plan-base-admission','affected-reuse-evidence-binding','affected-reuse-run-job-coverage'))
 $checkIds = [ordered]@{
     'graph-import-closure'='affected-selector-graph-import-closure'
     'dependency-closure'='affected-selector-dependency-closure'
@@ -33,6 +33,7 @@ $checkIds = [ordered]@{
     'executor-publication-collision-damage'='affected-selector-executor-publication-collision-damage'
     'selection-scenarios'='affected-selector-selection-scenarios'
     'trust-self-executor'='affected-selector-trust-self-executor'
+    'trust-phase-artifact-contract'='affected-selector-trust-phase-artifact-contract'
     'trust-registry-delta-ownership-obligation'='affected-selector-trust-registry-delta-ownership-obligation'
     'trust-deep-linux-merge-damage'='affected-selector-trust-deep-linux-merge-damage'
     'trust-deep-windows-merge-damage'='affected-selector-trust-deep-windows-merge-damage'
@@ -261,17 +262,19 @@ function Invoke-BindingCompatibilitySelfTest {
         [IO.File]::WriteAllBytes((Join-Path $fixture 'complete.stdout.bin'),[byte[]]@())
         [IO.File]::WriteAllBytes((Join-Path $fixture 'complete.stderr.bin'),[byte[]]@())
         $emptySha=Get-Sha256 ([byte[]]@())
-        $completePhaseIds=@('trust-self-executor','trust-registry-delta-ownership-obligation')
-        $completeCheckIds=[ordered]@{'trust-self-executor'='affected-selector-trust-self-executor';'trust-registry-delta-ownership-obligation'='affected-selector-trust-registry-delta-ownership-obligation'}
+        $completePhaseIds=@('trust-self-executor','trust-phase-artifact-contract','trust-registry-delta-ownership-obligation')
+        $completeCheckIds=[ordered]@{'trust-self-executor'='affected-selector-trust-self-executor';'trust-phase-artifact-contract'='affected-selector-trust-phase-artifact-contract';'trust-registry-delta-ownership-obligation'='affected-selector-trust-registry-delta-ownership-obligation'}
         function Write-CompleteTerminal([string]$PhaseId,[string]$Result) {
             $completeBinding=Get-Binding -PhaseId $PhaseId -CheckId ([string]$completeCheckIds[$PhaseId]) -Base $base -Head $current -Tree $currentTree -Plan ('6'*64) -Platform linux -Manifest $manifest -Runner $runner
             $terminal=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.affected_validation_self_test_phase_receipt.v1';phase_id=$PhaseId;binding=$completeBinding;binding_sha256=Get-MorphospaceCanonicalJsonSha256 -Value $completeBinding;started_at='2026-09-10T12:00:00Z';ended_at='2026-09-10T12:00:01Z';budget_seconds=1;elapsed_ms=1;result=$Result;child=[pscustomobject][ordered]@{started=$true;exit_code=$(if($Result-ceq'pass'){0}else{1});timed_out=$false;post_kill_drain_timed_out=$false;stdout=[pscustomobject][ordered]@{path='complete.stdout.bin';bytes=0;sha256=$emptySha};stderr=[pscustomobject][ordered]@{path='complete.stderr.bin';bytes=0;sha256=$emptySha}};outputs=@();claims=[pscustomobject][ordered]@{phase_only=$true;candidate_admission=$false;acceptance_authority=$false;publication_authority=$false;device_used=$false}}
             [void](Write-FixtureProjection $terminal "$PhaseId.terminal.json")
         }
         Write-CompleteTerminal 'trust-self-executor' 'pass'
-        Write-CompleteTerminal 'trust-registry-delta-ownership-obligation' 'code-fail'
-        Assert-Rejected {Test-CompleteTerminalSet -Root $fixture -PhaseIds $completePhaseIds -CheckIds $completeCheckIds -Base $base -Head $current -Tree $currentTree -Plan ('6'*64) -Platform linux -Manifest $manifest -Runner $runner} '*Affected phase terminal is not passing: trust-registry-delta-ownership-obligation=code-fail*' 'Affected phase complete-set self-test did not preserve the exact failed-terminal reason.'
         Write-CompleteTerminal 'trust-registry-delta-ownership-obligation' 'pass'
+        Assert-Rejected {Test-CompleteTerminalSet -Root $fixture -PhaseIds $completePhaseIds -CheckIds $completeCheckIds -Base $base -Head $current -Tree $currentTree -Plan ('6'*64) -Platform linux -Manifest $manifest -Runner $runner} '*requires exactly one terminal for every phase*' 'Affected phase complete-set self-test accepted missing phase-artifact contract evidence.'
+        Write-CompleteTerminal 'trust-phase-artifact-contract' 'code-fail'
+        Assert-Rejected {Test-CompleteTerminalSet -Root $fixture -PhaseIds $completePhaseIds -CheckIds $completeCheckIds -Base $base -Head $current -Tree $currentTree -Plan ('6'*64) -Platform linux -Manifest $manifest -Runner $runner} '*Affected phase terminal is not passing: trust-phase-artifact-contract=code-fail*' 'Affected phase complete-set self-test did not preserve the exact failed phase-artifact terminal reason.'
+        Write-CompleteTerminal 'trust-phase-artifact-contract' 'pass'
         Test-CompleteTerminalSet -Root $fixture -PhaseIds $completePhaseIds -CheckIds $completeCheckIds -Base $base -Head $current -Tree $currentTree -Plan ('6'*64) -Platform linux -Manifest $manifest -Runner $runner
         Write-Output 'Affected-validation phase ancestor-binding compatibility self-test passed.'
     } finally { if([IO.Directory]::Exists($fixture)){Remove-Item -LiteralPath $fixture -Recurse -Force} }
