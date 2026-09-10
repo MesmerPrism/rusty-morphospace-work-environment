@@ -283,21 +283,31 @@ case once; affected CI uses its separate result. Keep previous passing leaves
 only through the existing authenticated reuse route, and report a diagnostic
 focused pass separately from a completed frozen-candidate aggregate.
 
-Selector trust-root validation is a finite twenty-seven-phase DAG: graph/import
+Selector trust-root validation is a finite twenty-eight-phase DAG: graph/import
 closure, independently reusable per-check dependency-closure damage, executor
 pass/schema, ten independent executor-damage leaves for native failure,
 native exit 125, forged terminal control, parent containment, descendant
 containment, output ceiling, timeout, dual-stream draining, source integrity,
 and publication collision,
-selection scenarios, then independently reusable trust leaves for self/executor
-closure, registry delta/ownership/obligation, Linux and Windows Deep
-partition/merge damage, bounded archive/development/retirement/automation
-routing contracts, proportional mappings, and damage/culture finalization.
+selection scenarios, then sibling trust leaves for the phase-runner artifact
+contract and selector/executor integration. The artifact-contract leaf validates
+the schema-valid phase receipt and exact artifact set. The `trust-self-executor`
+leaf proves exact full-plan selection plus platform, prerequisite and contract
+closure without replaying that full plan, then runs an unmodified plan naturally
+resolved from a separate two-check fixture through the production executor.
+Further independently reusable trust leaves cover registry
+delta/ownership/obligation, Linux and Windows Deep partition/merge damage,
+bounded archive/development/retirement/automation routing contracts,
+proportional mappings, and damage/culture finalization.
 Three further leaves partition reuse admission, evidence binding, and
 run-job/coverage validation; the legacy reuse self-test retains only its bounded
 compatibility check and does not replay those bodies. Each phase has its own
 finite child budget and exact-host cache policy, so a later failure in one
-trust leaf does not invalidate completed sibling evidence. Every phase has a
+trust leaf does not invalidate completed sibling evidence. The measured
+artifact-contract phase was 16.895 seconds (19.331 seconds wall) under its
+75-second inner and 90-second outer budgets; selector/executor integration was
+71.759 seconds (74.069 seconds wall) under its 90-second inner and 105-second
+outer budgets. Every phase has a
 create-new terminal receipt bound to the exact repository commit/tree,
 plan, platform, check identity, and exact dependency manifest. The outer
 executor derives and batch-verifies that registry-owned transitive closure once
@@ -308,7 +318,7 @@ only its path and parent-computed SHA-256, then validates the projection schema,
 current head/tree, registry and check identity, ordinal tree records, and
 working bytes; it never repeats the import-graph analysis. The parent rechecks
 the held projection after the child and removes it during bounded cleanup.
-The registry contract requires all twenty-seven phase checks and the complete
+The registry contract requires all twenty-eight phase checks and the complete
 verifier to share that exact command and consumed-path-set input. The historical
 eighteen-phase verifier remains unchanged for compatibility; the complete
 verifier depends on every added phase and accepts only the full terminal set.
@@ -326,6 +336,8 @@ equal. Omission, addition, order, tree, working-byte, registry, or check-input
 drift fails before phase evidence can be accepted.
 The terminal verifier
 accepts only the complete exact passing receipt set and never replays a phase.
+Hosted outer affected CI still executes the selected phase leaves and retains
+their typed terminal and enclosing evidence bindings.
 Each executor-damage leaf begins from the same immutable fixture head and has
 no sibling mutation dependency. Selection consumes all ten contracts, while
 an individual failure leaves completed sibling receipts reusable. The executor
