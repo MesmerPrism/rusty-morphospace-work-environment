@@ -52,12 +52,28 @@ requires one exact registered command/argument match. Adding another aggregate
 owner or drifting its focused arguments therefore fails without updating a
 hand-maintained debt count.
 
-The resolver currently retains its conservative Deep diagnostic plan when a
-changed path has no owner or more than one owner. Deep execution cannot prove
-coverage for an unknown mapping, so the exact-HEAD ownership leaf fails such a
-candidate rather than granting validation credit. With the zero-debt baseline
-adopted, a later selector-engine slice can replace that expensive scheduling
-path with a typed non-executable mapping diagnostic.
+The resolver emits plan v2. Plan v1 remains a historical schema and current
+resolution, execution, segment merge, and reuse reject it. Each v2 plan binds
+the exact base and head registry blob OIDs and carries a versioned registry
+delta classification. Old and deleted paths are mapped with the base registry;
+new and added paths are mapped with the candidate registry; modified and
+renamed paths must map on both sides. An unmapped or ambiguously owned side
+produces a canonical `mapping-incomplete` plan with deterministic diagnostics,
+no selected checks, zero budget, and `execution_permitted=false`. The selector
+job uploads that plan and then fails before a validation segment can start.
+
+An unchanged registry needs no candidate ownership audit. Every changed
+registry receives the full candidate ownership and closure audit. A change to
+`revision` alone remains bounded only when every other registry semantic is
+identical. A coverage expansion remains bounded only when it appends literal
+patterns to existing path sets or appends trigger/consume references to
+existing checks, removes or mutates nothing, preserves every surviving base
+check's execution semantics and dependency closure, and leaves the candidate
+with complete unique ownership. All other registry deltas are structural and
+select independent Deep leaves. A missing base check obligation is
+`mapping-incomplete`; same-PR mapping migration and check retirement are not
+admitted. Final check removal remains non-executable until a separate,
+reviewed proof-of-unreferenced-retirement rule exists.
 
 Each resolver call binds the canonical repository root, tracked cleanliness,
 HEAD commit/tree, base ancestry, registry/schema identities, and the complete
@@ -267,14 +283,19 @@ case once; affected CI uses its separate result. Keep previous passing leaves
 only through the existing authenticated reuse route, and report a diagnostic
 focused pass separately from a completed frozen-candidate aggregate.
 
-Selector trust-root validation is a finite eighteen-phase DAG: graph/import
+Selector trust-root validation is a finite twenty-seven-phase DAG: graph/import
 closure, independently reusable per-check dependency-closure damage, executor
 pass/schema, ten independent executor-damage leaves for native failure,
 native exit 125, forged terminal control, parent containment, descendant
 containment, output ceiling, timeout, dual-stream draining, source integrity,
 and publication collision,
-selection scenarios, then four independent trust leaves for self/executor closure, routing contracts,
-proportional mappings, and damage/culture finalization. Each phase has its own
+selection scenarios, then independently reusable trust leaves for self/executor
+closure, registry delta/ownership/obligation, Linux and Windows Deep
+partition/merge damage, bounded archive/development/retirement/automation
+routing contracts, proportional mappings, and damage/culture finalization.
+Three further leaves partition reuse admission, evidence binding, and
+run-job/coverage validation; the legacy reuse self-test retains only its bounded
+compatibility check and does not replay those bodies. Each phase has its own
 finite child budget and exact-host cache policy, so a later failure in one
 trust leaf does not invalidate completed sibling evidence. Every phase has a
 create-new terminal receipt bound to the exact repository commit/tree,
@@ -287,8 +308,11 @@ only its path and parent-computed SHA-256, then validates the projection schema,
 current head/tree, registry and check identity, ordinal tree records, and
 working bytes; it never repeats the import-graph analysis. The parent rechecks
 the held projection after the child and removes it during bounded cleanup.
-The registry contract requires all eighteen phase checks and their verifier to
-share that exact command and consumed-path-set input. Each phase still receives
+The registry contract requires all twenty-seven phase checks and the complete
+verifier to share that exact command and consumed-path-set input. The historical
+eighteen-phase verifier remains unchanged for compatibility; the complete
+verifier depends on every added phase and accepts only the full terminal set.
+Each phase still receives
 and verifies its own check identity and binding, and the grouped working-byte
 set is rechecked after all terminals are consumed. Runner identity additionally
 binds the current OS/process architecture plus exact PowerShell and Git

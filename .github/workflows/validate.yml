@@ -63,6 +63,7 @@ jobs:
       windows: ${{ steps.plan.outputs.windows }}
       linux_matrix: ${{ steps.plan.outputs.linux_matrix }}
       windows_matrix: ${{ steps.plan.outputs.windows_matrix }}
+      execution_permitted: ${{ steps.plan.outputs.execution_permitted }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -88,14 +89,15 @@ jobs:
           ./scripts/Resolve-AffectedValidation.ps1 -RepositoryRoot . -BaseCommit $base -HeadCommit $head -Tier $tier -OutPath "$env:RUNNER_TEMP/affected-plan.json"
           $plan = Get-Content -LiteralPath "$env:RUNNER_TEMP/affected-plan.json" -Raw | ConvertFrom-Json -Depth 64
           "plan_sha256=$($plan.plan_sha256)" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
-          $linux = @($plan.selected_checks | Where-Object { @($_.platforms) -ccontains 'linux' }).Count -gt 0
-          $windows = @($plan.selected_checks | Where-Object { @($_.platforms) -ccontains 'windows' }).Count -gt 0
+          "execution_permitted=$(([bool]$plan.execution_permitted).ToString().ToLowerInvariant())" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+          $linux = [bool]$plan.execution_permitted -and @($plan.selected_checks | Where-Object { @($_.platforms) -ccontains 'linux' }).Count -gt 0
+          $windows = [bool]$plan.execution_permitted -and @($plan.selected_checks | Where-Object { @($_.platforms) -ccontains 'windows' }).Count -gt 0
           "linux=$($linux.ToString().ToLowerInvariant())" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
           "windows=$($windows.ToString().ToLowerInvariant())" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
           Import-Module ./scripts/lib/MorphospaceAffectedValidation.psm1 -Force
           $registry = Get-Content -LiteralPath manifests/affected-validation-registry.json -Raw | ConvertFrom-Json -Depth 64
           foreach ($platform in @('linux','windows')) {
-            $segments = @(Get-MorphospaceAffectedValidationSegments -Plan $plan -Registry $registry -Platform $platform)
+            $segments = if ([bool]$plan.execution_permitted) { @(Get-MorphospaceAffectedValidationSegments -Plan $plan -Registry $registry -Platform $platform) } else { @() }
             $include = if ($segments.Count -eq 0) { @([pscustomobject][ordered]@{segment_id="$platform-000";timeout_minutes=5}) } else { @($segments | ForEach-Object { $outer=[int][Math]::Ceiling(([long]$_.estimated_budget_seconds+900)/60.0);if($outer-ge360){throw 'Affected-validation segment plus bounded setup/cleanup overhead reaches the GitHub six-hour ceiling.'};[pscustomobject][ordered]@{segment_id=[string]$_.segment_id;timeout_minutes=$outer} }) }
             $matrix = [pscustomobject][ordered]@{include=@($include)}
             "${platform}_matrix=$(($matrix | ConvertTo-Json -Depth 4 -Compress))" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
@@ -117,6 +119,10 @@ jobs:
           path: ${{ runner.temp }}/affected-plan.json
           if-no-files-found: error
           retention-days: 7
+      - name: Stop non-executable affected mapping
+        if: ${{ !cancelled() && steps.plan.outputs.execution_permitted != 'true' }}
+        shell: pwsh
+        run: throw 'Affected-validation mapping is incomplete; the canonical diagnostic plan was preserved and no validation segment is permitted.'
 
   affected-linux-segments:
     name: segment-${{ matrix.segment_id }}

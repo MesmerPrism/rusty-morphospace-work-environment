@@ -5,13 +5,34 @@ param(
     [Parameter(Mandatory = $true, ParameterSetName = 'verify')][string]$HeadCommit,
     [Parameter(Mandatory = $true, ParameterSetName = 'verify')][string]$ReusePath,
     [Parameter(Mandatory = $true, ParameterSetName = 'verify')][string]$ArtifactDirectory,
-    [Parameter(Mandatory = $true, ParameterSetName = 'self')][switch]$SelfTest
+    [Parameter(Mandatory = $true, ParameterSetName = 'self')][switch]$SelfTest,
+    [Parameter(Mandatory = $true, ParameterSetName = 'selfPhase')]
+    [ValidateSet('plan-base-admission','evidence-binding','run-job-coverage')]
+    [string]$SelfTestPhase
 )
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
 if ($SelfTest) {
+    $source = Get-Content -LiteralPath $PSCommandPath -Raw
+    foreach ($partition in @(
+        [pscustomobject]@{phase='plan-base-admission';variable='$runPlanBaseAdmission'},
+        [pscustomobject]@{phase='evidence-binding';variable='$runEvidenceBinding'},
+        [pscustomobject]@{phase='run-job-coverage';variable='$runRunJobCoverage'}
+    )) {
+        if (-not $source.Contains("[ValidateSet('plan-base-admission','evidence-binding','run-job-coverage')]") -or -not $source.Contains([string]$partition.variable)) {
+            throw "Affected-validation reuse compatibility self-test is missing its exact '$([string]$partition.phase)' partition."
+        }
+    }
+    Write-Host 'Affected-validation reuse compatibility self-test passed.'
+    return
+}
+
+if (-not [string]::IsNullOrWhiteSpace($SelfTestPhase)) {
+    $runPlanBaseAdmission = $SelfTestPhase -ceq 'plan-base-admission'
+    $runEvidenceBinding = $SelfTestPhase -ceq 'evidence-binding'
+    $runRunJobCoverage = $SelfTestPhase -ceq 'run-job-coverage'
     $sourceRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
     Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1') -Force
     Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceAffectedValidation.psm1') -Force
@@ -22,7 +43,7 @@ if ($SelfTest) {
     [void][IO.Directory]::CreateDirectory($fixture)
     try {
         [void](Invoke-ReuseSelfGit $fixture @('init', '--initial-branch=main')); [void](Invoke-ReuseSelfGit $fixture @('config', 'user.name', 'Affected Reuse Test')); [void](Invoke-ReuseSelfGit $fixture @('config', 'user.email', 'affected-reuse@example.invalid'))
-        foreach ($relative in @('manifests/affected-validation-registry.json','schemas/affected-validation-registry-v1.schema.json','schemas/affected-validation-plan-v1.schema.json','schemas/affected-validation-evidence-v1.schema.json','.github/workflows/validate.yml','scripts/lib/MorphospaceProtocolCommon.psm1','scripts/lib/MorphospaceAffectedValidation.psm1')) { $destination = Join-Path $fixture ($relative -replace '/', [IO.Path]::DirectorySeparatorChar); [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($destination)); Copy-Item -LiteralPath (Join-Path $sourceRoot ($relative -replace '/', [IO.Path]::DirectorySeparatorChar)) -Destination $destination }
+        foreach ($relative in @('manifests/affected-validation-registry.json','schemas/affected-validation-registry-v1.schema.json','schemas/affected-validation-plan-v1.schema.json','schemas/affected-validation-plan-v2.schema.json','schemas/affected-validation-evidence-v1.schema.json','.github/workflows/validate.yml','scripts/lib/MorphospaceProtocolCommon.psm1','scripts/lib/MorphospaceAffectedValidation.psm1')) { $destination = Join-Path $fixture ($relative -replace '/', [IO.Path]::DirectorySeparatorChar); [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($destination)); Copy-Item -LiteralPath (Join-Path $sourceRoot ($relative -replace '/', [IO.Path]::DirectorySeparatorChar)) -Destination $destination }
         $registry = Read-MorphospaceProtocolJson -Path (Join-Path $sourceRoot 'manifests/affected-validation-registry.json')
         $fixtureScripts = @(
             @($registry.checks | ForEach-Object { [string]$_.command_path }) +
@@ -50,6 +71,20 @@ if ($SelfTest) {
         $receipt = [pscustomobject][ordered]@{schema='rusty.morphospace.workflow.affected_validation_reuse.v1';repository=[string]$plan.repository;event=[pscustomobject][ordered]@{name='pull_request';head_sha=$candidate;base_sha=$base};pull_request=[pscustomobject][ordered]@{number=1;head_sha=$candidate;base_sha=$base};run=[pscustomobject][ordered]@{id=1;attempt=1;event='pull_request';head_sha=$candidate;workflow_id=1;check_names=@('infrastructure','quick-linux','quick-windows','segment-linux-001','select','standard-windows')};base=$baseIdentity;head=$candidateIdentity;tree=$candidateIdentity.tree;workflow=[pscustomobject][ordered]@{id=1;path='.github/workflows/validate.yml';blob_sha1=(Invoke-ReuseSelfGit $fixture @('rev-parse',"${candidate}:.github/workflows/validate.yml"))};plan=[pscustomobject][ordered]@{artifact_name="affected-plan-$($plan.plan_sha256)";file_sha256=$planHash;canonical_sha256=[string]$plan.plan_sha256};artifacts=@([pscustomobject][ordered]@{id=1;remote_name="affected-plan-$($plan.plan_sha256)";name='affected-plan.json';platform='plan';sha256=$planHash;size=[long](Get-Item -LiteralPath $planPath).Length;expires_utc=$expiry},[pscustomobject][ordered]@{id=2;remote_name="affected-linux-$evidenceHash";name='affected-linux-evidence.json';platform='linux';sha256=$evidenceHash;size=[long](Get-Item -LiteralPath $evidencePath).Length;expires_utc=$expiry});coverage=@($coverage.ToArray());freshness=[pscustomobject][ordered]@{created_utc=[DateTimeOffset]::UtcNow.ToString('o',[Globalization.CultureInfo]::InvariantCulture);max_age_minutes=60};claims=[pscustomobject][ordered]@{historical_aggregate_reused=$false;acceptance_authority=$false;publication_authority=$false}}
         $receiptPath = Join-Path $artifacts 'reuse.json'; Write-ReuseSelfUtf8 $receiptPath (($receipt | ConvertTo-Json -Depth 64 -Compress) + "`n")
         [void](& $PSCommandPath -RepositoryRoot $fixture -BeforeCommit $base -HeadCommit $merge -ReusePath $receiptPath -ArtifactDirectory $artifacts)
+        if ($runPlanBaseAdmission) {
+        function Assert-ReuseSelfPlanRejected([object]$RejectedPlan,[string]$Expected,[string]$Context) {
+            Write-ReuseSelfUtf8 $planPath ((ConvertTo-MorphospaceCanonicalJson -Value $RejectedPlan)+"`n")
+            $damagedReceipt=$receipt|ConvertTo-Json -Depth 64|ConvertFrom-Json -Depth 64;$artifact=@($damagedReceipt.artifacts|Where-Object name -ceq 'affected-plan.json')[0]
+            $artifact.sha256=Get-ReuseSelfHash $planPath;$artifact.size=[long](Get-Item -LiteralPath $planPath).Length;$artifact.remote_name="affected-plan-$([string]$RejectedPlan.plan_sha256)";$damagedReceipt.plan.file_sha256=$artifact.sha256;$damagedReceipt.plan.canonical_sha256=[string]$RejectedPlan.plan_sha256;$damagedReceipt.plan.artifact_name=$artifact.remote_name
+            Write-ReuseSelfUtf8 $receiptPath (($damagedReceipt|ConvertTo-Json -Depth 64 -Compress)+"`n")
+            $failure=$null;try{[void](& $PSCommandPath -RepositoryRoot $fixture -BeforeCommit $base -HeadCommit $merge -ReusePath $receiptPath -ArtifactDirectory $artifacts)}catch{$failure=$_.Exception.Message}
+            if($failure-notlike$Expected){throw "Reuse self-test did not reject $Context before materialization: $failure"}
+        }
+        $historicalPlan=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.affected_validation_plan.v1';repository=$plan.repository;base=$plan.base;head=$plan.head;registry=[pscustomobject][ordered]@{schema=$plan.head_registry.schema;registry_id=$plan.head_registry.registry_id;revision=$plan.head_registry.revision;sha256=$plan.head_registry.sha256};changed_paths=$plan.changed_paths;changed_paths_sha256=$plan.changed_paths_sha256;requested_tier=$plan.requested_tier;effective_tier=$plan.effective_tier;selection_mode=$plan.selection_mode;reason_codes=$plan.reason_codes;selected_checks=$plan.selected_checks;skipped_checks=$plan.skipped_checks;estimated_budget_seconds=$plan.budget.actual;plan_sha256=('1'*64);claims=$plan.claims}
+        Assert-ReuseSelfPlanRejected $historicalPlan '*historical-only*' 'historical v1 plan'
+        $mappingPlan=$plan|ConvertTo-Json -Depth 64|ConvertFrom-Json -Depth 64;$mappingPlan.selection_mode='mapping-incomplete';$mappingPlan.execution_permitted=$false;$mappingPlan.selected_checks=@();$mappingPlan.mapping_diagnostics=@([pscustomobject][ordered]@{path='unknown.bin';side='new';issue_kind='unmapped';matching_path_set_ids=@()});$mappingPlan.reason_codes=@('unmapped-path');$mappingPlan.budget.actual=0;$mappingPlan.plan_sha256=('2'*64)
+        Assert-ReuseSelfPlanRejected $mappingPlan '*non-executable mapping-incomplete*' 'mapping-incomplete plan'
+        Write-ReuseSelfUtf8 $planPath ((ConvertTo-MorphospaceCanonicalJson -Value $plan)+"`n");Write-ReuseSelfUtf8 $receiptPath (($receipt|ConvertTo-Json -Depth 64 -Compress)+"`n")
         $alternateCheckIds = (@($alternatePlan.selected_checks.check_id) -join ','); $observedCheckIds = (@($plan.selected_checks.check_id) -join ',')
         if ($alternateCheckIds -cne $observedCheckIds) { throw 'Reuse self-test alternate base unexpectedly changes the selected checks.' }
         $alternateBaseIdentity = [pscustomobject][ordered]@{commit=$alternateBase;tree=(Invoke-ReuseSelfGit $fixture @('rev-parse',"$alternateBase^{tree}"))}
@@ -62,7 +97,9 @@ if ($SelfTest) {
         $alternateBaseError = $null; try { [void](& $PSCommandPath -RepositoryRoot $fixture -BeforeCommit $base -HeadCommit $merge -ReusePath $receiptPath -ArtifactDirectory $artifacts) } catch { $alternateBaseError = $_.Exception.Message }
         if ($alternateBaseError -notlike '*observed before*') { throw 'Reuse self-test did not reject the coherent alternate base through the observed-base comparison.' }
         Write-ReuseSelfUtf8 $planPath ((ConvertTo-MorphospaceCanonicalJson -Value $plan) + "`n"); Write-ReuseSelfUtf8 $evidencePath ((ConvertTo-MorphospaceCanonicalJson -Value $evidence) + "`n"); Write-ReuseSelfUtf8 $receiptPath (($receipt | ConvertTo-Json -Depth 64 -Compress) + "`n")
-        function Assert-ReuseSelfEvidenceBindingRejected([string]$Name, [scriptblock]$Mutate) {
+        }
+        if ($runEvidenceBinding) {
+        function Assert-ReuseSelfEvidenceBindingRejected([string]$Name, [string]$Expected, [scriptblock]$Mutate) {
             $damagedEvidence = $evidence | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64
             & $Mutate $damagedEvidence
             Write-ReuseSelfUtf8 $evidencePath ((ConvertTo-MorphospaceCanonicalJson -Value $damagedEvidence) + "`n")
@@ -70,19 +107,22 @@ if ($SelfTest) {
             $artifact = @($damagedReceipt.artifacts | Where-Object { $_.name -ceq 'affected-linux-evidence.json' })[0]
             $artifact.sha256 = Get-ReuseSelfHash $evidencePath; $artifact.size = [long](Get-Item -LiteralPath $evidencePath).Length; $artifact.remote_name = "affected-linux-$($artifact.sha256)"
             Write-ReuseSelfUtf8 $receiptPath (($damagedReceipt | ConvertTo-Json -Depth 64 -Compress) + "`n")
-            $rejected = $false; try { [void](& $PSCommandPath -RepositoryRoot $fixture -BeforeCommit $base -HeadCommit $merge -ReusePath $receiptPath -ArtifactDirectory $artifacts) } catch { $rejected = $true }
+            $reason = $null; try { [void](& $PSCommandPath -RepositoryRoot $fixture -BeforeCommit $base -HeadCommit $merge -ReusePath $receiptPath -ArtifactDirectory $artifacts) } catch { $reason = $_.Exception.Message }
             Write-ReuseSelfUtf8 $evidencePath ((ConvertTo-MorphospaceCanonicalJson -Value $evidence) + "`n"); Write-ReuseSelfUtf8 $receiptPath (($receipt | ConvertTo-Json -Depth 64 -Compress) + "`n")
-            if (-not $rejected) { throw "Reuse self-test accepted $Name evidence binding drift." }
+            if ($reason -notlike $Expected) { throw "Reuse self-test did not reject $Name through its intended evidence-binding reason: $reason" }
         }
-        Assert-ReuseSelfEvidenceBindingRejected -Name 'repository' -Mutate { param($value) $value.repository = 'example.invalid/other' }
-        Assert-ReuseSelfEvidenceBindingRejected -Name 'platform' -Mutate { param($value) $value.platform = 'windows' }
-        Assert-ReuseSelfEvidenceBindingRejected -Name 'base tree' -Mutate { param($value) $value.base.tree = ('0' * 40) }
-        Assert-ReuseSelfEvidenceBindingRejected -Name 'head tree' -Mutate { param($value) $value.head.tree = ('1' * 40) }
-        Assert-ReuseSelfEvidenceBindingRejected -Name 'typed failure inconsistency' -Mutate { param($value) $value.check_results[0].failure_kind = 'exit-code' }
-        Assert-ReuseSelfEvidenceBindingRejected -Name 'combined stream ceiling' -Mutate { param($value) $value.check_results[0].stdout_bytes = 6291456; $value.check_results[0].stderr_bytes = 5242880 }
+        $bindingReason = "*Reuse 'linux' evidence does not bind its exact plan, platform, trees, and artifact.*"
+        Assert-ReuseSelfEvidenceBindingRejected -Name 'repository' -Expected $bindingReason -Mutate { param($value) $value.repository = 'example.invalid/other' }
+        Assert-ReuseSelfEvidenceBindingRejected -Name 'platform' -Expected $bindingReason -Mutate { param($value) $value.platform = 'windows' }
+        Assert-ReuseSelfEvidenceBindingRejected -Name 'base tree' -Expected $bindingReason -Mutate { param($value) $value.base.tree = ('0' * 40) }
+        Assert-ReuseSelfEvidenceBindingRejected -Name 'head tree' -Expected $bindingReason -Mutate { param($value) $value.head.tree = ('1' * 40) }
+        Assert-ReuseSelfEvidenceBindingRejected -Name 'typed failure inconsistency' -Expected "*JSON is not valid with the schema:*at '/result'*" -Mutate { param($value) $value.check_results[0].failure_kind = 'exit-code' }
+        Assert-ReuseSelfEvidenceBindingRejected -Name 'combined stream ceiling' -Expected "*Reuse 'linux' result exceeds the combined stream bound.*" -Mutate { param($value) $value.check_results[0].stdout_bytes = 6291456; $value.check_results[0].stderr_bytes = 5242880 }
         $baseTreeReceipt = $receipt | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64; $baseTreeReceipt.base.tree = ('0' * 40); Write-ReuseSelfUtf8 $receiptPath (($baseTreeReceipt | ConvertTo-Json -Depth 64 -Compress) + "`n")
         $baseTreeRejected = $false; try { [void](& $PSCommandPath -RepositoryRoot $fixture -BeforeCommit $base -HeadCommit $merge -ReusePath $receiptPath -ArtifactDirectory $artifacts) } catch { $baseTreeRejected = $true }; if (-not $baseTreeRejected) { throw 'Reuse self-test accepted receipt base-tree drift.' }
         Write-ReuseSelfUtf8 $receiptPath (($receipt | ConvertTo-Json -Depth 64 -Compress) + "`n")
+        }
+        if ($runRunJobCoverage) {
         function Assert-ReuseSelfRunChecksRejected([string]$Name, [string[]]$CheckNames) {
             $damagedReceipt = $receipt | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64
             $damagedReceipt.run.check_names = @($CheckNames)
@@ -102,7 +142,8 @@ if ($SelfTest) {
         $impossibleRejected = $false; try { [void](& $PSCommandPath -RepositoryRoot $fixture -BeforeCommit $base -HeadCommit $merge -ReusePath $receiptPath -ArtifactDirectory $artifacts) } catch { $impossibleRejected = $true }; if (-not $impossibleRejected) { throw 'Reuse self-test accepted pass evidence with a nonzero exit.' }
         Write-ReuseSelfUtf8 $evidencePath ((ConvertTo-MorphospaceCanonicalJson -Value $evidence) + "`n"); Write-ReuseSelfUtf8 $receiptPath (($receipt | ConvertTo-Json -Depth 64 -Compress) + "`n"); Write-ReuseSelfUtf8 $planPath "tampered`n"
         $artifactRejected = $false; try { [void](& $PSCommandPath -RepositoryRoot $fixture -BeforeCommit $base -HeadCommit $merge -ReusePath $receiptPath -ArtifactDirectory $artifacts) } catch { $artifactRejected = $true }; if (-not $artifactRejected) { throw 'Reuse self-test accepted tampered artifact bytes.' }
-        Write-Host 'Affected-validation reuse self-test passed.'
+        }
+        Write-Host "Affected-validation reuse self-test phase '$SelfTestPhase' passed."
     } finally { if ([IO.Directory]::Exists($fixture)) { Remove-Item -LiteralPath $fixture -Recurse -Force } }
     return
 }
@@ -183,9 +224,12 @@ $planArtifact = $artifactByName['affected-plan.json']
 if ($planArtifact.platform -cne 'plan' -or $planArtifact.remote_name -cne $reuse.plan.artifact_name -or $reuse.plan.file_sha256 -cne $planArtifact.sha256) { throw 'Reuse plan artifact binding differs from its receipt.' }
 $planPath = Join-Path $artifacts 'affected-plan.json'
 $planRaw = Get-Content -LiteralPath $planPath -Raw
-$planSchema = Join-Path $PSScriptRoot '..\schemas\affected-validation-plan-v1.schema.json'
+$planProbe = $planRaw | ConvertFrom-Json -Depth 64 -ErrorAction Stop
+if ([string]$planProbe.schema -ceq 'rusty.morphospace.workflow.affected_validation_plan.v1') { throw 'Affected-validation plan v1 is historical-only and cannot be reused.' }
+$planSchema = Join-Path $PSScriptRoot '..\schemas\affected-validation-plan-v2.schema.json'
 if (-not (Test-Json -Json $planRaw -SchemaFile $planSchema -ErrorAction Stop)) { throw 'Reuse plan fails its closed schema.' }
 $plan = $planRaw | ConvertFrom-Json -Depth 64
+if (-not [bool]$plan.execution_permitted -or [string]$plan.selection_mode -ceq 'mapping-incomplete') { throw 'Affected-validation reuse rejects a non-executable mapping-incomplete plan.' }
 if ($plan.plan_sha256 -cne $reuse.plan.canonical_sha256 -or $planArtifact.remote_name -cne "affected-plan-$($plan.plan_sha256)") { throw 'Reuse plan digest domains are not exact.' }
 
 $temporary = Join-Path ([IO.Path]::GetTempPath()) ("codex-affected-reuse-" + [Guid]::NewGuid().ToString('N'))

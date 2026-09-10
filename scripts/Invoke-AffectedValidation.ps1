@@ -1049,9 +1049,12 @@ function Get-AffectedValidationProducerBinding {
 $planFull = [IO.Path]::GetFullPath($PlanPath)
 if (-not [IO.File]::Exists($planFull)) { throw 'Affected-validation plan is absent.' }
 $planRaw = Get-Content -LiteralPath $planFull -Raw
-$planSchema = Join-Path $repoRoot 'schemas/affected-validation-plan-v1.schema.json'
+$planProbe = $planRaw | ConvertFrom-Json -Depth 64 -ErrorAction Stop
+if ([string]$planProbe.schema -ceq 'rusty.morphospace.workflow.affected_validation_plan.v1') { throw 'Affected-validation plan v1 is historical-only and cannot be executed.' }
+$planSchema = Join-Path $repoRoot 'schemas/affected-validation-plan-v2.schema.json'
 if (-not (Test-Json -Json $planRaw -SchemaFile $planSchema -ErrorAction Stop)) { throw 'Affected-validation plan fails its closed schema.' }
 $plan = Read-MorphospaceProtocolJson -Path $planFull
+if (-not [bool]$plan.execution_permitted -or [string]$plan.selection_mode -ceq 'mapping-incomplete') { throw 'Affected-validation execution rejects a non-executable mapping-incomplete plan.' }
 $output = [IO.Path]::GetFullPath($OutPath)
 $parent = [IO.Path]::GetDirectoryName($output)
 if ([IO.File]::Exists($output)) { throw 'Affected-validation evidence output already exists.' }

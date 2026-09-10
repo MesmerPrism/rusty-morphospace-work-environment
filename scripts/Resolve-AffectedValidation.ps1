@@ -15,7 +15,7 @@ if ([string]::IsNullOrWhiteSpace($RegistryPath)) { $RegistryPath = Join-Path $ro
 Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceAffectedValidation.psm1') -Force
 $plan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $root -BaseRevision $BaseCommit -HeadRevision $HeadCommit -RegistryPath $RegistryPath -RequestedTier $Tier.ToLowerInvariant()
-$planSchema = Join-Path $root 'schemas/affected-validation-plan-v1.schema.json'
+$planSchema = Join-Path $root 'schemas/affected-validation-plan-v2.schema.json'
 if (-not (Test-Json -Json (ConvertTo-MorphospaceCanonicalJson -Value $plan) -SchemaFile $planSchema -ErrorAction Stop)) { throw 'Affected-validation plan fails its closed schema.' }
 $output = [System.IO.Path]::GetFullPath($OutPath)
 $parent = [System.IO.Path]::GetDirectoryName($output)
