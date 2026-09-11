@@ -260,9 +260,9 @@ function Resolve-MorphospaceAffectedCheckDependencyClosure {
                 # Content-derived execution is never a static dependency edge. Record
                 # it explicitly so it receives the same fail-closed expansion as an
                 # unknown variable dispatch; declarations only bind identifier targets.
-                $isExpressionInvocation = $commandName -match '(?i)(?:^|\\)Invoke-Expression$' -or [string]$command.Extent.Text -match '(?i)\[scriptblock\]::Create\s*\('
+                $isExpressionInvocation = $commandName -match '(?i)(?:^|\\)(?:Invoke-Expression|iex)$' -or [string]$command.Extent.Text -match '(?i)\[scriptblock\]::Create\s*\('
                 if ($isExpressionInvocation) {
-                    $expression = if ($commandName -match '(?i)(?:^|\\)Invoke-Expression$' -and @($command.CommandElements).Count -gt 1) { [string]$command.CommandElements[1].Extent.Text } else { '[scriptblock]::Create' }
+                    $expression = if ($commandName -match '(?i)(?:^|\\)(?:Invoke-Expression|iex)$' -and @($command.CommandElements).Count -gt 1) { [string]$command.CommandElements[1].Extent.Text } else { '[scriptblock]::Create' }
                     Add-MorphospaceFallback -Importer $importer -Variable $expression -Kind 'unresolved-expression-invocation'
                     continue
                 }
@@ -344,6 +344,18 @@ function Resolve-MorphospaceAffectedCheckDependencyClosure {
                     continue
                 }
                 Add-MorphospaceFallback -Importer $importer -Variable ([string]$first.Extent.Text) -Kind $(if($isImport){'unresolved-import'}else{'unresolved-invocation'})
+            }
+            # ScriptBlock invocation methods are expression ASTs rather than command
+            # ASTs. They may execute content constructed at runtime, so do not let
+            # them retain an exact dependency closure merely because no '&' appears.
+            foreach ($memberInvocation in @($ast.FindAll({
+                param($node)
+                $node -is [Management.Automation.Language.InvokeMemberExpressionAst]
+            },$true))) {
+                $memberName = if ($memberInvocation.Member -is [Management.Automation.Language.StringConstantExpressionAst]) { [string]$memberInvocation.Member.Value } else { '' }
+                if ($memberName -match '^(?:Invoke(?:ReturnAsIs|WithContext)?|DynamicInvoke)$') {
+                    Add-MorphospaceFallback -Importer $importer -Variable ("scriptblock-method:" + $memberName) -Kind 'unresolved-expression-invocation'
+                }
             }
             [byte[]]$afterBytes = [IO.File]::ReadAllBytes($absolute)
             if ((Get-MorphospaceAffectedDependencyBytesSha256 -Bytes $afterBytes) -cne $beforeSha) { throw "Affected dependency source bytes changed during analysis: $importer" }

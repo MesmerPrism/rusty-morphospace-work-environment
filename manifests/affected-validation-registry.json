@@ -34,7 +34,6 @@
     {"importer": "scripts/Test-WorkUnitAutomation.ps1", "variable": "damage", "count": 1, "target_paths": ["scripts/Test-WorkUnitAutomation.ps1"]},
     {"importer": "scripts/Test-WorkUnitAutomation.ps1", "variable": "damageCase", "count": 1, "target_paths": ["scripts/Test-WorkUnitAutomation.ps1"]},
     {"importer": "scripts/Test-WorkUnitAutomation.ps1", "variable": "drift", "count": 1, "target_paths": ["scripts/Test-WorkUnitAutomation.ps1"]},
-    {"importer": "scripts/Test-WorkUnitAutomation.ps1", "variable": "freshPwsh", "count": 1, "classification": "authenticated-external-command"},
     {"importer": "scripts/Test-WorkUnitAutomation.ps1", "variable": "graphCase", "count": 2, "target_paths": ["scripts/Test-WorkUnitAutomation.ps1"]},
     {"importer": "scripts/Test-WorkUnitAutomation.ps1", "variable": "retirementModule", "count": 4, "target_paths": ["scripts/PreparedPushRetirement.psm1"]},
     {"importer": "scripts/Test-WorkflowContracts.ps1", "variable": "executedPreparedValidator", "count": 1, "target_paths": ["scripts/Test-ExecutedPreparedPublicationReconciliation.ps1"]},

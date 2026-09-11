@@ -1543,6 +1543,20 @@ function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]
         Assert-True ([string]$invokeExpressionFallback.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($invokeExpressionFallback.paths).Count -eq 6) 'Content-derived Invoke-Expression bypassed conservative dependency fallback.'
         Assert-True (@($invokeExpressionFallback.resolution.fallback_reasons | Where-Object { [string]$_.importer -ceq 'scripts/Fallback.ps1' -and [string]$_.variable -ceq '$definition[0].Extent.Text' -and [string]$_.kind -ceq 'unresolved-expression-invocation' }).Count -eq 1) 'Content-derived Invoke-Expression omitted its explicit conservative fallback reason.'
 
+        Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "`$definition = @([pscustomobject]@{ Extent = [pscustomobject]@{ Text = 'Import-Module scripts/Dynamic.psm1' } })`niex `$definition[0].Extent.Text`n"
+        $iexFallback = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
+        Assert-True ([string]$iexFallback.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($iexFallback.paths).Count -eq 6) 'iex alias bypassed conservative dependency fallback.'
+        Assert-True (@($iexFallback.resolution.fallback_reasons | Where-Object { [string]$_.importer -ceq 'scripts/Fallback.ps1' -and [string]$_.variable -ceq '$definition[0].Extent.Text' -and [string]$_.kind -ceq 'unresolved-expression-invocation' }).Count -eq 1) 'iex alias omitted its explicit conservative fallback reason.'
+
+        Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "`$sb = [scriptblock]::Create('Import-Module scripts/Dynamic.psm1')`n`$sb.Invoke()`n"
+        $storedScriptBlockFallback = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
+        Assert-True ([string]$storedScriptBlockFallback.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($storedScriptBlockFallback.paths).Count -eq 6) 'Stored ScriptBlock.Invoke bypassed conservative dependency fallback.'
+        Assert-True (@($storedScriptBlockFallback.resolution.fallback_reasons | Where-Object { [string]$_.importer -ceq 'scripts/Fallback.ps1' -and [string]$_.variable -ceq 'scriptblock-method:Invoke' -and [string]$_.kind -ceq 'unresolved-expression-invocation' }).Count -eq 1) 'Stored ScriptBlock.Invoke omitted its explicit conservative fallback reason.'
+
+        Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "`$sb = [scriptblock]::Create('Import-Module scripts/Dynamic.psm1')`n`$sb.InvokeReturnAsIs()`n"
+        $alternateScriptBlockFallback = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
+        Assert-True ([string]$alternateScriptBlockFallback.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($alternateScriptBlockFallback.paths).Count -eq 6) 'ScriptBlock.InvokeReturnAsIs bypassed conservative dependency fallback.'
+        Assert-True (@($alternateScriptBlockFallback.resolution.fallback_reasons | Where-Object { [string]$_.importer -ceq 'scripts/Fallback.ps1' -and [string]$_.variable -ceq 'scriptblock-method:InvokeReturnAsIs' -and [string]$_.kind -ceq 'unresolved-expression-invocation' }).Count -eq 1) 'ScriptBlock.InvokeReturnAsIs omitted its explicit conservative fallback reason.'
         Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "& ([scriptblock]::Create('Import-Module scripts/Dynamic.psm1'))`n"
         $scriptBlockCreateFallback = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
         Assert-True ([string]$scriptBlockCreateFallback.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($scriptBlockCreateFallback.paths).Count -eq 6) 'Expression-shaped ScriptBlock.Create invocation bypassed conservative dependency fallback.'
