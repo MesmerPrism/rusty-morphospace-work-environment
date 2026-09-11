@@ -103,7 +103,8 @@ Included:
   agent workflows;
 - routing guidance for app-owned OpenXR, Meta Spatial SDK native bridges, and
   app-packaged OpenXR API layers;
-- four portable local skill templates plus explicit installation of the
+- five portable local skill templates, including a user-invoked manual cleanup
+  playbook, plus explicit installation of the
   canonical Meta Quest workflow skill from `meta-quest-agent-workflow`;
 - repo-lane routing for both Rusty-owned media streams and the separately
   bounded Hostess Meta/MQDH Cinematic presentation provider;
@@ -185,7 +186,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass `
 
 4. Read [Local Skill Bootstrap](docs/LOCAL_SKILL_BOOTSTRAP.md), set the exact
    clean canonical Meta workflow checkout, then plan, install, and verify the
-   five skill routers:
+   six skills:
 
 ```powershell
 $MetaWorkflowRoot = "<workspace-root>\meta-quest-agent-workflow"

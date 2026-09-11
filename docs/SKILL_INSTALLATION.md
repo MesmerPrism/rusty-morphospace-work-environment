@@ -1,6 +1,6 @@
 # Skill Installation
 
-This repository ships four local portable skill routers. The canonical
+This repository ships five local portable skills. The canonical
 `meta-quest-workflow` source is owned by the public
 `MesmerPrism/meta-quest-agent-workflow` repository. Use the managed installer;
 do not copy skills by hand or place contributor paths in committed templates.
@@ -11,6 +11,7 @@ do not copy skills by hand or place contributor paths in committed templates.
 | `rusty-morphospace-context` | Compatibility locator for existing installed-provenance callers. |
 | `system-engineering` | Authority, contracts, interfaces, observability, and validation. |
 | `rust-work-graph` | Bounded inventories, dependency/diff maps, and graph receipts. |
+| `rusty-morphospace-cleanup` | User-invoked manual cleanup of generated artifacts; it never schedules or automatically deletes. |
 | `meta-quest-workflow` (external canonical source) | Live Quest/ADB/APK/evidence routing to the public device workflow. |
 
 For the complete new-machine, existing-installation, update, backup, and
