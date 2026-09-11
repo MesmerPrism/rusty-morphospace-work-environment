@@ -240,7 +240,7 @@
             "type": "object", "additionalProperties": false, "required": ["importer", "variable", "kind"],
             "properties": {
               "importer": { "$ref": "#/$defs/trackedPowerShellPath" }, "variable": { "type": "string", "minLength": 1, "maxLength": 512 },
-              "kind": { "enum": ["unresolved-import", "unresolved-invocation", "ambiguous-static-binding"] }
+              "kind": { "enum": ["unresolved-import", "unresolved-invocation", "unresolved-expression-invocation", "ambiguous-static-binding"] }
             }
           }
         }
