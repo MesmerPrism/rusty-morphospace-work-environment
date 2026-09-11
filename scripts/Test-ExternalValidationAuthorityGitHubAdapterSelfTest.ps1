@@ -99,6 +99,15 @@ $trustedRoot = Join-Path $temp "trusted"
 $markerPath = Join-Path $temp "candidate-executed.txt"
 $adapter = Join-Path $PSScriptRoot "Invoke-ExternalValidationAuthorityForGitHub.ps1"
 $adapterSource = Get-Content -Raw $adapter
+$workflowSource = Get-Content -Raw (Join-Path (Split-Path -Parent $PSScriptRoot) ".github/workflows/static-admission.yml")
+# YAML permissions and step environment entries are literal configuration.
+if ([regex]::Matches($workflowSource, '(?m)^\s*permissions:').Count -ne 1 -or
+    $workflowSource -cnotmatch '(?m)^permissions:\r?\n  issues: read\r?\n\r?\n' -or
+    [regex]::Matches($workflowSource, 'STATIC_ADMISSION_COMMENTS_TOKEN: \$\{\{ github.token \}\}').Count -ne 1 -or
+    $workflowSource -cnotmatch '(?s)name: Inspect pull request objects with the pinned base verifier.*env:.*STATIC_ADMISSION_COMMENTS_TOKEN:' -or
+    $workflowSource -cnotmatch '-RequireAuthenticatedComments') {
+    throw "Static workflow must confine its required read-only credential to the trusted reader step."
+}
 if (
     -not $adapterSource.Contains('.ReadAsync($buffer,0,$buffer.Length,$deadline.Token)') -or
     $adapterSource.Contains('while(($n=$stream.Read(')
@@ -108,6 +117,135 @@ if (
 $repository = "example/static-admission-fixture"
 $pullRequestNumber = "7"
 $rsa = [Security.Cryptography.RSA]::Create(3072)
+
+# Exercise the actual reader with an in-memory HTTP transport. Production has
+# no endpoint override; even hostile Link/Location headers cannot select a URL.
+$adapterAst = [Management.Automation.Language.Parser]::ParseFile($adapter, [ref]$null, [ref]$null)
+foreach ($name in @("Get-CommentFetchRetryPlan", "Get-PublicIssueComments", "New-GitStartInfo", "Test-ForbiddenGitEnvironmentName")) {
+    $definition = $adapterAst.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $false)
+    Set-Item -LiteralPath "Function:$name" -Value $definition.Body.GetScriptBlock()
+}
+Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Net;
+using System.Net.Http;
+using System.Threading;
+using System.Threading.Tasks;
+public sealed class StaticCommentTestHandler : HttpMessageHandler {
+    public readonly Queue<HttpResponseMessage> Responses = new Queue<HttpResponseMessage>();
+    public readonly List<string> Requests = new List<string>();
+    public readonly List<string> Authorizations = new List<string>();
+    public bool FailTransport;
+    public int DelayBeforeResponseMilliseconds;
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token) {
+        Requests.Add(request.Method + " " + request.RequestUri.AbsoluteUri);
+        Authorizations.Add(request.Headers.Authorization == null ? "" : request.Headers.Authorization.ToString());
+        if (FailTransport) throw new HttpRequestException("DO-NOT-LOG-response-secret");
+        await Task.Delay(DelayBeforeResponseMilliseconds, token);
+        if (Responses.Count == 0) throw new InvalidOperationException("Unexpected additional HTTP request");
+        return Responses.Dequeue();
+    }
+}
+public sealed class StaticCommentSlowBody : Stream {
+    public override bool CanRead => true;
+    public override bool CanSeek => false;
+    public override bool CanWrite => false;
+    public override long Length => throw new NotSupportedException();
+    public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+    public override int Read(byte[] b, int o, int n) => throw new Exception("Synchronous body read is forbidden");
+    public override async Task<int> ReadAsync(byte[] b, int o, int n, CancellationToken token) { await Task.Delay(30000, token); return 0; }
+    public override void Flush() => throw new NotSupportedException();
+    public override long Seek(long n, SeekOrigin o) => throw new NotSupportedException();
+    public override void SetLength(long n) => throw new NotSupportedException();
+    public override void Write(byte[] b, int o, int n) => throw new NotSupportedException();
+}
+'@
+function New-CommentResponse([int]$Status, [string]$Body = "[]", [hashtable]$Headers = @{}) {
+    $response = [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]$Status)
+    $response.Content = [Net.Http.StringContent]::new($Body)
+    foreach ($name in $Headers.Keys) { [void]$response.Headers.TryAddWithoutValidation($name, [string]$Headers[$name]) }
+    return $response
+}
+function Invoke-CommentTransportCase([Net.Http.HttpResponseMessage[]]$Responses, [string]$Reject = "", [int]$ExpectedRequests = 1, [int]$MaximumBytes = 1048576, [string]$Token = "fixture_token") {
+    $handler = [StaticCommentTestHandler]::new()
+    foreach ($response in $Responses) { $handler.Responses.Enqueue($response) }
+    $AllowLocalTestRemote = $true
+    $invoke = { Get-PublicIssueComments "example/repository" 7 "" 1000 $MaximumBytes $Token $handler }
+    if ($Reject) { Assert-Rejected $invoke $Reject "HTTP transport case" }
+    else { $null = & $invoke }
+    if ($handler.Requests.Count -ne $ExpectedRequests) { throw "HTTP case made $($handler.Requests.Count) requests, expected $ExpectedRequests." }
+    foreach ($request in $handler.Requests) {
+        if ($request -cnotmatch '^GET https://api\.github\.com/repos/example/repository/issues/7/comments\?per_page=100&page=[0-9]+$') { throw "Comment request escaped the fixed read-only origin or path." }
+    }
+    $expectedAuthorization = if ($Token) { "Bearer $Token" } else { "" }
+    foreach ($authorization in $handler.Authorizations) {
+        if ($authorization -cne $expectedAuthorization) { throw "Reader silently changed authentication across requests." }
+    }
+}
+$now = [datetimeoffset]::Parse("2026-01-01T00:00:00Z")
+foreach ($case in @(
+    @{status=403;headers=@{};attempt=1;delay=$null},
+    @{status=401;headers=@{};attempt=1;delay=$null},
+    @{status=429;headers=@{};attempt=1;delay=60L},
+    @{status=403;headers=@{"x-ratelimit-remaining"="0";"x-ratelimit-reset"="1767229200"};attempt=1;delay=3601L},
+    @{status=403;headers=@{"x-ratelimit-remaining"="0"};attempt=1;delay=$null},
+    @{status=403;headers=@{"x-ratelimit-remaining"="0";"x-ratelimit-reset"="1767225602";"retry-after"="5"};attempt=1;delay=5L},
+    @{status=403;headers=@{"retry-after"="Thu, 01 Jan 2026 00:00:04 GMT"};attempt=1;delay=4L},
+    @{status=503;headers=@{};attempt=1;delay=1L},
+    @{status=503;headers=@{};attempt=2;delay=2L},
+    @{status=503;headers=@{};attempt=3;delay=$null},
+    @{status=503;headers=@{"x-ratelimit-remaining"="0";"x-ratelimit-reset"="1767229200"};attempt=1;delay=3601L},
+    @{status=503;headers=@{"retry-after"="garbage-secret"};attempt=1;delay=$null},
+    @{status=503;headers=@{"x-ratelimit-reset"="garbage-secret"};attempt=1;delay=$null},
+    @{status=503;headers=@{"retry-after"="9223372036854775807"};attempt=1;delay=[long]::MaxValue}
+)) {
+    $response = New-CommentResponse $case.status "DO-NOT-LOG-response-secret" $case.headers
+    try {
+        $plan = Get-CommentFetchRetryPlan $response $case.attempt $now
+        if ($plan.delay_seconds -cne $case.delay) { throw "Wrong retry plan for HTTP $($case.status): $($plan.delay_seconds)." }
+        if ($plan.detail -match 'secret') { throw "Retry diagnostics exposed untrusted content." }
+    } finally { $response.Dispose() }
+}
+Invoke-CommentTransportCase @((New-CommentResponse 200))
+Invoke-CommentTransportCase @((New-CommentResponse 200)) -Token ""
+Invoke-CommentTransportCase @((New-CommentResponse 503), (New-CommentResponse 200)) -ExpectedRequests 2
+Invoke-CommentTransportCase @((New-CommentResponse 503), (New-CommentResponse 503), (New-CommentResponse 503)) -ExpectedRequests 3 -Reject 'HTTP 503; attempt=3'
+Invoke-CommentTransportCase @((New-CommentResponse 403 "DO-NOT-LOG-response-secret" @{"x-ratelimit-limit"="60";"x-ratelimit-remaining"="0";"x-ratelimit-reset"="9223372036854775807"})) -Reject 'HTTP 403.*x-ratelimit-limit=60.*x-ratelimit-remaining=0'
+Invoke-CommentTransportCase @((New-CommentResponse 401)) -Reject 'HTTP 401'
+Invoke-CommentTransportCase @((New-CommentResponse 429)) -Reject 'HTTP 429'
+Invoke-CommentTransportCase @((New-CommentResponse 302 "[]" @{Location="https://attacker.invalid/steal"})) -Reject 'HTTP 302'
+Invoke-CommentTransportCase @((New-CommentResponse 200 "[]" @{Link='<https://attacker.invalid/steal>; rel="next"'}), (New-CommentResponse 200)) -ExpectedRequests 2
+Invoke-CommentTransportCase @((New-CommentResponse 200 '[{"duplicate":1,"duplicate":2}]')) -Reject 'Duplicate'
+Invoke-CommentTransportCase @((New-CommentResponse 200 "[1,2,3]")) -MaximumBytes 4 -Reject 'size bound'
+$emptyPages = @(1..12 | ForEach-Object { New-CommentResponse 200 "[]" @{Link='<https://attacker.invalid/steal>; rel="next"'} })
+Invoke-CommentTransportCase $emptyPages -ExpectedRequests 11 -Reject 'page bound'
+$handler = [StaticCommentTestHandler]::new()
+$handler.FailTransport = $true
+$AllowLocalTestRemote = $true
+Assert-Rejected { Get-PublicIssueComments "example/repository" 7 "" 1000 1048576 "fixture_token" $handler } '^Public comment fetch failed during transport or exceeded the shared 20-second deadline\.$' "sanitized network error"
+$AllowLocalTestRemote = $false
+Assert-Rejected { Get-PublicIssueComments "example/repository" 7 "" 1000 1048576 "" ([StaticCommentTestHandler]::new()) } 'test-only' "production HTTP injection"
+$handler = [StaticCommentTestHandler]::new()
+$handler.DelayBeforeResponseMilliseconds = 10000
+$slowResponse = New-CommentResponse 200
+$slowResponse.Content.Dispose()
+$slowResponse.Content = [Net.Http.StreamContent]::new([StaticCommentSlowBody]::new())
+$handler.Responses.Enqueue($slowResponse)
+$AllowLocalTestRemote = $true
+$watch = [Diagnostics.Stopwatch]::StartNew()
+Assert-Rejected { Get-PublicIssueComments "example/repository" 7 "" 1000 1048576 "fixture_token" $handler } 'canceled|cancelled|deadline' "shared header/body deadline"
+if ($watch.Elapsed.TotalSeconds -gt 28) { throw "Body read restarted rather than shared the HTTP deadline." }
+$AllowLocalTestRemote = $false
+
+# A child is credential-free even if a caller reintroduces the step variable.
+$ForbiddenGitEnvironmentVariables = @()
+$env:STATIC_ADMISSION_COMMENTS_TOKEN = "fixture_token"
+try {
+    $start = New-GitStartInfo $PSScriptRoot
+    if ($start.Environment.ContainsKey("STATIC_ADMISSION_COMMENTS_TOKEN")) { throw "Git child inherited the comment token." }
+} finally { Remove-Item Env:STATIC_ADMISSION_COMMENTS_TOKEN }
 
 try {
     [void](New-Item -ItemType Directory -Path $temp)
@@ -133,6 +271,10 @@ try {
     ) -Destination (
         Join-Path $seedRoot "scripts/Test-ExternalValidationAuthority.ps1"
     )
+    $fixtureVerifierPath = Join-Path $seedRoot "scripts/Test-ExternalValidationAuthority.ps1"
+    $fixtureVerifierSource = Get-Content -Raw $fixtureVerifierPath
+    $fixtureVerifierSource += "`n" + 'if (Test-Path Env:STATIC_ADMISSION_COMMENTS_TOKEN) { throw "Verifier inherited the comment token." }'
+    Write-Utf8 $fixtureVerifierPath $fixtureVerifierSource
     foreach ($schemaName in @(
         "external-validation-authority-assessment-v1.schema.json",
         "external-validation-authority-policy-v1.schema.json",
@@ -214,7 +356,13 @@ try {
     [void](Invoke-GitTest $temp @("clone", "--no-local", $remoteRoot, $trustedRoot))
     [void](Invoke-GitTest $trustedRoot @("checkout", "--detach", $baseCommit))
     $commonArguments = @{RepositoryRoot=$trustedRoot;Repository=$repository;PullRequestNumber=$pullRequestNumber;BaseCommit=$baseCommit;HeadCommit=$unprotectedHead;PinnedVerifierCommit=$baseCommit;PinnedVerifierTree=$baseTree;PinnedVerifierPath="scripts/Test-ExternalValidationAuthority.ps1";PinnedVerifierSha256=$verifierSha256;RemoteUrl=$remoteRoot;AllowLocalTestRemote=$true}
-    $ordinaryAssessment=(@(& $adapter @commonArguments)-join "`n")|ConvertFrom-Json -Depth 30
+    Assert-Rejected { & $adapter @commonArguments -RequireAuthenticatedComments } 'requires its read-only workflow token' "missing hosted credential"
+    $env:STATIC_ADMISSION_COMMENTS_TOKEN = "invalid`ncredential"
+    Assert-Rejected { & $adapter @commonArguments -RequireAuthenticatedComments } 'credential has an invalid format' "malformed credential"
+    if (Test-Path Env:STATIC_ADMISSION_COMMENTS_TOKEN) { throw "Rejected credential remained in the environment." }
+    $env:STATIC_ADMISSION_COMMENTS_TOKEN = "fixture_token"
+    $ordinaryAssessment=(@(& $adapter @commonArguments -RequireAuthenticatedComments)-join "`n")|ConvertFrom-Json -Depth 30
+    if (Test-Path Env:STATIC_ADMISSION_COMMENTS_TOKEN) { throw "Adapter retained the credential environment variable." }
     if([string]$ordinaryAssessment.decision -cne "unprotected"){throw "Ordinary unprotected v1 fixture returned the wrong decision."}
 
     [void](Invoke-GitTest $seedRoot @("checkout", "-b", "approved-work", $baseCommit))

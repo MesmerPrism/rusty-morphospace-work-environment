@@ -12,7 +12,7 @@ on:
       - synchronize
 
 permissions:
-  contents: read
+  issues: read
 
 concurrency:
   group: static-admission-${{ github.event.pull_request.number }}
@@ -95,8 +95,9 @@ jobs:
           HEAD_COMMIT: ${{ github.event.pull_request.head.sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPOSITORY: ${{ github.repository }}
-          # The adapter fetches public issue comments without a token. Keep
-          # permissions read-only and do not add issues/pull-requests write.
+          # This job executes only the exact trusted base. The adapter consumes
+          # and removes this variable before any Git/verifier child can inherit it.
+          STATIC_ADMISSION_COMMENTS_TOKEN: ${{ github.token }}
         run: |
           Set-StrictMode -Version Latest
           $ErrorActionPreference = "Stop"
@@ -108,6 +109,7 @@ jobs:
             -PullRequestNumber $env:PR_NUMBER `
             -BaseCommit $env:BASE_COMMIT `
             -HeadCommit $env:HEAD_COMMIT `
+            -RequireAuthenticatedComments `
             -PinnedVerifierCommit `
               "9cfe4f328579a44bf8f0adf6bdb3fa7f68084f5b" `
             -PinnedVerifierTree `
