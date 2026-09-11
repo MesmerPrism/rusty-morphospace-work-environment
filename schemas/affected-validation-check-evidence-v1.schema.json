@@ -70,13 +70,8 @@
       "items": { "$ref": "#/$defs/artifact" }
     },
     "reused_from": {
-      "anyOf": [
-        { "type": "null" },
-        {
-          "type": "object", "additionalProperties": false, "required": ["receipt_sha256", "source_head"],
-          "properties": { "receipt_sha256": { "$ref": "#/$defs/sha256" }, "source_head": { "$ref": "#/$defs/gitIdentity" } }
-        }
-      ]
+      "type": ["null", "object"], "additionalProperties": false, "required": ["receipt_sha256", "source_head"],
+      "properties": { "receipt_sha256": { "$ref": "#/$defs/sha256" }, "source_head": { "$ref": "#/$defs/gitIdentity" } }
     },
     "claims": {
       "type": "object", "additionalProperties": false,
