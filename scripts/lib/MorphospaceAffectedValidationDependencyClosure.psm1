@@ -254,8 +254,18 @@ function Resolve-MorphospaceAffectedCheckDependencyClosure {
                 [void]$untypedParametersByScope[$scope].Add([string]$parameter.Name.VariablePath.UserPath)
             }
             foreach ($command in @($ast.FindAll({ param($node) $node -is [Management.Automation.Language.CommandAst] },$true))) {
-                $isImport = [string]$command.GetCommandName() -match '(?i)(?:^|\\)Import-Module$'
+                $commandName = [string]$command.GetCommandName()
+                $isImport = $commandName -match '(?i)(?:^|\\)Import-Module$'
                 $isInvocation = $command.InvocationOperator -in @([Management.Automation.Language.TokenKind]::Ampersand,[Management.Automation.Language.TokenKind]::Dot)
+                # Content-derived execution is never a static dependency edge. Record
+                # it explicitly so it receives the same fail-closed expansion as an
+                # unknown variable dispatch; declarations only bind identifier targets.
+                $isExpressionInvocation = $commandName -match '(?i)(?:^|\\)Invoke-Expression$' -or [string]$command.Extent.Text -match '(?i)\[scriptblock\]::Create\s*\('
+                if ($isExpressionInvocation) {
+                    $expression = if ($commandName -match '(?i)(?:^|\\)Invoke-Expression$' -and @($command.CommandElements).Count -gt 1) { [string]$command.CommandElements[1].Extent.Text } else { '[scriptblock]::Create' }
+                    Add-MorphospaceFallback -Importer $importer -Variable $expression -Kind 'unresolved-expression-invocation'
+                    continue
+                }
                 if (-not $isImport -and -not $isInvocation) { continue }
                 $trackedLiteral = @($command.FindAll({ param($node) $node -is [Management.Automation.Language.StringConstantExpressionAst] -and $literalOffsets.Contains([int]$node.Extent.StartOffset) },$true)).Count -ne 0
                 if ($trackedLiteral) { continue }
