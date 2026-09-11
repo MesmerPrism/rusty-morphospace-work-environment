@@ -71,9 +71,32 @@ existing checks, removes or mutates nothing, preserves every surviving base
 check's execution semantics and dependency closure, and leaves the candidate
 with complete unique ownership. All other registry deltas are structural and
 select independent Deep leaves. A missing base check obligation is
-`mapping-incomplete`; same-PR mapping migration and check retirement are not
-admitted. Final check removal remains non-executable until a separate,
-reviewed proof-of-unreferenced-retirement rule exists.
+`mapping-incomplete` unless the resolver emits an exact unreferenced-retirement
+proof from the bound base and candidate registries. That narrow proof requires
+an exact next revision, a complete candidate ownership audit, no base or
+candidate prerequisite or execution-order reference to the removed check, no
+surviving consumer of a contract it provided, no always-run or aggregate role,
+and no same-invocation replacement. If its command path remains tracked,
+another candidate check must still register that command. A proved retirement
+remains structural: it selects the independent Deep leaves and still requires
+exact static owner admission. Any failed predicate stays `mapping-incomplete`;
+the proof never excuses an ambiguous base mapping.
+
+A same-PR mapping migration may repair one previously unmapped old side only
+when the changed artifact survives as a modification or rename, the registry
+revision is exactly next, the complete candidate tree has unique ownership,
+and the candidate path has one path-set owner with at least one trigger. The
+plan records the old/new path and change status, the candidate path-set digest,
+and every candidate trigger and consumer check bound by the exact head registry.
+Those checks remain in the structural Deep selection. Deletes and any base-side
+ambiguity remain non-executable `mapping-incomplete` outcomes.
+
+These proofs are the structural intent for retirement and migration. Their
+deterministic fields derive from the two registry blobs already bound by plan
+v2, while Deep candidate execution and base-owned Static Admission remain
+separate. A second general structural-intent or review-exception mechanism
+would duplicate those bindings without closing another concrete risk, so the
+deferred C14 idea is unnecessary for these cases.
 
 Each resolver call binds the canonical repository root, tracked cleanliness,
 HEAD commit/tree, base ancestry, registry/schema identities, and the complete

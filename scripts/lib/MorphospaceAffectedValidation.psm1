@@ -941,9 +941,57 @@ function Test-MorphospaceAffectedPrefixArray {
     return $true
 }
 
+function Get-MorphospaceAffectedMappingMigrationProofs {
+    param(
+        [Parameter(Mandatory=$true)][object]$BaseRegistry,
+        [Parameter(Mandatory=$true)][object]$HeadRegistry,
+        [Parameter(Mandatory=$true)][Collections.IDictionary]$BaseCompiledPathSets,
+        [Parameter(Mandatory=$true)][Collections.IDictionary]$HeadCompiledPathSets,
+        [Parameter(Mandatory=$true)][AllowEmptyCollection()][object[]]$Changes,
+        [bool]$CandidateOwnershipAudited,
+        [bool]$CandidateOwnershipComplete
+    )
+    if (-not $CandidateOwnershipAudited -or -not $CandidateOwnershipComplete -or [long]$HeadRegistry.revision -ne ([long]$BaseRegistry.revision + 1)) { return @() }
+    $proofs=[Collections.Generic.List[object]]::new()
+    foreach($change in @($Changes)){
+        if($null-eq$change.old_path-or$null-eq$change.new_path-or[string]$change.status-cnotmatch'^(?:M|T|R(?:[0-9]{1,2}|100))$'){continue}
+        [string[]]$baseMatches=@($BaseCompiledPathSets.Keys|Where-Object{Test-MorphospaceAffectedPathSetMatch -Path ([string]$change.old_path) -Patterns @($BaseCompiledPathSets[[string]$_])})
+        [string[]]$headMatches=@($HeadCompiledPathSets.Keys|Where-Object{Test-MorphospaceAffectedPathSetMatch -Path ([string]$change.new_path) -Patterns @($HeadCompiledPathSets[[string]$_])})
+        [Array]::Sort($baseMatches,[StringComparer]::Ordinal);[Array]::Sort($headMatches,[StringComparer]::Ordinal)
+        if($baseMatches.Count-ne0-or$headMatches.Count-ne1){continue}
+        $pathSetId=[string]$headMatches[0]
+        [string[]]$triggerCheckIds=@($HeadRegistry.checks|Where-Object{@($_.trigger_path_sets)-ccontains$pathSetId}|ForEach-Object{[string]$_.check_id})
+        [string[]]$consumeCheckIds=@($HeadRegistry.checks|Where-Object{@($_.consume_path_sets)-ccontains$pathSetId}|ForEach-Object{[string]$_.check_id})
+        [Array]::Sort($triggerCheckIds,[StringComparer]::Ordinal);[Array]::Sort($consumeCheckIds,[StringComparer]::Ordinal)
+        if($triggerCheckIds.Count-eq0){continue}
+        $headPathSet=@($HeadRegistry.path_sets|Where-Object{[string]$_.path_set_id-ceq$pathSetId})[0]
+        $proofs.Add([pscustomobject][ordered]@{
+            old_path=[string]$change.old_path
+            new_path=[string]$change.new_path
+            change_status=[string]$change.status
+            base_matching_path_set_ids=@()
+            head_path_set_id=$pathSetId
+            head_path_set_sha256=Get-MorphospaceCanonicalJsonSha256 -Value $headPathSet
+            head_trigger_check_ids=@($triggerCheckIds)
+            head_consume_check_ids=@($consumeCheckIds)
+        })
+    }
+    return @($proofs.ToArray()|Sort-Object old_path,new_path)
+}
+
 function Get-MorphospaceAffectedRegistryDelta {
-    param([Parameter(Mandatory=$true)][object]$BaseRegistry,[Parameter(Mandatory=$true)][object]$HeadRegistry,[bool]$CandidateOwnershipAudited,[bool]$RegistryBlobChanged)
-    $addedPatterns=[Collections.Generic.List[object]]::new();$addedTriggers=[Collections.Generic.List[object]]::new();$addedConsumes=[Collections.Generic.List[object]]::new()
+    param(
+        [Parameter(Mandatory=$true)][object]$BaseRegistry,
+        [Parameter(Mandatory=$true)][object]$HeadRegistry,
+        [bool]$CandidateOwnershipAudited,
+        [bool]$CandidateOwnershipComplete,
+        [bool]$RegistryBlobChanged,
+        [object]$HeadInventory,
+        [Collections.IDictionary]$BaseCompiledPathSets,
+        [Collections.IDictionary]$HeadCompiledPathSets,
+        [object[]]$Changes
+    )
+    $addedPatterns=[Collections.Generic.List[object]]::new();$addedTriggers=[Collections.Generic.List[object]]::new();$addedConsumes=[Collections.Generic.List[object]]::new();$retiredCheckProofs=[Collections.Generic.List[object]]::new()
     $baseCanonical=$BaseRegistry|ConvertTo-Json -Depth 64 -Compress
     $headCanonical=$HeadRegistry|ConvertTo-Json -Depth 64 -Compress
     $revisionIsNext = [long]$HeadRegistry.revision -eq ([long]$BaseRegistry.revision + 1)
@@ -984,7 +1032,59 @@ function Get-MorphospaceAffectedRegistryDelta {
             if($safe -and ($addedPatterns.Count+$addedTriggers.Count+$addedConsumes.Count)-gt0){$classification='coverage-expanding'}
         }
     }
-    return [pscustomobject][ordered]@{schema='rusty.morphospace.workflow.affected_validation_registry_delta.v1';classification=$classification;candidate_ownership_audited=$CandidateOwnershipAudited;added_patterns=@($addedPatterns.ToArray());added_trigger_references=@($addedTriggers.ToArray());added_consume_references=@($addedConsumes.ToArray())}
+    if ($revisionIsNext -and $CandidateOwnershipAudited -and $CandidateOwnershipComplete -and $null -ne $HeadInventory) {
+        $headChecksById=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+        foreach($check in @($HeadRegistry.checks)){$headChecksById[[string]$check.check_id]=$check}
+        $headTrackedPaths=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        foreach($record in @($HeadInventory.records)){[void]$headTrackedPaths.Add([string]$record.path)}
+        [string[]]$missingCheckIds=@($BaseRegistry.checks|Where-Object{-not$headChecksById.ContainsKey([string]$_.check_id)}|ForEach-Object{[string]$_.check_id})
+        [Array]::Sort($missingCheckIds,[StringComparer]::Ordinal)
+        foreach($checkId in $missingCheckIds){
+            $baseCheck=@($BaseRegistry.checks|Where-Object{[string]$_.check_id-ceq$checkId})[0]
+            $baseInbound=[Collections.Generic.List[string]]::new();$headInbound=[Collections.Generic.List[string]]::new()
+            foreach($candidate in @($BaseRegistry.checks)){if([string]$candidate.check_id-cne$checkId-and(@($candidate.prerequisite_checks)-ccontains$checkId-or@(Get-MorphospaceAffectedExecutionAfterChecks -Check $candidate)-ccontains$checkId)){[void]$baseInbound.Add([string]$candidate.check_id)}}
+            foreach($candidate in @($HeadRegistry.checks)){if(@($candidate.prerequisite_checks)-ccontains$checkId-or@(Get-MorphospaceAffectedExecutionAfterChecks -Check $candidate)-ccontains$checkId){[void]$headInbound.Add([string]$candidate.check_id)}}
+            $providedContracts=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+            foreach($contract in @($baseCheck.provides_contracts)){[void]$providedContracts.Add([string]$contract)}
+            $baseContractConsumers=[Collections.Generic.List[string]]::new();$headContractConsumers=[Collections.Generic.List[string]]::new()
+            if($providedContracts.Count-gt0){
+                foreach($candidate in @($BaseRegistry.checks)){if([string]$candidate.check_id-cne$checkId-and@($candidate.consumes_contracts|Where-Object{$providedContracts.Contains([string]$_)}).Count-gt0){[void]$baseContractConsumers.Add([string]$candidate.check_id)}}
+                foreach($candidate in @($HeadRegistry.checks)){if(@($candidate.consumes_contracts|Where-Object{$providedContracts.Contains([string]$_)}).Count-gt0){[void]$headContractConsumers.Add([string]$candidate.check_id)}}
+            }
+            $baseInvocation=Get-MorphospaceCanonicalJsonSha256 -Value ([pscustomobject][ordered]@{command_path=[string]$baseCheck.command_path;arguments=@($baseCheck.arguments)})
+            $headExactInvocation=[Collections.Generic.List[string]]::new();$headCommandChecks=[Collections.Generic.List[string]]::new()
+            foreach($candidate in @($HeadRegistry.checks)){
+                if([string]$candidate.command_path-ceq[string]$baseCheck.command_path){[void]$headCommandChecks.Add([string]$candidate.check_id)}
+                $candidateInvocation=Get-MorphospaceCanonicalJsonSha256 -Value ([pscustomobject][ordered]@{command_path=[string]$candidate.command_path;arguments=@($candidate.arguments)})
+                if($candidateInvocation-ceq$baseInvocation){[void]$headExactInvocation.Add([string]$candidate.check_id)}
+            }
+            foreach($list in @($baseInbound,$headInbound,$baseContractConsumers,$headContractConsumers,$headExactInvocation,$headCommandChecks)){if($list.Count-gt1){$list.Sort([StringComparer]::Ordinal)}}
+            $commandPathPresent=$headTrackedPaths.Contains([string]$baseCheck.command_path)
+            $baseAlwaysRun=[bool]$baseCheck.always_run-or@($BaseRegistry.always_run_check_ids)-ccontains$checkId
+            $baseAggregateRolePresent=$null-ne$baseCheck.PSObject.Properties['aggregate_role']
+            $eligible=-not$baseAlwaysRun-and-not$baseAggregateRolePresent-and$baseInbound.Count-eq0-and$headInbound.Count-eq0-and$baseContractConsumers.Count-eq0-and$headContractConsumers.Count-eq0-and$headExactInvocation.Count-eq0-and(-not$commandPathPresent-or$headCommandChecks.Count-gt0)
+            if($eligible){
+                $retiredCheckProofs.Add([pscustomobject][ordered]@{
+                    check_id=$checkId
+                    command_path=[string]$baseCheck.command_path
+                    base_check_sha256=Get-MorphospaceCanonicalJsonSha256 -Value $baseCheck
+                    base_always_run=$false
+                    base_aggregate_role_present=$false
+                    base_inbound_check_ids=@($baseInbound.ToArray())
+                    head_inbound_check_ids=@($headInbound.ToArray())
+                    base_contract_consumer_check_ids=@($baseContractConsumers.ToArray())
+                    head_contract_consumer_check_ids=@($headContractConsumers.ToArray())
+                    head_exact_invocation_check_ids=@($headExactInvocation.ToArray())
+                    command_path_present_in_head=$commandPathPresent
+                    head_command_check_ids=@($headCommandChecks.ToArray())
+                })
+            }
+        }
+    }
+    $mappingMigrationProofs=@()
+    if($null-ne$BaseCompiledPathSets-and$null-ne$HeadCompiledPathSets-and$null-ne$Changes){$mappingMigrationProofs=@(Get-MorphospaceAffectedMappingMigrationProofs -BaseRegistry $BaseRegistry -HeadRegistry $HeadRegistry -BaseCompiledPathSets $BaseCompiledPathSets -HeadCompiledPathSets $HeadCompiledPathSets -Changes $Changes -CandidateOwnershipAudited $CandidateOwnershipAudited -CandidateOwnershipComplete $CandidateOwnershipComplete)}
+    if($mappingMigrationProofs.Count-gt0){$classification='structural'}
+    return [pscustomobject][ordered]@{schema='rusty.morphospace.workflow.affected_validation_registry_delta.v2';classification=$classification;candidate_ownership_audited=$CandidateOwnershipAudited;candidate_ownership_complete=$CandidateOwnershipComplete;added_patterns=@($addedPatterns.ToArray());added_trigger_references=@($addedTriggers.ToArray());added_consume_references=@($addedConsumes.ToArray());retired_check_proofs=@($retiredCheckProofs.ToArray());mapping_migration_proofs=@($mappingMigrationProofs)}
 }
 
 function Resolve-MorphospaceAffectedValidation {
@@ -1043,17 +1143,17 @@ function Resolve-MorphospaceAffectedValidation {
     $registryChanged=[string]$baseRegistryEntry.blob-cne[string]$registryTreeEntry.blob
     $baseRegistrySnapshot=if($registryChanged){Get-MorphospaceAffectedRegistryAtCommit -RepositoryRoot $root -Commit $base.commit -Inventory $baseInventory -RegistryPath $registryRelativePath}else{$headRegistrySnapshot}
     $candidateOwnershipAudited = $false
-    $candidateOwnershipComplete = $true
+    $candidateOwnershipComplete = $false
     $ownershipAudit = $null
     if ($registryChanged) {
         $ownershipAudit = Get-MorphospaceAffectedValidationOwnershipAudit -Registry $registry -CompiledRegistry $compiled -Inventory $inventory
         $candidateOwnershipAudited = $true
         $candidateOwnershipComplete = @($ownershipAudit.unmapped_paths).Count -eq 0 -and @($ownershipAudit.ambiguous_paths).Count -eq 0 -and @($ownershipAudit.registered_commands_without_one_owner).Count -eq 0 -and [long]$ownershipAudit.owned_path_count -eq [long]$ownershipAudit.tracked_path_count
     }
-    $registryDelta = Get-MorphospaceAffectedRegistryDelta -BaseRegistry $baseRegistrySnapshot.registry -HeadRegistry $registry -CandidateOwnershipAudited $candidateOwnershipAudited -RegistryBlobChanged $registryChanged
+    $changes = @(Get-MorphospaceAffectedChanges -RepositoryRoot $root -BaseCommit $base.commit -HeadCommit $head.commit)
+    $registryDelta = Get-MorphospaceAffectedRegistryDelta -BaseRegistry $baseRegistrySnapshot.registry -HeadRegistry $registry -CandidateOwnershipAudited $candidateOwnershipAudited -CandidateOwnershipComplete $candidateOwnershipComplete -RegistryBlobChanged $registryChanged -HeadInventory $inventory -BaseCompiledPathSets $baseRegistrySnapshot.compiled_path_sets -HeadCompiledPathSets $compiled.path_sets -Changes $changes
     if (-not $candidateOwnershipComplete -and [string]$registryDelta.classification -ceq 'coverage-expanding') { $registryDelta.classification = 'structural' }
     if ([bool]$registryDelta.candidate_ownership_audited -ne $registryChanged) { throw 'Affected-validation registry delta has an invalid candidate ownership-audit state.' }
-    $changes = @(Get-MorphospaceAffectedChanges -RepositoryRoot $root -BaseCommit $base.commit -HeadCommit $head.commit)
     if([string]$registryDelta.classification-ceq'coverage-expanding'){
         $newCandidatePaths=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
         foreach($change in $changes){if($null-ne$change.new_path-and($null-eq$change.old_path-or[string]$change.old_path-cne[string]$change.new_path)){[void]$newCandidatePaths.Add([string]$change.new_path)}}
@@ -1068,6 +1168,8 @@ function Resolve-MorphospaceAffectedValidation {
         (Test-MorphospaceAffectedPathCaseCollision -Paths @($changedPathValues.ToArray()))
     $matchedPathSets = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
     $mappingDiagnostics = [System.Collections.Generic.List[object]]::new()
+    $mappingMigrationByIdentity=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach($proof in @($registryDelta.mapping_migration_proofs)){[void]$mappingMigrationByIdentity.Add("$([string]$proof.old_path)`0$([string]$proof.new_path)")}
     foreach ($change in $changes) {
         foreach ($sideRecord in @(
             [pscustomobject]@{side='old';path=$change.old_path;path_sets=$baseRegistrySnapshot.compiled_path_sets},
@@ -1081,6 +1183,7 @@ function Resolve-MorphospaceAffectedValidation {
             [Array]::Sort($matches,[StringComparer]::Ordinal)
             foreach($pathSetId in $matches){[void]$matchedPathSets.Add([string]$pathSetId)}
             if ($matches.Count -ne 1) {
+                if([string]$sideRecord.side-ceq'old'-and$matches.Count-eq0-and$null-ne$change.new_path-and$mappingMigrationByIdentity.Contains("$([string]$change.old_path)`0$([string]$change.new_path)")){continue}
                 $mappingDiagnostics.Add([pscustomobject][ordered]@{path=[string]$path;side=[string]$sideRecord.side;issue_kind=$(if($matches.Count-eq0){'unmapped'}else{'ambiguous'});matching_path_set_ids=@($matches)})
             }
         }
@@ -1088,8 +1191,11 @@ function Resolve-MorphospaceAffectedValidation {
     if ($registryChanged) {
         $headChecks=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
         foreach($check in @($registry.checks)){[void]$headChecks.Add([string]$check.check_id)}
+        $provenRetiredChecks=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        foreach($proof in @($registryDelta.retired_check_proofs)){[void]$provenRetiredChecks.Add([string]$proof.check_id)}
         foreach($baseCheck in @($baseRegistrySnapshot.registry.checks)){
             if(-not $headChecks.Contains([string]$baseCheck.check_id)){
+                if($provenRetiredChecks.Contains([string]$baseCheck.check_id)){continue}
                 [string[]]$owners=@($baseRegistrySnapshot.compiled_path_sets.Keys|Where-Object{Test-MorphospaceAffectedPathSetMatch -Path ([string]$baseCheck.command_path) -Patterns @($baseRegistrySnapshot.compiled_path_sets[[string]$_])})
                 [Array]::Sort($owners,[StringComparer]::Ordinal)
                 $mappingDiagnostics.Add([pscustomobject][ordered]@{path=[string]$baseCheck.command_path;side='old';issue_kind='missing-base-check-obligation';matching_path_set_ids=@($owners)})
@@ -1115,6 +1221,8 @@ function Resolve-MorphospaceAffectedValidation {
     if ([string]$registryDelta.classification -ceq 'structural') { $fullDeep = $true; [void]$reasonCodes.Add('structural-registry-change') }
     elseif ([string]$registryDelta.classification -ceq 'coverage-expanding') { [void]$reasonCodes.Add('coverage-expanding-registry-change') }
     elseif ([string]$registryDelta.classification -ceq 'revision-only') { [void]$reasonCodes.Add('revision-only-registry-change') }
+    if(@($registryDelta.retired_check_proofs).Count-gt0){[void]$reasonCodes.Add('unreferenced-check-retirement')}
+    if(@($registryDelta.mapping_migration_proofs).Count-gt0){[void]$reasonCodes.Add('same-pr-mapping-migration')}
     foreach ($id in @($registry.deep_escalation_path_sets)) {
         if ($matchedPathSets.Contains([string]$id)) { $fullDeep = $true; [void]$reasonCodes.Add('trust-root-path-changed') }
     }

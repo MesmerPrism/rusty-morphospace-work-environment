@@ -2335,8 +2335,8 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value $termina
     $fixtureRegistry.path_sets = @($fixtureRegistry.path_sets) + @([pscustomobject][ordered]@{path_set_id='fixture-support';patterns=@('schemas/DocumentationLinksInput.schema.json','schemas/FallbackDynamicInput.schema.json','scripts/FallbackDynamicTarget.ps1','scripts/lib/DocumentationLinksDependency.psm1')})
     $fixtureRegistry.checks = @($fixtureRegistry.checks) + @($leafBindingCheck)
     $fixtureRegistry.checks | Where-Object check_id -ceq 'documentation-links' | ForEach-Object {
-        $_.trigger_path_sets = @($_.trigger_path_sets) + @('fixture-support')
-        $_.consume_path_sets = @($_.consume_path_sets) + @('fixture-support')
+        $_.trigger_path_sets = @($_.trigger_path_sets) + @('fixture-support','leaf-binding-fixture')
+        $_.consume_path_sets = @($_.consume_path_sets) + @('fixture-support','leaf-binding-fixture')
     }
     $fixtureRegistry.checks | Where-Object check_id -ceq 'public-boundary' | ForEach-Object {
         $_.trigger_path_sets = @($_.trigger_path_sets) + @('leaf-binding-fixture','fixture-support')
@@ -2372,7 +2372,7 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value $termina
         [void](Invoke-TestGit $fixture @('commit', '-m', 'docs'))
         $docsHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
         $docsPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $base -HeadRevision $docsHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
-        Assert-True ([string]$docsPlan.registry_delta.classification -ceq 'unchanged' -and -not [bool]$docsPlan.registry_delta.candidate_ownership_audited) 'Unchanged registry delta claimed a candidate ownership audit or changed classification.'
+        Assert-True ([string]$docsPlan.registry_delta.classification -ceq 'unchanged' -and -not [bool]$docsPlan.registry_delta.candidate_ownership_audited -and -not [bool]$docsPlan.registry_delta.candidate_ownership_complete) 'Unchanged registry delta claimed a candidate ownership audit/completion or changed classification.'
         Write-Utf8 $planPath ((ConvertTo-MorphospaceCanonicalJson -Value $docsPlan) + "`n")
         if ($runFullSelector -or $runExecutorPassPhase) {
             Assert-True ($docsPlan.selection_mode -ceq 'affected') 'Documentation change did not remain affected-only.'
@@ -3650,6 +3650,40 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     if ($runFullSelector -or $runTrustRegistryPhase -or $runTrustDeepLinuxPhase -or $runTrustDeepWindowsPhase -or $runTrustRoutingPhase -or $runTrustRoutingDevelopmentPhase -or $runTrustRoutingRetirementPhase -or $runTrustRoutingAutomationPhase) {
     $trustSegmentClock = [Diagnostics.Stopwatch]::StartNew()
     $routingBaseHead = if ($runFullSelector) { $infrastructureHead } else { $deleteHead }
+    if ($runFullSelector -or $runTrustRegistryPhase) {
+    $unchangedFixture=Join-Path $fixture 'unchanged-registry-repository'
+    try {
+        foreach($directory in @('docs','manifests','schemas','scripts')){[void][IO.Directory]::CreateDirectory((Join-Path $unchangedFixture $directory))}
+        Copy-Item -LiteralPath (Join-Path $repoRoot 'schemas/affected-validation-registry-v1.schema.json') -Destination (Join-Path $unchangedFixture 'schemas/affected-validation-registry-v1.schema.json')
+        Write-Utf8 (Join-Path $unchangedFixture 'scripts/Test-Fixture.ps1') "'fixture owner'`n"
+        Write-Utf8 (Join-Path $unchangedFixture 'scripts/Test-PublicBoundary.ps1') "'fixture'`n"
+        Write-Utf8 (Join-Path $unchangedFixture 'docs/base.md') "base`n"
+        $unchangedRegistry=[pscustomobject][ordered]@{
+            schema='rusty.morphospace.workflow.affected_validation_registry.v1';registry_id='unchanged-registry-fixture-v1';repository_id='Fixture/affected-validation';revision=1
+            historical_aggregate=[pscustomobject][ordered]@{tier='deep';reusable_evidence=$false;full_history_required=$true}
+            dependency_declarations=@()
+            path_sets=@([pscustomobject][ordered]@{path_set_id='fixture-docs';patterns=@('docs/**')})
+            checks=@(
+                [pscustomobject][ordered]@{check_id='fixture-check';command_path='scripts/Test-Fixture.ps1';arguments=@();platforms=@('linux');minimum_tier='quick';trigger_path_sets=@('fixture-docs');consume_path_sets=@('fixture-docs');prerequisite_checks=@();provides_contracts=@('fixture-check');consumes_contracts=@();always_run=$false;authority_class='ordinary';cache_policy='portable';budget_seconds=1;external_state='none'},
+                [pscustomobject][ordered]@{check_id='public-boundary';command_path='scripts/Test-PublicBoundary.ps1';arguments=@();platforms=@('linux');minimum_tier='quick';trigger_path_sets=@('fixture-docs');consume_path_sets=@('fixture-docs');prerequisite_checks=@();provides_contracts=@('public-boundary');consumes_contracts=@();always_run=$false;authority_class='ordinary';cache_policy='portable';budget_seconds=1;external_state='none'}
+            )
+            always_run_check_ids=@();deep_escalation_path_sets=@()
+            claims=[pscustomobject][ordered]@{selection_only=$true;executes_checks=$false;acceptance_authority=$false;publication_authority=$false}
+        }
+        Write-Utf8 (Join-Path $unchangedFixture 'manifests/affected-validation-registry.json') ((ConvertTo-MorphospaceCanonicalJson -Value $unchangedRegistry)+"`n")
+        [void](Invoke-TestGit $unchangedFixture @('init','--initial-branch=main'));[void](Invoke-TestGit $unchangedFixture @('config','user.name','Affected Validation Test'));[void](Invoke-TestGit $unchangedFixture @('config','user.email','affected-validation@example.invalid'));[void](Invoke-TestGit $unchangedFixture @('add','.'));[void](Invoke-TestGit $unchangedFixture @('commit','-m','unchanged registry base'))
+        $unchangedBase=Invoke-TestGit $unchangedFixture @('rev-parse','HEAD')
+        $emptyPlan=Resolve-MorphospaceAffectedValidation -RepositoryRoot $unchangedFixture -BaseRevision $unchangedBase -HeadRevision $unchangedBase -RegistryPath (Join-Path $unchangedFixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+        Assert-True (@($emptyPlan.changed_paths).Count-eq0-and[string]$emptyPlan.registry_delta.classification-ceq'unchanged'-and-not[bool]$emptyPlan.registry_delta.candidate_ownership_audited-and-not[bool]$emptyPlan.registry_delta.candidate_ownership_complete) 'Exact base=head resolution did not emit a valid unaudited unchanged-registry delta.'
+        Assert-True (Test-Json -Json (ConvertTo-MorphospaceCanonicalJson -Value $emptyPlan) -SchemaFile (Join-Path $repoRoot 'schemas/affected-validation-plan-v2.schema.json') -ErrorAction Stop) 'Exact base=head plan failed the closed v2 schema.'
+        Write-Utf8 (Join-Path $unchangedFixture 'docs/base.md') "ordinary change`n";[void](Invoke-TestGit $unchangedFixture @('add','docs/base.md'));[void](Invoke-TestGit $unchangedFixture @('commit','-m','ordinary unchanged registry change'))
+        $ordinaryUnchangedHead=Invoke-TestGit $unchangedFixture @('rev-parse','HEAD')
+        $ordinaryUnchangedPlan=Resolve-MorphospaceAffectedValidation -RepositoryRoot $unchangedFixture -BaseRevision $unchangedBase -HeadRevision $ordinaryUnchangedHead -RegistryPath (Join-Path $unchangedFixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+        Assert-True ($ordinaryUnchangedPlan.selection_mode-ceq'affected'-and[string]$ordinaryUnchangedPlan.registry_delta.classification-ceq'unchanged'-and-not[bool]$ordinaryUnchangedPlan.registry_delta.candidate_ownership_audited-and-not[bool]$ordinaryUnchangedPlan.registry_delta.candidate_ownership_complete-and(@($ordinaryUnchangedPlan.selected_checks.check_id|Sort-Object)-join'|')-ceq'fixture-check|public-boundary') 'Ordinary unchanged-registry PR claimed an ownership audit/completion or changed selection.'
+        Assert-True (Test-Json -Json (ConvertTo-MorphospaceCanonicalJson -Value $ordinaryUnchangedPlan) -SchemaFile (Join-Path $repoRoot 'schemas/affected-validation-plan-v2.schema.json') -ErrorAction Stop) 'Ordinary unchanged-registry PR plan failed the closed v2 schema.'
+    } finally {if([IO.Directory]::Exists($unchangedFixture)){Remove-Item -LiteralPath $unchangedFixture -Recurse -Force}}
+    Write-Host 'Unchanged-registry and exact base=head plan regressions passed.'
+    }
     $contractRegistry = Read-MorphospaceProtocolJson -Path (Join-Path $fixture 'manifests/affected-validation-registry.json')
     $contractRegistry.revision = [long]$contractRegistry.revision + 1
     Write-Utf8 (Join-Path $fixture 'manifests/affected-validation-registry.json') ((ConvertTo-MorphospaceCanonicalJson -Value $contractRegistry) + "`n")
@@ -3658,7 +3692,7 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     $registryContractHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
     $registryContractPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $routingBaseHead -HeadRevision $registryContractHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
     if ($runFullSelector -or $runTrustRegistryPhase) {
-    Assert-True ([bool]$registryContractPlan.registry_delta.candidate_ownership_audited) 'Changed registry delta omitted its mandatory full candidate ownership audit.'
+    Assert-True ([bool]$registryContractPlan.registry_delta.candidate_ownership_audited -and [bool]$registryContractPlan.registry_delta.candidate_ownership_complete) 'Changed registry delta omitted its mandatory complete candidate ownership audit.'
     $expectedRegistryContractChecks = @('affected-validation-ownership') + $workflowConsumerFixtureChecks
     $actualRegistryContractChecks = @($registryContractPlan.selected_checks.check_id | Sort-Object)
     Assert-True ($registryContractPlan.selection_mode -ceq 'affected' -and $registryContractPlan.effective_tier -ceq 'standard' -and ($actualRegistryContractChecks -join '|') -ceq (($expectedRegistryContractChecks | Sort-Object) -join '|')) "Affected-validation registry change did not retain its exact bounded ownership/workflow-action/public-boundary closure: mode=$($registryContractPlan.selection_mode) tier=$($registryContractPlan.effective_tier) checks=$($actualRegistryContractChecks -join ',')."
@@ -3693,11 +3727,96 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     Write-Host 'Registry semantic mutation case passed.'
 
     [void](Invoke-TestGit $fixture @('checkout','--detach',$registryContractHead))
-    $retirementRegistry=$contractRegistry|ConvertTo-Json -Depth 64|ConvertFrom-Json -Depth 64;$retirementRegistry.revision=[long]$retirementRegistry.revision+1;$retirementRegistry.checks=@($retirementRegistry.checks|Where-Object check_id -cne 'work-environment-deep')
-    Write-Utf8 (Join-Path $fixture 'manifests/affected-validation-registry.json') ((ConvertTo-MorphospaceCanonicalJson -Value $retirementRegistry)+"`n");[void](Invoke-TestGit $fixture @('add','manifests/affected-validation-registry.json'));[void](Invoke-TestGit $fixture @('commit','-m','unsupported check retirement'))
-    $retirementHead=Invoke-TestGit $fixture @('rev-parse','HEAD');$retirementPlan=Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $registryContractHead -HeadRevision $retirementHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
-    Assert-True ($retirementPlan.selection_mode -ceq 'mapping-incomplete' -and -not [bool]$retirementPlan.execution_permitted -and @($retirementPlan.selected_checks).Count-eq0 -and [long]$retirementPlan.budget.actual-eq0 -and @($retirementPlan.mapping_diagnostics|Where-Object{$_.issue_kind-ceq'missing-base-check-obligation'-and$_.path-ceq'scripts/Test-WorkEnvironment.ps1'}).Count-eq1) 'Deleted base check obligation did not remain non-executable pending a retirement proof rule.'
-    Write-Host 'Registry retirement case passed.'
+    $retirementRegistry=$contractRegistry|ConvertTo-Json -Depth 64|ConvertFrom-Json -Depth 64
+    $retirementRegistry.revision=[long]$retirementRegistry.revision+1
+    $retirementRegistry.checks=@($retirementRegistry.checks|Where-Object check_id -cne 'leaf-binding-fixture')
+    Write-Utf8 (Join-Path $fixture 'manifests/affected-validation-registry.json') ((ConvertTo-MorphospaceCanonicalJson -Value $retirementRegistry)+"`n")
+    Remove-Item -LiteralPath (Join-Path $fixture 'scripts/Test-AffectedLeafBindingFixture.ps1')
+    [void](Invoke-TestGit $fixture @('add','manifests/affected-validation-registry.json','scripts/Test-AffectedLeafBindingFixture.ps1'))
+    [void](Invoke-TestGit $fixture @('commit','-m','proved unreferenced check retirement'))
+    $retirementHead=Invoke-TestGit $fixture @('rev-parse','HEAD')
+    $retirementPlan=Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $registryContractHead -HeadRevision $retirementHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+    $retirementProof=@($retirementPlan.registry_delta.retired_check_proofs|Where-Object check_id -ceq 'leaf-binding-fixture')
+    Assert-True ($retirementPlan.selection_mode-ceq'full-deep'-and[bool]$retirementPlan.execution_permitted-and@($retirementPlan.mapping_diagnostics).Count-eq0-and@($retirementPlan.reason_codes)-ccontains'unreferenced-check-retirement'-and@($retirementPlan.reason_codes)-ccontains'structural-registry-change') 'Proved retirement did not remain executable only through structural Deep selection.'
+    Assert-True ($retirementProof.Count-eq1-and[string]$retirementProof[0].command_path-ceq'scripts/Test-AffectedLeafBindingFixture.ps1'-and[string]$retirementProof[0].base_check_sha256-match'^[0-9a-f]{64}$'-and-not[bool]$retirementProof[0].command_path_present_in_head-and@($retirementProof[0].head_command_check_ids).Count-eq0) 'Proved retirement omitted its exact deleted-command binding.'
+    foreach($field in @('base_inbound_check_ids','head_inbound_check_ids','base_contract_consumer_check_ids','head_contract_consumer_check_ids','head_exact_invocation_check_ids')){Assert-True (@($retirementProof[0].$field).Count-eq0) "Proved retirement retained a forbidden $field reference."}
+    Assert-True (Test-Json -Json (ConvertTo-MorphospaceCanonicalJson -Value $retirementPlan) -SchemaFile (Join-Path $repoRoot 'schemas/affected-validation-plan-v2.schema.json') -ErrorAction Stop) 'Proved retirement plan failed the closed v2 schema.'
+    $forgedReferencedRetirement=$retirementPlan|ConvertTo-Json -Depth 64|ConvertFrom-Json -Depth 64;$forgedReferencedRetirement.registry_delta.retired_check_proofs[0].base_inbound_check_ids=@('documentation-links')
+    Assert-True (-not(Test-Json -Json (ConvertTo-MorphospaceCanonicalJson -Value $forgedReferencedRetirement) -SchemaFile (Join-Path $repoRoot 'schemas/affected-validation-plan-v2.schema.json') -ErrorAction SilentlyContinue)) 'Plan schema accepted a retirement proof with a base inbound reference.'
+    $forgedOrphanedCommand=$retirementPlan|ConvertTo-Json -Depth 64|ConvertFrom-Json -Depth 64;$forgedOrphanedCommand.registry_delta.retired_check_proofs[0].command_path_present_in_head=$true
+    Assert-True (-not(Test-Json -Json (ConvertTo-MorphospaceCanonicalJson -Value $forgedOrphanedCommand) -SchemaFile (Join-Path $repoRoot 'schemas/affected-validation-plan-v2.schema.json') -ErrorAction SilentlyContinue)) 'Plan schema accepted a tracked retired command without a remaining check registration.'
+    $forgedDuplicateProof=$retirementPlan|ConvertTo-Json -Depth 64|ConvertFrom-Json -Depth 64;$forgedDuplicateProof.registry_delta.retired_check_proofs=@($forgedDuplicateProof.registry_delta.retired_check_proofs[0],$forgedDuplicateProof.registry_delta.retired_check_proofs[0])
+    Assert-True (-not(Test-Json -Json (ConvertTo-MorphospaceCanonicalJson -Value $forgedDuplicateProof) -SchemaFile (Join-Path $repoRoot 'schemas/affected-validation-plan-v2.schema.json') -ErrorAction SilentlyContinue)) 'Plan schema accepted duplicate retirement proofs.'
+    $forgedIncompleteOwnership=$retirementPlan|ConvertTo-Json -Depth 64|ConvertFrom-Json -Depth 64;$forgedIncompleteOwnership.registry_delta.candidate_ownership_complete=$false
+    Assert-True (-not(Test-Json -Json (ConvertTo-MorphospaceCanonicalJson -Value $forgedIncompleteOwnership) -SchemaFile (Join-Path $repoRoot 'schemas/affected-validation-plan-v2.schema.json') -ErrorAction SilentlyContinue)) 'Plan schema accepted a retirement proof without complete candidate ownership.'
+
+    [void](Invoke-TestGit $fixture @('checkout','--detach',$registryContractHead))
+    $orphanedCommandRegistry=$contractRegistry|ConvertTo-Json -Depth 64|ConvertFrom-Json -Depth 64;$orphanedCommandRegistry.revision=[long]$orphanedCommandRegistry.revision+1;$orphanedCommandRegistry.checks=@($orphanedCommandRegistry.checks|Where-Object check_id -cne 'leaf-binding-fixture')
+    Write-Utf8 (Join-Path $fixture 'manifests/affected-validation-registry.json') ((ConvertTo-MorphospaceCanonicalJson -Value $orphanedCommandRegistry)+"`n");[void](Invoke-TestGit $fixture @('add','manifests/affected-validation-registry.json'));[void](Invoke-TestGit $fixture @('commit','-m','orphaned command retirement damage'))
+    $orphanedCommandHead=Invoke-TestGit $fixture @('rev-parse','HEAD');$orphanedCommandPlan=Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $registryContractHead -HeadRevision $orphanedCommandHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+    Assert-True ($orphanedCommandPlan.selection_mode-ceq'mapping-incomplete'-and@($orphanedCommandPlan.registry_delta.retired_check_proofs).Count-eq0-and@($orphanedCommandPlan.mapping_diagnostics|Where-Object{$_.issue_kind-ceq'missing-base-check-obligation'-and$_.path-ceq'scripts/Test-AffectedLeafBindingFixture.ps1'}).Count-eq1) 'Retirement proof allowed a tracked command to lose its final registered invocation.'
+
+    function Get-TestRetirementDelta([object]$Base,[object]$Head,[string[]]$HeadPaths){
+        $headInventory=[pscustomobject]@{records=@($HeadPaths|ForEach-Object{[pscustomobject]@{path=$_}})}
+        return &$registryDeltaModule {param($b,$h,$i) Get-MorphospaceAffectedRegistryDelta -BaseRegistry $b -HeadRegistry $h -CandidateOwnershipAudited $true -CandidateOwnershipComplete $true -RegistryBlobChanged $true -HeadInventory $i} $Base $Head $headInventory
+    }
+    Assert-True (@((Get-TestRetirementDelta $contractRegistry $retirementRegistry @()).retired_check_proofs).Count-eq1) 'Direct retirement classifier positive control did not emit one proof.'
+    $renamedCheckRegistry=$contractRegistry|ConvertTo-Json -Depth 64|ConvertFrom-Json -Depth 64;$renamedCheckRegistry.revision=[long]$renamedCheckRegistry.revision+1;$renamedCheck=@($renamedCheckRegistry.checks|Where-Object check_id -ceq 'leaf-binding-fixture')[0];$renamedCheck.check_id='leaf-binding-fixture-renamed'
+    Assert-True (@((Get-TestRetirementDelta $contractRegistry $renamedCheckRegistry @('scripts/Test-AffectedLeafBindingFixture.ps1')).retired_check_proofs).Count-eq0) 'Retirement proof admitted a same-invocation check-ID replacement.'
+
+    $referencedBaseRegistry=$contractRegistry|ConvertTo-Json -Depth 64|ConvertFrom-Json -Depth 64;$referencedBaseRegistry.checks|Where-Object check_id -ceq 'documentation-links'|ForEach-Object{$_.prerequisite_checks=@($_.prerequisite_checks)+@('leaf-binding-fixture')}
+    $referencedRetirementRegistry=$referencedBaseRegistry|ConvertTo-Json -Depth 64|ConvertFrom-Json -Depth 64;$referencedRetirementRegistry.revision=[long]$referencedRetirementRegistry.revision+1;$referencedRetirementRegistry.checks=@($referencedRetirementRegistry.checks|Where-Object check_id -cne 'leaf-binding-fixture');$referencedRetirementRegistry.checks|Where-Object check_id -ceq 'documentation-links'|ForEach-Object{$_.prerequisite_checks=@($_.prerequisite_checks|Where-Object{$_-cne'leaf-binding-fixture'})}
+    Assert-True (@((Get-TestRetirementDelta $referencedBaseRegistry $referencedRetirementRegistry @()).retired_check_proofs).Count-eq0) 'Retirement proof admitted same-revision removal of a surviving base reference.'
+
+    $contractBaseRegistry=$contractRegistry|ConvertTo-Json -Depth 64|ConvertFrom-Json -Depth 64;$contractBaseRegistry.checks|Where-Object check_id -ceq 'leaf-binding-fixture'|ForEach-Object{$_.provides_contracts=@('retired-contract')};$contractBaseRegistry.checks|Where-Object check_id -ceq 'documentation-links'|ForEach-Object{$_.consumes_contracts=@($_.consumes_contracts)+@('retired-contract')}
+    $contractRetirementRegistry=$contractBaseRegistry|ConvertTo-Json -Depth 64|ConvertFrom-Json -Depth 64;$contractRetirementRegistry.revision=[long]$contractRetirementRegistry.revision+1;$contractRetirementRegistry.checks=@($contractRetirementRegistry.checks|Where-Object check_id -cne 'leaf-binding-fixture');$contractRetirementRegistry.checks|Where-Object check_id -ceq 'documentation-links'|ForEach-Object{$_.consumes_contracts=@($_.consumes_contracts|Where-Object{$_-cne'retired-contract'})}
+    Assert-True (@((Get-TestRetirementDelta $contractBaseRegistry $contractRetirementRegistry @()).retired_check_proofs).Count-eq0) 'Retirement proof admitted same-revision removal of a provided-contract consumer.'
+
+    $skippedRevisionRegistry=$retirementRegistry|ConvertTo-Json -Depth 64|ConvertFrom-Json -Depth 64;$skippedRevisionRegistry.revision=[long]$contractRegistry.revision+2
+    Assert-True (@((Get-TestRetirementDelta $contractRegistry $skippedRevisionRegistry @()).retired_check_proofs).Count-eq0) 'Retirement proof admitted a skipped registry revision.'
+
+    $protectedRetirementRegistry=$contractRegistry|ConvertTo-Json -Depth 64|ConvertFrom-Json -Depth 64;$protectedRetirementRegistry.revision=[long]$protectedRetirementRegistry.revision+1;$protectedRetirementRegistry.checks=@($protectedRetirementRegistry.checks|Where-Object check_id -cne 'work-environment-deep')
+    Assert-True (@((Get-TestRetirementDelta $contractRegistry $protectedRetirementRegistry @('scripts/Test-WorkEnvironment.ps1')).retired_check_proofs).Count-eq0) 'Retirement proof admitted the protected cumulative aggregate.'
+
+    [void](Invoke-TestGit $fixture @('checkout','--detach',$registryContractHead))
+    Write-Utf8 (Join-Path $fixture 'mapping-migration-input.txt') "unmapped base`n"
+    [void](Invoke-TestGit $fixture @('add','mapping-migration-input.txt'));[void](Invoke-TestGit $fixture @('commit','-m','unmapped migration base'))
+    $migrationBase=Invoke-TestGit $fixture @('rev-parse','HEAD')
+    $migrationRegistry=$contractRegistry|ConvertTo-Json -Depth 64|ConvertFrom-Json -Depth 64;$migrationRegistry.revision=[long]$migrationRegistry.revision+1
+    $migrationPathSet=@($migrationRegistry.path_sets|Where-Object path_set_id -ceq 'documentation')[0];$migrationPathSet.patterns=@($migrationPathSet.patterns)+@('mapping-migration-input.txt')
+    Write-Utf8 (Join-Path $fixture 'manifests/affected-validation-registry.json') ((ConvertTo-MorphospaceCanonicalJson -Value $migrationRegistry)+"`n");Write-Utf8 (Join-Path $fixture 'mapping-migration-input.txt') "mapped candidate`n"
+    [void](Invoke-TestGit $fixture @('add','manifests/affected-validation-registry.json','mapping-migration-input.txt'));[void](Invoke-TestGit $fixture @('commit','-m','same pr mapping migration'))
+    $migrationHead=Invoke-TestGit $fixture @('rev-parse','HEAD');$migrationPlan=Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $migrationBase -HeadRevision $migrationHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+    $migrationProof=@($migrationPlan.registry_delta.mapping_migration_proofs|Where-Object old_path -ceq 'mapping-migration-input.txt')
+    [string[]]$expectedMigrationTriggers=@($migrationRegistry.checks|Where-Object{@($_.trigger_path_sets)-ccontains'documentation'}|ForEach-Object{[string]$_.check_id}|Sort-Object)
+    [string[]]$expectedMigrationConsumers=@($migrationRegistry.checks|Where-Object{@($_.consume_path_sets)-ccontains'documentation'}|ForEach-Object{[string]$_.check_id}|Sort-Object)
+    Assert-True ($migrationPlan.selection_mode-ceq'full-deep'-and[bool]$migrationPlan.execution_permitted-and@($migrationPlan.mapping_diagnostics).Count-eq0-and@($migrationPlan.reason_codes)-ccontains'same-pr-mapping-migration'-and@($migrationPlan.reason_codes)-ccontains'structural-registry-change') 'Same-PR mapping migration did not remain executable only through structural Deep selection.'
+    Assert-True ($migrationProof.Count-eq1-and[string]$migrationProof[0].new_path-ceq'mapping-migration-input.txt'-and[string]$migrationProof[0].change_status-ceq'M'-and@($migrationProof[0].base_matching_path_set_ids).Count-eq0-and[string]$migrationProof[0].head_path_set_id-ceq'documentation'-and[string]$migrationProof[0].head_path_set_sha256-match'^[0-9a-f]{64}$'-and(@($migrationProof[0].head_trigger_check_ids)-join'|')-ceq($expectedMigrationTriggers-join'|')-and(@($migrationProof[0].head_consume_check_ids)-join'|')-ceq($expectedMigrationConsumers-join'|')) 'Same-PR mapping migration omitted its exact candidate owner and affected consumers.'
+    foreach($consumerCheckId in @($expectedMigrationTriggers+$expectedMigrationConsumers|Sort-Object -Unique)){
+        $consumerCheck=@($migrationRegistry.checks|Where-Object check_id -ceq $consumerCheckId)[0]
+        $isHistoricalAggregate=$null-ne$consumerCheck.PSObject.Properties['aggregate_role']-and[string]$consumerCheck.aggregate_role-ceq'work-environment-deep-v1'
+        Assert-True ($isHistoricalAggregate-or@($migrationPlan.selected_checks.check_id)-ccontains$consumerCheckId) "Same-PR mapping migration omitted affected consumer '$consumerCheckId'."
+    }
+    Assert-True (Test-Json -Json (ConvertTo-MorphospaceCanonicalJson -Value $migrationPlan) -SchemaFile (Join-Path $repoRoot 'schemas/affected-validation-plan-v2.schema.json') -ErrorAction Stop) 'Same-PR mapping migration plan failed the closed v2 schema.'
+    $forgedMigrationBaseOwner=$migrationPlan|ConvertTo-Json -Depth 64|ConvertFrom-Json -Depth 64;$forgedMigrationBaseOwner.registry_delta.mapping_migration_proofs[0].base_matching_path_set_ids=@('documentation')
+    Assert-True (-not(Test-Json -Json (ConvertTo-MorphospaceCanonicalJson -Value $forgedMigrationBaseOwner) -SchemaFile (Join-Path $repoRoot 'schemas/affected-validation-plan-v2.schema.json') -ErrorAction SilentlyContinue)) 'Plan schema accepted a migration proof for a base-owned path.'
+    $forgedMigrationNoTrigger=$migrationPlan|ConvertTo-Json -Depth 64|ConvertFrom-Json -Depth 64;$forgedMigrationNoTrigger.registry_delta.mapping_migration_proofs[0].head_trigger_check_ids=@()
+    Assert-True (-not(Test-Json -Json (ConvertTo-MorphospaceCanonicalJson -Value $forgedMigrationNoTrigger) -SchemaFile (Join-Path $repoRoot 'schemas/affected-validation-plan-v2.schema.json') -ErrorAction SilentlyContinue)) 'Plan schema accepted a migration proof without a candidate trigger.'
+
+    [void](Invoke-TestGit $fixture @('checkout','--detach',$registryContractHead))
+    $ambiguousMigrationBaseRegistry=$contractRegistry|ConvertTo-Json -Depth 64|ConvertFrom-Json -Depth 64;$ambiguousMigrationBaseRegistry.revision=[long]$ambiguousMigrationBaseRegistry.revision+1
+    foreach($pathSetId in @('documentation','portable-skills')){$pathSet=@($ambiguousMigrationBaseRegistry.path_sets|Where-Object path_set_id -ceq $pathSetId)[0];$pathSet.patterns=@($pathSet.patterns)+@('mapping-migration-ambiguous.txt')}
+    Write-Utf8 (Join-Path $fixture 'manifests/affected-validation-registry.json') ((ConvertTo-MorphospaceCanonicalJson -Value $ambiguousMigrationBaseRegistry)+"`n");Write-Utf8 (Join-Path $fixture 'mapping-migration-ambiguous.txt') "ambiguous base`n"
+    [void](Invoke-TestGit $fixture @('add','manifests/affected-validation-registry.json','mapping-migration-ambiguous.txt'));[void](Invoke-TestGit $fixture @('commit','-m','ambiguous migration base'))
+    $ambiguousMigrationBase=Invoke-TestGit $fixture @('rev-parse','HEAD')
+    $ambiguousMigrationRegistry=$ambiguousMigrationBaseRegistry|ConvertTo-Json -Depth 64|ConvertFrom-Json -Depth 64;$ambiguousMigrationRegistry.revision=[long]$ambiguousMigrationRegistry.revision+1
+    $skillsPathSet=@($ambiguousMigrationRegistry.path_sets|Where-Object path_set_id -ceq 'portable-skills')[0];$skillsPathSet.patterns=@($skillsPathSet.patterns|Where-Object{$_-cne'mapping-migration-ambiguous.txt'})
+    Write-Utf8 (Join-Path $fixture 'manifests/affected-validation-registry.json') ((ConvertTo-MorphospaceCanonicalJson -Value $ambiguousMigrationRegistry)+"`n");Write-Utf8 (Join-Path $fixture 'mapping-migration-ambiguous.txt') "uniquely mapped candidate`n"
+    [void](Invoke-TestGit $fixture @('add','manifests/affected-validation-registry.json','mapping-migration-ambiguous.txt'));[void](Invoke-TestGit $fixture @('commit','-m','ambiguous mapping removal'))
+    $ambiguousMigrationHead=Invoke-TestGit $fixture @('rev-parse','HEAD');$ambiguousMigrationPlan=Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $ambiguousMigrationBase -HeadRevision $ambiguousMigrationHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+    Assert-True ($ambiguousMigrationPlan.selection_mode-ceq'mapping-incomplete'-and-not[bool]$ambiguousMigrationPlan.execution_permitted-and@($ambiguousMigrationPlan.registry_delta.mapping_migration_proofs).Count-eq0-and@($ambiguousMigrationPlan.mapping_diagnostics|Where-Object{$_.path-ceq'mapping-migration-ambiguous.txt'-and$_.side-ceq'old'-and$_.issue_kind-ceq'ambiguous'-and@($_.matching_path_set_ids).Count-eq2}).Count-eq1) 'Same-PR ownership removal admitted an ambiguous base mapping.'
+    Remove-Item -LiteralPath Function:Get-TestRetirementDelta
+    Write-Host 'Registry unreferenced-retirement and same-PR mapping-migration proof/damage cases passed.'
     Write-Host "Trust registry-delta/ownership/obligation checks passed in $([long]$trustSegmentClock.Elapsed.TotalMilliseconds)ms."
     }
 
