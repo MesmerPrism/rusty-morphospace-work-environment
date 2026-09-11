@@ -1,6 +1,6 @@
 # Local Skill Bootstrap
 
-This guide installs four Work Environment-owned skill routers plus the
+This guide installs five Work Environment-owned skill routers plus the
 canonical Meta Quest router into a contributor's own agent environment with
 verifiable split source provenance. It supports a new machine and an existing
 installation without silently overwriting local work.
@@ -59,7 +59,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass `
   -Action Plan
 ```
 
-Review all five rows, then install. Writes require `-Execute`:
+Review all six rows, then install. Writes require `-Execute`:
 
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass `
@@ -127,6 +127,13 @@ work-environment clone before handing portable work to `rusty-morphospace`.
 Normal routing does not require this extra hop. It contains no architecture
 copy, live unit, or release-candidate status. Private planning workspaces may
 add a stricter state-first read order in their own `AGENTS.md`.
+
+### rusty-morphospace-cleanup
+
+Use this explicit-only skill when the user asks to manually clean generated
+artifacts. It installs with the same provenance, Plan/Install/Update, and
+Verify behavior as the other Work Environment-owned skills. The skill does not
+schedule cleanup, add an on-resume hook, or authorize automatic deletion.
 
 ### system-engineering
 
@@ -209,7 +216,7 @@ file edited locally is managed drift and will be restored by Update; keep local
 notes in separate files or project/repo instructions.
 
 After review, repeat Update for the remaining named skills or omit `-SkillId`
-to update all five. Run Verify again.
+to update all six. Run Verify again.
 
 ## 6. Review And Prune Unmanaged Files
 
@@ -257,5 +264,5 @@ pwsh -NoProfile -ExecutionPolicy Bypass `
 The test proves plan/install/verify behavior, exact Meta playbook locator
 generation and damage rejection, drift detection, explicit update,
 unmanaged-file reporting and preservation, dry-run and fingerprinted
-backup-first pruning, and final verification for all five skills without
+backup-first pruning, and final verification for all six skills without
 touching the contributor's real skill directory.

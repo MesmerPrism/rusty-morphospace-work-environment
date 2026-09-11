@@ -32,8 +32,8 @@ Use the installed local routers:
 - `$rusty-morphospace` for normal architecture, ownership, composition,
   workflow, validation, and instruction routing. It resolves the installed
   locator directly.
-- `$rusty-morphospace-context` only for existing callers needing the
-  compatibility locator.
+- `$rusty-morphospace-context` only for existing callers needing the compatibility locator.
+- `$rusty-morphospace-cleanup` for user-requested manual cleanup only; never schedule or hook it.
 - `$system-engineering` for authority, contracts, interfaces, observability,
   and validation design.
 - `$rust-work-graph` for bounded inventories, source roots, and impact maps.

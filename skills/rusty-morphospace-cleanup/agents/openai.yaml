@@ -1,0 +1,6 @@
+interface:
+  display_name: "Morphospace Manual Cleanup"
+  short_description: "Clean generated artifacts only when requested"
+  default_prompt: "Use $rusty-morphospace-cleanup to clean this project's obsolete generated artifacts now, compact useful lessons, and review how to prevent new bloat."
+policy:
+  allow_implicit_invocation: false
