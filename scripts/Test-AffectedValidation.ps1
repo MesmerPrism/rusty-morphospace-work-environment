@@ -2504,6 +2504,17 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value $termina
             Assert-True (Test-Json -Json (ConvertTo-MorphospaceCanonicalJson -Value $reusedPass) -SchemaFile (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json') -ErrorAction Stop) 'Leaf schema rejected the intentional reused-pass/started=false shape.'
             $documentationStdout = [IO.File]::ReadAllBytes((Join-Path $documentationReceipt[0].DirectoryName 'stdout.bin'))
             $documentationStderr = [IO.File]::ReadAllBytes((Join-Path $documentationReceipt[0].DirectoryName 'stderr.bin'))
+            $expressionFallbackReceipt = $documentationReceiptValue | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64 -DateKind String
+            $expressionFallbackReasons = @($expressionFallbackReceipt.binding.dependency_resolution.fallback_reasons | Where-Object { [string]$_.importer -ceq 'scripts/Test-DocumentationLinks.ps1' -and [string]$_.variable -ceq 'UnresolvedModulePath' -and [string]$_.kind -ceq 'unresolved-import' })
+            Assert-True ($expressionFallbackReasons.Count -eq 1) 'Expression-invocation schema fixture did not select exactly one production-shaped fallback reason.'
+            $expressionFallbackReasons[0].kind = 'unresolved-expression-invocation'
+            $expressionFallbackReceipt.binding_sha256 = Get-MorphospaceCanonicalJsonSha256 -Value $expressionFallbackReceipt.binding
+            $expressionFallbackSnapshot = New-MorphospaceAffectedCheckSnapshot -Receipt $expressionFallbackReceipt -Stdout $documentationStdout -Stderr $documentationStderr -Artifacts @() -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json')
+            Assert-True (@($expressionFallbackSnapshot.receipt.binding.dependency_resolution.fallback_reasons | Where-Object { [string]$_.kind -ceq 'unresolved-expression-invocation' }).Count -eq 1) 'Parent snapshot retention rejected the production-shaped expression-invocation fallback reason.'
+            $unknownFallbackReceipt = $expressionFallbackReceipt | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64 -DateKind String
+            $unknownFallbackReceipt.binding.dependency_resolution.fallback_reasons[0].kind = 'arbitrary-fallback-kind'
+            $unknownFallbackReceipt.binding_sha256 = Get-MorphospaceCanonicalJsonSha256 -Value $unknownFallbackReceipt.binding
+            Assert-True (-not (Test-Json -Json (ConvertTo-MorphospaceCanonicalJson -Value $unknownFallbackReceipt) -SchemaFile (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json') -ErrorAction SilentlyContinue)) 'Leaf evidence schema accepted an arbitrary dependency fallback reason kind.'
             $executedNullSnapshot = New-MorphospaceAffectedCheckSnapshot -Receipt $documentationReceiptValue -Stdout $documentationStdout -Stderr $documentationStderr -Artifacts @() -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json')
             Assert-True ([string]$executedNullSnapshot.receipt.mode -ceq 'executed' -and $null -eq $executedNullSnapshot.receipt.reused_from) 'Parent snapshot retention rejected the valid executed/null reuse shape.'
             $reusedObjectSnapshot = New-MorphospaceAffectedCheckSnapshot -Receipt $reusedPass -Stdout $documentationStdout -Stderr $documentationStderr -Artifacts @() -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json')
