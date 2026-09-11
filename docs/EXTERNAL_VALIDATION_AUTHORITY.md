@@ -115,6 +115,12 @@ files, Git configuration, diagnostics, or candidate execution. Redirects,
 cookies, default credentials, and token fallback after an authentication failure
 are disabled. Local callers may still read public comments anonymously when
 they do not request authenticated transport. No write permission is granted.
+The bearer value is opaque: enforce nonempty hosted credentials, a 4,096-character
+transport ceiling, and no whitespace or control characters, without checking a
+token prefix or decoding claims. GitHub's
+[installation-token format notice](https://github.blog/changelog/2026-04-24-notice-about-upcoming-new-format-for-github-app-installation-tokens/)
+includes Actions-issued tokens and explicitly advises against hardcoded format
+assumptions. Token transport does not establish owner authorization.
 Exactly one fresh pinned-owner comment
 must contain a valid `rusty-morphospace-external-owner-authorization:v1` for the
 current evidence. Historical comments for older evidence remain inert audit

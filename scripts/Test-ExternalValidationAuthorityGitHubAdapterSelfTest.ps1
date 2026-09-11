@@ -357,12 +357,20 @@ try {
     [void](Invoke-GitTest $trustedRoot @("checkout", "--detach", $baseCommit))
     $commonArguments = @{RepositoryRoot=$trustedRoot;Repository=$repository;PullRequestNumber=$pullRequestNumber;BaseCommit=$baseCommit;HeadCommit=$unprotectedHead;PinnedVerifierCommit=$baseCommit;PinnedVerifierTree=$baseTree;PinnedVerifierPath="scripts/Test-ExternalValidationAuthority.ps1";PinnedVerifierSha256=$verifierSha256;RemoteUrl=$remoteRoot;AllowLocalTestRemote=$true}
     Assert-Rejected { & $adapter @commonArguments -RequireAuthenticatedComments } 'requires its read-only workflow token' "missing hosted credential"
-    $env:STATIC_ADMISSION_COMMENTS_TOKEN = "invalid`ncredential"
-    Assert-Rejected { & $adapter @commonArguments -RequireAuthenticatedComments } 'credential has an invalid format' "malformed credential"
-    if (Test-Path Env:STATIC_ADMISSION_COMMENTS_TOKEN) { throw "Rejected credential remained in the environment." }
-    $env:STATIC_ADMISSION_COMMENTS_TOKEN = "fixture_token"
-    $ordinaryAssessment=(@(& $adapter @commonArguments -RequireAuthenticatedComments)-join "`n")|ConvertFrom-Json -Depth 30
-    if (Test-Path Env:STATIC_ADMISSION_COMMENTS_TOKEN) { throw "Adapter retained the credential environment variable." }
+    foreach ($invalidToken in @('', ' ', "`t", 'two words', ' leading', 'trailing ', "invalid`ncredential", "trailing`n", "trailing`r", "invalid`r`nInjected: value", ("control" + [char]1 + "value"), ("format" + [char]0x200b + "value"), ("space" + [char]0x00a0 + "value"), ('x' * 4097))) {
+        $env:STATIC_ADMISSION_COMMENTS_TOKEN = $invalidToken
+        Assert-Rejected { & $adapter @commonArguments -RequireAuthenticatedComments } 'requires its read-only workflow token|credential has an invalid format' "unsafe credential value"
+        if (Test-Path Env:STATIC_ADMISSION_COMMENTS_TOKEN) { throw "Rejected credential remained in the environment." }
+    }
+    # Synthetic values only: classic spelling, current JWT-shaped spelling,
+    # opaque punctuation without a known prefix, and the transport size ceiling.
+    # Passing these proves safe transport, not that GitHub would authorize them.
+    foreach ($opaqueToken in @('fixture_token', ('ghs_123456_' + ('a' * 170) + '.' + ('b-' * 85) + '.' + ('c_' * 85)), 'opaque.value-with+slash/equals=tilde~', ('x' * 4096))) {
+        $env:STATIC_ADMISSION_COMMENTS_TOKEN = $opaqueToken
+        $ordinaryAssessment=(@(& $adapter @commonArguments -RequireAuthenticatedComments)-join "`n")|ConvertFrom-Json -Depth 30
+        if (Test-Path Env:STATIC_ADMISSION_COMMENTS_TOKEN) { throw "Adapter retained the credential environment variable." }
+        Invoke-CommentTransportCase @((New-CommentResponse 200)) -Token $opaqueToken
+    }
     if([string]$ordinaryAssessment.decision -cne "unprotected"){throw "Ordinary unprotected v1 fixture returned the wrong decision."}
 
     [void](Invoke-GitTest $seedRoot @("checkout", "-b", "approved-work", $baseCommit))

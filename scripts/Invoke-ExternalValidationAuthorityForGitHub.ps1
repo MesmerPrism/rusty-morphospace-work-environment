@@ -26,7 +26,10 @@ Remove-Item Env:STATIC_ADMISSION_COMMENTS_TOKEN -ErrorAction SilentlyContinue
 if ($RequireAuthenticatedComments -and [string]::IsNullOrEmpty($commentReadToken)) {
     throw "The base-owned comment reader requires its read-only workflow token."
 }
-if ($commentReadToken -and $commentReadToken -cnotmatch '^[A-Za-z0-9_]{1,4096}$') {
+# GitHub installation tokens are opaque, including its variable-length JWT
+# format. Bound the header value and reject whitespace/control injection only;
+# never infer authority from a prefix, alphabet, length, or decoded claims.
+if ($commentReadToken -and ($commentReadToken.Length -gt 4096 -or $commentReadToken -match '[\s\p{C}]')) {
     throw "The comment reader credential has an invalid format."
 }
 $GitCommandTimeoutSeconds = 60
