@@ -196,4 +196,10 @@ immutable assessment hash. The owner signs only a payload derived from that
 request; comment fields never supply expected repository, Git, artifact, or
 assessment evidence. A stale authorization remains inert history and triggers
 a fresh request instead of blocking recovery. Keep signing outside the
-anonymous read-only workflow.
+read-only workflow. Its base-owned comment reader uses an ephemeral token with
+only `issues: read` to avoid the runner IP's shared anonymous quota; the token
+is removed from the environment before subprocesses and never reaches
+candidate code. Bounded retries cannot replace waiting for an exhausted quota,
+and transport authentication cannot replace the exact owner signature. See
+[External Validation Authority](EXTERNAL_VALIDATION_AUTHORITY.md) for the
+deadline, diagnostics, and adoption proof.
