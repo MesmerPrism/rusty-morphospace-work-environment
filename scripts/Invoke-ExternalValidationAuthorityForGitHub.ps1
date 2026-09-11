@@ -27,9 +27,9 @@ if ($RequireAuthenticatedComments -and [string]::IsNullOrEmpty($commentReadToken
     throw "The base-owned comment reader requires its read-only workflow token."
 }
 # GitHub installation tokens are opaque, including its variable-length JWT
-# format. Bound the header value and reject whitespace/control injection only;
-# never infer authority from a prefix, alphabet, length, or decoded claims.
-if ($commentReadToken -and ($commentReadToken.Length -gt 4096 -or $commentReadToken -match '[\s\p{C}]')) {
+# format. Enforce only bounded HTTP token68 syntax, including trailing padding;
+# never infer authority from a provider prefix, fixed length, or decoded claims.
+if ($commentReadToken -and ($commentReadToken.Length -gt 4096 -or $commentReadToken -cnotmatch '\A[A-Za-z0-9._~+/-]+=*\z')) {
     throw "The comment reader credential has an invalid format."
 }
 $GitCommandTimeoutSeconds = 60
@@ -509,6 +509,23 @@ if ($AllowLocalTestRemote -and [string]::IsNullOrWhiteSpace($RemoteUrl)) {
     throw "A local self-test remote must be explicit."
 }
 
+# Read only bounded transport limits as inert data before any child runs. The
+# exact trusted owner policy and signature are validated after Git identity
+# checks. No code or schema from RepositoryRoot is loaded during this phase.
+try {
+    $commentTransportPolicy = Get-Content -Raw -LiteralPath (Join-Path $trusted "config/external-owner-authorization.json") | ConvertFrom-Json -Depth 30
+    $commentLimit = $commentTransportPolicy.maximum_comments
+    $commentByteLimit = $commentTransportPolicy.maximum_response_bytes
+    if (
+        $commentLimit -isnot [long] -or $commentLimit -lt 1 -or $commentLimit -gt 1000 -or
+        $commentByteLimit -isnot [long] -or $commentByteLimit -lt 1024 -or $commentByteLimit -gt 1048576
+    ) { throw "Comment transport policy limits are invalid." }
+    $comments = @(Get-PublicIssueComments $Repository ([int]$PullRequestNumber) $CommentsJsonPath ([int]$commentLimit) ([int]$commentByteLimit) $commentReadToken)
+} finally {
+    $commentReadToken = $null
+    Remove-Variable commentReadToken
+}
+
 $headBeforeFetch = (Invoke-Git $trusted @("rev-parse", "HEAD")).stdout.Trim()
 if ($headBeforeFetch -cne $BaseCommit) {
     throw "Trusted checkout HEAD does not equal the event base commit."
@@ -646,9 +663,6 @@ if($externalOutcome){
     $requestText=($request|ConvertTo-Json -Depth 30).Replace("`r`n","`n").Replace("`r","`n")
     if(-not(Test-Json -Json ($requestAssessment|ConvertTo-Json -Depth 30) -SchemaFile (Join-Path $trusted "schemas/external-validation-authority-assessment-v1.schema.json") -ErrorAction Stop)){throw "Request assessment failed its schema."}
     if(-not(Test-Json -Json $requestText -SchemaFile (Join-Path $trusted "schemas/external-owner-authorization-request-v1.schema.json") -ErrorAction Stop)){throw "External owner authorization request failed its schema."}
-    try {
-        $comments=@(Get-PublicIssueComments $Repository ([int]$PullRequestNumber) $CommentsJsonPath ([int]$ownerPolicy.maximum_comments) ([int]$ownerPolicy.maximum_response_bytes) $commentReadToken)
-    } finally { $commentReadToken = $null }
     $markerComments = @(
         foreach ($comment in $comments) {
             if ([string]$comment.user.login -cne [string]$ownerPolicy.owner_login) { continue }

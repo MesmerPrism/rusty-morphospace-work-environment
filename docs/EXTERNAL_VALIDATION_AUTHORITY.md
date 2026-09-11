@@ -109,15 +109,19 @@ policy-controlled response-byte, comment-count, and comment-size bounds. The
 base-owned GitHub step requires its ephemeral `GITHUB_TOKEN` with only
 `issues: read`; it uses that token only for GET requests to the fixed
 `https://api.github.com/repos/<repository>/issues/<number>/comments` endpoint.
-The adapter consumes and removes the step-specific environment variable before
-any Git or verifier invocation. It does not place the token in arguments,
+The adapter consumes and removes the step-specific environment variable, fetches
+comments, and removes its token variable before any Git or verifier invocation.
+This transport phase also runs for unprotected and base-approved changes. It reads
+only bounded numeric policy limits as data; exact base identity, full policy, and
+owner evidence are validated afterward. It does not place the token in arguments,
 files, Git configuration, diagnostics, or candidate execution. Redirects,
 cookies, default credentials, and token fallback after an authentication failure
 are disabled. Local callers may still read public comments anonymously when
 they do not request authenticated transport. No write permission is granted.
 The bearer value is opaque: enforce nonempty hosted credentials, a 4,096-character
-transport ceiling, and no whitespace or control characters, without checking a
-token prefix or decoding claims. GitHub's
+transport ceiling, and HTTP token68 syntax (ASCII letters, digits, `._~+/-`, with
+optional trailing `=` padding). Whitespace, controls, header separators, and
+interior padding reject, without checking a provider prefix or decoding claims. GitHub's
 [installation-token format notice](https://github.blog/changelog/2026-04-24-notice-about-upcoming-new-format-for-github-app-installation-tokens/)
 includes Actions-issued tokens and explicitly advises against hardcoded format
 assumptions. Token transport does not establish owner authorization.

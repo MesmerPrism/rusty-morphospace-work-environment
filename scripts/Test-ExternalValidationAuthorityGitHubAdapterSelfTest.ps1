@@ -273,7 +273,14 @@ try {
     )
     $fixtureVerifierPath = Join-Path $seedRoot "scripts/Test-ExternalValidationAuthority.ps1"
     $fixtureVerifierSource = Get-Content -Raw $fixtureVerifierPath
-    $fixtureVerifierSource += "`n" + 'if (Test-Path Env:STATIC_ADMISSION_COMMENTS_TOKEN) { throw "Verifier inherited the comment token." }'
+    $fixtureVerifierAst = [Management.Automation.Language.Parser]::ParseInput($fixtureVerifierSource, [ref]$null, [ref]$null)
+    $credentialProbe = @'
+
+if (Test-Path Env:STATIC_ADMISSION_COMMENTS_TOKEN) { throw "Verifier inherited the comment token." }
+if (Get-Variable commentReadToken -ErrorAction SilentlyContinue) { throw "Verifier resolved the parent comment token variable." }
+
+'@
+    $fixtureVerifierSource = $fixtureVerifierSource.Insert($fixtureVerifierAst.ParamBlock.Extent.EndOffset, $credentialProbe)
     Write-Utf8 $fixtureVerifierPath $fixtureVerifierSource
     foreach ($schemaName in @(
         "external-validation-authority-assessment-v1.schema.json",
@@ -355,9 +362,10 @@ try {
 
     [void](Invoke-GitTest $temp @("clone", "--no-local", $remoteRoot, $trustedRoot))
     [void](Invoke-GitTest $trustedRoot @("checkout", "--detach", $baseCommit))
-    $commonArguments = @{RepositoryRoot=$trustedRoot;Repository=$repository;PullRequestNumber=$pullRequestNumber;BaseCommit=$baseCommit;HeadCommit=$unprotectedHead;PinnedVerifierCommit=$baseCommit;PinnedVerifierTree=$baseTree;PinnedVerifierPath="scripts/Test-ExternalValidationAuthority.ps1";PinnedVerifierSha256=$verifierSha256;RemoteUrl=$remoteRoot;AllowLocalTestRemote=$true}
+    $commentsPath=Join-Path $temp "comments.json";Write-Utf8 $commentsPath "[]"
+    $commonArguments = @{RepositoryRoot=$trustedRoot;Repository=$repository;PullRequestNumber=$pullRequestNumber;BaseCommit=$baseCommit;HeadCommit=$unprotectedHead;PinnedVerifierCommit=$baseCommit;PinnedVerifierTree=$baseTree;PinnedVerifierPath="scripts/Test-ExternalValidationAuthority.ps1";PinnedVerifierSha256=$verifierSha256;RemoteUrl=$remoteRoot;CommentsJsonPath=$commentsPath;AllowLocalTestRemote=$true}
     Assert-Rejected { & $adapter @commonArguments -RequireAuthenticatedComments } 'requires its read-only workflow token' "missing hosted credential"
-    foreach ($invalidToken in @('', ' ', "`t", 'two words', ' leading', 'trailing ', "invalid`ncredential", "trailing`n", "trailing`r", "invalid`r`nInjected: value", ("control" + [char]1 + "value"), ("format" + [char]0x200b + "value"), ("space" + [char]0x00a0 + "value"), ('x' * 4097))) {
+    foreach ($invalidToken in @('', ' ', "`t", 'two words', ' leading', 'trailing ', "invalid`ncredential", "trailing`n", "trailing`r", "invalid`r`nInjected: value", ("control" + [char]1 + "value"), ("format" + [char]0x200b + "value"), ("space" + [char]0x00a0 + "value"), ('x' * 4097), 'a,b', 'a"b', "a'b", 'a:b', 'a;b', '=', '==', '=abc', 'abc=def', 'abc==def', 'café')) {
         $env:STATIC_ADMISSION_COMMENTS_TOKEN = $invalidToken
         Assert-Rejected { & $adapter @commonArguments -RequireAuthenticatedComments } 'requires its read-only workflow token|credential has an invalid format' "unsafe credential value"
         if (Test-Path Env:STATIC_ADMISSION_COMMENTS_TOKEN) { throw "Rejected credential remained in the environment." }
@@ -365,7 +373,7 @@ try {
     # Synthetic values only: classic spelling, current JWT-shaped spelling,
     # opaque punctuation without a known prefix, and the transport size ceiling.
     # Passing these proves safe transport, not that GitHub would authorize them.
-    foreach ($opaqueToken in @('fixture_token', ('ghs_123456_' + ('a' * 170) + '.' + ('b-' * 85) + '.' + ('c_' * 85)), 'opaque.value-with+slash/equals=tilde~', ('x' * 4096))) {
+    foreach ($opaqueToken in @('fixture_token', ('ghs_123456_' + ('a' * 170) + '.' + ('b-' * 85) + '.' + ('c_' * 85)), 'opaque.value-with+slash/tilde~', 'opaque=', 'opaque==', 'x', ('x' * 4096), (('x' * 4095) + '='))) {
         $env:STATIC_ADMISSION_COMMENTS_TOKEN = $opaqueToken
         $ordinaryAssessment=(@(& $adapter @commonArguments -RequireAuthenticatedComments)-join "`n")|ConvertFrom-Json -Depth 30
         if (Test-Path Env:STATIC_ADMISSION_COMMENTS_TOKEN) { throw "Adapter retained the credential environment variable." }
