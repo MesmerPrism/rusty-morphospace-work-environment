@@ -104,12 +104,56 @@ summarized in
 The durable v1 route runs ordinary base-policy admission first. Only the exact
 `Protected changes do not match an exact base-approved change set.` outcome may
 continue; every other outcome fails. The adapter fetches public PR issue
-comments anonymously across bounded pages, with a shared timeout plus
-policy-controlled response-byte, comment-count, and comment-size bounds. It
-sends no token and performs no write. Exactly one fresh pinned-owner comment
+comments across bounded pages, with a shared 20-second timeout plus
+policy-controlled response-byte, comment-count, and comment-size bounds. The
+base-owned GitHub step requires its ephemeral `GITHUB_TOKEN` with only
+`issues: read`; it uses that token only for GET requests to the fixed
+`https://api.github.com/repos/<repository>/issues/<number>/comments` endpoint.
+The adapter consumes and removes the step-specific environment variable, fetches
+comments, and removes its token variable before any Git or verifier invocation.
+This transport phase also runs for unprotected and base-approved changes. It reads
+only bounded numeric policy limits as data; exact base identity, full policy, and
+owner evidence are validated afterward. It does not place the token in arguments,
+files, Git configuration, diagnostics, or candidate execution. Redirects,
+cookies, default credentials, and token fallback after an authentication failure
+are disabled. Local callers may still read public comments anonymously when
+they do not request authenticated transport. No write permission is granted.
+The bearer value is opaque: enforce nonempty hosted credentials, a 4,096-character
+transport ceiling, and HTTP token68 syntax (ASCII letters, digits, `._~+/-`, with
+optional trailing `=` padding). Whitespace, controls, header separators, and
+interior padding reject, without checking a provider prefix or decoding claims. GitHub's
+[installation-token format notice](https://github.blog/changelog/2026-04-24-notice-about-upcoming-new-format-for-github-app-installation-tokens/)
+includes Actions-issued tokens and explicitly advises against hardcoded format
+assumptions. Token transport does not establish owner authorization.
+Exactly one fresh pinned-owner comment
 must contain a valid `rusty-morphospace-external-owner-authorization:v1` for the
 current evidence. Historical comments for older evidence remain inert audit
 history and do not have to be edited or deleted.
+
+Authenticated transport removes dependence on the originating IP's shared
+anonymous primary quota; it does not grant authorization or remove rate limits.
+[GitHub's rate-limit contract](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api)
+sets anonymous requests to 60/hour per IP and `GITHUB_TOKEN` requests to
+1,000/hour per repository. A retry alone cannot repair an exhausted quota whose
+reset lies outside the deadline. The reader allows at most three attempts per
+page, retries selected server errors with one- then two-second backoff, and
+honors valid `Retry-After` and primary-reset headers without shortening their
+wait. A secondary limit without explicit timing requires at least one minute
+and therefore fails within this 20-second policy. An ordinary 403, invalid
+retry timing, exhausted attempts, or a wait outside the remaining budget fails
+closed. Only bounded numeric status/rate metadata enters diagnostics; response
+bodies and arbitrary headers are never logged. All pages, body reads, and
+waits share the same deadline, and a separate page ceiling prevents an endless
+empty-page chain.
+
+Keep `pull_request_target` and the existing required static check. Posting a
+comment still requires rerunning that exact check; comments are data, not
+execution triggers or authority. Adding `issue_comment` or `workflow_run` would
+require a separately reviewed event-to-current-head binding and check-delivery
+design, and does not itself solve anonymous rate limits. The transport repair
+must first pass the old trusted-base gate with a fresh exact owner signature;
+candidate tests cannot activate it. After adoption, a protected follow-up PR
+must exercise the new authenticated base-owned path and its required check.
 
 The RSA-PSS-SHA256 signed canonical payload binds the issuer and unique audit ID,
 repository and PR, exact base/head commits and trees, complete sorted artifact
@@ -217,7 +261,7 @@ checkout.
 
 The adapter:
 
-- declares only `contents: read`;
+- declares only `issues: read` (all other optional token permissions are none);
 - uses no actions or checkout token; any future action must be pinned by full
   commit and keep credentials disabled;
 - checks out only `pull_request.base.sha`;
@@ -229,8 +273,9 @@ The adapter:
 - pins the work-environment verifier commit, tree, entrypoint, and SHA-256;
 - invokes only the base-owned adapter and pinned verifier;
 - never imports, executes, restores, builds, or extracts candidate content;
-- uses no secrets, environments, OIDC, candidate artifacts, caches,
-  submodules, LFS, comments, releases, or write permissions.
+- uses no stored secrets, environments, OIDC, candidate artifacts, caches,
+  submodules, LFS, comment writes, releases, or write permissions; only its
+  comment reader receives the ephemeral read-only workflow token.
 
 The base adapter may issue a repository-specific typed assessment that adds
 workflow run identity. It must not relabel a static assessment or a

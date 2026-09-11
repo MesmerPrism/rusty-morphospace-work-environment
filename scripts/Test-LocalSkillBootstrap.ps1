@@ -159,7 +159,7 @@ try {
 
     $planText = Invoke-InstallerChild -Arguments @("-RepoRoot", $installerSourceRoot, "-TargetRoot", $targetRoot, "-Action", "Plan", "-Json")
     $plan = $planText | ConvertFrom-Json
-    Assert-True -Condition (@($plan).Count -eq 5) -Message "Plan did not include all five portable skills (count=$(@($plan).Count)). Output: $planText"
+    Assert-True -Condition (@($plan).Count -eq 6) -Message "Plan did not include all six portable skills (count=$(@($plan).Count)). Output: $planText"
     Assert-True -Condition (@($plan | Where-Object { $_.action -ne "would-install" }).Count -eq 0) -Message "Fresh plan was not entirely would-install."
     Assert-True -Condition (-not (Test-Path -LiteralPath $targetRoot)) -Message "Plan unexpectedly created the target root."
 
@@ -172,7 +172,7 @@ try {
     $installed = $installText | ConvertFrom-Json
     Assert-True -Condition (@($installed | Where-Object { $_.action -ne "installed" }).Count -eq 0) -Message "One or more skills were not installed."
 
-    foreach ($skill in @("meta-quest-workflow", "rust-work-graph", "rusty-morphospace", "rusty-morphospace-context", "system-engineering")) {
+    foreach ($skill in @("meta-quest-workflow", "rust-work-graph", "rusty-morphospace", "rusty-morphospace-cleanup", "rusty-morphospace-context", "system-engineering")) {
         $skillRoot = Join-Path $targetRoot $skill
         Assert-True -Condition (Test-Path -LiteralPath (Join-Path $skillRoot "SKILL.md")) -Message "$skill SKILL.md is missing."
         Assert-True -Condition (Test-Path -LiteralPath (Join-Path $skillRoot ".morphospace-skill-source.json")) -Message "$skill provenance is missing."
@@ -209,7 +209,7 @@ try {
             Assert-True -Condition ($playbookLocator.docs_root -eq (Join-Path $metaSourceRoot "docs")) -Message "Meta Quest playbook docs root is wrong."
             Assert-True -Condition ($playbookLocator.playbook_index_path -eq (Join-Path $metaSourceRoot "docs\playbook-index.md")) -Message "Meta Quest playbook index path is wrong."
         }
-        if ($skill -in @("rusty-morphospace", "rusty-morphospace-context")) {
+        if ($skill -in @("rusty-morphospace", "rusty-morphospace-cleanup", "rusty-morphospace-context")) {
             Assert-True -Condition (Test-Path -LiteralPath (Join-Path $skillRoot "agents\openai.yaml")) -Message "$skill agents/openai.yaml is missing."
             Assert-True -Condition (@($metadata.source_files | Where-Object {
                 ([string]$_.path).Replace("\", "/") -ceq "agents/openai.yaml"

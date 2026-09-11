@@ -13,11 +13,25 @@ param(
     [string]$RemoteUrl = "",
     [string]$CommentsJsonPath = "",
     [string]$AuthorizationRequestPath = "",
+    [switch]$RequireAuthenticatedComments,
     [switch]$AllowLocalTestRemote
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+# Consume the step-scoped credential before any Git or verifier invocation.
+# It is used only by the fixed-origin HTTP reader, never a command argument.
+$commentReadToken = [Environment]::GetEnvironmentVariable("STATIC_ADMISSION_COMMENTS_TOKEN")
+Remove-Item Env:STATIC_ADMISSION_COMMENTS_TOKEN -ErrorAction SilentlyContinue
+if ($RequireAuthenticatedComments -and [string]::IsNullOrEmpty($commentReadToken)) {
+    throw "The base-owned comment reader requires its read-only workflow token."
+}
+# GitHub installation tokens are opaque, including its variable-length JWT
+# format. Enforce only bounded HTTP token68 syntax, including trailing padding;
+# never infer authority from a provider prefix, fixed length, or decoded claims.
+if ($commentReadToken -and ($commentReadToken.Length -gt 4096 -or $commentReadToken -cnotmatch '\A[A-Za-z0-9._~+/-]+=*\z')) {
+    throw "The comment reader credential has an invalid format."
+}
 $GitCommandTimeoutSeconds = 60
 $MaximumVerifierBytes = 1048576
 $ForbiddenGitEnvironmentVariables = @(
@@ -124,6 +138,7 @@ function New-GitStartInfo {
     $start.CreateNoWindow = $true
     $start.RedirectStandardOutput = $true
     $start.RedirectStandardError = $true
+    [void]$start.Environment.Remove("STATIC_ADMISSION_COMMENTS_TOKEN")
     $start.Environment["GIT_NO_REPLACE_OBJECTS"] = "1"
     $start.Environment["GIT_OPTIONAL_LOCKS"] = "0"
     $start.Environment["GIT_LFS_SKIP_SMUDGE"] = "1"
@@ -316,13 +331,66 @@ function Get-ExternalOwnerCandidateArtifacts {
     return ,@($items | Sort-Object { [string]$_.path } -CaseSensitive)
 }
 
+function Get-CommentFetchRetryPlan {
+    param([Net.Http.HttpResponseMessage]$Response, [int]$Attempt, [datetimeoffset]$Now)
+
+    # Only bounded numeric rate-limit metadata enters diagnostics. Never print
+    # response bodies, arbitrary headers, request objects, or credentials.
+    $metadata = @{}
+    foreach ($name in @("x-ratelimit-limit", "x-ratelimit-remaining", "x-ratelimit-reset", "retry-after")) {
+        $values = [Collections.Generic.IEnumerable[string]]$null
+        if ($Response.Headers.TryGetValues($name, [ref]$values)) {
+            $items = @($values)
+            [long]$number = 0
+            if ($items.Count -eq 1 -and $items[0] -cmatch '^[0-9]{1,19}$' -and [long]::TryParse($items[0], [ref]$number)) {
+                $metadata[$name] = $number
+            } elseif ($name -eq "retry-after") {
+                [datetimeoffset]$date = [datetimeoffset]::MinValue
+                if ($items.Count -eq 1 -and [datetimeoffset]::TryParseExact($items[0], "r", [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AssumeUniversal, [ref]$date)) {
+                    $metadata[$name] = [long][Math]::Max(0, [Math]::Ceiling(($date - $Now).TotalSeconds))
+                } else {
+                    return @{ delay_seconds = $null; detail = "invalid Retry-After header" }
+                }
+            } else {
+                return @{ delay_seconds = $null; detail = "invalid numeric rate-limit header" }
+            }
+        }
+    }
+    $detail = @($metadata.Keys | Sort-Object | ForEach-Object { "$_=$($metadata[$_])" }) -join "; "
+    $status = [int]$Response.StatusCode
+    $delay = $null
+    if ($Attempt -lt 3) {
+        if ($status -in @(403, 429)) {
+            if ($metadata.ContainsKey("retry-after") -or $metadata["x-ratelimit-remaining"] -ceq 0 -or $status -eq 429) {
+                # GitHub requires at least one minute for secondary throttling
+                # without a reset/Retry-After. The caller's 20s budget rejects it.
+                $delay = 60L
+                if ($metadata.ContainsKey("retry-after")) { $delay = [Math]::Max(1L, $metadata["retry-after"]) }
+            }
+        } elseif ($status -in @(500, 502, 503, 504)) {
+            $delay = [long][Math]::Pow(2, $Attempt - 1)
+            if ($metadata.ContainsKey("retry-after")) { $delay = [Math]::Max($delay, $metadata["retry-after"]) }
+        }
+        if ($null -ne $delay -and $metadata["x-ratelimit-remaining"] -ceq 0) {
+            if (-not $metadata.ContainsKey("x-ratelimit-reset")) { $delay = $null }
+            else {
+                $untilReset = [Math]::Max(1L, $metadata["x-ratelimit-reset"] - $Now.ToUnixTimeSeconds() + 1)
+                $delay = if ($status -in @(403, 429) -and -not $metadata.ContainsKey("retry-after")) { $untilReset } else { [Math]::Max($delay, $untilReset) }
+            }
+        }
+    }
+    return @{ delay_seconds = $delay; detail = $detail }
+}
+
 function Get-PublicIssueComments {
     param(
         [string]$RepositoryName,
         [int]$Number,
         [string]$FixturePath,
         [int]$MaximumComments,
-        [int]$MaximumResponseBytes
+        [int]$MaximumResponseBytes,
+        [string]$ReadToken = "",
+        [Net.Http.HttpMessageHandler]$TestHandler = $null
     )
     Import-Module (Join-Path $PSScriptRoot "lib/ExternalOwnerAuthorization.psm1") -Force
     if($FixturePath){
@@ -334,18 +402,48 @@ function Get-PublicIssueComments {
         if($fixtureComments.Count -gt $MaximumComments){throw "Comment count exceeds the configured bound."}
         return $fixtureComments
     }
-    $handler=[Net.Http.HttpClientHandler]::new()
-    $handler.AllowAutoRedirect=$false
+    if ($TestHandler -and -not $AllowLocalTestRemote) { throw "HTTP handlers are test-only." }
+    $handler = $TestHandler
+    if ($null -eq $handler) {
+        $handler=[Net.Http.HttpClientHandler]::new()
+        $handler.AllowAutoRedirect=$false
+        $handler.UseCookies=$false
+        $handler.UseDefaultCredentials=$false
+    }
     $client=[Net.Http.HttpClient]::new($handler)
     $client.Timeout=[Threading.Timeout]::InfiniteTimeSpan
     $client.DefaultRequestHeaders.UserAgent.ParseAdd("rusty-morphospace-static-admission/1")
+    $client.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json")
+    $client.DefaultRequestHeaders.Add("X-GitHub-Api-Version", "2022-11-28")
+    if ($ReadToken) { $client.DefaultRequestHeaders.Authorization = [Net.Http.Headers.AuthenticationHeaderValue]::new("Bearer", $ReadToken) }
     $deadline=[Threading.CancellationTokenSource]::new([TimeSpan]::FromSeconds(20))
+    $elapsed=[Diagnostics.Stopwatch]::StartNew()
     $comments=[Collections.Generic.List[object]]::new()
     [int64]$totalBytes=0
     try{
+        $maximumPages = [int][Math]::Ceiling($MaximumComments / 100.0) + 1
         for($page=1;;$page++){
+            if ($page -gt $maximumPages) { throw "Comment pagination exceeds its page bound." }
             $uri="https://api.github.com/repos/$RepositoryName/issues/$Number/comments?per_page=100&page=$page"
-            $response=$client.GetAsync($uri,[Net.Http.HttpCompletionOption]::ResponseHeadersRead,$deadline.Token).GetAwaiter().GetResult()
+            $response = $null
+            for ($attempt = 1; $attempt -le 3; $attempt++) {
+                try {
+                    $response=$client.GetAsync($uri,[Net.Http.HttpCompletionOption]::ResponseHeadersRead,$deadline.Token).GetAwaiter().GetResult()
+                } catch {
+                    throw "Public comment fetch failed during transport or exceeded the shared 20-second deadline."
+                }
+                if ($response.IsSuccessStatusCode) { break }
+                $status = [int]$response.StatusCode
+                $retry = Get-CommentFetchRetryPlan $response $attempt ([datetimeoffset]::UtcNow)
+                $response.Dispose()
+                $response = $null
+                if ($null -eq $retry.delay_seconds -or $retry.delay_seconds -ge (20 - $elapsed.Elapsed.TotalSeconds)) {
+                    throw "Public comment fetch failed with HTTP $status; attempt=$attempt; $($retry.detail); no retry fits the bounded policy."
+                }
+                Write-Warning "Public comment fetch HTTP $status; attempt=$attempt; $($retry.detail); retry in $($retry.delay_seconds)s."
+                try { [Threading.Tasks.Task]::Delay([TimeSpan]::FromSeconds($retry.delay_seconds), $deadline.Token).GetAwaiter().GetResult() }
+                catch { throw "Public comment fetch exceeded the shared 20-second deadline." }
+            }
             try{
                 if(-not $response.IsSuccessStatusCode){throw "Public comment fetch failed with HTTP $([int]$response.StatusCode)."}
                 if($response.Content.Headers.ContentLength -and $totalBytes+$response.Content.Headers.ContentLength -gt $MaximumResponseBytes){throw "Comment response exceeds its size bound."}
@@ -371,7 +469,7 @@ function Get-PublicIssueComments {
             }finally{$response.Dispose()}
         }
         return $comments.ToArray()
-    }finally{$deadline.Dispose();$client.Dispose();$handler.Dispose()}
+    }finally{$elapsed.Stop();$deadline.Dispose();$client.Dispose();$handler.Dispose()}
 }
 
 Assert-CleanGitProcessEnvironment
@@ -409,6 +507,23 @@ if (-not $AllowLocalTestRemote -and $RemoteUrl -cne $expectedRemote) {
 }
 if ($AllowLocalTestRemote -and [string]::IsNullOrWhiteSpace($RemoteUrl)) {
     throw "A local self-test remote must be explicit."
+}
+
+# Read only bounded transport limits as inert data before any child runs. The
+# exact trusted owner policy and signature are validated after Git identity
+# checks. No code or schema from RepositoryRoot is loaded during this phase.
+try {
+    $commentTransportPolicy = Get-Content -Raw -LiteralPath (Join-Path $trusted "config/external-owner-authorization.json") | ConvertFrom-Json -Depth 30
+    $commentLimit = $commentTransportPolicy.maximum_comments
+    $commentByteLimit = $commentTransportPolicy.maximum_response_bytes
+    if (
+        $commentLimit -isnot [long] -or $commentLimit -lt 1 -or $commentLimit -gt 1000 -or
+        $commentByteLimit -isnot [long] -or $commentByteLimit -lt 1024 -or $commentByteLimit -gt 1048576
+    ) { throw "Comment transport policy limits are invalid." }
+    $comments = @(Get-PublicIssueComments $Repository ([int]$PullRequestNumber) $CommentsJsonPath ([int]$commentLimit) ([int]$commentByteLimit) $commentReadToken)
+} finally {
+    $commentReadToken = $null
+    Remove-Variable commentReadToken
 }
 
 $headBeforeFetch = (Invoke-Git $trusted @("rev-parse", "HEAD")).stdout.Trim()
@@ -548,7 +663,6 @@ if($externalOutcome){
     $requestText=($request|ConvertTo-Json -Depth 30).Replace("`r`n","`n").Replace("`r","`n")
     if(-not(Test-Json -Json ($requestAssessment|ConvertTo-Json -Depth 30) -SchemaFile (Join-Path $trusted "schemas/external-validation-authority-assessment-v1.schema.json") -ErrorAction Stop)){throw "Request assessment failed its schema."}
     if(-not(Test-Json -Json $requestText -SchemaFile (Join-Path $trusted "schemas/external-owner-authorization-request-v1.schema.json") -ErrorAction Stop)){throw "External owner authorization request failed its schema."}
-    $comments=@(Get-PublicIssueComments $Repository ([int]$PullRequestNumber) $CommentsJsonPath ([int]$ownerPolicy.maximum_comments) ([int]$ownerPolicy.maximum_response_bytes))
     $markerComments = @(
         foreach ($comment in $comments) {
             if ([string]$comment.user.login -cne [string]$ownerPolicy.owner_login) { continue }

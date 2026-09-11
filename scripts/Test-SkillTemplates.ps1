@@ -27,13 +27,14 @@ $limits = [ordered]@{
     "system-engineering" = 6KB
     "rust-work-graph" = 4KB
     "rusty-morphospace-context" = 1KB
+    "rusty-morphospace-cleanup" = 8KB
 }
 $actual = @(Get-ChildItem -LiteralPath $skillRoot -Directory |
     Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName "SKILL.md") } |
     Sort-Object Name)
 
 if ((@($actual.Name) -join "|") -cne (($limits.Keys | Sort-Object) -join "|")) {
-    throw "Expected exactly the four work-environment-owned portable skills. Found: $($actual.Name -join ', ')"
+    throw "Expected exactly the five work-environment-owned portable skills. Found: $($actual.Name -join ', ')"
 }
 if (Test-Path -LiteralPath (Join-Path $skillRoot "meta-quest-workflow\SKILL.md") -PathType Leaf) {
     throw "Work Environment must not track a competing Meta Quest skill source."
@@ -95,6 +96,8 @@ Assert-Contains $contentByName["rusty-morphospace-context"] '$rusty-morphospace'
 Assert-Contains $contentByName["system-engineering"] '$meta-quest-workflow' "System engineering must route live device work."
 Assert-Contains $contentByName["rust-work-graph"] '$system-engineering' "The graph skill must route authority decisions."
 Assert-Contains $contentByName["rust-work-graph"] '$meta-quest-workflow' "The graph skill must route live device work."
+Assert-Contains $contentByName["rusty-morphospace-cleanup"] 'user requests cleanup' "The cleanup skill must remain user-invoked."
+Assert-Contains $contentByName["rusty-morphospace-cleanup"] 'Do not schedule cleanup' "The cleanup skill must remain manual-only."
 
 $publicPath = Join-Path $skillRoot "rusty-morphospace\SKILL.md"
 foreach ($reference in @("references/ownership-map.md", "references/project-workflow.md")) {
