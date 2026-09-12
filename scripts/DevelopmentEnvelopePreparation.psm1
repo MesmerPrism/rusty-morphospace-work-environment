@@ -84,6 +84,67 @@ function Assert-PreparationHistoricalSupersessionAudit {
            $null-ne$accepted.intent.target.state.document.current_unit){throw "Preparation historical supersession chain for '$historicalId' has an unauthenticated accepted endpoint."}
     }
 }
+function Test-PreparationDraftReference {
+    param([object]$Value,[string]$UnitId,[string]$Field='')
+    if ($null -eq $Value) { return $false }
+    if ($Value -is [string]) {
+        if ($Field -match '(^|_)units?(_ids?|_before|_after)?$|^prerequisites$') { return $Value -ieq $UnitId }
+        if ($Field -match '(^|_)paths?$') { return $Value.Replace('\','/') -ieq "iteration-units/$UnitId.json" }
+        return $false
+    }
+    if ($Value -is [System.Collections.IEnumerable]) {
+        foreach ($item in $Value) { if (Test-PreparationDraftReference $item $UnitId $Field) { return $true } }
+    } elseif ($Value -is [pscustomobject]) {
+        foreach ($property in $Value.PSObject.Properties) {
+            if (Test-PreparationDraftReference $property.Value $UnitId $property.Name) { return $true }
+        }
+    }
+    return $false
+}
+function Get-PreparationInertDraftIds {
+    param([string]$Workspace,[object]$History)
+    $inert = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $drafts = @($History.units.Keys | Where-Object { [string]$History.units[$_].status -ceq 'proposed' })
+    if (-not $History.authenticated -or $drafts.Count -eq 0) { return ,$inert }
+    # Read only the owner control surface. Never recurse through evidence,
+    # archive objects, local payloads, or legacy directories to prove absence.
+    $paths = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($relative in @('workspace.state.json','project.spec.json','feature.lock.json')) {
+        if ([IO.File]::Exists((Get-PreparationPath $Workspace $relative))) { [void]$paths.Add($relative) }
+    }
+    foreach ($directory in @('receipts','receipts/transactions')) {
+        $absolute = Get-PreparationPath $Workspace $directory
+        if (-not [IO.Directory]::Exists($absolute)) { continue }
+        foreach ($file in @(Get-ChildItem -LiteralPath $absolute -Filter '*.json' -File)) { [void]$paths.Add("$directory/$($file.Name)") }
+    }
+    $state = Read-MorphospaceProtocolJson (Get-PreparationPath $Workspace 'workspace.state.json')
+    if ($state.PSObject.Properties.Name -contains 'history_archive' -and $null -ne $state.history_archive) {
+        # The history reader already authenticates this declared root; its typed
+        # source paths establish membership without opening archived payloads.
+        [void]$paths.Add([string]$state.history_archive.root_path)
+    }
+    $documents = [Collections.Generic.List[object]]::new()
+    foreach ($path in $paths) { $documents.Add((Read-MorphospaceProtocolJson (Get-PreparationPath $Workspace $path))) }
+    foreach ($event in $History.events) { $documents.Add($event) }
+    foreach ($id in $drafts) {
+        $unit = $History.units[$id]
+        if ($unit.PSObject.Properties.Name -notcontains 'schema' -or
+            [string]$unit.schema -cne 'rusty.morphospace.workflow.iteration_unit.v1' -or
+            @($unit.PSObject.Properties.Name | Where-Object { $_ -match 'admission|preparation|^candidate_freeze$|^inherited_candidate' }).Count -gt 0) { continue }
+        $referenced = $false
+        foreach ($otherId in $History.units.Keys) {
+            if ($otherId -ceq $id) { continue }
+            if (Test-PreparationDraftReference $History.units[$otherId] $id) { $referenced = $true; break }
+        }
+        if (-not $referenced) {
+            foreach ($document in $documents) {
+                if (Test-PreparationDraftReference $document $id) { $referenced = $true; break }
+            }
+        }
+        if (-not $referenced) { [void]$inert.Add($id) }
+    }
+    return ,$inert
+}
 function Assert-PreparationHistoricalSupersessionClosure {
     param([string]$Workspace)
     if($null-eq(Get-Command Get-MorphospaceCurrentWorkHistory -ErrorAction SilentlyContinue)){Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceCurrentWorkHistory.psm1')}
@@ -93,10 +154,12 @@ function Assert-PreparationHistoricalSupersessionClosure {
         Assert-PreparationHistoricalSupersessionAudit $Workspace
         return
     }
+    $inertDrafts = Get-PreparationInertDraftIds $Workspace $history
     foreach ($id in $history.units.Keys) {
         if ([string]$history.units[$id].status -cne 'accepted' -and
             -not $history.retired_ids.Contains($id) -and
-            -not $history.historically_retired_proposed_ids.Contains($id)) {
+            -not $history.historically_retired_proposed_ids.Contains($id) -and
+            -not $inertDrafts.Contains($id)) {
             throw "Preparation rejects nonhistorical unit '$id' outside idle accepted authority."
         }
     }

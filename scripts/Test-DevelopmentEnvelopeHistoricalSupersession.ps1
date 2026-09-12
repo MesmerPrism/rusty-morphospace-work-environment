@@ -46,6 +46,27 @@ try{
     Assert-Closure $workspace
     $after=@(Get-ChildItem $workspace -Recurse -File|Sort-Object FullName|ForEach-Object{"$($_.FullName.Substring($workspace.Length))=$(Get-MorphospaceFileSha256 $_.FullName)"})
     Assert-History (($before-join"`n")-ceq($after-join"`n")) 'positive validation rewrote immutable workspace bytes'
+    $draftRoot=Join-Path $temp 'inert-draft';Copy-Item $workspace $draftRoot -Recurse
+    $draftPath=Join-Path $draftRoot 'iteration-units/unit015.json'
+    Write-HistoryJson $draftPath ([ordered]@{schema='rusty.morphospace.workflow.iteration_unit.v1';project_id='morphovision-shaped';unit_id='unit015';status='proposed';prerequisites=@('unit013');objective='An unused draft.'})
+    # Prose is not an authority reference. Local evidence is outside this read.
+    Write-HistoryJson (Join-Path $draftRoot 'receipts/notes.json') ([ordered]@{summary='unit015';notes='iteration-units/unit015.json'})
+    [IO.Directory]::CreateDirectory((Join-Path $draftRoot 'local'))|Out-Null
+    [IO.File]::WriteAllText((Join-Path $draftRoot 'local/unrelated.json'),'not-json')
+    $draftBefore=Get-MorphospaceFileSha256 $draftPath
+    Assert-Closure $draftRoot
+    Assert-History ((Get-MorphospaceFileSha256 $draftPath)-ceq$draftBefore) 'inert classification rewrote draft bytes'
+    Assert-Rejected $draftRoot 'draft-admission-binding' {param($r)$p=Join-Path $r 'iteration-units/unit015.json';$u=Read-MorphospaceProtocolJson $p;$u|Add-Member admission $null;Write-HistoryJson $p $u}
+    Assert-Rejected $draftRoot 'draft-preparation-binding' {param($r)$p=Join-Path $r 'iteration-units/unit015.json';$u=Read-MorphospaceProtocolJson $p;$u|Add-Member preparation $null;Write-HistoryJson $p $u}
+    Assert-Rejected $draftRoot 'draft-current' {param($r)$p=Join-Path $r 'workspace.state.json';$d=Read-MorphospaceProtocolJson $p;$d.current_unit='unit015';Write-HistoryJson $p $d}
+    Assert-Rejected $draftRoot 'draft-next' {param($r)$p=Join-Path $r 'workspace.state.json';$d=Read-MorphospaceProtocolJson $p;$d.next_ready_unit='unit015';Write-HistoryJson $p $d}
+    Assert-Rejected $draftRoot 'draft-admission-receipt' {param($r)Write-HistoryJson (Join-Path $r 'receipts/admitted.json') ([ordered]@{schema='rusty.morphospace.workflow.development_unit_admission_receipt.v1';unit_id='unit015'})}
+    Assert-Rejected $draftRoot 'draft-transaction-path' {param($r)Write-HistoryJson (Join-Path $r 'receipts/transactions/draft.completion.json') ([ordered]@{target=[ordered]@{unit=[ordered]@{path='iteration-units/unit015.json'}}})}
+    Assert-Rejected $draftRoot 'draft-case-ambiguous-reference' {param($r)Write-HistoryJson (Join-Path $r 'receipts/reference.json') ([ordered]@{unit_id='UNIT015'})}
+    Assert-Rejected $draftRoot 'draft-prerequisite' {param($r)Write-HistoryJson (Join-Path $r 'iteration-units/unit018.json') ([ordered]@{schema='rusty.morphospace.workflow.iteration_unit.v1';project_id='morphovision-shaped';unit_id='unit018';status='proposed';prerequisites=@('unit015')})}
+    Assert-Rejected $draftRoot 'draft-duplicate-identity' {param($r)Copy-Item (Join-Path $r 'iteration-units/unit015.json') (Join-Path $r 'iteration-units/duplicate.json')}
+    Assert-Rejected $draftRoot 'draft-pending-transaction' {param($r)Write-HistoryJson (Join-Path $r 'receipts/transactions/pending.intent.json') ([ordered]@{unit_id='unit015'})}
+    Assert-Rejected $draftRoot 'draft-damaged-control' {param($r)[IO.File]::WriteAllText((Join-Path $r 'receipts/unknown.json'),'not-json')}
     Assert-Rejected $workspace 'future-proposed' {param($r)Write-HistoryJson (Join-Path $r 'iteration-units\unit014.json') ([ordered]@{unit_id='unit014';status='proposed'})}
     Assert-Rejected $workspace 'current-authority' {param($r)$p=Join-Path $r 'workspace.state.json';$d=Read-MorphospaceProtocolJson $p;$d.current_unit='unit013';Write-HistoryJson $p $d}
     Assert-AuditRejected $workspace 'missing-supersession-completion' {param($r)Remove-Item -LiteralPath (Join-Path $r 'receipts\transactions\unit009-superseded-by-unit010-transition.completion.json')}
