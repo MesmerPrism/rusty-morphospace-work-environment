@@ -77,7 +77,10 @@ After that authenticated idle boundary, a canonical same-project `proposed`
 unit may remain as an inert draft when it has no admission, preparation, freeze,
 or inherited-candidate binding and no typed incoming unit-identity or unit-path
 reference. Preparation checks the retained units and events, project/lock/state,
-canonical receipt and transaction records, and declared archive-root metadata.
+canonical receipt and transaction records, managed attempt controls, and declared
+archive-root metadata. Attempt checks enumerate canonical unit/attempt directories
+and only `evidence.json`, `validation-receipt-v2.json`, `validation-action.json`,
+and `accept-action.json`; other nested payloads are not read.
 References include prerequisites and pending or orphaned transaction bindings;
 prose mentions do not establish authority. The check does not traverse local
 evidence payloads or archive objects. Unreadable control records or ambiguous

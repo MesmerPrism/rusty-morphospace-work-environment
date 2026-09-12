@@ -117,6 +117,20 @@ function Get-PreparationInertDraftIds {
         if (-not [IO.Directory]::Exists($absolute)) { continue }
         foreach ($file in @(Get-ChildItem -LiteralPath $absolute -Filter '*.json' -File)) { [void]$paths.Add("$directory/$($file.Name)") }
     }
+    # Managed attempt controls may refer to another unit; inspect every
+    # canonical unit/attempt directory, but only the four owner-named files.
+    $receiptsRoot = Get-PreparationPath $Workspace 'receipts'
+    foreach ($unitDirectory in @(Get-ChildItem -LiteralPath $receiptsRoot -Directory)) {
+        if ($unitDirectory.Name -cnotmatch '^[a-z0-9][a-z0-9-]{1,127}$') { continue }
+        $unitRoot = Get-PreparationPath $Workspace "receipts/$($unitDirectory.Name)"
+        foreach ($attemptDirectory in @(Get-ChildItem -LiteralPath $unitRoot -Directory)) {
+            if ($attemptDirectory.Name -cnotmatch '^[a-z0-9][a-z0-9-]{7,95}$') { continue }
+            foreach ($role in @('validation-evidence','validation-receipt','validation-action','accept-action')) {
+                $control = Get-MorphospaceManagedControlPath -WorkspaceRoot $Workspace -UnitId $unitDirectory.Name -AttemptId $attemptDirectory.Name -Role $role
+                if ([IO.File]::Exists($control.absolute_path)) { [void]$paths.Add([string]$control.relative_path) }
+            }
+        }
+    }
     $state = Read-MorphospaceProtocolJson (Get-PreparationPath $Workspace 'workspace.state.json')
     if ($state.PSObject.Properties.Name -contains 'history_archive' -and $null -ne $state.history_archive) {
         # The history reader already authenticates this declared root; its typed

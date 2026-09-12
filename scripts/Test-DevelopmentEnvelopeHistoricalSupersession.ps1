@@ -53,6 +53,9 @@ try{
     Write-HistoryJson (Join-Path $draftRoot 'receipts/notes.json') ([ordered]@{summary='unit015';notes='iteration-units/unit015.json'})
     [IO.Directory]::CreateDirectory((Join-Path $draftRoot 'local'))|Out-Null
     [IO.File]::WriteAllText((Join-Path $draftRoot 'local/unrelated.json'),'not-json')
+    $payloadRoot=Join-Path $draftRoot 'receipts/unit999/attempt-0001';[IO.Directory]::CreateDirectory($payloadRoot)|Out-Null
+    [IO.File]::WriteAllText((Join-Path $payloadRoot 'unrelated-payload.json'),'not-json')
+    Write-HistoryJson (Join-Path $payloadRoot 'payload/reference.json') ([ordered]@{unit_id='unit015'})
     $draftBefore=Get-MorphospaceFileSha256 $draftPath
     Assert-Closure $draftRoot
     Assert-History ((Get-MorphospaceFileSha256 $draftPath)-ceq$draftBefore) 'inert classification rewrote draft bytes'
@@ -61,6 +64,9 @@ try{
     Assert-Rejected $draftRoot 'draft-current' {param($r)$p=Join-Path $r 'workspace.state.json';$d=Read-MorphospaceProtocolJson $p;$d.current_unit='unit015';Write-HistoryJson $p $d}
     Assert-Rejected $draftRoot 'draft-next' {param($r)$p=Join-Path $r 'workspace.state.json';$d=Read-MorphospaceProtocolJson $p;$d.next_ready_unit='unit015';Write-HistoryJson $p $d}
     Assert-Rejected $draftRoot 'draft-admission-receipt' {param($r)Write-HistoryJson (Join-Path $r 'receipts/admitted.json') ([ordered]@{schema='rusty.morphospace.workflow.development_unit_admission_receipt.v1';unit_id='unit015'})}
+    foreach($controlName in @('evidence.json','validation-receipt-v2.json','validation-action.json','accept-action.json')){
+        Assert-Rejected $draftRoot "draft-nested-$controlName" {param($r)Write-HistoryJson (Join-Path $r "receipts/unit999/attempt-0001/$controlName") ([ordered]@{unit_id='unit015'})}
+    }
     Assert-Rejected $draftRoot 'draft-transaction-path' {param($r)Write-HistoryJson (Join-Path $r 'receipts/transactions/draft.completion.json') ([ordered]@{target=[ordered]@{unit=[ordered]@{path='iteration-units/unit015.json'}}})}
     Assert-Rejected $draftRoot 'draft-case-ambiguous-reference' {param($r)Write-HistoryJson (Join-Path $r 'receipts/reference.json') ([ordered]@{unit_id='UNIT015'})}
     Assert-Rejected $draftRoot 'draft-prerequisite' {param($r)Write-HistoryJson (Join-Path $r 'iteration-units/unit018.json') ([ordered]@{schema='rusty.morphospace.workflow.iteration_unit.v1';project_id='morphovision-shaped';unit_id='unit018';status='proposed';prerequisites=@('unit015')})}
