@@ -2020,7 +2020,6 @@ if ($runFullSelector -or $runExecutorPassPhase) {
     $hostedActionPins = @{
         'actions/checkout'='3d3c42e5aac5ba805825da76410c181273ba90b1'
         'actions/upload-artifact'='043fb46d1a93c77aae656e7c1c64a875d1fc6a0a'
-        'actions/download-artifact'='3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c'
         'actions/cache/restore'='55cc8345863c7cc4c66a329aec7e433d2d1c52a9'
         'actions/cache/save'='55cc8345863c7cc4c66a329aec7e433d2d1c52a9'
     }
@@ -2149,9 +2148,10 @@ if ($runFullSelector -or $runExecutorPassPhase) {
     }
     foreach ($reducer in @('quick-linux','standard-windows','main-linux-delta','main-windows-delta')) {
         $reducerBody = [string]$workflowJobs[$reducer]
+        $downloadIndex = $reducerBody.IndexOf('Download-AffectedValidationSegmentArtifacts.ps1',[StringComparison]::Ordinal)
         $stageIndex = $reducerBody.IndexOf('Stage-AffectedValidationSegmentEvidence.ps1',[StringComparison]::Ordinal)
         $mergeIndex = $reducerBody.IndexOf('Merge-AffectedValidationSegments.ps1',[StringComparison]::Ordinal)
-        Assert-True ($reducerBody.Contains('merge-multiple: false') -and -not $reducerBody.Contains('merge-multiple: true') -and $stageIndex -ge 0 -and $mergeIndex -gt $stageIndex -and $reducerBody.Contains('-RunId $env:GITHUB_RUN_ID -CurrentAttempt ([int]$env:GITHUB_RUN_ATTEMPT)')) "Reducer '$reducer' can flatten or merge unselected retry artifacts."
+        Assert-True ($downloadIndex -ge 0 -and $stageIndex -gt $downloadIndex -and -not $reducerBody.Contains('actions/download-artifact@') -and $mergeIndex -gt $stageIndex -and $reducerBody.Contains('-RunId $env:GITHUB_RUN_ID -CurrentAttempt ([int]$env:GITHUB_RUN_ATTEMPT)')) "Reducer '$reducer' can flatten or merge unselected retry artifacts."
         Assert-True ($reducerBody.Contains('name: affected-selection-') -and $reducerBody.Contains('-selection.json')) "Reducer '$reducer' does not retain its selected attempt receipt."
         if ($reducer -cin @('quick-linux','standard-windows')) {
             Assert-True ($reducerBody -match 'name: affected-(?:linux|windows)-\$\{\{ steps.merge.outputs.evidence_sha256 \}\}-\$\{\{ github.run_id \}\}-\$\{\{ github.run_attempt \}\}') "Reducer '$reducer' final artifact can collide on an aggregate-only retry."
@@ -2161,7 +2161,7 @@ if ($runFullSelector -or $runExecutorPassPhase) {
         $artifactMarker = "affected-$platform-evidence.json"
         $artifactIndex = $workflowSource.IndexOf($artifactMarker, [StringComparison]::Ordinal)
         Assert-True ($artifactIndex -ge 0) "PR workflow lacks the $platform evidence artifact."
-        Assert-True ($workflowSource.Contains("pattern: affected-segment-$platform-*") -and $workflowSource.Contains("-Platform $platform -SegmentEvidenceDirectory")) "PR workflow does not download and merge the exact $platform segment evidence set."
+        Assert-True ($workflowSource.Contains("-Platform $platform -DestinationRoot") -and $workflowSource.Contains("-Platform $platform -SegmentEvidenceDirectory")) "PR workflow does not download and merge the exact $platform segment evidence set."
     }
     foreach ($platform in @('linux','windows')) {
         $mainSegmentBody = [string]$workflowJobs["main-$platform-segments"]

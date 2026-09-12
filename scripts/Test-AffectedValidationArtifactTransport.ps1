@@ -25,7 +25,66 @@ function Assert-TransportScratchChild([string]$Root, [string]$Path, [string]$Con
     if (-not $pathFull.StartsWith(($rootFull + [IO.Path]::DirectorySeparatorChar), [StringComparison]::OrdinalIgnoreCase)) { throw "Transport fixture $Context escaped its scratch root: $pathFull" }
 }
 
-function Invoke-TransportStageMergeFixture([string]$ScratchRoot) {
+function Invoke-TransportDownloadFixture([object[]]$Rows, [hashtable]$Sources, [string]$Destination, [string]$Platform = 'linux', [switch]$FailDownload) {
+    $fixtureRemoteRows = $Rows
+    $fixtureSources = $Sources
+    $fixtureDownloads = [Collections.Generic.List[string]]::new()
+    function gh {
+        $global:LASTEXITCODE = 0
+        if ($args[0] -ceq 'api') {
+            Assert-Transport ($args.Count -eq 2 -and $args[1] -match '^/repos/example/transport-fixture/actions/runs/77/artifacts\?per_page=100&page=([1-9][0-9]*)$') 'Downloader did not enumerate the exact repository/run.'
+            $page = [int]$Matches[1]
+            return (@{total_count=($fixtureRemoteRows.Count + $page - 1);artifacts=@($fixtureRemoteRows | Select-Object -Skip (($page - 1) * 100) -First 100)} | ConvertTo-Json -Depth 32)
+        }
+        Assert-Transport ($args.Count -eq 9 -and $args[0] -ceq 'run' -and $args[1] -ceq 'download' -and $args[2] -ceq '77' -and $args[3] -ceq '--repo' -and $args[4] -ceq 'example/transport-fixture' -and $args[5] -ceq '--name' -and $args[7] -ceq '--dir') 'Downloader did not bind one exact name and run per download.'
+        $name = [string]$args[6]; $target = [string]$args[8]
+        Assert-Transport ([IO.Path]::GetFileName($target) -ceq $name) 'Downloader lost the real artifact directory identity.'
+        $fixtureDownloads.Add($name)
+        if ($FailDownload) { $global:LASTEXITCODE = 1; return }
+        # Reproduce the actual CLI/action singleton behavior: payload directly
+        # in the requested directory, with no automatic artifact-name wrapper.
+        [void][IO.Directory]::CreateDirectory($target)
+        foreach ($source in @(Get-ChildItem -LiteralPath $fixtureSources[$name])) { Copy-Item -LiteralPath $source.FullName -Destination $target }
+    }
+    & (Join-Path $PSScriptRoot 'Download-AffectedValidationSegmentArtifacts.ps1') -Repository 'example/transport-fixture' -RunId 77 -CurrentAttempt 2 -Platform $Platform -DestinationRoot $Destination | Out-Null
+    return @($fixtureDownloads.ToArray())
+}
+
+function Invoke-TransportDownloadDamageFixture([string]$ScratchRoot) {
+    $goodName = "affected-segment-linux-001-$('a' * 64)-77-2"
+    $olderName = "affected-segment-linux-001-$('b' * 64)-77-1"
+    foreach ($kind in @('name','run','future','id','duplicate-id','duplicate-name','duplicate-winner','expired-winner','empty')) {
+        $good = [pscustomobject]@{name=$goodName;id=1;expired=$false}
+        $rows = @($good)
+        $pattern = '*artifact name is invalid*'
+        switch ($kind) {
+            'name' { $good.name = 'affected-segment-linux-../escape' }
+            'run' { $good.name = $goodName -replace '-77-2$', '-78-2'; $pattern = '*wrong run*' }
+            'future' { $good.name = $goodName -replace '-77-2$', '-77-3'; $pattern = '*future attempt*' }
+            'id' { $good.id = '../1'; $pattern = '*artifact ID is invalid*' }
+            'duplicate-id' { $rows += [pscustomobject]@{name=$olderName;id=1;expired=$false}; $pattern = '*duplicate names or IDs*' }
+            'duplicate-name' { $rows += [pscustomobject]@{name=$goodName;id=2;expired=$false}; $pattern = '*duplicate names or IDs*' }
+            'duplicate-winner' { $rows += [pscustomobject]@{name=($goodName -replace ('a' * 64), ('b' * 64));id=2;expired=$false}; $pattern = '*duplicate candidates at winning attempt*' }
+            'expired-winner' { $good.expired=$true; $rows += [pscustomobject]@{name=$olderName;id=2;expired=$false}; $pattern = '*expired*' }
+            'empty' { $rows=@(); $pattern = '*No linux segment artifacts*' }
+        }
+        $output = Join-Path $ScratchRoot "download-damage-$kind"
+        Assert-TransportThrows { Invoke-TransportDownloadFixture -Rows $rows -Sources @{} -Destination $output | Out-Null } $pattern "Downloader accepted '$kind' metadata."
+        Assert-Transport (-not (Test-Path -LiteralPath $output)) "Downloader created output before rejecting '$kind' metadata."
+    }
+    $good = [pscustomobject]@{name=$goodName;id=1;expired=$false}
+    $source = Join-Path $ScratchRoot 'download-fixture-source'; [void][IO.Directory]::CreateDirectory($source)
+    Write-TransportFixtureUtf8 (Join-Path $source 'linux-001.json') 'byte-exact download'
+    # The selected artifact is on page two; unrelated uploads change total_count.
+    $rows = @(1..100 | ForEach-Object { [pscustomobject]@{name="unrelated-$_";id=($_+1);expired=$false} }) + @($good)
+    $output = Join-Path $ScratchRoot 'download-paginated'
+    $calls = @(Invoke-TransportDownloadFixture -Rows $rows -Sources @{$goodName=$source} -Destination $output)
+    Assert-Transport ($calls.Count -eq 1 -and [IO.File]::ReadAllText((Join-Path $output "$goodName/linux-001.json")) -ceq 'byte-exact download') 'Paginated download lost identity or bytes.'
+    Assert-TransportThrows { Invoke-TransportDownloadFixture -Rows @($good) -Sources @{$goodName=$source} -Destination $output | Out-Null } '*destination already exists*' 'Downloader accepted an existing destination.'
+    Assert-TransportThrows { Invoke-TransportDownloadFixture -Rows @($good) -Sources @{} -Destination (Join-Path $ScratchRoot 'download-failed') -FailDownload | Out-Null } '*Could not download selected*' 'Downloader hid a CLI download failure.'
+}
+
+function Invoke-TransportStageMergeFixture([string]$ScratchRoot, [int]$SegmentCount = 2) {
     $fixture = Join-Path $ScratchRoot 'stage-merge-fixture'
     [void][IO.Directory]::CreateDirectory($fixture)
     foreach ($directory in @('manifests','schemas','scripts')) { [void][IO.Directory]::CreateDirectory((Join-Path $fixture $directory)) }
@@ -33,7 +92,7 @@ function Invoke-TransportStageMergeFixture([string]$ScratchRoot) {
     $checks = [Collections.Generic.List[object]]::new()
     $pathSets = [Collections.Generic.List[object]]::new()
     foreach ($platform in @('linux','windows')) {
-        foreach ($suffix in @('alpha','beta')) {
+        foreach ($suffix in @('alpha','beta') | Select-Object -First $SegmentCount) {
             $id = "$platform-$suffix"; $commandPath = "scripts/Test-$platform-$suffix.ps1"; $pathSetId = "$id-path"
             Write-TransportFixtureUtf8 (Join-Path $fixture $commandPath) '# transport fixture'
             $pathSets.Add([pscustomobject][ordered]@{path_set_id=$pathSetId;patterns=@($commandPath)})
@@ -62,9 +121,37 @@ function Invoke-TransportStageMergeFixture([string]$ScratchRoot) {
 
     foreach($platform in @('linux','windows')){
         $segments=@(Get-MorphospaceAffectedValidationSegments -Plan $plan -Registry $registry -Platform $platform)
-        Assert-Transport ($segments.Count-eq2-and@($segments|ForEach-Object{@($_.check_ids).Count}|Where-Object{$_-ne1}).Count-eq0) "Transport fixture did not produce two independent $platform segments."
+        Assert-Transport ($segments.Count-eq$SegmentCount-and@($segments|ForEach-Object{@($_.check_ids).Count}|Where-Object{$_-ne1}).Count-eq0) "Transport fixture did not produce $SegmentCount independent $platform segments."
+        if ($SegmentCount -eq 1) {
+            $serverRoot = Join-Path $ScratchRoot "$platform-server"
+            $payload = New-StageEvidence $segments[0] $platform
+            $serverArtifact = Add-StageArtifact $serverRoot $segments[0].segment_id $payload 1
+            $name = [IO.Path]::GetFileName($serverArtifact)
+            $download = Join-Path $ScratchRoot "$platform-singleton-download"
+            $calls = @(Invoke-TransportDownloadFixture -Rows @([pscustomobject]@{name=$name;id=1;expired=$false}) -Sources @{$name=$serverArtifact} -Destination $download -Platform $platform)
+            Assert-Transport ($calls.Count -eq 1) 'Singleton download did not request exactly one artifact.'
+            $stage = Join-Path $ScratchRoot "$platform-singleton-stage"
+            & (Join-Path $PSScriptRoot 'Stage-AffectedValidationSegmentEvidence.ps1') -RepositoryRoot $fixture -BaseCommit $head -HeadCommit $head -PlanPath $planPath -Platform $platform -DownloadedArtifactRoot $download -RunId 77 -CurrentAttempt 2 -StagingDirectory $stage -SelectionReceiptPath (Join-Path $ScratchRoot "$platform-singleton-selection.json") | Out-Null
+            Assert-Transport ([Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $stage "$($segments[0].segment_id).json"))) -ceq [Convert]::ToBase64String($payload)) 'Singleton staging changed payload bytes.'
+            $merged = & (Join-Path $PSScriptRoot 'Merge-AffectedValidationSegments.ps1') -RepositoryRoot $fixture -BaseCommit $head -HeadCommit $head -PlanPath $planPath -Platform $platform -SegmentEvidenceDirectory $stage -OutPath (Join-Path $ScratchRoot "$platform-singleton-merged.json")
+            Assert-Transport ($merged.result -ceq 'pass' -and @($merged.check_results).Count -eq 1) 'Singleton download/stage/merge failed.'
+            # The previous pattern-download layout must remain rejected.
+            $flatRoot = Join-Path $ScratchRoot "$platform-flat-download"; [void][IO.Directory]::CreateDirectory($flatRoot)
+            [IO.File]::WriteAllBytes((Join-Path $flatRoot "$($segments[0].segment_id).json"), $payload)
+            Assert-TransportThrows { & (Join-Path $PSScriptRoot 'Stage-AffectedValidationSegmentEvidence.ps1') -RepositoryRoot $fixture -BaseCommit $head -HeadCommit $head -PlanPath $planPath -Platform $platform -DownloadedArtifactRoot $flatRoot -RunId 77 -CurrentAttempt 2 -StagingDirectory (Join-Path $ScratchRoot "$platform-flat-stage") -SelectionReceiptPath (Join-Path $ScratchRoot "$platform-flat-selection.json") | Out-Null } '*download layout contains a file*' 'Stage accepted anonymous singleton payload.'
+            continue
+        }
         $transportRoot=Join-Path $ScratchRoot "$platform-transport";[void][IO.Directory]::CreateDirectory($transportRoot);$first=$segments[0];$second=$segments[1];$firstPass=New-StageEvidence $first $platform;$secondPass=New-StageEvidence $second $platform
         [void](Add-StageArtifact $transportRoot $first.segment_id (New-StageEvidence $first $platform 'code-fail') 1);$winner=Add-StageArtifact $transportRoot $first.segment_id $firstPass 2;[void](Add-StageArtifact $transportRoot $second.segment_id $secondPass 1)
+        $remoteRows = @(); $sources = @{}; $remoteId = 1
+        foreach ($artifact in @(Get-ChildItem -LiteralPath $transportRoot -Directory)) {
+            $remoteRows += [pscustomobject]@{name=$artifact.Name;id=$remoteId++;expired=($artifact.Name -like "affected-segment-$($first.segment_id)-*-77-1")}
+            $sources[$artifact.Name] = $artifact.FullName
+        }
+        $transportRoot = Join-Path $ScratchRoot "$platform-real-download"
+        $calls = @(Invoke-TransportDownloadFixture -Rows $remoteRows -Sources $sources -Destination $transportRoot -Platform $platform)
+        Assert-Transport ($calls.Count -eq 2) 'Multi download did not select only the fresh winner and retained sibling; expired loser must not block.'
+        $winner = Join-Path $transportRoot ([IO.Path]::GetFileName($winner))
         $stage=Join-Path $ScratchRoot "$platform-stage";$receipt=Join-Path $ScratchRoot "$platform-selection.json";$selection=& (Join-Path $PSScriptRoot 'Stage-AffectedValidationSegmentEvidence.ps1') -RepositoryRoot $fixture -BaseCommit $head -HeadCommit $head -PlanPath $planPath -Platform $platform -DownloadedArtifactRoot $transportRoot -RunId 77 -CurrentAttempt 2 -StagingDirectory $stage -SelectionReceiptPath $receipt
         Assert-Transport ((@($selection.selected|Where-Object{[string]$_.segment_id-ceq[string]$first.segment_id})[0].attempt-eq2)) "Transport fixture did not select the new $platform retry."
         Assert-Transport ([Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $stage "$($first.segment_id).json"))) -ceq [Convert]::ToBase64String($firstPass) -and [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $stage "$($second.segment_id).json"))) -ceq [Convert]::ToBase64String($secondPass)) "Transport fixture did not preserve byte-exact staged $platform evidence."
@@ -164,6 +251,9 @@ try {
         & (Join-Path $PSScriptRoot 'Stage-AffectedValidationSegmentEvidence.ps1') -RepositoryRoot (Split-Path -Parent $PSScriptRoot) -BaseCommit ('0' * 40) -HeadCommit ('1' * 40) -PlanPath $oversizedPlan -Platform linux -DownloadedArtifactRoot $downloadRoot -RunId 77 -CurrentAttempt 1 -StagingDirectory $freshStage -SelectionReceiptPath $freshReceipt | Out-Null
     } '*plan exceeds the 16 MiB bound*' 'Stage transport accepted an oversized plan input.'
     Assert-Transport (-not [IO.Directory]::Exists($freshStage) -and -not [IO.File]::Exists($freshReceipt)) 'Stage transport created outputs before bounded input validation.'
+    Invoke-TransportDownloadDamageFixture -ScratchRoot $scratch
+    $singletonScratch = Join-Path $scratch 'singleton'; [void][IO.Directory]::CreateDirectory($singletonScratch)
+    Invoke-TransportStageMergeFixture -ScratchRoot $singletonScratch -SegmentCount 1
     Invoke-TransportStageMergeFixture -ScratchRoot $scratch
 } finally {
     $scratchFull = [IO.Path]::GetFullPath($scratch)

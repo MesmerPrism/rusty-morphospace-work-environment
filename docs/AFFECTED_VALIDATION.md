@@ -447,6 +447,15 @@ verifier. Expired, damaged or ambiguous winning artifacts require current-delta
 validation; they cannot select an older attempt instead. Content-only legacy
 names are not admitted by this retry transport contract.
 
+Segment reducers use `Download-AffectedValidationSegmentArtifacts.ps1` to
+list the exact run's artifact metadata within a bounded inventory, select the
+latest attempt for each logical segment, and download each winner into its
+actual artifact-name directory. An expired losing attempt is irrelevant; an
+expired winner fails without fallback. Explicit per-name download destinations
+preserve identity for both one and many segments: the hosted download action
+flattens a single pattern match even with `merge-multiple: false`. Staging still
+requires the exact plan's segment set, artifact names, and payload hashes.
+
 The independent `affected-artifact-transport` check exercises real staging
 and merging against a small Git fixture on both runner platforms. It owns
 retry ordering, retained siblings, identity damage and output-confinement

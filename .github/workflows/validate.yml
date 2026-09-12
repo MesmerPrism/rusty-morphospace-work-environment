@@ -319,11 +319,10 @@ jobs:
           if ($env:LINUX_SELECTED -ceq 'true' -and $env:SEGMENT_RESULT -cne 'success') { throw 'One or more required Linux segments did not succeed.' }
       - name: Download Linux segment evidence
         if: needs.select.outputs.linux == 'true'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          pattern: affected-segment-linux-*
-          path: ${{ runner.temp }}/affected-linux-segments
-          merge-multiple: false
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/Download-AffectedValidationSegmentArtifacts.ps1 -Repository $env:GITHUB_REPOSITORY -RunId $env:GITHUB_RUN_ID -CurrentAttempt ([int]$env:GITHUB_RUN_ATTEMPT) -Platform linux -DestinationRoot "$env:RUNNER_TEMP/affected-linux-segments"
       - name: Verify and merge exact Linux segment union
         if: needs.select.outputs.linux == 'true'
         id: merge
@@ -543,11 +542,10 @@ jobs:
           if ($env:WINDOWS_SELECTED -ceq 'true' -and $env:SEGMENT_RESULT -cne 'success') { throw 'One or more required Windows segments did not succeed.' }
       - name: Download Windows segment evidence
         if: needs.select.outputs.windows == 'true'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          pattern: affected-segment-windows-*
-          path: ${{ runner.temp }}/affected-windows-segments
-          merge-multiple: false
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/Download-AffectedValidationSegmentArtifacts.ps1 -Repository $env:GITHUB_REPOSITORY -RunId $env:GITHUB_RUN_ID -CurrentAttempt ([int]$env:GITHUB_RUN_ATTEMPT) -Platform windows -DestinationRoot "$env:RUNNER_TEMP/affected-windows-segments"
       - name: Verify and merge exact Windows segment union
         if: needs.select.outputs.windows == 'true'
         id: merge
@@ -794,11 +792,10 @@ jobs:
           if ($env:PLATFORM_SELECTED -cne 'true') { throw 'Required current-delta platform selection is not true.' }
           if ($env:SEGMENT_RESULT -cne 'success') { throw 'One or more required current-delta linux segments did not succeed.' }
       - name: Download current Linux delta segment evidence
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          pattern: affected-segment-linux-*
-          path: ${{ runner.temp }}/affected-linux-segments
-          merge-multiple: false
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/Download-AffectedValidationSegmentArtifacts.ps1 -Repository $env:GITHUB_REPOSITORY -RunId $env:GITHUB_RUN_ID -CurrentAttempt ([int]$env:GITHUB_RUN_ATTEMPT) -Platform linux -DestinationRoot "$env:RUNNER_TEMP/affected-linux-segments"
       - name: Verify current Linux delta segment union
         shell: pwsh
         env:
@@ -835,11 +832,10 @@ jobs:
           if ($env:PLATFORM_SELECTED -cne 'true') { throw 'Required current-delta platform selection is not true.' }
           if ($env:SEGMENT_RESULT -cne 'success') { throw 'One or more required current-delta windows segments did not succeed.' }
       - name: Download current Windows delta segment evidence
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          pattern: affected-segment-windows-*
-          path: ${{ runner.temp }}/affected-windows-segments
-          merge-multiple: false
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/Download-AffectedValidationSegmentArtifacts.ps1 -Repository $env:GITHUB_REPOSITORY -RunId $env:GITHUB_RUN_ID -CurrentAttempt ([int]$env:GITHUB_RUN_ATTEMPT) -Platform windows -DestinationRoot "$env:RUNNER_TEMP/affected-windows-segments"
       - name: Verify current Windows delta segment union
         shell: pwsh
         env:
