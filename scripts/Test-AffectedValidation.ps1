@@ -1645,7 +1645,7 @@ function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]
         if ([IO.Directory]::Exists($fixture)) { Remove-Item -LiteralPath $fixture -Recurse -Force }
     }
 }
-function Invoke-WorkflowSelectionGate([string]$JobBody, [string]$SelectionVariable, [string]$SelectionValue, [string]$SegmentResultVariable) {
+function Invoke-WorkflowSelectionGate([string]$JobBody, [string]$SelectionVariable, [string]$SelectionValue, [string]$SegmentResultVariable, [string]$SegmentResult = 'success') {
     $run = [regex]::Match($JobBody, '(?ms)^        run: \|\r?\n(?<script>.*?)(?=^      - |\z)')
     if (-not $run.Success) { throw 'Workflow job lacks a first run script.' }
     $lines = @($run.Groups['script'].Value -split "`r?`n" | Select-Object -First 3)
@@ -1656,7 +1656,7 @@ function Invoke-WorkflowSelectionGate([string]$JobBody, [string]$SelectionVariab
     try {
         $env:INFRA_RESULT = 'success'; $env:SELECT_RESULT = 'success'
         [Environment]::SetEnvironmentVariable($SelectionVariable, $SelectionValue, 'Process')
-        [Environment]::SetEnvironmentVariable($SegmentResultVariable, 'success', 'Process')
+        [Environment]::SetEnvironmentVariable($SegmentResultVariable, $SegmentResult, 'Process')
         & ([scriptblock]::Create($gate))
     } finally {
         foreach ($name in @('INFRA_RESULT','SELECT_RESULT',$SelectionVariable,$SegmentResultVariable)) { [Environment]::SetEnvironmentVariable($name, $saved[$name], 'Process') }
@@ -2091,6 +2091,9 @@ if ($runFullSelector -or $runExecutorPassPhase) {
         }
         Invoke-WorkflowSelectionGate -JobBody $body -SelectionVariable ([string]$selectedContext.selected) -SelectionValue 'true' -SegmentResultVariable ([string]$selectedContext.segment_result)
         Invoke-WorkflowSelectionGate -JobBody $body -SelectionVariable ([string]$selectedContext.selected) -SelectionValue 'false' -SegmentResultVariable ([string]$selectedContext.segment_result)
+        foreach ($failedProducer in @('failure','cancelled','skipped','')) {
+            Assert-AffectedThrows { Invoke-WorkflowSelectionGate -JobBody $body -SelectionVariable ([string]$selectedContext.selected) -SelectionValue 'true' -SegmentResultVariable ([string]$selectedContext.segment_result) -SegmentResult $failedProducer } '*segments did not succeed*' "Required '$($selectedContext.id)' reducer could reuse old artifacts after producer result '$failedProducer'."
+        }
         $segmentBody = [string]$workflowJobs[[string]$selectedContext.segment_job]
         & $assertPreEvidenceFailureContract $segmentBody ([string]$selectedContext.platform)
         Assert-AffectedThrows { & $assertPreEvidenceFailureContract ($segmentBody.Replace('[IO.FileMode]::CreateNew','[IO.FileMode]::Create')) ([string]$selectedContext.platform) } '*CreateNew*' "Workflow '$($selectedContext.segment_job)' damage test accepted overwrite-capable diagnostic publication."
@@ -2110,6 +2113,50 @@ if ($runFullSelector -or $runExecutorPassPhase) {
     Assert-True ($quickWindowsBody -notmatch 'Invoke-AffectedValidation') 'Required quick-windows context replays the selected Windows suite.'
     $postMergeBody = [string]$workflowJobs['post-merge-attestation']
     Assert-True ($postMergeBody.Contains("if ([string]`$run.path -cne `$workflowPath)")) 'Post-merge evidence reuse does not bind the exact GitHub workflow path representation.'
+    Assert-True ($postMergeBody.Contains('gh api --paginate --slurp') -and $postMergeBody.Contains('Select-MorphospaceAffectedArtifactAttempts -Artifacts $aggregateArtifacts') -and $postMergeBody.Contains('-CurrentAttempt ([int]$run.run_attempt)') -and $postMergeBody.Contains('foreach ($selectedArtifact in $selectedArtifacts)')) 'Post-merge reuse does not select exact artifact attempts before downloading them.'
+    Assert-True ($postMergeBody.Contains("if ([bool]`$remote.expired)") -and $postMergeBody.Contains('Test-AffectedValidationReuse.ps1')) 'Post-merge reuse can fall back from an expired winner or omit exact evidence verification.'
+    foreach ($pageVariable in @('runPages','jobPages','artifactPages')) {
+        Assert-True ($postMergeBody.Contains("`$$pageVariable = gh api --paginate --slurp")) "Post-merge reuse does not enumerate all $pageVariable pages."
+    }
+    $filterStart=$postMergeBody.IndexOf('              $aggregateArtifacts = ',[StringComparison]::Ordinal)
+    $filterEnd=$postMergeBody.IndexOf('              $artifactRoot = ',[StringComparison]::Ordinal)
+    Assert-True ($filterStart -ge 0 -and $filterEnd -gt $filterStart) 'Post-merge reuse lacks the independent attempt-selection stage.'
+    & {
+        Import-Module (Join-Path $repoRoot 'scripts/lib/MorphospaceAffectedValidationArtifactTransport.psm1') -Force
+        $run=[pscustomobject]@{id=77;run_attempt=3}
+        $remoteArtifacts=@(
+            [pscustomobject]@{name="affected-plan-$('a'*64)-77-1"},
+            [pscustomobject]@{name="affected-linux-$('b'*64)-77-1"},
+            [pscustomobject]@{name="affected-linux-$('c'*64)-77-3"},
+            [pscustomobject]@{name='affected-plan-diagnostic-77-2'},
+            [pscustomobject]@{name='affected-selection-linux-77-3'},
+            [pscustomobject]@{name='unrelated-artifact'}
+        )
+        $selectionScript=[scriptblock]::Create($postMergeBody.Substring($filterStart,$filterEnd-$filterStart))
+        . $selectionScript
+        Assert-True ($selectedArtifacts.Count -eq 2 -and @($selectedArtifacts | Where-Object { $_.identity.logical_id -ceq 'linux' })[0].identity.attempt -eq 3) 'Post-merge artifact filtering lost a retry or admitted diagnostics as aggregate evidence.'
+        $remoteArtifacts += [pscustomobject]@{name="affected-linux-$('d'*64)-77-3"}
+        Assert-AffectedThrows { . $selectionScript } '*duplicate candidates at winning attempt*' 'Post-merge selection accepted competing final aggregates in one attempt.'
+    }
+    foreach ($producer in @('select','affected-linux-segments','affected-windows-segments','main-linux-segments','main-windows-segments')) {
+        $producerBody = [string]$workflowJobs[$producer]
+        $artifactPrefix = if ($producer -ceq 'select') { 'name: affected-plan-' } else { 'name: affected-segment-' }
+        $artifactLine = @($producerBody -split "`r?`n" | Where-Object { $_.TrimStart().StartsWith($artifactPrefix,[StringComparison]::Ordinal) -and -not $_.Contains('name: affected-plan-diagnostic-') })
+        Assert-True ($artifactLine.Count -eq 1 -and $artifactLine[0].EndsWith('-${{ github.run_id }}-${{ github.run_attempt }}',[StringComparison]::Ordinal)) "Producer '$producer' does not publish a unique run/attempt artifact."
+        Assert-True ($producerBody -notmatch 'continue-on-error|overwrite:') "Producer '$producer' can hide a failed attempt or overwrite its evidence."
+        $upload = [regex]::Match($producerBody,'(?ms)^      - (?:name: [^\r\n]+\r?\n(?:(?!^      - ).)*?|uses: )actions/upload-artifact@.*?'+[regex]::Escape($artifactPrefix)+'.*?(?=^      - |\z)')
+        Assert-True ($upload.Success -and $upload.Value.Contains('if-no-files-found: error')) "Producer '$producer' does not require its artifact upload."
+    }
+    foreach ($reducer in @('quick-linux','standard-windows','main-linux-delta','main-windows-delta')) {
+        $reducerBody = [string]$workflowJobs[$reducer]
+        $stageIndex = $reducerBody.IndexOf('Stage-AffectedValidationSegmentEvidence.ps1',[StringComparison]::Ordinal)
+        $mergeIndex = $reducerBody.IndexOf('Merge-AffectedValidationSegments.ps1',[StringComparison]::Ordinal)
+        Assert-True ($reducerBody.Contains('merge-multiple: false') -and -not $reducerBody.Contains('merge-multiple: true') -and $stageIndex -ge 0 -and $mergeIndex -gt $stageIndex -and $reducerBody.Contains('-RunId $env:GITHUB_RUN_ID -CurrentAttempt ([int]$env:GITHUB_RUN_ATTEMPT)')) "Reducer '$reducer' can flatten or merge unselected retry artifacts."
+        Assert-True ($reducerBody.Contains('name: affected-selection-') -and $reducerBody.Contains('-selection.json')) "Reducer '$reducer' does not retain its selected attempt receipt."
+        if ($reducer -cin @('quick-linux','standard-windows')) {
+            Assert-True ($reducerBody -match 'name: affected-(?:linux|windows)-\$\{\{ steps.merge.outputs.evidence_sha256 \}\}-\$\{\{ github.run_id \}\}-\$\{\{ github.run_attempt \}\}') "Reducer '$reducer' final artifact can collide on an aggregate-only retry."
+        }
+    }
     foreach ($platform in @('linux','windows')) {
         $artifactMarker = "affected-$platform-evidence.json"
         $artifactIndex = $workflowSource.IndexOf($artifactMarker, [StringComparison]::Ordinal)
@@ -2121,6 +2168,27 @@ if ($runFullSelector -or $runExecutorPassPhase) {
         $mainFinalBody = [string]$workflowJobs["main-$platform-delta"]
         Assert-True ($mainSegmentBody.Contains("matrix: `${{ fromJSON(needs.select.outputs.$($platform)_matrix) }}") -and $mainSegmentBody.Contains('-SegmentId $env:SEGMENT_ID')) "Post-merge $platform fallback is not segmented."
         Assert-True ($mainFinalBody.Contains("needs: [select, post-merge-attestation, main-$platform-segments]") -and $mainFinalBody.Contains('Merge-AffectedValidationSegments.ps1')) "Post-merge $platform final context does not require and verify its exact segment union."
+        Assert-True ($mainFinalBody.Contains("SEGMENT_RESULT: `${{ needs.main-$platform-segments.result }}") -and $mainFinalBody.Contains("`$env:SEGMENT_RESULT -cne 'success'")) "Post-merge $platform reducer lacks explicit producer success binding."
+        $gateMatch = [regex]::Match($mainFinalBody,'(?ms)^        run: \|\r?\n(?<script>.*?)(?=^      - |\z)')
+        $gateScript = [scriptblock]::Create($gateMatch.Groups['script'].Value)
+        $savedGateEnvironment = @{}
+        $gateNames = @('SELECT_RESULT','ATTESTATION_RESULT','SEGMENT_RESULT','PLATFORM_SELECTED')
+        foreach ($name in $gateNames) { $savedGateEnvironment[$name] = [Environment]::GetEnvironmentVariable($name,'Process') }
+        try {
+            $env:SELECT_RESULT='success'; $env:ATTESTATION_RESULT='success'; $env:SEGMENT_RESULT='success'; $env:PLATFORM_SELECTED='true'
+            & $gateScript
+            foreach ($failedInput in @('SELECT_RESULT','ATTESTATION_RESULT','SEGMENT_RESULT')) {
+                foreach ($failureValue in @('failure','cancelled','skipped','')) {
+                    [Environment]::SetEnvironmentVariable($failedInput,$failureValue,'Process')
+                    Assert-AffectedThrows { & $gateScript } '*did not succeed*' "Post-merge $platform reducer accepted $failedInput=$failureValue with old passing artifacts available."
+                }
+                [Environment]::SetEnvironmentVariable($failedInput,'success','Process')
+            }
+            foreach ($invalidSelection in @('false','unexpected','')) {
+                $env:PLATFORM_SELECTED=$invalidSelection
+                Assert-AffectedThrows { & $gateScript } '*selection is not true*' "Post-merge $platform reducer accepted an unselected platform."
+            }
+        } finally { foreach ($name in $gateNames) { [Environment]::SetEnvironmentVariable($name,$savedGateEnvironment[$name],'Process') } }
     }
     $deepBody = [string]$workflowJobs['deep']
     Assert-True ($deepBody.Contains('needs: [infrastructure, select, quick-linux, standard-windows]') -and $deepBody.Contains('full-history segmented Deep evidence') -and $deepBody -notmatch 'Test-WorkEnvironment') 'Scheduled/manual Deep does not bind the fresh segmented leaf evidence or still reruns the cumulative aggregate.'
@@ -3917,6 +3985,11 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
         }
     }
 
+    # The direct transport leaf runs independently in affected validation.
+    # Retain it once for the cumulative compatibility entrypoint.
+    if ($runFullSelector) {
+        & (Join-Path $repoRoot 'scripts/Test-AffectedValidationArtifactTransport.ps1')
+    }
     $segmentMergeRoot = Join-Path ([IO.Path]::GetTempPath()) ('morphospace-affected-segment-merge-' + [Guid]::NewGuid().ToString('N'))
     [void][IO.Directory]::CreateDirectory($segmentMergeRoot)
     try {

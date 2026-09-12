@@ -409,6 +409,50 @@ is reusable: scheduled/manual Deep checks out full history, executes every
 independent leaf through fresh segments, and verifies their exact union.
 Neither evidence shape is publication or acceptance authority.
 
+Segment retries retain earlier artifacts in the same GitHub run. Each segment
+artifact name binds its segment ID, raw payload SHA-256, run ID, and attempt.
+All four platform reducers download those artifacts into separate directories
+and use `Stage-AffectedValidationSegmentEvidence.ps1` before the strict segment
+merger. Flattening multiple artifact attempts into the same filenames is
+forbidden: download order must never choose a validation result.
+
+Staging selects exactly one candidate at the greatest available attempt no
+later than the current attempt for every expected segment in the same run.
+Unchanged siblings may come from earlier attempts. A duplicate winner, missing
+segment, foreign run, future attempt, unsafe payload layout, wrong digest,
+source/plan mismatch, or non-passing selected result rejects; it never causes
+fallback to an older pass. Superseded results do not enter the merged
+validation result.
+Outputs must be new paths outside Git metadata, with no input overlap or
+reparse-point ancestors. All selected bytes are checked before create-new
+staging, and a closed selection receipt records artifact names, attempts and
+digests. The existing merger
+then verifies the exact plan, runner, ordered coverage and command blobs.
+
+This transport selection is valid only behind the reducers' successful-producer
+guards. Every successful producer must upload its exact evidence, and neither
+execution nor upload may use `continue-on-error`. A retry that fails before
+upload, times out, or is cancelled cannot borrow an older passing artifact.
+These guards apply equally to pull requests, scheduled/manual Deep, and push
+delta reducers. Selection receipts are retained for diagnosis; they grant no
+aggregate, acceptance or publication authority.
+
+Plans and final Linux/Windows aggregates also include run ID and attempt in
+their artifact names, permitting aggregate-only and complete workflow retries.
+The plan name continues to bind the canonical plan digest; evidence names bind
+raw file digests. Post-merge attestation enumerates all artifact pages and uses
+the same deterministic attempt selector before downloading each logical
+artifact. The selected names are bound to the successful PR run by the reuse
+verifier. Expired, damaged or ambiguous winning artifacts require current-delta
+validation; they cannot select an older attempt instead. Content-only legacy
+names are not admitted by this retry transport contract.
+
+The independent `affected-artifact-transport` check exercises real staging
+and merging against a small Git fixture on both runner platforms. It owns
+retry ordering, retained siblings, identity damage and output-confinement
+cases, with its own timeout and exact-host cache binding. Existing selector
+and platform-merge phases retain their separate budgets.
+
 Workflow concurrency has four closed identities: a cancelable per-PR group, a
 noncanceling main-ref group, a stable noncanceling scheduled Deep group, and a
 unique noncanceling manual Deep group bound to `github.run_id`. GitHub may
@@ -435,7 +479,7 @@ they remain explicitly non-authoritative.
 
 Every JavaScript action in this workflow is pinned to an immutable Node 24
 release commit. Artifact upload keeps the default archived transport, and all
-downloads use the existing name/pattern and merged-directory modes; the action
+segment downloads use separate artifact directories and explicit staging; the action
 upgrade does not opt into direct-file upload or change the evidence filenames,
 payloads, or repository-computed digests. The cache key and cached-directory
 contracts are likewise unchanged. These jobs use GitHub-hosted runners, which
