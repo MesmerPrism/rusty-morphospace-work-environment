@@ -51,7 +51,7 @@ $selectorPhaseCheckIds = @(
     'affected-selector-selftest',
     'affected-selector-complete-selftest'
 )
-$selectorTrustRootCheckIds = @($selectorPhaseCheckIds + @('affected-topology-selftest','affected-reuse-selftest'))
+$selectorTrustRootCheckIds = @($selectorPhaseCheckIds + @('affected-artifact-transport','affected-topology-selftest','affected-reuse-selftest'))
 
 function Assert-True([bool]$Condition, [string]$Message) { if (-not $Condition) { throw $Message } }
 function Invoke-AffectedSelectionClosureDeterminismSelfTest {
