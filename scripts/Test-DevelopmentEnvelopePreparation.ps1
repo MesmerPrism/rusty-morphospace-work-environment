@@ -2,6 +2,7 @@ param([switch]$SelfTest)
 $ErrorActionPreference='Stop'
 $repoRoot=Split-Path $PSScriptRoot -Parent
 Import-Module (Join-Path $PSScriptRoot 'DevelopmentEnvelopePreparation.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
 function Assert-Preparation([bool]$ok,[string]$message){if(-not$ok){throw "Development-envelope preparation self-test failed: $message"}}
 function Write-PreparationJson([string]$path,[object]$value){[IO.Directory]::CreateDirectory((Split-Path $path -Parent))|Out-Null;[IO.File]::WriteAllText($path,(($value|ConvertTo-Json -Depth 64)+"`n"),[Text.UTF8Encoding]::new($false))}
@@ -60,6 +61,30 @@ try {
   $duplicateRoot=Join-Path $temp 'damage-duplicate-predecessor';Copy-Item $recoveryBase $duplicateRoot -Recurse;$duplicateLock=Read-MorphospaceProtocolJson (Join-Path $duplicateRoot 'feature.lock.json');$duplicateLock.features+=,(Copy-Preparation $duplicateLock.features[0]);$duplicateLock.lock_fingerprint=LockFingerprint $duplicateLock;Write-PreparationJson (Join-Path $duplicateRoot 'feature.lock.json') $duplicateLock;$duplicateState=Read-MorphospaceProtocolJson (Join-Path $duplicateRoot 'workspace.state.json');$duplicateState.module_registry.lock_fingerprint=$duplicateLock.lock_fingerprint;Write-PreparationJson (Join-Path $duplicateRoot 'workspace.state.json') $duplicateState;$duplicateInput=Copy-Preparation $input;$duplicateInput.expected.feature_lock_sha256=Hash $duplicateLock;$duplicateInput.expected.state_sha256=Hash $duplicateState;Assert-PreparationRejected $duplicateRoot $duplicateInput 'duplicate-predecessor' "Preparation current feature lock repeats 'existing-provider'."
   foreach($damage in @('permission','root','future-unit')){$root=Join-Path $temp ("damage-"+$damage);Copy-Item $ws $root -Recurse;$d=Copy-Preparation $input;if($damage-eq'permission'){$d.envelope.allowed_permission_categories+=,'INTERNET'}elseif($damage-eq'root'){$d.envelope.owner_repositories[0].source_roots=@('../outside/')}else{Write-PreparationJson (Join-Path $root 'iteration-units\future.json') ([ordered]@{unit_id='future'})};Assert-PreparationRejected $root $d $damage}
   & (Join-Path $PSScriptRoot 'Test-DevelopmentEnvelopeHistoricalSupersession.ps1') -SelfTest
+  # A never-admitted draft is retained through a fresh, distinct envelope.
+  $draftRoot=Join-Path $temp 'inert-proposal-preparation';Copy-Item $recoveryBase $draftRoot -Recurse
+  $draftState=Read-MorphospaceProtocolJson (Join-Path $draftRoot 'workspace.state.json')
+  $preAcceptedState=Copy-Preparation $draftState;$preAcceptedState.current_unit='u001'
+  Write-PreparationJson (Join-Path $draftRoot 'workspace.state.json') $preAcceptedState
+  $preAcceptedUnit=Copy-Preparation $u001;$preAcceptedUnit.status='validating'
+  Write-PreparationJson (Join-Path $draftRoot 'iteration-units/u001.json') $preAcceptedUnit
+  $draftState.last_event_id='u001-accepted-0002'
+  $acceptedEvent=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.iteration_event.v1';event_id='u001-accepted-0002';sequence=2;timestamp='2026-08-25T00:01:00.0000000Z';project_id='portable-envelope';unit_id='u001';event_type='state-transition';summary='Accepted the fixture checkpoint.';receipts=@('receipts/u001-accepted.json')}
+  Start-MorphospaceTransitionLedger -WorkspaceRoot $draftRoot -TransactionId 'u001-accepted-0002-transition' -StatePath 'workspace.state.json' -UnitPath 'iteration-units/u001.json' -EventsPath 'iteration-events.jsonl' -TargetState $draftState -TargetUnit $u001 -Event $acceptedEvent -ExpectedPreStateSha256 (Hash $preAcceptedState) -ExpectedPreUnitSha256 (Hash $preAcceptedUnit)|Out-Null
+  $draftUnitPath=Join-Path $draftRoot 'iteration-units/u015.json'
+  Write-PreparationJson $draftUnitPath ([ordered]@{schema='rusty.morphospace.workflow.iteration_unit.v1';project_id='portable-envelope';unit_id='u015';status='proposed';prerequisites=@('u001');objective='Retained never-admitted draft.'})
+  $draftHash=Get-MorphospaceFileSha256 $draftUnitPath
+  $acceptedHash=Get-MorphospaceFileSha256 (Join-Path $draftRoot 'iteration-units/u001.json')
+  $fresh=Copy-Preparation $input;$fresh.preparation_id='u018-envelope';$fresh.envelope.source_composition.path='source-composition/u018-envelope.json'
+  $fresh.expected.state_sha256=Hash $draftState;$fresh.expected.events_sha256=Get-MorphospaceFileSha256 (Join-Path $draftRoot 'iteration-events.jsonl');$fresh.expected.events_length=([IO.FileInfo](Join-Path $draftRoot 'iteration-events.jsonl')).Length;$fresh.expected.event_tail_id='u001-accepted-0002'
+  $freshPath=Join-Path $temp 'u018-envelope.json';Write-PreparationJson $freshPath $fresh
+  $freshOut=Join-Path $draftRoot 'receipts/u018-envelope.json';$freshHash=Get-MorphospaceFileSha256 $freshPath
+  $freshDry=Invoke-MorphospacePrepareDevelopmentEnvelope -WorkspaceRoot $draftRoot -DevelopmentEnvelopePreparation $freshPath -OutPath $freshOut
+  $freshRun=Invoke-MorphospacePrepareDevelopmentEnvelope -WorkspaceRoot $draftRoot -DevelopmentEnvelopePreparation $freshPath -ExpectedDevelopmentEnvelopePreparationSha256 $freshHash -OutPath $freshOut -Execute
+  $freshReplay=Invoke-MorphospacePrepareDevelopmentEnvelope -WorkspaceRoot $draftRoot -DevelopmentEnvelopePreparation $freshPath -ExpectedDevelopmentEnvelopePreparationSha256 $freshHash -OutPath $freshOut -Execute
+  $freshState=Read-MorphospaceProtocolJson (Join-Path $draftRoot 'workspace.state.json')
+  Assert-Preparation (-not $freshDry.executed -and $freshRun.executed -and $freshReplay.executed -and $null -eq $freshState.current_unit -and $null -eq $freshState.next_ready_unit -and $freshState.last_accepted_receipt -ceq $draftState.last_accepted_receipt) 'fresh preparation with inert draft failed dry-run, execution, replay, or idle accepted ownership'
+  Assert-Preparation ((Get-MorphospaceFileSha256 $draftUnitPath)-ceq$draftHash -and (Get-MorphospaceFileSha256 (Join-Path $draftRoot 'iteration-units/u001.json'))-ceq$acceptedHash -and -not(Test-Path (Join-Path $draftRoot 'iteration-units/u018.json'))) 'fresh preparation rewrote retained draft/checkpoint or created future unit authority'
   $currentWorkHistory=Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceCurrentWorkHistory.psm1') -PassThru;Assert-PreparationCurrentWorkReadable $legacyRoot 'legacy-boundary-prepare';Assert-PreparationCurrentWorkReadable $legacyRecoveryRoot 'legacy-boundary-recovery'
   Write-Host 'Development-envelope preparation self-test passed.'
 } finally {if(Test-Path $temp){Remove-Item -LiteralPath $temp -Recurse -Force}}

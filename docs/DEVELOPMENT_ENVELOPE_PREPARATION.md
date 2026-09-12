@@ -73,6 +73,27 @@ Current or queued work, blockers, pending publication, ambiguous/orphaned chains
 damaged acceptance evidence, stale preimages, and incomplete current transactions
 remain admission failures. Explicit prerequisites retain their own evidence.
 
+After that authenticated idle boundary, a canonical same-project `proposed`
+unit may remain as an inert draft when it has no admission, preparation, freeze,
+or inherited-candidate binding and no typed incoming unit-identity or unit-path
+reference. Preparation checks the retained units and events, project/lock/state,
+canonical receipt and transaction records, managed attempt controls, and declared
+archive-root metadata. Attempt checks enumerate canonical unit/attempt directories
+and only `evidence.json`, `validation-receipt-v2.json`, `validation-action.json`,
+and `accept-action.json`; other nested payloads are not read.
+References include prerequisites and pending or orphaned transaction bindings;
+prose mentions do not establish authority. The check does not traverse local
+evidence payloads or archive objects. Unreadable control records or ambiguous
+identities cannot prove absence. The existing prerequisite checks still apply
+to the draft itself.
+
+This read-only classification preserves the draft byte-for-byte. It grants no
+admission, retirement, acceptance, or validation credit and needs no lifecycle
+transaction of its own. Fresh preparation retains the accepted checkpoint and
+source-lock rules; later admission still requires its ordinary fresh, absent
+unit identity. An admitted or referenced proposal still follows its existing
+owner route, including `RetireProposed` where applicable.
+
 Preparation uses its own v1 intent, completion, receipt, and event. Each binds
 the complete multi-document CAS set. A matching interrupted transaction may
 resume; a changed input, preimage, artifact, event prefix, or target rejects.
