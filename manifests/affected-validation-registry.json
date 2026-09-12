@@ -9,7 +9,7 @@
     {"importer": "scripts/Invoke-AffectedValidationSelfTestPhase.ps1", "variable": "gitPath", "count": 1, "classification": "authenticated-external-command"},
     {"importer": "scripts/Invoke-ExternalValidationAuthorityForGitHub.ps1", "variable": "verifierFullPath", "count": 1, "classification": "authenticated-external-command"},
     {"importer": "scripts/New-ProjectWorkspace.ps1", "variable": "validator", "count": 1, "target_paths": ["scripts/Test-WorkflowContracts.ps1"]},
-    {"importer": "scripts/Test-AffectedValidationReuse.ps1", "variable": "PSCommandPath", "count": 10, "target_paths": ["scripts/Test-AffectedValidationReuse.ps1"]},
+    {"importer": "scripts/Test-AffectedValidationReuse.ps1", "variable": "PSCommandPath", "count": 11, "target_paths": ["scripts/Test-AffectedValidationReuse.ps1"]},
     {"importer": "scripts/Test-AuthorityRecordReadiness.ps1", "variable": "processModule", "count": 1, "target_paths": ["scripts/lib/MorphospaceAuthorityProcess.psm1"]},
     {"importer": "scripts/Test-BlockedSuccessorPreparation.ps1", "variable": "module", "count": 5, "target_paths": ["scripts/BlockedSuccessorPreparation.psm1", "scripts/lib/MorphospaceProtocolCommon.psm1", "scripts/lib/MorphospaceTransitionLedger.psm1"]},
     {"importer": "scripts/Test-CorrectResolvedBlockerEvidence.ps1", "variable": "After", "count": 1, "target_paths": ["scripts/Test-CorrectResolvedBlockerEvidence.ps1"]},
