@@ -138,20 +138,58 @@ $temp=$Root;$repoRoot=$RepositoryRoot;$transitionLedgerModule=$TransitionLedgerM
   [pscustomobject][ordered]@{workspace=$ws;project=$project;feature_lock=$featureLock;state=$state;u001=$u001;source_repository=$sourceRepo;source_commit=$sourceCommit;source_tree=$sourceTree;source_row=$sourceRow;dependency_repository=$dependencyRepo;dependency_commit=$dependencyCommit;dependency_tree=$dependencyTree;dependency_row=$dependencyRow;source_identity=$sourceIdentity;source_composition=$sourceComposition;scope=$scope;u002=$u002;project_hash=$projectHash;state_hash=$stateHash;lock_hash=$lockHash;source_hash=$sourceHash;source_canonical_hash=$sourceCanonicalHash;map_hash=$mapHash;event_hash=$eventHash;prepared_envelope=$preparedEnvelope;preparation_receipt=$prepReceipt;preparation_hash=$prepHash;preparation_event=$prepEvent;preparation_intent=$intent;preparation_completion=$completion;admission_template=$admission}
 }
 
+function New-EnvelopeHistoricalRetirement {
+  param([string]$Workspace,[switch]$Execute)
+  # Construct retained evidence from the historical producer, which retired the
+  # proposal before current-work preparation validation existed. This fixture is
+  # not a current retirement entrypoint: its caller first proves today's owner
+  # rejects the unrepaired preparation. Reuse exact admission and ledger owners.
+  $historicalRetirementModule=Import-Module (Join-Path $PSScriptRoot '../ProposedUnitRetirement.psm1') -PassThru
+  &$historicalRetirementModule {param($workspace,$execute)
+    $unitRelative='iteration-units/u002.json';$receiptRelative='receipts/u002-contract-retirement.json';$timestamp='2026-08-25T00:01:30.0000000Z'
+    $state=Read-MorphospaceProtocolJson (Join-Path $workspace 'workspace.state.json')
+    $unit=Test-MorphospaceProposedRetirementJson -Path (Join-Path $workspace $unitRelative) -Schemas @('iteration-unit.schema.json') -Context 'Historical retirement fixture target'
+    $ledger=Read-MorphospaceProposedRetirementEvents (Join-Path $workspace 'iteration-events.jsonl')
+    $map=@{};foreach($file in @(Get-ChildItem -LiteralPath (Join-Path $workspace 'iteration-units') -Filter '*.json' -File)){$entry=Read-MorphospaceProtocolJson $file.FullName;$id=[string]$entry.unit_id;if($map.ContainsKey($id)){throw 'Historical fixture has duplicate units.'};$map[$id]=[pscustomobject]@{document=$entry;path=$file.FullName}}
+    $stateHash=Get-MorphospaceCanonicalJsonSha256 $state;$unitHash=Get-MorphospaceCanonicalJsonSha256 $unit;$unitRawHash=Get-MorphospaceFileSha256 (Join-Path $workspace $unitRelative)
+    $binding=Get-MorphospaceProposedRetirementBinding -WorkspaceRoot $workspace -UnitRelativePath $unitRelative -UnitId u002 -ReplacementUnitId u003 -Reason contract-invalid -ProjectId ([string]$state.project_id) -LiveState $state -LiveUnit $unit -Ledger $ledger -UnitMap $map -ExpectedStateSha256 $stateHash -ExpectedUnitSha256 $unitHash -ExpectedUnitRawSha256 $unitRawHash
+    $sequence=@($ledger.events).Count+1;$eventId='u002-proposal-retired-'+('{0:D4}' -f $sequence)
+    $event=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.iteration_event.v1';event_id=$eventId;sequence=$sequence;timestamp=$timestamp;project_id=[string]$state.project_id;unit_id='u002';event_type='state-transition';summary="Retired the exact admitted proposed unit because its contract is invalid; preserved its admission chain and recorded intended replacement identity 'u003' for separate admission.";receipts=@($receiptRelative)}
+    $transaction=[pscustomobject][ordered]@{transaction_id="$eventId-transition";state_path='workspace.state.json';unit_path=$unitRelative;events_path='iteration-events.jsonl';receipt_path=$receiptRelative;event_id=$eventId;expected_pre_state_sha256=$stateHash;expected_pre_unit_sha256=$unitHash;expected_pre_unit_raw_sha256=$unitRawHash;expected_events_sha256=[string]$ledger.sha256;expected_events_length=[int64]$ledger.length;expected_event_tail_id=[string]$ledger.tail_id}
+    $receipt=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.proposed_unit_retirement_receipt.v1';project_id=[string]$state.project_id;unit_id='u002';action='RetireProposed';timestamp=$timestamp;executed=[bool]$execute;transition='proposed-to-superseded-retired';status_before='proposed';status_after=$(if($execute){'superseded'}else{'proposed'});current_unit_before=$null;current_unit_after=$null;preservation=[ordered]@{git_mutation_performed=$false;device_mutation_performed=$false;force_push_allowed=$false};proposed_retirement=$binding;transaction=$transaction;event_id=$(if($execute){$eventId}else{$null})}
+    $bytes=[Text.UTF8Encoding]::new($false).GetBytes(($receipt|ConvertTo-Json -Depth 32)+[Environment]::NewLine)
+    if(-not(Test-Json -Json ([Text.UTF8Encoding]::new($false).GetString($bytes)) -SchemaFile (Join-Path $PSScriptRoot '../../schemas/proposed-unit-retirement-receipt-v1.schema.json'))){throw 'Historical retirement fixture receipt is invalid.'}
+    if($execute){
+      $state.last_event_id=$eventId;$unit.status='superseded'
+      Start-MorphospaceTransitionLedger -WorkspaceRoot $workspace -TransactionId $transaction.transaction_id -StatePath 'workspace.state.json' -UnitPath $unitRelative -EventsPath 'iteration-events.jsonl' -TargetState $state -TargetUnit $unit -Event $event -ExpectedPreStateSha256 $stateHash -ExpectedPreUnitSha256 $unitHash -ExpectedPreUnitRawSha256 $unitRawHash -ExpectedEventTailId ([string]$ledger.tail_id) -ExpectedEventsSha256 ([string]$ledger.sha256) -ExpectedEventsLength ([int64]$ledger.length) -Artifacts @([pscustomobject]@{path=$receiptRelative;sha256=(Get-MorphospaceSha256Bytes $bytes);bytes_base64=[Convert]::ToBase64String($bytes)})|Out-Null
+    }
+    $receipt
+  } $Workspace ([bool]$Execute)
+}
+
 function New-EnvelopeRetiredRepreparationFixture {
-  param([string]$Root,[string]$RepositoryRoot,[string]$Workspace,[string]$SourceRepository,[object]$AdmissionTemplate)
+  param([string]$Root,[string]$RepositoryRoot,[string]$Workspace,[string]$SourceRepository,[object]$AdmissionTemplate,[switch]$HistoricalPreparationFault)
 $temp=$Root;$repoRoot=$RepositoryRoot;$ws=$Workspace;$sourceRepo=$SourceRepository;$admission=$AdmissionTemplate
     $retirementBase=Join-Path $temp 'proposed-retirement-base';Copy-Item -LiteralPath $ws -Destination $retirementBase -Recurse
     $retirementOut=Join-Path $retirementBase 'receipts\u002-contract-retirement.json'
     $proposedRetirementModule=Import-Module (Join-Path $PSScriptRoot '../ProposedUnitRetirement.psm1') -PassThru
-    $retirementDry=&$proposedRetirementModule {param($arguments)Invoke-MorphospaceProposedUnitRetirement @arguments} @{WorkspaceRoot=$retirementBase;UnitId='u002';ReplacementUnitId='u003';RetirementReason='contract-invalid';OutPath=$retirementOut;Timestamp='2026-08-25T00:01:30.0000000Z'}
+    if($HistoricalPreparationFault){
+      $historicalBefore=Get-EnvelopeWorkspaceByteInventorySha256 $retirementBase;$rejectedMessage=''
+      try{Invoke-MorphospaceProposedUnitRetirement -WorkspaceRoot $retirementBase -UnitId u002 -ReplacementUnitId u003 -OutPath $retirementOut -Timestamp '2026-08-25T00:01:30.0000000Z'|Out-Null}catch{$rejectedMessage=$_.Exception.Message}
+      Assert-Envelope ($rejectedMessage-ceq'Preparation target feature-lock fingerprint is stale or damaged.'-and$historicalBefore-ceq(Get-EnvelopeWorkspaceByteInventorySha256 $retirementBase)) 'current retirement did not reject the unrepaired historical preparation without mutation'
+      $retirementDry=New-EnvelopeHistoricalRetirement -Workspace $retirementBase
+    }else{
+      $retirementDry=&$proposedRetirementModule {param($arguments)Invoke-MorphospaceProposedUnitRetirement @arguments} @{WorkspaceRoot=$retirementBase;UnitId='u002';ReplacementUnitId='u003';RetirementReason='contract-invalid';OutPath=$retirementOut;Timestamp='2026-08-25T00:01:30.0000000Z'}
+    }
     $retirementPre=$retirementDry.proposed_retirement.authenticated_preimage
     $preservedAdmission=@(
       'receipts\u002-admission.json',
       'receipts\transactions\u002-admission-admitted-transition.intent.json',
       'receipts\transactions\u002-admission-admitted-transition.completion.json'
     )|ForEach-Object{[pscustomobject]@{path=$_;sha256=Get-EnvelopeFileSha256 (Join-Path $retirementBase $_)}}
-    $retirementRun=&$proposedRetirementModule {param($arguments)Invoke-MorphospaceProposedUnitRetirement @arguments} @{WorkspaceRoot=$retirementBase;UnitId='u002';ReplacementUnitId='u003';RetirementReason='contract-invalid';OutPath=$retirementOut;ExpectedStateSha256=[string]$retirementPre.state_sha256;ExpectedUnitSha256=[string]$retirementPre.unit_sha256;ExpectedUnitRawSha256=[string]$retirementPre.unit_raw_sha256;ExpectedEventsSha256=[string]$retirementPre.events_sha256;ExpectedEventsLength=[long]$retirementPre.events_length;ExpectedEventTailId=[string]$retirementPre.event_tail_id;ExpectedProposedRetirementBindingSha256=[string]$retirementDry.proposed_retirement.binding_sha256;Timestamp='2026-08-25T00:01:30.0000000Z';Execute=$true}
+    if($HistoricalPreparationFault){$retirementRun=New-EnvelopeHistoricalRetirement -Workspace $retirementBase -Execute}else{
+      $retirementRun=&$proposedRetirementModule {param($arguments)Invoke-MorphospaceProposedUnitRetirement @arguments} @{WorkspaceRoot=$retirementBase;UnitId='u002';ReplacementUnitId='u003';RetirementReason='contract-invalid';OutPath=$retirementOut;ExpectedStateSha256=[string]$retirementPre.state_sha256;ExpectedUnitSha256=[string]$retirementPre.unit_sha256;ExpectedUnitRawSha256=[string]$retirementPre.unit_raw_sha256;ExpectedEventsSha256=[string]$retirementPre.events_sha256;ExpectedEventsLength=[long]$retirementPre.events_length;ExpectedEventTailId=[string]$retirementPre.event_tail_id;ExpectedProposedRetirementBindingSha256=[string]$retirementDry.proposed_retirement.binding_sha256;Timestamp='2026-08-25T00:01:30.0000000Z';Execute=$true}
+    }
     $retiredUnit=Read-EnvelopeProtocolJson (Join-Path $retirementBase 'iteration-units\u002.json');$retiredState=Read-EnvelopeProtocolJson (Join-Path $retirementBase 'workspace.state.json');$retiredEvents=@(Get-Content (Join-Path $retirementBase 'iteration-events.jsonl')|Where-Object{$_}|ForEach-Object{$_|ConvertFrom-Json});$retiredTail=$retiredEvents[-1]
     Assert-Envelope ($retirementRun.transition-eq'proposed-to-superseded-retired'-and$retiredUnit.status-eq'superseded'-and$null-eq$retiredState.current_unit-and$null-eq$retiredState.next_ready_unit-and-not(Test-Path (Join-Path $retirementBase 'iteration-units\u003.json'))) 'RetireProposed did not close only the exact old proposal while leaving replacement admission separate'
     Assert-Envelope ([string]$retiredTail.event_id-cmatch'^u002-proposal-retired-[0-9]{4}$'-and[string]$retiredTail.unit_id-ceq'u002'-and@($retiredTail.receipts).Count-eq1-and[string]$retiredTail.receipts[0]-ceq'receipts/u002-contract-retirement.json') 'RetireProposed did not append its exact receipt-bound retirement event'
@@ -217,6 +255,6 @@ $ws=$preparedSeed.workspace;$sourceRepo=$preparedSeed.source_repository;$admissi
   $admission.expected.state_sha256=[string]$faultIntent.target.state.sha256
   $admission.expected.feature_lock_sha256=[string]$faultIntent.target.feature_lock.sha256
     $admissionPath=Join-Path $temp 'admission.json';Write-EnvelopeJson $admissionPath $admission;$out=Join-Path $ws 'receipts\u002-admission.json';$dry=Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $ws -DevelopmentUnitAdmission $admissionPath -OutPath $out -Timestamp '2026-08-25T00:01:00.0000000Z';$run=Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $ws -DevelopmentUnitAdmission $admissionPath -ExpectedDevelopmentUnitAdmissionSha256 $dry.audit_receipt.sha256 -OutPath $out -Timestamp '2026-08-25T00:01:00.0000000Z' -Execute;Assert-Envelope ($run.transition -eq 'development-unit-admitted' -and (Test-Path (Join-Path $ws 'iteration-units\u002.json'))) 'admission did not atomically create the successor unit';$replay=Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $ws -DevelopmentUnitAdmission $admissionPath -ExpectedDevelopmentUnitAdmissionSha256 $dry.audit_receipt.sha256 -OutPath $out -Execute;Assert-Envelope ($replay.transition -eq 'development-unit-already-admitted') 'exact admission replay was not idempotent'
-$retiredSeed=New-EnvelopeRetiredRepreparationFixture -Root $temp -RepositoryRoot $RepositoryRoot -Workspace $ws -SourceRepository $sourceRepo -AdmissionTemplate $admission
+$retiredSeed=New-EnvelopeRetiredRepreparationFixture -Root $temp -RepositoryRoot $RepositoryRoot -Workspace $ws -SourceRepository $sourceRepo -AdmissionTemplate $admission -HistoricalPreparationFault
   [pscustomobject]@{base_repository=$retiredSeed.recovery_repository;repreparation_template=$retiredSeed.repreparation_template;admission_template=$admission}
 }
