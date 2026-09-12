@@ -880,8 +880,19 @@ try {
     # extraction. Preserve the caller timestamp spelling and exact legacy receipt
     # bytes while allowing only the ledger-owned wall-clock fields to differ across
     # independent module and CLI executions.
+    # Retirement authenticates the entire current-work suffix; retain the broad
+    # admission-only synthetic fixture above for its separate contract tests.
+    $protocolModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1') -PassThru
+    Import-Module (Join-Path $PSScriptRoot 'DevelopmentUnitAdmission.psm1')
+    . (Join-Path $PSScriptRoot 'test-support/DevelopmentAdmissionFixture.ps1')
+    $retirementSeed=New-EnvelopeAdmissionPreparedFixture -Root (Join-Path $testRoot 'retirement-owner-seed') -RepositoryRoot $RepoRoot -TransitionLedgerModule $transitionLedgerModule -OwnerProducedPreparation
+    $retirementAdmission=$retirementSeed.admission_template;$retirementAdmission.unit.instruction_impact='none';$retirementAdmission.unit.instruction_surfaces=@();$retirementAdmission.unit.instruction_none_justification='This isolated proposal changes no instruction contract.'
+    $retirementAdmissionPath=Join-Path $testRoot 'retirement-owner-admission.json';Write-EnvelopeJson $retirementAdmissionPath $retirementAdmission
+    $retirementAdmissionOut=Join-Path $retirementSeed.workspace 'receipts/u002-admission.json'
+    $retirementAdmissionDry=Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $retirementSeed.workspace -DevelopmentUnitAdmission $retirementAdmissionPath -OutPath $retirementAdmissionOut -Timestamp '2026-08-25T00:01:00.0000000Z'
+    Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $retirementSeed.workspace -DevelopmentUnitAdmission $retirementAdmissionPath -ExpectedDevelopmentUnitAdmissionSha256 $retirementAdmissionDry.audit_receipt.sha256 -OutPath $retirementAdmissionOut -Timestamp '2026-08-25T00:01:00.0000000Z' -Execute|Out-Null
     $legacyRetirementModuleWorkspace=Join-Path $testRoot 'legacy-retirement-module';$legacyRetirementCliWorkspace=Join-Path $testRoot 'legacy-retirement-cli'
-    Copy-Item -LiteralPath $envelopeWorkspace -Destination $legacyRetirementModuleWorkspace -Recurse;Copy-Item -LiteralPath $envelopeWorkspace -Destination $legacyRetirementCliWorkspace -Recurse
+    Copy-Item -LiteralPath $retirementSeed.workspace -Destination $legacyRetirementModuleWorkspace -Recurse;Copy-Item -LiteralPath $retirementSeed.workspace -Destination $legacyRetirementCliWorkspace -Recurse
     $legacyRetirementTimestamp='2026-08-25T02:01:30+02:00';$legacyRetirementModuleOut=Join-Path $legacyRetirementModuleWorkspace 'receipts/u002-contract-retirement.json';$legacyRetirementCliOut=Join-Path $legacyRetirementCliWorkspace 'receipts/u002-contract-retirement.json'
     $legacyRetirementBase=@{Action='RetireProposed';UnitId='u002';ReplacementUnitId='u003';RetirementReason='contract-invalid';Timestamp=$legacyRetirementTimestamp}
     $legacyRetirementModuleDry=Invoke-MorphospaceWorkUnitAutomation @legacyRetirementBase -WorkspaceRoot $legacyRetirementModuleWorkspace -OutPath $legacyRetirementModuleOut

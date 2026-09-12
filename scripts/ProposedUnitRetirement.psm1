@@ -65,15 +65,28 @@ function Read-MorphospaceProposedRetirementEvents {
 }
 
 function Get-MorphospaceProposedRetirementUnits {
-    param([Parameter(Mandatory)][string]$WorkspaceRoot)
+    param([Parameter(Mandatory)][string]$WorkspaceRoot, [Parameter(Mandatory)][string]$TargetUnitId)
     $unitRoot = Resolve-MorphospaceWorkspacePath $WorkspaceRoot 'iteration-units'
     if (-not [IO.Directory]::Exists($unitRoot)) { throw 'Iteration-unit directory is missing.' }
+    # Classification authenticates the accepted checkpoint, current suffix,
+    # retained identities and explicit prerequisites before any schema exemption.
+    # Import lazily without Force: the history reader also consumes retirement
+    # evidence, but does not call this live mutation owner.
+    Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceCurrentWorkHistory.psm1')
+    $history = Get-MorphospaceCurrentWorkHistory -WorkspaceRoot $WorkspaceRoot
     $map = @{}
-    foreach ($file in @(Get-ChildItem -LiteralPath $unitRoot -Filter '*.json' -File | Sort-Object Name)) {
-        $unit = Test-MorphospaceProposedRetirementJson -Path $file.FullName -Schemas @('iteration-unit.schema.json') -Context 'Iteration unit'
-        $unitId = [string]$unit.unit_id
-        if ($map.ContainsKey($unitId)) { throw "Duplicate iteration unit '$unitId'." }
-        $map[$unitId] = [pscustomobject]@{ document = $unit; path = $file.FullName }
+    foreach ($unitId in @($history.units.Keys | Sort-Object)) {
+        $path = Resolve-MorphospaceWorkspacePath $WorkspaceRoot "iteration-units/$unitId.json" -RequireLeaf
+        $unit = $history.units[$unitId]
+        $historical = $history.authenticated -and ($history.historical_ids.Contains($unitId) -or $history.historically_retired_proposed_ids.Contains($unitId))
+        if ($unitId -ceq $TargetUnitId -or -not $historical) {
+            $unit = Test-MorphospaceProposedRetirementJson -Path $path -Schemas @('iteration-unit.schema.json') -Context 'Iteration unit'
+        } elseif ([string]$unit.schema -cne 'rusty.morphospace.workflow.iteration_unit.v1' -or
+            ($history.historical_ids.Contains($unitId) -and @('active','validating','accepted') -cnotcontains [string]$unit.status) -or
+            ($history.historically_retired_proposed_ids.Contains($unitId) -and [string]$unit.status -cne 'superseded')) {
+            throw "RetireProposed historical unit '$unitId' has a damaged schema or lifecycle identity."
+        }
+        $map[$unitId] = [pscustomobject]@{ document = $unit; path = $path }
     }
     return $map
 }
@@ -348,7 +361,7 @@ function Invoke-MorphospaceProposedUnitRetirementCore {
     $eventsPath = Resolve-MorphospaceWorkspacePath $workspace 'iteration-events.jsonl' -RequireLeaf
     $project = Test-MorphospaceProposedRetirementJson -Path $projectPath -Schemas @('project-spec.schema.json','project-spec-v2.schema.json') -Context 'Project specification'
     $state = Test-MorphospaceProposedRetirementJson -Path $statePath -Schemas @('workspace-state.schema.json','workspace-state-v2.schema.json') -Context 'Workspace state'
-    $unitMap = Get-MorphospaceProposedRetirementUnits $workspace
+    $unitMap = Get-MorphospaceProposedRetirementUnits -WorkspaceRoot $workspace -TargetUnitId $UnitId
     if (-not $unitMap.ContainsKey($UnitId)) { throw "Iteration unit '$UnitId' does not exist." }
     $unitEntry = $unitMap[$UnitId]
     $unit = $unitEntry.document

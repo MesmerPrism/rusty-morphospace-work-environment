@@ -76,6 +76,15 @@ a fresh preparation unless a separately adopted owner contract says otherwise.
 candidate in place, create the replacement, or authorize source/build/device
 mutation.
 
+Retirement inventory uses the authenticated current-work and accepted-checkpoint
+boundary in [Current Work Validation](CURRENT_WORK_VALIDATION.md). It validates
+the target proposal and all nonhistorical units against the current schema while
+preserving retained historical bytes. Historical classification keeps unique,
+canonical project/unit identities, source locks, live references, explicit
+accepted prerequisites and transaction chains strict; it grants no validation
+credit and never relaxes the retirement target or distinct replacement absence.
+Without an authenticated checkpoint, every unit retains current schema checks.
+
 The direct retirement owner is `ProposedUnitRetirement.psm1`. It emits the
 closed `proposed_unit_retirement_receipt.v1` format, including the complete
 admission binding and the exact retirement transaction paths and CAS

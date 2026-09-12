@@ -57,7 +57,7 @@ function Update-EnvelopeRepreparationDirtBinding([object]$Fixture,[string]$Relat
 }
 $temp=Join-Path ([IO.Path]::GetTempPath()) ('workenv-development-envelope-'+[guid]::NewGuid().ToString('N'))
 try {
-  $preparedSeed=New-EnvelopeAdmissionPreparedFixture -Root $temp -RepositoryRoot $repoRoot -TransitionLedgerModule $transitionLedgerModule
+  $preparedSeed=New-EnvelopeAdmissionPreparedFixture -Root $temp -RepositoryRoot $repoRoot -TransitionLedgerModule $transitionLedgerModule -OwnerProducedPreparation
   $ws=$preparedSeed.workspace
   $project=$preparedSeed.project
   $featureLock=$preparedSeed.feature_lock

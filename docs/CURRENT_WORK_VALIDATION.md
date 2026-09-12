@@ -132,6 +132,16 @@ ledger validator. A prerequisite can use the finite proof only at or before the
 authenticated current boundary. Current suffix transitions and general ledger
 validation do not gain a compatibility route.
 
+Proposed-unit retirement uses this same authenticated inventory before applying
+the current unit schema. The target proposal and every nonhistorical unit remain
+subject to that schema. Retained historical units keep their original bytes and
+schema/lifecycle identities; an old instruction field does not become a new
+retirement prerequisite. Canonical paths, unique project/unit identities, current
+references, accepted prerequisite evidence, source projections and transaction
+suffixes remain strict. Without an authenticated boundary, no unit receives a
+historical schema exemption. Both direct and generic retirement use this owner
+classification, which grants no validation credit.
+
 External planning repositories remain the sole current authority after a
 completed materialization/adoption. Embedded source-repository history is a
 retained snapshot. Route through the project's existing local repository map;
