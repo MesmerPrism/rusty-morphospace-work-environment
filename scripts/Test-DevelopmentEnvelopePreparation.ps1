@@ -1,4 +1,4 @@
-param([switch]$SelfTest)
+param([switch]$SelfTest,[switch]$AdditivePreparationOnly)
 $ErrorActionPreference='Stop'
 $repoRoot=Split-Path $PSScriptRoot -Parent
 Import-Module (Join-Path $PSScriptRoot 'DevelopmentEnvelopePreparation.psm1') -Force
@@ -9,6 +9,171 @@ function Write-PreparationJson([string]$path,[object]$value){[IO.Directory]::Cre
 function Copy-Preparation([object]$value){$value|ConvertTo-Json -Depth 64|ConvertFrom-Json -DateKind String}
 function Hash([object]$value){Get-MorphospaceCanonicalJsonSha256 $value}
 function LockFingerprint([object]$value){$copy=Copy-Preparation $value;$copy.lock_fingerprint='0'*64;Hash $copy}
+function Test-AdditivePreparationCases {
+  param([object]$PreparationTemplate)
+  $cases=@(
+    'project-denied-feature','unused-module','unused-authority','changed-module','changed-authority',
+    'wrong-authority','module-maturity','duplicate-module','duplicate-module-feature','duplicate-authority',
+    'unknown-module-source','unknown-feature-source','module-dependency','feature-dependency',
+    'validation-profile','rollback-profile','selected-row','unlisted-entry','unknown-selected-module'
+  )
+  foreach ($case in $cases) {
+    $root=Join-Path $temp ('additive-'+$case)
+    Copy-Item $recoveryBase $root -Recurse
+    $candidate=Copy-Preparation $PreparationTemplate
+    $target=$candidate.envelope.project
+    $feature=$candidate.envelope.feature_lock.features[1]
+    switch ($case) {
+      'project-denied-feature' { $target.composition.denied_features=@('generic-envelope-feature') }
+      'unused-module' { $extra=Copy-Preparation $target.modules[1];$extra.module_id='unused';$extra.feature_id='unused';$target.modules+=,$extra;$target.composition.selected_modules+=,'unused' }
+      'unused-authority' { $target.authority_map+=,[pscustomobject]@{parameter='unused';owner='owner';adapters=@()} }
+      'changed-module' { $target.modules[0].contract_revision='2' }
+      'changed-authority' { $target.authority_map[0].owner='different-owner' }
+      'wrong-authority' { $target.authority_map[1].owner='different-owner' }
+      'module-maturity' { $target.modules[1].maturity='candidate' }
+      'duplicate-module' { $target.modules+=,(Copy-Preparation $target.modules[1]) }
+      'duplicate-module-feature' {
+        # The duplicate is an unchanged inactive preimage row; validating only
+        # newly added modules would miss it.
+        $current=Read-MorphospaceProtocolJson (Join-Path $root 'project.spec.json')
+        $extra=Copy-Preparation $target.modules[1];$extra.module_id='inactive-alias';$extra.selected=$false
+        $current.modules+=,$extra;$target.modules+=,(Copy-Preparation $extra)
+        Write-PreparationJson (Join-Path $root 'project.spec.json') $current
+        $candidate.expected.project_sha256=Hash $current
+      }
+      'duplicate-authority' { $target.authority_map+=,(Copy-Preparation $target.authority_map[1]) }
+      'unknown-module-source' { $target.modules[1].source_repo='unknown' }
+      'unknown-feature-source' { $feature.descriptor.source_repo='unknown' }
+      'module-dependency' { $target.modules[1].dependencies=@('unknown') }
+      'feature-dependency' { $feature.dependencies=@('unknown') }
+      'validation-profile' { $feature.validation_profile='unknown' }
+      'rollback-profile' { $feature.rollback_profile='unknown' }
+      'selected-row' { $feature.selected=$false }
+      'unlisted-entry' { $extra=Copy-Preparation $feature;$extra.feature_id='unlisted';$candidate.envelope.feature_lock.features+=,$extra }
+      'unknown-selected-module' { $target.composition.selected_modules+=,'unknown' }
+    }
+    $candidate.envelope.feature_lock.lock_fingerprint=LockFingerprint $candidate.envelope.feature_lock
+    Assert-PreparationRejected $root $candidate ('additive-'+$case) -Execute
+  }
+  foreach ($axis in @($emptyEffects.Keys)) {
+    $root=Join-Path $temp ('additive-effect-'+$axis)
+    Copy-Item $recoveryBase $root -Recurse
+    $candidate=Copy-Preparation $PreparationTemplate
+    $candidate.envelope.feature_lock.features[1].effects.$axis+=,'fixture.undeclared'
+    $candidate.envelope.feature_lock.lock_fingerprint=LockFingerprint $candidate.envelope.feature_lock
+    Assert-PreparationRejected $root $candidate ('additive-effect-'+$axis) "Preparation target effect union '$axis' is incomplete or expanded." -Execute
+  }
+  $root=Join-Path $temp 'additive-shared-authority'
+  Copy-Item $recoveryBase $root -Recurse
+  $shared=Copy-Preparation $PreparationTemplate
+  $module=Copy-Preparation $shared.envelope.project.modules[1]
+  $module.module_id='second-feature';$module.feature_id='second-feature'
+  $shared.envelope.project.modules+=,$module
+  $shared.envelope.project.composition.selected_features+=,'second-feature'
+  $shared.envelope.project.composition.selected_modules+=,'second-feature'
+  $feature=Copy-Preparation $shared.envelope.feature_lock.features[1]
+  $feature.feature_id='second-feature';$feature.module_id='second-feature'
+  $feature.dependencies=@('existing-provider');$module.dependencies=@('existing-provider')
+  $shared.envelope.feature_lock.features+=,$feature
+  $shared.envelope.feature_lock.selected_features+=,'second-feature'
+  $shared.envelope.feature_lock.lock_fingerprint=LockFingerprint $shared.envelope.feature_lock
+  $path=Join-Path $temp 'additive-shared-authority.json'
+  Write-PreparationJson $path $shared
+  $result=Invoke-MorphospacePrepareDevelopmentEnvelope -WorkspaceRoot $root -DevelopmentEnvelopePreparation $path -OutPath (Join-Path $root 'receipts/portable-envelope-prepare.json')
+  Assert-Preparation (-not $result.executed) 'shared same-owner authority or dependency on an unchanged feature rejected'
+  $conflicting=Copy-Preparation $shared
+  $conflicting.envelope.feature_lock.features[2].parameter_authorities[0].owner='different-owner'
+  $conflicting.envelope.feature_lock.lock_fingerprint=LockFingerprint $conflicting.envelope.feature_lock
+  Assert-PreparationRejected $root $conflicting 'conflicting-shared-authority' "Preparation newly selected features disagree on authority 'generic.envelope'." -Execute
+  $repeated=Copy-Preparation $shared
+  $repeated.envelope.feature_lock.features[2].parameter_authorities+=,(Copy-Preparation $feature.parameter_authorities[0])
+  $repeated.envelope.feature_lock.lock_fingerprint=LockFingerprint $repeated.envelope.feature_lock
+  Assert-PreparationRejected $root $repeated 'repeated-feature-parameter' -Execute
+
+  # A self-consistent but invalid additive intent must fail before its first
+  # staged artifact, live document, or event write.
+  $root=Join-Path $temp 'additive-invalid-resume'
+  Copy-Item $recoveryBase $root -Recurse
+  $out=Join-Path $root 'receipts/portable-envelope-prepare.json'
+  try { Invoke-MorphospacePrepareDevelopmentEnvelope -WorkspaceRoot $root -DevelopmentEnvelopePreparation $inputPath -ExpectedDevelopmentEnvelopePreparationSha256 $inputHash -OutPath $out -Execute -FaultAfter after-intent | Out-Null }
+  catch { Assert-Preparation ($_.Exception.Message -ceq 'Injected preparation interruption after intent.') 'invalid-resume seed did not reach intent' }
+  $intentPath=Join-Path $root 'receipts/transactions/portable-envelope-prepare-prepared-transition.intent.json'
+  $intent=Read-MorphospaceProtocolJson $intentPath
+  $candidate=Copy-Preparation $PreparationTemplate
+  $candidate.envelope.project.composition.denied_features=@('generic-envelope-feature')
+  $path=Join-Path $temp 'additive-invalid-resume.json';Write-PreparationJson $path $candidate
+  $receipt=([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($intent.artifacts[0].bytes_base64)) | ConvertFrom-Json -DateKind String)
+  $receipt.envelope=$candidate.envelope;$receipt.input_sha256=Get-MorphospaceFileSha256 $path
+  $intent.target.project.document=$candidate.envelope.project
+  $intent.target.project.sha256=Hash $intent.target.project.document
+  $receipt.project_sha256=$intent.target.project.sha256
+  $intent.artifacts[0].sha256=Hash $receipt
+  $intent.artifacts[0].bytes_base64=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($receipt | ConvertTo-Json -Depth 64)))
+  Write-PreparationJson $intentPath $intent
+  $before=Get-PreparationWorkspaceInventory $root
+  $message=''
+  try { Invoke-MorphospacePrepareDevelopmentEnvelope -WorkspaceRoot $root -DevelopmentEnvelopePreparation $path -ExpectedDevelopmentEnvelopePreparationSha256 (Get-MorphospaceFileSha256 $path) -OutPath $out -Execute | Out-Null }
+  catch { $message=$_.Exception.Message }
+  Assert-Preparation ($message -ceq "Preparation selected feature 'generic-envelope-feature' is denied by the target project." -and (Get-PreparationWorkspaceInventory $root) -ceq $before) 'invalid additive intent resumed or changed workspace bytes'
+  $preparationModule=Get-Module DevelopmentEnvelopePreparation
+  foreach ($case in @('source-artifact-conflict','event-predecessor-conflict')) {
+    $root=Join-Path $temp $case
+    Copy-Item $recoveryBase $root -Recurse
+    try { Invoke-MorphospacePrepareDevelopmentEnvelope -WorkspaceRoot $root -DevelopmentEnvelopePreparation $inputPath -ExpectedDevelopmentEnvelopePreparationSha256 $inputHash -OutPath (Join-Path $root 'receipts/portable-envelope-prepare.json') -Execute -FaultAfter after-intent | Out-Null }
+    catch { Assert-Preparation ($_.Exception.Message -ceq 'Injected preparation interruption after intent.') "$case did not reach intent" }
+    if ($case -ceq 'source-artifact-conflict') { Write-PreparationJson (Join-Path $root 'source-composition/prepared.json') @{conflicting=$true} }
+    else { [IO.File]::AppendAllText((Join-Path $root 'iteration-events.jsonl'),"`n") }
+    $before=Get-PreparationWorkspaceInventory $root
+    $rejected=$false
+    try {
+      & $preparationModule { param($workspace,$owner)
+        Complete-MorphospaceDevelopmentEnvelopePreparation $workspace $owner 'receipts/transactions/portable-envelope-prepare-prepared-transition.intent.json' 'receipts/transactions/portable-envelope-prepare-prepared-transition.completion.json'
+      } $root $repoRoot | Out-Null
+    } catch { $rejected=$true }
+    Assert-Preparation ($rejected -and (Get-PreparationWorkspaceInventory $root) -ceq $before) "$case wrote artifacts or projections before rejection"
+  }
+
+  # Model the retained ordinary producer's narrower semantic contract through
+  # its owner writer. All durable artifacts still come from preparation itself.
+  $root=Join-Path $temp 'historical-no-addition-replay'
+  Copy-Item $recoveryBase $root -Recurse
+  $historical=Copy-Preparation $PreparationTemplate
+  $historical.envelope.project.modules=@($historical.envelope.project.modules[0])
+  $historical.envelope.project.authority_map=@($historical.envelope.project.authority_map[0])
+  $historical.envelope.project.composition.selected_features=@()
+  $historical.envelope.project.composition.selected_modules=@('existing-provider')
+  $historical.envelope.project.composition.denied_features=@('existing-provider')
+  $historical.envelope.project.composition.allowed_permissions=@()
+  $historical.envelope.feature_lock.features=@($historical.envelope.feature_lock.features[0])
+  $historical.envelope.feature_lock.selected_features=@('existing-provider')
+  $historical.envelope.feature_lock.effect_union.permissions=@()
+  $historical.envelope.feature_lock.lock_fingerprint=LockFingerprint $historical.envelope.feature_lock
+  $historical.envelope.allowed_permission_categories=@('none')
+  $path=Join-Path $temp 'historical-no-addition.json';Write-PreparationJson $path $historical
+  $arguments=@{WorkspaceRoot=$root;DevelopmentEnvelopePreparation=$path;ExpectedDevelopmentEnvelopePreparationSha256=(Get-MorphospaceFileSha256 $path);OutPath=(Join-Path $root 'receipts/portable-envelope-prepare.json');Timestamp='2026-08-25T00:01:00.0000000Z';Execute=$true}
+  & $preparationModule { param($request)
+    $saved=(Get-Item Function:Assert-PreparationEnvelope).ScriptBlock
+    try {
+      function script:Assert-PreparationEnvelope { param($Preparation,$Project,$FeatureLock,$Mode)
+        Assert-MorphospaceDevelopmentEnvelope $Preparation $Project $FeatureLock historical
+      }
+      Invoke-MorphospacePrepareDevelopmentEnvelope @request
+    } finally { Set-Item Function:script:Assert-PreparationEnvelope $saved }
+  } $arguments | Out-Null
+  $before=Get-PreparationWorkspaceInventory $root
+  $replayed=Invoke-MorphospacePrepareDevelopmentEnvelope @arguments
+  Assert-Preparation ($replayed.executed -and (Get-PreparationWorkspaceInventory $root) -ceq $before) 'retained no-addition ordinary preparation replay acquired new full-target requirements'
+  $currentWorkHistory=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceCurrentWorkHistory.psm1') -PassThru
+  Assert-PreparationCurrentWorkReadable $root 'portable-envelope-prepare'
+  & $preparationModule { param($preparation,$project,$lock)
+    Assert-PreparationEnvelope $preparation $project $lock
+  } $historical $project $lock
+  $ordinaryRejected=$false
+  try { & $preparationModule { param($preparation,$project,$lock) Assert-PreparationEnvelope $preparation $project $lock ordinary } $historical $project $lock }
+  catch { $ordinaryRejected=$_.Exception.Message -ceq "Preparation selected feature 'existing-provider' is denied by the target project." }
+  Assert-Preparation $ordinaryRejected 'historical no-addition regression did not distinguish the ordinary target contract'
+  Write-Host 'Additive preparation target and interrupted-intent self-tests passed.'
+}
 function SchemaPin([string]$revision,[string]$file){"https://raw.githubusercontent.com/MesmerPrism/rusty-morphospace-work-environment/$revision/schemas/$file"}
 function Get-PreparationWorkspaceInventory([string]$root){(@(Get-ChildItem -LiteralPath $root -Recurse -File -Force|ForEach-Object{[pscustomobject][ordered]@{path=[IO.Path]::GetRelativePath($root,$_.FullName).Replace('\','/');length=$_.Length;sha256=Get-MorphospaceFileSha256 $_.FullName}}|Sort-Object path)|ConvertTo-Json -Depth 4 -Compress)}
 function Get-PreparationRepositoryHeads([string]$root){$map=Read-MorphospaceProtocolJson (Join-Path $root 'repository-map.json');(@($map.repositories|ForEach-Object{[pscustomobject][ordered]@{repo_id=[string]$_.repo_id;head=(& git -C ([string]$_.path) rev-parse HEAD).Trim().ToLowerInvariant()}}|Sort-Object repo_id)|ConvertTo-Json -Compress)}
@@ -28,6 +193,8 @@ try {
   $targetLock=Copy-Preparation $lock;$targetLock.'$schema'=SchemaPin $newPinRevision 'feature-lock-v2.schema.json';$targetLock.project_revision=2;$targetLock.revision=2;$feature=New-FixtureFeature 'generic-envelope-feature';$feature.parameter_authorities=@([ordered]@{parameter='generic.envelope';owner='owner'});$feature.effects.permissions=@('EXAMPLE_PERMISSION');$targetLock.features+=,$feature;$targetLock.selected_features=@('existing-provider','generic-envelope-feature');$targetLock.effect_union.permissions=@('EXAMPLE_PERMISSION');$targetLock.lock_fingerprint=LockFingerprint $targetLock
   $eventsPath=Join-Path $ws 'iteration-events.jsonl';$input=[ordered]@{schema='rusty.morphospace.workflow.development_envelope_preparation.v1';preparation_id='portable-envelope-prepare';project_id='portable-envelope';predecessor_unit_id='u001';envelope=[ordered]@{project=$targetProject;feature_lock=$targetLock;schema_pin_revision=$newPinRevision;owner_repositories=@([ordered]@{repo_id='planning';source_roots=@('morphospace/')},[ordered]@{repo_id='read-only-dependency';source_roots=@('src/')});public_private_boundary='mixed';allowed_change_categories=@('implementation','validation','documentation-only');allowed_effect_categories=@('filesystem','build','device');allowed_permission_categories=@('EXAMPLE_PERMISSION');build_envelope=[ordered]@{class='product';allowed_profiles=@('quick-host','raw-projection-devfast','raw-projection-candidate','maximum-blend-control-candidate')};device_envelope=[ordered]@{requirement='required';allowed_kinds=@('quest-typed-deploy-launch-observe-stop','raw-projection-freshness','maximum-blend-fixed-90hz-cpu4-gpu4-ababa')};source_composition=[ordered]@{path='source-composition/prepared.json';repository_ids=@('planning','read-only-dependency')}};expected=[ordered]@{project_sha256=(Hash $project);state_sha256=(Hash $state);feature_lock_sha256=(Hash $lock);repository_map_path='repository-map.json';repository_map_sha256=(Get-MorphospaceFileSha256 (Join-Path $ws 'repository-map.json'));predecessor_unit_path='iteration-units/u001.json';predecessor_unit_sha256=(Hash $u001);events_sha256=(Get-MorphospaceFileSha256 $eventsPath);events_length=([IO.FileInfo]$eventsPath).Length;event_tail_id='u001-accepted'};does_not_prove=@('Does not admit a future unit or execute a device action.')}
   $inputPath=Join-Path $temp 'prepare.json';Write-PreparationJson $inputPath $input;$out=Join-Path $ws 'receipts\portable-envelope-prepare.json';$dry=Invoke-MorphospacePrepareDevelopmentEnvelope -WorkspaceRoot $ws -DevelopmentEnvelopePreparation $inputPath -OutPath $out -Timestamp '2026-08-25T00:01:00.0000000Z';$inputHash=Get-MorphospaceFileSha256 $inputPath;$recoveryBase=Join-Path $temp 'recovery-base';Copy-Item $ws $recoveryBase -Recurse
+  Test-AdditivePreparationCases $input
+  if ($AdditivePreparationOnly) { return }
   foreach($effectDamage in @([pscustomobject]@{case='effect-union-missing-permission';axis='permissions';value=@()},[pscustomobject]@{case='effect-union-missing-command';axis='commands';value=@()})){$root=Join-Path $temp ('damage-'+$effectDamage.case);Copy-Item $recoveryBase $root -Recurse;$candidate=Copy-Preparation $input;if($effectDamage.axis-ceq'commands'){$candidate.envelope.feature_lock.features[1].effects.commands=@('fixture.command')};$candidate.envelope.feature_lock.effect_union.($effectDamage.axis)=$effectDamage.value;$candidate.envelope.feature_lock.lock_fingerprint=LockFingerprint $candidate.envelope.feature_lock;Assert-PreparationRejected $root $candidate $effectDamage.case "Preparation target effect union '$($effectDamage.axis)' is incomplete or expanded."}
   foreach($permissionDamage in @([pscustomobject]@{case='effect-permission-missing-project-ceiling';kind='project';expected='Preparation project, feature-lock, and declared permission ceilings differ.'},[pscustomobject]@{case='effect-permission-missing-declared-ceiling';kind='declared';expected="The JSON is not valid with the schema: Value should have at least 1 items at '/envelope/allowed_permission_categories'"})){$root=Join-Path $temp ('damage-'+$permissionDamage.case);Copy-Item $recoveryBase $root -Recurse;$candidate=Copy-Preparation $input;if($permissionDamage.kind-ceq'project'){$candidate.envelope.project.composition.allowed_permissions=@()}else{$candidate.envelope.allowed_permission_categories=@()};Assert-PreparationRejected $root $candidate $permissionDamage.case $permissionDamage.expected}
   $noParameterRoot=Join-Path $temp 'positive-no-parameter-feature';Copy-Item $recoveryBase $noParameterRoot -Recurse;$noParameter=Copy-Preparation $input;$noParameter.envelope.feature_lock.features[1].parameter_authorities=@();$noParameter.envelope.project.authority_map=@($noParameter.envelope.project.authority_map|Where-Object{[string]$_.parameter-cne'generic.envelope'});$noParameter.envelope.feature_lock.lock_fingerprint=LockFingerprint $noParameter.envelope.feature_lock;$noParameterPath=Join-Path $temp 'positive-no-parameter-feature.json';Write-PreparationJson $noParameterPath $noParameter;$noParameterDry=Invoke-MorphospacePrepareDevelopmentEnvelope -WorkspaceRoot $noParameterRoot -DevelopmentEnvelopePreparation $noParameterPath -OutPath (Join-Path $noParameterRoot 'receipts\portable-envelope-prepare.json');Assert-Preparation (-not$noParameterDry.executed) 'valid no-parameter feature was not accepted for ordinary dry preparation'

@@ -446,7 +446,7 @@ function Assert-CurrentWorkPreparationStep {
     }
     if([string]$artifacts[0].path-cne$receiptRelative-or[string]$artifacts[1].path-cne$sourceRelative-or[string]$artifacts[0].sha256-cne(Get-MorphospaceCanonicalJsonSha256 $receipt)-or[string]$artifacts[1].sha256-cne(Get-MorphospaceCanonicalJsonSha256 $source)){throw 'Current-work preparation artifact order or identities are detached.'}
     $preparation=[pscustomobject]@{project_id=[string]$receipt.project_id;envelope=$receipt.envelope}
-    $preModuleIds=@($Intent.pre.project.document.modules|ForEach-Object{[string]$_.module_id});$addedModuleIds=@($Intent.target.project.document.modules|ForEach-Object{[string]$_.module_id}|Where-Object{$preModuleIds-cnotcontains$_});$preAuthorityKeys=@($Intent.pre.project.document.authority_map|ForEach-Object{[string]$_.parameter});$addedAuthorityKeys=@($Intent.target.project.document.authority_map|ForEach-Object{[string]$_.parameter}|Where-Object{$preAuthorityKeys-cnotcontains$_});$preparationMode=if($addedModuleIds.Count-eq0-and$addedAuthorityKeys.Count-eq0){'historical'}else{'ordinary'}
+    $preparationMode=Get-MorphospaceDevelopmentEnvelopeReplayMode $Intent.pre.project.document $Intent.target.project.document
     Assert-MorphospaceDevelopmentEnvelopeAdditiveProject $Intent.pre.project.document $Intent.target.project.document $true @($receipt.envelope.owner_repositories) $preparationMode
     $semanticsAccepted=$true
     try{
@@ -481,7 +481,7 @@ function Assert-CurrentWorkPreparationStep {
         if((Get-MorphospaceCanonicalJsonSha256 $missingDeclared)-cne(Get-MorphospaceCanonicalJsonSha256 $addedRecovered)){throw 'Current-work preparation recovery changes validation profiles beyond the exact missing declared profiles.'}
         $normalizedEnvelope=$receipt.envelope|ConvertTo-Json -Depth 64|ConvertFrom-Json -DateKind String;$normalizedEnvelope.feature_lock=$normalizedLock;$normalizedEnvelope.project.validation_profiles=@($Intent.target.project.document.validation_profiles)+@($addedRecovered|ForEach-Object{$recoveredProfiles[$_]});$normalizedPreparation=[pscustomobject]@{project_id=[string]$receipt.project_id;envelope=$normalizedEnvelope}
         $normalizedTargetState=$Intent.target.state.document|ConvertTo-Json -Depth 64|ConvertFrom-Json -DateKind String;$normalizedTargetState.module_registry=Get-MorphospaceDevelopmentEnvelopeModuleRegistry $Intent.target.project.document $normalizedLock
-        Assert-MorphospaceDevelopmentEnvelope $normalizedPreparation $Intent.pre.project.document $Intent.pre.feature_lock.document
+        Assert-MorphospaceDevelopmentEnvelope $normalizedPreparation $Intent.pre.project.document $Intent.pre.feature_lock.document $preparationMode
         $normalizedDerivedState=Get-MorphospaceDevelopmentEnvelopeTargetState $normalizedPreparation $Intent.pre.project.document $Intent.pre.feature_lock.document $Intent.pre.state.document;$normalizedDerivedState.last_event_id=[string]$ExpectedEvent.event_id
         if((Get-MorphospaceCanonicalJsonSha256 $normalizedDerivedState)-cne(Get-MorphospaceCanonicalJsonSha256 $normalizedTargetState)){throw 'Current-work preparation recovery would conceal damage outside the exact fingerprint and module-registry defect.'}
         Assert-MorphospaceDevelopmentEnvelopeLockAndRegistry $Intent.target.project.document $normalizedLock $normalizedTargetState 'normalized historical target'

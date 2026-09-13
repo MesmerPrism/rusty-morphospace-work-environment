@@ -4,6 +4,17 @@ Import-Module (Join-Path $PSScriptRoot 'MorphospaceProtocolCommon.psm1')
 Import-Module (Join-Path $PSScriptRoot 'MorphospacePreparationRepositoryScope.psm1')
 
 function Get-MorphospaceDevelopmentEnvelopeHash { param([object]$Value) Get-MorphospaceCanonicalJsonSha256 $Value }
+function Get-MorphospaceDevelopmentEnvelopeReplayMode {
+    param([object]$Current,[object]$Target)
+    # Retained transactions with immutable module/authority surfaces predate
+    # additive projection checks. Never retry failed ordinary predicates using
+    # historical semantics.
+    foreach ($property in @('modules','authority_map')) {
+        if ((Get-MorphospaceDevelopmentEnvelopeHash $Current.$property) -cne
+            (Get-MorphospaceDevelopmentEnvelopeHash $Target.$property)) { return 'ordinary' }
+    }
+    return 'historical'
+}
 function Copy-MorphospaceDevelopmentEnvelopeValue { param([object]$Value) $Value | ConvertTo-Json -Depth 64 | ConvertFrom-Json -DateKind String }
 function Get-MorphospaceDevelopmentEnvelopeSchemaPin {
     param([string]$Revision,[string]$SchemaFile)
@@ -134,7 +145,6 @@ function Assert-MorphospaceDevelopmentEnvelope {
     $newFeatureIds=@($added|ForEach-Object{[string]$_});$featureById=@{};foreach($f in @($targetLock.features)){$featureById[[string]$f.feature_id]=$f}
     $repositories=@{};foreach($r in @($targetProject.repositories)){$repositories[[string]$r.repo_id]=$true}
     $addedModuleIds=@($newModules.Keys|Where-Object{-not$oldModules.ContainsKey($_)})
-    if($Mode-cne'ordinary'-and$addedModuleIds.Count-ne0){throw 'Preparation historical/repreparation mode cannot add project modules.'}
     foreach($id in $addedModuleIds){
         $module=$newModules[$id];$featureId=[string]$module.feature_id
         if($newFeatureIds-cnotcontains$featureId){throw "Preparation added module '$id' is not justified by a newly selected feature."}
@@ -155,21 +165,68 @@ function Assert-MorphospaceDevelopmentEnvelope {
     $oldAuthorities=@{};foreach($a in @($Project.authority_map)){if($oldAuthorities.ContainsKey([string]$a.parameter)){throw "Preparation current project repeats authority '$([string]$a.parameter)'."};$oldAuthorities[[string]$a.parameter]=$a}
     $newAuthorities=@{};foreach($a in @($targetProject.authority_map)){if($newAuthorities.ContainsKey([string]$a.parameter)){throw "Preparation target project repeats authority '$([string]$a.parameter)'."};$newAuthorities[[string]$a.parameter]=$a}
     foreach($key in $oldAuthorities.Keys){if(-not$newAuthorities.ContainsKey($key)-or(Get-MorphospaceDevelopmentEnvelopeHash $oldAuthorities[$key])-cne(Get-MorphospaceDevelopmentEnvelopeHash $newAuthorities[$key])){throw "Preparation removes or rewrites authority '$key'."}}
-    $declaredAuthority=@{};foreach($featureId in $newFeatureIds){foreach($a in @($featureById[$featureId].parameter_authorities)){$key=[string]$a.parameter;if($declaredAuthority.ContainsKey($key)){throw "Preparation newly selected features repeat authority '$key'."};$declaredAuthority[$key]=[string]$a.owner}}
+    $declaredAuthority=@{}
+    foreach ($featureId in $newFeatureIds) {
+        $parameters=@{}
+        foreach ($authority in @($featureById[$featureId].parameter_authorities)) {
+            $key=[string]$authority.parameter
+            $owner=[string]$authority.owner
+            if ($parameters.ContainsKey($key)) { throw "Preparation feature '$featureId' repeats authority '$key'." }
+            $parameters[$key]=$true
+            if ($declaredAuthority.ContainsKey($key) -and [string]$declaredAuthority[$key] -cne $owner) { throw "Preparation newly selected features disagree on authority '$key'." }
+            $declaredAuthority[$key]=$owner
+        }
+    }
     $addedAuthorityKeys=@($newAuthorities.Keys|Where-Object{-not$oldAuthorities.ContainsKey($_)})
-    if($Mode-cne'ordinary'-and$addedAuthorityKeys.Count-ne0){throw 'Preparation historical/repreparation mode cannot add project authority rows.'}
     foreach($key in $addedAuthorityKeys){if(-not$declaredAuthority.ContainsKey($key)-or[string]$newAuthorities[$key].owner-cne[string]$declaredAuthority[$key]){throw "Preparation added authority '$key' is unused or has the wrong owner."}}
     foreach($key in $declaredAuthority.Keys){if(-not$newAuthorities.ContainsKey($key)-or[string]$newAuthorities[$key].owner-cne[string]$declaredAuthority[$key]){throw "Preparation newly selected feature authority '$key' is not uniquely consumed."}}
+    # Check every target row, including retained inactive module rows. Project
+    # roots may be a subset of the lock's selected dependency closure.
+    $moduleFeatures=@{}
+    foreach ($module in @($targetProject.modules)) {
+        $id=[string]$module.module_id
+        $featureId=[string]$module.feature_id
+        if ($moduleFeatures.ContainsKey($featureId)) { throw "Preparation target modules repeat feature '$featureId'." }
+        $moduleFeatures[$featureId]=$id
+        if (-not $repositories.ContainsKey([string]$module.source_repo)) { throw "Preparation module '$id' has an undeclared source repository." }
+        foreach ($dependency in @($module.dependencies)) {
+            if (-not $newModules.ContainsKey([string]$dependency)) { throw "Preparation module '$id' has undeclared dependency '$dependency'." }
+        }
+        if ($module.selected -eq $true -and @($targetProject.composition.selected_modules) -cnotcontains $id) { throw "Preparation selected module '$id' is absent from project composition." }
+    }
+    foreach ($id in @($targetProject.composition.selected_modules)) {
+        if (-not $newModules.ContainsKey([string]$id) -or $newModules[[string]$id].selected -ne $true) { throw "Preparation composition module '$id' lacks its selected module row." }
+        if (@($targetProject.composition.denied_modules) -ccontains $id) { throw "Preparation selected feature '$($newModules[[string]$id].feature_id)' selects denied module '$id'." }
+    }
+    foreach ($id in @($targetProject.composition.selected_features)) {
+        if (@($targetLock.selected_features) -cnotcontains $id) { throw "Preparation target lock lacks project-selected feature '$id'." }
+    }
+    $lockIds=@($targetLock.selected_features | Sort-Object)
+    $featureIds=@($targetLock.features | ForEach-Object { [string]$_.feature_id } | Sort-Object)
+    if ((Get-MorphospaceDevelopmentEnvelopeHash $lockIds) -cne (Get-MorphospaceDevelopmentEnvelopeHash $featureIds)) { throw 'Preparation target selected features must exactly match feature entries.' }
+    $validationIds=@($targetProject.validation_profiles | ForEach-Object { [string]$_.profile_id })
+    $rollbackIds=@($targetProject.acceptance_profiles | ForEach-Object { [string]$_.profile_id })
     $exclusiveGroups=@{};foreach($featureId in @($targetLock.selected_features|ForEach-Object{[string]$_}|Sort-Object -Unique)){
         if(-not$featureById.ContainsKey($featureId)){throw "Preparation selected feature '$featureId' is absent from the target lock."}
         if(@($targetLock.denied_features)-ccontains$featureId){throw "Preparation selected feature '$featureId' is denied by the target feature lock."}
+        if (@($targetProject.composition.denied_features) -ccontains $featureId) { throw "Preparation selected feature '$featureId' is denied by the target project." }
         $selectedFeature=$featureById[$featureId];$moduleId=[string]$selectedFeature.module_id
+        if ($selectedFeature.selected -ne $true) { throw "Preparation feature '$featureId' disagrees with the target selected feature set." }
+        if (-not $repositories.ContainsKey([string]$selectedFeature.descriptor.source_repo)) { throw "Preparation feature '$featureId' has an undeclared source repository." }
+        if ($validationIds -cnotcontains [string]$selectedFeature.validation_profile) { throw "Preparation feature '$featureId' has an unregistered validation profile." }
+        if ($rollbackIds -cnotcontains [string]$selectedFeature.rollback_profile) { throw "Preparation feature '$featureId' has an unregistered rollback profile." }
         if(@($targetProject.composition.denied_modules)-ccontains$moduleId){throw "Preparation selected feature '$featureId' selects denied module '$moduleId'."}
         if(-not$newModules.ContainsKey($moduleId)-or[string]$newModules[$moduleId].feature_id-cne$featureId-or$newModules[$moduleId].selected-ne$true-or@($targetProject.composition.selected_modules)-cnotcontains$moduleId){throw "Preparation selected feature '$featureId' lacks its exact selected module binding."}
         if([string]$selectedFeature.run_activation_default-cne'disabled'-or[string]$selectedFeature.activation.rule-cne'selected-lock-and-runtime-input'-or@($selectedFeature.activation.runtime_inputs).Count-eq0){throw "Preparation selected feature '$featureId' lacks its disabled activation invariant."}
         foreach($dependency in @($selectedFeature.dependencies)){if(-not$featureById.ContainsKey([string]$dependency)-or@($targetLock.selected_features)-cnotcontains[string]$dependency){throw "Preparation selected feature '$featureId' has an unselected dependency '$dependency'."}}
         foreach($conflict in @($selectedFeature.conflicts)){if(@($targetLock.selected_features)-ccontains[string]$conflict){throw "Preparation selected feature '$featureId' selects conflict '$conflict'."}}
-        foreach($authority in @($selectedFeature.parameter_authorities)){$key=[string]$authority.parameter;if(-not$newAuthorities.ContainsKey($key)-or[string]$newAuthorities[$key].owner-cne[string]$authority.owner){throw "Preparation selected feature '$featureId' has an unconsumed authority '$key'."}}
+        $parameters=@{}
+        foreach ($authority in @($selectedFeature.parameter_authorities)) {
+            $key=[string]$authority.parameter
+            if ($parameters.ContainsKey($key)) { throw "Preparation feature '$featureId' repeats authority '$key'." }
+            $parameters[$key]=$true
+            if (-not $newAuthorities.ContainsKey($key) -or [string]$newAuthorities[$key].owner -cne [string]$authority.owner) { throw "Preparation selected feature '$featureId' has an unconsumed authority '$key'." }
+        }
         $group=[string]$selectedFeature.exclusive_group;if($group){if($exclusiveGroups.ContainsKey($group)){throw "Preparation selected features repeat exclusive group '$group'."};$exclusiveGroups[$group]=$featureId}
     }
     # The lock is closed-world: every effect axis is exactly the sorted unique
@@ -191,4 +248,4 @@ function Assert-MorphospaceDevelopmentEnvelope {
     $currentProfiles=@($Project.validation_profiles|ForEach-Object{[string]$_.profile_id});foreach($profile in @($registeredProfiles|Where-Object{$currentProfiles-cnotcontains$_})){if($declaredProfiles-cnotcontains$profile){throw "Preparation adds validation profile '$profile' outside the declared build profile ceiling."}}
 }
 
-Export-ModuleMember -Function Get-MorphospaceDevelopmentEnvelopeCurrentProjectProjection,Assert-MorphospaceDevelopmentEnvelopeOwnerRoots,Get-MorphospaceDevelopmentEnvelopeModuleRegistry,Assert-MorphospaceDevelopmentEnvelopeLockAndRegistry,Assert-MorphospaceDevelopmentEnvelopeRepreparationDefect,Assert-MorphospaceDevelopmentEnvelopeAdditiveProject,Assert-MorphospaceDevelopmentEnvelopeRepositoryRoots,Get-MorphospaceDevelopmentEnvelopeTargetState,Assert-MorphospaceDevelopmentEnvelope
+Export-ModuleMember -Function Get-MorphospaceDevelopmentEnvelopeReplayMode,Get-MorphospaceDevelopmentEnvelopeCurrentProjectProjection,Assert-MorphospaceDevelopmentEnvelopeOwnerRoots,Get-MorphospaceDevelopmentEnvelopeModuleRegistry,Assert-MorphospaceDevelopmentEnvelopeLockAndRegistry,Assert-MorphospaceDevelopmentEnvelopeRepreparationDefect,Assert-MorphospaceDevelopmentEnvelopeAdditiveProject,Assert-MorphospaceDevelopmentEnvelopeRepositoryRoots,Get-MorphospaceDevelopmentEnvelopeTargetState,Assert-MorphospaceDevelopmentEnvelope
