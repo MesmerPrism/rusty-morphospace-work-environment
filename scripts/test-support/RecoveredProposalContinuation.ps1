@@ -103,7 +103,7 @@ function Test-RecoveredPreparedAdmission {
     }
     $preparationPath = Join-Path $TestRoot 'original-checkpoint-preparation.json'
     Write-EnvelopeJson $preparationPath $preparation
-    $automation = Join-Path $ScriptsRoot 'Invoke-WorkUnitAutomation.ps1'
+    $automation = Join-Path $PSScriptRoot '../Invoke-WorkUnitAutomation.ps1'
     $prepared = & $automation -Action PrepareDevelopmentEnvelope -WorkspaceRoot $workspace -DevelopmentEnvelopePreparation $preparationPath -ExpectedDevelopmentEnvelopePreparationSha256 (Get-EnvelopeFileSha256 $preparationPath) -OutPath (Join-Path $workspace 'receipts/u004-envelope.json') -Timestamp '2026-08-25T00:02:03.0000000Z' -Execute | ConvertFrom-Json
     Assert-Envelope $prepared.executed 'fresh continuation preparation did not execute'
     $publicBefore = Get-EnvelopeWorkspaceByteInventorySha256 $workspace
