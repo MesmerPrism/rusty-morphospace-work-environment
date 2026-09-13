@@ -446,10 +446,11 @@ function Assert-CurrentWorkPreparationStep {
     }
     if([string]$artifacts[0].path-cne$receiptRelative-or[string]$artifacts[1].path-cne$sourceRelative-or[string]$artifacts[0].sha256-cne(Get-MorphospaceCanonicalJsonSha256 $receipt)-or[string]$artifacts[1].sha256-cne(Get-MorphospaceCanonicalJsonSha256 $source)){throw 'Current-work preparation artifact order or identities are detached.'}
     $preparation=[pscustomobject]@{project_id=[string]$receipt.project_id;envelope=$receipt.envelope}
-    Assert-MorphospaceDevelopmentEnvelopeAdditiveProject $Intent.pre.project.document $Intent.target.project.document $true @($receipt.envelope.owner_repositories)
+    $preModuleIds=@($Intent.pre.project.document.modules|ForEach-Object{[string]$_.module_id});$addedModuleIds=@($Intent.target.project.document.modules|ForEach-Object{[string]$_.module_id}|Where-Object{$preModuleIds-cnotcontains$_});$preAuthorityKeys=@($Intent.pre.project.document.authority_map|ForEach-Object{[string]$_.parameter});$addedAuthorityKeys=@($Intent.target.project.document.authority_map|ForEach-Object{[string]$_.parameter}|Where-Object{$preAuthorityKeys-cnotcontains$_});$preparationMode=if($addedModuleIds.Count-eq0-and$addedAuthorityKeys.Count-eq0){'historical'}else{'ordinary'}
+    Assert-MorphospaceDevelopmentEnvelopeAdditiveProject $Intent.pre.project.document $Intent.target.project.document $true @($receipt.envelope.owner_repositories) $preparationMode
     $semanticsAccepted=$true
     try{
-        Assert-MorphospaceDevelopmentEnvelope $preparation $Intent.pre.project.document $Intent.pre.feature_lock.document
+        Assert-MorphospaceDevelopmentEnvelope $preparation $Intent.pre.project.document $Intent.pre.feature_lock.document $preparationMode
         $derivedState=Get-MorphospaceDevelopmentEnvelopeTargetState $preparation $Intent.pre.project.document $Intent.pre.feature_lock.document $Intent.pre.state.document;$derivedState.last_event_id=[string]$ExpectedEvent.event_id
         if((Get-MorphospaceCanonicalJsonSha256 $derivedState)-cne[string]$Intent.target.state.sha256){throw 'Current-work preparation target state is not the exact owner-derived projection.'}
         Assert-MorphospaceDevelopmentEnvelopeLockAndRegistry $Intent.target.project.document $Intent.target.feature_lock.document $Intent.target.state.document 'historical target'
