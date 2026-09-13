@@ -1,5 +1,16 @@
 # Current work and historical auditing
 
+An authenticated [active-unit retirement](ACTIVE_UNIT_RETIREMENT.md) has a
+distinct `retired-active` disposition. Its preserved unit bytes do not grant
+current ownership or accepted-prerequisite evidence. The reader authenticates
+the retirement transaction through later preparation and admission; it rejects
+resurrection and does not reinterpret retirement as acceptance.
+
+A preparation completion that predates its intent requires the exact
+[preparation timestamp recovery](PREPARATION_TIMESTAMP_RECOVERY.md) transaction.
+The malformed original remains immutable; the reader has no general
+chronology bypass.
+
 Ordinary project continuation uses `Test-WorkflowContracts.ps1` with
 `-WorkspaceRoot`, `-RepositoryMapPath`, `-CurrentWorkOnly`, and
 `-SkipOwnerSelfTests` when consuming an unchanged adopted work-environment.

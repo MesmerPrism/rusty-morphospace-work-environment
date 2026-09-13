@@ -1990,6 +1990,17 @@ function Invoke-MorphospaceWorkUnitAutomation {
     if (-not $unitMap.ContainsKey($UnitId)) { throw "Iteration unit '$UnitId' does not exist." }
     $unitEntry = $unitMap[$UnitId]
     $unit = $unitEntry.document
+    $retiredActiveIds = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    if (@($events | Where-Object { [string]$_.event_id -cmatch '-active-retired$' }).Count -gt 0) {
+        Import-Module (Join-Path $PSScriptRoot 'ActiveUnitRetirement.psm1')
+        foreach ($retirementEvent in @($events | Where-Object { [string]$_.event_id -cmatch '-active-retired$' })) {
+            $retirementProof = Test-MorphospaceHistoricalActiveUnitRetirement -WorkspaceRoot $resolvedWorkspace -ExpectedEvent $retirementEvent
+            if (-not $retiredActiveIds.Add([string]$retirementProof.intent.event.unit_id)) { throw 'Active retirement identity is ambiguous.' }
+        }
+        if ($retiredActiveIds.Contains($UnitId) -and $Action -cne 'Inspect') {
+            throw 'An authenticated retired active unit cannot acquire lifecycle authority again.'
+        }
+    }
     if ([string]$unit.project_id -ne [string]$spec.project_id -or [string]$state.project_id -ne [string]$spec.project_id) {
         throw "Project identifiers do not agree."
     }
@@ -2769,7 +2780,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
                 $workspacePrefix = $resolvedWorkspace.TrimEnd("\", "/") + [System.IO.Path]::DirectorySeparatorChar
                 $recoveryReference = $recoveryPath.Substring($workspacePrefix.Length).Replace("\", "/")
             }
-            $inFlight = @($unitMap.Values | Where-Object { [string]$_.document.status -in @("active", "validating") })
+            $inFlight = @($unitMap.Values | Where-Object { [string]$_.document.status -in @("active", "validating") -and -not $retiredActiveIds.Contains([string]$_.document.unit_id) })
             if (-not $state.current_unit -and $inFlight.Count -eq 1) {
                 $recoveredId = [string]$inFlight[0].document.unit_id
                 if ($recoveredId -ne $UnitId) { throw "Recover resolved '$recoveredId', not requested '$UnitId'." }

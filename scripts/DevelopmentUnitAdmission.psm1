@@ -9,6 +9,32 @@ function Get-AdmissionTransactionId { param([string]$AdmissionId) "$AdmissionId-
 function Get-AdmissionEventId { param([string]$AdmissionId) "$AdmissionId-admitted" }
 function Assert-AdmissionJson { param([string]$Path,[string]$Schema,[string]$Message) if (-not (Test-Json -Json (Get-Content -Raw -LiteralPath $Path) -SchemaFile $Schema)) { throw $Message } }
 function Get-AdmissionFileHash { param([string]$Workspace,[string]$Relative) Get-MorphospaceFileSha256 (Resolve-MorphospaceWorkspacePath $Workspace $Relative -RequireLeaf) }
+function Assert-AdmissionActiveRetirementBinding {
+    param([string]$Workspace,[object]$Admission,[int]$AdmissionSequence)
+    $events = @(Get-Content -LiteralPath (Join-Path $Workspace 'iteration-events.jsonl') | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json -DateKind String })
+    foreach ($event in @($events | Where-Object { [string]$_.event_id -cmatch '-active-retired$' -and [int]$_.sequence -lt $AdmissionSequence })) {
+        Import-Module (Join-Path $PSScriptRoot 'ActiveUnitRetirement.psm1')
+        $proof = Test-MorphospaceHistoricalActiveUnitRetirement -WorkspaceRoot $Workspace -ExpectedEvent $event
+        $priorAdmissions = @($events | Where-Object { [int]$_.sequence -gt [int]$event.sequence -and [int]$_.sequence -lt $AdmissionSequence -and [string]$_.event_id -cmatch '-admitted$' } | Sort-Object sequence)
+        $replacement = [string]$proof.receipt.replacement_unit_id
+        if (($priorAdmissions.Count -eq 0 -and [string]$Admission.unit_id -cne $replacement) -or
+            ($priorAdmissions.Count -gt 0 -and [string]$priorAdmissions[0].unit_id -cne $replacement)) {
+            throw 'Active retirement permits only its explicitly named replacement admission.'
+        }
+        if ($priorAdmissions.Count -gt 0) {
+            $priorEvent=$priorAdmissions[0]
+            if (@($priorEvent.receipts).Count -ne 1 -or [string]$priorEvent.event_type -cne 'state-transition' -or
+                @($events | Where-Object { [string]$_.event_id -ceq [string]$priorEvent.event_id }).Count -ne 1) { throw 'Prior replacement admission event is not unique and exact.' }
+            $receiptPath=Resolve-MorphospaceWorkspacePath $Workspace ([string]$priorEvent.receipts[0]) -RequireLeaf
+            Assert-AdmissionJson $receiptPath (Join-Path (Split-Path $PSScriptRoot -Parent) 'schemas/development-unit-admission-v1.schema.json') 'Prior replacement admission receipt schema is invalid.'
+            $priorAdmission=Read-MorphospaceProtocolJson $receiptPath
+            if ([string]$priorAdmission.unit_id -cne $replacement -or [string]$priorAdmission.unit.unit_id -cne $replacement -or [string]$priorAdmission.unit.status -cne 'proposed') { throw 'Prior replacement admission receipt has a different unit identity.' }
+            $priorStep=Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $Workspace -TransactionId (Get-AdmissionTransactionId ([string]$priorAdmission.admission_id)) -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath "iteration-units/$replacement.json" -ExpectedEventsPath 'iteration-events.jsonl'
+            if ((Get-MorphospaceCanonicalJsonSha256 $priorStep.intent.event) -cne (Get-MorphospaceCanonicalJsonSha256 $priorEvent)) { throw 'Prior replacement admission event is detached from its committed transaction.' }
+            [void](Get-MorphospaceAdmissionIntentBinding $Workspace $priorAdmission (Get-MorphospaceFileSha256 $receiptPath) $priorStep.intent.target.state.document $null $null)
+        }
+    }
+}
 function Assert-AdmissionPaths {
     param([object]$Unit,[object]$Assessment,[object]$Project)
     $projectById=@{}; foreach($r in @($Project.repositories)){$projectById[[string]$r.repo_id]=$r}
@@ -75,6 +101,7 @@ function Complete-MorphospaceDevelopmentUnitAdmission {
             } @($workspace,$transactionId,$binding.intent_relative,$binding.intent_absolute,$intent,$binding.completion_absolute)|Out-Null
             return [pscustomobject]@{status='already-committed';transaction_id=$transactionId}
         }
+        Assert-AdmissionActiveRetirementBinding $workspace $Admission ([int]$intent.event.sequence)
         $statePath=Resolve-MorphospaceWorkspacePath $workspace 'workspace.state.json' -RequireLeaf;$unitAbsolute=Resolve-MorphospaceWorkspacePath $workspace $unitPath;$eventsPath=Resolve-MorphospaceWorkspacePath $workspace 'iteration-events.jsonl' -RequireLeaf
         $currentState=Read-MorphospaceProtocolJson $statePath;$currentStateHash=Get-MorphospaceCanonicalJsonSha256 $currentState
         if(@([string]$intent.pre.state.sha256,[string]$intent.target.state.sha256)-cnotcontains$currentStateHash){throw 'Admission recovery state CAS is stale or conflicting.'}
@@ -111,6 +138,7 @@ function Start-MorphospaceDevelopmentUnitAdmission {
         if([IO.File]::Exists($intentPath)){return}
         Invoke-AdmissionLedger { param($Root,$Id) Assert-MorphospaceNoOutstandingTransitionIntent $Root $Id } @($Workspace,$transactionId)
         $eventsPath=Resolve-MorphospaceWorkspacePath $Workspace 'iteration-events.jsonl' -RequireLeaf;$events=@(Get-Content $eventsPath|Where-Object{$_}|ForEach-Object{$_|ConvertFrom-Json});$tail=$events[-1]
+        Assert-AdmissionActiveRetirementBinding $Workspace $Admission ([int]$tail.sequence + 1)
         $event=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.iteration_event.v1';event_id=$eventId;sequence=[int]$tail.sequence+1;timestamp=$Timestamp;project_id=$Admission.project_id;unit_id=$Admission.unit_id;event_type='state-transition';summary='Admitted a bounded proposed development unit; normal Ready, Inspect, and Claim remain required.';receipts=@($outRelative)}
         $intent=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.transition_ledger_intent.v1';transaction_id=$transactionId;created_at=$Timestamp;state=[pscustomobject]@{path='workspace.state.json'};unit=[pscustomobject]@{path=$unitPath};events=[pscustomobject]@{path='iteration-events.jsonl'};pre=[pscustomobject]@{state=[pscustomobject]@{sha256=$expected.state_sha256};unit=[pscustomobject]@{sha256=('0'*64)}};target=[pscustomobject]@{state=[pscustomobject]@{sha256=(Get-MorphospaceCanonicalJsonSha256 $TargetState);document=$TargetState};unit=[pscustomobject]@{sha256=(Get-MorphospaceCanonicalJsonSha256 $Admission.unit);document=$Admission.unit}};expected=[pscustomobject]@{state_sha256=$expected.state_sha256;unit_sha256=('0'*64);event_tail_id=$expected.event_tail_id;events_sha256=$expected.events_sha256;events_length=[int64]$expected.events_length};artifacts=@([pscustomobject]@{path=$outRelative;sha256=$InputHash;bytes_base64=[Convert]::ToBase64String([IO.File]::ReadAllBytes($InputPath))});event=$event;status='prepared'}
         Invoke-AdmissionLedger { param($Intent,$Id) Assert-MorphospaceLedgerIntent $Intent $Id } @($intent,$transactionId)|Out-Null
@@ -157,6 +185,17 @@ function Invoke-MorphospaceAdmitDevelopmentUnit {
         $binding=Get-MorphospaceAdmissionIntentBinding $workspace $admission $inputHash $targetState $project $lockDoc;$completed=[IO.File]::Exists($binding.completion_absolute)
         if($Execute){[void](Complete-MorphospaceDevelopmentUnitAdmission $workspace $admission $inputHash $targetState $project $lockDoc -FaultAfter $FaultAfter)}
         return [pscustomobject][ordered]@{schema='rusty.morphospace.workflow.work_unit_automation_receipt.v2';project_id=$admission.project_id;unit_id=$admission.unit_id;action='AdmitDevelopmentUnit';timestamp=$Timestamp;executed=$Execute.IsPresent;transition=$(if($completed){'development-unit-already-admitted'}else{'development-unit-admitted'});status_before=$null;status_after='proposed';current_unit_before=$null;current_unit_after=$null;preservation=[ordered]@{git_mutation_performed=$false;device_mutation_performed=$false;remote_mutation_performed=$false};audit_receipt=[ordered]@{path=$outRelative;sha256=$inputHash};event_id=$(if($Execute-and-not$completed){$eventId}else{$null})}
+    }
+    if (@(Get-Content -LiteralPath $eventPath | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json -DateKind String } | Where-Object { [string]$_.event_id -cmatch '-active-retired$' }).Count -gt 0) {
+        Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceCurrentWorkHistory.psm1')
+        $retirementHistory = Get-MorphospaceCurrentWorkHistory -WorkspaceRoot $workspace -RequireIdle
+        foreach ($proof in $retirementHistory.active_retirements.Values) {
+            $replacementId = [string]$proof.receipt.replacement_unit_id
+            $replacementAdmissions = @($retirementHistory.events | Where-Object { [string]$_.unit_id -ceq $replacementId -and [string]$_.event_id -cmatch '-admitted$' -and [int]$_.sequence -gt [int]$proof.intent.event.sequence })
+            if ($replacementAdmissions.Count -eq 0 -and [string]$admission.unit_id -cne $replacementId) {
+                throw 'Active retirement permits only its explicitly named replacement admission.'
+            }
+        }
     }
     [void](Test-MorphospaceDevelopmentUnitPreparation -WorkspaceRoot $workspace -Admission $admission -Phase Admission)
     if($null -ne $state.current_unit -or $null -ne $state.next_ready_unit){throw 'Admission requires an idle project with no current or ready unit.'}

@@ -3,6 +3,11 @@
 Use these owner actions when immutable later work must replace stale lifecycle
 authority. They preserve old units and evidence; they do not infer acceptance.
 
+The active successor must stay inside the old unit's write scope. For a new
+objective requiring broader authority, use [active-unit retirement](ACTIVE_UNIT_RETIREMENT.md)
+and fresh development-envelope preparation. Do not widen the old unit merely
+to make a supersession request pass.
+
 ## Active successor
 
 `SupersedeActive` consumes one reviewed `active_unit_supersession.v1` request.

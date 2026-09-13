@@ -1,0 +1,242 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/active-unit-retirement-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "retirement_id",
+    "project_id",
+    "unit_id",
+    "replacement_unit_id",
+    "reason",
+    "old_unit",
+    "expected",
+    "source_composition",
+    "claim",
+    "repositories",
+    "accepted_receipt"
+  ],
+  "properties": {
+    "schema": {
+      "const": "rusty.morphospace.workflow.active_unit_retirement.v1"
+    },
+    "retirement_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,95}$"
+    },
+    "project_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,95}$"
+    },
+    "unit_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,95}$"
+    },
+    "replacement_unit_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,95}$"
+    },
+    "reason": {
+      "const": "scope-replanned"
+    },
+    "old_unit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "unit_id",
+        "path",
+        "status",
+        "raw_sha256",
+        "canonical_sha256"
+      ],
+      "properties": {
+        "unit_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{1,95}$"
+        },
+        "path": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9./-]+\\.json$"
+        },
+        "status": {
+          "const": "active"
+        },
+        "raw_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "canonical_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "expected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "project_raw_sha256",
+        "project_canonical_sha256",
+        "feature_lock_raw_sha256",
+        "feature_lock_canonical_sha256",
+        "state_raw_sha256",
+        "state_canonical_sha256",
+        "events_sha256",
+        "events_length",
+        "event_tail_id",
+        "repository_map_sha256"
+      ],
+      "properties": {
+        "project_raw_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "project_canonical_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "feature_lock_raw_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "feature_lock_canonical_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "state_raw_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "state_canonical_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "events_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "events_length": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 67108864
+        },
+        "event_tail_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{1,191}$"
+        },
+        "repository_map_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "source_composition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "raw_sha256",
+        "canonical_sha256"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9./-]+\\.json$"
+        },
+        "raw_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "canonical_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event_id",
+        "transaction_id",
+        "intent_sha256",
+        "completion_sha256"
+      ],
+      "properties": {
+        "event_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]+-claimed-[0-9]{4,}$"
+        },
+        "transaction_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]+-transition$"
+        },
+        "intent_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "completion_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "repositories": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "repo_id",
+          "head",
+          "tree",
+          "branch",
+          "clean"
+        ],
+        "properties": {
+          "repo_id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{1,95}$"
+          },
+          "head": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$"
+          },
+          "tree": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$"
+          },
+          "branch": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "clean": {
+            "const": true
+          }
+        }
+      }
+    },
+    "accepted_receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9./-]+\\.json$"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    }
+  }
+}

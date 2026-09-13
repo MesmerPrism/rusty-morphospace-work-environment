@@ -32,6 +32,11 @@ source roots, retained proposal retirement, and subsequent ordinary admission.
 The current-work reader keeps authenticated retired proposals separate from
 accepted prerequisites as later acceptances advance the checkpoint.
 
+When a changed goal exceeds an active unit's objective or source envelope, use
+`docs/ACTIVE_UNIT_RETIREMENT.md` before fresh preparation. Preserve the old unit
+and implementation checkpoints; retirement supplies no acceptance evidence.
+`SupersedeActive` remains limited to the predecessor's write scope.
+
 An explicit user instruction may activate
 `<work-environment>/docs/FULL_AUTHORITY_MODE.md` for the current task and its
 declared project or ecosystem scope. The grant persists until explicit
