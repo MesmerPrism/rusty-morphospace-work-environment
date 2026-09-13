@@ -177,6 +177,65 @@ function Test-RecoveredPreparedAdmission {
     Assert-Envelope ([string](Read-EnvelopeProtocolJson (Join-Path $workspace 'workspace.state.json')).last_accepted_receipt -ceq $originalAccepted) 'fresh continuation advanced its accepted checkpoint'
 }
 
+function Test-RepreparationEventClassification {
+    param([string]$Workspace,[string]$TestRoot,[string]$ScriptsRoot,[string]$UnitId,[string]$ReplacementUnitId)
+    Import-Module (Join-Path $PSScriptRoot '../lib/MorphospaceCurrentWorkHistory.psm1')
+    $recovery=Read-EnvelopeProtocolJson (Join-Path $Workspace 'receipts/u003-envelope-recovery-repreparation.json')
+    $intentPath=Join-Path $Workspace $recovery.original_preparation.intent.path
+    $intent=Read-EnvelopeProtocolJson $intentPath
+    $events=@(Get-Content -LiteralPath (Join-Path $Workspace 'iteration-events.jsonl')|Where-Object{$_}|ForEach-Object{$_|ConvertFrom-Json -DateKind String})
+    $originalEvent=@($events|Where-Object event_id -CEQ $recovery.original_preparation.event_id)[0]
+    $evidenceArguments=@{Workspace=$Workspace;IntentPath=$intentPath;Intent=$intent;Events=$events;ExpectedEvent=$originalEvent}
+    # Unrelated later events may own JSON, plain text, or another receipt shape.
+    # Candidate selection must not parse or schema-test those artifacts.
+    $textReceipt=Join-Path $Workspace 'receipts/unrelated-observation.txt'
+    [IO.File]::WriteAllText($textReceipt,"Non-JSON observation.`n",[Text.UTF8Encoding]::new($false))
+    foreach($kind in @('state-transition','decision')){
+        foreach($first in @("receipts/$UnitId-admission.json",'receipts/unrelated-observation.txt')){
+            $unrelated=Copy-Envelope $events[-1];$unrelated.sequence=[int]$events[-1].sequence+1
+            $unrelated.event_type=$kind;$unrelated.event_id='unrelated-prepared'
+            $unrelated.receipts=@($first,'receipts/unrelated.json')
+            $arguments=$evidenceArguments.Clone();$arguments.Events=@($events)+@($unrelated)
+            $before=Get-EnvelopeWorkspaceByteInventorySha256 $Workspace
+            $null=Get-MorphospacePreparationStepEvidence @arguments
+            Assert-Envelope ($before-ceq(Get-EnvelopeWorkspaceByteInventorySha256 $Workspace)) 'unrelated two-receipt classification changed workspace bytes'
+        }
+    }
+    Remove-Item -LiteralPath $textReceipt
+    # A real owner-shaped candidate remains strict, including schema damage
+    # and duplicate candidates for the exact original preparation.
+    $recoveryPath=Join-Path $Workspace 'receipts/u003-envelope-recovery-repreparation.json'
+    $recoveryBytes=[IO.File]::ReadAllBytes($recoveryPath)
+    foreach($damage in @('schema','binding','ambiguous')){
+        $arguments=$evidenceArguments.Clone()
+        try{
+            if($damage-ceq'ambiguous'){
+                $candidate=@($events|Where-Object{@($_.receipts).Count-gt0-and[string]$_.receipts[0]-ceq'receipts/u003-envelope-recovery-repreparation.json'})[0]
+                $arguments.Events=@($events)+@($candidate)
+            }else{
+                $damaged=Copy-Envelope $recovery
+                if($damage-ceq'schema'){$damaged.schema='unrelated.receipt.v1'}else{$damaged.original_preparation.intent.sha256='0'*64}
+                Write-EnvelopeJson $recoveryPath $damaged
+            }
+            $before=Get-EnvelopeWorkspaceByteInventorySha256 $Workspace;$rejected=$false
+            try{$null=Get-MorphospacePreparationStepEvidence @arguments}catch{$rejected=$true}
+            Assert-Envelope ($rejected-and$before-ceq(Get-EnvelopeWorkspaceByteInventorySha256 $Workspace)) "preparation recovery accepted or mutated $damage"
+        }finally{[IO.File]::WriteAllBytes($recoveryPath,$recoveryBytes)}
+    }
+    . (Join-Path $PSScriptRoot 'ActiveUnitRetirementFixture.ps1')
+    $request=New-ActiveUnitRetirementRequest -WorkspaceRoot $Workspace -RetirementId "retire-$UnitId" -ReplacementUnitId $ReplacementUnitId
+    $requestPath=Join-Path $TestRoot "retire-$UnitId-request.json";Write-EnvelopeJson $requestPath $request
+    $unitHash=Get-EnvelopeFileSha256 (Join-Path $Workspace "iteration-units/$UnitId.json")
+    $automation=Join-Path $PSScriptRoot '../Invoke-WorkUnitAutomation.ps1'
+    $retired=& $automation -Action RetireActive -WorkspaceRoot $Workspace -UnitId $UnitId -RepoMapPath (Join-Path $Workspace 'repository-map.json') -ActiveUnitRetirement $requestPath -ExpectedActiveUnitRetirementSha256 (Get-EnvelopeFileSha256 $requestPath) -OutPath (Join-Path $Workspace "receipts/retire-$UnitId.json") -Timestamp '2026-08-25T00:02:08.0000000Z' -Execute|ConvertFrom-Json
+    Import-Module (Join-Path $PSScriptRoot '../lib/MorphospaceCurrentWorkHistory.psm1')
+    $before=Get-EnvelopeWorkspaceByteInventorySha256 $Workspace
+    $history=Get-MorphospaceCurrentWorkHistory -WorkspaceRoot $Workspace -RequireIdle
+    Assert-Envelope ($retired.executed-and$history.authenticated-and$history.retired_active_ids.Contains($UnitId)-and$unitHash-ceq(Get-EnvelopeFileSha256 (Join-Path $Workspace "iteration-units/$UnitId.json"))-and$before-ceq(Get-EnvelopeWorkspaceByteInventorySha256 $Workspace)) 'real active retirement after recovered preparation did not preserve readable idle history'
+    $public=Invoke-RecoveredContinuationPublicValidation -WorkspaceRoot $Workspace -ScriptsRoot $ScriptsRoot
+    Assert-Envelope ($public.exit_code-eq0-and$before-ceq(Get-EnvelopeWorkspaceByteInventorySha256 $Workspace)) "retired recovered-preparation history failed public validation or changed bytes: $($public.output)"
+}
+
 function Test-RecoveredProposalRetirement {
     param([string]$AdmittedWorkspace, [string]$TestRoot, [string]$ScriptsRoot,[ValidateSet('All','PreparedAdmission','LaterAcceptance')][string]$Scenario='All')
     Import-Module (Join-Path $PSScriptRoot '../AdmissionCompletionTimestampRecovery.psm1')
