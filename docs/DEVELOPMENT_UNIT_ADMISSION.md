@@ -1,5 +1,10 @@
 # Development-Unit Admission and Candidate Freeze
 
+When changed product goals exceed an active unit's envelope, first use the
+non-accepting [active-unit retirement](ACTIVE_UNIT_RETIREMENT.md) route. Fresh
+preparation can then use the idle project and its actual accepted predecessor;
+the retired unit is retained implementation history, not accepted evidence.
+
 `PrepareDevelopmentEnvelope` is the only owner action that changes an idle
 existing project's future development envelope. It atomically advances only
 the additive project/repository-root and feature/effect/permission/build/device

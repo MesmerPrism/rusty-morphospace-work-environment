@@ -101,7 +101,7 @@ function Test-PreparationDraftReference {
     }
     return $false
 }
-function Get-PreparationInertDraftIds {
+function Get-MorphospaceInertDevelopmentProposalIds {
     param([string]$Workspace,[object]$History)
     $inert = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $drafts = @($History.units.Keys | Where-Object { [string]$History.units[$_].status -ceq 'proposed' })
@@ -168,10 +168,11 @@ function Assert-PreparationHistoricalSupersessionClosure {
         Assert-PreparationHistoricalSupersessionAudit $Workspace
         return
     }
-    $inertDrafts = Get-PreparationInertDraftIds $Workspace $history
+    $inertDrafts = Get-MorphospaceInertDevelopmentProposalIds $Workspace $history
     foreach ($id in $history.units.Keys) {
         if ([string]$history.units[$id].status -cne 'accepted' -and
             -not $history.retired_ids.Contains($id) -and
+            -not $history.retired_active_ids.Contains($id) -and
             -not $history.historically_retired_proposed_ids.Contains($id) -and
             -not $inertDrafts.Contains($id)) {
             throw "Preparation rejects nonhistorical unit '$id' outside idle accepted authority."
@@ -281,7 +282,8 @@ function Complete-MorphospaceDevelopmentEnvelopePreparation {
     if($FaultAfter-eq'after-event'){throw 'Injected preparation interruption after event.'}
     if ($null -ne $completion) { return 'already-committed' }
     if($CheckOnly){return 'recoverable'}
-    $completion=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.development_envelope_preparation_completion.v1';transaction_id=$intent.transaction_id;completed_at=[DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffffffZ');intent_sha256=(Get-PreparationFileHash $intentPath);target_project_sha256=$intent.target.project.sha256;target_state_sha256=$intent.target.state.sha256;target_feature_lock_sha256=$intent.target.feature_lock.sha256;event_id=$intent.event.event_id;status='committed'};Write-MorphospaceManagedProtocolJsonAtomic $Workspace $CompletionRelative $completion -NoOverwrite;return 'committed'
+    $intentAt=Test-MorphospaceStrictUtcTimestamp ([string]$intent.created_at);$completedAt=[DateTimeOffset]::UtcNow;if($completedAt-lt$intentAt){$completedAt=$intentAt}
+    $completion=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.development_envelope_preparation_completion.v1';transaction_id=$intent.transaction_id;completed_at=$completedAt.ToString('yyyy-MM-ddTHH:mm:ss.fffffffZ');intent_sha256=(Get-PreparationFileHash $intentPath);target_project_sha256=$intent.target.project.sha256;target_state_sha256=$intent.target.state.sha256;target_feature_lock_sha256=$intent.target.feature_lock.sha256;event_id=$intent.event.event_id;status='committed'};Write-MorphospaceManagedProtocolJsonAtomic $Workspace $CompletionRelative $completion -NoOverwrite;return 'committed'
 }
 function Get-PreparationSourceComposition {
     param([object]$Preparation,[hashtable]$Map)
@@ -328,4 +330,4 @@ function Invoke-MorphospacePrepareDevelopmentEnvelope {
  $mutex=Enter-MorphospaceWorkspaceMutex $workspace;try{if([IO.File]::Exists($intentPath)){throw 'Preparation intent appeared during observation; retry against the exact owner intent.'};Write-MorphospaceManagedProtocolJsonAtomic $workspace $intentRelative $intent -NoOverwrite;if($FaultAfter-eq'after-intent'){throw 'Injected preparation interruption after intent.'};[void](Complete-MorphospaceDevelopmentEnvelopePreparation $workspace $repoRoot $intentRelative $completionRelative -FaultAfter $FaultAfter)}finally{Exit-MorphospaceWorkspaceMutex $mutex}
  New-PreparationAutomationReceipt $p $Timestamp $true 'idle-project-envelope-prepared' $receiptRelative $inputHash $state $eventId
 }
-Export-ModuleMember -Function Invoke-MorphospacePrepareDevelopmentEnvelope
+Export-ModuleMember -Function Invoke-MorphospacePrepareDevelopmentEnvelope,Get-MorphospaceInertDevelopmentProposalIds

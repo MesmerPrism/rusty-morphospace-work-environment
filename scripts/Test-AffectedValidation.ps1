@@ -4442,7 +4442,8 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
         'transition-ledger','authority-record-readiness','authority-runner-fast',
         'authority-runner-handoff','trust-migration-authority',
         'history-archive-checkpoint','work-unit-automation','project-workspace-scaffold',
-        'development-envelope-preparation','preparation-repository-scope','public-boundary'
+        'development-envelope-preparation','preparation-repository-scope','public-boundary',
+        'active-unit-retirement','active-unit-retirement-continuation','preparation-completion-timestamp-recovery'
     )
     $preparationRepositoryScopeSelectionChecks=@(
         $preparationRepositoryScopeConsumerChecks + @(
@@ -4531,8 +4532,8 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
         [pscustomobject]@{ path='scripts/Test-HistoricalValidationDebtPhaseRunner.ps1'; checks=@('historical-validation-debt-phase-runner') },
         [pscustomobject]@{ path='scripts/Test-OwnershipAuthority.ps1'; checks=@('ownership-authority') },
         [pscustomobject]@{ path='scripts/Test-TransitionLedger.ps1'; checks=@('transition-ledger') },
-        [pscustomobject]@{ path='schemas/development-unit-admission-v1.schema.json'; checks=@('development-unit-admission','recovered-proposal-continuation','recovered-prepared-admission') + $workflowConsumerFixtureChecks; exact_checks=$true },
-        [pscustomobject]@{ path='scripts/DevelopmentUnitAdmission.psm1'; checks=@('development-unit-admission','recovered-proposal-continuation','recovered-prepared-admission') + $workflowConsumerFixtureChecks; exact_checks=$true },
+        [pscustomobject]@{ path='schemas/development-unit-admission-v1.schema.json'; checks=@('development-unit-admission','recovered-proposal-continuation','recovered-prepared-admission','active-unit-retirement-continuation') + $workflowConsumerFixtureChecks; exact_checks=$true },
+        [pscustomobject]@{ path='scripts/DevelopmentUnitAdmission.psm1'; checks=@('development-unit-admission','recovered-proposal-continuation','recovered-prepared-admission','active-unit-retirement-continuation') + $workflowConsumerFixtureChecks; exact_checks=$true },
         [pscustomobject]@{ path='scripts/Test-DevelopmentUnitAdmission.ps1'; checks=@('development-unit-admission','public-boundary'); exact_checks=$true },
         [pscustomobject]@{ path='scripts/Test-AdmissionCompletionTimestampRecovery.ps1'; checks=@('admission-completion-timestamp-recovery','public-boundary'); exact_checks=$true },
         [pscustomobject]@{ path='scripts/Test-RecoveredProposalContinuation.ps1'; checks=@('recovered-proposal-continuation','recovered-prepared-admission','public-boundary'); exact_checks=$true },

@@ -1402,6 +1402,10 @@ function Test-ProjectBundle {
             Assert-Contract ([string]$unit.status -ceq 'superseded') "$Context retired proposed unit '$unitId' has a damaged lifecycle identity."
             continue
         }
+        if ($null -ne $currentHistory -and $currentHistory.retired_active_ids.Contains($unitId)) {
+            Assert-Contract ([string]$unit.schema -ceq 'rusty.morphospace.workflow.iteration_unit.v1' -and [string]$unit.status -ceq 'active') "$Context retired active unit '$unitId' has a damaged retained identity."
+            continue
+        }
         $priorFailureAttribution = $script:FailureAttribution
         $historicalDebtEligibleAttribution = New-HistoricalDebtUnitFailureAttribution `
             -Unit $unit -UnitPath $path -State $state -WorkspaceRoot $workspaceRoot -EligibleHistoricalDebt
@@ -2038,7 +2042,7 @@ function Test-ProjectBundle {
         $unitMap[[string]$unit.unit_id] = $unit
     }
     foreach ($unit in $units.ToArray()) {
-        if ($null -ne $currentHistory -and ($currentHistory.historical_ids.Contains([string]$unit.unit_id) -or $currentHistory.historically_retired_proposed_ids.Contains([string]$unit.unit_id))) { continue }
+        if ($null -ne $currentHistory -and ($currentHistory.historical_ids.Contains([string]$unit.unit_id) -or $currentHistory.historically_retired_proposed_ids.Contains([string]$unit.unit_id) -or $currentHistory.retired_active_ids.Contains([string]$unit.unit_id))) { continue }
         foreach ($prerequisite in @($unit.prerequisites)) {
             Assert-Contract ($unitMap.ContainsKey([string]$prerequisite)) "$Context unit '$($unit.unit_id)' references missing prerequisite '$prerequisite'."
         }
@@ -2451,12 +2455,14 @@ function Test-ProjectBundle {
         }
     }
     $activeUnits = @($units | Where-Object {
-        $_.status -eq "active" -and -not $supersededInFlightIds.Contains([string]$_.unit_id)
+        $_.status -eq "active" -and -not $supersededInFlightIds.Contains([string]$_.unit_id) -and
+        ($null -eq $currentHistory -or -not $currentHistory.retired_active_ids.Contains([string]$_.unit_id))
     })
     Assert-Contract ($activeUnits.Count -le 1) "$Context has more than one effective active iteration unit."
     $inFlightUnits = @($units | Where-Object {
         ($_.status -eq "active" -or $_.status -eq "validating") -and
-        -not $supersededInFlightIds.Contains([string]$_.unit_id)
+        -not $supersededInFlightIds.Contains([string]$_.unit_id) -and
+        ($null -eq $currentHistory -or -not $currentHistory.retired_active_ids.Contains([string]$_.unit_id))
     })
     Assert-Contract ($inFlightUnits.Count -le 1) "$Context has more than one effective in-flight iteration unit."
 

@@ -126,7 +126,7 @@ function Get-HistoryArchiveSourceInventory {
         $path = Get-HistoryArchivePath $Workspace $relative -RequireLeaf
         $unit = Read-MorphospaceProtocolJson -Path $path
         if (-not $AuthenticatedReplay -and [string]$unit.status -notin @('accepted','blocked','superseded') -and
-            ($null -eq $currentHistory -or -not $currentHistory.retired_ids.Contains([string]$unit.unit_id))) { throw "History archive requires terminal units; '$relative' is '$([string]$unit.status)'." }
+            ($null -eq $currentHistory -or (-not $currentHistory.retired_ids.Contains([string]$unit.unit_id) -and -not $currentHistory.retired_active_ids.Contains([string]$unit.unit_id)))) { throw "History archive requires terminal units; '$relative' is '$([string]$unit.status)'." }
         $records.Add([pscustomobject][ordered]@{ source_path=$relative; kind='terminal-unit'; sha256=(Get-HistoryArchiveFileHash $path); byte_length=[long]([IO.FileInfo]$path).Length }) | Out-Null
     }
     foreach ($relative in @(Get-HistoryArchiveDirectoryFiles $Workspace 'receipts')) {

@@ -21,6 +21,8 @@ $script:ProposedUnitRetirementModule = Import-Module (Join-Path $PSScriptRoot 'P
 # force reload unloads that binding even though this module can still call it.
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceActiveUnitContractReviewCompatibility.psm1')
 
+Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceRepositoryObservation.psm1')
+
 function Read-MorphospaceJson {
     param([Parameter(Mandatory = $true)][string]$Path)
 
@@ -91,96 +93,6 @@ function Add-MorphospaceEvent {
         try { $writer.Write($line) } finally { $writer.Dispose() }
     } finally {
         if ($stream) { $stream.Dispose() }
-    }
-}
-
-function Get-MorphospaceGitOutput {
-    param(
-        [Parameter(Mandatory = $true)][string]$RepositoryPath,
-        [Parameter(Mandatory = $true)][string[]]$Arguments,
-        [switch]$AllowFailure
-    )
-
-    $previousPreference = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    try {
-        $output = @(& git -C $RepositoryPath @Arguments 2>&1)
-        $exitCode = $LASTEXITCODE
-    } finally {
-        $ErrorActionPreference = $previousPreference
-    }
-    if ($exitCode -ne 0 -and -not $AllowFailure) {
-        throw "Git command failed in '$RepositoryPath': git $($Arguments -join ' ')"
-    }
-    return [pscustomobject]@{ exit_code = $exitCode; lines = @($output); text = ($output -join [Environment]::NewLine).Trim() }
-}
-
-function Get-MorphospaceRepositoryState {
-    param(
-        [Parameter(Mandatory = $true)][string]$RepoId,
-        [Parameter(Mandatory = $true)][string]$Path
-    )
-
-    if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
-        return [pscustomobject][ordered]@{
-            repo_id = $RepoId; path = $Path; available = $false; is_git = $false
-            head = $null; tree = $null; branch = $null; upstream = $null; dirty = $null
-            tracked_changes = $null; untracked_changes = $null; ahead = $null
-            behind = $null; diverged = $null; relation = "missing"; status_porcelain = @()
-        }
-    }
-
-    $inside = Get-MorphospaceGitOutput -RepositoryPath $Path -Arguments @("rev-parse", "--is-inside-work-tree") -AllowFailure
-    if ($inside.exit_code -ne 0 -or $inside.text -ne "true") {
-        return [pscustomobject][ordered]@{
-            repo_id = $RepoId; path = $Path; available = $true; is_git = $false
-            head = $null; tree = $null; branch = $null; upstream = $null; dirty = $null
-            tracked_changes = $null; untracked_changes = $null; ahead = $null
-            behind = $null; diverged = $null; relation = "not-git"; status_porcelain = @()
-        }
-    }
-
-    $head = (Get-MorphospaceGitOutput -RepositoryPath $Path -Arguments @("rev-parse", "HEAD")).text
-    $tree = (Get-MorphospaceGitOutput -RepositoryPath $Path -Arguments @("rev-parse", "HEAD^{tree}")).text
-    $branchResult = Get-MorphospaceGitOutput -RepositoryPath $Path -Arguments @("symbolic-ref", "--quiet", "--short", "HEAD") -AllowFailure
-    $branch = if ($branchResult.exit_code -eq 0) { $branchResult.text } else { $null }
-    $upstreamResult = Get-MorphospaceGitOutput -RepositoryPath $Path -Arguments @("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}") -AllowFailure
-    $upstream = if ($upstreamResult.exit_code -eq 0) { $upstreamResult.text } else { $null }
-    $status = Get-MorphospaceGitOutput -RepositoryPath $Path -Arguments @("status", "--porcelain=v1", "--untracked-files=all")
-    $statusLines = @($status.lines | ForEach-Object { [string]$_ })
-    $tracked = @($statusLines | Where-Object { -not $_.StartsWith("??") }).Count
-    $untracked = @($statusLines | Where-Object { $_.StartsWith("??") }).Count
-    $ahead = $null
-    $behind = $null
-    $relation = if ($null -eq $branch) { "detached" } elseif ($null -eq $upstream) { "no-upstream" } else { "unknown" }
-    if ($upstream) {
-        $counts = (Get-MorphospaceGitOutput -RepositoryPath $Path -Arguments @("rev-list", "--left-right", "--count", "HEAD...@{upstream}")).text -split "\s+"
-        if ($counts.Count -ne 2) { throw "Unexpected ahead/behind output for '$RepoId'." }
-        $ahead = [int]$counts[0]
-        $behind = [int]$counts[1]
-        if ($ahead -gt 0 -and $behind -gt 0) { $relation = "diverged" }
-        elseif ($ahead -gt 0) { $relation = "ahead" }
-        elseif ($behind -gt 0) { $relation = "behind" }
-        else { $relation = "synchronized" }
-    }
-
-    return [pscustomobject][ordered]@{
-        repo_id = $RepoId
-        path = (Resolve-Path -LiteralPath $Path).Path
-        available = $true
-        is_git = $true
-        head = $head
-        tree = $tree
-        branch = $branch
-        upstream = $upstream
-        dirty = ($statusLines.Count -gt 0)
-        tracked_changes = $tracked
-        untracked_changes = $untracked
-        ahead = $ahead
-        behind = $behind
-        diverged = ($relation -eq "diverged")
-        relation = $relation
-        status_porcelain = $statusLines
     }
 }
 
@@ -1990,6 +1902,17 @@ function Invoke-MorphospaceWorkUnitAutomation {
     if (-not $unitMap.ContainsKey($UnitId)) { throw "Iteration unit '$UnitId' does not exist." }
     $unitEntry = $unitMap[$UnitId]
     $unit = $unitEntry.document
+    $retiredActiveIds = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    if (@($events | Where-Object { [string]$_.event_id -cmatch '-active-retired$' }).Count -gt 0) {
+        Import-Module (Join-Path $PSScriptRoot 'ActiveUnitRetirement.psm1')
+        foreach ($retirementEvent in @($events | Where-Object { [string]$_.event_id -cmatch '-active-retired$' })) {
+            $retirementProof = Test-MorphospaceHistoricalActiveUnitRetirement -WorkspaceRoot $resolvedWorkspace -ExpectedEvent $retirementEvent
+            if (-not $retiredActiveIds.Add([string]$retirementProof.intent.event.unit_id)) { throw 'Active retirement identity is ambiguous.' }
+        }
+        if ($retiredActiveIds.Contains($UnitId) -and $Action -cne 'Inspect') {
+            throw 'An authenticated retired active unit cannot acquire lifecycle authority again.'
+        }
+    }
     if ([string]$unit.project_id -ne [string]$spec.project_id -or [string]$state.project_id -ne [string]$spec.project_id) {
         throw "Project identifiers do not agree."
     }
@@ -2769,7 +2692,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
                 $workspacePrefix = $resolvedWorkspace.TrimEnd("\", "/") + [System.IO.Path]::DirectorySeparatorChar
                 $recoveryReference = $recoveryPath.Substring($workspacePrefix.Length).Replace("\", "/")
             }
-            $inFlight = @($unitMap.Values | Where-Object { [string]$_.document.status -in @("active", "validating") })
+            $inFlight = @($unitMap.Values | Where-Object { [string]$_.document.status -in @("active", "validating") -and -not $retiredActiveIds.Contains([string]$_.document.unit_id) })
             if (-not $state.current_unit -and $inFlight.Count -eq 1) {
                 $recoveredId = [string]$inFlight[0].document.unit_id
                 if ($recoveredId -ne $UnitId) { throw "Recover resolved '$recoveredId', not requested '$UnitId'." }
