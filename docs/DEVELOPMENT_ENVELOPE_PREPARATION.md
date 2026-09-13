@@ -18,6 +18,30 @@ Preparation records a preparation-owned source-composition lock from clean
 repository-map observations without requiring an iteration-unit document for
 the future unit.
 
+For an ordinary preparation, `project.modules` and `project.authority_map` are
+additive feature-closure projections. Existing rows are byte-identical. A new
+module is permitted only for a newly selected target-lock feature (or a newly
+entering dependency), must be selected and named by `composition.selected_modules`,
+use `app-local` maturity, name a declared source repository, and have closed
+dependencies. A new authority parameter is permitted only when at least one
+newly selected feature declares that parameter and every consumer names the
+same exact owner. A feature cannot repeat a parameter declaration.
+An unchanged feature may reuse an unchanged module and authority row. Duplicate,
+unused, denied, malformed, or owner-mismatched bindings fail before any intent,
+artifact, document, or event write. This ordinary rule does not broaden
+repreparation or reinterpret retained historical no-addition envelopes.
+
+The complete additive target must also satisfy the ordinary closed composition
+contract: project-selected features are roots within the lock closure; every
+lock entry is selected and has one selected module, declared source, registered
+validation and rollback profiles, closed dependencies, and an exact effect union
+on all fourteen axes. Project and lock denials remain effective. Module feature
+IDs are unique across selected and inactive rows. Resume checks run before any
+artifact or projection write. Historical replay dispatch uses the bound module
+and authority projections and retains that mode through the finite existing
+fingerprint, registry, and profile repair; semantic failure never grants a
+historical waiver.
+
 An ordinary preparation may also add roots to an existing repository. Every
 other field of that repository record and every existing root remain unchanged.
 Each added root must exactly match a reviewed `owner_repositories.source_roots`

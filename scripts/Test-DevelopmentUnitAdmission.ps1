@@ -1,4 +1,4 @@
-param([switch]$SelfTest)
+param([switch]$SelfTest,[switch]$AdditivePreparationOnly)
 $ErrorActionPreference='Stop'
 $repoRoot=Split-Path $PSScriptRoot -Parent
 Import-Module (Join-Path $PSScriptRoot 'DevelopmentUnitAdmission.psm1') -Force
@@ -11,6 +11,27 @@ $transitionLedgerPath=Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.p
 $transitionLedgerModule=@(Get-Module -All|Where-Object{$_.Path-eq$transitionLedgerPath}|Select-Object -Last 1)[0]
 if($null-eq$transitionLedgerModule){throw 'MorphospaceTransitionLedger module is unavailable.'}
 . (Join-Path $PSScriptRoot 'test-support/DevelopmentAdmissionFixture.ps1')
+
+# The additive path always runs in the full suite and can be selected alone
+# while changing preparation semantics, without repeating recovery fixtures.
+$additiveRoot=Join-Path ([IO.Path]::GetTempPath()) ('workenv-additive-admission-'+[guid]::NewGuid().ToString('N'))
+try {
+  $seed=New-EnvelopeAdmissionPreparedFixture -Root $additiveRoot -RepositoryRoot $repoRoot -TransitionLedgerModule $transitionLedgerModule -OwnerProducedPreparation -AdditiveFeature
+  $workspace=$seed.workspace
+  & (Join-Path $PSScriptRoot 'Test-WorkflowContracts.ps1') -RepoRoot $repoRoot -WorkspaceRoot $workspace -CurrentWorkOnly -SkipOwnerSelfTests
+  $admissionPath=Join-Path $additiveRoot 'admission.json'
+  Write-EnvelopeJson $admissionPath $seed.admission_template
+  $admit=Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $workspace -DevelopmentUnitAdmission $admissionPath -ExpectedDevelopmentUnitAdmissionSha256 (Get-EnvelopeFileSha256 $admissionPath) -OutPath (Join-Path $workspace 'receipts/u002-admission.json') -Timestamp '2026-08-25T00:01:00.0000000Z' -Execute
+  $arguments=@{WorkspaceRoot=$workspace;UnitId='u002';RepoMapPath=(Join-Path $workspace 'repository-map.json');ValidationTier='quick'}
+  $ready=& $automationModule {param($argsMap) Invoke-MorphospaceWorkUnitAutomation @argsMap -Action Ready -Timestamp '2026-08-25T00:02:00.0000000Z' -Execute} $arguments
+  $inspect=& $automationModule {param($argsMap) Invoke-MorphospaceWorkUnitAutomation @argsMap -Action Inspect -Timestamp '2026-08-25T00:02:05.0000000Z'} $arguments
+  $claim=& $automationModule {param($argsMap) Invoke-MorphospaceWorkUnitAutomation @argsMap -Action Claim -Timestamp '2026-08-25T00:02:10.0000000Z' -Execute} $arguments
+  Assert-Envelope ($admit.transition -ceq 'development-unit-admitted' -and $ready.transition -ceq 'proposed-to-ready' -and $inspect.claim_preflight.ready_to_claim -and $claim.transition -ceq 'ready-to-active') 'additive preparation did not pass public current-work validation and ordinary Admit/Ready/Inspect/Claim'
+  Write-Host 'Additive preparation lifecycle self-test passed.'
+} finally {
+  if (Test-Path -LiteralPath $additiveRoot) { Remove-Item -LiteralPath $additiveRoot -Recurse -Force }
+}
+if ($AdditivePreparationOnly) { return }
 
 Assert-Envelope ($null-eq(Get-Command Complete-MorphospaceDevelopmentEnvelopeRepreparation -ErrorAction SilentlyContinue)) 'private repreparation completion command leaked through the public module boundary'
 $nestedOwnedDirtAccepted=&$repreparationModule { @('src/project.spec.json','foo/iteration-units/nested-unit.json','foo/receipts/nested.json','foo/source-composition/nested.json')|Where-Object{Test-RepreparationOwnedDirtPath $_} }

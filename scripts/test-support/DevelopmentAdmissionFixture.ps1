@@ -77,7 +77,7 @@ function New-EnvelopeRepreparationFixture([string]$BaseRepository,[string]$Fixtu
 }
 
 function New-EnvelopeAdmissionPreparedFixture {
-  param([string]$Root,[string]$RepositoryRoot,[object]$TransitionLedgerModule,[switch]$OwnerProducedPreparation,[switch]$HistoricalSupersession)
+  param([string]$Root,[string]$RepositoryRoot,[object]$TransitionLedgerModule,[switch]$OwnerProducedPreparation,[switch]$HistoricalSupersession,[switch]$AdditiveFeature)
 $temp=$Root;$repoRoot=$RepositoryRoot;$transitionLedgerModule=$TransitionLedgerModule
     $ws=Join-Path $temp 'morphospace';[IO.Directory]::CreateDirectory((Join-Path $ws 'iteration-units'))|Out-Null;[IO.Directory]::CreateDirectory((Join-Path $ws 'receipts'))|Out-Null
     $example=Join-Path $repoRoot 'examples\hello-morphospace-v2\morphospace'
@@ -112,6 +112,32 @@ $temp=$Root;$repoRoot=$RepositoryRoot;$transitionLedgerModule=$TransitionLedgerM
       Import-Module (Join-Path $PSScriptRoot '../DevelopmentEnvelopePreparation.psm1') -Force
       $targetProject=Copy-Envelope $project;$targetProject.revision=[int]$project.revision+1
       $targetFeatureLock=Copy-Envelope $featureLock;$targetFeatureLock.project_revision=[int]$targetProject.revision;$targetFeatureLock.revision=[int]$featureLock.revision+1;$targetFeatureLock.generated_at='2026-08-25T00:00:30.0000000Z';$targetFeatureLock.lock_fingerprint=(Get-EnvelopeLockFingerprint -Value $targetFeatureLock)
+      if ($AdditiveFeature) {
+        Assert-Envelope (@($project.modules).Count -eq 0 -and @($featureLock.features).Count -eq 0) 'additive lifecycle baseline is not empty'
+        $targetProject.composition.selected_features=@('fixture-observation')
+        $targetProject.composition.selected_modules=@('fixture-observation')
+        $targetProject.modules=@([pscustomobject][ordered]@{
+          module_id='fixture-observation';feature_id='fixture-observation';lane='project-shell';maturity='app-local'
+          contract='fixture.observation.v1';contract_revision='1';source_repo='project-shell';dependencies=@();selected=$true
+        })
+        $targetProject.authority_map+=,[pscustomobject][ordered]@{parameter='fixture.observation';owner='project-shell';adapters=@()}
+        $sourceDigest=Get-EnvelopeFileSha256 (Join-Path $sourceRepo 'morphospace/README.md')
+        $targetFeatureLock.selected_features=@('fixture-observation')
+        $targetFeatureLock.features=@([pscustomobject][ordered]@{
+          feature_id='fixture-observation';module_id='fixture-observation';version='1';owner_lane='project-shell'
+          selected=$true;run_activation_default='disabled'
+          descriptor=[ordered]@{path='features/fixture-observation.json';sha256=$sourceDigest;source_repo='project-shell';source_revision=$sourceCommit;source_path='morphospace/README.md';source_sha256=$sourceDigest}
+          dependencies=@();conflicts=@();exclusive_group=$null;effects=(Copy-Envelope $featureLock.effect_union)
+          parameter_authorities=@([ordered]@{parameter='fixture.observation';owner='project-shell'})
+          activation=[ordered]@{rule='selected-lock-and-runtime-input';runtime_inputs=@('fixture-input');receipt_schema='fixture.observation.receipt.v1';effective_marker='fixture.observation'}
+          validation_profile='workflow';rollback_profile='rollback'
+        })
+        $targetFeatureLock.lock_fingerprint=Get-EnvelopeLockFingerprint $targetFeatureLock
+        $u002.objective='Exercise an ordinarily prepared, disabled feature through the owner lifecycle.'
+        $u002.instruction_impact='none';$u002.instruction_surfaces=@()
+        $u002.instruction_none_justification='The fixture consumer changes no portable instruction contract.'
+        $u002.acceptance=@([pscustomobject]@{acceptance_id='prepared-closure';proof='The admitted unit remains within the prepared closure.';command='Test-WorkflowContracts.ps1'})
+      }
       $eventsPath=Join-Path $ws 'iteration-events.jsonl'
       $mapHash=Get-EnvelopeFileSha256 (Join-Path $ws 'repository-map.json')
       $projectHash=Get-EnvelopeCanonicalJsonSha256 $project
