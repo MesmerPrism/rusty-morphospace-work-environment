@@ -161,15 +161,17 @@ request without cancelling `main` readback.
 The 21 job or step guards that must remain eligible after ordinary failure use
 `!cancelled()` and stop after cancellation. Main segment and delta job guards
 retain implicit `success()` semantics so they remain failure-sensitive.
-The required Quick jobs own shared coverage; the Windows Standard job executes
-only the additional work-unit automation gate. During local iteration, use
-focused checks; freeze and commit the candidate before its one risk-selected
-handoff aggregate. A dirty aggregate is diagnostic and is not a prerequisite
-for a matching clean receipt. For a local Standard handoff, run Quick once and
-then run `scripts/Test-WorkflowContracts.ps1 -StandardDeltaOnly` as the
-closed-child Work Unit Automation delta. Do not follow Quick
-with cumulative `Test-WorkEnvironment.ps1 -Tier Standard`, which replays the
-Quick suite for compatibility.
+Linux Quick verifies the selected Linux segment union. Windows Standard verifies
+the complete selected Windows segment union; Windows Quick retains its required
+context by binding that result without replaying those checks. During local iteration, use
+focused checks; freeze and commit the candidate before its exact affected
+checkpoint. Follow [Validation](docs/VALIDATION.md#ordinary-local-affected-checkpoint):
+preview the exact base/head plan with `Resolve-AffectedValidation.ps1`, inspect
+effective coverage and budgets, then use `Invoke-AffectedValidation.ps1` for
+the actual host platform. Reuse only finalized exact evidence and report
+remaining platform obligations separately. Dirty checks remain diagnostic.
+Cumulative Work Environment suites and the closed Standard delta retain their
+explicit compatibility meanings; they are not the ordinary local default.
 
 1. Run `pwsh -NoProfile -File .\scripts\Test-PowerShellHost.ps1` and read
    [Setup Overview](docs/SETUP_OVERVIEW.md).

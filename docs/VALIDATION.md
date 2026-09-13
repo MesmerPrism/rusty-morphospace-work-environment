@@ -9,7 +9,8 @@ emit the migration guidance from that check.
 
 ## Work Environment Repo
 
-Before freezing a workflow change, run the touched receipt and action checks:
+When changing receipt structure, action registration, or v2 receipt relations,
+run the corresponding focused owner checks before freezing the candidate:
 
 ```powershell
 pwsh -NoProfile -File ./scripts/Test-ValidationReceiptStructure.ps1 -SelfTest
@@ -29,37 +30,88 @@ before the graph/import and dependency-closure phases of the final runner.
 Shared consumer expectations in selector scenarios have one explicit fixture
 definition; do not derive those expectations from the selector being tested.
 
-For source publication, also run the complete builder/lifecycle rehearsal in
+When changing the source-only publication builder or lifecycle boundary, run
+the complete builder/lifecycle rehearsal in
 `Test-SourceOnlyPublicationInputs.ps1 -SelfTest`. It complements the existing
-source-only recovery test and must pass before a shared candidate is described
-as ready. Focused results on a dirty candidate are diagnostic; the frozen
+source-only recovery test and must pass before that changed boundary is
+described as ready. These are boundary-specific checks, not a checklist for
+every feature. Focused results on a dirty candidate are diagnostic; the frozen
 candidate still follows the managed phased runner and trust-root admission.
 
-Quick checkpoint:
+### Ordinary local affected checkpoint
+
+Run the touched owner checks and `git diff --check` while editing, then commit
+one coherent candidate. From that same clean owner checkout, resolve a plan
+against explicit full base and head commit identities. Use a new ignored local
+output path outside source, Git metadata and input directories:
 
 ```powershell
-pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-PowerShellHost.ps1 -SelfTest
-pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkEnvironment.ps1 -SelfTest -Tier Quick
-git diff --check
+pwsh -NoProfile -File ./scripts/Resolve-AffectedValidation.ps1 `
+  -RepositoryRoot <clean-owner-root> `
+  -BaseCommit <exact-base-commit> -HeadCommit <exact-head-commit> `
+  -Tier Quick -OutPath <new-local-output>/plan.json
 ```
 
-Standard delta, after a passing Quick checkpoint when the changed boundary
-requires it:
+This is selection only: no validation check has run. The resolver requires
+clean tracked working bytes and HEAD equal to the selected head; it binds base
+ancestry, exact source trees and both registry identities. Do not substitute a
+moving remote ref or treat a dirty edit as an exact checkpoint.
+
+Inspect the returned plan before launching checks. For a saved plan:
 
 ```powershell
-pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-WorkflowContracts.ps1 -StandardDeltaOnly
+$affectedPlan = Get-Content -Raw <new-local-output>/plan.json | ConvertFrom-Json
+$affectedPlan | Select-Object base, head, plan_sha256, requested_tier, `
+  effective_tier, selection_mode, execution_permitted, budget | Format-List
+$affectedPlan.selected_checks | Select-Object check_id, platforms, `
+  minimum_tier, reasons, budget_seconds, cache_policy | Format-List
 ```
 
-`Quick` covers portable contracts, scaffolding, skill bootstrap, and docs. The
-canonical closed-child route above adds the Standard work-unit automation coverage
-without replaying Quick. `Test-WorkEnvironment.ps1 -SelfTest -Tier Standard`
-remains a cumulative compatibility aggregate for callers that have not already
-run Quick; do not invoke it after the Quick checkpoint. `Deep` adds the
-closed-room validation-authority suites and should run only when that risk is
-in scope. A device is not part of any of these tiers. A standalone
-`Test-WorkUnitAutomation.ps1` invocation is a strict low-level diagnostic that
-requires its caller to have already constructed a closed environment; it is
-not the public local Standard route.
+`Tier` requests a coverage level; the effective tier can be higher when the
+selected obligations require it. Report that increase explicitly. Quick,
+Standard and Deep are not latency promises. `budget.actual` sums registered
+check ceilings; it is not measured or predicted wall time. Preserve required
+checks even when their cost exceeds a caller's limit: defer execution and
+report validation pending, rather than lowering coverage. No new global time
+or fanout gate is implied.
+
+Execute the saved plan for the actual host platform, using another new output
+path. For a Windows host with selected Windows checks:
+
+```powershell
+pwsh -NoProfile -File ./scripts/Invoke-AffectedValidation.ps1 `
+  -RepositoryRoot <same-clean-owner-root> `
+  -BaseCommit <same-exact-base-commit> -HeadCommit <same-exact-head-commit> `
+  -PlanPath <new-local-output>/plan.json -Platform windows `
+  -OutPath <new-attempt-output>/windows.json
+```
+
+Use `-Platform linux` only on a Linux host. The executor recomputes the exact
+plan before any child starts; a stale or altered plan cannot reuse the preview
+as authority. If the host platform has no selected checks, do not invoke its
+zero-check execution route: report not applicable and preserve the other
+platform's pending obligations. A Windows pass covers only the exact Windows
+selection; it does not establish Linux completion. Local check evidence does
+not grant hosted validation, static admission, acceptance or publication.
+
+For a corrected attempt, pass an existing finalized local check inventory with
+`-PriorEvidenceDirectory <prior-check-evidence-directory>` and write to new
+output paths. The executor authenticates every reusable leaf; a cache miss
+runs the required check. See [Affected Validation](AFFECTED_VALIDATION.md#local-evidence-and-segment-retries)
+for complete-inventory requirements, exact segment retries and platform merging.
+
+### Explicit compatibility sweeps
+
+`Test-WorkEnvironment.ps1 -SelfTest -Tier Quick`, `Standard` and `Deep` retain
+their cumulative compatibility meanings. Use them when the aggregate itself
+is selected or a full compatibility sweep is explicitly required; they are
+not the default local affected checkpoint. Existing scheduled/manual coverage
+is unchanged. When deliberately running cumulative Quick plus its Standard
+delta, `Test-WorkflowContracts.ps1 -StandardDeltaOnly` retains the closed-child
+automation launcher without replaying Quick. Do not follow cumulative Quick
+with cumulative Standard. A standalone `Test-WorkUnitAutomation.ps1` remains
+a low-level diagnostic requiring an already-closed child environment. A
+device is not part of these coverage tiers.
 
 During an edit loop, run only the focused owner test for the touched surface,
 for example:
@@ -90,11 +142,13 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-AffectedValidationO
 ```
 
 The affected-validation registry is a mandatory protected path with its own
-focused ownership and workflow-action checks. Selector implementation and
-schema changes remain Deep trust-root work. Unknown or overlapping mappings
-still produce the conservative Deep diagnostic plan, and the ownership leaf
-then fails that candidate; a later engine slice may replace this expensive
-diagnostic route with an early typed non-executable result.
+focused ownership and workflow-action checks. Selector implementation changes
+select the full bounded selector closure; affected schema and structural
+registry changes select the independent Deep obligations described in
+[Affected Validation](AFFECTED_VALIDATION.md). Unknown or overlapping mappings
+produce a typed `mapping-incomplete` plan with no selected checks, zero budget
+and `execution_permitted=false`. Execution and merging reject that plan;
+there is no executable broad fallback for incomplete ownership.
 
 The source-only publication check is Windows-scoped because it authenticates
 physical directory identity with volume serial and `FileIdInfo`. Its fixture
@@ -103,12 +157,12 @@ after both the prepared and recorded transitions. Those current-work checks
 authenticate local ledger, artifact, unit, and state evidence without requiring
 a planning remote or repeating live source publication observations.
 
-Do not execute the same risk-selected aggregate on dirty source and again on
-clean source solely to obtain both receipt shapes. A dirty aggregate is an
-explicit diagnostic. For handoff, freeze and commit the coherent candidate,
-then run the smallest sufficient aggregate once against its exact base. If a
-repair changes that commit, rerun the nearest failed check first and execute
-the aggregate once for the repaired candidate.
+Do not run the same broad suite on dirty and clean source solely to obtain
+both receipt shapes. A dirty check is diagnostic. For handoff, freeze and
+commit the coherent candidate, resolve its exact affected plan, and execute
+the selected obligations with eligible finalized evidence reuse. If a repair
+changes that commit, run the nearest failed check first, freeze the repair and
+resolve a fresh exact plan; do not relabel earlier aggregate evidence.
 
 For example, current skill-review compatibility compares the routed skill to
 the owning repository's exact HEAD blob. Editing that skill can therefore make

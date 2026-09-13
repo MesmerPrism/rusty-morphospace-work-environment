@@ -145,14 +145,17 @@ remains alive, accepting that its terminal
 evidence may be incomplete and cannot count as a pass.
 
 Keep Linux Quick, Windows Quick, and Windows Standard as separate required
-contexts. Quick owns the common portable suite. Standard runs only the
-additional Work Unit Automation delta and relies on the required Quick
-contexts; it must not replay the complete Quick tier. Use the same split
-locally: run Quick once, then invoke
-`Test-WorkflowContracts.ps1 -StandardDeltaOnly` only when the
-Standard delta is warranted. Preserve cumulative `Test-WorkEnvironment.ps1
--Tier Standard` only as a compatibility aggregate for callers that have not
-already run Quick. Pin third-party actions to reviewed full commits and update
+contexts. Linux Quick verifies the selected Linux segment union. Windows
+Standard verifies the complete selected Windows segment union, while Windows
+Quick binds that result without replaying its checks. The ordinary local
+route is the [exact affected checkpoint](VALIDATION.md#ordinary-local-affected-checkpoint):
+preview with `Resolve-AffectedValidation.ps1`, then execute selected checks
+with `Invoke-AffectedValidation.ps1` for the actual host platform. Keep requested
+and effective coverage visible and preserve pending platform obligations.
+Finalized leaf reuse does not grant admission or publication authority.
+Cumulative `Test-WorkEnvironment.ps1` tiers and
+`Test-WorkflowContracts.ps1 -StandardDeltaOnly` retain their explicit
+compatibility meanings. Pin third-party actions to reviewed full commits and update
 those pins through the locked validation-authority path.
 
 ## Semantic Checks
