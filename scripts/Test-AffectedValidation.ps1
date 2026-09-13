@@ -1275,11 +1275,11 @@ function Get-AffectedProtocolCommonOwnerChecks([string]$Root, [object]$Registry)
     $consumerCheckIds = [Collections.Generic.List[string]]::new()
     $consumers = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $missingChecks = [Collections.Generic.List[string]]::new()
-    # This owner self-test is not currently dispatched by Test-WorkEnvironment,
-    # but its independently reviewed receipt is invalidated by the same
-    # InheritedCandidateMaterialization -> ProtocolCommon tracked-byte edge.
-    # Keep that review-bound supplementary entrypoint explicit and narrow.
-    $supplementaryEntrypoints = @('scripts/Test-InheritedCandidateMaterialization.ps1')
+    # These independent leaves are not dispatched by the compatibility aggregate,
+    # but their tracked owner closures consume ProtocolCommon. Keep their
+    # supplementary graph roots explicit so both source bindings and selection
+    # expectations include them without adding duplicate cumulative execution.
+    $supplementaryEntrypoints = @('scripts/Test-InheritedCandidateMaterialization.ps1','scripts/Test-RecoveredPreparedAdmission.ps1')
     foreach ($supplementary in $supplementaryEntrypoints) {
         if (-not $trackedPaths.Contains($supplementary)) { throw "Supplementary ProtocolCommon owner entrypoint is absent or untracked: $supplementary" }
     }

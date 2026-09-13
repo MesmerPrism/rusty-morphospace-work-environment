@@ -1,4 +1,4 @@
-param([switch]$SelfTest,[ValidateSet('All','PreparedAdmission','LaterAcceptance')][string]$Scenario='All')
+param([switch]$SelfTest,[ValidateSet('All','PreparedAdmission','LaterAcceptance')][string]$Scenario='LaterAcceptance')
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path $PSScriptRoot -Parent
 
