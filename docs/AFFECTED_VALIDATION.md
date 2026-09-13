@@ -743,3 +743,19 @@ Windows execution or merge establishes only Windows completion; Linux remains
 pending if selected. If the host platform has no selected checks, report not
 applicable without invoking the zero-check executor or claiming a platform
 pass. Static admission, acceptance and publication remain separate.
+
+### Optional parent phase progress
+
+`Invoke-AffectedValidation.ps1 -PhaseProgress` emits bounded, non-authoritative
+`affected-phase` records to native stderr. It is off by default. Records contain
+monotonic phase durations, selected-check ordinals/counts, budgets and existing
+reuse/execution decisions; they contain no check IDs, paths, environment values
+or child text. Stdout, closed evidence and reusable input definitions remain
+unchanged. Executor source edits still invalidate its exact source bindings.
+Capture parent stderr separately in task-owned local diagnostics if needed;
+never add it to child streams, check inventories or admission evidence. Emission
+stops after 2,048 records (at most 512 UTF-8 bytes each) or a sink error without
+changing validation results. Callers must drain stderr: the volume bound is not
+an I/O deadline. Synchronous child capture emits only start/return boundaries,
+including its internal cleanup; it has no periodic heartbeat. Existing cleanup,
+failure classification and finalized-inventory requirements remain authoritative.

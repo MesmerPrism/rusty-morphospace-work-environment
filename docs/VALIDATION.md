@@ -186,6 +186,7 @@ Admission and recovered-proposal continuation have separate focused entrypoints:
 pwsh -NoProfile -File ./scripts/Test-DevelopmentUnitAdmission.ps1 -SelfTest
 pwsh -NoProfile -File ./scripts/Test-AdmissionCompletionTimestampRecovery.ps1 -SelfTest
 pwsh -NoProfile -File ./scripts/Test-RecoveredProposalContinuation.ps1 -SelfTest
+pwsh -NoProfile -File ./scripts/Test-RecoveredPreparedAdmission.ps1 -SelfTest
 pwsh -NoProfile -File ./scripts/Test-ProposedUnitRetirement.ps1 -SelfTest
 ```
 
@@ -196,6 +197,12 @@ independent Windows affected-validation leaf with exact-host evidence. Direct
 test edits select that test and public-boundary checks; shared fixture or
 production changes select their actual consumers. A passing old admission
 receipt does not stand in for the newly separated continuation result.
+The prepared-admission leaf retains the original accepted checkpoint through
+fresh Prepare, Admit, Ready, Inspect and Claim, including damaged-recovery
+rejection without writes. The existing continuation entrypoint keeps its prior
+later-acceptance scenario by default. Its explicit `-Scenario All` runs both;
+affected Deep validation selects both independent leaves. The unchanged
+compatibility aggregate keeps its original invocation and coverage.
 The proposed-unit retirement leaf exercises the direct owner independently,
 including dry/execute parity, authenticated admission recovery, CAS failures,
 fault recovery, replay, strict receipt-format dispatch, preserved evidence,

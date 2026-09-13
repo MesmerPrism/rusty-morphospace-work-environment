@@ -1,4 +1,4 @@
-param([switch]$SelfTest)
+param([switch]$SelfTest,[ValidateSet('All','PreparedAdmission','LaterAcceptance')][string]$Scenario='LaterAcceptance')
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path $PSScriptRoot -Parent
 
@@ -25,16 +25,19 @@ try {
     $createdTemp = Get-Item -LiteralPath $temp -Force
     if (($createdTemp.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "Recovered proposal continuation refused reparse-point temp root '$temp'." }
     $seed = New-RecoveredProposalContinuationSeed -Root (Join-Path $temp 'seed') -RepositoryRoot $repoRoot -TransitionLedgerModule $transitionLedgerModule
+    if ($Scenario -ne 'PreparedAdmission') {
     $callerRoot = Join-Path $temp 'caller'
     $caller = New-RecoveredProposalContinuationFixture -BaseRepository $seed.base_repository -FixtureRoot $callerRoot -RepreparationTemplate $seed.repreparation_template -AdmissionTemplate $seed.admission_template -RepreparationModule $repreparationModule
     $callerHeadBefore = (@(Invoke-EnvelopeGit $caller.repository @('rev-parse','HEAD'))[0]).Trim()
     $callerWorkspaceBefore = Get-EnvelopeWorkspaceByteInventorySha256 $caller.workspace
     $callerRepositoryBefore = Get-EnvelopeWorkspaceByteInventorySha256 $caller.repository
+    }
 
     $continuationRoot = Join-Path $temp 'continuation'
     $continuation = New-RecoveredProposalContinuationFixture -BaseRepository $seed.base_repository -FixtureRoot $continuationRoot -RepreparationTemplate $seed.repreparation_template -AdmissionTemplate $seed.admission_template -RepreparationModule $repreparationModule
-    Test-RecoveredProposalRetirement -AdmittedWorkspace $continuation.workspace -TestRoot $continuationRoot -ScriptsRoot $PSScriptRoot
+    Test-RecoveredProposalRetirement -AdmittedWorkspace $continuation.workspace -TestRoot $continuationRoot -ScriptsRoot $PSScriptRoot -Scenario $Scenario
 
+    if ($Scenario -ne 'PreparedAdmission') {
     $callerHeadAfter = (@(Invoke-EnvelopeGit $caller.repository @('rev-parse','HEAD'))[0]).Trim()
     Assert-Envelope ($callerHeadAfter -ceq $callerHeadBefore -and (Get-EnvelopeWorkspaceByteInventorySha256 $caller.workspace) -ceq $callerWorkspaceBefore -and (Get-EnvelopeWorkspaceByteInventorySha256 $caller.repository) -ceq $callerRepositoryBefore) 'isolated continuation regression changed its caller workspace or mapped Git repository'
 
@@ -50,8 +53,9 @@ try {
     Remove-Item -LiteralPath $alternateMapPath
     Remove-Item -LiteralPath (Split-Path $alternateMapPath -Parent)
     Assert-Envelope ($substitutionRejected -and -not (Test-Path -LiteralPath (Split-Path $alternateMapPath -Parent))) 'recovered admission map substitution or nonrecursive cleanup did not preserve the caller boundary'
+    }
 
-    Write-Host 'Recovered proposal continuation self-test passed.'
+    Write-Host "Recovered proposal continuation self-test passed: scenario=$Scenario."
     $settled = $true
 } finally {
     if (Test-Path -LiteralPath $temp) {

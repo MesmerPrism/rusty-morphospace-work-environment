@@ -59,6 +59,8 @@ function Test-PreparationProvenanceHasAdmissionConsumer {
   [Parameter(Mandatory)][object]$Admission,
   [Parameter(Mandatory)][object]$PreparationIntent
  )
+ $lock=Enter-MorphospaceWorkspaceMutex -WorkspaceRoot $Workspace
+ try{
  $transactionRoot=Resolve-MorphospaceWorkspacePath $Workspace 'receipts/transactions'
  if(-not[IO.Directory]::Exists($transactionRoot)){return $false}
  $directConsumers=0
@@ -69,12 +71,19 @@ function Test-PreparationProvenanceHasAdmissionConsumer {
   $checkpoint=Test-MorphospaceAcceptedCheckpointProof -WorkspaceRoot $Workspace -ExpectedEvent $accepted[0] -AllowFiniteHistoricalV1
   if([string]$checkpoint.intent.target.unit.document.status-ceq'accepted'){$sealedSequence=[int]$accepted[0].sequence}
  }
+ $recoveryIndex=$null
  foreach($intentFile in @(Get-ChildItem -LiteralPath $transactionRoot -File -Filter '*-admitted-transition.intent.json')){
   $transactionId=$intentFile.Name.Substring(0,$intentFile.Name.Length-'.intent.json'.Length)
   $consumerIntent=Read-MorphospaceProtocolJson $intentFile.FullName
   $sealed=@($events|Where-Object{[int]$_.sequence-lt$sealedSequence-and"$($_.event_id)-transition"-ceq$transactionId})
   if($sealed.Count-eq1-and(Get-MorphospaceCanonicalJsonSha256 $consumerIntent.event)-ceq(Get-MorphospaceCanonicalJsonSha256 $sealed[0])-and[string]$consumerIntent.pre.state.sha256-cne[string]$PreparationIntent.target.state.sha256){continue}
-  Assert-PreparationProvenanceCommittedTransaction -Workspace $Workspace -TransactionId $transactionId -AllowHistorical -AllowIncomplete
+  if($null-eq$recoveryIndex){$recoveryIndex=Get-MorphospaceAdmissionCompletionTimestampRecoveryIndex -WorkspaceRoot $Workspace -ExpectedEvents $events -AfterSequence $sealedSequence}
+  if($recoveryIndex.by_admission_event.ContainsKey([string]$consumerIntent.event.event_id)){
+   $recovery=$recoveryIndex.by_admission_event[[string]$consumerIntent.event.event_id]
+   if($transactionId-cne[string]$recovery.original_intent.transaction_id-or(Get-MorphospaceCanonicalJsonSha256 $consumerIntent)-cne(Get-MorphospaceCanonicalJsonSha256 $recovery.original_intent)-or(Get-MorphospaceCanonicalJsonSha256 $consumerIntent.event)-cne(Get-MorphospaceCanonicalJsonSha256 $recovery.original_intent.event)){throw 'Prepared-envelope admission consumer differs from its authenticated recovery intent.'}
+  }else{
+   Assert-PreparationProvenanceCommittedTransaction -Workspace $Workspace -TransactionId $transactionId -AllowHistorical -AllowIncomplete
+  }
   if([string]$consumerIntent.schema-cne'rusty.morphospace.workflow.transition_ledger_intent.v1'){throw 'Prepared-envelope admission-consumer intent has an unexpected schema.'}
   if(@($consumerIntent.artifacts).Count-ne1){throw 'Prepared-envelope admission consumer does not own exactly one admission artifact.'}
   try{$consumer=ConvertFrom-MorphospaceProtocolJsonBytes -Bytes ([Convert]::FromBase64String([string]$consumerIntent.artifacts[0].bytes_base64)) -Context 'prepared-envelope admission consumer'}catch{throw "Prepared-envelope admission consumer artifact is invalid. $($_.Exception.Message)"}
@@ -90,6 +99,7 @@ function Test-PreparationProvenanceHasAdmissionConsumer {
  }
  if($directConsumers-gt1){throw 'Prepared envelope has more than one direct admission consumer.'}
  return $directConsumers-eq1
+ }finally{Exit-MorphospaceWorkspaceMutex $lock}
 }
 function Get-PreparationProvenanceAdmissionPrefix {
  [CmdletBinding()]param(

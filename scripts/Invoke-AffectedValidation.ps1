@@ -9,17 +9,56 @@ param(
     [string]$CheckEvidenceDirectory,
     [string]$PriorEvidenceDirectory,
     [ValidatePattern('^(?:windows|linux)-[0-9]{3}$')][string]$SegmentId,
-    [switch]$RunRestorationCollisionSelfTest
+    [switch]$RunRestorationCollisionSelfTest,
+    [switch]$PhaseProgress
 )
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
+# Parent-only observations. Never projected to children or included in evidence/bindings.
+function New-AffectedValidationPhaseProgress([bool]$Enabled) {
+    return @{enabled=$Enabled;clock=[Diagnostics.Stopwatch]::StartNew();sequence=0;starts=@{};ordinal=0;count=0;budget=0}
+}
+function Write-AffectedValidationPhaseProgress([string]$Phase,[string]$Event,[string]$Detail='none') {
+    if (-not $phaseProgressState.enabled) { return }
+    try {
+        # Finite literals and numeric ordinals only: no check IDs, paths, exceptions or child text.
+        if (@('run','bootstrap-imports','bootstrap-capture','plan-read','output-setup','plan-recompute','registry-segment','execution-inventory','runner-binding','check-dependency-closure','check-binding','prior-inventory','reuse-lookup','leaf-disposition','leaf-execution','leaf-prepare','child-capture','leaf-postcheck','leaf-projection-cleanup','leaf-snapshot','inventory-finalize','aggregate-publish') -cnotcontains $Phase -or
+            @('start','end','decision') -cnotcontains $Event -or
+            @('none','compiled','already-loaded','memoized','resolved','not-supplied','unavailable','accepted','rejected','disabled','external-state','no-candidates','exact-match','no-valid-match','blocked','reused','executed','pass','code-fail','infra-fail','not-attempted','completed','returned','threw') -cnotcontains $Detail) { return }
+        $offset = [long]$phaseProgressState.clock.ElapsedMilliseconds
+        $duration = [long]0
+        if ($Event -ceq 'start') { $phaseProgressState.starts[$Phase]=$offset }
+        elseif ($Event -ceq 'end' -and $phaseProgressState.starts.ContainsKey($Phase)) {
+            $duration=$offset-[long]$phaseProgressState.starts[$Phase]
+            $phaseProgressState.starts.Remove($Phase)
+        }
+        # At most 2,048 records of at most 512 UTF-8 bytes, including this last marker.
+        $truncated = [int]$phaseProgressState.sequence -ge 2047
+        if ($truncated) { $Phase='diagnostics';$Event='truncated';$Detail='event-limit';$duration=0 }
+        $phaseProgressState.sequence++
+        $line = [string]::Format([Globalization.CultureInfo]::InvariantCulture,
+            'affected-phase {{"diagnostic_version":1,"authority":"none","sequence":{0},"phase":"{1}","event":"{2}","offset_ms":{3},"duration_ms":{4},"ordinal":{5},"count":{6},"budget_seconds":{7},"detail":"{8}"}}',
+            [int]$phaseProgressState.sequence,$Phase,$Event,$offset,$duration,[int]$phaseProgressState.ordinal,[int]$phaseProgressState.count,[int]$phaseProgressState.budget,$Detail)
+        if ([Text.Encoding]::UTF8.GetByteCount($line+[Environment]::NewLine) -gt 512) { $phaseProgressState.enabled=$false;return }
+        [Console]::Error.WriteLine($line)
+        if ($truncated) { $phaseProgressState.enabled=$false }
+    } catch { $phaseProgressState.enabled=$false }
+}
+$phaseProgressState = New-AffectedValidationPhaseProgress -Enabled ([bool]$PhaseProgress)
+$phaseProgressReturned = $false
+Write-AffectedValidationPhaseProgress run start
+try {
+Write-AffectedValidationPhaseProgress bootstrap-imports start
 $root = [IO.Path]::GetFullPath($RepositoryRoot)
 $repoRoot = Split-Path -Parent $PSScriptRoot
 Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceAffectedValidation.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceAffectedValidationCheckEvidence.psm1') -Force
 
+Write-AffectedValidationPhaseProgress bootstrap-imports end
+Write-AffectedValidationPhaseProgress bootstrap-capture start
+$phaseCaptureBootstrap = if ('W017BoundedChildCapture' -as [type]) { 'already-loaded' } else { 'compiled' }
 if (-not ('W017BoundedChildCapture' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
@@ -804,6 +843,8 @@ public static class W017SupervisorInnerJob {
 '@
 }
 
+Write-AffectedValidationPhaseProgress bootstrap-capture end $phaseCaptureBootstrap
+
 function Get-AffectedValidationBytesHash([byte[]]$Bytes) { ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($Bytes))).ToLowerInvariant() }
 function Get-AffectedValidationDependencyProjectionIOException([Exception]$Exception) {
     $current = $Exception
@@ -947,6 +988,7 @@ function Invoke-AffectedValidationCheck([object]$Check, [string]$Command, [strin
     $budget = [Math]::Min([Math]::Max([int]$Check.budget_seconds, 1), 7200)
     $arguments = [Collections.Generic.List[string]]::new()
     foreach ($argument in @('-NoProfile', '-NonInteractive', '-File', $Command) + @($Check.arguments)) { [void]$arguments.Add([string]$argument) }
+    Write-AffectedValidationPhaseProgress leaf-prepare start
     $parentEnvironmentBefore = Get-AffectedValidationEnvironmentState
     $dependencyProjectionFile = $null
     $environmentProjection = $null
@@ -962,8 +1004,12 @@ function Invoke-AffectedValidationCheck([object]$Check, [string]$Command, [strin
         if($null-ne$dependencyProjectionFile){$launcherValues.RUSTY_AFFECTED_VALIDATION_DEPENDENCY_PROJECTION_PATH=[string]$dependencyProjectionFile.path;$launcherValues.RUSTY_AFFECTED_VALIDATION_DEPENDENCY_PROJECTION_SHA256=[string]$dependencyProjectionFile.sha256}
         $environmentProjection=Get-AffectedValidationChildEnvironmentProjection -LauncherValues $launcherValues
         try { [void](Assert-MorphospaceAffectedBatchedWorkingBytes -RepositoryRoot $root -ExpectedHead $plan.head -Inventory $Inventory -Paths $IntegrityPaths) } catch { $integrityError = "Pre-execution affected-check input integrity failed: $($_.Exception.Message)" }
+        Write-AffectedValidationPhaseProgress leaf-prepare end
         if ($null -eq $integrityError) {
+            Write-AffectedValidationPhaseProgress child-capture start
             $child = [W017BoundedChildCapture]::Run((Get-Process -Id $PID).Path, $root, @($arguments.ToArray()), @($environmentProjection.names), @($environmentProjection.values), $budget, 10485760, 15000)
+            Write-AffectedValidationPhaseProgress child-capture end
+            Write-AffectedValidationPhaseProgress leaf-postcheck start
             if ($null -ne $dependencyProjectionFile -and $null -ne $dependencyProjectionFile.stream) {
                 try { $dependencyProjectionFile.stream.Dispose(); $dependencyProjectionFile.stream = $null } catch { $integrityError = "Post-execution affected-check dependency projection publisher-handle cleanup failed: $($_.Exception.Message)" }
             }
@@ -984,9 +1030,11 @@ function Invoke-AffectedValidationCheck([object]$Check, [string]$Command, [strin
                     $integrityError = if ($null -eq $integrityError) { $postIntegrityError } else { "$integrityError $postIntegrityError" }
                 }
             }
+            Write-AffectedValidationPhaseProgress leaf-postcheck end
         }
         if ($null -ne $integrityError) { $child.Error = if ([string]::IsNullOrWhiteSpace([string]$child.Error)) { $integrityError } else { ([string]$child.Error + [Environment]::NewLine + $integrityError) } }
     } finally {
+        Write-AffectedValidationPhaseProgress leaf-projection-cleanup start
         if ($null -ne $dependencyProjectionFile) {
             try { if ($null -ne $dependencyProjectionFile.stream) { $dependencyProjectionFile.stream.Dispose(); $dependencyProjectionFile.stream = $null } } catch { $projectionCleanupError = "Affected-check dependency projection handle cleanup failed: $($_.Exception.Message)" }
             finally {
@@ -1000,6 +1048,7 @@ function Invoke-AffectedValidationCheck([object]$Check, [string]$Command, [strin
             }
         }
     }
+    Write-AffectedValidationPhaseProgress leaf-projection-cleanup end
     $parentEnvironmentAfter = Get-AffectedValidationEnvironmentState
     $parentEnvironmentUnchanged = $parentEnvironmentBefore.count -eq $parentEnvironmentAfter.count -and $parentEnvironmentBefore.sha256 -ceq $parentEnvironmentAfter.sha256
     if(-not$parentEnvironmentUnchanged){$integrityError='Affected-validation parent environment changed across child execution.';$child.Error=if([string]::IsNullOrWhiteSpace([string]$child.Error)){$integrityError}else{[string]$child.Error+[Environment]::NewLine+$integrityError}}
@@ -1046,6 +1095,7 @@ function Get-AffectedValidationProducerBinding {
     return [pscustomobject][ordered]@{context='local';execution_id=[guid]::NewGuid().ToString('N');repository=[string]$plan.repository;event_name='local';pull_request_number=0;run_id='local';run_attempt=0;workflow_path='local';job='local'}
 }
 
+Write-AffectedValidationPhaseProgress plan-read start
 $planFull = [IO.Path]::GetFullPath($PlanPath)
 if (-not [IO.File]::Exists($planFull)) { throw 'Affected-validation plan is absent.' }
 $planRaw = Get-Content -LiteralPath $planFull -Raw
@@ -1055,6 +1105,8 @@ $planSchema = Join-Path $repoRoot 'schemas/affected-validation-plan-v2.schema.js
 if (-not (Test-Json -Json $planRaw -SchemaFile $planSchema -ErrorAction Stop)) { throw 'Affected-validation plan fails its closed schema.' }
 $plan = Read-MorphospaceProtocolJson -Path $planFull
 if (-not [bool]$plan.execution_permitted -or [string]$plan.selection_mode -ceq 'mapping-incomplete') { throw 'Affected-validation execution rejects a non-executable mapping-incomplete plan.' }
+Write-AffectedValidationPhaseProgress plan-read end
+Write-AffectedValidationPhaseProgress output-setup start
 $output = [IO.Path]::GetFullPath($OutPath)
 $parent = [IO.Path]::GetDirectoryName($output)
 if ([IO.File]::Exists($output)) { throw 'Affected-validation evidence output already exists.' }
@@ -1063,9 +1115,13 @@ $executionSuffix = if ([string]::IsNullOrWhiteSpace($SegmentId)) { $Platform } e
 $checkEvidenceRoot = if ([string]::IsNullOrWhiteSpace($CheckEvidenceDirectory)) { Join-Path $parent ("affected-check-evidence-$([string]$plan.plan_sha256)-$executionSuffix") } else { [IO.Path]::GetFullPath($CheckEvidenceDirectory) }
 if ([IO.Directory]::Exists($checkEvidenceRoot) -or [IO.File]::Exists($checkEvidenceRoot)) { throw 'Affected-validation check evidence root already exists.' }
 $phaseEvidenceRoot = Join-Path $parent ("affected-selector-phases-$([string]$plan.plan_sha256)-$executionSuffix")
+Write-AffectedValidationPhaseProgress output-setup end
+Write-AffectedValidationPhaseProgress plan-recompute start
 $registryPath = Join-Path $root 'manifests/affected-validation-registry.json'
 $recomputed = Resolve-MorphospaceAffectedValidation -RepositoryRoot $root -BaseRevision $BaseCommit -HeadRevision $HeadCommit -RegistryPath $registryPath -RequestedTier ([string]$plan.requested_tier)
 if ((Get-MorphospaceCanonicalJsonSha256 -Value $recomputed) -cne (Get-MorphospaceCanonicalJsonSha256 -Value $plan) -or [string]$plan.plan_sha256 -cne [string]$recomputed.plan_sha256) { throw 'Affected-validation plan differs from the exact current base/head/registry selection.' }
+Write-AffectedValidationPhaseProgress plan-recompute end
+Write-AffectedValidationPhaseProgress registry-segment start
 $platformSelected = @($plan.selected_checks | Where-Object { @($_.platforms) -ccontains $Platform })
 if ($platformSelected.Count -eq 0) { throw "Affected-validation execution rejects an empty '$Platform' selection." }
 $registry = Read-MorphospaceProtocolJson -Path $registryPath
@@ -1083,12 +1139,18 @@ if (-not [string]::IsNullOrWhiteSpace($SegmentId)) {
     $selected = @($platformSelected | Where-Object { $segmentSet.Contains([string]$_.check_id) })
     if ($selected.Count -ne @($segment[0].check_ids).Count) { throw 'Affected-validation segment selection differs from its exact partition.' }
 }
+$phaseProgressState.count=$selected.Count
+Write-AffectedValidationPhaseProgress registry-segment end
+Write-AffectedValidationPhaseProgress execution-inventory start
 $inventory = Get-MorphospaceAffectedTreeInventory -RepositoryRoot $root -Commit ([string]$plan.head.commit)
+Write-AffectedValidationPhaseProgress execution-inventory end
+Write-AffectedValidationPhaseProgress runner-binding start
 $runnerBinding = Get-MorphospaceAffectedCheckRunnerBinding
 $runnerSourceManifest = @(Get-MorphospaceAffectedCheckRunnerSourceManifest -Inventory $inventory)
 $checkReceiptSchema = Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json'
 $checkInventorySchema = Join-Path $repoRoot 'schemas/affected-validation-check-inventory-v1.schema.json'
 $producer = Get-AffectedValidationProducerBinding
+Write-AffectedValidationPhaseProgress runner-binding end
 $results = [Collections.Generic.List[object]]::new()
 $outcomes = @{}
 $bindings = @{}
@@ -1096,6 +1158,8 @@ $bindingRecords = [Collections.Generic.List[object]]::new()
 $dependencyClosuresByInput = @{}
 $emptyBytes = [byte[]]::new(0)
 foreach ($selectedCheck in $selected) {
+    $phaseProgressState.ordinal++
+    Write-AffectedValidationPhaseProgress check-dependency-closure start
     $check = $checkMap[[string]$selectedCheck.check_id]
     if ($null -eq $check) { throw "Affected-validation selected an unknown check '$($selectedCheck.check_id)'." }
     $prerequisiteBindings = [Collections.Generic.List[object]]::new()
@@ -1107,10 +1171,13 @@ foreach ($selectedCheck in $selected) {
     $dependencyClosureKey = Get-AffectedValidationDependencyClosureCacheKey -Check $check
     if ($dependencyClosuresByInput.ContainsKey($dependencyClosureKey)) {
         $dependencyClosure = $dependencyClosuresByInput[$dependencyClosureKey]
+        Write-AffectedValidationPhaseProgress check-dependency-closure end memoized
     } else {
         $dependencyClosure = Get-MorphospaceAffectedCheckDependencyClosure -Check $check -CompiledRegistry $compiledRegistry -Inventory $inventory -RepositoryRoot $root
         $dependencyClosuresByInput[$dependencyClosureKey] = $dependencyClosure
+        Write-AffectedValidationPhaseProgress check-dependency-closure end resolved
     }
+    Write-AffectedValidationPhaseProgress check-binding start
     $dependencyManifest = @($dependencyClosure.manifest)
     $binding = New-MorphospaceAffectedCheckBinding -Repository ([string]$plan.repository) -Platform $Platform -Check $check -Runner $runnerBinding -RunnerSourceManifest $runnerSourceManifest -DependencyManifest $dependencyManifest -DependencyResolution $dependencyClosure.resolution -PrerequisiteBindings @($prerequisiteBindings.ToArray())
     $bindingSha = Get-MorphospaceCanonicalJsonSha256 -Value $binding
@@ -1120,26 +1187,41 @@ foreach ($selectedCheck in $selected) {
     [string[]]$integrityPaths = @($integrityPathSet)
     [Array]::Sort($integrityPaths,[StringComparer]::Ordinal)
     $bindingRecords.Add([pscustomobject][ordered]@{check=$check;binding=$binding;binding_sha256=$bindingSha;integrity_paths=@($integrityPaths)})
+    Write-AffectedValidationPhaseProgress check-binding end
 }
 
+$phaseProgressState.ordinal=0
+Write-AffectedValidationPhaseProgress prior-inventory start
+$priorInventoryDiagnostic = if ([string]::IsNullOrWhiteSpace($PriorEvidenceDirectory)) { 'not-supplied' } else { 'unavailable' }
 $priorEvidenceSnapshots = $null
 if (-not [string]::IsNullOrWhiteSpace($PriorEvidenceDirectory) -and [IO.Directory]::Exists([IO.Path]::GetFullPath($PriorEvidenceDirectory))) {
-    try { $priorEvidenceSnapshots = @((Read-MorphospaceAffectedCheckInventory -EvidenceDirectory $PriorEvidenceDirectory -ExpectedProducerContext $producer -InventorySchemaPath $checkInventorySchema).candidate_snapshots) } catch { $priorEvidenceSnapshots = @() }
+    try { $priorEvidenceSnapshots = @((Read-MorphospaceAffectedCheckInventory -EvidenceDirectory $PriorEvidenceDirectory -ExpectedProducerContext $producer -InventorySchemaPath $checkInventorySchema).candidate_snapshots); $priorInventoryDiagnostic='accepted' } catch { $priorEvidenceSnapshots = @(); $priorInventoryDiagnostic='rejected' }
 }
+Write-AffectedValidationPhaseProgress prior-inventory end $priorInventoryDiagnostic
 $reuseSnapshots = @{}
 foreach ($record in @($bindingRecords.ToArray())) {
+    $phaseProgressState.ordinal++
+    Write-AffectedValidationPhaseProgress reuse-lookup start
     $check = $record.check
-    if ([string]$check.cache_policy -ceq 'disabled' -or [string]$check.external_state -cne 'none' -or $null -eq $priorEvidenceSnapshots -or $priorEvidenceSnapshots.Count -eq 0) { continue }
+    if ([string]$check.cache_policy -ceq 'disabled' -or [string]$check.external_state -cne 'none' -or $null -eq $priorEvidenceSnapshots -or $priorEvidenceSnapshots.Count -eq 0) {
+        $reuseDiagnostic = if ([string]$check.cache_policy -ceq 'disabled') { 'disabled' } elseif ([string]$check.external_state -cne 'none') { 'external-state' } else { 'no-candidates' }
+        Write-AffectedValidationPhaseProgress reuse-lookup end $reuseDiagnostic
+        continue
+    }
     $reusable = Find-MorphospaceAffectedReusableCheckReceipt -PriorEvidenceDirectory $PriorEvidenceDirectory -SchemaPath $checkReceiptSchema -ExpectedBinding $record.binding -ExpectedBindingSha256 ([string]$record.binding_sha256) -RepositoryRoot $root -CurrentHeadCommit ([string]$plan.head.commit) -CandidateEvidenceSnapshots $priorEvidenceSnapshots
     if ($null -ne $reusable) { $reuseSnapshots[[string]$check.check_id] = $reusable }
+    Write-AffectedValidationPhaseProgress reuse-lookup end $(if ($null -ne $reusable) { 'exact-match' } else { 'no-valid-match' })
 }
 
+$phaseProgressState.ordinal=0
 $terminalIntegrityFailure = $false
 $infrastructureReasons = [Collections.Generic.List[string]]::new()
 $codeFailureReasons = [Collections.Generic.List[string]]::new()
 $parentSnapshots = [Collections.Generic.List[object]]::new()
 foreach ($record in @($bindingRecords.ToArray())) {
+    $phaseProgressState.ordinal++
     $check = $record.check
+    $phaseProgressState.budget=[int]$check.budget_seconds
     $binding = $record.binding
     $bindingSha = [string]$record.binding_sha256
     $blockedBy = [Collections.Generic.List[string]]::new()
@@ -1149,6 +1231,8 @@ foreach ($record in @($bindingRecords.ToArray())) {
         if ([string]$outcomes[$prerequisite] -cne 'pass') { $blockedBy.Add($prerequisite) }
     }
     if ($blockedBy.Count -gt 0) {
+        Write-AffectedValidationPhaseProgress leaf-disposition decision blocked
+        Write-AffectedValidationPhaseProgress leaf-snapshot start
         $now = [DateTimeOffset]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ',[Globalization.CultureInfo]::InvariantCulture)
         [string[]]$blockedIds = @($blockedBy.ToArray()); [Array]::Sort($blockedIds,[StringComparer]::Ordinal)
         $blockedReceipt = [pscustomobject][ordered]@{
@@ -1162,10 +1246,13 @@ foreach ($record in @($bindingRecords.ToArray())) {
         Assert-MorphospaceAffectedCheckEnvironmentEvidence -Evidence $blockedReceipt.environment -RequireProjection $false
         $parentSnapshots.Add((New-MorphospaceAffectedCheckSnapshot -Receipt $blockedReceipt -Stdout $emptyBytes -Stderr $emptyBytes -Artifacts @() -SchemaPath $checkReceiptSchema))
         $outcomes[[string]$check.check_id] = 'blocked'
+        Write-AffectedValidationPhaseProgress leaf-snapshot end blocked
         continue
     }
     $reusable = if ($reuseSnapshots.ContainsKey([string]$check.check_id)) { $reuseSnapshots[[string]$check.check_id] } else { $null }
     if ($null -ne $reusable) {
+        Write-AffectedValidationPhaseProgress leaf-disposition decision reused
+        Write-AffectedValidationPhaseProgress leaf-snapshot start
         $stdout = [byte[]]$reusable.stdout
         $stderr = [byte[]]$reusable.stderr
         $artifacts = @($reusable.artifacts)
@@ -1184,12 +1271,17 @@ foreach ($record in @($bindingRecords.ToArray())) {
         $parentSnapshots.Add((New-MorphospaceAffectedCheckSnapshot -Receipt $reusedReceipt -Stdout $stdout -Stderr $stderr -Artifacts $artifacts -SchemaPath $checkReceiptSchema))
         $aggregate = [pscustomobject][ordered]@{check_id=[string]$check.check_id;command_path=[string]$check.command_path;command_blob_sha1=[string]$binding.command_blob_sha1;mode='reused';result='pass';started=$false;failure_kind=$null;exit_code=0;timed_out=$false;output_truncated=$false;post_kill_drain_timed_out=$false;stdout_sha256=Get-AffectedValidationBytesHash $stdout;stderr_sha256=Get-AffectedValidationBytesHash $stderr;stdout_bytes=[long]$stdout.Length;stderr_bytes=[long]$stderr.Length}
         $results.Add($aggregate); $outcomes[[string]$check.check_id] = 'pass'
+        Write-AffectedValidationPhaseProgress leaf-snapshot end reused
         continue
     }
     $command = Join-Path $root (([string]$check.command_path) -replace '/', [IO.Path]::DirectorySeparatorChar)
     if (-not [IO.File]::Exists($command)) { throw "Affected-validation command is absent: $($check.command_path)" }
+    Write-AffectedValidationPhaseProgress leaf-disposition decision executed
+    Write-AffectedValidationPhaseProgress leaf-execution start
     $execution = Invoke-AffectedValidationCheck -Check $check -Command $command -IntegrityPaths @($record.integrity_paths) -Inventory $inventory -DependencyManifest @($binding.dependency_manifest)
     $checkResult = $execution.aggregate
+    Write-AffectedValidationPhaseProgress leaf-execution end ([string]$checkResult.result)
+    Write-AffectedValidationPhaseProgress leaf-snapshot start
     $artifacts = if ([string]$checkResult.result -ceq 'pass') { @(Get-MorphospaceAffectedCheckPhaseArtifacts -Check $check -PhaseEvidenceRoot $phaseEvidenceRoot -ExpectedBinding $binding -ExpectedSource ([pscustomobject][ordered]@{base=$plan.base;head=$plan.head}) -ExpectedPlanSha256 ([string]$plan.plan_sha256)) } else { @() }
     $artifactReferences = @(Get-MorphospaceAffectedCheckArtifactReferences -Artifacts $artifacts)
     $executedReceipt = [pscustomobject][ordered]@{
@@ -1203,6 +1295,7 @@ foreach ($record in @($bindingRecords.ToArray())) {
     Assert-MorphospaceAffectedCheckEnvironmentEvidence -Evidence $executedReceipt.environment -RequireProjection ([bool]$executedReceipt.environment.projected)
     $parentSnapshots.Add((New-MorphospaceAffectedCheckSnapshot -Receipt $executedReceipt -Stdout $execution.stdout -Stderr $execution.stderr -Artifacts $artifacts -SchemaPath $checkReceiptSchema))
     $results.Add($checkResult); $outcomes[[string]$check.check_id] = [string]$checkResult.result
+    Write-AffectedValidationPhaseProgress leaf-snapshot end executed
     if ([string]$checkResult.result -ceq 'infra-fail') {
         $reason = if ([string]::IsNullOrWhiteSpace([string]$execution.child.Error)) { 'child process did not start without a typed launch reason' } else { ([string]$execution.child.Error).Replace("`r",' ').Replace("`n",' ') }
         if ($reason.Length -gt 1024) { $reason = $reason.Substring(0,1024) }
@@ -1218,6 +1311,8 @@ foreach ($record in @($bindingRecords.ToArray())) {
     }
     if ([bool]$execution.integrity_failed) { $terminalIntegrityFailure = $true; break }
 }
+$phaseProgressState.ordinal=0
+$phaseProgressState.budget=0
 $resultValues = @($results | ForEach-Object result)
 $outcomeValues = @($outcomes.Values)
 $overall = if ($resultValues -ccontains 'infra-fail') { 'infra-fail' } elseif ($resultValues -ccontains 'code-fail' -or $outcomeValues -ccontains 'blocked') { 'code-fail' } else { 'pass' }
@@ -1232,14 +1327,18 @@ $evidenceJson = ConvertTo-MorphospaceCanonicalJson -Value $evidence
 if (-not (Test-Json -Json $evidenceJson -SchemaFile $evidenceSchema -ErrorAction Stop)) { throw 'Affected-validation evidence fails its closed schema.' }
 $inventoryFinalized = $false
 $inventoryReceipt = $null
+Write-AffectedValidationPhaseProgress inventory-finalize start
 if (-not $terminalIntegrityFailure -and $outcomes.Count -eq $selected.Count) {
     $inventoryReceipt = Write-MorphospaceAffectedCheckCache -EvidenceDirectory $checkEvidenceRoot -Snapshots @($parentSnapshots.ToArray()) -Producer $producer -Source ([pscustomobject][ordered]@{base=$plan.base;head=$plan.head}) -PlanSha256 ([string]$plan.plan_sha256) -Platform $Platform -ReceiptSchemaPath $checkReceiptSchema -InventorySchemaPath $checkInventorySchema
     if ([int]$inventoryReceipt.entry_count -ne $selected.Count) { throw 'Affected check finalized inventory does not cover every selected check.' }
     $inventoryFinalized = $true
 }
+Write-AffectedValidationPhaseProgress inventory-finalize end $(if ($inventoryFinalized) { 'completed' } else { 'not-attempted' })
+Write-AffectedValidationPhaseProgress aggregate-publish start
 $evidenceBytes = [Text.UTF8Encoding]::new($false).GetBytes($evidenceJson + [Environment]::NewLine)
 $evidenceStream = [IO.File]::Open($output,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
 try { $evidenceStream.Write($evidenceBytes,0,$evidenceBytes.Length);$evidenceStream.Flush($true) } finally { $evidenceStream.Dispose() }
+Write-AffectedValidationPhaseProgress aggregate-publish end
 if ($overall -cne 'pass') {
     $reasonParts = @($infrastructureReasons.ToArray()) + @($codeFailureReasons.ToArray())
     $reasonText=$reasonParts -join ' | ';if($reasonText.Length-gt8192){$reasonText=$reasonText.Substring(0,8192)}
@@ -1250,4 +1349,8 @@ if ($overall -cne 'pass') {
 }
 if (-not $inventoryFinalized) { throw 'Affected-validation passing execution did not finalize its cache inventory.' }
 $evidence | Add-Member -MemberType NoteProperty -Name cache_inventory_sha256 -Value ([string]$inventoryReceipt.sha256)
+$phaseProgressReturned=$true
 $evidence
+} finally {
+    Write-AffectedValidationPhaseProgress run end $(if ($phaseProgressReturned) { 'returned' } else { 'threw' })
+}
