@@ -36,8 +36,8 @@ function Get-RetirementExecutionArguments([object]$Dry,[string]$Workspace,[strin
         ExpectedProposedRetirementBindingSha256=[string]$Dry.proposed_retirement.binding_sha256;Execute=$true
     }
 }
-function New-RetirementAdmittedFixture([string]$Root){
-    $seed=New-EnvelopeAdmissionPreparedFixture -Root $Root -RepositoryRoot $repoRoot -TransitionLedgerModule $ledgerModule
+function New-RetirementAdmittedFixture([string]$Root,[switch]$HistoricalSupersession){
+    $seed=New-EnvelopeAdmissionPreparedFixture -Root $Root -RepositoryRoot $repoRoot -TransitionLedgerModule $ledgerModule -OwnerProducedPreparation -HistoricalSupersession:$HistoricalSupersession
     $seed.admission_template.unit.instruction_impact='none'
     $seed.admission_template.unit.instruction_surfaces=@()
     $seed.admission_template.unit.instruction_none_justification='The temporary admitted proposal changes no instruction contract.'
@@ -60,6 +60,55 @@ try{
 
     $narrowWorkspace=Copy-RetirementFixture $admitted $temp 'narrow'
     $narrowOut=Join-Path $narrowWorkspace 'receipts/u002-contract-retirement.json';$timestamp='2026-08-25T00:01:30.0000000Z'
+    $historicalSeed=New-RetirementAdmittedFixture (Join-Path $temp 'historical-seed') -HistoricalSupersession
+    $oldPath=Join-Path $historicalSeed 'iteration-units/u000.json'
+    Assert-Retirement (-not(Test-RetirementSchemaAccepts (Read-EnvelopeProtocolJson $oldPath) (Join-Path $repoRoot 'schemas/iteration-unit.schema.json'))) 'historical fixture accidentally satisfies the current unit schema'
+    $historyModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceCurrentWorkHistory.psm1') -PassThru
+    $history=Get-MorphospaceCurrentWorkHistory -WorkspaceRoot $historicalSeed
+    Assert-Retirement ($history.authenticated-and$history.retired_ids.Contains('u000')-and@($history.audit_only|Where-Object{[bool]$_.grants_validation_credit}).Count-eq0) 'retained old-schema fixture is not authenticated history without validation credit'
+    foreach($surface in @('direct','generic')){
+        $workspace=Copy-RetirementFixture $historicalSeed $temp "historical-$surface";$out=Join-Path $workspace 'receipts/u002-history-retirement.json'
+        $beforeHistory=Get-RetirementInventory $workspace;$oldHash=Get-EnvelopeFileSha256 (Join-Path $workspace 'iteration-units/u000.json')
+        $arguments=@{WorkspaceRoot=$workspace;UnitId='u002';ReplacementUnitId='u003';OutPath=$out;Timestamp=$timestamp}
+        $historyDry=if($surface-ceq'direct'){Invoke-MorphospaceProposedUnitRetirement @arguments}else{Invoke-MorphospaceWorkUnitAutomation @arguments -Action RetireProposed}
+        Assert-Retirement (-not$historyDry.executed-and$beforeHistory-ceq(Get-RetirementInventory $workspace)) "$surface historical dry run changed retained bytes"
+        $execution=Get-RetirementExecutionArguments $historyDry $workspace $out $timestamp
+        $historyRun=if($surface-ceq'direct'){Invoke-MorphospaceProposedUnitRetirement @execution}else{Invoke-MorphospaceWorkUnitAutomation @execution -Action RetireProposed}
+        $afterHistory=Get-MorphospaceCurrentWorkHistory -WorkspaceRoot $workspace
+        Assert-Retirement ($historyRun.executed-and$oldHash-ceq(Get-EnvelopeFileSha256 (Join-Path $workspace 'iteration-units/u000.json'))-and$afterHistory.historically_retired_proposed_ids.Contains('u002')) "$surface historical execute did not preserve history and authenticate retirement"
+        $replaySnapshot=Get-RetirementInventory $workspace;$message=''
+        try{if($surface-ceq'direct'){Invoke-MorphospaceProposedUnitRetirement @execution|Out-Null}else{Invoke-MorphospaceWorkUnitAutomation @execution -Action RetireProposed|Out-Null}}catch{$message=$_.Exception.Message}
+        Assert-Retirement ($message-and$replaySnapshot-ceq(Get-RetirementInventory $workspace)) "$surface historical replay changed terminal bytes"
+    }
+    foreach($damage in @('malformed','duplicate','foreign','noncanonical','schema-identity','nonhistorical-old-schema','target-schema','accepted-checkpoint','suffix','source-lock','missing-prerequisite','retired-prerequisite','current','queued','replacement-present')){
+        $workspace=Copy-RetirementFixture $historicalSeed $temp "history-damage-$damage";$unitPath=Join-Path $workspace 'iteration-units/u000.json';$old=Read-EnvelopeProtocolJson $unitPath
+        switch($damage){
+            'malformed'{[IO.File]::WriteAllText($unitPath,'{')}
+            'duplicate'{Copy-Item -LiteralPath $unitPath -Destination (Join-Path $workspace 'iteration-units/duplicate.json')}
+            'foreign'{$old.project_id='foreign-project';Write-EnvelopeJson $unitPath $old}
+            'noncanonical'{Rename-Item -LiteralPath $unitPath -NewName 'renamed.json'}
+            'schema-identity'{$old.schema='unknown';Write-EnvelopeJson $unitPath $old}
+            'nonhistorical-old-schema'{$old.unit_id='u004';$old.status='proposed';Write-EnvelopeJson (Join-Path $workspace 'iteration-units/u004.json') $old}
+            'target-schema'{$p=Join-Path $workspace 'iteration-units/u002.json';$u=Read-EnvelopeProtocolJson $p;$u.PSObject.Properties.Remove('objective');Write-EnvelopeJson $p $u}
+            'accepted-checkpoint'{$p=Join-Path $workspace 'receipts/transactions/u001-accepted-0002-transition.completion.json';$v=Read-EnvelopeProtocolJson $p;$v.intent.sha256='0'*64;Write-EnvelopeJson $p $v}
+            'suffix'{$p=Join-Path $workspace 'receipts/transactions/u002-admission-admitted-transition.completion.json';$v=Read-EnvelopeProtocolJson $p;$v.intent.sha256='0'*64;Write-EnvelopeJson $p $v}
+            'source-lock'{$p=Join-Path $workspace 'source-composition.json';$v=Read-EnvelopeProtocolJson $p;$v.repositories[0].commit='0'*40;Write-EnvelopeJson $p $v}
+            {$_-in@('missing-prerequisite','retired-prerequisite')}{$p=Join-Path $workspace 'iteration-units/u004.json';$v=Read-EnvelopeProtocolJson (Join-Path $workspace 'iteration-units/u002.json');$v.unit_id='u004';$v.prerequisites=@($(if($damage-ceq'missing-prerequisite'){'absent'}else{'u000'}));Write-EnvelopeJson $p $v}
+            {$_-in@('current','queued')}{$p=Join-Path $workspace 'workspace.state.json';$v=Read-EnvelopeProtocolJson $p;if($damage-ceq'current'){$v.current_unit='u000'}else{$v.next_ready_unit='u000'};Write-EnvelopeJson $p $v}
+            'replacement-present'{$v=Read-EnvelopeProtocolJson (Join-Path $workspace 'iteration-units/u002.json');$v.unit_id='u003';Write-EnvelopeJson (Join-Path $workspace 'iteration-units/u003.json') $v}
+        }
+        $snapshot=Get-RetirementInventory $workspace;$message=''
+        try{Invoke-MorphospaceProposedUnitRetirement -WorkspaceRoot $workspace -UnitId u002 -ReplacementUnitId u003 -OutPath (Join-Path $workspace 'receipts/u002-history-retirement.json') -Timestamp $timestamp|Out-Null}catch{$message=$_.Exception.Message}
+        Assert-Retirement ($message-and$snapshot-ceq(Get-RetirementInventory $workspace)) "retirement accepted or mutated historical boundary damage '$damage'"
+    }
+    # No accepted checkpoint grants no exemption, but does not invent a new
+    # acceptance prerequisite for inventory discovery of contemporary units.
+    $noBoundary=Copy-RetirementFixture $admitted $temp 'no-accepted-boundary';$p=Join-Path $noBoundary 'workspace.state.json';$v=Read-EnvelopeProtocolJson $p;$v.last_accepted_receipt=$null;Write-EnvelopeJson $p $v
+    $inventory=&$ownerModule {param($root)Get-MorphospaceProposedRetirementUnits -WorkspaceRoot $root -TargetUnitId u002} $noBoundary
+    Assert-Retirement ($inventory.Count-eq2) 'contemporary inventory requires an accepted boundary'
+    Copy-Item -LiteralPath $oldPath -Destination (Join-Path $noBoundary 'iteration-units/u000.json');$noBoundarySnapshot=Get-RetirementInventory $noBoundary;$message=''
+    try{&$ownerModule {param($root)Get-MorphospaceProposedRetirementUnits -WorkspaceRoot $root -TargetUnitId u002|Out-Null} $noBoundary}catch{$message=$_.Exception.Message}
+    Assert-Retirement ($message-and$noBoundarySnapshot-ceq(Get-RetirementInventory $noBoundary)) 'unauthenticated inventory exempted old-schema history'
     $before=Get-RetirementInventory $narrowWorkspace
     $dry=Invoke-MorphospaceProposedUnitRetirement -WorkspaceRoot $narrowWorkspace -UnitId u002 -ReplacementUnitId u003 -OutPath $narrowOut -Timestamp $timestamp
     Assert-Retirement (-not$dry.executed-and$null-eq$dry.event_id-and[string]$dry.schema-ceq'rusty.morphospace.workflow.proposed_unit_retirement_receipt.v1'-and$before-ceq(Get-RetirementInventory $narrowWorkspace)) 'narrow dry run changed bytes or returned the wrong format'
@@ -163,5 +212,5 @@ try{
         if($mutation-cne'publish'){Assert-Retirement ($snapshot-ceq(Get-RetirementInventory $workspace)) "private legacy callback $mutation changed workspace bytes"}
     }
 
-    [pscustomobject][ordered]@{schema='rusty.morphospace.workflow.proposed_unit_retirement_self_test.v1';status='pass';narrow_schema='rusty.morphospace.workflow.proposed_unit_retirement_receipt.v1';fault_cuts=4;stale_cas_cases=7;private_legacy_adapter_negative_cases=12;caller_command_preserved=([string]$publicBefore.Name)}|ConvertTo-Json -Depth 8
+    [pscustomobject][ordered]@{schema='rusty.morphospace.workflow.proposed_unit_retirement_self_test.v1';status='pass';narrow_schema='rusty.morphospace.workflow.proposed_unit_retirement_receipt.v1';historical_public_surfaces=2;historical_negative_cases=15;unauthenticated_inventory_cases=2;fault_cuts=4;stale_cas_cases=7;private_legacy_adapter_negative_cases=12;caller_command_preserved=([string]$publicBefore.Name)}|ConvertTo-Json -Depth 8
 }finally{if(Test-Path -LiteralPath $temp){Remove-Item -LiteralPath $temp -Recurse -Force}}
