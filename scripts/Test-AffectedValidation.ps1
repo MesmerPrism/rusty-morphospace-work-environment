@@ -4536,6 +4536,7 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
         [pscustomobject]@{ path='scripts/Test-DevelopmentUnitAdmission.ps1'; checks=@('development-unit-admission','public-boundary'); exact_checks=$true },
         [pscustomobject]@{ path='scripts/Test-AdmissionCompletionTimestampRecovery.ps1'; checks=@('admission-completion-timestamp-recovery','public-boundary'); exact_checks=$true },
         [pscustomobject]@{ path='scripts/Test-RecoveredProposalContinuation.ps1'; checks=@('recovered-proposal-continuation','recovered-prepared-admission','public-boundary'); exact_checks=$true },
+        [pscustomobject]@{ path='scripts/Test-RecoveredPreparedAdmission.ps1'; checks=@('recovered-proposal-continuation','recovered-prepared-admission','public-boundary'); exact_checks=$true },
         [pscustomobject]@{ path='scripts/test-support/RecoveredProposalContinuation.ps1'; checks=@('recovered-proposal-continuation','recovered-prepared-admission','public-boundary'); exact_checks=$true },
         [pscustomobject]@{ path='scripts/test-support/DevelopmentAdmissionFixture.ps1'; checks=@('development-unit-admission','recovered-proposal-continuation','recovered-prepared-admission','public-boundary'); exact_checks=$true },
         [pscustomobject]@{ path='examples/hello-morphospace-v2/morphospace/iteration-units/hello-001.json'; checks=@('development-unit-admission','recovered-proposal-continuation','recovered-prepared-admission','blocked-successor-preparation','workflow-contracts','public-boundary') },

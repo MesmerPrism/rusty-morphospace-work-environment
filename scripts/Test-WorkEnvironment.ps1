@@ -316,7 +316,7 @@ if ($SelfTest) {
         [pscustomobject]@{ name = "workflow:active-write-scope-amendment"; script = "Test-ActiveWriteScopeAmendment.ps1"; detail = "Validated additive project-bounded active feature-unit write-scope amendments, exact CAS, transaction ownership, and no Git/device/remote mutation." },
         [pscustomobject]@{ name = "workflow:development-unit-admission"; script = "Test-DevelopmentUnitAdmission.ps1"; arguments = @("-SelfTest"); detail = "Validated accepted-predecessor successor admission, exact replay, frozen candidate closure, and no Git/device/remote mutation." },
         [pscustomobject]@{ name = "workflow:recovered-proposal-continuation"; script = "Test-RecoveredProposalContinuation.ps1"; arguments = @("-SelfTest","-Scenario","LaterAcceptance"); detail = "Validated recovered retirement and later accepted-boundary continuation while preserving caller bytes and HEAD." }
-        [pscustomobject]@{ name = "workflow:recovered-prepared-admission"; script = "Test-RecoveredProposalContinuation.ps1"; arguments = @("-SelfTest","-Scenario","PreparedAdmission"); detail = "Validated fresh Prepare, Admit, Ready, Inspect and Claim after recovered retirement while retaining the original accepted checkpoint and rejecting damaged recovery evidence." }
+        [pscustomobject]@{ name = "workflow:recovered-prepared-admission"; script = "Test-RecoveredPreparedAdmission.ps1"; arguments = @("-SelfTest"); detail = "Validated fresh Prepare, Admit, Ready, Inspect and Claim after recovered retirement while retaining the original accepted checkpoint and rejecting damaged recovery evidence." }
     )) {
         try {
             $quickTestPath = Join-Path (Join-Path $RepoRoot "scripts") $quickTest.script
