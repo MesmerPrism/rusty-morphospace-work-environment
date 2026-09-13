@@ -641,10 +641,12 @@ the focused owners remain responsible for the real state-transition and
 idempotence semantics. Local development can invoke only that seam with
 `Test-WorkUnitAutomation.ps1 -LifecycleRouterSelfTestOnly` only as a strict
 low-level diagnostic from an already-closed process environment; the
-registered owner still runs the complete integration test once for final
-admission. The public local Standard route is
-`Test-WorkflowContracts.ps1 -StandardDeltaOnly`, whose launcher constructs
-that closed child environment without changing its caller.
+registered owner still runs the complete integration test when selected for
+final validation. The ordinary local route is the
+[exact affected checkpoint](VALIDATION.md#ordinary-local-affected-checkpoint).
+`Test-WorkflowContracts.ps1 -StandardDeltaOnly` remains the explicit compatibility
+delta launcher; it constructs a closed child environment without changing its
+caller, but is not an unconditional local handoff requirement.
 
 `terminal-validation-selection-release-v2.schema.json` belongs to the normal
 validation selector path set. The shared
@@ -681,7 +683,7 @@ producer source changes continue to select their focused owners, while a
 schema-only change gets a bounded complete producer-shape compatibility pass.
 The active-supersession test resolves its literal
 module bindings without a dynamic declaration. Every lifecycle path therefore
-has one ordinal owner and avoids unmapped or ambiguous Deep fallback.
+has one ordinal owner; unmapped or ambiguous ownership fails closed.
 
 Development-unit admission has a dedicated, non-overlapping path set for its
 schema, module, and focused self-test. Direct changes to any of those paths
@@ -689,3 +691,55 @@ select the admission owner and public-boundary validation, but do not replay
 development-envelope preparation or the cumulative Deep aggregate. Shared
 protocol or transition-ledger changes still select admission through its
 declared consumed dependencies.
+
+## Local evidence and segment retries
+
+Use `Resolve-AffectedValidation.ps1` for selection preview and
+`Invoke-AffectedValidation.ps1` for execution, from the same clean owner
+checkout and with the same exact base/head identities. The requested tier may
+rise to the effective tier required by selected obligations. Inspect the plan's
+IDs, reasons, platforms and budgets before executing; summed ceilings are not
+a wall-time prediction. The executor independently recomputes the plan.
+
+Pass a prior finalized local check-evidence directory through
+`-PriorEvidenceDirectory`; the directory contains the executor-produced
+`inventory.json`, not just a platform aggregate. Every attempt uses new output
+and check-evidence paths. Keep diagnostics outside that closed inventory.
+Reuse authenticates producer context, source/runner/dependency inputs and
+prerequisites. Local and GitHub producer contexts are distinct; local receipts
+do not automatically become hosted or owner-admission evidence. Disabled or
+external-state checks execute, and invalid cache input cannot supply a pass.
+
+An ordinary failed run may still finalize its inventory after all selected
+checks have outcomes, preserving independent passes for a corrected attempt.
+While candidate children can run, snapshots remain parent-owned memory. Parent
+interruption, incomplete execution or terminal integrity failure does not
+finalize a reusable inventory. Do not promise recovery of individual completed
+leaves from such an interrupted executor.
+
+For a segment retry, derive the partition with the existing
+`Get-MorphospaceAffectedValidationSegments -Plan <plan-object>
+-Registry <registry-object> -Platform <host-platform>` function exported by
+`scripts/lib/MorphospaceAffectedValidation.psm1`. Invoke the executor with its
+exact `-SegmentId`, plan and source identities, writing a new attempt output.
+Do not invent a smaller check subset or alter dependency-connected segments.
+A completed segment is partial platform evidence; retain other passing
+segments, but rerun an interrupted segment without a finalized inventory.
+
+For an unchanged exact plan, explicitly assemble one passing result per
+expected segment into a new flat directory, named `<segment-id>.json`, and
+run `Merge-AffectedValidationSegments.ps1` with the same `-RepositoryRoot`,
+`-BaseCommit`, `-HeadCommit`, `-PlanPath`, `-Platform`, that
+`-SegmentEvidenceDirectory`, and a new `-OutPath`. Preserve original attempts
+outside the merge directory. Do not silently choose an older pass after a
+later failed or incomplete attempt. The merger requires exact complete ordered
+coverage and rejects missing, duplicate, foreign-plan or non-passing evidence.
+The hosted artifact-attempt staging contract remains unchanged.
+
+A changed head requires a new plan and new aggregate outputs. Earlier finalized
+inventories may supply exact compatible leaves through the executor, but old
+segment aggregates cannot be relabeled or merged into a new plan. A full
+Windows execution or merge establishes only Windows completion; Linux remains
+pending if selected. If the host platform has no selected checks, report not
+applicable without invoking the zero-check executor or claiming a platform
+pass. Static admission, acceptance and publication remain separate.

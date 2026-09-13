@@ -105,12 +105,15 @@ not build, device, validation, acceptance, or publication authority.
 ## Validate proportionately
 
 Run focused owner checks and `git diff --check` while editing. Commit a coherent
-candidate before its exact-head aggregate: some checks deliberately bind working
-bytes to HEAD. Then run the smallest sufficient managed checkpoint once against
-its exact base, as described in [Validation](docs/VALIDATION.md). Run Standard
-delta only after Quick when its boundary requires it; use Deep for its declared
-authority risk. Dirty-source checks are diagnostic, and a local commit grants no
-admission or publication authority. A device is not part of these tiers.
+candidate before its exact affected checkpoint: some checks deliberately bind
+working bytes to HEAD. Use `Resolve-AffectedValidation.ps1` to preview the exact
+base/head plan, then `Invoke-AffectedValidation.ps1` for the selected host
+platform, as described in [Validation](docs/VALIDATION.md). Inspect requested
+and effective tiers, selected reasons and budgets before execution; tier names
+describe coverage, not latency. Preserve pending platform obligations and use
+only finalized exact evidence for reuse. Cumulative suites remain explicit
+compatibility sweeps. Dirty-source checks are diagnostic, and a local commit
+grants no admission or publication authority. A device is not part of these tiers.
 
 Use exact instruction synchronization for authority, module layout, activation,
 validation, device policy, repository routing, or public/private boundaries.
