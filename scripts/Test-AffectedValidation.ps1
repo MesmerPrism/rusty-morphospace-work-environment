@@ -143,6 +143,98 @@ function Invoke-TestGit([string]$Root, [string[]]$Arguments) {
     if ($LASTEXITCODE -ne 0) { throw "git test fixture failed: $($Arguments -join ' ')`n$($result -join "`n")" }
     return ($result -join "`n").Trim()
 }
+function Read-AffectedPhaseProgressEvents([string]$Text) {
+    $lines = @($Text -split '\r?\n' | Where-Object { $_.Length -gt 0 })
+    Assert-True ($lines.Count -le 2048 -and [Text.Encoding]::UTF8.GetByteCount($Text) -le 1048576) 'Parent diagnostics exceeded their finite output bound.'
+    $previousOffset = [long]0
+    $sequence = 0
+    foreach ($line in $lines) {
+        Assert-True ($line.StartsWith('affected-phase ',[StringComparison]::Ordinal) -and [Text.Encoding]::UTF8.GetByteCount($line+[Environment]::NewLine) -le 512) 'Parent diagnostic record has an unexpected prefix or length.'
+        $event = $line.Substring(15) | ConvertFrom-Json -Depth 8 -ErrorAction Stop
+        $keys = @($event.PSObject.Properties.Name | Sort-Object)
+        Assert-True (($keys -join ',') -ceq 'authority,budget_seconds,count,detail,diagnostic_version,duration_ms,event,offset_ms,ordinal,phase,sequence') 'Parent diagnostics exposed non-scalar or unapproved fields.'
+        $sequence++
+        Assert-True ($event.diagnostic_version -eq 1 -and $event.authority -ceq 'none' -and $event.sequence -eq $sequence -and $event.offset_ms -ge $previousOffset -and $event.duration_ms -ge 0 -and $event.duration_ms -le $event.offset_ms) 'Parent diagnostic sequence/duration is not monotonic or claimed authority.'
+        $previousOffset=[long]$event.offset_ms
+        $event
+    }
+}
+function Invoke-AffectedPhaseProgressEmitterSelfTest {
+    $source = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -Raw
+    $ast = [Management.Automation.Language.Parser]::ParseInput($source,[ref]$null,[ref]$null)
+    foreach ($name in @('New-AffectedValidationPhaseProgress','Write-AffectedValidationPhaseProgress')) {
+        $definition = @($ast.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name},$true))
+        Assert-True ($definition.Count -eq 1) 'Parent diagnostic helper must have one definition.'
+        . ([scriptblock]::Create($definition[0].Extent.Text))
+    }
+    $originalError = [Console]::Error
+    $writer = [IO.StringWriter]::new([Globalization.CultureInfo]::InvariantCulture)
+    try {
+        [Console]::SetError($writer)
+        $phaseProgressState = New-AffectedValidationPhaseProgress $false
+        $values = @(Write-AffectedValidationPhaseProgress run start)
+        Assert-True ($values.Count -eq 0 -and $writer.ToString().Length -eq 0) 'Disabled diagnostics wrote to an output stream.'
+        $phaseProgressState = New-AffectedValidationPhaseProgress $true
+        $phaseProgressState.ordinal=1;$phaseProgressState.count=2;$phaseProgressState.budget=30
+        $values = @(Write-AffectedValidationPhaseProgress run start; Write-AffectedValidationPhaseProgress run end returned)
+        $events = @(Read-AffectedPhaseProgressEvents $writer.ToString())
+        Assert-True ($values.Count -eq 0 -and $events.Count -eq 2 -and $events[0].event -ceq 'start' -and $events[1].event -ceq 'end' -and $events[1].duration_ms -eq ($events[1].offset_ms-$events[0].offset_ms) -and $events[0].ordinal -eq 1 -and $events[0].count -eq 2 -and $events[0].budget_seconds -eq 30) 'Parent phase timer or scalar projection changed.'
+        [void]$writer.GetStringBuilder().Clear()
+        # The interface has no check-ID/path field. Even a syntactically plausible
+        # secret identifier cannot escape by occupying a phase, event or detail.
+        foreach ($unsafe in @('private-check-id',"private`nsecret",'C:/private/secret',('a'*1024),'private\secret','秘密')) {
+            Write-AffectedValidationPhaseProgress $unsafe start
+            Write-AffectedValidationPhaseProgress run $unsafe
+            Write-AffectedValidationPhaseProgress run decision $unsafe
+        }
+        Assert-True ($writer.ToString().Length -eq 0) 'Unsafe caller text escaped the finite diagnostic vocabulary.'
+        $phaseProgressState = New-AffectedValidationPhaseProgress $true
+        for ($index=0;$index -lt 2100;$index++) { Write-AffectedValidationPhaseProgress run decision }
+        $events = @(Read-AffectedPhaseProgressEvents $writer.ToString())
+        Assert-True ($events.Count -eq 2048 -and $events[-1].event -ceq 'truncated' -and $events[-1].detail -ceq 'event-limit' -and @($events | Where-Object event -ceq 'truncated').Count -eq 1 -and -not $phaseProgressState.enabled) 'Parent diagnostic cap failed to emit one final truncation marker and stop.'
+        $writer.Dispose()
+        $phaseProgressState = New-AffectedValidationPhaseProgress $true
+        $values = @(& { Write-AffectedValidationPhaseProgress run start; 'core-result'; Write-AffectedValidationPhaseProgress run end returned })
+        Assert-True (-not $phaseProgressState.enabled -and $values.Count -eq 1 -and $values[0] -ceq 'core-result') 'Diagnostic sink failure changed ordinary output or remained enabled.'
+        $originalFailure = $null
+        $phaseProgressState = New-AffectedValidationPhaseProgress $true
+        try { try { throw [InvalidOperationException]::new('core-failure-sentinel') } finally { Write-AffectedValidationPhaseProgress run end threw } } catch { $originalFailure=$_ }
+        Assert-True ($null -ne $originalFailure -and $originalFailure.Exception.Message -ceq 'core-failure-sentinel') 'Diagnostic sink failure replaced a core exception.'
+    } finally { [Console]::SetError($originalError);$writer.Dispose() }
+}
+function Invoke-AffectedProgressBootstrapFixture([string]$Fixture,[bool]$Progress) {
+    $literal = { param([string]$Value) "'"+$Value.Replace("'","''")+"'" }
+    # Native stream routing needs no cold plan/dependency/reuse replay. The real
+    # executor rejects an absent plan after bootstrap, before any leaf or output.
+    $command = '$ErrorActionPreference="Stop"; $values=@();$rejected=$false;try{{$values=@(& {0} -RepositoryRoot {1} -BaseCommit {2} -HeadCommit {2} -PlanPath {3} -Platform linux -OutPath {4}{5})}}catch{{if($_.Exception.Message -cne "Affected-validation plan is absent."){{throw}};$rejected=$true}};if(-not $rejected -or $values.Count -ne 0){{throw "Native bootstrap changed rejection or leaked success output."}}; [Console]::Out.WriteLine(''{{"fixture":"phase-progress-stream","rejected":true}}'')' -f
+        (& $literal (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1')),(& $literal $Fixture),(& $literal ('0'*40)),(& $literal (Join-Path $Fixture 'absent-phase-progress-plan.json')),(& $literal (Join-Path $Fixture 'absent-phase-progress-evidence.json')),$(if($Progress){' -PhaseProgress'}else{''})
+    $start=[Diagnostics.ProcessStartInfo]::new()
+    $start.FileName=(Get-Command pwsh -ErrorAction Stop).Source
+    $start.UseShellExecute=$false;$start.CreateNoWindow=$true
+    $start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
+    $start.StandardOutputEncoding=[Text.UTF8Encoding]::new($false,$true)
+    $start.StandardErrorEncoding=[Text.UTF8Encoding]::new($false,$true)
+    foreach($argument in @('-NoProfile','-NonInteractive','-Command',$command)){[void]$start.ArgumentList.Add($argument)}
+    $process=[Diagnostics.Process]::new();$process.StartInfo=$start
+    try {
+        if(-not $process.Start()){throw 'Native progress bootstrap fixture did not start.'}
+        $stdoutTask=$process.StandardOutput.ReadToEndAsync();$stderrTask=$process.StandardError.ReadToEndAsync()
+        if(-not $process.WaitForExit(30000)){try{$process.Kill($true)}catch{};throw 'Native progress bootstrap fixture exceeded its finite deadline.'}
+        $stdout=$stdoutTask.GetAwaiter().GetResult();$stderr=$stderrTask.GetAwaiter().GetResult()
+        Assert-True ($process.ExitCode -eq 0) "Native progress bootstrap fixture failed: $stderr"
+        $observation=$stdout|ConvertFrom-Json -Depth 8 -ErrorAction Stop
+        Assert-True ($observation.fixture -ceq 'phase-progress-stream' -and $observation.rejected) 'Native stdout is not the single serialized fixture observation.'
+        $events=@(Read-AffectedPhaseProgressEvents $stderr)
+        if($Progress){
+            Assert-True ($events.Count -eq 7 -and $events[0].phase -ceq 'run' -and $events[0].event -ceq 'start' -and $events[-1].phase -ceq 'run' -and $events[-1].detail -ceq 'threw') 'Native stderr omitted bootstrap/rejection boundaries.'
+            foreach($phase in @('bootstrap-imports','bootstrap-capture')) {
+                $pair=@($events|Where-Object phase -ceq $phase)
+                Assert-True ($pair.Count -eq 2 -and $pair[0].event -ceq 'start' -and $pair[1].event -ceq 'end' -and $pair[1].duration_ms -eq ($pair[1].offset_ms-$pair[0].offset_ms)) "Native diagnostic phase '$phase' has no exact monotonic pair."
+            }
+        } else { Assert-True ($stderr.Length -eq 0) 'Default-off native executor emitted diagnostic stderr.' }
+        Assert-True (-not [IO.File]::Exists((Join-Path $Fixture 'absent-phase-progress-evidence.json'))) 'Bootstrap diagnostics fabricated authoritative evidence.'
+    } finally { $process.Dispose() }
+}
 function Invoke-FreshAffectedPlanProcess([string]$Fixture,[string]$BaseCommit,[string]$HeadCommit) {
     $affectedModulePath = Join-Path $repoRoot 'scripts/lib/MorphospaceAffectedValidation.psm1'
     $protocolModulePath = Join-Path $repoRoot 'scripts/lib/MorphospaceProtocolCommon.psm1'
@@ -2466,6 +2558,9 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value $termina
         Assert-True ([string]$docsPlan.registry_delta.classification -ceq 'unchanged' -and -not [bool]$docsPlan.registry_delta.candidate_ownership_audited -and -not [bool]$docsPlan.registry_delta.candidate_ownership_complete) 'Unchanged registry delta claimed a candidate ownership audit/completion or changed classification.'
         Write-Utf8 $planPath ((ConvertTo-MorphospaceCanonicalJson -Value $docsPlan) + "`n")
         if ($runFullSelector -or $runExecutorPassPhase) {
+            Invoke-AffectedPhaseProgressEmitterSelfTest
+            Invoke-AffectedProgressBootstrapFixture -Fixture $fixture -Progress $false
+            Invoke-AffectedProgressBootstrapFixture -Fixture $fixture -Progress $true
             Assert-True ($docsPlan.selection_mode -ceq 'affected') 'Documentation change did not remain affected-only.'
             Assert-True (@($docsPlan.selected_checks.check_id) -ccontains 'documentation-links') 'Documentation check was not selected.'
             $docsBoundaryIndex = [array]::IndexOf(@($docsPlan.selected_checks.check_id), 'public-boundary')
@@ -2884,11 +2979,32 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value $termina
             } finally { if ([IO.Directory]::Exists($restoreAncestorLink)) { Remove-Item -LiteralPath $restoreAncestorLink -Force } }
             $reuseEvidencePath = Join-Path $fixture 'affected-evidence-reused.json'
             $reuseCheckRoot = Join-Path $fixture 'affected-check-evidence-reused'
-            $reusedEvidence = & (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $base -HeadCommit $docsHead -PlanPath $planPath -Platform linux -OutPath $reuseEvidencePath -CheckEvidenceDirectory $reuseCheckRoot -PriorEvidenceDirectory $firstCheckRoot
+            $reuseProgressWriter=[IO.StringWriter]::new();$reuseOriginalError=[Console]::Error
+            try {
+                [Console]::SetError($reuseProgressWriter)
+                $reusedValues = @(& (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $base -HeadCommit $docsHead -PlanPath $planPath -Platform linux -OutPath $reuseEvidencePath -CheckEvidenceDirectory $reuseCheckRoot -PriorEvidenceDirectory $firstCheckRoot -PhaseProgress)
+            } finally { [Console]::SetError($reuseOriginalError);$reuseProgressText=$reuseProgressWriter.ToString();$reuseProgressWriter.Dispose() }
+            Assert-True ($reusedValues.Count -eq 1) 'Enabled parent diagnostics changed the single evidence success stream.'
+            $reusedEvidence=$reusedValues[0]
+            $reuseProgress=@(Read-AffectedPhaseProgressEvents $reuseProgressText)
+            Assert-True ($reuseProgress[-1].phase -ceq 'run' -and $reuseProgress[-1].detail -ceq 'returned') 'Reusable diagnostics omitted the returned run boundary.'
+            foreach($phase in @('plan-recompute','execution-inventory','runner-binding','prior-inventory','inventory-finalize','aggregate-publish')) {
+                $pair=@($reuseProgress|Where-Object phase -ceq $phase)
+                Assert-True ($pair.Count -eq 2 -and $pair[0].event -ceq 'start' -and $pair[1].event -ceq 'end' -and $pair[1].duration_ms -eq ($pair[1].offset_ms-$pair[0].offset_ms)) "Reusable diagnostic phase '$phase' has no exact monotonic pair."
+            }
+            $reuseDecisions=@($reuseProgress|Where-Object phase -ceq 'leaf-disposition')
+            Assert-True ($reuseDecisions.Count -eq @($docsPlan.selected_checks).Count -and @($reuseDecisions|Where-Object detail -cne 'reused').Count -eq 0 -and @($reuseProgress|Where-Object phase -ceq 'child-capture').Count -eq 0) 'Reusable diagnostics claimed child execution or omitted actual reuse decisions.'
+            $expectedOrdinal=0
+            foreach($decision in $reuseDecisions){$expectedOrdinal++;Assert-True ($decision.ordinal -eq $expectedOrdinal -and $decision.count -eq $reuseDecisions.Count) 'Reusable diagnostic ordinals changed selected order.'}
+            Assert-True (@($reuseProgress|Where-Object { $_.phase -ceq 'reuse-lookup' -and $_.event -ceq 'end' -and $_.detail -ceq 'exact-match' }).Count -eq $reuseDecisions.Count) 'Reusable diagnostic lookup omitted an exact match.'
             Assert-True ($reusedEvidence.result -ceq 'pass') 'Affected executor did not accept exact dependency-bound reusable leaves.'
             $reusedReceipts = @(Get-ChildItem -LiteralPath $reuseCheckRoot -Filter receipt.json -File -Recurse | ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json -Depth 64 -DateKind String })
             Assert-True ($reusedReceipts.Count -eq @($reusedEvidence.check_results).Count -and @($reusedReceipts | Where-Object mode -cne 'reused').Count -eq 0) 'Exact unchanged leaf evidence was replayed instead of reused.'
             Assert-True ([IO.File]::Exists((Join-Path $reuseCheckRoot 'inventory.json'))) 'Fully reused execution did not finalize a new parent-owned inventory.'
+            foreach($receipt in $reusedReceipts){
+                $initial=@($firstReceipts|ForEach-Object{Get-Content -LiteralPath $_.FullName -Raw|ConvertFrom-Json -Depth 64 -DateKind String}|Where-Object {$_.binding.check_id -ceq $receipt.binding.check_id})
+                Assert-True ($initial.Count -eq 1 -and $initial[0].binding_sha256 -ceq $receipt.binding_sha256) 'Toggling parent progress changed an exact reusable input binding.'
+            }
 
             # Snapshot every prior receipt before any child can run.  The first
             # leaf executes because its prior stream is invalid; that child
@@ -3082,7 +3198,13 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value $termina
     $failingEvidencePath = Join-Path $fixture 'failing-evidence.json'
     $codeFailed = $false
     $codeFailureRecord = $null
-    try { [void](& (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $docsHead -HeadCommit $failingHead -PlanPath $planPath -Platform linux -OutPath $failingEvidencePath) } catch { $codeFailureRecord = $_; $codeFailed = $_.Exception.Message -like '*code-fail*' }
+    $failureProgressWriter=[IO.StringWriter]::new();$failureOriginalError=[Console]::Error
+    try {
+        [Console]::SetError($failureProgressWriter)
+        try { [void](& (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $docsHead -HeadCommit $failingHead -PlanPath $planPath -Platform linux -OutPath $failingEvidencePath -PhaseProgress) } catch { $codeFailureRecord = $_; $codeFailed = $_.Exception.Message -like '*code-fail*' }
+    } finally { [Console]::SetError($failureOriginalError);$failureProgressText=$failureProgressWriter.ToString();$failureProgressWriter.Dispose() }
+    $failureProgress=@(Read-AffectedPhaseProgressEvents $failureProgressText)
+    Assert-True ($failureProgress[-1].phase -ceq 'run' -and $failureProgress[-1].detail -ceq 'threw' -and @($failureProgress|Where-Object { $_.phase -ceq 'leaf-execution' -and $_.detail -ceq 'code-fail' }).Count -eq 1 -and @($failureProgress|Where-Object { $_.phase -ceq 'inventory-finalize' -and $_.detail -ceq 'completed' }).Count -eq 1) 'Code-failure diagnostics claimed success or omitted finalized independent evidence.'
     $codeFailureObserved = if ($null -eq $codeFailureRecord) { '<no exception>' } else { [string]$codeFailureRecord.Exception.Message }
     Assert-True $codeFailed "Affected executor swallowed or reclassified a native nonzero exit. Observed: $codeFailureObserved"
     $failingEvidence = Read-MorphospaceProtocolJson -Path $failingEvidencePath
@@ -3444,7 +3566,13 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     Write-Utf8 $planPath ((ConvertTo-MorphospaceCanonicalJson -Value $integrityDamagePlan) + "`n")
     $integrityDamageRoot = Join-Path $fixture 'affected-check-evidence-integrity-damage'
     $integrityFailure = $null
-    try { [void](& (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $restoredHead -HeadCommit $integrityDamageHead -PlanPath $planPath -Platform linux -OutPath (Join-Path $fixture 'integrity-damage-evidence.json') -CheckEvidenceDirectory $integrityDamageRoot) } catch { $integrityFailure = $_ }
+    $integrityProgressWriter=[IO.StringWriter]::new();$integrityOriginalError=[Console]::Error
+    try {
+        [Console]::SetError($integrityProgressWriter)
+        try { [void](& (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $restoredHead -HeadCommit $integrityDamageHead -PlanPath $planPath -Platform linux -OutPath (Join-Path $fixture 'integrity-damage-evidence.json') -CheckEvidenceDirectory $integrityDamageRoot -PhaseProgress) } catch { $integrityFailure = $_ }
+    } finally { [Console]::SetError($integrityOriginalError);$integrityProgressText=$integrityProgressWriter.ToString();$integrityProgressWriter.Dispose() }
+    $integrityProgress=@(Read-AffectedPhaseProgressEvents $integrityProgressText)
+    Assert-True ($integrityProgress[-1].detail -ceq 'threw' -and @($integrityProgress|Where-Object { $_.phase -ceq 'leaf-execution' -and $_.event -ceq 'start' }).Count -eq 1 -and @($integrityProgress|Where-Object { $_.phase -ceq 'inventory-finalize' -and $_.detail -ceq 'not-attempted' }).Count -eq 1) 'Integrity diagnostics implied reusable completion or another leaf dispatch.'
     Assert-True ($null -ne $integrityFailure -and [string]$integrityFailure.Exception.Message -like '*Post-execution affected-check input integrity failed*') 'Tracked child source mutation was not classified as a typed post-execution integrity failure.'
     $integrityEvidence = Read-MorphospaceProtocolJson -Path (Join-Path $fixture 'integrity-damage-evidence.json')
     Assert-True ($integrityEvidence.result -ceq 'infra-fail' -and -not [IO.File]::Exists((Join-Path $integrityDamageRoot 'inventory.json')) -and [string]$integrityFailure.Exception.Data['AffectedCacheFinalized'] -cne 'true') 'Input-integrity failure published a reusable cache inventory.'
