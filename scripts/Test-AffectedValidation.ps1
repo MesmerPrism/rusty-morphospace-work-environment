@@ -182,7 +182,7 @@ function Invoke-AffectedPhaseProgressEmitterSelfTest {
         [void]$writer.GetStringBuilder().Clear()
         # The interface has no check-ID/path field. Even a syntactically plausible
         # secret identifier cannot escape by occupying a phase, event or detail.
-        foreach ($unsafe in @('private-check-id',"private`nsecret",'C:/private/secret',('a'*1024),'private\secret','秘密')) {
+        foreach ($unsafe in @('private-check-id',"private`nsecret",(Join-Path ([IO.Path]::GetTempPath()) 'phase-progress-secret'),('a'*1024),'private\secret','秘密')) {
             Write-AffectedValidationPhaseProgress $unsafe start
             Write-AffectedValidationPhaseProgress run $unsafe
             Write-AffectedValidationPhaseProgress run decision $unsafe
