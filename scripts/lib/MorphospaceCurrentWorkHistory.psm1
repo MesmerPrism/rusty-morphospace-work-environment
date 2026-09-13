@@ -208,22 +208,9 @@ function Get-MorphospaceCurrentWorkHistory {
         [void](Test-MorphospaceHistoricalProposedRetirement -WorkspaceRoot $workspace -ExpectedEvent $retirementEvent -CommittedStep $retirementStep)
         if($historicallyRetiredProposedSequences.ContainsKey($retiredId)){throw 'Current-work proposed retirement identity is ambiguous.'};$historicallyRetiredProposedSequences[$retiredId]=[int]$retirementEvent.sequence;[void]$historicallyRetiredProposed.Add($retiredId)
     }
-    $recoveryByAdmissionEvent = @{}
-    $recoveryByCorrectionEvent = @{}
-    foreach ($candidate in @($events | Where-Object { [int]$_.sequence -gt $sequence -and @($_.receipts).Count -eq 1 })) {
-        $candidateReceiptPath = Resolve-MorphospaceWorkspacePath $workspace ([string]$candidate.receipts[0])
-        if (-not [IO.File]::Exists($candidateReceiptPath)) { continue }
-        $candidateReceipt = Read-MorphospaceProtocolJson $candidateReceiptPath
-        if ([string]$candidateReceipt.schema -cne 'rusty.morphospace.workflow.admission_completion_timestamp_recovery.v1') { continue }
-        $recovery = Test-MorphospaceHistoricalAdmissionCompletionTimestampRecovery -WorkspaceRoot $workspace -RecoveryPath $candidateReceiptPath -ExpectedEvent $candidate
-        $admissionEventId = "$([string]$candidateReceipt.admission_id)-admitted"
-        $admissionEvent = @($events | Where-Object { [string]$_.event_id -ceq $admissionEventId })
-        if ($admissionEvent.Count -ne 1 -or [int]$admissionEvent[0].sequence + 1 -ne [int]$candidate.sequence -or $recoveryByAdmissionEvent.ContainsKey($admissionEventId) -or $recoveryByCorrectionEvent.ContainsKey([string]$candidate.event_id)) {
-            throw 'Current-work admission recovery does not uniquely and immediately follow its malformed admission.'
-        }
-        $recoveryByAdmissionEvent[$admissionEventId] = $recovery
-        $recoveryByCorrectionEvent[[string]$candidate.event_id] = $recovery
-    }
+    $recoveryIndex = Get-MorphospaceAdmissionCompletionTimestampRecoveryIndex -WorkspaceRoot $workspace -ExpectedEvents $events -AfterSequence $sequence
+    $recoveryByAdmissionEvent = $recoveryIndex.by_admission_event
+    $recoveryByCorrectionEvent = $recoveryIndex.by_correction_event
     # Existing owner transactions fence all changes after the accepted boundary.
     foreach ($event in @($events | Where-Object { [int]$_.sequence -gt $sequence })) {
         $id = "$($event.event_id)-transition"

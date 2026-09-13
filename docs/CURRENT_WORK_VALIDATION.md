@@ -132,6 +132,16 @@ ledger validator. A prerequisite can use the finite proof only at or before the
 authenticated current boundary. Current suffix transitions and general ledger
 validation do not gain a compatibility route.
 
+Admission-consumer discovery also uses the shared authenticated admission
+timestamp-recovery index. A fresh preparation and admission can follow a
+recovered proposal retirement while retaining the original accepted checkpoint.
+The exact committed correction must uniquely and immediately follow its original
+admission and authenticate the original intent and malformed completion bytes.
+Consumer schema, preparation identity, project identity, incomplete-transaction
+ownership, and direct topology remain strict. This read-only classification does
+not permit a recovered admission to skip its correction when proving a direct
+Ready or retirement successor.
+
 Proposed-unit retirement uses this same authenticated inventory before applying
 the current unit schema. The target proposal and every nonhistorical unit remain
 subject to that schema. Retained historical units keep their original bytes and

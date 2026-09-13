@@ -316,4 +316,36 @@ function Test-MorphospaceHistoricalAdmissionCompletionTimestampRecovery {
     [pscustomobject]@{intent=$recoveryIntent;completion=$recoveryCompletion;receipt=$receipt;receipt_sha256=(Get-MorphospaceSha256Bytes $receiptBytes);original_intent=$originalIntent;malformed_completion=$completion;pre_event_state=$originalIntent.target.state.document;target_state=$targetState;target_unit=$unitDocument;recovery_event=$ExpectedEvent;bound_ledger_length=$boundLength;recovery_ledger_length=($boundLength+$recoveryLine.LongLength);project=$projectDocument;feature_lock=$lockDocument;grants_validation_credit=$false}
 }
 
-Export-ModuleMember -Function Test-MorphospaceHistoricalCommittedTransitionV1,Test-MorphospaceAcceptedCheckpointProof,Test-MorphospaceCommittedDevelopmentEnvelopeRepreparation,Test-MorphospaceHistoricalProposedRetirement,Test-MorphospaceHistoricalAdmissionCompletionTimestampRecovery
+function Get-MorphospaceAdmissionCompletionTimestampRecoveryIndex {
+    [CmdletBinding()]param(
+        [Parameter(Mandatory)][string]$WorkspaceRoot,
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$ExpectedEvents,
+        [Parameter(Mandatory)][ValidateRange(0,2147483647)][int]$AfterSequence
+    )
+    $workspace = [IO.Path]::GetFullPath($WorkspaceRoot)
+    $lock = Enter-MorphospaceWorkspaceMutex -WorkspaceRoot $workspace
+    try {
+        $events = @(Get-Content -LiteralPath (Resolve-MorphospaceWorkspacePath $workspace 'iteration-events.jsonl' -RequireLeaf) | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json -DateKind String })
+        if ((Get-MorphospaceCanonicalJsonSha256 @($events)) -cne (Get-MorphospaceCanonicalJsonSha256 @($ExpectedEvents))) { throw 'Admission recovery event snapshot differs from the workspace ledger.' }
+        $byAdmissionEvent = @{}
+        $byCorrectionEvent = @{}
+        foreach ($candidate in @($events | Where-Object { [int]$_.sequence -gt $AfterSequence -and @($_.receipts).Count -eq 1 })) {
+            $candidateReceiptPath = Resolve-MorphospaceWorkspacePath $workspace ([string]$candidate.receipts[0])
+            if (-not [IO.File]::Exists($candidateReceiptPath)) { continue }
+            $candidateReceipt = Read-MorphospaceProtocolJson $candidateReceiptPath
+            if ([string]$candidateReceipt.schema -cne 'rusty.morphospace.workflow.admission_completion_timestamp_recovery.v1') { continue }
+            $recovery = Test-MorphospaceHistoricalAdmissionCompletionTimestampRecovery -WorkspaceRoot $workspace -RecoveryPath $candidateReceiptPath -ExpectedEvent $candidate
+            $admissionEventId = "$([string]$candidateReceipt.admission_id)-admitted"
+            $admissionEvent = @($events | Where-Object { [string]$_.event_id -ceq $admissionEventId })
+            if ($admissionEvent.Count -ne 1 -or [int]$admissionEvent[0].sequence + 1 -ne [int]$candidate.sequence -or $byAdmissionEvent.ContainsKey($admissionEventId) -or $byCorrectionEvent.ContainsKey([string]$candidate.event_id)) {
+                throw 'Current-work admission recovery does not uniquely and immediately follow its malformed admission.'
+            }
+            if ((Get-MorphospaceCanonicalJsonSha256 $admissionEvent[0]) -cne (Get-MorphospaceCanonicalJsonSha256 $recovery.original_intent.event)) { throw 'Admission recovery original event differs from its authenticated intent.' }
+            $byAdmissionEvent[$admissionEventId] = $recovery
+            $byCorrectionEvent[[string]$candidate.event_id] = $recovery
+        }
+        [pscustomobject]@{ by_admission_event=$byAdmissionEvent; by_correction_event=$byCorrectionEvent }
+    } finally { Exit-MorphospaceWorkspaceMutex $lock }
+}
+
+Export-ModuleMember -Function Test-MorphospaceHistoricalCommittedTransitionV1,Test-MorphospaceAcceptedCheckpointProof,Test-MorphospaceCommittedDevelopmentEnvelopeRepreparation,Test-MorphospaceHistoricalProposedRetirement,Test-MorphospaceHistoricalAdmissionCompletionTimestampRecovery,Get-MorphospaceAdmissionCompletionTimestampRecoveryIndex
