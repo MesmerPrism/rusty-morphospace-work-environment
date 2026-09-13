@@ -48,6 +48,11 @@ a way to hide damaged current history or a failed transaction. Exact retries
 authenticate the original transaction; they do not append another retirement
 or overwrite retained evidence.
 
+An old, never-admitted proposal is excluded only when the ordinary preparation
+classifier proves it inert against the authenticated owner control surface.
+It remains byte-exact; a queued, admitted, referenced or in-flight proposal
+receives no exemption. The named replacement must still be absent.
+
 ## Prepare the replacement
 
 Once the project is idle, use ordinary `PrepareDevelopmentEnvelope` to review

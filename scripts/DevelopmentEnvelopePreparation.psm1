@@ -101,7 +101,7 @@ function Test-PreparationDraftReference {
     }
     return $false
 }
-function Get-PreparationInertDraftIds {
+function Get-MorphospaceInertDevelopmentProposalIds {
     param([string]$Workspace,[object]$History)
     $inert = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $drafts = @($History.units.Keys | Where-Object { [string]$History.units[$_].status -ceq 'proposed' })
@@ -168,7 +168,7 @@ function Assert-PreparationHistoricalSupersessionClosure {
         Assert-PreparationHistoricalSupersessionAudit $Workspace
         return
     }
-    $inertDrafts = Get-PreparationInertDraftIds $Workspace $history
+    $inertDrafts = Get-MorphospaceInertDevelopmentProposalIds $Workspace $history
     foreach ($id in $history.units.Keys) {
         if ([string]$history.units[$id].status -cne 'accepted' -and
             -not $history.retired_ids.Contains($id) -and
@@ -330,4 +330,4 @@ function Invoke-MorphospacePrepareDevelopmentEnvelope {
  $mutex=Enter-MorphospaceWorkspaceMutex $workspace;try{if([IO.File]::Exists($intentPath)){throw 'Preparation intent appeared during observation; retry against the exact owner intent.'};Write-MorphospaceManagedProtocolJsonAtomic $workspace $intentRelative $intent -NoOverwrite;if($FaultAfter-eq'after-intent'){throw 'Injected preparation interruption after intent.'};[void](Complete-MorphospaceDevelopmentEnvelopePreparation $workspace $repoRoot $intentRelative $completionRelative -FaultAfter $FaultAfter)}finally{Exit-MorphospaceWorkspaceMutex $mutex}
  New-PreparationAutomationReceipt $p $Timestamp $true 'idle-project-envelope-prepared' $receiptRelative $inputHash $state $eventId
 }
-Export-ModuleMember -Function Invoke-MorphospacePrepareDevelopmentEnvelope
+Export-ModuleMember -Function Invoke-MorphospacePrepareDevelopmentEnvelope,Get-MorphospaceInertDevelopmentProposalIds

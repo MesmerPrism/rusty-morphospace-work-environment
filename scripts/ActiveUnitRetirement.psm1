@@ -42,9 +42,9 @@ function Get-ActiveRetirementEvents([string]$Workspace){
     [pscustomobject]@{events=$events;sha256=Get-MorphospaceSha256Bytes $bytes;length=[long]$bytes.Length;tail_id=[string]$events[-1].event_id}
 }
 function Get-ActiveRetirementRepositories([object]$Unit,[object]$Source,[string]$RepoMapPath,[string]$Workspace='',[object]$RecoveryIntent=$null){
-    # Repository observation is action-only: importing this larger module during a historical read
-    # would reload its dependencies into the caller's validation scope.
-    Import-Module (Join-Path $PSScriptRoot 'WorkUnitAutomation.psm1')
+    # Git observation is action-only. The shared reader avoids importing the
+    # larger automation orchestrator into the historical dependency closure.
+    Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceRepositoryObservation.psm1')
     $mapDocument=Read-MorphospaceProtocolJson ([IO.Path]::GetFullPath($RepoMapPath))
     Assert-ActiveRetirementSchema $mapDocument 'repository-map.schema.json'
     $map=@{};foreach($row in @($mapDocument.repositories)){
@@ -246,9 +246,11 @@ function Invoke-MorphospaceRetireActive {
         Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceCurrentWorkHistory.psm1')
         $history=Get-MorphospaceCurrentWorkHistory -WorkspaceRoot $workspace
         if(-not$history.authenticated){throw 'Active retirement requires an authenticated accepted checkpoint and current suffix.'}
+        Import-Module (Join-Path $PSScriptRoot 'DevelopmentEnvelopePreparation.psm1')
+        $inertDrafts=Get-MorphospaceInertDevelopmentProposalIds -Workspace $workspace -History $history
         foreach($other in $history.units.Values){
             $otherId=[string]$other.unit_id
-            if($otherId-cne$UnitId-and@('proposed','ready','active','validating')-ccontains[string]$other.status-and-not$history.retired_active_ids.Contains($otherId)-and-not$history.historical_ids.Contains($otherId)){throw 'Active retirement refuses another pending or in-flight unit.'}
+            if($otherId-cne$UnitId-and@('proposed','ready','active','validating')-ccontains[string]$other.status-and-not$history.retired_active_ids.Contains($otherId)-and-not$history.historical_ids.Contains($otherId)-and-not$inertDrafts.Contains($otherId)){throw 'Active retirement refuses another pending or in-flight unit.'}
         }
         Assert-ActiveRetirementEqual $request.claim (Get-ActiveRetirementClaim $workspace $request $events.events) 'current Claim'
         if([string]$state.last_accepted_receipt-cne[string]$request.accepted_receipt.path-or(Get-MorphospaceFileSha256 (Resolve-MorphospaceWorkspacePath $workspace ([string]$request.accepted_receipt.path) -RequireLeaf))-cne[string]$request.accepted_receipt.sha256){throw 'Active retirement accepted receipt binding drifted.'}

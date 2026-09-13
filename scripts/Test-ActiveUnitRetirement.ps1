@@ -1,4 +1,4 @@
-param([switch]$SelfTest)
+param([switch]$SelfTest,[switch]$InertProposalsOnly)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version 2.0
 if(-not$SelfTest){throw 'Test-ActiveUnitRetirement requires -SelfTest.'}
@@ -35,6 +35,37 @@ try{
     $requestSchema=Join-Path $repository 'schemas/active-unit-retirement-v1.schema.json'
     Assert-RetirementTest (Test-Json -Json ($request|ConvertTo-Json -Depth 100) -SchemaFile $requestSchema) 'exact request schema'
     function Copy-RetirementWorkspace([string]$Name){$path=Join-Path $temp $Name;Copy-Item -LiteralPath $template -Destination $path -Recurse;Write-RetirementRequest $path $request;return $path}
+    # Authentic Prepare/Admit/Ready/Claim authority may coexist with an unrelated
+    # never-admitted draft. It grants no ownership and must survive retirement.
+    $draft=$seed.u002|ConvertTo-Json -Depth 100|ConvertFrom-Json -DateKind String
+    $draft.unit_id='u015';$draft.status='proposed'
+    foreach($name in @($draft.PSObject.Properties.Name|Where-Object{$_-match'admission|preparation|^candidate_freeze$|^inherited_candidate'})){$draft.PSObject.Properties.Remove($name)}
+    $inert=Copy-RetirementWorkspace 'inert-draft'
+    $draftPath=Join-Path $inert 'iteration-units/u015.json';Write-EnvelopeJson $draftPath $draft
+    $draftHash=Get-MorphospaceFileSha256 $draftPath;$before=Get-RetirementInventory $inert
+    $null=Invoke-RetirementTest $inert $false
+    Assert-RetirementTest ((Get-RetirementInventory $inert)-ceq$before) 'inert-draft dry run wrote bytes'
+    $done=Invoke-RetirementTest $inert
+    Assert-RetirementTest ($done.executed-and$null-eq$done.current_unit_after-and(Get-MorphospaceFileSha256 $draftPath)-ceq$draftHash) 'inert draft was rejected or rewritten'
+    foreach($kind in @('admitted','ready','active','validating','prerequisite','queued','receipt-reference','named-replacement')){
+        $workspace=Copy-RetirementWorkspace "draft-$kind"
+        $proposal=$draft|ConvertTo-Json -Depth 100|ConvertFrom-Json -DateKind String
+        if($kind-ceq'admitted'){$proposal|Add-Member -NotePropertyName admission -NotePropertyValue ([pscustomobject]@{admission_id='u015-admission'})}
+        if(@('ready','active','validating')-ccontains$kind){$proposal.status=$kind}
+        Write-EnvelopeJson (Join-Path $workspace 'iteration-units/u015.json') $proposal
+        if($kind-ceq'prerequisite'){
+            $dependent=$draft|ConvertTo-Json -Depth 100|ConvertFrom-Json -DateKind String;$dependent.unit_id='u016';$dependent.prerequisites=@('u015')
+            Write-EnvelopeJson (Join-Path $workspace 'iteration-units/u016.json') $dependent
+        }
+        if($kind-ceq'queued'){
+            $state=Read-MorphospaceProtocolJson (Join-Path $workspace 'workspace.state.json');$state.next_ready_unit='u015';Write-EnvelopeJson (Join-Path $workspace 'workspace.state.json') $state
+            $bad=$request|ConvertTo-Json -Depth 100|ConvertFrom-Json -DateKind String;$bad.expected.state_raw_sha256=Get-MorphospaceFileSha256 (Join-Path $workspace 'workspace.state.json');$bad.expected.state_canonical_sha256=Get-MorphospaceCanonicalJsonSha256 $state;Write-RetirementRequest $workspace $bad
+        }
+        if($kind-ceq'receipt-reference'){Write-EnvelopeJson (Join-Path $workspace 'receipts/u015-observation.json') ([ordered]@{unit_id='u015'})}
+        if($kind-ceq'named-replacement'){$bad=$request|ConvertTo-Json -Depth 100|ConvertFrom-Json -DateKind String;$bad.replacement_unit_id='u015';Write-RetirementRequest $workspace $bad}
+        Assert-RetirementRejects $workspace "non-inert $kind proposal"
+    }
+    if($InertProposalsOnly){[pscustomobject]@{status='pass';check='active-unit-retirement-inert-proposals';negative_cases=8;inert_draft_bytes_preserved=$true}|ConvertTo-Json -Compress;return}
     $success=Copy-RetirementWorkspace 'success';$before=Get-RetirementInventory $success
     $dry=Invoke-RetirementTest $success $false
     Assert-RetirementTest (-not$dry.executed-and$dry.current_unit_after-ceq'u002') 'dry observation grants no idle ownership'
