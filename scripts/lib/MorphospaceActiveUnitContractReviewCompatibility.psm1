@@ -172,7 +172,7 @@ function Test-MorphospaceActiveUnitContractReviewCompatibility {
         if ([string]$surface.action -cne 'update') { return $false }
     }
 
-    # The two review-only skill surfaces are a closed external registration,
+    # The exact review-only skill surfaces are a closed external registration,
     # never a second writable repository authority.
     if (@($Unit.allowed_repositories | Where-Object { [string]$_.repo_id -ceq 'skill-surfaces' }).Count -ne 0) {
         return $false

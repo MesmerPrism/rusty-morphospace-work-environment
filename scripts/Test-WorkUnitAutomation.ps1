@@ -988,7 +988,7 @@ try {
     Assert-Automation ($null -ne (Get-Command Get-GitWorkspaceInventory -ErrorAction SilentlyContinue)) 'public W-014 router exercise did not restore the later adoption helper'
 
     $portableDamageRoot = Join-Path $testRoot 'unregistered-skill-lookalike'
-    foreach ($skillId in @('rusty-morphospace', 'system-engineering')) {
+    foreach ($skillId in @('rust-work-graph', 'rusty-morphospace', 'system-engineering')) {
         [System.IO.Directory]::CreateDirectory((Join-Path $portableDamageRoot $skillId)) | Out-Null
         [System.IO.File]::WriteAllText((Join-Path $portableDamageRoot "$skillId\SKILL.md"), "# lookalike $skillId`n", $encoding)
     }
@@ -1024,7 +1024,7 @@ try {
     Assert-Automation ($extraAliasCheck.Count -eq 1 -and [string]$extraAliasCheck[0].outcome -ceq 'fail') 'extra skill-surfaces alias passed compatibility'
 
     $sameRootMapPath = Join-Path $testRoot 'same-root-skill-map.json'
-    foreach ($skillId in @('rusty-morphospace', 'system-engineering')) {
+    foreach ($skillId in @('rust-work-graph', 'rusty-morphospace', 'system-engineering')) {
         $sameRootDirectory = Join-Path $repo $skillId
         [System.IO.Directory]::CreateDirectory($sameRootDirectory) | Out-Null
         [System.IO.File]::WriteAllBytes((Join-Path $sameRootDirectory 'SKILL.md'), [System.IO.File]::ReadAllBytes((Join-Path $canonicalSkillRoot "$skillId\SKILL.md")))
@@ -1037,7 +1037,7 @@ try {
     Assert-Automation ($sameRootCheck.Count -eq 1 -and [string]$sameRootCheck[0].outcome -ceq 'fail') 'skill root equal to a writable repository passed compatibility'
 
     $containedRoot = Join-Path $repo 'registered-skill-surfaces'
-    foreach ($skillId in @('rusty-morphospace', 'system-engineering')) {
+    foreach ($skillId in @('rust-work-graph', 'rusty-morphospace', 'system-engineering')) {
         $containedDirectory = Join-Path $containedRoot $skillId
         [System.IO.Directory]::CreateDirectory($containedDirectory) | Out-Null
         [System.IO.File]::WriteAllBytes((Join-Path $containedDirectory 'SKILL.md'), [System.IO.File]::ReadAllBytes((Join-Path $canonicalSkillRoot "$skillId\SKILL.md")))
@@ -1051,7 +1051,7 @@ try {
     Assert-Automation ($containedRootCheck.Count -eq 1 -and [string]$containedRootCheck[0].outcome -ceq 'fail') 'skill root contained by a writable repository passed compatibility'
     # These paths belong only to this damage fixture. Restore its shared
     # synthetic repository before later cases require a clean source state.
-    foreach ($skillId in @('rusty-morphospace', 'system-engineering')) {
+    foreach ($skillId in @('rust-work-graph', 'rusty-morphospace', 'system-engineering')) {
         $sameRootDirectory = Join-Path $repo $skillId
         if ([IO.Directory]::Exists($sameRootDirectory)) { [IO.Directory]::Delete($sameRootDirectory, $true) }
     }
