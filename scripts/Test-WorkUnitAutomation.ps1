@@ -661,7 +661,7 @@ try {
     Invoke-TestGit -Path $repo -Arguments @("push", "origin", "main") | Out-Null
     $skillsRoot = Join-Path $testRoot 'registered-skill-surfaces'
     $canonicalSkillRoot = Join-Path (Split-Path -Parent $PSScriptRoot) 'skills'
-    foreach ($skillId in @('rusty-morphospace', 'system-engineering')) {
+    foreach ($skillId in @('rust-work-graph', 'rusty-morphospace', 'system-engineering')) {
         $skillDirectory = Join-Path $skillsRoot $skillId
         [System.IO.Directory]::CreateDirectory($skillDirectory) | Out-Null
         # The registered external copy must bind to this source revision's
@@ -736,7 +736,7 @@ try {
     $fixed = "2026-01-02T03:04:05.0000000Z"
 
     # The exact current-feature shape that needs a schema-only correction may
-    # retain two non-writable lifecycle-routed skill reviews. Inspect must use
+    # retain its exact non-writable lifecycle-routed skill reviews. Inspect must use
     # the same bounded semantic as the correction and contract validator.
     $reviewCompatibilityUnitId = "unit-current-review-compatibility"
     $reviewCompatibilityWorkspace = New-TestWorkspace -Root (Join-Path $testRoot "current-review-compatibility") -ProjectId "current-review-compatibility" -UnitId $reviewCompatibilityUnitId
@@ -794,7 +794,7 @@ try {
     $portableUnit | Add-Member -NotePropertyName claim_requirements -NotePropertyValue ([pscustomobject][ordered]@{
         minimum_free_disk_mib = 1; required_tools = @(); product_inputs = @()
     })
-    $portableUnit.change_categories = @('state-machine', 'validation-routing')
+    $portableUnit.change_categories = @('module-layout', 'state-machine', 'validation-routing')
     $portableUnit.instruction_impact = 'update'
     [void]$portableUnit.PSObject.Properties.Remove('instruction_none_justification')
     $portableUnit.allowed_repositories[0].allowed_paths = @('AGENTS.md', 'docs/workflow.md', 'src/', 'morphospace/')
@@ -802,7 +802,8 @@ try {
         [pscustomobject][ordered]@{ surface_kind='agents'; path='<project-shell>/AGENTS.md'; owner='project-shell'; change_reason='Update the repository-owned validation entrypoint.'; action='update'; status='planned'; validation='Synthetic Ready/Inspect/Claim parity fixture.'; skill_id=$null },
         [pscustomobject][ordered]@{ surface_kind='router-doc'; path='<project-shell>/docs/workflow.md'; owner='project-shell'; change_reason='Update the repository-owned validation router.'; action='update'; status='planned'; validation='Synthetic Ready/Inspect/Claim parity fixture.'; skill_id=$null },
         [pscustomobject][ordered]@{ surface_kind='skill'; path='<skills-root>/rusty-morphospace/SKILL.md'; owner='workflow-maintainer'; change_reason='Review the registered external lifecycle skill without claiming a repository edit.'; action='review-no-change'; status='planned'; validation='Bound repository-map skill registration.'; skill_id='rusty-morphospace' },
-        [pscustomobject][ordered]@{ surface_kind='skill'; path='<skills-root>/system-engineering/SKILL.md'; owner='workflow-maintainer'; change_reason='Review the registered external lifecycle skill without claiming a repository edit.'; action='review-no-change'; status='planned'; validation='Bound repository-map skill registration.'; skill_id='system-engineering' }
+        [pscustomobject][ordered]@{ surface_kind='skill'; path='<skills-root>/system-engineering/SKILL.md'; owner='workflow-maintainer'; change_reason='Review the registered external lifecycle skill without claiming a repository edit.'; action='review-no-change'; status='planned'; validation='Bound repository-map skill registration.'; skill_id='system-engineering' },
+        [pscustomobject][ordered]@{ surface_kind='skill'; path='<skills-root>/rust-work-graph/SKILL.md'; owner='workflow-maintainer'; change_reason='Review the registered external module-layout router without claiming a repository edit.'; action='review-no-change'; status='planned'; validation='Bound repository-map skill registration.'; skill_id='rust-work-graph' }
     )
     Write-TestJson -Path $portableUnitPath -Value $portableUnit
     $portableStatePath = Join-Path $portableWorkspace 'workspace.state.json'
@@ -987,7 +988,7 @@ try {
     Assert-Automation ($null -ne (Get-Command Get-GitWorkspaceInventory -ErrorAction SilentlyContinue)) 'public W-014 router exercise did not restore the later adoption helper'
 
     $portableDamageRoot = Join-Path $testRoot 'unregistered-skill-lookalike'
-    foreach ($skillId in @('rusty-morphospace', 'system-engineering')) {
+    foreach ($skillId in @('rust-work-graph', 'rusty-morphospace', 'system-engineering')) {
         [System.IO.Directory]::CreateDirectory((Join-Path $portableDamageRoot $skillId)) | Out-Null
         [System.IO.File]::WriteAllText((Join-Path $portableDamageRoot "$skillId\SKILL.md"), "# lookalike $skillId`n", $encoding)
     }
@@ -1023,7 +1024,7 @@ try {
     Assert-Automation ($extraAliasCheck.Count -eq 1 -and [string]$extraAliasCheck[0].outcome -ceq 'fail') 'extra skill-surfaces alias passed compatibility'
 
     $sameRootMapPath = Join-Path $testRoot 'same-root-skill-map.json'
-    foreach ($skillId in @('rusty-morphospace', 'system-engineering')) {
+    foreach ($skillId in @('rust-work-graph', 'rusty-morphospace', 'system-engineering')) {
         $sameRootDirectory = Join-Path $repo $skillId
         [System.IO.Directory]::CreateDirectory($sameRootDirectory) | Out-Null
         [System.IO.File]::WriteAllBytes((Join-Path $sameRootDirectory 'SKILL.md'), [System.IO.File]::ReadAllBytes((Join-Path $canonicalSkillRoot "$skillId\SKILL.md")))
@@ -1036,7 +1037,7 @@ try {
     Assert-Automation ($sameRootCheck.Count -eq 1 -and [string]$sameRootCheck[0].outcome -ceq 'fail') 'skill root equal to a writable repository passed compatibility'
 
     $containedRoot = Join-Path $repo 'registered-skill-surfaces'
-    foreach ($skillId in @('rusty-morphospace', 'system-engineering')) {
+    foreach ($skillId in @('rust-work-graph', 'rusty-morphospace', 'system-engineering')) {
         $containedDirectory = Join-Path $containedRoot $skillId
         [System.IO.Directory]::CreateDirectory($containedDirectory) | Out-Null
         [System.IO.File]::WriteAllBytes((Join-Path $containedDirectory 'SKILL.md'), [System.IO.File]::ReadAllBytes((Join-Path $canonicalSkillRoot "$skillId\SKILL.md")))
@@ -1050,7 +1051,7 @@ try {
     Assert-Automation ($containedRootCheck.Count -eq 1 -and [string]$containedRootCheck[0].outcome -ceq 'fail') 'skill root contained by a writable repository passed compatibility'
     # These paths belong only to this damage fixture. Restore its shared
     # synthetic repository before later cases require a clean source state.
-    foreach ($skillId in @('rusty-morphospace', 'system-engineering')) {
+    foreach ($skillId in @('rust-work-graph', 'rusty-morphospace', 'system-engineering')) {
         $sameRootDirectory = Join-Path $repo $skillId
         if ([IO.Directory]::Exists($sameRootDirectory)) { [IO.Directory]::Delete($sameRootDirectory, $true) }
     }
@@ -1065,7 +1066,7 @@ try {
     Assert-Automation ($writableSkillCheck.Count -eq 1 -and [string]$writableSkillCheck[0].outcome -ceq 'fail' -and @($writableSkillCheck[0].reason_codes) -contains 'instruction-action-mode-mismatch') 'review-no-change on a writable registered skill surface passed compatibility'
 
     $wrongCategoryUnit = $portableUnit | ConvertTo-Json -Depth 32 | ConvertFrom-Json
-    $wrongCategoryUnit.change_categories += 'module-layout'
+    $wrongCategoryUnit.instruction_surfaces = @($wrongCategoryUnit.instruction_surfaces | Where-Object { [string]$_.skill_id -cne 'rust-work-graph' })
     Write-TestJson -Path $portableUnitPath -Value $wrongCategoryUnit
     $wrongCategoryInspect = Invoke-MorphospaceWorkUnitAutomation -Action Inspect -WorkspaceRoot $portableWorkspace -UnitId $portableProposalId -RepoMapPath $repoMapPath -Timestamp $fixed
     $wrongCategoryCheck = @($wrongCategoryInspect.claim_preflight.coverage.checks | Where-Object { [string]$_.check_id -ceq 'instruction-action-compatibility' })

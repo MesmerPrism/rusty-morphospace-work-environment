@@ -90,6 +90,54 @@ function Test-AdditivePreparationCases {
   $repeated.envelope.feature_lock.lock_fingerprint=LockFingerprint $repeated.envelope.feature_lock
   Assert-PreparationRejected $root $repeated 'repeated-feature-parameter' -Execute
 
+  $root=Join-Path $temp 'additive-feature-rollback-profile'
+  Copy-Item $recoveryBase $root -Recurse
+  $addRollback=Copy-Preparation $PreparationTemplate
+  $addRollback.envelope.project.acceptance_profiles+=,[pscustomobject][ordered]@{profile_id='generic-envelope-rollback';commands=@('Disable the generic fixture feature and verify its effects are absent.')}
+  $addRollback.envelope.feature_lock.features[1].rollback_profile='generic-envelope-rollback'
+  $addRollback.envelope.feature_lock.lock_fingerprint=LockFingerprint $addRollback.envelope.feature_lock
+  $path=Join-Path $temp 'additive-feature-rollback-profile.json';Write-PreparationJson $path $addRollback
+  $result=Invoke-MorphospacePrepareDevelopmentEnvelope -WorkspaceRoot $root -DevelopmentEnvelopePreparation $path -ExpectedDevelopmentEnvelopePreparationSha256 (Get-MorphospaceFileSha256 $path) -OutPath (Join-Path $root 'receipts/portable-envelope-prepare.json') -Execute
+  $preparedProject=Read-MorphospaceProtocolJson (Join-Path $root 'project.spec.json')
+  Assert-Preparation ($result.executed-and@($preparedProject.acceptance_profiles|Where-Object{[string]$_.profile_id-ceq'generic-envelope-rollback'}).Count-eq1) 'newly selected feature could not register its exact rollback profile'
+
+  foreach($rollbackDamage in @('remove','rewrite','duplicate','unbound','unregistered')){
+    $root=Join-Path $temp ('additive-rollback-'+$rollbackDamage)
+    Copy-Item $recoveryBase $root -Recurse
+    $candidate=Copy-Preparation $PreparationTemplate
+    $expected=''
+    switch($rollbackDamage){
+      'remove' {$candidate.envelope.project.acceptance_profiles=@([pscustomobject][ordered]@{profile_id='replacement-rollback';commands=@('fixture')});$expected="Preparation removes or rewrites acceptance profile 'rollback'."}
+      'rewrite' {$candidate.envelope.project.acceptance_profiles[0].commands=@('rewritten');$expected="Preparation removes or rewrites acceptance profile 'rollback'."}
+      'duplicate' {$candidate.envelope.project.acceptance_profiles+=,(Copy-Preparation $candidate.envelope.project.acceptance_profiles[0]);$expected="Preparation target project repeats acceptance profile 'rollback'."}
+      'unbound' {$candidate.envelope.project.acceptance_profiles+=,[pscustomobject][ordered]@{profile_id='unused-rollback';commands=@('fixture')};$expected='Preparation added acceptance profiles must exactly match rollback profiles required by newly selected features.'}
+      'unregistered' {$candidate.envelope.feature_lock.features[1].rollback_profile='missing-rollback';$expected='Preparation added acceptance profiles must exactly match rollback profiles required by newly selected features.'}
+    }
+    $candidate.envelope.feature_lock.lock_fingerprint=LockFingerprint $candidate.envelope.feature_lock
+    Assert-PreparationRejected $root $candidate ('rollback-'+$rollbackDamage) $expected -Execute
+  }
+
+  $historicalCurrent=Copy-Preparation $project
+  $historicalTarget=Copy-Preparation $project
+  $historicalTarget.revision=2
+  $historicalTarget.acceptance_profiles+=,[pscustomobject][ordered]@{profile_id='historical-added-rollback';commands=@('fixture')}
+  $historicalRejected=$false;$historicalMessage='no rejection'
+  $preparationModule=Get-Module DevelopmentEnvelopePreparation
+  $historicalPayload=[pscustomobject]@{current=$historicalCurrent;target=$historicalTarget}
+  try { & $preparationModule { param($payload) Assert-PreparationAdditiveProject -Current $payload.current -Target $payload.target -AllowSchemaPinAdvance $false -OwnerRepositories $null -Mode historical } $historicalPayload }
+  catch {$historicalMessage=$_.Exception.Message;$historicalRejected=$historicalMessage-ceq"Preparation rewrites non-envelope project property 'acceptance_profiles'." }
+  Assert-Preparation $historicalRejected "historical preparation accepted an additive rollback profile or returned the wrong rejection: $historicalMessage"
+  $replayMode=& $preparationModule { param($payload) Get-MorphospaceDevelopmentEnvelopeReplayMode $payload.current $payload.target } $historicalPayload
+  Assert-Preparation ($replayMode-ceq'ordinary') 'acceptance-profile-only change selected historical replay semantics'
+  $historicalDuplicateCurrent=Copy-Preparation $project
+  $historicalDuplicateCurrent.acceptance_profiles+=,[pscustomobject][ordered]@{profile_id='rollback';commands=@('retained historical duplicate')}
+  $historicalDuplicateTarget=Copy-Preparation $historicalDuplicateCurrent;$historicalDuplicateTarget.revision=2
+  $historicalDuplicatePayload=[pscustomobject]@{current=$historicalDuplicateCurrent;target=$historicalDuplicateTarget}
+  $historicalDuplicateAccepted=$true
+  try { & $preparationModule { param($payload) Assert-PreparationAdditiveProject -Current $payload.current -Target $payload.target -AllowSchemaPinAdvance $false -OwnerRepositories $null -Mode historical } $historicalDuplicatePayload }
+  catch {$historicalDuplicateAccepted=$false}
+  Assert-Preparation $historicalDuplicateAccepted 'unchanged retained historical acceptance profiles acquired ordinary duplicate checks'
+
   # A self-consistent but invalid additive intent must fail before its first
   # staged artifact, live document, or event write.
   $root=Join-Path $temp 'additive-invalid-resume'

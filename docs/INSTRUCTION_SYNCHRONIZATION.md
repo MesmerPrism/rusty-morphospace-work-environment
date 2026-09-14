@@ -84,10 +84,11 @@ routed AGENTS, README/router, validation document, and skill surface as
 not convert the review record into an update claim.
 
 A second, closed explicit-feature compatibility rule applies while a feature
-unit is proposed, ready, active, or validating. It permits exactly the
-currently lifecycle-routed `rusty-morphospace` and `system-engineering` skill
-surfaces to remain `review-no-change` only when every other instruction surface
-uses `update`, the routed-skill union is exactly that pair, and the local
+unit is proposed, ready, active, or validating. It permits the exact
+currently lifecycle-routed subset of the owner-tracked `rusty-morphospace`,
+`system-engineering`, and `rust-work-graph` skill surfaces to remain
+`review-no-change` only when every other instruction surface uses `update`,
+the routed-skill union contains no other skill, and the local
 repository map registers their canonical `<skills-root>/<skill-id>/SKILL.md`
 files under one distinct external `skill-surfaces` source. The alias set is
 exactly `skills-root`; each installed file must SHA-256 match this revision's
@@ -108,8 +109,9 @@ accepted, blocked and no longer current with a blocker as its latest event, or
 superseded by the validator's canonical legacy old-to-replacement event
 projection. This compatibility does not upgrade that legacy projection to a
 current transaction-authentication claim, authorize a new transition or
-repair, or apply to a unit with explicit `work_mode`. Current and future
-feature units must update every relevant skill. Other formerly valid
+repair, or apply to a unit with explicit `work_mode`. Except for the closed
+external owner-tracked review rule above, current and future feature units
+must update every relevant skill. Other formerly valid
 instruction metadata may be projected only through the exact hash-bound
 historical-unit adoption contract, which does not relax synchronization for
 a current or future unit. See
