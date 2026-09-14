@@ -34,6 +34,17 @@ contains itself. Initially observed source repositories must be clean and
 distinct. Writable checkpoints must retain their locked baseline as an
 ancestor; read-only dependencies remain at their exact locked commits and trees.
 
+A project-shell read-only planning repository may instead retain the exact
+owner-produced lifecycle dirt when it strictly contains the active workspace
+and its HEAD and tree still equal the original preparation lock. This exception
+accepts only the final-byte projection of an authenticated
+`Prepare`/`Admit`/`Ready`/`Claim` chain, or its exact
+`Prepare`/`Admit`/`RetireProposed`/`Admit`/`Ready`/`Claim` replacement form.
+The verifier applies last-writer wins in ledger order and rejects staged
+changes, deletes, renames, conflicts, outside-workspace paths, pending
+artifacts, incomplete transactions, and target, artifact, intent, or completion
+drift. It grants no general dirty-planning or descendant-HEAD allowance.
+
 ```powershell
 pwsh -NoProfile -File <work-environment>/scripts/Invoke-WorkUnitAutomation.ps1 `
   -Action RetireActive -WorkspaceRoot <workspace> -UnitId <old-unit> `
