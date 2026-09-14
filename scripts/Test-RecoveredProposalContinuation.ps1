@@ -1,4 +1,4 @@
-param([switch]$SelfTest,[ValidateSet('All','PreparedAdmission','LaterAcceptance')][string]$Scenario='LaterAcceptance')
+param([switch]$SelfTest,[ValidateSet('All','PreparedAdmission','LaterAcceptance','RepreparationRetirement')][string]$Scenario='LaterAcceptance')
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path $PSScriptRoot -Parent
 
@@ -25,7 +25,7 @@ try {
     $createdTemp = Get-Item -LiteralPath $temp -Force
     if (($createdTemp.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "Recovered proposal continuation refused reparse-point temp root '$temp'." }
     $seed = New-RecoveredProposalContinuationSeed -Root (Join-Path $temp 'seed') -RepositoryRoot $repoRoot -TransitionLedgerModule $transitionLedgerModule
-    if ($Scenario -ne 'PreparedAdmission') {
+    if ($Scenario -in @('All','LaterAcceptance')) {
     $callerRoot = Join-Path $temp 'caller'
     $caller = New-RecoveredProposalContinuationFixture -BaseRepository $seed.base_repository -FixtureRoot $callerRoot -RepreparationTemplate $seed.repreparation_template -AdmissionTemplate $seed.admission_template -RepreparationModule $repreparationModule
     $callerHeadBefore = (@(Invoke-EnvelopeGit $caller.repository @('rev-parse','HEAD'))[0]).Trim()
@@ -35,9 +35,28 @@ try {
 
     $continuationRoot = Join-Path $temp 'continuation'
     $continuation = New-RecoveredProposalContinuationFixture -BaseRepository $seed.base_repository -FixtureRoot $continuationRoot -RepreparationTemplate $seed.repreparation_template -AdmissionTemplate $seed.admission_template -RepreparationModule $repreparationModule
-    Test-RecoveredProposalRetirement -AdmittedWorkspace $continuation.workspace -TestRoot $continuationRoot -ScriptsRoot $PSScriptRoot -Scenario $Scenario
+    if ($Scenario -ne 'RepreparationRetirement') {
+        Test-RecoveredProposalRetirement -AdmittedWorkspace $continuation.workspace -TestRoot $continuationRoot -ScriptsRoot $PSScriptRoot -Scenario $Scenario
+    }
+    if ($Scenario -in @('All','RepreparationRetirement')) {
+        $classification=$continuation;$classificationRoot=$continuationRoot
+        if($Scenario -eq 'All'){
+            $classificationRoot=Join-Path $temp 'repreparation-retirement'
+            $classification=New-RecoveredProposalContinuationFixture -BaseRepository $seed.base_repository -FixtureRoot $classificationRoot -RepreparationTemplate $seed.repreparation_template -AdmissionTemplate $seed.admission_template -RepreparationModule $repreparationModule
+        }
+        $automation=Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1'
+        $lifecycle=@{WorkspaceRoot=$classification.workspace;UnitId='u003';RepoMapPath=(Join-Path $classification.workspace 'repository-map.json');ValidationTier='quick'}
+        $ready=& $automation @lifecycle -Action Ready -Timestamp '2026-08-25T00:01:51.0000000Z' -Execute|ConvertFrom-Json
+        [void](Invoke-EnvelopeGit $classification.repository @('add','--','morphospace'))
+        [void](Invoke-EnvelopeGit $classification.repository @('commit','-m','checkpoint recovered preparation and Ready'))
+        $claim=& $automation @lifecycle -Action Claim -Timestamp '2026-08-25T00:01:52.0000000Z' -Execute|ConvertFrom-Json
+        Assert-Envelope ($ready.transition-ceq'proposed-to-ready'-and$claim.transition-ceq'ready-to-active') 'repreparation retirement fixture did not activate its owner-admitted recovered unit'
+        [void](Invoke-EnvelopeGit $classification.repository @('add','--','morphospace'))
+        [void](Invoke-EnvelopeGit $classification.repository @('commit','-m','checkpoint recovered unit Claim'))
+        Test-RepreparationEventClassification -Workspace $classification.workspace -TestRoot $classificationRoot -ScriptsRoot $PSScriptRoot -UnitId 'u003' -ReplacementUnitId 'u004'
+    }
 
-    if ($Scenario -ne 'PreparedAdmission') {
+    if ($Scenario -in @('All','LaterAcceptance')) {
     $callerHeadAfter = (@(Invoke-EnvelopeGit $caller.repository @('rev-parse','HEAD'))[0]).Trim()
     Assert-Envelope ($callerHeadAfter -ceq $callerHeadBefore -and (Get-EnvelopeWorkspaceByteInventorySha256 $caller.workspace) -ceq $callerWorkspaceBefore -and (Get-EnvelopeWorkspaceByteInventorySha256 $caller.repository) -ceq $callerRepositoryBefore) 'isolated continuation regression changed its caller workspace or mapped Git repository'
 

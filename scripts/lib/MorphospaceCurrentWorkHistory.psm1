@@ -492,9 +492,16 @@ function Get-MorphospacePreparationStepEvidence {
     }catch{$semanticsAccepted=$false;$semanticFailure=$_}
     if(-not$semanticsAccepted){
         $recoveryEvents=@()
-        foreach($candidate in @($Events|Where-Object{[int]$_.sequence-gt[int]$ExpectedEvent.sequence-and@($_.receipts).Count-eq2})){
+        foreach($candidate in @($Events|Where-Object{
+            [int]$_.sequence-gt[int]$ExpectedEvent.sequence-and
+            [string]$_.event_type-ceq'decision'-and
+            [string]$_.event_id-cmatch'^[a-z0-9][a-z0-9-]{1,127}-prepared$'-and
+            @($_.receipts).Count-eq2-and
+            [string]$_.receipts[0]-cmatch'^receipts/[a-z0-9][a-z0-9-]{1,127}-repreparation\.json$'-and
+            [string]$_.receipts[1]-ceq("receipts/{0}.json"-f([string]$_.event_id).Substring(0,([string]$_.event_id).Length-9))
+        })){
             $candidateRecoveryPath=Resolve-MorphospaceWorkspacePath $Workspace ([string]$candidate.receipts[0]) -RequireLeaf
-            if(-not(Test-Json -Json (Get-Content -LiteralPath $candidateRecoveryPath -Raw) -SchemaFile (Join-Path $repository 'schemas/development-envelope-repreparation-receipt-v1.schema.json'))){continue}
+            if(-not(Test-Json -Json (Get-Content -LiteralPath $candidateRecoveryPath -Raw) -SchemaFile (Join-Path $repository 'schemas/development-envelope-repreparation-receipt-v1.schema.json'))){throw 'Current-work preparation recovery receipt schema is invalid.'}
             $candidateRecovery=Read-MorphospaceProtocolJson $candidateRecoveryPath
             if([string]$candidateRecovery.original_preparation.event_id-ceq[string]$ExpectedEvent.event_id-and
                [string]$candidateRecovery.original_preparation.receipt.path-ceq$receiptRelative-and
