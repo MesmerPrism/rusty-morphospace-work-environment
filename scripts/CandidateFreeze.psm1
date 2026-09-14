@@ -79,8 +79,40 @@ function Assert-MorphospaceFrozenCandidateScope {
     foreach($device in @($Candidate.device_use)){if([string]$device -cne 'none' -and @($scope.device_envelope.allowed_kinds) -cnotcontains [string]$device){throw "Frozen device '$device' exceeds the admitted envelope."}}
     if(@($Candidate.cleanup_evidence).Count -lt 1 -or @($Candidate.instruction_surfaces).Count -lt 1){throw 'FreezeCandidate requires cleanup/evidence and instruction-surface declarations.'}
 }
+function Test-MorphospaceSelfHostedPlanningFreezeDirt {
+    param(
+        [string]$Workspace,
+        [object]$Unit,
+        [object]$RepositoryEntry,
+        [object]$FrozenTransition
+    )
+    if($null-eq$FrozenTransition-or[string]$RepositoryEntry.role-cne'planning'){return $false}
+    $repository=[IO.Path]::GetFullPath([string]$RepositoryEntry.path).TrimEnd('\','/')
+    $workspaceFull=[IO.Path]::GetFullPath($Workspace).TrimEnd('\','/')
+    $repositoryPrefix=$repository+[IO.Path]::DirectorySeparatorChar
+    $workspaceRelative=if($workspaceFull.Equals($repository,[StringComparison]::OrdinalIgnoreCase)){''}elseif($workspaceFull.StartsWith($repositoryPrefix,[StringComparison]::OrdinalIgnoreCase)){$workspaceFull.Substring($repositoryPrefix.Length).Replace('\','/').TrimEnd('/')+'/' }else{return $false}
+    $receiptRelative=([string]$Unit.candidate_freeze.receipt_path).Replace('\','/')
+    $ownedWorkspacePaths=@(
+        'workspace.state.json',
+        'iteration-events.jsonl',
+        "iteration-units/$([string]$Unit.unit_id).json",
+        $receiptRelative,
+        ([string]$FrozenTransition.intent_path).Replace('\','/'),
+        ([string]$FrozenTransition.completion_path).Replace('\','/')
+    )|Sort-Object -Unique
+    if($ownedWorkspacePaths.Count-ne6-or@($ownedWorkspacePaths|Where-Object{[string]::IsNullOrWhiteSpace([string]$_)}).Count-ne0){return $false}
+    $expected=@($ownedWorkspacePaths|ForEach-Object{$workspaceRelative+$_}|Sort-Object -Unique)
+    $staged=@(Invoke-MorphospaceCandidateGit $repository @('-c','core.safecrlf=false','diff','--cached','--name-only','--no-renames','--') 'self-hosted planning lifecycle staged-dirt observation'|Where-Object{$_}|ForEach-Object{([string]$_).Replace('\','/')}|Sort-Object -Unique)
+    $unstaged=@(Invoke-MorphospaceCandidateGit $repository @('-c','core.safecrlf=false','diff','--name-only','--no-renames','--') 'self-hosted planning lifecycle unstaged-dirt observation'|Where-Object{$_}|ForEach-Object{([string]$_).Replace('\','/')}|Sort-Object -Unique)
+    $untracked=@(Invoke-MorphospaceCandidateGit $repository @('ls-files','--others','--exclude-standard') 'self-hosted planning lifecycle untracked-dirt observation'|Where-Object{$_}|ForEach-Object{([string]$_).Replace('\','/')}|Sort-Object -Unique)
+    $observed=@($staged+$unstaged+$untracked|Sort-Object -Unique)
+    if($observed.Count-ne$expected.Count-or($observed-join'|')-cne($expected-join'|')){
+        throw "Self-hosted planning repository dirt differs from the exact authenticated freeze transition (expected: $($expected-join', '); observed: $($observed-join', '))."
+    }
+    return $true
+}
 function Assert-MorphospaceCandidateRepositoryClosure {
-    param([string]$Workspace,[object]$Candidate,[object]$Unit)
+    param([string]$Workspace,[object]$Candidate,[object]$Unit,[object]$FrozenTransition=$null)
     $map=Get-MorphospaceCandidateRepositoryMap $Workspace ([string]$Candidate.expected.repository_map_path)
     $composition=Get-MorphospaceCandidateSourceComposition $Workspace ([string]$Candidate.expected.source_composition_path) ([string]$Candidate.project_id) ([string]$Candidate.unit_id)
     $finalById=@{};foreach($final in @($Candidate.final_repositories)){
@@ -131,7 +163,7 @@ function Assert-MorphospaceCandidateRepositoryClosure {
         }
         if([string]$Candidate.cleanliness_policy-ceq'clean-only'){
             $observed=@(Invoke-MorphospaceCandidateGit $entry.path @('status','--porcelain=v1','--untracked-files=all') 'cleanliness observation')
-            if($observed.Count-ne0){throw "Frozen candidate clean-only repository '$id' is dirty."}
+            if($observed.Count-ne0-and-not(Test-MorphospaceSelfHostedPlanningFreezeDirt -Workspace $workspace -Unit $Unit -RepositoryEntry $entry -FrozenTransition $FrozenTransition)){throw "Frozen candidate clean-only repository '$id' is dirty outside the exact authenticated self-hosted planning freeze transition."}
         }else{
             $tracked=@(Invoke-MorphospaceCandidateGit $entry.path @('diff','--name-only','HEAD','--') 'changed-path observation')
             $untracked=@(Invoke-MorphospaceCandidateGit $entry.path @('ls-files','--others','--exclude-standard') 'untracked-path observation')
@@ -189,9 +221,9 @@ function Test-MorphospaceFrozenCandidate {
     if([string]$candidate.source_composition.path -cne [string]$candidate.expected.source_composition_path -or [string]$candidate.source_composition.sha256 -cne [string]$candidate.expected.source_composition_sha256){throw 'Frozen source-composition closure no longer matches its receipt CAS binding.'}
     if([int]$candidate.feature_lock.revision -ne [int]$featureLock.revision -or [string]$candidate.feature_lock.sha256 -cne [string]$candidate.expected.feature_lock_sha256){throw 'Frozen feature-lock closure no longer matches its receipt CAS binding.'}
     Assert-MorphospaceFrozenCandidateScope $candidate $liveUnit
-    Assert-MorphospaceCandidateRepositoryClosure $workspace $candidate $liveUnit
     $liveUnit|Add-Member -NotePropertyName candidate_freeze -NotePropertyValue $marker
-    [void](Get-MorphospaceFrozenCandidateTransition $workspace $candidate $state $liveUnit ([string]$freeze.receipt_path))
+    $frozenTransition=Get-MorphospaceFrozenCandidateTransition $workspace $candidate $state $liveUnit ([string]$freeze.receipt_path)
+    Assert-MorphospaceCandidateRepositoryClosure $workspace $candidate $liveUnit $frozenTransition
     $eventLines=@(Get-Content -LiteralPath (Resolve-MorphospaceWorkspacePath $workspace 'iteration-events.jsonl' -RequireLeaf)|Where-Object{$_})
     $tail=$eventLines[-1]|ConvertFrom-Json
     if([string]$tail.event_id-cne"$([string]$candidate.freeze_id)-recorded"){throw 'Frozen candidate transition is no longer the exact ledger tail.'}

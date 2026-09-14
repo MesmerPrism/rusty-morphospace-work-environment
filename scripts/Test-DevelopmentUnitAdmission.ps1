@@ -368,6 +368,86 @@ try {
   [IO.File]::WriteAllText((Join-Path $dependencyRepo 'dependency\drift.txt'),'dependency drift'+[Environment]::NewLine,[Text.UTF8Encoding]::new($false));Invoke-EnvelopeGit $dependencyRepo @('add','dependency/drift.txt')|Out-Null;Invoke-EnvelopeGit $dependencyRepo @('commit','-m','dependency-drift')|Out-Null;$dependencyDriftRejected=$false;try{Invoke-MorphospaceFreezeCandidate -WorkspaceRoot $ws -UnitId u002 -CandidateFreeze $freezePath -OutPath (Join-Path $ws 'receipts\dependency-drift-freeze.json')|Out-Null}catch{$dependencyDriftRejected=$true};Invoke-EnvelopeGit $dependencyRepo @('switch','--detach',$dependencyCommit)|Out-Null;Assert-Envelope $dependencyDriftRejected 'FreezeCandidate accepted live commit/tree drift in a read-only source-composition dependency'
   [IO.File]::WriteAllText((Join-Path $dependencyRepo 'dependency\README.md'),'dirty read-only dependency'+[Environment]::NewLine,[Text.UTF8Encoding]::new($false));$dependencyDirtyRejected=$false;try{Invoke-MorphospaceFreezeCandidate -WorkspaceRoot $ws -UnitId u002 -CandidateFreeze $freezePath -OutPath (Join-Path $ws 'receipts\dependency-dirty-freeze.json')|Out-Null}catch{$dependencyDirtyRejected=$true};[IO.File]::WriteAllText((Join-Path $dependencyRepo 'dependency\README.md'),'read-only dependency fixture'+[Environment]::NewLine,[Text.UTF8Encoding]::new($false));Assert-Envelope $dependencyDirtyRejected 'FreezeCandidate accepted tracked dirt in a read-only source-composition dependency'
   [IO.File]::WriteAllText((Join-Path $sourceRepo 'morphospace\dirty.txt'),'dirty',[Text.UTF8Encoding]::new($false));$dirtyRejected=$false;try{Invoke-MorphospaceFreezeCandidate -WorkspaceRoot $ws -UnitId u002 -CandidateFreeze $freezePath -OutPath (Join-Path $ws 'receipts\dirty-freeze.json')|Out-Null}catch{$dirtyRejected=$true};Remove-Item -LiteralPath (Join-Path $sourceRepo 'morphospace\dirty.txt') -Force;Assert-Envelope $dirtyRejected 'FreezeCandidate accepted a dirty clean-only repository'
+
+  # A planning repository may also physically contain its morphospace
+  # workspace. Keep its candidate HEAD fixed while the owner freeze transition
+  # writes the exact six authenticated lifecycle paths, then exercise the
+  # ordinary BeginValidation -> v1 receipt -> RecordValidation -> Accept path.
+  $selfHostedWorkspace=Join-Path $sourceRepo 'morphospace'
+  Get-ChildItem -LiteralPath $ws -Force|Copy-Item -Destination $selfHostedWorkspace -Recurse -Force
+  Invoke-EnvelopeGit $sourceRepo @('add','morphospace/')|Out-Null
+  Invoke-EnvelopeGit $sourceRepo @('commit','-m','self-hosted-planning-workspace-fixture')|Out-Null
+  $selfHostedCommit=(@(Invoke-EnvelopeGit $sourceRepo @('rev-parse','HEAD'))[0]).Trim().ToLowerInvariant()
+  $selfHostedTree=(@(Invoke-EnvelopeGit $sourceRepo @('rev-parse','HEAD^{tree}'))[0]).Trim().ToLowerInvariant()
+  $selfHostedUnit=Read-EnvelopeProtocolJson (Join-Path $selfHostedWorkspace 'iteration-units/u002.json')
+  $selfHostedState=Read-EnvelopeProtocolJson (Join-Path $selfHostedWorkspace 'workspace.state.json')
+  $selfHostedLock=Read-EnvelopeProtocolJson (Join-Path $selfHostedWorkspace 'feature.lock.json')
+  $selfHostedFreeze=Copy-Envelope $freeze
+  $selfHostedFreeze.freeze_id='u002-self-hosted-freeze'
+  $selfHostedFreeze.expected.project_sha256=Get-EnvelopeCanonicalJsonSha256 (Read-EnvelopeProtocolJson (Join-Path $selfHostedWorkspace 'project.spec.json'))
+  $selfHostedFreeze.expected.state_sha256=Get-EnvelopeCanonicalJsonSha256 $selfHostedState
+  $selfHostedFreeze.expected.unit_sha256=Get-EnvelopeCanonicalJsonSha256 $selfHostedUnit
+  $selfHostedFreeze.expected.feature_lock_sha256=Get-EnvelopeCanonicalJsonSha256 $selfHostedLock
+  $selfHostedFreeze.expected.source_composition_sha256=Get-EnvelopeFileSha256 (Join-Path $selfHostedWorkspace 'source-composition.json')
+  $selfHostedFreeze.expected.repository_map_sha256=Get-EnvelopeFileSha256 (Join-Path $selfHostedWorkspace 'repository-map.json')
+  $selfHostedFreeze.expected.events_sha256=Get-EnvelopeFileSha256 (Join-Path $selfHostedWorkspace 'iteration-events.jsonl')
+  $selfHostedFreeze.expected.events_length=([IO.FileInfo](Join-Path $selfHostedWorkspace 'iteration-events.jsonl')).Length
+  $selfHostedFreeze.expected.event_tail_id=[string]$selfHostedState.last_event_id
+  $selfHostedFreeze.final_repositories[0].commit=$selfHostedCommit
+  $selfHostedFreeze.final_repositories[0].tree=$selfHostedTree
+  $selfHostedFreeze.feature_lock.sha256=Get-EnvelopeCanonicalJsonSha256 $selfHostedLock
+  $selfHostedFreeze.source_composition.sha256=Get-EnvelopeFileSha256 (Join-Path $selfHostedWorkspace 'source-composition.json')
+  $selfHostedFreezePath=Join-Path $temp 'self-hosted-freeze.json'
+  Write-EnvelopeJson $selfHostedFreezePath $selfHostedFreeze
+  $selfHostedFreezeOut=Join-Path $selfHostedWorkspace 'receipts/u002-self-hosted-freeze.json'
+  $selfHostedDry=Invoke-MorphospaceFreezeCandidate -WorkspaceRoot $selfHostedWorkspace -UnitId u002 -CandidateFreeze $selfHostedFreezePath -OutPath $selfHostedFreezeOut -Timestamp '2026-08-25T00:02:30.0000000Z'
+  $selfHostedRun=Invoke-MorphospaceFreezeCandidate -WorkspaceRoot $selfHostedWorkspace -UnitId u002 -CandidateFreeze $selfHostedFreezePath -ExpectedCandidateFreezeSha256 $selfHostedDry.audit_receipt.sha256 -OutPath $selfHostedFreezeOut -Timestamp '2026-08-25T00:02:30.0000000Z' -Execute
+  Assert-Envelope ($selfHostedRun.transition-ceq'candidate-frozen'-and(@(Invoke-EnvelopeGit $sourceRepo @('rev-parse','HEAD'))[0]).Trim().ToLowerInvariant()-ceq$selfHostedCommit) 'self-hosted freeze moved the planning candidate HEAD'
+
+  $selfHostedMap=Join-Path $selfHostedWorkspace 'repository-map.json'
+  $beginArguments=@{Action='BeginValidation';WorkspaceRoot=$selfHostedWorkspace;UnitId='u002';RepoMapPath=$selfHostedMap;ValidationTier='quick';Timestamp='2026-08-25T00:02:40.0000000Z';Execute=$true}
+  [IO.File]::WriteAllText((Join-Path $selfHostedWorkspace 'unrelated.txt'),'unrelated planning dirt',[Text.UTF8Encoding]::new($false))
+  $unrelatedPlanningRejected=$false;try{&$automationModule {param($arguments)Invoke-MorphospaceWorkUnitAutomation @arguments} $beginArguments|Out-Null}catch{$unrelatedPlanningRejected=$true}
+  Remove-Item -LiteralPath (Join-Path $selfHostedWorkspace 'unrelated.txt') -Force
+  Assert-Envelope $unrelatedPlanningRejected 'BeginValidation accepted unrelated self-hosted planning dirt'
+  $selfHostedSourcePath=Join-Path $selfHostedWorkspace 'README.md';$selfHostedSourceBytes=[IO.File]::ReadAllBytes($selfHostedSourcePath);[IO.File]::AppendAllText($selfHostedSourcePath,'source drift',[Text.UTF8Encoding]::new($false))
+  $selfHostedSourceRejected=$false;try{&$automationModule {param($arguments)Invoke-MorphospaceWorkUnitAutomation @arguments} $beginArguments|Out-Null}catch{$selfHostedSourceRejected=$true}
+  [IO.File]::WriteAllBytes($selfHostedSourcePath,$selfHostedSourceBytes)
+  Assert-Envelope $selfHostedSourceRejected 'BeginValidation accepted a self-hosted planning source change outside the freeze transition'
+  [IO.File]::AppendAllText($selfHostedSourcePath,'index-only source drift',[Text.UTF8Encoding]::new($false));Invoke-EnvelopeGit $sourceRepo @('add','morphospace/README.md')|Out-Null;[IO.File]::WriteAllBytes($selfHostedSourcePath,$selfHostedSourceBytes)
+  $selfHostedIndexRejected=$false;try{&$automationModule {param($arguments)Invoke-MorphospaceWorkUnitAutomation @arguments} $beginArguments|Out-Null}catch{$selfHostedIndexRejected=$true}
+  Invoke-EnvelopeGit $sourceRepo @('reset','HEAD','--','morphospace/README.md')|Out-Null
+  [IO.File]::WriteAllBytes($selfHostedSourcePath,$selfHostedSourceBytes)
+  Assert-Envelope $selfHostedIndexRejected 'BeginValidation accepted an unrelated self-hosted planning change retained only in the index'
+  $selfHostedIntentPath=Join-Path $selfHostedWorkspace 'receipts/transactions/u002-self-hosted-freeze-recorded-transition.intent.json';$selfHostedIntentBytes=[IO.File]::ReadAllBytes($selfHostedIntentPath);[IO.File]::AppendAllText($selfHostedIntentPath,' ',[Text.UTF8Encoding]::new($false))
+  $selfHostedIntentRejected=$false;try{&$automationModule {param($arguments)Invoke-MorphospaceWorkUnitAutomation @arguments} $beginArguments|Out-Null}catch{$selfHostedIntentRejected=$true}
+  [IO.File]::WriteAllBytes($selfHostedIntentPath,$selfHostedIntentBytes)
+  Assert-Envelope $selfHostedIntentRejected 'BeginValidation accepted a tampered self-hosted freeze transaction'
+  $selfHostedBegin=&$automationModule {param($arguments)Invoke-MorphospaceWorkUnitAutomation @arguments} $beginArguments
+  Assert-Envelope ($selfHostedBegin.transition-ceq'active-to-validating'-and[string](Read-EnvelopeProtocolJson (Join-Path $selfHostedWorkspace 'iteration-units/u002.json')).status-ceq'validating') 'authenticated self-hosted freeze did not enter validation'
+
+  $selfHostedEvidenceArtifact=Join-Path $selfHostedWorkspace 'receipts/u002-self-hosted-validation.log'
+  [IO.File]::WriteAllText($selfHostedEvidenceArtifact,"synthetic owner test evidence`n",[Text.UTF8Encoding]::new($false))
+  $selfHostedValidatingUnit=Read-EnvelopeProtocolJson (Join-Path $selfHostedWorkspace 'iteration-units/u002.json')
+  $selfHostedValidationMatrix=@(&$automationModule {param($unit)New-MorphospaceValidationMatrix -Unit $unit} $selfHostedValidatingUnit)
+  $selfHostedEvidence=[ordered]@{
+    receipt_id='u002-self-hosted-pass-validation';tier='quick';result='pass'
+    artifacts=@([ordered]@{artifact_id='self-hosted-validation';kind='test-log';path='u002-self-hosted-validation.log'})
+    criteria=@($selfHostedValidatingUnit.acceptance|ForEach-Object{[ordered]@{acceptance_id=[string]$_.acceptance_id;status='pass';command=[string]$_.command;evidence_refs=@('self-hosted-validation')}})
+    gates=@($selfHostedValidationMatrix|Where-Object{[string]$_.disposition-cne'forbidden'}|ForEach-Object{[ordered]@{gate_id=[string]$_.gate_id;status='pass';command=[string]$_.command;evidence_refs=@('self-hosted-validation')}})
+    device_validation=$null
+  }
+  $selfHostedEvidencePath=Join-Path $temp 'self-hosted-validation-evidence.json';Write-EnvelopeJson $selfHostedEvidencePath $selfHostedEvidence
+  $selfHostedReceipt=Join-Path $selfHostedWorkspace 'receipts/u002-self-hosted-pass-validation.json'
+  & (Join-Path $PSScriptRoot 'New-ValidationReceipt.ps1') -WorkspaceRoot $selfHostedWorkspace -UnitId u002 -RepoMapPath $selfHostedMap -EvidencePath $selfHostedEvidencePath -OutPath $selfHostedReceipt -CreatedAt '2026-08-25T00:02:50Z'|Out-Null
+  $recordArguments=@{Action='RecordValidation';WorkspaceRoot=$selfHostedWorkspace;UnitId='u002';RepoMapPath=$selfHostedMap;ValidationTier='quick';ValidationResult='pass';ValidationReceipt='receipts/u002-self-hosted-pass-validation.json';Timestamp='2026-08-25T00:03:00.0000000Z';Execute=$true}
+  $selfHostedRecord=&$automationModule {param($arguments)Invoke-MorphospaceWorkUnitAutomation @arguments} $recordArguments
+  $acceptArguments=@{Action='Accept';WorkspaceRoot=$selfHostedWorkspace;UnitId='u002';RepoMapPath=$selfHostedMap;ValidationTier='quick';Timestamp='2026-08-25T00:03:10.0000000Z';Execute=$true}
+  $selfHostedAccept=&$automationModule {param($arguments)Invoke-MorphospaceWorkUnitAutomation @arguments} $acceptArguments
+  Assert-Envelope ($selfHostedRecord.transition-ceq'validation-pass'-and$selfHostedAccept.transition-ceq'validating-to-accepted'-and[string](Read-EnvelopeProtocolJson (Join-Path $selfHostedWorkspace 'iteration-units/u002.json')).status-ceq'accepted'-and(@(Invoke-EnvelopeGit $sourceRepo @('rev-parse','HEAD'))[0]).Trim().ToLowerInvariant()-ceq$selfHostedCommit) 'self-hosted planning lifecycle did not preserve HEAD through validation receipt and acceptance'
+  Invoke-EnvelopeGit $sourceRepo @('reset','--hard',$candidateCommit)|Out-Null
+  Invoke-EnvelopeGit $sourceRepo @('clean','-fd')|Out-Null
+
   $freezeOut=Join-Path $ws 'receipts\u002-freeze.json';$freezeDry=Invoke-MorphospaceFreezeCandidate -WorkspaceRoot $ws -UnitId u002 -CandidateFreeze $freezePath -OutPath $freezeOut -Timestamp '2026-08-25T00:03:00.0000000Z';$freezeRun=Invoke-MorphospaceFreezeCandidate -WorkspaceRoot $ws -UnitId u002 -CandidateFreeze $freezePath -ExpectedCandidateFreezeSha256 $freezeDry.audit_receipt.sha256 -OutPath $freezeOut -Timestamp '2026-08-25T00:03:00.0000000Z' -Execute;Assert-Envelope ($freezeRun.transition -eq 'candidate-frozen') 'candidate freeze did not bind immutable closure';$frozen=Read-EnvelopeProtocolJson (Join-Path $ws 'iteration-units\u002.json');Assert-Envelope (Test-MorphospaceFrozenCandidate $ws $frozen) 'frozen candidate was not consumable';$stateDrift=Join-Path $temp 'freeze-state-drift';Copy-Item -LiteralPath $ws -Destination $stateDrift -Recurse;$damagedState=Read-EnvelopeProtocolJson (Join-Path $stateDrift 'workspace.state.json');$damagedState.last_accepted_receipt='receipts/substituted.json';Write-EnvelopeJson (Join-Path $stateDrift 'workspace.state.json') $damagedState;$stateRejected=$false;try{Test-MorphospaceFrozenCandidate $stateDrift (Read-EnvelopeProtocolJson (Join-Path $stateDrift 'iteration-units\u002.json'))|Out-Null}catch{$stateRejected=$true};$ledgerDrift=Join-Path $temp 'freeze-ledger-drift';Copy-Item -LiteralPath $ws -Destination $ledgerDrift -Recurse;[IO.File]::AppendAllText((Join-Path $ledgerDrift 'iteration-events.jsonl'),((@{schema='rusty.morphospace.workflow.iteration_event.v1';event_id='u002-post-freeze';sequence=5;timestamp='2026-08-25T00:04:00.0000000Z';project_id='envelope-test';unit_id='u002';event_type='state-transition';summary='Injected post-freeze ledger drift.';receipts=@()}|ConvertTo-Json -Compress)+"`n"),[Text.UTF8Encoding]::new($false));$ledgerRejected=$false;try{Test-MorphospaceFrozenCandidate $ledgerDrift (Read-EnvelopeProtocolJson (Join-Path $ledgerDrift 'iteration-units\u002.json'))|Out-Null}catch{$ledgerRejected=$true};Assert-Envelope ($stateRejected-and$ledgerRejected) 'frozen candidate accepted state or ledger transition drift';$freezeReplay=Invoke-MorphospaceFreezeCandidate -WorkspaceRoot $ws -UnitId u002 -CandidateFreeze $freezePath -ExpectedCandidateFreezeSha256 $freezeDry.audit_receipt.sha256 -OutPath $freezeOut -Execute;Assert-Envelope ($freezeReplay.transition -eq 'candidate-already-frozen') 'identical freeze was not idempotent'
   Write-Host 'Development-unit admission self-test passed.'
 } finally {if(Test-Path $temp){Remove-Item -LiteralPath $temp -Recurse -Force}}
