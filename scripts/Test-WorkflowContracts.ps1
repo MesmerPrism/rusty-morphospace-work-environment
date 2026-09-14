@@ -745,7 +745,7 @@ function Invoke-CurrentInstructionSurfacePolicySelfTest {
         $state.project_id = [string]$unit.project_id
         $skillSurfaceRoot = Join-Path ([IO.Path]::GetTempPath()) ("morphospace-current-instruction-skills-" + [guid]::NewGuid().ToString("N"))
         $canonicalSkillRoot = Join-Path $RepoRoot 'skills'
-        foreach ($skillId in @('rusty-morphospace', 'system-engineering')) {
+        foreach ($skillId in @('rust-work-graph', 'rusty-morphospace', 'system-engineering')) {
             [IO.Directory]::CreateDirectory((Join-Path $skillSurfaceRoot $skillId)) | Out-Null
             [IO.File]::WriteAllBytes((Join-Path $skillSurfaceRoot "$skillId\SKILL.md"), [IO.File]::ReadAllBytes((Join-Path $canonicalSkillRoot "$skillId\SKILL.md")))
         }
@@ -799,8 +799,29 @@ function Invoke-CurrentInstructionSurfacePolicySelfTest {
         Assert-Contract (-not (Test-MorphospaceActiveUnitContractReviewCompatibility -Unit $unit -State $state -Lifecycle $script:WorkflowLifecycle -RepositoryMap $aggregateRepositoryMap)) "Extra non-required current skill review weakened the routed-skill rule."
         $unit.instruction_surfaces = @($unit.instruction_surfaces | Where-Object { [string]$_.skill_id -cne "rust-work-graph" })
         $unit.change_categories = @("implementation", "authority", "validation", "public-private-boundary", "module-layout")
-        Assert-Contract (-not (Test-MorphospaceActiveUnitContractReviewCompatibility -Unit $unit -State $state -Lifecycle $script:WorkflowLifecycle -RepositoryMap $aggregateRepositoryMap)) "A changed lifecycle routing result weakened the routed-skill rule."
+        Assert-Contract (-not (Test-MorphospaceActiveUnitContractReviewCompatibility -Unit $unit -State $state -Lifecycle $script:WorkflowLifecycle -RepositoryMap $aggregateRepositoryMap)) "A missing lifecycle-routed module-layout skill was accepted."
+        $moduleLayoutReview = [pscustomobject][ordered]@{ surface_kind="skill"; path="<skills-root>/rust-work-graph/SKILL.md"; owner="workflow-maintainer"; change_reason="Review the registered external module-layout router without claiming an edit."; action="review-no-change"; status="planned"; validation="Bound repository-map skill registration."; skill_id="rust-work-graph" }
+        $unit.instruction_surfaces += $moduleLayoutReview
+        $unit.status = 'proposed'; $state.current_unit = $null; $state.next_ready_unit = $null
+        Assert-Contract (Test-MorphospaceActiveUnitContractReviewCompatibility -Unit $unit -State $state -Lifecycle $script:WorkflowLifecycle -Phase Ready -RepositoryMap $aggregateRepositoryMap) "Module-layout routed reviews were rejected before Ready."
+        Assert-Contract (Test-MorphospaceActiveUnitContractReviewCompatibility -Unit $unit -State $state -Lifecycle $script:WorkflowLifecycle -Phase Inspect -RepositoryMap $aggregateRepositoryMap) "Module-layout routed reviews were rejected during proposed Inspect."
+        $unit.status = 'ready'; $state.next_ready_unit = [string]$unit.unit_id
+        Assert-Contract (Test-MorphospaceActiveUnitContractReviewCompatibility -Unit $unit -State $state -Lifecycle $script:WorkflowLifecycle -Phase Claim -RepositoryMap $aggregateRepositoryMap) "Module-layout routed reviews were rejected before Claim."
+        $unit.status = 'active'; $state.current_unit = [string]$unit.unit_id; $state.next_ready_unit = $null
+        $duplicateModuleLayout = $unit | ConvertTo-Json -Depth 40 | ConvertFrom-Json -Depth 40
+        $duplicateModuleLayout.instruction_surfaces += $moduleLayoutReview
+        Assert-Contract (-not (Test-MorphospaceActiveUnitContractReviewCompatibility -Unit $duplicateModuleLayout -State $state -Lifecycle $script:WorkflowLifecycle -RepositoryMap $aggregateRepositoryMap)) "Duplicate module-layout skill review weakened the routed-skill rule."
+        $wrongModuleLayoutPath = $unit | ConvertTo-Json -Depth 40 | ConvertFrom-Json -Depth 40
+        @($wrongModuleLayoutPath.instruction_surfaces | Where-Object { [string]$_.skill_id -ceq 'rust-work-graph' })[0].path = '<skills-root>/rust-work-graph/OTHER.md'
+        Assert-Contract (-not (Test-MorphospaceActiveUnitContractReviewCompatibility -Unit $wrongModuleLayoutPath -State $state -Lifecycle $script:WorkflowLifecycle -RepositoryMap $aggregateRepositoryMap)) "Wrong module-layout skill path weakened the routed-skill rule."
+        $unknownRouting = $script:WorkflowLifecycle | ConvertTo-Json -Depth 40 | ConvertFrom-Json -Depth 40
+        @($unknownRouting.instruction_sync.skill_routing | Where-Object { [string]$_.change_category -ceq 'module-layout' })[0].skill_ids += 'external-meta-router'
+        Assert-Contract (-not (Test-MorphospaceActiveUnitContractReviewCompatibility -Unit $unit -State $state -Lifecycle $unknownRouting -RepositoryMap $aggregateRepositoryMap)) "Unknown routed skill entered the owner-tracked compatibility set."
+        [IO.File]::AppendAllText((Join-Path $skillSurfaceRoot "rust-work-graph\SKILL.md"), "damage`n", [Text.UTF8Encoding]::new($false))
+        Assert-Contract (-not (Test-MorphospaceActiveUnitContractReviewCompatibility -Unit $unit -State $state -Lifecycle $script:WorkflowLifecycle -RepositoryMap $aggregateRepositoryMap)) "Changed module-layout router bytes weakened the routed-skill rule."
+        [IO.File]::WriteAllBytes((Join-Path $skillSurfaceRoot "rust-work-graph\SKILL.md"), [IO.File]::ReadAllBytes((Join-Path $canonicalSkillRoot "rust-work-graph\SKILL.md")))
         $unit.change_categories = @("implementation", "authority", "validation", "public-private-boundary")
+        $unit.instruction_surfaces = @($unit.instruction_surfaces | Where-Object { [string]$_.skill_id -cne 'rust-work-graph' })
         $writableSkillScope = @([pscustomobject]@{ repo_id="workflow-owner"; allowed_paths=@("<skills-root>/rusty-morphospace/SKILL.md") })
         $originalAllowedRepositories = $unit.allowed_repositories
         $unit.allowed_repositories = $writableSkillScope

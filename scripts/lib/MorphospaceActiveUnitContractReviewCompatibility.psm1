@@ -154,8 +154,10 @@ function Test-MorphospaceActiveUnitContractReviewCompatibility {
             if (-not $requiredSkillIds.Contains($skillId)) { $requiredSkillIds.Add($skillId) | Out-Null }
         }
     }
-    $expectedSkillIds = @('rusty-morphospace', 'system-engineering')
-    if ((@($requiredSkillIds.ToArray() | Sort-Object -Unique -CaseSensitive) -join '|') -cne ($expectedSkillIds -join '|')) {
+    $recognizedOwnerTrackedSkillIds = @('rust-work-graph', 'rusty-morphospace', 'system-engineering')
+    $expectedSkillIds = @($requiredSkillIds.ToArray() | Sort-Object -Unique -CaseSensitive)
+    if ($expectedSkillIds.Count -eq 0 -or
+        @($expectedSkillIds | Where-Object { $recognizedOwnerTrackedSkillIds -cnotcontains [string]$_ }).Count -ne 0) {
         return $false
     }
 

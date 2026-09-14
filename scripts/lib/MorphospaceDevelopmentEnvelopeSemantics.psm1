@@ -9,7 +9,7 @@ function Get-MorphospaceDevelopmentEnvelopeReplayMode {
     # Retained transactions with immutable module/authority surfaces predate
     # additive projection checks. Never retry failed ordinary predicates using
     # historical semantics.
-    foreach ($property in @('modules','authority_map')) {
+    foreach ($property in @('modules','authority_map','acceptance_profiles')) {
         if ((Get-MorphospaceDevelopmentEnvelopeHash $Current.$property) -cne
             (Get-MorphospaceDevelopmentEnvelopeHash $Target.$property)) { return 'ordinary' }
     }
@@ -84,7 +84,12 @@ function Assert-MorphospaceDevelopmentEnvelopeAdditiveProject {
     $currentProfiles=@{};foreach($profile in @($effectiveCurrent.validation_profiles)){$id=[string]$profile.profile_id;if($currentProfiles.ContainsKey($id)){throw "Preparation current project repeats validation profile '$id'."};$currentProfiles[$id]=$profile}
     $targetProfiles=@{};foreach($profile in @($Target.validation_profiles)){$id=[string]$profile.profile_id;if($targetProfiles.ContainsKey($id)){throw "Preparation target project repeats validation profile '$id'."};$targetProfiles[$id]=$profile}
     foreach($id in $currentProfiles.Keys){if(-not$targetProfiles.ContainsKey($id)-or(Get-MorphospaceDevelopmentEnvelopeHash $currentProfiles[$id])-cne(Get-MorphospaceDevelopmentEnvelopeHash $targetProfiles[$id])){throw "Preparation removes or rewrites validation profile '$id'."}}
-    $mutable=@('revision','composition','repositories','validation_profiles');if($Mode-ceq'ordinary'){$mutable+='modules';$mutable+='authority_map'};if($AllowSchemaPinAdvance){$mutable+='$schema'}
+    if($Mode-ceq'ordinary'){
+    $currentAcceptanceProfiles=@{};foreach($profile in @($effectiveCurrent.acceptance_profiles)){$id=[string]$profile.profile_id;if($currentAcceptanceProfiles.ContainsKey($id)){throw "Preparation current project repeats acceptance profile '$id'."};$currentAcceptanceProfiles[$id]=$profile}
+    $targetAcceptanceProfiles=@{};foreach($profile in @($Target.acceptance_profiles)){$id=[string]$profile.profile_id;if($targetAcceptanceProfiles.ContainsKey($id)){throw "Preparation target project repeats acceptance profile '$id'."};$targetAcceptanceProfiles[$id]=$profile}
+    foreach($id in $currentAcceptanceProfiles.Keys){if(-not$targetAcceptanceProfiles.ContainsKey($id)-or(Get-MorphospaceDevelopmentEnvelopeHash $currentAcceptanceProfiles[$id])-cne(Get-MorphospaceDevelopmentEnvelopeHash $targetAcceptanceProfiles[$id])){throw "Preparation removes or rewrites acceptance profile '$id'."}}
+    }
+    $mutable=@('revision','composition','repositories','validation_profiles');if($Mode-ceq'ordinary'){$mutable+='modules';$mutable+='authority_map';$mutable+='acceptance_profiles'};if($AllowSchemaPinAdvance){$mutable+='$schema'}
     foreach($property in @($effectiveCurrent.psobject.Properties.Name)){if($property -notin $mutable -and (Get-MorphospaceDevelopmentEnvelopeHash $effectiveCurrent.$property)-cne(Get-MorphospaceDevelopmentEnvelopeHash $Target.$property)){throw "Preparation rewrites non-envelope project property '$property'."}}
 }
 function Assert-MorphospaceDevelopmentEnvelopeOwnerRoots {
@@ -135,6 +140,14 @@ function Assert-MorphospaceDevelopmentEnvelope {
     $oldLockSelected=@($FeatureLock.selected_features|Sort-Object -Unique);$newLockSelected=@($targetLock.selected_features|Sort-Object -Unique);foreach($id in $oldLockSelected){if($newLockSelected-cnotcontains$id){throw "Preparation removes selected feature '$id'."}}
     $oldProjectSelected=@($Project.composition.selected_features|Sort-Object -Unique);$newProjectSelected=@($targetProject.composition.selected_features|Sort-Object -Unique);$addedLockSelected=@($newLockSelected|Where-Object{$oldLockSelected-cnotcontains$_}|Sort-Object);$addedProjectSelected=@($newProjectSelected|Where-Object{$oldProjectSelected-cnotcontains$_}|Sort-Object)
     if((Get-MorphospaceDevelopmentEnvelopeHash $added)-cne(Get-MorphospaceDevelopmentEnvelopeHash $addedLockSelected)-or(Get-MorphospaceDevelopmentEnvelopeHash $added)-cne(Get-MorphospaceDevelopmentEnvelopeHash $addedProjectSelected)){throw 'Preparation added feature bindings differ between project composition and feature lock.'}
+    if($Mode-ceq'ordinary'){
+    $currentRollbackProfiles=@($Project.acceptance_profiles|ForEach-Object{[string]$_.profile_id}|Sort-Object -Unique)
+    $targetRollbackProfiles=@($targetProject.acceptance_profiles|ForEach-Object{[string]$_.profile_id}|Sort-Object -Unique)
+    $addedRollbackProfiles=@($targetRollbackProfiles|Where-Object{$currentRollbackProfiles-cnotcontains$_}|Sort-Object -Unique)
+    $featureByIdForRollback=@{};foreach($f in @($targetLock.features)){$featureByIdForRollback[[string]$f.feature_id]=$f}
+    $requiredAddedRollbackProfiles=@($added|ForEach-Object{[string]$featureByIdForRollback[[string]$_].rollback_profile}|Where-Object{$currentRollbackProfiles-cnotcontains$_}|Sort-Object -Unique)
+    if((Get-MorphospaceDevelopmentEnvelopeHash $addedRollbackProfiles)-cne(Get-MorphospaceDevelopmentEnvelopeHash $requiredAddedRollbackProfiles)){throw 'Preparation added acceptance profiles must exactly match rollback profiles required by newly selected features.'}
+    }
     foreach($id in @($FeatureLock.denied_features)){if(@($targetLock.denied_features)-cnotcontains$id){throw "Preparation removes denied feature '$id'."}}
     if($Mode-ceq'ordinary'){
     # Modules and authority rows are an additive projection of newly selected

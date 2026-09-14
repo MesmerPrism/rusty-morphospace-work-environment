@@ -58,6 +58,11 @@ preparation derives and CAS-installs the target registry from the target lock
 revision/fingerprint and selected modules. Prepared build profiles must be
 registered in the target project; existing validation profiles are immutable,
 and every new registration must be named by the declared build-profile ceiling.
+Existing acceptance profiles are also immutable. Ordinary preparation may add
+an acceptance profile only when its ID is the rollback profile of a newly
+selected feature, and the added profile set must exactly equal the new rollback
+profiles those features require. A new feature may continue to use an existing
+rollback profile. Historical replay cannot add an acceptance profile.
 
 An optional `schema_pin_revision` permits the same owner transaction to advance
 the project, feature-lock, and workspace-state `$schema` pins. The three live
