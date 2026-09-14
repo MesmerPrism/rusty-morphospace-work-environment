@@ -27,6 +27,11 @@ module/crate, public contract, consumers, declared dependencies, instruction
 surfaces, and validation impact. Compare exact commits or trees when multiple
 repositories are involved. Distinguish observations, proposals, validation,
 acceptance, publication, and device evidence; do not infer one from another.
+For Android extraction, trace Java sources into the produced AAR/classes.jar
+and each host's Rust libraries into its packaged native library. Record where
+the single process authority lives; source inclusion alone does not prove
+artifact reuse. Divergent branches of one Git repository are source lineages,
+not independent owners; an integration must identify their combined head.
 When an idle project needs additional roots, route the exact owner inventory to
 `<work-environment>/docs/DEVELOPMENT_ENVELOPE_PREPARATION.md` before unit admission.
 

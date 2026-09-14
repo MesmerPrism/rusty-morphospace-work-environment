@@ -54,6 +54,10 @@ Select only the specialist routes that match the task:
   instruction-surface impact, and refactor maps.
 - Use `$meta-quest-workflow` before live Quest, ADB, APK, launch, capture,
   logcat, Perfetto, Wi-Fi ADB, or Meta tooling work.
+- For reusable Android media and in-process broker integration, read the Quest
+  owner's `docs/MEDIA_SESSION_RUNTIME.md` and `docs/MEDIA_STREAM_RUNTIME.md`.
+  Map the shared AAR and Rust library consumers separately from each host's
+  permissions, defaults, foreground lifecycle, and device evidence.
 - For an explicit historical audit or migration, use the resolved owner
   runbooks: `docs/HISTORICAL_UNIT_ADOPTION.md`,
   `docs/HISTORICAL_SUPERSESSION_COMPATIBILITY.md`, or
