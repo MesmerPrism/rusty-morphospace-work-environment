@@ -71,6 +71,17 @@ function New-ReadonlyPlanningRetirementSeed([string]$Root,[switch]$Replacement){
     $seed.workspace=$workspace
     return $seed
 }
+function Add-ReadonlyPlanningWriteScopeAmendment([object]$Projection,[string]$AmendmentId='u002-add-nested-file'){
+    $workspace=[string]$Projection.workspace;$unitId=[string](Read-EnvelopeProtocolJson (Join-Path $workspace 'workspace.state.json')).current_unit
+    $unit=Read-EnvelopeProtocolJson (Join-Path $workspace "iteration-units/$unitId.json");$project=Read-EnvelopeProtocolJson (Join-Path $workspace 'project.spec.json');$state=Read-EnvelopeProtocolJson (Join-Path $workspace 'workspace.state.json');$eventsPath=Join-Path $workspace 'iteration-events.jsonl'
+    $repository=[string]$unit.allowed_repositories[0].repo_id;$unitRow=@($unit.allowed_repositories|Where-Object{[string]$_.repo_id-ceq$repository})[0];$projectRow=@($project.repositories|Where-Object{[string]$_.repo_id-ceq$repository})[0];$assessmentRow=@($unit.agent_scope_assessment.owner_repositories|Where-Object{[string]$_.repo_id-ceq$repository})[0]
+    $newPath=([string]$projectRow.allowed_paths[0]).TrimEnd('/')+'/retirement-continuation.txt';$after=@($unitRow.allowed_paths)+$newPath
+    $amendment=[pscustomobject][ordered]@{'$schema'='https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/active-write-scope-amendment-v1.schema.json';schema='rusty.morphospace.workflow.active_write_scope_amendment.v1';amendment_id=$AmendmentId;project_id=[string]$project.project_id;unit_id=$unitId;repository_id=$repository;reason='Exercise authenticated planning continuation before active retirement.';semantic_rationale='The added exact file remains within the existing admitted owner root and objective.';ownership_proof=[pscustomobject][ordered]@{repo_id=$repository;source_roots=@($assessmentRow.source_roots);tracked_paths=@($after)};source_composition=[pscustomobject][ordered]@{mode=[string]$unit.source_composition.mode;lock_path=[string]$unit.source_composition.lock_path;lock_sha256=Get-EnvelopeFileSha256 (Join-Path $workspace ([string]$unit.source_composition.lock_path))};expected=[pscustomobject][ordered]@{status='active';current_unit=$unitId;project_revision=[int]$project.revision;project_sha256=Get-EnvelopeCanonicalJsonSha256 $project;state_sha256=Get-EnvelopeCanonicalJsonSha256 $state;unit_sha256=Get-EnvelopeCanonicalJsonSha256 $unit;events_sha256=Get-EnvelopeFileSha256 $eventsPath;events_length=([IO.FileInfo]$eventsPath).Length;event_tail_id=[string]$state.last_event_id};before_allowed_paths=@($unitRow.allowed_paths);after_allowed_paths=$after;does_not_prove=@('This fixture does not grant source, validation, acceptance, publication, or device authority.')}
+    $inputPath=Join-Path (Split-Path $Projection.repository -Parent) "$([IO.Path]::GetFileName($Projection.repository))-$AmendmentId.json";Write-EnvelopeJson $inputPath $amendment
+    $automation=Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1';$out=Join-Path $workspace "receipts/$AmendmentId.json"
+    $null=&$automation -Action AmendActiveWriteScope -WorkspaceRoot $workspace -UnitId $unitId -ActiveWriteScopeAmendment $inputPath -ExpectedActiveWriteScopeAmendmentSha256 (Get-EnvelopeFileSha256 $inputPath) -OutPath $out -Timestamp '2026-08-25T00:00:42.5000000Z' -Execute
+    return $Projection
+}
 function Invoke-NestedRetirement([object]$Projection,[string]$UnitId,[string]$ReplacementId,[string]$Timestamp,[switch]$Execute,[string]$FaultAfter='none'){
     if(-not[IO.Directory]::Exists([string]$Projection.workspace)-or-not[IO.File]::Exists([string]$Projection.map_path)){throw 'Nested retirement projection paths are absent.'}
     foreach($row in @((Read-EnvelopeProtocolJson $Projection.map_path).repositories)){if([string]::IsNullOrWhiteSpace([string]$row.path)){throw "Nested retirement repository '$([string]$row.repo_id)' has an empty path."}}
@@ -147,6 +158,39 @@ try{
     $nestedReplay=Invoke-NestedRetirement $nested u002 u003 '2026-08-25T00:00:43.0000000Z' -Execute
     Assert-RetirementTest ($nestedReplay.executed-and$null-eq$nestedReplay.current_unit_after) 'nested read-only planning replay did not return the committed retirement'
     Assert-RetirementCallerProtocol $nested.workspace 'nested read-only planning replay'
+    $continuationSeed=@(New-ReadonlyPlanningRetirementSeed (Join-Path $temp 'amended-continuation-seed'))[-1]
+    $amended=@(Add-ReadonlyPlanningWriteScopeAmendment ([pscustomobject]@{repository=[string]$continuationSeed.source_repository;workspace=[string]$continuationSeed.workspace;map=Read-EnvelopeProtocolJson (Join-Path $continuationSeed.workspace 'repository-map.json');map_path=Join-Path $continuationSeed.workspace 'repository-map.json'}))[-1]
+    $amendedHead=(@(Invoke-EnvelopeGit $amended.repository @('rev-parse','HEAD'))[0]).Trim();$amendedDry=Invoke-NestedRetirement $amended u002 u003 '2026-08-25T00:00:43.0000000Z'
+    Assert-RetirementTest (-not$amendedDry.executed) 'amended nested planning dry run failed'
+    $amendedRun=Invoke-NestedRetirement $amended u002 u003 '2026-08-25T00:00:43.0000000Z' -Execute
+    Assert-RetirementTest ($amendedRun.executed-and(@(Invoke-EnvelopeGit $amended.repository @('rev-parse','HEAD'))[0]).Trim()-ceq$amendedHead) 'amended nested planning retirement moved its locked HEAD'
+    $amendedReplay=Invoke-NestedRetirement $amended u002 u003 '2026-08-25T00:00:43.0000000Z' -Execute
+    Assert-RetirementTest ($amendedReplay.executed-and$null-eq$amendedReplay.current_unit_after) 'amended nested planning exact retry did not return the committed retirement'
+    Invoke-EnvelopeGit $amended.repository @('add','-f','morphospace')|Out-Null;Invoke-EnvelopeGit $amended.repository @('commit','-m','checkpoint amended active retirement')|Out-Null
+    $transitionLedgerModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceTransitionLedger.psm1') -PassThru
+    Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1')
+    Test-ActiveRetirementContinuation -Workspace $amended.workspace -TestRoot (Join-Path $temp 'amended-continuation') -RepositoryRoot $repository -RetirementReceiptPath 'receipts/retire-u002.json'
+    foreach($phase in @('after-intent','after-artifact','after-projection','after-event')){
+        $case=@(Add-ReadonlyPlanningWriteScopeAmendment (New-RetirementNestedPlanningProjection $readonlySeed $temp "nested-amended-recovery-$phase") "amended-recovery-$phase")[-1];$interrupted=$false
+        try{Invoke-NestedRetirement $case u002 u003 '2026-08-25T00:00:43.0000000Z' -Execute -FaultAfter $phase|Out-Null}catch{$interrupted=$_.Exception.Message-like'*Injected interruption*'}
+        Assert-RetirementTest $interrupted "amended nested planning recovery $phase did not interrupt"
+        $recovered=Invoke-NestedRetirement $case u002 u003 '2026-08-25T00:00:43.0000000Z' -Execute
+        Assert-RetirementTest ($recovered.executed-and$null-eq(Read-EnvelopeProtocolJson (Join-Path $case.workspace 'workspace.state.json')).current_unit) "amended nested planning recovery $phase did not complete"
+    }
+    foreach($damage in @('amended-unit','amendment-artifact-missing','amendment-artifact-damaged','amendment-proof','amendment-wrong-unit','amendment-incomplete','amendment-outside','amendment-staged')){
+        $amendmentId="${damage}-scope";$case=@(Add-ReadonlyPlanningWriteScopeAmendment (New-RetirementNestedPlanningProjection $readonlySeed $temp "nested-$damage") $amendmentId)[-1];$eventPath=Join-Path $case.workspace 'iteration-events.jsonl';$receiptPath=Join-Path $case.workspace "receipts/$amendmentId.json";$completionPath=Join-Path $case.workspace "receipts/transactions/$amendmentId-recorded-transition.completion.json"
+        switch($damage){
+            'amended-unit' {$unitPath=Join-Path $case.workspace 'iteration-units/u002.json';[IO.File]::AppendAllText($unitPath,' ')}
+            'amendment-artifact-missing' {Remove-Item -LiteralPath $receiptPath -Force}
+            'amendment-artifact-damaged' {[IO.File]::AppendAllText($receiptPath,' ')}
+            'amendment-proof' {$receipt=Read-EnvelopeProtocolJson $receiptPath;$receipt.ownership_proof.tracked_paths=@($receipt.before_allowed_paths);Write-EnvelopeJson $receiptPath $receipt;$intentPath=Join-Path $case.workspace "receipts/transactions/$amendmentId-recorded-transition.intent.json";$intent=Read-EnvelopeProtocolJson $intentPath;$artifactBytes=[IO.File]::ReadAllBytes($receiptPath);$intent.artifacts[0].bytes_base64=[Convert]::ToBase64String($artifactBytes);$intent.artifacts[0].sha256=Get-EnvelopeFileSha256 $receiptPath;Write-EnvelopeJson $intentPath $intent;$completion=Read-EnvelopeProtocolJson $completionPath;$completion.intent.sha256=Get-EnvelopeFileSha256 $intentPath;Write-EnvelopeJson $completionPath $completion}
+            'amendment-wrong-unit' {$lines=[Collections.Generic.List[string]]@(Get-Content $eventPath);$event=$lines[-1]|ConvertFrom-Json -DateKind String;$event.unit_id='u009';$lines[-1]=$event|ConvertTo-Json -Compress -Depth 32;[IO.File]::WriteAllText($eventPath,($lines-join"`n")+"`n",[Text.UTF8Encoding]::new($false))}
+            'amendment-incomplete' {Remove-Item -LiteralPath $completionPath -Force}
+            'amendment-outside' {[IO.File]::WriteAllText((Join-Path $case.repository 'outside-amendment.txt'),'outside')}
+            'amendment-staged' {Invoke-EnvelopeGit $case.repository @('add',([IO.Path]::GetRelativePath($case.repository,$receiptPath)))|Out-Null}
+        }
+        $rejected=$false;try{Invoke-NestedRetirement $case u002 u003 '2026-08-25T00:00:43.0000000Z' -Execute|Out-Null}catch{$rejected=$true};Assert-RetirementTest $rejected "$damage was accepted"
+    }
     foreach($phase in @('after-intent','after-artifact','after-projection','after-event')){
         $recoveryCase=@(New-RetirementNestedPlanningProjection $readonlySeed $temp "nested-recovery-$phase")[-1];$interrupted=$false
         try{Invoke-NestedRetirement $recoveryCase u002 u003 '2026-08-25T00:00:43.0000000Z' -Execute -FaultAfter $phase|Out-Null}catch{$interrupted=$_.Exception.Message-like'*Injected interruption*'}

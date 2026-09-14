@@ -109,7 +109,16 @@ function Test-ActiveRetirementAuthenticatedPlanningDirt {
     if($admissions.Count-ne1){throw 'Active retirement planning lifecycle requires one exact current admission receipt.'}
     $admission=$admissions[0]
     if($RecoveryIntent){Test-ActiveRetirementRecoveryPreparationProvenance $workspaceFull $admission $RecoveryIntent $provenanceModule}else{$null=&$provenanceModule {param($root,$admission) Test-MorphospaceDevelopmentUnitPreparation -WorkspaceRoot $root -Admission $admission -Phase Freeze} $workspaceFull $admission}
-    $events=(Get-ActiveRetirementEvents $workspaceFull).events;$preparedId="$([string]$admission.preparation.preparation_id)-prepared";$admittedId="$([string]$admission.admission_id)-admitted"
+    $eventObservation=Get-ActiveRetirementEvents $workspaceFull;$events=$eventObservation.events
+    if($RecoveryIntent){
+        $tailMatches=@($events|Where-Object{[string]$_.event_id-ceq[string]$RecoveryIntent.expected.event_tail_id})
+        if($tailMatches.Count-ne1){throw 'Active retirement recovery planning prefix tail is ambiguous.'}
+        $prefixLength=[long]$RecoveryIntent.expected.events_length;$bytes=[IO.File]::ReadAllBytes((Resolve-MorphospaceWorkspacePath $workspaceFull 'iteration-events.jsonl' -RequireLeaf))
+        if($prefixLength-lt1-or$prefixLength-gt$bytes.LongLength){throw 'Active retirement recovery planning prefix length is invalid.'};$prefix=[byte[]]::new($prefixLength);[Array]::Copy($bytes,$prefix,$prefixLength)
+        if((Get-MorphospaceSha256Bytes $prefix)-cne[string]$RecoveryIntent.expected.events_sha256){throw 'Active retirement recovery planning prefix bytes changed.'}
+        $events=@($events|Where-Object{[int]$_.sequence-le[int]$tailMatches[0].sequence})
+    }
+    $preparedId="$([string]$admission.preparation.preparation_id)-prepared";$admittedId="$([string]$admission.admission_id)-admitted"
     $prepared=@($events|Where-Object{[string]$_.event_id-ceq$preparedId});$admitted=@($events|Where-Object{[string]$_.event_id-ceq$admittedId});$claimed=@($events|Where-Object{[string]$_.unit_id-ceq[string]$Unit.unit_id-and[string]$_.event_id-cmatch('^'+[regex]::Escape([string]$Unit.unit_id)+'-claimed-[0-9]{4}$')})
     if($prepared.Count-ne1-or$admitted.Count-ne1-or$claimed.Count-ne1){throw 'Active retirement planning lifecycle event identities are ambiguous.'}
     $from=[int]$prepared[0].sequence;$to=[int]$claimed[0].sequence;$suffix=@($events|Where-Object{[int]$_.sequence-ge$from-and[int]$_.sequence-le$to}|Sort-Object sequence)
@@ -117,6 +126,17 @@ function Test-ActiveRetirementAuthenticatedPlanningDirt {
     $replacement=$suffix.Count-eq6-and[string]$suffix[0].event_id-ceq$preparedId-and[string]$suffix[1].event_id-cmatch'-admitted$'-and[string]$suffix[2].event_id-cmatch'-proposal-retired-[0-9]{4}$'-and[string]$suffix[3].event_id-ceq$admittedId-and[string]$suffix[4].event_id-cmatch('^'+[regex]::Escape([string]$Unit.unit_id)+'-ready-[0-9]{4}$')-and[string]$suffix[5].event_id-ceq[string]$claimed[0].event_id
     if(-not$direct-and-not$replacement){throw 'Active retirement planning lifecycle suffix is unsupported.'}
     for($index=0;$index-lt$suffix.Count;$index++){if([int]$suffix[$index].sequence-ne($from+$index)){throw 'Active retirement planning lifecycle suffix is not contiguous.'}}
+    $amendments=@($events|Where-Object{[int]$_.sequence-gt$to}|Sort-Object sequence)
+    $amendmentModule=$null
+    if($amendments.Count-ne0){
+        $amendmentModule=Import-Module (Join-Path $PSScriptRoot 'ActiveWriteScopeAmendment.psm1') -Force -PassThru
+        Restore-ActiveRetirementCallerModules
+        for($index=0;$index-lt$amendments.Count;$index++){
+            $event=$amendments[$index]
+            if([int]$event.sequence-ne($to+$index+1)-or[string]$event.unit_id-cne[string]$Unit.unit_id-or[string]$event.event_id-cnotmatch('^[a-z0-9][a-z0-9-]{1,127}-recorded$')){throw 'Active retirement planning continuation is not a contiguous same-unit write-scope amendment suffix.'}
+        }
+    }
+    $projectionSuffix=@($suffix)+@($amendments)
     $expected=@{};$recoveryOwned=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     if($RecoveryIntent){foreach($relative in @([string]$RecoveryIntent.state.path,[string]$RecoveryIntent.events.path,"receipts/transactions/$($RecoveryIntent.transaction_id).intent.json","receipts/transactions/$($RecoveryIntent.transaction_id).completion.json")+@($RecoveryIntent.artifacts|ForEach-Object{[string]$_.path})){[void]$recoveryOwned.Add($relative)};for($artifactIndex=0;$artifactIndex-lt@($RecoveryIntent.artifacts).Count;$artifactIndex++){[void]$recoveryOwned.Add("receipts/transactions/$($RecoveryIntent.transaction_id).artifact-$artifactIndex.pending")}}
     function Set-PlanningProjection([string]$Relative,[string]$Sha){$relative=ConvertTo-MorphospaceProtocolRelativePath $Relative;if(-not$recoveryOwned.Contains($relative)){$expected[$workspacePrefix+$relative]=$Sha}}
@@ -129,9 +149,12 @@ function Test-ActiveRetirementAuthenticatedPlanningDirt {
     foreach($name in @('project','state','feature_lock')){$projection=$preparationIntent.target.$name;Set-PlanningProjection ([string]$projection.path) (Get-ActiveRetirementCanonicalRawSha256 $projection.document)}
     foreach($artifact in @($preparationIntent.artifacts)){$artifactBytes=[Convert]::FromBase64String([string]$artifact.bytes_base64);Set-PlanningProjection ([string]$artifact.path) (Get-MorphospaceSha256Bytes $artifactBytes)}
     Set-PlanningProjection $preparationIntentRelative (Get-MorphospaceFileSha256 $preparationIntentPath);Set-PlanningProjection $preparationCompletionRelative (Get-MorphospaceFileSha256 $preparationCompletionPath)
-    foreach($event in @($suffix|Select-Object -Skip 1)){
+    foreach($event in @($projectionSuffix|Select-Object -Skip 1)){
         $transactionId="$([string]$event.event_id)-transition";$proof=Get-ActiveRetirementPlanningTransition -Workspace $workspaceFull -TransactionId $transactionId -HistoricalProjection:($null-ne$RecoveryIntent)
         if((Get-MorphospaceCanonicalJsonSha256 $proof.intent.event)-cne(Get-MorphospaceCanonicalJsonSha256 $event)){throw 'Active retirement planning lifecycle event is detached from its transaction.'}
+        if([int]$event.sequence-gt$to){
+            $null=&$amendmentModule {param($root,$expected,$transition) Assert-ActiveWriteScopeHistoricalTransition -WorkspaceRoot $root -ExpectedEvent $expected -Transition $transition} $workspaceFull $event $proof
+        }
         $intentRelative="receipts/transactions/$transactionId.intent.json";$completionRelative="receipts/transactions/$transactionId.completion.json";$intentPath=Resolve-MorphospaceWorkspacePath $workspaceFull $intentRelative -RequireLeaf;$completionPath=Resolve-MorphospaceWorkspacePath $workspaceFull $completionRelative -RequireLeaf
         if((Get-MorphospaceFileSha256 $intentPath)-cne(Get-ActiveRetirementCanonicalRawSha256 $proof.intent)-or(Get-MorphospaceFileSha256 $completionPath)-cne(Get-ActiveRetirementCanonicalRawSha256 $proof.completion)){throw 'Active retirement planning lifecycle transaction bytes are non-canonical.'}
         if(@(Get-ChildItem -LiteralPath (Split-Path $intentPath -Parent) -File -Filter "$transactionId.artifact-*.pending").Count-ne0){throw 'Active retirement planning lifecycle contains an orphan committed pending artifact.'}

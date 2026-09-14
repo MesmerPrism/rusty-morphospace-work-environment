@@ -39,7 +39,10 @@ owner-produced lifecycle dirt when it strictly contains the active workspace
 and its HEAD and tree still equal the original preparation lock. This exception
 accepts only the final-byte projection of an authenticated
 `Prepare`/`Admit`/`Ready`/`Claim` chain, or its exact
-`Prepare`/`Admit`/`RetireProposed`/`Admit`/`Ready`/`Claim` replacement form.
+`Prepare`/`Admit`/`RetireProposed`/`Admit`/`Ready`/`Claim` replacement form,
+followed by zero or more contiguous same-unit `AmendActiveWriteScope`
+transactions. Every amendment is revalidated by its owning semantic verifier;
+no other post-Claim event qualifies.
 The verifier applies last-writer wins in ledger order and rejects staged
 changes, deletes, renames, conflicts, outside-workspace paths, pending
 artifacts, incomplete transactions, and target, artifact, intent, or completion
@@ -66,7 +69,9 @@ receives no exemption. The named replacement must still be absent.
 
 ## Prepare the replacement
 
-Once the project is idle, use ordinary `PrepareDevelopmentEnvelope` to review
+Once the project is idle, checkpoint the completed planning retirement so the
+next preparation observes a clean current planning source. Then use ordinary
+`PrepareDevelopmentEnvelope` to review
 the revised repository roots, feature closure, permissions, build and device
 ceilings. Bind fresh clean source identities. Then use `AdmitDevelopmentUnit`,
 `Ready`, `Inspect` and `Claim` for the named replacement.
