@@ -3,6 +3,7 @@ $ErrorActionPreference='Stop'
 Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1')
 Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceTransitionLedger.psm1')
 Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceSourceCompositionIdentity.psm1')
+Import-Module (Join-Path $PSScriptRoot 'DevelopmentEnvelopeProvenance.psm1')
 
 function Assert-ActiveRetirementSchema([object]$Document,[string]$Name) {
     if(-not(Test-Json -Json ($Document|ConvertTo-Json -Depth 100 -Compress) -SchemaFile (Join-Path (Split-Path $PSScriptRoot -Parent) "schemas/$Name"))){throw "Active retirement $Name contract is invalid."}
@@ -41,6 +42,91 @@ function Get-ActiveRetirementEvents([string]$Workspace){
     }
     [pscustomobject]@{events=$events;sha256=Get-MorphospaceSha256Bytes $bytes;length=[long]$bytes.Length;tail_id=[string]$events[-1].event_id}
 }
+function Get-ActiveRetirementCanonicalRawSha256([object]$Document){Get-MorphospaceSha256Bytes (ConvertTo-MorphospaceProtocolJsonBytes $Document)}
+function Get-ActiveRetirementPlanningTransition([string]$Workspace,[string]$TransactionId,[switch]$HistoricalProjection){
+    if(-not$HistoricalProjection){return Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $Workspace -TransactionId $TransactionId -ExpectedEventsPath 'iteration-events.jsonl'}
+    $ledger=Get-Module MorphospaceTransitionLedger -All|Select-Object -First 1
+    if($null-eq$ledger){throw 'Active retirement planning transition-ledger verifier is unavailable.'}
+    &$ledger {param($root,$id)
+        $intentRelative=Get-MorphospaceLedgerPath $root $id intent;$completionRelative=Get-MorphospaceLedgerPath $root $id completion;$intentAbsolute=Resolve-MorphospaceWorkspacePath $root $intentRelative -RequireLeaf;$completionAbsolute=Resolve-MorphospaceWorkspacePath $root $completionRelative -RequireLeaf
+        $intent=Read-MorphospaceLedgerJson $intentAbsolute;Assert-MorphospaceLedgerIntent $intent $id;Assert-MorphospaceLedgerArtifactNamespace $root $id $intent;$completion=Read-MorphospaceLedgerJson $completionAbsolute
+        Assert-MorphospaceExactPropertySet $completion @('schema','transaction_id','completed_at','intent','state_sha256','unit_sha256','event_id','status') @() 'Active retirement historical planning completion';Assert-MorphospaceExactPropertySet $completion.intent @('role','path','schema','sha256') @() 'Active retirement historical planning completion intent'
+        if([string]$completion.schema-cne'rusty.morphospace.workflow.transition_ledger_completion.v1'-or[string]$completion.transaction_id-cne$id-or[string]$completion.status-cne'committed'-or[string]$completion.intent.role-cne'transition-ledger-intent'-or[string]$completion.intent.path-cne$intentRelative-or[string]$completion.intent.schema-cne[string]$intent.schema-or[string]$completion.intent.sha256-cne(Get-MorphospaceFileSha256 $intentAbsolute)-or[string]$completion.state_sha256-cne[string]$intent.target.state.sha256-or[string]$completion.unit_sha256-cne[string]$intent.target.unit.sha256-or[string]$completion.event_id-cne[string]$intent.event.event_id){throw 'Active retirement historical planning completion is detached.'}
+        if((Test-MorphospaceStrictUtcTimestamp ([string]$completion.completed_at))-lt(Test-MorphospaceStrictUtcTimestamp ([string]$intent.created_at))){throw 'Active retirement historical planning completion timestamp is invalid.'}
+        [void](Assert-MorphospaceLedgerEventPlacement (Resolve-MorphospaceWorkspacePath $root ([string]$intent.events.path) -RequireLeaf) $intent -AllowHistorical -RequirePresent)
+        foreach($artifact in @($intent.artifacts)){$target=Resolve-MorphospaceWorkspacePath $root ([string]$artifact.path) -RequireLeaf;if((Get-MorphospaceFileSha256 $target)-cne[string]$artifact.sha256){throw 'Active retirement historical planning artifact differs from its intent.'}}
+        [pscustomobject]@{intent=$intent;completion=$completion}
+    } $Workspace $TransactionId
+}
+function Test-ActiveRetirementRecoveryPreparationProvenance([string]$Workspace,[object]$Admission,[object]$RecoveryIntent){
+    $temporary=Join-Path ([IO.Path]::GetTempPath()) ('morphospace-retirement-provenance-'+[guid]::NewGuid().ToString('N'))
+    try{
+        Copy-Item -LiteralPath $Workspace -Destination $temporary -Recurse -Force
+        $preState=Copy-ActiveRetirementValue $RecoveryIntent.target.state.document;$preState.current_unit=[string]$RecoveryIntent.target.unit.document.unit_id;$preState.last_event_id=[string]$RecoveryIntent.expected.event_tail_id
+        if((Get-MorphospaceCanonicalJsonSha256 $preState)-cne[string]$RecoveryIntent.pre.state.sha256){throw 'Active retirement recovery state preimage is detached.'}
+        [IO.File]::WriteAllBytes((Join-Path $temporary ([string]$RecoveryIntent.state.path)),(ConvertTo-MorphospaceProtocolJsonBytes $preState))
+        $liveEvents=[IO.File]::ReadAllBytes((Resolve-MorphospaceWorkspacePath $Workspace ([string]$RecoveryIntent.events.path) -RequireLeaf));$length=[long]$RecoveryIntent.expected.events_length
+        if($length-lt0-or$length-gt$liveEvents.Length){throw 'Active retirement recovery event prefix length is invalid.'};$prefix=[byte[]]::new($length);[Array]::Copy($liveEvents,$prefix,$length)
+        if((Get-MorphospaceSha256Bytes $prefix)-cne[string]$RecoveryIntent.expected.events_sha256){throw 'Active retirement recovery event prefix differs from its authenticated preimage.'};[IO.File]::WriteAllBytes((Join-Path $temporary ([string]$RecoveryIntent.events.path)),$prefix)
+        foreach($relative in @("receipts/transactions/$($RecoveryIntent.transaction_id).intent.json","receipts/transactions/$($RecoveryIntent.transaction_id).completion.json")+@($RecoveryIntent.artifacts|ForEach-Object{[string]$_.path})){$path=Resolve-MorphospaceWorkspacePath $temporary $relative;if([IO.File]::Exists($path)){Remove-Item -LiteralPath $path -Force}}
+        $transactionRoot=Resolve-MorphospaceWorkspacePath $temporary 'receipts/transactions';foreach($pending in @(Get-ChildItem -LiteralPath $transactionRoot -File -Filter "$($RecoveryIntent.transaction_id).artifact-*.pending")){Remove-Item -LiteralPath $pending.FullName -Force}
+        $null=Test-MorphospaceDevelopmentUnitPreparation -WorkspaceRoot $temporary -Admission $Admission -Phase Freeze
+    }finally{
+        $resolved=[IO.Path]::GetFullPath($temporary);$tempPrefix=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\','/')+[IO.Path]::DirectorySeparatorChar
+        if($resolved.StartsWith($tempPrefix,[StringComparison]::OrdinalIgnoreCase)-and[IO.Path]::GetFileName($resolved).StartsWith('morphospace-retirement-provenance-')){Remove-Item -LiteralPath $resolved -Recurse -Force -ErrorAction SilentlyContinue}
+    }
+}
+function Test-ActiveRetirementAuthenticatedPlanningDirt {
+    param([string]$Workspace,[object]$Unit,[object]$RepositoryEntry,[string[]]$StatusPorcelain,[object]$RecoveryIntent=$null)
+    if([string]$RepositoryEntry.role-cne'planning'){return $false}
+    if([string]::IsNullOrWhiteSpace($Workspace)){throw 'Active retirement planning lifecycle workspace path is empty.'};if([string]::IsNullOrWhiteSpace([string]$RepositoryEntry.path)){throw 'Active retirement planning lifecycle repository path is empty.'}
+    if($null-eq$RecoveryIntent-and@($StatusPorcelain|Where-Object{[string]$_-cmatch'retire-.*-active-retired-transition'}).Count-ne0){throw 'Active retirement planning lifecycle recovery intent was not forwarded.'}
+    $repository=[IO.Path]::GetFullPath([string]$RepositoryEntry.path).TrimEnd('\','/');$workspaceFull=[IO.Path]::GetFullPath($Workspace).TrimEnd('\','/')
+    $repositoryPrefix=$repository+[IO.Path]::DirectorySeparatorChar;$pathComparison=if([OperatingSystem]::IsWindows()){[StringComparison]::OrdinalIgnoreCase}else{[StringComparison]::Ordinal}
+    if(-not$workspaceFull.StartsWith($repositoryPrefix,$pathComparison)){return $false}
+    $workspacePrefix=[IO.Path]::GetRelativePath($repository,$workspaceFull).Replace('\','/').TrimEnd('/')+'/'
+    $admissions=@(Get-ChildItem -LiteralPath (Resolve-MorphospaceWorkspacePath $workspaceFull 'receipts') -File -Filter '*.json'|ForEach-Object{$document=Read-MorphospaceProtocolJson $_.FullName;if([string]$document.schema-ceq'rusty.morphospace.workflow.development_unit_admission.v1'-and[string]$document.unit_id-ceq[string]$Unit.unit_id){$document}})
+    if($admissions.Count-ne1){throw 'Active retirement planning lifecycle requires one exact current admission receipt.'}
+    $admission=$admissions[0]
+    if($RecoveryIntent){Test-ActiveRetirementRecoveryPreparationProvenance $workspaceFull $admission $RecoveryIntent}else{$null=Test-MorphospaceDevelopmentUnitPreparation -WorkspaceRoot $workspaceFull -Admission $admission -Phase Freeze}
+    $events=(Get-ActiveRetirementEvents $workspaceFull).events;$preparedId="$([string]$admission.preparation.preparation_id)-prepared";$admittedId="$([string]$admission.admission_id)-admitted"
+    $prepared=@($events|Where-Object{[string]$_.event_id-ceq$preparedId});$admitted=@($events|Where-Object{[string]$_.event_id-ceq$admittedId});$claimed=@($events|Where-Object{[string]$_.unit_id-ceq[string]$Unit.unit_id-and[string]$_.event_id-cmatch('^'+[regex]::Escape([string]$Unit.unit_id)+'-claimed-[0-9]{4}$')})
+    if($prepared.Count-ne1-or$admitted.Count-ne1-or$claimed.Count-ne1){throw 'Active retirement planning lifecycle event identities are ambiguous.'}
+    $from=[int]$prepared[0].sequence;$to=[int]$claimed[0].sequence;$suffix=@($events|Where-Object{[int]$_.sequence-ge$from-and[int]$_.sequence-le$to}|Sort-Object sequence)
+    $direct=$suffix.Count-eq4-and[string]$suffix[0].event_id-ceq$preparedId-and[string]$suffix[1].event_id-ceq$admittedId-and[string]$suffix[2].event_id-cmatch('^'+[regex]::Escape([string]$Unit.unit_id)+'-ready-[0-9]{4}$')-and[string]$suffix[3].event_id-ceq[string]$claimed[0].event_id
+    $replacement=$suffix.Count-eq6-and[string]$suffix[0].event_id-ceq$preparedId-and[string]$suffix[1].event_id-cmatch'-admitted$'-and[string]$suffix[2].event_id-cmatch'-proposal-retired-[0-9]{4}$'-and[string]$suffix[3].event_id-ceq$admittedId-and[string]$suffix[4].event_id-cmatch('^'+[regex]::Escape([string]$Unit.unit_id)+'-ready-[0-9]{4}$')-and[string]$suffix[5].event_id-ceq[string]$claimed[0].event_id
+    if(-not$direct-and-not$replacement){throw 'Active retirement planning lifecycle suffix is unsupported.'}
+    for($index=0;$index-lt$suffix.Count;$index++){if([int]$suffix[$index].sequence-ne($from+$index)){throw 'Active retirement planning lifecycle suffix is not contiguous.'}}
+    $expected=@{};$recoveryOwned=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    if($RecoveryIntent){foreach($relative in @([string]$RecoveryIntent.state.path,[string]$RecoveryIntent.events.path,"receipts/transactions/$($RecoveryIntent.transaction_id).intent.json","receipts/transactions/$($RecoveryIntent.transaction_id).completion.json")+@($RecoveryIntent.artifacts|ForEach-Object{[string]$_.path})){[void]$recoveryOwned.Add($relative)};for($artifactIndex=0;$artifactIndex-lt@($RecoveryIntent.artifacts).Count;$artifactIndex++){[void]$recoveryOwned.Add("receipts/transactions/$($RecoveryIntent.transaction_id).artifact-$artifactIndex.pending")}}
+    function Set-PlanningProjection([string]$Relative,[string]$Sha){$relative=ConvertTo-MorphospaceProtocolRelativePath $Relative;if(-not$recoveryOwned.Contains($relative)){$expected[$workspacePrefix+$relative]=$Sha}}
+    $preparationTransactionId="$preparedId-transition";$preparationIntentRelative="receipts/transactions/$preparationTransactionId.intent.json";$preparationCompletionRelative="receipts/transactions/$preparationTransactionId.completion.json"
+    $preparationIntentPath=Resolve-MorphospaceWorkspacePath $workspaceFull $preparationIntentRelative -RequireLeaf;$preparationCompletionPath=Resolve-MorphospaceWorkspacePath $workspaceFull $preparationCompletionRelative -RequireLeaf
+    $preparationIntent=Read-MorphospaceProtocolJson $preparationIntentPath;$preparationCompletion=Read-MorphospaceProtocolJson $preparationCompletionPath
+    if([string]$preparationIntent.transaction_id-cne$preparationTransactionId-or[string]$preparationIntent.event.event_id-cne$preparedId-or[string]$preparationCompletion.transaction_id-cne$preparationTransactionId-or[string]$preparationCompletion.intent_sha256-cne(Get-MorphospaceFileSha256 $preparationIntentPath)-or[string]$preparationCompletion.event_id-cne$preparedId-or[string]$preparationCompletion.status-cne'committed'){throw 'Active retirement planning preparation transaction is detached.'}
+    if((Get-MorphospaceFileSha256 $preparationIntentPath)-cne(Get-ActiveRetirementCanonicalRawSha256 $preparationIntent)-or(Get-MorphospaceFileSha256 $preparationCompletionPath)-cne(Get-ActiveRetirementCanonicalRawSha256 $preparationCompletion)){throw 'Active retirement planning preparation transaction bytes are non-canonical.'}
+    if(@(Get-ChildItem -LiteralPath (Split-Path $preparationIntentPath -Parent) -File -Filter "$preparationTransactionId.artifact-*.pending").Count-ne0){throw 'Active retirement planning lifecycle contains an orphan preparation pending artifact.'}
+    foreach($name in @('project','state','feature_lock')){$projection=$preparationIntent.target.$name;Set-PlanningProjection ([string]$projection.path) (Get-ActiveRetirementCanonicalRawSha256 $projection.document)}
+    foreach($artifact in @($preparationIntent.artifacts)){$artifactBytes=[Convert]::FromBase64String([string]$artifact.bytes_base64);Set-PlanningProjection ([string]$artifact.path) (Get-MorphospaceSha256Bytes $artifactBytes)}
+    Set-PlanningProjection $preparationIntentRelative (Get-MorphospaceFileSha256 $preparationIntentPath);Set-PlanningProjection $preparationCompletionRelative (Get-MorphospaceFileSha256 $preparationCompletionPath)
+    foreach($event in @($suffix|Select-Object -Skip 1)){
+        $transactionId="$([string]$event.event_id)-transition";$proof=Get-ActiveRetirementPlanningTransition -Workspace $workspaceFull -TransactionId $transactionId -HistoricalProjection:($null-ne$RecoveryIntent)
+        if((Get-MorphospaceCanonicalJsonSha256 $proof.intent.event)-cne(Get-MorphospaceCanonicalJsonSha256 $event)){throw 'Active retirement planning lifecycle event is detached from its transaction.'}
+        $intentRelative="receipts/transactions/$transactionId.intent.json";$completionRelative="receipts/transactions/$transactionId.completion.json";$intentPath=Resolve-MorphospaceWorkspacePath $workspaceFull $intentRelative -RequireLeaf;$completionPath=Resolve-MorphospaceWorkspacePath $workspaceFull $completionRelative -RequireLeaf
+        if((Get-MorphospaceFileSha256 $intentPath)-cne(Get-ActiveRetirementCanonicalRawSha256 $proof.intent)-or(Get-MorphospaceFileSha256 $completionPath)-cne(Get-ActiveRetirementCanonicalRawSha256 $proof.completion)){throw 'Active retirement planning lifecycle transaction bytes are non-canonical.'}
+        if(@(Get-ChildItem -LiteralPath (Split-Path $intentPath -Parent) -File -Filter "$transactionId.artifact-*.pending").Count-ne0){throw 'Active retirement planning lifecycle contains an orphan committed pending artifact.'}
+        Set-PlanningProjection ([string]$proof.intent.state.path) (Get-ActiveRetirementCanonicalRawSha256 $proof.intent.target.state.document);Set-PlanningProjection ([string]$proof.intent.unit.path) (Get-ActiveRetirementCanonicalRawSha256 $proof.intent.target.unit.document)
+        foreach($projection in @($(if($proof.intent.PSObject.Properties.Name-contains'additional_projections'){$proof.intent.additional_projections}else{@()}))){Set-PlanningProjection ([string]$projection.path) (Get-ActiveRetirementCanonicalRawSha256 $projection.document)}
+        foreach($artifact in @($proof.intent.artifacts)){$artifactBytes=[Convert]::FromBase64String([string]$artifact.bytes_base64);if((Get-MorphospaceSha256Bytes $artifactBytes)-cne[string]$artifact.sha256){throw 'Active retirement planning lifecycle artifact payload is detached.'};Set-PlanningProjection ([string]$artifact.path) ([string]$artifact.sha256)}
+        Set-PlanningProjection $intentRelative (Get-MorphospaceFileSha256 $intentPath);Set-PlanningProjection $completionRelative (Get-MorphospaceFileSha256 $completionPath)
+    }
+    Set-PlanningProjection 'iteration-events.jsonl' (Get-MorphospaceFileSha256 (Resolve-MorphospaceWorkspacePath $workspaceFull 'iteration-events.jsonl' -RequireLeaf))
+    $staged=@(& git -C $repository diff --cached --name-only --no-renames -- 2>&1|Where-Object{$_}|ForEach-Object{([string]$_).Replace('\','/')});if($LASTEXITCODE-ne0-or$staged.Count-ne0){throw 'Active retirement planning lifecycle dirt must not be staged.'}
+    $changes=@();foreach($line in @($StatusPorcelain)){$value=[string]$line;if($value.Length-lt4-or$value.Substring(0,2)-cnotin@(' M','??')){throw 'Active retirement planning lifecycle dirt contains a staged, deleted, renamed, conflicted, or unsupported entry.'};$gitPath=$value.Substring(3).Replace('\','/');if($RecoveryIntent-and$gitPath.StartsWith($workspacePrefix,[StringComparison]::Ordinal)-and$recoveryOwned.Contains($gitPath.Substring($workspacePrefix.Length))){continue};$changes+=,$gitPath};$changes=@($changes|Sort-Object -Unique)
+    $allowed=@();foreach($path in @($expected.Keys|Sort-Object)){$live=Join-Path $repository $path;if(-not[IO.File]::Exists($live)-or(Get-MorphospaceFileSha256 $live)-cne[string]$expected[$path]){throw "Active retirement planning lifecycle projection is damaged: $path"};$null=& git -C $repository diff --quiet HEAD -- $path 2>&1;if($LASTEXITCODE-ne0){$allowed+=,$path}else{$null=& git -C $repository ls-files --error-unmatch -- $path 2>&1;if($LASTEXITCODE-ne0){$allowed+=,$path}}};$allowed=@($allowed|Sort-Object -Unique)
+    if($changes.Count-ne$allowed.Count-or($changes-join'|')-cne($allowed-join'|')){throw "Active retirement planning repository dirt differs from the authenticated lifecycle projection (expected: $($allowed-join', '); observed: $($changes-join', '))."}
+    return $true
+}
 function Get-ActiveRetirementRepositories([object]$Unit,[object]$Source,[string]$RepoMapPath,[string]$Workspace='',[object]$RecoveryIntent=$null){
     # Git observation is action-only. The shared reader avoids importing the
     # larger automation orchestrator into the historical dependency closure.
@@ -60,14 +146,15 @@ function Get-ActiveRetirementRepositories([object]$Unit,[object]$Source,[string]
     $roots=[Collections.Generic.HashSet[string]]::new($rootComparer)
     foreach($id in $ids){
         if(-not$map.ContainsKey($id)){throw "Active retirement lacks repository map entry '$id'."}
-        $observed=Get-MorphospaceRepositoryState -RepoId $id -Path ([string]$map[$id].path)
+        $entry=$map[$id]
+        $observed=Get-MorphospaceRepositoryState -RepoId $id -Path ([string]$entry.path)
         if($observed.available-and$observed.is_git){
-            $gitRoot=(@(& git -C ([string]$map[$id].path) rev-parse --show-toplevel 2>&1)-join'').Trim()
-            if($LASTEXITCODE-ne0-or-not$rootComparer.Equals([IO.Path]::GetFullPath($gitRoot),[IO.Path]::GetFullPath([string]$map[$id].path))-or-not$roots.Add([IO.Path]::GetFullPath($gitRoot))){throw 'Active retirement requires distinct exact repository roots.'}
+            $gitRoot=(@(& git -C ([string]$entry.path) rev-parse --show-toplevel 2>&1)-join'').Trim()
+            if($LASTEXITCODE-ne0-or-not$rootComparer.Equals([IO.Path]::GetFullPath($gitRoot),[IO.Path]::GetFullPath([string]$entry.path))-or-not$roots.Add([IO.Path]::GetFullPath($gitRoot))){throw 'Active retirement requires distinct exact repository roots.'}
         }
         $remaining=@($observed.status_porcelain)
-        if($RecoveryIntent-and[string]$map[$id].role-ceq'planning'){
-            $root=[IO.Path]::GetFullPath([string]$map[$id].path).TrimEnd('\','/')+[IO.Path]::DirectorySeparatorChar
+        if($RecoveryIntent-and[string]$entry.role-ceq'planning'){
+            $root=[IO.Path]::GetFullPath([string]$entry.path).TrimEnd('\','/')+[IO.Path]::DirectorySeparatorChar
             if($Workspace.StartsWith($root,[StringComparison]::OrdinalIgnoreCase)){
                 $prefix=[IO.Path]::GetRelativePath($root,$Workspace).Replace('\','/').TrimEnd('/')+'/'
                 $owned=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
@@ -82,8 +169,10 @@ function Get-ActiveRetirementRepositories([object]$Unit,[object]$Source,[string]
                 })
             }
         }
-        if(-not$observed.available-or-not$observed.is_git-or$remaining.Count-ne0-or[string]$observed.head-cnotmatch'^[0-9a-f]{40}$'-or[string]$observed.tree-cnotmatch'^[0-9a-f]{40}$'){throw "Active retirement requires clean available source repository '$id'."}
         $locked=@($Source.repositories|Where-Object{[string]$_.repo_id-ceq$id})[0]
+        $planningDirt=$false
+        if($observed.available-and$observed.is_git-and$remaining.Count-ne0-and-not$authorized.Contains($id)-and[string]$observed.head-ceq[string]$locked.commit-and[string]$observed.tree-ceq[string]$locked.tree){$planningDirt=Test-ActiveRetirementAuthenticatedPlanningDirt $Workspace $Unit $entry $remaining $RecoveryIntent}
+        if(-not$observed.available-or-not$observed.is_git-or($remaining.Count-ne0-and-not$planningDirt)-or[string]$observed.head-cnotmatch'^[0-9a-f]{40}$'-or[string]$observed.tree-cnotmatch'^[0-9a-f]{40}$'){throw "Active retirement requires clean available source repository '$id'."}
         # Writable repositories may have newer clean local checkpoints. Read-only dependencies stay pinned.
         if(-not$authorized.Contains($id)-and([string]$observed.head-cne[string]$locked.commit-or[string]$observed.tree-cne[string]$locked.tree)){throw "Active retirement read-only dependency '$id' differs from the source lock."}
         if($authorized.Contains($id)){
@@ -132,7 +221,7 @@ function Assert-ActiveRetirementPreserved([string]$Workspace,[object]$Request,[s
     }
     if([string]$source.project_id-cne[string]$Request.project_id){throw 'Active retirement source lock project identity is detached.'}
     if((Get-MorphospaceFileSha256 (Resolve-MorphospaceWorkspacePath $Workspace ([string]$Request.accepted_receipt.path) -RequireLeaf))-cne[string]$Request.accepted_receipt.sha256){throw 'Active retirement accepted checkpoint bytes drifted.'}
-    Assert-ActiveRetirementEqual @($Request.repositories) @(Get-ActiveRetirementRepositories $unit $source $RepoMapPath $Workspace $RecoveryIntent) 'clean repository observation'
+    Assert-ActiveRetirementEqual @($Request.repositories) @(Get-ActiveRetirementRepositories -Unit $unit -Source $source -RepoMapPath $RepoMapPath -Workspace $Workspace -RecoveryIntent $RecoveryIntent) 'clean repository observation'
     return $unit
 }
 function New-ActiveRetirementReceipt([object]$Request,[string]$Path,[string]$Sha,[string]$Timestamp){
@@ -221,7 +310,7 @@ function Invoke-MorphospaceRetireActive {
         if([IO.File]::Exists($intentPath)){
             $intent=Read-MorphospaceProtocolJson $intentPath;$receipt=Assert-ActiveRetirementIntent $workspace $intent $request $requestRef.path $sha $out.path
             if(-not[IO.File]::Exists($completionPath)){
-                [void](Assert-ActiveRetirementPreserved $workspace $request $RepoMapPath $intent)
+                [void](Assert-ActiveRetirementPreserved -Workspace $workspace -Request $request -RepoMapPath $RepoMapPath -RecoveryIntent $intent)
                 if(Test-Path -LiteralPath (Resolve-MorphospaceWorkspacePath $workspace "iteration-units/$($request.replacement_unit_id).json")){throw 'Interrupted active retirement replacement identity is no longer absent.'}
                 foreach($kind in @('intent','completion')){
                     if((Get-MorphospaceFileSha256 (Resolve-MorphospaceWorkspacePath $workspace "receipts/transactions/$($request.claim.transaction_id).$kind.json" -RequireLeaf))-cne[string]$request.claim."${kind}_sha256"){throw 'Active retirement interrupted Claim evidence changed.'}

@@ -6,7 +6,7 @@ $repository=Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'test-support/ActiveUnitRetirementContinuation.ps1')
 . (Join-Path $PSScriptRoot 'test-support/ActiveUnitRetirementFixture.ps1')
 Import-Module (Join-Path $PSScriptRoot 'ActiveUnitRetirement.psm1') -Force
-Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1')
+$protocolModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1') -PassThru
 function Assert-RetirementTest([bool]$Value,[string]$Message){if(-not$Value){throw "Active retirement test: $Message"}}
 function Get-RetirementInventory([string]$Workspace){
     $rows=@(Get-ChildItem -LiteralPath $Workspace -Recurse -File|Sort-Object FullName|ForEach-Object{[pscustomobject]@{path=[IO.Path]::GetRelativePath($Workspace,$_.FullName).Replace('\','/');sha256=Get-MorphospaceFileSha256 $_.FullName}})
@@ -23,6 +23,67 @@ function Assert-RetirementRejects([string]$Workspace,[string]$Label,[string]$Pat
     try{Invoke-RetirementTest $Workspace|Out-Null}catch{$rejected=$true;$message=$_.Exception.Message}
     Assert-RetirementTest ($rejected-and$message-like$Pattern) "$Label was not rejected: $message"
     Assert-RetirementTest ((Get-RetirementInventory $Workspace)-ceq$before) "$Label mutated workspace bytes"
+}
+function New-RetirementNestedPlanningProjection([object]$Seed,[string]$Root,[string]$Name){
+    $planning=Join-Path $Root $Name;Copy-Item -LiteralPath ([string]$Seed.source_repository) -Destination $planning -Recurse -Force
+    $workspace=Join-Path $planning 'morphospace'
+    $map=Read-EnvelopeProtocolJson (Join-Path $Seed.workspace 'repository-map.json');@($map.repositories|Where-Object{[string]$_.repo_id-ceq'project-shell'})[0].path=$planning
+    $mapPath=Join-Path $Root "$Name-map.json";Write-EnvelopeJson $mapPath $map
+    [pscustomobject]@{repository=$planning;workspace=$workspace;map=$map;map_path=$mapPath}
+}
+function New-ReadonlyPlanningRetirementSeed([string]$Root,[switch]$Replacement){
+    $protocolModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1') -PassThru
+    $ledger=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceTransitionLedger.psm1') -PassThru
+    $seed=@(New-EnvelopeAdmissionPreparedFixture -Root $Root -RepositoryRoot $repository -TransitionLedgerModule $ledger -OwnerProducedPreparation -AdditiveFeature)[-1]
+    $planning=[string]$seed.source_repository;$workspace=Join-Path $planning 'morphospace'
+    foreach($entry in @(Get-ChildItem -LiteralPath $seed.workspace -Force)){Copy-Item -LiteralPath $entry.FullName -Destination $workspace -Recurse -Force}
+    $preparationIntent=$seed.preparation_intent
+    Write-EnvelopeJson (Join-Path $workspace 'project.spec.json') $preparationIntent.pre.project.document;Write-EnvelopeJson (Join-Path $workspace 'workspace.state.json') $preparationIntent.pre.state.document;Write-EnvelopeJson (Join-Path $workspace 'feature.lock.json') $preparationIntent.pre.feature_lock.document;Write-EnvelopeJson (Join-Path $workspace 'iteration-units/u001.json') $preparationIntent.pre.predecessor_unit.document
+    $ledgerLines=@(Get-Content -LiteralPath (Join-Path $workspace 'iteration-events.jsonl')|Where-Object{$_});[IO.File]::WriteAllText((Join-Path $workspace 'iteration-events.jsonl'),(($ledgerLines[0..($ledgerLines.Count-2)]-join"`n")+"`n"),[Text.UTF8Encoding]::new($false))
+    foreach($relative in @('source-composition.json','receipts/u002-envelope.json','receipts/transactions/u002-envelope-prepared-transition.intent.json','receipts/transactions/u002-envelope-prepared-transition.completion.json')){Remove-Item -LiteralPath (Join-Path $workspace $relative) -Force}
+    $map=Read-EnvelopeProtocolJson (Join-Path $workspace 'repository-map.json');@($map.repositories|Where-Object{[string]$_.repo_id-ceq'project-shell'})[0].path=$planning;Write-EnvelopeJson (Join-Path $workspace 'repository-map.json') $map
+    Invoke-EnvelopeGit $planning @('add','-f','morphospace')|Out-Null;Invoke-EnvelopeGit $planning @('commit','-m','accepted planning baseline')|Out-Null
+    $baselineStatus=@(Invoke-EnvelopeGit $planning @('status','--porcelain=v1','--untracked-files=all'));if($baselineStatus.Count-ne0){throw "Nested accepted baseline commit is dirty: $($baselineStatus-join', ')"}
+    $lockedHead=(@(Invoke-EnvelopeGit $planning @('rev-parse','HEAD'))[0]).Trim().ToLowerInvariant()
+    $preparationDocument=Read-EnvelopeProtocolJson (Join-Path $Root 'u002-envelope-preparation.json');$preState=Read-EnvelopeProtocolJson (Join-Path $workspace 'workspace.state.json');$preProject=Read-EnvelopeProtocolJson (Join-Path $workspace 'project.spec.json');$preFeature=Read-EnvelopeProtocolJson (Join-Path $workspace 'feature.lock.json');$eventsPath=Join-Path $workspace 'iteration-events.jsonl'
+    @($preparationDocument.envelope.feature_lock.features)[0].descriptor.source_revision=$lockedHead;$preparationDocument.envelope.feature_lock.lock_fingerprint=Get-EnvelopeLockFingerprint $preparationDocument.envelope.feature_lock
+    $preparationDocument.expected.project_sha256=Get-EnvelopeCanonicalJsonSha256 $preProject;$preparationDocument.expected.state_sha256=Get-EnvelopeCanonicalJsonSha256 $preState;$preparationDocument.expected.feature_lock_sha256=Get-EnvelopeCanonicalJsonSha256 $preFeature;$preparationDocument.expected.repository_map_sha256=Get-EnvelopeFileSha256 (Join-Path $workspace 'repository-map.json');$preparationDocument.expected.predecessor_unit_sha256=Get-EnvelopeCanonicalJsonSha256 (Read-EnvelopeProtocolJson (Join-Path $workspace 'iteration-units/u001.json'));$preparationDocument.expected.events_sha256=Get-EnvelopeFileSha256 $eventsPath;$preparationDocument.expected.events_length=([IO.FileInfo]$eventsPath).Length;$preparationDocument.expected.event_tail_id=[string]$preState.last_event_id
+    $preparationPath=Join-Path $Root 'nested-preparation.json';Write-EnvelopeJson $preparationPath $preparationDocument
+    $null=Invoke-MorphospacePrepareDevelopmentEnvelope -WorkspaceRoot $workspace -DevelopmentEnvelopePreparation $preparationPath -ExpectedDevelopmentEnvelopePreparationSha256 (Get-EnvelopeFileSha256 $preparationPath) -OutPath (Join-Path $workspace 'receipts/u002-envelope.json') -Timestamp '2026-08-25T00:00:30.0000000Z' -Execute
+    $admission=Copy-Envelope $seed.admission_template;$state=Read-EnvelopeProtocolJson (Join-Path $workspace 'workspace.state.json');$project=Read-EnvelopeProtocolJson (Join-Path $workspace 'project.spec.json');$feature=Read-EnvelopeProtocolJson (Join-Path $workspace 'feature.lock.json');$sourcePath=Join-Path $workspace 'source-composition.json'
+    $admission.preparation.receipt_sha256=Get-EnvelopeFileSha256 (Join-Path $workspace 'receipts/u002-envelope.json');$admission.preparation.source_composition_sha256=Get-EnvelopeFileSha256 $sourcePath
+    $admission.expected.project_sha256=Get-EnvelopeCanonicalJsonSha256 $project;$admission.expected.state_sha256=Get-EnvelopeCanonicalJsonSha256 $state;$admission.expected.feature_lock_sha256=Get-EnvelopeCanonicalJsonSha256 $feature;$admission.expected.source_composition_sha256=Get-EnvelopeFileSha256 $sourcePath;$admission.expected.repository_map_sha256=Get-EnvelopeFileSha256 (Join-Path $workspace 'repository-map.json');$admission.expected.events_sha256=Get-EnvelopeFileSha256 $eventsPath;$admission.expected.events_length=([IO.FileInfo]$eventsPath).Length;$admission.expected.event_tail_id=[string]$state.last_event_id
+    $admission.unit.allowed_repositories=@([pscustomobject]@{repo_id='read-only-dependency';allowed_paths=@('dependency/')})
+    $admission.unit.read_only_dependencies=@([pscustomobject][ordered]@{repo_id='project-shell';paths=@('morphospace/');purpose='Nested planning authority.';verification='Exact preparation lock and authenticated lifecycle projection.'})
+    $admission.unit.agent_scope_assessment=$admission.agent_scope_assessment
+    $admissionPath=Join-Path $Root 'u002-readonly-planning-admission.json';Write-EnvelopeJson $admissionPath $admission
+    $automation=Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1'
+    $null=&$automation -Action AdmitDevelopmentUnit -WorkspaceRoot $workspace -DevelopmentUnitAdmission $admissionPath -ExpectedDevelopmentUnitAdmissionSha256 (Get-EnvelopeFileSha256 $admissionPath) -OutPath (Join-Path $workspace 'receipts/u002-admission.json') -Timestamp '2026-08-25T00:00:40.0000000Z' -Execute
+    if($Replacement){
+        $retireDry=&$automation -Action RetireProposed -WorkspaceRoot $workspace -UnitId u002 -ReplacementUnitId u003 -RetirementReason contract-invalid -OutPath (Join-Path $workspace 'receipts/u002-contract-retirement.json') -Timestamp '2026-08-25T00:00:41.0000000Z'|ConvertFrom-Json;$pre=$retireDry.proposed_retirement.authenticated_preimage
+        $null=&$automation -Action RetireProposed -WorkspaceRoot $workspace -UnitId u002 -ReplacementUnitId u003 -RetirementReason contract-invalid -OutPath (Join-Path $workspace 'receipts/u002-contract-retirement.json') -ExpectedStateSha256 $pre.state_sha256 -ExpectedUnitSha256 $pre.unit_sha256 -ExpectedUnitRawSha256 $pre.unit_raw_sha256 -ExpectedEventsSha256 $pre.events_sha256 -ExpectedEventsLength ([long]$pre.events_length) -ExpectedEventTailId $pre.event_tail_id -ExpectedProposedRetirementBindingSha256 $retireDry.proposed_retirement.binding_sha256 -Timestamp '2026-08-25T00:00:41.0000000Z' -Execute
+        $admission=New-EnvelopeReplacementAdmission $admission $workspace u003-admission u003;$admissionPath=Join-Path $Root 'u003-readonly-planning-admission.json';Write-EnvelopeJson $admissionPath $admission
+        $null=&$automation -Action AdmitDevelopmentUnit -WorkspaceRoot $workspace -DevelopmentUnitAdmission $admissionPath -ExpectedDevelopmentUnitAdmissionSha256 (Get-EnvelopeFileSha256 $admissionPath) -OutPath (Join-Path $workspace 'receipts/u003-admission.json') -Timestamp '2026-08-25T00:00:42.0000000Z' -Execute;$unitId='u003';$ready='2026-08-25T00:00:43.0000000Z';$claim='2026-08-25T00:00:44.0000000Z'
+    }else{$unitId='u002';$ready='2026-08-25T00:00:41.0000000Z';$claim='2026-08-25T00:00:42.0000000Z'}
+    $lifecycle=@{WorkspaceRoot=$workspace;UnitId=$unitId;RepoMapPath=(Join-Path $workspace 'repository-map.json');ValidationTier='quick'};$null=&$automation @lifecycle -Action Ready -Timestamp $ready -Execute;$null=&$automation @lifecycle -Action Claim -Timestamp $claim -Execute
+    $baselineLeak=@(Invoke-EnvelopeGit $planning @('status','--porcelain=v1','--untracked-files=all')|Where-Object{[string]$_-match'u001|repository-map'});if($baselineLeak.Count-ne0){throw "Nested lifecycle dirt leaked baseline paths: $($baselineLeak-join', ')"}
+    $seed.workspace=$workspace
+    return $seed
+}
+function Invoke-NestedRetirement([object]$Projection,[string]$UnitId,[string]$ReplacementId,[string]$Timestamp,[switch]$Execute,[string]$FaultAfter='none'){
+    if(-not[IO.Directory]::Exists([string]$Projection.workspace)-or-not[IO.File]::Exists([string]$Projection.map_path)){throw 'Nested retirement projection paths are absent.'}
+    foreach($row in @((Read-EnvelopeProtocolJson $Projection.map_path).repositories)){if([string]::IsNullOrWhiteSpace([string]$row.path)){throw "Nested retirement repository '$([string]$row.repo_id)' has an empty path."}}
+    $requestPath=Join-Path (Split-Path $Projection.repository -Parent) "$([IO.Path]::GetFileName($Projection.repository))-request.json"
+    $retirementModule=Import-Module (Join-Path $PSScriptRoot 'ActiveUnitRetirement.psm1') -PassThru
+    if([IO.File]::Exists($requestPath)){$request=Read-EnvelopeProtocolJson $requestPath}else{$request=&$retirementModule {param($workspace,$mapPath,$retirementId,$replacement)
+        $state=Read-MorphospaceProtocolJson (Join-Path $workspace 'workspace.state.json');$id=[string]$state.current_unit;$unitPath="iteration-units/$id.json";$unit=Read-MorphospaceProtocolJson (Join-Path $workspace $unitPath);$unitBinding=Get-ActiveRetirementFileBinding $workspace $unitPath;$events=Get-ActiveRetirementEvents $workspace;$expected=[ordered]@{}
+        foreach($pair in @(@('project','project.spec.json'),@('feature_lock','feature.lock.json'),@('state','workspace.state.json'))){$binding=Get-ActiveRetirementFileBinding $workspace $pair[1];$expected["$($pair[0])_raw_sha256"]=$binding.raw_sha256;$expected["$($pair[0])_canonical_sha256"]=$binding.canonical_sha256}
+        $expected.events_sha256=$events.sha256;$expected.events_length=$events.length;$expected.event_tail_id=$events.tail_id;$expected.repository_map_sha256=Get-MorphospaceFileSha256 $mapPath
+        $value=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.active_unit_retirement.v1';retirement_id=$retirementId;project_id=[string]$state.project_id;unit_id=$id;replacement_unit_id=$replacement;reason='scope-replanned';old_unit=[pscustomobject]@{unit_id=$id;path=$unitPath;raw_sha256=$unitBinding.raw_sha256;canonical_sha256=$unitBinding.canonical_sha256;status='active'};expected=[pscustomobject]$expected;source_composition=Get-ActiveRetirementFileBinding $workspace ([string]$unit.source_composition.lock_path);claim=$null;repositories=@();accepted_receipt=[pscustomobject]@{path=[string]$state.last_accepted_receipt;sha256=Get-MorphospaceFileSha256 (Join-Path $workspace ([string]$state.last_accepted_receipt))}}
+        $value.claim=Get-ActiveRetirementClaim $workspace $value $events.events;$source=Read-MorphospaceProtocolJson (Join-Path $workspace ([string]$value.source_composition.path));$value.repositories=@(Get-ActiveRetirementRepositories $unit $source $mapPath $workspace);$value
+    } $Projection.workspace $Projection.map_path "retire-$UnitId" $ReplacementId;Write-EnvelopeJson $requestPath $request}
+    $arguments=@{WorkspaceRoot=$Projection.workspace;UnitId=$UnitId;RepoMapPath=$Projection.map_path;ActiveUnitRetirement=$requestPath;ExpectedActiveUnitRetirementSha256=Get-EnvelopeFileSha256 $requestPath;OutPath=(Join-Path $Projection.workspace "receipts/retire-$UnitId.json");Timestamp=$Timestamp;FaultAfter=$FaultAfter}
+    Invoke-MorphospaceRetireActive @arguments -Execute:$Execute
 }
 $temp=Join-Path ([IO.Path]::GetTempPath()) ('morphospace-active-retirement-'+[guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($temp)|Out-Null
@@ -66,6 +127,46 @@ try{
         Assert-RetirementRejects $workspace "non-inert $kind proposal"
     }
     if($InertProposalsOnly){[pscustomobject]@{status='pass';check='active-unit-retirement-inert-proposals';negative_cases=8;inert_draft_bytes_preserved=$true}|ConvertTo-Json -Compress;return}
+    # The planning checkout remains at its preparation lock while the real owner
+    # writers create the admitted lifecycle projection inside the nested workspace.
+    $readonlySeed=@(New-ReadonlyPlanningRetirementSeed (Join-Path $temp 'readonly-seed'))[-1]
+    $nested=@(New-RetirementNestedPlanningProjection $readonlySeed $temp 'nested-direct')[-1]
+    $nestedHead=(@(Invoke-EnvelopeGit $nested.repository @('rev-parse','HEAD'))[0]).Trim()
+    $nestedDry=Invoke-NestedRetirement $nested u002 u003 '2026-08-25T00:00:43.0000000Z'
+    Assert-RetirementTest (-not$nestedDry.executed-and(@(Invoke-EnvelopeGit $nested.repository @('status','--porcelain=v1','--untracked-files=all')).Count-gt0)) 'nested read-only planning dry run did not preserve owner lifecycle dirt'
+    $nestedRun=Invoke-NestedRetirement $nested u002 u003 '2026-08-25T00:00:43.0000000Z' -Execute
+    Assert-RetirementTest ($nestedRun.executed-and(@(Invoke-EnvelopeGit $nested.repository @('rev-parse','HEAD'))[0]).Trim()-ceq$nestedHead) 'nested read-only planning retirement moved its locked HEAD'
+    foreach($phase in @('after-intent','after-artifact','after-projection','after-event')){
+        $recoveryCase=@(New-RetirementNestedPlanningProjection $readonlySeed $temp "nested-recovery-$phase")[-1];$interrupted=$false
+        try{Invoke-NestedRetirement $recoveryCase u002 u003 '2026-08-25T00:00:43.0000000Z' -Execute -FaultAfter $phase|Out-Null}catch{$interrupted=$_.Exception.Message-like'*Injected interruption*'}
+        Assert-RetirementTest $interrupted "nested planning recovery $phase did not interrupt"
+        $recovered=Invoke-NestedRetirement $recoveryCase u002 u003 '2026-08-25T00:00:43.0000000Z' -Execute
+        Assert-RetirementTest ($recovered.executed-and$null-eq(Read-EnvelopeProtocolJson (Join-Path $recoveryCase.workspace 'workspace.state.json')).current_unit) "nested planning recovery $phase did not complete"
+    }
+
+    foreach($damage in @('extra','staged','artifact','preparation-receipt','intent','completion','outside','head','role','writable','pending')){
+        $case=@(New-RetirementNestedPlanningProjection $readonlySeed $temp "nested-$damage")[-1]
+        switch($damage){
+            'extra' {[IO.File]::WriteAllText((Join-Path $case.workspace 'extra.txt'),'extra')}
+            'staged' {Invoke-EnvelopeGit $case.repository @('add','morphospace/workspace.state.json')|Out-Null}
+            'artifact' {[IO.File]::AppendAllText((Join-Path $case.workspace 'receipts/u002-admission.json'),' ')}
+            'preparation-receipt' {[IO.File]::AppendAllText((Join-Path $case.workspace 'receipts/u002-envelope.json'),' ')}
+            'intent' {[IO.File]::AppendAllText((Join-Path $case.workspace 'receipts/transactions/u002-claimed-0005-transition.intent.json'),' ')}
+            'completion' {[IO.File]::AppendAllText((Join-Path $case.workspace 'receipts/transactions/u002-claimed-0005-transition.completion.json'),' ')}
+            'outside' {[IO.File]::WriteAllText((Join-Path $case.repository 'outside.txt'),'outside')}
+            'head' {[IO.File]::WriteAllText((Join-Path $case.repository 'head.txt'),'head');Invoke-EnvelopeGit $case.repository @('add','head.txt')|Out-Null;Invoke-EnvelopeGit $case.repository @('config','user.name','Retirement Fixture')|Out-Null;Invoke-EnvelopeGit $case.repository @('config','user.email','fixture@example.invalid')|Out-Null;Invoke-EnvelopeGit $case.repository @('commit','-m','move-head')|Out-Null}
+            'role' {@($case.map.repositories|Where-Object{[string]$_.repo_id-ceq'project-shell'})[0].role='source';Write-EnvelopeJson $case.map_path $case.map}
+            'writable' {$unitPath=Join-Path $case.workspace 'iteration-units/u002.json';$unit=Read-EnvelopeProtocolJson $unitPath;$unit.allowed_repositories+=,[pscustomobject]@{repo_id='project-shell';allowed_paths=@('morphospace/')};Write-EnvelopeJson $unitPath $unit}
+            'pending' {[IO.File]::WriteAllText((Join-Path $case.workspace 'receipts/transactions/u002-admission-admitted-transition.artifact-0.pending'),'orphan')}
+        }
+        $rejected=$false;try{Invoke-NestedRetirement $case u002 u003 '2026-08-25T00:00:43.0000000Z' -Execute|Out-Null}catch{$rejected=$true}
+        Assert-RetirementTest $rejected "nested planning $damage damage was accepted"
+    }
+
+    $replacementSeed=@(New-ReadonlyPlanningRetirementSeed (Join-Path $temp 'replacement-seed') -Replacement)[-1]
+    $replacementProjection=@(New-RetirementNestedPlanningProjection $replacementSeed $temp 'nested-replacement')[-1];$replacementInterrupted=$false;try{Invoke-NestedRetirement $replacementProjection u003 u004 '2026-08-25T00:00:45.0000000Z' -Execute -FaultAfter after-projection|Out-Null}catch{$replacementInterrupted=$_.Exception.Message-like'*Injected interruption*'};Assert-RetirementTest $replacementInterrupted 'replacement nested planning recovery did not interrupt';$replacementRun=Invoke-NestedRetirement $replacementProjection u003 u004 '2026-08-25T00:00:45.0000000Z' -Execute
+    Assert-RetirementTest ($replacementRun.executed-and$null-eq(Read-EnvelopeProtocolJson (Join-Path $replacementProjection.workspace 'workspace.state.json')).current_unit) 'authenticated RetireProposed replacement suffix did not retire'
+    $protocolModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1') -PassThru
     $success=Copy-RetirementWorkspace 'success';$before=Get-RetirementInventory $success
     $dry=Invoke-RetirementTest $success $false
     Assert-RetirementTest (-not$dry.executed-and$dry.current_unit_after-ceq'u002') 'dry observation grants no idle ownership'
