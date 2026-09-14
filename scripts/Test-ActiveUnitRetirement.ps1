@@ -5,8 +5,9 @@ if(-not$SelfTest){throw 'Test-ActiveUnitRetirement requires -SelfTest.'}
 $repository=Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'test-support/ActiveUnitRetirementContinuation.ps1')
 . (Join-Path $PSScriptRoot 'test-support/ActiveUnitRetirementFixture.ps1')
+$protocolModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1') -Force -PassThru
 Import-Module (Join-Path $PSScriptRoot 'ActiveUnitRetirement.psm1') -Force
-$protocolModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1') -PassThru
+if($null-eq(Get-Command Read-MorphospaceProtocolJson -ErrorAction SilentlyContinue)){throw 'Active retirement test: importing the retirement owner removed the caller protocol commands.'}
 function Assert-RetirementTest([bool]$Value,[string]$Message){if(-not$Value){throw "Active retirement test: $Message"}}
 function Get-RetirementInventory([string]$Workspace){
     $rows=@(Get-ChildItem -LiteralPath $Workspace -Recurse -File|Sort-Object FullName|ForEach-Object{[pscustomobject]@{path=[IO.Path]::GetRelativePath($Workspace,$_.FullName).Replace('\','/');sha256=Get-MorphospaceFileSha256 $_.FullName}})
@@ -85,6 +86,11 @@ function Invoke-NestedRetirement([object]$Projection,[string]$UnitId,[string]$Re
     $arguments=@{WorkspaceRoot=$Projection.workspace;UnitId=$UnitId;RepoMapPath=$Projection.map_path;ActiveUnitRetirement=$requestPath;ExpectedActiveUnitRetirementSha256=Get-EnvelopeFileSha256 $requestPath;OutPath=(Join-Path $Projection.workspace "receipts/retire-$UnitId.json");Timestamp=$Timestamp;FaultAfter=$FaultAfter}
     Invoke-MorphospaceRetireActive @arguments -Execute:$Execute
 }
+function Assert-RetirementCallerProtocol([string]$Workspace,[string]$Context){
+    Assert-RetirementTest ($null-ne(Get-Command Read-MorphospaceProtocolJson -ErrorAction SilentlyContinue)) "$Context removed the caller protocol command"
+    $document=Read-MorphospaceProtocolJson (Join-Path $Workspace 'project.spec.json')
+    Assert-RetirementTest (-not[string]::IsNullOrWhiteSpace([string]$document.project_id)) "$Context left the caller protocol reader unusable"
+}
 $temp=Join-Path ([IO.Path]::GetTempPath()) ('morphospace-active-retirement-'+[guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($temp)|Out-Null
 try{
@@ -134,8 +140,13 @@ try{
     $nestedHead=(@(Invoke-EnvelopeGit $nested.repository @('rev-parse','HEAD'))[0]).Trim()
     $nestedDry=Invoke-NestedRetirement $nested u002 u003 '2026-08-25T00:00:43.0000000Z'
     Assert-RetirementTest (-not$nestedDry.executed-and(@(Invoke-EnvelopeGit $nested.repository @('status','--porcelain=v1','--untracked-files=all')).Count-gt0)) 'nested read-only planning dry run did not preserve owner lifecycle dirt'
+    Assert-RetirementCallerProtocol $nested.workspace 'nested read-only planning dry run'
     $nestedRun=Invoke-NestedRetirement $nested u002 u003 '2026-08-25T00:00:43.0000000Z' -Execute
     Assert-RetirementTest ($nestedRun.executed-and(@(Invoke-EnvelopeGit $nested.repository @('rev-parse','HEAD'))[0]).Trim()-ceq$nestedHead) 'nested read-only planning retirement moved its locked HEAD'
+    Assert-RetirementCallerProtocol $nested.workspace 'nested read-only planning execute'
+    $nestedReplay=Invoke-NestedRetirement $nested u002 u003 '2026-08-25T00:00:43.0000000Z' -Execute
+    Assert-RetirementTest ($nestedReplay.executed-and$null-eq$nestedReplay.current_unit_after) 'nested read-only planning replay did not return the committed retirement'
+    Assert-RetirementCallerProtocol $nested.workspace 'nested read-only planning replay'
     foreach($phase in @('after-intent','after-artifact','after-projection','after-event')){
         $recoveryCase=@(New-RetirementNestedPlanningProjection $readonlySeed $temp "nested-recovery-$phase")[-1];$interrupted=$false
         try{Invoke-NestedRetirement $recoveryCase u002 u003 '2026-08-25T00:00:43.0000000Z' -Execute -FaultAfter $phase|Out-Null}catch{$interrupted=$_.Exception.Message-like'*Injected interruption*'}

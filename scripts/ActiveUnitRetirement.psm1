@@ -1,10 +1,19 @@
 Set-StrictMode -Version 2.0
 $ErrorActionPreference='Stop'
-Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1')
-Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceTransitionLedger.psm1')
+$script:ActiveRetirementHadCallerProtocolCommon=$null-ne(Get-Command Read-MorphospaceProtocolJson -ErrorAction SilentlyContinue)
+$script:ActiveRetirementHadCallerTransitionLedger=$null-ne(Get-Command Test-MorphospaceCommittedTransitionLedger -ErrorAction SilentlyContinue)
+$script:ActiveRetirementProtocolCommonPath=Join-Path $PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1'
+$script:ActiveRetirementTransitionLedgerPath=Join-Path $PSScriptRoot 'lib/MorphospaceTransitionLedger.psm1'
+Import-Module $script:ActiveRetirementProtocolCommonPath
+Import-Module $script:ActiveRetirementTransitionLedgerPath
 Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceSourceCompositionIdentity.psm1')
-Import-Module (Join-Path $PSScriptRoot 'DevelopmentEnvelopeProvenance.psm1')
+if($script:ActiveRetirementHadCallerProtocolCommon){Microsoft.PowerShell.Core\Import-Module $script:ActiveRetirementProtocolCommonPath -Global}
+if($script:ActiveRetirementHadCallerTransitionLedger){Microsoft.PowerShell.Core\Import-Module $script:ActiveRetirementTransitionLedgerPath -Global}
 
+function Restore-ActiveRetirementCallerModules {
+    if($script:ActiveRetirementHadCallerProtocolCommon){Microsoft.PowerShell.Core\Import-Module $script:ActiveRetirementProtocolCommonPath -Global}
+    if($script:ActiveRetirementHadCallerTransitionLedger){Microsoft.PowerShell.Core\Import-Module $script:ActiveRetirementTransitionLedgerPath -Global}
+}
 function Assert-ActiveRetirementSchema([object]$Document,[string]$Name) {
     if(-not(Test-Json -Json ($Document|ConvertTo-Json -Depth 100 -Compress) -SchemaFile (Join-Path (Split-Path $PSScriptRoot -Parent) "schemas/$Name"))){throw "Active retirement $Name contract is invalid."}
 }
@@ -43,6 +52,16 @@ function Get-ActiveRetirementEvents([string]$Workspace){
     [pscustomobject]@{events=$events;sha256=Get-MorphospaceSha256Bytes $bytes;length=[long]$bytes.Length;tail_id=[string]$events[-1].event_id}
 }
 function Get-ActiveRetirementCanonicalRawSha256([object]$Document){Get-MorphospaceSha256Bytes (ConvertTo-MorphospaceProtocolJsonBytes $Document)}
+function Import-ActiveRetirementDevelopmentEnvelopeProvenance {
+    $path=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'DevelopmentEnvelopeProvenance.psm1'))
+    $module=Get-Module DevelopmentEnvelopeProvenance -All|Where-Object{[IO.Path]::GetFullPath([string]$_.Path)-ceq$path}|Select-Object -First 1
+    if($null-ne$module){return $module}
+    $module=Import-Module $path -PassThru
+    Import-Module $script:ActiveRetirementProtocolCommonPath
+    Import-Module $script:ActiveRetirementTransitionLedgerPath
+    Restore-ActiveRetirementCallerModules
+    $module
+}
 function Get-ActiveRetirementPlanningTransition([string]$Workspace,[string]$TransactionId,[switch]$HistoricalProjection){
     if(-not$HistoricalProjection){return Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $Workspace -TransactionId $TransactionId -ExpectedEventsPath 'iteration-events.jsonl'}
     $ledger=Get-Module MorphospaceTransitionLedger -All|Select-Object -First 1
@@ -58,7 +77,7 @@ function Get-ActiveRetirementPlanningTransition([string]$Workspace,[string]$Tran
         [pscustomobject]@{intent=$intent;completion=$completion}
     } $Workspace $TransactionId
 }
-function Test-ActiveRetirementRecoveryPreparationProvenance([string]$Workspace,[object]$Admission,[object]$RecoveryIntent){
+function Test-ActiveRetirementRecoveryPreparationProvenance([string]$Workspace,[object]$Admission,[object]$RecoveryIntent,[Management.Automation.PSModuleInfo]$ProvenanceModule){
     $temporary=Join-Path ([IO.Path]::GetTempPath()) ('morphospace-retirement-provenance-'+[guid]::NewGuid().ToString('N'))
     try{
         Copy-Item -LiteralPath $Workspace -Destination $temporary -Recurse -Force
@@ -70,7 +89,7 @@ function Test-ActiveRetirementRecoveryPreparationProvenance([string]$Workspace,[
         if((Get-MorphospaceSha256Bytes $prefix)-cne[string]$RecoveryIntent.expected.events_sha256){throw 'Active retirement recovery event prefix differs from its authenticated preimage.'};[IO.File]::WriteAllBytes((Join-Path $temporary ([string]$RecoveryIntent.events.path)),$prefix)
         foreach($relative in @("receipts/transactions/$($RecoveryIntent.transaction_id).intent.json","receipts/transactions/$($RecoveryIntent.transaction_id).completion.json")+@($RecoveryIntent.artifacts|ForEach-Object{[string]$_.path})){$path=Resolve-MorphospaceWorkspacePath $temporary $relative;if([IO.File]::Exists($path)){Remove-Item -LiteralPath $path -Force}}
         $transactionRoot=Resolve-MorphospaceWorkspacePath $temporary 'receipts/transactions';foreach($pending in @(Get-ChildItem -LiteralPath $transactionRoot -File -Filter "$($RecoveryIntent.transaction_id).artifact-*.pending")){Remove-Item -LiteralPath $pending.FullName -Force}
-        $null=Test-MorphospaceDevelopmentUnitPreparation -WorkspaceRoot $temporary -Admission $Admission -Phase Freeze
+        $null=&$ProvenanceModule {param($root,$admission) Test-MorphospaceDevelopmentUnitPreparation -WorkspaceRoot $root -Admission $admission -Phase Freeze} $temporary $Admission
     }finally{
         $resolved=[IO.Path]::GetFullPath($temporary);$tempPrefix=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\','/')+[IO.Path]::DirectorySeparatorChar
         if($resolved.StartsWith($tempPrefix,[StringComparison]::OrdinalIgnoreCase)-and[IO.Path]::GetFileName($resolved).StartsWith('morphospace-retirement-provenance-')){Remove-Item -LiteralPath $resolved -Recurse -Force -ErrorAction SilentlyContinue}
@@ -78,6 +97,7 @@ function Test-ActiveRetirementRecoveryPreparationProvenance([string]$Workspace,[
 }
 function Test-ActiveRetirementAuthenticatedPlanningDirt {
     param([string]$Workspace,[object]$Unit,[object]$RepositoryEntry,[string[]]$StatusPorcelain,[object]$RecoveryIntent=$null)
+    $provenanceModule=Import-ActiveRetirementDevelopmentEnvelopeProvenance
     if([string]$RepositoryEntry.role-cne'planning'){return $false}
     if([string]::IsNullOrWhiteSpace($Workspace)){throw 'Active retirement planning lifecycle workspace path is empty.'};if([string]::IsNullOrWhiteSpace([string]$RepositoryEntry.path)){throw 'Active retirement planning lifecycle repository path is empty.'}
     if($null-eq$RecoveryIntent-and@($StatusPorcelain|Where-Object{[string]$_-cmatch'retire-.*-active-retired-transition'}).Count-ne0){throw 'Active retirement planning lifecycle recovery intent was not forwarded.'}
@@ -88,7 +108,7 @@ function Test-ActiveRetirementAuthenticatedPlanningDirt {
     $admissions=@(Get-ChildItem -LiteralPath (Resolve-MorphospaceWorkspacePath $workspaceFull 'receipts') -File -Filter '*.json'|ForEach-Object{$document=Read-MorphospaceProtocolJson $_.FullName;if([string]$document.schema-ceq'rusty.morphospace.workflow.development_unit_admission.v1'-and[string]$document.unit_id-ceq[string]$Unit.unit_id){$document}})
     if($admissions.Count-ne1){throw 'Active retirement planning lifecycle requires one exact current admission receipt.'}
     $admission=$admissions[0]
-    if($RecoveryIntent){Test-ActiveRetirementRecoveryPreparationProvenance $workspaceFull $admission $RecoveryIntent}else{$null=Test-MorphospaceDevelopmentUnitPreparation -WorkspaceRoot $workspaceFull -Admission $admission -Phase Freeze}
+    if($RecoveryIntent){Test-ActiveRetirementRecoveryPreparationProvenance $workspaceFull $admission $RecoveryIntent $provenanceModule}else{$null=&$provenanceModule {param($root,$admission) Test-MorphospaceDevelopmentUnitPreparation -WorkspaceRoot $root -Admission $admission -Phase Freeze} $workspaceFull $admission}
     $events=(Get-ActiveRetirementEvents $workspaceFull).events;$preparedId="$([string]$admission.preparation.preparation_id)-prepared";$admittedId="$([string]$admission.admission_id)-admitted"
     $prepared=@($events|Where-Object{[string]$_.event_id-ceq$preparedId});$admitted=@($events|Where-Object{[string]$_.event_id-ceq$admittedId});$claimed=@($events|Where-Object{[string]$_.unit_id-ceq[string]$Unit.unit_id-and[string]$_.event_id-cmatch('^'+[regex]::Escape([string]$Unit.unit_id)+'-claimed-[0-9]{4}$')})
     if($prepared.Count-ne1-or$admitted.Count-ne1-or$claimed.Count-ne1){throw 'Active retirement planning lifecycle event identities are ambiguous.'}
@@ -358,6 +378,6 @@ function Invoke-MorphospaceRetireActive {
         Start-MorphospaceTransitionLedger -WorkspaceRoot $workspace -TransactionId $id -StatePath 'workspace.state.json' -UnitPath ([string]$request.old_unit.path) -EventsPath 'iteration-events.jsonl' -TargetState $target -TargetUnit $unit -Event $event -ExpectedPreStateSha256 ([string]$request.expected.state_canonical_sha256) -ExpectedPreStateRawSha256 ([string]$request.expected.state_raw_sha256) -ExpectedPreUnitSha256 ([string]$request.old_unit.canonical_sha256) -ExpectedPreUnitRawSha256 ([string]$request.old_unit.raw_sha256) -ExpectedEventTailId ([string]$request.expected.event_tail_id) -ExpectedEventsSha256 ([string]$request.expected.events_sha256) -ExpectedEventsLength ([long]$request.expected.events_length) -AdditionalProjections @([pscustomobject]@{path='feature.lock.json';expected_sha256=[string]$request.expected.feature_lock_canonical_sha256;expected_raw_sha256=[string]$request.expected.feature_lock_raw_sha256;document=$feature},[pscustomobject]@{path='project.spec.json';expected_sha256=[string]$request.expected.project_canonical_sha256;expected_raw_sha256=[string]$request.expected.project_raw_sha256;document=$project}) -Artifacts $artifacts -FaultAfter $FaultAfter|Out-Null
         [void](Test-MorphospaceHistoricalActiveUnitRetirement -WorkspaceRoot $workspace -ExpectedEvent $event)
         return New-ActiveRetirementResult $request $out.path (Get-MorphospaceFileSha256 $out.absolute) $Timestamp $true
-    }finally{Exit-MorphospaceWorkspaceMutex $mutex}
+    }finally{try{Restore-ActiveRetirementCallerModules}finally{Exit-MorphospaceWorkspaceMutex $mutex}}
 }
 Export-ModuleMember -Function Invoke-MorphospaceRetireActive,Test-MorphospaceHistoricalActiveUnitRetirement
