@@ -128,6 +128,18 @@ test matrix, cleanup/evidence roots, and source-composition closure. Each
 final repository must resolve through the bound repository map and exact source
 composition lock; duplicate IDs, substituted commit/tree identities, dirty
 clean-only worktrees, and changed paths outside the declared closure reject.
+
+When the project workspace's normalized absolute path is nested under the
+mapped writable planning repository, the executed freeze necessarily changes
+it before `BeginValidation` can consume the candidate. The frozen-candidate verifier
+admits only the exact six paths authenticated by the committed freeze
+transaction: workspace state, current unit, event ledger, candidate receipt,
+and that transaction's intent and completion. The planning repository must
+remain at the frozen commit/tree. The map entry must have role `planning`, and
+any extra tracked or untracked path still rejects. Source repositories receive
+no exception. This permits a self-hosted owner lifecycle without treating its
+transaction files as product changes or granting a general dirty-worktree
+allowance.
 The final-repository and changed-path sets must exactly equal the active unit's
 writable repository set. The preparation-owned source composition may be a
 strict superset because it also locks read-only project dependencies. Every
