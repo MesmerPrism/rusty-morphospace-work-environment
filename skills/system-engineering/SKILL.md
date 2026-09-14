@@ -32,6 +32,11 @@ replacement for owner contracts or exact evidence.
 - Separate control surfaces from high-rate media, pose, depth, mesh, camera,
   particle, and GPU-buffer data. Keep UI and CLI as adapters into the same
   owner.
+- For platform effects, require an injected executor to observe its own live
+  handles; a selected provider or caller-supplied completion is not effective
+  readback. Keep re-entrant host callbacks outside authority locks, bind them
+  to the current action and generation, and compensate uncertain effects
+  before reporting cleanup. An absent executor must fail explicitly.
 - Bind cross-repository work to exact source identities. Treat project specs,
   feature locks, and runtime receipts as the declared composition contract.
   Keep reusable modules behind a neutral conformance harness or independent
