@@ -76,6 +76,10 @@ For fresh work in an idle project, follow
 [Development Envelope Preparation](docs/DEVELOPMENT_ENVELOPE_PREPARATION.md)
 and [Development Unit Admission](docs/DEVELOPMENT_UNIT_ADMISSION.md), including
 exact owner roots and any retained proposed-unit retirement.
+For additions within an active unit's unchanged product objective and ceilings,
+use [Active Development Envelope Extension](docs/ACTIVE_DEVELOPMENT_ENVELOPE_EXTENSION.md).
+Fresh work may use [Tooling Context](docs/TOOLING_CONTEXT.md) to bind and upgrade
+its executor and installed routers separately from product source pins.
 
 For concurrent work, bind each source, build, and run to its declared exact
 identity. A closed feature lock controls activation; selection alone does not

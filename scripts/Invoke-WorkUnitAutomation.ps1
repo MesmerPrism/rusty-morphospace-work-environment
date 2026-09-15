@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("Inspect", "PrepareDevelopmentEnvelope", "ReprepareRetiredDevelopmentEnvelope", "PrepareBlockedSuccessor", "SupersedeActive", "RetireActive", "RecoverPreparationCompletionTimestamp", "ArchiveHistoryCheckpoint", "AdmitDevelopmentUnit", "RecoverAdmissionCompletionTimestamp", "RetireProposed", "Ready", "WithdrawReady", "Claim", "Resume", "CompleteInstructionSurfaces", "AmendActiveWriteScope", "NarrowValidationOnlyWriteScope", "FreezeCandidate", "RematerializeValidatingCandidate", "MaterializeInheritedCandidate", "CorrectActiveReadOnlyDependencies", "CorrectActiveProjectRepositoryScope", "CorrectActiveUnitContract", "RecordHistoricalUnitCompatibilityProjection", "RecordHistoricalSupersessionCompatibility", "BeginValidation", "ReturnToActive", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "PrepareSourceOnlyPublication", "RecordSourceOnlyPublication", "RetirePreparedPush", "ReconcilePreparedPublication", "ReconcilePreparedPushTransactionSuffix", "ResolveBlocker", "CorrectResolvedBlockerEvidence", "CorrectHistoricalBlockerResolutionIntentBinding", "CorrectCompletedTransitionSemantics", "NormalizeEventLedgerPrefix", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix", "ReconcileExecutedPreparedPublication")]
+    [ValidateSet("Inspect", "PrepareDevelopmentEnvelope", "ReprepareRetiredDevelopmentEnvelope", "PrepareBlockedSuccessor", "SupersedeActive", "RetireActive", "RecoverPreparationCompletionTimestamp", "ArchiveHistoryCheckpoint", "AdmitDevelopmentUnit", "RecoverAdmissionCompletionTimestamp", "RetireProposed", "Ready", "WithdrawReady", "Claim", "Resume", "CompleteInstructionSurfaces", "AmendActiveWriteScope", "ExtendActiveDevelopmentEnvelope", "UpgradeToolingContext", "NarrowValidationOnlyWriteScope", "FreezeCandidate", "RematerializeValidatingCandidate", "MaterializeInheritedCandidate", "CorrectActiveReadOnlyDependencies", "CorrectActiveProjectRepositoryScope", "CorrectActiveUnitContract", "RecordHistoricalUnitCompatibilityProjection", "RecordHistoricalSupersessionCompatibility", "BeginValidation", "ReturnToActive", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "PrepareSourceOnlyPublication", "RecordSourceOnlyPublication", "RetirePreparedPush", "ReconcilePreparedPublication", "ReconcilePreparedPushTransactionSuffix", "ResolveBlocker", "CorrectResolvedBlockerEvidence", "CorrectHistoricalBlockerResolutionIntentBinding", "CorrectCompletedTransitionSemantics", "NormalizeEventLedgerPrefix", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix", "ReconcileExecutedPreparedPublication")]
     [string]$Action,
     [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
     [string]$UnitId = "",
@@ -37,6 +37,11 @@ param(
     [string]$ExpectedActiveUnitContractCorrectionSha256 = "",
     [string]$ActiveWriteScopeAmendment = "",
     [string]$ExpectedActiveWriteScopeAmendmentSha256 = "",
+    [string]$ActiveDevelopmentEnvelopeExtension = "",
+    [string]$ExpectedActiveDevelopmentEnvelopeExtensionSha256 = "",
+    [string]$SourceCompositionOutPath = "",
+    [string]$ToolingContextUpgrade = "",
+    [string]$ExpectedToolingContextUpgradeSha256 = "",
     [string]$ValidationOnlyWriteScopeNarrowing = "",
     [string]$ExpectedValidationOnlyWriteScopeNarrowingSha256 = "",
     [string]$DevelopmentUnitAdmission = "",
@@ -120,6 +125,18 @@ if ($Action -eq "PrepareDevelopmentEnvelope") {
     if (-not $DevelopmentEnvelopePreparation -or -not $OutPath) { throw "PrepareDevelopmentEnvelope requires DevelopmentEnvelopePreparation and OutPath." }
     Import-Module (Join-Path $PSScriptRoot "DevelopmentEnvelopePreparation.psm1") -Force
     Invoke-MorphospacePrepareDevelopmentEnvelope -WorkspaceRoot $WorkspaceRoot -DevelopmentEnvelopePreparation $DevelopmentEnvelopePreparation -ExpectedDevelopmentEnvelopePreparationSha256 $ExpectedDevelopmentEnvelopePreparationSha256 -Timestamp $Timestamp -OutPath $OutPath -Execute:$Execute | ConvertTo-Json -Depth 32
+    return
+}
+if ($Action -eq "ExtendActiveDevelopmentEnvelope") {
+    if (-not $ActiveDevelopmentEnvelopeExtension -or -not $RepoMapPath -or -not $OutPath -or -not $SourceCompositionOutPath) { throw "ExtendActiveDevelopmentEnvelope requires ActiveDevelopmentEnvelopeExtension, RepoMapPath, OutPath, and SourceCompositionOutPath." }
+    Import-Module (Join-Path $PSScriptRoot "ActiveDevelopmentEnvelopeExtension.psm1")
+    Invoke-MorphospaceExtendActiveDevelopmentEnvelope -WorkspaceRoot $WorkspaceRoot -UnitId $UnitId -ActiveDevelopmentEnvelopeExtension $ActiveDevelopmentEnvelopeExtension -RepositoryMapPath $RepoMapPath -OutPath $OutPath -SourceCompositionOutPath $SourceCompositionOutPath -ExpectedActiveDevelopmentEnvelopeExtensionSha256 $ExpectedActiveDevelopmentEnvelopeExtensionSha256 -Timestamp $Timestamp -Execute:$Execute | ConvertTo-Json -Depth 64
+    return
+}
+if ($Action -eq "UpgradeToolingContext") {
+    if (-not $ToolingContextUpgrade -or -not $OutPath) { throw "UpgradeToolingContext requires ToolingContextUpgrade and OutPath." }
+    Import-Module (Join-Path $PSScriptRoot "ToolingContextUpgrade.psm1")
+    Invoke-MorphospaceUpgradeToolingContext -WorkspaceRoot $WorkspaceRoot -UnitId $UnitId -ToolingContextUpgrade $ToolingContextUpgrade -ExpectedToolingContextUpgradeSha256 $ExpectedToolingContextUpgradeSha256 -OutPath $OutPath -Timestamp $Timestamp -Execute:$Execute | ConvertTo-Json -Depth 64
     return
 }
 if ($Action -eq "ReprepareRetiredDevelopmentEnvelope") {

@@ -1,0 +1,19 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/tooling-context-v1.schema.json",
+  "title":"Exact workflow tooling context",
+  "type":"object","additionalProperties":false,
+  "required":["schema","context_id","project_id","preparation_id","fingerprint","product_projection","resolver","executor","routers","compatibility","limits","status","does_not_prove"],
+  "properties":{
+    "schema":{"const":"rusty.morphospace.workflow.tooling_context.v1"},
+    "context_id":{"$ref":"#/$defs/id"},"project_id":{"$ref":"#/$defs/id"},"preparation_id":{"$ref":"#/$defs/id"},"fingerprint":{"$ref":"#/$defs/hash"},
+    "product_projection":{"type":"object","additionalProperties":false,"required":["source_composition","repository_map","feature_lock"],"properties":{"source_composition":{"$ref":"#/$defs/file"},"repository_map":{"$ref":"#/$defs/file"},"feature_lock":{"$ref":"#/$defs/file"}}},
+    "resolver":{"$ref":"#/$defs/file"},
+    "executor":{"type":"object","additionalProperties":false,"required":["repo_id","remote_url","commit","tree","publication_evidence","entrypoint","closure"],"properties":{"repo_id":{"$ref":"#/$defs/id"},"remote_url":{"type":"string","minLength":1},"commit":{"$ref":"#/$defs/oid"},"tree":{"$ref":"#/$defs/oid"},"publication_evidence":{"$ref":"#/$defs/file"},"entrypoint":{"$ref":"#/$defs/path"},"closure":{"type":"array","minItems":1,"uniqueItems":true,"items":{"$ref":"#/$defs/blob"}}}},
+    "routers":{"type":"array","minItems":1,"uniqueItems":true,"items":{"type":"object","additionalProperties":false,"required":["skill_id","source_repo_id","commit","tree","source_fingerprint","managed_files"],"properties":{"skill_id":{"$ref":"#/$defs/id"},"source_repo_id":{"$ref":"#/$defs/id"},"commit":{"$ref":"#/$defs/oid"},"tree":{"$ref":"#/$defs/oid"},"source_fingerprint":{"$ref":"#/$defs/hash"},"managed_files":{"type":"array","minItems":1,"uniqueItems":true,"items":{"$ref":"#/$defs/blob"}}}}},
+    "compatibility":{"type":"object","additionalProperties":false,"required":["protocol_id","product_lock_schema","repository_map_schema","allowed_actions","receipt"],"properties":{"protocol_id":{"const":"tooling-context-v1"},"product_lock_schema":{"const":"rusty.morphospace.workflow.development_envelope_source_composition.v3"},"repository_map_schema":{"const":"rusty.morphospace.workflow.repository_map.v1"},"allowed_actions":{"type":"array","minItems":1,"uniqueItems":true,"items":{"type":"string","minLength":1}},"receipt":{"$ref":"#/$defs/file"}}},
+    "limits":{"type":"object","additionalProperties":false,"required":["upgrade_before_freeze_only","fallback_allowed","product_mutation_authority"],"properties":{"upgrade_before_freeze_only":{"const":true},"fallback_allowed":{"const":false},"product_mutation_authority":{"const":false}}},
+    "status":{"const":"bound"},"does_not_prove":{"type":"array","minItems":1,"uniqueItems":true,"items":{"type":"string","minLength":1}}
+  },
+  "$defs":{"id":{"type":"string","pattern":"^[a-z0-9][a-z0-9-]{1,127}$"},"hash":{"type":"string","pattern":"^[0-9a-f]{64}$"},"oid":{"type":"string","pattern":"^[0-9a-f]{40}$"},"path":{"type":"string","pattern":"^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$"},"file":{"type":"object","additionalProperties":false,"required":["path","sha256"],"properties":{"path":{"$ref":"#/$defs/path"},"sha256":{"$ref":"#/$defs/hash"}}},"blob":{"type":"object","additionalProperties":false,"required":["path","sha256"],"properties":{"path":{"$ref":"#/$defs/path"},"sha256":{"$ref":"#/$defs/hash"}}}}
+}

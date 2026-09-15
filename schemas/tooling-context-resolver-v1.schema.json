@@ -1,0 +1,7 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/tooling-context-resolver-v1.schema.json","type":"object","additionalProperties":false,
+  "required":["schema","context_id","executor_root","routers","status","does_not_prove"],
+  "properties":{"schema":{"const":"rusty.morphospace.workflow.tooling_context_resolver.v1"},"context_id":{"$ref":"#/$defs/id"},"executor_root":{"type":"string","minLength":3},"routers":{"type":"array","minItems":1,"uniqueItems":true,"items":{"type":"object","additionalProperties":false,"required":["skill_id","root"],"properties":{"skill_id":{"$ref":"#/$defs/id"},"root":{"type":"string","minLength":3}}}},"status":{"const":"resolved"},"does_not_prove":{"type":"array","minItems":1,"uniqueItems":true,"items":{"type":"string","minLength":1}}},
+  "$defs":{"id":{"type":"string","pattern":"^[a-z0-9][a-z0-9-]{1,127}$"}}
+}

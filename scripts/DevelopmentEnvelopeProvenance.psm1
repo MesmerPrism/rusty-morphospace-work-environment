@@ -1,11 +1,89 @@
 Set-StrictMode -Version 2.0
 $ErrorActionPreference='Stop'
-Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
-Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1') -Force
-Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceCurrentWorkCompatibility.psm1') -Force
-Import-Module (Join-Path $PSScriptRoot 'BlockedSuccessorPreparation.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1')
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1')
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceCurrentWorkCompatibility.psm1')
+Import-Module (Join-Path $PSScriptRoot 'BlockedSuccessorPreparation.psm1')
 function Assert-PreparationProvenanceJson { param([string]$Path,[string]$Schema,[string]$Message) if(-not(Test-Json -Json (Get-Content -Raw -LiteralPath $Path) -SchemaFile $Schema)){throw $Message} }
 function Get-PreparationProvenanceCanonicalHash { param([object]$Value,[string]$Context) try{return Get-MorphospaceCanonicalJsonSha256 $Value}catch{throw "$Context canonical identity is invalid. $($_.Exception.Message)"} }
+function Get-PreparationProvenanceProductMapBinding {
+ param([string]$RepoRoot,[object]$Receipt,[object]$Intent,[bool]$Recovered)
+ $receiptMigration=$Receipt.PSObject.Properties['legacy_tooling_reclassification']
+ $intentMigration=$Intent.PSObject.Properties['legacy_tooling_reclassification']
+ if(($null-eq$receiptMigration)-ne($null-eq$intentMigration)){throw 'Prepared-envelope tooling reclassification presence differs between receipt and intent.'}
+ if($null-eq$receiptMigration){return $Intent.pre.repository_map}
+ if($Recovered-or$Receipt.PSObject.Properties.Name-cnotcontains'tooling_context'-or$Intent.PSObject.Properties.Name-cnotcontains'tooling_context'){
+  throw 'Prepared-envelope tooling reclassification requires an ordinary preparation with a separately bound tooling context.'
+ }
+ $migration=$receiptMigration.Value
+ if(-not(Test-Json -Json ($migration|ConvertTo-Json -Depth 64) -SchemaFile (Join-Path $RepoRoot 'schemas/legacy-tooling-reclassification-v1.schema.json'))-or
+    (Get-MorphospaceCanonicalJsonSha256 $migration)-cne(Get-MorphospaceCanonicalJsonSha256 $intentMigration.Value)){
+  throw 'Prepared-envelope tooling reclassification schema or receipt/intent identity differs.'
+ }
+ if([string]$migration.old_repository_map.path-cne[string]$Intent.pre.repository_map.path-or
+    [string]$migration.old_repository_map.sha256-cne[string]$Intent.pre.repository_map.sha256-or
+    [string]$migration.target_repository_map.path-cne[string]$Intent.target.repository_map.path-or
+    [string]$migration.target_repository_map.sha256-cne[string]$Intent.target.repository_map.sha256){
+  throw 'Prepared-envelope tooling reclassification is detached from its old and target repository maps.'
+ }
+ return $migration.target_repository_map
+}
+function Test-PreparationProvenanceHasEffectiveContinuation {
+ param([string]$Workspace,[object]$Admission)
+ $path=Resolve-MorphospaceWorkspacePath $Workspace "iteration-units/$([string]$Admission.unit_id).json"
+ if(-not[IO.File]::Exists($path)){return $false}
+ $unit=Read-MorphospaceProtocolJson $path
+ if([string]$unit.source_composition.lock_path-cne[string]$Admission.preparation.source_composition_path){return $true}
+ $before=$Admission.unit.PSObject.Properties['tooling_context'];$after=$unit.PSObject.Properties['tooling_context']
+ if(($null-eq$before)-ne($null-eq$after)){return $true}
+ if($null-ne$before-and(Get-MorphospaceCanonicalJsonSha256 $before.Value)-cne(Get-MorphospaceCanonicalJsonSha256 $after.Value)){return $true}
+ return $false
+}
+function Get-PreparationProvenanceEffectiveContinuation {
+ param([string]$Workspace,[object]$Admission)
+ $continuationModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceDevelopmentContinuation.psm1') -PassThru
+ & $continuationModule {param($root,$inputAdmission) Get-MorphospaceDevelopmentEnvelopeContinuation -WorkspaceRoot $root -Admission $inputAdmission} $Workspace $Admission
+}
+function Get-PreparationProvenanceToolingContext {
+ param([string]$Workspace,[object]$Admission,[object]$Receipt,[object]$Intent,[object]$Source,[object]$Continuation)
+ $v3=[string]$Source.schema-ceq'rusty.morphospace.workflow.development_envelope_source_composition.v3'
+ $receiptProperty=$Receipt.PSObject.Properties['tooling_context']
+ $intentProperty=$Intent.PSObject.Properties['tooling_context']
+ $admittedProperty=$Admission.unit.PSObject.Properties['tooling_context']
+ if(-not$v3){
+  if($null-ne$receiptProperty-or$null-ne$intentProperty-or$null-ne$admittedProperty){throw 'Legacy preparation cannot acquire an unbound tooling context.'}
+  return $null
+ }
+ if($null-eq$receiptProperty-or$null-eq$intentProperty-or$null-eq$admittedProperty){throw 'Tool-separated preparation lacks its complete context binding.'}
+ $initial=$receiptProperty.Value
+ foreach($binding in @($intentProperty.Value,$admittedProperty.Value)){
+  if((Get-MorphospaceCanonicalJsonSha256 $binding)-cne(Get-MorphospaceCanonicalJsonSha256 $initial)){throw 'Prepared tooling context receipt, intent, and admission differ.'}
+ }
+ $initialPath=Resolve-MorphospaceWorkspacePath $Workspace ([string]$initial.path) -RequireLeaf
+ $initialDocument=Read-MorphospaceProtocolJson $initialPath
+ $initialBytes=[IO.File]::ReadAllBytes($initialPath)
+ if((Get-MorphospaceSha256Bytes $initialBytes)-cne[string]$initial.sha256-or(Get-MorphospaceCanonicalJsonSha256 $initialDocument)-cne[string]$initial.canonical_sha256){throw 'Prepared tooling context raw or canonical identity drifted.'}
+ $artifacts=@($Intent.artifacts|Where-Object{[string]$_.path-ceq[string]$initial.path})
+ if($artifacts.Count-ne1-or[string]$artifacts[0].sha256-cne[string]$initial.canonical_sha256-or[string]$artifacts[0].bytes_base64-cne[Convert]::ToBase64String($initialBytes)){throw 'Prepared tooling context is not the exact transaction-owned artifact.'}
+ if([string]$initialDocument.project_id-cne[string]$Admission.project_id-or[string]$initialDocument.preparation_id-cne[string]$Admission.preparation.preparation_id-or[string]$initial.protocol_id-cne[string]$Source.tooling_protocol.protocol_id-or[string]$initialDocument.compatibility.protocol_id-cne[string]$initial.protocol_id){throw 'Prepared tooling context identities or protocol differ.'}
+ $featureBytes=ConvertTo-MorphospaceProtocolJsonBytes $Intent.target.feature_lock.document
+ foreach($pair in @(
+  @('source_composition',[string]$Admission.preparation.source_composition_path,[string]$Admission.preparation.source_composition_sha256),
+  @('repository_map',[string]$Admission.expected.repository_map_path,[string]$Admission.expected.repository_map_sha256),
+  @('feature_lock','feature.lock.json',(Get-MorphospaceSha256Bytes $featureBytes))
+ )){
+  $binding=$initialDocument.product_projection.([string]$pair[0])
+  if([string]$binding.path-cne[string]$pair[1]-or[string]$binding.sha256-cne[string]$pair[2]){throw "Prepared tooling context product projection '$($pair[0])' is detached."}
+ }
+ $selected=if($null-ne$Continuation){$Continuation.unit.tooling_context}else{$initial}
+ $selectedPath=Resolve-MorphospaceWorkspacePath $Workspace ([string]$selected.path) -RequireLeaf
+ $context=Read-MorphospaceProtocolJson $selectedPath
+ if((Get-MorphospaceFileSha256 $selectedPath)-cne[string]$selected.sha256-or(Get-MorphospaceCanonicalJsonSha256 $context)-cne[string]$selected.canonical_sha256-or[string]$context.project_id-cne[string]$Admission.project_id-or[string]$context.preparation_id-cne[string]$Admission.preparation.preparation_id-or[string]$selected.protocol_id-cne[string]$Source.tooling_protocol.protocol_id){throw 'Effective tooling context binding is detached.'}
+ $toolingHistoryModule=Import-Module (Join-Path $PSScriptRoot 'ToolingContextProvenance.psm1') -PassThru
+ $null=&$toolingHistoryModule {param($value,$root) Assert-MorphospaceToolingContextHistoricalObservation -Context $value -WorkspaceRoot $root} $context $Workspace
+ $resolver=&$toolingHistoryModule {param($value,$root) Read-MorphospaceToolingContextResolver -Context $value -WorkspaceRoot $root} $context $Workspace
+ [pscustomobject]@{binding=$selected;document=$context;resolver=$resolver;initial_binding=$initial}
+}
 function Test-PreparationProvenancePathWithinRoots {
  param([string]$Path,[object[]]$Roots)
  foreach($rootValue in @($Roots)){$root=[string]$rootValue;if($Path-ceq$root-or$Path.StartsWith($root.TrimEnd('/')+'/',[StringComparison]::OrdinalIgnoreCase)){return $true}}
@@ -108,6 +186,19 @@ function Get-PreparationProvenanceAdmissionPrefix {
   [Parameter(Mandatory)][object]$State
  )
  $stateHash=Get-PreparationProvenanceCanonicalHash $State 'Prepared-envelope replacement recovery state'
+ # New active envelope/tooling transitions retain the original admission prefix.
+ # The continuation reader authenticates every intervening committed transition
+ # before returning that prefix; an arbitrary later state is never sufficient.
+ $boundAdmissions=@($AdmissionIntent.artifacts|ForEach-Object{
+  $value=ConvertFrom-MorphospaceProtocolJsonBytes ([Convert]::FromBase64String([string]$_.bytes_base64))
+  if([string]$value.schema-ceq'rusty.morphospace.workflow.development_unit_admission.v1'){$value}
+ })
+ if($boundAdmissions.Count-eq1-and(Test-PreparationProvenanceHasEffectiveContinuation $Workspace $boundAdmissions[0])){
+  $continuation=Get-PreparationProvenanceEffectiveContinuation $Workspace $boundAdmissions[0]
+  $allEvents=@(Get-Content -LiteralPath (Resolve-MorphospaceWorkspacePath $Workspace 'iteration-events.jsonl' -RequireLeaf)|Where-Object{$_}|ForEach-Object{ConvertFrom-MorphospaceProtocolJsonBytes ([Text.UTF8Encoding]::new($false).GetBytes([string]$_))})
+  $prefix=@($allEvents|Where-Object{[int]$_.sequence-lt[int]$continuation.admission_proof.intent.event.sequence})
+  return [pscustomobject]@{events=$prefix;event_present=$true}
+ }
  $admissionBoundary=@([string]$AdmissionIntent.pre.state.sha256,[string]$AdmissionIntent.target.state.sha256)-ccontains$stateHash
  $ledgerPath=Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1';$ledger=@(Get-Module -All|Where-Object{$_.Path-eq$ledgerPath}|Select-Object -Last 1)[0]
  if($null-eq$ledger){throw 'Prepared-envelope transition-ledger validator is unavailable.'}
@@ -290,7 +381,9 @@ function Test-MorphospacePreparedDevelopmentEnvelope {
  $intentSchema=if($recovered){'development-envelope-repreparation-intent-v1.schema.json'}else{'development-envelope-preparation-intent-v1.schema.json'};$completionSchema=if($recovered){'development-envelope-repreparation-completion-v1.schema.json'}else{'development-envelope-preparation-completion-v1.schema.json'}
  Assert-PreparationProvenanceJson $intentPath (Join-Path $repoRoot "schemas\$intentSchema") 'Prepared-envelope intent schema is invalid.';Assert-PreparationProvenanceJson $completionPath (Join-Path $repoRoot "schemas\$completionSchema") 'Prepared-envelope completion schema is invalid.'
  $intent=Read-MorphospaceProtocolJson $intentPath;$completion=Read-MorphospaceProtocolJson $completionPath;$sourcePath=Resolve-MorphospaceWorkspacePath $workspace ([string]$p.source_composition_path) -RequireLeaf
- $sourceSchema=if($recovered){'schemas\development-envelope-source-composition-v2.schema.json'}else{'schemas\development-envelope-source-composition-v1.schema.json'};Assert-PreparationProvenanceJson $sourcePath (Join-Path $repoRoot $sourceSchema) 'Prepared-envelope source lock schema is invalid.'
+ $sourceDocument=Read-MorphospaceProtocolJson $sourcePath
+ $sourceSchema=if($recovered){'schemas/development-envelope-source-composition-v2.schema.json'}elseif([string]$sourceDocument.schema-ceq'rusty.morphospace.workflow.development_envelope_source_composition.v3'){'schemas/development-envelope-source-composition-v3.schema.json'}else{'schemas/development-envelope-source-composition-v1.schema.json'}
+ Assert-PreparationProvenanceJson $sourcePath (Join-Path $repoRoot $sourceSchema) 'Prepared-envelope source lock schema is invalid.'
  $source=Read-MorphospaceProtocolJson $sourcePath;$project=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace 'project.spec.json' -RequireLeaf);$lock=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace 'feature.lock.json' -RequireLeaf);$state=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace 'workspace.state.json' -RequireLeaf)
  $scope=$Admission.agent_scope_assessment;$envelope=$receipt.envelope;foreach($name in @('allowed_change_categories','allowed_effect_categories','allowed_permission_categories')){if($null-eq$envelope.$name){throw "Prepared-envelope omits $name."};foreach($value in @($scope.$name)){if(@($envelope.$name)-cnotcontains$value){throw "Admission scope exceeds prepared $name."}}};if([string]$scope.public_private_boundary-cne[string]$envelope.public_private_boundary-or[string]$scope.build_envelope.class-cne[string]$envelope.build_envelope.class-or[string]$scope.device_envelope.requirement-cne[string]$envelope.device_envelope.requirement){throw 'Admission public/private, build, or device ceiling exceeds the prepared envelope.'}
  foreach($profile in @($scope.build_envelope.allowed_profiles)){if(@($envelope.build_envelope.allowed_profiles)-cnotcontains[string]$profile){throw 'Admission build profile exceeds the prepared envelope.'}}
@@ -302,10 +395,26 @@ function Test-MorphospacePreparedDevelopmentEnvelope {
  $sourceRawFileSha256=Get-MorphospaceFileSha256 $sourcePath;$sourceCanonicalJsonSha256=Get-MorphospaceCanonicalJsonSha256 $source;$receiptCanonicalJsonSha256=Get-MorphospaceCanonicalJsonSha256 $receipt;$receiptRawFileSha256=Get-MorphospaceFileSha256 $admissionPath
  $receiptBytesBase64=[Convert]::ToBase64String([IO.File]::ReadAllBytes($admissionPath));$sourceBytesBase64=[Convert]::ToBase64String([IO.File]::ReadAllBytes($sourcePath))
  $receiptArtifactHash=if($recovered){$receiptRawFileSha256}else{$receiptCanonicalJsonSha256};$sourceArtifactHash=if($recovered){$sourceRawFileSha256}else{$sourceCanonicalJsonSha256}
-  if([string]$receipt.preparation_id-cne[string]$p.preparation_id-or[string]$source.preparation_id-cne[string]$p.preparation_id-or[string]$receipt.source_composition.path-cne[string]$p.source_composition_path-or[string]$receipt.source_composition.sha256-cne$sourceCanonicalJsonSha256-or[string]$p.source_composition_sha256-cne$sourceRawFileSha256-or[string]$Admission.expected.repository_map_path-cne[string]$intent.pre.repository_map.path-or[string]$Admission.expected.repository_map_sha256-cne[string]$intent.pre.repository_map.sha256-or[string]$intent.transaction_id-cne$tx-or[string]$completion.transaction_id-cne$tx-or[string]$completion.intent_sha256-cne(Get-MorphospaceFileSha256 $intentPath)-or$receiptArtifact.Count-ne1-or$sourceArtifact.Count-ne1-or[string]$receiptArtifact[0].sha256-cne$receiptArtifactHash-or[string]$sourceArtifact[0].sha256-cne$sourceArtifactHash-or[string]$receiptArtifact[0].bytes_base64-cne$receiptBytesBase64-or[string]$sourceArtifact[0].bytes_base64-cne$sourceBytesBase64){throw 'Prepared-envelope artifact provenance is not exact.'}
+ $preparedProductMap=Get-PreparationProvenanceProductMapBinding -RepoRoot $repoRoot -Receipt $receipt -Intent $intent -Recovered $recovered
+  if([string]$receipt.preparation_id-cne[string]$p.preparation_id-or[string]$source.preparation_id-cne[string]$p.preparation_id-or[string]$receipt.source_composition.path-cne[string]$p.source_composition_path-or[string]$receipt.source_composition.sha256-cne$sourceCanonicalJsonSha256-or[string]$p.source_composition_sha256-cne$sourceRawFileSha256-or[string]$Admission.expected.repository_map_path-cne[string]$preparedProductMap.path-or[string]$Admission.expected.repository_map_sha256-cne[string]$preparedProductMap.sha256-or[string]$intent.transaction_id-cne$tx-or[string]$completion.transaction_id-cne$tx-or[string]$completion.intent_sha256-cne(Get-MorphospaceFileSha256 $intentPath)-or$receiptArtifact.Count-ne1-or$sourceArtifact.Count-ne1-or[string]$receiptArtifact[0].sha256-cne$receiptArtifactHash-or[string]$sourceArtifact[0].sha256-cne$sourceArtifactHash-or[string]$receiptArtifact[0].bytes_base64-cne$receiptBytesBase64-or[string]$sourceArtifact[0].bytes_base64-cne$sourceBytesBase64){throw 'Prepared-envelope artifact provenance is not exact.'}
  if($recovered){$recoveryArtifact=@($artifacts|Where-Object{[string]$_.path-ceq[string]$p.recovery_receipt_path});$recoveryRawSha256=Get-MorphospaceFileSha256 $recoveryPath;$recoveryBytesBase64=[Convert]::ToBase64String([IO.File]::ReadAllBytes($recoveryPath));$historyIdentity=[pscustomobject][ordered]@{retirement=$recoveryReceipt.retirement;original_preparation=$recoveryReceipt.original_preparation;preserved_evidence=@($recoveryReceipt.preserved_evidence)};if([string]$recoveryReceipt.project_id-cne[string]$Admission.project_id-or[string]$recoveryReceipt.replacement_unit_id-cne[string]$Admission.unit_id-or[string]$recoveryReceipt.retired_unit_id-cne[string]$receipt.predecessor_unit_id-or[string]$recoveryReceipt.preparation_id-cne[string]$p.preparation_id-or[string]$recoveryReceipt.input_sha256-cne[string]$receipt.input_sha256-or[string]$recoveryReceipt.input_sha256-cne[string]$intent.input_sha256-or[string]$recoveryReceipt.source_composition.path-cne[string]$p.source_composition_path-or[string]$recoveryReceipt.source_composition.sha256-cne$sourceRawFileSha256-or[string]$recoveryReceipt.history_sha256-cne(Get-MorphospaceCanonicalJsonSha256 $historyIdentity)-or(Get-MorphospaceCanonicalJsonSha256 @($recoveryReceipt.preserved_evidence))-cne(Get-MorphospaceCanonicalJsonSha256 @($intent.preserved_evidence))-or$recoveryArtifact.Count-ne1-or[string]$recoveryArtifact[0].sha256-cne$recoveryRawSha256-or[string]$recoveryArtifact[0].bytes_base64-cne$recoveryBytesBase64-or[string]$completion.repreparation_receipt_sha256-cne$recoveryRawSha256){throw 'Recovered prepared-envelope transaction does not bind its exact project, units, input, source, history, and recovery-receipt bytes.'}}
+ $effectiveContinuation=$null
+ if($Phase-ceq'Freeze'-and(Test-PreparationProvenanceHasEffectiveContinuation $workspace $Admission)){
+  $effectiveContinuation=Get-PreparationProvenanceEffectiveContinuation $workspace $Admission
+  $project=$intent.target.project.document
+  $lock=$intent.target.feature_lock.document
+ }
  if([string]$intent.target.project.sha256-cne(Get-MorphospaceCanonicalJsonSha256 $project)-or[string]$intent.target.feature_lock.sha256-cne(Get-MorphospaceCanonicalJsonSha256 $lock)-or[string]$completion.target_project_sha256-cne[string]$intent.target.project.sha256-or[string]$completion.target_feature_lock_sha256-cne[string]$intent.target.feature_lock.sha256-or[string]$completion.target_state_sha256-cne[string]$intent.target.state.sha256){throw 'Prepared-envelope completion target bytes drifted.'}
  $events=@(Get-Content -LiteralPath (Resolve-MorphospaceWorkspacePath $workspace 'iteration-events.jsonl' -RequireLeaf)|Where-Object{$_}|ForEach-Object{ConvertFrom-MorphospaceProtocolJsonBytes -Bytes ([Text.UTF8Encoding]::new($false).GetBytes([string]$_)) -Context 'prepared-envelope event ledger'});$event=@($events|Where-Object{[string]$_.event_id-ceq[string]$completion.event_id});if($event.Count-ne1-or[string]$event[0].project_id-cne[string]$Admission.project_id-or[string]$event[0].unit_id-cne[string]$receipt.predecessor_unit_id-or[string]$event[0].event_id-cne[string]$intent.event.event_id-or(Get-PreparationProvenanceCanonicalHash $event[0] 'Prepared-envelope live preparation event')-cne(Get-PreparationProvenanceCanonicalHash $intent.event 'Prepared-envelope intent event')){throw 'Prepared-envelope event provenance is invalid.'}
+ if($receipt.PSObject.Properties.Name-ccontains'legacy_tooling_reclassification'){
+  # Authenticate the migration's semantic producer proof as well as its map
+  # hashes. This also protects direct Admit/Freeze callers of this reader.
+  $preparationHistoryModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceCurrentWorkHistory.psm1') -PassThru
+  $null=&$preparationHistoryModule {
+   param($root,$path,$preparationIntent,$ledgerEvents,$preparationEvent)
+   Get-MorphospacePreparationStepEvidence -Workspace $root -IntentPath $path -Intent $preparationIntent -Events $ledgerEvents -ExpectedEvent $preparationEvent
+  } $workspace $intentPath $intent $events $event[0]
+ }
  if($Phase-ceq'Admission'){
   $preparedStateExact=[string]$intent.target.state.sha256-ceq(Get-MorphospaceCanonicalJsonSha256 $state)
   $preparationOwnsTail=$events.Count-gt0-and[string]$events[-1].event_id-ceq[string]$event[0].event_id-and[string]$state.last_event_id-ceq[string]$event[0].event_id
@@ -322,7 +431,14 @@ function Test-MorphospacePreparedDevelopmentEnvelope {
    }
   }
  }
- return [pscustomobject]@{receipt=$receipt;intent=$intent;completion=$completion;source_lock=$source;project=$project;feature_lock=$lock;state=$state}
+ $toolingContext=Get-PreparationProvenanceToolingContext -Workspace $workspace -Admission $Admission -Receipt $receipt -Intent $intent -Source $source -Continuation $effectiveContinuation
+ return [pscustomobject]@{
+  receipt=$receipt;intent=$intent;completion=$completion;original_source_lock=$source
+  source_lock=$(if($null-ne$effectiveContinuation){$effectiveContinuation.source_composition}else{$source})
+  project=$(if($null-ne$effectiveContinuation){$effectiveContinuation.project}else{$project})
+  feature_lock=$(if($null-ne$effectiveContinuation){$effectiveContinuation.feature_lock}else{$lock})
+  state=$state;continuation=$effectiveContinuation;tooling_context=$toolingContext
+ }
 }
 function Get-MorphospaceDevelopmentAdmissionKind {
  [CmdletBinding()]param([Parameter(Mandatory)][object]$Admission)
@@ -340,4 +456,115 @@ function Test-MorphospaceDevelopmentUnitPreparation {
  if(-not($Admission.PSObject.Properties.Name-contains'blocked_successor')){throw 'Blocked-successor admission lacks its closed terminal binding.'}
  return Test-MorphospaceBlockedSuccessorPreparation -WorkspaceRoot $WorkspaceRoot -Admission $Admission -Phase $Phase
 }
-Export-ModuleMember -Function Test-MorphospacePreparedDevelopmentEnvelope,Get-MorphospaceDevelopmentAdmissionKind,Test-MorphospaceDevelopmentUnitPreparation
+function Test-MorphospaceEffectiveDevelopmentEnvelope {
+ [CmdletBinding()]param(
+  [Parameter(Mandatory)][string]$WorkspaceRoot,
+  [Parameter(Mandatory)][string]$UnitId,
+  [Parameter(Mandatory)][string]$RepositoryMapPath
+ )
+ $workspace=[IO.Path]::GetFullPath($WorkspaceRoot)
+ $admissions=@(Get-ChildItem -LiteralPath (Resolve-MorphospaceWorkspacePath $workspace 'receipts') -File -Filter '*.json'|ForEach-Object{
+  $document=Read-MorphospaceProtocolJson $_.FullName
+  if([string]$document.schema-ceq'rusty.morphospace.workflow.development_unit_admission.v1'-and[string]$document.unit_id-ceq$UnitId){$document}
+ })
+ if($admissions.Count-ne1){throw 'Effective development envelope requires one exact admission.'}
+ $admission=$admissions[0]
+ if((Get-MorphospaceDevelopmentAdmissionKind $admission)-cne'ordinary'){throw 'Active envelope extension requires an ordinary admitted development unit.'}
+ $origin=Test-MorphospaceDevelopmentUnitPreparation -WorkspaceRoot $workspace -Admission $admission -Phase Freeze
+ $continuation=if($null-ne$origin.continuation){$origin.continuation}else{Get-PreparationProvenanceEffectiveContinuation $workspace $admission}
+ $mapped=Resolve-MorphospaceWorkspacePath $workspace ([string]$continuation.repository_map.path) -RequireLeaf
+ $supplied=[IO.Path]::GetFullPath($RepositoryMapPath)
+ $comparison=if([OperatingSystem]::IsWindows()){[StringComparison]::OrdinalIgnoreCase}else{[StringComparison]::Ordinal}
+ if(-not$mapped.Equals($supplied,$comparison)-or(Get-MorphospaceFileSha256 $mapped)-cne[string]$continuation.repository_map.raw_sha256){throw 'Effective development envelope map is detached from its committed owner lineage.'}
+ $sourceBinding=[pscustomobject]@{
+  path=[string]$continuation.source_composition_binding.path
+  raw_sha256=[string]$continuation.source_composition_binding.raw_sha256
+  canonical_sha256=(Get-MorphospaceCanonicalJsonSha256 $continuation.source_composition)
+ }
+ [pscustomobject]@{
+  original=[pscustomobject]@{
+   admission=$admission;preparation_receipt=$origin.receipt;preparation_intent=$origin.intent;preparation_completion=$origin.completion
+   source_composition=$origin.original_source_lock
+   source_composition_binding=[pscustomobject]@{path=[string]$admission.preparation.source_composition_path;raw_sha256=[string]$admission.preparation.source_composition_sha256;canonical_sha256=(Get-MorphospaceCanonicalJsonSha256 $origin.original_source_lock)}
+   repository_map=[pscustomobject]@{path=[string]$admission.expected.repository_map_path;raw_sha256=[string]$admission.expected.repository_map_sha256}
+  }
+  effective=[pscustomobject]@{
+   project=$continuation.project;feature_lock=$continuation.feature_lock;state=$continuation.state
+   unit=$continuation.unit;assessment=$continuation.unit.agent_scope_assessment;event_tail=$continuation.event_tail
+   source_composition=$continuation.source_composition;source_composition_binding=$sourceBinding
+   repository_map=$continuation.repository_map
+  }
+  extensions=@($continuation.extensions);tooling_upgrades=@($continuation.tooling_upgrades);continuation=$continuation
+ }
+}
+function Get-MorphospaceUnitToolingContextObservation {
+ [CmdletBinding()]param([Parameter(Mandatory)][string]$WorkspaceRoot,[Parameter(Mandatory)][string]$UnitId,[Parameter(Mandatory)][string]$Action,[Management.Automation.PSModuleInfo]$OwnerModule=$null)
+ $workspace=[IO.Path]::GetFullPath($WorkspaceRoot)
+ $unit=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace "iteration-units/$UnitId.json" -RequireLeaf)
+ if(-not($unit.PSObject.Properties.Name-contains'tooling_context')){return $null}
+ $admissions=@(Get-ChildItem -LiteralPath (Resolve-MorphospaceWorkspacePath $workspace 'receipts') -File -Filter '*.json'|ForEach-Object{
+  $value=Read-MorphospaceProtocolJson $_.FullName
+  if([string]$value.schema-ceq'rusty.morphospace.workflow.development_unit_admission.v1'-and[string]$value.unit_id-ceq$UnitId){$value}
+ })
+ if($admissions.Count-ne1){throw 'Tooling execution requires one exact owner admission.'}
+ $proof=Test-MorphospaceDevelopmentUnitPreparation -WorkspaceRoot $workspace -Admission $admissions[0] -Phase Freeze
+ if($null-eq$proof.tooling_context){throw 'Tooling execution is detached from its prepared protocol.'}
+ $observation=$proof.tooling_context
+ if((Get-MorphospaceCanonicalJsonSha256 $unit.tooling_context)-cne(Get-MorphospaceCanonicalJsonSha256 $observation.binding)){throw 'Tooling execution did not resolve the live unit through its authenticated continuation.'}
+ if($null-eq$OwnerModule){$OwnerModule=$MyInvocation.MyCommand.Module}
+ [void](Assert-MorphospaceToolingContextExecutor -WorkspaceRoot $workspace -Binding $observation.binding -Action $Action -OwnerModule $OwnerModule)
+ return $observation
+}
+function Assert-MorphospaceToolingContextExecutor {
+ [CmdletBinding()]param([Parameter(Mandatory)][string]$WorkspaceRoot,[Parameter(Mandatory)][object]$Binding,[Parameter(Mandatory)][string]$Action,[Management.Automation.PSModuleInfo]$OwnerModule=$null)
+ $workspace=[IO.Path]::GetFullPath($WorkspaceRoot)
+ $path=Resolve-MorphospaceWorkspacePath $workspace ([string]$Binding.path) -RequireLeaf
+ $document=Read-MorphospaceProtocolJson $path
+ if((Get-MorphospaceFileSha256 $path)-cne[string]$Binding.sha256-or(Get-MorphospaceCanonicalJsonSha256 $document)-cne[string]$Binding.canonical_sha256-or[string]$document.compatibility.protocol_id-cne[string]$Binding.protocol_id){throw 'Tooling executor context pointer is detached.'}
+ $toolingExecutorModule=Import-Module (Join-Path $PSScriptRoot 'ToolingContextProvenance.psm1') -PassThru
+ $resolver=&$toolingExecutorModule {param($root,$value) Read-MorphospaceToolingContextResolver -WorkspaceRoot $root -Context $value} $workspace $document
+ $observation=[pscustomobject]@{document=$document;resolver=$resolver;binding=$Binding}
+ if(@($observation.document.compatibility.allowed_actions)-cnotcontains$Action){throw "Tooling context does not declare action '$Action'."}
+ $null=&$toolingExecutorModule {param($root,$value) Assert-MorphospaceToolingContextLocalObservation -WorkspaceRoot $root -Context $value} $workspace $observation.document
+ $executor=[IO.Path]::GetFullPath([string]$observation.resolver.executor_root).TrimEnd('\','/')
+ $executing=[IO.Path]::GetFullPath((Split-Path $PSScriptRoot -Parent)).TrimEnd('\','/')
+ $comparison=if([OperatingSystem]::IsWindows()){[StringComparison]::OrdinalIgnoreCase}else{[StringComparison]::Ordinal}
+ if(-not$executor.Equals($executing,$comparison)){throw 'Owner action is executing outside its exact bound tooling checkout.'}
+ if($null-eq$OwnerModule){$OwnerModule=$MyInvocation.MyCommand.Module}
+ $null=&$toolingExecutorModule {param($context,$root,$owner) Assert-MorphospaceToolingContextLoadedOwnerModule -Context $context -ExecutorRoot $root -OwnerModule $owner} $document $executor $OwnerModule
+ return $observation
+}
+function Get-MorphospaceToolingInstructionRepositoryMap {
+ [CmdletBinding()]param(
+  [Parameter(Mandatory)][string]$WorkspaceRoot,
+  [Parameter(Mandatory)][object]$Unit,
+  [Parameter(Mandatory)][hashtable]$RepositoryMap
+ )
+ $result=@{};foreach($id in $RepositoryMap.Keys){$result[$id]=$RepositoryMap[$id]}
+ if(-not($Unit.PSObject.Properties.Name-contains'tooling_context')){return $result}
+ if($result.ContainsKey('skill-surfaces')-or@($result.Values|Where-Object{$_.PSObject.Properties.Name-contains'aliases'-and@($_.aliases)-ccontains'skills-root'}).Count-ne0){throw 'A tooling-bound product map cannot also own the installed skill alias.'}
+ $observation=Get-MorphospaceUnitToolingContextObservation -WorkspaceRoot $WorkspaceRoot -UnitId ([string]$Unit.unit_id) -Action Inspect
+ if((Get-MorphospaceCanonicalJsonSha256 $Unit.tooling_context)-cne(Get-MorphospaceCanonicalJsonSha256 $observation.binding)){throw 'Instruction review supplied a different tooling context from the live owner unit.'}
+ $comparison=if([OperatingSystem]::IsWindows()){[StringComparison]::OrdinalIgnoreCase}else{[StringComparison]::Ordinal}
+ $skillRoot=$null
+ foreach($router in @($observation.resolver.routers)){
+  $root=[IO.Path]::GetFullPath([string]$router.root).TrimEnd('\','/')
+  if((Split-Path $root -Leaf)-cne[string]$router.skill_id){throw 'Tooling router installation does not use its exact skill directory identity.'}
+  $parent=Split-Path $root -Parent
+  if($null-eq$skillRoot){$skillRoot=$parent}elseif(-not$skillRoot.Equals($parent,$comparison)){throw 'Tooling instruction routers must share their declared installation root.'}
+ }
+ if(-not$skillRoot){throw 'Tooling instruction context has no installed routers.'}
+ foreach($mapped in $RepositoryMap.Values){
+  $root=[IO.Path]::GetFullPath([string]$mapped.path).TrimEnd('\','/')
+  if($root.Equals($skillRoot,$comparison)-or$root.StartsWith($skillRoot+[IO.Path]::DirectorySeparatorChar,$comparison)-or$skillRoot.StartsWith($root+[IO.Path]::DirectorySeparatorChar,$comparison)){throw 'Installed tooling instruction roots overlap product repository authority.'}
+ }
+ foreach($surface in @($Unit.instruction_surfaces|Where-Object{[string]$_.path-clike'<skills-root>/*'})){
+  $matched=@($observation.document.routers|Where-Object{[string]$_.skill_id-ceq[string]$surface.skill_id})
+  if($matched.Count-ne1-or[string]$surface.path-cne"<skills-root>/$([string]$surface.skill_id)/SKILL.md"-or[string]$surface.action-cne'review-no-change'-or[string]$surface.owner-cne'workflow-maintainer'){throw 'Installed tooling is an exact review-only instruction surface.'}
+ }
+ # This view is used solely for reading instruction bytes. It never enters the
+ # product map, source composition, repository observations, or write scope.
+ $result['skill-surfaces']=[pscustomobject]@{repo_id='skill-surfaces';role='tooling';path=$skillRoot;aliases=@('skills-root')}
+ return $result
+}
+Export-ModuleMember -Function Test-MorphospacePreparedDevelopmentEnvelope,Get-MorphospaceDevelopmentAdmissionKind,Test-MorphospaceDevelopmentUnitPreparation,Test-MorphospaceEffectiveDevelopmentEnvelope,Get-MorphospaceUnitToolingContextObservation,Get-MorphospaceToolingInstructionRepositoryMap,Assert-MorphospaceToolingContextExecutor

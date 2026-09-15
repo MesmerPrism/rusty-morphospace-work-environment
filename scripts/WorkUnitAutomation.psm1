@@ -221,6 +221,7 @@ function New-MorphospaceGraphScope {
 
 function New-MorphospaceClaimPreflight {
     param(
+        [string]$WorkspaceRoot = '',
         [Parameter(Mandatory = $true)][object]$Unit,
         [Parameter(Mandatory = $true)][object]$State,
         [Parameter(Mandatory = $true)][object]$Spec,
@@ -297,7 +298,7 @@ function New-MorphospaceClaimPreflight {
             }
             $instructionUnit = ($Unit | ConvertTo-Json -Depth 32 | ConvertFrom-Json)
             foreach ($surface in @($instructionUnit.instruction_surfaces)) { $surface.status = 'complete' }
-            $instructionObservations = @(Get-MorphospaceInstructionObservation -Unit $instructionUnit -RepositoryMap $instructionRepositoryMap)
+            $instructionObservations = @(Get-MorphospaceInstructionObservation -Unit $instructionUnit -RepositoryMap $instructionRepositoryMap -WorkspaceRoot $WorkspaceRoot)
         } catch {
             $instructionObservationFailed = $true
             $issues.Add("Instruction surface preflight failed: $($_.Exception.Message)") | Out-Null
@@ -617,7 +618,7 @@ function New-MorphospaceClaimPreflight {
         # need their transition-specific status assertions.
         $instructionCompatibilityPhase = if ($Action -in @('Inspect', 'Ready', 'Claim')) { $Action } else { 'Aggregate' }
         $activeContractReviewCompatible = Test-MorphospaceActiveUnitContractReviewCompatibility `
-            -Unit $Unit -State $State -Lifecycle $lifecycle -Phase $instructionCompatibilityPhase -RepositoryMap $RepositoryMap
+            -Unit $Unit -State $State -Lifecycle $lifecycle -Phase $instructionCompatibilityPhase -RepositoryMap $RepositoryMap -WorkspaceRoot $WorkspaceRoot
         if ($instructionObservationFailed) { $instructionReasons.Add('instruction-surface-unresolved') | Out-Null }
         foreach ($surface in @($Unit.instruction_surfaces)) {
             if ([string]$surface.action -ne $expectedAction -and -not $activeContractReviewCompatible) {
@@ -787,6 +788,7 @@ function Test-MorphospaceInstructionCompletion {
 
 function Get-MorphospaceInstructionSurfaceCompletionPlan {
     param(
+        [string]$WorkspaceRoot = '',
         [Parameter(Mandatory = $true)][object]$Unit,
         [Parameter(Mandatory = $true)][hashtable]$RepositoryMap
     )
@@ -816,7 +818,7 @@ function Get-MorphospaceInstructionSurfaceCompletionPlan {
         }
     }
 
-    $observations = @(Get-MorphospaceInstructionObservation -Unit $targetUnit -RepositoryMap $instructionRepositoryMap)
+    $observations = @(Get-MorphospaceInstructionObservation -Unit $targetUnit -RepositoryMap $instructionRepositoryMap -WorkspaceRoot $WorkspaceRoot)
     $records = New-Object System.Collections.Generic.List[object]
     foreach ($surface in $planned) {
         $declaredPath = ([string]$surface.path).Replace("\", "/")
@@ -1902,6 +1904,9 @@ function Invoke-MorphospaceWorkUnitAutomation {
     if (-not $unitMap.ContainsKey($UnitId)) { throw "Iteration unit '$UnitId' does not exist." }
     $unitEntry = $unitMap[$UnitId]
     $unit = $unitEntry.document
+    if($unit.PSObject.Properties.Name-contains'tooling_context'){
+        [void](Get-MorphospaceUnitToolingContextObservation -WorkspaceRoot $resolvedWorkspace -UnitId $UnitId -Action $Action -OwnerModule $MyInvocation.MyCommand.Module)
+    }
     $retiredActiveIds = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     if (@($events | Where-Object { [string]$_.event_id -cmatch '-active-retired$' }).Count -gt 0) {
         Import-Module (Join-Path $PSScriptRoot 'ActiveUnitRetirement.psm1')
@@ -2272,7 +2277,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
         throw "$Action requires the exact normal-validation selector and evidence path bound in workspace state."
     }
     $graphScope = New-MorphospaceGraphScope -Unit $unit
-    $claimPreflight = New-MorphospaceClaimPreflight -Unit $unit -State $state -Spec $spec -RepositoryMap $repoMap -RepositoryStates $repoStatesArray -ValidationMatrix $validationMatrix -ValidationTier $ValidationTier -Action $Action
+    $claimPreflight = New-MorphospaceClaimPreflight -WorkspaceRoot $resolvedWorkspace -Unit $unit -State $state -Spec $spec -RepositoryMap $repoMap -RepositoryStates $repoStatesArray -ValidationMatrix $validationMatrix -ValidationTier $ValidationTier -Action $Action
     $beforeCurrent = $state.current_unit
     $expectedPreStateSha256 = Get-MorphospaceCanonicalJsonSha256 $state
     $expectedPreUnitSha256 = Get-MorphospaceCanonicalJsonSha256 $unit
@@ -2460,7 +2465,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
             if (-not $InstructionCompletionId -or $InstructionCompletionId -cnotmatch '^[a-z0-9][a-z0-9-]{1,95}$') {
                 throw "InstructionCompletionId must contain 2 through 96 lowercase alphanumeric/hyphen characters."
             }
-            $completionPlan = Get-MorphospaceInstructionSurfaceCompletionPlan -Unit $unit -RepositoryMap $repoMap
+            $completionPlan = Get-MorphospaceInstructionSurfaceCompletionPlan -WorkspaceRoot $resolvedWorkspace -Unit $unit -RepositoryMap $repoMap
             Assert-MorphospaceExactInstructionSurfaceIds -Surfaces $completionPlan.surfaces -RequestedIds $InstructionSurfaceIds -Required:$Execute
             if ($ExpectedUnitSha256 -and $ExpectedUnitSha256 -cne $expectedPreUnitSha256) {
                 throw "ExpectedUnitSha256 does not match the current active unit."

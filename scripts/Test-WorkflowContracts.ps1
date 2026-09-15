@@ -25,9 +25,10 @@ Set-Variable -Scope Script -Name UnattributedFailureAttribution -Value ([object]
 $script:FailureAttribution = $script:UnattributedFailureAttribution
 $script:PortableIdPattern = "^[a-z0-9][a-z0-9-]{1,127}$"
 $script:LocalRepositoryMap = @{}
+$script:LocalRepositoryEntries = @{}
 if ($RepositoryMapPath) {
     $mapDocument = Get-Content -LiteralPath $RepositoryMapPath -Raw | ConvertFrom-Json
-    foreach ($entry in @($mapDocument.repositories)) { $script:LocalRepositoryMap[[string]$entry.repo_id] = [string]$entry.path }
+    foreach ($entry in @($mapDocument.repositories)) { $script:LocalRepositoryMap[[string]$entry.repo_id] = [string]$entry.path; $script:LocalRepositoryEntries[[string]$entry.repo_id]=$entry }
 }
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceCompletedTransitionSemanticCorrection.psm1') -Force
 Import-Module (Join-Path $RepoRoot 'scripts\AdmissionCompletionTimestampRecovery.psm1') -Force
@@ -1777,7 +1778,9 @@ function Test-ProjectBundle {
                     } elseif (Test-MorphospaceActiveUnitContractReviewCompatibility `
                         -Unit $unit `
                         -State $state `
-                        -Lifecycle $script:WorkflowLifecycle) {
+                        -Lifecycle $script:WorkflowLifecycle `
+                        -WorkspaceRoot $workspaceRoot `
+                        -RepositoryMap $(if($unit.PSObject.Properties.Name-contains'tooling_context'){$script:LocalRepositoryEntries}else{@{}})) {
                         # Current feature units may retain only the exact,
                         # lifecycle-routed non-writable skill reviews.
                     } elseif (-not $workModeExplicit -and [string]$skillSurface.action -ceq "review-no-change") {
@@ -1990,6 +1993,22 @@ function Test-ProjectBundle {
             } elseif ($composition.mode -eq "exact-materialization") {
                 Assert-Contract ((Test-Text $composition.lock_path) -and (Test-Text $composition.materialization_receipt)) "$Context unit '$($unit.unit_id)' exact materialization needs both lock and materialization receipt."
             }
+        }
+        if(@('proposed','ready','active','validating')-ccontains[string]$unit.status-and
+           ($null-eq$currentHistory-or(-not$currentHistory.historical_ids.Contains([string]$unit.unit_id)-and-not$currentHistory.retired_active_ids.Contains([string]$unit.unit_id)))){
+            try{
+                if($unit.PSObject.Properties.Name-contains'tooling_context'){
+                    $module=Import-Module (Join-Path $RepoRoot 'scripts/DevelopmentEnvelopeProvenance.psm1') -PassThru
+                    [void](&$module {param($root,$id) Get-MorphospaceUnitToolingContextObservation -WorkspaceRoot $root -UnitId $id -Action Inspect} $workspaceRoot ([string]$unit.unit_id))
+                }elseif($unit.PSObject.Properties.Name-contains'agent_scope_assessment'-and$unit.PSObject.Properties.Name-contains'source_composition'-and[string]$unit.source_composition.mode-ceq'exact-lock'){
+                    $sourcePath=Resolve-MorphospaceWorkspacePath $workspaceRoot ([string]$unit.source_composition.lock_path) -RequireLeaf
+                    $source=Read-MorphospaceProtocolJson $sourcePath
+                    if([string]$source.schema-ceq'rusty.morphospace.workflow.active_development_envelope_source_composition.v1'){
+                        $module=Import-Module (Join-Path $RepoRoot 'scripts/DevelopmentEnvelopeProvenance.psm1') -PassThru
+                        [void](&$module {param($root,$id,$map) Test-MorphospaceEffectiveDevelopmentEnvelope -WorkspaceRoot $root -UnitId $id -RepositoryMapPath $map} $workspaceRoot ([string]$unit.unit_id) $RepositoryMapPath)
+                    }
+                }
+            }catch{Add-Failure -Message "$Context unit '$($unit.unit_id)' current development provenance failed: $($_.Exception.Message)"}
         }
         $script:FailureAttribution = $historicalDebtEligibleAttribution
         if ($unit.PSObject.Properties.Name -contains "resource_requirements") {

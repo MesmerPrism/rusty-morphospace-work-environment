@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/active-development-envelope-source-composition-v1.schema.json",
+  "title": "Active development-envelope derivative source composition",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "lock_id", "extension_id", "project_id", "unit_id",
+    "parent", "original_preparation", "repository_map", "fingerprint",
+    "repositories", "status", "does_not_prove"
+  ],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.workflow.active_development_envelope_source_composition.v1" },
+    "lock_id": { "$ref": "#/$defs/id" },
+    "extension_id": { "$ref": "#/$defs/id" },
+    "project_id": { "$ref": "#/$defs/id" },
+    "unit_id": { "$ref": "#/$defs/id" },
+    "parent": { "$ref": "#/$defs/sourceBinding" },
+    "original_preparation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["preparation_id", "path", "raw_sha256", "canonical_sha256", "schema", "lock_id", "fingerprint"],
+      "properties": {
+        "preparation_id": { "$ref": "#/$defs/id" },
+        "path": { "$ref": "#/$defs/path" },
+        "raw_sha256": { "$ref": "#/$defs/hash" },
+        "canonical_sha256": { "$ref": "#/$defs/hash" },
+        "schema": { "enum": [
+          "rusty.morphospace.workflow.development_envelope_source_composition.v1",
+          "rusty.morphospace.workflow.development_envelope_source_composition.v2",
+          "rusty.morphospace.workflow.development_envelope_source_composition.v3"
+        ] },
+        "lock_id": { "$ref": "#/$defs/id" },
+        "fingerprint": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "repository_map": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "raw_sha256", "original_path", "original_raw_sha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/path" },
+        "raw_sha256": { "$ref": "#/$defs/hash" },
+        "original_path": { "$ref": "#/$defs/path" },
+        "original_raw_sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "fingerprint": { "$ref": "#/$defs/hash" },
+    "repositories": {
+      "type": "array", "minItems": 1, "uniqueItems": true,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": [
+          "repo_id", "role", "introduced_by", "baseline_commit", "baseline_tree",
+          "parent_commit", "parent_tree", "effective_commit", "effective_tree",
+          "branch", "materialization_path", "worktree_state", "permitted_active_dirt"
+        ],
+        "properties": {
+          "repo_id": { "$ref": "#/$defs/id" },
+          "role": { "enum": ["source", "planning"] },
+          "introduced_by": { "$ref": "#/$defs/id" },
+          "baseline_commit": { "$ref": "#/$defs/revision" },
+          "baseline_tree": { "$ref": "#/$defs/revision" },
+          "parent_commit": { "$ref": "#/$defs/revision" },
+          "parent_tree": { "$ref": "#/$defs/revision" },
+          "effective_commit": { "$ref": "#/$defs/revision" },
+          "effective_tree": { "$ref": "#/$defs/revision" },
+          "branch": { "type": ["string", "null"] },
+          "materialization_path": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" },
+          "worktree_state": { "enum": ["clean", "permitted-active-dirt"] },
+          "permitted_active_dirt": {
+            "type": "array", "uniqueItems": true,
+            "items": { "$ref": "#/$defs/dirt" }
+          }
+        }
+      }
+    },
+    "status": { "const": "locked" },
+    "does_not_prove": {
+      "type": "array", "minItems": 1, "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" },
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "path": { "type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$" },
+    "sourceBinding": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "raw_sha256", "canonical_sha256", "schema", "lock_id", "fingerprint"],
+      "properties": {
+        "path": { "$ref": "#/$defs/path" },
+        "raw_sha256": { "$ref": "#/$defs/hash" },
+        "canonical_sha256": { "$ref": "#/$defs/hash" },
+        "schema": { "enum": [
+          "rusty.morphospace.workflow.development_envelope_source_composition.v1",
+          "rusty.morphospace.workflow.development_envelope_source_composition.v2",
+          "rusty.morphospace.workflow.development_envelope_source_composition.v3",
+          "rusty.morphospace.workflow.active_development_envelope_source_composition.v1"
+        ] },
+        "lock_id": { "$ref": "#/$defs/id" },
+        "fingerprint": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "dirt": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "status", "sha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/path" },
+        "status": { "type": "string", "pattern": "^[ MARC?][ MD?]$" },
+        "sha256": { "oneOf": [{ "$ref": "#/$defs/hash" }, { "type": "null" }] }
+      }
+    }
+  }
+}

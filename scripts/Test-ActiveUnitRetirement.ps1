@@ -294,7 +294,15 @@ try{
         $recoveryCase=@(New-RetirementNestedPlanningProjection $readonlySeed $temp "nested-recovery-$phase")[-1];$interrupted=$false
         try{Invoke-NestedRetirement $recoveryCase u002 u003 '2026-08-25T00:00:43.0000000Z' -Execute -FaultAfter $phase|Out-Null}catch{$interrupted=$_.Exception.Message-like'*Injected interruption*'}
         Assert-RetirementTest $interrupted "nested planning recovery $phase did not interrupt"
-        if($phase-ceq'after-projection'){$unowned=Join-Path $recoveryCase.repository 'unowned-recovery.txt';[IO.File]::WriteAllText($unowned,'unowned');try{$rejected=$false;try{Invoke-NestedRetirement $recoveryCase u002 u003 '2026-08-25T00:00:43.0000000Z' -Execute|Out-Null}catch{$rejected=$_.Exception.Message-like'*clean available source*'};Assert-RetirementTest $rejected 'in-place recovery accepted unrelated planning dirt'}finally{[IO.File]::Delete($unowned)}}
+        if($phase-ceq'after-projection'){
+            $unowned=Join-Path $recoveryCase.repository 'unowned-recovery.txt';[IO.File]::WriteAllText($unowned,'unowned')
+            try{
+                $before=Get-RetirementInventory $recoveryCase.workspace;$rejected=$false;$message=''
+                try{Invoke-NestedRetirement $recoveryCase u002 u003 '2026-08-25T00:00:43.0000000Z' -Execute|Out-Null}catch{$message=$_.Exception.Message;$rejected=$message-like'*clean available source*'-or$message-like'*planning repository dirt differs from the authenticated lifecycle projection*'}
+                Assert-RetirementTest $rejected "in-place recovery accepted unrelated planning dirt: $message"
+                Assert-RetirementTest ((Get-RetirementInventory $recoveryCase.workspace)-ceq$before) 'in-place recovery rejection changed workspace bytes'
+            }finally{[IO.File]::Delete($unowned)}
+        }
         $recovered=Invoke-NestedRetirement $recoveryCase u002 u003 '2026-08-25T00:00:43.0000000Z' -Execute
         Assert-RetirementTest ($recovered.executed-and$null-eq(Read-EnvelopeProtocolJson (Join-Path $recoveryCase.workspace 'workspace.state.json')).current_unit) "nested planning recovery $phase did not complete"
     }

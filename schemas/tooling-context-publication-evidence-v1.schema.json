@@ -1,0 +1,7 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/tooling-context-publication-evidence-v1.schema.json","type":"object","additionalProperties":false,
+  "required":["schema","publication_id","executor","validation","status","does_not_prove"],
+  "properties":{"schema":{"const":"rusty.morphospace.workflow.tooling_context_publication_evidence.v1"},"publication_id":{"$ref":"#/$defs/id"},"executor":{"type":"object","additionalProperties":false,"required":["repo_id","remote_url","commit","tree"],"properties":{"repo_id":{"$ref":"#/$defs/id"},"remote_url":{"type":"string","minLength":1},"commit":{"$ref":"#/$defs/oid"},"tree":{"$ref":"#/$defs/oid"}}},"validation":{"$ref":"#/$defs/file"},"status":{"const":"source-observed"},"does_not_prove":{"type":"array","minItems":1,"uniqueItems":true,"contains":{"const":"Does not independently prove remote publication authority."},"items":{"type":"string","minLength":1}}},
+  "$defs":{"id":{"type":"string","pattern":"^[a-z0-9][a-z0-9-]{1,127}$"},"hash":{"type":"string","pattern":"^[0-9a-f]{64}$"},"oid":{"type":"string","pattern":"^[0-9a-f]{40}$"},"path":{"type":"string","pattern":"^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$"},"file":{"type":"object","additionalProperties":false,"required":["path","sha256"],"properties":{"path":{"$ref":"#/$defs/path"},"sha256":{"$ref":"#/$defs/hash"}}}}
+}

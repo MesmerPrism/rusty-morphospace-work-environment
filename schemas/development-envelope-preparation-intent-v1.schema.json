@@ -2,22 +2,323 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/development-envelope-preparation-intent-v1.schema.json",
   "title": "Development envelope preparation intent",
-  "type": "object", "additionalProperties": false,
-  "required": ["schema", "transaction_id", "created_at", "pre", "target", "artifacts", "event", "status"],
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "transaction_id",
+    "created_at",
+    "pre",
+    "target",
+    "artifacts",
+    "event",
+    "status"
+  ],
   "properties": {
-    "schema": { "const": "rusty.morphospace.workflow.development_envelope_preparation_intent.v1" },
-    "transaction_id": { "$ref": "#/$defs/id" }, "created_at": { "type": "string", "format": "date-time" },
-    "pre": { "$ref": "#/$defs/binding" }, "target": { "$ref": "#/$defs/binding" },
-    "artifacts": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "$ref": "#/$defs/artifact" } },
-    "event": { "type": "object" }, "status": { "const": "prepared" }
+    "schema": {
+      "const": "rusty.morphospace.workflow.development_envelope_preparation_intent.v1"
+    },
+    "transaction_id": {
+      "$ref": "#/$defs/id"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "pre": {
+      "$ref": "#/$defs/binding"
+    },
+    "target": {
+      "$ref": "#/$defs/binding"
+    },
+    "tooling_context": {
+      "$ref": "#/$defs/toolingPointer"
+    },
+    "legacy_tooling_reclassification": {
+      "$ref": "#/$defs/legacyToolingReclassification"
+    },
+    "artifacts": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 3,
+      "items": {
+        "$ref": "#/$defs/artifact"
+      }
+    },
+    "event": {
+      "type": "object"
+    },
+    "status": {
+      "const": "prepared"
+    }
   },
   "$defs": {
-    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" }, "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-    "path": { "type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$" },
-    "document": { "type": "object" },
-    "binding": { "type": "object", "additionalProperties": false, "required": ["project", "state", "feature_lock", "predecessor_unit", "events", "repository_map"], "properties": { "project": { "$ref": "#/$defs/documentBinding" }, "state": { "$ref": "#/$defs/documentBinding" }, "feature_lock": { "$ref": "#/$defs/documentBinding" }, "predecessor_unit": { "$ref": "#/$defs/documentBinding" }, "events": { "$ref": "#/$defs/fileBinding" }, "repository_map": { "$ref": "#/$defs/fileBinding" } } },
-    "documentBinding": { "type": "object", "additionalProperties": false, "required": ["path", "sha256", "document"], "properties": { "path": { "$ref": "#/$defs/path" }, "sha256": { "$ref": "#/$defs/hash" }, "document": { "$ref": "#/$defs/document" } } },
-    "fileBinding": { "type": "object", "additionalProperties": false, "required": ["path", "sha256"], "properties": { "path": { "$ref": "#/$defs/path" }, "sha256": { "$ref": "#/$defs/hash" } } },
-    "artifact": { "type": "object", "additionalProperties": false, "required": ["path", "sha256", "bytes_base64"], "properties": { "path": { "$ref": "#/$defs/path" }, "sha256": { "$ref": "#/$defs/hash" }, "bytes_base64": { "type": "string", "minLength": 4 } } }
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,127}$"
+    },
+    "hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "path": {
+      "type": "string",
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$"
+    },
+    "document": {
+      "type": "object"
+    },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "project",
+        "state",
+        "feature_lock",
+        "predecessor_unit",
+        "events",
+        "repository_map"
+      ],
+      "properties": {
+        "project": {
+          "$ref": "#/$defs/documentBinding"
+        },
+        "state": {
+          "$ref": "#/$defs/documentBinding"
+        },
+        "feature_lock": {
+          "$ref": "#/$defs/documentBinding"
+        },
+        "predecessor_unit": {
+          "$ref": "#/$defs/documentBinding"
+        },
+        "events": {
+          "$ref": "#/$defs/fileBinding"
+        },
+        "repository_map": {
+          "$ref": "#/$defs/fileBinding"
+        }
+      }
+    },
+    "documentBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256",
+        "document"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/path"
+        },
+        "sha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "document": {
+          "$ref": "#/$defs/document"
+        }
+      }
+    },
+    "fileBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/path"
+        },
+        "sha256": {
+          "$ref": "#/$defs/hash"
+        }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256",
+        "bytes_base64"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/path"
+        },
+        "sha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "bytes_base64": {
+          "type": "string",
+          "minLength": 4
+        }
+      }
+    },
+    "toolingPointer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256",
+        "canonical_sha256",
+        "protocol_id"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/path"
+        },
+        "sha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "canonical_sha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "protocol_id": {
+          "const": "tooling-context-v1"
+        }
+      }
+    },
+    "oid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/path"
+        },
+        "sha256": {
+          "$ref": "#/$defs/hash"
+        }
+      }
+    },
+    "legacyToolingReclassification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "reclassification_id",
+        "old_repository_map",
+        "target_repository_map",
+        "removed_tool_repositories",
+        "status",
+        "does_not_prove"
+      ],
+      "properties": {
+        "schema": {
+          "const": "rusty.morphospace.workflow.legacy_tooling_reclassification.v1"
+        },
+        "reclassification_id": {
+          "$ref": "#/$defs/id"
+        },
+        "old_repository_map": {
+          "$ref": "#/$defs/file"
+        },
+        "target_repository_map": {
+          "$ref": "#/$defs/file"
+        },
+        "removed_tool_repositories": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "repo_id",
+              "project_row_sha256",
+              "map_row_sha256",
+              "source_composition",
+              "source_row_sha256",
+              "commit",
+              "tree",
+              "materialization_path",
+              "canonical_allowed_paths",
+              "router_skill_ids"
+            ],
+            "properties": {
+              "repo_id": {
+                "$ref": "#/$defs/id"
+              },
+              "project_row_sha256": {
+                "$ref": "#/$defs/hash"
+              },
+              "map_row_sha256": {
+                "$ref": "#/$defs/hash"
+              },
+              "source_composition": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "path",
+                  "sha256",
+                  "canonical_sha256"
+                ],
+                "properties": {
+                  "path": {
+                    "$ref": "#/$defs/path"
+                  },
+                  "sha256": {
+                    "$ref": "#/$defs/hash"
+                  },
+                  "canonical_sha256": {
+                    "$ref": "#/$defs/hash"
+                  }
+                }
+              },
+              "source_row_sha256": {
+                "$ref": "#/$defs/hash"
+              },
+              "commit": {
+                "$ref": "#/$defs/oid"
+              },
+              "tree": {
+                "$ref": "#/$defs/oid"
+              },
+              "materialization_path": {
+                "$ref": "#/$defs/id"
+              },
+              "canonical_allowed_paths": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "$ref": "#/$defs/path"
+                }
+              },
+              "router_skill_ids": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "$ref": "#/$defs/id"
+                }
+              }
+            }
+          }
+        },
+        "status": {
+          "const": "reviewed"
+        },
+        "does_not_prove": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
   }
 }

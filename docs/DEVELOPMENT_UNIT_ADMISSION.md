@@ -30,6 +30,29 @@ exact live workspace bytes. The preparation receipt and intent artifact retain
 their canonical-JSON SHA-256 identity separately. Admission must verify both
 domains plus the intent's exact base64 bytes; canonical and raw hashes are not
 interchangeable.
+
+An ordinary admission for a tooling-aware fresh preparation carries the same
+closed context pointer in the admission, its `expected` preimage, and the
+initial proposed unit. Admission authenticates that pointer against the
+preparation receipt and intent, source-composition v3's protocol discriminator,
+and the separate context artifact. It verifies the context's exact initial
+source/map/feature-lock projection and reobserves its resolver, clean executor,
+closed admission-module imports, and managed router files before any admission
+intent or recovery write. Tooling repositories and paths never enter product
+source composition, repository scope, or write authority. Recovered v2 and
+blocked-successor admission cannot add an initial context ad hoc.
+
+When preparation used the closed legacy-tooling reclassification route,
+admission still follows this ordinary tooling-aware path. It binds the authored
+target map and v3 source lock. The removed historical tool row never enters the
+new unit's product repository scope or instruction repository map; its old map,
+source lock, admission, and retirement remain immutable evidence.
+
+Later `UpgradeToolingContext` may replace only the unit's context pointer under
+its own pre-freeze transaction. The immutable preparation context and original
+product lock/pins remain historical evidence; an authenticated active-envelope
+extension retains that origin while separately advancing its effective product
+projection.
 The transaction creates the unit and receipt together through the standard
 typed transition-ledger intent/completion shape; its durable intent may be
 completed after an interruption. Exact replays are idempotent, while a reused

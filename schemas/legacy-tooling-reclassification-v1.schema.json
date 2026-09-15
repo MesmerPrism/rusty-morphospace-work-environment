@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/legacy-tooling-reclassification-v1.schema.json",
+  "title": "Idle legacy tooling repository reclassification",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "reclassification_id", "old_repository_map", "target_repository_map", "removed_tool_repositories", "status", "does_not_prove"],
+  "properties": {
+    "schema": { "const": "rusty.morphospace.workflow.legacy_tooling_reclassification.v1" },
+    "reclassification_id": { "$ref": "#/$defs/id" },
+    "old_repository_map": { "$ref": "#/$defs/file" },
+    "target_repository_map": { "$ref": "#/$defs/file" },
+    "removed_tool_repositories": {
+      "type": "array", "minItems": 1, "uniqueItems": true,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["repo_id", "project_row_sha256", "map_row_sha256", "source_composition", "source_row_sha256", "commit", "tree", "materialization_path", "canonical_allowed_paths", "router_skill_ids"],
+        "properties": {
+          "repo_id": { "$ref": "#/$defs/id" },
+          "project_row_sha256": { "$ref": "#/$defs/hash" },
+          "map_row_sha256": { "$ref": "#/$defs/hash" },
+          "source_composition": { "type": "object", "additionalProperties": false, "required": ["path", "sha256", "canonical_sha256"], "properties": { "path": { "$ref": "#/$defs/path" }, "sha256": { "$ref": "#/$defs/hash" }, "canonical_sha256": { "$ref": "#/$defs/hash" } } },
+          "source_row_sha256": { "$ref": "#/$defs/hash" },
+          "commit": { "$ref": "#/$defs/oid" }, "tree": { "$ref": "#/$defs/oid" },
+          "materialization_path": { "$ref": "#/$defs/id" },
+          "canonical_allowed_paths": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/path" } },
+          "router_skill_ids": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/id" } }
+        }
+      }
+    },
+    "status": { "const": "reviewed" },
+    "does_not_prove": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" },
+    "oid": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "path": { "type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$" },
+    "file": { "type": "object", "additionalProperties": false, "required": ["path", "sha256"], "properties": { "path": { "$ref": "#/$defs/path" }, "sha256": { "$ref": "#/$defs/hash" } } }
+  }
+}
