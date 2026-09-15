@@ -95,9 +95,8 @@ function Test-ActiveRetirementRecoveryPreparationProvenance([string]$Workspace,[
         if($resolved.StartsWith($tempPrefix,[StringComparison]::OrdinalIgnoreCase)-and[IO.Path]::GetFileName($resolved).StartsWith('morphospace-retirement-provenance-')){Remove-Item -LiteralPath $resolved -Recurse -Force -ErrorAction SilentlyContinue}
     }
 }
-function Test-ActiveRetirementAuthenticatedPlanningDirt {
-    param([string]$Workspace,[object]$Unit,[object]$RepositoryEntry,[string[]]$StatusPorcelain,[object]$RecoveryIntent=$null)
-    $provenanceModule=Import-ActiveRetirementDevelopmentEnvelopeProvenance
+function Test-ActiveRetirementPlanningProjectionFromAuthenticatedAdmission {
+    param([string]$Workspace,[object]$Unit,[object]$RepositoryEntry,[string[]]$StatusPorcelain,[Parameter(Mandatory)][object]$Admission,[object]$RecoveryIntent=$null)
     if([string]$RepositoryEntry.role-cne'planning'){return $false}
     if([string]::IsNullOrWhiteSpace($Workspace)){throw 'Active retirement planning lifecycle workspace path is empty.'};if([string]::IsNullOrWhiteSpace([string]$RepositoryEntry.path)){throw 'Active retirement planning lifecycle repository path is empty.'}
     if($null-eq$RecoveryIntent-and@($StatusPorcelain|Where-Object{[string]$_-cmatch'retire-.*-active-retired-transition'}).Count-ne0){throw 'Active retirement planning lifecycle recovery intent was not forwarded.'}
@@ -105,10 +104,7 @@ function Test-ActiveRetirementAuthenticatedPlanningDirt {
     $repositoryPrefix=$repository+[IO.Path]::DirectorySeparatorChar;$pathComparison=if([OperatingSystem]::IsWindows()){[StringComparison]::OrdinalIgnoreCase}else{[StringComparison]::Ordinal}
     if(-not$workspaceFull.StartsWith($repositoryPrefix,$pathComparison)){return $false}
     $workspacePrefix=[IO.Path]::GetRelativePath($repository,$workspaceFull).Replace('\','/').TrimEnd('/')+'/'
-    $admissions=@(Get-ChildItem -LiteralPath (Resolve-MorphospaceWorkspacePath $workspaceFull 'receipts') -File -Filter '*.json'|ForEach-Object{$document=Read-MorphospaceProtocolJson $_.FullName;if([string]$document.schema-ceq'rusty.morphospace.workflow.development_unit_admission.v1'-and[string]$document.unit_id-ceq[string]$Unit.unit_id){$document}})
-    if($admissions.Count-ne1){throw 'Active retirement planning lifecycle requires one exact current admission receipt.'}
-    $admission=$admissions[0]
-    if($RecoveryIntent){Test-ActiveRetirementRecoveryPreparationProvenance $workspaceFull $admission $RecoveryIntent $provenanceModule}else{$null=&$provenanceModule {param($root,$admission) Test-MorphospaceDevelopmentUnitPreparation -WorkspaceRoot $root -Admission $admission -Phase Freeze} $workspaceFull $admission}
+    $admission=$Admission
     $eventObservation=Get-ActiveRetirementEvents $workspaceFull;$events=$eventObservation.events
     if($RecoveryIntent){
         $tailMatches=@($events|Where-Object{[string]$_.event_id-ceq[string]$RecoveryIntent.expected.event_tail_id})
@@ -239,7 +235,7 @@ function Get-ActiveRetirementRepositories([object]$Unit,[object]$Source,[string]
             }
         }
         $planningDirt=$false
-        if($observed.available-and$observed.is_git-and$remaining.Count-ne0-and-not$authorized.Contains($id)-and[string]$observed.head-ceq[string]$locked.commit-and[string]$observed.tree-ceq[string]$locked.tree){$planningDirt=Test-ActiveRetirementAuthenticatedPlanningDirt $Workspace $Unit $entry $remaining $RecoveryIntent}
+        if($observed.available-and$observed.is_git-and$remaining.Count-ne0-and-not$authorized.Contains($id)-and[string]$observed.head-ceq[string]$locked.commit-and[string]$observed.tree-ceq[string]$locked.tree){$planningDirt=Test-ActiveRetirementPlanningProjectionFromAuthenticatedAdmission -Workspace $Workspace -Unit $Unit -RepositoryEntry $entry -StatusPorcelain $remaining -Admission $admission -RecoveryIntent $RecoveryIntent}
         if(-not$observed.available-or-not$observed.is_git-or($remaining.Count-ne0-and-not$planningDirt)-or[string]$observed.head-cnotmatch'^[0-9a-f]{40}$'-or[string]$observed.tree-cnotmatch'^[0-9a-f]{40}$'){throw "Active retirement requires clean available source repository '$id'."}
         # Writable repositories may have newer clean local checkpoints. Read-only dependencies stay pinned.
         if(-not$authorized.Contains($id)-and([string]$observed.head-cne[string]$locked.commit-or[string]$observed.tree-cne[string]$locked.tree)){throw "Active retirement read-only dependency '$id' differs from the source lock."}

@@ -9,9 +9,10 @@ $protocolModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceProtocolC
 Import-Module (Join-Path $PSScriptRoot 'ActiveUnitRetirement.psm1') -Force
 if($null-eq(Get-Command Read-MorphospaceProtocolJson -ErrorAction SilentlyContinue)){throw 'Active retirement test: importing the retirement owner removed the caller protocol commands.'}
 function Assert-RetirementTest([bool]$Value,[string]$Message){if(-not$Value){throw "Active retirement test: $Message"}}
+function Assert-RetirementNoReparse([string]$Root,[string]$Candidate){&$protocolModule {param($root,$candidate)Assert-MorphospaceNoReparseAncestor -Root $root -Candidate $candidate} $Root $Candidate}
 function Get-RetirementInventory([string]$Workspace){
-    $rows=@(Get-ChildItem -LiteralPath $Workspace -Recurse -File|Sort-Object FullName|ForEach-Object{[pscustomobject]@{path=[IO.Path]::GetRelativePath($Workspace,$_.FullName).Replace('\','/');sha256=Get-MorphospaceFileSha256 $_.FullName}})
-    Get-MorphospaceCanonicalJsonSha256 $rows
+    $rows=@(Get-ChildItem -LiteralPath $Workspace -Recurse -File -Force|Sort-Object FullName|ForEach-Object{[pscustomobject]@{path=[IO.Path]::GetRelativePath($Workspace,$_.FullName).Replace('\','/');sha256=Get-EnvelopeFileSha256 $_.FullName}})
+    Get-EnvelopeCanonicalJsonSha256 $rows
 }
 function Write-RetirementRequest([string]$Workspace,[object]$Request){Write-EnvelopeJson ($Workspace+'.request.json') $Request}
 function Invoke-RetirementTest([string]$Workspace,[bool]$Execute=$true,[string]$FaultAfter='none',[string]$RepoMapPath=''){
@@ -26,11 +27,14 @@ function Assert-RetirementRejects([string]$Workspace,[string]$Label,[string]$Pat
     Assert-RetirementTest ((Get-RetirementInventory $Workspace)-ceq$before) "$Label mutated workspace bytes"
 }
 function New-RetirementNestedPlanningProjection([object]$Seed,[string]$Root,[string]$Name){
-    $seedState=Read-EnvelopeProtocolJson (Join-Path $Seed.workspace 'workspace.state.json');$replacement=[string]$seedState.current_unit-ceq'u003'
-    $seedMap=Read-EnvelopeProtocolJson (Join-Path $Seed.workspace 'repository-map.json');$nested=$false
-    foreach($row in @($seedMap.repositories)){$top=(@(Invoke-EnvelopeGit ([string]$row.path) @('rev-parse','--show-toplevel'))[0]).Trim();if(-not[IO.Path]::GetFullPath($top).Equals([IO.Path]::GetFullPath([string]$row.path),[StringComparison]::OrdinalIgnoreCase)){$nested=$true}}
-    $fresh=@(New-ReadonlyPlanningRetirementSeed (Join-Path $Root "$Name-producer") -Replacement:$replacement -NestedReadOnlySource:$nested)[-1]
-    $workspace=[string]$fresh.workspace;$planning=[string]$fresh.source_repository;$mapPath=Join-Path $workspace 'repository-map.json';$map=Read-EnvelopeProtocolJson $mapPath
+    $fixtureRoot=[IO.Path]::GetFullPath($Root).TrimEnd('\','/');$fixturePrefix=$fixtureRoot+[IO.Path]::DirectorySeparatorChar;$planning=[IO.Path]::GetFullPath([string]$Seed.source_repository);$snapshot=[IO.Path]::GetFullPath([string]$Seed.retirement_snapshot_path)
+    foreach($path in @($planning,$snapshot)){if(-not$path.StartsWith($fixturePrefix,[StringComparison]::OrdinalIgnoreCase)){throw "Retirement fixture restore path escapes its unique root: $path"};Assert-RetirementNoReparse -Root $fixtureRoot -Candidate $path;$item=Get-Item -LiteralPath $path -Force;if(($item.Attributes-band[IO.FileAttributes]::ReparsePoint)-ne0){throw "Retirement fixture restore rejects a reparse point: $path"}}
+    if((Get-RetirementInventory $snapshot)-cne[string]$Seed.retirement_snapshot_inventory){throw 'Retirement fixture immutable producer snapshot is damaged.'}
+    Remove-Item -LiteralPath $planning -Recurse -Force;Copy-Item -LiteralPath $snapshot -Destination $planning -Recurse -Force
+    Assert-RetirementNoReparse -Root $fixtureRoot -Candidate $planning;if((Get-RetirementInventory $planning)-cne[string]$Seed.retirement_snapshot_inventory){throw 'Retirement fixture restore differs from its immutable producer snapshot.'}
+    $workspace=Join-Path $planning 'morphospace';$requestPath=Join-Path (Split-Path $planning -Parent) "$([IO.Path]::GetFileName($planning))-request.json";$requestFull=[IO.Path]::GetFullPath($requestPath)
+    if(-not$requestFull.StartsWith($fixturePrefix,[StringComparison]::OrdinalIgnoreCase)){throw 'Retirement fixture request cleanup path escapes its unique root.'};if([IO.File]::Exists($requestFull)){Remove-Item -LiteralPath $requestFull -Force}
+    $mapPath=Join-Path $workspace 'repository-map.json';$map=Read-EnvelopeProtocolJson $mapPath
     [pscustomobject]@{repository=$planning;workspace=$workspace;map=$map;map_path=$mapPath}
 }
 function New-ReadonlyPlanningRetirementSeed([string]$Root,[switch]$Replacement,[switch]$NestedReadOnlySource){
@@ -88,6 +92,9 @@ function New-ReadonlyPlanningRetirementSeed([string]$Root,[switch]$Replacement,[
     $lifecycle=@{WorkspaceRoot=$workspace;UnitId=$unitId;RepoMapPath=(Join-Path $workspace 'repository-map.json');ValidationTier='quick'};$null=&$automation @lifecycle -Action Ready -Timestamp $ready -Execute;$null=&$automation @lifecycle -Action Claim -Timestamp $claim -Execute
     $baselineLeak=@(Invoke-EnvelopeGit $planning @('status','--porcelain=v1','--untracked-files=all')|Where-Object{[string]$_-match'u001|repository-map'});if($baselineLeak.Count-ne0){throw "Nested lifecycle dirt leaked baseline paths: $($baselineLeak-join', ')"}
     $seed.workspace=$workspace
+    $snapshot=Join-Path $Root 'retirement-planning-snapshot';if([IO.Directory]::Exists($snapshot)){throw 'Retirement fixture immutable planning snapshot already exists.'};Copy-Item -LiteralPath $planning -Destination $snapshot -Recurse -Force
+    $seed|Add-Member -NotePropertyName retirement_snapshot_path -NotePropertyValue $snapshot -Force
+    $seed|Add-Member -NotePropertyName retirement_snapshot_inventory -NotePropertyValue (Get-RetirementInventory $snapshot) -Force
     return $seed
 }
 function Add-ReadonlyPlanningWriteScopeAmendment([object]$Projection,[string]$AmendmentId='u002-add-nested-file'){
@@ -193,7 +200,7 @@ try{
     Test-ActiveRetirementContinuation -Workspace $amended.workspace -TestRoot (Join-Path $temp 'amended-continuation') -RepositoryRoot $repository -RetirementReceiptPath 'receipts/retire-u002.json'
     $nestedSourceSeed=@(New-ReadonlyPlanningRetirementSeed (Join-Path $temp 'nested-source-negative-seed') -NestedReadOnlySource)[-1]
     $nestedSourceProjection=[pscustomobject]@{repository=[string]$nestedSourceSeed.source_repository;workspace=[string]$nestedSourceSeed.workspace;map=Read-EnvelopeProtocolJson (Join-Path $nestedSourceSeed.workspace 'repository-map.json');map_path=Join-Path $nestedSourceSeed.workspace 'repository-map.json'}
-    $retirementModule=Import-Module (Join-Path $PSScriptRoot 'ActiveUnitRetirement.psm1') -Force -PassThru
+    $retirementModule=Import-Module (Join-Path $PSScriptRoot 'ActiveUnitRetirement.psm1') -Force -PassThru;Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1')
     function Assert-NestedSourceMaterializationRejects([object]$Entry,[object]$Locked,[bool]$Writable,[Collections.Generic.HashSet[string]]$Roots,[string]$Label,[string]$Pattern){
         $rejected=$false;$message=''
         try{&$retirementModule {param($id,$entry,$locked,$writable,$roots)Get-ActiveRetirementRepositoryMaterialization -Id $id -Entry $entry -Locked $locked -Writable $writable -BackingRoots $roots} ([string]$Locked.repo_id) $Entry $Locked $Writable $Roots|Out-Null}catch{$rejected=$true;$message=$_.Exception.Message}
@@ -215,7 +222,7 @@ try{
     }catch{if(-not$aliasCreated){Write-Warning "Active retirement nested reparse negative skipped: $($_.Exception.Message)"}else{throw}}finally{if($aliasCreated){Remove-Item -LiteralPath $alias -Force}}
     $mapDriftSeed=@(New-ReadonlyPlanningRetirementSeed (Join-Path $temp 'nested-source-map-drift-seed') -NestedReadOnlySource)[-1];$mapDrift=[pscustomobject]@{repository=[string]$mapDriftSeed.source_repository;workspace=[string]$mapDriftSeed.workspace;map_path=Join-Path $mapDriftSeed.workspace 'repository-map.json'};$mapDriftRequest=New-ActiveUnitRetirementRequest -WorkspaceRoot $mapDrift.workspace -RepoMapPath $mapDrift.map_path;$mapDriftInput=Join-Path $temp 'nested-source-map-drift-request.json';Write-EnvelopeJson $mapDriftInput $mapDriftRequest
     $driftedMap=Read-EnvelopeProtocolJson $mapDrift.map_path;@($driftedMap.repositories|Where-Object{[string]$_.repo_id-ceq'nested-read-only-source'})[0].path=Split-Path ([string]@($driftedMap.repositories|Where-Object{[string]$_.repo_id-ceq'nested-read-only-source'})[0].path) -Parent;Write-EnvelopeJson $mapDrift.map_path $driftedMap
-    $mapDriftBefore=Get-RetirementInventory $mapDrift.workspace;$mapDriftRejected=$false;try{Invoke-MorphospaceRetireActive -WorkspaceRoot $mapDrift.workspace -UnitId u002 -RepoMapPath $mapDrift.map_path -ActiveUnitRetirement $mapDriftInput -ExpectedActiveUnitRetirementSha256 (Get-MorphospaceFileSha256 $mapDriftInput) -OutPath (Join-Path $mapDrift.workspace 'receipts/retire-u002.json') -Timestamp '2026-08-25T00:00:43.0000000Z' -Execute|Out-Null}catch{$mapDriftRejected=$_.Exception.Message-like'*repository map bytes drifted*'}
+    $mapDriftBefore=Get-RetirementInventory $mapDrift.workspace;$mapDriftRejected=$false;try{Invoke-MorphospaceRetireActive -WorkspaceRoot $mapDrift.workspace -UnitId u002 -RepoMapPath $mapDrift.map_path -ActiveUnitRetirement $mapDriftInput -ExpectedActiveUnitRetirementSha256 (Get-MorphospaceFileSha256 $mapDriftInput) -OutPath (Join-Path $mapDrift.workspace 'receipts/retire-u002.json') -Timestamp '2026-08-25T00:00:43.0000000Z' -Execute|Out-Null}catch{$mapDriftRejected=$_.Exception.Message-like'*repository map bytes drifted*'-or$_.Exception.Message-like'*repository map is detached from its admission*'}
     Assert-RetirementTest ($mapDriftRejected-and(Get-RetirementInventory $mapDrift.workspace)-ceq$mapDriftBefore) 'nested source repository-map drift was accepted or changed workspace bytes'
     $preRequestSwapRejected=$false;try{New-ActiveUnitRetirementRequest -WorkspaceRoot $mapDrift.workspace -RepoMapPath $mapDrift.map_path|Out-Null}catch{$preRequestSwapRejected=$_.Exception.Message-like'*repository map is detached from its admission*'}
     Assert-RetirementTest ($preRequestSwapRejected-and(Get-RetirementInventory $mapDrift.workspace)-ceq$mapDriftBefore) 'fresh retirement request rebound a producer-detached repository map or changed workspace bytes'
