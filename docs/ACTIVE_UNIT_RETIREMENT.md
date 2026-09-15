@@ -99,6 +99,12 @@ damaged transaction evidence and preservation of old bytes. Continue through
 fresh preparation, admission and ordinary claim; reject attempts to resurrect
 the old unit or use it as accepted evidence.
 
+The affected-validation registry partitions the focused retirement owner into
+bounded scenario leaves. The core leaf depends on every nested-source,
+amendment, recovery and damage leaf before it provides the retirement contract;
+one scenario cannot stand in for the complete focused result. Direct manual use
+of `Test-ActiveUnitRetirement.ps1 -SelfTest` still runs every scenario.
+
 Historical auditing remains separate. Later continuation must authenticate
 retirement after subsequent owner events without retrofitting new instruction
 requirements onto the retired unit.
