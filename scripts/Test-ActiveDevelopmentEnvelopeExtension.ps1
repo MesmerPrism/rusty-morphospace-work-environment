@@ -21,9 +21,16 @@ function Assert-ActiveEnvelopeRejected([scriptblock]$Action,[string]$Message){$r
 
 function Invoke-RetainedAuthorityFocusedTests {
     $surface=[pscustomobject][ordered]@{surface_kind='readme';path='README.md';owner='workflow-owner';change_reason='Keep the declared instruction current.';action='update';status='planned';validation='Observe the exact managed file.'}
-    $before=[pscustomobject][ordered]@{schema='test.unit';project_id='test-project';unit_id='test-unit';status='active';objective='Preserve the admitted objective.';prerequisites=@('prior-unit');acceptance=@('The admitted acceptance remains exact.');instruction_surfaces=@($surface)}
+    $before=[pscustomobject][ordered]@{schema='test.unit';project_id='test-project';unit_id='test-unit';status='active';objective='Preserve the admitted objective.';prerequisites=@('prior-unit');acceptance=@('The admitted acceptance remains exact.');instruction_none_justification=$null;instruction_surfaces=@($surface)}
     $statusAfter=Copy-Envelope $before;$statusAfter.status='validating'
     [void](&$continuationModule {param($b,$a)Assert-DevelopmentContinuationRetainedAuthority $b $a ([pscustomobject]@{artifacts=@()}) ([pscustomobject]@{})} $before $statusAfter)
+    $nonNull=Copy-Envelope $before;$nonNull.instruction_none_justification='Changed optional authority.'
+    foreach($pair in @(@($before,$nonNull),@($nonNull,$before))){
+        $rejected=$false
+        try{&$continuationModule {param($b,$a)Assert-DevelopmentContinuationRetainedAuthority $b $a ([pscustomobject]@{artifacts=@()}) ([pscustomobject]@{})} $pair[0] $pair[1]|Out-Null}
+        catch{if($_.Exception.Message-cne'Development continuation retained authority/instruction_none_justification is detached.'){throw};$rejected=$true}
+        Assert-ActiveEnvelopeTest $rejected 'retained continuation accepted a null/non-null authority change'
+    }
     foreach($mutation in @('objective','acceptance','prerequisites')){
         $forged=Copy-Envelope $before
         switch($mutation){'objective'{$forged.objective='Forged objective.'};'acceptance'{$forged.acceptance=@('Forged acceptance.')};'prerequisites'{$forged.prerequisites=@('forged-prerequisite')}}
@@ -41,7 +48,7 @@ function Invoke-RetainedAuthorityFocusedTests {
     [void](&$continuationModule {param($b,$a,$i,$e)Assert-DevelopmentContinuationRetainedAuthority $b $a $i $e} $before $instructionAfter $intent $event)
     $rowRewrite=Copy-Envelope $instructionAfter;$rowRewrite.instruction_surfaces[0].owner='forged-owner'
     Assert-ActiveEnvelopeRejected {&$continuationModule {param($b,$a,$i,$e)Assert-DevelopmentContinuationRetainedAuthority $b $a $i $e} $before $rowRewrite $intent $event} 'retained continuation accepted an instruction row rewrite'
-    [pscustomobject]@{result='pass';retained_status=$true;retained_instruction_completion=$true;forged_objective=$true;forged_acceptance=$true;forged_prerequisites=$true;forged_instruction_row=$true}
+    [pscustomobject]@{result='pass';retained_status=$true;retained_null_authority=$true;changed_null_authority_rejected=$true;retained_instruction_completion=$true;forged_objective=$true;forged_acceptance=$true;forged_prerequisites=$true;forged_instruction_row=$true}
 }
 
 function New-ActiveEnvelopeExtensionRequest {

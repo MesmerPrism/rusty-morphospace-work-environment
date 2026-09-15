@@ -5,6 +5,10 @@ Import-Module (Join-Path $PSScriptRoot 'MorphospaceTransitionLedger.psm1')
 
 function Assert-DevelopmentContinuationEqual {
     param([object]$Expected, [object]$Actual, [string]$Context)
+    if ($null -eq $Expected -or $null -eq $Actual) {
+        if ($null -eq $Expected -and $null -eq $Actual) { return }
+        throw "Development continuation $Context is detached."
+    }
     if ((Get-MorphospaceCanonicalJsonSha256 $Expected) -cne (Get-MorphospaceCanonicalJsonSha256 $Actual)) {
         throw "Development continuation $Context is detached."
     }
