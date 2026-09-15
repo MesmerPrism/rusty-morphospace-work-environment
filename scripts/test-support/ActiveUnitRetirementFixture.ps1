@@ -17,7 +17,7 @@ function New-ActiveUnitRetirementRequest {
         $request=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.active_unit_retirement.v1';retirement_id=$retirementId;project_id=[string]$state.project_id;unit_id=$id;replacement_unit_id=$replacement;reason='scope-replanned';old_unit=[pscustomobject]@{unit_id=$id;path=$unitPath;raw_sha256=$unitBinding.raw_sha256;canonical_sha256=$unitBinding.canonical_sha256;status='active'};expected=[pscustomobject]$expected;source_composition=Get-ActiveRetirementFileBinding $workspace ([string]$unit.source_composition.lock_path);claim=$null;repositories=@();accepted_receipt=[pscustomobject]@{path=[string]$state.last_accepted_receipt;sha256=Get-MorphospaceFileSha256 (Join-Path $workspace ([string]$state.last_accepted_receipt))}}
         $request.claim=Get-ActiveRetirementClaim $workspace $request $events.events
         $source=Read-MorphospaceProtocolJson (Join-Path $workspace ([string]$request.source_composition.path))
-        $request.repositories=@(Get-ActiveRetirementRepositories $unit $source $mapPath)
+        $request.repositories=@(Get-ActiveRetirementRepositories $unit $source $mapPath $workspace)
         return $request
     } $WorkspaceRoot $RepoMapPath $RetirementId $ReplacementUnitId
 }

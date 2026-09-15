@@ -750,6 +750,15 @@ function Assert-MorphospaceNormalizationFinalProjection {
     }
 }
 
+function Assert-MorphospaceNormalizationToolingContext {
+    param([string]$WorkspaceRoot,[object]$Unit)
+    if($Unit.PSObject.Properties.Name-notcontains'tooling_context'){return}
+    # The normalization owner authenticates the malformed ledger itself. Avoid
+    # requiring an ordinary continuation reader to parse it before repair.
+    $toolingExecutorModule=Import-Module (Join-Path $PSScriptRoot 'DevelopmentEnvelopeProvenance.psm1') -PassThru
+    [void](&$toolingExecutorModule {param($root,$binding,$owner) Assert-MorphospaceToolingContextExecutor -WorkspaceRoot $root -Binding $binding -Action NormalizeEventLedgerPrefix -OwnerModule $owner} $WorkspaceRoot $Unit.tooling_context $MyInvocation.MyCommand.Module)
+}
+
 function Complete-MorphospaceEventLedgerPrefixNormalization {
     param(
         [Parameter(Mandatory=$true)][string]$WorkspaceRoot,
@@ -790,6 +799,7 @@ function Complete-MorphospaceEventLedgerPrefixNormalization {
         if((Get-MorphospaceFileSha256 $unitPath)-cne[string]$intent.pre.unit_file_sha256){throw 'Event-ledger normalization current-unit bytes drifted after intent publication.'}
         $unit=Read-MorphospaceProtocolJson $unitPath
         if((Get-MorphospaceCanonicalJsonSha256 $unit)-cne[string]$intent.pre.unit_document_sha256-or[string]$unit.status-cne[string]$intent.receipt.document.unit.status){throw 'Event-ledger normalization current-unit document drifted after intent publication.'}
+        Assert-MorphospaceNormalizationToolingContext -WorkspaceRoot $workspace -Unit $unit
         $stateFileHash=Get-MorphospaceFileSha256 $statePath
         if($stateFileHash-cne[string]$intent.pre.state_file_sha256-and$stateFileHash-cne[string]$intent.target.state_file_sha256){throw 'Event-ledger normalization found neither the exact before nor exact after state.'}
 
@@ -896,6 +906,7 @@ function Invoke-MorphospaceEventLedgerPrefixNormalization {
             -ExpectedEventsSha256 $ExpectedEventsSha256 -ExpectedEventsLength $ExpectedEventsLength `
             -ExpectedEventTailId $ExpectedEventTailId -Timestamp $Timestamp
         Assert-MorphospaceNormalizationGitClean $candidate.git
+        Assert-MorphospaceNormalizationToolingContext -WorkspaceRoot $workspace -Unit $candidate.unit
         $intent=New-MorphospaceNormalizationIntent $candidate
         Test-MorphospaceNormalizationSchema $intent 'event-ledger-prefix-normalization-intent-v1.schema.json' 'Event-ledger normalization intent'
         $intentBytes=Get-MorphospaceNormalizationJsonBytes $intent

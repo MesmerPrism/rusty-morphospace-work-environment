@@ -89,15 +89,14 @@ function Test-ActiveRetirementRecoveryPreparationProvenance([string]$Workspace,[
         if((Get-MorphospaceSha256Bytes $prefix)-cne[string]$RecoveryIntent.expected.events_sha256){throw 'Active retirement recovery event prefix differs from its authenticated preimage.'};[IO.File]::WriteAllBytes((Join-Path $temporary ([string]$RecoveryIntent.events.path)),$prefix)
         foreach($relative in @("receipts/transactions/$($RecoveryIntent.transaction_id).intent.json","receipts/transactions/$($RecoveryIntent.transaction_id).completion.json")+@($RecoveryIntent.artifacts|ForEach-Object{[string]$_.path})){$path=Resolve-MorphospaceWorkspacePath $temporary $relative;if([IO.File]::Exists($path)){Remove-Item -LiteralPath $path -Force}}
         $transactionRoot=Resolve-MorphospaceWorkspacePath $temporary 'receipts/transactions';foreach($pending in @(Get-ChildItem -LiteralPath $transactionRoot -File -Filter "$($RecoveryIntent.transaction_id).artifact-*.pending")){Remove-Item -LiteralPath $pending.FullName -Force}
-        $null=&$ProvenanceModule {param($root,$admission) Test-MorphospaceDevelopmentUnitPreparation -WorkspaceRoot $root -Admission $admission -Phase Freeze} $temporary $Admission
+        return &$ProvenanceModule {param($root,$admission) Test-MorphospaceDevelopmentUnitPreparation -WorkspaceRoot $root -Admission $admission -Phase Freeze} $temporary $Admission
     }finally{
         $resolved=[IO.Path]::GetFullPath($temporary);$tempPrefix=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\','/')+[IO.Path]::DirectorySeparatorChar
         if($resolved.StartsWith($tempPrefix,[StringComparison]::OrdinalIgnoreCase)-and[IO.Path]::GetFileName($resolved).StartsWith('morphospace-retirement-provenance-')){Remove-Item -LiteralPath $resolved -Recurse -Force -ErrorAction SilentlyContinue}
     }
 }
-function Test-ActiveRetirementAuthenticatedPlanningDirt {
-    param([string]$Workspace,[object]$Unit,[object]$RepositoryEntry,[string[]]$StatusPorcelain,[object]$RecoveryIntent=$null)
-    $provenanceModule=Import-ActiveRetirementDevelopmentEnvelopeProvenance
+function Test-ActiveRetirementPlanningProjectionFromAuthenticatedAdmission {
+    param([string]$Workspace,[object]$Unit,[object]$RepositoryEntry,[string[]]$StatusPorcelain,[Parameter(Mandatory)][object]$Admission,[object]$RecoveryIntent=$null)
     if([string]$RepositoryEntry.role-cne'planning'){return $false}
     if([string]::IsNullOrWhiteSpace($Workspace)){throw 'Active retirement planning lifecycle workspace path is empty.'};if([string]::IsNullOrWhiteSpace([string]$RepositoryEntry.path)){throw 'Active retirement planning lifecycle repository path is empty.'}
     if($null-eq$RecoveryIntent-and@($StatusPorcelain|Where-Object{[string]$_-cmatch'retire-.*-active-retired-transition'}).Count-ne0){throw 'Active retirement planning lifecycle recovery intent was not forwarded.'}
@@ -105,11 +104,17 @@ function Test-ActiveRetirementAuthenticatedPlanningDirt {
     $repositoryPrefix=$repository+[IO.Path]::DirectorySeparatorChar;$pathComparison=if([OperatingSystem]::IsWindows()){[StringComparison]::OrdinalIgnoreCase}else{[StringComparison]::Ordinal}
     if(-not$workspaceFull.StartsWith($repositoryPrefix,$pathComparison)){return $false}
     $workspacePrefix=[IO.Path]::GetRelativePath($repository,$workspaceFull).Replace('\','/').TrimEnd('/')+'/'
-    $admissions=@(Get-ChildItem -LiteralPath (Resolve-MorphospaceWorkspacePath $workspaceFull 'receipts') -File -Filter '*.json'|ForEach-Object{$document=Read-MorphospaceProtocolJson $_.FullName;if([string]$document.schema-ceq'rusty.morphospace.workflow.development_unit_admission.v1'-and[string]$document.unit_id-ceq[string]$Unit.unit_id){$document}})
-    if($admissions.Count-ne1){throw 'Active retirement planning lifecycle requires one exact current admission receipt.'}
-    $admission=$admissions[0]
-    if($RecoveryIntent){Test-ActiveRetirementRecoveryPreparationProvenance $workspaceFull $admission $RecoveryIntent $provenanceModule}else{$null=&$provenanceModule {param($root,$admission) Test-MorphospaceDevelopmentUnitPreparation -WorkspaceRoot $root -Admission $admission -Phase Freeze} $workspaceFull $admission}
-    $events=(Get-ActiveRetirementEvents $workspaceFull).events;$preparedId="$([string]$admission.preparation.preparation_id)-prepared";$admittedId="$([string]$admission.admission_id)-admitted"
+    $admission=$Admission
+    $eventObservation=Get-ActiveRetirementEvents $workspaceFull;$events=$eventObservation.events
+    if($RecoveryIntent){
+        $tailMatches=@($events|Where-Object{[string]$_.event_id-ceq[string]$RecoveryIntent.expected.event_tail_id})
+        if($tailMatches.Count-ne1){throw 'Active retirement recovery planning prefix tail is ambiguous.'}
+        $prefixLength=[long]$RecoveryIntent.expected.events_length;$bytes=[IO.File]::ReadAllBytes((Resolve-MorphospaceWorkspacePath $workspaceFull 'iteration-events.jsonl' -RequireLeaf))
+        if($prefixLength-lt1-or$prefixLength-gt$bytes.LongLength){throw 'Active retirement recovery planning prefix length is invalid.'};$prefix=[byte[]]::new($prefixLength);[Array]::Copy($bytes,$prefix,$prefixLength)
+        if((Get-MorphospaceSha256Bytes $prefix)-cne[string]$RecoveryIntent.expected.events_sha256){throw 'Active retirement recovery planning prefix bytes changed.'}
+        $events=@($events|Where-Object{[int]$_.sequence-le[int]$tailMatches[0].sequence})
+    }
+    $preparedId="$([string]$admission.preparation.preparation_id)-prepared";$admittedId="$([string]$admission.admission_id)-admitted"
     $prepared=@($events|Where-Object{[string]$_.event_id-ceq$preparedId});$admitted=@($events|Where-Object{[string]$_.event_id-ceq$admittedId});$claimed=@($events|Where-Object{[string]$_.unit_id-ceq[string]$Unit.unit_id-and[string]$_.event_id-cmatch('^'+[regex]::Escape([string]$Unit.unit_id)+'-claimed-[0-9]{4}$')})
     if($prepared.Count-ne1-or$admitted.Count-ne1-or$claimed.Count-ne1){throw 'Active retirement planning lifecycle event identities are ambiguous.'}
     $from=[int]$prepared[0].sequence;$to=[int]$claimed[0].sequence;$suffix=@($events|Where-Object{[int]$_.sequence-ge$from-and[int]$_.sequence-le$to}|Sort-Object sequence)
@@ -117,6 +122,17 @@ function Test-ActiveRetirementAuthenticatedPlanningDirt {
     $replacement=$suffix.Count-eq6-and[string]$suffix[0].event_id-ceq$preparedId-and[string]$suffix[1].event_id-cmatch'-admitted$'-and[string]$suffix[2].event_id-cmatch'-proposal-retired-[0-9]{4}$'-and[string]$suffix[3].event_id-ceq$admittedId-and[string]$suffix[4].event_id-cmatch('^'+[regex]::Escape([string]$Unit.unit_id)+'-ready-[0-9]{4}$')-and[string]$suffix[5].event_id-ceq[string]$claimed[0].event_id
     if(-not$direct-and-not$replacement){throw 'Active retirement planning lifecycle suffix is unsupported.'}
     for($index=0;$index-lt$suffix.Count;$index++){if([int]$suffix[$index].sequence-ne($from+$index)){throw 'Active retirement planning lifecycle suffix is not contiguous.'}}
+    $amendments=@($events|Where-Object{[int]$_.sequence-gt$to}|Sort-Object sequence)
+    $amendmentModule=$null
+    if($amendments.Count-ne0){
+        $amendmentModule=Import-Module (Join-Path $PSScriptRoot 'ActiveWriteScopeAmendment.psm1') -Force -PassThru
+        Restore-ActiveRetirementCallerModules
+        for($index=0;$index-lt$amendments.Count;$index++){
+            $event=$amendments[$index]
+            if([int]$event.sequence-ne($to+$index+1)-or[string]$event.unit_id-cne[string]$Unit.unit_id-or[string]$event.event_id-cnotmatch('^[a-z0-9][a-z0-9-]{1,127}-recorded$')){throw 'Active retirement planning continuation is not a contiguous same-unit write-scope amendment suffix.'}
+        }
+    }
+    $projectionSuffix=@($suffix)+@($amendments)
     $expected=@{};$recoveryOwned=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     if($RecoveryIntent){foreach($relative in @([string]$RecoveryIntent.state.path,[string]$RecoveryIntent.events.path,"receipts/transactions/$($RecoveryIntent.transaction_id).intent.json","receipts/transactions/$($RecoveryIntent.transaction_id).completion.json")+@($RecoveryIntent.artifacts|ForEach-Object{[string]$_.path})){[void]$recoveryOwned.Add($relative)};for($artifactIndex=0;$artifactIndex-lt@($RecoveryIntent.artifacts).Count;$artifactIndex++){[void]$recoveryOwned.Add("receipts/transactions/$($RecoveryIntent.transaction_id).artifact-$artifactIndex.pending")}}
     function Set-PlanningProjection([string]$Relative,[string]$Sha){$relative=ConvertTo-MorphospaceProtocolRelativePath $Relative;if(-not$recoveryOwned.Contains($relative)){$expected[$workspacePrefix+$relative]=$Sha}}
@@ -129,9 +145,21 @@ function Test-ActiveRetirementAuthenticatedPlanningDirt {
     foreach($name in @('project','state','feature_lock')){$projection=$preparationIntent.target.$name;Set-PlanningProjection ([string]$projection.path) (Get-ActiveRetirementCanonicalRawSha256 $projection.document)}
     foreach($artifact in @($preparationIntent.artifacts)){$artifactBytes=[Convert]::FromBase64String([string]$artifact.bytes_base64);Set-PlanningProjection ([string]$artifact.path) (Get-MorphospaceSha256Bytes $artifactBytes)}
     Set-PlanningProjection $preparationIntentRelative (Get-MorphospaceFileSha256 $preparationIntentPath);Set-PlanningProjection $preparationCompletionRelative (Get-MorphospaceFileSha256 $preparationCompletionPath)
-    foreach($event in @($suffix|Select-Object -Skip 1)){
+    foreach($event in @($projectionSuffix|Select-Object -Skip 1)){
         $transactionId="$([string]$event.event_id)-transition";$proof=Get-ActiveRetirementPlanningTransition -Workspace $workspaceFull -TransactionId $transactionId -HistoricalProjection:($null-ne$RecoveryIntent)
         if((Get-MorphospaceCanonicalJsonSha256 $proof.intent.event)-cne(Get-MorphospaceCanonicalJsonSha256 $event)){throw 'Active retirement planning lifecycle event is detached from its transaction.'}
+        if([int]$event.sequence-gt$to){
+            $artifactSchemas=@($proof.intent.artifacts|ForEach-Object{[string](ConvertFrom-MorphospaceProtocolJsonBytes ([Convert]::FromBase64String([string]$_.bytes_base64))).schema})
+            if($artifactSchemas-ccontains'rusty.morphospace.workflow.active_development_envelope_extension.v1'){
+                $extensionModule=Import-Module (Join-Path $PSScriptRoot 'ActiveDevelopmentEnvelopeExtension.psm1') -PassThru
+                $null=&$extensionModule {param($root,$expected,$transition) Assert-ActiveEnvelopeHistoricalTransition -WorkspaceRoot $root -ExpectedEvent $expected -Transition $transition} $workspaceFull $event $proof
+            }elseif($artifactSchemas-ccontains'rusty.morphospace.workflow.tooling_context_upgrade.v1'){
+                $toolingModule=Import-Module (Join-Path $PSScriptRoot 'ToolingContextUpgrade.psm1') -PassThru
+                $null=&$toolingModule {param($root,$expected,$transition) Assert-ToolingContextHistoricalTransition -WorkspaceRoot $root -ExpectedEvent $expected -Transition $transition} $workspaceFull $event $proof
+            }else{
+                $null=&$amendmentModule {param($root,$expected,$transition) Assert-ActiveWriteScopeHistoricalTransition -WorkspaceRoot $root -ExpectedEvent $expected -Transition $transition} $workspaceFull $event $proof
+            }
+        }
         $intentRelative="receipts/transactions/$transactionId.intent.json";$completionRelative="receipts/transactions/$transactionId.completion.json";$intentPath=Resolve-MorphospaceWorkspacePath $workspaceFull $intentRelative -RequireLeaf;$completionPath=Resolve-MorphospaceWorkspacePath $workspaceFull $completionRelative -RequireLeaf
         if((Get-MorphospaceFileSha256 $intentPath)-cne(Get-ActiveRetirementCanonicalRawSha256 $proof.intent)-or(Get-MorphospaceFileSha256 $completionPath)-cne(Get-ActiveRetirementCanonicalRawSha256 $proof.completion)){throw 'Active retirement planning lifecycle transaction bytes are non-canonical.'}
         if(@(Get-ChildItem -LiteralPath (Split-Path $intentPath -Parent) -File -Filter "$transactionId.artifact-*.pending").Count-ne0){throw 'Active retirement planning lifecycle contains an orphan committed pending artifact.'}
@@ -147,6 +175,26 @@ function Test-ActiveRetirementAuthenticatedPlanningDirt {
     if($changes.Count-ne$allowed.Count-or($changes-join'|')-cne($allowed-join'|')){throw "Active retirement planning repository dirt differs from the authenticated lifecycle projection (expected: $($allowed-join', '); observed: $($changes-join', '))."}
     return $true
 }
+function Get-ActiveRetirementRepositoryMaterialization([string]$Id,[object]$Entry,[object]$Locked,[bool]$Writable,[Collections.Generic.HashSet[string]]$BackingRoots){
+    $rootComparer=if([OperatingSystem]::IsWindows()){[StringComparer]::OrdinalIgnoreCase}else{[StringComparer]::Ordinal}
+    $rootComparison=if([OperatingSystem]::IsWindows()){[StringComparison]::OrdinalIgnoreCase}else{[StringComparison]::Ordinal}
+    if([string]$Entry.role-cne[string]$Locked.role){throw "Active retirement repository map role differs from the source lock for '$Id'."}
+    $mappedText=[string]$Entry.path
+    if(-not[IO.Path]::IsPathFullyQualified($mappedText)-or$mappedText-cmatch'(^|[\\/])\.\.?(?:[\\/]|$)'){throw "Active retirement repository map path is not an exact absolute materialization for '$Id'."}
+    $mappedPath=[IO.Path]::GetFullPath($mappedText).TrimEnd('\','/')
+    if(-not[IO.Directory]::Exists($mappedPath)){throw "Active retirement requires clean available source repository '$Id'."}
+    Assert-MorphospaceNoReparseAncestor -Root ([IO.Path]::GetPathRoot($mappedPath)) -Candidate $mappedPath
+    $gitRoot=(@(& git -C $mappedPath rev-parse --show-toplevel 2>&1)-join'').Trim()
+    if($LASTEXITCODE-ne0){throw "Active retirement requires clean available source repository '$Id'."}
+    $gitRoot=[IO.Path]::GetFullPath($gitRoot).TrimEnd('\','/')
+    Assert-MorphospaceNoReparseAncestor -Root ([IO.Path]::GetPathRoot($gitRoot)) -Candidate $gitRoot
+    $isRoot=$rootComparer.Equals($gitRoot,$mappedPath);$isNested=$mappedPath.StartsWith($gitRoot+[IO.Path]::DirectorySeparatorChar,$rootComparison)
+    if(-not$isRoot-and-not$isNested){throw 'Active retirement mapped materialization is outside its backing Git repository.'}
+    if(-not$BackingRoots.Add($gitRoot)){throw 'Active retirement requires distinct authenticated backing Git repositories.'}
+    if($Writable-and-not$isRoot){throw "Active retirement writable repository '$Id' must map to its exact Git root."}
+    if($isNested-and($Writable-or[string]$Entry.role-cne'source')){throw "Active retirement nested repository materialization '$Id' must be a read-only source dependency."}
+    [pscustomobject]@{mapped_path=$mappedPath;git_root=$gitRoot;is_nested=$isNested}
+}
 function Get-ActiveRetirementRepositories([object]$Unit,[object]$Source,[string]$RepoMapPath,[string]$Workspace='',[object]$RecoveryIntent=$null){
     # Git observation is action-only. The shared reader avoids importing the
     # larger automation orchestrator into the historical dependency closure.
@@ -161,17 +209,24 @@ function Get-ActiveRetirementRepositories([object]$Unit,[object]$Source,[string]
     $sourceIds=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach($row in @($Source.repositories)){if(-not$sourceIds.Add([string]$row.repo_id)){throw 'Active retirement source composition repeats a repository.'}}
     foreach($id in $authorized){if(-not$sourceIds.Contains($id)){throw 'Active retirement source composition omits an authorized repository.'}}
-    $ids=[string[]]@($sourceIds);[Array]::Sort($ids,[StringComparer]::Ordinal);$observations=@()
+    if([string]::IsNullOrWhiteSpace($Workspace)){throw 'Active retirement repository observation requires its authenticated admission workspace.'}
+    $admissions=@(Get-ChildItem -LiteralPath (Resolve-MorphospaceWorkspacePath $Workspace 'receipts') -File -Filter '*.json'|ForEach-Object{$document=Read-MorphospaceProtocolJson $_.FullName;if([string]$document.schema-ceq'rusty.morphospace.workflow.development_unit_admission.v1'-and[string]$document.unit_id-ceq[string]$Unit.unit_id){$document}})
+    if($admissions.Count-ne1){throw 'Active retirement repository observation requires one exact current admission receipt.'}
+    $admission=$admissions[0];$provenanceModule=Import-ActiveRetirementDevelopmentEnvelopeProvenance
+    $preparationProof=if($RecoveryIntent){Test-ActiveRetirementRecoveryPreparationProvenance $Workspace $admission $RecoveryIntent $provenanceModule}else{&$provenanceModule {param($root,$document) Test-MorphospaceDevelopmentUnitPreparation -WorkspaceRoot $root -Admission $document -Phase Freeze} $Workspace $admission}
+    $mapBinding=if($preparationProof.PSObject.Properties.Name-contains'continuation'-and$null-ne$preparationProof.continuation){$preparationProof.continuation.repository_map}else{[pscustomobject]@{path=[string]$admission.expected.repository_map_path;raw_sha256=[string]$admission.expected.repository_map_sha256}}
+    $admittedMap=Resolve-MorphospaceWorkspacePath $Workspace ([string]$mapBinding.path) -RequireLeaf
     $rootComparer=if([OperatingSystem]::IsWindows()){[StringComparer]::OrdinalIgnoreCase}else{[StringComparer]::Ordinal}
+    if(-not$rootComparer.Equals([IO.Path]::GetFullPath($admittedMap),[IO.Path]::GetFullPath($RepoMapPath))-or(Get-MorphospaceFileSha256 $admittedMap)-cne[string]$mapBinding.raw_sha256){throw 'Active retirement repository map is detached from its admission.'}
+    $ids=[string[]]@($sourceIds);[Array]::Sort($ids,[StringComparer]::Ordinal);$observations=@()
     $roots=[Collections.Generic.HashSet[string]]::new($rootComparer)
     foreach($id in $ids){
         if(-not$map.ContainsKey($id)){throw "Active retirement lacks repository map entry '$id'."}
         $entry=$map[$id]
-        $observed=Get-MorphospaceRepositoryState -RepoId $id -Path ([string]$entry.path)
-        if($observed.available-and$observed.is_git){
-            $gitRoot=(@(& git -C ([string]$entry.path) rev-parse --show-toplevel 2>&1)-join'').Trim()
-            if($LASTEXITCODE-ne0-or-not$rootComparer.Equals([IO.Path]::GetFullPath($gitRoot),[IO.Path]::GetFullPath([string]$entry.path))-or-not$roots.Add([IO.Path]::GetFullPath($gitRoot))){throw 'Active retirement requires distinct exact repository roots.'}
-        }
+        $locked=@(Get-MorphospaceSourceCompositionRepositoryPins $Source|Where-Object{[string]$_.repo_id-ceq$id})[0]
+        $materialization=Get-ActiveRetirementRepositoryMaterialization -Id $id -Entry $entry -Locked $locked -Writable ($authorized.Contains($id)) -BackingRoots $roots
+        $mappedPath=[string]$materialization.mapped_path
+        $observed=Get-MorphospaceRepositoryState -RepoId $id -Path $mappedPath
         $remaining=@($observed.status_porcelain)
         if($RecoveryIntent-and[string]$entry.role-ceq'planning'){
             $root=[IO.Path]::GetFullPath([string]$entry.path).TrimEnd('\','/')+[IO.Path]::DirectorySeparatorChar
@@ -189,14 +244,13 @@ function Get-ActiveRetirementRepositories([object]$Unit,[object]$Source,[string]
                 })
             }
         }
-        $locked=@($Source.repositories|Where-Object{[string]$_.repo_id-ceq$id})[0]
         $planningDirt=$false
-        if($observed.available-and$observed.is_git-and$remaining.Count-ne0-and-not$authorized.Contains($id)-and[string]$observed.head-ceq[string]$locked.commit-and[string]$observed.tree-ceq[string]$locked.tree){$planningDirt=Test-ActiveRetirementAuthenticatedPlanningDirt $Workspace $Unit $entry $remaining $RecoveryIntent}
+        if($observed.available-and$observed.is_git-and$remaining.Count-ne0-and-not$authorized.Contains($id)-and[string]$observed.head-ceq[string]$locked.commit-and[string]$observed.tree-ceq[string]$locked.tree){$planningDirt=Test-ActiveRetirementPlanningProjectionFromAuthenticatedAdmission -Workspace $Workspace -Unit $Unit -RepositoryEntry $entry -StatusPorcelain $remaining -Admission $admission -RecoveryIntent $RecoveryIntent}
         if(-not$observed.available-or-not$observed.is_git-or($remaining.Count-ne0-and-not$planningDirt)-or[string]$observed.head-cnotmatch'^[0-9a-f]{40}$'-or[string]$observed.tree-cnotmatch'^[0-9a-f]{40}$'){throw "Active retirement requires clean available source repository '$id'."}
         # Writable repositories may have newer clean local checkpoints. Read-only dependencies stay pinned.
         if(-not$authorized.Contains($id)-and([string]$observed.head-cne[string]$locked.commit-or[string]$observed.tree-cne[string]$locked.tree)){throw "Active retirement read-only dependency '$id' differs from the source lock."}
         if($authorized.Contains($id)){
-            $null=& git -C ([string]$map[$id].path) merge-base --is-ancestor ([string]$locked.commit) ([string]$observed.head) 2>&1
+            $null=& git -C $mappedPath merge-base --is-ancestor ([string]$locked.commit) ([string]$observed.head) 2>&1
             if($LASTEXITCODE-ne0){throw "Active retirement writable checkpoint '$id' does not retain its locked baseline."}
         }
         $observations+=,[pscustomobject][ordered]@{repo_id=$id;head=[string]$observed.head;tree=[string]$observed.tree;branch=$observed.branch;clean=$true}
@@ -230,12 +284,17 @@ function Assert-ActiveRetirementPreserved([string]$Workspace,[object]$Request,[s
             Assert-ActiveRetirementSchema $source 'source-composition-lock.schema.json'
             if([string]$source.unit_id-cne[string]$Request.unit_id-or[string]$source.fingerprint-cne(Get-MorphospaceSourceCompositionFingerprint -ProjectId ([string]$source.project_id) -UnitId ([string]$source.unit_id) -Repositories @($source.repositories))){throw 'Active retirement unit source lock fingerprint is detached.'}
         }
-        {$_-cin@('rusty.morphospace.workflow.development_envelope_source_composition.v1','rusty.morphospace.workflow.development_envelope_source_composition.v2')} {
+        {$_-cin@('rusty.morphospace.workflow.development_envelope_source_composition.v1','rusty.morphospace.workflow.development_envelope_source_composition.v2','rusty.morphospace.workflow.development_envelope_source_composition.v3')} {
             $version=([string]$source.schema).Split('.')[-1]
             Assert-ActiveRetirementSchema $source "development-envelope-source-composition-$version.schema.json"
-            $identity=[pscustomobject][ordered]@{project_id=[string]$source.project_id;preparation_id=[string]$source.preparation_id;repositories=@($source.repositories)}
-            if([string]$source.fingerprint-cne(Get-MorphospaceCanonicalJsonSha256 $identity)-or[string]$source.lock_id-cne"$($source.preparation_id)-source-$(([string]$source.fingerprint).Substring(0,12))"){throw 'Active retirement preparation source lock fingerprint is detached.'}
+            if([string]$source.fingerprint-cne(Get-MorphospacePreparationSourceCompositionFingerprint $source)-or[string]$source.lock_id-cne"$($source.preparation_id)-source-$(([string]$source.fingerprint).Substring(0,12))"){throw 'Active retirement preparation source lock fingerprint is detached.'}
             # The current-history admission proof authenticates this preparation-owned artifact and the unit's binding.
+        }
+        'rusty.morphospace.workflow.active_development_envelope_source_composition.v1' {
+            Assert-ActiveRetirementSchema $source 'active-development-envelope-source-composition-v1.schema.json'
+            $identity=Copy-ActiveRetirementValue $source;$identity.fingerprint='0'*64
+            if([string]$source.unit_id-cne[string]$Request.unit_id-or[string]$source.fingerprint-cne(Get-MorphospaceCanonicalJsonSha256 $identity)){throw 'Active retirement extended source identity is detached.'}
+            # Get-ActiveRetirementRepositories authenticates its complete owner lineage.
         }
         default {throw 'Active retirement source composition schema is unsupported.'}
     }
@@ -331,6 +390,10 @@ function Invoke-MorphospaceRetireActive {
             $intent=Read-MorphospaceProtocolJson $intentPath;$receipt=Assert-ActiveRetirementIntent $workspace $intent $request $requestRef.path $sha $out.path
             if(-not[IO.File]::Exists($completionPath)){
                 [void](Assert-ActiveRetirementPreserved -Workspace $workspace -Request $request -RepoMapPath $RepoMapPath -RecoveryIntent $intent)
+                if($intent.target.unit.document.PSObject.Properties.Name-contains'tooling_context'){
+                    $module=Import-ActiveRetirementDevelopmentEnvelopeProvenance
+                    [void](&$module {param($root,$binding,$owner) Assert-MorphospaceToolingContextExecutor -WorkspaceRoot $root -Binding $binding -Action RetireActive -OwnerModule $owner} $workspace $intent.target.unit.document.tooling_context $MyInvocation.MyCommand.Module)
+                }
                 if(Test-Path -LiteralPath (Resolve-MorphospaceWorkspacePath $workspace "iteration-units/$($request.replacement_unit_id).json")){throw 'Interrupted active retirement replacement identity is no longer absent.'}
                 foreach($kind in @('intent','completion')){
                     if((Get-MorphospaceFileSha256 (Resolve-MorphospaceWorkspacePath $workspace "receipts/transactions/$($request.claim.transaction_id).$kind.json" -RequireLeaf))-cne[string]$request.claim."${kind}_sha256"){throw 'Active retirement interrupted Claim evidence changed.'}
@@ -345,6 +408,10 @@ function Invoke-MorphospaceRetireActive {
         if(Test-Path -LiteralPath $requestRef.absolute){throw 'Active retirement retained request artifact must be absent before the transaction.'}
         if(Test-Path -LiteralPath (Resolve-MorphospaceWorkspacePath $workspace "iteration-units/$($request.replacement_unit_id).json")){throw 'Active retirement replacement identity must be absent before fresh preparation.'}
         $unit=Assert-ActiveRetirementPreserved $workspace $request $RepoMapPath
+        if($unit.PSObject.Properties.Name-contains'tooling_context'){
+            $module=Import-ActiveRetirementDevelopmentEnvelopeProvenance
+            [void](&$module {param($root,$binding,$owner) Assert-MorphospaceToolingContextExecutor -WorkspaceRoot $root -Binding $binding -Action RetireActive -OwnerModule $owner} $workspace $unit.tooling_context $MyInvocation.MyCommand.Module)
+        }
         Assert-ActiveRetirementSchema $unit 'iteration-unit.schema.json'
         $project=Read-MorphospaceProtocolJson (Join-Path $workspace 'project.spec.json');$feature=Read-MorphospaceProtocolJson (Join-Path $workspace 'feature.lock.json');$state=Read-MorphospaceProtocolJson (Join-Path $workspace 'workspace.state.json')
         $stateSchema=if([string]$state.schema-ceq'rusty.morphospace.workflow.workspace_state.v2'){'workspace-state-v2.schema.json'}else{'workspace-state.schema.json'};Assert-ActiveRetirementSchema $state $stateSchema

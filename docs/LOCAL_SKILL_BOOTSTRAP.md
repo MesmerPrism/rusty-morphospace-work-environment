@@ -85,6 +85,34 @@ Use `-SkillId <skill-name>` to operate on one or more selected skills. Use
 sorted `unmanaged_files` and their fingerprint without failing an otherwise
 current managed skill.
 
+For a prepared workspace that carries exact tooling provenance, Verify can bind
+the installer readback to that context:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\Install-LocalSkills.ps1 `
+  -RepoRoot $WorkEnvironmentRoot `
+  -TargetRoot $SkillRoot `
+  -Action Verify `
+  -WorkspaceRoot $ProjectMorphospaceRoot `
+  -ToolingContextPath tooling-contexts/unit-tooling.json
+```
+
+Both context parameters are required together and are accepted only by the
+read-only Verify action. The context's ignored resolver must name the same
+executor `RepoRoot` and the same per-skill roots beneath `TargetRoot`; the
+installer verifies the exact clean executor closure and installed managed
+records/files. When `-SkillId` is omitted, the context's exact router set is
+used. An explicit selection must equal that set.
+
+Installing or updating a managed skill does not rewrite a project's product
+repository declarations. A project that historically carried installed skill
+surfaces as a read-only `tool` repository adopts separate tooling provenance
+only through the typed idle-project legacy-tooling reclassification preparation.
+That action checks the old retired source/map pins and the currently installed
+managed router records, while this installer remains the backup-first owner of
+host skill changes.
+
 Each installed skill receives:
 
 - `.morphospace-skill-source.json`: skill id, source repo/commit/release,

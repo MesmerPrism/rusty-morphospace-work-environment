@@ -267,9 +267,10 @@ function Resolve-MorphospaceAffectedCheckDependencyClosure {
                     continue
                 }
                 if (-not $isImport -and -not $isInvocation) { continue }
-                $trackedLiteral = @($command.FindAll({ param($node) $node -is [Management.Automation.Language.StringConstantExpressionAst] -and $literalOffsets.Contains([int]$node.Extent.StartOffset) },$true)).Count -ne 0
-                if ($trackedLiteral) { continue }
                 $elements = @($command.CommandElements); $first = $elements[0]
+                $literalSearchRoot = if ($isInvocation) { $first } else { $command }
+                $trackedLiteral = @($literalSearchRoot.FindAll({ param($node) $node -is [Management.Automation.Language.StringConstantExpressionAst] -and $literalOffsets.Contains([int]$node.Extent.StartOffset) },$true)).Count -ne 0
+                if ($trackedLiteral) { continue }
                 if ($isImport -and @($elements | Select-Object -Skip 1).Count -eq 1 -and $elements[1] -is [Management.Automation.Language.StringConstantExpressionAst] -and [string]$elements[1].Value -notmatch '[\\/]|(?i)\.psm1$') { continue }
                 if ($isInvocation -and ($first -is [Management.Automation.Language.StringConstantExpressionAst] -or $first -is [Management.Automation.Language.ScriptBlockExpressionAst])) { continue }
                 $variable = $null

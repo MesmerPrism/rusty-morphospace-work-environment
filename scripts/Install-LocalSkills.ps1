@@ -6,6 +6,8 @@ param(
     [string[]]$SkillId = @(),
     [string]$BackupRoot = "",
     [string]$ExpectedUnmanagedFingerprint = "",
+    [string]$WorkspaceRoot = "",
+    [string]$ToolingContextPath = "",
     [switch]$Execute,
     [switch]$AllowDirtySource,
     [switch]$Json
@@ -38,6 +40,35 @@ if (-not $RepoRoot) {
 $RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
 $SourceRoot = Join-Path $RepoRoot "skills"
 
+$toolingContext = $null
+$toolingResolver = $null
+if ($WorkspaceRoot -or $ToolingContextPath) {
+    if (-not $WorkspaceRoot -or -not $ToolingContextPath) {
+        throw "Exact tooling-context verification requires both -WorkspaceRoot and -ToolingContextPath."
+    }
+    if ($Action -ne "Verify" -or $Execute) {
+        throw "ToolingContextPath is a read-only Verify contract; installation and update remain explicit owner actions."
+    }
+    $WorkspaceRoot = (Resolve-Path -LiteralPath $WorkspaceRoot).Path
+    Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceProtocolCommon.psm1')
+    Import-Module (Join-Path $RepoRoot 'scripts\ToolingContextProvenance.psm1')
+    $contextAbsolute = Resolve-MorphospaceWorkspacePath $WorkspaceRoot $ToolingContextPath -RequireLeaf
+    $toolingContext = Read-MorphospaceProtocolJson $contextAbsolute
+    [void](Assert-MorphospaceToolingContext -Context $toolingContext)
+    $toolingResolver = Read-MorphospaceToolingContextResolver -WorkspaceRoot $WorkspaceRoot -Context $toolingContext
+    [void](Assert-MorphospaceToolingContextLocalObservation -Context $toolingContext -WorkspaceRoot $WorkspaceRoot)
+    $contextSkillIds = @($toolingContext.routers | ForEach-Object { [string]$_.skill_id })
+    if ($SkillId.Count -eq 0) {
+        $SkillId = $contextSkillIds
+    } else {
+        $selected = @($SkillId | Sort-Object -Unique -CaseSensitive)
+        $bound = @($contextSkillIds | Sort-Object -Unique -CaseSensitive)
+        if ($selected.Count -ne $bound.Count -or @($selected | Where-Object { $bound -cnotcontains $_ }).Count -ne 0) {
+            throw "Tooling-context Verify requires exactly its bound router skill set."
+        }
+    }
+}
+
 if (-not (Test-Path -LiteralPath $SourceRoot -PathType Container)) {
     throw "Skill source root not found: $SourceRoot"
 }
@@ -55,6 +86,18 @@ if (-not $TargetRoot) {
     }
 }
 $TargetRoot = [System.IO.Path]::GetFullPath($TargetRoot)
+
+if ($null -ne $toolingResolver) {
+    if (-not ([string]$toolingResolver.executor_root).Equals($RepoRoot, $pathStringComparison)) {
+        throw "Tooling-context executor root differs from RepoRoot."
+    }
+    foreach ($router in @($toolingResolver.routers)) {
+        $expectedRouterRoot = Join-Path $TargetRoot ([string]$router.skill_id)
+        if (-not ([string]$router.root).Equals([IO.Path]::GetFullPath($expectedRouterRoot), $pathStringComparison)) {
+            throw "Tooling-context router '$($router.skill_id)' root differs from TargetRoot."
+        }
+    }
+}
 
 if (-not $BackupRoot) {
     $BackupRoot = $TargetRoot.TrimEnd('\', '/') + "-backups"

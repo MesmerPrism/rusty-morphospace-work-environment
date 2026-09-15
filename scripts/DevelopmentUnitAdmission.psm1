@@ -3,12 +3,38 @@ $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'DevelopmentEnvelopeProvenance.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'ToolingContextProvenance.psm1')
 
 function Copy-AdmissionValue { param([object]$Value) return ($Value | ConvertTo-Json -Depth 64 | ConvertFrom-Json) }
 function Get-AdmissionTransactionId { param([string]$AdmissionId) "$AdmissionId-admitted-transition" }
 function Get-AdmissionEventId { param([string]$AdmissionId) "$AdmissionId-admitted" }
 function Assert-AdmissionJson { param([string]$Path,[string]$Schema,[string]$Message) if (-not (Test-Json -Json (Get-Content -Raw -LiteralPath $Path) -SchemaFile $Schema)) { throw $Message } }
 function Get-AdmissionFileHash { param([string]$Workspace,[string]$Relative) Get-MorphospaceFileSha256 (Resolve-MorphospaceWorkspacePath $Workspace $Relative -RequireLeaf) }
+function Test-AdmissionHasToolingContext { param([object]$Value) $null-ne$Value-and$Value.PSObject.Properties.Name-ccontains'tooling_context' }
+function Assert-AdmissionToolingContext {
+    param([string]$Workspace,[string]$RepoRoot,[object]$Admission,[object]$FeatureLock,[Management.Automation.PSModuleInfo]$OwnerModule)
+    $hasAdmission=Test-AdmissionHasToolingContext $Admission;$hasExpected=Test-AdmissionHasToolingContext $Admission.expected;$hasUnit=Test-AdmissionHasToolingContext $Admission.unit
+    if(-not$hasAdmission-and-not$hasExpected-and-not$hasUnit){return}
+    if(-not($hasAdmission-and$hasExpected-and$hasUnit)){throw 'Admission tooling-context pointer must be present in the admission, expected preimage, and initial unit.'}
+    if(($Admission.PSObject.Properties.Name-ccontains'admission_kind'-and[string]$Admission.admission_kind-cne'ordinary')-or($Admission.preparation.PSObject.Properties.Name-ccontains'preparation_kind'-and[string]$Admission.preparation.preparation_kind-cne'ordinary')){throw 'Only a fresh ordinary preparation and admission may establish an initial tooling context.'}
+    $pointer=$Admission.tooling_context
+    foreach($binding in @($Admission.expected.tooling_context,$Admission.unit.tooling_context)){if((Get-MorphospaceCanonicalJsonSha256 $binding)-cne(Get-MorphospaceCanonicalJsonSha256 $pointer)){throw 'Admission tooling-context pointers are not exact.'}}
+    $contextPath=Resolve-MorphospaceWorkspacePath $Workspace ([string]$pointer.path) -RequireLeaf;$context=Read-MorphospaceProtocolJson $contextPath
+    if((Get-MorphospaceFileSha256 $contextPath)-cne[string]$pointer.sha256-or(Get-MorphospaceCanonicalJsonSha256 $context)-cne[string]$pointer.canonical_sha256){throw 'Admission tooling-context pointer does not authenticate exact live raw and canonical bytes.'}
+    [void](Assert-MorphospaceToolingContext -Context $context)
+    if([string]$context.project_id-cne[string]$Admission.project_id-or[string]$context.preparation_id-cne[string]$Admission.preparation.preparation_id-or[string]$context.compatibility.protocol_id-cne[string]$pointer.protocol_id){throw 'Admission tooling context has a detached project, preparation, or protocol identity.'}
+    $sourcePath=Resolve-MorphospaceWorkspacePath $Workspace ([string]$Admission.expected.source_composition_path) -RequireLeaf;$source=Read-MorphospaceProtocolJson $sourcePath
+    if(-not(Test-Json -Json ($source|ConvertTo-Json -Depth 64) -SchemaFile (Join-Path $RepoRoot 'schemas\development-envelope-source-composition-v3.schema.json'))){throw 'Admission tooling context requires a source-composition v3 lock.'}
+    if([string]$source.tooling_protocol.protocol_id-cne[string]$pointer.protocol_id){throw 'Admission source composition and tooling context use different protocols.'}
+    $product=$context.product_projection
+    if([string]$product.source_composition.path-cne[string]$Admission.expected.source_composition_path-or[string]$product.source_composition.sha256-cne(Get-MorphospaceFileSha256 $sourcePath)-or[string]$product.repository_map.path-cne[string]$Admission.expected.repository_map_path-or[string]$product.repository_map.sha256-cne[string]$Admission.expected.repository_map_sha256-or[string]$product.feature_lock.path-cne'feature.lock.json'-or[string]$product.feature_lock.sha256-cne(Get-MorphospaceFileSha256 (Resolve-MorphospaceWorkspacePath $Workspace 'feature.lock.json' -RequireLeaf))){throw 'Admission tooling context does not bind the exact initial product projection.'}
+    $receiptPath=Resolve-MorphospaceWorkspacePath $Workspace ([string]$Admission.preparation.receipt_path) -RequireLeaf;$receipt=Read-MorphospaceProtocolJson $receiptPath;if(-not(Test-AdmissionHasToolingContext $receipt)-or(Get-MorphospaceCanonicalJsonSha256 $receipt.tooling_context)-cne(Get-MorphospaceCanonicalJsonSha256 $pointer)){throw 'Admission tooling context differs from its preparation receipt.'}
+    $intentPath=Resolve-MorphospaceWorkspacePath $Workspace "receipts/transactions/$([string]$Admission.preparation.preparation_id)-prepared-transition.intent.json" -RequireLeaf;$intent=Read-MorphospaceProtocolJson $intentPath;if(-not(Test-AdmissionHasToolingContext $intent)-or(Get-MorphospaceCanonicalJsonSha256 $intent.tooling_context)-cne(Get-MorphospaceCanonicalJsonSha256 $pointer)){throw 'Admission tooling context differs from its preparation intent.'}
+    $resolver=Read-MorphospaceToolingContextResolver -WorkspaceRoot $Workspace -Context $context
+    if([IO.Path]::GetFullPath([string]$resolver.executor_root)-ine[IO.Path]::GetFullPath($RepoRoot)-or@($context.executor.closure|Where-Object{([string]$_.path).Replace('\','/')-ceq'scripts/DevelopmentUnitAdmission.psm1'}).Count-ne1){throw 'Admission is not executing from the context-bound executor and closed admission module.'}
+    [void](Assert-MorphospaceToolingContextLocalObservation -Context $context -WorkspaceRoot $Workspace)
+    [void](Assert-MorphospaceToolingContextLoadedOwnerModule -Context $context -ExecutorRoot $RepoRoot -OwnerModule $OwnerModule)
+}
 function Assert-AdmissionActiveRetirementBinding {
     param([string]$Workspace,[object]$Admission,[int]$AdmissionSequence)
     $events = @(Get-Content -LiteralPath (Join-Path $Workspace 'iteration-events.jsonl') | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json -DateKind String })
@@ -162,7 +188,7 @@ function Start-MorphospaceDevelopmentUnitAdmission {
 }
 function Invoke-MorphospaceAdmitDevelopmentUnit {
     [CmdletBinding()]param([string]$WorkspaceRoot,[string]$DevelopmentUnitAdmission,[string]$OutPath,[string]$ExpectedDevelopmentUnitAdmissionSha256='',[string]$Timestamp='',[switch]$Execute,[ValidateSet('none','after-stage','after-intent','after-artifact','after-state','after-unit','after-event')][string]$FaultAfter='none')
-    $repoRoot=Split-Path $PSScriptRoot -Parent;$workspace=(Resolve-Path $WorkspaceRoot).Path;$input=(Resolve-Path $DevelopmentUnitAdmission).Path
+    $ownerModule=$MyInvocation.MyCommand.Module;$repoRoot=Split-Path $PSScriptRoot -Parent;$workspace=(Resolve-Path $WorkspaceRoot).Path;$input=(Resolve-Path $DevelopmentUnitAdmission).Path
     Assert-AdmissionJson $input (Join-Path $repoRoot 'schemas\development-unit-admission-v1.schema.json') 'Development-unit admission does not satisfy its schema.'
     $admission=Read-MorphospaceProtocolJson $input;$inputHash=Get-MorphospaceFileSha256 $input;$unitPath="iteration-units/$([string]$admission.unit_id).json";$outRelative="receipts/$([string]$admission.admission_id).json";$outFull=Resolve-MorphospaceWorkspacePath $workspace $outRelative
     if(-not(Test-Json -Json ($admission.agent_scope_assessment|ConvertTo-Json -Depth 64) -SchemaFile (Join-Path $repoRoot 'schemas\agent-scope-assessment-v1.schema.json'))){throw 'Admission agent scope assessment does not satisfy its schema.'}
@@ -172,6 +198,7 @@ function Invoke-MorphospaceAdmitDevelopmentUnit {
     if([string]$project.project_id -cne [string]$admission.project_id -or [string]$state.project_id -cne [string]$admission.project_id -or [string]$admission.unit.project_id -cne [string]$admission.project_id -or [string]$admission.unit.unit_id -cne [string]$admission.unit_id){throw 'Admission project and unit identities must exactly agree.'}
     $expected=$admission.expected
     foreach($check in @(@{v=$expected.project_sha256;a=(Get-MorphospaceCanonicalJsonSha256 $project);n='project'},@{v=$expected.feature_lock_sha256;a=(Get-MorphospaceCanonicalJsonSha256 $lockDoc);n='feature lock'},@{v=$expected.source_composition_sha256;a=(Get-AdmissionFileHash $workspace $expected.source_composition_path);n='source composition'},@{v=$expected.repository_map_sha256;a=(Get-AdmissionFileHash $workspace $expected.repository_map_path);n='repository map'})){if([string]$check.v -cne [string]$check.a){throw "Admission stale $($check.n) preimage."}}
+    Assert-AdmissionToolingContext $workspace $repoRoot $admission $lockDoc $ownerModule
     if([string]$admission.unit.status -cne 'proposed'){throw 'Admission creates only a proposed successor; Ready/Claim remain normal owner actions.'}
     $assessment=$admission.agent_scope_assessment; if(($assessment|ConvertTo-Json -Depth 64 -Compress) -cne ($admission.unit.agent_scope_assessment|ConvertTo-Json -Depth 64 -Compress)){throw 'Unit admission scope differs from the authored assessment.'};Assert-AdmissionPaths $admission.unit $assessment $project
     foreach($prerequisite in @($admission.unit.prerequisites)){ $p=Resolve-MorphospaceWorkspacePath $workspace "iteration-units/$prerequisite.json" -RequireLeaf;$u=Read-MorphospaceProtocolJson $p;if([string]$u.status -cne 'accepted'){throw "Admission predecessor '$prerequisite' is not accepted."} }

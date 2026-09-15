@@ -13,6 +13,14 @@ $ErrorActionPreference = 'Stop'
 # Independent consumer expectation shared across separately executable phases.
 # Do not derive this fixture contract from the selector under test.
 $workflowConsumerFixtureChecks = @('automation-receipt-v2-compatibility','normal-validation-selector','public-boundary','validating-candidate-rematerialization','validation-only-write-scope-narrowing','work-unit-automation','workflow-action-registry','workflow-contracts')
+$developmentUnitAdmissionBatchChecks = @(
+    'active-development-envelope-extension',
+    'tooling-context','tooling-context-product-negative','tooling-context-provenance-negative',
+    'tooling-context-recovery-after-artifact','tooling-context-recovery-after-event',
+    'tooling-context-recovery-after-intent','tooling-context-recovery-after-projection',
+    'tooling-legacy-reclassification-helper','tooling-legacy-reclassification-integration',
+    'tooling-preparation-integration'
+)
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceAffectedValidation.psm1') -Force
@@ -780,6 +788,7 @@ function New-AffectedTrackedFileAnalysisIndex([string]$Importer,[string]$Absolut
     $assignmentNodes = [Collections.Generic.List[object]]::new()
     $hashtableNodes = [Collections.Generic.List[object]]::new()
     $demandedVariablesByScope = [Collections.Generic.Dictionary[object,object]]::new([Collections.Generic.ReferenceEqualityComparer]::Instance)
+    $scriptScopedDemandedVariables = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $demandedMemberNames = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $demandedGetCommandVariables = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $observedMemberPairOffsets = [Collections.Generic.HashSet[int]]::new()
@@ -815,10 +824,15 @@ function New-AffectedTrackedFileAnalysisIndex([string]$Importer,[string]$Absolut
         if ($node.GetCommandName() -match '(?i)(?:^|\\)Import-Module$') {
             $importPathValues = @(if ($node.Extent.Text -match '(?i)\.ps(?:m)?1') { @(Get-AffectedIndexedLiteralScriptPaths $node) } else { @() })
             $importVariables = @(if ($importPathValues.Count -eq 0) { @(Get-AffectedIndexedVariables $node $true) } else { @() })
-            foreach ($variable in $importVariables) { Add-AffectedDemandedVariable -Scope $scope -Variable ([string]$variable) }
+            $bindingScope = $scope
+            if ($importVariables.Count -eq 1 -and [string]$importVariables[0] -imatch '^script:') {
+                $bindingScope = $ast
+                [void]$scriptScopedDemandedVariables.Add([string]$importVariables[0])
+            }
+            foreach ($variable in $importVariables) { Add-AffectedDemandedVariable -Scope $bindingScope -Variable ([string]$variable) }
             $imports.Add([pscustomobject][ordered]@{
                 ast = $node
-                scope = $scope
+                scope = $bindingScope
                 path_values = $importPathValues
                 variables = $importVariables
             }) | Out-Null
@@ -882,7 +896,7 @@ function New-AffectedTrackedFileAnalysisIndex([string]$Importer,[string]$Absolut
         $getCommandDemanded = $false
         if ($node.Left -is [Management.Automation.Language.VariableExpressionAst]) {
             $variable = [string]$node.Left.VariablePath.UserPath
-            $scope = Get-AffectedLexicalImportScope $node
+            $scope = if ($scriptScopedDemandedVariables.Contains($variable)) { $ast } else { Get-AffectedLexicalImportScope $node }
             $variableDemanded = $demandedVariablesByScope.ContainsKey($scope) -and $demandedVariablesByScope[$scope].Contains($variable)
             $getCommandDemanded = $demandedGetCommandVariables.Contains($variable)
         }
@@ -1368,6 +1382,7 @@ $checks = @(
         $memberEmptySource = "`$empty = [pscustomobject]@{}`n& `$empty.Run`n"
         $scopeSource = "`$RunnerPath = Join-Path `$PSScriptRoot 'Test-Outer.ps1'`n`$RunnerPath = Join-Path `$PSScriptRoot 'Test-Outer.ps1'`nfunction Invoke-Scoped([scriptblock]`$Action) {`n    `$RunnerPath = Join-Path `$PSScriptRoot 'Test-Inner.ps1'`n    & `$RunnerPath`n    & `$Action`n}`n& `$RunnerPath`nInvoke-Scoped { 'ok' | Out-Null }`n"
         $typedSource = "function Invoke-Typed([scriptblock]`$Action) { & `$Action }`nInvoke-Typed { 'ok' | Out-Null }`n"
+        $scriptScopedImportSource = "`$script:ModulePath = Join-Path `$PSScriptRoot 'middle.psm1'`nfunction Import-Scoped { Import-Module `$script:ModulePath -Force }`nImport-Scoped`n"
         $unrelatedRelevantSource = "`$RunnerPath = Join-Path `$PSScriptRoot 'Test-Outer.ps1'`n`$Command = Get-Command pwsh`n`$Actions = [pscustomobject]@{ Run = { 'ok' | Out-Null } }`n& `$RunnerPath`n& `$Actions.Run`n& `$Command.Source`n"
         $smallUnrelatedSource = $unrelatedRelevantSource + "`$NoiseTable = @{ Noise000 = @{ Value = 'noise' } }`n`$Noise000 = @('alpha','beta')`n"
         $largeUnrelatedBuilder = [Text.StringBuilder]::new($unrelatedRelevantSource)
@@ -1384,6 +1399,7 @@ $checks = @(
         Write-Utf8 (Join-Path $fixture 'scripts/Test-MemberEmpty.ps1') $memberEmptySource
         Write-Utf8 (Join-Path $fixture 'scripts/Test-Scope.ps1') $scopeSource
         Write-Utf8 (Join-Path $fixture 'scripts/Test-Typed.ps1') $typedSource
+        Write-Utf8 (Join-Path $fixture 'scripts/Test-ScriptScopedImport.ps1') $scriptScopedImportSource
         Write-Utf8 (Join-Path $fixture 'scripts/Test-UnrelatedSmall.ps1') $smallUnrelatedSource
         Write-Utf8 (Join-Path $fixture 'scripts/Test-UnrelatedLarge.ps1') $largeUnrelatedSource
         Write-Utf8 (Join-Path $fixture 'scripts/Test-Ambiguous.ps1') "Import-Module @((Join-Path `$PSScriptRoot 'middle.psm1'),(Join-Path `$PSScriptRoot 'MIDDLE.psm1')) -Force`n"
@@ -1401,6 +1417,15 @@ $checks = @(
         Assert-True (($owners -join ',') -ceq 'scripts/Test-Conditional.ps1,scripts/Test-Dynamic.ps1,scripts/Test-Member.ps1,scripts/Test-Scope.ps1,scripts/Test-Typed.ps1') 'Focused index fixture did not derive its exact direct/table owner roots.'
         $dynamicDeclaration = [pscustomobject][ordered]@{ importer='scripts/Test-Dynamic.ps1'; variable='ModulePath'; count=1; import_path='scripts/lib/MorphospaceProtocolCommon.psm1' }
         $graph = New-AffectedTrackedImportGraph -Root $fixture -Entrypoints $owners -DynamicImportDeclarations @($dynamicDeclaration) -TrackedPaths $tracked
+        $scriptScopedGraph = New-AffectedTrackedImportGraph -Root $fixture -Entrypoints @('scripts/Test-ScriptScopedImport.ps1') -TrackedPaths $tracked
+        Assert-True (@($scriptScopedGraph.edges['scripts/Test-ScriptScopedImport.ps1']) -ccontains 'scripts/middle.psm1') 'Indexed graph did not resolve an exact script-scoped import binding across a function boundary.'
+        Write-Utf8 (Join-Path $fixture 'scripts/Test-ScriptScopedImport.ps1') ("`$script:ModulePath = Join-Path `$PSScriptRoot 'middle.psm1'`n`$script:ModulePath = Join-Path `$PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1'`nfunction Import-Scoped { Import-Module `$script:ModulePath -Force }`nImport-Scoped`n")
+        Assert-AffectedThrows { New-AffectedTrackedImportGraph -Root $fixture -Entrypoints @('scripts/Test-ScriptScopedImport.ps1') -TrackedPaths $tracked } '*multiple literal path bindings*' 'Indexed graph accepted multiple root script-scoped import bindings.'
+        Write-Utf8 (Join-Path $fixture 'scripts/Test-ScriptScopedImport.ps1') ("`$script:ModulePath = `$RuntimeModulePath`nfunction Import-Scoped { Import-Module `$script:ModulePath -Force }`nImport-Scoped`n")
+        Assert-AffectedThrows { New-AffectedTrackedImportGraph -Root $fixture -Entrypoints @('scripts/Test-ScriptScopedImport.ps1') -TrackedPaths $tracked } '*not one literal script path*' 'Indexed graph accepted an arbitrary root script-scoped import binding.'
+        Write-Utf8 (Join-Path $fixture 'scripts/Test-ScriptScopedImport.ps1') ("`$script:ModulePath = Join-Path `$PSScriptRoot 'middle.psm1'`nfunction Set-ScopedModule { `$script:ModulePath = `$RuntimeModulePath }`nfunction Import-Scoped { Import-Module `$script:ModulePath -Force }`nSet-ScopedModule`nImport-Scoped`n")
+        Assert-AffectedThrows { New-AffectedTrackedImportGraph -Root $fixture -Entrypoints @('scripts/Test-ScriptScopedImport.ps1') -TrackedPaths $tracked } '*not one literal script path*' 'Indexed graph ignored an arbitrary nested reassignment of a root script-scoped import binding.'
+        Write-Utf8 (Join-Path $fixture 'scripts/Test-ScriptScopedImport.ps1') $scriptScopedImportSource
 
         $expectedAdjacency = [pscustomobject][ordered]@{ schema='affected_owner_adjacency.v1'; nodes=@(
             [pscustomobject][ordered]@{ path='scripts/Test-Conditional.ps1'; imports=@('scripts/Test-Dot.ps1','scripts/Test-Invoked.ps1','scripts/middle.psm1') },
@@ -1566,6 +1591,17 @@ function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]
         $typedCaseVariant = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
         Assert-True ([string]$typedCaseVariant.resolution.mode -ceq 'exact' -and ($typedCaseVariant.paths -join ',') -ceq 'scripts/Fallback.ps1') 'Case-variant typed-scriptblock lookup lost its exact callable classification.'
 
+        Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "function Invoke-Module([Management.Automation.PSModuleInfo]`$Module) { & `$Module { Import-Module (Join-Path `$PSScriptRoot 'Dynamic.psm1') } }`nInvoke-Module `$RuntimeModule`n"
+        $arbitraryTypedModule = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
+        Assert-True ([string]$arbitraryTypedModule.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($arbitraryTypedModule.paths).Count -eq 6 -and @($arbitraryTypedModule.resolution.fallback_reasons | Where-Object { [string]$_.importer -ceq 'scripts/Fallback.ps1' -and [string]$_.variable -ceq 'Module' -and [string]$_.kind -ceq 'unresolved-invocation' }).Count -eq 1) 'Arbitrary runtime PSModuleInfo parameter received an unconditional module-object exemption.'
+        $typedModuleDeclaration = [pscustomobject][ordered]@{importer='scripts/Fallback.ps1';variable='Module';count=1;target_paths=@('scripts/Static.psm1')}
+        $declaredTypedModule = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @($typedModuleDeclaration)
+        Assert-True ([string]$declaredTypedModule.resolution.mode -ceq 'exact' -and ($declaredTypedModule.paths -join ',') -ceq 'scripts/Dynamic.psm1,scripts/Fallback.ps1,scripts/Static.psm1') 'Closed module-object declaration omitted its target or nested scriptblock import edge.'
+        $typedModuleCountDamage = $typedModuleDeclaration | ConvertTo-Json -Depth 8 | ConvertFrom-Json -Depth 8 -DateKind String; $typedModuleCountDamage.count = 2
+        Assert-AffectedThrows { Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @($typedModuleCountDamage) } '*declaration count changed*' 'Module-object declaration accepted invocation-count drift.'
+        $typedModuleTargetDamage = $typedModuleDeclaration | ConvertTo-Json -Depth 8 | ConvertFrom-Json -Depth 8 -DateKind String; $typedModuleTargetDamage.target_paths = @('scripts/Missing.psm1')
+        Assert-AffectedThrows { Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @($typedModuleTargetDamage) } '*target is absent*' 'Module-object declaration accepted target drift.'
+
         Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "`$Runner = 'Static.psm1'`n& `$Runner`n`$Runner = 'Dynamic.psm1'`n"
         $afterUseAssignment = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
         Assert-True ([string]$afterUseAssignment.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($afterUseAssignment.paths).Count -eq 6) 'Assignment after invocation was treated as a definitely prior dispatch binding.'
@@ -1682,7 +1718,7 @@ function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]
             'scripts/lib/MorphospaceTransitionLedger.psm1',
             'scripts/lib/MorphospaceValidationAuthority.psm1'
         )
-        $safeIds = @('project-isolation','protocol-foundation','skill-templates')
+        $safeIds = @('project-isolation','skill-templates')
         $digests = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
         $timings = [Collections.Generic.List[object]]::new()
         foreach ($checkId in $safeIds) {
@@ -1696,17 +1732,38 @@ function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]
         }
         Assert-True ($digests.Count -eq $safeIds.Count) 'Per-check safe corpus collapsed to one common aggregate dependency identity.'
 
-        # Validating-candidate rematerialization is deliberately a focused
-        # producer/consumer owner. Its test loads the two owner modules through
-        # script-scoped variables, so those invocations must remain completely
-        # and exactly declared instead of falling back to every tracked script.
+        # Protocol foundation imports ContentObservation, whose authenticated
+        # preparation-history route now reaches retirement and its transition
+        # ledger. Keep this deliberately dependent check out of the unchanged
+        # corpus and prove the exact declared module-object calls retain the chain.
+        $protocolClock = [Diagnostics.Stopwatch]::StartNew()
+        $protocolClosure = Get-MorphospaceAffectedCheckDependencyClosure -Check $compiled.checks['protocol-foundation'] -CompiledRegistry $compiled -Inventory $realInventory -RepositoryRoot $Root
+        $protocolClock.Stop()
+        $protocolPaths = @($protocolClosure.manifest.path)
+        foreach ($requiredPath in @(
+            'scripts/lib/MorphospaceContentObservation.psm1',
+            'scripts/DevelopmentEnvelopeProvenance.psm1',
+            'scripts/lib/MorphospaceCurrentWorkHistory.psm1',
+            'scripts/ActiveUnitRetirement.psm1',
+            'scripts/lib/MorphospaceTransitionLedger.psm1'
+        )) {
+            Assert-True ($protocolPaths -ccontains $requiredPath) "Protocol foundation dependency closure omitted its retirement/ledger chain path '$requiredPath'."
+        }
+        $activeRetirementDeclarations = @($protocolClosure.resolution.used_declarations | Where-Object { [string]$_.importer -ceq 'scripts/ActiveUnitRetirement.psm1' })
+        $activeRetirementDeclarationIdentities = @($activeRetirementDeclarations | ForEach-Object { "$([string]$_.variable)|$([int]$_.count)|$(@($_.target_paths) -join ',')" })
+        Assert-True ([string]$protocolClosure.resolution.mode -ceq 'exact' -and @($protocolClosure.resolution.fallback_reasons).Count -eq 0) 'Protocol foundation did not retain an exact dependency closure through authenticated retirement history.'
+        Assert-True (($activeRetirementDeclarationIdentities -join ';') -ceq 'ProvenanceModule|2|scripts/DevelopmentEnvelopeProvenance.psm1;amendmentModule|1|scripts/ActiveWriteScopeAmendment.psm1;module|2|scripts/DevelopmentEnvelopeProvenance.psm1') 'Protocol foundation did not consume the exact closed ActiveUnitRetirement module-object declarations.'
+        [void]$timings.Add([pscustomobject][ordered]@{check_id='protocol-foundation-retirement-dependent';elapsed_ms=[long]$protocolClock.Elapsed.TotalMilliseconds;dependency_count=@($protocolClosure.manifest).Count})
+
+        # Validating-candidate rematerialization retains its exact owner-module
+        # declaration while its authenticated preparation-history route reaches
+        # retirement and the ledger through the same closed module-object calls.
         $rematerializationClock = [Diagnostics.Stopwatch]::StartNew()
         $rematerializationClosure = Get-MorphospaceAffectedCheckDependencyClosure -Check $compiled.checks['validating-candidate-rematerialization'] -CompiledRegistry $compiled -Inventory $realInventory -RepositoryRoot $Root
         $rematerializationClock.Stop()
         $rematerializationPaths = @($rematerializationClosure.manifest.path)
-        $rematerializationDeclarations = @($rematerializationClosure.resolution.used_declarations)
+        $rematerializationDeclarations = @($rematerializationClosure.resolution.used_declarations | Where-Object { [string]$_.importer -ceq 'scripts/Test-ValidatingCandidateRematerialization.ps1' -and $_.PSObject.Properties.Name -ccontains 'target_paths' })
         $rematerializationDeclarationIdentities = @($rematerializationDeclarations | ForEach-Object { "$([string]$_.importer)|$([string]$_.variable)|$([int]$_.count)|$(@($_.target_paths) -join ',')" })
-        Assert-True ([string]$rematerializationClosure.resolution.mode -ceq 'exact' -and @($rematerializationClosure.resolution.fallback_reasons).Count -eq 0) 'Validating-candidate rematerialization did not retain exact dependency resolution with no fallback.'
         Assert-True (($rematerializationDeclarationIdentities -join ';') -ceq 'scripts/Test-ValidatingCandidateRematerialization.ps1|script:RematerializationOwnerModule|2|scripts/ValidatingCandidateRematerialization.psm1') 'Validating-candidate rematerialization did not consume exactly its one remaining dynamic owner declaration.'
         foreach ($requiredPath in @(
             'schemas/candidate-freeze-v2.schema.json',
@@ -1714,10 +1771,16 @@ function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]
             'scripts/New-ValidatingCandidateRematerializationInput.ps1',
             'scripts/Test-ValidatingCandidateRematerialization.ps1',
             'scripts/ValidatingCandidateRematerialization.psm1',
+            'scripts/ActiveUnitRetirement.psm1',
+            'scripts/lib/MorphospaceTransitionLedger.psm1',
             'scripts/lib/MorphospaceSourceCompositionIdentity.psm1'
         )) {
             Assert-True ($rematerializationPaths -ccontains $requiredPath) "Validating-candidate rematerialization dependency closure omitted '$requiredPath'."
         }
+        $rematerializationRetirementDeclarations = @($rematerializationClosure.resolution.used_declarations | Where-Object { [string]$_.importer -ceq 'scripts/ActiveUnitRetirement.psm1' })
+        $rematerializationRetirementDeclarationIdentities = @($rematerializationRetirementDeclarations | ForEach-Object { "$([string]$_.variable)|$([int]$_.count)|$(@($_.target_paths) -join ',')" })
+        Assert-True ([string]$rematerializationClosure.resolution.mode -ceq 'exact' -and @($rematerializationClosure.resolution.fallback_reasons).Count -eq 0) 'Validating-candidate rematerialization did not retain an exact dependency closure through authenticated retirement history.'
+        Assert-True (($rematerializationRetirementDeclarationIdentities -join ';') -ceq 'ProvenanceModule|2|scripts/DevelopmentEnvelopeProvenance.psm1;amendmentModule|1|scripts/ActiveWriteScopeAmendment.psm1;module|2|scripts/DevelopmentEnvelopeProvenance.psm1') 'Validating-candidate rematerialization did not consume the exact closed ActiveUnitRetirement module-object declarations.'
         Assert-True ($rematerializationPaths -cnotcontains 'scripts/Test-WorkEnvironment.ps1') 'Validating-candidate rematerialization dependency closure expanded into the cumulative Work Environment aggregate.'
         [void]$timings.Add([pscustomobject][ordered]@{check_id='validating-candidate-rematerialization';elapsed_ms=[long]$rematerializationClock.Elapsed.TotalMilliseconds;dependency_count=@($rematerializationClosure.manifest).Count})
 
@@ -2098,7 +2161,10 @@ if ($runFullSelector -or $runExecutorPassPhase) {
     $executorPassCheck=$phaseCompiledRegistry.checks['affected-selector-executor-pass-schema']
     $executorPassBudgetIndex=[array]::IndexOf(@($executorPassCheck.arguments),'-BudgetSeconds')
     $executorPassInnerBudget=0
-    Assert-True ($executorPassBudgetIndex-ge0-and$executorPassBudgetIndex+1-lt@($executorPassCheck.arguments).Count-and[int]::TryParse([string]$executorPassCheck.arguments[$executorPassBudgetIndex+1],[ref]$executorPassInnerBudget)-and$executorPassInnerBudget-ge180-and[long]$executorPassCheck.budget_seconds-ge[long]$executorPassInnerBudget+15) 'Executor pass/schema phase lacks its measured hosted-Linux budget and bounded 15-second containment headroom.'
+    # The previous hosted-Linux pass consumed 173.759 seconds before the
+    # registry and exact closure grew; 240 seconds restores bounded headroom
+    # while the outer check retains exactly 15 seconds for containment.
+    Assert-True ($executorPassBudgetIndex-ge0-and$executorPassBudgetIndex+1-lt@($executorPassCheck.arguments).Count-and[int]::TryParse([string]$executorPassCheck.arguments[$executorPassBudgetIndex+1],[ref]$executorPassInnerBudget)-and$executorPassInnerBudget-eq240-and[long]$executorPassCheck.budget_seconds-eq[long]$executorPassInnerBudget+15) 'Executor pass/schema phase lacks its measured hosted-Linux budget or exact 15-second containment headroom.'
     $derivedPhaseManifest=@($phaseInventory.records | Where-Object { [string]$_.type -ceq 'blob' -and @('100644','100755') -ccontains [string]$_.mode } | Select-Object -First 24 | ForEach-Object { [pscustomobject][ordered]@{path=[string]$_.path;mode=[string]$_.mode;blob=[string]$_.blob} })
     Assert-True ($derivedPhaseManifest.Count -gt 16 -and $derivedPhaseManifest.Count -le 2048) 'Representative exact-head phase closure does not fit the closed bounded phase-manifest domain.'
     $derivedProjection=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.affected_validation_self_test_dependency_projection.v1';repository='MesmerPrism/rusty-morphospace-work-environment';head_commit=$phaseHead;head_tree=$phaseTree;registry_sha256=Get-MorphospaceCanonicalJsonSha256 -Value $registry;check_id='affected-selector-executor-pass-schema';command_path='scripts/Invoke-AffectedValidationSelfTestPhase.ps1';consume_path_sets=@($phaseCompiledRegistry.checks['affected-selector-executor-pass-schema'].consume_path_sets);dependency_manifest=$derivedPhaseManifest}
@@ -4351,7 +4417,7 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     [void](Invoke-TestGit $fixture @('commit', '-m', 'validating candidate input producer change'))
     $rematerializationProducerHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
     $rematerializationProducerPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $rematerializationProducerBase -HeadRevision $rematerializationProducerHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
-    $rematerializationExpectedChecks = $workflowConsumerFixtureChecks
+    $rematerializationExpectedChecks = @(($workflowConsumerFixtureChecks + $developmentUnitAdmissionBatchChecks) | Sort-Object)
     $rematerializationActualChecks = @($rematerializationProducerPlan.selected_checks.check_id); [Array]::Sort($rematerializationActualChecks, [StringComparer]::Ordinal)
     Assert-True ($rematerializationProducerPlan.selection_mode -ceq 'affected' -and $rematerializationProducerPlan.effective_tier -ceq 'standard') 'Validating-candidate input producer change did not retain affected Standard selection.'
     Assert-True (($rematerializationActualChecks -join ',') -ceq ($rematerializationExpectedChecks -join ',')) "Validating-candidate input producer selected the wrong exact closure: $($rematerializationActualChecks -join ',')."
@@ -4370,7 +4436,7 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     [void](Invoke-TestGit $fixture @('commit', '-m', 'shared automation receipt contract'))
     $automationReceiptHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
     $automationReceiptPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $rematerializationProducerHead -HeadRevision $automationReceiptHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
-    $automationReceiptExpectedChecks = $workflowConsumerFixtureChecks
+    $automationReceiptExpectedChecks = @(($workflowConsumerFixtureChecks + $developmentUnitAdmissionBatchChecks) | Sort-Object)
     $automationReceiptActualChecks = @($automationReceiptPlan.selected_checks.check_id); [Array]::Sort($automationReceiptActualChecks, [System.StringComparer]::Ordinal)
     Assert-True (($automationReceiptActualChecks -join ',') -ceq ($automationReceiptExpectedChecks -join ',')) "Shared automation receipt selected the wrong exact closure: $($automationReceiptActualChecks -join ',')."
     foreach ($checkId in @('history-archive-checkpoint','history-archive-checkpoint-selftest','work-environment-deep')) { Assert-True (@($automationReceiptPlan.selected_checks.check_id) -cnotcontains $checkId) "Shared automation receipt change incorrectly selected '$checkId'." }
@@ -4427,6 +4493,15 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     # selection cannot conceal an unmapped or ambiguous shared-module route.
     $validationAuthorityClosureChecks=@('authority-record-readiness','authority-runner-fast','authority-runner-handoff','transition-ledger','trust-migration-authority','validation-authority-launcher','validation-execution-authority') + $workflowConsumerFixtureChecks
     $preparationRepositoryScopeConsumerChecks=@(
+        'active-development-envelope-extension',
+        'tooling-context','tooling-context-product-negative','tooling-context-provenance-negative',
+        'tooling-context-recovery-after-artifact','tooling-context-recovery-after-event',
+        'tooling-context-recovery-after-intent','tooling-context-recovery-after-projection',
+        'tooling-legacy-reclassification-helper','tooling-legacy-reclassification-integration',
+        'tooling-preparation-integration',
+        'active-unit-retirement-amendment-recovery','active-unit-retirement-nested-damage',
+        'active-unit-retirement-nested-map-guards','active-unit-retirement-nested-positive',
+        'active-unit-retirement-nested-recovery',
         'workflow-contracts','normal-validation-selector','active-write-scope-amendment',
         'completed-transition-semantic-correction','correct-active-project-repository-scope',
         'correct-active-read-only-dependencies','development-unit-admission',
@@ -4449,6 +4524,13 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
         $preparationRepositoryScopeConsumerChecks + @(
             'automation-receipt-v2-compatibility','historical-supersession-compatibility',
             'validation-only-write-scope-narrowing','workflow-action-registry'
+        )
+    )
+    $completeCandidateBatchChecks=@(
+        $developmentUnitAdmissionBatchChecks + @(
+            'active-unit-retirement-amendment-recovery','active-unit-retirement-nested-damage',
+            'active-unit-retirement-nested-map-guards','active-unit-retirement-nested-positive',
+            'active-unit-retirement-nested-recovery'
         )
     )
     $preparationRepositoryScopeTriggers=@($registry.checks | Where-Object {
@@ -4532,16 +4614,16 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
         [pscustomobject]@{ path='scripts/Test-HistoricalValidationDebtPhaseRunner.ps1'; checks=@('historical-validation-debt-phase-runner') },
         [pscustomobject]@{ path='scripts/Test-OwnershipAuthority.ps1'; checks=@('ownership-authority') },
         [pscustomobject]@{ path='scripts/Test-TransitionLedger.ps1'; checks=@('transition-ledger') },
-        [pscustomobject]@{ path='schemas/development-unit-admission-v1.schema.json'; checks=@('development-unit-admission','recovered-proposal-continuation','recovered-prepared-admission','recovered-preparation-retirement','active-unit-retirement-continuation') + $workflowConsumerFixtureChecks; exact_checks=$true },
-        [pscustomobject]@{ path='scripts/DevelopmentUnitAdmission.psm1'; checks=@('development-unit-admission','recovered-proposal-continuation','recovered-prepared-admission','recovered-preparation-retirement','active-unit-retirement-continuation') + $workflowConsumerFixtureChecks; exact_checks=$true },
+        [pscustomobject]@{ path='schemas/development-unit-admission-v1.schema.json'; checks=@('development-unit-admission','recovered-proposal-continuation','recovered-prepared-admission','recovered-preparation-retirement','active-unit-retirement-continuation') + $workflowConsumerFixtureChecks + $developmentUnitAdmissionBatchChecks; exact_checks=$true },
+        [pscustomobject]@{ path='scripts/DevelopmentUnitAdmission.psm1'; checks=@('development-unit-admission','recovered-proposal-continuation','recovered-prepared-admission','recovered-preparation-retirement','active-unit-retirement-continuation') + $workflowConsumerFixtureChecks + $developmentUnitAdmissionBatchChecks; exact_checks=$true },
         [pscustomobject]@{ path='scripts/Test-DevelopmentUnitAdmission.ps1'; checks=@('development-unit-admission','public-boundary'); exact_checks=$true },
         [pscustomobject]@{ path='scripts/Test-AdmissionCompletionTimestampRecovery.ps1'; checks=@('admission-completion-timestamp-recovery','public-boundary'); exact_checks=$true },
         [pscustomobject]@{ path='scripts/Test-RecoveredProposalContinuation.ps1'; checks=@('recovered-proposal-continuation','recovered-prepared-admission','recovered-preparation-retirement','public-boundary'); exact_checks=$true },
         [pscustomobject]@{ path='scripts/Test-RecoveredPreparedAdmission.ps1'; checks=@('recovered-proposal-continuation','recovered-prepared-admission','recovered-preparation-retirement','public-boundary'); exact_checks=$true },
         [pscustomobject]@{ path='scripts/Test-RecoveredPreparationRetirement.ps1'; checks=@('recovered-proposal-continuation','recovered-prepared-admission','recovered-preparation-retirement','public-boundary'); exact_checks=$true },
-        [pscustomobject]@{ path='scripts/test-support/ActiveUnitRetirementFixture.ps1'; checks=@('active-unit-retirement','recovered-proposal-continuation','recovered-prepared-admission','recovered-preparation-retirement','public-boundary'); exact_checks=$true },
+        [pscustomobject]@{ path='scripts/test-support/ActiveUnitRetirementFixture.ps1'; checks=@('active-unit-retirement','recovered-proposal-continuation','recovered-prepared-admission','recovered-preparation-retirement','public-boundary') + $completeCandidateBatchChecks; exact_checks=$true },
         [pscustomobject]@{ path='scripts/test-support/RecoveredProposalContinuation.ps1'; checks=@('recovered-proposal-continuation','recovered-prepared-admission','recovered-preparation-retirement','public-boundary'); exact_checks=$true },
-        [pscustomobject]@{ path='scripts/test-support/DevelopmentAdmissionFixture.ps1'; checks=@('development-unit-admission','recovered-proposal-continuation','recovered-prepared-admission','recovered-preparation-retirement','public-boundary'); exact_checks=$true },
+        [pscustomobject]@{ path='scripts/test-support/DevelopmentAdmissionFixture.ps1'; checks=@('development-unit-admission','recovered-proposal-continuation','recovered-prepared-admission','recovered-preparation-retirement','public-boundary') + $developmentUnitAdmissionBatchChecks; exact_checks=$true },
         [pscustomobject]@{ path='examples/hello-morphospace-v2/morphospace/iteration-units/hello-001.json'; checks=@('development-unit-admission','recovered-proposal-continuation','recovered-prepared-admission','recovered-preparation-retirement','blocked-successor-preparation','workflow-contracts','public-boundary') },
         [pscustomobject]@{ path='scripts/AdmissionCompletionTimestampRecovery.psm1'; checks=@('admission-completion-timestamp-recovery','recovered-proposal-continuation','recovered-prepared-admission','recovered-preparation-retirement','workflow-contracts','work-unit-automation','public-boundary') },
         [pscustomobject]@{ path='schemas/admission-completion-timestamp-recovery-v1.schema.json'; checks=@('admission-completion-timestamp-recovery','recovered-proposal-continuation','recovered-prepared-admission','recovered-preparation-retirement','workflow-contracts','work-unit-automation','public-boundary') },

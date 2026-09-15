@@ -610,8 +610,8 @@ function Test-MorphospaceValidationReceiptV2 {
     Test-MorphospaceClaimBaseline -Baseline $baseline -Unit $Unit -RepositoryMapReference $protocol.repository_map -RepositoryMap $RepositoryMap | Out-Null
     $automationOutputs = @($ownership.automation_outputs)
     $transitionPaths=@(Get-MorphospaceCommittedTransitionPaths -WorkspaceRoot $WorkspaceRoot -AutomationOutputs $automationOutputs -RepositoryMap $RepositoryMap)
-    if($transitionPaths.Count-gt0){$current=Test-MorphospaceUnitOwnership -Ownership $ownership -ClaimBaseline $baseline -ClaimBaselineReference $protocol.claim_baseline -Unit $Unit -RepositoryMapReference $protocol.repository_map -RepositoryMap $RepositoryMap -CommittedTransitionPaths $transitionPaths}
-    else{$current=Test-MorphospaceUnitOwnership -Ownership $ownership -ClaimBaseline $baseline -ClaimBaselineReference $protocol.claim_baseline -Unit $Unit -RepositoryMapReference $protocol.repository_map -RepositoryMap $RepositoryMap}
+    if($transitionPaths.Count-gt0){$current=Test-MorphospaceUnitOwnership -WorkspaceRoot $WorkspaceRoot -Ownership $ownership -ClaimBaseline $baseline -ClaimBaselineReference $protocol.claim_baseline -Unit $Unit -RepositoryMapReference $protocol.repository_map -RepositoryMap $RepositoryMap -CommittedTransitionPaths $transitionPaths}
+    else{$current=Test-MorphospaceUnitOwnership -WorkspaceRoot $WorkspaceRoot -Ownership $ownership -ClaimBaseline $baseline -ClaimBaselineReference $protocol.claim_baseline -Unit $Unit -RepositoryMapReference $protocol.repository_map -RepositoryMap $RepositoryMap}
     $automationOutputs = @($current.automation_outputs)
     if ($automationOutputs.Count -eq 0) { throw 'Validation receipt v2 lacks an ownership-bound automation output contract.' }
     Test-MorphospaceAutomationOutputSet -AutomationOutputs @($automationOutputs|Where-Object{[string]$_.phase-cne'transition'}) -RepositoryMap $RepositoryMap -Expected present

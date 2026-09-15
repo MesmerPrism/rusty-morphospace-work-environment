@@ -32,6 +32,16 @@
     "project_id": { "$ref": "#/$defs/id" },
     "status": { "$ref": "#/$defs/id" },
     "objective": { "type": "string", "minLength": 1 },
+    "tooling_context": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256", "canonical_sha256", "protocol_id"],
+      "properties": {
+        "path": { "type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "canonical_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "protocol_id": { "$ref": "#/$defs/id" }
+      }
+    },
     "architecture_decision": {
       "type": "object",
       "additionalProperties": false,
@@ -384,6 +394,13 @@
     "push_checkpoint": { "enum": ["none", "local-only", "integration-batch", "manual-owner-review", "release"] }
   },
   "allOf": [
+    {
+      "if": { "required": ["tooling_context"] },
+      "then": {
+        "required": ["source_composition", "agent_scope_assessment"],
+        "properties": { "source_composition": { "properties": { "mode": { "const": "exact-lock" } } } }
+      }
+    },
     {
       "if": {
         "properties": { "instruction_impact": { "const": "none" } },

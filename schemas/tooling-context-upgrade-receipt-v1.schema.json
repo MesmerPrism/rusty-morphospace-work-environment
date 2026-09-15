@@ -1,0 +1,9 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/tooling-context-upgrade-receipt-v1.schema.json",
+  "title":"Tooling-context upgrade receipt",
+  "type":"object","additionalProperties":false,
+  "required":["schema","upgrade_id","project_id","unit_id","old_context","new_context","product_projection","compatibility_receipt","status","does_not_prove"],
+  "properties":{"schema":{"const":"rusty.morphospace.workflow.tooling_context_upgrade_receipt.v1"},"upgrade_id":{"$ref":"#/$defs/id"},"project_id":{"$ref":"#/$defs/id"},"unit_id":{"$ref":"#/$defs/id"},"old_context":{"$ref":"#/$defs/file"},"new_context":{"$ref":"#/$defs/file"},"product_projection":{"$ref":"#/$defs/projection"},"compatibility_receipt":{"$ref":"#/$defs/file"},"status":{"const":"upgraded"},"does_not_prove":{"type":"array","minItems":1,"uniqueItems":true,"items":{"type":"string","minLength":1}}},
+  "$defs":{"id":{"type":"string","pattern":"^[a-z0-9][a-z0-9-]{1,127}$"},"hash":{"type":"string","pattern":"^[0-9a-f]{64}$"},"path":{"type":"string","pattern":"^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$"},"file":{"type":"object","additionalProperties":false,"required":["path","sha256"],"properties":{"path":{"$ref":"#/$defs/path"},"sha256":{"$ref":"#/$defs/hash"}}},"projection":{"type":"object","additionalProperties":false,"required":["source_composition","repository_map","feature_lock"],"properties":{"source_composition":{"$ref":"#/$defs/file"},"repository_map":{"$ref":"#/$defs/file"},"feature_lock":{"$ref":"#/$defs/file"}}}}
+}
