@@ -170,6 +170,26 @@ function Test-ActiveRetirementAuthenticatedPlanningDirt {
     if($changes.Count-ne$allowed.Count-or($changes-join'|')-cne($allowed-join'|')){throw "Active retirement planning repository dirt differs from the authenticated lifecycle projection (expected: $($allowed-join', '); observed: $($changes-join', '))."}
     return $true
 }
+function Get-ActiveRetirementRepositoryMaterialization([string]$Id,[object]$Entry,[object]$Locked,[bool]$Writable,[Collections.Generic.HashSet[string]]$BackingRoots){
+    $rootComparer=if([OperatingSystem]::IsWindows()){[StringComparer]::OrdinalIgnoreCase}else{[StringComparer]::Ordinal}
+    $rootComparison=if([OperatingSystem]::IsWindows()){[StringComparison]::OrdinalIgnoreCase}else{[StringComparison]::Ordinal}
+    if([string]$Entry.role-cne[string]$Locked.role){throw "Active retirement repository map role differs from the source lock for '$Id'."}
+    $mappedText=[string]$Entry.path
+    if(-not[IO.Path]::IsPathFullyQualified($mappedText)-or$mappedText-cmatch'(^|[\\/])\.\.?(?:[\\/]|$)'){throw "Active retirement repository map path is not an exact absolute materialization for '$Id'."}
+    $mappedPath=[IO.Path]::GetFullPath($mappedText).TrimEnd('\','/')
+    if(-not[IO.Directory]::Exists($mappedPath)){throw "Active retirement requires clean available source repository '$Id'."}
+    Assert-MorphospaceNoReparseAncestor -Root ([IO.Path]::GetPathRoot($mappedPath)) -Candidate $mappedPath
+    $gitRoot=(@(& git -C $mappedPath rev-parse --show-toplevel 2>&1)-join'').Trim()
+    if($LASTEXITCODE-ne0){throw "Active retirement requires clean available source repository '$Id'."}
+    $gitRoot=[IO.Path]::GetFullPath($gitRoot).TrimEnd('\','/')
+    Assert-MorphospaceNoReparseAncestor -Root ([IO.Path]::GetPathRoot($gitRoot)) -Candidate $gitRoot
+    $isRoot=$rootComparer.Equals($gitRoot,$mappedPath);$isNested=$mappedPath.StartsWith($gitRoot+[IO.Path]::DirectorySeparatorChar,$rootComparison)
+    if(-not$isRoot-and-not$isNested){throw 'Active retirement mapped materialization is outside its backing Git repository.'}
+    if(-not$BackingRoots.Add($gitRoot)){throw 'Active retirement requires distinct authenticated backing Git repositories.'}
+    if($Writable-and-not$isRoot){throw "Active retirement writable repository '$Id' must map to its exact Git root."}
+    if($isNested-and($Writable-or[string]$Entry.role-cne'source')){throw "Active retirement nested repository materialization '$Id' must be a read-only source dependency."}
+    [pscustomobject]@{mapped_path=$mappedPath;git_root=$gitRoot;is_nested=$isNested}
+}
 function Get-ActiveRetirementRepositories([object]$Unit,[object]$Source,[string]$RepoMapPath,[string]$Workspace='',[object]$RecoveryIntent=$null){
     # Git observation is action-only. The shared reader avoids importing the
     # larger automation orchestrator into the historical dependency closure.
@@ -184,17 +204,23 @@ function Get-ActiveRetirementRepositories([object]$Unit,[object]$Source,[string]
     $sourceIds=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach($row in @($Source.repositories)){if(-not$sourceIds.Add([string]$row.repo_id)){throw 'Active retirement source composition repeats a repository.'}}
     foreach($id in $authorized){if(-not$sourceIds.Contains($id)){throw 'Active retirement source composition omits an authorized repository.'}}
-    $ids=[string[]]@($sourceIds);[Array]::Sort($ids,[StringComparer]::Ordinal);$observations=@()
+    if([string]::IsNullOrWhiteSpace($Workspace)){throw 'Active retirement repository observation requires its authenticated admission workspace.'}
+    $admissions=@(Get-ChildItem -LiteralPath (Resolve-MorphospaceWorkspacePath $Workspace 'receipts') -File -Filter '*.json'|ForEach-Object{$document=Read-MorphospaceProtocolJson $_.FullName;if([string]$document.schema-ceq'rusty.morphospace.workflow.development_unit_admission.v1'-and[string]$document.unit_id-ceq[string]$Unit.unit_id){$document}})
+    if($admissions.Count-ne1){throw 'Active retirement repository observation requires one exact current admission receipt.'}
+    $admission=$admissions[0];$provenanceModule=Import-ActiveRetirementDevelopmentEnvelopeProvenance
+    if($RecoveryIntent){Test-ActiveRetirementRecoveryPreparationProvenance $Workspace $admission $RecoveryIntent $provenanceModule}else{$null=&$provenanceModule {param($root,$document) Test-MorphospaceDevelopmentUnitPreparation -WorkspaceRoot $root -Admission $document -Phase Freeze} $Workspace $admission}
+    $admittedMap=Resolve-MorphospaceWorkspacePath $Workspace ([string]$admission.expected.repository_map_path) -RequireLeaf
     $rootComparer=if([OperatingSystem]::IsWindows()){[StringComparer]::OrdinalIgnoreCase}else{[StringComparer]::Ordinal}
+    if(-not$rootComparer.Equals([IO.Path]::GetFullPath($admittedMap),[IO.Path]::GetFullPath($RepoMapPath))-or(Get-MorphospaceFileSha256 $admittedMap)-cne[string]$admission.expected.repository_map_sha256){throw 'Active retirement repository map is detached from its admission.'}
+    $ids=[string[]]@($sourceIds);[Array]::Sort($ids,[StringComparer]::Ordinal);$observations=@()
     $roots=[Collections.Generic.HashSet[string]]::new($rootComparer)
     foreach($id in $ids){
         if(-not$map.ContainsKey($id)){throw "Active retirement lacks repository map entry '$id'."}
         $entry=$map[$id]
-        $observed=Get-MorphospaceRepositoryState -RepoId $id -Path ([string]$entry.path)
-        if($observed.available-and$observed.is_git){
-            $gitRoot=(@(& git -C ([string]$entry.path) rev-parse --show-toplevel 2>&1)-join'').Trim()
-            if($LASTEXITCODE-ne0-or-not$rootComparer.Equals([IO.Path]::GetFullPath($gitRoot),[IO.Path]::GetFullPath([string]$entry.path))-or-not$roots.Add([IO.Path]::GetFullPath($gitRoot))){throw 'Active retirement requires distinct exact repository roots.'}
-        }
+        $locked=@($Source.repositories|Where-Object{[string]$_.repo_id-ceq$id})[0]
+        $materialization=Get-ActiveRetirementRepositoryMaterialization -Id $id -Entry $entry -Locked $locked -Writable ($authorized.Contains($id)) -BackingRoots $roots
+        $mappedPath=[string]$materialization.mapped_path
+        $observed=Get-MorphospaceRepositoryState -RepoId $id -Path $mappedPath
         $remaining=@($observed.status_porcelain)
         if($RecoveryIntent-and[string]$entry.role-ceq'planning'){
             $root=[IO.Path]::GetFullPath([string]$entry.path).TrimEnd('\','/')+[IO.Path]::DirectorySeparatorChar
@@ -212,14 +238,13 @@ function Get-ActiveRetirementRepositories([object]$Unit,[object]$Source,[string]
                 })
             }
         }
-        $locked=@($Source.repositories|Where-Object{[string]$_.repo_id-ceq$id})[0]
         $planningDirt=$false
         if($observed.available-and$observed.is_git-and$remaining.Count-ne0-and-not$authorized.Contains($id)-and[string]$observed.head-ceq[string]$locked.commit-and[string]$observed.tree-ceq[string]$locked.tree){$planningDirt=Test-ActiveRetirementAuthenticatedPlanningDirt $Workspace $Unit $entry $remaining $RecoveryIntent}
         if(-not$observed.available-or-not$observed.is_git-or($remaining.Count-ne0-and-not$planningDirt)-or[string]$observed.head-cnotmatch'^[0-9a-f]{40}$'-or[string]$observed.tree-cnotmatch'^[0-9a-f]{40}$'){throw "Active retirement requires clean available source repository '$id'."}
         # Writable repositories may have newer clean local checkpoints. Read-only dependencies stay pinned.
         if(-not$authorized.Contains($id)-and([string]$observed.head-cne[string]$locked.commit-or[string]$observed.tree-cne[string]$locked.tree)){throw "Active retirement read-only dependency '$id' differs from the source lock."}
         if($authorized.Contains($id)){
-            $null=& git -C ([string]$map[$id].path) merge-base --is-ancestor ([string]$locked.commit) ([string]$observed.head) 2>&1
+            $null=& git -C $mappedPath merge-base --is-ancestor ([string]$locked.commit) ([string]$observed.head) 2>&1
             if($LASTEXITCODE-ne0){throw "Active retirement writable checkpoint '$id' does not retain its locked baseline."}
         }
         $observations+=,[pscustomobject][ordered]@{repo_id=$id;head=[string]$observed.head;tree=[string]$observed.tree;branch=$observed.branch;clean=$true}

@@ -31,8 +31,15 @@ Execution preserves its exact bytes at
 `receipts/<retirement_id>-request.json`, alongside the distinct retirement
 receipt. This avoids requiring a planning request to bind the Git commit that
 contains itself. Initially observed source repositories must be clean and
-distinct. Writable checkpoints must retain their locked baseline as an
-ancestor; read-only dependencies remain at their exact locked commits and trees.
+backed by distinct Git repositories. Writable entries must map to their exact
+Git roots and retain their locked baseline as an ancestor. A read-only source
+dependency may map to an authenticated nested directory, as permitted by the
+preparation-owned repository map and source lock; retirement observes the
+complete backing Git repository and requires its exact locked commit, tree,
+role, and clean worktree. Nested writable or planning entries, duplicate
+backing repositories, path traversal, and reparse-backed aliases are rejected.
+The lock's `materialization_path` remains the producer's materialization label;
+retirement does not reinterpret it as a Git-relative path.
 
 A project-shell read-only planning repository may instead retain the exact
 owner-produced lifecycle dirt when it strictly contains the active workspace
