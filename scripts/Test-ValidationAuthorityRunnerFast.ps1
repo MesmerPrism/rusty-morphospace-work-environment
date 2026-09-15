@@ -92,10 +92,16 @@ function Get-RunnerFastFixtureModuleClosure {
         $moduleDirectory = [IO.Path]::GetDirectoryName($moduleAbsolute)
         $lines = [IO.File]::ReadAllLines($moduleAbsolute,[Text.UTF8Encoding]::new($false,$true))
         $literalVariables = @{}
-        $assignmentPattern = '^\s*\$(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:Join-Path\s+\$PSScriptRoot\s+|\[IO\.Path\]::Combine\(\$PSScriptRoot\s*,\s*)[''"](?<path>[^''"]+\.psm1)[''"]\)?'
+        $assignmentPattern = '^\s*\$(?:(?<scope>script):)?(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:Join-Path\s+\$PSScriptRoot\s+|\[IO\.Path\]::Combine\(\$PSScriptRoot\s*,\s*)[''"](?<path>[^''"]+\.psm1)[''"]\)?'
+        $fullPathAssignmentPattern = '^\s*\$(?:(?<scope>script):)?(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*\[IO\.Path\]::GetFullPath\(\(Join-Path\s+\$PSScriptRoot\s+[''"](?<path>[^''"]+\.psm1)[''"]\)\)\s*$'
         foreach ($line in $lines) {
             $assignment = [regex]::Match($line,$assignmentPattern,[Text.RegularExpressions.RegexOptions]::IgnoreCase)
-            if ($assignment.Success) { $literalVariables[[string]$assignment.Groups['name'].Value] = [string]$assignment.Groups['path'].Value }
+            if (-not $assignment.Success) { $assignment = [regex]::Match($line,$fullPathAssignmentPattern,[Text.RegularExpressions.RegexOptions]::IgnoreCase) }
+            if ($assignment.Success) {
+                $variableName = [string]$assignment.Groups['name'].Value
+                if ([string]$assignment.Groups['scope'].Value) { $variableName = "script:$variableName" }
+                $literalVariables[$variableName] = [string]$assignment.Groups['path'].Value
+            }
         }
         foreach ($line in $lines) {
             if ($line -notmatch '(?i)\bImport-Module\b') { continue }
@@ -104,9 +110,10 @@ function Get-RunnerFastFixtureModuleClosure {
             if ($matches.Count -eq 1) {
                 $importPath = [string]$matches[0].Groups['path'].Value
             } elseif ($matches.Count -eq 0) {
-                $variableImport = [regex]::Match($line,'(?i)\bImport-Module\s+\$(?<name>[A-Za-z_][A-Za-z0-9_]*)\b')
+                $variableImport = [regex]::Match($line,'(?i)\bImport-Module\s+\$(?:(?<scope>script):)?(?<name>[A-Za-z_][A-Za-z0-9_]*)\b')
                 if (-not $variableImport.Success) { throw "Authority runner fixture import is not one closed literal or audited variable edge: $modulePath" }
                 $variableName = [string]$variableImport.Groups['name'].Value
+                if ([string]$variableImport.Groups['scope'].Value) { $variableName = "script:$variableName" }
                 if ($literalVariables.ContainsKey($variableName)) {
                     $importPath = [string]$literalVariables[$variableName]
                 } else {
@@ -361,9 +368,13 @@ try {
     Write-TestText (Join-Path $closureFixture 'scripts\leaf.psm1') "Set-StrictMode -Version 2.0`n"
     Write-TestText (Join-Path $closureFixture 'scripts\missing-entry.ps1') "Import-Module (Join-Path `$PSScriptRoot 'absent.psm1') -Force`n"
     Write-TestText (Join-Path $closureFixture 'scripts\dynamic-entry.ps1') "`$module = 'leaf.psm1'`nImport-Module `$module -Force`n"
+    Write-TestText (Join-Path $closureFixture 'scripts\scoped-entry.ps1') "`$script:ScopedModulePath = Join-Path `$PSScriptRoot 'leaf.psm1'`nImport-Module `$script:ScopedModulePath`n"
+    Write-TestText (Join-Path $closureFixture 'scripts\full-path-entry.ps1') "`$path = [IO.Path]::GetFullPath((Join-Path `$PSScriptRoot 'leaf.psm1'))`nImport-Module `$path`n"
     Initialize-TestGitRepository $git $closureFixture 'fixture module closure'
     $closureProbe = @(Get-RunnerFastFixtureModuleClosure -Git $git -SourceRoot $closureFixture -SeedPaths @('scripts/root.ps1'))
     Assert-RunnerFast (($closureProbe -join ',') -ceq 'scripts/leaf.psm1,scripts/middle.psm1,scripts/root.ps1') 'tracked entrypoint and module import closure was not derived exactly'
+    $literalVariableProbe = @(Get-RunnerFastFixtureModuleClosure -Git $git -SourceRoot $closureFixture -SeedPaths @('scripts/scoped-entry.ps1','scripts/full-path-entry.ps1'))
+    Assert-RunnerFast (($literalVariableProbe -join ',') -ceq 'scripts/full-path-entry.ps1,scripts/leaf.psm1,scripts/scoped-entry.ps1') 'scoped or normalized literal module import closure was not derived exactly'
     foreach ($damagePath in @('scripts/missing-entry.ps1','scripts/dynamic-entry.ps1')) {
         $damageRejected = $false
         try { [void](Get-RunnerFastFixtureModuleClosure -Git $git -SourceRoot $closureFixture -SeedPaths @($damagePath)) } catch { $damageRejected = $true }

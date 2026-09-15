@@ -55,7 +55,7 @@ remain authoritative.
 | Work | Read |
 | --- | --- |
 | Project composition, module extraction, activation, and isolation | [Project Workspace Protocol](docs/PROJECT_WORKSPACE_PROTOCOL.md), [Module Lifecycle](docs/MODULE_LIFECYCLE.md), [Feature Activation](docs/FEATURE_ACTIVATION.md), [Project Isolation](docs/PROJECT_ISOLATION.md) |
-| Iteration lifecycle, scoped work, hosted observation, transactions, and recovery | [Autonomous Iteration](docs/AUTONOMOUS_ITERATION.md) |
+| Iteration lifecycle, scoped work, hosted observation, transactions and recovery; active additions within unchanged objectives/ceilings; optional fresh executor/router binding and pre-Freeze tooling upgrades separate from product pins | [Autonomous Iteration](docs/AUTONOMOUS_ITERATION.md), [Active Development Envelope Extension](docs/ACTIVE_DEVELOPMENT_ENVELOPE_EXTENSION.md), [Tooling Context](docs/TOOLING_CONTEXT.md) |
 | Ordinary continuation from adopted history | [Current Work Validation](docs/CURRENT_WORK_VALIDATION.md) |
 | Validation selection, affected checks, and evidence | [Validation](docs/VALIDATION.md), [Affected Validation](docs/AFFECTED_VALIDATION.md) |
 | Validator, policy, runner, or schema trust-root change | [External Validation Authority](docs/EXTERNAL_VALIDATION_AUTHORITY.md) |
@@ -76,10 +76,6 @@ For fresh work in an idle project, follow
 [Development Envelope Preparation](docs/DEVELOPMENT_ENVELOPE_PREPARATION.md)
 and [Development Unit Admission](docs/DEVELOPMENT_UNIT_ADMISSION.md), including
 exact owner roots and any retained proposed-unit retirement.
-For additions within an active unit's unchanged product objective and ceilings,
-use [Active Development Envelope Extension](docs/ACTIVE_DEVELOPMENT_ENVELOPE_EXTENSION.md).
-Fresh work may use [Tooling Context](docs/TOOLING_CONTEXT.md) to bind and upgrade
-its executor and installed routers separately from product source pins.
 
 For concurrent work, bind each source, build, and run to its declared exact
 identity. A closed feature lock controls activation; selection alone does not
