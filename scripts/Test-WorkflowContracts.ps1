@@ -30,6 +30,10 @@ if ($RepositoryMapPath) {
     $mapDocument = Get-Content -LiteralPath $RepositoryMapPath -Raw | ConvertFrom-Json
     foreach ($entry in @($mapDocument.repositories)) { $script:LocalRepositoryMap[[string]$entry.repo_id] = [string]$entry.path; $script:LocalRepositoryEntries[[string]$entry.repo_id]=$entry }
 }
+# Load the provenance dependency before the force-import sequence. Its nested
+# transition-ledger import force-reloads ProtocolCommon; loading it later can
+# remove this script's hash-command binding while recording a failure.
+Import-Module (Join-Path $RepoRoot 'scripts\BlockedSuccessorPreparation.psm1')
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceCompletedTransitionSemanticCorrection.psm1') -Force
 Import-Module (Join-Path $RepoRoot 'scripts\AdmissionCompletionTimestampRecovery.psm1') -Force
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceHistoricalBlockerResolutionIntentBindingCorrection.psm1') -Force
@@ -196,6 +200,32 @@ function Add-Failure {
     }) | Out-Null
 }
 
+function Assert-WorkflowProvenanceFailureBinding {
+    $module = Import-Module (Join-Path $RepoRoot 'scripts/DevelopmentEnvelopeProvenance.psm1') -PassThru
+    if ($null -eq $module) { throw 'Current development provenance module was not loaded.' }
+    $failureCount = $script:Failures.Count
+    $recordCount = $script:FailureRecords.Count
+    $captureCount = $script:HistoricalDebtCaptureUnsafeFailures.Count
+    $message = 'Current development provenance failed: cold-start diagnostic sentinel.'
+    try {
+        try { throw 'cold-start diagnostic sentinel.' }
+        catch { Add-Failure -Message "Current development provenance failed: $($_.Exception.Message)" }
+        if ($script:Failures.Count -ne ($failureCount + 1) -or
+            $script:FailureRecords.Count -ne ($recordCount + 1) -or
+            $script:Failures[$failureCount] -cne $message -or
+            $script:FailureRecords[$recordCount].message_sha256 -cne
+                (Get-MorphospaceSha256Bytes -Bytes ([Text.UTF8Encoding]::new($false).GetBytes($message)))) {
+            throw 'Current development provenance failure diagnostic was not preserved.'
+        }
+    } finally {
+        while ($script:Failures.Count -gt $failureCount) { $script:Failures.RemoveAt($script:Failures.Count - 1) }
+        while ($script:FailureRecords.Count -gt $recordCount) { $script:FailureRecords.RemoveAt($script:FailureRecords.Count - 1) }
+        while ($script:HistoricalDebtCaptureUnsafeFailures.Count -gt $captureCount) {
+            $script:HistoricalDebtCaptureUnsafeFailures.RemoveAt($script:HistoricalDebtCaptureUnsafeFailures.Count - 1)
+        }
+    }
+}
+
 function Get-HistoricalDebtLocusIdentity {
     param([Parameter(Mandatory = $true)][object]$Locus)
     $properties = @($Locus.PSObject.Properties.Name)
@@ -283,6 +313,7 @@ function Invoke-HistoricalDebtCaptureAttributionSelfTest {
     }
 }
 
+Assert-WorkflowProvenanceFailureBinding
 Invoke-HistoricalDebtCaptureAttributionSelfTest
 
 function New-HistoricalDebtUnitFailureAttribution {
