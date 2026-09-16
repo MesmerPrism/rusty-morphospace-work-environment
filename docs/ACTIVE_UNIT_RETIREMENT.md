@@ -31,15 +31,25 @@ Execution preserves its exact bytes at
 `receipts/<retirement_id>-request.json`, alongside the distinct retirement
 receipt. This avoids requiring a planning request to bind the Git commit that
 contains itself. Initially observed source repositories must be clean and
-distinct. Writable checkpoints must retain their locked baseline as an
-ancestor; read-only dependencies remain at their exact locked commits and trees.
+backed by distinct Git repositories. Writable entries must map to their exact
+Git roots and retain their locked baseline as an ancestor. A read-only source
+dependency may map to an authenticated nested directory, as permitted by the
+preparation-owned repository map and source lock; retirement observes the
+complete backing Git repository and requires its exact locked commit, tree,
+role, and clean worktree. Nested writable or planning entries, duplicate
+backing repositories, path traversal, and reparse-backed aliases are rejected.
+The lock's `materialization_path` remains the producer's materialization label;
+retirement does not reinterpret it as a Git-relative path.
 
 A project-shell read-only planning repository may instead retain the exact
 owner-produced lifecycle dirt when it strictly contains the active workspace
 and its HEAD and tree still equal the original preparation lock. This exception
 accepts only the final-byte projection of an authenticated
 `Prepare`/`Admit`/`Ready`/`Claim` chain, or its exact
-`Prepare`/`Admit`/`RetireProposed`/`Admit`/`Ready`/`Claim` replacement form.
+`Prepare`/`Admit`/`RetireProposed`/`Admit`/`Ready`/`Claim` replacement form,
+followed by zero or more contiguous same-unit `AmendActiveWriteScope`
+transactions. Every amendment is revalidated by its owning semantic verifier;
+no other post-Claim event qualifies.
 The verifier applies last-writer wins in ledger order and rejects staged
 changes, deletes, renames, conflicts, outside-workspace paths, pending
 artifacts, incomplete transactions, and target, artifact, intent, or completion
@@ -66,7 +76,9 @@ receives no exemption. The named replacement must still be absent.
 
 ## Prepare the replacement
 
-Once the project is idle, use ordinary `PrepareDevelopmentEnvelope` to review
+Once the project is idle, checkpoint the completed planning retirement so the
+next preparation observes a clean current planning source. Then use ordinary
+`PrepareDevelopmentEnvelope` to review
 the revised repository roots, feature closure, permissions, build and device
 ceilings. Bind fresh clean source identities. Then use `AdmitDevelopmentUnit`,
 `Ready`, `Inspect` and `Claim` for the named replacement.
@@ -86,6 +98,12 @@ interruption recovery, source/overlay drift, conflicting current authority,
 damaged transaction evidence and preservation of old bytes. Continue through
 fresh preparation, admission and ordinary claim; reject attempts to resurrect
 the old unit or use it as accepted evidence.
+
+The affected-validation registry partitions the focused retirement owner into
+bounded scenario leaves. The core leaf depends on every nested-source,
+amendment, recovery and damage leaf before it provides the retirement contract;
+one scenario cannot stand in for the complete focused result. Direct manual use
+of `Test-ActiveUnitRetirement.ps1 -SelfTest` still runs every scenario.
 
 Historical auditing remains separate. Later continuation must authenticate
 retirement after subsequent owner events without retrofitting new instruction

@@ -168,3 +168,21 @@ completed materialization/adoption. Embedded source-repository history is a
 retained snapshot. Route through the project's existing local repository map;
 do not put machine paths into portable instructions or restore the embedded
 snapshot as current state.
+
+An active unit may use the additive repository/root operation in
+[Active Development Envelope Extension](ACTIVE_DEVELOPMENT_ENVELOPE_EXTENSION.md).
+Its original preparation remains immutable. Current readers derive the effective
+project, feature lock, source composition and local repository map through the
+authenticated extension transactions. Existing product baselines remain the
+baseline for Freeze and retirement; an extension does not erase earlier work.
+Objective, feature/effect/permission ceilings, prerequisites, build/device scope
+and acceptance requirements cannot grow through this operation.
+
+Fresh preparations may opt into [Tooling Context](TOOLING_CONTEXT.md). Product
+source pins and the exact executor/installed-router context are separate
+bindings. A pre-Freeze upgrade changes only the tooling context after verifying
+the declared consumer protocol and the current product projection. Instruction
+review resolves installed routers from that context without inserting them into
+the product repository map. Generic recovery checks the same external bindings
+before completing writes. Existing preparations retain their original protocol;
+neither operation rewrites accepted history or grants product validation credit.

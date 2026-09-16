@@ -1,9 +1,10 @@
 Set-StrictMode -Version 2.0
 $ErrorActionPreference='Stop'
-Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
-Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1') -Force
-Import-Module (Join-Path $PSScriptRoot 'DevelopmentEnvelopeProvenance.psm1') -Force
-Import-Module (Join-Path $PSScriptRoot 'InheritedCandidateMaterialization.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1')
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1')
+Import-Module (Join-Path $PSScriptRoot 'DevelopmentEnvelopeProvenance.psm1')
+Import-Module (Join-Path $PSScriptRoot 'InheritedCandidateMaterialization.psm1')
+Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceSourceCompositionIdentity.psm1')
 
 function Invoke-MorphospaceCandidateGit {
     param([string]$Repository,[string[]]$Arguments,[string]$Context)
@@ -46,8 +47,16 @@ function Get-MorphospaceCandidateSourceComposition {
     $path=Resolve-MorphospaceWorkspacePath $Workspace $RelativePath -RequireLeaf
     $repoRoot=Split-Path $PSScriptRoot -Parent
     $composition=Read-MorphospaceProtocolJson $path
-    if([string]$composition.schema-cin@('rusty.morphospace.workflow.development_envelope_source_composition.v1','rusty.morphospace.workflow.development_envelope_source_composition.v2')){
-        $schemaFile=if([string]$composition.schema-ceq'rusty.morphospace.workflow.development_envelope_source_composition.v2'){'development-envelope-source-composition-v2.schema.json'}else{'development-envelope-source-composition-v1.schema.json'}
+    if([string]$composition.schema-ceq'rusty.morphospace.workflow.active_development_envelope_source_composition.v1'){
+        if(-not(Test-Json -Json (Get-Content -Raw -LiteralPath $path) -SchemaFile (Join-Path $repoRoot 'schemas/active-development-envelope-source-composition-v1.schema.json'))){throw 'Frozen candidate active envelope source composition is malformed.'}
+        if([string]$composition.project_id-cne$ProjectId-or[string]$composition.unit_id-cne$UnitId){throw 'Frozen candidate active envelope identity is detached.'}
+        $mapPath=Resolve-MorphospaceWorkspacePath $Workspace ([string]$composition.repository_map.path) -RequireLeaf
+        $proof=Test-MorphospaceEffectiveDevelopmentEnvelope -WorkspaceRoot $Workspace -UnitId $UnitId -RepositoryMapPath $mapPath
+        if([string]$proof.effective.source_composition_binding.path-cne$RelativePath-or[string]$proof.effective.source_composition_binding.raw_sha256-cne(Get-MorphospaceFileSha256 $path)){throw 'Frozen candidate active envelope source lock is detached from its owner lineage.'}
+        return $composition
+    }
+    if([string]$composition.schema-cin@('rusty.morphospace.workflow.development_envelope_source_composition.v1','rusty.morphospace.workflow.development_envelope_source_composition.v2','rusty.morphospace.workflow.development_envelope_source_composition.v3')){
+        $schemaFile="development-envelope-source-composition-$(([string]$composition.schema).Split('.')[-1]).schema.json"
         if(-not(Test-Json -Json (Get-Content -Raw -LiteralPath $path) -SchemaFile (Join-Path $repoRoot "schemas\$schemaFile"))){throw 'Frozen candidate preparation-owned source composition is malformed.'}
         $admission=Get-MorphospaceCandidatePreparationProvenance $Workspace $UnitId;$preparation=$admission.document.preparation;[void](Test-MorphospaceDevelopmentUnitPreparation -WorkspaceRoot $Workspace -Admission $admission.document -Phase Freeze)
         if([string]$preparation.source_composition_path-cne$RelativePath-or[string]$preparation.source_composition_sha256-cne(Get-MorphospaceFileSha256 $path)){throw 'Frozen candidate preparation source lock is not the exact admitted lock.'}
@@ -115,6 +124,13 @@ function Assert-MorphospaceCandidateRepositoryClosure {
     param([string]$Workspace,[object]$Candidate,[object]$Unit,[object]$FrozenTransition=$null)
     $map=Get-MorphospaceCandidateRepositoryMap $Workspace ([string]$Candidate.expected.repository_map_path)
     $composition=Get-MorphospaceCandidateSourceComposition $Workspace ([string]$Candidate.expected.source_composition_path) ([string]$Candidate.project_id) ([string]$Candidate.unit_id)
+    if([string]$composition.schema-ceq'rusty.morphospace.workflow.active_development_envelope_source_composition.v1'){
+        $boundMapPath=[string]$composition.repository_map.path;$boundMapSha=[string]$composition.repository_map.raw_sha256
+    }elseif([string]$composition.schema-cin@('rusty.morphospace.workflow.development_envelope_source_composition.v1','rusty.morphospace.workflow.development_envelope_source_composition.v2','rusty.morphospace.workflow.development_envelope_source_composition.v3')){
+        $admission=Get-MorphospaceCandidatePreparationProvenance $Workspace ([string]$Candidate.unit_id)
+        $boundMapPath=[string]$admission.document.expected.repository_map_path;$boundMapSha=[string]$admission.document.expected.repository_map_sha256
+    }else{$boundMapPath='';$boundMapSha=''}
+    if($boundMapPath-and([string]$Candidate.expected.repository_map_path-cne$boundMapPath-or[string]$Candidate.expected.repository_map_sha256-cne$boundMapSha-or(Get-MorphospaceFileSha256 (Resolve-MorphospaceWorkspacePath $Workspace $boundMapPath -RequireLeaf))-cne$boundMapSha)){throw 'Frozen candidate repository map is detached from its prepared or extended owner binding.'}
     $finalById=@{};foreach($final in @($Candidate.final_repositories)){
         $id=[string]$final.repo_id
         if(-not$id-or$finalById.ContainsKey($id)){throw "Frozen candidate final repositories repeat or omit '$id'."}
@@ -126,7 +142,7 @@ function Assert-MorphospaceCandidateRepositoryClosure {
         $changedById[$id]=$changed
     }
     $scopeById=@{};foreach($scope in @($Unit.allowed_repositories)){if($scopeById.ContainsKey([string]$scope.repo_id)){throw 'Active unit repeats a repository scope.'};$scopeById[[string]$scope.repo_id]=$scope}
-    $compositionById=@{};foreach($row in @($composition.repositories)){
+    $compositionById=@{};foreach($row in @(Get-MorphospaceSourceCompositionRepositoryPins $composition)){
         $id=[string]$row.repo_id
         if(-not$id-or$compositionById.ContainsKey($id)){throw "Frozen candidate source composition repeats or omits '$id'."}
         $compositionById[$id]=$row
@@ -235,6 +251,9 @@ function Invoke-MorphospaceFreezeCandidate {
     if(-not(Test-Json -Json (Get-Content -Raw $input) -SchemaFile (Join-Path $repoRoot 'schemas\candidate-freeze-v1.schema.json'))){throw 'Candidate freeze does not satisfy its schema.'}
     $candidate=Read-MorphospaceProtocolJson $input;$project=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace 'project.spec.json' -RequireLeaf);$state=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace 'workspace.state.json' -RequireLeaf);$unitPath="iteration-units/$UnitId.json";$unit=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace $unitPath -RequireLeaf);$featureLock=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace 'feature.lock.json' -RequireLeaf);$eventsPath=Resolve-MorphospaceWorkspacePath $workspace 'iteration-events.jsonl' -RequireLeaf;$events=@(Get-Content $eventsPath|Where-Object{$_}|ForEach-Object{$_|ConvertFrom-Json});$tail=$events[-1]
     if([string]$candidate.project_id -cne [string]$project.project_id -or [string]$candidate.unit_id -cne $UnitId -or [string]$unit.status -cne 'active' -or [string]$state.current_unit -cne $UnitId){throw 'FreezeCandidate requires the matching active current unit.'}
+    if($unit.PSObject.Properties.Name-contains'tooling_context'){
+        [void](Get-MorphospaceUnitToolingContextObservation -WorkspaceRoot $workspace -UnitId $UnitId -Action FreezeCandidate -OwnerModule $MyInvocation.MyCommand.Module)
+    }
     [void](Test-MorphospaceInheritedCandidateMaterializationGate -WorkspaceRoot $workspace -Unit $unit)
     if(-not($unit.PSObject.Properties.Name -contains 'agent_scope_assessment')){throw 'FreezeCandidate is reserved for development-envelope admitted units.'}
     $inputHash=Get-MorphospaceFileSha256 $input;$outRelative="receipts/$([string]$candidate.freeze_id).json"

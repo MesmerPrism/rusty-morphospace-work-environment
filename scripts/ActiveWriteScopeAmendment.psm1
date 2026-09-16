@@ -75,6 +75,136 @@ function Assert-ActiveWriteScopeProtocolDocument {
     }
 }
 
+function Assert-ActiveWriteScopeHistoricalTransition {
+    [CmdletBinding()]param(
+        [Parameter(Mandatory)][string]$WorkspaceRoot,
+        [Parameter(Mandatory)][object]$ExpectedEvent,
+        [Parameter(Mandatory)][object]$Transition
+    )
+    $workspace = [IO.Path]::GetFullPath($WorkspaceRoot)
+    $repoRoot = Split-Path $PSScriptRoot -Parent
+    $eventId = [string]$ExpectedEvent.event_id
+    if ($eventId -cnotmatch '^(?<amendment>[a-z0-9][a-z0-9-]{1,127})-recorded$' -or
+        [string]$ExpectedEvent.event_type -cne 'state-transition' -or @($ExpectedEvent.receipts).Count -ne 1) {
+        throw 'Historical active write-scope amendment event identity is invalid.'
+    }
+    $amendmentId = [string]$Matches.amendment
+    $transactionId = "$eventId-transition"
+    $proof = $Transition
+    $intent = $proof.intent
+    if ([string]$intent.schema -cne 'rusty.morphospace.workflow.transition_ledger_intent.v3' -or
+        [string]$intent.transaction_id -cne $transactionId -or
+        [string]$intent.state.path -cne 'workspace.state.json' -or
+        [string]$intent.unit.path -cne "iteration-units/$([string]$ExpectedEvent.unit_id).json" -or
+        [string]$intent.events.path -cne 'iteration-events.jsonl' -or
+        (Get-MorphospaceCanonicalJsonSha256 $intent.event) -cne (Get-MorphospaceCanonicalJsonSha256 $ExpectedEvent)) {
+        throw 'Historical active write-scope amendment transaction is detached.'
+    }
+    $artifacts = @($intent.artifacts)
+    $receiptPath = [string]$ExpectedEvent.receipts[0]
+    if ($artifacts.Count -ne 1 -or [string]$artifacts[0].path -cne $receiptPath -or
+        $receiptPath -cne "receipts/$amendmentId.json") {
+        throw 'Historical active write-scope amendment artifact identity is invalid.'
+    }
+    $artifactBytes = [Convert]::FromBase64String([string]$artifacts[0].bytes_base64)
+    if ((Get-MorphospaceSha256Bytes $artifactBytes) -cne [string]$artifacts[0].sha256) {
+        throw 'Historical active write-scope amendment artifact payload is detached.'
+    }
+    $receiptAbsolute = Resolve-MorphospaceWorkspacePath $workspace $receiptPath -RequireLeaf
+    if ((Get-MorphospaceFileSha256 $receiptAbsolute) -cne [string]$artifacts[0].sha256) {
+        throw 'Historical active write-scope amendment receipt bytes changed.'
+    }
+    $amendment = ConvertFrom-MorphospaceProtocolJsonBytes $artifactBytes
+    if (-not (Test-Json -Json ($amendment | ConvertTo-Json -Depth 100 -Compress) -SchemaFile (Join-Path $repoRoot 'schemas/active-write-scope-amendment-v1.schema.json'))) {
+        throw 'Historical active write-scope amendment receipt is invalid.'
+    }
+    if ([string]$amendment.amendment_id -cne $amendmentId -or
+        [string]$amendment.project_id -cne [string]$ExpectedEvent.project_id -or
+        [string]$amendment.unit_id -cne [string]$ExpectedEvent.unit_id -or
+        [string]$amendment.expected.current_unit -cne [string]$ExpectedEvent.unit_id -or
+        [string]$intent.target.unit.document.unit_id -cne [string]$ExpectedEvent.unit_id -or
+        [string]$intent.target.unit.document.status -cne 'active' -or
+        [string]$intent.target.state.document.current_unit -cne [string]$ExpectedEvent.unit_id -or
+        [string]$intent.target.state.document.last_event_id -cne $eventId) {
+        throw 'Historical active write-scope amendment endpoint is detached.'
+    }
+    $targetUnit = $intent.target.unit.document
+    $workMode = if ($targetUnit.PSObject.Properties.Name -contains 'work_mode') { [string]$targetUnit.work_mode } else { 'feature' }
+    if ($workMode -cne 'feature' -or $targetUnit.PSObject.Properties.Name -contains 'candidate_freeze') {
+        throw 'Historical active write-scope amendment admitted authority proof is detached.'
+    }
+    $enveloped = $targetUnit.PSObject.Properties.Name -contains 'agent_scope_assessment'
+    $assessmentRows = @()
+    if ($enveloped) {
+        foreach ($field in @('semantic_rationale','ownership_proof','source_composition')) {
+            if (-not ($amendment.PSObject.Properties.Name -contains $field)) { throw "Historical admitted-unit amendment lacks $field." }
+        }
+        if ([string]$amendment.ownership_proof.repo_id -cne [string]$amendment.repository_id -or
+            [string]$targetUnit.source_composition.mode -cne [string]$amendment.source_composition.mode -or
+            [string]$targetUnit.source_composition.lock_path -cne [string]$amendment.source_composition.lock_path) { throw 'Historical active write-scope amendment admitted authority proof is detached.' }
+        $sourceLock = Resolve-MorphospaceWorkspacePath $workspace ([string]$amendment.source_composition.lock_path) -RequireLeaf
+        if ((Get-MorphospaceFileSha256 $sourceLock) -cne [string]$amendment.source_composition.lock_sha256) { throw 'Historical active write-scope amendment source lock changed.' }
+        $assessmentRows = @($targetUnit.agent_scope_assessment.owner_repositories | Where-Object { [string]$_.repo_id -ceq [string]$amendment.repository_id })
+        if ($assessmentRows.Count -ne 1) { throw 'Historical active write-scope amendment is outside its admitted owner envelope.' }
+    }
+    $projects = @($intent.additional_projections)
+    if ($projects.Count -ne 1 -or [string]$projects[0].path -cne 'project.spec.json' -or
+        [string]$projects[0].pre_sha256 -cne [string]$projects[0].target_sha256 -or
+        (Get-MorphospaceCanonicalJsonSha256 $projects[0].document) -cne [string]$projects[0].target_sha256 -or
+        [string]$amendment.expected.project_sha256 -cne [string]$projects[0].pre_sha256 -or
+        [int]$amendment.expected.project_revision -ne [int]$projects[0].document.revision) {
+        throw 'Historical active write-scope amendment project projection is detached.'
+    }
+    $before = @(Assert-ActiveWriteScopePathSet -Paths @($amendment.before_allowed_paths) -Name 'Historical amendment before paths')
+    $after = @(Assert-ActiveWriteScopePathSet -Paths @($amendment.after_allowed_paths) -Name 'Historical amendment after paths')
+    if ($after.Count -le $before.Count) { throw 'Historical active write-scope amendment is not additive.' }
+    $afterSet = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($path in $after) { [void]$afterSet.Add($path) }
+    foreach ($path in $before) { if (-not $afterSet.Contains($path)) { throw 'Historical active write-scope amendment removes a path.' } }
+    $projectRows = @($projects[0].document.repositories | Where-Object { [string]$_.repo_id -ceq [string]$amendment.repository_id })
+    $targetRows = @($intent.target.unit.document.allowed_repositories | Where-Object { [string]$_.repo_id -ceq [string]$amendment.repository_id })
+    if ($projectRows.Count -ne 1 -or $targetRows.Count -ne 1 -or
+        (Get-ActiveWriteScopePathSetHash @($targetRows[0].allowed_paths)) -cne (Get-ActiveWriteScopePathSetHash $after)) {
+        throw 'Historical active write-scope amendment target paths are detached.'
+    }
+    foreach ($path in $after) {
+        if (-not (Test-ActiveWriteScopePathAllowed $path @($projectRows[0].allowed_paths))) { throw 'Historical active write-scope amendment exceeds project scope.' }
+        if ($enveloped) {
+            $inAssessment = @($assessmentRows[0].source_roots | Where-Object { $path.TrimEnd('/') -eq ([string]$_).TrimEnd('/') -or $path.TrimEnd('/').StartsWith(([string]$_).TrimEnd('/') + '/', [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0
+            $tracked = @($amendment.ownership_proof.tracked_paths | Where-Object { [string]$_ -ceq $path }).Count -eq 1
+            if (-not $inAssessment -or -not $tracked) { throw 'Historical active write-scope amendment path lacks exact admitted owner proof.' }
+        }
+    }
+    $preUnit = Copy-ActiveWriteScopeDocument $intent.target.unit.document
+    $preRows = @($preUnit.allowed_repositories | Where-Object { [string]$_.repo_id -ceq [string]$amendment.repository_id })
+    if ($preRows.Count -ne 1) { throw 'Historical active write-scope amendment preimage repository is ambiguous.' }
+    if ($before.Count -eq 0) {
+        $preUnit.allowed_repositories = @($preUnit.allowed_repositories | Where-Object { [string]$_.repo_id -cne [string]$amendment.repository_id })
+    } else {
+        $preRows[0].allowed_paths = @(Copy-ActiveWriteScopeDocument $before)
+    }
+    $preState = Copy-ActiveWriteScopeDocument $intent.target.state.document
+    $preState.last_event_id = [string]$amendment.expected.event_tail_id
+    if ((Get-MorphospaceCanonicalJsonSha256 $preUnit) -cne [string]$intent.pre.unit.sha256) { throw 'Historical active write-scope amendment unit preimage is detached.' }
+    if ((Get-MorphospaceCanonicalJsonSha256 $preState) -cne [string]$intent.pre.state.sha256) { throw 'Historical active write-scope amendment state preimage is detached.' }
+    if ([string]$amendment.expected.unit_sha256 -cne [string]$intent.pre.unit.sha256 -or
+        [string]$amendment.expected.state_sha256 -cne [string]$intent.pre.state.sha256) { throw 'Historical active write-scope amendment expected document hashes are detached.' }
+    if ([string]$amendment.expected.events_sha256 -cne [string]$intent.expected.events_sha256 -or
+        [long]$amendment.expected.events_length -ne [long]$intent.expected.events_length -or
+        [string]$amendment.expected.event_tail_id -cne [string]$intent.expected.event_tail_id) { throw 'Historical active write-scope amendment ledger preimage is detached.' }
+    return $proof
+}
+
+function Test-MorphospaceHistoricalActiveWriteScopeAmendment {
+    [CmdletBinding()]param([Parameter(Mandatory)][string]$WorkspaceRoot,[Parameter(Mandatory)][object]$ExpectedEvent)
+    $transactionId = "$([string]$ExpectedEvent.event_id)-transition"
+    $proof = Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $WorkspaceRoot -TransactionId $transactionId `
+        -ExpectedStatePath 'workspace.state.json' `
+        -ExpectedUnitPath "iteration-units/$([string]$ExpectedEvent.unit_id).json" `
+        -ExpectedEventsPath 'iteration-events.jsonl'
+    Assert-ActiveWriteScopeHistoricalTransition -WorkspaceRoot $WorkspaceRoot -ExpectedEvent $ExpectedEvent -Transition $proof
+}
+
 function Invoke-MorphospaceAmendActiveWriteScope {
     [CmdletBinding()]param(
         [Parameter(Mandatory)][string]$WorkspaceRoot,
@@ -255,6 +385,7 @@ function Invoke-MorphospaceAmendActiveWriteScope {
             -ExpectedEventTailId $tailId -ExpectedEventsSha256 $eventsHash -ExpectedEventsLength $eventsLength `
             -AdditionalProjections @([pscustomobject]@{path=$projectRelative;expected_sha256=$projectHash;document=$project}) `
             -Artifacts @([pscustomobject]@{source_path=$amendmentPath;path=$outRelative;sha256=$amendmentHash}) | Out-Null
+        [void](Test-MorphospaceHistoricalActiveWriteScopeAmendment -WorkspaceRoot $workspace -ExpectedEvent $event)
     }
 
     $result = [pscustomobject][ordered]@{
@@ -278,4 +409,4 @@ function Invoke-MorphospaceAmendActiveWriteScope {
     return $result
 }
 
-Export-ModuleMember -Function Invoke-MorphospaceAmendActiveWriteScope
+Export-ModuleMember -Function Invoke-MorphospaceAmendActiveWriteScope,Test-MorphospaceHistoricalActiveWriteScopeAmendment

@@ -2,14 +2,253 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/development-envelope-preparation-receipt-v1.schema.json",
   "title": "Prepared idle-project development envelope receipt",
-  "type": "object", "additionalProperties": false,
-  "required": ["schema", "preparation_id", "project_id", "predecessor_unit_id", "input_sha256", "envelope", "project_sha256", "feature_lock_sha256", "source_composition", "does_not_prove"],
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "preparation_id",
+    "project_id",
+    "predecessor_unit_id",
+    "input_sha256",
+    "envelope",
+    "project_sha256",
+    "feature_lock_sha256",
+    "source_composition",
+    "does_not_prove"
+  ],
   "properties": {
-    "schema": { "const": "rusty.morphospace.workflow.development_envelope_preparation_receipt.v1" },
-    "preparation_id": { "$ref": "#/$defs/id" }, "project_id": { "$ref": "#/$defs/id" }, "predecessor_unit_id": { "$ref": "#/$defs/id" }, "input_sha256": { "$ref": "#/$defs/hash" },
-    "envelope": { "type": "object" }, "project_sha256": { "$ref": "#/$defs/hash" }, "feature_lock_sha256": { "$ref": "#/$defs/hash" },
-    "source_composition": { "type": "object", "additionalProperties": false, "required": ["path", "sha256"], "properties": { "path": { "$ref": "#/$defs/path" }, "sha256": { "$ref": "#/$defs/hash", "description": "Canonical-JSON SHA-256 of the prepared source-composition document; this is not its raw-file hash." } } },
-    "does_not_prove": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
+    "schema": {
+      "const": "rusty.morphospace.workflow.development_envelope_preparation_receipt.v1"
+    },
+    "preparation_id": {
+      "$ref": "#/$defs/id"
+    },
+    "project_id": {
+      "$ref": "#/$defs/id"
+    },
+    "predecessor_unit_id": {
+      "$ref": "#/$defs/id"
+    },
+    "input_sha256": {
+      "$ref": "#/$defs/hash"
+    },
+    "envelope": {
+      "type": "object"
+    },
+    "project_sha256": {
+      "$ref": "#/$defs/hash"
+    },
+    "feature_lock_sha256": {
+      "$ref": "#/$defs/hash"
+    },
+    "source_composition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/path"
+        },
+        "sha256": {
+          "$ref": "#/$defs/hash",
+          "description": "Canonical-JSON SHA-256 of the prepared source-composition document; this is not its raw-file hash."
+        }
+      }
+    },
+    "tooling_context": {
+      "$ref": "#/$defs/toolingPointer"
+    },
+    "legacy_tooling_reclassification": {
+      "$ref": "#/$defs/legacyToolingReclassification"
+    },
+    "does_not_prove": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
   },
-  "$defs": { "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" }, "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }, "path": { "type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$" } }
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,127}$"
+    },
+    "hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "path": {
+      "type": "string",
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$"
+    },
+    "toolingPointer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256",
+        "canonical_sha256",
+        "protocol_id"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/path"
+        },
+        "sha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "canonical_sha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "protocol_id": {
+          "const": "tooling-context-v1"
+        }
+      }
+    },
+    "oid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/path"
+        },
+        "sha256": {
+          "$ref": "#/$defs/hash"
+        }
+      }
+    },
+    "legacyToolingReclassification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "reclassification_id",
+        "old_repository_map",
+        "target_repository_map",
+        "removed_tool_repositories",
+        "status",
+        "does_not_prove"
+      ],
+      "properties": {
+        "schema": {
+          "const": "rusty.morphospace.workflow.legacy_tooling_reclassification.v1"
+        },
+        "reclassification_id": {
+          "$ref": "#/$defs/id"
+        },
+        "old_repository_map": {
+          "$ref": "#/$defs/file"
+        },
+        "target_repository_map": {
+          "$ref": "#/$defs/file"
+        },
+        "removed_tool_repositories": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "repo_id",
+              "project_row_sha256",
+              "map_row_sha256",
+              "source_composition",
+              "source_row_sha256",
+              "commit",
+              "tree",
+              "materialization_path",
+              "canonical_allowed_paths",
+              "router_skill_ids"
+            ],
+            "properties": {
+              "repo_id": {
+                "$ref": "#/$defs/id"
+              },
+              "project_row_sha256": {
+                "$ref": "#/$defs/hash"
+              },
+              "map_row_sha256": {
+                "$ref": "#/$defs/hash"
+              },
+              "source_composition": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "path",
+                  "sha256",
+                  "canonical_sha256"
+                ],
+                "properties": {
+                  "path": {
+                    "$ref": "#/$defs/path"
+                  },
+                  "sha256": {
+                    "$ref": "#/$defs/hash"
+                  },
+                  "canonical_sha256": {
+                    "$ref": "#/$defs/hash"
+                  }
+                }
+              },
+              "source_row_sha256": {
+                "$ref": "#/$defs/hash"
+              },
+              "commit": {
+                "$ref": "#/$defs/oid"
+              },
+              "tree": {
+                "$ref": "#/$defs/oid"
+              },
+              "materialization_path": {
+                "$ref": "#/$defs/id"
+              },
+              "canonical_allowed_paths": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "$ref": "#/$defs/path"
+                }
+              },
+              "router_skill_ids": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "$ref": "#/$defs/id"
+                }
+              }
+            }
+          }
+        },
+        "status": {
+          "const": "reviewed"
+        },
+        "does_not_prove": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
 }

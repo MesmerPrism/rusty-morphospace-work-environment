@@ -94,7 +94,8 @@ function Test-MorphospaceActiveUnitContractReviewCompatibility {
         [Parameter(Mandatory)][object]$State,
         [Parameter(Mandatory)][object]$Lifecycle,
         [ValidateSet('Aggregate', 'Inspect', 'Ready', 'Claim')][string]$Phase = 'Aggregate',
-        [hashtable]$RepositoryMap = @{}
+        [hashtable]$RepositoryMap = @{},
+        [string]$WorkspaceRoot = ''
     )
 
     $requiredUnitProperties = @('unit_id', 'status', 'work_mode', 'instruction_impact', 'change_categories', 'instruction_surfaces', 'allowed_repositories')
@@ -103,6 +104,14 @@ function Test-MorphospaceActiveUnitContractReviewCompatibility {
         return $false
     }
     if ($Phase -in @('Ready', 'Inspect', 'Claim') -and $RepositoryMap.Count -eq 0) { return $false }
+    $hasToolingContext=$Unit.PSObject.Properties.Name-contains'tooling_context'
+    if($hasToolingContext){
+        if(-not$WorkspaceRoot-or$RepositoryMap.Count-eq0){return $false}
+        try{
+            $module=Import-Module (Join-Path $PSScriptRoot '../DevelopmentEnvelopeProvenance.psm1') -PassThru
+            $RepositoryMap=&$module {param($root,$unit,$map) Get-MorphospaceToolingInstructionRepositoryMap -WorkspaceRoot $root -Unit $unit -RepositoryMap $map} $WorkspaceRoot $Unit $RepositoryMap
+        }catch{return $false}
+    }
     if ([string]::IsNullOrWhiteSpace([string]$Unit.unit_id) -or
         [string]$Unit.work_mode -cne 'feature' -or
         [string]$Unit.instruction_impact -cne 'update') {
@@ -195,7 +204,7 @@ function Test-MorphospaceActiveUnitContractReviewCompatibility {
     if ($RepositoryMap.Count -gt 0) {
         $registeredRoots = @($RepositoryMap.Values | Where-Object {
             [string]$_.repo_id -ceq 'skill-surfaces' -and
-            [string]$_.role -ceq 'source' -and
+            [string]$_.role -ceq $(if($hasToolingContext){'tooling'}else{'source'}) -and
             @($_.aliases).Count -eq 1 -and [string](@($_.aliases)[0]) -ceq 'skills-root'
         })
         if ($registeredRoots.Count -ne 1) { return $false }
@@ -214,7 +223,7 @@ function Test-MorphospaceActiveUnitContractReviewCompatibility {
             if (-not $allowedRoot -or (Test-MorphospaceActiveUnitContractReviewRootOverlap -Left $skillRoot -Right $allowedRoot)) { return $false }
         }
         foreach ($skillId in $expectedSkillIds) {
-            if (-not (Test-MorphospaceActiveUnitContractReviewTrackedSkillBinding -SkillRoot $skillRoot -SkillId $skillId)) { return $false }
+            if (-not $hasToolingContext -and -not (Test-MorphospaceActiveUnitContractReviewTrackedSkillBinding -SkillRoot $skillRoot -SkillId $skillId)) { return $false }
         }
     }
     return $true

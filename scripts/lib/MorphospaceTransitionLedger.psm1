@@ -743,6 +743,64 @@ function Test-MorphospaceCommittedTransitionLedger {
         }
     } finally {Exit-MorphospaceWorkspaceMutex $lock}
 }
+function Assert-MorphospaceLedgerExternalOwnerBindings {
+    param([string]$WorkspaceRoot,[object]$Intent,[object]$CurrentUnit=$null,[switch]$BeforeIntent)
+    # These two actions bind inputs outside the mutable state/unit projections.
+    # Recover must recheck the same owner predicates before installing artifacts
+    # or completing a partial projection. Existing intent kinds retain their
+    # original contract and acquire no new historical prerequisites.
+    if($null-eq$CurrentUnit){$CurrentUnit=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $WorkspaceRoot ([string]$Intent.unit.path) -RequireLeaf)}
+    $beforeTooling=$CurrentUnit.PSObject.Properties['tooling_context']
+    $afterTooling=$Intent.target.unit.document.PSObject.Properties['tooling_context']
+    $toolingUpgrade=$false
+    foreach($artifact in @($Intent.artifacts)){
+        try{$document=ConvertFrom-MorphospaceProtocolJsonBytes ([Convert]::FromBase64String([string]$artifact.bytes_base64))}catch{continue}
+        if($null-ne$document-and$document.PSObject.Properties.Name-contains'schema'-and[string]$document.schema-ceq'rusty.morphospace.workflow.tooling_context_upgrade.v1'){$toolingUpgrade=$true}
+    }
+    if(-not$toolingUpgrade){
+        if(($null-eq$beforeTooling)-ne($null-eq$afterTooling)){throw 'Transition may not add or remove an admitted tooling context.'}
+        if($null-ne$beforeTooling-and(Get-MorphospaceCanonicalJsonSha256 $beforeTooling.Value)-cne(Get-MorphospaceCanonicalJsonSha256 $afterTooling.Value)){throw 'Transition changes tooling context outside its upgrade owner action.'}
+    }
+    if($BeforeIntent-and$null-eq$afterTooling-and-not$toolingUpgrade){return}
+    if([string]$Intent.schema-cne$script:MorphospaceTransitionIntentV6){
+        if($toolingUpgrade){throw 'Tooling-context upgrade requires a raw-preimage v6 transition.'}
+        if($Intent.target.unit.document.PSObject.Properties.Name-contains'tooling_context'){
+            $toolingExecutorModule=Import-Module (Join-Path $PSScriptRoot '../DevelopmentEnvelopeProvenance.psm1') -PassThru
+            [void](&$toolingExecutorModule {param($root,$binding,$ownerModule) Assert-MorphospaceToolingContextExecutor -WorkspaceRoot $root -Binding $binding -Action Recover -OwnerModule $ownerModule} $WorkspaceRoot $Intent.target.unit.document.tooling_context $MyInvocation.MyCommand.Module)
+        }
+        return
+    }
+    $guards=@{
+        'rusty.morphospace.workflow.active_development_envelope_extension.v1'=@('ActiveDevelopmentEnvelopeExtension.psm1','Assert-MorphospaceActiveEnvelopeExtensionRecoveryBindings')
+        'rusty.morphospace.workflow.tooling_context_upgrade.v1'=@('ToolingContextUpgrade.psm1','Assert-MorphospaceToolingContextUpgradeRecoveryBindings')
+    }
+    $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach($artifact in @($Intent.artifacts)){
+        $bytes=[Convert]::FromBase64String([string]$artifact.bytes_base64)
+        if((Get-MorphospaceSha256Bytes $bytes)-cne[string]$artifact.sha256){throw 'Transition external-binding artifact payload is detached.'}
+        # Generic ledger artifacts were not historically restricted to JSON.
+        try{$document=ConvertFrom-MorphospaceProtocolJsonBytes $bytes}catch{continue}
+        if($null-eq$document-or-not($document.PSObject.Properties.Name-contains'schema')){continue}
+        $schema=[string]$document.schema
+        if(-not$guards.ContainsKey($schema)){continue}
+        if(-not$seen.Add($schema)){throw 'Transition external-binding request is duplicated.'}
+        if([string]$Intent.schema-cne$script:MorphospaceTransitionIntentV6){throw 'Transition external bindings require raw-preimage intent v6.'}
+        if($schema-ceq'rusty.morphospace.workflow.active_development_envelope_extension.v1'){
+            if(-not$BeforeIntent){
+                $extensionOwnerModule=Import-Module (Join-Path $PSScriptRoot '../ActiveDevelopmentEnvelopeExtension.psm1') -PassThru
+                $null=&$extensionOwnerModule {param($root,$intent) Assert-MorphospaceActiveEnvelopeExtensionRecoveryBindings -WorkspaceRoot $root -Intent $intent} $WorkspaceRoot $Intent
+            }
+        }else{
+            $upgradeOwnerModule=Import-Module (Join-Path $PSScriptRoot '../ToolingContextUpgrade.psm1') -PassThru
+            $null=&$upgradeOwnerModule {param($root,$intent) Assert-MorphospaceToolingContextUpgradeRecoveryBindings -WorkspaceRoot $root -Intent $intent} $WorkspaceRoot $Intent
+        }
+    }
+    if($seen.Count-gt1){throw 'Transition mixes distinct external-binding owner actions.'}
+    if(-not$seen.Contains('rusty.morphospace.workflow.tooling_context_upgrade.v1')-and$Intent.target.unit.document.PSObject.Properties.Name-contains'tooling_context'){
+        $toolingExecutorModule=Import-Module (Join-Path $PSScriptRoot '../DevelopmentEnvelopeProvenance.psm1') -PassThru
+        [void](&$toolingExecutorModule {param($root,$binding,$ownerModule) Assert-MorphospaceToolingContextExecutor -WorkspaceRoot $root -Binding $binding -Action Recover -OwnerModule $ownerModule} $WorkspaceRoot $Intent.target.unit.document.tooling_context $MyInvocation.MyCommand.Module)
+    }
+}
 function Complete-MorphospaceTransitionLedger {
     param([string]$WorkspaceRoot,[string]$TransactionId,[switch]$Repair,[ValidateSet('none','after-intent','after-artifact','after-projection','after-event')][string]$FaultAfter='none')
     $workspace=[IO.Path]::GetFullPath($WorkspaceRoot);$intentRelative=Get-MorphospaceLedgerPath $workspace $TransactionId intent;$completionRelative=Get-MorphospaceLedgerPath $workspace $TransactionId completion
@@ -757,6 +815,7 @@ function Complete-MorphospaceTransitionLedger {
             Assert-MorphospaceLedgerCommittedCompletion $workspace $TransactionId $intentRelative $intentAbsolute $intent $completionAbsolute
             return [pscustomobject]@{transaction_id=$TransactionId;status='already-committed'}
         }
+        Assert-MorphospaceLedgerExternalOwnerBindings -WorkspaceRoot $workspace -Intent $intent
         $stateAbsolute=Resolve-MorphospaceWorkspacePath $workspace ([string]$intent.state.path) -RequireLeaf
         $unitAbsolute=Resolve-MorphospaceWorkspacePath $workspace ([string]$intent.unit.path) -RequireLeaf
         $eventsAbsolute=Resolve-MorphospaceWorkspacePath -WorkspaceRoot $workspace -RelativePath ([string]$intent.events.path) -RequireLeaf
@@ -1060,6 +1119,7 @@ function Start-MorphospaceTransitionLedger {
         $intentFields.status='prepared'
         $intent=[pscustomobject]$intentFields
         Assert-MorphospaceLedgerIntent $intent $TransactionId
+        Assert-MorphospaceLedgerExternalOwnerBindings -WorkspaceRoot $workspace -Intent $intent -CurrentUnit $unit -BeforeIntent
         if($ExpectedPreUnitRawSha256-and(Get-MorphospaceLedgerBoundPreUnitRawSha256 $intent)-cne$ExpectedPreUnitRawSha256){
             throw 'Raw pre-unit CAS is not durably bound by the transition-owned receipt artifact.'
         }

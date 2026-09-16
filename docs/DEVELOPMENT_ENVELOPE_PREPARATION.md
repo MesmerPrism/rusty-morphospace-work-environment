@@ -134,6 +134,51 @@ exact authored bytes. These are distinct from the raw-file SHA-256 that a later
 admission supplies for its live workspace preimage; neither hash domain may be
 substituted for the other.
 
+A fresh ordinary request may opt into `tooling_context`. The descriptor names a
+portable context artifact, an ignored `local/` resolver-map binding, exact
+executor metadata and a finite closed import closure, exact managed-router
+records/files, and the fixed `tooling-context-v1` compatibility protocol.
+Preparation observes a clean executor HEAD/tree/origin and the installed router
+files through that resolver. The executor root must be the checkout actually
+running preparation and the closure must contain the preparation module.
+Preparation never installs or updates tooling.
+
+This opt-in produces source-composition v3. Its repositories remain exactly the
+product `source` and `planning` rows from repository-map v1. The only tooling
+member is `tooling_protocol: { protocol_id: tooling-context-v1 }`; no tooling
+path, commit, tree, or context hash enters the product source lock. Its
+fingerprint is the canonical JSON SHA-256 of `project_id`, `preparation_id`, the
+ordered product `repositories`, and `tooling_protocol`. The separate context
+binds raw hashes of the full v3 source bytes, repository map, and serialized
+target feature lock.
+
+The preparation receipt and intent each bind the initial context as
+`{path, sha256, canonical_sha256, protocol_id}`. The intent stages receipt,
+source, and context as three atomic artifacts. Recovery and exact replay
+reauthenticate the raw and canonical context identities, the original product
+projection, the resolver, and the live context-bound executor/router
+observation before writing. Requests without `tooling_context` retain the
+existing source-composition v1 and two-artifact transaction exactly; recovered
+repreparation v2 does not acquire this optional field.
+
+An idle project may adopt this protocol with the explicit
+`preparation_kind: legacy-tooling-reclassification` route. The request names
+distinct preserved old and authored target maps under `local/`, and binds their
+raw hashes. It may remove only declared project rows whose historical role was
+`tool`. Each removal must join an authenticated active-retirement request, the
+retired unit's unique admission, its immutable old source lock, and the old map
+hash. Historical Git blobs are read at the old commit below the recorded
+materialization path. Each old allowed path must be exactly one managed file of
+a named router in the new observed tooling context; other files in that
+router's closed managed set do not become product paths.
+
+The same preparation may add reviewed product roots through the ordinary
+owner-repository rules. All preserved map rows remain byte-equivalent as
+canonical rows, the new project/map/source repository sets remain exact, and
+no proposed, ready, or active owner may still depend on a removed tool row.
+The route preserves old maps, source locks, units, retirements, and admissions.
+It cannot remove a product, planning, or authority repository.
+
 `AdmitDevelopmentUnit` subsequently binds this exact receipt and its generated
 source-composition lock. It may only prove that the authored future unit is a
 subset of the already prepared envelope; it must not discover or project new

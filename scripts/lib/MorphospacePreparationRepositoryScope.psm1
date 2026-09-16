@@ -17,7 +17,7 @@ function Get-MorphospacePreparationProperty {
 
 function Get-MorphospacePreparationRepositoryIndex {
     param(
-        [Parameter(Mandatory = $true)][object[]]$Repositories,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$Repositories,
         [Parameter(Mandatory = $true)][string]$Context
     )
 
@@ -86,15 +86,22 @@ function Assert-MorphospacePreparationRepositoryRoots {
     param(
         [Parameter(Mandatory = $true)][object[]]$CurrentRepositories,
         [Parameter(Mandatory = $true)][object[]]$TargetRepositories,
-        [Parameter(Mandatory = $true)][object[]]$OwnerRepositories
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$OwnerRepositories,
+        [ValidateSet('ordinary','legacy-tooling-reclassification')][string]$Mode='ordinary',
+        [AllowEmptyCollection()][string[]]$RemovedToolRepositoryIds=@()
     )
 
     $currentById = Get-MorphospacePreparationRepositoryIndex -Repositories $CurrentRepositories -Context 'Current preparation repositories'
     $targetById = Get-MorphospacePreparationRepositoryIndex -Repositories $TargetRepositories -Context 'Target preparation repositories'
     $ownerById = Get-MorphospacePreparationRepositoryIndex -Repositories $OwnerRepositories -Context 'Reviewed owner repositories'
+    $removable=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal);foreach($id in @($RemovedToolRepositoryIds)){if(-not$removable.Add([string]$id)){throw 'Preparation repeats a removable tooling repository identity.'}}
+    if($Mode-ceq'ordinary'-and$removable.Count-ne0){throw 'Ordinary preparation cannot declare removable tooling repositories.'}
 
     foreach ($repoId in $currentById.Keys) {
-        if (-not $targetById.ContainsKey($repoId)) { throw "Preparation removes existing repository '$repoId'." }
+        if (-not $targetById.ContainsKey($repoId)) {
+            if($Mode-cne'legacy-tooling-reclassification'-or-not$removable.Contains($repoId)-or[string]$currentById[$repoId].role-cne'tool'-or$ownerById.ContainsKey($repoId)){throw "Preparation removes existing repository '$repoId'."}
+            continue
+        }
 
         $current = $currentById[$repoId]
         $target = $targetById[$repoId]
@@ -138,6 +145,7 @@ function Assert-MorphospacePreparationRepositoryRoots {
             $checkedNewRoots.Add($newRoot)
         }
     }
+    foreach($repoId in $removable){if(-not$currentById.ContainsKey($repoId)-or$targetById.ContainsKey($repoId)){throw "Preparation removable tooling repository '$repoId' is not the exact removed current row."}}
 }
 
 Export-ModuleMember -Function Assert-MorphospacePreparationRepositoryRoots

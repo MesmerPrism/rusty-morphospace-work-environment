@@ -746,7 +746,12 @@ function ConvertTo-MorphospacePublicInstructionEntries {
 }
 
 function Get-MorphospaceInstructionObservation {
-    param([object]$Unit,[hashtable]$RepositoryMap)
+    param([object]$Unit,[hashtable]$RepositoryMap,[string]$WorkspaceRoot='')
+    if($Unit.PSObject.Properties.Name-contains'tooling_context'){
+        if(-not$WorkspaceRoot){throw 'Tooling-bound instruction observation requires its owner workspace.'}
+        $module=Import-Module (Join-Path $PSScriptRoot '../DevelopmentEnvelopeProvenance.psm1') -PassThru
+        $RepositoryMap=&$module {param($root,$unit,$map) Get-MorphospaceToolingInstructionRepositoryMap -WorkspaceRoot $root -Unit $unit -RepositoryMap $map} $WorkspaceRoot $Unit $RepositoryMap
+    }
     if([string]$Unit.instruction_impact-ceq'none'){if(@($Unit.instruction_surfaces).Count-ne0){throw 'instruction_impact none must have an empty instruction surface set.'};return @()}
     if(@($Unit.instruction_surfaces).Count-eq0){throw 'Instruction impact requires at least one explicit surface.'}
     $leases=[Collections.Generic.List[object]]::new()

@@ -171,6 +171,16 @@ It may not block acceptance or trigger a corrective unit by itself.
 
 ## Trust-Root Evolution
 
+Active repository/root additions and tooling upgrades have distinct owner
+actions: [ExtendActiveDevelopmentEnvelope](ACTIVE_DEVELOPMENT_ENVELOPE_EXTENSION.md)
+and [UpgradeToolingContext](TOOLING_CONTEXT.md). Both preserve the admitted
+product objective and authority ceilings. Their shared continuation reader
+authenticates their order, so an upgrade binds the effective product projection
+after any extension, and a later extension preserves the selected tooling
+context. Freeze binds the final unit, including its exact tooling pointer, and
+closes both operations. No new requirement is imposed on an older preparation
+that did not opt into the tooling protocol.
+
 An in-repository policy cannot permanently authorize changes to itself without
 creating a circular trust claim. Before the last exact approval is consumed,
 maintain a separate owner-controlled policy-evolution gate. The gate must run
