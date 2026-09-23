@@ -102,6 +102,30 @@ function Assert-ActiveRetirementPlanningContinuationEvents {
         if([int]$event.sequence-ne($AfterSequence+$index+1)-or[string]$event.unit_id-cne$UnitId-or[string]$event.event_id-cnotmatch'^[a-z0-9][a-z0-9-]{1,127}-(?:recorded|tooling-context-upgraded)$'){throw 'Active retirement planning continuation is not a contiguous same-unit authenticated transition suffix.'}
     }
 }
+function Get-ActiveRetirementToolingProofBindings {
+    param([string]$WorkspaceRoot,[object]$Request,[object]$Context)
+    $bindings=@{};$documents=@{}
+    foreach($binding in @($Request.compatibility_receipt,$Context.executor.publication_evidence,$Context.compatibility.receipt)){
+        $relative=ConvertTo-MorphospaceProtocolRelativePath ([string]$binding.path)
+        $hash=[string]$binding.sha256
+        if($bindings.ContainsKey($relative)-and[string]$bindings[$relative]-cne$hash){throw "Active retirement tooling proof '$relative' has conflicting bindings."}
+        $path=Resolve-MorphospaceWorkspacePath $WorkspaceRoot $relative -RequireLeaf
+        if((Get-MorphospaceFileSha256 $path)-cne$hash){throw "Active retirement tooling proof '$relative' differs from its authenticated binding."}
+        $bindings[$relative]=$hash;$documents[$relative]=Read-MorphospaceProtocolJson $path
+    }
+    $compatibility=$documents[[string]$Request.compatibility_receipt.path]
+    $publication=$documents[[string]$Context.executor.publication_evidence.path]
+    $protocol=$documents[[string]$Context.compatibility.receipt.path]
+    foreach($binding in @($compatibility.validation.evidence,$publication.validation,$protocol.validation)){
+        $relative=ConvertTo-MorphospaceProtocolRelativePath ([string]$binding.path)
+        $hash=[string]$binding.sha256
+        if($bindings.ContainsKey($relative)-and[string]$bindings[$relative]-cne$hash){throw "Active retirement tooling proof '$relative' has conflicting bindings."}
+        $path=Resolve-MorphospaceWorkspacePath $WorkspaceRoot $relative -RequireLeaf
+        if((Get-MorphospaceFileSha256 $path)-cne$hash){throw "Active retirement tooling proof '$relative' differs from its authenticated binding."}
+        $bindings[$relative]=$hash
+    }
+    @($bindings.Keys|Sort-Object -CaseSensitive|ForEach-Object{[pscustomobject]@{path=$_;sha256=[string]$bindings[$_]}})
+}
 function Test-ActiveRetirementPlanningProjectionFromAuthenticatedAdmission {
     param([string]$Workspace,[object]$Unit,[object]$RepositoryEntry,[string[]]$StatusPorcelain,[Parameter(Mandatory)][object]$Admission,[object]$RecoveryIntent=$null,[string]$LockedCommit='',[string]$ObservedHead='')
     if([string]$RepositoryEntry.role-cne'planning'){return $false}
@@ -162,6 +186,11 @@ function Test-ActiveRetirementPlanningProjectionFromAuthenticatedAdmission {
             }elseif($artifactSchemas-ccontains'rusty.morphospace.workflow.tooling_context_upgrade.v1'){
                 $toolingModule=Import-Module (Join-Path $PSScriptRoot 'ToolingContextUpgrade.psm1') -PassThru
                 $null=&$toolingModule {param($root,$expected,$transition) Assert-ToolingContextHistoricalTransition -WorkspaceRoot $root -ExpectedEvent $expected -Transition $transition} $workspaceFull $event $proof
+                $documents=@($proof.intent.artifacts|ForEach-Object{ConvertFrom-MorphospaceProtocolJsonBytes ([Convert]::FromBase64String([string]$_.bytes_base64))})
+                $request=@($documents|Where-Object{[string]$_.schema-ceq'rusty.morphospace.workflow.tooling_context_upgrade.v1'})
+                $context=@($documents|Where-Object{[string]$_.schema-ceq'rusty.morphospace.workflow.tooling_context.v1'})
+                if($request.Count-ne1-or$context.Count-ne1){throw 'Active retirement tooling upgrade proof artifacts are ambiguous.'}
+                foreach($binding in @(Get-ActiveRetirementToolingProofBindings -WorkspaceRoot $workspaceFull -Request $request[0] -Context $context[0])){Set-PlanningProjection ([string]$binding.path) ([string]$binding.sha256)}
             }else{
                 $null=&$amendmentModule {param($root,$expected,$transition) Assert-ActiveWriteScopeHistoricalTransition -WorkspaceRoot $root -ExpectedEvent $expected -Transition $transition} $workspaceFull $event $proof
             }
