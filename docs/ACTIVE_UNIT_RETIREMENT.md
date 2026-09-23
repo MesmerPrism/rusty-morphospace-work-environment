@@ -42,18 +42,25 @@ The lock's `materialization_path` remains the producer's materialization label;
 retirement does not reinterpret it as a Git-relative path.
 
 A project-shell read-only planning repository may instead retain the exact
-owner-produced lifecycle dirt when it strictly contains the active workspace
-and its HEAD and tree still equal the original preparation lock. This exception
+owner-produced lifecycle projection when it strictly contains the active
+workspace. The original preparation lock may still be HEAD with unstaged
+lifecycle dirt, or a clean current HEAD may be a linear descendant of that
+lock whose commits change only authenticated projection paths. This exception
 accepts only the final-byte projection of an authenticated
 `Prepare`/`Admit`/`Ready`/`Claim` chain, or its exact
 `Prepare`/`Admit`/`RetireProposed`/`Admit`/`Ready`/`Claim` replacement form,
-followed by zero or more contiguous same-unit `AmendActiveWriteScope`
-transactions. Every amendment is revalidated by its owning semantic verifier;
-no other post-Claim event qualifies.
+followed by zero or more contiguous same-unit `AmendActiveWriteScope` and
+`UpgradeToolingContext` transactions. Every continuation is revalidated by its
+owning historical semantic verifier. An upgrade also binds the exact
+compatibility, publication, protocol, and affected-validation proof files
+referenced by its authenticated request and resulting tooling context.
 The verifier applies last-writer wins in ledger order and rejects staged
 changes, deletes, renames, conflicts, outside-workspace paths, pending
 artifacts, incomplete transactions, and target, artifact, intent, or completion
-drift. It grants no general dirty-planning or descendant-HEAD allowance.
+drift. For a committed descendant it also checks every changed path in every
+intervening commit and the live bytes against the authenticated projection;
+unrelated paths remain forbidden even if a later commit reverts them. This
+grants no general planning drift or arbitrary descendant-HEAD allowance.
 
 ```powershell
 pwsh -NoProfile -File <work-environment>/scripts/Invoke-WorkUnitAutomation.ps1 `

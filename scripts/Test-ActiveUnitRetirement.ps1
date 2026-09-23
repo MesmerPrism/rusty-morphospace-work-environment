@@ -1,7 +1,7 @@
 param(
     [switch]$SelfTest,
     [switch]$InertProposalsOnly,
-    [ValidateSet('All', 'Core', 'NestedPositive', 'NestedMapGuards', 'AmendmentRecovery', 'NestedRecovery', 'NestedDamage')]
+    [ValidateSet('All', 'Core', 'NestedPositive', 'NestedCommitted', 'NestedMapGuards', 'AmendmentRecovery', 'NestedRecovery', 'NestedDamage')]
     [string]$Scenario = 'All'
 )
 $ErrorActionPreference='Stop'
@@ -140,6 +140,7 @@ $temp=Join-Path ([IO.Path]::GetTempPath()) ('morphospace-active-retirement-'+[gu
 try{
     $runCore = $Scenario -cin @('All', 'Core') -or $InertProposalsOnly
     $runNestedPositive = $Scenario -cin @('All', 'NestedPositive')
+    $runNestedCommitted = $Scenario -cin @('All', 'NestedCommitted')
     $runNestedMapGuards = $Scenario -cin @('All', 'NestedMapGuards')
     $runAmendmentRecovery = $Scenario -cin @('All', 'AmendmentRecovery')
     $runNestedRecovery = $Scenario -cin @('All', 'NestedRecovery')
@@ -188,8 +189,41 @@ try{
     }
 
     $readonlySeed = $null
-    if($runNestedPositive -or $runAmendmentRecovery -or $runNestedRecovery -or $runNestedDamage){
+    if($runNestedPositive -or $runNestedCommitted -or $runAmendmentRecovery -or $runNestedRecovery -or $runNestedDamage){
         $readonlySeed=@(New-ReadonlyPlanningRetirementSeed (Join-Path $temp 'readonly-seed'))[-1]
+    }
+    if($runNestedCommitted){
+        $continuation=@([pscustomobject]@{sequence=5;unit_id='u002';event_id='u002-envelope-recorded'},[pscustomobject]@{sequence=6;unit_id='u002';event_id='u002-tooling-01-tooling-context-upgraded'})
+        &$retirementModule {param($events)Assert-ActiveRetirementPlanningContinuationEvents -Events $events -AfterSequence 4 -UnitId u002} $continuation
+        foreach($bad in @([pscustomobject]@{sequence=7;unit_id='u002';event_id='u002-tooling-01-tooling-context-upgraded'},[pscustomobject]@{sequence=6;unit_id='other';event_id='u002-tooling-01-tooling-context-upgraded'},[pscustomobject]@{sequence=6;unit_id='u002';event_id='u002-unowned-transition'})){
+            $message='';try{&$retirementModule {param($event)Assert-ActiveRetirementPlanningContinuationEvents -Events @($event) -AfterSequence 5 -UnitId u002} $bad}catch{$message=$_.Exception.Message}
+            Assert-RetirementTest ($message-like'*same-unit authenticated transition suffix*') "unowned planning continuation shape was accepted: $message"
+        }
+        $committed=@(New-RetirementNestedPlanningProjection $readonlySeed $temp 'nested-committed')[-1]
+        Invoke-EnvelopeGit $committed.repository @('add','-f','morphospace')|Out-Null
+        Invoke-EnvelopeGit $committed.repository @('commit','-m','authenticated prepare admit ready claim')|Out-Null
+        Assert-RetirementTest (@(Invoke-EnvelopeGit $committed.repository @('status','--porcelain=v1','--untracked-files=all')).Count-eq0) 'committed lifecycle fixture is dirty'
+        $checkpoint=(@(Invoke-EnvelopeGit $committed.repository @('rev-parse','HEAD'))[0]).Trim()
+        $unrelated=Join-Path $committed.repository 'unrelated.txt';[IO.File]::WriteAllText($unrelated,'unrelated')
+        $message='';try{Invoke-NestedRetirement $committed u002 u003 '2026-08-25T00:00:43.0000000Z'|Out-Null}catch{$message=$_.Exception.Message}
+        Assert-RetirementTest ($message-like'*clean available source*') "dirty committed descendant was accepted: $message"
+        Remove-Item -LiteralPath $unrelated -Force
+        [IO.File]::WriteAllText($unrelated,'staged');Invoke-EnvelopeGit $committed.repository @('add','unrelated.txt')|Out-Null
+        $message='';try{Invoke-NestedRetirement $committed u002 u003 '2026-08-25T00:00:43.0000000Z'|Out-Null}catch{$message=$_.Exception.Message}
+        Assert-RetirementTest ($message-like'*clean available source*') "staged committed descendant was accepted: $message"
+        Invoke-EnvelopeGit $committed.repository @('reset','--','unrelated.txt')|Out-Null;Remove-Item -LiteralPath $unrelated -Force
+        $dry=Invoke-NestedRetirement $committed u002 u003 '2026-08-25T00:00:43.0000000Z'
+        Assert-RetirementTest (-not$dry.executed) 'clean authenticated committed planning descendant dry run failed'
+        $done=Invoke-NestedRetirement $committed u002 u003 '2026-08-25T00:00:43.0000000Z' -Execute
+        Assert-RetirementTest ($done.executed-and(@(Invoke-EnvelopeGit $committed.repository @('rev-parse','HEAD'))[0]).Trim()-ceq$checkpoint) 'committed planning descendant retirement did not preserve HEAD'
+        $arbitrary=@(New-RetirementNestedPlanningProjection $readonlySeed $temp 'nested-arbitrary')[-1]
+        Invoke-EnvelopeGit $arbitrary.repository @('add','-f','morphospace')|Out-Null;Invoke-EnvelopeGit $arbitrary.repository @('commit','-m','authenticated prepare admit ready claim')|Out-Null
+        $unrelated=Join-Path $arbitrary.repository 'unrelated.txt';[IO.File]::WriteAllText($unrelated,'unrelated');Invoke-EnvelopeGit $arbitrary.repository @('add','unrelated.txt')|Out-Null;Invoke-EnvelopeGit $arbitrary.repository @('commit','-m','unrelated descendant')|Out-Null
+        $message='';try{Invoke-NestedRetirement $arbitrary u002 u003 '2026-08-25T00:00:43.0000000Z'|Out-Null}catch{$message=$_.Exception.Message}
+        Assert-RetirementTest ($message-like'*unauthenticated path*') "arbitrary committed descendant was accepted: $message"
+        Remove-Item -LiteralPath $unrelated -Force;Invoke-EnvelopeGit $arbitrary.repository @('add','-u','unrelated.txt')|Out-Null;Invoke-EnvelopeGit $arbitrary.repository @('commit','-m','revert unrelated descendant')|Out-Null
+        $message='';try{Invoke-NestedRetirement $arbitrary u002 u003 '2026-08-25T00:00:43.0000000Z'|Out-Null}catch{$message=$_.Exception.Message}
+        Assert-RetirementTest ($message-like'*unauthenticated path*') "reverted arbitrary committed descendant was accepted: $message"
     }
     if($runNestedPositive){
     # Direct and amended nested planning positives, exact replay, caller-module
@@ -389,6 +423,7 @@ try{
     }
     $checkName=switch($Scenario){
         'NestedPositive' {'active-unit-retirement-nested-positive'}
+        'NestedCommitted' {'active-unit-retirement-nested-committed'}
         'NestedMapGuards' {'active-unit-retirement-nested-map-guards'}
         'AmendmentRecovery' {'active-unit-retirement-amendment-recovery'}
         'NestedRecovery' {'active-unit-retirement-nested-recovery'}
