@@ -95,9 +95,18 @@ function Test-ActiveRetirementRecoveryPreparationProvenance([string]$Workspace,[
         if($resolved.StartsWith($tempPrefix,[StringComparison]::OrdinalIgnoreCase)-and[IO.Path]::GetFileName($resolved).StartsWith('morphospace-retirement-provenance-')){Remove-Item -LiteralPath $resolved -Recurse -Force -ErrorAction SilentlyContinue}
     }
 }
+function Assert-ActiveRetirementPlanningContinuationEvents {
+    param([object[]]$Events,[int]$AfterSequence,[string]$UnitId)
+    for($index=0;$index-lt$Events.Count;$index++){
+        $event=$Events[$index]
+        if([int]$event.sequence-ne($AfterSequence+$index+1)-or[string]$event.unit_id-cne$UnitId-or[string]$event.event_id-cnotmatch'^[a-z0-9][a-z0-9-]{1,127}-(?:recorded|tooling-context-upgraded)$'){throw 'Active retirement planning continuation is not a contiguous same-unit authenticated transition suffix.'}
+    }
+}
 function Test-ActiveRetirementPlanningProjectionFromAuthenticatedAdmission {
-    param([string]$Workspace,[object]$Unit,[object]$RepositoryEntry,[string[]]$StatusPorcelain,[Parameter(Mandatory)][object]$Admission,[object]$RecoveryIntent=$null)
+    param([string]$Workspace,[object]$Unit,[object]$RepositoryEntry,[string[]]$StatusPorcelain,[Parameter(Mandatory)][object]$Admission,[object]$RecoveryIntent=$null,[string]$LockedCommit='',[string]$ObservedHead='')
     if([string]$RepositoryEntry.role-cne'planning'){return $false}
+    $committed=[bool]$LockedCommit
+    if($committed-and($RecoveryIntent-or$StatusPorcelain.Count-ne0-or$ObservedHead-cnotmatch'^[0-9a-f]{40}$')){throw 'Active retirement committed planning descendant requires a clean exact HEAD without recovery.'}
     if([string]::IsNullOrWhiteSpace($Workspace)){throw 'Active retirement planning lifecycle workspace path is empty.'};if([string]::IsNullOrWhiteSpace([string]$RepositoryEntry.path)){throw 'Active retirement planning lifecycle repository path is empty.'}
     if($null-eq$RecoveryIntent-and@($StatusPorcelain|Where-Object{[string]$_-cmatch'retire-.*-active-retired-transition'}).Count-ne0){throw 'Active retirement planning lifecycle recovery intent was not forwarded.'}
     $repository=[IO.Path]::GetFullPath([string]$RepositoryEntry.path).TrimEnd('\','/');$workspaceFull=[IO.Path]::GetFullPath($Workspace).TrimEnd('\','/')
@@ -127,10 +136,7 @@ function Test-ActiveRetirementPlanningProjectionFromAuthenticatedAdmission {
     if($amendments.Count-ne0){
         $amendmentModule=Import-Module (Join-Path $PSScriptRoot 'ActiveWriteScopeAmendment.psm1') -Force -PassThru
         Restore-ActiveRetirementCallerModules
-        for($index=0;$index-lt$amendments.Count;$index++){
-            $event=$amendments[$index]
-            if([int]$event.sequence-ne($to+$index+1)-or[string]$event.unit_id-cne[string]$Unit.unit_id-or[string]$event.event_id-cnotmatch('^[a-z0-9][a-z0-9-]{1,127}-recorded$')){throw 'Active retirement planning continuation is not a contiguous same-unit write-scope amendment suffix.'}
-        }
+        Assert-ActiveRetirementPlanningContinuationEvents -Events $amendments -AfterSequence $to -UnitId ([string]$Unit.unit_id)
     }
     $projectionSuffix=@($suffix)+@($amendments)
     $expected=@{};$recoveryOwned=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
@@ -169,6 +175,26 @@ function Test-ActiveRetirementPlanningProjectionFromAuthenticatedAdmission {
         Set-PlanningProjection $intentRelative (Get-MorphospaceFileSha256 $intentPath);Set-PlanningProjection $completionRelative (Get-MorphospaceFileSha256 $completionPath)
     }
     Set-PlanningProjection 'iteration-events.jsonl' (Get-MorphospaceFileSha256 (Resolve-MorphospaceWorkspacePath $workspaceFull 'iteration-events.jsonl' -RequireLeaf))
+    if($committed){
+        $staged=@(& git -C $repository diff --cached --name-only --no-renames -- 2>&1);if($LASTEXITCODE-ne0-or$staged.Count-ne0){throw 'Active retirement committed planning descendant must remain clean.'}
+        foreach($path in @($expected.Keys)){$live=Join-Path $repository $path;if(-not[IO.File]::Exists($live)-or(Get-MorphospaceFileSha256 $live)-cne[string]$expected[$path]){throw "Active retirement committed planning projection is damaged: $path"}}
+        $changed=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        $cursor=$ObservedHead
+        while($cursor-cne$LockedCommit){
+            $line=(@(& git -C $repository rev-list --parents -n 1 $cursor 2>&1)-join'').Trim()
+            if($LASTEXITCODE-ne0-or$line-cnotmatch'^[0-9a-f]{40} [0-9a-f]{40}$'){throw 'Active retirement committed planning descendant must have linear authenticated history.'}
+            $parent=$line.Substring(41)
+            $paths=@(& git -C $repository diff --name-only --no-renames $parent $cursor -- 2>&1)
+            if($LASTEXITCODE-ne0){throw 'Active retirement committed planning descendant diff failed.'}
+            foreach($path in $paths){$relative=([string]$path).Replace('\','/');if(-not$expected.ContainsKey($relative)){throw "Active retirement committed planning descendant changes unauthenticated path: $relative"};[void]$changed.Add($relative)}
+            $cursor=$parent
+        }
+        $final=@(& git -C $repository diff --name-only --no-renames $LockedCommit $ObservedHead -- 2>&1)
+        if($LASTEXITCODE-ne0){throw 'Active retirement committed planning descendant final diff failed.'}
+        foreach($path in $final){if(-not$expected.ContainsKey(([string]$path).Replace('\','/'))){throw 'Active retirement committed planning descendant final projection is unauthenticated.'}}
+        if($changed.Count-eq0){throw 'Active retirement committed planning descendant contains no lifecycle projection.'}
+        return $true
+    }
     $staged=@(& git -C $repository diff --cached --name-only --no-renames -- 2>&1|Where-Object{$_}|ForEach-Object{([string]$_).Replace('\','/')});if($LASTEXITCODE-ne0-or$staged.Count-ne0){throw 'Active retirement planning lifecycle dirt must not be staged.'}
     $changes=@();foreach($line in @($StatusPorcelain)){$value=[string]$line;if($value.Length-lt4-or$value.Substring(0,2)-cnotin@(' M','??')){throw 'Active retirement planning lifecycle dirt contains a staged, deleted, renamed, conflicted, or unsupported entry.'};$gitPath=$value.Substring(3).Replace('\','/');if($RecoveryIntent-and$gitPath.StartsWith($workspacePrefix,[StringComparison]::Ordinal)-and$recoveryOwned.Contains($gitPath.Substring($workspacePrefix.Length))){continue};$changes+=,$gitPath};$changes=@($changes|Sort-Object -Unique)
     $allowed=@();foreach($path in @($expected.Keys|Sort-Object)){$live=Join-Path $repository $path;if(-not[IO.File]::Exists($live)-or(Get-MorphospaceFileSha256 $live)-cne[string]$expected[$path]){throw "Active retirement planning lifecycle projection is damaged: $path"};$null=& git -C $repository diff --quiet HEAD -- $path 2>&1;if($LASTEXITCODE-ne0){$allowed+=,$path}else{$null=& git -C $repository ls-files --error-unmatch -- $path 2>&1;if($LASTEXITCODE-ne0){$allowed+=,$path}}};$allowed=@($allowed|Sort-Object -Unique)
@@ -246,9 +272,14 @@ function Get-ActiveRetirementRepositories([object]$Unit,[object]$Source,[string]
         }
         $planningDirt=$false
         if($observed.available-and$observed.is_git-and$remaining.Count-ne0-and-not$authorized.Contains($id)-and[string]$observed.head-ceq[string]$locked.commit-and[string]$observed.tree-ceq[string]$locked.tree){$planningDirt=Test-ActiveRetirementPlanningProjectionFromAuthenticatedAdmission -Workspace $Workspace -Unit $Unit -RepositoryEntry $entry -StatusPorcelain $remaining -Admission $admission -RecoveryIntent $RecoveryIntent}
+        if($observed.available-and$observed.is_git-and$remaining.Count-eq0-and-not$authorized.Contains($id)-and[string]$entry.role-ceq'planning'-and[string]$observed.head-cne[string]$locked.commit){
+            $null=& git -C $mappedPath merge-base --is-ancestor ([string]$locked.commit) ([string]$observed.head) 2>&1
+            if($LASTEXITCODE-ne0){throw "Active retirement planning descendant '$id' does not retain its locked baseline."}
+            $planningDirt=Test-ActiveRetirementPlanningProjectionFromAuthenticatedAdmission -Workspace $Workspace -Unit $Unit -RepositoryEntry $entry -StatusPorcelain $remaining -Admission $admission -LockedCommit ([string]$locked.commit) -ObservedHead ([string]$observed.head)
+        }
         if(-not$observed.available-or-not$observed.is_git-or($remaining.Count-ne0-and-not$planningDirt)-or[string]$observed.head-cnotmatch'^[0-9a-f]{40}$'-or[string]$observed.tree-cnotmatch'^[0-9a-f]{40}$'){throw "Active retirement requires clean available source repository '$id'."}
         # Writable repositories may have newer clean local checkpoints. Read-only dependencies stay pinned.
-        if(-not$authorized.Contains($id)-and([string]$observed.head-cne[string]$locked.commit-or[string]$observed.tree-cne[string]$locked.tree)){throw "Active retirement read-only dependency '$id' differs from the source lock."}
+        if(-not$authorized.Contains($id)-and-not$planningDirt-and([string]$observed.head-cne[string]$locked.commit-or[string]$observed.tree-cne[string]$locked.tree)){throw "Active retirement read-only dependency '$id' differs from the source lock."}
         if($authorized.Contains($id)){
             $null=& git -C $mappedPath merge-base --is-ancestor ([string]$locked.commit) ([string]$observed.head) 2>&1
             if($LASTEXITCODE-ne0){throw "Active retirement writable checkpoint '$id' does not retain its locked baseline."}
