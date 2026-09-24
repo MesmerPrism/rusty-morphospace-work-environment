@@ -709,8 +709,8 @@ function Test-CurrentUnitInstructionWorkspace {
     } | Sort-Object -Unique -CaseSensitive)
     if ($triggeredCategories.Count -eq 0) { return }
 
-    $expectedInstructionImpact = if ($workMode -ceq "validation-only") { "review" } else { "update" }
-    $expectedRequiredAction = if ($workMode -ceq "validation-only") { "review-no-change" } else { "update" }
+    $expectedInstructionImpact = if ($workMode -ceq "validation-only" -or
+        @($instructionSurfaces | Where-Object { [string]$_.action -ceq "update" }).Count -eq 0) { "review" } else { "update" }
     Assert-Contract ($instructionImpact -ceq $expectedInstructionImpact) "$Context current unit work mode '$workMode' must use instruction_impact '$expectedInstructionImpact'."
     $agentSurfaces = @($instructionSurfaces | Where-Object { [string]$_.surface_kind -ceq "agents" })
     $routerSurfaces = @($instructionSurfaces | Where-Object {
@@ -718,8 +718,10 @@ function Test-CurrentUnitInstructionWorkspace {
     })
     Assert-Contract ($agentSurfaces.Count -gt 0) "$Context current unit needs the nearest AGENTS.md instruction surface."
     Assert-Contract ($routerSurfaces.Count -gt 0) "$Context current unit needs a README or router-doc instruction surface."
-    foreach ($surface in @($agentSurfaces + $routerSurfaces)) {
-        Assert-Contract ([string]$surface.action -ceq $expectedRequiredAction) "$Context current unit required instruction surface '$($surface.path)' must use '$expectedRequiredAction'."
+    if ($workMode -ceq "validation-only") {
+        foreach ($surface in @($agentSurfaces + $routerSurfaces)) {
+            Assert-Contract ([string]$surface.action -ceq "review-no-change") "$Context validation-only current unit required instruction surface '$($surface.path)' must use review-no-change."
+        }
     }
 
     $requiredSkillIds = [Collections.Generic.List[string]]::new()
@@ -733,11 +735,11 @@ function Test-CurrentUnitInstructionWorkspace {
             [string]$_.surface_kind -ceq "skill" -and [string]$_.skill_id -ceq [string]$requiredSkillId
         })
         Assert-Contract ($matching.Count -eq 1) "$Context current unit needs one instruction surface for relevant skill '$requiredSkillId'."
-        if ($matching.Count -eq 1 -and [string]$matching[0].action -cne $expectedRequiredAction) {
+        if ($matching.Count -eq 1 -and $workMode -cne "validation-only" -and [string]$matching[0].action -ceq "review-no-change") {
             Assert-Contract (Test-MorphospaceActiveUnitContractReviewCompatibility `
                 -Unit $unit `
                 -State $state `
-                -Lifecycle $script:WorkflowLifecycle) "$Context current unit relevant skill '$requiredSkillId' must use '$expectedRequiredAction'."
+                -Lifecycle $script:WorkflowLifecycle) "$Context current unit relevant skill '$requiredSkillId' review lacks exact owner-tracked provenance."
         }
     }
 
@@ -794,6 +796,28 @@ function Invoke-CurrentInstructionSurfacePolicySelfTest {
         [IO.File]::WriteAllText((Join-Path $fixtureRoot "workspace.state.json"), ($state | ConvertTo-Json -Depth 40), $utf8)
         [IO.File]::WriteAllText((Join-Path $fixtureRoot "iteration-units/current-instruction-surface.json"), $unitJson, $utf8)
         Test-CurrentUnitInstructionWorkspace -Root $fixtureRoot -SchemaPath $SchemaPath -Context "synthetic current instruction fixture"
+
+        $reviewOnly = $unit | ConvertTo-Json -Depth 40 | ConvertFrom-Json -Depth 40
+        $reviewOnly.instruction_impact = 'review'
+        foreach ($surface in @($reviewOnly.instruction_surfaces)) { $surface.action = 'review-no-change' }
+        Assert-Contract (($reviewOnly | ConvertTo-Json -Depth 40 | Test-Json -SchemaFile $SchemaPath -ErrorAction Stop)) "A complete review-only feature unit failed its schema."
+        Assert-Contract (Test-MorphospaceActiveUnitContractReviewCompatibility -Unit $reviewOnly -State $state -Lifecycle $script:WorkflowLifecycle -RepositoryMap $aggregateRepositoryMap) "A complete bound feature review was rejected."
+        [IO.File]::WriteAllText((Join-Path $fixtureRoot "iteration-units/current-instruction-surface.json"), ($reviewOnly | ConvertTo-Json -Depth 40), $utf8)
+        Test-CurrentUnitInstructionWorkspace -Root $fixtureRoot -SchemaPath $SchemaPath -Context "synthetic review-only current instruction fixture"
+        $misclassifiedReview = $reviewOnly | ConvertTo-Json -Depth 40 | ConvertFrom-Json -Depth 40
+        $misclassifiedReview.instruction_impact = 'update'
+        Assert-Contract (-not (Test-MorphospaceActiveUnitContractReviewCompatibility -Unit $misclassifiedReview -State $state -Lifecycle $script:WorkflowLifecycle -RepositoryMap $aggregateRepositoryMap)) "A review-only feature falsely claimed an instruction update."
+
+        $mixedReview = $unit | ConvertTo-Json -Depth 40 | ConvertFrom-Json -Depth 40
+        foreach ($surface in @($mixedReview.instruction_surfaces | Where-Object { [string]$_.surface_kind -in @('agents', 'readme') })) { $surface.action = 'review-no-change' }
+        Assert-Contract (Test-MorphospaceActiveUnitContractReviewCompatibility -Unit $mixedReview -State $state -Lifecycle $script:WorkflowLifecycle -RepositoryMap $aggregateRepositoryMap) "Mixed entrypoint review and guidance updates were rejected."
+        [IO.File]::WriteAllText((Join-Path $fixtureRoot "iteration-units/current-instruction-surface.json"), ($mixedReview | ConvertTo-Json -Depth 40), $utf8)
+        Test-CurrentUnitInstructionWorkspace -Root $fixtureRoot -SchemaPath $SchemaPath -Context "synthetic mixed current instruction fixture"
+        $mixedReview.instruction_surfaces = @($mixedReview.instruction_surfaces | ForEach-Object { $_ | Select-Object * })
+        foreach ($surface in @($mixedReview.instruction_surfaces | Where-Object { [string]$_.surface_kind -ceq 'skill' })) { $surface.action = 'update' }
+        Assert-Contract (Test-MorphospaceActiveUnitContractReviewCompatibility -Unit $mixedReview -State $state -Lifecycle $script:WorkflowLifecycle -RepositoryMap $aggregateRepositoryMap) "Reviewed entrypoints with updated routed skills were rejected."
+        [IO.File]::WriteAllText((Join-Path $fixtureRoot "iteration-units/current-instruction-surface.json"), ($mixedReview | ConvertTo-Json -Depth 40), $utf8)
+        Test-CurrentUnitInstructionWorkspace -Root $fixtureRoot -SchemaPath $SchemaPath -Context "synthetic reviewed entrypoint current instruction fixture"
 
         $unit.change_categories = @("implementation", "authority", "validation", "public-private-boundary")
         Assert-Contract (Test-MorphospaceActiveUnitContractReviewCompatibility -Unit $unit -State $state -Lifecycle $script:WorkflowLifecycle -RepositoryMap $aggregateRepositoryMap) "Lifecycle-routed current skill reviews were rejected."
@@ -1774,8 +1798,8 @@ function Test-ProjectBundle {
         }
 
         if ($triggeredCategories.Count -gt 0) {
-            $expectedInstructionImpact = if ($effectiveWorkMode -eq "validation-only") { "review" } else { "update" }
-            $expectedRequiredAction = if ($effectiveWorkMode -eq "validation-only") { "review-no-change" } else { "update" }
+            $expectedInstructionImpact = if ($effectiveWorkMode -eq "validation-only" -or
+                @($effectiveInstructionSurfaces | Where-Object { [string]$_.action -eq "update" }).Count -eq 0) { "review" } else { "update" }
             Assert-EvolvingInstructionPolicy `
                 -Condition ($effectiveInstructionImpact -eq $expectedInstructionImpact) `
                 -Unit $unit -State $state -DeferredSupersededFailures $deferredSupersededInstructionFailures `
@@ -1804,8 +1828,10 @@ function Test-ProjectBundle {
                     -Message "$Context unit '$($unit.unit_id)' needs one instruction surface for relevant skill '$requiredSkillId'."
                 if ($matchingSkill.Count -eq 1) {
                     $skillSurface = $matchingSkill[0]
-                    if ([string]$skillSurface.action -ceq $expectedRequiredAction) {
-                        # Current feature and validation-only records use the exact mode action.
+                    if ([string]$skillSurface.action -ceq "update") {
+                        # A changed skill route is recorded as an update.
+                    } elseif ($effectiveWorkMode -eq "validation-only" -and [string]$skillSurface.action -ceq "review-no-change") {
+                        # Validation-only work reviews without editing.
                     } elseif (Test-MorphospaceActiveUnitContractReviewCompatibility `
                         -Unit $unit `
                         -State $state `
@@ -1827,16 +1853,18 @@ function Test-ProjectBundle {
                         Assert-EvolvingInstructionPolicy `
                             -Condition $false `
                             -Unit $unit -State $state -DeferredSupersededFailures $deferredSupersededInstructionFailures `
-                            -Message "$Context unit '$($unit.unit_id)' relevant skill '$requiredSkillId' must use '$expectedRequiredAction'."
+                            -Message "$Context unit '$($unit.unit_id)' relevant skill '$requiredSkillId' review lacks exact owner-tracked provenance."
                     }
                 }
             }
 
-            foreach ($requiredSurface in @($agentSurfaces + $routerSurfaces)) {
-                Assert-EvolvingInstructionPolicy `
-                    -Condition ($requiredSurface.action -eq $expectedRequiredAction) `
-                    -Unit $unit -State $state -DeferredSupersededFailures $deferredSupersededInstructionFailures `
-                    -Message "$Context unit '$($unit.unit_id)' required instruction surface '$($requiredSurface.path)' must use '$expectedRequiredAction'."
+            if ($effectiveWorkMode -eq "validation-only") {
+                foreach ($requiredSurface in @($agentSurfaces + $routerSurfaces)) {
+                    Assert-EvolvingInstructionPolicy `
+                        -Condition ($requiredSurface.action -eq "review-no-change") `
+                        -Unit $unit -State $state -DeferredSupersededFailures $deferredSupersededInstructionFailures `
+                        -Message "$Context validation-only unit '$($unit.unit_id)' required instruction surface '$($requiredSurface.path)' must use review-no-change."
+                }
             }
 
             if ($effectiveWorkMode -eq "validation-only") {

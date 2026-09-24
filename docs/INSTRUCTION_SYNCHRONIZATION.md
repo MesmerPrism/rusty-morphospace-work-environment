@@ -1,9 +1,11 @@
 # Instruction Synchronization
 
 Agent entrypoints must stay aligned with the architecture they route. Record
-instruction impact in every iteration unit and update the smallest relevant
-surfaces in the same unit. Keep `AGENTS.md`, `SKILL.md`, and README entrypoints
-concise; link to detailed runbooks instead of copying long recipes into them.
+instruction impact in every iteration unit and review the smallest relevant
+surfaces in the same unit. A change category selects surfaces for review; an
+actual change to an instruction-level decision selects surfaces for editing.
+Keep `AGENTS.md`, `SKILL.md`, and README entrypoints concise; link to detailed
+runbooks instead of copying long recipes into them.
 
 ## Synchronization Matrix
 
@@ -19,9 +21,12 @@ concise; link to detailed runbooks instead of copying long recipes into them.
 | `<repo-root>/AGENTS.md` | The touched repo's authority, source map, module layout, activation, validation, or platform boundary changes. | Repo-local ownership, validation commands, source routing, and links. |
 | `<repo-root>/README.md` or nearest router doc | Contributor workflow, public contract, setup, module placement, or validation entrypoint changes. | User-facing first path, supported surface, and links to deeper docs. |
 
-Only skills relevant to the change category need updating. The lifecycle
+Only skills relevant to the change category need review. The lifecycle
 manifest provides the minimum skill routing used by validation; a unit may add
-more surfaces when its scope crosses multiple concerns.
+more surfaces when its scope crosses multiple concerns. Record `update` for a
+surface whose routed guidance changes and `review-no-change` when its guidance
+remains accurate. A completed review needs a concrete change reason and
+validation record; it does not claim an edit, acceptance, or publication.
 
 A portable APK build-lane change normally updates the Meta workflow's focused
 playbook, `AGENTS.md`, README/router, and canonical skill together with this
@@ -44,10 +49,13 @@ portable skills (`skill`). Compatibility, roadmap, and validation documents do
 not substitute for the required README or router entrypoint.
 
 Changes to authority, module layout, feature activation, validation, device
-policy, repo routing, or public/private boundaries require `update`. Before
-such a unit can become `accepted`, the nearest repo `AGENTS.md`, a README or
-router doc, and every relevant skill named by the synchronization matrix must
-have complete update records.
+policy, repo routing, or public/private boundaries require an instruction
+review. Before such a unit can become `accepted`, the nearest repo `AGENTS.md`,
+a README or router doc, and every relevant skill named by the synchronization
+matrix must have complete records. Use `instruction_impact: review` when all
+surfaces remain accurate and `instruction_impact: update` when at least one
+surface changes. Neither action relaxes the underlying owner contract or
+its validation and evidence requirements.
 
 A Full Authority Mode contract change updates its canonical detailed runbook,
 the nearest `AGENTS.md` and README/router, autonomous-liveness guidance,
@@ -83,12 +91,12 @@ routed AGENTS, README/router, validation document, and skill surface as
 `review-no-change`. Discovering a needed content change ends that unit; it does
 not convert the review record into an update claim.
 
-A second, closed explicit-feature compatibility rule applies while a feature
+A closed explicit-feature binding rule applies while a feature
 unit is proposed, ready, active, or validating. It permits the exact
 currently lifecycle-routed subset of the owner-tracked `rusty-morphospace`,
 `system-engineering`, and `rust-work-graph` skill surfaces to remain
-`review-no-change` only when every other instruction surface uses `update`,
-the routed-skill union contains no other skill, and the local
+`review-no-change` alongside reviewed or updated non-skill surfaces when the
+routed-skill union contains no other reviewed skill, and the local
 repository map registers their canonical `<skills-root>/<skill-id>/SKILL.md`
 files under one distinct external `skill-surfaces` source. The alias set is
 exactly `skills-root`; each installed file must SHA-256 match this revision's
@@ -109,9 +117,11 @@ accepted, blocked and no longer current with a blocker as its latest event, or
 superseded by the validator's canonical legacy old-to-replacement event
 projection. This compatibility does not upgrade that legacy projection to a
 current transaction-authentication claim, authorize a new transition or
-repair, or apply to a unit with explicit `work_mode`. Except for the closed
-external owner-tracked review rule above, current and future feature units
-must update every relevant skill. Other formerly valid
+repair, or apply to a unit with explicit `work_mode`. Current and future
+feature units may review the bound owner-tracked skill surfaces above without
+editing them. A routed skill outside that provenance route still requires its
+owning instruction-synchronization and validation route before it can claim
+`review-no-change`. Other formerly valid
 instruction metadata may be projected only through the exact hash-bound
 historical-unit adoption contract, which does not relax synchronization for
 a current or future unit. See
@@ -128,8 +138,8 @@ omits a skill route introduced later needs an exact project-owned
 ## Cadence
 
 1. Declare instruction impact when the unit becomes `ready`.
-2. Update instruction entrypoints with the implementation slice that makes
-   them true, or before accepting that slice.
+2. Review each routed entrypoint with the implementation slice. Edit only
+   guidance whose decision changed, before accepting that slice.
 3. Keep recipes in detailed docs or runbooks; add only durable routing to
    `AGENTS.md` and `SKILL.md`.
 4. Run workflow-contract, public-boundary, link, and repo-owned validation.
