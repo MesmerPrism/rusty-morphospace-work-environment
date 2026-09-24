@@ -528,7 +528,7 @@ jobs:
 
   standard-windows:
     needs: [infrastructure, select, affected-windows-segments]
-    timeout-minutes: 330
+    timeout-minutes: ${{ needs.select.outputs.windows_direct == 'true' && 330 || 20 }}
     if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
     runs-on: windows-latest
     steps:
