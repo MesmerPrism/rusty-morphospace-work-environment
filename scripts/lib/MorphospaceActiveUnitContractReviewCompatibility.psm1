@@ -168,8 +168,7 @@ function Test-MorphospaceActiveUnitContractReviewCompatibility {
         @($surfaces | Where-Object { @('review-no-change', 'update') -cnotcontains [string]$_.action }).Count -ne 0) {
         return $false
     }
-    if (@($surfaces | Where-Object { [string]$_.surface_kind -ceq 'agents' }).Count -eq 0 -or
-        @($surfaces | Where-Object { @('readme', 'router-doc') -ccontains [string]$_.surface_kind }).Count -eq 0) {
+    if (@($surfaces | Where-Object { @('readme', 'router-doc') -ccontains [string]$_.surface_kind }).Count -eq 0) {
         return $false
     }
     foreach ($skillId in $expectedSkillIds) {
