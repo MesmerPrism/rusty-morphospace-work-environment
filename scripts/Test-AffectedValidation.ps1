@@ -1800,21 +1800,23 @@ function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]
         if ([IO.Directory]::Exists($fixture)) { Remove-Item -LiteralPath $fixture -Recurse -Force }
     }
 }
-function Invoke-WorkflowSelectionGate([string]$JobBody, [string]$SelectionVariable, [string]$SelectionValue, [string]$SegmentResultVariable, [string]$SegmentResult = 'success') {
+function Invoke-WorkflowSelectionGate([string]$JobBody, [string]$SelectionVariable, [string]$SelectionValue, [string]$SegmentResultVariable, [string]$SegmentResult = 'success', [string]$WindowsDirect = 'false') {
     $run = [regex]::Match($JobBody, '(?ms)^        run: \|\r?\n(?<script>.*?)(?=^      - |\z)')
     if (-not $run.Success) { throw 'Workflow job lacks a first run script.' }
-    $lines = @($run.Groups['script'].Value -split "`r?`n" | Select-Object -First 3)
-    if ($lines.Count -ne 3) { throw 'Workflow job lacks the closed selection gate.' }
+    $lineCount = if ($JobBody.Contains('WINDOWS_DIRECT:')) { 6 } else { 3 }
+    $lines = @($run.Groups['script'].Value -split "`r?`n" | Select-Object -First $lineCount)
+    if ($lines.Count -ne $lineCount) { throw 'Workflow job lacks the closed selection gate.' }
     $gate = ($lines -join [Environment]::NewLine).Replace('exit 0', 'return')
     $saved = @{}
-    foreach ($name in @('INFRA_RESULT','SELECT_RESULT',$SelectionVariable,$SegmentResultVariable)) { $saved[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
+    foreach ($name in @('INFRA_RESULT','SELECT_RESULT',$SelectionVariable,$SegmentResultVariable,'WINDOWS_DIRECT','GITHUB_EVENT_NAME')) { $saved[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
     try {
         $env:INFRA_RESULT = 'success'; $env:SELECT_RESULT = 'success'
         [Environment]::SetEnvironmentVariable($SelectionVariable, $SelectionValue, 'Process')
         [Environment]::SetEnvironmentVariable($SegmentResultVariable, $SegmentResult, 'Process')
+        $env:WINDOWS_DIRECT = $WindowsDirect; $env:GITHUB_EVENT_NAME = 'pull_request'
         & ([scriptblock]::Create($gate))
     } finally {
-        foreach ($name in @('INFRA_RESULT','SELECT_RESULT',$SelectionVariable,$SegmentResultVariable)) { [Environment]::SetEnvironmentVariable($name, $saved[$name], 'Process') }
+        foreach ($name in @('INFRA_RESULT','SELECT_RESULT',$SelectionVariable,$SegmentResultVariable,'WINDOWS_DIRECT','GITHUB_EVENT_NAME')) { [Environment]::SetEnvironmentVariable($name, $saved[$name], 'Process') }
     }
 }
 
@@ -2268,6 +2270,14 @@ if ($runFullSelector -or $runExecutorPassPhase) {
     $quickWindowsBody = [string]$workflowJobs['quick-windows']
     Assert-True ($quickWindowsBody -match '(?m)^    needs: \[infrastructure, select, standard-windows\]$' -and $quickWindowsBody -match "\`$env:STANDARD_RESULT -cne 'success'") 'Required quick-windows context is not bound to the selected Windows result.'
     Assert-True ($quickWindowsBody -notmatch 'Invoke-AffectedValidation') 'Required quick-windows context replays the selected Windows suite.'
+    $directWindowsBody = [string]$workflowJobs['standard-windows']
+    $segmentedWindowsBody = [string]$workflowJobs['affected-windows-segments']
+    Assert-True ($directWindowsBody.Contains("WINDOWS_DIRECT: `${{ needs.select.outputs.windows_direct }}") -and $directWindowsBody.Contains("`$env:SEGMENT_RESULT -cne 'skipped'") -and $segmentedWindowsBody.Contains("needs.select.outputs.windows_direct == 'false'")) 'Opt-in direct Windows mode does not exclude segmented execution or bind its skipped dependency.'
+    Assert-True ($directWindowsBody.Contains('Invoke-AffectedValidation.ps1 -RepositoryRoot . -BaseCommit $env:PR_BASE -HeadCommit $env:PR_HEAD') -and $directWindowsBody.Contains('-Platform windows -OutPath $evidencePath') -and $directWindowsBody.Contains("`$expectedIds -join ','") -and $directWindowsBody.Contains('Test-Json -Json (Get-Content -LiteralPath $evidencePath -Raw) -SchemaFile ./schemas/affected-validation-evidence-v1.schema.json')) 'Direct Windows mode does not execute and verify the exact selected union.'
+    Assert-True ($directWindowsBody.Contains('AffectedCacheFinalized') -and $directWindowsBody.Contains('cache_ready=true') -and $directWindowsBody.Contains('inventoryPath') -and $directWindowsBody.Contains("steps.direct.outputs.evidence_ready == 'true'")) 'Direct Windows mode lacks finalized cache and typed aggregate retention.'
+    foreach ($invalidMode in @('unexpected','')) { Assert-AffectedThrows { Invoke-WorkflowSelectionGate -JobBody $directWindowsBody -SelectionVariable 'WINDOWS_SELECTED' -SelectionValue 'true' -SegmentResultVariable 'SEGMENT_RESULT' -WindowsDirect $invalidMode } '*execution mode must be exactly true or false*' 'Windows reducer accepted an invalid direct execution mode.' }
+    Invoke-WorkflowSelectionGate -JobBody $directWindowsBody -SelectionVariable 'WINDOWS_SELECTED' -SelectionValue 'true' -SegmentResultVariable 'SEGMENT_RESULT' -SegmentResult 'skipped' -WindowsDirect 'true'
+    foreach ($wrongProducer in @('success','failure','cancelled','')) { Assert-AffectedThrows { Invoke-WorkflowSelectionGate -JobBody $directWindowsBody -SelectionVariable 'WINDOWS_SELECTED' -SelectionValue 'true' -SegmentResultVariable 'SEGMENT_RESULT' -SegmentResult $wrongProducer -WindowsDirect 'true' } '*skipped segmented producer*' "Direct Windows reducer accepted producer state '$wrongProducer'." }
     $postMergeBody = [string]$workflowJobs['post-merge-attestation']
     Assert-True ($postMergeBody.Contains("if ([string]`$run.path -cne `$workflowPath)")) 'Post-merge evidence reuse does not bind the exact GitHub workflow path representation.'
     Assert-True ($postMergeBody.Contains('gh api --paginate --slurp') -and $postMergeBody.Contains('Select-MorphospaceAffectedArtifactAttempts -Artifacts $aggregateArtifacts') -and $postMergeBody.Contains('-CurrentAttempt ([int]$run.run_attempt)') -and $postMergeBody.Contains('foreach ($selectedArtifact in $selectedArtifacts)')) 'Post-merge reuse does not select exact artifact attempts before downloading them.'
@@ -2313,6 +2323,7 @@ if ($runFullSelector -or $runExecutorPassPhase) {
         Assert-True ($reducerBody.Contains('name: affected-selection-') -and $reducerBody.Contains('-selection.json')) "Reducer '$reducer' does not retain its selected attempt receipt."
         if ($reducer -cin @('quick-linux','standard-windows')) {
             Assert-True ($reducerBody -match 'name: affected-(?:linux|windows)-\$\{\{ steps.merge.outputs.evidence_sha256 \}\}-\$\{\{ github.run_id \}\}-\$\{\{ github.run_attempt \}\}') "Reducer '$reducer' final artifact can collide on an aggregate-only retry."
+            if ($reducer -ceq 'standard-windows') { Assert-True ($reducerBody -match 'name: affected-windows-\$\{\{ steps.direct.outputs.evidence_sha256 \}\}-\$\{\{ github.run_id \}\}-\$\{\{ github.run_attempt \}\}') 'Direct Windows final artifact lacks the same exact attempt binding.' }
         }
     }
     foreach ($platform in @('linux','windows')) {
@@ -2352,6 +2363,7 @@ if ($runFullSelector -or $runExecutorPassPhase) {
     Assert-True ($deepBody.Contains('needs: [infrastructure, select, quick-linux, standard-windows]') -and $deepBody.Contains('full-history segmented Deep evidence') -and $deepBody -notmatch 'Test-WorkEnvironment') 'Scheduled/manual Deep does not bind the fresh segmented leaf evidence or still reruns the cumulative aggregate.'
     $selectBody = [string]$workflowJobs['select']
     Assert-True ($selectBody.Contains("'schedule','workflow_dispatch'") -and $selectBody.Contains("{ 'Deep' }") -and $selectBody.Contains('Get-MorphospaceAffectedValidationSegments')) 'Schedule/manual selection does not resolve the complete Deep plan and deterministic segment matrices.'
+    Assert-True ($selectBody.Contains("contains(github.event.pull_request.labels.*.name, 'validation-single-windows')") -and $selectBody.Contains('windowsBudget -gt 18000') -and $selectBody.Contains('windows_direct=')) 'Single-runner Windows fallback is not bounded to an exact opt-in label and selected budget.'
     $planUploadIndex=$selectBody.IndexOf('name: Preserve canonical-digest affected plan',[StringComparison]::Ordinal);$mappingStopIndex=$selectBody.IndexOf('name: Stop non-executable affected mapping',[StringComparison]::Ordinal)
     Assert-True ($selectBody.Contains('execution_permitted') -and $selectBody.Contains('if ([bool]$plan.execution_permitted)') -and $planUploadIndex -ge 0 -and $mappingStopIndex -gt $planUploadIndex -and $selectBody.Contains("steps.plan.outputs.execution_permitted != 'true'")) 'Mapping-incomplete workflow does not upload the canonical plan before its explicit stop.'
     foreach($segmentJob in @('affected-linux-segments','affected-windows-segments')){Assert-True ([string]$workflowJobs[$segmentJob] -match "needs\.select\.outputs\.(?:linux|windows) == 'true'") "Affected segment job '$segmentJob' can run without an executable selected platform."}
