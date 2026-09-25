@@ -340,7 +340,8 @@ validation without a device.
   advisory/quarterly pinned-refresh cadence without central enforcement.
 - [Instruction Synchronization](docs/INSTRUCTION_SYNCHRONIZATION.md) keeps
   skills, planning instructions, touched-repo `AGENTS.md`, and README/router
-  docs aligned without duplicating long recipes.
+  docs aligned without duplicating long recipes. Change categories trigger
+  review; edit a routed surface only when its guidance changes.
 - [Affected Validation](docs/AFFECTED_VALIDATION.md) defines exact-tree
   current-delta selection, proportional workflow-authority leaf routing,
   current-byte-bound ordinal transitive owner/import/invocation coverage with

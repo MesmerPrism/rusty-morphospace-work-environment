@@ -145,9 +145,10 @@ proof that the module is general-purpose.
 
 An iteration unit declares whether it changes durable instructions. Changes to
 authority, module layout, activation, validation, device policy, repo routing,
-or public/private boundaries must update the nearest `AGENTS.md`, a README or
-router doc, and relevant skills before acceptance. Implementation-only units
-may declare no impact only with an explicit justification.
+or public/private boundaries must review the nearest `AGENTS.md`, a README or
+router doc, and relevant skills before acceptance. Edit each surface whose
+guidance changes; record a completed no-change review for an accurate surface.
+Implementation-only units may declare no impact with an explicit justification.
 
 Use the matrix in
 [Instruction Synchronization](INSTRUCTION_SYNCHRONIZATION.md). Entry points

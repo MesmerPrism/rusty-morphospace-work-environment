@@ -765,6 +765,29 @@ try {
     $reviewCompatibilityCheck = @($reviewCompatibilityInspect.claim_preflight.coverage.checks | Where-Object { [string]$_.check_id -ceq "instruction-action-compatibility" })
     Assert-Automation ($reviewCompatibilityCheck.Count -eq 1 -and [string]$reviewCompatibilityCheck[0].outcome -ceq "pass") "current lifecycle-routed skill reviews did not pass Inspect instruction compatibility"
 
+    $reviewOnlyUnit = $reviewCompatibilityUnit | ConvertTo-Json -Depth 32 | ConvertFrom-Json
+    $reviewOnlyUnit.instruction_impact = 'review'
+    foreach ($surface in @($reviewOnlyUnit.instruction_surfaces)) { $surface.action = 'review-no-change' }
+    Write-TestJson -Path $reviewCompatibilityUnitPath -Value $reviewOnlyUnit
+    $reviewOnlyInspect = Invoke-MorphospaceWorkUnitAutomation -Action Inspect -WorkspaceRoot $reviewCompatibilityWorkspace -UnitId $reviewCompatibilityUnitId -RepoMapPath $repoMapPath -Timestamp $fixed
+    $reviewOnlyCheck = @($reviewOnlyInspect.claim_preflight.coverage.checks | Where-Object { [string]$_.check_id -ceq 'instruction-action-compatibility' })
+    Assert-Automation ($reviewOnlyCheck.Count -eq 1 -and [string]$reviewOnlyCheck[0].outcome -ceq 'pass') 'bound review-only feature failed instruction preflight'
+
+    $misclassifiedReviewUnit = $reviewOnlyUnit | ConvertTo-Json -Depth 32 | ConvertFrom-Json
+    $misclassifiedReviewUnit.instruction_impact = 'update'
+    Write-TestJson -Path $reviewCompatibilityUnitPath -Value $misclassifiedReviewUnit
+    $misclassifiedReviewInspect = Invoke-MorphospaceWorkUnitAutomation -Action Inspect -WorkspaceRoot $reviewCompatibilityWorkspace -UnitId $reviewCompatibilityUnitId -RepoMapPath $repoMapPath -Timestamp $fixed
+    $misclassifiedReviewCheck = @($misclassifiedReviewInspect.claim_preflight.coverage.checks | Where-Object { [string]$_.check_id -ceq 'instruction-action-compatibility' })
+    Assert-Automation ($misclassifiedReviewCheck.Count -eq 1 -and [string]$misclassifiedReviewCheck[0].outcome -ceq 'fail' -and @($misclassifiedReviewCheck[0].reason_codes) -contains 'instruction-impact-mode-mismatch') 'review-only feature falsely claimed an instruction update'
+
+    $mixedReviewUnit = $reviewCompatibilityUnit | ConvertTo-Json -Depth 32 | ConvertFrom-Json
+    @($mixedReviewUnit.instruction_surfaces | Where-Object { [string]$_.surface_kind -ceq 'agents' })[0].action = 'review-no-change'
+    Write-TestJson -Path $reviewCompatibilityUnitPath -Value $mixedReviewUnit
+    $mixedReviewInspect = Invoke-MorphospaceWorkUnitAutomation -Action Inspect -WorkspaceRoot $reviewCompatibilityWorkspace -UnitId $reviewCompatibilityUnitId -RepoMapPath $repoMapPath -Timestamp $fixed
+    $mixedReviewCheck = @($mixedReviewInspect.claim_preflight.coverage.checks | Where-Object { [string]$_.check_id -ceq 'instruction-action-compatibility' })
+    Assert-Automation ($mixedReviewCheck.Count -eq 1 -and [string]$mixedReviewCheck[0].outcome -ceq 'pass') 'mixed entrypoint review and routed-skill review failed instruction preflight'
+    Write-TestJson -Path $reviewCompatibilityUnitPath -Value $reviewCompatibilityUnit
+
     $extraReviewUnit = $reviewCompatibilityUnit | ConvertTo-Json -Depth 32 | ConvertFrom-Json
     $extraReviewUnit.instruction_surfaces += [pscustomobject][ordered]@{ surface_kind = "skill"; path = "<skills-root>/rust-work-graph/SKILL.md"; owner = "workflow-maintainer"; change_reason = "Negative extra skill fixture."; action = "review-no-change"; status = "planned"; validation = "Must reject as non-required."; skill_id = "rust-work-graph" }
     Write-TestJson -Path $reviewCompatibilityUnitPath -Value $extraReviewUnit

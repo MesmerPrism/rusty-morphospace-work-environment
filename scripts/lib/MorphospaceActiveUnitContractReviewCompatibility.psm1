@@ -103,18 +103,10 @@ function Test-MorphospaceActiveUnitContractReviewCompatibility {
         $State.PSObject.Properties.Name -cnotcontains 'current_unit') {
         return $false
     }
-    if ($Phase -in @('Ready', 'Inspect', 'Claim') -and $RepositoryMap.Count -eq 0) { return $false }
     $hasToolingContext=$Unit.PSObject.Properties.Name-contains'tooling_context'
-    if($hasToolingContext){
-        if(-not$WorkspaceRoot-or$RepositoryMap.Count-eq0){return $false}
-        try{
-            $module=Import-Module (Join-Path $PSScriptRoot '../DevelopmentEnvelopeProvenance.psm1') -PassThru
-            $RepositoryMap=&$module {param($root,$unit,$map) Get-MorphospaceToolingInstructionRepositoryMap -WorkspaceRoot $root -Unit $unit -RepositoryMap $map} $WorkspaceRoot $Unit $RepositoryMap
-        }catch{return $false}
-    }
     if ([string]::IsNullOrWhiteSpace([string]$Unit.unit_id) -or
         [string]$Unit.work_mode -cne 'feature' -or
-        [string]$Unit.instruction_impact -cne 'update') {
+        @('review', 'update') -cnotcontains [string]$Unit.instruction_impact) {
         return $false
     }
     $status = [string]$Unit.status
@@ -163,22 +155,42 @@ function Test-MorphospaceActiveUnitContractReviewCompatibility {
             if (-not $requiredSkillIds.Contains($skillId)) { $requiredSkillIds.Add($skillId) | Out-Null }
         }
     }
-    $recognizedOwnerTrackedSkillIds = @('rust-work-graph', 'rusty-morphospace', 'system-engineering')
     $expectedSkillIds = @($requiredSkillIds.ToArray() | Sort-Object -Unique -CaseSensitive)
-    if ($expectedSkillIds.Count -eq 0 -or
-        @($expectedSkillIds | Where-Object { $recognizedOwnerTrackedSkillIds -cnotcontains [string]$_ }).Count -ne 0) {
-        return $false
-    }
+    if ($expectedSkillIds.Count -eq 0) { return $false }
 
     $surfaces = @($Unit.instruction_surfaces)
     $reviewSurfaces = @($surfaces | Where-Object { [string]$_.action -ceq 'review-no-change' })
-    if ($reviewSurfaces.Count -ne $expectedSkillIds.Count -or
-        @($reviewSurfaces | Where-Object { [string]$_.surface_kind -cne 'skill' }).Count -ne 0 -or
-        @($surfaces | Where-Object { [string]$_.action -cne 'review-no-change' -and [string]$_.action -cne 'update' }).Count -ne 0) {
+    $updatedSurfaces = @($surfaces | Where-Object { [string]$_.action -ceq 'update' })
+    $reviewedSkills = @($reviewSurfaces | Where-Object { [string]$_.surface_kind -ceq 'skill' })
+    $expectedImpact = if ($updatedSurfaces.Count -gt 0) { 'update' } else { 'review' }
+    if ($reviewSurfaces.Count -eq 0 -or
+        [string]$Unit.instruction_impact -cne $expectedImpact -or
+        @($surfaces | Where-Object { @('review-no-change', 'update') -cnotcontains [string]$_.action }).Count -ne 0) {
         return $false
     }
-    foreach ($surface in @($surfaces | Where-Object { [string]$_.action -cne 'review-no-change' })) {
-        if ([string]$surface.action -cne 'update') { return $false }
+    if (@($surfaces | Where-Object { @('readme', 'router-doc') -ccontains [string]$_.surface_kind }).Count -eq 0) {
+        return $false
+    }
+    foreach ($skillId in $expectedSkillIds) {
+        if (@($surfaces | Where-Object {
+            [string]$_.surface_kind -ceq 'skill' -and [string]$_.skill_id -ceq $skillId
+        }).Count -ne 1) { return $false }
+    }
+    if ($reviewedSkills.Count -eq 0) { return $true }
+    $recognizedOwnerTrackedSkillIds = @('rust-work-graph', 'rusty-morphospace', 'system-engineering')
+    if (@($reviewedSkills | Where-Object {
+        $recognizedOwnerTrackedSkillIds -cnotcontains [string]$_.skill_id -or
+        $expectedSkillIds -cnotcontains [string]$_.skill_id
+    }).Count -ne 0) {
+        return $false
+    }
+    if ($Phase -in @('Ready', 'Inspect', 'Claim') -and $RepositoryMap.Count -eq 0) { return $false }
+    if($hasToolingContext){
+        if(-not$WorkspaceRoot-or$RepositoryMap.Count-eq0){return $false}
+        try{
+            $module=Import-Module (Join-Path $PSScriptRoot '../DevelopmentEnvelopeProvenance.psm1') -PassThru
+            $RepositoryMap=&$module {param($root,$unit,$map) Get-MorphospaceToolingInstructionRepositoryMap -WorkspaceRoot $root -Unit $unit -RepositoryMap $map} $WorkspaceRoot $Unit $RepositoryMap
+        }catch{return $false}
     }
 
     # The exact review-only skill surfaces are a closed external registration,
@@ -187,8 +199,8 @@ function Test-MorphospaceActiveUnitContractReviewCompatibility {
         return $false
     }
     $writablePaths = @($Unit.allowed_repositories | ForEach-Object { @($_.allowed_paths | ForEach-Object { [string]$_ }) })
-    foreach ($skillId in $expectedSkillIds) {
-        $matches = @($reviewSurfaces | Where-Object { [string]$_.skill_id -ceq $skillId })
+    foreach ($skillId in @($reviewedSkills | ForEach-Object { [string]$_.skill_id } | Sort-Object -Unique -CaseSensitive)) {
+        $matches = @($reviewedSkills | Where-Object { [string]$_.skill_id -ceq $skillId })
         if ($matches.Count -ne 1 -or
             [string]$matches[0].path -cne "<skills-root>/$skillId/SKILL.md" -or
             [string]$matches[0].owner -cne 'workflow-maintainer' -or
@@ -222,7 +234,7 @@ function Test-MorphospaceActiveUnitContractReviewCompatibility {
             $allowedRoot = Resolve-MorphospaceActiveUnitContractReviewDirectory ([string]$RepositoryMap[$allowedRepoId].path)
             if (-not $allowedRoot -or (Test-MorphospaceActiveUnitContractReviewRootOverlap -Left $skillRoot -Right $allowedRoot)) { return $false }
         }
-        foreach ($skillId in $expectedSkillIds) {
+        foreach ($skillId in @($reviewedSkills | ForEach-Object { [string]$_.skill_id } | Sort-Object -Unique -CaseSensitive)) {
             if (-not $hasToolingContext -and -not (Test-MorphospaceActiveUnitContractReviewTrackedSkillBinding -SkillRoot $skillRoot -SkillId $skillId)) { return $false }
         }
     }

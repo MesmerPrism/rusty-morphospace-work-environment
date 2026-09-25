@@ -595,8 +595,8 @@ function New-MorphospaceClaimPreflight {
     if ($triggered.Count -eq 0 -and [string]$Unit.instruction_impact -eq 'none') {
         & $addCheck 'instruction-action-compatibility' 'pass' 'skipped' @('not-applicable')
     } else {
-        $expectedImpact = if ($workMode -eq 'validation-only') { 'review' } else { 'update' }
-        $expectedAction = if ($workMode -eq 'validation-only') { 'review-no-change' } else { 'update' }
+        $expectedImpact = if ($workMode -eq 'validation-only' -or
+            @($Unit.instruction_surfaces | Where-Object { [string]$_.action -ceq 'update' }).Count -eq 0) { 'review' } else { 'update' }
         if ([string]$Unit.instruction_impact -ne $expectedImpact) { $instructionReasons.Add('instruction-impact-mode-mismatch') | Out-Null }
         if (-not $instructionObservationFailed) {
             foreach ($surface in @($Unit.instruction_surfaces | Where-Object { [string]$_.action -ceq 'update' })) {
@@ -621,7 +621,9 @@ function New-MorphospaceClaimPreflight {
             -Unit $Unit -State $State -Lifecycle $lifecycle -Phase $instructionCompatibilityPhase -RepositoryMap $RepositoryMap -WorkspaceRoot $WorkspaceRoot
         if ($instructionObservationFailed) { $instructionReasons.Add('instruction-surface-unresolved') | Out-Null }
         foreach ($surface in @($Unit.instruction_surfaces)) {
-            if ([string]$surface.action -ne $expectedAction -and -not $activeContractReviewCompatible) {
+            if (($workMode -eq 'validation-only' -and [string]$surface.action -cne 'review-no-change') -or
+                ($workMode -ne 'validation-only' -and [string]$surface.surface_kind -ceq 'skill' -and
+                    [string]$surface.action -ceq 'review-no-change' -and -not $activeContractReviewCompatible)) {
                 $instructionReasons.Add('instruction-action-mode-mismatch') | Out-Null
             }
         }

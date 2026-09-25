@@ -63,6 +63,7 @@ jobs:
       windows: ${{ steps.plan.outputs.windows }}
       linux_matrix: ${{ steps.plan.outputs.linux_matrix }}
       windows_matrix: ${{ steps.plan.outputs.windows_matrix }}
+      windows_direct: ${{ steps.plan.outputs.windows_direct }}
       execution_permitted: ${{ steps.plan.outputs.execution_permitted }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -76,6 +77,7 @@ jobs:
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
           PUSH_BEFORE: ${{ github.event.before }}
+          SINGLE_WINDOWS_REQUESTED: ${{ contains(github.event.pull_request.labels.*.name, 'validation-single-windows') }}
         run: |
           $planFailure=$null
           try {
@@ -94,6 +96,11 @@ jobs:
           $windows = [bool]$plan.execution_permitted -and @($plan.selected_checks | Where-Object { @($_.platforms) -ccontains 'windows' }).Count -gt 0
           "linux=$($linux.ToString().ToLowerInvariant())" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
           "windows=$($windows.ToString().ToLowerInvariant())" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+          $windowsBudget = [long]0
+          foreach ($check in @($plan.selected_checks | Where-Object { @($_.platforms) -ccontains 'windows' })) { $windowsBudget += [long]$check.budget_seconds }
+          $windowsDirect = $env:GITHUB_EVENT_NAME -ceq 'pull_request' -and $env:SINGLE_WINDOWS_REQUESTED -ieq 'true' -and $windows
+          if ($windowsDirect -and $windowsBudget -gt 18000) { throw 'Requested single-runner Windows validation exceeds its 18,000-second selected budget ceiling.' }
+          "windows_direct=$($windowsDirect.ToString().ToLowerInvariant())" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
           Import-Module ./scripts/lib/MorphospaceAffectedValidation.psm1 -Force
           $registry = Get-Content -LiteralPath manifests/affected-validation-registry.json -Raw | ConvertFrom-Json -Depth 64
           foreach ($platform in @('linux','windows')) {
@@ -358,7 +365,7 @@ jobs:
   affected-windows-segments:
     name: segment-${{ matrix.segment_id }}
     needs: [infrastructure, select]
-    if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && needs.select.outputs.windows == 'true' }}
+    if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && needs.select.outputs.windows == 'true' && needs.select.outputs.windows_direct == 'false' }}
     runs-on: windows-latest
     timeout-minutes: ${{ matrix.timeout_minutes }}
     strategy:
@@ -525,7 +532,7 @@ jobs:
 
   standard-windows:
     needs: [infrastructure, select, affected-windows-segments]
-    timeout-minutes: 20
+    timeout-minutes: 330
     if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
     runs-on: windows-latest
     steps:
@@ -543,18 +550,122 @@ jobs:
           SELECT_RESULT: ${{ needs.select.result }}
           SEGMENT_RESULT: ${{ needs.affected-windows-segments.result }}
           WINDOWS_SELECTED: ${{ needs.select.outputs.windows }}
+          WINDOWS_DIRECT: ${{ needs.select.outputs.windows_direct }}
         run: |
           if ($env:INFRA_RESULT -cne 'success' -or $env:SELECT_RESULT -cne 'success') { throw 'Required Windows selection prerequisites did not succeed.' }
           if ($env:WINDOWS_SELECTED -cnotin @('true','false')) { throw 'Required Windows selection output must be exactly true or false.' }
-          if ($env:WINDOWS_SELECTED -ceq 'true' -and $env:SEGMENT_RESULT -cne 'success') { throw 'One or more required Windows segments did not succeed.' }
+          if ($env:WINDOWS_DIRECT -cnotin @('true','false')) { throw 'Required Windows execution mode must be exactly true or false.' }
+          if ($env:WINDOWS_SELECTED -cne 'true' -and $env:WINDOWS_DIRECT -cne 'false') { throw 'Unselected Windows checks cannot request direct execution.' }
+          if ($env:WINDOWS_SELECTED -ceq 'true' -and $env:WINDOWS_DIRECT -ceq 'false' -and $env:SEGMENT_RESULT -cne 'success') { throw 'One or more required Windows segments did not succeed.' }
+          if ($env:WINDOWS_DIRECT -ceq 'true' -and ($env:GITHUB_EVENT_NAME -cne 'pull_request' -or $env:SEGMENT_RESULT -cne 'skipped')) { throw 'Direct Windows execution requires a pull request and skipped segmented producer.' }
+      - name: Restore prior single-runner Windows check cache
+        if: ${{ needs.select.outputs.windows_direct == 'true' && github.event_name == 'pull_request' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: ${{ runner.temp }}/affected-check-cache-windows/current
+          key: affected-check-windows-pr-${{ github.event.pull_request.number }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            affected-check-windows-pr-${{ github.event.pull_request.number }}-
+      - name: Execute exact selected Windows union on this runner
+        if: ${{ needs.select.outputs.windows_direct == 'true' }}
+        id: direct
+        shell: pwsh
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          ./scripts/Test-PowerShellHost.ps1 -SelfTest
+          if ((git rev-parse HEAD) -cne $env:PR_HEAD) { throw 'Checkout does not equal the pull-request head SHA.' }
+          ./scripts/Resolve-AffectedValidation.ps1 -RepositoryRoot . -BaseCommit $env:PR_BASE -HeadCommit $env:PR_HEAD -Tier Quick -OutPath "$env:RUNNER_TEMP/affected-plan.json" | Out-Null
+          $plan = Get-Content -LiteralPath "$env:RUNNER_TEMP/affected-plan.json" -Raw | ConvertFrom-Json -Depth 64
+          $selected = @($plan.selected_checks | Where-Object { @($_.platforms) -ccontains 'windows' })
+          $budget = [long]0; foreach ($check in $selected) { $budget += [long]$check.budget_seconds }
+          if (-not [bool]$plan.execution_permitted -or $selected.Count -eq 0 -or $budget -gt 18000) { throw 'Direct Windows execution rejects an empty, non-executable, or over-budget selection.' }
+          $cacheRoot = Join-Path $env:RUNNER_TEMP 'affected-check-cache-windows'
+          $priorRoot = Join-Path $cacheRoot 'prior'
+          $currentRoot = Join-Path $cacheRoot 'current'
+          $evidencePath = Join-Path $env:RUNNER_TEMP 'affected-windows-evidence.json'
+          $runnerTempPrefix = [IO.Path]::GetFullPath($env:RUNNER_TEMP).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+          foreach ($path in @($cacheRoot,$priorRoot,$currentRoot)) { if (-not [IO.Path]::GetFullPath($path).StartsWith($runnerTempPrefix,[StringComparison]::OrdinalIgnoreCase)) { throw 'Direct Windows cache path escaped the runner temp directory.' } }
+          if (Test-Path -LiteralPath $priorRoot) { throw 'Direct Windows prior-cache destination already exists.' }
+          if (Test-Path -LiteralPath $currentRoot) { Move-Item -LiteralPath $currentRoot -Destination $priorRoot }
+          $failure = $null
+          $inventorySha256 = $null
+          try {
+            $execution = & ./scripts/Invoke-AffectedValidation.ps1 -RepositoryRoot . -BaseCommit $env:PR_BASE -HeadCommit $env:PR_HEAD -PlanPath "$env:RUNNER_TEMP/affected-plan.json" -Platform windows -OutPath $evidencePath -CheckEvidenceDirectory $currentRoot -PriorEvidenceDirectory $priorRoot
+            $inventorySha256 = [string]$execution.cache_inventory_sha256
+            if ($inventorySha256 -notmatch '^[0-9a-f]{64}$') { throw 'Passing Windows union executor did not return its finalized inventory SHA-256.' }
+          } catch {
+            $failure = $_
+            if ([string]$_.Exception.Data['AffectedCacheFinalized'] -ceq 'true') { $inventorySha256 = [string]$_.Exception.Data['AffectedInventorySha256'] }
+          }
+          if (-not (Test-Path -LiteralPath $evidencePath -PathType Leaf)) {
+            $message = if ($null -eq $failure) { 'Windows union returned without typed evidence.' } else { [string]$failure.Exception.Message }
+            if ($message.Length -gt 2048) { $message = $message.Substring(0,2048) }
+            $diagnostic = [pscustomobject][ordered]@{schema='rusty.morphospace.diagnostic.affected_validation_pre_evidence_failure.v1';authority='non-authoritative-terminal-diagnostic';phase='single-windows';result='code-fail';failure=[pscustomobject][ordered]@{failure_kind='pre-evidence';exception_type=if($null-eq$failure){'InvalidOperationException'}else{$failure.Exception.GetType().FullName};exception_message=$message};claims=[pscustomobject][ordered]@{typed_aggregate_evidence_produced=$false;acceptance_authority=$false;publication_authority=$false}}
+            [byte[]]$bytes = [Text.UTF8Encoding]::new($false).GetBytes(($diagnostic | ConvertTo-Json -Depth 6 -Compress) + "`n")
+            if ($bytes.Length -gt 65536) { throw 'Bounded Windows union diagnostic exceeded 65536 bytes.' }
+            $path = Join-Path $env:RUNNER_TEMP 'affected-windows-direct-diagnostic.json'
+            $stream = [IO.File]::Open($path,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+            try { $stream.Write($bytes,0,$bytes.Length) } finally { $stream.Dispose() }
+            'pre_evidence_failure=true' | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+            if ($null -ne $failure) { throw $failure }
+            throw 'Windows union returned without typed evidence.'
+          }
+          $evidence = Get-Content -LiteralPath $evidencePath -Raw | ConvertFrom-Json -Depth 64
+          if (-not (Test-Json -Json (Get-Content -LiteralPath $evidencePath -Raw) -SchemaFile ./schemas/affected-validation-evidence-v1.schema.json -ErrorAction Stop)) { throw 'Direct Windows aggregate fails its closed schema.' }
+          $expectedIds = @($selected | ForEach-Object { [string]$_.check_id })
+          $actualIds = @($evidence.check_results | ForEach-Object { [string]$_.check_id })
+          if ([string]$evidence.plan_sha256 -cne [string]$plan.plan_sha256 -or [string]$evidence.platform -cne 'windows' -or ($expectedIds -join ',') -cne ($actualIds -join ',')) { throw 'Direct Windows aggregate differs from the exact selected union.' }
+          "evidence_sha256=$((Get-FileHash -LiteralPath $evidencePath -Algorithm SHA256).Hash.ToLowerInvariant())" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+          'evidence_ready=true' | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+          if ($inventorySha256 -match '^[0-9a-f]{64}$') {
+            $inventoryPath = Join-Path $currentRoot 'inventory.json'
+            if (-not (Test-Path -LiteralPath $inventoryPath -PathType Leaf) -or (Get-FileHash -LiteralPath $inventoryPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $inventorySha256) { throw 'Direct Windows cache inventory differs from the executor receipt.' }
+            'cache_ready=true' | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+          }
+          if ($null -ne $failure) { throw $failure }
+          if ([string]$evidence.result -cne 'pass') { throw 'Direct Windows aggregate did not pass.' }
+          git diff --check $env:PR_BASE $env:PR_HEAD; if ($LASTEXITCODE -ne 0) { throw 'Windows pull-request delta has whitespace errors.' }
+      - name: Preserve single-runner Windows aggregate
+        if: ${{ !cancelled() && needs.select.outputs.windows_direct == 'true' && steps.direct.outputs.evidence_ready == 'true' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: affected-windows-${{ steps.direct.outputs.evidence_sha256 }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/affected-windows-evidence.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Preserve single-runner Windows diagnostic
+        if: ${{ !cancelled() && needs.select.outputs.windows_direct == 'true' && steps.direct.outputs.pre_evidence_failure == 'true' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: affected-windows-direct-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/affected-windows-direct-diagnostic.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Preserve single-runner Windows check streams and receipts
+        if: ${{ !cancelled() && needs.select.outputs.windows_direct == 'true' && steps.direct.outputs.cache_ready == 'true' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: affected-checks-windows-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/affected-check-cache-windows/current
+          if-no-files-found: error
+          retention-days: 7
+      - name: Save resumable single-runner Windows check cache
+        if: ${{ !cancelled() && needs.select.outputs.windows_direct == 'true' && steps.direct.outputs.cache_ready == 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: ${{ runner.temp }}/affected-check-cache-windows/current
+          key: affected-check-windows-pr-${{ github.event.pull_request.number }}-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Download Windows segment evidence
-        if: needs.select.outputs.windows == 'true'
+        if: ${{ needs.select.outputs.windows == 'true' && needs.select.outputs.windows_direct == 'false' }}
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: ./scripts/Download-AffectedValidationSegmentArtifacts.ps1 -Repository $env:GITHUB_REPOSITORY -RunId $env:GITHUB_RUN_ID -CurrentAttempt ([int]$env:GITHUB_RUN_ATTEMPT) -Platform windows -DestinationRoot "$env:RUNNER_TEMP/affected-windows-segments"
       - name: Verify and merge exact Windows segment union
-        if: needs.select.outputs.windows == 'true'
+        if: ${{ needs.select.outputs.windows == 'true' && needs.select.outputs.windows_direct == 'false' }}
         id: merge
         shell: pwsh
         env:
@@ -570,7 +681,7 @@ jobs:
           ./scripts/Merge-AffectedValidationSegments.ps1 -RepositoryRoot . -BaseCommit $base -HeadCommit $head -PlanPath "$env:RUNNER_TEMP/affected-plan.json" -Platform windows -SegmentEvidenceDirectory "$env:RUNNER_TEMP/affected-windows-staged" -OutPath "$env:RUNNER_TEMP/affected-windows-evidence.json" | Out-Null
           "evidence_sha256=$((Get-FileHash -LiteralPath "$env:RUNNER_TEMP/affected-windows-evidence.json" -Algorithm SHA256).Hash.ToLowerInvariant())" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
       - name: Preserve content-addressed Windows evidence
-        if: needs.select.outputs.windows == 'true'
+        if: ${{ needs.select.outputs.windows == 'true' && needs.select.outputs.windows_direct == 'false' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: affected-windows-${{ steps.merge.outputs.evidence_sha256 }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -578,7 +689,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Preserve Windows segment selection
-        if: needs.select.outputs.windows == 'true'
+        if: ${{ needs.select.outputs.windows == 'true' && needs.select.outputs.windows_direct == 'false' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: affected-selection-windows-${{ github.run_id }}-${{ github.run_attempt }}
