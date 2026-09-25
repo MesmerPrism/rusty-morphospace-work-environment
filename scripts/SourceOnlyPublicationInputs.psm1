@@ -5,6 +5,7 @@ Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Fo
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceContentObservation.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceValidationReceipt.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'AcceptedValidationEvidenceRelocation.psm1') -Force
 
 $script:SourceOnlyInputGit = $null
 
@@ -349,7 +350,14 @@ function New-MorphospaceSourceOnlyPublicationPlan {
     if ([string]$analysis.report.status -cne 'supported') { throw "Source-only publication readiness is '$($analysis.report.status)': $(@($analysis.report.reason_codes) -join ', ')." }
     $c = $analysis.context
     if ([string]$c.unit.status -cne 'accepted' -or $null -ne $c.state.current_unit -or $null -ne $c.state.pending_push_bundle) { throw 'Plan generation requires the exact accepted idle trigger with no pending publication bundle.' }
-    $acceptanceEvent = $c.tail
+    $relocation = $null
+    if ([string]$c.tail.event_id -cmatch '-accepted-evidence-relocated-[0-9]{4,}$') {
+        $relocation = Test-MorphospaceAcceptedEvidenceRelocation -WorkspaceRoot $c.workspace -RelocationId ([string]$c.tail.event_id) -RequireTail
+        if ([string]$relocation.document.unit_id -cne $UnitId) { throw 'Accepted evidence relocation belongs to another trigger unit.' }
+        $acceptanceEvent = $relocation.acceptance_event
+    } else {
+        $acceptanceEvent = $c.tail
+    }
     if ([string]$acceptanceEvent.unit_id -cne $UnitId -or [string]$acceptanceEvent.event_id -cnotmatch ('^' + [regex]::Escape($UnitId) + '-accepted-[0-9]{4,}$') -or @($acceptanceEvent.receipts).Count -ne 1) { throw 'Event-ledger tail is not the exact acceptance transition for the trigger unit.' }
     $receiptRelative = [string]$acceptanceEvent.receipts[0]
     if ($receiptRelative -cne [string]$c.state.last_accepted_receipt -or $receiptRelative -cne [string]$c.state.validation_checkpoint.receipt) { throw 'Accepted state does not bind the tail validation receipt.' }
@@ -357,11 +365,12 @@ function New-MorphospaceSourceOnlyPublicationPlan {
     $receipt = Assert-MorphospaceValidationReceiptStructure -ReceiptPath $receiptPath -AllowedSchemaIds 'rusty.morphospace.workflow.validation_receipt.v1'
     if ([string]$receipt.project_id -cne [string]$c.project.project_id -or [string]$receipt.unit_id -cne $UnitId -or [string]$receipt.result -cne 'pass') { throw 'Accepted validation receipt is not a passing receipt for this project and unit.' }
     foreach ($artifact in @($receipt.artifacts)) {
-        $artifactPath = if ([IO.Path]::IsPathRooted([string]$artifact.path)) { [IO.Path]::GetFullPath([string]$artifact.path) } else { [IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $receiptPath) ([string]$artifact.path))) }
+        $relocated = @(if ($null -ne $relocation) { $relocation.document.artifacts | Where-Object { [string]$_.artifact_id -ceq [string]$artifact.artifact_id } })
+        $artifactPath = if ($relocated.Count -eq 1) { Resolve-MorphospaceWorkspacePath $c.workspace ([string]$relocated[0].local_path) -RequireLeaf } elseif ([IO.Path]::IsPathRooted([string]$artifact.path)) { [IO.Path]::GetFullPath([string]$artifact.path) } else { [IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $receiptPath) ([string]$artifact.path))) }
         if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf) -or (Get-MorphospaceFileSha256 $artifactPath) -cne ([string]$artifact.sha256).ToLowerInvariant()) { throw "Accepted validation artifact '$([string]$artifact.artifact_id)' drifted." }
     }
     $transactionId = "$([string]$acceptanceEvent.event_id)-transition"
-    [void](Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $c.workspace -TransactionId $transactionId -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath "iteration-units/$UnitId.json" -ExpectedEventsPath 'iteration-events.jsonl' -RequireTail)
+    [void](Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $c.workspace -TransactionId $transactionId -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath "iteration-units/$UnitId.json" -ExpectedEventsPath 'iteration-events.jsonl' -RequireTail:($null -eq $relocation))
     $planRows = [Collections.Generic.List[object]]::new()
     foreach ($row in @($analysis.rows)) {
         $validatedRevision = @($receipt.repository_revisions | Where-Object { [string]$_.repo_id -ceq [string]$row.repo_id })
@@ -387,7 +396,7 @@ function New-MorphospaceSourceOnlyPublicationPlan {
         trigger = [pscustomobject][ordered]@{ kind = $triggerKind; accepted_status = 'accepted'; push_checkpoint = 'integration-batch' }
         acceptance_transition = [pscustomobject][ordered]@{ event_id = [string]$acceptanceEvent.event_id; transaction_id = $transactionId; validation_receipt = [pscustomobject][ordered]@{ path = $receiptRelative; sha256 = $receiptHash } }
         planning_owner = [pscustomobject][ordered]@{ repo_id = [string]$analysis.planning.repo_id; branch = [string]$analysis.planning.branch; head = [string]$analysis.planning.head; tree = [string]$analysis.planning.tree; remote_policy = 'no-configured-remotes' }
-        expected = [pscustomobject][ordered]@{ project_sha256 = Get-MorphospaceCanonicalJsonSha256 $c.project; state_sha256 = Get-MorphospaceCanonicalJsonSha256 $c.state; unit_sha256 = Get-MorphospaceCanonicalJsonSha256 $c.unit; events_sha256 = Get-MorphospaceFileSha256 $c.events_path; events_length = [int64]([IO.FileInfo]$c.events_path).Length; event_tail_id = [string]$acceptanceEvent.event_id }
+        expected = [pscustomobject][ordered]@{ project_sha256 = Get-MorphospaceCanonicalJsonSha256 $c.project; state_sha256 = Get-MorphospaceCanonicalJsonSha256 $c.state; unit_sha256 = Get-MorphospaceCanonicalJsonSha256 $c.unit; events_sha256 = Get-MorphospaceFileSha256 $c.events_path; events_length = [int64]([IO.FileInfo]$c.events_path).Length; event_tail_id = [string]$c.tail.event_id }
         source_repositories = @($planRows.ToArray())
         validation_evidence = @([pscustomobject][ordered]@{ evidence_id = [string]$receipt.receipt_id; path = $receiptRelative; sha256 = $receiptHash })
         preservation = [pscustomobject][ordered]@{ source_only = $true; planning_remote_required = $false; planning_remote_mutation_claimed = $false; planning_publication_performed = $false; unit_statuses_preserved = $true; acceptance_inferred = $false; validation_inferred = $false; wearer_acceptance_inferred = $false; force_push_allowed = $false }

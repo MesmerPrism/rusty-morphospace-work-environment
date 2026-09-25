@@ -4,6 +4,7 @@ Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Fo
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceContentObservation.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceValidationReceipt.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'AcceptedValidationEvidenceRelocation.psm1') -Force
 
 if($IsWindows-and-not('MorphospaceSourceOnlyFileIdentity'-as[type])){Add-Type -TypeDefinition @'
 using System; using System.ComponentModel; using System.IO; using System.Runtime.InteropServices; using Microsoft.Win32.SafeHandles;
@@ -155,6 +156,16 @@ function Assert-SourceOnlyPlan {
     $acceptanceEvents=@(Get-Content -LiteralPath $c.events_path|Where-Object{-not[string]::IsNullOrWhiteSpace($_)}|ForEach-Object{$_|ConvertFrom-Json -DateKind String}|Where-Object{[string]$_.event_id-ceq[string]$acceptance.event_id})
     if($acceptanceEvents.Count-ne1-or[string]$acceptance.event_id-cnotmatch('^'+[regex]::Escape($c.unit.unit_id)+'-accepted-[0-9]{4,}$')-or[string]$acceptanceEvents[0].unit_id-cne$c.unit.unit_id-or@($acceptanceEvents[0].receipts)-cnotcontains[string]$acceptance.validation_receipt.path){throw 'Accepted trigger event does not bind the declared validation receipt.'}
     if([string]$acceptance.transaction_id-cne"$([string]$acceptance.event_id)-transition"){throw 'Accepted trigger transaction identity is noncanonical.'}
+    $relocation=$null
+    if([string]$Plan.expected.event_tail_id-cmatch'-accepted-evidence-relocated-[0-9]{4,}$'){
+      $relocation=Test-MorphospaceAcceptedEvidenceRelocation -WorkspaceRoot $c.workspace -RelocationId ([string]$Plan.expected.event_tail_id)
+      if([string]$relocation.document.unit_id-cne[string]$c.unit.unit_id-or
+         [string]$relocation.document.acceptance.event_id-cne[string]$acceptance.event_id){
+          throw 'Source-only plan relocation is detached from its accepted trigger.'
+      }
+    }elseif([string]$Plan.expected.event_tail_id-cne[string]$acceptance.event_id){
+      throw 'Source-only plan expected tail is neither its acceptance nor its exact evidence relocation.'
+    }
     $acceptedTransition=Test-SourceOnlyCommittedPredecessorTransition -Context $c -TransactionId ([string]$acceptance.transaction_id) -PendingSuccessorIntent $PendingSuccessorIntent
     if((Get-MorphospaceCanonicalJsonSha256 $acceptedTransition.intent.event)-cne(Get-MorphospaceCanonicalJsonSha256 $acceptanceEvents[0])-or[string]$acceptedTransition.intent.target.unit.document.status-cne'accepted'-or[string]$acceptedTransition.intent.target.unit.sha256-cne(Get-MorphospaceCanonicalJsonSha256 $c.unit)-or$null-ne$acceptedTransition.intent.target.state.document.current_unit){throw 'Accepted trigger owner transition does not authenticate the retained accepted unit.'}
     $acceptedValidation=Assert-MorphospaceValidationReceiptStructure -ReceiptPath $acceptancePath -AllowedSchemaIds 'rusty.morphospace.workflow.validation_receipt.v1'
@@ -162,7 +173,11 @@ function Assert-SourceOnlyPlan {
     $checkpoint=$acceptedTransition.intent.target.state.document.validation_checkpoint
     if($null-eq$checkpoint-or[string]$checkpoint.receipt-cne[string]$acceptance.validation_receipt.path-or[string]$checkpoint.result-cne'pass'-or[string]$checkpoint.tier-cne[string]$acceptedValidation.tier){throw 'Accepted trigger transition does not bind its exact passing validation checkpoint.'}
     if(@($acceptedValidation.criteria|Where-Object{[string]$_.status-cne'pass'}).Count-ne0-or@($acceptedValidation.gates|Where-Object{[string]$_.status-cne'pass'}).Count-ne0){throw 'Accepted trigger validation receipt contains a failed criterion or gate.'}
-    foreach($artifact in @($acceptedValidation.artifacts)){$artifactPath=Resolve-SourceOnlyValidationArtifactPath $acceptancePath ([string]$artifact.path) ([string]$artifact.artifact_id);if((Get-MorphospaceFileSha256 $artifactPath)-cne([string]$artifact.sha256).ToLowerInvariant()){throw "Accepted trigger validation artifact '$($artifact.artifact_id)' drifted."}}
+    foreach($artifact in @($acceptedValidation.artifacts)){
+      $relocated=@(if($null-ne$relocation){$relocation.document.artifacts|Where-Object{[string]$_.artifact_id-ceq[string]$artifact.artifact_id}})
+      $artifactPath=if($relocated.Count-eq1){Resolve-MorphospaceWorkspacePath $c.workspace ([string]$relocated[0].local_path) -RequireLeaf}else{Resolve-SourceOnlyValidationArtifactPath $acceptancePath ([string]$artifact.path) ([string]$artifact.artifact_id)}
+      if((Get-MorphospaceFileSha256 $artifactPath)-cne([string]$artifact.sha256).ToLowerInvariant()){throw "Accepted trigger validation artifact '$($artifact.artifact_id)' drifted."}
+    }
     $planning=@($c.map.repositories|Where-Object{[string]$_.role-ceq'planning'});if($planning.Count-ne1-or[string]$planning[0].repo_id-cne[string]$Plan.planning_owner.repo_id){throw 'Repository map must identify exactly the bound planning owner.'}
     $planningRoot=(Resolve-Path ([string]$planning[0].path)).Path
     $top=[IO.Path]::GetFullPath((Get-SourceOnlyGitValue $planningRoot @('rev-parse','--show-toplevel') 'planning owner root observation')).TrimEnd('\','/')

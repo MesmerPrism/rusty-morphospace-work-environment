@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([switch]$SelfTest)
+param([switch]$SelfTest,[switch]$RelocationOnly,[switch]$HistoricalRawOnly)
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference='Stop'
@@ -51,10 +51,11 @@ function New-Source($Root,$Id,[string[]]$Paths){
 }
 function Publish-Merge($Source,$Root){$merger=Join-Path $Root "merge-$($Source.id)";Git $Source.repo @('push','origin',($Source.candidate+':refs/heads/candidate'))|Out-Null;Git $Root @('clone',$Source.remote,$merger)|Out-Null;Git $merger @('config','user.email','fixture@example.invalid')|Out-Null;Git $merger @('config','user.name','Fixture')|Out-Null;Git $merger @('checkout','main')|Out-Null;Git $merger @('merge','--no-ff','--no-edit','origin/candidate')|Out-Null;Git $merger @('push','origin','main')|Out-Null;Git $Source.repo @('fetch','origin','main')|Out-Null;GitValue $merger @('rev-parse','HEAD')}
 
-function New-Fixture($Root,$PublicationId){
+function New-Fixture($Root,$PublicationId,[switch]$UntrackedHostArtifact){
     [IO.Directory]::CreateDirectory($Root)|Out-Null
     $public=New-Source $Root 'public-provider' @('public-carried.txt');$private=New-Source $Root 'private-consumer' @('private-carried.txt','private-agents.md');$readonly=New-Source $Root 'readonly-dependency' @('readonly-input.txt')
     $planning=Join-Path $Root 'planning';$workspace=Join-Path $planning 'morphospace';$inputs=Join-Path $Root 'inputs';[IO.Directory]::CreateDirectory($planning)|Out-Null;[IO.Directory]::CreateDirectory($inputs)|Out-Null;Git $planning @('init')|Out-Null;Git $planning @('config','core.autocrlf','false')|Out-Null;Git $planning @('config','user.email','fixture@example.invalid')|Out-Null;Git $planning @('config','user.name','Fixture')|Out-Null
+    if($UntrackedHostArtifact){[IO.File]::AppendAllText((Join-Path $planning '.git/info/exclude'),"morphospace/receipts/host.txt`nmorphospace/local/`n",[Text.UTF8Encoding]::new($false))}
     [IO.Directory]::CreateDirectory((Join-Path $workspace 'iteration-units'))|Out-Null;[IO.Directory]::CreateDirectory((Join-Path $workspace 'receipts'))|Out-Null
     $unit=[ordered]@{schema='rusty.morphospace.workflow.iteration_unit.v1';unit_id='fixture-unit';project_id='fixture-project';status='active';objective='Publish reviewed source snapshots.';change_categories=@('documentation-only');instruction_impact='none';instruction_surfaces=@();instruction_none_justification='Fixture.';prerequisites=@();allowed_repositories=@([ordered]@{repo_id=$public.id;allowed_paths=@('public-carried.txt')},[ordered]@{repo_id=$private.id;allowed_paths=@('private-carried.txt','private-agents.md')});read_only_dependencies=@([ordered]@{repo_id=$readonly.id;paths=@('readonly-input.txt');purpose='Pinned dependency.';verification='Fixture.'});non_scope=@('Planning publication.');acceptance=@([ordered]@{acceptance_id='host';proof='pass';command='fixture'});risk_tier='standard';device_requirement='none';validation=@([ordered]@{profile_id='host';command='fixture'});outputs=@('source');commit_policy='fixture';push_checkpoint='integration-batch'}
     $event=[ordered]@{schema='rusty.morphospace.workflow.iteration_event.v1';event_id='fixture-start';sequence=1;timestamp='2026-01-01T00:00:00Z';project_id='fixture-project';unit_id='fixture-unit';event_type='state-transition';summary='fixture';receipts=@()}
@@ -112,6 +113,132 @@ function Assert-ReceiptStructuralRejection {
     }finally{Remove-FixtureRoot $root}
 }
 
+function Assert-AcceptedEvidenceRelocation {
+    $root=Join-Path ([IO.Path]::GetTempPath())('source-only-relocation-'+[guid]::NewGuid().ToString('N'))
+    try{
+        $f=New-Fixture $root 'fixture-relocation' -UntrackedHostArtifact
+        $planning=Split-Path $f.workspace -Parent
+        $acceptedPrefix=[IO.File]::ReadAllBytes((Join-Path $f.workspace 'iteration-events.jsonl'))
+        $acceptedReceiptHash=Hash (Join-Path $f.workspace 'receipts/host-pass.json')
+        $local=Join-Path $f.workspace 'local/accepted-evidence';[IO.Directory]::CreateDirectory($local)|Out-Null
+        Copy-Item -LiteralPath (Join-Path $f.workspace 'receipts/host.txt') -Destination (Join-Path $local 'host.txt')
+        $relocationModule=Import-Module (Join-Path $PSScriptRoot 'AcceptedValidationEvidenceRelocation.psm1') -Force -PassThru
+        $relocationInput=Join-Path $f.workspace 'local/relocation-input.json'
+        $draft=& $relocationModule {param($w,$o) New-MorphospaceAcceptedEvidenceRelocationInput -WorkspaceRoot $w -UnitId fixture-unit -LocalDirectory 'local/accepted-evidence' -CreatedAt '2026-01-01T00:00:45Z' -OutPath $o} $f.workspace $relocationInput
+        $out=Join-Path $f.workspace "receipts/$($draft.relocation_id).json"
+        $tampered=Join-Path $f.workspace 'local/tampered-input.json';$bad=Copy-Document (Read-Json $relocationInput);$bad.artifacts[0].sha256='0'*64;Write-Json $tampered $bad
+        Assert-Rejected {& $relocationModule {param($w,$i,$h,$o) Invoke-MorphospaceRelocateAcceptedValidationEvidence -WorkspaceRoot $w -RelocationInput $i -ExpectedInputSha256 $h -OutPath $o -Execute} $f.workspace $tampered (Hash $tampered) $out} 'relocation changed accepted hash' '*immutable receipt*' $f.workspace
+        $unignored=Join-Path $f.workspace 'local/unignored-input.json';$bad=Copy-Document (Read-Json $relocationInput);$bad.artifacts[0].local_path='receipts/host.txt';Write-Json $unignored $bad
+        Assert-Rejected {& $relocationModule {param($w,$i,$h,$o) Invoke-MorphospaceRelocateAcceptedValidationEvidence -WorkspaceRoot $w -RelocationInput $i -ExpectedInputSha256 $h -OutPath $o -Execute} $f.workspace $unignored (Hash $unignored) $out} 'relocation outside ignored local' '*regular expression*' $f.workspace
+        Git $planning @('add','-f','morphospace/receipts/host.txt')|Out-Null
+        Assert-Rejected {& $relocationModule {param($w,$i,$h,$o) Invoke-MorphospaceRelocateAcceptedValidationEvidence -WorkspaceRoot $w -RelocationInput $i -ExpectedInputSha256 $h -OutPath $o -Execute} $f.workspace $relocationInput $draft.sha256 $out} 'tracked original evidence' '*Original accepted evidence is tracked*' $f.workspace
+        Git $planning @('reset','--','morphospace/receipts/host.txt')|Out-Null
+        Git $planning @('add','-f','morphospace/local/accepted-evidence/host.txt')|Out-Null
+        Assert-Rejected {& $relocationModule {param($w,$i,$h,$o) Invoke-MorphospaceRelocateAcceptedValidationEvidence -WorkspaceRoot $w -RelocationInput $i -ExpectedInputSha256 $h -OutPath $o -Execute} $f.workspace $relocationInput $draft.sha256 $out} 'tracked local evidence' '*tracked by the planning owner*' $f.workspace
+        Git $planning @('reset','--','morphospace/local/accepted-evidence/host.txt')|Out-Null
+        $ownerAction=Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1'
+        $dry=& $ownerAction -Action RelocateAcceptedValidationEvidence -WorkspaceRoot $f.workspace -AcceptedEvidenceRelocation $relocationInput -ExpectedAcceptedEvidenceRelocationSha256 $draft.sha256 -OutPath $out|ConvertFrom-Json
+        if($dry.executed){throw 'Relocation owner action dry run executed.'}
+        if($IsWindows){
+            $fakeDirectory=Join-Path $root 'fake-git';[IO.Directory]::CreateDirectory($fakeDirectory)|Out-Null
+            [IO.File]::WriteAllText((Join-Path $fakeDirectory 'git.cmd'),"@echo off`r`nexit /b 0`r`n",[Text.UTF8Encoding]::new($false))
+            $probePath=Join-Path $root 'fake-git-probe.ps1'
+            [IO.File]::WriteAllText($probePath,@'
+param($FakeDirectory,$ModulePath,$Workspace,$RelocationInput,$ExpectedHash,$OutPath)
+$ErrorActionPreference='Stop'
+$env:PATH="$FakeDirectory;$env:PATH"
+if([IO.Path]::GetFullPath((@(Get-Command git -CommandType Application)[0]).Source)-cne[IO.Path]::GetFullPath((Join-Path $FakeDirectory 'git.cmd'))){throw 'Fake PATH Git fixture was not selected.'}
+Import-Module $ModulePath
+try {Invoke-MorphospaceRelocateAcceptedValidationEvidence -WorkspaceRoot $Workspace -RelocationInput $RelocationInput -ExpectedInputSha256 $ExpectedHash -OutPath $OutPath|Out-Null;throw 'Fake PATH Git was accepted.'}
+catch {if($_.Exception.Message-cnotlike '*bound executable*'){throw}}
+'Fake PATH Git rejected.'
+'@,[Text.UTF8Encoding]::new($false))
+            $pwshExecutable=(@(Get-Command pwsh -CommandType Application -ErrorAction Stop)[0]).Source
+            $probeOutput=@(& $pwshExecutable -NoProfile -File $probePath $fakeDirectory (Join-Path $PSScriptRoot 'AcceptedValidationEvidenceRelocation.psm1') $f.workspace $relocationInput $draft.sha256 $out 2>&1|ForEach-Object{[string]$_})
+            if($LASTEXITCODE-ne0-or$probeOutput[-1]-cne'Fake PATH Git rejected.'){throw "Fake PATH Git probe failed: $($probeOutput -join ' ')"}
+        }
+        & $relocationModule {param($w,$i,$h,$o) Invoke-MorphospaceRelocateAcceptedValidationEvidence -WorkspaceRoot $w -RelocationInput $i -ExpectedInputSha256 $h -OutPath $o -Execute} $f.workspace $relocationInput $draft.sha256 $out|Out-Null
+        if((Hash (Join-Path $f.workspace 'receipts/host-pass.json'))-cne$acceptedReceiptHash){throw 'Relocation rewrote accepted receipt.'}
+        $actual=[IO.File]::ReadAllBytes((Join-Path $f.workspace 'iteration-events.jsonl'))
+        for($i=0;$i-lt$acceptedPrefix.Length;$i++){if($actual[$i]-ne$acceptedPrefix[$i]){throw 'Relocation rewrote accepted event prefix.'}}
+        Remove-Item -LiteralPath (Join-Path $f.workspace 'receipts/host.txt')
+        [void](&$relocationModule {param($w,$id)Test-MorphospaceAcceptedEvidenceRelocation -WorkspaceRoot $w -RelocationId $id -RequireTail} $f.workspace $draft.relocation_id)
+        Assert-CurrentWork $f 'EvidenceRelocation'
+        Git $planning @('add','morphospace')|Out-Null;Git $planning @('commit','-m','accepted evidence relocation')|Out-Null
+        if(@(Git $planning @('status','--porcelain=v1','--untracked-files=all')).Count-ne0){throw 'Relocation fixture planning owner is not clean.'}
+        $generated=Join-Path $f.inputs 'relocated-plan.json'
+        $inputsModule=Import-Module (Join-Path $PSScriptRoot 'SourceOnlyPublicationInputs.psm1') -Force -PassThru
+        [void](&$inputsModule {param($f,$p)New-MorphospaceSourceOnlyPublicationPlan -WorkspaceRoot $f.workspace -UnitId fixture-unit -RepoMapPath $f.map -PublicationId fixture-relocation -OutPath $p} $f $generated)
+        $plan=Read-Json $generated
+        if([string]$plan.expected.event_tail_id-cne[string]$draft.relocation_id-or[string]$plan.acceptance_transition.event_id-cne'fixture-unit-accepted-0001'){throw 'Source-only plan lost separate acceptance and relocation identities.'}
+        $planHash=Hash $generated
+        Invoke-MorphospacePrepareSourceOnlyPublication -WorkspaceRoot $f.workspace -UnitId fixture-unit -RepoMapPath $f.map -SourceOnlyPublicationPlan $generated -ExpectedSourceOnlyPublicationPlanSha256 $planHash -OutPath (Join-Path $f.workspace 'receipts/fixture-relocation-plan.json') -Timestamp '2026-01-01T00:01:00Z' -Execute|Out-Null
+        Assert-CurrentWork $f 'RelocatedPrepare'
+        $pub=Publish-Merge $f.public $root;$priv=Publish-Merge $f.private $root
+        $f.plan=$plan;$f.plan_hash=$planHash
+        $executionPath=Join-Path $f.inputs 'relocated-execution.json';Write-Json $executionPath (New-Execution $f $pub $priv)
+        Invoke-MorphospaceRecordSourceOnlyPublication -WorkspaceRoot $f.workspace -UnitId fixture-unit -RepoMapPath $f.map -SourceOnlyPublicationExecution $executionPath -ExpectedSourceOnlyPublicationExecutionSha256 (Hash $executionPath) -OutPath (Join-Path $f.workspace 'receipts/fixture-relocation-execution.json') -Timestamp '2026-01-01T00:04:00Z' -Execute|Out-Null
+        Assert-CurrentWork $f 'RelocatedRecord'
+        [IO.File]::WriteAllText((Join-Path $local 'host.txt'),'damaged',[Text.UTF8Encoding]::new($false))
+        Assert-Rejected {& $relocationModule {param($w,$id)Test-MorphospaceAcceptedEvidenceRelocation -WorkspaceRoot $w -RelocationId $id} $f.workspace $draft.relocation_id} 'local copy tamper after publication' '*hash drifted*' $f.workspace
+        [IO.File]::WriteAllText((Join-Path $local 'host.txt'),'pass',[Text.UTF8Encoding]::new($false))
+        $nextUnit=Copy-Document (Read-Json (Join-Path $f.workspace 'iteration-units/fixture-unit.json'));$nextUnit.unit_id='fixture-next';$nextUnit.status='active';Write-Json (Join-Path $f.workspace 'iteration-units/fixture-next.json') $nextUnit
+        $nextReceipt=Copy-Document (Read-Json (Join-Path $f.workspace 'receipts/host-pass.json'));$nextReceipt.receipt_id='fixture-next-host-pass';$nextReceipt.unit_id='fixture-next';Write-Json (Join-Path $f.workspace 'receipts/fixture-next-host-pass.json') $nextReceipt
+        $nextState=Read-Json (Join-Path $f.workspace 'workspace.state.json');$nextEvents=@(Get-Content -LiteralPath (Join-Path $f.workspace 'iteration-events.jsonl')|Where-Object{$_}|ForEach-Object{$_|ConvertFrom-Json -DateKind String});$nextSequence=[int]$nextEvents[-1].sequence+1;$nextEventId="fixture-next-accepted-$('{0:d4}' -f $nextSequence)"
+        $nextState.last_event_id=$nextEventId;$nextState.last_accepted_receipt='receipts/fixture-next-host-pass.json';$nextState.validation_checkpoint.receipt='receipts/fixture-next-host-pass.json'
+        $nextUnit.status='accepted';$nextEvent=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.iteration_event.v1';event_id=$nextEventId;sequence=$nextSequence;timestamp='2026-01-01T00:05:00Z';project_id='fixture-project';unit_id='fixture-next';event_type='state-transition';summary='Accepted later fixture unit.';receipts=@('receipts/fixture-next-host-pass.json')}
+        $ledgerModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceTransitionLedger.psm1') -Force -PassThru
+        & $ledgerModule {param($w,$id,$s,$u,$e) Start-MorphospaceTransitionLedger -WorkspaceRoot $w -TransactionId "$id-transition" -StatePath 'workspace.state.json' -UnitPath 'iteration-units/fixture-next.json' -EventsPath 'iteration-events.jsonl' -TargetState $s -TargetUnit $u -Event $e} $f.workspace $nextEventId $nextState $nextUnit $nextEvent|Out-Null
+        $historyModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceCurrentWorkHistory.psm1') -Force -PassThru
+        [void](& $historyModule {param($w) Get-MorphospaceCurrentWorkHistory -WorkspaceRoot $w -RequireIdle} $f.workspace)
+        [IO.File]::WriteAllText((Join-Path $local 'host.txt'),'damaged',[Text.UTF8Encoding]::new($false))
+        [void](& $historyModule {param($w) Get-MorphospaceCurrentWorkHistory -WorkspaceRoot $w -RequireIdle} $f.workspace)
+        Assert-Rejected {& $relocationModule {param($w,$id) Test-MorphospaceAcceptedEvidenceRelocation -WorkspaceRoot $w -RelocationId $id} $f.workspace $draft.relocation_id} 'direct historical relocation local copy tamper' '*hash drifted*' $f.workspace
+    }finally{Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceTransitionLedger.psm1') -Force;Remove-FixtureRoot $root}
+}
+
+function Assert-AcceptedEvidenceRelocationRecovery {
+    foreach($stage in @('after-intent','after-artifact','after-projection','after-event')){
+        $root=Join-Path ([IO.Path]::GetTempPath())('source-only-relocation-recovery-'+$stage+'-'+[guid]::NewGuid().ToString('N'))
+        try {
+            $f=New-Fixture $root ('fixture-relocation-'+$stage) -UntrackedHostArtifact
+            $local=Join-Path $f.workspace 'local/accepted-evidence';[IO.Directory]::CreateDirectory($local)|Out-Null
+            Copy-Item -LiteralPath (Join-Path $f.workspace 'receipts/host.txt') -Destination (Join-Path $local 'host.txt')
+            $module=Import-Module (Join-Path $PSScriptRoot 'AcceptedValidationEvidenceRelocation.psm1') -Force -PassThru
+            $relocationInput=Join-Path $f.workspace 'local/relocation-input.json'
+            $draft=& $module {param($w,$o) New-MorphospaceAcceptedEvidenceRelocationInput -WorkspaceRoot $w -UnitId fixture-unit -LocalDirectory 'local/accepted-evidence' -CreatedAt '2026-01-01T00:00:45Z' -OutPath $o} $f.workspace $relocationInput
+            $out=Join-Path $f.workspace "receipts/$($draft.relocation_id).json"
+            $faulted=$false
+            try { & $module {param($w,$i,$h,$o,$s) Invoke-MorphospaceRelocateAcceptedValidationEvidence -WorkspaceRoot $w -RelocationInput $i -ExpectedInputSha256 $h -OutPath $o -Execute -FaultAfter $s} $f.workspace $relocationInput $draft.sha256 $out $stage|Out-Null }
+            catch { if($_.Exception.Message-cne@{'after-intent'='Injected interruption after intent publication.';'after-artifact'='Injected interruption after artifact installation.';'after-projection'='Injected interruption after projections.';'after-event'='Injected interruption after event append.'}[$stage]){throw};$faulted=$true }
+            if(-not$faulted){throw "Relocation did not fault $stage."}
+            if(-not(Test-Path -LiteralPath (Join-Path $f.workspace 'receipts/host.txt'))){throw 'Original raw evidence was removed during interrupted relocation.'}
+            $changed=Join-Path $f.workspace 'local/changed-input.json';$bad=Copy-Document (Read-Json $relocationInput);$bad.created_at='2026-01-01T00:00:46Z';Write-Json $changed $bad
+            Assert-Rejected { & $module {param($w,$i,$h,$o) Invoke-MorphospaceRelocateAcceptedValidationEvidence -WorkspaceRoot $w -RelocationInput $i -ExpectedInputSha256 $h -OutPath $o -Execute} $f.workspace $changed (Hash $changed) $out } "different relocation input after $stage" '*immutable transaction*' $f.workspace
+            $recovered=& $module {param($w,$i,$h,$o) Invoke-MorphospaceRelocateAcceptedValidationEvidence -WorkspaceRoot $w -RelocationInput $i -ExpectedInputSha256 $h -OutPath $o -Execute} $f.workspace $relocationInput $draft.sha256 $out
+            if(-not$recovered.recovered){throw "Relocation did not report recovery after $stage."}
+            Remove-Item -LiteralPath (Join-Path $f.workspace 'receipts/host.txt')
+            [void](& $module {param($w,$id) Test-MorphospaceAcceptedEvidenceRelocation -WorkspaceRoot $w -RelocationId $id -RequireTail} $f.workspace $draft.relocation_id)
+            Assert-CurrentWork $f "RelocationRecovery-$stage"
+        } catch { throw "Relocation recovery [$stage] failed: $($_.Exception.Message)" }
+        finally { Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceTransitionLedger.psm1') -Force;Remove-FixtureRoot $root }
+    }
+}
+
+function Assert-AcceptedEvidenceRelocationRejectsHistoricalRaw {
+    $root=Join-Path ([IO.Path]::GetTempPath())('source-only-relocation-historical-raw-'+[guid]::NewGuid().ToString('N'))
+    try {
+        $f=New-Fixture $root 'fixture-historical-raw'
+        $local=Join-Path $f.workspace 'local/accepted-evidence';[IO.Directory]::CreateDirectory($local)|Out-Null
+        [IO.File]::AppendAllText((Join-Path (Split-Path $f.workspace -Parent) '.git/info/exclude'),"morphospace/local/`n",[Text.UTF8Encoding]::new($false))
+        Copy-Item -LiteralPath (Join-Path $f.workspace 'receipts/host.txt') -Destination (Join-Path $local 'host.txt')
+        $module=Import-Module (Join-Path $PSScriptRoot 'AcceptedValidationEvidenceRelocation.psm1') -Force -PassThru
+        $draft=Join-Path $f.workspace 'local/historical-raw-input.json'
+        Assert-Rejected {& $module {param($w,$o) New-MorphospaceAcceptedEvidenceRelocationInput -WorkspaceRoot $w -UnitId fixture-unit -LocalDirectory 'local/accepted-evidence' -CreatedAt '2026-01-01T00:00:45Z' -OutPath $o} $f.workspace $draft} 'historically tracked raw artifact' '*Original accepted evidence is tracked*' $f.workspace
+        if(Test-Path -LiteralPath $draft){throw 'Rejected historically tracked raw artifact left an input file.'}
+    } finally {Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceTransitionLedger.psm1') -Force;Remove-FixtureRoot $root}
+}
+
 
 function Exercise-Recovery($Phase,$Stage){
     $root=Join-Path ([IO.Path]::GetTempPath())("source-only-$Phase-$Stage-"+[guid]::NewGuid().ToString('N'))
@@ -151,11 +278,17 @@ function Exercise-Recovery($Phase,$Stage){
     }finally{Remove-FixtureRoot $root}
 }
 
+if($HistoricalRawOnly){Assert-AcceptedEvidenceRelocationRejectsHistoricalRaw;'Historical raw evidence rejection self-test passed.';return}
+if($RelocationOnly){Assert-AcceptedEvidenceRelocation;Assert-AcceptedEvidenceRelocationRecovery;Assert-AcceptedEvidenceRelocationRejectsHistoricalRaw;'Accepted evidence relocation self-test passed.';return}
+
 $root=Join-Path ([IO.Path]::GetTempPath())('source-only-publication-'+[guid]::NewGuid().ToString('N'))
 try{
     $f=New-Fixture $root 'fixture-source-publication';Assert-Rejected {Invoke-MorphospacePrepareSourceOnlyPublication -WorkspaceRoot $f.workspace -UnitId fixture-unit -RepoMapPath $f.map -SourceOnlyPublicationPlan $f.plan_path -OutPath (Join-Path $f.workspace 'receipts/fixture-source-publication-plan.json') -Execute} 'prepare missing reviewed hash' '*dry-run plan SHA-256*' $f.workspace
     Assert-ReceiptRelativeArtifactBinding
     Assert-ReceiptStructuralRejection
+    Assert-AcceptedEvidenceRelocation
+    Assert-AcceptedEvidenceRelocationRecovery
+    Assert-AcceptedEvidenceRelocationRejectsHistoricalRaw
     $bad=Copy-Document $f.plan;$bad.expected.project_sha256='0'*64;$badPath=Join-Path $f.inputs 'project-drift.json';Write-Json $badPath $bad;Assert-Rejected {Invoke-MorphospacePrepareSourceOnlyPublication -WorkspaceRoot $f.workspace -UnitId fixture-unit -RepoMapPath $f.map -SourceOnlyPublicationPlan $badPath -OutPath (Join-Path $f.workspace 'receipts/fixture-source-publication-plan.json')} 'project drift' '*expected project drifted*' $f.workspace
     $aliasMap=Copy-Document (Read-Json $f.map);$aliasMap.repositories[1].path=$f.public.repo;$aliasMapPath=Join-Path $f.inputs 'physical-source-alias-map.json';Write-Json $aliasMapPath $aliasMap;Assert-Rejected {Invoke-MorphospacePrepareSourceOnlyPublication -WorkspaceRoot $f.workspace -UnitId fixture-unit -RepoMapPath $aliasMapPath -SourceOnlyPublicationPlan $f.plan_path -OutPath (Join-Path $f.workspace 'receipts/fixture-source-publication-plan.json')} 'physical source alias' '*share physical repository or Git authority*' $f.workspace
     Invoke-MorphospacePrepareSourceOnlyPublication -WorkspaceRoot $f.workspace -UnitId fixture-unit -RepoMapPath $f.map -SourceOnlyPublicationPlan $f.plan_path -ExpectedSourceOnlyPublicationPlanSha256 $f.plan_hash -OutPath (Join-Path $f.workspace 'receipts/fixture-source-publication-plan.json') -Timestamp '2026-01-01T00:01:00Z' -Execute|Out-Null
