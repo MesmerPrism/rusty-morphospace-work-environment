@@ -45,6 +45,11 @@ environment variables, UI controls, hotload files, and commands as adapters
 into that owner. Transport readback proves only that an adapter moved data;
 acceptance needs effective evidence from the consuming runtime.
 
+For supported state-changing app operator actions, map UI and typed CLI/local
+API to the same app-owned handler. Inventory the actions and close demonstrated
+gaps in the app owner; a reusable lane may supply descriptors or transport but
+does not own app decisions. UI automation is supplemental observation.
+
 Keep low-rate control data separate from high-rate media, camera, depth, mesh,
 particle, pose, and GPU-buffer planes. Keep UI handlers limited to collecting
 inputs, invoking owned routes, showing progress, and projecting structured

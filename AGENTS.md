@@ -78,11 +78,11 @@ For fresh work in an idle project, follow [Development Envelope Preparation](doc
 and [Development Unit Admission](docs/DEVELOPMENT_UNIT_ADMISSION.md), including exact owner roots
 and any retained proposed-unit retirement.
 
-For concurrent work, bind each source, build, and run to its declared exact
-identity. A closed feature lock controls activation; selection alone does not
-activate a runtime. Keep reusable modules behind an independent consumer or
-neutral conformance harness. Keep UI, CLI, platform, and device adapters out of
-their reusable authority owners.
+For concurrent work, bind source, build, and run to exact identities. A closed
+feature lock controls activation; selection alone does not activate a runtime.
+Keep reusable modules behind an independent consumer or conformance harness.
+Route state-changing operator UI and typed CLI/local API to one app handler;
+keep device adapters out of reusable authorities.
 
 ## Authority and publication
 

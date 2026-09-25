@@ -17,6 +17,18 @@ Rusty Morphospace is the umbrella. Concrete ownership stays in lanes.
 | Hostess | install/test/evidence orchestration, shell UX, Windows media receivers, and opaque operator-presentation adapters such as the bounded Meta/MQDH Cinematic route | Quest runtime feature authority, Meta casting transport, or generic Manifold media authority |
 | QuestIonAble File Manager | Windows-first exact-serial ADB storage, inspected APK deployment, constrained resolved launch, bounded device observation, and reviewed local device utilities through typed CLI/API/WPF routes | managed target selection, Manifold authority, Fleet scheduling, app-owned OpenXR/runtime truth |
 
+## Operator command parity
+
+Each app should route every supported state-changing human operator action and
+its typed CLI/local API equivalent through one app-owned command handler. The
+adapters share input validation, identity, authorization, confirmation,
+idempotency, and effective readback. Keep a bounded action inventory and test
+the shared handler through both adapters where the wiring could diverge.
+Manifold may supply reusable command descriptors and transport; an app retains
+its own business and platform authority. A wearer or platform grant remains
+pending until its trusted runtime confirms it. UI automation can observe the
+presentation but is not the command interface for autonomous operation.
+
 ## Public Rusty XR Compatibility
 
 Rusty XR remains the public compatibility and example core. Do not rename

@@ -30,8 +30,11 @@ replacement for owner contracts or exact evidence.
   Adapters translate requests and expose effective readback; transport alone is
   not acceptance.
 - Separate control surfaces from high-rate media, pose, depth, mesh, camera,
-  particle, and GPU-buffer data. Keep UI and CLI as adapters into the same
-  owner.
+  particle, and GPU-buffer data. For each supported state-changing human
+  operator action, give UI and typed CLI/local API adapters the same app-owned
+  command handler, input validation, authorization, confirmation, idempotency,
+  and effective readback. Keep a bounded action inventory and close demonstrated parity gaps;
+  UI automation is supplemental observation, not the command contract.
 - For platform effects, require an injected executor to observe its own live
   handles; a selected provider or caller-supplied completion is not effective
   readback. Keep re-entrant host callbacks outside authority locks, bind them
