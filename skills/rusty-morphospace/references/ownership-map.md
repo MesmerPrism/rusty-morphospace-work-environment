@@ -47,8 +47,10 @@ acceptance needs effective evidence from the consuming runtime.
 
 For supported state-changing app operator actions, map UI and typed CLI/local
 API to the same app-owned handler. Inventory the actions and close demonstrated
-gaps in the app owner; a reusable lane may supply descriptors or transport but
-does not own app decisions. UI automation is supplemental observation.
+gaps in the app owner. Expose typed status, choices, and review needed for the
+operator's decision and effective readback after it; a reusable lane may supply
+descriptors or transport but does not own app decisions. UI automation is
+supplemental observation.
 
 Keep low-rate control data separate from high-rate media, camera, depth, mesh,
 particle, pose, and GPU-buffer planes. Keep UI handlers limited to collecting

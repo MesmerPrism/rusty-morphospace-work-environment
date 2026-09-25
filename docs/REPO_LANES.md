@@ -22,8 +22,11 @@ Rusty Morphospace is the umbrella. Concrete ownership stays in lanes.
 Each app should route every supported state-changing human operator action and
 its typed CLI/local API equivalent through one app-owned command handler. The
 adapters share input validation, identity, authorization, confirmation,
-idempotency, and effective readback. Keep a bounded action inventory and test
-the shared handler through both adapters where the wiring could diverge.
+idempotency, and effective readback. Expose typed status, available choices,
+and review or preview results when a human uses them to decide whether to act;
+the CLI must be able to verify the same effective result. Keep a bounded action
+inventory and test the shared handler through both adapters where the wiring
+could diverge.
 Manifold may supply reusable command descriptors and transport; an app retains
 its own business and platform authority. A wearer or platform grant remains
 pending until its trusted runtime confirms it. UI automation can observe the
