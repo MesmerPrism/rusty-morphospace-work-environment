@@ -62,6 +62,7 @@ if ($SelfTest) {
         }
     }
     Assert-True ($violations.Count -eq 0) ("Authoritative workflows still invoke Windows PowerShell: " + (($violations | Sort-Object -Unique) -join ", "))
+    & (Join-Path $PSScriptRoot 'Use-PinnedWindowsPowerShell.ps1') -SelfTest
 }
 
 $currentVersion = [version]$PSVersionTable.PSVersion

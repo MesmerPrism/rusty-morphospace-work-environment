@@ -140,7 +140,7 @@
     {"path_set_id": "executed-push-receipt", "patterns": ["scripts/Test-ExecutedPushReceipt.ps1"]},
     {"path_set_id": "local-skill-bootstrap", "patterns": ["scripts/Install-LocalSkills.ps1", "scripts/Test-LocalSkillBootstrap.ps1"]},
     {"path_set_id": "planned-publication-accounting", "patterns": ["scripts/Test-PlannedPublicationAccounting.ps1", "scripts/lib/MorphospacePlannedPublication.psm1", "scripts/lib/MorphospacePlanningSuffixRewrite.psm1"]},
-    {"path_set_id": "powershell-host", "patterns": ["scripts/Test-PowerShellHost.ps1"]},
+    {"path_set_id": "powershell-host", "patterns": ["scripts/Test-PowerShellHost.ps1", "scripts/Use-PinnedWindowsPowerShell.ps1"]},
     {"path_set_id": "published-planning-authority-adoption", "patterns": ["scripts/Test-PublishedPlanningAuthorityAdoption.ps1", "scripts/New-PublishedActivePlanningAuthorityAdoption.ps1", "scripts/lib/MorphospacePublishedPlanningAuthorityAdoption.psm1"]},
     {"path_set_id": "quest-file-manager-cli-resolver", "patterns": ["scripts/Test-QuestFileManagerCliResolver.ps1", "scripts/Resolve-QuestFileManagerCli.ps1", "scripts/Invoke-QuestFileManagerDeployment.ps1"]},
     {"path_set_id": "quest-file-manager-permission-adapter", "patterns": ["scripts/Test-QuestFileManagerPermissionObservationAdapter.ps1", "scripts/lib/QuestFileManagerPermissionObservationAdapter.psm1", "fixtures/quest-file-manager/permission-observation-adapter.v1.json"]},
