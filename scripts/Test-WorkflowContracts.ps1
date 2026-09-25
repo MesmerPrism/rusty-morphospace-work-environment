@@ -39,7 +39,7 @@ Import-Module (Join-Path $RepoRoot 'scripts\AdmissionCompletionTimestampRecovery
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceHistoricalBlockerResolutionIntentBindingCorrection.psm1') -Force
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceBlockedSupersessionTerminalValidation.psm1') -Force
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceHistoricalUnitCompatibilityProjection.psm1') -Force
-Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceProtocolCommon.psm1') -Force
+$script:FailureHashModule = Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceProtocolCommon.psm1') -Force -PassThru
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceCurrentWorkHistory.psm1')
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceCurrentWorkCompatibility.psm1')
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceHistoricalValidationDebtBaseline.psm1') -Force
@@ -188,15 +188,15 @@ function Add-Failure {
     $core = [ordered]@{
         failure_code = $failureCode
         locus = $locus
-        message_sha256 = Get-MorphospaceSha256Bytes -Bytes ([Text.UTF8Encoding]::new($false).GetBytes($normalizedMessage))
-        evidence_sha256 = Get-MorphospaceCanonicalJsonSha256 -Value $evidence
+        message_sha256 = & $script:FailureHashModule { param($bytes) Get-MorphospaceSha256Bytes -Bytes $bytes } ([Text.UTF8Encoding]::new($false).GetBytes($normalizedMessage))
+        evidence_sha256 = & $script:FailureHashModule { param($value) Get-MorphospaceCanonicalJsonSha256 -Value $value } $evidence
     }
     $script:FailureRecords.Add([pscustomobject][ordered]@{
         failure_code = $core.failure_code
         locus = $core.locus
         message_sha256 = $core.message_sha256
         evidence_sha256 = $core.evidence_sha256
-        record_sha256 = Get-MorphospaceCanonicalJsonSha256 -Value $core
+        record_sha256 = & $script:FailureHashModule { param($value) Get-MorphospaceCanonicalJsonSha256 -Value $value } $core
     }) | Out-Null
 }
 
@@ -207,17 +207,22 @@ function Assert-WorkflowProvenanceFailureBinding {
     $recordCount = $script:FailureRecords.Count
     $captureCount = $script:HistoricalDebtCaptureUnsafeFailures.Count
     $message = 'Current development provenance failed: cold-start diagnostic sentinel.'
+    $exportedHash = Get-Module MorphospaceProtocolCommon
     try {
+        # A nested owner import can unload the script's exported hash commands.
+        # The diagnostic must still preserve the original contract failure.
+        if ($null -ne $exportedHash) { Remove-Module $exportedHash }
         try { throw 'cold-start diagnostic sentinel.' }
         catch { Add-Failure -Message "Current development provenance failed: $($_.Exception.Message)" }
         if ($script:Failures.Count -ne ($failureCount + 1) -or
             $script:FailureRecords.Count -ne ($recordCount + 1) -or
             $script:Failures[$failureCount] -cne $message -or
             $script:FailureRecords[$recordCount].message_sha256 -cne
-                (Get-MorphospaceSha256Bytes -Bytes ([Text.UTF8Encoding]::new($false).GetBytes($message)))) {
+                ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.UTF8Encoding]::new($false).GetBytes($message))).ToLowerInvariant())) {
             throw 'Current development provenance failure diagnostic was not preserved.'
         }
     } finally {
+        Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceProtocolCommon.psm1') -Force
         while ($script:Failures.Count -gt $failureCount) { $script:Failures.RemoveAt($script:Failures.Count - 1) }
         while ($script:FailureRecords.Count -gt $recordCount) { $script:FailureRecords.RemoveAt($script:FailureRecords.Count - 1) }
         while ($script:HistoricalDebtCaptureUnsafeFailures.Count -gt $captureCount) {
