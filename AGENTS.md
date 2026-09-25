@@ -74,10 +74,9 @@ units, authenticated transaction suffixes, explicit prerequisites, source locks,
 and scope strict; it does not retrofit newer requirements onto retired units.
 Use `-CurrentWorkOnly -SkipOwnerSelfTests` only for an unchanged adopted
 consumer. Historical recovery is an explicit route and preserves retained bytes.
-For fresh work in an idle project, follow
-[Development Envelope Preparation](docs/DEVELOPMENT_ENVELOPE_PREPARATION.md)
-and [Development Unit Admission](docs/DEVELOPMENT_UNIT_ADMISSION.md), including
-exact owner roots and any retained proposed-unit retirement.
+For fresh work in an idle project, follow [Development Envelope Preparation](docs/DEVELOPMENT_ENVELOPE_PREPARATION.md)
+and [Development Unit Admission](docs/DEVELOPMENT_UNIT_ADMISSION.md), including exact owner roots
+and any retained proposed-unit retirement.
 
 For concurrent work, bind each source, build, and run to its declared exact
 identity. A closed feature lock controls activation; selection alone does not
@@ -114,10 +113,8 @@ Preserve pending platform obligations and reuse only finalized exact evidence. C
 explicit compatibility sweeps; dirty-source checks are diagnostic. A local commit grants no admission
 or publication authority, and these tiers exclude devices.
 
-Use exact instruction synchronization for authority, module layout, activation,
-validation, device policy, repository routing, or public/private boundaries.
-Review affected surfaces and update changed guidance; do not read legacy unless
-selected. Give every
-tracked file one affected-validation owner and a specialized consumer beyond
-`public-boundary`; mirror aggregate owners as focused leaves with equal arguments.
-Freeze the candidate before its [exact-HEAD ownership audit](docs/AFFECTED_VALIDATION.md).
+Synchronize instructions when authority, modules, activation, validation,
+device policy, routing, or public/private boundaries change. Edit only changed
+guidance; read legacy only when selected. Give each tracked file one affected
+owner and specialized consumer beyond `public-boundary`; mirror aggregate owners
+as focused leaves with equal arguments. Freeze before the [exact-HEAD ownership audit](docs/AFFECTED_VALIDATION.md).
