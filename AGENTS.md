@@ -81,9 +81,8 @@ and any retained proposed-unit retirement.
 For concurrent work, bind source, build, and run to exact identities. A closed
 feature lock controls activation; selection alone does not activate a runtime.
 Keep reusable modules behind an independent consumer or conformance harness.
-Route state-changing operator UI and typed CLI/local API to one app handler;
-expose the typed status, choices, and review needed to make and verify those
-decisions. Keep device adapters out of reusable authorities.
+Route operator UI and typed CLI/local API through one app handler with typed
+decision state and effective readback; keep device adapters out of reusable authorities.
 
 ## Authority and publication
 
