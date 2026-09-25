@@ -6,6 +6,7 @@ Import-Module (Join-Path $PSScriptRoot 'MorphospaceCurrentWorkCompatibility.psm1
 Import-Module (Join-Path $PSScriptRoot 'MorphospaceDevelopmentEnvelopeSemantics.psm1')
 Import-Module (Join-Path $PSScriptRoot 'MorphospaceSourceCompositionIdentity.psm1')
 Import-Module (Join-Path $PSScriptRoot 'MorphospaceLegacyToolingReclassification.psm1')
+Import-Module (Join-Path $PSScriptRoot '../AcceptedValidationEvidenceRelocation.psm1')
 
 # A read-only lifecycle projection, not a new receipt or recovery mechanism.
 # Earlier records cannot grant current authority merely by being classified here.
@@ -357,6 +358,9 @@ function Get-MorphospaceCurrentWorkHistory {
         }
         if ([string]$intent.pre.state.sha256 -cne $priorStateHash) {
             throw 'Current-work transaction suffix has a detached state preimage.'
+        }
+        if ([string]$event.event_id -cmatch '-accepted-evidence-relocated-[0-9]{4,}$') {
+            [void](Test-MorphospaceAcceptedEvidenceRelocation -WorkspaceRoot $workspace -RelocationId ([string]$event.event_id))
         }
         $priorStateHash = [string]$intent.target.state.sha256
         $proposedRetirementPattern = '^' + [regex]::Escape([string]$event.unit_id) + '-proposal-retired-[0-9]{4}$'

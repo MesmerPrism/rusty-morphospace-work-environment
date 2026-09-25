@@ -97,6 +97,13 @@ resolve from the receipt's directory; rooted artifact paths retain their
 declared rooted resolution. Every artifact remains bound by its exact raw
 SHA-256.
 
+When the accepted event is immediately followed by the exact
+[accepted evidence relocation](ACCEPTED_VALIDATION_EVIDENCE_RELOCATION.md),
+the plan binds that correction as its prepublication tail while retaining
+the original acceptance event and receipt. Each artifact resolves only
+through its authenticated same-hash ignored-local mapping. Without that
+correction, ordinary receipt-relative and rooted resolution is unchanged.
+
 `fast-forward` binds the candidate as the final ref. `provider-merge` leaves
 the future merge revision unset in the plan. Recording accepts it only when
 the externally observed merge has exactly two ordered parents: the bound old

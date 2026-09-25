@@ -62,6 +62,7 @@ remain authoritative.
 | Validator, policy, runner, or schema trust-root change | [External Validation Authority](docs/EXTERNAL_VALIDATION_AUTHORITY.md) |
 | Explicit standing user delegation to the current agent | [Full Authority Mode](docs/FULL_AUTHORITY_MODE.md) |
 | Repository lifecycle, source-only publication, or planned publication accounting | [Repository Lifecycle](docs/REPOSITORY_LIFECYCLE.md), [Source-Only Publication](docs/SOURCE_ONLY_PUBLICATION.md), [Planned Publication Accounting](docs/PLANNED_PUBLICATION_ACCOUNTING.md) |
+| Accepted validation artifacts placed outside ignored local storage | [Accepted Validation Evidence Relocation](docs/ACCEPTED_VALIDATION_EVIDENCE_RELOCATION.md) |
 | Manual cleanup of task-owned scratch | [Direct Work Packages](docs/DIRECT_WORK_PACKAGES.md#manual-task-owned-scratch-cleanup) |
 | Published or unpublished planning-authority recovery | [External Planning and Historical Reconstruction](docs/EXTERNAL_PLANNING_AND_HISTORICAL_RECONSTRUCTION.md), [Unpublished Planning Authority Materialization](docs/UNPUBLISHED_PLANNING_AUTHORITY_MATERIALIZATION.md) |
 | Explicit historical audit or compatibility migration | [Historical Unit Adoption](docs/HISTORICAL_UNIT_ADOPTION.md), [Historical Supersession Compatibility](docs/HISTORICAL_SUPERSESSION_COMPATIBILITY.md) |

@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("Inspect", "PrepareDevelopmentEnvelope", "ReprepareRetiredDevelopmentEnvelope", "PrepareBlockedSuccessor", "SupersedeActive", "RetireActive", "RecoverPreparationCompletionTimestamp", "ArchiveHistoryCheckpoint", "AdmitDevelopmentUnit", "RecoverAdmissionCompletionTimestamp", "RetireProposed", "Ready", "WithdrawReady", "Claim", "Resume", "CompleteInstructionSurfaces", "AmendActiveWriteScope", "ExtendActiveDevelopmentEnvelope", "UpgradeToolingContext", "NarrowValidationOnlyWriteScope", "FreezeCandidate", "RematerializeValidatingCandidate", "MaterializeInheritedCandidate", "CorrectActiveReadOnlyDependencies", "CorrectActiveProjectRepositoryScope", "CorrectActiveUnitContract", "RecordHistoricalUnitCompatibilityProjection", "RecordHistoricalSupersessionCompatibility", "BeginValidation", "ReturnToActive", "PreflightValidation", "RecordValidation", "Accept", "PreparePush", "PrepareSourceOnlyPublication", "RecordSourceOnlyPublication", "RetirePreparedPush", "ReconcilePreparedPublication", "ReconcilePreparedPushTransactionSuffix", "ResolveBlocker", "CorrectResolvedBlockerEvidence", "CorrectHistoricalBlockerResolutionIntentBinding", "CorrectCompletedTransitionSemantics", "NormalizeEventLedgerPrefix", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix", "ReconcileExecutedPreparedPublication")]
+    [ValidateSet("Inspect", "PrepareDevelopmentEnvelope", "ReprepareRetiredDevelopmentEnvelope", "PrepareBlockedSuccessor", "SupersedeActive", "RetireActive", "RecoverPreparationCompletionTimestamp", "ArchiveHistoryCheckpoint", "AdmitDevelopmentUnit", "RecoverAdmissionCompletionTimestamp", "RetireProposed", "Ready", "WithdrawReady", "Claim", "Resume", "CompleteInstructionSurfaces", "AmendActiveWriteScope", "ExtendActiveDevelopmentEnvelope", "UpgradeToolingContext", "NarrowValidationOnlyWriteScope", "FreezeCandidate", "RematerializeValidatingCandidate", "MaterializeInheritedCandidate", "CorrectActiveReadOnlyDependencies", "CorrectActiveProjectRepositoryScope", "CorrectActiveUnitContract", "RecordHistoricalUnitCompatibilityProjection", "RecordHistoricalSupersessionCompatibility", "BeginValidation", "ReturnToActive", "PreflightValidation", "RecordValidation", "Accept", "RelocateAcceptedValidationEvidence", "PreparePush", "PrepareSourceOnlyPublication", "RecordSourceOnlyPublication", "RetirePreparedPush", "ReconcilePreparedPublication", "ReconcilePreparedPushTransactionSuffix", "ResolveBlocker", "CorrectResolvedBlockerEvidence", "CorrectHistoricalBlockerResolutionIntentBinding", "CorrectCompletedTransitionSemantics", "NormalizeEventLedgerPrefix", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix", "ReconcileExecutedPreparedPublication")]
     [string]$Action,
     [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
     [string]$UnitId = "",
@@ -8,6 +8,8 @@ param(
     [string]$RevisionsPath = "",
     [ValidateSet("pass", "partial", "fail", "blocked")][string]$ValidationResult = "pass",
     [string]$ValidationReceipt = "",
+    [string]$AcceptedEvidenceRelocation = "",
+    [string]$ExpectedAcceptedEvidenceRelocationSha256 = "",
     [string]$RecoveryReceipt = "",
     [string]$PublicationClosure = "",
     [string]$PublishedPlanningAuthorityAdoption = "",
@@ -103,6 +105,13 @@ param(
 
 $ErrorActionPreference = "Stop"
 Import-Module (Join-Path $PSScriptRoot "WorkUnitAutomation.psm1") -Force
+
+if ($Action -eq "RelocateAcceptedValidationEvidence") {
+    if (-not $AcceptedEvidenceRelocation -or -not $ExpectedAcceptedEvidenceRelocationSha256 -or -not $OutPath) { throw "RelocateAcceptedValidationEvidence requires AcceptedEvidenceRelocation, ExpectedAcceptedEvidenceRelocationSha256, and OutPath." }
+    Import-Module (Join-Path $PSScriptRoot "AcceptedValidationEvidenceRelocation.psm1") -Force
+    Invoke-MorphospaceRelocateAcceptedValidationEvidence -WorkspaceRoot $WorkspaceRoot -RelocationInput $AcceptedEvidenceRelocation -ExpectedInputSha256 $ExpectedAcceptedEvidenceRelocationSha256 -OutPath $OutPath -Execute:$Execute | ConvertTo-Json -Depth 32
+    return
+}
 
 if ($Action -eq "PrepareSourceOnlyPublication") {
     if (-not $RepoMapPath -or -not $SourceOnlyPublicationPlan -or -not $OutPath) { throw "PrepareSourceOnlyPublication requires RepoMapPath, SourceOnlyPublicationPlan, and OutPath." }

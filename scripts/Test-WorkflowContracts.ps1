@@ -2838,6 +2838,7 @@ $requiredSchemaNames = @(
     "interruption-receipt.schema.json",
     "source-only-publication-execution-v1.schema.json",
     "source-only-publication-plan-v1.schema.json",
+    "accepted-validation-evidence-relocation-v1.schema.json",
     "planning-workspace-projection.schema.json",
     "unpublished-workspace-materialization-v1.schema.json",
     "unpublished-planning-authority-receipt-v1.schema.json",

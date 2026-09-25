@@ -19,6 +19,13 @@ Register this exact command in the current project's validation profile.
 rerunning the shared owner's isolated test suite. Neither switch grants
 validation, acceptance, publication, or device evidence by itself.
 
+An owner-produced [accepted validation evidence relocation](ACCEPTED_VALIDATION_EVIDENCE_RELOCATION.md)
+may immediately follow the idle accepted checkpoint. While the correction
+remains after the latest accepted boundary, current-work replay authenticates
+the unchanged accepted receipt and event prefix, the one correction
+transaction, and each same-hash copy in ignored `local/`. It
+does not infer another acceptance or validation pass.
+
 The boundary is the unique committed acceptance transaction named by compact
 state. Its retained unit and ledger prefix must still authenticate. Canonical,
 unambiguous supersession chains ending in accepted history before that boundary
