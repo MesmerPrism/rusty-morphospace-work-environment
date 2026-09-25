@@ -111,13 +111,15 @@ preparation-reuse authority.
 Units changing authority, module layout, feature activation, validation,
 device policy, repo routing, or the public/private boundary have required
 instruction impact. They cannot become `accepted` until the nearest touched
-repo `AGENTS.md`, a README or router doc, and relevant skills are updated and
-validated.
+repo `AGENTS.md`, a README or router doc, and relevant skills are reviewed and
+validated. Edit the surfaces whose guidance changes; a completed
+`review-no-change` record is appropriate when the existing route remains true.
 
 Derive a complete but minimum surface set from the unit's routing. Do not churn
 every installed skill because one router changed; use `instruction_impact: none`
-or an exact `review-no-change` surface when the unit does not change that
-owner's instruction contract.
+when no category selects a surface, `review` when all selected surfaces remain
+accurate, and `update` when any selected guidance changes. Reviewed skills
+still require the exact provenance binding in the synchronization contract.
 
 For an implementation-only unit with no instruction change, use
 `instruction_impact: none`, leave `instruction_surfaces` empty, and record a

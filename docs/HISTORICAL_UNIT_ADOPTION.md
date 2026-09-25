@@ -69,9 +69,10 @@ claiming a current isolation or lease contract. In particular, an old
 An immutable terminal unit may also retain a formerly valid instruction-impact
 decision and instruction-surface actions. The receipt maps the exact legacy
 impact to `update` and names every affected agent, README/router, or skill path
-whose historical `review-no-change` action now requires `update`. These
-mappings must cover exactly the current semantic mismatches; missing, extra,
-renamed, or action-drifted surfaces reject. A blocked unit may retain a
+whose historical `review-no-change` action required `update` under that
+adoption protocol. These retained mappings are exact historical evidence;
+the later review-versus-edit policy does not recalculate or erase them. Missing,
+extra, renamed, or action-drifted surfaces reject. A blocked unit may retain a
 historical `planned` status: action normalization does not mark a surface
 complete or claim that an instruction edit or validation command ran. The unit
 and its historical instruction bytes remain unchanged, and current or future

@@ -399,12 +399,20 @@ failures cannot publish reusable bytes. A main push
 may reuse them only when its ordered merge parents, exact candidate tree,
 workflow bytes, ancestor base, PR/run/check identities, artifact bytes, and
 freshness all authenticate through `Test-AffectedValidationReuse.ps1`.
-The authenticated successful-job set is exactly `infrastructure`,
+For an ordinary segmented PR, the authenticated successful-job set is exactly `infrastructure`,
 `quick-linux`, `quick-windows`, `select`, `standard-windows`, and the
 deterministically recomputed `segment-<platform>-<ordinal>` jobs for selected
 platforms; artifact aliases such as `affected-linux` and `affected-windows`
-never substitute for GitHub job identities. Otherwise the main job runs its
-current delta through the same segment partition. No historical Deep receipt
+never substitute for GitHub job identities. An opt-in PR labeled
+`validation-single-windows` executes the exact selected Windows union in
+`standard-windows` on one hosted runner when its selected Windows budget is at
+most 18,000 seconds. The unsegmented executor recomputes the plan and emits the
+same typed platform aggregate. `quick-windows` still requires
+`standard-windows` success. This mode does not claim premerge reuse: its missing
+Windows segment jobs make the strict reuse verifier require a fresh current
+delta after merge. Removing the label restores the normal segmented PR
+topology. Scheduled and manual Deep runs remain segmented. Otherwise the main
+job runs its current delta through the same segment partition. No historical Deep receipt
 is reusable: scheduled/manual Deep checks out full history, executes every
 independent leaf through fresh segments, and verifies their exact union.
 Neither evidence shape is publication or acceptance authority.
@@ -467,11 +475,12 @@ noncanceling main-ref group, a stable noncanceling scheduled Deep group, and a
 unique noncanceling manual Deep group bound to `github.run_id`. GitHub may
 coalesce an older pending main or scheduled run, while an explicitly requested
 manual frozen-candidate Deep run is never replaced and may overlap another run.
-Exactly the 21 job and step guards that must remain eligible after an ordinary
+The job and step guards that must remain eligible after an ordinary
 prerequisite or step failure use `!cancelled()`: admission of the
 `affected-linux-segments` and `affected-windows-segments` jobs,
 Quick/Standard/Deep binding or reduction, and conditional diagnostic, evidence,
-or cache preservation. Cancellation makes those guards false so no unrelated
+or cache preservation, including the opt-in single-runner Windows artifacts.
+Cancellation makes those guards false so no unrelated
 segment or reducer is launched or retained. The
 `main-linux-segments`, `main-windows-segments`, `main-linux-delta`, and
 `main-windows-delta` job conditions retain implicit `success()` semantics and

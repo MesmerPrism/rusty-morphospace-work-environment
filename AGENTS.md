@@ -23,7 +23,8 @@ local configuration; do not copy them here.
   `change_category_aliases` map. They map one-to-one to canonical categories
   and never relabel accepted evidence.
 - Keep `AGENTS.md` and `SKILL.md` as routing indexes. Put long procedures in
-  linked owner docs, and synchronize affected instructions before acceptance.
+  linked owner docs. Review affected instructions before acceptance; edit only
+  surfaces whose guidance changes.
 
 ## Route the task
 
@@ -114,7 +115,8 @@ or publication authority, and these tiers exclude devices.
 
 Use exact instruction synchronization for authority, module layout, activation,
 validation, device policy, repository routing, or public/private boundaries.
-Update only affected surfaces; do not read legacy unless selected. Give every
+Review affected surfaces and update changed guidance; do not read legacy unless
+selected. Give every
 tracked file one affected-validation owner and a specialized consumer beyond
 `public-boundary`; mirror aggregate owners as focused leaves with equal arguments.
 Freeze the candidate before its [exact-HEAD ownership audit](docs/AFFECTED_VALIDATION.md).
