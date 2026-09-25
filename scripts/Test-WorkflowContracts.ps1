@@ -39,7 +39,9 @@ Import-Module (Join-Path $RepoRoot 'scripts\AdmissionCompletionTimestampRecovery
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceHistoricalBlockerResolutionIntentBindingCorrection.psm1') -Force
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceBlockedSupersessionTerminalValidation.psm1') -Force
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceHistoricalUnitCompatibilityProjection.psm1') -Force
-$script:FailureHashModule = Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceProtocolCommon.psm1') -Force -PassThru
+# Capture the module instance so every direct ProtocolCommon call remains bound
+# after nested owner imports unload or force-reload its exported commands.
+$script:ProtocolCommonModule = Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceProtocolCommon.psm1') -Force -PassThru
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceCurrentWorkHistory.psm1')
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceCurrentWorkCompatibility.psm1')
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceHistoricalValidationDebtBaseline.psm1') -Force
@@ -188,15 +190,15 @@ function Add-Failure {
     $core = [ordered]@{
         failure_code = $failureCode
         locus = $locus
-        message_sha256 = & $script:FailureHashModule { param($bytes) Get-MorphospaceSha256Bytes -Bytes $bytes } ([Text.UTF8Encoding]::new($false).GetBytes($normalizedMessage))
-        evidence_sha256 = & $script:FailureHashModule { param($value) Get-MorphospaceCanonicalJsonSha256 -Value $value } $evidence
+        message_sha256 = & $script:ProtocolCommonModule.ExportedCommands['Get-MorphospaceSha256Bytes'] ([Text.UTF8Encoding]::new($false).GetBytes($normalizedMessage))
+        evidence_sha256 = & $script:ProtocolCommonModule.ExportedCommands['Get-MorphospaceCanonicalJsonSha256'] $evidence
     }
     $script:FailureRecords.Add([pscustomobject][ordered]@{
         failure_code = $core.failure_code
         locus = $core.locus
         message_sha256 = $core.message_sha256
         evidence_sha256 = $core.evidence_sha256
-        record_sha256 = & $script:FailureHashModule { param($value) Get-MorphospaceCanonicalJsonSha256 -Value $value } $core
+        record_sha256 = & $script:ProtocolCommonModule.ExportedCommands['Get-MorphospaceCanonicalJsonSha256'] $core
     }) | Out-Null
 }
 
@@ -212,6 +214,21 @@ function Assert-WorkflowProvenanceFailureBinding {
         # A nested owner import can unload the script's exported hash commands.
         # The diagnostic must still preserve the original contract failure.
         if ($null -ne $exportedHash) { Remove-Module $exportedHash }
+        $boundProtocolNames = @(
+            'ConvertFrom-MorphospaceProtocolJsonBytes', 'ConvertTo-MorphospaceCanonicalJson',
+            'ConvertTo-MorphospaceProtocolRelativePath', 'Get-MorphospaceCanonicalJsonSha256',
+            'Get-MorphospaceFileSha256', 'Get-MorphospaceSha256Bytes',
+            'Read-MorphospaceProtocolJson', 'Resolve-MorphospaceWorkspacePath',
+            'Test-MorphospaceFeatureLockFingerprint', 'Write-MorphospaceManagedProtocolJsonAtomic'
+        )
+        foreach ($name in $boundProtocolNames) {
+            if ($script:ProtocolCommonModule.ExportedCommands[$name] -isnot [Management.Automation.FunctionInfo]) {
+                throw "Current development provenance lost bound ProtocolCommon command '$name'."
+            }
+        }
+        $boundFileHash = & $script:ProtocolCommonModule.ExportedCommands['Get-MorphospaceFileSha256'] -Path $PSCommandPath
+        $expectedFileHash = ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([IO.File]::ReadAllBytes($PSCommandPath)))).ToLowerInvariant()
+        if ($boundFileHash -cne $expectedFileHash) { throw 'Current development provenance lost bound ProtocolCommon file hashing.' }
         try { throw 'cold-start diagnostic sentinel.' }
         catch { Add-Failure -Message "Current development provenance failed: $($_.Exception.Message)" }
         if ($script:Failures.Count -ne ($failureCount + 1) -or
@@ -243,7 +260,7 @@ function Get-HistoricalDebtLocusIdentity {
     if ($properties -contains 'unit_id' -and -not [string]::IsNullOrEmpty([string]$Locus.unit_id)) {
         return [string]$Locus.unit_id
     }
-    return Get-MorphospaceCanonicalJsonSha256 -Value $Locus
+    return & $script:ProtocolCommonModule.ExportedCommands['Get-MorphospaceCanonicalJsonSha256'] -Value $Locus
 }
 
 function Invoke-HistoricalDebtCaptureAttributionSelfTest {
@@ -280,7 +297,7 @@ function Invoke-HistoricalDebtCaptureAttributionSelfTest {
         }
         if ((Get-HistoricalDebtLocusIdentity $validCurrentAttribution.locus) -cne 'current-unit' -or
             (Get-HistoricalDebtLocusIdentity $explicitUnclassifiedUnitAttribution.locus) -cne 'explicitly-unclassified-unit' -or
-            (Get-HistoricalDebtLocusIdentity ([pscustomobject][ordered]@{kind='unclassified'})) -cne (Get-MorphospaceCanonicalJsonSha256 ([pscustomobject][ordered]@{kind='unclassified'}))) {
+            (Get-HistoricalDebtLocusIdentity ([pscustomobject][ordered]@{kind='unclassified'})) -cne (& $script:ProtocolCommonModule.ExportedCommands['Get-MorphospaceCanonicalJsonSha256'] ([pscustomobject][ordered]@{kind='unclassified'}))) {
             throw 'Historical-debt capture attribution self-test failed: diagnostic locus ordering requires an absent property.'
         }
         if (-not (Test-HistoricalDebtCaptureUnsafeAttribution -Attribution $initialSentinel)) {
@@ -347,8 +364,8 @@ function New-HistoricalDebtUnitFailureAttribution {
         kind = if ($isCurrent) { 'current-unit' } else { 'historical-unit' }
         unit_id = $unitId
         path = $relativePath
-        raw_sha256 = Get-MorphospaceFileSha256 -Path $UnitPath
-        canonical_sha256 = Get-MorphospaceCanonicalJsonSha256 -Value $Unit
+        raw_sha256 = & $script:ProtocolCommonModule.ExportedCommands['Get-MorphospaceFileSha256'] -Path $UnitPath
+        canonical_sha256 = & $script:ProtocolCommonModule.ExportedCommands['Get-MorphospaceCanonicalJsonSha256'] -Value $Unit
     }
     $evidence = [ordered]@{ locus=$locus }
     if ($null -ne $Event) {
@@ -383,8 +400,8 @@ function New-HistoricalDebtWorkspaceStateFailureAttribution {
     $locus = [pscustomobject][ordered]@{
         kind = 'legacy-workspace-state'
         path = 'workspace.state.json'
-        raw_sha256 = Get-MorphospaceFileSha256 -Path $StatePath
-        canonical_sha256 = Get-MorphospaceCanonicalJsonSha256 -Value $State
+        raw_sha256 = & $script:ProtocolCommonModule.ExportedCommands['Get-MorphospaceFileSha256'] -Path $StatePath
+        canonical_sha256 = & $script:ProtocolCommonModule.ExportedCommands['Get-MorphospaceCanonicalJsonSha256'] -Value $State
     }
     return [pscustomobject][ordered]@{
         failure_code = 'legacy-workspace-state-contract'
@@ -906,7 +923,7 @@ function Invoke-CurrentInstructionSurfacePolicySelfTest {
 
 function Get-FileSha256 {
     param([string]$Path)
-    return Get-MorphospaceSha256Bytes ([IO.File]::ReadAllBytes($Path))
+    return & $script:ProtocolCommonModule.ExportedCommands['Get-MorphospaceSha256Bytes'] ([IO.File]::ReadAllBytes($Path))
 }
 
 function Test-ExactLegacyMappings {
@@ -955,8 +972,8 @@ function Read-EventLog {
         }
         try {
             $bytes=(New-Object System.Text.UTF8Encoding($false,$true)).GetBytes([string]$line)
-            $document=ConvertFrom-MorphospaceProtocolJsonBytes -Bytes $bytes -Context "$Context line $lineNumber"
-            $document.PSObject.Properties.Add([Management.Automation.PSNoteProperty]::new('__line_sha256',(Get-MorphospaceSha256Bytes $bytes)))
+            $document=& $script:ProtocolCommonModule.ExportedCommands['ConvertFrom-MorphospaceProtocolJsonBytes'] -Bytes $bytes -Context "$Context line $lineNumber"
+            $document.PSObject.Properties.Add([Management.Automation.PSNoteProperty]::new('__line_sha256',(& $script:ProtocolCommonModule.ExportedCommands['Get-MorphospaceSha256Bytes'] $bytes)))
             $events.Add($document) | Out-Null
         } catch {
             Add-Failure -Message "$Context line $lineNumber is not valid JSON: $($_.Exception.Message)"
@@ -1035,18 +1052,18 @@ function Get-SourceOnlyPublicationTailProjection {
     if ([string](@($event.receipts)[0]) -cne $artifactPath) { throw 'Source-only publication tail does not reference its exact canonical artifact.' }
     $transaction = Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $WorkspaceRoot -TransactionId "$tailId-transition" `
         -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath "iteration-units/$unitId.json" -ExpectedEventsPath 'iteration-events.jsonl' -RequireTail
-    $liveUnit = Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $WorkspaceRoot "iteration-units/$unitId.json" -RequireLeaf)
+    $liveUnit = & $script:ProtocolCommonModule.ExportedCommands['Read-MorphospaceProtocolJson'] (& $script:ProtocolCommonModule.ExportedCommands['Resolve-MorphospaceWorkspacePath'] $WorkspaceRoot "iteration-units/$unitId.json" -RequireLeaf)
     if ([string]$transaction.intent.event.event_id -cne $tailId -or
-        [string]$transaction.intent.target.unit.sha256 -cne (Get-MorphospaceCanonicalJsonSha256 $liveUnit)) {
+        [string]$transaction.intent.target.unit.sha256 -cne (& $script:ProtocolCommonModule.ExportedCommands['Get-MorphospaceCanonicalJsonSha256'] $liveUnit)) {
         throw 'Source-only publication tail is detached from its transaction or retained accepted unit.'
     }
     $artifacts = @($transaction.intent.artifacts)
-    $artifactFullPath = Resolve-MorphospaceWorkspacePath $WorkspaceRoot $artifactPath -RequireLeaf
+    $artifactFullPath = & $script:ProtocolCommonModule.ExportedCommands['Resolve-MorphospaceWorkspacePath'] $WorkspaceRoot $artifactPath -RequireLeaf
     if ($artifacts.Count -ne 1 -or [string]$artifacts[0].path -cne $artifactPath -or
-        [string]$artifacts[0].sha256 -cne (Get-MorphospaceFileSha256 $artifactFullPath)) {
+        [string]$artifacts[0].sha256 -cne (& $script:ProtocolCommonModule.ExportedCommands['Get-MorphospaceFileSha256'] $artifactFullPath)) {
         throw 'Source-only publication transaction does not own its exact live artifact.'
     }
-    $document = Read-MorphospaceProtocolJson $artifactFullPath
+    $document = & $script:ProtocolCommonModule.ExportedCommands['Read-MorphospaceProtocolJson'] $artifactFullPath
     $schemaName = if ($phase -ceq 'prepared') {'source-only-publication-plan-v1.schema.json'} else {'source-only-publication-execution-v1.schema.json'}
     if (-not (Test-Json -Json (Get-Content -Raw -LiteralPath $artifactFullPath) -SchemaFile (Join-Path $RepoRoot "schemas/$schemaName"))) {
         throw "Source-only publication $phase artifact does not satisfy its schema."
@@ -1093,18 +1110,18 @@ function Get-SourceOnlyPublicationTailProjection {
         $reconstructedPre = $targetState | ConvertTo-Json -Depth 64 | ConvertFrom-Json -DateKind String
         $reconstructedPre.pending_push_bundle = $null
         $reconstructedPre.last_event_id = [string]$transaction.intent.expected.event_tail_id
-        if ((Get-MorphospaceCanonicalJsonSha256 $reconstructedPre) -cne [string]$transaction.intent.pre.state.sha256) {
+        if ((& $script:ProtocolCommonModule.ExportedCommands['Get-MorphospaceCanonicalJsonSha256'] $reconstructedPre) -cne [string]$transaction.intent.pre.state.sha256) {
             throw 'Prepared source-only publication changes state outside its pending bundle and event tail.'
         }
     } else {
         $recordProjections = if ($transaction.intent.PSObject.Properties.Name -contains 'additional_projections') { @($transaction.intent.additional_projections) } else { @() }
         $planPath = [string]$document.plan.path
-        $planFullPath = Resolve-MorphospaceWorkspacePath $WorkspaceRoot $planPath -RequireLeaf
-        if ($planPath -cne "receipts/$publicationId-plan.json" -or (Get-MorphospaceFileSha256 $planFullPath) -cne [string]$document.plan.sha256 -or
+        $planFullPath = & $script:ProtocolCommonModule.ExportedCommands['Resolve-MorphospaceWorkspacePath'] $WorkspaceRoot $planPath -RequireLeaf
+        if ($planPath -cne "receipts/$publicationId-plan.json" -or (& $script:ProtocolCommonModule.ExportedCommands['Get-MorphospaceFileSha256'] $planFullPath) -cne [string]$document.plan.sha256 -or
             -not (Test-Json -Json (Get-Content -Raw -LiteralPath $planFullPath) -SchemaFile (Join-Path $RepoRoot 'schemas/source-only-publication-plan-v1.schema.json'))) {
             throw 'Recorded source-only publication does not retain its exact schema-valid plan.'
         }
-        $plan = Read-MorphospaceProtocolJson $planFullPath
+        $plan = & $script:ProtocolCommonModule.ExportedCommands['Read-MorphospaceProtocolJson'] $planFullPath
         $planIds = @($plan.source_repositories | ForEach-Object { [string]$_.repo_id })
         $executionIds = @($document.source_repositories | ForEach-Object { [string]$_.repo_id })
         if ([string]$plan.publication_id -cne $publicationId -or [string]$plan.project_id -cne [string]$document.project_id -or
@@ -1152,18 +1169,18 @@ function Get-SourceOnlyPublicationTailProjection {
         $preparedPre = $preparedState | ConvertTo-Json -Depth 64 | ConvertFrom-Json -DateKind String
         $preparedPre.pending_push_bundle = $null
         $preparedPre.last_event_id = [string]$prepared.intent.expected.event_tail_id
-        if ((Get-MorphospaceCanonicalJsonSha256 $preparedPre) -cne [string]$prepared.intent.pre.state.sha256) {
+        if ((& $script:ProtocolCommonModule.ExportedCommands['Get-MorphospaceCanonicalJsonSha256'] $preparedPre) -cne [string]$prepared.intent.pre.state.sha256) {
             throw 'Recorded source-only publication prepared predecessor changed state outside its pending bundle and event tail.'
         }
         $reconstructedPre = $targetState | ConvertTo-Json -Depth 64 | ConvertFrom-Json -DateKind String
         $reconstructedPre.pending_push_bundle = $preparedState.pending_push_bundle
         $reconstructedPre.last_event_id = $preparedId
-        if ((Get-MorphospaceCanonicalJsonSha256 $reconstructedPre) -cne [string]$transaction.intent.pre.state.sha256) {
+        if ((& $script:ProtocolCommonModule.ExportedCommands['Get-MorphospaceCanonicalJsonSha256'] $reconstructedPre) -cne [string]$transaction.intent.pre.state.sha256) {
             throw 'Recorded source-only publication changes state outside its pending bundle and event tail.'
         }
     }
-    $liveState = Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $WorkspaceRoot 'workspace.state.json' -RequireLeaf)
-    if ((Get-MorphospaceCanonicalJsonSha256 $targetState) -cne (Get-MorphospaceCanonicalJsonSha256 $liveState)) {
+    $liveState = & $script:ProtocolCommonModule.ExportedCommands['Read-MorphospaceProtocolJson'] (& $script:ProtocolCommonModule.ExportedCommands['Resolve-MorphospaceWorkspacePath'] $WorkspaceRoot 'workspace.state.json' -RequireLeaf)
+    if ((& $script:ProtocolCommonModule.ExportedCommands['Get-MorphospaceCanonicalJsonSha256'] $targetState) -cne (& $script:ProtocolCommonModule.ExportedCommands['Get-MorphospaceCanonicalJsonSha256'] $liveState)) {
         throw "Source-only publication $phase transaction does not own the live state."
     }
     return [pscustomobject]@{ phase=$phase; publication_id=$publicationId; unit_id=$unitId; artifact_path=$artifactPath }
@@ -1367,7 +1384,7 @@ function Test-ProjectBundle {
     if ($isLockV2) {
         Assert-Contract ([int]$lock.project_revision -eq [int]$spec.revision) "$Context feature_lock.v2 project revision drifted."
         Assert-Contract ($lock.activation_rule -eq "selected-lock-and-runtime-input") "$Context feature_lock.v2 activation rule drifted."
-        Assert-Contract (Test-MorphospaceFeatureLockFingerprint -Lock (Read-MorphospaceProtocolJson $Bundle.LockPath)) "$Context feature_lock.v2 fingerprint is stale or damaged."
+        Assert-Contract (& $script:ProtocolCommonModule.ExportedCommands['Test-MorphospaceFeatureLockFingerprint'] -Lock (& $script:ProtocolCommonModule.ExportedCommands['Read-MorphospaceProtocolJson'] $Bundle.LockPath)) "$Context feature_lock.v2 fingerprint is stale or damaged."
         $selectedLockIds = @($lock.selected_features | ForEach-Object { [string]$_ } | Sort-Object)
         $featureIds = @($features | ForEach-Object { [string]$_.feature_id } | Sort-Object)
         Assert-Contract (($selectedLockIds -join "|") -eq ($featureIds -join "|")) "$Context feature_lock.v2 selected_features must exactly match feature entries."
@@ -2065,8 +2082,8 @@ function Test-ProjectBundle {
                     $module=Import-Module (Join-Path $RepoRoot 'scripts/DevelopmentEnvelopeProvenance.psm1') -PassThru
                     [void](&$module {param($root,$id) Get-MorphospaceUnitToolingContextObservation -WorkspaceRoot $root -UnitId $id -Action Inspect} $workspaceRoot ([string]$unit.unit_id))
                 }elseif($unit.PSObject.Properties.Name-contains'agent_scope_assessment'-and$unit.PSObject.Properties.Name-contains'source_composition'-and[string]$unit.source_composition.mode-ceq'exact-lock'){
-                    $sourcePath=Resolve-MorphospaceWorkspacePath $workspaceRoot ([string]$unit.source_composition.lock_path) -RequireLeaf
-                    $source=Read-MorphospaceProtocolJson $sourcePath
+                    $sourcePath=& $script:ProtocolCommonModule.ExportedCommands['Resolve-MorphospaceWorkspacePath'] $workspaceRoot ([string]$unit.source_composition.lock_path) -RequireLeaf
+                    $source=& $script:ProtocolCommonModule.ExportedCommands['Read-MorphospaceProtocolJson'] $sourcePath
                     if([string]$source.schema-ceq'rusty.morphospace.workflow.active_development_envelope_source_composition.v1'){
                         $module=Import-Module (Join-Path $RepoRoot 'scripts/DevelopmentEnvelopeProvenance.psm1') -PassThru
                         [void](&$module {param($root,$id,$map) Test-MorphospaceEffectiveDevelopmentEnvelope -WorkspaceRoot $root -UnitId $id -RepositoryMapPath $map} $workspaceRoot ([string]$unit.unit_id) $RepositoryMapPath)
@@ -2412,9 +2429,9 @@ function Test-ProjectBundle {
                 throw "Correction event '$candidateId' does not have its exact v1 event shape."
             }
             $receiptRelative = [string]@($candidateCorrectionEvent.receipts)[0]
-            $receiptAbsolute = Resolve-MorphospaceWorkspacePath -WorkspaceRoot $workspaceRoot -RelativePath $receiptRelative -RequireLeaf
+            $receiptAbsolute = & $script:ProtocolCommonModule.ExportedCommands['Resolve-MorphospaceWorkspacePath'] -WorkspaceRoot $workspaceRoot -RelativePath $receiptRelative -RequireLeaf
             $strictEventBytes = [Text.UTF8Encoding]::new($false).GetBytes(($candidateCorrectionEvent | ConvertTo-Json -Depth 32 -Compress))
-            $strictEvent = ConvertFrom-MorphospaceProtocolJsonBytes -Bytes $strictEventBytes -Context "correction event '$candidateId'"
+            $strictEvent = & $script:ProtocolCommonModule.ExportedCommands['ConvertFrom-MorphospaceProtocolJsonBytes'] -Bytes $strictEventBytes -Context "correction event '$candidateId'"
             [void]$strictEvent.PSObject.Properties.Remove('__line_sha256')
             $verifiedCorrection = Test-MorphospaceCompletedTransitionSemanticCorrection `
                 -WorkspaceRoot $workspaceRoot -ReceiptPath $receiptAbsolute -Mode Projection -CorrectionEvent $strictEvent
@@ -2447,9 +2464,9 @@ function Test-ProjectBundle {
                 @($candidateRecoveryEvent.receipts)[0] -isnot [string]) {
                 throw "Admission recovery event '$candidateId' does not have its exact v1 event shape."
             }
-            $receiptAbsolute = Resolve-MorphospaceWorkspacePath -WorkspaceRoot $workspaceRoot -RelativePath ([string]@($candidateRecoveryEvent.receipts)[0]) -RequireLeaf
+            $receiptAbsolute = & $script:ProtocolCommonModule.ExportedCommands['Resolve-MorphospaceWorkspacePath'] -WorkspaceRoot $workspaceRoot -RelativePath ([string]@($candidateRecoveryEvent.receipts)[0]) -RequireLeaf
             $strictBytes = [Text.UTF8Encoding]::new($false).GetBytes(($candidateRecoveryEvent | ConvertTo-Json -Depth 32 -Compress))
-            $strictEvent = ConvertFrom-MorphospaceProtocolJsonBytes -Bytes $strictBytes -Context "admission recovery event '$candidateId'"
+            $strictEvent = & $script:ProtocolCommonModule.ExportedCommands['ConvertFrom-MorphospaceProtocolJsonBytes'] -Bytes $strictBytes -Context "admission recovery event '$candidateId'"
             [void]$strictEvent.PSObject.Properties.Remove('__line_sha256')
             if (-not $historicalAuditRequired) {
                 # The authenticated current-work suffix may have retired the
@@ -3268,7 +3285,7 @@ $historicalDebtCapture = [pscustomobject][ordered]@{
     failure_records = @(Get-CanonicalHistoricalDebtFailureRecords)
 }
 if ($EmitHistoricalValidationDebtCapture -and $script:HistoricalDebtCaptureUnsafeFailures.Count -eq 0) {
-    $captureBytes = [Text.UTF8Encoding]::new($false).GetBytes((ConvertTo-MorphospaceCanonicalJson -Value $historicalDebtCapture))
+    $captureBytes = [Text.UTF8Encoding]::new($false).GetBytes((& $script:ProtocolCommonModule.ExportedCommands['ConvertTo-MorphospaceCanonicalJson'] -Value $historicalDebtCapture))
     Write-Output ("historical_validation_debt_capture_base64=" + [Convert]::ToBase64String($captureBytes))
     return
 }
@@ -3277,12 +3294,12 @@ if ($null -ne $historicalDebtResult) {
     if ($script:Failures.Count -ne @($historicalDebtResult.recomputed_failure_set.count)) {
         throw 'Historical validation-debt ratchet did not account for every validator failure.'
     }
-    $resultRelative = ConvertTo-MorphospaceProtocolRelativePath -Path $HistoricalValidationDebtResultPath
+    $resultRelative = & $script:ProtocolCommonModule.ExportedCommands['ConvertTo-MorphospaceProtocolRelativePath'] -Path $HistoricalValidationDebtResultPath
     $expectedResultRelative = "receipts/historical-validation-debt/$([string]$historicalDebtResult.historical_debt.baseline_id)/results/$([string]$historicalDebtResult.current_unit.raw_sha256).json"
     if ($resultRelative -cne $expectedResultRelative) {
         throw 'Historical validation-debt result path is not the exact content-addressed path for this baseline and current-unit bytes.'
     }
-    Write-MorphospaceManagedProtocolJsonAtomic -WorkspaceRoot $WorkspaceRoot -RelativePath $resultRelative -Value $historicalDebtResult -NoOverwrite
+    & $script:ProtocolCommonModule.ExportedCommands['Write-MorphospaceManagedProtocolJsonAtomic'] -WorkspaceRoot $WorkspaceRoot -RelativePath $resultRelative -Value $historicalDebtResult -NoOverwrite
     $script:Failures.Clear()
     Write-Host "Workflow contract validation passed with unresolved historical debt: baseline=$([string]$historicalDebtResult.historical_debt.baseline_id); count=$([int]$historicalDebtResult.historical_debt.count); sha256=$([string]$historicalDebtResult.historical_debt.sha256); current_validation=passed."
 }
