@@ -377,6 +377,9 @@ jobs:
           key: affected-check-${{ matrix.segment_id }}-pr-${{ github.event.pull_request.number }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             affected-check-${{ matrix.segment_id }}-pr-${{ github.event.pull_request.number }}-
+      - name: Install reviewed Windows PowerShell for segment
+        shell: pwsh
+        run: ./scripts/Use-PinnedWindowsPowerShell.ps1 -Install
       - name: Run affected Windows segment
         id: execute
         shell: pwsh
@@ -391,6 +394,7 @@ jobs:
         run: |
           if ($env:INFRA_RESULT -cne 'success' -or $env:SELECT_RESULT -cne 'success') { throw 'Required Windows selection prerequisites did not succeed.' }
           if ($env:WINDOWS_SELECTED -cnotin @('true','false')) { throw 'Required Windows selection output must be exactly true or false.' }
+          ./scripts/Use-PinnedWindowsPowerShell.ps1 -AssertCurrent
           ./scripts/Test-PowerShellHost.ps1 -SelfTest
           $base = if ($env:GITHUB_EVENT_NAME -ceq 'pull_request') { $env:PR_BASE } else { (git rev-parse HEAD^).Trim() }
           $head = if ($env:GITHUB_EVENT_NAME -ceq 'pull_request') { $env:PR_HEAD } else { $env:GITHUB_SHA }
@@ -529,6 +533,9 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Install reviewed Windows PowerShell for aggregate
+        shell: pwsh
+        run: ./scripts/Use-PinnedWindowsPowerShell.ps1 -Install
       - name: Bind required Windows segment results
         shell: pwsh
         env:
@@ -554,6 +561,7 @@ jobs:
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
+          ./scripts/Use-PinnedWindowsPowerShell.ps1 -AssertCurrent
           $base = if ($env:GITHUB_EVENT_NAME -ceq 'pull_request') { $env:PR_BASE } else { (git rev-parse HEAD^).Trim() }
           $head = if ($env:GITHUB_EVENT_NAME -ceq 'pull_request') { $env:PR_HEAD } else { $env:GITHUB_SHA }
           $tier = if ($env:GITHUB_EVENT_NAME -ceq 'pull_request') { 'Quick' } else { 'Deep' }
@@ -742,6 +750,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with: { fetch-depth: 0 }
+      - name: Install reviewed Windows PowerShell for current delta
+        shell: pwsh
+        run: ./scripts/Use-PinnedWindowsPowerShell.ps1 -Install
       - name: Run current Windows delta segment
         id: execute
         shell: pwsh
@@ -749,6 +760,7 @@ jobs:
           PUSH_BEFORE: ${{ github.event.before }}
           SEGMENT_ID: ${{ matrix.segment_id }}
         run: |
+          ./scripts/Use-PinnedWindowsPowerShell.ps1 -AssertCurrent
           $evidencePath = Join-Path $env:RUNNER_TEMP "$env:SEGMENT_ID.json";$failure=$null
           try { ./scripts/Resolve-AffectedValidation.ps1 -RepositoryRoot . -BaseCommit $env:PUSH_BEFORE -HeadCommit $env:GITHUB_SHA -OutPath "$env:RUNNER_TEMP/affected-plan.json"; ./scripts/Invoke-AffectedValidation.ps1 -RepositoryRoot . -BaseCommit $env:PUSH_BEFORE -HeadCommit $env:GITHUB_SHA -PlanPath "$env:RUNNER_TEMP/affected-plan.json" -Platform windows -SegmentId $env:SEGMENT_ID -OutPath $evidencePath | Out-Null } catch {$failure=$_}
           if($null-eq$failure-and-not(Test-Path -LiteralPath $evidencePath -PathType Leaf)){$failure=[Management.Automation.ErrorRecord]::new([IO.InvalidDataException]::new('Affected-validation executor returned without its required aggregate evidence.'),'AffectedValidationMissingEvidence',[Management.Automation.ErrorCategory]::InvalidData,$evidencePath)}
@@ -820,6 +832,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with: { fetch-depth: 0 }
+      - name: Install reviewed Windows PowerShell for current delta aggregate
+        shell: pwsh
+        run: ./scripts/Use-PinnedWindowsPowerShell.ps1 -Install
       - name: Bind required current Windows delta producer results
         shell: pwsh
         env:
@@ -841,6 +856,7 @@ jobs:
         env:
           PUSH_BEFORE: ${{ github.event.before }}
         run: |
+          ./scripts/Use-PinnedWindowsPowerShell.ps1 -AssertCurrent
           ./scripts/Resolve-AffectedValidation.ps1 -RepositoryRoot . -BaseCommit $env:PUSH_BEFORE -HeadCommit $env:GITHUB_SHA -OutPath "$env:RUNNER_TEMP/affected-plan.json"
           ./scripts/Stage-AffectedValidationSegmentEvidence.ps1 -RepositoryRoot . -BaseCommit $env:PUSH_BEFORE -HeadCommit $env:GITHUB_SHA -PlanPath "$env:RUNNER_TEMP/affected-plan.json" -Platform windows -DownloadedArtifactRoot "$env:RUNNER_TEMP/affected-windows-segments" -RunId $env:GITHUB_RUN_ID -CurrentAttempt ([int]$env:GITHUB_RUN_ATTEMPT) -StagingDirectory "$env:RUNNER_TEMP/affected-windows-staged" -SelectionReceiptPath "$env:RUNNER_TEMP/affected-windows-selection.json" | Out-Null
           ./scripts/Merge-AffectedValidationSegments.ps1 -RepositoryRoot . -BaseCommit $env:PUSH_BEFORE -HeadCommit $env:GITHUB_SHA -PlanPath "$env:RUNNER_TEMP/affected-plan.json" -Platform windows -SegmentEvidenceDirectory "$env:RUNNER_TEMP/affected-windows-staged" -OutPath "$env:RUNNER_TEMP/affected-windows-evidence.json" | Out-Null
