@@ -47,31 +47,24 @@ function Assert-ActiveEnvelopeValidationCheckpoint {
         @($_.receipts)-ccontains[string]$checkpoint.receipt})
     if($accepts.Count-ne1-or[string]$accepts[0].unit_id-ceq$CurrentUnitId){throw 'Active-envelope validation checkpoint lacks one accepted predecessor.'}
     $accepted=Test-MorphospaceAcceptedCheckpointProof -WorkspaceRoot $WorkspaceRoot -ExpectedEvent $accepts[0] -AllowFiniteHistoricalV1
-    if(-not($accepted.PSObject.Properties.Name-contains'historical_only')){
-        $completionPath=Resolve-MorphospaceWorkspacePath $WorkspaceRoot "receipts/transactions/$([string]$accepts[0].event_id)-transition.completion.json" -RequireLeaf
-        $completionBytes=ConvertTo-MorphospaceProtocolJsonBytes $accepted.completion
-        if((Get-MorphospaceFileSha256 $completionPath)-cne(Get-MorphospaceSha256Bytes $completionBytes)){throw 'Active-envelope accepted predecessor completion bytes drifted.'}
-        $receiptBindings=@($accepted.intent.artifacts|Where-Object{[string]$_.path-ceq[string]$checkpoint.receipt})
-        if($receiptBindings.Count-eq0){
-            # Ordinary acceptance may retain a receipt emitted by RecordValidation.
-            # Authenticate that producer rather than trusting an event reference.
-            $producers=@($events|Where-Object{[int]$_.sequence-lt[int]$accepts[0].sequence-and
-                [string]$_.unit_id-ceq[string]$accepts[0].unit_id-and@($_.receipts)-ccontains[string]$checkpoint.receipt})
-            foreach($producer in $producers){
-                $proof=Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $WorkspaceRoot -TransactionId "$([string]$producer.event_id)-transition" -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath "iteration-units/$([string]$producer.unit_id).json" -ExpectedEventsPath 'iteration-events.jsonl'
-                if((Get-ActiveEnvelopeHash $proof.intent.event)-cne(Get-ActiveEnvelopeHash $producer)){throw 'Active-envelope accepted receipt producer event is detached.'}
-                $receiptBindings+=@($proof.intent.artifacts|Where-Object{[string]$_.path-ceq[string]$checkpoint.receipt})
-            }
-        }
-        if($receiptBindings.Count-ne1){throw 'Active-envelope accepted receipt lacks one authenticated artifact producer.'}
+    # Finite historical tuples retain the producer-era schema authenticated by the existing proof.
+    if(-not($accepted.PSObject.Properties.Name-contains'historical_only'-and$accepted.historical_only)){
+        $receipt=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $WorkspaceRoot ([string]$checkpoint.receipt) -RequireLeaf)
+    $receiptSchema=switch([string]$receipt.schema){
+        'rusty.morphospace.workflow.validation_receipt.v1'{'validation-receipt.schema.json'}
+        'rusty.morphospace.workflow.validation_receipt.v2'{'validation-receipt-v2.schema.json'}
+        default{throw 'Active-envelope accepted predecessor receipt schema is unsupported.'}
+    }
+    Assert-ActiveEnvelopeSchema $receipt $receiptSchema 'Active-envelope accepted predecessor receipt violates its closed schema.'
+    if([string]$receipt.project_id-cne[string]$State.project_id-or[string]$receipt.unit_id-cne[string]$accepts[0].unit_id-or
+       [string]$receipt.result-cne'pass'-or
+       ([string]$receipt.schema-ceq'rusty.morphospace.workflow.validation_receipt.v1'-and[string]$receipt.tier-cne[string]$checkpoint.tier)){
+        throw 'Active-envelope accepted predecessor receipt identity or result differs.'
+    }
     }
     $acceptedState=$accepted.intent.target.state.document
     $acceptedUnitPath=Resolve-MorphospaceWorkspacePath $WorkspaceRoot "iteration-units/$([string]$accepts[0].unit_id).json" -RequireLeaf
     $acceptedUnit=Read-MorphospaceProtocolJson $acceptedUnitPath
-    if(-not($accepted.PSObject.Properties.Name-contains'historical_only')){
-        $acceptedBytes=ConvertTo-MorphospaceProtocolJsonBytes $accepted.intent.target.unit.document
-        if((Get-MorphospaceFileSha256 $acceptedUnitPath)-cne(Get-MorphospaceSha256Bytes $acceptedBytes)){throw 'Active-envelope accepted predecessor unit bytes drifted.'}
-    }
     if([string]$acceptedUnit.status-cne'accepted'-or[string]$acceptedUnit.project_id-cne[string]$State.project_id-or
        (Get-ActiveEnvelopeHash $acceptedUnit)-cne[string]$accepted.intent.target.unit.sha256-or
        $null-ne$acceptedState.current_unit-or[string]$acceptedState.last_accepted_receipt-cne[string]$checkpoint.receipt-or

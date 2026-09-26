@@ -1,4 +1,4 @@
-param([switch]$SelfTest,[switch]$RetainedAuthorityOnly)
+param([switch]$SelfTest,[switch]$RetainedAuthorityOnly,[switch]$CheckpointProofOnly)
 $ErrorActionPreference='Stop'
 $repoRoot=Split-Path $PSScriptRoot -Parent
 
@@ -19,11 +19,14 @@ $continuationModule=Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceDevel
 function Assert-ActiveEnvelopeTest([bool]$Condition,[string]$Message){if(-not$Condition){throw "Active development-envelope extension self-test failed: $Message"}}
 function Assert-ActiveEnvelopeRejected([scriptblock]$Action,[string]$Message){$rejected=$false;try{&$Action|Out-Null}catch{$rejected=$true};Assert-ActiveEnvelopeTest $rejected $Message}
 
-# Adapt only the fixture writer inputs, before acceptance is produced. All durable
-# acceptance records and artifact bytes are emitted by the production owner writer.
-$checkpointWriter=New-Module -ArgumentList $transitionModule -ScriptBlock {
-    param($ProductionWriter)
+# Adapt fixture inputs before acceptance. Durable acceptance records come from
+# the owner writer; the ordinary case retains an externally supplied receipt.
+function New-ActiveEnvelopeCheckpointWriter([switch]$SeparateReceiptProducer,[switch]$ExternalReceipt){
+New-Module -ArgumentList $transitionModule,$SeparateReceiptProducer.IsPresent,$ExternalReceipt.IsPresent -ScriptBlock {
+    param($ProductionWriter,$SeparateProducer,$External)
     $script:writer=$ProductionWriter
+    $script:separateProducer=$SeparateProducer
+    $script:externalReceipt=$External
     function Start-MorphospaceTransitionLedger {
         param($WorkspaceRoot,$TransactionId,$StatePath,$UnitPath,$EventsPath,$TargetState,$TargetUnit,$Event)
         if([string]$TargetUnit.status-cne'accepted'){
@@ -32,17 +35,31 @@ $checkpointWriter=New-Module -ArgumentList $transitionModule -ScriptBlock {
         }
         $TargetState.validation_checkpoint=[pscustomobject][ordered]@{tier='quick';receipt=[string]$TargetState.last_accepted_receipt;result='pass'}
         $receiptPath=Join-Path $WorkspaceRoot ([string]$TargetState.last_accepted_receipt)
-        &$script:writer {param($w,$t,$s,$u,$e,$ts,$tu,$ev,$receipt)
-            $bytes=[IO.File]::ReadAllBytes($receipt)
-            # The fixture's draft receipt is not accepted yet. The owner writes
-            # those exact bytes as its artifact alongside the first acceptance.
-            Remove-Item -LiteralPath $receipt
+        &$script:writer {param($w,$t,$s,$u,$e,$ts,$tu,$ev,$receipt,$separate,$external)
+            $validation=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.validation_receipt.v1';receipt_id='u001-accepted';project_id=$ts.project_id;unit_id='u001';created_at='2026-08-24T23:58:00.0000000Z';tier='quick';result='pass';repository_revisions=@();changed_paths=@();artifacts=@([pscustomobject]@{artifact_id='fixture-project';kind='fixture';path='project.spec.json';sha256=Get-MorphospaceFileSha256 (Join-Path $w 'project.spec.json')});criteria=@([pscustomobject]@{acceptance_id='fixture-accepted';status='pass';command='Fixture predecessor validation.';evidence_refs=@('fixture-project')});gates=@([pscustomobject]@{gate_id='fixture-gate';status='pass';command='Fixture predecessor validation.';evidence_refs=@('fixture-project')});device_validation=$null}
+            $bytes=ConvertTo-MorphospaceProtocolJsonBytes $validation
+            # Prepare the unaccepted draft before the production writer seals its target.
+            # Receipts may be supplied externally or retained as owner artifacts.
+            if($external){[IO.File]::WriteAllBytes($receipt,$bytes)}else{Remove-Item -LiteralPath $receipt}
             $preStatePath=Join-Path $w $s;$preUnitPath=Join-Path $w $u;$eventsPath=Join-Path $w $e
             $preState=Read-MorphospaceProtocolJson $preStatePath;$preUnit=Read-MorphospaceProtocolJson $preUnitPath
-            Start-MorphospaceTransitionLedger -WorkspaceRoot $w -TransactionId $t -StatePath $s -UnitPath $u -EventsPath $e -TargetState $ts -TargetUnit $tu -Event $ev -ExpectedPreStateSha256 (Get-MorphospaceCanonicalJsonSha256 $preState) -ExpectedPreUnitSha256 (Get-MorphospaceCanonicalJsonSha256 $preUnit) -ExpectedEventsSha256 (Get-MorphospaceFileSha256 $eventsPath) -ExpectedEventsLength ([IO.FileInfo]$eventsPath).Length -Artifacts @([pscustomobject]@{path=[string]$ts.last_accepted_receipt;sha256=Get-MorphospaceSha256Bytes $bytes;bytes_base64=[Convert]::ToBase64String($bytes)})
-        } $WorkspaceRoot $TransactionId $StatePath $UnitPath $EventsPath $TargetState $TargetUnit $Event $receiptPath
+            $artifacts=@([pscustomobject]@{path=[string]$ts.last_accepted_receipt;sha256=Get-MorphospaceSha256Bytes $bytes;bytes_base64=[Convert]::ToBase64String($bytes)})
+            if($external){$artifacts=@()}
+            if($separate){
+                $producerState=$preState|ConvertTo-Json -Depth 100|ConvertFrom-Json -Depth 100 -DateKind String
+                $producerUnit=$preUnit|ConvertTo-Json -Depth 100|ConvertFrom-Json -Depth 100 -DateKind String
+                $producerUnit.status='validating';$producerState.current_unit='u001';$producerState.validation_checkpoint=$ts.validation_checkpoint;$producerState.last_event_id='u001-validation-pass-0001'
+                $producerEvent=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.iteration_event.v1';event_id='u001-validation-pass-0001';sequence=1;timestamp='2026-08-24T23:59:00.0000000Z';project_id=$ts.project_id;unit_id='u001';event_type='state-transition';summary='Recorded the fixture predecessor validation artifact.';receipts=@([string]$ts.last_accepted_receipt)}
+                Start-MorphospaceTransitionLedger -WorkspaceRoot $w -TransactionId 'u001-validation-pass-0001-transition' -StatePath $s -UnitPath $u -EventsPath $e -TargetState $producerState -TargetUnit $producerUnit -Event $producerEvent -ExpectedPreStateSha256 (Get-MorphospaceCanonicalJsonSha256 $preState) -ExpectedPreUnitSha256 (Get-MorphospaceCanonicalJsonSha256 $preUnit) -ExpectedEventsSha256 (Get-MorphospaceFileSha256 $eventsPath) -ExpectedEventsLength ([IO.FileInfo]$eventsPath).Length -Artifacts $artifacts|Out-Null
+                $preState=Read-MorphospaceProtocolJson $preStatePath;$preUnit=Read-MorphospaceProtocolJson $preUnitPath;$artifacts=@()
+                $ev.sequence=2
+            }
+            Start-MorphospaceTransitionLedger -WorkspaceRoot $w -TransactionId $t -StatePath $s -UnitPath $u -EventsPath $e -TargetState $ts -TargetUnit $tu -Event $ev -ExpectedPreStateSha256 (Get-MorphospaceCanonicalJsonSha256 $preState) -ExpectedPreUnitSha256 (Get-MorphospaceCanonicalJsonSha256 $preUnit) -ExpectedEventTailId ([string]$preState.last_event_id) -ExpectedEventsSha256 (Get-MorphospaceFileSha256 $eventsPath) -ExpectedEventsLength ([IO.FileInfo]$eventsPath).Length -Artifacts $artifacts
+        } $WorkspaceRoot $TransactionId $StatePath $UnitPath $EventsPath $TargetState $TargetUnit $Event $receiptPath $script:separateProducer $script:externalReceipt
     }
 }
+}
+$checkpointWriter=New-ActiveEnvelopeCheckpointWriter -ExternalReceipt
 
 function Invoke-RetainedAuthorityFocusedTests {
     $surface=[pscustomobject][ordered]@{surface_kind='readme';path='README.md';owner='workflow-owner';change_reason='Keep the declared instruction current.';action='update';status='planned';validation='Observe the exact managed file.'}
@@ -148,6 +165,15 @@ function New-ActiveEnvelopeFreezeRequest {
     return $freeze
 }
 
+function Set-ActiveEnvelopeEvidenceDamage([string]$Path){
+    $value=Read-EnvelopeProtocolJson $Path
+    if($Path.EndsWith('.completion.json')){$value.event_id='forged-event'}
+    elseif($Path.EndsWith('.intent.json')){$value.event.summary='Detached accepted intent.'}
+    elseif($Path.Replace('\','/').Contains('/iteration-units/')){$value.status='active'}
+    else{$value.result='fail'}
+    Write-EnvelopeJson $Path $value
+}
+
 $retainedAuthorityResult=Invoke-RetainedAuthorityFocusedTests
 if($RetainedAuthorityOnly){$retainedAuthorityResult|ConvertTo-Json -Compress;return}
 
@@ -155,6 +181,28 @@ $tempParent=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\','/')
 $temp=Join-Path $tempParent ('active-envelope-extension-'+[guid]::NewGuid().ToString('N'))
 try{
     [IO.Directory]::CreateDirectory($temp)|Out-Null
+    foreach($mode in @('external','separate-artifact')){
+        $writer=if($mode-ceq'external'){New-ActiveEnvelopeCheckpointWriter -ExternalReceipt}else{New-ActiveEnvelopeCheckpointWriter -SeparateReceiptProducer}
+        $proofSeed=New-EnvelopeAdmissionPreparedFixture -Root (Join-Path $temp "proof-$mode") -RepositoryRoot $repoRoot -TransitionLedgerModule $writer -OwnerProducedPreparation -AdditiveFeature
+        $proofArguments=@{WorkspaceRoot=$proofSeed.workspace;State=$proofSeed.state;CurrentUnitId='u002';Expected=$proofSeed.admission_template.expected}
+        [void](&$extensionModule {param($a)Assert-ActiveEnvelopeValidationCheckpoint @a} $proofArguments)
+        $prefixDrift=$proofArguments.Clone();$prefixDrift.Expected=Copy-Envelope $proofArguments.Expected;$prefixDrift.Expected.events_sha256='0'*64
+        Assert-ActiveEnvelopeRejected {&$extensionModule {param($a)Assert-ActiveEnvelopeValidationCheckpoint @a} $prefixDrift} "prefix drift accepted for $mode"
+        $ledgerPath=Join-Path $proofSeed.workspace 'iteration-events.jsonl';$ledgerBytes=[IO.File]::ReadAllBytes($ledgerPath)
+        $firstLine=([Text.UTF8Encoding]::new($false,$true).GetString($ledgerBytes)-split "`n")[0]+"`n";$firstBytes=[Text.UTF8Encoding]::new($false).GetBytes($firstLine)
+        $beforeAcceptance=$proofArguments.Clone();$beforeAcceptance.Expected=Copy-Envelope $proofArguments.Expected;$beforeAcceptance.Expected.events_length=$firstBytes.Length;$beforeAcceptance.Expected.events_sha256=(&$protocolModule {param($b)Get-MorphospaceSha256Bytes $b} $firstBytes);$beforeAcceptance.Expected.event_tail_id=($firstLine|ConvertFrom-Json -Depth 100).event_id
+        if($mode-ceq'separate-artifact'){Assert-ActiveEnvelopeRejected {&$extensionModule {param($a)Assert-ActiveEnvelopeValidationCheckpoint @a} $beforeAcceptance} 'acceptance outside captured prefix was accepted'}
+        $events=@([Text.UTF8Encoding]::new($false,$true).GetString($ledgerBytes)-split "`n"|Where-Object{$_}|ForEach-Object{$_|ConvertFrom-Json -Depth 100 -DateKind String})
+        $duplicate=Copy-Envelope $events[0];if($mode-ceq'separate-artifact'){$duplicate=Copy-Envelope $events[1]};$duplicate.event_id='u001-accepted-9999';$duplicate.sequence=$events.Count+1
+        [IO.File]::AppendAllText($ledgerPath,(($duplicate|ConvertTo-Json -Depth 100 -Compress)+"`n"),[Text.UTF8Encoding]::new($false))
+        $ambiguous=$proofArguments.Clone();$ambiguous.Expected=Copy-Envelope $proofArguments.Expected;$ambiguous.Expected.events_length=([IO.FileInfo]$ledgerPath).Length;$ambiguous.Expected.events_sha256=Get-EnvelopeFileSha256 $ledgerPath;$ambiguous.Expected.event_tail_id=$duplicate.event_id
+        Assert-ActiveEnvelopeRejected {&$extensionModule {param($a)Assert-ActiveEnvelopeValidationCheckpoint @a} $ambiguous} "ambiguous acceptance accepted for $mode"
+        [IO.File]::WriteAllBytes($ledgerPath,$ledgerBytes)
+        $receiptPath=Join-Path $proofSeed.workspace 'receipts/u001-accepted.json';$receiptBytes=[IO.File]::ReadAllBytes($receiptPath);Remove-Item -LiteralPath $receiptPath
+        Assert-ActiveEnvelopeRejected {&$extensionModule {param($a)Assert-ActiveEnvelopeValidationCheckpoint @a} $proofArguments} "missing accepted receipt accepted for $mode"
+        [IO.File]::WriteAllBytes($receiptPath,$receiptBytes)
+    }
+    if($CheckpointProofOnly){[pscustomobject]@{result='pass';external_receipt=$true;separate_receipt_producer=$true;prefix_drift_rejected=$true;acceptance_outside_prefix_rejected=$true;ambiguous_acceptance_rejected=$true;missing_receipt_rejected=$true}|ConvertTo-Json -Compress;return}
     $seed=New-EnvelopeAdmissionPreparedFixture -Root (Join-Path $temp 'seed') -RepositoryRoot $repoRoot -TransitionLedgerModule $checkpointWriter -OwnerProducedPreparation -AdditiveFeature
     $workspace=$seed.workspace;$admissionPath=Join-Path $temp 'admission.json';Write-EnvelopeJson $admissionPath $seed.admission_template
     Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $workspace -DevelopmentUnitAdmission $admissionPath -ExpectedDevelopmentUnitAdmissionSha256 (Get-EnvelopeFileSha256 $admissionPath) -OutPath (Join-Path $workspace 'receipts\u002-admission.json') -Timestamp '2026-09-15T00:00:00.0000000Z' -Execute|Out-Null
@@ -187,7 +235,7 @@ try{
     }
     foreach($path in $acceptedEvidence){
         $absolute=Join-Path $workspace $path;$bytes=[IO.File]::ReadAllBytes($absolute)
-        [IO.File]::AppendAllText($absolute,' ',[Text.UTF8Encoding]::new($false))
+        Set-ActiveEnvelopeEvidenceDamage $absolute
         Assert-ActiveEnvelopeRejected {&$extensionModule {param($a)Assert-ActiveEnvelopeValidationCheckpoint @a} $checkpointArguments} "damaged accepted evidence $path was accepted"
         [IO.File]::WriteAllBytes($absolute,$bytes)
     }
@@ -270,7 +318,7 @@ try{
     Assert-ActiveEnvelopeTest ($interrupted-and(Test-Path (Join-Path $recoveryWorkspace 'receipts\transactions\u002-add-dependency-recorded-transition.intent.json'))) 'recovery fixture did not retain the v6 intent'
     foreach($path in $acceptedEvidence){
         $absolute=Join-Path $recoveryWorkspace $path;$bytes=[IO.File]::ReadAllBytes($absolute)
-        [IO.File]::AppendAllText($absolute,' ',[Text.UTF8Encoding]::new($false));$inventory=Get-EnvelopeWorkspaceByteInventorySha256 $recoveryWorkspace
+        Set-ActiveEnvelopeEvidenceDamage $absolute;$inventory=Get-EnvelopeWorkspaceByteInventorySha256 $recoveryWorkspace
         Assert-ActiveEnvelopeRejected {&$transitionModule {param($w)Complete-MorphospaceTransitionLedger -WorkspaceRoot $w -TransactionId 'u002-add-dependency-recorded-transition' -Repair} $recoveryWorkspace} "generic Recover accepted damaged predecessor $path"
         Assert-ActiveEnvelopeTest ((Get-EnvelopeWorkspaceByteInventorySha256 $recoveryWorkspace)-ceq$inventory) "recovery rejection mutated workspace for $path"
         [IO.File]::WriteAllBytes($absolute,$bytes)
