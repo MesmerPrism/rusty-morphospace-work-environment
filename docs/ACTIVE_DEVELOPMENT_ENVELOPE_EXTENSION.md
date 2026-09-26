@@ -133,6 +133,16 @@ tree entries and paths remain exact; changing and reverting them is rejected.
 Declaring mutable lifecycle controls as immutable readonly content is contradictory
 and rejected; lifecycle authentication never exempts declared readonly bytes.
 
+Ordinary Ready and Claim may also produce a separately named optional output in
+the owner `receipts/` namespace. This is a derived byproduct, not a transaction
+artifact or proof of historical command emission. Its closed receipt schema,
+action, event, timestamp, statuses and selectors must match the authenticated
+ordinary transition; unrelated action bindings and duplicate outputs are rejected.
+Every committed touch retains the exact output and transaction bytes and the
+authenticated event prefix. Repository observations, graph scope, validation
+matrix and preflight telemetry grant no source, lifecycle or validation authority.
+Idempotent outputs without an event do not acquire this projection exception.
+
 Historical extension verification uses its captured pre-extension ledger bytes,
 length and tail. Parsing and recursive owner verification stay inside that
 prefix, which must precede the consumer event. Later authenticated extensions

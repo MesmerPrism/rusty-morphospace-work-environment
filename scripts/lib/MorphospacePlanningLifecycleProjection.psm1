@@ -94,6 +94,60 @@ function Get-MorphospacePlanningLifecycleToolingProofBindings {
     }
     @($bindings.Keys|Sort-Object -CaseSensitive|ForEach-Object{[pscustomobject]@{path=$_;sha256=[string]$bindings[$_]}})
 }
+function Get-MorphospacePlanningDerivedAutomationOutputs {
+    param([string]$Workspace,[string]$Repository,[string]$WorkspacePrefix,[object[]]$Transitions)
+    # Ready/Claim OutPath is a post-transaction observation, not a ledger artifact.
+    # Qualify only a unique derived byproduct; its telemetry grants no authority.
+    $byEvent=@{};foreach($transition in $Transitions){$byEvent[[string]$transition.proof.intent.event.event_id]=$transition}
+    $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal);$bindings=@()
+    foreach($file in @(Get-ChildItem -LiteralPath (Join-Path $Workspace 'receipts') -File -Recurse -Filter '*.json')){
+        $relative=ConvertTo-MorphospaceProtocolRelativePath ([IO.Path]::GetRelativePath($Workspace,$file.FullName).Replace('\','/'))
+        if($relative.StartsWith('receipts/transactions/',[StringComparison]::Ordinal)-or$file.Length-gt131072){continue}
+        $absolute=Resolve-MorphospaceWorkspacePath $Workspace $relative -RequireLeaf
+        try{$receipt=Read-MorphospaceProtocolJson $absolute}catch{continue}
+        if([string]$receipt.schema-cne'rusty.morphospace.workflow.work_unit_automation_receipt.v1'-or[string]$receipt.action-cnotin@('Ready','Claim')-or-not$byEvent.ContainsKey([string]$receipt.event_id)){continue}
+        Assert-MorphospacePlanningLifecycleSchema $receipt 'work-unit-automation-receipt.schema.json'
+        foreach($name in @('git_mutation_performed','device_mutation_performed','force_push_allowed')){if($receipt.preservation.$name-isnot[bool]-or$receipt.preservation.$name){throw 'Planning derived automation output has a non-preserving action flag.'}}
+        $context=$byEvent[[string]$receipt.event_id];$intent=$context.proof.intent;$ready=[string]$receipt.action-ceq'Ready';$expectedAction=if($context.ready){'Ready'}else{'Claim'};$expectedTransition=if($context.ready){'proposed-to-ready'}else{'ready-to-active'}
+        if([string]$receipt.action-cne$expectedAction-or-not$receipt.executed-or[string]$receipt.project_id-cne[string]$intent.event.project_id-or[string]$receipt.unit_id-cne[string]$intent.event.unit_id-or[string]$receipt.timestamp-cne[string]$intent.event.timestamp-or[string]$receipt.transition-cne$expectedTransition-or[string]$receipt.status_before-cne[string]$context.before_unit.status-or[string]$receipt.status_after-cne[string]$intent.target.unit.document.status-or(($null-eq$receipt.current_unit_before)-ne($null-eq$context.before_state.current_unit)-or[string]$receipt.current_unit_before-cne[string]$context.before_state.current_unit)-or(($null-eq$receipt.current_unit_after)-ne($null-eq$intent.target.state.document.current_unit)-or[string]$receipt.current_unit_after-cne[string]$intent.target.state.document.current_unit)){
+            throw 'Planning derived automation output differs from its authenticated ordinary transition.'
+        }
+        foreach($name in @('adoption_receipt','publication_closure','published_planning_authority_adoption','planned_publication','planning_suffix_rewrite_recovery','published_prerequisite_suffix_reconciliation','executed_prepared_publication_reconciliation','instruction_surface_completion','ready_withdrawal','proposed_retirement','terminal_validation_selection_release','push_plan')){
+            if($receipt.PSObject.Properties.Name-contains$name-and$null-ne$receipt.$name){throw 'Planning derived ordinary output contains an unrelated action binding.'}
+        }
+        if(-not$seen.Add([string]$receipt.event_id)){throw 'Planning derived automation output is ambiguous for its authenticated transition.'}
+        $absolute=Resolve-MorphospaceWorkspacePath $Workspace $relative -RequireLeaf
+        $paths=@($relative,"receipts/transactions/$($intent.transaction_id).intent.json","receipts/transactions/$($intent.transaction_id).completion.json")
+        $proofBindings=@();foreach($path in $paths){$live=Resolve-MorphospaceWorkspacePath $Workspace $path -RequireLeaf;$blob=@(&git -C $Repository hash-object --no-filters -- $live 2>$null);if($LASTEXITCODE-ne0-or$blob.Count-ne1){throw 'Planning derived output immutable blob binding failed.'};$proofBindings+=,[pscustomobject]@{path=$WorkspacePrefix+$path;blob_sha1=[string]$blob[0]}}
+        $ledger=[IO.File]::ReadAllBytes((Resolve-MorphospaceWorkspacePath $Workspace 'iteration-events.jsonl' -RequireLeaf));$start=[int]$intent.expected.events_length;$end=$start
+        while($end-lt$ledger.Length-and$ledger[$end]-ne10){$end++};if($end-ge$ledger.Length){throw 'Planning derived output event prefix is unavailable.'};$end++
+        $prefix=[byte[]]::new($end);[Array]::Copy($ledger,$prefix,$end)
+        $bindings+=,[pscustomobject]@{path=$WorkspacePrefix+$relative;sha256=Get-MorphospaceFileSha256 $absolute;proof_bindings=$proofBindings;events_path=$WorkspacePrefix+'iteration-events.jsonl';events_prefix_length=$end;events_prefix_sha256=Get-MorphospaceSha256Bytes $prefix}
+    }
+    return $bindings
+}
+function Assert-MorphospacePlanningDerivedAutomationOutputAtCommit {
+    param([string]$Repository,[string]$Commit,[object]$Binding,[string[]]$TouchedPaths=@())
+    $receipt=@(&git -C $Repository ls-tree $Commit -- ([string]$Binding.path) 2>$null)
+    if($LASTEXITCODE-ne0){throw 'Committed derived automation output tree observation failed.'}
+    $proofs=@($Binding.proof_bindings)
+    if($receipt.Count-eq0){
+        if([string]$Binding.path-cin$TouchedPaths){throw 'Committed derived automation output was deleted from its immutable evidence path.'}
+        if(@($proofs|Select-Object -Skip 1|Where-Object{[string]$_.path-cin$TouchedPaths}).Count-eq0){return}
+        # A complete transaction may be committed before its optional byproduct.
+        $proofs=@($proofs|Select-Object -Skip 1)
+    }
+    foreach($proof in $proofs){
+        $entry=@(&git -C $Repository ls-tree $Commit -- ([string]$proof.path) 2>$null)
+        if($LASTEXITCODE-ne0-or$entry.Count-ne1-or[string]$entry[0]-cnotmatch('^100644 blob '+[regex]::Escape([string]$proof.blob_sha1)+'\t')){throw 'Committed derived automation output or its transaction bytes changed.'}
+    }
+    $observationModule=Import-Module (Join-Path $PSScriptRoot 'MorphospaceContentObservation.psm1') -PassThru
+    $gitPath=(Get-Command git -CommandType Application -ErrorAction Stop|Select-Object -First 1).Source;$gitHash=Get-MorphospaceFileSha256 $gitPath
+    $result=&$observationModule {param($git,$hash,$root,$revision)Invoke-MorphospaceBoundGitBytes -GitExecutable $git -ExpectedExecutableSha256 $hash -RepositoryPath $root -Arguments @('cat-file','blob',$revision) -MaxOutputBytes 67108864} $gitPath $gitHash $Repository ($Commit+':'+[string]$Binding.events_path)
+    if($result.stdout.Length-lt[int]$Binding.events_prefix_length){throw 'Committed derived automation output precedes its authenticated event.'}
+    $prefix=[byte[]]::new([int]$Binding.events_prefix_length);[Array]::Copy($result.stdout,$prefix,$prefix.Length)
+    if((Get-MorphospaceSha256Bytes $prefix)-cne[string]$Binding.events_prefix_sha256){throw 'Committed derived automation output event prefix is detached.'}
+}
 function Get-MorphospacePlanningLifecycleProjectionEvidenceFromAuthenticatedAdmission {
     param([string]$Workspace,[object]$Unit,[object]$RepositoryEntry,[string[]]$StatusPorcelain,[Parameter(Mandatory)][object]$Admission,[object]$RecoveryIntent=$null,[string]$LockedCommit='',[string]$ObservedHead='',[object]$CapturedExpected=$null,[switch]$HistoricalOnly)
     if([string]$RepositoryEntry.role-cne'planning'){return $null}
@@ -136,11 +190,12 @@ function Get-MorphospacePlanningLifecycleProjectionEvidenceFromAuthenticatedAdmi
     foreach($name in @('project','state','feature_lock')){$projection=$preparationIntent.target.$name;Set-PlanningProjection ([string]$projection.path) (Get-MorphospacePlanningLifecycleCanonicalRawSha256 $projection.document)}
     foreach($artifact in @($preparationIntent.artifacts)){$artifactBytes=[Convert]::FromBase64String([string]$artifact.bytes_base64);Set-PlanningProjection ([string]$artifact.path) (Get-MorphospaceSha256Bytes $artifactBytes)}
     Set-PlanningProjection $preparationIntentRelative (Get-MorphospaceFileSha256 $preparationIntentPath);Set-PlanningProjection $preparationCompletionRelative (Get-MorphospaceFileSha256 $preparationCompletionPath)
-    $lastUnit=$Admission.unit;$lastState=$preparationIntent.target.state.document;$lastProject=$preparationIntent.target.project.document;$lastFeatureLock=$preparationIntent.target.feature_lock.document
+    $lastUnit=$Admission.unit;$lastState=$preparationIntent.target.state.document;$lastProject=$preparationIntent.target.project.document;$lastFeatureLock=$preparationIntent.target.feature_lock.document;$ordinaryTransitions=@()
     foreach($event in @($projectionSuffix|Select-Object -Skip 1)){
         $transactionId="$([string]$event.event_id)-transition";$proof=Get-MorphospacePlanningLifecycleTransition -Workspace $workspaceFull -TransactionId $transactionId -HistoricalProjection
         if((Get-MorphospaceCanonicalJsonSha256 $proof.intent.event)-cne(Get-MorphospaceCanonicalJsonSha256 $event)){throw 'Planning lifecycle planning lifecycle event is detached from its transaction.'}
         if([int]$event.sequence-gt[int]$admitted[0].sequence-and[int]$event.sequence-le$to){
+            if([string]$proof.intent.state.path-cne'workspace.state.json'-or[string]$proof.intent.unit.path-cne"iteration-units/$([string]$Unit.unit_id).json"-or[string]$proof.intent.events.path-cne'iteration-events.jsonl'){throw 'Planning Ready or Claim control references differ from canonical owner paths.'}
             if([string]$proof.intent.pre.unit.sha256-cne(Get-MorphospaceCanonicalJsonSha256 $lastUnit)-or[string]$proof.intent.pre.state.sha256-cne(Get-MorphospaceCanonicalJsonSha256 $lastState)){throw 'Planning Ready or Claim predecessor differs from authenticated prior unit or state.'}
             $ready=[int]$event.sequence-eq([int]$admitted[0].sequence+1);$slug=if($ready){'ready'}else{'claimed'};$status=if($ready){'ready'}else{'active'}
             $summary=if($ready){'Reviewed the bounded proposal and made it claimable without expanding its repositories, paths, or prerequisites.'}else{'Claimed one ready iteration unit without expanding repository or path scope.'}
@@ -149,6 +204,7 @@ function Get-MorphospacePlanningLifecycleProjectionEvidenceFromAuthenticatedAdmi
             $baseContinuationModule=Import-Module (Join-Path $PSScriptRoot 'MorphospaceDevelopmentContinuation.psm1') -PassThru
             &$baseContinuationModule {param($before,$after,$slug)Assert-DevelopmentContinuationStableAuthority $before $after @('status') $slug} $lastUnit $targetUnit $slug
             if(($ready-and($null-ne$targetState.current_unit-or[string]$targetState.next_ready_unit-cne[string]$Unit.unit_id))-or(-not$ready-and([string]$targetState.current_unit-cne[string]$Unit.unit_id-or$null-ne$targetState.next_ready_unit))){throw 'Planning Ready or Claim selector differs from ordinary owner authority.'}
+            $ordinaryTransitions+=,[pscustomobject]@{proof=$proof;ready=$ready;before_unit=$lastUnit;before_state=$lastState}
         }
         if([int]$event.sequence-gt$to){
             if([string]$proof.intent.pre.unit.sha256-cne(Get-MorphospaceCanonicalJsonSha256 $lastUnit)-or[string]$proof.intent.pre.state.sha256-cne(Get-MorphospaceCanonicalJsonSha256 $lastState)){throw 'Planning continuation predecessor differs from authenticated terminal unit or state.'}
@@ -194,6 +250,8 @@ function Get-MorphospacePlanningLifecycleProjectionEvidenceFromAuthenticatedAdmi
     }
     $authority=[pscustomobject]@{unit=$lastUnit;state=$lastState;project=$lastProject;feature_lock=$lastFeatureLock;assessment=$lastUnit.agent_scope_assessment}
     if($HistoricalOnly){return $authority}
+    $derivedOutputs=@{}
+    foreach($binding in @(Get-MorphospacePlanningDerivedAutomationOutputs -Workspace $workspaceFull -Repository $repository -WorkspacePrefix $workspacePrefix -Transitions $ordinaryTransitions)){$derivedOutputs[[string]$binding.path]=$binding;$expected[[string]$binding.path]=[string]$binding.sha256}
     Set-PlanningProjection 'iteration-events.jsonl' (Get-MorphospaceFileSha256 (Resolve-MorphospaceWorkspacePath $workspaceFull 'iteration-events.jsonl' -RequireLeaf))
     if($committed){
         $staged=@(& git -C $repository diff --cached --name-only --no-renames -- 2>&1);if($LASTEXITCODE-ne0-or$staged.Count-ne0){throw 'Planning lifecycle committed planning descendant must remain clean.'}
@@ -206,6 +264,7 @@ function Get-MorphospacePlanningLifecycleProjectionEvidenceFromAuthenticatedAdmi
             $parent=$line.Substring(41)
             $paths=@(& git -C $repository diff --name-only --no-renames $parent $cursor -- 2>&1)
             if($LASTEXITCODE-ne0){throw 'Planning lifecycle committed planning descendant diff failed.'}
+            foreach($binding in $derivedOutputs.Values){Assert-MorphospacePlanningDerivedAutomationOutputAtCommit -Repository $repository -Commit $cursor -Binding $binding -TouchedPaths @($paths)}
             foreach($path in $paths){
                 $relative=([string]$path).Replace('\','/')
                 if($committedOwn.ContainsKey($relative)){
@@ -216,6 +275,7 @@ function Get-MorphospacePlanningLifecycleProjectionEvidenceFromAuthenticatedAdmi
             }
             $cursor=$parent
         }
+        foreach($binding in $derivedOutputs.Values){Assert-MorphospacePlanningDerivedAutomationOutputAtCommit -Repository $repository -Commit $LockedCommit -Binding $binding}
         $final=@(& git -C $repository diff --name-only --no-renames $LockedCommit $ObservedHead -- 2>&1)
         if($LASTEXITCODE-ne0){throw 'Planning lifecycle committed planning descendant final diff failed.'}
         foreach($path in $final){if(-not$expected.ContainsKey(([string]$path).Replace('\','/'))-and-not$committedOwn.ContainsKey(([string]$path).Replace('\','/'))){throw 'Planning lifecycle committed planning descendant final projection is unauthenticated.'}}

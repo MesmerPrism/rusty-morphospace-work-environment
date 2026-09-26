@@ -121,3 +121,5 @@ requirements onto the retired unit.
 Retirement uses the shared [planning lifecycle projection contract](ACTIVE_DEVELOPMENT_ENVELOPE_EXTENSION.md#read-only-planning-source-and-lifecycle-projection). Its existing caller-authenticated admission route and replacement-unit compatibility remain intact; extraction adds no ordinary-only preparation prerequisite to retirement.
 
 The planning source commit/tree stays immutable. Only exact authenticated owner lifecycle projections can explain a nested planning descendant or current own-transition dirt. Declared immutable content, including legitimate additive readonly leaves derived from owner authority, gains no lifecycle-content exception.
+
+Optional ordinary Ready/Claim outputs qualify only as unique derived byproducts under that shared contract; their observational payload does not extend retirement authority.
