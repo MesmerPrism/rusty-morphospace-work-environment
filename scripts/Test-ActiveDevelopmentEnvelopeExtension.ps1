@@ -19,6 +19,31 @@ $continuationModule=Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceDevel
 function Assert-ActiveEnvelopeTest([bool]$Condition,[string]$Message){if(-not$Condition){throw "Active development-envelope extension self-test failed: $Message"}}
 function Assert-ActiveEnvelopeRejected([scriptblock]$Action,[string]$Message){$rejected=$false;try{&$Action|Out-Null}catch{$rejected=$true};Assert-ActiveEnvelopeTest $rejected $Message}
 
+# Adapt only the fixture writer inputs, before acceptance is produced. All durable
+# acceptance records and artifact bytes are emitted by the production owner writer.
+$checkpointWriter=New-Module -ArgumentList $transitionModule -ScriptBlock {
+    param($ProductionWriter)
+    $script:writer=$ProductionWriter
+    function Start-MorphospaceTransitionLedger {
+        param($WorkspaceRoot,$TransactionId,$StatePath,$UnitPath,$EventsPath,$TargetState,$TargetUnit,$Event)
+        if([string]$TargetUnit.status-cne'accepted'){
+            &$script:writer {param($a)Start-MorphospaceTransitionLedger @a} $PSBoundParameters
+            return
+        }
+        $TargetState.validation_checkpoint=[pscustomobject][ordered]@{tier='quick';receipt=[string]$TargetState.last_accepted_receipt;result='pass'}
+        $receiptPath=Join-Path $WorkspaceRoot ([string]$TargetState.last_accepted_receipt)
+        &$script:writer {param($w,$t,$s,$u,$e,$ts,$tu,$ev,$receipt)
+            $bytes=[IO.File]::ReadAllBytes($receipt)
+            # The fixture's draft receipt is not accepted yet. The owner writes
+            # those exact bytes as its artifact alongside the first acceptance.
+            Remove-Item -LiteralPath $receipt
+            $preStatePath=Join-Path $w $s;$preUnitPath=Join-Path $w $u;$eventsPath=Join-Path $w $e
+            $preState=Read-MorphospaceProtocolJson $preStatePath;$preUnit=Read-MorphospaceProtocolJson $preUnitPath
+            Start-MorphospaceTransitionLedger -WorkspaceRoot $w -TransactionId $t -StatePath $s -UnitPath $u -EventsPath $e -TargetState $ts -TargetUnit $tu -Event $ev -ExpectedPreStateSha256 (Get-MorphospaceCanonicalJsonSha256 $preState) -ExpectedPreUnitSha256 (Get-MorphospaceCanonicalJsonSha256 $preUnit) -ExpectedEventsSha256 (Get-MorphospaceFileSha256 $eventsPath) -ExpectedEventsLength ([IO.FileInfo]$eventsPath).Length -Artifacts @([pscustomobject]@{path=[string]$ts.last_accepted_receipt;sha256=Get-MorphospaceSha256Bytes $bytes;bytes_base64=[Convert]::ToBase64String($bytes)})
+        } $WorkspaceRoot $TransactionId $StatePath $UnitPath $EventsPath $TargetState $TargetUnit $Event $receiptPath
+    }
+}
+
 function Invoke-RetainedAuthorityFocusedTests {
     $surface=[pscustomobject][ordered]@{surface_kind='readme';path='README.md';owner='workflow-owner';change_reason='Keep the declared instruction current.';action='update';status='planned';validation='Observe the exact managed file.'}
     $before=[pscustomobject][ordered]@{schema='test.unit';project_id='test-project';unit_id='test-unit';status='active';objective='Preserve the admitted objective.';prerequisites=@('prior-unit');acceptance=@('The admitted acceptance remains exact.');instruction_none_justification=$null;instruction_surfaces=@($surface)}
@@ -130,7 +155,7 @@ $tempParent=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\','/')
 $temp=Join-Path $tempParent ('active-envelope-extension-'+[guid]::NewGuid().ToString('N'))
 try{
     [IO.Directory]::CreateDirectory($temp)|Out-Null
-    $seed=New-EnvelopeAdmissionPreparedFixture -Root (Join-Path $temp 'seed') -RepositoryRoot $repoRoot -TransitionLedgerModule $transitionModule -OwnerProducedPreparation -AdditiveFeature
+    $seed=New-EnvelopeAdmissionPreparedFixture -Root (Join-Path $temp 'seed') -RepositoryRoot $repoRoot -TransitionLedgerModule $checkpointWriter -OwnerProducedPreparation -AdditiveFeature
     $workspace=$seed.workspace;$admissionPath=Join-Path $temp 'admission.json';Write-EnvelopeJson $admissionPath $seed.admission_template
     Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $workspace -DevelopmentUnitAdmission $admissionPath -ExpectedDevelopmentUnitAdmissionSha256 (Get-EnvelopeFileSha256 $admissionPath) -OutPath (Join-Path $workspace 'receipts\u002-admission.json') -Timestamp '2026-09-15T00:00:00.0000000Z' -Execute|Out-Null
     $lifecycle=@{WorkspaceRoot=$workspace;UnitId='u002';RepoMapPath=(Join-Path $workspace 'repository-map.json');ValidationTier='quick'}
@@ -143,6 +168,31 @@ try{
     $preExtensionWorkspace=Join-Path $temp 'pre-extension-workspace';Copy-Item -LiteralPath $workspace -Destination $preExtensionWorkspace -Recurse
     $requestInfo=New-ActiveEnvelopeExtensionRequest -Workspace $workspace -AddedRepository $added -RequestPath (Join-Path $temp 'extension.json')
     $beforeProject=Read-EnvelopeProtocolJson (Join-Path $workspace 'project.spec.json');$beforeLock=Read-EnvelopeProtocolJson (Join-Path $workspace 'feature.lock.json');$beforeState=Read-EnvelopeProtocolJson (Join-Path $workspace 'workspace.state.json');$beforeUnit=Read-EnvelopeProtocolJson (Join-Path $workspace 'iteration-units\u002.json')
+    $acceptedEvidence=@('iteration-units/u001.json','receipts/u001-accepted.json','receipts/transactions/u001-accepted-0001-transition.intent.json','receipts/transactions/u001-accepted-0001-transition.completion.json')
+    $acceptedHashes=@{};foreach($path in $acceptedEvidence){$acceptedHashes[$path]=Get-EnvelopeFileSha256 (Join-Path $workspace $path)}
+    $checkpointArguments=@{WorkspaceRoot=$workspace;State=$beforeState;CurrentUnitId='u002';Expected=$requestInfo.request.expected}
+    foreach($case in @('current','unaccepted','mismatch','tier','result','malformed')){
+        $damaged=Copy-Envelope $beforeState;$args= $checkpointArguments.Clone();$args.State=$damaged
+        switch($case){
+            'current'{$args.CurrentUnitId='u001'}
+            'unaccepted'{$damaged.last_accepted_receipt='receipts/orphan.json';$damaged.validation_checkpoint.receipt='receipts/orphan.json'}
+            'mismatch'{$damaged.validation_checkpoint.receipt='receipts/other.json'}
+            'tier'{$damaged.validation_checkpoint.tier='deep'}
+            'result'{$damaged.validation_checkpoint.result='blocked'}
+            'malformed'{$damaged.validation_checkpoint|Add-Member extra 'forged'}
+        }
+        $inventory=Get-EnvelopeWorkspaceByteInventorySha256 $workspace
+        Assert-ActiveEnvelopeRejected {&$extensionModule {param($a)Assert-ActiveEnvelopeValidationCheckpoint @a} $args} "checkpoint $case was accepted"
+        Assert-ActiveEnvelopeTest ((Get-EnvelopeWorkspaceByteInventorySha256 $workspace)-ceq$inventory) "checkpoint $case rejection mutated workspace"
+    }
+    foreach($path in $acceptedEvidence){
+        $absolute=Join-Path $workspace $path;$bytes=[IO.File]::ReadAllBytes($absolute)
+        [IO.File]::AppendAllText($absolute,' ',[Text.UTF8Encoding]::new($false))
+        Assert-ActiveEnvelopeRejected {&$extensionModule {param($a)Assert-ActiveEnvelopeValidationCheckpoint @a} $checkpointArguments} "damaged accepted evidence $path was accepted"
+        [IO.File]::WriteAllBytes($absolute,$bytes)
+    }
+    $nullState=Copy-Envelope $beforeState;$nullState.validation_checkpoint=$null;$nullArgs=$checkpointArguments.Clone();$nullArgs.State=$nullState
+    [void](&$extensionModule {param($a)Assert-ActiveEnvelopeValidationCheckpoint @a} $nullArgs)
     $dry=Invoke-MorphospaceExtendActiveDevelopmentEnvelope -WorkspaceRoot $workspace -UnitId u002 -ActiveDevelopmentEnvelopeExtension $requestInfo.request_path -RepositoryMapPath $requestInfo.map_path -OutPath $requestInfo.receipt_path -SourceCompositionOutPath $requestInfo.source_path -Timestamp '2026-09-15T01:00:00.0000000Z'
     Assert-ActiveEnvelopeTest (-not$dry.executed-and-not(Test-Path $requestInfo.receipt_path)-and-not(Test-Path $requestInfo.source_path)) 'dry run wrote an artifact'
     $stale=Copy-Envelope $requestInfo.request;$stale.expected.project_sha256='0'*64;$stalePath=Join-Path $temp 'stale.json';Write-EnvelopeJson $stalePath $stale
@@ -162,6 +212,8 @@ try{
     Assert-ActiveEnvelopeTest ($run.executed-and$run.event_id-ceq'u002-add-dependency-recorded'-and[int]$afterProject.revision-eq([int]$beforeProject.revision+1)-and[int]$afterLock.revision-eq([int]$beforeLock.revision+1)-and[int]$afterState.plan_revision-eq([int]$beforeState.plan_revision+1)) 'execute did not advance the exact project, lock, and plan revisions'
     Assert-ActiveEnvelopeTest ([string]$afterUnit.objective-ceq[string]$beforeUnit.objective-and(Get-EnvelopeCanonicalJsonSha256 $afterUnit.acceptance)-ceq(Get-EnvelopeCanonicalJsonSha256 $beforeUnit.acceptance)-and[string]$afterUnit.source_composition.lock_path-ceq'source-composition-locks/u002-add-dependency.json') 'execute changed objective/acceptance or failed to install the derivative source binding'
     Assert-ActiveEnvelopeTest ([string]$afterSource.schema-ceq'rusty.morphospace.workflow.active_development_envelope_source_composition.v1'-and@($afterSource.repositories|Where-Object{$_.repo_id-ceq'added-dependency'-and$_.worktree_state-ceq'clean'}).Count-eq1) 'derivative source artifact lacks the clean added dependency'
+    Assert-ActiveEnvelopeTest ((Get-EnvelopeCanonicalJsonSha256 $afterState.validation_checkpoint)-ceq(Get-EnvelopeCanonicalJsonSha256 $beforeState.validation_checkpoint)) 'extension changed retained accepted checkpoint'
+    foreach($path in $acceptedEvidence){Assert-ActiveEnvelopeTest ((Get-EnvelopeFileSha256 (Join-Path $workspace $path))-ceq$acceptedHashes[$path]) "extension changed accepted evidence $path"}
     $events=@(Get-Content -LiteralPath (Join-Path $workspace 'iteration-events.jsonl')|Where-Object{$_}|ForEach-Object{$_|ConvertFrom-Json -Depth 100 -DateKind String})
     [void](Test-MorphospaceHistoricalActiveDevelopmentEnvelopeExtension -WorkspaceRoot $workspace -ExpectedEvent ($events[-1]))
     $replay=Invoke-MorphospaceExtendActiveDevelopmentEnvelope -WorkspaceRoot $workspace -UnitId u002 -ActiveDevelopmentEnvelopeExtension $requestInfo.request_path -RepositoryMapPath $requestInfo.map_path -OutPath $requestInfo.receipt_path -SourceCompositionOutPath $requestInfo.source_path -ExpectedActiveDevelopmentEnvelopeExtensionSha256 (Get-EnvelopeFileSha256 $requestInfo.request_path) -Execute
@@ -183,10 +235,46 @@ try{
     $retirementArguments.FaultAfter='none';$retirementRun=&$retirementModule {param($arguments)Invoke-MorphospaceRetireActive @arguments} $retirementArguments
     $retiredState=Read-EnvelopeProtocolJson (Join-Path $workspace 'workspace.state.json');$retiredUnit=Read-EnvelopeProtocolJson (Join-Path $workspace 'iteration-units\u002.json')
     Assert-ActiveEnvelopeTest ($retirementRun.executed-and$null-eq$retiredState.current_unit-and[string]$retiredUnit.candidate_freeze.freeze_id-ceq'u002-extension-freeze'-and(Get-EnvelopeFileSha256 (Join-Path $workspace 'project.spec.json'))-ceq$frozenProjectHash-and(Get-EnvelopeFileSha256 (Join-Path $workspace 'feature.lock.json'))-ceq$frozenLockHash-and(Get-EnvelopeFileSha256 $requestInfo.source_path)-ceq$frozenSourceHash) 'post-extension active retirement recovery changed preserved authority or failed to become idle'
+    $historyModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceCurrentWorkHistory.psm1') -PassThru
+    $history=&$historyModule {param($w)Get-MorphospaceCurrentWorkHistory -WorkspaceRoot $w -RequireIdle} $workspace
+    Assert-ActiveEnvelopeTest ($history.authenticated) 'current-work replay failed after ordinary Freeze and retirement'
+    $nextPreparation=Read-EnvelopeProtocolJson (Join-Path $temp 'seed/u002-envelope-preparation.json')
+    $nextPreparation.preparation_id='u003-envelope';$nextPreparation.envelope.project=Read-EnvelopeProtocolJson (Join-Path $workspace 'project.spec.json');$nextPreparation.envelope.project.revision++
+    $nextPreparation.envelope.feature_lock=Read-EnvelopeProtocolJson (Join-Path $workspace 'feature.lock.json');$nextPreparation.envelope.feature_lock.project_revision=$nextPreparation.envelope.project.revision;$nextPreparation.envelope.feature_lock.revision++;$nextPreparation.envelope.feature_lock.generated_at='2026-09-15T01:07:00.0000000Z';$nextPreparation.envelope.feature_lock.lock_fingerprint=Get-EnvelopeLockFingerprint $nextPreparation.envelope.feature_lock
+    $nextPreparation.envelope.owner_repositories=$retiredUnit.agent_scope_assessment.owner_repositories;$nextPreparation.envelope.source_composition.path='source-composition-u003.json';$nextPreparation.envelope.source_composition.repository_ids=@($afterSource.repositories.repo_id)
+    $nextPreparation.expected.project_sha256=Get-EnvelopeCanonicalJsonSha256 (Read-EnvelopeProtocolJson (Join-Path $workspace 'project.spec.json'));$nextPreparation.expected.feature_lock_sha256=Get-EnvelopeCanonicalJsonSha256 (Read-EnvelopeProtocolJson (Join-Path $workspace 'feature.lock.json'));$nextPreparation.expected.state_sha256=Get-EnvelopeCanonicalJsonSha256 $retiredState
+    $nextPreparation.expected.repository_map_path='repository-map-extension.json';$nextPreparation.expected.repository_map_sha256=Get-EnvelopeFileSha256 $requestInfo.map_path;$nextPreparation.expected.events_sha256=Get-EnvelopeFileSha256 (Join-Path $workspace 'iteration-events.jsonl');$nextPreparation.expected.events_length=([IO.FileInfo](Join-Path $workspace 'iteration-events.jsonl')).Length;$nextPreparation.expected.event_tail_id=$retiredState.last_event_id
+    $nextPreparationPath=Join-Path $temp 'next-preparation.json';Write-EnvelopeJson $nextPreparationPath $nextPreparation
+    Invoke-MorphospacePrepareDevelopmentEnvelope -WorkspaceRoot $workspace -DevelopmentEnvelopePreparation $nextPreparationPath -ExpectedDevelopmentEnvelopePreparationSha256 (Get-EnvelopeFileSha256 $nextPreparationPath) -OutPath (Join-Path $workspace 'receipts/u003-envelope.json') -Timestamp '2026-09-15T01:07:00.0000000Z' -Execute|Out-Null
+    $nextAdmission=Copy-Envelope $seed.admission_template;$nextAdmission.admission_id='u003-admission';$nextAdmission.unit_id='u003';$nextAdmission.unit.unit_id='u003';$nextAdmission.unit.agent_scope_assessment=$retiredUnit.agent_scope_assessment;$nextAdmission.agent_scope_assessment=$retiredUnit.agent_scope_assessment;$nextAdmission.unit.read_only_dependencies=$retiredUnit.read_only_dependencies;$nextAdmission.unit.source_composition.lock_path='source-composition-u003.json'
+    $nextAdmission.preparation.preparation_id='u003-envelope';$nextAdmission.preparation.receipt_path='receipts/u003-envelope.json';$nextAdmission.preparation.receipt_sha256=Get-EnvelopeFileSha256 (Join-Path $workspace 'receipts/u003-envelope.json');$nextAdmission.preparation.source_composition_path='source-composition-u003.json';$nextAdmission.preparation.source_composition_sha256=Get-EnvelopeFileSha256 (Join-Path $workspace 'source-composition-u003.json')
+    $nextAdmission.expected.project_sha256=Get-EnvelopeCanonicalJsonSha256 (Read-EnvelopeProtocolJson (Join-Path $workspace 'project.spec.json'));$nextAdmission.expected.feature_lock_sha256=Get-EnvelopeCanonicalJsonSha256 (Read-EnvelopeProtocolJson (Join-Path $workspace 'feature.lock.json'));$nextAdmission.expected.state_sha256=Get-EnvelopeCanonicalJsonSha256 (Read-EnvelopeProtocolJson (Join-Path $workspace 'workspace.state.json'));$nextAdmission.expected.source_composition_path='source-composition-u003.json';$nextAdmission.expected.source_composition_sha256=$nextAdmission.preparation.source_composition_sha256;$nextAdmission.expected.repository_map_path='repository-map-extension.json';$nextAdmission.expected.repository_map_sha256=$nextPreparation.expected.repository_map_sha256;$nextAdmission.expected.events_sha256=Get-EnvelopeFileSha256 (Join-Path $workspace 'iteration-events.jsonl');$nextAdmission.expected.events_length=([IO.FileInfo](Join-Path $workspace 'iteration-events.jsonl')).Length;$nextAdmission.expected.event_tail_id='u003-envelope-prepared'
+    $nextAdmissionPath=Join-Path $temp 'next-admission.json';Write-EnvelopeJson $nextAdmissionPath $nextAdmission
+    Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $workspace -DevelopmentUnitAdmission $nextAdmissionPath -ExpectedDevelopmentUnitAdmissionSha256 (Get-EnvelopeFileSha256 $nextAdmissionPath) -OutPath (Join-Path $workspace 'receipts/u003-admission.json') -Timestamp '2026-09-15T01:08:00.0000000Z' -Execute|Out-Null
+    $nextHistory=&$historyModule {param($w)Get-MorphospaceCurrentWorkHistory -WorkspaceRoot $w -RequireIdle} $workspace
+    Assert-ActiveEnvelopeTest ($nextHistory.authenticated) 'current-work continuation failed after successor preparation and admission'
 
+    foreach($fault in @('after-artifact','after-projection','after-event')){
+        $faultWorkspace=Join-Path $temp $fault;Copy-Item -LiteralPath $preExtensionWorkspace -Destination $faultWorkspace -Recurse
+        $faultInfo=New-ActiveEnvelopeExtensionRequest -Workspace $faultWorkspace -AddedRepository $added -RequestPath (Join-Path $temp "$fault-extension.json")
+        $faulted=$false
+        try{Invoke-MorphospaceExtendActiveDevelopmentEnvelope -WorkspaceRoot $faultWorkspace -UnitId u002 -ActiveDevelopmentEnvelopeExtension $faultInfo.request_path -RepositoryMapPath $faultInfo.map_path -OutPath $faultInfo.receipt_path -SourceCompositionOutPath $faultInfo.source_path -ExpectedActiveDevelopmentEnvelopeExtensionSha256 (Get-EnvelopeFileSha256 $faultInfo.request_path) -Timestamp '2026-09-15T01:10:00.0000000Z' -Execute -FaultAfter $fault|Out-Null}catch{$faulted=$_.Exception.Message-like'*Injected interruption*'}
+        Assert-ActiveEnvelopeTest $faulted "extension did not interrupt at $fault"
+        &$transitionModule {param($w)Complete-MorphospaceTransitionLedger -WorkspaceRoot $w -TransactionId 'u002-add-dependency-recorded-transition' -Repair} $faultWorkspace|Out-Null
+        $faultState=Read-EnvelopeProtocolJson (Join-Path $faultWorkspace 'workspace.state.json')
+        Assert-ActiveEnvelopeTest ((Get-EnvelopeCanonicalJsonSha256 $faultState.validation_checkpoint)-ceq(Get-EnvelopeCanonicalJsonSha256 $beforeState.validation_checkpoint)) "generic recovery changed retained checkpoint at $fault"
+        foreach($path in $acceptedEvidence){Assert-ActiveEnvelopeTest ((Get-EnvelopeFileSha256 (Join-Path $faultWorkspace $path))-ceq$acceptedHashes[$path]) "generic recovery changed accepted evidence at $fault/$path"}
+    }
     $recoveryWorkspace=$preExtensionWorkspace;$recoveryRequestInfo=New-ActiveEnvelopeExtensionRequest -Workspace $recoveryWorkspace -AddedRepository $added -RequestPath (Join-Path $temp 'recovery-extension.json')
     $interrupted=$false;try{Invoke-MorphospaceExtendActiveDevelopmentEnvelope -WorkspaceRoot $recoveryWorkspace -UnitId u002 -ActiveDevelopmentEnvelopeExtension $recoveryRequestInfo.request_path -RepositoryMapPath $recoveryRequestInfo.map_path -OutPath $recoveryRequestInfo.receipt_path -SourceCompositionOutPath $recoveryRequestInfo.source_path -ExpectedActiveDevelopmentEnvelopeExtensionSha256 (Get-EnvelopeFileSha256 $recoveryRequestInfo.request_path) -Timestamp '2026-09-15T01:10:00.0000000Z' -Execute -FaultAfter after-intent|Out-Null}catch{$interrupted=$true}
     Assert-ActiveEnvelopeTest ($interrupted-and(Test-Path (Join-Path $recoveryWorkspace 'receipts\transactions\u002-add-dependency-recorded-transition.intent.json'))) 'recovery fixture did not retain the v6 intent'
+    foreach($path in $acceptedEvidence){
+        $absolute=Join-Path $recoveryWorkspace $path;$bytes=[IO.File]::ReadAllBytes($absolute)
+        [IO.File]::AppendAllText($absolute,' ',[Text.UTF8Encoding]::new($false));$inventory=Get-EnvelopeWorkspaceByteInventorySha256 $recoveryWorkspace
+        Assert-ActiveEnvelopeRejected {&$transitionModule {param($w)Complete-MorphospaceTransitionLedger -WorkspaceRoot $w -TransactionId 'u002-add-dependency-recorded-transition' -Repair} $recoveryWorkspace} "generic Recover accepted damaged predecessor $path"
+        Assert-ActiveEnvelopeTest ((Get-EnvelopeWorkspaceByteInventorySha256 $recoveryWorkspace)-ceq$inventory) "recovery rejection mutated workspace for $path"
+        [IO.File]::WriteAllBytes($absolute,$bytes)
+    }
     [IO.File]::WriteAllText($dirtyDependencyPath,'recovery drift',[Text.UTF8Encoding]::new($false))
     Assert-ActiveEnvelopeRejected {&$transitionModule {param($w)Complete-MorphospaceTransitionLedger -WorkspaceRoot $w -TransactionId 'u002-add-dependency-recorded-transition' -Repair} $recoveryWorkspace} 'generic Recover accepted captured dependency-source drift'
     Remove-Item -LiteralPath $dirtyDependencyPath
@@ -199,7 +287,7 @@ try{
     $recovered=Invoke-MorphospaceExtendActiveDevelopmentEnvelope -WorkspaceRoot $recoveryWorkspace -UnitId u002 -ActiveDevelopmentEnvelopeExtension $recoveryRequestInfo.request_path -RepositoryMapPath $recoveryRequestInfo.map_path -OutPath $recoveryRequestInfo.receipt_path -SourceCompositionOutPath $recoveryRequestInfo.source_path -ExpectedActiveDevelopmentEnvelopeExtensionSha256 (Get-EnvelopeFileSha256 $recoveryRequestInfo.request_path) -Execute
     Assert-ActiveEnvelopeTest ($recovered.executed-and(Test-Path (Join-Path $recoveryWorkspace 'receipts\transactions\u002-add-dependency-recorded-transition.completion.json'))) 'exact interrupted extension did not recover'
 
-    [pscustomobject]@{result='pass';action='ExtendActiveDevelopmentEnvelope';prepare_admit_ready_claim_extend=$true;additive=$true;unreviewed_root_rejected=$true;dirty_source_rejected=$true;freeze_consumer=$true;retire_active_recovery=$true;v6_recovery=$true;generic_recover_source_drift_rejected=$true;generic_recover_map_drift_rejected=$true;git_mutation_performed=$false;device_mutation_performed=$false;remote_mutation_performed=$false}|ConvertTo-Json -Compress
+    [pscustomobject]@{result='pass';action='ExtendActiveDevelopmentEnvelope';prepare_admit_ready_claim_extend=$true;retained_accepted_checkpoint=$true;checkpoint_damage_rejected=$true;accepted_evidence_preserved=$true;current_work_after_retirement=$true;null_checkpoint=$true;additive=$true;unreviewed_root_rejected=$true;dirty_source_rejected=$true;freeze_consumer=$true;retire_active_recovery=$true;v6_recovery=$true;generic_recover_source_drift_rejected=$true;generic_recover_map_drift_rejected=$true;git_mutation_performed=$false;device_mutation_performed=$false;remote_mutation_performed=$false}|ConvertTo-Json -Compress
 }finally{
     $cleanupTarget=[IO.Path]::GetFullPath($temp);$cleanupName=[IO.Path]::GetFileName($cleanupTarget);$cleanupParent=[IO.Path]::GetFullPath((Split-Path $cleanupTarget -Parent)).TrimEnd('\','/')
     if($cleanupParent-cne$tempParent-or$cleanupName-cnotmatch'^active-envelope-extension-[0-9a-f]{32}$'){throw "Active-envelope test cleanup target escaped its unique temp prefix: '$cleanupTarget'."}

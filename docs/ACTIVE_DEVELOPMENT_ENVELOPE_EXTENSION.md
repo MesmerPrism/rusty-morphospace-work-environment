@@ -38,9 +38,18 @@ runtime-input activation and a closed dependency, module, authority, effect,
 validation, and rollback closure. Existing denials stay effective.
 
 The action is forbidden unless the exact current unit is an unfrozen `active`
-feature unit with no queued unit, blocker, validation checkpoint, pending push
+feature unit with no queued unit, blocker, current validation checkpoint, pending push
 or publication bundle, or incomplete transaction. It cannot follow candidate
 Freeze.
+
+A retained passing checkpoint may remain only when it equals the state's
+`last_accepted_receipt` and the exact checkpoint sealed by one authenticated
+accepted predecessor transaction. The predecessor unit and acceptance evidence
+must remain unchanged. Current-unit, unaccepted, mismatched, malformed or damaged
+checkpoints fail closed. This preserves prior acceptance; it grants no validation
+credit to the active unit. Recovery and later read-only replay verify the same
+proof against the captured pre-extension ledger prefix, without requiring that
+extension to remain the live ledger tail.
 
 ## Repository-map ownership
 

@@ -5,6 +5,7 @@ Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1')
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1')
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceDevelopmentEnvelopeSemantics.psm1')
 Import-Module (Join-Path $PSScriptRoot 'DevelopmentEnvelopeProvenance.psm1')
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceCurrentWorkCompatibility.psm1')
 
 $script:ActiveEnvelopeExtensionSchema = 'rusty.morphospace.workflow.active_development_envelope_extension.v1'
 $script:ActiveEnvelopeSourceSchema = 'rusty.morphospace.workflow.active_development_envelope_source_composition.v1'
@@ -18,6 +19,66 @@ function Copy-ActiveEnvelopeValue {
 function Get-ActiveEnvelopeHash {
     param([Parameter(Mandatory)][object]$Value)
     return Get-MorphospaceCanonicalJsonSha256 $Value
+}
+
+function Assert-ActiveEnvelopeValidationCheckpoint {
+    param([Parameter(Mandatory)][string]$WorkspaceRoot,[Parameter(Mandatory)][object]$State,
+        [Parameter(Mandatory)][string]$CurrentUnitId,[Parameter(Mandatory)][object]$Expected)
+    if($null-eq$State.validation_checkpoint){return}
+    $checkpoint=$State.validation_checkpoint
+    $names=@($checkpoint.PSObject.Properties.Name|Sort-Object)
+    if(($names-join ',')-cne'receipt,result,tier'-or[string]$checkpoint.result-cne'pass'-or
+       [string]$checkpoint.tier-cnotin@('quick','standard','deep')-or
+       [string]::IsNullOrWhiteSpace([string]$checkpoint.receipt)-or
+       [string]$checkpoint.receipt-cne[string]$State.last_accepted_receipt){
+        throw 'Active-envelope validation checkpoint must be the retained passing accepted predecessor.'
+    }
+    # Recovery and later read-only replay authenticate the captured predecessor,
+    # even when the live ledger already contains this extension or later work.
+    $eventsPath=Resolve-MorphospaceWorkspacePath $WorkspaceRoot 'iteration-events.jsonl' -RequireLeaf
+    $raw=[IO.File]::ReadAllBytes($eventsPath);$length=[int64]$Expected.events_length
+    if($length-le0-or$length-gt$raw.LongLength-or$length-gt[int]::MaxValue){throw 'Active-envelope accepted checkpoint predecessor prefix is unavailable.'}
+    $prefix=[byte[]]::new([int]$length);[Array]::Copy($raw,$prefix,[int]$length)
+    if((Get-MorphospaceSha256Bytes $prefix)-cne[string]$Expected.events_sha256){throw 'Active-envelope accepted checkpoint predecessor prefix drifted.'}
+    $events=@([Text.UTF8Encoding]::new($false,$true).GetString($prefix)-split "`n"|Where-Object{$_}|ForEach-Object{$_|ConvertFrom-Json -Depth 100 -DateKind String})
+    if($events.Count-eq0-or[string]$events[-1].event_id-cne[string]$Expected.event_tail_id){throw 'Active-envelope accepted checkpoint predecessor tail differs.'}
+    $accepts=@($events|Where-Object{[string]$_.event_type-ceq'state-transition'-and
+        [string]$_.event_id-cmatch('^'+[regex]::Escape([string]$_.unit_id)+'-accepted-[0-9]{4,}$')-and
+        @($_.receipts)-ccontains[string]$checkpoint.receipt})
+    if($accepts.Count-ne1-or[string]$accepts[0].unit_id-ceq$CurrentUnitId){throw 'Active-envelope validation checkpoint lacks one accepted predecessor.'}
+    $accepted=Test-MorphospaceAcceptedCheckpointProof -WorkspaceRoot $WorkspaceRoot -ExpectedEvent $accepts[0] -AllowFiniteHistoricalV1
+    if(-not($accepted.PSObject.Properties.Name-contains'historical_only')){
+        $completionPath=Resolve-MorphospaceWorkspacePath $WorkspaceRoot "receipts/transactions/$([string]$accepts[0].event_id)-transition.completion.json" -RequireLeaf
+        $completionBytes=ConvertTo-MorphospaceProtocolJsonBytes $accepted.completion
+        if((Get-MorphospaceFileSha256 $completionPath)-cne(Get-MorphospaceSha256Bytes $completionBytes)){throw 'Active-envelope accepted predecessor completion bytes drifted.'}
+        $receiptBindings=@($accepted.intent.artifacts|Where-Object{[string]$_.path-ceq[string]$checkpoint.receipt})
+        if($receiptBindings.Count-eq0){
+            # Ordinary acceptance may retain a receipt emitted by RecordValidation.
+            # Authenticate that producer rather than trusting an event reference.
+            $producers=@($events|Where-Object{[int]$_.sequence-lt[int]$accepts[0].sequence-and
+                [string]$_.unit_id-ceq[string]$accepts[0].unit_id-and@($_.receipts)-ccontains[string]$checkpoint.receipt})
+            foreach($producer in $producers){
+                $proof=Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $WorkspaceRoot -TransactionId "$([string]$producer.event_id)-transition" -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath "iteration-units/$([string]$producer.unit_id).json" -ExpectedEventsPath 'iteration-events.jsonl'
+                if((Get-ActiveEnvelopeHash $proof.intent.event)-cne(Get-ActiveEnvelopeHash $producer)){throw 'Active-envelope accepted receipt producer event is detached.'}
+                $receiptBindings+=@($proof.intent.artifacts|Where-Object{[string]$_.path-ceq[string]$checkpoint.receipt})
+            }
+        }
+        if($receiptBindings.Count-ne1){throw 'Active-envelope accepted receipt lacks one authenticated artifact producer.'}
+    }
+    $acceptedState=$accepted.intent.target.state.document
+    $acceptedUnitPath=Resolve-MorphospaceWorkspacePath $WorkspaceRoot "iteration-units/$([string]$accepts[0].unit_id).json" -RequireLeaf
+    $acceptedUnit=Read-MorphospaceProtocolJson $acceptedUnitPath
+    if(-not($accepted.PSObject.Properties.Name-contains'historical_only')){
+        $acceptedBytes=ConvertTo-MorphospaceProtocolJsonBytes $accepted.intent.target.unit.document
+        if((Get-MorphospaceFileSha256 $acceptedUnitPath)-cne(Get-MorphospaceSha256Bytes $acceptedBytes)){throw 'Active-envelope accepted predecessor unit bytes drifted.'}
+    }
+    if([string]$acceptedUnit.status-cne'accepted'-or[string]$acceptedUnit.project_id-cne[string]$State.project_id-or
+       (Get-ActiveEnvelopeHash $acceptedUnit)-cne[string]$accepted.intent.target.unit.sha256-or
+       $null-ne$acceptedState.current_unit-or[string]$acceptedState.last_accepted_receipt-cne[string]$checkpoint.receipt-or
+       $null-eq$acceptedState.validation_checkpoint-or
+       (Get-ActiveEnvelopeHash $checkpoint)-cne(Get-ActiveEnvelopeHash $acceptedState.validation_checkpoint)){
+        throw 'Active-envelope validation checkpoint differs from authenticated retained acceptance.'
+    }
 }
 
 function Assert-ActiveEnvelopeSchema {
@@ -430,6 +491,7 @@ function Assert-ActiveEnvelopeArtifactBindings {
     $requestBinding=Get-ActiveEnvelopeArtifactDocument $Intent $script:ActiveEnvelopeExtensionSchema 'active-development-envelope-extension-v1.schema.json'
     $sourceBinding=Get-ActiveEnvelopeArtifactDocument $Intent $script:ActiveEnvelopeSourceSchema 'active-development-envelope-source-composition-v1.schema.json'
     $request=$requestBinding.document;$source=$sourceBinding.document
+    Assert-ActiveEnvelopeValidationCheckpoint -WorkspaceRoot $workspace -State $request.before.state -CurrentUnitId ([string]$request.unit_id) -Expected $request.expected
     $eventId="$([string]$request.extension_id)-recorded"
     if([string]$Intent.transaction_id-cne"$eventId-transition"-or[string]$Intent.event.event_id-cne$eventId-or[string]$Intent.event.project_id-cne[string]$request.project_id-or[string]$Intent.event.unit_id-cne[string]$request.unit_id){throw 'Active-envelope recovery transaction identity is detached.'}
     $expectedReceipts=[string[]]@([string]$requestBinding.artifact.path,[string]$sourceBinding.artifact.path);[Array]::Sort($expectedReceipts,[StringComparer]::Ordinal)
@@ -595,7 +657,8 @@ function Invoke-MorphospaceExtendActiveDevelopmentEnvelope {
     }
     foreach($pair in @(@('project',$project),@('feature_lock',$lock),@('state',$state),@('unit',$unit))){if((Get-ActiveEnvelopeHash $pair[1])-cne(Get-ActiveEnvelopeHash $provenance.effective.($pair[0]))){throw "Live $($pair[0]) differs from authenticated effective-envelope provenance."}}
     if([string]$state.project_id-cne[string]$request.project_id-or[string]$state.current_unit-cne$UnitId-or$null-ne$state.next_ready_unit-or[string]$unit.project_id-cne[string]$request.project_id-or[string]$unit.status-cne'active'-or($unit.PSObject.Properties.Name-contains'candidate_freeze')){throw 'ExtendActiveDevelopmentEnvelope requires the exact unfrozen current active unit.'}
-    if(@($state.blockers).Count-ne0-or$null-ne$state.pending_push_bundle-or$null-ne$state.validation_checkpoint){throw 'ExtendActiveDevelopmentEnvelope requires no blocker, pending publication, or validation checkpoint.'}
+    if(@($state.blockers).Count-ne0-or$null-ne$state.pending_push_bundle){throw 'ExtendActiveDevelopmentEnvelope requires no blocker or pending publication.'}
+    Assert-ActiveEnvelopeValidationCheckpoint -WorkspaceRoot $workspace -State $state -CurrentUnitId $UnitId -Expected $request.expected
     $workMode=if($unit.PSObject.Properties.Name-contains'work_mode'){[string]$unit.work_mode}else{'feature'};if($workMode-cne'feature'-or-not($unit.PSObject.Properties.Name-contains'agent_scope_assessment')){throw 'ExtendActiveDevelopmentEnvelope requires an admitted feature unit.'}
     $eventsRaw=[IO.File]::ReadAllBytes($eventsPath);$events=@(Get-Content -LiteralPath $eventsPath|Where-Object{$_}|ForEach-Object{$_|ConvertFrom-Json -Depth 100});if($events.Count-eq0){throw 'Active-envelope extension requires a non-empty event ledger.'};$tail=$events[-1]
     foreach($check in @(
