@@ -1048,7 +1048,7 @@ function Assert-AffectedRetirementDeclarationLayout([object]$Resolution,[string[
         $expected += @('scripts/lib/MorphospacePlanningLifecycleProjection.psm1|amendmentModule|1|scripts/ActiveWriteScopeAmendment.psm1','scripts/lib/MorphospacePlanningLifecycleProjection.psm1|pendingExtensionModule|2|scripts/ActiveDevelopmentEnvelopeExtension.psm1')
     } else { $expected += 'scripts/ActiveUnitRetirement.psm1|amendmentModule|1|scripts/ActiveWriteScopeAmendment.psm1' }
     [Array]::Sort($actual,[StringComparer]::Ordinal); [Array]::Sort($expected,[StringComparer]::Ordinal)
-    Assert-True (($actual -join ';') -ceq ($expected -join ';')) 'Protocol foundation did not consume the exact closed retirement/shared-helper module-object declarations.'
+    Assert-True (($actual -join ';') -ceq ($expected -join ';')) 'Retirement-dependent consumer did not consume the exact closed retirement/shared-helper module-object declarations.'
 }
 function Get-AffectedStaticBuiltinFacts([object]$SourceAst,[object[]]$Nodes=$null) {
     if ($null -eq $Nodes) { $Nodes = @($SourceAst.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -or $node -is [Management.Automation.Language.CommandAst] },$true)) }
@@ -1894,7 +1894,107 @@ $checks = @(
     }
     return $audit
 }
+function Assert-AffectedRetirementDependentClosures([object[]]$Closures) {
+    $ids=@('protocol-foundation','validating-candidate-rematerialization')
+    Assert-True ($Closures.Count -eq $ids.Count) 'Retirement-dependent consumer corpus is not the exact closed pair.'
+    foreach($id in $ids){
+        $match=@($Closures|Where-Object{[string]$_.check_id -ceq $id})
+        Assert-True ($match.Count -eq 1) "Retirement-dependent consumer corpus lacks exactly one '$id'."
+        $closure=$match[0]
+        Assert-True ([string]$closure.resolution.mode -ceq 'exact' -and @($closure.resolution.fallback_reasons).Count -eq 0) "Retirement-dependent consumer '$id' did not retain exact closure without fallback."
+        foreach($path in @('scripts/ActiveUnitRetirement.psm1','scripts/DevelopmentEnvelopeProvenance.psm1','scripts/ActiveWriteScopeAmendment.psm1','scripts/lib/MorphospaceTransitionLedger.psm1')){Assert-True ($closure.paths -ccontains $path) "Retirement-dependent consumer '$id' omitted '$path'."}
+        Assert-AffectedRetirementDeclarationLayout -Resolution $closure.resolution -Paths $closure.paths
+        if($id -ceq 'validating-candidate-rematerialization'){
+            $rows=@($closure.resolution.used_declarations|Where-Object{[string]$_.importer -ceq 'scripts/Test-ValidatingCandidateRematerialization.ps1' -and $_.PSObject.Properties.Name -ccontains 'target_paths'})
+            $identities=@($rows|ForEach-Object{"$([string]$_.importer)|$([string]$_.variable)|$([int]$_.count)|$(@($_.target_paths)-join ',')"})
+            Assert-True (($identities-join ';') -ceq 'scripts/Test-ValidatingCandidateRematerialization.ps1|script:RematerializationOwnerModule|2|scripts/ValidatingCandidateRematerialization.psm1') 'Validating-candidate rematerialization did not consume exactly its one remaining dynamic owner declaration.'
+            Assert-True ($closure.paths -cnotcontains 'scripts/Test-WorkEnvironment.ps1') 'Validating-candidate rematerialization dependency closure expanded into the cumulative Work Environment aggregate.'
+        }
+    }
+}
+function Invoke-AffectedRetirementLayoutGraphSelfTest {
+    $fixture=Join-Path ([IO.Path]::GetTempPath()) ('morphospace-retirement-layout-graph-'+[guid]::NewGuid().ToString('N'))
+    [void][IO.Directory]::CreateDirectory((Join-Path $fixture 'scripts/lib'))
+    try{
+        $retirement="function Invoke-Provenance([object]`$ProvenanceModule){& `$ProvenanceModule { 'first' }; & `$ProvenanceModule { 'second' }}`nif(`$enabled){`$module=Import-Module (Join-Path `$PSScriptRoot 'DevelopmentEnvelopeProvenance.psm1') -PassThru}`n& `$module { 'first' }`n& `$module { 'second' }`n"
+        $legacy="if(`$enabled){`$amendmentModule=Import-Module (Join-Path `$PSScriptRoot 'ActiveWriteScopeAmendment.psm1') -PassThru}`n& `$amendmentModule { 'amendment' }`n"
+        $extracted="Import-Module (Join-Path `$PSScriptRoot 'lib/MorphospacePlanningLifecycleProjection.psm1')`n"
+        $helper="if(`$enabled){`$amendmentModule=Import-Module (Join-Path `$PSScriptRoot '../ActiveWriteScopeAmendment.psm1') -PassThru}`n& `$amendmentModule { 'amendment' }`nif(`$enabled){`$pendingExtensionModule=Import-Module (Join-Path `$PSScriptRoot '../ActiveDevelopmentEnvelopeExtension.psm1') -PassThru}`n& `$pendingExtensionModule { 'pending' }`n& `$pendingExtensionModule { 'recorded' }`n"
+        $files=[ordered]@{
+            'scripts/Test-ProtocolFoundation.ps1'="Import-Module (Join-Path `$PSScriptRoot 'ActiveUnitRetirement.psm1')`n"
+            'scripts/Test-ValidatingCandidateRematerialization.ps1'="if(`$enabled){`$script:RematerializationOwnerModule=Import-Module (Join-Path `$PSScriptRoot 'ValidatingCandidateRematerialization.psm1') -PassThru}`n& `$script:RematerializationOwnerModule { 'first' }`n& `$script:RematerializationOwnerModule { 'second' }`n"
+            'scripts/ValidatingCandidateRematerialization.psm1'="Import-Module (Join-Path `$PSScriptRoot 'ActiveUnitRetirement.psm1')`n"
+            'scripts/DevelopmentEnvelopeProvenance.psm1'="Import-Module (Join-Path `$PSScriptRoot 'lib/MorphospaceTransitionLedger.psm1')`n"
+            'scripts/ActiveWriteScopeAmendment.psm1'="'amendment'`n"
+            'scripts/ActiveDevelopmentEnvelopeExtension.psm1'="'extension'`n"
+            'scripts/lib/MorphospaceTransitionLedger.psm1'="'ledger'`n"
+            'scripts/ActiveUnitRetirement.psm1'=''
+            'scripts/lib/MorphospacePlanningLifecycleProjection.psm1'=$helper
+        }
+        $inventory=[pscustomobject]@{records=@($files.Keys|ForEach-Object{[pscustomobject]@{mode='100644';type='blob';blob=('0'*40);path=$_}})}
+        $common=@(
+            [pscustomobject]@{importer='scripts/ActiveUnitRetirement.psm1';variable='ProvenanceModule';count=2;target_paths=@('scripts/DevelopmentEnvelopeProvenance.psm1')},
+            [pscustomobject]@{importer='scripts/ActiveUnitRetirement.psm1';variable='module';count=2;target_paths=@('scripts/DevelopmentEnvelopeProvenance.psm1')},
+            [pscustomobject]@{importer='scripts/Test-ValidatingCandidateRematerialization.ps1';variable='script:RematerializationOwnerModule';count=2;target_paths=@('scripts/ValidatingCandidateRematerialization.psm1')}
+        )
+        foreach($layout in @('original','extracted')){
+            foreach($damage in @('none','altered-target','missing-call','extra-call','dynamic-call','shared-binding','missing-helper-edge','owner-count')){
+                $case=[ordered]@{};foreach($key in $files.Keys){$case[$key]=$files[$key]}
+                $case['scripts/ActiveUnitRetirement.psm1']=$retirement+$(if($layout -ceq 'original'){$legacy}else{$extracted})
+                $declarations=@($common|ConvertTo-Json -Depth 10|ConvertFrom-Json -Depth 10)
+                $declarations+=if($layout -ceq 'original'){[pscustomobject]@{importer='scripts/ActiveUnitRetirement.psm1';variable='amendmentModule';count=1;target_paths=@('scripts/ActiveWriteScopeAmendment.psm1')}}else{@(
+                    [pscustomobject]@{importer='scripts/lib/MorphospacePlanningLifecycleProjection.psm1';variable='amendmentModule';count=1;target_paths=@('scripts/ActiveWriteScopeAmendment.psm1')},
+                    [pscustomobject]@{importer='scripts/lib/MorphospacePlanningLifecycleProjection.psm1';variable='pendingExtensionModule';count=2;target_paths=@('scripts/ActiveDevelopmentEnvelopeExtension.psm1')}
+                )}
+                switch($damage){
+                    'altered-target'{$case['scripts/ActiveUnitRetirement.psm1']=$case['scripts/ActiveUnitRetirement.psm1'].Replace("'DevelopmentEnvelopeProvenance.psm1'","'ActiveWriteScopeAmendment.psm1'")}
+                    'missing-call'{$case['scripts/ActiveUnitRetirement.psm1']=$case['scripts/ActiveUnitRetirement.psm1'].Replace("& `$module { 'second' }",'')}
+                    'extra-call'{$case['scripts/ActiveUnitRetirement.psm1']+="& `$module { 'extra' }`n"}
+                    'dynamic-call'{$case['scripts/ActiveUnitRetirement.psm1']+="& `$UnboundOwner`n"}
+                    'shared-binding'{if($layout -ceq 'original'){$case['scripts/ActiveUnitRetirement.psm1']+=$extracted}else{$case['scripts/lib/MorphospacePlanningLifecycleProjection.psm1']=$helper.Replace("'../ActiveDevelopmentEnvelopeExtension.psm1'","'../ActiveWriteScopeAmendment.psm1'")}}
+                    'missing-helper-edge'{$case['scripts/ActiveUnitRetirement.psm1']=$retirement}
+                    'owner-count'{$case['scripts/Test-ValidatingCandidateRematerialization.ps1']+="& `$script:RematerializationOwnerModule { 'extra' }`n"}
+                }
+                foreach($key in $case.Keys){Write-Utf8 (Join-Path $fixture $key) ([string]$case[$key])}
+                $message=$null
+                try{
+                    $closures=@()
+                    foreach($consumer in @([pscustomobject]@{id='protocol-foundation';entry='scripts/Test-ProtocolFoundation.ps1'},[pscustomobject]@{id='validating-candidate-rematerialization';entry='scripts/Test-ValidatingCandidateRematerialization.ps1'})){
+                        $resolved=Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint $consumer.entry -Inventory $inventory -DynamicDeclarations $declarations
+                        $closures+=[pscustomobject]@{check_id=$consumer.id;paths=@($resolved.paths);resolution=$resolved.resolution}
+                        if($damage -ceq 'none'){
+                            $expected=@('scripts/ActiveUnitRetirement.psm1','scripts/DevelopmentEnvelopeProvenance.psm1','scripts/ActiveWriteScopeAmendment.psm1','scripts/lib/MorphospaceTransitionLedger.psm1',$consumer.entry)
+                            if($consumer.id -ceq 'validating-candidate-rematerialization'){$expected+='scripts/ValidatingCandidateRematerialization.psm1'}
+                            if($layout -ceq 'extracted'){$expected+=@('scripts/lib/MorphospacePlanningLifecycleProjection.psm1','scripts/ActiveDevelopmentEnvelopeExtension.psm1')}
+                            [Array]::Sort($expected,[StringComparer]::Ordinal)
+                            Assert-True ((@($resolved.paths)-join ';') -ceq ($expected-join ';')) "Retirement AST fixture '$layout/$($consumer.id)' did not bind exact paths."
+                        }
+                    }
+                    Assert-AffectedRetirementDependentClosures -Closures $closures
+                }catch{$message=$_.Exception.Message}
+                if($damage -ceq 'none'){Assert-True ($null -eq $message) "Retirement AST fixture rejected '$layout': $message"}else{
+                    $category=switch($damage){
+                        'altered-target'{'Affected dependency declaration omits observed static target:*'}
+                        'missing-call'{'Affected dependency declaration count changed:*'}
+                        'extra-call'{'Affected dependency declaration count changed:*'}
+                        'owner-count'{'Affected dependency declaration count changed:*'}
+                        'dynamic-call'{"Retirement-dependent consumer '*' did not retain exact closure without fallback."}
+                        'shared-binding'{if($layout -ceq 'original'){"Retirement-dependent consumer '*' did not retain exact closure without fallback."}else{'Affected dependency declaration omits observed static target:*'}}
+                        'missing-helper-edge'{if($layout -ceq 'original'){'Affected dependency declaration count changed:*'}else{"Retirement-dependent consumer '*' omitted '*'."}}
+                    }
+                    Assert-True ($null -ne $message -and $message -like $category) "Retirement AST fixture '$layout/$damage' lacked typed rejection: $message"
+                }
+            }
+        }
+        Write-Host 'Actual AST retirement layouts passed through both common consumer assertion routes.'
+    }finally{
+        $target=[IO.Path]::GetFullPath($fixture);$tempPrefix=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar)+[IO.Path]::DirectorySeparatorChar
+        if(-not $target.StartsWith($tempPrefix,[StringComparison]::OrdinalIgnoreCase)){throw 'Retirement fixture cleanup escaped temp root.'}
+        if([IO.Directory]::Exists($target)){Remove-Item -LiteralPath $target -Recurse -Force}
+    }
+}
 function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]$Registry) {
+    Invoke-AffectedRetirementLayoutGraphSelfTest
     $fixture = Join-Path ([IO.Path]::GetTempPath()) ('morphospace-affected-per-check-closure-' + [guid]::NewGuid().ToString('N'))
     [void][IO.Directory]::CreateDirectory((Join-Path $fixture 'scripts'))
     [void][IO.Directory]::CreateDirectory((Join-Path $fixture 'tools'))
@@ -2123,7 +2223,6 @@ function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]
             Assert-True ($protocolPaths -ccontains $requiredPath) "Protocol foundation dependency closure omitted its retirement/ledger chain path '$requiredPath'."
         }
         Assert-True ([string]$protocolClosure.resolution.mode -ceq 'exact' -and @($protocolClosure.resolution.fallback_reasons).Count -eq 0) 'Protocol foundation did not retain an exact dependency closure through authenticated retirement history.'
-        Assert-AffectedRetirementDeclarationLayout -Resolution $protocolClosure.resolution -Paths $protocolPaths
         # Independently fixed old and extracted owner layouts, not registry-derived expectations.
         $legacyDeclarations = @(
             [pscustomobject]@{importer='scripts/ActiveUnitRetirement.psm1';variable='ProvenanceModule';count=2;target_paths=@('scripts/DevelopmentEnvelopeProvenance.psm1')},
@@ -2174,12 +2273,15 @@ function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]
         )) {
             Assert-True ($rematerializationPaths -ccontains $requiredPath) "Validating-candidate rematerialization dependency closure omitted '$requiredPath'."
         }
-        $rematerializationRetirementDeclarations = @($rematerializationClosure.resolution.used_declarations | Where-Object { [string]$_.importer -ceq 'scripts/ActiveUnitRetirement.psm1' })
-        $rematerializationRetirementDeclarationIdentities = @($rematerializationRetirementDeclarations | ForEach-Object { "$([string]$_.variable)|$([int]$_.count)|$(@($_.target_paths) -join ',')" })
         Assert-True ([string]$rematerializationClosure.resolution.mode -ceq 'exact' -and @($rematerializationClosure.resolution.fallback_reasons).Count -eq 0) 'Validating-candidate rematerialization did not retain an exact dependency closure through authenticated retirement history.'
-        Assert-True (($rematerializationRetirementDeclarationIdentities -join ';') -ceq 'ProvenanceModule|2|scripts/DevelopmentEnvelopeProvenance.psm1;amendmentModule|1|scripts/ActiveWriteScopeAmendment.psm1;module|2|scripts/DevelopmentEnvelopeProvenance.psm1') 'Validating-candidate rematerialization did not consume the exact closed ActiveUnitRetirement module-object declarations.'
         Assert-True ($rematerializationPaths -cnotcontains 'scripts/Test-WorkEnvironment.ps1') 'Validating-candidate rematerialization dependency closure expanded into the cumulative Work Environment aggregate.'
         [void]$timings.Add([pscustomobject][ordered]@{check_id='validating-candidate-rematerialization';elapsed_ms=[long]$rematerializationClock.Elapsed.TotalMilliseconds;dependency_count=@($rematerializationClosure.manifest).Count})
+
+        # Both real consumers pass through the same closed layout assertion loop.
+        Assert-AffectedRetirementDependentClosures -Closures @(
+            [pscustomobject]@{check_id='protocol-foundation';paths=$protocolPaths;resolution=$protocolClosure.resolution},
+            [pscustomobject]@{check_id='validating-candidate-rematerialization';paths=$rematerializationPaths;resolution=$rematerializationClosure.resolution}
+        )
 
         $ledgerCheck = @($Registry.checks | Where-Object { [string]$_.check_id -ceq 'transition-ledger' })
         Assert-True ($ledgerCheck.Count -eq 1) 'The PR134-style correction proof lacks one transition-ledger check.'
