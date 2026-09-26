@@ -1,4 +1,5 @@
 Set-StrictMode -Version 2.0
+Import-Module (Join-Path $PSScriptRoot 'lib/MorphospacePlanningLifecycleProjection.psm1')
 $ErrorActionPreference='Stop'
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1')
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1')
@@ -124,10 +125,12 @@ function Assert-MorphospaceCandidateRepositoryClosure {
     param([string]$Workspace,[object]$Candidate,[object]$Unit,[object]$FrozenTransition=$null)
     $map=Get-MorphospaceCandidateRepositoryMap $Workspace ([string]$Candidate.expected.repository_map_path)
     $composition=Get-MorphospaceCandidateSourceComposition $Workspace ([string]$Candidate.expected.source_composition_path) ([string]$Candidate.project_id) ([string]$Candidate.unit_id)
+    $recoveredPlanningBaseline=$false
     if([string]$composition.schema-ceq'rusty.morphospace.workflow.active_development_envelope_source_composition.v1'){
         $boundMapPath=[string]$composition.repository_map.path;$boundMapSha=[string]$composition.repository_map.raw_sha256
     }elseif([string]$composition.schema-cin@('rusty.morphospace.workflow.development_envelope_source_composition.v1','rusty.morphospace.workflow.development_envelope_source_composition.v2','rusty.morphospace.workflow.development_envelope_source_composition.v3')){
         $admission=Get-MorphospaceCandidatePreparationProvenance $Workspace ([string]$Candidate.unit_id)
+        $recoveredPlanningBaseline=$admission.document.preparation.PSObject.Properties.Name-contains'preparation_kind'-and[string]$admission.document.preparation.preparation_kind-ceq'recovered'
         $boundMapPath=[string]$admission.document.expected.repository_map_path;$boundMapSha=[string]$admission.document.expected.repository_map_sha256
     }else{$boundMapPath='';$boundMapSha=''}
     if($boundMapPath-and([string]$Candidate.expected.repository_map_path-cne$boundMapPath-or[string]$Candidate.expected.repository_map_sha256-cne$boundMapSha-or(Get-MorphospaceFileSha256 (Resolve-MorphospaceWorkspacePath $Workspace $boundMapPath -RequireLeaf))-cne$boundMapSha)){throw 'Frozen candidate repository map is detached from its prepared or extended owner binding.'}
@@ -158,7 +161,15 @@ function Assert-MorphospaceCandidateRepositoryClosure {
         if(-not$scopeById.ContainsKey($id)){
             $head=(@(Invoke-MorphospaceCandidateGit $entry.path @('rev-parse','HEAD') 'read-only dependency commit observation')[0]).Trim().ToLowerInvariant()
             $tree=(@(Invoke-MorphospaceCandidateGit $entry.path @('rev-parse','HEAD^{tree}') 'read-only dependency tree observation')[0]).Trim().ToLowerInvariant()
-            if($head-cne[string]$bound.commit-or$tree-cne[string]$bound.tree){throw "Frozen candidate live read-only dependency identity drifted for '$id'."}
+            $planningDirt=if([string]$entry.role-ceq'planning'){@(Invoke-MorphospaceCandidateGit $entry.path @('status','--porcelain=v1','--untracked-files=all') 'read-only planning cleanliness observation')}else{@()}
+            if([string]$entry.role-ceq'planning'-and$recoveredPlanningBaseline){
+                if($head-cne[string]$bound.commit-or$tree-cne[string]$bound.tree){throw 'Recovered planning dependencies require the original exact source commit and tree.'}
+            }elseif([string]$entry.role-ceq'planning'-and($head-cne[string]$bound.commit-or$tree-cne[string]$bound.tree-or$planningDirt.Count-ne0)){
+                $dependency=@($Unit.read_only_dependencies|Where-Object{[string]$_.repo_id-ceq$id})
+                if($dependency.Count-ne1){throw 'Frozen candidate planning dependency lacks exact read-only scope.'}
+                $ownIntent=if($FrozenTransition){$FrozenTransition.intent}else{$null}
+                Assert-MorphospaceReadOnlyPlanningLifecycleProjection -Workspace $Workspace -Unit $Unit -RepositoryEntry $entry -Dependency $dependency[0] -LockedCommit ([string]$bound.commit) -LockedTree ([string]$bound.tree) -RecoveryIntent $ownIntent
+            }elseif($head-cne[string]$bound.commit-or$tree-cne[string]$bound.tree){throw "Frozen candidate live read-only dependency identity drifted for '$id'."}
             if([string]$entry.role-ceq'source'){
                 $tracked=@(Invoke-MorphospaceCandidateGit $entry.path @('status','--porcelain=v1','--untracked-files=no') 'read-only dependency tracked-cleanliness observation')
                 if($tracked.Count-ne0){throw "Frozen candidate read-only source dependency '$id' is not tracked-clean."}
@@ -192,7 +203,7 @@ function Assert-MorphospaceCandidateRepositoryClosure {
 }
 function Get-MorphospaceFrozenCandidateTransition {
     param([string]$Workspace,[object]$Candidate,[object]$LiveState,[object]$LiveUnit,[string]$ReceiptRelative)
-    $transactionId="$([string]$Candidate.freeze_id)-recorded-transition";$ledger=Get-Module MorphospaceTransitionLedger -All | Select-Object -First 1
+    $transactionId="$([string]$Candidate.freeze_id)-recorded-transition";$ledger=Get-Module MorphospaceTransitionLedger -All|Where-Object{[IO.Path]::GetFullPath($_.Path)-ceq[IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'lib/MorphospaceTransitionLedger.psm1'))}|Select-Object -First 1
     if($null-eq$ledger){throw 'Frozen candidate transition-ledger validator is unavailable.'}
     $binding=& $ledger {
         param($Root,$Id)
