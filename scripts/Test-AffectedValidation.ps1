@@ -765,10 +765,22 @@ function Get-AffectedOwnerFileSha256([string]$Path) {
     finally { $sha.Dispose(); $stream.Dispose() }
 }
 function Get-AffectedIndexedLiteralScriptPaths([Management.Automation.Language.Ast]$Node) {
-    return @(ConvertTo-AffectedOrdinalUniqueStrings @($Node.FindAll({
+    $literals = @($Node.FindAll({
         param($candidate)
         $candidate -is [Management.Automation.Language.StringConstantExpressionAst] -and [string]$candidate.Value -match '(?i)\.ps(?:m)?1$'
-    },$true) | ForEach-Object { [string]$_.Value }))
+    },$true) | Where-Object {
+        # A callable scriptblock's body is not its command target. Its actual
+        # nested commands are indexed separately by the recursive command walk.
+        $current = $_
+        $inBody = $false
+        while ($null -ne $current) {
+            if ($current -is [Management.Automation.Language.ScriptBlockExpressionAst]) { $inBody = $true; break }
+            if ([object]::ReferenceEquals($current,$Node)) { break }
+            $current = $current.Parent
+        }
+        -not $inBody
+    })
+    return @(ConvertTo-AffectedOrdinalUniqueStrings @($literals | ForEach-Object { [string]$_.Value }))
 }
 function Get-AffectedIndexedVariables([Management.Automation.Language.Ast]$Node,[bool]$ExcludePSScriptRoot) {
     return @(ConvertTo-AffectedOrdinalUniqueStrings @($Node.FindAll({
@@ -795,11 +807,17 @@ function New-AffectedTrackedFileAnalysisIndex([string]$Importer,[string]$Absolut
     $literalAssignmentScans = 0
     $metadataAssignmentScans = 0
     $memberValueScans = 0
+    $storageWritesByScope = [Collections.Generic.Dictionary[object,object]]::new([Collections.Generic.ReferenceEqualityComparer]::Instance)
+    $assignmentLexicalScopes = [Collections.Generic.Dictionary[object,object]]::new([Collections.Generic.ReferenceEqualityComparer]::Instance)
+    $moduleExportCalls = 0
+    $storageSimpleReads = 0
+    $storageRecursiveScans = 0
     $analysisNodes = @($ast.FindAll({
         param($node)
         $node -is [Management.Automation.Language.AssignmentStatementAst] -or
         $node -is [Management.Automation.Language.CommandAst] -or
-        $node -is [Management.Automation.Language.HashtableAst]
+        $node -is [Management.Automation.Language.HashtableAst] -or
+        $node -is [Management.Automation.Language.FunctionDefinitionAst]
     },$true))
     function Add-AffectedDemandedVariable([object]$Scope,[string]$Variable) {
         if ($null -eq $Scope -or [string]::IsNullOrWhiteSpace($Variable)) { return }
@@ -841,6 +859,16 @@ function New-AffectedTrackedFileAnalysisIndex([string]$Importer,[string]$Absolut
             $firstElement = @($node.CommandElements)[0]
             $invocationPathValues = @(if ($firstElement.Extent.Text -match '(?i)\.ps(?:m)?1') { @(Get-AffectedIndexedLiteralScriptPaths $firstElement) } else { @() })
             $invocationVariables = @(if ($invocationPathValues.Count -eq 0 -and $firstElement -is [Management.Automation.Language.VariableExpressionAst]) { @([string]$firstElement.VariablePath.UserPath) } else { @() })
+            if ($firstElement -is [Management.Automation.Language.IndexExpressionAst] -and
+                $firstElement.Target -is [Management.Automation.Language.MemberExpressionAst] -and
+                $firstElement.Target.Expression -is [Management.Automation.Language.VariableExpressionAst] -and
+                $firstElement.Target.Member -is [Management.Automation.Language.StringConstantExpressionAst] -and
+                [string]$firstElement.Target.Member.Value -ieq 'ExportedCommands') {
+                $moduleExportCalls++
+                $moduleVariable = [string]$firstElement.Target.Expression.VariablePath.UserPath
+                $invocationVariables = @($moduleVariable)
+                if ($moduleVariable -like 'script:*') { [void]$scriptScopedDemandedVariables.Add($moduleVariable); Add-AffectedDemandedVariable -Scope $ast -Variable $moduleVariable }
+            }
             $memberAsts = @(if ($firstElement -is [Management.Automation.Language.MemberExpressionAst] -or $firstElement.Extent.Text.Contains('.') -or $firstElement.Extent.Text.Contains('::')) { @($firstElement.FindAll({
                 param($candidate)
                 $candidate -is [Management.Automation.Language.MemberExpressionAst] -and
@@ -896,7 +924,9 @@ function New-AffectedTrackedFileAnalysisIndex([string]$Importer,[string]$Absolut
         $getCommandDemanded = $false
         if ($node.Left -is [Management.Automation.Language.VariableExpressionAst]) {
             $variable = [string]$node.Left.VariablePath.UserPath
-            $scope = if ($scriptScopedDemandedVariables.Contains($variable)) { $ast } else { Get-AffectedLexicalImportScope $node }
+            $lexicalScope = Get-AffectedLexicalImportScope $node
+            if ($moduleExportCalls -ne 0) { $assignmentLexicalScopes[$node] = $lexicalScope }
+            $scope = if ($scriptScopedDemandedVariables.Contains($variable)) { $ast } else { $lexicalScope }
             $variableDemanded = $demandedVariablesByScope.ContainsKey($scope) -and $demandedVariablesByScope[$scope].Contains($variable)
             $getCommandDemanded = $demandedGetCommandVariables.Contains($variable)
         }
@@ -946,6 +976,21 @@ function New-AffectedTrackedFileAnalysisIndex([string]$Importer,[string]$Absolut
         }
         $parametersByScope[$scope] = $byName
     }
+    if ($moduleExportCalls -ne 0) { foreach ($assignment in @($assignmentNodes)) {
+        $assignmentScope = if ($assignmentLexicalScopes.ContainsKey($assignment)) { $assignmentLexicalScopes[$assignment] } else { Get-AffectedLexicalImportScope $assignment }
+        $leaves = if ($assignment.Left -is [Management.Automation.Language.VariableExpressionAst]) { $storageSimpleReads++; @($assignment.Left) } else { $storageRecursiveScans++; @($assignment.Left.FindAll({ param($node) $node -is [Management.Automation.Language.VariableExpressionAst] },$true)) }
+        foreach ($leaf in $leaves) {
+            $name = [string]$leaf.VariablePath.UserPath; $storageScope = $assignmentScope
+            if ($name -like 'script:*') { $storageScope = $ast; $name = $name.Substring(7) }
+            elseif ($name -like 'local:*') { $name = $name.Substring(6) }
+            elseif ($name -like 'private:*') { $name = $name.Substring(8) }
+            elseif ($name.Contains(':')) { continue }
+            if (-not $storageWritesByScope.ContainsKey($storageScope)) { $storageWritesByScope[$storageScope] = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::OrdinalIgnoreCase) }
+            $names = $storageWritesByScope[$storageScope]
+            if (-not $names.ContainsKey($name)) { $names[$name] = [Collections.Generic.List[object]]::new() }
+            if (-not $names[$name].Contains($assignment)) { $names[$name].Add($assignment) | Out-Null }
+        }
+    } }
     return [pscustomobject][ordered]@{
         key = "$Importer|$SourceSha256"
         importer = $Importer
@@ -953,6 +998,10 @@ function New-AffectedTrackedFileAnalysisIndex([string]$Importer,[string]$Absolut
         source_sha256 = $SourceSha256
         ast = $ast
         assignment_records = $assignmentRecords.ToArray()
+        module_binding_assignments = $assignmentNodes.ToArray()
+        storage_writes_by_scope = $storageWritesByScope
+        builtin_facts = if ($moduleExportCalls -ne 0) { Get-AffectedStaticBuiltinFacts -SourceAst $ast -Nodes $analysisNodes } else { $null }
+        root_proofs = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
         assignments_by_scope = $assignmentsByScope
         parameters_by_scope = $parametersByScope
         member_pairs_by_name = $memberPairsByName
@@ -966,6 +1015,9 @@ function New-AffectedTrackedFileAnalysisIndex([string]$Importer,[string]$Absolut
             literal_assignment_subtree_scans = $literalAssignmentScans
             metadata_assignment_subtree_scans = $metadataAssignmentScans
             member_value_subtree_scans = $memberValueScans
+            module_export_callees = $moduleExportCalls
+            module_storage_simple_reads = $storageSimpleReads
+            module_storage_recursive_scans = $storageRecursiveScans
         }
     }
 }
@@ -985,9 +1037,202 @@ function Assert-AffectedTrackedFileAnalysisIndexStable([object]$Index) {
     $observed = Get-AffectedOwnerFileSha256 $Index.absolute_path
     if ($observed -cne [string]$Index.source_sha256) { throw "Owner import graph source bytes changed during construction: $($Index.importer)" }
 }
+function Assert-AffectedRetirementDeclarationLayout([object]$Resolution,[string[]]$Paths) {
+    $importers = @('scripts/ActiveUnitRetirement.psm1','scripts/lib/MorphospacePlanningLifecycleProjection.psm1')
+    $actual = @($Resolution.used_declarations | Where-Object { [string]$_.importer -cin $importers } | ForEach-Object { "$([string]$_.importer)|$([string]$_.variable)|$([int]$_.count)|$(@($_.target_paths) -join ',')" })
+    $expected = @(
+        'scripts/ActiveUnitRetirement.psm1|ProvenanceModule|2|scripts/DevelopmentEnvelopeProvenance.psm1',
+        'scripts/ActiveUnitRetirement.psm1|module|2|scripts/DevelopmentEnvelopeProvenance.psm1'
+    )
+    if ($Paths -ccontains 'scripts/lib/MorphospacePlanningLifecycleProjection.psm1') {
+        $expected += @('scripts/lib/MorphospacePlanningLifecycleProjection.psm1|amendmentModule|1|scripts/ActiveWriteScopeAmendment.psm1','scripts/lib/MorphospacePlanningLifecycleProjection.psm1|pendingExtensionModule|2|scripts/ActiveDevelopmentEnvelopeExtension.psm1')
+    } else { $expected += 'scripts/ActiveUnitRetirement.psm1|amendmentModule|1|scripts/ActiveWriteScopeAmendment.psm1' }
+    [Array]::Sort($actual,[StringComparer]::Ordinal); [Array]::Sort($expected,[StringComparer]::Ordinal)
+    Assert-True (($actual -join ';') -ceq ($expected -join ';')) 'Protocol foundation did not consume the exact closed retirement/shared-helper module-object declarations.'
+}
+function Get-AffectedStaticBuiltinFacts([object]$SourceAst,[object[]]$Nodes=$null) {
+    if ($null -eq $Nodes) { $Nodes = @($SourceAst.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -or $node -is [Management.Automation.Language.CommandAst] },$true)) }
+    $shadowNames = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $dynamicAlias = $false
+    foreach ($alias in $Nodes) {
+        if ($alias -is [Management.Automation.Language.FunctionDefinitionAst]) { [void]$shadowNames.Add(($alias.Name -replace '(?i)^(global|script|local|private):','')); continue }
+        if ($alias -isnot [Management.Automation.Language.CommandAst] -or $alias.GetCommandName() -notmatch '(?i)^(?:Microsoft\.PowerShell\.Utility\\)?(?:Set-Alias|New-Alias)$') { continue }
+        $elements = @($alias.CommandElements); $target = $null
+        for ($i=1;$i -lt $elements.Count;$i++) {
+            if ($elements[$i] -is [Management.Automation.Language.CommandParameterAst] -and $elements[$i].ParameterName -ieq 'Name') { $target = if ($null -ne $elements[$i].Argument) { $elements[$i].Argument } elseif ($i+1 -lt $elements.Count) { $elements[$i+1] } else { $null }; break }
+        }
+        if ($null -eq $target -and $elements.Count -gt 1 -and $elements[1] -isnot [Management.Automation.Language.CommandParameterAst]) { $target = $elements[1] }
+        if ($target -isnot [Management.Automation.Language.StringConstantExpressionAst]) { $dynamicAlias = $true } else { [void]$shadowNames.Add([string]$target.Value) }
+    }
+    return [pscustomobject]@{shadow_names=$shadowNames;dynamic_alias=$dynamicAlias}
+}
+function Test-AffectedStaticBuiltinCommand([object]$Command,[object]$SourceAst,[string]$Name,[string]$Module,[object]$Facts=$null) {
+    $commandName = [string]$Command.GetCommandName()
+    if ($commandName -ieq ($Module+'\'+$Name)) { return $true }
+    if ($commandName -ine $Name) { return $false }
+    if ($null -eq $Facts) { $Facts = Get-AffectedStaticBuiltinFacts $SourceAst }
+    return -not $Facts.dynamic_alias -and -not $Facts.shadow_names.Contains($Name)
+}
+function Get-AffectedUnwrappedPathAst([object]$Node) {
+    while ($null -ne $Node) {
+        if ($Node -is [Management.Automation.Language.ParenExpressionAst]) { $Node = $Node.Pipeline; continue }
+        if ($Node -is [Management.Automation.Language.PipelineAst] -and @($Node.PipelineElements).Count -eq 1) { $Node = $Node.PipelineElements[0]; continue }
+        if ($Node -is [Management.Automation.Language.CommandExpressionAst]) { $Node = $Node.Expression; continue }
+        return $Node
+    }
+    return $null
+}
+function Get-AffectedIndexedStorageWrites([object]$Index,[object]$Scope,[string]$Name) {
+    if (-not $Index.storage_writes_by_scope.ContainsKey($Scope) -or -not $Index.storage_writes_by_scope[$Scope].ContainsKey($Name)) { return @() }
+    return @($Index.storage_writes_by_scope[$Scope][$Name])
+}
+function Get-AffectedStaticOwnerPathRoot([object]$Node,[object]$Index,[object]$Scope,[string]$Root,[int]$Depth=0) {
+    $node = Get-AffectedUnwrappedPathAst $Node
+    $key = if ($node -is [Management.Automation.Language.VariableExpressionAst]) { "$($Scope.Extent.StartOffset)|$($Scope.GetType().Name)|$(([string]$node.VariablePath.UserPath).ToLowerInvariant())|$Root" } else { $null }
+    if ($null -ne $key -and $Index.root_proofs.ContainsKey($key)) { return $Index.root_proofs[$key] }
+    $result = Resolve-AffectedStaticOwnerPathRoot -Node $node -Index $Index -Scope $Scope -Root $Root -Depth $Depth
+    if ($null -ne $key) { $Index.root_proofs[$key] = $result }
+    return $result
+}
+function Resolve-AffectedStaticOwnerPathRoot([object]$Node,[object]$Index,[object]$Scope,[string]$Root,[int]$Depth=0) {
+    if ($Depth -gt 4) { throw 'Module Name path root derivation is recursive or ambiguous.' }
+    $node = Get-AffectedUnwrappedPathAst $Node
+    if ($node -is [Management.Automation.Language.CommandAst]) {
+        if (-not (Test-AffectedStaticBuiltinCommand -Command $node -SourceAst $Index.ast -Name Split-Path -Module Microsoft.PowerShell.Management -Facts $Index.builtin_facts) -or $node.CommandElements.Count -ne 3 -or $node.CommandElements[1] -isnot [Management.Automation.Language.CommandParameterAst] -or $node.CommandElements[1].ParameterName -ine 'Parent' -or $null -ne $node.CommandElements[1].Argument -or $node.CommandElements[2] -isnot [Management.Automation.Language.VariableExpressionAst] -or $node.CommandElements[2].VariablePath.UserPath -ine 'PSScriptRoot') { throw 'Module Name path root is not a fixed importer-owned parent.' }
+        return [IO.Path]::GetDirectoryName([IO.Path]::GetDirectoryName($Index.absolute_path))
+    }
+    if ($node -isnot [Management.Automation.Language.VariableExpressionAst]) { throw 'Module Name path root is not a fixed owner-root expression.' }
+    $variable = [string]$node.VariablePath.UserPath
+    if ($variable -ieq 'PSScriptRoot') { return [IO.Path]::GetDirectoryName($Index.absolute_path) }
+    if ($variable.Contains(':') -and $variable -notlike 'script:*') { throw 'Module Name path root has unsupported storage.' }
+    $name = $variable -replace '(?i)^script:',''
+    if ($variable -like 'script:*') { $Scope = $Index.ast }
+    $seen = [Collections.Generic.HashSet[object]]::new([Collections.Generic.ReferenceEqualityComparer]::Instance)
+    $assignments = @(); $parameters = @()
+    while ($null -ne $Scope -and $seen.Add($Scope)) {
+        $parameters = @(Get-AffectedScopeParameterAsts $Scope | Where-Object { $_.Name.VariablePath.UserPath -ieq $name })
+        $assignments = @(Get-AffectedIndexedStorageWrites -Index $Index -Scope $Scope -Name $name)
+        if ($parameters.Count -ne 0 -or $assignments.Count -ne 0) { break }
+        $next = Get-AffectedLexicalImportScope $Scope; if ([object]::ReferenceEquals($next,$Scope)) { break }; $Scope = $next
+    }
+    if (@($assignments | Where-Object { $_.Left -isnot [Management.Automation.Language.VariableExpressionAst] -or $_.Left.VariablePath.UserPath -like 'private:*' }).Count -ne 0) { throw 'Module Name path root has an unsupported storage write.' }
+    if ($parameters.Count -eq 0 -and $assignments.Count -eq 1 -and $assignments[0].Operator -eq [Management.Automation.Language.TokenKind]::Equals) { return Get-AffectedStaticOwnerPathRoot -Node $assignments[0].Right -Index $Index -Scope $Scope -Root $Root -Depth ($Depth+1) }
+    if ($parameters.Count -eq 1 -and $assignments.Count -eq 0 -and $null -ne $parameters[0].DefaultValue) { return Get-AffectedStaticOwnerPathRoot -Node $parameters[0].DefaultValue -Index $Index -Scope $Scope -Root $Root -Depth ($Depth+1) }
+    # This proves the source's empty-input fallback and graph-root identity,
+    # not a runtime caller's nonempty parameter override or execution outcome.
+    if ($parameters.Count -ne 1 -or $parameters[0].DefaultValue -isnot [Management.Automation.Language.StringConstantExpressionAst] -or [string]$parameters[0].DefaultValue.Value -cne '' -or $assignments.Count -lt 1 -or $assignments.Count -gt 2) { throw 'Module Name path root has conflicting or unbound initialization.' }
+    $ordered = @($assignments | Sort-Object { $_.Extent.StartOffset })
+    $fallback = $ordered[0]; $block = $fallback.Parent; $branch = $block.Parent
+    if ($fallback.Operator -ne [Management.Automation.Language.TokenKind]::Equals -or $block -isnot [Management.Automation.Language.StatementBlockAst] -or $branch -isnot [Management.Automation.Language.IfStatementAst] -or $branch.Clauses.Count -ne 1 -or $null -ne $branch.ElseClause -or $block.Statements.Count -ne 1 -or -not [object]::ReferenceEquals($branch.Clauses[0].Item2,$block)) { throw 'Module Name path root fallback is not a closed empty-input branch.' }
+    $guard = Get-AffectedUnwrappedPathAst $branch.Clauses[0].Item1
+    if ($guard -isnot [Management.Automation.Language.UnaryExpressionAst] -or $guard.TokenKind -ne [Management.Automation.Language.TokenKind]::Not -or $guard.Child -isnot [Management.Automation.Language.VariableExpressionAst] -or $guard.Child.VariablePath.UserPath -ine $variable) { throw 'Module Name path root fallback has a changed guard.' }
+    $derived = Get-AffectedStaticOwnerPathRoot -Node $fallback.Right -Index $Index -Scope $Scope -Root $Root -Depth ($Depth+1)
+    if ($ordered.Count -eq 2) {
+        $normal = $ordered[1]; $member = Get-AffectedUnwrappedPathAst $normal.Right
+        if ($normal.Operator -ne [Management.Automation.Language.TokenKind]::Equals -or $normal.Extent.StartOffset -le $branch.Extent.EndOffset -or -not [object]::ReferenceEquals((Get-AffectedLexicalImportScope $normal),$Scope) -or $member -isnot [Management.Automation.Language.MemberExpressionAst] -or $member.Member -isnot [Management.Automation.Language.StringConstantExpressionAst] -or $member.Member.Value -ine 'Path') { throw 'Module Name path root has an unrelated reassignment.' }
+        $resolve = Get-AffectedUnwrappedPathAst $member.Expression
+        if ($resolve -isnot [Management.Automation.Language.CommandAst] -or -not (Test-AffectedStaticBuiltinCommand -Command $resolve -SourceAst $Index.ast -Name Resolve-Path -Module Microsoft.PowerShell.Management -Facts $Index.builtin_facts) -or $resolve.CommandElements.Count -ne 3 -or $resolve.CommandElements[1] -isnot [Management.Automation.Language.CommandParameterAst] -or $resolve.CommandElements[1].ParameterName -ine 'LiteralPath' -or $null -ne $resolve.CommandElements[1].Argument -or $resolve.CommandElements[2] -isnot [Management.Automation.Language.VariableExpressionAst] -or $resolve.CommandElements[2].VariablePath.UserPath -ine $variable) { throw 'Module Name path root normalization is not a fixed self binding.' }
+    }
+    return $derived
+}
+function Get-AffectedStaticModuleNamePath([object]$Import,[object]$Index,[object]$Scope,[string]$Root) {
+    $names = [Collections.Generic.List[object]]::new()
+    $elements = @($Import.CommandElements)
+    for ($i=1;$i -lt $elements.Count;$i++) {
+        $element = $elements[$i]
+        if ($element -is [Management.Automation.Language.CommandParameterAst]) {
+            if ($element.ParameterName -ieq 'Name') {
+                if ($null -ne $element.Argument) { $names.Add($element.Argument) } elseif ($i+1 -lt $elements.Count -and $elements[$i+1] -isnot [Management.Automation.Language.CommandParameterAst]) { $i++; $names.Add($elements[$i]) } else { throw 'Module export binding has no module Name argument.' }
+            } elseif (@('PassThru','Force','Global','NoClobber','DisableNameChecking') -inotcontains $element.ParameterName -or $null -ne $element.Argument) { throw 'Module export binding has an unsupported module Name argument or option.' }
+        } else { $names.Add($element) }
+    }
+    if ($names.Count -ne 1) { throw 'Module export binding requires exactly one actual module Name argument.' }
+    $name = Get-AffectedUnwrappedPathAst $names[0]
+    if ($name -is [Management.Automation.Language.StringConstantExpressionAst]) {
+        $value = [string]$name.Value
+        $base = if ($value.Replace('\','/') -match '^scripts/') { $Root } else { [IO.Path]::GetDirectoryName($Index.absolute_path) }
+    } else {
+        if ($name -isnot [Management.Automation.Language.CommandAst] -or -not (Test-AffectedStaticBuiltinCommand -Command $name -SourceAst $Index.ast -Name Join-Path -Module Microsoft.PowerShell.Management -Facts $Index.builtin_facts) -or $name.CommandElements.Count -ne 3 -or $name.CommandElements[2] -isnot [Management.Automation.Language.StringConstantExpressionAst]) { throw 'Module export binding has a nonstatic actual module Name argument.' }
+        $value = [string]$name.CommandElements[2].Value
+        $base = Get-AffectedStaticOwnerPathRoot -Node $name.CommandElements[1] -Index $Index -Scope $Scope -Root $Root
+        if ([IO.Path]::GetFullPath($base).TrimEnd('\','/') -cne [IO.Path]::GetFullPath($Root).TrimEnd('\','/') -and $name.CommandElements[1] -isnot [Management.Automation.Language.VariableExpressionAst]) { throw 'Module Name root differs from the supplied owner graph root.' }
+        if ($name.CommandElements[1] -is [Management.Automation.Language.VariableExpressionAst] -and $name.CommandElements[1].VariablePath.UserPath -ine 'PSScriptRoot' -and [IO.Path]::GetFullPath($base).TrimEnd('\','/') -cne [IO.Path]::GetFullPath($Root).TrimEnd('\','/')) { throw 'Module Name root differs from the supplied owner graph root.' }
+    }
+    if ([string]::IsNullOrWhiteSpace($value) -or [IO.Path]::IsPathRooted($value) -or $value.Contains(':') -or $value.Replace('\','/') -match '(?:^|/)\.\.?/' -or $value -notmatch '(?i)\.psm1$') { throw 'Module export binding has a noncanonical actual module Name argument.' }
+    return [IO.Path]::GetFullPath((Join-Path $base $value))
+}
+function Get-AffectedIndexedModuleExportTarget([object]$Index,[object]$Invocation,[string]$Root,[Collections.Generic.HashSet[string]]$TrackedPaths,[object]$ModuleCache) {
+    $callee = $Invocation.first_element
+    if ($callee -isnot [Management.Automation.Language.IndexExpressionAst]) { return $null }
+    if ($callee.Target -isnot [Management.Automation.Language.MemberExpressionAst] -or
+        $callee.Target.Expression -isnot [Management.Automation.Language.VariableExpressionAst] -or
+        $callee.Target.Member -isnot [Management.Automation.Language.StringConstantExpressionAst] -or
+        [string]$callee.Target.Member.Value -ine 'ExportedCommands') { return $null }
+    $context = "$($Index.importer) :: $($Invocation.ast.Extent.Text)"
+    if ($callee.Index -isnot [Management.Automation.Language.StringConstantExpressionAst] -or [string]::IsNullOrWhiteSpace([string]$callee.Index.Value)) { throw "Module export invocation requires a nonempty literal export: $context" }
+    $variable = [string]$callee.Target.Expression.VariablePath.UserPath
+    if ($variable.Contains(':') -and $variable -notlike 'script:*') { throw "Module export invocation has an unsupported variable scope: $context" }
+    $namePart = $variable -replace '(?i)^script:',''
+    $scope = if ($variable -like 'script:*') { $Index.ast } else { $Invocation.scope }
+    $seen = [Collections.Generic.HashSet[object]]::new([Collections.Generic.ReferenceEqualityComparer]::Instance)
+    $bindings = @()
+    while ($null -ne $scope -and $seen.Add($scope)) {
+        if ($Index.parameters_by_scope.ContainsKey($scope) -and @($Index.parameters_by_scope[$scope].Keys | Where-Object { $_ -ieq $namePart }).Count -ne 0) { throw "Module export invocation is shadowed by an unbound parameter: $context" }
+        $bindings = @(Get-AffectedIndexedStorageWrites -Index $Index -Scope $scope -Name $namePart)
+        if ($bindings.Count -ne 0) { break }
+        $next = Get-AffectedLexicalImportScope $scope
+        if ([object]::ReferenceEquals($next,$scope)) { break }
+        $scope = $next
+    }
+    if ($bindings.Count -ne 1) { throw "Module export invocation requires one unreassigned module binding: $context" }
+    $assignment = $bindings[0]
+    if ($assignment.Left -isnot [Management.Automation.Language.VariableExpressionAst] -or $assignment.Left.VariablePath.UserPath -like 'private:*') { throw "Module export binding has an unsupported storage write: $context" }
+    $right = $assignment.Right
+    if ($assignment.Operator -ne [Management.Automation.Language.TokenKind]::Equals -or $right -isnot [Management.Automation.Language.PipelineAst] -or @($right.PipelineElements).Count -ne 1 -or $right.PipelineElements[0] -isnot [Management.Automation.Language.CommandAst]) { throw "Module export binding is not a single Import-Module result: $context" }
+    $import = $right.PipelineElements[0]
+    if (-not (Test-AffectedStaticBuiltinCommand -Command $import -SourceAst $Index.ast -Name Import-Module -Module Microsoft.PowerShell.Core -Facts $Index.builtin_facts)) { throw "Module export binding does not prove the builtin Import-Module: $context" }
+    $pass = @($import.CommandElements | Where-Object { $_ -is [Management.Automation.Language.CommandParameterAst] -and $_.ParameterName -ieq 'PassThru' })
+    if ($pass.Count -ne 1 -or $null -ne $pass[0].Argument) { throw "Module export binding requires one static Import-Module -PassThru path: $context" }
+    $full = Get-AffectedStaticModuleNamePath -Import $import -Index $Index -Scope (Get-AffectedLexicalImportScope $assignment) -Root $Root
+    $prefix = $Root.TrimEnd('\','/') + [IO.Path]::DirectorySeparatorChar
+    if (-not $full.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)) { throw "Module export binding escapes the tracked owner: $context" }
+    $relative = [IO.Path]::GetRelativePath($Root,$full).Replace('\','/')
+    if ($relative -cnotmatch '^scripts/.+\.psm1$' -or -not $TrackedPaths.Contains($relative) -or -not [IO.File]::Exists($full)) { throw "Module export binding is absent or untracked: $context" }
+    $moduleSha256 = Get-AffectedOwnerFileSha256 $full
+    if ($ModuleCache.ContainsKey($full)) {
+        $info = $ModuleCache[$full]
+        if ($info.sha256 -cne $moduleSha256) { throw "Module export source bytes changed during graph construction: $relative" }
+    } else {
+      $moduleAst = Get-AffectedPowerShellAst $full
+      $functions = @($moduleAst.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] },$false) | ForEach-Object { [string]$_.Name })
+      $exports = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+      $facts = Get-AffectedStaticBuiltinFacts $moduleAst
+      foreach ($export in @($moduleAst.FindAll({ param($node) $node -is [Management.Automation.Language.CommandAst] -and @('Export-ModuleMember','Microsoft.PowerShell.Core\Export-ModuleMember') -icontains $node.GetCommandName() },$false))) {
+        if (-not (Test-AffectedStaticBuiltinCommand -Command $export -SourceAst $moduleAst -Name Export-ModuleMember -Module Microsoft.PowerShell.Core -Facts $facts)) { throw "Module function export does not prove the builtin Export-ModuleMember: $relative" }
+        $functionArgument = $false
+        foreach ($element in @($export.CommandElements | Select-Object -Skip 1)) {
+            if ($element -is [Management.Automation.Language.CommandParameterAst]) { $functionArgument = $element.ParameterName -ieq 'Function'; if ($functionArgument -and $null -ne $element.Argument) { throw "Module function export is not an explicit literal list: $relative" }; continue }
+            if (-not $functionArgument) { continue }
+            $values = if ($element -is [Management.Automation.Language.ArrayLiteralAst]) { @($element.Elements) } else { @($element) }
+            foreach ($item in $values) {
+                if ($item -isnot [Management.Automation.Language.StringConstantExpressionAst] -or [string]$item.Value -match '[*?\[]') { throw "Module function export is not an explicit literal list: $relative" }
+                [void]$exports.Add([string]$item.Value)
+            }
+        }
+      }
+      if ((Get-AffectedOwnerFileSha256 $full) -cne $moduleSha256) { throw "Module export source bytes changed during graph construction: $relative" }
+      $info = [pscustomobject]@{sha256=$moduleSha256;relative_path=$relative;functions=$functions;exports=$exports}
+      $ModuleCache[$full] = $info
+    }
+    $name = [string]$callee.Index.Value
+    if (-not $info.exports.Contains($name) -or $info.functions -inotcontains $name) { throw "Module export invocation names no explicit local function export: $context" }
+    return $relative
+}
 function New-AffectedTrackedImportGraph([string]$Root, [string[]]$Entrypoints, [object[]]$DynamicImportDeclarations = @(), [Collections.Generic.HashSet[string]]$TrackedPaths = $null) {
     $root = [IO.Path]::GetFullPath($Root).TrimEnd('\','/')
     $rootPrefix = $root + [IO.Path]::DirectorySeparatorChar
+    # Construction-local only; each reused export fact retains exact path/SHA.
+    $moduleExportCache = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
     if ($null -eq $TrackedPaths) {
         $TrackedPaths = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
         foreach ($trackedPath in @(& git -C $root ls-files)) { [void]$TrackedPaths.Add(([string]$trackedPath).Replace('\','/')) }
@@ -1086,6 +1331,8 @@ function New-AffectedTrackedImportGraph([string]$Root, [string[]]$Entrypoints, [
         foreach ($invocationRecord in @($analysis.invocations)) {
             $invocation = $invocationRecord.ast
             $firstElement = $invocationRecord.first_element
+            $moduleExportTarget = Get-AffectedIndexedModuleExportTarget -Index $analysis -Invocation $invocationRecord -Root $root -TrackedPaths $TrackedPaths -ModuleCache $moduleExportCache
+            if ($null -ne $moduleExportTarget) { [void]$importEdges.Add($moduleExportTarget); continue }
             $pathValues = @($invocationRecord.path_values)
             $invocationValues = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
             if ($pathValues.Count -eq 1) {
@@ -1185,6 +1432,10 @@ function New-AffectedTrackedImportGraph([string]$Root, [string[]]$Entrypoints, [
         $analysis = $analysisByKey[[string]$analysisKeyByPath[$node]]
         if ([string]$analysis.key -cne "$node|$([string]$identities[$node])") { throw "Owner import graph analysis index identity drifted: $node" }
         Assert-AffectedTrackedFileAnalysisIndexStable $analysis
+    }
+    foreach ($path in @($moduleExportCache.Keys)) {
+        $info = $moduleExportCache[$path]
+        if (-not $identities.ContainsKey([string]$info.relative_path) -or [string]$identities[[string]$info.relative_path] -cne [string]$info.sha256 -or (Get-AffectedOwnerFileSha256 $path) -cne [string]$info.sha256) { throw "Module export cache identity differs from the final tracked graph: $($info.relative_path)" }
     }
     $orderedNodes = @($nodes)
     [Array]::Sort($orderedNodes,[StringComparer]::Ordinal)
@@ -1351,7 +1602,126 @@ function Get-AffectedProtocolCommonOwnerChecks([string]$Root, [object]$Registry)
         total_elapsed_ms = [long]$auditClock.Elapsed.TotalMilliseconds
     }
 }
+function Invoke-AffectedModuleExportSelfTest {
+    $ownerGraphFixture = Join-Path ([IO.Path]::GetTempPath()) ('morphospace-affected-module-export-' + [guid]::NewGuid().ToString('N'))
+    [void][IO.Directory]::CreateDirectory((Join-Path $ownerGraphFixture 'scripts/lib'))
+    try {
+        $moduleExportFixtureSource = @'
+$script:Owner = Import-Module (Join-Path $PSScriptRoot 'lib/FixtureExports.psm1') -PassThru
+function Invoke-ScriptExport { & $script:Owner.ExportedCommands['Invoke-First'] }
+function Invoke-LocalExport {
+    $localOwner = Import-Module (Join-Path $PSScriptRoot 'lib/FixtureExports.psm1') -PassThru
+    & $localOwner.ExportedCommands['Invoke-Second']
+}
+& { 'body-data-is-not-a-callee.ps1'; & (Join-Path $PSScriptRoot 'Test-StaticChild.ps1') }
+$body = { 'assigned-body-data.ps1'; & (Join-Path $PSScriptRoot 'Test-StaticChild.ps1') }
+& $body
+'@
+        Write-Utf8 (Join-Path $ownerGraphFixture 'scripts/Test-ModuleExport.ps1') $moduleExportFixtureSource
+        Write-Utf8 (Join-Path $ownerGraphFixture 'scripts/lib/FixtureExports.psm1') "function Invoke-First { 'one' }`nfunction Invoke-Second { 'two' }`nExport-ModuleMember -Function Invoke-First,Invoke-Second`n"
+        Write-Utf8 (Join-Path $ownerGraphFixture 'scripts/Test-StaticChild.ps1') "'actual child' | Out-Null`n"
+        [void](Invoke-TestGit $ownerGraphFixture @('init','--initial-branch=main'))
+        [void](Invoke-TestGit $ownerGraphFixture @('config','user.name','Affected Module Export Test'))
+        [void](Invoke-TestGit $ownerGraphFixture @('config','user.email','module-export@example.invalid'))
+        [void](Invoke-TestGit $ownerGraphFixture @('add','.'))
+        [void](Invoke-TestGit $ownerGraphFixture @('commit','-m','typed module export fixture'))
+        $fixtureTrackedPaths = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        foreach ($path in @(& git -C $ownerGraphFixture ls-files)) { [void]$fixtureTrackedPaths.Add([string]$path) }
+        $fixtureOwners = @('scripts/Test-ModuleExport.ps1')
+        $fixtureDeclarations = @()
+        $fixtureGraph = New-AffectedTrackedImportGraph -Root $ownerGraphFixture -Entrypoints $fixtureOwners -DynamicImportDeclarations $fixtureDeclarations -TrackedPaths $fixtureTrackedPaths
+        $fixtureReachability = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+        $fixtureModuleClosure = @(Get-AffectedGraphReachability -Graph $fixtureGraph -Entrypoint 'scripts/Test-ModuleExport.ps1' -Cache $fixtureReachability)
+        Assert-True ($fixtureModuleClosure -ccontains 'scripts/lib/FixtureExports.psm1' -and $fixtureModuleClosure -ccontains 'scripts/Test-StaticChild.ps1') 'Bound module exports or genuine nested scriptblock commands lost their tracked edges.'
+        $nestedModuleIndexPath = Join-Path $ownerGraphFixture 'scripts/Test-ModuleExport.ps1'
+        $nestedModuleIndex = New-AffectedTrackedFileAnalysisIndex -Importer 'scripts/Test-ModuleExport.ps1' -AbsolutePath $nestedModuleIndexPath -SourceSha256 (Get-AffectedOwnerFileSha256 $nestedModuleIndexPath)
+        Assert-True ($nestedModuleIndex.analysis_metrics.module_export_callees -eq 2 -and $nestedModuleIndex.analysis_metrics.module_storage_simple_reads -gt 0 -and $null -ne $nestedModuleIndex.builtin_facts) 'Recursive nested module callees did not demand binding/storage/builtin facts.'
+        Write-Utf8 (Join-Path $ownerGraphFixture 'scripts/Test-ModuleExport.ps1') ($moduleExportFixtureSource.Replace("`$script:Owner.ExportedCommands['Invoke-First']","`$script:owner.exportedcommands['invoke-FIRST']"))
+        [void](New-AffectedTrackedImportGraph -Root $ownerGraphFixture -Entrypoints $fixtureOwners -DynamicImportDeclarations $fixtureDeclarations -TrackedPaths $fixtureTrackedPaths)
+        Write-Utf8 (Join-Path $ownerGraphFixture 'scripts/Test-ModuleExport.ps1') ($moduleExportFixtureSource.Replace('Import-Module','Microsoft.PowerShell.Core\Import-Module'))
+        [void](New-AffectedTrackedImportGraph -Root $ownerGraphFixture -Entrypoints $fixtureOwners -DynamicImportDeclarations $fixtureDeclarations -TrackedPaths $fixtureTrackedPaths)
+        Write-Utf8 (Join-Path $ownerGraphFixture 'scripts/Test-ModuleExport.ps1') ($moduleExportFixtureSource.Replace("Import-Module (Join-Path `$PSScriptRoot 'lib/FixtureExports.psm1')","Import-Module -Name 'scripts/lib/FixtureExports.psm1'"))
+        [void](New-AffectedTrackedImportGraph -Root $ownerGraphFixture -Entrypoints $fixtureOwners -DynamicImportDeclarations $fixtureDeclarations -TrackedPaths $fixtureTrackedPaths)
+        foreach ($damage in @('dynamic-index','empty-index','missing-export','other-property','unbound','reassigned','case-reassigned','script-alias','private-mutation','private-invocation','wrapped-write','destructured-write','no-pass','false-pass','dynamic-import','name-decoy','multiple-names','extra-child','pipeline','foreign-import','shadow-import','scoped-shadow-import','alias-import','new-alias-import','untracked','external','shadow-parameter','nested-untracked')) {
+            $damagedSource = $moduleExportFixtureSource
+            $expectedError = '*Module export*'
+            switch ($damage) {
+                'dynamic-index' { $damagedSource = $damagedSource.Replace("['Invoke-First']",'[ $exportName ]'); $expectedError = '*nonempty literal export*' }
+                'empty-index' { $damagedSource = $damagedSource.Replace("['Invoke-First']","['']"); $expectedError = '*nonempty literal export*' }
+                'missing-export' { $damagedSource = $damagedSource.Replace("['Invoke-First']","['Invoke-Missing']"); $expectedError = '*no explicit local function export*' }
+                'other-property' { $damagedSource = $damagedSource.Replace('.ExportedCommands[','.OtherCommands['); $expectedError = '*neither a tracked script path nor an audited non-path callable*' }
+                'unbound' { $damagedSource = $damagedSource.Replace("`$script:Owner = Import-Module (Join-Path `$PSScriptRoot 'lib/FixtureExports.psm1') -PassThru","`$script:Owner = 'unbound'"); $expectedError = '*not a single Import-Module result*' }
+                'reassigned' { $damagedSource += "`n`$script:Owner = Import-Module (Join-Path `$PSScriptRoot 'lib/FixtureExports.psm1') -PassThru`n"; $expectedError = '*one unreassigned module binding*' }
+                'case-reassigned' { $damagedSource += "`nfunction Invoke-Mutate { `$script:owner = 'fake' }`nInvoke-Mutate`n"; $expectedError = '*one unreassigned module binding*' }
+                'script-alias' { $damagedSource = $damagedSource.Replace("`$script:Owner = Import-Module","`$Owner = Import-Module") + "`nfunction Invoke-Mutate { `$script:Owner = 'fake' }`nInvoke-Mutate`n"; $expectedError = '*one unreassigned module binding*' }
+                'private-mutation' { $damagedSource = $damagedSource.Replace("    & `$localOwner.ExportedCommands", "    `$private:LOCALOWNER = 'fake'`n    & `$localOwner.ExportedCommands"); $expectedError = '*one unreassigned module binding*' }
+                'private-invocation' { $damagedSource = $damagedSource.Replace('& $localOwner.ExportedCommands','& $private:localOwner.ExportedCommands'); $expectedError = '*unsupported variable scope*' }
+                'wrapped-write' { $damagedSource += "`n[object]`$script:owner = 'fake'`n"; $expectedError = '*one unreassigned module binding*' }
+                'destructured-write' { $damagedSource += "`n`$junk,`$script:owner = @('x','fake')`n"; $expectedError = '*one unreassigned module binding*' }
+                'no-pass' { $damagedSource = $damagedSource.Replace(' -PassThru',''); $expectedError = '*static Import-Module -PassThru path*' }
+                'false-pass' { $damagedSource = $damagedSource.Replace(' -PassThru',' -PassThru:$false'); $expectedError = '*static Import-Module -PassThru path*' }
+                'dynamic-import' { $damagedSource = "`$modulePath = Join-Path `$PSScriptRoot 'lib/FixtureExports.psm1'`n" + $damagedSource.Replace("`$script:Owner = Import-Module (Join-Path `$PSScriptRoot 'lib/FixtureExports.psm1')","`$script:Owner = Import-Module `$modulePath"); $expectedError = '*nonstatic actual module Name argument*' }
+                'name-decoy' { $damagedSource = $damagedSource.Replace("Import-Module (Join-Path `$PSScriptRoot 'lib/FixtureExports.psm1')","Import-Module -Name `$ForeignModule -ArgumentList 'lib/FixtureExports.psm1'"); $expectedError = '*unsupported module Name argument or option*' }
+                'multiple-names' { $damagedSource = $damagedSource.Replace("Import-Module (Join-Path `$PSScriptRoot 'lib/FixtureExports.psm1')","Import-Module -Name 'scripts/lib/FixtureExports.psm1' 'scripts/lib/FixtureExports.psm1'"); $expectedError = '*exactly one actual module Name argument*' }
+                'extra-child' { $damagedSource = $damagedSource.Replace("'lib/FixtureExports.psm1')","'lib/FixtureExports.psm1' `$extra)"); $expectedError = '*nonstatic actual module Name argument*' }
+                'pipeline' { $damagedSource = $damagedSource.Replace(' -PassThru',' -PassThru | Select-Object -First 1'); $expectedError = '*not a single Import-Module result*' }
+                'foreign-import' { $damagedSource = $damagedSource.Replace('Import-Module','Foreign\Import-Module'); $expectedError = '*does not prove the builtin Import-Module*' }
+                'shadow-import' { $damagedSource = "function Import-Module { [pscustomobject]@{ ExportedCommands = @{} } }`n" + $damagedSource; $expectedError = '*does not prove the builtin Import-Module*' }
+                'scoped-shadow-import' { $damagedSource = "function script:Import-Module { [pscustomobject]@{ ExportedCommands = @{} } }`n" + $damagedSource; $expectedError = '*does not prove the builtin Import-Module*' }
+                'alias-import' { $damagedSource = "Set-Alias -Name Import-Module -Value FakeImport`nfunction FakeImport { [pscustomobject]@{ ExportedCommands = @{} } }`n" + $damagedSource; $expectedError = '*does not prove the builtin Import-Module*' }
+                'new-alias-import' { $damagedSource = "New-Alias Import-Module FakeImport`nfunction FakeImport { [pscustomobject]@{ ExportedCommands = @{} } }`n" + $damagedSource; $expectedError = '*does not prove the builtin Import-Module*' }
+                'untracked' { $damagedSource = $damagedSource.Replace('lib/FixtureExports.psm1','lib/AbsentExports.psm1'); $expectedError = '*absent or untracked*' }
+                'external' { $damagedSource = $damagedSource.Replace('lib/FixtureExports.psm1','../../outside.psm1'); $expectedError = 'Owner import escapes the repository:*' }
+                'shadow-parameter' { $damagedSource = $damagedSource.Replace('function Invoke-LocalExport {','function Invoke-LocalExport($localOwner) {').Replace("    `$localOwner = Import-Module (Join-Path `$PSScriptRoot 'lib/FixtureExports.psm1') -PassThru",''); $expectedError = '*shadowed by an unbound parameter*' }
+                'nested-untracked' { $damagedSource = $damagedSource.Replace('Test-StaticChild.ps1','AbsentNested.ps1'); $expectedError = '*absent or untracked*' }
+            }
+            Write-Utf8 (Join-Path $ownerGraphFixture 'scripts/Test-ModuleExport.ps1') $damagedSource
+            $rejected = $false
+            $caughtMessage = ''
+            try { [void](New-AffectedTrackedImportGraph -Root $ownerGraphFixture -Entrypoints $fixtureOwners -DynamicImportDeclarations $fixtureDeclarations -TrackedPaths $fixtureTrackedPaths) } catch { $caughtMessage = $_.Exception.Message; $rejected = $caughtMessage -like $expectedError }
+            Assert-True $rejected "Typed exported-command/nested invocation '$damage' did not reject through its expected predicate: $caughtMessage"
+        }
+        $rootFixtureSource = @'
+param([string]$OwnerDirectory = '')
+if (-not $OwnerDirectory) { $OwnerDirectory = Split-Path -Parent $PSScriptRoot }
+$OwnerDirectory = (Resolve-Path -LiteralPath $OwnerDirectory).Path
+$module = Import-Module (Join-Path $OwnerDirectory 'scripts/lib/FixtureExports.psm1') -PassThru
+& $module.ExportedCommands['Invoke-First']
+'@
+        Write-Utf8 (Join-Path $ownerGraphFixture 'scripts/Test-ModuleExport.ps1') $rootFixtureSource
+        [void](New-AffectedTrackedImportGraph -Root $ownerGraphFixture -Entrypoints $fixtureOwners -DynamicImportDeclarations $fixtureDeclarations -TrackedPaths $fixtureTrackedPaths)
+        foreach ($damage in @('guard','foreign-root','reassigned-root','case-root','wrapped-root','root-decoy','shadow-join')) {
+            $source = $rootFixtureSource; $expectedError = '*Module Name path root*'
+            switch ($damage) {
+                'guard' { $source = $source.Replace('if (-not $OwnerDirectory)','if ($OwnerDirectory)'); $expectedError = '*fallback has a changed guard*' }
+                'foreign-root' { $source = $source.Replace('Split-Path -Parent $PSScriptRoot',"Join-Path `$PSScriptRoot 'foreign'"); $expectedError = '*not a fixed importer-owned parent*' }
+                'reassigned-root' { $source += "`n`$OwnerDirectory = 'foreign'`n"; $expectedError = '*conflicting or unbound initialization*' }
+                'case-root' { $source += "`nfunction Invoke-Mutate { `$script:ownerdirectory = 'foreign' }`n"; $expectedError = '*conflicting or unbound initialization*' }
+                'wrapped-root' { $source += "`n[string]`$OwnerDirectory = 'foreign'`n"; $expectedError = '*unsupported storage write*' }
+                'root-decoy' { $source = $source.Replace("Import-Module (Join-Path `$OwnerDirectory 'scripts/lib/FixtureExports.psm1')","Import-Module -Name `$foreign -ArgumentList 'scripts/lib/FixtureExports.psm1'"); $expectedError = '*unsupported module Name argument or option*' }
+                'shadow-join' { $source = $source.Replace("param([string]`$OwnerDirectory = '')","param([string]`$OwnerDirectory = '')`nfunction Join-Path { 'foreign' }"); $expectedError = '*nonstatic actual module Name argument*' }
+            }
+            Write-Utf8 (Join-Path $ownerGraphFixture 'scripts/Test-ModuleExport.ps1') $source
+            $message = ''
+            try { [void](New-AffectedTrackedImportGraph -Root $ownerGraphFixture -Entrypoints $fixtureOwners -DynamicImportDeclarations $fixtureDeclarations -TrackedPaths $fixtureTrackedPaths) } catch { $message = $_.Exception.Message }
+            Assert-True ($message -like $expectedError) "Owner-root initialization '$damage' did not reject through its expected predicate: $message"
+        }
+        $modulePath = Join-Path $ownerGraphFixture 'scripts/lib/FixtureExports.psm1'
+        $moduleSource = [IO.File]::ReadAllText($modulePath)
+        foreach ($shadow in @("function Export-ModuleMember { 'fake' }`n","Set-Alias -Name Export-ModuleMember -Value FakeExport`nfunction FakeExport { 'fake' }`n")) {
+            Write-Utf8 $modulePath ($shadow+$moduleSource)
+            Write-Utf8 (Join-Path $ownerGraphFixture 'scripts/Test-ModuleExport.ps1') $moduleExportFixtureSource
+            $message = ''
+            try { [void](New-AffectedTrackedImportGraph -Root $ownerGraphFixture -Entrypoints $fixtureOwners -DynamicImportDeclarations $fixtureDeclarations -TrackedPaths $fixtureTrackedPaths) } catch { $message = $_.Exception.Message }
+            Assert-True ($message -like '*does not prove the builtin Export-ModuleMember*') "Module export syntax shadow did not reject through builtin proof: $message"
+        }
+        Write-Utf8 $modulePath $moduleSource
+        Write-Utf8 (Join-Path $ownerGraphFixture 'scripts/Test-ModuleExport.ps1') $moduleExportFixtureSource
+        Write-Host 'Typed module export binding and nested-callee fixtures passed.'
+    } finally { if ([IO.Directory]::Exists($ownerGraphFixture)) { Remove-Item -LiteralPath $ownerGraphFixture -Recurse -Force } }
+}
 function Invoke-AffectedGraphIndexSelfTest([string]$Root,[object]$Registry) {
+    Invoke-AffectedModuleExportSelfTest
     $audit = Get-AffectedProtocolCommonOwnerChecks -Root $Root -Registry $Registry
     Assert-AffectedProtocolCommonGraphProjection -Value $audit -Context 'Real-tree ProtocolCommon graph'
     foreach ($requiredNode in @('scripts/New-ValidatingCandidateRematerializationInput.ps1','scripts/Test-ValidatingCandidateRematerialization.ps1','scripts/ValidatingCandidateRematerialization.psm1','scripts/lib/MorphospaceSourceCompositionIdentity.psm1')) {
@@ -1490,6 +1860,9 @@ $checks = @(
         Assert-True ($largeUnrelatedIndex.analysis_metrics.analysis_nodes -gt ($smallUnrelatedIndex.analysis_metrics.analysis_nodes + 500)) 'Large unrelated-data fixture did not materially expand the parsed AST surface.'
         foreach ($metric in @('literal_assignment_subtree_scans','metadata_assignment_subtree_scans','member_value_subtree_scans')) {
             Assert-True ([long]$largeUnrelatedIndex.analysis_metrics.$metric -eq [long]$smallUnrelatedIndex.analysis_metrics.$metric) "Large unrelated data changed demanded subtree work: metric=$metric small=$($smallUnrelatedIndex.analysis_metrics.$metric) large=$($largeUnrelatedIndex.analysis_metrics.$metric)."
+        }
+        foreach ($unrelatedIndex in @($smallUnrelatedIndex,$largeUnrelatedIndex)) {
+            Assert-True ($unrelatedIndex.analysis_metrics.module_export_callees -eq 0 -and $unrelatedIndex.analysis_metrics.module_storage_simple_reads -eq 0 -and $unrelatedIndex.analysis_metrics.module_storage_recursive_scans -eq 0 -and $null -eq $unrelatedIndex.builtin_facts -and $unrelatedIndex.storage_writes_by_scope.Count -eq 0) 'Files without module-export callees incurred module binding/storage/builtin work.'
         }
         Assert-True ($largeUnrelatedIndex.get_command_variables.Contains('Command') -and $smallUnrelatedIndex.get_command_variables.Contains('Command')) 'Demand-first index omitted the exact .Source/Get-Command binding.'
         Assert-True ([long]$largeUnrelatedClock.Elapsed.TotalMilliseconds -le 5000) "Large unrelated-data index dominated focused work: $([long]$largeUnrelatedClock.Elapsed.TotalMilliseconds)ms."
@@ -1749,10 +2122,34 @@ function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]
         )) {
             Assert-True ($protocolPaths -ccontains $requiredPath) "Protocol foundation dependency closure omitted its retirement/ledger chain path '$requiredPath'."
         }
-        $activeRetirementDeclarations = @($protocolClosure.resolution.used_declarations | Where-Object { [string]$_.importer -ceq 'scripts/ActiveUnitRetirement.psm1' })
-        $activeRetirementDeclarationIdentities = @($activeRetirementDeclarations | ForEach-Object { "$([string]$_.variable)|$([int]$_.count)|$(@($_.target_paths) -join ',')" })
         Assert-True ([string]$protocolClosure.resolution.mode -ceq 'exact' -and @($protocolClosure.resolution.fallback_reasons).Count -eq 0) 'Protocol foundation did not retain an exact dependency closure through authenticated retirement history.'
-        Assert-True (($activeRetirementDeclarationIdentities -join ';') -ceq 'ProvenanceModule|2|scripts/DevelopmentEnvelopeProvenance.psm1;amendmentModule|1|scripts/ActiveWriteScopeAmendment.psm1;module|2|scripts/DevelopmentEnvelopeProvenance.psm1') 'Protocol foundation did not consume the exact closed ActiveUnitRetirement module-object declarations.'
+        Assert-AffectedRetirementDeclarationLayout -Resolution $protocolClosure.resolution -Paths $protocolPaths
+        # Independently fixed old and extracted owner layouts, not registry-derived expectations.
+        $legacyDeclarations = @(
+            [pscustomobject]@{importer='scripts/ActiveUnitRetirement.psm1';variable='ProvenanceModule';count=2;target_paths=@('scripts/DevelopmentEnvelopeProvenance.psm1')},
+            [pscustomobject]@{importer='scripts/ActiveUnitRetirement.psm1';variable='module';count=2;target_paths=@('scripts/DevelopmentEnvelopeProvenance.psm1')},
+            [pscustomobject]@{importer='scripts/ActiveUnitRetirement.psm1';variable='amendmentModule';count=1;target_paths=@('scripts/ActiveWriteScopeAmendment.psm1')}
+        )
+        $sharedDeclarations = @($legacyDeclarations | Select-Object -First 2) + @(
+            [pscustomobject]@{importer='scripts/lib/MorphospacePlanningLifecycleProjection.psm1';variable='amendmentModule';count=1;target_paths=@('scripts/ActiveWriteScopeAmendment.psm1')},
+            [pscustomobject]@{importer='scripts/lib/MorphospacePlanningLifecycleProjection.psm1';variable='pendingExtensionModule';count=2;target_paths=@('scripts/ActiveDevelopmentEnvelopeExtension.psm1')}
+        )
+        foreach ($layout in @([pscustomobject]@{rows=$legacyDeclarations;paths=@('scripts/ActiveUnitRetirement.psm1')},[pscustomobject]@{rows=$sharedDeclarations;paths=@('scripts/ActiveUnitRetirement.psm1','scripts/lib/MorphospacePlanningLifecycleProjection.psm1')})) {
+            Assert-AffectedRetirementDeclarationLayout -Resolution ([pscustomobject]@{used_declarations=$layout.rows}) -Paths $layout.paths
+            foreach ($damage in @('missing','extra','count','target','mixed')) {
+                $rows = @($layout.rows | ConvertTo-Json -Depth 10 | ConvertFrom-Json -Depth 10)
+                switch ($damage) {
+                    'missing' { $rows = @($rows | Select-Object -Skip 1) }
+                    'extra' { $rows += $rows[0] }
+                    'count' { $rows[0].count = 3 }
+                    'target' { $rows[0].target_paths = @('scripts/ActiveWriteScopeAmendment.psm1') }
+                    'mixed' { $rows += $legacyDeclarations[2] }
+                }
+                $rejected = $false
+                try { Assert-AffectedRetirementDeclarationLayout -Resolution ([pscustomobject]@{used_declarations=$rows}) -Paths $layout.paths } catch { $rejected = $_.Exception.Message -like '*exact closed retirement/shared-helper*' }
+                Assert-True $rejected "Retirement declaration layout accepted '$damage' damage."
+            }
+        }
         [void]$timings.Add([pscustomobject][ordered]@{check_id='protocol-foundation-retirement-dependent';elapsed_ms=[long]$protocolClock.Elapsed.TotalMilliseconds;dependency_count=@($protocolClosure.manifest).Count})
 
         # Validating-candidate rematerialization retains its exact owner-module
