@@ -1050,6 +1050,129 @@ function Assert-AffectedRetirementDeclarationLayout([object]$Resolution,[string[
     [Array]::Sort($actual,[StringComparer]::Ordinal); [Array]::Sort($expected,[StringComparer]::Ordinal)
     Assert-True (($actual -join ';') -ceq ($expected -join ';')) 'Retirement-dependent consumer did not consume the exact closed retirement/shared-helper module-object declarations.'
 }
+# Independent catalogue: never derive the expected family from selector output.
+function Get-AffectedRetirementFixtureCatalogue {
+    @(
+        [pscustomobject]@{check_id='active-unit-retirement-amendment-recovery';scenario='AmendmentRecovery';optional=$false},
+        [pscustomobject]@{check_id='active-unit-retirement-nested-damage';scenario='NestedDamage';optional=$false},
+        [pscustomobject]@{check_id='active-unit-retirement-nested-map-guards';scenario='NestedMapGuards';optional=$false},
+        [pscustomobject]@{check_id='active-unit-retirement-nested-positive';scenario='NestedPositive';optional=$false},
+        [pscustomobject]@{check_id='active-unit-retirement-nested-recovery';scenario='NestedRecovery';optional=$false},
+        [pscustomobject]@{check_id='active-unit-retirement-nested-committed';scenario='NestedCommitted';optional=$true},
+        [pscustomobject]@{check_id='active-unit-retirement-planning-projection';scenario='PlanningProjection';optional=$true}
+    )
+}
+function Get-AffectedRetirementFixtureCapability([object]$Registry,[object]$CompiledRegistry) {
+    $markerId='planning-lifecycle-projection'
+    $helperPath='scripts/lib/MorphospacePlanningLifecycleProjection.psm1'
+    $markers=@($Registry.path_sets|Where-Object path_set_id -ceq $markerId)
+    if($markers.Count -gt 1){throw 'Retirement fixture catalogue rejected a duplicate registry capability.'}
+    $owners=@(foreach($id in $CompiledRegistry.path_sets.Keys) {
+        foreach($pattern in @($CompiledRegistry.path_sets[$id])) {
+            if($pattern.IsMatch($helperPath)){[string]$id;break}
+        }
+    })
+    if($markers.Count -eq 0) {
+        if($owners.Count){throw 'Retirement fixture catalogue rejected foreign helper ownership without its capability.'}
+        return $false
+    }
+    if((@($markers[0].patterns)-join [char]0) -cne $helperPath){throw 'Retirement fixture catalogue rejected a malformed registry capability.'}
+    if($owners.Count -ne 1 -or $owners[0] -cne $markerId){throw 'Retirement fixture catalogue rejected nonexact helper capability ownership.'}
+    return $true
+}
+function Get-AffectedRetirementFixtureChecks([object]$Registry,[object]$CompiledRegistry) {
+    $hasProjection=Get-AffectedRetirementFixtureCapability -Registry $Registry -CompiledRegistry $CompiledRegistry
+    $catalogue=@(Get-AffectedRetirementFixtureCatalogue)
+    $known=@($catalogue.check_id)+@('active-unit-retirement','active-unit-retirement-continuation')
+    foreach($check in @($Registry.checks)) {
+        if(([string]$check.check_id -clike 'active-unit-retirement-*' -or [string]$check.command_path -ceq 'scripts/Test-ActiveUnitRetirement.ps1') -and [string]$check.check_id -cnotin $known) { throw 'Retirement fixture catalogue rejected an unknown family member.' }
+    }
+    $optional=@($catalogue|Where-Object optional)
+    # The registry selects only the presence of independently typed capabilities.
+    $optionalPresent=@(foreach($entry in $optional){if(@($Registry.checks|Where-Object check_id -ceq $entry.check_id).Count){$entry}})
+    if($optionalPresent.Count -notin @(0,$optional.Count)) { throw 'Retirement fixture catalogue rejected an incomplete optional pair.' }
+    if(($hasProjection -and $optionalPresent.Count -ne $optional.Count) -or (-not $hasProjection -and $optionalPresent.Count -ne 0)){throw 'Retirement fixture catalogue rejected a registry capability/family mismatch.'}
+    $selected=@($catalogue|Where-Object {-not $_.optional})+@($optionalPresent)
+    foreach($entry in $selected) {
+        $rows=@($Registry.checks|Where-Object check_id -ceq $entry.check_id)
+        if($rows.Count -ne 1){throw 'Retirement fixture catalogue requires exactly one declared member.'}
+        $row=$rows[0]
+        if([string]$row.command_path -cne 'scripts/Test-ActiveUnitRetirement.ps1' -or (@($row.arguments)-join [char]0) -cne (@('-SelfTest','-Scenario',[string]$entry.scenario)-join [char]0) -or (@($row.platforms)-join [char]0) -cne 'windows' -or [string]$row.minimum_tier -cne 'standard' -or [string]$row.authority_class -cne 'integration' -or [string]$row.cache_policy -cne 'exact-host' -or [string]$row.external_state -cne 'none') { throw 'Retirement fixture catalogue rejected a malformed typed member.' }
+        foreach($scope in @('active-unit-retirement','active-unit-retirement-test','preparation-repository-scope')) {
+            if(@($row.trigger_path_sets) -cnotcontains $scope){throw 'Retirement fixture catalogue rejected a missing trigger obligation.'}
+        }
+        if(@($row.consume_path_sets) -cnotcontains 'preparation-repository-scope'){throw 'Retirement fixture catalogue rejected a missing preparation consumer obligation.'}
+        if($entry.optional -and (@($row.trigger_path_sets) -cnotcontains 'planning-lifecycle-projection' -or @($row.consume_path_sets) -cnotcontains 'planning-lifecycle-projection')) { throw 'Retirement fixture catalogue rejected a missing planning projection obligation.' }
+        if($entry.scenario -ceq 'PlanningProjection') {
+            foreach($scope in @('active-development-envelope-extension','development-envelope-preparation','development-envelope-provenance')) {
+                if(@($row.trigger_path_sets) -cnotcontains $scope -or @($row.consume_path_sets) -cnotcontains $scope) { throw 'Retirement fixture catalogue rejected a missing extension projection obligation.' }
+            }
+        }
+    }
+    [string[]]$ids=@($selected.check_id);[Array]::Sort($ids,[StringComparer]::Ordinal);$ids
+}
+function Invoke-AffectedRetirementFixtureCatalogueSelfTest([object]$Registry,[object]$CompiledRegistry) {
+    $catalogue=@(Get-AffectedRetirementFixtureCatalogue)
+    $optionalIds=@($catalogue|Where-Object optional|ForEach-Object check_id)
+    $markerId='planning-lifecycle-projection'
+    $helperPath='scripts/lib/MorphospacePlanningLifecycleProjection.psm1'
+    $original=$Registry|ConvertTo-Json -Depth 64|ConvertFrom-Json -Depth 64
+    $original.checks=@($original.checks|Where-Object {[string]$_.check_id -cnotin $optionalIds})
+    $original.path_sets=@($original.path_sets|Where-Object path_set_id -cne $markerId)
+    $originalOwnerSets=@{}
+    foreach($id in $CompiledRegistry.path_sets.Keys){if($id -cne $markerId){$originalOwnerSets[$id]=@($CompiledRegistry.path_sets[$id])}}
+    $originalCompiled=[pscustomobject]@{path_sets=$originalOwnerSets}
+    $expectedOriginal=@($catalogue|Where-Object {-not $_.optional}|ForEach-Object check_id|Sort-Object)
+    Assert-True ((@(Get-AffectedRetirementFixtureChecks -Registry $original -CompiledRegistry $originalCompiled)-join '|') -ceq ($expectedOriginal-join '|')) 'Retirement fixture catalogue rejected the original registered family.'
+    $expanded=$original|ConvertTo-Json -Depth 64|ConvertFrom-Json -Depth 64
+    $expanded.path_sets+=,[pscustomobject]@{path_set_id=$markerId;patterns=@($helperPath)}
+    $expandedOwnerSets=@{};foreach($id in $originalOwnerSets.Keys){$expandedOwnerSets[$id]=@($originalOwnerSets[$id])}
+    $expandedOwnerSets[$markerId]=@([regex]::new('^'+[regex]::Escape($helperPath)+'$',[Text.RegularExpressions.RegexOptions]::CultureInvariant))
+    $expandedCompiled=[pscustomobject]@{path_sets=$expandedOwnerSets}
+    $template=@($expanded.checks|Where-Object check_id -ceq $expectedOriginal[0])[0]
+    foreach($entry in @($catalogue|Where-Object optional)) {
+        $row=$template|ConvertTo-Json -Depth 64|ConvertFrom-Json -Depth 64
+        $row.check_id=$entry.check_id;$row.arguments=@('-SelfTest','-Scenario',$entry.scenario)
+        if(@($row.trigger_path_sets) -cnotcontains $markerId){$row.trigger_path_sets+=,$markerId}
+        if(@($row.consume_path_sets) -cnotcontains $markerId){$row.consume_path_sets+=,$markerId}
+        if($entry.scenario -ceq 'PlanningProjection') {
+            foreach($scope in @('active-development-envelope-extension','development-envelope-preparation','development-envelope-provenance')) {
+                if(@($row.trigger_path_sets) -cnotcontains $scope){$row.trigger_path_sets+=,$scope}
+                if(@($row.consume_path_sets) -cnotcontains $scope){$row.consume_path_sets+=,$scope}
+            }
+        }
+        $expanded.checks+=,$row
+    }
+    $expectedExpanded=@($catalogue.check_id|Sort-Object)
+    Assert-True ((@(Get-AffectedRetirementFixtureChecks -Registry $expanded -CompiledRegistry $expandedCompiled)-join '|') -ceq ($expectedExpanded-join '|')) 'Retirement fixture catalogue rejected the expanded registered family.'
+    foreach($damage in @('missing-both','missing-marker','malformed-marker','duplicate-marker','foreign-owner','foreign-without-marker','missing-owner','missing-first','missing-second','malformed-command','malformed-scenario','missing-trigger','missing-consumer','missing-projection','duplicate','unknown-family','missing-original')) {
+        $damaged=$expanded|ConvertTo-Json -Depth 64|ConvertFrom-Json -Depth 64
+        $damagedOwnerSets=@{};foreach($id in $expandedOwnerSets.Keys){$damagedOwnerSets[$id]=@($expandedOwnerSets[$id])}
+        $row=@($damaged.checks|Where-Object check_id -ceq $optionalIds[0])[0]
+        $pattern='Retirement fixture catalogue rejected a malformed typed member.'
+        switch($damage) {
+            'missing-both' {$damaged.checks=@($damaged.checks|Where-Object {$_.check_id -cnotin $optionalIds});$pattern='Retirement fixture catalogue rejected a registry capability/family mismatch.'}
+            'missing-marker' {$damaged.path_sets=@($damaged.path_sets|Where-Object path_set_id -cne $markerId);$damagedOwnerSets.Remove($markerId);$pattern='Retirement fixture catalogue rejected a registry capability/family mismatch.'}
+            'malformed-marker' {@($damaged.path_sets|Where-Object path_set_id -ceq $markerId)[0].patterns=@('scripts/lib/*.psm1');$damagedOwnerSets[$markerId]=@([regex]::new('^scripts/lib/[^/]*\.psm1$'));$pattern='Retirement fixture catalogue rejected a malformed registry capability.'}
+            'duplicate-marker' {$damaged.path_sets+=,[pscustomobject]@{path_set_id=$markerId;patterns=@($helperPath)};$pattern='Retirement fixture catalogue rejected a duplicate registry capability.'}
+            'foreign-owner' {$damaged.path_sets+=,[pscustomobject]@{path_set_id='foreign-owner';patterns=@('scripts/lib/**')};$damagedOwnerSets['foreign-owner']=@([regex]::new('^scripts/lib/.*$'));$pattern='Retirement fixture catalogue rejected nonexact helper capability ownership.'}
+            'foreign-without-marker' {$damaged.path_sets=@($damaged.path_sets|Where-Object path_set_id -cne $markerId);$damagedOwnerSets.Remove($markerId);$damaged.path_sets+=,[pscustomobject]@{path_set_id='foreign-owner';patterns=@('scripts/lib/**')};$damagedOwnerSets['foreign-owner']=@([regex]::new('^scripts/lib/.*$'));$pattern='Retirement fixture catalogue rejected foreign helper ownership without its capability.'}
+            'missing-owner' {$damagedOwnerSets.Remove($markerId);$pattern='Retirement fixture catalogue rejected nonexact helper capability ownership.'}
+            'missing-first' {$damaged.checks=@($damaged.checks|Where-Object check_id -cne $optionalIds[0]);$pattern='Retirement fixture catalogue rejected an incomplete optional pair.'}
+            'missing-second' {$damaged.checks=@($damaged.checks|Where-Object check_id -cne $optionalIds[1]);$pattern='Retirement fixture catalogue rejected an incomplete optional pair.'}
+            'malformed-command' {$row.command_path='scripts/Test-WorkEnvironment.ps1'}
+            'malformed-scenario' {$row.arguments=@('-SelfTest','-Scenario','Core')}
+            'missing-trigger' {$row.trigger_path_sets=@($row.trigger_path_sets|Where-Object {$_ -cne 'preparation-repository-scope'});$pattern='Retirement fixture catalogue rejected a missing trigger obligation.'}
+            'missing-consumer' {$row.consume_path_sets=@($row.consume_path_sets|Where-Object {$_ -cne 'preparation-repository-scope'});$pattern='Retirement fixture catalogue rejected a missing preparation consumer obligation.'}
+            'missing-projection' {$row.consume_path_sets=@($row.consume_path_sets|Where-Object {$_ -cne $markerId});$pattern='Retirement fixture catalogue rejected a missing planning projection obligation.'}
+            'duplicate' {$damaged.checks+=,($row|ConvertTo-Json -Depth 64|ConvertFrom-Json -Depth 64);$pattern='Retirement fixture catalogue requires exactly one declared member.'}
+            'unknown-family' {$row.check_id='active-unit-retirement-uncatalogued';$pattern='Retirement fixture catalogue rejected an unknown family member.'}
+            'missing-original' {$damaged.checks=@($damaged.checks|Where-Object check_id -cne $expectedOriginal[0]);$pattern='Retirement fixture catalogue requires exactly one declared member.'}
+        }
+        $damagedCompiled=[pscustomobject]@{path_sets=$damagedOwnerSets}
+        Assert-AffectedThrows { [void](Get-AffectedRetirementFixtureChecks -Registry $damaged -CompiledRegistry $damagedCompiled) } $pattern "Retirement fixture catalogue accepted '$damage'."
+    }
+}
 function Get-AffectedStaticBuiltinFacts([object]$SourceAst,[object[]]$Nodes=$null) {
     if ($null -eq $Nodes) { $Nodes = @($SourceAst.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -or $node -is [Management.Automation.Language.CommandAst] },$true)) }
     $shadowNames = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
@@ -5003,6 +5126,8 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     # single exact owner class.  Test each path independently so command-path
     # selection cannot conceal an unmapped or ambiguous shared-module route.
     $validationAuthorityClosureChecks=@('authority-record-readiness','authority-runner-fast','authority-runner-handoff','transition-ledger','trust-migration-authority','validation-authority-launcher','validation-execution-authority') + $workflowConsumerFixtureChecks
+    Invoke-AffectedRetirementFixtureCatalogueSelfTest -Registry $registry -CompiledRegistry $compiledRegistry
+    $retirementFixtureChecks=@(Get-AffectedRetirementFixtureChecks -Registry $registry -CompiledRegistry $compiledRegistry)
     $preparationRepositoryScopeConsumerChecks=@(
         'active-development-envelope-extension',
         'tooling-context','tooling-context-product-negative','tooling-context-provenance-negative',
@@ -5010,9 +5135,6 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
         'tooling-context-recovery-after-intent','tooling-context-recovery-after-projection',
         'tooling-legacy-reclassification-helper','tooling-legacy-reclassification-integration',
         'tooling-preparation-integration',
-        'active-unit-retirement-amendment-recovery','active-unit-retirement-nested-damage',
-        'active-unit-retirement-nested-map-guards','active-unit-retirement-nested-positive',
-        'active-unit-retirement-nested-recovery',
         'workflow-contracts','normal-validation-selector','active-write-scope-amendment',
         'completed-transition-semantic-correction','correct-active-project-repository-scope',
         'correct-active-read-only-dependencies','development-unit-admission',
@@ -5030,20 +5152,14 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
         'history-archive-checkpoint','work-unit-automation','project-workspace-scaffold',
         'development-envelope-preparation','preparation-repository-scope','public-boundary',
         'active-unit-retirement','active-unit-retirement-continuation','preparation-completion-timestamp-recovery'
-    )
+    ) + $retirementFixtureChecks
     $preparationRepositoryScopeSelectionChecks=@(
         $preparationRepositoryScopeConsumerChecks + @(
             'automation-receipt-v2-compatibility','historical-supersession-compatibility',
             'validation-only-write-scope-narrowing','workflow-action-registry'
         )
     )
-    $completeCandidateBatchChecks=@(
-        $developmentUnitAdmissionBatchChecks + @(
-            'active-unit-retirement-amendment-recovery','active-unit-retirement-nested-damage',
-            'active-unit-retirement-nested-map-guards','active-unit-retirement-nested-positive',
-            'active-unit-retirement-nested-recovery'
-        )
-    )
+    $completeCandidateBatchChecks=@($developmentUnitAdmissionBatchChecks + $retirementFixtureChecks)
     $preparationRepositoryScopeTriggers=@($registry.checks | Where-Object {
         @($_.trigger_path_sets) -ccontains 'preparation-repository-scope'
     } | ForEach-Object { [string]$_.check_id } | Sort-Object)

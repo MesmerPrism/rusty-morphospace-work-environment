@@ -477,7 +477,7 @@ function Test-MorphospaceBlockedSupersessionTransaction {
         $oldUnitId = $eventUnitId
         if ($eventId -cne "$oldUnitId$delimiter$targetUnitId" -or
             [string]$event.event_type -cne 'state-transition' -or
-            @($event.receipts).Count -ne 0) {
+            @($event.receipts).Count -notin @(0,1)) {
             throw "Supersession transaction '$eventId' does not carry the exact old-to-replacement event."
         }
         $binding = $intent.supersession
@@ -500,7 +500,7 @@ function Test-MorphospaceBlockedSupersessionTransaction {
             [string]$binding.pre_state.sha256 -cne [string]$intent.pre.state.sha256 -or
             [string]$binding.pre_state.document.project_id -cne $ProjectId -or
             [string]$binding.pre_state.document.current_unit -cne $oldUnitId -or
-            [string]$binding.pre_state.document.next_ready_unit -cne $targetUnitId -or
+            (@($event.receipts).Count -eq 0 -and [string]$binding.pre_state.document.next_ready_unit -cne $targetUnitId) -or
             [string]$binding.pre_state.document.last_event_id -cne [string]$intent.expected.event_tail_id) {
             throw "Supersession transaction '$eventId' has an invalid authenticated pre-state."
         }
@@ -520,10 +520,14 @@ function Test-MorphospaceBlockedSupersessionTransaction {
             [string]$intent.target.state.document.last_accepted_receipt -cne [string]$binding.pre_state.document.last_accepted_receipt) {
             throw "Supersession transaction '$eventId' target is not the exact non-accepting current replacement projection."
         }
-        $readyReplacement = $intent.target.unit.document | ConvertTo-Json -Depth 64 | ConvertFrom-Json
-        $readyReplacement.status = 'ready'
-        if ((Get-MorphospaceCanonicalJsonSha256 -Value $readyReplacement) -cne [string]$intent.pre.unit.sha256) {
-            throw "Supersession transaction '$eventId' pre-unit hash is not the exact ready form of its active replacement target."
+        if (@($event.receipts).Count -eq 1) {
+            Assert-MorphospaceReceiptBearingSupersession -WorkspaceRoot $WorkspaceRoot -Intent $intent -EventId $eventId -ProjectId $ProjectId -OldUnitId $oldUnitId -ReplacementUnitId $targetUnitId
+        } else {
+            $readyReplacement = $intent.target.unit.document | ConvertTo-Json -Depth 64 | ConvertFrom-Json
+            $readyReplacement.status = 'ready'
+            if ((Get-MorphospaceCanonicalJsonSha256 -Value $readyReplacement) -cne [string]$intent.pre.unit.sha256) {
+                throw "Supersession transaction '$eventId' pre-unit hash is not the exact ready form of its active replacement target."
+            }
         }
     } elseif ($isProjectionIntent) {
         if ($eventId.Contains('-superseded-by-', [StringComparison]::Ordinal)) {
@@ -657,7 +661,8 @@ function Test-MorphospaceBlockedSupersessionValidationReceipt {
         [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
         [Parameter(Mandatory = $true)][string]$RelativePath,
         [Parameter(Mandatory = $true)][string]$ProjectId,
-        [Parameter(Mandatory = $true)][string]$UnitId
+        [Parameter(Mandatory = $true)][string]$UnitId,
+        [ValidateSet('partial','fail','blocked')][string]$ExpectedResult = 'fail'
     )
     $file = Read-MorphospaceBlockedSupersessionJson -WorkspaceRoot $WorkspaceRoot -RelativePath $RelativePath -Context "blocked supersession validation receipt '$UnitId'"
     $schemaPath = Join-Path (Split-Path $PSScriptRoot -Parent) '..\schemas\validation-receipt.schema.json'
@@ -667,10 +672,275 @@ function Test-MorphospaceBlockedSupersessionValidationReceipt {
     if ([string]$receipt.schema -cne 'rusty.morphospace.workflow.validation_receipt.v1' -or
         [string]$receipt.project_id -cne $ProjectId -or
         [string]$receipt.unit_id -cne $UnitId -or
-        [string]$receipt.result -cne 'fail') {
-        throw "Validation receipt '$RelativePath' is not an exact same-unit fail result."
+        [string]$receipt.result -cne $ExpectedResult) {
+        throw "Validation receipt '$RelativePath' is not an exact same-unit $ExpectedResult result."
     }
     return $receipt
+}
+
+# Closed ordinary-producer conformance with no caller authenticity callback.
+function ConvertTo-MorphospaceTerminalSupersessionSourcePath {
+    param([string]$Path)
+    $value=$Path.Replace('\','/').Trim()
+    if(-not$value-or[IO.Path]::IsPathRooted($value)-or$value-cmatch'(^|/)\.\.(/|$)'-or$value-cmatch'(^|/)\.(/|$)'-or$value.Contains('//',[StringComparison]::Ordinal)){
+        throw 'Receipt-bearing supersession source scope has a noncanonical path.'
+    }
+    return $value
+}
+
+function Assert-MorphospaceTerminalSupersessionNoSourceWidening {
+    param([object]$OldUnit,[object]$ReplacementUnit)
+    $oldMap=@{}
+    foreach($repo in @($OldUnit.allowed_repositories)){
+        $id=[string]$repo.repo_id
+        if($oldMap.ContainsKey($id)){throw 'Receipt-bearing supersession source scope repeats an old repository.'}
+        $oldMap[$id]=@($repo.allowed_paths)
+    }
+    $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach($repo in @($ReplacementUnit.allowed_repositories)){
+        $id=[string]$repo.repo_id
+        if(-not$seen.Add($id)){throw 'Receipt-bearing supersession source scope repeats a replacement repository.'}
+        if(-not$oldMap.ContainsKey($id)){throw 'Receipt-bearing supersession source scope widens repository authority.'}
+        foreach($path in @($repo.allowed_paths)){
+            $candidate=ConvertTo-MorphospaceTerminalSupersessionSourcePath ([string]$path)
+            $contained=$false
+            foreach($oldPath in @($oldMap[$id])){
+                $allowed=(ConvertTo-MorphospaceTerminalSupersessionSourcePath ([string]$oldPath)).TrimEnd('/')
+                if($candidate.Equals($allowed,[StringComparison]::Ordinal)-or$candidate.StartsWith($allowed+'/',[StringComparison]::Ordinal)){$contained=$true;break}
+            }
+            if(-not$contained){throw 'Receipt-bearing supersession source scope widens path authority.'}
+        }
+    }
+}
+
+function Assert-MorphospaceReceiptBearingSupersession {
+    param([string]$WorkspaceRoot,[object]$Intent,[string]$EventId,[string]$ProjectId,[string]$OldUnitId,[string]$ReplacementUnitId)
+    if (@($Intent.event.receipts).Count -ne 1 -or @($Intent.artifacts).Count -ne 1 -or
+        [string]$Intent.event.receipts[0] -cne [string]$Intent.artifacts[0].path) {
+        throw 'Receipt-bearing supersession requires exactly one owned receipt artifact.'
+    }
+    $bytes=[Convert]::FromBase64String([string]$Intent.artifacts[0].bytes_base64)
+    if((Get-MorphospaceSha256Bytes $bytes)-cne[string]$Intent.artifacts[0].sha256){throw 'Receipt-bearing supersession artifact hash differs.'}
+    $receipt=ConvertFrom-MorphospaceProtocolJsonBytes $bytes
+    if([string]$Intent.artifacts[0].path-cnotmatch'^receipts/[a-z0-9][a-z0-9-]{1,127}\.json$'-or
+        [string]$receipt.audit_receipt.path-cnotmatch'^receipts/[a-z0-9][a-z0-9-]{1,127}\.json$'-or
+        [string]$Intent.event.summary-cne'Superseded the exact active unit with one reviewed proposed replacement while preserving the old unit and all acceptance evidence.'){
+        throw 'Receipt-bearing supersession requires exact owner namespace and event semantics.'
+    }
+    if([string]$receipt.schema-cne'rusty.morphospace.workflow.work_unit_automation_receipt.v2'-or
+        [string]$receipt.action-cne'SupersedeActive'-or$receipt.executed-ne$true-or
+        [string]$receipt.project_id-cne$ProjectId-or[string]$receipt.unit_id-cne$ReplacementUnitId-or
+        [string]$receipt.event_id-cne$EventId){throw 'Receipt-bearing supersession requires exact executed SupersedeActive output.'}
+    $requestFile=Read-MorphospaceBlockedSupersessionJson -WorkspaceRoot $WorkspaceRoot -RelativePath ([string]$receipt.audit_receipt.path) -Context 'SupersedeActive archived request'
+    if([string]$receipt.audit_receipt.sha256-cne[string]$requestFile.sha256){throw 'Receipt-bearing supersession request raw binding differs.'}
+    $ownerRoot=Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+    if(-not(Test-Json -Json ([Text.UTF8Encoding]::new($false,$true).GetString($requestFile.bytes)) -SchemaFile (Join-Path $ownerRoot 'schemas/active-unit-supersession-v1.schema.json'))){throw 'Receipt-bearing supersession request schema differs.'}
+    $request=$requestFile.document
+    if([string]$request.supersession_id-cne$EventId-or[string]$request.project_id-cne$ProjectId-or
+        [string]$request.old_unit.status-cne'active'-or[string]$request.replacement_unit.status-cne'proposed'-or
+        [string]$request.old_unit.unit_id-cne$OldUnitId-or[string]$request.replacement_unit.unit_id-cne$ReplacementUnitId-or
+        [string]$request.old_unit.path-cne"iteration-units/$OldUnitId.json"-or
+        [string]$request.replacement_unit.path-cne"iteration-units/$ReplacementUnitId.json"){
+        throw 'Receipt-bearing supersession request endpoints differ.'
+    }
+    $oldFile=Read-MorphospaceBlockedSupersessionJson -WorkspaceRoot $WorkspaceRoot -RelativePath ([string]$request.old_unit.path) -Context 'SupersedeActive immutable predecessor'
+    if([string]$oldFile.sha256-cne[string]$request.old_unit.raw_sha256-or
+        (Get-MorphospaceCanonicalJsonSha256 $oldFile.document)-cne[string]$request.old_unit.canonical_sha256-or
+        [string]$oldFile.document.status-cne'active') {throw 'Receipt-bearing supersession immutable predecessor differs.'}
+    if([string]$Intent.supersession.pre_state.document.current_unit-cne$OldUnitId-or
+        ($null-ne$Intent.supersession.pre_state.document.next_ready_unit-and
+         [string]$Intent.supersession.pre_state.document.next_ready_unit-cne$ReplacementUnitId)){
+        throw 'Receipt-bearing supersession predecessor captain/readiness differs.'
+    }
+    # Historical producer conformance; no producer import or live re-observation.
+    if([string]$request.expected.state_canonical_sha256-cne[string]$Intent.pre.state.sha256-or
+        [string]$request.replacement_unit.canonical_sha256-cne[string]$Intent.pre.unit.sha256-or
+        [string]$request.old_unit.canonical_sha256-cne[string]$Intent.supersession.old_unit.sha256-or
+        [string]$request.expected.events_sha256-cne[string]$Intent.expected.events_sha256-or
+        [int64]$request.expected.events_length-ne[int64]$Intent.expected.events_length-or
+        [string]$request.expected.event_tail_id-cne[string]$Intent.expected.event_tail_id){
+        throw 'Receipt-bearing supersession preimage differs from the reviewed request.'
+    }
+    $preReplacement=$Intent.target.unit.document|ConvertTo-Json -Depth 100|ConvertFrom-Json -DateKind String
+    $preReplacement.status='proposed'
+    if((Get-MorphospaceCanonicalJsonSha256 $preReplacement)-cne[string]$request.replacement_unit.canonical_sha256){
+        throw 'Receipt-bearing supersession target is not the exact proposed-to-active projection.'
+    }
+    Assert-MorphospaceTerminalSupersessionNoSourceWidening $oldFile.document $preReplacement
+    $targetState=$Intent.supersession.pre_state.document|ConvertTo-Json -Depth 100|ConvertFrom-Json -DateKind String
+    $targetState.current_unit=$ReplacementUnitId;$targetState.next_ready_unit=$null;$targetState.last_event_id=$EventId
+    if((Get-MorphospaceCanonicalJsonSha256 $targetState)-cne[string]$Intent.target.state.sha256){throw 'Receipt-bearing supersession target state differs from its exact owner transform.'}
+    $expectedReceipt=[pscustomobject][ordered]@{
+        schema='rusty.morphospace.workflow.work_unit_automation_receipt.v2'
+        project_id=$ProjectId;unit_id=$ReplacementUnitId;action='SupersedeActive'
+        timestamp=[string]$Intent.event.timestamp;executed=$true
+        transition='active-superseded-by-proposed-to-active';status_before='proposed';status_after='active'
+        current_unit_before=$OldUnitId;current_unit_after=$ReplacementUnitId
+        preservation=[pscustomobject][ordered]@{git_mutation_performed=$false;device_mutation_performed=$false;remote_mutation_performed=$false}
+        audit_receipt=[pscustomobject][ordered]@{path=[string]$receipt.audit_receipt.path;sha256=[string]$requestFile.sha256}
+        event_id=$EventId
+    }
+    if((Get-MorphospaceCanonicalJsonSha256 $receipt)-cne(Get-MorphospaceCanonicalJsonSha256 $expectedReceipt)){throw 'Receipt-bearing supersession output differs from its exact producer result.'}
+}
+
+function Assert-MorphospaceTerminalOrdinaryState {
+    param([string]$WorkspaceRoot,[object]$ExpectedState,[object]$TargetState)
+    # These slots are observations refreshed by ordinary owner actions; neither supplies
+    # lifecycle/source/validation authority. The entire target remains ledger/hash-bound.
+    $schemaName = switch ([string]$TargetState.schema) {
+        'rusty.morphospace.workflow.workspace_state.v1' { 'workspace-state.schema.json' }
+        'rusty.morphospace.workflow.workspace_state.v2' { 'workspace-state-v2.schema.json' }
+        default { throw 'Pre-validation ordinary state uses an unsupported schema.' }
+    }
+    $ownerRoot=Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+    if(-not(Test-Json -Json ($TargetState|ConvertTo-Json -Depth 100) -SchemaFile (Join-Path $ownerRoot "schemas/$schemaName"))){throw 'Pre-validation ordinary state schema differs.'}
+    $projectFile=Read-MorphospaceBlockedSupersessionJson -WorkspaceRoot $WorkspaceRoot -RelativePath 'project.spec.json' -Context 'ordinary state observation repository identities'
+    if([string]$projectFile.document.project_id-cne[string]$TargetState.project_id){throw 'Pre-validation observation project identity differs.'}
+    $declared=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach($repo in @($projectFile.document.repositories)){[void]$declared.Add([string]$repo.repo_id)}
+    $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach($id in @($TargetState.dirty_repositories)){
+        if(-not$declared.Contains([string]$id)-or-not$seen.Add([string]$id)){throw 'Pre-validation dirty observation has an undeclared or repeated repository.'}
+    }
+    if([string]$TargetState.schema-ceq'rusty.morphospace.workflow.workspace_state.v2'){
+        $seen.Clear()
+        foreach($head in @($TargetState.repository_heads)){
+            if(-not$declared.Contains([string]$head.repo_id)-or-not$seen.Add([string]$head.repo_id)){throw 'Pre-validation head observation has an undeclared or repeated repository.'}
+        }
+    }
+    $expected=$ExpectedState|ConvertTo-Json -Depth 100|ConvertFrom-Json -DateKind String
+    $expected.dirty_repositories=@($TargetState.dirty_repositories)
+    if([string]$expected.schema-ceq'rusty.morphospace.workflow.workspace_state.v2'){$expected.repository_heads=@($TargetState.repository_heads)}
+    if((Get-MorphospaceCanonicalJsonSha256 $expected)-cne(Get-MorphospaceCanonicalJsonSha256 $TargetState)){
+        throw 'Pre-validation ordinary transition changes authority-bearing state beyond its producer transform.'
+    }
+}
+
+function Assert-MorphospaceTerminalInstructionCompletion {
+    param([string]$WorkspaceRoot,[object]$BeforeUnit,[object]$BeforeState,[object]$Transition,[object]$Event)
+    if([string]$Transition.intent.schema-cne'rusty.morphospace.workflow.transition_ledger_intent.v1'-or
+        @($Transition.intent.artifacts).Count-ne1-or@($Event.receipts).Count-ne1-or
+        [string]$Event.receipts[0]-cne[string]$Transition.intent.artifacts[0].path){
+        throw 'Pre-validation continuation requires exact ordinary instruction completion.'
+    }
+    $after=$Transition.unit_document
+    if((Get-MorphospaceCanonicalJsonSha256 $BeforeUnit.instruction_surfaces)-ceq(Get-MorphospaceCanonicalJsonSha256 $after.instruction_surfaces)-or
+        [string]$BeforeUnit.status-cne'active'-or[string]$after.status-cne'active'){
+        throw 'Pre-validation instruction completion must complete actual planned surfaces without status change.'
+    }
+    $unit=$BeforeUnit|ConvertTo-Json -Depth 100|ConvertFrom-Json -DateKind String
+    $planned=@($unit.instruction_surfaces|Where-Object {[string]$_.status-ceq'planned'})
+    if($planned.Count-eq0){throw 'Pre-validation instruction completion has no planned surface.'}
+    foreach($surface in @($unit.instruction_surfaces)){
+        if([string]$surface.status-ceq'planned'){$surface.status='complete'}
+        elseif([string]$surface.status-cne'complete'){throw 'Pre-validation instruction completion has an unsupported surface status.'}
+    }
+    if((Get-MorphospaceCanonicalJsonSha256 $unit)-cne[string]$Transition.unit_sha256){throw 'Pre-validation instruction completion changes retained authority/objective or surface identities.'}
+    $artifact=$Transition.intent.artifacts[0]
+    $receipt=ConvertFrom-MorphospaceProtocolJsonBytes ([Convert]::FromBase64String([string]$artifact.bytes_base64))
+    $ownerRoot=Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+    if(-not(Test-Json -Json ($receipt|ConvertTo-Json -Depth 100) -SchemaFile (Join-Path $ownerRoot 'schemas/work-unit-automation-receipt.schema.json') -ErrorAction SilentlyContinue)){throw 'Pre-validation instruction-completion receipt schema differs.'}
+    $binding=$receipt.instruction_surface_completion
+    if([string]$receipt.action-cne'CompleteInstructionSurfaces'-or$receipt.executed-ne$true-or
+        [string]$receipt.transition-cne'planned-instruction-surfaces-to-complete'-or
+        [string]$receipt.unit_id-cne[string]$Event.unit_id-or[string]$receipt.project_id-cne[string]$Event.project_id-or
+        [string]$receipt.event_id-cne[string]$Event.event_id-or[string]$Event.event_id-cne"$([string]$binding.completion_id)-recorded"-or
+        [string]$Event.event_type-cne'state-transition'-or
+        [string]$Event.summary-cne'Completed the exact declared instruction-surface set after stable content observation without executing validation commands.'-or
+        $binding.all_planned_surfaces_completed-ne$true-or$binding.surface_files_observed_stable-ne$true-or$binding.validation_commands_executed-ne$false-or
+        [string]$binding.expected_unit_sha256-cne[string]$Transition.intent.pre.unit.sha256-or[string]$binding.resulting_unit_sha256-cne[string]$Transition.intent.target.unit.sha256){
+        throw 'Pre-validation instruction-completion receipt is detached.'
+    }
+    if([string]$receipt.timestamp-cne[string]$Event.timestamp-or
+        [string]$receipt.status_before-cne[string]$BeforeUnit.status-or[string]$receipt.status_after-cne[string]$after.status-or
+        (Get-MorphospaceCanonicalJsonSha256 $receipt.current_unit_before)-cne(Get-MorphospaceCanonicalJsonSha256 $BeforeState.current_unit)-or
+        (Get-MorphospaceCanonicalJsonSha256 $receipt.current_unit_after)-cne(Get-MorphospaceCanonicalJsonSha256 $Transition.state_document.current_unit)-or
+        $receipt.preservation.git_mutation_performed-ne$false-or$receipt.preservation.device_mutation_performed-ne$false-or$receipt.preservation.force_push_allowed-ne$false){
+        throw 'Pre-validation instruction-completion receipt transition fields differ.'
+    }
+    $rows=@($binding.surfaces)
+    if($rows.Count-ne$planned.Count){throw 'Pre-validation instruction-completion surface count differs from the planned set.'}
+    $ids=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $paths=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $previousId=$null
+    foreach($row in $rows){
+        $matches=@($planned|Where-Object {([string]$_.path).Replace('\','/')-ceq[string]$row.declared_path})
+        if($matches.Count-ne1-or-not$paths.Add([string]$row.declared_path)){throw 'Pre-validation instruction-completion surface declaration differs from the planned set.'}
+        $surface=$matches[0]
+        $skillId=if($surface.PSObject.Properties.Name-contains'skill_id'){$surface.skill_id}else{$null}
+        $identity=[pscustomobject][ordered]@{
+            surface_kind=[string]$surface.surface_kind;declared_path=([string]$surface.path).Replace('\','/')
+            repo_id=[string]$row.repo_id;relative_path=[string]$row.relative_path
+            owner=[string]$surface.owner;action=[string]$surface.action;validation=[string]$surface.validation;skill_id=$skillId
+        }
+        foreach($name in @('surface_kind','declared_path','owner','action','validation','skill_id')){
+            if((Get-MorphospaceCanonicalJsonSha256 ([pscustomobject][ordered]@{value=$row.$name}))-cne(Get-MorphospaceCanonicalJsonSha256 ([pscustomobject][ordered]@{value=$identity.$name}))){throw 'Pre-validation instruction-completion surface identity differs from the planned declaration.'}
+        }
+        if([string]$row.surface_id-cne(Get-MorphospaceCanonicalJsonSha256 $identity)-or-not$ids.Add([string]$row.surface_id)-or
+            ($null-ne$previousId-and[StringComparer]::Ordinal.Compare([string]$previousId,[string]$row.surface_id)-ge0)){
+            throw 'Pre-validation instruction-completion surface IDs are not exact, unique and sorted.'
+        }
+        $previousId=[string]$row.surface_id
+        if([string]$row.previous_status-cne'planned'-or[string]$row.resulting_status-cne'complete'){throw 'Pre-validation instruction-completion surface status differs.'}
+        # Routing/content remain historical observations in the same bound artifact.
+        # No current repository-map or live instruction file is re-observed here.
+        $observed=@($receipt.claim_preflight.instruction_surfaces|Where-Object {[string]$_.path-ceq[string]$row.declared_path})
+        if($observed.Count-ne1-or[string]$observed[0].repo_id-cne[string]$row.repo_id-or
+            [string]$observed[0].relative_path-cne[string]$row.relative_path-or[string]$observed[0].sha256-cne[string]$row.sha256){
+            throw 'Pre-validation instruction-completion retained observation differs.'
+        }
+    }
+    $observation=[pscustomobject][ordered]@{surfaces=$rows}
+    if([string]$binding.observation_sha256-cne(Get-MorphospaceCanonicalJsonSha256 $observation)){throw 'Pre-validation instruction-completion observation hash differs.'}
+    $expected=$BeforeState|ConvertTo-Json -Depth 100|ConvertFrom-Json -DateKind String
+    $expected.last_event_id=[string]$Event.event_id
+    Assert-MorphospaceTerminalOrdinaryState $WorkspaceRoot $expected $Transition.state_document
+}
+
+function Assert-MorphospaceTerminalBeginValidation {
+    param([string]$WorkspaceRoot,[object]$BeforeUnit,[object]$BeforeState,[object]$Transition,[object]$Event)
+    $id='{0}-validating-{1:D4}'-f[string]$BeforeUnit.unit_id,[int]$Event.sequence
+    if([string]$Transition.intent.schema-cne'rusty.morphospace.workflow.transition_ledger_intent.v1'-or
+        @($Transition.intent.artifacts).Count-ne0-or@($Event.receipts).Count-ne0-or
+        [string]$Event.event_id-cne$id-or[string]$Event.event_type-cne'state-transition'-or
+        [string]$Event.summary-cne'Entered validation with a deterministic command, instruction, graph, and device-impact plan.'-or
+        [string]$BeforeUnit.status-cne'active'-or[string]$BeforeState.current_unit-cne[string]$BeforeUnit.unit_id){
+        throw 'Pre-validation cycle requires exact ordinary BeginValidation.'
+    }
+    $unit=$BeforeUnit|ConvertTo-Json -Depth 100|ConvertFrom-Json -DateKind String
+    $unit.status='validating'
+    if((Get-MorphospaceCanonicalJsonSha256 $unit)-cne[string]$Transition.unit_sha256){throw 'Pre-validation BeginValidation changes unit contract beyond status.'}
+    $state=$BeforeState|ConvertTo-Json -Depth 100|ConvertFrom-Json -DateKind String
+    $state.last_event_id=[string]$Event.event_id
+    Assert-MorphospaceTerminalOrdinaryState $WorkspaceRoot $state $Transition.state_document
+}
+
+function Assert-MorphospaceTerminalReturnToActive {
+    param([string]$WorkspaceRoot,[object]$BeforeUnit,[object]$BeforeState,[object]$Transition,[object]$Event)
+    if([string]$Transition.intent.schema-cne'rusty.morphospace.workflow.transition_ledger_intent.v1'-or
+        @($Transition.intent.artifacts).Count-ne0-or@($Event.receipts).Count-ne1-or
+        [string]$Event.event_type-cne'validation'-or
+        [string]$Event.summary-cne'Retained a non-passing validation attempt and returned the same feature unit to active for an in-scope correction.'-or
+        [string]$BeforeUnit.status-cne'validating'-or[string]$BeforeState.current_unit-cne[string]$BeforeUnit.unit_id-or
+        (($BeforeUnit.PSObject.Properties.Name-contains'work_mode')-and[string]$BeforeUnit.work_mode-cne'feature')-or
+        (($BeforeUnit.PSObject.Properties.Name-contains'tags')-and@($BeforeUnit.tags|Where-Object {[string]$_-ceq'receipt-security'}).Count-ne0)){
+        throw 'Pre-validation cycle requires exact ordinary non-passing ReturnToActive.'
+    }
+    $checkpoint=$Transition.state_document.validation_checkpoint
+    $result=[string]$checkpoint.result
+    if($result-cnotin@('partial','fail','blocked')){throw 'Pre-validation ReturnToActive requires a non-passing checkpoint.'}
+    $id='{0}-validation-{1}-return-{2:D4}'-f[string]$BeforeUnit.unit_id,$result,[int]$Event.sequence
+    $receiptPath=ConvertTo-MorphospaceProtocolRelativePath ([string]$Event.receipts[0])
+    if([string]$Event.event_id-cne$id-or[string]$Event.receipts[0]-cne$receiptPath-or[string]$checkpoint.receipt-cne$receiptPath){throw 'Pre-validation ReturnToActive event/checkpoint differs.'}
+    $receipt=Test-MorphospaceBlockedSupersessionValidationReceipt -WorkspaceRoot $WorkspaceRoot -RelativePath $receiptPath -ProjectId ([string]$BeforeUnit.project_id) -UnitId ([string]$BeforeUnit.unit_id) -ExpectedResult $result
+    if([string]$checkpoint.tier-cne[string]$receipt.tier){throw 'Pre-validation ReturnToActive receipt tier differs.'}
+    $unit=$BeforeUnit|ConvertTo-Json -Depth 100|ConvertFrom-Json -DateKind String
+    $unit.status='active'
+    if((Get-MorphospaceCanonicalJsonSha256 $unit)-cne[string]$Transition.unit_sha256){throw 'Pre-validation ReturnToActive changes unit contract beyond status.'}
+    $state=$BeforeState|ConvertTo-Json -Depth 100|ConvertFrom-Json -DateKind String
+    $state.last_event_id=[string]$Event.event_id
+    $state.validation_checkpoint=[pscustomobject][ordered]@{tier=[string]$receipt.tier;receipt=$receiptPath;result=$result}
+    Assert-MorphospaceTerminalOrdinaryState $WorkspaceRoot $state $Transition.state_document
 }
 
 function Test-MorphospaceBlockedSupersessionTerminalValidation {
@@ -739,8 +1009,23 @@ function Test-MorphospaceBlockedSupersessionTerminalValidation {
         [int]$failEvent.sequence -ne ([int]$beginEvent.sequence + 1)) {
         throw "Replacement '$ReplacementUnitId' does not have the exact BeginValidation-to-fail event pair."
     }
-    if ([int]$beginRow.ordinal -ne ([int]$supersessionRow.ordinal + 1)) {
-        throw "BeginValidation is not the immediate owner transition after the authenticated supersession edge."
+    $prior = $supersession
+    for ($ordinal = [int]$supersessionRow.ordinal + 1; $ordinal -lt [int]$beginRow.ordinal; $ordinal++) {
+        $row = $ledger.rows[$ordinal]
+        $event = $row.document
+        if ([string]$event.project_id -cne $ProjectId -or [string]$event.unit_id -cne $ReplacementUnitId) {
+            throw 'Pre-validation continuation crosses the replacement project/unit.'
+        }
+        $step = Test-MorphospaceBlockedSupersessionTransaction -WorkspaceRoot $workspace -Ledger $ledger -Row $row -ProjectId $ProjectId -ExpectedTargetUnitId $ReplacementUnitId -ExpectedPreStateSha256 $prior.state_sha256 -ExpectedPreUnitSha256 $prior.unit_sha256
+        $beginId = '{0}-validating-{1:D4}' -f $ReplacementUnitId, [int]$event.sequence
+        if ([string]$event.event_id -ceq $beginId) {
+            Assert-MorphospaceTerminalBeginValidation $workspace $prior.unit_document $prior.state_document $step $event
+        } elseif ([string]$event.event_type -ceq 'validation') {
+            Assert-MorphospaceTerminalReturnToActive $workspace $prior.unit_document $prior.state_document $step $event
+        } else {
+            Assert-MorphospaceTerminalInstructionCompletion $workspace $prior.unit_document $prior.state_document $step $event
+        }
+        $prior = $step
     }
 
     $begin = Test-MorphospaceBlockedSupersessionTransaction `
@@ -748,18 +1033,9 @@ function Test-MorphospaceBlockedSupersessionTerminalValidation {
         -Ledger $ledger `
         -Row $beginRow `
         -ProjectId $ProjectId `
-        -ExpectedPreStateSha256 $supersession.state_sha256 `
-        -ExpectedPreUnitSha256 $supersession.unit_sha256
-    if ([string]$begin.unit_document.status -cne 'validating' -or
-        [string]$begin.state_document.current_unit -cne $ReplacementUnitId -or
-        [string]$begin.state_document.last_event_id -cne [string]$beginEvent.event_id) {
-        throw "BeginValidation target does not project the replacement as the current validating unit."
-    }
-    $beginPreUnit = $begin.unit_document | ConvertTo-Json -Depth 64 | ConvertFrom-Json
-    $beginPreUnit.status = 'active'
-    if ((Get-MorphospaceCanonicalJsonSha256 -Value $beginPreUnit) -cne [string]$begin.intent.pre.unit.sha256) {
-        throw "BeginValidation pre-unit hash is not the exact active form of its validating target."
-    }
+        -ExpectedPreStateSha256 $prior.state_sha256 `
+        -ExpectedPreUnitSha256 $prior.unit_sha256
+    Assert-MorphospaceTerminalBeginValidation $workspace $prior.unit_document $prior.state_document $begin $beginEvent
 
     $fail = Test-MorphospaceBlockedSupersessionTransaction -WorkspaceRoot $workspace -Ledger $ledger -Row $failRow -ProjectId $ProjectId -ExpectedPreStateSha256 $begin.state_sha256 -ExpectedPreUnitSha256 $begin.unit_sha256
     if ([string]$fail.intent.expected.event_tail_id -cne [string]$beginEvent.event_id) {
