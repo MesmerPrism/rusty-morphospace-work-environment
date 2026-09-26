@@ -110,3 +110,47 @@ Git mutation, build, device action, schema-revision adoption, or changed
 objective authority. Later Amendment, Freeze, retirement, current-work reading,
 and continuation must authenticate the effective extension chain rather than
 comparing against the original preparation endpoint alone.
+
+## Read-only planning source and lifecycle projection
+
+A read-only planning row keeps its original source commit and tree. The active
+extension also retains its baseline, parent and effective pins byte-for-byte;
+a live planning HEAD is a local observation, never a replacement source pin.
+An unchanged external planning dependency continues to use the exact clean
+commit/tree guard. Projection applies only when the strictly nested owner has
+advanced or has authenticated own-transition dirt. For an ordinary
+owner-prepared admission, the strictly nested planning workspace
+may advance through authenticated Prepare, Admit, Ready, Claim and same-unit
+Amend, tooling upgrade, active-extension or instruction-completion transactions.
+Instruction completion uses the fixed owner predicate for the exact nonempty
+planned-to-complete surface set, one authenticated receipt and unchanged
+remaining unit/state authority; arbitrary recorded events are rejected. The shared planning
+projection verifier authenticates preparation semantics, exact admission,
+source/map/dependency bindings, transaction completions, artifacts and tooling
+proofs before deriving the allowed lifecycle paths. Every intermediate commit
+must be linear and change only those paths. Declared read-only source bytes,
+tree entries and paths remain exact; changing and reverting them is rejected.
+Declaring mutable lifecycle controls as immutable readonly content is contradictory
+and rejected; lifecycle authentication never exempts declared readonly bytes.
+
+Historical extension verification uses its captured pre-extension ledger bytes,
+length and tail. Parsing and recursive owner verification stay inside that
+prefix, which must precede the consumer event. Later authenticated extensions
+do not rewrite an earlier proof. Recovery and post-Freeze checks separate that
+prefix from the exact current intent-owned projections, artifacts and transaction
+files: those current dirty files cannot authorize prior committed paths. Staged,
+renamed, deleted, conflicted or unrelated dirt remains invalid. The ordinary
+read-only planning route does not introduce historical reclassification or a
+new source-lock schema. The projected route derives the effective dependency row from authenticated
+terminal-prefix owner authority. Additive read-only paths use the fixed extension
+producer to prove the exact request, map and derived target before intent capture.
+Every admitted, effective and pending path must exist unchanged at the original
+source pin, in live bytes and in every intermediate commit. Added read-only paths
+never expand the allowed lifecycle commit paths. A committed Freeze is accepted only when its complete own
+projection is authenticated at that commit; ordinary BeginValidation consumes
+that Freeze before changing state. Existing retirement admission compatibility remains
+under its prior caller-authenticated route.
+
+Existing authenticated recovered preparation Freeze consumers retain their exact
+planning commit/tree route and existing own-transition dirt checks. They gain no
+planning HEAD/tree drift exception and need no ordinary preparation transaction.

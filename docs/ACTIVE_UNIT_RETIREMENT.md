@@ -115,3 +115,9 @@ of `Test-ActiveUnitRetirement.ps1 -SelfTest` still runs every scenario.
 Historical auditing remains separate. Later continuation must authenticate
 retirement after subsequent owner events without retrofitting new instruction
 requirements onto the retired unit.
+
+## Read-only planning source and lifecycle projection
+
+Retirement uses the shared [planning lifecycle projection contract](ACTIVE_DEVELOPMENT_ENVELOPE_EXTENSION.md#read-only-planning-source-and-lifecycle-projection). Its existing caller-authenticated admission route and replacement-unit compatibility remain intact; extraction adds no ordinary-only preparation prerequisite to retirement.
+
+The planning source commit/tree stays immutable. Only exact authenticated owner lifecycle projections can explain a nested planning descendant or current own-transition dirt. Declared immutable content, including legitimate additive readonly leaves derived from owner authority, gains no lifecycle-content exception.

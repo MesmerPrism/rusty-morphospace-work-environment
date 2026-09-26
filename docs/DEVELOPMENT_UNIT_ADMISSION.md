@@ -199,3 +199,9 @@ Admission consumes the canonical preparation result once per exact unit input.
 Exact replay and owner recovery revalidate that result; stale or conflicting
 evidence stops for independent rescue. A successful admission resumes the
 ordinary agent lifecycle rather than creating a preparation-only route.
+
+## Read-only planning source and lifecycle projection
+
+Freeze uses the shared [planning lifecycle projection contract](ACTIVE_DEVELOPMENT_ENVELOPE_EXTENSION.md#read-only-planning-source-and-lifecycle-projection). Ordinary admitted planning dependencies keep their original source pins while exact authenticated owner continuations establish the effective readonly scope. Committed Freeze replay authenticates its complete own control projection separately from the pre-Freeze owner prefix; BeginValidation consumes that verified Freeze before changing state.
+
+Existing authenticated recovered preparation consumers retain their exact planning HEAD/tree route and own-Freeze dirt checks. They gain no planning HEAD/tree drift exception and require no ordinary preparation transaction. Unchanged external planning dependencies retain the exact clean commit/tree guard.
