@@ -3,6 +3,7 @@ $ErrorActionPreference='Stop'
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1')
 $script:CandidateLedgerModule=Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1') -PassThru
 Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceValidationReceipt.psm1')
+$script:CandidateValidationPlanningModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceValidationPlanning.psm1') -PassThru
 Import-Module (Join-Path $PSScriptRoot 'DevelopmentEnvelopeProvenance.psm1')
 Import-Module (Join-Path $PSScriptRoot 'InheritedCandidateMaterialization.psm1')
 Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceSourceCompositionIdentity.psm1')
@@ -210,7 +211,7 @@ function Assert-FrozenContinuationEqual {
     param([object]$Expected,[object]$Actual,[string]$Context)
     if((Get-MorphospaceCanonicalJsonSha256 ([pscustomobject]@{value=$Expected}))-cne(Get-MorphospaceCanonicalJsonSha256 ([pscustomobject]@{value=$Actual}))){throw "Frozen validation continuation $Context is detached."}
 }
-function Get-FrozenContinuationAutomationModule {
+function Get-FrozenContinuationObservationModule {
     param([string]$Workspace,[object]$Unit)
     $root=Split-Path $PSScriptRoot -Parent
     if($Unit.PSObject.Properties.Name-ccontains'tooling_context'){
@@ -222,20 +223,43 @@ function Get-FrozenContinuationAutomationModule {
         $resolver=& $toolingModule { param($parameters) Read-MorphospaceToolingContextResolver @parameters } @{WorkspaceRoot=$Workspace;Context=$context}
         $root=[string]$resolver.executor_root
     }
-    $automationModule=Import-Module (Join-Path $root 'scripts/WorkUnitAutomation.psm1') -PassThru
-    if($Unit.PSObject.Properties.Name-ccontains'tooling_context'){& $toolingModule { param($parameters) Assert-MorphospaceToolingContextLoadedOwnerModule @parameters } @{Context=$context;ExecutorRoot=$root;OwnerModule=$automationModule}|Out-Null}
-    return $automationModule
+    # Parse authenticated producer source; never execute arbitrary historical code.
+    $scriptsRoot=Join-Path $root 'scripts'
+    $tokens=$null;$errors=$null
+    $producerAst=[Management.Automation.Language.Parser]::ParseFile((Join-Path $scriptsRoot 'WorkUnitAutomation.psm1'),[ref]$tokens,[ref]$errors)
+    if(@($errors).Count){throw 'Frozen continuation validation matrix producer is not parseable.'}
+    $matrixFunctions=@($producerAst.FindAll({param($node) $node-is[Management.Automation.Language.FunctionDefinitionAst]-and$node.Name-ceq'New-MorphospaceValidationMatrix'},$true))
+    if($matrixFunctions.Count-eq0){
+        $imports=@($producerAst.FindAll({param($node) $node-is[Management.Automation.Language.CommandAst]-and$node.GetCommandName()-ceq'Import-Module'-and$node.Extent.Text.Replace("`r`n","`n")-ceq'Import-Module (Join-Path $PSScriptRoot ''lib/MorphospaceValidationPlanning.psm1'')'},$true))
+        if($imports.Count-ne1){throw 'Frozen continuation extracted validation matrix import is detached.'}
+        $matrixPath=Join-Path $scriptsRoot 'lib/MorphospaceValidationPlanning.psm1'
+        if($Unit.PSObject.Properties.Name-ccontains'tooling_context'){
+            $relative='scripts/lib/MorphospaceValidationPlanning.psm1'
+            $bindings=@($context.executor.closure|Where-Object{[string]$_.path-ceq$relative})
+            if($bindings.Count-ne1-or(Get-MorphospaceFileSha256 $matrixPath)-cne[string]$bindings[0].sha256){throw 'Frozen continuation extracted validation matrix bytes are outside the original closure.'}
+        }
+        $producerAst=[Management.Automation.Language.Parser]::ParseFile($matrixPath,[ref]$tokens,[ref]$errors)
+        if(@($errors).Count){throw 'Frozen continuation extracted validation matrix is not parseable.'}
+        $matrixFunctions=@($producerAst.FindAll({param($node) $node-is[Management.Automation.Language.FunctionDefinitionAst]-and$node.Name-ceq'New-MorphospaceValidationMatrix'},$true))
+    }
+    if(-not[string]::Equals([string]$script:CandidateValidationPlanningModule.Definition,[IO.File]::ReadAllText([string]$script:CandidateValidationPlanningModule.Path),[StringComparison]::Ordinal)){throw 'Frozen continuation shared validation matrix loaded bytes drifted.'}
+    $authoritativeAst=[Management.Automation.Language.Parser]::ParseFile([string]$script:CandidateValidationPlanningModule.Path,[ref]$tokens,[ref]$errors)
+    $authoritativeFunctions=@($authoritativeAst.FindAll({param($node) $node-is[Management.Automation.Language.FunctionDefinitionAst]-and$node.Name-ceq'New-MorphospaceValidationMatrix'},$true))
+    if(@($errors).Count-or$matrixFunctions.Count-ne1-or$authoritativeFunctions.Count-ne1-or-not[string]::Equals($matrixFunctions[0].Extent.Text.Replace("`r`n","`n"),$authoritativeFunctions[0].Extent.Text.Replace("`r`n","`n"),[StringComparison]::Ordinal)){throw 'Frozen continuation original validation matrix semantics differ from the shared producer.'}
+    $observationModule=Import-Module (Join-Path $scriptsRoot 'lib/MorphospaceRepositoryObservation.psm1') -PassThru
+    if($Unit.PSObject.Properties.Name-ccontains'tooling_context'){& $toolingModule { param($parameters) Assert-MorphospaceToolingContextLoadedOwnerModule @parameters } @{Context=$context;ExecutorRoot=$root;OwnerModule=$observationModule}|Out-Null}
+    return $observationModule
 }
 function Get-FrozenContinuationRepositoryProjection {
     param([string]$Workspace,[object]$Candidate,[object]$Unit,[object]$BeforeState,[object]$RecordedTarget)
     $projected=Copy-FrozenContinuationValue $BeforeState
     $map=Get-MorphospaceCandidateRepositoryMap $Workspace ([string]$Candidate.expected.repository_map_path)
-    $automationModule=Get-FrozenContinuationAutomationModule $Workspace $Unit
+    $observationModule=Get-FrozenContinuationObservationModule $Workspace $Unit
     $dirty=@{};foreach($id in @($projected.dirty_repositories)){$dirty[[string]$id]=$true}
     $heads=@{};if($projected.PSObject.Properties.Name-ccontains'repository_heads'){foreach($head in @($projected.repository_heads)){$heads[[string]$head.repo_id]=$head}}
     foreach($allowed in @($Unit.allowed_repositories)){
         $id=[string]$allowed.repo_id;if(-not$map.ContainsKey($id)){continue}
-        $observed=& $automationModule { param($parameters) Get-MorphospaceRepositoryState @parameters } @{RepoId=$id;Path=([string]$map[$id].path)}
+        $observed=& $observationModule { param($parameters) Get-MorphospaceRepositoryState @parameters } @{RepoId=$id;Path=([string]$map[$id].path)}
         if(-not($observed.PSObject.Properties.Name-ccontains'dirty')){continue}
         if($observed.dirty){$dirty[$id]=$true}else{$dirty.Remove($id)}
         if([string]$projected.schema-ceq'rusty.morphospace.workflow.workspace_state.v2'-and$observed.is_git){
@@ -272,11 +296,11 @@ function Assert-FrozenContinuationReturnReceipt {
     $path=Resolve-MorphospaceWorkspacePath $Workspace ([string]$Checkpoint.receipt) -RequireLeaf
     $receipt=Assert-MorphospaceValidationReceiptStructure -ReceiptPath $path -AllowedSchemaIds @('rusty.morphospace.workflow.validation_receipt.v1')
     if([string]$receipt.project_id-cne[string]$Unit.project_id-or[string]$receipt.unit_id-cne[string]$Unit.unit_id-or[string]$receipt.result-cne[string]$Checkpoint.result-or[string]$receipt.tier-cne[string]$Checkpoint.tier){throw 'Frozen continuation Return validation identity is detached.'}
-    $automationModule=Get-FrozenContinuationAutomationModule $Workspace $Unit
-    $inspection=& $automationModule { param($parameters) Invoke-MorphospaceWorkUnitAutomation @parameters } @{WorkspaceRoot=$Workspace;UnitId=([string]$Unit.unit_id);Action='Inspect';RepoMapPath=(Resolve-MorphospaceWorkspacePath $Workspace ([string]$Candidate.expected.repository_map_path) -RequireLeaf);ValidationTier=([string]$receipt.tier)}
+    [void](Get-FrozenContinuationObservationModule $Workspace $Unit)
+    $validationMatrix=@(& $script:CandidateValidationPlanningModule { param($parameters) New-MorphospaceValidationMatrix @parameters } @{Unit=$Unit;DeviceSerials=@()})
     $criteria=@($Unit.acceptance|ForEach-Object{[string]$_.acceptance_id}|Sort-Object -CaseSensitive)
     Assert-FrozenContinuationEqual $criteria @($receipt.criteria|ForEach-Object{[string]$_.acceptance_id}|Sort-Object -CaseSensitive) 'Return criterion set'
-    $applicable=@($inspection.validation_matrix|Where-Object{[string]$_.disposition-cne'forbidden'})
+    $applicable=@($validationMatrix|Where-Object{[string]$_.disposition-cne'forbidden'})
     Assert-FrozenContinuationEqual @($applicable|ForEach-Object{[string]$_.gate_id}|Sort-Object -CaseSensitive) @($receipt.gates|ForEach-Object{[string]$_.gate_id}|Sort-Object -CaseSensitive) 'Return gate set'
     foreach($criterion in @($Unit.acceptance)){$row=@($receipt.criteria|Where-Object{[string]$_.acceptance_id-ceq[string]$criterion.acceptance_id});if($row.Count-ne1-or[string]$row[0].command-cne[string]$criterion.command){throw 'Frozen continuation Return criterion command is detached.'}}
     $unmatched=[Collections.Generic.List[object]]::new();foreach($gate in $applicable){$unmatched.Add($gate)}

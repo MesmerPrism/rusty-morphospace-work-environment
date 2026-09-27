@@ -417,12 +417,12 @@ foreach($row in @(@{file='examples/hello-morphospace-v2/morphospace/project.spec
  # The consumer portion must finish before this stage can ever report PASS.
  return Test-ReentryOldConsumer (Join-Path $Root 'old-consumer') $old $tool $bare $publication $fixture
 }
-function Test-ReentryBridgeCases([object]$Call,[object]$Request,[object]$Bridge,[string]$Root,[string]$Workspace,[string]$SourceRepository){
+function Test-ReentryBridgeCases([object]$Call,[object]$BaselineRequest,[object]$Bridge,[string]$Root,[string]$Workspace,[string]$SourceRepository){
  [IO.Directory]::CreateDirectory($Root)|Out-Null
  $baseline=Join-Path $Root 'pre-reentry-workspace';Copy-Item -LiteralPath $Workspace -Destination $baseline -Recurse -Force
  foreach($case in @('stale-cas','selector','closure-tamper','publication-tamper')){
   $ws=Join-Path $Root $case;Copy-Item -LiteralPath $baseline -Destination $ws -Recurse -Force
-  $request=Copy-ReentryValue $Request;$request.reentry_id="fixture-$case"
+  $request=Copy-ReentryValue $BaselineRequest;$request.reentry_id="fixture-$case"
   $bridgeArguments=$Call.Clone();$bridgeArguments.WorkspaceRoot=$ws;$bridgeArguments.OutPath=Join-Path $ws "receipts/$($request.reentry_id)-frozen-validation-reentry.json"
   $path=Join-Path $Root "$case-request.json";$bridgeArguments.FrozenValidationReentry=$path
   $expect=''
@@ -438,7 +438,7 @@ function Test-ReentryBridgeCases([object]$Call,[object]$Request,[object]$Bridge,
  foreach($fault in @('after-intent','after-artifact','after-projection','after-event')){
   Write-ReentryPhase "legacy: original writer interruption recovery $fault"
   $ws=Join-Path $Root $fault;Copy-Item -LiteralPath $baseline -Destination $ws -Recurse -Force
-  $request=Copy-ReentryValue $Request;$request.reentry_id="fixture-$fault"
+  $request=Copy-ReentryValue $BaselineRequest;$request.reentry_id="fixture-$fault"
   $path=Join-Path $Root "$fault-request.json";Write-ReentryJson $path $request
   $bridgeArguments=$Call.Clone();$bridgeArguments.WorkspaceRoot=$ws;$bridgeArguments.FrozenValidationReentry=$path;$bridgeArguments.OutPath=Join-Path $ws "receipts/$($request.reentry_id)-frozen-validation-reentry.json";$bridgeArguments.ExpectedFrozenValidationReentrySha256=Get-ReentryRawHash $path;$bridgeArguments.Execute=$true;$bridgeArguments.FaultAfter=$fault
   $failure=$null;try{&$Bridge { param($parameters) Invoke-MorphospaceFrozenValidationReentry @parameters } $bridgeArguments|Out-Null}catch{$failure=$_.Exception.Message}

@@ -39,6 +39,51 @@ function Invoke-ReentryGit {
         @($result.Split("`n")|ForEach-Object{$_.TrimEnd("`r")}|Where-Object{$_-cne''})
     }finally{$process.Dispose()}
 }
+function Invoke-ReentryOriginalInspect {
+    param([string]$Workspace,[object]$Unit,[object]$Request,[object]$Context,[object]$Resolver)
+    # Preserve the original public producer's entire Inspect prelude in an
+    # isolated host, without importing its broad graph into this finite reader.
+    $wrapper=Join-Path ([string]$Resolver.executor_root) 'scripts/Invoke-WorkUnitAutomation.ps1'
+    $schema=Join-Path ([string]$Resolver.executor_root) 'schemas/work-unit-automation-receipt.schema.json'
+    $hostPath=[Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+    if([IO.Path]::GetFileNameWithoutExtension($hostPath)-cne'pwsh'){throw 'Frozen re-entry original Inspect requires the current native pwsh host.'}
+    $hostHash=Get-MorphospaceFileSha256 $hostPath
+    & $script:ReentryToolingModule { param($parameters) Assert-MorphospaceToolingContextLocalObservation @parameters } @{WorkspaceRoot=$Workspace;Context=$Context}|Out-Null
+    $mapPath=Resolve-MorphospaceWorkspacePath $Workspace ([string]$Request.repository_map.path) -RequireLeaf
+    $start=[Diagnostics.ProcessStartInfo]::new();$start.FileName=$hostPath;$start.UseShellExecute=$false;$start.CreateNoWindow=$true;$start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
+    $start.StandardOutputEncoding=[Text.UTF8Encoding]::new($false);$start.StandardErrorEncoding=[Text.UTF8Encoding]::new($false)
+    # Only advisory warning formatting is suppressed. Data is carried through
+    # ArgumentList; the command and the original producer path are fixed.
+    foreach($argument in @('-NoLogo','-NoProfile','-NonInteractive','-CommandWithArgs','$WarningPreference="SilentlyContinue"; & $args[0] -Action Inspect -WorkspaceRoot $args[1] -UnitId $args[2] -RepoMapPath $args[3]',$wrapper,$Workspace,[string]$Unit.unit_id,$mapPath)){$start.ArgumentList.Add($argument)}
+    $process=[Diagnostics.Process]::new();$process.StartInfo=$start
+    $started=$false
+    try{
+        if(-not$process.Start()){throw 'Frozen re-entry original Inspect failed to start.'}
+        $started=$true
+        $streams=@(@{reader=$process.StandardOutput;buffer=[char[]]::new(4096);text=[Text.StringBuilder]::new();bytes=0;limit=262144;done=$false},@{reader=$process.StandardError;buffer=[char[]]::new(4096);text=[Text.StringBuilder]::new();bytes=0;limit=65536;done=$false})
+        foreach($stream in $streams){$stream.task=$stream.reader.ReadAsync($stream.buffer,0,$stream.buffer.Length)}
+        $timer=[Diagnostics.Stopwatch]::StartNew()
+        while(-not$process.HasExited-or@($streams|Where-Object{-not$_.done}).Count){
+            if($timer.ElapsedMilliseconds-ge120000){throw 'Frozen re-entry original Inspect exceeded its finite 120-second bound.'}
+            foreach($stream in $streams){if(-not$stream.done-and$stream.task.IsCompleted){
+                $count=$stream.task.GetAwaiter().GetResult()
+                if($count-eq0){$stream.done=$true;continue}
+                $chunk=[string]::new($stream.buffer,0,$count);$stream.bytes+=[Text.Encoding]::UTF8.GetByteCount($chunk)
+                if($stream.bytes-gt$stream.limit){throw 'Frozen re-entry original Inspect stream exceeded its bounded size.'}
+                [void]$stream.text.Append($chunk);$stream.task=$stream.reader.ReadAsync($stream.buffer,0,$stream.buffer.Length)
+            }}
+            if(-not$process.HasExited){[void]$process.WaitForExit(10)}else{[Threading.Thread]::Sleep(10)}
+        }
+        $output=$streams[0].text.ToString();$errorOutput=$streams[1].text.ToString()
+        if($process.ExitCode-ne0-or-not[string]::IsNullOrWhiteSpace($errorOutput)){throw "Frozen re-entry original Inspect failed: $($errorOutput.Substring(0,[Math]::Min(2048,$errorOutput.Length)))"}
+        if(-not(Test-Json -Json $output -SchemaFile $schema -ErrorAction SilentlyContinue)){throw 'Frozen re-entry original Inspect output does not satisfy its authenticated schema.'}
+        $receipt=ConvertFrom-MorphospaceProtocolJsonBytes ([Text.UTF8Encoding]::new($false).GetBytes($output))
+        if([string]$receipt.schema-cne'rusty.morphospace.workflow.work_unit_automation_receipt.v1'-or[string]$receipt.action-cne'Inspect'-or$receipt.executed-ne$false-or[string]$receipt.transition-cne'inspect-only'-or[string]$receipt.project_id-cne[string]$Unit.project_id-or[string]$receipt.unit_id-cne[string]$Unit.unit_id-or[string]$receipt.status_before-cne[string]$Unit.status-or[string]$receipt.status_after-cne[string]$Unit.status-or[string]$receipt.current_unit_before-cne[string]$Unit.unit_id-or[string]$receipt.current_unit_after-cne[string]$Unit.unit_id-or$null-ne$receipt.event_id){throw 'Frozen re-entry original Inspect returned a detached producer identity.'}
+        foreach($flag in @('git_mutation_performed','device_mutation_performed','force_push_allowed')){if($receipt.preservation.$flag-ne$false){throw 'Frozen re-entry original Inspect returned mutation authority.'}}
+    }finally{if($started-and-not$process.HasExited){$process.Kill($true);$process.WaitForExit()};$process.Dispose()}
+    if((Get-MorphospaceFileSha256 $hostPath)-cne$hostHash){throw 'Frozen re-entry original Inspect host changed during observation.'}
+    & $script:ReentryToolingModule { param($parameters) Assert-MorphospaceToolingContextLocalObservation @parameters } @{WorkspaceRoot=$Workspace;Context=$Context}|Out-Null
+}
 function Get-ReentryGitScalar {
     param([string]$Root,[string[]]$Arguments)
     $lines=@(Invoke-ReentryGit $Root $Arguments);if($lines.Count-ne1-or[string]::IsNullOrWhiteSpace($lines[0])){throw 'Frozen re-entry Git scalar observation is ambiguous.'};[string]$lines[0]
@@ -382,9 +427,7 @@ function Invoke-MorphospaceFrozenValidationReentry {
     $context=Get-ReentryOriginalContext $workspace $request $unit
     $publication=Assert-ReentryPublication $workspace $request $context -Executing
     $oldResolver=& $script:ReentryToolingModule { param($parameters) Read-MorphospaceToolingContextResolver @parameters } @{WorkspaceRoot=$workspace;Context=$context}
-    $oldAutomationModule=Import-Module (Join-Path ([string]$oldResolver.executor_root) 'scripts/WorkUnitAutomation.psm1') -PassThru
-    & $script:ReentryToolingModule { param($parameters) Assert-MorphospaceToolingContextLoadedOwnerModule @parameters } @{Context=$context;ExecutorRoot=([string]$oldResolver.executor_root);OwnerModule=$oldAutomationModule}|Out-Null
-    & $oldAutomationModule { param($parameters) Invoke-MorphospaceWorkUnitAutomation @parameters } @{WorkspaceRoot=$workspace;UnitId=$UnitId;Action='Inspect';RepoMapPath=(Resolve-MorphospaceWorkspacePath $workspace ([string]$request.repository_map.path) -RequireLeaf)}|Out-Null
+    Invoke-ReentryOriginalInspect $workspace $unit $request $context $oldResolver
     $flow=& $script:ReentryCandidateModule { param($parameters) Get-MorphospaceFrozenValidationContinuation @parameters } @{WorkspaceRoot=$workspace;Unit=$unit}
     if(@($flow.transitions).Count-lt2-or[string]$state.validation_checkpoint.result-cnotin@('fail','partial','blocked')){throw 'Frozen re-entry requires a genuine retained non-passing validation return.'}
     $eventsFile=Resolve-MorphospaceWorkspacePath $workspace 'iteration-events.jsonl' -RequireLeaf;$e=$request.expected
