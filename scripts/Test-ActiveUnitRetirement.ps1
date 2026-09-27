@@ -124,7 +124,12 @@ $oldPointer=Clone $seed.preparation_receipt.tooling_context
 & git -C $fixtureRoot commit -qm 'prepared planning baseline'
 $locked=GitScalar $fixtureRoot @('rev-parse','HEAD')
 $admission=Clone $seed.admission_template;if($admission.PSObject.Properties.Name-cnotcontains'admission_kind'){$admission|Add-Member -NotePropertyName admission_kind -NotePropertyValue 'ordinary'};if($admission.preparation.PSObject.Properties.Name-cnotcontains'preparation_kind'){$admission.preparation|Add-Member -NotePropertyName preparation_kind -NotePropertyValue 'ordinary'};$admissionPath=Join-Path $HarnessRoot 'admission.json';Write-TC $admissionPath $admission;Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $workspace -DevelopmentUnitAdmission $admissionPath -ExpectedDevelopmentUnitAdmissionSha256 (FileHash $admissionPath) -OutPath (Join-Path $workspace 'receipts/u002-admission.json') -Timestamp '2026-09-15T08:10:00.0000000Z' -Execute|Out-Null
-$automationArguments=@{WorkspaceRoot=$workspace;UnitId='u002';RepoMapPath=(Join-Path $workspace 'repository-map.json');ValidationTier='quick'};&$automationModule {param($a)Invoke-MorphospaceWorkUnitAutomation @a -Action Ready -Timestamp '2026-09-15T08:11:00.0000000Z' -Execute} $automationArguments|Out-Null;$diagnostic=&$automationModule {param($a)Invoke-MorphospaceWorkUnitAutomation @a -Action Claim -Timestamp '2026-09-15T08:12:00.0000000Z' -Execute} $automationArguments;Write-TC (Join-Path $workspace 'receipts/u002-claim-20260915.json') $diagnostic
+$automationArguments=@{WorkspaceRoot=$workspace;UnitId='u002';RepoMapPath=(Join-Path $workspace 'repository-map.json');ValidationTier='quick'}
+$readyDiagnostic=&$automationModule {param($a)Invoke-MorphospaceWorkUnitAutomation @a -Action Ready -Timestamp '2026-09-15T08:11:00.0000000Z' -Execute} $automationArguments
+$readyRelative='receipts/u002-ready-20260915.json';Write-TC (Join-Path $workspace $readyRelative) $readyDiagnostic
+& git -C $fixtureRoot add --all; & git -C $fixtureRoot commit -qm 'ready planning diagnostic';$readyIntroduced=GitScalar $fixtureRoot @('rev-parse','HEAD')
+$diagnostic=&$automationModule {param($a)Invoke-MorphospaceWorkUnitAutomation @a -Action Claim -Timestamp '2026-09-15T08:12:00.0000000Z' -Execute} $automationArguments
+Write-TC (Join-Path $workspace 'receipts/u002-claim-20260915.json') $diagnostic
 & git -C $tool checkout --detach $newCommit|Out-Null;if($LASTEXITCODE-ne0){throw 'Fixture could not advance to new tooling HEAD.'};$automationModule=Import-Module (Join-Path $PSScriptRoot 'WorkUnitAutomation.psm1') -Force -PassThru;$provenanceModule=Import-Module (Join-Path $PSScriptRoot 'ToolingContextProvenance.psm1') -Force -PassThru;$upgradeModule=Import-Module (Join-Path $PSScriptRoot 'ToolingContextUpgrade.psm1') -Force -PassThru
 & git -C $fixtureRoot add --all; & git -C $fixtureRoot commit -qm 'claimed planning diagnostic';$introduced=GitScalar $fixtureRoot @('rev-parse','HEAD')
 
@@ -148,28 +153,47 @@ $request=New-ActiveUnitRetirementRequest -WorkspaceRoot $workspace
 $relative='receipts/u002-claim-20260915.json'
 $binding=&$retirement {param($root,$p)Get-ActiveRetirementFileBinding $root $p} $workspace $relative
 $request|Add-Member retained_claim_diagnostic ([pscustomobject]@{role='inert-claim-diagnostic';producer_schema='rusty.morphospace.workflow.work_unit_automation_receipt.v1';path=$relative;raw_sha256=$binding.raw_sha256;canonical_sha256=$binding.canonical_sha256;git_blob_sha1=GitScalar $fixtureRoot @('hash-object',(Join-Path $workspace $relative));git_blob_sha256=$binding.raw_sha256;introduced_commit=$introduced;tooling_context=$oldPointer})
+$readyBinding=&$retirement {param($root,$p)Get-ActiveRetirementFileBinding $root $p} $workspace $readyRelative
+$readyTransaction="$($readyDiagnostic.event_id)-transition"
+$readyIntent=Read-TC (Join-Path $workspace "receipts/transactions/$readyTransaction.intent.json")
+$readyPredecessorIntent=Read-TC (Join-Path $workspace "receipts/transactions/$($readyIntent.expected.event_tail_id)-transition.intent.json")
+Assert-TC ((Canonical $readyPredecessorIntent.target.state.document)-ceq[string]$readyIntent.pre.state.sha256) 'Ready prestate is the actual immediate predecessor target state'
+Assert-TC ((Canonical @($readyIntent.target.state.document.repository_heads))-cne(Canonical @($readyPredecessorIntent.target.state.document.repository_heads))) 'authentic Ready refreshes repository heads versus its immediate predecessor'
+$request|Add-Member retained_ready_diagnostic ([pscustomobject]@{role='inert-ready-diagnostic';producer_schema='rusty.morphospace.workflow.work_unit_automation_receipt.v1';path=$readyRelative;raw_sha256=$readyBinding.raw_sha256;canonical_sha256=$readyBinding.canonical_sha256;git_blob_sha1=GitScalar $fixtureRoot @('hash-object',(Join-Path $workspace $readyRelative));git_blob_sha256=$readyBinding.raw_sha256;introduced_commit=$readyIntroduced;tooling_context=$oldPointer;event_id=[string]$readyDiagnostic.event_id;transaction_id=$readyTransaction;intent_sha256=FileHash (Join-Path $workspace "receipts/transactions/$readyTransaction.intent.json");completion_sha256=FileHash (Join-Path $workspace "receipts/transactions/$readyTransaction.completion.json")})
+Assert-TC ($readyIntroduced-cne$introduced) 'Ready and Claim diagnostics have independent introduction commits'
 $unit=Read-TC (Join-Path $workspace 'iteration-units/u002.json')
 $entry=[pscustomobject]@{role='planning';path=$fixtureRoot}
 function Check-Descendant([object]$Candidate){&$retirement {param($w,$u,$e,$a,$locked,$head,$r)Test-ActiveRetirementPlanningProjectionFromAuthenticatedAdmission -Workspace $w -Unit $u -RepositoryEntry $e -StatusPorcelain @() -Admission $a -LockedCommit $locked -ObservedHead $head -Request $r} $workspace $unit $entry $admission $locked $head $Candidate}
-Assert-TC (Check-Descendant $request) 'committed upgrade plus original inert Claim projection'
+Assert-TC (Check-Descendant $request) 'committed upgrade plus independently introduced inert Ready and Claim projections'
 $missing=Clone $request;$missing.PSObject.Properties.Remove('retained_claim_diagnostic')
 $message='';try{Check-Descendant $missing|Out-Null}catch{$message=$_.Exception.Message}
 Assert-TC ($message-ceq('Active retirement committed planning descendant changes unauthenticated path: morphospace/'+$relative)) 'missing Claim binding rejected by committed projection'
 $missingReason=$message
 $changed=Clone $request;$changed.retained_claim_diagnostic.raw_sha256='0'*64
-$message='';try{Check-Descendant $changed|Out-Null}catch{$message=$_.Exception.Message}
-Assert-TC ($message-ceq'Retained Claim diagnostic raw CAS drifted.') 'tampered Claim binding rejected by committed projection'
+$message='';try{&$retirement {param($w,$r,$repository,$h)Get-ActiveRetirementClaimDiagnosticProjection -Workspace $w -Request $r -Repository $repository -ObservedHead $h} $workspace $changed $fixtureRoot $head|Out-Null}catch{$message=$_.Exception.Message}
+Assert-TC ($message-ceq'Retained Claim diagnostic raw CAS drifted.') 'tampered Claim binding rejected by exact original diagnostic guard'
 $tamperReason=$message
+# Preserve the three full descendant traversals: positive, missing Claim and
+# missing Ready. Raw CAS negatives use the same owning early diagnostic guards.
+$missingReady=Clone $request;$missingReady.PSObject.Properties.Remove('retained_ready_diagnostic')
+$message='';try{Check-Descendant $missingReady|Out-Null}catch{$message=$_.Exception.Message}
+Assert-TC ($message-ceq('Active retirement committed planning descendant changes unauthenticated path: morphospace/'+$readyRelative)) 'missing Ready binding rejected by committed projection'
+$missingReadyReason=$message
+$changedReady=Clone $request;$changedReady.retained_ready_diagnostic.raw_sha256='0'*64
+$message='';try{&$retirement {param($w,$r,$repository,$h)Get-ActiveRetirementReadyDiagnosticProjection -Workspace $w -Request $r -Repository $repository -ObservedHead $h} $workspace $changedReady $fixtureRoot $head|Out-Null}catch{$message=$_.Exception.Message}
+Assert-TC ($message-ceq'Retained Ready diagnostic raw CAS drifted.') 'tampered Ready binding rejected by exact original diagnostic guard'
+$tamperedReadyReason=$message
 if($ComparisonScriptsRoot){
  $savedRetirement=$retirement
  try {
   $retirement=Import-Module (Join-Path $ComparisonScriptsRoot 'ActiveUnitRetirement.psm1') -Force -PassThru
-  $message='';try{Check-Descendant $request|Out-Null}catch{$message=$_.Exception.Message}
-  Assert-TC ($message-like'*changes unauthenticated path:*u002-claim-20260915.json*') 'baseline owner rejects the same genuine committed fixture'
+  $baselineRequest=Clone $request;$baselineRequest.PSObject.Properties.Remove('retained_ready_diagnostic')
+  $message='';try{Check-Descendant $baselineRequest|Out-Null}catch{$message=$_.Exception.Message}
+  Assert-TC ($message-like'*changes unauthenticated path:*u002-ready-20260915.json*') 'baseline owner rejects the same genuine committed fixture'
   [pscustomobject]@{baseline_comparison='expected-rejection';message=$message}|ConvertTo-Json -Compress
  }finally{$retirement=$savedRetirement}
 }
-[pscustomobject]@{status='passed';cases=3;negative_reasons=@($missingReason,$tamperReason);genuine_claim=$true;genuine_upgrade=$true;committed_descendant=$true;authority_credit=$false}|ConvertTo-Json -Compress
+[pscustomobject]@{status='passed';cases=5;negative_reasons=@($missingReason,$tamperReason,$missingReadyReason,$tamperedReadyReason);genuine_ready=$true;independent_diagnostic_introductions=$true;genuine_claim=$true;genuine_upgrade=$true;committed_descendant=$true;authority_credit=$false}|ConvertTo-Json -Compress
 } finally {
  if([IO.Directory]::Exists($HarnessRoot)-and[IO.Path]::GetDirectoryName($HarnessRoot).TrimEnd('\','/').Equals([IO.Path]::GetTempPath().TrimEnd('\','/'),[StringComparison]::OrdinalIgnoreCase)){Remove-Item -LiteralPath $HarnessRoot -Recurse -Force}
 }

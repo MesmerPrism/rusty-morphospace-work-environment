@@ -141,3 +141,25 @@ This option retains bytes only. It never inserts artifacts or receipt references
 into the original Claim ledger, nor supplies validation, gate, prerequisite,
 acceptance or publication credit. Requests without the optional binding retain
 the existing behavior.
+
+## Optional inert Ready diagnostic retention
+
+A request may additionally bind one `retained_ready_diagnostic` under the closed
+`inert-ready-diagnostic` role and `receipts/<name>-ready-YYYYMMDD.json` namespace.
+It uses the same raw, canonical, committed blob and original tooling-context pins
+as Claim retention, with its own `introduced_commit`, `event_id`, `transaction_id`,
+`intent_sha256` and `completion_sha256`. The Ready introduction need not be the
+Claim introduction.
+
+The owner authenticates the original executed v1 Ready output, its committed
+transaction and ledger event, the exact proposed-to-ready transition with no
+current unit and the target ready queue, and its immediate original Claim
+preimage. It verifies original declaration-shaped matrix and scope fields and
+both introduced and current Git blob bytes. Original intent artifacts and event
+receipts must be empty. Historical observations remain inert; retention adds no
+ledger artifact, validation, gate, acceptance or publication credit. Missing or
+tampered bindings leave the committed descendant unauthenticated.
+
+Ready may refresh its recorded repository heads. The owner verifies the exact
+original predecessor transaction and preimage, retaining those historical heads
+as inert observations without replaying current repository observations.
