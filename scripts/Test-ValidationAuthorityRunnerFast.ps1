@@ -37,6 +37,34 @@ function Invoke-TestGit {
     return [string]($output -join '')
 }
 
+function Get-RunnerFastFixtureImportCommands {
+    param([string]$Path)
+    $tokens=$null;$errors=$null
+    $ast=[Management.Automation.Language.Parser]::ParseFile($Path,[ref]$tokens,[ref]$errors)
+    if(@($errors).Count){throw "Authority runner fixture module is not parseable: $Path"}
+    return @($ast.FindAll({param($node) $node-is[Management.Automation.Language.CommandAst]-and$node.GetCommandName()-ieq'Import-Module'},$true))
+}
+function Get-RunnerFastFixtureClosedRootPath {
+    param([Management.Automation.Language.Ast]$Expression)
+    if($Expression-is[Management.Automation.Language.PipelineAst]){if(-not$Expression.Background-and$Expression.PipelineElements.Count-eq1){return Get-RunnerFastFixtureClosedRootPath $Expression.PipelineElements[0]};return $null}
+    if($Expression-is[Management.Automation.Language.CommandExpressionAst]){return Get-RunnerFastFixtureClosedRootPath $Expression.Expression}
+    if($Expression-is[Management.Automation.Language.ParenExpressionAst]){return Get-RunnerFastFixtureClosedRootPath $Expression.Pipeline}
+    if($Expression-is[Management.Automation.Language.CommandAst]){
+        if($Expression.GetCommandName()-ine'Join-Path'-or$Expression.CommandElements.Count-ne3-or$Expression.Redirections.Count-ne0-or$Expression.InvocationOperator-ne[Management.Automation.Language.TokenKind]::Unknown){return $null}
+        $root=$Expression.CommandElements[1];$child=$Expression.CommandElements[2]
+        if($root-isnot[Management.Automation.Language.VariableExpressionAst]-or$root.VariablePath.UserPath-ine'PSScriptRoot'-or$child-isnot[Management.Automation.Language.StringConstantExpressionAst]){return $null}
+        if($child.Value.EndsWith('.psm1',[StringComparison]::OrdinalIgnoreCase)){return [string]$child.Value};return $null
+    }
+    if($Expression-is[Management.Automation.Language.InvokeMemberExpressionAst]){
+        if(-not$Expression.Static-or$Expression.Expression-isnot[Management.Automation.Language.TypeExpressionAst]-or$Expression.Expression.TypeName.FullName-ine'IO.Path'-or$Expression.Member-isnot[Management.Automation.Language.StringConstantExpressionAst]){return $null}
+        if($Expression.Member.Value-ieq'GetFullPath'-and$Expression.Arguments.Count-eq1){return Get-RunnerFastFixtureClosedRootPath $Expression.Arguments[0]}
+        if($Expression.Member.Value-ieq'Combine'-and$Expression.Arguments.Count-eq2){
+            $root=$Expression.Arguments[0];$child=$Expression.Arguments[1]
+            if($root-is[Management.Automation.Language.VariableExpressionAst]-and$root.VariablePath.UserPath-ieq'PSScriptRoot'-and$child-is[Management.Automation.Language.StringConstantExpressionAst]-and$child.Value.EndsWith('.psm1',[StringComparison]::OrdinalIgnoreCase)){return [string]$child.Value}
+        }
+    }
+    return $null
+}
 function Get-RunnerFastFixtureModuleClosure {
     param(
         [string]$Git,
@@ -53,11 +81,17 @@ function Get-RunnerFastFixtureModuleClosure {
         # receive a temporary damage-test module path at runtime. They are not
         # repository module edges, and their exact file/variable/count is part
         # of this clean-room closure contract.
-        'scripts/Test-TransitionLedger.ps1|ModulePath' = 2
-        # The compact scanner captures the scope prefix from `$using:processModule`.
-        'scripts/Test-AuthorityRecordReadiness.ps1|using' = 1
+        'scripts/Test-TransitionLedger.ps1|modulepath' = 2
+        # The AST storage identity includes the exact using-variable component.
+        'scripts/Test-AuthorityRecordReadiness.ps1|using:processmodule' = 1
     }
     $observedAuditedDynamicImports = @{}
+    # These runtime imports use an authenticated historical executor root. The
+    # current logical target is a recursive fixture copy dependency, not an
+    # assertion that the historical runtime root is the current repository.
+    $auditedDynamicTargetImports=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+    $auditedDynamicTargetImports.Add('scripts/CandidateFreeze.psm1|Get-FrozenContinuationObservationModule|scriptsroot|lib/MorphospaceRepositoryObservation.psm1',@{count=1;target='scripts/lib/MorphospaceRepositoryObservation.psm1'})
+    $observedDynamicTargetImports=@{}
 
     function Add-RunnerFastFixturePath {
         param([string]$RelativePath)
@@ -90,42 +124,88 @@ function Get-RunnerFastFixtureModuleClosure {
         $modulePath = $pending.Dequeue()
         $moduleAbsolute = Join-Path $root $modulePath
         $moduleDirectory = [IO.Path]::GetDirectoryName($moduleAbsolute)
-        $lines = [IO.File]::ReadAllLines($moduleAbsolute,[Text.UTF8Encoding]::new($false,$true))
-        $literalVariables = @{}
-        $assignmentPattern = '^\s*\$(?:(?<scope>script):)?(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:Join-Path\s+\$PSScriptRoot\s+|\[IO\.Path\]::Combine\(\$PSScriptRoot\s*,\s*)[''"](?<path>[^''"]+\.psm1)[''"]\)?'
-        $fullPathAssignmentPattern = '^\s*\$(?:(?<scope>script):)?(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*\[IO\.Path\]::GetFullPath\(\(Join-Path\s+\$PSScriptRoot\s+[''"](?<path>[^''"]+\.psm1)[''"]\)\)\s*$'
-        foreach ($line in $lines) {
-            $assignment = [regex]::Match($line,$assignmentPattern,[Text.RegularExpressions.RegexOptions]::IgnoreCase)
-            if (-not $assignment.Success) { $assignment = [regex]::Match($line,$fullPathAssignmentPattern,[Text.RegularExpressions.RegexOptions]::IgnoreCase) }
-            if ($assignment.Success) {
-                $variableName = [string]$assignment.Groups['name'].Value
-                if ([string]$assignment.Groups['scope'].Value) { $variableName = "script:$variableName" }
-                $literalVariables[$variableName] = [string]$assignment.Groups['path'].Value
+        $tokens=$null;$errors=$null
+        $moduleAst=[Management.Automation.Language.Parser]::ParseFile($moduleAbsolute,[ref]$tokens,[ref]$errors)
+        if(@($errors).Count){throw "Authority runner fixture module is not parseable: $modulePath"}
+        $variableWrites=@{}
+        foreach($write in @($moduleAst.FindAll({param($node) $node-is[Management.Automation.Language.AssignmentStatementAst]},$true))){
+            $leaves=@($write.Left.FindAll({param($node) $node-is[Management.Automation.Language.VariableExpressionAst]},$true))
+            foreach($leaf in $leaves){
+                $name=[string]$leaf.VariablePath.UserPath
+                $owner=$write.Parent;while($null-ne$owner-and$owner-isnot[Management.Automation.Language.FunctionDefinitionAst]){$owner=$owner.Parent}
+                $scriptStorage=$name.StartsWith('script:',[StringComparison]::OrdinalIgnoreCase)
+                if($scriptStorage){$name=$name.Substring(7)}elseif($name.StartsWith('local:',[StringComparison]::OrdinalIgnoreCase)){$name=$name.Substring(6)}elseif($name.StartsWith('private:',[StringComparison]::OrdinalIgnoreCase)){$name=$name.Substring(8)}elseif($name.Contains(':')){continue}
+                $name=$name.ToLowerInvariant()
+                $scope=if($scriptStorage-or$null-eq$owner){'module'}else{[string]$owner.Extent.StartOffset}
+                $key="$scope|$name"
+                if(-not$variableWrites.ContainsKey($key)){$variableWrites[$key]=[Collections.Generic.List[object]]::new()}
+                $path=$null
+                if($write.Left-is[Management.Automation.Language.VariableExpressionAst]-and$write.Operator-eq[Management.Automation.Language.TokenKind]::Equals){
+                    $path=Get-RunnerFastFixtureClosedRootPath $write.Right
+                }
+                $variableWrites[$key].Add([pscustomobject]@{assignment=$write;path=$path})
             }
         }
-        foreach ($line in $lines) {
-            if ($line -notmatch '(?i)\bImport-Module\b') { continue }
-            $matches = [regex]::Matches($line,$importPattern,[Text.RegularExpressions.RegexOptions]::IgnoreCase)
-            $importPath = $null
-            if ($matches.Count -eq 1) {
-                $importPath = [string]$matches[0].Groups['path'].Value
-            } elseif ($matches.Count -eq 0) {
-                $variableImport = [regex]::Match($line,'(?i)\bImport-Module\s+\$(?:(?<scope>script):)?(?<name>[A-Za-z_][A-Za-z0-9_]*)\b')
-                if (-not $variableImport.Success) { throw "Authority runner fixture import is not one closed literal or audited variable edge: $modulePath" }
-                $variableName = [string]$variableImport.Groups['name'].Value
-                if ([string]$variableImport.Groups['scope'].Value) { $variableName = "script:$variableName" }
-                if ($literalVariables.ContainsKey($variableName)) {
-                    $importPath = [string]$literalVariables[$variableName]
-                } else {
-                    $auditKey = "$modulePath|$variableName"
-                    if (-not $auditedDynamicImportCounts.ContainsKey($auditKey)) {
-                        throw "Authority runner fixture import has no audited dynamic declaration: $auditKey"
+        foreach ($importCommand in @(Get-RunnerFastFixtureImportCommands $moduleAbsolute)) {
+            $line = $importCommand.Extent.Text
+            if($importCommand.CommandElements.Count-lt2){throw "Authority runner fixture import lacks a closed module argument: $modulePath"}
+            $argument=$importCommand.CommandElements[1]
+            foreach($extra in @($importCommand.CommandElements|Select-Object -Skip 2)){
+                $extraModules=@($extra.FindAll({param($node) $node-is[Management.Automation.Language.StringConstantExpressionAst]-and$node.Value.EndsWith('.psm1',[StringComparison]::OrdinalIgnoreCase)},$true))
+                if($extraModules.Count){throw "Authority runner fixture import has an unrelated module literal argument: $modulePath"}
+            }
+            $importPath=$null
+            if($argument-is[Management.Automation.Language.StringConstantExpressionAst]){
+                $importPath=[string]$argument.Value
+            }elseif($argument-is[Management.Automation.Language.VariableExpressionAst]-or$argument-is[Management.Automation.Language.UsingExpressionAst]){
+                $usingStorage=$argument-is[Management.Automation.Language.UsingExpressionAst]
+                $variableName=if($usingStorage){'using:'+([string]$argument.SubExpression.VariablePath.UserPath).ToLowerInvariant()}else{([string]$argument.VariablePath.UserPath).ToLowerInvariant()}
+                $scriptStorage=$variableName.StartsWith('script:',[StringComparison]::Ordinal)
+                $name=if($scriptStorage){$variableName.Substring(7)}else{$variableName}
+                if(-not$usingStorage-and$name.Contains(':')){throw "Authority runner fixture import variable scope is not closed: $modulePath"}
+                $importOwner=$importCommand.Parent;while($null-ne$importOwner-and$importOwner-isnot[Management.Automation.Language.FunctionDefinitionAst]){$importOwner=$importOwner.Parent}
+                $scope=if($scriptStorage-or$null-eq$importOwner){'module'}else{[string]$importOwner.Extent.StartOffset}
+                $key="$scope|$name"
+                if(-not$variableWrites.ContainsKey($key)){$key="module|$name"}
+                if(-not$usingStorage-and$variableWrites.ContainsKey($key)){
+                    $definitions=$variableWrites[$key]
+                    if($definitions.Count-ne1-or$null-eq$definitions[0].path){throw "Authority runner fixture module variable has unknown or ambiguous writes: $modulePath|$variableName"}
+                    $definition=$definitions[0].assignment
+                    if($definition.Extent.EndOffset-ge$importCommand.Extent.StartOffset){throw "Authority runner fixture module variable definition does not precede its import: $modulePath|$variableName"}
+                    $container=$importCommand.Parent;$dominates=$false
+                    while($null-ne$container){if($container.Extent.StartOffset-eq$definition.Parent.Extent.StartOffset-and$container.Extent.EndOffset-eq$definition.Parent.Extent.EndOffset){$dominates=$true;break};$container=$container.Parent}
+                    if(-not$dominates){throw "Authority runner fixture module variable definition does not dominate its import: $modulePath|$variableName"}
+                    if($key.StartsWith('module|',[StringComparison]::Ordinal)-and-not$scriptStorage){
+                        $enclosing=$importCommand.Parent
+                        while($null-ne$enclosing){
+                            if($enclosing-is[Management.Automation.Language.FunctionDefinitionAst]){
+                                $parameters=@($enclosing.Parameters);if($null-ne$enclosing.Body.ParamBlock){$parameters+=@($enclosing.Body.ParamBlock.Parameters)}
+                                foreach($parameter in $parameters){if($parameter.Name.VariablePath.UserPath-ieq$name){throw "Authority runner fixture module variable is shadowed by an import-scope parameter: $modulePath|$variableName"}}
+                                if($variableWrites.ContainsKey("$($enclosing.Extent.StartOffset)|$name")){throw "Authority runner fixture module variable is shadowed by an enclosing function write: $modulePath|$variableName"}
+                            }
+                            $enclosing=$enclosing.Parent
+                        }
                     }
-                    $observedAuditedDynamicImports[$auditKey] = 1 + $(if ($observedAuditedDynamicImports.ContainsKey($auditKey)) { [int]$observedAuditedDynamicImports[$auditKey] } else { 0 })
+                    $importPath=[string]$definitions[0].path
+                }else{
+                    $auditKey="$modulePath|$variableName"
+                    if(-not$auditedDynamicImportCounts.ContainsKey($auditKey)){throw "Authority runner fixture import has no audited dynamic declaration: $auditKey"}
+                    $observedAuditedDynamicImports[$auditKey]=1+$(if($observedAuditedDynamicImports.ContainsKey($auditKey)){[int]$observedAuditedDynamicImports[$auditKey]}else{0})
                     continue
                 }
-            } else {
-                throw "Authority runner fixture import contains multiple module paths: $modulePath"
+            }else{
+                $expression=$argument.Extent.Text
+                $importPath=Get-RunnerFastFixtureClosedRootPath $argument
+                if($null-eq$importPath){
+                    $dynamicTarget=[regex]::Match($expression,'^\(\s*Join-Path\s+\$(?<root>[A-Za-z_][A-Za-z0-9_]*)\s+[''"](?<suffix>[^''"]+\.psm1)[''"]\s*\)$')
+                    $owner=$importCommand.Parent;while($null-ne$owner-and$owner-isnot[Management.Automation.Language.FunctionDefinitionAst]){$owner=$owner.Parent}
+                    $functionName=if($null-ne$owner){[string]$owner.Name}else{''}
+                    $targetKey="$modulePath|$functionName|$($dynamicTarget.Groups['root'].Value.ToLowerInvariant())|$($dynamicTarget.Groups['suffix'].Value)"
+                    if(-not$dynamicTarget.Success-or-not$auditedDynamicTargetImports.ContainsKey($targetKey)){throw "Authority runner fixture import root expression is not closed: $modulePath $expression"}
+                    $observedDynamicTargetImports[$targetKey]=1+$(if($observedDynamicTargetImports.ContainsKey($targetKey)){[int]$observedDynamicTargetImports[$targetKey]}else{0})
+                    Add-RunnerFastFixturePath ([string]$auditedDynamicTargetImports[$targetKey].target)
+                    continue
+                }
             }
             $importAbsolute = [IO.Path]::GetFullPath((Join-Path $moduleDirectory $importPath))
             if (-not $importAbsolute.StartsWith($rootPrefix,[StringComparison]::OrdinalIgnoreCase)) {
@@ -142,6 +222,13 @@ function Get-RunnerFastFixtureModuleClosure {
         if ($observedCount -ne [int]$auditedDynamicImportCounts[$auditKey]) {
             throw "Authority runner fixture audited dynamic import count changed: $auditKey expected=$($auditedDynamicImportCounts[$auditKey]) observed=$observedCount"
         }
+    }
+
+    foreach($targetKey in @($auditedDynamicTargetImports.Keys)){
+        $declaringPath=$targetKey.Substring(0,$targetKey.IndexOf('|',[StringComparison]::Ordinal))
+        if(-not$paths.Contains($declaringPath)){continue}
+        $observedCount=if($observedDynamicTargetImports.ContainsKey($targetKey)){[int]$observedDynamicTargetImports[$targetKey]}else{0}
+        if($observedCount-ne[int]$auditedDynamicTargetImports[$targetKey].count){throw "Authority runner fixture dynamic target import count changed: $targetKey expected=$($auditedDynamicTargetImports[$targetKey].count) observed=$observedCount"}
     }
 
     $result = @($paths)
@@ -380,6 +467,80 @@ try {
         try { [void](Get-RunnerFastFixtureModuleClosure -Git $git -SourceRoot $closureFixture -SeedPaths @($damagePath)) } catch { $damageRejected = $true }
         Assert-RunnerFast $damageRejected "module import closure accepted damaged edge '$damagePath'"
     }
+    # Import discovery is actual command syntax, not quoted comparison data.
+    $scannerCases=@(
+        @{id='quoted-data';body='if ($value -ceq ''Import-Module (Join-Path $PSScriptRoot ''''missing.psm1'''')'') {}';valid=$true},
+        @{id='comment-data';body='# Import-Module ''missing.psm1''';valid=$true},
+        @{id='here-string-data';body="`$text=@'`nImport-Module 'missing.psm1'`n'@";valid=$true},
+        @{id='multiline-import';body="Import-Module (`n Join-Path `$PSScriptRoot 'leaf.psm1'`n)";valid=$true},
+        @{id='same-line-imports';body="Import-Module 'leaf.psm1'; Import-Module 'leaf.psm1'";valid=$true},
+        @{id='foreign-root';body="Import-Module (Join-Path `$oldRoot 'leaf.psm1')";valid=$false},
+        @{id='unrelated-module-argument';body="Import-Module (Join-Path `$PSScriptRoot 'leaf.psm1') -ArgumentList 'unrelated.psm1'";valid=$false}
+    )
+    foreach($case in $scannerCases){Write-TestText (Join-Path $closureFixture ("scripts/$($case.id).ps1")) ([string]$case.body)}
+    Invoke-TestGit $git $closureFixture @('add','--','scripts')|Out-Null
+    foreach($case in $scannerCases){
+        $rejected=$false;try{[void](Get-RunnerFastFixtureModuleClosure $git $closureFixture @("scripts/$($case.id).ps1"))}catch{$rejected=$true}
+        Assert-RunnerFast ($rejected-ne[bool]$case.valid) "actual import scanner case '$($case.id)' disagreed with its closed syntax contract"
+    }
+    $bindingCases=@(
+        @{id='computed-suffix';body="`$path=Join-Path `$PSScriptRoot 'leaf.psm1' + `$suffix`nImport-Module `$path";category='unknown or ambiguous writes'},
+        @{id='unknown-reassignment';body="`$path=Join-Path `$PSScriptRoot 'leaf.psm1'`n`$path=`$foreign`nImport-Module `$path";category='unknown or ambiguous writes'},
+        @{id='future-definition';body="Import-Module `$path`n`$path=Join-Path `$PSScriptRoot 'leaf.psm1'";category='does not precede'},
+        @{id='branch-definition';body="if (`$condition) { `$path=Join-Path `$PSScriptRoot 'leaf.psm1' }`nImport-Module `$path";category='does not dominate'},
+        @{id='script-storage-alias';body="`$path=Join-Path `$PSScriptRoot 'leaf.psm1'`nfunction Set-Damage { `$script:path=`$foreign }`nImport-Module `$path";category='unknown or ambiguous writes'}
+    )
+    $bindingCases+=@(
+        @{id='expandable-path';body="`$path=Join-Path `$PSScriptRoot `"leaf`$part.psm1`"`nImport-Module `$path";category='unknown or ambiguous writes'},
+        @{id='local-storage-alias';body="`$path=Join-Path `$PSScriptRoot 'leaf.psm1'`n`$local:path=`$foreign`nImport-Module `$path";category='unknown or ambiguous writes'},
+        @{id='private-storage-alias';body="`$path=Join-Path `$PSScriptRoot 'leaf.psm1'`n`$private:path=`$foreign`nImport-Module `$path";category='unknown or ambiguous writes'},
+        @{id='header-parameter-shadow';body="`$path=Join-Path `$PSScriptRoot 'leaf.psm1'`nfunction Child(`$path) { Import-Module `$path }";category='shadowed by an import-scope parameter'},
+        @{id='outer-parameter-shadow';body="`$path=Join-Path `$PSScriptRoot 'leaf.psm1'`nfunction Outer(`$path) { function Inner { Import-Module `$path } }";category='shadowed by an import-scope parameter'},
+        @{id='outer-write-shadow';body="`$path=Join-Path `$PSScriptRoot 'leaf.psm1'`nfunction Outer { `$path=`$foreign; function Inner { Import-Module `$path } }";category='shadowed by an enclosing function write'}
+    )
+    # A raw dollar-sign filename prevents interpolation damage from passing by
+    # merely failing a later missing-file check.
+    Write-TestText (Join-Path $closureFixture 'scripts/leaf$part.psm1') 'Set-StrictMode -Version 2.0'
+    foreach($case in $bindingCases){Write-TestText (Join-Path $closureFixture ("scripts/$($case.id).ps1")) $case.body}
+    Invoke-TestGit $git $closureFixture @('add','--','scripts')|Out-Null
+    foreach($case in $bindingCases){$rejected=$false;try{[void](Get-RunnerFastFixtureModuleClosure $git $closureFixture @("scripts/$($case.id).ps1"))}catch{if($_.Exception.Message-notlike("*"+$case.category+"*")){throw};$rejected=$true};Assert-RunnerFast $rejected "module variable binding accepted '$($case.id)'"}
+    $usingSeed='scripts/Test-AuthorityRecordReadiness.ps1'
+    foreach($case in @(
+        @{body='& { Import-Module $using:otherModule -Force }';category='no audited dynamic declaration'},
+        @{body='& { Import-Module $using:processModule -Force; Import-Module $using:processModule -Force }';category='audited dynamic import count changed'},
+        @{body='& {}';category='audited dynamic import count changed'}
+    )){Write-TestText (Join-Path $closureFixture $usingSeed) $case.body;Invoke-TestGit $git $closureFixture @('add','--',$usingSeed)|Out-Null;$rejected=$false;try{[void](Get-RunnerFastFixtureModuleClosure $git $closureFixture @($usingSeed))}catch{if($_.Exception.Message-notlike("*"+$case.category+"*")){throw};$rejected=$true};Assert-RunnerFast $rejected 'audited using-variable accepted changed identity or count'}
+    Write-TestText (Join-Path $closureFixture $usingSeed) '& { Import-Module $using:processModule -Force }'
+    [void](Get-RunnerFastFixtureModuleClosure $git $closureFixture @($usingSeed))
+    $targetSeed='scripts/CandidateFreeze.psm1';$targetFile=Join-Path $closureFixture 'scripts/lib/MorphospaceRepositoryObservation.psm1'
+    $targetBody='function Get-FrozenContinuationObservationModule { Import-Module (Join-Path $scriptsRoot ''lib/MorphospaceRepositoryObservation.psm1'') -PassThru }'
+    Write-TestText (Join-Path $closureFixture $targetSeed) $targetBody
+    Write-TestText $targetFile "Import-Module (Join-Path `$PSScriptRoot 'target-child.psm1')"
+    Write-TestText (Join-Path $closureFixture 'scripts/lib/target-child.psm1') 'Set-StrictMode -Version 2.0'
+    Invoke-TestGit $git $closureFixture @('add','--','scripts')|Out-Null
+    $targetClosure=@(Get-RunnerFastFixtureModuleClosure $git $closureFixture @($targetSeed))
+    Assert-RunnerFast (($targetClosure-join',')-ceq'scripts/CandidateFreeze.psm1,scripts/lib/MorphospaceRepositoryObservation.psm1,scripts/lib/target-child.psm1') 'declared historical-root target was not added and recursively closed'
+    foreach($mutation in @(
+        @{body=$targetBody.Replace('$scriptsRoot','$otherRoot');category='root expression is not closed'},
+        @{body=$targetBody.Replace('lib/MorphospaceRepositoryObservation.psm1','lib/other.psm1');category='root expression is not closed'},
+        @{body=$targetBody.Replace('Get-FrozenContinuationObservationModule','Get-OtherObservationModule');category='root expression is not closed'},
+        @{body=$targetBody.Replace('Join-Path $scriptsRoot','Join-Path (Get-OtherRoot)');category='root expression is not closed'},
+        @{body=($targetBody+"`n"+$targetBody);category='dynamic target import count changed'},
+        @{body='function Get-FrozenContinuationObservationModule {}';category='dynamic target import count changed'}
+    )){
+        Write-TestText (Join-Path $closureFixture $targetSeed) $mutation.body
+        $rejected=$false;try{[void](Get-RunnerFastFixtureModuleClosure $git $closureFixture @($targetSeed))}catch{if($_.Exception.Message-notlike("*"+$mutation.category+"*")){throw};$rejected=$true}
+        Assert-RunnerFast $rejected 'declared dynamic target accepted altered root, suffix, owner, expression or count'
+    }
+    Write-TestText (Join-Path $closureFixture $targetSeed) $targetBody
+    [IO.File]::Delete($targetFile)
+    $rejected=$false;try{[void](Get-RunnerFastFixtureModuleClosure $git $closureFixture @($targetSeed))}catch{if($_.Exception.Message-notlike'*fixture import is absent:*'){throw};$rejected=$true}
+    Assert-RunnerFast $rejected 'declared dynamic target accepted a missing target file'
+    Write-TestText $targetFile "Import-Module (Join-Path `$PSScriptRoot 'target-child.psm1')"
+    Invoke-TestGit $git $closureFixture @('rm','--cached','--','scripts/lib/MorphospaceRepositoryObservation.psm1')|Out-Null
+    $rejected=$false;try{[void](Get-RunnerFastFixtureModuleClosure $git $closureFixture @($targetSeed))}catch{if($_.Exception.Message-notlike'*fixture import is not tracked:*'){throw};$rejected=$true}
+    Assert-RunnerFast $rejected 'declared dynamic target accepted an untracked target file'
+    Invoke-TestGit $git $closureFixture @('add','--','scripts/lib/MorphospaceRepositoryObservation.psm1')|Out-Null
     $planning = Join-Path $root 'planning'
     $quest = Join-Path $root 'quest'
     $workEnvironment = Join-Path $root 'work-environment'

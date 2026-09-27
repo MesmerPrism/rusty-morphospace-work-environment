@@ -45,4 +45,25 @@ function New-MorphospaceValidationMatrix {
     return @($rows.ToArray())
 }
 
-Export-ModuleMember -Function New-MorphospaceValidationMatrix
+function Assert-MorphospaceValidationMatrixProducerParity {
+    param([Parameter(Mandatory)][string]$ExecutorRoot,[Parameter(Mandatory)][string]$AuthoritativeModulePath,[string]$ExpectedExtractedMatrixSha256='',[bool]$OriginalContextBound=$false)
+    $tokens=$null;$errors=$null
+    $producerAst=[Management.Automation.Language.Parser]::ParseFile([IO.Path]::Combine($ExecutorRoot,'scripts/WorkUnitAutomation.psm1'),[ref]$tokens,[ref]$errors)
+    if(@($errors).Count){throw 'Frozen continuation validation matrix producer is not parseable.'}
+    $matrixFunctions=@($producerAst.FindAll({param($node) $node-is[Management.Automation.Language.FunctionDefinitionAst]-and$node.Name-ceq'New-MorphospaceValidationMatrix'},$true))
+    if($matrixFunctions.Count-eq0){
+        $imports=@($producerAst.FindAll({param($node) $node-is[Management.Automation.Language.CommandAst]-and$node.GetCommandName()-ceq'Import-Module'-and$node.Extent.Text.Replace("`r`n","`n")-ceq'Import-Module (Join-Path $PSScriptRoot ''lib/MorphospaceValidationPlanning.psm1'')'},$true))
+        if($imports.Count-ne1){throw 'Frozen continuation extracted validation matrix import is detached.'}
+        $matrixPath=[IO.Path]::Combine($ExecutorRoot,'scripts/lib/MorphospaceValidationPlanning.psm1')
+        if($OriginalContextBound-and[string]::IsNullOrEmpty($ExpectedExtractedMatrixSha256)){throw 'Frozen continuation extracted validation matrix bytes are outside the original closure.'}
+        if($ExpectedExtractedMatrixSha256-and-not[string]::Equals([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([IO.File]::ReadAllBytes($matrixPath))).ToLowerInvariant(),$ExpectedExtractedMatrixSha256,[StringComparison]::Ordinal)){throw 'Frozen continuation extracted validation matrix bytes are outside the original closure.'}
+        $producerAst=[Management.Automation.Language.Parser]::ParseFile($matrixPath,[ref]$tokens,[ref]$errors)
+        if(@($errors).Count){throw 'Frozen continuation extracted validation matrix is not parseable.'}
+        $matrixFunctions=@($producerAst.FindAll({param($node) $node-is[Management.Automation.Language.FunctionDefinitionAst]-and$node.Name-ceq'New-MorphospaceValidationMatrix'},$true))
+    }
+    $authoritativeAst=[Management.Automation.Language.Parser]::ParseFile($AuthoritativeModulePath,[ref]$tokens,[ref]$errors)
+    $authoritativeFunctions=@($authoritativeAst.FindAll({param($node) $node-is[Management.Automation.Language.FunctionDefinitionAst]-and$node.Name-ceq'New-MorphospaceValidationMatrix'},$true))
+    if(@($errors).Count-or$matrixFunctions.Count-ne1-or$authoritativeFunctions.Count-ne1-or-not[string]::Equals($matrixFunctions[0].Extent.Text.Replace("`r`n","`n"),$authoritativeFunctions[0].Extent.Text.Replace("`r`n","`n"),[StringComparison]::Ordinal)){throw 'Frozen continuation original validation matrix semantics differ from the shared producer.'}
+}
+
+Export-ModuleMember -Function New-MorphospaceValidationMatrix,Assert-MorphospaceValidationMatrixProducerParity

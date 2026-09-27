@@ -48,6 +48,9 @@ ledger transport. The bridge does not change the unit pointer, expand the action
 catalogue, skip old recovery attestation, or make its location a trust root.
 Nonnull normal-validation selectors are outside its v1 contract and reject.
 RecordValidation and Accept continue through the original executor.
+Historical and pending proof reuse the narrow proof module, without importing
+the fresh actor. The bridge's original public Inspect wrapper still executes
+under its authenticated original context; it is not a source-data observation.
 
 See [Frozen Validation Retry](WORKFLOW_STABILITY.md#frozen-validation-retry) for
 the common unchanged-candidate, retained-failure, CAS and recovery contract.

@@ -1993,7 +1993,72 @@ function Invoke-AffectedRetirementLayoutGraphSelfTest {
         if([IO.Directory]::Exists($target)){Remove-Item -LiteralPath $target -Recurse -Force}
     }
 }
+function Invoke-AffectedClosedObserverDataSelfTest {
+ $OutRoot=Join-Path ([IO.Path]::GetTempPath()) ('morphospace-closed-data-'+[guid]::NewGuid().ToString('N'))
+ [void][IO.Directory]::CreateDirectory($OutRoot)
+ try {
+$observer=@'
+function Observe {
+ param([string]$ExecutorRoot)
+ $tokens=$null;$errors=$null
+ $ast=[Management.Automation.Language.Parser]::ParseFile([IO.Path]::Combine($ExecutorRoot,'scripts/Payload.psm1'),[ref]$tokens,[ref]$errors)
+ if(@($errors).Count){throw 'Parse failed'}
+ $items=@($ast.FindAll({param($node) $node-is[Management.Automation.Language.FunctionDefinitionAst]-and$node.Name-ceq'Example'},$true))
+ if($items.Count-ne1){throw 'Wrong count'}
+}
+'@
+$rows=[Collections.Generic.List[object]]::new()
+function CheckGraph([string]$Id,[string]$Entry,[int]$Count,[string[]]$ExpectedPaths,[string]$ExpectedMode,[bool]$Reject=$false){
+ $root=Join-Path $OutRoot $Id
+ [void][IO.Directory]::CreateDirectory((Join-Path $root 'scripts'))
+ [IO.File]::WriteAllText((Join-Path $root 'scripts/Entry.ps1'),$Entry)
+ [IO.File]::WriteAllText((Join-Path $root 'scripts/Payload.psm1'),"Import-Module './Child.psm1'`n& `$external`n")
+ [IO.File]::WriteAllText((Join-Path $root 'scripts/Child.psm1'),"function Example { 'inert fixture, never executed' }`n")
+ $inventory=[pscustomobject]@{records=@('scripts/Entry.ps1','scripts/Payload.psm1','scripts/Child.psm1'|ForEach-Object{[pscustomobject]@{path=$_;type='blob';mode='100644'}})}
+ $declarations=@([pscustomobject]@{importer='scripts/Payload.psm1';variable='external';classification='authenticated-external-command';count=$Count})
+ $before=@(Get-ChildItem (Join-Path $root 'scripts') -File|ForEach-Object{[pscustomobject]@{path=$_.Name;sha256=(Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()}})
+ $caught=$null;$result=$null
+ try{$result=Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $root -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations $declarations}catch{$caught=$_.Exception.Message}
+ if($Reject){if($null-eq$caught-or$caught-notmatch'Affected dependency declaration count changed: scripts/Payload.psm1\|external expected=2 observed=1'){throw "Wrong rejection $Id : $caught"}}
+ else{if($null-ne$caught){throw "$Id failed: $caught"};if(($result.paths-join'|')-cne($ExpectedPaths-join'|')-or$result.resolution.mode-cne$ExpectedMode){throw "$Id graph mismatch: $($result|ConvertTo-Json -Depth 10 -Compress)"}}
+ $after=@(Get-ChildItem (Join-Path $root 'scripts') -File|ForEach-Object{[pscustomobject]@{path=$_.Name;sha256=(Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()}})
+ if(($before|ConvertTo-Json -Compress)-cne($after|ConvertTo-Json -Compress)){throw "Fixture source changed $Id"}
+ $rows.Add([pscustomobject]@{id=$Id;paths=$(if($null-ne$result){@($result.paths)}else{@()});resolution=$(if($null-ne$result){$result.resolution}else{$null});rejection=$caught;source_before=$before;source_after=$after})
+}
+$data=@('scripts/Entry.ps1','scripts/Payload.psm1')
+$all=@('scripts/Child.psm1','scripts/Entry.ps1','scripts/Payload.psm1')
+CheckGraph 'data-only-declaration-not-executed' $observer 2 $data 'exact'
+CheckGraph 'dot-promotes-data' ($observer+"`n. './Payload.psm1'`n") 1 $all 'exact'
+CheckGraph 'amp-promotes-data' ($observer+"`n& './Payload.psm1'`n") 1 $all 'exact'
+CheckGraph 'renamed-inert-observer' ($observer.Replace('Observe','IndependentName')) 2 $data 'exact'
+CheckGraph 'AST-return-promotes-execution' ($observer.Replace(" if(`$items.Count-ne1)"," return `$ast`n if(`$items.Count-ne1)")) 1 $all 'exact'
+CheckGraph 'source-text-return-promotes-execution' ($observer.Replace(" if(`$items.Count-ne1)"," return `$items[0].Extent.Text`n if(`$items.Count-ne1)")) 1 $all 'exact'
+CheckGraph 'global-write-promotes-execution' ($observer.Replace(" if(`$items.Count-ne1)"," `$global:changed=`$true`n if(`$items.Count-ne1)")) 1 $all 'exact'
+CheckGraph 'implicit-output-promotes-execution' ($observer.Replace(" if(`$items.Count-ne1)"," `$ExecutorRoot`n if(`$items.Count-ne1)")) 1 $all 'exact'
+CheckGraph 'nested-root-write-promotes-execution' ($observer.Replace(" if(`$items.Count-ne1)"," `$unused=([string]`$ExecutorRoot='other')`n if(`$items.Count-ne1)")) 1 $all 'exact'
+CheckGraph 'data-first-import-promotes' ($observer+"`nImport-Module './Payload.psm1'`n") 1 $all 'exact'
+CheckGraph 'import-first-data-retained' ("Import-Module './Payload.psm1'`n"+$observer) 1 $all 'exact'
+CheckGraph 'executed-count-damage' ($observer+"`nImport-Module './Payload.psm1'`n") 2 @() '' $true
+CheckGraph 'independent-fallback-promotes-data' ($observer+"`nfunction Unknown { & `$unknown }`n") 1 $all 'all-tracked-scripts-fallback'
+CheckGraph 'typed-parser-scriptblock-escape-fallback' ($observer+"`nfunction Escape { & {param([scriptblock]`$x) & `$x} `$ast.GetScriptBlock() }`n") 1 $all 'all-tracked-scripts-fallback'
+CheckGraph 'extent-text-create-fallback' ($observer+"`nfunction Escape { `$created=[scriptblock]::Create(`$ast.Extent.Text) }`n") 1 $all 'all-tracked-scripts-fallback'
+CheckGraph 'dynamic-scriptblock-method-fallback' ($observer+"`nfunction Escape { `$memberName='Create';`$created=[scriptblock]::`$memberName(`$ast.Extent.Text) }`n") 1 $all 'all-tracked-scripts-fallback'
+# A data-only payload remains an input despite not recursively executing it.
+# Changing only its bytes changes its raw input SHA, while the path stays bound.
+$rawPath=Join-Path $OutRoot 'data-only-declaration-not-executed/scripts/Payload.psm1'
+$rawBefore=(Get-FileHash -LiteralPath $rawPath -Algorithm SHA256).Hash
+[IO.File]::AppendAllText($rawPath,"`n# inert data byte mutation`n")
+$rawAfter=(Get-FileHash -LiteralPath $rawPath -Algorithm SHA256).Hash
+if($rawBefore-ceq$rawAfter-or$rows[0].paths-cnotcontains'scripts/Payload.psm1'){throw 'Data payload mutation did not change retained raw input identity'}
+Write-Host "Finite observer data closure passed $($rows.Count) graph cases and raw input mutation."
+ }finally{
+  $target=[IO.Path]::GetFullPath($OutRoot);$prefix=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar)+[IO.Path]::DirectorySeparatorChar
+  if(-not$target.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){throw 'Closed observer fixture cleanup escaped temp root'}
+  if([IO.Directory]::Exists($target)){Remove-Item -LiteralPath $target -Recurse -Force}
+ }
+}
 function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]$Registry) {
+    Invoke-AffectedClosedObserverDataSelfTest
     Invoke-AffectedRetirementLayoutGraphSelfTest
     $fixture = Join-Path ([IO.Path]::GetTempPath()) ('morphospace-affected-per-check-closure-' + [guid]::NewGuid().ToString('N'))
     [void][IO.Directory]::CreateDirectory((Join-Path $fixture 'scripts'))

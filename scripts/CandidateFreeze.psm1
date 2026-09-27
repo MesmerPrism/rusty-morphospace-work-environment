@@ -223,29 +223,17 @@ function Get-FrozenContinuationObservationModule {
         $resolver=& $toolingModule { param($parameters) Read-MorphospaceToolingContextResolver @parameters } @{WorkspaceRoot=$Workspace;Context=$context}
         $root=[string]$resolver.executor_root
     }
-    # Parse authenticated producer source; never execute arbitrary historical code.
+    # Authenticate before the neutral parser consumes any historical source.
     $scriptsRoot=Join-Path $root 'scripts'
-    $tokens=$null;$errors=$null
-    $producerAst=[Management.Automation.Language.Parser]::ParseFile((Join-Path $scriptsRoot 'WorkUnitAutomation.psm1'),[ref]$tokens,[ref]$errors)
-    if(@($errors).Count){throw 'Frozen continuation validation matrix producer is not parseable.'}
-    $matrixFunctions=@($producerAst.FindAll({param($node) $node-is[Management.Automation.Language.FunctionDefinitionAst]-and$node.Name-ceq'New-MorphospaceValidationMatrix'},$true))
-    if($matrixFunctions.Count-eq0){
-        $imports=@($producerAst.FindAll({param($node) $node-is[Management.Automation.Language.CommandAst]-and$node.GetCommandName()-ceq'Import-Module'-and$node.Extent.Text.Replace("`r`n","`n")-ceq'Import-Module (Join-Path $PSScriptRoot ''lib/MorphospaceValidationPlanning.psm1'')'},$true))
-        if($imports.Count-ne1){throw 'Frozen continuation extracted validation matrix import is detached.'}
-        $matrixPath=Join-Path $scriptsRoot 'lib/MorphospaceValidationPlanning.psm1'
-        if($Unit.PSObject.Properties.Name-ccontains'tooling_context'){
-            $relative='scripts/lib/MorphospaceValidationPlanning.psm1'
-            $bindings=@($context.executor.closure|Where-Object{[string]$_.path-ceq$relative})
-            if($bindings.Count-ne1-or(Get-MorphospaceFileSha256 $matrixPath)-cne[string]$bindings[0].sha256){throw 'Frozen continuation extracted validation matrix bytes are outside the original closure.'}
-        }
-        $producerAst=[Management.Automation.Language.Parser]::ParseFile($matrixPath,[ref]$tokens,[ref]$errors)
-        if(@($errors).Count){throw 'Frozen continuation extracted validation matrix is not parseable.'}
-        $matrixFunctions=@($producerAst.FindAll({param($node) $node-is[Management.Automation.Language.FunctionDefinitionAst]-and$node.Name-ceq'New-MorphospaceValidationMatrix'},$true))
-    }
     if(-not[string]::Equals([string]$script:CandidateValidationPlanningModule.Definition,[IO.File]::ReadAllText([string]$script:CandidateValidationPlanningModule.Path),[StringComparison]::Ordinal)){throw 'Frozen continuation shared validation matrix loaded bytes drifted.'}
-    $authoritativeAst=[Management.Automation.Language.Parser]::ParseFile([string]$script:CandidateValidationPlanningModule.Path,[ref]$tokens,[ref]$errors)
-    $authoritativeFunctions=@($authoritativeAst.FindAll({param($node) $node-is[Management.Automation.Language.FunctionDefinitionAst]-and$node.Name-ceq'New-MorphospaceValidationMatrix'},$true))
-    if(@($errors).Count-or$matrixFunctions.Count-ne1-or$authoritativeFunctions.Count-ne1-or-not[string]::Equals($matrixFunctions[0].Extent.Text.Replace("`r`n","`n"),$authoritativeFunctions[0].Extent.Text.Replace("`r`n","`n"),[StringComparison]::Ordinal)){throw 'Frozen continuation original validation matrix semantics differ from the shared producer.'}
+    $expectedExtractedMatrixSha256=''
+    $originalContextBound=$Unit.PSObject.Properties.Name-ccontains'tooling_context'
+    if($originalContextBound){
+        $bindings=@($context.executor.closure|Where-Object{[string]$_.path-ceq'scripts/lib/MorphospaceValidationPlanning.psm1'})
+        if($bindings.Count-gt1){throw 'Frozen continuation extracted validation matrix bytes are outside the original closure.'}
+        if($bindings.Count-eq1){$expectedExtractedMatrixSha256=[string]$bindings[0].sha256}
+    }
+    & $script:CandidateValidationPlanningModule { param($parameters) Assert-MorphospaceValidationMatrixProducerParity @parameters } @{ExecutorRoot=$root;AuthoritativeModulePath=([string]$script:CandidateValidationPlanningModule.Path);ExpectedExtractedMatrixSha256=$expectedExtractedMatrixSha256;OriginalContextBound=$originalContextBound}
     $observationModule=Import-Module (Join-Path $scriptsRoot 'lib/MorphospaceRepositoryObservation.psm1') -PassThru
     if($Unit.PSObject.Properties.Name-ccontains'tooling_context'){& $toolingModule { param($parameters) Assert-MorphospaceToolingContextLoadedOwnerModule @parameters } @{Context=$context;ExecutorRoot=$root;OwnerModule=$observationModule}|Out-Null}
     return $observationModule
@@ -368,7 +356,7 @@ function Get-MorphospaceFrozenValidationContinuation {
     $pending=$null;$ledgerWorkspace=$workspace
     try{
     if($PendingReentry){
-        $pendingModule=Import-Module (Join-Path $PSScriptRoot 'FrozenValidationReentry.psm1') -PassThru
+        $pendingModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceFrozenValidationReentryProof.psm1') -PassThru
         $pending=& $pendingModule { param($parameters) Get-MorphospaceFrozenValidationReentryPendingObservation @parameters } @{WorkspaceRoot=$workspace;RequestPath=$PendingReentry}
         if([string]$pending.unit.unit_id-cne[string]$Unit.unit_id){throw 'Frozen continuation pending request belongs to a different unit.'}
         $ledgerWorkspace=[string]$pending.ledger_workspace;$liveUnit=$pending.unit
@@ -412,7 +400,7 @@ function Get-MorphospaceFrozenValidationContinuation {
         $bridge=@();foreach($artifact in @($intent.artifacts)){$doc=ConvertFrom-MorphospaceProtocolJsonBytes ([Convert]::FromBase64String([string]$artifact.bytes_base64));if([string]$doc.schema-ceq'rusty.morphospace.workflow.frozen_validation_reentry.v1'){$bridge+=,$doc}}
         if($bridge.Count-gt0){
             if($bridge.Count-ne1-or[string]$currentUnit.status-cne'active'){throw 'Frozen continuation repeated or misplaced re-entry request.'}
-            $reentryModule=Import-Module (Join-Path $PSScriptRoot 'FrozenValidationReentry.psm1') -PassThru
+            $reentryModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceFrozenValidationReentryProof.psm1') -PassThru
             & $reentryModule { param($parameters) Assert-MorphospaceFrozenValidationReentryHistoricalTransition @parameters } @{WorkspaceRoot=$workspace;Transition=$proof}
             $targetUnit.status='validating'
         }elseif([string]$currentUnit.status-ceq'active'){

@@ -98,6 +98,14 @@ used by the current frozen-candidate consumer. It authenticates the ordered
 continuation rather than requiring the live tail to remain the original Freeze
 event. It does not alter a receipt or create validation evidence. Missing,
 reordered, cross-unit, contract-changing or damaged transaction chains reject.
+Keep historical and pending verification in the narrow reentry proof module,
+separate from the fresh transition actor. The neutral validation-matrix parser
+observes authenticated source bytes and compares producer semantics; it returns
+no executable AST or code. Retain those bytes as validation inputs. Parsing a
+source file does not execute its imports, while actual imports, script calls and
+the bridge's original Inspect wrapper remain execution dependencies.
+The fixed reentry schema declares the required actor and CLI paths; private
+executor proof reads that same contract and still verifies the complete Git tree.
 
 An older pinned executor can instead use the separately published
 `Invoke-FrozenValidationReentry.ps1` bridge. Its typed request binds the unchanged

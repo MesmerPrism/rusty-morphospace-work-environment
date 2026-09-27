@@ -550,12 +550,50 @@ function Test-ReentryOldConsumer([string]$Root,[string]$Old,[string]$Tool,[strin
  Assert-Reentry ((Get-ReentryRawHash (Join-Path $ws 'source-composition.json'))-ceq$sourceHash-and(Get-ReentryRawHash (Join-Path $ws $oldContext.path))-ceq$contextHash-and(Get-ReentryRawHash (Join-Path $ws 'receipts/u002-reentry-freeze.json'))-ceq$freezeHash) 'bridge or old writer changed immutable original authority bytes'
  return [pscustomobject]@{original_executor=$oldHead;published_executor=$request.executor.commit;original_freeze_sha256=$freezeHash;original_context_sha256=$contextHash;original_source_lock_sha256=$sourceHash;workspace=$ws}
 }
+function Test-ReentryExecutorPathContract([string]$Root){
+ [IO.Directory]::CreateDirectory($Root)|Out-Null
+ $executorContractModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceFrozenValidationReentryProof.psm1') -PassThru
+ $schema=Read-ReentryJson (Join-Path $repoRoot 'schemas/frozen-validation-reentry-v1.schema.json')
+ $zero='0'*64;$oid='a'*40;$file=[ordered]@{path='receipts/example.json';sha256=$zero}
+ $document=[ordered]@{schema='rusty.morphospace.workflow.frozen_validation_reentry.v1';reentry_id='fixture-contract';project_id='fixture-project';unit_id='fixture-unit';expected=[ordered]@{state_sha256=$zero;state_raw_sha256=$zero;unit_sha256=$zero;unit_raw_sha256=$zero;events_sha256=$zero;events_length=1;event_tail_id='fixture-event'};freeze=[ordered]@{freeze_id='fixture-freeze';path=$file.path;sha256=$zero};tooling_context=[ordered]@{path='tooling-contexts/example.json';sha256=$zero;canonical_sha256=$zero;protocol_id='tooling-context-v1'};repository_map=$file;executor=[ordered]@{repo_id='fixture-source';remote_url='https://example.invalid/fixture';commit=$oid;tree=$oid;entrypoint='scripts/FrozenValidationReentry.psm1';closure=@()};validation=$file;publication=[ordered]@{resolver=$file;plan=$file;execution=$file;record_event_id='fixture-record'}}
+ foreach($case in @('complete','missing-actor','missing-cli','missing-both')){
+  $fixture=Join-Path $Root $case;[IO.Directory]::CreateDirectory((Join-Path $fixture 'scripts'))|Out-Null
+  [IO.File]::WriteAllText((Join-Path $fixture 'README.md'),'Isolated executor path contract fixture; no lifecycle or publication authority.')
+  if($case-notin@('missing-actor','missing-both')){[IO.File]::WriteAllText((Join-Path $fixture 'scripts/FrozenValidationReentry.psm1'),'# inert fixture actor')}
+  if($case-notin@('missing-cli','missing-both')){[IO.File]::WriteAllText((Join-Path $fixture 'scripts/Invoke-FrozenValidationReentry.ps1'),'# inert fixture CLI')}
+  Invoke-ReentryGit $fixture @('init','--quiet')|Out-Null
+  Invoke-ReentryGit $fixture @('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','add','.')|Out-Null
+  Invoke-ReentryGit $fixture @('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--quiet','-m','Executor path contract fixture')|Out-Null
+  $executor=Copy-ReentryValue $document.executor;$executor.commit=Get-ReentryGitScalar $fixture @('rev-parse','HEAD');$executor.tree=Get-ReentryGitScalar $fixture @('rev-parse','HEAD^{tree}');$executor.closure=@(Get-ReentryOwnerClosure $fixture)
+  $document.executor=$executor
+  $schemaPass=Test-Json -Json ($document|ConvertTo-Json -Depth 100) -SchemaFile (Join-Path $repoRoot 'schemas/frozen-validation-reentry-v1.schema.json') -ErrorAction SilentlyContinue
+  Assert-Reentry ($schemaPass-eq($case-ceq'complete')) "executor request schema presence mismatch:$case"
+  $before=@(Get-ReentryInventory $fixture);$failure=$null
+  try{&$executorContractModule {param($fixtureRoot,$executorDescriptor) Assert-ReentryExecutorClosure -Root $fixtureRoot -Executor $executorDescriptor} $fixture $executor|Out-Null}catch{$failure=$_.Exception.Message}
+  if($case-ceq'complete'){Assert-Reentry ($null-eq$failure) "private executor presence rejected valid complete tree:$failure"}else{Assert-Reentry ($failure-ceq'Frozen re-entry executor inventory or entrypoint is incomplete.') "private executor missing path rejection mismatch:$case/$failure"}
+  Assert-ReentryNoWrite $before $fixture "private path contract $case"
+ }
+ foreach($damage in @('clause-count','duplicate-path','extra-shape','noncanonical-path')){
+  $contract=Copy-ReentryValue $schema;$node=$contract.'$defs'.request.properties.executor.properties.closure
+  switch($damage){
+   'clause-count'{$node.allOf=@($node.allOf[0])}
+   'duplicate-path'{$node.allOf[1].contains.properties.path.const=$node.allOf[0].contains.properties.path.const}
+   'extra-shape'{$node.allOf[0].contains|Add-Member -NotePropertyName minProperties -NotePropertyValue 1}
+   'noncanonical-path'{$node.allOf[0].contains.properties.path.const='scripts/../outside.ps1'}
+  }
+  $failure=$null;try{&$executorContractModule {param($contractDocument) Get-ReentryRequiredExecutorPaths $contractDocument} $contract|Out-Null}catch{$failure=$_.Exception.Message}
+  Assert-Reentry ($null-ne$failure-and$failure-match'required executor path contract|relative path') "private required path contract failed to reject:$damage/$failure"
+ }
+ Write-ReentryPhase 'executor schema/private presence and malformed contract cases passed'
+}
+
 if($Stage-ne'shared'-and-not$IsWindows){throw 'The real legacy-publication stage requires Windows SourceOnly FileIdInfo. Invoke -Stage shared on Linux; combined -Stage all never silently omits bridge proof.'}
 
 $runRoot=if($FixtureRoot){[IO.Path]::GetFullPath($FixtureRoot)}else{Join-Path ([IO.Path]::GetTempPath()) ('frozen-validation-reentry-'+[guid]::NewGuid().ToString('N'))}
 if(Test-Path -LiteralPath $runRoot){throw "Refusing to overwrite fixture root: $runRoot"}
 [IO.Directory]::CreateDirectory($runRoot)|Out-Null
 try{
+ Test-ReentryExecutorPathContract (Join-Path $runRoot 'executor-contract')
  if($Stage-ceq'legacy-publication'){$legacy=Test-ReentryLegacyPublication (Join-Path $runRoot 'legacy');[pscustomobject]@{result='pass';stage='legacy-publication';assertions=$assertions;elapsed_seconds=$testClock.Elapsed.TotalSeconds;fixture_root=$runRoot;legacy=$legacy;product_acceptance=$false;device_use=$false}|ConvertTo-Json -Depth 20 -Compress;return}
  $journey=Test-ReentrySharedJourney (Join-Path $runRoot 'neutral')
  $selfHostedJourney=Test-ReentrySharedJourney (Join-Path $runRoot 'self-hosted') -SelfHosted

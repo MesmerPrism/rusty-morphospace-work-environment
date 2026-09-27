@@ -9,7 +9,7 @@
     {"importer":"scripts/ActiveUnitRetirement.psm1","variable":"amendmentModule","count":1,"target_paths":["scripts/ActiveWriteScopeAmendment.psm1"]},
     {"importer":"scripts/ActiveUnitRetirement.psm1","variable":"module","count":2,"target_paths":["scripts/DevelopmentEnvelopeProvenance.psm1"]},
     {"importer":"scripts/CandidateFreeze.psm1","variable":"observationModule","count":1,"target_paths":["scripts/lib/MorphospaceRepositoryObservation.psm1"]},
-    {"importer":"scripts/CandidateFreeze.psm1","variable":"pendingModule","count":1,"target_paths":["scripts/FrozenValidationReentry.psm1"]},
+    {"importer":"scripts/CandidateFreeze.psm1","variable":"pendingModule","count":1,"target_paths":["scripts/lib/MorphospaceFrozenValidationReentryProof.psm1"]},
     {"importer":"scripts/CandidateFreeze.psm1","variable":"toolingModule","count":1,"target_paths":["scripts/ToolingContextProvenance.psm1"]},
     {"importer":"scripts/DevelopmentEnvelopeRepreparation.psm1","variable":"prepModule","count":6,"target_paths":["scripts/DevelopmentEnvelopePreparation.psm1"]},
     {"importer":"scripts/FrozenValidationReentry.psm1","variable":"oldLedgerModule","count":5,"target_paths":["scripts/lib/MorphospaceTransitionLedger.psm1"]},
@@ -66,7 +66,7 @@
     {"importer":"scripts/lib/MorphospaceValidationReceipt.psm1","variable":"observationModule","count":2,"target_paths":["scripts/lib/MorphospaceContentObservation.psm1"]},
     {"importer":"scripts/test-support/ActiveUnitRetirementContinuation.ps1","variable":"transitionLedgerModule","count":1,"target_paths":["scripts/lib/MorphospaceTransitionLedger.psm1"]}
   ],"path_sets": [
-    {"path_set_id":"frozen-validation-reentry","patterns":["scripts/FrozenValidationReentry.psm1","scripts/Invoke-FrozenValidationReentry.ps1","scripts/Test-FrozenValidationReentry.ps1","schemas/frozen-validation-reentry-v1.schema.json"]},
+    {"path_set_id":"frozen-validation-reentry","patterns":["scripts/FrozenValidationReentry.psm1","scripts/lib/MorphospaceFrozenValidationReentryProof.psm1","scripts/Invoke-FrozenValidationReentry.ps1","scripts/Test-FrozenValidationReentry.ps1","schemas/frozen-validation-reentry-v1.schema.json"]},
     {"path_set_id":"active-development-envelope-extension","patterns":["scripts/ActiveDevelopmentEnvelopeExtension.psm1","schemas/active-development-envelope-extension-v1.schema.json","schemas/active-development-envelope-source-composition-v1.schema.json"]},
     {"path_set_id":"active-development-envelope-extension-test","patterns":["scripts/Test-ActiveDevelopmentEnvelopeExtension.ps1"]},
     {"path_set_id":"tooling-context","patterns":["scripts/ToolingContextProvenance.psm1","scripts/ToolingContextUpgrade.psm1","schemas/tooling-context-*.schema.json","schemas/development-envelope-source-composition-v3.schema.json"]},
