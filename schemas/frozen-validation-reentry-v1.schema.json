@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/frozen-validation-reentry-v1.schema.json",
+  "oneOf": [{"$ref":"#/$defs/request"},{"$ref":"#/$defs/resolver"},{"$ref":"#/$defs/result"}],
+  "$defs": {
+    "id":{"type":"string","pattern":"^[a-z0-9][a-z0-9-]{1,127}$"},
+    "reentryId":{"type":"string","pattern":"^[a-z0-9][a-z0-9-]{1,88}$"},
+    "hash":{"type":"string","pattern":"^[0-9a-f]{64}$"},
+    "oid":{"type":"string","pattern":"^[0-9a-f]{40}$"},
+    "path":{"type":"string","pattern":"^(?!/)(?!.*(?:^|/)\\.\\.?(?:/|$))[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$"},
+    "file":{"type":"object","additionalProperties":false,"required":["path","sha256"],"properties":{"path":{"$ref":"#/$defs/path"},"sha256":{"$ref":"#/$defs/hash"}}},
+    "pointer":{"type":"object","additionalProperties":false,"required":["path","sha256","canonical_sha256","protocol_id"],"properties":{"path":{"$ref":"#/$defs/path"},"sha256":{"$ref":"#/$defs/hash"},"canonical_sha256":{"$ref":"#/$defs/hash"},"protocol_id":{"const":"tooling-context-v1"}}},
+    "resolver":{"type":"object","additionalProperties":false,"required":["schema","owner_workspace","executor_root"],"properties":{"schema":{"const":"rusty.morphospace.workflow.frozen_validation_reentry_resolver.v1"},"owner_workspace":{"type":"string","minLength":1},"executor_root":{"type":"string","minLength":1}}},
+    "result":{"type":"object","additionalProperties":false,"required":["schema","project_id","unit_id","action","timestamp","executed","transition","status_before","status_after","current_unit_before","current_unit_after","audit_receipt","event_id","preservation"],"properties":{"schema":{"const":"rusty.morphospace.workflow.frozen_validation_reentry_result.v1"},"project_id":{"$ref":"#/$defs/id"},"unit_id":{"$ref":"#/$defs/id"},"action":{"const":"FrozenValidationReentry"},"timestamp":{"type":"string","pattern":"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,7})?Z$"},"executed":{"type":"boolean"},"transition":{"const":"active-to-validating"},"status_before":{"const":"active"},"status_after":{"const":"validating"},"current_unit_before":{"$ref":"#/$defs/id"},"current_unit_after":{"$ref":"#/$defs/id"},"audit_receipt":{"$ref":"#/$defs/file"},"event_id":{"oneOf":[{"$ref":"#/$defs/id"},{"type":"null"}]},"preservation":{"type":"object","additionalProperties":false,"required":["tooling_context_unchanged","candidate_freeze_unchanged","git_mutation_performed","device_mutation_performed","remote_mutation_performed"],"properties":{"tooling_context_unchanged":{"const":true},"candidate_freeze_unchanged":{"const":true},"git_mutation_performed":{"const":false},"device_mutation_performed":{"const":false},"remote_mutation_performed":{"const":false}}}}},
+    "request":{
+      "type":"object","additionalProperties":false,
+      "required":["schema","reentry_id","project_id","unit_id","expected","freeze","tooling_context","repository_map","executor","validation","publication"],
+      "properties":{
+        "schema":{"const":"rusty.morphospace.workflow.frozen_validation_reentry.v1"},
+        "reentry_id":{"$ref":"#/$defs/reentryId"},"project_id":{"$ref":"#/$defs/id"},"unit_id":{"$ref":"#/$defs/id"},
+        "expected":{"type":"object","additionalProperties":false,"required":["state_sha256","state_raw_sha256","unit_sha256","unit_raw_sha256","events_sha256","events_length","event_tail_id"],"properties":{"state_sha256":{"$ref":"#/$defs/hash"},"state_raw_sha256":{"$ref":"#/$defs/hash"},"unit_sha256":{"$ref":"#/$defs/hash"},"unit_raw_sha256":{"$ref":"#/$defs/hash"},"events_sha256":{"$ref":"#/$defs/hash"},"events_length":{"type":"integer","minimum":1},"event_tail_id":{"$ref":"#/$defs/id"}}},
+        "freeze":{"type":"object","additionalProperties":false,"required":["freeze_id","path","sha256"],"properties":{"freeze_id":{"$ref":"#/$defs/id"},"path":{"$ref":"#/$defs/path"},"sha256":{"$ref":"#/$defs/hash"}}},
+        "tooling_context":{"$ref":"#/$defs/pointer"},"repository_map":{"$ref":"#/$defs/file"},
+        "executor":{"type":"object","additionalProperties":false,"required":["repo_id","remote_url","commit","tree","entrypoint","closure"],"properties":{"repo_id":{"$ref":"#/$defs/id"},"remote_url":{"type":"string","minLength":1},"commit":{"$ref":"#/$defs/oid"},"tree":{"$ref":"#/$defs/oid"},"entrypoint":{"const":"scripts/FrozenValidationReentry.psm1"},"closure":{"type":"array","minItems":1,"items":{"$ref":"#/$defs/file"}}}},
+        "validation":{"$ref":"#/$defs/file"},
+        "publication":{"type":"object","additionalProperties":false,"required":["resolver","plan","execution","record_event_id"],"properties":{"resolver":{"$ref":"#/$defs/file"},"plan":{"$ref":"#/$defs/file"},"execution":{"$ref":"#/$defs/file"},"record_event_id":{"$ref":"#/$defs/id"}}}
+      }
+    }
+  }
+}
