@@ -1,6 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/frozen-validation-reentry-v1.schema.json",
+  "type": "object",
   "oneOf": [{"$ref":"#/$defs/request"},{"$ref":"#/$defs/resolver"},{"$ref":"#/$defs/result"}],
   "$defs": {
     "id":{"type":"string","pattern":"^[a-z0-9][a-z0-9-]{1,127}$"},

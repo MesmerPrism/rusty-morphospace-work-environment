@@ -303,14 +303,14 @@ function Invoke-ReentryPublisherPublication([object]$Fixture,[string]$Tool,[stri
 }
 
 function Complete-ReentryInstructions([string]$Workspace,[string]$Map,[string]$Id){
- $args=@{Action='CompleteInstructionSurfaces';WorkspaceRoot=$Workspace;UnitId='u002';RepoMapPath=$Map;InstructionCompletionId=$Id;OutPath=(Join-Path $Workspace "receipts/$Id-instruction-surfaces.json");Timestamp='2026-08-25T00:01:25Z'}
- $dry=&$automationModule { param($parameters) Invoke-MorphospaceWorkUnitAutomation @parameters } $args
+ $instructionArguments=@{Action='CompleteInstructionSurfaces';WorkspaceRoot=$Workspace;UnitId='u002';RepoMapPath=$Map;InstructionCompletionId=$Id;OutPath=(Join-Path $Workspace "receipts/$Id-instruction-surfaces.json");Timestamp='2026-08-25T00:01:25Z'}
+ $dry=&$automationModule { param($parameters) Invoke-MorphospaceWorkUnitAutomation @parameters } $instructionArguments
  $binding=$dry.instruction_surface_completion
  Assert-Reentry ($binding.all_planned_surfaces_completed) 'instruction dry did not observe the exact planned surfaces'
- $args.InstructionSurfaceIds=@($binding.surfaces|ForEach-Object{[string]$_.surface_id});$args.ExpectedUnitSha256=[string]$binding.expected_unit_sha256;$args.ExpectedInstructionObservationSha256=[string]$binding.observation_sha256;$args.Execute=$true
- $actual=&$automationModule { param($parameters) Invoke-MorphospaceWorkUnitAutomation @parameters } $args
+ $instructionArguments.InstructionSurfaceIds=@($binding.surfaces|ForEach-Object{[string]$_.surface_id});$instructionArguments.ExpectedUnitSha256=[string]$binding.expected_unit_sha256;$instructionArguments.ExpectedInstructionObservationSha256=[string]$binding.observation_sha256;$instructionArguments.Execute=$true
+ $actual=&$automationModule { param($parameters) Invoke-MorphospaceWorkUnitAutomation @parameters } $instructionArguments
  Assert-Reentry $actual.executed 'instruction completion did not execute'
- return [string]$args.OutPath
+ return [string]$instructionArguments.OutPath
 }
 function New-ReentryPassingOwnerReceipt([object]$Fixture,[string]$Tool,[string]$CheckOut,[string]$CheckErr){
  $ws=$Fixture.workspace;$unit=Read-ReentryJson (Join-Path $ws 'iteration-units/u002.json')
@@ -423,8 +423,8 @@ function Test-ReentryBridgeCases([object]$Call,[object]$Request,[object]$Bridge,
  foreach($case in @('stale-cas','selector','closure-tamper','publication-tamper')){
   $ws=Join-Path $Root $case;Copy-Item -LiteralPath $baseline -Destination $ws -Recurse -Force
   $request=Copy-ReentryValue $Request;$request.reentry_id="fixture-$case"
-  $args=$Call.Clone();$args.WorkspaceRoot=$ws;$args.OutPath=Join-Path $ws "receipts/$($request.reentry_id)-frozen-validation-reentry.json"
-  $path=Join-Path $Root "$case-request.json";$args.FrozenValidationReentry=$path
+  $bridgeArguments=$Call.Clone();$bridgeArguments.WorkspaceRoot=$ws;$bridgeArguments.OutPath=Join-Path $ws "receipts/$($request.reentry_id)-frozen-validation-reentry.json"
+  $path=Join-Path $Root "$case-request.json";$bridgeArguments.FrozenValidationReentry=$path
   $expect=''
   switch($case){
    'stale-cas'{$request.expected.state_sha256='0'*64;$expect='CAS|predecessor'}
@@ -433,39 +433,39 @@ function Test-ReentryBridgeCases([object]$Call,[object]$Request,[object]$Bridge,
    'publication-tamper'{$request.publication.execution.sha256='0'*64;$expect='execution|publication|bytes|hash'}
   }
   Write-ReentryJson $path $request
-  Assert-ReentryReject {&$Bridge { param($parameters) Invoke-MorphospaceFrozenValidationReentry @parameters } $args|Out-Null} $expect $ws $case
+  Assert-ReentryReject {&$Bridge { param($parameters) Invoke-MorphospaceFrozenValidationReentry @parameters } $bridgeArguments|Out-Null} $expect $ws $case
  }
  foreach($fault in @('after-intent','after-artifact','after-projection','after-event')){
   Write-ReentryPhase "legacy: original writer interruption recovery $fault"
   $ws=Join-Path $Root $fault;Copy-Item -LiteralPath $baseline -Destination $ws -Recurse -Force
   $request=Copy-ReentryValue $Request;$request.reentry_id="fixture-$fault"
   $path=Join-Path $Root "$fault-request.json";Write-ReentryJson $path $request
-  $args=$Call.Clone();$args.WorkspaceRoot=$ws;$args.FrozenValidationReentry=$path;$args.OutPath=Join-Path $ws "receipts/$($request.reentry_id)-frozen-validation-reentry.json";$args.ExpectedFrozenValidationReentrySha256=Get-ReentryRawHash $path;$args.Execute=$true;$args.FaultAfter=$fault
-  $failure=$null;try{&$Bridge { param($parameters) Invoke-MorphospaceFrozenValidationReentry @parameters } $args|Out-Null}catch{$failure=$_.Exception.Message}
+  $bridgeArguments=$Call.Clone();$bridgeArguments.WorkspaceRoot=$ws;$bridgeArguments.FrozenValidationReentry=$path;$bridgeArguments.OutPath=Join-Path $ws "receipts/$($request.reentry_id)-frozen-validation-reentry.json";$bridgeArguments.ExpectedFrozenValidationReentrySha256=Get-ReentryRawHash $path;$bridgeArguments.Execute=$true;$bridgeArguments.FaultAfter=$fault
+  $failure=$null;try{&$Bridge { param($parameters) Invoke-MorphospaceFrozenValidationReentry @parameters } $bridgeArguments|Out-Null}catch{$failure=$_.Exception.Message}
   Assert-Reentry ($null-ne$failure-and$failure-match'fault|injected') "fault $fault did not stop at the real public transport boundary:$failure"
   $intent=Join-Path $ws "receipts/transactions/$($request.reentry_id)-frozen-validation-reentered-transition.intent.json"
   Assert-Reentry (Test-Path -LiteralPath $intent -PathType Leaf) 'interrupted bridge must retain the actual old writer intent'
-  $args.FaultAfter='none';$args.Remove('Execute')
+  $bridgeArguments.FaultAfter='none';$bridgeArguments.Remove('Execute')
   $intentBytes=[IO.File]::ReadAllBytes($intent)
   try{
    $damaged=Read-ReentryJson $intent;$damaged.event.summary='Tampered pending bridge authority.'
    Write-ReentryJson $intent $damaged
-   Assert-ReentryReject {&$Bridge { param($parameters) Invoke-MorphospaceFrozenValidationReentry @parameters } $args|Out-Null} 'event|intent|semantic|authority' $ws "pending intent tamper $fault"
+   Assert-ReentryReject {&$Bridge { param($parameters) Invoke-MorphospaceFrozenValidationReentry @parameters } $bridgeArguments|Out-Null} 'event|intent|semantic|authority' $ws "pending intent tamper $fault"
   }finally{[IO.File]::WriteAllBytes($intent,$intentBytes)}
-  $audit=$args.OutPath
+  $audit=$bridgeArguments.OutPath
   if(Test-Path -LiteralPath $audit -PathType Leaf){
    $auditBytes=[IO.File]::ReadAllBytes($audit)
    try{
     [IO.File]::AppendAllText($audit,' ',[Text.UTF8Encoding]::new($false))
-    Assert-ReentryReject {&$Bridge { param($parameters) Invoke-MorphospaceFrozenValidationReentry @parameters } $args|Out-Null} 'artifact|audit|bytes|hash|owned' $ws "pending audit tamper $fault"
+    Assert-ReentryReject {&$Bridge { param($parameters) Invoke-MorphospaceFrozenValidationReentry @parameters } $bridgeArguments|Out-Null} 'artifact|audit|bytes|hash|owned' $ws "pending audit tamper $fault"
    }finally{[IO.File]::WriteAllBytes($audit,$auditBytes)}
   }
-  $dry=&$Bridge { param($parameters) Invoke-MorphospaceFrozenValidationReentry @parameters } $args
+  $dry=&$Bridge { param($parameters) Invoke-MorphospaceFrozenValidationReentry @parameters } $bridgeArguments
   Assert-Reentry (-not$dry.executed) 'recovery dry unexpectedly wrote'
-  $args.Execute=$true;$recovered=&$Bridge { param($parameters) Invoke-MorphospaceFrozenValidationReentry @parameters } $args
+  $bridgeArguments.Execute=$true;$recovered=&$Bridge { param($parameters) Invoke-MorphospaceFrozenValidationReentry @parameters } $bridgeArguments
   Assert-Reentry ($recovered.executed-and(Read-ReentryJson (Join-Path $ws 'iteration-units/u002.json')).status-ceq'validating') 'old public Complete -Repair did not recover the genuine interruption'
   $eventsBefore=Get-ReentryRawHash (Join-Path $ws 'iteration-events.jsonl')
-  &$Bridge { param($parameters) Invoke-MorphospaceFrozenValidationReentry @parameters } $args|Out-Null
+  &$Bridge { param($parameters) Invoke-MorphospaceFrozenValidationReentry @parameters } $bridgeArguments|Out-Null
   Assert-Reentry ((Get-ReentryRawHash (Join-Path $ws 'iteration-events.jsonl'))-ceq$eventsBefore) 'completed recovery replay duplicated an event'
  }
  $sourceFile=Join-Path $SourceRepository 'morphospace/README.md';$original=[IO.File]::ReadAllBytes($sourceFile)
