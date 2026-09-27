@@ -359,7 +359,7 @@ function Test-ReentryLegacyPublication([string]$Root){
  Invoke-ReentryGit $tool @('checkout','-b','fixture-owner-candidate')|Out-Null
  Invoke-ReentryGit $tool @('fetch','origin','main')|Out-Null
  Invoke-ReentryGit $tool @('branch','--set-upstream-to=origin/main')|Out-Null
- $changed=@('scripts/CandidateFreeze.psm1','scripts/FrozenValidationReentry.psm1','scripts/Invoke-FrozenValidationReentry.ps1','scripts/Test-FrozenValidationReentry.ps1','schemas/frozen-validation-reentry-v1.schema.json','manifests/affected-validation-registry.json','docs/WORKFLOW_STABILITY.md','docs/TOOLING_CONTEXT.md','scripts/Test-FixturePublicationOwner.ps1')
+ $changed=@('scripts/CandidateFreeze.psm1','scripts/lib/MorphospaceValidationPlanning.psm1','scripts/lib/MorphospaceFrozenValidationReentryProof.psm1','scripts/FrozenValidationReentry.psm1','scripts/Invoke-FrozenValidationReentry.ps1','scripts/Test-FrozenValidationReentry.ps1','schemas/frozen-validation-reentry-v1.schema.json','manifests/affected-validation-registry.json','docs/WORKFLOW_STABILITY.md','docs/TOOLING_CONTEXT.md','scripts/Test-FixturePublicationOwner.ps1')
  # Every copy is from the actual selected working source and is committed in the isolated candidate.
  foreach($path in @($changed|Where-Object{$_-cne'scripts/Test-FixturePublicationOwner.ps1'})){Assert-Reentry (Test-Path -LiteralPath (Join-Path $repoRoot $path) -PathType Leaf) "fixture candidate source missing:$path"}
  $skills=Join-Path $Root 'routers'
@@ -373,12 +373,13 @@ function Test-ReentryLegacyPublication([string]$Root){
  Write-ReentryJson $unitPath $unit
  Invoke-ReentryGit $fixture.owner @('add','morphospace')|Out-Null;Invoke-ReentryGit $fixture.owner @('commit','-m','genuine initial fixture source pin')|Out-Null
  foreach($path in @($changed|Where-Object{$_-cne'scripts/Test-FixturePublicationOwner.ps1'})){$dest=Join-Path $tool $path;[IO.Directory]::CreateDirectory((Split-Path $dest -Parent))|Out-Null;[IO.File]::WriteAllBytes($dest,[IO.File]::ReadAllBytes((Join-Path $repoRoot $path)))}
+ foreach($path in @($changed|Where-Object{$_-cne'scripts/Test-FixturePublicationOwner.ps1'})){Assert-Reentry ((Get-ReentryRawHash (Join-Path $tool $path))-ceq(Get-ReentryRawHash (Join-Path $repoRoot $path))) "published fixture overlay bytes differ:$path"}
  $fixtureChecker=@'
 param()
 $ErrorActionPreference='Stop'
 $root=Split-Path $PSScriptRoot -Parent
 $checks=0
-foreach($path in @('scripts/CandidateFreeze.psm1','scripts/FrozenValidationReentry.psm1','scripts/Invoke-FrozenValidationReentry.ps1','scripts/Test-FrozenValidationReentry.ps1')){
+foreach($path in @('scripts/CandidateFreeze.psm1','scripts/lib/MorphospaceValidationPlanning.psm1','scripts/lib/MorphospaceFrozenValidationReentryProof.psm1','scripts/FrozenValidationReentry.psm1','scripts/Invoke-FrozenValidationReentry.ps1','scripts/Test-FrozenValidationReentry.ps1')){
  $tokens=$null;$errors=$null
  [Management.Automation.Language.Parser]::ParseFile((Join-Path $root $path),[ref]$tokens,[ref]$errors)|Out-Null
  if($errors.Count-ne0){throw "Fixture owner script parse failed:$path"};$checks++
