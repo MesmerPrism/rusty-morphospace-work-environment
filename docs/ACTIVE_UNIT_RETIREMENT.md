@@ -115,3 +115,29 @@ of `Test-ActiveUnitRetirement.ps1 -SelfTest` still runs every scenario.
 Historical auditing remains separate. Later continuation must authenticate
 retirement after subsequent owner events without retrofitting new instruction
 requirements onto the retired unit.
+
+## Optional inert Claim diagnostic retention
+
+A reviewed retirement request may bind one `retained_claim_diagnostic` when an
+older executed `Claim` returned an automation receipt that was committed beside
+the transaction, but the original intent artifacts and event receipts are empty.
+The binding uses the closed `inert-claim-diagnostic` role, the v1 automation
+producer schema, a `receipts/<name>-claim-<YYYYMMDD>.json` path, exact raw and
+canonical hashes, the original committed addition and full Git blob SHA1/SHA256, and the original
+Claim target unit's tooling context (null only when the original Claim had none).
+A later context upgrade is not a substitute. Checkout normalization does not
+replace either raw binding: the full committed blob must also match the complete
+worktree diagnostic canonically.
+
+Retirement verifies the whole closed producer receipt, its ready-to-active
+transition, identities and timestamp, the committed Claim and context, and the
+validation matrix and graph scope derived from the retained Claim unit. Historical
+preflight observations remain unused diagnostic data; they are not recreated or
+used as present authority. Arbitrary evidence/control paths, producer roles,
+non-Claim authority payloads and changed bytes are rejected. The same binding is
+verified on transaction recovery and historical retirement readback.
+
+This option retains bytes only. It never inserts artifacts or receipt references
+into the original Claim ledger, nor supplies validation, gate, prerequisite,
+acceptance or publication credit. Requests without the optional binding retain
+the existing behavior.

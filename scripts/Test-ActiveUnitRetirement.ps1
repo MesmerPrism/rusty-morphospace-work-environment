@@ -8,6 +8,89 @@ $ErrorActionPreference='Stop'
 Set-StrictMode -Version 2.0
 if(-not$SelfTest){throw 'Test-ActiveUnitRetirement requires -SelfTest.'}
 
+function Invoke-ActiveRetirementClaimDiagnosticChecks {
+param([Parameter(Mandatory)][string]$ScriptsRoot)
+$owner=Split-Path $ScriptsRoot -Parent
+$protocolModule=Import-Module (Join-Path $ScriptsRoot 'lib/MorphospaceProtocolCommon.psm1') -PassThru
+. (Join-Path $ScriptsRoot 'test-support/DevelopmentAdmissionFixture.ps1')
+$module=Import-Module (Join-Path $ScriptsRoot 'ActiveUnitRetirement.psm1') -PassThru
+$ledger=Import-Module (Join-Path $ScriptsRoot 'lib/MorphospaceTransitionLedger.psm1') -PassThru
+$temporary=Join-Path ([IO.Path]::GetTempPath()) ('claim-retention-'+[guid]::NewGuid().ToString('N'))
+$cases=[Collections.Generic.List[string]]::new()
+try {
+    $seed=New-EnvelopeAdmissionPreparedFixture -Root $temporary -RepositoryRoot $owner -TransitionLedgerModule $ledger -OwnerProducedPreparation -AdditiveFeature
+    $workspace=$seed.workspace
+    $admissionPath=Join-Path $temporary 'admission.json'
+    Write-EnvelopeJson $admissionPath $seed.admission_template
+    $automation=Join-Path $ScriptsRoot 'Invoke-WorkUnitAutomation.ps1'
+    $null=&$automation -Action AdmitDevelopmentUnit -WorkspaceRoot $workspace -DevelopmentUnitAdmission $admissionPath -ExpectedDevelopmentUnitAdmissionSha256 (Get-EnvelopeFileSha256 $admissionPath) -OutPath (Join-Path $workspace 'receipts/u002-admission.json') -Timestamp '2026-08-25T00:00:40.0000000Z' -Execute
+    $lifecycle=@{WorkspaceRoot=$workspace;UnitId='u002';RepoMapPath=(Join-Path $workspace 'repository-map.json');ValidationTier='quick'}
+    $null=&$automation @lifecycle -Action Ready -Timestamp '2026-08-25T00:00:41.0000000Z' -Execute
+    # No OutPath: preserve the legacy unledgered diagnostic without inserting it
+    # into the actual Claim event or transition artifacts.
+    $diagnostic=&$automation @lifecycle -Action Claim -Timestamp '2026-08-25T00:00:42.0000000Z' -Execute | ConvertFrom-Json -DateKind String
+    $relative='receipts/u002-claim-20260825.json';$path=Join-Path $workspace $relative
+    Write-EnvelopeJson $path $diagnostic
+    &git -C $workspace init -q | Out-Null
+    &git -C $workspace config core.autocrlf false | Out-Null
+    &git -C $workspace -c user.name=Fixture -c user.email=fixture@example.invalid add -- . | Out-Null
+    &git -C $workspace -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm seed | Out-Null
+    # The addition must be a non-root commit so its exact A status is observable.
+    &git -C $workspace rm --cached -- $relative | Out-Null
+    &git -C $workspace -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm before-diagnostic | Out-Null
+    &git -C $workspace add -- $relative | Out-Null
+    &git -C $workspace -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm diagnostic | Out-Null
+    $head=(&git -C $workspace rev-parse HEAD).Trim()
+    $request=&$module {param($root,$relative,$head)
+        $state=Read-MorphospaceProtocolJson (Join-Path $root 'workspace.state.json');$unit=Read-MorphospaceProtocolJson (Join-Path $root 'iteration-units/u002.json');$binding=Get-ActiveRetirementFileBinding $root $relative
+        $value=[pscustomobject]@{schema='rusty.morphospace.workflow.active_unit_retirement.v1';project_id=$state.project_id;unit_id='u002';old_unit=[pscustomobject]@{path='iteration-units/u002.json'};claim=$null;retained_claim_diagnostic=[pscustomobject]@{role='inert-claim-diagnostic';producer_schema='rusty.morphospace.workflow.work_unit_automation_receipt.v1';path=$relative;raw_sha256=$binding.raw_sha256;canonical_sha256=$binding.canonical_sha256;git_blob_sha1=(&git -C $root hash-object -- (Join-Path $root $relative)).Trim();git_blob_sha256=$binding.raw_sha256;introduced_commit=$head;tooling_context=$(if($unit.PSObject.Properties.Name-contains'tooling_context'){$unit.tooling_context}else{$null})}}
+        $value.claim=Get-ActiveRetirementClaim $root $value (Get-ActiveRetirementEvents $root).events;$value
+    } $workspace $relative $head
+    # Complete the real request envelope, while keeping the independently derived
+    # Claim binding used by this focused predicate.
+    . (Join-Path $ScriptsRoot 'test-support/ActiveUnitRetirementFixture.ps1')
+    $full=New-ActiveUnitRetirementRequest -WorkspaceRoot $workspace
+    $full | Add-Member retained_claim_diagnostic $request.retained_claim_diagnostic
+    $request=$full
+    function Check($value){&$module {param($root,$request,$head)Get-ActiveRetirementClaimDiagnosticProjection -Workspace $root -Request $request -Repository $root -ObservedHead $head} $workspace $value $head}
+    $original=[IO.File]::ReadAllBytes($path)
+    $accepted=Check $request
+    if($accepted.path-cne$relative){throw 'Exact diagnostic projection was not returned.'};$cases.Add('exact committed inert Claim retained')
+    $empty=Copy-Envelope $request;$empty.PSObject.Properties.Remove('retained_claim_diagnostic')
+    if($null-ne(Check $empty)){throw 'Absent optional diagnostic altered legacy behavior.'};$cases.Add('absent binding legacy-compatible')
+    function Reject($label,[scriptblock]$mutation){$candidate=Copy-Envelope $request;$receipt=Copy-Envelope $diagnostic;&$mutation $candidate $receipt; $failed=$false;try{Check $candidate|Out-Null}catch{$failed=$true};[IO.File]::WriteAllBytes($path,$original);if(-not$failed){throw "False retention: $label"};$cases.Add($label)}
+    Reject 'raw CAS changed' {param($r,$d)$r.retained_claim_diagnostic.raw_sha256='0'*64}
+    Reject 'canonical CAS changed' {param($r,$d)$r.retained_claim_diagnostic.canonical_sha256='0'*64}
+    Reject 'Git blob changed' {param($r,$d)$r.retained_claim_diagnostic.git_blob_sha1='0'*40}
+    Reject 'raw committed Git blob changed' {param($r,$d)$r.retained_claim_diagnostic.git_blob_sha256='0'*64}
+    Reject 'Claim transaction binding changed' {param($r,$d)$r.claim.intent_sha256='0'*64}
+    Reject 'unrelated introduced commit' {param($r,$d)$r.retained_claim_diagnostic.introduced_commit='0'*40}
+    Reject 'control namespace forbidden' {param($r,$d)$r.retained_claim_diagnostic.path='workspace.state.json'}
+    Reject 'arbitrary evidence namespace forbidden' {param($r,$d)$r.retained_claim_diagnostic.path='receipts/validation-pass.json'}
+    Reject 'producer role substitution' {param($r,$d)$r.retained_claim_diagnostic.role='validation-evidence'}
+    Reject 'current context substitution' {param($r,$d)$r.retained_claim_diagnostic.tooling_context=[pscustomobject]@{protocol_id='tooling-context-v1';path='tooling-contexts/forged.json';sha256=('0'*64);canonical_sha256=('0'*64)}}
+    foreach($fault in @('action','unit','matrix','graph','preflight','authority')){
+        Reject "closed producer $fault substitution" {
+            param($r,$d)
+            switch($fault){action{$d.action='Accept'}unit{$d.unit_id='other'}matrix{$d.validation_matrix[0].command='forged'}graph{$d.graph_scope.repositories[0].allowed_paths=@('**')}preflight{$d.claim_preflight.validation_matrix=@()}authority{$d.adoption_receipt='receipts/validation-pass.json'}}
+            Write-EnvelopeJson $path $d
+            $binding=&$module {param($root,$p)Get-ActiveRetirementFileBinding $root $p} $workspace $relative
+            $r.retained_claim_diagnostic.raw_sha256=$binding.raw_sha256;$r.retained_claim_diagnostic.canonical_sha256=$binding.canonical_sha256
+        }
+    }
+    $intentPath=Join-Path $workspace "receipts/transactions/$($request.claim.transaction_id).intent.json"
+    $intentBytes=[IO.File]::ReadAllBytes($intentPath)
+    try{$intent=Read-EnvelopeProtocolJson $intentPath;$intent.artifacts=@([pscustomobject]@{path=$relative;sha256=$request.retained_claim_diagnostic.raw_sha256;bytes_base64=[Convert]::ToBase64String($original)});Write-EnvelopeJson $intentPath $intent;$failed=$false;try{Check $request|Out-Null}catch{$failed=$true};if(-not$failed){throw 'Original ledger artifact mutation was accepted.'};$cases.Add('original ledger artifact mutation rejected')}finally{[IO.File]::WriteAllBytes($intentPath,$intentBytes)}
+    $eventPath=Join-Path $workspace 'iteration-events.jsonl';$eventBytes=[IO.File]::ReadAllBytes($eventPath)
+    try{$rows=@(Get-Content $eventPath|ForEach-Object{$_|ConvertFrom-Json -DateKind String});$rows[-1].receipts=@($relative);[IO.File]::WriteAllText($eventPath,(($rows|ForEach-Object{$_|ConvertTo-Json -Depth 64 -Compress})-join"`n")+"`n",[Text.UTF8Encoding]::new($false));$failed=$false;try{Check $request|Out-Null}catch{$failed=$true};if(-not$failed){throw 'Original Claim event receipt mutation was accepted.'};$cases.Add('original event receipt mutation rejected')}finally{[IO.File]::WriteAllBytes($eventPath,$eventBytes)}
+    $cases.Add('original ledger artifacts and event receipts remain empty')
+    [pscustomobject]@{schema='local.active_retirement_claim_diagnostic_checks.v1';status='passed';cases=@($cases);authority_credit=$false}|ConvertTo-Json -Depth 8
+} finally {
+    # Native PowerShell deletion, restricted to this exact task-created temp root.
+    if([IO.Directory]::Exists($temporary)-and$temporary.StartsWith([IO.Path]::GetTempPath(),[StringComparison]::OrdinalIgnoreCase)){Remove-Item -LiteralPath $temporary -Recurse -Force}
+}
+
+}
 $repository=Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'test-support/ActiveUnitRetirementContinuation.ps1')
 . (Join-Path $PSScriptRoot 'test-support/ActiveUnitRetirementFixture.ps1')
@@ -421,6 +504,7 @@ try{
     $dirtyPath=Join-Path $sourcePath 'unowned-retirement-test.txt';[IO.File]::WriteAllText($dirtyPath,'unowned')
     try{$workspace=Copy-RetirementWorkspace 'dirty-source';Assert-RetirementRejects $workspace 'untracked source dirt' '*clean available source*'}finally{[IO.File]::Delete($dirtyPath)}
     }
+    if($runCore){$null=Invoke-ActiveRetirementClaimDiagnosticChecks -ScriptsRoot $PSScriptRoot}
     $checkName=switch($Scenario){
         'NestedPositive' {'active-unit-retirement-nested-positive'}
         'NestedCommitted' {'active-unit-retirement-nested-committed'}

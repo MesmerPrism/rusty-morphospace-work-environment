@@ -237,6 +237,87 @@
           "pattern": "^[0-9a-f]{64}$"
         }
       }
+    },
+    "retained_claim_diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "role",
+        "producer_schema",
+        "path",
+        "raw_sha256",
+        "canonical_sha256",
+        "git_blob_sha1",
+        "introduced_commit",
+        "tooling_context",
+        "git_blob_sha256"
+      ],
+      "properties": {
+        "role": {
+          "const": "inert-claim-diagnostic"
+        },
+        "producer_schema": {
+          "const": "rusty.morphospace.workflow.work_unit_automation_receipt.v1"
+        },
+        "path": {
+          "type": "string",
+          "pattern": "^receipts/[a-z0-9][a-z0-9-]{1,79}-claim-[0-9]{8}\\.json$"
+        },
+        "raw_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "canonical_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "git_blob_sha1": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "introduced_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "tooling_context": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "protocol_id",
+                "path",
+                "sha256",
+                "canonical_sha256"
+              ],
+              "properties": {
+                "protocol_id": {
+                  "const": "tooling-context-v1"
+                },
+                "path": {
+                  "type": "string",
+                  "pattern": "^tooling-contexts/[a-z0-9][a-z0-9-]{1,127}\\.json$"
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "canonical_sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "git_blob_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
     }
   }
 }
