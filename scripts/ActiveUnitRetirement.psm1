@@ -265,10 +265,10 @@ function Test-ActiveRetirementPlanningProjectionFromAuthenticatedAdmission {
                 $toolingModule=Import-Module (Join-Path $PSScriptRoot 'ToolingContextUpgrade.psm1') -PassThru
                 $null=&$toolingModule {param($root,$expected,$transition) Assert-ToolingContextHistoricalTransition -WorkspaceRoot $root -ExpectedEvent $expected -Transition $transition} $workspaceFull $event $proof
                 $documents=@($proof.intent.artifacts|ForEach-Object{ConvertFrom-MorphospaceProtocolJsonBytes ([Convert]::FromBase64String([string]$_.bytes_base64))})
-                $request=@($documents|Where-Object{[string]$_.schema-ceq'rusty.morphospace.workflow.tooling_context_upgrade.v1'})
-                $context=@($documents|Where-Object{[string]$_.schema-ceq'rusty.morphospace.workflow.tooling_context.v1'})
-                if($request.Count-ne1-or$context.Count-ne1){throw 'Active retirement tooling upgrade proof artifacts are ambiguous.'}
-                foreach($binding in @(Get-ActiveRetirementToolingProofBindings -WorkspaceRoot $workspaceFull -Request $request[0] -Context $context[0])){Set-PlanningProjection ([string]$binding.path) ([string]$binding.sha256)}
+                $toolingUpgradeRequests=@($documents|Where-Object{[string]$_.schema-ceq'rusty.morphospace.workflow.tooling_context_upgrade.v1'})
+                $toolingUpgradeContexts=@($documents|Where-Object{[string]$_.schema-ceq'rusty.morphospace.workflow.tooling_context.v1'})
+                if($toolingUpgradeRequests.Count-ne1-or$toolingUpgradeContexts.Count-ne1){throw 'Active retirement tooling upgrade proof artifacts are ambiguous.'}
+                foreach($binding in @(Get-ActiveRetirementToolingProofBindings -WorkspaceRoot $workspaceFull -Request $toolingUpgradeRequests[0] -Context $toolingUpgradeContexts[0])){Set-PlanningProjection ([string]$binding.path) ([string]$binding.sha256)}
             }else{
                 $null=&$amendmentModule {param($root,$expected,$transition) Assert-ActiveWriteScopeHistoricalTransition -WorkspaceRoot $root -ExpectedEvent $expected -Transition $transition} $workspaceFull $event $proof
             }

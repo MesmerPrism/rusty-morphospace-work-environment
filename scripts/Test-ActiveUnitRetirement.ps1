@@ -8,6 +8,173 @@ $ErrorActionPreference='Stop'
 Set-StrictMode -Version 2.0
 if(-not$SelfTest){throw 'Test-ActiveUnitRetirement requires -SelfTest.'}
 
+function Invoke-ActiveRetirementUpgradeClaimDescendantChecks {
+param([Parameter(Mandatory)][string]$ScriptsRoot,[string]$ComparisonScriptsRoot='')
+$script:TestClosurePaths=$null
+# Produce both transactions with the same owner APIs as Test-ToolingContext.
+# Prerequisite/CI publication inputs are labeled synthetic fixture evidence.
+# Preparation, admission, Ready, Claim and Upgrade transaction artifacts are
+# produced by the actual owning APIs.
+$owner=Split-Path $ScriptsRoot -Parent
+$HarnessRoot=Join-Path ([IO.Path]::GetTempPath()) ('retirement-upgrade-claim-'+[guid]::NewGuid().ToString('N'))
+$tool=Join-Path $HarnessRoot 'tool-owner'
+try {
+ [IO.Directory]::CreateDirectory($tool)|Out-Null
+ foreach($name in @('.github','config','docs','examples','fixtures','manifests','schemas','scripts','skills','templates','tools')){Copy-Item -LiteralPath (Join-Path $owner $name) -Destination (Join-Path $tool $name) -Recurse}
+ foreach($name in @('.gitattributes','.gitignore','AGENTS.md','CHANGELOG.md','CONTRIBUTING.md','LICENSE','NOTICE.md','README.md','SECURITY.md')){Copy-Item -LiteralPath (Join-Path $owner $name) -Destination (Join-Path $tool $name)}
+ # Match Test-ToolingContext's Git fixture materialization: tracked text is LF.
+ foreach($file in @(Get-ChildItem -LiteralPath $tool -Recurse -File)){if(@('.ps1','.psm1','.psd1','.json','.md','.yml','.yaml','.toml','.txt','.gitignore','.gitattributes')-contains$file.Extension-or$file.Name-in@('.gitignore','.gitattributes')){$text=[IO.File]::ReadAllText($file.FullName);if($text.IndexOf([char]0)-lt0){[IO.File]::WriteAllText($file.FullName,$text.Replace("`r`n","`n"),[Text.UTF8Encoding]::new($false))}}}
+ & git -C $tool init -q --initial-branch=main
+ & git -C $tool config core.autocrlf false
+ & git -C $tool config user.name 'Retirement Tooling Fixture'
+ & git -C $tool config user.email 'retirement@example.invalid'
+ & git -C $tool config commit.gpgsign false
+ & git -C $tool remote add origin 'https://example.invalid/work-environment.git'
+ # A genuine complete fixture executor tree, excluding unrelated owner tests,
+ # documentation and release assets. Required example/template inputs and runtime dependencies
+ # are committed; this fixture does not represent the production candidate.
+ # Bound the schema inventory to these fixture actions and their real $ref
+ # dependencies. Unrelated APK/history schemas are not fixture source inputs.
+ $fixtureSchemas=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+ foreach($file in @(Get-ChildItem -LiteralPath (Join-Path $tool 'schemas') -File)){if($file.Name-match'^(iteration-|project-|workspace-|feature-|repository-map|agent-scope|work-unit-|state-transition|event-transaction|tooling-context|development-|active-unit-retirement|active-write-scope|validation-|affected-validation|candidate-freeze|instruction-|module-|claim-baseline|current-unit|unit-ownership|resource-claim|read-only-dependency|source-composition|legacy-tooling|historical-supersession|normal-validation-selector|owner-validator)'){[void]$fixtureSchemas.Add('schemas/'+$file.Name)}}
+ # Include every literal schema source declared by the unchanged producer
+ # entrypoints used here (including protocol hash inputs, not only Test-Json).
+ foreach($name in @('scripts/WorkUnitAutomation.psm1','scripts/DevelopmentEnvelopePreparation.psm1','scripts/DevelopmentUnitAdmission.psm1','scripts/DevelopmentEnvelopeProvenance.psm1','scripts/ToolingContextProvenance.psm1','scripts/ToolingContextUpgrade.psm1','scripts/ActiveUnitRetirement.psm1','scripts/Test-WorkflowContracts.ps1','scripts/test-support/DevelopmentAdmissionFixture.ps1','scripts/test-support/ActiveUnitRetirementFixture.ps1')){
+  foreach($reference in [regex]::Matches([IO.File]::ReadAllText((Join-Path $tool $name)),'schemas[\\/]+([a-zA-Z0-9_.-]+\.json)')){[void]$fixtureSchemas.Add('schemas/'+$reference.Groups[1].Value)}
+ }
+ do {
+  $added=$false
+  foreach($relative in @($fixtureSchemas)){
+   foreach($reference in [regex]::Matches([IO.File]::ReadAllText((Join-Path $tool $relative)),'"\$ref"\s*:\s*"([^"#]+)(?:#[^"]*)?"')){
+    $target=[IO.Path]::GetFullPath((Join-Path (Split-Path (Join-Path $tool $relative) -Parent) $reference.Groups[1].Value))
+    if(-not$target.StartsWith((Join-Path $tool 'schemas')+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)-or-not[IO.File]::Exists($target)){throw 'Fixture schema reference is not a closed owner schema dependency.'}
+    if($fixtureSchemas.Add([IO.Path]::GetRelativePath($tool,$target).Replace('\','/'))){$added=$true}
+   }
+  }
+ }while($added)
+ $fixturePaths=@(Get-ChildItem -LiteralPath $tool -Recurse -File|ForEach-Object{[IO.Path]::GetRelativePath($tool,$_.FullName).Replace('\','/')}|Where-Object{($_-match'^(config|manifests|templates|fixtures|examples|skills)/'-or$fixtureSchemas.Contains($_))-or($_-match'^scripts/'-and$_-notmatch'^scripts/Test-[^/]+$'-and$_-notmatch'^scripts/tests/')-or$_-eq'scripts/Test-WorkflowContracts.ps1'-or$_-in@('.gitattributes','.gitignore','AGENTS.md','README.md')})
+ foreach($file in @(Get-ChildItem -LiteralPath $tool -Recurse -File)){ $relative=[IO.Path]::GetRelativePath($tool,$file.FullName).Replace('\','/');if($relative-notmatch'^\.git/'-and$fixturePaths-cnotcontains$relative){if(-not$file.FullName.StartsWith($tool+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw 'Fixture file escaped its temporary executor root.'};Remove-Item -LiteralPath $file.FullName} }
+ & git -C $tool add -- $fixturePaths; & git -C $tool commit -qm 'old executor'
+ $OldCommit=(&git -C $tool rev-parse HEAD).Trim()
+ [IO.File]::AppendAllText((Join-Path $tool 'scripts/ToolingContextUpgrade.psm1'),"`n# fixture new tooling revision`n",[Text.UTF8Encoding]::new($false))
+ & git -C $tool add -- scripts/ToolingContextUpgrade.psm1; & git -C $tool commit -qm 'new executor'
+ $NewCommit=(&git -C $tool rev-parse HEAD).Trim()
+$repoRoot=$tool;$PSScriptRoot=Join-Path $tool 'scripts'
+& git -C $repoRoot checkout --detach $OldCommit|Out-Null;if($LASTEXITCODE-ne0){throw 'Fixture could not materialize old tooling HEAD.'}
+Import-Module (Join-Path $PSScriptRoot 'DevelopmentUnitAdmission.psm1')
+$protocolModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1') -PassThru
+$ledgerModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceTransitionLedger.psm1') -PassThru
+$automationModule=Import-Module (Join-Path $PSScriptRoot 'WorkUnitAutomation.psm1') -PassThru
+$provenanceModule=Import-Module (Join-Path $PSScriptRoot 'ToolingContextProvenance.psm1') -Force -PassThru
+$upgradeModule=Import-Module (Join-Path $PSScriptRoot 'ToolingContextUpgrade.psm1') -Force -PassThru
+. (Join-Path $PSScriptRoot 'test-support/DevelopmentAdmissionFixture.ps1')
+function Get-MorphospaceToolingContextAllowedActions { &$provenanceModule {Get-MorphospaceToolingContextAllowedActions} }
+function New-MorphospaceToolingContext { [CmdletBinding()]param([string]$ContextId,[string]$ProjectId,[string]$PreparationId,[object]$ProductProjection,[object]$Resolver,[object]$Executor,[object[]]$Routers,[object]$Compatibility);&$provenanceModule {param($p)New-MorphospaceToolingContext @p} $PSBoundParameters }
+function Invoke-MorphospaceUpgradeToolingContext { [CmdletBinding()]param([string]$WorkspaceRoot,[string]$UnitId,[string]$ToolingContextUpgrade,[string]$ExpectedToolingContextUpgradeSha256,[string]$OutPath,[string]$Timestamp,[string]$FaultAfter,[switch]$Execute);&$upgradeModule {param($p)Invoke-MorphospaceUpgradeToolingContext @p} $PSBoundParameters }
+function Test-MorphospaceHistoricalToolingContextUpgrade { param([string]$WorkspaceRoot,[object]$ExpectedEvent);&$upgradeModule {param($w,$e)Test-MorphospaceHistoricalToolingContextUpgrade -WorkspaceRoot $w -ExpectedEvent $e} $WorkspaceRoot $ExpectedEvent }
+function Assert-TC([bool]$Value,[string]$Name){if(-not$Value){throw "Tooling-context self-test failed: $Name"}}
+function Assert-TCError([string]$Actual,[string]$Expected,[string]$Name){if($Actual-cne$Expected){throw "Tooling-context self-test unexpected $Name error: $Actual"};$true}
+function Read-TC([string]$Path){&$protocolModule {param($p)Read-MorphospaceProtocolJson $p} $Path}
+function ToBytes([object]$Value){&$protocolModule {param($v),[byte[]](ConvertTo-MorphospaceProtocolJsonBytes $v)} $Value}
+function FromBytes([byte[]]$Bytes){&$protocolModule {param($b)ConvertFrom-MorphospaceProtocolJsonBytes $b} $Bytes}
+function BytesHash([byte[]]$Bytes){&$protocolModule {param($b)Get-MorphospaceSha256Bytes $b} $Bytes}
+function Write-TC([string]$Path,[object]$Value){$parent=Split-Path $Path -Parent;if(-not(Test-Path $parent)){[IO.Directory]::CreateDirectory($parent)|Out-Null};[IO.File]::WriteAllBytes($Path,(ToBytes $Value))}
+function FileHash([string]$Path){&$protocolModule {param($p)Get-MorphospaceFileSha256 $p} $Path}
+function Canonical([object]$Value){&$protocolModule {param($v)Get-MorphospaceCanonicalJsonSha256 $v} $Value}
+function Clone([object]$Value){$Value|ConvertTo-Json -Depth 100|ConvertFrom-Json -Depth 100 -DateKind String}
+function GitScalar([string]$Root,[string[]]$Arguments){$rows=@(& git -C $Root @Arguments 2>&1);if($LASTEXITCODE-ne0-or$rows.Count-ne1){throw "Fixture Git failed: $($Arguments-join' ')"};([string]$rows[0]).Trim().ToLowerInvariant()}
+function GitBlob([string]$Root,[string]$Commit,[string]$Path){$start=[Diagnostics.ProcessStartInfo]::new();$start.FileName=(@(Get-Command git -CommandType Application)[0]).Source;$start.UseShellExecute=$false;$start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true;foreach($a in @('-C',$Root,'cat-file','blob',"$Commit`:$Path")){[void]$start.ArgumentList.Add($a)};$p=[Diagnostics.Process]::new();$p.StartInfo=$start;[void]$p.Start();$m=[IO.MemoryStream]::new();$p.StandardOutput.BaseStream.CopyTo($m);$err=$p.StandardError.ReadToEnd();$p.WaitForExit();if($p.ExitCode-ne0){throw $err};$m.ToArray()}
+function GitBlobMap([string]$Root,[string]$Commit,[string[]]$Paths){$start=[Diagnostics.ProcessStartInfo]::new();$start.FileName=(@(Get-Command git -CommandType Application)[0]).Source;$start.UseShellExecute=$false;$start.RedirectStandardInput=$true;$start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true;$start.StandardInputEncoding=[Text.UTF8Encoding]::new($false);foreach($a in @('-C',$Root,'cat-file','--batch')){[void]$start.ArgumentList.Add($a)};$p=[Diagnostics.Process]::new();$p.StartInfo=$start;[void]$p.Start();$inputText=(@($Paths|ForEach-Object{"$Commit`:$($_)"})-join"`n")+"`n";$writeTask=$p.StandardInput.WriteAsync($inputText);$s=$p.StandardOutput.BaseStream;$map=@{};foreach($path in $Paths){$h=[Collections.Generic.List[byte]]::new();while(($b=$s.ReadByte())-ne10){if($b-lt0){throw 'Fixture batch header ended.'};if($b-ne13){$h.Add([byte]$b)}};$header=[Text.Encoding]::ASCII.GetString($h.ToArray());if($header-cnotmatch'^[0-9a-f]{40} blob (?<size>[0-9]+)$'){throw $header};$bytes=[byte[]]::new([int]$Matches.size);$o=0;while($o-lt$bytes.Length){$n=$s.Read($bytes,$o,$bytes.Length-$o);if($n-le0){throw 'Fixture batch payload ended.'};$o+=$n};if($s.ReadByte()-ne10){throw 'Fixture batch delimiter absent.'};$map[$path]=$bytes};[void]$writeTask.GetAwaiter().GetResult();$p.StandardInput.Close();$err=$p.StandardError.ReadToEnd();$p.WaitForExit();if($p.ExitCode-ne0){throw $err};$map}
+function Get-ClosurePaths([string]$Root){
+ if($null-ne$script:TestClosurePaths){return @($script:TestClosurePaths)}
+ $records=@(git -C $Root ls-tree -r --full-tree HEAD|ForEach-Object{if([string]$_ -cnotmatch'^(?<mode>[0-9]{6})\s+(?<type>blob|tree|commit)\s+(?<oid>[0-9a-f]{40})\t(?<path>.+)$'){throw 'Fixture tree inventory malformed.'};[pscustomobject]@{mode=[string]$Matches.mode;type=[string]$Matches.type;oid=[string]$Matches.oid;path=([string]$Matches.path).Replace('\','/')}})
+ $script:TestClosurePaths=@($records|Where-Object{[string]$_.type-ceq'blob'}|ForEach-Object{[string]$_.path}|Sort-Object -CaseSensitive);@($script:TestClosurePaths)
+}
+function New-Closure([string]$Tool,[string]$Commit){$paths=@(Get-ClosurePaths $Tool);$head=GitScalar $Tool @('rev-parse','HEAD');$blobs=$(if($Commit-cne$head){GitBlobMap $Tool $Commit $paths}else{$null});@($paths|ForEach-Object{$path=[string]$_;$bytes=if($null-eq$blobs){[IO.File]::ReadAllBytes((Join-Path $Tool $path))}else{[byte[]]($blobs[$path])};if($null-eq$bytes){throw "Fixture batch omitted '$path' ($($blobs.GetType().FullName)); count=$(@($blobs).Count)"};[pscustomobject][ordered]@{path=$path;sha256=BytesHash $bytes}})}
+function New-RouterRoot([string]$Root,[string]$Id,[string]$Commit,[string]$Tree,[string]$Tool){$router=Join-Path $Root $Id;[IO.Directory]::CreateDirectory($router)|Out-Null;[IO.File]::WriteAllText((Join-Path $router 'SKILL.md'),"# $Id`n",[Text.UTF8Encoding]::new($false));$sha=FileHash (Join-Path $router 'SKILL.md');$fingerprint=Canonical ([pscustomobject]@{files=@([pscustomobject]@{path='SKILL.md';sha256=$sha})});$record=[pscustomobject][ordered]@{schema='rusty.morphospace.local_skill_source.v1';skill_id=$Id;installed_at='2026-09-15T08:00:00.0000000Z';source_repository='https://example.invalid/work-environment.git';source_commit=$Commit;source_worktree_dirty=$false;source_release='fixture';source_tree_sha256=$fingerprint;source_files=@([pscustomobject][ordered]@{path='SKILL.md';sha256=$sha});work_environment_root=$Tool};Write-TC (Join-Path $router '.morphospace-skill-source.json') $record;[pscustomobject]@{root=$router;row=[pscustomobject][ordered]@{skill_id=$Id;source_repo_id='workflow';commit=$Commit;tree=$Tree;source_fingerprint=$fingerprint;managed_files=@([pscustomobject][ordered]@{path='SKILL.md';sha256=$sha})}}}
+function New-OwnerValidation([string]$BaseCommit,[string]$BaseTree,[string]$HeadCommit,[string]$HeadTree){$empty='e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.affected_validation_evidence.v1';repository='MesmerPrism/rusty-morphospace-work-environment';base=[pscustomobject]@{commit=$BaseCommit;tree=$BaseTree};head=[pscustomobject]@{commit=$HeadCommit;tree=$HeadTree};plan_sha256='1'*64;platform='windows';runner=[pscustomobject]@{os_description='Windows tooling-context fixture';powershell_version=$PSVersionTable.PSVersion.ToString()};check_results=@([pscustomobject][ordered]@{check_id='tooling-context-contracts';command_path='scripts/Test-WorkflowContracts.ps1';command_blob_sha1=$HeadCommit;mode='executed';result='pass';started=$true;failure_kind=$null;exit_code=0;timed_out=$false;output_truncated=$false;post_kill_drain_timed_out=$false;stdout_sha256=$empty;stderr_sha256=$empty;stdout_bytes=0;stderr_bytes=0});result='pass';claims=[pscustomobject]@{historical_aggregate_reused=$false;acceptance_authority=$false;publication_authority=$false}}}
+function Save-Request([string]$Root,[object]$Request,[string]$Name){$path=Join-Path $Root $Name;Write-TC $path $Request;$path}
+function Set-ContextFingerprint([object]$Context){$identity=[ordered]@{context_id=$Context.context_id;project_id=$Context.project_id;preparation_id=$Context.preparation_id;product_projection=$Context.product_projection;resolver=$Context.resolver;executor=$Context.executor;routers=$Context.routers;compatibility=$Context.compatibility;limits=$Context.limits;status=$Context.status};$Context.fingerprint=Canonical $identity;$Context}
+function Invoke-Upgrade([object]$Fixture,[string]$RequestPath,[string]$Fault='none'){Invoke-MorphospaceUpgradeToolingContext -WorkspaceRoot $Fixture.workspace -UnitId 'u002' -ToolingContextUpgrade $RequestPath -ExpectedToolingContextUpgradeSha256 (FileHash $RequestPath) -OutPath (Join-Path $Fixture.workspace "receipts/$([string](Read-TC $RequestPath).upgrade_id)-tooling-context-upgrade-request.json") -Timestamp '2026-09-15T09:00:00.0000000Z' -Execute -FaultAfter $Fault}
+function WorkspaceFingerprint([string]$Workspace){Canonical @(Get-ChildItem $Workspace -Recurse -File|Sort-Object FullName|ForEach-Object{[pscustomobject]@{p=$_.FullName.Substring($Workspace.Length).Replace('\','/');h=FileHash $_.FullName}})}
+
+$tool=$repoRoot;$newCommit=$NewCommit;$oldTree=GitScalar $tool @('rev-parse',"$OldCommit^{tree}");$newTree=GitScalar $tool @('rev-parse',"$newCommit^{tree}");$fixtureRoot=Join-Path $HarnessRoot 'project-fixture';$workspace=Join-Path $fixtureRoot 'morphospace';foreach($d in @('receipts','local','tooling-contexts')){[IO.Directory]::CreateDirectory((Join-Path $workspace $d))|Out-Null}
+Write-TC (Join-Path $workspace 'receipts/tool-validation-old.json') (New-OwnerValidation $OldCommit $oldTree $OldCommit $oldTree);Write-TC (Join-Path $workspace 'receipts/tool-validation-new.json') (New-OwnerValidation $OldCommit $oldTree $newCommit $newTree);$oldValidation=[pscustomobject]@{path='receipts/tool-validation-old.json';sha256=FileHash (Join-Path $workspace 'receipts/tool-validation-old.json')};$newValidation=[pscustomobject]@{path='receipts/tool-validation-new.json';sha256=FileHash (Join-Path $workspace 'receipts/tool-validation-new.json')}
+$actions=@(Get-MorphospaceToolingContextAllowedActions);$protocol=[pscustomobject][ordered]@{protocol_id='tooling-context-v1';product_lock_schema='rusty.morphospace.workflow.development_envelope_source_composition.v3';repository_map_schema='rusty.morphospace.workflow.repository_map.v1';allowed_actions=$actions}
+Write-TC (Join-Path $workspace 'receipts/tool-publication-old.json') ([pscustomobject][ordered]@{schema='rusty.morphospace.workflow.tooling_context_publication_evidence.v1';publication_id='tool-old-observed';executor=[pscustomobject][ordered]@{repo_id='workflow';remote_url='https://example.invalid/work-environment.git';commit=$OldCommit;tree=$oldTree};validation=$oldValidation;status='source-observed';does_not_prove=@('Does not independently prove remote publication authority.')})
+Write-TC (Join-Path $workspace 'receipts/tool-publication-new.json') ([pscustomobject][ordered]@{schema='rusty.morphospace.workflow.tooling_context_publication_evidence.v1';publication_id='tool-new-observed';executor=[pscustomobject][ordered]@{repo_id='workflow';remote_url='https://example.invalid/work-environment.git';commit=$newCommit;tree=$newTree};validation=$newValidation;status='source-observed';does_not_prove=@('Does not independently prove remote publication authority.')})
+Write-TC (Join-Path $workspace 'receipts/tool-protocol-old.json') ([pscustomobject][ordered]@{schema='rusty.morphospace.workflow.tooling_context_protocol_receipt.v1';receipt_id='tool-old-protocol';executor=[pscustomobject][ordered]@{repo_id='workflow';commit=$OldCommit;tree=$oldTree};protocol=$protocol;validation=$oldValidation;status='compatible';does_not_prove=@('Does not authorize product mutation.')})
+Write-TC (Join-Path $workspace 'receipts/tool-protocol-new.json') ([pscustomobject][ordered]@{schema='rusty.morphospace.workflow.tooling_context_protocol_receipt.v1';receipt_id='tool-new-protocol';executor=[pscustomobject][ordered]@{repo_id='workflow';commit=$newCommit;tree=$newTree};protocol=$protocol;validation=$newValidation;status='compatible';does_not_prove=@('Does not authorize product mutation.')})
+$oldRouterRoot=Join-Path $HarnessRoot 'router-old';$newRouterRoot=Join-Path $HarnessRoot 'router-new';$oldRouter=New-RouterRoot $oldRouterRoot 'rusty-morphospace' $OldCommit $oldTree $tool;$oldSystemRouter=New-RouterRoot $oldRouterRoot 'system-engineering' $OldCommit $oldTree $tool;$oldGraphRouter=New-RouterRoot $oldRouterRoot 'rust-work-graph' $OldCommit $oldTree $tool;$newRouter=New-RouterRoot $newRouterRoot 'rusty-morphospace' $newCommit $newTree $tool;$newSystemRouter=New-RouterRoot $newRouterRoot 'system-engineering' $newCommit $newTree $tool;$newGraphRouter=New-RouterRoot $newRouterRoot 'rust-work-graph' $newCommit $newTree $tool
+foreach($row in @([pscustomobject]@{id='ctx-old';routers=@($oldRouter,$oldSystemRouter,$oldGraphRouter)},[pscustomobject]@{id='ctx-new';routers=@($newRouter,$newSystemRouter,$newGraphRouter)})){Write-TC (Join-Path $workspace "local/$($row.id)-resolver.json") ([pscustomobject][ordered]@{schema='rusty.morphospace.workflow.tooling_context_resolver.v1';context_id=$row.id;executor_root=$tool;routers=@($row.routers|ForEach-Object{[pscustomobject][ordered]@{skill_id=[string]$_.row.skill_id;root=[string]$_.root}});status='resolved';does_not_prove=@('Local resolution only.')})}
+$oldCompat=[pscustomobject][ordered]@{protocol_id='tooling-context-v1';product_lock_schema='rusty.morphospace.workflow.development_envelope_source_composition.v3';repository_map_schema='rusty.morphospace.workflow.repository_map.v1';allowed_actions=$actions;receipt=[pscustomobject]@{path='receipts/tool-protocol-old.json';sha256=FileHash (Join-Path $workspace 'receipts/tool-protocol-old.json')}};$newCompat=Clone $oldCompat;$newCompat.receipt=[pscustomobject]@{path='receipts/tool-protocol-new.json';sha256=FileHash (Join-Path $workspace 'receipts/tool-protocol-new.json')}
+$oldExecutor=[pscustomobject][ordered]@{repo_id='workflow';remote_url='https://example.invalid/work-environment.git';commit=$OldCommit;tree=$oldTree;publication_evidence=[pscustomobject]@{path='receipts/tool-publication-old.json';sha256=FileHash (Join-Path $workspace 'receipts/tool-publication-old.json')};entrypoint='scripts/ToolingContextUpgrade.psm1';closure=New-Closure $tool $OldCommit};$newExecutor=Clone $oldExecutor;$newExecutor.commit=$newCommit;$newExecutor.tree=$newTree;$newExecutor.publication_evidence=[pscustomobject]@{path='receipts/tool-publication-new.json';sha256=FileHash (Join-Path $workspace 'receipts/tool-publication-new.json')};$newExecutor.closure=New-Closure $tool $newCommit
+$descriptor=[pscustomobject][ordered]@{context_id='ctx-old';path='tooling-contexts/ctx-old.json';resolver=[pscustomobject]@{path='local/ctx-old-resolver.json';sha256=FileHash (Join-Path $workspace 'local/ctx-old-resolver.json')};executor=$oldExecutor;routers=@($oldRouter.row,$oldSystemRouter.row,$oldGraphRouter.row);compatibility=$oldCompat}
+$seed=New-EnvelopeAdmissionPreparedFixture -Root $fixtureRoot -RepositoryRoot $repoRoot -TransitionLedgerModule $ledgerModule -OwnerProducedPreparation -ToolingContextDescriptor $descriptor;$workspace=$seed.workspace
+$projection=[pscustomobject][ordered]@{source_composition=[pscustomobject][ordered]@{path='source-composition.json';sha256=FileHash (Join-Path $workspace 'source-composition.json')};repository_map=[pscustomobject][ordered]@{path='repository-map.json';sha256=FileHash (Join-Path $workspace 'repository-map.json')};feature_lock=[pscustomobject][ordered]@{path='feature.lock.json';sha256=FileHash (Join-Path $workspace 'feature.lock.json')}}
+$old=Read-TC (Join-Path $workspace 'tooling-contexts/ctx-old.json')
+$new=New-MorphospaceToolingContext -ContextId 'ctx-new' -ProjectId 'envelope-test' -PreparationId 'u002-envelope' -ProductProjection $projection -Resolver ([pscustomobject]@{path='local/ctx-new-resolver.json';sha256=FileHash (Join-Path $workspace 'local/ctx-new-resolver.json')}) -Executor $newExecutor -Routers @($newRouter.row,$newSystemRouter.row,$newGraphRouter.row) -Compatibility $newCompat
+$oldPointer=Clone $seed.preparation_receipt.tooling_context
+& git -C $fixtureRoot init -q
+& git -C $fixtureRoot config core.autocrlf false
+& git -C $fixtureRoot config user.name 'Retirement Fixture'
+& git -C $fixtureRoot config user.email 'retirement@example.invalid'
+& git -C $fixtureRoot config commit.gpgsign false
+& git -C $fixtureRoot add --all
+& git -C $fixtureRoot commit -qm 'prepared planning baseline'
+$locked=GitScalar $fixtureRoot @('rev-parse','HEAD')
+$admission=Clone $seed.admission_template;if($admission.PSObject.Properties.Name-cnotcontains'admission_kind'){$admission|Add-Member -NotePropertyName admission_kind -NotePropertyValue 'ordinary'};if($admission.preparation.PSObject.Properties.Name-cnotcontains'preparation_kind'){$admission.preparation|Add-Member -NotePropertyName preparation_kind -NotePropertyValue 'ordinary'};$admissionPath=Join-Path $HarnessRoot 'admission.json';Write-TC $admissionPath $admission;Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $workspace -DevelopmentUnitAdmission $admissionPath -ExpectedDevelopmentUnitAdmissionSha256 (FileHash $admissionPath) -OutPath (Join-Path $workspace 'receipts/u002-admission.json') -Timestamp '2026-09-15T08:10:00.0000000Z' -Execute|Out-Null
+$automationArguments=@{WorkspaceRoot=$workspace;UnitId='u002';RepoMapPath=(Join-Path $workspace 'repository-map.json');ValidationTier='quick'};&$automationModule {param($a)Invoke-MorphospaceWorkUnitAutomation @a -Action Ready -Timestamp '2026-09-15T08:11:00.0000000Z' -Execute} $automationArguments|Out-Null;$diagnostic=&$automationModule {param($a)Invoke-MorphospaceWorkUnitAutomation @a -Action Claim -Timestamp '2026-09-15T08:12:00.0000000Z' -Execute} $automationArguments;Write-TC (Join-Path $workspace 'receipts/u002-claim-20260915.json') $diagnostic
+& git -C $tool checkout --detach $newCommit|Out-Null;if($LASTEXITCODE-ne0){throw 'Fixture could not advance to new tooling HEAD.'};$automationModule=Import-Module (Join-Path $PSScriptRoot 'WorkUnitAutomation.psm1') -Force -PassThru;$provenanceModule=Import-Module (Join-Path $PSScriptRoot 'ToolingContextProvenance.psm1') -Force -PassThru;$upgradeModule=Import-Module (Join-Path $PSScriptRoot 'ToolingContextUpgrade.psm1') -Force -PassThru
+& git -C $fixtureRoot add --all; & git -C $fixtureRoot commit -qm 'claimed planning diagnostic';$introduced=GitScalar $fixtureRoot @('rev-parse','HEAD')
+
+function New-UpgradeRequest([string]$Workspace,[string]$Id,[object]$NewContext=$new){
+ $state=Read-TC (Join-Path $Workspace 'workspace.state.json');$unit=Read-TC (Join-Path $Workspace 'iteration-units/u002.json');$events=Join-Path $Workspace 'iteration-events.jsonl';$newBytes=ToBytes $NewContext
+ $proof=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.tooling_context_compatibility_receipt.v1';proof_id="$Id-proof";project_id='envelope-test';old_context=[pscustomobject]@{context_id=$old.context_id;fingerprint=$old.fingerprint;commit=$old.executor.commit;tree=$old.executor.tree};new_context=[pscustomobject]@{context_id=$NewContext.context_id;fingerprint=$NewContext.fingerprint;commit=$NewContext.executor.commit;tree=$NewContext.executor.tree};consumer=[pscustomobject]@{protocol_id='tooling-context-v1';product_projection=$projection;allowed_actions=$actions};validation=[pscustomobject]@{evidence=[pscustomobject]@{path='receipts/tool-validation-new.json';sha256=FileHash (Join-Path $Workspace 'receipts/tool-validation-new.json')};result='pass'};claims=[pscustomobject]@{same_product_projection=$true;protocol_compatible=$true};status='compatible';does_not_prove=@('Does not validate or publish product bytes.')};$proofPath="receipts/$Id-compatibility.json";Write-TC (Join-Path $Workspace $proofPath) $proof
+ [pscustomobject][ordered]@{schema='rusty.morphospace.workflow.tooling_context_upgrade.v1';upgrade_id=$Id;project_id='envelope-test';unit_id='u002';old_context=$oldPointer;new_context=[pscustomobject][ordered]@{path="tooling-contexts/$($NewContext.context_id).json";sha256=BytesHash $newBytes;canonical_sha256=Canonical $NewContext;protocol_id='tooling-context-v1';document=$NewContext};product_projection=$projection;compatibility_receipt=[pscustomobject]@{path=$proofPath;sha256=FileHash (Join-Path $Workspace $proofPath)};expected=[pscustomobject][ordered]@{state_sha256=Canonical $state;state_raw_sha256=FileHash (Join-Path $Workspace 'workspace.state.json');unit_sha256=Canonical $unit;unit_raw_sha256=FileHash (Join-Path $Workspace 'iteration-units/u002.json');events_sha256=FileHash $events;events_length=[IO.FileInfo]::new($events).Length;event_tail_id=[string]$state.last_event_id};does_not_prove=@('Does not mutate product inputs.')}
+}
+function New-Case([string]$Name){$case=Join-Path $HarnessRoot $Name;Copy-Item -LiteralPath $base -Destination $case -Recurse;[pscustomobject]@{workspace=$case}}
+
+
+$upgradeRequest=New-UpgradeRequest $workspace 'upgrade-retirement'
+$upgradePath=Save-Request $HarnessRoot $upgradeRequest 'upgrade.json'
+$done=Invoke-Upgrade ([pscustomobject]@{workspace=$workspace}) $upgradePath
+Assert-TC $done.executed 'genuine tooling upgrade executed'
+& git -C $fixtureRoot add --all; & git -C $fixtureRoot commit -qm 'upgraded planning context'
+$head=GitScalar $fixtureRoot @('rev-parse','HEAD')
+$retirement=Import-Module (Join-Path $PSScriptRoot 'ActiveUnitRetirement.psm1') -Force -PassThru
+. (Join-Path $PSScriptRoot 'test-support/ActiveUnitRetirementFixture.ps1')
+$request=New-ActiveUnitRetirementRequest -WorkspaceRoot $workspace
+$relative='receipts/u002-claim-20260915.json'
+$binding=&$retirement {param($root,$p)Get-ActiveRetirementFileBinding $root $p} $workspace $relative
+$request|Add-Member retained_claim_diagnostic ([pscustomobject]@{role='inert-claim-diagnostic';producer_schema='rusty.morphospace.workflow.work_unit_automation_receipt.v1';path=$relative;raw_sha256=$binding.raw_sha256;canonical_sha256=$binding.canonical_sha256;git_blob_sha1=GitScalar $fixtureRoot @('hash-object',(Join-Path $workspace $relative));git_blob_sha256=$binding.raw_sha256;introduced_commit=$introduced;tooling_context=$oldPointer})
+$unit=Read-TC (Join-Path $workspace 'iteration-units/u002.json')
+$entry=[pscustomobject]@{role='planning';path=$fixtureRoot}
+function Check-Descendant([object]$Candidate){&$retirement {param($w,$u,$e,$a,$locked,$head,$r)Test-ActiveRetirementPlanningProjectionFromAuthenticatedAdmission -Workspace $w -Unit $u -RepositoryEntry $e -StatusPorcelain @() -Admission $a -LockedCommit $locked -ObservedHead $head -Request $r} $workspace $unit $entry $admission $locked $head $Candidate}
+Assert-TC (Check-Descendant $request) 'committed upgrade plus original inert Claim projection'
+$missing=Clone $request;$missing.PSObject.Properties.Remove('retained_claim_diagnostic')
+$message='';try{Check-Descendant $missing|Out-Null}catch{$message=$_.Exception.Message}
+Assert-TC ($message-ceq('Active retirement committed planning descendant changes unauthenticated path: morphospace/'+$relative)) 'missing Claim binding rejected by committed projection'
+$missingReason=$message
+$changed=Clone $request;$changed.retained_claim_diagnostic.raw_sha256='0'*64
+$message='';try{Check-Descendant $changed|Out-Null}catch{$message=$_.Exception.Message}
+Assert-TC ($message-ceq'Retained Claim diagnostic raw CAS drifted.') 'tampered Claim binding rejected by committed projection'
+$tamperReason=$message
+if($ComparisonScriptsRoot){
+ $savedRetirement=$retirement
+ try {
+  $retirement=Import-Module (Join-Path $ComparisonScriptsRoot 'ActiveUnitRetirement.psm1') -Force -PassThru
+  $message='';try{Check-Descendant $request|Out-Null}catch{$message=$_.Exception.Message}
+  Assert-TC ($message-like'*changes unauthenticated path:*u002-claim-20260915.json*') 'baseline owner rejects the same genuine committed fixture'
+  [pscustomobject]@{baseline_comparison='expected-rejection';message=$message}|ConvertTo-Json -Compress
+ }finally{$retirement=$savedRetirement}
+}
+[pscustomobject]@{status='passed';cases=3;negative_reasons=@($missingReason,$tamperReason);genuine_claim=$true;genuine_upgrade=$true;committed_descendant=$true;authority_credit=$false}|ConvertTo-Json -Compress
+} finally {
+ if([IO.Directory]::Exists($HarnessRoot)-and[IO.Path]::GetDirectoryName($HarnessRoot).TrimEnd('\','/').Equals([IO.Path]::GetTempPath().TrimEnd('\','/'),[StringComparison]::OrdinalIgnoreCase)){Remove-Item -LiteralPath $HarnessRoot -Recurse -Force}
+}
+}
+
 function Invoke-ActiveRetirementClaimDiagnosticChecks {
 param([Parameter(Mandatory)][string]$ScriptsRoot)
 $owner=Split-Path $ScriptsRoot -Parent
@@ -504,7 +671,7 @@ try{
     $dirtyPath=Join-Path $sourcePath 'unowned-retirement-test.txt';[IO.File]::WriteAllText($dirtyPath,'unowned')
     try{$workspace=Copy-RetirementWorkspace 'dirty-source';Assert-RetirementRejects $workspace 'untracked source dirt' '*clean available source*'}finally{[IO.File]::Delete($dirtyPath)}
     }
-    if($runCore){$null=Invoke-ActiveRetirementClaimDiagnosticChecks -ScriptsRoot $PSScriptRoot}
+    if($runCore){$null=Invoke-ActiveRetirementClaimDiagnosticChecks -ScriptsRoot $PSScriptRoot;$null=Invoke-ActiveRetirementUpgradeClaimDescendantChecks -ScriptsRoot $PSScriptRoot}
     $checkName=switch($Scenario){
         'NestedPositive' {'active-unit-retirement-nested-positive'}
         'NestedCommitted' {'active-unit-retirement-nested-committed'}
