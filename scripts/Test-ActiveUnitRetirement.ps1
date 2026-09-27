@@ -2,11 +2,68 @@ param(
     [switch]$SelfTest,
     [switch]$InertProposalsOnly,
     [ValidateSet('All', 'Core', 'NestedPositive', 'NestedCommitted', 'NestedMapGuards', 'AmendmentRecovery', 'NestedRecovery', 'NestedDamage')]
-    [string]$Scenario = 'All'
+    [string]$Scenario = 'All',
+    [ValidateSet('', 'Base', 'Diagnostics')][string]$CoreWorkerGroup = ''
 )
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version 2.0
 if(-not$SelfTest){throw 'Test-ActiveUnitRetirement requires -SelfTest.'}
+
+# Internal groups are components of the one registered Core invocation.
+if($CoreWorkerGroup-and($Scenario-cne'Core'-or$InertProposalsOnly)){throw 'Core worker groups require the exact Core selector.'}
+if($IsWindows-and$Scenario-ceq'Core'-and-not$InertProposalsOnly-and-not$CoreWorkerGroup){
+    $parentDeadline=[DateTimeOffset]::UtcNow.AddMilliseconds(600000)
+    $capture=Join-Path ([IO.Path]::GetTempPath()) ('retirement-core-groups-'+[guid]::NewGuid().ToString('N'))
+    [IO.Directory]::CreateDirectory($capture)|Out-Null
+    $runner=Join-Path $PSScriptRoot 'lib/MorphospaceAuthorityProcess.psm1'
+    # Compile the existing native Job Object implementation once before workers.
+    Import-Module $runner -Force
+    $workers=[Collections.Generic.List[object]]::new()
+    try{
+        foreach($group in @('Base','Diagnostics')){
+            # Reserve all existing runner launch, job-empty, supervisor and drain waits.
+            $remaining=[int]($parentDeadline-[DateTimeOffset]::UtcNow).TotalMilliseconds-60000
+            if($remaining-le0){throw 'Core parent budget exhausted before group launch.'}
+            $stdout=Join-Path $capture "$group.stdout.log";$stderr=Join-Path $capture "$group.stderr.log"
+            $pipeline=[PowerShell]::Create()
+            $body={param($runner,$executable,$command,$group,$stdout,$stderr,$timeout)
+                $ErrorActionPreference='Stop'
+                Import-Module $runner
+                Invoke-MorphospaceCapturedProcess -FilePath $executable -Arguments @('-NoProfile','-File',$command,'-SelfTest','-Scenario','Core','-CoreWorkerGroup',$group) -StdoutPath $stdout -StderrPath $stderr -TimeoutMilliseconds $timeout
+            }
+            [void]$pipeline.AddScript($body.ToString()).AddArgument($runner).AddArgument((Join-Path $PSHOME 'pwsh.exe')).AddArgument($PSCommandPath).AddArgument($group).AddArgument($stdout).AddArgument($stderr).AddArgument($remaining)
+            $worker=[pscustomobject]@{group=$group;pipeline=$pipeline;handle=$null;stdout=$stdout;stderr=$stderr;terminal=$null;failure=$null}
+            $workers.Add($worker)
+            $worker.handle=$pipeline.BeginInvoke()
+        }
+        # Both existing supervisors run concurrently and own their process trees.
+        # Always collect both outcomes; one failed group cannot produce Core PASS.
+        foreach($worker in $workers){
+            try{$values=@($worker.pipeline.EndInvoke($worker.handle));$worker.terminal=@($values|Where-Object{$_.PSObject.Properties.Name-ccontains'exit_code'})[-1]}catch{$worker.failure=$_.Exception.Message}
+            if($worker.pipeline.HadErrors){$worker.failure=($worker.pipeline.Streams.Error|Out-String)}
+            $worker.pipeline.Dispose();$worker.pipeline=$null
+        }
+        $results=@($workers|ForEach-Object{[ordered]@{group=$_.group;terminal=$_.terminal;error=$_.failure;stdout_path=$_.stdout;stderr_path=$_.stderr}})
+        [IO.File]::WriteAllText((Join-Path $capture 'group-results.json'),($results|ConvertTo-Json -Depth 20),[Text.UTF8Encoding]::new($false))
+        foreach($worker in $workers){
+            if($worker.failure-or$null-eq$worker.terminal-or$worker.terminal.exit_code-ne0){throw "Core group $($worker.group) failed; actual captured evidence retained at $capture."}
+            $markers=@(Get-Content -LiteralPath $worker.stdout|Where-Object{$_-cmatch'^\{"schema":"local\.active_retirement_core_group\.v1"'}|ForEach-Object{$_|ConvertFrom-Json -DateKind String})
+            if($markers.Count-ne1-or(($markers[0].PSObject.Properties.Name|Sort-Object)-join'|')-cne'check|core_worker_group|scenario|schema|status'-or$markers[0].schema-cne'local.active_retirement_core_group.v1'-or$markers[0].core_worker_group-cne$worker.group-or$markers[0].status-cne'pass'-or$markers[0].check-cne'active-unit-retirement'-or$markers[0].scenario-cne'Core'){throw "Core group $($worker.group) lacks its actual terminal component marker."}
+        }
+        if([DateTimeOffset]::UtcNow-ge$parentDeadline){throw 'Core parent absolute600-second deadline exceeded.'}
+        [pscustomobject]@{status='pass';check='active-unit-retirement';scenario='Core';old_unit_and_prior_evidence_bytes_preserved=$true;source_mutation_performed=$false;group_results_path=(Join-Path $capture 'group-results.json')}|ConvertTo-Json -Compress
+        return
+    }finally{
+        foreach($worker in $workers){
+            if($null-ne$worker.pipeline){
+                if($null-ne$worker.handle-and-not$worker.handle.IsCompleted){try{$null=$worker.pipeline.EndInvoke($worker.handle)}catch{}}
+                $worker.pipeline.Dispose()
+            }
+        }
+        # Captured group failures and bounded fixtures remain addressable evidence.
+    }
+}
+
 
 function Invoke-ActiveRetirementUpgradeClaimDescendantChecks {
 param([Parameter(Mandatory)][string]$ScriptsRoot,[string]$ComparisonScriptsRoot='')
@@ -243,6 +300,11 @@ $cases=[Collections.Generic.List[string]]::new()
     $cases.Add('original ledger artifacts and event receipts remain empty')
     [pscustomobject]@{schema='local.active_retirement_claim_diagnostic_checks.v1';status='passed';cases=@($cases);authority_credit=$false}|ConvertTo-Json -Depth 8
 
+}
+if($CoreWorkerGroup-ceq'Diagnostics'){
+    $null=Invoke-ActiveRetirementUpgradeClaimDescendantChecks -ScriptsRoot $PSScriptRoot
+    [pscustomobject]@{schema='local.active_retirement_core_group.v1';core_worker_group='Diagnostics';status='pass';check='active-unit-retirement';scenario='Core'}|ConvertTo-Json -Compress
+    return
 }
 $repository=Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'test-support/ActiveUnitRetirementContinuation.ps1')
@@ -657,7 +719,7 @@ try{
     $dirtyPath=Join-Path $sourcePath 'unowned-retirement-test.txt';[IO.File]::WriteAllText($dirtyPath,'unowned')
     try{$workspace=Copy-RetirementWorkspace 'dirty-source';Assert-RetirementRejects $workspace 'untracked source dirt' '*clean available source*'}finally{[IO.File]::Delete($dirtyPath)}
     }
-    if($runCore){$null=Invoke-ActiveRetirementUpgradeClaimDescendantChecks -ScriptsRoot $PSScriptRoot}
+    if($runCore-and$CoreWorkerGroup-cne'Base'){$null=Invoke-ActiveRetirementUpgradeClaimDescendantChecks -ScriptsRoot $PSScriptRoot}
     $checkName=switch($Scenario){
         'NestedPositive' {'active-unit-retirement-nested-positive'}
         'NestedCommitted' {'active-unit-retirement-nested-committed'}
@@ -667,6 +729,7 @@ try{
         'NestedDamage' {'active-unit-retirement-nested-damage'}
         default {'active-unit-retirement'}
     }
+    if($CoreWorkerGroup-ceq'Base'){[pscustomobject]@{schema='local.active_retirement_core_group.v1';core_worker_group='Base';status='pass';check='active-unit-retirement';scenario='Core'}|ConvertTo-Json -Compress;return}
     [pscustomobject]@{status='pass';check=$checkName;scenario=$Scenario;old_unit_and_prior_evidence_bytes_preserved=$true;source_mutation_performed=$false}|ConvertTo-Json -Compress
 }finally{
     # The entire target is a unique fixture directory generated above.
