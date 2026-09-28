@@ -117,6 +117,23 @@ manifest declarations, reported grant bits, and app-op modes. It never grants
 or revokes permission and cannot establish permission policy, feature use, or
 application/OpenXR readiness.
 
+For Quest setup, use the linked `meta-quest-workflow` and the app's existing
+prerequisites, build/run profile and supported receipts. Before a new launch,
+bind required manifest declarations and fresh effective permission grants and
+app-op facts to the exact installed APK and target. Resolve missing requirements
+only through an authorized app/platform operation or a recorded provider gap,
+then retain effective readback. For an already launched diagnostic run, check
+these facts before bootstrap or media work and label the check as post-launch.
+
+Scene construction and scene/OpenXR readiness remain app-owned; permission
+grants, Android focus and process liveness cannot replace the app's supported
+readiness facts. Check for protected system tutorial or setup gates before
+continued runtime work. A provider's pending launch is not confirmed launch or
+app readiness. Required protected-system interaction belongs to the wearer;
+do not dismiss or automate it through an app or shell workaround. After wearer
+completion, require fresh typed launch confirmation and app-owned readiness
+readback before expensive runtime validation.
+
 For repeatable local work, use the fail-closed wrapper instead of reconstructing
 that sequence from ambient executables. Its default mode resolves the pinned
 provider and inspects only the local artifact without touching a headset:
