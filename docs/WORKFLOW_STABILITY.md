@@ -81,6 +81,65 @@ The generated handoff copies validation and acceptance command strings exactly
 from the unit and binds them to unit, state, event-ledger, repository commit,
 and repository tree hashes. It does not run those commands or grant authority.
 
+## Frozen Validation Retry
+
+A non-passing validation attempt does not invalidate the unchanged frozen
+candidate. Use the ordinary `ReturnToActive` action with that retained receipt;
+keep the failure, source pins, freeze receipt, tooling context and earlier ledger
+bytes. The next Begin must prove a finite owner-produced continuation from the
+same Freeze through Begin and non-passing Return, including each exact unit/state
+preimage, typed transaction and event. Repeat that cycle only while the candidate
+and its contract remain unchanged. A changed candidate requires its normal
+candidate-authoring route; a failed Record that actually blocked the unit uses
+its separate blocked/Resume contract.
+
+`Get-MorphospaceFrozenValidationContinuation` is the shared read-only predicate
+used by the current frozen-candidate consumer. It authenticates the ordered
+continuation rather than requiring the live tail to remain the original Freeze
+event. It does not alter a receipt or create validation evidence. Missing,
+reordered, cross-unit, contract-changing or damaged transaction chains reject.
+Keep historical and pending verification in the narrow reentry proof module,
+separate from the fresh transition actor. The neutral validation-matrix parser
+observes authenticated source bytes and compares producer semantics; it returns
+no executable AST or code. Retain those bytes as validation inputs. Parsing a
+source file does not execute its imports, while actual imports, script calls and
+the bridge's original Inspect wrapper remain execution dependencies.
+The fixed reentry schema declares the required actor and CLI paths; private
+executor proof reads that same contract and still verifies the complete Git tree.
+
+An older pinned executor can instead use the separately published
+`Invoke-FrozenValidationReentry.ps1` bridge. Its typed request binds the unchanged
+frozen candidate and live CAS preimages, the exact executor Git-tree closure,
+and validation/publication evidence for that same revision. The accepted repair
+owner's authenticated SourceOnly plan, executed output and recorded ledger bind
+the exact approved target remote/ref. Its live readback must retain the published
+revision. A reviewed source-only branch publication may precede separately gated
+main integration; an arbitrary ref or a local checkout cannot replace that proof.
+A local resolver supplies location,
+not publication or compatibility authority. The bridge rejects nonnull normal
+validation selectors; it cannot reinterpret a selected evidence plan.
+
+The v1 bridge supports an ordinary feature unit with its original v1 Freeze,
+bound tooling context, null selector and no device authority. It retains that
+context and invokes its exact
+public Start/Complete transition-ledger transport. It does not install a new
+context, add an allowed action, or suppress the old executor's transport/recovery
+attestation. Dry-run review precedes the request-hash-bound execution. An
+interruption retains the exact intent and uses its authenticated recovery path.
+A disposable byte-exact prefix view authenticates the predecessor; live source,
+context and owned-dirt checks retain the real workspace. The view supplies no
+new accepted history or mutation authority;
+no state/ledger hand edit or replacement Freeze is a retry mechanism. Actual
+RecordValidation and Accept still use the original executor and ordinary receipt
+contracts. Focused checks use `Test-FrozenValidationReentry.ps1 -SelfTest -Stage
+shared` on Linux and Windows for producer-generated retry cycles and damaged
+chain/CAS/source guards. The separate `-Stage legacy-publication` Windows check
+requires the actual SourceOnly publication producer, bound old-executor
+Record/Accept interoperability, selector rejection and interrupted bridge
+recovery. The combined stage rejects unsupported legacy execution on Linux;
+it does not silently omit that proof. Test execution and publication qualification
+remain separate evidence.
+
 ## Validation-Only Units
 
 Set `work_mode: validation-only` only for a unit whose product/source behavior

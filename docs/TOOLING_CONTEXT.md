@@ -34,3 +34,25 @@ independent remote publication authority.
 Existing projects without the opt-in fields remain on their existing schema dispatch.
 Current021 continues its retirement-first sequence. A later installer Update is a
 separate backup-first host action and must Verify against the upgraded context.
+
+## Retained Context During Frozen Validation Retry
+
+`ReturnToActive` after a non-passing attempt retains the original Freeze and
+context. Ordinary future Begin uses the shared finite continuation predicate;
+it does not need a context upgrade. For an older pinned executor, the separately
+published frozen-validation reentry bridge authenticates its own exact published
+revision and request through the accepted repair owner's authenticated SourceOnly
+plan/execution/recorded ledger and exact approved target-ref readback. It then uses
+the original context's exact public transition
+ledger transport. The bridge does not change the unit pointer, expand the action
+catalogue, skip old recovery attestation, or make its location a trust root.
+Nonnull normal-validation selectors are outside its v1 contract and reject.
+RecordValidation and Accept continue through the original executor.
+Historical and pending proof reuse the narrow proof module, without importing
+the fresh actor. The bridge's original public Inspect wrapper still executes
+under its authenticated original context; it is not a source-data observation.
+
+See [Frozen Validation Retry](WORKFLOW_STABILITY.md#frozen-validation-retry) for
+the common unchanged-candidate, retained-failure, CAS and recovery contract.
+`UpgradeToolingContext` remains a distinct pre-Freeze action; it is not a way to
+replace a frozen retry's historical context or erase a failed attempt.
