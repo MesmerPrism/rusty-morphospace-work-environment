@@ -1,4 +1,5 @@
 Set-StrictMode -Version 2.0
+Import-Module (Join-Path $PSScriptRoot 'lib/MorphospacePlanningLifecycleProjection.psm1')
 $ErrorActionPreference = 'Stop'
 
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1')
@@ -215,7 +216,10 @@ function Get-ActiveEnvelopeSourceComposition {
         [Parameter(Mandatory)][object]$Provenance,
         [Parameter(Mandatory)][object]$RepositoryMap,
         [Parameter(Mandatory)][string]$RepositoryMapRelative,
-        [Parameter(Mandatory)][string]$RepositoryMapRawSha256
+        [Parameter(Mandatory)][string]$RepositoryMapRawSha256,
+        [Parameter(Mandatory)][string]$WorkspaceRoot,
+        [string]$PendingExtensionPath,
+        [string]$ExpectedPendingExtensionSha256
     )
     $parentBinding = $Provenance.effective.source_composition_binding
     $originalBinding = $Provenance.original.source_composition_binding
@@ -251,7 +255,10 @@ function Get-ActiveEnvelopeSourceComposition {
             $baselineTree = Get-ActiveEnvelopeBaselineCommit $old tree
             $introducedBy = if ($null -ne $old.PSObject.Properties['introduced_by']) { [string]$old.introduced_by } else { [string]$Provenance.original.preparation_receipt.preparation_id }
             if ($oldReadOnly.ContainsKey($id)) {
-                if ($commit -cne $parentCommit -or $effectiveTree -cne $parentTree -or $dirty.Count -ne 0) { throw "Read-only repository '$id' drifted from its exact parent source identity." }
+                if ([string]$mapRow.role -ceq 'planning' -and ($commit -cne $parentCommit -or $effectiveTree -cne $parentTree -or $dirty.Count -ne 0)) {
+                    Assert-MorphospaceReadOnlyPlanningLifecycleProjection -Workspace $WorkspaceRoot -Unit $Provenance.effective.unit -RepositoryEntry $mapRow -Dependency $oldReadOnly[$id] -LockedCommit $parentCommit -LockedTree $parentTree -CapturedExpected $Extension.expected -PendingExtensionPath $PendingExtensionPath -ExpectedPendingExtensionSha256 $ExpectedPendingExtensionSha256
+                    $commit=$parentCommit;$effectiveTree=$parentTree;$dirty=@()
+                } elseif ($commit -cne $parentCommit -or $effectiveTree -cne $parentTree -or $dirty.Count -ne 0) { throw "Read-only repository '$id' drifted from its exact parent source identity." }
             } elseif ($oldWritable.ContainsKey($id)) {
                 & git -C $root merge-base --is-ancestor $parentCommit $commit 2>$null
                 if ($LASTEXITCODE -ne 0) { throw "Writable repository '$id' is not a descendant of its parent source identity." }
@@ -450,7 +457,7 @@ function Get-ActiveEnvelopeArtifactDocument {
 }
 
 function Assert-ActiveEnvelopeCapturedSourceObservation {
-    param([Parameter(Mandatory)][object]$Source,[Parameter(Mandatory)][object]$RepositoryMap,[Parameter(Mandatory)][object]$UnitEndpoint,[switch]$AllowWritableDescendant)
+    param([Parameter(Mandatory)][object]$Source,[Parameter(Mandatory)][object]$RepositoryMap,[Parameter(Mandatory)][object]$UnitEndpoint,[switch]$AllowWritableDescendant,[string]$WorkspaceRoot,[object]$RecoveryIntent=$null)
     $map=Get-ActiveEnvelopeIndex @($RepositoryMap.repositories) 'repo_id' 'Observed repository map'
     $sourceRows=Get-ActiveEnvelopeIndex @($Source.repositories) 'repo_id' 'Captured source composition'
     $writable=Get-ActiveEnvelopeIndex @($UnitEndpoint.allowed_repositories) 'repo_id' 'Observed writable scope'
@@ -463,7 +470,10 @@ function Assert-ActiveEnvelopeCapturedSourceObservation {
         $objectTree=@(Get-ActiveEnvelopeGitLines $root @('rev-parse',"$capturedCommit^{tree}") "Captured source commit for '$id' is unavailable.")
         if($objectTree.Count-ne1-or[string]$objectTree[0]-cne$capturedTree){throw "Captured source tree for '$id' is detached from its commit."}
         if($readOnly.ContainsKey($id)){
-            if($currentCommit-cne$capturedCommit-or$currentTree-cne$capturedTree-or$dirty.Count-ne0){throw "Read-only captured source '$id' drifted."}
+            if([string]$map[$id].role-ceq'planning'-and($currentCommit-cne$capturedCommit-or$currentTree-cne$capturedTree-or$dirty.Count-ne0)){
+                $observedUnit=[pscustomobject]@{unit_id=[string]$Source.unit_id}
+                Assert-MorphospaceReadOnlyPlanningLifecycleProjection -Workspace $WorkspaceRoot -Unit $observedUnit -RepositoryEntry $map[$id] -Dependency $readOnly[$id] -LockedCommit $capturedCommit -LockedTree $capturedTree -RecoveryIntent $RecoveryIntent
+            }elseif($currentCommit-cne$capturedCommit-or$currentTree-cne$capturedTree-or$dirty.Count-ne0){throw "Read-only captured source '$id' drifted."}
         }elseif($writable.ContainsKey($id)){
             if($AllowWritableDescendant){
                 &git -C $root merge-base --is-ancestor $capturedCommit $currentCommit 2>$null;if($LASTEXITCODE-ne0){throw "Writable captured source '$id' is not an effective-source descendant."}
@@ -484,6 +494,9 @@ function Assert-ActiveEnvelopeArtifactBindings {
     $requestBinding=Get-ActiveEnvelopeArtifactDocument $Intent $script:ActiveEnvelopeExtensionSchema 'active-development-envelope-extension-v1.schema.json'
     $sourceBinding=Get-ActiveEnvelopeArtifactDocument $Intent $script:ActiveEnvelopeSourceSchema 'active-development-envelope-source-composition-v1.schema.json'
     $request=$requestBinding.document;$source=$sourceBinding.document
+    if([string]$Intent.state.path-cne'workspace.state.json'-or[string]$Intent.unit.path-cne"iteration-units/$([string]$request.unit_id).json"-or[string]$Intent.events.path-cne'iteration-events.jsonl'){
+        throw 'Active-envelope recovery control references are not the canonical owner paths.'
+    }
     Assert-ActiveEnvelopeValidationCheckpoint -WorkspaceRoot $workspace -State $request.before.state -CurrentUnitId ([string]$request.unit_id) -Expected $request.expected
     $eventId="$([string]$request.extension_id)-recorded"
     if([string]$Intent.transaction_id-cne"$eventId-transition"-or[string]$Intent.event.event_id-cne$eventId-or[string]$Intent.event.project_id-cne[string]$request.project_id-or[string]$Intent.event.unit_id-cne[string]$request.unit_id){throw 'Active-envelope recovery transaction identity is detached.'}
@@ -524,7 +537,7 @@ function Assert-ActiveEnvelopeArtifactBindings {
     if((Get-MorphospaceFileSha256 $originalMapPath)-cne[string]$source.repository_map.original_raw_sha256){throw 'Active-envelope recovery original repository map drifted.'}
     $fingerprint=[string]$source.fingerprint;$copy=Copy-ActiveEnvelopeValue $source;$copy.fingerprint='0'*64
     if($fingerprint-cne(Get-ActiveEnvelopeHash $copy)){throw 'Active-envelope recovery source fingerprint is detached.'}
-    if($ObserveRepositories){$effectiveMap=Read-MorphospaceProtocolJson $mapPath;Assert-ActiveEnvelopeCapturedSourceObservation $source $effectiveMap $request.target}
+    if($ObserveRepositories){$effectiveMap=Read-MorphospaceProtocolJson $mapPath;Assert-ActiveEnvelopeCapturedSourceObservation $source $effectiveMap $request.target -WorkspaceRoot $workspace -RecoveryIntent $Intent}
     return [pscustomobject]@{request=$request;source_composition=$source}
 }
 
@@ -535,7 +548,7 @@ function Assert-MorphospaceActiveEnvelopeExtensionRecoveryBindings {
 }
 
 function Assert-ActiveEnvelopeHistoricalSourceSemantics {
-    param([Parameter(Mandatory)][object]$Request,[Parameter(Mandatory)][object]$Source,[Parameter(Mandatory)][object]$ParentSource,[Parameter(Mandatory)][object]$Map)
+    param([Parameter(Mandatory)][object]$Request,[Parameter(Mandatory)][object]$Source,[Parameter(Mandatory)][object]$ParentSource,[Parameter(Mandatory)][object]$Map,[string]$WorkspaceRoot,[int]$BeforeSequence)
     $before=Get-ActiveEnvelopeIndex @($ParentSource.repositories) 'repo_id' 'Historical parent source'
     $after=Get-ActiveEnvelopeIndex @($Source.repositories) 'repo_id' 'Historical derivative source'
     $beforeWritable=Get-ActiveEnvelopeIndex @($Request.before.allowed_repositories) 'repo_id' 'Historical pre-extension writable scope'
@@ -554,6 +567,9 @@ function Assert-ActiveEnvelopeHistoricalSourceSemantics {
             if([string]$row.role-cne[string]$old.role-or[string]$row.introduced_by-cne$expectedIntroducer-or[string]$row.materialization_path-cne[string]$old.materialization_path-or[string]$row.baseline_commit-cne(Get-ActiveEnvelopeBaselineCommit $old commit)-or[string]$row.baseline_tree-cne(Get-ActiveEnvelopeBaselineCommit $old tree)-or[string]$row.parent_commit-cne(Get-ActiveEnvelopeParentCommit $old commit)-or[string]$row.parent_tree-cne(Get-ActiveEnvelopeParentCommit $old tree)){throw "Historical source row '$id' rewrites retained lineage identity."}
             if($beforeReadOnly.ContainsKey($id)){
                 if([string]$row.effective_commit-cne[string]$row.parent_commit-or[string]$row.effective_tree-cne[string]$row.parent_tree-or[string]$row.worktree_state-cne'clean'-or@($row.permitted_active_dirt).Count-ne0){throw "Historical read-only source row '$id' drifted from its exact parent identity."}
+                if([string]$mapIndex[$id].role-ceq'planning'-and[IO.Path]::GetFullPath($WorkspaceRoot).StartsWith($root.TrimEnd('\','/')+[IO.Path]::DirectorySeparatorChar,$(if([OperatingSystem]::IsWindows()){[StringComparison]::OrdinalIgnoreCase}else{[StringComparison]::Ordinal}))){
+                    Assert-MorphospaceReadOnlyPlanningLifecycleProjection -Workspace $WorkspaceRoot -Unit ([pscustomobject]@{unit_id=[string]$Request.unit_id}) -RepositoryEntry $mapIndex[$id] -Dependency $beforeReadOnly[$id] -LockedCommit ([string]$row.parent_commit) -LockedTree ([string]$row.parent_tree) -CapturedExpected $Request.expected -HistoricalOnly -BeforeSequence $BeforeSequence
+                }
             }elseif($beforeWritable.ContainsKey($id)){
                 &git -C $root merge-base --is-ancestor ([string]$row.parent_commit) ([string]$row.effective_commit) 2>$null;if($LASTEXITCODE-ne0){throw "Historical writable source row '$id' is not a descendant of its parent identity."}
                 $paths=@(Get-ActiveEnvelopeGitLines $root @('diff','--name-only',"$([string]$row.parent_commit)..$([string]$row.effective_commit)",'--') "Historical writable source row '$id' delta is unavailable.")+@($row.permitted_active_dirt|ForEach-Object{$_.path})
@@ -590,7 +606,7 @@ function Assert-ActiveEnvelopeHistoricalTransition {
     if((Get-ActiveEnvelopeHash $targetUnit)-cne[string]$intent.target.unit.sha256-or(Get-ActiveEnvelopeHash $request.target.state)-cne[string]$intent.target.state.sha256-or(Get-ActiveEnvelopeHash $request.target.state)-cne(Get-ActiveEnvelopeHash $targetState)){throw 'Historical extension target state or unit is not the exact derived projection.'}
     $originalMap=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace ([string]$request.expected.original_repository_map_path) -RequireLeaf);$previousMap=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace ([string]$request.expected.repository_map_path) -RequireLeaf);$effectiveMap=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace ([string]$request.effective_repository_map.path) -RequireLeaf)
     Assert-ActiveEnvelopeMapExtension $request $originalMap $previousMap $effectiveMap ([string]$request.expected.repository_map_path)
-    $parentSource=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace ([string]$source.parent.path) -RequireLeaf);Assert-ActiveEnvelopeHistoricalSourceSemantics $request $source $parentSource $effectiveMap
+    $parentSource=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace ([string]$source.parent.path) -RequireLeaf);Assert-ActiveEnvelopeHistoricalSourceSemantics $request $source $parentSource $effectiveMap -WorkspaceRoot $workspace -BeforeSequence ([int]$ExpectedEvent.sequence)
     return $Transition
 }
 
@@ -669,7 +685,7 @@ function Invoke-MorphospaceExtendActiveDevelopmentEnvelope {
     $previousMap=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace ([string]$provenance.effective.repository_map.path) -RequireLeaf)
     Assert-ActiveEnvelopeMapExtension $request $originalMap $previousMap $map ([string]$provenance.effective.repository_map.path)
     $targetUnit=Assert-ActiveEnvelopeTargetSemantics $request $provenance $map
-    $source=Get-ActiveEnvelopeSourceComposition $request $provenance $map $mapBinding.relative $mapHash
+    $source=Get-ActiveEnvelopeSourceComposition $request $provenance $map $mapBinding.relative $mapHash $workspace $requestPath $inputHash
     $sourceBytes=ConvertTo-MorphospaceProtocolJsonBytes $source
     $targetState=Copy-ActiveEnvelopeValue $state;$targetState.plan_revision=[int]$state.plan_revision+1;$targetState.last_event_id=$eventId;$targetState.module_registry=Get-MorphospaceDevelopmentEnvelopeModuleRegistry $request.target.project $request.target.feature_lock
     if((Get-ActiveEnvelopeHash $targetState)-cne(Get-ActiveEnvelopeHash $request.target.state)){throw 'Reviewed target state differs from the exact derived plan and registry projection.'}

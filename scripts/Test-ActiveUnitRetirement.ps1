@@ -1,7 +1,7 @@
 param(
     [switch]$SelfTest,
     [switch]$InertProposalsOnly,
-    [ValidateSet('All', 'Core', 'NestedPositive', 'NestedCommitted', 'NestedMapGuards', 'AmendmentRecovery', 'NestedRecovery', 'NestedDamage')]
+    [ValidateSet('All', 'Core', 'NestedPositive', 'NestedCommitted', 'NestedMapGuards', 'AmendmentRecovery', 'NestedRecovery', 'NestedDamage', 'PlanningProjection')]
     [string]$Scenario = 'All'
 )
 $ErrorActionPreference='Stop'
@@ -44,12 +44,14 @@ function New-RetirementNestedPlanningProjection([object]$Seed,[string]$Root,[str
     $mapPath=Join-Path $workspace 'repository-map.json';$map=Read-EnvelopeProtocolJson $mapPath
     [pscustomobject]@{repository=$planning;workspace=$workspace;map=$map;map_path=$mapPath}
 }
-function New-ReadonlyPlanningRetirementSeed([string]$Root,[switch]$Replacement,[switch]$NestedReadOnlySource){
+function New-ReadonlyPlanningRetirementSeed([string]$Root,[switch]$Replacement,[switch]$NestedReadOnlySource,[switch]$ImmutableReadOnlyPaths){
     $protocolModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1') -PassThru
     $ledger=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceTransitionLedger.psm1') -PassThru
     $seed=@(New-EnvelopeAdmissionPreparedFixture -Root $Root -RepositoryRoot $repository -TransitionLedgerModule $ledger -OwnerProducedPreparation -AdditiveFeature)[-1]
     $planning=[string]$seed.source_repository;$workspace=Join-Path $planning 'morphospace'
+    if($ImmutableReadOnlyPaths){Invoke-EnvelopeGit $planning @('config','core.autocrlf','false')|Out-Null}
     foreach($entry in @(Get-ChildItem -LiteralPath $seed.workspace -Force)){Copy-Item -LiteralPath $entry.FullName -Destination $workspace -Recurse -Force}
+    if($ImmutableReadOnlyPaths){foreach($name in @('readonly-extra.txt','readonly-later.txt')){[IO.File]::WriteAllText((Join-Path $workspace $name),'immutable planning dependency existing at original pin',[Text.UTF8Encoding]::new($false))}}
     $preparationIntent=$seed.preparation_intent
     Write-EnvelopeJson (Join-Path $workspace 'project.spec.json') $preparationIntent.pre.project.document;Write-EnvelopeJson (Join-Path $workspace 'workspace.state.json') $preparationIntent.pre.state.document;Write-EnvelopeJson (Join-Path $workspace 'feature.lock.json') $preparationIntent.pre.feature_lock.document;Write-EnvelopeJson (Join-Path $workspace 'iteration-units/u001.json') $preparationIntent.pre.predecessor_unit.document
     $ledgerLines=@(Get-Content -LiteralPath (Join-Path $workspace 'iteration-events.jsonl')|Where-Object{$_});[IO.File]::WriteAllText((Join-Path $workspace 'iteration-events.jsonl'),(($ledgerLines[0..($ledgerLines.Count-2)]-join"`n")+"`n"),[Text.UTF8Encoding]::new($false))
@@ -63,7 +65,7 @@ function New-ReadonlyPlanningRetirementSeed([string]$Root,[switch]$Replacement,[
         $map.repositories+=,[pscustomobject][ordered]@{repo_id='nested-read-only-source';path=$nestedSource;role='source'}
     }
     Write-EnvelopeJson (Join-Path $workspace 'repository-map.json') $map
-    Invoke-EnvelopeGit $planning @('add','-f','morphospace')|Out-Null;Invoke-EnvelopeGit $planning @('commit','-m','accepted planning baseline')|Out-Null
+    Invoke-EnvelopeGit $planning @('add','-f','morphospace')|Out-Null;if($ImmutableReadOnlyPaths){Invoke-EnvelopeGit $planning @('add','--renormalize','morphospace')|Out-Null};Invoke-EnvelopeGit $planning @('commit','-m','accepted planning baseline')|Out-Null
     $baselineStatus=@(Invoke-EnvelopeGit $planning @('status','--porcelain=v1','--untracked-files=all'));if($baselineStatus.Count-ne0){throw "Nested accepted baseline commit is dirty: $($baselineStatus-join', ')"}
     $lockedHead=(@(Invoke-EnvelopeGit $planning @('rev-parse','HEAD'))[0]).Trim().ToLowerInvariant()
     $preparationDocument=Read-EnvelopeProtocolJson (Join-Path $Root 'u002-envelope-preparation.json');$preState=Read-EnvelopeProtocolJson (Join-Path $workspace 'workspace.state.json');$preProject=Read-EnvelopeProtocolJson (Join-Path $workspace 'project.spec.json');$preFeature=Read-EnvelopeProtocolJson (Join-Path $workspace 'feature.lock.json');$eventsPath=Join-Path $workspace 'iteration-events.jsonl'
@@ -80,13 +82,14 @@ function New-ReadonlyPlanningRetirementSeed([string]$Root,[switch]$Replacement,[
     $admission.preparation.receipt_sha256=Get-EnvelopeFileSha256 (Join-Path $workspace 'receipts/u002-envelope.json');$admission.preparation.source_composition_sha256=Get-EnvelopeFileSha256 $sourcePath
     $admission.expected.project_sha256=Get-EnvelopeCanonicalJsonSha256 $project;$admission.expected.state_sha256=Get-EnvelopeCanonicalJsonSha256 $state;$admission.expected.feature_lock_sha256=Get-EnvelopeCanonicalJsonSha256 $feature;$admission.expected.source_composition_sha256=Get-EnvelopeFileSha256 $sourcePath;$admission.expected.repository_map_sha256=Get-EnvelopeFileSha256 (Join-Path $workspace 'repository-map.json');$admission.expected.events_sha256=Get-EnvelopeFileSha256 $eventsPath;$admission.expected.events_length=([IO.FileInfo]$eventsPath).Length;$admission.expected.event_tail_id=[string]$state.last_event_id
     $admission.unit.allowed_repositories=@([pscustomobject]@{repo_id='read-only-dependency';allowed_paths=@('dependency/')})
-    $admission.unit.read_only_dependencies=@([pscustomobject][ordered]@{repo_id='project-shell';paths=@('morphospace/');purpose='Nested planning authority.';verification='Exact preparation lock and authenticated lifecycle projection.'})
+    $admission.unit.read_only_dependencies=@([pscustomobject][ordered]@{repo_id='project-shell';paths=@($(if($ImmutableReadOnlyPaths){'morphospace/README.md'}else{'morphospace/'}));purpose='Nested planning authority.';verification='Exact preparation lock and authenticated lifecycle projection.'})
     if($NestedReadOnlySource){
         $ownerRow=[pscustomobject][ordered]@{repo_id='nested-read-only-source';source_roots=@('SKILL.md')}
         $admission.agent_scope_assessment.owner_repositories+=,$ownerRow;$admission.unit.agent_scope_assessment.owner_repositories+=,(Copy-Envelope $ownerRow)
         $admission.unit.read_only_dependencies+=,[pscustomobject][ordered]@{repo_id='nested-read-only-source';paths=@('SKILL.md');purpose='Producer-authenticated nested source materialization.';verification='Exact preparation commit, tree, role, map, and clean backing repository.'}
     }
     $admission.unit.agent_scope_assessment=$admission.agent_scope_assessment
+    if($ImmutableReadOnlyPaths){$admission.unit.instruction_impact='review';$admission.unit.instruction_none_justification=$null;$admission.unit.instruction_surfaces=@([pscustomobject][ordered]@{surface_kind='validation-doc';path='<project-shell>/morphospace/README.md';owner='project-shell';change_reason='Review the immutable planning instructions used by this lifecycle fixture.';action='review-no-change';status='planned';validation='Stable source content observation.';skill_id=$null})}
     $admissionPath=Join-Path $Root 'u002-readonly-planning-admission.json';Write-EnvelopeJson $admissionPath $admission
     $automation=Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1'
     $null=&$automation -Action AdmitDevelopmentUnit -WorkspaceRoot $workspace -DevelopmentUnitAdmission $admissionPath -ExpectedDevelopmentUnitAdmissionSha256 (Get-EnvelopeFileSha256 $admissionPath) -OutPath (Join-Path $workspace 'receipts/u002-admission.json') -Timestamp '2026-08-25T00:00:40.0000000Z' -Execute
@@ -96,7 +99,9 @@ function New-ReadonlyPlanningRetirementSeed([string]$Root,[switch]$Replacement,[
         $admission=New-EnvelopeReplacementAdmission $admission $workspace u003-admission u003;$admissionPath=Join-Path $Root 'u003-readonly-planning-admission.json';Write-EnvelopeJson $admissionPath $admission
         $null=&$automation -Action AdmitDevelopmentUnit -WorkspaceRoot $workspace -DevelopmentUnitAdmission $admissionPath -ExpectedDevelopmentUnitAdmissionSha256 (Get-EnvelopeFileSha256 $admissionPath) -OutPath (Join-Path $workspace 'receipts/u003-admission.json') -Timestamp '2026-08-25T00:00:42.0000000Z' -Execute;$unitId='u003';$ready='2026-08-25T00:00:43.0000000Z';$claim='2026-08-25T00:00:44.0000000Z'
     }else{$unitId='u002';$ready='2026-08-25T00:00:41.0000000Z';$claim='2026-08-25T00:00:42.0000000Z'}
-    $lifecycle=@{WorkspaceRoot=$workspace;UnitId=$unitId;RepoMapPath=(Join-Path $workspace 'repository-map.json');ValidationTier='quick'};$null=&$automation @lifecycle -Action Ready -Timestamp $ready -Execute;$null=&$automation @lifecycle -Action Claim -Timestamp $claim -Execute
+    $lifecycle=@{WorkspaceRoot=$workspace;UnitId=$unitId;RepoMapPath=(Join-Path $workspace 'repository-map.json');ValidationTier='quick'}
+    $readyOutput=if($ImmutableReadOnlyPaths){@{OutPath=(Join-Path $workspace 'receipts/ordinary-reviewed-ready.json')}}else{@{}};$claimOutput=if($ImmutableReadOnlyPaths){@{OutPath=(Join-Path $workspace 'receipts/ordinary-claimed-owner.json')}}else{@{}}
+    $null=&$automation @lifecycle @readyOutput -Action Ready -Timestamp $ready -Execute;$null=&$automation @lifecycle @claimOutput -Action Claim -Timestamp $claim -Execute
     $baselineLeak=@(Invoke-EnvelopeGit $planning @('status','--porcelain=v1','--untracked-files=all')|Where-Object{[string]$_-match'u001|repository-map'});if($baselineLeak.Count-ne0){throw "Nested lifecycle dirt leaked baseline paths: $($baselineLeak-join', ')"}
     $seed.workspace=$workspace
     $snapshot=Join-Path $Root 'retirement-planning-snapshot';if([IO.Directory]::Exists($snapshot)){throw 'Retirement fixture immutable planning snapshot already exists.'};Copy-Item -LiteralPath $planning -Destination $snapshot -Recurse -Force
@@ -104,6 +109,80 @@ function New-ReadonlyPlanningRetirementSeed([string]$Root,[switch]$Replacement,[
     $seed|Add-Member -NotePropertyName retirement_snapshot_inventory -NotePropertyValue (Get-RetirementInventory $snapshot) -Force
     return $seed
 }
+function New-PlanningProjectionExtensionRequest {
+    param([string]$Workspace,[string]$AddedRepository,[string]$RequestPath,[string]$ExtensionId='u002-add-dependency',[string]$DependencyId='added-dependency',[string]$AddPlanningReadOnlyPath)
+    $project=Read-EnvelopeProtocolJson (Join-Path $Workspace 'project.spec.json')
+    $lock=Read-EnvelopeProtocolJson (Join-Path $Workspace 'feature.lock.json')
+    $state=Read-EnvelopeProtocolJson (Join-Path $Workspace 'workspace.state.json')
+    $unit=Read-EnvelopeProtocolJson (Join-Path $Workspace 'iteration-units\u002.json')
+    $source=Read-EnvelopeProtocolJson (Join-Path $Workspace ([string]$unit.source_composition.lock_path))
+    $parentMapRelative=if([string]$source.schema-ceq'rusty.morphospace.workflow.active_development_envelope_source_composition.v1'){[string]$source.repository_map.path}else{'repository-map.json'}
+    $map=Read-EnvelopeProtocolJson (Join-Path $Workspace $parentMapRelative)
+    $targetMap=Copy-Envelope $map
+    $targetMap.repositories+=,[pscustomobject][ordered]@{repo_id=$DependencyId;path=$AddedRepository;role='source'}
+    $targetMapPath=Join-Path $Workspace ("local/$ExtensionId-map.json");Write-EnvelopeJson $targetMapPath $targetMap
+    $targetProject=Copy-Envelope $project;$targetProject.revision=[int]$project.revision+1
+    $targetProject.repositories+=,[pscustomobject][ordered]@{repo_id=$DependencyId;role='core';path=("../$DependencyId");allowed_paths=@('dep/')}
+    $targetLock=Copy-Envelope $lock;$targetLock.project_revision=[int]$targetProject.revision;$targetLock.revision=[int]$lock.revision+1;$targetLock.generated_at='2026-09-15T01:00:00.0000000Z';$targetLock.lock_fingerprint='0'*64;$targetLock.lock_fingerprint=Get-EnvelopeCanonicalJsonSha256 $targetLock
+    $targetState=Copy-Envelope $state;$targetState.plan_revision=[int]$state.plan_revision+1;$targetState.last_event_id=("$ExtensionId-recorded");$targetState.module_registry.lock_revision=[int]$targetLock.revision;$targetState.module_registry.lock_fingerprint=[string]$targetLock.lock_fingerprint
+    $assessment=Copy-Envelope $unit.agent_scope_assessment
+    $assessment.owner_repositories+=,[pscustomobject][ordered]@{repo_id=$DependencyId;source_roots=@('dep/')}
+    $allowed=@(Copy-Envelope @($unit.allowed_repositories))
+    $readOnly=@(Copy-Envelope @($(if($unit.PSObject.Properties.Name-contains'read_only_dependencies'){$unit.read_only_dependencies}else{@()})))
+    if($AddPlanningReadOnlyPath){@($readOnly|Where-Object{[string]$_.repo_id-ceq'project-shell'})[0].paths+=,$AddPlanningReadOnlyPath}
+    $readOnly+=,[pscustomobject][ordered]@{repo_id=$DependencyId;paths=@('dep/');purpose='Compile against the newly discovered code dependency.';verification='Keep the dependency at the exact derivative source identity.'}
+    $emptyEffects=[ordered]@{};foreach($axis in @('permissions','services','activities','queries','tools','assets','shaders','native_libraries','commands','routes','streams','inputs','scenes','markers')){$emptyEffects[$axis]=@()}
+    $eventsPath=Join-Path $Workspace 'iteration-events.jsonl';$events=@(Get-Content -LiteralPath $eventsPath|Where-Object{$_}|ForEach-Object{$_|ConvertFrom-Json -Depth 100 -DateKind String})
+    $sourcePath=Join-Path $Workspace ([string]$unit.source_composition.lock_path)
+    $mapPath=Join-Path $Workspace $parentMapRelative
+    $request=[pscustomobject][ordered]@{
+        schema='rusty.morphospace.workflow.active_development_envelope_extension.v1'
+        extension_id=$ExtensionId;project_id='envelope-test';unit_id='u002'
+        rationale='The unchanged objective requires one newly discovered compile-time dependency owned by the declared repository.'
+        ownership_proof=@([pscustomobject][ordered]@{repo_id=$DependencyId;source_roots=@('dep/');owner='dependency-owner';evidence='The committed dependency root and its read-only role were reviewed against the unchanged objective.'})
+        additions=[pscustomobject][ordered]@{repository_ids=@($DependencyId);owner_roots=@([pscustomobject][ordered]@{repo_id=$DependencyId;source_roots=@('dep/')});feature_ids=@();module_ids=@();authority_parameters=@();effects=[pscustomobject]$emptyEffects;permissions=@();validation_profile_ids=@();acceptance_profile_ids=@();build_profile_ids=@();device_kinds=@()}
+        before=[pscustomobject][ordered]@{project=$project;feature_lock=$lock;state=$state;agent_scope_assessment=$unit.agent_scope_assessment;allowed_repositories=@($unit.allowed_repositories);read_only_dependencies=@($(if($unit.PSObject.Properties.Name-contains'read_only_dependencies'){$unit.read_only_dependencies}else{@()}))}
+        target=[pscustomobject][ordered]@{project=$targetProject;feature_lock=$targetLock;state=$targetState;agent_scope_assessment=$assessment;allowed_repositories=@($allowed);read_only_dependencies=@($readOnly)}
+        source_composition=[pscustomobject][ordered]@{path=("source-composition-locks/$ExtensionId.json");repository_ids=@(@($source.repositories.repo_id)+@($DependencyId)|Sort-Object -Unique)}
+        effective_repository_map=[pscustomobject][ordered]@{path=("local/$ExtensionId-map.json");raw_sha256=Get-EnvelopeFileSha256 $targetMapPath}
+        expected=[pscustomobject][ordered]@{
+            status='active';current_unit='u002';project_revision=[int]$project.revision;feature_lock_revision=[int]$lock.revision;plan_revision=[int]$state.plan_revision
+            project_sha256=Get-EnvelopeCanonicalJsonSha256 $project;project_raw_sha256=Get-EnvelopeFileSha256 (Join-Path $Workspace 'project.spec.json')
+            feature_lock_sha256=Get-EnvelopeCanonicalJsonSha256 $lock;feature_lock_raw_sha256=Get-EnvelopeFileSha256 (Join-Path $Workspace 'feature.lock.json')
+            state_sha256=Get-EnvelopeCanonicalJsonSha256 $state;state_raw_sha256=Get-EnvelopeFileSha256 (Join-Path $Workspace 'workspace.state.json')
+            unit_sha256=Get-EnvelopeCanonicalJsonSha256 $unit;unit_raw_sha256=Get-EnvelopeFileSha256 (Join-Path $Workspace 'iteration-units\u002.json')
+            events_sha256=Get-EnvelopeFileSha256 $eventsPath;events_length=([IO.FileInfo]$eventsPath).Length;event_tail_id=[string]$events[-1].event_id
+            source_composition_path=[string]$unit.source_composition.lock_path;source_composition_raw_sha256=Get-EnvelopeFileSha256 $sourcePath;source_composition_canonical_sha256=Get-EnvelopeCanonicalJsonSha256 $source
+            repository_map_path=$parentMapRelative;repository_map_raw_sha256=Get-EnvelopeFileSha256 $mapPath
+            original_source_composition_path=$(if([string]$source.schema-ceq'rusty.morphospace.workflow.active_development_envelope_source_composition.v1'){$source.original_preparation.path}else{[string]$unit.source_composition.lock_path});original_source_composition_raw_sha256=$(if([string]$source.schema-ceq'rusty.morphospace.workflow.active_development_envelope_source_composition.v1'){$source.original_preparation.raw_sha256}else{Get-EnvelopeFileSha256 $sourcePath})
+            original_repository_map_path='repository-map.json';original_repository_map_raw_sha256=Get-EnvelopeFileSha256 (Join-Path $Workspace 'repository-map.json')
+        }
+        does_not_prove=@('Does not change the objective, validate, accept, publish, mutate Git, or operate a device.')
+    }
+    Write-EnvelopeJson $RequestPath $request
+    return [pscustomobject]@{request=$request;request_path=$RequestPath;map_path=$targetMapPath;receipt_path=(Join-Path $Workspace ("receipts/$ExtensionId.json"));source_path=(Join-Path $Workspace ("source-composition-locks/$ExtensionId.json"))}
+}
+
+function New-PlanningProjectionFreezeRequest {
+    param([string]$Workspace,[string]$RepositoryMapPath,[string]$RequestPath)
+    $project=Read-EnvelopeProtocolJson (Join-Path $Workspace 'project.spec.json');$lock=Read-EnvelopeProtocolJson (Join-Path $Workspace 'feature.lock.json');$state=Read-EnvelopeProtocolJson (Join-Path $Workspace 'workspace.state.json');$unit=Read-EnvelopeProtocolJson (Join-Path $Workspace 'iteration-units\u002.json')
+    $eventsPath=Join-Path $Workspace 'iteration-events.jsonl';$events=@(Get-Content -LiteralPath $eventsPath|Where-Object{$_}|ForEach-Object{$_|ConvertFrom-Json -Depth 100 -DateKind String});$map=Read-EnvelopeProtocolJson $RepositoryMapPath;$mapRows=@{};foreach($row in @($map.repositories)){$mapRows[[string]$row.repo_id]=$row}
+    $final=[Collections.Generic.List[object]]::new();$changed=[Collections.Generic.List[object]]::new()
+    foreach($scope in @($unit.allowed_repositories)){
+        $id=[string]$scope.repo_id;if(-not$mapRows.ContainsKey($id)){throw "Freeze fixture writable repository '$id' is absent from the effective map."};$root=[string]$mapRows[$id].path
+        $head=(@(Invoke-EnvelopeGit $root @('rev-parse','HEAD'))[0]).Trim().ToLowerInvariant();$tree=(@(Invoke-EnvelopeGit $root @('rev-parse','HEAD^{tree}'))[0]).Trim().ToLowerInvariant()
+        $final.Add([pscustomobject][ordered]@{repo_id=$id;commit=$head;tree=$tree})|Out-Null;$changed.Add([pscustomobject][ordered]@{repo_id=$id;paths=@($scope.allowed_paths)})|Out-Null
+    }
+    $sourceRelative=[string]$unit.source_composition.lock_path;$sourcePath=Join-Path $Workspace $sourceRelative;$mapRelative=[IO.Path]::GetRelativePath($Workspace,$RepositoryMapPath).Replace('\','/');$deviceUse=@(if(@($unit.agent_scope_assessment.device_envelope.allowed_kinds).Count){@($unit.agent_scope_assessment.device_envelope.allowed_kinds)}else{@('none')})
+    $freeze=[pscustomobject][ordered]@{
+        schema='rusty.morphospace.workflow.candidate_freeze.v1';freeze_id='u002-extension-freeze';project_id=[string]$project.project_id;unit_id='u002'
+        expected=[pscustomobject][ordered]@{project_sha256=Get-EnvelopeCanonicalJsonSha256 $project;state_sha256=Get-EnvelopeCanonicalJsonSha256 $state;unit_sha256=Get-EnvelopeCanonicalJsonSha256 $unit;feature_lock_sha256=Get-EnvelopeCanonicalJsonSha256 $lock;source_composition_path=$sourceRelative;source_composition_sha256=Get-EnvelopeFileSha256 $sourcePath;repository_map_path=$mapRelative;repository_map_sha256=Get-EnvelopeFileSha256 $RepositoryMapPath;events_sha256=Get-EnvelopeFileSha256 $eventsPath;events_length=([IO.FileInfo]$eventsPath).Length;event_tail_id=[string]$events[-1].event_id}
+        final_repositories=@($final.ToArray());changed_paths=@($changed.ToArray());cleanliness_policy='clean-only';instruction_surfaces=@([pscustomobject][ordered]@{path='README.md';disposition='reviewed-no-change'});feature_lock=[pscustomobject][ordered]@{revision=[int]$lock.revision;sha256=Get-EnvelopeCanonicalJsonSha256 $lock};effects=@($unit.agent_scope_assessment.allowed_effect_categories);permissions=@($unit.agent_scope_assessment.allowed_permission_categories);device_use=@($deviceUse);test_matrix=@([pscustomobject][ordered]@{test_id='extension';command='pwsh -NoProfile -File scripts/Test-ActiveDevelopmentEnvelopeExtension.ps1'});cleanup_evidence=@('All source repositories are clean at their exact candidate identities.');source_composition=[pscustomobject][ordered]@{path=$sourceRelative;sha256=Get-EnvelopeFileSha256 $sourcePath};does_not_prove=@('Does not validate, accept, publish, mutate Git, or operate a device.')
+    }
+    Write-EnvelopeJson $RequestPath $freeze
+    return $freeze
+}
+
 function Add-ReadonlyPlanningWriteScopeAmendment([object]$Projection,[string]$AmendmentId='u002-add-nested-file'){
     $workspace=[string]$Projection.workspace;$unitId=[string](Read-EnvelopeProtocolJson (Join-Path $workspace 'workspace.state.json')).current_unit
     $unit=Read-EnvelopeProtocolJson (Join-Path $workspace "iteration-units/$unitId.json");$project=Read-EnvelopeProtocolJson (Join-Path $workspace 'project.spec.json');$state=Read-EnvelopeProtocolJson (Join-Path $workspace 'workspace.state.json');$eventsPath=Join-Path $workspace 'iteration-events.jsonl'
@@ -421,6 +500,229 @@ try{
     $dirtyPath=Join-Path $sourcePath 'unowned-retirement-test.txt';[IO.File]::WriteAllText($dirtyPath,'unowned')
     try{$workspace=Copy-RetirementWorkspace 'dirty-source';Assert-RetirementRejects $workspace 'untracked source dirt' '*clean available source*'}finally{[IO.File]::Delete($dirtyPath)}
     }
+    if($Scenario-cin@('All','PlanningProjection')){
+        $shadowScript=Join-Path $temp 'planning-caller-shadow.ps1'
+        [IO.File]::WriteAllText($shadowScript,@'
+param([string]$ModulePath)
+$ErrorActionPreference='Stop'
+function global:Read-MorphospaceProtocolJson {'unrelated-protocol-shadow'}
+function global:Test-MorphospaceCommittedTransitionLedger {'unrelated-ledger-shadow'}
+Import-Module $ModulePath
+$rejected=$false
+try{Assert-MorphospaceReadOnlyPlanningLifecycleProjection -Workspace $PSScriptRoot -Unit ([pscustomobject]@{unit_id='u002'}) -RepositoryEntry ([pscustomobject]@{role='source';path=$PSScriptRoot}) -Dependency ([pscustomobject]@{paths=@('README.md')}) -LockedCommit ('0'*40) -LockedTree ('0'*40)}catch{$rejected=$true}
+if(-not$rejected-or(Read-MorphospaceProtocolJson)-cne'unrelated-protocol-shadow'-or(Test-MorphospaceCommittedTransitionLedger)-cne'unrelated-ledger-shadow'){throw 'Planning projection replaced unrelated caller command authority.'}
+'planning caller shadows preserved'
+'@,[Text.UTF8Encoding]::new($false))
+        $shadowResult=&pwsh -NoProfile -File $shadowScript -ModulePath (Join-Path $PSScriptRoot 'lib/MorphospacePlanningLifecycleProjection.psm1')
+        Assert-RetirementTest ($LASTEXITCODE-eq0-and$shadowResult-ccontains'planning caller shadows preserved') 'planning projection overwrote unrelated caller commands'
+        Import-Module (Join-Path $PSScriptRoot 'lib/MorphospacePlanningLifecycleProjection.psm1')
+        $projectionExtensionModule=Import-Module (Join-Path $PSScriptRoot 'ActiveDevelopmentEnvelopeExtension.psm1') -PassThru
+        $projectionFreezeModule=Import-Module (Join-Path $PSScriptRoot 'CandidateFreeze.psm1') -PassThru
+        $projectionSeed=@(New-ReadonlyPlanningRetirementSeed (Join-Path $temp 'immutable-planning-seed') -ImmutableReadOnlyPaths)[-1]
+        $projection=@(New-RetirementNestedPlanningProjection $projectionSeed $temp 'immutable-planning')[-1]
+        $planning=$projection.repository;$workspace=$projection.workspace
+        [IO.File]::AppendAllText((Join-Path $planning '.git/info/exclude'),"`nmorphospace/local/`n",[Text.UTF8Encoding]::new($false))
+        $namedOutputs=@{};foreach($name in @('ordinary-reviewed-ready.json','ordinary-claimed-owner.json')){$path=Join-Path $workspace "receipts/$name";$namedOutputs[$path]=[IO.File]::ReadAllBytes($path);[IO.File]::Delete($path)}
+        Invoke-EnvelopeGit $planning @('add','-f','morphospace')|Out-Null;Invoke-EnvelopeGit $planning @('commit','-m','authenticated owner Prepare Admit Ready Claim')|Out-Null
+        foreach($path in $namedOutputs.Keys){[IO.File]::WriteAllBytes($path,$namedOutputs[$path])};Invoke-EnvelopeGit $planning @('add','morphospace/receipts')|Out-Null;Invoke-EnvelopeGit $planning @('commit','-m','ordinary post-action owner byproducts')|Out-Null
+        $unit=Read-EnvelopeProtocolJson (Join-Path $workspace 'iteration-units/u002.json');$source=Read-EnvelopeProtocolJson (Join-Path $workspace 'source-composition.json')
+        $entry=@($projection.map.repositories|Where-Object{[string]$_.repo_id-ceq'project-shell'})[0];$pin=@($source.repositories|Where-Object{[string]$_.repo_id-ceq'project-shell'})[0]
+        $arguments=@{Workspace=$workspace;Unit=$unit;RepositoryEntry=$entry;Dependency=$unit.read_only_dependencies[0];LockedCommit=[string]$pin.commit;LockedTree=[string]$pin.tree}
+        Assert-MorphospaceReadOnlyPlanningLifecycleProjection @arguments
+        $checkpoint=(@(Invoke-EnvelopeGit $planning @('rev-parse','HEAD'))[0]).Trim()
+        function Assert-PlanningProjectionRejects([scriptblock]$Action,[string]$Label){$before=Get-RetirementInventory $workspace;$failed=$false;try{&$Action|Out-Null}catch{$failed=$true};Assert-RetirementTest $failed "planning projection accepted $Label";Assert-RetirementTest ((Get-RetirementInventory $workspace)-ceq$before) "planning projection mutated bytes for $Label"}
+        $ordinaryClaimPath=Join-Path $workspace 'receipts/ordinary-claimed-owner.json';$ordinaryClaimBytes=[IO.File]::ReadAllBytes($ordinaryClaimPath)
+        foreach($damage in @('action','event','timestamp','status','selector','executed','adoption-binding','duplicate','outside-namespace','reserved-namespace')){
+            $extraPath=$null
+            if($damage-in@('duplicate','outside-namespace','reserved-namespace')){$extraPath=Join-Path $workspace $(if($damage-ceq'duplicate'){'receipts/copied-claim.json'}elseif($damage-ceq'reserved-namespace'){'receipts/transactions/unbound-owner-output.json'}else{'unbound-claim-output.json'});[IO.File]::WriteAllBytes($extraPath,$ordinaryClaimBytes)}else{
+                $damaged=Read-EnvelopeProtocolJson $ordinaryClaimPath
+                switch($damage){'action'{$damaged.action='Ready'}'event'{$damaged.event_id='u002-ready-0004'}'timestamp'{$damaged.timestamp='2026-08-25T00:00:41.0000000Z'}'status'{$damaged.status_before='proposed'}'selector'{$damaged.current_unit_after=$null}'executed'{$damaged.executed=$false}'adoption-binding'{$damaged.adoption_receipt='receipts/unbound-adoption.json'}}
+                Write-EnvelopeJson $ordinaryClaimPath $damaged
+            }
+            try{
+                Invoke-EnvelopeGit $planning @('add','-f','morphospace')|Out-Null;Invoke-EnvelopeGit $planning @('commit','-m',"damaged derived output $damage")|Out-Null
+                Assert-PlanningProjectionRejects {Assert-MorphospaceReadOnlyPlanningLifecycleProjection @arguments} "ordinary output $damage"
+            }finally{Invoke-EnvelopeGit $planning @('reset','--hard',$checkpoint)|Out-Null}
+        }
+        $changedOutput=Read-EnvelopeProtocolJson $ordinaryClaimPath;$changedOutput.preservation.repository_states[0] | Add-Member -NotePropertyName branch -NotePropertyValue 'changed informational observation' -Force;Write-EnvelopeJson $ordinaryClaimPath $changedOutput
+        Invoke-EnvelopeGit $planning @('add','morphospace/receipts/ordinary-claimed-owner.json')|Out-Null;Invoke-EnvelopeGit $planning @('commit','-m','changed derived output observation')|Out-Null
+        Assert-PlanningProjectionRejects {Assert-MorphospaceReadOnlyPlanningLifecycleProjection @arguments} 'changed committed derived output bytes'
+        [IO.File]::WriteAllBytes($ordinaryClaimPath,$ordinaryClaimBytes);Invoke-EnvelopeGit $planning @('add','morphospace/receipts/ordinary-claimed-owner.json')|Out-Null;Invoke-EnvelopeGit $planning @('commit','-m','reverted derived output observation')|Out-Null
+        Assert-PlanningProjectionRejects {Assert-MorphospaceReadOnlyPlanningLifecycleProjection @arguments} 'changed and reverted committed derived output bytes'
+        Invoke-EnvelopeGit $planning @('reset','--hard',$checkpoint)|Out-Null
+        [IO.File]::Delete($ordinaryClaimPath);Invoke-EnvelopeGit $planning @('add','-u','morphospace/receipts/ordinary-claimed-owner.json')|Out-Null;Invoke-EnvelopeGit $planning @('commit','-m','deleted derived output')|Out-Null
+        [IO.File]::WriteAllBytes($ordinaryClaimPath,$ordinaryClaimBytes);Invoke-EnvelopeGit $planning @('add','morphospace/receipts/ordinary-claimed-owner.json')|Out-Null;Invoke-EnvelopeGit $planning @('commit','-m','restored derived output')|Out-Null
+        Assert-PlanningProjectionRejects {Assert-MorphospaceReadOnlyPlanningLifecycleProjection @arguments} 'deleted and restored committed derived output'
+        Invoke-EnvelopeGit $planning @('reset','--hard',$checkpoint)|Out-Null
+        $claimIntentPath=@(Get-ChildItem (Join-Path $workspace 'receipts/transactions') -Filter 'u002-claimed-*.intent.json' -File)[0].FullName;$claimCompletionPath=$claimIntentPath.Replace('.intent.json','.completion.json')
+        $claimIntentBytes=[IO.File]::ReadAllBytes($claimIntentPath);$claimCompletionBytes=[IO.File]::ReadAllBytes($claimCompletionPath)
+        $changedProof=Read-EnvelopeProtocolJson $claimIntentPath;$changedProof.created_at='2026-08-25T00:00:00.0000000Z';Write-EnvelopeJson $claimIntentPath $changedProof;$changedCompletion=Read-EnvelopeProtocolJson $claimCompletionPath;$changedCompletion.intent.sha256=Get-EnvelopeFileSha256 $claimIntentPath;Write-EnvelopeJson $claimCompletionPath $changedCompletion
+        Invoke-EnvelopeGit $planning @('add','morphospace/receipts/transactions')|Out-Null;Invoke-EnvelopeGit $planning @('commit','-m','changed linked byproduct transaction')|Out-Null
+        Assert-PlanningProjectionRejects {Assert-MorphospaceReadOnlyPlanningLifecycleProjection @arguments} 'changed linked transaction while ordinary output is unchanged'
+        [IO.File]::WriteAllBytes($claimIntentPath,$claimIntentBytes);[IO.File]::WriteAllBytes($claimCompletionPath,$claimCompletionBytes);Invoke-EnvelopeGit $planning @('add','morphospace/receipts/transactions')|Out-Null;Invoke-EnvelopeGit $planning @('commit','-m','reverted linked byproduct transaction')|Out-Null
+        Assert-PlanningProjectionRejects {Assert-MorphospaceReadOnlyPlanningLifecycleProjection @arguments} 'changed and reverted linked transaction while ordinary output is unchanged'
+        Invoke-EnvelopeGit $planning @('reset','--hard',$checkpoint)|Out-Null
+        $projectionProofModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospacePlanningLifecycleProjection.psm1') -PassThru
+        $projectionAdmission=@(Get-ChildItem (Join-Path $workspace 'receipts') -File -Filter '*.json'|ForEach-Object{Read-EnvelopeProtocolJson $_.FullName}|Where-Object{[string]$_.schema-ceq'rusty.morphospace.workflow.development_unit_admission.v1'-and[string]$_.unit_id-ceq'u002'})[0]
+        foreach($slug in @('ready','claimed')){
+            $transitionFile=@(Get-ChildItem (Join-Path $workspace 'receipts/transactions') -File -Filter "u002-$slug-*.intent.json")[0]
+            $completionFile=$transitionFile.FullName.Replace('.intent.json','.completion.json');$originalIntent=[IO.File]::ReadAllBytes($transitionFile.FullName);$originalCompletion=[IO.File]::ReadAllBytes($completionFile)
+            foreach($damage in @('pre-unit','pre-state','target-authority')){
+                $detached=Read-EnvelopeProtocolJson $transitionFile.FullName;$completion=Read-EnvelopeProtocolJson $completionFile
+                if($damage-ceq'pre-unit'){$detached.pre.unit.sha256='0'*64;$detached.expected.unit_sha256=$detached.pre.unit.sha256}elseif($damage-ceq'pre-state'){$detached.pre.state.sha256='0'*64;$detached.expected.state_sha256=$detached.pre.state.sha256}else{$detached.target.unit.document.objective+=' unreviewed expansion';$detached.target.unit.sha256=Get-EnvelopeCanonicalJsonSha256 $detached.target.unit.document;$completion.unit_sha256=$detached.target.unit.sha256}
+                Write-EnvelopeJson $transitionFile.FullName $detached;$completion.intent.sha256=Get-EnvelopeFileSha256 $transitionFile.FullName;Write-EnvelopeJson $completionFile $completion
+                try{
+                    $before=Get-RetirementInventory $workspace
+                    $rejected=&$projectionProofModule {param($root,$unit,$entry,$admission,$transaction)
+                        # Prove this is a self-consistent generic transaction, then
+                        # require the independent owner projection to reject it.
+                        $null=Get-MorphospacePlanningLifecycleTransition $root $transaction -HistoricalProjection
+                        try{$null=Test-MorphospacePlanningLifecycleProjectionFromAuthenticatedAdmission -Workspace $root -Unit $unit -RepositoryEntry $entry -StatusPorcelain @() -Admission $admission -HistoricalOnly;return $false}catch{return $true}
+                    } $workspace $unit $entry $projectionAdmission $detached.transaction_id
+                    Assert-RetirementTest $rejected "planning projection accepted detached $slug $damage"
+                    Assert-RetirementTest ((Get-RetirementInventory $workspace)-ceq$before) "planning projection wrote during detached $slug $damage rejection"
+                }finally{[IO.File]::WriteAllBytes($transitionFile.FullName,$originalIntent);[IO.File]::WriteAllBytes($completionFile,$originalCompletion)}
+            }
+        }
+        $additionalPaths=Copy-Envelope $arguments.Dependency;$additionalPaths.paths=@($additionalPaths.paths)+@('morphospace/local/new-readonly.json')
+        $additionalArguments=@{};foreach($key in $arguments.Keys){$additionalArguments[$key]=$arguments[$key]};$additionalArguments.Dependency=$additionalPaths
+        Assert-PlanningProjectionRejects {Assert-MorphospaceReadOnlyPlanningLifecycleProjection @additionalArguments} 'unauthenticated dependency path addition beyond terminal owner prefix'
+        $externalPlanning=Join-Path $temp 'external-exact-planning';Invoke-EnvelopeGit $temp @('clone','--no-hardlinks',$planning,$externalPlanning)|Out-Null;Invoke-EnvelopeGit $externalPlanning @('reset','--hard',[string]$pin.commit)|Out-Null
+        $externalEntry=Copy-Envelope $entry;$externalEntry.path=$externalPlanning
+        $externalSource=[pscustomobject]@{unit_id='u002';repositories=@([pscustomobject]@{repo_id='project-shell';role='planning';effective_commit=[string]$pin.commit;effective_tree=[string]$pin.tree})}
+        $externalMap=[pscustomobject]@{repositories=@($externalEntry)};$externalEndpoint=[pscustomobject]@{allowed_repositories=@();read_only_dependencies=@($arguments.Dependency)}
+        $externalChecks=&$projectionExtensionModule {
+            param($source,$map,$endpoint,$workspace,$external)
+            Assert-ActiveEnvelopeCapturedSourceObservation $source $map $endpoint -WorkspaceRoot $workspace
+            [IO.File]::WriteAllText((Join-Path $external 'unrelated-external.txt'),'unrelated external history');&git -C $external add unrelated-external.txt|Out-Null;&git -C $external -c user.name=Fixture -c user.email=fixture@example.invalid commit -m 'unrelated external drift'|Out-Null
+            $rejected=$false;try{Assert-ActiveEnvelopeCapturedSourceObservation $source $map $endpoint -WorkspaceRoot $workspace}catch{$rejected=$true};return $rejected
+        } $externalSource $externalMap $externalEndpoint $workspace $externalPlanning
+        Assert-RetirementTest $externalChecks 'external unchanged planning fast path accepted nonnested drift'
+        foreach($path in @('unrelated.txt','morphospace/README.md')){
+            $absolute=Join-Path $planning $path;$existed=[IO.File]::Exists($absolute);$old=if($existed){[IO.File]::ReadAllBytes($absolute)}else{$null}
+            [IO.File]::WriteAllText($absolute,'foreign committed bytes',[Text.UTF8Encoding]::new($false));Invoke-EnvelopeGit $planning @('add','-f','--',$path)|Out-Null;Invoke-EnvelopeGit $planning @('commit','-m','foreign intermediate path')|Out-Null
+            if($existed){[IO.File]::WriteAllBytes($absolute,$old)}else{[IO.File]::Delete($absolute)}
+            Invoke-EnvelopeGit $planning @('add','-u','--',$path)|Out-Null;Invoke-EnvelopeGit $planning @('commit','-m','revert foreign intermediate path')|Out-Null
+            Assert-PlanningProjectionRejects {Assert-MorphospaceReadOnlyPlanningLifecycleProjection @arguments} "reverted $path"
+            Invoke-EnvelopeGit $planning @('reset','--hard',$checkpoint)|Out-Null
+        }
+        foreach($damage in @('role','nonnested','pin','map','readonly','preparation-semantic')){
+            $caseArguments=$arguments.Clone();$restorePath=$null;$restoreBytes=$null
+            switch($damage){
+                'role' {$caseArguments.RepositoryEntry=Copy-Envelope $entry;$caseArguments.RepositoryEntry.role='source'}
+                'nonnested' {$caseArguments.Workspace=Split-Path $planning -Parent}
+                'pin' {$caseArguments.LockedCommit=$checkpoint;$caseArguments.LockedTree=(@(Invoke-EnvelopeGit $planning @('rev-parse',"$checkpoint^{tree}"))[0]).Trim()}
+                'map' {$caseArguments.RepositoryEntry=Copy-Envelope $entry;$caseArguments.RepositoryEntry.repo_id='foreign-owner'}
+                'readonly' {$restorePath=Join-Path $planning 'morphospace/README.md';$restoreBytes=[IO.File]::ReadAllBytes($restorePath);[IO.File]::WriteAllText($restorePath,'damaged readonly')}
+                'preparation-semantic' {
+                    $restorePath=Join-Path $workspace 'receipts/transactions/u002-envelope-prepared-transition.intent.json';$restoreBytes=[IO.File]::ReadAllBytes($restorePath)
+                    $completionPath=Join-Path $workspace 'receipts/transactions/u002-envelope-prepared-transition.completion.json';$completionBytes=[IO.File]::ReadAllBytes($completionPath)
+                    $intent=Read-EnvelopeProtocolJson $restorePath;$intent.target.project.path='unrelated-owner.json';Write-EnvelopeJson $restorePath $intent
+                    $completion=Read-EnvelopeProtocolJson $completionPath;$completion.intent_sha256=Get-EnvelopeFileSha256 $restorePath;Write-EnvelopeJson $completionPath $completion
+                }
+            }
+            try{Assert-PlanningProjectionRejects {Assert-MorphospaceReadOnlyPlanningLifecycleProjection @caseArguments} $damage}finally{if($restorePath){[IO.File]::WriteAllBytes($restorePath,$restoreBytes)};if($damage-ceq'preparation-semantic'){[IO.File]::WriteAllBytes($completionPath,$completionBytes)}}
+        }
+        $dependency=Join-Path $temp 'projection-dependency';[IO.Directory]::CreateDirectory((Join-Path $dependency 'dep'))|Out-Null
+        Invoke-EnvelopeGit $temp @('init',$dependency)|Out-Null;Invoke-EnvelopeGit $dependency @('config','user.name','Projection Fixture')|Out-Null;Invoke-EnvelopeGit $dependency @('config','user.email','fixture@example.invalid')|Out-Null
+        [IO.File]::WriteAllText((Join-Path $dependency 'dep/api.txt'),'independent dependency');Invoke-EnvelopeGit $dependency @('add','dep')|Out-Null;Invoke-EnvelopeGit $dependency @('commit','-m','dependency baseline')|Out-Null
+        $requestInfo=New-PlanningProjectionExtensionRequest $workspace $dependency (Join-Path $temp 'projection-extension.json') -AddPlanningReadOnlyPath 'morphospace/readonly-extra.txt'
+        foreach($field in @('source_composition_path','source_composition_raw_sha256','source_composition_canonical_sha256','original_source_composition_path','original_source_composition_raw_sha256')){
+            $detachedRequest=Copy-Envelope $requestInfo.request;$detachedRequest.expected.$field=if($field.EndsWith('_path')){'source-composition-locks/unbound.json'}else{'0'*64}
+            $detachedPath=Join-Path $temp "pending-source-$field.json";Write-EnvelopeJson $detachedPath $detachedRequest
+            Assert-PlanningProjectionRejects {Assert-MorphospaceReadOnlyPlanningLifecycleProjection @arguments -CapturedExpected $detachedRequest.expected -PendingExtensionPath $detachedPath -ExpectedPendingExtensionSha256 (Get-EnvelopeFileSha256 $detachedPath)} "pending request $field"
+        }
+        $extensionArguments=@{WorkspaceRoot=$workspace;UnitId='u002';RepositoryMapPath=$requestInfo.map_path;SourceCompositionOutPath=$requestInfo.source_path;ActiveDevelopmentEnvelopeExtension=$requestInfo.request_path;ExpectedActiveDevelopmentEnvelopeExtensionSha256=(Get-EnvelopeFileSha256 $requestInfo.request_path);OutPath=$requestInfo.receipt_path;Timestamp='2026-09-15T01:00:00.0000000Z'}
+        $missingPathRequest=Copy-Envelope $requestInfo.request;@($missingPathRequest.target.read_only_dependencies|Where-Object{[string]$_.repo_id-ceq'project-shell'})[0].paths+=,'morphospace/absent-at-original-pin.txt'
+        $missingRequestPath=Join-Path $temp 'projection-missing-readonly-path.json';Write-EnvelopeJson $missingRequestPath $missingPathRequest
+        $missingArguments=$extensionArguments.Clone();$missingArguments.ActiveDevelopmentEnvelopeExtension=$missingRequestPath;$missingArguments.ExpectedActiveDevelopmentEnvelopeExtensionSha256=Get-EnvelopeFileSha256 $missingRequestPath
+        Assert-PlanningProjectionRejects {Invoke-MorphospaceExtendActiveDevelopmentEnvelope @missingArguments} 'new readonly path absent from original source pin'
+        $before=Get-RetirementInventory $workspace;$dry=Invoke-MorphospaceExtendActiveDevelopmentEnvelope @extensionArguments
+        Assert-RetirementTest (-not$dry.executed-and(Get-RetirementInventory $workspace)-ceq$before) 'planning extension dryrun changed bytes'
+        $interrupted=$false;try{Invoke-MorphospaceExtendActiveDevelopmentEnvelope @extensionArguments -Execute -FaultAfter after-intent|Out-Null}catch{$interrupted=$_.Exception.Message-like'*Injected interruption*'}
+        Assert-RetirementTest $interrupted 'planning extension did not reach its recovery boundary'
+        $pendingIntentPath=Join-Path $workspace 'receipts/transactions/u002-add-dependency-recorded-transition.intent.json'
+        $pendingIntentBytes=[IO.File]::ReadAllBytes($pendingIntentPath)
+        foreach($damage in @('target-unit','predecessor-unit','predecessor-state')){
+            $damaged=Read-EnvelopeProtocolJson $pendingIntentPath
+            if($damage-ceq'target-unit'){$damaged.target.unit.document.unit_id='u099';$damaged.target.unit.sha256=Get-EnvelopeCanonicalJsonSha256 $damaged.target.unit.document}elseif($damage-ceq'predecessor-unit'){$damaged.pre.unit.sha256='0'*64}else{$damaged.pre.state.sha256='0'*64}
+            $damageBytes=&$protocolModule {param($value)ConvertTo-MorphospaceProtocolJsonBytes $value} $damaged
+            [IO.File]::WriteAllBytes($pendingIntentPath,$damageBytes)
+            try{Assert-PlanningProjectionRejects {Invoke-MorphospaceExtendActiveDevelopmentEnvelope @extensionArguments -Execute} "damaged planning extension $damage"}finally{[IO.File]::WriteAllBytes($pendingIntentPath,$pendingIntentBytes)}
+        }
+        $redirected=Read-EnvelopeProtocolJson $pendingIntentPath
+        $redirected.unit.path='iteration-units/shadow.json';$redirected.pre_unit_raw.path='iteration-units/shadow.json'
+        $shadowPath=Join-Path $workspace 'iteration-units/shadow.json'
+        $redirectedBytes=&$protocolModule {param($intent) [pscustomobject]@{unit=ConvertTo-MorphospaceProtocolJsonBytes $intent.target.unit.document;intent=ConvertTo-MorphospaceProtocolJsonBytes $intent}} $redirected
+        [IO.File]::WriteAllBytes($shadowPath,$redirectedBytes.unit)
+        [IO.File]::WriteAllBytes($pendingIntentPath,$redirectedBytes.intent)
+        try{Assert-PlanningProjectionRejects {Invoke-MorphospaceExtendActiveDevelopmentEnvelope @extensionArguments -Execute} 'redirected canonical unit and pre-unit references'}finally{[IO.File]::WriteAllBytes($pendingIntentPath,$pendingIntentBytes);Remove-Item -LiteralPath $shadowPath}
+        $interrupted=$false;try{Invoke-MorphospaceExtendActiveDevelopmentEnvelope @extensionArguments -Execute -FaultAfter after-projection|Out-Null}catch{$interrupted=$_.Exception.Message-like'*Injected interruption*'}
+        Assert-RetirementTest $interrupted 'planning extension did not reach its projected recovery boundary'
+        $projectedIntentBytes=[IO.File]::ReadAllBytes($pendingIntentPath);$detachedIntent=Read-EnvelopeProtocolJson $pendingIntentPath
+        $requestArtifactIndex=@(for($index=0;$index-lt$detachedIntent.artifacts.Count;$index++){if(([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($detachedIntent.artifacts[$index].bytes_base64))|ConvertFrom-Json -DateKind String).schema-ceq'rusty.morphospace.workflow.active_development_envelope_extension.v1'){$index}})[0]
+        $requestArtifact=$detachedIntent.artifacts[$requestArtifactIndex];$detachedRequest=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($requestArtifact.bytes_base64))|ConvertFrom-Json -DateKind String
+        # last_event_id is overwritten by the extension's exact target transform.
+        # This forged predecessor leaves the genuine live target unchanged.
+        $detachedRequest.before.state.last_event_id='u002-envelope-prepared';$detachedRequest.expected.state_sha256=Get-EnvelopeCanonicalJsonSha256 $detachedRequest.before.state
+        $detachedStateBytes=&$protocolModule {param($value)ConvertTo-MorphospaceProtocolJsonBytes $value} $detachedRequest.before.state
+        $detachedRequest.expected.state_raw_sha256=Get-RetirementBytesSha256 $detachedStateBytes;$detachedIntent.pre.state.sha256=$detachedRequest.expected.state_sha256;$detachedIntent.pre_state_raw.sha256=$detachedRequest.expected.state_raw_sha256
+        foreach($name in @('state_sha256','state_raw_sha256')){if($detachedIntent.expected.PSObject.Properties.Name-contains$name){$detachedIntent.expected.$name=$detachedRequest.expected.$name}}
+        $artifactBytes=&$protocolModule {param($value)ConvertTo-MorphospaceProtocolJsonBytes $value} $detachedRequest;$requestArtifact.bytes_base64=[Convert]::ToBase64String($artifactBytes);$requestArtifact.sha256=Get-RetirementBytesSha256 $artifactBytes
+        $artifactRestore=@{}
+        foreach($relative in @($requestArtifact.path,"receipts/transactions/$($detachedIntent.transaction_id).artifact-$requestArtifactIndex.pending")){$artifactPath=Join-Path $workspace $relative;if([IO.File]::Exists($artifactPath)){$artifactRestore[$artifactPath]=[IO.File]::ReadAllBytes($artifactPath);[IO.File]::WriteAllBytes($artifactPath,$artifactBytes)}}
+        $detachedIntentBytes=&$protocolModule {param($value)ConvertTo-MorphospaceProtocolJsonBytes $value} $detachedIntent;[IO.File]::WriteAllBytes($pendingIntentPath,$detachedIntentBytes)
+        try{
+            $before=Get-RetirementInventory $workspace;$message=''
+            try{Assert-MorphospaceReadOnlyPlanningLifecycleProjection @arguments -RecoveryIntent $detachedIntent}catch{$message=$_.Exception.Message}
+            Assert-RetirementTest ($message-ceq'Pending or recorded planning extension predecessor differs from authenticated terminal unit or state.') "self-consistent own predecessor state missed the prefix guard: $message"
+            Assert-RetirementTest ((Get-RetirementInventory $workspace)-ceq$before) 'own predecessor state rejection wrote workspace bytes'
+        }finally{[IO.File]::WriteAllBytes($pendingIntentPath,$projectedIntentBytes);foreach($path in $artifactRestore.Keys){[IO.File]::WriteAllBytes($path,$artifactRestore[$path])}}
+        $null=Invoke-MorphospaceExtendActiveDevelopmentEnvelope @extensionArguments -Execute
+        $derivative=Read-EnvelopeProtocolJson $requestInfo.source_path;$planningRow=@($derivative.repositories|Where-Object{[string]$_.repo_id-ceq'project-shell'})[0]
+        Assert-RetirementTest ([string]$planningRow.baseline_commit-ceq[string]$pin.commit-and[string]$planningRow.parent_commit-ceq[string]$pin.commit-and[string]$planningRow.effective_commit-ceq[string]$pin.commit-and[string]$planningRow.effective_tree-ceq[string]$pin.tree) 'planning extension replaced immutable source pins'
+        $event=@(Get-Content (Join-Path $workspace 'iteration-events.jsonl')|Where-Object{$_}|ForEach-Object{$_|ConvertFrom-Json -DateKind String})[-1]
+        [void](Test-MorphospaceHistoricalActiveDevelopmentEnvelopeExtension -WorkspaceRoot $workspace -ExpectedEvent $event)
+        $badExpected=Copy-Envelope $requestInfo.request.expected;$badExpected.events_length=([IO.FileInfo](Join-Path $workspace 'iteration-events.jsonl')).Length;$badExpected.events_sha256=Get-EnvelopeFileSha256 (Join-Path $workspace 'iteration-events.jsonl');$badExpected.event_tail_id=[string]$event.event_id
+        Assert-PlanningProjectionRejects {Assert-MorphospaceReadOnlyPlanningLifecycleProjection @arguments -CapturedExpected $badExpected -HistoricalOnly -BeforeSequence ([int]$event.sequence)} 'consumer-containing prefix'
+        Invoke-EnvelopeGit $planning @('add','-f','morphospace')|Out-Null;Invoke-EnvelopeGit $planning @('commit','-m','authenticated owner extension')|Out-Null
+        $addedCheckpoint=(@(Invoke-EnvelopeGit $planning @('rev-parse','HEAD'))[0]).Trim()
+        $addedPath=Join-Path $workspace 'readonly-extra.txt';$addedBytes=[IO.File]::ReadAllBytes($addedPath)
+        [IO.File]::AppendAllText($addedPath,'changed');Invoke-EnvelopeGit $planning @('add','-f','morphospace/readonly-extra.txt')|Out-Null;Invoke-EnvelopeGit $planning @('commit','-m','changed added readonly dependency')|Out-Null
+        [IO.File]::WriteAllBytes($addedPath,$addedBytes);Invoke-EnvelopeGit $planning @('add','-f','morphospace/readonly-extra.txt')|Out-Null;Invoke-EnvelopeGit $planning @('commit','-m','reverted added readonly dependency')|Out-Null
+        Assert-PlanningProjectionRejects {Invoke-MorphospaceExtendActiveDevelopmentEnvelope @extensionArguments -Execute} 'changed and reverted newly added readonly path'
+        Invoke-EnvelopeGit $planning @('reset','--hard',$addedCheckpoint)|Out-Null
+        $null=Invoke-MorphospaceExtendActiveDevelopmentEnvelope @extensionArguments -Execute
+        $laterDependency=Join-Path $temp 'projection-later-dependency';Invoke-EnvelopeGit $temp @('clone','--no-hardlinks',$dependency,$laterDependency)|Out-Null
+        $laterInfo=New-PlanningProjectionExtensionRequest $workspace $laterDependency (Join-Path $temp 'projection-later-extension.json') -ExtensionId 'u002-add-later-dependency' -DependencyId 'later-dependency' -AddPlanningReadOnlyPath 'morphospace/readonly-later.txt'
+        $laterArguments=@{WorkspaceRoot=$workspace;UnitId='u002';RepositoryMapPath=$laterInfo.map_path;SourceCompositionOutPath=$laterInfo.source_path;ActiveDevelopmentEnvelopeExtension=$laterInfo.request_path;ExpectedActiveDevelopmentEnvelopeExtensionSha256=(Get-EnvelopeFileSha256 $laterInfo.request_path);OutPath=$laterInfo.receipt_path;Timestamp='2026-09-15T01:00:00.2500000Z'}
+        $null=Invoke-MorphospaceExtendActiveDevelopmentEnvelope @laterArguments -Execute
+        [void](Test-MorphospaceHistoricalActiveDevelopmentEnvelopeExtension -WorkspaceRoot $workspace -ExpectedEvent $event)
+        Invoke-EnvelopeGit $planning @('add','-f','morphospace')|Out-Null;Invoke-EnvelopeGit $planning @('commit','-m','authenticated second extension')|Out-Null
+        $null=Invoke-MorphospaceExtendActiveDevelopmentEnvelope @extensionArguments -Execute
+        $requestInfo=$laterInfo
+        $completionArguments=@{Action='CompleteInstructionSurfaces';WorkspaceRoot=$workspace;UnitId='u002';RepoMapPath=$requestInfo.map_path;InstructionCompletionId='u002-planning-instructions';OutPath=(Join-Path $workspace 'receipts/u002-planning-instructions.json');Timestamp='2026-09-15T01:00:00.5000000Z'}
+        $completionDry=&(Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1') @completionArguments|ConvertFrom-Json
+        $null=&(Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1') @completionArguments -ExpectedInstructionObservationSha256 $completionDry.instruction_surface_completion.observation_sha256 -ExpectedUnitSha256 $completionDry.instruction_surface_completion.expected_unit_sha256 -InstructionSurfaceIds @($completionDry.instruction_surface_completion.surfaces.surface_id) -Execute
+        Invoke-EnvelopeGit $planning @('add','-f','morphospace')|Out-Null;Invoke-EnvelopeGit $planning @('commit','-m','authenticated instruction completion')|Out-Null
+        $freezePath=Join-Path $temp 'projection-freeze.json';$freeze=New-PlanningProjectionFreezeRequest $workspace $requestInfo.map_path $freezePath
+        $freezeArguments=@{WorkspaceRoot=$workspace;UnitId='u002';CandidateFreeze=$freezePath;ExpectedCandidateFreezeSha256=(Get-EnvelopeFileSha256 $freezePath);OutPath=(Join-Path $workspace 'receipts/u002-extension-freeze.json');Timestamp='2026-09-15T01:00:01.0000000Z';Execute=$true}
+        $null=&$projectionFreezeModule {param($a) Invoke-MorphospaceFreezeCandidate @a} $freezeArguments
+        $frozen=Read-EnvelopeProtocolJson (Join-Path $workspace 'iteration-units/u002.json')
+        [void](&$projectionFreezeModule {param($root,$unit) Test-MorphospaceFrozenCandidate -WorkspaceRoot $root -Unit $unit} $workspace $frozen)
+        Invoke-EnvelopeGit $planning @('add','-f','morphospace')|Out-Null;Invoke-EnvelopeGit $planning @('commit','-m','authenticated committed Freeze')|Out-Null
+        [void](&$projectionFreezeModule {param($root,$unit) Test-MorphospaceFrozenCandidate -WorkspaceRoot $root -Unit $unit} $workspace $frozen)
+        $freezeCheckpoint=(@(Invoke-EnvelopeGit $planning @('rev-parse','HEAD'))[0]).Trim()
+        $freezeProofPath=Join-Path $workspace 'receipts/u002-extension-freeze.json';$freezeProofBytes=[IO.File]::ReadAllBytes($freezeProofPath)
+        [IO.File]::AppendAllText($freezeProofPath,' ',[Text.UTF8Encoding]::new($false));Invoke-EnvelopeGit $planning @('add','-f','morphospace')|Out-Null;Invoke-EnvelopeGit $planning @('commit','-m','damaged committed Freeze proof')|Out-Null
+        [IO.File]::WriteAllBytes($freezeProofPath,$freezeProofBytes);Invoke-EnvelopeGit $planning @('add','-f','morphospace')|Out-Null;Invoke-EnvelopeGit $planning @('commit','-m','reverted committed Freeze proof')|Out-Null
+        Assert-PlanningProjectionRejects {&$projectionFreezeModule {param($root,$unit) Test-MorphospaceFrozenCandidate -WorkspaceRoot $root -Unit $unit} $workspace $frozen} 'changed and reverted committed own Freeze proof'
+        Invoke-EnvelopeGit $planning @('reset','--hard',$freezeCheckpoint)|Out-Null
+        $null=&(Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1') -Action BeginValidation -WorkspaceRoot $workspace -UnitId u002 -RepoMapPath $requestInfo.map_path -ValidationTier quick -Timestamp '2026-09-15T01:00:02.0000000Z' -Execute
+        Assert-RetirementTest ([string](Read-EnvelopeProtocolJson (Join-Path $workspace 'iteration-units/u002.json')).status-ceq'validating') 'frozen planning candidate failed ordinary BeginValidation'
+        Assert-RetirementTest ($null-ne(Get-Command Read-MorphospaceProtocolJson -ErrorAction SilentlyContinue)) 'planning projection removed caller protocol commands'
+
+    }
     $checkName=switch($Scenario){
         'NestedPositive' {'active-unit-retirement-nested-positive'}
         'NestedCommitted' {'active-unit-retirement-nested-committed'}
@@ -428,6 +730,7 @@ try{
         'AmendmentRecovery' {'active-unit-retirement-amendment-recovery'}
         'NestedRecovery' {'active-unit-retirement-nested-recovery'}
         'NestedDamage' {'active-unit-retirement-nested-damage'}
+        'PlanningProjection' {'active-unit-retirement-planning-projection'}
         default {'active-unit-retirement'}
     }
     [pscustomobject]@{status='pass';check=$checkName;scenario=$Scenario;old_unit_and_prior_evidence_bytes_preserved=$true;source_mutation_performed=$false}|ConvertTo-Json -Compress
