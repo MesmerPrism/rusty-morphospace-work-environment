@@ -44,8 +44,10 @@ replacement for owner contracts or exact evidence.
   before reporting cleanup. An absent executor must fail explicitly.
 - Bind cross-repository work to exact source identities. Treat project specs,
   feature locks, and runtime receipts as the declared composition contract.
-  Keep reusable modules behind a neutral conformance harness or independent
-  consumer, and keep app or device details in adapters.
+  Use existing product integrations as evidence for specific invariants, not
+  as a mandate to move their working app-owned behavior into a shared module.
+  Name the property to reuse, keep app or device details in adapters, and put
+  a new reusable module behind a neutral harness or independent consumer.
 - Derive validation from the current unit and keep pass evidence, acceptance,
   publication, and device evidence distinct. Preserve blockers and dirty or
   historical bytes; do not rewrite them to repair an audit.
