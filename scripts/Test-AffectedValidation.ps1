@@ -3613,7 +3613,7 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value $termina
             } finally {
                 [void](Invoke-TestGit $fixture @('checkout','main'))
             }
-            $normalStatic=& (Get-Module MorphospaceAffectedValidationDependencyClosure) { param($r,$i) Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $r -Entrypoint 'scripts/Test-DocumentationLinks.ps1' -Inventory $i -DynamicDeclarations @() } $fixture (Get-MorphospaceAffectedTreeInventory -RepositoryRoot $fixture -Commit $docsHead)
+            $normalStatic=& (Import-Module (Join-Path $repoRoot 'scripts/lib/MorphospaceAffectedValidationDependencyClosure.psm1') -PassThru) { param($r,$i) Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $r -Entrypoint 'scripts/Test-DocumentationLinks.ps1' -Inventory $i -DynamicDeclarations @() } $fixture (Get-MorphospaceAffectedTreeInventory -RepositoryRoot $fixture -Commit $docsHead)
             Assert-True ($normalStatic.resolution.mode -ceq 'exact' -and ($normalStatic.paths -join ';') -ceq 'schemas/DocumentationLinksInput.schema.json;scripts/Test-DocumentationLinks.ps1;scripts/lib/DocumentationLinksDependency.psm1') 'Normal executor fixture lost its exact three required source edges.'
             Assert-True (@($documentationReceiptValue.binding.dependency_manifest.path) -ccontains 'scripts/lib/DocumentationLinksDependency.psm1') 'Affected leaf dependency manifest omitted a tracked transitive imported module.'
             Assert-True (@($documentationReceiptValue.binding.dependency_manifest.path) -ccontains 'schemas/DocumentationLinksInput.schema.json') 'Affected leaf dependency manifest omitted a tracked schema/data input.'
