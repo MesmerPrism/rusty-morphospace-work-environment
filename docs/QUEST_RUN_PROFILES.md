@@ -94,6 +94,23 @@ pwsh -NoProfile -ExecutionPolicy Bypass `
   -SourceRoot <app-source-root>
 ```
 
+While an owner build profile is running, its optional read-only progress
+observer can inspect the base receipt path supplied to `-Mode Build`:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\Inspect-QuestBuildProgress.ps1 `
+  -BaseReceiptPath <build-receipt.json>
+```
+
+The observer reads at most the final 8 KiB of each uniquely selected active
+stream or finalized stream and reports absent, ambiguous, and unreadable states
+explicitly. Stream lines may contain private build output; retain its JSON in
+the task's private evidence location. A milestone, readable stream, or visible
+receipt path does not prove that the build passed. Use the terminal result and
+its bound stream hashes for the build outcome. The observer starts no build or
+device operation and does not change either stream or receipt.
+
 The Work Environment consumer fixture targets QFM
 `app_runtime_observation.v5` plus
 `android_global_focus_observation.v1`, plus the separate read-only

@@ -5,6 +5,7 @@ $ErrorActionPreference = "Stop"
 if (-not $RepoRoot) { $RepoRoot = Split-Path -Parent $PSScriptRoot }
 $RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
 $runner = Join-Path $RepoRoot "scripts\Invoke-QuestBuildProfile.ps1"
+$progressInspector = Join-Path $RepoRoot "scripts\Inspect-QuestBuildProgress.ps1"
 $testRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("quest-build-profile-corpus-" + [guid]::NewGuid().ToString("N"))
 $profileRoot = "$testRoot-profiles"
 $externalSourceRoot = "$testRoot-qfm-source"
@@ -24,6 +25,13 @@ function Write-Utf8 {
 function Get-Sha {
     param([string]$Path)
     return (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()
+}
+
+function Read-Progress {
+    param([string]$BaseReceiptPath)
+    $output = & pwsh -NoProfile -NonInteractive -File $progressInspector -BaseReceiptPath $BaseReceiptPath
+    Assert-True ($LASTEXITCODE -eq 0) "Build progress observer failed."
+    return ($output | ConvertFrom-Json -Depth 8)
 }
 
 function Write-Profile {
@@ -296,7 +304,49 @@ if (-not (Test-Path -LiteralPath $outputParent)) { New-Item -ItemType Directory 
     Assert-True ($interruptedBuild.ExitCode -eq 1 -and -not (Test-Path -LiteralPath $interruptedReceipt)) "Interrupted terminal publication exposed a final result file."
     Assert-True (@(Get-ChildItem -LiteralPath $testRoot -Filter "interrupted-receipt.json.*.tmp" -File).Count -eq 0) "Interrupted terminal publication retained a temporary result file."
 
-    Write-Host "Quest build-profile preflight, terminal-result, deterministic identity, zero-side-effect, and fault-corpus tests passed."
+    $progressBase = Join-Path $testRoot "progress-receipt.json"
+    $missingProgress = Read-Progress $progressBase
+    Assert-True ($missingProgress.schema -ceq "rusty.morphospace.quest_build_progress_observation.v1" -and
+        $missingProgress.receipt_present -eq $false -and
+        $missingProgress.streams[0].phase -ceq "absent" -and
+        $missingProgress.streams[1].phase -ceq "absent") "Absent progress was not explicit."
+    $progressTemp = "$progressBase.stdout.bin.$([guid]::NewGuid().ToString('N')).tmp"
+    $progressWriter = [IO.File]::Open($progressTemp, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::Read)
+    try {
+        $progressBytes = [Text.UTF8Encoding]::new($false).GetBytes("BUILD_PHASE native-compile-link status=pass`n" + ('x' * 9000) + "`n")
+        $progressWriter.Write($progressBytes, 0, $progressBytes.Length)
+        $progressWriter.Flush($true)
+        $liveProgress = Read-Progress $progressBase
+        Assert-True ($liveProgress.streams[0].phase -ceq "active_temp" -and
+            $liveProgress.streams[0].read_state -ceq "readable" -and
+            $liveProgress.streams[0].bytes_observed -eq $progressBytes.Length -and
+            $liveProgress.streams[0].last_line.Length -le 200 -and
+            $liveProgress.receipt_present -eq $false) "Read-shared live progress was not bounded or was mistaken for a receipt."
+        $secondTemp = "$progressBase.stdout.bin.$([guid]::NewGuid().ToString('N')).tmp"
+        [IO.File]::WriteAllText($secondTemp, "second", [Text.UTF8Encoding]::new($false))
+        $ambiguousProgress = Read-Progress $progressBase
+        Assert-True ($ambiguousProgress.streams[0].phase -ceq "ambiguous_temp" -and
+            $ambiguousProgress.streams[0].read_state -ceq "not_read") "Ambiguous temporary progress was read."
+    } finally { $progressWriter.Dispose() }
+    $exclusiveBase = Join-Path $testRoot "exclusive-receipt.json"
+    $exclusiveTemp = "$exclusiveBase.stdout.bin.$([guid]::NewGuid().ToString('N')).tmp"
+    $exclusiveWriter = [IO.File]::Open($exclusiveTemp, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    try {
+        $exclusiveWriter.WriteByte(65)
+        $exclusiveWriter.Flush($true)
+        $exclusiveProgress = Read-Progress $exclusiveBase
+        Assert-True ($exclusiveProgress.streams[0].phase -ceq "active_temp" -and
+            $exclusiveProgress.streams[0].read_state -ceq "read_unavailable") "Exclusive live writer was treated as readable."
+    } finally { $exclusiveWriter.Dispose() }
+    [IO.File]::WriteAllText("$progressBase.stdout.bin", "BUILD_PHASE final status=pass`n", [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText($progressBase, "retained terminal receipt", [Text.UTF8Encoding]::new($false))
+    $finalProgress = Read-Progress $progressBase
+    Assert-True ($finalProgress.receipt_present -eq $true -and
+        $finalProgress.streams[0].phase -ceq "final" -and
+        $finalProgress.streams[0].read_state -ceq "readable" -and
+        $finalProgress.streams[0].last_milestone -cmatch "BUILD_PHASE final") "Final stream did not supersede temporary streams."
+
+    Write-Host "Quest build-profile preflight, terminal-result, deterministic identity, zero-side-effect, bounded progress, and fault-corpus tests passed."
 } finally {
     if (Test-Path -LiteralPath $testRoot) {
         $tempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
