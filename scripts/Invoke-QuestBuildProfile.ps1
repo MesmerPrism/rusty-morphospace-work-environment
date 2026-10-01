@@ -510,8 +510,9 @@ function Invoke-ChildProcess {
         if (-not $process.Start()) { throw "Build process did not start." }
         $started = $true
         [Console]::add_CancelKeyPress($cancelHandler)
-        $stdoutStream = [System.IO.File]::Open($stdoutTemp, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
-        $stderrStream = [System.IO.File]::Open($stderrTemp, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+        # Allow independent read-only progress inspection while retaining exclusive write ownership.
+        $stdoutStream = [System.IO.File]::Open($stdoutTemp, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::Read)
+        $stderrStream = [System.IO.File]::Open($stderrTemp, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::Read)
         try {
             $stdoutTask = $process.StandardOutput.BaseStream.CopyToAsync($stdoutStream)
             $stderrTask = $process.StandardError.BaseStream.CopyToAsync($stderrStream)

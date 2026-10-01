@@ -2,7 +2,7 @@
   "schema": "rusty.morphospace.workflow.affected_validation_registry.v1",
   "registry_id": "work-environment-current-delta-v1",
   "repository_id": "MesmerPrism/rusty-morphospace-work-environment",
-  "revision": 27,
+  "revision": 28,
   "historical_aggregate": {"tier": "deep", "reusable_evidence": false, "full_history_required": true},
   "dependency_declarations": [
     {"importer": "scripts/ActiveUnitRetirement.psm1", "variable": "ProvenanceModule", "count": 2, "target_paths": ["scripts/DevelopmentEnvelopeProvenance.psm1"]},
@@ -151,7 +151,7 @@
     {"path_set_id": "historical-unit-adoption-reconstruction", "patterns": ["scripts/Test-HistoricalUnitAdoptionReconstruction.ps1", "scripts/lib/MorphospaceHistoricalAdoptionReconstruction.psm1"]},
     {"path_set_id": "planning-workspace-projection", "patterns": ["scripts/Test-PlanningWorkspaceProjection.ps1", "scripts/New-ExternalPlanningWorkspace.ps1", "scripts/lib/MorphospacePlanningProjection.psm1"]},
     {"path_set_id": "protected-branch-push-guard", "patterns": ["scripts/Test-ProtectedBranchPushGuard.ps1", "scripts/Invoke-ProtectedBranchPushGuard.ps1"]},
-    {"path_set_id": "quest-build-profile", "patterns": ["scripts/Test-QuestBuildProfile.ps1", "scripts/Invoke-QuestBuildProfile.ps1"]},
+    {"path_set_id": "quest-build-profile", "patterns": ["scripts/Test-QuestBuildProfile.ps1", "scripts/Invoke-QuestBuildProfile.ps1", "scripts/Inspect-QuestBuildProgress.ps1"]},
     {"path_set_id": "quest-file-manager-consumer-contract", "patterns": ["scripts/Test-QuestFileManagerConsumerContract.ps1", "fixtures/quest-file-manager/inspected-deployment-consumer.v1.json"]},
     {"path_set_id": "read-only-dependency-closure", "patterns": ["scripts/Test-ReadOnlyDependencyClosure.ps1", "scripts/New-ReadOnlyDependencyClosure.ps1"]},
     {"path_set_id": "direct-work-package", "patterns": ["tools/Test-DirectWorkPackage.ps1"]},
