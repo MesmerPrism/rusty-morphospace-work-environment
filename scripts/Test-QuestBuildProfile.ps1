@@ -345,8 +345,22 @@ if (-not (Test-Path -LiteralPath $outputParent)) { New-Item -ItemType Directory 
         $finalProgress.streams[0].phase -ceq "final" -and
         $finalProgress.streams[0].read_state -ceq "readable" -and
         $finalProgress.streams[0].last_milestone -cmatch "BUILD_PHASE final") "Final stream did not supersede temporary streams."
+    $raceBase = Join-Path $testRoot "race-receipt.json"
+    $raceTemp = "$raceBase.stdout.bin.$([guid]::NewGuid().ToString('N')).tmp"
+    [IO.File]::WriteAllText($raceTemp, "BUILD_PHASE temporary status=pass`n", [Text.UTF8Encoding]::new($false))
+    . $progressInspector -BaseReceiptPath $raceBase | Out-Null
+    $selectedBeforeRename = Select-ProgressStream $raceBase "stdout"
+    Assert-True ($selectedBeforeRename.phase -ceq "active_temp") "Race fixture did not select the temporary stream."
+    Move-Item -LiteralPath $raceTemp -Destination "$raceBase.stdout.bin"
+    $staleSelection = Read-ProgressStreamSelection $selectedBeforeRename "stdout"
+    Assert-True ($staleSelection.phase -ceq "active_temp" -and
+        $staleSelection.read_state -ceq "read_unavailable" -and
+        $null -eq $staleSelection.last_write_utc) "Temp-to-final rename changed selected phase or raised a metadata error."
+    $afterRename = Read-Progress $raceBase
+    Assert-True ($afterRename.streams[0].phase -ceq "final" -and
+        $afterRename.streams[0].read_state -ceq "readable") "Fresh selection did not observe finalized stream."
 
-    Write-Host "Quest build-profile preflight, terminal-result, deterministic identity, zero-side-effect, bounded progress, and fault-corpus tests passed."
+    Write-Host "Quest build-profile preflight, terminal-result, deterministic identity, zero-side-effect, bounded progress, rename-race, and fault-corpus tests passed."
 } finally {
     if (Test-Path -LiteralPath $testRoot) {
         $tempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())

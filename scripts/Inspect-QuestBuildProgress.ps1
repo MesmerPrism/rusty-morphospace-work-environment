@@ -23,30 +23,48 @@ function Read-BoundedTail([string]$Path) {
         } finally { $stream.Dispose() }
     } catch [IO.IOException] {
         return [pscustomobject]@{ state = 'read_unavailable'; bytes = $null; last_line = ''; last_milestone = '' }
+    } catch [UnauthorizedAccessException] {
+        return [pscustomobject]@{ state = 'read_unavailable'; bytes = $null; last_line = ''; last_milestone = '' }
     }
 }
 
-$streams = @()
-foreach ($kind in @('stdout', 'stderr')) {
-    $final = "$BaseReceiptPath.$kind.bin"
+function Select-ProgressStream([string]$Base,[string]$Kind) {
+    $final = "$Base.$Kind.bin"
     $parent = Split-Path -Parent $final
     $name = Split-Path -Leaf $final
     $temporary = @()
     if (Test-Path -LiteralPath $parent -PathType Container) {
         $temporary = @(Get-ChildItem -LiteralPath $parent -File -Filter "$name.*.tmp" | Where-Object { $_.Name -cmatch "^$([regex]::Escape($name))\.[a-f0-9]{32}\.tmp$" })
     }
-    $path = if (Test-Path -LiteralPath $final -PathType Leaf) { $final } elseif ($temporary.Count -eq 1) { $temporary[0].FullName } else { $null }
-    $phase = if (Test-Path -LiteralPath $final -PathType Leaf) { 'final' } elseif ($temporary.Count -eq 1) { 'active_temp' } elseif ($temporary.Count -gt 1) { 'ambiguous_temp' } else { 'absent' }
-    $readback = if ($null -ne $path) { Read-BoundedTail $path } else { [pscustomobject]@{ state = 'not_read'; bytes = $null; last_line = ''; last_milestone = '' } }
-    $streams += [ordered]@{
-        kind = $kind
-        phase = $phase
+    $finalExists = Test-Path -LiteralPath $final -PathType Leaf
+    if ($finalExists) { return [pscustomobject]@{ path = $final; phase = 'final' } }
+    if ($temporary.Count -eq 1) { return [pscustomobject]@{ path = $temporary[0].FullName; phase = 'active_temp' } }
+    if ($temporary.Count -gt 1) { return [pscustomobject]@{ path = $null; phase = 'ambiguous_temp' } }
+    return [pscustomobject]@{ path = $null; phase = 'absent' }
+}
+
+function Read-ProgressStreamSelection([object]$Selection,[string]$Kind) {
+    $readback = if ($null -ne $Selection.path) { Read-BoundedTail $Selection.path } else { [pscustomobject]@{ state = 'not_read'; bytes = $null; last_line = ''; last_milestone = '' } }
+    $lastWrite = $null
+    if ($null -ne $Selection.path) {
+        try { $lastWrite = (Get-Item -LiteralPath $Selection.path -ErrorAction Stop).LastWriteTimeUtc.ToString('o') }
+        catch { $lastWrite = $null }
+    }
+    return [ordered]@{
+        kind = $Kind
+        phase = $Selection.phase
         read_state = $readback.state
         bytes_observed = $readback.bytes
-        last_write_utc = if ($path) { (Get-Item -LiteralPath $path).LastWriteTimeUtc.ToString('o') } else { $null }
+        last_write_utc = $lastWrite
         last_line = $readback.last_line
         last_milestone = $readback.last_milestone
     }
+}
+
+$streams = @()
+foreach ($kind in @('stdout', 'stderr')) {
+    $selection = Select-ProgressStream $BaseReceiptPath $kind
+    $streams += Read-ProgressStreamSelection $selection $kind
 }
 [ordered]@{
     schema = 'rusty.morphospace.quest_build_progress_observation.v1'
