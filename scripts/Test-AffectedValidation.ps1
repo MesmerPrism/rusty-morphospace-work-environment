@@ -10,6 +10,37 @@ param(
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
+$affectedTestClock = [Diagnostics.Stopwatch]::StartNew()
+$fixtureDiagnosticRoot = [Environment]::GetEnvironmentVariable('RUSTY_AFFECTED_VALIDATION_PHASE_ROOT','Process')
+$fixtureStageClock = $affectedTestClock
+$fixtureStagePreviousMs = 0L
+$fixtureStageCount = 0
+function Write-AffectedFixtureStage([string]$Stage) {
+    if ($SelfTestPhase -cne 'executor-pass-schema' -or [string]::IsNullOrWhiteSpace($fixtureDiagnosticRoot) -or $fixtureStageCount -ge 128) { return }
+    $elapsedMs = [long]$fixtureStageClock.Elapsed.TotalMilliseconds
+    $record = [pscustomobject][ordered]@{ stage=$Stage; elapsed_ms=$elapsedMs; duration_ms=$elapsedMs-$fixtureStagePreviousMs }
+    $script:fixtureStagePreviousMs = $elapsedMs
+    $script:fixtureStageCount++
+    try {
+        $path = Join-Path ([IO.Path]::GetFullPath($fixtureDiagnosticRoot)) 'executor-pass-schema.stages.jsonl'
+        [IO.File]::AppendAllText($path,((ConvertTo-Json -InputObject $record -Compress) + "`n"),[Text.UTF8Encoding]::new($false))
+    } catch { }
+}
+
+function Write-AffectedFixtureChildTiming([string]$Route, [object[]]$Receipts) {
+    if ($SelfTestPhase -cne 'executor-pass-schema' -or [string]::IsNullOrWhiteSpace($fixtureDiagnosticRoot)) { return }
+    foreach ($receipt in @($Receipts | Where-Object mode -ceq 'executed')) {
+        if ($fixtureStageCount -ge 128) { return }
+        $script:fixtureStageCount++
+        try {
+            $record = [pscustomobject][ordered]@{route=$Route;check_id=[string]$receipt.binding.check_id;started_at=[string]$receipt.started_at;ended_at=[string]$receipt.ended_at;elapsed_ms=[long]$receipt.elapsed_ms}
+            $path = Join-Path ([IO.Path]::GetFullPath($fixtureDiagnosticRoot)) 'executor-pass-schema.children.jsonl'
+            [IO.File]::AppendAllText($path,((ConvertTo-Json -InputObject $record -Compress) + "`n"),[Text.UTF8Encoding]::new($false))
+        } catch { }
+    }
+}
+Write-AffectedFixtureStage 'imports-enter'
+
 # Independent consumer expectation shared across separately executable phases.
 # Do not derive this fixture contract from the selector under test.
 $workflowConsumerFixtureChecks = @('automation-receipt-v2-compatibility','normal-validation-selector','public-boundary','validating-candidate-rematerialization','validation-only-write-scope-narrowing','work-unit-automation','workflow-action-registry','workflow-contracts')
@@ -26,6 +57,7 @@ Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1') -Fo
 Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceAffectedValidation.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceAffectedValidationCheckEvidence.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceAffectedValidationDependencyClosure.psm1') -Force
+Write-AffectedFixtureStage 'imports-complete'
 
 $selectorPhaseCheckIds = @(
     'affected-selector-graph-import-closure',
@@ -1993,7 +2025,292 @@ function Invoke-AffectedRetirementLayoutGraphSelfTest {
         if([IO.Directory]::Exists($target)){Remove-Item -LiteralPath $target -Recurse -Force}
     }
 }
+function Invoke-AffectedDependencyIndexCacheSelfTest {
+    $module = Get-Module MorphospaceAffectedValidationDependencyClosure
+    $fixture = Join-Path ([IO.Path]::GetTempPath()) ('affected-index-cache-' + [guid]::NewGuid().ToString('N'))
+    [void][IO.Directory]::CreateDirectory((Join-Path $fixture 'scripts'))
+    try {
+        Write-Utf8 (Join-Path $fixture 'scripts/Entry.ps1') "Import-Module `$DynamicPath`n"
+        Write-Utf8 (Join-Path $fixture 'scripts/Other.ps1') "& `$Unknown`n"
+        Write-Utf8 (Join-Path $fixture 'scripts/Target.psm1') "function Invoke-Target([scriptblock]`$Callback) { & `$Callback }`n"
+        $records = @('scripts/Entry.ps1','scripts/Other.ps1','scripts/Target.psm1') | ForEach-Object { [pscustomobject]@{path=$_;mode='100644';type='blob';blob=('0' * 40)} }
+        $inventory = [pscustomobject]@{records=@($records)}
+        $declaration = [pscustomobject][ordered]@{importer='scripts/Entry.ps1';variable='DynamicPath';count=1;target_paths=@('scripts/Target.psm1')}
+        $cold = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @($declaration)
+        $context = & $module {param($i) $c=$null;[void]$script:affectedDependencyIndexes.TryGetValue($i,[ref]$c);$c} $inventory
+        $originalIndex = $context.indexes['scripts/Entry.ps1']
+        $warm = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @($declaration)
+        Assert-True ((ConvertTo-MorphospaceCanonicalJson $cold) -ceq (ConvertTo-MorphospaceCanonicalJson $warm)) 'Warm analysis changed exact closure/declaration resolution.'
+        Assert-True ([object]::ReferenceEquals($originalIndex,$context.indexes['scripts/Entry.ps1'])) 'Warm entrypoint failed to reuse its completed immutable index.'
+        $fallback = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Other.ps1' -Inventory $inventory -DynamicDeclarations @($declaration)
+        Assert-True ($fallback.resolution.entrypoint -ceq 'scripts/Other.ps1' -and $fallback.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($fallback.resolution.used_declarations).Count -eq 1) 'Shared index leaked exact entrypoint state or declaration accounting into fallback.'
+        Assert-True ($context.indexes.Count -eq 3 -and [object]::ReferenceEquals($originalIndex,$context.indexes['scripts/Entry.ps1'])) 'Fallback did not share bounded completed per-script indexes.'
+        $invalidDeclaration = [pscustomobject][ordered]@{importer='scripts/Entry.ps1';variable='DynamicPath';count=2;target_paths=@('scripts/Target.psm1')}
+        Assert-AffectedThrows { Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @($invalidDeclaration) } '*declaration count changed*' 'Cached analysis bypassed fresh expected declaration count.'
+        $changedContext = & $module {param($i) $c=$null;[void]$script:affectedDependencyIndexes.TryGetValue($i,[ref]$c);$c} $inventory
+        Assert-True (-not [object]::ReferenceEquals($context,$changedContext)) 'Declaration change reused a different analysis context.'
+        $records[0].blob = '1' * 40
+        [void](Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @($declaration))
+        $inventoryContext = & $module {param($i) $c=$null;[void]$script:affectedDependencyIndexes.TryGetValue($i,[ref]$c);$c} $inventory
+        Assert-True (-not [object]::ReferenceEquals($changedContext,$inventoryContext)) 'In-place inventory mutation did not reset context.'
+        $target = Join-Path $fixture 'scripts/Target.psm1'
+        Write-Utf8 $target "& `$Runtime`n"
+        $changedBytes = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @($declaration)
+        Assert-True ($changedBytes.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($changedBytes.resolution.fallback_reasons | Where-Object variable -CEQ 'Runtime').Count -eq 1) 'Working-byte change reused an obsolete index.'
+        $validIndex = $inventoryContext.indexes['scripts/Target.psm1']
+        Write-Utf8 $target '{'
+        Assert-AffectedThrows { Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @($declaration) } '*could not parse tracked source*' 'Parse damage was hidden by the cache.'
+        Assert-True ([object]::ReferenceEquals($validIndex,$inventoryContext.indexes['scripts/Target.psm1'])) 'Failed parse published an incomplete index.'
+        Write-Utf8 $target "'fixed'`n"
+        [void](Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @($declaration))
+        # Mutate a warm entrypoint at each live hash boundary, through a temporary
+        # private hash seam. The original hash and module functions are restored.
+        $entryPath = Join-Path $fixture 'scripts/Entry.ps1'
+        $originalText = [IO.File]::ReadAllText($entryPath)
+        foreach ($mutationCall in @(2,3)) {
+            & $module {param($path,$call)
+                $script:cacheTestOriginalHash = ${function:Get-MorphospaceAffectedDependencyBytesSha256}
+                $script:cacheTestCalls=0;$script:cacheTestMutationCall=$call;$script:cacheTestPath=$path
+                function script:Get-MorphospaceAffectedDependencyBytesSha256 {
+                    param([byte[]]$Bytes)
+                    $hash = & $script:cacheTestOriginalHash -Bytes $Bytes
+                    $script:cacheTestCalls++
+                    if ($script:cacheTestCalls -eq $script:cacheTestMutationCall) { [IO.File]::AppendAllText($script:cacheTestPath,"`n# mutation") }
+                    return $hash
+                }
+            } $entryPath $mutationCall
+            try {
+                $pattern = if ($mutationCall -eq 2) { '*changed during analysis*' } else { '*changed after analysis*' }
+                Assert-AffectedThrows { Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @($declaration) } $pattern 'Warm cache bypassed a fresh source hash guard.'
+            } finally {
+                & $module { Set-Item Function:script:Get-MorphospaceAffectedDependencyBytesSha256 $script:cacheTestOriginalHash; Remove-Variable cacheTestOriginalHash,cacheTestCalls,cacheTestMutationCall,cacheTestPath -Scope Script }
+                Write-Utf8 $entryPath $originalText
+            }
+        }
+        # A second repository root must never resolve literals against the first.
+        $secondRoot=Join-Path $fixture 'second'
+        [void][IO.Directory]::CreateDirectory((Join-Path $secondRoot 'scripts'))
+        foreach($record in $records) { Copy-Item -LiteralPath (Join-Path $fixture $record.path) -Destination (Join-Path $secondRoot $record.path) }
+        [void](Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $secondRoot -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @($declaration))
+        $secondContext = & $module {param($i) $c=$null;[void]$script:affectedDependencyIndexes.TryGetValue($i,[ref]$c);$c} $inventory
+        Assert-True (-not [object]::ReferenceEquals($inventoryContext,$secondContext)) 'Another root reused the first root context.'
+        # Re-entry switches the cache context while an outer warm closure is live.
+        # The outer invocation must retain its own context and graph state.
+        & $module {param($root,$i,$d)
+            $script:cacheTestOriginalHash=${function:Get-MorphospaceAffectedDependencyBytesSha256}
+            $script:cacheTestCalls=0;$script:cacheTestReentered=$false
+            $script:cacheTestRoot=$root;$script:cacheTestInventory=$i;$script:cacheTestDeclaration=$d
+            function script:Get-MorphospaceAffectedDependencyBytesSha256 {
+                param([byte[]]$Bytes)
+                $hash=& $script:cacheTestOriginalHash -Bytes $Bytes
+                $script:cacheTestCalls++
+                if ($script:cacheTestCalls -eq 2 -and -not $script:cacheTestReentered) {
+                    $script:cacheTestReentered=$true
+                    [void](Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $script:cacheTestRoot -Entrypoint 'scripts/Other.ps1' -Inventory $script:cacheTestInventory -DynamicDeclarations @($script:cacheTestDeclaration))
+                }
+                return $hash
+            }
+        } $fixture $inventory $declaration
+        try {
+            $reentrant = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $secondRoot -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @($declaration)
+            Assert-True ((ConvertTo-MorphospaceCanonicalJson $cold) -ceq (ConvertTo-MorphospaceCanonicalJson $reentrant)) 'Re-entry contaminated the outer exact closure.'
+        } finally {
+            & $module { Set-Item Function:script:Get-MorphospaceAffectedDependencyBytesSha256 $script:cacheTestOriginalHash; Remove-Variable cacheTestOriginalHash,cacheTestCalls,cacheTestReentered,cacheTestRoot,cacheTestInventory,cacheTestDeclaration -Scope Script }
+        }
+        Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceAffectedValidationDependencyClosure.psm1') -Force
+        $newModule=Get-Module MorphospaceAffectedValidationDependencyClosure
+        $retained=& $newModule {param($i) $c=$null;$script:affectedDependencyIndexes.TryGetValue($i,[ref]$c)} $inventory
+        Assert-True (-not $retained) 'Force import retained a prior runner analysis lifetime.'
+    } finally {
+        $absolute=[IO.Path]::GetFullPath($fixture)
+        $prefix=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar)+[IO.Path]::DirectorySeparatorChar
+        if (-not $absolute.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)) { throw 'Index fixture cleanup escaped temp root.' }
+        if ([IO.Directory]::Exists($absolute)) { Remove-Item -LiteralPath $absolute -Recurse -Force }
+    }
+}
+function Invoke-AffectedDependencyDemandEquivalenceSelfTest {
+    # Golden canonical manifests AND resolution records were captured with the
+    # unmodified main analyzer at 6d202e5e3e09c29b154af0ae7014b75627932519.
+    # This oracle checks externally visible semantics, not filtered index shape.
+    $cases = @(
+        [pscustomobject]@{name='direct-dispatch';source='$dispatch = ''A.psm1''
+& $DISPATCH
+';canonical_sha256='a0a66b072cf114a7fc28d0170d9467589c1315755b67e848e58d1246108e3996'}
+        [pscustomobject]@{name='unused-path-assignment';source='$unused = ''B.psm1''
+$readme = ''data.md''
+$noise = @{ unrelated = { ''safe'' } }
+$dispatch = { ''safe'' }
+& $dispatch
+';canonical_sha256='526fc4c4cb5f00eafc63339cc4c2f99b41fb040d0ae5217d2e17fae4fd421ca4'}
+        [pscustomobject]@{name='unknown-rhs-variable';source='$alias = ''A.psm1''
+$dispatch = $alias
+& $dispatch
+';canonical_sha256='66fe397c4ac93dd515efd88c0f886d3e4c6f189ab4131f8c662663138f42d3c9'}
+        [pscustomobject]@{name='lexical-ambiguity';source='$dispatch = ''A.psm1''
+function Invoke-Inner { if ($true) { $DISPATCH = ''B.psm1'' }; & $dispatch }
+Invoke-Inner
+';canonical_sha256='20cc3fa6418237c21979a6d453161d9f54411fbf0767ff0e8db4dfe134ab8a47'}
+        [pscustomobject]@{name='member-scriptblock';source='$receiver = @{ Run = { ''safe'' } }
+$other = @{ Run = $runtime }
+& $RECEIVER.Run
+';canonical_sha256='e99594191d879e2344a27433708f23407971c8d28cd404d981d88381f0edbb3a'}
+        [pscustomobject]@{name='module-qualified-import';source='$module = ''A.psm1''
+Microsoft.PowerShell.Core\Import-Module $MODULE
+';canonical_sha256='a0a66b072cf114a7fc28d0170d9467589c1315755b67e848e58d1246108e3996'}
+        [pscustomobject]@{name='import-variable-expression';source='$module = ''A.psm1''
+Import-Module -Name ($module)
+';canonical_sha256='a0a66b072cf114a7fc28d0170d9467589c1315755b67e848e58d1246108e3996'}
+        [pscustomobject]@{name='get-command-source';source='$dispatch = ''A.psm1''
+& (Get-Command $DISPATCH).Source
+';canonical_sha256='8d25ef04917f10e6fb341509a299b5d3f8f3d1f61f061a606686336016bd78b0'}
+        [pscustomobject]@{name='expression-method-fallback';source='$dispatch = { ''safe'' }
+$dispatch.Invoke()
+';canonical_sha256='763d978156228fee167fbe0e6514e953c65a8324ed4b74a26864bfb73cc69021'}
+        [pscustomobject]@{name='typed-scriptblock';source='function Invoke-Typed([scriptblock]$dispatch) { & $DISPATCH }
+Invoke-Typed { ''safe'' }
+';canonical_sha256='e99594191d879e2344a27433708f23407971c8d28cd404d981d88381f0edbb3a'}
+    )
+    $fixture=Join-Path ([IO.Path]::GetTempPath()) ('affected-demand-equivalence-'+[guid]::NewGuid().ToString('N'))
+    [void][IO.Directory]::CreateDirectory((Join-Path $fixture 'scripts'))
+    try {
+        $records=@('scripts/Entry.ps1','scripts/A.psm1','scripts/B.psm1','scripts/data.md') | ForEach-Object { [pscustomobject]@{path=$_;mode='100644';type='blob';blob=('0'*40)} }
+        $inventory=[pscustomobject]@{records=@($records)}
+        foreach($path in @('scripts/A.psm1','scripts/B.psm1','scripts/data.md')) { Write-Utf8 (Join-Path $fixture $path) "# fixture`n" }
+        foreach($case in $cases) {
+            Write-Utf8 (Join-Path $fixture 'scripts/Entry.ps1') $case.source
+            foreach($temperature in @('cold','warm')) {
+                $closure=Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @()
+                $manifest=@($closure.paths | ForEach-Object { [pscustomobject][ordered]@{path=[string]$_;mode='100644';blob=('0'*40)} })
+                $actual=Get-MorphospaceCanonicalJsonSha256 ([pscustomobject][ordered]@{manifest=$manifest;resolution=$closure.resolution})
+                Assert-True ($actual -ceq $case.canonical_sha256) "Demand-index '$($case.name)/$temperature' changed the baseline canonical manifest or resolution."
+            }
+        }
+    } finally {
+        $target=[IO.Path]::GetFullPath($fixture)
+        $prefix=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar)+[IO.Path]::DirectorySeparatorChar
+        if (-not $target.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)) { throw 'Demand fixture cleanup escaped temp root.' }
+        if ([IO.Directory]::Exists($target)) { Remove-Item -LiteralPath $target -Recurse -Force }
+    }
+}
+function New-AffectedDocumentationFixtureText([switch]$UnresolvedImport) {
+    $parameter = if ($UnresolvedImport) { "param([string]`$UnresolvedModulePath)`n" } else { '' }
+    $import = if ($UnresolvedImport) { "if (-not [string]::IsNullOrWhiteSpace(`$UnresolvedModulePath)) { Import-Module `$UnresolvedModulePath -Force }`n" } else { '' }
+    # Normal execution preserves the ambient/launcher and transitive assertions.
+    # Only the focused fallback fixture contains the deliberately unknown import.
+    return $parameter + "if (@(Get-ChildItem Env: | Where-Object { ([string]`$_.Name).StartsWith('GIT_',[StringComparison]::OrdinalIgnoreCase) }).Count -ne 0 -or `$null-ne`$env:RUSTY_UNOWNED_DAMAGE -or `$null-ne`$env:WEF002_AMBIENT_DAMAGE) { throw 'Affected child retained an ambient environment override.' }`nif([string]::IsNullOrWhiteSpace(`$env:RUSTY_AFFECTED_VALIDATION_CHECK_ID)){throw 'Affected child omitted its launcher-owned identity.'}`n`$ModulePath = Join-Path `$PSScriptRoot 'lib/DocumentationLinksDependency.psm1'`nImport-Module `$ModulePath -Force`n" + $import + "`$SchemaRoot = Join-Path `$PSScriptRoot '../schemas'`n[void](Join-Path `$SchemaRoot 'DocumentationLinksInput.schema.json')`n[void](Get-DocumentationLinksDependency)`n"
+}
+function Invoke-AffectedFallbackReceiptSelfTest([string]$Root,[object]$Registry) {
+    $fixture=Join-Path ([IO.Path]::GetTempPath()) ('affected-fallback-receipt-'+[guid]::NewGuid().ToString('N'))
+    [void][IO.Directory]::CreateDirectory($fixture)
+    try {
+        foreach($path in @(
+            'schemas/affected-validation-check-evidence-v1.schema.json',
+            'schemas/affected-validation-check-inventory-v1.schema.json',
+            'schemas/affected-validation-plan-v2.schema.json',
+            'schemas/affected-validation-registry-v1.schema.json',
+            'scripts/Invoke-AffectedValidation.ps1',
+            'scripts/lib/MorphospaceAffectedValidation.psm1',
+            'scripts/lib/MorphospaceAffectedValidationCheckEvidence.psm1',
+            'scripts/lib/MorphospaceAffectedValidationDependencyClosure.psm1',
+            'scripts/lib/MorphospaceProtocolCommon.psm1'
+        )) {
+            $target=Join-Path $fixture $path
+            [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target))
+            Copy-Item -LiteralPath (Join-Path $Root $path) -Destination $target
+        }
+        Write-Utf8 (Join-Path $fixture 'scripts/lib/DocumentationLinksDependency.psm1') "function Get-DocumentationLinksDependency { 'bound' }`nExport-ModuleMember -Function Get-DocumentationLinksDependency`n"
+        Write-Utf8 (Join-Path $fixture 'scripts/Test-DocumentationLinks.ps1') (New-AffectedDocumentationFixtureText -UnresolvedImport)
+        Write-Utf8 (Join-Path $fixture 'scripts/Unrelated.ps1') "'unrelated'`n"
+        Write-Utf8 (Join-Path $fixture 'scripts/Test-PublicBoundary.ps1') "'public boundary fixture'`n"
+        Write-Utf8 (Join-Path $fixture 'scripts/FallbackDynamicTarget.ps1') "[void](Get-Content -LiteralPath (Join-Path `$PSScriptRoot '../schemas/FallbackDynamicInput.schema.json') -Raw)`n"
+        Write-Utf8 (Join-Path $fixture 'schemas/DocumentationLinksInput.schema.json') "{}`n"
+        Write-Utf8 (Join-Path $fixture 'schemas/FallbackDynamicInput.schema.json') "{}`n"
+        $smallRegistry=$Registry | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64 -DateKind String
+        $check=@($smallRegistry.checks | Where-Object check_id -ceq 'documentation-links')[0]
+        $check.platforms=@('windows','linux');$check.arguments=@();$check.minimum_tier='quick'
+        $check.trigger_path_sets=@('fixture-all');$check.consume_path_sets=@('fixture-all')
+        $check.prerequisite_checks=@();$check.provides_contracts=@();$check.consumes_contracts=@();$check.always_run=$true
+        if($null-ne$check.PSObject.Properties['execution_after_checks']){$check.PSObject.Properties.Remove('execution_after_checks')}
+        $boundary=@($smallRegistry.checks | Where-Object check_id -ceq 'public-boundary')[0]
+        $boundary.platforms=@('windows','linux');$boundary.arguments=@();$boundary.minimum_tier='quick'
+        $boundary.trigger_path_sets=@('fixture-all');$boundary.consume_path_sets=@('fixture-all')
+        $boundary.prerequisite_checks=@();$boundary.provides_contracts=@();$boundary.consumes_contracts=@();$boundary.always_run=$true
+        if($null-ne$boundary.PSObject.Properties['execution_after_checks']){$boundary.PSObject.Properties.Remove('execution_after_checks')}
+        $smallRegistry.checks=@($check,$boundary);$smallRegistry.path_sets=@([pscustomobject]@{path_set_id='fixture-all';patterns=@('**')})
+        $smallRegistry.dependency_declarations=@();$smallRegistry.always_run_check_ids=@('documentation-links','public-boundary');$smallRegistry.deep_escalation_path_sets=@()
+        [void][IO.Directory]::CreateDirectory((Join-Path $fixture 'manifests'))
+        Write-Utf8 (Join-Path $fixture 'manifests/affected-validation-registry.json') ((ConvertTo-MorphospaceCanonicalJson $smallRegistry)+"`n")
+        [void](Invoke-TestGit $fixture @('init','-b','main'))
+        [void](Invoke-TestGit $fixture @('config','user.name','Affected Fallback Receipt Test'))
+        [void](Invoke-TestGit $fixture @('config','user.email','fallback-receipt@example.invalid'))
+        [void](Invoke-TestGit $fixture @('add','.'));[void](Invoke-TestGit $fixture @('commit','-m','fallback fixture'))
+        $head=Invoke-TestGit $fixture @('rev-parse','HEAD')
+        $plan=Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $head -HeadRevision $head -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
+        $planPath=Join-Path $fixture 'plan.json';Write-Utf8 $planPath ((ConvertTo-MorphospaceCanonicalJson $plan)+"`n")
+        $platform=if($IsWindows){'windows'}else{'linux'}
+        $evidenceRoot=Join-Path $fixture 'actual-seed'
+        # Isolate the real runner's force imports from the caller's test modules.
+        $seedPwsh=(Get-Process -Id $PID).Path
+        & $seedPwsh -NoProfile -NonInteractive -File (Join-Path $Root 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $head -HeadCommit $head -PlanPath $planPath -Platform $platform -OutPath (Join-Path $fixture 'seed.json') -CheckEvidenceDirectory $evidenceRoot 1> (Join-Path $fixture 'seed.stdout.txt') 2> (Join-Path $fixture 'seed.stderr.txt')
+        Assert-True ($LASTEXITCODE -eq 0) 'Focused fallback real runner did not exit successfully.'
+        $seed=Read-MorphospaceProtocolJson -Path (Join-Path $fixture 'seed.json')
+        Assert-True ($seed.result -ceq 'pass' -and @($seed.check_results).Count -eq 2 -and @($seed.check_results | Where-Object mode -cne 'executed').Count -eq 0) 'Focused fallback seed was not an actual executed passing leaf.'
+        $receiptPath=Join-Path $evidenceRoot 'documentation-links/receipt.json'
+        $fallbackReceipt=Get-Content -Raw -LiteralPath $receiptPath | ConvertFrom-Json -Depth 64 -DateKind String
+        $fallbackStdout=[IO.File]::ReadAllBytes((Join-Path $evidenceRoot 'documentation-links/stdout.bin'))
+        $fallbackStderr=[IO.File]::ReadAllBytes((Join-Path $evidenceRoot 'documentation-links/stderr.bin'))
+        $inventory=Get-MorphospaceAffectedTreeInventory -RepositoryRoot $fixture -Commit $head
+        $expectedScripts=@($inventory.records | Where-Object { $_.path -match '\.ps(?:m)?1$' } | ForEach-Object path)
+        $observedScripts=@($fallbackReceipt.binding.dependency_manifest.path | Where-Object { $_ -match '\.ps(?:m)?1$' })
+        Assert-True (($expectedScripts -join ';') -ceq ($observedScripts -join ';') -and $expectedScripts.Count -eq 10) 'Focused fallback did not bind exactly its bounded tracked script inventory.'
+        Assert-True (@($fallbackReceipt.binding.dependency_manifest.path) -ccontains 'scripts/Unrelated.ps1') 'Focused fallback omitted its unrelated tracked script.'
+        $staticFallback=Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Test-DocumentationLinks.ps1' -Inventory $inventory -DynamicDeclarations @()
+        $staticScripts=@($staticFallback.paths | Where-Object { $_ -match '\.ps(?:m)?1$' })
+        Assert-True (($staticScripts -join ';') -ceq ($expectedScripts -join ';') -and @($staticFallback.paths) -ccontains 'schemas/FallbackDynamicInput.schema.json') 'Focused static fallback lost its bounded scripts or transitive non-script edge behind declared consume inputs.'
+
+        $compiled=Test-MorphospaceAffectedValidationRegistry -Registry $smallRegistry -RepositoryRoot $fixture -SchemaPath (Join-Path $fixture 'schemas/affected-validation-registry-v1.schema.json')
+        $expectedClosure=Get-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Check $compiled.checks['documentation-links'] -CompiledRegistry $compiled -Inventory $inventory
+        Assert-True ((ConvertTo-MorphospaceCanonicalJson $expectedClosure) -ceq (ConvertTo-MorphospaceCanonicalJson ([pscustomobject][ordered]@{manifest=@($fallbackReceipt.binding.dependency_manifest);resolution=$fallbackReceipt.binding.dependency_resolution}))) 'Actual fallback receipt changed its source-derived canonical manifest/resolution.'
+        $actualProducer=(Read-MorphospaceProtocolJson -Path (Join-Path $evidenceRoot 'inventory.json')).producer
+        $actualInventory=Read-MorphospaceAffectedCheckInventory -EvidenceDirectory $evidenceRoot -ExpectedProducerContext $actualProducer -InventorySchemaPath (Join-Path $Root 'schemas/affected-validation-check-inventory-v1.schema.json')
+        Assert-True (@($actualInventory.candidate_snapshots).Count -eq 2) 'Actual fallback runner did not finalize its readable seed inventory.'
+        $expressionFallbackReceipt = $fallbackReceipt | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64 -DateKind String
+        $expressionFallbackReasons = @($expressionFallbackReceipt.binding.dependency_resolution.fallback_reasons | Where-Object { [string]$_.importer -ceq 'scripts/Test-DocumentationLinks.ps1' -and [string]$_.variable -ceq 'UnresolvedModulePath' -and [string]$_.kind -ceq 'unresolved-import' })
+        Assert-True ($expressionFallbackReasons.Count -eq 1) 'Expression-invocation schema fixture did not select exactly one production-shaped fallback reason.'
+        $expressionFallbackReasons[0].kind = 'unresolved-expression-invocation'
+        $expressionFallbackReceipt.binding_sha256 = Get-MorphospaceCanonicalJsonSha256 -Value $expressionFallbackReceipt.binding
+        $expressionFallbackSnapshot = New-MorphospaceAffectedCheckSnapshot -Receipt $expressionFallbackReceipt -Stdout $fallbackStdout -Stderr $fallbackStderr -Artifacts @() -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json')
+        Assert-True (@($expressionFallbackSnapshot.receipt.binding.dependency_resolution.fallback_reasons | Where-Object { [string]$_.kind -ceq 'unresolved-expression-invocation' }).Count -eq 1) 'Parent snapshot retention rejected the production-shaped expression-invocation fallback reason.'
+        $unknownFallbackReceipt = $expressionFallbackReceipt | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64 -DateKind String
+        $unknownFallbackReceipt.binding.dependency_resolution.fallback_reasons[0].kind = 'arbitrary-fallback-kind'
+        $unknownFallbackReceipt.binding_sha256 = Get-MorphospaceCanonicalJsonSha256 -Value $unknownFallbackReceipt.binding
+        Assert-True (-not (Test-Json -Json (ConvertTo-MorphospaceCanonicalJson -Value $unknownFallbackReceipt) -SchemaFile (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json') -ErrorAction SilentlyContinue)) 'Leaf evidence schema accepted an arbitrary dependency fallback reason kind.'
+        Assert-True ([string]$fallbackReceipt.binding.dependency_resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($fallbackReceipt.binding.dependency_resolution.fallback_reasons | Where-Object { $_.importer -ceq 'scripts/Test-DocumentationLinks.ps1' -and $_.variable -ceq 'UnresolvedModulePath' -and $_.kind -ceq 'unresolved-import' }).Count -eq 1) 'Unknown dynamic Import-Module did not bind its exact all-scripts fallback reason.'
+        Assert-True (@($fallbackReceipt.binding.dependency_manifest.path) -ccontains 'scripts/Unrelated.ps1') 'Dynamic Import-Module did not conservatively bind unresolved tracked PowerShell sources.'
+        Assert-True (@($fallbackReceipt.binding.dependency_manifest.path) -ccontains 'scripts/FallbackDynamicTarget.ps1' -and @($fallbackReceipt.binding.dependency_manifest.path) -ccontains 'schemas/FallbackDynamicInput.schema.json') 'Dynamic fallback did not traverse its added target into the tracked non-PowerShell input.'
+        $resolutionDamagedBinding = $fallbackReceipt.binding | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64 -DateKind String
+        $resolutionDamageTargets = @($resolutionDamagedBinding.dependency_resolution.fallback_reasons | Where-Object {
+            [string]$_.importer -ceq 'scripts/Test-DocumentationLinks.ps1' -and
+            [string]$_.variable -ceq 'UnresolvedModulePath' -and
+            [string]$_.kind -ceq 'unresolved-import'
+        })
+        Assert-True ($resolutionDamageTargets.Count -eq 1) 'Dynamic dependency-resolution damage fixture did not select exactly one keyed fallback reason.'
+        $resolutionDamageTargets[0].kind = 'unresolved-invocation'
+        $resolutionDamagedSha = Get-MorphospaceCanonicalJsonSha256 -Value $resolutionDamagedBinding
+        $resolutionReuse = Find-MorphospaceAffectedReusableCheckReceipt -PriorEvidenceDirectory $evidenceRoot -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json') -ExpectedBinding $resolutionDamagedBinding -ExpectedBindingSha256 $resolutionDamagedSha -RepositoryRoot $fixture -CurrentHeadCommit $head -CandidateReceiptPaths @($receiptPath)
+        Assert-True ($null -eq $resolutionReuse) 'Dynamic dependency-resolution reason drift reused evidence from a different binding.'
+        Write-Host "Focused fallback actual seed passed: scripts=$($expectedScripts.Count), receipts=$(@($actualInventory.candidate_snapshots).Count), canonical=$(Get-MorphospaceCanonicalJsonSha256 $expectedClosure)."
+    } finally {
+        $target=[IO.Path]::GetFullPath($fixture)
+        $prefix=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar)+[IO.Path]::DirectorySeparatorChar
+        if(-not $target.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){throw 'Fallback fixture cleanup escaped temp root.'}
+        if([IO.Directory]::Exists($target)){Remove-Item -LiteralPath $target -Recurse -Force}
+    }
+}
 function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]$Registry) {
+    Invoke-AffectedFallbackReceiptSelfTest -Root $Root -Registry $Registry
+    Invoke-AffectedDependencyDemandEquivalenceSelfTest
+    Invoke-AffectedDependencyIndexCacheSelfTest
     Invoke-AffectedRetirementLayoutGraphSelfTest
     $fixture = Join-Path ([IO.Path]::GetTempPath()) ('morphospace-affected-per-check-closure-' + [guid]::NewGuid().ToString('N'))
     [void][IO.Directory]::CreateDirectory((Join-Path $fixture 'scripts'))
@@ -2553,6 +2870,7 @@ $checks = @(
 }
 
 if ($runFullSelector -or $runExecutorPassPhase) {
+    Write-AffectedFixtureStage 'executor-contract-fixtures-enter'
     $workflowSource = Get-Content -LiteralPath (Join-Path $repoRoot '.github/workflows/validate.yml') -Raw
     $workflowContractsSource = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts/Test-WorkflowContracts.ps1') -Raw
     $executorSource = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -Raw
@@ -2662,10 +2980,10 @@ if ($runFullSelector -or $runExecutorPassPhase) {
     $executorPassCheck=$phaseCompiledRegistry.checks['affected-selector-executor-pass-schema']
     $executorPassBudgetIndex=[array]::IndexOf(@($executorPassCheck.arguments),'-BudgetSeconds')
     $executorPassInnerBudget=0
-    # The previous hosted-Linux pass consumed 173.759 seconds before the
-    # registry and exact closure grew; 240 seconds restores bounded headroom
-    # while the outer check retains exactly 15 seconds for containment.
-    Assert-True ($executorPassBudgetIndex-ge0-and$executorPassBudgetIndex+1-lt@($executorPassCheck.arguments).Count-and[int]::TryParse([string]$executorPassCheck.arguments[$executorPassBudgetIndex+1],[ref]$executorPassInnerBudget)-and$executorPassInnerBudget-eq240-and[long]$executorPassCheck.budget_seconds-eq[long]$executorPassInnerBudget+15) 'Executor pass/schema phase lacks its measured hosted-Linux budget or exact 15-second containment headroom.'
+    # Keep the existing child cap. The outer envelope separately covers up to
+    # 60 seconds of preflight/evidence work plus the existing 15-second kill
+    # wait and 15-second stream drain; preflight must not consume child time.
+    Assert-True ($executorPassBudgetIndex-ge0-and$executorPassBudgetIndex+1-lt@($executorPassCheck.arguments).Count-and[int]::TryParse([string]$executorPassCheck.arguments[$executorPassBudgetIndex+1],[ref]$executorPassInnerBudget)-and$executorPassInnerBudget-eq240-and[long]$executorPassCheck.budget_seconds-eq[long]$executorPassInnerBudget+90) 'Executor pass/schema phase lacks its measured child budget plus preflight, containment, and evidence-finalization headroom.'
     $derivedPhaseManifest=@($phaseInventory.records | Where-Object { [string]$_.type -ceq 'blob' -and @('100644','100755') -ccontains [string]$_.mode } | Select-Object -First 24 | ForEach-Object { [pscustomobject][ordered]@{path=[string]$_.path;mode=[string]$_.mode;blob=[string]$_.blob} })
     Assert-True ($derivedPhaseManifest.Count -gt 16 -and $derivedPhaseManifest.Count -le 2048) 'Representative exact-head phase closure does not fit the closed bounded phase-manifest domain.'
     $derivedProjection=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.affected_validation_self_test_dependency_projection.v1';repository='MesmerPrism/rusty-morphospace-work-environment';head_commit=$phaseHead;head_tree=$phaseTree;registry_sha256=Get-MorphospaceCanonicalJsonSha256 -Value $registry;check_id='affected-selector-executor-pass-schema';command_path='scripts/Invoke-AffectedValidationSelfTestPhase.ps1';consume_path_sets=@($phaseCompiledRegistry.checks['affected-selector-executor-pass-schema'].consume_path_sets);dependency_manifest=$derivedPhaseManifest}
@@ -3070,7 +3388,7 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value $termina
     Write-Utf8 (Join-Path $fixture 'schemas/DocumentationLinksInput.schema.json') "{}`n"
     Write-Utf8 (Join-Path $fixture 'schemas/FallbackDynamicInput.schema.json') "{}`n"
     Write-Utf8 (Join-Path $fixture 'scripts/FallbackDynamicTarget.ps1') "[void](Get-Content -LiteralPath (Join-Path `$PSScriptRoot '../schemas/FallbackDynamicInput.schema.json') -Raw)`n"
-    Write-Utf8 (Join-Path $fixture 'scripts/Test-DocumentationLinks.ps1') "param([string]`$UnresolvedModulePath)`nif (@(Get-ChildItem Env: | Where-Object { ([string]`$_.Name).StartsWith('GIT_',[StringComparison]::OrdinalIgnoreCase) }).Count -ne 0 -or `$null-ne`$env:RUSTY_UNOWNED_DAMAGE -or `$null-ne`$env:WEF002_AMBIENT_DAMAGE) { throw 'Affected child retained an ambient environment override.' }`nif([string]::IsNullOrWhiteSpace(`$env:RUSTY_AFFECTED_VALIDATION_CHECK_ID)){throw 'Affected child omitted its launcher-owned identity.'}`n`$ModulePath = Join-Path `$PSScriptRoot 'lib/DocumentationLinksDependency.psm1'`nImport-Module `$ModulePath -Force`nif (-not [string]::IsNullOrWhiteSpace(`$UnresolvedModulePath)) { Import-Module `$UnresolvedModulePath -Force }`n`$SchemaRoot = Join-Path `$PSScriptRoot '../schemas'`n[void](Join-Path `$SchemaRoot 'DocumentationLinksInput.schema.json')`n[void](Get-DocumentationLinksDependency)`n"
+    Write-Utf8 (Join-Path $fixture 'scripts/Test-DocumentationLinks.ps1') (New-AffectedDocumentationFixtureText)
     Write-Utf8 (Join-Path $fixture 'scripts/Test-AffectedLeafBindingFixture.ps1') "'leaf binding fixture'`n"
     Write-Utf8 (Join-Path $fixture 'scripts/Test-PublicBoundary.ps1') "`$prior=Join-Path ([IO.Path]::GetFullPath((Get-Location).Path)) 'affected-check-evidence-snapshot-prior';if([IO.Directory]::Exists(`$prior)){`$targets=@(Get-ChildItem -LiteralPath `$prior -Filter receipt.json -File -Recurse|Where-Object{(Get-Content -LiteralPath `$_.FullName -Raw|ConvertFrom-Json -Depth 64).binding.check_id -ceq 'documentation-links'});if(`$targets.Count-ne1){throw 'snapshot mutation target is not exact'};[IO.File]::WriteAllText(`$targets[0].FullName,'mutated after parent snapshot',[Text.UTF8Encoding]::new(`$false))}`n"
     $fixtureRegistry = Read-MorphospaceProtocolJson -Path $registryPath
@@ -3135,6 +3453,7 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value $termina
         Assert-True ([string]$docsPlan.registry_delta.classification -ceq 'unchanged' -and -not [bool]$docsPlan.registry_delta.candidate_ownership_audited -and -not [bool]$docsPlan.registry_delta.candidate_ownership_complete) 'Unchanged registry delta claimed a candidate ownership audit/completion or changed classification.'
         Write-Utf8 $planPath ((ConvertTo-MorphospaceCanonicalJson -Value $docsPlan) + "`n")
         if ($runFullSelector -or $runExecutorPassPhase) {
+            Write-AffectedFixtureStage 'executor-fixture-setup-enter'
             Invoke-AffectedPhaseProgressEmitterSelfTest
             Invoke-AffectedProgressBootstrapFixture -Fixture $fixture -Progress $false
             Invoke-AffectedProgressBootstrapFixture -Fixture $fixture -Progress $true
@@ -3157,6 +3476,7 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value $termina
             Assert-AffectedThrows { & (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $base -HeadCommit $docsHead -PlanPath $planPath -Platform linux -SegmentId 'windows-001' -OutPath (Join-Path $fixture 'affected-evidence-wrong-platform.json') | Out-Null } '*differs from its requested platform*' 'Affected executor accepted a segment ID for another platform.'
             Assert-AffectedThrows { & (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $base -HeadCommit $docsHead -PlanPath $planPath -Platform linux -SegmentId 'linux-999' -OutPath (Join-Path $fixture 'affected-evidence-unknown-segment.json') | Out-Null } '*not present in the exact plan partition*' 'Affected executor accepted a segment ID outside the exact partition.'
             $evidencePath = Join-Path $fixture 'affected-evidence.json'
+            Write-AffectedFixtureStage 'seed-enter'
             $priorGitPager = [Environment]::GetEnvironmentVariable('GIT_PAGER','Process')
             $priorGitTestOverride = [Environment]::GetEnvironmentVariable('GIT_AFFECTED_VALIDATION_TEST','Process')
             $priorRustyDamage = [Environment]::GetEnvironmentVariable('RUSTY_UNOWNED_DAMAGE','Process');$priorOtherDamage=[Environment]::GetEnvironmentVariable('WEF002_AMBIENT_DAMAGE','Process')
@@ -3202,9 +3522,11 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value $termina
             $documentationReceipt = @($firstReceipts | Where-Object { (Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json -Depth 64 -DateKind String).binding.check_id -ceq 'documentation-links' })
             $leafBindingReceipt = @($firstReceipts | Where-Object { (Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json -Depth 64 -DateKind String).binding.check_id -ceq 'leaf-binding-fixture' })
             Assert-True ($publicBoundaryReceipt.Count -eq 1 -and $documentationReceipt.Count -eq 1 -and $leafBindingReceipt.Count -eq 1) 'Documentation/order-anchor/leaf-binding receipt identities are not unique.'
+            Write-AffectedFixtureStage 'seed-executed-and-bound'
             $publicBoundaryReceiptValue = Get-Content -LiteralPath $publicBoundaryReceipt[0].FullName -Raw | ConvertFrom-Json -Depth 64 -DateKind String
             $documentationReceiptValue = Get-Content -LiteralPath $documentationReceipt[0].FullName -Raw | ConvertFrom-Json -Depth 64 -DateKind String
             $leafBindingReceiptValue = Get-Content -LiteralPath $leafBindingReceipt[0].FullName -Raw | ConvertFrom-Json -Depth 64 -DateKind String
+            Write-AffectedFixtureChildTiming 'seed' @($publicBoundaryReceiptValue,$documentationReceiptValue,$leafBindingReceiptValue)
             $missingLeafFailureKind = $documentationReceiptValue | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64 -DateKind String
             $missingLeafFailureKind.child.PSObject.Properties.Remove('failure_kind')
             Assert-True (-not (Test-Json -Json (ConvertTo-MorphospaceCanonicalJson -Value $missingLeafFailureKind) -SchemaFile (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json') -ErrorAction SilentlyContinue)) 'Leaf evidence schema accepted missing typed failure data.'
@@ -3244,17 +3566,6 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value $termina
             Assert-True (Test-Json -Json (ConvertTo-MorphospaceCanonicalJson -Value $reusedPass) -SchemaFile (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json') -ErrorAction Stop) 'Leaf schema rejected the intentional reused-pass/started=false shape.'
             $documentationStdout = [IO.File]::ReadAllBytes((Join-Path $documentationReceipt[0].DirectoryName 'stdout.bin'))
             $documentationStderr = [IO.File]::ReadAllBytes((Join-Path $documentationReceipt[0].DirectoryName 'stderr.bin'))
-            $expressionFallbackReceipt = $documentationReceiptValue | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64 -DateKind String
-            $expressionFallbackReasons = @($expressionFallbackReceipt.binding.dependency_resolution.fallback_reasons | Where-Object { [string]$_.importer -ceq 'scripts/Test-DocumentationLinks.ps1' -and [string]$_.variable -ceq 'UnresolvedModulePath' -and [string]$_.kind -ceq 'unresolved-import' })
-            Assert-True ($expressionFallbackReasons.Count -eq 1) 'Expression-invocation schema fixture did not select exactly one production-shaped fallback reason.'
-            $expressionFallbackReasons[0].kind = 'unresolved-expression-invocation'
-            $expressionFallbackReceipt.binding_sha256 = Get-MorphospaceCanonicalJsonSha256 -Value $expressionFallbackReceipt.binding
-            $expressionFallbackSnapshot = New-MorphospaceAffectedCheckSnapshot -Receipt $expressionFallbackReceipt -Stdout $documentationStdout -Stderr $documentationStderr -Artifacts @() -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json')
-            Assert-True (@($expressionFallbackSnapshot.receipt.binding.dependency_resolution.fallback_reasons | Where-Object { [string]$_.kind -ceq 'unresolved-expression-invocation' }).Count -eq 1) 'Parent snapshot retention rejected the production-shaped expression-invocation fallback reason.'
-            $unknownFallbackReceipt = $expressionFallbackReceipt | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64 -DateKind String
-            $unknownFallbackReceipt.binding.dependency_resolution.fallback_reasons[0].kind = 'arbitrary-fallback-kind'
-            $unknownFallbackReceipt.binding_sha256 = Get-MorphospaceCanonicalJsonSha256 -Value $unknownFallbackReceipt.binding
-            Assert-True (-not (Test-Json -Json (ConvertTo-MorphospaceCanonicalJson -Value $unknownFallbackReceipt) -SchemaFile (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json') -ErrorAction SilentlyContinue)) 'Leaf evidence schema accepted an arbitrary dependency fallback reason kind.'
             $executedNullSnapshot = New-MorphospaceAffectedCheckSnapshot -Receipt $documentationReceiptValue -Stdout $documentationStdout -Stderr $documentationStderr -Artifacts @() -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json')
             Assert-True ([string]$executedNullSnapshot.receipt.mode -ceq 'executed' -and $null -eq $executedNullSnapshot.receipt.reused_from) 'Parent snapshot retention rejected the valid executed/null reuse shape.'
             $reusedObjectSnapshot = New-MorphospaceAffectedCheckSnapshot -Receipt $reusedPass -Stdout $documentationStdout -Stderr $documentationStderr -Artifacts @() -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json')
@@ -3339,11 +3650,11 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value $termina
             } finally {
                 [void](Invoke-TestGit $fixture @('checkout','main'))
             }
+            $normalStatic=& (Import-Module (Join-Path $repoRoot 'scripts/lib/MorphospaceAffectedValidationDependencyClosure.psm1') -PassThru) { param($r,$i) Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $r -Entrypoint 'scripts/Test-DocumentationLinks.ps1' -Inventory $i -DynamicDeclarations @() } $fixture (Get-MorphospaceAffectedTreeInventory -RepositoryRoot $fixture -Commit $docsHead)
+            Assert-True ($normalStatic.resolution.mode -ceq 'exact' -and ($normalStatic.paths -join ';') -ceq 'schemas/DocumentationLinksInput.schema.json;scripts/Test-DocumentationLinks.ps1;scripts/lib/DocumentationLinksDependency.psm1') 'Normal executor fixture lost its exact three required source edges.'
+            Write-AffectedFixtureStage 'binding-damage-complete'
             Assert-True (@($documentationReceiptValue.binding.dependency_manifest.path) -ccontains 'scripts/lib/DocumentationLinksDependency.psm1') 'Affected leaf dependency manifest omitted a tracked transitive imported module.'
             Assert-True (@($documentationReceiptValue.binding.dependency_manifest.path) -ccontains 'schemas/DocumentationLinksInput.schema.json') 'Affected leaf dependency manifest omitted a tracked schema/data input.'
-            Assert-True ([string]$documentationReceiptValue.binding.dependency_resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($documentationReceiptValue.binding.dependency_resolution.fallback_reasons | Where-Object { $_.importer -ceq 'scripts/Test-DocumentationLinks.ps1' -and $_.variable -ceq 'UnresolvedModulePath' -and $_.kind -ceq 'unresolved-import' }).Count -eq 1) 'Unknown dynamic Import-Module did not bind its exact all-scripts fallback reason.'
-            Assert-True (@($documentationReceiptValue.binding.dependency_manifest.path) -ccontains 'scripts/Test-PublicBoundary.ps1') 'Dynamic Import-Module did not conservatively bind unresolved tracked PowerShell sources.'
-            Assert-True (@($documentationReceiptValue.binding.dependency_manifest.path) -ccontains 'scripts/FallbackDynamicTarget.ps1' -and @($documentationReceiptValue.binding.dependency_manifest.path) -ccontains 'schemas/FallbackDynamicInput.schema.json') 'Dynamic fallback did not traverse its added target into the tracked non-PowerShell input.'
             $schemaDamagedBinding = $documentationReceiptValue.binding | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64 -DateKind String
             $schemaRecord = @($schemaDamagedBinding.dependency_manifest | Where-Object path -ceq 'schemas/FallbackDynamicInput.schema.json')
             Assert-True ($schemaRecord.Count -eq 1) 'Schema-drift fixture did not resolve one dependency record.'
@@ -3351,17 +3662,6 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value $termina
             $schemaDamagedSha = Get-MorphospaceCanonicalJsonSha256 -Value $schemaDamagedBinding
             $schemaReuse = Find-MorphospaceAffectedReusableCheckReceipt -PriorEvidenceDirectory $firstCheckRoot -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json') -ExpectedBinding $schemaDamagedBinding -ExpectedBindingSha256 $schemaDamagedSha -RepositoryRoot $fixture -CurrentHeadCommit $docsHead -CandidateReceiptPaths @($documentationReceipt[0].FullName)
             Assert-True ($null -eq $schemaReuse) 'Tracked schema/input drift reused evidence from a different dependency binding.'
-            $resolutionDamagedBinding = $documentationReceiptValue.binding | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64 -DateKind String
-            $resolutionDamageTargets = @($resolutionDamagedBinding.dependency_resolution.fallback_reasons | Where-Object {
-                [string]$_.importer -ceq 'scripts/Test-DocumentationLinks.ps1' -and
-                [string]$_.variable -ceq 'UnresolvedModulePath' -and
-                [string]$_.kind -ceq 'unresolved-import'
-            })
-            Assert-True ($resolutionDamageTargets.Count -eq 1) 'Dynamic dependency-resolution damage fixture did not select exactly one keyed fallback reason.'
-            $resolutionDamageTargets[0].kind = 'unresolved-invocation'
-            $resolutionDamagedSha = Get-MorphospaceCanonicalJsonSha256 -Value $resolutionDamagedBinding
-            $resolutionReuse = Find-MorphospaceAffectedReusableCheckReceipt -PriorEvidenceDirectory $firstCheckRoot -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json') -ExpectedBinding $resolutionDamagedBinding -ExpectedBindingSha256 $resolutionDamagedSha -RepositoryRoot $fixture -CurrentHeadCommit $docsHead -CandidateReceiptPaths @($documentationReceipt[0].FullName)
-            Assert-True ($null -eq $resolutionReuse) 'Dynamic dependency-resolution reason drift reused evidence from a different binding.'
             $singleReadInventory = Read-MorphospaceAffectedCheckInventory -EvidenceDirectory $firstCheckRoot -ExpectedProducerContext $firstInventory.producer -InventorySchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-inventory-v1.schema.json')
             $singleReadDocumentationSnapshot = @($singleReadInventory.candidate_snapshots | Where-Object check_id -ceq 'documentation-links')
             Assert-True ($singleReadDocumentationSnapshot.Count -eq 1) 'Parent inventory did not snapshot exactly one documentation receipt.'
@@ -3599,7 +3899,9 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value $termina
             Update-AffectedInventoryFileRecord -InventoryRoot $snapshotPriorRoot -FilePath $snapshotPublicStream
             $snapshotOutputRoot = Join-Path $fixture 'affected-check-evidence-snapshot-output'
             $snapshotEvidence = & (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $base -HeadCommit $docsHead -PlanPath $planPath -Platform linux -OutPath (Join-Path $fixture 'affected-evidence-snapshot.json') -CheckEvidenceDirectory $snapshotOutputRoot -PriorEvidenceDirectory $snapshotPriorRoot
+            Write-AffectedFixtureStage 'snapshot-rerun-complete'
             $snapshotOutputReceipts = @(Get-ChildItem -LiteralPath $snapshotOutputRoot -Filter receipt.json -File -Recurse | ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json -Depth 64 -DateKind String })
+            Write-AffectedFixtureChildTiming 'snapshot' $snapshotOutputReceipts
             Assert-True ($snapshotEvidence.result -ceq 'pass' -and @($snapshotOutputReceipts | Where-Object { $_.binding.check_id -ceq 'public-boundary' -and $_.mode -ceq 'executed' }).Count -eq 1 -and @($snapshotOutputReceipts | Where-Object { $_.binding.check_id -ceq 'documentation-links' -and $_.mode -ceq 'reused' }).Count -eq 1) 'A child mutation changed a future reuse decision after the parent prior snapshot.'
             Assert-True ((Get-Content -LiteralPath $snapshotDocumentationReceipt[0].FullName -Raw) -ceq 'mutated after parent snapshot') 'Prior-snapshot fixture did not actually mutate the future on-disk receipt.'
 
@@ -3617,9 +3919,15 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value $termina
             Write-Utf8 $sourceDamagedReceiptPath ((ConvertTo-MorphospaceCanonicalJson -Value $sourceDamagedReceipt) + "`n")
             Update-AffectedInventoryFileRecord -InventoryRoot $sourceDamagedPriorRoot -FilePath $sourceDamagedReceiptPath
             $sourceFallbackEvidence = & (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $base -HeadCommit $docsHead -PlanPath $planPath -Platform linux -OutPath (Join-Path $fixture 'affected-evidence-source-damaged.json') -CheckEvidenceDirectory (Join-Path $fixture 'affected-check-evidence-source-damaged-output') -PriorEvidenceDirectory $sourceDamagedPriorRoot
+            Write-AffectedFixtureStage 'source-rerun-complete'
             $sourceFallbackReceipts = @(Get-ChildItem -LiteralPath (Join-Path $fixture 'affected-check-evidence-source-damaged-output') -Filter receipt.json -File -Recurse | ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json -Depth 64 -DateKind String })
+            Write-AffectedFixtureChildTiming 'source' $sourceFallbackReceipts
             Assert-True ($sourceFallbackEvidence.result -ceq 'pass' -and @($sourceFallbackReceipts | Where-Object mode -ceq 'executed').Count -eq 1 -and @($sourceFallbackReceipts | Where-Object mode -ceq 'reused').Count -eq ($sourceFallbackReceipts.Count - 1)) 'Receipt source-commit blob damage did not rerun only the affected leaf.'
+            # The runner uses this same authenticated snapshot/read/reuse path for
+            # every variant. Exercise all eight rejection predicates directly, then
+            # retain one actual owner fallback to prove null dispatches only its leaf.
             foreach ($environmentDamage in @('count','hash','order','second-hop','unreviewed','leaf-count','leaf-hash','leaf-empty')) {
+                Write-AffectedFixtureStage "environment-$environmentDamage-enter"
                 $environmentPriorRoot = Join-Path $fixture "affected-check-evidence-environment-$environmentDamage-prior"
                 Copy-Item -LiteralPath $firstCheckRoot -Destination $environmentPriorRoot -Recurse
                 $environmentReceiptFiles = @(Get-ChildItem -LiteralPath $environmentPriorRoot -Filter receipt.json -File -Recurse | Where-Object { (Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json -Depth 64 -DateKind String).binding.check_id -ceq 'documentation-links' })
@@ -3659,11 +3967,22 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value $termina
                 Assert-True ($(if($environmentDamage-ceq'leaf-empty'){-not$environmentSchemaValid}else{$environmentSchemaValid})) "Environment $environmentDamage schema classification differs from its closed damage contract."
                 Write-Utf8 $environmentReceiptPath ($environmentReceiptJson + "`n")
                 Update-AffectedInventoryFileRecord -InventoryRoot $environmentPriorRoot -FilePath $environmentReceiptPath
-                $environmentOutputRoot = Join-Path $fixture "affected-check-evidence-environment-$environmentDamage-output"
-                $environmentFallbackEvidence = & (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $base -HeadCommit $docsHead -PlanPath $planPath -Platform linux -OutPath (Join-Path $fixture "affected-evidence-environment-$environmentDamage.json") -CheckEvidenceDirectory $environmentOutputRoot -PriorEvidenceDirectory $environmentPriorRoot
-                $environmentFallbackReceipts = @(Get-ChildItem -LiteralPath $environmentOutputRoot -Filter receipt.json -File -Recurse | ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json -Depth 64 -DateKind String })
-                Assert-True ($environmentFallbackEvidence.result -ceq 'pass' -and @($environmentFallbackReceipts | Where-Object { $_.binding.check_id -ceq 'documentation-links' -and $_.mode -ceq 'executed' }).Count -eq 1 -and @($environmentFallbackReceipts | Where-Object mode -ceq 'reused').Count -eq ($environmentFallbackReceipts.Count - 1)) "Schema-valid environment $environmentDamage damage aborted reuse instead of rerunning only its leaf."
+                $environmentRead = Read-MorphospaceAffectedCheckInventory -EvidenceDirectory $environmentPriorRoot -ExpectedProducerContext $firstInventory.producer -InventorySchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-inventory-v1.schema.json')
+                $environmentSnapshot = @($environmentRead.candidate_snapshots | Where-Object check_id -ceq 'documentation-links')
+                Assert-True ($environmentSnapshot.Count -eq 1) "Environment $environmentDamage inventory did not capture exactly one documentation receipt."
+                $environmentReuse = Find-MorphospaceAffectedReusableCheckReceipt -PriorEvidenceDirectory $environmentPriorRoot -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json') -ExpectedBinding $documentationReceiptValue.binding -ExpectedBindingSha256 ([string]$documentationReceiptValue.binding_sha256) -RepositoryRoot $fixture -CurrentHeadCommit $docsHead -CandidateEvidenceSnapshots $environmentSnapshot
+                Assert-True ($null -eq $environmentReuse) "Environment $environmentDamage damage reused a receipt with invalid projected environment evidence."
+                Write-AffectedFixtureStage "environment-$environmentDamage-reuse-rejected"
+                if ($environmentDamage -ceq 'count') {
+                    $environmentOutputRoot = Join-Path $fixture 'affected-check-evidence-environment-count-output'
+                    $environmentFallbackEvidence = & (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $base -HeadCommit $docsHead -PlanPath $planPath -Platform linux -OutPath (Join-Path $fixture 'affected-evidence-environment-count.json') -CheckEvidenceDirectory $environmentOutputRoot -PriorEvidenceDirectory $environmentPriorRoot
+                    $environmentFallbackReceipts = @(Get-ChildItem -LiteralPath $environmentOutputRoot -Filter receipt.json -File -Recurse | ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json -Depth 64 -DateKind String })
+                    Write-AffectedFixtureChildTiming 'environment-count' $environmentFallbackReceipts
+                    Assert-True ($environmentFallbackEvidence.result -ceq 'pass' -and @($environmentFallbackReceipts | Where-Object { $_.binding.check_id -ceq 'documentation-links' -and $_.mode -ceq 'executed' }).Count -eq 1 -and @($environmentFallbackReceipts | Where-Object mode -ceq 'reused').Count -eq ($environmentFallbackReceipts.Count - 1)) 'Rejected environment evidence did not rerun only its affected leaf.'
+                    Write-AffectedFixtureStage 'environment-count-rerun-complete'
+                }
             }
+            Write-AffectedFixtureStage 'combined-stream-enter'
             $combinedStreamPriorRoot = Join-Path $fixture 'affected-check-evidence-combined-stream-prior'
             Copy-Item -LiteralPath $firstCheckRoot -Destination $combinedStreamPriorRoot -Recurse
             $combinedStreamReceiptFile = @(Get-ChildItem -LiteralPath $combinedStreamPriorRoot -Filter receipt.json -File -Recurse | Where-Object { (Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json -Depth 64 -DateKind String).binding.check_id -ceq 'documentation-links' })
@@ -3679,10 +3998,12 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value $termina
             Assert-True (Test-Json -Json $combinedStreamReceiptJson -SchemaFile (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json') -ErrorAction Stop) 'Combined-stream damage is not schema-valid as required by the semantic-cache test.'
             Write-Utf8 $combinedStreamReceiptPath ($combinedStreamReceiptJson+"`n")
             foreach($combinedPath in @($combinedStreamReceiptPath,$combinedStdoutPath,$combinedStderrPath)){Update-AffectedInventoryFileRecord -InventoryRoot $combinedStreamPriorRoot -FilePath $combinedPath}
-            $combinedStreamOutputRoot=Join-Path $fixture 'affected-check-evidence-combined-stream-output'
-            $combinedStreamFallbackEvidence=& (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $base -HeadCommit $docsHead -PlanPath $planPath -Platform linux -OutPath (Join-Path $fixture 'affected-evidence-combined-stream.json') -CheckEvidenceDirectory $combinedStreamOutputRoot -PriorEvidenceDirectory $combinedStreamPriorRoot
-            $combinedStreamFallbackReceipts=@(Get-ChildItem -LiteralPath $combinedStreamOutputRoot -Filter receipt.json -File -Recurse|ForEach-Object{Get-Content -LiteralPath $_.FullName -Raw|ConvertFrom-Json -Depth 64 -DateKind String})
-            Assert-True ($combinedStreamFallbackEvidence.result-ceq'pass'-and@($combinedStreamFallbackReceipts|Where-Object{$_.binding.check_id-ceq'documentation-links'-and$_.mode-ceq'executed'}).Count-eq1-and@($combinedStreamFallbackReceipts|Where-Object mode -ceq 'reused').Count-eq($combinedStreamFallbackReceipts.Count-1)) 'Schema-valid combined-stream cache damage aborted reuse instead of rerunning only its leaf.'
+            $combinedStreamRead = Read-MorphospaceAffectedCheckInventory -EvidenceDirectory $combinedStreamPriorRoot -ExpectedProducerContext $firstInventory.producer -InventorySchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-inventory-v1.schema.json')
+            $combinedStreamSnapshot = @($combinedStreamRead.candidate_snapshots | Where-Object check_id -ceq 'documentation-links')
+            Assert-True ($combinedStreamSnapshot.Count -eq 1) 'Combined-stream inventory did not capture exactly one documentation receipt.'
+            $combinedStreamReuse = Find-MorphospaceAffectedReusableCheckReceipt -PriorEvidenceDirectory $combinedStreamPriorRoot -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json') -ExpectedBinding $documentationReceiptValue.binding -ExpectedBindingSha256 ([string]$documentationReceiptValue.binding_sha256) -RepositoryRoot $fixture -CurrentHeadCommit $docsHead -CandidateEvidenceSnapshots $combinedStreamSnapshot
+            Assert-True ($null -eq $combinedStreamReuse) 'Combined-stream cache damage reused a receipt exceeding the semantic combined-stream limit.'
+            Write-AffectedFixtureStage 'combined-stream-reuse-rejected'
             $reparsePriorRoot = Join-Path $fixture 'affected-check-evidence-reparse-prior'
             try {
                 if ($IsWindows) { [void](New-Item -ItemType Junction -Path $reparsePriorRoot -Target $firstCheckRoot) }
@@ -3697,11 +4018,14 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value $termina
             $damagedStreamPath = Join-Path ([IO.Path]::GetDirectoryName($damagedReceiptPath)) 'stdout.bin'
             [IO.File]::WriteAllBytes($damagedStreamPath,[Text.UTF8Encoding]::new($false).GetBytes('damaged prior stream'))
             Update-AffectedInventoryFileRecord -InventoryRoot $damagedPriorRoot -FilePath $damagedStreamPath
-            $fallbackEvidencePath = Join-Path $fixture 'affected-evidence-damaged-prior.json'
-            $fallbackCheckRoot = Join-Path $fixture 'affected-check-evidence-damaged-fallback'
-            $fallbackEvidence = & (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $base -HeadCommit $docsHead -PlanPath $planPath -Platform linux -OutPath $fallbackEvidencePath -CheckEvidenceDirectory $fallbackCheckRoot -PriorEvidenceDirectory $damagedPriorRoot
-            $fallbackReceipts = @(Get-ChildItem -LiteralPath $fallbackCheckRoot -Filter receipt.json -File -Recurse | ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json -Depth 64 -DateKind String })
-            Assert-True ($fallbackEvidence.result -ceq 'pass' -and @($fallbackReceipts | Where-Object mode -ceq 'executed').Count -eq 1 -and @($fallbackReceipts | Where-Object mode -ceq 'reused').Count -eq ($fallbackReceipts.Count - 1)) 'Damaged prior stream did not rerun only its exact leaf while reusing unaffected leaves.'
+            $damagedRead = Read-MorphospaceAffectedCheckInventory -EvidenceDirectory $damagedPriorRoot -ExpectedProducerContext $firstInventory.producer -InventorySchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-inventory-v1.schema.json')
+            $damagedReceipt = Get-Content -LiteralPath $damagedReceiptPath -Raw | ConvertFrom-Json -Depth 64 -DateKind String
+            $damagedSnapshot = @($damagedRead.candidate_snapshots | Where-Object check_id -ceq $damagedReceipt.binding.check_id)
+            $damagedExpected = @($publicBoundaryReceiptValue,$documentationReceiptValue,$leafBindingReceiptValue | Where-Object { $_.binding.check_id -ceq $damagedReceipt.binding.check_id })
+            Assert-True ($damagedSnapshot.Count -eq 1 -and $damagedExpected.Count -eq 1) 'Damaged-stream fixture did not select one authenticated original receipt.'
+            $damagedReuse = Find-MorphospaceAffectedReusableCheckReceipt -PriorEvidenceDirectory $damagedPriorRoot -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json') -ExpectedBinding $damagedExpected[0].binding -ExpectedBindingSha256 ([string]$damagedExpected[0].binding_sha256) -RepositoryRoot $fixture -CurrentHeadCommit $docsHead -CandidateEvidenceSnapshots $damagedSnapshot
+            Assert-True ($null -eq $damagedReuse) 'Damaged prior stream reused its exact leaf despite its unchanged receipt hash/size claims.'
+            Write-AffectedFixtureStage 'damaged-stream-reuse-rejected'
             $persistedEvidence = Read-MorphospaceProtocolJson -Path $evidencePath
             foreach ($case in $failureKindCases) {
                 $validAggregateFailure = $persistedEvidence | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64 -DateKind String
@@ -3746,6 +4070,7 @@ Write-FixtureJson -Path (Join-Path $root "$Phase.terminal.json") -Value $termina
             $impossiblePending = $persistedEvidence | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64
             $impossiblePending.check_results[0].result = 'pending-infra'; $impossiblePending.result = 'pending-infra'
             Assert-True (-not (Test-Json -Json (ConvertTo-MorphospaceCanonicalJson -Value $impossiblePending) -SchemaFile (Join-Path $repoRoot 'schemas/affected-validation-evidence-v1.schema.json') -ErrorAction SilentlyContinue)) 'Check evidence accepted pending-infra outside the typed pre-job classifier.'
+            Write-AffectedFixtureStage 'aggregate-schema-damage-complete'
             $boundaryIndex = [array]::IndexOf(@($docsPlan.selected_checks.check_id), 'public-boundary')
             $documentationIndex = [array]::IndexOf(@($docsPlan.selected_checks.check_id), 'documentation-links')
             Assert-True ($boundaryIndex -ge 0 -and $documentationIndex -gt $boundaryIndex) 'Selected checks were not in deterministic prerequisite-first order.'
@@ -4183,6 +4508,7 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     }
     $restoredHead = $docsHead
     if ($runFullSelector -or $runExecutorPassPhase) {
+        Write-AffectedFixtureStage 'terminal-schema-checks-enter'
         foreach ($invalidPath in @('docs/', '   ')) {
             $damagedPlan = ConvertFrom-Json -InputObject (ConvertTo-MorphospaceCanonicalJson -Value $docsPlan) -Depth 64
             $damagedPlan.changed_paths[0].new_path = $invalidPath
