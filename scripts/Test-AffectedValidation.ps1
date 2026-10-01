@@ -1993,7 +1993,176 @@ function Invoke-AffectedRetirementLayoutGraphSelfTest {
         if([IO.Directory]::Exists($target)){Remove-Item -LiteralPath $target -Recurse -Force}
     }
 }
+function Invoke-AffectedDependencyIndexCacheSelfTest {
+    $module = Get-Module MorphospaceAffectedValidationDependencyClosure
+    $fixture = Join-Path ([IO.Path]::GetTempPath()) ('affected-index-cache-' + [guid]::NewGuid().ToString('N'))
+    [void][IO.Directory]::CreateDirectory((Join-Path $fixture 'scripts'))
+    try {
+        Write-Utf8 (Join-Path $fixture 'scripts/Entry.ps1') "Import-Module `$DynamicPath`n"
+        Write-Utf8 (Join-Path $fixture 'scripts/Other.ps1') "& `$Unknown`n"
+        Write-Utf8 (Join-Path $fixture 'scripts/Target.psm1') "function Invoke-Target([scriptblock]`$Callback) { & `$Callback }`n"
+        $records = @('scripts/Entry.ps1','scripts/Other.ps1','scripts/Target.psm1') | ForEach-Object { [pscustomobject]@{path=$_;mode='100644';type='blob';blob=('0' * 40)} }
+        $inventory = [pscustomobject]@{records=@($records)}
+        $declaration = [pscustomobject][ordered]@{importer='scripts/Entry.ps1';variable='DynamicPath';count=1;target_paths=@('scripts/Target.psm1')}
+        $cold = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @($declaration)
+        $context = & $module {param($i) $c=$null;[void]$script:affectedDependencyIndexes.TryGetValue($i,[ref]$c);$c} $inventory
+        $originalIndex = $context.indexes['scripts/Entry.ps1']
+        $warm = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @($declaration)
+        Assert-True ((ConvertTo-MorphospaceCanonicalJson $cold) -ceq (ConvertTo-MorphospaceCanonicalJson $warm)) 'Warm analysis changed exact closure/declaration resolution.'
+        Assert-True ([object]::ReferenceEquals($originalIndex,$context.indexes['scripts/Entry.ps1'])) 'Warm entrypoint failed to reuse its completed immutable index.'
+        $fallback = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Other.ps1' -Inventory $inventory -DynamicDeclarations @($declaration)
+        Assert-True ($fallback.resolution.entrypoint -ceq 'scripts/Other.ps1' -and $fallback.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($fallback.resolution.used_declarations).Count -eq 1) 'Shared index leaked exact entrypoint state or declaration accounting into fallback.'
+        Assert-True ($context.indexes.Count -eq 3 -and [object]::ReferenceEquals($originalIndex,$context.indexes['scripts/Entry.ps1'])) 'Fallback did not share bounded completed per-script indexes.'
+        $invalidDeclaration = [pscustomobject][ordered]@{importer='scripts/Entry.ps1';variable='DynamicPath';count=2;target_paths=@('scripts/Target.psm1')}
+        Assert-AffectedThrows { Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @($invalidDeclaration) } '*declaration count changed*' 'Cached analysis bypassed fresh expected declaration count.'
+        $changedContext = & $module {param($i) $c=$null;[void]$script:affectedDependencyIndexes.TryGetValue($i,[ref]$c);$c} $inventory
+        Assert-True (-not [object]::ReferenceEquals($context,$changedContext)) 'Declaration change reused a different analysis context.'
+        $records[0].blob = '1' * 40
+        [void](Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @($declaration))
+        $inventoryContext = & $module {param($i) $c=$null;[void]$script:affectedDependencyIndexes.TryGetValue($i,[ref]$c);$c} $inventory
+        Assert-True (-not [object]::ReferenceEquals($changedContext,$inventoryContext)) 'In-place inventory mutation did not reset context.'
+        $target = Join-Path $fixture 'scripts/Target.psm1'
+        Write-Utf8 $target "& `$Runtime`n"
+        $changedBytes = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @($declaration)
+        Assert-True ($changedBytes.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($changedBytes.resolution.fallback_reasons | Where-Object variable -CEQ 'Runtime').Count -eq 1) 'Working-byte change reused an obsolete index.'
+        $validIndex = $inventoryContext.indexes['scripts/Target.psm1']
+        Write-Utf8 $target '{'
+        Assert-AffectedThrows { Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @($declaration) } '*could not parse tracked source*' 'Parse damage was hidden by the cache.'
+        Assert-True ([object]::ReferenceEquals($validIndex,$inventoryContext.indexes['scripts/Target.psm1'])) 'Failed parse published an incomplete index.'
+        Write-Utf8 $target "'fixed'`n"
+        [void](Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @($declaration))
+        # Mutate a warm entrypoint at each live hash boundary, through a temporary
+        # private hash seam. The original hash and module functions are restored.
+        $entryPath = Join-Path $fixture 'scripts/Entry.ps1'
+        $originalText = [IO.File]::ReadAllText($entryPath)
+        foreach ($mutationCall in @(2,3)) {
+            & $module {param($path,$call)
+                $script:cacheTestOriginalHash = ${function:Get-MorphospaceAffectedDependencyBytesSha256}
+                $script:cacheTestCalls=0;$script:cacheTestMutationCall=$call;$script:cacheTestPath=$path
+                function script:Get-MorphospaceAffectedDependencyBytesSha256 {
+                    param([byte[]]$Bytes)
+                    $hash = & $script:cacheTestOriginalHash -Bytes $Bytes
+                    $script:cacheTestCalls++
+                    if ($script:cacheTestCalls -eq $script:cacheTestMutationCall) { [IO.File]::AppendAllText($script:cacheTestPath,"`n# mutation") }
+                    return $hash
+                }
+            } $entryPath $mutationCall
+            try {
+                $pattern = if ($mutationCall -eq 2) { '*changed during analysis*' } else { '*changed after analysis*' }
+                Assert-AffectedThrows { Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @($declaration) } $pattern 'Warm cache bypassed a fresh source hash guard.'
+            } finally {
+                & $module { Set-Item Function:script:Get-MorphospaceAffectedDependencyBytesSha256 $script:cacheTestOriginalHash; Remove-Variable cacheTestOriginalHash,cacheTestCalls,cacheTestMutationCall,cacheTestPath -Scope Script }
+                Write-Utf8 $entryPath $originalText
+            }
+        }
+        # A second repository root must never resolve literals against the first.
+        $secondRoot=Join-Path $fixture 'second'
+        [void][IO.Directory]::CreateDirectory((Join-Path $secondRoot 'scripts'))
+        foreach($record in $records) { Copy-Item -LiteralPath (Join-Path $fixture $record.path) -Destination (Join-Path $secondRoot $record.path) }
+        [void](Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $secondRoot -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @($declaration))
+        $secondContext = & $module {param($i) $c=$null;[void]$script:affectedDependencyIndexes.TryGetValue($i,[ref]$c);$c} $inventory
+        Assert-True (-not [object]::ReferenceEquals($inventoryContext,$secondContext)) 'Another root reused the first root context.'
+        # Re-entry switches the cache context while an outer warm closure is live.
+        # The outer invocation must retain its own context and graph state.
+        & $module {param($root,$i,$d)
+            $script:cacheTestOriginalHash=${function:Get-MorphospaceAffectedDependencyBytesSha256}
+            $script:cacheTestCalls=0;$script:cacheTestReentered=$false
+            $script:cacheTestRoot=$root;$script:cacheTestInventory=$i;$script:cacheTestDeclaration=$d
+            function script:Get-MorphospaceAffectedDependencyBytesSha256 {
+                param([byte[]]$Bytes)
+                $hash=& $script:cacheTestOriginalHash -Bytes $Bytes
+                $script:cacheTestCalls++
+                if ($script:cacheTestCalls -eq 2 -and -not $script:cacheTestReentered) {
+                    $script:cacheTestReentered=$true
+                    [void](Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $script:cacheTestRoot -Entrypoint 'scripts/Other.ps1' -Inventory $script:cacheTestInventory -DynamicDeclarations @($script:cacheTestDeclaration))
+                }
+                return $hash
+            }
+        } $fixture $inventory $declaration
+        try {
+            $reentrant = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $secondRoot -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @($declaration)
+            Assert-True ((ConvertTo-MorphospaceCanonicalJson $cold) -ceq (ConvertTo-MorphospaceCanonicalJson $reentrant)) 'Re-entry contaminated the outer exact closure.'
+        } finally {
+            & $module { Set-Item Function:script:Get-MorphospaceAffectedDependencyBytesSha256 $script:cacheTestOriginalHash; Remove-Variable cacheTestOriginalHash,cacheTestCalls,cacheTestReentered,cacheTestRoot,cacheTestInventory,cacheTestDeclaration -Scope Script }
+        }
+        Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceAffectedValidationDependencyClosure.psm1') -Force
+        $newModule=Get-Module MorphospaceAffectedValidationDependencyClosure
+        $retained=& $newModule {param($i) $c=$null;$script:affectedDependencyIndexes.TryGetValue($i,[ref]$c)} $inventory
+        Assert-True (-not $retained) 'Force import retained a prior runner analysis lifetime.'
+    } finally {
+        $absolute=[IO.Path]::GetFullPath($fixture)
+        $prefix=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar)+[IO.Path]::DirectorySeparatorChar
+        if (-not $absolute.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)) { throw 'Index fixture cleanup escaped temp root.' }
+        if ([IO.Directory]::Exists($absolute)) { Remove-Item -LiteralPath $absolute -Recurse -Force }
+    }
+}
+function Invoke-AffectedDependencyDemandEquivalenceSelfTest {
+    # Golden canonical manifests AND resolution records were captured with the
+    # unmodified main analyzer at 6d202e5e3e09c29b154af0ae7014b75627932519.
+    # This oracle checks externally visible semantics, not filtered index shape.
+    $cases = @(
+        [pscustomobject]@{name='direct-dispatch';source='$dispatch = ''A.psm1''
+& $DISPATCH
+';canonical_sha256='a0a66b072cf114a7fc28d0170d9467589c1315755b67e848e58d1246108e3996'}
+        [pscustomobject]@{name='unused-path-assignment';source='$unused = ''B.psm1''
+$readme = ''data.md''
+$noise = @{ unrelated = { ''safe'' } }
+$dispatch = { ''safe'' }
+& $dispatch
+';canonical_sha256='526fc4c4cb5f00eafc63339cc4c2f99b41fb040d0ae5217d2e17fae4fd421ca4'}
+        [pscustomobject]@{name='unknown-rhs-variable';source='$alias = ''A.psm1''
+$dispatch = $alias
+& $dispatch
+';canonical_sha256='66fe397c4ac93dd515efd88c0f886d3e4c6f189ab4131f8c662663138f42d3c9'}
+        [pscustomobject]@{name='lexical-ambiguity';source='$dispatch = ''A.psm1''
+function Invoke-Inner { if ($true) { $DISPATCH = ''B.psm1'' }; & $dispatch }
+Invoke-Inner
+';canonical_sha256='20cc3fa6418237c21979a6d453161d9f54411fbf0767ff0e8db4dfe134ab8a47'}
+        [pscustomobject]@{name='member-scriptblock';source='$receiver = @{ Run = { ''safe'' } }
+$other = @{ Run = $runtime }
+& $RECEIVER.Run
+';canonical_sha256='e99594191d879e2344a27433708f23407971c8d28cd404d981d88381f0edbb3a'}
+        [pscustomobject]@{name='module-qualified-import';source='$module = ''A.psm1''
+Microsoft.PowerShell.Core\Import-Module $MODULE
+';canonical_sha256='a0a66b072cf114a7fc28d0170d9467589c1315755b67e848e58d1246108e3996'}
+        [pscustomobject]@{name='import-variable-expression';source='$module = ''A.psm1''
+Import-Module -Name ($module)
+';canonical_sha256='a0a66b072cf114a7fc28d0170d9467589c1315755b67e848e58d1246108e3996'}
+        [pscustomobject]@{name='get-command-source';source='$dispatch = ''A.psm1''
+& (Get-Command $DISPATCH).Source
+';canonical_sha256='8d25ef04917f10e6fb341509a299b5d3f8f3d1f61f061a606686336016bd78b0'}
+        [pscustomobject]@{name='expression-method-fallback';source='$dispatch = { ''safe'' }
+$dispatch.Invoke()
+';canonical_sha256='763d978156228fee167fbe0e6514e953c65a8324ed4b74a26864bfb73cc69021'}
+        [pscustomobject]@{name='typed-scriptblock';source='function Invoke-Typed([scriptblock]$dispatch) { & $DISPATCH }
+Invoke-Typed { ''safe'' }
+';canonical_sha256='e99594191d879e2344a27433708f23407971c8d28cd404d981d88381f0edbb3a'}
+    )
+    $fixture=Join-Path ([IO.Path]::GetTempPath()) ('affected-demand-equivalence-'+[guid]::NewGuid().ToString('N'))
+    [void][IO.Directory]::CreateDirectory((Join-Path $fixture 'scripts'))
+    try {
+        $records=@('scripts/Entry.ps1','scripts/A.psm1','scripts/B.psm1','scripts/data.md') | ForEach-Object { [pscustomobject]@{path=$_;mode='100644';type='blob';blob=('0'*40)} }
+        $inventory=[pscustomobject]@{records=@($records)}
+        foreach($path in @('scripts/A.psm1','scripts/B.psm1','scripts/data.md')) { Write-Utf8 (Join-Path $fixture $path) "# fixture`n" }
+        foreach($case in $cases) {
+            Write-Utf8 (Join-Path $fixture 'scripts/Entry.ps1') $case.source
+            foreach($temperature in @('cold','warm')) {
+                $closure=Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @()
+                $manifest=@($closure.paths | ForEach-Object { [pscustomobject][ordered]@{path=[string]$_;mode='100644';blob=('0'*40)} })
+                $actual=Get-MorphospaceCanonicalJsonSha256 ([pscustomobject][ordered]@{manifest=$manifest;resolution=$closure.resolution})
+                Assert-True ($actual -ceq $case.canonical_sha256) "Demand-index '$($case.name)/$temperature' changed the baseline canonical manifest or resolution."
+            }
+        }
+    } finally {
+        $target=[IO.Path]::GetFullPath($fixture)
+        $prefix=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar)+[IO.Path]::DirectorySeparatorChar
+        if (-not $target.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)) { throw 'Demand fixture cleanup escaped temp root.' }
+        if ([IO.Directory]::Exists($target)) { Remove-Item -LiteralPath $target -Recurse -Force }
+    }
+}
 function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]$Registry) {
+    Invoke-AffectedDependencyDemandEquivalenceSelfTest
+    Invoke-AffectedDependencyIndexCacheSelfTest
     Invoke-AffectedRetirementLayoutGraphSelfTest
     $fixture = Join-Path ([IO.Path]::GetTempPath()) ('morphospace-affected-per-check-closure-' + [guid]::NewGuid().ToString('N'))
     [void][IO.Directory]::CreateDirectory((Join-Path $fixture 'scripts'))
