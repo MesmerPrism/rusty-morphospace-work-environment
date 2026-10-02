@@ -123,6 +123,13 @@ try {
     Invoke-ResolverChild -ExpectedExit 1 | Out-Null
 
     $config.apk_permission_observation_contract = "questionable.file_manager.apk_permission_observation.v1"
+    $config.apk_deploy_result_contract = 'questionable.file_manager.apk_deploy_result.v0'
+    Write-JsonUtf8NoBom -Path $configPath -Value $config
+    Invoke-ResolverChild -ExpectedExit 1 | Out-Null
+    $config.Remove('apk_deploy_result_contract')
+    Write-JsonUtf8NoBom -Path $configPath -Value $config
+    Invoke-ResolverChild -ExpectedExit 1 | Out-Null
+    $config.apk_deploy_result_contract = 'questionable.file_manager.apk_deploy_result.v1'
     $config.executable_path = $invalidExtensionFixture
     Write-JsonUtf8NoBom -Path $configPath -Value $config
     Invoke-ResolverChild -ExpectedExit 1 | Out-Null
@@ -131,6 +138,89 @@ try {
     $config.extra = "not-allowed"
     Write-JsonUtf8NoBom -Path $configPath -Value $config
     Invoke-ResolverChild -ExpectedExit 1 | Out-Null
+
+    if ($IsWindows) {
+        # Run the production target-free executable probe, not the inert-byte
+        # path above. The fixture admits only help and operator-actions.
+        $probeProject = Join-Path $testRoot 'probe-project'
+        $probeRuntime = Join-Path $testRoot 'probe-runtime'
+        New-Item -ItemType Directory -Path $probeProject, $probeRuntime | Out-Null
+        $sdkRows = @(& dotnet --list-sdks)
+        if ($LASTEXITCODE -ne 0) { throw 'Probe fixture needs the installed .NET SDK.' }
+        $sdkVersion = @($sdkRows | ForEach-Object { if ([string]$_ -match '^(\d+\.\d+\.\d+) ') { [version]$Matches[1] } } | Sort-Object -Descending | Select-Object -First 1)
+        if ($sdkVersion.Count -ne 1) { throw 'Probe fixture needs a stable installed .NET SDK.' }
+        $targetFramework = "net$($sdkVersion[0].Major).0"
+        Write-JsonUtf8NoBom -Path (Join-Path $probeProject 'global.json') -Value @{ sdk = @{ version = [string]$sdkVersion[0]; rollForward = 'disable' } }
+        [IO.File]::WriteAllText((Join-Path $probeProject 'NuGet.Config'), '<configuration><packageSources><clear /></packageSources></configuration>')
+        [IO.File]::WriteAllText((Join-Path $probeProject 'Fixture.csproj'), @"
+<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>$targetFramework</TargetFramework><AssemblyName>questionable-file-manager</AssemblyName><Company>Mesmer Prism</Company><Product>questionable-file-manager</Product><Version>0.1.0-dev</Version><InformationalVersion>0.1.0-dev+$('a' * 40)</InformationalVersion><AppendSourceRevisionToInformationalVersion>false</AppendSourceRevisionToInformationalVersion></PropertyGroup></Project>
+"@)
+        [IO.File]::WriteAllText((Join-Path $probeProject 'Program.cs'), @'
+using System;
+using System.IO;
+File.AppendAllText(Path.Combine(AppContext.BaseDirectory, "..", "probe-calls.txt"), string.Join("|", args) + "\n");
+if (args.Length == 1 && args[0] == "--help") {
+ Console.WriteLine("apk preflight --serial\napk deploy --serial\napk diagnose --serial\napk stop --serial\napk permissions --serial\nadb forwards --serial");
+} else if (args.Length == 2 && args[0] == "operator-actions" && args[1] == "--json") {
+ Console.WriteLine(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "contracts.json")));
+} else { Environment.Exit(19); }
+'@)
+        $buildLog = Join-Path $testRoot 'probe-build.log'
+        # Keep first-use, package and build-server writes in this owned fixture
+        # root, including the managed runner's isolated write environment.
+        $buildEnvironment = @{}
+        foreach ($name in @('DOTNET_CLI_HOME', 'NUGET_PACKAGES', 'APPDATA', 'LOCALAPPDATA', 'PROGRAMDATA', 'PROGRAMFILES', 'PROGRAMFILES(X86)', 'DOTNET_SKIP_FIRST_TIME_EXPERIENCE', 'DOTNET_CLI_TELEMETRY_OPTOUT', 'MSBUILDDISABLENODEREUSE')) {
+            $buildEnvironment[$name] = [Environment]::GetEnvironmentVariable($name)
+        }
+        try {
+            $env:DOTNET_CLI_HOME = $probeProject
+            $env:NUGET_PACKAGES = Join-Path $probeProject 'packages'
+            $env:APPDATA = Join-Path $probeProject 'appdata'
+            $env:LOCALAPPDATA = Join-Path $probeProject 'localappdata'
+            $env:PROGRAMDATA = Join-Path $probeProject 'programdata'
+            $env:PROGRAMFILES = Join-Path $probeProject 'programfiles'
+            [Environment]::SetEnvironmentVariable('PROGRAMFILES(X86)', (Join-Path $probeProject 'programfiles-x86'))
+            New-Item -ItemType Directory -Path $env:APPDATA, $env:LOCALAPPDATA, $env:PROGRAMDATA, $env:PROGRAMFILES, ([Environment]::GetEnvironmentVariable('PROGRAMFILES(X86)')) | Out-Null
+            $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE = '1'
+            $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
+            $env:MSBUILDDISABLENODEREUSE = '1'
+            Push-Location $probeProject
+            try { & dotnet build Fixture.csproj --nologo --configuration Release --output $probeRuntime "-p:RestoreConfigFile=$(Join-Path $probeProject 'NuGet.Config')" *> $buildLog }
+            finally { Pop-Location }
+            if ($LASTEXITCODE -ne 0) { throw "Target-free probe fixture build failed: $((Get-Content -LiteralPath $buildLog -Tail 12) -join ' | ')" }
+        } finally {
+            foreach ($name in $buildEnvironment.Keys) { [Environment]::SetEnvironmentVariable($name, $buildEnvironment[$name]) }
+        }
+        $probeConfig = $config | ConvertTo-Json -Depth 16 | ConvertFrom-Json
+        $probeConfig.PSObject.Properties.Remove('extra')
+        $probeConfig.PSObject.Properties.Remove('executable_path')
+        $probeConfig.runtime_root = $probeRuntime
+        $contracts = [ordered]@{
+            inspectedDeployment = $config.inspected_deployment_contract; apkPreflightResult = $config.apk_preflight_result_contract
+            apkDeployResult = $config.apk_deploy_result_contract; apkDiagnosticResult = $config.apk_diagnostic_result_contract
+            apkStopResult = $config.apk_stop_result_contract; apkPermissionObservation = $config.apk_permission_observation_contract
+            adbForwardInventoryResult = $config.adb_forward_inventory_result_contract; apkLaunchResult = $config.apk_launch_result_contract
+            launcherExportProof = $config.launcher_export_proof_contract; runtimeObservation = $config.runtime_observation_contract
+        }
+        foreach ($probeCase in @('current', 'mismatched-deploy', 'missing-deploy')) {
+            $caseContracts = $contracts | ConvertTo-Json | ConvertFrom-Json
+            if ($probeCase -eq 'mismatched-deploy') { $caseContracts.apkDeployResult = 'questionable.file_manager.apk_deploy_result.v0' }
+            if ($probeCase -eq 'missing-deploy') { $caseContracts.PSObject.Properties.Remove('apkDeployResult') }
+            Write-JsonUtf8NoBom -Path (Join-Path $probeRuntime 'contracts.json') -Value @{ schema = 'questionable.file_manager.operator_actions.v1'; contracts = $caseContracts }
+            $probeConfig.distribution_files = @(Get-ChildItem -LiteralPath $probeRuntime -File | Sort-Object Name | ForEach-Object {
+                [pscustomobject]@{ relative_path = $_.Name; size_bytes = $_.Length; sha256 = (Get-FileHash -LiteralPath $_.FullName).Hash.ToLowerInvariant() }
+            })
+            $probeConfig.distribution_manifest_sha256 = Get-DistributionManifestSha256 -EntryPoint $probeConfig.entry_point_relative_path -Files $probeConfig.distribution_files
+            Write-JsonUtf8NoBom -Path $configPath -Value $probeConfig
+            $probeLog = Join-Path $testRoot 'probe-calls.txt'
+            if (Test-Path -LiteralPath $probeLog) { Remove-Item -LiteralPath $probeLog }
+            $probeOutput = @(& $hostExecutable -NoProfile -File $resolver -RepoRoot $RepoRoot -ConfigPath $configPath -Json 2>&1)
+            $expectedExit = if ($probeCase -eq 'current') { 0 } else { 1 }
+            if ($LASTEXITCODE -ne $expectedExit) { throw "Actual provider probe case failed: $probeCase ($($probeOutput -join ' | '))" }
+            $probeCalls = @(Get-Content -LiteralPath $probeLog)
+            if ($probeCalls.Count -ne 2 -or $probeCalls[0] -cne '--help' -or $probeCalls[1] -cne 'operator-actions|--json') { throw 'Resolver probe entered a device route.' }
+        }
+    }
 
     $deploymentOutput = @(
         & $hostExecutable -NoProfile -ExecutionPolicy Bypass `
@@ -149,6 +239,9 @@ try {
         -not $deploymentResult.partial_runtime_copy_rejected -or
         -not $deploymentResult.duplicate_runtime_filenames_preserved -or
         -not $deploymentResult.windows_path_bound_enforced -or
+        $deploymentResult.composed_deployment_cases -ne 12 -or
+        -not $deploymentResult.composed_deployment_single_dispatch -or
+        -not $deploymentResult.composed_deployment_no_uncertainty_retry -or
         ($IsWindows -and -not $deploymentResult.host_read_lock_enforced) -or
         (-not $IsWindows -and $deploymentResult.host_read_lock_enforced) -or
         -not $deploymentResult.process_failure_retained) {
