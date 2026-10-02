@@ -301,6 +301,82 @@ $cases=[Collections.Generic.List[string]]::new()
     [pscustomobject]@{schema='local.active_retirement_claim_diagnostic_checks.v1';status='passed';cases=@($cases);authority_credit=$false}|ConvertTo-Json -Depth 8
 
 }
+
+function Test-RetirementHistoricalLedgerObservation {
+    param($Module,[string]$Workspace,$Event)
+    # Exercise the real historical verifier and its original namespace/source/
+    # transaction guards. Only call counts and deliberate disk mutations are hooked.
+    &$Module {
+        $script:ledgerTestOriginalEvents=${function:Get-ActiveRetirementEvents}
+        $script:ledgerTestOriginalSchema=${function:Assert-ActiveRetirementSchema}
+        $script:ledgerTestOriginalClaim=${function:Get-ActiveRetirementClaim}
+        function script:Assert-ActiveRetirementSchema($Document,$Name){if($Name-cin@('iteration-event.schema.json','iteration-event-v2.schema.json')){$script:ledgerTestSchemaCalls++};&$script:ledgerTestOriginalSchema $Document $Name}
+        function script:Get-ActiveRetirementEvents($Workspace){$script:ledgerTestReads++;$value=&$script:ledgerTestOriginalEvents $Workspace;if($script:ledgerTestMutation-and$script:ledgerTestReads-eq$script:ledgerTestMutation.read){[IO.File]::WriteAllBytes($script:ledgerTestMutation.path,$script:ledgerTestMutation.bytes)};if($script:ledgerTestSchemaDrift-and$script:ledgerTestReads-eq1){$script:ActiveRetirementHistoricalEventsScope.schema_hashes='0'*129};return $value}
+        function script:Get-ActiveRetirementClaim($Workspace,$Request,$Events){
+            # Two extra joins model the unchanged Claim/Ready diagnostic readers;
+            # they call the production reader, never replace its authentication.
+            if($script:ledgerTestExtraJoins){$null=Get-ActiveRetirementEvents $Workspace;$null=Get-ActiveRetirementEvents $Workspace}
+            if($script:ledgerTestReenter){$null=Test-MorphospaceHistoricalActiveUnitRetirement -WorkspaceRoot $Workspace -ExpectedEvent $script:ledgerTestEvent}
+            &$script:ledgerTestOriginalClaim $Workspace $Request $Events
+        }
+    }
+    $ledger=Join-Path $Workspace 'iteration-events.jsonl';$original=[IO.File]::ReadAllBytes($ledger)
+    $eventCount=@([Text.UTF8Encoding]::new($false,$true).GetString($original).Split([char]10)|Where-Object{$_}).Count
+    function Observe([object]$Mutation=$null,[bool]$Extra=$true,[bool]$Reenter=$false,[bool]$SchemaDrift=$false,[string]$WorkspaceArgument=$Workspace){
+        &$Module {param($mutation,$extra,$reenter,$schemaDrift,$event)$script:ledgerTestReads=0;$script:ledgerTestSchemaCalls=0;$script:ledgerTestMutation=$mutation;$script:ledgerTestExtraJoins=$extra;$script:ledgerTestReenter=$reenter;$script:ledgerTestSchemaDrift=$schemaDrift;$script:ledgerTestEvent=$event} $Mutation $Extra $Reenter $SchemaDrift $Event
+        $watch=[Diagnostics.Stopwatch]::StartNew();$failed=$false;$message=''
+        try{$null=&$Module {param($workspace,$event)Test-MorphospaceHistoricalActiveUnitRetirement -WorkspaceRoot $workspace -ExpectedEvent $event} $WorkspaceArgument $Event}catch{$failed=$true;$message=$_.Exception.Message}finally{$watch.Stop()}
+        &$Module {param($failed,$message,$elapsed)[pscustomobject]@{failed=$failed;message=$message;elapsed_ms=$elapsed;raw_reads=$script:ledgerTestReads;schema_checks=$script:ledgerTestSchemaCalls;scope_cleared=$null-eq$script:ActiveRetirementHistoricalEventsScope}} $failed $message $watch.Elapsed.TotalMilliseconds
+    }
+    $cases=[Collections.Generic.List[string]]::new()
+    function Require($name,$condition){Assert-RetirementTest $condition $name;$cases.Add($name)}
+    try{
+        $first=Observe
+        Require 'one actual verifier validates event schemas once across repeated joins and final raw read' (-not$first.failed-and$first.raw_reads-ge4-and$first.schema_checks-eq$eventCount-and$first.scope_cleared)
+        $second=Observe
+        Require 'new verifier independently authenticates schemas again' (-not$second.failed-and$second.schema_checks-eq$eventCount-and$second.scope_cleared)
+        $spelling=Observe -WorkspaceArgument ($Workspace+[IO.Path]::DirectorySeparatorChar)
+        Require 'supported trailing workspace separator preserves authentication' (-not$spelling.failed-and$spelling.scope_cleared)
+        if($IsWindows){$spelling=Observe -WorkspaceArgument $Workspace.ToUpperInvariant();Require 'Windows workspace case spelling preserves authentication' (-not$spelling.failed-and$spelling.scope_cleared)}
+        foreach($where in @('prefix','tail')){
+            $changed=[byte[]]$original.Clone();$index=if($where-ceq'prefix'){0}else{$changed.Length-2};$changed[$index]=($changed[$index]-bxor1)
+            try{$result=Observe @{read=1;path=$ledger;bytes=$changed};Require "same-length $where bytes changed after observation reject" ($result.failed-and$result.scope_cleared)}finally{[IO.File]::WriteAllBytes($ledger,$original)}
+        }
+        $changed=[byte[]]($original+[Text.Encoding]::UTF8.GetBytes(" `n"))
+        try{$result=Observe @{read=3;path=$ledger;bytes=$changed};Require 'final-return ledger freshness rejects changed tail length' ($result.failed-and$result.scope_cleared)}finally{[IO.File]::WriteAllBytes($ledger,$original)}
+        $result=Observe $null $true $true
+        Require 'reentrant verifier rejects and clears lexical scope' ($result.failed-and$result.message-ceq'Historical retirement event authentication cannot be reentered.'-and$result.scope_cleared)
+        $result=Observe $null $true $false $true
+        Require 'reused observation requires exact schema-source identity' ($result.failed-and$result.message-ceq'Historical retirement event schemas changed during authentication.'-and$result.scope_cleared)
+        $null=Observe
+        $proof=&$Module {param($workspace,$event)Test-MorphospaceHistoricalActiveUnitRetirement -WorkspaceRoot $workspace -ExpectedEvent $event} $Workspace $Event
+        foreach($damage in @('source','transaction','namespace')){
+            $path=if($damage-ceq'source'){Join-Path $Workspace $proof.request.source_composition.path}elseif($damage-ceq'transaction'){Join-Path $Workspace "receipts/transactions/$($proof.transaction_id).completion.json"}else{Join-Path $Workspace "receipts/transactions/$($proof.transaction_id).intent.json"}
+            $saved=if(Test-Path $path){[IO.File]::ReadAllBytes($path)}else{$null}
+            try{
+                if($damage-ceq'namespace'){$intent=Read-EnvelopeProtocolJson $path;$intent.artifacts[0].path='receipts/transactions/forbidden-target.json';Write-EnvelopeJson $path $intent}else{[IO.File]::WriteAllText($path,'damaged')}
+                $result=Observe;Require "original $damage authentication still rejects" ($result.failed-and$result.scope_cleared)
+            }finally{if($null-ne$saved){[IO.File]::WriteAllBytes($path,$saved)}else{Remove-Item -LiteralPath $path}}
+        }
+        # Pending filesystem stages are an enclosing history guard, not a new
+        # standalone historical-verifier policy. Exercise that original owner.
+        $historyModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceCurrentWorkHistory.psm1') -PassThru
+        $history=&$historyModule {param($workspace)Get-MorphospaceCurrentWorkHistory -WorkspaceRoot $workspace} $Workspace
+        Require 'enclosing small-fixture current history remains authenticated' $history.authenticated
+        $pending=Join-Path $Workspace 'receipts/transactions/unmatched-pending-transition.intent.json'
+        try{
+            $intent=Read-EnvelopeProtocolJson (Join-Path $Workspace "receipts/transactions/$($proof.transaction_id).intent.json");$intent.transaction_id='unmatched-pending-transition';Write-EnvelopeJson $pending $intent
+            $denied=$false;try{$null=&$historyModule {param($workspace)Get-MorphospaceCurrentWorkHistory -WorkspaceRoot $workspace} $Workspace}catch{$denied=$true}
+            Require 'enclosing original incomplete transaction guard still rejects' $denied
+        }finally{Remove-Item -LiteralPath $pending}
+        $restored=Observe
+        Require 'restored inputs require fresh authentication and pass' (-not$restored.failed-and$restored.schema_checks-eq$eventCount-and$restored.scope_cleared)
+        [pscustomobject]@{check='historical-retirement-ledger-observation';status='pass';cases=$cases.ToArray();event_count=$eventCount;positive=$first;scope='One real historical verifier with instrumented additional diagnostic-style joins; no full consumer timing claim'}|ConvertTo-Json -Depth 10 -Compress
+    }finally{
+        [IO.File]::WriteAllBytes($ledger,$original)
+        &$Module {Set-Item Function:script:Get-ActiveRetirementEvents $script:ledgerTestOriginalEvents;Set-Item Function:script:Assert-ActiveRetirementSchema $script:ledgerTestOriginalSchema;Set-Item Function:script:Get-ActiveRetirementClaim $script:ledgerTestOriginalClaim}
+    }
+}
 if($CoreWorkerGroup-ceq'Diagnostics'){
     $null=Invoke-ActiveRetirementUpgradeClaimDescendantChecks -ScriptsRoot $PSScriptRoot
     [pscustomobject]@{schema='local.active_retirement_core_group.v1';core_worker_group='Diagnostics';status='pass';check='active-unit-retirement';scenario='Core'}|ConvertTo-Json -Compress
@@ -688,6 +764,7 @@ try{
     $event=Get-Content -LiteralPath (Join-Path $success 'iteration-events.jsonl')|Select-Object -Last 1|ConvertFrom-Json -DateKind String
     $proof=&$retirementModule {param($workspace,$expected)Test-MorphospaceHistoricalActiveUnitRetirement -WorkspaceRoot $workspace -ExpectedEvent $expected} $success $event
     Assert-RetirementTest ($proof.receipt.replacement_unit_id-ceq'u003'-and-not$proof.receipt.accepted) 'authenticated named replacement lineage'
+    Test-RetirementHistoricalLedgerObservation $retirementModule $success $event
     $post=Get-RetirementInventory $success;Invoke-RetirementTest $success|Out-Null
     Assert-RetirementTest ((Get-RetirementInventory $success)-ceq$post) 'completed replay changed bytes'
     foreach($phase in @('after-intent','after-artifact','after-projection','after-event')){
