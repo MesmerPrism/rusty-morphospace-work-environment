@@ -169,17 +169,23 @@ if (args.Length == 1 && args[0] == "--help") {
         # Keep first-use, package and build-server writes in this owned fixture
         # root, including the managed runner's isolated write environment.
         $buildEnvironment = @{}
-        foreach ($name in @('DOTNET_CLI_HOME', 'NUGET_PACKAGES', 'DOTNET_SKIP_FIRST_TIME_EXPERIENCE', 'DOTNET_CLI_TELEMETRY_OPTOUT', 'MSBUILDDISABLENODEREUSE')) {
+        foreach ($name in @('DOTNET_CLI_HOME', 'NUGET_PACKAGES', 'APPDATA', 'LOCALAPPDATA', 'PROGRAMDATA', 'PROGRAMFILES', 'PROGRAMFILES(X86)', 'DOTNET_SKIP_FIRST_TIME_EXPERIENCE', 'DOTNET_CLI_TELEMETRY_OPTOUT', 'MSBUILDDISABLENODEREUSE')) {
             $buildEnvironment[$name] = [Environment]::GetEnvironmentVariable($name)
         }
         try {
             $env:DOTNET_CLI_HOME = $probeProject
             $env:NUGET_PACKAGES = Join-Path $probeProject 'packages'
+            $env:APPDATA = Join-Path $probeProject 'appdata'
+            $env:LOCALAPPDATA = Join-Path $probeProject 'localappdata'
+            $env:PROGRAMDATA = Join-Path $probeProject 'programdata'
+            $env:PROGRAMFILES = Join-Path $probeProject 'programfiles'
+            [Environment]::SetEnvironmentVariable('PROGRAMFILES(X86)', (Join-Path $probeProject 'programfiles-x86'))
+            New-Item -ItemType Directory -Path $env:APPDATA, $env:LOCALAPPDATA, $env:PROGRAMDATA, $env:PROGRAMFILES, ([Environment]::GetEnvironmentVariable('PROGRAMFILES(X86)')) | Out-Null
             $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE = '1'
             $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
             $env:MSBUILDDISABLENODEREUSE = '1'
             Push-Location $probeProject
-            try { & dotnet build Fixture.csproj --nologo --configuration Release --output $probeRuntime *> $buildLog }
+            try { & dotnet build Fixture.csproj --nologo --configuration Release --output $probeRuntime "-p:RestoreConfigFile=$(Join-Path $probeProject 'NuGet.Config')" *> $buildLog }
             finally { Pop-Location }
             if ($LASTEXITCODE -ne 0) { throw "Target-free probe fixture build failed: $((Get-Content -LiteralPath $buildLog -Tail 12) -join ' | ')" }
         } finally {
