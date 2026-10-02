@@ -174,8 +174,8 @@ function Get-MorphospaceLedgerEventTail { param([string]$EventsPath)
     return [string]$events[-1].event_id
 }
 function Assert-MorphospaceLedgerEventPlacement {
-    param([string]$EventsPath,[object]$Intent,[switch]$AllowHistorical,[switch]$RequirePresent)
-    $snapshot=Get-MorphospaceLedgerSnapshot $EventsPath
+    param([string]$EventsPath,[object]$Intent,[switch]$AllowHistorical,[switch]$RequirePresent,[object]$ObservedSnapshot=$null)
+    $snapshot=if($null-ne$ObservedSnapshot){$ObservedSnapshot}else{Get-MorphospaceLedgerSnapshot $EventsPath}
     $events=@($snapshot.events)
     $matchingIndexes=@()
     for($index=0;$index-lt$events.Count;$index++){
@@ -665,7 +665,7 @@ function Install-MorphospaceLedgerArtifacts {
     }
 }
 function Assert-MorphospaceLedgerCommittedCompletion {
-    param([string]$Workspace,[string]$TransactionId,[string]$IntentRelative,[string]$IntentAbsolute,[object]$Intent,[string]$CompletionAbsolute)
+    param([string]$Workspace,[string]$TransactionId,[string]$IntentRelative,[string]$IntentAbsolute,[object]$Intent,[string]$CompletionAbsolute,[object]$ObservedSnapshot=$null)
     $completion=Read-MorphospaceLedgerJson $CompletionAbsolute
     Assert-MorphospaceExactPropertySet $completion @('schema','transaction_id','completed_at','intent','state_sha256','unit_sha256','event_id','status') @() 'Transition ledger completion'
     Assert-MorphospaceExactPropertySet $completion.intent @('role','path','schema','sha256') @() 'Transition ledger completion intent reference'
@@ -683,12 +683,13 @@ function Assert-MorphospaceLedgerCommittedCompletion {
     $completedAt=Test-MorphospaceStrictUtcTimestamp ([string]$completion.completed_at)
     if($completedAt-lt$createdAt){throw 'Transition ledger completion timestamp precedes its intent creation.'}
     $eventsAbsolute=Resolve-MorphospaceWorkspacePath -WorkspaceRoot $Workspace -RelativePath ([string]$Intent.events.path) -RequireLeaf
-    [void](Assert-MorphospaceLedgerEventPlacement $eventsAbsolute $Intent -AllowHistorical -RequirePresent)
+    [void](Assert-MorphospaceLedgerEventPlacement $eventsAbsolute $Intent -AllowHistorical -RequirePresent -ObservedSnapshot $ObservedSnapshot)
     foreach($artifact in @($Intent.artifacts)){
         $target=Resolve-MorphospaceWorkspacePath -WorkspaceRoot $Workspace -RelativePath ([string]$artifact.path) -RequireLeaf
         if((Get-MorphospaceFileSha256 $target)-cne[string]$artifact.sha256){throw "Transition ledger committed artifact differs from its intent: $($artifact.path)"}
     }
-    if([string](Get-MorphospaceLedgerEventTail $eventsAbsolute)-ceq[string]$Intent.event.event_id){
+    $tailId=if($null-ne$ObservedSnapshot){[string]$ObservedSnapshot.tail_id}else{[string](Get-MorphospaceLedgerEventTail $eventsAbsolute)}
+    if($tailId-ceq[string]$Intent.event.event_id){
         foreach($projection in @('state','unit')){
             $current=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $Workspace ([string]$Intent.$projection.path) -RequireLeaf)
             if((Get-MorphospaceLedgerDocumentHash $current)-cne[string]$Intent.target.$projection.sha256){throw "Transition ledger tail completion does not own its target $projection projection."}
@@ -696,6 +697,33 @@ function Assert-MorphospaceLedgerCommittedCompletion {
         foreach($projection in @($(if($Intent.PSObject.Properties.Name-contains'additional_projections'){$Intent.additional_projections}else{@()}))){
             $current=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $Workspace ([string]$projection.path) -RequireLeaf)
             if((Get-MorphospaceLedgerDocumentHash $current)-cne[string]$projection.target_sha256){throw "Transition ledger tail completion does not own additional projection '$($projection.path)'."}
+        }
+    }
+}
+function Get-MorphospaceReadOnlyLedgerObservation {
+    param([string]$EventsPath)
+    # Private, invocation-local observation. No public API accepts a trusted snapshot.
+    $schemaRoot=Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'schemas'
+    $pins=@(foreach($path in @(
+        $PSCommandPath,
+        (Join-Path $PSScriptRoot 'MorphospaceProtocolCommon.psm1'),
+        (Join-Path $schemaRoot 'iteration-event.schema.json'),
+        (Join-Path $schemaRoot 'iteration-event-v2.schema.json')
+    )){[pscustomobject]@{path=$path;sha256=Get-MorphospaceFileSha256 $path}})
+    $observation=[pscustomobject]@{path=$EventsPath;policy=$pins;snapshot=Get-MorphospaceLedgerSnapshot $EventsPath}
+    Assert-MorphospaceReadOnlyLedgerObservation $observation
+    $observation
+}
+function Assert-MorphospaceReadOnlyLedgerObservation {
+    param([object]$Observation)
+    $bytes=[IO.File]::ReadAllBytes($Observation.path)
+    if($bytes.LongLength-ne$Observation.snapshot.length-or
+       (Get-MorphospaceLedgerByteHash $bytes)-cne$Observation.snapshot.sha256){
+        throw 'Read-only committed transition ledger changed during authentication.'
+    }
+    foreach($pin in $Observation.policy){
+        if((Get-MorphospaceFileSha256 $pin.path)-cne$pin.sha256){
+            throw 'Read-only committed transition schema or parser policy changed during authentication.'
         }
     }
 }
@@ -728,19 +756,22 @@ function Test-MorphospaceCommittedTransitionLedger {
             }
         }
         Assert-MorphospaceLedgerArtifactNamespace $workspace $TransactionId $intent
-        Assert-MorphospaceLedgerCommittedCompletion $workspace $TransactionId $intentRelative $intentAbsolute $intent $completionAbsolute
         $eventsAbsolute=Resolve-MorphospaceWorkspacePath -WorkspaceRoot $workspace -RelativePath ([string]$intent.events.path) -RequireLeaf
-        $tailId=[string](Get-MorphospaceLedgerEventTail $eventsAbsolute)
+        $observation=Get-MorphospaceReadOnlyLedgerObservation $eventsAbsolute
+        Assert-MorphospaceLedgerCommittedCompletion $workspace $TransactionId $intentRelative $intentAbsolute $intent $completionAbsolute -ObservedSnapshot $observation.snapshot
+        $tailId=[string]$observation.snapshot.tail_id
         if($RequireTail-and$tailId-cne[string]$intent.event.event_id){
             throw 'Committed transition event is not the physical ledger tail.'
         }
-        return [pscustomobject][ordered]@{
+        $result=[pscustomobject][ordered]@{
             transaction_id=$TransactionId
             status='committed'
             intent=$intent
             completion=Read-MorphospaceLedgerJson $completionAbsolute
             event_tail_id=$tailId
         }
+        Assert-MorphospaceReadOnlyLedgerObservation $observation
+        return $result
     } finally {Exit-MorphospaceWorkspaceMutex $lock}
 }
 function Assert-MorphospaceLedgerExternalOwnerBindings {
