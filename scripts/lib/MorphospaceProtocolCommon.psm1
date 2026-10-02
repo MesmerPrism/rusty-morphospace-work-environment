@@ -1,6 +1,39 @@
 Microsoft.PowerShell.Core\Set-StrictMode -Version 2.0
 $ErrorActionPreference = "Stop"
 
+if (-not ('MorphospaceCanonicalJsonStringV1' -as [type])) {
+    Microsoft.PowerShell.Utility\Add-Type -TypeDefinition @'
+using System.Text;
+public static class MorphospaceCanonicalJsonStringV1 {
+    public static void Append(string value, StringBuilder builder) {
+        value = value ?? "";
+        const string hex = "0123456789abcdef";
+        builder.Append('"');
+        for (int i=0; i<value.Length; i++) {
+            char c=value[i];
+            switch(c) {
+                case '\b': builder.Append("\\b"); break;
+                case '\t': builder.Append("\\t"); break;
+                case '\n': builder.Append("\\n"); break;
+                case '\f': builder.Append("\\f"); break;
+                case '\r': builder.Append("\\r"); break;
+                case '"': builder.Append("\\\""); break;
+                case '\\': builder.Append("\\\\"); break;
+                default:
+                    if(c<32 || c>126) {
+                        builder.Append("\\u");
+                        builder.Append(hex[(c>>12)&15]); builder.Append(hex[(c>>8)&15]);
+                        builder.Append(hex[(c>>4)&15]); builder.Append(hex[c&15]);
+                    } else builder.Append(c);
+                    break;
+            }
+        }
+        builder.Append('"');
+    }
+}
+'@
+}
+
 function ConvertTo-MorphospaceLowerHex {
     param([Parameter(Mandatory=$true)][AllowEmptyCollection()][byte[]]$Bytes)
     $builder=[Text.StringBuilder]::new($Bytes.Length*2)
@@ -42,19 +75,7 @@ function Get-MorphospaceStreamSha256 {
 
 function Add-MorphospaceCanonicalJsonString {
     param([string]$Value,[Text.StringBuilder]$Builder)
-    [void]$Builder.Append('"')
-    foreach($codeUnit in $Value.ToCharArray()){
-        $code=[int]$codeUnit
-        if($code-eq8){[void]$Builder.Append('\b');continue}
-        if($code-eq9){[void]$Builder.Append('\t');continue}
-        if($code-eq10){[void]$Builder.Append('\n');continue}
-        if($code-eq12){[void]$Builder.Append('\f');continue}
-        if($code-eq13){[void]$Builder.Append('\r');continue}
-        if($code-eq34){[void]$Builder.Append('\"');continue}
-        if($code-eq92){[void]$Builder.Append('\\');continue}
-        if($code-lt32-or$code-gt126){[void]$Builder.Append(('\u{0:x4}'-f$code))}else{[void]$Builder.Append($codeUnit)}
-    }
-    [void]$Builder.Append('"')
+    [MorphospaceCanonicalJsonStringV1]::Append($Value,$Builder)
 }
 
 function Add-MorphospaceCanonicalJsonValue {
