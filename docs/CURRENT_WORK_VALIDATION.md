@@ -19,6 +19,23 @@ Register this exact command in the current project's validation profile.
 rerunning the shared owner's isolated test suite. Neither switch grants
 validation, acceptance, publication, or device evidence by itself.
 
+For repeated authentication against an unchanged, independently validated owner,
+add `-CurrentWorkspaceOnly` to that same command. This explicit owner mode keeps
+the complete project bundle, current-work history, transaction, receipt, source
+composition, instruction and feature checks. It separates fixed owner schema
+examples, negative fixtures and self-tests from live project authentication.
+Run default owner conformance when validating or adopting a changed owner;
+this workspace mode supplies no conformance, acceptance or execution credit.
+It is unavailable for alternative instruction-only, delta or historical-debt
+modes. It requires an explicit workspace and both existing switches.
+
+Before history authentication, this mode checks the required workspace files
+and any current or queued unit's exact tooling-context file and local resolver
+pin. A missing or changed resolver therefore denies early. The later complete
+provenance and executor checks still run. No cache spans project changes or
+successive effects; every invocation reads and authenticates the current owner.
+Device, source-launch and effect-specific guards remain with their callers.
+
 An owner-produced [accepted validation evidence relocation](ACCEPTED_VALIDATION_EVIDENCE_RELOCATION.md)
 may immediately follow the idle accepted checkpoint. While the correction
 remains after the latest accepted boundary, current-work replay authenticates

@@ -43,7 +43,7 @@ Write-AffectedFixtureStage 'imports-enter'
 
 # Independent consumer expectation shared across separately executable phases.
 # Do not derive this fixture contract from the selector under test.
-$workflowConsumerFixtureChecks = @('automation-receipt-v2-compatibility','normal-validation-selector','public-boundary','validating-candidate-rematerialization','validation-only-write-scope-narrowing','work-unit-automation','workflow-action-registry','workflow-contracts')
+$workflowConsumerFixtureChecks = @('automation-receipt-v2-compatibility','current-workspace-validation','normal-validation-selector','public-boundary','validating-candidate-rematerialization','validation-only-write-scope-narrowing','work-unit-automation','workflow-action-registry','workflow-contracts')
 $developmentUnitAdmissionBatchChecks = @(
     'active-development-envelope-extension',
     'tooling-context','tooling-context-product-negative','tooling-context-provenance-negative',
@@ -5359,7 +5359,7 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     )
     $preparationRepositoryScopeSelectionChecks=@(
         $preparationRepositoryScopeConsumerChecks + @(
-            'automation-receipt-v2-compatibility','historical-supersession-compatibility',
+            'automation-receipt-v2-compatibility','current-workspace-validation','historical-supersession-compatibility',
             'validation-only-write-scope-narrowing','workflow-action-registry'
         )
     )
