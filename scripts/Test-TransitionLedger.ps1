@@ -1,3 +1,5 @@
+[CmdletBinding()]
+param([switch]$ReadOnlySnapshotOnly)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $transitionModulePath = Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1'
@@ -535,6 +537,83 @@ function Invoke-ConcurrentLedgerDriftTest {
     Assert-Ledger (-not [IO.File]::Exists($intentPath)) "$DriftTarget drift wrote a transition intent"
     Assert-Ledger (@(Get-Content (Join-Path $WorkspaceRoot 'iteration-events.jsonl') | Where-Object { $_ }).Count -eq 0) "$DriftTarget drift appended an event"
 }
+
+function Test-ReadOnlyCommittedSnapshot {
+    $fixture=Join-Path ([IO.Path]::GetTempPath()) ('ledger-observation-'+[guid]::NewGuid().ToString('N'))
+    $count=0
+    try {
+        Initialize-LedgerFixture $fixture ([pscustomobject]@{schema='test';stage='before'}) ([pscustomobject]@{schema='test';status='before'})
+        foreach($sequence in 1..2){
+            $arguments=@{WorkspaceRoot=$fixture;TransactionId="observed-$sequence-transition";StatePath='workspace.state.json';UnitPath='iteration-units/unit.json';EventsPath='iteration-events.jsonl';TargetState=[pscustomobject]@{schema='test';stage="after-$sequence"};TargetUnit=[pscustomobject]@{schema='test';status="after-$sequence"};Event=(New-LedgerEvent "observed-$sequence" $sequence)}
+            if($sequence-eq1){$body=[Text.Encoding]::UTF8.GetBytes('retained-artifact');$arguments.Artifacts=@([pscustomobject]@{path='receipts/observed.bin';sha256=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($body)).ToLowerInvariant();bytes_base64=[Convert]::ToBase64String($body)})}
+            Start-MorphospaceTransitionLedger @arguments | Out-Null
+        }
+        & $transitionModule {
+            $script:originalReader=(Get-Item Function:Read-MorphospaceLedgerEvents).ScriptBlock
+            $script:originalObservationAssert=(Get-Item Function:Assert-MorphospaceReadOnlyLedgerObservation).ScriptBlock
+            $script:parseCount=0
+            Set-Item Function:script:Read-MorphospaceLedgerEvents {
+                param([string]$EventsPath,[AllowEmptyCollection()][byte[]]$ProvidedBytes)
+                $script:parseCount++
+                & $script:originalReader @PSBoundParameters
+            }
+        }
+        $historical=Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $fixture -TransactionId observed-1-transition -ExpectedStatePath workspace.state.json -ExpectedUnitPath iteration-units/unit.json -ExpectedEventsPath iteration-events.jsonl
+        Assert-Ledger ($historical.status-ceq'committed'-and$historical.event_tail_id-ceq'observed-2') 'historical transaction output changed';$count++
+        Assert-Ledger ((& $transitionModule {$script:parseCount})-eq1) 'committed transaction parsed its ledger more than once';$count++
+        $tail=Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $fixture -TransactionId observed-2-transition -RequireTail
+        Assert-Ledger ($tail.event_tail_id-ceq'observed-2'-and(& $transitionModule {$script:parseCount})-eq2) 'separate invocation did not parse freshly';$count++
+        $rejected=$false;try{Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $fixture -TransactionId observed-1-transition -RequireTail|Out-Null}catch{$rejected=$true}
+        Assert-Ledger $rejected 'historical transaction accepted RequireTail';$count++
+        $rejected=$false;try{Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $fixture -TransactionId observed-1-transition -ExpectedEventsPath wrong.json|Out-Null}catch{$rejected=$true}
+        Assert-Ledger $rejected 'wrong expected ledger path accepted';$count++
+        $damage=@{
+            malformed={param($p)[IO.File]::WriteAllText("$p/iteration-events.jsonl",'{')}
+            schema={param($p)$s=[IO.File]::ReadAllText("$p/iteration-events.jsonl");[IO.File]::WriteAllText("$p/iteration-events.jsonl",$s.Replace('iteration_event.v1','iteration_event.v9'))}
+            duplicate={param($p)$s=[IO.File]::ReadAllText("$p/iteration-events.jsonl");[IO.File]::WriteAllText("$p/iteration-events.jsonl",$s.Replace('observed-2','observed-1'))}
+            absent={param($p)$s=[IO.File]::ReadAllLines("$p/iteration-events.jsonl");[IO.File]::WriteAllText("$p/iteration-events.jsonl",$s[1]+"`n")}
+            sequence={param($p)$s=[IO.File]::ReadAllText("$p/iteration-events.jsonl");[IO.File]::WriteAllText("$p/iteration-events.jsonl",$s.Replace('"sequence":2','"sequence":3'))}
+            chronology={param($p)$s=[IO.File]::ReadAllText("$p/iteration-events.jsonl");$i=$s.LastIndexOf('2026-01-01');$s=$s.Remove($i,10).Insert($i,'2025-01-01');[IO.File]::WriteAllText("$p/iteration-events.jsonl",$s)}
+            prefix={param($p)$s=[IO.File]::ReadAllText("$p/iteration-events.jsonl");[IO.File]::WriteAllText("$p/iteration-events.jsonl",$s.Replace('Transition-ledger test event.','Transition-ledger damaged event.'))}
+            intent={param($p)$v=Read-TestProtocolJson "$p/receipts/transactions/observed-1-transition.intent.json";$v.event.event_id='different';Write-Json "$p/receipts/transactions/observed-1-transition.intent.json" $v}
+            completion={param($p)$v=Read-TestProtocolJson "$p/receipts/transactions/observed-1-transition.completion.json";$v.intent.sha256='0'*64;Write-Json "$p/receipts/transactions/observed-1-transition.completion.json" $v}
+            artifact={param($p)[IO.File]::WriteAllText("$p/receipts/observed.bin",'changed')}
+            projection={param($p)Write-Json "$p/workspace.state.json" ([pscustomobject]@{schema='test';stage='changed'})}
+        }
+        foreach($name in $damage.Keys){
+            $case="$fixture-$name";Copy-Item -LiteralPath $fixture -Destination $case -Recurse
+            try{& $damage[$name] $case;$rejected=$false;try{Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $case -TransactionId $(if($name-in@('prefix','projection')){'observed-2-transition'}else{'observed-1-transition'})|Out-Null}catch{$rejected=$true};Assert-Ledger $rejected "observation damage accepted: $name";$count++}finally{[IO.Directory]::Delete($case,$true)}
+        }
+        foreach($kind in @('ledger','schema-v1','schema-v2','module','protocol')){
+            $path=switch($kind){ledger{"$fixture/iteration-events.jsonl"}schema-v1{"$root/schemas/iteration-event.schema.json"}schema-v2{"$root/schemas/iteration-event-v2.schema.json"}module{$transitionModulePath}protocol{"$PSScriptRoot/lib/MorphospaceProtocolCommon.psm1"}}
+            $before=[IO.File]::ReadAllBytes($path)
+            try{
+                & $transitionModule {
+                    param($path)
+                    $script:observationChecks=0;$script:driftPath=$path
+                    Set-Item Function:script:Assert-MorphospaceReadOnlyLedgerObservation {
+                        param([object]$Observation)
+                        $script:observationChecks++
+                        if($script:observationChecks-eq2){$b=[IO.File]::ReadAllBytes($script:driftPath);$b[0]=$b[0]-bxor1;[IO.File]::WriteAllBytes($script:driftPath,$b)}
+                        & $script:originalObservationAssert $Observation
+                    }
+                } $path
+                $rejected=$false;try{Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $fixture -TransactionId observed-1-transition|Out-Null}catch{$rejected=$_.Exception.Message-like'*changed during authentication*'}
+                Assert-Ledger $rejected "mid-invocation $kind byte drift accepted";$count++
+            }finally{
+                [IO.File]::WriteAllBytes($path,$before)
+                & $transitionModule {Set-Item Function:script:Assert-MorphospaceReadOnlyLedgerObservation $script:originalObservationAssert}
+            }
+        }
+        [pscustomobject]@{status='pass';read_only_snapshot_cases=$count;writer_produced_transactions=2;cross_invocation_cache=$false}
+    }finally{
+        & $transitionModule {
+            if($script:originalReader){Set-Item Function:script:Read-MorphospaceLedgerEvents $script:originalReader}
+        }
+        if([IO.Directory]::Exists($fixture)){[IO.Directory]::Delete($fixture,$true)}
+    }
+}
+if($ReadOnlySnapshotOnly){Test-ReadOnlyCommittedSnapshot;return}
 
 $workspace = Join-Path ([IO.Path]::GetTempPath()) ('morphospace-ledger-' + [guid]::NewGuid().ToString('N'))
 try {
@@ -2074,6 +2153,7 @@ try {
         -TransitionModulePath $transitionModulePath
 
     foreach($recoverySchema in @('development-envelope-repreparation-v1.schema.json','development-envelope-repreparation-receipt-v1.schema.json','development-envelope-repreparation-intent-v1.schema.json','development-envelope-repreparation-completion-v1.schema.json','development-envelope-source-composition-v2.schema.json')){$schemaPath=Join-Path $root "schemas\$recoverySchema";$schema=Get-Content -Raw -LiteralPath $schemaPath|ConvertFrom-Json;Assert-Ledger ($schema.type-ceq'object'-and$schema.additionalProperties-eq$false) "repreparation schema '$recoverySchema' is not a closed transaction surface"}
+    Test-ReadOnlyCommittedSnapshot
     Write-Host 'Transition-ledger self-test passed.'
 } finally {
     if ([IO.Directory]::Exists($workspace)) { [IO.Directory]::Delete($workspace, $true) }
