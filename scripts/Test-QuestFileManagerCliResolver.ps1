@@ -145,9 +145,12 @@ try {
         $probeProject = Join-Path $testRoot 'probe-project'
         $probeRuntime = Join-Path $testRoot 'probe-runtime'
         New-Item -ItemType Directory -Path $probeProject, $probeRuntime | Out-Null
-        $sdkVersion = ([string](& dotnet --version)).Trim()
-        if ($LASTEXITCODE -ne 0 -or $sdkVersion -notmatch '^(\d+)\.') { throw 'Probe fixture needs the installed .NET SDK.' }
-        $targetFramework = "net$($Matches[1]).0"
+        $sdkRows = @(& dotnet --list-sdks)
+        if ($LASTEXITCODE -ne 0) { throw 'Probe fixture needs the installed .NET SDK.' }
+        $sdkVersion = @($sdkRows | ForEach-Object { if ([string]$_ -match '^(\d+\.\d+\.\d+) ') { [version]$Matches[1] } } | Sort-Object -Descending | Select-Object -First 1)
+        if ($sdkVersion.Count -ne 1) { throw 'Probe fixture needs a stable installed .NET SDK.' }
+        $targetFramework = "net$($sdkVersion[0].Major).0"
+        Write-JsonUtf8NoBom -Path (Join-Path $probeProject 'global.json') -Value @{ sdk = @{ version = [string]$sdkVersion[0]; rollForward = 'disable' } }
         [IO.File]::WriteAllText((Join-Path $probeProject 'NuGet.Config'), '<configuration><packageSources><clear /></packageSources></configuration>')
         [IO.File]::WriteAllText((Join-Path $probeProject 'Fixture.csproj'), @"
 <Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>$targetFramework</TargetFramework><AssemblyName>questionable-file-manager</AssemblyName><Company>Mesmer Prism</Company><Product>questionable-file-manager</Product><Version>0.1.0-dev</Version><InformationalVersion>0.1.0-dev+$('a' * 40)</InformationalVersion><AppendSourceRevisionToInformationalVersion>false</AppendSourceRevisionToInformationalVersion></PropertyGroup></Project>
@@ -163,8 +166,25 @@ if (args.Length == 1 && args[0] == "--help") {
 } else { Environment.Exit(19); }
 '@)
         $buildLog = Join-Path $testRoot 'probe-build.log'
-        & dotnet build (Join-Path $probeProject 'Fixture.csproj') --nologo --configuration Release --output $probeRuntime *> $buildLog
-        if ($LASTEXITCODE -ne 0) { throw "Target-free probe fixture build failed; see $buildLog" }
+        # Keep first-use, package and build-server writes in this owned fixture
+        # root, including the managed runner's isolated write environment.
+        $buildEnvironment = @{}
+        foreach ($name in @('DOTNET_CLI_HOME', 'NUGET_PACKAGES', 'DOTNET_SKIP_FIRST_TIME_EXPERIENCE', 'DOTNET_CLI_TELEMETRY_OPTOUT', 'MSBUILDDISABLENODEREUSE')) {
+            $buildEnvironment[$name] = [Environment]::GetEnvironmentVariable($name)
+        }
+        try {
+            $env:DOTNET_CLI_HOME = $probeProject
+            $env:NUGET_PACKAGES = Join-Path $probeProject 'packages'
+            $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE = '1'
+            $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
+            $env:MSBUILDDISABLENODEREUSE = '1'
+            Push-Location $probeProject
+            try { & dotnet build Fixture.csproj --nologo --configuration Release --output $probeRuntime *> $buildLog }
+            finally { Pop-Location }
+            if ($LASTEXITCODE -ne 0) { throw "Target-free probe fixture build failed: $((Get-Content -LiteralPath $buildLog -Tail 12) -join ' | ')" }
+        } finally {
+            foreach ($name in $buildEnvironment.Keys) { [Environment]::SetEnvironmentVariable($name, $buildEnvironment[$name]) }
+        }
         $probeConfig = $config | ConvertTo-Json -Depth 16 | ConvertFrom-Json
         $probeConfig.PSObject.Properties.Remove('extra')
         $probeConfig.PSObject.Properties.Remove('executable_path')
