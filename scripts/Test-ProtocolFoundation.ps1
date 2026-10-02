@@ -1,5 +1,3 @@
-param()
-
 $ErrorActionPreference = 'Stop'
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceContentObservation.psm1') -Force
@@ -12,6 +10,34 @@ $script:CommonModule = Get-Module MorphospaceProtocolCommon
 function Assert-Foundation { param([bool]$Condition,[string]$Message) if(-not$Condition){throw "Protocol foundation self-test failed: $Message"} }
 function Assert-Rejected { param([scriptblock]$Action,[string]$Message) $rejected=$false;try{&$Action}catch{$rejected=$true};Assert-Foundation $rejected $Message }
 function Write-Utf8Lf { param([string]$Path,[string]$Text) [IO.File]::WriteAllText($Path,$Text,[Text.UTF8Encoding]::new($false)) }
+# Retained v1 code-unit oracle: canonical bytes are a protocol compatibility contract.
+function ConvertTo-FoundationLegacyCanonicalString {
+    param([string]$Value)
+    $builder=[Text.StringBuilder]::new();[void]$builder.Append('"')
+    foreach($codeUnit in $Value.ToCharArray()){
+        $code=[int]$codeUnit
+        if($code-eq8){[void]$builder.Append('\b');continue}
+        if($code-eq9){[void]$builder.Append('\t');continue}
+        if($code-eq10){[void]$builder.Append('\n');continue}
+        if($code-eq12){[void]$builder.Append('\f');continue}
+        if($code-eq13){[void]$builder.Append('\r');continue}
+        if($code-eq34){[void]$builder.Append('\"');continue}
+        if($code-eq92){[void]$builder.Append('\\');continue}
+        if($code-lt32-or$code-gt126){[void]$builder.Append(('\u{0:x4}'-f$code))}else{[void]$builder.Append($codeUnit)}
+    }
+    [void]$builder.Append('"');return $builder.ToString()
+}
+function Assert-CanonicalStringV1 {
+    param([string]$Value)
+    $expected=ConvertTo-FoundationLegacyCanonicalString $Value
+    $actual=& $script:CommonModule {param($v)$b=[Text.StringBuilder]::new();Add-MorphospaceCanonicalJsonString $v $b;return $b.ToString()} $Value
+    Assert-Foundation ([StringComparer]::Ordinal.Equals($expected,$actual)) 'typed escaper changed v1 code-unit output'
+    $document=[ordered]@{value=$Value};$expectedJson='{"value":'+$expected+'}'
+    Assert-Foundation ([StringComparer]::Ordinal.Equals($expectedJson,(ConvertTo-MorphospaceCanonicalJson $document))) 'typed escaper changed full canonical document'
+    $expectedBytes=[Text.UTF8Encoding]::new($false,$true).GetBytes($expectedJson+[char]10)
+    $actualBytes=ConvertTo-MorphospaceProtocolJsonBytes $document
+    Assert-Foundation ((Get-MorphospaceSha256Bytes $expectedBytes)-ceq(Get-MorphospaceSha256Bytes $actualBytes)) 'typed escaper changed protocol UTF8 LF bytes/hash'
+}
 function Invoke-InternalGit { param([string]$Git,[string]$Root,[string[]]$Arguments) &$script:ContentModule {param($g,$r,$a) Invoke-MorphospaceBoundGitBytes -GitExecutable $g -RepositoryPath $r -Arguments $a} $Git $Root $Arguments }
 function Invoke-FixtureGit { param([string]$Git,[string]$Root,[string[]]$Arguments) $p=Invoke-InternalGit $Git $Root $Arguments;if($p.exit_code-ne0){throw 'fixture git failed'} }
 function Invoke-InternalEventAppend { param([hashtable]$Parameters) & $script:EventModule { param($p) Add-MorphospaceEventV2 @p } $Parameters }
@@ -72,6 +98,11 @@ try{
     $escapeRoundTrip=$canonicalEscapes|ConvertFrom-Json
     Assert-Foundation ([string]$escapeRoundTrip.path-ceq[string]$escapeValue.path-and[string]$escapeRoundTrip.quoted-ceq[string]$escapeValue.quoted-and[string]$escapeRoundTrip.controls-ceq[string]$escapeValue.controls-and[string]$escapeRoundTrip.unicode-ceq[string]$escapeValue.unicode) 'canonical JSON string escaping does not round-trip'
     Assert-Foundation ($canonicalEscapes.Contains('"path":"tool-root\\Git\\cmd\\git.exe"')-and$canonicalEscapes.Contains('"quoted":"say \"hi\""')-and$canonicalEscapes.Contains('"controls":"tab\tline\nnext"')-and$canonicalEscapes.Contains('"unicode":"\u00e9"')) 'canonical JSON escaping is not minimal and deterministic'
+    $allCodeUnits=[char[]]::new(65536);for($code=0;$code-lt65536;$code++){$allCodeUnits[$code]=[char]$code}
+    Assert-CanonicalStringV1 ([string]::new($allCodeUnits))
+    Assert-CanonicalStringV1 ''
+    Assert-CanonicalStringV1 ([string]::new([char[]]@(0xd800,0x61,0xdc00,0xd83d,0xde00,0xffff,0x2028,0x2029)))
+    Assert-CanonicalStringV1 ('{"projection":"'+('aZ09+/='*32768)+'","path":"tool-root\fixture"}')
     $badJson=@('{"a":1,"a":2}','{"a":1,"A":2}','{"a":1,}','{/*comment*/"a":1}','{"a":1.5}')
     foreach($text in $badJson){$path=Join-Path $commonRoot ([guid]::NewGuid().ToString('N')+'.json');Write-Utf8Lf $path $text;Assert-Rejected {Read-MorphospaceProtocolJson $path|Out-Null} "strict JSON accepted $text"}
     $bomPath=Join-Path $commonRoot 'bom.json';[IO.File]::WriteAllBytes($bomPath,[byte[]](0xef,0xbb,0xbf,0x7b,0x7d));Assert-Rejected {Read-MorphospaceProtocolJson $bomPath|Out-Null} 'UTF-8 BOM accepted'
