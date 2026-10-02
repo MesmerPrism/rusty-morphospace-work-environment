@@ -789,7 +789,9 @@ function Test-CurrentUnitInstructionWorkspace {
             Assert-Contract (Test-MorphospaceActiveUnitContractReviewCompatibility `
                 -Unit $unit `
                 -State $state `
-                -Lifecycle $script:WorkflowLifecycle) "$Context current unit relevant skill '$requiredSkillId' review lacks exact owner-tracked provenance."
+                -Lifecycle $script:WorkflowLifecycle `
+                -WorkspaceRoot $Root `
+                -RepositoryMap $(if($unit.PSObject.Properties.Name-contains'tooling_context'){$script:LocalRepositoryEntries}else{@{}})) "$Context current unit relevant skill '$requiredSkillId' review lacks exact owner-tracked provenance."
         }
     }
 
