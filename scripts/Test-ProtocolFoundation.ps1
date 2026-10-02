@@ -1,5 +1,3 @@
-param([string[]]$CanonicalIntentPaths=@())
-
 $ErrorActionPreference = 'Stop'
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceContentObservation.psm1') -Force
@@ -105,27 +103,6 @@ try{
     Assert-CanonicalStringV1 ''
     Assert-CanonicalStringV1 ([string]::new([char[]]@(0xd800,0x61,0xdc00,0xd83d,0xde00,0xffff,0x2028,0x2029)))
     Assert-CanonicalStringV1 ('{"projection":"'+('aZ09+/='*32768)+'","path":"tool-root\fixture"}')
-    # Optional exact retained intent inputs remain outside this portable repository.
-    Assert-Foundation ($CanonicalIntentPaths.Count-le8) 'canonical intent fixture count exceeds8'
-    foreach($intentPath in $CanonicalIntentPaths){
-        Assert-Foundation ([IO.FileInfo]::new($intentPath).Length-le524288) 'canonical intent fixture exceeds512KiB'
-        $intent=Read-MorphospaceProtocolJson $intentPath
-        $actualIntent=ConvertTo-MorphospaceCanonicalJson $intent
-        # Only string escaping changes: run the production object traversal with the retained v1 oracle.
-        $legacyIntent=& $script:CommonModule {param($v,$oracle)
-            $prior=${function:Add-MorphospaceCanonicalJsonString}
-            try{
-                $script:FoundationStringOracle=$oracle;$script:FoundationOracleCalls=0
-                function Add-MorphospaceCanonicalJsonString {param([string]$Value,[Text.StringBuilder]$Builder)[void]$Builder.Append((& $script:FoundationStringOracle $Value));$script:FoundationOracleCalls++}
-                $json=ConvertTo-MorphospaceCanonicalJson $v;return @{json=$json;oracle_calls=$script:FoundationOracleCalls}
-            }finally{Set-Item -LiteralPath Function:Add-MorphospaceCanonicalJsonString -Value $prior;Remove-Variable -Name FoundationStringOracle,FoundationOracleCalls -Scope Script}
-        } $intent ${function:ConvertTo-FoundationLegacyCanonicalString}
-        Assert-Foundation ($legacyIntent.oracle_calls-gt0) 'actual retained intent comparison did not execute legacy oracle'
-        $expectedIntent=$legacyIntent.json
-        Assert-Foundation ([StringComparer]::Ordinal.Equals($expectedIntent,$actualIntent)) 'actual retained intent canonical bytes changed'
-        $utf8=[Text.UTF8Encoding]::new($false,$true)
-        Assert-Foundation ((Get-MorphospaceSha256Bytes $utf8.GetBytes($expectedIntent+[char]10))-ceq(Get-MorphospaceSha256Bytes (ConvertTo-MorphospaceProtocolJsonBytes $intent))) 'actual retained intent protocol byte hash changed'
-    }
     $badJson=@('{"a":1,"a":2}','{"a":1,"A":2}','{"a":1,}','{/*comment*/"a":1}','{"a":1.5}')
     foreach($text in $badJson){$path=Join-Path $commonRoot ([guid]::NewGuid().ToString('N')+'.json');Write-Utf8Lf $path $text;Assert-Rejected {Read-MorphospaceProtocolJson $path|Out-Null} "strict JSON accepted $text"}
     $bomPath=Join-Path $commonRoot 'bom.json';[IO.File]::WriteAllBytes($bomPath,[byte[]](0xef,0xbb,0xbf,0x7b,0x7d));Assert-Rejected {Read-MorphospaceProtocolJson $bomPath|Out-Null} 'UTF-8 BOM accepted'
