@@ -115,3 +115,51 @@ of `Test-ActiveUnitRetirement.ps1 -SelfTest` still runs every scenario.
 Historical auditing remains separate. Later continuation must authenticate
 retirement after subsequent owner events without retrofitting new instruction
 requirements onto the retired unit.
+
+## Optional inert Claim diagnostic retention
+
+A reviewed retirement request may bind one `retained_claim_diagnostic` when an
+older executed `Claim` returned an automation receipt that was committed beside
+the transaction, but the original intent artifacts and event receipts are empty.
+The binding uses the closed `inert-claim-diagnostic` role, the v1 automation
+producer schema, a `receipts/<name>-claim-<YYYYMMDD>.json` path, exact raw and
+canonical hashes, the original committed addition and full Git blob SHA1/SHA256, and the original
+Claim target unit's tooling context (null only when the original Claim had none).
+A later context upgrade is not a substitute. Checkout normalization does not
+replace either raw binding: the full committed blob must also match the complete
+worktree diagnostic canonically.
+
+Retirement verifies the whole closed producer receipt, its ready-to-active
+transition, identities and timestamp, the committed Claim and context, and the
+validation matrix and graph scope derived from the retained Claim unit. Historical
+preflight observations remain unused diagnostic data; they are not recreated or
+used as present authority. Arbitrary evidence/control paths, producer roles,
+non-Claim authority payloads and changed bytes are rejected. The same binding is
+verified on transaction recovery and historical retirement readback.
+
+This option retains bytes only. It never inserts artifacts or receipt references
+into the original Claim ledger, nor supplies validation, gate, prerequisite,
+acceptance or publication credit. Requests without the optional binding retain
+the existing behavior.
+
+## Optional inert Ready diagnostic retention
+
+A request may additionally bind one `retained_ready_diagnostic` under the closed
+`inert-ready-diagnostic` role and `receipts/<name>-ready-YYYYMMDD.json` namespace.
+It uses the same raw, canonical, committed blob and original tooling-context pins
+as Claim retention, with its own `introduced_commit`, `event_id`, `transaction_id`,
+`intent_sha256` and `completion_sha256`. The Ready introduction need not be the
+Claim introduction.
+
+The owner authenticates the original executed v1 Ready output, its committed
+transaction and ledger event, the exact proposed-to-ready transition with no
+current unit and the target ready queue, and its immediate original Claim
+preimage. It verifies original declaration-shaped matrix and scope fields and
+both introduced and current Git blob bytes. Original intent artifacts and event
+receipts must be empty. Historical observations remain inert; retention adds no
+ledger artifact, validation, gate, acceptance or publication credit. Missing or
+tampered bindings leave the committed descendant unauthenticated.
+
+Ready may refresh its recorded repository heads. The owner verifies the exact
+original predecessor transaction and preimage, retaining those historical heads
+as inert observations without replaying current repository observations.

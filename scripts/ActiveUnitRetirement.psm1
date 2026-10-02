@@ -126,8 +126,175 @@ function Get-ActiveRetirementToolingProofBindings {
     }
     @($bindings.Keys|Sort-Object -CaseSensitive|ForEach-Object{[pscustomobject]@{path=$_;sha256=[string]$bindings[$_]}})
 }
+function Get-ActiveRetirementClaimDiagnosticProjection {
+    param([string]$Workspace,[object]$Request,[string]$Repository,[string]$ObservedHead)
+    if($null-eq$Request-or$Request.PSObject.Properties.Name-cnotcontains'retained_claim_diagnostic'){return $null}
+    Assert-ActiveRetirementSchema $Request 'active-unit-retirement-v1.schema.json'
+    $binding=$Request.retained_claim_diagnostic
+    $reference=Get-ActiveRetirementReference $Workspace ([string]$binding.path)
+    if($reference.path-cnotmatch '^receipts/[a-z0-9][a-z0-9-]{1,79}-claim-[0-9]{8}\.json$'){throw 'Retained Claim diagnostic path is outside the closed diagnostic namespace.'}
+    if(([IO.FileInfo]$reference.absolute).Length-gt131072){throw 'Retained Claim diagnostic exceeds its byte bound.'}
+    $bytes=[IO.File]::ReadAllBytes($reference.absolute)
+    if($bytes.Length-gt131072-or(Get-MorphospaceSha256Bytes $bytes)-cne[string]$binding.raw_sha256){throw 'Retained Claim diagnostic raw CAS drifted.'}
+    $diagnostic=ConvertFrom-MorphospaceProtocolJsonBytes $bytes
+    Assert-ActiveRetirementSchema $diagnostic 'work-unit-automation-receipt.schema.json'
+    if((Get-MorphospaceCanonicalJsonSha256 $diagnostic)-cne[string]$binding.canonical_sha256){throw 'Retained Claim diagnostic canonical CAS drifted.'}
+    $proof=Get-ActiveRetirementPlanningTransition $Workspace ([string]$Request.claim.transaction_id) -HistoricalProjection
+    $intent=$proof.intent;$event=$intent.event;$unit=$intent.target.unit.document
+    Assert-ActiveRetirementEqual $Request.claim (Get-ActiveRetirementClaim $Workspace $Request (Get-ActiveRetirementEvents $Workspace).events) 'diagnostic committed Claim'
+    if(@($intent.artifacts).Count-ne0-or@($event.receipts).Count-ne0){throw 'Retained Claim diagnostic must not replace an original ledger artifact.'}
+    if([string]$diagnostic.schema-cne'rusty.morphospace.workflow.work_unit_automation_receipt.v1'-or[string]$diagnostic.action-cne'Claim'-or$diagnostic.executed-ne$true-or[string]$diagnostic.transition-cne'ready-to-active'-or[string]$diagnostic.status_before-cne'ready'-or[string]$diagnostic.status_after-cne'active'-or$null-ne$diagnostic.current_unit_before-or[string]$diagnostic.current_unit_after-cne[string]$Request.unit_id-or[string]$diagnostic.project_id-cne[string]$Request.project_id-or[string]$diagnostic.unit_id-cne[string]$Request.unit_id-or[string]$diagnostic.event_id-cne[string]$Request.claim.event_id-or[string]$diagnostic.timestamp-cne[string]$event.timestamp-or[string]$unit.status-cne'active'-or[string]$event.event_type-cne'state-transition') {throw 'Retained Claim diagnostic producer semantics are detached.'}
+    if([string]$event.project_id-cne[string]$Request.project_id-or[string]$unit.unit_id-cne[string]$Request.unit_id){throw 'Retained Claim diagnostic original owner identity drifted.'}
+    $preState=Copy-ActiveRetirementValue $intent.target.state.document;$preState.current_unit=$null;$preState.next_ready_unit=[string]$Request.unit_id;$preState.last_event_id=[string]$intent.expected.event_tail_id
+    if((Get-MorphospaceCanonicalJsonSha256 $preState)-cne[string]$intent.pre.state.sha256){throw 'Retained Claim diagnostic original idle-to-owned state is malformed.'}
+    $preUnit=Copy-ActiveRetirementValue $unit;$preUnit.status='ready'
+    if((Get-MorphospaceCanonicalJsonSha256 $preUnit)-cne[string]$intent.pre.unit.sha256){throw 'Retained Claim diagnostic original transition is malformed.'}
+    foreach($name in @('adoption_receipt','publication_closure','published_planning_authority_adoption','planned_publication','planning_suffix_rewrite_recovery','published_prerequisite_suffix_reconciliation','executed_prepared_publication_reconciliation','instruction_surface_completion','ready_withdrawal','proposed_retirement','terminal_validation_selection_release','push_plan')){if($diagnostic.PSObject.Properties.Name-ccontains$name-and$null-ne$diagnostic.$name){throw 'Retained Claim diagnostic contains a non-Claim authority payload.'}}
+    $originalContext=if($unit.PSObject.Properties.Name-ccontains'tooling_context'){$unit.tooling_context}else{$null}
+    if($null-eq$originalContext){if($null-ne$binding.tooling_context){throw 'Retained Claim diagnostic original context is absent.'}}else{Assert-ActiveRetirementEqual $binding.tooling_context $originalContext 'original Claim diagnostic context'}
+    if($null-ne$originalContext){
+        $contextPath=Resolve-MorphospaceWorkspacePath $Workspace ([string]$originalContext.path) -RequireLeaf
+        $context=Read-MorphospaceProtocolJson $contextPath
+        if((Get-MorphospaceFileSha256 $contextPath)-cne[string]$originalContext.sha256-or(Get-MorphospaceCanonicalJsonSha256 $context)-cne[string]$originalContext.canonical_sha256){throw 'Retained Claim diagnostic original context bytes drifted.'}
+        Assert-ActiveRetirementSchema $context 'tooling-context-v1.schema.json'
+    }
+    # Derive only declaration-shaped producer fields. Historical disk/tool/lease
+    # observations remain unused diagnostic data; they authorize no gate today.
+    $matrixModule=Import-Module (Join-Path $PSScriptRoot 'WorkUnitAutomation.psm1') -PassThru
+    $deviceRows=@($diagnostic.validation_matrix|Where-Object{[string]$_.gate_id-ceq'device-validation'})
+    $serials=if($deviceRows.Count-eq1-and$deviceRows[0].PSObject.Properties.Name-ccontains'serials'){@($deviceRows[0].serials)}else{@()}
+    $matrix=@(&$matrixModule {param($u,$s)New-MorphospaceValidationMatrix -Unit $u -DeviceSerials $s} $unit $serials)
+    Assert-ActiveRetirementEqual $matrix @($diagnostic.validation_matrix) 'diagnostic declared validation matrix'
+    Assert-ActiveRetirementEqual $matrix @($diagnostic.claim_preflight.validation_matrix) 'diagnostic preflight matrix'
+    $repos=@($unit.allowed_repositories|Sort-Object repo_id|ForEach-Object{[pscustomobject][ordered]@{repo_id=[string]$_.repo_id;allowed_paths=@($_.allowed_paths|ForEach-Object{([string]$_ -replace '\\','/')}|Sort-Object -Unique)}})
+    $dependencies=@($unit.read_only_dependencies|ForEach-Object{[pscustomobject][ordered]@{repo_id=[string]$_.repo_id;paths=@($_.paths|ForEach-Object{([string]$_ -replace '\\','/')}|Sort-Object -Unique);purpose=[string]$_.purpose;verification=[string]$_.verification}}|Sort-Object repo_id)
+    $scope=[pscustomobject][ordered]@{change_categories=@($unit.change_categories|Sort-Object -Unique);repositories=$repos;read_only_dependencies=$dependencies;exclusion='Do not scan repositories or paths outside this list.'}
+    Assert-ActiveRetirementEqual $scope $diagnostic.graph_scope 'diagnostic declared graph scope'
+    if($diagnostic.claim_preflight.ready_to_claim-ne$true-or$diagnostic.claim_preflight.requirements_declared-ne($unit.PSObject.Properties.Name-ccontains'claim_requirements')-or@($diagnostic.claim_preflight.issues).Count-ne0){throw 'Retained Claim diagnostic preflight contradicts executed Claim.'}
+    $workspaceRelative=[IO.Path]::GetRelativePath($Repository,$Workspace).Replace('\','/').TrimEnd('/')
+    $prefix=if($workspaceRelative-ceq'.'){''}else{$workspaceRelative+'/'}
+    $gitPath=$prefix+$reference.path
+    $introduced=[string]$binding.introduced_commit
+    $null=&git -C $Repository merge-base --is-ancestor $introduced $ObservedHead 2>&1
+    if($LASTEXITCODE-ne0){throw 'Retained Claim diagnostic commit is outside observed history.'}
+    $introduction=@(&git -C $Repository diff-tree --no-commit-id --name-status -r $introduced -- $gitPath 2>&1)
+    if($LASTEXITCODE-ne0-or$introduction.Count-ne1-or[string]$introduction[0]-cne("A`t"+$gitPath)){throw 'Retained Claim diagnostic must bind its original committed addition.'}
+    foreach($revision in @($introduced,$ObservedHead)){
+        $blob=(@(&git -C $Repository rev-parse "$($revision):$gitPath" 2>&1)-join'').Trim()
+        if($LASTEXITCODE-ne0-or$blob-cne[string]$binding.git_blob_sha1){throw 'Retained Claim diagnostic committed blob CAS drifted.'}
+    }
+    $liveBlob=(@(&git -C $Repository hash-object --path=$gitPath -- $reference.absolute 2>&1)-join'').Trim()
+    if($LASTEXITCODE-ne0-or$liveBlob-cne[string]$binding.git_blob_sha1){throw 'Retained Claim diagnostic live blob differs from committed bytes.'}
+    $blobSize=(@(&git -C $Repository cat-file -s ([string]$binding.git_blob_sha1) 2>&1)-join'').Trim()
+    if($LASTEXITCODE-ne0-or$blobSize-cnotmatch'^[0-9]{1,6}$'-or[long]$blobSize-gt131072){throw 'Retained Claim diagnostic committed blob exceeds its byte bound.'}
+    $start=[Diagnostics.ProcessStartInfo]::new('git');$start.UseShellExecute=$false;$start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
+    foreach($arg in @('-C',$Repository,'cat-file','blob',[string]$binding.git_blob_sha1)){$start.ArgumentList.Add($arg)}
+    $process=[Diagnostics.Process]::Start($start);$errorTask=$process.StandardError.ReadToEndAsync();$stream=[IO.MemoryStream]::new()
+    try{$process.StandardOutput.BaseStream.CopyTo($stream);$process.WaitForExit();$errorText=$errorTask.GetAwaiter().GetResult();if($process.ExitCode-ne0){throw 'Retained Claim diagnostic committed blob is unavailable.'};$blobBytes=$stream.ToArray()}finally{$stream.Dispose();$process.Dispose()}
+    if($blobBytes.Length-gt131072-or(Get-MorphospaceSha256Bytes $blobBytes)-cne[string]$binding.git_blob_sha256){throw 'Retained Claim diagnostic committed raw blob CAS drifted.'}
+    Assert-ActiveRetirementEqual $diagnostic (ConvertFrom-MorphospaceProtocolJsonBytes $blobBytes) 'complete committed Claim diagnostic'
+    foreach($relative in @("receipts/transactions/$($Request.claim.transaction_id).intent.json","receipts/transactions/$($Request.claim.transaction_id).completion.json")+@($(if($originalContext){[string]$originalContext.path}else{@()}))){
+        $live=Resolve-MorphospaceWorkspacePath $Workspace $relative -RequireLeaf
+        $expectedBlob=(@(&git -C $Repository hash-object --path=$prefix$relative -- $live 2>&1)-join'').Trim()
+        $originalBlob=(@(&git -C $Repository rev-parse "$($introduced):$prefix$relative" 2>&1)-join'').Trim()
+        if($LASTEXITCODE-ne0-or$originalBlob-cne$expectedBlob){throw 'Retained Claim diagnostic committed original Claim/context join drifted.'}
+    }
+    # Retention only: never add to the original event/intent, gate selection,
+    # validation checkpoint, acceptance, prerequisite or publication evidence.
+    [pscustomobject]@{path=$reference.path;sha256=[string]$binding.raw_sha256}
+}
+
+function Get-ActiveRetirementReadyDiagnosticProjection {
+    param([string]$Workspace,[object]$Request,[string]$Repository,[string]$ObservedHead)
+    if($null-eq$Request-or$Request.PSObject.Properties.Name-cnotcontains'retained_ready_diagnostic'){return $null}
+    Assert-ActiveRetirementSchema $Request 'active-unit-retirement-v1.schema.json'
+    $binding=$Request.retained_ready_diagnostic
+    $reference=Get-ActiveRetirementReference $Workspace ([string]$binding.path)
+    if($reference.path-cnotmatch '^receipts/[a-z0-9][a-z0-9-]{1,79}-ready-[0-9]{8}\.json$'){throw 'Retained Ready diagnostic path is outside the closed diagnostic namespace.'}
+    if(([IO.FileInfo]$reference.absolute).Length-gt131072){throw 'Retained Ready diagnostic exceeds its byte bound.'}
+    $bytes=[IO.File]::ReadAllBytes($reference.absolute)
+    if($bytes.Length-gt131072-or(Get-MorphospaceSha256Bytes $bytes)-cne[string]$binding.raw_sha256){throw 'Retained Ready diagnostic raw CAS drifted.'}
+    $diagnostic=ConvertFrom-MorphospaceProtocolJsonBytes $bytes
+    Assert-ActiveRetirementSchema $diagnostic 'work-unit-automation-receipt.schema.json'
+    if((Get-MorphospaceCanonicalJsonSha256 $diagnostic)-cne[string]$binding.canonical_sha256){throw 'Retained Ready diagnostic canonical CAS drifted.'}
+    $proof=Get-ActiveRetirementPlanningTransition $Workspace ([string]$binding.transaction_id) -HistoricalProjection
+    $intent=$proof.intent;$event=$intent.event;$unit=$intent.target.unit.document
+    if([string]$binding.transaction_id-cne"$($binding.event_id)-transition"-or[string]$binding.event_id-cnotmatch('^'+[regex]::Escape([string]$Request.unit_id)+'-ready-[0-9]{4,}$')-or[string]$event.event_id-cne[string]$binding.event_id){throw 'Retained Ready diagnostic transaction identity is detached.'}
+    foreach($pair in @(@('intent',$binding.intent_sha256),@('completion',$binding.completion_sha256))){$path=Resolve-MorphospaceWorkspacePath $Workspace "receipts/transactions/$($binding.transaction_id).$($pair[0]).json" -RequireLeaf;if((Get-MorphospaceFileSha256 $path)-cne[string]$pair[1]){throw 'Retained Ready diagnostic transaction CAS drifted.'}}
+    Assert-ActiveRetirementEqual $Request.claim (Get-ActiveRetirementClaim $Workspace $Request (Get-ActiveRetirementEvents $Workspace).events) 'diagnostic subsequent committed Claim'
+    $claimProof=Get-ActiveRetirementPlanningTransition $Workspace ([string]$Request.claim.transaction_id) -HistoricalProjection
+    if([string]$claimProof.intent.expected.event_tail_id-cne[string]$binding.event_id-or[string]$claimProof.intent.pre.unit.sha256-cne(Get-MorphospaceCanonicalJsonSha256 $unit)-or[string]$claimProof.intent.pre.state.sha256-cne(Get-MorphospaceCanonicalJsonSha256 $intent.target.state.document)-or[int]$claimProof.intent.event.sequence-ne([int]$event.sequence+1)){throw 'Retained Ready diagnostic does not join the original immediate Claim preimage.'}
+    if(@($intent.artifacts).Count-ne0-or@($event.receipts).Count-ne0){throw 'Retained Ready diagnostic must not replace an original ledger artifact.'}
+    if([string]$diagnostic.schema-cne'rusty.morphospace.workflow.work_unit_automation_receipt.v1'-or[string]$diagnostic.action-cne'Ready'-or$diagnostic.executed-ne$true-or[string]$diagnostic.transition-cne'proposed-to-ready'-or[string]$diagnostic.status_before-cne'proposed'-or[string]$diagnostic.status_after-cne'ready'-or$null-ne$diagnostic.current_unit_before-or$null-ne$diagnostic.current_unit_after-or[string]$diagnostic.project_id-cne[string]$Request.project_id-or[string]$diagnostic.unit_id-cne[string]$Request.unit_id-or[string]$diagnostic.event_id-cne[string]$binding.event_id-or[string]$diagnostic.timestamp-cne[string]$event.timestamp-or[string]$unit.status-cne'ready'-or[string]$event.event_type-cne'state-transition') {throw 'Retained Ready diagnostic producer semantics are detached.'}
+    if([string]$event.project_id-cne[string]$Request.project_id-or[string]$event.unit_id-cne[string]$Request.unit_id-or[string]$unit.unit_id-cne[string]$Request.unit_id-or[string]$unit.project_id-cne[string]$Request.project_id){throw 'Retained Ready diagnostic original owner identity drifted.'}
+    if($null-ne$intent.target.state.document.current_unit-or[string]$intent.target.state.document.next_ready_unit-cne[string]$Request.unit_id){throw 'Retained Ready diagnostic original ready queue is malformed.'}
+    $predecessorId=[string]$intent.expected.event_tail_id;$predecessorTransaction="$predecessorId-transition"
+    $predecessor=Get-ActiveRetirementPlanningTransition $Workspace $predecessorTransaction -HistoricalProjection
+    if([string]$predecessor.intent.event.event_id-cne$predecessorId-or[string]$predecessor.intent.event.project_id-cne[string]$Request.project_id-or[string]$predecessor.intent.event.unit_id-cne[string]$Request.unit_id-or[int]$predecessor.intent.event.sequence-ne([int]$event.sequence-1)-or(Get-MorphospaceCanonicalJsonSha256 $predecessor.intent.target.state.document)-cne[string]$intent.pre.state.sha256){throw 'Retained Ready diagnostic original predecessor is detached.'}
+    $preState=Copy-ActiveRetirementValue $intent.target.state.document;$preState.current_unit=$null;$preState.next_ready_unit=$null;$preState.last_event_id=[string]$intent.expected.event_tail_id
+    # Ready refreshes recorded repository heads. Preserve its authenticated
+    # historical preimage; never replay present observations or grant credit.
+    $preState.repository_heads=@($predecessor.intent.target.state.document.repository_heads|ForEach-Object{Copy-ActiveRetirementValue $_})
+    if((Get-MorphospaceCanonicalJsonSha256 $preState)-cne[string]$intent.pre.state.sha256){throw 'Retained Ready diagnostic original idle-to-owned state is malformed.'}
+    $preUnit=Copy-ActiveRetirementValue $unit;$preUnit.status='proposed'
+    if((Get-MorphospaceCanonicalJsonSha256 $preUnit)-cne[string]$intent.pre.unit.sha256){throw 'Retained Ready diagnostic original transition is malformed.'}
+    foreach($name in @('adoption_receipt','publication_closure','published_planning_authority_adoption','planned_publication','planning_suffix_rewrite_recovery','published_prerequisite_suffix_reconciliation','executed_prepared_publication_reconciliation','instruction_surface_completion','ready_withdrawal','proposed_retirement','terminal_validation_selection_release','push_plan')){if($diagnostic.PSObject.Properties.Name-ccontains$name-and$null-ne$diagnostic.$name){throw 'Retained Ready diagnostic contains a non-Ready authority payload.'}}
+    $originalContext=if($unit.PSObject.Properties.Name-ccontains'tooling_context'){$unit.tooling_context}else{$null}
+    if($null-eq$originalContext){if($null-ne$binding.tooling_context){throw 'Retained Ready diagnostic original context is absent.'}}else{Assert-ActiveRetirementEqual $binding.tooling_context $originalContext 'original Ready diagnostic context'}
+    if($null-ne$originalContext){
+        $contextPath=Resolve-MorphospaceWorkspacePath $Workspace ([string]$originalContext.path) -RequireLeaf
+        $context=Read-MorphospaceProtocolJson $contextPath
+        if((Get-MorphospaceFileSha256 $contextPath)-cne[string]$originalContext.sha256-or(Get-MorphospaceCanonicalJsonSha256 $context)-cne[string]$originalContext.canonical_sha256){throw 'Retained Ready diagnostic original context bytes drifted.'}
+        Assert-ActiveRetirementSchema $context 'tooling-context-v1.schema.json'
+    }
+    # Derive only declaration-shaped producer fields. Historical disk/tool/lease
+    # observations remain unused diagnostic data; they authorize no gate today.
+    $matrixModule=Import-Module (Join-Path $PSScriptRoot 'WorkUnitAutomation.psm1') -PassThru
+    $deviceRows=@($diagnostic.validation_matrix|Where-Object{[string]$_.gate_id-ceq'device-validation'})
+    $serials=if($deviceRows.Count-eq1-and$deviceRows[0].PSObject.Properties.Name-ccontains'serials'){@($deviceRows[0].serials)}else{@()}
+    $matrix=@(&$matrixModule {param($u,$s)New-MorphospaceValidationMatrix -Unit $u -DeviceSerials $s} $unit $serials)
+    Assert-ActiveRetirementEqual $matrix @($diagnostic.validation_matrix) 'diagnostic declared validation matrix'
+    Assert-ActiveRetirementEqual $matrix @($diagnostic.claim_preflight.validation_matrix) 'diagnostic preflight matrix'
+    $repos=@($unit.allowed_repositories|Sort-Object repo_id|ForEach-Object{[pscustomobject][ordered]@{repo_id=[string]$_.repo_id;allowed_paths=@($_.allowed_paths|ForEach-Object{([string]$_ -replace '\\','/')}|Sort-Object -Unique)}})
+    $dependencies=@($unit.read_only_dependencies|ForEach-Object{[pscustomobject][ordered]@{repo_id=[string]$_.repo_id;paths=@($_.paths|ForEach-Object{([string]$_ -replace '\\','/')}|Sort-Object -Unique);purpose=[string]$_.purpose;verification=[string]$_.verification}}|Sort-Object repo_id)
+    $scope=[pscustomobject][ordered]@{change_categories=@($unit.change_categories|Sort-Object -Unique);repositories=$repos;read_only_dependencies=$dependencies;exclusion='Do not scan repositories or paths outside this list.'}
+    Assert-ActiveRetirementEqual $scope $diagnostic.graph_scope 'diagnostic declared graph scope'
+    if($diagnostic.claim_preflight.ready_to_claim-ne$true-or$diagnostic.claim_preflight.requirements_declared-ne($unit.PSObject.Properties.Name-ccontains'claim_requirements')-or@($diagnostic.claim_preflight.issues).Count-ne0){throw 'Retained Ready diagnostic preflight contradicts executed Ready.'}
+    $workspaceRelative=[IO.Path]::GetRelativePath($Repository,$Workspace).Replace('\','/').TrimEnd('/')
+    $prefix=if($workspaceRelative-ceq'.'){''}else{$workspaceRelative+'/'}
+    $gitPath=$prefix+$reference.path
+    $introduced=[string]$binding.introduced_commit
+    $null=&git -C $Repository merge-base --is-ancestor $introduced $ObservedHead 2>&1
+    if($LASTEXITCODE-ne0){throw 'Retained Ready diagnostic commit is outside observed history.'}
+    $introduction=@(&git -C $Repository diff-tree --no-commit-id --name-status -r $introduced -- $gitPath 2>&1)
+    if($LASTEXITCODE-ne0-or$introduction.Count-ne1-or[string]$introduction[0]-cne("A`t"+$gitPath)){throw 'Retained Ready diagnostic must bind its original committed addition.'}
+    foreach($revision in @($introduced,$ObservedHead)){
+        $blob=(@(&git -C $Repository rev-parse "$($revision):$gitPath" 2>&1)-join'').Trim()
+        if($LASTEXITCODE-ne0-or$blob-cne[string]$binding.git_blob_sha1){throw 'Retained Ready diagnostic committed blob CAS drifted.'}
+    }
+    $liveBlob=(@(&git -C $Repository hash-object --path=$gitPath -- $reference.absolute 2>&1)-join'').Trim()
+    if($LASTEXITCODE-ne0-or$liveBlob-cne[string]$binding.git_blob_sha1){throw 'Retained Ready diagnostic live blob differs from committed bytes.'}
+    $blobSize=(@(&git -C $Repository cat-file -s ([string]$binding.git_blob_sha1) 2>&1)-join'').Trim()
+    if($LASTEXITCODE-ne0-or$blobSize-cnotmatch'^[0-9]{1,6}$'-or[long]$blobSize-gt131072){throw 'Retained Ready diagnostic committed blob exceeds its byte bound.'}
+    $start=[Diagnostics.ProcessStartInfo]::new('git');$start.UseShellExecute=$false;$start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
+    foreach($arg in @('-C',$Repository,'cat-file','blob',[string]$binding.git_blob_sha1)){$start.ArgumentList.Add($arg)}
+    $process=[Diagnostics.Process]::Start($start);$errorTask=$process.StandardError.ReadToEndAsync();$stream=[IO.MemoryStream]::new()
+    try{$process.StandardOutput.BaseStream.CopyTo($stream);$process.WaitForExit();$errorText=$errorTask.GetAwaiter().GetResult();if($process.ExitCode-ne0){throw 'Retained Ready diagnostic committed blob is unavailable.'};$blobBytes=$stream.ToArray()}finally{$stream.Dispose();$process.Dispose()}
+    if($blobBytes.Length-gt131072-or(Get-MorphospaceSha256Bytes $blobBytes)-cne[string]$binding.git_blob_sha256){throw 'Retained Ready diagnostic committed raw blob CAS drifted.'}
+    Assert-ActiveRetirementEqual $diagnostic (ConvertFrom-MorphospaceProtocolJsonBytes $blobBytes) 'complete committed Ready diagnostic'
+    foreach($relative in @("receipts/transactions/$($binding.transaction_id).intent.json","receipts/transactions/$($binding.transaction_id).completion.json","receipts/transactions/$predecessorTransaction.intent.json","receipts/transactions/$predecessorTransaction.completion.json")+@($(if($originalContext){[string]$originalContext.path}else{@()}))){
+        $live=Resolve-MorphospaceWorkspacePath $Workspace $relative -RequireLeaf
+        $expectedBlob=(@(&git -C $Repository hash-object --path=$prefix$relative -- $live 2>&1)-join'').Trim()
+        $originalBlob=(@(&git -C $Repository rev-parse "$($introduced):$prefix$relative" 2>&1)-join'').Trim()
+        if($LASTEXITCODE-ne0-or$originalBlob-cne$expectedBlob){throw 'Retained Ready diagnostic committed original Ready/context join drifted.'}
+    }
+    # Retention only: never add to the original event/intent, gate selection,
+    # validation checkpoint, acceptance, prerequisite or publication evidence.
+    [pscustomobject]@{path=$reference.path;sha256=[string]$binding.raw_sha256}
+}
+
 function Test-ActiveRetirementPlanningProjectionFromAuthenticatedAdmission {
-    param([string]$Workspace,[object]$Unit,[object]$RepositoryEntry,[string[]]$StatusPorcelain,[Parameter(Mandatory)][object]$Admission,[object]$RecoveryIntent=$null,[string]$LockedCommit='',[string]$ObservedHead='')
+    param([string]$Workspace,[object]$Unit,[object]$RepositoryEntry,[string[]]$StatusPorcelain,[Parameter(Mandatory)][object]$Admission,[object]$RecoveryIntent=$null,[string]$LockedCommit='',[string]$ObservedHead='',[object]$Request=$null)
     if([string]$RepositoryEntry.role-cne'planning'){return $false}
     $committed=[bool]$LockedCommit
     if($committed-and($RecoveryIntent-or$StatusPorcelain.Count-ne0-or$ObservedHead-cnotmatch'^[0-9a-f]{40}$')){throw 'Active retirement committed planning descendant requires a clean exact HEAD without recovery.'}
@@ -187,10 +354,10 @@ function Test-ActiveRetirementPlanningProjectionFromAuthenticatedAdmission {
                 $toolingModule=Import-Module (Join-Path $PSScriptRoot 'ToolingContextUpgrade.psm1') -PassThru
                 $null=&$toolingModule {param($root,$expected,$transition) Assert-ToolingContextHistoricalTransition -WorkspaceRoot $root -ExpectedEvent $expected -Transition $transition} $workspaceFull $event $proof
                 $documents=@($proof.intent.artifacts|ForEach-Object{ConvertFrom-MorphospaceProtocolJsonBytes ([Convert]::FromBase64String([string]$_.bytes_base64))})
-                $request=@($documents|Where-Object{[string]$_.schema-ceq'rusty.morphospace.workflow.tooling_context_upgrade.v1'})
-                $context=@($documents|Where-Object{[string]$_.schema-ceq'rusty.morphospace.workflow.tooling_context.v1'})
-                if($request.Count-ne1-or$context.Count-ne1){throw 'Active retirement tooling upgrade proof artifacts are ambiguous.'}
-                foreach($binding in @(Get-ActiveRetirementToolingProofBindings -WorkspaceRoot $workspaceFull -Request $request[0] -Context $context[0])){Set-PlanningProjection ([string]$binding.path) ([string]$binding.sha256)}
+                $toolingUpgradeRequests=@($documents|Where-Object{[string]$_.schema-ceq'rusty.morphospace.workflow.tooling_context_upgrade.v1'})
+                $toolingUpgradeContexts=@($documents|Where-Object{[string]$_.schema-ceq'rusty.morphospace.workflow.tooling_context.v1'})
+                if($toolingUpgradeRequests.Count-ne1-or$toolingUpgradeContexts.Count-ne1){throw 'Active retirement tooling upgrade proof artifacts are ambiguous.'}
+                foreach($binding in @(Get-ActiveRetirementToolingProofBindings -WorkspaceRoot $workspaceFull -Request $toolingUpgradeRequests[0] -Context $toolingUpgradeContexts[0])){Set-PlanningProjection ([string]$binding.path) ([string]$binding.sha256)}
             }else{
                 $null=&$amendmentModule {param($root,$expected,$transition) Assert-ActiveWriteScopeHistoricalTransition -WorkspaceRoot $root -ExpectedEvent $expected -Transition $transition} $workspaceFull $event $proof
             }
@@ -202,6 +369,16 @@ function Test-ActiveRetirementPlanningProjectionFromAuthenticatedAdmission {
         foreach($projection in @($(if($proof.intent.PSObject.Properties.Name-contains'additional_projections'){$proof.intent.additional_projections}else{@()}))){Set-PlanningProjection ([string]$projection.path) (Get-ActiveRetirementCanonicalRawSha256 $projection.document)}
         foreach($artifact in @($proof.intent.artifacts)){$artifactBytes=[Convert]::FromBase64String([string]$artifact.bytes_base64);if((Get-MorphospaceSha256Bytes $artifactBytes)-cne[string]$artifact.sha256){throw 'Active retirement planning lifecycle artifact payload is detached.'};Set-PlanningProjection ([string]$artifact.path) ([string]$artifact.sha256)}
         Set-PlanningProjection $intentRelative (Get-MorphospaceFileSha256 $intentPath);Set-PlanningProjection $completionRelative (Get-MorphospaceFileSha256 $completionPath)
+    }
+    if($Request-and$Request.PSObject.Properties.Name-ccontains'retained_claim_diagnostic'){
+        $diagnosticHead=if($ObservedHead){$ObservedHead}else{(@(&git -C $repository rev-parse HEAD 2>&1)-join'').Trim()}
+        $diagnostic=Get-ActiveRetirementClaimDiagnosticProjection -Workspace $workspaceFull -Request $Request -Repository $repository -ObservedHead $diagnosticHead
+        Set-PlanningProjection ([string]$diagnostic.path) ([string]$diagnostic.sha256)
+    }
+    if($Request-and$Request.PSObject.Properties.Name-ccontains'retained_ready_diagnostic'){
+        $readyHead=if($ObservedHead){$ObservedHead}else{(@(&git -C $repository rev-parse HEAD 2>&1)-join'').Trim()}
+        $readyDiagnostic=Get-ActiveRetirementReadyDiagnosticProjection -Workspace $workspaceFull -Request $Request -Repository $repository -ObservedHead $readyHead
+        Set-PlanningProjection ([string]$readyDiagnostic.path) ([string]$readyDiagnostic.sha256)
     }
     Set-PlanningProjection 'iteration-events.jsonl' (Get-MorphospaceFileSha256 (Resolve-MorphospaceWorkspacePath $workspaceFull 'iteration-events.jsonl' -RequireLeaf))
     if($committed){
@@ -250,12 +427,13 @@ function Get-ActiveRetirementRepositoryMaterialization([string]$Id,[object]$Entr
     if($isNested-and($Writable-or[string]$Entry.role-cne'source')){throw "Active retirement nested repository materialization '$Id' must be a read-only source dependency."}
     [pscustomobject]@{mapped_path=$mappedPath;git_root=$gitRoot;is_nested=$isNested}
 }
-function Get-ActiveRetirementRepositories([object]$Unit,[object]$Source,[string]$RepoMapPath,[string]$Workspace='',[object]$RecoveryIntent=$null){
+function Get-ActiveRetirementRepositories([object]$Unit,[object]$Source,[string]$RepoMapPath,[string]$Workspace='',[object]$RecoveryIntent=$null,[object]$Request=$null){
     # Git observation is action-only. The shared reader avoids importing the
     # larger automation orchestrator into the historical dependency closure.
     Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceRepositoryObservation.psm1')
     $mapDocument=Read-MorphospaceProtocolJson ([IO.Path]::GetFullPath($RepoMapPath))
     Assert-ActiveRetirementSchema $mapDocument 'repository-map.schema.json'
+    $retainedDiagnosticValidated=$false
     $map=@{};foreach($row in @($mapDocument.repositories)){
         if($map.ContainsKey([string]$row.repo_id)){throw 'Active retirement repository map contains duplicate identities.'};$map[[string]$row.repo_id]=$row
     }
@@ -274,6 +452,7 @@ function Get-ActiveRetirementRepositories([object]$Unit,[object]$Source,[string]
     $rootComparer=if([OperatingSystem]::IsWindows()){[StringComparer]::OrdinalIgnoreCase}else{[StringComparer]::Ordinal}
     if(-not$rootComparer.Equals([IO.Path]::GetFullPath($admittedMap),[IO.Path]::GetFullPath($RepoMapPath))-or(Get-MorphospaceFileSha256 $admittedMap)-cne[string]$mapBinding.raw_sha256){throw 'Active retirement repository map is detached from its admission.'}
     $ids=[string[]]@($sourceIds);[Array]::Sort($ids,[StringComparer]::Ordinal);$observations=@()
+    $retainedReadyValidated=$false
     $roots=[Collections.Generic.HashSet[string]]::new($rootComparer)
     foreach($id in $ids){
         if(-not$map.ContainsKey($id)){throw "Active retirement lacks repository map entry '$id'."}
@@ -299,12 +478,20 @@ function Get-ActiveRetirementRepositories([object]$Unit,[object]$Source,[string]
                 })
             }
         }
+        if($Request-and$Request.PSObject.Properties.Name-ccontains'retained_claim_diagnostic'-and[string]$entry.role-ceq'planning'){
+            $null=Get-ActiveRetirementClaimDiagnosticProjection -Workspace $Workspace -Request $Request -Repository $mappedPath -ObservedHead ([string]$observed.head)
+            $retainedDiagnosticValidated=$true
+        }
+        if($Request-and$Request.PSObject.Properties.Name-ccontains'retained_ready_diagnostic'-and[string]$entry.role-ceq'planning'){
+            $null=Get-ActiveRetirementReadyDiagnosticProjection -Workspace $Workspace -Request $Request -Repository $mappedPath -ObservedHead ([string]$observed.head)
+            $retainedReadyValidated=$true
+        }
         $planningDirt=$false
-        if($observed.available-and$observed.is_git-and$remaining.Count-ne0-and-not$authorized.Contains($id)-and[string]$observed.head-ceq[string]$locked.commit-and[string]$observed.tree-ceq[string]$locked.tree){$planningDirt=Test-ActiveRetirementPlanningProjectionFromAuthenticatedAdmission -Workspace $Workspace -Unit $Unit -RepositoryEntry $entry -StatusPorcelain $remaining -Admission $admission -RecoveryIntent $RecoveryIntent}
+        if($observed.available-and$observed.is_git-and$remaining.Count-ne0-and-not$authorized.Contains($id)-and[string]$observed.head-ceq[string]$locked.commit-and[string]$observed.tree-ceq[string]$locked.tree){$planningDirt=Test-ActiveRetirementPlanningProjectionFromAuthenticatedAdmission -Workspace $Workspace -Unit $Unit -RepositoryEntry $entry -StatusPorcelain $remaining -Admission $admission -RecoveryIntent $RecoveryIntent -Request $Request}
         if($observed.available-and$observed.is_git-and$remaining.Count-eq0-and-not$authorized.Contains($id)-and[string]$entry.role-ceq'planning'-and[string]$observed.head-cne[string]$locked.commit){
             $null=& git -C $mappedPath merge-base --is-ancestor ([string]$locked.commit) ([string]$observed.head) 2>&1
             if($LASTEXITCODE-ne0){throw "Active retirement planning descendant '$id' does not retain its locked baseline."}
-            $planningDirt=Test-ActiveRetirementPlanningProjectionFromAuthenticatedAdmission -Workspace $Workspace -Unit $Unit -RepositoryEntry $entry -StatusPorcelain $remaining -Admission $admission -LockedCommit ([string]$locked.commit) -ObservedHead ([string]$observed.head)
+            $planningDirt=Test-ActiveRetirementPlanningProjectionFromAuthenticatedAdmission -Workspace $Workspace -Unit $Unit -RepositoryEntry $entry -StatusPorcelain $remaining -Admission $admission -LockedCommit ([string]$locked.commit) -ObservedHead ([string]$observed.head) -Request $Request
         }
         if(-not$observed.available-or-not$observed.is_git-or($remaining.Count-ne0-and-not$planningDirt)-or[string]$observed.head-cnotmatch'^[0-9a-f]{40}$'-or[string]$observed.tree-cnotmatch'^[0-9a-f]{40}$'){throw "Active retirement requires clean available source repository '$id'."}
         # Writable repositories may have newer clean local checkpoints. Read-only dependencies stay pinned.
@@ -315,6 +502,8 @@ function Get-ActiveRetirementRepositories([object]$Unit,[object]$Source,[string]
         }
         $observations+=,[pscustomobject][ordered]@{repo_id=$id;head=[string]$observed.head;tree=[string]$observed.tree;branch=$observed.branch;clean=$true}
     }
+    if($Request-and$Request.PSObject.Properties.Name-ccontains'retained_claim_diagnostic'-and-not$retainedDiagnosticValidated){throw 'Retained Claim diagnostic requires its exact planning repository.'}
+    if($Request-and$Request.PSObject.Properties.Name-ccontains'retained_ready_diagnostic'-and-not$retainedReadyValidated){throw 'Retained Ready diagnostic requires its exact planning repository.'}
     return @($observations)
 }
 function Get-ActiveRetirementClaim([string]$Workspace,[object]$Request,[object[]]$Events){
@@ -360,7 +549,7 @@ function Assert-ActiveRetirementPreserved([string]$Workspace,[object]$Request,[s
     }
     if([string]$source.project_id-cne[string]$Request.project_id){throw 'Active retirement source lock project identity is detached.'}
     if((Get-MorphospaceFileSha256 (Resolve-MorphospaceWorkspacePath $Workspace ([string]$Request.accepted_receipt.path) -RequireLeaf))-cne[string]$Request.accepted_receipt.sha256){throw 'Active retirement accepted checkpoint bytes drifted.'}
-    Assert-ActiveRetirementEqual @($Request.repositories) @(Get-ActiveRetirementRepositories -Unit $unit -Source $source -RepoMapPath $RepoMapPath -Workspace $Workspace -RecoveryIntent $RecoveryIntent) 'clean repository observation'
+    Assert-ActiveRetirementEqual @($Request.repositories) @(Get-ActiveRetirementRepositories -Unit $unit -Source $source -RepoMapPath $RepoMapPath -Workspace $Workspace -RecoveryIntent $RecoveryIntent -Request $Request) 'clean repository observation'
     return $unit
 }
 function New-ActiveRetirementReceipt([object]$Request,[string]$Path,[string]$Sha,[string]$Timestamp){
@@ -370,6 +559,21 @@ function New-ActiveRetirementResult([object]$Request,[string]$Path,[string]$Sha,
     [pscustomobject][ordered]@{schema='rusty.morphospace.workflow.work_unit_automation_receipt.v2';project_id=[string]$Request.project_id;unit_id=[string]$Request.unit_id;action='RetireActive';timestamp=$Timestamp;executed=$Executed;transition='active-retired-to-idle';status_before='active';status_after='active';current_unit_before=[string]$Request.unit_id;current_unit_after=$(if($Executed){$null}else{[string]$Request.unit_id});preservation=[pscustomobject]@{git_mutation_performed=$false;device_mutation_performed=$false;remote_mutation_performed=$false};audit_receipt=[pscustomobject]@{path=$Path;sha256=$Sha};event_id=$(if($Executed){"$($Request.retirement_id)-active-retired"}else{$null})}
 }
 function Assert-ActiveRetirementIntent([string]$Workspace,[object]$Intent,[object]$Request,[string]$RequestPath,[string]$RequestSha,[string]$OutPath){
+    if($Request.PSObject.Properties.Name-ccontains'retained_claim_diagnostic'){
+        $repository=(@(&git -C $Workspace rev-parse --show-toplevel 2>&1)-join'').Trim()
+        if($LASTEXITCODE-ne0){throw 'Retained Claim diagnostic historical Git materialization is unavailable.'}
+        $head=(@(&git -C $repository rev-parse HEAD 2>&1)-join'').Trim()
+        if($LASTEXITCODE-ne0){throw 'Retained Claim diagnostic historical Git HEAD is unavailable.'}
+        $null=Get-ActiveRetirementClaimDiagnosticProjection -Workspace $Workspace -Request $Request -Repository $repository -ObservedHead $head
+    }
+
+    if($Request.PSObject.Properties.Name-ccontains'retained_ready_diagnostic'){
+        $readyRepository=(@(&git -C $Workspace rev-parse --show-toplevel 2>&1)-join'').Trim()
+        if($LASTEXITCODE-ne0){throw 'Retained Ready diagnostic historical Git materialization is unavailable.'}
+        $readyHead=(@(&git -C $readyRepository rev-parse HEAD 2>&1)-join'').Trim()
+        if($LASTEXITCODE-ne0){throw 'Retained Ready diagnostic historical Git HEAD is unavailable.'}
+        $null=Get-ActiveRetirementReadyDiagnosticProjection -Workspace $Workspace -Request $Request -Repository $readyRepository -ObservedHead $readyHead
+    }
     $eventId="$($Request.retirement_id)-active-retired"
     if([string]$Request.old_unit.unit_id-cne[string]$Request.unit_id-or[string]$Request.old_unit.path-cne"iteration-units/$($Request.unit_id).json"-or[string]$Request.replacement_unit_id-ceq[string]$Request.unit_id-or[string]$Intent.target.unit.document.unit_id-cne[string]$Request.unit_id-or[string]$Intent.target.unit.document.project_id-cne[string]$Request.project_id-or[string]$Intent.target.unit.document.status-cne'active'-or[string]$Intent.target.unit.document.source_composition.lock_path-cne[string]$Request.source_composition.path){throw 'Active retirement historical endpoint or source-lock identity is detached.'}
     if([string]$Intent.schema-cne'rusty.morphospace.workflow.transition_ledger_intent.v6'-or[string]$Intent.transaction_id-cne"$eventId-transition"-or[string]$Intent.state.path-cne'workspace.state.json'-or[string]$Intent.unit.path-cne[string]$Request.old_unit.path-or[string]$Intent.events.path-cne'iteration-events.jsonl'){throw 'Active retirement intent identity or paths are detached.'}
