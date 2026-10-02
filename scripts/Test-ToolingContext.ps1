@@ -1,4 +1,4 @@
-param([switch]$SelfTest,[switch]$Child,[switch]$KeepFailedFixture,[string]$OldCommit='',[string]$NewCommit='',[string]$HarnessRoot='',[ValidateSet('all','lifecycle','recovery','product-negative','provenance-negative')][string]$Scenario='all',[ValidateSet('all','after-intent','after-artifact','after-projection','after-event')][string]$RecoveryFault='all')
+param([switch]$SelfTest,[switch]$Child,[switch]$KeepFailedFixture,[string]$OldCommit='',[string]$NewCommit='',[string]$HarnessRoot='',[ValidateSet('all','lifecycle','recovery','product-negative','provenance-negative','instruction-context')][string]$Scenario='all',[ValidateSet('all','after-intent','after-artifact','after-projection','after-event')][string]$RecoveryFault='all')
 Set-StrictMode -Version 2.0
 $ErrorActionPreference='Stop'
 $script:TestClosurePaths=$null
@@ -76,8 +76,53 @@ $projection=[pscustomobject][ordered]@{source_composition=[pscustomobject][order
 $old=Read-TC (Join-Path $workspace 'tooling-contexts/ctx-old.json')
 $new=New-MorphospaceToolingContext -ContextId 'ctx-new' -ProjectId 'envelope-test' -PreparationId 'u002-envelope' -ProductProjection $projection -Resolver ([pscustomobject]@{path='local/ctx-new-resolver.json';sha256=FileHash (Join-Path $workspace 'local/ctx-new-resolver.json')}) -Executor $newExecutor -Routers @($newRouter.row,$newSystemRouter.row,$newGraphRouter.row) -Compatibility $newCompat
 $oldPointer=Clone $seed.preparation_receipt.tooling_context
-$admission=Clone $seed.admission_template;if($admission.PSObject.Properties.Name-cnotcontains'admission_kind'){$admission|Add-Member -NotePropertyName admission_kind -NotePropertyValue 'ordinary'};if($admission.preparation.PSObject.Properties.Name-cnotcontains'preparation_kind'){$admission.preparation|Add-Member -NotePropertyName preparation_kind -NotePropertyValue 'ordinary'};$admissionPath=Join-Path $HarnessRoot 'admission.json';Write-TC $admissionPath $admission;Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $workspace -DevelopmentUnitAdmission $admissionPath -ExpectedDevelopmentUnitAdmissionSha256 (FileHash $admissionPath) -OutPath (Join-Path $workspace 'receipts/u002-admission.json') -Timestamp '2026-09-15T08:10:00.0000000Z' -Execute|Out-Null
+$admission=Clone $seed.admission_template;
+# This fixture's planning root needs a nearest instruction surface for the shortcut.
+# Declare it before the actual admission producer; never alter an admitted unit.
+[IO.File]::WriteAllText((Join-Path $seed.source_repository 'AGENTS.md'),"# Fixture agent instructions`nUse the bound owner tooling; perform no external effects.`n",[Text.UTF8Encoding]::new($false))
+$admission.unit.instruction_surfaces+=,[pscustomobject][ordered]@{surface_kind='agents';path='<project-shell>/AGENTS.md';owner='project-owner';change_reason='Review the nearest fixture planning instructions.';action='review-no-change';status='complete';validation='Read the fixture AGENTS.md before owner admission.';skill_id=$null}
+if($admission.PSObject.Properties.Name-cnotcontains'admission_kind'){$admission|Add-Member -NotePropertyName admission_kind -NotePropertyValue 'ordinary'};if($admission.preparation.PSObject.Properties.Name-cnotcontains'preparation_kind'){$admission.preparation|Add-Member -NotePropertyName preparation_kind -NotePropertyValue 'ordinary'};$admissionPath=Join-Path $HarnessRoot 'admission.json';Write-TC $admissionPath $admission;Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $workspace -DevelopmentUnitAdmission $admissionPath -ExpectedDevelopmentUnitAdmissionSha256 (FileHash $admissionPath) -OutPath (Join-Path $workspace 'receipts/u002-admission.json') -Timestamp '2026-09-15T08:10:00.0000000Z' -Execute|Out-Null
 $args=@{WorkspaceRoot=$workspace;UnitId='u002';RepoMapPath=(Join-Path $workspace 'repository-map.json');ValidationTier='quick'};&$automationModule {param($a)Invoke-MorphospaceWorkUnitAutomation @a -Action Ready -Timestamp '2026-09-15T08:11:00.0000000Z' -Execute} $args|Out-Null;&$automationModule {param($a)Invoke-MorphospaceWorkUnitAutomation @a -Action Claim -Timestamp '2026-09-15T08:12:00.0000000Z' -Execute} $args|Out-Null
+# Exercise the actual shortcut CLI against owner-produced active tooling context.
+# The lifecycle registration includes these cases; the focused scenario omits upgrades.
+if($Scenario-in@('all','lifecycle','instruction-context')){
+ $instructionCases=0
+ function Invoke-TCInstructionShortcut([bool]$IncludeMap=$true){
+  $cliArgs=@('-NoProfile','-NonInteractive','-File',(Join-Path $tool 'scripts/Test-WorkflowContracts.ps1'),'-RepoRoot',$tool,'-WorkspaceRoot',$workspace,'-CurrentUnitInstructionOnly')
+  if($IncludeMap){$cliArgs+=@('-RepositoryMapPath',(Join-Path $workspace 'repository-map.json'))}
+  $text=(& pwsh @cliArgs 2>&1|Out-String)
+  [pscustomobject]@{exit_code=$LASTEXITCODE;text=$text}
+ }
+ function Assert-TCInstructionShortcut($Result,[bool]$Expected,[string]$Name){
+  $marker=if($Expected){'Current-unit instruction contract passed;'}else{'review lacks exact owner-tracked provenance'}
+  if(($Result.exit_code-eq0)-ne$Expected-or$Result.text-notmatch[regex]::Escape($marker)){throw "Instruction shortcut case '$Name' failed: $($Result.text)"}
+  $script:instructionCases++
+ }
+ Assert-TCInstructionShortcut (Invoke-TCInstructionShortcut) $true 'actual prepared tooling context'
+ Assert-TCInstructionShortcut (Invoke-TCInstructionShortcut $false) $false 'missing repository map'
+ $contextFile=Join-Path $workspace 'tooling-contexts/ctx-old.json'
+ $contextBytes=[IO.File]::ReadAllBytes($contextFile)
+ try{
+  [IO.File]::AppendAllText($contextFile,' ',[Text.UTF8Encoding]::new($false))
+  Assert-TCInstructionShortcut (Invoke-TCInstructionShortcut) $false 'damaged raw context pin'
+ }finally{[IO.File]::WriteAllBytes($contextFile,$contextBytes)}
+ $resolverFile=Join-Path $workspace 'local/ctx-old-resolver.json'
+ $resolverBytes=[IO.File]::ReadAllBytes($resolverFile)
+ try{
+  $resolver=Read-TC $resolverFile;$resolver.context_id='ctx-unrelated';Write-TC $resolverFile $resolver
+  Assert-TCInstructionShortcut (Invoke-TCInstructionShortcut) $false 'mismatched resolver context'
+ }finally{[IO.File]::WriteAllBytes($resolverFile,$resolverBytes)}
+ try{
+  [IO.File]::Move($contextFile,"$contextFile.absent")
+  Assert-TCInstructionShortcut (Invoke-TCInstructionShortcut) $false 'absent context document'
+ }finally{if([IO.File]::Exists("$contextFile.absent")){[IO.File]::Move("$contextFile.absent",$contextFile)}}
+ Assert-TCInstructionShortcut (Invoke-TCInstructionShortcut) $true 'restored exact context'
+ Write-TCPhase 'instruction-context-complete'
+ if($Scenario-ceq'instruction-context'){
+  [pscustomobject]@{result='pass';scenario=$Scenario;production_shortcut_cases=$instructionCases;real_git=$true;owner_produced_preparation=$true;guard_mocked=$false;device_calls=0}|ConvertTo-Json -Compress
+  return
+ }
+}
 & git -C $tool checkout --detach $newCommit|Out-Null;if($LASTEXITCODE-ne0){throw 'Fixture could not advance to new tooling HEAD.'};$automationModule=Import-Module (Join-Path $PSScriptRoot 'WorkUnitAutomation.psm1') -Force -PassThru;$provenanceModule=Import-Module (Join-Path $PSScriptRoot 'ToolingContextProvenance.psm1') -Force -PassThru;$upgradeModule=Import-Module (Join-Path $PSScriptRoot 'ToolingContextUpgrade.psm1') -Force -PassThru
 $base=Join-Path $HarnessRoot 'active-base';Copy-Item -LiteralPath $workspace -Destination $base -Recurse
 Write-TCPhase 'setup-complete'
