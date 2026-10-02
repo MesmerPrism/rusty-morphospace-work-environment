@@ -1,5 +1,6 @@
 Set-StrictMode -Version 2.0
 $ErrorActionPreference='Stop'
+$script:ActiveRetirementHistoricalEventsScope=$null
 $script:ActiveRetirementHadCallerProtocolCommon=$null-ne(Get-Command Read-MorphospaceProtocolJson -ErrorAction SilentlyContinue)
 $script:ActiveRetirementHadCallerTransitionLedger=$null-ne(Get-Command Test-MorphospaceCommittedTransitionLedger -ErrorAction SilentlyContinue)
 $script:ActiveRetirementProtocolCommonPath=Join-Path $PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1'
@@ -36,6 +37,19 @@ function Get-ActiveRetirementEvents([string]$Workspace){
     $path=Resolve-MorphospaceWorkspacePath $Workspace 'iteration-events.jsonl' -RequireLeaf
     $bytes=[IO.File]::ReadAllBytes($path)
     if($bytes.Length-eq0-or$bytes.Length-gt67108864-or$bytes[-1]-ne10){throw 'Active retirement requires a bounded LF-terminated event ledger.'}
+    $sha=Get-MorphospaceSha256Bytes $bytes
+    $scope=$script:ActiveRetirementHistoricalEventsScope
+    if($null-ne$scope){
+        $workspaceKey=[IO.Path]::GetFullPath($Workspace).TrimEnd('\','/')
+        $comparison=if([OperatingSystem]::IsWindows()){[StringComparison]::OrdinalIgnoreCase}else{[StringComparison]::Ordinal}
+        if(-not$scope.workspace.Equals($workspaceKey,$comparison)){throw 'Historical retirement event observation escaped its workspace.'}
+        $schemaHashes=@('iteration-event.schema.json','iteration-event-v2.schema.json'|ForEach-Object{Get-MorphospaceFileSha256 (Join-Path (Split-Path $PSScriptRoot -Parent) "schemas/$_")})-join':'
+        if($null-ne$scope.observation){
+            if($scope.observation.length-ne[long]$bytes.Length-or$scope.observation.sha256-cne$sha){throw 'Historical retirement event ledger changed during authentication.'}
+            if($scope.schema_hashes-cne$schemaHashes){throw 'Historical retirement event schemas changed during authentication.'}
+            return $scope.observation
+        }
+    }
     $text=[Text.UTF8Encoding]::new($false,$true).GetString($bytes)
     $events=@();$seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach($line in @($text.Split([char]10))){
@@ -49,7 +63,13 @@ function Get-ActiveRetirementEvents([string]$Workspace){
         if(-not$seen.Add([string]$event.event_id)-or[int]$event.sequence-ne($events.Count+1)){throw 'Active retirement event sequence or identity is invalid.'}
         $events+=,$event
     }
-    [pscustomobject]@{events=$events;sha256=Get-MorphospaceSha256Bytes $bytes;length=[long]$bytes.Length;tail_id=[string]$events[-1].event_id}
+    $observation=[pscustomobject]@{events=$events;sha256=$sha;length=[long]$bytes.Length;tail_id=[string]$events[-1].event_id}
+    if($null-ne$scope){
+        $validatedSchemaHashes=@('iteration-event.schema.json','iteration-event-v2.schema.json'|ForEach-Object{Get-MorphospaceFileSha256 (Join-Path (Split-Path $PSScriptRoot -Parent) "schemas/$_")})-join':'
+        if($schemaHashes-cne$validatedSchemaHashes){throw 'Historical retirement event schemas changed during authentication.'}
+        $scope.observation=$observation;$scope.schema_hashes=$schemaHashes
+    }
+    $observation
 }
 function Get-ActiveRetirementCanonicalRawSha256([object]$Document){Get-MorphospaceSha256Bytes (ConvertTo-MorphospaceProtocolJsonBytes $Document)}
 function Import-ActiveRetirementDevelopmentEnvelopeProvenance {
@@ -611,6 +631,11 @@ function Assert-ActiveRetirementIntent([string]$Workspace,[object]$Intent,[objec
 function Test-MorphospaceHistoricalActiveUnitRetirement {
     [CmdletBinding()]param([Parameter(Mandatory)][string]$WorkspaceRoot,[Parameter(Mandatory)][object]$ExpectedEvent)
     $workspace=[IO.Path]::GetFullPath($WorkspaceRoot)
+    # Parsed events belong only to this read-only verifier. Every use still
+    # reads and hashes live raw bytes; all transaction/provenance guards remain live.
+    if($null-ne$script:ActiveRetirementHistoricalEventsScope){throw 'Historical retirement event authentication cannot be reentered.'}
+    $script:ActiveRetirementHistoricalEventsScope=[pscustomobject]@{workspace=$workspace.TrimEnd('\','/');observation=$null;schema_hashes=$null}
+    try {
     if([string]$ExpectedEvent.event_id-cnotmatch'-active-retired$'-or@($ExpectedEvent.receipts).Count-ne2){throw 'Historical active retirement event identity is invalid.'}
     $retirementId=[string]$ExpectedEvent.event_id-creplace'-active-retired$',''
     $requestPath="receipts/$retirementId-request.json"
@@ -634,7 +659,9 @@ function Test-MorphospaceHistoricalActiveUnitRetirement {
     $events=(Get-ActiveRetirementEvents $workspace).events
     Assert-ActiveRetirementEqual $request.claim (Get-ActiveRetirementClaim $workspace $request @($events|Where-Object{[int]$_.sequence-lt[int]$ExpectedEvent.sequence})) 'historical Claim'
     # Later envelope/source checkpoints may evolve; historical authentication never compares their live preimages.
+    $null=Get-ActiveRetirementEvents $workspace
     [pscustomobject]@{intent=$proof.intent;completion=$proof.completion;receipt=$receipt;request=$request;transaction_id=$id}
+    }finally{$script:ActiveRetirementHistoricalEventsScope=$null}
 }
 function Invoke-MorphospaceRetireActive {
     [CmdletBinding()]param([Parameter(Mandatory)][string]$WorkspaceRoot,[Parameter(Mandatory)][string]$UnitId,[Parameter(Mandatory)][string]$RepoMapPath,[Parameter(Mandatory)][string]$ActiveUnitRetirement,[string]$ExpectedActiveUnitRetirementSha256='',[string]$Timestamp='',[Parameter(Mandatory)][string]$OutPath,[switch]$Execute,[ValidateSet('none','after-intent','after-artifact','after-projection','after-event')][string]$FaultAfter='none')
