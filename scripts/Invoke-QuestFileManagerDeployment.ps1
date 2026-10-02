@@ -22,7 +22,7 @@ Import-Module (Join-Path $PSScriptRoot 'lib\QuestFileManagerRuntimeObservationAd
 
 function Get-StepArguments {
     param(
-        [ValidateSet("Inspect", "Observe", "Install", "Launch")]
+        [ValidateSet("Inspect", "Observe", "Install", "Launch", "Deploy")]
         [string]$Step,
         [string]$Artifact,
         [string]$TargetSerial
@@ -33,6 +33,7 @@ function Get-StepArguments {
         "Observe" { return @("apk", "observe", "--serial", $TargetSerial, "--file", $Artifact, "--json") }
         "Install" { return @("apk", "install", "--serial", $TargetSerial, "--file", $Artifact, "--json") }
         "Launch" { return @("apk", "launch", "--serial", $TargetSerial, "--file", $Artifact, "--json") }
+        "Deploy" { return @("apk", "deploy", "--serial", $TargetSerial, "--file", $Artifact, "--json") }
     }
 }
 
@@ -168,6 +169,40 @@ function Assert-RuntimeObservation {
     # never readiness assertions. Process, task, and focus remain raw facts;
     # application/OpenXR readiness stays unknown until app-owned evidence exists.
     return $adapted
+}
+
+function Invoke-ComposedDeployment {
+    param(
+        [hashtable]$StepArguments,
+        [object]$Inspection,
+        [string]$TargetSerial,
+        [string]$Shape,
+        [string]$Component,
+        [scriptblock]$StepRunner = { param($Arguments) Invoke-Step @Arguments }
+    )
+    # One invocation only. An unknown install/launch effect cannot authorize a
+    # retry or a fallback sequence. Invoke-Step retains exact failure evidence.
+    $envelope = & $StepRunner $StepArguments
+    if ([string]$envelope.schema -cne 'questionable.file_manager.apk_deploy_result.v1' -or
+        $envelope.succeeded -isnot [bool] -or -not $envelope.succeeded -or
+        $null -eq $envelope.result -or
+        [string]$envelope.result.DeploymentContract -cne 'questionable.file_manager.apk_deployment.v3') {
+        throw 'Deploy did not return the pinned composed deployment contract.'
+    }
+    Assert-MutationConfirmed -Envelope $envelope -Step Deploy
+    $result = $envelope.result
+    Assert-InstalledArtifact -Expected $Inspection -Installed $result.Install.Installed -ExpectedSerial $TargetSerial -Step 'Deploy install'
+    Assert-InstalledArtifact -Expected $Inspection -Installed $result.Launch.Installed -ExpectedSerial $TargetSerial -Step 'Deploy launch'
+    Assert-InstalledArtifact -Expected $Inspection -Installed $result.Runtime.Installed -ExpectedSerial $TargetSerial -Step 'Deploy final observation'
+    if ($result.Install.CommandResult.Succeeded -isnot [bool] -or -not $result.Install.CommandResult.Succeeded -or
+        $result.Launch.CommandResult.Succeeded -isnot [bool] -or -not $result.Launch.CommandResult.Succeeded -or
+        $result.Launch.ComponentObservedResumed -isnot [bool] -or -not $result.Launch.ComponentObservedResumed -or
+        $result.ClaimBoundary.ExactInstalledBytesConfirmed -isnot [bool] -or -not $result.ClaimBoundary.ExactInstalledBytesConfirmed -or
+        $result.ClaimBoundary.ResolvedComponentObserved -isnot [bool] -or -not $result.ClaimBoundary.ResolvedComponentObserved -or
+        $result.ClaimBoundary.QfmOwnedInstallLaunchEffectConfirmed -isnot [bool] -or -not $result.ClaimBoundary.QfmOwnedInstallLaunchEffectConfirmed) {
+        throw 'Deploy install/launch effect lacks confirmed QFM proof.'
+    }
+    Assert-RuntimeObservation -Observation $result.Runtime -Shape $Shape -Component $Component | Out-Null
 }
 
 function Write-StepEvidence {
@@ -397,6 +432,51 @@ function Invoke-SelfTest {
         $adaptedObservation.fact_families.application_evidence.openxr_readiness -cne 'unknown') {
         throw "Self-test allowed Android transport facts to become application or OpenXR readiness."
     }
+    $deployFixture = [pscustomobject]@{
+        schema = 'questionable.file_manager.apk_deploy_result.v1'
+        succeeded = $true
+        mutation = [pscustomobject]@{ Stage = 'confirmed' }
+        result = [pscustomobject]@{
+            DeploymentContract = 'questionable.file_manager.apk_deployment.v3'
+            Install = [pscustomobject]@{ Installed = $installed; CommandResult = [pscustomobject]@{ Succeeded = $true } }
+            Launch = [pscustomobject]@{ Installed = $installed; CommandResult = [pscustomobject]@{ Succeeded = $true }; ComponentObservedResumed = $true }
+            Runtime = [pscustomobject]@{ Installed = $installed; ObservationContract = 'questionable.file_manager.app_runtime_observation.v5'; ProcessIds = @(); IsForeground = $false; IsTopResumed = $false }
+            ClaimBoundary = [pscustomobject]@{ ExactInstalledBytesConfirmed = $true; ResolvedComponentObserved = $true; QfmOwnedInstallLaunchEffectConfirmed = $true }
+        }
+    }
+    $deployCases = @('success', 'pending', 'failed', 'wrong-contract', 'wrong-serial', 'install-bytes', 'launch-bytes', 'final-bytes', 'launch-unobserved', 'claim-unconfirmed', 'unknown-facts', 'dispatch-timeout')
+    foreach ($case in $deployCases) {
+        $fixture = $deployFixture | ConvertTo-Json -Depth 16 | ConvertFrom-Json
+        switch ($case) {
+            'pending' { $fixture.mutation.Stage = 'pending' }
+            'failed' { $fixture.succeeded = $false }
+            'wrong-contract' { $fixture.result.DeploymentContract = 'questionable.file_manager.apk_deployment.v0' }
+            'wrong-serial' { $fixture.result.Runtime.Installed.Serial = 'OTHER123' }
+            'install-bytes' { $fixture.result.Install.Installed.BaseApkSha256 = 'b' * 64 }
+            'launch-bytes' { $fixture.result.Launch.Installed.BaseApkSizeBytes = 5 }
+            'final-bytes' { $fixture.result.Runtime.Installed.BaseApkSha256 = 'b' * 64 }
+            'launch-unobserved' { $fixture.result.Launch.ComponentObservedResumed = $false }
+            'claim-unconfirmed' { $fixture.result.ClaimBoundary.QfmOwnedInstallLaunchEffectConfirmed = $false }
+            'unknown-facts' { $fixture.result.Runtime.ObservationContract = 'unknown' }
+        }
+        $calls = [System.Collections.Generic.List[string]]::new()
+        $runner = {
+            param($Arguments)
+            $calls.Add([string]$Arguments.Step)
+            if ($Arguments.Step -cne 'Deploy' -or $Arguments.TargetSerial -cne 'QUEST123' -or $Arguments.Artifact -cne 'example.apk') { throw 'Unexpected fixed deploy identity.' }
+            if ($case -ceq 'dispatch-timeout') { throw [TimeoutException]::new('Unconfirmed effect.') }
+            return $fixture
+        }
+        $failed = $false
+        try {
+            Invoke-ComposedDeployment -Inspection $artifact -TargetSerial 'QUEST123' -Shape ImmersiveXr -Component '' -StepArguments @{ Step = 'Deploy'; TargetSerial = 'QUEST123'; Artifact = 'example.apk' } -StepRunner $runner
+        } catch { $failed = $true }
+        if ($calls.Count -ne 1 -or $calls[0] -cne 'Deploy' -or $failed -ne ($case -cne 'success')) {
+            throw "Composed deployment self-test failed or retried: $case"
+        }
+    }
+    $deployArguments = (Get-StepArguments -Step Deploy -Artifact 'example.apk' -TargetSerial 'QUEST123') -join '|'
+    if ($deployArguments -cne 'apk|deploy|--serial|QUEST123|--file|example.apk|--json') { throw 'Unexpected composed deploy vector.' }
     $rejected = $false
     try {
         Assert-InstalledArtifact -Expected $artifact `
@@ -534,6 +614,9 @@ function Invoke-SelfTest {
         duplicate_runtime_filenames_preserved = ($providerFiles.Count -eq 3)
         windows_path_bound_enforced = $longPathRejected
         runtime_facts_do_not_establish_readiness = $true
+        composed_deployment_cases = $deployCases.Count
+        composed_deployment_single_dispatch = $true
+        composed_deployment_no_uncertainty_retry = $true
     } | ConvertTo-Json -Depth 4
 }
 
@@ -653,7 +736,7 @@ try {
             -Component $ExpectedComponent
     }
 
-    if ($Mode -in @("Install", "Deploy")) {
+    if ($Mode -eq "Install") {
         $install = Invoke-Step `
             -Executable $executionProvider `
             -Step Install `
@@ -682,30 +765,17 @@ try {
     }
 
     if ($Mode -eq "Deploy") {
-        $launch = Invoke-Step `
-            -Executable $executionProvider `
-            -Step Launch `
-            -Artifact $executionArtifact `
-            -TargetSerial $Serial `
-            -EvidenceRoot $evidenceRoot `
-            -EvidenceName "launch" `
-            -ExpectedExecutableSha256 ([string]$resolution.executable_sha256) `
-            -ProviderClosure $providerClosure `
-            -DeadlineSeconds $TimeoutSeconds
-        Assert-LaunchAdmitted -Envelope $launch
-        Assert-InstalledArtifact -Expected $inspection -Installed $launch.result.Installed -ExpectedSerial $Serial -Step Launch
-        $observation = Invoke-Step `
-            -Executable $executionProvider `
-            -Step Observe `
-            -Artifact $executionArtifact `
-            -TargetSerial $Serial `
-            -EvidenceRoot $evidenceRoot `
-            -EvidenceName 'post-launch-observe' `
-            -ExpectedExecutableSha256 ([string]$resolution.executable_sha256) `
-            -ProviderClosure $providerClosure `
-            -DeadlineSeconds $TimeoutSeconds
-        Assert-InstalledArtifact -Expected $inspection -Installed $observation.Installed -ExpectedSerial $Serial -Step Observe
-        Assert-RuntimeObservation -Observation $observation -Shape $RuntimeShape -Component $ExpectedComponent | Out-Null
+        Invoke-ComposedDeployment -Inspection $inspection -TargetSerial $Serial -Shape $RuntimeShape -Component $ExpectedComponent -StepArguments @{
+            Executable = $executionProvider
+            Step = 'Deploy'
+            Artifact = $executionArtifact
+            TargetSerial = $Serial
+            EvidenceRoot = $evidenceRoot
+            EvidenceName = 'deploy'
+            ExpectedExecutableSha256 = [string]$resolution.executable_sha256
+            ProviderClosure = $providerClosure
+            DeadlineSeconds = $TimeoutSeconds
+        }
     }
 } finally {
     if ($null -ne $artifactRunCopy) {

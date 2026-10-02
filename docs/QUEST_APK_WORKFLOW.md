@@ -159,7 +159,16 @@ pwsh -NoProfile -ExecutionPolicy Bypass `
 ```
 
 `Install` and `Deploy` fail if File Manager returns anything short of exact
-headset-confirmed artifact readback. Every device mode requires a new
+headset-confirmed artifact readback. `Deploy` invokes the pinned composed
+`apk deploy` route once. Its immutable admission retains the post-install
+installed-byte proof before launch and the final installed-byte proof before
+runtime probes, avoiding repeated independent byte transfers. The wrapper
+requires the confirmed QFM install/launch effect and exact serial, digest and
+size joins for install, launch and final observation. Android runtime facts
+remain facts; they never prove app/OpenXR readiness or wearer visibility.
+The run retains `deploy.json` and its execution evidence. An uncertain effect
+fails without another launch or fallback; reconcile it before a fresh run.
+`Install` retains its separate post-install observation. Every device mode requires a new
 run-owned evidence directory, makes content-addressed read-locked copies of
 the APK and the complete hash-pinned provider closure (entry point plus every
 declared runtime sibling), and retains the provider source commit/tree,
