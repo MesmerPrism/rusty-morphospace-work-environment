@@ -5,6 +5,7 @@ param(
     [switch]$CurrentUnitInstructionOnly,
     [switch]$SkipOwnerSelfTests,
     [switch]$CurrentWorkOnly,
+    [switch]$CurrentWorkspaceOnly,
     [switch]$StandardDeltaOnly,
     [string]$HistoricalValidationDebtBaselinePath = "",
     [string]$HistoricalValidationDebtResultPath = "",
@@ -12,6 +13,9 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+if ($CurrentWorkspaceOnly -and (-not $WorkspaceRoot -or -not $CurrentWorkOnly -or -not $SkipOwnerSelfTests -or $CurrentUnitInstructionOnly -or $StandardDeltaOnly -or $HistoricalValidationDebtBaselinePath -or $HistoricalValidationDebtResultPath -or $EmitHistoricalValidationDebtCapture)) {
+    throw 'CurrentWorkspaceOnly requires WorkspaceRoot, CurrentWorkOnly and SkipOwnerSelfTests, with no alternate validation mode.'
+}
 
 if (-not $RepoRoot) {
     $RepoRoot = Split-Path -Parent $PSScriptRoot
@@ -335,8 +339,32 @@ function Invoke-HistoricalDebtCaptureAttributionSelfTest {
     }
 }
 
+function Assert-CurrentWorkspaceRequiredInputs {
+    param([Parameter(Mandatory)][string]$Root)
+    $rootPath = (Resolve-Path -LiteralPath $Root).Path
+    $missing = [Collections.Generic.List[string]]::new()
+    foreach ($relative in @('project.spec.json','feature.lock.json','workspace.state.json','iteration-events.jsonl')) {
+        if (-not [IO.File]::Exists((Join-Path $rootPath $relative))) { $missing.Add($relative) }
+    }
+    if ($missing.Count) { throw "Current workspace required inputs are absent: $($missing -join ', ')" }
+    $state = Read-MorphospaceProtocolJson (Join-Path $rootPath 'workspace.state.json')
+    foreach ($id in @($state.current_unit,$state.next_ready_unit) | Where-Object { $_ } | Sort-Object -Unique) {
+        $unitPath = Resolve-MorphospaceWorkspacePath $rootPath "iteration-units/$id.json" -RequireLeaf
+        $unit = Read-MorphospaceProtocolJson $unitPath
+        if ($unit.PSObject.Properties.Name -notcontains 'tooling_context') { continue }
+        # These are existing pointer/resolver checks, moved ahead of history replay.
+        # They deny early and confer no authenticated owner or execution evidence.
+        $contextPath = Resolve-MorphospaceWorkspacePath $rootPath ([string]$unit.tooling_context.path) -RequireLeaf
+        if ((Get-MorphospaceFileSha256 $contextPath) -cne [string]$unit.tooling_context.sha256) { throw 'Tooling executor context pointer is detached.' }
+        $context = Read-MorphospaceProtocolJson $contextPath
+        $resolverPath = Resolve-MorphospaceWorkspacePath $rootPath ([string]$context.resolver.path) -RequireLeaf
+        if ((Get-MorphospaceFileSha256 $resolverPath) -cne [string]$context.resolver.sha256) { throw 'Tooling context resolver raw hash drifted.' }
+    }
+}
+if ($CurrentWorkspaceOnly) { Assert-CurrentWorkspaceRequiredInputs -Root $WorkspaceRoot }
+
 Assert-WorkflowProvenanceFailureBinding
-Invoke-HistoricalDebtCaptureAttributionSelfTest
+if (-not $CurrentWorkspaceOnly) { Invoke-HistoricalDebtCaptureAttributionSelfTest }
 
 function New-HistoricalDebtUnitFailureAttribution {
     param(
@@ -2816,6 +2844,7 @@ if ($null -ne $lifecycle) {
 }
 
 $schemaRoot = Join-Path $RepoRoot "schemas"
+if (-not $CurrentWorkspaceOnly) {
 $schemaFiles = @(Get-ChildItem -LiteralPath $schemaRoot -Filter "*.schema.json" -File | Sort-Object Name)
 $requiredSchemaNames = @(
     "authority-failure-report.schema.json",
@@ -3249,6 +3278,8 @@ if ((Test-Path -LiteralPath $releaseCapsuleTemplate -PathType Leaf) -and (Test-P
     }
 }
 
+} # Immutable owner conformance remains in default validation.
+
 if ($WorkspaceRoot) {
     $resolvedWorkspace = (Resolve-Path -LiteralPath $WorkspaceRoot).Path
     $workspaceBundle = New-Bundle `
@@ -3304,9 +3335,12 @@ if ($null -ne $historicalDebtResult) {
     Write-Host "Workflow contract validation passed with unresolved historical debt: baseline=$([string]$historicalDebtResult.historical_debt.baseline_id); count=$([int]$historicalDebtResult.historical_debt.count); sha256=$([string]$historicalDebtResult.historical_debt.sha256); current_validation=passed."
 }
 
+if (-not $CurrentWorkspaceOnly) {
 $recoveryActionSchema=Read-JsonDocument -Path (Join-Path $RepoRoot 'schemas\work-unit-automation-receipt-v2.schema.json') -Context 'repreparation automation registration'
 if($null-ne$recoveryActionSchema-and@($recoveryActionSchema.properties.action.enum)-cnotcontains'ReprepareRetiredDevelopmentEnvelope'){Add-Failure -Message 'ReprepareRetiredDevelopmentEnvelope is absent from the v2 automation receipt action set.'}
 foreach($recoveryContract in @('schemas/development-envelope-repreparation-v1.schema.json','schemas/development-envelope-repreparation-receipt-v1.schema.json','schemas/development-envelope-repreparation-intent-v1.schema.json','schemas/development-envelope-repreparation-completion-v1.schema.json','schemas/development-envelope-source-composition-v2.schema.json','scripts/DevelopmentEnvelopeRepreparation.psm1')){if(-not(Test-Path -LiteralPath (Join-Path $RepoRoot $recoveryContract))){Add-Failure -Message "Repreparation contract surface is absent: $recoveryContract"}}
+
+}
 
 if ($script:Failures.Count -gt 0) {
     Write-Host "Workflow contract validation failures:"
@@ -3316,5 +3350,5 @@ if ($script:Failures.Count -gt 0) {
     throw "Workflow contract validation failed with $($script:Failures.Count) error(s)."
 }
 
-$scope = if ($WorkspaceRoot) { "portable examples and project workspace" } else { "portable examples" }
+$scope = if ($CurrentWorkspaceOnly) { "current project workspace; owner conformance not repeated" } elseif ($WorkspaceRoot) { "portable examples and project workspace" } else { "portable examples" }
 Write-Host "Workflow contract validation passed for $scope."
