@@ -14,6 +14,23 @@ function Get-ToolingUpgradeEvents {
 function Get-ToolingUpgradeArtifactDocument {
  param([object]$Intent,[string]$Schema);$matches=@();foreach($artifact in @($Intent.artifacts)){try{$bytes=[Convert]::FromBase64String([string]$artifact.bytes_base64)}catch{throw 'Tooling-context upgrade intent contains invalid artifact base64.'};if((Get-MorphospaceSha256Bytes $bytes)-cne[string]$artifact.sha256){throw 'Tooling-context upgrade intent artifact hash is detached.'};$document=ConvertFrom-MorphospaceProtocolJsonBytes $bytes 'tooling-context upgrade intent artifact';if([string]$document.schema-ceq$Schema){$matches+=,[pscustomobject]@{binding=$artifact;bytes=$bytes;document=$document}}};if($matches.Count-ne1){throw "Tooling-context upgrade intent must contain exactly one '$Schema' artifact."};$matches[0]
 }
+# Authenticate every artifact once for the two closed upgrade roles. The decoded
+# objects are local to this invocation; no caller-supplied or cross-call cache.
+function Get-ToolingUpgradeArtifactPair {
+ param([object]$Intent)
+ $requests=@();$contexts=@()
+ foreach($artifact in @($Intent.artifacts)){
+  try{$bytes=[Convert]::FromBase64String([string]$artifact.bytes_base64)}catch{throw 'Tooling-context upgrade intent contains invalid artifact base64.'}
+  if((Get-MorphospaceSha256Bytes $bytes)-cne[string]$artifact.sha256){throw 'Tooling-context upgrade intent artifact hash is detached.'}
+  $document=ConvertFrom-MorphospaceProtocolJsonBytes $bytes 'tooling-context upgrade intent artifact'
+  $selected=[pscustomobject]@{binding=$artifact;bytes=$bytes;document=$document}
+  if([string]$document.schema-ceq'rusty.morphospace.workflow.tooling_context_upgrade.v1'){$requests+=,$selected}
+  if([string]$document.schema-ceq'rusty.morphospace.workflow.tooling_context.v1'){$contexts+=,$selected}
+ }
+ if($requests.Count-ne1){throw "Tooling-context upgrade intent must contain exactly one 'rusty.morphospace.workflow.tooling_context_upgrade.v1' artifact."}
+ if($contexts.Count-ne1){throw "Tooling-context upgrade intent must contain exactly one 'rusty.morphospace.workflow.tooling_context.v1' artifact."}
+ [pscustomobject]@{request=$requests[0];context=$contexts[0]}
+}
 function Assert-ToolingUpgradePointer {
  param([object]$Pointer,[object]$Context,[byte[]]$Bytes,[string]$Name)
  if([string]$Pointer.protocol_id-cne(Get-MorphospaceToolingContextProtocolId)-or[string]$Pointer.sha256-cne(Get-MorphospaceSha256Bytes $Bytes)-or[string]$Pointer.canonical_sha256-cne(Get-MorphospaceCanonicalJsonSha256 $Context)){throw "Tooling-context upgrade $Name pointer is detached."}
@@ -60,7 +77,7 @@ function New-ToolingUpgradeAutomationReceipt {
 function Assert-MorphospaceToolingContextUpgradeRecoveryBindings {
  [CmdletBinding()]param([Parameter(Mandatory)][string]$WorkspaceRoot,[Parameter(Mandatory)][object]$Intent)
  $workspace=[IO.Path]::GetFullPath($WorkspaceRoot);if([string]$Intent.schema-cne'rusty.morphospace.workflow.transition_ledger_intent.v6'){throw 'Tooling-context upgrade recovery requires transition-ledger v6.'}
- $requestArtifact=Get-ToolingUpgradeArtifactDocument $Intent 'rusty.morphospace.workflow.tooling_context_upgrade.v1';$newArtifact=Get-ToolingUpgradeArtifactDocument $Intent 'rusty.morphospace.workflow.tooling_context.v1';$request=$requestArtifact.document;$new=$newArtifact.document
+ $artifactPair=Get-ToolingUpgradeArtifactPair $Intent;$requestArtifact=$artifactPair.request;$newArtifact=$artifactPair.context;$request=$requestArtifact.document;$new=$newArtifact.document
  Test-ToolingUpgradeJson $request 'tooling-context-upgrade-v1.schema.json' 'Tooling-context recovery request violates its owner schema.';$new=Assert-MorphospaceToolingContext $new
  $expectedReceipts=@([string]$request.new_context.path,[string]$requestArtifact.binding.path)|Sort-Object -CaseSensitive
  $artifactPaths=@($Intent.artifacts|ForEach-Object{[string]$_.path});$eventReceipts=@($Intent.event.receipts)
@@ -81,7 +98,7 @@ function Assert-MorphospaceToolingContextUpgradeRecoveryBindings {
 function Assert-ToolingContextHistoricalTransition {
  [CmdletBinding()]param([Parameter(Mandatory)][string]$WorkspaceRoot,[Parameter(Mandatory)][object]$ExpectedEvent,[Parameter(Mandatory)][object]$Transition,[object]$ExpectedProductProjection=$null)
  $workspace=[IO.Path]::GetFullPath($WorkspaceRoot);$intent=$Transition.intent;if([string]$intent.schema-cne'rusty.morphospace.workflow.transition_ledger_intent.v6'-or(Get-MorphospaceCanonicalJsonSha256 $intent.event)-cne(Get-MorphospaceCanonicalJsonSha256 $ExpectedEvent)){throw 'Historical tooling-context upgrade transition is detached.'}
- $requestArtifact=Get-ToolingUpgradeArtifactDocument $intent 'rusty.morphospace.workflow.tooling_context_upgrade.v1';$newArtifact=Get-ToolingUpgradeArtifactDocument $intent 'rusty.morphospace.workflow.tooling_context.v1';$request=$requestArtifact.document;$new=Assert-MorphospaceToolingContext $newArtifact.document;Test-ToolingUpgradeJson $request 'tooling-context-upgrade-v1.schema.json' 'Historical tooling-context request is invalid.'
+ $artifactPair=Get-ToolingUpgradeArtifactPair $intent;$requestArtifact=$artifactPair.request;$newArtifact=$artifactPair.context;$request=$requestArtifact.document;$new=Assert-MorphospaceToolingContext $newArtifact.document;Test-ToolingUpgradeJson $request 'tooling-context-upgrade-v1.schema.json' 'Historical tooling-context request is invalid.'
  $expectedReceipts=@([string]$request.new_context.path,[string]$requestArtifact.binding.path)|Sort-Object -CaseSensitive
  $eventReceipts=@($ExpectedEvent.receipts);$artifactPaths=@($intent.artifacts|ForEach-Object{[string]$_.path})
  if(@($intent.artifacts).Count-ne2-or[string]$ExpectedEvent.event_id-cne"$([string]$request.upgrade_id)-tooling-context-upgraded"-or[string]$ExpectedEvent.project_id-cne[string]$request.project_id-or[string]$ExpectedEvent.unit_id-cne[string]$request.unit_id-or[string]$ExpectedEvent.event_type-cne'state-transition'-or[string]$ExpectedEvent.summary-cne'Upgraded the current pre-freeze tooling context while preserving the authenticated product envelope.'-or($eventReceipts-join[char]0)-cne($expectedReceipts-join[char]0)-or($artifactPaths-join[char]0)-cne($expectedReceipts-join[char]0)-or[string]$intent.transaction_id-cne"$([string]$ExpectedEvent.event_id)-transition"){throw 'Historical tooling-context event identity is detached.'}
