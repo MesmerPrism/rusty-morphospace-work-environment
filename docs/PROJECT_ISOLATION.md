@@ -47,7 +47,7 @@ that provide tooling, device access, or validation evidence must not enter a
 source lock merely because they are locally available.
 
 The command plans by default. Add `-Execute` only after reviewing the full
-commit/tree set. For the strongest isolation, materialize the lock as detached
+commit/tree set. For separate checkout and build identities, materialize the lock as detached
 clean worktrees under a project-specific local root:
 
 ```powershell
@@ -63,6 +63,56 @@ The materialization is content addressed, refuses replacement, and preserves
 sibling repository leaf names so relative cross-repository dependencies still
 resolve. The lock excludes tracked changes and untracked files; commit an
 intentional source slice before locking it.
+
+## Durable Supplier Object Storage
+
+A separate checkout or an ordinary `.git` directory does not establish an
+independent object store. Linked worktrees share their common Git directory.
+A local clone with `--no-hardlinks` can still inherit the source repository's
+`objects/info/alternates`; that option controls hard links, not borrowed Git
+objects. Such a clone can stop resolving its pinned source after the supplying
+repository is retired or its objects disappear.
+
+When a reusable supplier must survive independently of its source checkout,
+create a fresh namespace and dissociate borrowed objects during cloning:
+
+```powershell
+git clone --no-hardlinks --dissociate --no-checkout <source-repository> <supplier-root>
+git -C <supplier-root> remote set-url origin <reviewed-origin-url>
+git -C <supplier-root> checkout --detach <exact-source-commit>
+```
+
+Require every command to exit successfully. The reviewed origin is the declared
+repository identity, not the local source path copied into a clone's default
+origin. Retain the original source observation and the actual clone arguments;
+changing the locator does not authenticate an otherwise unreviewed supplier.
+Do not reuse or repair an existing frozen supplier in place.
+
+Before describing the result as an independent reusable supplier, observe and
+retain all of the following through the selected Git executable:
+
+- the exact declared origin, `HEAD` commit and tree, and an empty
+  `status --porcelain --untracked-files=all`;
+- absolute `rev-parse --git-dir`, `--git-common-dir` and `--git-path objects`
+  locations within the supplier's own ordinary `.git` directory, rather than
+  a linked or external Git directory;
+- absence of both `objects/info/alternates` and `objects/info/http-alternates`,
+  including empty files, and no ambient `GIT_DIR`, `GIT_COMMON_DIR`,
+  `GIT_WORK_TREE`, `GIT_OBJECT_DIRECTORY` or
+  `GIT_ALTERNATE_OBJECT_DIRECTORIES` override;
+- successful `git fsck --full`, with the retained source commit/tree still
+  resolvable from this object store.
+
+The exact source lock and the consuming owner's source, namespace and
+qualification guards remain required. Object independence supplies no new
+validation, acceptance, publication or adoption authority.
+
+This lifetime requirement does not forbid declared object sharing. Detached
+worktree materializations still isolate checkout writes while depending on
+their common repository. Disposable host fixtures may deliberately use
+`--shared` or references when that dependency and fixture lifetime are explicit.
+Neither is an independent durable supplier; retire its borrower before its
+provider. Read-only borrowing alone is not a conflicting source write.
 
 ## Build Identity
 
@@ -84,7 +134,7 @@ claim or mutex.
 Locked Candidate/publication builds reject ambient feature variables, require
 an exact clean source commit/tree, write immutable content-addressed output,
 and emit a run capsule that hashes the APK, build manifest, feature lock,
-effective runtime profile, property manifest, and—when QFM is used—the provider
+effective runtime profile, property manifest, andâ€”when QFM is usedâ€”the provider
 source commit/tree, portable distribution-manifest digest, closure digest, and
 staged relative entry point. A provider closure is the declared entry point
 plus every required relative runtime file with its size and SHA-256; its staged
