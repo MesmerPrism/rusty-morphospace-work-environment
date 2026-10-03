@@ -1,4 +1,4 @@
-param([switch]$SelfTest,[switch]$Child,[switch]$KeepFailedFixture,[string]$OldCommit='',[string]$NewCommit='',[string]$HarnessRoot='',[ValidateSet('all','lifecycle','recovery','product-negative','provenance-negative','instruction-context')][string]$Scenario='all',[ValidateSet('all','after-intent','after-artifact','after-projection','after-event')][string]$RecoveryFault='all')
+param([switch]$ArtifactSelectionOnly,[string]$ActualIntentPath='', [string]$ExpectedActualIntentSha256='', [switch]$SelfTest,[switch]$Child,[switch]$KeepFailedFixture,[string]$OldCommit='',[string]$NewCommit='',[string]$HarnessRoot='',[ValidateSet('all','lifecycle','recovery','product-negative','provenance-negative','instruction-context')][string]$Scenario='all',[ValidateSet('all','after-intent','after-artifact','after-projection','after-event')][string]$RecoveryFault='all')
 Set-StrictMode -Version 2.0
 $ErrorActionPreference='Stop'
 $script:TestClosurePaths=$null
@@ -6,6 +6,85 @@ $script:ToolingTestClock=[Diagnostics.Stopwatch]::StartNew()
 function Write-TCPhase([string]$Name){[Console]::Error.WriteLine(('tooling_context_phase={0}; elapsed_seconds={1:N1}' -f $Name,$script:ToolingTestClock.Elapsed.TotalSeconds))}
 if(-not$SelfTest){throw 'Test-ToolingContext requires -SelfTest.'}
 trap { [Console]::Error.WriteLine("$($_.Exception.Message)`n$($_.ScriptStackTrace)"); exit 1 }
+
+if($ArtifactSelectionOnly){
+ $pairModule=Import-Module (Join-Path $PSScriptRoot 'ToolingContextUpgrade.psm1') -Force -PassThru
+ $pairProtocol=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1') -PassThru
+ $pairCases=0
+ function Assert-PairCase([bool]$Ok,[string]$Name){if(-not$Ok){throw "Artifact-selection case failed: $Name"};$script:pairCases++}
+ function New-PairArtifact([string]$Json){$body=[Text.UTF8Encoding]::new($false).GetBytes($Json);[pscustomobject]@{path='receipts/fixture.json';bytes_base64=[Convert]::ToBase64String($body);sha256=(&$pairProtocol {param($b)Get-MorphospaceSha256Bytes $b} $body)}}
+ function New-PairIntent { [pscustomobject]@{artifacts=@(New-PairArtifact '{"schema":"rusty.morphospace.workflow.tooling_context_upgrade.v1","value":"request"}';New-PairArtifact '{"schema":"rusty.morphospace.workflow.tooling_context.v1","value":"context"}')} }
+ function Test-PairEquivalent($Intent,[string]$Name){
+  $old=&$pairModule {param($i) [pscustomobject]@{request=Get-ToolingUpgradeArtifactDocument $i 'rusty.morphospace.workflow.tooling_context_upgrade.v1';context=Get-ToolingUpgradeArtifactDocument $i 'rusty.morphospace.workflow.tooling_context.v1'}} $Intent
+  $new=&$pairModule {param($i)Get-ToolingUpgradeArtifactPair $i} $Intent
+  foreach($role in @('request','context')){
+   Assert-PairCase (($old.$role.bytes.Length-eq$new.$role.bytes.Length)-and[Convert]::ToBase64String($old.$role.bytes)-ceq[Convert]::ToBase64String($new.$role.bytes)) "$Name/$role raw"
+   $hashes=&$pairProtocol {param($a,$b) @(Get-MorphospaceCanonicalJsonSha256 $a;Get-MorphospaceCanonicalJsonSha256 $b)} $old.$role.document $new.$role.document
+   Assert-PairCase ($hashes[0]-ceq$hashes[1]) "$Name/$role canonical"
+  }
+ }
+ function Test-PairRejected($Intent,[string]$Name){
+  $oldDenied=$false;$newDenied=$false
+  try{&$pairModule {param($i)Get-ToolingUpgradeArtifactDocument $i 'rusty.morphospace.workflow.tooling_context_upgrade.v1';Get-ToolingUpgradeArtifactDocument $i 'rusty.morphospace.workflow.tooling_context.v1'} $Intent|Out-Null}catch{$oldDenied=$true}
+  try{&$pairModule {param($i)Get-ToolingUpgradeArtifactPair $i} $Intent|Out-Null}catch{$newDenied=$true}
+  Assert-PairCase ($oldDenied-and$newDenied) $Name
+ }
+ Test-PairEquivalent (New-PairIntent) 'ordinary'
+ $unicode=New-PairIntent;$unicode.artifacts[0]=New-PairArtifact '{"schema":"rusty.morphospace.workflow.tooling_context_upgrade.v1","text":"\uD83D\uDE80\n\t\\\"","min":-9223372036854775808,"max":9223372036854775807,"array":[null,true,false,0]}'
+ Test-PairEquivalent $unicode 'unicode-and-numeric-boundaries'
+ $literal=New-PairIntent;$literal.artifacts[0]=New-PairArtifact ('{"schema":"rusty.morphospace.workflow.tooling_context_upgrade.v1","text":"'+[char]0x00e9+[char]0xd83d+[char]0xde80+'"}')
+ Test-PairEquivalent $literal 'literal-utf8'
+ foreach($body in @(
+ '{"schema":"rusty.morphospace.workflow.tooling_context_upgrade.v1","x":1.0}',
+ '{"schema":"rusty.morphospace.workflow.tooling_context_upgrade.v1","x":1e0}',
+ '{"schema":"rusty.morphospace.workflow.tooling_context_upgrade.v1","x":9223372036854775808}',
+ '{"schema":"rusty.morphospace.workflow.tooling_context_upgrade.v1","x":-9223372036854775809}',
+ '{"schema":"rusty.morphospace.workflow.tooling_context_upgrade.v1","x":01}',
+ '{"schema":"rusty.morphospace.workflow.tooling_context_upgrade.v1","x":"\uD800"}',
+ '{"schema":"rusty.morphospace.workflow.tooling_context_upgrade.v1","x":"\uDC00"}',
+ '{"schema":"rusty.morphospace.workflow.tooling_context_upgrade.v1","X":1,"x":2}',
+ '{"schema":"rusty.morphospace.workflow.tooling_context_upgrade.v1","x":1,"x":2}',
+ '{"schema":"rusty.morphospace.workflow.tooling_context_upgrade.v1",}',
+ '{"schema":"rusty.morphospace.workflow.tooling_context_upgrade.v1"} false',
+ '[1,2]')){$bad=New-PairIntent;$bad.artifacts[0]=New-PairArtifact $body;Test-PairRejected $bad 'strict-json-negative'}
+ foreach($rawBad in @([byte[]](0xc3,0x28),[byte[]](0xef,0xbb,0xbf,0x7b,0x7d),[byte[]](0x7b,0x00,0x7d))){$bad=New-PairIntent;$bad.artifacts[0].bytes_base64=[Convert]::ToBase64String($rawBad);$bad.artifacts[0].sha256=(&$pairProtocol {param($b)Get-MorphospaceSha256Bytes $b} $rawBad);Test-PairRejected $bad 'invalid-utf8-bom-or-nul'}
+ # Count only the selection seam with a tiny decoder stub; all strict-format
+ # equivalence and rejection cases above and actual input below use the real decoder.
+ $bad=New-PairIntent;$bad.artifacts[0].bytes_base64='!';Test-PairRejected $bad 'invalid-base64'
+ $bad=New-PairIntent;$bad.artifacts[1].sha256='0'*64;Test-PairRejected $bad 'wrong-hash'
+ $bad=New-PairIntent;$bad.artifacts=@($bad.artifacts[0]);Test-PairRejected $bad 'missing-context'
+ $bad=New-PairIntent;$bad.artifacts=@($bad.artifacts[1]);Test-PairRejected $bad 'missing-request'
+ $bad=New-PairIntent;$bad.artifacts+=,$bad.artifacts[0];Test-PairRejected $bad 'duplicate-request'
+ $bad=New-PairIntent;$bad.artifacts+=,$bad.artifacts[1];Test-PairRejected $bad 'duplicate-context'
+ $bad=New-PairIntent;$bad.artifacts[1]=New-PairArtifact '{"schema":"RUSTY.morphospace.workflow.tooling_context.v1"}';Test-PairRejected $bad 'schema-case'
+ $bad=New-PairIntent;$bad.artifacts+=,(New-PairArtifact '{"schema":"unused","x":1.5}');Test-PairRejected $bad 'malformed-unused-artifact'
+ $bad=New-PairIntent;$bad.artifacts+=,(New-PairArtifact '{"schema":"unused"}');$bad.artifacts[2].sha256='0'*64;Test-PairRejected $bad 'wrong-hash-unused-artifact'
+ $unused=New-PairIntent;$unused.artifacts+=,(New-PairArtifact '{"schema":"unused","x":1}');Test-PairEquivalent $unused 'authenticated-unused-artifact'
+ &$pairModule {$script:PairTestDecodeCount=0;function script:ConvertFrom-MorphospaceProtocolJsonBytes {param([byte[]]$Bytes,[string]$Context)$script:PairTestDecodeCount++;[Text.UTF8Encoding]::new($false,$true).GetString($Bytes)|ConvertFrom-Json -DateKind String}}
+ try{
+  $fixture=New-PairIntent
+  &$pairModule {param($i)Get-ToolingUpgradeArtifactPair $i|Out-Null} $fixture
+  Assert-PairCase ((&$pairModule {$script:PairTestDecodeCount})-eq2) 'one-decode-per-artifact'
+  &$pairModule {param($i)Get-ToolingUpgradeArtifactPair $i|Out-Null} $fixture
+  Assert-PairCase ((&$pairModule {$script:PairTestDecodeCount})-eq4) 'next-call-redecodes'
+  $fixture.artifacts[0].sha256='0'*64;Test-PairRejected $fixture 'next-call-drift-denies'
+ }finally{&$pairModule {Remove-Item Function:ConvertFrom-MorphospaceProtocolJsonBytes;Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1') -Force;Remove-Variable PairTestDecodeCount -Scope Script}}
+ $actualRows=@()
+ if($ActualIntentPath){
+  if($ExpectedActualIntentSha256-cnotmatch'^[0-9a-f]{64}$'){throw 'Actual artifact-selection input requires its exact SHA-256.'}
+  $raw=[IO.File]::ReadAllBytes($ActualIntentPath)
+  if((&$pairProtocol {param($b)Get-MorphospaceSha256Bytes $b} $raw)-cne$ExpectedActualIntentSha256){throw 'Actual artifact-selection input bytes drifted.'}
+  $actual=&$pairProtocol {param($b)ConvertFrom-MorphospaceProtocolJsonBytes $b 'actual artifact selection'} $raw
+  Test-PairEquivalent $actual 'actual-retained-intent'
+  for($trial=0;$trial-lt3;$trial++){
+   $clock=[Diagnostics.Stopwatch]::StartNew();&$pairModule {param($i)Get-ToolingUpgradeArtifactDocument $i 'rusty.morphospace.workflow.tooling_context_upgrade.v1'|Out-Null;Get-ToolingUpgradeArtifactDocument $i 'rusty.morphospace.workflow.tooling_context.v1'|Out-Null} $actual;$clock.Stop();$oldMs=$clock.Elapsed.TotalMilliseconds
+   $clock.Restart();&$pairModule {param($i)Get-ToolingUpgradeArtifactPair $i|Out-Null} $actual;$clock.Stop()
+   $actualRows+=@{trial=$trial;old_ms=$oldMs;paired_ms=$clock.Elapsed.TotalMilliseconds;old_decodes=4;paired_decodes=2}
+  }
+ }
+ [pscustomobject]@{result='pass';cases=$pairCases;action='authenticated-artifact-pair';actual_input_sha256=$ExpectedActualIntentSha256;microprofile=$actualRows;device_calls=0;aggregate_invoked=$false}|ConvertTo-Json -Depth 8
+ return
+}
 
 function Remove-ToolingTestRoot([string]$Path){$temp=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\','/');$target=[IO.Path]::GetFullPath($Path).TrimEnd('\','/');if(-not([IO.Path]::GetDirectoryName($target).Equals($temp,[StringComparison]::OrdinalIgnoreCase))-or-not([IO.Path]::GetFileName($target).StartsWith('tooling-context-', [StringComparison]::Ordinal))){throw "Refusing tooling-context fixture cleanup: $target"};if(Test-Path $target){Remove-Item -LiteralPath $target -Recurse -Force}}
 if(-not$Child){
