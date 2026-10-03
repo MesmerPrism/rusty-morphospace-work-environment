@@ -582,7 +582,8 @@ function Test-ReadOnlyCommittedSnapshot {
         }
         foreach($name in $damage.Keys){
             $case="$fixture-$name";Copy-Item -LiteralPath $fixture -Destination $case -Recurse
-            try{& $damage[$name] $case;$rejected=$false;try{Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $case -TransactionId $(if($name-in@('prefix','projection')){'observed-2-transition'}else{'observed-1-transition'})|Out-Null}catch{$rejected=$true};Assert-Ledger $rejected "observation damage accepted: $name";$count++}finally{[IO.Directory]::Delete($case,$true)}
+            $observationDamage=$damage[$name]
+            try{& $observationDamage $case;$rejected=$false;try{Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $case -TransactionId $(if($name-in@('prefix','projection')){'observed-2-transition'}else{'observed-1-transition'})|Out-Null}catch{$rejected=$true};Assert-Ledger $rejected "observation damage accepted: $name";$count++}finally{[IO.Directory]::Delete($case,$true)}
         }
         foreach($kind in @('ledger','schema-v1','schema-v2','module','protocol')){
             $path=switch($kind){ledger{"$fixture/iteration-events.jsonl"}schema-v1{"$root/schemas/iteration-event.schema.json"}schema-v2{"$root/schemas/iteration-event-v2.schema.json"}module{$transitionModulePath}protocol{"$PSScriptRoot/lib/MorphospaceProtocolCommon.psm1"}}

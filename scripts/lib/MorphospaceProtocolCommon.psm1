@@ -147,11 +147,24 @@ function Skip-MorphospaceJsonWhitespace {
     while($Index.Value-lt$Text.Length-and(' ',"`t","`r","`n")-contains[string]$Text[$Index.Value]){$Index.Value++}
 }
 
+# Match runs without inspecting each ordinary code unit in PowerShell. The
+# current offset and the existing string bound remain authoritative.
+$script:ProtocolJsonStringStops = [char[]](0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,34,92)
+$script:ProtocolJsonInteger = [regex]::new('-?(?:0|[1-9][0-9]*)')
+
 function Read-MorphospaceJsonString {
     param([string]$Text,[ref]$Index)
     if($Index.Value-ge$Text.Length-or$Text[$Index.Value]-ne'"'){throw 'Expected JSON string.'};$Index.Value++;$builder=[Text.StringBuilder]::new()
     while($Index.Value-lt$Text.Length){
-        $character=$Text[$Index.Value];$Index.Value++
+        $character=$Text[$Index.Value]
+        if($character-ne'"'-and$character-ne'\'-and[int]$character-ge32){
+            $end=$Text.IndexOfAny($script:ProtocolJsonStringStops,$Index.Value)
+            if($end-lt0){$end=$Text.Length};$length=$end-$Index.Value
+            if($builder.Length+$length-gt1048576){throw 'JSON string exceeds 1 MiB.'}
+            [void]$builder.Append($Text.Substring($Index.Value,$length));$Index.Value=$end
+            continue
+        }
+        $Index.Value++
         if($character-eq'"'){return $builder.ToString()}
         if([int]$character-lt32){throw 'Unescaped JSON control character.'}
         if($character-ne'\'){[void]$builder.Append($character);if($builder.Length-gt1048576){throw 'JSON string exceeds 1 MiB.'};continue}
@@ -179,9 +192,13 @@ function Read-MorphospaceJsonValue {
         while($true){[void]$items.Add((Read-MorphospaceJsonValue $Text $Index ($Depth+1)));Skip-MorphospaceJsonWhitespace $Text $Index;if($Index.Value-ge$Text.Length){throw 'Unterminated JSON array.'};$delimiter=$Text[$Index.Value];$Index.Value++;if($delimiter-eq']'){break};if($delimiter-ne','){throw 'Expected JSON array comma/close.'};Skip-MorphospaceJsonWhitespace $Text $Index;if($Index.Value-lt$Text.Length-and$Text[$Index.Value]-eq']'){throw 'Trailing JSON array comma.'}}
         return ,$items.ToArray()
     }
-    foreach($literal in @([pscustomobject]@{text='true';value=$true},[pscustomobject]@{text='false';value=$false},[pscustomobject]@{text='null';value=$null})){if($Text.Substring($Index.Value).StartsWith($literal.text,[StringComparison]::Ordinal)){$Index.Value+=$literal.text.Length;return $literal.value}}
-    $remaining=$Text.Substring($Index.Value);$match=[regex]::Match($remaining,'^-?(?:0|[1-9][0-9]*)')
-    if(-not$match.Success){throw "Invalid JSON token at offset $($Index.Value)."};$token=$match.Value;$Index.Value+=$token.Length;if($Index.Value-lt$Text.Length-and' ',"`t","`r","`n",',',']','}'-notcontains[string]$Text[$Index.Value]){throw 'Floating/exponent/invalid JSON number.'}
+    foreach($literal in @([pscustomobject]@{text='true';value=$true},[pscustomobject]@{text='false';value=$false},[pscustomobject]@{text='null';value=$null})){if($Index.Value+$literal.text.Length-le$Text.Length-and[StringComparer]::Ordinal.Equals($Text.Substring($Index.Value,$literal.text.Length),$literal.text)){$Index.Value+=$literal.text.Length;return $literal.value}}
+    # A legal first code unit guarantees a token starts here; failed searches
+    # must not traverse a later token or the remaining document.
+    if(([int]$character-lt48-or[int]$character-gt57)-and$character-ne'-'){throw "Invalid JSON token at offset $($Index.Value)."}
+    if($character-eq'-'-and($Index.Value+1-ge$Text.Length-or[int]$Text[$Index.Value+1]-lt48-or[int]$Text[$Index.Value+1]-gt57)){throw "Invalid JSON token at offset $($Index.Value)."}
+    $match=$script:ProtocolJsonInteger.Match($Text,$Index.Value)
+    if(-not$match.Success-or$match.Index-ne$Index.Value){throw "Invalid JSON token at offset $($Index.Value)."};$token=$match.Value;$Index.Value+=$token.Length;if($Index.Value-lt$Text.Length-and' ',"`t","`r","`n",',',']','}'-notcontains[string]$Text[$Index.Value]){throw 'Floating/exponent/invalid JSON number.'}
     $number=[long]0;if(-not[long]::TryParse($token,[Globalization.NumberStyles]::AllowLeadingSign,[Globalization.CultureInfo]::InvariantCulture,[ref]$number)){throw 'JSON integer exceeds Int64.'};return $number
 }
 

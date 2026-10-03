@@ -1364,7 +1364,18 @@ function New-AffectedTrackedImportGraph([string]$Root, [string[]]$Entrypoints, [
             $invocation = $invocationRecord.ast
             $firstElement = $invocationRecord.first_element
             $moduleExportTarget = Get-AffectedIndexedModuleExportTarget -Index $analysis -Invocation $invocationRecord -Root $root -TrackedPaths $TrackedPaths -ModuleCache $moduleExportCache
-            if ($null -ne $moduleExportTarget) { [void]$importEdges.Add($moduleExportTarget); continue }
+            if ($null -ne $moduleExportTarget) {
+                $exportVariable = [string]$firstElement.Target.Expression.VariablePath.UserPath
+                $exportKey = "$importer|$exportVariable"
+                if ($declarations.ContainsKey($exportKey)) {
+                    $exportDeclaration = $declarations[$exportKey]
+                    $exportTargets = @(if ($exportDeclaration.PSObject.Properties.Name -ccontains 'import_path') { [string]$exportDeclaration.import_path } elseif ($exportDeclaration.PSObject.Properties.Name -ccontains 'import_paths') { @($exportDeclaration.import_paths) })
+                    if ($exportTargets -cnotcontains $moduleExportTarget) { throw "Dynamic owner declaration omits the verified module export target: $exportKey" }
+                    $observedDeclarations[$exportKey] = 1 + $(if ($observedDeclarations.ContainsKey($exportKey)) { [int]$observedDeclarations[$exportKey] } else { 0 })
+                }
+                [void]$importEdges.Add($moduleExportTarget)
+                continue
+            }
             $pathValues = @($invocationRecord.path_values)
             $invocationValues = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
             if ($pathValues.Count -eq 1) {
@@ -1425,7 +1436,18 @@ function New-AffectedTrackedImportGraph([string]$Root, [string[]]$Entrypoints, [
                         if ($nextScope -eq $candidateScope) { break }
                         $candidateScope = $nextScope
                     }
-                    if ($boundValues.Count -eq 1) {
+                    $key = "$importer|$variable"
+                    if ($declarations.ContainsKey($key)) {
+                        $declaration = $declarations[$key]
+                        $declaredInvocationTargets = @(if ($declaration.PSObject.Properties.Name -ccontains 'import_path') { [string]$declaration.import_path } elseif ($declaration.PSObject.Properties.Name -ccontains 'import_paths') { @($declaration.import_paths) })
+                        foreach ($boundValue in @($boundValues)) {
+                            $boundFull = if ($boundValue.Replace('\','/') -match '^scripts/') { [IO.Path]::GetFullPath((Join-Path $root $boundValue)) } else { [IO.Path]::GetFullPath((Join-Path $directory $boundValue)) }
+                            $boundRelative = [IO.Path]::GetRelativePath($root,$boundFull).Replace('\','/')
+                            if ($declaredInvocationTargets -cnotcontains $boundRelative) { throw "Dynamic owner declaration omits observed static target: $key :: $boundRelative" }
+                        }
+                        foreach ($target in $declaredInvocationTargets) { [void]$invocationValues.Add([string]$target) }
+                        $observedDeclarations[$key] = 1 + $(if ($observedDeclarations.ContainsKey($key)) { [int]$observedDeclarations[$key] } else { 0 })
+                    } elseif ($boundValues.Count -eq 1) {
                         [void]$invocationValues.Add(@($boundValues)[0])
                     } elseif ($boundValues.Count -gt 1) {
                         throw "Static invocation variable has multiple literal script bindings: $importer|$variable"
@@ -1565,6 +1587,12 @@ function Get-AffectedProtocolCommonOwnerChecks([string]$Root, [object]$Registry)
     $dynamicImports = @(
         [pscustomobject][ordered]@{ importer='scripts/Test-AuthorityRecordReadiness.ps1'; variable='processModule'; count=1; import_path='scripts/lib/MorphospaceAuthorityProcess.psm1' },
         [pscustomobject][ordered]@{ importer='scripts/Test-TransitionLedger.ps1'; variable='ModulePath'; count=2; import_path='scripts/lib/MorphospaceTransitionLedger.psm1' },
+        [pscustomobject][ordered]@{ importer='scripts/Test-TransitionLedger.ps1'; variable='observationDamage'; count=1; import_path='scripts/Test-TransitionLedger.ps1' },
+        [pscustomobject][ordered]@{ importer='scripts/Test-TransitionLedger.ps1'; variable='script:originalObservationAssert'; count=1; import_path='scripts/lib/MorphospaceTransitionLedger.psm1' },
+        [pscustomobject][ordered]@{ importer='scripts/Test-TransitionLedger.ps1'; variable='script:originalReader'; count=1; import_path='scripts/lib/MorphospaceTransitionLedger.psm1' },
+        [pscustomobject][ordered]@{ importer='scripts/Test-TransitionLedger.ps1'; variable='script:transitionModule'; count=4; import_path='scripts/lib/MorphospaceTransitionLedger.psm1' },
+        [pscustomobject][ordered]@{ importer='scripts/Test-TransitionLedger.ps1'; variable='script:validationAuthorityModule'; count=1; import_path='scripts/lib/MorphospaceValidationAuthority.psm1' },
+        [pscustomobject][ordered]@{ importer='scripts/Test-TransitionLedger.ps1'; variable='transitionModule'; count=6; import_path='scripts/lib/MorphospaceTransitionLedger.psm1' },
         [pscustomobject][ordered]@{ importer='scripts/Test-WorkflowContracts.ps1'; variable='focusedRecoveryPath'; count=1; import_paths=@('scripts/Test-HistoricalUnitAdoptionReconstruction.ps1','scripts/Test-PlanningWorkspaceProjection.ps1','scripts/Test-PublishedPlanningAuthorityAdoption.ps1') },
         [pscustomobject][ordered]@{ importer='scripts/Test-WorkEnvironment.ps1'; variable='quickTestPath'; count=3; import_paths=$ownerEntrypoints },
         [pscustomobject][ordered]@{ importer='scripts/Invoke-ExternalValidationAuthorityForGitHub.ps1'; variable='verifierFullPath'; count=1; classification='authenticated-external-script' }
@@ -2307,7 +2335,62 @@ function Invoke-AffectedFallbackReceiptSelfTest([string]$Root,[object]$Registry)
         if([IO.Directory]::Exists($target)){Remove-Item -LiteralPath $target -Recurse -Force}
     }
 }
+function Invoke-AffectedCallableScopeSelfTest {
+    $fixture = Join-Path ([IO.Path]::GetTempPath()) ('morphospace-callable-scope-' + [guid]::NewGuid().ToString('N'))
+    [void][IO.Directory]::CreateDirectory((Join-Path $fixture 'scripts'))
+    try {
+        Write-Utf8 (Join-Path $fixture 'scripts/Static.psm1') "function Invoke-Literal { 'literal' }`nExport-ModuleMember -Function Invoke-Literal`n"
+        Write-Utf8 (Join-Path $fixture 'scripts/Other.psm1') "function Invoke-Other { 'other' }`nExport-ModuleMember -Function Invoke-Other`n"
+        $tracked = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        foreach ($path in @('scripts/Entry.ps1','scripts/Other.psm1','scripts/Static.psm1')) { [void]$tracked.Add($path) }
+        $inventory = [pscustomobject]@{records=@($tracked | ForEach-Object { [pscustomobject]@{mode='100644';type='blob';blob=('0'*40);path=$_} })}
+        Write-Utf8 (Join-Path $fixture 'scripts/Entry.ps1') "`$Action=`$RuntimeCallable`nfunction Invoke-Local([scriptblock]`$Action) { & `$Action }`n"
+        $shadow = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @()
+        Assert-True ($shadow.resolution.mode -ceq 'exact' -and ($shadow.paths -join ',') -ceq 'scripts/Entry.ps1') 'A lexical scriptblock parameter incorrectly inherited an unrelated outer assignment.'
+        Write-Utf8 (Join-Path $fixture 'scripts/Entry.ps1') "`$Action=`$RuntimeCallable`nfunction Invoke-Local([scriptblock]`$Action) { `$Action=`$OtherRuntimeCallable; & `$Action }`n"
+        $reassigned = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @()
+        Assert-True ($reassigned.resolution.mode -ceq 'all-tracked-scripts-fallback') 'Local reassignment received a typed-parameter exemption.'
+        $entry = "`$Module=Import-Module (Join-Path `$PSScriptRoot 'Static.psm1') -PassThru`n& `$Module.ExportedCommands['Invoke-Literal']`n"
+        Write-Utf8 (Join-Path $fixture 'scripts/Entry.ps1') $entry
+        $declaration = [pscustomobject][ordered]@{importer='scripts/Entry.ps1';variable='Module';count=1;target_paths=@('scripts/Static.psm1')}
+        $export = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @($declaration)
+        Assert-True ($export.resolution.mode -ceq 'exact' -and ($export.paths -join ',') -ceq 'scripts/Entry.ps1,scripts/Static.psm1') 'Fixed exported-command declaration omitted its literal module dependency.'
+        $graphDeclaration = [pscustomobject][ordered]@{importer='scripts/Entry.ps1';variable='Module';count=1;import_path='scripts/Static.psm1'}
+        $graph = New-AffectedTrackedImportGraph -Root $fixture -Entrypoints @('scripts/Entry.ps1') -TrackedPaths $tracked -DynamicImportDeclarations @($graphDeclaration)
+        Assert-True ($graph.nodes -contains 'scripts/Static.psm1') 'Owner graph did not join its verified export to the exact declaration.'
+        $wrongTarget = [pscustomobject][ordered]@{importer='scripts/Entry.ps1';variable='Module';count=1;target_paths=@('scripts/Other.psm1')}
+        Assert-AffectedThrows { Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @($wrongTarget) } '*omits observed static target*' 'An exported command accepted an unrelated declared module target.'
+        $wrongGraphTarget = [pscustomobject][ordered]@{importer='scripts/Entry.ps1';variable='Module';count=1;import_path='scripts/Other.psm1'}
+        Assert-AffectedThrows { New-AffectedTrackedImportGraph -Root $fixture -Entrypoints @('scripts/Entry.ps1') -TrackedPaths $tracked -DynamicImportDeclarations @($wrongGraphTarget) } '*omits the verified module export target*' 'Owner graph accepted an unrelated exported-command target.'
+        $wrongCount = [pscustomobject][ordered]@{importer='scripts/Entry.ps1';variable='Module';count=2;target_paths=@('scripts/Static.psm1')}
+        Assert-AffectedThrows { Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @($wrongCount) } '*count changed*' 'Export declaration accepted a damaged invocation count.'
+        Write-Utf8 (Join-Path $fixture 'scripts/Entry.ps1') ($entry.Replace("& `$Module.ExportedCommands", "`$Module=`$RuntimeModule`n& `$Module.ExportedCommands"))
+        $unknown = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @()
+        Assert-True ($unknown.resolution.mode -ceq 'all-tracked-scripts-fallback') 'Reassigned exported-command receiver received a fixed-module exemption.'
+        Write-Utf8 (Join-Path $fixture 'scripts/Entry.ps1') "Import-Module (Join-Path `$PSScriptRoot 'Static.psm1')`n& (Get-Module Static) { 'literal' }`n"
+        $module = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @()
+        Assert-True ($module.resolution.mode -ceq 'exact' -and ($module.paths -join ',') -ceq 'scripts/Entry.ps1,scripts/Static.psm1') 'Fixed Get-Module invocation lost its closed local import.'
+        Write-Utf8 (Join-Path $fixture 'scripts/Entry.ps1') "Import-Module (Join-Path `$PSScriptRoot 'Static.psm1')`n& (Get-Module Foreign) { 'literal' }`n"
+        $foreign = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @()
+        Assert-True ($foreign.resolution.mode -ceq 'all-tracked-scripts-fallback') 'Foreign Get-Module target received an unconditional module-object exemption.'
+        Write-Utf8 (Join-Path $fixture 'scripts/Entry.ps1') "Import-Module `$RuntimeModulePath`n& (Get-Module Static) { 'literal' }`n"
+        $external = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @()
+        Assert-True ($external.resolution.mode -ceq 'all-tracked-scripts-fallback') 'Unknown module import was classified by its requested module name.'
+        Write-Utf8 (Join-Path $fixture 'scripts/Entry.ps1') "`$HostExecutable=(Get-Command pwsh -CommandType Application).Source`n& `$HostExecutable -NoProfile -Command 'unused'`n"
+        $hostUnknown = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @()
+        Assert-True ($hostUnknown.resolution.mode -ceq 'all-tracked-scripts-fallback') 'Host executable assignment received an implicit external-command exemption.'
+        $hostDeclaration = [pscustomobject][ordered]@{importer='scripts/Entry.ps1';variable='HostExecutable';count=1;classification='authenticated-external-command'}
+        $hostExact = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @($hostDeclaration)
+        Assert-True ($hostExact.resolution.mode -ceq 'exact' -and @($hostExact.resolution.used_declarations).Count -eq 1) 'Exact reviewed external-command declaration was not joined to its invocation.'
+        $hostCountDamage = [pscustomobject][ordered]@{importer='scripts/Entry.ps1';variable='HostExecutable';count=2;classification='authenticated-external-command'}
+        Assert-AffectedThrows { Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @($hostCountDamage) } '*count changed*' 'External-command declaration accepted a damaged invocation count.'
+        $hostClassificationDamage = [pscustomobject][ordered]@{importer='scripts/Entry.ps1';variable='HostExecutable';count=1;classification='arbitrary-runtime-command'}
+        Assert-AffectedThrows { Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @($hostClassificationDamage) } '*unsupported classification*' 'External-command declaration accepted an unsupported classification.'
+        Write-Host 'PASS: 15 callable scope/module/declaration production regressions.'
+    } finally { if ([IO.Directory]::Exists($fixture)) { Remove-Item -LiteralPath $fixture -Recurse -Force } }
+}
 function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]$Registry) {
+    Invoke-AffectedCallableScopeSelfTest
     Invoke-AffectedFallbackReceiptSelfTest -Root $Root -Registry $Registry
     Invoke-AffectedDependencyDemandEquivalenceSelfTest
     Invoke-AffectedDependencyIndexCacheSelfTest
