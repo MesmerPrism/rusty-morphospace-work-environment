@@ -134,7 +134,7 @@ claim or mutex.
 Locked Candidate/publication builds reject ambient feature variables, require
 an exact clean source commit/tree, write immutable content-addressed output,
 and emit a run capsule that hashes the APK, build manifest, feature lock,
-effective runtime profile, property manifest, andâ€”when QFM is usedâ€”the provider
+effective runtime profile, property manifest, and—when QFM is used—the provider
 source commit/tree, portable distribution-manifest digest, closure digest, and
 staged relative entry point. A provider closure is the declared entry point
 plus every required relative runtime file with its size and SHA-256; its staged
