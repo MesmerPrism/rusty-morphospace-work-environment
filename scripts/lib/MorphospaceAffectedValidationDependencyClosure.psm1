@@ -195,6 +195,12 @@ function New-MorphospaceAffectedDependencyIndex {
     }
     $typedScriptBlocksByScope = [Collections.Generic.Dictionary[object,object]]::new([Collections.Generic.ReferenceEqualityComparer]::Instance)
     $untypedParametersByScope = [Collections.Generic.Dictionary[object,object]]::new([Collections.Generic.ReferenceEqualityComparer]::Instance)
+    $parametersByScope = [Collections.Generic.Dictionary[object,object]]::new([Collections.Generic.ReferenceEqualityComparer]::Instance)
+    foreach ($parameter in @($ast.FindAll({param($node) $node -is [Management.Automation.Language.ParameterAst]},$true))) {
+        $scope = Get-MorphospaceAffectedDependencyLexicalScope -Node $parameter
+        if (-not $parametersByScope.ContainsKey($scope)) { $parametersByScope[$scope] = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase) }
+        [void]$parametersByScope[$scope].Add([string]$parameter.Name.VariablePath.UserPath)
+    }
     foreach ($parameter in @($ast.FindAll({ param($node) $node -is [Management.Automation.Language.ParameterAst] -and $node.StaticType -eq [scriptblock] },$true))) {
         $scope = Get-MorphospaceAffectedDependencyLexicalScope -Node $parameter
         if (-not $typedScriptBlocksByScope.ContainsKey($scope)) { $typedScriptBlocksByScope[$scope] = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase) }
@@ -209,7 +215,7 @@ function New-MorphospaceAffectedDependencyIndex {
         if (-not $untypedParametersByScope.ContainsKey($scope)) { $untypedParametersByScope[$scope] = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase) }
         [void]$untypedParametersByScope[$scope].Add([string]$parameter.Name.VariablePath.UserPath)
     }
-    return [pscustomobject]@{sha256=$Sha;length=$Bytes.Length;ast=$ast;assignments=$assignmentsByScope;typed=$typedScriptBlocksByScope;untyped=$untypedParametersByScope}
+    return [pscustomobject]@{sha256=$Sha;length=$Bytes.Length;ast=$ast;assignments=$assignmentsByScope;typed=$typedScriptBlocksByScope;untyped=$untypedParametersByScope;parameters=$parametersByScope}
 }
 
 function Resolve-MorphospaceAffectedCheckDependencyClosure {
@@ -330,6 +336,55 @@ function Resolve-MorphospaceAffectedCheckDependencyClosure {
                 if ($isInvocation -and ($first -is [Management.Automation.Language.StringConstantExpressionAst] -or $first -is [Management.Automation.Language.ScriptBlockExpressionAst])) { continue }
                 $variable = $null
                 $memberInvocationUnclassified = $false
+                $fixedExportInvocation = $false
+                # A fixed exported command dispatch binds the containing module,
+                # not an opaque index expression. Dynamic export names remain unknown.
+                if ($isInvocation -and $first -is [Management.Automation.Language.IndexExpressionAst] -and
+                    $first.Index -is [Management.Automation.Language.StringConstantExpressionAst] -and
+                    [string]$first.Index.Value -cmatch '^[A-Za-z][A-Za-z0-9_-]*$' -and
+                    $first.Target -is [Management.Automation.Language.MemberExpressionAst] -and
+                    $first.Target.Member -is [Management.Automation.Language.StringConstantExpressionAst] -and
+                    [string]$first.Target.Member.Value -ceq 'ExportedCommands' -and
+                    $first.Target.Expression -is [Management.Automation.Language.VariableExpressionAst]) {
+                    $variable = [string]$first.Target.Expression.VariablePath.UserPath
+                    $memberInvocationUnclassified = $true
+                    $fixedExportInvocation = $true
+                }
+                # Match only a fixed Get-Module name with an explicit literal local
+                # import. External names, wildcards and computed pipelines fall back.
+                if ($isInvocation -and $first -is [Management.Automation.Language.ParenExpressionAst] -and
+                    @($first.Pipeline.PipelineElements).Count -eq 1 -and
+                    $first.Pipeline.PipelineElements[0] -is [Management.Automation.Language.CommandAst]) {
+                    $moduleCommand = $first.Pipeline.PipelineElements[0]
+                    if ([string]$moduleCommand.GetCommandName() -ieq 'Get-Module' -and
+                        @($moduleCommand.CommandElements).Count -eq 2 -and
+                        $moduleCommand.CommandElements[1] -is [Management.Automation.Language.StringConstantExpressionAst] -and
+                        [string]$moduleCommand.CommandElements[1].Value -cmatch '^[A-Za-z][A-Za-z0-9_.-]*$') {
+                        $moduleName = [string]$moduleCommand.CommandElements[1].Value
+                        $moduleTargets = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+                        foreach ($literalImport in @($ast.FindAll({param($node) $node -is [Management.Automation.Language.CommandAst] -and [string]$node.GetCommandName() -imatch '(?:^|\\)Import-Module$'},$true))) {
+                            if (@($literalImport.CommandElements).Count -lt 2) { continue }
+                            $importArgument = $literalImport.CommandElements[1]
+                            $closedImport = $importArgument -is [Management.Automation.Language.StringConstantExpressionAst]
+                            if ($importArgument -is [Management.Automation.Language.ParenExpressionAst] -and
+                                @($importArgument.Pipeline.PipelineElements).Count -eq 1 -and
+                                $importArgument.Pipeline.PipelineElements[0] -is [Management.Automation.Language.CommandAst]) {
+                                $join = $importArgument.Pipeline.PipelineElements[0]
+                                $closedImport = [string]$join.GetCommandName() -ieq 'Join-Path' -and @($join.CommandElements).Count -eq 3 -and
+                                    $join.CommandElements[1] -is [Management.Automation.Language.VariableExpressionAst] -and
+                                    @('PSScriptRoot','RepoRoot') -icontains [string]$join.CommandElements[1].VariablePath.UserPath -and
+                                    $join.CommandElements[2] -is [Management.Automation.Language.StringConstantExpressionAst]
+                            }
+                            if (-not $closedImport) { continue }
+                            foreach ($literal in @($literalImport.FindAll({param($node) $node -is [Management.Automation.Language.StringConstantExpressionAst] -and [string]$node.Value -imatch '\.psm1$'},$true))) {
+                                if ([IO.Path]::GetFileNameWithoutExtension(([string]$literal.Value).Replace('\','/')) -cne $moduleName) { continue }
+                                $target = Add-MorphospaceTrackedDependencyPath -Importer $importer -Value ([string]$literal.Value)
+                                if ($null -ne $target) { [void]$moduleTargets.Add($target) }
+                            }
+                        }
+                        if ($moduleTargets.Count -eq 1) { continue }
+                    }
+                }
                 if ($isInvocation -and $first -is [Management.Automation.Language.MemberExpressionAst] -and [string]$first.Extent.Text -match '(?i)\.Source$') {
                     $getCommandNodes = @($first.FindAll({ param($node) $node -is [Management.Automation.Language.CommandAst] -and [string]$node.GetCommandName() -imatch '(?:^|\\)Get-Command$' },$true))
                     if ($getCommandNodes.Count -eq 1) {
@@ -365,12 +420,14 @@ function Resolve-MorphospaceAffectedCheckDependencyClosure {
                     $nonPath = $false
                     $unclassifiedBinding = $memberInvocationUnclassified
                     $typedScriptBlock = $false
+                    $exportBindings = [Collections.Generic.List[object]]::new()
                     $invocationScope = Get-MorphospaceAffectedDependencyLexicalScope -Node $command
                     foreach ($scope in @(Get-MorphospaceAffectedDependencyScopeChain -Scope $invocationScope)) {
                         if ($assignmentsByScope.ContainsKey($scope)) {
                             $scopeAssignments = $assignmentsByScope[$scope]
                             if ($scopeAssignments.ContainsKey($variable)) {
                                 foreach ($record in @($scopeAssignments[$variable])) {
+                                    if ($fixedExportInvocation) { $exportBindings.Add($record) }
                                     foreach ($value in @($record.paths)) { [void]$boundPaths.Add([string]$value) }
                                     if ([bool]$record.non_path) { $nonPath=$true }
                                     if ([bool]$record.unclassified_binding) { $unclassifiedBinding=$true }
@@ -380,6 +437,25 @@ function Resolve-MorphospaceAffectedCheckDependencyClosure {
                         }
                         if ($typedScriptBlocksByScope.ContainsKey($scope) -and $typedScriptBlocksByScope[$scope].Contains($variable)) { $typedScriptBlock=$true }
                         if ($untypedParametersByScope.ContainsKey($scope) -and $untypedParametersByScope[$scope].Contains($variable)) { $unclassifiedBinding=$true }
+                        # A parameter shadows outer bindings. Local assignments were
+                        # still inspected above, so reassignment remains fail-closed.
+                        if ($index.parameters.ContainsKey($scope) -and $index.parameters[$scope].Contains($variable)) { break }
+                    }
+                    if ($fixedExportInvocation) {
+                        $closedExportBinding = $exportBindings.Count -eq 1 -and $boundPaths.Count -eq 1
+                        if ($closedExportBinding) {
+                            $exportRecord = $exportBindings[0]
+                            $exportCommands = @($exportRecord.ast.Right.FindAll({param($node) $node -is [Management.Automation.Language.CommandAst]},$true))
+                            $closedExportBinding = $exportCommands.Count -ge 1 -and $exportCommands.Count -le 2 -and
+                                [string]$exportCommands[0].GetCommandName() -ieq 'Import-Module' -and
+                                @($exportRecord.ast.Right.FindAll({param($node) $node -is [Management.Automation.Language.VariableExpressionAst] -and @('PSScriptRoot','RepoRoot') -inotcontains [string]$node.VariablePath.UserPath},$true)).Count -eq 0 -and
+                                (Test-MorphospaceAffectedDependencyAssignmentDefinite -Assignment $exportRecord.ast -AssignmentScope $exportRecord.scope -Invocation $command -InvocationScope $invocationScope)
+                            if ($exportCommands.Count -eq 2 -and [string]$exportCommands[1].GetCommandName() -ine 'Join-Path') { $closedExportBinding=$false }
+                        }
+                        if (-not $closedExportBinding) {
+                            Add-MorphospaceFallback -Importer $importer -Variable $variable -Kind 'ambiguous-static-binding'
+                            continue
+                        }
                     }
                     # A literal assignment cannot make a variable invocation exact when
                     # another applicable assignment has no classified path or callable
