@@ -1,3 +1,7 @@
+[CmdletBinding()]
+param(
+    [switch]$StrictJsonReaderOnly
+)
 $ErrorActionPreference = 'Stop'
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceContentObservation.psm1') -Force
@@ -38,6 +42,50 @@ function Assert-CanonicalStringV1 {
     $actualBytes=ConvertTo-MorphospaceProtocolJsonBytes $document
     Assert-Foundation ((Get-MorphospaceSha256Bytes $expectedBytes)-ceq(Get-MorphospaceSha256Bytes $actualBytes)) 'typed escaper changed protocol UTF8 LF bytes/hash'
 }
+function Test-FoundationStrictJsonReader {
+    $utf8=[Text.UTF8Encoding]::new($false,$true)
+    $cases=[Collections.Generic.List[object]]::new()
+    foreach($text in @(
+        '{}','{"values":[true,false,null,0,-0,-9223372036854775808,9223372036854775807]}',
+        '{"x":"long ordinary run before\\slash and\"quote then ordinary tail"}',
+        '{"x":"\b\f\n\r\t\/\\\"\u0000\u001f\u00e9\ud83d\ude00"}',
+        ('{"x":"'+[char]233+[char]0x2028+'"}'),
+        ('{"x":"'+('a'*1048576)+'"}'),
+        ('{"x":"'+('a'*524288)+'\n'+('b'*524287)+'"}')
+    )){$cases.Add(@{bytes=$utf8.GetBytes($text);accept=$true})}
+    foreach($text in @(
+        '{"a":1,"A":2}','{"a":1,"a":2}','{"x":trueX}','{"x":false0}',
+        '{"x":nullx}','{"x":01}','{"x":-01}','{"x":1.0}','{"x":1e2}',
+        '{"x":9223372036854775808}','{"x":-9223372036854775809}',
+        '{"x":tru}','{"x":fals}','{"x":nul}','{"x":+1}',
+        '{"x":TRUE}','{"x":False}','{"x":Null}',
+        '{"x":"\ud800"}','{"x":"\udc00"}','{"x":"\ud800\u0041"}',
+        '{"x":"\u12xz"}','{"x":"\q"}','{"x":"unterminated}',
+        '{"x":[] ,}','{"x":[1,]}','{}{}','[]',
+        ('{"x":"'+[char]31+'"}'),
+        ('{"x":"'+('a'*1048577)+'"}'),
+        ('{"x":"'+('a'*524288)+'\n'+('b'*524288)+'"}'),
+        ('{"x":'+('['*65)+'0'+(']'*65)+'}'),
+        ('{"x":"'+('a'*16777216)+'"}')
+    )){$cases.Add(@{bytes=$utf8.GetBytes($text);accept=$false})}
+    $cases.Add(@{bytes=[byte[]](0xef,0xbb,0xbf,0x7b,0x7d);accept=$false})
+    $cases.Add(@{bytes=[byte[]](0x7b,0,0x7d);accept=$false})
+    $cases.Add(@{bytes=[byte[]](0x7b,0x22,0x78,0x22,0x3a,0x22,0xc0,0xaf,0x22,0x7d);accept=$false})
+    $caseNumber=0
+    foreach($case in $cases){
+        $caseNumber++;$actual=$null;$accepted=$true
+        try{$actual=ConvertFrom-MorphospaceProtocolJsonBytes -Bytes $case.bytes}catch{$accepted=$false}
+        Assert-Foundation ($accepted-eq$case.accept) "strict reader case $caseNumber acceptance changed"
+        if($accepted){
+            $expected=$utf8.GetString($case.bytes)|ConvertFrom-Json -Depth 100 -DateKind String
+            Assert-Foundation (($actual|ConvertTo-Json -Depth 100 -Compress)-ceq($expected|ConvertTo-Json -Depth 100 -Compress)) "strict reader case $caseNumber decoded value changed"
+        }
+    }
+    [pscustomobject]@{scope='strict-json-reader-focused';cases=$caseNumber;device_calls=0}|ConvertTo-Json|Write-Host
+}
+Test-FoundationStrictJsonReader
+if($StrictJsonReaderOnly){Write-Host 'Strict JSON reader focused checks passed.';return}
+
 function Invoke-InternalGit { param([string]$Git,[string]$Root,[string[]]$Arguments) &$script:ContentModule {param($g,$r,$a) Invoke-MorphospaceBoundGitBytes -GitExecutable $g -RepositoryPath $r -Arguments $a} $Git $Root $Arguments }
 function Invoke-FixtureGit { param([string]$Git,[string]$Root,[string[]]$Arguments) $p=Invoke-InternalGit $Git $Root $Arguments;if($p.exit_code-ne0){throw 'fixture git failed'} }
 function Invoke-InternalEventAppend { param([hashtable]$Parameters) & $script:EventModule { param($p) Add-MorphospaceEventV2 @p } $Parameters }
