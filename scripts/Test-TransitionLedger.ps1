@@ -548,7 +548,8 @@ function Test-ReadOnlyCommittedSnapshot {
             if($sequence-eq1){$body=[Text.Encoding]::UTF8.GetBytes('retained-artifact');$arguments.Artifacts=@([pscustomobject]@{path='receipts/observed.bin';sha256=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($body)).ToLowerInvariant();bytes_base64=[Convert]::ToBase64String($body)})}
             Start-MorphospaceTransitionLedger @arguments | Out-Null
         }
-        & $transitionModule {
+        $batchCases=& $transitionModule {
+            param($fixture)
             $script:originalReader=(Get-Item Function:Read-MorphospaceLedgerEvents).ScriptBlock
             $script:originalObservationAssert=(Get-Item Function:Assert-MorphospaceReadOnlyLedgerObservation).ScriptBlock
             $script:parseCount=0
@@ -557,7 +558,31 @@ function Test-ReadOnlyCommittedSnapshot {
                 $script:parseCount++
                 & $script:originalReader @PSBoundParameters
             }
-        }
+            $cases=0
+            $token=New-MorphospaceReadOnlyLedgerBatch $fixture
+            try {
+                $first=Test-MorphospaceCommittedTransitionLedgerCore -WorkspaceRoot $fixture -TransactionId observed-1-transition -BatchToken $token
+                $second=Test-MorphospaceCommittedTransitionLedgerCore -WorkspaceRoot $fixture -TransactionId observed-2-transition -BatchToken $token
+                if($first.status-cne'committed'-or$second.event_tail_id-cne'observed-2'-or$script:parseCount-ne1){throw 'Private batch did not validate both transactions with one ledger parse.'};$cases++
+                foreach($path in @($script:readOnlyLedgerBatches[$token].observation.path)+@($script:readOnlyLedgerBatches[$token].observation.policy.path)){
+                    $denied=$false
+                    try{$writer=[IO.File]::Open($path,'Open','Write','ReadWrite');$writer.Dispose()}catch [IO.IOException]{$denied=$true}
+                    if(-not$denied){throw 'Private batch immutable input allowed replacement.'};$cases++
+                }
+                $pin=$script:readOnlyLedgerBatches[$token].observation.policy[0];$saved=$pin.sha256
+                try{$pin.sha256='0'*64;$denied=$false;try{Test-MorphospaceCommittedTransitionLedgerCore -WorkspaceRoot $fixture -TransactionId observed-1-transition -BatchToken $token|Out-Null}catch{$denied=$true};if(-not$denied){throw 'Changed batch policy pin accepted.'};$cases++}
+                finally{$pin.sha256=$saved}
+                $denied=$false;try{Test-MorphospaceCommittedTransitionLedgerCore -WorkspaceRoot $fixture -TransactionId missing-transition -BatchToken $token|Out-Null}catch{$denied=$true}
+                if(-not$denied){throw 'Private batch concealed a missing transaction.'};$cases++
+                $parameters=(Get-Command Test-MorphospaceCommittedTransitionLedger).Parameters
+                if($parameters.ContainsKey('BatchToken')-or$parameters.ContainsKey('ObservedSnapshot')){throw 'Standalone API accepts caller trusted batch state.'};$cases++
+            } finally {Close-MorphospaceReadOnlyLedgerBatch $token}
+            $denied=$false;try{Test-MorphospaceCommittedTransitionLedgerCore -WorkspaceRoot $fixture -TransactionId observed-1-transition -BatchToken $token|Out-Null}catch{$denied=$true}
+            if(-not$denied-or$script:readOnlyLedgerBatches.Count-ne0){throw 'Private batch survived its invocation.'};$cases++
+            $script:parseCount=0
+            $cases
+        } $fixture
+        $count+=$batchCases
         $historical=Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $fixture -TransactionId observed-1-transition -ExpectedStatePath workspace.state.json -ExpectedUnitPath iteration-units/unit.json -ExpectedEventsPath iteration-events.jsonl
         Assert-Ledger ($historical.status-ceq'committed'-and$historical.event_tail_id-ceq'observed-2') 'historical transaction output changed';$count++
         Assert-Ledger ((& $transitionModule {$script:parseCount})-eq1) 'committed transaction parsed its ledger more than once';$count++

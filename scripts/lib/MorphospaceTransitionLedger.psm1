@@ -727,7 +727,40 @@ function Assert-MorphospaceReadOnlyLedgerObservation {
         }
     }
 }
-function Test-MorphospaceCommittedTransitionLedger {
+function New-MorphospaceReadOnlyLedgerBatch {
+    param([string]$WorkspaceRoot)
+    $workspace=[IO.Path]::GetFullPath($WorkspaceRoot)
+    $lock=Enter-MorphospaceWorkspaceMutex -WorkspaceRoot $workspace
+    $handles=[Collections.Generic.List[IO.FileStream]]::new()
+    try {
+        $events=Resolve-MorphospaceWorkspacePath $workspace 'iteration-events.jsonl' -RequireLeaf
+        $schemaRoot=Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'schemas'
+        foreach($path in @($events,$PSCommandPath,(Join-Path $PSScriptRoot 'MorphospaceProtocolCommon.psm1'),(Join-Path $schemaRoot 'iteration-event.schema.json'),(Join-Path $schemaRoot 'iteration-event-v2.schema.json'))){
+            $handles.Add([IO.File]::Open($path,'Open','Read','Read'))
+        }
+        $observation=Get-MorphospaceReadOnlyLedgerObservation $events
+        $token=[guid]::NewGuid().ToString('N')
+        if(-not(Get-Variable -Scope Script -Name readOnlyLedgerBatches -ErrorAction SilentlyContinue)){$script:readOnlyLedgerBatches=@{}}
+        $script:readOnlyLedgerBatches[$token]=[pscustomobject]@{workspace=$workspace;observation=$observation;handles=$handles;mutex=$lock}
+        return $token
+    } catch {
+        foreach($handle in $handles){$handle.Dispose()}
+        Exit-MorphospaceWorkspaceMutex $lock
+        throw
+    }
+}
+function Close-MorphospaceReadOnlyLedgerBatch {
+    param([string]$Token)
+    if(-not$script:readOnlyLedgerBatches.ContainsKey($Token)){throw 'Read-only ledger batch is not active.'}
+    $batch=$script:readOnlyLedgerBatches[$Token]
+    try{Assert-MorphospaceReadOnlyLedgerObservation $batch.observation}
+    finally {
+        $script:readOnlyLedgerBatches.Remove($Token)
+        foreach($handle in $batch.handles){$handle.Dispose()}
+        Exit-MorphospaceWorkspaceMutex $batch.mutex
+    }
+}
+function Test-MorphospaceCommittedTransitionLedgerCore {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory=$true)][string]$WorkspaceRoot,
@@ -735,7 +768,8 @@ function Test-MorphospaceCommittedTransitionLedger {
         [string]$ExpectedStatePath='',
         [string]$ExpectedUnitPath='',
         [string]$ExpectedEventsPath='',
-        [switch]$RequireTail
+        [switch]$RequireTail,
+        [string]$BatchToken=''
     )
     $workspace=[IO.Path]::GetFullPath($WorkspaceRoot)
     $intentRelative=Get-MorphospaceLedgerPath $workspace $TransactionId intent
@@ -757,7 +791,13 @@ function Test-MorphospaceCommittedTransitionLedger {
         }
         Assert-MorphospaceLedgerArtifactNamespace $workspace $TransactionId $intent
         $eventsAbsolute=Resolve-MorphospaceWorkspacePath -WorkspaceRoot $workspace -RelativePath ([string]$intent.events.path) -RequireLeaf
-        $observation=Get-MorphospaceReadOnlyLedgerObservation $eventsAbsolute
+        if($BatchToken){
+            if(-not$script:readOnlyLedgerBatches.ContainsKey($BatchToken)){throw 'Read-only ledger batch is not active.'}
+            $batch=$script:readOnlyLedgerBatches[$BatchToken]
+            if($batch.workspace-cne$workspace-or$batch.observation.path-cne$eventsAbsolute){throw 'Read-only ledger batch belongs to a different workspace.'}
+            $observation=$batch.observation
+            Assert-MorphospaceReadOnlyLedgerObservation $observation
+        } else {$observation=Get-MorphospaceReadOnlyLedgerObservation $eventsAbsolute}
         Assert-MorphospaceLedgerCommittedCompletion $workspace $TransactionId $intentRelative $intentAbsolute $intent $completionAbsolute -ObservedSnapshot $observation.snapshot
         $tailId=[string]$observation.snapshot.tail_id
         if($RequireTail-and$tailId-cne[string]$intent.event.event_id){
@@ -773,6 +813,20 @@ function Test-MorphospaceCommittedTransitionLedger {
         Assert-MorphospaceReadOnlyLedgerObservation $observation
         return $result
     } finally {Exit-MorphospaceWorkspaceMutex $lock}
+}
+function Test-MorphospaceCommittedTransitionLedger {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)][string]$WorkspaceRoot,
+        [Parameter(Mandatory=$true)][string]$TransactionId,
+        [string]$ExpectedStatePath='',
+        [string]$ExpectedUnitPath='',
+        [string]$ExpectedEventsPath='',
+        [switch]$RequireTail
+    )
+    # The exported API always authenticates a fresh observation. Batch tokens
+    # are private and expire before the current-history invocation returns.
+    Test-MorphospaceCommittedTransitionLedgerCore @PSBoundParameters
 }
 function Assert-MorphospaceLedgerExternalOwnerBindings {
     param([string]$WorkspaceRoot,[object]$Intent,[object]$CurrentUnit=$null,[switch]$BeforeIntent)

@@ -36,6 +36,14 @@ provenance and executor checks still run. No cache spans project changes or
 successive effects; every invocation reads and authenticates the current owner.
 Device, source-launch and effect-specific guards remain with their callers.
 
+Within one current-history invocation, the ledger owner may share its freshly
+authenticated physical ledger observation across committed suffix checks. The
+private batch holds the workspace mutex and read locks for the ledger, parser,
+module and event schemas, and rechecks their exact bytes before and after each
+step. Every transaction, completion, artifact and projection remains checked.
+The batch expires in `finally`; the public standalone transition validator
+always reads a fresh observation and accepts no trusted snapshot or batch token.
+
 An owner-produced [accepted validation evidence relocation](ACCEPTED_VALIDATION_EVIDENCE_RELOCATION.md)
 may immediately follow the idle accepted checkpoint. While the correction
 remains after the latest accepted boundary, current-work replay authenticates

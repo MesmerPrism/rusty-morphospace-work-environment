@@ -1,7 +1,7 @@
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'MorphospaceProtocolCommon.psm1')
-Import-Module (Join-Path $PSScriptRoot 'MorphospaceTransitionLedger.psm1')
+$script:currentWorkLedgerModule=Import-Module (Join-Path $PSScriptRoot 'MorphospaceTransitionLedger.psm1') -PassThru
 Import-Module (Join-Path $PSScriptRoot 'MorphospaceCurrentWorkCompatibility.psm1')
 Import-Module (Join-Path $PSScriptRoot 'MorphospaceDevelopmentEnvelopeSemantics.psm1')
 Import-Module (Join-Path $PSScriptRoot 'MorphospaceSourceCompositionIdentity.psm1')
@@ -246,6 +246,8 @@ function Get-MorphospaceCurrentWorkHistory {
         $preparationRecoveryByCorrection = $preparationRecoveryIndex.by_correction_event
     }
     # Existing owner transactions fence all changes after the accepted boundary.
+    $ledgerBatch=$null
+    try {
     foreach ($event in @($events | Where-Object { [int]$_.sequence -gt $sequence })) {
         $id = "$($event.event_id)-transition"
         $step = $null
@@ -323,7 +325,12 @@ function Get-MorphospaceCurrentWorkHistory {
                 $projectionHashes[$path] = [string]$intent.target.$name.sha256
             }
         } elseif (-not $authenticatedArchiveStep) {
-            $step = if ($null -ne $specialStep) { $specialStep } else { Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $workspace -TransactionId $id -ExpectedStatePath 'workspace.state.json' -ExpectedEventsPath 'iteration-events.jsonl' }
+            $step = if ($null -ne $specialStep) { $specialStep } else {
+                # Special/empty suffixes keep their original contracts. Mint a
+                # batch only when a committed ledger step already needs one.
+                if(-not$ledgerBatch){$ledgerBatch=& $script:currentWorkLedgerModule {param($root) New-MorphospaceReadOnlyLedgerBatch $root} $workspace}
+                & $script:currentWorkLedgerModule {param($root,$transaction,$batch) Test-MorphospaceCommittedTransitionLedgerCore -WorkspaceRoot $root -TransactionId $transaction -ExpectedStatePath 'workspace.state.json' -ExpectedEventsPath 'iteration-events.jsonl' -BatchToken $batch} $workspace $id $ledgerBatch
+            }
             $intent = $step.intent
             if($intent.PSObject.Properties.Name-contains'artifacts'){
                 $ownerActionSchemas=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
@@ -373,6 +380,7 @@ function Get-MorphospaceCurrentWorkHistory {
             [void]$historicallyRetiredProposed.Add([string]$event.unit_id)
         }
     }
+    } finally {if($ledgerBatch){& $script:currentWorkLedgerModule {param($batch) Close-MorphospaceReadOnlyLedgerBatch $batch} $ledgerBatch}}
     if ($priorStateHash -cne (Get-MorphospaceCanonicalJsonSha256 $state)) { throw 'Current-work transaction suffix does not derive the live state.' }
     foreach ($id in @($historicallyRetiredProposed)) {
         $resurrectionPattern='^'+[regex]::Escape($id)+'-(ready|claimed|active|validating|resumed)(?:-|$)'
