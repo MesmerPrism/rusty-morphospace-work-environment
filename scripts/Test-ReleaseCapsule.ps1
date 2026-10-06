@@ -130,7 +130,7 @@ function Invoke-ReleaseCapsuleValidation {
     if (-not (Test-Path -LiteralPath $CapsulePath -PathType Leaf)) { throw "Release capsule not found: $CapsulePath" }
     $resolvedCapsulePath = (Resolve-Path -LiteralPath $CapsulePath).Path
     $capsule = Get-Content -Raw -LiteralPath $resolvedCapsulePath | ConvertFrom-Json
-    $shapeFailures = Test-CapsuleShape -Capsule $capsule
+    $shapeFailures = @(Test-CapsuleShape -Capsule $capsule)
     if ($shapeFailures.Count -gt 0) { throw ($shapeFailures -join [Environment]::NewLine) }
     if ($OnlyShape) { return $null }
 
