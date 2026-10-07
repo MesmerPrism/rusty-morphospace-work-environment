@@ -1538,6 +1538,26 @@ function Get-MorphospaceReadyWithdrawalBinding {
     $completionPath = Join-Path $WorkspaceRoot ($completionRelative.Replace('/', [IO.Path]::DirectorySeparatorChar))
     $intent = Read-MorphospaceProtocolJson -Path $intentPath
     $completion = Read-MorphospaceProtocolJson -Path $completionPath
+    $readyUnitSha256 = $ExpectedUnitSha256
+    if ([string]$intent.target.unit.sha256 -cne $ExpectedUnitSha256 -and $LiveUnit.PSObject.Properties.Name -ccontains 'tooling_context') {
+        # Only the existing owner-authenticated Ready/tooling-upgrade continuation
+        # can bridge the historical Ready hash to the exact live withdrawal CAS.
+        $admissions = @(Get-ChildItem -LiteralPath (Join-Path $WorkspaceRoot 'receipts') -File -Filter '*.json' | ForEach-Object {
+            $document = Read-MorphospaceProtocolJson $_.FullName
+            if ([string]$document.schema -ceq 'rusty.morphospace.workflow.development_unit_admission.v1' -and [string]$document.unit_id -ceq $UnitId) { $document }
+        })
+        if ($admissions.Count -ne 1) { throw 'WithdrawReady requires one exact admission for its tooling-upgrade continuation.' }
+        $continuationModule = Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceDevelopmentContinuation.psm1') -PassThru
+        $continuation = & $continuationModule { param($root,$admission) Get-MorphospaceDevelopmentEnvelopeContinuation -WorkspaceRoot $root -Admission $admission -ReadOnlyReady } $WorkspaceRoot $admissions[0]
+        $originalReady = @($continuation.records | Where-Object kind -CEQ 'ready')
+        if ($originalReady.Count -ne 1 -or @($continuation.tooling_upgrades).Count -eq 0 -or
+            (Get-MorphospaceCanonicalJsonSha256 $originalReady[0].transition.intent) -cne (Get-MorphospaceCanonicalJsonSha256 $intent) -or
+            (Get-MorphospaceCanonicalJsonSha256 $continuation.unit) -cne $ExpectedUnitSha256 -or
+            (Get-MorphospaceCanonicalJsonSha256 $continuation.state) -cne $ExpectedStateSha256) {
+            throw 'WithdrawReady tooling-upgrade continuation does not bind the original Ready and exact live CAS.'
+        }
+        $readyUnitSha256 = [string]$intent.target.unit.sha256
+    }
     if ([string]$intent.schema -cne 'rusty.morphospace.workflow.transition_ledger_intent.v1' -or
         [string]$intent.transaction_id -cne $transactionId -or
         [string]$intent.state.path -cne 'workspace.state.json' -or
@@ -1550,10 +1570,10 @@ function Get-MorphospaceReadyWithdrawalBinding {
         [string]$intent.target.unit.document.status -cne 'ready' -or
         [string]$intent.target.state.document.project_id -cne $ProjectId -or
         [string]$intent.target.state.document.last_event_id -cne [string]$readyEvent.event_id -or
-        [string]$intent.target.unit.sha256 -cne $ExpectedUnitSha256 -or
+        [string]$intent.target.unit.sha256 -cne $readyUnitSha256 -or
         [string]$completion.transaction_id -cne $transactionId -or
         [string]$completion.event_id -cne [string]$readyEvent.event_id -or
-        [string]$completion.unit_sha256 -cne $ExpectedUnitSha256) {
+        [string]$completion.unit_sha256 -cne $readyUnitSha256) {
         throw 'WithdrawReady original Ready transaction does not bind the exact live unit and historical ready projection.'
     }
 

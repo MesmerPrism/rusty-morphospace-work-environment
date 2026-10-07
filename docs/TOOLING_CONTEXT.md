@@ -20,8 +20,9 @@ current unit. A Ready upgrade preserves that queue and status; ordinary Claim is
 still required before Freeze or BeginValidation. The read-only Ready provenance
 reader authenticates the owner-produced Ready transition and each intervening
 tooling upgrade, including its product fences and raw CAS. Post-upgrade
-`WithdrawReady` is currently unsupported and fails closed; ordinary unupgraded
-withdrawal retains its existing route. The owner transaction authenticates the historical old context,
+`WithdrawReady` authenticates that same Ready-and-upgrade chain and withdraws
+against the exact current state/unit CAS, preserving the original Ready receipt
+and hashes. Ordinary unupgraded withdrawal retains its existing route. The owner transaction authenticates the historical old context,
 the live clean new context, exact typed protocol evidence, and the current effective
 product projection. A prior active-envelope extension may have advanced that product
 projection through its own authenticated transition; the new context binds the

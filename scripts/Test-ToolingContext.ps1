@@ -268,9 +268,33 @@ if($Scenario-in@('all','ready-lifecycle')){
  $done=Invoke-Upgrade $positive $rp;Assert-TC ($done.executed-and$done.status_before-ceq'ready'-and$done.status_after-ceq'ready'-and$null-eq$done.current_unit_after) 'Ready upgrade receipt'
  $afterState=Read-TC (Join-Path $positive.workspace 'workspace.state.json');$afterUnit=Read-TC (Join-Path $positive.workspace 'iteration-units/u002.json')
  Assert-TC ($null-eq$afterState.current_unit-and[string]$afterState.next_ready_unit-ceq'u002'-and[string]$afterUnit.status-ceq'ready') 'Ready upgrade preserves queue and status'
- $withdrawDenied=$false;$beforeWithdraw=WorkspaceFingerprint $positive.workspace
- try{&$automationModule {param($a)Invoke-MorphospaceWorkUnitAutomation @a -Action WithdrawReady -OutPath (Join-Path $a.WorkspaceRoot 'receipts/ready-upgrade-withdraw.json') -Timestamp '2026-09-15T09:01:00.0000000Z' -Execute} @{WorkspaceRoot=$positive.workspace;UnitId='u002';RepoMapPath=(Join-Path $positive.workspace 'repository-map.json');ValidationTier='quick'}|Out-Null}catch{$withdrawDenied=Assert-TCError $_.Exception.Message 'WithdrawReady original Ready transaction does not bind the exact live unit and historical ready projection.' 'post-upgrade withdrawal'}
- Assert-TC ($withdrawDenied-and(WorkspaceFingerprint $positive.workspace)-ceq$beforeWithdraw) 'post-upgrade Withdraw remains fail-closed without writes'
+ # Independent copied Ready-upgrade fixture: Claim/Freeze below retain their
+ # original positive owner while withdrawal has a genuine upgraded live CAS.
+ $withdrawWorkspace=Join-Path $HarnessRoot 'ready-upgrade-withdraw';Copy-Item -LiteralPath $positive.workspace -Destination $withdrawWorkspace -Recurse
+ $withdrawArgs=@{WorkspaceRoot=$withdrawWorkspace;UnitId='u002';RepoMapPath=(Join-Path $withdrawWorkspace 'repository-map.json');ValidationTier='quick';OutPath=(Join-Path $withdrawWorkspace 'receipts/ready-upgrade-withdraw.json');Timestamp='2026-09-15T09:01:00.0000000Z'}
+ foreach($damage in @('unit-scope','current-owner','source-bytes','upgrade-completion')){
+  $damagePath=switch($damage){'unit-scope'{Join-Path $withdrawWorkspace 'iteration-units/u002.json'};'current-owner'{Join-Path $withdrawWorkspace 'workspace.state.json'};'source-bytes'{Join-Path $withdrawWorkspace 'source-composition.json'};'upgrade-completion'{Join-Path $withdrawWorkspace 'receipts/transactions/upgrade-ready-tooling-context-upgraded-transition.completion.json'}}
+  $original=[IO.File]::ReadAllBytes($damagePath)
+  try{
+   switch($damage){
+    'unit-scope'{$document=Read-TC $damagePath;$document.objective='Unrelated changed objective';Write-TC $damagePath $document}
+    'current-owner'{$document=Read-TC $damagePath;$document.current_unit='u002';Write-TC $damagePath $document}
+    'source-bytes'{[IO.File]::AppendAllText($damagePath,' ')}
+    'upgrade-completion'{$document=Read-TC $damagePath;$document.unit_sha256='0'*64;Write-TC $damagePath $document}
+   }
+   $before=WorkspaceFingerprint $withdrawWorkspace;$denied=$false
+   try{&$automationModule {param($a)Invoke-MorphospaceWorkUnitAutomation @a -Action WithdrawReady -Execute} $withdrawArgs|Out-Null}catch{$denied=$true}
+   Assert-TC ($denied-and(WorkspaceFingerprint $withdrawWorkspace)-ceq$before) ("upgraded Withdraw $damage rejects without writes")
+  }finally{[IO.File]::WriteAllBytes($damagePath,$original)}
+ }
+ $withdrawBefore=Read-TC (Join-Path $withdrawWorkspace 'iteration-units/u002.json');$withdrawState=Read-TC (Join-Path $withdrawWorkspace 'workspace.state.json')
+ $dryWithdraw=&$automationModule {param($a)Invoke-MorphospaceWorkUnitAutomation @a -Action WithdrawReady} $withdrawArgs
+ $withdraw=&$automationModule {param($a)Invoke-MorphospaceWorkUnitAutomation @a -Action WithdrawReady -Execute} $withdrawArgs
+ Assert-TC ($withdraw.executed-and$withdraw.status_before-ceq'ready'-and$withdraw.status_after-ceq'proposed'-and$null-eq$withdraw.current_unit_after) 'supported upgraded Ready actually withdraws'
+ $finalWithdraw=Read-TC (Join-Path $withdrawWorkspace 'iteration-units/u002.json');$finalState=Read-TC (Join-Path $withdrawWorkspace 'workspace.state.json')
+ $expectedWithdraw=$withdrawBefore|ConvertTo-Json -Depth 100|ConvertFrom-Json -Depth 100 -DateKind String;$expectedWithdraw.status='proposed'
+ Assert-TC ((Canonical $finalWithdraw)-ceq(Canonical $expectedWithdraw)-and$null-eq$finalState.current_unit-and$null-eq$finalState.next_ready_unit) 'upgraded withdrawal preserves exact unit except status and deterministic queue'
+ Assert-TC ($dryWithdraw.executed-eq$false-and$withdraw.ready_withdrawal.original_ready_transaction.target_unit_sha256-cne(Canonical $withdrawBefore)-and$withdraw.ready_withdrawal.authenticated_preimage.unit_sha256-ceq(Canonical $withdrawBefore)) 'historical Ready and upgraded live CAS remain distinct exact bindings'
  $effectiveModule=Import-Module (Join-Path $PSScriptRoot 'DevelopmentEnvelopeProvenance.psm1') -PassThru
  $unclaimedDenied=$false
  try{&$effectiveModule {param($w)Test-MorphospaceEffectiveDevelopmentEnvelope -WorkspaceRoot $w -UnitId u002 -RepositoryMapPath (Join-Path $w 'repository-map.json')} $positive.workspace|Out-Null}catch{$unclaimedDenied=$true}
@@ -295,7 +319,7 @@ if($Scenario-in@('all','ready-lifecycle')){
  if($LASTEXITCODE-ne0){throw 'Ordinary unupgraded withdrawal child failed.'};$withdraw=Read-TC (Join-Path $ordinary.workspace 'receipts/ordinary-withdraw.json')
  Assert-TC ($withdraw.executed-and$withdraw.status_after-ceq'proposed') 'ordinary unupgraded withdrawal retained'
  Write-TCPhase 'ready-lifecycle-complete'
- [pscustomobject]@{result='pass';scenario=$Scenario;owner_produced_ready=$true;actual_upgrade_claim=$true;post_upgrade_withdraw='unsupported-fail-closed';device_calls=0}|ConvertTo-Json -Compress
+ [pscustomobject]@{result='pass';scenario=$Scenario;owner_produced_ready=$true;actual_upgrade_claim=$true;post_upgrade_withdraw='supported-authenticated-continuation';device_calls=0}|ConvertTo-Json -Compress
  if($Scenario-ceq'ready-lifecycle'){return}
 }
 
