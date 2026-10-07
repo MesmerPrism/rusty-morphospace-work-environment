@@ -148,6 +148,13 @@ Before `BeginValidation`, an admitted unit must use `FreezeCandidate`. The
 freeze receipt records exact repository commits/trees, changed paths and
 cleanliness policy, instructions, feature lock, effects/permissions/device use,
 test matrix, cleanup/evidence roots, and source-composition closure. Each
+candidate declares `permissions: []` when it requests no permissions, including
+an inert source-only library. The array remains required; any declared permission
+must be a unique nonempty string within the admitted permission ceiling. Do not
+invent an Android permission or a `none` sentinel to represent an empty set.
+Empty requested permissions do not alter device, runtime, effect, source or
+publication guards. Source-only publication still follows ordinary acceptance.
+Each
 final repository must resolve through the bound repository map and exact source
 composition lock; duplicate IDs, substituted commit/tree identities, dirty
 clean-only worktrees, and changed paths outside the declared closure reject.

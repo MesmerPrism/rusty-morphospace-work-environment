@@ -40,9 +40,9 @@ function Test-PreparationProvenanceHasEffectiveContinuation {
  return $false
 }
 function Get-PreparationProvenanceEffectiveContinuation {
- param([string]$Workspace,[object]$Admission)
+ param([string]$Workspace,[object]$Admission,[switch]$ReadOnlyReady)
  $continuationModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceDevelopmentContinuation.psm1') -PassThru
- & $continuationModule {param($root,$inputAdmission) Get-MorphospaceDevelopmentEnvelopeContinuation -WorkspaceRoot $root -Admission $inputAdmission} $Workspace $Admission
+ & $continuationModule {param($root,$inputAdmission,$ready) Get-MorphospaceDevelopmentEnvelopeContinuation -WorkspaceRoot $root -Admission $inputAdmission -ReadOnlyReady:$ready} $Workspace $Admission ([bool]$ReadOnlyReady)
 }
 function Get-PreparationProvenanceToolingContext {
  param([string]$Workspace,[object]$Admission,[object]$Receipt,[object]$Intent,[object]$Source,[object]$Continuation)
@@ -183,7 +183,8 @@ function Get-PreparationProvenanceAdmissionPrefix {
  [CmdletBinding()]param(
   [Parameter(Mandatory)][string]$Workspace,
   [Parameter(Mandatory)][object]$AdmissionIntent,
-  [Parameter(Mandatory)][object]$State
+  [Parameter(Mandatory)][object]$State,
+  [switch]$ReadOnlyReady
  )
  $stateHash=Get-PreparationProvenanceCanonicalHash $State 'Prepared-envelope replacement recovery state'
  # New active envelope/tooling transitions retain the original admission prefix.
@@ -194,7 +195,7 @@ function Get-PreparationProvenanceAdmissionPrefix {
   if([string]$value.schema-ceq'rusty.morphospace.workflow.development_unit_admission.v1'){$value}
  })
  if($boundAdmissions.Count-eq1-and(Test-PreparationProvenanceHasEffectiveContinuation $Workspace $boundAdmissions[0])){
-  $continuation=Get-PreparationProvenanceEffectiveContinuation $Workspace $boundAdmissions[0]
+  $continuation=Get-PreparationProvenanceEffectiveContinuation $Workspace $boundAdmissions[0] -ReadOnlyReady:$ReadOnlyReady
   $allEvents=@(Get-Content -LiteralPath (Resolve-MorphospaceWorkspacePath $Workspace 'iteration-events.jsonl' -RequireLeaf)|Where-Object{$_}|ForEach-Object{ConvertFrom-MorphospaceProtocolJsonBytes ([Text.UTF8Encoding]::new($false).GetBytes([string]$_))})
   $prefix=@($allEvents|Where-Object{[int]$_.sequence-lt[int]$continuation.admission_proof.intent.event.sequence})
   return [pscustomobject]@{events=$prefix;event_present=$true}
@@ -223,6 +224,21 @@ function Get-PreparationProvenanceAdmissionPrefix {
  if($admissionIndexes.Count-ne1){throw 'Prepared-envelope replacement admission event placement is ambiguous.'}
  $admissionIndex=[int]$admissionIndexes[0]
  $suffixCount=$events.Count-($admissionIndex+1)
+ if($suffixCount-eq1-and$ReadOnlyReady){
+  # Read-only context observation before Claim. Freeze never opts into this path.
+  $readyEvent=$events[$admissionIndex+1];$unitId=[string]$AdmissionIntent.event.unit_id;$projectId=[string]$AdmissionIntent.event.project_id
+  if([string]$readyEvent.project_id-cne$projectId-or[string]$readyEvent.unit_id-cne$unitId-or[string]$readyEvent.event_type-cne'state-transition'-or[string]$readyEvent.event_id-cnotmatch('^'+[regex]::Escape($unitId)+'-ready-[0-9]{4}$')-or[int]$readyEvent.sequence-ne([int]$AdmissionIntent.event.sequence+1)-or[string]$readyEvent.summary-cne'Reviewed the bounded proposal and made it claimable without expanding its repositories, paths, or prerequisites.'-or@($readyEvent.receipts).Count-ne0){throw 'Prepared-envelope read-only Ready event is not exact.'}
+  $readyTransactionId="$([string]$readyEvent.event_id)-transition"
+  $readyIntent=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $Workspace "receipts/transactions/$readyTransactionId.intent.json" -RequireLeaf)
+  Assert-PreparationProvenanceCommittedTransaction -Workspace $Workspace -TransactionId ([string]$AdmissionIntent.transaction_id) -SuccessorIntent $readyIntent
+  Assert-PreparationProvenanceCommittedTransaction -Workspace $Workspace -TransactionId $readyTransactionId
+  $expectedReadyUnit=$AdmissionIntent.target.unit.document|ConvertTo-Json -Depth 100|ConvertFrom-Json -Depth 100 -DateKind String;$expectedReadyUnit.status='ready'
+  if((Get-PreparationProvenanceCanonicalHash $expectedReadyUnit 'Expected Ready unit')-cne(Get-PreparationProvenanceCanonicalHash $readyIntent.target.unit.document 'Owned Ready unit')){throw 'Prepared-envelope read-only Ready changes authority outside its ordinary unit status transition.'}
+  $unitRelative="iteration-units/$unitId.json";$liveUnit=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $Workspace $unitRelative -RequireLeaf)
+  if([string]$readyIntent.unit.path-cne$unitRelative-or(Get-PreparationProvenanceCanonicalHash $readyIntent.event 'Ready intent event')-cne(Get-PreparationProvenanceCanonicalHash $readyEvent 'Ready live event')-or[string]$readyIntent.target.unit.document.status-cne'ready'-or[string]$liveUnit.status-cne'ready'-or[string]$liveUnit.unit_id-cne$unitId-or[string]$State.project_id-cne$projectId-or$null-ne$State.current_unit-or[string]$State.next_ready_unit-cne$unitId-or[string]$State.last_event_id-cne[string]$readyEvent.event_id-or[string]$readyIntent.target.state.sha256-cne$stateHash-or[string]$readyIntent.target.unit.sha256-cne(Get-PreparationProvenanceCanonicalHash $liveUnit 'Ready live unit')){throw 'Prepared-envelope read-only Ready transaction does not own the exact live slot.'}
+  $prefix=if($admissionIndex-gt0){@($events[0..($admissionIndex-1)])}else{@()}
+  return [pscustomobject]@{events=$prefix;event_present=$true}
+ }
  if($suffixCount-notin@(2,3)){throw 'Prepared-envelope replacement Freeze requires exactly the owner-produced Ready and Claim suffix, optionally followed by its own Freeze.'}
 
  $admissionEvent=$events[$admissionIndex];$readyEvent=$events[$admissionIndex+1];$claimEvent=$events[$admissionIndex+2]
@@ -281,9 +297,10 @@ function Test-MorphospacePreparedEnvelopeReplacementSuffix {
   [Parameter(Mandatory)][object]$PreparationCompletion,
   [Parameter(Mandatory)][object]$State,
   [Parameter(Mandatory)][object[]]$Events,
-  [object]$AdmissionIntent=$null
+  [object]$AdmissionIntent=$null,
+  [switch]$ReadOnlyReady
  )
- $claimedReplacement=$null-ne$AdmissionIntent-and[string]$State.current_unit-ceq[string]$Admission.unit_id-and$null-eq$State.next_ready_unit
+ $claimedReplacement=$null-ne$AdmissionIntent-and(([string]$State.current_unit-ceq[string]$Admission.unit_id-and$null-eq$State.next_ready_unit)-or($ReadOnlyReady-and$null-eq$State.current_unit-and[string]$State.next_ready_unit-ceq[string]$Admission.unit_id))
  if(-not$claimedReplacement-and($null-ne$State.current_unit-or$null-ne$State.next_ready_unit)){throw 'Prepared-envelope replacement admission requires an idle project.'}
  if($Events.Count-lt3){throw 'Prepared-envelope replacement admission lacks its exact transition suffix.'}
 
@@ -370,7 +387,7 @@ function Test-MorphospacePreparedEnvelopeReplacementSuffix {
  return $true
 }
 function Test-MorphospacePreparedDevelopmentEnvelope {
- [CmdletBinding()]param([Parameter(Mandatory)][string]$WorkspaceRoot,[Parameter(Mandatory)][object]$Admission,[ValidateSet('Admission','Freeze')][string]$Phase='Admission')
+ [CmdletBinding()]param([Parameter(Mandatory)][string]$WorkspaceRoot,[Parameter(Mandatory)][object]$Admission,[ValidateSet('Admission','Freeze')][string]$Phase='Admission',[switch]$ReadOnlyReady)
  $workspace=(Resolve-Path $WorkspaceRoot).Path;$repoRoot=Split-Path $PSScriptRoot -Parent;$p=$Admission.preparation
  $admissionPath=Resolve-MorphospaceWorkspacePath $workspace ([string]$p.receipt_path) -RequireLeaf
  if((Get-MorphospaceFileSha256 $admissionPath)-cne[string]$p.receipt_sha256){throw 'Prepared-envelope admission receipt bytes drifted.'}
@@ -400,7 +417,7 @@ function Test-MorphospacePreparedDevelopmentEnvelope {
  if($recovered){$recoveryArtifact=@($artifacts|Where-Object{[string]$_.path-ceq[string]$p.recovery_receipt_path});$recoveryRawSha256=Get-MorphospaceFileSha256 $recoveryPath;$recoveryBytesBase64=[Convert]::ToBase64String([IO.File]::ReadAllBytes($recoveryPath));$historyIdentity=[pscustomobject][ordered]@{retirement=$recoveryReceipt.retirement;original_preparation=$recoveryReceipt.original_preparation;preserved_evidence=@($recoveryReceipt.preserved_evidence)};if([string]$recoveryReceipt.project_id-cne[string]$Admission.project_id-or[string]$recoveryReceipt.replacement_unit_id-cne[string]$Admission.unit_id-or[string]$recoveryReceipt.retired_unit_id-cne[string]$receipt.predecessor_unit_id-or[string]$recoveryReceipt.preparation_id-cne[string]$p.preparation_id-or[string]$recoveryReceipt.input_sha256-cne[string]$receipt.input_sha256-or[string]$recoveryReceipt.input_sha256-cne[string]$intent.input_sha256-or[string]$recoveryReceipt.source_composition.path-cne[string]$p.source_composition_path-or[string]$recoveryReceipt.source_composition.sha256-cne$sourceRawFileSha256-or[string]$recoveryReceipt.history_sha256-cne(Get-MorphospaceCanonicalJsonSha256 $historyIdentity)-or(Get-MorphospaceCanonicalJsonSha256 @($recoveryReceipt.preserved_evidence))-cne(Get-MorphospaceCanonicalJsonSha256 @($intent.preserved_evidence))-or$recoveryArtifact.Count-ne1-or[string]$recoveryArtifact[0].sha256-cne$recoveryRawSha256-or[string]$recoveryArtifact[0].bytes_base64-cne$recoveryBytesBase64-or[string]$completion.repreparation_receipt_sha256-cne$recoveryRawSha256){throw 'Recovered prepared-envelope transaction does not bind its exact project, units, input, source, history, and recovery-receipt bytes.'}}
  $effectiveContinuation=$null
  if($Phase-ceq'Freeze'-and(Test-PreparationProvenanceHasEffectiveContinuation $workspace $Admission)){
-  $effectiveContinuation=Get-PreparationProvenanceEffectiveContinuation $workspace $Admission
+  $effectiveContinuation=Get-PreparationProvenanceEffectiveContinuation $workspace $Admission -ReadOnlyReady:$ReadOnlyReady
   $project=$intent.target.project.document
   $lock=$intent.target.feature_lock.document
  }
@@ -427,7 +444,7 @@ function Test-MorphospacePreparedDevelopmentEnvelope {
   if([IO.File]::Exists($admissionIntentPath)){
    $admissionIntent=Read-MorphospaceProtocolJson $admissionIntentPath
    if([string]$admissionIntent.expected.event_tail_id-cne[string]$intent.event.event_id){
-    try{$projection=Get-PreparationProvenanceAdmissionPrefix -Workspace $workspace -AdmissionIntent $admissionIntent -State $state;[void](Test-MorphospacePreparedEnvelopeReplacementSuffix -Workspace $workspace -RepoRoot $repoRoot -Admission $Admission -PreparationIntent $intent -PreparationCompletion $completion -State $state -Events @($projection.events) -AdmissionIntent $admissionIntent)}catch{throw "Prepared-envelope replacement recovery provenance is invalid. $($_.Exception.Message)"}
+    try{$projection=Get-PreparationProvenanceAdmissionPrefix -Workspace $workspace -AdmissionIntent $admissionIntent -State $state -ReadOnlyReady:$ReadOnlyReady;[void](Test-MorphospacePreparedEnvelopeReplacementSuffix -Workspace $workspace -RepoRoot $repoRoot -Admission $Admission -PreparationIntent $intent -PreparationCompletion $completion -State $state -Events @($projection.events) -AdmissionIntent $admissionIntent -ReadOnlyReady:$ReadOnlyReady)}catch{throw "Prepared-envelope replacement recovery provenance is invalid. $($_.Exception.Message)"}
    }
   }
  }
@@ -446,11 +463,11 @@ function Get-MorphospaceDevelopmentAdmissionKind {
  return 'ordinary'
 }
 function Test-MorphospaceDevelopmentUnitPreparation {
- [CmdletBinding()]param([Parameter(Mandatory)][string]$WorkspaceRoot,[Parameter(Mandatory)][object]$Admission,[ValidateSet('Admission','Freeze','Release')][string]$Phase='Admission')
+ [CmdletBinding()]param([Parameter(Mandatory)][string]$WorkspaceRoot,[Parameter(Mandatory)][object]$Admission,[ValidateSet('Admission','Freeze','Release')][string]$Phase='Admission',[switch]$ReadOnlyReady)
  $kind=Get-MorphospaceDevelopmentAdmissionKind $Admission
  if($kind-ceq'ordinary'){
   if($Admission.PSObject.Properties.Name-contains'blocked_successor'){throw 'Ordinary admission may not carry blocked-successor provenance.'}
-  return Test-MorphospacePreparedDevelopmentEnvelope -WorkspaceRoot $WorkspaceRoot -Admission $Admission -Phase $(if($Phase-ceq'Release'){'Freeze'}else{$Phase})
+  return Test-MorphospacePreparedDevelopmentEnvelope -WorkspaceRoot $WorkspaceRoot -Admission $Admission -Phase $(if($Phase-ceq'Release'){'Freeze'}else{$Phase}) -ReadOnlyReady:$ReadOnlyReady
  }
  if($kind-cne'blocked-successor'){throw "Unknown development admission kind '$kind'."}
  if(-not($Admission.PSObject.Properties.Name-contains'blocked_successor')){throw 'Blocked-successor admission lacks its closed terminal binding.'}
@@ -460,7 +477,8 @@ function Test-MorphospaceEffectiveDevelopmentEnvelope {
  [CmdletBinding()]param(
   [Parameter(Mandatory)][string]$WorkspaceRoot,
   [Parameter(Mandatory)][string]$UnitId,
-  [Parameter(Mandatory)][string]$RepositoryMapPath
+  [Parameter(Mandatory)][string]$RepositoryMapPath,
+  [switch]$ReadOnlyReady
  )
  $workspace=[IO.Path]::GetFullPath($WorkspaceRoot)
  $admissions=@(Get-ChildItem -LiteralPath (Resolve-MorphospaceWorkspacePath $workspace 'receipts') -File -Filter '*.json'|ForEach-Object{
@@ -470,8 +488,8 @@ function Test-MorphospaceEffectiveDevelopmentEnvelope {
  if($admissions.Count-ne1){throw 'Effective development envelope requires one exact admission.'}
  $admission=$admissions[0]
  if((Get-MorphospaceDevelopmentAdmissionKind $admission)-cne'ordinary'){throw 'Active envelope extension requires an ordinary admitted development unit.'}
- $origin=Test-MorphospaceDevelopmentUnitPreparation -WorkspaceRoot $workspace -Admission $admission -Phase Freeze
- $continuation=if($null-ne$origin.continuation){$origin.continuation}else{Get-PreparationProvenanceEffectiveContinuation $workspace $admission}
+ $origin=Test-MorphospaceDevelopmentUnitPreparation -WorkspaceRoot $workspace -Admission $admission -Phase Freeze -ReadOnlyReady:$ReadOnlyReady
+ $continuation=if($null-ne$origin.continuation){$origin.continuation}else{Get-PreparationProvenanceEffectiveContinuation $workspace $admission -ReadOnlyReady:$ReadOnlyReady}
  $mapped=Resolve-MorphospaceWorkspacePath $workspace ([string]$continuation.repository_map.path) -RequireLeaf
  $supplied=[IO.Path]::GetFullPath($RepositoryMapPath)
  $comparison=if([OperatingSystem]::IsWindows()){[StringComparison]::OrdinalIgnoreCase}else{[StringComparison]::Ordinal}
@@ -507,7 +525,7 @@ function Get-MorphospaceUnitToolingContextObservation {
   if([string]$value.schema-ceq'rusty.morphospace.workflow.development_unit_admission.v1'-and[string]$value.unit_id-ceq$UnitId){$value}
  })
  if($admissions.Count-ne1){throw 'Tooling execution requires one exact owner admission.'}
- $proof=Test-MorphospaceDevelopmentUnitPreparation -WorkspaceRoot $workspace -Admission $admissions[0] -Phase Freeze
+ $proof=Test-MorphospaceDevelopmentUnitPreparation -WorkspaceRoot $workspace -Admission $admissions[0] -Phase Freeze -ReadOnlyReady
  if($null-eq$proof.tooling_context){throw 'Tooling execution is detached from its prepared protocol.'}
  $observation=$proof.tooling_context
  if((Get-MorphospaceCanonicalJsonSha256 $unit.tooling_context)-cne(Get-MorphospaceCanonicalJsonSha256 $observation.binding)){throw 'Tooling execution did not resolve the live unit through its authenticated continuation.'}
