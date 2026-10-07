@@ -26,6 +26,16 @@ controls validation depth.
 
 ## Minimal package
 
+When an external planning authority publishes a central issue queue, consult
+relevant open items once when planning a new package. Keep one primary outcome;
+use balanced mode by default or fast track when the user prioritizes delivery.
+Balanced work may include related extras sharing actual validation, with bounded
+cost and risk; fast track includes only direct delivery dependencies. Record
+selected IDs and brief deferrals in existing notes, without new manifest fields
+or guards. Queue other discoveries for later and continue the selected work;
+do not rescan the full backlog or replan before each command. This selection
+does not widen an admitted unit or replace its owner requirements.
+
 Keep the record outside public source repositories when it contains private
 intent or commands. Use public repository identities and portable relative
 paths; do not store local machine paths, secrets, device identifiers, or private
