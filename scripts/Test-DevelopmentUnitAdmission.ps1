@@ -1,4 +1,4 @@
-param([switch]$SelfTest,[switch]$AdditivePreparationOnly)
+param([switch]$SelfTest,[switch]$AdditivePreparationOnly,[switch]$OwnPlanningCaseOnly)
 $ErrorActionPreference='Stop'
 $repoRoot=Split-Path $PSScriptRoot -Parent
 Import-Module (Join-Path $PSScriptRoot 'DevelopmentUnitAdmission.psm1') -Force
@@ -11,6 +11,37 @@ $transitionLedgerPath=Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.p
 $transitionLedgerModule=@(Get-Module -All|Where-Object{$_.Path-eq$transitionLedgerPath}|Select-Object -Last 1)[0]
 if($null-eq$transitionLedgerModule){throw 'MorphospaceTransitionLedger module is unavailable.'}
 . (Join-Path $PSScriptRoot 'test-support/DevelopmentAdmissionFixture.ps1')
+
+# This leaf regression runs on a genuinely case-sensitive temporary filesystem;
+# the ordinary producer lifecycle below separately authenticates owner authority.
+$caseRoot=Join-Path ([IO.Path]::GetTempPath()) ('workenv-own-planning-case-'+[guid]::NewGuid().ToString('N'))
+try {
+  $caseLower=Join-Path $caseRoot 'owner';$caseUpper=Join-Path $caseRoot 'OWNER';[IO.Directory]::CreateDirectory($caseLower)|Out-Null
+  if(Test-Path -LiteralPath $caseUpper){Write-Host 'Own-planning case-distinct Git-root control not applicable: filesystem is case-insensitive.'}
+  else {
+    foreach($caseRepository in @($caseLower,$caseUpper)){
+      [IO.Directory]::CreateDirectory((Join-Path $caseRepository 'morphospace'))|Out-Null;Invoke-EnvelopeGit $caseRoot @('init',$caseRepository)|Out-Null
+      Invoke-EnvelopeGit $caseRepository @('config','user.name','Envelope Case Test')|Out-Null;Invoke-EnvelopeGit $caseRepository @('config','user.email','case@example.invalid')|Out-Null
+      [IO.File]::WriteAllText((Join-Path $caseRepository 'morphospace/README.md'),'case-sensitive Git-owner fixture')
+      Invoke-EnvelopeGit $caseRepository @('add','morphospace/')|Out-Null;Invoke-EnvelopeGit $caseRepository @('commit','-m','distinct-case-git-owner')|Out-Null
+    }
+    $caseModule=@(Get-Module -All|Where-Object{$_.Path-eq(Join-Path $PSScriptRoot 'CandidateFreeze.psm1')}|Select-Object -Last 1)[0]
+    $caseEntry=[pscustomobject]@{path=$caseLower;role='planning'};$caseBound=[pscustomobject]@{commit=(@(Invoke-EnvelopeGit $caseLower @('rev-parse','HEAD'))[0]).Trim()};$caseComposition=[pscustomobject]@{schema='rusty.morphospace.workflow.development_envelope_source_composition.v3'}
+    $casePositive=&$caseModule {param($w,$e,$b,$c)Test-MorphospaceOwnPlanningCandidateHistory $w $e $b $c ([pscustomobject]@{}) $null} (Join-Path $caseLower 'morphospace') $caseEntry $caseBound $caseComposition
+    $caseSibling=&$caseModule {param($w,$e,$b,$c)Test-MorphospaceOwnPlanningCandidateHistory $w $e $b $c ([pscustomobject]@{}) $null} (Join-Path $caseUpper 'morphospace') $caseEntry $caseBound $caseComposition
+    Assert-Envelope ($casePositive-and-not$caseSibling) 'own-planning path guard accepted a real case-distinct sibling Git owner'
+    Write-Host 'Own-planning case-sensitive Git-root leaf controls passed (exact owner positive; real case-distinct sibling rejected).'
+  }
+} finally {
+  if(Test-Path -LiteralPath $caseRoot){
+    $resolvedCaseRoot=[IO.Path]::GetFullPath((Resolve-Path -LiteralPath $caseRoot).Path).TrimEnd('\','/')
+    $temporaryCaseRoot=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\','/')
+    $caseComparison=if([Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Windows)){[StringComparison]::OrdinalIgnoreCase}else{[StringComparison]::Ordinal}
+    if(-not([IO.Path]::GetDirectoryName($resolvedCaseRoot).Equals($temporaryCaseRoot,$caseComparison))-or[IO.Path]::GetFileName($resolvedCaseRoot)-cnotmatch'^workenv-own-planning-case-[0-9a-f]{32}$'){throw 'Refusing case-guard fixture cleanup outside its exact named temporary root.'}
+    Remove-Item -LiteralPath $resolvedCaseRoot -Recurse -Force
+  }
+}
+if($OwnPlanningCaseOnly){return}
 
 # The additive path always runs in the full suite and can be selected alone
 # while changing preparation semantics, without repeating recovery fixtures.

@@ -129,16 +129,17 @@ function Test-MorphospaceOwnPlanningCandidateHistory {
         'rusty.morphospace.workflow.development_envelope_source_composition.v2',
         'rusty.morphospace.workflow.development_envelope_source_composition.v3',
         'rusty.morphospace.workflow.active_development_envelope_source_composition.v1')){return $false}
+    $pathComparison=if([Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Windows)){[StringComparison]::OrdinalIgnoreCase}else{[StringComparison]::Ordinal}
     $repository=[IO.Path]::GetFullPath([string]$RepositoryEntry.path).TrimEnd('\','/')
     $workspaceFull=[IO.Path]::GetFullPath($Workspace).TrimEnd('\','/')
     $gitRoot=(@(Invoke-MorphospaceCandidateGit $repository @('rev-parse','--show-toplevel') 'own-planning Git-root observation')[0]).Trim()
-    if(-not([IO.Path]::GetFullPath($gitRoot).TrimEnd('\','/').Equals($repository,[StringComparison]::OrdinalIgnoreCase))){return $false}
+    if(-not([IO.Path]::GetFullPath($gitRoot).TrimEnd('\','/').Equals($repository,$pathComparison))){return $false}
     $prefix=$repository+[IO.Path]::DirectorySeparatorChar
     # This bounded route is for a nested control workspace, never a blanket
     # role=planning exemption for an entire repository or a sibling workspace.
-    if(-not$workspaceFull.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){return $false}
+    if(-not$workspaceFull.StartsWith($prefix,$pathComparison)){return $false}
     $workspaceGitRoot=(@(Invoke-MorphospaceCandidateGit $workspaceFull @('rev-parse','--show-toplevel') 'own-planning workspace Git-root observation')[0]).Trim()
-    if(-not([IO.Path]::GetFullPath($workspaceGitRoot).TrimEnd('\','/').Equals($repository,[StringComparison]::OrdinalIgnoreCase))){return $false}
+    if(-not([IO.Path]::GetFullPath($workspaceGitRoot).TrimEnd('\','/').Equals($repository,$pathComparison))){return $false}
     $controlPrefix=$workspaceFull.Substring($prefix.Length).Replace('\','/').TrimEnd('/')+'/'
     $head=(@(Invoke-MorphospaceCandidateGit $repository @('rev-parse','HEAD') 'own-planning live commit observation')[0]).Trim().ToLowerInvariant()
     [void](Invoke-MorphospaceCandidateGit $repository @('merge-base','--is-ancestor',[string]$Bound.commit,$head) 'own-planning historical ancestry observation')
