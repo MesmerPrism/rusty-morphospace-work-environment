@@ -2058,9 +2058,15 @@ function Test-ProjectBundle {
 
         Assert-Contract (@($effectiveAllowedRepositories).Count -gt 0) "$Context unit '$($unit.unit_id)' needs allowed repositories."
         $writeRepositoryIds = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        $allowedRepositoryIds = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
         foreach ($allowedRepo in @($effectiveAllowedRepositories)) {
             $repoId = [string]$allowedRepo.repo_id
-            Assert-Contract ($writeRepositoryIds.Add($repoId)) "$Context unit '$($unit.unit_id)' repeats writable repository '$repoId'."
+            Assert-Contract ($allowedRepositoryIds.Add($repoId)) "$Context unit '$($unit.unit_id)' repeats writable repository '$repoId'."
+            # An explicit validation-only empty row declares membership, not write authority.
+            # Keep ordinary modes and every nonempty path scope disjoint from dependencies.
+            if (-not ([string]$unit.work_mode -ceq 'validation-only' -and $effectiveWorkMode -ceq 'validation-only' -and $null -ne $allowedRepo.allowed_paths -and @($allowedRepo.allowed_paths).Count -eq 0)) {
+                [void]$writeRepositoryIds.Add($repoId)
+            }
             Assert-Contract ($repositoryMap.ContainsKey($repoId)) "$Context unit '$($unit.unit_id)' references undeclared repo '$repoId'."
             if ($effectiveWorkMode -ceq 'validation-only') {
                 Assert-Contract ($null -ne $allowedRepo.allowed_paths) "$Context validation-only unit '$($unit.unit_id)' repo '$repoId' needs an allowed-path array."
