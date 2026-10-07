@@ -151,7 +151,12 @@ try {
   Assert-Envelope ($planningRun.transition-ceq'candidate-frozen'-and$planningConsumed-and(@(Invoke-EnvelopeGit $planningRepository @('rev-parse','HEAD'))[0]).Trim()-ceq$planningHead) 'read-only own-planning Freeze/consumer changed Git HEAD or lost owner provenance'
   Write-Host 'Read-only own-planning external-owner Freeze controls passed (producer lifecycle, consumer, control-only merge, nine fail-closed negatives).'
 } finally {
-  if(Test-Path -LiteralPath $planningRoot){Remove-Item -LiteralPath $planningRoot -Recurse -Force}
+  if(Test-Path -LiteralPath $planningRoot){
+    $resolvedPlanningRoot=[IO.Path]::GetFullPath((Resolve-Path -LiteralPath $planningRoot).Path).TrimEnd('\','/')
+    $resolvedTemporaryRoot=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\','/')
+    if(-not([IO.Path]::GetDirectoryName($resolvedPlanningRoot).Equals($resolvedTemporaryRoot,[StringComparison]::OrdinalIgnoreCase))-or[IO.Path]::GetFileName($resolvedPlanningRoot)-cnotmatch'^workenv-own-planning-freeze-[0-9a-f]{32}$'){throw 'Refusing own-planning fixture cleanup outside its exact named temporary root.'}
+    Remove-Item -LiteralPath $resolvedPlanningRoot -Recurse -Force
+  }
 }
 if ($AdditivePreparationOnly) { return }
 
