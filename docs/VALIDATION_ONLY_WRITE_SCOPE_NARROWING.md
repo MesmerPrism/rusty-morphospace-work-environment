@@ -11,6 +11,12 @@ validation-only path remains limited by the existing `morphospace` scope rule,
 while feature units and units with omitted `work_mode` still require a
 nonempty path list.
 
+The full current-work contract consumer treats an explicitly declared
+validation-only repository row with empty paths as membership without write
+authority. That row may also declare read-only dependencies. Duplicate rows,
+nonempty path scopes, feature mode and omitted mode retain their normal checks
+and writable/read-only disjointness.
+
 An unchanged-source validation-only unit freezes each observed repository with
 an empty `changed_paths[].paths` array matching its empty admitted write scope.
 The v1 freeze producer and frozen consumer require explicit `validation-only`

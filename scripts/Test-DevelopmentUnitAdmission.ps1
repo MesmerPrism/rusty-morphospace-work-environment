@@ -15,7 +15,7 @@ if($null-eq$transitionLedgerModule){throw 'MorphospaceTransitionLedger module is
 function Test-ValidationOnlyEmptyFreeze {
   $root=Join-Path ([IO.Path]::GetTempPath()) ('workenv-validation-empty-freeze-'+[guid]::NewGuid().ToString('N'))
   try {
-    $seed=New-EnvelopeAdmissionPreparedFixture -Root $root -RepositoryRoot $repoRoot -TransitionLedgerModule $transitionLedgerModule -OwnerProducedPreparation -ValidationOnly
+    $seed=New-EnvelopeAdmissionPreparedFixture -Root $root -RepositoryRoot $repoRoot -TransitionLedgerModule $transitionLedgerModule -OwnerProducedPreparation -NearestAgentInstructions -ValidationOnly
     $ws=$seed.workspace;$admission=$seed.admission_template;$admissionPath=Join-Path $root 'admission.json';Write-EnvelopeJson $admissionPath $admission
     $out=Join-Path $ws 'receipts/u002-admission.json'
     $dry=Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $ws -DevelopmentUnitAdmission $admissionPath -OutPath $out
@@ -66,6 +66,40 @@ function Test-ValidationOnlyEmptyFreeze {
     }
     $begin=&$automationModule {param($a)Invoke-MorphospaceWorkUnitAutomation @a} @{Action='BeginValidation';WorkspaceRoot=$ws;UnitId='u002';RepoMapPath=(Join-Path $ws 'repository-map.json');ValidationTier='quick';Execute=$true}
     Assert-Envelope ($begin.transition-ceq'active-to-validating') 'empty Freeze failed actual BeginValidation consumer'
+    $contractOutput=& (Join-Path $PSHOME 'pwsh') -NoProfile -File (Join-Path $PSScriptRoot 'Test-WorkflowContracts.ps1') -WorkspaceRoot $ws -RepositoryMapPath (Join-Path $ws 'repository-map.json') -CurrentWorkOnly -SkipOwnerSelfTests -CurrentWorkspaceOnly 2>&1
+    $contractOutput|Write-Host
+    Assert-Envelope ($LASTEXITCODE-eq0) 'genuine validation-only empty write scope failed the full current-work contract consumer'
+    # Exercise the exact consumer block on copies; damage probes never rewrite owner evidence.
+    $consumerText=[IO.File]::ReadAllText((Join-Path $PSScriptRoot 'Test-WorkflowContracts.ps1'))
+    $scopeStart=$consumerText.IndexOf('        $writeRepositoryIds = ',[StringComparison]::Ordinal)
+    $conflictEnd=$consumerText.IndexOf('both writable scope and a read-only dependency.', $scopeStart,[StringComparison]::Ordinal)
+    $scopeEnd=$consumerText.IndexOf('            Assert-Contract ($repositoryMap.ContainsKey($repoId)) "$Context unit', $conflictEnd,[StringComparison]::Ordinal)
+    Assert-Envelope ($scopeStart-ge0-and$scopeEnd-gt$scopeStart) 'consumer scope block could not be identified'
+    $scopeBlock=[scriptblock]::Create($consumerText.Substring($scopeStart,$scopeEnd-$scopeStart)+"`n        }")
+    foreach($kind in @('positive','feature','omitted-mode','nonempty-path','null-paths','duplicate-row')){
+      $probe=Copy-Envelope $unit
+      switch($kind){
+        'feature' {$probe.work_mode='feature'}
+        'omitted-mode' {$probe.PSObject.Properties.Remove('work_mode')}
+        'nonempty-path' {$probe.allowed_repositories[0].allowed_paths=@('morphospace/')}
+        'null-paths' {$probe.allowed_repositories[0].allowed_paths=$null}
+        'duplicate-row' {$probe.allowed_repositories+=,$probe.allowed_repositories[0]}
+      }
+      $before=Get-EnvelopeWorkspaceByteInventorySha256 $ws;$rejected=$false
+      try {
+        & {
+          param($block,$unit)
+          function Assert-Contract {param($condition,$message)if(-not$condition){throw $message}}
+          function Test-NonEmptyTextArray {param($Value,$Context)Assert-Contract (@($Value).Count-gt0-and@($Value|Where-Object{[string]::IsNullOrWhiteSpace([string]$_)}).Count-eq0) $Context}
+          function Test-PathInScope {param($Candidate,$Allowed)return @($Allowed|Where-Object{$Candidate.StartsWith([string]$_,[StringComparison]::Ordinal)}).Count-gt0}
+          $effectiveWorkMode=if($unit.PSObject.Properties.Name-contains'work_mode'){[string]$unit.work_mode}else{'feature'}
+          $effectiveAllowedRepositories=@($unit.allowed_repositories);$effectiveReadOnlyDependencies=@($unit.read_only_dependencies)
+          $repositoryMap=@{'project-shell'=[pscustomobject]@{allowed_paths=@('morphospace/')};'read-only-dependency'=[pscustomobject]@{allowed_paths=@('dependency/')}}
+          $currentHistory=$null;$Context='isolated exact consumer scope';&$block
+        } $scopeBlock $probe
+      }catch{if($_.Exception-is[Management.Automation.CommandNotFoundException]){throw};$rejected=$true}
+      Assert-Envelope (($rejected-eq($kind-cne'positive'))-and$before-ceq(Get-EnvelopeWorkspaceByteInventorySha256 $ws)) "full consumer scope block mishandled or wrote $kind"
+    }
     Assert-Envelope ((@(Invoke-EnvelopeGit $source @('rev-parse','HEAD'))[0]).Trim()-ceq$seed.source_commit) 'owner lifecycle changed observed source'
     Write-Host 'Validation-only unchanged-source owner preparation/admission/Ready/Claim/Freeze/frozen-consumer/BeginValidation and eleven no-write negative controls passed; no device effects.'
   }finally{
