@@ -27,6 +27,60 @@ try {
   $inspect=& $automationModule {param($argsMap) Invoke-MorphospaceWorkUnitAutomation @argsMap -Action Inspect -Timestamp '2026-08-25T00:02:05.0000000Z'} $arguments
   $claim=& $automationModule {param($argsMap) Invoke-MorphospaceWorkUnitAutomation @argsMap -Action Claim -Timestamp '2026-08-25T00:02:10.0000000Z' -Execute} $arguments
   Assert-Envelope ($admit.transition -ceq 'development-unit-admitted' -and $ready.transition -ceq 'proposed-to-ready' -and $inspect.claim_preflight.ready_to_claim -and $claim.transition -ceq 'ready-to-active') 'additive preparation did not pass public current-work validation and ordinary Admit/Ready/Inspect/Claim'
+  # A permission-free library still uses the ordinary external owner lifecycle.
+  # Owner writers create preparation/admission/Ready/Claim; only damage inputs
+  # below are hand-authored, and no runtime or device authority is inferred.
+  $unit=Read-EnvelopeProtocolJson (Join-Path $workspace 'iteration-units/u002.json')
+  $state=Read-EnvelopeProtocolJson (Join-Path $workspace 'workspace.state.json')
+  $lock=Read-EnvelopeProtocolJson (Join-Path $workspace 'feature.lock.json')
+  $sourceHash=Get-EnvelopeFileSha256 (Join-Path $workspace 'source-composition.json')
+  $eventsPath=Join-Path $workspace 'iteration-events.jsonl'
+  $freeze=[ordered]@{
+    schema='rusty.morphospace.workflow.candidate_freeze.v1';freeze_id='u002-permission-free-freeze';project_id='envelope-test';unit_id='u002'
+    expected=[ordered]@{project_sha256=(Get-EnvelopeCanonicalJsonSha256 (Read-EnvelopeProtocolJson (Join-Path $workspace 'project.spec.json')));state_sha256=(Get-EnvelopeCanonicalJsonSha256 $state);unit_sha256=(Get-EnvelopeCanonicalJsonSha256 $unit);feature_lock_sha256=(Get-EnvelopeCanonicalJsonSha256 $lock);source_composition_path='source-composition.json';source_composition_sha256=$sourceHash;repository_map_path='repository-map.json';repository_map_sha256=(Get-EnvelopeFileSha256 (Join-Path $workspace 'repository-map.json'));events_sha256=(Get-EnvelopeFileSha256 $eventsPath);events_length=([IO.FileInfo]$eventsPath).Length;event_tail_id=[string]$state.last_event_id}
+    final_repositories=@([ordered]@{repo_id='project-shell';commit=$seed.source_commit;tree=$seed.source_tree});changed_paths=@([ordered]@{repo_id='project-shell';paths=@('morphospace/')});cleanliness_policy='clean-only'
+    instruction_surfaces=@([ordered]@{path='morphospace/README.md';disposition='reviewed-no-change'});feature_lock=[ordered]@{revision=[int]$lock.revision;sha256=(Get-EnvelopeCanonicalJsonSha256 $lock)}
+    effects=@('none');permissions=@();device_use=@('none');test_matrix=@([ordered]@{test_id='permission-free';command='owner lifecycle conformance'});cleanup_evidence=@('Host fixture only; no devices or runtime permissions.');source_composition=[ordered]@{path='source-composition.json';sha256=$sourceHash};does_not_prove=@('Does not activate a runtime, validate a product, accept a unit or publish source.')
+  }
+  $freezePath=Join-Path $additiveRoot 'permission-free-freeze.json';Write-EnvelopeJson $freezePath $freeze
+  $freezeModule=@(Get-Module -All|Where-Object{$_.Path-eq(Join-Path $PSScriptRoot 'CandidateFreeze.psm1')}|Select-Object -Last 1)[0]
+  Assert-Envelope ($null-ne$freezeModule) 'actual owner candidate freeze module unavailable'
+  function Invoke-PermissionFreeFreeze {
+    param([string]$WorkspaceRoot,[string]$UnitId,[string]$CandidateFreeze,[string]$OutPath,[string]$Timestamp,[string]$ExpectedCandidateFreezeSha256,[switch]$Execute)
+    &$freezeModule {param($a)Invoke-MorphospaceFreezeCandidate @a} $PSBoundParameters
+  }
+  $freezeOut=Join-Path $workspace 'receipts/u002-permission-free-freeze.json'
+  $freezeDry=Invoke-PermissionFreeFreeze -WorkspaceRoot $workspace -UnitId 'u002' -CandidateFreeze $freezePath -OutPath $freezeOut -Timestamp '2026-08-25T00:03:00.0000000Z'
+  foreach($damage in @(
+    [pscustomobject]@{name='missing-permissions';mutate={param($d)$d.PSObject.Properties.Remove('permissions')}},
+    [pscustomobject]@{name='null-permissions';mutate={param($d)$d.permissions=$null}},
+    [pscustomobject]@{name='string-permissions';mutate={param($d)$d.permissions='none'}},
+    [pscustomobject]@{name='empty-permission-item';mutate={param($d)$d.permissions=@('')}},
+    [pscustomobject]@{name='duplicate-permission';mutate={param($d)$d.permissions=@('none','none')}},
+    [pscustomobject]@{name='undeclared-android-permission';mutate={param($d)$d.permissions=@('android.permission.BLUETOOTH_CONNECT')}},
+    [pscustomobject]@{name='device-forbidden';mutate={param($d)$d.device_use=@('quest')}},
+    [pscustomobject]@{name='effect-outside-ceiling';mutate={param($d)$d.effects=@('network')}},
+    [pscustomobject]@{name='source-tree-substitution';mutate={param($d)$d.final_repositories[0].tree='0'*40}}
+  )){
+    $damaged=Copy-Envelope $freeze;&$damage.mutate $damaged
+    $path=Join-Path $additiveRoot ("permission-free-$($damage.name).json");Write-EnvelopeJson $path $damaged
+    $before=Get-EnvelopeWorkspaceByteInventorySha256 $workspace;$denied=$false
+    try{Invoke-PermissionFreeFreeze -WorkspaceRoot $workspace -UnitId 'u002' -CandidateFreeze $path -OutPath (Join-Path $workspace 'receipts/permission-free-damage.json')|Out-Null}catch{$denied=$true}
+    Assert-Envelope ($denied-and$before-ceq(Get-EnvelopeWorkspaceByteInventorySha256 $workspace)) "permission-free freeze accepted or mutated $($damage.name)"
+  }
+  $androidScope=Copy-Envelope $unit;$androidScope.agent_scope_assessment.allowed_permission_categories=@('android.permission.BLUETOOTH_CONNECT')
+  $androidCandidate=Copy-Envelope $freeze
+  &$freezeModule {param($c,$u)Assert-MorphospaceFrozenCandidateScope $c $u} $androidCandidate $androidScope
+  $androidCandidate.permissions=@('none');$sentinelDenied=$false
+  try{&$freezeModule {param($c,$u)Assert-MorphospaceFrozenCandidateScope $c $u} $androidCandidate $androidScope}catch{$sentinelDenied=$true}
+  Assert-Envelope $sentinelDenied 'Android ceiling accepted invented none permission sentinel'
+  $freezeRun=Invoke-PermissionFreeFreeze -WorkspaceRoot $workspace -UnitId 'u002' -CandidateFreeze $freezePath -ExpectedCandidateFreezeSha256 $freezeDry.audit_receipt.sha256 -OutPath $freezeOut -Timestamp '2026-08-25T00:03:00.0000000Z' -Execute
+  $frozen=Read-EnvelopeProtocolJson (Join-Path $workspace 'iteration-units/u002.json')
+  $consumed=&$freezeModule {param($w,$u)Test-MorphospaceFrozenCandidate $w $u} $workspace $frozen
+  Assert-Envelope ($freezeRun.transition-ceq'candidate-frozen'-and$consumed) 'empty permission request failed ordinary owner freeze or exact consumer'
+  $validation=&$automationModule {param($argsMap)Invoke-MorphospaceWorkUnitAutomation @argsMap -Action BeginValidation -Timestamp '2026-08-25T00:04:00.0000000Z' -Execute} $arguments
+  Assert-Envelope ($validation.transition-ceq'active-to-validating') 'empty permission candidate did not pass ordinary BeginValidation'
+  Write-Host 'Permission-free external-owner freeze controls passed (empty positive and ten fail-closed negatives).'
   Write-Host 'Additive preparation lifecycle self-test passed.'
 } finally {
   if (Test-Path -LiteralPath $additiveRoot) { Remove-Item -LiteralPath $additiveRoot -Recurse -Force }

@@ -86,7 +86,7 @@ function Get-MorphospaceDevelopmentEnvelopeContinuation {
        The preparation reader separately authenticates the immutable origin.
        No caller can supply a substituted origin, projection, or skip predicate. #>
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$WorkspaceRoot, [Parameter(Mandatory)][object]$Admission)
+    param([Parameter(Mandatory)][string]$WorkspaceRoot, [Parameter(Mandatory)][object]$Admission, [switch]$ReadOnlyReady)
     $workspace = [IO.Path]::GetFullPath($WorkspaceRoot)
     $ownerRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
     if (-not (Test-Json -Json ($Admission | ConvertTo-Json -Depth 100) -SchemaFile (Join-Path $ownerRoot 'schemas/development-unit-admission-v1.schema.json'))) { throw 'Development continuation admission schema is invalid.' }
@@ -133,9 +133,11 @@ function Get-MorphospaceDevelopmentEnvelopeContinuation {
         if ([string]$intent.pre.state.sha256 -cne [string]$previous.target.state.sha256 -or [string]$intent.pre.unit.sha256 -cne [string]$previous.target.unit.sha256) { throw 'Development continuation state/unit chain is detached.' }
         $targetUnit = $intent.target.unit.document
         $targetState = $intent.target.state.document
-        $offset = $index-$admissionIndex
+        $upgrade = Get-DevelopmentContinuationArtifact $intent 'rusty.morphospace.workflow.tooling_context_upgrade.v1'
+        $readyCount=@($records|Where-Object kind -CEQ 'ready').Count;$claimCount=@($records|Where-Object kind -CEQ 'claimed').Count
+        $offset=if($readyCount-eq0){1}else{2}
         $kind = ''
-        if ($offset -le 2) {
+        if ($readyCount-eq0-or($claimCount-eq0-and$null-eq$upgrade)) {
             $slug = if ($offset -eq 1) { 'ready' } else { 'claimed' }
             $status = if ($offset -eq 1) { 'ready' } else { 'active' }
             $summary = if ($offset -eq 1) { 'Reviewed the bounded proposal and made it claimable without expanding its repositories, paths, or prerequisites.' } else { 'Claimed one ready iteration unit without expanding repository or path scope.' }
@@ -146,7 +148,6 @@ function Get-MorphospaceDevelopmentEnvelopeContinuation {
             $kind = $slug
         } else {
             $extension = Get-DevelopmentContinuationArtifact $intent 'rusty.morphospace.workflow.active_development_envelope_extension.v1'
-            $upgrade = Get-DevelopmentContinuationArtifact $intent 'rusty.morphospace.workflow.tooling_context_upgrade.v1'
             $amendment = Get-DevelopmentContinuationArtifact $intent 'rusty.morphospace.workflow.active_write_scope_amendment.v1'
             if(@(@($extension,$upgrade,$amendment)|Where-Object{$null-ne$_}).Count-gt1){throw 'Development continuation mixes distinct owner actions.'}
             if ($null -ne $extension) {
@@ -226,7 +227,9 @@ function Get-MorphospaceDevelopmentEnvelopeContinuation {
         $previous = $intent
         $currentUnit = $targetUnit
     }
-    if ($records.Count -lt 2) { throw 'Development continuation requires the completed ordinary Ready and Claim chain.' }
+    $readyCount=@($records|Where-Object kind -CEQ 'ready').Count;$claimCount=@($records|Where-Object kind -CEQ 'claimed').Count
+    $readyObservation=$ReadOnlyReady-and$readyCount-eq1-and$claimCount-eq0-and[string]$liveUnit.status-ceq'ready'-and$null-eq$liveState.current_unit-and[string]$liveState.next_ready_unit-ceq$unitId-and@($records|Where-Object{$_.kind-cnotin@('ready','tooling-upgrade')}).Count-eq0
+    if($readyCount-ne1-or($claimCount-ne1-and-not$readyObservation)){throw 'Development continuation requires the completed ordinary Ready and Claim chain, or an explicit read-only exact Ready tooling observation.'}
     Assert-DevelopmentContinuationEqual $liveUnit $currentUnit 'live unit'
     Assert-DevelopmentContinuationEqual $liveState $previous.target.state.document 'live state'
     Assert-DevelopmentContinuationEqual $project (Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace 'project.spec.json' -RequireLeaf)) 'live project'

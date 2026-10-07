@@ -14,8 +14,14 @@ historical repreparation, or published-authority adoption. Those operations use 
 separate historical owner contracts. Active-unit reads and writes resolve and attest
 the current unit's exact context, including the loaded caller modules.
 
-Only `UpgradeToolingContext` may replace the context, while the current unit is active
-and before Freeze. The owner transaction authenticates the historical old context,
+Only `UpgradeToolingContext` may replace the context before Freeze. The unit must
+be active in the exact current slot, or Ready in the exact next-ready slot with no
+current unit. A Ready upgrade preserves that queue and status; ordinary Claim is
+still required before Freeze or BeginValidation. The read-only Ready provenance
+reader authenticates the owner-produced Ready transition and each intervening
+tooling upgrade, including its product fences and raw CAS. Post-upgrade
+`WithdrawReady` is currently unsupported and fails closed; ordinary unupgraded
+withdrawal retains its existing route. The owner transaction authenticates the historical old context,
 the live clean new context, exact typed protocol evidence, and the current effective
 product projection. A prior active-envelope extension may have advanced that product
 projection through its own authenticated transition; the new context binds the
