@@ -148,6 +148,13 @@ Before `BeginValidation`, an admitted unit must use `FreezeCandidate`. The
 freeze receipt records exact repository commits/trees, changed paths and
 cleanliness policy, instructions, feature lock, effects/permissions/device use,
 test matrix, cleanup/evidence roots, and source-composition closure. Each
+candidate declares `permissions: []` when it requests no permissions, including
+an inert source-only library. The array remains required; any declared permission
+must be a unique nonempty string within the admitted permission ceiling. Do not
+invent an Android permission or a `none` sentinel to represent an empty set.
+Empty requested permissions do not alter device, runtime, effect, source or
+publication guards. Source-only publication still follows ordinary acceptance.
+Each
 final repository must resolve through the bound repository map and exact source
 composition lock; duplicate IDs, substituted commit/tree identities, dirty
 clean-only worktrees, and changed paths outside the declared closure reject.
@@ -168,7 +175,18 @@ writable repository set. The preparation-owned source composition may be a
 strict superset because it also locks read-only project dependencies. Every
 composition entry must resolve through the same repository map role, and every
 writable repository must be present in that composition. Read-only dependencies
-retain their exact locked live commit/tree. A writable final identity may
+retain their exact locked live commit/tree, except the mapped `planning` Git
+root that physically owns this nested control workspace. Its immutable original
+commit/tree objects remain required, and its authenticated preparation/effective
+continuation, unit, map, source and transaction bindings remain unchanged. Its
+live HEAD must descend from the original lock; every intervening commit must
+change only paths under this exact control-workspace prefix, including reverted
+changes. The repository must be clean before Freeze; afterward only the exact
+six authenticated freeze-transition paths above may be dirty. A sibling planning
+root, nested independent Git workspace, generic unauthenticated source lock,
+non-descendant history or any outside-prefix change receives no exception. This
+does not add planning write scope or include lifecycle changes as product source.
+A writable final identity may
 advance only as a Git descendant of its locked baseline and must equal the live
 candidate commit/tree. Its committed baseline-to-final delta must remain inside
 both the declared candidate closure and the active write scope. Read-only source

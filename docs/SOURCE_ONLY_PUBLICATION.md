@@ -23,6 +23,12 @@ inputs; the existing automation actions retain lifecycle authority.
    `device_validation`. Each input artifact supplies only `artifact_id`,
    `kind` and `path`; relative paths resolve from the output receipt directory.
    Record and accept through the normal owner actions.
+   The stateless builder accepts authenticated development-envelope source
+   compositions through v3, including its separate tooling protocol. A later
+   qualified constructor can produce the same validation receipt v1 for a
+   frozen unit; RecordValidation and Accept still use that unit's bound owner
+   executor and all current lifecycle guards. Construction does not upgrade
+   the unit's tooling context.
 3. Commit the accepted local planning checkpoint, rerun readiness, then use
    `-Action Plan` with the same workspace, unit, map and publication ID.
    Pass its output and SHA-256 to `PrepareSourceOnlyPublication`.

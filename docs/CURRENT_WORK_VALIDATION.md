@@ -1,15 +1,6 @@
 # Current work and historical auditing
 
-An authenticated [active-unit retirement](ACTIVE_UNIT_RETIREMENT.md) has a
-distinct `retired-active` disposition. Its preserved unit bytes do not grant
-current ownership or accepted-prerequisite evidence. The reader authenticates
-the retirement transaction through later preparation and admission; it rejects
-resurrection and does not reinterpret retirement as acceptance.
-
-A preparation completion that predates its intent requires the exact
-[preparation timestamp recovery](PREPARATION_TIMESTAMP_RECOVERY.md) transaction.
-The malformed original remains immutable; the reader has no general
-chronology bypass.
+## Ordinary continuation
 
 Ordinary project continuation uses `Test-WorkflowContracts.ps1` with
 `-WorkspaceRoot`, `-RepositoryMapPath`, `-CurrentWorkOnly`, and
@@ -43,6 +34,24 @@ module and event schemas, and rechecks their exact bytes before and after each
 step. Every transaction, completion, artifact and projection remains checked.
 The batch expires in `finally`; the public standalone transition validator
 always reads a fresh observation and accepts no trusted snapshot or batch token.
+
+Use the next supported owner/product action within the current scope. The
+compatibility cases below explain specific authenticated histories; they are not
+a startup checklist or new prerequisites for every iteration. Read the relevant
+case when a current validator diagnostic or explicit history task names it.
+
+## Authenticated history and recovery cases
+
+An authenticated [active-unit retirement](ACTIVE_UNIT_RETIREMENT.md) has a
+distinct `retired-active` disposition. Its preserved unit bytes do not grant
+current ownership or accepted-prerequisite evidence. The reader authenticates
+the retirement transaction through later preparation and admission; it rejects
+resurrection and does not reinterpret retirement as acceptance.
+
+A preparation completion that predates its intent requires the exact
+[preparation timestamp recovery](PREPARATION_TIMESTAMP_RECOVERY.md) transaction.
+The malformed original remains immutable; the reader has no general
+chronology bypass.
 
 An owner-produced [accepted validation evidence relocation](ACCEPTED_VALIDATION_EVIDENCE_RELOCATION.md)
 may immediately follow the idle accepted checkpoint. While the correction
