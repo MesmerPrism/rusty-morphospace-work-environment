@@ -3187,7 +3187,12 @@ foreach ($historyArchiveContract in $historyArchiveContracts) {
 }
 if (-not $SkipOwnerSelfTests) {
     foreach ($selfTest in @("Test-LegacyEmbeddedPushPlanCompatibility.ps1","Test-PreparedPublicationReconstruction.ps1","Test-ResolveBlocker.ps1","Test-CorrectResolvedBlockerEvidence.ps1","Test-HistoricalBlockerResolutionIntentBindingCorrection.ps1","Test-CorrectActiveReadOnlyDependencies.ps1","Test-CorrectActiveProjectRepositoryScope.ps1","Test-ActiveWriteScopeAmendment.ps1","Test-DevelopmentUnitAdmission.ps1","Test-RecoveredProposalContinuation.ps1","Test-CompletedTransitionSemanticCorrection.ps1","Test-AdmissionCompletionTimestampRecovery.ps1","Test-TransitionLedger.ps1","Test-HistoryArchiveValidation.ps1")) {
-        try { [void](Invoke-IsolatedWorkflowSelfTest -Path (Join-Path $RepoRoot "scripts\$selfTest")) }
+        $selfTestArguments = @()
+        if ($selfTest -ceq 'Test-AdmissionCompletionTimestampRecovery.ps1') { $selfTestArguments = @('-SelfTest') }
+        # Match the existing focused-check budget; the observed complete run takes more than 240 seconds.
+        $selfTestTimeoutSeconds = 240
+        if ($selfTest -ceq 'Test-DevelopmentUnitAdmission.ps1') { $selfTestTimeoutSeconds = 900 }
+        try { [void](Invoke-IsolatedWorkflowSelfTest -Path (Join-Path $RepoRoot "scripts\$selfTest") -Arguments $selfTestArguments -TimeoutSeconds $selfTestTimeoutSeconds) }
         catch { Add-Failure -Message "$selfTest failed: $($_.Exception.Message)" }
     }
 }
