@@ -51,22 +51,23 @@ try {
   }
   $freezeOut=Join-Path $workspace 'receipts/u002-permission-free-freeze.json'
   $freezeDry=Invoke-PermissionFreeFreeze -WorkspaceRoot $workspace -UnitId 'u002' -CandidateFreeze $freezePath -OutPath $freezeOut -Timestamp '2026-08-25T00:03:00.0000000Z'
-  foreach($damage in @(
-    [pscustomobject]@{name='missing-permissions';mutate={param($d)$d.PSObject.Properties.Remove('permissions')}},
-    [pscustomobject]@{name='null-permissions';mutate={param($d)$d.permissions=$null}},
-    [pscustomobject]@{name='string-permissions';mutate={param($d)$d.permissions='none'}},
-    [pscustomobject]@{name='empty-permission-item';mutate={param($d)$d.permissions=@('')}},
-    [pscustomobject]@{name='duplicate-permission';mutate={param($d)$d.permissions=@('none','none')}},
-    [pscustomobject]@{name='undeclared-android-permission';mutate={param($d)$d.permissions=@('android.permission.BLUETOOTH_CONNECT')}},
-    [pscustomobject]@{name='device-forbidden';mutate={param($d)$d.device_use=@('quest')}},
-    [pscustomobject]@{name='effect-outside-ceiling';mutate={param($d)$d.effects=@('network')}},
-    [pscustomobject]@{name='source-tree-substitution';mutate={param($d)$d.final_repositories[0].tree='0'*40}}
-  )){
-    $damaged=Copy-Envelope $freeze;&$damage.mutate $damaged
-    $path=Join-Path $additiveRoot ("permission-free-$($damage.name).json");Write-EnvelopeJson $path $damaged
+  foreach($permissionDamage in @('missing-permissions','null-permissions','string-permissions','empty-permission-item','duplicate-permission','undeclared-android-permission','device-forbidden','effect-outside-ceiling','source-tree-substitution')){
+    $damaged=Copy-Envelope $freeze
+    switch($permissionDamage){
+      'missing-permissions'{$damaged.PSObject.Properties.Remove('permissions')}
+      'null-permissions'{$damaged.permissions=$null}
+      'string-permissions'{$damaged.permissions='none'}
+      'empty-permission-item'{$damaged.permissions=@('')}
+      'duplicate-permission'{$damaged.permissions=@('none','none')}
+      'undeclared-android-permission'{$damaged.permissions=@('android.permission.BLUETOOTH_CONNECT')}
+      'device-forbidden'{$damaged.device_use=@('quest')}
+      'effect-outside-ceiling'{$damaged.effects=@('network')}
+      'source-tree-substitution'{$damaged.final_repositories[0].tree='0'*40}
+    }
+    $path=Join-Path $additiveRoot ("permission-free-$permissionDamage.json");Write-EnvelopeJson $path $damaged
     $before=Get-EnvelopeWorkspaceByteInventorySha256 $workspace;$denied=$false
     try{Invoke-PermissionFreeFreeze -WorkspaceRoot $workspace -UnitId 'u002' -CandidateFreeze $path -OutPath (Join-Path $workspace 'receipts/permission-free-damage.json')|Out-Null}catch{$denied=$true}
-    Assert-Envelope ($denied-and$before-ceq(Get-EnvelopeWorkspaceByteInventorySha256 $workspace)) "permission-free freeze accepted or mutated $($damage.name)"
+    Assert-Envelope ($denied-and$before-ceq(Get-EnvelopeWorkspaceByteInventorySha256 $workspace)) "permission-free freeze accepted or mutated $permissionDamage"
   }
   $androidScope=Copy-Envelope $unit;$androidScope.agent_scope_assessment.allowed_permission_categories=@('android.permission.BLUETOOTH_CONNECT')
   $androidCandidate=Copy-Envelope $freeze
