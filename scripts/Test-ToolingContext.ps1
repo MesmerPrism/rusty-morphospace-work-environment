@@ -269,7 +269,7 @@ if($Scenario-in@('all','ready-lifecycle')){
  $afterState=Read-TC (Join-Path $positive.workspace 'workspace.state.json');$afterUnit=Read-TC (Join-Path $positive.workspace 'iteration-units/u002.json')
  Assert-TC ($null-eq$afterState.current_unit-and[string]$afterState.next_ready_unit-ceq'u002'-and[string]$afterUnit.status-ceq'ready') 'Ready upgrade preserves queue and status'
  $withdrawDenied=$false;$beforeWithdraw=WorkspaceFingerprint $positive.workspace
- try{&$automationModule {param($a)Invoke-MorphospaceWorkUnitAutomation @a -Action WithdrawReady -Timestamp '2026-09-15T09:01:00.0000000Z' -Execute} @{WorkspaceRoot=$positive.workspace;UnitId='u002';RepoMapPath=(Join-Path $positive.workspace 'repository-map.json');ValidationTier='quick'}|Out-Null}catch{$withdrawDenied=$true}
+ try{&$automationModule {param($a)Invoke-MorphospaceWorkUnitAutomation @a -Action WithdrawReady -OutPath (Join-Path $a.WorkspaceRoot 'receipts/ready-upgrade-withdraw.json') -Timestamp '2026-09-15T09:01:00.0000000Z' -Execute} @{WorkspaceRoot=$positive.workspace;UnitId='u002';RepoMapPath=(Join-Path $positive.workspace 'repository-map.json');ValidationTier='quick'}|Out-Null}catch{$withdrawDenied=Assert-TCError $_.Exception.Message 'WithdrawReady original Ready transaction does not bind the exact live unit and historical ready projection.' 'post-upgrade withdrawal'}
  Assert-TC ($withdrawDenied-and(WorkspaceFingerprint $positive.workspace)-ceq$beforeWithdraw) 'post-upgrade Withdraw remains fail-closed without writes'
  $effectiveModule=Import-Module (Join-Path $PSScriptRoot 'DevelopmentEnvelopeProvenance.psm1') -PassThru
  $unclaimedDenied=$false
@@ -289,8 +289,10 @@ if($Scenario-in@('all','ready-lifecycle')){
  Assert-TC ($frozen.executed-and$frozen.transition-ceq'candidate-frozen') 'Ready upgrade Claim permits exact permission-free Freeze'
  $ordinary=New-Case 'unupgraded-withdraw'
  & git -C $tool checkout --detach $OldCommit|Out-Null
- $oldAutomation=Import-Module (Join-Path $PSScriptRoot 'WorkUnitAutomation.psm1') -Force -PassThru
- $withdraw=&$oldAutomation {param($a)Invoke-MorphospaceWorkUnitAutomation @a -Action WithdrawReady -Timestamp '2026-09-15T09:03:00.0000000Z' -Execute} @{WorkspaceRoot=$ordinary.workspace;UnitId='u002';RepoMapPath=(Join-Path $ordinary.workspace 'repository-map.json');ValidationTier='quick'}
+ # Fresh process authenticates the old executor; no new-revision modules
+ # retained in this child's session can impersonate that exact old context.
+ $withdrawText=(& pwsh -NoProfile -NonInteractive -File (Join-Path $tool 'scripts/Invoke-WorkUnitAutomation.ps1') -Action WithdrawReady -WorkspaceRoot $ordinary.workspace -UnitId u002 -RepoMapPath (Join-Path $ordinary.workspace 'repository-map.json') -ValidationTier quick -OutPath (Join-Path $ordinary.workspace 'receipts/ordinary-withdraw.json') -Timestamp '2026-09-15T09:03:00.0000000Z' -Execute|Out-String)
+ if($LASTEXITCODE-ne0){throw 'Ordinary unupgraded withdrawal child failed.'};$withdraw=$withdrawText|ConvertFrom-Json -Depth 100 -DateKind String
  Assert-TC ($withdraw.executed-and$withdraw.status_after-ceq'proposed') 'ordinary unupgraded withdrawal retained'
  Write-TCPhase 'ready-lifecycle-complete'
  [pscustomobject]@{result='pass';scenario=$Scenario;owner_produced_ready=$true;actual_upgrade_claim=$true;post_upgrade_withdraw='unsupported-fail-closed';device_calls=0}|ConvertTo-Json -Compress
