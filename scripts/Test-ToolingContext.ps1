@@ -88,14 +88,39 @@ if($ArtifactSelectionOnly){
 
 function Remove-ToolingTestRoot([string]$Path){$temp=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\','/');$target=[IO.Path]::GetFullPath($Path).TrimEnd('\','/');if(-not([IO.Path]::GetDirectoryName($target).Equals($temp,[StringComparison]::OrdinalIgnoreCase))-or-not([IO.Path]::GetFileName($target).StartsWith('tooling-context-', [StringComparison]::Ordinal))){throw "Refusing tooling-context fixture cleanup: $target"};if(Test-Path $target){Remove-Item -LiteralPath $target -Recurse -Force}}
 if(-not$Child){
- $sourceRoot=Split-Path $PSScriptRoot -Parent;$root=Join-Path ([IO.Path]::GetTempPath()) ('tooling-context-'+[guid]::NewGuid().ToString('N'));$tool=Join-Path $root 'tool-owner';$preserve=$false
+ $sourceRoot=Split-Path $PSScriptRoot -Parent;$root=if($HarnessRoot){[IO.Path]::GetFullPath($HarnessRoot)}else{Join-Path ([IO.Path]::GetTempPath()) ('tooling-context-'+[guid]::NewGuid().ToString('N'))};if(Test-Path -LiteralPath $root){throw 'Tooling-context parent fixture root already exists.'};Remove-ToolingTestRoot $root;$tool=Join-Path $root 'tool-owner';$preserve=$false
+ $readyProcess=$null;$readyOutput=$null;$readyError=$null;$readyRoot=Join-Path ([IO.Path]::GetTempPath()) ('tooling-context-'+[guid]::NewGuid().ToString('N'));$readyClock=[Diagnostics.Stopwatch]::StartNew()
  try{
+  if($Scenario-in@('all','lifecycle')){
+   # Independent fixture roots and child process: no shared Git checkout,
+   # project ledger, router installation, modules, or external effects.
+   $start=[Diagnostics.ProcessStartInfo]::new();$start.FileName=(@(Get-Command pwsh -CommandType Application)[0]).Source;$start.UseShellExecute=$false;$start.CreateNoWindow=$true;$start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
+   foreach($argument in @('-NoProfile','-NonInteractive','-File',(Join-Path $sourceRoot 'scripts/Test-ToolingContext.ps1'),'-SelfTest','-Scenario','ready-lifecycle','-HarnessRoot',$readyRoot)){[void]$start.ArgumentList.Add($argument)}
+   if($KeepFailedFixture){[void]$start.ArgumentList.Add('-KeepFailedFixture')}
+   $readyProcess=[Diagnostics.Process]::new();$readyProcess.StartInfo=$start;[void]$readyProcess.Start();$readyOutput=$readyProcess.StandardOutput.ReadToEndAsync();$readyError=$readyProcess.StandardError.ReadToEndAsync()
+  }
   [IO.Directory]::CreateDirectory($tool)|Out-Null;foreach($name in @('.github','config','docs','examples','fixtures','manifests','schemas','scripts','skills','templates','tools')){Copy-Item -LiteralPath (Join-Path $sourceRoot $name) -Destination (Join-Path $tool $name) -Recurse};foreach($name in @('.gitattributes','.gitignore','AGENTS.md','CHANGELOG.md','CONTRIBUTING.md','LICENSE','NOTICE.md','README.md','SECURITY.md')){Copy-Item -LiteralPath (Join-Path $sourceRoot $name) -Destination (Join-Path $tool $name)};foreach($file in @(Get-ChildItem -LiteralPath $tool -Recurse -File)){if(@('.ps1','.psm1','.psd1','.json','.md','.yml','.yaml','.toml','.txt','.gitignore','.gitattributes')-contains$file.Extension-or$file.Name-in@('.gitignore','.gitattributes')){$text=[IO.File]::ReadAllText($file.FullName);if($text.IndexOf([char]0)-lt0){[IO.File]::WriteAllText($file.FullName,$text.Replace("`r`n","`n"),[Text.UTF8Encoding]::new($false))}}}
   & git -C $tool init --initial-branch=main|Out-Null;& git -C $tool config user.name 'Tooling Context Test';& git -C $tool config user.email 'tooling-context@example.invalid';& git -C $tool config commit.gpgsign false;& git -C $tool config core.autocrlf false;& git -C $tool remote add origin 'https://example.invalid/work-environment.git';& git -C $tool add --all;& git -C $tool commit -m 'old tooling context'|Out-Null;& git -C $tool checkout-index -a -f;& git -C $tool reset --hard HEAD|Out-Null;$old=(& git -C $tool rev-parse HEAD).Trim().ToLowerInvariant()
   [IO.File]::AppendAllText((Join-Path $tool 'scripts/ToolingContextUpgrade.psm1'),"`n# fixture new tooling revision`n",[Text.UTF8Encoding]::new($false));& git -C $tool add scripts/ToolingContextUpgrade.psm1;& git -C $tool commit -m 'new tooling context'|Out-Null;& git -C $tool checkout-index -a -f;& git -C $tool reset --hard HEAD|Out-Null
    $new=(& git -C $tool rev-parse HEAD).Trim().ToLowerInvariant();& pwsh -NoProfile -File (Join-Path $tool 'scripts/Test-ToolingContext.ps1') -SelfTest -Child -OldCommit $old -NewCommit $new -HarnessRoot $root -Scenario $Scenario -RecoveryFault $RecoveryFault
   if($LASTEXITCODE-ne0){throw "Tooling-context bound-child self-test failed with exit code $LASTEXITCODE."}
-  }catch{if($KeepFailedFixture){$preserve=$true;[Console]::Error.WriteLine("tooling_context_failed_fixture=$root")};throw}finally{if(-not$preserve){Remove-ToolingTestRoot $root}}
+  if($null-ne$readyProcess){
+   $remaining=[Math]::Max(0,590000-[int]$readyClock.ElapsedMilliseconds)
+   if(-not$readyProcess.WaitForExit($remaining)){throw 'Independent Ready tooling child exceeded the shared bounded lifecycle deadline.'}
+   if(-not[Threading.Tasks.Task]::WaitAll([Threading.Tasks.Task[]]@($readyOutput,$readyError),5000)){throw 'Independent Ready tooling child output drain exceeded its bounded deadline.'}
+   $readyStdout=$readyOutput.GetAwaiter().GetResult();$readyStderr=$readyError.GetAwaiter().GetResult()
+   if($readyStdout){[Console]::Out.Write($readyStdout)};if($readyStderr){[Console]::Error.Write($readyStderr)}
+   if($readyProcess.ExitCode-ne0){throw "Independent Ready tooling child failed with exit code $($readyProcess.ExitCode)."}
+  }
+
+  }catch{if($KeepFailedFixture){$preserve=$true;[Console]::Error.WriteLine("tooling_context_failed_fixture=$root")};throw}finally{
+   if($null-ne$readyProcess){
+    if(-not$readyProcess.HasExited){$readyProcess.Kill($true);if(-not$readyProcess.WaitForExit(5000)){throw 'Independent Ready tooling child did not stop after bounded cancellation.'}}
+    $readyProcess.Dispose()
+    if(-not$KeepFailedFixture){Remove-ToolingTestRoot $readyRoot}
+   }
+   if(-not$preserve){Remove-ToolingTestRoot $root}
+  }
  return
 }
 
