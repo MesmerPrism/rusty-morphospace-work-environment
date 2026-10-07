@@ -81,6 +81,10 @@ function Assert-MorphospaceFrozenCandidateScope {
     foreach($r in @($Candidate.changed_paths)){
         if($unitRepos -cnotcontains [string]$r.repo_id){throw "Frozen changed path set includes undeclared repository '$($r.repo_id)'."}
         $allowed=@($Unit.allowed_repositories|Where-Object{[string]$_.repo_id -ceq [string]$r.repo_id})[0]
+        if(@($r.paths).Count-eq0){
+            $validationOnly=$Unit.PSObject.Properties.Name-contains'work_mode'-and[string]$Unit.work_mode-ceq'validation-only'
+            if(-not$validationOnly-or@($allowed.allowed_paths).Count-ne0-or[string]$Candidate.cleanliness_policy-cne'clean-only'){throw 'Empty frozen path rows require an explicit validation-only unit, empty admitted write scope and clean-only observation.'}
+        }
         foreach($path in @($r.paths)){if(-not(Test-MorphospaceCandidatePathAllowed -Path ([string]$path).TrimEnd('/') -Allowed @($allowed.allowed_paths))){throw "Frozen path '$($r.repo_id)/$path' exceeds the active write scope."}}
     }
     foreach($effect in @($Candidate.effects)){if(@($scope.allowed_effect_categories) -cnotcontains [string]$effect){throw "Frozen effect '$effect' exceeds the admitted envelope."}}
@@ -202,6 +206,7 @@ function Assert-MorphospaceCandidateRepositoryClosure {
     foreach($id in @($scopeById.Keys|Sort-Object)){
         if(-not$finalById.ContainsKey($id)-or-not$changedById.ContainsKey($id)-or-not$compositionById.ContainsKey($id)-or-not$map.ContainsKey($id)){throw "Frozen candidate closure is incomplete for '$id'."}
         $final=$finalById[$id];$bound=$compositionById[$id];$entry=$map[$id]
+        if(@($changedById[$id].paths).Count-eq0-and([string]$final.commit-cne[string]$bound.commit-or[string]$final.tree-cne[string]$bound.tree)){throw "Frozen read-only observation '$id' must retain its exact locked commit and tree."}
         $head=(@(Invoke-MorphospaceCandidateGit $entry.path @('rev-parse','HEAD') 'writable candidate commit observation')[0]).Trim().ToLowerInvariant()
         $tree=(@(Invoke-MorphospaceCandidateGit $entry.path @('rev-parse','HEAD^{tree}') 'writable candidate tree observation')[0]).Trim().ToLowerInvariant()
         if($head-cne[string]$final.commit-or$tree-cne[string]$final.tree){throw "Frozen candidate live writable repository identity drifted for '$id'."}

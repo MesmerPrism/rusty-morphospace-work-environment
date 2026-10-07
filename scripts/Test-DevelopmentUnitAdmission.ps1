@@ -1,4 +1,4 @@
-param([switch]$SelfTest,[switch]$AdditivePreparationOnly,[switch]$OwnPlanningCaseOnly)
+param([switch]$SelfTest,[switch]$AdditivePreparationOnly,[switch]$OwnPlanningCaseOnly,[switch]$ValidationOnlyFreezeOnly)
 $ErrorActionPreference='Stop'
 $repoRoot=Split-Path $PSScriptRoot -Parent
 Import-Module (Join-Path $PSScriptRoot 'DevelopmentUnitAdmission.psm1') -Force
@@ -11,6 +11,71 @@ $transitionLedgerPath=Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.p
 $transitionLedgerModule=@(Get-Module -All|Where-Object{$_.Path-eq$transitionLedgerPath}|Select-Object -Last 1)[0]
 if($null-eq$transitionLedgerModule){throw 'MorphospaceTransitionLedger module is unavailable.'}
 . (Join-Path $PSScriptRoot 'test-support/DevelopmentAdmissionFixture.ps1')
+
+function Test-ValidationOnlyEmptyFreeze {
+  $root=Join-Path ([IO.Path]::GetTempPath()) ('workenv-validation-empty-freeze-'+[guid]::NewGuid().ToString('N'))
+  try {
+    $seed=New-EnvelopeAdmissionPreparedFixture -Root $root -RepositoryRoot $repoRoot -TransitionLedgerModule $transitionLedgerModule -OwnerProducedPreparation -ValidationOnly
+    $ws=$seed.workspace;$admission=$seed.admission_template;$admissionPath=Join-Path $root 'admission.json';Write-EnvelopeJson $admissionPath $admission
+    $out=Join-Path $ws 'receipts/u002-admission.json'
+    $dry=Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $ws -DevelopmentUnitAdmission $admissionPath -OutPath $out
+    Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $ws -DevelopmentUnitAdmission $admissionPath -ExpectedDevelopmentUnitAdmissionSha256 $dry.audit_receipt.sha256 -OutPath $out -Execute|Out-Null
+    foreach($action in @('Ready','Claim')){&$automationModule {param($a)Invoke-MorphospaceWorkUnitAutomation @a} @{Action=$action;WorkspaceRoot=$ws;UnitId='u002';RepoMapPath=(Join-Path $ws 'repository-map.json');ValidationTier='quick';Execute=$true}|Out-Null}
+    $state=Read-EnvelopeProtocolJson (Join-Path $ws 'workspace.state.json');$unit=Read-EnvelopeProtocolJson (Join-Path $ws 'iteration-units/u002.json');$lock=Read-EnvelopeProtocolJson (Join-Path $ws 'feature.lock.json');$events=Join-Path $ws 'iteration-events.jsonl'
+    $freeze=[ordered]@{schema='rusty.morphospace.workflow.candidate_freeze.v1';freeze_id='u002-empty-freeze';project_id='envelope-test';unit_id='u002';expected=[ordered]@{project_sha256=Get-EnvelopeCanonicalJsonSha256 (Read-EnvelopeProtocolJson (Join-Path $ws 'project.spec.json'));state_sha256=Get-EnvelopeCanonicalJsonSha256 $state;unit_sha256=Get-EnvelopeCanonicalJsonSha256 $unit;feature_lock_sha256=Get-EnvelopeCanonicalJsonSha256 $lock;source_composition_path='source-composition.json';source_composition_sha256=Get-EnvelopeFileSha256 (Join-Path $ws 'source-composition.json');repository_map_path='repository-map.json';repository_map_sha256=Get-EnvelopeFileSha256 (Join-Path $ws 'repository-map.json');events_sha256=Get-EnvelopeFileSha256 $events;events_length=([IO.FileInfo]$events).Length;event_tail_id=[string]$state.last_event_id};final_repositories=@([ordered]@{repo_id='project-shell';commit=$seed.source_commit;tree=$seed.source_tree});changed_paths=@([ordered]@{repo_id='project-shell';paths=@()});cleanliness_policy='clean-only';instruction_surfaces=@([ordered]@{path='morphospace/README.md';disposition='reviewed-no-change'});feature_lock=[ordered]@{revision=[int]$lock.revision;sha256=Get-EnvelopeCanonicalJsonSha256 $lock};effects=@('none');permissions=@();device_use=@('none');test_matrix=@([ordered]@{test_id='validation-only';command='owner host conformance'});cleanup_evidence=@('No runtime or device effects.');source_composition=[ordered]@{path='source-composition.json';sha256=Get-EnvelopeFileSha256 (Join-Path $ws 'source-composition.json')};does_not_prove=@('Host lifecycle conformance only; no physical authority or device effects.')}
+    $freezePath=Join-Path $root 'freeze.json';Write-EnvelopeJson $freezePath $freeze;$freezeOut=Join-Path $ws 'receipts/u002-empty-freeze.json'
+    $freezeModule=Import-Module (Join-Path $PSScriptRoot 'CandidateFreeze.psm1') -PassThru
+    function Invoke-EmptyFreeze {param([hashtable]$a)&$freezeModule {param($p)Invoke-MorphospaceFreezeCandidate @p} $a}
+    foreach($kind in @('feature','omitted-mode','write-scope','dirty-policy','extra-row','stale-CAS','tree-drift')){
+      $candidate=Copy-Envelope $freeze;$probe=Copy-Envelope $unit
+      switch($kind){
+        'feature' {$probe.work_mode='feature'}
+        'omitted-mode' {$probe.PSObject.Properties.Remove('work_mode')}
+        'write-scope' {$probe.allowed_repositories[0].allowed_paths=@('morphospace/')}
+        'dirty-policy' {$candidate.cleanliness_policy='declared-dirty-paths'}
+        'extra-row' {$candidate.changed_paths+=,[pscustomobject]@{repo_id='undeclared';paths=@()}}
+        'stale-CAS' {$candidate.expected.state_sha256='0'*64}
+        'tree-drift' {$candidate.final_repositories[0].tree='0'*40}
+      }
+      $before=Get-EnvelopeWorkspaceByteInventorySha256 $ws;$rejected=$false
+      try {
+        if($kind-in@('feature','omitted-mode','write-scope','dirty-policy','extra-row')){&$freezeModule {param($c,$u)Assert-MorphospaceFrozenCandidateScope $c $u} $candidate $probe}
+        else {$path=Join-Path $root "$kind.json";Write-EnvelopeJson $path $candidate;Invoke-EmptyFreeze @{WorkspaceRoot=$ws;UnitId='u002';CandidateFreeze=$path;OutPath=$freezeOut}|Out-Null}
+      }catch{if($_.Exception-is[Management.Automation.CommandNotFoundException]){throw};$rejected=$true}
+      Assert-Envelope ($rejected-and$before-ceq(Get-EnvelopeWorkspaceByteInventorySha256 $ws)) "empty Freeze accepted or wrote $kind"
+    }
+    $source=$seed.source_repository
+    [IO.File]::WriteAllText((Join-Path $source 'morphospace/untracked.txt'),'dirt')
+    $before=Get-EnvelopeWorkspaceByteInventorySha256 $ws;$rejected=$false;try{Invoke-EmptyFreeze @{WorkspaceRoot=$ws;UnitId='u002';CandidateFreeze=$freezePath;OutPath=$freezeOut}|Out-Null}catch{if($_.Exception-is[Management.Automation.CommandNotFoundException]){throw};$rejected=$true};Assert-Envelope ($rejected-and$before-ceq(Get-EnvelopeWorkspaceByteInventorySha256 $ws)) 'empty Freeze accepted dirty source or wrote on rejection'
+    Remove-Item -LiteralPath (Join-Path $source 'morphospace/untracked.txt')
+    Invoke-EnvelopeGit $source @('commit','--allow-empty','-m','empty commit drift')|Out-Null
+    $drift=Copy-Envelope $freeze;$drift.final_repositories[0].commit=(@(Invoke-EnvelopeGit $source @('rev-parse','HEAD'))[0]).Trim();$driftPath=Join-Path $root 'head-drift.json';Write-EnvelopeJson $driftPath $drift
+    $before=Get-EnvelopeWorkspaceByteInventorySha256 $ws;$rejected=$false;try{Invoke-EmptyFreeze @{WorkspaceRoot=$ws;UnitId='u002';CandidateFreeze=$driftPath;OutPath=$freezeOut}|Out-Null}catch{if($_.Exception-is[Management.Automation.CommandNotFoundException]){throw};$rejected=$true};Assert-Envelope ($rejected-and$before-ceq(Get-EnvelopeWorkspaceByteInventorySha256 $ws)) 'empty Freeze accepted same-tree head drift or wrote on rejection'
+    Invoke-EnvelopeGit $source @('switch','--detach',$seed.source_commit)|Out-Null
+    $before=Get-EnvelopeWorkspaceByteInventorySha256 $ws;$dry=Invoke-EmptyFreeze @{WorkspaceRoot=$ws;UnitId='u002';CandidateFreeze=$freezePath;OutPath=$freezeOut}
+    Assert-Envelope ($before-ceq(Get-EnvelopeWorkspaceByteInventorySha256 $ws)) 'empty Freeze dry run wrote workspace'
+    Invoke-EmptyFreeze @{WorkspaceRoot=$ws;UnitId='u002';CandidateFreeze=$freezePath;ExpectedCandidateFreezeSha256=$dry.audit_receipt.sha256;OutPath=$freezeOut;Execute=$true}|Out-Null
+    Assert-Envelope (&$freezeModule {param($w,$u)Test-MorphospaceFrozenCandidate $w $u} $ws (Read-EnvelopeProtocolJson (Join-Path $ws 'iteration-units/u002.json'))) 'genuine empty Freeze failed frozen consumer'
+    foreach($kind in @('dirty','head')){
+      if($kind-eq'dirty'){[IO.File]::WriteAllText((Join-Path $source 'morphospace/untracked.txt'),'post-freeze dirt')}
+      else {Invoke-EnvelopeGit $source @('commit','--allow-empty','-m','post-freeze empty commit')|Out-Null}
+      $before=Get-EnvelopeWorkspaceByteInventorySha256 $ws;$rejected=$false
+      try{&$freezeModule {param($w,$u)Test-MorphospaceFrozenCandidate $w $u} $ws (Read-EnvelopeProtocolJson (Join-Path $ws 'iteration-units/u002.json'))|Out-Null}catch{if($_.Exception-is[Management.Automation.CommandNotFoundException]){throw};$rejected=$true}
+      Assert-Envelope ($rejected-and$before-ceq(Get-EnvelopeWorkspaceByteInventorySha256 $ws)) "frozen consumer accepted $kind drift or wrote on rejection"
+      if($kind-eq'dirty'){Remove-Item -LiteralPath (Join-Path $source 'morphospace/untracked.txt')}else{Invoke-EnvelopeGit $source @('switch','--detach',$seed.source_commit)|Out-Null}
+    }
+    $begin=&$automationModule {param($a)Invoke-MorphospaceWorkUnitAutomation @a} @{Action='BeginValidation';WorkspaceRoot=$ws;UnitId='u002';RepoMapPath=(Join-Path $ws 'repository-map.json');ValidationTier='quick';Execute=$true}
+    Assert-Envelope ($begin.transition-ceq'active-to-validating') 'empty Freeze failed actual BeginValidation consumer'
+    Assert-Envelope ((@(Invoke-EnvelopeGit $source @('rev-parse','HEAD'))[0]).Trim()-ceq$seed.source_commit) 'owner lifecycle changed observed source'
+    Write-Host 'Validation-only unchanged-source owner preparation/admission/Ready/Claim/Freeze/frozen-consumer/BeginValidation and eleven no-write negative controls passed; no device effects.'
+  }finally{
+    $full=[IO.Path]::GetFullPath($root);$temp=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\','/')
+    if([IO.Path]::GetDirectoryName($full).TrimEnd('\','/')-ne$temp-or-not[IO.Path]::GetFileName($full).StartsWith('workenv-validation-empty-freeze-')){throw 'Refusing unnamed fixture cleanup'}
+    if(Test-Path -LiteralPath $full){Remove-Item -LiteralPath $full -Recurse -Force}
+  }
+}
+if($ValidationOnlyFreezeOnly){Test-ValidationOnlyEmptyFreeze;return}
+if(-not$OwnPlanningCaseOnly-and-not$AdditivePreparationOnly){Test-ValidationOnlyEmptyFreeze}
 
 # This leaf regression runs on a genuinely case-sensitive temporary filesystem;
 # the ordinary producer lifecycle below separately authenticates owner authority.

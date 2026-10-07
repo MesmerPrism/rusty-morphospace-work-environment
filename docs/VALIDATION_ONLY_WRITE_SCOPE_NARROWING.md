@@ -11,6 +11,17 @@ validation-only path remains limited by the existing `morphospace` scope rule,
 while feature units and units with omitted `work_mode` still require a
 nonempty path list.
 
+An unchanged-source validation-only unit freezes each observed repository with
+an empty `changed_paths[].paths` array matching its empty admitted write scope.
+The v1 freeze producer and frozen consumer require explicit `validation-only`
+mode, `clean-only` observation, and the exact locked commit and tree for that
+row. Repository membership, live cleanliness, dependencies and transaction CAS
+remain checked. A feature unit or omitted mode cannot use an empty freeze row;
+an empty-tree successor commit also does not count as an unchanged observation.
+This permits real host or admitted serial-scoped validation without artificial
+source writes. The freeze remains evidence of closure, not device authority or
+validation acceptance.
+
 The `validation_only_write_scope_narrowing.v1` request binds the raw and
 canonical project, state, and unit preimages; the ledger prefix; repository-map
 and exact source-lock bytes; and complete before/after repository rows. The
