@@ -86,6 +86,73 @@ try {
 } finally {
   if (Test-Path -LiteralPath $additiveRoot) { Remove-Item -LiteralPath $additiveRoot -Recurse -Force }
 }
+# A separate writable product repository and the owner's nested read-only
+# planning repository exercise the ordinary producer lifecycle, not a forged
+# state fixture or a role-only planning exemption.
+$planningRoot=Join-Path ([IO.Path]::GetTempPath()) ('workenv-own-planning-freeze-'+[guid]::NewGuid().ToString('N'))
+try {
+  $planningSeed=New-EnvelopeAdmissionPreparedFixture -Root $planningRoot -RepositoryRoot $repoRoot -TransitionLedgerModule $transitionLedgerModule -OwnerProducedPreparation -SelfHostedReadOnlyPlanning
+  $planningWorkspace=$planningSeed.workspace;$planningRepository=$planningSeed.source_repository
+  $planningAdmissionPath=Join-Path $planningRoot 'admission.json';Write-EnvelopeJson $planningAdmissionPath $planningSeed.admission_template
+  Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $planningWorkspace -DevelopmentUnitAdmission $planningAdmissionPath -ExpectedDevelopmentUnitAdmissionSha256 (Get-EnvelopeFileSha256 $planningAdmissionPath) -OutPath (Join-Path $planningWorkspace 'receipts/u002-admission.json') -Timestamp '2026-08-25T00:01:00.0000000Z' -Execute|Out-Null
+  $planningArguments=@{WorkspaceRoot=$planningWorkspace;UnitId='u002';RepoMapPath=(Join-Path $planningWorkspace 'repository-map.json');ValidationTier='quick'}
+  &$automationModule {param($a)Invoke-MorphospaceWorkUnitAutomation @a -Action Ready -Timestamp '2026-08-25T00:02:00.0000000Z' -Execute} $planningArguments|Out-Null
+  &$automationModule {param($a)Invoke-MorphospaceWorkUnitAutomation @a -Action Claim -Timestamp '2026-08-25T00:02:10.0000000Z' -Execute} $planningArguments|Out-Null
+  Invoke-EnvelopeGit $planningRepository @('add','morphospace/')|Out-Null;Invoke-EnvelopeGit $planningRepository @('commit','-m','commit-owned-preparation-admission-ready-claim')|Out-Null
+  $planningHead=(@(Invoke-EnvelopeGit $planningRepository @('rev-parse','HEAD'))[0]).Trim()
+  $planningUnit=Read-EnvelopeProtocolJson (Join-Path $planningWorkspace 'iteration-units/u002.json');$planningState=Read-EnvelopeProtocolJson (Join-Path $planningWorkspace 'workspace.state.json');$planningLock=Read-EnvelopeProtocolJson (Join-Path $planningWorkspace 'feature.lock.json')
+  $planningSource=Read-EnvelopeProtocolJson (Join-Path $planningWorkspace 'source-composition.json');$planningPin=@($planningSource.repositories|Where-Object repo_id -ceq 'project-shell')[0]
+  Assert-Envelope ($planningHead-cne[string]$planningPin.commit-and@($planningUnit.allowed_repositories.repo_id)-cnotcontains'project-shell') 'own-planning fixture did not advance real owner history outside writable product scope'
+  $planningFreeze=Copy-Envelope $freeze;$planningFreeze.freeze_id='u002-own-planning-freeze'
+  $planningFreeze.expected=[pscustomobject][ordered]@{project_sha256=(Get-EnvelopeCanonicalJsonSha256 (Read-EnvelopeProtocolJson (Join-Path $planningWorkspace 'project.spec.json')));state_sha256=(Get-EnvelopeCanonicalJsonSha256 $planningState);unit_sha256=(Get-EnvelopeCanonicalJsonSha256 $planningUnit);feature_lock_sha256=(Get-EnvelopeCanonicalJsonSha256 $planningLock);source_composition_path='source-composition.json';source_composition_sha256=(Get-EnvelopeFileSha256 (Join-Path $planningWorkspace 'source-composition.json'));repository_map_path='repository-map.json';repository_map_sha256=(Get-EnvelopeFileSha256 (Join-Path $planningWorkspace 'repository-map.json'));events_sha256=(Get-EnvelopeFileSha256 (Join-Path $planningWorkspace 'iteration-events.jsonl'));events_length=([IO.FileInfo](Join-Path $planningWorkspace 'iteration-events.jsonl')).Length;event_tail_id=[string]$planningState.last_event_id}
+  $planningFreeze.final_repositories=@([pscustomobject]@{repo_id='read-only-dependency';commit=$planningSeed.dependency_commit;tree=$planningSeed.dependency_tree});$planningFreeze.changed_paths=@([pscustomobject]@{repo_id='read-only-dependency';paths=@('dependency/')});$planningFreeze.feature_lock.revision=[int]$planningLock.revision;$planningFreeze.feature_lock.sha256=$planningFreeze.expected.feature_lock_sha256;$planningFreeze.source_composition.sha256=$planningFreeze.expected.source_composition_sha256
+  $planningFreezePath=Join-Path $planningRoot 'freeze.json';Write-EnvelopeJson $planningFreezePath $planningFreeze;$planningFreezeOut=Join-Path $planningWorkspace 'receipts/u002-own-planning-freeze.json'
+  $planningFreezeModule=@(Get-Module -All|Where-Object{$_.Path-eq(Join-Path $PSScriptRoot 'CandidateFreeze.psm1')}|Select-Object -Last 1)[0]
+  function Invoke-OwnedPlanningFreeze {
+    param([string]$WorkspaceRoot,[string]$UnitId,[string]$CandidateFreeze,[string]$OutPath,[string]$ExpectedCandidateFreezeSha256,[switch]$Execute)
+    &$planningFreezeModule {param($a)Invoke-MorphospaceFreezeCandidate @a} $PSBoundParameters
+  }
+  $planningDry=Invoke-OwnedPlanningFreeze -WorkspaceRoot $planningWorkspace -UnitId u002 -CandidateFreeze $planningFreezePath -OutPath $planningFreezeOut
+  function New-OwnedPlanningMerge([string]$Suffix,[switch]$OutsideMergeChange){
+    Invoke-EnvelopeGit $planningRepository @('checkout','-b',"control-left-$Suffix",$planningHead)|Out-Null
+    [IO.File]::WriteAllText((Join-Path $planningWorkspace "left-$Suffix.txt"),'control left');Invoke-EnvelopeGit $planningRepository @('add','morphospace/')|Out-Null;Invoke-EnvelopeGit $planningRepository @('commit','-m','left-control-only')|Out-Null
+    Invoke-EnvelopeGit $planningRepository @('checkout','-b',"control-right-$Suffix",$planningHead)|Out-Null
+    [IO.File]::WriteAllText((Join-Path $planningWorkspace "right-$Suffix.txt"),'control right');Invoke-EnvelopeGit $planningRepository @('add','morphospace/')|Out-Null;Invoke-EnvelopeGit $planningRepository @('commit','-m','right-control-only')|Out-Null
+    Invoke-EnvelopeGit $planningRepository @('checkout',"control-left-$Suffix")|Out-Null;Invoke-EnvelopeGit $planningRepository @('merge','--no-ff','--no-commit',"control-right-$Suffix")|Out-Null
+    if($OutsideMergeChange){[IO.File]::WriteAllText((Join-Path $planningRepository 'merge-only-outside.txt'),'outside change authored only in merge');Invoke-EnvelopeGit $planningRepository @('add','merge-only-outside.txt')|Out-Null}
+    Invoke-EnvelopeGit $planningRepository @('commit','-m','owner-history-merge')|Out-Null
+  }
+  New-OwnedPlanningMerge 'positive'
+  Invoke-OwnedPlanningFreeze -WorkspaceRoot $planningWorkspace -UnitId u002 -CandidateFreeze $planningFreezePath -OutPath $planningFreezeOut|Out-Null
+  Invoke-EnvelopeGit $planningRepository @('checkout','--detach',$planningHead)|Out-Null
+  foreach($planningCase in @('dirty-control','dirty-outside','committed-outside-and-reverted','non-descendant','stale-cas','map-drift','old-object','merge-only-outside')){
+    $damaged=Copy-Envelope $planningFreeze;$damagePath=Join-Path $planningRoot 'damaged-freeze.json';$restorePath='';$restoreBytes=$null
+    switch($planningCase){
+      'dirty-control'{$restorePath=Join-Path $planningWorkspace 'unowned.txt';[IO.File]::WriteAllText($restorePath,'unowned')}
+      'dirty-outside'{$restorePath=Join-Path $planningRepository 'outside.txt';[IO.File]::WriteAllText($restorePath,'unowned')}
+      'committed-outside-and-reverted'{$restorePath=Join-Path $planningRepository 'outside.txt';[IO.File]::WriteAllText($restorePath,'outside');Invoke-EnvelopeGit $planningRepository @('add','outside.txt')|Out-Null;Invoke-EnvelopeGit $planningRepository @('commit','-m','outside-control-change')|Out-Null;Remove-Item -LiteralPath $restorePath;Invoke-EnvelopeGit $planningRepository @('add','outside.txt')|Out-Null;Invoke-EnvelopeGit $planningRepository @('commit','-m','revert-outside-control-change')|Out-Null;$restorePath=''}
+      'non-descendant'{Invoke-EnvelopeGit $planningRepository @('checkout','--orphan','unrelated-owner-history')|Out-Null;Invoke-EnvelopeGit $planningRepository @('add','morphospace/')|Out-Null;Invoke-EnvelopeGit $planningRepository @('commit','-m','unrelated-owner-history')|Out-Null}
+      'merge-only-outside'{New-OwnedPlanningMerge 'negative' -OutsideMergeChange}
+      'stale-cas'{$damaged.expected.state_sha256='0'*64}
+      'map-drift'{$restorePath=Join-Path $planningWorkspace 'repository-map.json';$restoreBytes=[IO.File]::ReadAllBytes($restorePath);[IO.File]::AppendAllText($restorePath,' ')}
+      'old-object'{$restorePath=Join-Path $planningWorkspace 'source-composition.json';$restoreBytes=[IO.File]::ReadAllBytes($restorePath);$badSource=Copy-Envelope $planningSource;$badSource.repositories[0].tree='0'*40;Write-EnvelopeJson $restorePath $badSource}
+    }
+    Write-EnvelopeJson $damagePath $damaged;$before=Get-EnvelopeWorkspaceByteInventorySha256 $planningWorkspace;$denied=$false
+    try{Invoke-OwnedPlanningFreeze -WorkspaceRoot $planningWorkspace -UnitId u002 -CandidateFreeze $damagePath -OutPath $planningFreezeOut|Out-Null}catch{$denied=$true}
+    Assert-Envelope ($denied-and$before-ceq(Get-EnvelopeWorkspaceByteInventorySha256 $planningWorkspace)) "own-planning freeze accepted or mutated $planningCase"
+    if($restoreBytes){[IO.File]::WriteAllBytes($restorePath,$restoreBytes)}elseif($restorePath){Remove-Item -LiteralPath $restorePath}
+    if($planningCase-cin@('committed-outside-and-reverted','non-descendant','merge-only-outside')){Invoke-EnvelopeGit $planningRepository @('checkout','--detach',$planningHead)|Out-Null}
+  }
+  $ownEntry=[pscustomobject]@{role='planning';path=$planningRepository};$unrelatedWorkspace=Join-Path $planningRoot 'unrelated-workspace';[IO.Directory]::CreateDirectory($unrelatedWorkspace)|Out-Null
+  $unrelatedAccepted=&$planningFreezeModule {param($w,$e,$b,$c,$u)Test-MorphospaceOwnPlanningCandidateHistory $w $e $b $c $u $null} $unrelatedWorkspace $ownEntry $planningPin $planningSource $planningUnit
+  Assert-Envelope (-not$unrelatedAccepted) 'own-planning history exemption accepted a sibling workspace'
+  $planningRun=Invoke-OwnedPlanningFreeze -WorkspaceRoot $planningWorkspace -UnitId u002 -CandidateFreeze $planningFreezePath -ExpectedCandidateFreezeSha256 $planningDry.audit_receipt.sha256 -OutPath $planningFreezeOut -Execute
+  $planningFrozen=Read-EnvelopeProtocolJson (Join-Path $planningWorkspace 'iteration-units/u002.json');$planningConsumed=&$planningFreezeModule {param($w,$u)Test-MorphospaceFrozenCandidate $w $u} $planningWorkspace $planningFrozen
+  Assert-Envelope ($planningRun.transition-ceq'candidate-frozen'-and$planningConsumed-and(@(Invoke-EnvelopeGit $planningRepository @('rev-parse','HEAD'))[0]).Trim()-ceq$planningHead) 'read-only own-planning Freeze/consumer changed Git HEAD or lost owner provenance'
+  Write-Host 'Read-only own-planning external-owner Freeze controls passed (producer lifecycle, consumer, control-only merge, nine fail-closed negatives).'
+} finally {
+  if(Test-Path -LiteralPath $planningRoot){Remove-Item -LiteralPath $planningRoot -Recurse -Force}
+}
 if ($AdditivePreparationOnly) { return }
 
 Assert-Envelope ($null-eq(Get-Command Complete-MorphospaceDevelopmentEnvelopeRepreparation -ErrorAction SilentlyContinue)) 'private repreparation completion command leaked through the public module boundary'

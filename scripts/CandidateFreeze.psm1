@@ -120,6 +120,38 @@ function Test-MorphospaceSelfHostedPlanningFreezeDirt {
     }
     return $true
 }
+function Test-MorphospaceOwnPlanningCandidateHistory {
+    param([string]$Workspace,[object]$RepositoryEntry,[object]$Bound,[object]$Composition,[object]$Unit,[object]$FrozenTransition)
+    # Get-MorphospaceCandidateSourceComposition has already authenticated the
+    # exact preparation/effective continuation. A generic lock is insufficient.
+    if([string]$RepositoryEntry.role-cne'planning'-or[string]$Composition.schema-cnotin@(
+        'rusty.morphospace.workflow.development_envelope_source_composition.v1',
+        'rusty.morphospace.workflow.development_envelope_source_composition.v2',
+        'rusty.morphospace.workflow.development_envelope_source_composition.v3',
+        'rusty.morphospace.workflow.active_development_envelope_source_composition.v1')){return $false}
+    $repository=[IO.Path]::GetFullPath([string]$RepositoryEntry.path).TrimEnd('\','/')
+    $workspaceFull=[IO.Path]::GetFullPath($Workspace).TrimEnd('\','/')
+    $gitRoot=(@(Invoke-MorphospaceCandidateGit $repository @('rev-parse','--show-toplevel') 'own-planning Git-root observation')[0]).Trim()
+    if(-not([IO.Path]::GetFullPath($gitRoot).TrimEnd('\','/').Equals($repository,[StringComparison]::OrdinalIgnoreCase))){return $false}
+    $prefix=$repository+[IO.Path]::DirectorySeparatorChar
+    # This bounded route is for a nested control workspace, never a blanket
+    # role=planning exemption for an entire repository or a sibling workspace.
+    if(-not$workspaceFull.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){return $false}
+    $workspaceGitRoot=(@(Invoke-MorphospaceCandidateGit $workspaceFull @('rev-parse','--show-toplevel') 'own-planning workspace Git-root observation')[0]).Trim()
+    if(-not([IO.Path]::GetFullPath($workspaceGitRoot).TrimEnd('\','/').Equals($repository,[StringComparison]::OrdinalIgnoreCase))){return $false}
+    $controlPrefix=$workspaceFull.Substring($prefix.Length).Replace('\','/').TrimEnd('/')+'/'
+    $head=(@(Invoke-MorphospaceCandidateGit $repository @('rev-parse','HEAD') 'own-planning live commit observation')[0]).Trim().ToLowerInvariant()
+    [void](Invoke-MorphospaceCandidateGit $repository @('merge-base','--is-ancestor',[string]$Bound.commit,$head) 'own-planning historical ancestry observation')
+    # Inspect each intervening commit, not merely the endpoint diff: a source
+    # or docs change followed by a revert must not gain this control-only route.
+    $changed=@(Invoke-MorphospaceCandidateGit $repository @('-c','core.quotepath=false','log','--format=','--name-only','--no-renames','--full-history','-m',"$([string]$Bound.commit)..$head",'--') 'own-planning lifecycle history observation')
+    foreach($path in @($changed|Where-Object{$_}|Sort-Object -Unique)){
+        if(-not([string]$path).StartsWith($controlPrefix,[StringComparison]::Ordinal)){throw "Frozen candidate own-planning history changed '$path' outside its exact control workspace."}
+    }
+    $dirty=@(Invoke-MorphospaceCandidateGit $repository @('status','--porcelain=v1','--untracked-files=all') 'own-planning cleanliness observation')
+    if($dirty.Count-ne0-and-not(Test-MorphospaceSelfHostedPlanningFreezeDirt -Workspace $Workspace -Unit $Unit -RepositoryEntry $RepositoryEntry -FrozenTransition $FrozenTransition)){throw 'Frozen candidate own-planning repository is dirty outside its authenticated freeze transition.'}
+    return $true
+}
 function Assert-MorphospaceCandidateRepositoryClosure {
     param([string]$Workspace,[object]$Candidate,[object]$Unit,[object]$FrozenTransition=$null)
     $map=Get-MorphospaceCandidateRepositoryMap $Workspace ([string]$Candidate.expected.repository_map_path)
@@ -156,6 +188,7 @@ function Assert-MorphospaceCandidateRepositoryClosure {
         $lockedTree=(@(Invoke-MorphospaceCandidateGit $entry.path @('rev-parse',"$([string]$bound.commit)^{tree}") 'source-composition tree-object observation')[0]).Trim().ToLowerInvariant()
         if($lockedCommit-cne[string]$bound.commit-or$lockedTree-cne[string]$bound.tree){throw "Frozen candidate source-composition object identity differs for '$id'."}
         if(-not$scopeById.ContainsKey($id)){
+            if(Test-MorphospaceOwnPlanningCandidateHistory -Workspace $workspace -RepositoryEntry $entry -Bound $bound -Composition $composition -Unit $Unit -FrozenTransition $FrozenTransition){continue}
             $head=(@(Invoke-MorphospaceCandidateGit $entry.path @('rev-parse','HEAD') 'read-only dependency commit observation')[0]).Trim().ToLowerInvariant()
             $tree=(@(Invoke-MorphospaceCandidateGit $entry.path @('rev-parse','HEAD^{tree}') 'read-only dependency tree observation')[0]).Trim().ToLowerInvariant()
             if($head-cne[string]$bound.commit-or$tree-cne[string]$bound.tree){throw "Frozen candidate live read-only dependency identity drifted for '$id'."}
