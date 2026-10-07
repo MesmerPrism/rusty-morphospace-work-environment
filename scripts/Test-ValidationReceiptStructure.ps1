@@ -217,6 +217,29 @@ try {
     [IO.File]::WriteAllText((Join-Path $workspace 'iteration-units/locked-unit.json'),(($lockedUnit|ConvertTo-Json -Depth 20)+"`n"),[Text.UTF8Encoding]::new($false))
     $lockedBuilt = New-MorphospaceValidationReceiptV1 -WorkspaceRoot $workspace -UnitId locked-unit -RepoMapPath $lockedMapPath -Evidence $productEvidence -OutPath 'receipts/locked-builder.json' -CreatedAt '2026-09-08T00:00:00Z'
     Assert-ReceiptTest ([string]$lockedBuilt.repository_revisions[0].base_revision -ceq $lockedBase) 'v1 builder did not use the authenticated source-composition baseline'
+    # A v3 product lock separates tooling provenance without changing the
+    # authenticated source baseline consumed by the stateless v1 builder.
+    $v3Lock = [pscustomobject][ordered]@{
+        schema='rusty.morphospace.workflow.development_envelope_source_composition.v3';lock_id='locked-source';preparation_id='builder-preparation';project_id='builder-project';fingerprint=$hash
+        repositories=@([pscustomobject][ordered]@{repo_id='source-repo';role='source';commit=$lockedBase;tree=$lockedTree;branch='main';materialization_path='source';tracked_worktree_clean=$true})
+        tooling_protocol=[pscustomobject]@{protocol_id='tooling-context-v1'};status='locked';does_not_prove=@('Validation result')
+    }
+    foreach ($v3Damage in @('none','schema','required-field','repository-row')) {
+        $v3Document = Copy-ReceiptTestDocument $v3Lock
+        if ($v3Damage -eq 'schema') { $v3Document.schema='rusty.morphospace.workflow.development_envelope_source_composition.v99' }
+        if ($v3Damage -eq 'required-field') { $v3Document.PSObject.Properties.Remove('tooling_protocol') }
+        if ($v3Damage -eq 'repository-row') { $v3Document.repositories[0].commit='invalid' }
+        [IO.File]::WriteAllText($sourceLockPath,(($v3Document|ConvertTo-Json -Depth 30)+"`n"),[Text.UTF8Encoding]::new($false))
+        $v3Hash=(Get-FileHash -LiteralPath $sourceLockPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        $candidateFreeze.expected.source_composition_sha256=$v3Hash;$candidateFreeze.source_composition.sha256=$v3Hash
+        [IO.File]::WriteAllText($freezePath,(($candidateFreeze|ConvertTo-Json -Depth 30)+"`n"),[Text.UTF8Encoding]::new($false))
+        $lockedUnit.candidate_freeze.receipt_sha256=(Get-FileHash -LiteralPath $freezePath -Algorithm SHA256).Hash.ToLowerInvariant()
+        [IO.File]::WriteAllText((Join-Path $workspace 'iteration-units/locked-unit.json'),(($lockedUnit|ConvertTo-Json -Depth 20)+"`n"),[Text.UTF8Encoding]::new($false))
+        $v3Output="receipts/v3-$v3Damage.json";$v3Rejected=$false
+        try { $v3Built=New-MorphospaceValidationReceiptV1 -WorkspaceRoot $workspace -UnitId locked-unit -RepoMapPath $lockedMapPath -Evidence $productEvidence -OutPath $v3Output -CreatedAt '2026-09-08T00:00:00Z' } catch { $v3Rejected=$_.Exception.Message -like '*source-composition lock does not satisfy a supported schema*' -or $_.FullyQualifiedErrorId -like 'InvalidJsonAgainstSchema*' }
+        if ($v3Damage -eq 'none') { Assert-ReceiptTest (-not $v3Rejected -and [string]$v3Built.repository_revisions[0].base_revision -ceq $lockedBase -and [string]$v3Built.schema -ceq 'rusty.morphospace.workflow.validation_receipt.v1') 'valid v3 lock did not produce a source-bound v1 receipt' }
+        else { Assert-ReceiptTest ($v3Rejected -and -not(Test-Path -LiteralPath (Join-Path $workspace $v3Output))) "v3 builder accepted $v3Damage damage despite authenticated byte bindings" }
+    }
     Add-Content -LiteralPath $sourceLockPath -Value ' ' -NoNewline
     $driftRejected = $false
     try { New-MorphospaceValidationReceiptV1 -WorkspaceRoot $workspace -UnitId locked-unit -RepoMapPath $lockedMapPath -Evidence $productEvidence -OutPath 'receipts/drifted-lock.json' | Out-Null } catch { $driftRejected = $_.Exception.Message -like '*source-composition lock does not match the candidate-freeze binding*' }

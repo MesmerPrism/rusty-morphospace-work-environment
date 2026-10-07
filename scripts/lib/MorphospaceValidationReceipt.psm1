@@ -210,6 +210,7 @@ function New-MorphospaceValidationReceiptV1 {
             'rusty.morphospace.workflow.source_composition_lock.v1'='source-composition-lock.schema.json'
             'rusty.morphospace.workflow.development_envelope_source_composition.v1'='development-envelope-source-composition-v1.schema.json'
             'rusty.morphospace.workflow.development_envelope_source_composition.v2'='development-envelope-source-composition-v2.schema.json'
+            'rusty.morphospace.workflow.development_envelope_source_composition.v3'='development-envelope-source-composition-v3.schema.json'
         }
         $lockSchema = [string]$lock.schema
         if (-not $lockSchemas.ContainsKey($lockSchema) -or -not (Test-Json -Json $lockJson -SchemaFile (Join-Path $repositoryRoot "schemas\$($lockSchemas[$lockSchema])") -ErrorAction Stop)) { throw 'Validation receipt source-composition lock does not satisfy a supported schema.' }
