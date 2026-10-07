@@ -1,4 +1,4 @@
-param([switch]$SelfTest,[switch]$AdditivePreparationOnly)
+param([switch]$SelfTest,[switch]$AdditivePreparationOnly,[switch]$OwnPlanningCaseOnly)
 $ErrorActionPreference='Stop'
 $repoRoot=Split-Path $PSScriptRoot -Parent
 Import-Module (Join-Path $PSScriptRoot 'DevelopmentUnitAdmission.psm1') -Force
@@ -11,6 +11,37 @@ $transitionLedgerPath=Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.p
 $transitionLedgerModule=@(Get-Module -All|Where-Object{$_.Path-eq$transitionLedgerPath}|Select-Object -Last 1)[0]
 if($null-eq$transitionLedgerModule){throw 'MorphospaceTransitionLedger module is unavailable.'}
 . (Join-Path $PSScriptRoot 'test-support/DevelopmentAdmissionFixture.ps1')
+
+# This leaf regression runs on a genuinely case-sensitive temporary filesystem;
+# the ordinary producer lifecycle below separately authenticates owner authority.
+$caseRoot=Join-Path ([IO.Path]::GetTempPath()) ('workenv-own-planning-case-'+[guid]::NewGuid().ToString('N'))
+try {
+  $caseLower=Join-Path $caseRoot 'owner';$caseUpper=Join-Path $caseRoot 'OWNER';[IO.Directory]::CreateDirectory($caseLower)|Out-Null
+  if(Test-Path -LiteralPath $caseUpper){Write-Host 'Own-planning case-distinct Git-root control not applicable: filesystem is case-insensitive.'}
+  else {
+    foreach($caseRepository in @($caseLower,$caseUpper)){
+      [IO.Directory]::CreateDirectory((Join-Path $caseRepository 'morphospace'))|Out-Null;Invoke-EnvelopeGit $caseRoot @('init',$caseRepository)|Out-Null
+      Invoke-EnvelopeGit $caseRepository @('config','user.name','Envelope Case Test')|Out-Null;Invoke-EnvelopeGit $caseRepository @('config','user.email','case@example.invalid')|Out-Null
+      [IO.File]::WriteAllText((Join-Path $caseRepository 'morphospace/README.md'),'case-sensitive Git-owner fixture')
+      Invoke-EnvelopeGit $caseRepository @('add','morphospace/')|Out-Null;Invoke-EnvelopeGit $caseRepository @('commit','-m','distinct-case-git-owner')|Out-Null
+    }
+    $caseModule=@(Get-Module -All|Where-Object{$_.Path-eq(Join-Path $PSScriptRoot 'CandidateFreeze.psm1')}|Select-Object -Last 1)[0]
+    $caseEntry=[pscustomobject]@{path=$caseLower;role='planning'};$caseBound=[pscustomobject]@{commit=(@(Invoke-EnvelopeGit $caseLower @('rev-parse','HEAD'))[0]).Trim()};$caseComposition=[pscustomobject]@{schema='rusty.morphospace.workflow.development_envelope_source_composition.v3'}
+    $casePositive=&$caseModule {param($w,$e,$b,$c)Test-MorphospaceOwnPlanningCandidateHistory $w $e $b $c ([pscustomobject]@{}) $null} (Join-Path $caseLower 'morphospace') $caseEntry $caseBound $caseComposition
+    $caseSibling=&$caseModule {param($w,$e,$b,$c)Test-MorphospaceOwnPlanningCandidateHistory $w $e $b $c ([pscustomobject]@{}) $null} (Join-Path $caseUpper 'morphospace') $caseEntry $caseBound $caseComposition
+    Assert-Envelope ($casePositive-and-not$caseSibling) 'own-planning path guard accepted a real case-distinct sibling Git owner'
+    Write-Host 'Own-planning case-sensitive Git-root leaf controls passed (exact owner positive; real case-distinct sibling rejected).'
+  }
+} finally {
+  if(Test-Path -LiteralPath $caseRoot){
+    $resolvedCaseRoot=[IO.Path]::GetFullPath((Resolve-Path -LiteralPath $caseRoot).Path).TrimEnd('\','/')
+    $temporaryCaseRoot=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\','/')
+    $caseComparison=if([Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Windows)){[StringComparison]::OrdinalIgnoreCase}else{[StringComparison]::Ordinal}
+    if(-not([IO.Path]::GetDirectoryName($resolvedCaseRoot).Equals($temporaryCaseRoot,$caseComparison))-or[IO.Path]::GetFileName($resolvedCaseRoot)-cnotmatch'^workenv-own-planning-case-[0-9a-f]{32}$'){throw 'Refusing case-guard fixture cleanup outside its exact named temporary root.'}
+    Remove-Item -LiteralPath $resolvedCaseRoot -Recurse -Force
+  }
+}
+if($OwnPlanningCaseOnly){return}
 
 # The additive path always runs in the full suite and can be selected alone
 # while changing preparation semantics, without repeating recovery fixtures.
@@ -85,6 +116,78 @@ try {
   Write-Host 'Additive preparation lifecycle self-test passed.'
 } finally {
   if (Test-Path -LiteralPath $additiveRoot) { Remove-Item -LiteralPath $additiveRoot -Recurse -Force }
+}
+# A separate writable product repository and the owner's nested read-only
+# planning repository exercise the ordinary producer lifecycle, not a forged
+# state fixture or a role-only planning exemption.
+$planningRoot=Join-Path ([IO.Path]::GetTempPath()) ('workenv-own-planning-freeze-'+[guid]::NewGuid().ToString('N'))
+try {
+  $planningSeed=New-EnvelopeAdmissionPreparedFixture -Root $planningRoot -RepositoryRoot $repoRoot -TransitionLedgerModule $transitionLedgerModule -OwnerProducedPreparation -SelfHostedReadOnlyPlanning
+  $planningWorkspace=$planningSeed.workspace;$planningRepository=$planningSeed.source_repository
+  $planningAdmissionPath=Join-Path $planningRoot 'admission.json';Write-EnvelopeJson $planningAdmissionPath $planningSeed.admission_template
+  Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $planningWorkspace -DevelopmentUnitAdmission $planningAdmissionPath -ExpectedDevelopmentUnitAdmissionSha256 (Get-EnvelopeFileSha256 $planningAdmissionPath) -OutPath (Join-Path $planningWorkspace 'receipts/u002-admission.json') -Timestamp '2026-08-25T00:01:00.0000000Z' -Execute|Out-Null
+  $planningArguments=@{WorkspaceRoot=$planningWorkspace;UnitId='u002';RepoMapPath=(Join-Path $planningWorkspace 'repository-map.json');ValidationTier='quick'}
+  &$automationModule {param($a)Invoke-MorphospaceWorkUnitAutomation @a -Action Ready -Timestamp '2026-08-25T00:02:00.0000000Z' -Execute} $planningArguments|Out-Null
+  &$automationModule {param($a)Invoke-MorphospaceWorkUnitAutomation @a -Action Claim -Timestamp '2026-08-25T00:02:10.0000000Z' -Execute} $planningArguments|Out-Null
+  Invoke-EnvelopeGit $planningRepository @('add','morphospace/')|Out-Null;Invoke-EnvelopeGit $planningRepository @('commit','-m','commit-owned-preparation-admission-ready-claim')|Out-Null
+  $planningHead=(@(Invoke-EnvelopeGit $planningRepository @('rev-parse','HEAD'))[0]).Trim()
+  $planningUnit=Read-EnvelopeProtocolJson (Join-Path $planningWorkspace 'iteration-units/u002.json');$planningState=Read-EnvelopeProtocolJson (Join-Path $planningWorkspace 'workspace.state.json');$planningLock=Read-EnvelopeProtocolJson (Join-Path $planningWorkspace 'feature.lock.json')
+  $planningSource=Read-EnvelopeProtocolJson (Join-Path $planningWorkspace 'source-composition.json');$planningPin=@($planningSource.repositories|Where-Object repo_id -ceq 'project-shell')[0]
+  Assert-Envelope ($planningHead-cne[string]$planningPin.commit-and@($planningUnit.allowed_repositories.repo_id)-cnotcontains'project-shell') 'own-planning fixture did not advance real owner history outside writable product scope'
+  $planningFreeze=Copy-Envelope $freeze;$planningFreeze.freeze_id='u002-own-planning-freeze'
+  $planningFreeze.expected=[pscustomobject][ordered]@{project_sha256=(Get-EnvelopeCanonicalJsonSha256 (Read-EnvelopeProtocolJson (Join-Path $planningWorkspace 'project.spec.json')));state_sha256=(Get-EnvelopeCanonicalJsonSha256 $planningState);unit_sha256=(Get-EnvelopeCanonicalJsonSha256 $planningUnit);feature_lock_sha256=(Get-EnvelopeCanonicalJsonSha256 $planningLock);source_composition_path='source-composition.json';source_composition_sha256=(Get-EnvelopeFileSha256 (Join-Path $planningWorkspace 'source-composition.json'));repository_map_path='repository-map.json';repository_map_sha256=(Get-EnvelopeFileSha256 (Join-Path $planningWorkspace 'repository-map.json'));events_sha256=(Get-EnvelopeFileSha256 (Join-Path $planningWorkspace 'iteration-events.jsonl'));events_length=([IO.FileInfo](Join-Path $planningWorkspace 'iteration-events.jsonl')).Length;event_tail_id=[string]$planningState.last_event_id}
+  $planningFreeze.final_repositories=@([pscustomobject]@{repo_id='read-only-dependency';commit=$planningSeed.dependency_commit;tree=$planningSeed.dependency_tree});$planningFreeze.changed_paths=@([pscustomobject]@{repo_id='read-only-dependency';paths=@('dependency/')});$planningFreeze.feature_lock.revision=[int]$planningLock.revision;$planningFreeze.feature_lock.sha256=$planningFreeze.expected.feature_lock_sha256;$planningFreeze.source_composition.sha256=$planningFreeze.expected.source_composition_sha256
+  $planningFreezePath=Join-Path $planningRoot 'freeze.json';Write-EnvelopeJson $planningFreezePath $planningFreeze;$planningFreezeOut=Join-Path $planningWorkspace 'receipts/u002-own-planning-freeze.json'
+  $planningFreezeModule=@(Get-Module -All|Where-Object{$_.Path-eq(Join-Path $PSScriptRoot 'CandidateFreeze.psm1')}|Select-Object -Last 1)[0]
+  function Invoke-OwnedPlanningFreeze {
+    param([string]$WorkspaceRoot,[string]$UnitId,[string]$CandidateFreeze,[string]$OutPath,[string]$ExpectedCandidateFreezeSha256,[switch]$Execute)
+    &$planningFreezeModule {param($a)Invoke-MorphospaceFreezeCandidate @a} $PSBoundParameters
+  }
+  $planningDry=Invoke-OwnedPlanningFreeze -WorkspaceRoot $planningWorkspace -UnitId u002 -CandidateFreeze $planningFreezePath -OutPath $planningFreezeOut
+  function New-OwnedPlanningMerge([string]$Suffix,[switch]$OutsideMergeChange){
+    Invoke-EnvelopeGit $planningRepository @('checkout','-b',"control-left-$Suffix",$planningHead)|Out-Null
+    [IO.File]::WriteAllText((Join-Path $planningWorkspace "left-$Suffix.txt"),'control left');Invoke-EnvelopeGit $planningRepository @('add','morphospace/')|Out-Null;Invoke-EnvelopeGit $planningRepository @('commit','-m','left-control-only')|Out-Null
+    Invoke-EnvelopeGit $planningRepository @('checkout','-b',"control-right-$Suffix",$planningHead)|Out-Null
+    [IO.File]::WriteAllText((Join-Path $planningWorkspace "right-$Suffix.txt"),'control right');Invoke-EnvelopeGit $planningRepository @('add','morphospace/')|Out-Null;Invoke-EnvelopeGit $planningRepository @('commit','-m','right-control-only')|Out-Null
+    Invoke-EnvelopeGit $planningRepository @('checkout',"control-left-$Suffix")|Out-Null;Invoke-EnvelopeGit $planningRepository @('merge','--no-ff','--no-commit',"control-right-$Suffix")|Out-Null
+    if($OutsideMergeChange){[IO.File]::WriteAllText((Join-Path $planningRepository 'merge-only-outside.txt'),'outside change authored only in merge');Invoke-EnvelopeGit $planningRepository @('add','merge-only-outside.txt')|Out-Null}
+    Invoke-EnvelopeGit $planningRepository @('commit','-m','owner-history-merge')|Out-Null
+  }
+  New-OwnedPlanningMerge 'positive'
+  Invoke-OwnedPlanningFreeze -WorkspaceRoot $planningWorkspace -UnitId u002 -CandidateFreeze $planningFreezePath -OutPath $planningFreezeOut|Out-Null
+  Invoke-EnvelopeGit $planningRepository @('checkout','--detach',$planningHead)|Out-Null
+  foreach($planningCase in @('dirty-control','dirty-outside','committed-outside-and-reverted','non-descendant','stale-cas','map-drift','old-object','merge-only-outside')){
+    $damaged=Copy-Envelope $planningFreeze;$damagePath=Join-Path $planningRoot 'damaged-freeze.json';$restorePath='';$restoreBytes=$null
+    switch($planningCase){
+      'dirty-control'{$restorePath=Join-Path $planningWorkspace 'unowned.txt';[IO.File]::WriteAllText($restorePath,'unowned')}
+      'dirty-outside'{$restorePath=Join-Path $planningRepository 'outside.txt';[IO.File]::WriteAllText($restorePath,'unowned')}
+      'committed-outside-and-reverted'{$restorePath=Join-Path $planningRepository 'outside.txt';[IO.File]::WriteAllText($restorePath,'outside');Invoke-EnvelopeGit $planningRepository @('add','outside.txt')|Out-Null;Invoke-EnvelopeGit $planningRepository @('commit','-m','outside-control-change')|Out-Null;Remove-Item -LiteralPath $restorePath;Invoke-EnvelopeGit $planningRepository @('add','outside.txt')|Out-Null;Invoke-EnvelopeGit $planningRepository @('commit','-m','revert-outside-control-change')|Out-Null;$restorePath=''}
+      'non-descendant'{Invoke-EnvelopeGit $planningRepository @('checkout','--orphan','unrelated-owner-history')|Out-Null;Invoke-EnvelopeGit $planningRepository @('add','morphospace/')|Out-Null;Invoke-EnvelopeGit $planningRepository @('commit','-m','unrelated-owner-history')|Out-Null}
+      'merge-only-outside'{New-OwnedPlanningMerge 'negative' -OutsideMergeChange}
+      'stale-cas'{$damaged.expected.state_sha256='0'*64}
+      'map-drift'{$restorePath=Join-Path $planningWorkspace 'repository-map.json';$restoreBytes=[IO.File]::ReadAllBytes($restorePath);[IO.File]::AppendAllText($restorePath,' ')}
+      'old-object'{$restorePath=Join-Path $planningWorkspace 'source-composition.json';$restoreBytes=[IO.File]::ReadAllBytes($restorePath);$badSource=Copy-Envelope $planningSource;$badSource.repositories[0].tree='0'*40;Write-EnvelopeJson $restorePath $badSource}
+    }
+    Write-EnvelopeJson $damagePath $damaged;$before=Get-EnvelopeWorkspaceByteInventorySha256 $planningWorkspace;$denied=$false
+    try{Invoke-OwnedPlanningFreeze -WorkspaceRoot $planningWorkspace -UnitId u002 -CandidateFreeze $damagePath -OutPath $planningFreezeOut|Out-Null}catch{$denied=$true}
+    Assert-Envelope ($denied-and$before-ceq(Get-EnvelopeWorkspaceByteInventorySha256 $planningWorkspace)) "own-planning freeze accepted or mutated $planningCase"
+    if($restoreBytes){[IO.File]::WriteAllBytes($restorePath,$restoreBytes)}elseif($restorePath){Remove-Item -LiteralPath $restorePath}
+    if($planningCase-cin@('committed-outside-and-reverted','non-descendant','merge-only-outside')){Invoke-EnvelopeGit $planningRepository @('checkout','--detach',$planningHead)|Out-Null}
+  }
+  $ownEntry=[pscustomobject]@{role='planning';path=$planningRepository};$unrelatedWorkspace=Join-Path $planningRoot 'unrelated-workspace';[IO.Directory]::CreateDirectory($unrelatedWorkspace)|Out-Null
+  $unrelatedAccepted=&$planningFreezeModule {param($w,$e,$b,$c,$u)Test-MorphospaceOwnPlanningCandidateHistory $w $e $b $c $u $null} $unrelatedWorkspace $ownEntry $planningPin $planningSource $planningUnit
+  Assert-Envelope (-not$unrelatedAccepted) 'own-planning history exemption accepted a sibling workspace'
+  $planningRun=Invoke-OwnedPlanningFreeze -WorkspaceRoot $planningWorkspace -UnitId u002 -CandidateFreeze $planningFreezePath -ExpectedCandidateFreezeSha256 $planningDry.audit_receipt.sha256 -OutPath $planningFreezeOut -Execute
+  $planningFrozen=Read-EnvelopeProtocolJson (Join-Path $planningWorkspace 'iteration-units/u002.json');$planningConsumed=&$planningFreezeModule {param($w,$u)Test-MorphospaceFrozenCandidate $w $u} $planningWorkspace $planningFrozen
+  Assert-Envelope ($planningRun.transition-ceq'candidate-frozen'-and$planningConsumed-and(@(Invoke-EnvelopeGit $planningRepository @('rev-parse','HEAD'))[0]).Trim()-ceq$planningHead) 'read-only own-planning Freeze/consumer changed Git HEAD or lost owner provenance'
+  Write-Host 'Read-only own-planning external-owner Freeze controls passed (producer lifecycle, consumer, control-only merge, nine fail-closed negatives).'
+} finally {
+  if(Test-Path -LiteralPath $planningRoot){
+    $resolvedPlanningRoot=[IO.Path]::GetFullPath((Resolve-Path -LiteralPath $planningRoot).Path).TrimEnd('\','/')
+    $resolvedTemporaryRoot=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\','/')
+    if(-not([IO.Path]::GetDirectoryName($resolvedPlanningRoot).Equals($resolvedTemporaryRoot,[StringComparison]::OrdinalIgnoreCase))-or[IO.Path]::GetFileName($resolvedPlanningRoot)-cnotmatch'^workenv-own-planning-freeze-[0-9a-f]{32}$'){throw 'Refusing own-planning fixture cleanup outside its exact named temporary root.'}
+    Remove-Item -LiteralPath $resolvedPlanningRoot -Recurse -Force
+  }
 }
 if ($AdditivePreparationOnly) { return }
 
@@ -254,6 +357,10 @@ try {
   $relativeMapAdmission=New-EnvelopeReplacementAdmission -Template $admission -Workspace $relativeMapFixture.workspace -AdmissionId 'u003-relative-admission' -UnitId 'u003';$relativeMapAdmission.preparation=[ordered]@{preparation_kind='recovered';preparation_id='u003-envelope';receipt_path='receipts/u003-envelope.json';receipt_sha256=(Get-EnvelopeFileSha256 (Join-Path $relativeMapFixture.workspace 'receipts/u003-envelope.json'));source_composition_path='source-composition-locks/u003-envelope.json';source_composition_sha256=(Get-EnvelopeFileSha256 (Join-Path $relativeMapFixture.workspace 'source-composition-locks/u003-envelope.json'));recovery_receipt_path='receipts/u003-envelope-recovery-repreparation.json';recovery_receipt_sha256=(Get-EnvelopeFileSha256 $relativeMapOut)};$relativeMapAdmission.unit.source_composition.lock_path='source-composition-locks/u003-envelope.json';$relativeMapAdmission.unit.allowed_repositories=@([pscustomobject][ordered]@{repo_id='read-only-dependency';allowed_paths=@('dependency/')});$relativeMapAdmission.unit.read_only_dependencies=@([pscustomobject][ordered]@{repo_id='project-shell';paths=@('morphospace/');purpose='Synthetic predecessor workflow authority.';verification='Exact recovered source-composition identity.'});$relativeMapAdmission.expected.project_sha256=Get-EnvelopeCanonicalJsonSha256 (Read-EnvelopeProtocolJson (Join-Path $relativeMapFixture.workspace 'project.spec.json'));$relativeMapAdmission.expected.feature_lock_sha256=Get-EnvelopeCanonicalJsonSha256 (Read-EnvelopeProtocolJson (Join-Path $relativeMapFixture.workspace 'feature.lock.json'));$relativeMapAdmission.expected.source_composition_path='source-composition-locks/u003-envelope.json';$relativeMapAdmission.expected.source_composition_sha256=$relativeMapAdmission.preparation.source_composition_sha256;$relativeMapAdmission.expected.repository_map_path='local/repository-map.json';$relativeMapAdmission.expected.repository_map_sha256=Get-EnvelopeFileSha256 (Join-Path $relativeMapFixture.workspace 'local/repository-map.json')
   $relativeMapAdmissionPath=Join-Path $temp 'u003-relative-admission.json';Write-EnvelopeJson $relativeMapAdmissionPath $relativeMapAdmission;$relativeMapAdmissionOut=Join-Path $relativeMapFixture.workspace 'receipts/u003-relative-admission.json';$relativeMapAdmissionDry=Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $relativeMapFixture.workspace -DevelopmentUnitAdmission $relativeMapAdmissionPath -OutPath $relativeMapAdmissionOut -Timestamp '2026-08-25T00:01:50.0000000Z';$relativeMapAdmissionRun=Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $relativeMapFixture.workspace -DevelopmentUnitAdmission $relativeMapAdmissionPath -ExpectedDevelopmentUnitAdmissionSha256 $relativeMapAdmissionDry.audit_receipt.sha256 -OutPath $relativeMapAdmissionOut -Timestamp '2026-08-25T00:01:50.0000000Z' -Execute;Assert-Envelope ($relativeMapAdmissionRun.transition-ceq'development-unit-admitted') 'nested-map repreparation did not feed real recovered admission'
   $relativeMapAbsolute=Join-Path $relativeMapFixture.workspace 'local/repository-map.json';$relativeMapReady=&$automationModule {param($arguments)Invoke-MorphospaceWorkUnitAutomation @arguments} @{Action='Ready';WorkspaceRoot=$relativeMapFixture.workspace;UnitId='u003';RepoMapPath=$relativeMapAbsolute;ValidationTier='quick';Timestamp='2026-08-25T00:02:00.0000000Z';Execute=$true};$relativeMapClaim=&$automationModule {param($arguments)Invoke-MorphospaceWorkUnitAutomation @arguments} @{Action='Claim';WorkspaceRoot=$relativeMapFixture.workspace;UnitId='u003';RepoMapPath=$relativeMapAbsolute;ValidationTier='quick';Timestamp='2026-08-25T00:02:10.0000000Z';Execute=$true};Assert-Envelope ($relativeMapReady.transition-ceq'proposed-to-ready'-and$relativeMapClaim.transition-ceq'ready-to-active') 'nested-map recovered admission did not pass real Ready and Claim consumers'
+  # This clean-only Freeze journey checkpoints the genuine owner-produced
+  # recovery/admission/Ready/Claim control changes before freezing the product.
+  Invoke-EnvelopeGit (Split-Path $relativeMapFixture.workspace -Parent) @('add','morphospace/')|Out-Null
+  Invoke-EnvelopeGit (Split-Path $relativeMapFixture.workspace -Parent) @('commit','-m','nested-map-owner-lifecycle-checkpoint')|Out-Null
   [IO.File]::WriteAllText((Join-Path $relativeMapFixture.writable_repository 'dependency\candidate.txt'),'nested-map candidate descendant'+[Environment]::NewLine,[Text.UTF8Encoding]::new($false));Invoke-EnvelopeGit $relativeMapFixture.writable_repository @('add','dependency/candidate.txt')|Out-Null;Invoke-EnvelopeGit $relativeMapFixture.writable_repository @('commit','-m','nested-map-candidate-descendant')|Out-Null;$relativeMapCandidateCommit=(@(Invoke-EnvelopeGit $relativeMapFixture.writable_repository @('rev-parse','HEAD'))[0]).Trim().ToLowerInvariant();$relativeMapCandidateTree=(@(Invoke-EnvelopeGit $relativeMapFixture.writable_repository @('rev-parse','HEAD^{tree}'))[0]).Trim().ToLowerInvariant()
   $relativeMapUnit=Read-EnvelopeProtocolJson (Join-Path $relativeMapFixture.workspace 'iteration-units/u003.json');$relativeMapState=Read-EnvelopeProtocolJson (Join-Path $relativeMapFixture.workspace 'workspace.state.json');$relativeMapLock=Read-EnvelopeProtocolJson (Join-Path $relativeMapFixture.workspace 'feature.lock.json');$relativeMapEventsPath=Join-Path $relativeMapFixture.workspace 'iteration-events.jsonl';$relativeMapTail=@(Get-Content -LiteralPath $relativeMapEventsPath|Where-Object{$_}|ForEach-Object{$_|ConvertFrom-Json})[-1];$relativeMapSourceRelative='source-composition-locks/u003-envelope.json';$relativeMapSourceHash=Get-EnvelopeFileSha256 (Join-Path $relativeMapFixture.workspace $relativeMapSourceRelative)
   $relativeMapFreeze=[ordered]@{schema='rusty.morphospace.workflow.candidate_freeze.v1';freeze_id='u003-relative-freeze';project_id='envelope-test';unit_id='u003';expected=[ordered]@{project_sha256=(Get-EnvelopeCanonicalJsonSha256 (Read-EnvelopeProtocolJson (Join-Path $relativeMapFixture.workspace 'project.spec.json')));state_sha256=(Get-EnvelopeCanonicalJsonSha256 $relativeMapState);unit_sha256=(Get-EnvelopeCanonicalJsonSha256 $relativeMapUnit);feature_lock_sha256=(Get-EnvelopeCanonicalJsonSha256 $relativeMapLock);source_composition_path=$relativeMapSourceRelative;source_composition_sha256=$relativeMapSourceHash;repository_map_path='local/repository-map.json';repository_map_sha256=(Get-EnvelopeFileSha256 $relativeMapAbsolute);events_sha256=(Get-EnvelopeFileSha256 $relativeMapEventsPath);events_length=([IO.FileInfo]$relativeMapEventsPath).Length;event_tail_id=[string]$relativeMapTail.event_id};final_repositories=@([ordered]@{repo_id='read-only-dependency';commit=$relativeMapCandidateCommit;tree=$relativeMapCandidateTree});changed_paths=@([ordered]@{repo_id='read-only-dependency';paths=@('dependency/')});cleanliness_policy='clean-only';instruction_surfaces=@([ordered]@{path='README.md';disposition='reviewed-no-change'});feature_lock=[ordered]@{revision=[int]$relativeMapLock.revision;sha256=(Get-EnvelopeCanonicalJsonSha256 $relativeMapLock)};effects=@('none');permissions=@('none');device_use=@('none');test_matrix=@([ordered]@{test_id='quick';command='test'});cleanup_evidence=@('No residue.');source_composition=[ordered]@{path=$relativeMapSourceRelative;sha256=$relativeMapSourceHash};does_not_prove=@('Does not validate or accept.')};$relativeMapFreezePath=Join-Path $temp 'u003-relative-freeze.json';Write-EnvelopeJson $relativeMapFreezePath $relativeMapFreeze;$relativeMapFreezeOut=Join-Path $relativeMapFixture.workspace 'receipts/u003-relative-freeze.json';$relativeMapFreezeDry=Invoke-MorphospaceFreezeCandidate -WorkspaceRoot $relativeMapFixture.workspace -UnitId u003 -CandidateFreeze $relativeMapFreezePath -OutPath $relativeMapFreezeOut -Timestamp '2026-08-25T00:02:20.0000000Z';$relativeMapFreezeRun=Invoke-MorphospaceFreezeCandidate -WorkspaceRoot $relativeMapFixture.workspace -UnitId u003 -CandidateFreeze $relativeMapFreezePath -ExpectedCandidateFreezeSha256 $relativeMapFreezeDry.audit_receipt.sha256 -OutPath $relativeMapFreezeOut -Timestamp '2026-08-25T00:02:20.0000000Z' -Execute;Assert-Envelope ($relativeMapFreezeRun.transition-ceq'candidate-frozen'-and(Test-MorphospaceFrozenCandidate $relativeMapFixture.workspace (Read-EnvelopeProtocolJson (Join-Path $relativeMapFixture.workspace 'iteration-units/u003.json')))-and(Test-Path $relativeMapAbsolute)-and-not(Test-Path (Join-Path $relativeMapFixture.workspace 'repository-map.json'))) 'nested-map Reprepare-to-recovered-Admission journey did not pass the real Freeze consumer'
