@@ -1,62 +1,52 @@
 # Agent Notes
 
-This repository owns portable workflow contracts, schemas, examples, validators,
-and skill templates. Each project owns its instantiated `morphospace/` state.
-Keep live state, private evidence, and machine paths in the project or ignored
-local configuration; do not copy them here.
+This repository owns portable workflow contracts, schemas, validators and skill
+templates. Projects own their instantiated `morphospace/` state. Keep committed
+content public and portable; private evidence, machine paths, credentials,
+device identities and generated artifacts belong in ignored local storage.
 
-## Always apply
+## Continue the requested work
 
-- Keep committed content public and portable. Use placeholders in public docs;
-  keep machine paths, private repository names, device serials, package identities, credentials,
-  pairing material, logs, screenshots, APKs, and private payloads in ignored
-  `local/` or `artifacts/` locations.
-- Use PowerShell 7.6 LTS or newer through `pwsh` for authoritative workflows,
-  child runners, validation, and examples. Windows PowerShell 5.1 is only for
-  bootstrap detection; do not add new `powershell.exe` execution paths.
-- Preserve unrelated dirty work. Inspection and planning are non-mutating;
-  execution, validation, acceptance, publication, and device evidence are
-  distinct owner authorities. An active scoped task continues through already
-  authorized read-only or recoverable work; stop only at a real authority,
-  safety, scope, or evidence boundary.
-- Production declaration aliases exist only in the versioned lifecycle
-  `change_category_aliases` map. They map one-to-one to canonical categories
-  and never relabel accepted evidence.
-- Keep `AGENTS.md` and `SKILL.md` as routing indexes. Put long procedures in
-  linked owner docs. Review affected instructions before acceptance; edit only
-  surfaces whose guidance changes.
+Use the nearest owner instructions and the documents for the effect being
+changed. For a bounded implementation or documentation change, use
+[Direct Work Packages](docs/DIRECT_WORK_PACKAGES.md). For ordinary continuation,
+start with [Current Work Validation](docs/CURRENT_WORK_VALIDATION.md); read
+historical recovery only when selected or required by an actual current error.
 
-## Route the task
+Continue already authorized work and recoverable repairs through completion.
+Ask only about a real unresolved scope, authority, safety or evidence boundary;
+stop the dependent action and continue independent work. An explicitly active
+[Full Authority Mode](docs/FULL_AUTHORITY_MODE.md) supplies task-scoped delegation,
+not a substitute for owner contracts or exact evidence.
 
-Use the installed local routers:
+Preserve unrelated dirty work and immutable accepted history. Use `pwsh` 7.6 LTS
+or newer for authoritative workflows and child runners; Windows PowerShell 5.1
+is bootstrap detection only. A validation pass, acceptance, publication and device
+run remain separate facts.
 
-- `$rusty-morphospace` for normal architecture, ownership, composition,
-  workflow, validation, and instruction routing. It resolves the installed
-  locator directly.
-- `$rusty-morphospace-context` only for existing callers needing the compatibility locator.
-- `$rusty-morphospace-cleanup` for user-requested manual cleanup only; never schedule or hook it.
-- `$system-engineering` for authority, contracts, interfaces, observability,
-  and validation design.
-- `$rust-work-graph` for bounded inventories, source roots, and impact maps.
-- `$meta-quest-workflow` before live Quest, ADB, APK, launch, capture, logcat,
-  Perfetto, Wi-Fi ADB, or Meta tooling work. This repository never owns a
-  competing device procedure.
+## Route only the relevant concern
 
-Install or update local routers only through
-[Local Skill Bootstrap](docs/LOCAL_SKILL_BOOTSTRAP.md) and
-`scripts/Install-LocalSkills.ps1`. Managed writes require `-Execute`; updates
-back up managed content and preserve unmanaged files. The canonical Meta skill
-comes only from an explicit clean `meta-quest-agent-workflow` checkout.
+- `$rusty-morphospace`: normal first hop; resolves its installed locator directly.
+- `$system-engineering`: authority, contracts, interfaces and validation design.
+- `$rust-work-graph`: bounded source, dependency and instruction inventories.
+- `$meta-quest-workflow`: live Quest/ADB/APK/launch/capture/Meta work; this repo
+  owns no competing device procedure.
+- `$rusty-morphospace-context`: compatibility locator for existing callers.
+- `$rusty-morphospace-cleanup`: user-requested manual cleanup; never schedule it.
 
-## Choose the governing contract
+Install/update managed routers through [Local Skill Bootstrap](docs/LOCAL_SKILL_BOOTSTRAP.md)
+and `scripts/Install-LocalSkills.ps1`: writes require `-Execute`, updates back up
+managed bytes and preserve unmanaged files. Canonical Meta source comes from an
+explicit clean `meta-quest-agent-workflow` checkout.
 
-Read only the documents that match the requested work; their exact contracts
-remain authoritative.
+## Select the owner contract
+
+Read the matching row, rather than every document in this table.
 
 | Work | Read |
 | --- | --- |
 | Project composition, module extraction, activation, and isolation | [Project Workspace Protocol](docs/PROJECT_WORKSPACE_PROTOCOL.md), [Module Lifecycle](docs/MODULE_LIFECYCLE.md), [Feature Activation](docs/FEATURE_ACTIVATION.md), [Project Isolation](docs/PROJECT_ISOLATION.md) |
-| Iteration lifecycle, scoped work, hosted observation, transactions and recovery; active additions within unchanged objectives/ceilings; optional fresh executor/router binding and pre-Freeze tooling upgrades separate from product pins | [Autonomous Iteration](docs/AUTONOMOUS_ITERATION.md), [Active Development Envelope Extension](docs/ACTIVE_DEVELOPMENT_ENVELOPE_EXTENSION.md), [Tooling Context](docs/TOOLING_CONTEXT.md) |
+| Lifecycle, active envelope extension, or tooling upgrade | [Autonomous Iteration](docs/AUTONOMOUS_ITERATION.md), [Active Development Envelope Extension](docs/ACTIVE_DEVELOPMENT_ENVELOPE_EXTENSION.md), [Tooling Context](docs/TOOLING_CONTEXT.md) |
 | Ordinary continuation from adopted history | [Current Work Validation](docs/CURRENT_WORK_VALIDATION.md) |
 | Validation selection, affected checks, and evidence | [Validation](docs/VALIDATION.md), [Affected Validation](docs/AFFECTED_VALIDATION.md) |
 | Validator, policy, runner, or schema trust-root change | [External Validation Authority](docs/EXTERNAL_VALIDATION_AUTHORITY.md) |
@@ -69,52 +59,41 @@ remain authoritative.
 | Live Quest package or evidence work | [Quest APK Workflow](docs/QUEST_APK_WORKFLOW.md), then `$meta-quest-workflow` |
 | Instruction, router, or skill impact | [Instruction Synchronization](docs/INSTRUCTION_SYNCHRONIZATION.md) |
 
-Ordinary continuation uses the accepted current-work boundary. It keeps current
-units, authenticated transaction suffixes, explicit prerequisites, source locks,
-and scope strict; it does not retrofit newer requirements onto retired units.
-Use `-CurrentWorkOnly -SkipOwnerSelfTests` only for an unchanged adopted
-consumer. Historical recovery is an explicit route and preserves retained bytes.
-For fresh work in an idle project, follow [Development Envelope Preparation](docs/DEVELOPMENT_ENVELOPE_PREPARATION.md)
-and [Development Unit Admission](docs/DEVELOPMENT_UNIT_ADMISSION.md), including exact owner roots
-and any retained proposed-unit retirement.
 
-For concurrent work, bind source, build, and run to exact identities. A closed
-feature lock controls activation; selection alone does not activate a runtime.
-Keep reusable modules behind an independent consumer or conformance harness.
-Route operator UI and typed CLI/local API through one app handler with typed
-decision state and effective readback; keep device adapters out of reusable authorities.
+For fresh work in an idle project, use [Development Envelope Preparation](docs/DEVELOPMENT_ENVELOPE_PREPARATION.md)
+and [Development Unit Admission](docs/DEVELOPMENT_UNIT_ADMISSION.md), including
+exact roots and any retained proposed-unit retirement. A closed feature lock
+controls activation; selection alone does not activate a runtime. Bind concurrent
+source, build and run work to exact identities.
 
-## Authority and publication
+One owner controls each runtime parameter/state transition. Keep high-rate media
+out of control messages and device adapters out of reusable authorities. UI and
+typed CLI/local API share the app command handler and effective readback.
+Reusable modules need an independent consumer or conformance harness.
 
-One owner controls each runtime parameter and state transition. Adapter
-readback proves transport, while acceptance requires the consuming owner’s
-effective marker or receipt. Keep control planes separate from high-rate media,
-pose, depth, mesh, camera, particle, and GPU-buffer data. A validation pass,
-acceptance, publication, and device run remain separate facts.
+Publication and recovery use their named contracts in the table. Exact
+synchronized readback is only the unchanged, clean, equal-revision, zero-commit
+route with bound identity/order and an explicit no-acceptance claim. A hash-bound
+project preflight precedes expensive package/signer/grant/toolchain/bridge work;
+it supplies admission evidence only.
 
-Use exact synchronized readback only for an unchanged declared repository with
-equal revisions, clean state, zero commits, bound identity/order, and an
-explicit no-acceptance claim. Treat planned and source-only publication,
-intervening accepted publication, externally published planning authority, and
-historical reconstruction as their named owner contracts; none grants a general
-remote-drift, chronology-repair, Git-mutation, or publication exception.
+## Validate the changed behavior
 
-Before expensive package, signer, grant, toolchain, or bridge work, consume a
-hash-bound project-produced preflight observation. It is admission evidence,
-not build, device, validation, acceptance, or publication authority.
+Run focused affected checks and `git diff --check` while editing. Commit one
+coherent candidate, then select exact base/head using `Resolve-AffectedValidation.ps1`
+and run `Invoke-AffectedValidation.ps1` on the declared host. Inspect effective
+tier, selected checks, reasons and budgets in [Validation](docs/VALIDATION.md).
+Tiers describe coverage, not latency; device work has its separate owner route.
 
-## Validate proportionately
+Reuse finalized exact evidence when relevant inputs are unchanged. Changed owner
+tooling requires its own conformance and final CI; unchanged consumers use the
+current-work modes documented above. Do not repeat unrelated passing tests or
+apply newer policy to retired units merely to continue current work.
 
-Run focused owner checks and `git diff --check` while editing. Commit a coherent
-candidate before [exact affected validation](docs/VALIDATION.md), which binds working bytes to HEAD.
-Preview exact base/head with `Resolve-AffectedValidation.ps1`, then use `Invoke-AffectedValidation.ps1`
-on the selected host. Inspect requested/effective tiers, reasons and budgets; tiers describe coverage, not latency.
-Preserve pending platform obligations and reuse only finalized exact evidence. Cumulative suites remain
-explicit compatibility sweeps; dirty-source checks are diagnostic. A local commit grants no admission
-or publication authority, and these tiers exclude devices.
-
-Synchronize instructions when authority, modules, activation, validation,
-device policy, routing, or public/private boundaries change. Edit only changed
-guidance; read legacy only when selected. Give each tracked file one affected
-owner and specialized consumer beyond `public-boundary`; mirror aggregate owners
-as focused leaves with equal arguments. Freeze before the [exact-HEAD ownership audit](docs/AFFECTED_VALIDATION.md).
+[Instruction Synchronization](docs/INSTRUCTION_SYNCHRONIZATION.md) selects the
+smallest relevant surfaces for review; edit only guidance whose decision changed.
+Keep entrypoints as maps and procedures in owner docs. Production aliases belong
+only to the versioned lifecycle `change_category_aliases` map and never relabel
+accepted evidence. Each tracked path needs one affected owner and a specialized
+consumer beyond `public-boundary`; preserve focused aggregate parity and freeze
+before the [exact-HEAD ownership audit](docs/AFFECTED_VALIDATION.md).
