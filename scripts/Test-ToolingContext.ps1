@@ -291,8 +291,8 @@ if($Scenario-in@('all','ready-lifecycle')){
  & git -C $tool checkout --detach $OldCommit|Out-Null
  # Fresh process authenticates the old executor; no new-revision modules
  # retained in this child's session can impersonate that exact old context.
- $withdrawText=(& pwsh -NoProfile -NonInteractive -File (Join-Path $tool 'scripts/Invoke-WorkUnitAutomation.ps1') -Action WithdrawReady -WorkspaceRoot $ordinary.workspace -UnitId u002 -RepoMapPath (Join-Path $ordinary.workspace 'repository-map.json') -ValidationTier quick -OutPath (Join-Path $ordinary.workspace 'receipts/ordinary-withdraw.json') -Timestamp '2026-09-15T09:03:00.0000000Z' -Execute|Out-String)
- if($LASTEXITCODE-ne0){throw 'Ordinary unupgraded withdrawal child failed.'};$withdraw=$withdrawText|ConvertFrom-Json -Depth 100 -DateKind String
+ & pwsh -NoProfile -NonInteractive -File (Join-Path $tool 'scripts/Invoke-WorkUnitAutomation.ps1') -Action WithdrawReady -WorkspaceRoot $ordinary.workspace -UnitId u002 -RepoMapPath (Join-Path $ordinary.workspace 'repository-map.json') -ValidationTier quick -OutPath (Join-Path $ordinary.workspace 'receipts/ordinary-withdraw.json') -Timestamp '2026-09-15T09:03:00.0000000Z' -Execute|Out-Null
+ if($LASTEXITCODE-ne0){throw 'Ordinary unupgraded withdrawal child failed.'};$withdraw=Read-TC (Join-Path $ordinary.workspace 'receipts/ordinary-withdraw.json')
  Assert-TC ($withdraw.executed-and$withdraw.status_after-ceq'proposed') 'ordinary unupgraded withdrawal retained'
  Write-TCPhase 'ready-lifecycle-complete'
  [pscustomobject]@{result='pass';scenario=$Scenario;owner_produced_ready=$true;actual_upgrade_claim=$true;post_upgrade_withdraw='unsupported-fail-closed';device_calls=0}|ConvertTo-Json -Compress
