@@ -989,7 +989,7 @@ function Get-AffectedValidationFailureKind([string]$Result,[object]$Child,[Allow
 }
 function Write-AffectedValidationBudgetWarning {
     [CmdletBinding()]param($Check,$Child)
-    if($Child.EstimatedBudgetExceeded-and-not$Child.TimedOut){Write-Warning "Affected check '$($Check.check_id)' exceeded its estimated $($Check.budget_seconds)-second budget; the estimate did not cancel the child."}
+    if($Child.EstimatedBudgetExceeded-and-not$Child.TimedOut){Write-Warning "Affected check '$($Check.check_id)' exceeded its estimated $($Check.budget_seconds)-second budget; the estimate did not cancel the child." -WarningAction Continue}
 }
 function Invoke-AffectedValidationCheck([object]$Check, [string]$Command, [string[]]$IntegrityPaths, [object]$Inventory, [object[]]$DependencyManifest) {
     $started = [DateTimeOffset]::UtcNow
