@@ -69,10 +69,13 @@ $affectedPlan.selected_checks | Select-Object check_id, platforms, `
 
 `Tier` requests a coverage level; the effective tier can be higher when the
 selected obligations require it. Report that increase explicitly. Quick,
-Standard and Deep are not latency promises. `budget.actual` sums registered
-check ceilings; it is not measured or predicted wall time. Preserve required
-checks even when their cost exceeds a caller's limit: defer execution and
-report validation pending, rather than lowering coverage. No new global time
+Standard and Deep are not latency promises. `budget.actual` sums registered estimates; it is not measured or predicted wall time.
+Leaf estimates are advisory: exceeding one warns and retains actual completion.
+Use `Invoke-AffectedValidation.ps1 -StrictBudget` only when intentionally enforcing
+registered estimates as cancellation deadlines. Existing explicit inner timeouts,
+native completion, containment and complete output requirements still apply.
+Preserve required checks. An explicit caller execution constraint can defer
+execution with validation pending, rather than lowering coverage. No global time
 or fanout gate is implied.
 
 Execute the saved plan for the actual host platform, using another new output

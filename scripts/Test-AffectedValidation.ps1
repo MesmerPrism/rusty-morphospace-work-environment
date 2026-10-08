@@ -4406,7 +4406,7 @@ throw 'sustained output unexpectedly reached its natural terminal'
     Write-Utf8 $planPath ((ConvertTo-MorphospaceCanonicalJson -Value $timeoutPlan) + "`n")
     $timeoutEvidencePath = Join-Path $fixture 'timeout-evidence.json'
     $timeoutFailed = $false; $timeoutFailure = $null
-    try { [void](& (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $docsHead -HeadCommit $timeoutHead -PlanPath $planPath -Platform linux -OutPath $timeoutEvidencePath) } catch { $timeoutFailure = $_; $timeoutFailed = $_.Exception.Message -like '*code-fail*' }
+    try { [void](& (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -RepositoryRoot $fixture -BaseCommit $docsHead -HeadCommit $timeoutHead -PlanPath $planPath -Platform linux -OutPath $timeoutEvidencePath -StrictBudget) } catch { $timeoutFailure = $_; $timeoutFailed = $_.Exception.Message -like '*code-fail*' }
     $timeoutObserved = if ($null -eq $timeoutFailure) { '<no exception>' } else { [string]$timeoutFailure.Exception.Message }
     Assert-True $timeoutFailed "Affected executor accepted or misclassified a timed-out child. Observed: $timeoutObserved"
     $timeoutEvidence = Read-MorphospaceProtocolJson -Path $timeoutEvidencePath

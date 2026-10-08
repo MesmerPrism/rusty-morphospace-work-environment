@@ -119,7 +119,9 @@ evidence-relevant check definition, runner executable bytes and versions, and
 prerequisite binding identities. The raw registry remains bound by full plan
 selection validation; scheduling-only `execution_after_checks` metadata is the
 only check-definition field omitted from a reusable leaf binding. A
-zero-check platform request is invalid. A nonzero exit, timeout, output flood,
+zero-check platform request is invalid. Registered leaf time estimates warn on
+overrun and do not cancel by default; `-StrictBudget` explicitly enforces them.
+Explicit inner timeouts retain their meaning. A nonzero exit, enforced timeout, output flood,
 or post-kill drain overrun is `code-fail`; `infra-fail` is reserved for a
 process-start or host fault. Each failed child carries one closed
 `failure_kind` (`launch`, `timeout`, `output-limit`, `drain-timeout`,

@@ -10,6 +10,7 @@ param(
     [string]$PriorEvidenceDirectory,
     [ValidatePattern('^(?:windows|linux)-[0-9]{3}$')][string]$SegmentId,
     [switch]$RunRestorationCollisionSelfTest,
+    [switch]$StrictBudget,
     [switch]$PhaseProgress
 )
 
@@ -75,6 +76,7 @@ public sealed class W017BoundedChildResult {
     public bool Started;
     public int? ExitCode;
     public bool TimedOut;
+    public bool EstimatedBudgetExceeded;
     public bool OutputTruncated;
     public bool PostKillDrainTimedOut;
     public bool ChildTreeCleanupAttempted;
@@ -617,7 +619,7 @@ public static class W017SupervisorInnerJob {
         }
         throw new InvalidOperationException("owned validation supervisor evidence remained undeletable after its bounded cleanup deadline: " + last.Message, last);
     }
-    private static W017BoundedChildResult RunCore(string executable, string workingDirectory, string[] arguments, string[] environmentNames, string[] environmentValues, int budgetSeconds, int outputLimitBytes, int postKillDrainMilliseconds, string setupDamage) {
+    private static W017BoundedChildResult RunCore(string executable, string workingDirectory, string[] arguments, string[] environmentNames, string[] environmentValues, int budgetSeconds, int outputLimitBytes, int postKillDrainMilliseconds, string setupDamage, bool strictBudget = true) {
         var result = new W017BoundedChildResult();
         var output = new MemoryStream();
         var error = new MemoryStream();
@@ -715,7 +717,7 @@ public static class W017SupervisorInnerJob {
             while (true) {
                 if (!ready || result.TimedOut || !String.IsNullOrWhiteSpace(result.Error)) { break; }
                 if (Volatile.Read(ref state.Truncated) != 0) { break; }
-                if (DateTime.UtcNow >= deadline) { result.TimedOut = true; break; }
+                if (DateTime.UtcNow >= deadline) { result.EstimatedBudgetExceeded = true; if (strictBudget) { result.TimedOut = true; break; } }
                 if (process.WaitForExit(50)) {
                     if (completionTask == null || !completionTask.Wait(postKillDrainMilliseconds)) { AppendError(result, "owned validation supervisor completion did not close within its bounded deadline"); }
                     else { try { ApplySupervisorCompletion(result, completionTask.Result); } catch (Exception exception) { AppendError(result, exception.Message); } }
@@ -828,6 +830,9 @@ public static class W017SupervisorInnerJob {
         File.SetAttributes(objectPath, File.GetAttributes(objectPath) | FileAttributes.ReadOnly);
         DeleteOwnedSupervisorDirectory(root, 1000);
         if (Directory.Exists(root) || File.Exists(root)) { throw new InvalidOperationException("read-only owned supervisor evidence survived cleanup self-test"); }
+    }
+    public static W017BoundedChildResult RunWithBudgetPolicy(string executable, string workingDirectory, string[] arguments, string[] environmentNames, string[] environmentValues, int budgetSeconds, int outputLimitBytes, int postKillDrainMilliseconds, bool strictBudget) {
+        return RunCore(executable, workingDirectory, arguments, environmentNames, environmentValues, budgetSeconds, outputLimitBytes, postKillDrainMilliseconds, null, strictBudget);
     }
     public static W017BoundedChildResult Run(string executable, string workingDirectory, string[] arguments, string[] environmentNames, string[] environmentValues, int budgetSeconds, int outputLimitBytes, int postKillDrainMilliseconds) {
         return RunCore(executable, workingDirectory, arguments, environmentNames, environmentValues, budgetSeconds, outputLimitBytes, postKillDrainMilliseconds, null);
@@ -982,10 +987,14 @@ function Get-AffectedValidationFailureKind([string]$Result,[object]$Child,[Allow
     if(-not[string]::IsNullOrWhiteSpace([string]$Child.Error)){return 'infrastructure'}
     return 'exit-code'
 }
+function Write-AffectedValidationBudgetWarning {
+    [CmdletBinding()]param($Check,$Child)
+    if($Child.EstimatedBudgetExceeded-and-not$Child.TimedOut){Write-Warning "Affected check '$($Check.check_id)' exceeded its estimated $($Check.budget_seconds)-second budget; the estimate did not cancel the child."}
+}
 function Invoke-AffectedValidationCheck([object]$Check, [string]$Command, [string[]]$IntegrityPaths, [object]$Inventory, [object[]]$DependencyManifest) {
     $started = [DateTimeOffset]::UtcNow
     $clock = [Diagnostics.Stopwatch]::StartNew()
-    $budget = [Math]::Min([Math]::Max([int]$Check.budget_seconds, 1), 7200)
+    $budget = [int]$Check.budget_seconds
     $arguments = [Collections.Generic.List[string]]::new()
     foreach ($argument in @('-NoProfile', '-NonInteractive', '-File', $Command) + @($Check.arguments)) { [void]$arguments.Add([string]$argument) }
     Write-AffectedValidationPhaseProgress leaf-prepare start
@@ -1007,7 +1016,8 @@ function Invoke-AffectedValidationCheck([object]$Check, [string]$Command, [strin
         Write-AffectedValidationPhaseProgress leaf-prepare end
         if ($null -eq $integrityError) {
             Write-AffectedValidationPhaseProgress child-capture start
-            $child = [W017BoundedChildCapture]::Run((Get-Process -Id $PID).Path, $root, @($arguments.ToArray()), @($environmentProjection.names), @($environmentProjection.values), $budget, 10485760, 15000)
+            $child = [W017BoundedChildCapture]::RunWithBudgetPolicy((Get-Process -Id $PID).Path, $root, @($arguments.ToArray()), @($environmentProjection.names), @($environmentProjection.values), $budget, 10485760, 15000, [bool]$StrictBudget)
+            Write-AffectedValidationBudgetWarning -Check $Check -Child $child
             Write-AffectedValidationPhaseProgress child-capture end
             Write-AffectedValidationPhaseProgress leaf-postcheck start
             if ($null -ne $dependencyProjectionFile -and $null -ne $dependencyProjectionFile.stream) {
@@ -1061,7 +1071,7 @@ function Invoke-AffectedValidationCheck([object]$Check, [string]$Command, [strin
     $stdout = [byte[]]$child.Stdout
     $stderr = [byte[]]$child.Stderr
     if (-not [string]::IsNullOrWhiteSpace([string]$child.Error)) { $stderr = [Text.UTF8Encoding]::new($false).GetBytes([string]$child.Error) }
-    # A started check that overruns its contract or floods/drains output is a
+    # A started check with an explicitly enforced timeout or incomplete output is a
     # check failure.  `infra-fail` is reserved for a host/process-start fault;
     # pre-job availability uses the separate typed pending-infrastructure gate.
     $result = if (-not $child.Started) { 'infra-fail' } elseif ($child.TimedOut -or $child.OutputTruncated -or $child.PostKillDrainTimedOut) { 'code-fail' } elseif (-not [string]::IsNullOrWhiteSpace([string]$child.Error)) { 'infra-fail' } elseif ([int]$child.ExitCode -eq 0) { 'pass' } else { 'code-fail' }
