@@ -11,15 +11,15 @@ $leaf=Join-Path $local 'leaf.ps1';[IO.File]::WriteAllText($leaf,"Start-Sleep -Mi
 Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1') -Force
 foreach($name in @('Get-AffectedValidationBytesHash','Get-AffectedValidationChildEnvironmentProjection')){$f=$ast.Find({param($n)$n-is[Management.Automation.Language.FunctionDefinitionAst]-and$n.Name-eq$name},$true);if(!$f){throw 'Production environment projection missing'};Invoke-Expression $f.Extent.Text}
 $environment=Get-AffectedValidationChildEnvironmentProjection @{}
-$exe=(Get-Process -Id $PID).Path;$args=@('-NoProfile','-NonInteractive','-File',$leaf)
-$advisory=[W017BoundedChildCapture]::RunWithBudgetPolicy($exe,$local,$args,@($environment.names),@($environment.values),1,10485760,15000,$false)
+$exe=(Get-Process -Id $PID).Path;$cliArgs=@('-NoProfile','-NonInteractive','-File',$leaf)
+$advisory=[W017BoundedChildCapture]::RunWithBudgetPolicy($exe,$local,$cliArgs,@($environment.names),@($environment.values),1,10485760,15000,$false)
 if(!$advisory.Started-or$advisory.TimedOut-or!$advisory.EstimatedBudgetExceeded-or$advisory.ExitCode-ne0-or$advisory.OutputTruncated-or$advisory.PostKillDrainTimedOut-or!$advisory.ContainmentCleanupSucceeded-or!$advisory.SupervisorEvidenceCleanupSucceeded-or$advisory.Error){throw ('Advisory real-leaf completion failed: '+($advisory|ConvertTo-Json -Depth 5 -Compress))}
 if([Text.Encoding]::UTF8.GetString($advisory.Stdout)-cne'actual-complete'-or[Text.Encoding]::UTF8.GetString($advisory.Stderr)-cne'actual-stderr'){throw 'Advisory raw EOF capture changed'}
 $warnings=@();$savedWarningPreference=$WarningPreference
 try{$WarningPreference='Stop';$warningOutput=@(Write-AffectedValidationBudgetWarning -Check ([pscustomobject]@{check_id='real-advisory-leaf';budget_seconds=1}) -Child $advisory -WarningVariable warnings 3>&1)}finally{$WarningPreference=$savedWarningPreference}
 if($warnings.Count-ne1-or$warningOutput.Count-ne1-or$warningOutput[0]-isnot[Management.Automation.WarningRecord]){throw 'Advisory warning stopped completion or entered the success stream'}
 if([Text.Encoding]::UTF8.GetString($advisory.Stdout)-cne'actual-complete'-or[Text.Encoding]::UTF8.GetString($advisory.Stderr)-cne'actual-stderr'-or$advisory.ExitCode-ne0){throw 'Warning changed actual completed raw child capture'}
-$strict=[W017BoundedChildCapture]::RunWithBudgetPolicy($exe,$local,$args,@($environment.names),@($environment.values),1,10485760,15000,$true)
+$strict=[W017BoundedChildCapture]::RunWithBudgetPolicy($exe,$local,$cliArgs,@($environment.names),@($environment.values),1,10485760,15000,$true)
 if(!$strict.Started-or!$strict.TimedOut-or!$strict.EstimatedBudgetExceeded-or!$strict.ChildTreeCleanupAttempted-or!$strict.ContainmentCleanupSucceeded-or!$strict.SupervisorEvidenceCleanupSucceeded){throw 'Explicit strict budget did not time out and clean owned child'}
 if([Text.Encoding]::UTF8.GetString($strict.Stdout).Contains('actual-complete')){throw 'Canceled leaf claimed completion'}
 $invoke=$ast.Find({param($n)$n-is[Management.Automation.Language.FunctionDefinitionAst]-and$n.Name-eq'Invoke-AffectedValidationCheck'},$true).Extent.Text
