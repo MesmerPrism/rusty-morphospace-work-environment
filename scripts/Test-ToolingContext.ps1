@@ -1,4 +1,4 @@
-param([switch]$ArtifactSelectionOnly,[string]$ActualIntentPath='', [string]$ExpectedActualIntentSha256='', [switch]$SelfTest,[switch]$Child,[switch]$KeepFailedFixture,[string]$OldCommit='',[string]$NewCommit='',[string]$HarnessRoot='',[ValidateSet('all','lifecycle','recovery','product-negative','provenance-negative','instruction-context','ready-lifecycle')][string]$Scenario='all',[ValidateSet('all','after-intent','after-artifact','after-projection','after-event')][string]$RecoveryFault='all')
+param([switch]$ArtifactSelectionOnly,[string]$ActualIntentPath='', [string]$ExpectedActualIntentSha256='', [switch]$SelfTest,[switch]$Child,[switch]$KeepFailedFixture,[string]$OldCommit='',[string]$NewCommit='',[string]$HarnessRoot='',[ValidateSet('all','lifecycle','recovery','product-negative','provenance-negative','instruction-context','ready-lifecycle','post-nonpass')][string]$Scenario='all',[ValidateSet('all','after-intent','after-artifact','after-projection','after-event')][string]$RecoveryFault='all')
 Set-StrictMode -Version 2.0
 $ErrorActionPreference='Stop'
 $script:TestClosurePaths=$null
@@ -90,6 +90,7 @@ function Remove-ToolingTestRoot([string]$Path){$temp=[IO.Path]::GetFullPath([IO.
 if(-not$Child){
  $sourceRoot=Split-Path $PSScriptRoot -Parent;$root=if($HarnessRoot){[IO.Path]::GetFullPath($HarnessRoot)}else{Join-Path ([IO.Path]::GetTempPath()) ('tooling-context-'+[guid]::NewGuid().ToString('N'))};if(Test-Path -LiteralPath $root){throw 'Tooling-context parent fixture root already exists.'};Remove-ToolingTestRoot $root;$tool=Join-Path $root 'tool-owner';$preserve=$false
  $readyProcess=$null;$readyOutput=$null;$readyError=$null;$readyRoot=Join-Path ([IO.Path]::GetTempPath()) ('tooling-context-'+[guid]::NewGuid().ToString('N'));$readyClock=[Diagnostics.Stopwatch]::StartNew()
+ $postProcess=$null;$postOutput=$null;$postError=$null;$postRoot=Join-Path ([IO.Path]::GetTempPath()) ('tooling-context-'+[guid]::NewGuid().ToString('N'));$postClock=[Diagnostics.Stopwatch]::StartNew()
  try{
   if($Scenario-in@('all','lifecycle')){
    # Independent fixture roots and child process: no shared Git checkout,
@@ -98,6 +99,10 @@ if(-not$Child){
    foreach($argument in @('-NoProfile','-NonInteractive','-File',(Join-Path $sourceRoot 'scripts/Test-ToolingContext.ps1'),'-SelfTest','-Scenario','ready-lifecycle','-HarnessRoot',$readyRoot)){[void]$start.ArgumentList.Add($argument)}
    if($KeepFailedFixture){[void]$start.ArgumentList.Add('-KeepFailedFixture')}
    $readyProcess=[Diagnostics.Process]::new();$readyProcess.StartInfo=$start;[void]$readyProcess.Start();$readyOutput=$readyProcess.StandardOutput.ReadToEndAsync();$readyError=$readyProcess.StandardError.ReadToEndAsync()
+   $start=[Diagnostics.ProcessStartInfo]::new();$start.FileName=(@(Get-Command pwsh -CommandType Application)[0]).Source;$start.UseShellExecute=$false;$start.CreateNoWindow=$true;$start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
+   foreach($argument in @('-NoProfile','-NonInteractive','-File',(Join-Path $sourceRoot 'scripts/Test-ToolingContext.ps1'),'-SelfTest','-Scenario','post-nonpass','-HarnessRoot',$postRoot)){[void]$start.ArgumentList.Add($argument)}
+   if($KeepFailedFixture){[void]$start.ArgumentList.Add('-KeepFailedFixture')}
+   $postProcess=[Diagnostics.Process]::new();$postProcess.StartInfo=$start;[void]$postProcess.Start();$postOutput=$postProcess.StandardOutput.ReadToEndAsync();$postError=$postProcess.StandardError.ReadToEndAsync()
   }
   [IO.Directory]::CreateDirectory($tool)|Out-Null;foreach($name in @('.github','config','docs','examples','fixtures','manifests','schemas','scripts','skills','templates','tools')){Copy-Item -LiteralPath (Join-Path $sourceRoot $name) -Destination (Join-Path $tool $name) -Recurse};foreach($name in @('.gitattributes','.gitignore','AGENTS.md','CHANGELOG.md','CONTRIBUTING.md','LICENSE','NOTICE.md','README.md','SECURITY.md')){Copy-Item -LiteralPath (Join-Path $sourceRoot $name) -Destination (Join-Path $tool $name)};foreach($file in @(Get-ChildItem -LiteralPath $tool -Recurse -File)){if(@('.ps1','.psm1','.psd1','.json','.md','.yml','.yaml','.toml','.txt','.gitignore','.gitattributes')-contains$file.Extension-or$file.Name-in@('.gitignore','.gitattributes')){$text=[IO.File]::ReadAllText($file.FullName);if($text.IndexOf([char]0)-lt0){[IO.File]::WriteAllText($file.FullName,$text.Replace("`r`n","`n"),[Text.UTF8Encoding]::new($false))}}}
   & git -C $tool init --initial-branch=main|Out-Null;& git -C $tool config user.name 'Tooling Context Test';& git -C $tool config user.email 'tooling-context@example.invalid';& git -C $tool config commit.gpgsign false;& git -C $tool config core.autocrlf false;& git -C $tool remote add origin 'https://example.invalid/work-environment.git';& git -C $tool add --all;& git -C $tool commit -m 'old tooling context'|Out-Null;& git -C $tool checkout-index -a -f;& git -C $tool reset --hard HEAD|Out-Null;$old=(& git -C $tool rev-parse HEAD).Trim().ToLowerInvariant()
@@ -113,11 +118,26 @@ if(-not$Child){
    if($readyProcess.ExitCode-ne0){throw "Independent Ready tooling child failed with exit code $($readyProcess.ExitCode)."}
   }
 
+  if($null-ne$postProcess){
+   $remaining=[Math]::Max(0,590000-[int]$postClock.ElapsedMilliseconds)
+   if(-not$postProcess.WaitForExit($remaining)){throw 'Independent Post-nonpass tooling child exceeded the shared bounded lifecycle deadline.'}
+   if(-not[Threading.Tasks.Task]::WaitAll([Threading.Tasks.Task[]]@($postOutput,$postError),5000)){throw 'Independent Post-nonpass tooling child output drain exceeded its bounded deadline.'}
+   $postStdout=$postOutput.GetAwaiter().GetResult();$postStderr=$postError.GetAwaiter().GetResult()
+   if($postStdout){[Console]::Out.Write($postStdout)};if($postStderr){[Console]::Error.Write($postStderr)}
+   if($postProcess.ExitCode-ne0){throw "Independent Post-nonpass tooling child failed with exit code $($postProcess.ExitCode)."}
+  }
+
   }catch{if($KeepFailedFixture){$preserve=$true;[Console]::Error.WriteLine("tooling_context_failed_fixture=$root")};throw}finally{
    if($null-ne$readyProcess){
     if(-not$readyProcess.HasExited){$readyProcess.Kill($true);if(-not$readyProcess.WaitForExit(5000)){throw 'Independent Ready tooling child did not stop after bounded cancellation.'}}
     $readyProcess.Dispose()
     if(-not$KeepFailedFixture){Remove-ToolingTestRoot $readyRoot}
+   }
+
+   if($null-ne$postProcess){
+    if(-not$postProcess.HasExited){$postProcess.Kill($true);if(-not$postProcess.WaitForExit(5000)){throw 'Independent Post-nonpass tooling child did not stop after bounded cancellation.'}}
+    $postProcess.Dispose()
+    if(-not$KeepFailedFixture){Remove-ToolingTestRoot $postRoot}
    }
    if(-not$preserve){Remove-ToolingTestRoot $root}
   }
@@ -133,6 +153,7 @@ $automationModule=Import-Module (Join-Path $PSScriptRoot 'WorkUnitAutomation.psm
 $provenanceModule=Import-Module (Join-Path $PSScriptRoot 'ToolingContextProvenance.psm1') -Force -PassThru
 $upgradeModule=Import-Module (Join-Path $PSScriptRoot 'ToolingContextUpgrade.psm1') -Force -PassThru
 . (Join-Path $PSScriptRoot 'test-support/DevelopmentAdmissionFixture.ps1')
+. (Join-Path $PSScriptRoot 'test-support/ActiveUnitRetirementFixture.ps1')
 function Get-MorphospaceToolingContextAllowedActions { &$provenanceModule {Get-MorphospaceToolingContextAllowedActions} }
 function New-MorphospaceToolingContext { [CmdletBinding()]param([string]$ContextId,[string]$ProjectId,[string]$PreparationId,[object]$ProductProjection,[object]$Resolver,[object]$Executor,[object[]]$Routers,[object]$Compatibility);&$provenanceModule {param($p)New-MorphospaceToolingContext @p} $PSBoundParameters }
 function Invoke-MorphospaceUpgradeToolingContext { [CmdletBinding()]param([string]$WorkspaceRoot,[string]$UnitId,[string]$ToolingContextUpgrade,[string]$ExpectedToolingContextUpgradeSha256,[string]$OutPath,[string]$Timestamp,[string]$FaultAfter,[switch]$Execute);&$upgradeModule {param($p)Invoke-MorphospaceUpgradeToolingContext @p} $PSBoundParameters }
@@ -227,6 +248,27 @@ if($Scenario-in@('all','lifecycle','instruction-context')){
   return
  }
 }
+if($Scenario-ceq'post-nonpass'){
+ $nonpassWorkspace=Join-Path $HarnessRoot 'post-nonpass';Copy-Item -LiteralPath $workspace -Destination $nonpassWorkspace -Recurse
+ & git -C $nonpassWorkspace init --initial-branch=main|Out-Null;& git -C $nonpassWorkspace config user.name 'Nonpass Fixture';& git -C $nonpassWorkspace config user.email 'fixture@example.invalid';& git -C $nonpassWorkspace config commit.gpgsign false;& git -C $nonpassWorkspace config core.autocrlf false
+ [IO.File]::AppendAllText((Join-Path $nonpassWorkspace '.git/info/exclude'),"`nlocal/`n")
+ & git -C $nonpassWorkspace add --all;& git -C $nonpassWorkspace commit -qm 'Checkpoint authentic admitted fixture'
+ $nonpassMap=Join-Path $nonpassWorkspace 'repository-map.json';$nonpassFreeze=Join-Path $HarnessRoot 'post-nonpass-freeze.json';$null=New-RetirementNonpassFreezeRequest $nonpassWorkspace $nonpassMap $nonpassFreeze
+ $run=Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1';$lifecycle=@{WorkspaceRoot=$nonpassWorkspace;UnitId='u002';RepoMapPath=$nonpassMap;ValidationTier='quick'}
+ $null=&$run @lifecycle -Action FreezeCandidate -CandidateFreeze $nonpassFreeze -ExpectedCandidateFreezeSha256 (FileHash $nonpassFreeze) -OutPath (Join-Path $nonpassWorkspace 'receipts/u002-extension-freeze.json') -Timestamp '2026-09-15T08:20:00.0000000Z' -Execute
+ $null=&$automationModule {param($a)Invoke-MorphospaceWorkUnitAutomation @a -Action BeginValidation -Timestamp '2026-09-15T08:21:00.0000000Z' -Execute} $lifecycle
+ $unit=Read-TC (Join-Path $nonpassWorkspace 'iteration-units/u002.json');$matrix=@(&$automationModule {param($u)New-MorphospaceValidationMatrix -Unit $u -DeviceSerials @()} $unit)
+ $evidencePath=Join-Path $HarnessRoot 'synthetic-failure.txt';[IO.File]::WriteAllText($evidencePath,'Host-only synthetic failure, no device effects.')
+ $evidence=[pscustomobject]@{receipt_id='u002-synthetic-nonpass';tier='quick';result='fail';artifacts=@([pscustomobject]@{artifact_id='fixture';kind='host-control';path=$evidencePath});criteria=@($unit.acceptance|ForEach-Object{[pscustomobject]@{acceptance_id=$_.acceptance_id;status='fail';command=$_.command;evidence_refs=@('fixture')}});gates=@($matrix|Where-Object disposition -CNE 'forbidden'|ForEach-Object{[pscustomobject]@{gate_id=$_.gate_id;status='fail';command=$_.command;evidence_refs=@('fixture')}});device_validation=$null}
+ Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceValidationReceipt.psm1');$null=New-MorphospaceValidationReceiptV1 -WorkspaceRoot $nonpassWorkspace -UnitId u002 -RepoMapPath $nonpassMap -Evidence $evidence -OutPath (Join-Path $nonpassWorkspace 'receipts/post-fail.json') -CreatedAt '2026-09-15T08:22:00.0000000Z'
+ $null=&$automationModule {param($a)Invoke-MorphospaceWorkUnitAutomation @a -Action RecordValidation -ValidationReceipt 'receipts/post-fail.json' -ValidationResult fail -Timestamp '2026-09-15T08:23:00.0000000Z' -Execute} $lifecycle
+ $null=&$automationModule {param($a)Invoke-MorphospaceWorkUnitAutomation @a -Action Resume -Timestamp '2026-09-15T08:24:00.0000000Z' -Execute} $lifecycle
+ $state=Read-TC (Join-Path $nonpassWorkspace 'workspace.state.json');$heads=@();$sources=@()
+ foreach($entry in @((Read-TC $nonpassMap).repositories)){$heads+=@([pscustomobject]@{repo_id=$entry.repo_id;revision=GitScalar $entry.path @('rev-parse','HEAD');branch=GitScalar $entry.path @('branch','--show-current')});$file=@(Get-ChildItem $entry.path -Recurse -File|Where-Object {-not $_.FullName.Contains([IO.Path]::DirectorySeparatorChar+'.git'+[IO.Path]::DirectorySeparatorChar)}|Select-Object -First 1)[0];$sources+=@([pscustomobject]@{repo_id=$entry.repo_id;sources=@([pscustomobject]@{path=[IO.Path]::GetRelativePath($entry.path,$file.FullName).Replace([IO.Path]::DirectorySeparatorChar,'/');sha256=FileHash $file.FullName})})}
+ $resolution=[pscustomobject]@{schema='rusty.morphospace.workflow.blocker_resolution_receipt.v1';receipt_id='u002-scope-disposition';project_id=$state.project_id;unit_id='u002';blocker=$state.blockers[0];result='pass';evidence=@([pscustomobject]@{path='receipts/post-fail.json';sha256=FileHash (Join-Path $nonpassWorkspace 'receipts/post-fail.json')});repository_heads=$heads;repository_sources=$sources;preserve_blocker_ids=@()};$resolutionPath=Save-Request $HarnessRoot $resolution 'post-resolution.json'
+ $null=&$run @lifecycle -Action ResolveBlocker -BlockerResolutionReceipt $resolutionPath -OutPath (Join-Path $nonpassWorkspace 'receipts/post-resolution.json') -Timestamp '2026-09-15T08:25:00.0000000Z' -Execute
+ & git -C $nonpassWorkspace add --all;& git -C $nonpassWorkspace commit -qm 'Checkpoint authentic failed resumed resolved fixture'
+}
 & git -C $tool checkout --detach $newCommit|Out-Null;if($LASTEXITCODE-ne0){throw 'Fixture could not advance to new tooling HEAD.'};$automationModule=Import-Module (Join-Path $PSScriptRoot 'WorkUnitAutomation.psm1') -Force -PassThru;$provenanceModule=Import-Module (Join-Path $PSScriptRoot 'ToolingContextProvenance.psm1') -Force -PassThru;$upgradeModule=Import-Module (Join-Path $PSScriptRoot 'ToolingContextUpgrade.psm1') -Force -PassThru
 $base=Join-Path $HarnessRoot 'active-base';Copy-Item -LiteralPath $workspace -Destination $base -Recurse
 Write-TCPhase 'setup-complete'
@@ -239,6 +281,26 @@ function New-Case([string]$Name){$case=Join-Path $HarnessRoot $Name;Copy-Item -L
 
 
 
+if($Scenario-ceq'post-nonpass'){
+ $retirementModule=Import-Module (Join-Path $PSScriptRoot 'ActiveUnitRetirement.psm1') -PassThru
+ $npUnit=Read-TC (Join-Path $nonpassWorkspace 'iteration-units/u002.json');$npState=Read-TC (Join-Path $nonpassWorkspace 'workspace.state.json');$freezeBefore=Canonical $npUnit.candidate_freeze;$checkpointBefore=Canonical $npState.validation_checkpoint
+ foreach($damage in @('passing','unfailed','wrong-owner','blocked','freeze-drift','checkpoint-drift','interleaved')){
+  $u=Clone $npUnit;$st=Clone $npState
+  switch($damage){'passing'{$st.validation_checkpoint.result='pass'};'unfailed'{$st.validation_checkpoint=$null};'wrong-owner'{$st.current_unit='u099'};'blocked'{$st.blockers=@([pscustomobject]@{blocker_id='other';condition='other';resume_when='other'})};'freeze-drift'{$u.candidate_freeze.receipt_sha256='0'*64};'checkpoint-drift'{$st.validation_checkpoint.receipt='receipts/forged.json'};'interleaved'{$st.last_event_id='u099-blocker-resolved-9999'}}
+  $denied=$false;try{&$retirementModule {param($w,$u,$s)Assert-ActiveRetirementPostNonpassUpgradeSlot $w $u $s u002} $nonpassWorkspace $u $st}catch{$denied=$true};Assert-TC $denied "post-nonpass upgrade negative $damage"
+ }
+ $npRequest=New-UpgradeRequest $nonpassWorkspace 'upgrade-post-nonpass';$npPath=Save-Request $HarnessRoot $npRequest 'upgrade-post-nonpass.json';$npFixture=[pscustomobject]@{workspace=$nonpassWorkspace}
+ $interrupted=$false;try{Invoke-Upgrade $npFixture $npPath 'after-projection'|Out-Null}catch{$interrupted=$_.Exception.Message-ceq'Injected interruption after projections.'};Assert-TC $interrupted 'actual post-nonpass upgrade interruption'
+ $done=Invoke-Upgrade $npFixture $npPath;Assert-TC $done.executed 'actual post-nonpass upgrade recovery'
+ $afterUnit=Read-TC (Join-Path $nonpassWorkspace 'iteration-units/u002.json');$afterState=Read-TC (Join-Path $nonpassWorkspace 'workspace.state.json');Assert-TC ((Canonical $afterUnit.candidate_freeze)-ceq$freezeBefore-and(Canonical $afterState.validation_checkpoint)-ceq$checkpointBefore) 'post-nonpass upgrade preserves exact freeze and failure checkpoint'
+ $null=Invoke-Upgrade $npFixture $npPath
+ & git -C $nonpassWorkspace add --all;& git -C $nonpassWorkspace commit -qm 'Checkpoint authenticated post-nonpass tooling upgrade'
+ $retirement=New-ActiveUnitRetirementRequest -WorkspaceRoot $nonpassWorkspace -RepoMapPath (Join-Path $nonpassWorkspace 'repository-map.json');$retirePath=Save-Request $HarnessRoot $retirement 'post-nonpass-retirement.json'
+ $dry=&$retirementModule {param($w,$p,$h)Invoke-MorphospaceRetireActive -WorkspaceRoot $w -UnitId u002 -RepoMapPath (Join-Path $w 'repository-map.json') -ActiveUnitRetirement $p -ExpectedActiveUnitRetirementSha256 $h -OutPath (Join-Path $w 'receipts/retire-u002.json') -Timestamp '2026-09-15T09:01:00.0000000Z'} $nonpassWorkspace $retirePath (FileHash $retirePath)
+ Assert-TC (-not$dry.executed) 'public post-upgrade retirement reader'
+ Write-TCPhase 'post-nonpass-upgrade-retirement-complete'
+ if($Scenario-ceq'post-nonpass'){[pscustomobject]@{result='pass';scenario=$Scenario;actual_failed_frozen_upgrade=$true;retirement_reader=$true;negative_cases=7;device_calls=0}|ConvertTo-Json -Compress;return}
+}
 if($Scenario-in@('all','lifecycle')){$positive=New-Case 'positive';$request=New-UpgradeRequest $positive.workspace 'upgrade-positive';$requestPath=Save-Request $HarnessRoot $request 'upgrade-positive.json';$productBefore=(@($projection.PSObject.Properties|ForEach-Object{FileHash (Join-Path $positive.workspace ([string]$_.Value.path))}))-join'|';$dry=Invoke-MorphospaceUpgradeToolingContext -WorkspaceRoot $positive.workspace -UnitId u002 -ToolingContextUpgrade $requestPath -OutPath (Join-Path $positive.workspace 'receipts/upgrade-positive-tooling-context-upgrade-request.json') -Timestamp '2026-09-15T09:00:00.0000000Z';Assert-TC (-not$dry.executed) 'dry run';$done=Invoke-Upgrade $positive $requestPath;Assert-TC $done.executed 'positive execute'
 $unitAfter=Read-TC (Join-Path $positive.workspace 'iteration-units/u002.json');Assert-TC ([string]$unitAfter.tooling_context.path-ceq'tooling-contexts/ctx-new.json') 'positive pointer';Assert-TC (((@($projection.PSObject.Properties|ForEach-Object{FileHash (Join-Path $positive.workspace ([string]$_.Value.path))}))-join'|')-ceq$productBefore) 'positive preserved product bytes';$inspectArgs=@{WorkspaceRoot=$positive.workspace;UnitId='u002';RepoMapPath=(Join-Path $positive.workspace 'repository-map.json');ValidationTier='quick'};$inspection=&$automationModule {param($a)Invoke-MorphospaceWorkUnitAutomation @a -Action Inspect} $inspectArgs;Assert-TC ([string]$inspection.action-ceq'Inspect') 'post-upgrade Inspect';$beforeReplay=WorkspaceFingerprint $positive.workspace;$replay=Invoke-Upgrade $positive $requestPath;Assert-TC ($replay.executed-and(WorkspaceFingerprint $positive.workspace)-ceq$beforeReplay) 'exact replay';$event=@(Get-Content -LiteralPath (Join-Path $positive.workspace 'iteration-events.jsonl')|Where-Object{$_}|ForEach-Object{FromBytes ([Text.UTF8Encoding]::new($false).GetBytes([string]$_))})[-1];Test-MorphospaceHistoricalToolingContextUpgrade $positive.workspace $event|Out-Null
 $retirementModule=Import-Module (Join-Path $PSScriptRoot 'ActiveUnitRetirement.psm1') -Force -PassThru;$proofs=@(&$retirementModule {param($workspace,$upgrade,$context)Get-ActiveRetirementToolingProofBindings -WorkspaceRoot $workspace -Request $upgrade -Context $context} $positive.workspace $request $new);$expectedProofs=@('receipts/tool-validation-new.json','receipts/tool-publication-new.json','receipts/tool-protocol-new.json','receipts/upgrade-positive-compatibility.json')|Sort-Object -CaseSensitive;Assert-TC ((@($proofs|ForEach-Object{[string]$_.path})-join'|')-ceq($expectedProofs-join'|')) 'retirement proof closure after upgrade';foreach($proof in $proofs){Assert-TC ((FileHash (Join-Path $positive.workspace ([string]$proof.path)))-ceq[string]$proof.sha256) 'retirement proof byte binding'};Write-TCPhase 'lifecycle-complete'}

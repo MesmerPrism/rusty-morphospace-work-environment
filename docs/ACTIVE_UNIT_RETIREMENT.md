@@ -51,7 +51,15 @@ accepts only the final-byte projection of an authenticated
 `Prepare`/`Admit`/`RetireProposed`/`Admit`/`Ready`/`Claim` replacement form,
 followed by zero or more contiguous same-unit `AmendActiveWriteScope` and
 `UpgradeToolingContext` transactions. Every continuation is revalidated by its
-owning historical semantic verifier. An upgrade also binds the exact
+owning historical semantic verifier. A frozen unit may also retain its exact
+instruction completion, FreezeCandidate, BeginValidation, fail RecordValidation,
+Resume and passing scope-disposition ResolveBlocker chain. Retirement
+authenticates each preceding target and reconstructs the exact next state and
+unit; Resume and resolution preserve the nonpass checkpoint and acceptance.
+The fail receipt must retain its original committed blob across every later
+path-changing commit, including a rewrite followed by restoration. Its hashed
+artifacts and resolution evidence remain exact. Other lifecycle transitions,
+validation promotion, and unknown projection changes are rejected. An upgrade also binds the exact
 compatibility, publication, protocol, and affected-validation proof files
 referenced by its authenticated request and resulting tooling context.
 The verifier applies last-writer wins in ledger order and rejects staged
@@ -163,3 +171,12 @@ tampered bindings leave the committed descendant unauthenticated.
 Ready may refresh its recorded repository heads. The owner verifies the exact
 original predecessor transaction and preimage, retaining those historical heads
 as inert observations without replaying current repository observations.
+
+The optional `retained_lifecycle_diagnostics` request field retains up to three
+original BeginValidation, failed RecordValidation and Resume wrapper outputs.
+Each is bound to its original Git addition and exact raw/canonical bytes, blob,
+owner event, timestamp, action, status and current-owner projections. The reader
+authenticates these as inert diagnostics; they do not replace transition
+artifacts, supply acceptance or grant a runtime effect. Original Ready/Claim
+diagnostic filenames may use either the date suffix or the producer's undated
+`-ready.json` / `-claim.json` spelling, with the same semantic and blob guards.

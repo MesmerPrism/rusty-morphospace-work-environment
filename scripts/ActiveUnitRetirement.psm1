@@ -119,9 +119,108 @@ function Assert-ActiveRetirementPlanningContinuationEvents {
     param([object[]]$Events,[int]$AfterSequence,[string]$UnitId)
     for($index=0;$index-lt$Events.Count;$index++){
         $event=$Events[$index]
-        if([int]$event.sequence-ne($AfterSequence+$index+1)-or[string]$event.unit_id-cne$UnitId-or[string]$event.event_id-cnotmatch'^[a-z0-9][a-z0-9-]{1,127}-(?:recorded|tooling-context-upgraded)$'){throw 'Active retirement planning continuation is not a contiguous same-unit authenticated transition suffix.'}
+        if([int]$event.sequence-ne($AfterSequence+$index+1)-or[string]$event.unit_id-cne$UnitId-or[string]$event.event_id-cnotmatch'^[a-z0-9][a-z0-9-]{1,127}-(?:recorded|tooling-context-upgraded|validating-[0-9]{4,}|validation-fail-[0-9]{4,}|resumed-[0-9]{4,}|blocker-resolved-[0-9]{4,})$'){throw 'Active retirement planning continuation is not a contiguous same-unit authenticated transition suffix.'}
     }
 }
+function Assert-ActiveRetirementImmutableNonpassReceipt {
+    param([string]$Workspace,[string]$Relative)
+    $repository=(@(&git -C $Workspace rev-parse --show-toplevel 2>&1)-join'').Trim();if($LASTEXITCODE-ne0){throw 'Active retirement nonpass receipt requires committed planning history.'}
+    $prefix=[IO.Path]::GetRelativePath($repository,$Workspace).Replace('\','/').TrimEnd('/');if($prefix-ceq'.'){$prefix=''}else{$prefix+='/' };$gitPath=$prefix+$Relative
+    $additions=@(&git -C $repository log --format=%H --diff-filter=A -- $gitPath 2>&1);if($LASTEXITCODE-ne0-or$additions.Count-ne1){throw 'Active retirement nonpass receipt requires one original committed addition.'}
+    $blob=(@(&git -C $repository rev-parse "$($additions[0]):$gitPath" 2>&1)-join'').Trim();if($LASTEXITCODE-ne0){throw 'Active retirement nonpass original blob is unavailable.'}
+    $changes=@(&git -C $repository log --format=%H -- $gitPath 2>&1);if($LASTEXITCODE-ne0){throw 'Active retirement nonpass receipt history is unavailable.'}
+    foreach($revision in @($changes)+@('HEAD')){$observed=(@(&git -C $repository rev-parse "$($revision):$gitPath" 2>&1)-join'').Trim();if($LASTEXITCODE-ne0-or$observed-cne$blob){throw 'Active retirement nonpass original receipt was rewritten in planning history.'}}
+    $live=(@(&git -C $repository hash-object --path=$gitPath -- (Resolve-MorphospaceWorkspacePath $Workspace $Relative -RequireLeaf) 2>&1)-join'').Trim();if($LASTEXITCODE-ne0-or$live-cne$blob){throw 'Active retirement nonpass original receipt live bytes drifted.'}
+}
+
+function Assert-ActiveRetirementRetainedLifecycle {
+    param([string]$Workspace,[object]$Event,[object]$Transition)
+    $intent=$Transition.intent;$unitId=[string]$Event.unit_id
+    $prior=Get-ActiveRetirementPlanningTransition $Workspace "$([string]$intent.expected.event_tail_id)-transition"
+    if([string]$prior.intent.event.unit_id-cne$unitId-or[int]$prior.intent.event.sequence-ne([int]$Event.sequence-1)-or[string]$intent.pre.state.sha256-cne[string]$prior.intent.target.state.sha256-or[string]$intent.pre.unit.sha256-cne[string]$prior.intent.target.unit.sha256){throw 'Active retirement retained lifecycle predecessor is detached.'}
+    $state=Copy-ActiveRetirementValue $prior.intent.target.state.document;$unit=Copy-ActiveRetirementValue $prior.intent.target.unit.document
+    $targetUnit=$intent.target.unit.document;$targetState=$intent.target.state.document
+    $development=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceDevelopmentContinuation.psm1') -PassThru
+    $instruction=@($intent.artifacts|Where-Object{[string](ConvertFrom-MorphospaceProtocolJsonBytes ([Convert]::FromBase64String([string]$_.bytes_base64))).schema-ceq'rusty.morphospace.workflow.work_unit_automation_receipt.v1'})
+    $freeze=@($intent.artifacts|Where-Object{[string](ConvertFrom-MorphospaceProtocolJsonBytes ([Convert]::FromBase64String([string]$_.bytes_base64))).schema-cin@('rusty.morphospace.workflow.candidate_freeze.v1','rusty.morphospace.workflow.candidate_freeze.v2')})
+    if($instruction.Count-eq1){
+        if([string]$unit.status-cne'active'-or[string]$state.current_unit-cne$unitId){throw 'Active retirement instruction completion requires active ownership.'}
+        $null=&$development {param($before,$after,$intent,$event)Assert-DevelopmentContinuationRetainedAuthority $before $after $intent $event} $unit $targetUnit $intent $Event
+        $unit=Copy-ActiveRetirementValue $targetUnit
+    }elseif($freeze.Count-eq1){
+        if(@($intent.artifacts).Count-ne1-or[string]$unit.status-cne'active'-or[string]$state.current_unit-cne$unitId-or$unit.PSObject.Properties.Name-ccontains'candidate_freeze'){throw 'Active retirement Freeze requires an unfrozen active owner.'}
+        $binding=$freeze[0];$receipt=ConvertFrom-MorphospaceProtocolJsonBytes ([Convert]::FromBase64String([string]$binding.bytes_base64))
+        $schema=if([string]$receipt.schema-ceq'rusty.morphospace.workflow.candidate_freeze.v1'){'candidate-freeze-v1.schema.json'}else{'candidate-freeze-v2.schema.json'};Assert-ActiveRetirementSchema $receipt $schema
+        if([string]$receipt.unit_id-cne$unitId-or[string]$receipt.project_id-cne[string]$Event.project_id-or[string]$Event.event_id-cne"$([string]$receipt.freeze_id)-recorded"-or[string]$receipt.expected.unit_sha256-cne[string]$intent.pre.unit.sha256-or[string]$receipt.expected.state_sha256-cne[string]$intent.pre.state.sha256-or[string]$Event.summary-cne'Froze the exact candidate closure before validation.'){throw 'Active retirement Freeze receipt is detached.'}
+        Assert-ActiveRetirementEqual @($binding.path) @($Event.receipts) 'Freeze event receipt'
+        $pointer=[pscustomobject]@{freeze_id=[string]$receipt.freeze_id;receipt_path=[string]$binding.path;receipt_sha256=[string]$binding.sha256}
+        $unit|Add-Member -NotePropertyName candidate_freeze -NotePropertyValue $pointer
+    }elseif([string]$Event.event_id-cmatch('^'+[regex]::Escape($unitId)+'-validating-[0-9]{4,}$')){
+        if([string]$unit.status-cne'active'-or[string]$state.current_unit-cne$unitId-or$unit.PSObject.Properties.Name-cnotcontains'candidate_freeze'-or@($intent.artifacts).Count-ne0-or@($Event.receipts).Count-ne0-or[string]$Event.summary-cne'Entered validation with a deterministic command, instruction, graph, and device-impact plan.'){throw 'Active retirement BeginValidation is not the exact frozen active transition.'};$unit.status='validating'
+    }elseif([string]$Event.event_id-cmatch('^'+[regex]::Escape($unitId)+'-validation-fail-[0-9]{4,}$')){
+        if([string]$unit.status-cne'validating'-or[string]$state.current_unit-cne$unitId-or@($intent.artifacts).Count-ne0-or@($Event.receipts).Count-ne1-or[string]$Event.event_type-cne'blocker'-or[string]$Event.summary-cne'Recorded non-passing validation and blocked further acceptance.'){throw 'Active retirement nonpass is not the exact validating-to-blocked transition.'}
+        $relative=[string]$Event.receipts[0];Assert-ActiveRetirementImmutableNonpassReceipt $Workspace $relative;$receipt=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $Workspace $relative -RequireLeaf);Assert-ActiveRetirementSchema $receipt 'validation-receipt.schema.json'
+        if([string]$receipt.schema-cne'rusty.morphospace.workflow.validation_receipt.v1'-or[string]$receipt.unit_id-cne$unitId-or[string]$receipt.project_id-cne[string]$Event.project_id-or[string]$receipt.result-cne'fail'){throw 'Active retirement nonpass receipt identity/result is detached.'}
+        foreach($artifact in @($receipt.artifacts)){$artifactPath=if([IO.Path]::IsPathRooted([string]$artifact.path)){[IO.Path]::GetFullPath([string]$artifact.path)}else{[IO.Path]::GetFullPath((Join-Path (Split-Path (Resolve-MorphospaceWorkspacePath $Workspace $relative -RequireLeaf) -Parent) ([string]$artifact.path)))};if((Get-MorphospaceFileSha256 $artifactPath)-cne[string]$artifact.sha256){throw 'Active retirement nonpass artifact bytes drifted.'}}
+        $state.validation_checkpoint=[pscustomobject]@{receipt=$relative;result='fail';tier=[string]$receipt.tier};$unit.status='blocked';$state.current_unit=$null
+        if($state.PSObject.Properties.Name-ccontains'normal_validation_selection'){$state.normal_validation_selection=$null}
+        $blockerId="$unitId-validation-fail";if(@($state.blockers|Where-Object blocker_id -CEQ $blockerId).Count-ne0){throw 'Active retirement nonpass repeats a failure blocker.'}
+        $state.blockers=@($state.blockers)+@([pscustomobject]@{blocker_id=$blockerId;condition="Validation result is fail in $relative.";resume_when='Correct the failure and explicitly resume the unit.'})
+    }elseif([string]$Event.event_id-cmatch('^'+[regex]::Escape($unitId)+'-resumed-[0-9]{4,}$')){
+        if([string]$unit.status-cne'blocked'-or$null-ne$state.current_unit-or[string]$state.validation_checkpoint.result-cne'fail'-or@($intent.artifacts).Count-ne0-or@($Event.receipts).Count-ne0-or[string]$Event.summary-cne'Resumed a blocked unit while preserving blocker and validation history.'){throw 'Active retirement Resume is not the exact failed blocked owner transition.'};$unit.status='active';$state.current_unit=$unitId
+    }elseif([string]$Event.event_id-cmatch('^'+[regex]::Escape($unitId)+'-blocker-resolved-[0-9]{4,}$')){
+        if([string]$unit.status-cne'active'-or[string]$state.current_unit-cne$unitId-or[string]$state.validation_checkpoint.result-cne'fail'-or@($intent.artifacts).Count-ne1-or@($Event.receipts).Count-ne1){throw 'Active retirement resolution requires the planning-resumed failed owner.'}
+        $binding=$intent.artifacts[0];$receipt=ConvertFrom-MorphospaceProtocolJsonBytes ([Convert]::FromBase64String([string]$binding.bytes_base64));Assert-ActiveRetirementSchema $receipt 'blocker-resolution-receipt-v1.schema.json'
+        if([string]$receipt.result-cne'pass'-or[string]$receipt.unit_id-cne$unitId-or[string]$receipt.project_id-cne[string]$Event.project_id-or[string]$receipt.blocker.blocker_id-cne"$unitId-validation-fail"-or[string]$Event.receipts[0]-cne[string]$binding.path-or[string]$Event.summary-cne"Resolved blocker '$([string]$receipt.blocker.blocker_id)' from hash-bound passing evidence while preserving all other workflow projections."){throw 'Active retirement scope resolution receipt is detached.'}
+        $matches=@($state.blockers|Where-Object blocker_id -CEQ $receipt.blocker.blocker_id);if($matches.Count-ne1){throw 'Active retirement scope resolution blocker is absent or duplicated.'};Assert-ActiveRetirementEqual $matches[0] $receipt.blocker 'resolution exact blocker'
+        $state.blockers=@($state.blockers|Where-Object blocker_id -CNE $receipt.blocker.blocker_id);Assert-ActiveRetirementEqual @($state.blockers|ForEach-Object blocker_id|Sort-Object) @($receipt.preserve_blocker_ids|Sort-Object) 'resolution preserved blockers'
+        foreach($evidence in @($receipt.evidence)){if((Get-MorphospaceFileSha256 (Resolve-MorphospaceWorkspacePath $Workspace ([string]$evidence.path) -RequireLeaf))-cne[string]$evidence.sha256){throw 'Active retirement scope resolution evidence drifted.'}}
+    }else{throw 'Active retirement retained lifecycle action is unsupported.'}
+    if([string]$Event.event_id-cnotmatch'-validation-fail-'-and[string]$Event.event_type-cne'state-transition'){throw 'Active retirement retained lifecycle event type is invalid.'}
+    $state.last_event_id=[string]$Event.event_id
+    Assert-ActiveRetirementEqual $unit $targetUnit 'retained lifecycle exact target unit';Assert-ActiveRetirementEqual $state $targetState 'retained lifecycle exact target state'
+    foreach($projection in @(if($intent.PSObject.Properties.Name-ccontains'additional_projections'){$intent.additional_projections})){
+        if([string]$projection.path-cnotin@('project.spec.json','feature.lock.json')-or[string]$projection.pre_sha256-cne[string]$projection.target_sha256-or(Get-MorphospaceCanonicalJsonSha256 $projection.document)-cne[string]$projection.pre_sha256){throw 'Active retirement retained lifecycle changed product authority.'}
+    }
+}
+
+function Assert-ActiveRetirementPostNonpassUpgradeSlot {
+    param([string]$Workspace,[object]$Unit,[object]$State,[string]$UnitId)
+    if([string]$Unit.unit_id-cne$UnitId-or[string]$Unit.status-cne'active'-or[string]$State.current_unit-cne$UnitId-or@($State.blockers).Count-ne0-or$null-ne$State.next_ready_unit-or[string]$State.validation_checkpoint.result-cne'fail'-or$Unit.PSObject.Properties.Name-cnotcontains'candidate_freeze'){throw 'Frozen tooling upgrade requires the exact failed, resumed, blocker-free active owner.'}
+    $events=@(Get-Content -LiteralPath (Join-Path $Workspace 'iteration-events.jsonl')|ForEach-Object{ConvertFrom-MorphospaceProtocolJsonBytes ([Text.UTF8Encoding]::new($false).GetBytes($_))})
+    $freeze=$Unit.candidate_freeze;$starts=@($events|Where-Object event_id -CEQ "$([string]$freeze.freeze_id)-recorded");$ends=@($events|Where-Object event_id -CEQ ([string]$State.last_event_id))
+    if($starts.Count-ne1-or$ends.Count-ne1-or[string]$ends[0].event_id-cnotmatch('^'+[regex]::Escape($UnitId)+'-blocker-resolved-[0-9]{4,}$')){throw 'Frozen tooling upgrade lacks its original freeze and final scope-resolution events.'}
+    $suffix=@($events|Where-Object{[int]$_.sequence-ge[int]$starts[0].sequence-and[int]$_.sequence-le[int]$ends[0].sequence})
+    Assert-ActiveRetirementPlanningContinuationEvents $suffix ([int]$starts[0].sequence-1) $UnitId
+    if($suffix.Count-ne5-or[string]$suffix[1].event_id-cnotmatch'-validating-[0-9]{4,}$'-or[string]$suffix[2].event_id-cnotmatch'-validation-fail-[0-9]{4,}$'-or[string]$suffix[3].event_id-cnotmatch'-resumed-[0-9]{4,}$'){throw 'Frozen tooling upgrade requires exactly Freeze, BeginValidation, fail, Resume and ResolveBlocker.'}
+    foreach($event in $suffix){$proof=Get-ActiveRetirementPlanningTransition $Workspace "$([string]$event.event_id)-transition";Assert-ActiveRetirementRetainedLifecycle $Workspace $event $proof}
+    Assert-ActiveRetirementEqual $Unit $proof.intent.target.unit.document 'post-nonpass upgrade original unit';Assert-ActiveRetirementEqual $State $proof.intent.target.state.document 'post-nonpass upgrade original state'
+}
+function Get-ActiveRetirementLifecycleDiagnostics {
+    param([string]$Workspace,[string]$Repository,[string]$ObservedHead,[object]$Request,[object[]]$Events)
+    if($null-eq$Request-or$Request.PSObject.Properties.Name-cnotcontains'retained_lifecycle_diagnostics'){return @()}
+    $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal);$seenEvents=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach($binding in @($Request.retained_lifecycle_diagnostics)){
+        if(-not$seen.Add([string]$binding.path)-or-not$seenEvents.Add([string]$binding.event_id)){throw 'Retained lifecycle diagnostic repeats a path or event.'}
+        $reference=Get-ActiveRetirementReference $Workspace ([string]$binding.path);$receipt=Read-MorphospaceProtocolJson $reference.absolute;Assert-ActiveRetirementSchema $receipt 'work-unit-automation-receipt.schema.json'
+        if((Get-MorphospaceFileSha256 $reference.absolute)-cne[string]$binding.raw_sha256-or(Get-MorphospaceCanonicalJsonSha256 $receipt)-cne[string]$binding.canonical_sha256){throw 'Retained lifecycle diagnostic raw/canonical bytes drifted.'}
+        $matches=@($Events|Where-Object event_id -CEQ $binding.event_id);if($matches.Count-ne1-or[string]$matches[0].unit_id-cne[string]$Request.unit_id){throw 'Retained lifecycle diagnostic event is detached.'}
+        $event=$matches[0];$proof=Get-ActiveRetirementPlanningTransition $Workspace "$([string]$event.event_id)-transition";Assert-ActiveRetirementRetainedLifecycle $Workspace $event $proof
+        $prior=Get-ActiveRetirementPlanningTransition $Workspace "$([string]$proof.intent.expected.event_tail_id)-transition"
+        $action=switch -Regex -CaseSensitive ([string]$event.event_id){'-validating-[0-9]{4,}$'{'BeginValidation'};'-validation-fail-[0-9]{4,}$'{'RecordValidation'};'-resumed-[0-9]{4,}$'{'Resume'};default{throw 'Retained lifecycle diagnostic action is unsupported.'}}
+        $transition=switch -CaseSensitive ($action){'BeginValidation'{'active-to-validating'};'RecordValidation'{'validation-fail'};'Resume'{'blocked-to-active'}}
+        if($receipt.executed-ne$true-or[string]$receipt.timestamp-cne[string]$event.timestamp-or[string]$receipt.schema-cne'rusty.morphospace.workflow.work_unit_automation_receipt.v1'-or[string]$receipt.action-cne$action-or[string]$receipt.transition-cne$transition-or[string]$receipt.event_id-cne[string]$event.event_id-or[string]$receipt.project_id-cne[string]$event.project_id-or[string]$receipt.unit_id-cne[string]$event.unit_id-or[string]$receipt.status_before-cne[string]$prior.intent.target.unit.document.status-or[string]$receipt.status_after-cne[string]$proof.intent.target.unit.document.status){throw 'Retained lifecycle diagnostic owner action/status is detached.'}
+        Assert-ActiveRetirementEqual ([pscustomobject]@{value=$receipt.current_unit_before}) ([pscustomobject]@{value=$prior.intent.target.state.document.current_unit}) 'diagnostic previous owner';Assert-ActiveRetirementEqual ([pscustomobject]@{value=$receipt.current_unit_after}) ([pscustomobject]@{value=$proof.intent.target.state.document.current_unit}) 'diagnostic resulting owner'
+        foreach($name in @('adoption_receipt','publication_closure','published_planning_authority_adoption','planned_publication','planning_suffix_rewrite_recovery','published_prerequisite_suffix_reconciliation','executed_prepared_publication_reconciliation','instruction_surface_completion','ready_withdrawal','proposed_retirement','terminal_validation_selection_release','push_plan')){if($receipt.PSObject.Properties.Name-ccontains$name-and$null-ne$receipt.$name){throw 'Retained lifecycle diagnostic contains unrelated authority payload.'}}
+        $prefix=[IO.Path]::GetRelativePath($Repository,$Workspace).Replace('\','/').TrimEnd('/')+'/';$gitPath=$prefix+$reference.path
+        $null=&git -C $Repository merge-base --is-ancestor ([string]$binding.introduced_commit) $ObservedHead 2>&1;if($LASTEXITCODE-ne0){throw 'Retained lifecycle diagnostic commit is outside observed history.'}
+        $addition=@(&git -C $Repository diff-tree --no-commit-id --name-status -r ([string]$binding.introduced_commit) -- $gitPath 2>&1);if($LASTEXITCODE-ne0-or$addition.Count-ne1-or[string]$addition[0]-cne("A`t"+$gitPath)){throw 'Retained lifecycle diagnostic lacks exact original addition.'}
+        foreach($revision in @([string]$binding.introduced_commit,$ObservedHead)){$blob=(@(&git -C $Repository rev-parse "$($revision):$gitPath" 2>&1)-join'').Trim();if($LASTEXITCODE-ne0-or$blob-cne[string]$binding.git_blob_sha1){throw 'Retained lifecycle diagnostic committed blob drifted.'}}
+        $live=(@(&git -C $Repository hash-object --path=$gitPath -- $reference.absolute 2>&1)-join'').Trim();if($LASTEXITCODE-ne0-or$live-cne[string]$binding.git_blob_sha1){throw 'Retained lifecycle diagnostic live blob drifted.'}
+        [pscustomobject]@{path=$reference.path;sha256=[string]$binding.raw_sha256}
+    }
+}
+
 function Get-ActiveRetirementToolingProofBindings {
     param([string]$WorkspaceRoot,[object]$Request,[object]$Context)
     $bindings=@{};$documents=@{}
@@ -152,7 +251,7 @@ function Get-ActiveRetirementClaimDiagnosticProjection {
     Assert-ActiveRetirementSchema $Request 'active-unit-retirement-v1.schema.json'
     $binding=$Request.retained_claim_diagnostic
     $reference=Get-ActiveRetirementReference $Workspace ([string]$binding.path)
-    if($reference.path-cnotmatch '^receipts/[a-z0-9][a-z0-9-]{1,79}-claim-[0-9]{8}\.json$'){throw 'Retained Claim diagnostic path is outside the closed diagnostic namespace.'}
+    if($reference.path-cnotmatch '^receipts/[a-z0-9][a-z0-9-]{1,79}-claim(?:-[0-9]{8})?\.json$'){throw 'Retained Claim diagnostic path is outside the closed diagnostic namespace.'}
     if(([IO.FileInfo]$reference.absolute).Length-gt131072){throw 'Retained Claim diagnostic exceeds its byte bound.'}
     $bytes=[IO.File]::ReadAllBytes($reference.absolute)
     if($bytes.Length-gt131072-or(Get-MorphospaceSha256Bytes $bytes)-cne[string]$binding.raw_sha256){throw 'Retained Claim diagnostic raw CAS drifted.'}
@@ -230,7 +329,7 @@ function Get-ActiveRetirementReadyDiagnosticProjection {
     Assert-ActiveRetirementSchema $Request 'active-unit-retirement-v1.schema.json'
     $binding=$Request.retained_ready_diagnostic
     $reference=Get-ActiveRetirementReference $Workspace ([string]$binding.path)
-    if($reference.path-cnotmatch '^receipts/[a-z0-9][a-z0-9-]{1,79}-ready-[0-9]{8}\.json$'){throw 'Retained Ready diagnostic path is outside the closed diagnostic namespace.'}
+    if($reference.path-cnotmatch '^receipts/[a-z0-9][a-z0-9-]{1,79}-ready(?:-[0-9]{8})?\.json$'){throw 'Retained Ready diagnostic path is outside the closed diagnostic namespace.'}
     if(([IO.FileInfo]$reference.absolute).Length-gt131072){throw 'Retained Ready diagnostic exceeds its byte bound.'}
     $bytes=[IO.File]::ReadAllBytes($reference.absolute)
     if($bytes.Length-gt131072-or(Get-MorphospaceSha256Bytes $bytes)-cne[string]$binding.raw_sha256){throw 'Retained Ready diagnostic raw CAS drifted.'}
@@ -378,8 +477,11 @@ function Test-ActiveRetirementPlanningProjectionFromAuthenticatedAdmission {
                 $toolingUpgradeContexts=@($documents|Where-Object{[string]$_.schema-ceq'rusty.morphospace.workflow.tooling_context.v1'})
                 if($toolingUpgradeRequests.Count-ne1-or$toolingUpgradeContexts.Count-ne1){throw 'Active retirement tooling upgrade proof artifacts are ambiguous.'}
                 foreach($binding in @(Get-ActiveRetirementToolingProofBindings -WorkspaceRoot $workspaceFull -Request $toolingUpgradeRequests[0] -Context $toolingUpgradeContexts[0])){Set-PlanningProjection ([string]$binding.path) ([string]$binding.sha256)}
-            }else{
+            }elseif($artifactSchemas-ccontains'rusty.morphospace.workflow.active_write_scope_amendment.v1'){
                 $null=&$amendmentModule {param($root,$expected,$transition) Assert-ActiveWriteScopeHistoricalTransition -WorkspaceRoot $root -ExpectedEvent $expected -Transition $transition} $workspaceFull $event $proof
+            }else{
+                Assert-ActiveRetirementRetainedLifecycle $workspaceFull $event $proof
+                foreach($relative in @($event.receipts)){Set-PlanningProjection ([string]$relative) (Get-MorphospaceFileSha256 (Resolve-MorphospaceWorkspacePath $workspaceFull ([string]$relative) -RequireLeaf))}
             }
         }
         $intentRelative="receipts/transactions/$transactionId.intent.json";$completionRelative="receipts/transactions/$transactionId.completion.json";$intentPath=Resolve-MorphospaceWorkspacePath $workspaceFull $intentRelative -RequireLeaf;$completionPath=Resolve-MorphospaceWorkspacePath $workspaceFull $completionRelative -RequireLeaf
@@ -401,6 +503,7 @@ function Test-ActiveRetirementPlanningProjectionFromAuthenticatedAdmission {
         Set-PlanningProjection ([string]$readyDiagnostic.path) ([string]$readyDiagnostic.sha256)
     }
     Set-PlanningProjection 'iteration-events.jsonl' (Get-MorphospaceFileSha256 (Resolve-MorphospaceWorkspacePath $workspaceFull 'iteration-events.jsonl' -RequireLeaf))
+    foreach($binding in @(Get-ActiveRetirementLifecycleDiagnostics $workspaceFull $repository $ObservedHead $Request $events)){Set-PlanningProjection ([string]$binding.path) ([string]$binding.sha256)}
     if($committed){
         $staged=@(& git -C $repository diff --cached --name-only --no-renames -- 2>&1);if($LASTEXITCODE-ne0-or$staged.Count-ne0){throw 'Active retirement committed planning descendant must remain clean.'}
         foreach($path in @($expected.Keys)){$live=Join-Path $repository $path;if(-not[IO.File]::Exists($live)-or(Get-MorphospaceFileSha256 $live)-cne[string]$expected[$path]){throw "Active retirement committed planning projection is damaged: $path"}}
@@ -593,6 +696,11 @@ function Assert-ActiveRetirementIntent([string]$Workspace,[object]$Intent,[objec
         $readyHead=(@(&git -C $readyRepository rev-parse HEAD 2>&1)-join'').Trim()
         if($LASTEXITCODE-ne0){throw 'Retained Ready diagnostic historical Git HEAD is unavailable.'}
         $null=Get-ActiveRetirementReadyDiagnosticProjection -Workspace $Workspace -Request $Request -Repository $readyRepository -ObservedHead $readyHead
+    }
+    if($Request.PSObject.Properties.Name-ccontains'retained_lifecycle_diagnostics'){
+        $repository=(@(&git -C $Workspace rev-parse --show-toplevel 2>&1)-join'').Trim();if($LASTEXITCODE-ne0){throw 'Retained lifecycle diagnostic historical repository is unavailable.'}
+        $head=(@(&git -C $repository rev-parse HEAD 2>&1)-join'').Trim();if($LASTEXITCODE-ne0){throw 'Retained lifecycle diagnostic historical HEAD is unavailable.'}
+        $null=Get-ActiveRetirementLifecycleDiagnostics $Workspace $repository $head $Request (Get-ActiveRetirementEvents $Workspace).events
     }
     $eventId="$($Request.retirement_id)-active-retired"
     if([string]$Request.old_unit.unit_id-cne[string]$Request.unit_id-or[string]$Request.old_unit.path-cne"iteration-units/$($Request.unit_id).json"-or[string]$Request.replacement_unit_id-ceq[string]$Request.unit_id-or[string]$Intent.target.unit.document.unit_id-cne[string]$Request.unit_id-or[string]$Intent.target.unit.document.project_id-cne[string]$Request.project_id-or[string]$Intent.target.unit.document.status-cne'active'-or[string]$Intent.target.unit.document.source_composition.lock_path-cne[string]$Request.source_composition.path){throw 'Active retirement historical endpoint or source-lock identity is detached.'}
