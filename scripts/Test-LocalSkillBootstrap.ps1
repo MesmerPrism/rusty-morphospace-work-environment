@@ -61,18 +61,23 @@ function Test-ToolingContextRootComparison {
     if ($normalizer.Count -ne 1 -or $comparison.Count -ne 1) { throw 'Exact installer root boundary missing.' }
     $boundary = [scriptblock]::Create($normalizer[0].Extent.Text + "`n" + $comparison[0].Extent.Text)
     $RepoRoot = $ExecutorDirectory; $TargetRoot = $SkillsDirectory
-    $pathStringComparison = [StringComparison]::OrdinalIgnoreCase
+    $windows = [Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Windows)
+    $pathStringComparison = if ($windows) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
     $routerDirectory = Join-Path $SkillsDirectory 'rusty-morphospace'
-    foreach ($shape in @('native', 'forward', 'mixed', 'trailing', 'case')) {
+    $shapes = if ($windows) { @('native', 'forward', 'mixed', 'trailing', 'case') } else { @('native', 'dot', 'trailing') }
+    foreach ($shape in $shapes) {
         $executor = $ExecutorDirectory; $routerPath = $routerDirectory
         if ($shape -eq 'forward') { $executor = $executor.Replace('\', '/'); $routerPath = $routerPath.Replace('\', '/') }
         if ($shape -eq 'mixed') { $executor = $executor.Replace('\', '/') + '/.'; $routerPath += '\.' }
-        if ($shape -eq 'trailing') { $executor += '\'; $routerPath += '/' }
+        if ($shape -eq 'dot') { $executor += '/.'; $routerPath += '/.' }
+        if ($shape -eq 'trailing') { $executor += [IO.Path]::DirectorySeparatorChar; $routerPath += '/' }
         if ($shape -eq 'case') { $executor = $executor.ToUpperInvariant(); $routerPath = $routerPath.ToUpperInvariant() }
         $toolingResolver = [pscustomobject]@{executor_root=$executor; routers=@([pscustomobject]@{skill_id='rusty-morphospace'; root=$routerPath})}
         & $boundary
     }
-    foreach ($damage in @('other-executor', 'other-router', 'relative-executor', 'relative-router', 'missing-executor', 'file-router')) {
+    $damages = @('other-executor', 'other-router', 'relative-executor', 'relative-router', 'missing-executor', 'file-router')
+    if (-not $windows) { $damages += 'case-router' }
+    foreach ($damage in $damages) {
         $executor = $ExecutorDirectory; $routerPath = $routerDirectory
         if ($damage -eq 'other-executor') { $executor = $SkillsDirectory }
         if ($damage -eq 'other-router') { $routerPath = Join-Path $SkillsDirectory 'system-engineering' }
@@ -80,12 +85,72 @@ function Test-ToolingContextRootComparison {
         if ($damage -eq 'relative-router') { $routerPath = 'skills/rusty-morphospace' }
         if ($damage -eq 'missing-executor') { $executor = Join-Path $ExecutorDirectory 'absent-root' }
         if ($damage -eq 'file-router') { $routerPath = Join-Path $routerDirectory 'SKILL.md' }
+        if ($damage -eq 'case-router') { $routerPath = $routerDirectory.ToUpperInvariant() }
         $toolingResolver = [pscustomobject]@{executor_root=$executor; routers=@([pscustomobject]@{skill_id='rusty-morphospace'; root=$routerPath})}
         $denied = $false
         try { & $boundary } catch { $denied = $true }
         Assert-True -Condition $denied -Message "Tooling-context directory boundary accepted $damage."
     }
-    Write-Host 'Actual tooling-context root comparison: five Windows shape positives and six directory/identity negatives passed.'
+    Write-Host "Actual tooling-context root comparison: $($shapes.Count) host path positives and $($damages.Count) directory/identity negatives passed."
+}
+
+function Test-IntegratedToolingContextVerify {
+    $workspace = Join-Path $testRoot 'context-workspace'
+    foreach ($directory in @('local', 'receipts', 'tooling-contexts')) {
+        New-Item -ItemType Directory -Path (Join-Path $workspace $directory) -Force | Out-Null
+    }
+    $protocol = Import-Module (Join-Path $installerSourceRoot 'scripts/lib/MorphospaceProtocolCommon.psm1') -PassThru
+    $provenance = Import-Module (Join-Path $installerSourceRoot 'scripts/ToolingContextProvenance.psm1') -PassThru
+    function Write-ContextFixture([string]$Path, [object]$Value) {
+        $bytes = & $protocol { param($v) ,(ConvertTo-MorphospaceProtocolJsonBytes $v) } $Value
+        [IO.File]::WriteAllBytes((Join-Path $workspace $Path), $bytes)
+        return [pscustomobject]@{path=$Path; sha256=(Get-FileHash (Join-Path $workspace $Path)).Hash.ToLowerInvariant()}
+    }
+    $commit = ([string](& git -C $installerSourceRoot rev-parse HEAD)).Trim()
+    $tree = ([string](& git -C $installerSourceRoot rev-parse 'HEAD^{tree}')).Trim()
+    $identity = [pscustomobject]@{commit=$commit; tree=$tree}
+    $empty = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+    # Schema-valid fixture evidence, never publication or validation authority.
+    $validation = Write-ContextFixture 'receipts/validation.json' ([pscustomobject]@{
+        schema='rusty.morphospace.workflow.affected_validation_evidence.v1'; repository='fixture/workflow'; base=$identity; head=$identity; plan_sha256=('1'*64); platform='windows'
+        runner=@{os_description='Windows bootstrap fixture'; powershell_version=$PSVersionTable.PSVersion.ToString()}
+        check_results=@(@{check_id='fixture-check';command_path='scripts/Test-LocalSkillBootstrap.ps1';command_blob_sha1=$commit;mode='executed';result='pass';started=$true;failure_kind=$null;exit_code=0;timed_out=$false;output_truncated=$false;post_kill_drain_timed_out=$false;stdout_sha256=$empty;stderr_sha256=$empty;stdout_bytes=0;stderr_bytes=0})
+        result='pass';claims=@{historical_aggregate_reused=$false;acceptance_authority=$false;publication_authority=$false}
+    })
+    $executorIdentity = @{repo_id='workflow';remote_url='https://example.invalid/rusty-morphospace-work-environment.git';commit=$commit;tree=$tree}
+    $publication = Write-ContextFixture 'receipts/publication.json' @{schema='rusty.morphospace.workflow.tooling_context_publication_evidence.v1';publication_id='fixture-publication';executor=$executorIdentity;validation=$validation;status='source-observed';does_not_prove=@('Does not independently prove remote publication authority.', 'Fixture only; no publication authority.')}
+    $actions = @(& $provenance { Get-MorphospaceToolingContextAllowedActions })
+    $compatibility = @{protocol_id='tooling-context-v1';product_lock_schema='rusty.morphospace.workflow.development_envelope_source_composition.v3';repository_map_schema='rusty.morphospace.workflow.repository_map.v1';allowed_actions=$actions}
+    $compatibility.receipt = Write-ContextFixture 'receipts/protocol.json' @{schema='rusty.morphospace.workflow.tooling_context_protocol_receipt.v1';receipt_id='fixture-protocol';executor=@{repo_id='workflow';commit=$commit;tree=$tree};protocol=$compatibility.Clone();validation=$validation;status='compatible';does_not_prove=@('Fixture only; no product mutation.')}
+    $closure = @(& git -C $installerSourceRoot ls-files | ForEach-Object {
+        [pscustomobject]@{path=[string]$_;sha256=(Get-FileHash (Join-Path $installerSourceRoot $_)).Hash.ToLowerInvariant()}
+    })
+    $record = Get-Content -Raw (Join-Path $targetRoot 'rusty-morphospace/.morphospace-skill-source.json') | ConvertFrom-Json
+    $managed = @($record.source_files | ForEach-Object { @{path=([string]$_.path).Replace('\','/');sha256=$_.sha256} })
+    $router = @{skill_id='rusty-morphospace';source_repo_id='workflow';commit=$commit;tree=$tree;source_fingerprint=$record.source_tree_sha256;managed_files=$managed}
+    $resolver = Write-ContextFixture 'local/resolver.json' @{schema='rusty.morphospace.workflow.tooling_context_resolver.v1';context_id='fixture-context';executor_root=$installerSourceRoot.Replace('\','/');routers=@(@{skill_id='rusty-morphospace';root=(Join-Path $targetRoot 'rusty-morphospace').Replace('\','/')});status='resolved';does_not_prove=@('Local fixture resolution only.')}
+    $projection = @{}
+    foreach ($role in @('source_composition','repository_map','feature_lock')) { $projection[$role] = Write-ContextFixture "$role.json" @{fixture=$role} }
+    $executor = $executorIdentity.Clone(); $executor.publication_evidence=$publication; $executor.entrypoint='scripts/Install-LocalSkills.ps1'; $executor.closure=$closure
+    $context = & $provenance { param($p) New-MorphospaceObservedToolingContext @p } @{
+        WorkspaceRoot=$workspace;ContextId='fixture-context';ProjectId='fixture-project';PreparationId='fixture-preparation';ProductProjection=$projection;ResolverPath=$resolver.path;Executor=$executor;Routers=@($router);Compatibility=$compatibility
+    }
+    $null = Write-ContextFixture 'tooling-contexts/context.json' $context
+    $arguments = @('-RepoRoot',$installerSourceRoot,'-TargetRoot',$targetRoot,'-Action','Verify','-WorkspaceRoot',$workspace,'-ToolingContextPath','tooling-contexts/context.json','-Json')
+    $verified = (Invoke-InstallerChild -Arguments $arguments) | ConvertFrom-Json
+    Assert-True ($verified.action -eq 'verified') 'Integrated context-bound Verify rejected authenticated forward-slash roots.'
+    $wrongTarget = Join-Path $testRoot 'other-skills'
+    Copy-Item -LiteralPath $targetRoot -Destination $wrongTarget -Recurse
+    $wrongArguments = @('-RepoRoot',$installerSourceRoot,'-TargetRoot',$wrongTarget,'-Action','Verify','-WorkspaceRoot',$workspace,'-ToolingContextPath','tooling-contexts/context.json','-Json')
+    $rejected = Invoke-InstallerChild -Arguments $wrongArguments -ExpectedExit 1
+    Assert-True ($rejected -match 'root differs from TargetRoot') 'Integrated Verify accepted another existing router directory.'
+    $resolverBytes = [IO.File]::ReadAllBytes((Join-Path $workspace 'local/resolver.json'))
+    try {
+        [IO.File]::AppendAllText((Join-Path $workspace 'local/resolver.json'), ' ')
+        $rejected = Invoke-InstallerChild -Arguments $arguments -ExpectedExit 1
+        Assert-True ($rejected -match 'resolver raw hash drifted') 'Integrated Verify bypassed exact resolver bytes.'
+    } finally { [IO.File]::WriteAllBytes((Join-Path $workspace 'local/resolver.json'), $resolverBytes) }
+    Write-Host 'Integrated production context-bound Verify accepted forward-slash roots; other-directory and raw-resolver tamper denied.'
 }
 
 function Assert-IgnoredMetaRequiredFileRejected {
@@ -134,6 +199,9 @@ try {
     New-Item -ItemType Directory -Force -Path $testRoot | Out-Null
     New-Item -ItemType Directory -Force -Path $installerSourceRoot | Out-Null
     Copy-Item -LiteralPath (Join-Path $RepoRoot "skills") -Destination (Join-Path $installerSourceRoot "skills") -Recurse
+    foreach ($directory in @('scripts', 'schemas')) {
+        Copy-Item -LiteralPath (Join-Path $RepoRoot $directory) -Destination (Join-Path $installerSourceRoot $directory) -Recurse
+    }
     if (Test-Path -LiteralPath (Join-Path $RepoRoot "manifests") -PathType Container) {
         Copy-Item -LiteralPath (Join-Path $RepoRoot "manifests") -Destination (Join-Path $installerSourceRoot "manifests") -Recurse
     }
@@ -216,6 +284,7 @@ try {
     $installText = Invoke-InstallerChild -Arguments @("-RepoRoot", $installerSourceRoot, "-TargetRoot", $targetRoot, "-BackupRoot", $backupRoot, "-Action", "Install", "-Execute", "-Json")
     $installed = $installText | ConvertFrom-Json
     Test-ToolingContextRootComparison -ExecutorDirectory $installerSourceRoot -SkillsDirectory $targetRoot
+    Test-IntegratedToolingContextVerify
     Assert-True -Condition (@($installed | Where-Object { $_.action -ne "installed" }).Count -eq 0) -Message "One or more skills were not installed."
 
     foreach ($skill in @("meta-quest-workflow", "rust-work-graph", "rusty-morphospace", "rusty-morphospace-cleanup", "rusty-morphospace-context", "system-engineering")) {
