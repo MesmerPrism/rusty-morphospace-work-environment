@@ -64,6 +64,42 @@ binds the current effective map and the proposed effective map by relative path
 and raw SHA-256. The derivative source artifact binds the same identities.
 Recovery rechecks the maps before any transaction write.
 
+## Adopted external planning destination
+
+The optional `planning_authority_relocation` binding selects one existing
+read-only repository-map row with the `planning` role. It admits no dependency
+or root additions. The proposed map must use a distinct path and differ only in
+that row's local path. The original admission map and source lock remain exact.
+All objective, product, feature, permission, build and device ceilings retain
+their ordinary extension guards.
+
+The destination is the explicitly selected CLI workspace's backing Git root,
+with its exact clean commit, tree, branch and contained workspace path. It must
+retain the original locked planning commit, the original published planning
+adoption and its projection, and the complete authenticated current-unit
+planning projection. A copied set of control files cannot supply this history.
+A genuine Git clone retaining the complete proof may be explicitly selected;
+the contract does not claim a cryptographic identity for a physical checkout.
+
+The binding pins both the current raw adoption/projection bytes and their
+immutable Git blob bytes. Historical CRLF checkout bytes may differ from LF
+Git bytes only by the exact CRLF-to-LF conversion. Semantic JSON equivalence,
+changed receipts and rewrite-then-revert history are insufficient.
+
+Historical verification observes the request's captured committed control and
+event prefix. It does not include the extension being verified in that prefix.
+Qualified tooling proof files remain bound to their recorded exact hashes;
+they do not become committed control projections. The derivative planning
+source row keeps its original baseline and records the selected destination
+as its effective identity. The explicit `planning-authority-relocation-only`
+source mode retains every non-planning parent source identity. Separate
+`current_checkout_observation` records show actual current checkout identities
+and dirt without selecting them as product source. A known unrelated source
+divergence is not hidden, accepted, or imported into the product lock. Recovery
+requires those separate observations to remain exact. Ordinary dependency/root
+extension source selection is unchanged. This grants no new writable planning
+scope.
+
 ## Source lineage and working copies
 
 The action creates

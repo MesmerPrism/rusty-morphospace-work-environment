@@ -10,6 +10,7 @@
     "repositories", "status", "does_not_prove"
   ],
   "properties": {
+    "source_selection_mode": { "const": "planning-authority-relocation-only" },
     "schema": { "const": "rusty.morphospace.workflow.active_development_envelope_source_composition.v1" },
     "lock_id": { "$ref": "#/$defs/id" },
     "extension_id": { "$ref": "#/$defs/id" },
@@ -54,6 +55,7 @@
           "branch", "materialization_path", "worktree_state", "permitted_active_dirt"
         ],
         "properties": {
+          "current_checkout_observation": { "$ref": "#/$defs/currentCheckout" },
           "repo_id": { "$ref": "#/$defs/id" },
           "role": { "enum": ["source", "planning"] },
           "introduced_by": { "$ref": "#/$defs/id" },
@@ -80,6 +82,41 @@
     }
   },
   "$defs": {
+  "currentCheckout": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "claim",
+      "head",
+      "tree",
+      "branch",
+      "dirt"
+    ],
+    "properties": {
+      "claim": {
+        "const": "observation-only-no-source-selection"
+      },
+      "head": {
+        "$ref": "#/$defs/revision"
+      },
+      "tree": {
+        "$ref": "#/$defs/revision"
+      },
+      "branch": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "dirt": {
+        "type": "array",
+        "uniqueItems": true,
+        "items": {
+          "$ref": "#/$defs/dirt"
+        }
+      }
+    }
+  },
     "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$" },
     "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },

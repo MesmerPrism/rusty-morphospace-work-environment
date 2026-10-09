@@ -1,6 +1,7 @@
 param([switch]$SelfTest,[switch]$RetainedAuthorityOnly,[switch]$CheckpointProofOnly)
 $ErrorActionPreference='Stop'
 $repoRoot=Split-Path $PSScriptRoot -Parent
+& (Join-Path $PSScriptRoot 'Test-PlanningAuthorityRelocation.ps1') -SelfTest
 
 $protocolModule=Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force -PassThru
 Import-Module (Join-Path $PSScriptRoot 'DevelopmentEnvelopePreparation.psm1') -Force
@@ -308,6 +309,15 @@ try{
         $faulted=$false
         try{Invoke-MorphospaceExtendActiveDevelopmentEnvelope -WorkspaceRoot $faultWorkspace -UnitId u002 -ActiveDevelopmentEnvelopeExtension $faultInfo.request_path -RepositoryMapPath $faultInfo.map_path -OutPath $faultInfo.receipt_path -SourceCompositionOutPath $faultInfo.source_path -ExpectedActiveDevelopmentEnvelopeExtensionSha256 (Get-EnvelopeFileSha256 $faultInfo.request_path) -Timestamp '2026-09-15T01:10:00.0000000Z' -Execute -FaultAfter $fault|Out-Null}catch{$faulted=$_.Exception.Message-like'*Injected interruption*'}
         Assert-ActiveEnvelopeTest $faulted "extension did not interrupt at $fault"
+        $ownedIntent=Read-EnvelopeProtocolJson (Join-Path $faultWorkspace 'receipts/transactions/u002-add-dependency-recorded-transition.intent.json')
+        $ownedPaths=@('workspace.state.json','iteration-units/u002.json','project.spec.json','feature.lock.json','iteration-events.jsonl','receipts/transactions/u002-add-dependency-recorded-transition.intent.json')+@($ownedIntent.artifacts|ForEach-Object{[string]$_.path})+@(Get-ChildItem (Join-Path $faultWorkspace 'receipts/transactions') -Filter 'u002-add-dependency-recorded-transition.artifact-*.pending'|ForEach-Object{'receipts/transactions/'+$_.Name})
+        $ownedDirt=@($ownedPaths|Sort-Object -Unique|Where-Object{Test-Path -LiteralPath (Join-Path $faultWorkspace $_)}|ForEach-Object{[pscustomobject]@{path="$fault/$_";status=' M';sha256=Get-EnvelopeFileSha256 (Join-Path $faultWorkspace $_)}})
+        &$extensionModule {param($w,$r,$i,$d)Assert-ActiveEnvelopePlanningRecoveryDirt -WorkspaceRoot $w -Repository $r -Intent $i -Dirt $d} $faultWorkspace $temp $ownedIntent $ownedDirt
+        $wrongDirt=Copy-Envelope $ownedDirt;$wrongDirt[0].sha256='0'*64
+        Assert-ActiveEnvelopeRejected {&$extensionModule {param($w,$r,$i,$d)Assert-ActiveEnvelopePlanningRecoveryDirt -WorkspaceRoot $w -Repository $r -Intent $i -Dirt $d} $faultWorkspace $temp $ownedIntent $wrongDirt} "planning recovery admitted wrong projection bytes at $fault"
+        $extraDirt=@($ownedDirt)+@([pscustomobject]@{path="$fault/unowned.json";status='??';sha256='0'*64})
+        Assert-ActiveEnvelopeRejected {&$extensionModule {param($w,$r,$i,$d)Assert-ActiveEnvelopePlanningRecoveryDirt -WorkspaceRoot $w -Repository $r -Intent $i -Dirt $d} $faultWorkspace $temp $ownedIntent $extraDirt} "planning recovery admitted an unrelated path at $fault"
+        Write-Output "PASS genuine $fault planning recovery bytes and drift/unrelated-path denials"
         &$transitionModule {param($w)Complete-MorphospaceTransitionLedger -WorkspaceRoot $w -TransactionId 'u002-add-dependency-recorded-transition' -Repair} $faultWorkspace|Out-Null
         $faultState=Read-EnvelopeProtocolJson (Join-Path $faultWorkspace 'workspace.state.json')
         Assert-ActiveEnvelopeTest ((Get-EnvelopeCanonicalJsonSha256 $faultState.validation_checkpoint)-ceq(Get-EnvelopeCanonicalJsonSha256 $beforeState.validation_checkpoint)) "generic recovery changed retained checkpoint at $fault"
@@ -335,7 +345,7 @@ try{
     $recovered=Invoke-MorphospaceExtendActiveDevelopmentEnvelope -WorkspaceRoot $recoveryWorkspace -UnitId u002 -ActiveDevelopmentEnvelopeExtension $recoveryRequestInfo.request_path -RepositoryMapPath $recoveryRequestInfo.map_path -OutPath $recoveryRequestInfo.receipt_path -SourceCompositionOutPath $recoveryRequestInfo.source_path -ExpectedActiveDevelopmentEnvelopeExtensionSha256 (Get-EnvelopeFileSha256 $recoveryRequestInfo.request_path) -Execute
     Assert-ActiveEnvelopeTest ($recovered.executed-and(Test-Path (Join-Path $recoveryWorkspace 'receipts\transactions\u002-add-dependency-recorded-transition.completion.json'))) 'exact interrupted extension did not recover'
 
-    [pscustomobject]@{result='pass';action='ExtendActiveDevelopmentEnvelope';prepare_admit_ready_claim_extend=$true;retained_accepted_checkpoint=$true;checkpoint_damage_rejected=$true;accepted_evidence_preserved=$true;current_work_after_retirement=$true;null_checkpoint=$true;additive=$true;unreviewed_root_rejected=$true;dirty_source_rejected=$true;freeze_consumer=$true;retire_active_recovery=$true;v6_recovery=$true;generic_recover_source_drift_rejected=$true;generic_recover_map_drift_rejected=$true;git_mutation_performed=$false;device_mutation_performed=$false;remote_mutation_performed=$false}|ConvertTo-Json -Compress
+    [pscustomobject]@{result='pass';action='ExtendActiveDevelopmentEnvelope';prepare_admit_ready_claim_extend=$true;retained_accepted_checkpoint=$true;checkpoint_damage_rejected=$true;accepted_evidence_preserved=$true;current_work_after_retirement=$true;null_checkpoint=$true;additive=$true;unreviewed_root_rejected=$true;dirty_source_rejected=$true;freeze_consumer=$true;retire_active_recovery=$true;v6_recovery=$true;planning_owned_recovery_bytes=$true;generic_recover_source_drift_rejected=$true;generic_recover_map_drift_rejected=$true;git_mutation_performed=$false;device_mutation_performed=$false;remote_mutation_performed=$false}|ConvertTo-Json -Compress
 }finally{
     $cleanupTarget=[IO.Path]::GetFullPath($temp);$cleanupName=[IO.Path]::GetFileName($cleanupTarget);$cleanupParent=[IO.Path]::GetFullPath((Split-Path $cleanupTarget -Parent)).TrimEnd('\','/')
     if($cleanupParent-cne$tempParent-or$cleanupName-cnotmatch'^active-envelope-extension-[0-9a-f]{32}$'){throw "Active-envelope test cleanup target escaped its unique temp prefix: '$cleanupTarget'."}

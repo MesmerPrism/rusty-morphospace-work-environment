@@ -10,6 +10,96 @@
     "effective_repository_map", "expected", "does_not_prove"
   ],
   "properties": {
+  "planning_authority_relocation": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "repo_id",
+      "destination",
+      "adoption",
+      "projection"
+    ],
+    "properties": {
+      "repo_id": {
+        "$ref": "#/$defs/id"
+      },
+      "destination": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "head",
+          "tree",
+          "branch",
+          "workspace_path"
+        ],
+        "properties": {
+          "head": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$"
+          },
+          "tree": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$"
+          },
+          "branch": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1
+          },
+          "workspace_path": {
+            "$ref": "#/$defs/path"
+          }
+        }
+      },
+      "adoption": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "raw_sha256",
+          "introduced_commit",
+          "git_blob_sha256"
+        ],
+        "properties": {
+          "path": {
+            "$ref": "#/$defs/path"
+          },
+          "raw_sha256": {
+            "$ref": "#/$defs/hash"
+          },
+          "introduced_commit": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$"
+          },
+          "git_blob_sha256": {
+            "$ref": "#/$defs/hash"
+          }
+        }
+      },
+      "projection": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "raw_sha256",
+          "git_blob_sha256"
+        ],
+        "properties": {
+          "path": {
+            "$ref": "#/$defs/path"
+          },
+          "raw_sha256": {
+            "$ref": "#/$defs/hash"
+          },
+          "git_blob_sha256": {
+            "$ref": "#/$defs/hash"
+          }
+        }
+      }
+    }
+  },
     "schema": { "const": "rusty.morphospace.workflow.active_development_envelope_extension.v1" },
     "extension_id": { "$ref": "#/$defs/id" },
     "project_id": { "$ref": "#/$defs/id" },

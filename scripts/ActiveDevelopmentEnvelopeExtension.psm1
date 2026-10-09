@@ -11,6 +11,14 @@ $script:ActiveEnvelopeExtensionSchema = 'rusty.morphospace.workflow.active_devel
 $script:ActiveEnvelopeSourceSchema = 'rusty.morphospace.workflow.active_development_envelope_source_composition.v1'
 $script:ActiveEnvelopeEffectAxes = @('permissions','services','activities','queries','tools','assets','shaders','native_libraries','commands','routes','streams','inputs','scenes','markers')
 
+function Get-ActiveEnvelopeExtensionSummary {
+    param([Parameter(Mandatory)][object]$Request)
+    if($Request.PSObject.Properties.Name-ccontains'planning_authority_relocation'){
+        return 'Extended the active development envelope through one owner-reviewed adopted planning-authority relocation.'
+    }
+    return 'Extended the active development envelope through one owner-reviewed additive dependency and root transaction.'
+}
+
 function Copy-ActiveEnvelopeValue {
     param([Parameter(Mandatory)][object]$Value)
     return ($Value | ConvertTo-Json -Depth 100 | ConvertFrom-Json -Depth 100 -DateKind String)
@@ -215,11 +223,14 @@ function Get-ActiveEnvelopeSourceComposition {
         [Parameter(Mandatory)][object]$Provenance,
         [Parameter(Mandatory)][object]$RepositoryMap,
         [Parameter(Mandatory)][string]$RepositoryMapRelative,
-        [Parameter(Mandatory)][string]$RepositoryMapRawSha256
+        [Parameter(Mandatory)][string]$RepositoryMapRawSha256,
+        [string]$WorkspaceRoot=''
     )
     $parentBinding = $Provenance.effective.source_composition_binding
     $originalBinding = $Provenance.original.source_composition_binding
     $parent = $Provenance.effective.source_composition
+    $relocation=$Extension.PSObject.Properties.Name-ccontains'planning_authority_relocation'
+    if($relocation){$relocationModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospacePlanningAuthorityRelocation.psm1') -PassThru;[void](&$relocationModule {param($w,$q,$p,$m)Assert-MorphospacePlanningAuthorityRelocation -WorkspaceRoot $w -Request $q -ParentSource $p -EffectiveMap $m} $WorkspaceRoot $Extension $parent $RepositoryMap)}
     $original = $Provenance.original.source_composition
     $parentRows = Get-ActiveEnvelopeIndex @($parent.repositories) 'repo_id' 'Parent source composition'
     $mapRows = Get-ActiveEnvelopeIndex @($RepositoryMap.repositories) 'repo_id' 'Effective repository map'
@@ -250,8 +261,21 @@ function Get-ActiveEnvelopeSourceComposition {
             $baselineCommit = Get-ActiveEnvelopeBaselineCommit $old commit
             $baselineTree = Get-ActiveEnvelopeBaselineCommit $old tree
             $introducedBy = if ($null -ne $old.PSObject.Properties['introduced_by']) { [string]$old.introduced_by } else { [string]$Provenance.original.preparation_receipt.preparation_id }
+            if($relocation-and$id-cne[string]$Extension.planning_authority_relocation.repo_id){
+                # This transaction selects planning authority only. Current product
+                # checkout observations are not a new selected source identity.
+                $lockedTree=@(Get-ActiveEnvelopeGitLines $root @('rev-parse',"$parentCommit^{tree}") "Retained product source '$id' is unavailable.")
+                if($lockedTree.Count-ne1-or[string]$lockedTree[0]-cne$parentTree){throw "Retained product tree '$id' differs."}
+                $observation=[pscustomobject][ordered]@{claim='observation-only-no-source-selection';head=$commit;tree=$effectiveTree;branch=$branch;dirt=@($dirty)}
+                $retainedDirt=if($old.PSObject.Properties.Name-ccontains'permitted_active_dirt'){@($old.permitted_active_dirt)}else{@()}
+                $retainedState=if($old.PSObject.Properties.Name-ccontains'worktree_state'){[string]$old.worktree_state}else{'clean'}
+                $records.Add([pscustomobject][ordered]@{repo_id=$id;role=[string]$old.role;introduced_by=$introducedBy;baseline_commit=$baselineCommit;baseline_tree=$baselineTree;parent_commit=$parentCommit;parent_tree=$parentTree;effective_commit=$parentCommit;effective_tree=$parentTree;branch=$old.branch;materialization_path=$old.materialization_path;worktree_state=$retainedState;permitted_active_dirt=@($retainedDirt);current_checkout_observation=$observation})|Out-Null
+                continue
+            }
             if ($oldReadOnly.ContainsKey($id)) {
-                if ($commit -cne $parentCommit -or $effectiveTree -cne $parentTree -or $dirty.Count -ne 0) { throw "Read-only repository '$id' drifted from its exact parent source identity." }
+                if($relocation-and$id-ceq[string]$Extension.planning_authority_relocation.repo_id){
+                    if($commit-cne[string]$Extension.planning_authority_relocation.destination.head-or$effectiveTree-cne[string]$Extension.planning_authority_relocation.destination.tree-or$dirty.Count-ne0){throw 'Relocated planning source identity differs.'};$leaf=[string]$old.materialization_path
+                }elseif ($commit -cne $parentCommit -or $effectiveTree -cne $parentTree -or $dirty.Count -ne 0) { throw "Read-only repository '$id' drifted from its exact parent source identity." }
             } elseif ($oldWritable.ContainsKey($id)) {
                 & git -C $root merge-base --is-ancestor $parentCommit $commit 2>$null
                 if ($LASTEXITCODE -ne 0) { throw "Writable repository '$id' is not a descendant of its parent source identity." }
@@ -299,6 +323,7 @@ function Get-ActiveEnvelopeSourceComposition {
         status='locked'
         does_not_prove=@('Does not change the admitted objective, accept or validate work, mutate Git or a device, grant publication authority, or waive any owner boundary.')
     }
+    if($relocation){$source|Add-Member source_selection_mode 'planning-authority-relocation-only'}
     $source.fingerprint = Get-ActiveEnvelopeHash $source
     Assert-ActiveEnvelopeSchema $source 'active-development-envelope-source-composition-v1.schema.json' 'Generated active-envelope source composition violates its closed schema.'
     return $source
@@ -312,16 +337,25 @@ function Assert-ActiveEnvelopeMapExtension {
     $original = Get-ActiveEnvelopeIndex @($OriginalMap.repositories) 'repo_id' 'Original repository map'
     $old = Get-ActiveEnvelopeIndex @($PreviousMap.repositories) 'repo_id' 'Previous effective repository map'
     $new = Get-ActiveEnvelopeIndex @($EffectiveMap.repositories) 'repo_id' 'Effective repository map'
+    $relocation=$Extension.PSObject.Properties.Name-ccontains'planning_authority_relocation'
+    $relocatedId=if($relocation){[string]$Extension.planning_authority_relocation.repo_id}else{''}
+    if($relocation-and(@($Extension.additions.repository_ids).Count-ne0-or@($Extension.additions.owner_roots).Count-ne0-or[string]$Extension.effective_repository_map.path-ceq$PreviousMapPath)){throw 'Planning relocation needs a distinct map and no unrelated additions.'}
     foreach ($id in $original.Keys) {
         if (-not $old.ContainsKey($id) -or (Get-ActiveEnvelopeHash $original[$id]) -cne (Get-ActiveEnvelopeHash $old[$id])) { throw "Previous effective repository map lost original row '$id'." }
     }
     foreach ($id in $old.Keys) {
+        if($relocation-and$id-ceq$relocatedId){
+            if(-not$new.ContainsKey($id)-or[string]$old[$id].role-cne'planning'-or[string]$new[$id].role-cne'planning'){throw 'Relocation must retain its existing planning row.'}
+            $copy=Copy-ActiveEnvelopeValue $new[$id];$copy.path=$old[$id].path
+            if((Get-ActiveEnvelopeHash $copy)-cne(Get-ActiveEnvelopeHash $old[$id])-or[string]$old[$id].path-ceq[string]$new[$id].path){throw 'Planning relocation may change only its selected row path.'}
+        }else{
         if (-not $new.ContainsKey($id) -or (Get-ActiveEnvelopeHash $old[$id]) -cne (Get-ActiveEnvelopeHash $new[$id])) { throw "Effective repository map removes or rewrites previous row '$id'." }
+        }
     }
     $added = @($new.Keys | Where-Object { -not $old.ContainsKey($_) } | Sort-Object)
     Assert-ActiveEnvelopeExactSet -Actual $added -Expected @($Extension.additions.repository_ids) -Label 'Effective repository-map additions'
     if ($added.Count -gt 0 -and [string]$Extension.effective_repository_map.path -ceq $PreviousMapPath) { throw 'Adding a repository requires a distinct new ignored repository map.' }
-    if ($added.Count -eq 0 -and [string]$Extension.effective_repository_map.path -cne $PreviousMapPath) { throw 'A roots-only extension must reuse the unchanged effective repository map.' }
+    if (-not$relocation-and$added.Count -eq 0 -and [string]$Extension.effective_repository_map.path -cne $PreviousMapPath) { throw 'A roots-only extension must reuse the unchanged effective repository map.' }
 }
 
 function Assert-ActiveEnvelopeExplicitAdditions {
@@ -449,8 +483,45 @@ function Get-ActiveEnvelopeArtifactDocument {
     return $matches[0]
 }
 
+function Assert-ActiveEnvelopePlanningRecoveryDirt {
+    param([string]$WorkspaceRoot,[string]$Repository,[object]$Intent,[object[]]$Dirt)
+    # Called only after the complete historical extension/request/artifact proof.
+    # Bind each transaction-owned dirty file to exact captured or target bytes;
+    # generic ledger recovery still performs its mandatory mutex-protected CAS.
+    $workspace=[IO.Path]::GetFullPath($WorkspaceRoot)
+    $prefix=[IO.Path]::GetRelativePath($Repository,$workspace).Replace('\','/').TrimEnd('/')+'/'
+    $pins=@{}
+    foreach($name in @('state','unit')){
+        $raw=if($name-ceq'state'){[string]$Intent.pre_state_raw.sha256}else{[string]$Intent.pre_unit_raw.sha256}
+        $pins[$prefix+[string]$Intent.$name.path]=@($raw,(Get-MorphospaceSha256Bytes (ConvertTo-MorphospaceProtocolJsonBytes $Intent.target.$name.document)))
+    }
+    foreach($projection in @($Intent.additional_projections)){
+        $pins[$prefix+[string]$projection.path]=@([string]$projection.pre_raw_sha256,(Get-MorphospaceSha256Bytes (ConvertTo-MorphospaceProtocolJsonBytes $projection.document)))
+    }
+    $intentRelative="receipts/transactions/$([string]$Intent.transaction_id).intent.json"
+    $pins[$prefix+$intentRelative]=@((Get-MorphospaceSha256Bytes (ConvertTo-MorphospaceProtocolJsonBytes $Intent)))
+    for($index=0;$index-lt@($Intent.artifacts).Count;$index++){
+        $artifact=$Intent.artifacts[$index]
+        $pins[$prefix+[string]$artifact.path]=@([string]$artifact.sha256)
+        $pins[$prefix+"receipts/transactions/$([string]$Intent.transaction_id).artifact-$index.pending"]=@([string]$artifact.sha256)
+    }
+    $ledgerModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceTransitionLedger.psm1') -PassThru
+    $eventsPath=Resolve-MorphospaceWorkspacePath $workspace ([string]$Intent.events.path) -RequireLeaf
+    &$ledgerModule {param($path,$intent)[void](Assert-MorphospaceLedgerEventPlacement $path $intent)} $eventsPath $Intent
+    $pins[$prefix+[string]$Intent.events.path]=@((Get-MorphospaceFileSha256 $eventsPath))
+    $completionRelative="receipts/transactions/$([string]$Intent.transaction_id).completion.json"
+    $completion=Resolve-MorphospaceWorkspacePath $workspace $completionRelative
+    if([IO.File]::Exists($completion)){
+        &$ledgerModule {param($w,$i,$relative,$completion)Assert-MorphospaceLedgerCommittedCompletion -Workspace $w -TransactionId ([string]$i.transaction_id) -IntentRelative $relative -IntentAbsolute (Resolve-MorphospaceWorkspacePath $w $relative -RequireLeaf) -Intent $i -CompletionAbsolute $completion} $workspace $Intent $intentRelative $completion
+        $pins[$prefix+$completionRelative]=@((Get-MorphospaceFileSha256 $completion))
+    }
+    foreach($row in @($Dirt)){
+        if([string]$row.status-cnotin@(' M','??')-or-not$pins.ContainsKey([string]$row.path)-or$pins[[string]$row.path]-cnotcontains[string]$row.sha256){throw 'Planning relocation recovery dirt is not exact owner transaction bytes.'}
+    }
+}
+
 function Assert-ActiveEnvelopeCapturedSourceObservation {
-    param([Parameter(Mandatory)][object]$Source,[Parameter(Mandatory)][object]$RepositoryMap,[Parameter(Mandatory)][object]$UnitEndpoint,[switch]$AllowWritableDescendant)
+    param([Parameter(Mandatory)][object]$Source,[Parameter(Mandatory)][object]$RepositoryMap,[Parameter(Mandatory)][object]$UnitEndpoint,[switch]$AllowWritableDescendant,[string]$WorkspaceRoot='',[object]$RecoveryIntent=$null)
     $map=Get-ActiveEnvelopeIndex @($RepositoryMap.repositories) 'repo_id' 'Observed repository map'
     $sourceRows=Get-ActiveEnvelopeIndex @($Source.repositories) 'repo_id' 'Captured source composition'
     $writable=Get-ActiveEnvelopeIndex @($UnitEndpoint.allowed_repositories) 'repo_id' 'Observed writable scope'
@@ -462,6 +533,18 @@ function Assert-ActiveEnvelopeCapturedSourceObservation {
         if($head.Count-ne1-or$tree.Count-ne1){throw "Captured source repository '$id' has ambiguous identities."};$currentCommit=([string]$head[0]).ToLowerInvariant();$currentTree=([string]$tree[0]).ToLowerInvariant();$capturedCommit=[string]$sourceRows[$id].effective_commit;$capturedTree=[string]$sourceRows[$id].effective_tree;$dirty=@(Get-ActiveEnvelopeDirtyRows $root)
         $objectTree=@(Get-ActiveEnvelopeGitLines $root @('rev-parse',"$capturedCommit^{tree}") "Captured source commit for '$id' is unavailable.")
         if($objectTree.Count-ne1-or[string]$objectTree[0]-cne$capturedTree){throw "Captured source tree for '$id' is detached from its commit."}
+        if($Source.PSObject.Properties.Name-ccontains'source_selection_mode'-and$sourceRows[$id].PSObject.Properties.Name-ccontains'current_checkout_observation'){
+            $observed=$sourceRows[$id].current_checkout_observation
+            $branchRows=@(Get-ActiveEnvelopeGitLines $root @('branch','--show-current') 'Observed product branch is unavailable.')
+            $branch=if($branchRows.Count){[string]$branchRows[0]}else{$null}
+            if($currentCommit-cne[string]$observed.head-or$currentTree-cne[string]$observed.tree-or(($branch|ConvertTo-Json -Compress)-cne($observed.branch|ConvertTo-Json -Compress))-or(Get-ActiveEnvelopeHash @($dirty))-cne(Get-ActiveEnvelopeHash @($observed.dirt))){throw 'Observation-only product checkout drifted before planning recovery.'}
+            continue
+        }
+        if($RecoveryIntent-and$Source.PSObject.Properties.Name-ccontains'source_selection_mode'-and[string]$sourceRows[$id].role-ceq'planning'){
+            if($currentCommit-cne$capturedCommit-or$currentTree-cne$capturedTree){throw 'Planning relocation recovery changed the captured backing Git identity.'}
+            Assert-ActiveEnvelopePlanningRecoveryDirt -WorkspaceRoot $WorkspaceRoot -Repository $root -Intent $RecoveryIntent -Dirt @($dirty)
+            continue
+        }
         if($readOnly.ContainsKey($id)){
             if($currentCommit-cne$capturedCommit-or$currentTree-cne$capturedTree-or$dirty.Count-ne0){throw "Read-only captured source '$id' drifted."}
         }elseif($writable.ContainsKey($id)){
@@ -489,7 +572,7 @@ function Assert-ActiveEnvelopeArtifactBindings {
     if([string]$Intent.transaction_id-cne"$eventId-transition"-or[string]$Intent.event.event_id-cne$eventId-or[string]$Intent.event.project_id-cne[string]$request.project_id-or[string]$Intent.event.unit_id-cne[string]$request.unit_id){throw 'Active-envelope recovery transaction identity is detached.'}
     $expectedReceipts=[string[]]@([string]$requestBinding.artifact.path,[string]$sourceBinding.artifact.path);[Array]::Sort($expectedReceipts,[StringComparer]::Ordinal)
     $actualReceipts=[string[]]@($Intent.event.receipts);[Array]::Sort($actualReceipts,[StringComparer]::Ordinal)
-    if([string]$Intent.event.event_type-cne'state-transition'-or[string]$Intent.event.summary-cne'Extended the active development envelope through one owner-reviewed additive dependency and root transaction.'-or$actualReceipts.Count-ne2-or($actualReceipts-join[char]0)-cne($expectedReceipts-join[char]0)){throw 'Active-envelope recovery event semantics or artifact receipts are detached.'}
+    if([string]$Intent.event.event_type-cne'state-transition'-or[string]$Intent.event.summary-cne(Get-ActiveEnvelopeExtensionSummary $request)-or$actualReceipts.Count-ne2-or($actualReceipts-join[char]0)-cne($expectedReceipts-join[char]0)){throw 'Active-envelope recovery event semantics or artifact receipts are detached.'}
     if([string]$source.extension_id-cne[string]$request.extension_id-or[string]$source.project_id-cne[string]$request.project_id-or[string]$source.unit_id-cne[string]$request.unit_id-or[string]$Intent.target.unit.document.source_composition.lock_path-cne[string]$request.source_composition.path-or[string]$sourceBinding.artifact.path-cne[string]$request.source_composition.path){throw 'Active-envelope recovery source artifact is detached.'}
     if([string]$requestBinding.artifact.path-cne"receipts/$([string]$request.extension_id).json"){throw 'Active-envelope recovery receipt artifact path is detached.'}
     foreach($binding in @(
@@ -524,7 +607,7 @@ function Assert-ActiveEnvelopeArtifactBindings {
     if((Get-MorphospaceFileSha256 $originalMapPath)-cne[string]$source.repository_map.original_raw_sha256){throw 'Active-envelope recovery original repository map drifted.'}
     $fingerprint=[string]$source.fingerprint;$copy=Copy-ActiveEnvelopeValue $source;$copy.fingerprint='0'*64
     if($fingerprint-cne(Get-ActiveEnvelopeHash $copy)){throw 'Active-envelope recovery source fingerprint is detached.'}
-    if($ObserveRepositories){$effectiveMap=Read-MorphospaceProtocolJson $mapPath;Assert-ActiveEnvelopeCapturedSourceObservation $source $effectiveMap $request.target}
+    if($ObserveRepositories){$effectiveMap=Read-MorphospaceProtocolJson $mapPath;Assert-ActiveEnvelopeCapturedSourceObservation $source $effectiveMap $request.target -WorkspaceRoot $workspace -RecoveryIntent $Intent}
     return [pscustomobject]@{request=$request;source_composition=$source}
 }
 
@@ -535,7 +618,11 @@ function Assert-MorphospaceActiveEnvelopeExtensionRecoveryBindings {
 }
 
 function Assert-ActiveEnvelopeHistoricalSourceSemantics {
-    param([Parameter(Mandatory)][object]$Request,[Parameter(Mandatory)][object]$Source,[Parameter(Mandatory)][object]$ParentSource,[Parameter(Mandatory)][object]$Map)
+    param([Parameter(Mandatory)][object]$Request,[Parameter(Mandatory)][object]$Source,[Parameter(Mandatory)][object]$ParentSource,[Parameter(Mandatory)][object]$Map,[string]$WorkspaceRoot='')
+    $relocation=$Request.PSObject.Properties.Name-ccontains'planning_authority_relocation'
+    if($relocation){$relocationModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospacePlanningAuthorityRelocation.psm1') -PassThru;[void](&$relocationModule {param($w,$q,$p,$m)Assert-MorphospacePlanningAuthorityRelocation -WorkspaceRoot $w -Request $q -ParentSource $p -EffectiveMap $m -Historical} $WorkspaceRoot $Request $ParentSource $Map)}
+    $planningOnly=$Source.PSObject.Properties.Name-ccontains'source_selection_mode'
+    if($planningOnly-ne$relocation-or($planningOnly-and[string]$Source.source_selection_mode-cne'planning-authority-relocation-only')){throw 'Planning-only source mode is detached from its relocation request.'}
     $before=Get-ActiveEnvelopeIndex @($ParentSource.repositories) 'repo_id' 'Historical parent source'
     $after=Get-ActiveEnvelopeIndex @($Source.repositories) 'repo_id' 'Historical derivative source'
     $beforeWritable=Get-ActiveEnvelopeIndex @($Request.before.allowed_repositories) 'repo_id' 'Historical pre-extension writable scope'
@@ -552,8 +639,18 @@ function Assert-ActiveEnvelopeHistoricalSourceSemantics {
             $old=$before[$id]
             $expectedIntroducer=if($old.PSObject.Properties.Name-contains'introduced_by'){[string]$old.introduced_by}else{[string]$Source.original_preparation.preparation_id}
             if([string]$row.role-cne[string]$old.role-or[string]$row.introduced_by-cne$expectedIntroducer-or[string]$row.materialization_path-cne[string]$old.materialization_path-or[string]$row.baseline_commit-cne(Get-ActiveEnvelopeBaselineCommit $old commit)-or[string]$row.baseline_tree-cne(Get-ActiveEnvelopeBaselineCommit $old tree)-or[string]$row.parent_commit-cne(Get-ActiveEnvelopeParentCommit $old commit)-or[string]$row.parent_tree-cne(Get-ActiveEnvelopeParentCommit $old tree)){throw "Historical source row '$id' rewrites retained lineage identity."}
+            if($relocation-and$id-cne[string]$Request.planning_authority_relocation.repo_id){
+                $retainedDirt=if($old.PSObject.Properties.Name-ccontains'permitted_active_dirt'){@($old.permitted_active_dirt)}else{@()}
+                $retainedState=if($old.PSObject.Properties.Name-ccontains'worktree_state'){[string]$old.worktree_state}else{'clean'}
+                if([string]$row.effective_commit-cne[string]$row.parent_commit-or[string]$row.effective_tree-cne[string]$row.parent_tree-or(($row.branch|ConvertTo-Json -Compress)-cne($old.branch|ConvertTo-Json -Compress))-or[string]$row.worktree_state-cne$retainedState-or(Get-ActiveEnvelopeHash @($row.permitted_active_dirt))-cne(Get-ActiveEnvelopeHash @($retainedDirt))-or-not($row.PSObject.Properties.Name-ccontains'current_checkout_observation')){throw 'Planning-only relocation advanced retained product source.'}
+                $observed=$row.current_checkout_observation
+                $observedTree=@(Get-ActiveEnvelopeGitLines $root @('rev-parse',"$([string]$observed.head)^{tree}") 'Observed product source is unavailable.')
+                if($observedTree.Count-ne1-or[string]$observedTree[0]-cne[string]$observed.tree){throw 'Observed product tree is detached.'}
+                continue
+            }
+            if($row.PSObject.Properties.Name-ccontains'current_checkout_observation'){throw 'Ordinary selected source cannot carry observation-only product evidence.'}
             if($beforeReadOnly.ContainsKey($id)){
-                if([string]$row.effective_commit-cne[string]$row.parent_commit-or[string]$row.effective_tree-cne[string]$row.parent_tree-or[string]$row.worktree_state-cne'clean'-or@($row.permitted_active_dirt).Count-ne0){throw "Historical read-only source row '$id' drifted from its exact parent identity."}
+                if($relocation-and$id-ceq[string]$Request.planning_authority_relocation.repo_id){if([string]$row.effective_commit-cne[string]$Request.planning_authority_relocation.destination.head-or[string]$row.effective_tree-cne[string]$Request.planning_authority_relocation.destination.tree-or[string]$row.worktree_state-cne'clean'-or@($row.permitted_active_dirt).Count-ne0){throw 'Historical relocated planning identity differs.'}}else{if([string]$row.effective_commit-cne[string]$row.parent_commit-or[string]$row.effective_tree-cne[string]$row.parent_tree-or[string]$row.worktree_state-cne'clean'-or@($row.permitted_active_dirt).Count-ne0){throw "Historical read-only source row '$id' drifted from its exact parent identity."}}
             }elseif($beforeWritable.ContainsKey($id)){
                 &git -C $root merge-base --is-ancestor ([string]$row.parent_commit) ([string]$row.effective_commit) 2>$null;if($LASTEXITCODE-ne0){throw "Historical writable source row '$id' is not a descendant of its parent identity."}
                 $paths=@(Get-ActiveEnvelopeGitLines $root @('diff','--name-only',"$([string]$row.parent_commit)..$([string]$row.effective_commit)",'--') "Historical writable source row '$id' delta is unavailable.")+@($row.permitted_active_dirt|ForEach-Object{$_.path})
@@ -590,7 +687,7 @@ function Assert-ActiveEnvelopeHistoricalTransition {
     if((Get-ActiveEnvelopeHash $targetUnit)-cne[string]$intent.target.unit.sha256-or(Get-ActiveEnvelopeHash $request.target.state)-cne[string]$intent.target.state.sha256-or(Get-ActiveEnvelopeHash $request.target.state)-cne(Get-ActiveEnvelopeHash $targetState)){throw 'Historical extension target state or unit is not the exact derived projection.'}
     $originalMap=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace ([string]$request.expected.original_repository_map_path) -RequireLeaf);$previousMap=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace ([string]$request.expected.repository_map_path) -RequireLeaf);$effectiveMap=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace ([string]$request.effective_repository_map.path) -RequireLeaf)
     Assert-ActiveEnvelopeMapExtension $request $originalMap $previousMap $effectiveMap ([string]$request.expected.repository_map_path)
-    $parentSource=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace ([string]$source.parent.path) -RequireLeaf);Assert-ActiveEnvelopeHistoricalSourceSemantics $request $source $parentSource $effectiveMap
+    $parentSource=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace ([string]$source.parent.path) -RequireLeaf);Assert-ActiveEnvelopeHistoricalSourceSemantics $request $source $parentSource $effectiveMap -WorkspaceRoot $workspace
     return $Transition
 }
 
@@ -669,13 +766,13 @@ function Invoke-MorphospaceExtendActiveDevelopmentEnvelope {
     $previousMap=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace ([string]$provenance.effective.repository_map.path) -RequireLeaf)
     Assert-ActiveEnvelopeMapExtension $request $originalMap $previousMap $map ([string]$provenance.effective.repository_map.path)
     $targetUnit=Assert-ActiveEnvelopeTargetSemantics $request $provenance $map
-    $source=Get-ActiveEnvelopeSourceComposition $request $provenance $map $mapBinding.relative $mapHash
+    $source=Get-ActiveEnvelopeSourceComposition $request $provenance $map $mapBinding.relative $mapHash -WorkspaceRoot $workspace
     $sourceBytes=ConvertTo-MorphospaceProtocolJsonBytes $source
     $targetState=Copy-ActiveEnvelopeValue $state;$targetState.plan_revision=[int]$state.plan_revision+1;$targetState.last_event_id=$eventId;$targetState.module_registry=Get-MorphospaceDevelopmentEnvelopeModuleRegistry $request.target.project $request.target.feature_lock
     if((Get-ActiveEnvelopeHash $targetState)-cne(Get-ActiveEnvelopeHash $request.target.state)){throw 'Reviewed target state differs from the exact derived plan and registry projection.'}
     Assert-ActiveEnvelopeSchema $targetState 'workspace-state-v2.schema.json' 'Target active-envelope workspace state violates its schema.'
     Assert-ActiveEnvelopeSchema $targetUnit 'iteration-unit.schema.json' 'Target active-envelope unit violates its schema.'
-    $event=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.iteration_event.v1';event_id=$eventId;sequence=[int]$tail.sequence+1;timestamp=$(if($Timestamp){$Timestamp}else{[DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffffffZ')});project_id=[string]$request.project_id;unit_id=$UnitId;event_type='state-transition';summary='Extended the active development envelope through one owner-reviewed additive dependency and root transaction.';receipts=@($outBinding.relative,$sourceOutBinding.relative|Sort-Object)}
+    $event=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.iteration_event.v1';event_id=$eventId;sequence=[int]$tail.sequence+1;timestamp=$(if($Timestamp){$Timestamp}else{[DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffffffZ')});project_id=[string]$request.project_id;unit_id=$UnitId;event_type='state-transition';summary=(Get-ActiveEnvelopeExtensionSummary $request);receipts=@($outBinding.relative,$sourceOutBinding.relative|Sort-Object)}
     if(-not(Test-MorphospaceStrictUtcTimestamp ([string]$event.timestamp))){throw 'Extension timestamp must be strict UTC.'}
     Assert-ActiveEnvelopeSchema $event 'iteration-event.schema.json' 'Active-envelope extension event violates its schema.'
     if($Execute){
