@@ -30,7 +30,7 @@
     {"importer":"scripts/Test-DevelopmentUnitAdmission.ps1","variable":"ledgerModule","count":3,"target_paths":["scripts/lib/MorphospaceTransitionLedger.psm1"]},
     {"importer": "scripts/Test-DevelopmentUnitAdmission.ps1", "variable": "module", "count": 2, "target_paths": ["scripts/CandidateFreeze.psm1"]},
     {"importer":"scripts/Test-DevelopmentUnitAdmission.ps1","variable":"path","count":1,"target_paths":["scripts/CandidateFreeze.psm1"]},
-    {"importer":"scripts/Test-DevelopmentUnitAdmission.ps1","variable":"planningFreezeModule","count":3,"target_paths":["scripts/CandidateFreeze.psm1"]},
+    {"importer":"scripts/Test-DevelopmentUnitAdmission.ps1","variable":"planningFreezeModule","count":1,"target_paths":["scripts/CandidateFreeze.psm1"]},
     {"importer":"scripts/Test-DevelopmentUnitAdmission.ps1","variable":"protocolModule","count":2,"target_paths":["scripts/lib/MorphospaceProtocolCommon.psm1"]},
     {"importer": "scripts/Test-DevelopmentUnitAdmission.ps1", "variable": "writerModule", "count": 1, "target_paths": ["scripts/DevelopmentEnvelopeRepreparation.psm1"]},
     {"importer":"scripts/Test-ExecutedPushReceipt.ps1","variable":"case","count":1,"target_paths":["scripts/Test-ExecutedPushReceipt.ps1"]},
