@@ -41,3 +41,12 @@ independent remote publication authority.
 Existing projects without the opt-in fields remain on their existing schema dispatch.
 Current021 continues its retirement-first sequence. A later installer Update is a
 separate backup-first host action and must Verify against the upgraded context.
+
+An authenticated failed frozen unit may deliberately upgrade tooling for its
+nonaccepting retirement. This route requires the exact active/current unit,
+a retained failing checkpoint, no remaining blockers or ready unit, and the
+original committed Freeze, BeginValidation, fail, Resume and ResolveBlocker
+chain. It preserves the original freeze, failure receipt, product projection
+and accepted checkpoint. The ordinary context, compatibility, owner-validation,
+raw CAS, recovery and historical guards still apply; no validation, acceptance
+or runtime effect is granted.

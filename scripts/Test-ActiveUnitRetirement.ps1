@@ -1,7 +1,7 @@
 param(
     [switch]$SelfTest,
     [switch]$InertProposalsOnly,
-    [ValidateSet('All', 'Core', 'NestedPositive', 'NestedCommitted', 'NestedMapGuards', 'AmendmentRecovery', 'NestedRecovery', 'NestedDamage')]
+    [ValidateSet('All', 'Core', 'NestedPositive', 'NestedCommitted', 'PostNonpass', 'NestedMapGuards', 'AmendmentRecovery', 'NestedRecovery', 'NestedDamage')]
     [string]$Scenario = 'All',
     [ValidateSet('', 'Base', 'Diagnostics')][string]$CoreWorkerGroup = ''
 )
@@ -519,6 +519,53 @@ try{
     $runAmendmentRecovery = $Scenario -cin @('All', 'AmendmentRecovery')
     $runNestedRecovery = $Scenario -cin @('All', 'NestedRecovery')
     $runNestedDamage = $Scenario -cin @('All', 'NestedDamage')
+
+    if($Scenario-cin@('All','NestedPositive','NestedCommitted','PostNonpass')){
+        $postSeed=@(New-ReadonlyPlanningRetirementSeed (Join-Path $temp 'post-nonpass-seed'))[-1];$workspace=Join-Path $postSeed.source_repository 'morphospace';$planning=[string]$postSeed.source_repository;$mapPath=Join-Path $workspace 'repository-map.json'
+        Invoke-EnvelopeGit $planning @('add','morphospace')|Out-Null;Invoke-EnvelopeGit $planning @('commit','-qm','Checkpoint synthetic admitted claim')|Out-Null
+        $freezePath=Join-Path $temp 'post-nonpass-freeze.json';$null=New-RetirementNonpassFreezeRequest $workspace $mapPath $freezePath
+        $automation=Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1';$common=@{WorkspaceRoot=$workspace;UnitId='u002';RepoMapPath=$mapPath;ValidationTier='quick'}
+        $null=&$automation @common -Action FreezeCandidate -CandidateFreeze $freezePath -ExpectedCandidateFreezeSha256 (Get-EnvelopeFileSha256 $freezePath) -OutPath (Join-Path $workspace 'receipts/u002-extension-freeze.json') -Timestamp '2026-08-25T00:00:44.0000000Z' -Execute
+        $null=&$automation @common -Action BeginValidation -OutPath (Join-Path $workspace 'receipts/post-begin.json') -Timestamp '2026-08-25T00:00:45.0000000Z' -Execute
+        $unit=Read-EnvelopeProtocolJson (Join-Path $workspace 'iteration-units/u002.json');$module=Import-Module (Join-Path $PSScriptRoot 'WorkUnitAutomation.psm1') -PassThru
+        $matrix=@(&$module {param($unit)New-MorphospaceValidationMatrix -Unit $unit -DeviceSerials @()} $unit)
+        $evidencePath=Join-Path $temp 'synthetic-nonpass.txt';[IO.Directory]::CreateDirectory((Split-Path $evidencePath -Parent))|Out-Null;[IO.File]::WriteAllText($evidencePath,'Synthetic host-only failure; no device or product acceptance.')
+        $evidence=[pscustomobject]@{receipt_id='u002-synthetic-nonpass';tier='quick';result='fail';artifacts=@([pscustomobject]@{artifact_id='fixture';kind='host-control';path=$evidencePath});criteria=@($unit.acceptance|ForEach-Object{[pscustomobject]@{acceptance_id=$_.acceptance_id;status='fail';command=$_.command;evidence_refs=@('fixture')}});gates=@($matrix|Where-Object disposition -CNE 'forbidden'|ForEach-Object{[pscustomobject]@{gate_id=$_.gate_id;status='fail';command=$_.command;evidence_refs=@('fixture')}});device_validation=$null}
+        Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceValidationReceipt.psm1');$null=New-MorphospaceValidationReceiptV1 -WorkspaceRoot $workspace -UnitId u002 -RepoMapPath $mapPath -Evidence $evidence -OutPath (Join-Path $workspace 'receipts/post-fail.json') -CreatedAt '2026-08-25T00:00:46.0000000Z'
+        $null=&$automation @common -Action RecordValidation -ValidationReceipt 'receipts/post-fail.json' -ValidationResult fail -OutPath (Join-Path $workspace 'receipts/post-record.json') -Timestamp '2026-08-25T00:00:47.0000000Z' -Execute
+        $null=&$automation @common -Action Resume -OutPath (Join-Path $workspace 'receipts/post-resume.json') -Timestamp '2026-08-25T00:00:48.0000000Z' -Execute
+        $state=Read-EnvelopeProtocolJson (Join-Path $workspace 'workspace.state.json');$heads=@();$sources=@()
+        foreach($entry in @((Read-EnvelopeProtocolJson $mapPath).repositories)){
+            $heads+=@([pscustomobject]@{repo_id=$entry.repo_id;revision=(@(Invoke-EnvelopeGit $entry.path @('rev-parse','HEAD'))[0]).Trim();branch=(@(Invoke-EnvelopeGit $entry.path @('branch','--show-current'))-join'').Trim()})
+            $file=@(Get-ChildItem $entry.path -Recurse -File|Where-Object FullName -NotMatch '[\\/]\.git[\\/]'|Select-Object -First 1)[0];$sources+=@([pscustomobject]@{repo_id=$entry.repo_id;sources=@([pscustomobject]@{path=[IO.Path]::GetRelativePath($entry.path,$file.FullName).Replace('\','/');sha256=Get-EnvelopeFileSha256 $file.FullName})})
+        }
+        $resolution=[pscustomobject]@{schema='rusty.morphospace.workflow.blocker_resolution_receipt.v1';receipt_id='u002-scope-disposition';project_id=$state.project_id;unit_id='u002';blocker=$state.blockers[0];result='pass';evidence=@([pscustomobject]@{path='receipts/post-fail.json';sha256=Get-EnvelopeFileSha256 (Join-Path $workspace 'receipts/post-fail.json')});repository_heads=$heads;repository_sources=$sources;preserve_blocker_ids=@()};$resolutionPath=Join-Path $temp 'post-resolution.json';Write-EnvelopeJson $resolutionPath $resolution
+        $null=&$automation @common -Action ResolveBlocker -BlockerResolutionReceipt $resolutionPath -OutPath (Join-Path $workspace 'receipts/post-resolution.json') -Timestamp '2026-08-25T00:00:49.0000000Z' -Execute
+        Invoke-EnvelopeGit $planning @('add','morphospace')|Out-Null;Invoke-EnvelopeGit $planning @('commit','-qm','Record synthetic nonpass lifecycle')|Out-Null;$introduced=(@(Invoke-EnvelopeGit $planning @('rev-parse','HEAD'))[0]).Trim()
+        $diagnostics=@(foreach($relative in @('receipts/post-begin.json','receipts/post-record.json','receipts/post-resume.json')){$document=Read-EnvelopeProtocolJson (Join-Path $workspace $relative);[pscustomobject]@{role='inert-post-nonpass-lifecycle-diagnostic';path=$relative;raw_sha256=Get-EnvelopeFileSha256 (Join-Path $workspace $relative);canonical_sha256=Get-EnvelopeCanonicalJsonSha256 $document;introduced_commit=$introduced;git_blob_sha1=(@(Invoke-EnvelopeGit $planning @('rev-parse',"HEAD:morphospace/$relative"))[0]).Trim();event_id=$document.event_id}})
+        $request=New-ActiveUnitRetirementRequest -WorkspaceRoot $workspace -RetainedLifecycleDiagnostics $diagnostics;$postRequestPath=Join-Path $temp 'post-retirement-request.json';Write-EnvelopeJson $postRequestPath $request
+        $before=Get-RetirementInventory $workspace;$dry=Invoke-MorphospaceRetireActive -WorkspaceRoot $workspace -UnitId u002 -RepoMapPath $mapPath -ActiveUnitRetirement $postRequestPath -ExpectedActiveUnitRetirementSha256 (Get-EnvelopeFileSha256 $postRequestPath) -OutPath (Join-Path $workspace 'receipts/retire-u002.json') -Timestamp '2026-08-25T00:00:50.0000000Z';Assert-RetirementTest (-not$dry.executed-and(Get-RetirementInventory $workspace)-ceq$before) 'post-nonpass public reader dry run changed bytes'
+        $events=Get-Content (Join-Path $workspace 'iteration-events.jsonl')|ForEach-Object{$_|ConvertFrom-Json -DateKind String};$event=@($events|Where-Object event_id -match '-resumed-')[0];$proof=&$retirementModule {param($w,$id)Get-ActiveRetirementPlanningTransition $w "$id-transition"} $workspace $event.event_id
+        foreach($damage in @('scope','checkpoint','accepted','blockers','wrong-event','extra-artifact','protocol')){
+            $changed=Copy-Envelope $proof;$changedEvent=Copy-Envelope $event
+            switch($damage){'scope'{$changed.intent.target.unit.document.objective='forged objective'};'checkpoint'{$changed.intent.target.state.document.validation_checkpoint.result='pass'};'accepted'{$changed.intent.target.state.document.last_accepted_receipt='receipts/post-fail.json'};'blockers'{$changed.intent.target.state.document.blockers=@()};'wrong-event'{$changedEvent.event_id='u002-observed-9999'};'extra-artifact'{$changed.intent.artifacts=@([pscustomobject]@{path='receipts/extra.json';sha256=('0'*64);bytes_base64=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('{"schema":"unknown"}'))})};'protocol'{$freezeEvent=@($events|Where-Object event_id -CEQ 'u002-extension-freeze-recorded')[0];$changed=&$retirementModule {param($w,$id)Get-ActiveRetirementPlanningTransition $w "$id-transition"} $workspace $freezeEvent.event_id;$changed=Copy-Envelope $changed;$changedEvent=Copy-Envelope $freezeEvent;$changed.intent.target.unit.document.candidate_freeze|Add-Member -NotePropertyName protocol_id -NotePropertyValue 'forged'}}
+            $rejected=$false;try{&$retirementModule {param($w,$e,$p)Assert-ActiveRetirementRetainedLifecycle $w $e $p} $workspace $changedEvent $changed}catch{$rejected=$true};Assert-RetirementTest $rejected "post-nonpass semantic branch accepted $damage"
+        }
+        foreach($damage in @('timestamp','wrong-event','authority-payload','blob')){
+            $binding=Copy-Envelope $diagnostics[0];$path=Join-Path $workspace $binding.path;$savedDiagnostic=[IO.File]::ReadAllBytes($path);$document=Read-EnvelopeProtocolJson $path
+            switch($damage){'timestamp'{$document.timestamp='2026-08-25T00:00:45.1000000Z'};'wrong-event'{$document.event_id='u002-validating-9999'};'authority-payload'{$document.adoption_receipt='receipts/forged.json'};'blob'{$binding.git_blob_sha1=('0'*40)}}
+            try{
+                if($damage-cne'blob'){Write-EnvelopeJson $path $document;$binding.raw_sha256=Get-EnvelopeFileSha256 $path;$binding.canonical_sha256=Get-EnvelopeCanonicalJsonSha256 $document}
+                $diagnosticRequest=Copy-Envelope $request;$diagnosticRequest.retained_lifecycle_diagnostics=@($binding)
+                $rejected=$false;try{&$retirementModule {param($w,$r,$head,$request,$events)Get-ActiveRetirementLifecycleDiagnostics $w $r $head $request $events} $workspace $planning $introduced $diagnosticRequest $events|Out-Null}catch{$rejected=$true};Assert-RetirementTest $rejected "post-nonpass diagnostic accepted $damage"
+            }finally{[IO.File]::WriteAllBytes($path,$savedDiagnostic)}
+        }
+        $failure=Join-Path $workspace 'receipts/post-fail.json';$saved=[IO.File]::ReadAllBytes($failure);$modified=Read-EnvelopeProtocolJson $failure;$modified.created_at='2026-08-25T00:00:46.1000000Z';Write-EnvelopeJson $failure $modified;Invoke-EnvelopeGit $planning @('add','morphospace/receipts/post-fail.json')|Out-Null;Invoke-EnvelopeGit $planning @('commit','-qm','Synthetic receipt rewrite negative')|Out-Null
+        $rejected=$false;try{&$retirementModule {param($w)Assert-ActiveRetirementImmutableNonpassReceipt $w 'receipts/post-fail.json'} $workspace}catch{$rejected=$true};Assert-RetirementTest $rejected 'schema-valid committed nonpass receipt rewrite accepted'
+        [IO.File]::WriteAllBytes($failure,$saved);Invoke-EnvelopeGit $planning @('add','morphospace/receipts/post-fail.json')|Out-Null;Invoke-EnvelopeGit $planning @('commit','-qm','Restore synthetic receipt negative')|Out-Null
+        $rejected=$false;try{&$retirementModule {param($w)Assert-ActiveRetirementImmutableNonpassReceipt $w 'receipts/post-fail.json'} $workspace}catch{$rejected=$true};Assert-RetirementTest $rejected 'rewritten then restored nonpass receipt history accepted'
+        if($Scenario-ceq'PostNonpass'){[pscustomobject]@{status='pass';check='active-unit-retirement';scenario=$Scenario;producer_lifecycle_pass=$true;semantic_negatives=7;diagnostic_negatives=4;receipt_history_negatives=2;mutated_real_project=$false}|ConvertTo-Json -Compress;return}
+    }
 
     if($runCore){
         $seed=New-ActiveRetirementContinuationSeed -Root (Join-Path $temp 'seed') -RepositoryRoot $repository

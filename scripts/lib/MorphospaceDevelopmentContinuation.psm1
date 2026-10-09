@@ -170,7 +170,7 @@ function Get-MorphospaceDevelopmentEnvelopeContinuation {
                 $extensions += ,$proof
                 $kind = 'extension'
             } elseif ($null -ne $upgrade) {
-                if ($frozen) { throw 'Development continuation upgrades frozen tooling.' }
+                # The typed upgrade verifier below authenticates the narrow failed-frozen route.
                 $expectedProjection=[pscustomobject][ordered]@{
                     source_composition=[pscustomobject]@{path=$sourcePath;sha256=$sourceSha}
                     repository_map=[pscustomobject]@{path=$mapPath;sha256=$mapSha}
