@@ -66,7 +66,8 @@ function Test-ValidationOnlyEmptyFreeze {
     }
     $begin=&$automationModule {param($a)Invoke-MorphospaceWorkUnitAutomation @a} @{Action='BeginValidation';WorkspaceRoot=$ws;UnitId='u002';RepoMapPath=(Join-Path $ws 'repository-map.json');ValidationTier='quick';Execute=$true}
     Assert-Envelope ($begin.transition-ceq'active-to-validating') 'empty Freeze failed actual BeginValidation consumer'
-    $contractOutput=& (Join-Path $PSHOME 'pwsh') -NoProfile -File (Join-Path $PSScriptRoot 'Test-WorkflowContracts.ps1') -WorkspaceRoot $ws -RepositoryMapPath (Join-Path $ws 'repository-map.json') -CurrentWorkOnly -SkipOwnerSelfTests -CurrentWorkspaceOnly 2>&1
+    $contractHostExecutable=Join-Path $PSHOME $(if($IsWindows){'pwsh.exe'}else{'pwsh'})
+    $contractOutput=& $contractHostExecutable -NoProfile -File (Join-Path $PSScriptRoot 'Test-WorkflowContracts.ps1') -WorkspaceRoot $ws -RepositoryMapPath (Join-Path $ws 'repository-map.json') -CurrentWorkOnly -SkipOwnerSelfTests -CurrentWorkspaceOnly 2>&1
     $contractOutput|Write-Host
     Assert-Envelope ($LASTEXITCODE-eq0) 'genuine validation-only empty write scope failed the full current-work contract consumer'
     # Exercise the exact consumer block on copies; damage probes never rewrite owner evidence.
@@ -88,7 +89,7 @@ function Test-ValidationOnlyEmptyFreeze {
       $before=Get-EnvelopeWorkspaceByteInventorySha256 $ws;$rejected=$false
       try {
         & {
-          param($block,$unit)
+          param([scriptblock]$block,$unit)
           function Assert-Contract {param($condition,$message)if(-not$condition){throw $message}}
           function Test-NonEmptyTextArray {param($Value,$Context)Assert-Contract (@($Value).Count-gt0-and@($Value|Where-Object{[string]::IsNullOrWhiteSpace([string]$_)}).Count-eq0) $Context}
           function Test-PathInScope {param($Candidate,$Allowed)return @($Allowed|Where-Object{$Candidate.StartsWith([string]$_,[StringComparison]::Ordinal)}).Count-gt0}

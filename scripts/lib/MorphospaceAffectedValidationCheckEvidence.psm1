@@ -11,8 +11,8 @@ function Get-MorphospaceAffectedCheckRunnerBinding {
     $powerShellPath = [IO.Path]::GetFullPath((Get-Process -Id $PID).Path)
     $gitCommand = Get-Command git -CommandType Application -ErrorAction Stop | Select-Object -First 1
     if ($null -eq $gitCommand -or [string]::IsNullOrWhiteSpace([string]$gitCommand.Source)) { throw 'Affected check evidence could not resolve the Git executable.' }
-    $gitPath = [IO.Path]::GetFullPath([string]$gitCommand.Source)
-    $gitVersion = (& $gitPath --version).Trim()
+    $gitExecutable = [IO.Path]::GetFullPath([string]$gitCommand.Source)
+    $gitVersion = (& $gitExecutable --version).Trim()
     if ($LASTEXITCODE -ne 0 -or $gitVersion -cnotmatch '^git version [0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?(?:\.[A-Za-z0-9.-]+)?$') { throw 'Affected check evidence could not resolve a canonical Git version.' }
     return [pscustomobject][ordered]@{
         os_description=[Runtime.InteropServices.RuntimeInformation]::OSDescription
@@ -20,7 +20,7 @@ function Get-MorphospaceAffectedCheckRunnerBinding {
         powershell_version=$PSVersionTable.PSVersion.ToString()
         powershell_executable_sha256=Get-MorphospaceAffectedCheckBytesSha256 ([IO.File]::ReadAllBytes($powerShellPath))
         git_version=$gitVersion
-        git_executable_sha256=Get-MorphospaceAffectedCheckBytesSha256 ([IO.File]::ReadAllBytes($gitPath))
+        git_executable_sha256=Get-MorphospaceAffectedCheckBytesSha256 ([IO.File]::ReadAllBytes($gitExecutable))
     }
 }
 

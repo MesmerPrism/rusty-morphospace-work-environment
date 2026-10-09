@@ -288,6 +288,7 @@ if ($SelfTest) {
 
     foreach ($quickTest in @(
         [pscustomobject]@{ name = "workflow:public-boundary"; script = "Test-PublicBoundary.ps1"; detail = "Validated the portable public/private boundary." },
+        [pscustomobject]@{ name = "workflow:advisory-affected-budgets"; script = "Test-AdvisoryAffectedBudgets.ps1"; detail = "Validated real leaf completion beyond its estimate, diagnostic overrun, explicit strict cancellation, and complete native raw streams." },
         [pscustomobject]@{ name = "workflow:documentation-links"; script = "Test-DocumentationLinks.ps1"; detail = "Validated relative Markdown links." },
         [pscustomobject]@{ name = "workflow:skill-templates"; script = "Test-SkillTemplates.ps1"; detail = "Validated the five local skills, external Meta ownership boundary, and locator contract." },
         [pscustomobject]@{ name = "workflow:normal-validation-selector"; script = "Test-NormalValidationSelector.ps1"; arguments = @("-SelfTest"); detail = "Validated exact external Quick selection, immutable unit/freeze/candidate binding, hash-only lifecycle reconstruction, canonical evidence dispatch/consumption, ordinary fallback preservation, and damaged-case rejection without producer execution." },
