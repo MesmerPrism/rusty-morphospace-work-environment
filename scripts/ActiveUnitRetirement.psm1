@@ -193,7 +193,7 @@ function Assert-ActiveRetirementPostNonpassUpgradeSlot {
     $suffix=@($events|Where-Object{[int]$_.sequence-ge[int]$starts[0].sequence-and[int]$_.sequence-le[int]$ends[0].sequence})
     Assert-ActiveRetirementPlanningContinuationEvents $suffix ([int]$starts[0].sequence-1) $UnitId
     if($suffix.Count-ne5-or[string]$suffix[1].event_id-cnotmatch'-validating-[0-9]{4,}$'-or[string]$suffix[2].event_id-cnotmatch'-validation-fail-[0-9]{4,}$'-or[string]$suffix[3].event_id-cnotmatch'-resumed-[0-9]{4,}$'){throw 'Frozen tooling upgrade requires exactly Freeze, BeginValidation, fail, Resume and ResolveBlocker.'}
-    foreach($event in $suffix){$proof=Get-ActiveRetirementPlanningTransition $Workspace "$([string]$event.event_id)-transition";Assert-ActiveRetirementRetainedLifecycle $Workspace $event $proof}
+    foreach($event in $suffix){$proof=Get-ActiveRetirementPlanningTransition $Workspace "$([string]$event.event_id)-transition" -HistoricalProjection;Assert-ActiveRetirementRetainedLifecycle $Workspace $event $proof}
     Assert-ActiveRetirementEqual $Unit $proof.intent.target.unit.document 'post-nonpass upgrade original unit';Assert-ActiveRetirementEqual $State $proof.intent.target.state.document 'post-nonpass upgrade original state'
 }
 function Get-ActiveRetirementLifecycleDiagnostics {
