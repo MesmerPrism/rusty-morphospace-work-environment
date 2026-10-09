@@ -43,6 +43,51 @@ function Assert-True {
     }
 }
 
+function Test-ToolingContextRootComparison {
+    # Exercise the actual installer comparison boundary after its unchanged
+    # context/hash/closure assertions. This fixture does not replace those assertions.
+    param([string]$ExecutorDirectory, [string]$SkillsDirectory)
+    $tokens = $null; $parseErrors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseFile($installer, [ref]$tokens, [ref]$parseErrors)
+    if ($parseErrors.Count -ne 0) { throw 'Installer source did not parse.' }
+    $normalizer = @($ast.FindAll({ param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -ceq 'Resolve-SkillContextDirectoryRoot'
+    }, $false))
+    $comparison = @($ast.EndBlock.Statements | Where-Object {
+        $_ -is [Management.Automation.Language.IfStatementAst] -and
+        $_.Extent.Text.StartsWith('if ($null -ne $toolingResolver)')
+    })
+    if ($normalizer.Count -ne 1 -or $comparison.Count -ne 1) { throw 'Exact installer root boundary missing.' }
+    $boundary = [scriptblock]::Create($normalizer[0].Extent.Text + "`n" + $comparison[0].Extent.Text)
+    $RepoRoot = $ExecutorDirectory; $TargetRoot = $SkillsDirectory
+    $pathStringComparison = [StringComparison]::OrdinalIgnoreCase
+    $routerDirectory = Join-Path $SkillsDirectory 'rusty-morphospace'
+    foreach ($shape in @('native', 'forward', 'mixed', 'trailing', 'case')) {
+        $executor = $ExecutorDirectory; $routerPath = $routerDirectory
+        if ($shape -eq 'forward') { $executor = $executor.Replace('\', '/'); $routerPath = $routerPath.Replace('\', '/') }
+        if ($shape -eq 'mixed') { $executor = $executor.Replace('\', '/') + '/.'; $routerPath += '\.' }
+        if ($shape -eq 'trailing') { $executor += '\'; $routerPath += '/' }
+        if ($shape -eq 'case') { $executor = $executor.ToUpperInvariant(); $routerPath = $routerPath.ToUpperInvariant() }
+        $toolingResolver = [pscustomobject]@{executor_root=$executor; routers=@([pscustomobject]@{skill_id='rusty-morphospace'; root=$routerPath})}
+        & $boundary
+    }
+    foreach ($damage in @('other-executor', 'other-router', 'relative-executor', 'relative-router', 'missing-executor', 'file-router')) {
+        $executor = $ExecutorDirectory; $routerPath = $routerDirectory
+        if ($damage -eq 'other-executor') { $executor = $SkillsDirectory }
+        if ($damage -eq 'other-router') { $routerPath = Join-Path $SkillsDirectory 'system-engineering' }
+        if ($damage -eq 'relative-executor') { $executor = 'source' }
+        if ($damage -eq 'relative-router') { $routerPath = 'skills/rusty-morphospace' }
+        if ($damage -eq 'missing-executor') { $executor = Join-Path $ExecutorDirectory 'absent-root' }
+        if ($damage -eq 'file-router') { $routerPath = Join-Path $routerDirectory 'SKILL.md' }
+        $toolingResolver = [pscustomobject]@{executor_root=$executor; routers=@([pscustomobject]@{skill_id='rusty-morphospace'; root=$routerPath})}
+        $denied = $false
+        try { & $boundary } catch { $denied = $true }
+        Assert-True -Condition $denied -Message "Tooling-context directory boundary accepted $damage."
+    }
+    Write-Host 'Actual tooling-context root comparison: five Windows shape positives and six directory/identity negatives passed.'
+}
+
 function Assert-IgnoredMetaRequiredFileRejected {
     param([string]$RelativePath)
 
@@ -170,6 +215,7 @@ try {
 
     $installText = Invoke-InstallerChild -Arguments @("-RepoRoot", $installerSourceRoot, "-TargetRoot", $targetRoot, "-BackupRoot", $backupRoot, "-Action", "Install", "-Execute", "-Json")
     $installed = $installText | ConvertFrom-Json
+    Test-ToolingContextRootComparison -ExecutorDirectory $installerSourceRoot -SkillsDirectory $targetRoot
     Assert-True -Condition (@($installed | Where-Object { $_.action -ne "installed" }).Count -eq 0) -Message "One or more skills were not installed."
 
     foreach ($skill in @("meta-quest-workflow", "rust-work-graph", "rusty-morphospace", "rusty-morphospace-cleanup", "rusty-morphospace-context", "system-engineering")) {
