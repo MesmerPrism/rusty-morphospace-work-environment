@@ -33,12 +33,12 @@ function Get-ActiveRetirementFileBinding([string]$Workspace,[string]$Path){
     $document=Read-MorphospaceProtocolJson $absolute
     [pscustomobject][ordered]@{path=$Path;raw_sha256=Get-MorphospaceFileSha256 $absolute;canonical_sha256=Get-MorphospaceCanonicalJsonSha256 $document}
 }
-function Get-ActiveRetirementEvents([string]$Workspace){
+function Get-ActiveRetirementEvents([string]$Workspace,[byte[]]$CommittedBytes=$null){
     $path=Resolve-MorphospaceWorkspacePath $Workspace 'iteration-events.jsonl' -RequireLeaf
-    $bytes=[IO.File]::ReadAllBytes($path)
+    $bytes=if($null-ne$CommittedBytes){$CommittedBytes}else{[IO.File]::ReadAllBytes($path)}
     if($bytes.Length-eq0-or$bytes.Length-gt67108864-or$bytes[-1]-ne10){throw 'Active retirement requires a bounded LF-terminated event ledger.'}
     $sha=Get-MorphospaceSha256Bytes $bytes
-    $scope=$script:ActiveRetirementHistoricalEventsScope
+    $scope=if($null-ne$CommittedBytes){$null}else{$script:ActiveRetirementHistoricalEventsScope}
     if($null-ne$scope){
         $workspaceKey=[IO.Path]::GetFullPath($Workspace).TrimEnd('\','/')
         $comparison=if([OperatingSystem]::IsWindows()){[StringComparison]::OrdinalIgnoreCase}else{[StringComparison]::Ordinal}
@@ -412,10 +412,25 @@ function Get-ActiveRetirementReadyDiagnosticProjection {
     [pscustomobject]@{path=$reference.path;sha256=[string]$binding.raw_sha256}
 }
 
+function Read-ActiveRetirementCommittedBytes([string]$Repository,[string]$Head,[string]$Path){
+    if($Head-cnotmatch'^[0-9a-f]{40}$'){throw 'Committed planning snapshot needs an exact Git revision.'}
+    $relative=ConvertTo-MorphospaceProtocolRelativePath $Path
+    $blob=(@(&git -C $Repository rev-parse "$($Head):$relative" 2>&1)-join'').Trim()
+    if($LASTEXITCODE-ne0-or$blob-cnotmatch'^[0-9a-f]{40}$'){throw "Committed planning snapshot blob is unavailable: ${Head}:$relative"}
+    $size=(@(&git -C $Repository cat-file -s $blob 2>&1)-join'').Trim()
+    if($LASTEXITCODE-ne0-or$size-cnotmatch'^[0-9]{1,9}$'-or[long]$size-gt67108864){throw 'Committed planning snapshot blob exceeds its bound.'}
+    $start=[Diagnostics.ProcessStartInfo]::new('git');$start.UseShellExecute=$false;$start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
+    foreach($arg in @('-C',$Repository,'cat-file','blob',$blob)){$start.ArgumentList.Add($arg)}
+    $process=[Diagnostics.Process]::Start($start);$errorTask=$process.StandardError.ReadToEndAsync();$stream=[IO.MemoryStream]::new()
+    try{$process.StandardOutput.BaseStream.CopyTo($stream);$process.WaitForExit();$errorText=$errorTask.GetAwaiter().GetResult();if($process.ExitCode-ne0){throw 'Committed planning snapshot read failed.'};$bytes=$stream.ToArray()}finally{$stream.Dispose();$process.Dispose()}
+    if($bytes.LongLength-ne[long]$size){throw 'Committed planning snapshot blob size changed.'}
+    return ,$bytes
+}
 function Test-ActiveRetirementPlanningProjectionFromAuthenticatedAdmission {
-    param([string]$Workspace,[object]$Unit,[object]$RepositoryEntry,[string[]]$StatusPorcelain,[Parameter(Mandatory)][object]$Admission,[object]$RecoveryIntent=$null,[string]$LockedCommit='',[string]$ObservedHead='',[object]$Request=$null)
+    param([string]$Workspace,[object]$Unit,[object]$RepositoryEntry,[string[]]$StatusPorcelain,[Parameter(Mandatory)][object]$Admission,[object]$RecoveryIntent=$null,[string]$LockedCommit='',[string]$ObservedHead='',[object]$Request=$null,[switch]$CommittedSnapshot)
     if([string]$RepositoryEntry.role-cne'planning'){return $false}
     $committed=[bool]$LockedCommit
+    if($CommittedSnapshot-and(-not$committed-or$RecoveryIntent)){throw 'Committed planning snapshot requires exact committed ancestry without a recovery override.'}
     if($committed-and($RecoveryIntent-or$StatusPorcelain.Count-ne0-or$ObservedHead-cnotmatch'^[0-9a-f]{40}$')){throw 'Active retirement committed planning descendant requires a clean exact HEAD without recovery.'}
     if([string]::IsNullOrWhiteSpace($Workspace)){throw 'Active retirement planning lifecycle workspace path is empty.'};if([string]::IsNullOrWhiteSpace([string]$RepositoryEntry.path)){throw 'Active retirement planning lifecycle repository path is empty.'}
     if($null-eq$RecoveryIntent-and@($StatusPorcelain|Where-Object{[string]$_-cmatch'retire-.*-active-retired-transition'}).Count-ne0){throw 'Active retirement planning lifecycle recovery intent was not forwarded.'}
@@ -424,7 +439,12 @@ function Test-ActiveRetirementPlanningProjectionFromAuthenticatedAdmission {
     if(-not$workspaceFull.StartsWith($repositoryPrefix,$pathComparison)){return $false}
     $workspacePrefix=[IO.Path]::GetRelativePath($repository,$workspaceFull).Replace('\','/').TrimEnd('/')+'/'
     $admission=$Admission
-    $eventObservation=Get-ActiveRetirementEvents $workspaceFull;$events=$eventObservation.events
+    if($CommittedSnapshot){
+        $unitBytes=Read-ActiveRetirementCommittedBytes $repository $ObservedHead ($workspacePrefix+'iteration-units/'+[string]$Unit.unit_id+'.json')
+        Assert-ActiveRetirementEqual $Unit (ConvertFrom-MorphospaceProtocolJsonBytes $unitBytes) 'committed snapshot unit'
+        $eventBytes=Read-ActiveRetirementCommittedBytes $repository $ObservedHead ($workspacePrefix+'iteration-events.jsonl')
+        $eventObservation=Get-ActiveRetirementEvents $workspaceFull -CommittedBytes $eventBytes
+    }else{$eventObservation=Get-ActiveRetirementEvents $workspaceFull};$events=$eventObservation.events
     if($RecoveryIntent){
         $tailMatches=@($events|Where-Object{[string]$_.event_id-ceq[string]$RecoveryIntent.expected.event_tail_id})
         if($tailMatches.Count-ne1){throw 'Active retirement recovery planning prefix tail is ambiguous.'}
@@ -449,9 +469,9 @@ function Test-ActiveRetirementPlanningProjectionFromAuthenticatedAdmission {
         Assert-ActiveRetirementPlanningContinuationEvents -Events $amendments -AfterSequence $to -UnitId ([string]$Unit.unit_id)
     }
     $projectionSuffix=@($suffix)+@($amendments)
-    $expected=@{};$recoveryOwned=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $expected=@{};$auxiliaryProofs=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal);$recoveryOwned=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     if($RecoveryIntent){foreach($relative in @([string]$RecoveryIntent.state.path,[string]$RecoveryIntent.events.path,"receipts/transactions/$($RecoveryIntent.transaction_id).intent.json","receipts/transactions/$($RecoveryIntent.transaction_id).completion.json")+@($RecoveryIntent.artifacts|ForEach-Object{[string]$_.path})){[void]$recoveryOwned.Add($relative)};for($artifactIndex=0;$artifactIndex-lt@($RecoveryIntent.artifacts).Count;$artifactIndex++){[void]$recoveryOwned.Add("receipts/transactions/$($RecoveryIntent.transaction_id).artifact-$artifactIndex.pending")}}
-    function Set-PlanningProjection([string]$Relative,[string]$Sha){$relative=ConvertTo-MorphospaceProtocolRelativePath $Relative;if(-not$recoveryOwned.Contains($relative)){$expected[$workspacePrefix+$relative]=$Sha}}
+    function Set-PlanningProjection([string]$Relative,[string]$Sha,[switch]$AuxiliaryProof){$relative=ConvertTo-MorphospaceProtocolRelativePath $Relative;if(-not$recoveryOwned.Contains($relative)){$expected[$workspacePrefix+$relative]=$Sha;if($AuxiliaryProof){[void]$auxiliaryProofs.Add($workspacePrefix+$relative)}}}
     $preparationTransactionId="$preparedId-transition";$preparationIntentRelative="receipts/transactions/$preparationTransactionId.intent.json";$preparationCompletionRelative="receipts/transactions/$preparationTransactionId.completion.json"
     $preparationIntentPath=Resolve-MorphospaceWorkspacePath $workspaceFull $preparationIntentRelative -RequireLeaf;$preparationCompletionPath=Resolve-MorphospaceWorkspacePath $workspaceFull $preparationCompletionRelative -RequireLeaf
     $preparationIntent=Read-MorphospaceProtocolJson $preparationIntentPath;$preparationCompletion=Read-MorphospaceProtocolJson $preparationCompletionPath
@@ -462,7 +482,7 @@ function Test-ActiveRetirementPlanningProjectionFromAuthenticatedAdmission {
     foreach($artifact in @($preparationIntent.artifacts)){$artifactBytes=[Convert]::FromBase64String([string]$artifact.bytes_base64);Set-PlanningProjection ([string]$artifact.path) (Get-MorphospaceSha256Bytes $artifactBytes)}
     Set-PlanningProjection $preparationIntentRelative (Get-MorphospaceFileSha256 $preparationIntentPath);Set-PlanningProjection $preparationCompletionRelative (Get-MorphospaceFileSha256 $preparationCompletionPath)
     foreach($event in @($projectionSuffix|Select-Object -Skip 1)){
-        $transactionId="$([string]$event.event_id)-transition";$proof=Get-ActiveRetirementPlanningTransition -Workspace $workspaceFull -TransactionId $transactionId -HistoricalProjection:($null-ne$RecoveryIntent)
+        $transactionId="$([string]$event.event_id)-transition";$proof=Get-ActiveRetirementPlanningTransition -Workspace $workspaceFull -TransactionId $transactionId -HistoricalProjection:($null-ne$RecoveryIntent-or$CommittedSnapshot)
         if((Get-MorphospaceCanonicalJsonSha256 $proof.intent.event)-cne(Get-MorphospaceCanonicalJsonSha256 $event)){throw 'Active retirement planning lifecycle event is detached from its transaction.'}
         if([int]$event.sequence-gt$to){
             $artifactSchemas=@($proof.intent.artifacts|ForEach-Object{[string](ConvertFrom-MorphospaceProtocolJsonBytes ([Convert]::FromBase64String([string]$_.bytes_base64))).schema})
@@ -476,7 +496,7 @@ function Test-ActiveRetirementPlanningProjectionFromAuthenticatedAdmission {
                 $toolingUpgradeRequests=@($documents|Where-Object{[string]$_.schema-ceq'rusty.morphospace.workflow.tooling_context_upgrade.v1'})
                 $toolingUpgradeContexts=@($documents|Where-Object{[string]$_.schema-ceq'rusty.morphospace.workflow.tooling_context.v1'})
                 if($toolingUpgradeRequests.Count-ne1-or$toolingUpgradeContexts.Count-ne1){throw 'Active retirement tooling upgrade proof artifacts are ambiguous.'}
-                foreach($binding in @(Get-ActiveRetirementToolingProofBindings -WorkspaceRoot $workspaceFull -Request $toolingUpgradeRequests[0] -Context $toolingUpgradeContexts[0])){Set-PlanningProjection ([string]$binding.path) ([string]$binding.sha256)}
+                foreach($binding in @(Get-ActiveRetirementToolingProofBindings -WorkspaceRoot $workspaceFull -Request $toolingUpgradeRequests[0] -Context $toolingUpgradeContexts[0])){Set-PlanningProjection ([string]$binding.path) ([string]$binding.sha256) -AuxiliaryProof}
             }elseif($artifactSchemas-ccontains'rusty.morphospace.workflow.active_write_scope_amendment.v1'){
                 $null=&$amendmentModule {param($root,$expected,$transition) Assert-ActiveWriteScopeHistoricalTransition -WorkspaceRoot $root -ExpectedEvent $expected -Transition $transition} $workspaceFull $event $proof
             }else{
@@ -502,11 +522,11 @@ function Test-ActiveRetirementPlanningProjectionFromAuthenticatedAdmission {
         $readyDiagnostic=Get-ActiveRetirementReadyDiagnosticProjection -Workspace $workspaceFull -Request $Request -Repository $repository -ObservedHead $readyHead
         Set-PlanningProjection ([string]$readyDiagnostic.path) ([string]$readyDiagnostic.sha256)
     }
-    Set-PlanningProjection 'iteration-events.jsonl' (Get-MorphospaceFileSha256 (Resolve-MorphospaceWorkspacePath $workspaceFull 'iteration-events.jsonl' -RequireLeaf))
+    Set-PlanningProjection 'iteration-events.jsonl' ([string]$eventObservation.sha256)
     foreach($binding in @(Get-ActiveRetirementLifecycleDiagnostics $workspaceFull $repository $ObservedHead $Request $events)){Set-PlanningProjection ([string]$binding.path) ([string]$binding.sha256)}
     if($committed){
         $staged=@(& git -C $repository diff --cached --name-only --no-renames -- 2>&1);if($LASTEXITCODE-ne0-or$staged.Count-ne0){throw 'Active retirement committed planning descendant must remain clean.'}
-        foreach($path in @($expected.Keys)){$live=Join-Path $repository $path;if(-not[IO.File]::Exists($live)-or(Get-MorphospaceFileSha256 $live)-cne[string]$expected[$path]){throw "Active retirement committed planning projection is damaged: $path"}}
+        foreach($path in @($expected.Keys)){$live=Join-Path $repository $path;$sha=if($CommittedSnapshot-and-not$auxiliaryProofs.Contains($path)){Get-MorphospaceSha256Bytes (Read-ActiveRetirementCommittedBytes $repository $ObservedHead $path)}elseif([IO.File]::Exists($live)){Get-MorphospaceFileSha256 $live}else{''};if($sha-cne[string]$expected[$path]){throw "Active retirement committed planning projection is damaged: $path"}}
         $changed=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
         $cursor=$ObservedHead
         while($cursor-cne$LockedCommit){
