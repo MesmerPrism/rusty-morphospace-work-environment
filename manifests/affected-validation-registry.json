@@ -2,7 +2,7 @@
   "schema": "rusty.morphospace.workflow.affected_validation_registry.v1",
   "registry_id": "work-environment-current-delta-v1",
   "repository_id": "MesmerPrism/rusty-morphospace-work-environment",
-  "revision": 31,
+  "revision": 32,
   "historical_aggregate": {"tier": "deep", "reusable_evidence": false, "full_history_required": true},
   "dependency_declarations": [
     {"importer": "scripts/ActiveUnitRetirement.psm1", "variable": "ProvenanceModule", "count": 2, "target_paths": ["scripts/DevelopmentEnvelopeProvenance.psm1"]},
