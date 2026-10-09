@@ -87,13 +87,30 @@ if (-not $TargetRoot) {
 }
 $TargetRoot = [System.IO.Path]::GetFullPath($TargetRoot)
 
+function Resolve-SkillContextDirectoryRoot {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    if (-not [IO.Path]::IsPathFullyQualified($Path)) {
+        throw "Tooling-context root must be fully qualified."
+    }
+    $normalized = [IO.Path]::GetFullPath($Path)
+    if (-not (Test-Path -LiteralPath $normalized -PathType Container)) {
+        throw "Tooling-context root must identify an existing directory."
+    }
+    return [IO.Path]::TrimEndingDirectorySeparator((Resolve-Path -LiteralPath $normalized).ProviderPath)
+}
+
 if ($null -ne $toolingResolver) {
-    if (-not ([string]$toolingResolver.executor_root).Equals($RepoRoot, $pathStringComparison)) {
+    $executorRoot = Resolve-SkillContextDirectoryRoot ([string]$toolingResolver.executor_root)
+    $expectedExecutorRoot = Resolve-SkillContextDirectoryRoot $RepoRoot
+    if (-not $executorRoot.Equals($expectedExecutorRoot, $pathStringComparison)) {
         throw "Tooling-context executor root differs from RepoRoot."
     }
     foreach ($router in @($toolingResolver.routers)) {
         $expectedRouterRoot = Join-Path $TargetRoot ([string]$router.skill_id)
-        if (-not ([string]$router.root).Equals([IO.Path]::GetFullPath($expectedRouterRoot), $pathStringComparison)) {
+        $routerRoot = Resolve-SkillContextDirectoryRoot ([string]$router.root)
+        $expectedRouterRoot = Resolve-SkillContextDirectoryRoot $expectedRouterRoot
+        if (-not $routerRoot.Equals($expectedRouterRoot, $pathStringComparison)) {
             throw "Tooling-context router '$($router.skill_id)' root differs from TargetRoot."
         }
     }
