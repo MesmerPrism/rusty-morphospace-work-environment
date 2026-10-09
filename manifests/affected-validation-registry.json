@@ -5,6 +5,7 @@
   "revision": 31,
   "historical_aggregate": {"tier": "deep", "reusable_evidence": false, "full_history_required": true},
   "dependency_declarations": [
+    {"importer": "scripts/Test-DevelopmentUnitAdmission.ps1", "variable": "contractHostExecutable", "count": 1, "classification": "authenticated-external-command"},
     {"importer": "scripts/ActiveUnitRetirement.psm1", "variable": "ProvenanceModule", "count": 2, "target_paths": ["scripts/DevelopmentEnvelopeProvenance.psm1"]},
     {"importer": "scripts/ActiveUnitRetirement.psm1", "variable": "amendmentModule", "count": 1, "target_paths": ["scripts/ActiveWriteScopeAmendment.psm1"]},
     {"importer": "scripts/ActiveUnitRetirement.psm1", "variable": "module", "count": 2, "target_paths": ["scripts/DevelopmentEnvelopeProvenance.psm1"]},
