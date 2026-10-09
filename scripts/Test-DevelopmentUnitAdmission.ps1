@@ -89,7 +89,7 @@ function Test-ValidationOnlyEmptyFreeze {
       $before=Get-EnvelopeWorkspaceByteInventorySha256 $ws;$rejected=$false
       try {
         & {
-          param($block,$unit)
+          param([scriptblock]$block,$unit)
           function Assert-Contract {param($condition,$message)if(-not$condition){throw $message}}
           function Test-NonEmptyTextArray {param($Value,$Context)Assert-Contract (@($Value).Count-gt0-and@($Value|Where-Object{[string]::IsNullOrWhiteSpace([string]$_)}).Count-eq0) $Context}
           function Test-PathInScope {param($Candidate,$Allowed)return @($Allowed|Where-Object{$Candidate.StartsWith([string]$_,[StringComparison]::Ordinal)}).Count-gt0}
