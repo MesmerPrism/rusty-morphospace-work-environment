@@ -20,7 +20,7 @@ function Assert-MorphospacePlanningAuthorityRelocation {
     }
     $validated=Test-MorphospacePublishedPlanningAuthorityAdoptionDocument -Path (Resolve-MorphospaceWorkspacePath $workspace ([string]$binding.adoption.path) -RequireLeaf) -WorkspaceRoot $workspace
     if([string]$validated.document.project_id-cne[string]$Request.project_id-or[string]$validated.document.planning_repository.workspace_path-cne[string]$binding.destination.workspace_path-or[string]$validated.document.planning_workspace_projection.path-cne[string]$binding.projection.path-or[string]$validated.adoption_sha256-cne[string]$binding.adoption.raw_sha256-or[string]$validated.document.planning_workspace_projection.sha256-cne[string]$binding.projection.raw_sha256){throw 'Planning relocation adopted project/workspace/projection join is detached.'}
-    $module=Import-Module (Join-Path (Split-Path $PSScriptRoot -Parent) 'ActiveUnitRetirement.psm1') -PassThru
+    $module=Import-Module (Join-Path $PSScriptRoot '../ActiveUnitRetirement.psm1') -PassThru
     $proof=&$module {param($w,$repository,$revision,$request,$parent,$binding)
         $prefix=[string]$binding.destination.workspace_path+'/'
         foreach($pair in @(@('project.spec.json','project_raw_sha256'),@('feature.lock.json','feature_lock_raw_sha256'),@('workspace.state.json','state_raw_sha256'),@('iteration-events.jsonl','events_sha256'),@(('iteration-units/'+[string]$request.unit_id+'.json'),'unit_raw_sha256'))){
