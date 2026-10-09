@@ -1,4 +1,4 @@
-param([switch]$ArtifactSelectionOnly,[string]$ActualIntentPath='', [string]$ExpectedActualIntentSha256='', [switch]$SelfTest,[switch]$Child,[switch]$KeepFailedFixture,[string]$OldCommit='',[string]$NewCommit='',[string]$HarnessRoot='',[ValidateSet('all','lifecycle','recovery','product-negative','provenance-negative','instruction-context','ready-lifecycle','post-nonpass')][string]$Scenario='all',[ValidateSet('all','after-intent','after-artifact','after-projection','after-event')][string]$RecoveryFault='all')
+param([switch]$ExecutorPreflightOnly,[switch]$ArtifactSelectionOnly,[string]$ActualIntentPath='', [string]$ExpectedActualIntentSha256='', [switch]$SelfTest,[switch]$Child,[switch]$KeepFailedFixture,[string]$OldCommit='',[string]$NewCommit='',[string]$HarnessRoot='',[ValidateSet('all','lifecycle','recovery','product-negative','provenance-negative','instruction-context','ready-lifecycle','post-nonpass')][string]$Scenario='all',[ValidateSet('all','after-intent','after-artifact','after-projection','after-event')][string]$RecoveryFault='all')
 Set-StrictMode -Version 2.0
 $ErrorActionPreference='Stop'
 $script:TestClosurePaths=$null
@@ -6,6 +6,11 @@ $script:ToolingTestClock=[Diagnostics.Stopwatch]::StartNew()
 function Write-TCPhase([string]$Name){[Console]::Error.WriteLine(('tooling_context_phase={0}; elapsed_seconds={1:N1}' -f $Name,$script:ToolingTestClock.Elapsed.TotalSeconds))}
 if(-not$SelfTest){throw 'Test-ToolingContext requires -SelfTest.'}
 trap { [Console]::Error.WriteLine("$($_.Exception.Message)`n$($_.ScriptStackTrace)"); exit 1 }
+
+if($ExecutorPreflightOnly-or(-not$Child-and$Scenario-ceq'all'-and-not$ArtifactSelectionOnly)){
+ & (Join-Path $PSScriptRoot 'Test-ToolingContextExecutorPreflight.ps1') -SelfTest
+ if($ExecutorPreflightOnly){return}
+}
 
 if($ArtifactSelectionOnly){
  $pairModule=Import-Module (Join-Path $PSScriptRoot 'ToolingContextUpgrade.psm1') -Force -PassThru
