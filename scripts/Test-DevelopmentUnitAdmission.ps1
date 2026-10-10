@@ -22,7 +22,7 @@ function Test-EnvelopeGitLongPaths {
     [void][IO.Directory]::CreateDirectory($root)
     Invoke-EnvelopeGit $root @('init')|Out-Null
     $configBefore=(Get-FileHash -LiteralPath (Join-Path $root '.git/config')).Hash
-    $relative=('nested-'+('n'*128))+'/morphospace/receipts/transactions/u001-accepted-0001-transition.completion.json'
+    $relative=('nested-'+('n'*95))+'/'+('m'*95)+'/morphospace/receipts/transactions/u001-accepted-0001-transition.completion.json'
     $path=Join-Path $root $relative
     [void][IO.Directory]::CreateDirectory((Split-Path $path -Parent))
     [IO.File]::WriteAllText($path,'fixture receipt',[Text.UTF8Encoding]::new($false))
@@ -38,6 +38,33 @@ function Test-EnvelopeGitLongPaths {
     Assert-Envelope $failed 'Git fixture lost its nonzero-exit rejection'
     Assert-Envelope ($configBefore-ceq(Get-FileHash -LiteralPath (Join-Path $root '.git/config')).Hash) 'Git fixture persisted command-scoped long-path configuration'
     Write-Output 'PASS actual fixture Git long receipt indexing and nonzero-exit rejection; no persisted Git configuration'
+    # The real freeze consumer uses plain Git status, not the writer override.
+    # Its disposable repository must explicitly support the same long paths.
+    $globalBefore=@(& git config --global --list --show-origin 2>&1|ForEach-Object{[string]$_}) -join "`n"
+    Invoke-EnvelopeGit $root @('config','--local','user.name','Envelope Long Path Test')|Out-Null
+    Invoke-EnvelopeGit $root @('config','--local','user.email','longpath@example.invalid')|Out-Null
+    Invoke-EnvelopeGit $root @('commit','-m','long-receipt-fixture')|Out-Null
+    $bound=[pscustomobject]@{commit=(@(Invoke-EnvelopeGit $root @('rev-parse','HEAD'))[0]).Trim()}
+    $entry=[pscustomobject]@{path=$root;role='planning'}
+    $composition=[pscustomobject]@{schema='rusty.morphospace.workflow.development_envelope_source_composition.v3'}
+    $freezeModule=@(Get-Module -All|Where-Object{$_.Path-eq(Join-Path $PSScriptRoot 'CandidateFreeze.psm1')}|Select-Object -Last 1)[0]
+    if($IsWindows){
+      Invoke-EnvelopeGit $root @('config','--local','core.longpaths','false')|Out-Null
+      $plainBaseline=@(& git -C $root status --porcelain=v1 --untracked-files=all 2>&1|ForEach-Object{[string]$_})
+      Assert-Envelope (($plainBaseline-join' ')-match'Filename too long'-and@($plainBaseline|Where-Object{$_-like' D *'}).Count-eq1) 'Plain Git consumer did not expose phantom long-path deletion'
+      $readerRejected=$false
+      try{&$freezeModule {param($w,$e,$b,$c)Test-MorphospaceOwnPlanningCandidateHistory $w $e $b $c ([pscustomobject]@{}) $null} (Join-Path $root ('nested-'+('n'*95))) $entry $bound $composition|Out-Null}catch{$readerRejected=$_.Exception.Message-eq'Frozen candidate own-planning repository is dirty outside its authenticated freeze transition.'}
+      Assert-Envelope $readerRejected 'Actual freeze reader did not reject inaccessible fixture files'
+    }
+    Invoke-EnvelopeGit $root @('config','--local','core.longpaths','true')|Out-Null
+    $plain=@(& git -C $root status --porcelain=v1 --untracked-files=all 2>&1)
+    Assert-Envelope ($LASTEXITCODE-eq0-and$plain.Count-eq0) 'Plain Git consumer still sees false fixture dirt'
+    $readerClean=&$freezeModule {param($w,$e,$b,$c)Test-MorphospaceOwnPlanningCandidateHistory $w $e $b $c ([pscustomobject]@{}) $null} (Join-Path $root ('nested-'+('n'*95))) $entry $bound $composition
+    Assert-Envelope $readerClean 'Actual freeze reader did not accept clean long-path fixture'
+    Assert-Envelope ((@(Invoke-EnvelopeGit $root @('config','--local','--get','core.longpaths'))[0])-ceq'true') 'Disposable fixture repository did not retain deliberate local consumer support'
+    $globalAfter=@(& git config --global --list --show-origin 2>&1|ForEach-Object{[string]$_}) -join "`n"
+    Assert-Envelope ($globalBefore-ceq$globalAfter) 'Fixture consumer support changed global Git configuration'
+    Write-Output 'PASS plain Git and actual freeze long-path consumer: baseline phantom deletion/rejection, candidate clean; disposable local configuration only'
   }finally{
     $absolute=[IO.Path]::GetFullPath($root);$prefix=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\','/')+[IO.Path]::DirectorySeparatorChar
     if(-not$absolute.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)-or[IO.Path]::GetFileName($absolute)-notlike'workenv-git-long-*'){throw 'Unsafe Git fixture cleanup path'}

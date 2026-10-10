@@ -26,7 +26,7 @@
     {"importer":"scripts/Test-DevelopmentUnitAdmission.ps1","variable":"automationModule","count":2,"target_paths":["scripts/WorkUnitAutomation.psm1"]},
     {"importer": "scripts/Test-DevelopmentUnitAdmission.ps1", "variable": "contractHostExecutable", "count": 1, "classification": "authenticated-external-command"},
     {"importer": "scripts/Test-DevelopmentUnitAdmission.ps1", "variable": "damage", "count": 2, "target_paths": ["scripts/Test-DevelopmentUnitAdmission.ps1"]},
-    {"importer":"scripts/Test-DevelopmentUnitAdmission.ps1","variable":"freezeModule","count":5,"target_paths":["scripts/CandidateFreeze.psm1"]},
+    {"importer":"scripts/Test-DevelopmentUnitAdmission.ps1","variable":"freezeModule","count":7,"target_paths":["scripts/CandidateFreeze.psm1"]},
     {"importer": "scripts/Test-DevelopmentUnitAdmission.ps1", "variable": "ledger", "count": 1, "target_paths": ["scripts/lib/MorphospaceTransitionLedger.psm1"]},
     {"importer":"scripts/Test-DevelopmentUnitAdmission.ps1","variable":"ledgerModule","count":3,"target_paths":["scripts/lib/MorphospaceTransitionLedger.psm1"]},
     {"importer": "scripts/Test-DevelopmentUnitAdmission.ps1", "variable": "module", "count": 2, "target_paths": ["scripts/CandidateFreeze.psm1"]},
