@@ -1,6 +1,10 @@
-param([switch]$SelfTest,[switch]$AdditivePreparationOnly,[switch]$OwnPlanningCaseOnly,[switch]$ValidationOnlyFreezeOnly)
+param([switch]$SelfTest,[switch]$AdditivePreparationOnly,[switch]$OwnPlanningCaseOnly,[switch]$ValidationOnlyFreezeOnly,[switch]$InstructionDeclarationOnly)
 $ErrorActionPreference='Stop'
 $repoRoot=Split-Path $PSScriptRoot -Parent
+if($SelfTest-or$InstructionDeclarationOnly){
+  & (Join-Path $PSScriptRoot 'Test-AdmissionInstructionDeclaration.ps1') -SelfTest
+  if($InstructionDeclarationOnly){return}
+}
 Import-Module (Join-Path $PSScriptRoot 'DevelopmentUnitAdmission.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'CandidateFreeze.psm1') -Force
 $protocolModule=Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -PassThru

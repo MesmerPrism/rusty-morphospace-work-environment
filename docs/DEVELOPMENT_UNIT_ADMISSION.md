@@ -65,6 +65,20 @@ permission ceilings, build and device envelope, non-scope, prerequisites,
 validation class, and evidence/cleanup expectations. It never substitutes a
 complete changed-file list for bounded exploration.
 
+Before expensive preparation/tooling authentication for a fresh admission,
+the owner checks the authored instruction declaration against the current
+lifecycle trigger and skill-routing contract. Triggered categories cannot use
+`instruction_impact: none`; impact must match the declared actions, with an
+AGENTS surface, README/router surface and exactly one surface for each routed
+skill. Planned reviews remain planned: this check does not assert completion,
+resolve instruction paths or replace Ready's live source/action guards.
+Validation-only required AGENTS and README/router records retain the existing
+`review-no-change` action rule.
+Existing admission intents retain their original recovery authentication and
+do not acquire this new declaration check. Accepted history is unchanged.
+The focused host check is `scripts/Test-DevelopmentUnitAdmission.ps1 -InstructionDeclarationOnly`.
+The existing registered admission `-SelfTest` also invokes these controls.
+
 If Ready exposes a defect in the immutable admitted contract itself,
 `RetireProposed` is the only owner route that can close that identity before
 Claim. It requires `status=proposed`, an idle project with no current or
