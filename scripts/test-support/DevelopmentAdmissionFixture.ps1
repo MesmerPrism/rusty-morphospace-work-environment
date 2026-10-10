@@ -9,7 +9,10 @@ function Copy-Envelope([object]$Value){$Value|ConvertTo-Json -Depth 64|ConvertFr
 
 function Get-EnvelopeLockFingerprint([object]$Value){$copy=Copy-Envelope $Value;$copy.lock_fingerprint='0'*64;Get-EnvelopeCanonicalJsonSha256 $copy}
 
-function Invoke-EnvelopeGit([string]$Path,[string[]]$Arguments){$output=@(& git -C $Path @Arguments 2>&1);if($LASTEXITCODE-ne0){throw "Envelope Git fixture failed: git -C $Path $($Arguments -join ' ') $($output -join ' ')"};@($output|ForEach-Object{[string]$_})}
+# Capture-owned TEMP adds nesting to the real transaction receipt paths. Enable
+# Git's Windows long-path support for this fixture command only; no persisted
+# repository or machine configuration and no production path policy changes.
+function Invoke-EnvelopeGit([string]$Path,[string[]]$Arguments){$output=@(& git -c core.longpaths=true -C $Path @Arguments 2>&1);if($LASTEXITCODE-ne0){throw "Envelope Git fixture failed: git -C $Path $($Arguments -join ' ') $($output -join ' ')"};@($output|ForEach-Object{[string]$_})}
 
 function Get-EnvelopeProtocolModule{if($null-eq$protocolModule){throw 'MorphospaceProtocolCommon retained module is unavailable.'};$protocolModule}
 

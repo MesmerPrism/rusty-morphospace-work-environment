@@ -1,4 +1,4 @@
-param([switch]$SelfTest,[switch]$AdditivePreparationOnly,[switch]$OwnPlanningCaseOnly,[switch]$ValidationOnlyFreezeOnly,[switch]$InstructionDeclarationOnly)
+param([switch]$SelfTest,[switch]$AdditivePreparationOnly,[switch]$OwnPlanningCaseOnly,[switch]$ValidationOnlyFreezeOnly,[switch]$InstructionDeclarationOnly,[switch]$GitLongPathsOnly)
 $ErrorActionPreference='Stop'
 $repoRoot=Split-Path $PSScriptRoot -Parent
 if($SelfTest-or$InstructionDeclarationOnly){
@@ -15,6 +15,36 @@ $transitionLedgerPath=Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.p
 $transitionLedgerModule=@(Get-Module -All|Where-Object{$_.Path-eq$transitionLedgerPath}|Select-Object -Last 1)[0]
 if($null-eq$transitionLedgerModule){throw 'MorphospaceTransitionLedger module is unavailable.'}
 . (Join-Path $PSScriptRoot 'test-support/DevelopmentAdmissionFixture.ps1')
+
+function Test-EnvelopeGitLongPaths {
+  $root=Join-Path ([IO.Path]::GetTempPath()) ('workenv-git-long-'+[guid]::NewGuid().ToString('N'))
+  try {
+    [void][IO.Directory]::CreateDirectory($root)
+    Invoke-EnvelopeGit $root @('init')|Out-Null
+    $configBefore=(Get-FileHash -LiteralPath (Join-Path $root '.git/config')).Hash
+    $relative=('nested-'+('n'*128))+'/morphospace/receipts/transactions/u001-accepted-0001-transition.completion.json'
+    $path=Join-Path $root $relative
+    [void][IO.Directory]::CreateDirectory((Split-Path $path -Parent))
+    [IO.File]::WriteAllText($path,'fixture receipt',[Text.UTF8Encoding]::new($false))
+    Assert-Envelope ($path.Length-gt260) 'Git long-path fixture is not beyond the Windows legacy path limit'
+    if($IsWindows){
+      $baseline=@(& git -c core.longpaths=false -C $root add -- $relative 2>&1);$baselineCode=$LASTEXITCODE
+      Assert-Envelope ($baselineCode-ne0-and($baseline-join' ')-match'Filename too long') 'Git long-path fixture did not reproduce the real Windows indexing failure'
+    }
+    Invoke-EnvelopeGit $root @('add','--',$relative)|Out-Null
+    $tracked=@(Invoke-EnvelopeGit $root @('ls-files','--',$relative))
+    Assert-Envelope ($tracked.Count-eq1-and$tracked[0]-ceq$relative) 'Fixture command did not index the exact long receipt path'
+    $failed=$false;try{Invoke-EnvelopeGit $root @('not-an-envelope-git-command')|Out-Null}catch{$failed=$_.Exception.Message.StartsWith('Envelope Git fixture failed:')}
+    Assert-Envelope $failed 'Git fixture lost its nonzero-exit rejection'
+    Assert-Envelope ($configBefore-ceq(Get-FileHash -LiteralPath (Join-Path $root '.git/config')).Hash) 'Git fixture persisted command-scoped long-path configuration'
+    Write-Output 'PASS actual fixture Git long receipt indexing and nonzero-exit rejection; no persisted Git configuration'
+  }finally{
+    $absolute=[IO.Path]::GetFullPath($root);$prefix=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\','/')+[IO.Path]::DirectorySeparatorChar
+    if(-not$absolute.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)-or[IO.Path]::GetFileName($absolute)-notlike'workenv-git-long-*'){throw 'Unsafe Git fixture cleanup path'}
+    if(Test-Path -LiteralPath $absolute){Remove-Item -LiteralPath $absolute -Recurse -Force}
+  }
+}
+if($SelfTest-or$GitLongPathsOnly){Test-EnvelopeGitLongPaths;if($GitLongPathsOnly){return}}
 
 function Test-ValidationOnlyEmptyFreeze {
   $root=Join-Path ([IO.Path]::GetTempPath()) ('workenv-validation-empty-freeze-'+[guid]::NewGuid().ToString('N'))
