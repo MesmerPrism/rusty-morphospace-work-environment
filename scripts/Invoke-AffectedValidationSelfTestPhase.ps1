@@ -4,6 +4,7 @@ param(
     [ValidateSet('graph-import-closure','dependency-closure','executor-pass-schema','executor-native-failure-damage','executor-native-exit125-damage','executor-forged-terminal-damage','executor-parent-containment-damage','executor-descendant-containment-damage','executor-output-ceiling-damage','executor-timeout-damage','executor-dual-stream-damage','executor-source-integrity-damage','executor-publication-collision-damage','selection-scenarios','trust-self-executor','trust-phase-artifact-contract','trust-registry-delta-ownership-obligation','trust-deep-linux-merge-damage','trust-deep-windows-merge-damage','trust-routing-contracts','trust-routing-development-contracts','trust-routing-retirement-contracts','trust-routing-automation-contracts','trust-proportional-mappings','trust-damage-final','affected-reuse-plan-base-admission','affected-reuse-evidence-binding','affected-reuse-run-job-coverage')]
     [string]$Phase,
     [Parameter(Mandatory=$true,ParameterSetName='Phase')][ValidateRange(1,600)][int]$BudgetSeconds,
+    [Parameter(ParameterSetName='Phase')][switch]$StrictBudget,
     [Parameter(Mandatory=$true,ParameterSetName='Verify')][switch]$Verify,
     [Parameter(Mandatory=$true,ParameterSetName='VerifyComplete')][switch]$VerifyComplete,
     [Parameter(Mandatory=$true,ParameterSetName='BindingSelfTest')][switch]$BindingSelfTest
@@ -280,7 +281,47 @@ function Invoke-BindingCompatibilitySelfTest {
     } finally { if([IO.Directory]::Exists($fixture)){Remove-Item -LiteralPath $fixture -Recurse -Force} }
 }
 
-if($BindingSelfTest){Invoke-BindingCompatibilitySelfTest;return}
+function Wait-AffectedPhaseChild {
+    param([Parameter(Mandatory)][Diagnostics.Process]$Process,[Parameter(Mandatory)][ValidateRange(1,600)][int]$BudgetSeconds,[switch]$StrictBudget)
+    if ($Process.WaitForExit($BudgetSeconds * 1000)) { return $false }
+    if ($StrictBudget) {
+        try { $Process.Kill($true) } catch {}
+        [void]$Process.WaitForExit(15000)
+        return $true
+    }
+    Write-Warning 'Affected phase exceeded its advisory runtime estimate; waiting for genuine completion.' -WarningAction Continue
+    $Process.WaitForExit()
+    return $false
+}
+
+function Invoke-PhaseBudgetPolicySelfTest {
+    foreach ($strict in @($false,$true)) {
+        $start = [Diagnostics.ProcessStartInfo]::new()
+        $start.FileName = (Get-Process -Id $PID).Path
+        $start.UseShellExecute = $false; $start.CreateNoWindow = $true
+        $start.RedirectStandardOutput = $true; $start.RedirectStandardError = $true
+        foreach ($arg in @('-NoProfile','-NonInteractive','-Command', $(if($strict){'Start-Sleep -Seconds 60'}else{'Start-Sleep -Milliseconds 1400; Write-Output completed'}))) { [void]$start.ArgumentList.Add($arg) }
+        $child = [Diagnostics.Process]::new(); $child.StartInfo = $start
+        try {
+            if (-not $child.Start()) { throw 'Phase budget policy child did not start.' }
+            $stdout = $child.StandardOutput.ReadToEndAsync(); $stderr = $child.StandardError.ReadToEndAsync()
+            $savedWarning = $WarningPreference
+            try { $WarningPreference = 'Stop'; $observed = @(Wait-AffectedPhaseChild -Process $child -BudgetSeconds 1 -StrictBudget:$strict 3>&1) } finally { $WarningPreference = $savedWarning }
+            if (-not $child.HasExited -or $observed[-1] -isnot [bool] -or $observed[-1] -ne $strict) { throw 'Phase budget policy did not preserve its actual timeout disposition and owned exit.' }
+            if (-not [Threading.Tasks.Task]::WaitAll(@($stdout,$stderr),15000) -or $stderr.Result.Length -ne 0) { throw 'Phase budget policy child streams did not drain exactly.' }
+            $warnings = @($observed | Where-Object { $_ -is [Management.Automation.WarningRecord] })
+            if ($strict) {
+                if ($warnings.Count -ne 0 -or $stdout.Result.Length -ne 0) { throw 'Strict phase timeout emitted a completion or advisory claim.' }
+            } elseif ($warnings.Count -ne 1 -or $stdout.Result.Trim() -cne 'completed' -or $child.ExitCode -ne 0) { throw 'Advisory phase overrun failed to retain genuine successful completion.' }
+        } finally {
+            if (-not $child.HasExited) { try { $child.Kill($true); [void]$child.WaitForExit(15000) } catch {} }
+            $child.Dispose()
+        }
+    }
+    Write-Output 'Affected phase budget policy self-test passed: advisory completion and explicit strict timeout.'
+}
+
+if($BindingSelfTest){Invoke-PhaseBudgetPolicySelfTest;Invoke-BindingCompatibilitySelfTest;return}
 
 $evidenceRoot = [IO.Path]::GetFullPath((Get-RequiredEnvironment 'RUSTY_AFFECTED_VALIDATION_PHASE_ROOT' '^.+$'))
 $baseCommit = Get-RequiredEnvironment 'RUSTY_AFFECTED_VALIDATION_BASE_COMMIT' '^[0-9a-f]{40}$'
@@ -363,7 +404,7 @@ try {
         $childStarted = $true
         $stdoutTask = $process.StandardOutput.BaseStream.CopyToAsync($stdoutMemory)
         $stderrTask = $process.StandardError.BaseStream.CopyToAsync($stderrMemory)
-        if (-not $process.WaitForExit($BudgetSeconds * 1000)) { $timedOut = $true; try { $process.Kill($true) } catch {}; [void]$process.WaitForExit(15000) }
+        $timedOut = Wait-AffectedPhaseChild -Process $process -BudgetSeconds $BudgetSeconds -StrictBudget:$StrictBudget
         if (-not [Threading.Tasks.Task]::WaitAll(@($stdoutTask,$stderrTask),15000)) { $drainTimedOut = $true }
         if ($process.HasExited -and -not $timedOut) { $exitCode = [int]$process.ExitCode }
     } catch { $launchError = [string]$_.Exception.Message }
