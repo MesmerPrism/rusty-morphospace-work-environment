@@ -1585,6 +1585,7 @@ function Get-AffectedProtocolCommonOwnerChecks([string]$Root, [object]$Registry)
     $registrationAudit = Assert-MorphospaceAffectedWorkEnvironmentLeafRegistration -Root $Root -Registry $Registry
     $ownerEntrypoints = @($registrationAudit.owner_entrypoints)
     $dynamicImports = @(
+        [pscustomobject][ordered]@{ importer='scripts/Test-LocalSkillBootstrap.ps1'; variable='boundary'; count=2; import_path='scripts/Install-LocalSkills.ps1' },
         [pscustomobject][ordered]@{ importer='scripts/Test-AuthorityRecordReadiness.ps1'; variable='processModule'; count=1; import_path='scripts/lib/MorphospaceAuthorityProcess.psm1' },
         [pscustomobject][ordered]@{ importer='scripts/Test-TransitionLedger.ps1'; variable='ModulePath'; count=2; import_path='scripts/lib/MorphospaceTransitionLedger.psm1' },
         [pscustomobject][ordered]@{ importer='scripts/Test-TransitionLedger.ps1'; variable='observationDamage'; count=1; import_path='scripts/Test-TransitionLedger.ps1' },

@@ -121,7 +121,13 @@ selection validation; scheduling-only `execution_after_checks` metadata is the
 only check-definition field omitted from a reusable leaf binding. A
 zero-check platform request is invalid. Registered leaf time estimates warn on
 overrun and do not cancel by default; `-StrictBudget` explicitly enforces them.
-Explicit inner timeouts retain their meaning. A nonzero exit, enforced timeout, output flood,
+The public self-test phase runner follows the same policy: `-BudgetSeconds`
+records an advisory estimate and an overrun warns while waiting for genuine
+completion. Select `-StrictBudget` explicitly when testing enforced timeout or
+when a deliberate operation requires that stop policy.
+Existing recorded timeouts remain failed evidence. Output-flood containment,
+resource exhaustion, explicit cancellation, authority expiry and complete
+receipt/stream checks retain their meaning. A nonzero exit, enforced timeout, output flood,
 or post-kill drain overrun is `code-fail`; `infra-fail` is reserved for a
 process-start or host fault. Each failed child carries one closed
 `failure_kind` (`launch`, `timeout`, `output-limit`, `drain-timeout`,
@@ -327,7 +333,7 @@ proportional mappings, and damage/culture finalization.
 Three further leaves partition reuse admission, evidence binding, and
 run-job/coverage validation; the legacy reuse self-test retains only its bounded
 compatibility check and does not replay those bodies. Each phase has its own
-finite child budget and exact-host cache policy, so a later failure in one
+declared runtime estimate and exact-host cache policy, so a later failure in one
 trust leaf does not invalidate completed sibling evidence. The measured
 artifact-contract phase was 16.895 seconds (19.331 seconds wall) under its
 75-second inner and 90-second outer budgets; selector/executor integration was
@@ -567,8 +573,9 @@ adjacency construction. The audit rechecks every source
 byte identity, binds deterministic adjacency and consumer digests, then
 memoizes owner reachability under a measured finite timing bound. A
 consumer fails closed if it lacks a registered `protocol-common` check. The
-selector phases enforce their finite budgets independently; timeout or
-over-budget execution fails that phase and never silently escalates to Deep.
+selector phases observe their runtime estimates independently; advisory overrun
+alone does not fail a phase. An explicitly enforced timeout fails that phase and
+never silently escalates to Deep.
 The legacy no-argument cumulative selector remains diagnostic only and is not
 an admission gate.
 The independently reviewed `Test-InheritedCandidateMaterialization.ps1`

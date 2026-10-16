@@ -7,6 +7,16 @@ current product source/map/feature projection, the complete tracked executor tre
 the exact clean Git commit/tree/remote, installed router provenance, and passing
 owner affected-validation evidence for the same executor revision.
 
+For a new local context, use `New-MorphospaceObservedToolingContext` with the
+selected workspace and resolver. `New-MorphospaceToolingContext` constructs and
+validates a portable value only; it does not observe a checkout. The observed
+producer requires exact clean Git identity and raw closure hashes, then checks
+those hashes against the complete pinned Git blob inventory before router and
+validation-evidence checks. A clean checkout with converted line endings can
+therefore be rejected with the offending path before context staging or router
+installation. The producer never normalizes bytes or rewrites an old context.
+Run the focused production fixture with
+`pwsh -NoProfile -File scripts/Test-ToolingContext.ps1 -SelfTest -ExecutorPreflightOnly`.
 The compatibility action catalogue is a finite consumer protocol. It describes the
 ordinary lifecycle actions that the tooling revision can interpret; it does not make
 a terminal unit's tooling pointer the authority for idle history archive,
