@@ -132,9 +132,11 @@ transaction, its installed automation receipt and original SHA-bound request,
 the byte-exact old unit, the proposed-to-active replacement preimage, and the
 unique chain into the current unit. The old endpoint must be neither current,
 next-ready, nor a prerequisite. This is only a read-only classification of that
-one obsolete scope declaration. It does not make the old unit accepted or
-historical, grant validation credit, defer any other structural error, or relax
-the replacement unit's current scope checks.
+obsolete scope declaration and the minimum authority rank of a known guard
+profile. Guard-profile vocabulary remains strict. The old profile grants no
+current authority, validation credit or acceptance, and the classification does
+not relax current or next-ready ownership, prerequisite guards, any other
+structural error, or the replacement unit's current scope and guard checks.
 
 Preparation uses this same boundary automatically. Archive checkpoint admission
 also recognizes retired lifecycle identities while copying the original bytes.
