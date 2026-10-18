@@ -2169,7 +2169,14 @@ function Test-ProjectBundle {
             } elseif (@($effectiveChangeCategories | Where-Object { $labsCategories -contains $_ }).Count -gt 0) {
                 $minimumGuardRank = 1
             }
-            Assert-Contract ([int]$guardRanks[$guardProfile] -ge $minimumGuardRank) "$Context unit '$($unit.unit_id)' guard profile '$guardProfile' is below the required authority level."
+            # Only the obsolete lower bound may be classified after the exact
+            # immutable SupersedeActive chain; vocabulary and all other checks
+            # remain strict, including current/next and prerequisite authority.
+            $authenticatedSupersededGuardProfile = (
+                $null -ne $currentHistory -and $currentHistory.authenticated -eq $true -and
+                $currentHistory.authenticated_superseded_scope_conflict_ids.Contains([string]$unit.unit_id)
+            )
+            Assert-Contract ([int]$guardRanks[$guardProfile] -ge $minimumGuardRank -or $authenticatedSupersededGuardProfile) "$Context unit '$($unit.unit_id)' guard profile '$guardProfile' is below the required authority level."
         }
         $script:FailureAttribution = $historicalDebtIneligibleAttribution
         Assert-Contract (@($unit.validation).Count -gt 0) "$Context unit '$($unit.unit_id)' needs validation commands."
