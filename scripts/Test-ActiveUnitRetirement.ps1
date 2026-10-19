@@ -1,7 +1,7 @@
 param(
     [switch]$SelfTest,
     [switch]$InertProposalsOnly,
-    [ValidateSet('All', 'Core', 'NestedPositive', 'NestedCommitted', 'PostNonpass', 'NestedMapGuards', 'AmendmentRecovery', 'NestedRecovery', 'NestedDamage')]
+    [ValidateSet('All', 'Core', 'InstructionHeads', 'NestedPositive', 'NestedCommitted', 'PostNonpass', 'NestedMapGuards', 'AmendmentRecovery', 'NestedRecovery', 'NestedDamage')]
     [string]$Scenario = 'All',
     [ValidateSet('', 'Base', 'Diagnostics')][string]$CoreWorkerGroup = ''
 )
@@ -512,6 +512,55 @@ function Assert-RetirementCallerProtocol([string]$Workspace,[string]$Context){
 $temp=Join-Path ([IO.Path]::GetTempPath()) ('morphospace-active-retirement-'+[guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($temp)|Out-Null
 try{
+    if($Scenario-cin@('All','Core','InstructionHeads')-and$CoreWorkerGroup-cne'Diagnostics'){
+        $ledger=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceTransitionLedger.psm1') -PassThru
+        $seed=New-EnvelopeAdmissionPreparedFixture -Root (Join-Path $temp 'instruction-heads') -RepositoryRoot $repository -TransitionLedgerModule $ledger -OwnerProducedPreparation
+        $workspace=$seed.workspace;$source=[string]$seed.source_repository
+        $admission=Copy-Envelope $seed.admission_template
+        $admission.unit.instruction_impact='review';$admission.unit.instruction_none_justification=$null
+        $admission.unit.instruction_surfaces=@([pscustomobject]@{surface_kind='readme';path='<project-shell>/morphospace/README.md';owner='project-shell';change_reason='Observe an actual committed instruction update before completion.';action='review-no-change';status='planned';validation='Read the exact source bytes.';skill_id=$null})
+        $admissionPath=Join-Path $temp 'instruction-admission.json';Write-EnvelopeJson $admissionPath $admission
+        $automation=Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1'
+        $null=&$automation -Action AdmitDevelopmentUnit -WorkspaceRoot $workspace -DevelopmentUnitAdmission $admissionPath -ExpectedDevelopmentUnitAdmissionSha256 (Get-EnvelopeFileSha256 $admissionPath) -OutPath (Join-Path $workspace 'receipts/u002-admission.json') -Timestamp '2026-08-25T00:00:40.0000000Z' -Execute
+        $args=@{WorkspaceRoot=$workspace;UnitId='u002';RepoMapPath=(Join-Path $workspace 'repository-map.json');ValidationTier='quick'}
+        $null=&$automation @args -Action Ready -Timestamp '2026-08-25T00:00:41.0000000Z' -Execute
+        $null=&$automation @args -Action Claim -Timestamp '2026-08-25T00:00:42.0000000Z' -Execute
+        $before=Read-EnvelopeProtocolJson (Join-Path $workspace 'workspace.state.json')
+        [IO.File]::AppendAllText((Join-Path $source 'morphospace/README.md'),"Reviewed instruction content.`n")
+        Invoke-EnvelopeGit $source @('add','morphospace/README.md')|Out-Null;Invoke-EnvelopeGit $source @('commit','-qm','Complete reviewed instructions at a new clean head')|Out-Null
+        $complete=@{Action='CompleteInstructionSurfaces';InstructionCompletionId='u002-instructions';OutPath=(Join-Path $workspace 'receipts/u002-instructions.json');Timestamp='2026-08-25T00:00:43.0000000Z'}
+        $dry=&$automation @args @complete|ConvertFrom-Json
+        $null=&$automation @args @complete -InstructionSurfaceIds @($dry.instruction_surface_completion.surfaces|ForEach-Object surface_id) -ExpectedUnitSha256 $dry.instruction_surface_completion.expected_unit_sha256 -ExpectedInstructionObservationSha256 $dry.instruction_surface_completion.observation_sha256 -Execute
+        $event=@(Get-Content (Join-Path $workspace 'iteration-events.jsonl')|ForEach-Object{$_|ConvertFrom-Json -DateKind String})[-1]
+        $proof=&$retirementModule {param($w,$id)Get-ActiveRetirementPlanningTransition $w "$id-transition"} $workspace $event.event_id
+        $after=$proof.intent.target.state.document
+        Assert-RetirementTest ([string]$before.repository_heads[0].head-cne[string]$after.repository_heads[0].head) 'producer did not advance the clean repository head'
+        $inventory=Get-RetirementInventory $workspace
+        &$retirementModule {param($w,$e,$p)Assert-ActiveRetirementRetainedLifecycle $w $e $p} $workspace $event $proof
+        foreach($damage in @('target-head','target-state','receipt-head','foreign-repository','duplicate-repository','dirty-summary','artifact-bytes','unit-authority')){
+            $changed=Copy-Envelope $proof
+            switch($damage){
+                'target-head' {$changed.intent.target.state.document.repository_heads[0].head='0'*40}
+                'target-state' {$changed.intent.target.state.document.last_accepted_receipt='receipts/forged-pass.json'}
+                'unit-authority' {$changed.intent.target.unit.document.objective='Different authority'}
+                'artifact-bytes' {$changed.intent.artifacts[0].bytes_base64=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('{}'))}
+                default {
+                    $r=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($changed.intent.artifacts[0].bytes_base64))|ConvertFrom-Json -DateKind String
+                    switch($damage){
+                        'receipt-head' {$r.preservation.repository_states[0].head='0'*40}
+                        'foreign-repository' {$r.preservation.repository_states[0].repo_id='foreign-repository';$r.claim_preflight.writable_repositories[0].repo_id='foreign-repository'}
+                        'duplicate-repository' {$r.preservation.repository_states+=,$r.preservation.repository_states[0]}
+                        'dirty-summary' {$r.preservation.repository_states[0].dirty=$true}
+                    }
+                    $bytes=[Text.Encoding]::UTF8.GetBytes(($r|ConvertTo-Json -Depth 100));$changed.intent.artifacts[0].bytes_base64=[Convert]::ToBase64String($bytes);$changed.intent.artifacts[0].sha256=Get-RetirementBytesSha256 $bytes
+                }
+            }
+            $denied=$false;try{&$retirementModule {param($w,$e,$p)Assert-ActiveRetirementRetainedLifecycle $w $e $p} $workspace $event $changed}catch{$denied=$true}
+            Assert-RetirementTest $denied "instruction repository replay accepted $damage"
+        }
+        Assert-RetirementTest ($inventory-ceq(Get-RetirementInventory $workspace)) 'instruction repository reader changed historical bytes'
+        Write-Host 'Authentic instruction-completion head refresh and eight refusal controls passed.'
+    }
     $runCore = $Scenario -cin @('All', 'Core') -or $InertProposalsOnly
     $runNestedPositive = $Scenario -cin @('All', 'NestedPositive')
     $runNestedCommitted = $Scenario -cin @('All', 'NestedCommitted')
