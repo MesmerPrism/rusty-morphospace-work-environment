@@ -1072,9 +1072,16 @@ function Assert-AffectedTrackedFileAnalysisIndexStable([object]$Index) {
 function Assert-AffectedRetirementDeclarationLayout([object]$Resolution,[string[]]$Paths) {
     $importers = @('scripts/ActiveUnitRetirement.psm1','scripts/lib/MorphospacePlanningLifecycleProjection.psm1')
     $actual = @($Resolution.used_declarations | Where-Object { [string]$_.importer -cin $importers } | ForEach-Object { "$([string]$_.importer)|$([string]$_.variable)|$([int]$_.count)|$(@($_.target_paths) -join ',')" })
+    $lineageLayout = $Paths -ccontains 'scripts/lib/MorphospaceActiveRetirementLineage.psm1'
+    $sharedLayout = $Paths -ccontains 'scripts/lib/MorphospacePlanningLifecycleProjection.psm1'
+    Assert-True (-not ($lineageLayout -and $sharedLayout)) 'Retirement-dependent consumer did not consume the exact closed retirement/shared-helper module-object declarations.'
+    # Independent finite production contracts; never derive expectations from registry rows.
+    $moduleDeclaration = if ($lineageLayout) {
+        'scripts/ActiveUnitRetirement.psm1|module|4|scripts/DevelopmentEnvelopeProvenance.psm1,scripts/lib/MorphospaceActiveRetirementLineage.psm1'
+    } else { 'scripts/ActiveUnitRetirement.psm1|module|2|scripts/DevelopmentEnvelopeProvenance.psm1' }
     $expected = @(
         'scripts/ActiveUnitRetirement.psm1|ProvenanceModule|2|scripts/DevelopmentEnvelopeProvenance.psm1',
-        'scripts/ActiveUnitRetirement.psm1|module|2|scripts/DevelopmentEnvelopeProvenance.psm1'
+        $moduleDeclaration
     )
     if ($Paths -ccontains 'scripts/lib/MorphospacePlanningLifecycleProjection.psm1') {
         $expected += @('scripts/lib/MorphospacePlanningLifecycleProjection.psm1|amendmentModule|1|scripts/ActiveWriteScopeAmendment.psm1','scripts/lib/MorphospacePlanningLifecycleProjection.psm1|pendingExtensionModule|2|scripts/ActiveDevelopmentEnvelopeExtension.psm1')
@@ -1980,6 +1987,11 @@ function Invoke-AffectedRetirementLayoutGraphSelfTest {
         $retirement="function Invoke-Provenance([object]`$ProvenanceModule){& `$ProvenanceModule { 'first' }; & `$ProvenanceModule { 'second' }}`nif(`$enabled){`$module=Import-Module (Join-Path `$PSScriptRoot 'DevelopmentEnvelopeProvenance.psm1') -PassThru}`n& `$module { 'first' }`n& `$module { 'second' }`n"
         $legacy="if(`$enabled){`$amendmentModule=Import-Module (Join-Path `$PSScriptRoot 'ActiveWriteScopeAmendment.psm1') -PassThru}`n& `$amendmentModule { 'amendment' }`n"
         $extracted="Import-Module (Join-Path `$PSScriptRoot 'lib/MorphospacePlanningLifecycleProjection.psm1')`n"
+        # Production v2's ordinary module bindings live in separate functions.
+        # A script-scope module assignment would make local export bindings ambiguous.
+        $lineageRetirement="function Invoke-Provenance([object]`$ProvenanceModule){& `$ProvenanceModule { 'first' }; & `$ProvenanceModule { 'second' }}`nfunction Invoke-OrdinaryFirst { if(`$enabled){`$module=Import-Module (Join-Path `$PSScriptRoot 'DevelopmentEnvelopeProvenance.psm1') -PassThru}; & `$module { 'first' } }`nfunction Invoke-OrdinarySecond { if(`$enabled){`$module=Import-Module (Join-Path `$PSScriptRoot 'DevelopmentEnvelopeProvenance.psm1') -PassThru}; & `$module { 'second' } }`n"
+        # Actual fixed-export AST shapes used by the two v2 writer functions.
+        $lineage="function Invoke-LineageProof { `$module=Import-Module (Join-Path `$PSScriptRoot 'lib/MorphospaceActiveRetirementLineage.psm1') -PassThru; & `$module.ExportedCommands['Get-MorphospaceActiveRetirementSupersessionLineage'] }`nfunction Invoke-LineagePlanning { `$module=Import-Module (Join-Path `$PSScriptRoot 'lib/MorphospaceActiveRetirementLineage.psm1') -PassThru; & `$module.ExportedCommands['Test-MorphospaceActiveRetirementSupersessionPlanningProjection'] }`n"
         $helper="if(`$enabled){`$amendmentModule=Import-Module (Join-Path `$PSScriptRoot '../ActiveWriteScopeAmendment.psm1') -PassThru}`n& `$amendmentModule { 'amendment' }`nif(`$enabled){`$pendingExtensionModule=Import-Module (Join-Path `$PSScriptRoot '../ActiveDevelopmentEnvelopeExtension.psm1') -PassThru}`n& `$pendingExtensionModule { 'pending' }`n& `$pendingExtensionModule { 'recorded' }`n"
         $files=[ordered]@{
             'scripts/Test-ProtocolFoundation.ps1'="Import-Module (Join-Path `$PSScriptRoot 'ActiveUnitRetirement.psm1')`n"
@@ -1991,6 +2003,7 @@ function Invoke-AffectedRetirementLayoutGraphSelfTest {
             'scripts/lib/MorphospaceTransitionLedger.psm1'="'ledger'`n"
             'scripts/ActiveUnitRetirement.psm1'=''
             'scripts/lib/MorphospacePlanningLifecycleProjection.psm1'=$helper
+            'scripts/lib/MorphospaceActiveRetirementLineage.psm1'="function Get-MorphospaceActiveRetirementSupersessionLineage { 'proof' }`nfunction Test-MorphospaceActiveRetirementSupersessionPlanningProjection { 'planning' }`nExport-ModuleMember -Function Get-MorphospaceActiveRetirementSupersessionLineage,Test-MorphospaceActiveRetirementSupersessionPlanningProjection`n"
         }
         $inventory=[pscustomobject]@{records=@($files.Keys|ForEach-Object{[pscustomobject]@{mode='100644';type='blob';blob=('0'*40);path=$_}})}
         $common=@(
@@ -1998,12 +2011,18 @@ function Invoke-AffectedRetirementLayoutGraphSelfTest {
             [pscustomobject]@{importer='scripts/ActiveUnitRetirement.psm1';variable='module';count=2;target_paths=@('scripts/DevelopmentEnvelopeProvenance.psm1')},
             [pscustomobject]@{importer='scripts/Test-ValidatingCandidateRematerialization.ps1';variable='script:RematerializationOwnerModule';count=2;target_paths=@('scripts/ValidatingCandidateRematerialization.psm1')}
         )
-        foreach($layout in @('original','extracted')){
-            foreach($damage in @('none','altered-target','missing-call','extra-call','dynamic-call','shared-binding','missing-helper-edge','owner-count')){
+        foreach($layout in @('original','extracted','lineage')){
+            $damages=@('none','altered-target','missing-call','extra-call','dynamic-call','shared-binding','missing-helper-edge','owner-count')
+            if($layout -ceq 'lineage'){$damages+=@('altered-lineage-target','missing-lineage-call','extra-lineage-call','mixed-layout')}
+            foreach($damage in $damages){
                 $case=[ordered]@{};foreach($key in $files.Keys){$case[$key]=$files[$key]}
-                $case['scripts/ActiveUnitRetirement.psm1']=$retirement+$(if($layout -ceq 'original'){$legacy}else{$extracted})
+                $case['scripts/ActiveUnitRetirement.psm1']=$(if($layout -ceq 'lineage'){$lineageRetirement}else{$retirement})+$(if($layout -ceq 'extracted'){$extracted}else{$legacy})+$(if($layout -ceq 'lineage'){$lineage}else{''})
                 $declarations=@($common|ConvertTo-Json -Depth 10|ConvertFrom-Json -Depth 10)
-                $declarations+=if($layout -ceq 'original'){[pscustomobject]@{importer='scripts/ActiveUnitRetirement.psm1';variable='amendmentModule';count=1;target_paths=@('scripts/ActiveWriteScopeAmendment.psm1')}}else{@(
+                if($layout -ceq 'lineage'){
+                    $row=@($declarations|Where-Object{[string]$_.importer -ceq 'scripts/ActiveUnitRetirement.psm1' -and [string]$_.variable -ceq 'module'})[0]
+                    $row.count=4;$row.target_paths=@('scripts/DevelopmentEnvelopeProvenance.psm1','scripts/lib/MorphospaceActiveRetirementLineage.psm1')
+                }
+                $declarations+=if($layout -cne 'extracted'){[pscustomobject]@{importer='scripts/ActiveUnitRetirement.psm1';variable='amendmentModule';count=1;target_paths=@('scripts/ActiveWriteScopeAmendment.psm1')}}else{@(
                     [pscustomobject]@{importer='scripts/lib/MorphospacePlanningLifecycleProjection.psm1';variable='amendmentModule';count=1;target_paths=@('scripts/ActiveWriteScopeAmendment.psm1')},
                     [pscustomobject]@{importer='scripts/lib/MorphospacePlanningLifecycleProjection.psm1';variable='pendingExtensionModule';count=2;target_paths=@('scripts/ActiveDevelopmentEnvelopeExtension.psm1')}
                 )}
@@ -2012,7 +2031,17 @@ function Invoke-AffectedRetirementLayoutGraphSelfTest {
                     'missing-call'{$case['scripts/ActiveUnitRetirement.psm1']=$case['scripts/ActiveUnitRetirement.psm1'].Replace("& `$module { 'second' }",'')}
                     'extra-call'{$case['scripts/ActiveUnitRetirement.psm1']+="& `$module { 'extra' }`n"}
                     'dynamic-call'{$case['scripts/ActiveUnitRetirement.psm1']+="& `$UnboundOwner`n"}
-                    'shared-binding'{if($layout -ceq 'original'){$case['scripts/ActiveUnitRetirement.psm1']+=$extracted}else{$case['scripts/lib/MorphospacePlanningLifecycleProjection.psm1']=$helper.Replace("'../ActiveDevelopmentEnvelopeExtension.psm1'","'../ActiveWriteScopeAmendment.psm1'")}}
+                    'shared-binding'{if($layout -cne 'extracted'){$case['scripts/ActiveUnitRetirement.psm1']+=$extracted}else{$case['scripts/lib/MorphospacePlanningLifecycleProjection.psm1']=$helper.Replace("'../ActiveDevelopmentEnvelopeExtension.psm1'","'../ActiveWriteScopeAmendment.psm1'")}}
+                    'altered-lineage-target'{$case['scripts/ActiveUnitRetirement.psm1']=$case['scripts/ActiveUnitRetirement.psm1'].Replace("'lib/MorphospaceActiveRetirementLineage.psm1'","'ActiveWriteScopeAmendment.psm1'")}
+                    'missing-lineage-call'{$case['scripts/ActiveUnitRetirement.psm1']=$case['scripts/ActiveUnitRetirement.psm1'].Replace("& `$module.ExportedCommands['Get-MorphospaceActiveRetirementSupersessionLineage']",'')}
+                    'extra-lineage-call'{$case['scripts/ActiveUnitRetirement.psm1']=$case['scripts/ActiveUnitRetirement.psm1'].Replace("& `$module.ExportedCommands['Get-MorphospaceActiveRetirementSupersessionLineage']","& `$module.ExportedCommands['Get-MorphospaceActiveRetirementSupersessionLineage']; & `$module.ExportedCommands['Get-MorphospaceActiveRetirementSupersessionLineage']")}
+                    'mixed-layout'{
+                        $case['scripts/ActiveUnitRetirement.psm1']+=$extracted
+                        $declarations+=@(
+                            [pscustomobject]@{importer='scripts/lib/MorphospacePlanningLifecycleProjection.psm1';variable='amendmentModule';count=1;target_paths=@('scripts/ActiveWriteScopeAmendment.psm1')},
+                            [pscustomobject]@{importer='scripts/lib/MorphospacePlanningLifecycleProjection.psm1';variable='pendingExtensionModule';count=2;target_paths=@('scripts/ActiveDevelopmentEnvelopeExtension.psm1')}
+                        )
+                    }
                     'missing-helper-edge'{$case['scripts/ActiveUnitRetirement.psm1']=$retirement}
                     'owner-count'{$case['scripts/Test-ValidatingCandidateRematerialization.ps1']+="& `$script:RematerializationOwnerModule { 'extra' }`n"}
                 }
@@ -2027,6 +2056,7 @@ function Invoke-AffectedRetirementLayoutGraphSelfTest {
                             $expected=@('scripts/ActiveUnitRetirement.psm1','scripts/DevelopmentEnvelopeProvenance.psm1','scripts/ActiveWriteScopeAmendment.psm1','scripts/lib/MorphospaceTransitionLedger.psm1',$consumer.entry)
                             if($consumer.id -ceq 'validating-candidate-rematerialization'){$expected+='scripts/ValidatingCandidateRematerialization.psm1'}
                             if($layout -ceq 'extracted'){$expected+=@('scripts/lib/MorphospacePlanningLifecycleProjection.psm1','scripts/ActiveDevelopmentEnvelopeExtension.psm1')}
+                            if($layout -ceq 'lineage'){$expected+='scripts/lib/MorphospaceActiveRetirementLineage.psm1'}
                             [Array]::Sort($expected,[StringComparer]::Ordinal)
                             Assert-True ((@($resolved.paths)-join ';') -ceq ($expected-join ';')) "Retirement AST fixture '$layout/$($consumer.id)' did not bind exact paths."
                         }
@@ -2040,8 +2070,12 @@ function Invoke-AffectedRetirementLayoutGraphSelfTest {
                         'extra-call'{'Affected dependency declaration count changed:*'}
                         'owner-count'{'Affected dependency declaration count changed:*'}
                         'dynamic-call'{"Retirement-dependent consumer '*' did not retain exact closure without fallback."}
-                        'shared-binding'{if($layout -ceq 'original'){"Retirement-dependent consumer '*' did not retain exact closure without fallback."}else{'Affected dependency declaration omits observed static target:*'}}
-                        'missing-helper-edge'{if($layout -ceq 'original'){'Affected dependency declaration count changed:*'}else{"Retirement-dependent consumer '*' omitted '*'."}}
+                        'shared-binding'{if($layout -cne 'extracted'){"Retirement-dependent consumer '*' did not retain exact closure without fallback."}else{'Affected dependency declaration omits observed static target:*'}}
+                        'missing-helper-edge'{if($layout -cne 'extracted'){'Affected dependency declaration count changed:*'}else{"Retirement-dependent consumer '*' omitted '*'."}}
+                        'altered-lineage-target'{'Affected dependency declaration omits observed static target:*'}
+                        'missing-lineage-call'{'Affected dependency declaration count changed:*'}
+                        'extra-lineage-call'{'Affected dependency declaration count changed:*'}
+                        'mixed-layout'{'Retirement-dependent consumer did not consume the exact closed retirement/shared-helper module-object declarations.'}
                     }
                     Assert-True ($null -ne $message -and $message -like $category) "Retirement AST fixture '$layout/$damage' lacked typed rejection: $message"
                 }
@@ -2634,7 +2668,12 @@ function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]
             [pscustomobject]@{importer='scripts/lib/MorphospacePlanningLifecycleProjection.psm1';variable='amendmentModule';count=1;target_paths=@('scripts/ActiveWriteScopeAmendment.psm1')},
             [pscustomobject]@{importer='scripts/lib/MorphospacePlanningLifecycleProjection.psm1';variable='pendingExtensionModule';count=2;target_paths=@('scripts/ActiveDevelopmentEnvelopeExtension.psm1')}
         )
-        foreach ($layout in @([pscustomobject]@{rows=$legacyDeclarations;paths=@('scripts/ActiveUnitRetirement.psm1')},[pscustomobject]@{rows=$sharedDeclarations;paths=@('scripts/ActiveUnitRetirement.psm1','scripts/lib/MorphospacePlanningLifecycleProjection.psm1')})) {
+        $lineageDeclarations = @(
+            [pscustomobject]@{importer='scripts/ActiveUnitRetirement.psm1';variable='ProvenanceModule';count=2;target_paths=@('scripts/DevelopmentEnvelopeProvenance.psm1')},
+            [pscustomobject]@{importer='scripts/ActiveUnitRetirement.psm1';variable='module';count=4;target_paths=@('scripts/DevelopmentEnvelopeProvenance.psm1','scripts/lib/MorphospaceActiveRetirementLineage.psm1')},
+            [pscustomobject]@{importer='scripts/ActiveUnitRetirement.psm1';variable='amendmentModule';count=1;target_paths=@('scripts/ActiveWriteScopeAmendment.psm1')}
+        )
+        foreach ($layout in @([pscustomobject]@{rows=$legacyDeclarations;paths=@('scripts/ActiveUnitRetirement.psm1')},[pscustomobject]@{rows=$sharedDeclarations;paths=@('scripts/ActiveUnitRetirement.psm1','scripts/lib/MorphospacePlanningLifecycleProjection.psm1')},[pscustomobject]@{rows=$lineageDeclarations;paths=@('scripts/ActiveUnitRetirement.psm1','scripts/lib/MorphospaceActiveRetirementLineage.psm1')})) {
             Assert-AffectedRetirementDeclarationLayout -Resolution ([pscustomobject]@{used_declarations=$layout.rows}) -Paths $layout.paths
             foreach ($damage in @('missing','extra','count','target','mixed')) {
                 $rows = @($layout.rows | ConvertTo-Json -Depth 10 | ConvertFrom-Json -Depth 10)
