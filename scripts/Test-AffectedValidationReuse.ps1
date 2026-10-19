@@ -103,7 +103,7 @@ if (-not [string]::IsNullOrWhiteSpace($SelfTestPhase)) {
         Write-ReuseSelfUtf8 $planPath ((ConvertTo-MorphospaceCanonicalJson -Value $plan) + "`n"); Write-ReuseSelfUtf8 $evidencePath ((ConvertTo-MorphospaceCanonicalJson -Value $evidence) + "`n"); Write-ReuseSelfUtf8 $receiptPath (($receipt | ConvertTo-Json -Depth 64 -Compress) + "`n")
         }
         if ($runEvidenceBinding) {
-        function Assert-ReuseSelfEvidenceBindingRejected([string]$Name, [string]$Expected, [scriptblock]$Mutate) {
+        function Assert-ReuseSelfEvidenceBindingRejected([string]$Name, [string[]]$Expected, [scriptblock]$Mutate) {
             $damagedEvidence = $evidence | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64
             & $Mutate $damagedEvidence
             Write-ReuseSelfUtf8 $evidencePath ((ConvertTo-MorphospaceCanonicalJson -Value $damagedEvidence) + "`n")
@@ -113,14 +113,14 @@ if (-not [string]::IsNullOrWhiteSpace($SelfTestPhase)) {
             Write-ReuseSelfUtf8 $receiptPath (($damagedReceipt | ConvertTo-Json -Depth 64 -Compress) + "`n")
             $reason = $null; try { [void](& $PSCommandPath -RepositoryRoot $fixture -BeforeCommit $base -HeadCommit $merge -ReusePath $receiptPath -ArtifactDirectory $artifacts) } catch { $reason = $_.Exception.Message }
             Write-ReuseSelfUtf8 $evidencePath ((ConvertTo-MorphospaceCanonicalJson -Value $evidence) + "`n"); Write-ReuseSelfUtf8 $receiptPath (($receipt | ConvertTo-Json -Depth 64 -Compress) + "`n")
-            if ($reason -notlike $Expected) { throw "Reuse self-test did not reject $Name through its intended evidence-binding reason: $reason" }
+            if (@($Expected | Where-Object { $reason -like $_ }).Count -eq 0) { throw "Reuse self-test did not reject $Name through its intended evidence-binding reason: $reason" }
         }
         $bindingReason = "*Reuse 'linux' evidence does not bind its exact plan, platform, trees, and artifact.*"
         Assert-ReuseSelfEvidenceBindingRejected -Name 'repository' -Expected $bindingReason -Mutate { param($value) $value.repository = 'example.invalid/other' }
         Assert-ReuseSelfEvidenceBindingRejected -Name 'platform' -Expected $bindingReason -Mutate { param($value) $value.platform = 'windows' }
         Assert-ReuseSelfEvidenceBindingRejected -Name 'base tree' -Expected $bindingReason -Mutate { param($value) $value.base.tree = ('0' * 40) }
         Assert-ReuseSelfEvidenceBindingRejected -Name 'head tree' -Expected $bindingReason -Mutate { param($value) $value.head.tree = ('1' * 40) }
-        Assert-ReuseSelfEvidenceBindingRejected -Name 'typed failure inconsistency' -Expected "*JSON is not valid with the schema:*at '/result'*" -Mutate { param($value) $value.check_results[0].failure_kind = 'exit-code' }
+        Assert-ReuseSelfEvidenceBindingRejected -Name 'typed failure inconsistency' -Expected @("*JSON is not valid with the schema:*at '/result'*","Reuse 'linux' evidence fails its closed schema.") -Mutate { param($value) $value.check_results[0].failure_kind = 'exit-code' }
         Assert-ReuseSelfEvidenceBindingRejected -Name 'combined stream ceiling' -Expected "*Reuse 'linux' result exceeds the combined stream bound.*" -Mutate { param($value) $value.check_results[0].stdout_bytes = 6291456; $value.check_results[0].stderr_bytes = 5242880 }
         function Assert-ReuseSelfArtifactNameRejected([string]$Name, [scriptblock]$Mutate) {
             $damagedReceipt = $receipt | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64
