@@ -133,6 +133,38 @@ function Assert-ActiveRetirementImmutableNonpassReceipt {
     $live=(@(&git -C $repository hash-object --path=$gitPath -- (Resolve-MorphospaceWorkspacePath $Workspace $Relative -RequireLeaf) 2>&1)-join'').Trim();if($LASTEXITCODE-ne0-or$live-cne$blob){throw 'Active retirement nonpass original receipt live bytes drifted.'}
 }
 
+function Set-ActiveRetirementInstructionRepositoryProjection {
+    param([object]$State,[object]$Unit,[object]$Receipt)
+    # The ledger and instruction verifier authenticate this receipt before this
+    # replay. Reconstruct the producer's clean repository observation, never the
+    # target state. Dirty summaries omit porcelain bytes and cannot prove its
+    # fingerprint, so they do not acquire a new compatibility route here.
+    $observed=@($Receipt.preservation.repository_states)
+    $preflight=@($Receipt.claim_preflight.writable_repositories)
+    $scopes=@($Unit.allowed_repositories)
+    $ids=@($scopes|ForEach-Object{[string]$_.repo_id}|Sort-Object -CaseSensitive)
+    Assert-ActiveRetirementEqual $ids @($observed|ForEach-Object{[string]$_.repo_id}|Sort-Object -CaseSensitive) 'instruction repository observations'
+    Assert-ActiveRetirementEqual $ids @($preflight|ForEach-Object{[string]$_.repo_id}|Sort-Object -CaseSensitive) 'instruction repository preflight'
+    if(@($ids|Sort-Object -Unique -CaseSensitive).Count-ne$ids.Count-or
+        $Receipt.preservation.git_mutation_performed-ne$false-or$Receipt.preservation.device_mutation_performed-ne$false-or$Receipt.preservation.force_push_allowed-ne$false){throw 'Active retirement instruction repository preservation is invalid.'}
+    $heads=@{};foreach($head in @($State.repository_heads)){
+        $id=[string]$head.repo_id;if($heads.ContainsKey($id)){throw 'Active retirement instruction prior repository heads repeat an identity.'};$heads[$id]=$head
+    }
+    $dirty=@{};foreach($id in @($State.dirty_repositories)){$dirty[[string]$id]=$true}
+    foreach($scope in $scopes){
+        $id=[string]$scope.repo_id;$row=@($observed|Where-Object{[string]$_.repo_id-ceq$id})[0];$check=@($preflight|Where-Object{[string]$_.repo_id-ceq$id})[0]
+        if($row.available-ne$true-or$row.is_git-ne$true-or$row.dirty-ne$false-or$row.tracked_changes-ne0-or$row.untracked_changes-ne0-or
+            [string]$row.head-cnotmatch'^[0-9a-f]{40}$'-or[string]$row.tree-cnotmatch'^[0-9a-f]{40}$'-or
+            $row.PSObject.Properties.Name-ccontains'workflow_transport'-or$check.mapped-ne$true-or$check.available-ne$true-or$check.is_git-ne$true-or
+            [string]$row.head-cne[string]$check.head-or[string]$row.tree-cne[string]$check.tree){throw 'Active retirement instruction repository observation/preflight join is invalid.'}
+        Assert-ActiveRetirementEqual @($scope.allowed_paths|ForEach-Object{([string]$_).Replace('\','/')}|Sort-Object -Unique) @($check.allowed_paths) 'instruction repository paths'
+        $heads[$id]=[pscustomobject][ordered]@{repo_id=$id;head=[string]$row.head;branch=$row.branch;dirty_fingerprint=Get-MorphospaceSha256Bytes ([byte[]]::new(0))}
+        $dirty.Remove($id)
+    }
+    $State.repository_heads=@($heads.Values|Sort-Object repo_id)
+    $State.dirty_repositories=@($dirty.Keys|Sort-Object)
+}
+
 function Assert-ActiveRetirementRetainedLifecycle {
     param([string]$Workspace,[object]$Event,[object]$Transition)
     $intent=$Transition.intent;$unitId=[string]$Event.unit_id
@@ -146,6 +178,11 @@ function Assert-ActiveRetirementRetainedLifecycle {
     if($instruction.Count-eq1){
         if([string]$unit.status-cne'active'-or[string]$state.current_unit-cne$unitId){throw 'Active retirement instruction completion requires active ownership.'}
         $null=&$development {param($before,$after,$intent,$event)Assert-DevelopmentContinuationRetainedAuthority $before $after $intent $event} $unit $targetUnit $intent $Event
+        $receipt=ConvertFrom-MorphospaceProtocolJsonBytes ([Convert]::FromBase64String([string]$instruction[0].bytes_base64))
+        if([string]$receipt.action-cne'CompleteInstructionSurfaces'-or$receipt.executed-ne$true-or[string]$receipt.event_id-cne[string]$Event.event_id){throw 'Active retirement instruction repository receipt is detached.'}
+        if([string]$state.schema-ceq'rusty.morphospace.workflow.workspace_state.v2'){
+            Set-ActiveRetirementInstructionRepositoryProjection $state $unit $receipt
+        }
         $unit=Copy-ActiveRetirementValue $targetUnit
     }elseif($freeze.Count-eq1){
         if(@($intent.artifacts).Count-ne1-or[string]$unit.status-cne'active'-or[string]$state.current_unit-cne$unitId-or$unit.PSObject.Properties.Name-ccontains'candidate_freeze'){throw 'Active retirement Freeze requires an unfrozen active owner.'}
