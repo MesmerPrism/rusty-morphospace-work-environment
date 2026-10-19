@@ -2,18 +2,45 @@ param([switch]$KeepFixture, [switch]$RematerializationV6Only)
 
 $ErrorActionPreference = 'Stop'
 $RepoRoot = Split-Path -Parent $PSScriptRoot
-Import-Module (Join-Path $PSScriptRoot 'WorkUnitAutomation.psm1') -Force
-Import-Module (Join-Path $PSScriptRoot 'ActiveWriteScopeAmendment.psm1') -Force
-Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
+$script:fixtureAutomationModule = Import-Module (Join-Path $PSScriptRoot 'WorkUnitAutomation.psm1') -Force -PassThru
+$script:fixtureAmendmentModule = Import-Module (Join-Path $PSScriptRoot 'ActiveWriteScopeAmendment.psm1') -Force -PassThru
+$script:fixtureProtocolModule = Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force -PassThru
 $ledgerModule = Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1') -Force -PassThru
-Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceBlockedSupersessionTerminalValidation.psm1') -Force
+$script:fixtureTerminalModule = Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceBlockedSupersessionTerminalValidation.psm1') -Force -PassThru
 if ($RematerializationV6Only) {
     Import-Module (Join-Path $PSScriptRoot 'CandidateFreeze.psm1') -Force
-    Import-Module (Join-Path $PSScriptRoot 'ValidatingCandidateRematerialization.psm1') -Force
-    Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force -Global
+    $script:fixtureRematerializationModule = Import-Module (Join-Path $PSScriptRoot 'ValidatingCandidateRematerialization.psm1') -Force -PassThru
 }
 
-function Start-MorphospaceTransitionLedger {
+# Keep the real owner implementations bound to this fixture's retained modules.
+# Producer Force imports may remove matching export bindings; distinct fixture delegates
+# and explicit ModuleObject calls do not rediscover or replace those exports.
+function Read-FixtureProtocolJson {
+    param([Parameter(Mandatory=$true)][string]$Path)
+    & $script:fixtureProtocolModule.ExportedCommands['Read-MorphospaceProtocolJson'] @PSBoundParameters
+}
+
+function ConvertFrom-FixtureProtocolJsonBytes {
+    param([Parameter(Mandatory=$true)][AllowEmptyCollection()][byte[]]$Bytes,[string]$Context='protocol JSON')
+    & $script:fixtureProtocolModule.ExportedCommands['ConvertFrom-MorphospaceProtocolJsonBytes'] @PSBoundParameters
+}
+
+function Get-FixtureCanonicalJsonSha256 {
+    param([Parameter(Mandatory=$true)][object]$Value)
+    & $script:fixtureProtocolModule.ExportedCommands['Get-MorphospaceCanonicalJsonSha256'] @PSBoundParameters
+}
+
+function Get-FixtureSha256Bytes {
+    param([Parameter(Mandatory=$true)][AllowEmptyCollection()][byte[]]$Bytes)
+    & $script:fixtureProtocolModule.ExportedCommands['Get-MorphospaceSha256Bytes'] @PSBoundParameters
+}
+
+function Get-FixtureFileSha256 {
+    param([Parameter(Mandatory=$true)][string]$Path)
+    & $script:fixtureProtocolModule.ExportedCommands['Get-MorphospaceFileSha256'] @PSBoundParameters
+}
+
+function Start-FixtureTransitionLedger {
     param(
         [string]$WorkspaceRoot, [string]$TransactionId, [string]$StatePath, [string]$UnitPath, [string]$EventsPath,
         [object]$TargetState, [object]$TargetUnit, [object]$Event,
@@ -48,10 +75,10 @@ function Write-FixtureJson {
 
 function ConvertFrom-FixtureJsonText {
     param([string]$Text, [string]$Context = 'fixture JSON')
-    return ConvertFrom-MorphospaceProtocolJsonBytes -Bytes $encoding.GetBytes($Text) -Context $Context
+    return ConvertFrom-FixtureProtocolJsonBytes -Bytes $encoding.GetBytes($Text) -Context $Context
 }
 
-function Read-FixtureJson { param([string]$Path) return Read-MorphospaceProtocolJson -Path $Path }
+function Read-FixtureJson { param([string]$Path) return Read-FixtureProtocolJson -Path $Path }
 
 function Copy-FixtureValue {
     param([object]$Value)
@@ -70,7 +97,7 @@ function Import-RematerializationV6FixtureDefinitions {
 
 function Get-RematerializationV6Transition {
     param([string]$Workspace, [string]$EventId, [string]$PriorStateSha256, [string]$PriorUnitSha256)
-    $module = Get-Module MorphospaceBlockedSupersessionTerminalValidation
+    $module = $script:fixtureTerminalModule
     if ($null -eq $module) { throw 'Blocked-supersession terminal validation module is unavailable.' }
     return & $module {
         param($Workspace, $EventId, $PriorStateSha256, $PriorUnitSha256)
@@ -85,7 +112,7 @@ function Get-RematerializationV6Transition {
 
 function Test-RematerializationV6TransitionDirect {
     param([string]$Workspace, [object]$Transition, [object]$PriorState, [string]$PriorStateSha256, [object]$PriorUnit, [string]$PriorUnitSha256)
-    $module = Get-Module MorphospaceBlockedSupersessionTerminalValidation
+    $module = $script:fixtureTerminalModule
     & $module {
         param($Workspace, $Transition, $PriorState, $PriorStateSha256, $PriorUnit, $PriorUnitSha256)
         Test-MorphospaceBlockedSupersessionRematerializationV6 -WorkspaceRoot $Workspace -ProjectId 'test-project' -UnitId 'unit-remat-001' `
@@ -111,6 +138,256 @@ function Invoke-FixtureGit {
     $output = @(& git -C $sourceRoot @Arguments 2>&1 | ForEach-Object { [string]$_ })
     if ($LASTEXITCODE -ne 0) { throw "Fixture Git failed: git $($Arguments -join ' ')`n$($output -join [Environment]::NewLine)" }
     return @($output)
+}
+
+# Producer conformance fixtures use neutral project and unit identities.
+function Update-TerminalProducerEvent {
+    param([string]$Workspace,[string]$EventId,[scriptblock]$Mutation)
+    $path=Join-Path $Workspace 'iteration-events.jsonl'
+    $text=[IO.File]::ReadAllText($path,$encoding)
+    $parts=[regex]::Split($text,'(?<=\n)')
+    $count=0
+    for($index=0;$index-lt$parts.Length;$index++){
+        if([string]::IsNullOrWhiteSpace($parts[$index])){continue}
+        $event=ConvertFrom-FixtureJsonText $parts[$index] 'producer event damage'
+        if([string]$event.event_id-cne$EventId){continue}
+        &$Mutation $event
+        $newline=if($parts[$index].EndsWith("`r`n")){"`r`n"}elseif($parts[$index].EndsWith("`n")){"`n"}else{''}
+        $parts[$index]=($event|ConvertTo-Json -Depth 100 -Compress)+$newline
+        $count++
+    }
+    if($count-ne1){throw 'Producer event damage did not select exactly one raw row.'}
+    [IO.File]::WriteAllText($path,($parts-join''),$encoding)
+}
+function New-TerminalProducerSupersessionRequest {
+    param([string]$Workspace)
+    $project=Read-FixtureJson (Join-Path $Workspace 'project.spec.json')
+    $state=Read-FixtureJson (Join-Path $Workspace 'workspace.state.json')
+    $oldPath="iteration-units/$oldUnitId.json";$replacementPath="iteration-units/$replacementUnitId.json"
+    $old=Read-FixtureJson (Join-Path $Workspace $oldPath)
+    $replacement=Read-FixtureJson (Join-Path $Workspace $replacementPath)
+    $eventBytes=[IO.File]::ReadAllBytes((Join-Path $Workspace 'iteration-events.jsonl'))
+    $events=@(Get-Content -LiteralPath (Join-Path $Workspace 'iteration-events.jsonl')|Where-Object {$_}|ForEach-Object {ConvertFrom-FixtureJsonText $_ 'producer request ledger'})
+    $tail=if($events.Count){[string]$events[-1].event_id}else{$null}
+    # Only a reviewed request is constructed. Real SupersedeActive validates this
+    # actual clean fixture materialization and emits its own receipt/transaction.
+    if(@(Invoke-FixtureGit @('status','--porcelain')).Count-ne0){throw 'Producer fixture request requires its actual source to be clean.'}
+    $head=([string](@(Invoke-FixtureGit @('rev-parse','HEAD'))[0])).Trim()
+    $tree=([string](@(Invoke-FixtureGit @('rev-parse','HEAD^{tree}'))[0])).Trim()
+    $branch=([string](@(Invoke-FixtureGit @('symbolic-ref','--short','HEAD'))[0])).Trim()
+    [string[]]$allowed=@($replacement.allowed_repositories[0].allowed_paths)
+    [Array]::Sort($allowed,[StringComparer]::Ordinal)
+    $repositories=@([pscustomobject][ordered]@{
+        repo_id='fixture-source';head=$head;tree=$tree;branch=$branch
+        dirty_fingerprint=Get-FixtureSha256Bytes ([byte[]]@())
+        scope_disposition='owned'
+        ownership_scopes=@([pscustomobject][ordered]@{unit_id=$replacementUnitId;role='replacement';allowed_paths=$allowed})
+        allowed_paths=$allowed;overlay=@()
+    })
+    [pscustomobject][ordered]@{
+        schema='rusty.morphospace.workflow.active_unit_supersession.v1'
+        supersession_id=$supersessionEventId
+        project_id=$projectId
+        old_unit=[ordered]@{unit_id=$oldUnitId;path=$oldPath;raw_sha256=(Get-FileHash (Join-Path $Workspace $oldPath) -Algorithm SHA256).Hash.ToLowerInvariant();canonical_sha256=Get-FixtureCanonicalJsonSha256 $old;status='active'}
+        replacement_unit=[ordered]@{unit_id=$replacementUnitId;path=$replacementPath;raw_sha256=(Get-FileHash (Join-Path $Workspace $replacementPath) -Algorithm SHA256).Hash.ToLowerInvariant();canonical_sha256=Get-FixtureCanonicalJsonSha256 $replacement;status='proposed'}
+        companion_units=@()
+        expected=[ordered]@{
+            project_raw_sha256=(Get-FileHash (Join-Path $Workspace 'project.spec.json') -Algorithm SHA256).Hash.ToLowerInvariant()
+            project_canonical_sha256=Get-FixtureCanonicalJsonSha256 $project
+            state_raw_sha256=(Get-FileHash (Join-Path $Workspace 'workspace.state.json') -Algorithm SHA256).Hash.ToLowerInvariant()
+            state_canonical_sha256=Get-FixtureCanonicalJsonSha256 $state
+            events_sha256=Get-FixtureSha256Bytes $eventBytes
+            events_length=[int64]$eventBytes.Length
+            event_tail_id=$tail
+            repository_map_sha256=(Get-FileHash $repoMapPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        }
+        repositories=@($repositories)
+        does_not_authorize=@('This request changes only workflow ownership; it authorizes no acceptance, source edit, build, device, Git, remote, or publication action.')
+    }
+}
+
+function Update-TerminalInstructionArtifact {
+    param([string]$Workspace,[scriptblock]$Mutation,[bool]$RecomputeIds=$true,[bool]$RecomputeObservation=$true)
+    $path=Join-Path $Workspace 'receipts/producer-instructions-output.json'
+    $receipt=Read-FixtureJson $path
+    &$Mutation $receipt
+    if($RecomputeIds){
+        foreach($row in @($receipt.instruction_surface_completion.surfaces)){
+            $identity=[pscustomobject][ordered]@{
+                surface_kind=$row.surface_kind;declared_path=$row.declared_path;repo_id=$row.repo_id;relative_path=$row.relative_path
+                owner=$row.owner;action=$row.action;validation=$row.validation;skill_id=$row.skill_id
+            }
+            $row.surface_id=Get-FixtureCanonicalJsonSha256 $identity
+        }
+        $receipt.instruction_surface_completion.surfaces=@($receipt.instruction_surface_completion.surfaces|Sort-Object surface_id -CaseSensitive)
+    }
+    if($RecomputeObservation){$receipt.instruction_surface_completion.observation_sha256=Get-FixtureCanonicalJsonSha256 ([pscustomobject][ordered]@{surfaces=@($receipt.instruction_surface_completion.surfaces)})}
+    Write-FixtureJson $path $receipt
+    $bytes=[IO.File]::ReadAllBytes($path)
+    $intentPath=Join-Path $Workspace 'receipts/transactions/producer-instructions-recorded-transition.intent.json'
+    $intent=Read-FixtureJson $intentPath
+    $intent.artifacts[0].bytes_base64=[Convert]::ToBase64String($bytes);$intent.artifacts[0].sha256=Get-FixtureSha256Bytes $bytes
+    Write-FixtureJson $intentPath $intent
+    Rebind-FixtureTransaction $Workspace 'producer-instructions-recorded'
+}
+
+function Update-TerminalSupersessionScopeArtifact {
+    param([string]$Workspace,[ValidateSet('path','repository')][string]$Damage)
+    $intentPath=Join-Path $Workspace "receipts/transactions/$supersessionEventId-transition.intent.json"
+    $intent=Read-FixtureJson $intentPath
+    if($Damage-ceq'path'){$intent.target.unit.document.allowed_repositories[0].allowed_paths+=@('outside-source/')}
+    else{$intent.target.unit.document.allowed_repositories+=@([pscustomobject][ordered]@{repo_id='foreign-source';allowed_paths=@('src/')})}
+    $pre=Copy-FixtureValue $intent.target.unit.document;$pre.status='proposed'
+    $preHash=Get-FixtureCanonicalJsonSha256 $pre
+    $intent.pre.unit.sha256=$preHash;$intent.expected.unit_sha256=$preHash
+    $requestPath=Join-Path $Workspace 'receipts/producer-supersession-request.json'
+    $request=Read-FixtureJson $requestPath
+    $request.replacement_unit.canonical_sha256=$preHash
+    $request.replacement_unit.raw_sha256=Get-FixtureSha256Bytes ($encoding.GetBytes(($pre|ConvertTo-Json -Depth 100)+[Environment]::NewLine))
+    if($Damage-ceq'path'){
+        [string[]]$allowed=@($pre.allowed_repositories[0].allowed_paths)
+        [Array]::Sort($allowed,[StringComparer]::Ordinal)
+        $request.repositories[0].allowed_paths=$allowed;$request.repositories[0].ownership_scopes[0].allowed_paths=$allowed
+    }else{
+        $extra=Copy-FixtureValue $request.repositories[0];$extra.repo_id='foreign-source';$extra.allowed_paths=@('src/');$extra.ownership_scopes[0].allowed_paths=@('src/')
+        $request.repositories=@(@($request.repositories)+$extra|Sort-Object repo_id -CaseSensitive)
+    }
+    Write-FixtureJson $requestPath $request
+    $output=Join-Path $Workspace 'receipts/producer-supersession-output.json'
+    $receipt=Read-FixtureJson $output
+    $receipt.audit_receipt.sha256=(Get-FileHash $requestPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    Write-FixtureJson $output $receipt
+    $bytes=[IO.File]::ReadAllBytes($output)
+    $intent.artifacts[0].bytes_base64=[Convert]::ToBase64String($bytes);$intent.artifacts[0].sha256=Get-FixtureSha256Bytes $bytes
+    Write-FixtureJson $intentPath $intent
+    Rebind-FixtureTransaction $Workspace $supersessionEventId
+}
+
+function Invoke-ReceiptBearingProducerTerminalCases {
+    param([string]$Template)
+    $case=Copy-FixtureWorkspace -Source $Template -Name 'producer-receipt-bearing-cycles'
+    $replacement=Read-FixtureJson (Join-Path $case "iteration-units/$replacementUnitId.json")
+    $replacement.status='proposed'
+    foreach($surface in @($replacement.instruction_surfaces)){$surface.status='planned'}
+    Write-FixtureJson (Join-Path $case "iteration-units/$replacementUnitId.json") $replacement
+    Update-FixtureJson (Join-Path $case 'workspace.state.json') {param($s)$s.next_ready_unit=$null}
+    $request=New-TerminalProducerSupersessionRequest $case
+    $requestPath=Join-Path $case 'receipts/producer-supersession-request.json'
+    Write-FixtureJson $requestPath $request
+    $requestHash=(Get-FileHash $requestPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $null=& (Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1') -Action SupersedeActive -WorkspaceRoot $case -UnitId $replacementUnitId -RepoMapPath $repoMapPath -ActiveUnitSupersession $requestPath -ExpectedActiveUnitSupersessionSha256 $requestHash -OutPath (Join-Path $case 'receipts/producer-supersession-output.json') -Timestamp '2026-01-02T03:03:00.0000000Z' -Execute
+    # Completion is actual owner producer output, never a hand-authored v1 artifact.
+    $completionArguments=@{Action='CompleteInstructionSurfaces';WorkspaceRoot=$case;UnitId=$replacementUnitId;RepoMapPath=$repoMapPath;InstructionCompletionId='producer-instructions';OutPath=(Join-Path $case 'receipts/producer-instructions-output.json');Timestamp='2026-01-02T03:03:30.0000000Z'}
+    $dry=& $script:fixtureAutomationModule.ExportedCommands['Invoke-MorphospaceWorkUnitAutomation'] @completionArguments
+    $completionArguments.ExpectedInstructionObservationSha256=[string]$dry.instruction_surface_completion.observation_sha256
+    $completionArguments.ExpectedUnitSha256=[string]$dry.instruction_surface_completion.expected_unit_sha256
+    $completionArguments.InstructionSurfaceIds=@($dry.instruction_surface_completion.surfaces.surface_id)
+    $completionArguments.Execute=$true
+    $null=& $script:fixtureAutomationModule.ExportedCommands['Invoke-MorphospaceWorkUnitAutomation'] @completionArguments
+    $cycleReturnIds=[Collections.Generic.List[string]]::new()
+    for($attempt=1;$attempt-le2;$attempt++){
+        Invoke-OwnerAction $case BeginValidation $replacementUnitId ('2026-01-02T03:0{0}:00.0000000Z'-f($attempt+3))
+        $failed=New-FixtureValidationReceipt $case $replacementUnitId fail "producer-attempt-$attempt"
+        Invoke-OwnerAction $case ReturnToActive $replacementUnitId ('2026-01-02T03:0{0}:30.0000000Z'-f($attempt+3)) -ValidationReceipt $failed -ValidationResult fail
+        $state=Read-FixtureJson (Join-Path $case 'workspace.state.json')
+        $cycleReturnIds.Add([string]$state.last_event_id)
+    }
+    Invoke-OwnerAction $case BeginValidation $replacementUnitId '2026-01-02T03:06:00.0000000Z'
+    $failReceipt=New-FixtureValidationReceipt $case $replacementUnitId fail 'producer-terminal'
+    Invoke-OwnerAction $case RecordValidation $replacementUnitId '2026-01-02T03:06:30.0000000Z' -ValidationReceipt $failReceipt -ValidationResult fail
+    Assert-HelperPasses $case 'receipt-bearing-proposed-preimage-completion-two-return-cycles' 0
+    # Existing blocked instruction compatibility is intentionally unchanged. Aggregate
+    # CurrentWork integration is asserted after the real supported Resume action.
+    $resumed=Copy-FixtureWorkspace $case 'producer-real-resume'
+    Invoke-OwnerAction $resumed Resume $replacementUnitId '2026-01-02T03:07:00.0000000Z'
+    Assert-HelperPasses $resumed 'receipt-bearing-terminal-real-resume' 1
+    Invoke-WorkflowContract $resumed|Out-Null
+    Assert-Passed $true 'receipt-bearing-terminal-resume-aggregate'
+    Assert-HelperRejects $case 'producer-request-missing' {param($c)Remove-Item -LiteralPath (Join-Path $c 'receipts/producer-supersession-request.json')} 'Workspace artifact'
+    Assert-HelperRejects $case 'producer-bound-output-action-substitution' {
+        param($c)$output=Join-Path $c 'receipts/producer-supersession-output.json'
+        Update-FixtureJson $output {param($r)$r.action='Inspect'}
+        $bytes=[IO.File]::ReadAllBytes($output)
+        $intentPath=Join-Path $c "receipts/transactions/$supersessionEventId-transition.intent.json"
+        $i=Read-FixtureJson $intentPath
+        $i.artifacts[0].bytes_base64=[Convert]::ToBase64String($bytes);$i.artifacts[0].sha256=Get-FixtureSha256Bytes $bytes
+        Write-FixtureJson $intentPath $i;Rebind-FixtureTransaction $c $supersessionEventId
+    } 'requires exact executed SupersedeActive output'
+    Assert-HelperRejects $case 'producer-supersession-ready-substitution' {
+        param($c)
+        $p=Join-Path $c "receipts/transactions/$supersessionEventId-transition.intent.json"
+        Update-FixtureJson $p {param($i)$u=Copy-FixtureValue $i.target.unit.document;$u.status='ready';$i.pre.unit.sha256=Get-FixtureCanonicalJsonSha256 $u;$i.expected.unit_sha256=$i.pre.unit.sha256}
+        Rebind-FixtureTransaction $c $supersessionEventId
+    } 'preimage differs from the reviewed request'
+    $returnId=$cycleReturnIds[0]
+    Assert-HelperRejects $case 'producer-return-completion-missing' {param($c)Remove-Item -LiteralPath (Join-Path $c "receipts/transactions/$returnId-transition.completion.json")} 'Workspace artifact'
+    Assert-HelperRejects $case 'producer-return-cross-unit' {
+        param($c)Update-TerminalProducerEvent $c $returnId {param($e)$e.unit_id='foreign-unit'}
+        Update-FixtureJson (Join-Path $c "receipts/transactions/$returnId-transition.intent.json") {param($i)$i.event.unit_id='foreign-unit'};Rebind-FixtureTransaction $c $returnId
+    } 'crosses the replacement project/unit'
+    Assert-HelperRejects $case 'producer-return-arbitrary-recorded-substitution' {
+        param($c)Update-TerminalProducerEvent $c $returnId {param($e)$e.event_type='state-transition'}
+        Update-FixtureJson (Join-Path $c "receipts/transactions/$returnId-transition.intent.json") {param($i)$i.event.event_type='state-transition'};Rebind-FixtureTransaction $c $returnId
+    } 'requires exact ordinary instruction completion'
+    Assert-HelperRejects $case 'producer-return-unit-contract-change' {
+        param($c)Update-FixtureJson (Join-Path $c "receipts/transactions/$returnId-transition.intent.json") {param($i)$i.target.unit.document.objective+=' foreign scope'};Rebind-FixtureTransaction $c $returnId
+    } 'ReturnToActive changes unit contract beyond status'
+    Assert-HelperRejects $case 'producer-return-passing-substitution' {
+        param($c)Update-FixtureJson (Join-Path $c "receipts/transactions/$returnId-transition.intent.json") {param($i)$i.target.state.document.validation_checkpoint.result='pass'};Rebind-FixtureTransaction $c $returnId
+    } 'ReturnToActive requires a non-passing checkpoint'
+    Assert-HelperRejects $case 'producer-return-detached-pre-state' {
+        param($c)Update-FixtureJson (Join-Path $c "receipts/transactions/$returnId-transition.intent.json") {param($i)$i.pre.state.sha256=('a'*64);$i.expected.state_sha256=$i.pre.state.sha256};Rebind-FixtureTransaction $c $returnId
+    } 'detached from the preceding state target'
+    Assert-HelperRejects $case 'producer-return-inferred-acceptance' {
+        param($c)Update-FixtureJson (Join-Path $c "receipts/transactions/$returnId-transition.intent.json") {param($i)$i.target.state.document.last_accepted_receipt='receipts/fabricated-pass.json'};Rebind-FixtureTransaction $c $returnId
+    } 'authority-bearing state'
+    Assert-HelperRejects $case 'producer-return-undeclared-observation' {
+        param($c)Update-FixtureJson (Join-Path $c "receipts/transactions/$returnId-transition.intent.json") {param($i)$i.target.state.document.dirty_repositories=@('foreign-repository')};Rebind-FixtureTransaction $c $returnId
+    } 'undeclared or repeated repository'
+    Assert-HelperRejects $case 'producer-return-receipt-substitution' {
+        param($c)$i=Read-FixtureJson (Join-Path $c "receipts/transactions/$returnId-transition.intent.json")
+        Update-FixtureJson (Join-Path $c ([string]$i.event.receipts[0])) {param($r)$r.unit_id='foreign-unit'}
+    } 'not an exact same-unit fail result'
+    Assert-HelperRejects $case 'producer-completion-contract-change' {
+        param($c)$id='producer-instructions-recorded'
+        Update-FixtureJson (Join-Path $c "receipts/transactions/$id-transition.intent.json") {param($i)$i.target.unit.document.objective+=' foreign scope'};Rebind-FixtureTransaction $c $id
+    } 'retained authority/objective'
+    Assert-HelperRejects $case 'producer-completion-surface-owner-rehashed' {
+        param($c)Update-TerminalInstructionArtifact $c {param($r)$r.instruction_surface_completion.surfaces[0].owner='foreign-owner'}
+    } 'surface identity differs from the planned declaration'
+    Assert-HelperRejects $case 'producer-completion-surface-path-rehashed' {
+        param($c)Update-TerminalInstructionArtifact $c {param($r)$r.instruction_surface_completion.surfaces[0].declared_path='<repo-root>/foreign.md'}
+    } 'surface declaration differs from the planned set'
+    Assert-HelperRejects $case 'producer-completion-surface-action-rehashed' {
+        param($c)Update-TerminalInstructionArtifact $c {param($r)$row=$r.instruction_surface_completion.surfaces[0];$row.action=if($row.action-ceq'update'){'review-no-change'}else{'update'}}
+    } 'surface identity differs from the planned declaration'
+    Assert-HelperRejects $case 'producer-completion-surface-id-rehashed-observation' {
+        param($c)Update-TerminalInstructionArtifact $c {param($r)$r.instruction_surface_completion.surfaces[0].surface_id=('a'*64)} -RecomputeIds $false
+    } 'surface IDs are not exact, unique and sorted'
+    Assert-HelperRejects $case 'producer-completion-observation-hash-substitution' {
+        param($c)Update-TerminalInstructionArtifact $c {param($r)$r.instruction_surface_completion.observation_sha256=('b'*64)} -RecomputeIds $false -RecomputeObservation $false
+    } 'observation hash differs'
+    Assert-HelperRejects $case 'producer-completion-relative-observation-substitution' {
+        param($c)Update-TerminalInstructionArtifact $c {param($r)$r.instruction_surface_completion.surfaces[0].relative_path='foreign.md'}
+    } 'retained observation differs'
+    Assert-HelperRejects $case 'producer-completion-timestamp-substitution' {
+        param($c)Update-TerminalInstructionArtifact $c {param($r)$r.timestamp='2026-01-02T03:03:31.0000000Z'}
+    } 'receipt transition fields differ'
+    Assert-HelperRejects $case 'producer-completion-status-substitution' {
+        param($c)Update-TerminalInstructionArtifact $c {param($r)$r.status_before='proposed'}
+    } 'receipt transition fields differ'
+    Assert-HelperRejects $case 'producer-completion-captain-substitution' {
+        param($c)Update-TerminalInstructionArtifact $c {param($r)$r.current_unit_before='foreign-unit'}
+    } 'receipt transition fields differ'
+    Assert-HelperRejects $case 'producer-completion-preservation-substitution' {
+        param($c)Update-TerminalInstructionArtifact $c {param($r)$r.preservation.git_mutation_performed=$true}
+    } 'instruction-completion receipt schema differs'
+    Assert-HelperRejects $case 'producer-supersession-path-widening-rebound' {
+        param($c)Update-TerminalSupersessionScopeArtifact $c path
+    } 'source scope widens path authority'
+    Assert-HelperRejects $case 'producer-supersession-repository-widening-rebound' {
+        param($c)Update-TerminalSupersessionScopeArtifact $c repository
+    } 'source scope widens repository authority'
 }
 
 function New-FixtureUnit {
@@ -205,7 +482,7 @@ function Invoke-OwnerAction {
         Execute = $true
     }
     if ($ValidationReceipt) { $arguments.ValidationReceipt = $ValidationReceipt; $arguments.ValidationResult = $ValidationResult }
-    Invoke-MorphospaceWorkUnitAutomation @arguments | Out-Null
+    & $script:fixtureAutomationModule.ExportedCommands['Invoke-MorphospaceWorkUnitAutomation'] @arguments | Out-Null
 }
 
 function Invoke-WorkflowContract {
@@ -221,7 +498,7 @@ function Assert-Passed {
 
 function Assert-HelperPasses {
     param([string]$Workspace, [string]$Name, [int]$ContinuationCount, [int]$ProjectionCount = -1)
-    $result = Test-MorphospaceBlockedSupersessionTerminalValidation -WorkspaceRoot $Workspace -ProjectId $projectId -SupersessionEventId $supersessionEventId -ReplacementUnitId $replacementUnitId
+    $result = & $script:fixtureTerminalModule.ExportedCommands['Test-MorphospaceBlockedSupersessionTerminalValidation'] -WorkspaceRoot $Workspace -ProjectId $projectId -SupersessionEventId $supersessionEventId -ReplacementUnitId $replacementUnitId
     $projectionMatches = $ProjectionCount -lt 0 -or [int]$result.continuation_projection_count -eq $ProjectionCount
     Assert-Passed ($result.history_present -and $result.authenticated -and [int]$result.continuation_event_count -eq $ContinuationCount -and $projectionMatches -and -not $result.acceptance_inferred) $Name
 }
@@ -233,7 +510,7 @@ function Assert-HelperRejects {
     $rejected = $false
     $rejectionMessage = ''
     try {
-        Test-MorphospaceBlockedSupersessionTerminalValidation -WorkspaceRoot $caseRoot -ProjectId $projectId -SupersessionEventId $supersessionEventId -ReplacementUnitId $replacementUnitId | Out-Null
+        & $script:fixtureTerminalModule.ExportedCommands['Test-MorphospaceBlockedSupersessionTerminalValidation'] -WorkspaceRoot $caseRoot -ProjectId $projectId -SupersessionEventId $supersessionEventId -ReplacementUnitId $replacementUnitId | Out-Null
     } catch { $rejected = $true; $rejectionMessage = [string]$_.Exception.Message }
     if ($rejected -and $ExpectedMessage -and -not $rejectionMessage.Contains($ExpectedMessage, [StringComparison]::Ordinal)) {
         throw "Assertion failed: $Name rejected with '$rejectionMessage' instead of expected context '$ExpectedMessage'."
@@ -263,12 +540,12 @@ function Rebind-FixtureTransaction {
     $intentPath = Join-Path $Workspace "receipts\transactions\$transactionId.intent.json"
     $completionPath = Join-Path $Workspace "receipts\transactions\$transactionId.completion.json"
     $intent = Read-FixtureJson -Path $intentPath
-    $embeddedEventHash = Get-MorphospaceCanonicalJsonSha256 -Value $intent.event
-    $intent.target.state.sha256 = Get-MorphospaceCanonicalJsonSha256 -Value $intent.target.state.document
-    $intent.target.unit.sha256 = Get-MorphospaceCanonicalJsonSha256 -Value $intent.target.unit.document
+    $embeddedEventHash = Get-FixtureCanonicalJsonSha256 -Value $intent.event
+    $intent.target.state.sha256 = Get-FixtureCanonicalJsonSha256 -Value $intent.target.state.document
+    $intent.target.unit.sha256 = Get-FixtureCanonicalJsonSha256 -Value $intent.target.unit.document
     Write-FixtureJson -Path $intentPath -Value $intent
     $reboundIntent = Read-FixtureJson -Path $intentPath
-    if ((Get-MorphospaceCanonicalJsonSha256 -Value $reboundIntent.event) -cne $embeddedEventHash) {
+    if ((Get-FixtureCanonicalJsonSha256 -Value $reboundIntent.event) -cne $embeddedEventHash) {
         throw "Fixture transaction '$EventId' rebind changed its embedded immutable event."
     }
     $completion = Read-FixtureJson -Path $completionPath
@@ -291,14 +568,14 @@ function Rewrite-FixtureTransactionEventIdentity {
     $intent.transaction_id = $newTransactionId
     $intent.event.event_id = $NewEventId
     $intent.target.state.document.last_event_id = $NewEventId
-    $intent.target.state.sha256 = Get-MorphospaceCanonicalJsonSha256 -Value $intent.target.state.document
+    $intent.target.state.sha256 = Get-FixtureCanonicalJsonSha256 -Value $intent.target.state.document
     Write-FixtureJson -Path $newIntentPath -Value $intent
     $completion.transaction_id = $newTransactionId
     $completion.event_id = $NewEventId
     $completion.state_sha256 = [string]$intent.target.state.sha256
     $completion.intent.path = "receipts/transactions/$newTransactionId.intent.json"
     $completion.intent.schema = [string]$intent.schema
-    $completion.intent.sha256 = Get-MorphospaceFileSha256 -Path $newIntentPath
+    $completion.intent.sha256 = Get-FixtureFileSha256 -Path $newIntentPath
     Write-FixtureJson -Path $newCompletionPath -Value $completion
     Remove-Item -LiteralPath $oldIntentPath,$oldCompletionPath
     Update-FixtureLedgerEvent -Workspace $Workspace -EventId $OldEventId -Mutation { param($event) $event.event_id = $NewEventId }
@@ -344,10 +621,10 @@ function Add-OwnerV2SupersessionContinuation {
     $eventId="$oldId-superseded-by-$newId";$targetState=Copy-FixtureValue $state;$targetState.current_unit=$newId;$targetState.next_ready_unit=$null;$targetState.last_event_id=$eventId
     $active=Copy-FixtureValue $ready;$active.status='active'
     $event=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.iteration_event.v1';event_id=$eventId;sequence=[int]$tail.sequence+1;timestamp=$timestamp;project_id=$projectId;unit_id=$oldId;event_type='state-transition';summary='The exact owner-produced v2 fixture replacement supersedes its authenticated predecessor.';receipts=@()}
-    Start-MorphospaceTransitionLedger -WorkspaceRoot $Workspace -TransactionId "$eventId-transition" -StatePath 'workspace.state.json' -UnitPath "iteration-units/$newId.json" -EventsPath 'iteration-events.jsonl' `
-        -TargetState $targetState -TargetUnit $active -Event $event -ExpectedStateSha256 (Get-MorphospaceCanonicalJsonSha256 $state) -ExpectedUnitSha256 (Get-MorphospaceCanonicalJsonSha256 $ready) `
-        -ExpectedEventTailId ([string]$tail.event_id) -ExpectedEventsSha256 (Get-MorphospaceFileSha256 $eventsPath) -ExpectedEventsLength ([IO.FileInfo]::new($eventsPath).Length) `
-        -ExpectedSupersededUnitSha256 (Get-MorphospaceCanonicalJsonSha256 $old)|Out-Null
+    Start-FixtureTransitionLedger -WorkspaceRoot $Workspace -TransactionId "$eventId-transition" -StatePath 'workspace.state.json' -UnitPath "iteration-units/$newId.json" -EventsPath 'iteration-events.jsonl' `
+        -TargetState $targetState -TargetUnit $active -Event $event -ExpectedStateSha256 (Get-FixtureCanonicalJsonSha256 $state) -ExpectedUnitSha256 (Get-FixtureCanonicalJsonSha256 $ready) `
+        -ExpectedEventTailId ([string]$tail.event_id) -ExpectedEventsSha256 (Get-FixtureFileSha256 $eventsPath) -ExpectedEventsLength ([IO.FileInfo]::new($eventsPath).Length) `
+        -ExpectedSupersededUnitSha256 (Get-FixtureCanonicalJsonSha256 $old)|Out-Null
     [pscustomobject][ordered]@{event_id=$eventId;old_id=$oldId;new_id=$newId}
 }
 
@@ -378,10 +655,10 @@ function Add-OwnerActiveWriteScopeAmendment {
             status = 'active'
             current_unit = $UnitId
             project_revision = [int]$project.revision
-            project_sha256 = Get-MorphospaceCanonicalJsonSha256 -Value $project
-            state_sha256 = Get-MorphospaceCanonicalJsonSha256 -Value $state
-            unit_sha256 = Get-MorphospaceCanonicalJsonSha256 -Value $unit
-            events_sha256 = Get-MorphospaceFileSha256 -Path $eventsPath
+            project_sha256 = Get-FixtureCanonicalJsonSha256 -Value $project
+            state_sha256 = Get-FixtureCanonicalJsonSha256 -Value $state
+            unit_sha256 = Get-FixtureCanonicalJsonSha256 -Value $unit
+            events_sha256 = Get-FixtureFileSha256 -Path $eventsPath
             events_length = [IO.FileInfo]::new($eventsPath).Length
             event_tail_id = [string]$eventTail.event_id
         }
@@ -392,10 +669,10 @@ function Add-OwnerActiveWriteScopeAmendment {
     $inputPath = Join-Path $testRoot "$amendmentId-input.json"
     $outPath = Join-Path $Workspace "receipts\$amendmentId.json"
     Write-FixtureJson -Path $inputPath -Value $amendment
-    $inputHash = Get-MorphospaceFileSha256 -Path $inputPath
-    $dry = Invoke-MorphospaceAmendActiveWriteScope -WorkspaceRoot $Workspace -UnitId $UnitId -ActiveWriteScopeAmendment $inputPath -OutPath $outPath -Timestamp $Timestamp
+    $inputHash = Get-FixtureFileSha256 -Path $inputPath
+    $dry = & $script:fixtureAmendmentModule.ExportedCommands['Invoke-MorphospaceAmendActiveWriteScope'] -WorkspaceRoot $Workspace -UnitId $UnitId -ActiveWriteScopeAmendment $inputPath -OutPath $outPath -Timestamp $Timestamp
     if ($dry.executed) { throw 'Owner amendment fixture dry run unexpectedly executed.' }
-    $result = Invoke-MorphospaceAmendActiveWriteScope -WorkspaceRoot $Workspace -UnitId $UnitId -ActiveWriteScopeAmendment $inputPath -ExpectedActiveWriteScopeAmendmentSha256 $inputHash -OutPath $outPath -Timestamp $Timestamp -Execute
+    $result = & $script:fixtureAmendmentModule.ExportedCommands['Invoke-MorphospaceAmendActiveWriteScope'] -WorkspaceRoot $Workspace -UnitId $UnitId -ActiveWriteScopeAmendment $inputPath -ExpectedActiveWriteScopeAmendmentSha256 $inputHash -OutPath $outPath -Timestamp $Timestamp -Execute
     if (-not $result.executed) { throw 'Owner amendment fixture did not execute.' }
     return [string]$result.event_id
 }
@@ -425,21 +702,21 @@ function Add-OwnerProjectionContinuation {
     $requests = [Collections.Generic.List[object]]::new()
     if ($TwoProjectionAnchor) {
         foreach ($relativePath in @('feature.lock.json','project.spec.json')) {
-            $document = Read-MorphospaceProtocolJson -Path (Join-Path $Workspace $relativePath)
+            $document = Read-FixtureProtocolJson -Path (Join-Path $Workspace $relativePath)
             $requests.Add([pscustomobject][ordered]@{
                 path = $relativePath
-                expected_sha256 = Get-MorphospaceCanonicalJsonSha256 -Value $document
+                expected_sha256 = Get-FixtureCanonicalJsonSha256 -Value $document
                 document = $document
             }) | Out-Null
         }
     } else {
         $relativePath = 'project.spec.json'
-        $current = Read-MorphospaceProtocolJson -Path (Join-Path $Workspace $relativePath)
+        $current = Read-FixtureProtocolJson -Path (Join-Path $Workspace $relativePath)
         $target = Copy-FixtureValue $current
         $target.purpose = 'Neutral blocked-history fixture with an authenticated chained project projection.'
         $requests.Add([pscustomobject][ordered]@{
             path = $relativePath
-            expected_sha256 = Get-MorphospaceCanonicalJsonSha256 -Value $current
+            expected_sha256 = Get-FixtureCanonicalJsonSha256 -Value $current
             document = $target
         }) | Out-Null
     }
@@ -456,15 +733,15 @@ function Add-OwnerProjectionContinuation {
     }
     $rawBinding = @{}
     if ($RawPreimages) {
-        $rawBinding.ExpectedPreStateRawSha256 = Get-MorphospaceFileSha256 -Path $statePath
-        $rawBinding.ExpectedPreUnitRawSha256 = Get-MorphospaceFileSha256 -Path $unitPath
+        $rawBinding.ExpectedPreStateRawSha256 = Get-FixtureFileSha256 -Path $statePath
+        $rawBinding.ExpectedPreUnitRawSha256 = Get-FixtureFileSha256 -Path $unitPath
         foreach ($request in $requests) {
-            $request | Add-Member -NotePropertyName expected_raw_sha256 -NotePropertyValue (Get-MorphospaceFileSha256 -Path (Join-Path $Workspace ([string]$request.path)))
+            $request | Add-Member -NotePropertyName expected_raw_sha256 -NotePropertyValue (Get-FixtureFileSha256 -Path (Join-Path $Workspace ([string]$request.path)))
         }
     } elseif ($RawBound) {
-        $rawBinding.ExpectedPreUnitRawSha256 = Get-MorphospaceFileSha256 -Path $unitPath
+        $rawBinding.ExpectedPreUnitRawSha256 = Get-FixtureFileSha256 -Path $unitPath
     }
-    Start-MorphospaceTransitionLedger `
+    Start-FixtureTransitionLedger `
         -WorkspaceRoot $Workspace `
         -TransactionId "$EventId-transition" `
         -StatePath 'workspace.state.json' `
@@ -473,10 +750,10 @@ function Add-OwnerProjectionContinuation {
         -TargetState $targetState `
         -TargetUnit $targetUnit `
         -Event $event `
-        -ExpectedPreStateSha256 (Get-MorphospaceCanonicalJsonSha256 -Value $state) `
-        -ExpectedPreUnitSha256 (Get-MorphospaceCanonicalJsonSha256 -Value $unit) `
+        -ExpectedPreStateSha256 (Get-FixtureCanonicalJsonSha256 -Value $state) `
+        -ExpectedPreUnitSha256 (Get-FixtureCanonicalJsonSha256 -Value $unit) `
         -ExpectedEventTailId ([string]$tail.event_id) `
-        -ExpectedEventsSha256 (Get-MorphospaceFileSha256 -Path $eventsPath) `
+        -ExpectedEventsSha256 (Get-FixtureFileSha256 -Path $eventsPath) `
         -ExpectedEventsLength ([IO.FileInfo]::new($eventsPath).Length) `
         -AdditionalProjections @($requests.ToArray()) `
         @rawBinding | Out-Null
@@ -502,8 +779,8 @@ function Add-OwnerRawArtifactContinuation {
     $receiptBytes = $encoding.GetBytes("owner-authenticated raw-artifact receipt`n")
     $sourceBytes = $encoding.GetBytes("owner-authenticated raw-artifact source composition`n")
     $artifacts = @(
-        [pscustomobject][ordered]@{ bytes_base64 = [Convert]::ToBase64String($receiptBytes); path = 'receipts/later-current-owner-raw-artifact.json'; sha256 = Get-MorphospaceSha256Bytes -Bytes $receiptBytes },
-        [pscustomobject][ordered]@{ bytes_base64 = [Convert]::ToBase64String($sourceBytes); path = 'source-composition/later-current-owner-raw-artifact.json'; sha256 = Get-MorphospaceSha256Bytes -Bytes $sourceBytes }
+        [pscustomobject][ordered]@{ bytes_base64 = [Convert]::ToBase64String($receiptBytes); path = 'receipts/later-current-owner-raw-artifact.json'; sha256 = Get-FixtureSha256Bytes -Bytes $receiptBytes },
+        [pscustomobject][ordered]@{ bytes_base64 = [Convert]::ToBase64String($sourceBytes); path = 'source-composition/later-current-owner-raw-artifact.json'; sha256 = Get-FixtureSha256Bytes -Bytes $sourceBytes }
     )
     $event = [pscustomobject][ordered]@{
         schema = 'rusty.morphospace.workflow.iteration_event.v1'
@@ -516,7 +793,7 @@ function Add-OwnerRawArtifactContinuation {
         summary = 'Owner-authenticated exact raw unit bytes and two immutable event artifacts without changing the unit projection.'
         receipts = @($artifacts.path)
     }
-    Start-MorphospaceTransitionLedger `
+    Start-FixtureTransitionLedger `
         -WorkspaceRoot $Workspace `
         -TransactionId "$EventId-transition" `
         -StatePath 'workspace.state.json' `
@@ -525,11 +802,11 @@ function Add-OwnerRawArtifactContinuation {
         -TargetState $targetState `
         -TargetUnit $targetUnit `
         -Event $event `
-        -ExpectedPreStateSha256 (Get-MorphospaceCanonicalJsonSha256 -Value $state) `
-        -ExpectedPreUnitSha256 (Get-MorphospaceCanonicalJsonSha256 -Value $unit) `
-        -ExpectedPreUnitRawSha256 (Get-MorphospaceFileSha256 -Path $unitPath) `
+        -ExpectedPreStateSha256 (Get-FixtureCanonicalJsonSha256 -Value $state) `
+        -ExpectedPreUnitSha256 (Get-FixtureCanonicalJsonSha256 -Value $unit) `
+        -ExpectedPreUnitRawSha256 (Get-FixtureFileSha256 -Path $unitPath) `
         -ExpectedEventTailId ([string]$tail.event_id) `
-        -ExpectedEventsSha256 (Get-MorphospaceFileSha256 -Path $eventsPath) `
+        -ExpectedEventsSha256 (Get-FixtureFileSha256 -Path $eventsPath) `
         -ExpectedEventsLength ([IO.FileInfo]::new($eventsPath).Length) `
         -Artifacts $artifacts | Out-Null
     return $EventId
@@ -544,12 +821,12 @@ if ($RematerializationV6Only) {
     Invoke-Expression (Import-RematerializationV6FixtureDefinitions)
     $targetedFixture = New-RematerializationFixture 'blocked-history-v6'
     try {
-        $priorState = Read-MorphospaceProtocolJson $targetedFixture.state_path
-        $priorUnit = Read-MorphospaceProtocolJson $targetedFixture.unit_path
-        $priorStateSha256 = Get-MorphospaceCanonicalJsonSha256 $priorState
-        $priorUnitSha256 = Get-MorphospaceCanonicalJsonSha256 $priorUnit
-        $candidateSha256 = Get-MorphospaceFileSha256 $targetedFixture.candidate_path
-        $executed = Invoke-MorphospaceRematerializeValidatingCandidate -WorkspaceRoot $targetedFixture.workspace -UnitId 'unit-remat-001' `
+        $priorState = Read-FixtureProtocolJson $targetedFixture.state_path
+        $priorUnit = Read-FixtureProtocolJson $targetedFixture.unit_path
+        $priorStateSha256 = Get-FixtureCanonicalJsonSha256 $priorState
+        $priorUnitSha256 = Get-FixtureCanonicalJsonSha256 $priorUnit
+        $candidateSha256 = Get-FixtureFileSha256 $targetedFixture.candidate_path
+        $executed = & $script:fixtureRematerializationModule.ExportedCommands['Invoke-MorphospaceRematerializeValidatingCandidate'] -WorkspaceRoot $targetedFixture.workspace -UnitId 'unit-remat-001' `
             -CandidateFreeze $targetedFixture.candidate_path -SourceCompositionLock $targetedFixture.source_lock_path `
             -RepoMapPath $targetedFixture.map_path -OutPath $targetedFixture.out_path -ExpectedCandidateFreezeSha256 $candidateSha256 `
             -Timestamp '2026-09-02T00:02:00.0000000Z' -Execute
@@ -628,6 +905,7 @@ try {
     $state.next_ready_unit = $replacementUnitId
     $state.last_event_id = $null
     Write-FixtureJson -Path $statePath -Value $state
+    $producerTemplate = Copy-FixtureWorkspace -Source $workspace -Name 'producer-before-supersession'
     $supersessionEvent = [pscustomobject][ordered]@{
         schema = 'rusty.morphospace.workflow.iteration_event.v1'
         event_id = $supersessionEventId
@@ -645,7 +923,7 @@ try {
     $supersessionTargetState.current_unit = $replacementUnitId
     $supersessionTargetState.next_ready_unit = $null
     $supersessionTargetState.last_event_id = $supersessionEventId
-    Start-MorphospaceTransitionLedger `
+    Start-FixtureTransitionLedger `
         -WorkspaceRoot $workspace `
         -TransactionId "$supersessionEventId-transition" `
         -StatePath 'workspace.state.json' `
@@ -684,6 +962,7 @@ try {
     Assert-HelperPasses -Workspace $baselineWorkspace -Name 'exact-terminal-lifecycle-positive' -ContinuationCount 0
     Invoke-WorkflowContract -Workspace $baselineWorkspace | Out-Null
     Assert-Passed $true 'terminal-lifecycle-aggregate-integration'
+    Invoke-ReceiptBearingProducerTerminalCases -Template $producerTemplate
 
     $laterActiveWorkspace = Copy-FixtureWorkspace -Source $baselineWorkspace -Name 'positive-later-current'
     Add-LaterUnit -Workspace $laterActiveWorkspace
@@ -1036,7 +1315,7 @@ try {
             param($i)
             $bytes = $encoding.GetBytes('coherently substituted embedded artifact')
             $i.artifacts[0].bytes_base64 = [Convert]::ToBase64String($bytes)
-            $i.artifacts[0].sha256 = Get-MorphospaceSha256Bytes -Bytes $bytes
+            $i.artifacts[0].sha256 = Get-FixtureSha256Bytes -Bytes $bytes
         }
         Rebind-FixtureTransaction -Workspace $case -EventId $ownerAmendEventId
     }
@@ -1066,8 +1345,8 @@ try {
             param($i)
             $i.schema = 'rusty.morphospace.workflow.transition_ledger_intent.v3'
             $i.PSObject.Properties.Remove('supersession')
-            $project = Read-MorphospaceProtocolJson -Path (Join-Path $case 'project.spec.json')
-            $projectHash = Get-MorphospaceCanonicalJsonSha256 -Value $project
+            $project = Read-FixtureProtocolJson -Path (Join-Path $case 'project.spec.json')
+            $projectHash = Get-FixtureCanonicalJsonSha256 -Value $project
             $i | Add-Member -NotePropertyName additional_projections -NotePropertyValue @([pscustomobject][ordered]@{ path = 'project.spec.json'; pre_sha256 = $projectHash; target_sha256 = $projectHash; document = $project })
         }
         Rebind-FixtureTransaction -Workspace $case -EventId $supersessionEventId
@@ -1106,7 +1385,7 @@ try {
         Update-FixtureJson (Join-Path $case "receipts\transactions\$supersessionEventId-transition.intent.json") {
             param($i)
             $i.supersession.old_unit.document.objective = 'Drifted old-unit binding.'
-            $i.supersession.old_unit.sha256 = Get-MorphospaceCanonicalJsonSha256 -Value $i.supersession.old_unit.document
+            $i.supersession.old_unit.sha256 = Get-FixtureCanonicalJsonSha256 -Value $i.supersession.old_unit.document
         }
         Rebind-FixtureTransaction -Workspace $case -EventId $supersessionEventId
     }
@@ -1115,7 +1394,7 @@ try {
         Update-FixtureJson (Join-Path $case "receipts\transactions\$supersessionEventId-transition.intent.json") {
             param($i)
             $i.supersession.pre_state.document.current_unit = 'unrelated-owner'
-            $newHash = Get-MorphospaceCanonicalJsonSha256 -Value $i.supersession.pre_state.document
+            $newHash = Get-FixtureCanonicalJsonSha256 -Value $i.supersession.pre_state.document
             $i.supersession.pre_state.sha256 = $newHash
             $i.pre.state.sha256 = $newHash
             $i.expected.state_sha256 = $newHash
