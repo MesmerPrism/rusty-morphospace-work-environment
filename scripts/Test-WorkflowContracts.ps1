@@ -2064,7 +2064,7 @@ function Test-ProjectBundle {
             Assert-Contract ($allowedRepositoryIds.Add($repoId)) "$Context unit '$($unit.unit_id)' repeats writable repository '$repoId'."
             # An explicit validation-only empty row declares membership, not write authority.
             # Keep ordinary modes and every nonempty path scope disjoint from dependencies.
-            if (-not ($workModeExplicit -and $workMode -ceq 'validation-only' -and $effectiveWorkMode -ceq 'validation-only' -and $null -ne $allowedRepo.allowed_paths -and @($allowedRepo.allowed_paths).Count -eq 0)) {
+            if (-not (($unit.PSObject.Properties.Name -contains 'work_mode') -and [string]$unit.work_mode -ceq 'validation-only' -and $effectiveWorkMode -ceq 'validation-only' -and $null -ne $allowedRepo.allowed_paths -and @($allowedRepo.allowed_paths).Count -eq 0)) {
                 [void]$writeRepositoryIds.Add($repoId)
             }
             Assert-Contract ($repositoryMap.ContainsKey($repoId)) "$Context unit '$($unit.unit_id)' references undeclared repo '$repoId'."

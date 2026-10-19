@@ -2,7 +2,7 @@
   "schema": "rusty.morphospace.workflow.affected_validation_registry.v1",
   "registry_id": "work-environment-current-delta-v1",
   "repository_id": "MesmerPrism/rusty-morphospace-work-environment",
-  "revision": 34,
+  "revision": 35,
   "historical_aggregate": {"tier": "deep", "reusable_evidence": false, "full_history_required": true},
   "dependency_declarations": [
     {"importer": "scripts/ActiveUnitRetirement.psm1", "variable": "ProvenanceModule", "count": 2, "target_paths": ["scripts/DevelopmentEnvelopeProvenance.psm1"]},
@@ -78,7 +78,6 @@
     {"importer": "scripts/lib/MorphospaceTransitionLedger.psm1", "variable": "toolingExecutorModule", "count": 2, "target_paths": ["scripts/DevelopmentEnvelopeProvenance.psm1"]},
     {"importer": "scripts/lib/MorphospaceValidationReceipt.psm1", "variable": "observationModule", "count": 2, "target_paths": ["scripts/lib/MorphospaceContentObservation.psm1"]},
     {"importer": "scripts/test-support/ActiveUnitRetirementContinuation.ps1", "variable": "transitionLedgerModule", "count": 1, "target_paths": ["scripts/lib/MorphospaceTransitionLedger.psm1"]},
-    {"importer": "scripts/test-support/ActiveUnitRetirementFixture.ps1", "variable": "lineagePath", "count": 1, "target_paths": ["scripts/lib/MorphospaceActiveRetirementLineage.psm1"]},
     {"importer":"scripts/test-support/DevelopmentAdmissionFixture.ps1","variable":"module","count":4,"target_paths":["scripts/lib/MorphospaceProtocolCommon.psm1"]},
     {"importer":"scripts/test-support/DevelopmentAdmissionFixture.ps1","variable":"transitionLedgerModule","count":1,"target_paths":["scripts/lib/MorphospaceTransitionLedger.psm1"]},
     {"importer":"scripts/test-support/RecoveredProposalContinuation.ps1","variable":"RepreparationModule","count":1,"target_paths":["scripts/DevelopmentEnvelopeRepreparation.psm1"]},

@@ -67,6 +67,159 @@ function Assert-SupersessionHistory {
     $history
 }
 
+function Get-SupersessionSemanticLineage {
+    param([object]$Case)
+    $lineageModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceActiveRetirementLineage.psm1') -PassThru
+    $unit=Read-EnvelopeProtocolJson (Join-Path $Case.workspace 'iteration-units/u004.json')
+    $events=@(Get-Content -LiteralPath (Join-Path $Case.workspace 'iteration-events.jsonl')|Where-Object{$_}|ForEach-Object{$_|ConvertFrom-Json -DateKind String})
+    &$lineageModule {param($w,$u,$e,$m,$maps)Get-MorphospaceActiveRetirementSupersessionLineage -WorkspaceRoot $w -UnitId u004 -CurrentUnit $u -Events $e -RepositoryMapPath $m -HistoricalRepositoryMapPaths $maps} $Case.workspace $unit $events $Case.arguments.RepoMapPath @($Case.request.ownership.repository_maps.path)
+}
+function Get-SupersessionGenericHistoricalProof {
+    param([string]$Workspace,[string]$TransactionId)
+    $retirementModule=Import-Module (Join-Path $PSScriptRoot 'ActiveUnitRetirement.psm1') -PassThru
+    &$retirementModule {param($w,$id)Get-ActiveRetirementPlanningTransition -Workspace $w -TransactionId $id -HistoricalProjection} $Workspace $TransactionId
+}
+function Write-SupersessionSemanticTransition {
+    param([string]$Workspace,[object]$Intent,[object]$Completion)
+    $relative="receipts/transactions/$($Intent.transaction_id).intent.json"
+    Write-EnvelopeJson (Join-Path $Workspace $relative) $Intent
+    $Completion.intent.schema=[string]$Intent.schema
+    $Completion.intent.sha256=Get-EnvelopeFileSha256 (Join-Path $Workspace $relative)
+    Write-EnvelopeJson (Join-Path $Workspace "receipts/transactions/$($Intent.transaction_id).completion.json") $Completion
+}
+function Test-SupersessionOrdinaryAuthorityProjections {
+    param([object]$Case)
+    $positive=Get-SupersessionSemanticLineage $Case
+    $baseline=Get-EnvelopeWorkspaceByteInventorySha256 $Case.workspace
+    foreach($action in @('ready','claimed','validation-fail-return')){
+        $records=@($positive.planning_projection|Where-Object{[string]$_.event.unit_id-ceq'u002'-and[string]$_.event.event_id-cmatch("^u002-"+[regex]::Escape($action)+'-[0-9]+$')})
+        Assert-Envelope ($records.Count-eq1) "authority fixture lacks actual root $action transaction"
+        $original=$records[0]
+        Assert-Envelope ($original.intent.PSObject.Properties.Name-cnotcontains'additional_projections') "actual $action producer unexpectedly carries an authority projection"
+        foreach($authority in @('project','feature_lock')){
+            $intentPath=Join-Path $Case.workspace "receipts/transactions/$($original.intent.transaction_id).intent.json"
+            $completionPath=Join-Path $Case.workspace "receipts/transactions/$($original.intent.transaction_id).completion.json"
+            $intentBytes=[IO.File]::ReadAllBytes($intentPath);$completionBytes=[IO.File]::ReadAllBytes($completionPath)
+            try{
+                $bad=Copy-Envelope $original.intent;$completion=Copy-Envelope $original.completion
+                $document=Copy-Envelope $positive.$authority
+                $priorHash=Get-EnvelopeCanonicalJsonSha256 $document
+                if($authority-ceq'project'){$document.purpose=[string]$document.purpose+' MODELED unsupported intermediate authority.';$relative='project.spec.json';$schema='project-spec-v2.schema.json'}
+                else{$document.generated_at='2026-08-26T00:00:00.0000000Z';$document.lock_fingerprint=Get-EnvelopeLockFingerprint $document;$relative='feature.lock.json';$schema='feature-lock-v2.schema.json'}
+                Assert-Envelope (Test-Json -Json ($document|ConvertTo-Json -Depth 100) -SchemaFile (Join-Path $repoRoot "schemas/$schema")) "negative $action/$authority document violates its unchanged schema"
+                $bad.schema='rusty.morphospace.workflow.transition_ledger_intent.v3'
+                $bad|Add-Member -NotePropertyName additional_projections -NotePropertyValue @([pscustomobject]@{path=$relative;pre_sha256=$priorHash;target_sha256=Get-EnvelopeCanonicalJsonSha256 $document;document=$document})
+                Write-SupersessionSemanticTransition $Case.workspace $bad $completion
+                # This must pass the real generic proof. A malformed intent,
+                # stale completion or receipt/artifact mismatch earns no credit.
+                $proof=Get-SupersessionGenericHistoricalProof $Case.workspace $bad.transaction_id
+                Assert-Envelope ((Get-EnvelopeCanonicalJsonSha256 $proof.intent.target)-ceq(Get-EnvelopeCanonicalJsonSha256 $original.intent.target)-and(Get-EnvelopeCanonicalJsonSha256 $proof.intent.event)-ceq(Get-EnvelopeCanonicalJsonSha256 $original.intent.event)) 'authority negative changed the actual event/state/unit transition'
+                $expected=if($action-ceq'validation-fail-return'){'Active retirement lineage ReturnToActive authority projection is unsupported.'}else{'Active retirement lineage ordinary Ready/Claim authority projection is unsupported.'}
+                $before=Get-EnvelopeWorkspaceByteInventorySha256 $Case.workspace;$message=''
+                try{$null=Get-SupersessionSemanticLineage $Case}catch{$message=$_.Exception.Message}
+                Assert-Envelope ($message-ceq$expected-and$before-ceq(Get-EnvelopeWorkspaceByteInventorySha256 $Case.workspace)) "authority negative $action/$authority did not reach exact semantic refusal: $message"
+                $checks.Add("reject:generic-ledger-valid-$action-$authority-authority")
+            }finally{[IO.File]::WriteAllBytes($intentPath,$intentBytes);[IO.File]::WriteAllBytes($completionPath,$completionBytes)}
+            Assert-Envelope ($baseline-ceq(Get-EnvelopeWorkspaceByteInventorySha256 $Case.workspace)) 'authority negative did not restore the exact real-writer fixture'
+            $null=Get-SupersessionSemanticLineage $Case
+        }
+    }
+}
+function New-SupersessionExtensionCase {
+    param([string]$Root)
+    # A separate planning workspace leaves the actual read-only dependency
+    # byte-exact while the extension's real source observer runs.
+    $seed=New-ActiveRetirementContinuationSeed -Root $Root -RepositoryRoot $repoRoot -FeatureWorkMode
+    $workspace=$seed.workspace;$oldMap=Join-Path $workspace 'repository-map.json'
+    $project=Read-EnvelopeProtocolJson (Join-Path $workspace 'project.spec.json');$lock=Read-EnvelopeProtocolJson (Join-Path $workspace 'feature.lock.json')
+    $state=Read-EnvelopeProtocolJson (Join-Path $workspace 'workspace.state.json');$unit=Read-EnvelopeProtocolJson (Join-Path $workspace 'iteration-units/u002.json')
+    $sourcePath=Join-Path $workspace ([string]$unit.source_composition.lock_path);$source=Read-EnvelopeProtocolJson $sourcePath
+    $added=Join-Path $Root 'added-repository';[IO.Directory]::CreateDirectory((Join-Path $added 'dep'))|Out-Null
+    Invoke-EnvelopeGit $Root @('init',$added)|Out-Null
+    foreach($pair in @(@('user.name','Supersession Extension Fixture'),@('user.email','fixture@example.invalid'),@('commit.gpgsign','false'))){Invoke-EnvelopeGit $added @('config',$pair[0],$pair[1])|Out-Null}
+    [IO.File]::WriteAllText((Join-Path $added 'dep/README.md'),'MODELED dependency source'+[Environment]::NewLine,[Text.UTF8Encoding]::new($false))
+    Invoke-EnvelopeGit $added @('add','dep/README.md')|Out-Null;Invoke-EnvelopeGit $added @('commit','-qm','Retain isolated dependency baseline')|Out-Null
+    $map=Copy-Envelope (Read-EnvelopeProtocolJson $oldMap);$map.repositories+=,[pscustomobject]@{repo_id='added-dependency';path=$added;role='source'}
+    $mapPath=Join-Path $workspace 'repository-map-extension.json';Write-EnvelopeJson $mapPath $map
+    $targetProject=Copy-Envelope $project;$targetProject.revision=[int]$project.revision+1
+    $targetProject.repositories+=,[pscustomobject]@{repo_id='added-dependency';role='core';path='../added-repository';allowed_paths=@('dep/')}
+    $targetLock=Copy-Envelope $lock;$targetLock.project_revision=[int]$targetProject.revision;$targetLock.revision=[int]$lock.revision+1;$targetLock.generated_at='2026-08-25T00:00:50.0000000Z';$targetLock.lock_fingerprint=Get-EnvelopeLockFingerprint $targetLock
+    $targetState=Copy-Envelope $state;$targetState.plan_revision=[int]$state.plan_revision+1;$targetState.last_event_id='u002-add-dependency-recorded';$targetState.module_registry.lock_revision=[int]$targetLock.revision;$targetState.module_registry.lock_fingerprint=[string]$targetLock.lock_fingerprint
+    $assessment=Copy-Envelope $unit.agent_scope_assessment;$assessment.owner_repositories+=,[pscustomobject]@{repo_id='added-dependency';source_roots=@('dep/')}
+    $allowed=@(foreach($row in @($unit.allowed_repositories)){Copy-Envelope $row})
+    $readOnly=@(foreach($row in @($unit.read_only_dependencies)){Copy-Envelope $row});$readOnly+=,[pscustomobject]@{repo_id='added-dependency';paths=@('dep/');purpose='Compile against the unchanged-objective dependency.';verification='Retain the exact derivative source identity.'}
+    $effects=[ordered]@{};foreach($axis in @('permissions','services','activities','queries','tools','assets','shaders','native_libraries','commands','routes','streams','inputs','scenes','markers')){$effects[$axis]=@()}
+    $eventsPath=Join-Path $workspace 'iteration-events.jsonl'
+    $request=[pscustomobject]@{
+        schema='rusty.morphospace.workflow.active_development_envelope_extension.v1';extension_id='u002-add-dependency';project_id=[string]$project.project_id;unit_id='u002'
+        rationale='The unchanged objective needs one reviewed isolated compile-time dependency.'
+        ownership_proof=@([pscustomobject]@{repo_id='added-dependency';source_roots=@('dep/');owner='fixture-dependency-owner';evidence='Actual clean isolated Git source, reviewed for the same objective.'})
+        additions=[pscustomobject]@{repository_ids=@('added-dependency');owner_roots=@([pscustomobject]@{repo_id='added-dependency';source_roots=@('dep/')});feature_ids=@();module_ids=@();authority_parameters=@();effects=[pscustomobject]$effects;permissions=@();validation_profile_ids=@();acceptance_profile_ids=@();build_profile_ids=@();device_kinds=@()}
+        before=[pscustomobject]@{project=$project;feature_lock=$lock;state=$state;agent_scope_assessment=$unit.agent_scope_assessment;allowed_repositories=@($unit.allowed_repositories);read_only_dependencies=@($unit.read_only_dependencies)}
+        target=[pscustomobject]@{project=$targetProject;feature_lock=$targetLock;state=$targetState;agent_scope_assessment=$assessment;allowed_repositories=$allowed;read_only_dependencies=$readOnly}
+        source_composition=[pscustomobject]@{path='source-composition-locks/u002-add-dependency.json';repository_ids=@(@($source.repositories.repo_id)+@('added-dependency')|Sort-Object -Unique)}
+        effective_repository_map=[pscustomobject]@{path='repository-map-extension.json';raw_sha256=Get-EnvelopeFileSha256 $mapPath}
+        expected=[pscustomobject]@{status='active';current_unit='u002';project_revision=[int]$project.revision;feature_lock_revision=[int]$lock.revision;plan_revision=[int]$state.plan_revision
+            project_sha256=Get-EnvelopeCanonicalJsonSha256 $project;project_raw_sha256=Get-EnvelopeFileSha256 (Join-Path $workspace 'project.spec.json');feature_lock_sha256=Get-EnvelopeCanonicalJsonSha256 $lock;feature_lock_raw_sha256=Get-EnvelopeFileSha256 (Join-Path $workspace 'feature.lock.json')
+            state_sha256=Get-EnvelopeCanonicalJsonSha256 $state;state_raw_sha256=Get-EnvelopeFileSha256 (Join-Path $workspace 'workspace.state.json');unit_sha256=Get-EnvelopeCanonicalJsonSha256 $unit;unit_raw_sha256=Get-EnvelopeFileSha256 (Join-Path $workspace 'iteration-units/u002.json')
+            events_sha256=Get-EnvelopeFileSha256 $eventsPath;events_length=([IO.FileInfo]$eventsPath).Length;event_tail_id=[string]$state.last_event_id
+            source_composition_path=[string]$unit.source_composition.lock_path;source_composition_raw_sha256=Get-EnvelopeFileSha256 $sourcePath;source_composition_canonical_sha256=Get-EnvelopeCanonicalJsonSha256 $source
+            repository_map_path='repository-map.json';repository_map_raw_sha256=Get-EnvelopeFileSha256 $oldMap;original_source_composition_path=[string]$unit.source_composition.lock_path;original_source_composition_raw_sha256=Get-EnvelopeFileSha256 $sourcePath;original_repository_map_path='repository-map.json';original_repository_map_raw_sha256=Get-EnvelopeFileSha256 $oldMap}
+        does_not_prove=@('MODELED dependency; no product validation, acceptance, publication or device operation.')
+    }
+    $requestPath=Join-Path $Root 'extension-input.json';Write-EnvelopeJson $requestPath $request
+    $args=@{Action='ExtendActiveDevelopmentEnvelope';WorkspaceRoot=$workspace;UnitId='u002';RepoMapPath=$mapPath;ActiveDevelopmentEnvelopeExtension=$requestPath;OutPath=(Join-Path $workspace 'receipts/u002-add-dependency.json');SourceCompositionOutPath=(Join-Path $workspace $request.source_composition.path);Timestamp='2026-08-25T00:00:50.0000000Z'}
+    $before=Get-EnvelopeWorkspaceByteInventorySha256 $workspace;$dry=& (Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1') @args|ConvertFrom-Json -DateKind String
+    Assert-Envelope (-not$dry.executed-and$before-ceq(Get-EnvelopeWorkspaceByteInventorySha256 $workspace)) 'actual extension dry run mutated bytes'
+    $null=& (Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1') @args -ExpectedActiveDevelopmentEnvelopeExtensionSha256 (Get-EnvelopeFileSha256 $requestPath) -Execute
+    # The extension source is owned by u002. Each real successor earns its own
+    # source lock instead of relabeling that retained unit-bound derivative.
+    # A real declared writable source change supplies each clean Git checkpoint;
+    # planning files themselves are outside this isolated source checkout.
+    [IO.File]::AppendAllText((Join-Path $seed.source_repository 'morphospace/README.md'),'MODELED u003 source revision'+[Environment]::NewLine,[Text.UTF8Encoding]::new($false))
+    Add-ActiveRetirementSupersession $seed 'u003' '2026-08-25T00:00:51.0000000Z' -OwnSourceLock -RepoMapPath $mapPath
+    [IO.File]::AppendAllText((Join-Path $seed.source_repository 'morphospace/README.md'),'MODELED u004 source revision'+[Environment]::NewLine,[Text.UTF8Encoding]::new($false))
+    Add-ActiveRetirementSupersession $seed 'u004' '2026-08-25T00:00:52.0000000Z' -OwnSourceLock -RepoMapPath $mapPath
+    $retirement=New-ActiveUnitRetirementRequest -WorkspaceRoot $workspace -RepoMapPath $mapPath -RetirementId retire-u004 -ReplacementUnitId u005 -Supersession
+    [pscustomobject]@{seed=$seed;workspace=$workspace;request=$retirement;arguments=@{RepoMapPath=$mapPath}}
+}
+function Test-SupersessionExtensionBeforeContext {
+    param([object]$Case)
+    $extensionModule=Import-Module (Join-Path $PSScriptRoot 'ActiveDevelopmentEnvelopeExtension.psm1') -PassThru
+    $protocolModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1') -PassThru
+    $positive=Get-SupersessionSemanticLineage $Case
+    $records=@($positive.planning_projection|Where-Object kind -CEQ 'extension')
+    Assert-Envelope ($records.Count-eq1) 'context fixture lacks actual public extension'
+    $record=$records[0];$id=[string]$record.intent.transaction_id
+    $requestPath=Join-Path $Case.workspace 'receipts/u002-add-dependency.json';$intentPath=Join-Path $Case.workspace "receipts/transactions/$id.intent.json";$completionPath=Join-Path $Case.workspace "receipts/transactions/$id.completion.json"
+    $saved=@{};foreach($path in @($requestPath,$intentPath,$completionPath)){$saved[$path]=[IO.File]::ReadAllBytes($path)}
+    $baseline=Get-EnvelopeWorkspaceByteInventorySha256 $Case.workspace
+    $null=&$extensionModule {param($w,$e,$p)Assert-ActiveEnvelopeHistoricalTransition -WorkspaceRoot $w -ExpectedEvent $e -Transition $p} $Case.workspace $record.event $record
+    try{
+        $request=Read-EnvelopeProtocolJson $requestPath;$bad=Copy-Envelope $record.intent;$completion=Copy-Envelope $record.completion
+        $purpose=[string]$request.before.project.purpose+' MODELED detached historical project.'
+        $request.before.project.purpose=$purpose;$request.target.project.purpose=$purpose
+        $request.expected.project_sha256=Get-EnvelopeCanonicalJsonSha256 $request.before.project
+        $request.expected.project_raw_sha256=&$protocolModule {param($v)Get-MorphospaceSha256Bytes (ConvertTo-MorphospaceProtocolJsonBytes $v)} $request.before.project
+        $projection=@($bad.additional_projections|Where-Object path -CEQ 'project.spec.json')[0]
+        $projection.pre_sha256=$request.expected.project_sha256;$projection.pre_raw_sha256=$request.expected.project_raw_sha256;$projection.document=$request.target.project;$projection.target_sha256=Get-EnvelopeCanonicalJsonSha256 $projection.document
+        Write-EnvelopeJson $requestPath $request
+        $artifact=@($bad.artifacts|Where-Object path -CEQ 'receipts/u002-add-dependency.json')[0]
+        $artifact.bytes_base64=[Convert]::ToBase64String([IO.File]::ReadAllBytes($requestPath));$artifact.sha256=Get-EnvelopeFileSha256 $requestPath
+        Write-SupersessionSemanticTransition $Case.workspace $bad $completion
+        $proof=Get-SupersessionGenericHistoricalProof $Case.workspace $id
+        # Both layers must succeed: this is a self-consistent delegated proof,
+        # not malformed input or a target/additivity/source failure.
+        $null=&$extensionModule {param($w,$e,$p)Assert-ActiveEnvelopeHistoricalTransition -WorkspaceRoot $w -ExpectedEvent $e -Transition $p} $Case.workspace $record.event $proof
+        $before=Get-EnvelopeWorkspaceByteInventorySha256 $Case.workspace;$message=''
+        try{$null=Get-SupersessionSemanticLineage $Case}catch{$message=$_.Exception.Message}
+        Assert-Envelope ($message-ceq'Active retirement supersession lineage extension before project differs.'-and$before-ceq(Get-EnvelopeWorkspaceByteInventorySha256 $Case.workspace)) "self-consistent extension did not reach reconstructed project guard: $message"
+        $checks.Add('reject:generic-and-delegated-valid-extension-before-project')
+    }finally{foreach($path in $saved.Keys){[IO.File]::WriteAllBytes($path,$saved[$path])}}
+    Assert-Envelope ($baseline-ceq(Get-EnvelopeWorkspaceByteInventorySha256 $Case.workspace)) 'extension negative failed exact raw restoration'
+    $null=Get-SupersessionSemanticLineage $Case
+}
+
 $tempParent=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\','/')
 if((Get-Item -LiteralPath $tempParent -Force).Attributes-band[IO.FileAttributes]::ReparsePoint){throw 'Refusing reparse-point fixture temp parent.'}
 $tempName='wef-supersession-retirement-'+[guid]::NewGuid().ToString('N');$temp=[IO.Path]::GetFullPath((Join-Path $tempParent $tempName));$settled=$false
@@ -158,6 +311,7 @@ try{
     }
     if($selectedRetainedCase-cin@('All','SuccessorLifecycle')){
     $lifecycleCase=New-SupersessionRetirementCase -Root (Join-Path $temp 'successor-lifecycle') -SuccessorLifecycle
+    Test-SupersessionOrdinaryAuthorityProjections $lifecycleCase
     $before=Get-EnvelopeWorkspaceByteInventorySha256 $lifecycleCase.workspace;$null=Invoke-SupersessionRetirement $lifecycleCase
     Assert-Envelope ($before-ceq(Get-EnvelopeWorkspaceByteInventorySha256 $lifecycleCase.workspace)) 'successor lifecycle retirement dry run wrote bytes'
     Assert-Envelope (@($lifecycleCase.request.ownership.repository_maps).Count-eq2) 'actual alternate materialization map was not joined with original root map'
@@ -181,6 +335,9 @@ try{
     $null=Invoke-SupersessionRetirement $lifecycleCase -Execute;$null=Assert-SupersessionHistory $lifecycleCase -Idle
     Test-ActiveRetirementEndpointAuthoritySemantics $lifecycleCase $lifecycleLineage
     $checks.Add('actual-return-to-active-supersede-instruction-freeze-fresh-source-and-map-change')
+    $extensionCase=New-SupersessionExtensionCase -Root (Join-Path $temp 'extension-context')
+    Test-SupersessionExtensionBeforeContext $extensionCase
+    $checks.Add('actual-public-extension-and-inherited-two-edge-context')
     }
     foreach($disposition in @('Untracked','Ignored')){
         if($selectedRetainedCase-cne'All'-and$selectedRetainedCase-cne$disposition){continue}

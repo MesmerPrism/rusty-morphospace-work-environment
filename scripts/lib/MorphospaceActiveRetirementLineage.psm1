@@ -8,6 +8,11 @@ function Assert-RetirementLineageEqual([object]$Before,[object]$After,[string]$C
  if((Get-MorphospaceCanonicalJsonSha256 $Before)-cne(Get-MorphospaceCanonicalJsonSha256 $After)){throw "Active retirement supersession lineage $Context differs."}
 }
 function Copy-RetirementLineageValue([object]$Value){$Value|ConvertTo-Json -Depth 100|ConvertFrom-Json -DateKind String}
+function Assert-RetirementLineageNoAuthorityProjection([object]$Intent,[string]$Context){
+ # These ordinary producers emit only state/unit changes. Ledger hashes alone
+ # cannot authorize an extra intermediate project or feature-lock mutation.
+ if($Intent.PSObject.Properties.Name-ccontains'additional_projections'-and@($Intent.additional_projections).Count-ne0){throw "Active retirement lineage $Context authority projection is unsupported."}
+}
 function ConvertTo-RetirementLineageSourcePath([string]$Path){
  # Match the Supersede producer's normalizer, including its Ordinal containment.
  $value=$Path.Replace('\','/').Trim()
@@ -167,6 +172,7 @@ function Get-MorphospaceActiveRetirementSupersessionLineage {
   }else{
    if([string]$event.unit_id-cne[string]$unit.unit_id-or[string]$intent.pre.unit.sha256-cne[string]$previous.target.unit.sha256){throw 'Active retirement lineage interleaves another unit.'}
    if($null-eq$claim){
+    Assert-RetirementLineageNoAuthorityProjection $intent 'ordinary Ready/Claim'
     $slug=if($ready){'claimed'}else{'ready'};$status=if($ready){'active'}else{'ready'};$expected=Copy-RetirementLineageValue $unit;$expected.status=$status;$state=Copy-RetirementLineageValue $previous.target.state.document;$state.last_event_id=[string]$event.event_id
     if($ready){$state.current_unit=$rootId;$state.next_ready_unit=$null}else{$state.next_ready_unit=$rootId}
     if([string]$event.event_id-cnotmatch('^'+[regex]::Escape($rootId)+'-'+$slug+'-[0-9]{4,}$')-or[string]$event.event_type-cne'state-transition'-or@($event.receipts).Count-ne0-or@($intent.artifacts).Count-ne0){throw 'Active retirement lineage ordinary Ready/Claim prefix is invalid.'}
@@ -175,10 +181,32 @@ function Get-MorphospaceActiveRetirementSupersessionLineage {
     if($ready){$claim=[pscustomobject]@{event_id=[string]$event.event_id;transaction_id=[string]$intent.transaction_id;intent_sha256=Get-MorphospaceFileSha256 (Resolve-MorphospaceWorkspacePath $workspace "receipts/transactions/$($intent.transaction_id).intent.json" -RequireLeaf);completion_sha256=Get-MorphospaceFileSha256 (Resolve-MorphospaceWorkspacePath $workspace "receipts/transactions/$($intent.transaction_id).completion.json" -RequireLeaf)}}else{$ready=$true}
    }else{
     $extension=Get-RetirementLineageArtifact $intent 'rusty.morphospace.workflow.active_development_envelope_extension.v1';$upgrade=Get-RetirementLineageArtifact $intent 'rusty.morphospace.workflow.tooling_context_upgrade.v1';$amendment=Get-RetirementLineageArtifact $intent 'rusty.morphospace.workflow.active_write_scope_amendment.v1'
-    if($extension){$extensionModule=Import-Module (Join-Path $PSScriptRoot '../ActiveDevelopmentEnvelopeExtension.psm1') -PassThru;$null=&$extensionModule {param($root,$event,$proof) Assert-ActiveEnvelopeHistoricalTransition -WorkspaceRoot $root -ExpectedEvent $event -Transition $proof} $workspace $event $proof;$project=$extension.document.target.project;$feature=$extension.document.target.feature_lock;$kind='extension'}
-    elseif($upgrade){$toolingModule=Import-Module (Join-Path $PSScriptRoot '../ToolingContextUpgrade.psm1') -PassThru;$null=&$toolingModule {param($root,$event,$proof) Assert-ToolingContextHistoricalTransition -WorkspaceRoot $root -ExpectedEvent $event -Transition $proof} $workspace $event $proof;$kind='tooling-upgrade'}
-    elseif($amendment){$amendmentModule=Import-Module (Join-Path $PSScriptRoot '../ActiveWriteScopeAmendment.psm1') -PassThru;Import-Module (Join-Path $PSScriptRoot 'MorphospaceProtocolCommon.psm1');Import-Module (Join-Path $PSScriptRoot 'MorphospaceTransitionLedger.psm1');$null=&$amendmentModule {param($root,$event,$proof) Assert-ActiveWriteScopeHistoricalTransition -WorkspaceRoot $root -ExpectedEvent $event -Transition $proof} $workspace $event $proof;$kind='amendment'}
+    if($extension){
+     # Authenticate the historical predecessor before trusting the extension's
+     # self-consistent before/target documents; no current policy is applied.
+     Assert-RetirementLineageEqual $project $extension.document.before.project 'extension before project'
+     Assert-RetirementLineageEqual $feature $extension.document.before.feature_lock 'extension before feature lock'
+     $extensionModule=Import-Module (Join-Path $PSScriptRoot '../ActiveDevelopmentEnvelopeExtension.psm1') -PassThru
+     $null=&$extensionModule {param($root,$event,$proof) Assert-ActiveEnvelopeHistoricalTransition -WorkspaceRoot $root -ExpectedEvent $event -Transition $proof} $workspace $event $proof
+     $project=$extension.document.target.project;$feature=$extension.document.target.feature_lock;$kind='extension'
+    }
+    elseif($upgrade){
+     $toolingModule=Import-Module (Join-Path $PSScriptRoot '../ToolingContextUpgrade.psm1') -PassThru
+     $null=&$toolingModule {param($root,$event,$proof) Assert-ToolingContextHistoricalTransition -WorkspaceRoot $root -ExpectedEvent $event -Transition $proof} $workspace $event $proof
+     Assert-RetirementLineageEqual $feature $intent.additional_projections[0].document 'tooling unchanged feature lock'
+     Assert-RetirementLineageEqual $project $intent.additional_projections[1].document 'tooling unchanged project'
+     $kind='tooling-upgrade'
+    }
+    elseif($amendment){
+     $amendmentModule=Import-Module (Join-Path $PSScriptRoot '../ActiveWriteScopeAmendment.psm1') -PassThru
+     Import-Module (Join-Path $PSScriptRoot 'MorphospaceProtocolCommon.psm1')
+     Import-Module (Join-Path $PSScriptRoot 'MorphospaceTransitionLedger.psm1')
+     $null=&$amendmentModule {param($root,$event,$proof) Assert-ActiveWriteScopeHistoricalTransition -WorkspaceRoot $root -ExpectedEvent $event -Transition $proof} $workspace $event $proof
+     Assert-RetirementLineageEqual $project $intent.additional_projections[0].document 'amendment unchanged project'
+     $kind='amendment'
+    }
     elseif([string]$event.event_id-cmatch('^'+[regex]::Escape([string]$unit.unit_id)+'-validation-(fail|partial|blocked)-return-[0-9]{4,}$')){
+     Assert-RetirementLineageNoAuthorityProjection $intent 'ReturnToActive'
      $result=$Matches[1];$state=Copy-RetirementLineageValue $previous.target.state.document;$expectedUnit=Copy-RetirementLineageValue $unit
      if([string]$unit.status-cne'validating'-or[string]$state.current_unit-cne[string]$unit.unit_id-or[string]$event.event_type-cne'validation'-or@($event.receipts).Count-ne1-or@($intent.artifacts).Count-ne0-or[string]$event.summary-cne'Retained a non-passing validation attempt and returned the same feature unit to active for an in-scope correction.'){throw 'Active retirement lineage ReturnToActive is not the exact owner action.'}
      $workMode=if($unit.PSObject.Properties.Name-ccontains'work_mode'){[string]$unit.work_mode}else{'feature'}

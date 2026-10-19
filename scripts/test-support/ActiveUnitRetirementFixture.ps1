@@ -13,8 +13,24 @@ function New-ActiveUnitRetirementRequest {
         })
     }
     $retirementModule=Import-Module (Join-Path $PSScriptRoot '../ActiveUnitRetirement.psm1') -PassThru
+    $lineage=$null
+    if($Supersession){
+        # Keep the import and fixed export in this defining fixture scope.
+        # Only construction data crosses into the retirement-module block;
+        # the public writer and repository observer reauthenticate it below.
+        $lineageModule=Import-Module (Join-Path $PSScriptRoot '../lib/MorphospaceActiveRetirementLineage.psm1') -PassThru
+        $observedState=Get-Content -LiteralPath (Join-Path $WorkspaceRoot 'workspace.state.json') -Raw|ConvertFrom-Json -Depth 100 -DateKind String
+        $observedId=[string]$observedState.current_unit
+        $observedUnit=Get-Content -LiteralPath (Join-Path $WorkspaceRoot "iteration-units/$observedId.json") -Raw|ConvertFrom-Json -Depth 100 -DateKind String
+        $observedEvents=@(Get-Content -LiteralPath (Join-Path $WorkspaceRoot 'iteration-events.jsonl')|Where-Object{$_}|ForEach-Object{$_|ConvertFrom-Json -Depth 100 -DateKind String})
+        try{
+            $lineage=& $lineageModule.ExportedCommands['Get-MorphospaceActiveRetirementSupersessionLineage'] -WorkspaceRoot $WorkspaceRoot -UnitId $observedId -Events $observedEvents -CurrentUnit $observedUnit -RepositoryMapPath $RepoMapPath
+        }finally{
+            & $retirementModule { Restore-ActiveRetirementLineageCallerModules }
+        }
+    }
     & $retirementModule {
-        param($workspace,$mapPath,$retirementId,$replacement,$diagnostics,$supersession,$rootDiagnostics,$lineagePath,$repositoryDrafts)
+        param($workspace,$mapPath,$retirementId,$replacement,$diagnostics,$supersession,$rootDiagnostics,$lineage,$repositoryDrafts)
         $state=Read-MorphospaceProtocolJson (Join-Path $workspace 'workspace.state.json');$id=[string]$state.current_unit
         $unitPath="iteration-units/$id.json";$unit=Read-MorphospaceProtocolJson (Join-Path $workspace $unitPath)
         $unitBinding=Get-ActiveRetirementFileBinding $workspace $unitPath
@@ -27,8 +43,7 @@ function New-ActiveUnitRetirementRequest {
         $request=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.active_unit_retirement.v1';retirement_id=$retirementId;project_id=[string]$state.project_id;unit_id=$id;replacement_unit_id=$replacement;reason='scope-replanned';old_unit=[pscustomobject]@{unit_id=$id;path=$unitPath;raw_sha256=$unitBinding.raw_sha256;canonical_sha256=$unitBinding.canonical_sha256;status='active'};expected=[pscustomobject]$expected;source_composition=Get-ActiveRetirementFileBinding $workspace ([string]$unit.source_composition.lock_path);claim=$null;repositories=@($repositoryDrafts);accepted_receipt=[pscustomobject]@{path=[string]$state.last_accepted_receipt;sha256=Get-MorphospaceFileSha256 (Join-Path $workspace ([string]$state.last_accepted_receipt))}}
         if($supersession){
             if($diagnostics.Count){throw 'Supersession v2 does not borrow optional v1 inert diagnostic fields.'}
-            $lineageOwner=Import-Module $lineagePath -PassThru
-            try{$lineage=&$lineageOwner {param($root,$unitId,$prefix,$current,$map) Get-MorphospaceActiveRetirementSupersessionLineage -WorkspaceRoot $root -UnitId $unitId -Events $prefix -CurrentUnit $current -RepositoryMapPath $map} $workspace $id $events.events $unit $mapPath}finally{Restore-ActiveRetirementLineageCallerModules}
+            if($null-eq$lineage){throw 'Supersession fixture lacks its actual owner-produced lineage observation.'}
             $request.schema='rusty.morphospace.workflow.active_unit_retirement.v2'
             $request.PSObject.Properties.Remove('claim')
             $request|Add-Member -NotePropertyName ownership -NotePropertyValue $lineage.ownership
@@ -39,7 +54,7 @@ function New-ActiveUnitRetirementRequest {
         if($diagnostics.Count-eq0){$request.PSObject.Properties.Remove('retained_lifecycle_diagnostics')}
         $request.repositories=@(Get-ActiveRetirementRepositories $unit $source $mapPath $workspace -Request $request)
         return $request
-    } $WorkspaceRoot $RepoMapPath $RetirementId $ReplacementUnitId $RetainedLifecycleDiagnostics $Supersession.IsPresent $RetainedRootDiagnostics (Join-Path $PSScriptRoot '../lib/MorphospaceActiveRetirementLineage.psm1') $repositoryDrafts
+    } $WorkspaceRoot $RepoMapPath $RetirementId $ReplacementUnitId $RetainedLifecycleDiagnostics $Supersession.IsPresent $RetainedRootDiagnostics $lineage $repositoryDrafts
 }
 
 function New-RetirementNonpassFreezeRequest {
