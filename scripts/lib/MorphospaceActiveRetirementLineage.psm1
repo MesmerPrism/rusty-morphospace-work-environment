@@ -140,11 +140,26 @@ function Get-MorphospaceActiveRetirementSupersessionLineage {
  for($i=0;$i-lt$events.Count;$i++){if($i-ge@($observation.events).Count){throw 'Active retirement lineage prefix exceeds retained history.'};Assert-RetirementLineageEqual $events[$i] $observation.events[$i] 'retained event prefix'}
  if($endpoint){$tail=@($events|Where-Object{[string]$_.event_id-ceq[string]$endpoint.expected.event_tail_id});if($tail.Count-ne1){throw 'Active retirement lineage retirement predecessor is ambiguous.'};$events=@($events|Where-Object{[int]$_.sequence-le[int]$tail[0].sequence});if([long]$endpoint.expected.events_length-gt[long]$observation.length){throw 'Active retirement lineage retirement prefix exceeds retained bytes.'};$bytes=[IO.File]::ReadAllBytes((Resolve-MorphospaceWorkspacePath $workspace 'iteration-events.jsonl' -RequireLeaf));$prefix=[byte[]]::new([long]$endpoint.expected.events_length);[Array]::Copy($bytes,$prefix,$prefix.Length);if((Get-MorphospaceSha256Bytes $prefix)-cne[string]$endpoint.expected.events_sha256){throw 'Active retirement lineage retirement prefix bytes differ.'}}
  elseif($events.Count-ne@($observation.events).Count){throw 'Active retirement lineage current read requires the actual complete event prefix.'}
- $incoming=@{};$outgoing=@{}
- foreach($event in $events){if(-not([string]$event.event_id).Contains('-superseded-by-',[StringComparison]::Ordinal)){continue};$proof=Get-RetirementLineageTransition $workspace $event;$intent=$proof.intent;if($intent.PSObject.Properties.Name-cnotcontains'supersession'){throw 'Active retirement lineage supersession lacks endpoints.'};$old=[string]$intent.supersession.old_unit_id;$new=[string]$intent.supersession.new_unit_id;if($incoming.ContainsKey($new)-or$outgoing.ContainsKey($old)){throw 'Active retirement lineage supersession branches or repeats an owner.'};$incoming[$new]=$proof;$outgoing[$old]=$proof}
+ # Discover only this endpoint's ancestry. An unrelated supersession before
+ # the authenticated accepted boundary need not have acquired a later ledger
+ # producer. Event names select candidates; their real owner transactions are
+ # still authenticated below, then the complete root-to-current suffix replays.
+ $incoming=@{};$outgoing=@{};$cursor=$UnitId
+ $visited=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+ while($true){
+  if(-not$visited.Add($cursor)){throw 'Active retirement lineage is cyclic.'}
+  $candidates=@($events|Where-Object{-not[string]::IsNullOrWhiteSpace([string]$_.unit_id)-and[string]::Equals([string]$_.event_id,([string]$_.unit_id+'-superseded-by-'+$cursor),[StringComparison]::Ordinal)})
+  if($candidates.Count-eq0){break}
+  if($candidates.Count-ne1){throw 'Active retirement lineage supersession branches or repeats an owner.'}
+  $event=$candidates[0];$proof=Get-RetirementLineageTransition $workspace $event;$intent=$proof.intent
+  if($intent.PSObject.Properties.Name-cnotcontains'supersession'){throw 'Active retirement lineage supersession lacks endpoints.'}
+  $old=[string]$intent.supersession.old_unit_id;$new=[string]$intent.supersession.new_unit_id
+  if($new-cne$cursor-or$old-cne[string]$event.unit_id-or[string]$event.event_id-cne(Get-MorphospaceSupersessionEventId $old $new)){throw 'Active retirement lineage discovered endpoints are detached.'}
+  $outgoingEvents=@($events|Where-Object{[string]$_.unit_id-ceq$old-and([string]$_.event_id).StartsWith("$old-superseded-by-",[StringComparison]::Ordinal)})
+  if($outgoingEvents.Count-ne1-or$incoming.ContainsKey($new)-or$outgoing.ContainsKey($old)){throw 'Active retirement lineage supersession branches or repeats an owner.'}
+  $incoming[$new]=$proof;$outgoing[$old]=$proof;$cursor=$old
+ }
  if(-not$incoming.ContainsKey($UnitId)){throw 'Active retirement lineage endpoint was not admitted by SupersedeActive.'}
- $cursor=$UnitId;$visited=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
- while($incoming.ContainsKey($cursor)){if(-not$visited.Add($cursor)){throw 'Active retirement lineage is cyclic.'};$cursor=[string]$incoming[$cursor].intent.supersession.old_unit_id}
  $rootId=$cursor;$admissions=@(Get-ChildItem -LiteralPath (Resolve-MorphospaceWorkspacePath $workspace 'receipts') -File -Filter '*.json'|ForEach-Object{$value=Read-MorphospaceProtocolJson $_.FullName;if($value.PSObject.Properties.Name-ccontains'schema'-and[string]$value.schema-ceq'rusty.morphospace.workflow.development_unit_admission.v1'-and[string]$value.unit_id-ceq$rootId){[pscustomobject]@{path=[IO.Path]::GetRelativePath($workspace,$_.FullName).Replace('\','/');document=$value}}})
  if($admissions.Count-ne1){throw 'Active retirement lineage ordinary admission root is missing or ambiguous.'}
  $admission=$admissions[0].document;$originModule=Import-Module (Join-Path $PSScriptRoot '../DevelopmentEnvelopeProvenance.psm1') -PassThru

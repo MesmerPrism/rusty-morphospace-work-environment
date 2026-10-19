@@ -20,8 +20,20 @@ $automation=Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1'
 $checks=[Collections.Generic.List[string]]::new()
 
 function New-SupersessionRetirementCase {
-    param([string]$Root,[switch]$Nonpass,[switch]$RootDiagnostics,[switch]$SuccessorLifecycle,[ValidateSet('Committed','Untracked','Ignored')][string]$AttemptDisposition='Committed')
-    $seed=New-ActiveRetirementContinuationSeed -Root $Root -RepositoryRoot $repoRoot -SelfHostedReadOnlyPlanning -RetainRootDiagnostics:$RootDiagnostics -FeatureWorkMode:($SuccessorLifecycle-or$AttemptDisposition-cne'Committed')
+    param([string]$Root,[switch]$Nonpass,[switch]$RootDiagnostics,[switch]$SuccessorLifecycle,[switch]$HistoricalPrefix,[ValidateSet('Committed','Untracked','Ignored')][string]$AttemptDisposition='Committed')
+    if($HistoricalPrefix){
+        # The existing producer-era fixture seals an unrelated supersession
+        # before a real acceptance transaction, without a later intent for it.
+        # Every current preparation/admission/Ready/Claim still uses its writer.
+        $seed=New-EnvelopeAdmissionPreparedFixture -Root $Root -RepositoryRoot $repoRoot -TransitionLedgerModule $transitionLedgerModule -OwnerProducedPreparation -AdditiveFeature -SelfHostedReadOnlyPlanning -HistoricalSupersession
+        $admissionPath=Join-Path $Root 'u002-admission-input.json';Write-EnvelopeJson $admissionPath $seed.admission_template
+        $null=&$automation -Action AdmitDevelopmentUnit -WorkspaceRoot $seed.workspace -DevelopmentUnitAdmission $admissionPath -ExpectedDevelopmentUnitAdmissionSha256 (Get-EnvelopeFileSha256 $admissionPath) -OutPath (Join-Path $seed.workspace 'receipts/u002-admission.json') -Timestamp '2026-08-25T00:00:40.0000000Z' -Execute
+        $null=&$automation -Action Ready -WorkspaceRoot $seed.workspace -UnitId u002 -RepoMapPath (Join-Path $seed.workspace 'repository-map.json') -Timestamp '2026-08-25T00:00:41.0000000Z' -Execute
+        $null=&$automation -Action Claim -WorkspaceRoot $seed.workspace -UnitId u002 -RepoMapPath (Join-Path $seed.workspace 'repository-map.json') -Timestamp '2026-08-25T00:00:42.0000000Z' -Execute
+        Assert-Envelope (-not(Test-Path -LiteralPath (Join-Path $seed.workspace 'receipts/transactions/u000-superseded-by-u001-transition.intent.json'))) 'historical prefix unexpectedly acquired a later producer intent'
+    }else{
+        $seed=New-ActiveRetirementContinuationSeed -Root $Root -RepositoryRoot $repoRoot -SelfHostedReadOnlyPlanning -RetainRootDiagnostics:$RootDiagnostics -FeatureWorkMode:($SuccessorLifecycle-or$AttemptDisposition-cne'Committed')
+    }
     if($Nonpass-or$SuccessorLifecycle-or$AttemptDisposition-cne'Committed'){Add-ActiveRetirementRootNonpass -Seed $seed -TestRoot $Root -ReturnToActive:($SuccessorLifecycle-or$AttemptDisposition-cne'Committed') -AttemptDisposition $AttemptDisposition}
     Add-ActiveRetirementSupersession $seed 'u003' '2026-08-25T00:00:51.0000000Z' -OwnSourceLock:$SuccessorLifecycle -InstructionReview:$SuccessorLifecycle
     $mapPath=Join-Path $seed.workspace 'repository-map.json'
@@ -226,7 +238,7 @@ $tempName='wef-supersession-retirement-'+[guid]::NewGuid().ToString('N');$temp=[
 try{
     [void][IO.Directory]::CreateDirectory($temp)
     if($selectedCase-cin@('All','OriginContinuation')){
-    $originCase=New-SupersessionRetirementCase -Root (Join-Path $temp 'nonpass') -Nonpass
+    $originCase=New-SupersessionRetirementCase -Root (Join-Path $temp 'nonpass') -Nonpass -HistoricalPrefix
     $request=$originCase.request
     Assert-Envelope ($request.schema-ceq'rusty.morphospace.workflow.active_unit_retirement.v2'-and$request.PSObject.Properties.Name-cnotcontains'claim'-and$request.ownership.root_unit_id-ceq'u002'-and@($request.ownership.supersessions).Count-eq2) 'v2 did not bind root and ordered two-edge chain'
     $events=@(Get-Content -LiteralPath (Join-Path $originCase.workspace 'iteration-events.jsonl')|Where-Object{$_}|ForEach-Object{$_|ConvertFrom-Json -DateKind String})
@@ -281,6 +293,7 @@ try{
     Test-SupersessionRetirementContinuation -Case $originCase -TestRoot (Join-Path $temp 'continuation') -RepositoryRoot $repoRoot
     foreach($relative in $preserved.Keys){Assert-Envelope ($preserved[$relative]-ceq(Get-EnvelopeFileSha256 (Join-Path $originCase.workspace $relative))) "replacement continuation rewrote $relative"}
     $checks.Add('actual-idle-prepare-admit-ready-claim-and-later-accept-continuation')
+    $checks.Add('sealed-unrelated-historical-supersession-needs-no-later-intent')
     }
     if($selectedCase-cin@('All','RetainedSource')){
     # Diagnostic retention and frozen nonpass are independent positive cases:
