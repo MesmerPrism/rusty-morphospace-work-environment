@@ -168,6 +168,8 @@ if ($Action -eq "SupersedeActive") {
 }
 if ($Action -eq "RetireActive") {
     if (-not $ActiveUnitRetirement -or -not $RepoMapPath -or -not $OutPath) { throw "RetireActive requires ActiveUnitRetirement, RepoMapPath, and OutPath." }
+    # The owner dispatches closed v1 ordinary-Claim and v2 supersession-origin
+    # requests itself; the CLI grants no alternative lineage or bypass switch.
     Import-Module (Join-Path $PSScriptRoot "ActiveUnitRetirement.psm1") -Force
     Invoke-MorphospaceRetireActive -WorkspaceRoot $WorkspaceRoot -UnitId $UnitId -RepoMapPath $RepoMapPath -ActiveUnitRetirement $ActiveUnitRetirement -ExpectedActiveUnitRetirementSha256 $ExpectedActiveUnitRetirementSha256 -Timestamp $Timestamp -OutPath $OutPath -Execute:$Execute | ConvertTo-Json -Depth 64
     return

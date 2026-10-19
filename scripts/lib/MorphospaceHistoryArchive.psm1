@@ -125,6 +125,9 @@ function Get-HistoryArchiveSourceInventory {
     foreach ($relative in @(Get-HistoryArchiveDirectoryFiles $Workspace 'iteration-units')) {
         $path = Get-HistoryArchivePath $Workspace $relative -RequireLeaf
         $unit = Read-MorphospaceProtocolJson -Path $path
+        # retired_ids also includes exact Supersede ancestors whose successor
+        # earned an authenticated active retirement. Their retained active bytes
+        # are archived unchanged; this classification grants no accepted credit.
         if (-not $AuthenticatedReplay -and [string]$unit.status -notin @('accepted','blocked','superseded') -and
             ($null -eq $currentHistory -or (-not $currentHistory.retired_ids.Contains([string]$unit.unit_id) -and -not $currentHistory.retired_active_ids.Contains([string]$unit.unit_id)))) { throw "History archive requires terminal units; '$relative' is '$([string]$unit.status)'." }
         $records.Add([pscustomobject][ordered]@{ source_path=$relative; kind='terminal-unit'; sha256=(Get-HistoryArchiveFileHash $path); byte_length=[long]([IO.FileInfo]$path).Length }) | Out-Null

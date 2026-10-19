@@ -1,0 +1,90 @@
+{
+  "schema": "rusty.morphospace.workflow.active_unit_retirement.v2",
+  "retirement_id": "retire-current-for-successor",
+  "project_id": "example-workflow",
+  "unit_id": "unit-current",
+  "replacement_unit_id": "unit-successor",
+  "reason": "scope-replanned",
+  "old_unit": {
+    "unit_id": "unit-current",
+    "path": "iteration-units/unit-current.json",
+    "status": "active",
+    "raw_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "canonical_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "expected": {
+    "project_raw_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "project_canonical_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "feature_lock_raw_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "feature_lock_canonical_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "state_raw_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "state_canonical_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "events_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "events_length": 1,
+    "event_tail_id": "unit-previous-superseded-by-unit-current",
+    "repository_map_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "source_composition": {
+    "path": "source-compositions/unit-current.lock.json",
+    "raw_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "canonical_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "ownership": {
+    "kind": "supersession",
+    "root_unit_id": "unit-previous",
+    "root_admission": {
+      "path": "receipts/admit-unit-previous.json",
+      "raw_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "canonical_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "root_claim": {
+      "event_id": "unit-previous-claimed-0004",
+      "transaction_id": "unit-previous-claimed-0004-transition",
+      "intent_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "completion_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "agent_scope_assessment_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "repository_map": {
+      "path": "local/repository-map.json",
+      "raw_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "repository_maps": [
+      {
+        "path": "local/repository-map.json",
+        "raw_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    ],
+    "validation_attempts": [],
+    "supersessions": [
+      {
+        "old_unit_id": "unit-previous",
+        "replacement_unit_id": "unit-current",
+        "event_id": "unit-previous-superseded-by-unit-current",
+        "transaction_id": "unit-previous-superseded-by-unit-current-transition",
+        "intent_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "completion_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "request": {
+          "path": "receipts/supersede-request.json",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "receipt": {
+          "path": "receipts/supersede-result.json",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      }
+    ]
+  },
+  "repositories": [
+    {
+      "repo_id": "source-repo",
+      "head": "0000000000000000000000000000000000000000",
+      "tree": "0000000000000000000000000000000000000000",
+      "branch": "codex/reviewed-source-checkpoint",
+      "clean": true
+    }
+  ],
+  "accepted_receipt": {
+    "path": "receipts/unit-accepted-validation.json",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  }
+}

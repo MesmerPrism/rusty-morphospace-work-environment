@@ -2064,7 +2064,7 @@ function Test-ProjectBundle {
             Assert-Contract ($allowedRepositoryIds.Add($repoId)) "$Context unit '$($unit.unit_id)' repeats writable repository '$repoId'."
             # An explicit validation-only empty row declares membership, not write authority.
             # Keep ordinary modes and every nonempty path scope disjoint from dependencies.
-            if (-not ([string]$unit.work_mode -ceq 'validation-only' -and $effectiveWorkMode -ceq 'validation-only' -and $null -ne $allowedRepo.allowed_paths -and @($allowedRepo.allowed_paths).Count -eq 0)) {
+            if (-not ($workModeExplicit -and $workMode -ceq 'validation-only' -and $effectiveWorkMode -ceq 'validation-only' -and $null -ne $allowedRepo.allowed_paths -and @($allowedRepo.allowed_paths).Count -eq 0)) {
                 [void]$writeRepositoryIds.Add($repoId)
             }
             Assert-Contract ($repositoryMap.ContainsKey($repoId)) "$Context unit '$($unit.unit_id)' references undeclared repo '$repoId'."
@@ -2892,6 +2892,8 @@ $requiredSchemaNames = @(
     "historical-blocker-resolution-intent-binding-correction-v1.schema.json",
     "active-read-only-dependency-correction-v1.schema.json",
     "active-unit-supersession-v1.schema.json",
+    "active-unit-retirement-v2.schema.json",
+    "active-unit-retirement-receipt-v2.schema.json",
     "blocked-successor-preparation-receipt-v1.schema.json",
     "blocked-successor-preparation-v1.schema.json",
     "completed-transition-semantic-correction-v1.schema.json",
@@ -3185,7 +3187,8 @@ $candidateContracts = @(
     [pscustomobject]@{ Template = "blocker-resolution-correction-receipt.example.json"; Schema = "blocker-resolution-correction-receipt-v1.schema.json"; Label = "Blocker-resolution correction" },
     [pscustomobject]@{ Template = "historical-blocker-resolution-intent-binding-correction.example.json"; Schema = "historical-blocker-resolution-intent-binding-correction-v1.schema.json"; Label = "Historical blocker-resolution intent-binding correction" },
     [pscustomobject]@{ Template = "active-read-only-dependency-correction.example.json"; Schema = "active-read-only-dependency-correction-v1.schema.json"; Label = "Active read-only dependency correction" },
-    [pscustomobject]@{ Template = "active-write-scope-amendment.example.json"; Schema = "active-write-scope-amendment-v1.schema.json"; Label = "Active write-scope amendment" }
+    [pscustomobject]@{ Template = "active-write-scope-amendment.example.json"; Schema = "active-write-scope-amendment-v1.schema.json"; Label = "Active write-scope amendment" },
+    [pscustomobject]@{ Template = "active-unit-retirement-v2.example.json"; Schema = "active-unit-retirement-v2.schema.json"; Label = "Supersession-origin active retirement" }
 )
 foreach ($candidateContract in $candidateContracts) {
     $candidateTemplate = Join-Path $templatesRoot $candidateContract.Template

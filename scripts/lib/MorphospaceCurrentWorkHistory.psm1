@@ -206,6 +206,7 @@ function Get-MorphospaceCurrentWorkHistory {
     $priorStateHash = [string]$accepted.intent.target.state.sha256
     $projectionHashes = @{}
     $suffixTransitions = @{}
+    $retiredSupersessionAncestors = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $audit = [Collections.Generic.List[object]]::new()
     # Retirement remains independently authenticated even after a later
     # acceptance seals its event. It never enters accepted history.
@@ -224,6 +225,21 @@ function Get-MorphospaceCurrentWorkHistory {
             throw 'Current-work active retirement was followed by an unnamed replacement admission.'
         }
         $activeRetirements[$retiredId] = $proof
+        if ([string]$proof.request.schema -ceq 'rusty.morphospace.workflow.active_unit_retirement.v2') {
+            # The historical retirement verifier has authenticated the entire
+            # ordinary-origin/Supersede chain at this retirement's predecessor.
+            # These ancestors remain unaccepted and acquire no current policy.
+            foreach ($edge in @($proof.request.ownership.supersessions)) {
+                $oldId = [string]$edge.old_unit_id
+                $edgeEvent = @($events | Where-Object { [string]$_.event_id -ceq [string]$edge.event_id })
+                if ($edgeEvent.Count -ne 1 -or -not $units.ContainsKey($oldId) -or
+                    [string]$state.current_unit -ceq $oldId -or [string]$state.next_ready_unit -ceq $oldId -or
+                    @($events | Where-Object { [int]$_.sequence -gt [int]$edgeEvent[0].sequence -and [string]$_.unit_id -ceq $oldId -and [string]$_.event_type -cin @('state-transition','validation','blocker') }).Count -ne 0) {
+                    throw 'Current-work retired supersession lineage cannot hide a resurrected ancestor.'
+                }
+                [void]$historical.Add($oldId); [void]$retired.Add($oldId); [void]$retiredSupersessionAncestors.Add($oldId)
+            }
+        }
         $activeRetirementSteps[[string]$retirementEvent.event_id] = $proof
         $audit.Add([pscustomobject]@{unit_id=$retiredId; classification='retired-active'; current_policy_revalidated=$false; grants_validation_credit=$false})
     }
@@ -392,6 +408,7 @@ function Get-MorphospaceCurrentWorkHistory {
     }
     $supersededScopeResult = Get-MorphospaceAuthenticatedSupersededScopeConflicts -Workspace $workspace -State $state -Units $units -Events $events -AcceptedSequence $sequence -SuffixTransitions $suffixTransitions
     $supersededScopeConflicts = $supersededScopeResult.ids
+    foreach ($id in $retiredSupersessionAncestors) { [void]$supersededScopeConflicts.Add($id) }
     foreach ($path in $projectionHashes.Keys) {
         if ((Get-MorphospaceCanonicalJsonSha256 (Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace $path -RequireLeaf))) -cne $projectionHashes[$path]) {
             throw "Current-work live projection '$path' differs from its latest transaction."
@@ -420,6 +437,7 @@ function Get-MorphospaceCurrentWorkHistory {
         $edges[$old] = [pscustomobject]@{ replacement=[string]$matches[0]; sequence=[int]$event.sequence }
     }
     foreach ($id in $units.Keys) {
+        if ($retiredSupersessionAncestors.Contains($id)) { continue }
         if ([string]$units[$id].status -ceq 'accepted') {
             $terminal = @($events | Where-Object { [int]$_.sequence -le $sequence -and [string]$_.unit_id -ceq $id -and [string]$_.event_id -cmatch ('^'+[regex]::Escape($id)+'-accepted-[0-9]{4,}$') })
             if ($terminal.Count -eq 1) { [void]$historical.Add($id) }
@@ -443,10 +461,10 @@ function Get-MorphospaceCurrentWorkHistory {
     }
     foreach ($id in @($historical)) {
         if ([string]$state.current_unit -ceq $id -or [string]$state.next_ready_unit -ceq $id -or
-            @($events | Where-Object { [int]$_.sequence -gt $sequence -and [string]$_.unit_id -ceq $id -and [string]$_.event_type -ceq 'state-transition' -and [string]$_.event_id -cmatch '-(claimed|active|ready|validating)-' }).Count -gt 0) {
+            (-not $retiredSupersessionAncestors.Contains($id) -and @($events | Where-Object { [int]$_.sequence -gt $sequence -and [string]$_.unit_id -ceq $id -and [string]$_.event_type -ceq 'state-transition' -and [string]$_.event_id -cmatch '-(claimed|active|ready|validating)-' }).Count -gt 0)) {
             throw 'Current-work history cannot hide a resurrected historical owner.'
         }
-        $audit.Add([pscustomobject]@{unit_id=$id; classification=$(if($retired.Contains($id)){'retired'}else{'accepted-history'}); current_policy_revalidated=$false; grants_validation_credit=$false})
+        $audit.Add([pscustomobject]@{unit_id=$id; classification=$(if($retiredSupersessionAncestors.Contains($id)){'retired-supersession-ancestor'}elseif($retired.Contains($id)){'retired'}else{'accepted-history'}); current_policy_revalidated=$false; grants_validation_credit=$false})
     }
     # Historical prerequisite evidence remains an actual dependency, even
     # though its old instruction vocabulary is not reinterpreted.
