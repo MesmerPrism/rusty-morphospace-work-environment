@@ -2,7 +2,7 @@
 # fixture. The baseline u001 is the established MODELED accepted prerequisite;
 # every ownership, nonpass, retirement and replacement transition below uses
 # the actual public owner writer and its retained intent/completion.
-param([switch]$SelfTest,[ValidateSet('All','OriginContinuation','RetainedSource','Recovery')][string]$Case='All',[ValidateSet('All','RootDiagnostics','SuccessorLifecycle','Untracked','Ignored',IgnoreCase=$false)][string]$RetainedCase='All')
+param([switch]$SelfTest,[ValidateSet('All','OriginContinuation','RetainedSource','Recovery',IgnoreCase=$false)][string]$Case='All',[ValidateSet('All','RootDiagnostics','SuccessorLifecycle','Untracked','Ignored',IgnoreCase=$false)][string]$RetainedCase='All')
 $selectedCase=$Case
 $selectedRetainedCase=$RetainedCase
 $ErrorActionPreference='Stop'
