@@ -1,5 +1,18 @@
 # Affected Validation
 
+Estimated check and segment budgets guide grouping and emit diagnostic warnings.
+An irreducible dependency group remains intact when its estimate exceeds the
+advisory maximum. The legacy `maximum_budget_seconds` field and corresponding
+parameter retain their names for compatibility; they do not authorize
+cancellation or refuse dispatch. Warning publication failure does not cancel
+the original work. Structural validity, exact source and dependency bindings,
+explicit cancellation, and actual child termination remain separate checks.
+
+Hosted jobs use the existing 360-minute execution ceiling. A segment estimate
+does not select a shorter hard cutoff, and an opted-in single Windows runner
+warns when its estimate exceeds 18,000 seconds. Actual platform termination
+still ends that original job and supplies no passing evidence.
+
 `validate.yml` resolves a closed, exact-base/current-head plan before running
 candidate validation. The registry owns canonical path classes, semantic
 dependencies, execution order, platform applicability, and the exact Git blob identities that evidence

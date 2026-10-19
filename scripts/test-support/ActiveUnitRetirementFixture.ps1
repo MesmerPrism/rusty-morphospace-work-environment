@@ -290,7 +290,13 @@ function Test-ActiveRetirementDirtyInstructionSemantics {
         }finally{[IO.File]::WriteAllBytes($receiptPath,$receiptBytes);[IO.File]::WriteAllBytes($intentPath,$intentBytes);[IO.File]::WriteAllBytes($completionPath,$completionBytes)}
         $null=Get-SupersessionSemanticLineage $Case
     }
-    $probe=Join-Path $Case.seed.dependency_repository 'dependency/instruction-observation-probe.txt';$probeBytes=[IO.File]::ReadAllBytes($probe)
+    # This case deliberately relocated its dependency after the first source
+    # lock. Damage the currently selected materialization, not the preserved
+    # original checkout that no longer supplies the current repository row.
+    $currentMap=Read-EnvelopeProtocolJson $Case.arguments.RepoMapPath
+    $currentDependency=@($currentMap.repositories|Where-Object repo_id -CEQ 'read-only-dependency')
+    Assert-Envelope ($currentDependency.Count-eq1) 'current dirty-source control lacks its actual dependency materialization'
+    $probe=Join-Path $currentDependency[0].path 'dependency/instruction-observation-probe.txt';$probeBytes=[IO.File]::ReadAllBytes($probe)
     try{
         [IO.File]::AppendAllText($probe,"`nMODELED current dirty source must still refuse.",[Text.UTF8Encoding]::new($false))
         $before=Get-EnvelopeWorkspaceByteInventorySha256 $Case.workspace;$rejected=$false

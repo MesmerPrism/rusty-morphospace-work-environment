@@ -95,7 +95,7 @@ function Invoke-RetainedAuthorityFocusedTests {
 }
 
 function New-ActiveEnvelopeExtensionRequest {
-    param([string]$Workspace,[string]$AddedRepository,[string]$RequestPath)
+    param([string]$Workspace,[string]$AddedRepository,[string]$RequestPath,[string]$AddedOwnerRoot='')
     $project=Read-EnvelopeProtocolJson (Join-Path $Workspace 'project.spec.json')
     $lock=Read-EnvelopeProtocolJson (Join-Path $Workspace 'feature.lock.json')
     $state=Read-EnvelopeProtocolJson (Join-Path $Workspace 'workspace.state.json')
@@ -142,8 +142,31 @@ function New-ActiveEnvelopeExtensionRequest {
         }
         does_not_prove=@('Does not change the objective, validate, accept, publish, mutate Git, or operate a device.')
     }
+    if($AddedOwnerRoot){
+        # A roots-only extension retains the actual admitted map and every
+        # existing source row; it grants no new feature or repository identity.
+        Remove-Item -LiteralPath $targetMapPath
+        $targetMapPath=$mapPath
+        $request.extension_id='u002-add-root'
+        $request.rationale='The unchanged documentation objective requires one additional exact root in the existing writable repository.'
+        $request.ownership_proof=@([pscustomobject][ordered]@{repo_id='project-shell';source_roots=@($AddedOwnerRoot);owner='project-shell';evidence='The existing repository owner reviewed the additional documentation root against the unchanged objective.'})
+        $request.additions.repository_ids=@()
+        $request.additions.owner_roots=@([pscustomobject][ordered]@{repo_id='project-shell';source_roots=@($AddedOwnerRoot)})
+        $request.target.project.repositories=@(Copy-Envelope @($project.repositories))
+        @($request.target.project.repositories|Where-Object{$_.repo_id-ceq'project-shell'})[0].allowed_paths+=,$AddedOwnerRoot
+        $request.target.agent_scope_assessment=Copy-Envelope $unit.agent_scope_assessment
+        @($request.target.agent_scope_assessment.owner_repositories|Where-Object{$_.repo_id-ceq'project-shell'})[0].source_roots+=,$AddedOwnerRoot
+        $request.target.allowed_repositories=@(Copy-Envelope @($unit.allowed_repositories))
+        @($request.target.allowed_repositories|Where-Object{$_.repo_id-ceq'project-shell'})[0].allowed_paths+=,$AddedOwnerRoot
+        $request.target.read_only_dependencies=@(Copy-Envelope @($unit.read_only_dependencies))
+        $request.target.state.last_event_id='u002-add-root-recorded'
+        $request.source_composition.path='source-composition-locks/u002-add-root.json'
+        $request.source_composition.repository_ids=@($source.repositories|ForEach-Object{[string]$_.repo_id})
+        $request.effective_repository_map.path='repository-map.json'
+        $request.effective_repository_map.raw_sha256=Get-EnvelopeFileSha256 $mapPath
+    }
     Write-EnvelopeJson $RequestPath $request
-    return [pscustomobject]@{request=$request;request_path=$RequestPath;map_path=$targetMapPath;receipt_path=(Join-Path $Workspace 'receipts\u002-add-dependency.json');source_path=(Join-Path $Workspace 'source-composition-locks\u002-add-dependency.json')}
+    return [pscustomobject]@{request=$request;request_path=$RequestPath;map_path=$targetMapPath;receipt_path=(Join-Path $Workspace ('receipts/'+$request.extension_id+'.json'));source_path=(Join-Path $Workspace ([string]$request.source_composition.path))}
 }
 
 function New-ActiveEnvelopeFreezeRequest {
@@ -175,6 +198,62 @@ function Set-ActiveEnvelopeEvidenceDamage([string]$Path){
     Write-EnvelopeJson $Path $value
 }
 
+function Test-ActiveEnvelopeFeaturelessRootsOnly {
+    param([string]$Root)
+    # Do not populate the feature/module arrays to make the owner API usable.
+    # This is the same valid featureless input shape as a roots-only repair.
+    $fixture=New-EnvelopeAdmissionPreparedFixture -Root $Root -RepositoryRoot $repoRoot -TransitionLedgerModule $checkpointWriter -OwnerProducedPreparation
+    $workspace=$fixture.workspace;$admission=Join-Path $Root 'admission.json';Write-EnvelopeJson $admission $fixture.admission_template
+    Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $workspace -DevelopmentUnitAdmission $admission -ExpectedDevelopmentUnitAdmissionSha256 (Get-EnvelopeFileSha256 $admission) -OutPath (Join-Path $workspace 'receipts/u002-admission.json') -Timestamp '2026-09-15T00:00:00.0000000Z' -Execute|Out-Null
+    $lifecycle=@{WorkspaceRoot=$workspace;UnitId='u002';RepoMapPath=(Join-Path $workspace 'repository-map.json');ValidationTier='quick'}
+    &$automationModule {param($a)Invoke-MorphospaceWorkUnitAutomation @a -Action Ready -Timestamp '2026-09-15T00:01:00.0000000Z' -Execute} $lifecycle|Out-Null
+    &$automationModule {param($a)Invoke-MorphospaceWorkUnitAutomation @a -Action Claim -Timestamp '2026-09-15T00:02:00.0000000Z' -Execute} $lifecycle|Out-Null
+    $request=New-ActiveEnvelopeExtensionRequest -Workspace $workspace -RequestPath (Join-Path $Root 'roots-only.json') -AddedOwnerRoot 'additional-docs/'
+    Assert-ActiveEnvelopeTest (@($request.request.before.feature_lock.features).Count-eq0-and@($request.request.before.project.modules).Count-eq0) 'roots-only fixture silently selected a feature/module'
+    $mapHash=Get-EnvelopeFileSha256 $request.map_path
+
+    # All five identifier projections may be empty. Exercise the actual helper
+    # with valid empty arrays, rather than substituting dummy authority rows.
+    $emptyRequest=Copy-Envelope $request.request;$emptyProject=Copy-Envelope $emptyRequest.before.project
+    foreach($name in @('modules','authority_map','validation_profiles','acceptance_profiles')){$emptyProject.$name=@();$emptyRequest.target.project.$name=@()}
+    [void](&$extensionModule {param($q,$p)Assert-ActiveEnvelopeExplicitAdditions $q $p $q.before.feature_lock $q.before.agent_scope_assessment} $emptyRequest $emptyProject)
+
+    $forged=Copy-Envelope $request.request
+    $forged.target.project.authority_map+=,[pscustomobject][ordered]@{parameter='unadmitted.authority';owner='project-shell';adapters=@()}
+    $forged.additions.authority_parameters=@('unadmitted.authority')
+    $forgedPath=Join-Path $Root 'added-authority.json';Write-EnvelopeJson $forgedPath $forged
+    $inventory=Get-EnvelopeWorkspaceByteInventorySha256 $workspace;$authorityRejected=$false
+    try{Invoke-MorphospaceExtendActiveDevelopmentEnvelope -WorkspaceRoot $workspace -UnitId u002 -ActiveDevelopmentEnvelopeExtension $forgedPath -RepositoryMapPath $request.map_path -OutPath $request.receipt_path -SourceCompositionOutPath $request.source_path|Out-Null}
+    catch{if($_.Exception.Message-cne"Preparation added authority 'unadmitted.authority' is unused or has the wrong owner."){throw};$authorityRejected=$true}
+    Assert-ActiveEnvelopeTest ($authorityRejected-and(Get-EnvelopeWorkspaceByteInventorySha256 $workspace)-ceq$inventory) 'featureless roots-only route added authority or changed workspace on refusal'
+
+    $arguments=@{WorkspaceRoot=$workspace;UnitId='u002';ActiveDevelopmentEnvelopeExtension=$request.request_path;RepositoryMapPath=$request.map_path;OutPath=$request.receipt_path;SourceCompositionOutPath=$request.source_path;Timestamp='2026-09-15T01:00:00.0000000Z'}
+    $dry=Invoke-MorphospaceExtendActiveDevelopmentEnvelope @arguments
+    Assert-ActiveEnvelopeTest (-not$dry.executed-and-not(Test-Path -LiteralPath $request.receipt_path)-and-not(Test-Path -LiteralPath $request.source_path)) 'featureless roots-only dry run wrote output'
+    $arguments.ExpectedActiveDevelopmentEnvelopeExtensionSha256=Get-EnvelopeFileSha256 $request.request_path;$arguments.Execute=$true
+    $run=Invoke-MorphospaceExtendActiveDevelopmentEnvelope @arguments
+    $unit=Read-EnvelopeProtocolJson (Join-Path $workspace 'iteration-units/u002.json');$lock=Read-EnvelopeProtocolJson (Join-Path $workspace 'feature.lock.json')
+    Assert-ActiveEnvelopeTest ($run.executed-and@($lock.features).Count-eq0-and@($unit.allowed_repositories|Where-Object{$_.repo_id-ceq'project-shell'-and$_.allowed_paths-ccontains'additional-docs/'}).Count-eq1-and(Get-EnvelopeFileSha256 $request.map_path)-ceq$mapHash) 'featureless roots-only execute changed map/features or omitted the root'
+    $events=@(Get-Content -LiteralPath (Join-Path $workspace 'iteration-events.jsonl')|Where-Object{$_}|ForEach-Object{$_|ConvertFrom-Json -Depth 100 -DateKind String})
+    [void](Test-MorphospaceHistoricalActiveDevelopmentEnvelopeExtension -WorkspaceRoot $workspace -ExpectedEvent $events[-1])
+
+    # A subsequent ordinary write must derive from the authenticated extension,
+    # not the original admission endpoint or a fabricated current projection.
+    $next=New-ActiveEnvelopeExtensionRequest -Workspace $workspace -RequestPath (Join-Path $Root 'next-root.json') -AddedOwnerRoot 'additional-docs-two/'
+    $next.request.extension_id='u002-add-second-root';$next.request.target.state.last_event_id='u002-add-second-root-recorded';$next.request.source_composition.path='source-composition-locks/u002-add-second-root.json'
+    $next.request.expected.original_source_composition_path=$request.request.expected.original_source_composition_path
+    $next.request.expected.original_source_composition_raw_sha256=$request.request.expected.original_source_composition_raw_sha256
+    Write-EnvelopeJson $next.request_path $next.request
+    $nextArguments=@{WorkspaceRoot=$workspace;UnitId='u002';ActiveDevelopmentEnvelopeExtension=$next.request_path;RepositoryMapPath=$next.map_path;OutPath=(Join-Path $workspace 'receipts/u002-add-second-root.json');SourceCompositionOutPath=(Join-Path $workspace $next.request.source_composition.path);Timestamp='2026-09-15T01:01:00.0000000Z'}
+    $nextDry=Invoke-MorphospaceExtendActiveDevelopmentEnvelope @nextArguments
+    Assert-ActiveEnvelopeTest (-not$nextDry.executed-and(Get-EnvelopeFileSha256 $next.map_path)-ceq$mapHash) 'next featureless roots-only writer lost effective provenance or changed the map'
+    $nextArguments.ExpectedActiveDevelopmentEnvelopeExtensionSha256=Get-EnvelopeFileSha256 $next.request_path;$nextArguments.Execute=$true
+    $nextRun=Invoke-MorphospaceExtendActiveDevelopmentEnvelope @nextArguments
+    Assert-ActiveEnvelopeTest $nextRun.executed 'next featureless roots-only writer did not execute'
+    [void](Test-MorphospaceHistoricalActiveDevelopmentEnvelopeExtension -WorkspaceRoot $workspace -ExpectedEvent $events[-1])
+    Write-Output 'PASS genuine featureless Prepare/Admit/Ready/Claim roots-only extension, historical replay, next writer, and authority refusal'
+}
+
 $retainedAuthorityResult=Invoke-RetainedAuthorityFocusedTests
 if($RetainedAuthorityOnly){$retainedAuthorityResult|ConvertTo-Json -Compress;return}
 
@@ -204,6 +283,7 @@ try{
         [IO.File]::WriteAllBytes($receiptPath,$receiptBytes)
     }
     if($CheckpointProofOnly){[pscustomobject]@{result='pass';external_receipt=$true;separate_receipt_producer=$true;prefix_drift_rejected=$true;acceptance_outside_prefix_rejected=$true;ambiguous_acceptance_rejected=$true;missing_receipt_rejected=$true}|ConvertTo-Json -Compress;return}
+    Test-ActiveEnvelopeFeaturelessRootsOnly -Root (Join-Path $temp 'featureless-roots-only')
     $seed=New-EnvelopeAdmissionPreparedFixture -Root (Join-Path $temp 'seed') -RepositoryRoot $repoRoot -TransitionLedgerModule $checkpointWriter -OwnerProducedPreparation -AdditiveFeature
     $workspace=$seed.workspace;$admissionPath=Join-Path $temp 'admission.json';Write-EnvelopeJson $admissionPath $seed.admission_template
     Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $workspace -DevelopmentUnitAdmission $admissionPath -ExpectedDevelopmentUnitAdmissionSha256 (Get-EnvelopeFileSha256 $admissionPath) -OutPath (Join-Path $workspace 'receipts\u002-admission.json') -Timestamp '2026-09-15T00:00:00.0000000Z' -Execute|Out-Null

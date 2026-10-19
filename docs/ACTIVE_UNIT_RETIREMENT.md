@@ -29,6 +29,13 @@ The closed `ownership.repository_maps` array supplies one exact path/raw-hash
 reference per distinct map hash bound by those producers, sorted by hash.
 Historical maps are read only from those reviewed references and the known
 preparation/current map bindings; unrelated paths grant no authority.
+An instruction completion in this authenticated supersession lineage may retain
+the producer's dirty repository observation. Its exact receipt, repository IDs,
+head/tree and preflight scope joins still authenticate. The existing historical
+observation projection preserves that recorded state without inventing a clean
+fingerprint or granting current source validity. Ordinary retirement retains its
+clean-observation reconstruction; current writable source must independently
+meet the retirement source guards.
 The required `ownership.validation_attempts` array retains every intervening
 `ReturnToActive` validation receipt in actual event order as
 `{event_id,path,raw_sha256,canonical_sha256}`; it is empty when none occurred.

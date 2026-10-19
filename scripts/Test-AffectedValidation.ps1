@@ -5142,7 +5142,16 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     )}
     $oversizedComponentSegments = @(Get-MorphospaceAffectedValidationSegments -Plan $oversizedComponentPlan -Registry $oversizedComponentRegistry -Platform windows)
     Assert-True ($oversizedComponentSegments.Count -eq 1 -and [long]$oversizedComponentSegments[0].target_budget_seconds -eq 3600 -and [long]$oversizedComponentSegments[0].maximum_budget_seconds -eq 18000 -and [long]$oversizedComponentSegments[0].estimated_budget_seconds -eq 4000 -and [int]$oversizedComponentSegments[0].dependency_component_count -eq 1) 'Affected-validation segmentation did not preserve one irreducible dependency component above the soft target and below the hard maximum.'
-    Assert-AffectedThrows { Get-MorphospaceAffectedValidationSegments -Plan $oversizedComponentPlan -Registry $oversizedComponentRegistry -Platform windows -MaximumSegmentBudgetSeconds 3600 | Out-Null } '*exceeds the hosted segment maximum: 4000 > 3600 seconds*' 'Affected-validation segmentation admitted an irreducible dependency component above the hard maximum.'
+    $overEstimate = @(Get-MorphospaceAffectedValidationSegments -Plan $oversizedComponentPlan -Registry $oversizedComponentRegistry -Platform windows -MaximumSegmentBudgetSeconds 3600 3>&1)
+    $estimateWarnings = @($overEstimate | Where-Object { $_ -is [Management.Automation.WarningRecord] })
+    $estimateSegments = @($overEstimate | Where-Object { $_ -isnot [Management.Automation.WarningRecord] })
+    Assert-True ($estimateWarnings.Count -eq 1 -and $estimateSegments.Count -eq 1 -and $estimateSegments[0].estimated_budget_seconds -eq 4000 -and ($estimateSegments[0].check_ids -join ',') -ceq 'oversized-a,oversized-b') 'An irreducible dependency group was refused or split solely because its estimate exceeded the advisory maximum.'
+    $savedEstimateWarningPreference = $WarningPreference
+    try {
+        $WarningPreference = 'Stop'
+        $warningFailureSegments = @(Get-MorphospaceAffectedValidationSegments -Plan $oversizedComponentPlan -Registry $oversizedComponentRegistry -Platform windows -MaximumSegmentBudgetSeconds 3600)
+        Assert-True ($warningFailureSegments.Count -eq 1 -and ($warningFailureSegments[0].check_ids -join ',') -ceq 'oversized-a,oversized-b') 'A diagnostic warning failure prevented intact dependency-group scheduling.'
+    } finally { $WarningPreference = $savedEstimateWarningPreference }
     $segmentOwner = @{}
     foreach ($platform in $deepPlatforms) {
         $platformSelections = @($schemaContractPlan.selected_checks | Where-Object { @($_.platforms) -ccontains $platform })
@@ -5150,7 +5159,7 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
         Assert-True ($segments.Count -gt 0 -and ($platform -cne 'windows' -or $segments.Count -gt 1)) "Affected-validation $platform Deep partition did not produce its bounded segment set."
         $covered = [Collections.Generic.List[string]]::new()
         foreach ($segment in $segments) {
-            Assert-True ([long]$segment.target_budget_seconds -eq 3600 -and [long]$segment.maximum_budget_seconds -eq 18000 -and [long]$segment.estimated_budget_seconds -le [long]$segment.maximum_budget_seconds -and [int]$segment.dependency_component_count -gt 0 -and [int]$segment.segment_count -eq $segments.Count -and @($segment.check_ids).Count -gt 0) "Affected-validation segment '$($segment.segment_id)' exceeds its hard maximum or has invalid target/cardinality metadata."
+            Assert-True ([long]$segment.target_budget_seconds -eq 3600 -and [long]$segment.maximum_budget_seconds -eq 18000 -and [long]$segment.estimated_budget_seconds -gt 0 -and [int]$segment.dependency_component_count -gt 0 -and [int]$segment.segment_count -eq $segments.Count -and @($segment.check_ids).Count -gt 0) "Affected-validation segment '$($segment.segment_id)' has invalid advisory budget or cardinality metadata."
             if ([long]$segment.estimated_budget_seconds -gt [long]$segment.target_budget_seconds) { Assert-True ([int]$segment.dependency_component_count -eq 1) "Affected-validation segment '$($segment.segment_id)' exceeds its soft target without being one irreducible dependency component." }
             foreach ($id in @($segment.check_ids)) {
                 $ownerKey = "$platform/$id"

@@ -42,6 +42,12 @@ case when a current validator diagnostic or explicit history task names it.
 
 ## Authenticated history and recovery cases
 
+Supersession-origin retirement preserves authenticated historical instruction
+repository observations, including recorded dirt, through its existing narrow
+observation projection. It still verifies the original receipt and its exact
+preflight joins. This supplies no clean-source or current-validity claim and
+does not change ordinary retirement's clean-observation requirements.
+
 An authenticated [active-unit retirement](ACTIVE_UNIT_RETIREMENT.md) has a
 distinct `retired-active` disposition. Its preserved unit bytes do not grant
 current ownership or accepted-prerequisite evidence. The reader authenticates

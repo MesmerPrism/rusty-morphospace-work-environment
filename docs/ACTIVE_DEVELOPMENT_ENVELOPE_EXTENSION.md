@@ -31,6 +31,11 @@ role, objective, acceptance criteria, non-scope, prerequisites, instructions,
 validation policy, commit policy, push checkpoint, and public/private boundary
 remain unchanged.
 
+An empty feature, module or authority list is a valid empty set during this
+comparison. A roots-only extension does not require an invented feature or
+authority row. Nonempty additions remain explicit and subject to the same
+unchanged ceilings and exact-difference checks.
+
 New roots must be canonical and exact owner-reviewed roots. The project,
 assessment, and unit writable/read-only closures must agree. A repository cannot
 be both writable and read-only. Every selected feature retains disabled-default,

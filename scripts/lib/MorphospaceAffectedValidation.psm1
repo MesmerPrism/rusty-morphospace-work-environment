@@ -460,7 +460,7 @@ function Get-MorphospaceAffectedValidationSegments {
         [ValidateRange(60, 18000)][int]$TargetBudgetSeconds = 3600,
         [ValidateRange(60, 21600)][int]$MaximumSegmentBudgetSeconds = 18000
     )
-    if ($TargetBudgetSeconds -gt $MaximumSegmentBudgetSeconds) { throw 'Affected-validation segment target exceeds its hard maximum.' }
+    if ($TargetBudgetSeconds -gt $MaximumSegmentBudgetSeconds) { try { Write-Warning 'Affected-validation grouping target exceeds its advisory maximum; inspect the grouping configuration.' } catch { } }
 
     $checkMap = @{}
     foreach ($check in @($Registry.checks)) { $checkMap[[string]$check.check_id] = $check }
@@ -505,7 +505,7 @@ function Get-MorphospaceAffectedValidationSegments {
         }
         $orderedMembers = @($selected | Where-Object { $members.Contains([string]$_.check_id) } | ForEach-Object { [string]$_.check_id })
         $componentBudget = [long](@($orderedMembers | ForEach-Object { [long]$checkMap[$_].budget_seconds }) | Measure-Object -Sum).Sum
-        if ($componentBudget -gt $MaximumSegmentBudgetSeconds) { throw "Affected-validation dependency component '$($orderedMembers[0])' exceeds the hosted segment maximum: $componentBudget > $MaximumSegmentBudgetSeconds seconds." }
+        if ($componentBudget -gt $MaximumSegmentBudgetSeconds) { try { Write-Warning "Affected-validation dependency component '$($orderedMembers[0])' exceeds the advisory segment estimate: $componentBudget > $MaximumSegmentBudgetSeconds seconds; retain the intact dependency group and inspect progress." } catch { } }
         $components.Add([pscustomobject][ordered]@{ key=[string]$orderedMembers[0]; budget_seconds=$componentBudget; check_ids=@($orderedMembers) })
     }
 
