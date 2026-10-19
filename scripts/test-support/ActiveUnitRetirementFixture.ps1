@@ -24,7 +24,10 @@ function New-ActiveUnitRetirementRequest {
         $observedUnit=Get-Content -LiteralPath (Join-Path $WorkspaceRoot "iteration-units/$observedId.json") -Raw|ConvertFrom-Json -Depth 100 -DateKind String
         $observedEvents=@(Get-Content -LiteralPath (Join-Path $WorkspaceRoot 'iteration-events.jsonl')|Where-Object{$_}|ForEach-Object{$_|ConvertFrom-Json -Depth 100 -DateKind String})
         try{
-            $lineage=& $lineageModule.ExportedCommands['Get-MorphospaceActiveRetirementSupersessionLineage'] -WorkspaceRoot $WorkspaceRoot -UnitId $observedId -Events $observedEvents -CurrentUnit $observedUnit -RepositoryMapPath $RepoMapPath
+            $lineage=& $lineageModule {
+                param($root,$unitId,$prefix,$current,$map)
+                Get-MorphospaceActiveRetirementSupersessionLineage -WorkspaceRoot $root -UnitId $unitId -Events $prefix -CurrentUnit $current -RepositoryMapPath $map
+            } $WorkspaceRoot $observedId $observedEvents $observedUnit $RepoMapPath
         }finally{
             & $retirementModule { Restore-ActiveRetirementLineageCallerModules }
         }
