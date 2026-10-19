@@ -2116,7 +2116,17 @@ function Test-ProjectBundle {
             try{
                 if($unit.PSObject.Properties.Name-contains'tooling_context'){
                     $module=Import-Module (Join-Path $RepoRoot 'scripts/DevelopmentEnvelopeProvenance.psm1') -PassThru
-                    [void](&$module {param($root,$id) Get-MorphospaceUnitToolingContextObservation -WorkspaceRoot $root -UnitId $id -Action Inspect} $workspaceRoot ([string]$unit.unit_id))
+                    $authenticatedSupersededTooling = (
+                        $null -ne $currentHistory -and $currentHistory.authenticated -eq $true -and
+                        $currentHistory.authenticated_superseded_scope_conflict_ids.Contains([string]$unit.unit_id)
+                    )
+                    if ($authenticatedSupersededTooling) {
+                        # Preserved predecessor data is authenticated without claiming
+                        # an owner action from its separately bound executor checkout.
+                        [void](&$module {param($root,$id) Get-MorphospaceUnitToolingContextProvenance -WorkspaceRoot $root -UnitId $id} $workspaceRoot ([string]$unit.unit_id))
+                    } else {
+                        [void](&$module {param($root,$id) Get-MorphospaceUnitToolingContextObservation -WorkspaceRoot $root -UnitId $id -Action Inspect} $workspaceRoot ([string]$unit.unit_id))
+                    }
                 }elseif($unit.PSObject.Properties.Name-contains'agent_scope_assessment'-and$unit.PSObject.Properties.Name-contains'source_composition'-and[string]$unit.source_composition.mode-ceq'exact-lock'){
                     $sourcePath=& $script:ProtocolCommonModule.ExportedCommands['Resolve-MorphospaceWorkspacePath'] $workspaceRoot ([string]$unit.source_composition.lock_path) -RequireLeaf
                     $source=& $script:ProtocolCommonModule.ExportedCommands['Read-MorphospaceProtocolJson'] $sourcePath
