@@ -358,10 +358,10 @@ function Update-AffectedInventoryFileRecord([string]$InventoryRoot,[string]$File
     if ($matched -ne 1) { throw "Affected inventory fixture did not bind exactly one file '$relative'." }
     Write-Utf8 $inventoryPath ((ConvertTo-MorphospaceCanonicalJson -Value $inventory) + "`n")
 }
-function Assert-AffectedThrows([scriptblock]$Action,[string]$Pattern,[string]$Message) {
+function Assert-AffectedThrows([scriptblock]$Action,[string[]]$Pattern,[string]$Message) {
     $reason = $null
     try { & $Action | Out-Null } catch { $reason = [string]$_.Exception.Message }
-    if ([string]::IsNullOrWhiteSpace($reason) -or $reason -notlike $Pattern) { throw "$Message :: observed='$reason'" }
+    if ([string]::IsNullOrWhiteSpace($reason) -or @($Pattern | Where-Object { $reason -like $_ }).Count -eq 0) { throw "$Message :: observed='$reason'" }
 }
 function Assert-AffectedExecutorContainmentSource([string]$Source) {
     $forbidden = @('TryReadControl','ControlPath','leaf.stdout.bin','leaf.stderr.bin','ReadAllBytes($stdoutPath)','disableMaxPrivilege','0x000f0fff','CreateRestrictedLeafToken','RUSTY_AFFECTED_VALIDATION_RESTRICTING_SIDS','ProcessStartInfo]::new($unshare.Source)','--map-root-user','ConvertSecurityDescriptorToStringSecurityDescriptor','"w017-affected-child-"','''leaf-temp''','Get-ChildItem Env:','Remove-Item -LiteralPath ("Env:$name")','--preserve-env')
@@ -5136,7 +5136,7 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
             $typedDamage = $firstSegmentOriginal | ConvertFrom-Json -Depth 64 -DateKind String
             $typedDamage.check_results[0].failure_kind = 'exit-code'
             Write-Utf8 $firstSegmentFile.FullName ((ConvertTo-MorphospaceCanonicalJson -Value $typedDamage) + "`n")
-            Assert-AffectedThrows { & (Join-Path $repoRoot 'scripts/Merge-AffectedValidationSegments.ps1') -RepositoryRoot $fixture -BaseCommit $registryContractHead -HeadCommit $schemaContractHead -PlanPath $segmentPlanPath -Platform $platform -SegmentEvidenceDirectory $segmentEvidenceRoot -OutPath (Join-Path $segmentMergeRoot "$platform-typed-damaged.json") | Out-Null } '*not valid with the schema*' "Affected-validation $platform segment merger accepted inconsistent typed failure data."
+            Assert-AffectedThrows { & (Join-Path $repoRoot 'scripts/Merge-AffectedValidationSegments.ps1') -RepositoryRoot $fixture -BaseCommit $registryContractHead -HeadCommit $schemaContractHead -PlanPath $segmentPlanPath -Platform $platform -SegmentEvidenceDirectory $segmentEvidenceRoot -OutPath (Join-Path $segmentMergeRoot "$platform-typed-damaged.json") | Out-Null } @('*not valid with the schema*',"Affected-validation segment evidence fails its closed schema: $($firstSegmentFile.Name)") "Affected-validation $platform segment merger accepted inconsistent typed failure data."
             Write-Utf8 $firstSegmentFile.FullName $firstSegmentOriginal
             $combinedStreamDamage=$firstSegmentOriginal|ConvertFrom-Json -Depth 64 -DateKind String
             $combinedStreamDamage.check_results[0].stdout_bytes=6291456;$combinedStreamDamage.check_results[0].stderr_bytes=5242880

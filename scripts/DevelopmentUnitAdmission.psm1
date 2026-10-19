@@ -8,6 +8,37 @@ Import-Module (Join-Path $PSScriptRoot 'ToolingContextProvenance.psm1')
 function Copy-AdmissionValue { param([object]$Value) return ($Value | ConvertTo-Json -Depth 64 | ConvertFrom-Json) }
 function Get-AdmissionTransactionId { param([string]$AdmissionId) "$AdmissionId-admitted-transition" }
 function Get-AdmissionEventId { param([string]$AdmissionId) "$AdmissionId-admitted" }
+function Assert-AdmissionInstructionDeclaration {
+    param([object]$Unit,[object]$Lifecycle)
+    # Authored declarations only: completion, path/source observation and
+    # transition-specific review compatibility remain ordinary Ready guards.
+    $surfaces=@($Unit.instruction_surfaces)
+    $impact=[string]$Unit.instruction_impact
+    if($impact-ceq'none'){
+        if($surfaces.Count-ne0-or[string]::IsNullOrWhiteSpace([string]$Unit.instruction_none_justification)){
+            throw 'Admission instruction declaration: none requires no surfaces and an explicit justification.'
+        }
+    }elseif($surfaces.Count-eq0-or-not[string]::IsNullOrWhiteSpace([string]$Unit.instruction_none_justification)){
+        throw 'Admission instruction declaration: review/update requires surfaces and no none justification.'
+    }
+    $aliases=@{};foreach($row in @($Lifecycle.change_category_aliases)){$aliases[[string]$row.alias]=[string]$row.canonical}
+    $categories=@($Unit.change_categories|ForEach-Object{if($aliases.ContainsKey([string]$_)){$aliases[[string]$_]}else{[string]$_}})
+    $triggered=@($categories|Where-Object{@($Lifecycle.instruction_sync.trigger_categories)-ccontains$_}|Sort-Object -Unique)
+    if($triggered.Count-eq0-and$impact-ceq'none'){return}
+    $mode=if($Unit.PSObject.Properties.Name-ccontains'work_mode'){[string]$Unit.work_mode}else{'feature'}
+    $expected=if($mode-ceq'validation-only'-or@($surfaces|Where-Object{[string]$_.action-ceq'update'}).Count-eq0){'review'}else{'update'}
+    if($impact-cne$expected){throw "Admission instruction declaration: instruction-impact-mode-mismatch (expected '$expected')."}
+    if($triggered.Count-eq0){return}
+    if(@($surfaces|Where-Object{[string]$_.surface_kind-ceq'agents'}).Count-eq0){throw 'Admission instruction declaration: nearest AGENTS surface is required.'}
+    if(@($surfaces|Where-Object{[string]$_.surface_kind-cin@('readme','router-doc')}).Count-eq0){throw 'Admission instruction declaration: README or router-doc surface is required.'}
+    if($mode-ceq'validation-only'-and@($surfaces|Where-Object{[string]$_.surface_kind-cin@('agents','readme','router-doc')-and[string]$_.action-cne'review-no-change'}).Count-gt0){
+        throw 'Admission instruction declaration: validation-only required entrypoints must use review-no-change.'
+    }
+    $skills=@($Lifecycle.instruction_sync.skill_routing|Where-Object{$triggered-ccontains[string]$_.change_category}|ForEach-Object{$_.skill_ids}|Sort-Object -Unique)
+    foreach($skill in $skills){
+        if(@($surfaces|Where-Object{[string]$_.surface_kind-ceq'skill'-and[string]$_.skill_id-ceq[string]$skill}).Count-ne1){throw "Admission instruction declaration: one routed skill surface is required for '$skill'."}
+    }
+}
 function Assert-AdmissionJson { param([string]$Path,[string]$Schema,[string]$Message) if (-not (Test-Json -Json (Get-Content -Raw -LiteralPath $Path) -SchemaFile $Schema)) { throw $Message } }
 function Get-AdmissionFileHash { param([string]$Workspace,[string]$Relative) Get-MorphospaceFileSha256 (Resolve-MorphospaceWorkspacePath $Workspace $Relative -RequireLeaf) }
 function Test-AdmissionHasToolingContext { param([object]$Value) $null-ne$Value-and$Value.PSObject.Properties.Name-ccontains'tooling_context' }
@@ -193,6 +224,10 @@ function Invoke-MorphospaceAdmitDevelopmentUnit {
     $admission=Read-MorphospaceProtocolJson $input;$inputHash=Get-MorphospaceFileSha256 $input;$unitPath="iteration-units/$([string]$admission.unit_id).json";$outRelative="receipts/$([string]$admission.admission_id).json";$outFull=Resolve-MorphospaceWorkspacePath $workspace $outRelative
     if(-not(Test-Json -Json ($admission.agent_scope_assessment|ConvertTo-Json -Depth 64) -SchemaFile (Join-Path $repoRoot 'schemas\agent-scope-assessment-v1.schema.json'))){throw 'Admission agent scope assessment does not satisfy its schema.'}
     if(-not(Test-Json -Json ($admission.unit|ConvertTo-Json -Depth 64) -SchemaFile (Join-Path $repoRoot 'schemas\iteration-unit.schema.json'))){throw 'Admission unit does not satisfy the iteration-unit schema.'}
+    $instructionIntent=Invoke-AdmissionLedger {param($Root,$Id) Resolve-MorphospaceWorkspacePath $Root (Get-MorphospaceLedgerPath $Root $Id intent)} @($workspace,(Get-AdmissionTransactionId ([string]$admission.admission_id)))
+    if(-not[IO.File]::Exists($instructionIntent)){
+        Assert-AdmissionInstructionDeclaration $admission.unit (Read-MorphospaceProtocolJson (Join-Path $repoRoot 'manifests/workflow-lifecycle.portable.json'))
+    }
     $project=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace 'project.spec.json' -RequireLeaf);$state=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace 'workspace.state.json' -RequireLeaf);$lockDoc=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace 'feature.lock.json' -RequireLeaf)
     $eventPath=Resolve-MorphospaceWorkspacePath $workspace 'iteration-events.jsonl' -RequireLeaf;$eventLines=@(Get-Content $eventPath|Where-Object{$_});if($eventLines.Count-lt1){throw 'Admission requires a non-empty predecessor ledger.'};$tail=($eventLines[-1]|ConvertFrom-Json)
     if([string]$project.project_id -cne [string]$admission.project_id -or [string]$state.project_id -cne [string]$admission.project_id -or [string]$admission.unit.project_id -cne [string]$admission.project_id -or [string]$admission.unit.unit_id -cne [string]$admission.unit_id){throw 'Admission project and unit identities must exactly agree.'}
