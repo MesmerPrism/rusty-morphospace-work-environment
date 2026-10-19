@@ -68,6 +68,16 @@ lists, scopes, and pre-protocol transaction shapes are historical audit concerns
 not prerequisites for unrelated new work. No per-unit compatibility receipt is
 required merely to continue from this boundary.
 
+A tooling-bound active predecessor authenticated through the exact ordered
+supersession chain to the current owner remains immutable source evidence. Its
+aggregate provenance check authenticates the preparation/admission, context and
+resolver pins, product projection and historical executor blob inventory without
+executing an action from that predecessor's checkout. This applies only to the
+current-history classifier's authenticated superseded set; current, next-ready,
+required-prerequisite, resurrected or tampered units receive no exception. Actual
+owner actions still attest the exact bound checkout and loaded owner modules.
+No context pointer, source lock or historical byte is changed by this read.
+
 Current ownership, queued work, blockers, pending publication, source identities,
 instruction requirements, scope intersections, compare-and-swap preimages, and
 incomplete current transactions remain strict. Transactions after the boundary
@@ -132,9 +142,11 @@ transaction, its installed automation receipt and original SHA-bound request,
 the byte-exact old unit, the proposed-to-active replacement preimage, and the
 unique chain into the current unit. The old endpoint must be neither current,
 next-ready, nor a prerequisite. This is only a read-only classification of that
-one obsolete scope declaration. It does not make the old unit accepted or
-historical, grant validation credit, defer any other structural error, or relax
-the replacement unit's current scope checks.
+obsolete scope declaration and the minimum authority rank of a known guard
+profile. Guard-profile vocabulary remains strict. The old profile grants no
+current authority, validation credit or acceptance, and the classification does
+not relax current or next-ready ownership, prerequisite guards, any other
+structural error, or the replacement unit's current scope and guard checks.
 
 Preparation uses this same boundary automatically. Archive checkpoint admission
 also recognizes retired lifecycle identities while copying the original bytes.

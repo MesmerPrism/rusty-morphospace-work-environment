@@ -2116,7 +2116,20 @@ function Test-ProjectBundle {
             try{
                 if($unit.PSObject.Properties.Name-contains'tooling_context'){
                     $module=Import-Module (Join-Path $RepoRoot 'scripts/DevelopmentEnvelopeProvenance.psm1') -PassThru
-                    [void](&$module {param($root,$id) Get-MorphospaceUnitToolingContextObservation -WorkspaceRoot $root -UnitId $id -Action Inspect} $workspaceRoot ([string]$unit.unit_id))
+                    $authenticatedSupersededTooling = (
+                        $null -ne $currentHistory -and $currentHistory.authenticated -eq $true -and
+                        $currentHistory.authenticated_superseded_scope_conflict_ids.Contains([string]$unit.unit_id)
+                    )
+                    [void](&$module {
+                        param($root,$id,[bool]$preservedPredecessorData)
+                        if ($preservedPredecessorData) {
+                            # Authenticate preserved data without claiming an action
+                            # from its separately bound executor checkout.
+                            Get-MorphospaceUnitToolingContextProvenance -WorkspaceRoot $root -UnitId $id
+                        } else {
+                            Get-MorphospaceUnitToolingContextObservation -WorkspaceRoot $root -UnitId $id -Action Inspect
+                        }
+                    } $workspaceRoot ([string]$unit.unit_id) $authenticatedSupersededTooling)
                 }elseif($unit.PSObject.Properties.Name-contains'agent_scope_assessment'-and$unit.PSObject.Properties.Name-contains'source_composition'-and[string]$unit.source_composition.mode-ceq'exact-lock'){
                     $sourcePath=& $script:ProtocolCommonModule.ExportedCommands['Resolve-MorphospaceWorkspacePath'] $workspaceRoot ([string]$unit.source_composition.lock_path) -RequireLeaf
                     $source=& $script:ProtocolCommonModule.ExportedCommands['Read-MorphospaceProtocolJson'] $sourcePath
@@ -2169,7 +2182,14 @@ function Test-ProjectBundle {
             } elseif (@($effectiveChangeCategories | Where-Object { $labsCategories -contains $_ }).Count -gt 0) {
                 $minimumGuardRank = 1
             }
-            Assert-Contract ([int]$guardRanks[$guardProfile] -ge $minimumGuardRank) "$Context unit '$($unit.unit_id)' guard profile '$guardProfile' is below the required authority level."
+            # Only the obsolete lower bound may be classified after the exact
+            # immutable SupersedeActive chain; vocabulary and all other checks
+            # remain strict, including current/next and prerequisite authority.
+            $authenticatedSupersededGuardProfile = (
+                $null -ne $currentHistory -and $currentHistory.authenticated -eq $true -and
+                $currentHistory.authenticated_superseded_scope_conflict_ids.Contains([string]$unit.unit_id)
+            )
+            Assert-Contract ([int]$guardRanks[$guardProfile] -ge $minimumGuardRank -or $authenticatedSupersededGuardProfile) "$Context unit '$($unit.unit_id)' guard profile '$guardProfile' is below the required authority level."
         }
         $script:FailureAttribution = $historicalDebtIneligibleAttribution
         Assert-Contract (@($unit.validation).Count -gt 0) "$Context unit '$($unit.unit_id)' needs validation commands."

@@ -16,7 +16,7 @@ function Get-ScopeBytesHash([byte[]]$Value){&$protocol {param($v)Get-Morphospace
 function Invoke-ScopePrivate([object]$Module,[scriptblock]$Script,[object[]]$Arguments){&$Module $Script $Arguments}
 function Copy-ScopeValue([object]$Value){$Value|ConvertTo-Json -Depth 100|ConvertFrom-Json -DateKind String}
 
-function New-ScopeUnit([string]$Id,[string]$Status,[switch]$Overlap,[string[]]$Prerequisites=@()){
+function New-ScopeUnit([string]$Id,[string]$Status,[switch]$Overlap,[string[]]$Prerequisites=@(),[switch]$LowGuard){
     $unit=[ordered]@{
         schema='rusty.morphospace.workflow.iteration_unit.v1';unit_id=$Id;project_id='scope-conflict-test';status=$Status
         objective="Exercise authenticated supersession history for $Id.";change_categories=@('implementation')
@@ -27,6 +27,7 @@ function New-ScopeUnit([string]$Id,[string]$Status,[switch]$Overlap,[string[]]$P
         risk_tier='quick';device_requirement='none';validation=@([ordered]@{profile_id='quick';command='Test-SupersededScopeConflict.ps1 -SelfTest'})
         outputs=@('One focused synthetic result.');commit_policy='Synthetic fixture only.';push_checkpoint='none'
     }
+    if($LowGuard){$unit.guard_profile='labs';$unit.change_categories=@('state-machine')}
     if($Overlap){$unit.read_only_dependencies=@([ordered]@{repo_id='source-repo';paths=@('src/feature.rs');purpose='Preserved obsolete declaration.';verification='Authenticated exact supersession only.'})}
     [pscustomobject]$unit
 }
@@ -62,13 +63,13 @@ function Invoke-ScopeSupersession([string]$Workspace,[string]$OldId,[string]$New
     Invoke-MorphospaceSupersedeActive -WorkspaceRoot $Workspace -UnitId $NewId -RepoMapPath (Join-Path $Workspace 'repository-map.json') -ActiveUnitSupersession $requestPath -ExpectedActiveUnitSupersessionSha256 (Get-ScopeFileHash $requestPath) -OutPath (Join-Path $Workspace "receipts/$id-automation.json") -Timestamp $Timestamp -Execute|Out-Null
 }
 
-function New-ScopeWorkspace([string]$Root,[string]$Name,[string]$Source,[switch]$Accepted,[string[]]$ExtraIds=@()){
+function New-ScopeWorkspace([string]$Root,[string]$Name,[string]$Source,[switch]$Accepted,[string[]]$ExtraIds=@(),[switch]$LowGuard){
     $workspace=Join-Path $Root $Name
     [IO.Directory]::CreateDirectory((Join-Path $workspace 'iteration-units'))|Out-Null
     [IO.Directory]::CreateDirectory((Join-Path $workspace 'receipts'))|Out-Null
     Write-ScopeJson (Join-Path $workspace 'project.spec.json') ([ordered]@{schema='test';project_id='scope-conflict-test'})
     Write-ScopeJson (Join-Path $workspace 'repository-map.json') ([ordered]@{'$schema'='fixture';schema='rusty.morphospace.workflow.repository_map.v1';repositories=@([ordered]@{repo_id='source-repo';path=$Source;role='source'})})
-    Write-ScopeJson (Join-Path $workspace 'iteration-units/unit-old.json') (New-ScopeUnit unit-old active -Overlap)
+    Write-ScopeJson (Join-Path $workspace 'iteration-units/unit-old.json') (New-ScopeUnit unit-old active -Overlap -LowGuard:$LowGuard)
     Write-ScopeJson (Join-Path $workspace 'iteration-units/unit-new.json') (New-ScopeUnit unit-new proposed)
     foreach($id in $ExtraIds){Write-ScopeJson (Join-Path $workspace "iteration-units/$id.json") (New-ScopeUnit $id proposed)}
     if(-not$Accepted){
@@ -96,6 +97,81 @@ function New-ScopeWorkspace([string]$Root,[string]$Name,[string]$Source,[switch]
 }
 
 function Get-ScopeHistory([string]$Workspace){&$history {param($w)Get-MorphospaceCurrentWorkHistory -WorkspaceRoot $w} $Workspace}
+# Exercise the actual production guard block against real owner-produced history.
+# No complete project validator or hand-authored positive history is substituted.
+$guardTokens=$null;$guardErrors=$null
+$guardAst=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'Test-WorkflowContracts.ps1'),[ref]$guardTokens,[ref]$guardErrors)
+Assert-ScopeTest (@($guardErrors).Count-eq0) 'production guard source did not parse'
+$guardBlocks=@($guardAst.FindAll({param($node)
+    $node-is[Management.Automation.Language.IfStatementAst]-and$node.Clauses.Count-eq1-and
+    $node.Clauses[0].Item1.Extent.Text-ceq'$unit.PSObject.Properties.Name -contains "guard_profile"'
+},$true))
+Assert-ScopeTest ($guardBlocks.Count-eq1) 'one exact production guard-profile block required'
+$guardBlock=[scriptblock]::Create($guardBlocks[0].Extent.Text)
+function Test-ScopeGuard([object]$Unit,[object]$CurrentHistory){
+    $script:ScopeGuardFailures=[Collections.Generic.List[string]]::new()
+    $script:GuardProfiles=@('fast','labs','locked')
+    function Assert-Contract([bool]$Condition,[string]$Message){if(-not$Condition){$script:ScopeGuardFailures.Add($Message)|Out-Null}}
+    $unit=$Unit;$currentHistory=$CurrentHistory;$effectiveChangeCategories=@($unit.change_categories);$Context='synthetic guard fixture'
+    &$guardBlock
+    return @($script:ScopeGuardFailures.ToArray())
+}
+
+# Exercise the actual aggregate dispatch and the factored production reader.
+# Preparation is mocked at its existing authenticated-proof seam: this test
+# covers dispatch, proof refusal and live binding equality, while the existing
+# tooling fixtures retain complete preparation/context/blob authentication.
+$toolingBlocks=@($guardAst.FindAll({param($node)
+    $node-is[Management.Automation.Language.IfStatementAst]-and$node.Clauses.Count-eq1-and
+    $node.Clauses[0].Item1.Extent.Text.StartsWith("@('proposed','ready','active','validating')",[StringComparison]::Ordinal)-and
+    $node.Extent.Text.Contains('current development provenance failed',[StringComparison]::Ordinal)
+},$true))
+Assert-ScopeTest ($toolingBlocks.Count-eq1) 'one production development-provenance dispatch block required'
+$toolingBlock=[scriptblock]::Create($toolingBlocks[0].Extent.Text)
+$provenanceTokens=$null;$provenanceErrors=$null
+$provenanceAst=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'DevelopmentEnvelopeProvenance.psm1'),[ref]$provenanceTokens,[ref]$provenanceErrors)
+Assert-ScopeTest (@($provenanceErrors).Count-eq0) 'production provenance reader source did not parse'
+$readerFunctions=@($provenanceAst.FindAll({param($node)
+    $node-is[Management.Automation.Language.FunctionDefinitionAst]-and
+    @('Get-MorphospaceUnitToolingContextProvenance','Get-MorphospaceUnitToolingContextObservation')-ccontains$node.Name
+},$true))
+Assert-ScopeTest ($readerFunctions.Count-eq2) 'exact production provenance and strict observation functions required'
+$script:ScopeToolingHarness=New-Module -ArgumentList $protocol.Path,@($readerFunctions|ForEach-Object{$_.Name;$_.Body.Extent.Text}) -ScriptBlock {
+    param($ProtocolPath,$Definitions)
+    Import-Module $ProtocolPath
+    for($i=0;$i-lt$Definitions.Count;$i+=2){Set-Item -Path "Function:script:$($Definitions[$i])" -Value ([scriptblock]::Create($Definitions[$i+1].Substring(1,$Definitions[$i+1].Length-2)))}
+    $script:Proof=$null;$script:ProofRefused=$false;$script:ProofCalls=0;$script:ExecutorCalls=0
+    function Test-MorphospaceDevelopmentUnitPreparation {
+        param($WorkspaceRoot,$Admission,$Phase,[switch]$ReadOnlyReady)
+        $script:ProofCalls++
+        if($Phase-cne'Freeze'-or-not$ReadOnlyReady){throw 'fixture requires the unchanged read-only prepared-proof route'}
+        if($script:ProofRefused){throw 'fixture authenticated prepared proof refused'}
+        return $script:Proof
+    }
+    function Assert-MorphospaceToolingContextExecutor {
+        param($WorkspaceRoot,$Binding,$Action,$OwnerModule)
+        $script:ExecutorCalls++
+        throw 'fixture owner action is outside its exact bound tooling checkout'
+    }
+    Export-ModuleMember -Function Get-MorphospaceUnitToolingContextProvenance,Get-MorphospaceUnitToolingContextObservation
+}
+function Test-ScopeToolingDispatch([object]$Unit,[object]$CurrentHistory,[string]$Workspace){
+    $script:ScopeToolingFailures=[Collections.Generic.List[string]]::new()
+    function Add-Failure([string]$Message){$script:ScopeToolingFailures.Add($Message)|Out-Null}
+    function Import-Module {param([string]$Name,[switch]$PassThru) return $script:ScopeToolingHarness}
+    $unit=$Unit;$currentHistory=$CurrentHistory;$workspaceRoot=$Workspace;$Context='synthetic tooling fixture'
+    $RepoRoot=$repoRoot;$RepositoryMapPath=Join-Path $Workspace 'repository-map.json'
+    &$toolingBlock
+    return @($script:ScopeToolingFailures.ToArray())
+}
+function Reset-ScopeToolingCalls {&$script:ScopeToolingHarness {$script:ProofCalls=0;$script:ExecutorCalls=0}}
+function Assert-ScopeToolingDispatch([object]$Unit,[object]$CurrentHistory,[string]$Workspace,[bool]$Pure,[string]$Case){
+    Reset-ScopeToolingCalls
+    $failures=@(Test-ScopeToolingDispatch $Unit $CurrentHistory $Workspace)
+    $counts=&$script:ScopeToolingHarness { @($script:ProofCalls,$script:ExecutorCalls) }
+    Assert-ScopeTest ($counts[0]-eq1-and$counts[1]-eq$(if($Pure){0}else{1})-and$failures.Count-eq$(if($Pure){0}else{1})) "$Case selected the wrong data/action provenance route"
+}
+
 function Copy-ScopeWorkspace([string]$Source,[string]$Root,[string]$Name){$target=Join-Path $Root $Name;Copy-Item -LiteralPath $Source -Destination $target -Recurse;return $target}
 
 if(-not$SelfTest){throw 'Test-SupersededScopeConflict requires -SelfTest.'}
@@ -110,7 +186,7 @@ try{
     &git -C $source init|Out-Null;&git -C $source config user.email fixture@example.invalid;&git -C $source config user.name Fixture;&git -C $source add src/feature.rs;&git -C $source commit -m fixture|Out-Null
     [IO.File]::WriteAllText((Join-Path $source 'src/feature.rs'),('owned overlay'+[char]10),[Text.UTF8Encoding]::new($false))
 
-    $before=New-ScopeWorkspace $temp before $source -Accepted
+    $before=New-ScopeWorkspace $temp before $source -Accepted -LowGuard
     $plain=Get-ScopeHistory $before
     Assert-ScopeTest ($plain.authenticated-and-not$plain.authenticated_superseded_scope_conflict_ids.Contains('unit-old')) 'an accepted boundary without SupersedeActive admitted the old unit'
 
@@ -118,17 +194,39 @@ try{
     Invoke-ScopeSupersession $positive unit-old unit-new '2026-09-08T08:03:00.0000000Z'
     $projected=Get-ScopeHistory $positive
     Assert-ScopeTest ($projected.authenticated_superseded_scope_conflict_ids.Contains('unit-old')-and-not$projected.historical_ids.Contains('unit-old')) 'the exact supported handoff was not classified without historical credit'
+    $lowOld=Read-ScopeJson (Join-Path $positive 'iteration-units/unit-old.json')
+    Assert-ScopeTest (@(Test-ScopeGuard $lowOld $projected).Count-eq0) 'a known obsolete labs profile failed after exact authenticated handoff'
+    Assert-ScopeTest (@(Test-ScopeGuard $lowOld $null).Count-eq1) 'full historical audit without current history gained the minimum-rank exception'
+    Assert-ScopeTest (@(Test-ScopeGuard $lowOld $plain).Count-eq1) 'accepted history without supersession gained the minimum-rank exception'
+    $unauthenticated=Get-ScopeHistory (New-ScopeWorkspace $temp guard-no-boundary $source -LowGuard)
+    Assert-ScopeTest (@(Test-ScopeGuard $lowOld $unauthenticated).Count-eq1) 'unauthenticated current history gained the minimum-rank exception'
+    $lowCurrent=Read-ScopeJson (Join-Path $positive 'iteration-units/unit-new.json')
+    $lowCurrent|Add-Member -NotePropertyName guard_profile -NotePropertyValue labs -Force;$lowCurrent.change_categories=@('state-machine')
+    Assert-ScopeTest (@(Test-ScopeGuard $lowCurrent $projected).Count-eq1) 'the current owner gained obsolete predecessor authority'
+    $unknown=Copy-ScopeValue $lowOld;$unknown.guard_profile='unknown'
+    $unknownFailures=@(Test-ScopeGuard $unknown $projected)
+    Assert-ScopeTest ($unknownFailures.Count-eq1-and$unknownFailures[0]-like'*unknown guard profile*') 'unknown profile vocabulary was deferred with the obsolete minimum'
+
+    $queued=Copy-ScopeWorkspace $positive $temp guard-next-ready
+    $queuedState=Read-ScopeJson (Join-Path $queued 'workspace.state.json');$queuedState.next_ready_unit='unit-old';$queuedState.last_event_id='unit-old-queued-0005'
+    $queuedEvent=[ordered]@{schema='rusty.morphospace.workflow.iteration_event.v1';event_id='unit-old-queued-0005';sequence=5;timestamp='2026-09-08T08:04:00.0000000Z';project_id='scope-conflict-test';unit_id='unit-new';event_type='state-transition';summary='Negative fixture queues the preserved predecessor.';receipts=@()}
+    Start-ScopeTransition $queued 'unit-old-queued-0005-transition' unit-new $queuedState (Read-ScopeJson (Join-Path $queued 'iteration-units/unit-new.json')) $queuedEvent
+    $queuedHistory=Get-ScopeHistory $queued
+    Assert-ScopeTest (-not$queuedHistory.authenticated_superseded_scope_conflict_ids.Contains('unit-old')-and@(Test-ScopeGuard $lowOld $queuedHistory).Count-eq1) 'a next-ready predecessor gained the minimum-rank exception'
+
 
     $raw=Copy-ScopeWorkspace $positive $temp raw-tamper
     $oldPath=Join-Path $raw 'iteration-units/unit-old.json';$oldDocument=Read-ScopeJson $oldPath
     [IO.File]::WriteAllText($oldPath,(($oldDocument|ConvertTo-Json -Depth 100 -Compress)+[char]10),[Text.UTF8Encoding]::new($false))
     Assert-ScopeTest (-not(Get-ScopeHistory $raw).authenticated_superseded_scope_conflict_ids.Contains('unit-old')) 'raw predecessor tamper retained the exception'
+    Assert-ScopeTest (@(Test-ScopeGuard $lowOld (Get-ScopeHistory $raw)).Count-eq1) 'raw predecessor tamper retained the minimum-rank exception'
 
     $chain=Copy-ScopeWorkspace $positive $temp chained-positive
     Write-ScopeJson (Join-Path $chain 'iteration-units/unit-final.json') (New-ScopeUnit unit-final proposed)
     Invoke-ScopeSupersession $chain unit-new unit-final '2026-09-08T08:04:00.0000000Z'
     $chainHistory=Get-ScopeHistory $chain
     Assert-ScopeTest ($chainHistory.authenticated_superseded_scope_conflict_ids.Contains('unit-old')-and$chainHistory.authenticated_superseded_scope_conflict_ids.Contains('unit-new')) 'an ordered unique supersession chain did not reach the current owner'
+    Assert-ScopeTest (@(Test-ScopeGuard $lowOld $chainHistory).Count-eq0) 'an ordered unique chain lost obsolete minimum-rank classification'
 
     $prerequisite=Copy-ScopeWorkspace $positive $temp prerequisite
     $dependent=Read-ScopeJson (Join-Path $prerequisite 'iteration-units/unit-new.json');$dependent.prerequisites=@('unit-old');Write-ScopeJson (Join-Path $prerequisite 'iteration-units/unit-new.json') $dependent
@@ -163,7 +261,62 @@ try{
     $rejected=$false;try{Get-ScopeHistory $structural|Out-Null}catch{$rejected=$true}
     Assert-ScopeTest $rejected 'unrelated event-sequence damage was deferred'
 
-    [pscustomobject][ordered]@{status='pass';check='superseded-scope-conflict';positive=@('exact-owner-supersession','ordered-unique-chain');negative_cases=@('no-supersession','raw-old-tamper','no-accepted-boundary','prerequisite','converging-predecessors','resurrection','unrelated-structural-damage')}|ConvertTo-Json -Depth 8
+    $toolingWorkspace=Join-Path $temp 'tooling-reader'
+    $binding=[pscustomobject]@{path='tooling-contexts/old.json';sha256=('a'*64);canonical_sha256=('b'*64);protocol_id='tooling-context-v1'}
+    $toolingOld=Copy-ScopeValue $lowOld;$toolingOld|Add-Member -NotePropertyName tooling_context -NotePropertyValue $binding
+    $toolingCurrent=Copy-ScopeValue $lowCurrent;$toolingCurrent|Add-Member -NotePropertyName tooling_context -NotePropertyValue $binding
+    foreach($u in @($toolingOld,$toolingCurrent)){
+        Write-ScopeJson (Join-Path $toolingWorkspace "iteration-units/$($u.unit_id).json") $u
+        Write-ScopeJson (Join-Path $toolingWorkspace "receipts/$($u.unit_id)-admitted.json") ([pscustomobject]@{schema='rusty.morphospace.workflow.development_unit_admission.v1';unit_id=$u.unit_id})
+    }
+    &$script:ScopeToolingHarness {param($b)$script:Proof=[pscustomobject]@{tooling_context=[pscustomobject]@{binding=$b;document=[pscustomobject]@{fixture='authenticated prepared context'}}}} $binding
+    Assert-ScopeToolingDispatch $toolingOld $projected $toolingWorkspace $true 'exact authenticated superseded predecessor'
+    Assert-ScopeToolingDispatch $toolingOld $chainHistory $toolingWorkspace $true 'ordered authenticated successor chain'
+    $unauthenticatedProjected=$projected.PSObject.Copy();$unauthenticatedProjected.authenticated=$false
+    Assert-ScopeTest ($projected.authenticated-and$unauthenticatedProjected.authenticated_superseded_scope_conflict_ids.Contains('unit-old')) 'unauthenticated clone lost the original classified ID or changed its source history'
+    Assert-ScopeToolingDispatch $toolingOld $unauthenticatedProjected $toolingWorkspace $false 'unauthenticated history retaining the classified ID'
+    Assert-ScopeToolingDispatch $toolingOld $null $toolingWorkspace $false 'full audit without current history'
+    Assert-ScopeToolingDispatch $toolingOld $plain $toolingWorkspace $false 'no supersession'
+    Assert-ScopeToolingDispatch $toolingOld $unaccepted $toolingWorkspace $false 'no accepted boundary'
+    Assert-ScopeToolingDispatch $toolingCurrent $projected $toolingWorkspace $false 'current owner'
+    Assert-ScopeToolingDispatch $toolingOld $queuedHistory $toolingWorkspace $false 'next-ready predecessor'
+    Assert-ScopeToolingDispatch $toolingOld (Get-ScopeHistory $raw) $toolingWorkspace $false 'raw predecessor tamper'
+    Assert-ScopeToolingDispatch $toolingOld (Get-ScopeHistory $resurrected) $toolingWorkspace $false 'resurrected predecessor'
+    Assert-ScopeToolingDispatch $toolingOld $convergedHistory $toolingWorkspace $false 'ambiguous converging predecessors'
+
+    # A rejected prepared proof and a detached live pointer still refuse even
+    # when the independent supersession classifier selected the DATA route.
+    &$script:ScopeToolingHarness {$script:ProofRefused=$true}
+    $proofFailures=@(Test-ScopeToolingDispatch $toolingOld $projected $toolingWorkspace)
+    Assert-ScopeTest ($proofFailures.Count-eq1-and$proofFailures[0]-like'*authenticated prepared proof refused*') 'prepared-proof refusal was suppressed for preserved data'
+    &$script:ScopeToolingHarness {$script:ProofRefused=$false}
+    $detached=Copy-ScopeValue $toolingOld;$detached.tooling_context.sha256=('c'*64)
+    Write-ScopeJson (Join-Path $toolingWorkspace 'iteration-units/unit-old.json') $detached
+    $pointerFailures=@(Test-ScopeToolingDispatch $detached $projected $toolingWorkspace)
+    Assert-ScopeTest ($pointerFailures.Count-eq1-and$pointerFailures[0]-like'*authenticated continuation*') 'detached live tooling pointer was accepted by the pure reader'
+    Write-ScopeJson (Join-Path $toolingWorkspace 'iteration-units/unit-old.json') $toolingOld
+
+    Write-ScopeJson (Join-Path $toolingWorkspace 'receipts/unit-old-duplicate.json') ([pscustomobject]@{schema='rusty.morphospace.workflow.development_unit_admission.v1';unit_id='unit-old'})
+    $admissionFailures=@(Test-ScopeToolingDispatch $toolingOld $projected $toolingWorkspace)
+    Assert-ScopeTest ($admissionFailures.Count-eq1-and$admissionFailures[0]-like'*one exact owner admission*') 'ambiguous admission was accepted by the pure reader'
+    [IO.File]::Delete((Join-Path $toolingWorkspace 'receipts/unit-old-duplicate.json'))
+
+    Write-ScopeJson (Join-Path $toolingWorkspace 'iteration-units/unit-ordinary.json') (New-ScopeUnit unit-ordinary active)
+    Reset-ScopeToolingCalls
+    $ordinaryResult=&$script:ScopeToolingHarness {param($w)Get-MorphospaceUnitToolingContextObservation -WorkspaceRoot $w -UnitId unit-ordinary -Action Inspect} $toolingWorkspace
+    $ordinaryCalls=&$script:ScopeToolingHarness { @($script:ProofCalls,$script:ExecutorCalls) }
+    Assert-ScopeTest ($null-eq$ordinaryResult-and$ordinaryCalls[0]-eq0-and$ordinaryCalls[1]-eq0) 'ordinary unit acquired a tooling context or executor requirement'
+
+    # Calling the public action reader directly never acquires the aggregate's
+    # classification. Every action still reaches the exact executor assertion.
+    foreach($action in @('Inspect','Ready','Claim','FreezeCandidate')){
+        Reset-ScopeToolingCalls;$actionRefused=$false
+        try{&$script:ScopeToolingHarness {param($w,$a)Get-MorphospaceUnitToolingContextObservation -WorkspaceRoot $w -UnitId unit-old -Action $a} $toolingWorkspace $action|Out-Null}catch{$actionRefused=$_.Exception.Message-like'*outside its exact bound tooling checkout*'}
+        $calls=&$script:ScopeToolingHarness { @($script:ProofCalls,$script:ExecutorCalls) }
+        Assert-ScopeTest ($actionRefused-and$calls[0]-eq1-and$calls[1]-eq1) "strict $action observation bypassed executor attestation"
+    }
+
+    [pscustomobject][ordered]@{status='pass';check='superseded-scope-conflict';positive=@('exact-owner-supersession','ordered-unique-chain','known-obsolete-labs-minimum','superseded-tooling-data-provenance','ordinary-unit-null-observation');guard_negative_cases=@('no-current-history','no-supersession','unauthenticated-history','current-owner','next-ready-owner','unknown-profile-vocabulary','raw-old-tamper');tooling_negative_cases=@('no-current-history','no-supersession','no-accepted-boundary','unauthenticated-classified-history','current-owner','next-ready-owner','raw-old-tamper','resurrection','convergence','prepared-proof-refusal','detached-context-pointer','ambiguous-admission','representative-direct-owner-actions');negative_cases=@('no-supersession','raw-old-tamper','no-accepted-boundary','prerequisite','converging-predecessors','resurrection','unrelated-structural-damage')}|ConvertTo-Json -Depth 8
 }finally{
     if(Test-Path -LiteralPath $temp){
         $item=Get-Item -LiteralPath $temp -Force

@@ -515,8 +515,8 @@ function Test-MorphospaceEffectiveDevelopmentEnvelope {
   extensions=@($continuation.extensions);tooling_upgrades=@($continuation.tooling_upgrades);continuation=$continuation
  }
 }
-function Get-MorphospaceUnitToolingContextObservation {
- [CmdletBinding()]param([Parameter(Mandatory)][string]$WorkspaceRoot,[Parameter(Mandatory)][string]$UnitId,[Parameter(Mandatory)][string]$Action,[Management.Automation.PSModuleInfo]$OwnerModule=$null)
+function Get-MorphospaceUnitToolingContextProvenance {
+ [CmdletBinding()]param([Parameter(Mandatory)][string]$WorkspaceRoot,[Parameter(Mandatory)][string]$UnitId)
  $workspace=[IO.Path]::GetFullPath($WorkspaceRoot)
  $unit=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace "iteration-units/$UnitId.json" -RequireLeaf)
  if(-not($unit.PSObject.Properties.Name-contains'tooling_context')){return $null}
@@ -529,8 +529,14 @@ function Get-MorphospaceUnitToolingContextObservation {
  if($null-eq$proof.tooling_context){throw 'Tooling execution is detached from its prepared protocol.'}
  $observation=$proof.tooling_context
  if((Get-MorphospaceCanonicalJsonSha256 $unit.tooling_context)-cne(Get-MorphospaceCanonicalJsonSha256 $observation.binding)){throw 'Tooling execution did not resolve the live unit through its authenticated continuation.'}
+ return $observation
+}
+function Get-MorphospaceUnitToolingContextObservation {
+ [CmdletBinding()]param([Parameter(Mandatory)][string]$WorkspaceRoot,[Parameter(Mandatory)][string]$UnitId,[Parameter(Mandatory)][string]$Action,[Management.Automation.PSModuleInfo]$OwnerModule=$null)
+ $observation=Get-MorphospaceUnitToolingContextProvenance -WorkspaceRoot $WorkspaceRoot -UnitId $UnitId
+ if($null-eq$observation){return $null}
  if($null-eq$OwnerModule){$OwnerModule=$MyInvocation.MyCommand.Module}
- [void](Assert-MorphospaceToolingContextExecutor -WorkspaceRoot $workspace -Binding $observation.binding -Action $Action -OwnerModule $OwnerModule)
+ [void](Assert-MorphospaceToolingContextExecutor -WorkspaceRoot $WorkspaceRoot -Binding $observation.binding -Action $Action -OwnerModule $OwnerModule)
  return $observation
 }
 function Assert-MorphospaceToolingContextExecutor {
@@ -585,4 +591,4 @@ function Get-MorphospaceToolingInstructionRepositoryMap {
  $result['skill-surfaces']=[pscustomobject]@{repo_id='skill-surfaces';role='tooling';path=$skillRoot;aliases=@('skills-root')}
  return $result
 }
-Export-ModuleMember -Function Test-MorphospacePreparedDevelopmentEnvelope,Get-MorphospaceDevelopmentAdmissionKind,Test-MorphospaceDevelopmentUnitPreparation,Test-MorphospaceEffectiveDevelopmentEnvelope,Get-MorphospaceUnitToolingContextObservation,Get-MorphospaceToolingInstructionRepositoryMap,Assert-MorphospaceToolingContextExecutor
+Export-ModuleMember -Function Test-MorphospacePreparedDevelopmentEnvelope,Get-MorphospaceDevelopmentAdmissionKind,Test-MorphospaceDevelopmentUnitPreparation,Test-MorphospaceEffectiveDevelopmentEnvelope,Get-MorphospaceUnitToolingContextProvenance,Get-MorphospaceUnitToolingContextObservation,Get-MorphospaceToolingInstructionRepositoryMap,Assert-MorphospaceToolingContextExecutor
