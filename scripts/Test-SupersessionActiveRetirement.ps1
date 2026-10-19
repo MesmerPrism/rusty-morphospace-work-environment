@@ -35,10 +35,11 @@ function New-SupersessionRetirementCase {
         $seed=New-ActiveRetirementContinuationSeed -Root $Root -RepositoryRoot $repoRoot -SelfHostedReadOnlyPlanning -RetainRootDiagnostics:$RootDiagnostics -FeatureWorkMode:($SuccessorLifecycle-or$AttemptDisposition-cne'Committed')
     }
     if($Nonpass-or$SuccessorLifecycle-or$AttemptDisposition-cne'Committed'){Add-ActiveRetirementRootNonpass -Seed $seed -TestRoot $Root -ReturnToActive:($SuccessorLifecycle-or$AttemptDisposition-cne'Committed') -AttemptDisposition $AttemptDisposition}
+    if($SuccessorLifecycle){Initialize-ActiveRetirementInstructionDirtFixture $seed}
     Add-ActiveRetirementSupersession $seed 'u003' '2026-08-25T00:00:51.0000000Z' -OwnSourceLock:$SuccessorLifecycle -InstructionReview:$SuccessorLifecycle
     $mapPath=Join-Path $seed.workspace 'repository-map.json'
     if($SuccessorLifecycle){
-        Add-ActiveRetirementSupersededLifecycle $seed
+        Add-ActiveRetirementSupersededLifecycle $seed -DirtyInstructionObservation
         # A second actual attempt needs the new owner's genuine Freeze tail;
         # ReturnToActive does not authorize replaying the root's old Freeze.
         Add-ActiveRetirementSecondReturn -Seed $seed -TestRoot $Root -UnitId u003
@@ -325,6 +326,8 @@ try{
     if($selectedRetainedCase-cin@('All','SuccessorLifecycle')){
     $lifecycleCase=New-SupersessionRetirementCase -Root (Join-Path $temp 'successor-lifecycle') -SuccessorLifecycle
     Test-SupersessionOrdinaryAuthorityProjections $lifecycleCase
+    Test-ActiveRetirementDirtyInstructionSemantics $lifecycleCase
+    $checks.Add('actual-dirty-instruction-observation-retained-with-preflight-and-current-source-guards')
     $before=Get-EnvelopeWorkspaceByteInventorySha256 $lifecycleCase.workspace;$null=Invoke-SupersessionRetirement $lifecycleCase
     Assert-Envelope ($before-ceq(Get-EnvelopeWorkspaceByteInventorySha256 $lifecycleCase.workspace)) 'successor lifecycle retirement dry run wrote bytes'
     Assert-Envelope (@($lifecycleCase.request.ownership.repository_maps).Count-eq2) 'actual alternate materialization map was not joined with original root map'
@@ -347,6 +350,8 @@ try{
     $lifecycleLineage=Test-ActiveRetirementSupersessionSemantics $lifecycleCase
     $null=Invoke-SupersessionRetirement $lifecycleCase -Execute;$null=Assert-SupersessionHistory $lifecycleCase -Idle
     Test-ActiveRetirementEndpointAuthoritySemantics $lifecycleCase $lifecycleLineage
+    Test-SupersessionRetirementContinuation -Case $lifecycleCase -TestRoot (Join-Path $temp 'successor-lifecycle-later-idle') -RepositoryRoot $repoRoot
+    $checks.Add('actual-dirty-instruction-lineage-retirement-idle-prepare-admit-ready-claim-continuation')
     $checks.Add('actual-return-to-active-supersede-instruction-freeze-fresh-source-and-map-change')
     $extensionCase=New-SupersessionExtensionCase -Root (Join-Path $temp 'extension-context')
     Test-SupersessionExtensionBeforeContext $extensionCase

@@ -22,7 +22,7 @@ jobs:
   static-admission:
     name: Static admission
     runs-on: windows-latest
-    timeout-minutes: 10
+    timeout-minutes: 360
     steps:
       - name: Check out exact trusted base without credentials
         shell: pwsh

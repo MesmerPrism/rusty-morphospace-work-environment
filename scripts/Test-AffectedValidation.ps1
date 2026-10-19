@@ -3012,6 +3012,22 @@ $checks = @(
 if ($runFullSelector -or $runExecutorPassPhase) {
     Write-AffectedFixtureStage 'executor-contract-fixtures-enter'
     $workflowSource = Get-Content -LiteralPath (Join-Path $repoRoot '.github/workflows/validate.yml') -Raw
+    $timeoutDefinition = [regex]::Match($workflowSource, '(?ms)^          function Get-AffectedJobTimeoutMinutes\([^\r\n]*\) \{\r?\n.*?^          \}')
+    Assert-True $timeoutDefinition.Success 'Hosted segment timeout policy is missing its executable definition.'
+    $timeoutPolicy = [scriptblock]::Create($timeoutDefinition.Value + "`n" + 'Get-AffectedJobTimeoutMinutes -EstimatedBudgetSeconds $args[0]')
+    foreach ($estimate in @(0L, 3600L, 20700L, 86400L)) {
+        $observations = @(& $timeoutPolicy $estimate 3>&1)
+        $warnings = @($observations | Where-Object { $_ -is [Management.Automation.WarningRecord] })
+        $values = @($observations | Where-Object { $_ -isnot [Management.Automation.WarningRecord] })
+        Assert-True ($values.Count -eq 1 -and $values[0] -eq 360 -and $warnings.Count -eq [int]($estimate -ge 20700)) 'An estimated duration shortened or refused the original hosted job instead of warning.'
+    }
+    $failingWarningPolicy = [scriptblock]::Create("function Write-Warning { throw 'MODELED warning publisher failure' }`n" + $timeoutDefinition.Value + "`nGet-AffectedJobTimeoutMinutes -EstimatedBudgetSeconds 86400")
+    Assert-True ((& $failingWarningPolicy) -eq 360) 'A warning publisher failure blocked hosted job admission.'
+    foreach ($workflowText in @($workflowSource, (Get-Content -LiteralPath (Join-Path $repoRoot '.github/workflows/static-admission.yml') -Raw))) {
+        foreach ($numericTimeout in [regex]::Matches($workflowText, '(?m)^\s+timeout-minutes:\s*(\d+)\s*$')) {
+            Assert-True ($numericTimeout.Groups[1].Value -ceq '360') 'Hosted workflow uses a shorter estimated hard cutoff.'
+        }
+    }
     $workflowContractsSource = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts/Test-WorkflowContracts.ps1') -Raw
     $executorSource = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -Raw
     $phaseRunnerPath = Join-Path $repoRoot 'scripts/Invoke-AffectedValidationSelfTestPhase.ps1'
@@ -3322,7 +3338,7 @@ if ($runFullSelector -or $runExecutorPassPhase) {
     Assert-True ($deepBody.Contains('needs: [infrastructure, select, quick-linux, standard-windows]') -and $deepBody.Contains('full-history segmented Deep evidence') -and $deepBody -notmatch 'Test-WorkEnvironment') 'Scheduled/manual Deep does not bind the fresh segmented leaf evidence or still reruns the cumulative aggregate.'
     $selectBody = [string]$workflowJobs['select']
     Assert-True ($selectBody.Contains("'schedule','workflow_dispatch'") -and $selectBody.Contains("{ 'Deep' }") -and $selectBody.Contains('Get-MorphospaceAffectedValidationSegments')) 'Schedule/manual selection does not resolve the complete Deep plan and deterministic segment matrices.'
-    Assert-True ($selectBody.Contains("contains(github.event.pull_request.labels.*.name, 'validation-single-windows')") -and $selectBody.Contains('windowsBudget -gt 18000') -and $selectBody.Contains('windows_direct=')) 'Single-runner Windows fallback is not bounded to an exact opt-in label and selected budget.'
+    Assert-True ($selectBody.Contains("contains(github.event.pull_request.labels.*.name, 'validation-single-windows')") -and $selectBody.Contains('windowsBudget -gt 18000') -and $selectBody.Contains('windows_direct=') -and $selectBody.Contains('Single-runner Windows estimate exceeds') -and -not $selectBody.Contains("throw 'Requested single-runner Windows validation exceeds")) 'Single-runner Windows opt-in or advisory estimate policy changed.'
     $planUploadIndex=$selectBody.IndexOf('name: Preserve canonical-digest affected plan',[StringComparison]::Ordinal);$mappingStopIndex=$selectBody.IndexOf('name: Stop non-executable affected mapping',[StringComparison]::Ordinal)
     Assert-True ($selectBody.Contains('execution_permitted') -and $selectBody.Contains('if ([bool]$plan.execution_permitted)') -and $planUploadIndex -ge 0 -and $mappingStopIndex -gt $planUploadIndex -and $selectBody.Contains("steps.plan.outputs.execution_permitted != 'true'")) 'Mapping-incomplete workflow does not upload the canonical plan before its explicit stop.'
     foreach($segmentJob in @('affected-linux-segments','affected-windows-segments')){Assert-True ([string]$workflowJobs[$segmentJob] -match "needs\.select\.outputs\.(?:linux|windows) == 'true'") "Affected segment job '$segmentJob' can run without an executable selected platform."}

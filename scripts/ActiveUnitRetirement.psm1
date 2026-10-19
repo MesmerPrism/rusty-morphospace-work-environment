@@ -190,11 +190,14 @@ function Assert-ActiveRetirementImmutableNonpassReceipt {
 }
 
 function Set-ActiveRetirementInstructionRepositoryProjection {
-    param([object]$State,[object]$Unit,[object]$Receipt)
+    param([object]$State,[object]$Unit,[object]$Receipt,[switch]$HistoricalObservation)
     # The ledger and instruction verifier authenticate this receipt before this
     # replay. Reconstruct the producer's clean repository observation, never the
-    # target state. Dirty summaries omit porcelain bytes and cannot prove its
-    # fingerprint, so they do not acquire a new compatibility route here.
+    # target state. Ordinary replay still requires a clean observation because
+    # dirty summaries omit the porcelain bytes needed to derive a fingerprint.
+    # Supersession replay authenticates these historical observations below,
+    # then uses its existing declared-repository observation projection. It does
+    # not turn a preserved dirty summary into current source or clean evidence.
     $observed=@($Receipt.preservation.repository_states)
     $preflight=@($Receipt.claim_preflight.writable_repositories)
     $scopes=@($Unit.allowed_repositories)
@@ -209,11 +212,13 @@ function Set-ActiveRetirementInstructionRepositoryProjection {
     $dirty=@{};foreach($id in @($State.dirty_repositories)){$dirty[[string]$id]=$true}
     foreach($scope in $scopes){
         $id=[string]$scope.repo_id;$row=@($observed|Where-Object{[string]$_.repo_id-ceq$id})[0];$check=@($preflight|Where-Object{[string]$_.repo_id-ceq$id})[0]
-        if($row.available-ne$true-or$row.is_git-ne$true-or$row.dirty-ne$false-or$row.tracked_changes-ne0-or$row.untracked_changes-ne0-or
+        if($row.available-ne$true-or$row.is_git-ne$true-or
+            (-not$HistoricalObservation-and($row.dirty-ne$false-or$row.tracked_changes-ne0-or$row.untracked_changes-ne0))-or
             [string]$row.head-cnotmatch'^[0-9a-f]{40}$'-or[string]$row.tree-cnotmatch'^[0-9a-f]{40}$'-or
             $row.PSObject.Properties.Name-ccontains'workflow_transport'-or$check.mapped-ne$true-or$check.available-ne$true-or$check.is_git-ne$true-or
             [string]$row.head-cne[string]$check.head-or[string]$row.tree-cne[string]$check.tree){throw 'Active retirement instruction repository observation/preflight join is invalid.'}
         Assert-ActiveRetirementEqual @($scope.allowed_paths|ForEach-Object{([string]$_).Replace('\','/')}|Sort-Object -Unique) @($check.allowed_paths) 'instruction repository paths'
+        if($HistoricalObservation){continue}
         $heads[$id]=[pscustomobject][ordered]@{repo_id=$id;head=[string]$row.head;branch=$row.branch;dirty_fingerprint=Get-MorphospaceSha256Bytes ([byte[]]::new(0))}
         $dirty.Remove($id)
     }
@@ -252,7 +257,7 @@ function Assert-ActiveRetirementRetainedLifecycle {
         $receipt=ConvertFrom-MorphospaceProtocolJsonBytes ([Convert]::FromBase64String([string]$instruction[0].bytes_base64))
         if([string]$receipt.action-cne'CompleteInstructionSurfaces'-or$receipt.executed-ne$true-or[string]$receipt.event_id-cne[string]$Event.event_id){throw 'Active retirement instruction repository receipt is detached.'}
         if([string]$state.schema-ceq'rusty.morphospace.workflow.workspace_state.v2'){
-            Set-ActiveRetirementInstructionRepositoryProjection $state $unit $receipt
+            Set-ActiveRetirementInstructionRepositoryProjection $state $unit $receipt -HistoricalObservation:$SupersessionLineage
         }
         $unit=Copy-ActiveRetirementValue $targetUnit
     }elseif($freeze.Count-eq1){

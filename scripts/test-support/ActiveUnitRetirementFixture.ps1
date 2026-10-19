@@ -202,13 +202,33 @@ function Add-ActiveRetirementRootDiagnostics {
 }
 
 function Add-ActiveRetirementSupersededLifecycle {
-    param([object]$Seed,[string]$UnitId='u003',[string]$RepoMapPath='')
+    param([object]$Seed,[string]$UnitId='u003',[string]$RepoMapPath='',[switch]$DirtyInstructionObservation)
     $workspace=$Seed.workspace;if(-not$RepoMapPath){$RepoMapPath=Join-Path $workspace 'repository-map.json'}
     $automation=Join-Path $PSScriptRoot '../Invoke-WorkUnitAutomation.ps1';$common=@{WorkspaceRoot=$workspace;UnitId=$UnitId;RepoMapPath=$RepoMapPath;ValidationTier='quick'}
     $instruction=@{Action='CompleteInstructionSurfaces';InstructionCompletionId="$UnitId-review";OutPath=(Join-Path $workspace "receipts/$UnitId-review.json");Timestamp='2026-08-25T00:00:51.1000000Z'}
-    $before=Get-EnvelopeWorkspaceByteInventorySha256 $workspace;$dry=&$automation @common @instruction|ConvertFrom-Json
-    Assert-Envelope ($before-ceq(Get-EnvelopeWorkspaceByteInventorySha256 $workspace)) 'post-Supersede instruction dry run wrote bytes'
-    $null=&$automation @common @instruction -InstructionSurfaceIds @($dry.instruction_surface_completion.surfaces.surface_id) -ExpectedUnitSha256 $dry.instruction_surface_completion.expected_unit_sha256 -ExpectedInstructionObservationSha256 $dry.instruction_surface_completion.observation_sha256 -Execute
+    $probePath=$null;$probeBytes=$null;$untrackedPath=$null
+    if($DirtyInstructionObservation){
+        $probePath=Join-Path $Seed.dependency_repository 'dependency/instruction-observation-probe.txt'
+        $untrackedPath=Join-Path $Seed.dependency_repository 'dependency/instruction-observation-untracked.txt'
+        Assert-Envelope ((Test-Path -LiteralPath $probePath -PathType Leaf)-and-not(Test-Path -LiteralPath $untrackedPath)) 'dirty instruction fixture lacks its exact tracked probe or has an unrelated untracked probe'
+        $probeBytes=[IO.File]::ReadAllBytes($probePath)
+        [IO.File]::AppendAllText($probePath,"`nMODELED temporary tracked instruction-observation dirt.",[Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText($untrackedPath,'MODELED temporary untracked instruction-observation dirt.',[Text.UTF8Encoding]::new($false))
+    }
+    try{
+        $before=Get-EnvelopeWorkspaceByteInventorySha256 $workspace;$dry=&$automation @common @instruction|ConvertFrom-Json
+        Assert-Envelope ($before-ceq(Get-EnvelopeWorkspaceByteInventorySha256 $workspace)) 'post-Supersede instruction dry run wrote bytes'
+        $null=&$automation @common @instruction -InstructionSurfaceIds @($dry.instruction_surface_completion.surfaces.surface_id) -ExpectedUnitSha256 $dry.instruction_surface_completion.expected_unit_sha256 -ExpectedInstructionObservationSha256 $dry.instruction_surface_completion.observation_sha256 -Execute
+        if($DirtyInstructionObservation){
+            $receipt=Read-EnvelopeProtocolJson $instruction.OutPath
+            $observed=@($receipt.preservation.repository_states|Where-Object repo_id -CEQ 'read-only-dependency')
+            $preflight=@($receipt.claim_preflight.writable_repositories|Where-Object repo_id -CEQ 'read-only-dependency')
+            Assert-Envelope ($observed.Count-eq1-and$preflight.Count-eq1-and$observed[0].dirty-eq$true-and$observed[0].tracked_changes-ge1-and$observed[0].untracked_changes-ge1-and[string]$observed[0].head-ceq[string]$preflight[0].head-and[string]$observed[0].tree-ceq[string]$preflight[0].tree) 'actual CompleteInstructions did not retain genuine dirty tracked/untracked observation and matching preflight'
+        }
+    }finally{
+        if($DirtyInstructionObservation){[IO.File]::WriteAllBytes($probePath,$probeBytes);Remove-Item -LiteralPath $untrackedPath -Force}
+    }
+    if($DirtyInstructionObservation){Assert-Envelope (@(Invoke-EnvelopeGit $Seed.dependency_repository @('status','--porcelain=v1','--untracked-files=all')).Count-eq0) 'temporary instruction dirt was not restored before the genuine Freeze'}
     # Keep the reviewed input outside the source worktree. The genuine source
     # lock pins its clean proposed-input HEAD; own-planning transport stays at
     # that HEAD while real lifecycle files are written before this Freeze.
@@ -218,6 +238,66 @@ function Add-ActiveRetirementSupersededLifecycle {
     $before=Get-EnvelopeWorkspaceByteInventorySha256 $workspace;$dry=&$automation @common @call|ConvertFrom-Json
     Assert-Envelope ($before-ceq(Get-EnvelopeWorkspaceByteInventorySha256 $workspace)) 'post-Supersede Freeze dry run wrote bytes'
     $null=&$automation @common @call -ExpectedCandidateFreezeSha256 $dry.audit_receipt.sha256 -Execute
+}
+
+# A tracked file distinct from the reviewed instruction keeps that instruction's
+# bytes unchanged. Its real commit is inside the already-owned dependency/ scope,
+# before the successor's genuine source-lock writer captures the new clean HEAD.
+function Initialize-ActiveRetirementInstructionDirtFixture {
+    param([object]$Seed)
+    $relative='dependency/instruction-observation-probe.txt';$path=Join-Path $Seed.dependency_repository $relative
+    Assert-Envelope (-not(Test-Path -LiteralPath $path)) 'instruction dirt probe already exists'
+    [IO.File]::WriteAllText($path,'MODELED stable tracked source for historical observation controls.'+[Environment]::NewLine,[Text.UTF8Encoding]::new($false))
+    Invoke-EnvelopeGit $Seed.dependency_repository @('add','--',$relative)|Out-Null
+    Invoke-EnvelopeGit $Seed.dependency_repository @('commit','-qm','Retain tracked historical instruction observation probe')|Out-Null
+}
+
+# Generic ledger binding is validated before each semantic refusal, so a malformed
+# artifact/completion cannot masquerade as coverage for the historical branch.
+function Test-ActiveRetirementDirtyInstructionSemantics {
+    param([object]$Case)
+    $retirementModule=Import-Module (Join-Path $PSScriptRoot '../ActiveUnitRetirement.psm1') -PassThru
+    $lineage=Get-SupersessionSemanticLineage $Case
+    $records=@($lineage.planning_projection|Where-Object{[string]$_.event.event_id-ceq'u003-review-recorded'})
+    Assert-Envelope ($records.Count-eq1) 'dirty fixture lacks its genuine instruction transaction'
+    $record=$records[0];$binding=@($record.intent.artifacts)[0]
+    $receiptPath=Join-Path $Case.workspace ([string]$binding.path);$receipt=Read-EnvelopeProtocolJson $receiptPath
+    $observed=@($receipt.preservation.repository_states|Where-Object repo_id -CEQ 'read-only-dependency')[0]
+    Assert-Envelope ($observed.dirty-eq$true-and$observed.tracked_changes-ge1-and$observed.untracked_changes-ge1) 'historical instruction receipt was not actually dirty'
+    $prior=&$retirementModule {param($w,$id)Get-ActiveRetirementPlanningTransition $w $id -HistoricalProjection} $Case.workspace "$([string]$record.intent.expected.event_tail_id)-transition"
+    $ordinaryMessage=''
+    try{$null=&$retirementModule {param($s,$u,$r)Set-ActiveRetirementInstructionRepositoryProjection $s $u $r} (Copy-Envelope $prior.intent.target.state.document) $prior.intent.target.unit.document $receipt}catch{$ordinaryMessage=$_.Exception.Message}
+    Assert-Envelope ($ordinaryMessage-ceq'Active retirement instruction repository observation/preflight join is invalid.') 'ordinary v1 replay stopped refusing a dirty historical instruction observation'
+    $intentPath=Join-Path $Case.workspace "receipts/transactions/$($record.intent.transaction_id).intent.json"
+    $completionPath=Join-Path $Case.workspace "receipts/transactions/$($record.intent.transaction_id).completion.json"
+    $receiptBytes=[IO.File]::ReadAllBytes($receiptPath);$intentBytes=[IO.File]::ReadAllBytes($intentPath);$completionBytes=[IO.File]::ReadAllBytes($completionPath)
+    foreach($damage in @('preflight-head','preflight-paths','detached-receipt-event')){
+        try{
+            $badReceipt=Copy-Envelope $receipt;$badIntent=Copy-Envelope $record.intent;$completion=Copy-Envelope $record.completion
+            switch($damage){
+                'preflight-head'{$badReceipt.claim_preflight.writable_repositories[0].head='0'*40;$expected='Active retirement instruction repository observation/preflight join is invalid.'}
+                'preflight-paths'{$badReceipt.claim_preflight.writable_repositories[0].allowed_paths=@('dependency/foreign/');$expected='Active retirement instruction repository paths binding drifted.'}
+                'detached-receipt-event'{$badReceipt.event_id='u099-review-recorded';$expected='Development continuation instruction-completion receipt is detached.'}
+            }
+            Write-EnvelopeJson $receiptPath $badReceipt
+            $badIntent.artifacts[0].sha256=Get-EnvelopeFileSha256 $receiptPath
+            $badIntent.artifacts[0].bytes_base64=[Convert]::ToBase64String([IO.File]::ReadAllBytes($receiptPath))
+            Write-SupersessionSemanticTransition $Case.workspace $badIntent $completion
+            $null=Get-SupersessionGenericHistoricalProof $Case.workspace $badIntent.transaction_id
+            $before=Get-EnvelopeWorkspaceByteInventorySha256 $Case.workspace;$message=''
+            try{$null=Get-SupersessionSemanticLineage $Case}catch{$message=$_.Exception.Message}
+            Assert-Envelope ($message-ceq$expected-and$before-ceq(Get-EnvelopeWorkspaceByteInventorySha256 $Case.workspace)) "dirty instruction $damage did not reach its exact semantic refusal: $message"
+        }finally{[IO.File]::WriteAllBytes($receiptPath,$receiptBytes);[IO.File]::WriteAllBytes($intentPath,$intentBytes);[IO.File]::WriteAllBytes($completionPath,$completionBytes)}
+        $null=Get-SupersessionSemanticLineage $Case
+    }
+    $probe=Join-Path $Case.seed.dependency_repository 'dependency/instruction-observation-probe.txt';$probeBytes=[IO.File]::ReadAllBytes($probe)
+    try{
+        [IO.File]::AppendAllText($probe,"`nMODELED current dirty source must still refuse.",[Text.UTF8Encoding]::new($false))
+        $before=Get-EnvelopeWorkspaceByteInventorySha256 $Case.workspace;$rejected=$false
+        try{$null=Invoke-SupersessionRetirement $Case -Execute}catch{$rejected=$true}
+        Assert-Envelope ($rejected-and$before-ceq(Get-EnvelopeWorkspaceByteInventorySha256 $Case.workspace)) 'historical dirty observation waived current source cleanliness or wrote a retirement'
+    }finally{[IO.File]::WriteAllBytes($probe,$probeBytes)}
+    $null=Invoke-SupersessionRetirement $Case
 }
 
 # Semantic adverse controls derive from authenticated real writer outputs. Only
