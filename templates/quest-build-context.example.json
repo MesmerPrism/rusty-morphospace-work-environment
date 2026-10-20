@@ -1,0 +1,12 @@
+{
+ "schema":"rusty.morphospace.local_quest_build_context.v1",
+ "environment":{"PATH":"<declared-existing-tool-directories>","HOME":"<declared-home>"},
+ "tools":{
+  "cargo":{"path":"<absolute-selected-cargo>","sha256":"0000000000000000000000000000000000000000000000000000000000000000"},
+  "rustc":{"path":"<absolute-selected-rustc>","sha256":"0000000000000000000000000000000000000000000000000000000000000000"},
+  "rustup":{"path":"<absolute-selected-rustup>","sha256":"0000000000000000000000000000000000000000000000000000000000000000"},
+  "pwsh":{"path":"<absolute-selected-pwsh>","sha256":"0000000000000000000000000000000000000000000000000000000000000000"},
+  "git":{"path":"<absolute-selected-git>","sha256":"0000000000000000000000000000000000000000000000000000000000000000"}
+ },
+ "rust_toolchain":{"channel":"repository-declared-channel"}
+}

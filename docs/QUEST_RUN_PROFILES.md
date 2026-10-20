@@ -156,3 +156,88 @@ Meta `FocusPlaceholderActivity`—cannot become application/OpenXR readiness.
 Permission observation likewise cannot establish permission policy, grantability,
 feature use, readiness, or wearer visibility. Unknown and unavailable provider
 facts remain explicit rather than being silently converted to success or failure.
+
+## Selected build context and developer environment
+
+Use one ignored `local_quest_build_context.v1` document for the declared
+nonsecret environment and exact scalar Cargo, Rustc, Rustup, PowerShell and Git
+paths/hashes. `Invoke-QuestBuildProfile.ps1` accepts the paired
+`-BuildContextPath` and `-BuildContextSha256` inputs with the existing Preflight
+and Build modes. A direct toolchain executable remains usable when Rustup proxy
+siblings are also on PATH: explicit selection bypasses ambient discovery.
+When selected Git is declared, the first actual PATH Application for bare Git
+consumers must resolve to that exact canonical selection; a different earlier
+Git refuses. Later PATH Git entries do not replace explicit selection.
+Compatibility discovery refuses multiple distinct PowerShell or Rustup
+Applications instead of passing an array as an executable.
+
+The shared `scripts/lib/MorphospaceQuestBuildEnvironment.psm1` exports
+`Resolve-MorphospaceQuestBuildContext` and
+`Invoke-MorphospaceQuestBuildEnvironment`. The app resolves tools and declared
+targets before native exports, then invokes its existing preparation and build
+code in the resolved environment. The complete profile preflight still runs
+after generated inputs exist. An input-only source/workspace preflight does not
+prove tool, signer, platform or build readiness. Source/admission, native writer
+and cache-origin guards remain with their existing owners.
+
+The resolver probes the exact selected tools under the same effective
+in-memory environment returned to the synchronous action. It derives RUSTC and
+RUSTUP_TOOLCHAIN, refuses contradictory explicit bindings, and compares the
+selected compiler version/sysroot with the declared Rustup toolchain before
+accepting an installed target. It never installs a target or updates a tool.
+Only explicitly reviewed passthrough names absent from the literal context are
+imported. Signing passwords and a transient application media key use that
+existing in-memory overlay; they must never be serialized into the context or
+printed. Public evidence contains names, presence and hashes. The resolved
+object contains sensitive in-memory values and must not be serialized or logged.
+
+Windows host exports also require the actual developer environment, including
+INCLUDE, LIB, LIBPATH, VCINSTALLDIR, VCTOOLSINSTALLDIR, WINDOWSSDKDIR and
+UNIVERSALCRTSDKDIR plus existing VS/SDK PATH directories. Select and hash-check
+the installed Microsoft's `Launch-VsDevShell.ps1` in a preparation PowerShell
+session, invoke its documented `-Arch amd64 -HostArch amd64
+-SkipAutomaticLocation` route, and author the context there with the same WEF
+module. This is one data-authoring/refresh operation, not a required runtime
+wrapper. Keep the selected Microsoft script identity and actual preparation
+result in ignored evidence; do not discover or provision Visual Studio from the
+build runner. The app-owned early prerequisite check must confirm actual cl,
+link and rc identities and the declared VS/SDK roots before native export.
+
+```powershell
+Import-Module ./scripts/lib/MorphospaceQuestBuildEnvironment.psm1
+# In the explicitly selected developer session; all values below are local.
+$authored = New-MorphospaceQuestBuildContext `
+  -SourceRoot <owning-source-root> -OutputPath <ignored-new-context.json> `
+  -EnvironmentVariableNames @('PATH','SYSTEMROOT','SYSTEMDRIVE','WINDIR',
+    'COMSPEC','PATHEXT','TEMP','TMP','USERPROFILE','HOME','RUSTUP_HOME',
+    'CARGO_HOME','INCLUDE','LIB','LIBPATH','VCINSTALLDIR','VCTOOLSINSTALLDIR',
+    'WINDOWSSDKDIR','UNIVERSALCRTSDKDIR') `
+  -ToolPaths @{cargo=<selected-cargo>;rustc=<selected-rustc>;
+    rustup=<selected-rustup>;pwsh=<selected-pwsh>;git=<selected-git>} `
+  -RustToolchainChannel <declared-channel> `
+  -RequiredTargets @('aarch64-linux-android')
+```
+
+The author checks that its create-new output is Git-ignored, hashes the explicit
+tools, and validates the captured data. It captures only named nonsecret
+variables, never the whole ambient environment. `EnvironmentOverrides` permits
+explicit reviewed values such as the complete existing-directory PATH and
+app-owned Java/Android roots. A refused authored document remains evidence and
+is never silently overwritten or deleted. Refresh into a fresh output when
+tools or the developer environment change. Future builds consume the same
+supported context/profile path directly, without rebuilding a task wrapper or
+creating tool aliases. `templates/quest-build-context.example.json` contains
+placeholders only and must not be executed before local resolution.
+
+Selected tool and context aliases are resolved to canonical leaf paths before
+use, including ordinary Linux executable symlinks. Dispatch uses that canonical
+path. Reparse changes at the held boundary refuse. Windows read sharing excludes
+byte replacement while the context/tool/source holds are live. Other hosts do
+not acquire Windows sharing semantics; byte/path checks and their concurrency
+limits remain explicit. Resolved environment/tool map mutation refuses before
+Action. Synchronous scopes serialize process environment changes, restore every
+original variable in finally, and allow no background work inside that scope.
+For subprocesses use the existing retained-process primitive with explicit
+EnvironmentValues: actual exit, reap, both EOFs, raw hashes and persisted final
+caller proof are still required, with no automatic retry or provisioning. A
+successful context or host fixture never establishes an APK or device result.

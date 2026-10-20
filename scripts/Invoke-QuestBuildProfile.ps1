@@ -8,6 +8,8 @@ param(
     [string]$ToolSha256 = "",
     [string]$EnvironmentBindingsPath = "",
     [string]$EnvironmentBindingsSha256 = "",
+    [string]$BuildContextPath = "",
+    [string]$BuildContextSha256 = "",
     [string]$SignerObservationPath = "",
     [string]$SignerObservationSha256 = "",
     [int]$TimeoutSeconds = 900,
@@ -20,9 +22,33 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+$script:QuestBuildEnvironmentModule=Import-Module (Join-Path $PSScriptRoot "lib/MorphospaceQuestBuildEnvironment.psm1") -PassThru
+$script:ActiveQuestBuildContext=$null
+$script:InitialProjectionFailures=@()
 $WaitPolicy = if($WaitPolicy -ieq 'Retained'){'Retained'}else{'Bounded'}
 if($WaitPolicy -ceq "Retained"){Import-Module (Join-Path $PSScriptRoot "lib/MorphospaceRetainedBuildProcess.psm1") -Force}
 
+function Resolve-QuestBuildApplication {
+ param([string]$Name)
+ if($null-ne$script:ActiveQuestBuildContext-and$script:ActiveQuestBuildContext.Tools.ContainsKey($Name)){return [pscustomobject]@{Source=$script:ActiveQuestBuildContext.Tools[$Name].Path}}
+ $matches=@(Get-Command -Name $Name -CommandType Application -ErrorAction SilentlyContinue|Group-Object Source|ForEach-Object{$_.Group[0]})
+ if($matches.Count-ne1){$e=[InvalidOperationException]::new('Selected build tool resolution failed.');$e.Data['ReasonCode']=if($matches.Count){'tool-ambiguous'}else{'tool-missing'};throw $e}
+ return $matches[0]
+}
+function Get-QuestBuildGitPath {if($null-ne$script:ActiveQuestBuildContext-and$script:ActiveQuestBuildContext.Tools.ContainsKey('git')){return $script:ActiveQuestBuildContext.Tools.git.Path};return 'git'}
+function Resolve-ProfileBuildContext {
+ param([object]$Profile,[object]$Environment)
+ $checks=[Collections.Generic.List[object]]::new()
+ $projection=Get-ChildEnvironmentProjection $Profile.Preflight $Environment.Values $checks
+ $script:InitialProjectionFailures=@($checks|Where-Object status -ne passed)
+ $targets=@();$channel='';$required=@('git')
+ if([IO.Path]::GetExtension($Profile.ProfileExecutable)-ieq'.ps1'){$required+='pwsh'}
+ if($null-ne$Profile.Preflight){$config=Get-OptionalProperty $Profile.Preflight 'toolchain';if($null-ne$config){$targets=@(Get-OptionalProperty $config 'required_targets');foreach($relative in @(Get-OptionalProperty $config 'repository_files')){$declared=Get-DeclaredRustToolchainChannel (Resolve-ContainedPath $Profile.Root $relative 'toolchain');if($declared){if($channel-and$channel-cne$declared){$e=[InvalidOperationException]::new('Repository Rust channels conflict.');$e.Data['ReasonCode']='toolchain-compiler-mismatch';throw $e};$channel=$declared}}}}
+ if($targets.Count){$required+=@('rustc','rustup')}
+ $arguments=@{ContextPath=$BuildContextPath;ContextSha256=$BuildContextSha256;RequiredTools=$required;RequiredTargets=$targets;WorkingDirectory=$Profile.WorkingDirectory;PassthroughVariables=@($projection.Values.Keys);EnvironmentBindings=$Environment.Values}
+ if($channel){$arguments.ToolchainChannel=$channel}
+ Resolve-MorphospaceQuestBuildContext @arguments
+}
 function Get-Sha256 {
     param([string]$Path)
     return (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()
@@ -117,7 +143,8 @@ function Read-BuildProfile {
 }
 
 function Resolve-EnvironmentBindings {
-    param([object]$Profile, [string]$BindingsPath, [string]$BindingsSha256)
+    param([object]$Profile, [string]$BindingsPath, [string]$BindingsSha256, [switch]$MetadataOnly)
+    $selectedGitExecutable=Get-QuestBuildGitPath
     $requirements = @($Profile.environment.PSObject.Properties)
     if ((@($requirements)).Count -eq 0) {
         if ($BindingsPath -or $BindingsSha256) { throw "Environment binding inputs were supplied for a profile that declares none." }
@@ -141,10 +168,10 @@ function Resolve-EnvironmentBindings {
         $revision = [string]$binding.git_revision
         $tree = [string]$binding.git_tree
         if (($revision -or $tree) -and ($revision -cnotmatch "^[a-f0-9]{40}$" -or $tree -cnotmatch "^[a-f0-9]{40}$" -or [string]$binding.kind -cne "directory")) { throw "Git-bound environment entries require one exact revision/tree pair and directory kind." }
-        if ($revision) {
-            $observedRevision = ((& git -C $bindingPath rev-parse HEAD 2>$null) -join "").Trim()
-            $observedTree = ((& git -C $bindingPath rev-parse "HEAD^{tree}" 2>$null) -join "").Trim()
-            $observedStatus = (& git -C $bindingPath status --porcelain=v1 -z 2>$null) -join ""
+        if ($revision -and -not $MetadataOnly) {
+            $observedRevision = ((& $selectedGitExecutable -C $bindingPath rev-parse HEAD 2>$null) -join "").Trim()
+            $observedTree = ((& $selectedGitExecutable -C $bindingPath rev-parse "HEAD^{tree}" 2>$null) -join "").Trim()
+            $observedStatus = (& $selectedGitExecutable -C $bindingPath status --porcelain=v1 -z 2>$null) -join ""
             if ($LASTEXITCODE -ne 0 -or $observedRevision -cne $revision -or $observedTree -cne $tree -or $observedStatus) { throw "Git-bound environment entry is not the exact clean revision and tree." }
         }
         $byId[$bindingId] = [pscustomobject]@{ Path = $bindingPath; Kind = [string]$binding.kind; Revision = $revision; Tree = $tree }
@@ -177,7 +204,7 @@ function Resolve-Execution {
     }
     $cliArguments = @($Profile.Document.arguments | ForEach-Object { [string]$_ })
     if ($extension -ceq ".ps1") {
-        $fileName = [System.IO.Path]::GetFullPath((Get-Command pwsh -ErrorAction Stop).Source)
+        $fileName = [System.IO.Path]::GetFullPath((Resolve-QuestBuildApplication pwsh).Source)
         $arguments = @("-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", $boundToolPath) + $cliArguments
     } elseif ($extension -cin @(".exe", ".cmd", ".bat")) {
         $fileName = $boundToolPath
@@ -188,11 +215,12 @@ function Resolve-Execution {
 
 function Get-SourceObservation {
     param([string]$Root)
-    $inside = ((& git -C $Root rev-parse --is-inside-work-tree 2>$null) -join "").Trim()
+    $selectedGitExecutable=Get-QuestBuildGitPath
+    $inside = ((& $selectedGitExecutable -C $Root rev-parse --is-inside-work-tree 2>$null) -join "").Trim()
     if ($LASTEXITCODE -ne 0 -or $inside -cne "true") { return [ordered]@{ git_available = $false; revision = $null; tree = $null; dirty = $null } }
-    $revision = ((& git -C $Root rev-parse HEAD 2>$null) -join "").Trim()
-    $tree = ((& git -C $Root rev-parse "HEAD^{tree}" 2>$null) -join "").Trim()
-    $status = (& git -C $Root status --porcelain=v1 -z 2>$null) -join ""
+    $revision = ((& $selectedGitExecutable -C $Root rev-parse HEAD 2>$null) -join "").Trim()
+    $tree = ((& $selectedGitExecutable -C $Root rev-parse "HEAD^{tree}" 2>$null) -join "").Trim()
+    $status = (& $selectedGitExecutable -C $Root status --porcelain=v1 -z 2>$null) -join ""
     return [ordered]@{ git_available = $true; revision = $revision; tree = $tree; dirty = -not [string]::IsNullOrEmpty($status) }
 }
 
@@ -207,7 +235,7 @@ function Get-ChildEnvironmentProjection {
     param([object]$Preflight, [hashtable]$BindingValues, [System.Collections.Generic.List[object]]$Checks)
     $projection = if ($null -eq $Preflight) { $null } else { Get-OptionalProperty $Preflight "environment_projection" }
     if ($null -ne $projection) { Assert-PropertySet $projection @() @("passthrough", "prohibited_parent_variables") "Environment projection" }
-    $defaultPassthrough = @("COMSPEC", "HOME", "PATH", "PATHEXT", "SYSTEMROOT", "TEMP", "TMP", "TMPDIR", "WINDIR")
+    $defaultPassthrough = @("COMSPEC", "HOME", "PATH", "PATHEXT", "SYSTEMROOT", "SYSTEMDRIVE", "USERPROFILE", "TEMP", "TMP", "TMPDIR", "WINDIR")
     $passthrough = if ($null -ne $projection -and $null -ne (Get-OptionalProperty $projection "passthrough")) { @($projection.passthrough) } else { $defaultPassthrough }
     $prohibited = if ($null -ne $projection -and $null -ne (Get-OptionalProperty $projection "prohibited_parent_variables")) { @($projection.prohibited_parent_variables) } else { @() }
     if ((@($passthrough | Select-Object -Unique)).Count -ne (@($passthrough)).Count -or (@($prohibited | Select-Object -Unique)).Count -ne (@($prohibited)).Count -or (@($passthrough + $prohibited | Where-Object { $_ -isnot [string] -or $_ -cnotmatch "^[A-Z][A-Z0-9_]{0,63}$" })).Count -gt 0) { throw "Environment projection is invalid." }
@@ -228,6 +256,10 @@ function Get-ChildEnvironmentProjection {
     foreach ($name in @($BindingValues.Keys | Sort-Object)) {
         $child[$name] = [string]$BindingValues[$name]
         $evidence += [ordered]@{ variable = $name; source = "profile-binding"; present = $true; value_sha256 = Get-StringSha256 ([string]$BindingValues[$name]) }
+    }
+    if($null-ne$script:ActiveQuestBuildContext){
+        $child=@{};foreach($name in $script:ActiveQuestBuildContext.EnvironmentValues.Keys){$child[$name]=[string]$script:ActiveQuestBuildContext.EnvironmentValues[$name]}
+        $evidence=@($script:ActiveQuestBuildContext.Evidence|Where-Object kind -eq environment|ForEach-Object{[ordered]@{variable=$_.variable;source='selected-context';present=$_.present;value_sha256=$_.value_sha256}})
     }
     return [pscustomobject]@{ Values = $child; Evidence = @($evidence | Sort-Object variable, source) }
 }
@@ -331,6 +363,8 @@ function Get-DeclaredRustToolchainChannel {
 function Invoke-QuestBuildPreflight {
     param([object]$Profile, [object]$Execution, [object]$Environment, [string]$SignerPath, [string]$SignerSha256)
     $checks = [System.Collections.Generic.List[object]]::new()
+    $projectedEnvironment = Get-ChildEnvironmentProjection $Profile.Preflight $Environment.Values $checks
+    foreach($failure in $script:InitialProjectionFailures){$checks.Add($failure)}
     $source = Get-SourceObservation $Profile.Root
     $sourceStatus = if ($source.git_available) { "passed" } else { "incomplete" }
     $sourceReason = if ($source.git_available) { "" } else { "source-git-unavailable" }
@@ -385,14 +419,15 @@ function Invoke-QuestBuildPreflight {
             }
             $requiredTargets = @((Get-OptionalProperty $toolchainConfig "required_targets") | Sort-Object)
             if ((@($requiredTargets)).Count -gt 0) {
-                $rustup = Get-Command rustup -ErrorAction SilentlyContinue
+                $rustup = Resolve-QuestBuildApplication rustup
                 if ($null -eq $rustup) {
                     foreach ($target in $requiredTargets) {
                         Add-PreflightCheck $checks "toolchain.target.$target" "contradiction" "rustup-unavailable" "rustup is required to observe the declared target."
                         $toolchain += [ordered]@{ kind = "required-target"; target = [string]$target; installed = $false; observer = "rustup-unavailable" }
                     }
                 } else {
-                    $installedTargets = @((& $rustup.Source target list --installed 2>$null) | ForEach-Object { [string]$_ })
+                    $installedText=& $script:QuestBuildEnvironmentModule {param($path,$values,$directory) Invoke-QuestContextToolProbe $path @('target','list','--installed') $values $directory} $rustup.Source $projectedEnvironment.Values $Profile.WorkingDirectory
+                    $installedTargets=@($installedText -split '\r?\n')
                     foreach ($target in $requiredTargets) {
                         $targetPresent = $target -in $installedTargets
                         $targetStatus = if ($targetPresent) { "passed" } else { "contradiction" }
@@ -405,7 +440,6 @@ function Invoke-QuestBuildPreflight {
             }
         }
     }
-    $projectedEnvironment = Get-ChildEnvironmentProjection $preflight $Environment.Values $checks
     $sourceComposition = Get-SourceCompositionLock $preflight $source $Environment $checks
     $identity = Read-SignerObservation $preflight $SignerPath $SignerSha256 $checks
     $outputConfig = if ($null -eq $preflight) { $null } else { Get-OptionalProperty $preflight "output" }
@@ -429,6 +463,7 @@ function Invoke-QuestBuildPreflight {
         }
         Add-PreflightCheck $checks "output.candidate-collision-policy" $(if ($collisionPolicy -eq "content-addressed") { "passed" } else { "contradiction" }) $(if ($collisionPolicy -eq "content-addressed") { "" } else { "candidate-output-not-content-addressed" }) "Candidate output collision policy is $(if ($collisionPolicy -eq "content-addressed") { 'content-addressed' } else { 'not content-addressed' })."
     }
+    if($null-ne$script:ActiveQuestBuildContext){$toolchain+=,[ordered]@{kind='selected-context';context_sha256=$script:ActiveQuestBuildContext.ContextSha256;environment_sha256=$script:ActiveQuestBuildContext.EnvironmentSha256;runner_sha256=$script:RunnerSourceSha256;evidence=@($script:ActiveQuestBuildContext.Evidence|Where-Object kind -ne environment)}}
     $binding = [ordered]@{ profile_sha256 = $Profile.Sha256; profile_id = [string]$Profile.Document.profile_id; executable = [ordered]@{ profile_path = $Execution.BoundToolPath; profile_sha256 = $Execution.BoundToolSha256; child_path = $Execution.FileName; child_sha256 = Get-Sha256 $Execution.FileName; arguments = @($Execution.Arguments) }; source = $source; source_composition = $sourceComposition; manifest_relative_dependencies = @($dependencies); lockfiles = @($lockfiles); toolchain = @($toolchain); environment = @($projectedEnvironment.Evidence); identity = $identity; output = [ordered]@{ lane = $lane; collision_policy = $collisionPolicy; allow_source_root = $allowSourceRoot; artifact_template = [string]$Profile.ArtifactRelativePath; content_addressed = $contentAddressed } }
     $bindingSha256 = Get-StringSha256 (ConvertTo-CompactJson $binding)
     $effectiveArtifact = if ($contentAddressed) {
@@ -623,7 +658,7 @@ function New-TerminalResult {
         operation = $Operation
         terminal_status = $Status
         profile = [ordered]@{ profile_id = if ($null -ne $Profile) { [string]$Profile.Document.profile_id } else { $null }; profile_sha256 = if ($null -ne $Profile) { [string]$Profile.Sha256 } else { $null } }
-        invocation = [ordered]@{ binding_sha256 = if ($null -ne $Preflight) { [string]$Preflight.BindingSha256 } else { Get-StringSha256 "quest-build-terminal-result-empty-binding-v1" }; executable = if ($null -ne $Execution) { [string]$Execution.FileName } else { $null }; arguments = if ($null -ne $Execution) { @($Execution.Arguments) } else { @() }; timeout_seconds = $evidenceTimeoutSeconds; child_environment_sha256 = if ($null -ne $Preflight) { [string]$Preflight.ChildEnvironmentSha256 } else { $null }; child_environment_variable_count = if ($null -ne $Preflight) { @($Preflight.ChildEnvironment.Keys).Count } else { 0 } }
+        invocation = [ordered]@{ binding_sha256 = if ($null -ne $Preflight) { [string]$Preflight.BindingSha256 } else { Get-StringSha256 "quest-build-terminal-result-empty-binding-v1" }; executable = if ($null -ne $Execution) { [string]$Execution.FileName } else { $null }; arguments = @(if ($null -ne $Execution) { $Execution.Arguments }); timeout_seconds = $evidenceTimeoutSeconds; child_environment_sha256 = if ($null -ne $Preflight) { [string]$Preflight.ChildEnvironmentSha256 } else { $null }; child_environment_variable_count = if ($null -ne $Preflight) { @($Preflight.ChildEnvironment.Keys).Count } else { 0 } }
         observation = [ordered]@{ observation_id = if ($null -ne $Preflight) { [string]$Preflight.Observation.observation_id } else { $null }; sha256 = if ($null -ne $Preflight) { [string]$Preflight.ObservationSha256 } else { $null }; content_sha256 = if ($null -ne $Preflight) { [string]$Preflight.Observation.content_sha256 } else { $null } }
         reason_codes = @($ReasonCodes | Where-Object { $_ } | Sort-Object -Unique)
         child_process = $childProcessEvidence
@@ -686,18 +721,27 @@ $execution = $null
 $preflight = $null
 $terminal = $null
 $child = $null
+$runnerSourceHold=$null
 $exitCode = 1
 $operation = if ($Mode -ceq "Preflight") { "preflight" } else { "build" }
 try {
+    $runnerSourceHold=[IO.File]::Open($PSCommandPath,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
+    $script:RunnerSourceSha256=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($runnerSourceHold)).ToLowerInvariant()
+    $runnerSourceHold.Position=0
     if ($Mode -cnotin @("Preflight", "Build")) { throw "Mode must be Preflight or Build." }
     if ($WaitPolicy -ceq "Bounded" -and ($TimeoutSeconds -lt 1 -or $TimeoutSeconds -gt 3600)) { throw "TimeoutSeconds must be between 1 and 3600 for bounded compatibility mode." }
     if ($WaitPolicy -ceq "Retained" -and $EstimatedWarningSeconds -lt 1) { throw "Positive EstimatedWarningSeconds required." }
     if (-not $ProfilePath -or -not $ProfileSha256 -or -not $SourceRoot) { throw "ProfilePath, ProfileSha256, and SourceRoot are required." }
     $source = (Resolve-Path -LiteralPath $SourceRoot -ErrorAction Stop).Path
     $profile = Read-BuildProfile $ProfilePath $ProfileSha256 $source
+    if([bool]$BuildContextPath-ne[bool]$BuildContextSha256){throw 'Build context path and SHA256 must be paired.'}
+    if($BuildContextPath){
+        $environment=Resolve-EnvironmentBindings $profile.Document $EnvironmentBindingsPath $EnvironmentBindingsSha256 -MetadataOnly
+        $script:ActiveQuestBuildContext=Resolve-ProfileBuildContext $profile $environment
+        $environment=Invoke-MorphospaceQuestBuildEnvironment -Context $script:ActiveQuestBuildContext -Action {Resolve-EnvironmentBindings $profile.Document $EnvironmentBindingsPath $EnvironmentBindingsSha256}
+    }else{$environment=Resolve-EnvironmentBindings $profile.Document $EnvironmentBindingsPath $EnvironmentBindingsSha256}
     $execution = Resolve-Execution $profile $ToolPath $ToolSha256
-    $environment = Resolve-EnvironmentBindings $profile.Document $EnvironmentBindingsPath $EnvironmentBindingsSha256
-    $preflight = Invoke-QuestBuildPreflight $profile $execution $environment $SignerObservationPath $SignerObservationSha256
+    $preflight = if($null-ne$script:ActiveQuestBuildContext){Invoke-MorphospaceQuestBuildEnvironment -Context $script:ActiveQuestBuildContext -Action {Invoke-QuestBuildPreflight $profile $execution $environment $SignerObservationPath $SignerObservationSha256}}else{Invoke-QuestBuildPreflight $profile $execution $environment $SignerObservationPath $SignerObservationSha256}
     if ($operation -ceq "preflight") {
         $terminal = New-TerminalResult "preflight" $preflight.Status $profile $execution $preflight $preflight.ReasonCodes $null $preflight.Payload $TimeoutSeconds $null
         $exitCode = if ($preflight.Status -eq "passed") { 0 } elseif ($preflight.Status -eq "contradiction") { 2 } else { 3 }
@@ -708,9 +752,11 @@ try {
         if (-not $ReceiptPath) { throw "ReceiptPath is required for Build mode." }
         $receiptFullPath = [System.IO.Path]::GetFullPath($ReceiptPath)
         if (Test-Path -LiteralPath $receiptFullPath) { throw "ReceiptPath already exists." }
-        $childResults = if($WaitPolicy -ceq 'Retained'){
-            @(Invoke-MorphospaceRetainedBuildProcess -Execution $execution -EnvironmentValues $preflight.ChildEnvironment -BaseReceiptPath $receiptFullPath -EstimatedWarningSeconds $EstimatedWarningSeconds -CancelAfterMilliseconds $TestCancelAfterMilliseconds)
-        }else{@(Invoke-ChildProcess $execution $preflight.ChildEnvironment $receiptFullPath $TimeoutSeconds $TestCancelAfterMilliseconds)}
+        $dispatch={
+            if($WaitPolicy -ceq 'Retained'){Invoke-MorphospaceRetainedBuildProcess -Execution $execution -EnvironmentValues $preflight.ChildEnvironment -BaseReceiptPath $receiptFullPath -EstimatedWarningSeconds $EstimatedWarningSeconds -CancelAfterMilliseconds $TestCancelAfterMilliseconds}
+            else{Invoke-ChildProcess $execution $preflight.ChildEnvironment $receiptFullPath $TimeoutSeconds $TestCancelAfterMilliseconds}
+        }
+        $childResults=if($null-ne$script:ActiveQuestBuildContext){@(Invoke-MorphospaceQuestBuildEnvironment -Context $script:ActiveQuestBuildContext -Action $dispatch)}else{@(& $dispatch)}
         if ($childResults.Count -ne 1) { throw "Child wrapper emitted $($childResults.Count) result objects." }
         $child = $childResults[0]
         $payload = $preflight.Payload
@@ -733,6 +779,7 @@ try {
 } catch {
     $terminalStatus = if ($operation -eq "preflight") { "contradiction" } else { "failed" }
     $reasonCode = if ($operation -eq "preflight") { "preflight-input-invalid" } else { "wrapper-error" }
+    if($_.Exception.Data.Contains("ReasonCode")){$reasonCode=[string]$_.Exception.Data["ReasonCode"]}
     # An observer/artifact/publication failure after execution must not relabel
     # the actual child as never started or discard its retained stream facts.
     $failureStreams=if($null-ne$child){$child.Streams}else{$null}
@@ -750,5 +797,7 @@ try {
 } catch {
     [Console]::Out.WriteLine((ConvertTo-CompactJson $terminal))
     $exitCode = 1
+} finally {
+    if($null-ne$runnerSourceHold){$runnerSourceHold.Dispose()}
 }
 exit $exitCode
