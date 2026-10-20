@@ -141,24 +141,111 @@ foreach($drift in @('manifests/affected-validation-registry.json',$phaseCommandP
 }
 
 # A parent exits with a live descendant retaining both inherited pipes.
-# Reusable evidence requires actual descendant exit, both EOFs and process reap.
-$descendantLeaf=@'
-$exe=(Get-Process -Id $PID).Path
-$start=[Diagnostics.ProcessStartInfo]::new($exe);$start.UseShellExecute=$false
-foreach($arg in @('-NoProfile','-NonInteractive','-Command',"[Console]::Out.Write('descendant-stdout');[Console]::Error.Write('descendant-stderr');Start-Sleep -Seconds 60;[Console]::Out.Write('unsettled-descendant-complete')")){$start.ArgumentList.Add($arg)}
-$child=[Diagnostics.Process]::Start($start)
-[Console]::Out.WriteLine('descendant-pid:'+$child.Id)
-Start-Sleep -Milliseconds 1500
-$child.Dispose()
+# Bind the original in this observer's PID namespace before allowing that exit.
+# A namespace-local PID is never a host PID or proof of host process identity.
+$descendantChild=@'
+param([string]$ControlRoot,[string]$Nonce)
+$ErrorActionPreference='Stop'
+if($Nonce-cnotmatch'^[0-9a-f]{32}$'){throw 'Exact descendant fixture nonce required'}
+$birth=if($IsLinux){[long](([IO.File]::ReadAllText('/proc/self/stat')-split'\) ',2)[1].Split(' ')[19])}else{(Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks}
+$namespace=if($IsLinux){([IO.FileInfo]::new('/proc/self/ns/pid')).LinkTarget}else{''}
+[Console]::Out.Write('descendant-stdout');[Console]::Error.Write('descendant-stderr')
+$ready=[Text.UTF8Encoding]::new($false).GetBytes(([ordered]@{schema='fixture.descendant-ready.v1';nonce=$Nonce;namespace_pid=$PID;pid_namespace=$namespace;birth_ticks=$birth}|ConvertTo-Json -Compress))
+$pending=Join-Path $ControlRoot 'descendant-ready.pending';$final=Join-Path $ControlRoot 'descendant-ready.json'
+$stream=[IO.FileStream]::new($pending,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+try{$stream.Write($ready,0,$ready.Length);$stream.Flush($true)}finally{$stream.Dispose()}
+[IO.File]::Move($pending,$final)
+Start-Sleep -Seconds 60
+[Console]::Out.Write('unsettled-descendant-complete')
 '@
-Write-ControlText (Join-Path $fixture 'scripts/Leaf.ps1') $descendantLeaf
+$descendantNonce=[Guid]::NewGuid().ToString('N')
+$descendantLeaf=@'
+$ErrorActionPreference='Stop'
+$exe=(Get-Process -Id $PID).Path
+$root=$env:RUSTY_AFFECTED_VALIDATION_PHASE_ROOT
+[void][IO.Directory]::CreateDirectory($root)
+$start=[Diagnostics.ProcessStartInfo]::new($exe);$start.UseShellExecute=$false
+foreach($arg in @('-NoProfile','-NonInteractive','-File',(Join-Path $PSScriptRoot 'Descendant.ps1'),'-ControlRoot',$root,'-Nonce','__NONCE__')){$start.ArgumentList.Add($arg)}
+$child=[Diagnostics.Process]::Start($start)
+try{
+ [Console]::Out.WriteLine('descendant-pid:'+$child.Id)
+ $ready=Join-Path $root 'descendant-ready.json';$ack=Join-Path $root 'descendant-observed.txt'
+ $deadline=[DateTime]::UtcNow.AddSeconds(45)
+ while(-not[IO.File]::Exists($ack)){
+  if([IO.File]::Exists((Join-Path $root 'descendant-refused.txt'))){throw 'Descendant host identity observation refused'}
+  if($child.HasExited){throw 'Descendant exited before its live original was observed'}
+  if([DateTime]::UtcNow-ge$deadline){throw 'Descendant identity handshake did not complete'}
+  Start-Sleep -Milliseconds 10
+ }
+ $hash=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([IO.File]::ReadAllBytes($ready))).ToLowerInvariant()
+ if([IO.File]::ReadAllText($ack)-cne("observed:$hash`n")-or$child.HasExited){throw 'Exact live descendant observation ACK required'}
+}finally{$child.Dispose()}
+'@
+Write-ControlText (Join-Path $fixture 'scripts/Descendant.ps1') $descendantChild
+Write-ControlText (Join-Path $fixture 'scripts/Leaf.ps1') ($descendantLeaf.Replace('__NONCE__',$descendantNonce))
 $descendantCandidate=Set-ControlCandidate @($boundary,(New-ControlCheck 'fixture-leaf' 'scripts/Leaf.ps1')) 'descendant'
-$descendant=Invoke-ControlRunner $descendantCandidate 'descendant-run'
+$descendantPlan=Read-ControlJson $descendantCandidate.plan
+$descendantControlRoot=Join-Path (Join-Path $local 'descendant-run') ("affected-selector-phases-$($descendantPlan.plan_sha256)-"+$(if($IsWindows){'windows'}else{'linux'}))
+$trackerSource=@'
+param([string]$Root,[string]$Nonce,[string]$ProcessName,[Threading.ManualResetEventSlim]$Stop)
+$ErrorActionPreference='Stop'
+try{
+$readyPath=Join-Path $Root 'descendant-ready.json'
+while(-not[IO.File]::Exists($readyPath)){if($Stop.IsSet){throw 'Runner ended without a descendant readiness record'};Start-Sleep -Milliseconds 10}
+$raw=[IO.File]::ReadAllBytes($readyPath);$ready=[Text.Encoding]::UTF8.GetString($raw)|ConvertFrom-Json
+if((@($ready.PSObject.Properties.Name|Sort-Object)-join',')-cne'birth_ticks,namespace_pid,nonce,pid_namespace,schema'-or$ready.schema-cne'fixture.descendant-ready.v1'-or$ready.nonce-cne$Nonce-or$ready.namespace_pid-le0-or$ready.birth_ticks-le0){throw 'Closed actual descendant readiness record required'}
+if($IsLinux-and($ready.pid_namespace-cnotmatch'^pid:\[[0-9]+\]$'-or$ready.pid_namespace-ceq([IO.FileInfo]::new('/proc/self/ns/pid')).LinkTarget)){throw 'Actual separate descendant PID namespace required'}
+$found=$null
+while($null-eq$found){
+ if($Stop.IsSet){throw 'Runner ended before the actual descendant original was mapped'}
+ foreach($process in [Diagnostics.Process]::GetProcessesByName($ProcessName)){
+  try{
+   if($IsLinux){
+    $base='/proc/'+$process.Id
+    if(([IO.FileInfo]::new($base+'/ns/pid')).LinkTarget-cne$ready.pid_namespace){continue}
+    $status=[IO.File]::ReadAllText($base+'/status');$match=[regex]::Match($status,'(?m)^NSpid:\s+([0-9 \t]+)$')
+    if(-not$match.Success-or[long]($match.Groups[1].Value.Trim()-split'\s+')[-1]-ne$ready.namespace_pid){continue}
+    $birth=[long](([IO.File]::ReadAllText($base+'/stat')-split'\) ',2)[1].Split(' ')[19])
+   }else{if($process.Id-ne$ready.namespace_pid){continue};$birth=$process.StartTime.ToUniversalTime().Ticks}
+   if($birth-ne$ready.birth_ticks){throw 'Descendant birth differs from the exact host original'}
+   if($process.HasExited){throw 'Descendant exited before its host original was observed'}
+   if($null-ne$found){throw 'Descendant namespace/birth did not identify one host original'}
+   $found=[pscustomobject]@{host_pid=$process.Id;namespace_pid=[long]$ready.namespace_pid;pid_namespace=[string]$ready.pid_namespace;birth_ticks=$birth;live_original_observed=$true;ready_sha256=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($raw)).ToLowerInvariant()}
+  }catch [IO.FileNotFoundException]{}catch [IO.DirectoryNotFoundException]{}catch [InvalidOperationException]{}finally{$process.Dispose()}
+ }
+ if($null-eq$found){Start-Sleep -Milliseconds 10}
+}
+$pending=Join-Path $Root 'descendant-observed.pending';$ack=Join-Path $Root 'descendant-observed.txt'
+[IO.File]::WriteAllText($pending,("observed:$($found.ready_sha256)`n"),[Text.UTF8Encoding]::new($false));[IO.File]::Move($pending,$ack)
+$found
+}catch{if([IO.Directory]::Exists($Root)){[IO.File]::WriteAllText((Join-Path $Root 'descendant-refused.txt'),[string]$_,[Text.UTF8Encoding]::new($false))};throw}
+'@
+$trackerStop=[Threading.ManualResetEventSlim]::new($false);$tracker=[PowerShell]::Create()
+[void]$tracker.AddScript($trackerSource).AddArgument($descendantControlRoot).AddArgument($descendantNonce).AddArgument([IO.Path]::GetFileNameWithoutExtension((Get-Process -Id $PID).Path)).AddArgument($trackerStop)
+$trackerFuture=$tracker.BeginInvoke()
+$dispatchError=$null;$trackerError=$null;$trackerHadErrors=$false;$trackerErrors='';$tracked=@()
+try{$descendant=Invoke-ControlRunner $descendantCandidate 'descendant-run'}catch{$dispatchError=$_}finally{
+ $trackerStop.Set()
+ try{$tracked=@($tracker.EndInvoke($trackerFuture))}catch{$trackerError=$_}finally{$trackerHadErrors=$tracker.HadErrors;$trackerErrors=$tracker.Streams.Error-join'; ';$tracker.Dispose();$trackerStop.Dispose()}
+}
+if($null-ne$dispatchError){throw $dispatchError}
+if($null-ne$trackerError){throw $trackerError}
+Assert-Control (-not$trackerHadErrors-and$tracked.Count-eq1) ('Actual descendant host identity was not retained: '+$trackerErrors)
+$descendantOriginal=$tracked[0]
+Write-ControlText (Join-Path $local 'descendant-original.json') ($descendantOriginal|ConvertTo-Json -Depth 5)
 $descendantReceipt=Get-ControlReceipt $descendant 'fixture-leaf'
 $stdout=Get-ControlStream $descendant 'fixture-leaf' 'stdout';$stderr=Get-ControlStream $descendant 'fixture-leaf' 'stderr'
 Assert-Control ($stdout-match'descendant-pid:([0-9]+)') 'Descendant original was not issued'
-$descendantPid=[int]$Matches[1]
-Assert-Control ($descendantReceipt.result-ceq'pass'-and-not$descendantReceipt.child.post_kill_drain_timed_out-and$stdout.Contains('descendant-stdout')-and-not$stdout.Contains('unsettled-descendant-complete')-and$stderr-ceq'descendant-stderr'-and$null-eq(Get-Process -Id $descendantPid -ErrorAction SilentlyContinue)) 'Terminal preceded owned descendant exit, dual EOF or reap'
+Assert-Control ([long]$Matches[1]-eq$descendantOriginal.namespace_pid-and$descendantOriginal.live_original_observed) 'Namespace-local descendant PID differs from its observed original'
+$originalPresent=$false
+if($IsLinux){
+ try{$stat=[IO.File]::ReadAllText('/proc/'+$descendantOriginal.host_pid+'/stat');$originalPresent=[long](($stat-split'\) ',2)[1].Split(' ')[19])-eq$descendantOriginal.birth_ticks}catch [IO.FileNotFoundException]{}catch [IO.DirectoryNotFoundException]{}
+}else{
+ $process=Get-Process -Id $descendantOriginal.host_pid -ErrorAction SilentlyContinue
+ if($null-ne$process){try{$originalPresent=$process.StartTime.ToUniversalTime().Ticks-eq$descendantOriginal.birth_ticks}finally{$process.Dispose()}}
+}
+Assert-Control (-not$originalPresent) 'Terminal preceded the exact observed host descendant exit/reap'
+Assert-Control ($descendantReceipt.result-ceq'pass'-and-not$descendantReceipt.child.post_kill_drain_timed_out-and$stdout.Contains('descendant-stdout')-and-not$stdout.Contains('unsettled-descendant-complete')-and$stderr-ceq'descendant-stderr') 'Terminal preceded owned descendant dual EOF or truthful containment completion'
 
 # Plan binding cannot authorize mutated working bytes; no passing terminal is reusable.
 $leafPath=Join-Path $fixture 'scripts/Leaf.ps1';$original=[IO.File]::ReadAllBytes($leafPath)
