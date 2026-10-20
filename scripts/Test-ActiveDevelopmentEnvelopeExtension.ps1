@@ -1,4 +1,4 @@
-param([switch]$SelfTest,[switch]$RetainedAuthorityOnly,[switch]$CheckpointProofOnly)
+param([switch]$SelfTest,[switch]$RetainedAuthorityOnly,[switch]$CheckpointProofOnly,[switch]$PreparationConsumerOnly,[switch]$ExtendedSourceConsumerOnly)
 $ErrorActionPreference='Stop'
 $repoRoot=Split-Path $PSScriptRoot -Parent
 & (Join-Path $PSScriptRoot 'Test-PlanningAuthorityRelocation.ps1') -SelfTest
@@ -21,6 +21,53 @@ $continuationModule=Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceDevel
 
 function Assert-ActiveEnvelopeTest([bool]$Condition,[string]$Message){if(-not$Condition){throw "Active development-envelope extension self-test failed: $Message"}}
 function Assert-ActiveEnvelopeRejected([scriptblock]$Action,[string]$Message){$rejected=$false;try{&$Action|Out-Null}catch{$rejected=$true};Assert-ActiveEnvelopeTest $rejected $Message}
+
+function Test-ActiveEnvelopeBuildPreflightConsumer([string]$Workspace,[string]$UnitId,[string]$Root,[string]$RepositoryMapPath=''){
+    # Consume persisted owner artifacts. Materialize their exact tiny fixture
+    # commits rather than replacing a locked source with its later planning HEAD.
+    $unit=Read-EnvelopeProtocolJson (Join-Path $Workspace "iteration-units/$UnitId.json")
+    $source=Read-EnvelopeProtocolJson (Join-Path $Workspace ([string]$unit.source_composition.lock_path))
+    if(-not$RepositoryMapPath){$RepositoryMapPath=Join-Path $Workspace 'repository-map.json'}
+    $map=Read-EnvelopeProtocolJson $RepositoryMapPath
+    [void][IO.Directory]::CreateDirectory($Root)
+    $rows=@($source.repositories|Sort-Object repo_id|ForEach-Object{
+        $derivative=$_.PSObject.Properties.Name-contains'effective_commit'
+        [pscustomobject]@{repo_id=[string]$_.repo_id;commit=$(if($derivative){[string]$_.effective_commit}else{[string]$_.commit});tree=$(if($derivative){[string]$_.effective_tree}else{[string]$_.tree})}
+    });$materialized=@()
+    foreach($row in $rows){
+        $mapping=@($map.repositories|Where-Object repo_id -CEQ $row.repo_id)
+        Assert-ActiveEnvelopeTest ($mapping.Count-eq1) 'preflight fixture lacks an exact owner mapping'
+        $path=Join-Path $Root ([string]$row.repo_id)
+        Invoke-EnvelopeGit $Root @('clone','--quiet','--no-hardlinks','--no-checkout',[string]$mapping[0].path,$path)|Out-Null
+        Invoke-EnvelopeGit $path @('checkout','--quiet','--detach',[string]$row.commit)|Out-Null
+        $materialized+=,[pscustomobject]@{row=$row;path=$path}
+    }
+    $tool=Join-Path $Root 'gradle.bat';$marker=Join-Path $Root 'compiler-started.txt'
+    [IO.File]::WriteAllText($tool,"@echo compiler-started> `"$marker`"`r`n",[Text.UTF8Encoding]::new($false))
+    for($count=0;$count-le[math]::Min(2,$materialized.Count-1);$count++){
+        $bindings=@();$external=@();$environment=[ordered]@{}
+        for($i=0;$i-lt$count;$i++){
+            $entry=$materialized[$i+1];$id="source-$i";$environment["SOURCE_$i"]=$id
+            $bindings+=,[pscustomobject][ordered]@{id=$id;path=$entry.path;kind='directory';git_revision=[string]$entry.row.commit;git_tree=[string]$entry.row.tree}
+            $external+=,[pscustomobject][ordered]@{source_id=[string]$entry.row.repo_id;binding_id=$id;git_revision=[string]$entry.row.commit;git_tree=[string]$entry.row.tree}
+        }
+        $profile=[pscustomobject][ordered]@{schema='rusty.morphospace.quest_build_profile.v1';profile_id='prepared-source-consumer';working_directory='.';executable='gradle';arguments=@();environment=[pscustomobject]$environment;artifact=[pscustomobject]@{relative_path='fixture.apk';kind='single-base-apk'};preflight=[pscustomobject]@{source_composition=[pscustomobject]@{source=[pscustomobject]@{git_revision=[string]$materialized[0].row.commit;git_tree=[string]$materialized[0].row.tree;require_clean=$true};external_sources=@($external)};output=[pscustomobject]@{lane='warm';collision_policy='new-only';allow_source_root=$true}}}
+        $profilePath=Join-Path $Root "profile-$count.json";Write-EnvelopeJson $profilePath $profile
+        $bindingsPath=Join-Path $Root "bindings-$count.json";Write-EnvelopeJson $bindingsPath ([pscustomobject]@{schema='rusty.morphospace.local_quest_build_environment.v1';bindings=@($bindings)})
+        $persisted=Read-EnvelopeProtocolJson $profilePath
+        Assert-ActiveEnvelopeTest ($persisted.arguments-is[Array]-and$persisted.preflight.source_composition.external_sources-is[Array]-and@($persisted.preflight.source_composition.external_sources).Count-eq$count) 'persisted profile lost zero/one/two array cardinality'
+        $args=@('-NoProfile','-NonInteractive','-File',(Join-Path $PSScriptRoot 'Invoke-QuestBuildProfile.ps1'),'-Mode','Preflight','-ProfilePath',$profilePath,'-ProfileSha256',(Get-EnvelopeFileSha256 $profilePath),'-SourceRoot',$materialized[0].path,'-ToolPath',$tool,'-ToolSha256',(Get-EnvelopeFileSha256 $tool))
+        if($count-gt0){$args+=@('-EnvironmentBindingsPath',$bindingsPath,'-EnvironmentBindingsSha256',(Get-EnvelopeFileSha256 $bindingsPath))}
+        $output=@(& pwsh @args);$exit=$LASTEXITCODE;$terminal=($output-join"`n")|ConvertFrom-Json -Depth 64 -DateKind String
+        $resultPath=Join-Path $Root "terminal-$count.json";Write-EnvelopeJson $resultPath $terminal;$persistedTerminal=Read-EnvelopeProtocolJson $resultPath
+        Assert-ActiveEnvelopeTest ($exit-eq0-and$persistedTerminal.operation-ceq'preflight'-and$persistedTerminal.terminal_status-ceq'passed'-and-not$persistedTerminal.child_process.started-and$persistedTerminal.owner_payload.source_composition.external_sources-is[Array]-and@($persistedTerminal.owner_payload.source_composition.external_sources).Count-eq$count-and-not(Test-Path -LiteralPath $marker)) "writer source lock did not reach real build preflight or preflight spawned the compiler: exit=$exit count=$count terminal=$($terminal|ConvertTo-Json -Depth 16 -Compress)"
+        # Change one persisted source identity, retaining a valid profile hash.
+        $profile.preflight.source_composition.source.git_tree='0'*40;Write-EnvelopeJson $profilePath $profile
+        $badArgs=@($args);$hashIndex=[Array]::IndexOf($badArgs,'-ProfileSha256')+1;$badArgs[$hashIndex]=Get-EnvelopeFileSha256 $profilePath
+        $badOutput=@(& pwsh @badArgs);$badExit=$LASTEXITCODE;$bad=($badOutput-join"`n")|ConvertFrom-Json -Depth 64
+        Assert-ActiveEnvelopeTest ($badExit-eq2-and$bad.terminal_status-ceq'contradiction'-and@($bad.reason_codes)-contains'source-composition-source-mismatch'-and-not$bad.child_process.started-and-not(Test-Path -LiteralPath $marker)) 'mismatched persisted source reached compilation or passed preflight'
+    }
+}
 
 # Adapt fixture inputs before acceptance. Durable acceptance records come from
 # the owner writer; the ordinary case retains an externally supplied receipt.
@@ -273,6 +320,7 @@ function Test-ActiveEnvelopeScopeOnlyAmendmentContinuation {
     $run=&$freezeModule {param($a)Invoke-MorphospaceFreezeCandidate @a} $freezeArguments
     Assert-ActiveEnvelopeTest ($run.transition-ceq'candidate-frozen') 'scope-only replacement chain did not reach real candidate Freeze'
     [void](Invoke-ScopeOnlyEffectiveEnvelope $workspace $map)
+    Test-ActiveEnvelopeBuildPreflightConsumer $workspace 'u003' (Join-Path $Root 'build-preflight')
     Write-Output 'PASS genuine retained proposal/replacement/Ready/Claim/four scope-only amendments/full effective envelope/Freeze and detached evidence refusals'
 }
 function Invoke-ScopeOnlyEffectiveEnvelope([string]$Workspace,[string]$Map){
@@ -331,6 +379,7 @@ function Test-ActiveEnvelopeFeaturelessRootsOnly {
     $nextArguments.ExpectedActiveDevelopmentEnvelopeExtensionSha256=Get-EnvelopeFileSha256 $next.request_path;$nextArguments.Execute=$true
     $nextRun=Invoke-MorphospaceExtendActiveDevelopmentEnvelope @nextArguments
     Assert-ActiveEnvelopeTest $nextRun.executed 'next featureless roots-only writer did not execute'
+    Test-ActiveEnvelopeBuildPreflightConsumer $workspace 'u002' (Join-Path $Root 'build-preflight')
     [void](Test-MorphospaceHistoricalActiveDevelopmentEnvelopeExtension -WorkspaceRoot $workspace -ExpectedEvent $events[-1])
     Write-Output 'PASS genuine featureless Prepare/Admit/Ready/Claim roots-only extension, historical replay, next writer, and authority refusal'
 }
@@ -342,7 +391,7 @@ $tempParent=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\','/')
 $temp=Join-Path $tempParent ('active-envelope-extension-'+[guid]::NewGuid().ToString('N'))
 try{
     [IO.Directory]::CreateDirectory($temp)|Out-Null
-    foreach($mode in @('external','separate-artifact')){
+    if(-not$PreparationConsumerOnly-and-not$ExtendedSourceConsumerOnly){foreach($mode in @('external','separate-artifact')){
         $writer=if($mode-ceq'external'){New-ActiveEnvelopeCheckpointWriter -ExternalReceipt}else{New-ActiveEnvelopeCheckpointWriter -SeparateReceiptProducer}
         $proofSeed=New-EnvelopeAdmissionPreparedFixture -Root (Join-Path $temp "proof-$mode") -RepositoryRoot $repoRoot -TransitionLedgerModule $writer -OwnerProducedPreparation -AdditiveFeature
         $proofArguments=@{WorkspaceRoot=$proofSeed.workspace;State=$proofSeed.state;CurrentUnitId='u002';Expected=$proofSeed.admission_template.expected}
@@ -363,7 +412,8 @@ try{
         Assert-ActiveEnvelopeRejected {&$extensionModule {param($a)Assert-ActiveEnvelopeValidationCheckpoint @a} $proofArguments} "missing accepted receipt accepted for $mode"
         [IO.File]::WriteAllBytes($receiptPath,$receiptBytes)
     }
-    if($CheckpointProofOnly){[pscustomobject]@{result='pass';external_receipt=$true;separate_receipt_producer=$true;prefix_drift_rejected=$true;acceptance_outside_prefix_rejected=$true;ambiguous_acceptance_rejected=$true;missing_receipt_rejected=$true}|ConvertTo-Json -Compress;return}
+    if($CheckpointProofOnly){[pscustomobject]@{result='pass';external_receipt=$true;separate_receipt_producer=$true;prefix_drift_rejected=$true;acceptance_outside_prefix_rejected=$true;ambiguous_acceptance_rejected=$true;missing_receipt_rejected=$true}|ConvertTo-Json -Compress;return}}
+    if(-not$ExtendedSourceConsumerOnly){
     Test-ActiveEnvelopeScopeOnlyAmendmentContinuation -Root (Join-Path $temp 'scope-only-amendment-continuation')
     Test-ActiveEnvelopeFeaturelessRootsOnly -Root (Join-Path $temp 'featureless-roots-only')
     # Genuine recovered-origin positive. Both fixture factories already belong
@@ -438,7 +488,10 @@ try{
     Assert-ActiveEnvelopeTest ((Get-EnvelopeCanonicalJsonSha256 $recoveredOriginTargets.project) -ceq [string]$recoveredOriginIntent.target.project.sha256 -and (Get-EnvelopeCanonicalJsonSha256 $recoveredOriginTargets.feature_lock) -ceq [string]$recoveredOriginIntent.target.feature_lock.sha256 -and (Get-EnvelopeCanonicalJsonSha256 $recoveredOriginFull.project) -ceq [string]$recoveredOriginIntent.target.project.sha256 -and (Get-EnvelopeCanonicalJsonSha256 $recoveredOriginFull.feature_lock) -ceq [string]$recoveredOriginIntent.target.feature_lock.sha256) 'actual recovered helper or full reader lost the typed writer-owned targets'
     Assert-ActiveEnvelopeTest ([string]$recoveredOriginFull.unit.unit_id -ceq 'u003' -and [string]$recoveredOriginFull.unit.status -ceq 'active' -and @($recoveredOriginFull.records | Where-Object kind -CEQ 'ready').Count -eq 1 -and @($recoveredOriginFull.records | Where-Object kind -CEQ 'claimed').Count -eq 1 -and @($recoveredOriginFull.extensions).Count -eq 0 -and @($recoveredOriginFull.tooling_upgrades).Count -eq 0) 'recovered positive bypassed the genuine ordinary owner continuation'
     Assert-ActiveEnvelopeTest ((Get-EnvelopeCanonicalJsonSha256 $recoveredOriginReceipt.envelope.project) -ceq (Get-EnvelopeCanonicalJsonSha256 $recoveredOriginTargets.project) -and (Get-EnvelopeCanonicalJsonSha256 $recoveredOriginReceipt.envelope.feature_lock) -ceq (Get-EnvelopeCanonicalJsonSha256 $recoveredOriginTargets.feature_lock) -and (Get-EnvelopeWorkspaceByteInventorySha256 $recoveredOriginWorkspace) -ceq $recoveredOriginBeforeReads) 'actual rich recovered receipt disagreed or read-only observations changed fixture bytes'
+    Test-ActiveEnvelopeBuildPreflightConsumer $recoveredOriginWorkspace 'u003' (Join-Path $recoveredOriginRoot 'build-preflight')
     Write-Output 'PASS genuine current Reprepare/Admit/Ready/Claim origin helper and full continuation; retained historical evidence and read-only bytes unchanged'
+    if($PreparationConsumerOnly){[pscustomobject]@{result='pass';ordinary_v1_without_snapshots=$true;recovered_v1_with_snapshots=$true;scope_only_amendment=$true;roots_only_extensions=$true;real_build_preflight=$true;persisted_zero_one_array_cardinality=$true;source_mismatch_refused=$true;compiler_started=$false;device_used=$false}|ConvertTo-Json -Compress;return}
+    }
     $seed=New-EnvelopeAdmissionPreparedFixture -Root (Join-Path $temp 'seed') -RepositoryRoot $repoRoot -TransitionLedgerModule $checkpointWriter -OwnerProducedPreparation -AdditiveFeature
     $workspace=$seed.workspace;$admissionPath=Join-Path $temp 'admission.json';Write-EnvelopeJson $admissionPath $seed.admission_template
     Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $workspace -DevelopmentUnitAdmission $admissionPath -ExpectedDevelopmentUnitAdmissionSha256 (Get-EnvelopeFileSha256 $admissionPath) -OutPath (Join-Path $workspace 'receipts\u002-admission.json') -Timestamp '2026-09-15T00:00:00.0000000Z' -Execute|Out-Null
@@ -509,6 +562,8 @@ try{
     $freezeArguments.ExpectedCandidateFreezeSha256=[string]$freezeDry.audit_receipt.sha256;$freezeArguments.Execute=$true;$freezeRun=&$freezeModule {param($arguments)Invoke-MorphospaceFreezeCandidate @arguments} $freezeArguments
     $frozenUnit=Read-EnvelopeProtocolJson (Join-Path $workspace 'iteration-units\u002.json');$frozenProjectHash=Get-EnvelopeFileSha256 (Join-Path $workspace 'project.spec.json');$frozenLockHash=Get-EnvelopeFileSha256 (Join-Path $workspace 'feature.lock.json');$frozenSourceHash=Get-EnvelopeFileSha256 $requestInfo.source_path
     Assert-ActiveEnvelopeTest ($freezeRun.transition-ceq'candidate-frozen'-and[bool](&$freezeModule {param($root,$unit)Test-MorphospaceFrozenCandidate -WorkspaceRoot $root -Unit $unit} $workspace $frozenUnit)) 'derived source composition did not pass the real candidate Freeze consumer'
+    Test-ActiveEnvelopeBuildPreflightConsumer $workspace 'u002' (Join-Path $temp 'extension-build-preflight') $requestInfo.map_path
+    if($ExtendedSourceConsumerOnly){[pscustomobject]@{result='pass';writer_produced_source_extension=$true;real_freeze_consumer=$true;real_build_preflight=$true;persisted_zero_one_two_array_cardinality=$true;source_mismatch_refused=$true;compiler_started=$false;device_used=$false}|ConvertTo-Json -Compress;return}
     $retirementRequest=New-ActiveUnitRetirementRequest -WorkspaceRoot $workspace -RepoMapPath $requestInfo.map_path -RetirementId 'retire-u002-extension' -ReplacementUnitId 'u003';$retirementRequestPath=Join-Path $temp 'retire-u002-extension.json';Write-EnvelopeJson $retirementRequestPath $retirementRequest;$retirementOut=Join-Path $workspace 'receipts\retire-u002-extension.json'
     $retirementArguments=@{WorkspaceRoot=$workspace;UnitId='u002';RepoMapPath=$requestInfo.map_path;ActiveUnitRetirement=$retirementRequestPath;OutPath=$retirementOut;Timestamp='2026-09-15T01:06:00.0000000Z'}
     $retirementDry=&$retirementModule {param($arguments)Invoke-MorphospaceRetireActive @arguments} $retirementArguments
