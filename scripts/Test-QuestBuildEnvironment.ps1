@@ -29,6 +29,12 @@ if(-not$SeedContextPath){
  $toolRecords=@{};foreach($id in $paths.Keys){$toolRecords[$id]=[ordered]@{path=[IO.Path]::GetFullPath($paths[$id]);sha256=(Get-FileHash -LiteralPath $paths[$id] -Algorithm SHA256).Hash.ToLowerInvariant()}}
  $environment=@{};foreach($name in @('HOME','USERPROFILE','SYSTEMROOT','SYSTEMDRIVE','WINDIR','COMSPEC','PATHEXT','TEMP','TMP','TMPDIR','RUSTUP_HOME','CARGO_HOME')){$value=[Environment]::GetEnvironmentVariable($name);if($null-ne$value){$environment[$name]=$value}}
  $pathParts=@($paths.Values|ForEach-Object{Split-Path $_ -Parent})+@(([Environment]::GetEnvironmentVariable('PATH'))-split[regex]::Escape([string][IO.Path]::PathSeparator)|Where-Object{$_-and(Test-Path -LiteralPath $_ -PathType Container -ErrorAction SilentlyContinue)})
+ # The validation supervisor deliberately omits these ambient names. The fixture
+ # declares actual Windows facts without changing the parent or production guard.
+ if($IsWindows){
+  if(-not$environment.ContainsKey('SYSTEMDRIVE')){$environment.SYSTEMDRIVE=[IO.Path]::GetPathRoot([string]$environment.SYSTEMROOT).TrimEnd('\')}
+  if(-not$environment.ContainsKey('USERPROFILE')){$environment.USERPROFILE=[Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)}
+ }
  $environment.PATH=(@($pathParts|Select-Object -Unique)-join[IO.Path]::PathSeparator)
  $seed=[ordered]@{schema='rusty.morphospace.local_quest_build_context.v1';environment=$environment;tools=$toolRecords;rust_toolchain=[ordered]@{channel=$channel}}
  $SeedContextPath=Join-Path $EvidenceRoot 'seed.json'
@@ -167,6 +173,7 @@ try{
   $alias=Join-Path $EvidenceRoot 'tool-alias';$retained=Join-Path $EvidenceRoot 'tool-alias-original';$empty=Join-Path $EvidenceRoot 'empty-alias-target'
   [void][IO.Directory]::CreateDirectory($empty)
   $kind=if($IsWindows){'Junction'}else{'SymbolicLink'}
+  try{
   $null=New-Item -ItemType $kind -Path $alias -Target (Split-Path $seed.tools.git.path -Parent)
   $v=Clone $seed;$v.tools.git.path=Join-Path $alias ([IO.Path]::GetFileName($seed.tools.git.path));$p=Store 'canonical-tool-alias' $v
   $c=Resolve $p -tools @('git')
@@ -176,6 +183,16 @@ try{
   $null=New-Item -ItemType $kind -Path $alias -Target $empty
   Invoke-MorphospaceQuestBuildEnvironment -Context $c -Action {param($bound)$canonicalGitExecutable=[string]$bound.Tools.git.Path;$out=@(& $canonicalGitExecutable --version);Assert ($LASTEXITCODE-eq0-and$out.Count-gt0) 'Canonical target dispatch changed after alias retarget'} -ArgumentList @($c)
   Refusal {Resolve $p -tools @('git')} 'tool-missing'
+  }finally{
+   # Remove only the two links created by this case; never traverse their targets.
+   foreach($link in @($alias,$retained)){
+    if([IO.Directory]::Exists($link)){
+     if([IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($link))-cne[IO.Path]::GetFullPath($EvidenceRoot)){throw 'Owned alias cleanup boundary differs'}
+     if(([IO.File]::GetAttributes($link)-band[IO.FileAttributes]::ReparsePoint)-eq0){throw 'Owned alias cleanup requires a link'}
+     [IO.Directory]::Delete($link)
+    }
+   }
+  }
  }
 
 
