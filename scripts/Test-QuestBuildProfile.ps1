@@ -378,4 +378,6 @@ if (-not (Test-Path -LiteralPath $outputParent)) { New-Item -ItemType Directory 
 # actual retained-v2 original/pipe/capture controls.
 & pwsh -NoProfile -NonInteractive -File (Join-Path $PSScriptRoot 'Test-QuestBuildRetainedOriginal.ps1') -RepoRoot $RepoRoot
 if($LASTEXITCODE-ne0){throw 'Retained build original controls failed'}
+& pwsh -NoProfile -NonInteractive -File (Join-Path $PSScriptRoot 'Test-QuestBuildEnvironment.ps1') -RepoRoot $RepoRoot
+if($LASTEXITCODE-ne0){throw 'Quest selected build environment corpus failed.'}
 exit 0

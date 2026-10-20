@@ -1,0 +1,12 @@
+{
+ "$schema":"https://json-schema.org/draft/2020-12/schema",
+ "$id":"https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/local-quest-build-context-v1.schema.json",
+ "title":"Local selected Quest build execution context",
+ "type":"object","additionalProperties":false,"required":["schema","environment","tools"],
+ "properties":{
+  "schema":{"const":"rusty.morphospace.local_quest_build_context.v1"},
+  "environment":{"type":"object","maxProperties":96,"propertyNames":{"pattern":"^[A-Z][A-Z0-9_]{0,95}$"},"additionalProperties":{"type":"string","maxLength":32767}},
+  "tools":{"type":"object","maxProperties":5,"propertyNames":{"enum":["cargo","rustc","rustup","pwsh","git"]},"additionalProperties":{"type":"object","additionalProperties":false,"required":["path","sha256"],"properties":{"path":{"type":"string","minLength":1},"sha256":{"type":"string","pattern":"^[a-f0-9]{64}$"}}}},
+  "rust_toolchain":{"type":"object","additionalProperties":false,"required":["channel"],"properties":{"channel":{"type":"string","pattern":"^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$"}}}
+ }
+}
