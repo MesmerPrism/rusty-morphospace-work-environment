@@ -38,6 +38,38 @@ config, and verified diagnostic adapter. Hostess plans or runs
 only those adapters, retains foreign receipts by path and SHA-256, and resumes
 only completed hash-valid stages.
 
+## Retained build originals
+
+New callers can explicitly select `-WaitPolicy Retained` with a positive
+`-EstimatedWarningSeconds`. The estimate emits diagnostics only. The same
+once-issued child and both output readers remain owned until actual parent
+exit, reap and both stream completions, including descendant-held pipes.
+Warning publication failure never cancels or repeats the build. Explicit
+console cancellation remains a separate action and still settles that original.
+
+This mode emits `rusty.morphospace.quest_build_terminal_result.v2`. It records
+the selected policy, actual process/EOF facts, independently drained and stored
+raw bytes, capture errors, and attempted/failed warning publication. A raw sink
+failure continues draining the original producer and reports failure after
+settlement; partial raw evidence remains retained. A passed result requires
+exit zero, actual reap, both EOFs and complete authenticated raw capture.
+Parent reap and output EOF do not assert absence of arbitrary descendant work.
+
+The default `Bounded` compatibility mode retains the explicit `TimeoutSeconds`
+deadline and v1 result. Its deadline is a cancellation policy, not a progress
+estimate. New ongoing preparation callers should deliberately select retained
+mode and qualify its v2 consumer. Source, signer, profile, artifact and output
+collision checks remain unchanged. Neither mode grants device authorization.
+The owning controls are `Test-QuestBuildProfile.ps1` and its causal retained
+original corpus `Test-QuestBuildRetainedOriginal.ps1`.
+The corpus uses the declared core Python dependency for a producer that
+explicitly inherits both output pipes into a real descendant. It verifies a
+new warning after the observed parent exits, then releases the descendant and
+checks both large byte streams and their late tails. It also exercises raw and
+warning sink faults, actual nonzero exit, requested cancellation, and the public
+preflight/build boundary. Its four-byte artifact is a host fixture, not an APK
+or device validation result.
+
 ## Host-only executable preflight
 
 `Invoke-QuestBuildProfile.ps1 -Mode Preflight` is an advisory producer for the

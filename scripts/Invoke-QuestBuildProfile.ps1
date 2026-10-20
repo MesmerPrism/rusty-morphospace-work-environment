@@ -11,6 +11,8 @@ param(
     [string]$SignerObservationPath = "",
     [string]$SignerObservationSha256 = "",
     [int]$TimeoutSeconds = 900,
+    [ValidateSet("Bounded","Retained")][string]$WaitPolicy = "Bounded",
+    [long]$EstimatedWarningSeconds = 60,
     [switch]$SelfTest,
     [switch]$TestInterruptBeforePublish,
     [int]$TestCancelAfterMilliseconds = 0
@@ -18,6 +20,8 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+$WaitPolicy = if($WaitPolicy -ieq 'Retained'){'Retained'}else{'Bounded'}
+if($WaitPolicy -ceq "Retained"){Import-Module (Join-Path $PSScriptRoot "lib/MorphospaceRetainedBuildProcess.psm1") -Force}
 
 function Get-Sha256 {
     param([string]$Path)
@@ -568,6 +572,7 @@ function Invoke-ChildProcess {
 
 function Assert-TerminalResult {
     param([object]$Result)
+    if([string]$Result.schema -ceq "rusty.morphospace.quest_build_terminal_result.v2"){Assert-RetainedTerminalResult $Result;return}
     Assert-PropertySet $Result @("schema", "operation", "terminal_status", "profile", "invocation", "observation", "reason_codes", "child_process", "streams", "owner_payload") @() "Terminal result"
     if ([string]$Result.schema -cne "rusty.morphospace.quest_build_terminal_result.v1" -or [string]$Result.operation -cnotin @("preflight", "build")) { throw "Terminal result identity is invalid." }
     $preflightStatuses = @("passed", "contradiction", "incomplete")
@@ -585,6 +590,24 @@ function Assert-TerminalResult {
         Assert-PropertySet $embeddedObservation @("schema", "observation_id", "created_at", "subject", "values", "capabilities", "content_sha256") @() "Embedded execution preflight observation"
         if ([string]$embeddedObservation.schema -cne "rusty.morphospace.workflow.execution_preflight_observation.v1" -or [string]$embeddedObservation.observation_id -cne [string]$Result.observation.observation_id -or [string]$embeddedObservation.content_sha256 -cne [string]$Result.observation.content_sha256 -or (Get-StringSha256 (ConvertTo-CompactJson $embeddedObservation)) -cne [string]$Result.observation.sha256) { throw "Terminal result does not bind its embedded execution preflight observation." }
     }
+}
+
+function Assert-RetainedTerminalResult {
+    param([object]$Result)
+    if(-not(Test-Json -Json (ConvertTo-CompactJson $Result) -SchemaFile (Join-Path $PSScriptRoot '../schemas/quest-build-terminal-result-v2.schema.json'))){throw 'Retained terminal schema invalid'}
+    $child=$Result.child_process
+    if($Result.invocation.wait_policy-cne'retained-warning' -or $child.estimated_warning_seconds-ne$Result.invocation.estimated_warning_seconds -or $child.automatic_retry){throw 'Retained policy binding invalid'}
+    if($child.started){
+        if(-not$child.process_reaped -or $child.outcome-cnotin@('passed','failed','cancelled') -or -not$Result.streams.captured){throw 'Actual retained child settlement required'}
+        if($child.stdout_eof-ne$Result.streams.stdout.eof -or $child.stderr_eof-ne$Result.streams.stderr.eof){throw 'Actual stream observations differ'}
+        if($child.termination_requested-ne($child.cancellation-cne'not-requested')){throw 'Explicit cancellation binding differs'}
+        if($Result.terminal_status-ceq'passed'){
+            if($child.outcome-cne'passed' -or $child.exit_code-ne0 -or $child.termination_requested -or -not$child.raw_capture_complete -or @($child.observer_errors).Count){throw 'Passed retained original lacks actual closure'}
+            foreach($stream in @($Result.streams.stdout,$Result.streams.stderr)){
+                if(-not$stream.eof -or $null-ne$stream.storage_error -or $null-ne$stream.read_error -or $null-eq$stream.sha256 -or $null-eq$stream.size_bytes -or $stream.drained_bytes-ne$stream.stored_bytes -or $stream.stored_bytes-ne$stream.size_bytes){throw 'Passed retained stream is incomplete'}
+            }
+        }
+    }elseif($child.outcome-cne'not-started' -or $child.process_reaped -or $child.stdout_eof -or $child.stderr_eof -or $child.raw_capture_complete -or $Result.streams.captured -or $null-ne$child.exit_code){throw 'Not-started retained observation differs'}
 }
 
 function New-TerminalResult {
@@ -606,6 +629,16 @@ function New-TerminalResult {
         child_process = $childProcessEvidence
         streams = if ($null -ne $Streams) { $Streams } else { [ordered]@{ captured = $false; stdout = $null; stderr = $null } }
         owner_payload = if ($null -ne $Payload) { $Payload } else { [ordered]@{ artifact = $null; source = $null; source_composition = [ordered]@{ source = $null; external_sources = @() }; lockfiles = @(); toolchain = @(); environment = @(); identity = [ordered]@{}; output = [ordered]@{}; execution_preflight_observation = $null } }
+    }
+    if($WaitPolicy -ceq 'Retained'){
+        $estimate=if($EstimatedWarningSeconds-gt0){$EstimatedWarningSeconds}else{$null}
+        $result.schema='rusty.morphospace.quest_build_terminal_result.v2'
+        $result.invocation.Remove('timeout_seconds')
+        $result.invocation['wait_policy']='retained-warning'
+        $result.invocation['estimated_warning_seconds']=$estimate
+        if($null-eq$ChildProcess){
+            $result.child_process=[ordered]@{started=$false;outcome='not-started';estimated_warning_seconds=$estimate;elapsed_milliseconds=0L;cancellation='not-requested';termination_requested=$false;automatic_retry=$false;process_reaped=$false;stdout_eof=$false;stderr_eof=$false;raw_capture_complete=$false;warning_count=0L;warning_publication_failures=0L;observer_errors=@();exit_code=$null}
+        }
     }
     Assert-TerminalResult $result
     return $result
@@ -652,11 +685,13 @@ $profile = $null
 $execution = $null
 $preflight = $null
 $terminal = $null
+$child = $null
 $exitCode = 1
 $operation = if ($Mode -ceq "Preflight") { "preflight" } else { "build" }
 try {
     if ($Mode -cnotin @("Preflight", "Build")) { throw "Mode must be Preflight or Build." }
-    if ($TimeoutSeconds -lt 1 -or $TimeoutSeconds -gt 3600) { throw "TimeoutSeconds must be between 1 and 3600." }
+    if ($WaitPolicy -ceq "Bounded" -and ($TimeoutSeconds -lt 1 -or $TimeoutSeconds -gt 3600)) { throw "TimeoutSeconds must be between 1 and 3600 for bounded compatibility mode." }
+    if ($WaitPolicy -ceq "Retained" -and $EstimatedWarningSeconds -lt 1) { throw "Positive EstimatedWarningSeconds required." }
     if (-not $ProfilePath -or -not $ProfileSha256 -or -not $SourceRoot) { throw "ProfilePath, ProfileSha256, and SourceRoot are required." }
     $source = (Resolve-Path -LiteralPath $SourceRoot -ErrorAction Stop).Path
     $profile = Read-BuildProfile $ProfilePath $ProfileSha256 $source
@@ -673,7 +708,9 @@ try {
         if (-not $ReceiptPath) { throw "ReceiptPath is required for Build mode." }
         $receiptFullPath = [System.IO.Path]::GetFullPath($ReceiptPath)
         if (Test-Path -LiteralPath $receiptFullPath) { throw "ReceiptPath already exists." }
-        $childResults = @(Invoke-ChildProcess $execution $preflight.ChildEnvironment $receiptFullPath $TimeoutSeconds $TestCancelAfterMilliseconds)
+        $childResults = if($WaitPolicy -ceq 'Retained'){
+            @(Invoke-MorphospaceRetainedBuildProcess -Execution $execution -EnvironmentValues $preflight.ChildEnvironment -BaseReceiptPath $receiptFullPath -EstimatedWarningSeconds $EstimatedWarningSeconds -CancelAfterMilliseconds $TestCancelAfterMilliseconds)
+        }else{@(Invoke-ChildProcess $execution $preflight.ChildEnvironment $receiptFullPath $TimeoutSeconds $TestCancelAfterMilliseconds)}
         if ($childResults.Count -ne 1) { throw "Child wrapper emitted $($childResults.Count) result objects." }
         $child = $childResults[0]
         $payload = $preflight.Payload
@@ -688,7 +725,7 @@ try {
                 }
             }
         } else {
-            $reason = switch ($child.Status) { "timed_out" { "child-timeout" } "cancelled" { "child-cancelled" } default { "child-exit-nonzero" } }
+            $reason = switch ($child.Status) { "timed_out" { "child-timeout" } "cancelled" { "child-cancelled" } default { if($WaitPolicy-ceq"Retained" -and -not$child.ChildProcess.raw_capture_complete){"child-capture-incomplete"}else{"child-exit-nonzero"} } }
             $terminal = New-TerminalResult "build" $child.Status $profile $execution $preflight @($reason) $child.Streams $payload $TimeoutSeconds $child.ChildProcess
         }
         $exitCode = if ($terminal.terminal_status -eq "passed") { 0 } else { 1 }
@@ -696,7 +733,12 @@ try {
 } catch {
     $terminalStatus = if ($operation -eq "preflight") { "contradiction" } else { "failed" }
     $reasonCode = if ($operation -eq "preflight") { "preflight-input-invalid" } else { "wrapper-error" }
-    $terminal = New-TerminalResult $operation $terminalStatus $profile $execution $preflight @($reasonCode) $null $null $TimeoutSeconds $null
+    # An observer/artifact/publication failure after execution must not relabel
+    # the actual child as never started or discard its retained stream facts.
+    $failureStreams=if($null-ne$child){$child.Streams}else{$null}
+    $failureProcess=if($null-ne$child){$child.ChildProcess}else{$null}
+    $failurePayload=if($null-ne$preflight){$preflight.Payload}else{$null}
+    $terminal = New-TerminalResult $operation $terminalStatus $profile $execution $preflight @($reasonCode) $failureStreams $failurePayload $TimeoutSeconds $failureProcess
     $exitCode = if ($operation -eq "preflight") { 2 } else { 1 }
 }
 
