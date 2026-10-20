@@ -366,6 +366,79 @@ try{
     if($CheckpointProofOnly){[pscustomobject]@{result='pass';external_receipt=$true;separate_receipt_producer=$true;prefix_drift_rejected=$true;acceptance_outside_prefix_rejected=$true;ambiguous_acceptance_rejected=$true;missing_receipt_rejected=$true}|ConvertTo-Json -Compress;return}
     Test-ActiveEnvelopeScopeOnlyAmendmentContinuation -Root (Join-Path $temp 'scope-only-amendment-continuation')
     Test-ActiveEnvelopeFeaturelessRootsOnly -Root (Join-Path $temp 'featureless-roots-only')
+    # Genuine recovered-origin positive. Both fixture factories already belong
+    # to the dot-sourced DevelopmentAdmissionFixture.ps1. The current public
+    # Reprepare and Admit writers earn every recovered receipt used below.
+    $recoveredOriginSeed = New-RecoveredProposalContinuationSeed -Root (Join-Path $temp 'recovered-origin-seed') -RepositoryRoot $repoRoot -TransitionLedgerModule $transitionModule
+    $recoveredOriginRoot = Join-Path $temp 'recovered-origin-positive'
+    $recoveredOriginFixture = New-EnvelopeRepreparationFixture -BaseRepository $recoveredOriginSeed.base_repository -FixtureRoot $recoveredOriginRoot -Template $recoveredOriginSeed.repreparation_template
+    $recoveredOriginWorkspace = $recoveredOriginFixture.workspace
+    $recoveredOriginPreserved = @()
+    foreach ($binding in @(
+        $recoveredOriginFixture.input.original_preparation.receipt,
+        $recoveredOriginFixture.input.original_preparation.source_composition,
+        $recoveredOriginFixture.input.original_preparation.intent,
+        $recoveredOriginFixture.input.original_preparation.completion,
+        $recoveredOriginFixture.input.retirement.receipt,
+        $recoveredOriginFixture.input.retirement.intent,
+        $recoveredOriginFixture.input.retirement.completion
+    )) {
+        $recoveredOriginPreserved += [pscustomobject]@{ path=[string]$binding.path; sha256=(Get-EnvelopeFileSha256 (Join-Path $recoveredOriginWorkspace ([string]$binding.path))) }
+    }
+    $recoveredOriginOut = Join-Path $recoveredOriginWorkspace 'receipts/u003-envelope-recovery-repreparation.json'
+    $recoveredOriginArguments = @{
+        Action='ReprepareRetiredDevelopmentEnvelope'; WorkspaceRoot=$recoveredOriginWorkspace
+        DevelopmentEnvelopeRepreparation=$recoveredOriginFixture.input_path
+        ExpectedDevelopmentEnvelopeRepreparationSha256=(Get-EnvelopeFileSha256 $recoveredOriginFixture.input_path)
+        OutPath=$recoveredOriginOut; Timestamp='2026-08-25T00:01:40.0000000Z'; Execute=$true
+    }
+    $recoveredOriginRun = & (Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1') @recoveredOriginArguments | ConvertFrom-Json -DateKind String
+    Assert-ActiveEnvelopeTest ($recoveredOriginRun.executed -and $recoveredOriginRun.transition -ceq 'retired-envelope-reprepared') 'actual current Reprepare writer did not produce the recovered-origin boundary'
+    $recoveredOriginAdmissionRequest = New-EnvelopeReplacementAdmission -Template $recoveredOriginSeed.admission_template -Workspace $recoveredOriginWorkspace -AdmissionId 'u003-admission' -UnitId 'u003'
+    $recoveredOriginAdmissionRequest.preparation = [ordered]@{
+        preparation_kind='recovered'; preparation_id='u003-envelope'
+        receipt_path='receipts/u003-envelope.json'
+        receipt_sha256=(Get-EnvelopeFileSha256 (Join-Path $recoveredOriginWorkspace 'receipts/u003-envelope.json'))
+        source_composition_path='source-composition-locks/u003-envelope.json'
+        source_composition_sha256=(Get-EnvelopeFileSha256 (Join-Path $recoveredOriginWorkspace 'source-composition-locks/u003-envelope.json'))
+        recovery_receipt_path='receipts/u003-envelope-recovery-repreparation.json'
+        recovery_receipt_sha256=(Get-EnvelopeFileSha256 $recoveredOriginOut)
+    }
+    $recoveredOriginAdmissionRequest.unit.source_composition.lock_path = 'source-composition-locks/u003-envelope.json'
+    $recoveredOriginAdmissionRequest.expected.project_sha256 = Get-EnvelopeCanonicalJsonSha256 (Read-EnvelopeProtocolJson (Join-Path $recoveredOriginWorkspace 'project.spec.json'))
+    $recoveredOriginAdmissionRequest.expected.feature_lock_sha256 = Get-EnvelopeCanonicalJsonSha256 (Read-EnvelopeProtocolJson (Join-Path $recoveredOriginWorkspace 'feature.lock.json'))
+    $recoveredOriginAdmissionRequest.expected.source_composition_path = $recoveredOriginAdmissionRequest.preparation.source_composition_path
+    $recoveredOriginAdmissionRequest.expected.source_composition_sha256 = $recoveredOriginAdmissionRequest.preparation.source_composition_sha256
+    $recoveredOriginAdmissionRequest.expected.repository_map_sha256 = Get-EnvelopeFileSha256 (Join-Path $recoveredOriginWorkspace 'repository-map.json')
+    $recoveredOriginAdmissionPath = Join-Path $recoveredOriginRoot 'admission.json'
+    Write-EnvelopeJson $recoveredOriginAdmissionPath $recoveredOriginAdmissionRequest
+    $recoveredOriginAdmissionOut = Join-Path $recoveredOriginWorkspace 'receipts/u003-admission.json'
+    $recoveredOriginAdmitted = Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $recoveredOriginWorkspace -DevelopmentUnitAdmission $recoveredOriginAdmissionPath -ExpectedDevelopmentUnitAdmissionSha256 (Get-EnvelopeFileSha256 $recoveredOriginAdmissionPath) -OutPath $recoveredOriginAdmissionOut -Timestamp '2026-08-25T00:01:50.0000000Z' -Execute
+    Assert-ActiveEnvelopeTest ($recoveredOriginAdmitted.transition -ceq 'development-unit-admitted') 'actual recovered admission writer did not earn the origin binding'
+    # Use the persisted writer-owned admission, not an unaccepted request DTO.
+    $recoveredOriginAdmission = Read-EnvelopeProtocolJson $recoveredOriginAdmissionOut
+    $recoveredOriginLifecycle = @{ WorkspaceRoot=$recoveredOriginWorkspace; UnitId='u003'; RepoMapPath=(Join-Path $recoveredOriginWorkspace 'repository-map.json'); ValidationTier='quick' }
+    $recoveredOriginReady = & $automationModule { param($a) Invoke-MorphospaceWorkUnitAutomation @a -Action Ready -Timestamp '2026-08-25T00:01:51.0000000Z' -Execute } $recoveredOriginLifecycle
+    # This is an isolated fixture checkpoint, as in the existing recovered-
+    # continuation owner test; actual Claim observes its real repository state.
+    [void](Invoke-EnvelopeGit $recoveredOriginFixture.repository @('add','--','morphospace'))
+    [void](Invoke-EnvelopeGit $recoveredOriginFixture.repository @('commit','-m','checkpoint writer-produced recovered preparation and Ready'))
+    $recoveredOriginClaimed = & $automationModule { param($a) Invoke-MorphospaceWorkUnitAutomation @a -Action Claim -Timestamp '2026-08-25T00:01:52.0000000Z' -Execute } $recoveredOriginLifecycle
+    Assert-ActiveEnvelopeTest ($recoveredOriginReady.transition -ceq 'proposed-to-ready' -and $recoveredOriginClaimed.transition -ceq 'ready-to-active') 'actual recovered owner did not complete Ready and Claim'
+    $recoveredOriginIntent = Read-EnvelopeProtocolJson (Join-Path $recoveredOriginWorkspace 'receipts/transactions/u003-envelope-recovery-transition.intent.json')
+    $recoveredOriginCompletion = Read-EnvelopeProtocolJson (Join-Path $recoveredOriginWorkspace 'receipts/transactions/u003-envelope-recovery-transition.completion.json')
+    $recoveredOriginReceipt = Read-EnvelopeProtocolJson (Join-Path $recoveredOriginWorkspace 'receipts/u003-envelope.json')
+    Assert-ActiveEnvelopeTest ($recoveredOriginAdmission.preparation.preparation_kind -ceq 'recovered' -and [string]$recoveredOriginCompletion.intent_sha256 -ceq (Get-EnvelopeFileSha256 (Join-Path $recoveredOriginWorkspace 'receipts/transactions/u003-envelope-recovery-transition.intent.json'))) 'recovered positive is detached from its real typed Reprepare completion'
+    foreach ($binding in @($recoveredOriginPreserved)) {
+        Assert-ActiveEnvelopeTest ((Get-EnvelopeFileSha256 (Join-Path $recoveredOriginWorkspace $binding.path)) -ceq $binding.sha256) 'recovered origin journey rewrote retained preparation or retirement evidence'
+    }
+    $recoveredOriginBeforeReads = Get-EnvelopeWorkspaceByteInventorySha256 $recoveredOriginWorkspace
+    $recoveredOriginTargets = & $continuationModule { param($w,$a) Read-DevelopmentContinuationPreparationTargets $w $a } $recoveredOriginWorkspace $recoveredOriginAdmission
+    $recoveredOriginFull = & $continuationModule { param($w,$a) Get-MorphospaceDevelopmentEnvelopeContinuation -WorkspaceRoot $w -Admission $a } $recoveredOriginWorkspace $recoveredOriginAdmission
+    Assert-ActiveEnvelopeTest ((Get-EnvelopeCanonicalJsonSha256 $recoveredOriginTargets.project) -ceq [string]$recoveredOriginIntent.target.project.sha256 -and (Get-EnvelopeCanonicalJsonSha256 $recoveredOriginTargets.feature_lock) -ceq [string]$recoveredOriginIntent.target.feature_lock.sha256 -and (Get-EnvelopeCanonicalJsonSha256 $recoveredOriginFull.project) -ceq [string]$recoveredOriginIntent.target.project.sha256 -and (Get-EnvelopeCanonicalJsonSha256 $recoveredOriginFull.feature_lock) -ceq [string]$recoveredOriginIntent.target.feature_lock.sha256) 'actual recovered helper or full reader lost the typed writer-owned targets'
+    Assert-ActiveEnvelopeTest ([string]$recoveredOriginFull.unit.unit_id -ceq 'u003' -and [string]$recoveredOriginFull.unit.status -ceq 'active' -and @($recoveredOriginFull.records | Where-Object kind -CEQ 'ready').Count -eq 1 -and @($recoveredOriginFull.records | Where-Object kind -CEQ 'claimed').Count -eq 1 -and @($recoveredOriginFull.extensions).Count -eq 0 -and @($recoveredOriginFull.tooling_upgrades).Count -eq 0) 'recovered positive bypassed the genuine ordinary owner continuation'
+    Assert-ActiveEnvelopeTest ((Get-EnvelopeCanonicalJsonSha256 $recoveredOriginReceipt.envelope.project) -ceq (Get-EnvelopeCanonicalJsonSha256 $recoveredOriginTargets.project) -and (Get-EnvelopeCanonicalJsonSha256 $recoveredOriginReceipt.envelope.feature_lock) -ceq (Get-EnvelopeCanonicalJsonSha256 $recoveredOriginTargets.feature_lock) -and (Get-EnvelopeWorkspaceByteInventorySha256 $recoveredOriginWorkspace) -ceq $recoveredOriginBeforeReads) 'actual rich recovered receipt disagreed or read-only observations changed fixture bytes'
+    Write-Output 'PASS genuine current Reprepare/Admit/Ready/Claim origin helper and full continuation; retained historical evidence and read-only bytes unchanged'
     $seed=New-EnvelopeAdmissionPreparedFixture -Root (Join-Path $temp 'seed') -RepositoryRoot $repoRoot -TransitionLedgerModule $checkpointWriter -OwnerProducedPreparation -AdditiveFeature
     $workspace=$seed.workspace;$admissionPath=Join-Path $temp 'admission.json';Write-EnvelopeJson $admissionPath $seed.admission_template
     Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $workspace -DevelopmentUnitAdmission $admissionPath -ExpectedDevelopmentUnitAdmissionSha256 (Get-EnvelopeFileSha256 $admissionPath) -OutPath (Join-Path $workspace 'receipts\u002-admission.json') -Timestamp '2026-09-15T00:00:00.0000000Z' -Execute|Out-Null

@@ -2,7 +2,7 @@
   "schema": "rusty.morphospace.workflow.affected_validation_registry.v1",
   "registry_id": "work-environment-current-delta-v1",
   "repository_id": "MesmerPrism/rusty-morphospace-work-environment",
-  "revision": 36,
+  "revision": 37,
   "historical_aggregate": {"tier": "deep", "reusable_evidence": false, "full_history_required": true},
   "dependency_declarations": [
     {"importer": "scripts/ActiveUnitRetirement.psm1", "variable": "ProvenanceModule", "count": 2, "target_paths": ["scripts/DevelopmentEnvelopeProvenance.psm1"]},
@@ -62,6 +62,7 @@
     {"importer": "scripts/Test-WorkUnitAutomation.ps1", "variable": "drift", "count": 1, "target_paths": ["scripts/Test-WorkUnitAutomation.ps1"]},
     {"importer":"scripts/Test-WorkUnitAutomation.ps1","variable":"freshPwsh","count":1,"classification":"authenticated-external-command"},
     {"importer": "scripts/Test-WorkUnitAutomation.ps1", "variable": "graphCase", "count": 2, "target_paths": ["scripts/Test-WorkUnitAutomation.ps1"]},
+    {"importer": "scripts/Test-WorkUnitAutomation.ps1", "variable": "preparationContinuationModule", "count": 3, "target_paths": ["scripts/lib/MorphospaceDevelopmentContinuation.psm1"]},
     {"importer": "scripts/Test-WorkUnitAutomation.ps1", "variable": "retirementModule", "count": 4, "target_paths": ["scripts/PreparedPushRetirement.psm1"]},
     {"importer": "scripts/Test-WorkflowContracts.ps1", "variable": "executedPreparedValidator", "count": 1, "target_paths": ["scripts/Test-ExecutedPreparedPublicationReconciliation.ps1"]},
     {"importer": "scripts/Test-WorkflowContracts.ps1", "variable": "executedPushValidator", "count": 1, "target_paths": ["scripts/Test-ExecutedPushReceipt.ps1"]},

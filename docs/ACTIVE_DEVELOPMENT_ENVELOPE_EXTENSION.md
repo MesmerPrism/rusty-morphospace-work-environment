@@ -157,3 +157,10 @@ projection without changing its source-composition lock or tooling pointer.
 Prepared-envelope provenance authenticates the complete committed continuation
 for that delta, including every amendment producer and live endpoint. It does
 not widen the ordinary Ready/Claim/Freeze suffix or accept detached scope.
+
+Historical preparation receipt v1 does not require embedded project or feature-lock
+snapshots in its envelope. Continuation derives both from the exact internally
+selected committed preparation transaction, checking its completion, required
+receipt hashes, source/artifact bytes and ledger event. Optional embedded snapshots
+must agree when present. This does not permit a live-document fallback, skip a
+continuation transition or change retained historical evidence.
