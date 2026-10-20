@@ -84,9 +84,16 @@ function Write-NewJson([string]$Path,[object]$Value) {
 function Read-DependencyProjectionFile([string]$Path,[string]$ExpectedSha256) {
     $full=[IO.Path]::GetFullPath($Path)
     if(-not[IO.File]::Exists($full)){throw 'Affected phase dependency projection file is absent.'}
-    $info=[IO.FileInfo]::new($full)
-    if($info.Length -le 0 -or $info.Length -gt 134217728){throw 'Affected phase dependency projection file exceeds its bound.'}
-    [byte[]]$bytes=[IO.File]::ReadAllBytes($full)
+    # The parent retains its read/write publisher handle with FileShare.Read.
+    # Readers must allow that existing handle while requesting read access only.
+    $stream=[IO.FileStream]::new($full,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::ReadWrite)
+    try {
+        $length=$stream.Length
+        if($length -le 0 -or $length -gt 134217728){throw 'Affected phase dependency projection file exceeds its bound.'}
+        [byte[]]$bytes=[byte[]]::new([int]$length)
+        $stream.ReadExactly($bytes)
+        if($stream.Length-ne$length){throw 'Affected phase dependency projection length changed during read.'}
+    } finally { $stream.Dispose() }
     if((Get-Sha256 $bytes)-cne$ExpectedSha256){throw 'Affected phase dependency projection file differs from its parent-owned hash.'}
     try { $json = [Text.UTF8Encoding]::new($false,$true).GetString($bytes) } catch { throw 'Affected phase dependency projection is not strict UTF-8.' }
     $schemaPath = Join-Path $repoRoot 'schemas/affected-validation-self-test-dependency-projection-v1.schema.json'

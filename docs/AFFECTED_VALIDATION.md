@@ -519,9 +519,12 @@ remain failure-sensitive; they do not use a `!cancelled()` job override. Cancel
 a run normally first. Force-cancel only a legacy or already-started run that
 does not stop after bounded observation; force-cancel may prevent terminal
 evidence upload, and missing evidence never becomes pass or reusable evidence.
-Every job has an explicit outer timeout. Segment matrices derive their
-timeout from the exact segment estimated budget plus 900 seconds of bounded
-setup/cleanup overhead and reject any value reaching GitHub's six-hour ceiling.
+Every job has an explicit outer timeout. Segment matrix jobs use the hosted
+six-hour execution ceiling (`timeout-minutes: 360`). Their estimates remain
+advisory: the planner warns when an estimate plus 900 seconds of setup/cleanup
+headroom reaches that ceiling, and still admits the intact segment. The hosted
+outer timeout can terminate an unfinished original; only already finalized,
+authenticated evidence is eligible for reuse.
 Setup, plan, and main-delta pre-evidence failures write create-new diagnostics
 bounded to 64 KiB and upload them under the existing pinned artifact action;
 they remain explicitly non-authoritative.
@@ -559,9 +562,11 @@ leaves and does not replay that cumulative aggregate. Hosted execution packs
 dependency-connected checks into deterministic, non-overlapping segments with
 a one-hour estimated target, runs independent segments concurrently, and then
 verifies their exact union into the existing platform evidence shape. A single
-dependency component may exceed the target but must remain below the five-hour
-hard ceiling; the explicit 15-minute outer overhead keeps every admitted
-segment below the hosted six-hour job limit.
+dependency component may exceed the target or the legacy five-hour advisory
+maximum. The planner retains semantic prerequisite groups intact and warns on
+that estimate; it does not cancel work or reject the group because of an
+estimate. The hosted six-hour execution ceiling still applies to actual job
+execution, including setup and cleanup.
 After
 adoption, changes limited to either APK run-transaction schema or its audit
 tool select the portable Quick `apk-run-transaction` leaf plus the public
