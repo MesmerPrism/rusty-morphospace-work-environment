@@ -127,7 +127,38 @@ function Assert-MorphospaceValidationReceiptStructure {
         throw "Validation receipt does not satisfy structural schema '$schemaId': $($_.Exception.Message)"
     }
     if (-not $valid) {
-        $details = @($schemaErrors | ForEach-Object { $_.Exception.Message } | Select-Object -Unique) -join ' | '
+        $messages = [Collections.Generic.List[string]]::new()
+        foreach ($schemaError in $schemaErrors) { $messages.Add($schemaError.Exception.Message) }
+        # PowerShell 7.6.7 can return false without reporting nested errors.
+        # Upstream reproduction: PowerShell/PowerShell issue #28218.
+        # Traverse the same bundled schema engine's hierarchy for diagnostics
+        # only. The original false result remains the rejection decision even
+        # if diagnostic extraction fails or a second evaluation disagrees.
+        try {
+            $options = [Json.Schema.EvaluationOptions]::new()
+            $options.OutputFormat = [Json.Schema.OutputFormat]::Hierarchical
+            $options.SchemaRegistry.Fetch = $null
+            $schemaText = Get-Content -LiteralPath $schemaPath -Raw
+            $evaluation = [Json.Schema.JsonSchema]::FromText($schemaText).Evaluate([Text.Json.Nodes.JsonNode]::Parse($json), $options)
+            $queue = [Collections.Generic.Queue[object]]::new()
+            $queue.Enqueue($evaluation)
+            $diagnosticLength = 0
+            while ($queue.Count -gt 0 -and $diagnosticLength -lt 4096) {
+                $node = $queue.Dequeue()
+                if (-not $node.IsValid -and $null -ne $node.Errors) {
+                    foreach ($entry in $node.Errors.GetEnumerator()) {
+                        $message = "at '$($node.InstanceLocation.ToString())': $($entry.Key): $($entry.Value)"
+                        $messages.Add($message)
+                        $diagnosticLength += $message.Length
+                    }
+                }
+                if ($null -ne $node.Details) { foreach ($child in $node.Details) { $queue.Enqueue($child) } }
+            }
+            if ($queue.Count -gt 0) { $messages.Add('[nested diagnostics truncated]') }
+        } catch {
+            $messages.Add('Nested schema diagnostics unavailable; the original validation result is false.')
+        }
+        $details = @($messages.ToArray() | Select-Object -Unique) -join ' | '
         if ($details.Length -gt 4096) { $details = $details.Substring(0,4096) + ' [truncated]' }
         throw "Validation receipt does not satisfy structural schema '$schemaId': $details"
     }

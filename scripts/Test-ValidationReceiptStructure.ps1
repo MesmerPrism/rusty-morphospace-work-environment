@@ -66,6 +66,13 @@ try { Assert-MorphospaceValidationReceiptStructure -Document $extraRevisionField
 catch { $reportedExtraField = $_.Exception.Message -like '*/repository_revisions/0/tree*' }
 Assert-ReceiptTest ($null -eq $extraRevisionField.device_validation -and $reportedExtraField) 'schema diagnostics hid the invalid revision field behind the legal null device branch'
 
+$nestedReference = Copy-ReceiptTestDocument $many
+$nestedReference.criteria[0].evidence_refs[0] = [pscustomobject]@{ invalid='reference object' }
+$reportedNestedReference = $false
+try { Assert-MorphospaceValidationReceiptStructure -Document $nestedReference | Out-Null }
+catch { $reportedNestedReference = $_.Exception.Message -like '*/criteria/0/evidence_refs/0*' }
+Assert-ReceiptTest $reportedNestedReference 'deep array-item failure did not retain its exact JSON pointer'
+
 foreach ($field in @('repository_revisions','changed_paths','artifacts','criteria','gates')) {
     $malformed = Copy-ReceiptTestDocument $v1
     $malformed.$field = 'scalar-value'
