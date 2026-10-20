@@ -1,0 +1,676 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/active-unit-retirement-v2.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "retirement_id",
+    "project_id",
+    "unit_id",
+    "replacement_unit_id",
+    "reason",
+    "old_unit",
+    "expected",
+    "source_composition",
+    "ownership",
+    "repositories",
+    "accepted_receipt"
+  ],
+  "properties": {
+    "schema": {
+      "const": "rusty.morphospace.workflow.active_unit_retirement.v2"
+    },
+    "retirement_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,95}$"
+    },
+    "project_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,95}$"
+    },
+    "unit_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,95}$"
+    },
+    "replacement_unit_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,95}$"
+    },
+    "reason": {
+      "const": "scope-replanned"
+    },
+    "old_unit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "unit_id",
+        "path",
+        "status",
+        "raw_sha256",
+        "canonical_sha256"
+      ],
+      "properties": {
+        "unit_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{1,95}$"
+        },
+        "path": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9./-]+\\.json$"
+        },
+        "status": {
+          "const": "active"
+        },
+        "raw_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "canonical_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "expected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "project_raw_sha256",
+        "project_canonical_sha256",
+        "feature_lock_raw_sha256",
+        "feature_lock_canonical_sha256",
+        "state_raw_sha256",
+        "state_canonical_sha256",
+        "events_sha256",
+        "events_length",
+        "event_tail_id",
+        "repository_map_sha256"
+      ],
+      "properties": {
+        "project_raw_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "project_canonical_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "feature_lock_raw_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "feature_lock_canonical_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "state_raw_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "state_canonical_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "events_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "events_length": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 67108864
+        },
+        "event_tail_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{1,191}$"
+        },
+        "repository_map_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "source_composition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "raw_sha256",
+        "canonical_sha256"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9./-]+\\.json$"
+        },
+        "raw_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "canonical_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "repositories": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "repo_id",
+          "head",
+          "tree",
+          "branch",
+          "clean"
+        ],
+        "properties": {
+          "repo_id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{1,95}$"
+          },
+          "head": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$"
+          },
+          "tree": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$"
+          },
+          "branch": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "clean": {
+            "const": true
+          }
+        }
+      }
+    },
+    "accepted_receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9./-]+\\.json$"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "ownership": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "root_unit_id",
+        "root_admission",
+        "root_claim",
+        "agent_scope_assessment_sha256",
+        "repository_map",
+        "repository_maps",
+        "validation_attempts",
+        "supersessions"
+      ],
+      "properties": {
+        "kind": {
+          "const": "supersession"
+        },
+        "root_unit_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{1,127}$"
+        },
+        "root_admission": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "path",
+            "raw_sha256",
+            "canonical_sha256"
+          ],
+          "properties": {
+            "path": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9./-]+\\.json$"
+            },
+            "raw_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "canonical_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        },
+        "root_claim": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "event_id",
+            "transaction_id",
+            "intent_sha256",
+            "completion_sha256"
+          ],
+          "properties": {
+            "event_id": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9-]+-claimed-[0-9]{4,}$"
+            },
+            "transaction_id": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9-]+-transition$"
+            },
+            "intent_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "completion_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        },
+        "agent_scope_assessment_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "repository_map": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "path",
+            "raw_sha256"
+          ],
+          "properties": {
+            "path": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9./-]+\\.json$"
+            },
+            "raw_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        },
+        "repository_maps": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "path",
+              "raw_sha256"
+            ],
+            "properties": {
+              "path": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9./-]+\\.json$"
+              },
+              "raw_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            }
+          }
+        },
+        "validation_attempts": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "event_id",
+              "path",
+              "raw_sha256",
+              "canonical_sha256"
+            ],
+            "properties": {
+              "event_id": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9-]+-validation-(fail|partial|blocked)-return-[0-9]{4,}$"
+              },
+              "path": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9./-]+\\.json$"
+              },
+              "raw_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "canonical_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            }
+          }
+        },
+        "supersessions": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "old_unit_id",
+              "replacement_unit_id",
+              "event_id",
+              "transaction_id",
+              "intent_sha256",
+              "completion_sha256",
+              "request",
+              "receipt"
+            ],
+            "properties": {
+              "old_unit_id": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9-]{1,127}$"
+              },
+              "replacement_unit_id": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9-]{1,127}$"
+              },
+              "event_id": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9-]{1,191}$"
+              },
+              "transaction_id": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9-]+-transition$"
+              },
+              "intent_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "completion_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "request": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "path",
+                  "sha256"
+                ],
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9][a-z0-9./-]+\\.json$"
+                  },
+                  "sha256": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  }
+                }
+              },
+              "receipt": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "path",
+                  "sha256"
+                ],
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9][a-z0-9./-]+\\.json$"
+                  },
+                  "sha256": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "retained_claim_diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "role",
+        "producer_schema",
+        "path",
+        "raw_sha256",
+        "canonical_sha256",
+        "git_blob_sha1",
+        "introduced_commit",
+        "tooling_context",
+        "git_blob_sha256"
+      ],
+      "properties": {
+        "role": {
+          "const": "inert-claim-diagnostic"
+        },
+        "producer_schema": {
+          "const": "rusty.morphospace.workflow.work_unit_automation_receipt.v1"
+        },
+        "path": {
+          "type": "string",
+          "pattern": "^receipts/[a-z0-9][a-z0-9-]{1,79}-claim(?:-[0-9]{8})?\\.json$"
+        },
+        "raw_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "canonical_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "git_blob_sha1": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "introduced_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "tooling_context": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "protocol_id",
+                "path",
+                "sha256",
+                "canonical_sha256"
+              ],
+              "properties": {
+                "protocol_id": {
+                  "const": "tooling-context-v1"
+                },
+                "path": {
+                  "type": "string",
+                  "pattern": "^tooling-contexts/[a-z0-9][a-z0-9-]{1,127}\\.json$"
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "canonical_sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "git_blob_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "retained_ready_diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "role",
+        "producer_schema",
+        "path",
+        "raw_sha256",
+        "canonical_sha256",
+        "git_blob_sha1",
+        "introduced_commit",
+        "tooling_context",
+        "git_blob_sha256",
+        "event_id",
+        "transaction_id",
+        "intent_sha256",
+        "completion_sha256"
+      ],
+      "properties": {
+        "role": {
+          "const": "inert-ready-diagnostic"
+        },
+        "producer_schema": {
+          "const": "rusty.morphospace.workflow.work_unit_automation_receipt.v1"
+        },
+        "path": {
+          "type": "string",
+          "pattern": "^receipts/[a-z0-9][a-z0-9-]{1,79}-ready(?:-[0-9]{8})?\\.json$"
+        },
+        "raw_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "canonical_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "git_blob_sha1": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "introduced_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "tooling_context": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "protocol_id",
+                "path",
+                "sha256",
+                "canonical_sha256"
+              ],
+              "properties": {
+                "protocol_id": {
+                  "const": "tooling-context-v1"
+                },
+                "path": {
+                  "type": "string",
+                  "pattern": "^tooling-contexts/[a-z0-9][a-z0-9-]{1,127}\\.json$"
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "canonical_sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "git_blob_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "event_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]+-ready-[0-9]{4,}$"
+        },
+        "transaction_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]+-transition$"
+        },
+        "intent_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "completion_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "retained_lifecycle_diagnostics": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "role",
+          "path",
+          "raw_sha256",
+          "canonical_sha256",
+          "git_blob_sha1",
+          "introduced_commit",
+          "event_id"
+        ],
+        "properties": {
+          "role": {
+            "const": "inert-post-nonpass-lifecycle-diagnostic"
+          },
+          "path": {
+            "type": "string",
+            "pattern": "^receipts/[a-z0-9][a-z0-9-]{1,127}\\.json$"
+          },
+          "raw_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "canonical_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "git_blob_sha1": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$"
+          },
+          "introduced_commit": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$"
+          },
+          "event_id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]+-(validating|validation-fail|resumed)-[0-9]{4,}$"
+          }
+        }
+      }
+    }
+  }
+}

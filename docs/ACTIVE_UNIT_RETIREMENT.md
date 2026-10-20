@@ -10,6 +10,84 @@ write scope. `AmendActiveWriteScope` remains a bounded correction within the
 existing objective, project and agent envelope. Neither action authorizes a
 different product architecture or new source authority.
 
+## Supersession-origin retirement
+
+An active replacement produced by `SupersedeActive` has no ordinary Claim or
+admission of its own. Use `active_unit_retirement.v2` for that origin; do not
+manufacture those events or put a supersession into the v1 `claim` field.
+Ordinary admitted units keep the existing v1 request, receipt and history
+semantics. The same `RetireActive` CLI dispatches the closed request schema;
+there is no bypass flag or caller-supplied trusted-history token.
+
+V2 replaces `claim` with `ownership.kind: supersession`. It binds the root's
+actual ordinary admission and Claim, the current assessment bound by the real
+proposed-to-active owner projection, the exact
+effective repository map and each ordered supersession event, transaction,
+intent, completion, retained request and owner result. The owner recomputes
+these bindings from the real transactions and the current unit/source artifact.
+The closed `ownership.repository_maps` array supplies one exact path/raw-hash
+reference per distinct map hash bound by those producers, sorted by hash.
+Historical maps are read only from those reviewed references and the known
+preparation/current map bindings; unrelated paths grant no authority.
+An instruction completion in this authenticated supersession lineage may retain
+the producer's dirty repository observation. Its exact receipt, repository IDs,
+head/tree and preflight scope joins still authenticate. The existing historical
+observation projection preserves that recorded state without inventing a clean
+fingerprint or granting current source validity. Ordinary retirement retains its
+clean-observation reconstruction; current writable source must independently
+meet the retirement source guards.
+The required `ownership.validation_attempts` array retains every intervening
+`ReturnToActive` validation receipt in actual event order as
+`{event_id,path,raw_sha256,canonical_sha256}`; it is empty when none occurred.
+These are exact reviewed hashes of the retained bytes now. The old action did
+not pin receipt bytes or require a Git addition, so this binding does not claim
+an original-time raw hash or original committed custody. Receipt semantics and
+artifact hashes still require authentication. Current, interrupted and historical
+retirement verification recomputes the whole ownership binding, rejecting later
+changes, omissions or reordered attempts. Ordinary v1 retention is unchanged.
+The owner checks the original preparation/admission and every intervening supported
+owner continuation, rejects ambiguous, forked, replayed or resurrected chains,
+and authenticates the same origin on interrupted execution and later readback.
+Retained lifecycle replay uses the authenticated project and feature lock at
+each step to derive the producer's module registry. Historical repository heads
+and dirty-repository observations remain inert, schema-checked observations of
+declared repositories; every other state field still requires exact equality.
+The schema example is
+[`active-unit-retirement-v2.example.json`](../templates/active-unit-retirement-v2.example.json);
+its zero hashes are placeholders and supply no authority.
+
+Both versions require exact current preimages, an unchanged accepted checkpoint,
+no conflicting queue/blocker/publication/validation selector, and the intended
+replacement identity to remain absent. Writable source checkpoints must be
+clean descendants of their locked baseline; readonly dependencies remain exact.
+Only an authenticated owner planning projection may account for lifecycle dirt
+or its clean linear checkpoint. V2 does not accept arbitrary dirty overlays.
+Preserve owned implementation in a reviewed clean checkpoint before retirement;
+the checkpoint is retained source, not accepted product evidence.
+
+V2 emits `active_unit_retirement_receipt.v2`, retaining the exact `ownership`
+binding with `accepted: false` and `source_mutation_performed: false`. The writer
+still changes only the current-unit pointer and event tail, preserving the old
+unit, failed validation checkpoint, acceptance and source evidence. Historical
+verification follows that origin after idle preparation and a later admission
+or accepted boundary. V2 also checks the retirement completion's canonical JSON
+and single-LF producer framing. This is not an independent original completion
+hash or attestation of its otherwise valid `completed_at` value.
+No workflow retirement receipt proves runtime cleanup,
+child EOF, app-data release, device readiness or permission to replace a live
+source process. Those effects remain with their actual owners.
+
+V2 may retain the existing optional `retained_claim_diagnostic`,
+`retained_ready_diagnostic` and `retained_lifecycle_diagnostics` bindings for
+the **root ordinary unit**. Their closed producer schemas, raw/canonical hashes,
+original introduced commit/blob, exact transaction and original tooling-context
+joins remain mandatory. The verifier selects `ownership.root_unit_id` and its
+actual `root_claim`; it never invents a Claim or diagnostic for the supersession
+replacement. These files must remain inert, outside original ledger artifacts,
+and contribute only their authenticated final-byte planning projection. The
+retained request artifact binds the complete optional fields. They grant no
+current gate, prerequisite, validation, acceptance or publication credit.
+
 ## Review and retire
 
 1. Preserve implementation checkpoints and distinguish them from accepted

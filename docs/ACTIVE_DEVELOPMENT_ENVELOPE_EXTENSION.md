@@ -31,6 +31,11 @@ role, objective, acceptance criteria, non-scope, prerequisites, instructions,
 validation policy, commit policy, push checkpoint, and public/private boundary
 remain unchanged.
 
+An empty feature, module or authority list is a valid empty set during this
+comparison. A roots-only extension does not require an invented feature or
+authority row. Nonempty additions remain explicit and subject to the same
+unchanged ceilings and exact-difference checks.
+
 New roots must be canonical and exact owner-reviewed roots. The project,
 assessment, and unit writable/read-only closures must agree. A repository cannot
 be both writable and read-only. Every selected feature retains disabled-default,
@@ -146,3 +151,16 @@ Git mutation, build, device action, schema-revision adoption, or changed
 objective authority. Later Amendment, Freeze, retirement, current-work reading,
 and continuation must authenticate the effective extension chain rather than
 comparing against the original preparation endpoint alone.
+
+A scope-only `AmendActiveWriteScope` changes the admitted unit write-authority
+projection without changing its source-composition lock or tooling pointer.
+Prepared-envelope provenance authenticates the complete committed continuation
+for that delta, including every amendment producer and live endpoint. It does
+not widen the ordinary Ready/Claim/Freeze suffix or accept detached scope.
+
+Historical preparation receipt v1 does not require embedded project or feature-lock
+snapshots in its envelope. Continuation derives both from the exact internally
+selected committed preparation transaction, checking its completion, required
+receipt hashes, source/artifact bytes and ledger event. Optional embedded snapshots
+must agree when present. This does not permit a live-document fallback, skip a
+continuation transition or change retained historical evidence.

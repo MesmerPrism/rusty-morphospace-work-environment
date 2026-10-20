@@ -81,6 +81,69 @@ function Assert-DevelopmentContinuationRetainedAuthority {
     }
 }
 
+function Read-DevelopmentContinuationPreparationTargets {
+    # A v1 receipt's envelope may contain only scope ceilings. Its optional
+    # snapshots are never the authority for these exact committed targets.
+    param([string]$Workspace, [object]$Admission)
+    $ownerRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+    $p = $Admission.preparation
+    $receiptPath = Resolve-MorphospaceWorkspacePath $Workspace ([string]$p.receipt_path) -RequireLeaf
+    $receipt = Read-DevelopmentContinuationBinding $Workspace ([string]$p.receipt_path) ([string]$p.receipt_sha256)
+    if (-not (Test-Json -Json ($receipt | ConvertTo-Json -Depth 100) -SchemaFile (Join-Path $ownerRoot 'schemas/development-envelope-preparation-receipt-v1.schema.json') -ErrorAction Stop)) { throw 'Development continuation preparation receipt schema is invalid.' }
+    $recovered = $p.PSObject.Properties.Name -contains 'preparation_kind' -and [string]$p.preparation_kind -ceq 'recovered'
+    $recovery = $null
+    if ($recovered) {
+        $recoveryPath = Resolve-MorphospaceWorkspacePath $Workspace ([string]$p.recovery_receipt_path) -RequireLeaf
+        $recovery = Read-DevelopmentContinuationBinding $Workspace ([string]$p.recovery_receipt_path) ([string]$p.recovery_receipt_sha256)
+        if (-not (Test-Json -Json ($recovery | ConvertTo-Json -Depth 100) -SchemaFile (Join-Path $ownerRoot 'schemas/development-envelope-repreparation-receipt-v1.schema.json') -ErrorAction Stop)) { throw 'Development continuation recovery receipt schema is invalid.' }
+        if ([string]$recovery.project_id -cne [string]$Admission.project_id -or [string]$recovery.replacement_unit_id -cne [string]$Admission.unit_id -or [string]$recovery.preparation_id -cne [string]$p.preparation_id) { throw 'Development continuation recovery receipt identity is detached.' }
+        $tx = "$([string]$recovery.repreparation_id)-transition"
+    } else { $tx = "$([string]$p.preparation_id)-prepared-transition" }
+    $intentPath = Resolve-MorphospaceWorkspacePath $Workspace "receipts/transactions/$tx.intent.json" -RequireLeaf
+    $completionPath = Resolve-MorphospaceWorkspacePath $Workspace "receipts/transactions/$tx.completion.json"
+    if (-not [IO.File]::Exists($completionPath)) { throw 'Development continuation preparation completion is absent.' }
+    $intent = Read-MorphospaceProtocolJson $intentPath
+    $completion = Read-MorphospaceProtocolJson $completionPath
+    $intentSchema = if ($recovered) { 'development-envelope-repreparation-intent-v1.schema.json' } else { 'development-envelope-preparation-intent-v1.schema.json' }
+    $completionSchema = if ($recovered) { 'development-envelope-repreparation-completion-v1.schema.json' } else { 'development-envelope-preparation-completion-v1.schema.json' }
+    foreach ($row in @(@($intent,$intentSchema),@($completion,$completionSchema))) {
+        if (-not (Test-Json -Json ($row[0] | ConvertTo-Json -Depth 100) -SchemaFile (Join-Path $ownerRoot ('schemas/' + $row[1])) -ErrorAction Stop)) { throw 'Development continuation preparation transaction schema is invalid.' }
+    }
+    if ([string]$intent.transaction_id -cne $tx -or [string]$completion.transaction_id -cne $tx -or [string]$completion.intent_sha256 -cne (Get-MorphospaceFileSha256 $intentPath) -or [string]$completion.event_id -cne [string]$intent.event.event_id -or [string]$receipt.preparation_id -cne [string]$p.preparation_id -or [string]$receipt.project_id -cne [string]$Admission.project_id -or [string]$intent.event.project_id -cne [string]$Admission.project_id -or [string]$intent.event.unit_id -cne [string]$receipt.predecessor_unit_id) { throw 'Development continuation preparation transaction identity is detached.' }
+    $sourcePath = Resolve-MorphospaceWorkspacePath $Workspace ([string]$p.source_composition_path) -RequireLeaf
+    $source = Read-DevelopmentContinuationBinding $Workspace ([string]$p.source_composition_path) ([string]$p.source_composition_sha256)
+    $sourceSchema = if ($recovered) { 'development-envelope-source-composition-v2.schema.json' } elseif ([string]$source.schema -ceq 'rusty.morphospace.workflow.development_envelope_source_composition.v3') { 'development-envelope-source-composition-v3.schema.json' } else { 'development-envelope-source-composition-v1.schema.json' }
+    if (-not (Test-Json -Json ($source | ConvertTo-Json -Depth 100) -SchemaFile (Join-Path $ownerRoot ('schemas/' + $sourceSchema)) -ErrorAction Stop)) { throw 'Development continuation preparation source schema is invalid.' }
+    if ([string]$source.project_id -cne [string]$Admission.project_id -or [string]$source.preparation_id -cne [string]$p.preparation_id -or [string]$receipt.source_composition.path -cne [string]$p.source_composition_path -or [string]$receipt.source_composition.sha256 -cne (Get-MorphospaceCanonicalJsonSha256 $source)) { throw 'Development continuation preparation source is detached.' }
+    # Preparation artifacts have a different historical hash contract from
+    # ordinary transition-ledger artifacts: canonical for ordinary, raw for
+    # recovered, with the exact file bytes separately bound in both cases.
+    foreach ($row in @(@([string]$p.receipt_path,$receiptPath,$receipt),@([string]$p.source_composition_path,$sourcePath,$source))) {
+        $artifacts = @($intent.artifacts | Where-Object { [string]$_.path -ceq $row[0] })
+        $artifactHash = if ($recovered) { Get-MorphospaceFileSha256 $row[1] } else { Get-MorphospaceCanonicalJsonSha256 $row[2] }
+        if ($artifacts.Count -ne 1 -or [string]$artifacts[0].sha256 -cne $artifactHash -or [string]$artifacts[0].bytes_base64 -cne [Convert]::ToBase64String([IO.File]::ReadAllBytes($row[1]))) { throw 'Development continuation preparation artifact is detached.' }
+    }
+    if ($recovered) {
+        $rows = @($intent.artifacts | Where-Object { [string]$_.path -ceq [string]$p.recovery_receipt_path })
+        if ($rows.Count -ne 1 -or [string]$rows[0].sha256 -cne [string]$p.recovery_receipt_sha256 -or [string]$rows[0].bytes_base64 -cne [Convert]::ToBase64String([IO.File]::ReadAllBytes($recoveryPath)) -or [string]$completion.repreparation_receipt_sha256 -cne [string]$p.recovery_receipt_sha256) { throw 'Development continuation recovery artifact is detached.' }
+        $historyIdentity = [pscustomobject][ordered]@{ retirement=$recovery.retirement; original_preparation=$recovery.original_preparation; preserved_evidence=@($recovery.preserved_evidence) }
+        if ([string]$recovery.retired_unit_id -cne [string]$receipt.predecessor_unit_id -or [string]$recovery.input_sha256 -cne [string]$receipt.input_sha256 -or [string]$recovery.input_sha256 -cne [string]$intent.input_sha256 -or [string]$recovery.source_composition.path -cne [string]$p.source_composition_path -or [string]$recovery.source_composition.sha256 -cne [string]$p.source_composition_sha256 -or [string]$recovery.history_sha256 -cne (Get-MorphospaceCanonicalJsonSha256 $historyIdentity) -or (Get-MorphospaceCanonicalJsonSha256 @($recovery.preserved_evidence)) -cne (Get-MorphospaceCanonicalJsonSha256 @($intent.preserved_evidence))) { throw 'Development continuation recovery history is detached.' }
+    }
+    foreach ($row in @(@('project','project.spec.json','project_sha256','target_project_sha256'),@('feature_lock','feature.lock.json','feature_lock_sha256','target_feature_lock_sha256'))) {
+        $name = $row[0]; $target = $intent.target.$name; $hash = Get-MorphospaceCanonicalJsonSha256 $target.document
+        if ([string]$target.path -cne $row[1] -or [string]$target.document.project_id -cne [string]$Admission.project_id -or [string]$target.sha256 -cne $hash -or [string]$receipt.($row[2]) -cne $hash -or [string]$Admission.expected.($row[2]) -cne $hash -or [string]$completion.($row[3]) -cne $hash) { throw "Development continuation preparation $name target is detached." }
+        $snapshot = $receipt.envelope.PSObject.Properties[$name]
+        if ($null -ne $snapshot) { Assert-DevelopmentContinuationEqual $target.document $snapshot.Value "optional preparation $name snapshot" }
+    }
+    if ([string]$intent.target.state.path -cne 'workspace.state.json' -or [string]$intent.target.state.sha256 -cne (Get-MorphospaceCanonicalJsonSha256 $intent.target.state.document) -or [string]$completion.target_state_sha256 -cne [string]$intent.target.state.sha256) { throw 'Development continuation preparation state target is detached.' }
+    $events = @(Get-Content -LiteralPath (Resolve-MorphospaceWorkspacePath $Workspace 'iteration-events.jsonl' -RequireLeaf) | Where-Object { $_ } | ForEach-Object { ConvertFrom-MorphospaceProtocolJsonBytes ([Text.UTF8Encoding]::new($false).GetBytes([string]$_)) })
+    $matched = @($events | Where-Object { [string]$_.event_id -ceq [string]$completion.event_id })
+    if ($matched.Count -ne 1) { throw 'Development continuation preparation event is missing or ambiguous.' }
+    Assert-DevelopmentContinuationEqual $intent.event $matched[0] 'preparation event'
+    if (@($matched[0].receipts | Where-Object { [string]$_ -ceq [string]$p.receipt_path }).Count -ne 1) { throw 'Development continuation preparation event receipt is detached.' }
+    return [pscustomobject]@{ project=$intent.target.project.document; feature_lock=$intent.target.feature_lock.document }
+}
+
 function Get-MorphospaceDevelopmentEnvelopeContinuation {
     <# Authenticates the active owner's continuation, not acceptance or publication.
        The preparation reader separately authenticates the immutable origin.
@@ -102,8 +165,6 @@ function Get-MorphospaceDevelopmentEnvelopeContinuation {
     $mapPath = [string]$Admission.expected.repository_map_path
     $mapSha = [string]$Admission.expected.repository_map_sha256
     $null = Read-DevelopmentContinuationBinding $workspace $mapPath $mapSha
-    $project = $original.envelope.project
-    $featureLock = $original.envelope.feature_lock
     $events = @(Get-Content -LiteralPath (Resolve-MorphospaceWorkspacePath $workspace 'iteration-events.jsonl' -RequireLeaf) | Where-Object { $_ } | ForEach-Object {
         ConvertFrom-MorphospaceProtocolJsonBytes ([Text.UTF8Encoding]::new($false).GetBytes([string]$_))
     })
@@ -117,6 +178,9 @@ function Get-MorphospaceDevelopmentEnvelopeContinuation {
     $admissionArtifact = Get-DevelopmentContinuationArtifact $admissionProof.intent 'rusty.morphospace.workflow.development_unit_admission.v1'
     if ($null -eq $admissionArtifact) { throw 'Development continuation lacks its transaction-owned admission receipt.' }
     Assert-DevelopmentContinuationEqual $Admission $admissionArtifact.document 'admission receipt'
+    $preparedTargets = Read-DevelopmentContinuationPreparationTargets $workspace $Admission
+    $project = $preparedTargets.project
+    $featureLock = $preparedTargets.feature_lock
     $previous = $admissionProof.intent
     $currentUnit = $previous.target.unit.document
     $records = @()

@@ -14,6 +14,71 @@ function Assert-Ledger {
     if (-not $Value) { throw "Transition-ledger self-test failed: $Message" }
 }
 
+function Test-AdvisoryWorkspaceMutex {
+    # Real mutex/holder/waiter. The holder releases only when the actual warning
+    # is published, so elapsed scheduling never decides acceptance or overlap.
+    if(-not('WorkspaceMutexWaitFixture' -as [type])){
+        Add-Type -TypeDefinition @'
+using System;
+using System.Threading;
+public sealed class WorkspaceMutexWaitFixture : IDisposable {
+    public readonly ManualResetEventSlim Ready = new ManualResetEventSlim(false);
+    public readonly ManualResetEventSlim Release = new ManualResetEventSlim(false);
+    public readonly Thread Original;
+    public string Error;
+    public int Warnings;
+    public WorkspaceMutexWaitFixture(string name, bool abandon) {
+        Original = new Thread(() => {
+            using (var mutex = new Mutex(false, name)) {
+                try {
+                    mutex.WaitOne(); Ready.Set(); Release.Wait();
+                    if (!abandon) mutex.ReleaseMutex();
+                } catch (Exception error) { Error = error.GetType().Name; }
+                finally { Ready.Set(); }
+            }
+        });
+        Original.Start();
+    }
+    public void WarnAndRelease() { Interlocked.Increment(ref Warnings); Release.Set(); }
+    public void Dispose() { Release.Set(); Original.Join(); Ready.Dispose(); Release.Dispose(); }
+}
+'@
+    }
+    $protocol=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1') -PassThru
+    foreach($mode in @('ordinary','warning-sink-failure','abandoned')){
+        $path=Join-Path ([IO.Path]::GetTempPath()) ('workspace-mutex-'+[guid]::NewGuid().ToString('N'))
+        $normalized=[IO.Path]::GetFullPath($path).TrimEnd('\','/').ToUpperInvariant()
+        $digest=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($normalized))).ToLowerInvariant()
+        $holder=[WorkspaceMutexWaitFixture]::new("Local\RustyMorphospace-$digest",$mode-ceq'abandoned')
+        $lock=$null
+        try{
+            $holder.Ready.Wait()
+            Assert-Ledger ([string]::IsNullOrEmpty($holder.Error)) 'actual mutex holder failed before readiness'
+            $lock=&$protocol {
+                param($root,$actualHolder,$mode)
+                if(Test-Path -LiteralPath Function:Write-Warning){throw 'Unexpected preexisting fixture warning function.'}
+                $script:WorkspaceMutexFixtureHolder=$actualHolder;$script:WorkspaceMutexFixtureMode=$mode
+                function script:Write-Warning {
+                    param([string]$Message)
+                    $script:WorkspaceMutexFixtureHolder.WarnAndRelease()
+                    if($script:WorkspaceMutexFixtureMode-ceq'warning-sink-failure'){throw 'Modeled warning publisher failed.'}
+                }
+                try{Enter-MorphospaceWorkspaceMutex -WorkspaceRoot $root -TimeoutSeconds 1}
+                finally{
+                    Remove-Item -LiteralPath Function:Write-Warning
+                    Remove-Variable WorkspaceMutexFixtureHolder,WorkspaceMutexFixtureMode -Scope Script
+                }
+            } $path $holder $mode
+            Assert-Ledger ($lock.acquired-and$holder.Warnings-eq1-and$lock.name-ceq"Local\RustyMorphospace-$digest") 'slow mutex observation replaced its original waiter or acquired a different lock'
+            Assert-Ledger ($lock.abandoned-eq($mode-ceq'abandoned')) 'actual abandoned-mutex disposition changed'
+        }finally{
+            if($null-ne$lock){&$protocol {param($value) Exit-MorphospaceWorkspaceMutex $value} $lock}
+            $holder.Dispose()
+        }
+        Assert-Ledger ([string]::IsNullOrEmpty($holder.Error)) 'actual mutex holder failed during release'
+    }
+}
+
 function Write-Json {
     param([string]$Path, [object]$Value)
     [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($Path)) | Out-Null
@@ -2179,6 +2244,7 @@ try {
         -TransitionModulePath $transitionModulePath
 
     foreach($recoverySchema in @('development-envelope-repreparation-v1.schema.json','development-envelope-repreparation-receipt-v1.schema.json','development-envelope-repreparation-intent-v1.schema.json','development-envelope-repreparation-completion-v1.schema.json','development-envelope-source-composition-v2.schema.json')){$schemaPath=Join-Path $root "schemas\$recoverySchema";$schema=Get-Content -Raw -LiteralPath $schemaPath|ConvertFrom-Json;Assert-Ledger ($schema.type-ceq'object'-and$schema.additionalProperties-eq$false) "repreparation schema '$recoverySchema' is not a closed transaction surface"}
+    Test-AdvisoryWorkspaceMutex
     Test-ReadOnlyCommittedSnapshot
     Write-Host 'Transition-ledger self-test passed.'
 } finally {

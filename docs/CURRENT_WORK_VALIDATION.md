@@ -42,11 +42,72 @@ case when a current validator diagnostic or explicit history task names it.
 
 ## Authenticated history and recovery cases
 
+Supersession-origin retirement preserves authenticated historical instruction
+repository observations, including recorded dirt, through its existing narrow
+observation projection. It still verifies the original receipt and its exact
+preflight joins. This supplies no clean-source or current-validity claim and
+does not change ordinary retirement's clean-observation requirements.
+
 An authenticated [active-unit retirement](ACTIVE_UNIT_RETIREMENT.md) has a
 distinct `retired-active` disposition. Its preserved unit bytes do not grant
 current ownership or accepted-prerequisite evidence. The reader authenticates
 the retirement transaction through later preparation and admission; it rejects
 resurrection and does not reinterpret retirement as acceptance.
+
+For a successor actually admitted by `SupersedeActive`, retirement v2 binds its
+real ordinary root admission and Claim, every ordered supersession request and
+receipt, the effective map, current assessment and exact source lock. It does
+not manufacture a successor admission or Claim. The reader authenticates
+supported intervening instruction, Freeze, non-passing validation/return,
+extension, scope and tooling transitions at that historical prefix. Unsupported,
+branched, detached or resurrected ownership is refused. Ordinary retirement v1
+keeps its existing contract.
+
+The v2 request retains a finite `ownership.repository_maps` set of relative
+path/raw-hash references, one for each distinct producer-bound map identity.
+The reader accepts no ambient inventory or inferred final-map substitute for an
+intermediate map. Each source lock must have its supported schema, correct
+project/unit or preparation fingerprint, and complete declared writable and
+read-only dependency intersection with that point's project, assessment and
+exact map roles. A retained map path locates bytes whose hash the original
+producer bound; it does not claim the producer recorded that path. Likewise a
+fresh source lock's self-fingerprint proves its current internal identity, not
+an original Supersede-time raw-file binding absent from that producer's contract.
+Retirement's raw source pins and unchanged project/feature fences remain exact.
+An intermediate Freeze's captured source path and raw hash are also rechecked
+against that historical unit's lock, even when a later successor uses another
+lock. Project architectural roles remain separate from source/map roles;
+source roles must match the exact authenticated map rather than an inferred
+translation of `application`, `adapter` or another project role.
+
+`ownership.validation_attempts` lists the exact ReturnToActive events in ledger
+order with each receipt's relative path, raw hash and canonical hash. The reader
+recomputes this finite set in current, recovery and historical reads, including
+the original schema, feature-unit identity, result/tier checkpoint and evidence
+artifact hashes. These are reviewed retained-byte bindings: the original Return
+producer recorded the receipt path, result and tier, without a raw receipt hash
+or Git-introduction requirement. A genuine untracked or ignored receipt can
+therefore remain retained input. Only those authenticated receipt paths receive
+this handling; their bytes remain exact and unrelated dirt is still refused.
+Ordinary retirement v1's immutable non-passing receipt contract is unchanged.
+
+After that successor retires, its authenticated supersession ancestors have the
+audit disposition `retired-supersession-ancestor`. Their retained active bytes
+remain immutable through later idle preparation, admission and Ready/Claim,
+and through a later accepted boundary or archive. They grant no prerequisite
+acceptance or validation credit and acquire no newer feature prerequisites.
+Planning repository dirt or clean descendants are allowed only for exact
+authenticated lifecycle projections, including bound inert root diagnostics;
+staging, unrelated paths, deleted/renamed files and non-linear history remain
+refused.
+
+An interrupted v2 retirement may have already written its idle state or appended
+its event while the planning HEAD remains the reviewed pre-retirement
+descendant. Recovery verifies those two committed historical projections from
+their exact HEAD blobs and checks live state/event bytes against the actual
+pending intent's preimage or target. It still verifies the linear committed
+lifecycle path set and every live source, map, unit and retained-input pin;
+recovery does not switch to a general dirty-workspace allowance.
 
 A preparation completion that predates its intent requires the exact
 [preparation timestamp recovery](PREPARATION_TIMESTAMP_RECOVERY.md) transaction.

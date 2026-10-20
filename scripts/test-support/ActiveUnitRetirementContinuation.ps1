@@ -2,19 +2,33 @@
 . (Join-Path $PSScriptRoot 'DevelopmentAdmissionFixture.ps1')
 
 function New-ActiveRetirementContinuationSeed {
-    param([string]$Root,[string]$RepositoryRoot)
+    param([string]$Root,[string]$RepositoryRoot,[switch]$SelfHostedReadOnlyPlanning,[switch]$RetainRootDiagnostics,[switch]$FeatureWorkMode)
     $scriptsRoot = Join-Path $RepositoryRoot 'scripts'
     $protocolModule = Import-Module (Join-Path $PSScriptRoot '../lib/MorphospaceProtocolCommon.psm1') -PassThru
     $transitionLedgerModule = Import-Module (Join-Path $PSScriptRoot '../lib/MorphospaceTransitionLedger.psm1') -PassThru
     Import-Module (Join-Path $PSScriptRoot '../DevelopmentEnvelopePreparation.psm1')
-    $seed = New-EnvelopeAdmissionPreparedFixture -Root $Root -RepositoryRoot $RepositoryRoot -TransitionLedgerModule $transitionLedgerModule -OwnerProducedPreparation -AdditiveFeature
+    $seed = New-EnvelopeAdmissionPreparedFixture -Root $Root -RepositoryRoot $RepositoryRoot -TransitionLedgerModule $transitionLedgerModule -OwnerProducedPreparation -AdditiveFeature -SelfHostedReadOnlyPlanning:$SelfHostedReadOnlyPlanning
+    if($FeatureWorkMode){
+        $seed.admission_template.unit|Add-Member -NotePropertyName work_mode -NotePropertyValue 'feature' -Force
+        $seed.admission_template.unit|Add-Member -NotePropertyName claim_requirements -NotePropertyValue ([pscustomobject]@{minimum_free_disk_mib=1;required_tools=@();product_inputs=@()}) -Force
+    }
     $admissionPath = Join-Path $Root 'u002-admission-input.json'
     Write-EnvelopeJson $admissionPath $seed.admission_template
     $automation = Join-Path $PSScriptRoot '../Invoke-WorkUnitAutomation.ps1'
     $null = & $automation -Action AdmitDevelopmentUnit -WorkspaceRoot $seed.workspace -DevelopmentUnitAdmission $admissionPath -ExpectedDevelopmentUnitAdmissionSha256 (Get-EnvelopeFileSha256 $admissionPath) -OutPath (Join-Path $seed.workspace 'receipts/u002-admission.json') -Timestamp '2026-08-25T00:00:40.0000000Z' -Execute
     $lifecycle = @{WorkspaceRoot=$seed.workspace; UnitId='u002'; RepoMapPath=(Join-Path $seed.workspace 'repository-map.json'); ValidationTier='quick'}
-    $null = & $automation @lifecycle -Action Ready -Timestamp '2026-08-25T00:00:41.0000000Z' -Execute
-    $null = & $automation @lifecycle -Action Claim -Timestamp '2026-08-25T00:00:42.0000000Z' -Execute
+    $readyArgs=@{};if($RetainRootDiagnostics){$readyArgs.OutPath=Join-Path $seed.workspace 'receipts/u002-ready.json'}
+    $null = & $automation @lifecycle @readyArgs -Action Ready -Timestamp '2026-08-25T00:00:41.0000000Z' -Execute
+    if($RetainRootDiagnostics){
+        Invoke-EnvelopeGit $seed.source_repository @('add','morphospace')|Out-Null;Invoke-EnvelopeGit $seed.source_repository @('commit','-qm','Retain real root Ready diagnostic')|Out-Null
+        $seed|Add-Member -NotePropertyName root_ready_introduced_commit -NotePropertyValue ((@(Invoke-EnvelopeGit $seed.source_repository @('rev-parse','HEAD'))[0]).Trim())
+    }
+    $claimArgs=@{};if($RetainRootDiagnostics){$claimArgs.OutPath=Join-Path $seed.workspace 'receipts/u002-claim.json'}
+    $null = & $automation @lifecycle @claimArgs -Action Claim -Timestamp '2026-08-25T00:00:42.0000000Z' -Execute
+    if($RetainRootDiagnostics){
+        Invoke-EnvelopeGit $seed.source_repository @('add','morphospace')|Out-Null;Invoke-EnvelopeGit $seed.source_repository @('commit','-qm','Retain real root Claim diagnostic')|Out-Null
+        $seed|Add-Member -NotePropertyName root_claim_introduced_commit -NotePropertyValue ((@(Invoke-EnvelopeGit $seed.source_repository @('rev-parse','HEAD'))[0]).Trim())
+    }
     return $seed
 }
 
@@ -23,13 +37,13 @@ function Assert-ActiveRetirementPublicHistory {
     $hostPath = (Get-Process -Id $PID).Path
     $validator = Join-Path $PSScriptRoot '../Test-WorkflowContracts.ps1'
     $before = Get-EnvelopeWorkspaceByteInventorySha256 $WorkspaceRoot
-    $output = & $hostPath -NoProfile -File $validator -RepoRoot $RepositoryRoot -WorkspaceRoot $WorkspaceRoot -RepositoryMapPath (Join-Path $WorkspaceRoot 'repository-map.json') -CurrentWorkOnly -SkipOwnerSelfTests 2>&1 | Out-String
+    $output = & $hostPath -NoProfile -File $validator -RepoRoot $RepositoryRoot -WorkspaceRoot $WorkspaceRoot -RepositoryMapPath (Join-Path $WorkspaceRoot 'repository-map.json') -CurrentWorkOnly -CurrentWorkspaceOnly -SkipOwnerSelfTests 2>&1 | Out-String
     Assert-Envelope ($LASTEXITCODE -eq 0) "active retirement public current-work validation failed: $output"
     Assert-Envelope ($before -ceq (Get-EnvelopeWorkspaceByteInventorySha256 $WorkspaceRoot)) 'public current-work validation changed retired workspace bytes'
 }
 
 function New-ActiveRetirementReplacementPreparation {
-    param([string]$Workspace)
+    param([string]$Workspace,[string]$ReplacementUnitId='u003')
     $project = Read-EnvelopeProtocolJson (Join-Path $Workspace 'project.spec.json')
     $state = Read-EnvelopeProtocolJson (Join-Path $Workspace 'workspace.state.json')
     $lock = Read-EnvelopeProtocolJson (Join-Path $Workspace 'feature.lock.json')
@@ -39,10 +53,10 @@ function New-ActiveRetirementReplacementPreparation {
     $envelope.feature_lock.project_revision = [int]$envelope.project.revision
     $envelope.feature_lock.generated_at = '2026-08-25T00:01:01.0000000Z'
     $envelope.feature_lock.lock_fingerprint = Get-EnvelopeLockFingerprint $envelope.feature_lock
-    $envelope.source_composition.path = 'source-compositions/u003-envelope.json'
+    $envelope.source_composition.path = "source-compositions/$ReplacementUnitId-envelope.json"
     $eventsPath = Join-Path $Workspace 'iteration-events.jsonl'
     [pscustomobject][ordered]@{
-        schema='rusty.morphospace.workflow.development_envelope_preparation.v1'; preparation_id='u003-envelope'
+        schema='rusty.morphospace.workflow.development_envelope_preparation.v1'; preparation_id="$ReplacementUnitId-envelope"
         project_id=[string]$project.project_id; predecessor_unit_id='u001'; envelope=$envelope
         expected=[ordered]@{
             project_sha256=(Get-EnvelopeCanonicalJsonSha256 $project); state_sha256=(Get-EnvelopeCanonicalJsonSha256 $state)
@@ -236,4 +250,65 @@ function Test-ActiveRetirementContinuation {
     Assert-Envelope ((Get-EnvelopeFileSha256 $oldPath) -ceq $oldRawHash) 'continuation changed original retired active bytes'
     Test-ActiveRetirementFulfilledAdmissionProof $Workspace $TestRoot
     Test-ActiveRetirementArchive $Workspace $TestRoot
+}
+
+# The supersession successor is retired without acceptance; its named successor
+# goes through ordinary owner preparation/admission rather than a synthetic
+# event or a borrowed Claim. Default v1 helpers above remain unchanged.
+function Test-SupersessionRetirementContinuation {
+    param([object]$Case,[string]$TestRoot,[string]$RepositoryRoot)
+    [void][IO.Directory]::CreateDirectory($TestRoot)
+    $workspace=$Case.workspace;$planning=$Case.seed.source_repository;$automation=Join-Path $PSScriptRoot '../Invoke-WorkUnitAutomation.ps1'
+    $originalAccepted=[string](Read-EnvelopeProtocolJson (Join-Path $workspace 'workspace.state.json')).last_accepted_receipt
+    Invoke-EnvelopeGit $planning @('add','morphospace')|Out-Null;Invoke-EnvelopeGit $planning @('commit','-qm','Retain actual nonaccepting supersession retirement')|Out-Null
+    $preparation=New-ActiveRetirementReplacementPreparation -Workspace $workspace -ReplacementUnitId u005
+    $path=Join-Path $TestRoot 'u005-preparation.json';Write-EnvelopeJson $path $preparation
+    $args=@{Action='PrepareDevelopmentEnvelope';WorkspaceRoot=$workspace;DevelopmentEnvelopePreparation=$path;OutPath=(Join-Path $workspace 'receipts/u005-envelope.json');Timestamp='2026-08-25T00:01:01.0000000Z'}
+    $before=Get-EnvelopeWorkspaceByteInventorySha256 $workspace;$dry=&$automation @args|ConvertFrom-Json
+    Assert-Envelope ($before-ceq(Get-EnvelopeWorkspaceByteInventorySha256 $workspace)) 'v2 idle preparation dry run wrote bytes'
+    $null=&$automation @args -ExpectedDevelopmentEnvelopePreparationSha256 $dry.audit_receipt.sha256 -Execute
+    $admission=New-EnvelopeReplacementAdmission -Template (Read-EnvelopeProtocolJson (Join-Path $workspace 'receipts/u002-admission.json')) -Workspace $workspace -AdmissionId u005-admission -UnitId u005
+    $admission.preparation=[ordered]@{preparation_id='u005-envelope';receipt_path='receipts/u005-envelope.json';receipt_sha256=Get-EnvelopeFileSha256 (Join-Path $workspace 'receipts/u005-envelope.json');source_composition_path='source-compositions/u005-envelope.json';source_composition_sha256=Get-EnvelopeFileSha256 (Join-Path $workspace 'source-compositions/u005-envelope.json')}
+    $admission.unit.source_composition.lock_path=$admission.preparation.source_composition_path
+    $admission.expected.project_sha256=Get-EnvelopeCanonicalJsonSha256 (Read-EnvelopeProtocolJson (Join-Path $workspace 'project.spec.json'))
+    $admission.expected.feature_lock_sha256=Get-EnvelopeCanonicalJsonSha256 (Read-EnvelopeProtocolJson (Join-Path $workspace 'feature.lock.json'))
+    $admission.expected.source_composition_path=$admission.preparation.source_composition_path;$admission.expected.source_composition_sha256=$admission.preparation.source_composition_sha256
+    foreach($damage in @('unnamed-replacement','retired-prerequisite')){
+        $bad=Copy-Envelope $admission
+        if($damage-ceq'unnamed-replacement'){$bad.admission_id='u006-admission';$bad.unit_id='u006';$bad.unit.unit_id='u006'}else{$bad.unit.prerequisites=@('u004')}
+        $badPath=Join-Path $TestRoot "$damage.json";Write-EnvelopeJson $badPath $bad;$before=Get-EnvelopeWorkspaceByteInventorySha256 $workspace;$rejected=$false
+        try{$null=&$automation -Action AdmitDevelopmentUnit -WorkspaceRoot $workspace -DevelopmentUnitAdmission $badPath -ExpectedDevelopmentUnitAdmissionSha256 (Get-EnvelopeFileSha256 $badPath) -OutPath (Join-Path $workspace "receipts/$($bad.admission_id).json") -Execute}catch{$rejected=$true}
+        Assert-Envelope ($rejected-and$before-ceq(Get-EnvelopeWorkspaceByteInventorySha256 $workspace)) "supersession retirement continuation accepted or wrote $damage"
+    }
+    $path=Join-Path $TestRoot 'u005-admission.json';Write-EnvelopeJson $path $admission
+    $args=@{Action='AdmitDevelopmentUnit';WorkspaceRoot=$workspace;DevelopmentUnitAdmission=$path;OutPath=(Join-Path $workspace 'receipts/u005-admission.json');Timestamp='2026-08-25T00:01:02.0000000Z'}
+    $before=Get-EnvelopeWorkspaceByteInventorySha256 $workspace;$dry=&$automation @args|ConvertFrom-Json
+    Assert-Envelope ($before-ceq(Get-EnvelopeWorkspaceByteInventorySha256 $workspace)) 'v2 replacement admission dry run wrote bytes'
+    $null=&$automation @args -ExpectedDevelopmentUnitAdmissionSha256 $dry.audit_receipt.sha256 -Execute
+    $common=@{WorkspaceRoot=$workspace;UnitId='u005';RepoMapPath=(Join-Path $workspace 'repository-map.json');ValidationTier='quick'}
+    $null=&$automation @common -Action Ready -Timestamp '2026-08-25T00:01:03.0000000Z' -Execute
+    $inspect=&$automation @common -Action Inspect|ConvertFrom-Json
+    Assert-Envelope $inspect.claim_preflight.ready_to_claim 'actual replacement did not become claimable'
+    $null=&$automation @common -Action Claim -Timestamp '2026-08-25T00:01:04.0000000Z' -Execute
+    $history=Get-MorphospaceCurrentWorkHistory -WorkspaceRoot $workspace
+    Assert-Envelope ($history.authenticated-and$history.retired_active_ids.Contains('u004')-and-not$history.historical_ids.Contains('u004')-and$history.accepted_unit_id-ceq'u001') 'later ordinary current owner lost nonaccepting retired history'
+    Assert-Envelope ([string](Read-EnvelopeProtocolJson (Join-Path $workspace 'workspace.state.json')).last_accepted_receipt-ceq$originalAccepted) 'ordinary replacement journey changed accepted prerequisite'
+    Assert-ActiveRetirementPublicHistory $workspace $RepositoryRoot
+    # Exercise a genuine later owner Accept boundary with explicitly modeled
+    # fixture evidence; this is not evidence of product validation/acceptance.
+    Invoke-EnvelopeGit $planning @('add','morphospace')|Out-Null;Invoke-EnvelopeGit $planning @('commit','-qm','Retain ordinary replacement Claim')|Out-Null
+    $freezePath=Join-Path $TestRoot 'u005-freeze.json';$null=New-RetirementNonpassFreezeRequest -Workspace $workspace -RepositoryMapPath $common.RepoMapPath -RequestPath $freezePath -UnitId u005
+    $null=&$automation @common -Action FreezeCandidate -CandidateFreeze $freezePath -ExpectedCandidateFreezeSha256 (Get-EnvelopeFileSha256 $freezePath) -OutPath (Join-Path $workspace 'receipts/u005-extension-freeze.json') -Timestamp '2026-08-25T00:01:05.0000000Z' -Execute
+    $null=&$automation @common -Action BeginValidation -Timestamp '2026-08-25T00:01:06.0000000Z' -Execute
+    $unit=Read-EnvelopeProtocolJson (Join-Path $workspace 'iteration-units/u005.json');$owner=Import-Module (Join-Path $PSScriptRoot '../WorkUnitAutomation.psm1') -PassThru
+    $matrix=@(&$owner {param($u)New-MorphospaceValidationMatrix -Unit $u -DeviceSerials @()} $unit)
+    $evidencePath=Join-Path $TestRoot 'modeled-successor-pass.txt';[IO.File]::WriteAllText($evidencePath,'MODELED fixture host evidence for authentic owner lifecycle control only. No tested product, device, publication, or product acceptance claim.')
+    $evidence=[pscustomobject]@{receipt_id='u005-modeled-pass';tier='quick';result='pass';artifacts=@([pscustomobject]@{artifact_id='fixture';kind='host-control';path=$evidencePath});criteria=@($unit.acceptance|ForEach-Object{[pscustomobject]@{acceptance_id=$_.acceptance_id;status='pass';command=$_.command;evidence_refs=@('fixture')}});gates=@($matrix|Where-Object disposition -CNE 'forbidden'|ForEach-Object{[pscustomobject]@{gate_id=$_.gate_id;status='pass';command=$_.command;evidence_refs=@('fixture')}});device_validation=$null}
+    Import-Module (Join-Path $PSScriptRoot '../lib/MorphospaceValidationReceipt.psm1')
+    $null=New-MorphospaceValidationReceiptV1 -WorkspaceRoot $workspace -UnitId u005 -RepoMapPath $common.RepoMapPath -Evidence $evidence -OutPath (Join-Path $workspace 'receipts/u005-modeled-pass.json') -CreatedAt '2026-08-25T00:01:07.0000000Z'
+    $null=&$automation @common -Action RecordValidation -ValidationReceipt 'receipts/u005-modeled-pass.json' -ValidationResult pass -Timestamp '2026-08-25T00:01:08.0000000Z' -Execute
+    $null=&$automation @common -Action Accept -Timestamp '2026-08-25T00:01:09.0000000Z' -Execute
+    $history=Get-MorphospaceCurrentWorkHistory -WorkspaceRoot $workspace -RequireIdle
+    Assert-Envelope ($history.authenticated-and$history.retired_active_ids.Contains('u004')-and-not$history.historical_ids.Contains('u004')-and$history.accepted_unit_id-ceq'u005') 'later actual Accept boundary reclassified retired supersession work'
+    Assert-ActiveRetirementPublicHistory $workspace $RepositoryRoot
 }

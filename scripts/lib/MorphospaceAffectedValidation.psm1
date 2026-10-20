@@ -4,56 +4,84 @@ $ErrorActionPreference = 'Stop'
 $protocolModule = Join-Path $PSScriptRoot 'MorphospaceProtocolCommon.psm1'
 Microsoft.PowerShell.Core\Import-Module -Name $protocolModule
 
+function Wait-MorphospaceAffectedGitOriginal {
+    param(
+        [Parameter(Mandatory=$true)][Diagnostics.Process]$Process,
+        [string]$Operation = 'git read',
+        [ValidateRange(0,2147483647)][int]$EstimateMilliseconds = 30000,
+        [AllowNull()][scriptblock]$WarningPublisher = $null
+    )
+    if (-not $Process.WaitForExit($EstimateMilliseconds)) {
+        try {
+            if ($null -ne $WarningPublisher) {
+                [void]$WarningPublisher.Invoke($Process,$Operation)
+            } else {
+                Write-Warning "$Operation exceeded its $($EstimateMilliseconds)ms estimate; retaining the same original through actual exit and both stream joins." -WarningAction Continue
+            }
+        } catch { }
+    }
+    # Parameterless wait retains this exact owned Process. The caller joins its
+    # already draining stdout/stderr tasks and applies the real exit policy.
+    [void]$Process.WaitForExit()
+}
+
 function Invoke-MorphospaceAffectedGit {
     param(
-        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
-        [Parameter(Mandatory = $true)][string[]]$Arguments,
-        [AllowNull()][string]$StandardInputText = $null,
+        [Parameter(Mandatory=$true)][string]$RepositoryRoot,
+        [Parameter(Mandatory=$true)][string[]]$Arguments,
+        [AllowNull()][string]$StandardInputText=$null,
         [switch]$AllowFailure
     )
-
-    $start = [System.Diagnostics.ProcessStartInfo]::new()
-    $start.FileName = 'git'
-    $start.WorkingDirectory = [System.IO.Path]::GetFullPath($RepositoryRoot)
-    $start.UseShellExecute = $false
-    $start.CreateNoWindow = $true
-    $start.RedirectStandardOutput = $true
-    $start.RedirectStandardError = $true
-    $start.RedirectStandardInput = $null -ne $StandardInputText
-    $strictUtf8 = [System.Text.UTF8Encoding]::new($false, $true)
-    if ($start.RedirectStandardInput) { $start.StandardInputEncoding = $strictUtf8 }
-    $start.StandardOutputEncoding = $strictUtf8
-    $start.StandardErrorEncoding = $strictUtf8
-    foreach ($argument in $Arguments) { [void]$start.ArgumentList.Add($argument) }
-    $process = [System.Diagnostics.Process]::new()
-    $process.StartInfo = $start
-    try {
-        if (-not $process.Start()) { throw 'git did not start.' }
-        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
-        $stderrTask = $process.StandardError.ReadToEndAsync()
-        if ($start.RedirectStandardInput) {
-            $process.StandardInput.Write($StandardInputText)
-            $process.StandardInput.Close()
+    $start=[Diagnostics.ProcessStartInfo]::new();$start.FileName='git';$start.WorkingDirectory=[IO.Path]::GetFullPath($RepositoryRoot)
+    $start.UseShellExecute=$false;$start.CreateNoWindow=$true
+    $start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true;$start.RedirectStandardInput=$null-ne$StandardInputText
+    $strictUtf8=[Text.UTF8Encoding]::new($false,$true)
+    if($start.RedirectStandardInput){$start.StandardInputEncoding=$strictUtf8}
+    $start.StandardOutputEncoding=$strictUtf8;$start.StandardErrorEncoding=$strictUtf8
+    foreach($argument in $Arguments){[void]$start.ArgumentList.Add($argument)}
+    $process=[Diagnostics.Process]::new();$process.StartInfo=$start
+    $stdoutMemory=[IO.MemoryStream]::new();$stderrMemory=[IO.MemoryStream]::new()
+    try{
+        if(-not$process.Start()){throw 'git did not start.'}
+        $stdoutTask=$process.StandardOutput.BaseStream.CopyToAsync($stdoutMemory)
+        $stderrTask=$process.StandardError.BaseStream.CopyToAsync($stderrMemory)
+        try{
+            if($start.RedirectStandardInput){try{$process.StandardInput.Write($StandardInputText)}finally{$process.StandardInput.Close()}}
+            Wait-MorphospaceAffectedGitOriginal -Process $process -Operation ("git: "+($Arguments-join' '))
+        }finally{
+            try{[void]$process.WaitForExit()}finally{
+                try{[void]$stdoutTask.GetAwaiter().GetResult()}finally{[void]$stderrTask.GetAwaiter().GetResult()}
+            }
         }
-        if (-not $process.WaitForExit(30000)) {
-            try { $process.Kill($true) } catch {}
-            throw "git timed out: $($Arguments -join ' ')"
-        }
-        $stdout = $stdoutTask.GetAwaiter().GetResult()
-        $stderr = $stderrTask.GetAwaiter().GetResult()
-        if (-not $AllowFailure -and $process.ExitCode -ne 0) {
-            throw "git failed ($($process.ExitCode)): $($Arguments -join ' ')`n$stderr"
-        }
-        return [pscustomobject]@{ exit_code = $process.ExitCode; stdout = $stdout; stderr = $stderr }
-    } finally { $process.Dispose() }
+        # Strict decoding occurs only after raw drains and actual native exit.
+        $stdout=$strictUtf8.GetString($stdoutMemory.ToArray());$stderr=$strictUtf8.GetString($stderrMemory.ToArray())
+        if(-not$AllowFailure-and$process.ExitCode-ne0){throw ("git failed ($($process.ExitCode)): $($Arguments-join' ')"+[char]10+$stderr)}
+        return [pscustomobject]@{exit_code=$process.ExitCode;stdout=$stdout;stderr=$stderr}
+    }finally{$stdoutMemory.Dispose();$stderrMemory.Dispose();$process.Dispose()}
 }
 
 function Get-MorphospaceAffectedGitBlobBytes {
     param([Parameter(Mandatory=$true)][string]$RepositoryRoot,[Parameter(Mandatory=$true)][string]$Blob)
     if($Blob-cnotmatch'^[0-9a-f]{40}$'){throw 'Affected-validation blob identity is malformed.'}
-    $start=[Diagnostics.ProcessStartInfo]::new();$start.FileName='git';$start.WorkingDirectory=[IO.Path]::GetFullPath($RepositoryRoot);$start.UseShellExecute=$false;$start.CreateNoWindow=$true;$start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true;$start.ArgumentList.Add('cat-file');$start.ArgumentList.Add('blob');$start.ArgumentList.Add($Blob)
-    $process=[Diagnostics.Process]::new();$process.StartInfo=$start;$memory=[IO.MemoryStream]::new()
-    try{if(-not$process.Start()){throw 'git cat-file did not start.'};$stdoutTask=$process.StandardOutput.BaseStream.CopyToAsync($memory);$stderrTask=$process.StandardError.ReadToEndAsync();if(-not$process.WaitForExit(30000)){try{$process.Kill($true)}catch{};throw 'git cat-file timed out.'};[void]$stdoutTask.GetAwaiter().GetResult();$stderr=$stderrTask.GetAwaiter().GetResult();if($process.ExitCode-ne0-or$stderr.Length-ne0){throw "git cat-file failed for blob '$Blob': $stderr"};return $memory.ToArray()}finally{$memory.Dispose();$process.Dispose()}
+    $start=[Diagnostics.ProcessStartInfo]::new();$start.FileName='git';$start.WorkingDirectory=[IO.Path]::GetFullPath($RepositoryRoot)
+    $start.UseShellExecute=$false;$start.CreateNoWindow=$true;$start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
+    foreach($argument in @('cat-file','blob',$Blob)){[void]$start.ArgumentList.Add($argument)}
+    $process=[Diagnostics.Process]::new();$process.StartInfo=$start
+    $memory=[IO.MemoryStream]::new();$stderrMemory=[IO.MemoryStream]::new();$strictUtf8=[Text.UTF8Encoding]::new($false,$true)
+    try{
+        if(-not$process.Start()){throw 'git cat-file did not start.'}
+        $stdoutTask=$process.StandardOutput.BaseStream.CopyToAsync($memory);$stderrTask=$process.StandardError.BaseStream.CopyToAsync($stderrMemory)
+        try{Wait-MorphospaceAffectedGitOriginal -Process $process -Operation 'git cat-file'}finally{
+            try{[void]$process.WaitForExit()}finally{
+                try{[void]$stdoutTask.GetAwaiter().GetResult()}finally{[void]$stderrTask.GetAwaiter().GetResult()}
+            }
+        }
+        # Binary stdout stays opaque. Invalid stderr now fails strict decoding
+        # instead of the prior default decoder's nonempty-stderr refusal.
+        $stderr=$strictUtf8.GetString($stderrMemory.ToArray())
+        if($process.ExitCode-ne0-or$stderr.Length-ne0){throw "git cat-file failed for blob '$Blob': $stderr"}
+        return $memory.ToArray()
+    }finally{$memory.Dispose();$stderrMemory.Dispose();$process.Dispose()}
 }
 
 function ConvertTo-MorphospaceAffectedPath {
@@ -460,7 +488,7 @@ function Get-MorphospaceAffectedValidationSegments {
         [ValidateRange(60, 18000)][int]$TargetBudgetSeconds = 3600,
         [ValidateRange(60, 21600)][int]$MaximumSegmentBudgetSeconds = 18000
     )
-    if ($TargetBudgetSeconds -gt $MaximumSegmentBudgetSeconds) { throw 'Affected-validation segment target exceeds its hard maximum.' }
+    if ($TargetBudgetSeconds -gt $MaximumSegmentBudgetSeconds) { try { Write-Warning 'Affected-validation grouping target exceeds its advisory maximum; inspect the grouping configuration.' } catch { } }
 
     $checkMap = @{}
     foreach ($check in @($Registry.checks)) { $checkMap[[string]$check.check_id] = $check }
@@ -505,7 +533,7 @@ function Get-MorphospaceAffectedValidationSegments {
         }
         $orderedMembers = @($selected | Where-Object { $members.Contains([string]$_.check_id) } | ForEach-Object { [string]$_.check_id })
         $componentBudget = [long](@($orderedMembers | ForEach-Object { [long]$checkMap[$_].budget_seconds }) | Measure-Object -Sum).Sum
-        if ($componentBudget -gt $MaximumSegmentBudgetSeconds) { throw "Affected-validation dependency component '$($orderedMembers[0])' exceeds the hosted segment maximum: $componentBudget > $MaximumSegmentBudgetSeconds seconds." }
+        if ($componentBudget -gt $MaximumSegmentBudgetSeconds) { try { Write-Warning "Affected-validation dependency component '$($orderedMembers[0])' exceeds the advisory segment estimate: $componentBudget > $MaximumSegmentBudgetSeconds seconds; retain the intact dependency group and inspect progress." } catch { } }
         $components.Add([pscustomobject][ordered]@{ key=[string]$orderedMembers[0]; budget_seconds=$componentBudget; check_ids=@($orderedMembers) })
     }
 

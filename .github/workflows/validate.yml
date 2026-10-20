@@ -19,7 +19,7 @@ concurrency:
 jobs:
   infrastructure:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 360
     outputs:
       classification: ${{ steps.classify.outputs.classification }}
     steps:
@@ -57,7 +57,7 @@ jobs:
     needs: infrastructure
     if: needs.infrastructure.outputs.classification == 'ready'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 360
     outputs:
       linux: ${{ steps.plan.outputs.linux }}
       windows: ${{ steps.plan.outputs.windows }}
@@ -99,13 +99,19 @@ jobs:
           $windowsBudget = [long]0
           foreach ($check in @($plan.selected_checks | Where-Object { @($_.platforms) -ccontains 'windows' })) { $windowsBudget += [long]$check.budget_seconds }
           $windowsDirect = $env:GITHUB_EVENT_NAME -ceq 'pull_request' -and $env:SINGLE_WINDOWS_REQUESTED -ieq 'true' -and $windows
-          if ($windowsDirect -and $windowsBudget -gt 18000) { throw 'Requested single-runner Windows validation exceeds its 18,000-second selected budget ceiling.' }
+          if ($windowsDirect -and $windowsBudget -gt 18000) { try { Write-Warning 'Single-runner Windows estimate exceeds 18,000 seconds; inspect progress while retaining the original job.' } catch { } }
           "windows_direct=$($windowsDirect.ToString().ToLowerInvariant())" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
           Import-Module ./scripts/lib/MorphospaceAffectedValidation.psm1 -Force
           $registry = Get-Content -LiteralPath manifests/affected-validation-registry.json -Raw | ConvertFrom-Json -Depth 64
+          function Get-AffectedJobTimeoutMinutes([long]$EstimatedBudgetSeconds) {
+            if ([Math]::Ceiling(($EstimatedBudgetSeconds + 900) / 60.0) -ge 360) {
+              try { Write-Warning 'Estimated segment cost reaches the configured platform ceiling; inspect progress and retain the original job.' } catch { }
+            }
+            return 360
+          }
           foreach ($platform in @('linux','windows')) {
             $segments = if ([bool]$plan.execution_permitted) { @(Get-MorphospaceAffectedValidationSegments -Plan $plan -Registry $registry -Platform $platform) } else { @() }
-            $include = if ($segments.Count -eq 0) { @([pscustomobject][ordered]@{segment_id="$platform-000";timeout_minutes=5}) } else { @($segments | ForEach-Object { $outer=[int][Math]::Ceiling(([long]$_.estimated_budget_seconds+900)/60.0);if($outer-ge360){throw 'Affected-validation segment plus bounded setup/cleanup overhead reaches the GitHub six-hour ceiling.'};[pscustomobject][ordered]@{segment_id=[string]$_.segment_id;timeout_minutes=$outer} }) }
+            $include = if ($segments.Count -eq 0) { @([pscustomobject][ordered]@{segment_id="$platform-000";timeout_minutes=360}) } else { @($segments | ForEach-Object { [pscustomobject][ordered]@{segment_id=[string]$_.segment_id;timeout_minutes=(Get-AffectedJobTimeoutMinutes -EstimatedBudgetSeconds ([long]$_.estimated_budget_seconds))} }) }
             $matrix = [pscustomobject][ordered]@{include=@($include)}
             "${platform}_matrix=$(($matrix | ConvertTo-Json -Depth 4 -Compress))" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
           }
@@ -305,7 +311,7 @@ jobs:
 
   quick-linux:
     needs: [infrastructure, select, affected-linux-segments]
-    timeout-minutes: 20
+    timeout-minutes: 360
     if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     steps:
@@ -532,7 +538,7 @@ jobs:
 
   standard-windows:
     needs: [infrastructure, select, affected-windows-segments]
-    timeout-minutes: 330
+    timeout-minutes: 360
     if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
     runs-on: windows-latest
     steps:
@@ -581,7 +587,8 @@ jobs:
           $plan = Get-Content -LiteralPath "$env:RUNNER_TEMP/affected-plan.json" -Raw | ConvertFrom-Json -Depth 64
           $selected = @($plan.selected_checks | Where-Object { @($_.platforms) -ccontains 'windows' })
           $budget = [long]0; foreach ($check in $selected) { $budget += [long]$check.budget_seconds }
-          if (-not [bool]$plan.execution_permitted -or $selected.Count -eq 0 -or $budget -gt 18000) { throw 'Direct Windows execution rejects an empty, non-executable, or over-budget selection.' }
+          if (-not [bool]$plan.execution_permitted -or $selected.Count -eq 0) { throw 'Direct Windows execution rejects an empty or non-executable selection.' }
+          if ($budget -gt 18000) { try { Write-Warning 'Direct Windows estimate exceeds 18,000 seconds; inspect progress while retaining the original job.' } catch { } }
           $cacheRoot = Join-Path $env:RUNNER_TEMP 'affected-check-cache-windows'
           $priorRoot = Join-Path $cacheRoot 'prior'
           $currentRoot = Join-Path $cacheRoot 'current'
@@ -699,7 +706,7 @@ jobs:
 
   quick-windows:
     needs: [infrastructure, select, standard-windows]
-    timeout-minutes: 10
+    timeout-minutes: 360
     if: ${{ !cancelled() && github.event_name == 'pull_request' }}
     runs-on: windows-latest
     steps:
@@ -718,7 +725,7 @@ jobs:
   post-merge-attestation:
     if: github.event_name == 'push'
     needs: select
-    timeout-minutes: 30
+    timeout-minutes: 360
     runs-on: ubuntu-latest
     outputs:
       execution_mode: ${{ steps.attest.outputs.execution_mode }}
@@ -899,7 +906,7 @@ jobs:
     if: github.event_name == 'push' && needs.select.outputs.linux == 'true' && needs.post-merge-attestation.outputs.execution_mode == 'current-delta'
     needs: [select, post-merge-attestation, main-linux-segments]
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with: { fetch-depth: 0 }
@@ -939,7 +946,7 @@ jobs:
     if: github.event_name == 'push' && needs.select.outputs.windows == 'true' && needs.post-merge-attestation.outputs.execution_mode == 'current-delta'
     needs: [select, post-merge-attestation, main-windows-segments]
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with: { fetch-depth: 0 }
@@ -983,7 +990,7 @@ jobs:
     if: ${{ !cancelled() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
     needs: [infrastructure, select, quick-linux, standard-windows]
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:

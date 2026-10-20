@@ -960,6 +960,93 @@ try {
     }
     $envelopeFreezePath=Join-Path $testRoot 'development-envelope-freeze.json'; $envelopeFreezeOut=Join-Path $envelopeWorkspace 'receipts\u002-freeze.json'; Write-TestJson -Path $envelopeFreezePath -Value $envelopeFreeze
     $envelopeFreezeDry=& (Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1') -Action FreezeCandidate -WorkspaceRoot $envelopeWorkspace -UnitId 'u002' -CandidateFreeze $envelopeFreezePath -OutPath $envelopeFreezeOut -Timestamp $fixed | ConvertFrom-Json
+    # Legal minimal-v1 preparation receipts predate optional embedded snapshots.
+    # The full public Freeze dry above must authenticate the real amendment chain
+    # while deriving its immutable origin from the typed preparation transaction.
+    $minimalPreparationReceipt = Read-TestProtocolJson $envelopePreparationReceiptPath
+    Assert-Automation ($minimalPreparationReceipt.envelope.PSObject.Properties.Name -cnotcontains 'project' -and $minimalPreparationReceipt.envelope.PSObject.Properties.Name -cnotcontains 'feature_lock') 'minimal-v1 compatibility fixture unexpectedly contains optional snapshots'
+    $preparationContinuationPath = Join-Path $PSScriptRoot 'lib/MorphospaceDevelopmentContinuation.psm1'
+    $preparationContinuationModule = @(Get-Module -All | Where-Object { $_.Path -eq $preparationContinuationPath } | Select-Object -Last 1)[0]
+    if ($null -eq $preparationContinuationModule) { throw 'Actual continuation module was not reached by public Freeze.' }
+    function Get-PreparationTargetFixtureInventory {
+        $root = [IO.Path]::GetFullPath($envelopeWorkspace)
+        $rows = @(Get-ChildItem -LiteralPath $root -Recurse -File | Sort-Object FullName | ForEach-Object { [ordered]@{ path=$_.FullName.Substring($root.Length).Replace('\','/'); bytes=$_.Length; sha256=(Get-TestFileHash $_.FullName) } })
+        Get-TestCanonicalHash $rows
+    }
+    function Update-PreparationTargetFixtureReceipt([object]$Request) {
+        $receipt = Read-TestProtocolJson $envelopePreparationReceiptPath
+        $intent = Read-TestProtocolJson $envelopePreparationIntentPath
+        $artifact = @($intent.artifacts | Where-Object { $_.path -ceq $Request.preparation.receipt_path })
+        Assert-Automation ($artifact.Count -eq 1) 'one exact preparation receipt artifact required for damage control'
+        $artifact[0].sha256 = Get-TestCanonicalHash $receipt
+        $artifact[0].bytes_base64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes($envelopePreparationReceiptPath))
+        Write-TestJson $envelopePreparationIntentPath $intent
+        $completion = Read-TestProtocolJson $envelopePreparationCompletionPath
+        $completion.intent_sha256 = Get-TestFileHash $envelopePreparationIntentPath
+        Write-TestJson $envelopePreparationCompletionPath $completion
+        $Request.preparation.receipt_sha256 = Get-TestFileHash $envelopePreparationReceiptPath
+    }
+    function Assert-PreparationTargetFixtureRefusal([scriptblock]$Damage,[string]$Expected) {
+        $request = $envelopeAdmission | ConvertTo-Json -Depth 100 | ConvertFrom-Json -Depth 100 -DateKind String
+        # Prove this exact undamaged workspace/reader before every targeted fault.
+        $null = & $preparationContinuationModule { param($w,$a) Read-DevelopmentContinuationPreparationTargets $w $a } $envelopeWorkspace $request
+        $inventory = Get-PreparationTargetFixtureInventory
+        $saved = @{}
+        foreach ($path in @($envelopePreparationReceiptPath,$envelopePreparationIntentPath,$envelopePreparationCompletionPath)) { $saved[$path] = [IO.File]::ReadAllBytes($path) }
+        try {
+            & $Damage $request | Out-Null
+            $caught = $null
+            try { $null = & $preparationContinuationModule { param($w,$a) Read-DevelopmentContinuationPreparationTargets $w $a } $envelopeWorkspace $request } catch { $caught = $_ }
+            Assert-Automation ($null -ne $caught -and $caught.Exception.Message -ceq $Expected) "preparation target damage missed exact guard: $Expected / $caught"
+        } finally {
+            foreach ($path in $saved.Keys) { [IO.File]::WriteAllBytes($path,$saved[$path]) }
+        }
+        Assert-Automation ((Get-PreparationTargetFixtureInventory) -ceq $inventory) 'preparation target refusal changed/restored unrelated workspace bytes'
+        $null = & $preparationContinuationModule { param($w,$a) Read-DevelopmentContinuationPreparationTargets $w $a } $envelopeWorkspace $envelopeAdmission
+    }
+    Assert-PreparationTargetFixtureRefusal {
+        param($request)
+        $intent = Read-TestProtocolJson $envelopePreparationIntentPath
+        $intent.target.project.document.project_id = 'foreign-project'
+        Write-TestJson $envelopePreparationIntentPath $intent
+        $completion = Read-TestProtocolJson $envelopePreparationCompletionPath
+        $completion.intent_sha256 = Get-TestFileHash $envelopePreparationIntentPath
+        Write-TestJson $envelopePreparationCompletionPath $completion
+    } 'Development continuation preparation project target is detached.'
+    Assert-PreparationTargetFixtureRefusal {
+        param($request)
+        Remove-Item -LiteralPath $envelopePreparationCompletionPath
+    } 'Development continuation preparation completion is absent.'
+    Assert-PreparationTargetFixtureRefusal {
+        param($request)
+        $receipt = Read-TestProtocolJson $envelopePreparationReceiptPath
+        $receipt.project_id = 'foreign-project'
+        Write-TestJson $envelopePreparationReceiptPath $receipt
+        Update-PreparationTargetFixtureReceipt $request
+    } 'Development continuation preparation transaction identity is detached.'
+    Assert-PreparationTargetFixtureRefusal {
+        param($request)
+        $receipt = Read-TestProtocolJson $envelopePreparationReceiptPath
+        $receipt.project_sha256 = '0' * 64
+        Write-TestJson $envelopePreparationReceiptPath $receipt
+        Update-PreparationTargetFixtureReceipt $request
+    } 'Development continuation preparation project target is detached.'
+    Assert-PreparationTargetFixtureRefusal {
+        param($request)
+        $completion = Read-TestProtocolJson $envelopePreparationCompletionPath
+        $completion.intent_sha256 = '0' * 64
+        Write-TestJson $envelopePreparationCompletionPath $completion
+    } 'Development continuation preparation transaction identity is detached.'
+    Assert-PreparationTargetFixtureRefusal {
+        param($request)
+        $receipt = Read-TestProtocolJson $envelopePreparationReceiptPath
+        $snapshot = $envelopeProject | ConvertTo-Json -Depth 100 | ConvertFrom-Json -Depth 100 -DateKind String
+        $snapshot.project_id = 'foreign-project'
+        $receipt.envelope | Add-Member -NotePropertyName project -NotePropertyValue $snapshot
+        Write-TestJson $envelopePreparationReceiptPath $receipt
+        Update-PreparationTargetFixtureReceipt $request
+    } 'Development continuation optional preparation project snapshot is detached.'
+
     $envelopeFreezeRun=& (Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1') -Action FreezeCandidate -WorkspaceRoot $envelopeWorkspace -UnitId 'u002' -CandidateFreeze $envelopeFreezePath -ExpectedCandidateFreezeSha256 $envelopeFreezeDry.audit_receipt.sha256 -OutPath $envelopeFreezeOut -Timestamp $fixed -Execute | ConvertFrom-Json
     $envelopeFrozenUnit=Read-TestProtocolJson $envelopeU002Path; $envelopeFrozenState=Read-TestProtocolJson $envelopeStatePath
     $envelopeFreezeIntent=Join-Path $envelopeWorkspace 'receipts\transactions\u002-freeze-recorded-transition.intent.json'; $envelopeFreezeCompletion=Join-Path $envelopeWorkspace 'receipts\transactions\u002-freeze-recorded-transition.completion.json'

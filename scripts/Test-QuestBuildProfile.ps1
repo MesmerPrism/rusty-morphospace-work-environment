@@ -374,4 +374,8 @@ if (-not (Test-Path -LiteralPath $outputParent)) { New-Item -ItemType Directory 
         Remove-Item -LiteralPath $fullProfileRoot -Recurse -Force
     }
 }
+# One declared affected check covers the unchanged legacy corpus and the
+# actual retained-v2 original/pipe/capture controls.
+& pwsh -NoProfile -NonInteractive -File (Join-Path $PSScriptRoot 'Test-QuestBuildRetainedOriginal.ps1') -RepoRoot $RepoRoot
+if($LASTEXITCODE-ne0){throw 'Retained build original controls failed'}
 exit 0

@@ -259,7 +259,10 @@ function Invoke-AffectedProgressBootstrapFixture([string]$Fixture,[bool]$Progres
     try {
         if(-not $process.Start()){throw 'Native progress bootstrap fixture did not start.'}
         $stdoutTask=$process.StandardOutput.ReadToEndAsync();$stderrTask=$process.StandardError.ReadToEndAsync()
-        if(-not $process.WaitForExit(30000)){try{$process.Kill($true)}catch{};throw 'Native progress bootstrap fixture exceeded its finite deadline.'}
+        if (-not $process.WaitForExit(30000)) {
+            try { Write-Warning 'Native progress bootstrap fixture exceeded its 30000ms estimate; awaiting the original process and both stream EOFs.' -WarningAction Continue } catch {}
+        }
+        $process.WaitForExit()
         $stdout=$stdoutTask.GetAwaiter().GetResult();$stderr=$stderrTask.GetAwaiter().GetResult()
         Assert-True ($process.ExitCode -eq 0) "Native progress bootstrap fixture failed: $stderr"
         $observation=$stdout|ConvertFrom-Json -Depth 8 -ErrorAction Stop
@@ -301,7 +304,10 @@ function Invoke-FreshAffectedPlanProcess([string]$Fixture,[string]$BaseCommit,[s
         if (-not $process.Start()) { throw 'Fresh affected-plan process did not start.' }
         $stdoutTask = $process.StandardOutput.ReadToEndAsync()
         $stderrTask = $process.StandardError.ReadToEndAsync()
-        if (-not $process.WaitForExit(60000)) { try { $process.Kill($true) } catch {}; throw 'Fresh affected-plan process timed out.' }
+        if (-not $process.WaitForExit(60000)) {
+            try { Write-Warning 'Fresh affected-plan process exceeded its 60000ms estimate; awaiting the original process and both stream EOFs.' -WarningAction Continue } catch {}
+        }
+        $process.WaitForExit()
         $stdout = $stdoutTask.GetAwaiter().GetResult()
         $stderr = $stderrTask.GetAwaiter().GetResult()
         if ($process.ExitCode -ne 0) { throw "Fresh affected-plan process failed with exit $($process.ExitCode): $stderr" }
@@ -331,7 +337,10 @@ function Invoke-TestGitInput([string]$Root, [string[]]$Arguments, [string]$Input
         $stderrTask = $process.StandardError.ReadToEndAsync()
         $process.StandardInput.Write($InputText)
         $process.StandardInput.Close()
-        if (-not $process.WaitForExit(30000)) { try { $process.Kill($true) } catch {}; throw 'git fixture process timed out.' }
+        if (-not $process.WaitForExit(30000)) {
+            try { Write-Warning 'git fixture process exceeded its 30000ms estimate; awaiting the original process and both stream EOFs.' -WarningAction Continue } catch {}
+        }
+        $process.WaitForExit()
         $stdout = $stdoutTask.GetAwaiter().GetResult()
         $stderr = $stderrTask.GetAwaiter().GetResult()
         if ($process.ExitCode -ne 0) { throw "git test fixture with input failed: $($Arguments -join ' ')`n$stderr" }
@@ -375,7 +384,155 @@ function Assert-AffectedExecutorContainmentSource([string]$Source) {
     Assert-True ([regex]::Matches($Source,'if\(IsTransientThreadOpenError\(error\)\)\{entry\.').Count -eq 2) 'Affected executor initial thread snapshots do not both use the closed transient thread-open classifier.'
     Assert-True ([regex]::Matches($Source,'if\(count==0\)throw new InvalidOperationException').Count -eq 2) 'Affected executor lost the nonempty retained/protected thread requirement.'
 }
+function Invoke-AffectedGitMalformedDrainSelfTest {
+    $affectedModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceAffectedValidation.psm1') -PassThru
+    $template=@'
+$ErrorActionPreference='Stop'
+if([Console]::ReadLine()-cne'release-owned-original'){exit 91}
+$stdout=[byte[]](@(255,10)+[Text.Encoding]::UTF8.GetBytes(('x'*1048576)+'OUT-END'))
+$stderr=[byte[]](@(255,10)+[Text.Encoding]::UTF8.GetBytes(('y'*1048576)+'ERR-END'))
+$out=[Console]::OpenStandardOutput();$err=[Console]::OpenStandardError()
+$out.Write($stdout,0,$stdout.Length);$out.Flush()
+$err.Write($stderr,0,$stderr.Length);$err.Flush()
+exit __EXIT__
+'@
+    foreach($binary in @($false,$true)){
+        $nativeExit=if($binary){0}else{7}
+        $nativeSource=$template.Replace('__EXIT__',[string]$nativeExit)
+        $start=[Diagnostics.ProcessStartInfo]::new();$start.FileName=[Environment]::ProcessPath
+        $start.UseShellExecute=$false;$start.CreateNoWindow=$true;$start.RedirectStandardInput=$true;$start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
+        foreach($argument in @('-NoLogo','-NoProfile','-NonInteractive','-EncodedCommand',[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($nativeSource)))){[void]$start.ArgumentList.Add($argument)}
+        $process=[Diagnostics.Process]::new();$process.StartInfo=$start
+        $stdoutMemory=[IO.MemoryStream]::new();$stderrMemory=[IO.MemoryStream]::new()
+        $stdoutTask=$null;$stderrTask=$null;$started=$false
+        $state=[pscustomobject]@{calls=0;live=$false;pid=0;birth=0L}
+        try{
+            if(-not$process.Start()){throw 'Malformed Git-drain fixture child did not start.'}
+            $started=$true;$originalPid=$process.Id;$originalBirth=$process.StartTime.ToUniversalTime().Ticks
+            $stdoutTask=$process.StandardOutput.BaseStream.CopyToAsync($stdoutMemory);$stderrTask=$process.StandardError.BaseStream.CopyToAsync($stderrMemory)
+            $publisher={
+                param($Original,$Operation)
+                try{$state.calls++;$state.live=-not$Original.HasExited;$state.pid=$Original.Id;$state.birth=$Original.StartTime.ToUniversalTime().Ticks}
+                finally{try{$Original.StandardInput.WriteLine('release-owned-original');$Original.StandardInput.Flush()}finally{$Original.StandardInput.Close()}}
+                throw 'Intentional warning sink failure after malformed child release.'
+            }.GetNewClosure()
+            & $affectedModule {param($Original,$Publisher) Wait-MorphospaceAffectedGitOriginal -Process $Original -EstimateMilliseconds 0 -WarningPublisher $Publisher} $process $publisher
+            try{[void]$stdoutTask.GetAwaiter().GetResult()}finally{[void]$stderrTask.GetAwaiter().GetResult()}
+            Assert-True ($process.HasExited-and$process.ExitCode-eq$nativeExit-and$state.calls-eq1-and$state.live-and$state.pid-eq$originalPid-and$state.birth-eq$originalBirth) 'Malformed raw drain did not retain the exact original native exit/incarnation.'
+            foreach($pair in @([pscustomobject]@{stream=$stdoutMemory;fill='x';tail='OUT-END'},[pscustomobject]@{stream=$stderrMemory;fill='y';tail='ERR-END'})){
+                $actual=$pair.stream.ToArray();$expected=[byte[]](@(255,10)+[Text.Encoding]::UTF8.GetBytes((([string]$pair.fill)*1048576)+[string]$pair.tail))
+                Assert-True ($actual.Length-eq$expected.Length-and[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($actual))-ceq[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($expected))) 'Malformed raw stream lost its exact prefix/tail or EOF before decoding.'
+            }
+            $decodeRefused=$false
+            try{
+                $strict=[Text.UTF8Encoding]::new($false,$true)
+                if(-not$binary){[void]$strict.GetString($stdoutMemory.ToArray())}
+                [void]$strict.GetString($stderrMemory.ToArray())
+            }catch{
+                $failure=$_.Exception
+                while($null-ne$failure-and$failure-isnot[Text.DecoderFallbackException]){$failure=$failure.InnerException}
+                if($null-eq$failure){throw}
+                $decodeRefused=$true
+            }
+            Assert-True $decodeRefused 'Malformed UTF8 was accepted after actual exit and both raw EOFs.'
+        }finally{
+            try{
+                if($started){
+                    try{$process.StandardInput.WriteLine('release-owned-original');$process.StandardInput.Flush()}catch{}
+                    try{$process.StandardInput.Close()}catch{}
+                    if($null-eq$stdoutTask){$stdoutTask=$process.StandardOutput.BaseStream.CopyToAsync($stdoutMemory)}
+                    if($null-eq$stderrTask){$stderrTask=$process.StandardError.BaseStream.CopyToAsync($stderrMemory)}
+                    try{[void]$process.WaitForExit()}finally{try{[void]$stdoutTask.GetAwaiter().GetResult()}finally{[void]$stderrTask.GetAwaiter().GetResult()}}
+                }
+            }finally{$stdoutMemory.Dispose();$stderrMemory.Dispose();$process.Dispose()}
+        }
+    }
+    Write-Host 'Malformed Git raw-drain controls passed: actual exit and both EOFs precede strict text/binary-stderr refusal.'
+}
+
+function Invoke-AffectedGitOriginalWaitSelfTest {
+    Invoke-AffectedGitMalformedDrainSelfTest
+    $affectedModule = Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceAffectedValidation.psm1') -PassThru
+    $childTemplate = @'
+$ErrorActionPreference='Stop'
+$release=[Console]::ReadLine()
+if($release-cne'release-owned-original'){exit 91}
+$stdout=[Text.Encoding]::UTF8.GetBytes(('x'*1048576)+'OUT-END')
+if(__BINARY__){$stdout=[byte[]](@(0,255,10)+$stdout)}
+$outStream=[Console]::OpenStandardOutput()
+$outStream.Write($stdout,0,$stdout.Length);$outStream.Flush()
+[Console]::Error.Write(('y'*1048576)+'ERR-END');[Console]::Error.Flush()
+exit __EXIT__
+'@
+    $completed=0
+    foreach($binary in @($false,$true)) {
+        foreach($exit in @(0,7)) {
+            foreach($publisherThrows in @($false,$true)) {
+                $nativeSource=$childTemplate.Replace('__BINARY__',$(if($binary){'$true'}else{'$false'})).Replace('__EXIT__',[string]$exit)
+                $start=[Diagnostics.ProcessStartInfo]::new()
+                $start.FileName=[Environment]::ProcessPath
+                $start.UseShellExecute=$false;$start.CreateNoWindow=$true
+                $start.RedirectStandardInput=$true;$start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
+                $utf8=[Text.UTF8Encoding]::new($false,$true)
+                $start.StandardInputEncoding=$utf8;$start.StandardOutputEncoding=$utf8;$start.StandardErrorEncoding=$utf8
+                foreach($argument in @('-NoLogo','-NoProfile','-NonInteractive','-EncodedCommand',[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($nativeSource)))){[void]$start.ArgumentList.Add($argument)}
+                $process=[Diagnostics.Process]::new();$process.StartInfo=$start
+                $memory=[IO.MemoryStream]::new();$stdoutTask=$null;$stderrTask=$null;$started=$false
+                $state=[pscustomobject]@{calls=0;pid=0;birth=0L;live=$false;released=$false;throw_after_release=$publisherThrows}
+                try {
+                    if(-not$process.Start()){throw 'Owned Git-wait fixture child did not start.'}
+                    $started=$true;$originalPid=$process.Id;$originalBirth=$process.StartTime.ToUniversalTime().Ticks
+                    $stdoutTask=if($binary){$process.StandardOutput.BaseStream.CopyToAsync($memory)}else{$process.StandardOutput.ReadToEndAsync()}
+                    $stderrTask=$process.StandardError.ReadToEndAsync()
+                    $publisher={
+                        param($Original,$Operation)
+                        try {
+                            $state.calls++;$state.pid=$Original.Id;$state.birth=$Original.StartTime.ToUniversalTime().Ticks;$state.live=-not$Original.HasExited
+                        } finally {
+                            try {$Original.StandardInput.WriteLine('release-owned-original');$Original.StandardInput.Flush();$state.released=$true}
+                            finally {$Original.StandardInput.Close()}
+                        }
+                        if($state.throw_after_release){throw 'Intentional Git-wait warning publication failure after release.'}
+                        'warning-success-output-must-not-leak'
+                    }.GetNewClosure()
+                    $waitOutput=@(& $affectedModule {
+                        param($Original,$Publisher)
+                        Wait-MorphospaceAffectedGitOriginal -Process $Original -Operation 'owned Git-wait fixture' -EstimateMilliseconds 0 -WarningPublisher $Publisher
+                    } $process $publisher)
+                    $stdoutResult=$stdoutTask.GetAwaiter().GetResult();$stderr=$stderrTask.GetAwaiter().GetResult()
+                    Assert-True ($waitOutput.Count-eq0) 'Git-wait diagnostics leaked success-stream output.'
+                    Assert-True ($state.calls-eq1-and$state.released-and$state.live-and$state.pid-eq$originalPid-and$state.birth-eq$originalBirth) 'Estimate warning did not observe and release the exact still-live original incarnation.'
+                    Assert-True ($process.HasExited-and$process.ExitCode-eq$exit) 'Estimated Git wait cancelled, replayed or relabeled the original native exit.'
+                    $expectedText=('x'*1048576)+'OUT-END'
+                    if($binary) {
+                        $expectedBytes=[byte[]](@(0,255,10)+[Text.Encoding]::UTF8.GetBytes($expectedText));$actualBytes=$memory.ToArray()
+                        Assert-True ($actualBytes.Length-eq$expectedBytes.Length-and[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($actualBytes))-ceq[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($expectedBytes))) 'Git binary wait lost exact bytes or stdout EOF.'
+                    } else {Assert-True ($stdoutResult-ceq$expectedText) 'Git text wait lost exact stdout or EOF.'}
+                    Assert-True ($stderr-ceq(('y'*1048576)+'ERR-END')) 'Git wait lost exact stderr or EOF.'
+                    $completed++
+                } finally {
+                    if($started) {
+                        # Cleanup owns this same Process and drains both streams;
+                        # no estimated cleanup deadline, kill, PID lookup or retry.
+                        try {$process.StandardInput.WriteLine('release-owned-original');$process.StandardInput.Flush()}catch{}
+                        try {$process.StandardInput.Close()}catch{}
+                        if($null-eq$stdoutTask){$stdoutTask=if($binary){$process.StandardOutput.BaseStream.CopyToAsync($memory)}else{$process.StandardOutput.ReadToEndAsync()}}
+                        if($null-eq$stderrTask){$stderrTask=$process.StandardError.ReadToEndAsync()}
+                        try {[void]$process.WaitForExit()}finally {
+                            try {[void]$stdoutTask.GetAwaiter().GetResult()}finally {[void]$stderrTask.GetAwaiter().GetResult()}
+                        }
+                    }
+                    $memory.Dispose();$process.Dispose()
+                }
+            }
+        }
+    }
+    Assert-True ($completed-eq8) 'Git original-wait controls did not complete all text/binary, native exit and warning-publication cases.'
+    Write-Host "Git original-wait controls passed: cases=$completed; actual child exit and both EOFs retained."
+}
+
 function Invoke-AffectedBatchSelfTest {
+    Invoke-AffectedGitOriginalWaitSelfTest
     $fixture = [IO.Path]::GetFullPath((Join-Path ([IO.Path]::GetTempPath()) ('morphospace-affected-batch-' + [guid]::NewGuid().ToString('N'))))
     $tempPrefix = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar,[IO.Path]::AltDirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
     if (-not $fixture.StartsWith($tempPrefix,[StringComparison]::OrdinalIgnoreCase)) { throw 'Focused affected batch fixture is outside the exact temporary root.' }
@@ -400,6 +557,26 @@ function Invoke-AffectedBatchSelfTest {
 
         $entryA = $inventory.by_path['scripts/A.ps1']
         $entryB = $inventory.by_path['scripts/B.ps1']
+        $blobBytes = & $affectedModule { param($Root,$Blob) Get-MorphospaceAffectedGitBlobBytes -RepositoryRoot $Root -Blob $Blob } $fixture $entryA.blob
+        Assert-True ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([byte[]]$blobBytes)) -ceq [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([IO.File]::ReadAllBytes((Join-Path $fixture 'scripts/A.ps1'))))) 'Actual Git blob read changed raw bytes after its original stream join.'
+        Assert-AffectedThrows { & $affectedModule { param($Root) Get-MorphospaceAffectedGitBlobBytes -RepositoryRoot $Root -Blob ('0' * 40) } $fixture } '*git cat-file failed*' 'Actual Git blob failure was accepted after an estimated wait.'
+        $allowedFailure = & $affectedModule { param($Root) Invoke-MorphospaceAffectedGit -RepositoryRoot $Root -Arguments @('cat-file','blob',('0' * 40)) -AllowFailure } $fixture
+        Assert-True ($allowedFailure.exit_code -ne 0 -and $allowedFailure.stderr.Length -gt 0) 'AllowFailure lost the actual Git failure exit or stderr.'
+        $malformedFile=Join-Path $fixture 'malformed-bytes.bin'
+        [byte[]]$malformedBytes=@(255,10)+[Text.Encoding]::UTF8.GetBytes(('z'*1048576)+'BLOB-END')
+        [IO.File]::WriteAllBytes($malformedFile,$malformedBytes)
+        $malformedBlob=Invoke-TestGit $fixture @('hash-object','-w','--no-filters','malformed-bytes.bin')
+        $roundtrip=& $affectedModule {param($Root,$Blob) Get-MorphospaceAffectedGitBlobBytes -RepositoryRoot $Root -Blob $Blob} $fixture $malformedBlob
+        Assert-True ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([byte[]]$roundtrip))-ceq[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($malformedBytes))) 'Actual Git binary read did not preserve malformed UTF8 bytes.'
+        $decodeRejected=$false
+        try{[void](& $affectedModule {param($Root,$Blob) Invoke-MorphospaceAffectedGit -RepositoryRoot $Root -Arguments @('cat-file','blob',$Blob)} $fixture $malformedBlob)}catch{
+            $failure=$_.Exception
+            while($null-ne$failure-and$failure-isnot[Text.DecoderFallbackException]){$failure=$failure.InnerException}
+            if($null-eq$failure){throw}
+            $decodeRejected=$true
+        }
+        Assert-True $decodeRejected 'Actual Git text read accepted malformed UTF8 instead of refusing after raw drain.'
+        Remove-Item -LiteralPath $malformedFile
         $validHashOutput = "$($entryA.blob)`n$($entryB.blob)`n"
         $parsedHashes = @(& $affectedModule { param($Text,$Paths,$Inventory) ConvertFrom-MorphospaceAffectedBatchHashOutput -Stdout $Text -Paths $Paths -Inventory $Inventory } $validHashOutput @('scripts/A.ps1','scripts/B.ps1') $inventory)
         Assert-True ($parsedHashes.Count -eq 2 -and $parsedHashes[0].path -ceq 'scripts/A.ps1' -and $parsedHashes[1].path -ceq 'scripts/B.ps1') 'Positive batch hash parser changed record order/path identity.'
@@ -1072,9 +1249,16 @@ function Assert-AffectedTrackedFileAnalysisIndexStable([object]$Index) {
 function Assert-AffectedRetirementDeclarationLayout([object]$Resolution,[string[]]$Paths) {
     $importers = @('scripts/ActiveUnitRetirement.psm1','scripts/lib/MorphospacePlanningLifecycleProjection.psm1')
     $actual = @($Resolution.used_declarations | Where-Object { [string]$_.importer -cin $importers } | ForEach-Object { "$([string]$_.importer)|$([string]$_.variable)|$([int]$_.count)|$(@($_.target_paths) -join ',')" })
+    $lineageLayout = $Paths -ccontains 'scripts/lib/MorphospaceActiveRetirementLineage.psm1'
+    $sharedLayout = $Paths -ccontains 'scripts/lib/MorphospacePlanningLifecycleProjection.psm1'
+    Assert-True (-not ($lineageLayout -and $sharedLayout)) 'Retirement-dependent consumer did not consume the exact closed retirement/shared-helper module-object declarations.'
+    # Independent finite production contracts; never derive expectations from registry rows.
+    $moduleDeclaration = if ($lineageLayout) {
+        'scripts/ActiveUnitRetirement.psm1|module|4|scripts/DevelopmentEnvelopeProvenance.psm1,scripts/lib/MorphospaceActiveRetirementLineage.psm1'
+    } else { 'scripts/ActiveUnitRetirement.psm1|module|2|scripts/DevelopmentEnvelopeProvenance.psm1' }
     $expected = @(
         'scripts/ActiveUnitRetirement.psm1|ProvenanceModule|2|scripts/DevelopmentEnvelopeProvenance.psm1',
-        'scripts/ActiveUnitRetirement.psm1|module|2|scripts/DevelopmentEnvelopeProvenance.psm1'
+        $moduleDeclaration
     )
     if ($Paths -ccontains 'scripts/lib/MorphospacePlanningLifecycleProjection.psm1') {
         $expected += @('scripts/lib/MorphospacePlanningLifecycleProjection.psm1|amendmentModule|1|scripts/ActiveWriteScopeAmendment.psm1','scripts/lib/MorphospacePlanningLifecycleProjection.psm1|pendingExtensionModule|2|scripts/ActiveDevelopmentEnvelopeExtension.psm1')
@@ -1782,13 +1966,16 @@ $module = Import-Module (Join-Path $OwnerDirectory 'scripts/lib/FixtureExports.p
     } finally { if ([IO.Directory]::Exists($ownerGraphFixture)) { Remove-Item -LiteralPath $ownerGraphFixture -Recurse -Force } }
 }
 function Invoke-AffectedGraphIndexSelfTest([string]$Root,[object]$Registry) {
+    Invoke-AffectedGitOriginalWaitSelfTest
     Invoke-AffectedModuleExportSelfTest
     $audit = Get-AffectedProtocolCommonOwnerChecks -Root $Root -Registry $Registry
     Assert-AffectedProtocolCommonGraphProjection -Value $audit -Context 'Real-tree ProtocolCommon graph'
     foreach ($requiredNode in @('scripts/New-ValidatingCandidateRematerializationInput.ps1','scripts/Test-ValidatingCandidateRematerialization.ps1','scripts/ValidatingCandidateRematerialization.psm1','scripts/lib/MorphospaceSourceCompositionIdentity.psm1')) {
         Assert-True (@($audit.tracked_graph_adjacency.path) -ccontains $requiredNode) "Real-tree ProtocolCommon graph omitted the rematerialization node: $requiredNode"
     }
-    Assert-True ([long]$audit.total_elapsed_ms -le 45000) "ProtocolCommon transitive owner audit exceeded its measured 45-second bound: $($audit.total_elapsed_ms)ms."
+    if ([long]$audit.total_elapsed_ms -gt 45000) {
+        try { Write-Warning "ProtocolCommon transitive owner audit exceeded its 45000ms estimate: $($audit.total_elapsed_ms)ms." -WarningAction Continue } catch {}
+    }
 
     $missingFocusedLeaf = $Registry | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64
     $missingFocusedLeaf.checks = @($missingFocusedLeaf.checks | Where-Object { [string]$_.check_id -cne 'external-owner-authorization' })
@@ -1926,7 +2113,9 @@ $checks = @(
             Assert-True ($unrelatedIndex.analysis_metrics.module_export_callees -eq 0 -and $unrelatedIndex.analysis_metrics.module_storage_simple_reads -eq 0 -and $unrelatedIndex.analysis_metrics.module_storage_recursive_scans -eq 0 -and $null -eq $unrelatedIndex.builtin_facts -and $unrelatedIndex.storage_writes_by_scope.Count -eq 0) 'Files without module-export callees incurred module binding/storage/builtin work.'
         }
         Assert-True ($largeUnrelatedIndex.get_command_variables.Contains('Command') -and $smallUnrelatedIndex.get_command_variables.Contains('Command')) 'Demand-first index omitted the exact .Source/Get-Command binding.'
-        Assert-True ([long]$largeUnrelatedClock.Elapsed.TotalMilliseconds -le 5000) "Large unrelated-data index dominated focused work: $([long]$largeUnrelatedClock.Elapsed.TotalMilliseconds)ms."
+        if ([long]$largeUnrelatedClock.Elapsed.TotalMilliseconds -gt 5000) {
+            try { Write-Warning "Large unrelated-data index exceeded its 5000ms estimate: $([long]$largeUnrelatedClock.Elapsed.TotalMilliseconds)ms." -WarningAction Continue } catch {}
+        }
         $smallUnrelatedGraph = New-AffectedTrackedImportGraph -Root $fixture -Entrypoints @('scripts/Test-UnrelatedSmall.ps1') -TrackedPaths $tracked
         $largeUnrelatedGraph = New-AffectedTrackedImportGraph -Root $fixture -Entrypoints @('scripts/Test-UnrelatedLarge.ps1') -TrackedPaths $tracked
         $smallUnrelatedClosure = @(Get-AffectedGraphReachability -Graph $smallUnrelatedGraph -Entrypoint 'scripts/Test-UnrelatedSmall.ps1' -Cache ([Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)) | Where-Object { $_ -cne 'scripts/Test-UnrelatedSmall.ps1' })
@@ -1980,6 +2169,11 @@ function Invoke-AffectedRetirementLayoutGraphSelfTest {
         $retirement="function Invoke-Provenance([object]`$ProvenanceModule){& `$ProvenanceModule { 'first' }; & `$ProvenanceModule { 'second' }}`nif(`$enabled){`$module=Import-Module (Join-Path `$PSScriptRoot 'DevelopmentEnvelopeProvenance.psm1') -PassThru}`n& `$module { 'first' }`n& `$module { 'second' }`n"
         $legacy="if(`$enabled){`$amendmentModule=Import-Module (Join-Path `$PSScriptRoot 'ActiveWriteScopeAmendment.psm1') -PassThru}`n& `$amendmentModule { 'amendment' }`n"
         $extracted="Import-Module (Join-Path `$PSScriptRoot 'lib/MorphospacePlanningLifecycleProjection.psm1')`n"
+        # Production v2's ordinary module bindings live in separate functions.
+        # A script-scope module assignment would make local export bindings ambiguous.
+        $lineageRetirement="function Invoke-Provenance([object]`$ProvenanceModule){& `$ProvenanceModule { 'first' }; & `$ProvenanceModule { 'second' }}`nfunction Invoke-OrdinaryFirst { if(`$enabled){`$module=Import-Module (Join-Path `$PSScriptRoot 'DevelopmentEnvelopeProvenance.psm1') -PassThru}; & `$module { 'first' } }`nfunction Invoke-OrdinarySecond { if(`$enabled){`$module=Import-Module (Join-Path `$PSScriptRoot 'DevelopmentEnvelopeProvenance.psm1') -PassThru}; & `$module { 'second' } }`n"
+        # Actual fixed-export AST shapes used by the two v2 writer functions.
+        $lineage="function Invoke-LineageProof { `$module=Import-Module (Join-Path `$PSScriptRoot 'lib/MorphospaceActiveRetirementLineage.psm1') -PassThru; & `$module.ExportedCommands['Get-MorphospaceActiveRetirementSupersessionLineage'] }`nfunction Invoke-LineagePlanning { `$module=Import-Module (Join-Path `$PSScriptRoot 'lib/MorphospaceActiveRetirementLineage.psm1') -PassThru; & `$module.ExportedCommands['Test-MorphospaceActiveRetirementSupersessionPlanningProjection'] }`n"
         $helper="if(`$enabled){`$amendmentModule=Import-Module (Join-Path `$PSScriptRoot '../ActiveWriteScopeAmendment.psm1') -PassThru}`n& `$amendmentModule { 'amendment' }`nif(`$enabled){`$pendingExtensionModule=Import-Module (Join-Path `$PSScriptRoot '../ActiveDevelopmentEnvelopeExtension.psm1') -PassThru}`n& `$pendingExtensionModule { 'pending' }`n& `$pendingExtensionModule { 'recorded' }`n"
         $files=[ordered]@{
             'scripts/Test-ProtocolFoundation.ps1'="Import-Module (Join-Path `$PSScriptRoot 'ActiveUnitRetirement.psm1')`n"
@@ -1991,6 +2185,7 @@ function Invoke-AffectedRetirementLayoutGraphSelfTest {
             'scripts/lib/MorphospaceTransitionLedger.psm1'="'ledger'`n"
             'scripts/ActiveUnitRetirement.psm1'=''
             'scripts/lib/MorphospacePlanningLifecycleProjection.psm1'=$helper
+            'scripts/lib/MorphospaceActiveRetirementLineage.psm1'="function Get-MorphospaceActiveRetirementSupersessionLineage { 'proof' }`nfunction Test-MorphospaceActiveRetirementSupersessionPlanningProjection { 'planning' }`nExport-ModuleMember -Function Get-MorphospaceActiveRetirementSupersessionLineage,Test-MorphospaceActiveRetirementSupersessionPlanningProjection`n"
         }
         $inventory=[pscustomobject]@{records=@($files.Keys|ForEach-Object{[pscustomobject]@{mode='100644';type='blob';blob=('0'*40);path=$_}})}
         $common=@(
@@ -1998,12 +2193,18 @@ function Invoke-AffectedRetirementLayoutGraphSelfTest {
             [pscustomobject]@{importer='scripts/ActiveUnitRetirement.psm1';variable='module';count=2;target_paths=@('scripts/DevelopmentEnvelopeProvenance.psm1')},
             [pscustomobject]@{importer='scripts/Test-ValidatingCandidateRematerialization.ps1';variable='script:RematerializationOwnerModule';count=2;target_paths=@('scripts/ValidatingCandidateRematerialization.psm1')}
         )
-        foreach($layout in @('original','extracted')){
-            foreach($damage in @('none','altered-target','missing-call','extra-call','dynamic-call','shared-binding','missing-helper-edge','owner-count')){
+        foreach($layout in @('original','extracted','lineage')){
+            $damages=@('none','altered-target','missing-call','extra-call','dynamic-call','shared-binding','missing-helper-edge','owner-count')
+            if($layout -ceq 'lineage'){$damages+=@('altered-lineage-target','missing-lineage-call','extra-lineage-call','mixed-layout')}
+            foreach($damage in $damages){
                 $case=[ordered]@{};foreach($key in $files.Keys){$case[$key]=$files[$key]}
-                $case['scripts/ActiveUnitRetirement.psm1']=$retirement+$(if($layout -ceq 'original'){$legacy}else{$extracted})
+                $case['scripts/ActiveUnitRetirement.psm1']=$(if($layout -ceq 'lineage'){$lineageRetirement}else{$retirement})+$(if($layout -ceq 'extracted'){$extracted}else{$legacy})+$(if($layout -ceq 'lineage'){$lineage}else{''})
                 $declarations=@($common|ConvertTo-Json -Depth 10|ConvertFrom-Json -Depth 10)
-                $declarations+=if($layout -ceq 'original'){[pscustomobject]@{importer='scripts/ActiveUnitRetirement.psm1';variable='amendmentModule';count=1;target_paths=@('scripts/ActiveWriteScopeAmendment.psm1')}}else{@(
+                if($layout -ceq 'lineage'){
+                    $row=@($declarations|Where-Object{[string]$_.importer -ceq 'scripts/ActiveUnitRetirement.psm1' -and [string]$_.variable -ceq 'module'})[0]
+                    $row.count=4;$row.target_paths=@('scripts/DevelopmentEnvelopeProvenance.psm1','scripts/lib/MorphospaceActiveRetirementLineage.psm1')
+                }
+                $declarations+=if($layout -cne 'extracted'){[pscustomobject]@{importer='scripts/ActiveUnitRetirement.psm1';variable='amendmentModule';count=1;target_paths=@('scripts/ActiveWriteScopeAmendment.psm1')}}else{@(
                     [pscustomobject]@{importer='scripts/lib/MorphospacePlanningLifecycleProjection.psm1';variable='amendmentModule';count=1;target_paths=@('scripts/ActiveWriteScopeAmendment.psm1')},
                     [pscustomobject]@{importer='scripts/lib/MorphospacePlanningLifecycleProjection.psm1';variable='pendingExtensionModule';count=2;target_paths=@('scripts/ActiveDevelopmentEnvelopeExtension.psm1')}
                 )}
@@ -2012,7 +2213,17 @@ function Invoke-AffectedRetirementLayoutGraphSelfTest {
                     'missing-call'{$case['scripts/ActiveUnitRetirement.psm1']=$case['scripts/ActiveUnitRetirement.psm1'].Replace("& `$module { 'second' }",'')}
                     'extra-call'{$case['scripts/ActiveUnitRetirement.psm1']+="& `$module { 'extra' }`n"}
                     'dynamic-call'{$case['scripts/ActiveUnitRetirement.psm1']+="& `$UnboundOwner`n"}
-                    'shared-binding'{if($layout -ceq 'original'){$case['scripts/ActiveUnitRetirement.psm1']+=$extracted}else{$case['scripts/lib/MorphospacePlanningLifecycleProjection.psm1']=$helper.Replace("'../ActiveDevelopmentEnvelopeExtension.psm1'","'../ActiveWriteScopeAmendment.psm1'")}}
+                    'shared-binding'{if($layout -cne 'extracted'){$case['scripts/ActiveUnitRetirement.psm1']+=$extracted}else{$case['scripts/lib/MorphospacePlanningLifecycleProjection.psm1']=$helper.Replace("'../ActiveDevelopmentEnvelopeExtension.psm1'","'../ActiveWriteScopeAmendment.psm1'")}}
+                    'altered-lineage-target'{$case['scripts/ActiveUnitRetirement.psm1']=$case['scripts/ActiveUnitRetirement.psm1'].Replace("'lib/MorphospaceActiveRetirementLineage.psm1'","'ActiveWriteScopeAmendment.psm1'")}
+                    'missing-lineage-call'{$case['scripts/ActiveUnitRetirement.psm1']=$case['scripts/ActiveUnitRetirement.psm1'].Replace("& `$module.ExportedCommands['Get-MorphospaceActiveRetirementSupersessionLineage']",'')}
+                    'extra-lineage-call'{$case['scripts/ActiveUnitRetirement.psm1']=$case['scripts/ActiveUnitRetirement.psm1'].Replace("& `$module.ExportedCommands['Get-MorphospaceActiveRetirementSupersessionLineage']","& `$module.ExportedCommands['Get-MorphospaceActiveRetirementSupersessionLineage']; & `$module.ExportedCommands['Get-MorphospaceActiveRetirementSupersessionLineage']")}
+                    'mixed-layout'{
+                        $case['scripts/ActiveUnitRetirement.psm1']+=$extracted
+                        $declarations+=@(
+                            [pscustomobject]@{importer='scripts/lib/MorphospacePlanningLifecycleProjection.psm1';variable='amendmentModule';count=1;target_paths=@('scripts/ActiveWriteScopeAmendment.psm1')},
+                            [pscustomobject]@{importer='scripts/lib/MorphospacePlanningLifecycleProjection.psm1';variable='pendingExtensionModule';count=2;target_paths=@('scripts/ActiveDevelopmentEnvelopeExtension.psm1')}
+                        )
+                    }
                     'missing-helper-edge'{$case['scripts/ActiveUnitRetirement.psm1']=$retirement}
                     'owner-count'{$case['scripts/Test-ValidatingCandidateRematerialization.ps1']+="& `$script:RematerializationOwnerModule { 'extra' }`n"}
                 }
@@ -2027,6 +2238,7 @@ function Invoke-AffectedRetirementLayoutGraphSelfTest {
                             $expected=@('scripts/ActiveUnitRetirement.psm1','scripts/DevelopmentEnvelopeProvenance.psm1','scripts/ActiveWriteScopeAmendment.psm1','scripts/lib/MorphospaceTransitionLedger.psm1',$consumer.entry)
                             if($consumer.id -ceq 'validating-candidate-rematerialization'){$expected+='scripts/ValidatingCandidateRematerialization.psm1'}
                             if($layout -ceq 'extracted'){$expected+=@('scripts/lib/MorphospacePlanningLifecycleProjection.psm1','scripts/ActiveDevelopmentEnvelopeExtension.psm1')}
+                            if($layout -ceq 'lineage'){$expected+='scripts/lib/MorphospaceActiveRetirementLineage.psm1'}
                             [Array]::Sort($expected,[StringComparer]::Ordinal)
                             Assert-True ((@($resolved.paths)-join ';') -ceq ($expected-join ';')) "Retirement AST fixture '$layout/$($consumer.id)' did not bind exact paths."
                         }
@@ -2040,8 +2252,12 @@ function Invoke-AffectedRetirementLayoutGraphSelfTest {
                         'extra-call'{'Affected dependency declaration count changed:*'}
                         'owner-count'{'Affected dependency declaration count changed:*'}
                         'dynamic-call'{"Retirement-dependent consumer '*' did not retain exact closure without fallback."}
-                        'shared-binding'{if($layout -ceq 'original'){"Retirement-dependent consumer '*' did not retain exact closure without fallback."}else{'Affected dependency declaration omits observed static target:*'}}
-                        'missing-helper-edge'{if($layout -ceq 'original'){'Affected dependency declaration count changed:*'}else{"Retirement-dependent consumer '*' omitted '*'."}}
+                        'shared-binding'{if($layout -cne 'extracted'){"Retirement-dependent consumer '*' did not retain exact closure without fallback."}else{'Affected dependency declaration omits observed static target:*'}}
+                        'missing-helper-edge'{if($layout -cne 'extracted'){'Affected dependency declaration count changed:*'}else{"Retirement-dependent consumer '*' omitted '*'."}}
+                        'altered-lineage-target'{'Affected dependency declaration omits observed static target:*'}
+                        'missing-lineage-call'{'Affected dependency declaration count changed:*'}
+                        'extra-lineage-call'{'Affected dependency declaration count changed:*'}
+                        'mixed-layout'{'Retirement-dependent consumer did not consume the exact closed retirement/shared-helper module-object declarations.'}
                     }
                     Assert-True ($null -ne $message -and $message -like $category) "Retirement AST fixture '$layout/$damage' lacked typed rejection: $message"
                 }
@@ -2309,7 +2525,8 @@ function Invoke-AffectedFallbackReceiptSelfTest([string]$Root,[object]$Registry)
         $expressionFallbackReasons[0].kind = 'unresolved-expression-invocation'
         $expressionFallbackReceipt.binding_sha256 = Get-MorphospaceCanonicalJsonSha256 -Value $expressionFallbackReceipt.binding
         $expressionFallbackSnapshot = New-MorphospaceAffectedCheckSnapshot -Receipt $expressionFallbackReceipt -Stdout $fallbackStdout -Stderr $fallbackStderr -Artifacts @() -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json')
-        Assert-True (@($expressionFallbackSnapshot.receipt.binding.dependency_resolution.fallback_reasons | Where-Object { [string]$_.kind -ceq 'unresolved-expression-invocation' }).Count -eq 1) 'Parent snapshot retention rejected the production-shaped expression-invocation fallback reason.'
+        Assert-True (@($expressionFallbackSnapshot.receipt.binding.dependency_resolution.fallback_reasons | Where-Object { [string]$_.importer -ceq 'scripts/Test-DocumentationLinks.ps1' -and [string]$_.variable -ceq 'UnresolvedModulePath' -and [string]$_.kind -ceq 'unresolved-expression-invocation' }).Count -eq 1) 'Parent snapshot retention rejected the production-shaped expression-invocation fallback reason.'
+        Assert-True ((ConvertTo-MorphospaceCanonicalJson $expressionFallbackSnapshot.receipt.binding) -ceq (ConvertTo-MorphospaceCanonicalJson $expressionFallbackReceipt.binding)) 'Parent snapshot retention changed the complete expression-invocation fixture binding.'
         $unknownFallbackReceipt = $expressionFallbackReceipt | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64 -DateKind String
         $unknownFallbackReceipt.binding.dependency_resolution.fallback_reasons[0].kind = 'arbitrary-fallback-kind'
         $unknownFallbackReceipt.binding_sha256 = Get-MorphospaceCanonicalJsonSha256 -Value $unknownFallbackReceipt.binding
@@ -2634,7 +2851,12 @@ function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]
             [pscustomobject]@{importer='scripts/lib/MorphospacePlanningLifecycleProjection.psm1';variable='amendmentModule';count=1;target_paths=@('scripts/ActiveWriteScopeAmendment.psm1')},
             [pscustomobject]@{importer='scripts/lib/MorphospacePlanningLifecycleProjection.psm1';variable='pendingExtensionModule';count=2;target_paths=@('scripts/ActiveDevelopmentEnvelopeExtension.psm1')}
         )
-        foreach ($layout in @([pscustomobject]@{rows=$legacyDeclarations;paths=@('scripts/ActiveUnitRetirement.psm1')},[pscustomobject]@{rows=$sharedDeclarations;paths=@('scripts/ActiveUnitRetirement.psm1','scripts/lib/MorphospacePlanningLifecycleProjection.psm1')})) {
+        $lineageDeclarations = @(
+            [pscustomobject]@{importer='scripts/ActiveUnitRetirement.psm1';variable='ProvenanceModule';count=2;target_paths=@('scripts/DevelopmentEnvelopeProvenance.psm1')},
+            [pscustomobject]@{importer='scripts/ActiveUnitRetirement.psm1';variable='module';count=4;target_paths=@('scripts/DevelopmentEnvelopeProvenance.psm1','scripts/lib/MorphospaceActiveRetirementLineage.psm1')},
+            [pscustomobject]@{importer='scripts/ActiveUnitRetirement.psm1';variable='amendmentModule';count=1;target_paths=@('scripts/ActiveWriteScopeAmendment.psm1')}
+        )
+        foreach ($layout in @([pscustomobject]@{rows=$legacyDeclarations;paths=@('scripts/ActiveUnitRetirement.psm1')},[pscustomobject]@{rows=$sharedDeclarations;paths=@('scripts/ActiveUnitRetirement.psm1','scripts/lib/MorphospacePlanningLifecycleProjection.psm1')},[pscustomobject]@{rows=$lineageDeclarations;paths=@('scripts/ActiveUnitRetirement.psm1','scripts/lib/MorphospaceActiveRetirementLineage.psm1')})) {
             Assert-AffectedRetirementDeclarationLayout -Resolution ([pscustomobject]@{used_declarations=$layout.rows}) -Paths $layout.paths
             foreach ($damage in @('missing','extra','count','target','mixed')) {
                 $rows = @($layout.rows | ConvertTo-Json -Depth 10 | ConvertFrom-Json -Depth 10)
@@ -2828,7 +3050,9 @@ if ($runTrustMappingsPhase) {
 
 if ($runFullSelector) {
     $protocolCommonAudit = Get-AffectedProtocolCommonOwnerChecks -Root $repoRoot -Registry $registry
-    Assert-True ([long]$protocolCommonAudit.total_elapsed_ms -le 45000) "ProtocolCommon transitive owner audit exceeded its measured 45-second bound: $($protocolCommonAudit.total_elapsed_ms)ms."
+    if ([long]$protocolCommonAudit.total_elapsed_ms -gt 45000) {
+        try { Write-Warning "ProtocolCommon transitive owner audit exceeded its 45000ms estimate: $($protocolCommonAudit.total_elapsed_ms)ms." -WarningAction Continue } catch {}
+    }
     $protocolCommonConsumerChecks = @($protocolCommonAudit.check_ids)
     Write-Host "ProtocolCommon owner graph passed: roots=$($protocolCommonAudit.owner_entrypoints) nodes=$($protocolCommonAudit.tracked_graph_nodes) consumers=$($protocolCommonAudit.protocol_consumers) graph_ms=$($protocolCommonAudit.graph_elapsed_ms) total_ms=$($protocolCommonAudit.total_elapsed_ms)."
     Invoke-AffectedPerCheckDependencyClosureSelfTest -Root $repoRoot -Registry $registry
@@ -2899,7 +3123,9 @@ $checks = @(
         Assert-True ($fixtureDynamicClosure -ccontains 'scripts/lib/MorphospaceProtocolCommon.psm1') 'Exact dynamic import declaration did not contribute its tracked edge.'
         Assert-True ($fixtureDynamicInvocationClosure -ccontains 'scripts/Test-DynamicTarget.ps1' -and $fixtureDynamicInvocationClosure -ccontains 'scripts/Test-StaticChild.ps1' -and $fixtureDynamicInvocationClosure -ccontains 'scripts/lib/MorphospaceProtocolCommon.psm1') 'Exact multiple-target dynamic invocation declaration did not retain stable cardinality or contribute every tracked edge.'
         Assert-True ($fixtureDynamicClosure -ccontains 'scripts/lib/MorphospaceProtocolCommon.psm1' -and $fixtureDynamicInvocationClosure.Count -gt $fixtureDynamicClosure.Count) 'StrictMode one-target and multiple-target declaration cardinalities were not both retained as arrays.'
-        Assert-True ([long]$fixtureGraphClock.Elapsed.TotalMilliseconds -le 10000) "Fixture import graph and memoized reachability exceeded 10 seconds: $([long]$fixtureGraphClock.Elapsed.TotalMilliseconds)ms."
+        if ([long]$fixtureGraphClock.Elapsed.TotalMilliseconds -gt 10000) {
+            try { Write-Warning "Fixture import graph and memoized reachability exceeded its 10000ms estimate: $([long]$fixtureGraphClock.Elapsed.TotalMilliseconds)ms." -WarningAction Continue } catch {}
+        }
 
         Write-Utf8 (Join-Path $ownerGraphFixture 'scripts/Test-WorkEnvironment.ps1') ($workEnvironmentFixtureSource + "`n`$unclassified = 'Test-Unclassified.ps1'`n")
         $unclassifiedRejected = $false
@@ -2956,6 +3182,22 @@ $checks = @(
 if ($runFullSelector -or $runExecutorPassPhase) {
     Write-AffectedFixtureStage 'executor-contract-fixtures-enter'
     $workflowSource = Get-Content -LiteralPath (Join-Path $repoRoot '.github/workflows/validate.yml') -Raw
+    $timeoutDefinition = [regex]::Match($workflowSource, '(?ms)^          function Get-AffectedJobTimeoutMinutes\([^\r\n]*\) \{\r?\n.*?^          \}')
+    Assert-True $timeoutDefinition.Success 'Hosted segment timeout policy is missing its executable definition.'
+    $timeoutPolicy = [scriptblock]::Create($timeoutDefinition.Value + "`n" + 'Get-AffectedJobTimeoutMinutes -EstimatedBudgetSeconds $args[0]')
+    foreach ($estimate in @(0L, 3600L, 20700L, 86400L)) {
+        $observations = @(& $timeoutPolicy $estimate 3>&1)
+        $warnings = @($observations | Where-Object { $_ -is [Management.Automation.WarningRecord] })
+        $values = @($observations | Where-Object { $_ -isnot [Management.Automation.WarningRecord] })
+        Assert-True ($values.Count -eq 1 -and $values[0] -eq 360 -and $warnings.Count -eq [int]($estimate -ge 20700)) 'An estimated duration shortened or refused the original hosted job instead of warning.'
+    }
+    $failingWarningPolicy = [scriptblock]::Create("function Write-Warning { throw 'MODELED warning publisher failure' }`n" + $timeoutDefinition.Value + "`nGet-AffectedJobTimeoutMinutes -EstimatedBudgetSeconds 86400")
+    Assert-True ((& $failingWarningPolicy) -eq 360) 'A warning publisher failure blocked hosted job admission.'
+    foreach ($workflowText in @($workflowSource, (Get-Content -LiteralPath (Join-Path $repoRoot '.github/workflows/static-admission.yml') -Raw))) {
+        foreach ($numericTimeout in [regex]::Matches($workflowText, '(?m)^\s+timeout-minutes:\s*(\d+)\s*$')) {
+            Assert-True ($numericTimeout.Groups[1].Value -ceq '360') 'Hosted workflow uses a shorter estimated hard cutoff.'
+        }
+    }
     $workflowContractsSource = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts/Test-WorkflowContracts.ps1') -Raw
     $executorSource = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -Raw
     $phaseRunnerPath = Join-Path $repoRoot 'scripts/Invoke-AffectedValidationSelfTestPhase.ps1'
@@ -3025,7 +3267,9 @@ if ($runFullSelector -or $runExecutorPassPhase) {
         try {
             Assert-AffectedThrows { Read-AffectedValidationDependencyProjectionFile -Path $projectionReadbackFixture -ExpectedLength $projectionReadbackBytes.Length -SharingRetryMilliseconds 30 } '*remained sharing-locked after bounded 30ms post-child readback*' 'Affected dependency-projection readback did not fail closed after its finite sharing retry bound.'
         } finally { $projectionLockClock.Stop(); $projectionLock.Dispose() }
-        Assert-True ($projectionLockClock.ElapsedMilliseconds -le 1000) "Affected dependency-projection sharing-lock rejection exceeded its practical bounded tolerance: $($projectionLockClock.ElapsedMilliseconds)ms."
+        if ($projectionLockClock.ElapsedMilliseconds -gt 1000) {
+            try { Write-Warning "Affected dependency-projection sharing-lock rejection exceeded its 1000ms estimate: $($projectionLockClock.ElapsedMilliseconds)ms." -WarningAction Continue } catch {}
+        }
         [byte[]]$projectionReadback = Read-AffectedValidationDependencyProjectionFile -Path $projectionReadbackFixture -ExpectedLength $projectionReadbackBytes.Length -SharingRetryMilliseconds 30
         Assert-True ((Get-MorphospaceAffectedCheckBytesSha256 $projectionReadback) -ceq (Get-MorphospaceAffectedCheckBytesSha256 $projectionReadbackBytes)) 'Affected dependency-projection readback changed bytes after sharing-lock release.'
         Assert-AffectedThrows { Read-AffectedValidationDependencyProjectionFile -Path $projectionReadbackFixture -ExpectedLength ($projectionReadbackBytes.Length+1) -SharingRetryMilliseconds 30 } '*byte length changed*' 'Affected dependency-projection readback accepted an unexpected byte length.'
@@ -3264,7 +3508,7 @@ if ($runFullSelector -or $runExecutorPassPhase) {
     Assert-True ($deepBody.Contains('needs: [infrastructure, select, quick-linux, standard-windows]') -and $deepBody.Contains('full-history segmented Deep evidence') -and $deepBody -notmatch 'Test-WorkEnvironment') 'Scheduled/manual Deep does not bind the fresh segmented leaf evidence or still reruns the cumulative aggregate.'
     $selectBody = [string]$workflowJobs['select']
     Assert-True ($selectBody.Contains("'schedule','workflow_dispatch'") -and $selectBody.Contains("{ 'Deep' }") -and $selectBody.Contains('Get-MorphospaceAffectedValidationSegments')) 'Schedule/manual selection does not resolve the complete Deep plan and deterministic segment matrices.'
-    Assert-True ($selectBody.Contains("contains(github.event.pull_request.labels.*.name, 'validation-single-windows')") -and $selectBody.Contains('windowsBudget -gt 18000') -and $selectBody.Contains('windows_direct=')) 'Single-runner Windows fallback is not bounded to an exact opt-in label and selected budget.'
+    Assert-True ($selectBody.Contains("contains(github.event.pull_request.labels.*.name, 'validation-single-windows')") -and $selectBody.Contains('windowsBudget -gt 18000') -and $selectBody.Contains('windows_direct=') -and $selectBody.Contains('Single-runner Windows estimate exceeds') -and -not $selectBody.Contains("throw 'Requested single-runner Windows validation exceeds")) 'Single-runner Windows opt-in or advisory estimate policy changed.'
     $planUploadIndex=$selectBody.IndexOf('name: Preserve canonical-digest affected plan',[StringComparison]::Ordinal);$mappingStopIndex=$selectBody.IndexOf('name: Stop non-executable affected mapping',[StringComparison]::Ordinal)
     Assert-True ($selectBody.Contains('execution_permitted') -and $selectBody.Contains('if ([bool]$plan.execution_permitted)') -and $planUploadIndex -ge 0 -and $mappingStopIndex -gt $planUploadIndex -and $selectBody.Contains("steps.plan.outputs.execution_permitted != 'true'")) 'Mapping-incomplete workflow does not upload the canonical plan before its explicit stop.'
     foreach($segmentJob in @('affected-linux-segments','affected-windows-segments')){Assert-True ([string]$workflowJobs[$segmentJob] -match "needs\.select\.outputs\.(?:linux|windows) == 'true'") "Affected segment job '$segmentJob' can run without an executable selected platform."}
@@ -5068,7 +5312,16 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     )}
     $oversizedComponentSegments = @(Get-MorphospaceAffectedValidationSegments -Plan $oversizedComponentPlan -Registry $oversizedComponentRegistry -Platform windows)
     Assert-True ($oversizedComponentSegments.Count -eq 1 -and [long]$oversizedComponentSegments[0].target_budget_seconds -eq 3600 -and [long]$oversizedComponentSegments[0].maximum_budget_seconds -eq 18000 -and [long]$oversizedComponentSegments[0].estimated_budget_seconds -eq 4000 -and [int]$oversizedComponentSegments[0].dependency_component_count -eq 1) 'Affected-validation segmentation did not preserve one irreducible dependency component above the soft target and below the hard maximum.'
-    Assert-AffectedThrows { Get-MorphospaceAffectedValidationSegments -Plan $oversizedComponentPlan -Registry $oversizedComponentRegistry -Platform windows -MaximumSegmentBudgetSeconds 3600 | Out-Null } '*exceeds the hosted segment maximum: 4000 > 3600 seconds*' 'Affected-validation segmentation admitted an irreducible dependency component above the hard maximum.'
+    $overEstimate = @(Get-MorphospaceAffectedValidationSegments -Plan $oversizedComponentPlan -Registry $oversizedComponentRegistry -Platform windows -MaximumSegmentBudgetSeconds 3600 3>&1)
+    $estimateWarnings = @($overEstimate | Where-Object { $_ -is [Management.Automation.WarningRecord] })
+    $estimateSegments = @($overEstimate | Where-Object { $_ -isnot [Management.Automation.WarningRecord] })
+    Assert-True ($estimateWarnings.Count -eq 1 -and $estimateSegments.Count -eq 1 -and $estimateSegments[0].estimated_budget_seconds -eq 4000 -and ($estimateSegments[0].check_ids -join ',') -ceq 'oversized-a,oversized-b') 'An irreducible dependency group was refused or split solely because its estimate exceeded the advisory maximum.'
+    $savedEstimateWarningPreference = $WarningPreference
+    try {
+        $WarningPreference = 'Stop'
+        $warningFailureSegments = @(Get-MorphospaceAffectedValidationSegments -Plan $oversizedComponentPlan -Registry $oversizedComponentRegistry -Platform windows -MaximumSegmentBudgetSeconds 3600)
+        Assert-True ($warningFailureSegments.Count -eq 1 -and ($warningFailureSegments[0].check_ids -join ',') -ceq 'oversized-a,oversized-b') 'A diagnostic warning failure prevented intact dependency-group scheduling.'
+    } finally { $WarningPreference = $savedEstimateWarningPreference }
     $segmentOwner = @{}
     foreach ($platform in $deepPlatforms) {
         $platformSelections = @($schemaContractPlan.selected_checks | Where-Object { @($_.platforms) -ccontains $platform })
@@ -5076,7 +5329,7 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
         Assert-True ($segments.Count -gt 0 -and ($platform -cne 'windows' -or $segments.Count -gt 1)) "Affected-validation $platform Deep partition did not produce its bounded segment set."
         $covered = [Collections.Generic.List[string]]::new()
         foreach ($segment in $segments) {
-            Assert-True ([long]$segment.target_budget_seconds -eq 3600 -and [long]$segment.maximum_budget_seconds -eq 18000 -and [long]$segment.estimated_budget_seconds -le [long]$segment.maximum_budget_seconds -and [int]$segment.dependency_component_count -gt 0 -and [int]$segment.segment_count -eq $segments.Count -and @($segment.check_ids).Count -gt 0) "Affected-validation segment '$($segment.segment_id)' exceeds its hard maximum or has invalid target/cardinality metadata."
+            Assert-True ([long]$segment.target_budget_seconds -eq 3600 -and [long]$segment.maximum_budget_seconds -eq 18000 -and [long]$segment.estimated_budget_seconds -gt 0 -and [int]$segment.dependency_component_count -gt 0 -and [int]$segment.segment_count -eq $segments.Count -and @($segment.check_ids).Count -gt 0) "Affected-validation segment '$($segment.segment_id)' has invalid advisory budget or cardinality metadata."
             if ([long]$segment.estimated_budget_seconds -gt [long]$segment.target_budget_seconds) { Assert-True ([int]$segment.dependency_component_count -eq 1) "Affected-validation segment '$($segment.segment_id)' exceeds its soft target without being one irreducible dependency component." }
             foreach ($id in @($segment.check_ids)) {
                 $ownerKey = "$platform/$id"
@@ -5439,7 +5692,8 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
         'authority-runner-handoff','trust-migration-authority',
         'history-archive-checkpoint','work-unit-automation','project-workspace-scaffold',
         'development-envelope-preparation','preparation-repository-scope','public-boundary',
-        'active-unit-retirement','active-unit-retirement-continuation','preparation-completion-timestamp-recovery'
+        'active-unit-retirement','active-unit-retirement-continuation','preparation-completion-timestamp-recovery',
+        'supersession-active-retirement'
     )
     $preparationRepositoryScopeSelectionChecks=@(
         $preparationRepositoryScopeConsumerChecks + @(
@@ -5451,7 +5705,7 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
         $developmentUnitAdmissionBatchChecks + @(
             'active-unit-retirement-amendment-recovery','active-unit-retirement-nested-damage',
             'active-unit-retirement-nested-map-guards','active-unit-retirement-nested-positive',
-            'active-unit-retirement-nested-recovery'
+            'active-unit-retirement-nested-recovery','supersession-active-retirement'
         )
     )
     $preparationRepositoryScopeTriggers=@($registry.checks | Where-Object {

@@ -33,6 +33,10 @@ function Test-PreparationProvenanceHasEffectiveContinuation {
  $path=Resolve-MorphospaceWorkspacePath $Workspace "iteration-units/$([string]$Admission.unit_id).json"
  if(-not[IO.File]::Exists($path)){return $false}
  $unit=Read-MorphospaceProtocolJson $path
+ # A scope-only owner amendment retains the source lock and tooling pointer.
+ # This delta selects full committed continuation authentication; it does not
+ # accept the changed authority or relax the narrow unamended suffix reader.
+ if((Get-MorphospaceCanonicalJsonSha256 @($unit.allowed_repositories))-cne(Get-MorphospaceCanonicalJsonSha256 @($Admission.unit.allowed_repositories))){return $true}
  if([string]$unit.source_composition.lock_path-cne[string]$Admission.preparation.source_composition_path){return $true}
  $before=$Admission.unit.PSObject.Properties['tooling_context'];$after=$unit.PSObject.Properties['tooling_context']
  if(($null-eq$before)-ne($null-eq$after)){return $true}
@@ -457,6 +461,50 @@ function Test-MorphospacePreparedDevelopmentEnvelope {
   state=$state;continuation=$effectiveContinuation;tooling_context=$toolingContext
  }
 }
+function Test-MorphospaceHistoricalDevelopmentAdmissionOrigin {
+ # A retained origin is checked against its own committed prefix, never today's
+ # current-unit selector. Later policy does not turn it into new admission.
+ [CmdletBinding()]param([Parameter(Mandatory)][string]$WorkspaceRoot,[Parameter(Mandatory)][object]$Admission,[Parameter(Mandatory)][object[]]$Events)
+ $workspace=[IO.Path]::GetFullPath($WorkspaceRoot);$repoRoot=Split-Path $PSScriptRoot -Parent
+ if(-not(Test-Json -Json ($Admission|ConvertTo-Json -Depth 100) -SchemaFile (Join-Path $repoRoot 'schemas/development-unit-admission-v1.schema.json'))-or(Get-MorphospaceDevelopmentAdmissionKind $Admission)-cne'ordinary'){throw 'Supersession retirement requires a real ordinary admission origin.'}
+ if($Admission.preparation.PSObject.Properties.Name-ccontains'preparation_kind'-and[string]$Admission.preparation.preparation_kind-cne'ordinary'){throw 'Supersession retirement historical origin does not support recovered preparation.'}
+ $preparedId="$($Admission.preparation.preparation_id)-prepared";$admittedId="$($Admission.admission_id)-admitted"
+ $prepared=@($Events|Where-Object{[string]$_.event_id-ceq$preparedId});$admitted=@($Events|Where-Object{[string]$_.event_id-ceq$admittedId})
+ if($prepared.Count-ne1-or$admitted.Count-ne1-or[int]$admitted[0].sequence-ne([int]$prepared[0].sequence+1)){throw 'Supersession retirement origin requires a contiguous ordinary preparation/admission prefix.'}
+ $preparedPath=Resolve-MorphospaceWorkspacePath $workspace "receipts/transactions/$preparedId-transition.intent.json" -RequireLeaf;$intent=Read-MorphospaceProtocolJson $preparedPath
+ $history=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceCurrentWorkHistory.psm1') -PassThru
+ $preparation=&$history {param($root,$path,$value,$events,$event) Get-MorphospacePreparationStepEvidence -Workspace $root -IntentPath $path -Intent $value -Events $events -ExpectedEvent $event} $workspace $preparedPath $intent $Events $prepared[0]
+ if($preparation.PSObject.Properties.Name-ccontains'chronology_fault'-and$preparation.chronology_fault){throw 'Supersession retirement preparation has an unresolved chronology fault.'}
+ Assert-PreparationProvenanceCommittedTransaction -Workspace $workspace -TransactionId "$admittedId-transition" -AllowHistorical
+ $admissionIntent=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace "receipts/transactions/$admittedId-transition.intent.json" -RequireLeaf)
+ $admissionCompletion=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace "receipts/transactions/$admittedId-transition.completion.json" -RequireLeaf)
+ $receiptRelative="receipts/$($Admission.admission_id).json";$receiptPath=Resolve-MorphospaceWorkspacePath $workspace $receiptRelative -RequireLeaf
+ $artifacts=@($admissionIntent.artifacts)
+ if($artifacts.Count-ne1-or[string]$artifacts[0].path-cne$receiptRelative-or(Get-MorphospaceCanonicalJsonSha256 (Read-MorphospaceProtocolJson $receiptPath))-cne(Get-MorphospaceCanonicalJsonSha256 $Admission)-or[string]$admissionIntent.unit.path-cne"iteration-units/$($Admission.unit_id).json"-or[string]$admissionIntent.target.unit.document.status-cne'proposed'-or(Get-MorphospaceCanonicalJsonSha256 $Admission.unit)-cne[string]$admissionIntent.target.unit.sha256-or(Get-MorphospaceCanonicalJsonSha256 $admitted[0])-cne(Get-MorphospaceCanonicalJsonSha256 $admissionIntent.event)-or[string]$admissionIntent.pre.state.sha256-cne[string]$intent.target.state.sha256-or[string]$admissionIntent.expected.event_tail_id-cne$preparedId){throw 'Supersession retirement root admission is detached from its committed producer.'}
+ $state=$intent.target.state.document|ConvertTo-Json -Depth 100|ConvertFrom-Json -DateKind String;$state.last_event_id=$admittedId
+ if($null-ne$state.current_unit-or$null-ne$state.next_ready_unit-or(Get-MorphospaceCanonicalJsonSha256 $state)-cne[string]$admissionIntent.target.state.sha256){throw 'Supersession retirement root admission changes the idle ownership projection.'}
+ foreach($pair in @(@('project_sha256','project'),@('feature_lock_sha256','feature_lock'))){if([string]$Admission.expected.($pair[0])-cne[string]$intent.target.($pair[1]).sha256){throw 'Supersession retirement root admission envelope preimage differs.'}}
+ $p=$Admission.preparation;$receipt=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace ([string]$p.receipt_path) -RequireLeaf);$sourcePath=Resolve-MorphospaceWorkspacePath $workspace ([string]$p.source_composition_path) -RequireLeaf;$source=Read-MorphospaceProtocolJson $sourcePath
+ $map=Get-PreparationProvenanceProductMapBinding -RepoRoot $repoRoot -Receipt $receipt -Intent $intent -Recovered $false
+ if((Get-MorphospaceFileSha256 (Resolve-MorphospaceWorkspacePath $workspace ([string]$p.receipt_path) -RequireLeaf))-cne[string]$p.receipt_sha256-or(Get-MorphospaceFileSha256 $sourcePath)-cne[string]$p.source_composition_sha256-or[string]$Admission.expected.source_composition_path-cne[string]$p.source_composition_path-or[string]$Admission.expected.source_composition_sha256-cne[string]$p.source_composition_sha256-or[string]$Admission.unit.source_composition.lock_path-cne[string]$p.source_composition_path-or[string]$Admission.expected.repository_map_path-cne[string]$map.path-or[string]$Admission.expected.repository_map_sha256-cne[string]$map.sha256){throw 'Supersession retirement root preparation source/map bindings differ.'}
+ if((Get-MorphospaceCanonicalJsonSha256 $Admission.agent_scope_assessment)-cne(Get-MorphospaceCanonicalJsonSha256 $Admission.unit.agent_scope_assessment)){throw 'Supersession retirement root assessment differs from the admitted unit.'}
+ $scope=$Admission.agent_scope_assessment;$envelope=$receipt.envelope
+ foreach($name in @('allowed_change_categories','allowed_effect_categories','allowed_permission_categories')){foreach($value in @($scope.$name)){if(@($envelope.$name)-cnotcontains$value){throw 'Supersession retirement assessment exceeds its original prepared ceiling.'}}}
+ foreach($name in @('public_private_boundary')){if([string]$scope.$name-cne[string]$envelope.$name){throw 'Supersession retirement assessment changes its original boundary.'}}
+ if([string]$scope.build_envelope.class-cne[string]$envelope.build_envelope.class-or[string]$scope.device_envelope.requirement-cne[string]$envelope.device_envelope.requirement){throw 'Supersession retirement assessment changes its original build/device ceiling.'}
+ foreach($profile in @($scope.build_envelope.allowed_profiles)){if(@($envelope.build_envelope.allowed_profiles)-cnotcontains$profile){throw 'Supersession retirement assessment exceeds its prepared profiles.'}}
+ foreach($kind in @($scope.device_envelope.allowed_kinds)){if(@($envelope.device_envelope.allowed_kinds)-cnotcontains$kind){throw 'Supersession retirement assessment exceeds its prepared devices.'}}
+ foreach($owner in @($scope.owner_repositories)){$rows=@($envelope.owner_repositories|Where-Object{[string]$_.repo_id-ceq[string]$owner.repo_id});if($rows.Count-ne1){throw 'Supersession retirement assessment adds an unprepared owner.'};foreach($root in @($owner.source_roots)){if(@($rows[0].source_roots)-cnotcontains$root){throw 'Supersession retirement assessment expands its prepared roots.'}}}
+ Assert-PreparationProvenanceAdmissionClosure $Admission $envelope $intent.target.project.document $source
+ # Original path assessment is semantic producer evidence; it does not execute
+ # admission or consult current policy/accepted validation requirements.
+ $projectById=@{};foreach($row in @($intent.target.project.document.repositories)){$projectById[[string]$row.repo_id]=$row};$scopeById=@{};foreach($row in @($scope.owner_repositories)){$scopeById[[string]$row.repo_id]=$row}
+ foreach($row in @($Admission.unit.allowed_repositories)){$id=[string]$row.repo_id;if(-not$projectById.ContainsKey($id)-or-not$scopeById.ContainsKey($id)){throw 'Historical admission write owner is outside its original project/assessment.'};foreach($path in @($row.allowed_paths)){$raw=[string]$path;$canonical=ConvertTo-MorphospaceProtocolRelativePath $raw.TrimEnd('/');if($raw.EndsWith('/')){$canonical+='/'};if($raw-cne$canonical-or-not(Test-PreparationProvenancePathWithinRoots $canonical @($projectById[$id].allowed_paths))-or-not(Test-PreparationProvenancePathWithinRoots $canonical @($scopeById[$id].source_roots))){throw 'Historical admission write path exceeds its original canonical authority.'}}}
+ foreach($category in @($Admission.unit.change_categories)){if(@($scope.allowed_change_categories)-cnotcontains$category){throw 'Historical admission unit changes exceed its assessment.'}}
+ if([string]$Admission.unit.device_requirement-ceq'required'-and[string]$scope.device_envelope.requirement-cin@('forbidden','none')){throw 'Historical admission device requirement exceeds its assessment.'}
+ $tooling=Get-PreparationProvenanceToolingContext -Workspace $workspace -Admission $Admission -Receipt $receipt -Intent $intent -Source $source -Continuation $null
+ [pscustomobject]@{intent=$intent;completion=(Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace "receipts/transactions/$preparedId-transition.completion.json" -RequireLeaf));admission_proof=[pscustomobject]@{intent=$admissionIntent;completion=$admissionCompletion};project=$intent.target.project.document;feature_lock=$intent.target.feature_lock.document;source_lock=$source;repository_map=[pscustomobject]@{path=[string]$map.path;raw_sha256=[string]$map.sha256};tooling_context=$tooling}
+}
 function Get-MorphospaceDevelopmentAdmissionKind {
  [CmdletBinding()]param([Parameter(Mandatory)][object]$Admission)
  if($Admission.PSObject.Properties.Name-contains'admission_kind'){return [string]$Admission.admission_kind}
@@ -591,4 +639,4 @@ function Get-MorphospaceToolingInstructionRepositoryMap {
  $result['skill-surfaces']=[pscustomobject]@{repo_id='skill-surfaces';role='tooling';path=$skillRoot;aliases=@('skills-root')}
  return $result
 }
-Export-ModuleMember -Function Test-MorphospacePreparedDevelopmentEnvelope,Get-MorphospaceDevelopmentAdmissionKind,Test-MorphospaceDevelopmentUnitPreparation,Test-MorphospaceEffectiveDevelopmentEnvelope,Get-MorphospaceUnitToolingContextProvenance,Get-MorphospaceUnitToolingContextObservation,Get-MorphospaceToolingInstructionRepositoryMap,Assert-MorphospaceToolingContextExecutor
+Export-ModuleMember -Function Test-MorphospaceHistoricalDevelopmentAdmissionOrigin,Test-MorphospacePreparedDevelopmentEnvelope,Get-MorphospaceDevelopmentAdmissionKind,Test-MorphospaceDevelopmentUnitPreparation,Test-MorphospaceEffectiveDevelopmentEnvelope,Get-MorphospaceUnitToolingContextProvenance,Get-MorphospaceUnitToolingContextObservation,Get-MorphospaceToolingInstructionRepositoryMap,Assert-MorphospaceToolingContextExecutor

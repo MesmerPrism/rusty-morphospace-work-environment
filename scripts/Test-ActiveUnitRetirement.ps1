@@ -893,6 +893,7 @@ try{
     try{$workspace=Copy-RetirementWorkspace 'dirty-source';Assert-RetirementRejects $workspace 'untracked source dirt' '*clean available source*'}finally{[IO.File]::Delete($dirtyPath)}
     }
     if($runCore-and$CoreWorkerGroup-cne'Base'){$null=Invoke-ActiveRetirementUpgradeClaimDescendantChecks -ScriptsRoot $PSScriptRoot}
+    if($Scenario-ceq'All'){& (Join-Path $PSScriptRoot 'Test-SupersessionActiveRetirement.ps1') -SelfTest|Out-Null}
     $checkName=switch($Scenario){
         'NestedPositive' {'active-unit-retirement-nested-positive'}
         'NestedCommitted' {'active-unit-retirement-nested-committed'}

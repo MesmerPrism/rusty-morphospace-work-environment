@@ -1,0 +1,402 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/quest-build-terminal-result-v2.schema.json",
+  "title": "Rusty Morphospace retained Quest build terminal result v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "operation",
+    "terminal_status",
+    "profile",
+    "invocation",
+    "observation",
+    "reason_codes",
+    "streams",
+    "owner_payload",
+    "child_process"
+  ],
+  "properties": {
+    "schema": {
+      "const": "rusty.morphospace.quest_build_terminal_result.v2"
+    },
+    "operation": {
+      "enum": [
+        "preflight",
+        "build"
+      ]
+    },
+    "terminal_status": {
+      "enum": [
+        "passed",
+        "contradiction",
+        "incomplete",
+        "failed",
+        "cancelled"
+      ]
+    },
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "profile_id",
+        "profile_sha256"
+      ],
+      "properties": {
+        "profile_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 96
+        },
+        "profile_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    },
+    "invocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "binding_sha256",
+        "executable",
+        "arguments",
+        "child_environment_sha256",
+        "child_environment_variable_count",
+        "wait_policy",
+        "estimated_warning_seconds"
+      ],
+      "properties": {
+        "binding_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "executable": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "arguments": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "child_environment_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "child_environment_variable_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "wait_policy": {
+          "const": "retained-warning"
+        },
+        "estimated_warning_seconds": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        }
+      }
+    },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "observation_id",
+        "sha256"
+      ],
+      "properties": {
+        "observation_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "content_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    },
+    "child_process": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "started",
+        "outcome",
+        "estimated_warning_seconds",
+        "elapsed_milliseconds",
+        "cancellation",
+        "termination_requested",
+        "automatic_retry",
+        "process_reaped",
+        "stdout_eof",
+        "stderr_eof",
+        "raw_capture_complete",
+        "warning_count",
+        "warning_publication_failures",
+        "observer_errors",
+        "exit_code"
+      ],
+      "properties": {
+        "started": {
+          "type": "boolean"
+        },
+        "outcome": {
+          "enum": [
+            "not-started",
+            "passed",
+            "failed",
+            "cancelled"
+          ]
+        },
+        "estimated_warning_seconds": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "elapsed_milliseconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cancellation": {
+          "enum": [
+            "not-requested",
+            "console-cancel",
+            "test-cancel"
+          ]
+        },
+        "termination_requested": {
+          "type": "boolean"
+        },
+        "automatic_retry": {
+          "const": false
+        },
+        "process_reaped": {
+          "type": "boolean"
+        },
+        "stdout_eof": {
+          "type": "boolean"
+        },
+        "stderr_eof": {
+          "type": "boolean"
+        },
+        "raw_capture_complete": {
+          "type": "boolean"
+        },
+        "warning_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "warning_publication_failures": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "observer_errors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "exit_code": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      }
+    },
+    "reason_codes": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "pattern": "^[a-z0-9][a-z0-9.-]{1,127}$"
+      }
+    },
+    "streams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "captured",
+        "stdout",
+        "stderr"
+      ],
+      "properties": {
+        "captured": {
+          "type": "boolean"
+        },
+        "stdout": {
+          "$ref": "#/$defs/stream"
+        },
+        "stderr": {
+          "$ref": "#/$defs/stream"
+        }
+      }
+    },
+    "owner_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact",
+        "source",
+        "lockfiles",
+        "toolchain",
+        "environment",
+        "identity",
+        "output",
+        "execution_preflight_observation"
+      ],
+      "properties": {
+        "artifact": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "source": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "source_composition": {
+          "type": "object"
+        },
+        "lockfiles": {
+          "type": "array"
+        },
+        "toolchain": {
+          "type": "array"
+        },
+        "environment": {
+          "type": "array"
+        },
+        "identity": {
+          "type": "object"
+        },
+        "output": {
+          "type": "object"
+        },
+        "execution_preflight_observation": {
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      }
+    }
+  },
+  "$defs": {
+    "stream": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "path",
+            "sha256",
+            "size_bytes",
+            "drained_bytes",
+            "stored_bytes",
+            "eof",
+            "storage_error",
+            "read_error"
+          ],
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "sha256": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "size_bytes": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "drained_bytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "stored_bytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "eof": {
+              "type": "boolean"
+            },
+            "storage_error": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "read_error": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "preflight"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "terminal_status": {
+            "enum": [
+              "passed",
+              "contradiction",
+              "incomplete"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

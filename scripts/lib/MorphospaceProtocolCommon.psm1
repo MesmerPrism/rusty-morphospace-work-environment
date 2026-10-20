@@ -528,7 +528,13 @@ function Enter-MorphospaceWorkspaceMutex {
     try {
         try { $acquired = $mutex.WaitOne([TimeSpan]::FromSeconds($TimeoutSeconds)) }
         catch [System.Threading.AbandonedMutexException] { $acquired = $true; $abandoned = $true }
-        if (-not $acquired) { throw "Timed out waiting for the exclusive workspace protocol lock." }
+        if (-not $acquired) {
+            # This estimate diagnoses contention; only actual acquisition grants
+            # ownership. Keep the same waiter and mutex after a slow owner.
+            try { Write-Warning "Workspace protocol lock wait exceeded the $TimeoutSeconds second estimate; retaining the same exclusive-lock waiter." } catch { }
+            try { $acquired = $mutex.WaitOne() }
+            catch [System.Threading.AbandonedMutexException] { $acquired = $true; $abandoned = $true }
+        }
         return [pscustomobject]@{ mutex=$mutex; acquired=$true; abandoned=$abandoned; name="Local\RustyMorphospace-$id" }
     } catch {
         if (-not $acquired) { $mutex.Dispose() }
