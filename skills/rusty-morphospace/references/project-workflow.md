@@ -1,12 +1,13 @@
 # Rusty Morphospace Project Workflow
 
-Use this reference for ordinary project composition, activation, isolated
-source work, lifecycle, validation, and instruction impact. Detailed recovery
-and audit procedures remain in the resolved work-environment runbooks.
+Use this reference for composition, activation, source work, lifecycle,
+validation and instruction impact. Recovery and audit remain in owner runbooks.
 Here, `<work-environment>` is the locator's `work_environment_root`; read its
 named runbooks under `<work-environment>/docs/`.
 
 ## Resume and scope
+
+Use `docs/DIRECT_WORK_PACKAGES.md#agent-and-framework-adaptation` for framework practices.
 
 Read the nearest project instructions, then its `morphospace/project.spec.json`,
 `feature.lock.json`, `workspace.state.json`, current unit when present, and only

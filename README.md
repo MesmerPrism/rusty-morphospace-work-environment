@@ -3,6 +3,9 @@
 Portable onboarding and project-iteration workspace for Rusty Morphospace
 development.
 
+For bounded work, use [Direct Work Packages](docs/DIRECT_WORK_PACKAGES.md),
+including its owner-maintained agent and framework adaptation.
+
 PowerShell `7.6` LTS or newer, invoked explicitly as `pwsh`, is the supported
 workflow host. Windows PowerShell 5.1 may run the bootstrap host check, but it
 is not an execution environment for validation, automation, builds, or release
