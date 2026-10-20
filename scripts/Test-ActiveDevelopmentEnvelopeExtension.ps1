@@ -10,6 +10,8 @@ $automationModule=Import-Module (Join-Path $PSScriptRoot 'WorkUnitAutomation.psm
 $extensionModule=Import-Module (Join-Path $PSScriptRoot 'ActiveDevelopmentEnvelopeExtension.psm1') -Force -PassThru
 $freezeModule=Import-Module (Join-Path $PSScriptRoot 'CandidateFreeze.psm1') -PassThru
 $retirementModule=Import-Module (Join-Path $PSScriptRoot 'ActiveUnitRetirement.psm1') -PassThru
+$scopeAmendmentModule=Import-Module (Join-Path $PSScriptRoot 'ActiveWriteScopeAmendment.psm1') -PassThru
+$scopeProvenanceModule=Import-Module (Join-Path $PSScriptRoot 'DevelopmentEnvelopeProvenance.psm1') -PassThru
 $transitionPath=Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1'
 $transitionModule=@(Get-Module -All|Where-Object{$_.Path-eq$transitionPath}|Select-Object -Last 1)[0]
 if($null-eq$transitionModule){throw 'Active-envelope test cannot retain the transition-ledger module.'}
@@ -170,8 +172,8 @@ function New-ActiveEnvelopeExtensionRequest {
 }
 
 function New-ActiveEnvelopeFreezeRequest {
-    param([string]$Workspace,[string]$RepositoryMapPath,[string]$RequestPath)
-    $project=Read-EnvelopeProtocolJson (Join-Path $Workspace 'project.spec.json');$lock=Read-EnvelopeProtocolJson (Join-Path $Workspace 'feature.lock.json');$state=Read-EnvelopeProtocolJson (Join-Path $Workspace 'workspace.state.json');$unit=Read-EnvelopeProtocolJson (Join-Path $Workspace 'iteration-units\u002.json')
+    param([string]$Workspace,[string]$RepositoryMapPath,[string]$RequestPath,[string]$UnitId='u002')
+    $project=Read-EnvelopeProtocolJson (Join-Path $Workspace 'project.spec.json');$lock=Read-EnvelopeProtocolJson (Join-Path $Workspace 'feature.lock.json');$state=Read-EnvelopeProtocolJson (Join-Path $Workspace 'workspace.state.json');$unit=Read-EnvelopeProtocolJson (Join-Path $Workspace "iteration-units/$UnitId.json")
     $eventsPath=Join-Path $Workspace 'iteration-events.jsonl';$events=@(Get-Content -LiteralPath $eventsPath|Where-Object{$_}|ForEach-Object{$_|ConvertFrom-Json -Depth 100 -DateKind String});$map=Read-EnvelopeProtocolJson $RepositoryMapPath;$mapRows=@{};foreach($row in @($map.repositories)){$mapRows[[string]$row.repo_id]=$row}
     $final=[Collections.Generic.List[object]]::new();$changed=[Collections.Generic.List[object]]::new()
     foreach($scope in @($unit.allowed_repositories)){
@@ -181,7 +183,7 @@ function New-ActiveEnvelopeFreezeRequest {
     }
     $sourceRelative=[string]$unit.source_composition.lock_path;$sourcePath=Join-Path $Workspace $sourceRelative;$mapRelative=[IO.Path]::GetRelativePath($Workspace,$RepositoryMapPath).Replace('\','/');$deviceUse=@(if(@($unit.agent_scope_assessment.device_envelope.allowed_kinds).Count){@($unit.agent_scope_assessment.device_envelope.allowed_kinds)}else{@('none')})
     $freeze=[pscustomobject][ordered]@{
-        schema='rusty.morphospace.workflow.candidate_freeze.v1';freeze_id='u002-extension-freeze';project_id=[string]$project.project_id;unit_id='u002'
+        schema='rusty.morphospace.workflow.candidate_freeze.v1';freeze_id="$UnitId-extension-freeze";project_id=[string]$project.project_id;unit_id=$UnitId
         expected=[pscustomobject][ordered]@{project_sha256=Get-EnvelopeCanonicalJsonSha256 $project;state_sha256=Get-EnvelopeCanonicalJsonSha256 $state;unit_sha256=Get-EnvelopeCanonicalJsonSha256 $unit;feature_lock_sha256=Get-EnvelopeCanonicalJsonSha256 $lock;source_composition_path=$sourceRelative;source_composition_sha256=Get-EnvelopeFileSha256 $sourcePath;repository_map_path=$mapRelative;repository_map_sha256=Get-EnvelopeFileSha256 $RepositoryMapPath;events_sha256=Get-EnvelopeFileSha256 $eventsPath;events_length=([IO.FileInfo]$eventsPath).Length;event_tail_id=[string]$events[-1].event_id}
         final_repositories=@($final.ToArray());changed_paths=@($changed.ToArray());cleanliness_policy='clean-only';instruction_surfaces=@([pscustomobject][ordered]@{path='README.md';disposition='reviewed-no-change'});feature_lock=[pscustomobject][ordered]@{revision=[int]$lock.revision;sha256=Get-EnvelopeCanonicalJsonSha256 $lock};effects=@($unit.agent_scope_assessment.allowed_effect_categories);permissions=@($unit.agent_scope_assessment.allowed_permission_categories);device_use=@($deviceUse);test_matrix=@([pscustomobject][ordered]@{test_id='extension';command='pwsh -NoProfile -File scripts/Test-ActiveDevelopmentEnvelopeExtension.ps1'});cleanup_evidence=@('All source repositories are clean at their exact candidate identities.');source_composition=[pscustomobject][ordered]@{path=$sourceRelative;sha256=Get-EnvelopeFileSha256 $sourcePath};does_not_prove=@('Does not validate, accept, publish, mutate Git, or operate a device.')
     }
@@ -196,6 +198,85 @@ function Set-ActiveEnvelopeEvidenceDamage([string]$Path){
     elseif($Path.Replace('\','/').Contains('/iteration-units/')){$value.status='active'}
     else{$value.result='fail'}
     Write-EnvelopeJson $Path $value
+}
+
+function Test-ActiveEnvelopeScopeOnlyAmendmentContinuation {
+    param([string]$Root)
+    $seed=New-EnvelopeAdmissionPreparedFixture -Root $Root -RepositoryRoot $repoRoot -TransitionLedgerModule $checkpointWriter -OwnerProducedPreparation
+    $workspace=$seed.workspace;$firstPath=Join-Path $Root 'first-admission.json';Write-EnvelopeJson $firstPath $seed.admission_template
+    Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $workspace -DevelopmentUnitAdmission $firstPath -ExpectedDevelopmentUnitAdmissionSha256 (Get-EnvelopeFileSha256 $firstPath) -OutPath (Join-Path $workspace 'receipts/u002-admission.json') -Timestamp '2026-09-16T00:00:00.0000000Z' -Execute|Out-Null
+    # Retain the actual proposed unit and admit its named replacement using the
+    # same immutable preparation. This is the production replacement-prefix seam.
+    $retire=@{Action='RetireProposed';WorkspaceRoot=$workspace;UnitId='u002';ReplacementUnitId='u003';RetirementReason='contract-invalid';OutPath=(Join-Path $workspace 'receipts/u002-scope-fixture-retirement.json');Timestamp='2026-09-16T00:01:00.0000000Z'}
+    $retireDry=&$automationModule {param($a)Invoke-MorphospaceWorkUnitAutomation @a} $retire
+    $pre=$retireDry.proposed_retirement.authenticated_preimage
+    $retire.ExpectedStateSha256=[string]$pre.state_sha256;$retire.ExpectedUnitSha256=[string]$pre.unit_sha256;$retire.ExpectedUnitRawSha256=[string]$pre.unit_raw_sha256
+    $retire.ExpectedEventsSha256=[string]$pre.events_sha256;$retire.ExpectedEventsLength=[long]$pre.events_length;$retire.ExpectedEventTailId=[string]$pre.event_tail_id
+    $retire.ExpectedProposedRetirementBindingSha256=[string]$retireDry.proposed_retirement.binding_sha256;$retire.Execute=$true
+    &$automationModule {param($a)Invoke-MorphospaceWorkUnitAutomation @a} $retire|Out-Null
+    $admission=New-EnvelopeReplacementAdmission -Template $seed.admission_template -Workspace $workspace -AdmissionId 'u003-admission' -UnitId u003
+    # Narrow the new draft before admission. Every later added path remains
+    # inside the unchanged prepared project/assessment root morphospace/.
+    $admission.unit.allowed_repositories[0].allowed_paths=@('morphospace/README.md')
+    $admission.unit|Add-Member -Force architecture_decision ([pscustomobject][ordered]@{selected='Retain this bounded documentation unit with additive owner-approved paths.';material_advance='The newly reviewed paths let the same objective continue.';deferred='Any larger project or source identity change.';deferred_reason='The original project and source lock already cover these paths.'})
+    $admissionPath=Join-Path $Root 'replacement-admission.json';Write-EnvelopeJson $admissionPath $admission
+    Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $workspace -DevelopmentUnitAdmission $admissionPath -ExpectedDevelopmentUnitAdmissionSha256 (Get-EnvelopeFileSha256 $admissionPath) -OutPath (Join-Path $workspace 'receipts/u003-admission.json') -Timestamp '2026-09-16T00:02:00.0000000Z' -Execute|Out-Null
+    $map=Join-Path $workspace 'repository-map.json';$lifecycle=@{WorkspaceRoot=$workspace;UnitId='u003';RepoMapPath=$map;ValidationTier='quick'}
+    &$automationModule {param($a)Invoke-MorphospaceWorkUnitAutomation @a -Action Ready -Timestamp '2026-09-16T00:03:00.0000000Z' -Execute} $lifecycle|Out-Null
+    &$automationModule {param($a)Invoke-MorphospaceWorkUnitAutomation @a -Action Claim -Timestamp '2026-09-16T00:04:00.0000000Z' -Execute} $lifecycle|Out-Null
+    $unitPath=Join-Path $workspace 'iteration-units/u003.json';$initial=Read-EnvelopeProtocolJson $unitPath
+    $sourcePath=Join-Path $workspace ([string]$initial.source_composition.lock_path);$sourceHash=Get-EnvelopeFileSha256 $sourcePath
+    $projectHash=Get-EnvelopeFileSha256 (Join-Path $workspace 'project.spec.json');$featureHash=Get-EnvelopeFileSha256 (Join-Path $workspace 'feature.lock.json')
+    $toolingBefore=$initial.PSObject.Properties['tooling_context']
+    $amendmentIds=@()
+    for($i=1;$i-le4;$i++){
+        $unit=Read-EnvelopeProtocolJson $unitPath;$state=Read-EnvelopeProtocolJson (Join-Path $workspace 'workspace.state.json');$project=Read-EnvelopeProtocolJson (Join-Path $workspace 'project.spec.json')
+        $eventsPath=Join-Path $workspace 'iteration-events.jsonl';$before=@($unit.allowed_repositories[0].allowed_paths);$after=@($before)+@("morphospace/scope-$i/")
+        $id="u003-scope-only-$i";$amendmentIds+=,$id
+        $request=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.active_write_scope_amendment.v1';amendment_id=$id;project_id='envelope-test';unit_id='u003';repository_id='project-shell';reason='Continue the same bounded documentation objective within its already prepared owner root.';semantic_rationale='The owner reviewed this exact additional nested documentation path without changing project or source selection.';ownership_proof=[pscustomobject][ordered]@{repo_id='project-shell';source_roots=@('morphospace/');tracked_paths=@($after)};source_composition=[pscustomobject][ordered]@{mode=[string]$unit.source_composition.mode;lock_path=[string]$unit.source_composition.lock_path;lock_sha256=$sourceHash};expected=[pscustomobject][ordered]@{status='active';current_unit='u003';project_revision=[int]$project.revision;project_sha256=Get-EnvelopeCanonicalJsonSha256 $project;state_sha256=Get-EnvelopeCanonicalJsonSha256 $state;unit_sha256=Get-EnvelopeCanonicalJsonSha256 $unit;events_sha256=Get-EnvelopeFileSha256 $eventsPath;events_length=([IO.FileInfo]$eventsPath).Length;event_tail_id=[string]$state.last_event_id};before_allowed_paths=$before;after_allowed_paths=$after;does_not_prove=@('No source identity, build, media, device, acceptance or publication authority.')}
+        $path=Join-Path $Root "$id.json";Write-EnvelopeJson $path $request
+        $arguments=@{WorkspaceRoot=$workspace;UnitId='u003';ActiveWriteScopeAmendment=$path;ExpectedActiveWriteScopeAmendmentSha256=(Get-EnvelopeFileSha256 $path);OutPath=(Join-Path $workspace "receipts/$id.json");Timestamp=('2026-09-16T00:{0:D2}:00.0000000Z' -f (4+$i));Execute=$true}
+        &$scopeAmendmentModule {param($a)Invoke-MorphospaceAmendActiveWriteScope @a} $arguments|Out-Null
+    }
+    $current=Read-EnvelopeProtocolJson $unitPath;$toolingAfter=$current.PSObject.Properties['tooling_context']
+    Assert-ActiveEnvelopeTest ([string]$current.source_composition.lock_path-ceq[string]$initial.source_composition.lock_path-and(Get-EnvelopeFileSha256 $sourcePath)-ceq$sourceHash-and(Get-EnvelopeFileSha256 (Join-Path $workspace 'project.spec.json'))-ceq$projectHash-and(Get-EnvelopeFileSha256 (Join-Path $workspace 'feature.lock.json'))-ceq$featureHash) 'scope-only fixture changed preparation/project/feature/source identity'
+    Assert-ActiveEnvelopeTest (($null-eq$toolingBefore)-eq($null-eq$toolingAfter)) 'scope-only fixture changed tooling-context presence'
+    if($null-ne$toolingBefore){Assert-ActiveEnvelopeTest ((Get-EnvelopeCanonicalJsonSha256 $toolingBefore.Value)-ceq(Get-EnvelopeCanonicalJsonSha256 $toolingAfter.Value)) 'scope-only fixture changed tooling context'}
+    # The old discriminator returned false here and its narrow suffix reader
+    # refused Ready+Claim+four genuine amendments. Authenticate the full chain.
+    $admissionIntent=Read-EnvelopeProtocolJson (Join-Path $workspace 'receipts/transactions/u003-admission-admitted-transition.intent.json')
+    $prefix=&$scopeProvenanceModule {param($w,$a,$s)Get-PreparationProvenanceAdmissionPrefix -Workspace $w -AdmissionIntent $a -State $s} $workspace $admissionIntent (Read-EnvelopeProtocolJson (Join-Path $workspace 'workspace.state.json'))
+    Assert-ActiveEnvelopeTest (@($prefix.events)[-1].event_id-ceq$admissionIntent.expected.event_tail_id) 'scope-only continuation did not preserve the exact retained replacement admission prefix'
+    $effective=Invoke-ScopeOnlyEffectiveEnvelope $workspace $map
+    Assert-ActiveEnvelopeTest ((Get-EnvelopeCanonicalJsonSha256 $effective.effective.unit.allowed_repositories)-ceq(Get-EnvelopeCanonicalJsonSha256 $current.allowed_repositories)-and@($effective.extensions).Count-eq0-and@($effective.tooling_upgrades).Count-eq0) 'effective consumer lost scope-only amendments or invented an extension/tooling action'
+    foreach($damage in @('detached-live-scope','foreign-unit-receipt','missing-completion','tampered-intent')){
+        $damagedWorkspace=Join-Path $Root $damage;Copy-Item -LiteralPath $workspace -Destination $damagedWorkspace -Recurse
+        # Prove that relocation itself is a valid, read-only observation before
+        # applying the target damage; a broken copy must not satisfy refusal.
+        $undamagedInventory=Get-EnvelopeWorkspaceByteInventorySha256 $damagedWorkspace
+        [void](Invoke-ScopeOnlyEffectiveEnvelope $damagedWorkspace (Join-Path $damagedWorkspace 'repository-map.json'))
+        Assert-ActiveEnvelopeTest ((Get-EnvelopeWorkspaceByteInventorySha256 $damagedWorkspace)-ceq$undamagedInventory) "undamaged copied fixture changed during $damage observation"
+        switch($damage){
+            'detached-live-scope'{$p=Join-Path $damagedWorkspace 'iteration-units/u003.json';$v=Read-EnvelopeProtocolJson $p;$v.allowed_repositories[0].allowed_paths+=,'morphospace/unowned/';Write-EnvelopeJson $p $v}
+            'foreign-unit-receipt'{$p=Join-Path $damagedWorkspace 'receipts/u003-scope-only-2.json';$v=Read-EnvelopeProtocolJson $p;$v.unit_id='u999';Write-EnvelopeJson $p $v}
+            'missing-completion'{Remove-Item -LiteralPath (Join-Path $damagedWorkspace 'receipts/transactions/u003-scope-only-2-recorded-transition.completion.json')}
+            'tampered-intent'{$p=Join-Path $damagedWorkspace 'receipts/transactions/u003-scope-only-2-recorded-transition.intent.json';$v=Read-EnvelopeProtocolJson $p;$v.event.summary='Detached amendment intent.';Write-EnvelopeJson $p $v}
+        }
+        $inventory=Get-EnvelopeWorkspaceByteInventorySha256 $damagedWorkspace
+        Assert-ActiveEnvelopeRejected {Invoke-ScopeOnlyEffectiveEnvelope $damagedWorkspace (Join-Path $damagedWorkspace 'repository-map.json')} "scope-only continuation accepted $damage"
+        Assert-ActiveEnvelopeTest ((Get-EnvelopeWorkspaceByteInventorySha256 $damagedWorkspace)-ceq$inventory) "scope-only rejection mutated $damage"
+    }
+    $freezePath=Join-Path $Root 'scope-only-freeze.json';$null=New-ActiveEnvelopeFreezeRequest -Workspace $workspace -RepositoryMapPath $map -RequestPath $freezePath -UnitId u003
+    $freezeArguments=@{WorkspaceRoot=$workspace;UnitId='u003';CandidateFreeze=$freezePath;OutPath=(Join-Path $workspace 'receipts/u003-extension-freeze.json');Timestamp='2026-09-16T00:09:00.0000000Z'}
+    $dry=&$freezeModule {param($a)Invoke-MorphospaceFreezeCandidate @a} $freezeArguments
+    $freezeArguments.ExpectedCandidateFreezeSha256=[string]$dry.audit_receipt.sha256;$freezeArguments.Execute=$true
+    $run=&$freezeModule {param($a)Invoke-MorphospaceFreezeCandidate @a} $freezeArguments
+    Assert-ActiveEnvelopeTest ($run.transition-ceq'candidate-frozen') 'scope-only replacement chain did not reach real candidate Freeze'
+    [void](Invoke-ScopeOnlyEffectiveEnvelope $workspace $map)
+    Write-Output 'PASS genuine retained proposal/replacement/Ready/Claim/four scope-only amendments/full effective envelope/Freeze and detached evidence refusals'
+}
+function Invoke-ScopeOnlyEffectiveEnvelope([string]$Workspace,[string]$Map){
+    &$scopeProvenanceModule {param($w,$m)Test-MorphospaceEffectiveDevelopmentEnvelope -WorkspaceRoot $w -UnitId u003 -RepositoryMapPath $m} $Workspace $Map
 }
 
 function Test-ActiveEnvelopeFeaturelessRootsOnly {
@@ -283,6 +364,7 @@ try{
         [IO.File]::WriteAllBytes($receiptPath,$receiptBytes)
     }
     if($CheckpointProofOnly){[pscustomobject]@{result='pass';external_receipt=$true;separate_receipt_producer=$true;prefix_drift_rejected=$true;acceptance_outside_prefix_rejected=$true;ambiguous_acceptance_rejected=$true;missing_receipt_rejected=$true}|ConvertTo-Json -Compress;return}
+    Test-ActiveEnvelopeScopeOnlyAmendmentContinuation -Root (Join-Path $temp 'scope-only-amendment-continuation')
     Test-ActiveEnvelopeFeaturelessRootsOnly -Root (Join-Path $temp 'featureless-roots-only')
     $seed=New-EnvelopeAdmissionPreparedFixture -Root (Join-Path $temp 'seed') -RepositoryRoot $repoRoot -TransitionLedgerModule $checkpointWriter -OwnerProducedPreparation -AdditiveFeature
     $workspace=$seed.workspace;$admissionPath=Join-Path $temp 'admission.json';Write-EnvelopeJson $admissionPath $seed.admission_template

@@ -151,3 +151,9 @@ Git mutation, build, device action, schema-revision adoption, or changed
 objective authority. Later Amendment, Freeze, retirement, current-work reading,
 and continuation must authenticate the effective extension chain rather than
 comparing against the original preparation endpoint alone.
+
+A scope-only `AmendActiveWriteScope` changes the admitted unit write-authority
+projection without changing its source-composition lock or tooling pointer.
+Prepared-envelope provenance authenticates the complete committed continuation
+for that delta, including every amendment producer and live endpoint. It does
+not widen the ordinary Ready/Claim/Freeze suffix or accept detached scope.

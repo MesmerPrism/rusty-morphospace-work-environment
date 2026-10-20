@@ -33,6 +33,10 @@ function Test-PreparationProvenanceHasEffectiveContinuation {
  $path=Resolve-MorphospaceWorkspacePath $Workspace "iteration-units/$([string]$Admission.unit_id).json"
  if(-not[IO.File]::Exists($path)){return $false}
  $unit=Read-MorphospaceProtocolJson $path
+ # A scope-only owner amendment retains the source lock and tooling pointer.
+ # This delta selects full committed continuation authentication; it does not
+ # accept the changed authority or relax the narrow unamended suffix reader.
+ if((Get-MorphospaceCanonicalJsonSha256 @($unit.allowed_repositories))-cne(Get-MorphospaceCanonicalJsonSha256 @($Admission.unit.allowed_repositories))){return $true}
  if([string]$unit.source_composition.lock_path-cne[string]$Admission.preparation.source_composition_path){return $true}
  $before=$Admission.unit.PSObject.Properties['tooling_context'];$after=$unit.PSObject.Properties['tooling_context']
  if(($null-eq$before)-ne($null-eq$after)){return $true}
