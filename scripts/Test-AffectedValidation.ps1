@@ -2525,7 +2525,8 @@ function Invoke-AffectedFallbackReceiptSelfTest([string]$Root,[object]$Registry)
         $expressionFallbackReasons[0].kind = 'unresolved-expression-invocation'
         $expressionFallbackReceipt.binding_sha256 = Get-MorphospaceCanonicalJsonSha256 -Value $expressionFallbackReceipt.binding
         $expressionFallbackSnapshot = New-MorphospaceAffectedCheckSnapshot -Receipt $expressionFallbackReceipt -Stdout $fallbackStdout -Stderr $fallbackStderr -Artifacts @() -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-check-evidence-v1.schema.json')
-        Assert-True (@($expressionFallbackSnapshot.receipt.binding.dependency_resolution.fallback_reasons | Where-Object { [string]$_.kind -ceq 'unresolved-expression-invocation' }).Count -eq 1) 'Parent snapshot retention rejected the production-shaped expression-invocation fallback reason.'
+        Assert-True (@($expressionFallbackSnapshot.receipt.binding.dependency_resolution.fallback_reasons | Where-Object { [string]$_.importer -ceq 'scripts/Test-DocumentationLinks.ps1' -and [string]$_.variable -ceq 'UnresolvedModulePath' -and [string]$_.kind -ceq 'unresolved-expression-invocation' }).Count -eq 1) 'Parent snapshot retention rejected the production-shaped expression-invocation fallback reason.'
+        Assert-True ((ConvertTo-MorphospaceCanonicalJson $expressionFallbackSnapshot.receipt.binding) -ceq (ConvertTo-MorphospaceCanonicalJson $expressionFallbackReceipt.binding)) 'Parent snapshot retention changed the complete expression-invocation fixture binding.'
         $unknownFallbackReceipt = $expressionFallbackReceipt | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64 -DateKind String
         $unknownFallbackReceipt.binding.dependency_resolution.fallback_reasons[0].kind = 'arbitrary-fallback-kind'
         $unknownFallbackReceipt.binding_sha256 = Get-MorphospaceCanonicalJsonSha256 -Value $unknownFallbackReceipt.binding
