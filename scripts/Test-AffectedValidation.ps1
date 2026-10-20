@@ -384,7 +384,155 @@ function Assert-AffectedExecutorContainmentSource([string]$Source) {
     Assert-True ([regex]::Matches($Source,'if\(IsTransientThreadOpenError\(error\)\)\{entry\.').Count -eq 2) 'Affected executor initial thread snapshots do not both use the closed transient thread-open classifier.'
     Assert-True ([regex]::Matches($Source,'if\(count==0\)throw new InvalidOperationException').Count -eq 2) 'Affected executor lost the nonempty retained/protected thread requirement.'
 }
+function Invoke-AffectedGitMalformedDrainSelfTest {
+    $affectedModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceAffectedValidation.psm1') -PassThru
+    $template=@'
+$ErrorActionPreference='Stop'
+if([Console]::ReadLine()-cne'release-owned-original'){exit 91}
+$stdout=[byte[]](@(255,10)+[Text.Encoding]::UTF8.GetBytes(('x'*1048576)+'OUT-END'))
+$stderr=[byte[]](@(255,10)+[Text.Encoding]::UTF8.GetBytes(('y'*1048576)+'ERR-END'))
+$out=[Console]::OpenStandardOutput();$err=[Console]::OpenStandardError()
+$out.Write($stdout,0,$stdout.Length);$out.Flush()
+$err.Write($stderr,0,$stderr.Length);$err.Flush()
+exit __EXIT__
+'@
+    foreach($binary in @($false,$true)){
+        $nativeExit=if($binary){0}else{7}
+        $nativeSource=$template.Replace('__EXIT__',[string]$nativeExit)
+        $start=[Diagnostics.ProcessStartInfo]::new();$start.FileName=[Environment]::ProcessPath
+        $start.UseShellExecute=$false;$start.CreateNoWindow=$true;$start.RedirectStandardInput=$true;$start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
+        foreach($argument in @('-NoLogo','-NoProfile','-NonInteractive','-EncodedCommand',[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($nativeSource)))){[void]$start.ArgumentList.Add($argument)}
+        $process=[Diagnostics.Process]::new();$process.StartInfo=$start
+        $stdoutMemory=[IO.MemoryStream]::new();$stderrMemory=[IO.MemoryStream]::new()
+        $stdoutTask=$null;$stderrTask=$null;$started=$false
+        $state=[pscustomobject]@{calls=0;live=$false;pid=0;birth=0L}
+        try{
+            if(-not$process.Start()){throw 'Malformed Git-drain fixture child did not start.'}
+            $started=$true;$originalPid=$process.Id;$originalBirth=$process.StartTime.ToUniversalTime().Ticks
+            $stdoutTask=$process.StandardOutput.BaseStream.CopyToAsync($stdoutMemory);$stderrTask=$process.StandardError.BaseStream.CopyToAsync($stderrMemory)
+            $publisher={
+                param($Original,$Operation)
+                try{$state.calls++;$state.live=-not$Original.HasExited;$state.pid=$Original.Id;$state.birth=$Original.StartTime.ToUniversalTime().Ticks}
+                finally{try{$Original.StandardInput.WriteLine('release-owned-original');$Original.StandardInput.Flush()}finally{$Original.StandardInput.Close()}}
+                throw 'Intentional warning sink failure after malformed child release.'
+            }.GetNewClosure()
+            & $affectedModule {param($Original,$Publisher) Wait-MorphospaceAffectedGitOriginal -Process $Original -EstimateMilliseconds 0 -WarningPublisher $Publisher} $process $publisher
+            try{[void]$stdoutTask.GetAwaiter().GetResult()}finally{[void]$stderrTask.GetAwaiter().GetResult()}
+            Assert-True ($process.HasExited-and$process.ExitCode-eq$nativeExit-and$state.calls-eq1-and$state.live-and$state.pid-eq$originalPid-and$state.birth-eq$originalBirth) 'Malformed raw drain did not retain the exact original native exit/incarnation.'
+            foreach($pair in @([pscustomobject]@{stream=$stdoutMemory;fill='x';tail='OUT-END'},[pscustomobject]@{stream=$stderrMemory;fill='y';tail='ERR-END'})){
+                $actual=$pair.stream.ToArray();$expected=[byte[]](@(255,10)+[Text.Encoding]::UTF8.GetBytes((([string]$pair.fill)*1048576)+[string]$pair.tail))
+                Assert-True ($actual.Length-eq$expected.Length-and[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($actual))-ceq[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($expected))) 'Malformed raw stream lost its exact prefix/tail or EOF before decoding.'
+            }
+            $decodeRefused=$false
+            try{
+                $strict=[Text.UTF8Encoding]::new($false,$true)
+                if(-not$binary){[void]$strict.GetString($stdoutMemory.ToArray())}
+                [void]$strict.GetString($stderrMemory.ToArray())
+            }catch{
+                $failure=$_.Exception
+                while($null-ne$failure-and$failure-isnot[Text.DecoderFallbackException]){$failure=$failure.InnerException}
+                if($null-eq$failure){throw}
+                $decodeRefused=$true
+            }
+            Assert-True $decodeRefused 'Malformed UTF8 was accepted after actual exit and both raw EOFs.'
+        }finally{
+            try{
+                if($started){
+                    try{$process.StandardInput.WriteLine('release-owned-original');$process.StandardInput.Flush()}catch{}
+                    try{$process.StandardInput.Close()}catch{}
+                    if($null-eq$stdoutTask){$stdoutTask=$process.StandardOutput.BaseStream.CopyToAsync($stdoutMemory)}
+                    if($null-eq$stderrTask){$stderrTask=$process.StandardError.BaseStream.CopyToAsync($stderrMemory)}
+                    try{[void]$process.WaitForExit()}finally{try{[void]$stdoutTask.GetAwaiter().GetResult()}finally{[void]$stderrTask.GetAwaiter().GetResult()}}
+                }
+            }finally{$stdoutMemory.Dispose();$stderrMemory.Dispose();$process.Dispose()}
+        }
+    }
+    Write-Host 'Malformed Git raw-drain controls passed: actual exit and both EOFs precede strict text/binary-stderr refusal.'
+}
+
+function Invoke-AffectedGitOriginalWaitSelfTest {
+    Invoke-AffectedGitMalformedDrainSelfTest
+    $affectedModule = Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceAffectedValidation.psm1') -PassThru
+    $childTemplate = @'
+$ErrorActionPreference='Stop'
+$release=[Console]::ReadLine()
+if($release-cne'release-owned-original'){exit 91}
+$stdout=[Text.Encoding]::UTF8.GetBytes(('x'*1048576)+'OUT-END')
+if(__BINARY__){$stdout=[byte[]](@(0,255,10)+$stdout)}
+$outStream=[Console]::OpenStandardOutput()
+$outStream.Write($stdout,0,$stdout.Length);$outStream.Flush()
+[Console]::Error.Write(('y'*1048576)+'ERR-END');[Console]::Error.Flush()
+exit __EXIT__
+'@
+    $completed=0
+    foreach($binary in @($false,$true)) {
+        foreach($exit in @(0,7)) {
+            foreach($publisherThrows in @($false,$true)) {
+                $nativeSource=$childTemplate.Replace('__BINARY__',$(if($binary){'$true'}else{'$false'})).Replace('__EXIT__',[string]$exit)
+                $start=[Diagnostics.ProcessStartInfo]::new()
+                $start.FileName=[Environment]::ProcessPath
+                $start.UseShellExecute=$false;$start.CreateNoWindow=$true
+                $start.RedirectStandardInput=$true;$start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
+                $utf8=[Text.UTF8Encoding]::new($false,$true)
+                $start.StandardInputEncoding=$utf8;$start.StandardOutputEncoding=$utf8;$start.StandardErrorEncoding=$utf8
+                foreach($argument in @('-NoLogo','-NoProfile','-NonInteractive','-EncodedCommand',[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($nativeSource)))){[void]$start.ArgumentList.Add($argument)}
+                $process=[Diagnostics.Process]::new();$process.StartInfo=$start
+                $memory=[IO.MemoryStream]::new();$stdoutTask=$null;$stderrTask=$null;$started=$false
+                $state=[pscustomobject]@{calls=0;pid=0;birth=0L;live=$false;released=$false;throw_after_release=$publisherThrows}
+                try {
+                    if(-not$process.Start()){throw 'Owned Git-wait fixture child did not start.'}
+                    $started=$true;$originalPid=$process.Id;$originalBirth=$process.StartTime.ToUniversalTime().Ticks
+                    $stdoutTask=if($binary){$process.StandardOutput.BaseStream.CopyToAsync($memory)}else{$process.StandardOutput.ReadToEndAsync()}
+                    $stderrTask=$process.StandardError.ReadToEndAsync()
+                    $publisher={
+                        param($Original,$Operation)
+                        try {
+                            $state.calls++;$state.pid=$Original.Id;$state.birth=$Original.StartTime.ToUniversalTime().Ticks;$state.live=-not$Original.HasExited
+                        } finally {
+                            try {$Original.StandardInput.WriteLine('release-owned-original');$Original.StandardInput.Flush();$state.released=$true}
+                            finally {$Original.StandardInput.Close()}
+                        }
+                        if($state.throw_after_release){throw 'Intentional Git-wait warning publication failure after release.'}
+                        'warning-success-output-must-not-leak'
+                    }.GetNewClosure()
+                    $waitOutput=@(& $affectedModule {
+                        param($Original,$Publisher)
+                        Wait-MorphospaceAffectedGitOriginal -Process $Original -Operation 'owned Git-wait fixture' -EstimateMilliseconds 0 -WarningPublisher $Publisher
+                    } $process $publisher)
+                    $stdoutResult=$stdoutTask.GetAwaiter().GetResult();$stderr=$stderrTask.GetAwaiter().GetResult()
+                    Assert-True ($waitOutput.Count-eq0) 'Git-wait diagnostics leaked success-stream output.'
+                    Assert-True ($state.calls-eq1-and$state.released-and$state.live-and$state.pid-eq$originalPid-and$state.birth-eq$originalBirth) 'Estimate warning did not observe and release the exact still-live original incarnation.'
+                    Assert-True ($process.HasExited-and$process.ExitCode-eq$exit) 'Estimated Git wait cancelled, replayed or relabeled the original native exit.'
+                    $expectedText=('x'*1048576)+'OUT-END'
+                    if($binary) {
+                        $expectedBytes=[byte[]](@(0,255,10)+[Text.Encoding]::UTF8.GetBytes($expectedText));$actualBytes=$memory.ToArray()
+                        Assert-True ($actualBytes.Length-eq$expectedBytes.Length-and[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($actualBytes))-ceq[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($expectedBytes))) 'Git binary wait lost exact bytes or stdout EOF.'
+                    } else {Assert-True ($stdoutResult-ceq$expectedText) 'Git text wait lost exact stdout or EOF.'}
+                    Assert-True ($stderr-ceq(('y'*1048576)+'ERR-END')) 'Git wait lost exact stderr or EOF.'
+                    $completed++
+                } finally {
+                    if($started) {
+                        # Cleanup owns this same Process and drains both streams;
+                        # no estimated cleanup deadline, kill, PID lookup or retry.
+                        try {$process.StandardInput.WriteLine('release-owned-original');$process.StandardInput.Flush()}catch{}
+                        try {$process.StandardInput.Close()}catch{}
+                        if($null-eq$stdoutTask){$stdoutTask=if($binary){$process.StandardOutput.BaseStream.CopyToAsync($memory)}else{$process.StandardOutput.ReadToEndAsync()}}
+                        if($null-eq$stderrTask){$stderrTask=$process.StandardError.ReadToEndAsync()}
+                        try {[void]$process.WaitForExit()}finally {
+                            try {[void]$stdoutTask.GetAwaiter().GetResult()}finally {[void]$stderrTask.GetAwaiter().GetResult()}
+                        }
+                    }
+                    $memory.Dispose();$process.Dispose()
+                }
+            }
+        }
+    }
+    Assert-True ($completed-eq8) 'Git original-wait controls did not complete all text/binary, native exit and warning-publication cases.'
+    Write-Host "Git original-wait controls passed: cases=$completed; actual child exit and both EOFs retained."
+}
+
 function Invoke-AffectedBatchSelfTest {
+    Invoke-AffectedGitOriginalWaitSelfTest
     $fixture = [IO.Path]::GetFullPath((Join-Path ([IO.Path]::GetTempPath()) ('morphospace-affected-batch-' + [guid]::NewGuid().ToString('N'))))
     $tempPrefix = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar,[IO.Path]::AltDirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
     if (-not $fixture.StartsWith($tempPrefix,[StringComparison]::OrdinalIgnoreCase)) { throw 'Focused affected batch fixture is outside the exact temporary root.' }
@@ -409,6 +557,26 @@ function Invoke-AffectedBatchSelfTest {
 
         $entryA = $inventory.by_path['scripts/A.ps1']
         $entryB = $inventory.by_path['scripts/B.ps1']
+        $blobBytes = & $affectedModule { param($Root,$Blob) Get-MorphospaceAffectedGitBlobBytes -RepositoryRoot $Root -Blob $Blob } $fixture $entryA.blob
+        Assert-True ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([byte[]]$blobBytes)) -ceq [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([IO.File]::ReadAllBytes((Join-Path $fixture 'scripts/A.ps1'))))) 'Actual Git blob read changed raw bytes after its original stream join.'
+        Assert-AffectedThrows { & $affectedModule { param($Root) Get-MorphospaceAffectedGitBlobBytes -RepositoryRoot $Root -Blob ('0' * 40) } $fixture } '*git cat-file failed*' 'Actual Git blob failure was accepted after an estimated wait.'
+        $allowedFailure = & $affectedModule { param($Root) Invoke-MorphospaceAffectedGit -RepositoryRoot $Root -Arguments @('cat-file','blob',('0' * 40)) -AllowFailure } $fixture
+        Assert-True ($allowedFailure.exit_code -ne 0 -and $allowedFailure.stderr.Length -gt 0) 'AllowFailure lost the actual Git failure exit or stderr.'
+        $malformedFile=Join-Path $fixture 'malformed-bytes.bin'
+        [byte[]]$malformedBytes=@(255,10)+[Text.Encoding]::UTF8.GetBytes(('z'*1048576)+'BLOB-END')
+        [IO.File]::WriteAllBytes($malformedFile,$malformedBytes)
+        $malformedBlob=Invoke-TestGit $fixture @('hash-object','-w','--no-filters','malformed-bytes.bin')
+        $roundtrip=& $affectedModule {param($Root,$Blob) Get-MorphospaceAffectedGitBlobBytes -RepositoryRoot $Root -Blob $Blob} $fixture $malformedBlob
+        Assert-True ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([byte[]]$roundtrip))-ceq[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($malformedBytes))) 'Actual Git binary read did not preserve malformed UTF8 bytes.'
+        $decodeRejected=$false
+        try{[void](& $affectedModule {param($Root,$Blob) Invoke-MorphospaceAffectedGit -RepositoryRoot $Root -Arguments @('cat-file','blob',$Blob)} $fixture $malformedBlob)}catch{
+            $failure=$_.Exception
+            while($null-ne$failure-and$failure-isnot[Text.DecoderFallbackException]){$failure=$failure.InnerException}
+            if($null-eq$failure){throw}
+            $decodeRejected=$true
+        }
+        Assert-True $decodeRejected 'Actual Git text read accepted malformed UTF8 instead of refusing after raw drain.'
+        Remove-Item -LiteralPath $malformedFile
         $validHashOutput = "$($entryA.blob)`n$($entryB.blob)`n"
         $parsedHashes = @(& $affectedModule { param($Text,$Paths,$Inventory) ConvertFrom-MorphospaceAffectedBatchHashOutput -Stdout $Text -Paths $Paths -Inventory $Inventory } $validHashOutput @('scripts/A.ps1','scripts/B.ps1') $inventory)
         Assert-True ($parsedHashes.Count -eq 2 -and $parsedHashes[0].path -ceq 'scripts/A.ps1' -and $parsedHashes[1].path -ceq 'scripts/B.ps1') 'Positive batch hash parser changed record order/path identity.'
@@ -1798,6 +1966,7 @@ $module = Import-Module (Join-Path $OwnerDirectory 'scripts/lib/FixtureExports.p
     } finally { if ([IO.Directory]::Exists($ownerGraphFixture)) { Remove-Item -LiteralPath $ownerGraphFixture -Recurse -Force } }
 }
 function Invoke-AffectedGraphIndexSelfTest([string]$Root,[object]$Registry) {
+    Invoke-AffectedGitOriginalWaitSelfTest
     Invoke-AffectedModuleExportSelfTest
     $audit = Get-AffectedProtocolCommonOwnerChecks -Root $Root -Registry $Registry
     Assert-AffectedProtocolCommonGraphProjection -Value $audit -Context 'Real-tree ProtocolCommon graph'

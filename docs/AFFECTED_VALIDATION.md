@@ -8,6 +8,16 @@ cancellation or refuse dispatch. Warning publication failure does not cancel
 the original work. Structural validity, exact source and dependency bindings,
 explicit cancellation, and actual child termination remain separate checks.
 
+Shared Git text and binary reads likewise treat their 30-second estimate as a
+warning. They retain the same original process through actual exit and both
+stream joins; warning publication failure cannot kill, replay or accept it.
+Both streams drain as raw bytes before strict UTF-8 text decoding, so malformed
+text cannot strand a child on a full pipe. Both stream tasks are joined even
+when one await fails. Binary stdout stays opaque. Binary stderr now uses
+explicit strict UTF-8 instead of its former default replacement decoder;
+malformed nonempty stderr remains refusal, with a decoding failure rather than
+a generic Git-stderr failure. Native exits and valid text parsing stay strict.
+
 Hosted jobs use the existing 360-minute execution ceiling. A segment estimate
 does not select a shorter hard cutoff, and an opted-in single Windows runner
 warns when its estimate exceeds 18,000 seconds. Actual platform termination
