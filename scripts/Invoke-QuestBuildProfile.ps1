@@ -31,9 +31,10 @@ if($WaitPolicy -ceq "Retained"){Import-Module (Join-Path $PSScriptRoot "lib/Morp
 function Resolve-QuestBuildApplication {
  param([string]$Name)
  if($null-ne$script:ActiveQuestBuildContext-and$script:ActiveQuestBuildContext.Tools.ContainsKey($Name)){return [pscustomobject]@{Source=$script:ActiveQuestBuildContext.Tools[$Name].Path}}
- $matches=@(Get-Command -Name $Name -CommandType Application -ErrorAction SilentlyContinue|Group-Object Source|ForEach-Object{$_.Group[0]})
- if($matches.Count-ne1){$e=[InvalidOperationException]::new('Selected build tool resolution failed.');$e.Data['ReasonCode']=if($matches.Count){'tool-ambiguous'}else{'tool-missing'};throw $e}
- return $matches[0]
+ # No-context compatibility preserves ordinary PATH precedence and returns one scalar.
+ $selected=Get-Command -Name $Name -CommandType Application -ErrorAction SilentlyContinue|Select-Object -First 1
+ if($null-eq$selected){$e=[InvalidOperationException]::new('Selected build tool resolution failed.');$e.Data['ReasonCode']='tool-missing';throw $e}
+ return $selected
 }
 function Get-QuestBuildGitPath {if($null-ne$script:ActiveQuestBuildContext-and$script:ActiveQuestBuildContext.Tools.ContainsKey('git')){return $script:ActiveQuestBuildContext.Tools.git.Path};return 'git'}
 function Resolve-ProfileBuildContext {

@@ -16,8 +16,8 @@ $workingDirectory=$EvidenceRoot
 $gitFixture=(Get-Command git -CommandType Application -ErrorAction Stop|Select-Object -First 1).Source
 function Fixture-Git([string[]]$Arguments){$out=@(& $gitFixture -C $workingDirectory @Arguments 2>&1);if($LASTEXITCODE-ne0){throw 'Fixture Git failed'};return $out}
 if(-not$SeedContextPath){
- # Explicit fixture selection is test data; production compatibility lookup below
- # still receives real multiple Applications and must refuse ambiguity.
+ # Explicit fixture selection is test data. Compatibility cases preserve ordinary
+ # first-Application PATH precedence; explicit contexts pin exact tools.
  $rustupFixture=(Get-Command rustup -CommandType Application -ErrorAction Stop|Select-Object -First 1).Source
  $channel=((& $rustupFixture show active-toolchain)-join'').Split(' ')[0]
  if($LASTEXITCODE-ne0){throw 'Fixture Rust toolchain observation failed'}
@@ -207,20 +207,20 @@ $path=Join-Path $PSScriptRoot $Output
  }
  Case 'public-context-preflight' {$r=Public 'Preflight' $valid;Assert ($r.ExitCode-eq0-and$r.Result.terminal_status-ceq'passed'-and-not$r.Result.child_process.started) 'Actual public context Preflight failed'}
  foreach($role in @('pwsh','rustup')){
-  Case "public-compatibility-$role-ambiguity" {
+  Case "public-compatibility-$role-path-precedence" {
    $duplicateDir=Join-Path $EvidenceRoot "duplicate-$role";[void][IO.Directory]::CreateDirectory($duplicateDir)
    $extension=[IO.Path]::GetExtension($seed.tools.$role.path)
-   # Real executable file, never a mocked command resolver; refusal precedes invocation.
+   # Real executable files exercise multiple Application matches and the first selected tool.
    [IO.File]::Copy($seed.tools.git.path,(Join-Path $duplicateDir ($role+$extension)))
    $v=Clone $seed
    $entries=@((Split-Path $seed.tools.pwsh.path -Parent),(Split-Path $seed.tools.rustup.path -Parent),(Split-Path $seed.tools.git.path -Parent),$duplicateDir)
    if($IsWindows){$entries+=@((Join-Path $seed.environment.SYSTEMROOT 'System32'),[string]$seed.environment.SYSTEMROOT)}
    $v.environment.PATH=@($entries|Select-Object -Unique)-join[IO.Path]::PathSeparator
    $p=Store "compatibility-$role" $v;$c=Resolve $p -tools @('pwsh')
-   $r=Invoke-MorphospaceQuestBuildEnvironment -Context $c -Action {Public 'Preflight'}
-   Assert ($r.ExitCode-ne0-and'tool-ambiguous'-cin$r.Result.reason_codes-and-not$r.Result.child_process.started) 'Public compatibility ambiguity was not typed before dispatch'
+   $r=Invoke-MorphospaceQuestBuildEnvironment -Context $c -Action {param($name)$matches=@(Get-Command -Name $name -CommandType Application -ErrorAction Stop);Assert ($matches.Count-ge2) 'Actual multiple Application fixture absent';Public 'Preflight'} -ArgumentList @($role)
+   Assert ($r.ExitCode-eq0-and$r.Result.terminal_status-ceq'passed'-and-not$r.Result.child_process.started) 'Ordinary no-context PATH precedence was not preserved'
    $explicit=Invoke-MorphospaceQuestBuildEnvironment -Context $c -Action {param($bound)Public 'Preflight' $bound} -ArgumentList @($p)
-   Assert ($explicit.ExitCode-eq0-and$explicit.Result.terminal_status-ceq'passed') 'Explicit selection failed to bypass actual ambient ambiguity'
+   Assert ($explicit.ExitCode-eq0-and$explicit.Result.terminal_status-ceq'passed') 'Explicit selection failed with actual lower-precedence Applications'
   }
  }
  Case 'same-module-ignored-data-author' {

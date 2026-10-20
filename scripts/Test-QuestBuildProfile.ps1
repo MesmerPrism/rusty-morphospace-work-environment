@@ -127,13 +127,7 @@ function Assert-Terminal {
     }
 }
 
-$fixtureOriginalPath=$env:PATH
 try {
-    # Legacy compatibility fixtures declare one actual PowerShell Application.
-    # Dedicated context cases below exercise real multiple-match refusal.
-    $fixturePwshDirectory=Split-Path -Parent ([Environment]::ProcessPath)
-    $fixtureOtherPwshDirectories=@(Get-Command pwsh -CommandType Application -ErrorAction Stop|Where-Object Source -cne ([Environment]::ProcessPath)|ForEach-Object{Split-Path -Parent $_.Source})
-    $env:PATH=(@($fixturePwshDirectory)+@($fixtureOriginalPath.Split([IO.Path]::PathSeparator)|Where-Object{$_-and$_-notin$fixtureOtherPwshDirectories})|Select-Object -Unique)-join[IO.Path]::PathSeparator
     New-Item -ItemType Directory -Path (Join-Path $testRoot "out") -Force | Out-Null
     Write-Utf8 (Join-Path $testRoot "AndroidManifest.xml") "<manifest package=\"example.fixture\" />`n"
     Write-Utf8 (Join-Path $testRoot "rust-toolchain.toml") "[toolchain]`nchannel = \"1.97.1\"`n"
@@ -368,7 +362,6 @@ if (-not (Test-Path -LiteralPath $outputParent)) { New-Item -ItemType Directory 
 
     Write-Host "Quest build-profile preflight, terminal-result, deterministic identity, zero-side-effect, bounded progress, rename-race, and fault-corpus tests passed."
 } finally {
-    $env:PATH=$fixtureOriginalPath
     if (Test-Path -LiteralPath $testRoot) {
         $tempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
         $fullTestRoot = [System.IO.Path]::GetFullPath($testRoot)
@@ -383,11 +376,8 @@ if (-not (Test-Path -LiteralPath $outputParent)) { New-Item -ItemType Directory 
 }
 # One declared affected check covers the unchanged legacy corpus and the
 # actual retained-v2 original/pipe/capture controls.
-try {
-    $env:PATH=(@($fixturePwshDirectory)+@($fixtureOriginalPath.Split([IO.Path]::PathSeparator)|Where-Object{$_-and$_-notin$fixtureOtherPwshDirectories})|Select-Object -Unique)-join[IO.Path]::PathSeparator
-    & pwsh -NoProfile -NonInteractive -File (Join-Path $PSScriptRoot 'Test-QuestBuildRetainedOriginal.ps1') -RepoRoot $RepoRoot
-    if($LASTEXITCODE-ne0){throw 'Retained build original controls failed'}
-} finally {$env:PATH=$fixtureOriginalPath}
+& pwsh -NoProfile -NonInteractive -File (Join-Path $PSScriptRoot 'Test-QuestBuildRetainedOriginal.ps1') -RepoRoot $RepoRoot
+if($LASTEXITCODE-ne0){throw 'Retained build original controls failed'}
 & pwsh -NoProfile -NonInteractive -File (Join-Path $PSScriptRoot 'Test-QuestBuildEnvironment.ps1') -RepoRoot $RepoRoot
 if($LASTEXITCODE-ne0){throw 'Quest selected build environment corpus failed.'}
 exit 0

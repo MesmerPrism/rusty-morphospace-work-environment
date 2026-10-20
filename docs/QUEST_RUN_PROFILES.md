@@ -168,8 +168,10 @@ siblings are also on PATH: explicit selection bypasses ambient discovery.
 When selected Git is declared, the first actual PATH Application for bare Git
 consumers must resolve to that exact canonical selection; a different earlier
 Git refuses. Later PATH Git entries do not replace explicit selection.
-Compatibility discovery refuses multiple distinct PowerShell or Rustup
-Applications instead of passing an array as an executable.
+Without a context, compatibility discovery preserves ordinary PATH precedence
+and returns the first PowerShell or Rustup Application as one scalar. It does
+not authenticate that choice as an explicit selected tool. Context selections
+retain their exact path/hash, canonical path and compiler/target checks.
 
 The shared `scripts/lib/MorphospaceQuestBuildEnvironment.psm1` exports
 `Resolve-MorphospaceQuestBuildContext` and
