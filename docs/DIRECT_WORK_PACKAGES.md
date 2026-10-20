@@ -24,6 +24,52 @@ limited to bounded implementation, validation, or documentation. Select
 `risk_tier` independently: guard profile controls authority, while risk tier
 controls validation depth.
 
+## Agent and framework adaptation
+
+Framework practices operate inside the selected owner package. Reuse its
+approved objective, scope, exact checkpoints, validation route and lifecycle.
+Use Superpowers design, debugging, testing and review practices where useful;
+use GSD bounded phases, fresh contexts and dependency waves when they reduce
+coordination. Select one execution scheduler and one isolation owner. Framework
+notes are derivative navigation, not another planning or acceptance authority.
+Existing user authorization and resolved decisions persist across continuation;
+revisit them only when an unresolved scope, authority or evidence boundary
+changes the action. Honor the user's model and reasoning settings for workers
+and reviews through the live tool schema; framework examples grant no override.
+
+Reuse suitable existing isolation, dependencies and compatible build lanes.
+Choose setup and baseline checks from missing prerequisites, changed inputs or
+actual uncertainty. Entering a worktree alone requires no cold build, dependency
+reinstall or full suite. Verify claims with the owner's required checks and
+exact evidence-reuse rules, preserving required live facts. Label executed,
+reused, blocked and unattempted work separately and name material reuse misses.
+
+Delegate coherent independent outcomes with explicit path ownership and compact
+evidence returns. Keep one writer per mutable surface and order semantic
+prerequisites and owner transitions. The worker owns its ordinary repair loop;
+review or rerun completed work when changed inputs, failure or an unresolved
+risk warrants it. Neither a new reviewer nor a handoff implies a cold baseline.
+
+Carry the same issued original through actual exit, reap, stream EOF and semantic
+outcome using its owning executor. Advisory duration and storage indicators
+prompt observation or a scoped decision; they do not cancel an operation.
+Explicit Stop, actual expiry, revoked authority and damaged evidence retain
+their owner-defined effects. A signed lifetime still deserves review when it
+prevents the intended operation. Record adjacent discoveries for later and
+attempt the next supported product action after repairing the selected path.
+
+Use only supported versioned reload boundaries for data, policy and assets.
+Native, JNI, codec and lifecycle changes still cross their required source and
+artifact boundaries. Runtime display selection is not source hotloading.
+
+Keep one compact continuation with the objective, authorized stop boundary,
+exact source and artifact identities, active originals and custodian, blocker,
+next supported action, deferred discoveries and evidence pointers. Keep history
+in its existing owner records. Close the package with its usable outcome,
+remaining limits and resource custody. Preserve meaningful ignored inputs and
+original evidence still authenticated by consumers before worktree archival;
+use the existing cleanup and evidence-relocation contracts for retirement.
+
 ## Minimal package
 
 When an external planning authority publishes a central issue queue, consult
