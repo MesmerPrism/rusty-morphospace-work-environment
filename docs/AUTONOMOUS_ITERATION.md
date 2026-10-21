@@ -64,6 +64,30 @@ a genuine blocker, requires another owner, or should release current-unit
 authority. Validation-only units cannot use `ReturnToActive`; a discovered
 product defect becomes a separately proposed feature unit.
 
+An admitted frozen feature unit uses `FreezeCandidate` with a
+`candidate_freeze.v3` input for an in-scope correction after `ReturnToActive`.
+The predecessor names the old freeze marker, the exact Return event, and its
+transaction-owned retained validation receipt. The contiguous owner journey
+must be Freeze → BeginValidation → non-passing ReturnToActive; the same active
+unit, scope, project, feature lock, tooling context, source-composition lock and
+repository map remain bound. Commit the corrected source inside that scope and
+provide fresh candidate CAS, final source identities, and validation declarations.
+The original freeze, failed receipt and every transaction remain immutable.
+
+An executed frozen Return retains an exact byte copy of its consumed receipt
+under `receipts/<return-event-id>-retained-validation.json`. Earlier Return
+transactions without this owned copy do not gain revision authority retroactively.
+The new freeze clears only the proven failed checkpoint and selector; validation
+and acceptance must bind the new freeze and source. A protected source correction
+requires fresh exact external-owner admission; a predecessor's approval never
+authorizes the new candidate. An interrupted revision resumes from the exact
+request and durable intent after rechecking predecessor proof and live source.
+Completed replay adds no second event. The chain supports at most 32 linked
+predecessors; broader authority changes use the existing successor/retirement
+route. `RematerializeValidatingCandidate` retains its existing v1-to-v2 route;
+it does not consume a v3 correction. A rematerialized v2 candidate uses its own
+existing recovery contract and cannot enter the v3 predecessor route.
+
 ## Guard Profiles
 
 `guard_profile` selects change authority; `risk_tier` independently selects

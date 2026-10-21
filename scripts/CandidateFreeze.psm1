@@ -158,9 +158,9 @@ function Test-MorphospaceOwnPlanningCandidateHistory {
     return $true
 }
 function Assert-MorphospaceCandidateRepositoryClosure {
-    param([string]$Workspace,[object]$Candidate,[object]$Unit,[object]$FrozenTransition=$null)
+    param([string]$Workspace,[object]$Candidate,[object]$Unit,[object]$FrozenTransition=$null,[object]$AuthenticatedComposition=$null)
     $map=Get-MorphospaceCandidateRepositoryMap $Workspace ([string]$Candidate.expected.repository_map_path)
-    $composition=Get-MorphospaceCandidateSourceComposition $Workspace ([string]$Candidate.expected.source_composition_path) ([string]$Candidate.project_id) ([string]$Candidate.unit_id)
+    $composition=if($null-ne$AuthenticatedComposition){$AuthenticatedComposition}else{Get-MorphospaceCandidateSourceComposition $Workspace ([string]$Candidate.expected.source_composition_path) ([string]$Candidate.project_id) ([string]$Candidate.unit_id)}
     if([string]$composition.schema-ceq'rusty.morphospace.workflow.active_development_envelope_source_composition.v1'){
         $boundMapPath=[string]$composition.repository_map.path;$boundMapSha=[string]$composition.repository_map.raw_sha256
     }elseif([string]$composition.schema-cin@('rusty.morphospace.workflow.development_envelope_source_composition.v1','rusty.morphospace.workflow.development_envelope_source_composition.v2','rusty.morphospace.workflow.development_envelope_source_composition.v3')){
@@ -249,6 +249,116 @@ function Get-MorphospaceFrozenCandidateTransition {
     if([string]$completion.transaction_id-cne$transactionId-or[string]$completion.event_id-cne$eventId-or[string]$completion.state_sha256-cne[string]$intent.target.state.sha256-or[string]$completion.unit_sha256-cne[string]$intent.target.unit.sha256){throw 'Frozen candidate transition completion differs from its exact intent.'}
     return $binding
 }
+function Assert-CandidateRevisionEqual {
+    param([object]$Expected,[object]$Actual,[string]$Context)
+    if((Get-MorphospaceCanonicalJsonSha256 $Expected)-cne(Get-MorphospaceCanonicalJsonSha256 $Actual)){throw "Candidate revision $Context is detached."}
+}
+function Get-CandidateRevisionTransition {
+    param([string]$Workspace,[string]$EventId,[string]$UnitId)
+    # Recovery may already have installed B's projections while Return remains
+    # the physical event tail. Authenticate historical evidence independently;
+    # the revision transform and ledger CAS authenticate the live endpoint.
+    $retirementOwner=Import-Module (Join-Path $PSScriptRoot 'ActiveUnitRetirement.psm1') -PassThru
+    $proof=&$retirementOwner {param($root,$id) Get-ActiveRetirementPlanningTransition $root $id -HistoricalProjection} $Workspace "$EventId-transition"
+    if([string]$proof.intent.state.path-cne'workspace.state.json'-or[string]$proof.intent.unit.path-cne"iteration-units/$UnitId.json"-or[string]$proof.intent.events.path-cne'iteration-events.jsonl'){throw 'Candidate revision predecessor projection paths are detached.'}
+    return $proof
+}
+function Assert-MorphospaceCandidateRevisionPredecessor {
+    param([string]$Workspace,[object]$Candidate,[object]$BeforeUnit,[object]$BeforeState,[int]$Depth=0)
+    if($Depth-ge32){throw 'Candidate revision predecessor chain exceeds the supported depth.'}
+    $owner=Split-Path $PSScriptRoot -Parent
+    if(-not(Test-Json -Json ($Candidate|ConvertTo-Json -Depth 100) -SchemaFile (Join-Path $owner 'schemas/candidate-freeze-v3.schema.json'))){throw 'Candidate revision schema is invalid.'}
+    $id=[string]$Candidate.unit_id;$predecessor=$Candidate.predecessor
+    if([string]$BeforeUnit.unit_id-cne$id-or[string]$BeforeUnit.project_id-cne[string]$Candidate.project_id-or[string]$BeforeUnit.status-cne'active'-or[string]$BeforeState.current_unit-cne$id-or$null-ne$BeforeState.next_ready_unit-or@($BeforeState.blockers).Count-ne0-or($BeforeUnit.PSObject.Properties.Name-contains'work_mode'-and[string]$BeforeUnit.work_mode-cne'feature')){throw 'Candidate revision requires the same blocker-free active feature owner.'}
+    Assert-CandidateRevisionEqual $BeforeUnit.candidate_freeze $predecessor.freeze 'predecessor marker'
+    if([string]$Candidate.freeze_id-ceq[string]$predecessor.freeze.freeze_id-or[string]$BeforeState.last_event_id-cne[string]$predecessor.return_event_id){throw 'Candidate revision requires a fresh identity immediately after ReturnToActive.'}
+    $oldPath=Resolve-MorphospaceWorkspacePath $Workspace ([string]$predecessor.freeze.receipt_path) -RequireLeaf
+    if((Get-MorphospaceFileSha256 $oldPath)-cne[string]$predecessor.freeze.receipt_sha256){throw 'Candidate revision predecessor freeze bytes drifted.'}
+    $old=Read-MorphospaceProtocolJson $oldPath
+    if([string]$old.schema-cnotin@('rusty.morphospace.workflow.candidate_freeze.v1','rusty.morphospace.workflow.candidate_freeze.v3')-or[string]$old.freeze_id-cne[string]$predecessor.freeze.freeze_id-or[string]$old.unit_id-cne$id-or[string]$old.project_id-cne[string]$Candidate.project_id){throw 'Candidate revision predecessor identity is detached.'}
+    $oldSchema=if([string]$old.schema-ceq'rusty.morphospace.workflow.candidate_freeze.v1'){'candidate-freeze-v1.schema.json'}else{'candidate-freeze-v3.schema.json'}
+    if(-not(Test-Json -Json ($old|ConvertTo-Json -Depth 100) -SchemaFile (Join-Path $owner "schemas/$oldSchema"))){throw 'Candidate revision predecessor schema is invalid.'}
+    $frozen=Get-CandidateRevisionTransition $Workspace "$([string]$old.freeze_id)-recorded" $id
+    [void](Get-MorphospaceFrozenCandidateTransition $Workspace $old $frozen.intent.target.state.document $frozen.intent.target.unit.document ([string]$predecessor.freeze.receipt_path))
+    $originalUnit=$frozen.intent.target.unit.document|ConvertTo-Json -Depth 100|ConvertFrom-Json -Depth 100 -DateKind String
+    if([string]$old.schema-ceq'rusty.morphospace.workflow.candidate_freeze.v1'){$originalUnit.PSObject.Properties.Remove('candidate_freeze')}else{$originalUnit.candidate_freeze=$old.predecessor.freeze}
+    if((Get-MorphospaceCanonicalJsonSha256 $originalUnit)-cne[string]$old.expected.unit_sha256){throw 'Candidate revision original freeze changed its admitted unit authority.'}
+    if([string]$old.schema-ceq'rusty.morphospace.workflow.candidate_freeze.v3'){
+        $oldReturn=Get-CandidateRevisionTransition $Workspace ([string]$old.predecessor.return_event_id) $id
+        Assert-MorphospaceCandidateRevisionPredecessor $Workspace $old $oldReturn.intent.target.unit.document $oldReturn.intent.target.state.document ($Depth+1)
+        $oldState=$oldReturn.intent.target.state.document|ConvertTo-Json -Depth 100|ConvertFrom-Json -Depth 100 -DateKind String
+        $oldState.last_event_id="$($old.freeze_id)-recorded";$oldState.validation_checkpoint=$null
+        if($oldState.PSObject.Properties.Name-contains'normal_validation_selection'){$oldState.normal_validation_selection=$null}
+        Assert-CandidateRevisionEqual $oldState $frozen.intent.target.state.document 'predecessor revision target state'
+    }
+    $returned=Get-CandidateRevisionTransition $Workspace ([string]$predecessor.return_event_id) $id
+    $begin=Get-CandidateRevisionTransition $Workspace ([string]$returned.intent.expected.event_tail_id) $id
+    $returnEvent=$returned.intent.event;$beginEvent=$begin.intent.event
+    if([string]$begin.intent.expected.event_tail_id-cne[string]$frozen.intent.event.event_id-or[int]$beginEvent.sequence-ne([int]$frozen.intent.event.sequence+1)-or[int]$returnEvent.sequence-ne([int]$beginEvent.sequence+1)-or[string]$beginEvent.event_id-cnotmatch('^'+[regex]::Escape($id)+'-validating-[0-9]{4,}$')-or[string]$beginEvent.summary-cne'Entered validation with a deterministic command, instruction, graph, and device-impact plan.'-or@($beginEvent.receipts).Count-ne0-or@($begin.intent.artifacts).Count-ne0){throw 'Candidate revision requires the exact Freeze, BeginValidation, ReturnToActive chain.'}
+    foreach($pair in @(@($frozen,$begin),@($begin,$returned))){if([string]$pair[1].intent.pre.state.sha256-cne[string]$pair[0].intent.target.state.sha256-or[string]$pair[1].intent.pre.unit.sha256-cne[string]$pair[0].intent.target.unit.sha256){throw 'Candidate revision lifecycle predecessor chain is detached.'}}
+    $validating=($frozen.intent.target.unit.document|ConvertTo-Json -Depth 100|ConvertFrom-Json -Depth 100 -DateKind String);$validating.status='validating'
+    Assert-CandidateRevisionEqual $validating $begin.intent.target.unit.document 'BeginValidation unit'
+    $validating.status='active';Assert-CandidateRevisionEqual $validating $BeforeUnit 'retained unit authority'
+    Assert-CandidateRevisionEqual $BeforeUnit $returned.intent.target.unit.document 'ReturnToActive unit'
+    Assert-CandidateRevisionEqual $BeforeState $returned.intent.target.state.document 'ReturnToActive state'
+    $checkpoint=$BeforeState.validation_checkpoint;$result=[string]$checkpoint.result
+    if($result-cnotin@('fail','blocked','partial')-or[string]$returnEvent.event_id-cnotmatch('^'+[regex]::Escape($id)+'-validation-'+[regex]::Escape($result)+'-return-[0-9]{4,}$')-or[string]$returnEvent.event_type-cne'validation'-or[string]$returnEvent.summary-cne'Retained a non-passing validation attempt and returned the same feature unit to active for an in-scope correction.'-or@($returnEvent.receipts).Count-ne2-or[string]$returnEvent.receipts[0]-cne[string]$checkpoint.receipt-or[string]$returnEvent.receipts[1]-cne[string]$predecessor.validation_receipt.path){throw 'Candidate revision lacks the exact retained non-passing ReturnToActive attempt.'}
+    $artifacts=@($returned.intent.artifacts)
+    if($artifacts.Count-ne1-or[string]$artifacts[0].path-cne[string]$predecessor.validation_receipt.path-or[string]$artifacts[0].sha256-cne[string]$predecessor.validation_receipt.sha256){throw 'Candidate revision failed receipt is not owned by ReturnToActive.'}
+    foreach($relative in @([string]$checkpoint.receipt,[string]$predecessor.validation_receipt.path)){if((Get-MorphospaceFileSha256 (Resolve-MorphospaceWorkspacePath $Workspace $relative -RequireLeaf))-cne[string]$predecessor.validation_receipt.sha256){throw 'Candidate revision failed receipt bytes drifted.'}}
+    $receipt=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $Workspace ([string]$predecessor.validation_receipt.path) -RequireLeaf)
+    if([string]$receipt.schema-cne'rusty.morphospace.workflow.validation_receipt.v1'-or[string]$receipt.unit_id-cne$id-or[string]$receipt.project_id-cne[string]$Candidate.project_id-or[string]$receipt.result-cne$result-or[string]$receipt.tier-cne[string]$checkpoint.tier){throw 'Candidate revision failed receipt identity is detached.'}
+    if(-not(Test-Json -Json ($receipt|ConvertTo-Json -Depth 100) -SchemaFile (Join-Path $owner 'schemas/validation-receipt.schema.json'))){throw 'Candidate revision failed receipt schema is invalid.'}
+    $artifactIds=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $receiptDirectory=Split-Path (Resolve-MorphospaceWorkspacePath $Workspace ([string]$checkpoint.receipt) -RequireLeaf) -Parent
+    foreach($artifact in @($receipt.artifacts)){
+        $artifactPath=if([IO.Path]::IsPathFullyQualified([string]$artifact.path)){[string]$artifact.path}else{Join-Path $receiptDirectory ([string]$artifact.path)}
+        if(-not$artifactIds.Add([string]$artifact.artifact_id)-or(Get-MorphospaceFileSha256 $artifactPath)-cne([string]$artifact.sha256).ToLowerInvariant()){throw 'Candidate revision failed validation evidence bytes drifted.'}
+    }
+    foreach($evidence in @($receipt.criteria)+@($receipt.gates)+@(if($null-ne$receipt.device_validation){$receipt.device_validation})){foreach($reference in @($evidence.evidence_refs)){if(-not$artifactIds.Contains([string]$reference)){throw 'Candidate revision failed receipt references unknown evidence.'}}}
+    foreach($repository in @($old.final_repositories)){
+        $revisions=@($receipt.repository_revisions|Where-Object{[string]$_.repo_id-ceq[string]$repository.repo_id})
+        if($revisions.Count-ne1-or[string]$revisions[0].head_revision-cne[string]$repository.commit){throw 'Candidate revision failed attempt source differs from its predecessor freeze.'}
+    }
+    foreach($name in @('project_sha256','feature_lock_sha256','source_composition_path','source_composition_sha256','repository_map_path','repository_map_sha256')){if([string]$Candidate.expected.$name-cne[string]$old.expected.$name){throw "Candidate revision changes frozen authority input '$name'."}}
+    if([string]$Candidate.expected.state_sha256-cne[string]$returned.intent.target.state.sha256-or[string]$Candidate.expected.unit_sha256-cne[string]$returned.intent.target.unit.sha256-or[string]$Candidate.expected.event_tail_id-cne[string]$returnEvent.event_id){throw 'Candidate revision CAS is detached from ReturnToActive.'}
+    # Approval and validation identities are not carried to the changed source.
+    return $returned
+}
+function Assert-MorphospaceCandidateRevisionRecoveryBindings {
+    param([string]$WorkspaceRoot,[object]$Intent,[switch]$Historical)
+    $workspace=[IO.Path]::GetFullPath($WorkspaceRoot)
+    if(@($Intent.artifacts).Count-ne1){throw 'Candidate revision requires one transaction-owned freeze artifact.'}
+    $artifact=$Intent.artifacts[0];$bytes=[Convert]::FromBase64String([string]$artifact.bytes_base64)
+    if((Get-MorphospaceSha256Bytes $bytes)-cne[string]$artifact.sha256){throw 'Candidate revision artifact bytes drifted.'}
+    $candidate=ConvertFrom-MorphospaceProtocolJsonBytes $bytes
+    if([string]$candidate.source_composition.path-cne[string]$candidate.expected.source_composition_path-or[string]$candidate.source_composition.sha256-cne[string]$candidate.expected.source_composition_sha256-or[string]$candidate.feature_lock.sha256-cne[string]$candidate.expected.feature_lock_sha256){throw 'Candidate revision source or feature closure detaches from its CAS.'}
+    $returned=Get-CandidateRevisionTransition $workspace ([string]$candidate.predecessor.return_event_id) ([string]$candidate.unit_id)
+    [void](Assert-MorphospaceCandidateRevisionPredecessor $workspace $candidate $returned.intent.target.unit.document $returned.intent.target.state.document)
+    $targetUnit=$returned.intent.target.unit.document|ConvertTo-Json -Depth 100|ConvertFrom-Json -Depth 100 -DateKind String
+    $targetUnit.candidate_freeze=[pscustomobject]@{freeze_id=$candidate.freeze_id;receipt_path="receipts/$($candidate.freeze_id).json";receipt_sha256=$artifact.sha256}
+    $targetState=$returned.intent.target.state.document|ConvertTo-Json -Depth 100|ConvertFrom-Json -Depth 100 -DateKind String
+    $eventId="$($candidate.freeze_id)-recorded";$targetState.last_event_id=$eventId
+    $targetState.validation_checkpoint=$null
+    if($targetState.PSObject.Properties.Name-contains'normal_validation_selection'){$targetState.normal_validation_selection=$null}
+    Assert-CandidateRevisionEqual $targetUnit $Intent.target.unit.document 'revision target unit'
+    Assert-CandidateRevisionEqual $targetState $Intent.target.state.document 'revision target state'
+    if([string]$Intent.schema-cne'rusty.morphospace.workflow.transition_ledger_intent.v3'-or[string]$Intent.transaction_id-cne"$eventId-transition"-or[string]$Intent.event.event_id-cne$eventId-or[string]$Intent.event.summary-cne'Froze a linked in-scope candidate correction after retaining the non-passing validation attempt.'-or[string]$Intent.event.unit_id-cne[string]$candidate.unit_id-or[string]$Intent.event.project_id-cne[string]$candidate.project_id-or[string]$Intent.event.event_type-cne'state-transition'-or[int]$Intent.event.sequence-ne([int]$returned.intent.event.sequence+1)-or@($Intent.event.receipts).Count-ne1-or[string]$Intent.event.receipts[0]-cne[string]$artifact.path-or[string]$artifact.path-cne"receipts/$($candidate.freeze_id).json"-or[string]$Intent.pre.state.sha256-cne[string]$candidate.expected.state_sha256-or[string]$Intent.pre.unit.sha256-cne[string]$candidate.expected.unit_sha256-or[string]$Intent.expected.event_tail_id-cne[string]$candidate.expected.event_tail_id-or[string]$Intent.expected.events_sha256-cne[string]$candidate.expected.events_sha256-or[int64]$Intent.expected.events_length-ne[int64]$candidate.expected.events_length){throw 'Candidate revision transition is detached.'}
+    if(@($Intent.additional_projections).Count-ne2){throw 'Candidate revision authority fences are incomplete.'}
+    $fences=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach($projection in @($Intent.additional_projections)){$name=switch -CaseSensitive ([string]$projection.path){'project.spec.json'{'project_sha256'};'feature.lock.json'{'feature_lock_sha256'};default{throw 'Candidate revision contains an unknown authority fence.'}};if(-not$fences.Add([string]$projection.path)-or[string]$projection.pre_sha256-cne[string]$candidate.expected.$name-or[string]$projection.target_sha256-cne[string]$candidate.expected.$name-or(Get-MorphospaceCanonicalJsonSha256 $projection.document)-cne[string]$candidate.expected.$name){throw 'Candidate revision authority fence changes its projection.'}}
+    Assert-MorphospaceFrozenCandidateScope $candidate $targetUnit
+    if($Historical){return}
+    foreach($pair in @(@('project.spec.json','project_sha256'),@('feature.lock.json','feature_lock_sha256'))){if((Get-MorphospaceCanonicalJsonSha256 (Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace $pair[0] -RequireLeaf)))-cne[string]$candidate.expected.($pair[1])){throw 'Candidate revision live authority fence drifted.'}}
+    $featureLock=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace 'feature.lock.json' -RequireLeaf)
+    if([int]$candidate.feature_lock.revision-ne[int]$featureLock.revision){throw 'Candidate revision feature-lock revision drifted.'}
+    foreach($pair in @(@('source_composition_path','source_composition_sha256'),@('repository_map_path','repository_map_sha256'))){if((Get-MorphospaceFileSha256 (Resolve-MorphospaceWorkspacePath $workspace ([string]$candidate.expected.($pair[0])) -RequireLeaf))-cne[string]$candidate.expected.($pair[1])){throw 'Candidate revision live source binding drifted.'}}
+    # The original freeze and contiguous owner transactions authenticate this
+    # unchanged lock. Recovery may have installed the new projection already.
+    $composition=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace ([string]$candidate.source_composition.path) -RequireLeaf)
+    $frozenTransition=[pscustomobject]@{intent=$Intent;intent_path="receipts/transactions/$($Intent.transaction_id).intent.json";completion_path="receipts/transactions/$($Intent.transaction_id).completion.json"}
+    Assert-MorphospaceCandidateRepositoryClosure $workspace $candidate $targetUnit $frozenTransition $composition
+}
 function Test-MorphospaceFrozenCandidate {
     param([string]$WorkspaceRoot,[object]$Unit)
     # This applies to all units.  It is deliberately before the W-016
@@ -266,18 +376,20 @@ function Test-MorphospaceFrozenCandidate {
         Import-Module (Join-Path $PSScriptRoot 'ValidatingCandidateRematerialization.psm1') -Force
         return [bool](Test-MorphospaceRematerializedCandidate -WorkspaceRoot $workspace -Unit $Unit)
     }
-    if([string]$candidate.schema-cne'rusty.morphospace.workflow.candidate_freeze.v1'-or-not(Test-Json -Json (Get-Content -Raw $path) -SchemaFile (Join-Path $repoRoot 'schemas\candidate-freeze-v1.schema.json'))){throw 'Frozen candidate receipt is malformed.'}
+    $schema=if([string]$candidate.schema-ceq'rusty.morphospace.workflow.candidate_freeze.v3'){'candidate-freeze-v3.schema.json'}else{'candidate-freeze-v1.schema.json'}
+    if([string]$candidate.schema-cnotin@('rusty.morphospace.workflow.candidate_freeze.v1','rusty.morphospace.workflow.candidate_freeze.v3')-or-not(Test-Json -Json (Get-Content -Raw $path) -SchemaFile (Join-Path $repoRoot "schemas/$schema"))){throw 'Frozen candidate receipt is malformed.'}
     if([string]$candidate.freeze_id -cne [string]$freeze.freeze_id -or [string]$candidate.unit_id -cne [string]$Unit.unit_id){throw 'Frozen candidate receipt identity does not match its unit marker.'}
     $unitPath="iteration-units/$([string]$Unit.unit_id).json";$liveUnit=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace $unitPath -RequireLeaf)
     $project=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace 'project.spec.json' -RequireLeaf);$state=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace 'workspace.state.json' -RequireLeaf);$featureLock=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace 'feature.lock.json' -RequireLeaf)
     if([string]$candidate.project_id -cne [string]$project.project_id -or [string]$candidate.unit_id -cne [string]$liveUnit.unit_id -or [string]$state.current_unit -cne [string]$liveUnit.unit_id -or [string]$state.last_event_id -cne "$([string]$candidate.freeze_id)-recorded"){throw 'Frozen candidate identity no longer matches the live active authority.'}
-    $marker=$liveUnit.candidate_freeze;$liveUnit.PSObject.Properties.Remove('candidate_freeze')
+    $marker=$liveUnit.candidate_freeze;if([string]$candidate.schema-ceq'rusty.morphospace.workflow.candidate_freeze.v3'){$liveUnit.candidate_freeze=$candidate.predecessor.freeze}else{$liveUnit.PSObject.Properties.Remove('candidate_freeze')}
     foreach($check in @(@{e=$candidate.expected.project_sha256;a=(Get-MorphospaceCanonicalJsonSha256 $project);n='project'},@{e=$candidate.expected.unit_sha256;a=(Get-MorphospaceCanonicalJsonSha256 $liveUnit);n='unit'},@{e=$candidate.expected.feature_lock_sha256;a=(Get-MorphospaceCanonicalJsonSha256 $featureLock);n='feature lock'},@{e=$candidate.expected.source_composition_sha256;a=(Get-MorphospaceFileSha256 (Resolve-MorphospaceWorkspacePath $workspace $candidate.expected.source_composition_path -RequireLeaf));n='source composition'},@{e=$candidate.expected.repository_map_sha256;a=(Get-MorphospaceFileSha256 (Resolve-MorphospaceWorkspacePath $workspace $candidate.expected.repository_map_path -RequireLeaf));n='repository map'})){if([string]$check.e -cne [string]$check.a){throw "Frozen candidate $($check.n) drifted after freeze."}}
     if([string]$candidate.source_composition.path -cne [string]$candidate.expected.source_composition_path -or [string]$candidate.source_composition.sha256 -cne [string]$candidate.expected.source_composition_sha256){throw 'Frozen source-composition closure no longer matches its receipt CAS binding.'}
     if([int]$candidate.feature_lock.revision -ne [int]$featureLock.revision -or [string]$candidate.feature_lock.sha256 -cne [string]$candidate.expected.feature_lock_sha256){throw 'Frozen feature-lock closure no longer matches its receipt CAS binding.'}
     Assert-MorphospaceFrozenCandidateScope $candidate $liveUnit
-    $liveUnit|Add-Member -NotePropertyName candidate_freeze -NotePropertyValue $marker
+    $liveUnit|Add-Member -NotePropertyName candidate_freeze -NotePropertyValue $marker -Force
     $frozenTransition=Get-MorphospaceFrozenCandidateTransition $workspace $candidate $state $liveUnit ([string]$freeze.receipt_path)
+    if([string]$candidate.schema-ceq'rusty.morphospace.workflow.candidate_freeze.v3'){Assert-MorphospaceCandidateRevisionRecoveryBindings $workspace $frozenTransition.intent}
     Assert-MorphospaceCandidateRepositoryClosure $workspace $candidate $liveUnit $frozenTransition
     $eventLines=@(Get-Content -LiteralPath (Resolve-MorphospaceWorkspacePath $workspace 'iteration-events.jsonl' -RequireLeaf)|Where-Object{$_})
     $tail=$eventLines[-1]|ConvertFrom-Json
@@ -285,10 +397,29 @@ function Test-MorphospaceFrozenCandidate {
     return $true
 }
 function Invoke-MorphospaceFreezeCandidate {
-    [CmdletBinding()]param([string]$WorkspaceRoot,[string]$UnitId,[string]$CandidateFreeze,[string]$ExpectedCandidateFreezeSha256='',[string]$Timestamp='',[string]$OutPath,[switch]$Execute)
+    [CmdletBinding()]param([string]$WorkspaceRoot,[string]$UnitId,[string]$CandidateFreeze,[string]$ExpectedCandidateFreezeSha256='',[string]$Timestamp='',[string]$OutPath,[ValidateSet('none','after-intent','after-artifact','after-projection','after-event')][string]$FaultAfter='none',[switch]$Execute)
     $repoRoot=Split-Path $PSScriptRoot -Parent;$workspace=(Resolve-Path $WorkspaceRoot).Path;$input=(Resolve-Path $CandidateFreeze).Path
-    if(-not(Test-Json -Json (Get-Content -Raw $input) -SchemaFile (Join-Path $repoRoot 'schemas\candidate-freeze-v1.schema.json'))){throw 'Candidate freeze does not satisfy its schema.'}
+    $inputDocument=Read-MorphospaceProtocolJson $input;$isRevision=[string]$inputDocument.schema-ceq'rusty.morphospace.workflow.candidate_freeze.v3';$schema=if($isRevision){'candidate-freeze-v3.schema.json'}else{'candidate-freeze-v1.schema.json'}
+    if(-not(Test-Json -Json (Get-Content -Raw $input) -SchemaFile (Join-Path $repoRoot "schemas/$schema"))){throw 'Candidate freeze does not satisfy its schema.'}
     $candidate=Read-MorphospaceProtocolJson $input;$project=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace 'project.spec.json' -RequireLeaf);$state=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace 'workspace.state.json' -RequireLeaf);$unitPath="iteration-units/$UnitId.json";$unit=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace $unitPath -RequireLeaf);$featureLock=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace 'feature.lock.json' -RequireLeaf);$eventsPath=Resolve-MorphospaceWorkspacePath $workspace 'iteration-events.jsonl' -RequireLeaf;$events=@(Get-Content $eventsPath|Where-Object{$_}|ForEach-Object{$_|ConvertFrom-Json});$tail=$events[-1]
+    if($isRevision){
+        $revisionHash=Get-MorphospaceFileSha256 $input
+        $revisionRelative="receipts/$($candidate.freeze_id).json";$revisionEvent="$($candidate.freeze_id)-recorded";$revisionTransaction="$revisionEvent-transition"
+        $intentPath=Resolve-MorphospaceWorkspacePath $workspace "receipts/transactions/$revisionTransaction.intent.json"
+        if([IO.File]::Exists($intentPath)){
+            if($ExpectedCandidateFreezeSha256-cne$revisionHash-or[IO.Path]::GetFullPath($OutPath)-cne(Resolve-MorphospaceWorkspacePath $workspace $revisionRelative)){throw 'Candidate revision replay requires its exact request hash and output path.'}
+            $intent=Read-MorphospaceProtocolJson $intentPath
+            if(@($intent.artifacts).Count-ne1-or[string]$intent.artifacts[0].sha256-cne$revisionHash){throw 'Candidate revision replay input differs from the durable intent.'}
+            Assert-MorphospaceCandidateRevisionRecoveryBindings $workspace $intent
+            $completion=Resolve-MorphospaceWorkspacePath $workspace "receipts/transactions/$revisionTransaction.completion.json"
+            if(-not[IO.File]::Exists($completion)){
+                if(-not$Execute){throw 'Interrupted candidate revision requires executed recovery.'}
+                Complete-MorphospaceTransitionLedger -WorkspaceRoot $workspace -TransactionId $revisionTransaction -Repair -FaultAfter $FaultAfter|Out-Null
+            }
+            [void](Get-CandidateRevisionTransition $workspace $revisionEvent $UnitId)
+            return [pscustomobject][ordered]@{schema='rusty.morphospace.workflow.work_unit_automation_receipt.v2';project_id=$project.project_id;unit_id=$UnitId;action='FreezeCandidate';timestamp=[string]$intent.event.timestamp;executed=$Execute.IsPresent;transition='candidate-already-frozen';status_before='active';status_after='active';current_unit_before=$UnitId;current_unit_after=$UnitId;preservation=[ordered]@{git_mutation_performed=$false;device_mutation_performed=$false;remote_mutation_performed=$false};audit_receipt=[ordered]@{path=$revisionRelative;sha256=$revisionHash};event_id=$null}
+        }
+    }
     if([string]$candidate.project_id -cne [string]$project.project_id -or [string]$candidate.unit_id -cne $UnitId -or [string]$unit.status -cne 'active' -or [string]$state.current_unit -cne $UnitId){throw 'FreezeCandidate requires the matching active current unit.'}
     if($unit.PSObject.Properties.Name-contains'tooling_context'){
         [void](Get-MorphospaceUnitToolingContextObservation -WorkspaceRoot $workspace -UnitId $UnitId -Action FreezeCandidate -OwnerModule $MyInvocation.MyCommand.Module)
@@ -296,7 +427,8 @@ function Invoke-MorphospaceFreezeCandidate {
     [void](Test-MorphospaceInheritedCandidateMaterializationGate -WorkspaceRoot $workspace -Unit $unit)
     if(-not($unit.PSObject.Properties.Name -contains 'agent_scope_assessment')){throw 'FreezeCandidate is reserved for development-envelope admitted units.'}
     $inputHash=Get-MorphospaceFileSha256 $input;$outRelative="receipts/$([string]$candidate.freeze_id).json"
-    if($unit.PSObject.Properties.Name -contains 'candidate_freeze'){if([string]$unit.candidate_freeze.receipt_sha256 -ceq $inputHash -and [string]$unit.candidate_freeze.freeze_id -ceq [string]$candidate.freeze_id){return [pscustomobject][ordered]@{schema='rusty.morphospace.workflow.work_unit_automation_receipt.v2';project_id=$project.project_id;unit_id=$UnitId;action='FreezeCandidate';timestamp=$Timestamp;executed=$Execute.IsPresent;transition='candidate-already-frozen';status_before='active';status_after='active';current_unit_before=$UnitId;current_unit_after=$UnitId;preservation=[ordered]@{git_mutation_performed=$false;device_mutation_performed=$false;remote_mutation_performed=$false};audit_receipt=[ordered]@{path=$outRelative;sha256=$inputHash};event_id=$null}};throw 'Conflicting candidate freeze is rejected.'}
+    if($unit.PSObject.Properties.Name -contains 'candidate_freeze'){if([string]$unit.candidate_freeze.receipt_sha256 -ceq $inputHash -and [string]$unit.candidate_freeze.freeze_id -ceq [string]$candidate.freeze_id){return [pscustomobject][ordered]@{schema='rusty.morphospace.workflow.work_unit_automation_receipt.v2';project_id=$project.project_id;unit_id=$UnitId;action='FreezeCandidate';timestamp=$Timestamp;executed=$Execute.IsPresent;transition='candidate-already-frozen';status_before='active';status_after='active';current_unit_before=$UnitId;current_unit_after=$UnitId;preservation=[ordered]@{git_mutation_performed=$false;device_mutation_performed=$false;remote_mutation_performed=$false};audit_receipt=[ordered]@{path=$outRelative;sha256=$inputHash};event_id=$null}};if(-not$isRevision){throw 'Conflicting candidate freeze is rejected.'}}
+    if($isRevision){[void](Assert-MorphospaceCandidateRevisionPredecessor $workspace $candidate $unit $state)}
     $e=$candidate.expected;foreach($check in @(@{e=$e.project_sha256;a=(Get-MorphospaceCanonicalJsonSha256 $project);n='project'},@{e=$e.state_sha256;a=(Get-MorphospaceCanonicalJsonSha256 $state);n='state'},@{e=$e.unit_sha256;a=(Get-MorphospaceCanonicalJsonSha256 $unit);n='unit'},@{e=$e.feature_lock_sha256;a=(Get-MorphospaceCanonicalJsonSha256 $featureLock);n='feature lock'},@{e=$e.source_composition_sha256;a=(Get-MorphospaceFileSha256 (Resolve-MorphospaceWorkspacePath $workspace $e.source_composition_path -RequireLeaf));n='source composition'},@{e=$e.repository_map_sha256;a=(Get-MorphospaceFileSha256 (Resolve-MorphospaceWorkspacePath $workspace $e.repository_map_path -RequireLeaf));n='repository map'},@{e=$e.events_sha256;a=(Get-MorphospaceFileSha256 $eventsPath);n='ledger'})){if([string]$check.e -cne [string]$check.a){throw "FreezeCandidate stale $($check.n) preimage (expected $($check.e), actual $($check.a), state-tail $($state.last_event_id))."}}
     if([int64]$e.events_length -ne ([IO.FileInfo]$eventsPath).Length -or [string]$e.event_tail_id -cne [string]$tail.event_id){throw 'FreezeCandidate stale ledger length or tail.'}
     if([string]$candidate.source_composition.path -cne [string]$e.source_composition_path -or [string]$candidate.source_composition.sha256 -cne [string]$e.source_composition_sha256){throw 'Frozen source-composition closure must exactly restate its CAS-bound source composition.'}
@@ -305,8 +437,9 @@ function Invoke-MorphospaceFreezeCandidate {
     Assert-MorphospaceCandidateRepositoryClosure $workspace $candidate $unit
     if($ExpectedCandidateFreezeSha256 -and $ExpectedCandidateFreezeSha256 -cne $inputHash){throw 'Expected candidate-freeze hash does not match input.'};if($Execute -and -not $ExpectedCandidateFreezeSha256){throw 'Executed FreezeCandidate requires its dry-run SHA-256.'}
     $outFull=Resolve-MorphospaceWorkspacePath $workspace $outRelative;if([IO.Path]::GetFullPath($OutPath) -cne $outFull){throw "Candidate freeze output must be '$outRelative'."}
-    if(-not $Timestamp){$Timestamp=[DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffffffZ')};$eventId="$([string]$candidate.freeze_id)-recorded";$targetUnit=($unit|ConvertTo-Json -Depth 64|ConvertFrom-Json);$targetUnit|Add-Member -NotePropertyName candidate_freeze -NotePropertyValue ([ordered]@{freeze_id=$candidate.freeze_id;receipt_path=$outRelative;receipt_sha256=$inputHash});$targetState=($state|ConvertTo-Json -Depth 64|ConvertFrom-Json);$targetState.last_event_id=$eventId;$event=[ordered]@{schema='rusty.morphospace.workflow.iteration_event.v1';event_id=$eventId;sequence=[int]$tail.sequence+1;timestamp=$Timestamp;project_id=$project.project_id;unit_id=$UnitId;event_type='state-transition';summary='Froze the exact candidate closure before validation.';receipts=@($outRelative)}
-    if($Execute){Start-MorphospaceTransitionLedger -WorkspaceRoot $workspace -TransactionId "$eventId-transition" -StatePath 'workspace.state.json' -UnitPath $unitPath -EventsPath 'iteration-events.jsonl' -TargetState $targetState -TargetUnit $targetUnit -Event ([pscustomobject]$event) -ExpectedStateSha256 $e.state_sha256 -ExpectedUnitSha256 $e.unit_sha256 -ExpectedEventTailId $e.event_tail_id -ExpectedEventsSha256 $e.events_sha256 -ExpectedEventsLength $e.events_length -AdditionalProjections @([pscustomobject]@{path='feature.lock.json';expected_sha256=$e.feature_lock_sha256;document=$featureLock},[pscustomobject]@{path='project.spec.json';expected_sha256=$e.project_sha256;document=$project}) -Artifacts @([pscustomobject]@{source_path=$input;path=$outRelative;sha256=$inputHash})|Out-Null}
+    if(-not $Timestamp){$Timestamp=[DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffffffZ')};$eventId="$([string]$candidate.freeze_id)-recorded";$targetUnit=($unit|ConvertTo-Json -Depth 64|ConvertFrom-Json);$targetUnit|Add-Member -NotePropertyName candidate_freeze -NotePropertyValue ([ordered]@{freeze_id=$candidate.freeze_id;receipt_path=$outRelative;receipt_sha256=$inputHash}) -Force;$targetState=($state|ConvertTo-Json -Depth 64|ConvertFrom-Json);$targetState.last_event_id=$eventId;$event=[ordered]@{schema='rusty.morphospace.workflow.iteration_event.v1';event_id=$eventId;sequence=[int]$tail.sequence+1;timestamp=$Timestamp;project_id=$project.project_id;unit_id=$UnitId;event_type='state-transition';summary='Froze the exact candidate closure before validation.';receipts=@($outRelative)}
+    if($isRevision){$targetState.validation_checkpoint=$null;if($targetState.PSObject.Properties.Name-contains'normal_validation_selection'){$targetState.normal_validation_selection=$null};$event.summary='Froze a linked in-scope candidate correction after retaining the non-passing validation attempt.'}
+    if($Execute){Start-MorphospaceTransitionLedger -WorkspaceRoot $workspace -TransactionId "$eventId-transition" -StatePath 'workspace.state.json' -UnitPath $unitPath -EventsPath 'iteration-events.jsonl' -TargetState $targetState -TargetUnit $targetUnit -Event ([pscustomobject]$event) -ExpectedStateSha256 $e.state_sha256 -ExpectedUnitSha256 $e.unit_sha256 -ExpectedEventTailId $e.event_tail_id -ExpectedEventsSha256 $e.events_sha256 -ExpectedEventsLength $e.events_length -AdditionalProjections @([pscustomobject]@{path='feature.lock.json';expected_sha256=$e.feature_lock_sha256;document=$featureLock},[pscustomobject]@{path='project.spec.json';expected_sha256=$e.project_sha256;document=$project}) -Artifacts @([pscustomobject]@{source_path=$input;path=$outRelative;sha256=$inputHash}) -FaultAfter $FaultAfter|Out-Null}
     return [pscustomobject][ordered]@{schema='rusty.morphospace.workflow.work_unit_automation_receipt.v2';project_id=$project.project_id;unit_id=$UnitId;action='FreezeCandidate';timestamp=$Timestamp;executed=$Execute.IsPresent;transition='candidate-frozen';status_before='active';status_after='active';current_unit_before=$UnitId;current_unit_after=$UnitId;preservation=[ordered]@{git_mutation_performed=$false;device_mutation_performed=$false;remote_mutation_performed=$false};audit_receipt=[ordered]@{path=$outRelative;sha256=$inputHash};event_id=$(if($Execute){$eventId}else{$null})}
 }
-Export-ModuleMember -Function Invoke-MorphospaceFreezeCandidate,Test-MorphospaceFrozenCandidate
+Export-ModuleMember -Function Invoke-MorphospaceFreezeCandidate,Test-MorphospaceFrozenCandidate,Assert-MorphospaceCandidateRevisionRecoveryBindings

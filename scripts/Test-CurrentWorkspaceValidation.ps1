@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param()
+param([switch]$ProofMeasurementOnly)
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 Import-Module (Join-Path $PSScriptRoot 'DevelopmentUnitAdmission.psm1') -Force
@@ -20,6 +20,47 @@ function Invoke-ActualValidator([string]$OwnerRoot, [string]$Workspace, [bool]$L
     $text = (& pwsh @arguments 2>&1 | Out-String)
     return [pscustomobject]@{ exit_code=$LASTEXITCODE; text=$text }
 }
+function Add-OwnerAuthenticationCount([string]$Name,[string]$TransactionId=''){
+    $counts=$global:WefProofMeasurement017.calls
+    if(-not$counts.ContainsKey($Name)){$counts[$Name]=0};$counts[$Name]++
+    if($TransactionId){$transactions=$global:WefProofMeasurement017.transactions;if(-not$transactions.ContainsKey($TransactionId)){$transactions[$TransactionId]=0};$transactions[$TransactionId]++}
+}
+function Measure-OwnerAuthentication([string]$Name,[scriptblock]$Action){
+    # Test-only command breakpoints count the real owner calls. They never supply
+    # an authority observation and are removed even when the measured call fails.
+    if(Get-Variable WefProofMeasurement017 -Scope Global -ErrorAction SilentlyContinue){throw 'Proof measurement cannot be nested.'}
+    $global:WefProofMeasurement017=[ordered]@{calls=@{};transactions=@{}}
+    $breakpoints=@();$watch=[Diagnostics.Stopwatch]::StartNew()
+    try{
+        # Literal breakpoint actions keep the dependency closure static. The
+        # intent action reads the actual debuggee transaction parameter.
+        $actions=@{
+            'Assert-MorphospaceLedgerIntent'={
+                $frame=@(Get-PSCallStack|Where-Object FunctionName -CEQ 'Assert-MorphospaceLedgerIntent')[0]
+                $id=[string]$frame.InvocationInfo.BoundParameters['TransactionId']
+                if(-not$id){throw 'Actual intent breakpoint has no bound transaction identity.'}
+                Add-OwnerAuthenticationCount 'Assert-MorphospaceLedgerIntent' $id
+            }
+            'Assert-MorphospaceLedgerCommittedCompletion'={Add-OwnerAuthenticationCount 'Assert-MorphospaceLedgerCommittedCompletion'}
+            'Get-MorphospaceLedgerSnapshot'={Add-OwnerAuthenticationCount 'Get-MorphospaceLedgerSnapshot'}
+            'Get-MorphospaceCurrentWorkHistory'={Add-OwnerAuthenticationCount 'Get-MorphospaceCurrentWorkHistory'}
+            'Get-ActiveRetirementPlanningTransition'={Add-OwnerAuthenticationCount 'Get-ActiveRetirementPlanningTransition'}
+            'Get-ActiveRetirementRepositories'={Add-OwnerAuthenticationCount 'Get-ActiveRetirementRepositories'}
+            'Assert-ActiveRetirementPreserved'={Add-OwnerAuthenticationCount 'Assert-ActiveRetirementPreserved'}
+            'Test-MorphospaceDevelopmentUnitPreparation'={Add-OwnerAuthenticationCount 'Test-MorphospaceDevelopmentUnitPreparation'}
+        }
+        foreach($command in $actions.Keys){$breakpoints+=Set-PSBreakpoint -Command $command -Action $actions[$command]}
+        & $Action
+    }finally{
+        $watch.Stop()
+        foreach($breakpoint in $breakpoints){Remove-PSBreakpoint -Breakpoint $breakpoint}
+        $observed=$global:WefProofMeasurement017
+        Remove-Variable WefProofMeasurement017 -Scope Global
+        if($observed.calls.ContainsKey('')-or-not$observed.calls.ContainsKey('Assert-MorphospaceLedgerIntent')-or$observed.transactions.Count-eq0){throw 'Actual owner proof instrumentation did not capture named intent calls.'}
+        [ordered]@{schema='rusty.morphospace.test.owner_proof_measurement.v1';action=$Name;elapsed_ms=[math]::Round($watch.Elapsed.TotalMilliseconds,3);call_counts=$observed.calls;transaction_intent_checks=$observed.transactions;test_only_instrumentation=$true}|ConvertTo-Json -Depth 12 -Compress|Write-Host
+    }
+}
+
 function Assert-Result($Result,[bool]$Pass,[string]$Name) {
     if (($Result.exit_code -eq 0) -ne $Pass) { throw "Current workspace validation case '$Name' failed: $($Result.text)" }
     $script:passed++
@@ -34,7 +75,16 @@ try {
     foreach ($action in @('Ready','Claim')) {
         Invoke-MorphospaceWorkUnitAutomation -Action $action -WorkspaceRoot $workspace -UnitId u002 -RepoMapPath (Join-Path $workspace 'repository-map.json') -OutPath (Join-Path $workspace "receipts/$action-action.json") -Execute | Out-Null
     }
+    if($ProofMeasurementOnly){
+        Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceCurrentWorkHistory.psm1') -Force
+        $history=Measure-OwnerAuthentication 'GetCurrentWorkHistory-prepared-current' {Get-MorphospaceCurrentWorkHistory -WorkspaceRoot $workspace}
+        if(-not$history.authenticated){throw 'Measured actual current-history action failed.'}
+        return
+    }
     Assert-Result (Invoke-ActualValidator $repoRoot $workspace $true) $true 'live prepared current owner'
+    Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceCurrentWorkHistory.psm1') -Force
+    $history=Measure-OwnerAuthentication 'GetCurrentWorkHistory-prepared-current' {Get-MorphospaceCurrentWorkHistory -WorkspaceRoot $workspace}
+    if(-not$history.authenticated){throw 'Measured actual current-history action failed.'}
     $eventPath = Join-Path $workspace 'iteration-events.jsonl'
     $eventBytes = [IO.File]::ReadAllBytes($eventPath)
     try {

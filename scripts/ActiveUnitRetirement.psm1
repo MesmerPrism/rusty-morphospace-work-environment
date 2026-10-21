@@ -1,3 +1,4 @@
+$script:ActiveRetirementProofBatch=$null
 Set-StrictMode -Version 2.0
 $ErrorActionPreference='Stop'
 $script:ActiveRetirementHistoricalEventsScope=$null
@@ -138,20 +139,42 @@ function Import-ActiveRetirementDevelopmentEnvelopeProvenance {
     Restore-ActiveRetirementCallerModules
     $module
 }
+function Enter-ActiveRetirementProofBatch([string]$Workspace){
+    if($null-ne$script:ActiveRetirementProofBatch){throw 'Active retirement proof invocation cannot be reentered.'}
+    $ledger=Import-Module $script:ActiveRetirementTransitionLedgerPath -PassThru
+    Restore-ActiveRetirementCallerModules
+    $token=&$ledger {param($root)New-MorphospaceReadOnlyLedgerBatch $root} $Workspace
+    $script:ActiveRetirementProofBatch=[pscustomobject]@{workspace=$Workspace;ledger=$ledger;token=$token}
+}
+function Exit-ActiveRetirementProofBatch {
+    if($null-eq$script:ActiveRetirementProofBatch){return}
+    $scope=$script:ActiveRetirementProofBatch;$script:ActiveRetirementProofBatch=$null
+    &$scope.ledger {param($token)Close-MorphospaceReadOnlyLedgerBatch $token} $scope.token
+}
+function Test-ActiveRetirementCommittedTransition {
+    param([string]$WorkspaceRoot,[string]$TransactionId,[string]$ExpectedStatePath='',[string]$ExpectedUnitPath='',[string]$ExpectedEventsPath='')
+    $arguments=@{WorkspaceRoot=$WorkspaceRoot;TransactionId=$TransactionId;ExpectedStatePath=$ExpectedStatePath;ExpectedUnitPath=$ExpectedUnitPath;ExpectedEventsPath=$ExpectedEventsPath}
+    if($null-eq$script:ActiveRetirementProofBatch){return Test-MorphospaceCommittedTransitionLedger @arguments}
+    $scope=$script:ActiveRetirementProofBatch
+    if($scope.workspace-cne[IO.Path]::GetFullPath($WorkspaceRoot)){throw 'Active retirement proof invocation escaped its workspace.'}
+    $arguments.BatchToken=$scope.token
+    &$scope.ledger {param($arguments)Test-MorphospaceCommittedTransitionLedgerCore @arguments} $arguments
+}
 function Get-ActiveRetirementPlanningTransition([string]$Workspace,[string]$TransactionId,[switch]$HistoricalProjection){
-    if(-not$HistoricalProjection){return Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $Workspace -TransactionId $TransactionId -ExpectedEventsPath 'iteration-events.jsonl'}
-    $ledger=Get-Module MorphospaceTransitionLedger -All|Select-Object -First 1
+    if(-not$HistoricalProjection){return Test-ActiveRetirementCommittedTransition -WorkspaceRoot $Workspace -TransactionId $TransactionId -ExpectedEventsPath 'iteration-events.jsonl'}
+    $ledger=if($null-ne$script:ActiveRetirementProofBatch){$script:ActiveRetirementProofBatch.ledger}else{Get-Module MorphospaceTransitionLedger -All|Where-Object{[IO.Path]::GetFullPath([string]$_.Path)-ceq$script:ActiveRetirementTransitionLedgerPath}|Select-Object -First 1}
     if($null-eq$ledger){throw 'Active retirement planning transition-ledger verifier is unavailable.'}
-    &$ledger {param($root,$id)
+    $token=if($null-ne$script:ActiveRetirementProofBatch){if($script:ActiveRetirementProofBatch.workspace-cne[IO.Path]::GetFullPath($Workspace)){throw 'Historical retirement proof escaped its workspace.'};$script:ActiveRetirementProofBatch.token}else{''}
+    &$ledger {param($root,$id,$token)
         $intentRelative=Get-MorphospaceLedgerPath $root $id intent;$completionRelative=Get-MorphospaceLedgerPath $root $id completion;$intentAbsolute=Resolve-MorphospaceWorkspacePath $root $intentRelative -RequireLeaf;$completionAbsolute=Resolve-MorphospaceWorkspacePath $root $completionRelative -RequireLeaf
-        $intent=Read-MorphospaceLedgerJson $intentAbsolute;Assert-MorphospaceLedgerIntent $intent $id;Assert-MorphospaceLedgerArtifactNamespace $root $id $intent;$completion=Read-MorphospaceLedgerJson $completionAbsolute
+        $intent=Read-MorphospaceCheckedLedgerIntent ([IO.Path]::GetFullPath($root)) $id $intentAbsolute $token;Assert-MorphospaceLedgerArtifactNamespace $root $id $intent;$completion=Read-MorphospaceLedgerJson $completionAbsolute
         Assert-MorphospaceExactPropertySet $completion @('schema','transaction_id','completed_at','intent','state_sha256','unit_sha256','event_id','status') @() 'Active retirement historical planning completion';Assert-MorphospaceExactPropertySet $completion.intent @('role','path','schema','sha256') @() 'Active retirement historical planning completion intent'
         if([string]$completion.schema-cne'rusty.morphospace.workflow.transition_ledger_completion.v1'-or[string]$completion.transaction_id-cne$id-or[string]$completion.status-cne'committed'-or[string]$completion.intent.role-cne'transition-ledger-intent'-or[string]$completion.intent.path-cne$intentRelative-or[string]$completion.intent.schema-cne[string]$intent.schema-or[string]$completion.intent.sha256-cne(Get-MorphospaceFileSha256 $intentAbsolute)-or[string]$completion.state_sha256-cne[string]$intent.target.state.sha256-or[string]$completion.unit_sha256-cne[string]$intent.target.unit.sha256-or[string]$completion.event_id-cne[string]$intent.event.event_id){throw 'Active retirement historical planning completion is detached.'}
         if((Test-MorphospaceStrictUtcTimestamp ([string]$completion.completed_at))-lt(Test-MorphospaceStrictUtcTimestamp ([string]$intent.created_at))){throw 'Active retirement historical planning completion timestamp is invalid.'}
         [void](Assert-MorphospaceLedgerEventPlacement (Resolve-MorphospaceWorkspacePath $root ([string]$intent.events.path) -RequireLeaf) $intent -AllowHistorical -RequirePresent)
         foreach($artifact in @($intent.artifacts)){$target=Resolve-MorphospaceWorkspacePath $root ([string]$artifact.path) -RequireLeaf;if((Get-MorphospaceFileSha256 $target)-cne[string]$artifact.sha256){throw 'Active retirement historical planning artifact differs from its intent.'}}
         [pscustomobject]@{intent=$intent;completion=$completion}
-    } $Workspace $TransactionId
+    } $Workspace $TransactionId $token
 }
 function Test-ActiveRetirementRecoveryPreparationProvenance([string]$Workspace,[object]$Admission,[object]$RecoveryIntent,[Management.Automation.PSModuleInfo]$ProvenanceModule){
     $temporary=Join-Path ([IO.Path]::GetTempPath()) ('morphospace-retirement-provenance-'+[guid]::NewGuid().ToString('N'))
@@ -175,7 +198,7 @@ function Assert-ActiveRetirementPlanningContinuationEvents {
     param([object[]]$Events,[int]$AfterSequence,[string]$UnitId)
     for($index=0;$index-lt$Events.Count;$index++){
         $event=$Events[$index]
-        if([int]$event.sequence-ne($AfterSequence+$index+1)-or[string]$event.unit_id-cne$UnitId-or[string]$event.event_id-cnotmatch'^[a-z0-9][a-z0-9-]{1,127}-(?:recorded|tooling-context-upgraded|validating-[0-9]{4,}|validation-fail-[0-9]{4,}|resumed-[0-9]{4,}|blocker-resolved-[0-9]{4,})$'){throw 'Active retirement planning continuation is not a contiguous same-unit authenticated transition suffix.'}
+        if([int]$event.sequence-ne($AfterSequence+$index+1)-or[string]$event.unit_id-cne$UnitId-or[string]$event.event_id-cnotmatch'^[a-z0-9][a-z0-9-]{1,127}-(?:recorded|tooling-context-upgraded|validating-[0-9]{4,}|validation-fail-[0-9]{4,}|validation-(?:fail|partial|blocked)-return-[0-9]{4,}|resumed-[0-9]{4,}|blocker-resolved-[0-9]{4,})$'){throw 'Active retirement planning continuation is not a contiguous same-unit authenticated transition suffix.'}
     }
 }
 function Assert-ActiveRetirementImmutableNonpassReceipt {
@@ -260,6 +283,11 @@ function Assert-ActiveRetirementRetainedLifecycle {
             Set-ActiveRetirementInstructionRepositoryProjection $state $unit $receipt -HistoricalObservation:$SupersessionLineage
         }
         $unit=Copy-ActiveRetirementValue $targetUnit
+    }elseif(@($intent.artifacts|Where-Object{[string](ConvertFrom-MorphospaceProtocolJsonBytes ([Convert]::FromBase64String([string]$_.bytes_base64))).schema-ceq'rusty.morphospace.workflow.candidate_freeze.v3'}).Count-eq1){
+        $revisionOwner=Import-Module (Join-Path $PSScriptRoot 'CandidateFreeze.psm1') -PassThru
+        &$revisionOwner {param($w,$i) Assert-MorphospaceCandidateRevisionRecoveryBindings $w $i -Historical} $Workspace $intent
+        $unit=Copy-ActiveRetirementValue $targetUnit;$state.validation_checkpoint=$null
+        if($state.PSObject.Properties.Name-ccontains'normal_validation_selection'){$state.normal_validation_selection=$null}
     }elseif($freeze.Count-eq1){
         if(@($intent.artifacts).Count-ne1-or[string]$unit.status-cne'active'-or[string]$state.current_unit-cne$unitId-or$unit.PSObject.Properties.Name-ccontains'candidate_freeze'){throw 'Active retirement Freeze requires an unfrozen active owner.'}
         $binding=$freeze[0];$receipt=ConvertFrom-MorphospaceProtocolJsonBytes ([Convert]::FromBase64String([string]$binding.bytes_base64))
@@ -270,6 +298,19 @@ function Assert-ActiveRetirementRetainedLifecycle {
         $unit|Add-Member -NotePropertyName candidate_freeze -NotePropertyValue $pointer
     }elseif([string]$Event.event_id-cmatch('^'+[regex]::Escape($unitId)+'-validating-[0-9]{4,}$')){
         if([string]$unit.status-cne'active'-or[string]$state.current_unit-cne$unitId-or$unit.PSObject.Properties.Name-cnotcontains'candidate_freeze'-or@($intent.artifacts).Count-ne0-or@($Event.receipts).Count-ne0-or[string]$Event.summary-cne'Entered validation with a deterministic command, instruction, graph, and device-impact plan.'){throw 'Active retirement BeginValidation is not the exact frozen active transition.'};$unit.status='validating'
+    }elseif([string]$Event.event_id-cmatch('^'+[regex]::Escape($unitId)+'-validation-(fail|partial|blocked)-return-[0-9]{4,}$')){
+        $result=$Matches[1]
+        $workMode=if($unit.PSObject.Properties.Name-ccontains'work_mode'){[string]$unit.work_mode}else{'feature'}
+        if($workMode-cne'feature'-or$unit.PSObject.Properties.Name-cnotcontains'candidate_freeze'-or([string]$unit.project_id-ceq'morphospace-platform-iteration'-and$unitId-ceq'wf-005')-or($unit.PSObject.Properties.Name-ccontains'tags'-and@($unit.tags|Where-Object{[string]$_-eq'receipt-security'}).Count-ne0)){throw 'Active retirement ReturnToActive is not its supported frozen feature producer.'}
+        if([string]$unit.status-cne'validating'-or[string]$state.current_unit-cne$unitId-or[string]$Event.event_type-cne'validation'-or[string]$Event.summary-cne'Retained a non-passing validation attempt and returned the same feature unit to active for an in-scope correction.'-or@($Event.receipts).Count-ne2){throw 'Active retirement ReturnToActive requires its transaction-owned retained attempt.'}
+        $relative=[string]$Event.receipts[0];$receiptPath=Resolve-MorphospaceWorkspacePath $Workspace $relative -RequireLeaf;$receipt=Read-MorphospaceProtocolJson $receiptPath
+        Assert-ActiveRetirementSchema $receipt 'validation-receipt.schema.json'
+        if([string]$receipt.unit_id-cne$unitId-or[string]$receipt.project_id-cne[string]$Event.project_id-or[string]$receipt.result-cne$result){throw 'Active retirement ReturnToActive receipt is detached.'}
+        if(@($intent.artifacts).Count-ne1-or[string]$intent.artifacts[0].path-cne[string]$Event.receipts[1]-or[string]$Event.receipts[1]-cne"receipts/$($Event.event_id)-retained-validation.json"-or[string]$intent.artifacts[0].sha256-cne(Get-MorphospaceFileSha256 $receiptPath)){throw 'Active retirement retained ReturnToActive bytes are detached.'}
+        $ids=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        foreach($artifact in @($receipt.artifacts)){$path=if([IO.Path]::IsPathFullyQualified([string]$artifact.path)){[string]$artifact.path}else{Join-Path (Split-Path $receiptPath -Parent) ([string]$artifact.path)};if(-not$ids.Add([string]$artifact.artifact_id)-or(Get-MorphospaceFileSha256 $path)-cne([string]$artifact.sha256).ToLowerInvariant()){throw 'Active retirement retained ReturnToActive evidence bytes drifted.'}}
+        foreach($evidence in @($receipt.criteria)+@($receipt.gates)+@(if($null-ne$receipt.device_validation){$receipt.device_validation})){foreach($reference in @($evidence.evidence_refs)){if(-not$ids.Contains([string]$reference)){throw 'Active retirement retained ReturnToActive references unknown evidence.'}}}
+        $unit.status='active';$state.validation_checkpoint=[pscustomobject]@{tier=[string]$receipt.tier;receipt=$relative;result=$result}
     }elseif([string]$Event.event_id-cmatch('^'+[regex]::Escape($unitId)+'-validation-fail-[0-9]{4,}$')){
         if([string]$unit.status-cne'validating'-or[string]$state.current_unit-cne$unitId-or@($intent.artifacts).Count-ne0-or@($Event.receipts).Count-ne1-or[string]$Event.event_type-cne'blocker'-or[string]$Event.summary-cne'Recorded non-passing validation and blocked further acceptance.'){throw 'Active retirement nonpass is not the exact validating-to-blocked transition.'}
         $relative=[string]$Event.receipts[0];Assert-ActiveRetirementImmutableNonpassReceipt $Workspace $relative;$receipt=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $Workspace $relative -RequireLeaf);Assert-ActiveRetirementSchema $receipt 'validation-receipt.schema.json'
@@ -289,7 +330,7 @@ function Assert-ActiveRetirementRetainedLifecycle {
         $state.blockers=@($state.blockers|Where-Object blocker_id -CNE $receipt.blocker.blocker_id);Assert-ActiveRetirementEqual @($state.blockers|ForEach-Object blocker_id|Sort-Object) @($receipt.preserve_blocker_ids|Sort-Object) 'resolution preserved blockers'
         foreach($evidence in @($receipt.evidence)){if((Get-MorphospaceFileSha256 (Resolve-MorphospaceWorkspacePath $Workspace ([string]$evidence.path) -RequireLeaf))-cne[string]$evidence.sha256){throw 'Active retirement scope resolution evidence drifted.'}}
     }else{throw 'Active retirement retained lifecycle action is unsupported.'}
-    if([string]$Event.event_id-cnotmatch'-validation-fail-'-and[string]$Event.event_type-cne'state-transition'){throw 'Active retirement retained lifecycle event type is invalid.'}
+    if([string]$Event.event_id-cnotmatch'-validation-(?:fail-[0-9]+|(?:fail|partial|blocked)-return-[0-9]+)$'-and[string]$Event.event_type-cne'state-transition'){throw 'Active retirement retained lifecycle event type is invalid.'}
     $state.last_event_id=[string]$Event.event_id
     if($SupersessionLineage){
         # Reuse the v2 reader's narrow producer-derived observation projection.
@@ -902,7 +943,9 @@ function Test-MorphospaceHistoricalActiveUnitRetirement {
     # reads and hashes live raw bytes; all transaction/provenance guards remain live.
     if($null-ne$script:ActiveRetirementHistoricalEventsScope){throw 'Historical retirement event authentication cannot be reentered.'}
     $script:ActiveRetirementHistoricalEventsScope=[pscustomobject]@{workspace=$workspace.TrimEnd('\','/');observation=$null;schema_hashes=$null}
+    $ownsProofBatch=$null-eq$script:ActiveRetirementProofBatch
     try {
+    if($ownsProofBatch){Enter-ActiveRetirementProofBatch $workspace}
     if([string]$ExpectedEvent.event_id-cnotmatch'-active-retired$'-or@($ExpectedEvent.receipts).Count-ne2){throw 'Historical active retirement event identity is invalid.'}
     $retirementId=[string]$ExpectedEvent.event_id-creplace'-active-retired$',''
     $requestPath="receipts/$retirementId-request.json"
@@ -915,7 +958,7 @@ function Test-MorphospaceHistoricalActiveUnitRetirement {
     $sha=Get-MorphospaceFileSha256 $reference.absolute
     if($sha-cne[string]$receipt.request.sha256){throw 'Historical active retirement request bytes are damaged.'}
     $id="$($ExpectedEvent.event_id)-transition"
-    $proof=Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $workspace -TransactionId $id -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath ([string]$request.old_unit.path) -ExpectedEventsPath 'iteration-events.jsonl'
+    $proof=Test-ActiveRetirementCommittedTransition -WorkspaceRoot $workspace -TransactionId $id -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath ([string]$request.old_unit.path) -ExpectedEventsPath 'iteration-events.jsonl'
     if(Test-ActiveRetirementSupersessionRequest $request){
         $completionPath=Resolve-MorphospaceWorkspacePath $workspace "receipts/transactions/$id.completion.json" -RequireLeaf
         if((Get-MorphospaceFileSha256 $completionPath)-cne(Get-ActiveRetirementCanonicalRawSha256 $proof.completion)){throw 'Historical supersession retirement completion bytes differ from canonical producer framing.'}
@@ -935,7 +978,7 @@ function Test-MorphospaceHistoricalActiveUnitRetirement {
     # Later envelope/source checkpoints may evolve; historical authentication never compares their live preimages.
     $null=Get-ActiveRetirementEvents $workspace
     [pscustomobject]@{intent=$proof.intent;completion=$proof.completion;receipt=$receipt;request=$request;transaction_id=$id}
-    }finally{$script:ActiveRetirementHistoricalEventsScope=$null}
+    }finally{try{if($ownsProofBatch){Exit-ActiveRetirementProofBatch}}finally{$script:ActiveRetirementHistoricalEventsScope=$null}}
 }
 function Invoke-MorphospaceRetireActive {
     [CmdletBinding()]param([Parameter(Mandatory)][string]$WorkspaceRoot,[Parameter(Mandatory)][string]$UnitId,[Parameter(Mandatory)][string]$RepoMapPath,[Parameter(Mandatory)][string]$ActiveUnitRetirement,[string]$ExpectedActiveUnitRetirementSha256='',[string]$Timestamp='',[Parameter(Mandatory)][string]$OutPath,[switch]$Execute,[ValidateSet('none','after-intent','after-artifact','after-projection','after-event')][string]$FaultAfter='none')
@@ -950,7 +993,10 @@ function Invoke-MorphospaceRetireActive {
     $eventId="$($request.retirement_id)-active-retired";$id="$eventId-transition"
     $intentPath=Resolve-MorphospaceWorkspacePath $workspace "receipts/transactions/$id.intent.json";$completionPath=Resolve-MorphospaceWorkspacePath $workspace "receipts/transactions/$id.completion.json"
     $mutex=Enter-MorphospaceWorkspaceMutex $workspace
+    $ownsProofBatch=$false
     try{
+        Enter-ActiveRetirementProofBatch $workspace
+        $ownsProofBatch=$true
         if([IO.File]::Exists($intentPath)){
             $intent=Read-MorphospaceProtocolJson $intentPath;$receipt=Assert-ActiveRetirementIntent $workspace $intent $request $requestRef.path $sha $out.path
             if(-not[IO.File]::Exists($completionPath)){
@@ -968,6 +1014,8 @@ function Invoke-MorphospaceRetireActive {
                     }
                 }
                 if(-not$Execute){throw 'Active retirement has an interrupted transaction; exact Execute is required to resume.'}
+                # No proof or read handle crosses the mutation boundary.
+                Exit-ActiveRetirementProofBatch
                 Complete-MorphospaceTransitionLedger -WorkspaceRoot $workspace -TransactionId $id -Repair -FaultAfter $FaultAfter|Out-Null
             }
             [void](Test-MorphospaceHistoricalActiveUnitRetirement -WorkspaceRoot $workspace -ExpectedEvent $intent.event)
@@ -1016,9 +1064,12 @@ function Invoke-MorphospaceRetireActive {
         # Reobserve non-ledger guards while holding the same workspace mutex immediately before publishing intent.
         [void](Assert-ActiveRetirementPreserved $workspace $request $RepoMapPath)
         if((Get-MorphospaceFileSha256 $inputPath)-cne$sha){throw 'Active retirement request bytes drifted before intent.'}
+        # Source/CAS pre-intent checks above remain fresh; dispose all shared
+        # immutable proof before mutation, then authenticate the new history anew.
+        Exit-ActiveRetirementProofBatch
         Start-MorphospaceTransitionLedger -WorkspaceRoot $workspace -TransactionId $id -StatePath 'workspace.state.json' -UnitPath ([string]$request.old_unit.path) -EventsPath 'iteration-events.jsonl' -TargetState $target -TargetUnit $unit -Event $event -ExpectedPreStateSha256 ([string]$request.expected.state_canonical_sha256) -ExpectedPreStateRawSha256 ([string]$request.expected.state_raw_sha256) -ExpectedPreUnitSha256 ([string]$request.old_unit.canonical_sha256) -ExpectedPreUnitRawSha256 ([string]$request.old_unit.raw_sha256) -ExpectedEventTailId ([string]$request.expected.event_tail_id) -ExpectedEventsSha256 ([string]$request.expected.events_sha256) -ExpectedEventsLength ([long]$request.expected.events_length) -AdditionalProjections @([pscustomobject]@{path='feature.lock.json';expected_sha256=[string]$request.expected.feature_lock_canonical_sha256;expected_raw_sha256=[string]$request.expected.feature_lock_raw_sha256;document=$feature},[pscustomobject]@{path='project.spec.json';expected_sha256=[string]$request.expected.project_canonical_sha256;expected_raw_sha256=[string]$request.expected.project_raw_sha256;document=$project}) -Artifacts $artifacts -FaultAfter $FaultAfter|Out-Null
         [void](Test-MorphospaceHistoricalActiveUnitRetirement -WorkspaceRoot $workspace -ExpectedEvent $event)
         return New-ActiveRetirementResult $request $out.path (Get-MorphospaceFileSha256 $out.absolute) $Timestamp $true
-    }finally{try{Restore-ActiveRetirementCallerModules}finally{Exit-MorphospaceWorkspaceMutex $mutex}}
+    }finally{try{if($ownsProofBatch){Exit-ActiveRetirementProofBatch}}finally{try{Restore-ActiveRetirementCallerModules}finally{Exit-MorphospaceWorkspaceMutex $mutex}}}
 }
 Export-ModuleMember -Function Invoke-MorphospaceRetireActive,Test-MorphospaceHistoricalActiveUnitRetirement

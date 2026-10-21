@@ -615,6 +615,13 @@ function Test-ReadOnlyCommittedSnapshot {
         }
         $batchCases=& $transitionModule {
             param($fixture)
+            $script:originalIntentAssert=(Get-Item Function:Assert-MorphospaceLedgerIntent).ScriptBlock
+            $script:intentChecks=0
+            Set-Item Function:script:Assert-MorphospaceLedgerIntent {
+                param([object]$Intent,[string]$TransactionId)
+                $script:intentChecks++
+                & $script:originalIntentAssert @PSBoundParameters
+            }
             $script:originalReader=(Get-Item Function:Read-MorphospaceLedgerEvents).ScriptBlock
             $script:originalObservationAssert=(Get-Item Function:Assert-MorphospaceReadOnlyLedgerObservation).ScriptBlock
             $script:parseCount=0
@@ -629,6 +636,33 @@ function Test-ReadOnlyCommittedSnapshot {
                 $first=Test-MorphospaceCommittedTransitionLedgerCore -WorkspaceRoot $fixture -TransactionId observed-1-transition -BatchToken $token
                 $second=Test-MorphospaceCommittedTransitionLedgerCore -WorkspaceRoot $fixture -TransactionId observed-2-transition -BatchToken $token
                 if($first.status-cne'committed'-or$second.event_tail_id-cne'observed-2'-or$script:parseCount-ne1){throw 'Private batch did not validate both transactions with one ledger parse.'};$cases++
+                # Real writer-owned transactions must share only their immutable
+                # intent semantics. Completion/artifact/tail proofs stay live.
+                $again=Test-MorphospaceCommittedTransitionLedgerCore -WorkspaceRoot $fixture -TransactionId observed-1-transition -BatchToken $token
+                if($script:intentChecks-ne2){throw "Repeated immutable intent proof was not shared: $($script:intentChecks) checks for two transactions."};$cases++
+                $denied=$false
+                try{Read-MorphospaceCheckedLedgerIntent ([IO.Path]::GetFullPath($fixture)) 'wrong-requested-id' (Join-Path $fixture 'receipts/transactions/observed-1-transition.intent.json') $token|Out-Null}catch{$denied=$true}
+                if(-not$denied){throw 'Warm immutable proof accepted a different requested transaction identity.'};$cases++
+                $first.intent.event.summary='mutated returned DTO'
+                $again=Test-MorphospaceCommittedTransitionLedgerCore -WorkspaceRoot $fixture -TransactionId observed-1-transition -BatchToken $token
+                if($again.intent.event.summary-ceq'mutated returned DTO'){throw 'Shared proof trusted a caller-mutated returned intent.'};$cases++
+                $nested=New-MorphospaceReadOnlyLedgerBatch $fixture
+                try{
+                    $null=Test-MorphospaceCommittedTransitionLedgerCore -WorkspaceRoot $fixture -TransactionId observed-1-transition -BatchToken $nested
+                    if($script:intentChecks-ne2){throw 'Same invocation nested batch repeated immutable proof.'};$cases++
+                }finally{Close-MorphospaceReadOnlyLedgerBatch $nested}
+                foreach($damage in @('artifact','projection','intent')){
+                    $path=switch($damage){artifact{Join-Path $fixture 'receipts/observed.bin'}projection{Join-Path $fixture 'workspace.state.json'}intent{Join-Path $fixture 'receipts/transactions/observed-1-transition.intent.json'}}
+                    $bytes=[IO.File]::ReadAllBytes($path)
+                    try{
+                        $denied=$false
+                        try{[IO.File]::WriteAllText($path,'damaged');Test-MorphospaceCommittedTransitionLedgerCore -WorkspaceRoot $fixture -TransactionId $(if($damage-ceq'projection'){'observed-2-transition'}else{'observed-1-transition'}) -BatchToken $token|Out-Null}catch{$denied=$true}
+                        if(-not$denied){throw "Shared intent proof concealed changed $damage bytes."};$cases++
+                    }finally{if([IO.File]::ReadAllBytes($path).Length-ne$bytes.Length-or[Convert]::ToHexString([IO.File]::ReadAllBytes($path))-cne[Convert]::ToHexString($bytes)){[IO.File]::WriteAllBytes($path,$bytes)}}
+                }
+                $beforeStandalone=$script:intentChecks
+                $null=Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $fixture -TransactionId observed-1-transition
+                if($script:intentChecks-ne($beforeStandalone+1)){throw 'Standalone validator trusted an active private batch.'};$cases++
                 foreach($path in @($script:readOnlyLedgerBatches[$token].observation.path)+@($script:readOnlyLedgerBatches[$token].observation.policy.path)){
                     $denied=$false
                     try{$writer=[IO.File]::Open($path,'Open','Write','ReadWrite');$writer.Dispose()}catch [IO.IOException]{$denied=$true}
@@ -700,6 +734,7 @@ function Test-ReadOnlyCommittedSnapshot {
     }finally{
         & $transitionModule {
             if($script:originalReader){Set-Item Function:script:Read-MorphospaceLedgerEvents $script:originalReader}
+            if($script:originalIntentAssert){Set-Item Function:script:Assert-MorphospaceLedgerIntent $script:originalIntentAssert}
         }
         if([IO.Directory]::Exists($fixture)){[IO.Directory]::Delete($fixture,$true)}
     }

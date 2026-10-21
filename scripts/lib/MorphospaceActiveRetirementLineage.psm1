@@ -58,7 +58,7 @@ function Assert-RetirementLineageSource {
 }
 function Assert-RetirementLineageFreezeSource {
  param([string]$Workspace,[object]$Intent,[object]$Unit)
- $freezes=@(foreach($schema in @('rusty.morphospace.workflow.candidate_freeze.v1','rusty.morphospace.workflow.candidate_freeze.v2')){$artifact=Get-RetirementLineageArtifact $Intent $schema;if($null-ne$artifact){$artifact}})
+ $freezes=@(foreach($schema in @('rusty.morphospace.workflow.candidate_freeze.v1','rusty.morphospace.workflow.candidate_freeze.v2','rusty.morphospace.workflow.candidate_freeze.v3')){$artifact=Get-RetirementLineageArtifact $Intent $schema;if($null-ne$artifact){$artifact}})
  if($freezes.Count-eq0){return};if($freezes.Count-ne1){throw 'Active retirement lineage Freeze source receipt is ambiguous.'}
  # The source at this historical Freeze can differ from the eventual endpoint.
  # Unlike a fresh Supersede input, Freeze actually captured its raw-file hash.
@@ -223,7 +223,10 @@ function Get-MorphospaceActiveRetirementSupersessionLineage {
     elseif([string]$event.event_id-cmatch('^'+[regex]::Escape([string]$unit.unit_id)+'-validation-(fail|partial|blocked)-return-[0-9]{4,}$')){
      Assert-RetirementLineageNoAuthorityProjection $intent 'ReturnToActive'
      $result=$Matches[1];$state=Copy-RetirementLineageValue $previous.target.state.document;$expectedUnit=Copy-RetirementLineageValue $unit
-     if([string]$unit.status-cne'validating'-or[string]$state.current_unit-cne[string]$unit.unit_id-or[string]$event.event_type-cne'validation'-or@($event.receipts).Count-ne1-or@($intent.artifacts).Count-ne0-or[string]$event.summary-cne'Retained a non-passing validation attempt and returned the same feature unit to active for an in-scope correction.'){throw 'Active retirement lineage ReturnToActive is not the exact owner action.'}
+     if([string]$unit.status-cne'validating'-or[string]$state.current_unit-cne[string]$unit.unit_id-or[string]$event.event_type-cne'validation'-or@($event.receipts).Count-cnotin@(1,2)-or[string]$event.summary-cne'Retained a non-passing validation attempt and returned the same feature unit to active for an in-scope correction.'){throw 'Active retirement lineage ReturnToActive is not the exact owner action.'}
+     if(@($event.receipts).Count-eq2){
+      if(@($intent.artifacts).Count-ne1-or[string]$intent.artifacts[0].path-cne[string]$event.receipts[1]-or[string]$event.receipts[1]-cne"receipts/$($event.event_id)-retained-validation.json"-or[string]$intent.artifacts[0].sha256-cne(Get-MorphospaceFileSha256 (Resolve-MorphospaceWorkspacePath $workspace ([string]$event.receipts[0]) -RequireLeaf))){throw 'Active retirement lineage retained ReturnToActive bytes are detached.'}
+     }elseif(@($intent.artifacts).Count-ne0){throw 'Active retirement lineage historical ReturnToActive has unexpected artifacts.'}
      $workMode=if($unit.PSObject.Properties.Name-ccontains'work_mode'){[string]$unit.work_mode}else{'feature'}
      if($workMode-cne'feature'-or([string]$unit.project_id-ceq'morphospace-platform-iteration'-and[string]$unit.unit_id-ceq'wf-005')-or($unit.PSObject.Properties.Name-ccontains'tags'-and@($unit.tags|Where-Object{[string]$_-eq'receipt-security'}).Count-ne0)){throw 'Active retirement lineage ReturnToActive is not the supported feature/manual-receipt producer.'}
      $relative=ConvertTo-MorphospaceProtocolRelativePath ([string]$event.receipts[0]);$receiptPath=Resolve-MorphospaceWorkspacePath $workspace $relative -RequireLeaf

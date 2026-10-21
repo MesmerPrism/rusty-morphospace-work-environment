@@ -1992,6 +1992,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
         $null -ne $state.normal_validation_selection
     ) { $state.normal_validation_selection } else { $null }
     $releaseTerminalValidationSelection = $false
+    $retainedValidationArtifact = $null
     $terminalSelectionReleaseProof = $null
     $terminalSelectionReleaseProofReference = ''
     Assert-MorphospaceReadyTerminalReleaseSelectorBinding -Route $terminalReleaseRoute -UnitId $UnitId -Selection $existingValidationSelection
@@ -2600,6 +2601,17 @@ function Invoke-MorphospaceWorkUnitAutomation {
                 }
                 $unit.status = 'active'
                 $event = New-MorphospaceEvent -State $state -Events $events -UnitId $UnitId -ActionSlug "validation-$ValidationResult-return" -Timestamp $Timestamp -EventType "validation" -Summary "Retained a non-passing validation attempt and returned the same feature unit to active for an in-scope correction." -Receipts @($ValidationReceipt)
+                if ($unit.PSObject.Properties.Name -contains 'candidate_freeze') {
+                    # Preserve the exact consumed attempt in the transaction. A
+                    # later correction cannot rebind an edited receipt path.
+                    $retainedValidationRelative = "receipts/$([string]$event.event_id)-retained-validation.json"
+                    $event.receipts = @($ValidationReceipt, $retainedValidationRelative)
+                    $retainedValidationArtifact = [pscustomobject]@{
+                        source_path = $validatedReceiptPath
+                        path = $retainedValidationRelative
+                        sha256 = Get-MorphospaceFileSha256 $validatedReceiptPath
+                    }
+                }
             }
         }
         "PreflightValidation" {
@@ -3024,6 +3036,9 @@ function Invoke-MorphospaceWorkUnitAutomation {
     }
     $result = $null
     $transitionArtifacts = @()
+    if ($Execute -and $Action -ceq 'ReturnToActive' -and $null -ne $retainedValidationArtifact) {
+        $transitionArtifacts = @($retainedValidationArtifact)
+    }
     $transitionOwnsOutPath = $false
     if ($Execute -and $event) {
         $state.last_event_id = [string]$event.event_id
