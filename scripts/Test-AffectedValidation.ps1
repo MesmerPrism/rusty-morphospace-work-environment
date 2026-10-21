@@ -1246,7 +1246,7 @@ function Assert-AffectedTrackedFileAnalysisIndexStable([object]$Index) {
     $observed = Get-AffectedOwnerFileSha256 $Index.absolute_path
     if ($observed -cne [string]$Index.source_sha256) { throw "Owner import graph source bytes changed during construction: $($Index.importer)" }
 }
-function Assert-AffectedRetirementDeclarationLayout([object]$Resolution,[string[]]$Paths) {
+function Assert-AffectedRetirementDeclarationLayout([object]$Resolution,[string[]]$Paths,[switch]$ProofBatchLayout) {
     $importers = @('scripts/ActiveUnitRetirement.psm1','scripts/lib/MorphospacePlanningLifecycleProjection.psm1')
     $actual = @($Resolution.used_declarations | Where-Object { [string]$_.importer -cin $importers } | ForEach-Object { "$([string]$_.importer)|$([string]$_.variable)|$([int]$_.count)|$(@($_.target_paths) -join ',')" })
     $lineageLayout = $Paths -ccontains 'scripts/lib/MorphospaceActiveRetirementLineage.psm1'
@@ -1263,6 +1263,10 @@ function Assert-AffectedRetirementDeclarationLayout([object]$Resolution,[string[
     if ($Paths -ccontains 'scripts/lib/MorphospacePlanningLifecycleProjection.psm1') {
         $expected += @('scripts/lib/MorphospacePlanningLifecycleProjection.psm1|amendmentModule|1|scripts/ActiveWriteScopeAmendment.psm1','scripts/lib/MorphospacePlanningLifecycleProjection.psm1|pendingExtensionModule|2|scripts/ActiveDevelopmentEnvelopeExtension.psm1')
     } else { $expected += 'scripts/ActiveUnitRetirement.psm1|amendmentModule|1|scripts/ActiveWriteScopeAmendment.psm1' }
+    if ($ProofBatchLayout) {
+        Assert-True ($lineageLayout -and -not $sharedLayout -and $Paths -ccontains 'scripts/lib/MorphospaceTransitionLedger.psm1') 'Retirement-dependent consumer did not consume the exact closed retirement/shared-helper module-object declarations.'
+        $expected += 'scripts/ActiveUnitRetirement.psm1|scope|2|scripts/lib/MorphospaceTransitionLedger.psm1'
+    }
     [Array]::Sort($actual,[StringComparer]::Ordinal); [Array]::Sort($expected,[StringComparer]::Ordinal)
     Assert-True (($actual -join ';') -ceq ($expected -join ';')) 'Retirement-dependent consumer did not consume the exact closed retirement/shared-helper module-object declarations.'
 }
@@ -2144,7 +2148,7 @@ $checks = @(
     }
     return $audit
 }
-function Assert-AffectedRetirementDependentClosures([object[]]$Closures) {
+function Assert-AffectedRetirementDependentClosures([object[]]$Closures,[switch]$ProofBatchLayout) {
     $ids=@('protocol-foundation','validating-candidate-rematerialization')
     Assert-True ($Closures.Count -eq $ids.Count) 'Retirement-dependent consumer corpus is not the exact closed pair.'
     foreach($id in $ids){
@@ -2153,7 +2157,7 @@ function Assert-AffectedRetirementDependentClosures([object[]]$Closures) {
         $closure=$match[0]
         Assert-True ([string]$closure.resolution.mode -ceq 'exact' -and @($closure.resolution.fallback_reasons).Count -eq 0) "Retirement-dependent consumer '$id' did not retain exact closure without fallback."
         foreach($path in @('scripts/ActiveUnitRetirement.psm1','scripts/DevelopmentEnvelopeProvenance.psm1','scripts/ActiveWriteScopeAmendment.psm1','scripts/lib/MorphospaceTransitionLedger.psm1')){Assert-True ($closure.paths -ccontains $path) "Retirement-dependent consumer '$id' omitted '$path'."}
-        Assert-AffectedRetirementDeclarationLayout -Resolution $closure.resolution -Paths $closure.paths
+        Assert-AffectedRetirementDeclarationLayout -Resolution $closure.resolution -Paths $closure.paths -ProofBatchLayout:$ProofBatchLayout
         if($id -ceq 'validating-candidate-rematerialization'){
             $rows=@($closure.resolution.used_declarations|Where-Object{[string]$_.importer -ceq 'scripts/Test-ValidatingCandidateRematerialization.ps1' -and $_.PSObject.Properties.Name -ccontains 'target_paths'})
             $identities=@($rows|ForEach-Object{"$([string]$_.importer)|$([string]$_.variable)|$([int]$_.count)|$(@($_.target_paths)-join ',')"})
@@ -2174,6 +2178,9 @@ function Invoke-AffectedRetirementLayoutGraphSelfTest {
         $lineageRetirement="function Invoke-Provenance([object]`$ProvenanceModule){& `$ProvenanceModule { 'first' }; & `$ProvenanceModule { 'second' }}`nfunction Invoke-OrdinaryFirst { if(`$enabled){`$module=Import-Module (Join-Path `$PSScriptRoot 'DevelopmentEnvelopeProvenance.psm1') -PassThru}; & `$module { 'first' } }`nfunction Invoke-OrdinarySecond { if(`$enabled){`$module=Import-Module (Join-Path `$PSScriptRoot 'DevelopmentEnvelopeProvenance.psm1') -PassThru}; & `$module { 'second' } }`n"
         # Actual fixed-export AST shapes used by the two v2 writer functions.
         $lineage="function Invoke-LineageProof { `$module=Import-Module (Join-Path `$PSScriptRoot 'lib/MorphospaceActiveRetirementLineage.psm1') -PassThru; & `$module.ExportedCommands['Get-MorphospaceActiveRetirementSupersessionLineage'] }`nfunction Invoke-LineagePlanning { `$module=Import-Module (Join-Path `$PSScriptRoot 'lib/MorphospaceActiveRetirementLineage.psm1') -PassThru; & `$module.ExportedCommands['Test-MorphospaceActiveRetirementSupersessionPlanningProjection'] }`n"
+        # The fourth layout models the production's exact receiver/member calls;
+        # its finite target/count contract is independent of the registry.
+        $proofBatch="function Invoke-ProofClose { `$scope=`$script:ProofBatch; & `$scope.ledger { 'close' } }`nfunction Invoke-ProofRead { `$scope=`$script:ProofBatch; & `$scope.ledger { 'read' } }`n"
         $helper="if(`$enabled){`$amendmentModule=Import-Module (Join-Path `$PSScriptRoot '../ActiveWriteScopeAmendment.psm1') -PassThru}`n& `$amendmentModule { 'amendment' }`nif(`$enabled){`$pendingExtensionModule=Import-Module (Join-Path `$PSScriptRoot '../ActiveDevelopmentEnvelopeExtension.psm1') -PassThru}`n& `$pendingExtensionModule { 'pending' }`n& `$pendingExtensionModule { 'recorded' }`n"
         $files=[ordered]@{
             'scripts/Test-ProtocolFoundation.ps1'="Import-Module (Join-Path `$PSScriptRoot 'ActiveUnitRetirement.psm1')`n"
@@ -2193,14 +2200,16 @@ function Invoke-AffectedRetirementLayoutGraphSelfTest {
             [pscustomobject]@{importer='scripts/ActiveUnitRetirement.psm1';variable='module';count=2;target_paths=@('scripts/DevelopmentEnvelopeProvenance.psm1')},
             [pscustomobject]@{importer='scripts/Test-ValidatingCandidateRematerialization.ps1';variable='script:RematerializationOwnerModule';count=2;target_paths=@('scripts/ValidatingCandidateRematerialization.psm1')}
         )
-        foreach($layout in @('original','extracted','lineage')){
+        foreach($layout in @('original','extracted','lineage','proof-batch')){
+            $lineageLayout=$layout -cin @('lineage','proof-batch')
             $damages=@('none','altered-target','missing-call','extra-call','dynamic-call','shared-binding','missing-helper-edge','owner-count')
-            if($layout -ceq 'lineage'){$damages+=@('altered-lineage-target','missing-lineage-call','extra-lineage-call','mixed-layout')}
+            if($lineageLayout){$damages+=@('altered-lineage-target','missing-lineage-call','extra-lineage-call','mixed-layout')}
+            if($layout -ceq 'proof-batch'){$damages+=@('missing-proof-call','extra-proof-call','missing-proof-declaration','proof-count','proof-target')}
             foreach($damage in $damages){
                 $case=[ordered]@{};foreach($key in $files.Keys){$case[$key]=$files[$key]}
-                $case['scripts/ActiveUnitRetirement.psm1']=$(if($layout -ceq 'lineage'){$lineageRetirement}else{$retirement})+$(if($layout -ceq 'extracted'){$extracted}else{$legacy})+$(if($layout -ceq 'lineage'){$lineage}else{''})
+                $case['scripts/ActiveUnitRetirement.psm1']=$(if($lineageLayout){$lineageRetirement}else{$retirement})+$(if($layout -ceq 'extracted'){$extracted}else{$legacy})+$(if($lineageLayout){$lineage}else{''})+$(if($layout -ceq 'proof-batch'){$proofBatch}else{''})
                 $declarations=@($common|ConvertTo-Json -Depth 10|ConvertFrom-Json -Depth 10)
-                if($layout -ceq 'lineage'){
+                if($lineageLayout){
                     $row=@($declarations|Where-Object{[string]$_.importer -ceq 'scripts/ActiveUnitRetirement.psm1' -and [string]$_.variable -ceq 'module'})[0]
                     $row.count=4;$row.target_paths=@('scripts/DevelopmentEnvelopeProvenance.psm1','scripts/lib/MorphospaceActiveRetirementLineage.psm1')
                 }
@@ -2208,6 +2217,7 @@ function Invoke-AffectedRetirementLayoutGraphSelfTest {
                     [pscustomobject]@{importer='scripts/lib/MorphospacePlanningLifecycleProjection.psm1';variable='amendmentModule';count=1;target_paths=@('scripts/ActiveWriteScopeAmendment.psm1')},
                     [pscustomobject]@{importer='scripts/lib/MorphospacePlanningLifecycleProjection.psm1';variable='pendingExtensionModule';count=2;target_paths=@('scripts/ActiveDevelopmentEnvelopeExtension.psm1')}
                 )}
+                if($layout -ceq 'proof-batch'){$declarations+=[pscustomobject]@{importer='scripts/ActiveUnitRetirement.psm1';variable='scope';count=2;target_paths=@('scripts/lib/MorphospaceTransitionLedger.psm1')}}
                 switch($damage){
                     'altered-target'{$case['scripts/ActiveUnitRetirement.psm1']=$case['scripts/ActiveUnitRetirement.psm1'].Replace("'DevelopmentEnvelopeProvenance.psm1'","'ActiveWriteScopeAmendment.psm1'")}
                     'missing-call'{$case['scripts/ActiveUnitRetirement.psm1']=$case['scripts/ActiveUnitRetirement.psm1'].Replace("& `$module { 'second' }",'')}
@@ -2225,6 +2235,11 @@ function Invoke-AffectedRetirementLayoutGraphSelfTest {
                         )
                     }
                     'missing-helper-edge'{$case['scripts/ActiveUnitRetirement.psm1']=$retirement}
+                    'missing-proof-call'{$case['scripts/ActiveUnitRetirement.psm1']=$case['scripts/ActiveUnitRetirement.psm1'].Replace("& `$scope.ledger { 'close' }",'')}
+                    'extra-proof-call'{$case['scripts/ActiveUnitRetirement.psm1']+="& `$scope.ledger { 'extra' }`n"}
+                    'missing-proof-declaration'{$declarations=@($declarations|Where-Object{[string]$_.variable -cne 'scope'})}
+                    'proof-count'{@($declarations|Where-Object{[string]$_.variable -ceq 'scope'})[0].count=3}
+                    'proof-target'{@($declarations|Where-Object{[string]$_.variable -ceq 'scope'})[0].target_paths=@('scripts/ActiveWriteScopeAmendment.psm1')}
                     'owner-count'{$case['scripts/Test-ValidatingCandidateRematerialization.ps1']+="& `$script:RematerializationOwnerModule { 'extra' }`n"}
                 }
                 foreach($key in $case.Keys){Write-Utf8 (Join-Path $fixture $key) ([string]$case[$key])}
@@ -2238,18 +2253,23 @@ function Invoke-AffectedRetirementLayoutGraphSelfTest {
                             $expected=@('scripts/ActiveUnitRetirement.psm1','scripts/DevelopmentEnvelopeProvenance.psm1','scripts/ActiveWriteScopeAmendment.psm1','scripts/lib/MorphospaceTransitionLedger.psm1',$consumer.entry)
                             if($consumer.id -ceq 'validating-candidate-rematerialization'){$expected+='scripts/ValidatingCandidateRematerialization.psm1'}
                             if($layout -ceq 'extracted'){$expected+=@('scripts/lib/MorphospacePlanningLifecycleProjection.psm1','scripts/ActiveDevelopmentEnvelopeExtension.psm1')}
-                            if($layout -ceq 'lineage'){$expected+='scripts/lib/MorphospaceActiveRetirementLineage.psm1'}
+                            if($lineageLayout){$expected+='scripts/lib/MorphospaceActiveRetirementLineage.psm1'}
                             [Array]::Sort($expected,[StringComparer]::Ordinal)
                             Assert-True ((@($resolved.paths)-join ';') -ceq ($expected-join ';')) "Retirement AST fixture '$layout/$($consumer.id)' did not bind exact paths."
                         }
                     }
-                    Assert-AffectedRetirementDependentClosures -Closures $closures
+                    Assert-AffectedRetirementDependentClosures -Closures $closures -ProofBatchLayout:($layout -ceq 'proof-batch')
                 }catch{$message=$_.Exception.Message}
                 if($damage -ceq 'none'){Assert-True ($null -eq $message) "Retirement AST fixture rejected '$layout': $message"}else{
                     $category=switch($damage){
                         'altered-target'{'Affected dependency declaration omits observed static target:*'}
                         'missing-call'{'Affected dependency declaration count changed:*'}
                         'extra-call'{'Affected dependency declaration count changed:*'}
+                        'missing-proof-call'{'Affected dependency declaration count changed:*'}
+                        'extra-proof-call'{'Affected dependency declaration count changed:*'}
+                        'missing-proof-declaration'{"Retirement-dependent consumer '*' did not retain exact closure without fallback."}
+                        'proof-count'{'Affected dependency declaration count changed:*'}
+                        'proof-target'{'Retirement-dependent consumer did not consume the exact closed retirement/shared-helper module-object declarations.'}
                         'owner-count'{'Affected dependency declaration count changed:*'}
                         'dynamic-call'{"Retirement-dependent consumer '*' did not retain exact closure without fallback."}
                         'shared-binding'{if($layout -cne 'extracted'){"Retirement-dependent consumer '*' did not retain exact closure without fallback."}else{'Affected dependency declaration omits observed static target:*'}}
@@ -2856,21 +2876,33 @@ function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]
             [pscustomobject]@{importer='scripts/ActiveUnitRetirement.psm1';variable='module';count=4;target_paths=@('scripts/DevelopmentEnvelopeProvenance.psm1','scripts/lib/MorphospaceActiveRetirementLineage.psm1')},
             [pscustomobject]@{importer='scripts/ActiveUnitRetirement.psm1';variable='amendmentModule';count=1;target_paths=@('scripts/ActiveWriteScopeAmendment.psm1')}
         )
-        foreach ($layout in @([pscustomobject]@{rows=$legacyDeclarations;paths=@('scripts/ActiveUnitRetirement.psm1')},[pscustomobject]@{rows=$sharedDeclarations;paths=@('scripts/ActiveUnitRetirement.psm1','scripts/lib/MorphospacePlanningLifecycleProjection.psm1')},[pscustomobject]@{rows=$lineageDeclarations;paths=@('scripts/ActiveUnitRetirement.psm1','scripts/lib/MorphospaceActiveRetirementLineage.psm1')})) {
-            Assert-AffectedRetirementDeclarationLayout -Resolution ([pscustomobject]@{used_declarations=$layout.rows}) -Paths $layout.paths
-            foreach ($damage in @('missing','extra','count','target','mixed')) {
+        $proofBatchDeclarations = @($lineageDeclarations) + @([pscustomobject]@{importer='scripts/ActiveUnitRetirement.psm1';variable='scope';count=2;target_paths=@('scripts/lib/MorphospaceTransitionLedger.psm1')})
+        foreach ($layout in @([pscustomobject]@{rows=$legacyDeclarations;paths=@('scripts/ActiveUnitRetirement.psm1');proof_batch=$false},[pscustomobject]@{rows=$sharedDeclarations;paths=@('scripts/ActiveUnitRetirement.psm1','scripts/lib/MorphospacePlanningLifecycleProjection.psm1');proof_batch=$false},[pscustomobject]@{rows=$lineageDeclarations;paths=@('scripts/ActiveUnitRetirement.psm1','scripts/lib/MorphospaceActiveRetirementLineage.psm1');proof_batch=$false},[pscustomobject]@{rows=$proofBatchDeclarations;paths=@('scripts/ActiveUnitRetirement.psm1','scripts/lib/MorphospaceActiveRetirementLineage.psm1','scripts/lib/MorphospaceTransitionLedger.psm1');proof_batch=$true})) {
+            Assert-AffectedRetirementDeclarationLayout -Resolution ([pscustomobject]@{used_declarations=$layout.rows}) -Paths $layout.paths -ProofBatchLayout:$layout.proof_batch
+            $damages=@('missing','extra','count','target','mixed')
+            if($layout.proof_batch){$damages+=@('scope-missing','scope-extra','scope-count','scope-target')}
+            foreach ($damage in $damages) {
                 $rows = @($layout.rows | ConvertTo-Json -Depth 10 | ConvertFrom-Json -Depth 10)
                 switch ($damage) {
                     'missing' { $rows = @($rows | Select-Object -Skip 1) }
                     'extra' { $rows += $rows[0] }
                     'count' { $rows[0].count = 3 }
                     'target' { $rows[0].target_paths = @('scripts/ActiveWriteScopeAmendment.psm1') }
+                    'scope-missing' { $rows=@($rows|Where-Object{[string]$_.variable -cne 'scope'}) }
+                    'scope-extra' { $rows+=@($rows|Where-Object{[string]$_.variable -ceq 'scope'})[0] }
+                    'scope-count' { @($rows|Where-Object{[string]$_.variable -ceq 'scope'})[0].count=3 }
+                    'scope-target' { @($rows|Where-Object{[string]$_.variable -ceq 'scope'})[0].target_paths=@('scripts/ActiveWriteScopeAmendment.psm1') }
                     'mixed' { $rows += $legacyDeclarations[2] }
                 }
                 $rejected = $false
-                try { Assert-AffectedRetirementDeclarationLayout -Resolution ([pscustomobject]@{used_declarations=$rows}) -Paths $layout.paths } catch { $rejected = $_.Exception.Message -like '*exact closed retirement/shared-helper*' }
+                try { Assert-AffectedRetirementDeclarationLayout -Resolution ([pscustomobject]@{used_declarations=$rows}) -Paths $layout.paths -ProofBatchLayout:$layout.proof_batch } catch { $rejected = $_.Exception.Message -like '*exact closed retirement/shared-helper*' }
                 Assert-True $rejected "Retirement declaration layout accepted '$damage' damage."
             }
+        }
+        foreach($oldLayout in @($legacyDeclarations,$sharedDeclarations,$lineageDeclarations)){
+            $rejected=$false
+            try{Assert-AffectedRetirementDeclarationLayout -Resolution ([pscustomobject]@{used_declarations=$oldLayout}) -Paths @('scripts/ActiveUnitRetirement.psm1','scripts/lib/MorphospaceActiveRetirementLineage.psm1','scripts/lib/MorphospaceTransitionLedger.psm1') -ProofBatchLayout}catch{$rejected=$_.Exception.Message -like '*exact closed retirement/shared-helper*'}
+            Assert-True $rejected 'Proof-batch declaration contract accepted an old layout without its exact scope declaration.'
         }
         [void]$timings.Add([pscustomobject][ordered]@{check_id='protocol-foundation-retirement-dependent';elapsed_ms=[long]$protocolClock.Elapsed.TotalMilliseconds;dependency_count=@($protocolClosure.manifest).Count})
 
@@ -2901,7 +2933,7 @@ function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]
         [void]$timings.Add([pscustomobject][ordered]@{check_id='validating-candidate-rematerialization';elapsed_ms=[long]$rematerializationClock.Elapsed.TotalMilliseconds;dependency_count=@($rematerializationClosure.manifest).Count})
 
         # Both real consumers pass through the same closed layout assertion loop.
-        Assert-AffectedRetirementDependentClosures -Closures @(
+        Assert-AffectedRetirementDependentClosures -ProofBatchLayout -Closures @(
             [pscustomobject]@{check_id='protocol-foundation';paths=$protocolPaths;resolution=$protocolClosure.resolution},
             [pscustomobject]@{check_id='validating-candidate-rematerialization';paths=$rematerializationPaths;resolution=$rematerializationClosure.resolution}
         )
