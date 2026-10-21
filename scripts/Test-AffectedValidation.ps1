@@ -1448,6 +1448,84 @@ function Get-AffectedIndexedModuleExportTarget([object]$Index,[object]$Invocatio
     if (-not $info.exports.Contains($name) -or $info.functions -inotcontains $name) { throw "Module export invocation names no explicit local function export: $context" }
     return $relative
 }
+function Get-AffectedAuditedModuleMemberTarget([string]$Importer, [Management.Automation.Language.CommandAst]$Invocation, [object]$Declarations) {
+    # A closed test-graph adapter for the two audited originating-module calls.
+    # This does not infer arbitrary member bindings or exempt them from tracking.
+    $elements = @($Invocation.CommandElements)
+    $callee = $elements[0]
+    if ($Importer -cne 'scripts/ActiveUnitRetirement.psm1' -or
+        $callee -isnot [Management.Automation.Language.MemberExpressionAst] -or
+        $callee.Static -or
+        $callee.Expression -isnot [Management.Automation.Language.VariableExpressionAst] -or
+        [string]$callee.Expression.VariablePath.UserPath -cne 'scope' -or
+        $callee.Member -isnot [Management.Automation.Language.StringConstantExpressionAst] -or
+        [string]$callee.Member.Value -cne 'ledger' -or
+        $callee.Extent.Text -cne '$scope.ledger') { return $null }
+    $key = "$Importer|scope.ledger"
+    if (-not $Declarations.ContainsKey($key)) { throw "Audited module-member invocation lacks an exact declaration: $key" }
+    $declaration = $Declarations[$key]
+    if ((@($declaration.PSObject.Properties.Name) -join ',') -cne 'importer,variable,count,import_path' -or
+        [int]$declaration.count -ne 2 -or
+        [string]$declaration.import_path -cne 'scripts/lib/MorphospaceTransitionLedger.psm1') {
+        throw "Audited module-member declaration changed its exact tracked target/count: $key"
+    }
+    if ($Invocation.InvocationOperator -ne [Management.Automation.Language.TokenKind]::Ampersand -or
+        @($Invocation.Redirections).Count -ne 0 -or $elements.Count -ne 3 -or
+        $elements[1] -isnot [Management.Automation.Language.ScriptBlockExpressionAst]) {
+        throw "Audited module-member invocation changed its module-scriptblock shape: $key"
+    }
+    # Check AST/token boundaries, not whitespace-stripped text: a split command
+    # name or argument must not become the audited command after normalization.
+    $body = $elements[1].ScriptBlock
+    if ($null -eq $body.ParamBlock -or @($body.ParamBlock.Parameters).Count -ne 1 -or
+        ($null -ne $body.ParamBlock.Attributes -and @($body.ParamBlock.Attributes).Count -ne 0) -or
+        ($null -ne $body.Attributes -and @($body.Attributes).Count -ne 0) -or
+        ($null -ne $body.UsingStatements -and @($body.UsingStatements).Count -ne 0) -or $null -ne $body.BeginBlock -or
+        $null -ne $body.ProcessBlock -or $null -ne $body.DynamicParamBlock -or
+        $null -ne $body.CleanBlock -or $null -eq $body.EndBlock -or
+        -not $body.EndBlock.Unnamed -or ($null -ne $body.EndBlock.Traps -and @($body.EndBlock.Traps).Count -ne 0) -or
+        @($body.EndBlock.Statements).Count -ne 1) {
+        throw "Audited module-member invocation changed its closed callback blocks: $key"
+    }
+    $parameter = $body.ParamBlock.Parameters[0]
+    $pipeline = $body.EndBlock.Statements[0]
+    if (($null -ne $parameter.Attributes -and @($parameter.Attributes).Count -ne 0) -or $null -ne $parameter.DefaultValue -or
+        $pipeline -isnot [Management.Automation.Language.PipelineAst] -or
+        $pipeline.Background -or @($pipeline.PipelineElements).Count -ne 1 -or
+        $pipeline.PipelineElements[0] -isnot [Management.Automation.Language.CommandAst]) {
+        throw "Audited module-member invocation changed its closed callback pipeline: $key"
+    }
+    $command = $pipeline.PipelineElements[0]
+    $inner = @($command.CommandElements)
+    if ($command.InvocationOperator -ne [Management.Automation.Language.TokenKind]::Unknown -or
+        @($command.Redirections).Count -ne 0 -or $inner.Count -ne 2 -or
+        $inner[0] -isnot [Management.Automation.Language.StringConstantExpressionAst] -or
+        $inner[0].StringConstantType -ne [Management.Automation.Language.StringConstantType]::BareWord -or
+        $inner[1] -isnot [Management.Automation.Language.VariableExpressionAst]) {
+        throw "Audited module-member invocation changed its closed callback command: $key"
+    }
+    $argument = $elements[2]
+    $operation = $null
+    if ($parameter.Name.Extent.Text -ceq '$token' -and
+        [string]$inner[0].Value -ceq 'Close-MorphospaceReadOnlyLedgerBatch' -and
+        $inner[1].Extent.Text -ceq '$token' -and -not $inner[1].Splatted -and
+        $argument -is [Management.Automation.Language.MemberExpressionAst] -and
+        -not $argument.Static -and
+        $argument.Expression -is [Management.Automation.Language.VariableExpressionAst] -and
+        [string]$argument.Expression.VariablePath.UserPath -ceq 'scope' -and
+        $argument.Member -is [Management.Automation.Language.StringConstantExpressionAst] -and
+        [string]$argument.Member.Value -ceq 'token' -and $argument.Extent.Text -ceq '$scope.token') {
+        $operation = 'close'
+    } elseif ($parameter.Name.Extent.Text -ceq '$arguments' -and
+        [string]$inner[0].Value -ceq 'Test-MorphospaceCommittedTransitionLedgerCore' -and
+        $inner[1].Extent.Text -ceq '@arguments' -and $inner[1].Splatted -and
+        $argument -is [Management.Automation.Language.VariableExpressionAst] -and
+        -not $argument.Splatted -and [string]$argument.VariablePath.UserPath -ceq 'arguments' -and
+        $argument.Extent.Text -ceq '$arguments') {
+        $operation = 'core'
+    } else { throw "Audited module-member invocation changed its closed callback/argument contract: $key" }
+    return [pscustomobject]@{key=$key;operation=$operation;target=[string]$declaration.import_path}
+}
 function New-AffectedTrackedImportGraph([string]$Root, [string[]]$Entrypoints, [object[]]$DynamicImportDeclarations = @(), [Collections.Generic.HashSet[string]]$TrackedPaths = $null) {
     $root = [IO.Path]::GetFullPath($Root).TrimEnd('\','/')
     $rootPrefix = $root + [IO.Path]::DirectorySeparatorChar
@@ -1476,6 +1554,7 @@ function New-AffectedTrackedImportGraph([string]$Root, [string[]]$Entrypoints, [
         $declarations[$key] = $declaration
     }
     $observedDeclarations = [Collections.Generic.Dictionary[string,int]]::new([StringComparer]::Ordinal)
+    $auditedMemberOperations = [Collections.Generic.Dictionary[string,int]]::new([StringComparer]::Ordinal)
     $nodes = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $pending = [Collections.Generic.Queue[string]]::new()
     $edges = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
@@ -1562,6 +1641,15 @@ function New-AffectedTrackedImportGraph([string]$Root, [string[]]$Entrypoints, [
                     $observedDeclarations[$exportKey] = 1 + $(if ($observedDeclarations.ContainsKey($exportKey)) { [int]$observedDeclarations[$exportKey] } else { 0 })
                 }
                 [void]$importEdges.Add($moduleExportTarget)
+                continue
+            }
+            $auditedMember = Get-AffectedAuditedModuleMemberTarget -Importer $importer -Invocation $invocation -Declarations $declarations
+            if ($null -ne $auditedMember) {
+                $memberKey = [string]$auditedMember.key
+                $operationKey = "$memberKey|$([string]$auditedMember.operation)"
+                $observedDeclarations[$memberKey] = 1 + $(if ($observedDeclarations.ContainsKey($memberKey)) { [int]$observedDeclarations[$memberKey] } else { 0 })
+                $auditedMemberOperations[$operationKey] = 1 + $(if ($auditedMemberOperations.ContainsKey($operationKey)) { [int]$auditedMemberOperations[$operationKey] } else { 0 })
+                [void]$importEdges.Add([string]$auditedMember.target)
                 continue
             }
             $pathValues = @($invocationRecord.path_values)
@@ -1669,6 +1757,15 @@ function New-AffectedTrackedImportGraph([string]$Root, [string[]]$Entrypoints, [
         $observed = if ($observedDeclarations.ContainsKey($key)) { [int]$observedDeclarations[$key] } else { 0 }
         if ($observed -ne [int]$declaration.count) { throw "Dynamic owner import declaration count changed: $key expected=$($declaration.count) observed=$observed" }
     }
+    $auditedMemberKey = 'scripts/ActiveUnitRetirement.psm1|scope.ledger'
+    if ($declarations.ContainsKey($auditedMemberKey) -and $nodes.Contains('scripts/ActiveUnitRetirement.psm1')) {
+        foreach ($operation in @('close','core')) {
+            $operationKey = "$auditedMemberKey|$operation"
+            if (-not $auditedMemberOperations.ContainsKey($operationKey) -or [int]$auditedMemberOperations[$operationKey] -ne 1) {
+                throw "Audited module-member operation pair changed: $operationKey"
+            }
+        }
+    }
     foreach ($node in @($nodes)) {
         if (-not $analysisKeyByPath.ContainsKey($node) -or -not $analysisByKey.ContainsKey([string]$analysisKeyByPath[$node])) { throw "Owner import graph analysis index is absent for a tracked node: $node" }
         $analysis = $analysisByKey[[string]$analysisKeyByPath[$node]]
@@ -1773,10 +1870,12 @@ function Get-AffectedProtocolCommonOwnerChecks([string]$Root, [object]$Registry)
     $registrationAudit = Assert-MorphospaceAffectedWorkEnvironmentLeafRegistration -Root $Root -Registry $Registry
     $ownerEntrypoints = @($registrationAudit.owner_entrypoints)
     $dynamicImports = @(
+        [pscustomobject][ordered]@{ importer='scripts/ActiveUnitRetirement.psm1'; variable='scope.ledger'; count=2; import_path='scripts/lib/MorphospaceTransitionLedger.psm1' },
         [pscustomobject][ordered]@{ importer='scripts/Test-LocalSkillBootstrap.ps1'; variable='boundary'; count=2; import_path='scripts/Install-LocalSkills.ps1' },
         [pscustomobject][ordered]@{ importer='scripts/Test-AuthorityRecordReadiness.ps1'; variable='processModule'; count=1; import_path='scripts/lib/MorphospaceAuthorityProcess.psm1' },
         [pscustomobject][ordered]@{ importer='scripts/Test-TransitionLedger.ps1'; variable='ModulePath'; count=2; import_path='scripts/lib/MorphospaceTransitionLedger.psm1' },
         [pscustomobject][ordered]@{ importer='scripts/Test-TransitionLedger.ps1'; variable='observationDamage'; count=1; import_path='scripts/Test-TransitionLedger.ps1' },
+        [pscustomobject][ordered]@{ importer='scripts/Test-TransitionLedger.ps1'; variable='script:originalIntentAssert'; count=1; import_path='scripts/lib/MorphospaceTransitionLedger.psm1' },
         [pscustomobject][ordered]@{ importer='scripts/Test-TransitionLedger.ps1'; variable='script:originalObservationAssert'; count=1; import_path='scripts/lib/MorphospaceTransitionLedger.psm1' },
         [pscustomobject][ordered]@{ importer='scripts/Test-TransitionLedger.ps1'; variable='script:originalReader'; count=1; import_path='scripts/lib/MorphospaceTransitionLedger.psm1' },
         [pscustomobject][ordered]@{ importer='scripts/Test-TransitionLedger.ps1'; variable='script:transitionModule'; count=4; import_path='scripts/lib/MorphospaceTransitionLedger.psm1' },
@@ -1969,9 +2068,79 @@ $module = Import-Module (Join-Path $OwnerDirectory 'scripts/lib/FixtureExports.p
         Write-Host 'Typed module export binding and nested-callee fixtures passed.'
     } finally { if ([IO.Directory]::Exists($ownerGraphFixture)) { Remove-Item -LiteralPath $ownerGraphFixture -Recurse -Force } }
 }
+function Invoke-AffectedAuditedModuleMemberSelfTest {
+    $fixture = Join-Path ([IO.Path]::GetTempPath()) ('morphospace-audited-member-' + [guid]::NewGuid().ToString('N'))
+    [void][IO.Directory]::CreateDirectory((Join-Path $fixture 'scripts/lib'))
+    try {
+        $importer = 'scripts/ActiveUnitRetirement.psm1'
+        $target = 'scripts/lib/MorphospaceTransitionLedger.psm1'
+        $tracked = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        foreach ($path in @($importer,$target,'scripts/lib/Wrong.psm1','scripts/Unknown.ps1')) { [void]$tracked.Add($path) }
+        Write-Utf8 (Join-Path $fixture $target) "# Tracked module bytes; never executed.`n"
+        Write-Utf8 (Join-Path $fixture 'scripts/lib/Wrong.psm1') "# Wrong tracked target.`n"
+        $close = '&$scope.ledger {param($token)Close-MorphospaceReadOnlyLedgerBatch $token} $scope.token'
+        $core = '&$scope.ledger {param($arguments)Test-MorphospaceCommittedTransitionLedgerCore @arguments} $arguments'
+        $source = "$close`n$core`n"
+        $declaration = [pscustomobject][ordered]@{importer=$importer;variable='scope.ledger';count=2;import_path=$target}
+        Write-Utf8 (Join-Path $fixture $importer) $source
+        $positive = New-AffectedTrackedImportGraph -Root $fixture -Entrypoints @($importer) -DynamicImportDeclarations @($declaration) -TrackedPaths $tracked
+        Assert-True (($positive.nodes -join ',') -ceq "$importer,$target" -and @($positive.edges[$importer]).Count -eq 1 -and $positive.edges[$importer][0] -ceq $target) 'Audited module-member graph did not retain exactly the tracked ledger edge.'
+        Assert-AffectedThrows { New-AffectedTrackedImportGraph -Root $fixture -Entrypoints @($importer) -TrackedPaths $tracked } '*Audited module-member invocation lacks an exact declaration*' 'Audited module-member graph accepted missing declaration.'
+        Assert-AffectedThrows { New-AffectedTrackedImportGraph -Root $fixture -Entrypoints @($importer) -DynamicImportDeclarations @($declaration,$declaration) -TrackedPaths $tracked } '*duplicate*' 'Audited module-member graph accepted duplicate declarations.'
+        foreach ($damage in @('count-minus','count-plus','wrong-target','multiple-targets','external')) {
+            $bad = [pscustomobject][ordered]@{importer=$importer;variable='scope.ledger';count=2;import_path=$target}
+            switch ($damage) {
+                'count-minus' { $bad.count=1 }
+                'count-plus' { $bad.count=3 }
+                'wrong-target' { $bad.import_path='scripts/lib/Wrong.psm1' }
+                'multiple-targets' { $bad=[pscustomobject][ordered]@{importer=$importer;variable='scope.ledger';count=2;import_paths=@($target,'scripts/lib/Wrong.psm1')} }
+                'external' { $bad=[pscustomobject][ordered]@{importer=$importer;variable='scope.ledger';count=2;classification='authenticated-external-script'} }
+            }
+            Assert-AffectedThrows { New-AffectedTrackedImportGraph -Root $fixture -Entrypoints @($importer) -DynamicImportDeclarations @($bad) -TrackedPaths $tracked } '*Audited module-member declaration changed*' "Audited module-member graph accepted $damage."
+        }
+        [void]$tracked.Remove($target)
+        Assert-AffectedThrows { New-AffectedTrackedImportGraph -Root $fixture -Entrypoints @($importer) -DynamicImportDeclarations @($declaration) -TrackedPaths $tracked } '*absent or untracked*' 'Audited module-member graph bypassed tracked target checking.'
+        [void]$tracked.Add($target)
+        foreach ($damage in @('receiver','member','computed','static','nested','null-conditional','operator','no-scriptblock','extra-argument','outer-argument','inner-command','split-command','inner-argument','extra-statement','extra-block','typed-parameter','redirection','missing-call','extra-call','duplicate-operation')) {
+            $damaged = $source
+            $expected = '*Audited module-member*'
+            switch ($damage) {
+                'receiver' { $damaged=$source.Replace('$scope.ledger','$other.ledger');$expected='*neither a tracked script path nor an audited non-path callable*' }
+                'member' { $damaged=$source.Replace('$scope.ledger','$scope.other');$expected='*neither a tracked script path nor an audited non-path callable*' }
+                'computed' { $damaged=$source.Replace('$scope.ledger','$scope.$name');$expected='*neither a tracked script path nor an audited non-path callable*' }
+                'static' { $damaged=$source.Replace('$scope.ledger','$scope::ledger');$expected='*neither a tracked script path nor an audited non-path callable*' }
+                'nested' { $damaged=$source.Replace('$scope.ledger','$scope.inner.ledger');$expected='*neither a tracked script path nor an audited non-path callable*' }
+                'null-conditional' { $damaged=$source.Replace('$scope.ledger','${scope}?.ledger');$expected='*neither a tracked script path nor an audited non-path callable*' }
+                'operator' { $damaged=$source.Replace('&$scope.ledger','. $scope.ledger') }
+                'no-scriptblock' { $damaged=$source.Replace('{param($token)Close-MorphospaceReadOnlyLedgerBatch $token}','$callback') }
+                'extra-argument' { $damaged=$source.Replace('$scope.token','$scope.token $extra') }
+                'outer-argument' { $damaged=$source.Replace('$scope.token','$scope.wrong') }
+                'inner-command' { $damaged=$source.Replace('Close-MorphospaceReadOnlyLedgerBatch','Unknown-Command') }
+                'split-command' { $damaged=$source.Replace('Close-MorphospaceReadOnlyLedgerBatch','Close -MorphospaceReadOnlyLedgerBatch') }
+                'inner-argument' { $damaged=$source.Replace('Core @arguments','Core $arguments') }
+                'extra-statement' { $damaged=$source.Replace('Batch $token}','Batch $token; Unknown-Command}') }
+                'extra-block' { $damaged=$source.Replace('param($token)Close-MorphospaceReadOnlyLedgerBatch $token','param($token) begin { Unknown-Command } end { Close-MorphospaceReadOnlyLedgerBatch $token }') }
+                'typed-parameter' { $damaged=$source.Replace('param($token)','param([object]$token)') }
+                'redirection' { $damaged=$source.Replace('$scope.token','$scope.token 2>$null') }
+                'missing-call' { $damaged="$close`n";$expected='*declaration count changed*' }
+                'extra-call' { $damaged=$source+"$close`n";$expected='*declaration count changed*' }
+                'duplicate-operation' { $damaged="$close`n$close`n";$expected='*operation pair changed*' }
+            }
+            Write-Utf8 (Join-Path $fixture $importer) $damaged
+            Assert-AffectedThrows { New-AffectedTrackedImportGraph -Root $fixture -Entrypoints @($importer) -DynamicImportDeclarations @($declaration) -TrackedPaths $tracked } $expected "Audited module-member graph accepted $damage."
+        }
+        Write-Utf8 (Join-Path $fixture 'scripts/Unknown.ps1') $source
+        $unknown = [pscustomobject][ordered]@{importer='scripts/Unknown.ps1';variable='scope.ledger';count=2;import_path=$target}
+        Assert-AffectedThrows { New-AffectedTrackedImportGraph -Root $fixture -Entrypoints @('scripts/Unknown.ps1') -DynamicImportDeclarations @($unknown) -TrackedPaths $tracked } '*neither a tracked script path nor an audited non-path callable*' 'Audited module-member graph accepted unknown importer.'
+        Write-Host 'Audited module-member tracked target/count/closed-shape refusal controls passed.'
+    } finally {
+        if ([IO.Directory]::Exists($fixture)) { Remove-Item -LiteralPath $fixture -Recurse -Force }
+    }
+}
 function Invoke-AffectedGraphIndexSelfTest([string]$Root,[object]$Registry) {
     Invoke-AffectedGitOriginalWaitSelfTest
     Invoke-AffectedModuleExportSelfTest
+    Invoke-AffectedAuditedModuleMemberSelfTest
     $audit = Get-AffectedProtocolCommonOwnerChecks -Root $Root -Registry $Registry
     Assert-AffectedProtocolCommonGraphProjection -Value $audit -Context 'Real-tree ProtocolCommon graph'
     foreach ($requiredNode in @('scripts/New-ValidatingCandidateRematerializationInput.ps1','scripts/Test-ValidatingCandidateRematerialization.ps1','scripts/ValidatingCandidateRematerialization.psm1','scripts/lib/MorphospaceSourceCompositionIdentity.psm1')) {
