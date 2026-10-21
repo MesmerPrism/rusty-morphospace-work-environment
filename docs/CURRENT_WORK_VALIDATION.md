@@ -32,8 +32,31 @@ authenticated physical ledger observation across committed suffix checks. The
 private batch holds the workspace mutex and read locks for the ledger, parser,
 module and event schemas, and rechecks their exact bytes before and after each
 step. Every transaction, completion, artifact and projection remains checked.
-The batch expires in `finally`; the public standalone transition validator
-always reads a fresh observation and accepts no trusted snapshot or batch token.
+The batch also authenticates each exact committed intent's immutable semantics
+once, keyed by its resolved path and raw hash. Each subsequent read parses a
+fresh object from the current raw bytes and checks the requested transaction
+identity. Caller mutations of returned objects cannot change this private proof.
+Nested readers may share it only on the same thread, workspace and held ledger
+observation. Completions, artifacts, event placement, required paths and tail
+checks remain live on every read; changed intent or policy bytes refuse.
+
+Active retirement uses the same private proof scope around its existing owner
+checks. It retains current repository/source observations, preparation
+provenance, state/unit/feature CAS and immediate pre-intent checks. The scope is
+disposed before either a new transition or recovery writes, and the resulting
+history receives fresh authentication. Success, refusal and exceptions all
+dispose the scope. The batch expires in `finally`; the public standalone
+transition validator always reads a fresh observation and accepts no trusted
+snapshot or batch token. No proof survives an invocation or is supplied by a
+caller.
+
+The owning fixtures measure complete history and retirement actions as well as
+actual authentication call counts. A measured post-nonpass retirement reduced
+repeated intent checks from 32 to 18 across the same nine transactions, while
+all 32 completion checks and the repository/history checks remained. The simple
+history fixture already checked four unique intents once each; it demonstrates
+no additional duplicate-work reduction. These counts describe those fixtures,
+not an attribution of application build time or a duration guarantee.
 
 Use the next supported owner/product action within the current scope. The
 compatibility cases below explain specific authenticated histories; they are not

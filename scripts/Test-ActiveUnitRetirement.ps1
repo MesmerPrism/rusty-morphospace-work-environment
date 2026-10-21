@@ -396,6 +396,47 @@ function Get-RetirementInventory([string]$Workspace){
 }
 function Get-RetirementBytesSha256([byte[]]$Bytes){&$protocolModule {param($value)Get-MorphospaceSha256Bytes $value} $Bytes}
 function Write-RetirementRequest([string]$Workspace,[object]$Request){Write-EnvelopeJson ($Workspace+'.request.json') $Request}
+function Add-OwnerAuthenticationCount([string]$Name,[string]$TransactionId=''){
+    $counts=$global:WefProofMeasurement017.calls
+    if(-not$counts.ContainsKey($Name)){$counts[$Name]=0};$counts[$Name]++
+    if($TransactionId){$transactions=$global:WefProofMeasurement017.transactions;if(-not$transactions.ContainsKey($TransactionId)){$transactions[$TransactionId]=0};$transactions[$TransactionId]++}
+}
+function Measure-OwnerAuthentication([string]$Name,[scriptblock]$Action){
+    # Test-only command breakpoints count the real owner calls. They never supply
+    # an authority observation and are removed even when the measured call fails.
+    if(Get-Variable WefProofMeasurement017 -Scope Global -ErrorAction SilentlyContinue){throw 'Proof measurement cannot be nested.'}
+    $global:WefProofMeasurement017=[ordered]@{calls=@{};transactions=@{}}
+    $breakpoints=@();$watch=[Diagnostics.Stopwatch]::StartNew()
+    try{
+        # Literal breakpoint actions keep the dependency closure static. The
+        # intent action reads the actual debuggee transaction parameter.
+        $actions=@{
+            'Assert-MorphospaceLedgerIntent'={
+                $frame=@(Get-PSCallStack|Where-Object FunctionName -CEQ 'Assert-MorphospaceLedgerIntent')[0]
+                $id=[string]$frame.InvocationInfo.BoundParameters['TransactionId']
+                if(-not$id){throw 'Actual intent breakpoint has no bound transaction identity.'}
+                Add-OwnerAuthenticationCount 'Assert-MorphospaceLedgerIntent' $id
+            }
+            'Assert-MorphospaceLedgerCommittedCompletion'={Add-OwnerAuthenticationCount 'Assert-MorphospaceLedgerCommittedCompletion'}
+            'Get-MorphospaceLedgerSnapshot'={Add-OwnerAuthenticationCount 'Get-MorphospaceLedgerSnapshot'}
+            'Get-MorphospaceCurrentWorkHistory'={Add-OwnerAuthenticationCount 'Get-MorphospaceCurrentWorkHistory'}
+            'Get-ActiveRetirementPlanningTransition'={Add-OwnerAuthenticationCount 'Get-ActiveRetirementPlanningTransition'}
+            'Get-ActiveRetirementRepositories'={Add-OwnerAuthenticationCount 'Get-ActiveRetirementRepositories'}
+            'Assert-ActiveRetirementPreserved'={Add-OwnerAuthenticationCount 'Assert-ActiveRetirementPreserved'}
+            'Test-MorphospaceDevelopmentUnitPreparation'={Add-OwnerAuthenticationCount 'Test-MorphospaceDevelopmentUnitPreparation'}
+        }
+        foreach($command in $actions.Keys){$breakpoints+=Set-PSBreakpoint -Command $command -Action $actions[$command]}
+        & $Action
+    }finally{
+        $watch.Stop()
+        foreach($breakpoint in $breakpoints){Remove-PSBreakpoint -Breakpoint $breakpoint}
+        $observed=$global:WefProofMeasurement017
+        Remove-Variable WefProofMeasurement017 -Scope Global
+        if($observed.calls.ContainsKey('')-or-not$observed.calls.ContainsKey('Assert-MorphospaceLedgerIntent')-or$observed.transactions.Count-eq0){throw 'Actual owner proof instrumentation did not capture named intent calls.'}
+        [ordered]@{schema='rusty.morphospace.test.owner_proof_measurement.v1';action=$Name;elapsed_ms=[math]::Round($watch.Elapsed.TotalMilliseconds,3);call_counts=$observed.calls;transaction_intent_checks=$observed.transactions;test_only_instrumentation=$true}|ConvertTo-Json -Depth 12 -Compress|Write-Host
+    }
+}
+
 function Invoke-RetirementTest([string]$Workspace,[bool]$Execute=$true,[string]$FaultAfter='none',[string]$RepoMapPath=''){
     $requestPath=$Workspace+'.request.json'
     if(-not$RepoMapPath){$RepoMapPath=Join-Path $Workspace 'repository-map.json'}
@@ -593,7 +634,25 @@ try{
         Invoke-EnvelopeGit $planning @('add','morphospace')|Out-Null;Invoke-EnvelopeGit $planning @('commit','-qm','Record synthetic nonpass lifecycle')|Out-Null;$introduced=(@(Invoke-EnvelopeGit $planning @('rev-parse','HEAD'))[0]).Trim()
         $diagnostics=@(foreach($relative in @('receipts/post-begin.json','receipts/post-record.json','receipts/post-resume.json')){$document=Read-EnvelopeProtocolJson (Join-Path $workspace $relative);[pscustomobject]@{role='inert-post-nonpass-lifecycle-diagnostic';path=$relative;raw_sha256=Get-EnvelopeFileSha256 (Join-Path $workspace $relative);canonical_sha256=Get-EnvelopeCanonicalJsonSha256 $document;introduced_commit=$introduced;git_blob_sha1=(@(Invoke-EnvelopeGit $planning @('rev-parse',"HEAD:morphospace/$relative"))[0]).Trim();event_id=$document.event_id}})
         $request=New-ActiveUnitRetirementRequest -WorkspaceRoot $workspace -RetainedLifecycleDiagnostics $diagnostics;$postRequestPath=Join-Path $temp 'post-retirement-request.json';Write-EnvelopeJson $postRequestPath $request
-        $before=Get-RetirementInventory $workspace;$dry=Invoke-MorphospaceRetireActive -WorkspaceRoot $workspace -UnitId u002 -RepoMapPath $mapPath -ActiveUnitRetirement $postRequestPath -ExpectedActiveUnitRetirementSha256 (Get-EnvelopeFileSha256 $postRequestPath) -OutPath (Join-Path $workspace 'receipts/retire-u002.json') -Timestamp '2026-08-25T00:00:50.0000000Z';Assert-RetirementTest (-not$dry.executed-and(Get-RetirementInventory $workspace)-ceq$before) 'post-nonpass public reader dry run changed bytes'
+        $before=Get-RetirementInventory $workspace;$dry=Measure-OwnerAuthentication 'RetireActive-postnonpass-dry' {Invoke-MorphospaceRetireActive -WorkspaceRoot $workspace -UnitId u002 -RepoMapPath $mapPath -ActiveUnitRetirement $postRequestPath -ExpectedActiveUnitRetirementSha256 (Get-EnvelopeFileSha256 $postRequestPath) -OutPath (Join-Path $workspace 'receipts/retire-u002.json') -Timestamp '2026-08-25T00:00:50.0000000Z'};Assert-RetirementTest (-not$dry.executed-and(Get-RetirementInventory $workspace)-ceq$before) 'post-nonpass public reader dry run changed bytes'
+        $scopeArguments=@{WorkspaceRoot=$workspace;UnitId='u002';RepoMapPath=$mapPath;ActiveUnitRetirement=$postRequestPath;ExpectedActiveUnitRetirementSha256=(Get-EnvelopeFileSha256 $postRequestPath);OutPath=(Join-Path $workspace 'receipts/retire-u002.json');Timestamp='2026-08-25T00:00:50.0000000Z'}
+        $scopeCases=&$retirementModule {
+            param($root,$arguments)
+            Enter-ActiveRetirementProofBatch $root
+            $token=$script:ActiveRetirementProofBatch.token
+            try{
+                $denied=$false;try{Invoke-MorphospaceRetireActive @arguments|Out-Null}catch{$denied=$_.Exception.Message-like'*cannot be reentered*'}
+                if(-not$denied-or$null-eq$script:ActiveRetirementProofBatch-or$script:ActiveRetirementProofBatch.token-cne$token){throw 'Nested retirement invocation consumed its parent proof scope.'}
+            }finally{Exit-ActiveRetirementProofBatch}
+            $broken=$arguments.Clone();$broken.RepoMapPath=Join-Path $root 'absent-proof-scope-map.json'
+            $denied=$false;try{Invoke-MorphospaceRetireActive @broken|Out-Null}catch{$denied=$true}
+            if(-not$denied-or$null-ne$script:ActiveRetirementProofBatch){throw 'Failed retirement retained private proof authority.'}
+            $ledger=Get-Module MorphospaceTransitionLedger -All|Where-Object{[IO.Path]::GetFullPath([string]$_.Path)-ceq$script:ActiveRetirementTransitionLedgerPath}|Select-Object -First 1
+            $remaining=&$ledger {$script:readOnlyLedgerBatches.Count}
+            if($remaining-ne0){throw 'Retirement exception leaked ledger handles or proof batch.'}
+            3
+        } $workspace $scopeArguments
+        Assert-RetirementTest ((Get-RetirementInventory $workspace)-ceq$before) 'proof-scope refusal changed workspace bytes'
         $events=Get-Content (Join-Path $workspace 'iteration-events.jsonl')|ForEach-Object{$_|ConvertFrom-Json -DateKind String};$event=@($events|Where-Object event_id -match '-resumed-')[0];$proof=&$retirementModule {param($w,$id)Get-ActiveRetirementPlanningTransition $w "$id-transition"} $workspace $event.event_id
         foreach($damage in @('scope','checkpoint','accepted','blockers','wrong-event','extra-artifact','protocol')){
             $changed=Copy-Envelope $proof;$changedEvent=Copy-Envelope $event
@@ -613,7 +672,7 @@ try{
         $rejected=$false;try{&$retirementModule {param($w)Assert-ActiveRetirementImmutableNonpassReceipt $w 'receipts/post-fail.json'} $workspace}catch{$rejected=$true};Assert-RetirementTest $rejected 'schema-valid committed nonpass receipt rewrite accepted'
         [IO.File]::WriteAllBytes($failure,$saved);Invoke-EnvelopeGit $planning @('add','morphospace/receipts/post-fail.json')|Out-Null;Invoke-EnvelopeGit $planning @('commit','-qm','Restore synthetic receipt negative')|Out-Null
         $rejected=$false;try{&$retirementModule {param($w)Assert-ActiveRetirementImmutableNonpassReceipt $w 'receipts/post-fail.json'} $workspace}catch{$rejected=$true};Assert-RetirementTest $rejected 'rewritten then restored nonpass receipt history accepted'
-        if($Scenario-ceq'PostNonpass'){[pscustomobject]@{status='pass';check='active-unit-retirement';scenario=$Scenario;producer_lifecycle_pass=$true;semantic_negatives=7;diagnostic_negatives=4;receipt_history_negatives=2;mutated_real_project=$false}|ConvertTo-Json -Compress;return}
+        if($Scenario-ceq'PostNonpass'){[pscustomobject]@{status='pass';check='active-unit-retirement';scenario=$Scenario;producer_lifecycle_pass=$true;semantic_negatives=7;diagnostic_negatives=4;receipt_history_negatives=2;proof_scope_cases=$scopeCases;mutated_real_project=$false}|ConvertTo-Json -Compress;return}
     }
 
     if($runCore){

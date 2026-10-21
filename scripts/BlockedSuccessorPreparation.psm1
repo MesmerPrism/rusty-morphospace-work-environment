@@ -76,7 +76,14 @@ function Get-BlockedSuccessorTerminalObservation {
     if(-not($unit.PSObject.Properties.Name-contains'candidate_freeze')){throw 'Blocked-successor predecessor is not candidate-frozen.'}
     foreach($name in @('freeze_id','receipt_path','receipt_sha256')){if([string]$unit.candidate_freeze.$name-cne[string]$terminal.candidate_freeze.$name){throw "Blocked-successor candidate-freeze $name drifted."}}
     $freezePath=Resolve-MorphospaceWorkspacePath $Workspace ([string]$terminal.candidate_freeze.receipt_path) -RequireLeaf
-    Assert-BlockedSuccessorSchema $freezePath 'candidate-freeze-v1.schema.json' 'Blocked-successor candidate-freeze receipt is invalid.'
+     $freezeDocument=Read-MorphospaceProtocolJson $freezePath
+    $freezeSchema=if([string]$freezeDocument.schema-ceq'rusty.morphospace.workflow.candidate_freeze.v3'){'candidate-freeze-v3.schema.json'}else{'candidate-freeze-v1.schema.json'}
+    Assert-BlockedSuccessorSchema $freezePath $freezeSchema 'Blocked-successor candidate-freeze receipt is invalid.'
+    if([string]$freezeDocument.schema-ceq'rusty.morphospace.workflow.candidate_freeze.v3'){
+        $revisionOwner=Import-Module (Join-Path $PSScriptRoot 'CandidateFreeze.psm1') -PassThru
+        $freezeProof=Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $Workspace -TransactionId "$($freezeDocument.freeze_id)-recorded-transition" -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath ([string]$terminal.unit_path) -ExpectedEventsPath 'iteration-events.jsonl'
+        &$revisionOwner {param($w,$i) Assert-MorphospaceCandidateRevisionRecoveryBindings $w $i -Historical} $Workspace $freezeProof.intent
+    }
     if((Get-MorphospaceFileSha256 $freezePath)-cne[string]$terminal.candidate_freeze.receipt_sha256){throw 'Blocked-successor candidate-freeze receipt bytes drifted.'}
     $freeze=Read-MorphospaceProtocolJson $freezePath
     if([string]$freeze.freeze_id-cne[string]$terminal.candidate_freeze.freeze_id-or[string]$freeze.unit_id-cne[string]$terminal.unit_id-or[string]$freeze.project_id-cne[string]$Request.project_id){throw 'Blocked-successor candidate-freeze identity is not exact.'}

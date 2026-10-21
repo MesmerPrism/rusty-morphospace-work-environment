@@ -741,7 +741,17 @@ function New-MorphospaceReadOnlyLedgerBatch {
         $observation=Get-MorphospaceReadOnlyLedgerObservation $events
         $token=[guid]::NewGuid().ToString('N')
         if(-not(Get-Variable -Scope Script -Name readOnlyLedgerBatches -ErrorAction SilentlyContinue)){$script:readOnlyLedgerBatches=@{}}
-        $script:readOnlyLedgerBatches[$token]=[pscustomobject]@{workspace=$workspace;observation=$observation;handles=$handles;mutex=$lock}
+        $thread=[Threading.Thread]::CurrentThread.ManagedThreadId
+        $intents=[Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
+        # A nested reader may share immutable intent semantics only while its
+        # parent still owns this exact ledger/policy observation on this thread.
+        foreach($parent in $script:readOnlyLedgerBatches.Values){
+            if($parent.workspace-ceq$workspace-and$parent.thread-eq$thread-and$parent.observation.snapshot.sha256-ceq$observation.snapshot.sha256){
+                Assert-MorphospaceReadOnlyLedgerObservation $parent.observation
+                $intents=$parent.intents;break
+            }
+        }
+        $script:readOnlyLedgerBatches[$token]=[pscustomobject]@{workspace=$workspace;observation=$observation;handles=$handles;mutex=$lock;thread=$thread;intents=$intents}
         return $token
     } catch {
         foreach($handle in $handles){$handle.Dispose()}
@@ -759,6 +769,31 @@ function Close-MorphospaceReadOnlyLedgerBatch {
         foreach($handle in $batch.handles){$handle.Dispose()}
         Exit-MorphospaceWorkspaceMutex $batch.mutex
     }
+}
+function Read-MorphospaceCheckedLedgerIntent {
+    param([string]$Workspace,[string]$TransactionId,[string]$IntentPath,[string]$BatchToken='')
+    if(-not$BatchToken){
+        $intent=Read-MorphospaceLedgerJson $IntentPath
+        Assert-MorphospaceLedgerIntent $intent $TransactionId
+        return $intent
+    }
+    if(-not$script:readOnlyLedgerBatches.ContainsKey($BatchToken)){throw 'Read-only ledger batch is not active.'}
+    $batch=$script:readOnlyLedgerBatches[$BatchToken]
+    if($batch.workspace-cne$Workspace-or$batch.thread-ne[Threading.Thread]::CurrentThread.ManagedThreadId){throw 'Read-only ledger batch belongs to a different workspace or thread.'}
+    Assert-MorphospaceReadOnlyLedgerObservation $batch.observation
+    # Parse a fresh DTO from the same exact raw bytes whose semantics were
+    # authenticated. No caller-owned parsed object is retained or trusted.
+    $bytes=[IO.File]::ReadAllBytes($IntentPath);$sha=Get-MorphospaceLedgerByteHash $bytes
+    if($batch.intents.ContainsKey($IntentPath)-and$batch.intents[$IntentPath]-cne$sha){throw 'Read-only committed intent changed during authentication.'}
+    $intent=ConvertFrom-MorphospaceProtocolJsonBytes $bytes
+    if([string]$intent.transaction_id-cne$TransactionId){throw 'Read-only committed intent identity differs from the requested transaction.'}
+    if(-not$batch.intents.ContainsKey($IntentPath)){
+        Assert-MorphospaceLedgerIntent $intent $TransactionId
+        Assert-MorphospaceReadOnlyLedgerObservation $batch.observation
+        if((Get-MorphospaceFileSha256 $IntentPath)-cne$sha){throw 'Read-only committed intent changed during authentication.'}
+        $batch.intents[$IntentPath]=$sha
+    }
+    $intent
 }
 function Test-MorphospaceCommittedTransitionLedgerCore {
     [CmdletBinding()]
@@ -778,8 +813,7 @@ function Test-MorphospaceCommittedTransitionLedgerCore {
     try {
         $intentAbsolute=Resolve-MorphospaceWorkspacePath -WorkspaceRoot $workspace -RelativePath $intentRelative -RequireLeaf
         $completionAbsolute=Resolve-MorphospaceWorkspacePath -WorkspaceRoot $workspace -RelativePath $completionRelative -RequireLeaf
-        $intent=Read-MorphospaceLedgerJson $intentAbsolute
-        Assert-MorphospaceLedgerIntent $intent $TransactionId
+        $intent=Read-MorphospaceCheckedLedgerIntent $workspace $TransactionId $intentAbsolute $BatchToken
         foreach($expected in @(
             [pscustomobject]@{name='state';supplied=$ExpectedStatePath;actual=[string]$intent.state.path},
             [pscustomobject]@{name='unit';supplied=$ExpectedUnitPath;actual=[string]$intent.unit.path},
@@ -794,7 +828,7 @@ function Test-MorphospaceCommittedTransitionLedgerCore {
         if($BatchToken){
             if(-not$script:readOnlyLedgerBatches.ContainsKey($BatchToken)){throw 'Read-only ledger batch is not active.'}
             $batch=$script:readOnlyLedgerBatches[$BatchToken]
-            if($batch.workspace-cne$workspace-or$batch.observation.path-cne$eventsAbsolute){throw 'Read-only ledger batch belongs to a different workspace.'}
+            if($batch.workspace-cne$workspace-or$batch.observation.path-cne$eventsAbsolute-or$batch.thread-ne[Threading.Thread]::CurrentThread.ManagedThreadId){throw 'Read-only ledger batch belongs to a different workspace or thread.'}
             $observation=$batch.observation
             Assert-MorphospaceReadOnlyLedgerObservation $observation
         } else {$observation=Get-MorphospaceReadOnlyLedgerObservation $eventsAbsolute}
@@ -830,6 +864,13 @@ function Test-MorphospaceCommittedTransitionLedger {
 }
 function Assert-MorphospaceLedgerExternalOwnerBindings {
     param([string]$WorkspaceRoot,[object]$Intent,[object]$CurrentUnit=$null,[switch]$BeforeIntent)
+    foreach($artifact in @($Intent.artifacts)){
+        try{$candidate=ConvertFrom-MorphospaceProtocolJsonBytes ([Convert]::FromBase64String([string]$artifact.bytes_base64))}catch{continue}
+        if($null-ne$candidate-and$candidate.PSObject.Properties.Name-contains'schema'-and[string]$candidate.schema-ceq'rusty.morphospace.workflow.candidate_freeze.v3'){
+            $revisionOwner=Import-Module (Join-Path $PSScriptRoot '../CandidateFreeze.psm1') -PassThru
+            &$revisionOwner {param($root,$transition) Assert-MorphospaceCandidateRevisionRecoveryBindings $root $transition} $WorkspaceRoot $Intent
+        }
+    }
     # These two actions bind inputs outside the mutable state/unit projections.
     # Recover must recheck the same owner predicates before installing artifacts
     # or completing a partial projection. Existing intent kinds retain their

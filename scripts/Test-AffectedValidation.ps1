@@ -1246,7 +1246,7 @@ function Assert-AffectedTrackedFileAnalysisIndexStable([object]$Index) {
     $observed = Get-AffectedOwnerFileSha256 $Index.absolute_path
     if ($observed -cne [string]$Index.source_sha256) { throw "Owner import graph source bytes changed during construction: $($Index.importer)" }
 }
-function Assert-AffectedRetirementDeclarationLayout([object]$Resolution,[string[]]$Paths) {
+function Assert-AffectedRetirementDeclarationLayout([object]$Resolution,[string[]]$Paths,[switch]$ProofBatchLayout) {
     $importers = @('scripts/ActiveUnitRetirement.psm1','scripts/lib/MorphospacePlanningLifecycleProjection.psm1')
     $actual = @($Resolution.used_declarations | Where-Object { [string]$_.importer -cin $importers } | ForEach-Object { "$([string]$_.importer)|$([string]$_.variable)|$([int]$_.count)|$(@($_.target_paths) -join ',')" })
     $lineageLayout = $Paths -ccontains 'scripts/lib/MorphospaceActiveRetirementLineage.psm1'
@@ -1263,6 +1263,10 @@ function Assert-AffectedRetirementDeclarationLayout([object]$Resolution,[string[
     if ($Paths -ccontains 'scripts/lib/MorphospacePlanningLifecycleProjection.psm1') {
         $expected += @('scripts/lib/MorphospacePlanningLifecycleProjection.psm1|amendmentModule|1|scripts/ActiveWriteScopeAmendment.psm1','scripts/lib/MorphospacePlanningLifecycleProjection.psm1|pendingExtensionModule|2|scripts/ActiveDevelopmentEnvelopeExtension.psm1')
     } else { $expected += 'scripts/ActiveUnitRetirement.psm1|amendmentModule|1|scripts/ActiveWriteScopeAmendment.psm1' }
+    if ($ProofBatchLayout) {
+        Assert-True ($lineageLayout -and -not $sharedLayout -and $Paths -ccontains 'scripts/lib/MorphospaceTransitionLedger.psm1') 'Retirement-dependent consumer did not consume the exact closed retirement/shared-helper module-object declarations.'
+        $expected += 'scripts/ActiveUnitRetirement.psm1|scope|2|scripts/lib/MorphospaceTransitionLedger.psm1'
+    }
     [Array]::Sort($actual,[StringComparer]::Ordinal); [Array]::Sort($expected,[StringComparer]::Ordinal)
     Assert-True (($actual -join ';') -ceq ($expected -join ';')) 'Retirement-dependent consumer did not consume the exact closed retirement/shared-helper module-object declarations.'
 }
@@ -1444,6 +1448,84 @@ function Get-AffectedIndexedModuleExportTarget([object]$Index,[object]$Invocatio
     if (-not $info.exports.Contains($name) -or $info.functions -inotcontains $name) { throw "Module export invocation names no explicit local function export: $context" }
     return $relative
 }
+function Get-AffectedAuditedModuleMemberTarget([string]$Importer, [Management.Automation.Language.CommandAst]$Invocation, [object]$Declarations) {
+    # A closed test-graph adapter for the two audited originating-module calls.
+    # This does not infer arbitrary member bindings or exempt them from tracking.
+    $elements = @($Invocation.CommandElements)
+    $callee = $elements[0]
+    if ($Importer -cne 'scripts/ActiveUnitRetirement.psm1' -or
+        $callee -isnot [Management.Automation.Language.MemberExpressionAst] -or
+        $callee.Static -or
+        $callee.Expression -isnot [Management.Automation.Language.VariableExpressionAst] -or
+        [string]$callee.Expression.VariablePath.UserPath -cne 'scope' -or
+        $callee.Member -isnot [Management.Automation.Language.StringConstantExpressionAst] -or
+        [string]$callee.Member.Value -cne 'ledger' -or
+        $callee.Extent.Text -cne '$scope.ledger') { return $null }
+    $key = "$Importer|scope.ledger"
+    if (-not $Declarations.ContainsKey($key)) { throw "Audited module-member invocation lacks an exact declaration: $key" }
+    $declaration = $Declarations[$key]
+    if ((@($declaration.PSObject.Properties.Name) -join ',') -cne 'importer,variable,count,import_path' -or
+        [int]$declaration.count -ne 2 -or
+        [string]$declaration.import_path -cne 'scripts/lib/MorphospaceTransitionLedger.psm1') {
+        throw "Audited module-member declaration changed its exact tracked target/count: $key"
+    }
+    if ($Invocation.InvocationOperator -ne [Management.Automation.Language.TokenKind]::Ampersand -or
+        @($Invocation.Redirections).Count -ne 0 -or $elements.Count -ne 3 -or
+        $elements[1] -isnot [Management.Automation.Language.ScriptBlockExpressionAst]) {
+        throw "Audited module-member invocation changed its module-scriptblock shape: $key"
+    }
+    # Check AST/token boundaries, not whitespace-stripped text: a split command
+    # name or argument must not become the audited command after normalization.
+    $body = $elements[1].ScriptBlock
+    if ($null -eq $body.ParamBlock -or @($body.ParamBlock.Parameters).Count -ne 1 -or
+        ($null -ne $body.ParamBlock.Attributes -and @($body.ParamBlock.Attributes).Count -ne 0) -or
+        ($null -ne $body.Attributes -and @($body.Attributes).Count -ne 0) -or
+        ($null -ne $body.UsingStatements -and @($body.UsingStatements).Count -ne 0) -or $null -ne $body.BeginBlock -or
+        $null -ne $body.ProcessBlock -or $null -ne $body.DynamicParamBlock -or
+        $null -ne $body.CleanBlock -or $null -eq $body.EndBlock -or
+        -not $body.EndBlock.Unnamed -or ($null -ne $body.EndBlock.Traps -and @($body.EndBlock.Traps).Count -ne 0) -or
+        @($body.EndBlock.Statements).Count -ne 1) {
+        throw "Audited module-member invocation changed its closed callback blocks: $key"
+    }
+    $parameter = $body.ParamBlock.Parameters[0]
+    $pipeline = $body.EndBlock.Statements[0]
+    if (($null -ne $parameter.Attributes -and @($parameter.Attributes).Count -ne 0) -or $null -ne $parameter.DefaultValue -or
+        $pipeline -isnot [Management.Automation.Language.PipelineAst] -or
+        $pipeline.Background -or @($pipeline.PipelineElements).Count -ne 1 -or
+        $pipeline.PipelineElements[0] -isnot [Management.Automation.Language.CommandAst]) {
+        throw "Audited module-member invocation changed its closed callback pipeline: $key"
+    }
+    $command = $pipeline.PipelineElements[0]
+    $inner = @($command.CommandElements)
+    if ($command.InvocationOperator -ne [Management.Automation.Language.TokenKind]::Unknown -or
+        @($command.Redirections).Count -ne 0 -or $inner.Count -ne 2 -or
+        $inner[0] -isnot [Management.Automation.Language.StringConstantExpressionAst] -or
+        $inner[0].StringConstantType -ne [Management.Automation.Language.StringConstantType]::BareWord -or
+        $inner[1] -isnot [Management.Automation.Language.VariableExpressionAst]) {
+        throw "Audited module-member invocation changed its closed callback command: $key"
+    }
+    $argument = $elements[2]
+    $operation = $null
+    if ($parameter.Name.Extent.Text -ceq '$token' -and
+        [string]$inner[0].Value -ceq 'Close-MorphospaceReadOnlyLedgerBatch' -and
+        $inner[1].Extent.Text -ceq '$token' -and -not $inner[1].Splatted -and
+        $argument -is [Management.Automation.Language.MemberExpressionAst] -and
+        -not $argument.Static -and
+        $argument.Expression -is [Management.Automation.Language.VariableExpressionAst] -and
+        [string]$argument.Expression.VariablePath.UserPath -ceq 'scope' -and
+        $argument.Member -is [Management.Automation.Language.StringConstantExpressionAst] -and
+        [string]$argument.Member.Value -ceq 'token' -and $argument.Extent.Text -ceq '$scope.token') {
+        $operation = 'close'
+    } elseif ($parameter.Name.Extent.Text -ceq '$arguments' -and
+        [string]$inner[0].Value -ceq 'Test-MorphospaceCommittedTransitionLedgerCore' -and
+        $inner[1].Extent.Text -ceq '@arguments' -and $inner[1].Splatted -and
+        $argument -is [Management.Automation.Language.VariableExpressionAst] -and
+        -not $argument.Splatted -and [string]$argument.VariablePath.UserPath -ceq 'arguments' -and
+        $argument.Extent.Text -ceq '$arguments') {
+        $operation = 'core'
+    } else { throw "Audited module-member invocation changed its closed callback/argument contract: $key" }
+    return [pscustomobject]@{key=$key;operation=$operation;target=[string]$declaration.import_path}
+}
 function New-AffectedTrackedImportGraph([string]$Root, [string[]]$Entrypoints, [object[]]$DynamicImportDeclarations = @(), [Collections.Generic.HashSet[string]]$TrackedPaths = $null) {
     $root = [IO.Path]::GetFullPath($Root).TrimEnd('\','/')
     $rootPrefix = $root + [IO.Path]::DirectorySeparatorChar
@@ -1472,6 +1554,7 @@ function New-AffectedTrackedImportGraph([string]$Root, [string[]]$Entrypoints, [
         $declarations[$key] = $declaration
     }
     $observedDeclarations = [Collections.Generic.Dictionary[string,int]]::new([StringComparer]::Ordinal)
+    $auditedMemberOperations = [Collections.Generic.Dictionary[string,int]]::new([StringComparer]::Ordinal)
     $nodes = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $pending = [Collections.Generic.Queue[string]]::new()
     $edges = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
@@ -1558,6 +1641,15 @@ function New-AffectedTrackedImportGraph([string]$Root, [string[]]$Entrypoints, [
                     $observedDeclarations[$exportKey] = 1 + $(if ($observedDeclarations.ContainsKey($exportKey)) { [int]$observedDeclarations[$exportKey] } else { 0 })
                 }
                 [void]$importEdges.Add($moduleExportTarget)
+                continue
+            }
+            $auditedMember = Get-AffectedAuditedModuleMemberTarget -Importer $importer -Invocation $invocation -Declarations $declarations
+            if ($null -ne $auditedMember) {
+                $memberKey = [string]$auditedMember.key
+                $operationKey = "$memberKey|$([string]$auditedMember.operation)"
+                $observedDeclarations[$memberKey] = 1 + $(if ($observedDeclarations.ContainsKey($memberKey)) { [int]$observedDeclarations[$memberKey] } else { 0 })
+                $auditedMemberOperations[$operationKey] = 1 + $(if ($auditedMemberOperations.ContainsKey($operationKey)) { [int]$auditedMemberOperations[$operationKey] } else { 0 })
+                [void]$importEdges.Add([string]$auditedMember.target)
                 continue
             }
             $pathValues = @($invocationRecord.path_values)
@@ -1665,6 +1757,15 @@ function New-AffectedTrackedImportGraph([string]$Root, [string[]]$Entrypoints, [
         $observed = if ($observedDeclarations.ContainsKey($key)) { [int]$observedDeclarations[$key] } else { 0 }
         if ($observed -ne [int]$declaration.count) { throw "Dynamic owner import declaration count changed: $key expected=$($declaration.count) observed=$observed" }
     }
+    $auditedMemberKey = 'scripts/ActiveUnitRetirement.psm1|scope.ledger'
+    if ($declarations.ContainsKey($auditedMemberKey) -and $nodes.Contains('scripts/ActiveUnitRetirement.psm1')) {
+        foreach ($operation in @('close','core')) {
+            $operationKey = "$auditedMemberKey|$operation"
+            if (-not $auditedMemberOperations.ContainsKey($operationKey) -or [int]$auditedMemberOperations[$operationKey] -ne 1) {
+                throw "Audited module-member operation pair changed: $operationKey"
+            }
+        }
+    }
     foreach ($node in @($nodes)) {
         if (-not $analysisKeyByPath.ContainsKey($node) -or -not $analysisByKey.ContainsKey([string]$analysisKeyByPath[$node])) { throw "Owner import graph analysis index is absent for a tracked node: $node" }
         $analysis = $analysisByKey[[string]$analysisKeyByPath[$node]]
@@ -1769,10 +1870,12 @@ function Get-AffectedProtocolCommonOwnerChecks([string]$Root, [object]$Registry)
     $registrationAudit = Assert-MorphospaceAffectedWorkEnvironmentLeafRegistration -Root $Root -Registry $Registry
     $ownerEntrypoints = @($registrationAudit.owner_entrypoints)
     $dynamicImports = @(
+        [pscustomobject][ordered]@{ importer='scripts/ActiveUnitRetirement.psm1'; variable='scope.ledger'; count=2; import_path='scripts/lib/MorphospaceTransitionLedger.psm1' },
         [pscustomobject][ordered]@{ importer='scripts/Test-LocalSkillBootstrap.ps1'; variable='boundary'; count=2; import_path='scripts/Install-LocalSkills.ps1' },
         [pscustomobject][ordered]@{ importer='scripts/Test-AuthorityRecordReadiness.ps1'; variable='processModule'; count=1; import_path='scripts/lib/MorphospaceAuthorityProcess.psm1' },
         [pscustomobject][ordered]@{ importer='scripts/Test-TransitionLedger.ps1'; variable='ModulePath'; count=2; import_path='scripts/lib/MorphospaceTransitionLedger.psm1' },
         [pscustomobject][ordered]@{ importer='scripts/Test-TransitionLedger.ps1'; variable='observationDamage'; count=1; import_path='scripts/Test-TransitionLedger.ps1' },
+        [pscustomobject][ordered]@{ importer='scripts/Test-TransitionLedger.ps1'; variable='script:originalIntentAssert'; count=1; import_path='scripts/lib/MorphospaceTransitionLedger.psm1' },
         [pscustomobject][ordered]@{ importer='scripts/Test-TransitionLedger.ps1'; variable='script:originalObservationAssert'; count=1; import_path='scripts/lib/MorphospaceTransitionLedger.psm1' },
         [pscustomobject][ordered]@{ importer='scripts/Test-TransitionLedger.ps1'; variable='script:originalReader'; count=1; import_path='scripts/lib/MorphospaceTransitionLedger.psm1' },
         [pscustomobject][ordered]@{ importer='scripts/Test-TransitionLedger.ps1'; variable='script:transitionModule'; count=4; import_path='scripts/lib/MorphospaceTransitionLedger.psm1' },
@@ -1965,9 +2068,79 @@ $module = Import-Module (Join-Path $OwnerDirectory 'scripts/lib/FixtureExports.p
         Write-Host 'Typed module export binding and nested-callee fixtures passed.'
     } finally { if ([IO.Directory]::Exists($ownerGraphFixture)) { Remove-Item -LiteralPath $ownerGraphFixture -Recurse -Force } }
 }
+function Invoke-AffectedAuditedModuleMemberSelfTest {
+    $fixture = Join-Path ([IO.Path]::GetTempPath()) ('morphospace-audited-member-' + [guid]::NewGuid().ToString('N'))
+    [void][IO.Directory]::CreateDirectory((Join-Path $fixture 'scripts/lib'))
+    try {
+        $importer = 'scripts/ActiveUnitRetirement.psm1'
+        $target = 'scripts/lib/MorphospaceTransitionLedger.psm1'
+        $tracked = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        foreach ($path in @($importer,$target,'scripts/lib/Wrong.psm1','scripts/Unknown.ps1')) { [void]$tracked.Add($path) }
+        Write-Utf8 (Join-Path $fixture $target) "# Tracked module bytes; never executed.`n"
+        Write-Utf8 (Join-Path $fixture 'scripts/lib/Wrong.psm1') "# Wrong tracked target.`n"
+        $close = '&$scope.ledger {param($token)Close-MorphospaceReadOnlyLedgerBatch $token} $scope.token'
+        $core = '&$scope.ledger {param($arguments)Test-MorphospaceCommittedTransitionLedgerCore @arguments} $arguments'
+        $source = "$close`n$core`n"
+        $declaration = [pscustomobject][ordered]@{importer=$importer;variable='scope.ledger';count=2;import_path=$target}
+        Write-Utf8 (Join-Path $fixture $importer) $source
+        $positive = New-AffectedTrackedImportGraph -Root $fixture -Entrypoints @($importer) -DynamicImportDeclarations @($declaration) -TrackedPaths $tracked
+        Assert-True (($positive.nodes -join ',') -ceq "$importer,$target" -and @($positive.edges[$importer]).Count -eq 1 -and $positive.edges[$importer][0] -ceq $target) 'Audited module-member graph did not retain exactly the tracked ledger edge.'
+        Assert-AffectedThrows { New-AffectedTrackedImportGraph -Root $fixture -Entrypoints @($importer) -TrackedPaths $tracked } '*Audited module-member invocation lacks an exact declaration*' 'Audited module-member graph accepted missing declaration.'
+        Assert-AffectedThrows { New-AffectedTrackedImportGraph -Root $fixture -Entrypoints @($importer) -DynamicImportDeclarations @($declaration,$declaration) -TrackedPaths $tracked } '*duplicate*' 'Audited module-member graph accepted duplicate declarations.'
+        foreach ($damage in @('count-minus','count-plus','wrong-target','multiple-targets','external')) {
+            $bad = [pscustomobject][ordered]@{importer=$importer;variable='scope.ledger';count=2;import_path=$target}
+            switch ($damage) {
+                'count-minus' { $bad.count=1 }
+                'count-plus' { $bad.count=3 }
+                'wrong-target' { $bad.import_path='scripts/lib/Wrong.psm1' }
+                'multiple-targets' { $bad=[pscustomobject][ordered]@{importer=$importer;variable='scope.ledger';count=2;import_paths=@($target,'scripts/lib/Wrong.psm1')} }
+                'external' { $bad=[pscustomobject][ordered]@{importer=$importer;variable='scope.ledger';count=2;classification='authenticated-external-script'} }
+            }
+            Assert-AffectedThrows { New-AffectedTrackedImportGraph -Root $fixture -Entrypoints @($importer) -DynamicImportDeclarations @($bad) -TrackedPaths $tracked } '*Audited module-member declaration changed*' "Audited module-member graph accepted $damage."
+        }
+        [void]$tracked.Remove($target)
+        Assert-AffectedThrows { New-AffectedTrackedImportGraph -Root $fixture -Entrypoints @($importer) -DynamicImportDeclarations @($declaration) -TrackedPaths $tracked } '*absent or untracked*' 'Audited module-member graph bypassed tracked target checking.'
+        [void]$tracked.Add($target)
+        foreach ($damage in @('receiver','member','computed','static','nested','null-conditional','operator','no-scriptblock','extra-argument','outer-argument','inner-command','split-command','inner-argument','extra-statement','extra-block','typed-parameter','redirection','missing-call','extra-call','duplicate-operation')) {
+            $damaged = $source
+            $expected = '*Audited module-member*'
+            switch ($damage) {
+                'receiver' { $damaged=$source.Replace('$scope.ledger','$other.ledger');$expected='*neither a tracked script path nor an audited non-path callable*' }
+                'member' { $damaged=$source.Replace('$scope.ledger','$scope.other');$expected='*neither a tracked script path nor an audited non-path callable*' }
+                'computed' { $damaged=$source.Replace('$scope.ledger','$scope.$name');$expected='*neither a tracked script path nor an audited non-path callable*' }
+                'static' { $damaged=$source.Replace('$scope.ledger','$scope::ledger');$expected='*neither a tracked script path nor an audited non-path callable*' }
+                'nested' { $damaged=$source.Replace('$scope.ledger','$scope.inner.ledger');$expected='*neither a tracked script path nor an audited non-path callable*' }
+                'null-conditional' { $damaged=$source.Replace('$scope.ledger','${scope}?.ledger');$expected='*neither a tracked script path nor an audited non-path callable*' }
+                'operator' { $damaged=$source.Replace('&$scope.ledger','. $scope.ledger') }
+                'no-scriptblock' { $damaged=$source.Replace('{param($token)Close-MorphospaceReadOnlyLedgerBatch $token}','$callback') }
+                'extra-argument' { $damaged=$source.Replace('$scope.token','$scope.token $extra') }
+                'outer-argument' { $damaged=$source.Replace('$scope.token','$scope.wrong') }
+                'inner-command' { $damaged=$source.Replace('Close-MorphospaceReadOnlyLedgerBatch','Unknown-Command') }
+                'split-command' { $damaged=$source.Replace('Close-MorphospaceReadOnlyLedgerBatch','Close -MorphospaceReadOnlyLedgerBatch') }
+                'inner-argument' { $damaged=$source.Replace('Core @arguments','Core $arguments') }
+                'extra-statement' { $damaged=$source.Replace('Batch $token}','Batch $token; Unknown-Command}') }
+                'extra-block' { $damaged=$source.Replace('param($token)Close-MorphospaceReadOnlyLedgerBatch $token','param($token) begin { Unknown-Command } end { Close-MorphospaceReadOnlyLedgerBatch $token }') }
+                'typed-parameter' { $damaged=$source.Replace('param($token)','param([object]$token)') }
+                'redirection' { $damaged=$source.Replace('$scope.token','$scope.token 2>$null') }
+                'missing-call' { $damaged="$close`n";$expected='*declaration count changed*' }
+                'extra-call' { $damaged=$source+"$close`n";$expected='*declaration count changed*' }
+                'duplicate-operation' { $damaged="$close`n$close`n";$expected='*operation pair changed*' }
+            }
+            Write-Utf8 (Join-Path $fixture $importer) $damaged
+            Assert-AffectedThrows { New-AffectedTrackedImportGraph -Root $fixture -Entrypoints @($importer) -DynamicImportDeclarations @($declaration) -TrackedPaths $tracked } $expected "Audited module-member graph accepted $damage."
+        }
+        Write-Utf8 (Join-Path $fixture 'scripts/Unknown.ps1') $source
+        $unknown = [pscustomobject][ordered]@{importer='scripts/Unknown.ps1';variable='scope.ledger';count=2;import_path=$target}
+        Assert-AffectedThrows { New-AffectedTrackedImportGraph -Root $fixture -Entrypoints @('scripts/Unknown.ps1') -DynamicImportDeclarations @($unknown) -TrackedPaths $tracked } '*neither a tracked script path nor an audited non-path callable*' 'Audited module-member graph accepted unknown importer.'
+        Write-Host 'Audited module-member tracked target/count/closed-shape refusal controls passed.'
+    } finally {
+        if ([IO.Directory]::Exists($fixture)) { Remove-Item -LiteralPath $fixture -Recurse -Force }
+    }
+}
 function Invoke-AffectedGraphIndexSelfTest([string]$Root,[object]$Registry) {
     Invoke-AffectedGitOriginalWaitSelfTest
     Invoke-AffectedModuleExportSelfTest
+    Invoke-AffectedAuditedModuleMemberSelfTest
     $audit = Get-AffectedProtocolCommonOwnerChecks -Root $Root -Registry $Registry
     Assert-AffectedProtocolCommonGraphProjection -Value $audit -Context 'Real-tree ProtocolCommon graph'
     foreach ($requiredNode in @('scripts/New-ValidatingCandidateRematerializationInput.ps1','scripts/Test-ValidatingCandidateRematerialization.ps1','scripts/ValidatingCandidateRematerialization.psm1','scripts/lib/MorphospaceSourceCompositionIdentity.psm1')) {
@@ -2144,7 +2317,7 @@ $checks = @(
     }
     return $audit
 }
-function Assert-AffectedRetirementDependentClosures([object[]]$Closures) {
+function Assert-AffectedRetirementDependentClosures([object[]]$Closures,[switch]$ProofBatchLayout) {
     $ids=@('protocol-foundation','validating-candidate-rematerialization')
     Assert-True ($Closures.Count -eq $ids.Count) 'Retirement-dependent consumer corpus is not the exact closed pair.'
     foreach($id in $ids){
@@ -2153,7 +2326,7 @@ function Assert-AffectedRetirementDependentClosures([object[]]$Closures) {
         $closure=$match[0]
         Assert-True ([string]$closure.resolution.mode -ceq 'exact' -and @($closure.resolution.fallback_reasons).Count -eq 0) "Retirement-dependent consumer '$id' did not retain exact closure without fallback."
         foreach($path in @('scripts/ActiveUnitRetirement.psm1','scripts/DevelopmentEnvelopeProvenance.psm1','scripts/ActiveWriteScopeAmendment.psm1','scripts/lib/MorphospaceTransitionLedger.psm1')){Assert-True ($closure.paths -ccontains $path) "Retirement-dependent consumer '$id' omitted '$path'."}
-        Assert-AffectedRetirementDeclarationLayout -Resolution $closure.resolution -Paths $closure.paths
+        Assert-AffectedRetirementDeclarationLayout -Resolution $closure.resolution -Paths $closure.paths -ProofBatchLayout:$ProofBatchLayout
         if($id -ceq 'validating-candidate-rematerialization'){
             $rows=@($closure.resolution.used_declarations|Where-Object{[string]$_.importer -ceq 'scripts/Test-ValidatingCandidateRematerialization.ps1' -and $_.PSObject.Properties.Name -ccontains 'target_paths'})
             $identities=@($rows|ForEach-Object{"$([string]$_.importer)|$([string]$_.variable)|$([int]$_.count)|$(@($_.target_paths)-join ',')"})
@@ -2174,6 +2347,9 @@ function Invoke-AffectedRetirementLayoutGraphSelfTest {
         $lineageRetirement="function Invoke-Provenance([object]`$ProvenanceModule){& `$ProvenanceModule { 'first' }; & `$ProvenanceModule { 'second' }}`nfunction Invoke-OrdinaryFirst { if(`$enabled){`$module=Import-Module (Join-Path `$PSScriptRoot 'DevelopmentEnvelopeProvenance.psm1') -PassThru}; & `$module { 'first' } }`nfunction Invoke-OrdinarySecond { if(`$enabled){`$module=Import-Module (Join-Path `$PSScriptRoot 'DevelopmentEnvelopeProvenance.psm1') -PassThru}; & `$module { 'second' } }`n"
         # Actual fixed-export AST shapes used by the two v2 writer functions.
         $lineage="function Invoke-LineageProof { `$module=Import-Module (Join-Path `$PSScriptRoot 'lib/MorphospaceActiveRetirementLineage.psm1') -PassThru; & `$module.ExportedCommands['Get-MorphospaceActiveRetirementSupersessionLineage'] }`nfunction Invoke-LineagePlanning { `$module=Import-Module (Join-Path `$PSScriptRoot 'lib/MorphospaceActiveRetirementLineage.psm1') -PassThru; & `$module.ExportedCommands['Test-MorphospaceActiveRetirementSupersessionPlanningProjection'] }`n"
+        # The fourth layout models the production's exact receiver/member calls;
+        # its finite target/count contract is independent of the registry.
+        $proofBatch="function Invoke-ProofClose { `$scope=`$script:ProofBatch; & `$scope.ledger { 'close' } }`nfunction Invoke-ProofRead { `$scope=`$script:ProofBatch; & `$scope.ledger { 'read' } }`n"
         $helper="if(`$enabled){`$amendmentModule=Import-Module (Join-Path `$PSScriptRoot '../ActiveWriteScopeAmendment.psm1') -PassThru}`n& `$amendmentModule { 'amendment' }`nif(`$enabled){`$pendingExtensionModule=Import-Module (Join-Path `$PSScriptRoot '../ActiveDevelopmentEnvelopeExtension.psm1') -PassThru}`n& `$pendingExtensionModule { 'pending' }`n& `$pendingExtensionModule { 'recorded' }`n"
         $files=[ordered]@{
             'scripts/Test-ProtocolFoundation.ps1'="Import-Module (Join-Path `$PSScriptRoot 'ActiveUnitRetirement.psm1')`n"
@@ -2193,14 +2369,16 @@ function Invoke-AffectedRetirementLayoutGraphSelfTest {
             [pscustomobject]@{importer='scripts/ActiveUnitRetirement.psm1';variable='module';count=2;target_paths=@('scripts/DevelopmentEnvelopeProvenance.psm1')},
             [pscustomobject]@{importer='scripts/Test-ValidatingCandidateRematerialization.ps1';variable='script:RematerializationOwnerModule';count=2;target_paths=@('scripts/ValidatingCandidateRematerialization.psm1')}
         )
-        foreach($layout in @('original','extracted','lineage')){
+        foreach($layout in @('original','extracted','lineage','proof-batch')){
+            $lineageLayout=$layout -cin @('lineage','proof-batch')
             $damages=@('none','altered-target','missing-call','extra-call','dynamic-call','shared-binding','missing-helper-edge','owner-count')
-            if($layout -ceq 'lineage'){$damages+=@('altered-lineage-target','missing-lineage-call','extra-lineage-call','mixed-layout')}
+            if($lineageLayout){$damages+=@('altered-lineage-target','missing-lineage-call','extra-lineage-call','mixed-layout')}
+            if($layout -ceq 'proof-batch'){$damages+=@('missing-proof-call','extra-proof-call','missing-proof-declaration','proof-count','proof-target')}
             foreach($damage in $damages){
                 $case=[ordered]@{};foreach($key in $files.Keys){$case[$key]=$files[$key]}
-                $case['scripts/ActiveUnitRetirement.psm1']=$(if($layout -ceq 'lineage'){$lineageRetirement}else{$retirement})+$(if($layout -ceq 'extracted'){$extracted}else{$legacy})+$(if($layout -ceq 'lineage'){$lineage}else{''})
+                $case['scripts/ActiveUnitRetirement.psm1']=$(if($lineageLayout){$lineageRetirement}else{$retirement})+$(if($layout -ceq 'extracted'){$extracted}else{$legacy})+$(if($lineageLayout){$lineage}else{''})+$(if($layout -ceq 'proof-batch'){$proofBatch}else{''})
                 $declarations=@($common|ConvertTo-Json -Depth 10|ConvertFrom-Json -Depth 10)
-                if($layout -ceq 'lineage'){
+                if($lineageLayout){
                     $row=@($declarations|Where-Object{[string]$_.importer -ceq 'scripts/ActiveUnitRetirement.psm1' -and [string]$_.variable -ceq 'module'})[0]
                     $row.count=4;$row.target_paths=@('scripts/DevelopmentEnvelopeProvenance.psm1','scripts/lib/MorphospaceActiveRetirementLineage.psm1')
                 }
@@ -2208,6 +2386,7 @@ function Invoke-AffectedRetirementLayoutGraphSelfTest {
                     [pscustomobject]@{importer='scripts/lib/MorphospacePlanningLifecycleProjection.psm1';variable='amendmentModule';count=1;target_paths=@('scripts/ActiveWriteScopeAmendment.psm1')},
                     [pscustomobject]@{importer='scripts/lib/MorphospacePlanningLifecycleProjection.psm1';variable='pendingExtensionModule';count=2;target_paths=@('scripts/ActiveDevelopmentEnvelopeExtension.psm1')}
                 )}
+                if($layout -ceq 'proof-batch'){$declarations+=[pscustomobject]@{importer='scripts/ActiveUnitRetirement.psm1';variable='scope';count=2;target_paths=@('scripts/lib/MorphospaceTransitionLedger.psm1')}}
                 switch($damage){
                     'altered-target'{$case['scripts/ActiveUnitRetirement.psm1']=$case['scripts/ActiveUnitRetirement.psm1'].Replace("'DevelopmentEnvelopeProvenance.psm1'","'ActiveWriteScopeAmendment.psm1'")}
                     'missing-call'{$case['scripts/ActiveUnitRetirement.psm1']=$case['scripts/ActiveUnitRetirement.psm1'].Replace("& `$module { 'second' }",'')}
@@ -2225,6 +2404,11 @@ function Invoke-AffectedRetirementLayoutGraphSelfTest {
                         )
                     }
                     'missing-helper-edge'{$case['scripts/ActiveUnitRetirement.psm1']=$retirement}
+                    'missing-proof-call'{$case['scripts/ActiveUnitRetirement.psm1']=$case['scripts/ActiveUnitRetirement.psm1'].Replace("& `$scope.ledger { 'close' }",'')}
+                    'extra-proof-call'{$case['scripts/ActiveUnitRetirement.psm1']+="& `$scope.ledger { 'extra' }`n"}
+                    'missing-proof-declaration'{$declarations=@($declarations|Where-Object{[string]$_.variable -cne 'scope'})}
+                    'proof-count'{@($declarations|Where-Object{[string]$_.variable -ceq 'scope'})[0].count=3}
+                    'proof-target'{@($declarations|Where-Object{[string]$_.variable -ceq 'scope'})[0].target_paths=@('scripts/ActiveWriteScopeAmendment.psm1')}
                     'owner-count'{$case['scripts/Test-ValidatingCandidateRematerialization.ps1']+="& `$script:RematerializationOwnerModule { 'extra' }`n"}
                 }
                 foreach($key in $case.Keys){Write-Utf8 (Join-Path $fixture $key) ([string]$case[$key])}
@@ -2238,18 +2422,23 @@ function Invoke-AffectedRetirementLayoutGraphSelfTest {
                             $expected=@('scripts/ActiveUnitRetirement.psm1','scripts/DevelopmentEnvelopeProvenance.psm1','scripts/ActiveWriteScopeAmendment.psm1','scripts/lib/MorphospaceTransitionLedger.psm1',$consumer.entry)
                             if($consumer.id -ceq 'validating-candidate-rematerialization'){$expected+='scripts/ValidatingCandidateRematerialization.psm1'}
                             if($layout -ceq 'extracted'){$expected+=@('scripts/lib/MorphospacePlanningLifecycleProjection.psm1','scripts/ActiveDevelopmentEnvelopeExtension.psm1')}
-                            if($layout -ceq 'lineage'){$expected+='scripts/lib/MorphospaceActiveRetirementLineage.psm1'}
+                            if($lineageLayout){$expected+='scripts/lib/MorphospaceActiveRetirementLineage.psm1'}
                             [Array]::Sort($expected,[StringComparer]::Ordinal)
                             Assert-True ((@($resolved.paths)-join ';') -ceq ($expected-join ';')) "Retirement AST fixture '$layout/$($consumer.id)' did not bind exact paths."
                         }
                     }
-                    Assert-AffectedRetirementDependentClosures -Closures $closures
+                    Assert-AffectedRetirementDependentClosures -Closures $closures -ProofBatchLayout:($layout -ceq 'proof-batch')
                 }catch{$message=$_.Exception.Message}
                 if($damage -ceq 'none'){Assert-True ($null -eq $message) "Retirement AST fixture rejected '$layout': $message"}else{
                     $category=switch($damage){
                         'altered-target'{'Affected dependency declaration omits observed static target:*'}
                         'missing-call'{'Affected dependency declaration count changed:*'}
                         'extra-call'{'Affected dependency declaration count changed:*'}
+                        'missing-proof-call'{'Affected dependency declaration count changed:*'}
+                        'extra-proof-call'{'Affected dependency declaration count changed:*'}
+                        'missing-proof-declaration'{"Retirement-dependent consumer '*' did not retain exact closure without fallback."}
+                        'proof-count'{'Affected dependency declaration count changed:*'}
+                        'proof-target'{'Retirement-dependent consumer did not consume the exact closed retirement/shared-helper module-object declarations.'}
                         'owner-count'{'Affected dependency declaration count changed:*'}
                         'dynamic-call'{"Retirement-dependent consumer '*' did not retain exact closure without fallback."}
                         'shared-binding'{if($layout -cne 'extracted'){"Retirement-dependent consumer '*' did not retain exact closure without fallback."}else{'Affected dependency declaration omits observed static target:*'}}
@@ -2856,21 +3045,33 @@ function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]
             [pscustomobject]@{importer='scripts/ActiveUnitRetirement.psm1';variable='module';count=4;target_paths=@('scripts/DevelopmentEnvelopeProvenance.psm1','scripts/lib/MorphospaceActiveRetirementLineage.psm1')},
             [pscustomobject]@{importer='scripts/ActiveUnitRetirement.psm1';variable='amendmentModule';count=1;target_paths=@('scripts/ActiveWriteScopeAmendment.psm1')}
         )
-        foreach ($layout in @([pscustomobject]@{rows=$legacyDeclarations;paths=@('scripts/ActiveUnitRetirement.psm1')},[pscustomobject]@{rows=$sharedDeclarations;paths=@('scripts/ActiveUnitRetirement.psm1','scripts/lib/MorphospacePlanningLifecycleProjection.psm1')},[pscustomobject]@{rows=$lineageDeclarations;paths=@('scripts/ActiveUnitRetirement.psm1','scripts/lib/MorphospaceActiveRetirementLineage.psm1')})) {
-            Assert-AffectedRetirementDeclarationLayout -Resolution ([pscustomobject]@{used_declarations=$layout.rows}) -Paths $layout.paths
-            foreach ($damage in @('missing','extra','count','target','mixed')) {
+        $proofBatchDeclarations = @($lineageDeclarations) + @([pscustomobject]@{importer='scripts/ActiveUnitRetirement.psm1';variable='scope';count=2;target_paths=@('scripts/lib/MorphospaceTransitionLedger.psm1')})
+        foreach ($layout in @([pscustomobject]@{rows=$legacyDeclarations;paths=@('scripts/ActiveUnitRetirement.psm1');proof_batch=$false},[pscustomobject]@{rows=$sharedDeclarations;paths=@('scripts/ActiveUnitRetirement.psm1','scripts/lib/MorphospacePlanningLifecycleProjection.psm1');proof_batch=$false},[pscustomobject]@{rows=$lineageDeclarations;paths=@('scripts/ActiveUnitRetirement.psm1','scripts/lib/MorphospaceActiveRetirementLineage.psm1');proof_batch=$false},[pscustomobject]@{rows=$proofBatchDeclarations;paths=@('scripts/ActiveUnitRetirement.psm1','scripts/lib/MorphospaceActiveRetirementLineage.psm1','scripts/lib/MorphospaceTransitionLedger.psm1');proof_batch=$true})) {
+            Assert-AffectedRetirementDeclarationLayout -Resolution ([pscustomobject]@{used_declarations=$layout.rows}) -Paths $layout.paths -ProofBatchLayout:$layout.proof_batch
+            $damages=@('missing','extra','count','target','mixed')
+            if($layout.proof_batch){$damages+=@('scope-missing','scope-extra','scope-count','scope-target')}
+            foreach ($damage in $damages) {
                 $rows = @($layout.rows | ConvertTo-Json -Depth 10 | ConvertFrom-Json -Depth 10)
                 switch ($damage) {
                     'missing' { $rows = @($rows | Select-Object -Skip 1) }
                     'extra' { $rows += $rows[0] }
                     'count' { $rows[0].count = 3 }
                     'target' { $rows[0].target_paths = @('scripts/ActiveWriteScopeAmendment.psm1') }
+                    'scope-missing' { $rows=@($rows|Where-Object{[string]$_.variable -cne 'scope'}) }
+                    'scope-extra' { $rows+=@($rows|Where-Object{[string]$_.variable -ceq 'scope'})[0] }
+                    'scope-count' { @($rows|Where-Object{[string]$_.variable -ceq 'scope'})[0].count=3 }
+                    'scope-target' { @($rows|Where-Object{[string]$_.variable -ceq 'scope'})[0].target_paths=@('scripts/ActiveWriteScopeAmendment.psm1') }
                     'mixed' { $rows += $legacyDeclarations[2] }
                 }
                 $rejected = $false
-                try { Assert-AffectedRetirementDeclarationLayout -Resolution ([pscustomobject]@{used_declarations=$rows}) -Paths $layout.paths } catch { $rejected = $_.Exception.Message -like '*exact closed retirement/shared-helper*' }
+                try { Assert-AffectedRetirementDeclarationLayout -Resolution ([pscustomobject]@{used_declarations=$rows}) -Paths $layout.paths -ProofBatchLayout:$layout.proof_batch } catch { $rejected = $_.Exception.Message -like '*exact closed retirement/shared-helper*' }
                 Assert-True $rejected "Retirement declaration layout accepted '$damage' damage."
             }
+        }
+        foreach($oldLayout in @($legacyDeclarations,$sharedDeclarations,$lineageDeclarations)){
+            $rejected=$false
+            try{Assert-AffectedRetirementDeclarationLayout -Resolution ([pscustomobject]@{used_declarations=$oldLayout}) -Paths @('scripts/ActiveUnitRetirement.psm1','scripts/lib/MorphospaceActiveRetirementLineage.psm1','scripts/lib/MorphospaceTransitionLedger.psm1') -ProofBatchLayout}catch{$rejected=$_.Exception.Message -like '*exact closed retirement/shared-helper*'}
+            Assert-True $rejected 'Proof-batch declaration contract accepted an old layout without its exact scope declaration.'
         }
         [void]$timings.Add([pscustomobject][ordered]@{check_id='protocol-foundation-retirement-dependent';elapsed_ms=[long]$protocolClock.Elapsed.TotalMilliseconds;dependency_count=@($protocolClosure.manifest).Count})
 
@@ -2901,7 +3102,7 @@ function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]
         [void]$timings.Add([pscustomobject][ordered]@{check_id='validating-candidate-rematerialization';elapsed_ms=[long]$rematerializationClock.Elapsed.TotalMilliseconds;dependency_count=@($rematerializationClosure.manifest).Count})
 
         # Both real consumers pass through the same closed layout assertion loop.
-        Assert-AffectedRetirementDependentClosures -Closures @(
+        Assert-AffectedRetirementDependentClosures -ProofBatchLayout -Closures @(
             [pscustomobject]@{check_id='protocol-foundation';paths=$protocolPaths;resolution=$protocolClosure.resolution},
             [pscustomobject]@{check_id='validating-candidate-rematerialization';paths=$rematerializationPaths;resolution=$rematerializationClosure.resolution}
         )
@@ -3380,9 +3581,8 @@ if ($runFullSelector -or $runExecutorPassPhase) {
         }
     }
     foreach ($requiredContext in @('quick-linux','quick-windows','standard-windows')) { Assert-True $workflowJobs.ContainsKey($requiredContext) "PR workflow lacks the required '$requiredContext' context." }
-    foreach ($segmentJobId in @('affected-linux-segments','affected-windows-segments','main-linux-segments','main-windows-segments')) { Assert-True $workflowJobs.ContainsKey($segmentJobId) "Workflow lacks the required '$segmentJobId' segmented execution job." }
+    foreach ($segmentJobId in @('affected-windows-segments','main-windows-segments')) { Assert-True $workflowJobs.ContainsKey($segmentJobId) "Workflow lacks the required '$segmentJobId' segmented execution job." }
     foreach ($selectedContext in @(
-        @{ id = 'quick-linux'; selected = 'LINUX_SELECTED'; segment_result = 'SEGMENT_RESULT'; segment_job = 'affected-linux-segments'; platform = 'linux' },
         @{ id = 'standard-windows'; selected = 'WINDOWS_SELECTED'; segment_result = 'SEGMENT_RESULT'; segment_job = 'affected-windows-segments'; platform = 'windows' }
     )) {
         $body = [string]$workflowJobs[[string]$selectedContext.id]
@@ -3412,9 +3612,35 @@ if ($runFullSelector -or $runExecutorPassPhase) {
         Assert-True ($segmentBody.Contains('PR_NUMBER: ${{ github.event.pull_request.number }}') -and $segmentBody.Contains("steps.execute.outputs.cache_ready == 'true'") -and $segmentBody.Contains('AffectedCacheFinalized') -and $segmentBody.Contains('actualInventorySha256 -cne $inventorySha256')) "Workflow '$($selectedContext.segment_job)' does not retain exact producer and parent-finalized cache binding."
         Assert-True ($body.Contains('Merge-AffectedValidationSegments.ps1') -and $body.Contains("-Platform $($selectedContext.platform)")) "Required '$($selectedContext.id)' context does not verify the exact $($selectedContext.platform) segment union."
     }
+    # Linux's complete platform union is executed by one actual parent, not
+    # assembled from independently scheduled kernels/PowerShell installations.
+    Assert-True (-not$workflowJobs.ContainsKey('affected-linux-segments')-and-not$workflowJobs.ContainsKey('main-linux-segments')) 'Linux direct topology also retains ambiguous segmented producers.'
+    $directLinuxBody=[string]$workflowJobs['quick-linux']
+    Assert-True ($directLinuxBody -match '(?m)^    needs: \[infrastructure, select\]$') 'Direct Linux required context does not bind exact selection prerequisites.'
+    foreach($selection in @('true','false')){Invoke-WorkflowSelectionGate -JobBody $directLinuxBody -SelectionVariable 'LINUX_SELECTED' -SelectionValue $selection -SegmentResultVariable 'SEGMENT_RESULT'}
+    foreach($selection in @('','unexpected')){Assert-AffectedThrows {Invoke-WorkflowSelectionGate -JobBody $directLinuxBody -SelectionVariable 'LINUX_SELECTED' -SelectionValue $selection -SegmentResultVariable 'SEGMENT_RESULT'} '*must be exactly true or false*' 'Linux direct context accepted an invalid platform-selection value.'}
+    foreach($linuxJob in @('quick-linux','main-linux-delta')) {
+        $body=[string]$workflowJobs[$linuxJob]
+        Assert-True ($body -notmatch '(?m)^    (?:strategy|matrix):' -and -not$body.Contains('-SegmentId')) "Linux union '$linuxJob' is partitioned across different parents."
+        foreach($required in @('-Platform linux -OutPath $evidencePath','-BaseCommit $base -HeadCommit $head','-Tier $tier','PUSH_BEFORE: ${{ github.event.before }}',"@(`$_.platforms) -ccontains 'linux'",'evidence.base.commit','evidence.head.commit','evidence.plan_sha256','expectedIds -join',"evidence.result -cne 'pass'",'AffectedValidationMissingEvidence','AffectedCacheFinalized','inventoryPath','steps.direct.outputs.evidence_ready','steps.direct.outputs.cache_ready','affected-checks-linux-${{ github.sha }}-${{ github.run_attempt }}','affected-linux-${{ steps.direct.outputs.evidence_sha256 }}-${{ github.run_id }}-${{ github.run_attempt }}','affected-selector-phases-*-linux')) {
+            Assert-True $body.Contains($required) "Linux union '$linuxJob' omits its exact source/coverage/cache/raw evidence contract: $required"
+        }
+    }
+    Assert-True ($directLinuxBody.Contains('affected-check-linux-pr-')-and$directLinuxBody.Contains("github.event_name == 'pull_request' && needs.select.outputs.linux == 'true' && steps.direct.outputs.cache_ready")) 'Linux direct mode lost its PR-scoped compatible cache lane.'
+    $mainLinuxBody=[string]$workflowJobs['main-linux-delta']
+    Assert-True ($mainLinuxBody.Contains('needs: [select, post-merge-attestation]')-and$mainLinuxBody.Contains("needs.post-merge-attestation.outputs.execution_mode == 'current-delta'")-and$mainLinuxBody.Contains("`$env:SELECT_RESULT -cne 'success'")-and$mainLinuxBody.Contains("`$env:ATTESTATION_RESULT -cne 'success'")-and$mainLinuxBody.Contains("`$env:PLATFORM_SELECTED -cne 'true'")) 'Linux current-delta fallback bypasses actual selection/attestation or repeats authenticated reuse.'
     $quickWindowsBody = [string]$workflowJobs['quick-windows']
     Assert-True ($quickWindowsBody -match '(?m)^    needs: \[infrastructure, select, standard-windows\]$' -and $quickWindowsBody -match "\`$env:STANDARD_RESULT -cne 'success'") 'Required quick-windows context is not bound to the selected Windows result.'
     Assert-True ($quickWindowsBody -notmatch 'Invoke-AffectedValidation') 'Required quick-windows context replays the selected Windows suite.'
+    foreach($windowsProfileJob in @('affected-windows-segments','standard-windows','quick-windows','main-windows-segments','main-windows-delta','deep')) {
+        Assert-True ([string]$workflowJobs[$windowsProfileJob]-cmatch'(?m)^    runs-on: windows-2025$') 'Hosted Windows job uses a moving runner generation.'
+    }
+    $windowsProfileGuard="if ([Environment]::OSVersion.VersionString -cne 'Microsoft Windows NT 10.0.26100.0') { throw 'Affected Windows producer OS differs from the reviewed Windows Server2025 profile.' }"
+    foreach($windowsProducer in @(@('affected-windows-segments',1),@('standard-windows',2),@('main-windows-segments',1),@('main-windows-delta',1))) {
+        $body=[string]$workflowJobs[$windowsProducer[0]]
+        Assert-True (([regex]::Matches($body,[regex]::Escape($windowsProfileGuard))).Count-eq[int]$windowsProducer[1]) 'Windows validation producer lacks the exact live OS profile guard.'
+        Assert-True (([regex]::Matches($body,[regex]::Escape('./scripts/Use-PinnedWindowsPowerShell.ps1 -AssertCurrent'))).Count-eq[int]$windowsProducer[1]) 'Windows producer must assert its real pinned PowerShell/executable before validation.'
+    }
     $directWindowsBody = [string]$workflowJobs['standard-windows']
     $segmentedWindowsBody = [string]$workflowJobs['affected-windows-segments']
     Assert-True ($directWindowsBody.Contains("WINDOWS_DIRECT: `${{ needs.select.outputs.windows_direct }}") -and $directWindowsBody.Contains("`$env:SEGMENT_RESULT -cne 'skipped'") -and $segmentedWindowsBody.Contains("needs.select.outputs.windows_direct == 'false'")) 'Opt-in direct Windows mode does not exclude segmented execution or bind its skipped dependency.'
@@ -3450,7 +3676,7 @@ if ($runFullSelector -or $runExecutorPassPhase) {
         $remoteArtifacts += [pscustomobject]@{name="affected-linux-$('d'*64)-77-3"}
         Assert-AffectedThrows { . $selectionScript } '*duplicate candidates at winning attempt*' 'Post-merge selection accepted competing final aggregates in one attempt.'
     }
-    foreach ($producer in @('select','affected-linux-segments','affected-windows-segments','main-linux-segments','main-windows-segments')) {
+    foreach ($producer in @('select','affected-windows-segments','main-windows-segments')) {
         $producerBody = [string]$workflowJobs[$producer]
         $artifactPrefix = if ($producer -ceq 'select') { 'name: affected-plan-' } else { 'name: affected-segment-' }
         $artifactLine = @($producerBody -split "`r?`n" | Where-Object { $_.TrimStart().StartsWith($artifactPrefix,[StringComparison]::Ordinal) -and -not $_.Contains('name: affected-plan-diagnostic-') })
@@ -3459,7 +3685,7 @@ if ($runFullSelector -or $runExecutorPassPhase) {
         $upload = [regex]::Match($producerBody,'(?ms)^      - (?:name: [^\r\n]+\r?\n(?:(?!^      - ).)*?|uses: )actions/upload-artifact@.*?'+[regex]::Escape($artifactPrefix)+'.*?(?=^      - |\z)')
         Assert-True ($upload.Success -and $upload.Value.Contains('if-no-files-found: error')) "Producer '$producer' does not require its artifact upload."
     }
-    foreach ($reducer in @('quick-linux','standard-windows','main-linux-delta','main-windows-delta')) {
+    foreach ($reducer in @('standard-windows','main-windows-delta')) {
         $reducerBody = [string]$workflowJobs[$reducer]
         $downloadIndex = $reducerBody.IndexOf('Download-AffectedValidationSegmentArtifacts.ps1',[StringComparison]::Ordinal)
         $stageIndex = $reducerBody.IndexOf('Stage-AffectedValidationSegmentEvidence.ps1',[StringComparison]::Ordinal)
@@ -3471,13 +3697,13 @@ if ($runFullSelector -or $runExecutorPassPhase) {
             if ($reducer -ceq 'standard-windows') { Assert-True ($reducerBody -match 'name: affected-windows-\$\{\{ steps.direct.outputs.evidence_sha256 \}\}-\$\{\{ github.run_id \}\}-\$\{\{ github.run_attempt \}\}') 'Direct Windows final artifact lacks the same exact attempt binding.' }
         }
     }
-    foreach ($platform in @('linux','windows')) {
+    foreach ($platform in @('windows')) {
         $artifactMarker = "affected-$platform-evidence.json"
         $artifactIndex = $workflowSource.IndexOf($artifactMarker, [StringComparison]::Ordinal)
         Assert-True ($artifactIndex -ge 0) "PR workflow lacks the $platform evidence artifact."
         Assert-True ($workflowSource.Contains("-Platform $platform -DestinationRoot") -and $workflowSource.Contains("-Platform $platform -SegmentEvidenceDirectory")) "PR workflow does not download and merge the exact $platform segment evidence set."
     }
-    foreach ($platform in @('linux','windows')) {
+    foreach ($platform in @('windows')) {
         $mainSegmentBody = [string]$workflowJobs["main-$platform-segments"]
         $mainFinalBody = [string]$workflowJobs["main-$platform-delta"]
         Assert-True ($mainSegmentBody.Contains("matrix: `${{ fromJSON(needs.select.outputs.$($platform)_matrix) }}") -and $mainSegmentBody.Contains('-SegmentId $env:SEGMENT_ID')) "Post-merge $platform fallback is not segmented."
@@ -3505,13 +3731,13 @@ if ($runFullSelector -or $runExecutorPassPhase) {
         } finally { foreach ($name in $gateNames) { [Environment]::SetEnvironmentVariable($name,$savedGateEnvironment[$name],'Process') } }
     }
     $deepBody = [string]$workflowJobs['deep']
-    Assert-True ($deepBody.Contains('needs: [infrastructure, select, quick-linux, standard-windows]') -and $deepBody.Contains('full-history segmented Deep evidence') -and $deepBody -notmatch 'Test-WorkEnvironment') 'Scheduled/manual Deep does not bind the fresh segmented leaf evidence or still reruns the cumulative aggregate.'
+    Assert-True ($deepBody.Contains('needs: [infrastructure, select, quick-linux, standard-windows]') -and $deepBody.Contains('full-history selected Deep evidence') -and $deepBody -notmatch 'Test-WorkEnvironment') 'Scheduled/manual Deep does not bind the fresh segmented leaf evidence or still reruns the cumulative aggregate.'
     $selectBody = [string]$workflowJobs['select']
     Assert-True ($selectBody.Contains("'schedule','workflow_dispatch'") -and $selectBody.Contains("{ 'Deep' }") -and $selectBody.Contains('Get-MorphospaceAffectedValidationSegments')) 'Schedule/manual selection does not resolve the complete Deep plan and deterministic segment matrices.'
     Assert-True ($selectBody.Contains("contains(github.event.pull_request.labels.*.name, 'validation-single-windows')") -and $selectBody.Contains('windowsBudget -gt 18000') -and $selectBody.Contains('windows_direct=') -and $selectBody.Contains('Single-runner Windows estimate exceeds') -and -not $selectBody.Contains("throw 'Requested single-runner Windows validation exceeds")) 'Single-runner Windows opt-in or advisory estimate policy changed.'
     $planUploadIndex=$selectBody.IndexOf('name: Preserve canonical-digest affected plan',[StringComparison]::Ordinal);$mappingStopIndex=$selectBody.IndexOf('name: Stop non-executable affected mapping',[StringComparison]::Ordinal)
     Assert-True ($selectBody.Contains('execution_permitted') -and $selectBody.Contains('if ([bool]$plan.execution_permitted)') -and $planUploadIndex -ge 0 -and $mappingStopIndex -gt $planUploadIndex -and $selectBody.Contains("steps.plan.outputs.execution_permitted != 'true'")) 'Mapping-incomplete workflow does not upload the canonical plan before its explicit stop.'
-    foreach($segmentJob in @('affected-linux-segments','affected-windows-segments')){Assert-True ([string]$workflowJobs[$segmentJob] -match "needs\.select\.outputs\.(?:linux|windows) == 'true'") "Affected segment job '$segmentJob' can run without an executable selected platform."}
+    foreach($segmentJob in @('affected-windows-segments')){Assert-True ([string]$workflowJobs[$segmentJob] -match "needs\.select\.outputs\.(?:linux|windows) == 'true'") "Affected segment job '$segmentJob' can run without an executable selected platform."}
     $executorSource = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -Raw
     $inventorySchema = Get-Content -LiteralPath (Join-Path $repoRoot 'schemas/affected-validation-check-inventory-v1.schema.json') -Raw | ConvertFrom-Json -Depth 64
     $producerEvents = @($inventorySchema.properties.producer.properties.event_name.enum)

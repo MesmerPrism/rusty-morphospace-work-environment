@@ -226,6 +226,7 @@ function New-MorphospaceValidationReceiptV1 {
         $freezeSchemas = @{
             'rusty.morphospace.workflow.candidate_freeze.v1'='candidate-freeze-v1.schema.json'
             'rusty.morphospace.workflow.candidate_freeze.v2'='candidate-freeze-v2.schema.json'
+            'rusty.morphospace.workflow.candidate_freeze.v3'='candidate-freeze-v3.schema.json'
         }
         $freezeSchema = [string]$freeze.schema
         if (-not $freezeSchemas.ContainsKey($freezeSchema) -or -not (Test-Json -Json $freezeJson -SchemaFile (Join-Path $repositoryRoot "schemas\$($freezeSchemas[$freezeSchema])") -ErrorAction Stop)) { throw 'Validation receipt candidate-freeze receipt does not satisfy a supported schema.' }

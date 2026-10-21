@@ -8,6 +8,14 @@ objective requiring broader authority, use [active-unit retirement](ACTIVE_UNIT_
 and fresh development-envelope preparation. Do not widen the old unit merely
 to make a supersession request pass.
 
+For an in-scope correction following failed validation of an admitted frozen
+feature unit, prefer the linked `candidate_freeze.v3` route in
+[Autonomous Iteration](AUTONOMOUS_ITERATION.md). It keeps the existing admitted
+unit and preparation, authenticates its exact non-passing ReturnToActive attempt,
+and freezes fresh source without transferring validation or approval. Supersession
+continues to serve a reviewed replacement unit; it does not erase a freeze or
+make an old receipt validate different source.
+
 ## Active successor
 
 `SupersedeActive` consumes one reviewed `active_unit_supersession.v1` request.

@@ -254,6 +254,12 @@ function Get-MorphospaceDevelopmentEnvelopeContinuation {
                 $amendmentModule = Import-Module (Join-Path $PSScriptRoot '../ActiveWriteScopeAmendment.psm1') -PassThru
                 $null = & $amendmentModule { param($root,$expected,$transition) Assert-ActiveWriteScopeHistoricalTransition -WorkspaceRoot $root -ExpectedEvent $expected -Transition $transition } $workspace $event $proof
                 $kind = 'amendment'
+            } elseif ($null -ne (Get-DevelopmentContinuationArtifact $intent 'rusty.morphospace.workflow.candidate_freeze.v3')) {
+                $revisionOwner=Import-Module (Join-Path $PSScriptRoot '../CandidateFreeze.psm1') -PassThru
+                &$revisionOwner {param($root,$transition) Assert-MorphospaceCandidateRevisionRecoveryBindings $root $transition -Historical} $workspace $intent
+                Assert-DevelopmentContinuationStableAuthority $currentUnit $targetUnit @('candidate_freeze') 'candidate revision'
+                $frozen=$true
+                $kind='candidate-revision'
             } elseif ($targetUnit.PSObject.Properties.Name -contains 'candidate_freeze' -and -not ($currentUnit.PSObject.Properties.Name -contains 'candidate_freeze')) {
                 if ([string]$event.event_id -cne "$([string]$targetUnit.candidate_freeze.freeze_id)-recorded" -or [string]$event.summary -cne 'Froze the exact candidate closure before validation.' -or @($event.receipts).Count -ne 1 -or [string]$event.receipts[0] -cne [string]$targetUnit.candidate_freeze.receipt_path) { throw 'Development continuation candidate Freeze is detached.' }
                 Assert-DevelopmentContinuationStableAuthority $currentUnit $targetUnit @('candidate_freeze') 'Freeze'

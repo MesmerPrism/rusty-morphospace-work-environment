@@ -1,6 +1,7 @@
 param([switch]$LifecycleRouterSelfTestOnly)
 
 $ErrorActionPreference = "Stop"
+if(-not$LifecycleRouterSelfTestOnly){ & (Join-Path $PSScriptRoot "Test-CandidateRevision.ps1") -SelfTest }
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 Import-Module (Join-Path $PSScriptRoot "WorkUnitAutomation.psm1") -Force
 Import-Module (Join-Path $PSScriptRoot "lib\MorphospacePlanningProjection.psm1") -Force

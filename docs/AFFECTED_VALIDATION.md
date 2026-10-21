@@ -19,8 +19,8 @@ malformed nonempty stderr remains refusal, with a decoding failure rather than
 a generic Git-stderr failure. Native exits and valid text parsing stay strict.
 
 Hosted jobs use the existing 360-minute execution ceiling. A segment estimate
-does not select a shorter hard cutoff, and an opted-in single Windows runner
-warns when its estimate exceeds 18,000 seconds. Actual platform termination
+does not select a shorter hard cutoff. Whole-platform Linux and opted-in single
+Windows execution warn when their estimate exceeds 18,000 seconds. Actual platform termination
 still ends that original job and supplies no passing evidence.
 
 `validate.yml` resolves a closed, exact-base/current-head plan before running
@@ -430,22 +430,135 @@ failures cannot publish reusable bytes. A main push
 may reuse them only when its ordered merge parents, exact candidate tree,
 workflow bytes, ancestor base, PR/run/check identities, artifact bytes, and
 freshness all authenticate through `Test-AffectedValidationReuse.ps1`.
-For an ordinary segmented PR, the authenticated successful-job set is exactly `infrastructure`,
-`quick-linux`, `quick-windows`, `select`, `standard-windows`, and the
-deterministically recomputed `segment-<platform>-<ordinal>` jobs for selected
-platforms; artifact aliases such as `affected-linux` and `affected-windows`
-never substitute for GitHub job identities. An opt-in PR labeled
-`validation-single-windows` executes the exact selected Windows union in
-`standard-windows` on one hosted runner when its selected Windows budget is at
-most 18,000 seconds. The unsegmented executor recomputes the plan and emits the
-same typed platform aggregate. `quick-windows` still requires
-`standard-windows` success. This mode does not claim premerge reuse: its missing
-Windows segment jobs make the strict reuse verifier require a fresh current
-delta after merge. Removing the label restores the normal segmented PR
-topology. Scheduled and manual Deep runs remain segmented. Otherwise the main
-job runs its current delta through the same segment partition. No historical Deep receipt
-is reusable: scheduled/manual Deep checks out full history, executes every
-independent leaf through fresh segments, and verifies their exact union.
+For current PRs, Linux executes the complete selected platform in `quick-linux`
+through the existing executor without `-SegmentId`. The single parent records
+its actual kernel and PowerShell identity for the whole typed aggregate; a
+mutable hosted label does not establish a shared runtime across matrix jobs.
+The existing strict segment merger and exact per-check runner/tool bindings are
+unchanged. Windows retains its deterministic segment partition. Windows jobs
+select `windows-2025` explicitly. Every actual Windows segment, direct union
+and aggregate/current-delta producer first asserts the installed PowerShell
+7.6.6 executable in its own process, then checks the literal live
+`Environment.OSVersion.VersionString` value `Microsoft Windows NT 10.0.26100.0`,
+before resolving or executing validation. Installation still precedes these
+steps, so the runner's default shell may legitimately start the pinned shell
+for the next step. The OS assertion is never delegated to that earlier process.
+The finite profile guarantees matching OS/PowerShell tuples for passing
+producers; it does not guarantee provider availability, freeze a whole VM image,
+or waive the existing strict merger identity comparison. An unsupported runner
+fails before costly validation rather than producing incompatible evidence. The ordinary
+successful-job set is exactly `infrastructure`, `quick-linux`, `quick-windows`,
+`select`, `standard-windows`, and the recomputed Windows segment jobs. Artifact
+aliases never substitute for GitHub job identities.
+
+The reuse verifier derives the Linux-direct branch only from the exact candidate
+workflow after its Git blob/source join. It requires the finite job topology,
+actual literal whole-platform command, exact arguments and source/union guards.
+Both producer jobs allow exactly the two declared run scripts, and count the
+unique executor invocation across all their run blocks, including inline steps;
+missing, duplicate, foreign or ambiguous direct-plus-segmented producers refuse.
+Historical segmented candidates retain their original exact job-set contract.
+The change creates no receipt-supplied mode, runner waiver, extra-job exemption
+or new public evidence schema. All source/plan/run/attempt/coverage/artifact/
+freshness/result checks remain required for postmerge exact-tree reuse.
+
+### Candidate-hosted evidence intake
+
+Use the same public verifier to collect and verify a completed candidate PR run.
+The command owns the provider reads, downloads and verification; a separate
+project-specific collector or recursive historical-receipt preparer is not
+required. Select the exact candidate checkout, base/head, PR, run, existing
+absolute `gh` executable and a fresh ignored output directory:
+
+```powershell
+& ./scripts/Test-AffectedValidationReuse.ps1 -CandidateHosted `
+    -RepositoryRoot $candidateCheckout -BeforeCommit $base -HeadCommit $head `
+    -Repository 'MesmerPrism/rusty-morphospace-work-environment' `
+    -PullRequestNumber $pullRequest -RunId $runId `
+    -GhPath $selectedGhPath -OutputDirectory $freshIgnoredOutput
+```
+
+The producer and candidate checkouts must be clean and bind their exact Git
+identities and held physical source bytes. The selected run must be a successful
+terminal `pull_request` run for that exact open same-repository PR/base/head and
+workflow. Pending, failed, stale, incomplete or contradictory provider data
+refuses; the already captured raw evidence remains. The command performs no
+workflow retry, signing, posting, acceptance or publication. It uses the existing
+retained-process primitive for each once-issued provider read, preserving child
+exit/reap, both EOFs and complete raw streams. It never changes network settings.
+
+Every GET explicitly selects `github.com`; ambient `GH_HOST` cannot reroute the
+provider. Pagination must be complete. Each artifact binds its actual run/head,
+expiry, provider ZIP digest and safe complete extracted member inventory.
+Winning platform/segment attempts are selected through the existing public
+artifact transport rules. A segmented aggregate must agree with its actual
+staging selection; a direct Linux producer has one real platform root. Successful
+job identities, plan recomputation, source trees, selected coverage, finalized
+per-check inventories, producer run/attempt/job, command/dependency/runner
+bindings, raw streams and phase start/terminal/output bytes remain load-bearing.
+Each winning root additionally binds an actual successful provider job ID from
+its own attempt. Jobs are read once per unique selected producer attempt, not
+substituted by the latest API projection. Earlier successful sibling attempts
+may be selected by the existing staging contract; a per-check latest-attempt mixture cannot substitute for those roots.
+
+The full leaf `binding.runner` and prerequisite binding map belong to each
+authenticated producer root. Distinct Windows segments may have different Git
+or executable identities while retaining the exact aggregate OS/PowerShell
+tuple enforced by the unchanged merger. Full bindings must match within each
+root. The aggregate uses `Environment.OSVersion.VersionString`; the leaf runner
+uses `RuntimeInformation.OSDescription`. These are distinct source-defined OS
+projections. Their common PowerShell field and the provider/artifact/inventory/
+summary/leaf joins bind the observations; no OS-string normalization or invented
+aggregate execution identifier is used.
+
+`hosted-intake.json` is a diagnostic report with schema
+`rusty.morphospace.diagnostic.affected_validation_hosted_intake.v1`. It contains
+exact source/run/plan identities, selected roots and rows, separate executed and
+reused counts, producer source pins, both runner projections, and a relative
+`raw_manifest` reference. `raw-manifest.json` binds the retained provider
+originals, ZIPs, metadata and extracted files by path, byte length and SHA-256.
+The report and manifest do not self-reference. Successful stdout is one JSON
+object binding the persisted report's relative path, byte length and SHA-256 to
+the selected output directory. A downstream owner can retain its ordinary
+command original and consume these report/manifest bytes directly as validation
+artifacts under its existing receipt contract.
+
+The proof boundary is the current source-qualified producer and its verified
+self-contained current inventory. The unchanged public receipt predicates check
+current exact bindings, source ancestry, environment evidence, complete raw
+streams and retained phase artifacts. A `reused` leaf retains its original
+source/evidence and immediate `reused_from` pointer; it is never relabeled as a
+current execution. The report explicitly states
+`historical_genesis_reverified=false`: it does not recursively fetch or re-prove
+every prior executed ancestor. Source qualification and the existing owner
+acceptance/static/publication decisions remain separate; the diagnostic report
+creates none of those authorities. Existing ordered-merge verification using
+`-ReusePath` and `-ArtifactDirectory` retains its original contract and behavior.
+
+Linux PR caches use the stable `affected-check-cache-linux/current` platform
+lane and `affected-check-linux-pr-<PR>-<run>-<attempt>` keys. Only the executor's
+unchanged exact check bindings decide reuse. No fresh-only policy is introduced.
+Old `linux-001`/`linux-002` inventories and originals remain historical; they
+are not silently merged or relabeled as a platform inventory. The first direct
+run may have no compatible platform-lane candidate. Later compatible direct
+runs can reuse that lane normally. Whole-platform phase directories retain their
+actual parent, source, start/terminal and raw stream facts.
+
+An opt-in PR labeled `validation-single-windows` still executes the selected
+Windows union in `standard-windows` on one hosted runner. `quick-windows` binds
+that real result. Its existing strict missing-Windows-segment fallback remains:
+this optional Windows mode does not claim premerge reuse. The Linux-direct
+branch does not relax that separate historical mode. Removing the label restores
+normal segmented Windows execution.
+
+On a real push, authenticated exact-tree premerge reuse retains the cheap
+attestation path. If unavailable or invalid, `main-linux-delta` executes the
+whole current Linux platform on one parent and Windows runs its current segment
+partition. Event base/head and tier remain exact: PR and push use Quick (subject
+to ordinary resolver escalation); schedule/manual use the full Deep selection.
+Scheduled/manual Linux runs are whole-platform, Windows runs remain segmented,
+and both bind their actual complete selected evidence. No historical Deep
+receipt is reusable, and no cumulative compatibility aggregate is replayed.
 Neither evidence shape is publication or acceptance authority.
 
 Segment retries retain earlier artifacts in the same GitHub run. Each segment
