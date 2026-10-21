@@ -1,4 +1,4 @@
-param([string]$RepoRoot = "")
+param([string]$RepoRoot = "", [string]$SeedContextPath = "", [string]$SeedContextSha256 = "")
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -73,7 +73,10 @@ function Invoke-Runner {
         [string]$EnvironmentBindingsSha256 = "",
         [int]$Timeout = 30,
         [int]$CancelAfterMilliseconds = 0,
-        [switch]$Interrupt
+        [switch]$Interrupt,
+        [string]$BuildContextPath = "",
+        [string]$BuildContextSha256 = "",
+        [switch]$Retained
     )
     $runnerArguments = @(
         "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", $runner,
@@ -83,6 +86,8 @@ function Invoke-Runner {
         "-SourceRoot", $testRoot,
         "-TimeoutSeconds", [string]$Timeout
     )
+    if ($Retained) { $runnerArguments += @("-WaitPolicy", "Retained", "-EstimatedWarningSeconds", "30") }
+    if ($BuildContextPath) { $runnerArguments += @("-BuildContextPath", $BuildContextPath, "-BuildContextSha256", $BuildContextSha256) }
     if ($Receipt) { $runnerArguments += @("-ReceiptPath", $Receipt) }
     if ($SignerPath) { $runnerArguments += @("-SignerObservationPath", $SignerPath, "-SignerObservationSha256", $SignerSha256) }
     if ($EnvironmentBindingsPath) { $runnerArguments += @("-EnvironmentBindingsPath", $EnvironmentBindingsPath, "-EnvironmentBindingsSha256", $EnvironmentBindingsSha256) }
@@ -109,7 +114,7 @@ function Assert-Terminal {
     Assert-True ([int]$Invocation.Result.invocation.timeout_seconds -ge 1) "Terminal invocation budget is missing."
     $projectedEnvironment = $null -ne $Invocation.Result.observation.observation_id
     if ($projectedEnvironment) {
-        Assert-True ([string]$Invocation.Result.invocation.child_environment_sha256 -match "^[a-f0-9]{64}$" -and [int]$Invocation.Result.invocation.child_environment_variable_count -ge 0) "Projected child-environment evidence is missing."
+        Assert-True ($null -eq $Invocation.Result.invocation.child_environment_sha256 -and [int]$Invocation.Result.invocation.child_environment_variable_count -ge 0) "Projected child-environment evidence must be presence-only with a JSON-null value digest."
     } else {
         Assert-True ($null -eq $Invocation.Result.invocation.child_environment_sha256 -and [int]$Invocation.Result.invocation.child_environment_variable_count -eq 0 -and -not [bool]$Invocation.Result.child_process.started) "No-projection terminal evidence is inconsistent."
     }
@@ -125,6 +130,128 @@ function Assert-Terminal {
     if ($ExpectedOperation -eq "preflight") {
         Assert-True ($ExpectedStatus -in @("passed", "contradiction", "incomplete")) "Preflight used a build-only terminal status."
     }
+}
+
+
+# Obviously synthetic literals live only in this owning test fixture. They are
+# never profile/context/argv values or persisted environment observations.
+function Get-PrivacyCanaries {
+    return @('SYNTHETIC-NOT-A-CREDENTIAL::alpha-040::v1', 'SYNTHETIC-NOT-A-CREDENTIAL::bravo-041::v1')
+}
+function Assert-PrivacyPublicText([string]$Text) {
+    foreach ($value in @(Get-PrivacyCanaries)) {
+        $utf8 = [Text.Encoding]::UTF8.GetBytes($value)
+        $utf16 = [Text.Encoding]::Unicode.GetBytes($value)
+        $json = [Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -InputObject $value -Compress))
+        $forms = @($value, [Convert]::ToBase64String($utf8), [Convert]::ToBase64String($utf16))
+        foreach ($bytes in @($utf8, $utf16, $json)) {
+            $digest = [Security.Cryptography.SHA256]::HashData($bytes)
+            $forms += [Convert]::ToHexString($digest).ToLowerInvariant()
+            $forms += [Convert]::ToBase64String($digest)
+        }
+        foreach ($form in $forms) {
+            if ($Text.IndexOf($form, [StringComparison]::OrdinalIgnoreCase) -ge 0) { throw 'Synthetic credential representation leaked into public evidence' }
+        }
+    }
+}
+function Assert-PrivacyEvidence([object]$Value) {
+    if ($null -eq $Value) { return }
+    if ($Value -is [Collections.IDictionary]) {
+        foreach ($key in @($Value.Keys)) {
+            if ([string]$key -in @('value_sha256', 'environment_sha256', 'child_environment_sha256')) {
+                if ($null -ne $Value[$key]) { throw 'Public environment value fingerprint must be JSON null' }
+            }
+            Assert-PrivacyEvidence $Value[$key]
+        }
+    } elseif ($Value -is [Collections.IEnumerable] -and $Value -isnot [string]) {
+        foreach ($item in $Value) { Assert-PrivacyEvidence $item }
+    }
+}
+function Assert-PrivacyJson([string]$Text) {
+    Assert-PrivacyPublicText $Text
+    Assert-PrivacyEvidence (ConvertFrom-Json -InputObject $Text -AsHashtable -Depth 100 -DateKind String)
+}
+function Set-PrivacyVariable([string]$Name, [AllowNull()][object]$Value) {
+    if ($null -eq $Value) { [Environment]::SetEnvironmentVariable($Name, [System.Management.Automation.Language.NullString]::Value) }
+    else { [Environment]::SetEnvironmentVariable($Name, [string]$Value) }
+}
+
+function Get-PrivacyParentFingerprint {
+    # Private, transient comparison only; never returned as public evidence.
+    $pairs = @([Environment]::GetEnvironmentVariables().GetEnumerator() | Sort-Object Key | ForEach-Object { [ordered]@{name=[string]$_.Key;value=[string]$_.Value} })
+    return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes(($pairs | ConvertTo-Json -Compress -Depth 4)))).ToLowerInvariant()
+}
+function Get-PrivacyStableView([object]$Result) {
+    return ([ordered]@{
+        binding_sha256=$Result.invocation.binding_sha256
+        child_environment_sha256=$Result.invocation.child_environment_sha256
+        child_environment_variable_count=$Result.invocation.child_environment_variable_count
+        environment=@($Result.owner_payload.environment)
+        selected_context=@($Result.owner_payload.toolchain | Where-Object kind -CEQ 'selected-context')
+        observation_content_sha256=$Result.observation.content_sha256
+    } | ConvertTo-Json -Depth 64 -Compress)
+}
+function Assert-PrivacyRunner([object]$Invocation, [string]$Mode, [string]$Receipt='', [int]$ExpectedChildExit=13) {
+    Assert-PrivacyJson $Invocation.Json
+    Assert-True ($null-eq$Invocation.Result.invocation.child_environment_sha256) 'Public child-environment digest is not JSON null.'
+    $observation=$Invocation.Result.owner_payload.execution_preflight_observation
+    $policy=@($observation.values | Where-Object key -CEQ 'quest-build.environment-observation-policy')
+    Assert-True ($policy.Count-eq1-and$policy[0].value-ceq'presence-only-v1') 'Presence-only preflight policy missing.'
+    Assert-True (@($observation.values | Where-Object key -CEQ 'quest-build.child-environment-sha256').Count-eq0) 'Legacy environment fingerprint persisted.'
+    if($Mode-ceq'Preflight') {
+        Assert-True ($Invocation.ExitCode-eq0-and$Invocation.Result.terminal_status-ceq'passed'-and-not$Invocation.Result.child_process.started) 'Privacy Preflight unexpectedly failed or dispatched.'
+    }else{
+        $child=$Invocation.Result.child_process
+        Assert-True ($Invocation.Result.schema-ceq'rusty.morphospace.quest_build_terminal_result.v2'-and$Invocation.ExitCode-eq1-and$Invocation.Result.terminal_status-ceq'failed') 'Synthetic retained failure terminal differs.'
+        Assert-True ($child.started-and$child.process_reaped-and$child.stdout_eof-and$child.stderr_eof-and$child.raw_capture_complete-and$child.exit_code-eq$ExpectedChildExit-and-not$child.termination_requested-and-not$child.automatic_retry-and@($child.observer_errors).Count-eq0) 'Synthetic retained child lacks genuine exit/reap/dual EOF.'
+        Assert-True (@($Invocation.Result.reason_codes | Where-Object {$_-ceq'child-exit-nonzero'}).Count-eq1) 'Failure was not the intended exact-value child exit.'
+        Assert-True (Test-Path -LiteralPath $Receipt -PathType Leaf) 'Retained synthetic terminal was not persisted.'
+        $stored=Get-Content -LiteralPath $Receipt -Raw
+        Assert-PrivacyJson $stored
+        Assert-True (($stored|ConvertFrom-Json -Depth 100).invocation.binding_sha256-ceq$Invocation.Result.invocation.binding_sha256) 'Published terminal binding differs.'
+        foreach($stream in @($Invocation.Result.streams.stdout,$Invocation.Result.streams.stderr)) {
+            Assert-True ((Get-Sha $stream.path)-ceq$stream.sha256-and(Get-Item -LiteralPath $stream.path).Length-eq$stream.size_bytes) 'Synthetic raw stream identity differs.'
+            Assert-PrivacyPublicText (Get-Content -LiteralPath $stream.path -Raw)
+        }
+        if($ExpectedChildExit-eq13){
+            Assert-True ((Get-Content -LiteralPath $Invocation.Result.streams.stdout.path -Raw).Trim()-ceq'privacy-child-exact-value:true') 'Child did not confirm independent exact-value assertion.'
+            Assert-True ((Get-Content -LiteralPath $Invocation.Result.streams.stderr.path -Raw).Trim()-ceq'privacy-child-intentional-failure:true') 'Synthetic failure stderr differs.'
+        }else{
+            Assert-True ($ExpectedChildExit-eq97-and$Invocation.Result.streams.stdout.size_bytes-eq0-and$Invocation.Result.streams.stderr.size_bytes-eq0) 'Mismatch receiver falsely confirmed exact delivery.'
+        }
+        Assert-True ($null-eq$Invocation.Result.owner_payload.artifact) 'Synthetic failure acquired artifact credit.'
+    }
+}
+function New-PrivacySeedContext {
+    if([bool]$SeedContextPath-ne[bool]$SeedContextSha256){throw 'Seed context path and hash must be paired'}
+    if($SeedContextPath){
+        Assert-True ((Get-Sha $SeedContextPath)-ceq$SeedContextSha256) 'Privacy seed context identity differs.'
+        return [pscustomobject]@{Path=$SeedContextPath;Sha256=$SeedContextSha256}
+    }
+    # Registered CI has no authored context. Declare only actual OS facts and
+    # actual existing Git/pwsh, preserving the inherited PATH (no masking).
+    $environment=@{}
+    foreach($name in @('HOME','USERPROFILE','SYSTEMROOT','SYSTEMDRIVE','WINDIR','COMSPEC','PATHEXT','TEMP','TMP','TMPDIR','PATH')) {
+        $value=[Environment]::GetEnvironmentVariable($name)
+        if($null-ne$value){$environment[$name]=$value}
+    }
+    if($IsWindows){
+        if(-not$environment.ContainsKey('SYSTEMDRIVE')){$environment.SYSTEMDRIVE=[IO.Path]::GetPathRoot([string]$environment.SYSTEMROOT).TrimEnd('\')}
+        if(-not$environment.ContainsKey('USERPROFILE')){$environment.USERPROFILE=[Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)}
+    }
+    # Drop only invalid/nonexistent entries: no real Application or its ordering
+    # changes, including multiple installed pwsh/Git applications. Do not mask.
+    if($environment.ContainsKey('PATH')){
+        $validEntries=@($environment.PATH.Split([IO.Path]::PathSeparator)|Where-Object {$_-and[IO.Path]::IsPathFullyQualified($_)-and(Test-Path -LiteralPath $_ -PathType Container -ErrorAction SilentlyContinue)})
+        $environment.PATH=$validEntries-join[IO.Path]::PathSeparator
+    }
+    $gitTool=(Get-Command git -CommandType Application -ErrorAction Stop|Select-Object -First 1).Source
+    $paths=@{git=$gitTool;pwsh=[Environment]::ProcessPath};$tools=@{}
+    foreach($id in $paths.Keys){$tools[$id]=[ordered]@{path=[IO.Path]::GetFullPath($paths[$id]);sha256=(Get-Sha $paths[$id])}}
+    $context=[ordered]@{schema='rusty.morphospace.local_quest_build_context.v1';environment=$environment;tools=$tools}
+    $path=Join-Path $profileRoot 'privacy-context.json'
+    Write-Utf8 $path ($context|ConvertTo-Json -Depth 16)
+    return [pscustomobject]@{Path=$path;Sha256=(Get-Sha $path)}
 }
 
 try {
@@ -213,6 +340,10 @@ if (-not (Test-Path -LiteralPath $outputParent)) { New-Item -ItemType Directory 
     $candidateReceipt = Join-Path $testRoot "candidate-receipt.json"
     $candidateBuild = Invoke-Runner "Build" $candidateRecord -Receipt $candidateReceipt
     Assert-Terminal $candidateBuild "build" "passed" 0
+    Assert-PrivacyJson $candidatePreflight.Json
+    Assert-PrivacyJson $candidateBuild.Json
+    $derived=@($candidateBuild.Result.owner_payload.environment|Where-Object source -CEQ 'wrapper-derived')
+    Assert-True ($derived.Count-eq1-and$derived[0].variable-ceq'MORPHOSPACE_CONTENT_ADDRESSED_ARTIFACT'-and$derived[0].present-and$null-eq$derived[0].value_sha256) 'Wrapper-derived environment row is not presence-only.'
     $candidateArtifact = [string]$candidateBuild.Result.owner_payload.output.effective_artifact
     Assert-True ((Split-Path -Leaf $candidateArtifact) -ceq "candidate-$($candidateBuild.Result.invocation.binding_sha256).apk") "Content-addressed output path was not derived from the binding digest."
     Assert-True ([string]$candidateBuild.Result.owner_payload.artifact.kind -ceq "single-base-apk" -and [string]$candidateBuild.Result.owner_payload.artifact.path -ceq $candidateArtifact -and (Test-Path -LiteralPath $candidateArtifact)) "Candidate build did not retain one derived base APK proof."
@@ -360,6 +491,94 @@ if (-not (Test-Path -LiteralPath $outputParent)) { New-Item -ItemType Directory 
     Assert-True ($afterRename.streams[0].phase -ceq "final" -and
         $afterRename.streams[0].read_state -ceq "readable") "Fresh selection did not observe finalized stream."
 
+
+    # Same child bytes/profile/context/argv across A/B. Only the synthetic value
+    # and its nonsecret expected-case selector differ in transient parent env.
+    Write-Utf8 (Join-Path $testRoot 'privacy-child.ps1') @'
+$expected = switch ([Environment]::GetEnvironmentVariable('WEF_PRIVACY_CASE')) {
+    'A' { 'SYNTHETIC-NOT-A-CREDENTIAL::alpha-040::v1' }
+    'B' { 'SYNTHETIC-NOT-A-CREDENTIAL::bravo-041::v1' }
+    default { $null }
+}
+if ($null-eq$expected-or[Environment]::GetEnvironmentVariable('WEF_PRIVACY_CANARY')-cne$expected) { exit 97 }
+[Console]::Out.WriteLine('privacy-child-exact-value:true')
+[Console]::Error.WriteLine('privacy-child-intentional-failure:true')
+exit 13
+'@
+    $privacyChildSha=Get-Sha (Join-Path $testRoot 'privacy-child.ps1')
+    $privacyProfile=New-Profile -ArtifactRelativePath 'out/privacy-unused.apk' -Arguments @()
+    $privacyProfile.executable='privacy-child.ps1'
+    $privacyProfile.preflight.toolchain.repository_files=@()
+    $privacyProfile.preflight.environment_projection.passthrough=@('HOME','PATH','TEMP','TMP','TMPDIR','SYSTEMROOT','SYSTEMDRIVE','USERPROFILE','COMSPEC','WINDIR','PATHEXT','WEF_PRIVACY_CANARY','WEF_PRIVACY_CASE')
+    $privacyRecord=Write-Profile $privacyProfile
+    $privacySeed=New-PrivacySeedContext
+    $oldCanary=[Environment]::GetEnvironmentVariable('WEF_PRIVACY_CANARY')
+    $oldCase=[Environment]::GetEnvironmentVariable('WEF_PRIVACY_CASE')
+    $privacyParentBefore=Get-PrivacyParentFingerprint
+    $privacyComparisons=0;$privacyChildClosures=0;$privacyMismatchClosures=0
+    try {
+        foreach($lane in @('legacy','selected-context')) {
+            foreach($operation in @('Preflight','Build')) {
+                $views=@();$sample=0
+                foreach($expected in @(Get-PrivacyCanaries)) {
+                    Set-PrivacyVariable 'WEF_PRIVACY_CANARY' $expected
+                    Set-PrivacyVariable 'WEF_PRIVACY_CASE' (@('A','B')[$sample])
+                    $before=Get-PrivacyParentFingerprint
+                    $receipt=Join-Path $profileRoot "privacy-$lane-$operation-$sample.json"
+                    $options=@{Mode=$operation;ProfileRecord=$privacyRecord;Receipt=$receipt;Retained=$true}
+                    if($lane-ceq'selected-context'){$options.BuildContextPath=$privacySeed.Path;$options.BuildContextSha256=$privacySeed.Sha256}
+                    $r=Invoke-Runner @options
+                    Assert-PrivacyRunner $r $operation $receipt
+                    Assert-True ((Get-PrivacyParentFingerprint)-ceq$before) 'Runner changed the synthetic parent environment.'
+                    Assert-True ((Get-Sha (Join-Path $testRoot 'privacy-child.ps1'))-ceq$privacyChildSha-and(Get-Sha $privacyRecord.Path)-ceq$privacyRecord.Sha256-and(Get-Sha $privacySeed.Path)-ceq$privacySeed.Sha256) 'A/B fixture bytes changed.'
+                    $row=@($r.Result.owner_payload.environment|Where-Object variable -CEQ 'WEF_PRIVACY_CANARY')
+                    Assert-True ($row.Count-eq1-and$row[0].present-and$null-eq$row[0].value_sha256) 'Synthetic environment presence row differs.'
+                    $view=Get-PrivacyStableView $r.Result;Assert-PrivacyJson $view;$views+=,$view
+                    if($operation-ceq'Build'){$privacyChildClosures++}
+                    $sample++
+                }
+                Assert-True ($views.Count-eq2-and$views[0]-ceq$views[1]) 'A/B value-only change altered permitted binding/evidence.'
+                $privacyComparisons++
+            }
+        }
+        # Causal receiver negative: same literal child and profile, intentionally
+        # wrong nonsecret selector must exit97 without claiming exact delivery.
+        Set-PrivacyVariable 'WEF_PRIVACY_CANARY' (@(Get-PrivacyCanaries)[0])
+        Set-PrivacyVariable 'WEF_PRIVACY_CASE' 'B'
+        foreach($lane in @('legacy','selected-context')) {
+            $receipt=Join-Path $profileRoot "privacy-$lane-mismatch.json"
+            $options=@{Mode='Build';ProfileRecord=$privacyRecord;Receipt=$receipt;Retained=$true}
+            if($lane-ceq'selected-context'){$options.BuildContextPath=$privacySeed.Path;$options.BuildContextSha256=$privacySeed.Sha256}
+            $r=Invoke-Runner @options;Assert-PrivacyRunner $r 'Build' $receipt 97
+            $privacyMismatchClosures++
+        }
+        # Absence and prohibition use the same real public Preflight path.
+        Set-PrivacyVariable 'WEF_PRIVACY_CANARY' $null
+        Set-PrivacyVariable 'WEF_PRIVACY_CASE' $null
+        foreach($lane in @('legacy','selected-context')) {
+            $options=@{Mode='Preflight';ProfileRecord=$privacyRecord;Retained=$true}
+            if($lane-ceq'selected-context'){$options.BuildContextPath=$privacySeed.Path;$options.BuildContextSha256=$privacySeed.Sha256}
+            $r=Invoke-Runner @options;Assert-PrivacyRunner $r 'Preflight'
+            $row=@($r.Result.owner_payload.environment|Where-Object variable -CEQ 'WEF_PRIVACY_CANARY')
+            Assert-True ($row.Count-le1-and@($row|Where-Object {$_.present-or$null-ne$_.value_sha256}).Count-eq0) 'Absent synthetic variable was observed present.'
+        }
+        $privacyProfile.preflight.environment_projection.prohibited_parent_variables=@('WEF_PRIVACY_CANARY')
+        $prohibitedRecord=Write-Profile $privacyProfile
+        Set-PrivacyVariable 'WEF_PRIVACY_CANARY' (@(Get-PrivacyCanaries)[0])
+        foreach($lane in @('legacy','selected-context')) {
+            $options=@{Mode='Preflight';ProfileRecord=$prohibitedRecord;Retained=$true}
+            if($lane-ceq'selected-context'){$options.BuildContextPath=$privacySeed.Path;$options.BuildContextSha256=$privacySeed.Sha256}
+            $r=Invoke-Runner @options;Assert-PrivacyJson $r.Json
+            Assert-True ($r.ExitCode-eq2-and$r.Result.terminal_status-ceq'contradiction'-and-not$r.Result.child_process.started-and@($r.Result.reason_codes|Where-Object {$_-ceq'prohibited-parent-environment'}).Count-eq1) 'Prohibited synthetic variable did not refuse before child.'
+        }
+    } finally {
+        Set-PrivacyVariable 'WEF_PRIVACY_CANARY' $oldCanary
+        Set-PrivacyVariable 'WEF_PRIVACY_CASE' $oldCase
+    }
+    Assert-True ((Get-PrivacyParentFingerprint)-ceq$privacyParentBefore) 'Privacy orchestration failed exact parent restoration.'
+    Assert-True ($privacyComparisons-eq4-and$privacyChildClosures-eq4-and$privacyMismatchClosures-eq2) 'Privacy public runner coverage incomplete.'
+    Write-Host 'Synthetic privacy public-runner controls passed: four A/B comparisons, four exact-value retained failures, two receiver-mismatch controls, absence/prohibition, exact parent restoration.'
+
     Write-Host "Quest build-profile preflight, terminal-result, deterministic identity, zero-side-effect, bounded progress, rename-race, and fault-corpus tests passed."
 } finally {
     if (Test-Path -LiteralPath $testRoot) {
@@ -378,6 +597,8 @@ if (-not (Test-Path -LiteralPath $outputParent)) { New-Item -ItemType Directory 
 # actual retained-v2 original/pipe/capture controls.
 & pwsh -NoProfile -NonInteractive -File (Join-Path $PSScriptRoot 'Test-QuestBuildRetainedOriginal.ps1') -RepoRoot $RepoRoot
 if($LASTEXITCODE-ne0){throw 'Retained build original controls failed'}
-& pwsh -NoProfile -NonInteractive -File (Join-Path $PSScriptRoot 'Test-QuestBuildEnvironment.ps1') -RepoRoot $RepoRoot
+$contextCorpusOptions=@{}
+if($SeedContextPath){$contextCorpusOptions.SeedContextPath=$SeedContextPath;$contextCorpusOptions.SeedContextSha256=$SeedContextSha256}
+& pwsh -NoProfile -NonInteractive -File (Join-Path $PSScriptRoot 'Test-QuestBuildEnvironment.ps1') -RepoRoot $RepoRoot @contextCorpusOptions
 if($LASTEXITCODE-ne0){throw 'Quest selected build environment corpus failed.'}
 exit 0

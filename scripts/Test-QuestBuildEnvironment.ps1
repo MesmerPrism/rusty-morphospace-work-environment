@@ -59,6 +59,50 @@ function ParentHash{$pairs=@([Environment]::GetEnvironmentVariables().GetEnumera
 function Resolve([string]$p,[string[]]$tools=@('cargo','rustc','rustup','pwsh','git'),[string[]]$targets=@(),[string]$channel=''){$args=@{ContextPath=$p;ContextSha256=(Sha $p);WorkingDirectory=$WorkingDirectory;RequiredTools=$tools;RequiredTargets=$targets};if($channel){$args.ToolchainChannel=$channel};Resolve-MorphospaceQuestBuildContext @args}
 function Refusal([scriptblock]$action,[string]$code){$caught=$null;try{& $action|Out-Null}catch{$caught=$_};Assert ($null-ne$caught) 'Expected production refusal absent';Assert ([string]$caught.Exception.Data['ReasonCode']-ceq$code) "Wrong sanitized reason; expected $code"}
 function Case([string]$id,[scriptblock]$body){$before=ParentHash;try{&$body;Assert ((ParentHash)-ceq$before) 'Parent environment was not restored';$results.Add([ordered]@{case=$id;status='passed'})}catch{$results.Add([ordered]@{case=$id;status='failed';error_type=$_.Exception.GetType().FullName;reason_code=[string]$_.Exception.Data['ReasonCode']});[Console]::Error.WriteLine("FAILED causal case: $id / $($_.Exception.Message)")}}
+
+# Obviously synthetic literals live only in this owning test fixture. They are
+# never profile/context/argv values or persisted environment observations.
+function Get-PrivacyCanaries {
+    return @('SYNTHETIC-NOT-A-CREDENTIAL::alpha-040::v1', 'SYNTHETIC-NOT-A-CREDENTIAL::bravo-041::v1')
+}
+function Assert-PrivacyPublicText([string]$Text) {
+    foreach ($value in @(Get-PrivacyCanaries)) {
+        $utf8 = [Text.Encoding]::UTF8.GetBytes($value)
+        $utf16 = [Text.Encoding]::Unicode.GetBytes($value)
+        $json = [Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -InputObject $value -Compress))
+        $forms = @($value, [Convert]::ToBase64String($utf8), [Convert]::ToBase64String($utf16))
+        foreach ($bytes in @($utf8, $utf16, $json)) {
+            $digest = [Security.Cryptography.SHA256]::HashData($bytes)
+            $forms += [Convert]::ToHexString($digest).ToLowerInvariant()
+            $forms += [Convert]::ToBase64String($digest)
+        }
+        foreach ($form in $forms) {
+            if ($Text.IndexOf($form, [StringComparison]::OrdinalIgnoreCase) -ge 0) { throw 'Synthetic credential representation leaked into public evidence' }
+        }
+    }
+}
+function Assert-PrivacyEvidence([object]$Value) {
+    if ($null -eq $Value) { return }
+    if ($Value -is [Collections.IDictionary]) {
+        foreach ($key in @($Value.Keys)) {
+            if ([string]$key -in @('value_sha256', 'environment_sha256', 'child_environment_sha256')) {
+                if ($null -ne $Value[$key]) { throw 'Public environment value fingerprint must be JSON null' }
+            }
+            Assert-PrivacyEvidence $Value[$key]
+        }
+    } elseif ($Value -is [Collections.IEnumerable] -and $Value -isnot [string]) {
+        foreach ($item in $Value) { Assert-PrivacyEvidence $item }
+    }
+}
+function Assert-PrivacyJson([string]$Text) {
+    Assert-PrivacyPublicText $Text
+    Assert-PrivacyEvidence (ConvertFrom-Json -InputObject $Text -AsHashtable -Depth 100 -DateKind String)
+}
+function Set-PrivacyVariable([string]$Name, [AllowNull()][object]$Value) {
+    if ($null -eq $Value) { [Environment]::SetEnvironmentVariable($Name, [System.Management.Automation.Language.NullString]::Value) }
+    else { [Environment]::SetEnvironmentVariable($Name, [string]$Value) }
+}
+
 try{
  Assert ((Sha $SeedContextPath)-ceq$SeedContextSha256) 'Seed context identity differs'
  $seed=Get-Content -Raw -LiteralPath $SeedContextPath|ConvertFrom-Json -Depth 40 -DateKind String
@@ -100,7 +144,7 @@ try{
   $old=[Environment]::GetEnvironmentVariable('MORPHOSPACE_CAUSAL_SECRET')
   try{[Environment]::SetEnvironmentVariable('MORPHOSPACE_CAUSAL_SECRET','owned-nonsecret-fixture-value');$c=Resolve-MorphospaceQuestBuildContext -ContextPath $valid -ContextSha256 (Sha $valid) -WorkingDirectory $WorkingDirectory -RequiredTools @('pwsh') -PassthroughVariables @('MORPHOSPACE_CAUSAL_SECRET')
    Invoke-MorphospaceQuestBuildEnvironment -Context $c -Action {Assert ([Environment]::GetEnvironmentVariable('MORPHOSPACE_CAUSAL_SECRET')-ceq'owned-nonsecret-fixture-value') 'Explicit transient overlay absent'}
-   $marker=@($c.Evidence|Where-Object {$_.kind-ceq'environment'-and$_.variable-ceq'MORPHOSPACE_CAUSAL_SECRET'});$rawMarker=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes('owned-nonsecret-fixture-value'))).ToLowerInvariant();Assert ($marker.Count-eq1-and$marker[0].value_sha256-ceq$rawMarker) 'Existing environment hash domain changed'
+   $marker=@($c.Evidence|Where-Object {$_.kind-ceq'environment'-and$_.variable-ceq'MORPHOSPACE_CAUSAL_SECRET'});Assert ($marker.Count-eq1-and$marker[0].present-and$null-eq$marker[0].value_sha256-and$null-eq$c.EnvironmentSha256) 'Explicit overlay must persist presence only'
    $evidence=$c.Evidence|ConvertTo-Json -Depth 40 -Compress;Assert (-not$evidence.Contains('owned-nonsecret-fixture-value')) 'Raw overlay value leaked into evidence'
   }finally{if($null-eq$old){[Environment]::SetEnvironmentVariable('MORPHOSPACE_CAUSAL_SECRET',[System.Management.Automation.Language.NullString]::Value)}else{[Environment]::SetEnvironmentVariable('MORPHOSPACE_CAUSAL_SECRET',$old)}}
  }
@@ -125,6 +169,86 @@ try{
   $oldPreference=$PSNativeCommandUseErrorActionPreference
   try{$PSNativeCommandUseErrorActionPreference=$true;Refusal {Resolve $p -tools @('pwsh')} 'tool-probe-failed'}finally{$PSNativeCommandUseErrorActionPreference=$oldPreference}
  }
+
+ # Public serialization is intentionally a finite view, never the private map.
+ function Privacy-Resolve {
+  Resolve-MorphospaceQuestBuildContext -ContextPath $valid -ContextSha256 (Sha $valid) -WorkingDirectory $WorkingDirectory -RequiredTools @('pwsh') -PassthroughVariables @('WEF_PRIVACY_CANARY')
+ }
+ function Privacy-View([object]$Context) {
+  ConvertTo-Json -InputObject ([ordered]@{context_sha256=$Context.ContextSha256;environment_sha256=$Context.EnvironmentSha256;evidence=@($Context.Evidence)}) -Depth 64 -Compress
+ }
+ Case 'privacy-value-only-change-keeps-public-evidence-and-exact-delivery' {
+  $old=[Environment]::GetEnvironmentVariable('WEF_PRIVACY_CANARY');$views=@()
+  try {
+   foreach($expected in @(Get-PrivacyCanaries)) {
+    Set-PrivacyVariable 'WEF_PRIVACY_CANARY' $expected
+    $c=Privacy-Resolve
+    Assert ($null-eq$c.EnvironmentSha256) 'Public selected-context environment digest must be null'
+    $row=@($c.Evidence|Where-Object {$_.kind-ceq'environment'-and$_.variable-ceq'WEF_PRIVACY_CANARY'})
+    Assert ($row.Count-eq1-and$row[0].present-and$null-eq$row[0].value_sha256) 'Synthetic passthrough presence row differs'
+    Invoke-MorphospaceQuestBuildEnvironment -Context $c -Action {param($wanted)Assert ([Environment]::GetEnvironmentVariable('WEF_PRIVACY_CANARY')-ceq$wanted) 'Exact synthetic value was not delivered'} -ArgumentList @($expected)
+    Assert ([Environment]::GetEnvironmentVariable('WEF_PRIVACY_CANARY')-ceq$expected) 'Synthetic parent overlay was not restored'
+    $view=Privacy-View $c;Assert-PrivacyJson $view;$views+=,$view
+   }
+   Assert ($views.Count-eq2-and$views[0]-ceq$views[1]) 'Changing only a synthetic value changed permitted public evidence'
+  }finally{Set-PrivacyVariable 'WEF_PRIVACY_CANARY' $old}
+ }
+ Case 'privacy-private-map-mutation-refuses-before-callback' {
+  $old=[Environment]::GetEnvironmentVariable('WEF_PRIVACY_CANARY')
+  try {
+   $values=@(Get-PrivacyCanaries);Set-PrivacyVariable 'WEF_PRIVACY_CANARY' $values[0];$c=Privacy-Resolve
+   $c.EnvironmentValues['WEF_PRIVACY_CANARY']=$values[1];$script:privacyCalled=$false
+   Refusal {Invoke-MorphospaceQuestBuildEnvironment -Context $c -Action {$script:privacyCalled=$true}} 'resolved-context-mutated'
+   Assert (-not$script:privacyCalled) 'Changed private value reached callback'
+  }finally{Set-PrivacyVariable 'WEF_PRIVACY_CANARY' $old}
+ }
+ Case 'privacy-public-null-field-is-still-integrity-bound' {
+  $old=[Environment]::GetEnvironmentVariable('WEF_PRIVACY_CANARY')
+  try {
+   Set-PrivacyVariable 'WEF_PRIVACY_CANARY' (@(Get-PrivacyCanaries)[0]);$c=Privacy-Resolve
+   Assert ($null-eq$c.EnvironmentSha256) 'Privacy policy absent before mutation'
+   $c.EnvironmentSha256='0'*64;$script:privacyCalled=$false
+   Refusal {Invoke-MorphospaceQuestBuildEnvironment -Context $c -Action {$script:privacyCalled=$true}} 'resolved-context-mutated'
+   Assert (-not$script:privacyCalled) 'Changed public DTO reached callback'
+  }finally{Set-PrivacyVariable 'WEF_PRIVACY_CANARY' $old}
+ }
+ Case 'privacy-same-value-nesting-delivers-and-exception-restores' {
+  $old=[Environment]::GetEnvironmentVariable('WEF_PRIVACY_CANARY')
+  try {
+   $expected=@(Get-PrivacyCanaries)[0];Set-PrivacyVariable 'WEF_PRIVACY_CANARY' $expected;$c=Privacy-Resolve
+   Invoke-MorphospaceQuestBuildEnvironment -Context $c -Action {
+    param($bound,$wanted)
+    Invoke-MorphospaceQuestBuildEnvironment -Context $bound -Action {param($value)Assert ([Environment]::GetEnvironmentVariable('WEF_PRIVACY_CANARY')-ceq$value) 'Identical private nested scope lost synthetic value'} -ArgumentList @($wanted)
+   } -ArgumentList @($c,$expected)
+   $caught=$false;try{Invoke-MorphospaceQuestBuildEnvironment -Context $c -Action {throw 'synthetic-private-callback-failure'}}catch{$caught=$_.Exception.Message.Contains('synthetic-private-callback-failure')}
+   Assert $caught 'Synthetic callback failure was not propagated'
+   Assert ([Environment]::GetEnvironmentVariable('WEF_PRIVACY_CANARY')-ceq$expected) 'Exception lost parent overlay'
+  }finally{Set-PrivacyVariable 'WEF_PRIVACY_CANARY' $old}
+ }
+ Case 'privacy-different-private-values-refuse-nesting-despite-equal-public-evidence' {
+  $old=[Environment]::GetEnvironmentVariable('WEF_PRIVACY_CANARY')
+  try {
+   $values=@(Get-PrivacyCanaries);Set-PrivacyVariable 'WEF_PRIVACY_CANARY' $values[0];$a=Privacy-Resolve
+   Set-PrivacyVariable 'WEF_PRIVACY_CANARY' $values[1];$b=Privacy-Resolve
+   Assert ((Privacy-View $a)-ceq(Privacy-View $b)) 'Expected equal presence-only evidence absent'
+   Invoke-MorphospaceQuestBuildEnvironment -Context $a -Action {
+    param($nested,$wanted)
+    Refusal {Invoke-MorphospaceQuestBuildEnvironment -Context $nested -Action {throw 'unexpected private nested action'}} 'environment-busy'
+    Assert ([Environment]::GetEnvironmentVariable('WEF_PRIVACY_CANARY')-ceq$wanted) 'Refused nesting changed active outer value'
+   } -ArgumentList @($b,$values[0])
+  }finally{Set-PrivacyVariable 'WEF_PRIVACY_CANARY' $old}
+ }
+ Case 'privacy-absent-passthrough-never-reports-present-or-a-value-hash' {
+  $old=[Environment]::GetEnvironmentVariable('WEF_PRIVACY_CANARY')
+  try {
+   Set-PrivacyVariable 'WEF_PRIVACY_CANARY' $null;$c=Privacy-Resolve
+   Assert (-not$c.EnvironmentValues.ContainsKey('WEF_PRIVACY_CANARY')) 'Absent passthrough entered private map'
+   $row=@($c.Evidence|Where-Object {$_.kind-ceq'environment'-and$_.variable-ceq'WEF_PRIVACY_CANARY'})
+   Assert ($row.Count-le1-and@($row|Where-Object {$_.present-or$null-ne$_.value_sha256}).Count-eq0) 'Absent synthetic value was reported present'
+   Assert-PrivacyJson (Privacy-View $c)
+  }finally{Set-PrivacyVariable 'WEF_PRIVACY_CANARY' $old}
+ }
+
  # Actual distinct installed compiler/sysroot, not a contradictory channel argument.
  $currentVersion=((& $seedRustcExecutable -vV)-join[Environment]::NewLine)
  $hostLine=@($currentVersion-split'\r?\n'|Where-Object{$_-match'^host: '})[0]
@@ -140,7 +264,9 @@ try{
  $script:RealCompilerMismatchExercised=$false
  if($foreignCompiler){
   Case 'actual-compiler-versus-rustup-toolchain-mismatch' {
-   $v=Clone $seed;$v.tools.rustc.path=$foreignCompiler;$v.tools.rustc.sha256=Sha $foreignCompiler;$p=Store 'actual-foreign-compiler' $v
+   $v=Clone $seed;$v.tools.rustc.path=$foreignCompiler;$v.tools.rustc.sha256=Sha $foreignCompiler
+   if($null-ne$v.environment.PSObject.Properties['RUSTC']){$v.environment.RUSTC=$v.tools.rustc.path}
+   $p=Store 'actual-foreign-compiler' $v
    Refusal {Resolve $p -targets @($hostTarget)} 'toolchain-compiler-mismatch'
    $script:RealCompilerMismatchExercised=$true
   }
@@ -244,7 +370,7 @@ $path=Join-Path $PSScriptRoot $Output
   $toolPaths=@{};foreach($id in $seed.tools.PSObject.Properties.Name){$toolPaths[$id]=$seed.tools.$id.path}
   $c=Resolve $valid;$newPath=Join-Path $workingDirectory 'authored-context.json'
   $authored=Invoke-MorphospaceQuestBuildEnvironment -Context $c -Action {param($output,$tools,$channel)
-   New-MorphospaceQuestBuildContext -OutputPath $output -SourceRoot $workingDirectory -EnvironmentVariableNames @('PATH','HOME','SYSTEMROOT','SYSTEMDRIVE','USERPROFILE','COMSPEC','WINDIR','PATHEXT','TEMP','TMP','TMPDIR','RUSTUP_HOME','CARGO_HOME') -ToolPaths $tools -RustToolchainChannel $channel
+   New-MorphospaceQuestBuildContext -OutputPath $output -SourceRoot $workingDirectory -EnvironmentVariableNames ([string[]]@($seed.environment.PSObject.Properties.Name)) -ToolPaths $tools -RustToolchainChannel $channel
   } -ArgumentList @($newPath,$toolPaths,[string]$seed.rust_toolchain.channel)
   Assert ((Sha $newPath)-ceq$authored.sha256-and-not$authored.execution_authority) 'Data author failed exact ignored output identity'
   $unignored=Join-Path $workingDirectory 'unignored-context.json'
@@ -267,6 +393,7 @@ $path=Join-Path $PSScriptRoot $Output
 
 }catch{$results.Add([ordered]@{case='production-api-bootstrap';status='failed';error_type=$_.Exception.GetType().FullName;reason_code=[string]$_.Exception.Data['ReasonCode']});[Console]::Error.WriteLine('Production API baseline unavailable or invalid; no causal cases credited.')}
 $summary=[ordered]@{schema='task.durable_build_context_causal_cases.v1';production_module=$module;cases=@($results.ToArray());passed=@($results|Where-Object status -ceq passed).Count;failed=@($results|Where-Object status -ceq failed).Count;compiler_builds=0;device_actions=0;apk_proof=$false;real_compiler_mismatch_exercised=$script:RealCompilerMismatchExercised}
+Assert-PrivacyJson ($summary|ConvertTo-Json -Depth 20 -Compress)
 $p=Store 'RESULT' $summary
 [Console]::Out.WriteLine(($summary|ConvertTo-Json -Depth 12 -Compress))
 if($summary.failed-or$summary.passed-lt20){exit 1}

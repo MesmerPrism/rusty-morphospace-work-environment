@@ -151,8 +151,8 @@ adapters. It preserves installed identity, process, task/top-resumed, global
 Android focus, package permission declarations, reported grant bits, and app-op
 modes as separate fact families. Its app-evidence family is
 always explicit `unknown` until an app-owned receipt arrives: PID/process,
-top-resumed, or raw focus—including a brief app-focused frame followed by
-Meta `FocusPlaceholderActivity`—cannot become application/OpenXR readiness.
+top-resumed, or raw focusâ€”including a brief app-focused frame followed by
+Meta `FocusPlaceholderActivity`â€”cannot become application/OpenXR readiness.
 Permission observation likewise cannot establish permission policy, grantability,
 feature use, readiness, or wearer visibility. Unknown and unavailable provider
 facts remain explicit rather than being silently converted to success or failure.
@@ -190,8 +190,8 @@ accepting an installed target. It never installs a target or updates a tool.
 Only explicitly reviewed passthrough names absent from the literal context are
 imported. Signing passwords and a transient application media key use that
 existing in-memory overlay; they must never be serialized into the context or
-printed. Public evidence contains names, presence and hashes. The resolved
-object contains sensitive in-memory values and must not be serialized or logged.
+printed. Public environment evidence contains names, origins and presence only.
+The resolved object contains sensitive in-memory values and must not be serialized or logged.
 
 Windows host exports also require the actual developer environment, including
 INCLUDE, LIB, LIBPATH, VCINSTALLDIR, VCTOOLSINSTALLDIR, WINDOWSSDKDIR and
@@ -243,3 +243,35 @@ For subprocesses use the existing retained-process primitive with explicit
 EnvironmentValues: actual exit, reap, both EOFs, raw hashes and persisted final
 caller proof are still required, with no automatic retry or provisioning. A
 successful context or host fixture never establishes an APK or device result.
+
+
+### Presence-only environment observation
+
+All persisted environment rows use names, origins and presence only;
+`value_sha256`, resolved `EnvironmentSha256` and terminal
+`child_environment_sha256` are null. This default applies to base values,
+transient overlays, profile bindings and legacy passthrough, so a caller cannot
+accidentally disclose a password or media-key fingerprint by omitting a
+sensitivity declaration. The nonsecret context file retains its raw artifact
+hash; credentials must never be authored into that file or arguments.
+
+`quest-build.environment-observation-policy = presence-only-v1` identifies this
+policy. Invocation/output bindings and preflight observation hashes cover the
+sanitized metadata plus their existing profile/source/tool/execution inputs;
+they do not attest exact credential values or authorize artifact reuse across
+different credentials. No credential-derived digest is substituted under a
+new metadata-hash name.
+
+The module keeps its exact resolved-map mutation fingerprint and nested-scope
+comparison private in memory. Changes to environment values, public context
+metadata, tools or evidence still refuse before Action; canonical source/tool/
+context holds and finally rechecks, the mutex, compatible nesting, contradictory
+nesting refusal and full parent restoration remain required. The runner guards
+its private final child map immediately before dispatch. Public nulls are not
+compared as an exact-environment proof.
+
+Original child streams, exit/reap/both EOF and permitted whole-artifact integrity
+hashes retain their existing raw provenance. This policy does not rewrite raw
+streams or make a child that prints credentials safe. Owners must keep secrets
+out of command arguments, logs and artifacts. Older evidence remains immutable
+and is not relabeled as presence-only proof.

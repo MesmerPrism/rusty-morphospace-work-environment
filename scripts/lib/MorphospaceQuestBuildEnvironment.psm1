@@ -69,7 +69,7 @@ function Invoke-QuestContextToolProbe([string]$Path,[string[]]$Arguments,[Collec
 }
 function Get-QuestResolvedFingerprint([object]$Context){
  $tools=@($Context.Tools.Keys|Sort-Object|ForEach-Object{[ordered]@{id=[string]$_;path=[string]$Context.Tools[$_].Path;sha256=[string]$Context.Tools[$_].Sha256}})
- Get-QuestContextValueHash ([ordered]@{path=$Context.ContextPath;sha256=$Context.ContextSha256;environment_sha256=(Get-QuestContextEnvironmentHash $Context.EnvironmentValues);tools=$tools;channel=$Context.ToolchainChannel;directory=$Context.WorkingDirectory;evidence=$Context.Evidence})
+ Get-QuestContextValueHash ([ordered]@{path=$Context.ContextPath;sha256=$Context.ContextSha256;environment_sha256=(Get-QuestContextEnvironmentHash $Context.EnvironmentValues);public_environment_sha256=$Context.EnvironmentSha256;tools=$tools;channel=$Context.ToolchainChannel;directory=$Context.WorkingDirectory;evidence=$Context.Evidence})
 }
 function Assert-QuestContextBareGit([object]$Context){
  if(-not$Context.Tools.ContainsKey('git')){return}
@@ -148,9 +148,9 @@ function Resolve-MorphospaceQuestBuildContext {
    $installed=(Invoke-QuestContextToolProbe $tools.rustup.Path @('target','list','--installed','--toolchain',$channel) $effective $WorkingDirectory)-split'\r?\n'
    foreach($target in $RequiredTargets){if($target-cnotin$installed){Stop-QuestBuildContext 'target-missing'};$evidence.Add([ordered]@{kind='required-target';target=$target;installed=$true;channel=$channel;compiler_sha256=$tools.rustc.Sha256})}
   }
-  foreach($name in @($effective.Keys|Sort-Object)){$evidence.Add([ordered]@{kind='environment';variable=$name;present=$true;value_sha256=(Get-QuestContextBytesHash ([Text.UTF8Encoding]::new($false).GetBytes([string]$effective[$name])))})}
-  $context=[pscustomobject]@{ContextPath=$full;ContextSha256=$ContextSha256;EnvironmentValues=$effective;EnvironmentSha256=(Get-QuestContextEnvironmentHash $effective);Tools=$tools;ToolchainChannel=$channel;WorkingDirectory=[IO.Path]::GetFullPath($WorkingDirectory);Evidence=@($evidence.ToArray())}
-  $script:ResolvedQuestContexts.Add($context,[pscustomobject]@{Fingerprint=(Get-QuestResolvedFingerprint $context)})
+  foreach($name in @($effective.Keys|Sort-Object)){$evidence.Add([ordered]@{kind='environment';variable=$name;present=$true;value_sha256=$null})}
+  $context=[pscustomobject]@{ContextPath=$full;ContextSha256=$ContextSha256;EnvironmentValues=$effective;EnvironmentSha256=$null;Tools=$tools;ToolchainChannel=$channel;WorkingDirectory=[IO.Path]::GetFullPath($WorkingDirectory);Evidence=@($evidence.ToArray())}
+  $script:ResolvedQuestContexts.Add($context,[pscustomobject]@{Fingerprint=(Get-QuestResolvedFingerprint $context);EnvironmentSha256=(Get-QuestContextEnvironmentHash $effective)})
   return $context
  }catch{
   if($_.Exception.Data.Contains('ReasonCode')){throw}
@@ -162,7 +162,7 @@ function Invoke-MorphospaceQuestBuildEnvironment {
  param([Parameter(Mandatory)][object]$Context,[Parameter(Mandatory)][scriptblock]$Action,[object[]]$ArgumentList=@())
  $binding=$null
  if(-not$script:ResolvedQuestContexts.TryGetValue($Context,[ref]$binding)){Stop-QuestBuildContext 'resolved-context-mutated'}
- if((Get-QuestResolvedFingerprint $Context)-cne$binding.Fingerprint-or(Get-QuestContextEnvironmentHash $Context.EnvironmentValues)-cne$Context.EnvironmentSha256){Stop-QuestBuildContext 'resolved-context-mutated'}
+ if((Get-QuestResolvedFingerprint $Context)-cne$binding.Fingerprint-or(Get-QuestContextEnvironmentHash $Context.EnvironmentValues)-cne$binding.EnvironmentSha256){Stop-QuestBuildContext 'resolved-context-mutated'}
  $holds=[Collections.Generic.List[IO.FileStream]]::new()
  $boundPaths=[Collections.Generic.List[object]]::new()
  try{
