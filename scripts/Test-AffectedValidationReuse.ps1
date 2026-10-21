@@ -748,7 +748,7 @@ if (-not [string]::IsNullOrWhiteSpace($SelfTestPhase)) {
         $duplicateReceipt=$receipt|ConvertTo-Json -Depth 64|ConvertFrom-Json -Depth 64
         $duplicateReceipt.run.check_names=@('infrastructure','quick-linux','quick-linux','quick-windows','select','standard-windows')
         Write-ReuseSelfUtf8 $receiptPath (($duplicateReceipt|ConvertTo-Json -Depth 64 -Compress)+"`n")
-        $duplicateRefused=$false;try{[void](& $PSCommandPath -RepositoryRoot $fixture -BeforeCommit $base -HeadCommit $merge -ReusePath $receiptPath -ArtifactDirectory $artifacts)}catch{$duplicateRefused=$true}
+        $duplicateRefused=$false;try{[void](& (Join-Path $PSScriptRoot 'Test-AffectedValidationReuse.ps1') -RepositoryRoot $fixture -BeforeCommit $base -HeadCommit $merge -ReusePath $receiptPath -ArtifactDirectory $artifacts)}catch{$duplicateRefused=$true}
         Write-ReuseSelfUtf8 $receiptPath (($receipt|ConvertTo-Json -Depth 64 -Compress)+"`n")
         if(-not$duplicateRefused){throw 'Reuse accepted duplicate actual successful job identities.'}
         $damaged = $receipt | ConvertTo-Json -Depth 64 | ConvertFrom-Json -Depth 64; $damaged.coverage = @(); Write-ReuseSelfUtf8 $receiptPath (($damaged | ConvertTo-Json -Depth 64 -Compress) + "`n")
