@@ -184,7 +184,7 @@ function Resolve-EnvironmentBindings {
         if (-not $byId.ContainsKey($bindingId)) { throw "Required environment binding '$bindingId' is missing." }
         $binding = $byId[$bindingId]
         $values[[string]$requirement.Name] = $binding.Path
-        $evidence += [ordered]@{ variable = [string]$requirement.Name; binding_id = $bindingId; kind = $binding.Kind; value_sha256 = Get-StringSha256 $binding.Path; git_revision = if ($binding.Revision) { $binding.Revision } else { $null }; git_tree = if ($binding.Tree) { $binding.Tree } else { $null } }
+        $evidence += [ordered]@{ variable = [string]$requirement.Name; binding_id = $bindingId; kind = $binding.Kind; value_sha256 = $null; git_revision = if ($binding.Revision) { $binding.Revision } else { $null }; git_tree = if ($binding.Tree) { $binding.Tree } else { $null } }
     }
     return [pscustomobject]@{ Values = $values; Evidence = @($evidence | Sort-Object variable); Bindings = $byId }
 }
@@ -245,7 +245,7 @@ function Get-ChildEnvironmentProjection {
     foreach ($name in @($passthrough | Sort-Object)) {
         $value = [Environment]::GetEnvironmentVariable($name)
         if ($null -ne $value) { $child[$name] = $value }
-        $evidence += [ordered]@{ variable = $name; source = "host-passthrough"; present = $null -ne $value; value_sha256 = if ($null -ne $value) { Get-StringSha256 $value } else { $null } }
+        $evidence += [ordered]@{ variable = $name; source = "host-passthrough"; present = $null -ne $value; value_sha256 = $null }
     }
     foreach ($name in @($prohibited | Sort-Object)) {
         $present = $null -ne [Environment]::GetEnvironmentVariable($name)
@@ -256,11 +256,11 @@ function Get-ChildEnvironmentProjection {
     }
     foreach ($name in @($BindingValues.Keys | Sort-Object)) {
         $child[$name] = [string]$BindingValues[$name]
-        $evidence += [ordered]@{ variable = $name; source = "profile-binding"; present = $true; value_sha256 = Get-StringSha256 ([string]$BindingValues[$name]) }
+        $evidence += [ordered]@{ variable = $name; source = "profile-binding"; present = $true; value_sha256 = $null }
     }
     if($null-ne$script:ActiveQuestBuildContext){
         $child=@{};foreach($name in $script:ActiveQuestBuildContext.EnvironmentValues.Keys){$child[$name]=[string]$script:ActiveQuestBuildContext.EnvironmentValues[$name]}
-        $evidence=@($script:ActiveQuestBuildContext.Evidence|Where-Object kind -eq environment|ForEach-Object{[ordered]@{variable=$_.variable;source='selected-context';present=$_.present;value_sha256=$_.value_sha256}})
+        $evidence=@($script:ActiveQuestBuildContext.Evidence|Where-Object kind -eq environment|ForEach-Object{[ordered]@{variable=$_.variable;source='selected-context';present=$_.present;value_sha256=$null}})
     }
     return [pscustomobject]@{ Values = $child; Evidence = @($evidence | Sort-Object variable, source) }
 }
@@ -477,9 +477,10 @@ function Invoke-QuestBuildPreflight {
     $environmentEvidence = @($projectedEnvironment.Evidence)
     if ($contentAddressed) {
         $childEnvironment["MORPHOSPACE_CONTENT_ADDRESSED_ARTIFACT"] = $effectiveArtifact
-        $environmentEvidence += [ordered]@{ variable = "MORPHOSPACE_CONTENT_ADDRESSED_ARTIFACT"; source = "wrapper-derived"; present = $true; value_sha256 = Get-StringSha256 $effectiveArtifact }
+        $environmentEvidence += [ordered]@{ variable = "MORPHOSPACE_CONTENT_ADDRESSED_ARTIFACT"; source = "wrapper-derived"; present = $true; value_sha256 = $null }
     }
-    $childEnvironmentSha256 = Get-ChildEnvironmentSha256 $childEnvironment
+    # Persist only presence metadata; exact child values remain private to this invocation.
+    $childEnvironmentSha256 = $null
     $insideSource = -not [System.IO.Path]::IsPathRooted([System.IO.Path]::GetRelativePath($Profile.Root, $effectiveArtifact))
     $sourceRootPolicyPasses = $allowSourceRoot -or -not $insideSource
     Add-PreflightCheck $checks "output.source-root" $(if ($sourceRootPolicyPasses) { "passed" } else { "contradiction" }) $(if ($sourceRootPolicyPasses) { "" } else { "output-inside-source-root" }) "Output source-root policy is satisfied."
@@ -493,7 +494,7 @@ function Invoke-QuestBuildPreflight {
         [ordered]@{ key = "quest-build.profile-sha256"; value = $Profile.Sha256 },
         [ordered]@{ key = "quest-build.invocation-binding-sha256"; value = $bindingSha256 },
         [ordered]@{ key = "quest-build.executable-sha256"; value = $Execution.BoundToolSha256 },
-        [ordered]@{ key = "quest-build.child-environment-sha256"; value = $childEnvironmentSha256 },
+        [ordered]@{ key = "quest-build.environment-observation-policy"; value = "presence-only-v1" },
         [ordered]@{ key = "quest-build.arguments-sha256"; value = Get-StringSha256 ((@($Execution.Arguments) -join "`u{001F}")) },
         [ordered]@{ key = "quest-build.output-lane"; value = $lane },
         [ordered]@{ key = "quest-build.output-collision-policy"; value = $collisionPolicy }
@@ -659,7 +660,7 @@ function New-TerminalResult {
         operation = $Operation
         terminal_status = $Status
         profile = [ordered]@{ profile_id = if ($null -ne $Profile) { [string]$Profile.Document.profile_id } else { $null }; profile_sha256 = if ($null -ne $Profile) { [string]$Profile.Sha256 } else { $null } }
-        invocation = [ordered]@{ binding_sha256 = if ($null -ne $Preflight) { [string]$Preflight.BindingSha256 } else { Get-StringSha256 "quest-build-terminal-result-empty-binding-v1" }; executable = if ($null -ne $Execution) { [string]$Execution.FileName } else { $null }; arguments = @(if ($null -ne $Execution) { $Execution.Arguments }); timeout_seconds = $evidenceTimeoutSeconds; child_environment_sha256 = if ($null -ne $Preflight) { [string]$Preflight.ChildEnvironmentSha256 } else { $null }; child_environment_variable_count = if ($null -ne $Preflight) { @($Preflight.ChildEnvironment.Keys).Count } else { 0 } }
+        invocation = [ordered]@{ binding_sha256 = if ($null -ne $Preflight) { [string]$Preflight.BindingSha256 } else { Get-StringSha256 "quest-build-terminal-result-empty-binding-v1" }; executable = if ($null -ne $Execution) { [string]$Execution.FileName } else { $null }; arguments = @(if ($null -ne $Execution) { $Execution.Arguments }); timeout_seconds = $evidenceTimeoutSeconds; child_environment_sha256 = if ($null -ne $Preflight) { $Preflight.ChildEnvironmentSha256 } else { $null }; child_environment_variable_count = if ($null -ne $Preflight) { @($Preflight.ChildEnvironment.Keys).Count } else { 0 } }
         observation = [ordered]@{ observation_id = if ($null -ne $Preflight) { [string]$Preflight.Observation.observation_id } else { $null }; sha256 = if ($null -ne $Preflight) { [string]$Preflight.ObservationSha256 } else { $null }; content_sha256 = if ($null -ne $Preflight) { [string]$Preflight.Observation.content_sha256 } else { $null } }
         reason_codes = @($ReasonCodes | Where-Object { $_ } | Sort-Object -Unique)
         child_process = $childProcessEvidence
@@ -743,6 +744,8 @@ try {
     }else{$environment=Resolve-EnvironmentBindings $profile.Document $EnvironmentBindingsPath $EnvironmentBindingsSha256}
     $execution = Resolve-Execution $profile $ToolPath $ToolSha256
     $preflight = if($null-ne$script:ActiveQuestBuildContext){Invoke-MorphospaceQuestBuildEnvironment -Context $script:ActiveQuestBuildContext -Action {Invoke-QuestBuildPreflight $profile $execution $environment $SignerObservationPath $SignerObservationSha256}}else{Invoke-QuestBuildPreflight $profile $execution $environment $SignerObservationPath $SignerObservationSha256}
+    # Private-only exact map guard. Never serialize this fingerprint.
+    $privateDispatchEnvironmentSha256 = Get-ChildEnvironmentSha256 $preflight.ChildEnvironment
     if ($operation -ceq "preflight") {
         $terminal = New-TerminalResult "preflight" $preflight.Status $profile $execution $preflight $preflight.ReasonCodes $null $preflight.Payload $TimeoutSeconds $null
         $exitCode = if ($preflight.Status -eq "passed") { 0 } elseif ($preflight.Status -eq "contradiction") { 2 } else { 3 }
@@ -754,6 +757,7 @@ try {
         $receiptFullPath = [System.IO.Path]::GetFullPath($ReceiptPath)
         if (Test-Path -LiteralPath $receiptFullPath) { throw "ReceiptPath already exists." }
         $dispatch={
+            if ((Get-ChildEnvironmentSha256 $preflight.ChildEnvironment) -cne $privateDispatchEnvironmentSha256) { throw "Child environment changed before dispatch." }
             if($WaitPolicy -ceq 'Retained'){Invoke-MorphospaceRetainedBuildProcess -Execution $execution -EnvironmentValues $preflight.ChildEnvironment -BaseReceiptPath $receiptFullPath -EstimatedWarningSeconds $EstimatedWarningSeconds -CancelAfterMilliseconds $TestCancelAfterMilliseconds}
             else{Invoke-ChildProcess $execution $preflight.ChildEnvironment $receiptFullPath $TimeoutSeconds $TestCancelAfterMilliseconds}
         }
