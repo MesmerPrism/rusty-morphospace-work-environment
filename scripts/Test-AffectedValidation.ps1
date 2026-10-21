@@ -3581,9 +3581,8 @@ if ($runFullSelector -or $runExecutorPassPhase) {
         }
     }
     foreach ($requiredContext in @('quick-linux','quick-windows','standard-windows')) { Assert-True $workflowJobs.ContainsKey($requiredContext) "PR workflow lacks the required '$requiredContext' context." }
-    foreach ($segmentJobId in @('affected-linux-segments','affected-windows-segments','main-linux-segments','main-windows-segments')) { Assert-True $workflowJobs.ContainsKey($segmentJobId) "Workflow lacks the required '$segmentJobId' segmented execution job." }
+    foreach ($segmentJobId in @('affected-windows-segments','main-windows-segments')) { Assert-True $workflowJobs.ContainsKey($segmentJobId) "Workflow lacks the required '$segmentJobId' segmented execution job." }
     foreach ($selectedContext in @(
-        @{ id = 'quick-linux'; selected = 'LINUX_SELECTED'; segment_result = 'SEGMENT_RESULT'; segment_job = 'affected-linux-segments'; platform = 'linux' },
         @{ id = 'standard-windows'; selected = 'WINDOWS_SELECTED'; segment_result = 'SEGMENT_RESULT'; segment_job = 'affected-windows-segments'; platform = 'windows' }
     )) {
         $body = [string]$workflowJobs[[string]$selectedContext.id]
@@ -3613,9 +3612,35 @@ if ($runFullSelector -or $runExecutorPassPhase) {
         Assert-True ($segmentBody.Contains('PR_NUMBER: ${{ github.event.pull_request.number }}') -and $segmentBody.Contains("steps.execute.outputs.cache_ready == 'true'") -and $segmentBody.Contains('AffectedCacheFinalized') -and $segmentBody.Contains('actualInventorySha256 -cne $inventorySha256')) "Workflow '$($selectedContext.segment_job)' does not retain exact producer and parent-finalized cache binding."
         Assert-True ($body.Contains('Merge-AffectedValidationSegments.ps1') -and $body.Contains("-Platform $($selectedContext.platform)")) "Required '$($selectedContext.id)' context does not verify the exact $($selectedContext.platform) segment union."
     }
+    # Linux's complete platform union is executed by one actual parent, not
+    # assembled from independently scheduled kernels/PowerShell installations.
+    Assert-True (-not$workflowJobs.ContainsKey('affected-linux-segments')-and-not$workflowJobs.ContainsKey('main-linux-segments')) 'Linux direct topology also retains ambiguous segmented producers.'
+    $directLinuxBody=[string]$workflowJobs['quick-linux']
+    Assert-True ($directLinuxBody -match '(?m)^    needs: \[infrastructure, select\]$') 'Direct Linux required context does not bind exact selection prerequisites.'
+    foreach($selection in @('true','false')){Invoke-WorkflowSelectionGate -JobBody $directLinuxBody -SelectionVariable 'LINUX_SELECTED' -SelectionValue $selection -SegmentResultVariable 'SEGMENT_RESULT'}
+    foreach($selection in @('','unexpected')){Assert-AffectedThrows {Invoke-WorkflowSelectionGate -JobBody $directLinuxBody -SelectionVariable 'LINUX_SELECTED' -SelectionValue $selection -SegmentResultVariable 'SEGMENT_RESULT'} '*must be exactly true or false*' 'Linux direct context accepted an invalid platform-selection value.'}
+    foreach($linuxJob in @('quick-linux','main-linux-delta')) {
+        $body=[string]$workflowJobs[$linuxJob]
+        Assert-True ($body -notmatch '(?m)^    (?:strategy|matrix):' -and -not$body.Contains('-SegmentId')) "Linux union '$linuxJob' is partitioned across different parents."
+        foreach($required in @('-Platform linux -OutPath $evidencePath','-BaseCommit $base -HeadCommit $head','-Tier $tier','PUSH_BEFORE: ${{ github.event.before }}',"@(`$_.platforms) -ccontains 'linux'",'evidence.base.commit','evidence.head.commit','evidence.plan_sha256','expectedIds -join',"evidence.result -cne 'pass'",'AffectedValidationMissingEvidence','AffectedCacheFinalized','inventoryPath','steps.direct.outputs.evidence_ready','steps.direct.outputs.cache_ready','affected-checks-linux-${{ github.sha }}-${{ github.run_attempt }}','affected-linux-${{ steps.direct.outputs.evidence_sha256 }}-${{ github.run_id }}-${{ github.run_attempt }}','affected-selector-phases-*-linux')) {
+            Assert-True $body.Contains($required) "Linux union '$linuxJob' omits its exact source/coverage/cache/raw evidence contract: $required"
+        }
+    }
+    Assert-True ($directLinuxBody.Contains('affected-check-linux-pr-')-and$directLinuxBody.Contains("github.event_name == 'pull_request' && needs.select.outputs.linux == 'true' && steps.direct.outputs.cache_ready")) 'Linux direct mode lost its PR-scoped compatible cache lane.'
+    $mainLinuxBody=[string]$workflowJobs['main-linux-delta']
+    Assert-True ($mainLinuxBody.Contains('needs: [select, post-merge-attestation]')-and$mainLinuxBody.Contains("needs.post-merge-attestation.outputs.execution_mode == 'current-delta'")-and$mainLinuxBody.Contains("`$env:SELECT_RESULT -cne 'success'")-and$mainLinuxBody.Contains("`$env:ATTESTATION_RESULT -cne 'success'")-and$mainLinuxBody.Contains("`$env:PLATFORM_SELECTED -cne 'true'")) 'Linux current-delta fallback bypasses actual selection/attestation or repeats authenticated reuse.'
     $quickWindowsBody = [string]$workflowJobs['quick-windows']
     Assert-True ($quickWindowsBody -match '(?m)^    needs: \[infrastructure, select, standard-windows\]$' -and $quickWindowsBody -match "\`$env:STANDARD_RESULT -cne 'success'") 'Required quick-windows context is not bound to the selected Windows result.'
     Assert-True ($quickWindowsBody -notmatch 'Invoke-AffectedValidation') 'Required quick-windows context replays the selected Windows suite.'
+    foreach($windowsProfileJob in @('affected-windows-segments','standard-windows','quick-windows','main-windows-segments','main-windows-delta','deep')) {
+        Assert-True ([string]$workflowJobs[$windowsProfileJob]-cmatch'(?m)^    runs-on: windows-2025$') 'Hosted Windows job uses a moving runner generation.'
+    }
+    $windowsProfileGuard="if ([Environment]::OSVersion.VersionString -cne 'Microsoft Windows NT 10.0.26100.0') { throw 'Affected Windows producer OS differs from the reviewed Windows Server2025 profile.' }"
+    foreach($windowsProducer in @(@('affected-windows-segments',1),@('standard-windows',2),@('main-windows-segments',1),@('main-windows-delta',1))) {
+        $body=[string]$workflowJobs[$windowsProducer[0]]
+        Assert-True (([regex]::Matches($body,[regex]::Escape($windowsProfileGuard))).Count-eq[int]$windowsProducer[1]) 'Windows validation producer lacks the exact live OS profile guard.'
+        Assert-True (([regex]::Matches($body,[regex]::Escape('./scripts/Use-PinnedWindowsPowerShell.ps1 -AssertCurrent'))).Count-eq[int]$windowsProducer[1]) 'Windows producer must assert its real pinned PowerShell/executable before validation.'
+    }
     $directWindowsBody = [string]$workflowJobs['standard-windows']
     $segmentedWindowsBody = [string]$workflowJobs['affected-windows-segments']
     Assert-True ($directWindowsBody.Contains("WINDOWS_DIRECT: `${{ needs.select.outputs.windows_direct }}") -and $directWindowsBody.Contains("`$env:SEGMENT_RESULT -cne 'skipped'") -and $segmentedWindowsBody.Contains("needs.select.outputs.windows_direct == 'false'")) 'Opt-in direct Windows mode does not exclude segmented execution or bind its skipped dependency.'
@@ -3651,7 +3676,7 @@ if ($runFullSelector -or $runExecutorPassPhase) {
         $remoteArtifacts += [pscustomobject]@{name="affected-linux-$('d'*64)-77-3"}
         Assert-AffectedThrows { . $selectionScript } '*duplicate candidates at winning attempt*' 'Post-merge selection accepted competing final aggregates in one attempt.'
     }
-    foreach ($producer in @('select','affected-linux-segments','affected-windows-segments','main-linux-segments','main-windows-segments')) {
+    foreach ($producer in @('select','affected-windows-segments','main-windows-segments')) {
         $producerBody = [string]$workflowJobs[$producer]
         $artifactPrefix = if ($producer -ceq 'select') { 'name: affected-plan-' } else { 'name: affected-segment-' }
         $artifactLine = @($producerBody -split "`r?`n" | Where-Object { $_.TrimStart().StartsWith($artifactPrefix,[StringComparison]::Ordinal) -and -not $_.Contains('name: affected-plan-diagnostic-') })
@@ -3660,7 +3685,7 @@ if ($runFullSelector -or $runExecutorPassPhase) {
         $upload = [regex]::Match($producerBody,'(?ms)^      - (?:name: [^\r\n]+\r?\n(?:(?!^      - ).)*?|uses: )actions/upload-artifact@.*?'+[regex]::Escape($artifactPrefix)+'.*?(?=^      - |\z)')
         Assert-True ($upload.Success -and $upload.Value.Contains('if-no-files-found: error')) "Producer '$producer' does not require its artifact upload."
     }
-    foreach ($reducer in @('quick-linux','standard-windows','main-linux-delta','main-windows-delta')) {
+    foreach ($reducer in @('standard-windows','main-windows-delta')) {
         $reducerBody = [string]$workflowJobs[$reducer]
         $downloadIndex = $reducerBody.IndexOf('Download-AffectedValidationSegmentArtifacts.ps1',[StringComparison]::Ordinal)
         $stageIndex = $reducerBody.IndexOf('Stage-AffectedValidationSegmentEvidence.ps1',[StringComparison]::Ordinal)
@@ -3672,13 +3697,13 @@ if ($runFullSelector -or $runExecutorPassPhase) {
             if ($reducer -ceq 'standard-windows') { Assert-True ($reducerBody -match 'name: affected-windows-\$\{\{ steps.direct.outputs.evidence_sha256 \}\}-\$\{\{ github.run_id \}\}-\$\{\{ github.run_attempt \}\}') 'Direct Windows final artifact lacks the same exact attempt binding.' }
         }
     }
-    foreach ($platform in @('linux','windows')) {
+    foreach ($platform in @('windows')) {
         $artifactMarker = "affected-$platform-evidence.json"
         $artifactIndex = $workflowSource.IndexOf($artifactMarker, [StringComparison]::Ordinal)
         Assert-True ($artifactIndex -ge 0) "PR workflow lacks the $platform evidence artifact."
         Assert-True ($workflowSource.Contains("-Platform $platform -DestinationRoot") -and $workflowSource.Contains("-Platform $platform -SegmentEvidenceDirectory")) "PR workflow does not download and merge the exact $platform segment evidence set."
     }
-    foreach ($platform in @('linux','windows')) {
+    foreach ($platform in @('windows')) {
         $mainSegmentBody = [string]$workflowJobs["main-$platform-segments"]
         $mainFinalBody = [string]$workflowJobs["main-$platform-delta"]
         Assert-True ($mainSegmentBody.Contains("matrix: `${{ fromJSON(needs.select.outputs.$($platform)_matrix) }}") -and $mainSegmentBody.Contains('-SegmentId $env:SEGMENT_ID')) "Post-merge $platform fallback is not segmented."
@@ -3706,13 +3731,13 @@ if ($runFullSelector -or $runExecutorPassPhase) {
         } finally { foreach ($name in $gateNames) { [Environment]::SetEnvironmentVariable($name,$savedGateEnvironment[$name],'Process') } }
     }
     $deepBody = [string]$workflowJobs['deep']
-    Assert-True ($deepBody.Contains('needs: [infrastructure, select, quick-linux, standard-windows]') -and $deepBody.Contains('full-history segmented Deep evidence') -and $deepBody -notmatch 'Test-WorkEnvironment') 'Scheduled/manual Deep does not bind the fresh segmented leaf evidence or still reruns the cumulative aggregate.'
+    Assert-True ($deepBody.Contains('needs: [infrastructure, select, quick-linux, standard-windows]') -and $deepBody.Contains('full-history selected Deep evidence') -and $deepBody -notmatch 'Test-WorkEnvironment') 'Scheduled/manual Deep does not bind the fresh segmented leaf evidence or still reruns the cumulative aggregate.'
     $selectBody = [string]$workflowJobs['select']
     Assert-True ($selectBody.Contains("'schedule','workflow_dispatch'") -and $selectBody.Contains("{ 'Deep' }") -and $selectBody.Contains('Get-MorphospaceAffectedValidationSegments')) 'Schedule/manual selection does not resolve the complete Deep plan and deterministic segment matrices.'
     Assert-True ($selectBody.Contains("contains(github.event.pull_request.labels.*.name, 'validation-single-windows')") -and $selectBody.Contains('windowsBudget -gt 18000') -and $selectBody.Contains('windows_direct=') -and $selectBody.Contains('Single-runner Windows estimate exceeds') -and -not $selectBody.Contains("throw 'Requested single-runner Windows validation exceeds")) 'Single-runner Windows opt-in or advisory estimate policy changed.'
     $planUploadIndex=$selectBody.IndexOf('name: Preserve canonical-digest affected plan',[StringComparison]::Ordinal);$mappingStopIndex=$selectBody.IndexOf('name: Stop non-executable affected mapping',[StringComparison]::Ordinal)
     Assert-True ($selectBody.Contains('execution_permitted') -and $selectBody.Contains('if ([bool]$plan.execution_permitted)') -and $planUploadIndex -ge 0 -and $mappingStopIndex -gt $planUploadIndex -and $selectBody.Contains("steps.plan.outputs.execution_permitted != 'true'")) 'Mapping-incomplete workflow does not upload the canonical plan before its explicit stop.'
-    foreach($segmentJob in @('affected-linux-segments','affected-windows-segments')){Assert-True ([string]$workflowJobs[$segmentJob] -match "needs\.select\.outputs\.(?:linux|windows) == 'true'") "Affected segment job '$segmentJob' can run without an executable selected platform."}
+    foreach($segmentJob in @('affected-windows-segments')){Assert-True ([string]$workflowJobs[$segmentJob] -match "needs\.select\.outputs\.(?:linux|windows) == 'true'") "Affected segment job '$segmentJob' can run without an executable selected platform."}
     $executorSource = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -Raw
     $inventorySchema = Get-Content -LiteralPath (Join-Path $repoRoot 'schemas/affected-validation-check-inventory-v1.schema.json') -Raw | ConvertFrom-Json -Depth 64
     $producerEvents = @($inventorySchema.properties.producer.properties.event_name.enum)
