@@ -40,6 +40,22 @@ Nested readers may share it only on the same thread, workspace and held ledger
 observation. Completions, artifacts, event placement, required paths and tail
 checks remain live on every read; changed intent or policy bytes refuse.
 
+Preparation provenance readers use that same existing owner scope for immutable
+intent semantics. Equivalent nested scopes must share their private intent proof
+dictionary and exact ledger/policy observation; ambiguous scopes refuse.
+Standalone reads remain fresh. Completion, placement, artifact, state and
+successor checks still run for each consumer. Focused controls distinguish fewer
+semantic evaluations from unchanged live guard counts; they do not establish an
+application-wide timing improvement.
+
+Ordinary preparation also rejects an unavailable or tracked-dirty selected source
+before costly history authentication. This early observation only refuses work;
+the later complete source snapshot and immediate mutation guards still run.
+Before creating an immutable feature admission, authored instruction checks also
+reject reviewed skill records outside that feature's category routing. Ready
+retains its complete path, source, map and instruction checks; admission supplies
+no Claim authority.
+
 Active retirement uses the same private proof scope around its existing owner
 checks. It retains current repository/source observations, preparation
 provenance, state/unit/feature CAS and immediate pre-intent checks. The scope is

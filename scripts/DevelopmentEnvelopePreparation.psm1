@@ -324,6 +324,18 @@ function Complete-MorphospaceDevelopmentEnvelopePreparation {
     $intentAt=Test-MorphospaceStrictUtcTimestamp ([string]$intent.created_at);$completedAt=[DateTimeOffset]::UtcNow;if($completedAt-lt$intentAt){$completedAt=$intentAt}
     $completion=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.development_envelope_preparation_completion.v1';transaction_id=$intent.transaction_id;completed_at=$completedAt.ToString('yyyy-MM-ddTHH:mm:ss.fffffffZ');intent_sha256=(Get-PreparationFileHash $intentPath);target_project_sha256=$intent.target.project.sha256;target_state_sha256=$intent.target.state.sha256;target_feature_lock_sha256=$intent.target.feature_lock.sha256;event_id=$intent.event.event_id;status='committed'};Write-MorphospaceManagedProtocolJsonAtomic $Workspace $CompletionRelative $completion -NoOverwrite;return 'committed'
 }
+function Assert-PreparationMappedSourceReadiness {
+    param([object]$Preparation,[hashtable]$Map)
+    # Cheap refusal only: this observation is not a retained source proof.
+    # The full source snapshot below still reobserves Git after history checks.
+    foreach($id in @($Preparation.envelope.source_composition.repository_ids|Sort-Object -Unique)){
+        if(-not$Map.ContainsKey([string]$id)){throw "Preparation source-composition repository '$id' is unmapped."}
+        $root=[IO.Path]::GetFullPath([string]$Map[[string]$id].path)
+        if(-not[IO.Directory]::Exists($root)){throw "Preparation mapped repository '$id' is unavailable."}
+        $dirty=@(& git --no-optional-locks -C $root status --porcelain=v1 --untracked-files=no)
+        if($LASTEXITCODE-ne0-or$dirty.Count-ne0){throw "Preparation source-composition repository '$id' is not tracked-clean."}
+    }
+}
 function Get-PreparationSourceComposition {
     param([object]$Preparation,[hashtable]$Map)
     $records=[Collections.Generic.List[object]]::new();$leaves=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
@@ -358,10 +370,12 @@ function Invoke-MorphospacePrepareDevelopmentEnvelope {
  [void](Get-MorphospaceDevelopmentEnvelopeCurrentProjectProjection $project);Assert-PreparationSchema $repoRoot $lockPath 'feature-lock-v2.schema.json' 'Preparation current feature lock does not satisfy the owner schema.'
  Assert-PreparationSchema $repoRoot $mapPath 'repository-map.schema.json' 'Preparation repository map does not satisfy the closed owner schema.'
  if($isReclassification){Assert-PreparationSchema $repoRoot $targetMapPath 'repository-map.schema.json' 'Preparation target repository map does not satisfy the closed owner schema.'}
+ $map=@{};foreach($entry in @($mapDoc.repositories)){$id=[string]$entry.repo_id;if($map.ContainsKey($id)){throw "Preparation repository map repeats '$id' case-insensitively."};$map[$id]=$entry};$targetMap=@{};foreach($entry in @($targetMapDoc.repositories)){$id=[string]$entry.repo_id;if($targetMap.ContainsKey($id)){throw "Preparation target repository map repeats '$id' case-insensitively."};$targetMap[$id]=$entry}
+ Assert-PreparationMappedSourceReadiness $p $targetMap
  if([string]$project.project_id-cne[string]$p.project_id-or[string]$state.project_id-cne[string]$p.project_id-or[string]$pre.project_id-cne[string]$p.project_id-or[string]$pre.unit_id-cne[string]$p.predecessor_unit_id-or[string]$pre.status-cne'accepted'){throw 'Preparation project/predecessor identity or acceptance is invalid.'};if($null-ne$state.current_unit-or$null-ne$state.next_ready_unit){throw 'Preparation requires an idle project with null current and ready units.'};Assert-PreparationLockAndRegistry $project $lock $state 'current'
   Assert-PreparationHistoricalSupersessionClosure $workspace
  foreach($check in @(@{e=$p.expected.project_sha256;a=(Get-PreparationHash $project);n='project'},@{e=$p.expected.state_sha256;a=(Get-PreparationHash $state);n='state'},@{e=$p.expected.feature_lock_sha256;a=(Get-PreparationHash $lock);n='feature lock'},@{e=$p.expected.repository_map_sha256;a=(Get-PreparationFileHash $mapPath);n='repository map'},@{e=$p.expected.predecessor_unit_sha256;a=(Get-PreparationHash $pre);n='predecessor unit'},@{e=$p.expected.events_sha256;a=(Get-PreparationFileHash $eventsPath);n='ledger'})){if([string]$check.e-cne[string]$check.a){throw "Preparation stale $($check.n) preimage."}}
- if([int64]$p.expected.events_length-ne$eventBytes.LongLength-or[string]$p.expected.event_tail_id-cne[string]$tail.event_id){throw 'Preparation ledger predecessor is stale.'};$map=@{};foreach($entry in @($mapDoc.repositories)){$id=[string]$entry.repo_id;if($map.ContainsKey($id)){throw "Preparation repository map repeats '$id' case-insensitively."};$map[$id]=$entry};$targetMap=@{};foreach($entry in @($targetMapDoc.repositories)){$id=[string]$entry.repo_id;if($targetMap.ContainsKey($id)){throw "Preparation target repository map repeats '$id' case-insensitively."};$targetMap[$id]=$entry}
+ if([int64]$p.expected.events_length-ne$eventBytes.LongLength-or[string]$p.expected.event_tail_id-cne[string]$tail.event_id){throw 'Preparation ledger predecessor is stale.'}
  if(-not(Test-Json -Json ($p.envelope.project|ConvertTo-Json -Depth 64) -SchemaFile (Join-Path $repoRoot 'schemas\project-spec-v2.schema.json'))){throw 'Preparation target project does not satisfy the owner schema.'};if(-not(Test-Json -Json ($p.envelope.feature_lock|ConvertTo-Json -Depth 64) -SchemaFile (Join-Path $repoRoot 'schemas\feature-lock-v2.schema.json'))){throw 'Preparation target feature lock does not satisfy the owner schema.'}
  $targetState=Get-PreparationTargetState $p $project $lock $state
  if(-not(Test-Json -Json ($targetState|ConvertTo-Json -Depth 64) -SchemaFile (Join-Path $repoRoot 'schemas\workspace-state-v2.schema.json'))){throw 'Preparation target workspace state does not satisfy the owner schema.'}

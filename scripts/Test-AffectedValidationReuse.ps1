@@ -12,6 +12,7 @@ param(
     [Parameter(Mandatory = $true, ParameterSetName = 'hosted')][string]$GhPath,
     [Parameter(Mandatory = $true, ParameterSetName = 'hosted')][string]$OutputDirectory,
     [Parameter(Mandatory = $true, ParameterSetName = 'self')][switch]$SelfTest,
+    [Parameter(Mandatory = $true, ParameterSetName = 'dependencySharing')][switch]$DependencySharingSelfTest,
     [Parameter(Mandatory = $true, ParameterSetName = 'selfPhase')]
     [ValidateSet('plan-base-admission','evidence-binding','run-job-coverage')]
     [string]$SelfTestPhase
@@ -238,7 +239,7 @@ function Get-ReuseHostedSelectedRows {
     $tree=Get-MorphospaceAffectedTreeInventory -RepositoryRoot $Context.RepositoryRoot -Commit $Context.Head
     $runnerSources=@(Get-MorphospaceAffectedCheckRunnerSourceManifest -Inventory $tree)
     $checkMap=@{};foreach($check in @($registry.checks)){$checkMap[[string]$check.check_id]=$check}
-    $closures=@{};$allRows=[Collections.Generic.List[object]]::new();$platforms=[Collections.Generic.List[object]]::new();$expectedJobs=[Collections.Generic.List[string]]::new()
+    $closures=$null;$allRows=[Collections.Generic.List[object]]::new();$platforms=[Collections.Generic.List[object]]::new();$expectedJobs=[Collections.Generic.List[string]]::new()
     foreach($name in @('infrastructure','select','quick-linux','quick-windows','standard-windows')){$expectedJobs.Add($name)}
     foreach($platform in @('linux','windows')){
         $selected=@($Plan.selected_checks|Where-Object{@($_.platforms)-ccontains$platform});if($selected.Count-eq0){continue}
@@ -299,9 +300,8 @@ function Get-ReuseHostedSelectedRows {
             $id=[string]$selection.check_id;$check=$checkMap[$id];$snapshot=$snapshots[$id];$raw=[Convert]::FromBase64String($snapshot.receipt_base64);$receipt=[Text.UTF8Encoding]::new($false,$true).GetString($raw)|ConvertFrom-Json -Depth 100 -DateKind String
             $rootState=Get-ReuseHostedRootBindingState -States $rootStates -Root $rowRoots[$id].root -Runner $receipt.binding.runner -AggregateRunner $aggregate.runner
             $runner=$rootState.runner;$bindings=$rootState.bindings
-            $key=Get-MorphospaceCanonicalJsonSha256 ([pscustomobject]@{command=$check.command_path;arguments=@($check.arguments);path_sets=@($check.consume_path_sets)})
-            if(-not$closures.ContainsKey($key)){$closures[$key]=Get-MorphospaceAffectedCheckDependencyClosure -Check $check -CompiledRegistry $compiled -Inventory $tree -RepositoryRoot $Context.RepositoryRoot}
-            $closure=$closures[$key];$prerequisites=@(foreach($prereq in @($check.prerequisite_checks)){if(-not$bindings.ContainsKey([string]$prereq)){throw 'Hosted current binding order omits a prerequisite.'};[pscustomobject]@{check_id=[string]$prereq;binding_sha256=[string]$bindings[[string]$prereq]}})
+            if($null-eq$closures){$closures=Get-MorphospaceAffectedCheckDependencyClosures -Checks @($Plan.selected_checks|ForEach-Object{$checkMap[[string]$_.check_id]}) -CompiledRegistry $compiled -Inventory $tree -RepositoryRoot $Context.RepositoryRoot}
+            $closure=$closures[$id];$prerequisites=@(foreach($prereq in @($check.prerequisite_checks)){if(-not$bindings.ContainsKey([string]$prereq)){throw 'Hosted current binding order omits a prerequisite.'};[pscustomobject]@{check_id=[string]$prereq;binding_sha256=[string]$bindings[[string]$prereq]}})
             $binding=New-MorphospaceAffectedCheckBinding -Repository $Context.Repository -Platform $platform -Check $check -Runner $runner -RunnerSourceManifest $runnerSources -DependencyManifest @($closure.manifest) -DependencyResolution $closure.resolution -PrerequisiteBindings $prerequisites
             $bindingSha=Get-MorphospaceCanonicalJsonSha256 $binding;$bindings[$id]=$bindingSha
             if([string]$receipt.mode-ceq'reused'){
@@ -573,6 +573,77 @@ function Invoke-ReuseHostedProducerControls {
     Write-Host 'Candidate-hosted real producer controls passed (executed -> reused -> reused; provider modeled; no historical genesis or hosted execution claim).'
 }
 
+if ($DependencySharingSelfTest) {
+    Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1') -Force
+    $evidenceModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceAffectedValidationCheckEvidence.psm1') -Force -PassThru -DisableNameChecking
+    $dependencyModule=& $evidenceModule {Get-Module MorphospaceAffectedValidationDependencyClosure}
+    $fixture=Join-Path ([IO.Path]::GetTempPath()) ('affected-sharing-'+[guid]::NewGuid().ToString('N'))
+    [void][IO.Directory]::CreateDirectory((Join-Path $fixture 'scripts/notes'));[void][IO.Directory]::CreateDirectory((Join-Path $fixture 'notes'))
+    function Write-SharingFixture([string]$Path,[string]$Text){[IO.File]::WriteAllText((Join-Path $fixture $Path),$Text,[Text.UTF8Encoding]::new($false))}
+    function Assert-Sharing([bool]$Value,[string]$Message){if(-not$Value){throw $Message}}
+    function Assert-SharingRefused([scriptblock]$Action,[string]$Message){$refused=$false;try{&$Action|Out-Null}catch{$refused=$true};Assert-Sharing $refused $Message}
+    try {
+        Write-SharingFixture 'scripts/A.ps1' "Import-Module (Join-Path `$PSScriptRoot 'Shared.psm1')`n"
+        Write-SharingFixture 'scripts/B.ps1' "Import-Module (Join-Path `$PSScriptRoot 'Shared.psm1')`n"
+        Write-SharingFixture 'scripts/Shared.psm1' "`$target='Target.psm1'; & `$target; '../notes/a.json'`n"
+        Write-SharingFixture 'scripts/Target.psm1' "function Invoke-Target { 'ok' }`n"
+        Write-SharingFixture 'scripts/Fallback.ps1' "& `$Unknown`n"
+        Write-SharingFixture 'scripts/notes/a.json' '{"collision":true}';Write-SharingFixture 'notes/a.json' '{}';Write-SharingFixture 'notes/b.json' '{}';Write-SharingFixture 'notes/extra.json' '{}'
+        $inventory=[pscustomobject]@{records=@(Get-ChildItem -LiteralPath $fixture -File -Recurse|ForEach-Object{[pscustomobject]@{path=[IO.Path]::GetRelativePath($fixture,$_.FullName).Replace('\','/');mode='100644';type='blob';blob=('0'*40)}})}
+        $byPath=@{};foreach($record in $inventory.records){$byPath[$record.path]=$record};$inventory|Add-Member -NotePropertyName by_path -NotePropertyValue $byPath
+        $compiled=[pscustomobject]@{dependency_declarations=@();path_sets=@{a=@([regex]::new('^notes/a\.json$'));b=@([regex]::new('^notes/b\.json$'))}}
+        $checks=@(foreach($row in @(@('a-first','scripts/A.ps1','one','a'),@('a-phase','scripts/A.ps1','two','b'),@('b-first','scripts/B.ps1','three','a'),@('fallback','scripts/Fallback.ps1','four','b'))){[pscustomobject]@{check_id=$row[0];command_path=$row[1];arguments=@('-Scenario',$row[2]);consume_path_sets=@($row[3]);cache_policy='exact-host';external_state='none';prerequisite_checks=@()}})
+        & $dependencyModule {
+            $script:sharingOriginalScope=(Get-Item Function:Get-MorphospaceAffectedDependencyScopeChain).ScriptBlock
+            $script:sharingScopeCalls=0;$script:sharingMutation=$null
+            Set-Item Function:script:Get-MorphospaceAffectedDependencyScopeChain -Value {param($Scope) $script:sharingScopeCalls++;if($null-ne$script:sharingMutation){$action=$script:sharingMutation;$script:sharingMutation=$null;&$action}; & $script:sharingOriginalScope -Scope $Scope}
+        }
+        $coldTimer=[Diagnostics.Stopwatch]::StartNew();$cold=@{}
+        foreach($check in $checks){$cold[$check.check_id]=Get-MorphospaceAffectedCheckDependencyClosure -Check $check -CompiledRegistry $compiled -Inventory $inventory -RepositoryRoot $fixture}
+        $coldTimer.Stop();$coldCalls=& $dependencyModule {$script:sharingScopeCalls}; & $dependencyModule {$script:sharingScopeCalls=0}
+        $sharedTimer=[Diagnostics.Stopwatch]::StartNew()
+        if(Get-Command Get-MorphospaceAffectedCheckDependencyClosures -ErrorAction SilentlyContinue){$shared=Get-MorphospaceAffectedCheckDependencyClosures -Checks $checks -CompiledRegistry $compiled -Inventory $inventory -RepositoryRoot $fixture}
+        else{$shared=@{};foreach($check in $checks){$shared[$check.check_id]=Get-MorphospaceAffectedCheckDependencyClosure -Check $check -CompiledRegistry $compiled -Inventory $inventory -RepositoryRoot $fixture}}
+        $sharedTimer.Stop();$sharedCalls=& $dependencyModule {$script:sharingScopeCalls}
+        foreach($check in $checks){Assert-Sharing ((ConvertTo-MorphospaceCanonicalJson $cold[$check.check_id])-ceq(ConvertTo-MorphospaceCanonicalJson $shared[$check.check_id])) ('Shared closure changed manifest/resolution: '+$check.check_id)}
+        Assert-Sharing ($sharedCalls-eq2-and$coldCalls-gt$sharedCalls) "Static per-file analysis repeated across entrypoints/arguments: cold=$coldCalls shared=$sharedCalls"
+        Assert-Sharing (@($shared['a-first'].manifest.path)-ccontains'notes/a.json'-and@($shared['a-first'].manifest.path)-cnotcontains'notes/b.json'-and@($shared['a-phase'].manifest.path)-ccontains'notes/b.json') 'Per-check consume sets were collapsed.'
+        Assert-Sharing (@($shared['a-phase'].manifest.path)-ccontains'notes/a.json'-and@($shared['a-phase'].manifest.path)-cnotcontains'scripts/notes/a.json') 'Cached replay re-resolved a canonical dependency through the importer directory.'
+        Assert-Sharing ($shared['fallback'].resolution.mode-ceq'all-tracked-scripts-fallback') 'Shared fallback lost fail-closed coverage.'
+        $bindings=@(foreach($check in $checks[0..1]){New-MorphospaceAffectedCheckBinding -Repository fixture/repo -Platform windows -Check $check -Runner ([pscustomobject]@{fixture='runner'}) -RunnerSourceManifest @([pscustomobject]@{path='scripts/A.ps1';mode='100644';blob=('0'*40)}) -DependencyManifest $shared[$check.check_id].manifest -DependencyResolution $shared[$check.check_id].resolution -PrerequisiteBindings @()})
+        Assert-Sharing ($bindings[0].arguments[1]-ceq'one'-and$bindings[1].arguments[1]-ceq'two') 'Shared static work collapsed independent arguments.'
+        $shared['a-first'].resolution.entrypoint='poisoned';$shared['a-first'].manifest[0].path='poisoned'
+        $fresh=Get-MorphospaceAffectedCheckDependencyClosures -Checks $checks -CompiledRegistry $compiled -Inventory $inventory -RepositoryRoot $fixture
+        Assert-Sharing ((ConvertTo-MorphospaceCanonicalJson $fresh['a-first'])-ceq(ConvertTo-MorphospaceCanonicalJson $cold['a-first'])) 'Caller mutation escaped the completed invocation.'
+        Write-SharingFixture 'scripts/Shared.psm1' "`$target='Target.psm1'; & `$target; '../notes/a.json'; 'notes/extra.json'`n"
+        $changed=Get-MorphospaceAffectedCheckDependencyClosures -Checks $checks -CompiledRegistry $compiled -Inventory $inventory -RepositoryRoot $fixture
+        Assert-Sharing (@($changed['a-first'].manifest.path)-ccontains'notes/extra.json') 'New invocation reused stale source facts.'
+        Write-SharingFixture 'scripts/Shared.psm1' "`$target='Target.psm1'; & `$target; '../notes/a.json'`n"
+        $declaration=[pscustomobject]@{importer='scripts/Fallback.ps1';variable='Unknown';count=1;target_paths=@('scripts/Target.psm1')}
+        $declared=[pscustomobject]@{dependency_declarations=@($declaration);path_sets=$compiled.path_sets}
+        $exact=Get-MorphospaceAffectedCheckDependencyClosures -Checks @($checks[3]) -CompiledRegistry $declared -Inventory $inventory -RepositoryRoot $fixture
+        Assert-Sharing ($exact.fallback.resolution.mode-ceq'exact') 'Changed declarations failed to invalidate fallback facts.'
+        $declaration.count=2
+        Assert-SharingRefused {Get-MorphospaceAffectedCheckDependencyClosures -Checks @($checks[3]) -CompiledRegistry $declared -Inventory $inventory -RepositoryRoot $fixture} 'Declaration-count damage was accepted.'
+        $declaration.count=1
+        & $dependencyModule {param($root) $script:sharingMutation={ [IO.File]::AppendAllText((Join-Path $root 'scripts/A.ps1'),'#drift') }.GetNewClosure()} $fixture
+        Assert-SharingRefused {Get-MorphospaceAffectedCheckDependencyClosures -Checks $checks -CompiledRegistry $compiled -Inventory $inventory -RepositoryRoot $fixture} 'Source mutation during analysis was accepted.'
+        Write-SharingFixture 'scripts/A.ps1' "Import-Module (Join-Path `$PSScriptRoot 'Shared.psm1')`n"
+        & $dependencyModule {param($i) $script:sharingMutation={ $i.records[0].blob=('1'*40) }.GetNewClosure()} $inventory
+        Assert-SharingRefused {Get-MorphospaceAffectedCheckDependencyClosures -Checks $checks -CompiledRegistry $compiled -Inventory $inventory -RepositoryRoot $fixture} 'Inventory mutation during batch was accepted.'
+        $inventory.records[0].blob=('0'*40)
+        $analyzerSha=& $dependencyModule {$script:affectedDependencyAnalyzerSha}
+        try{& $dependencyModule {$script:affectedDependencyAnalyzerSha=('0'*64)};Assert-SharingRefused {Get-MorphospaceAffectedCheckDependencyClosures -Checks $checks -CompiledRegistry $compiled -Inventory $inventory -RepositoryRoot $fixture} 'Analyzer identity damage was accepted.'}finally{& $dependencyModule {param($sha) $script:affectedDependencyAnalyzerSha=$sha} $analyzerSha}
+        [pscustomobject]@{schema='rusty.morphospace.test.static_dependency_sharing.v1';result='pass';checks=$checks.Count;unique_entrypoints=3;cold_semantic_scope_visits=$coldCalls;shared_semantic_scope_visits=$sharedCalls;cold_ms=$coldTimer.Elapsed.TotalMilliseconds;shared_ms=$sharedTimer.Elapsed.TotalMilliseconds;network_git_build_lifecycle_device_used=$false}|ConvertTo-Json -Compress
+    }finally{
+        & $dependencyModule {if(Test-Path Function:script:Get-MorphospaceAffectedDependencyScopeChain){Set-Item Function:script:Get-MorphospaceAffectedDependencyScopeChain -Value $script:sharingOriginalScope};Remove-Variable sharingOriginalScope,sharingScopeCalls,sharingMutation -Scope Script -ErrorAction SilentlyContinue}
+        $absolute=[IO.Path]::GetFullPath($fixture);$prefix=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar)+[IO.Path]::DirectorySeparatorChar
+        if(-not$absolute.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){throw 'Dependency sharing fixture escaped temp root.'}
+        if([IO.Directory]::Exists($absolute)){Remove-Item -LiteralPath $absolute -Recurse -Force}
+    }
+    return
+}
+
 if ($SelfTest) {
     $source = Get-Content -LiteralPath $PSCommandPath -Raw
     foreach ($partition in @(
@@ -584,6 +655,7 @@ if ($SelfTest) {
             throw "Affected-validation reuse compatibility self-test is missing its exact '$([string]$partition.phase)' partition."
         }
     }
+    & $PSCommandPath -DependencySharingSelfTest
     Write-Host 'Affected-validation reuse compatibility self-test passed.'
     return
 }

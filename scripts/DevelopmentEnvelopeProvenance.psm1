@@ -119,7 +119,31 @@ function Assert-PreparationProvenanceCommittedTransaction {
    param($root,$id,$successor,$historical,$incomplete)
    $workspace=[IO.Path]::GetFullPath($root);$intentRelative=Get-MorphospaceLedgerPath $workspace $id intent;$completionRelative=Get-MorphospaceLedgerPath $workspace $id completion
    $intentAbsolute=Resolve-MorphospaceWorkspacePath $workspace $intentRelative -RequireLeaf;$completionAbsolute=Resolve-MorphospaceWorkspacePath $workspace $completionRelative
-   $intent=Read-MorphospaceLedgerJson $intentAbsolute;Assert-MorphospaceLedgerIntent $intent $id;Assert-MorphospaceLedgerArtifactNamespace $workspace $id $intent
+   # Reuse only immutable intent semantics owned by an already active ledger
+   # invocation. Mode-specific completion/placement/projection checks below stay
+   # fresh; a standalone call still authenticates its intent independently.
+   $batchToken=''
+   if(Get-Variable -Scope Script -Name readOnlyLedgerBatches -ErrorAction SilentlyContinue){
+    $tokens=@($script:readOnlyLedgerBatches.Keys|Where-Object{
+     $scope=$script:readOnlyLedgerBatches[$_]
+     $scope.workspace-ceq$workspace-and$scope.thread-eq[Threading.Thread]::CurrentThread.ManagedThreadId
+    }|Sort-Object -CaseSensitive)
+    if($tokens.Count-gt0){
+     $owner=$script:readOnlyLedgerBatches[$tokens[0]]
+     foreach($token in $tokens){
+      $scope=$script:readOnlyLedgerBatches[$token]
+      if(-not[object]::ReferenceEquals($scope.intents,$owner.intents)-or
+         $scope.observation.path-cne$owner.observation.path-or$scope.observation.snapshot.sha256-cne$owner.observation.snapshot.sha256-or
+         $scope.observation.snapshot.length-ne$owner.observation.snapshot.length-or
+         (Get-MorphospaceCanonicalJsonSha256 $scope.observation.policy)-cne(Get-MorphospaceCanonicalJsonSha256 $owner.observation.policy)){
+       throw 'Prepared-envelope intent proof scope is ambiguous.'
+      }
+     }
+     $batchToken=[string]$tokens[0]
+    }
+   }
+   $intent=Read-MorphospaceCheckedLedgerIntent $workspace $id $intentAbsolute $batchToken
+   Assert-MorphospaceLedgerArtifactNamespace $workspace $id $intent
    if(-not[IO.File]::Exists($completionAbsolute)){
     if(-not$incomplete){throw 'Prepared-envelope transition completion is missing.'}
     for($artifactIndex=0;$artifactIndex-lt@($intent.artifacts).Count;$artifactIndex++){$artifact=@($intent.artifacts)[$artifactIndex];$stageRelative=Get-MorphospaceLedgerArtifactStagePath $id $artifactIndex;$stageAbsolute=Resolve-MorphospaceWorkspacePath $workspace $stageRelative;$targetAbsolute=Resolve-MorphospaceWorkspacePath $workspace ([string]$artifact.path);$stagePresent=[IO.File]::Exists($stageAbsolute);$targetPresent=[IO.File]::Exists($targetAbsolute);if($stagePresent-eq$targetPresent){throw 'Prepared-envelope incomplete transition does not own exactly one staged or installed artifact projection.'};$ownedArtifact=if($stagePresent){$stageAbsolute}else{$targetAbsolute};if((Get-MorphospaceFileSha256 $ownedArtifact)-cne[string]$artifact.sha256){throw 'Prepared-envelope incomplete transition artifact differs from its intent.'}}

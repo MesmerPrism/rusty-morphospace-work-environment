@@ -38,6 +38,11 @@ function Assert-AdmissionInstructionDeclaration {
     foreach($skill in $skills){
         if(@($surfaces|Where-Object{[string]$_.surface_kind-ceq'skill'-and[string]$_.skill_id-ceq[string]$skill}).Count-ne1){throw "Admission instruction declaration: one routed skill surface is required for '$skill'."}
     }
+    if($mode-ceq'feature'){
+        foreach($surface in @($surfaces|Where-Object{[string]$_.surface_kind-ceq'skill'-and[string]$_.action-ceq'review-no-change'})){
+            if($skills-cnotcontains[string]$surface.skill_id){throw "Admission instruction declaration: reviewed skill '$([string]$surface.skill_id)' is not routed for the feature categories."}
+        }
+    }
 }
 function Assert-AdmissionJson { param([string]$Path,[string]$Schema,[string]$Message) if (-not (Test-Json -Json (Get-Content -Raw -LiteralPath $Path) -SchemaFile $Schema)) { throw $Message } }
 function Get-AdmissionFileHash { param([string]$Workspace,[string]$Relative) Get-MorphospaceFileSha256 (Resolve-MorphospaceWorkspacePath $Workspace $Relative -RequireLeaf) }

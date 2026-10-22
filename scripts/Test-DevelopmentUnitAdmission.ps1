@@ -1,8 +1,45 @@
 param([switch]$SelfTest,[switch]$AdditivePreparationOnly,[switch]$OwnPlanningCaseOnly,[switch]$ValidationOnlyFreezeOnly,[switch]$InstructionDeclarationOnly,[switch]$GitLongPathsOnly)
 $ErrorActionPreference='Stop'
 $repoRoot=Split-Path $PSScriptRoot -Parent
+function Test-AdmissionReviewedSkillRouting {
+  $owner=Import-Module (Join-Path $PSScriptRoot 'DevelopmentUnitAdmission.psm1') -Force -PassThru
+  $lifecycle=Get-Content -LiteralPath (Join-Path $repoRoot 'manifests/workflow-lifecycle.portable.json') -Raw|ConvertFrom-Json -Depth 100
+  $unit=Get-Content -LiteralPath (Join-Path $repoRoot 'templates/iteration-unit.example.json') -Raw|ConvertFrom-Json -Depth 100
+  $unit.work_mode='feature';$unit.change_categories=@('implementation','validation','documentation-only')
+  $unit.instruction_impact='update';$unit.instruction_none_justification=$null
+  $unit.instruction_surfaces=@(
+    [pscustomobject]@{surface_kind='agents';action='review-no-change'},
+    [pscustomobject]@{surface_kind='readme';action='review-no-change'},
+    [pscustomobject]@{surface_kind='skill';skill_id='rusty-morphospace';action='review-no-change'},
+    [pscustomobject]@{surface_kind='skill';skill_id='system-engineering';action='review-no-change'},
+    [pscustomobject]@{surface_kind='router-doc';action='update'}
+  )
+  & $owner {param($u,$l) Assert-AdmissionInstructionDeclaration $u $l} $unit $lifecycle
+  foreach($kind in @('extra-reviewed','unknown-reviewed','omitted-mode')){
+    $probe=$unit|ConvertTo-Json -Depth 100|ConvertFrom-Json -Depth 100
+    if($kind-ceq'omitted-mode'){$probe.PSObject.Properties.Remove('work_mode')}
+    $id=if($kind-ceq'unknown-reviewed'){'unrouted-fixture-skill'}else{'rust-work-graph'}
+    $probe.instruction_surfaces+= [pscustomobject]@{surface_kind='skill';skill_id=$id;action='review-no-change'}
+    $rejected=$false
+    try{& $owner {param($u,$l) Assert-AdmissionInstructionDeclaration $u $l} $probe $lifecycle}catch{
+      if($_.Exception.Message-notlike'Admission instruction declaration: reviewed skill*not routed*'){throw}
+      $rejected=$true
+    }
+    if(-not$rejected){throw "Admission accepted a feature reviewed skill that Ready rejects: $kind"}
+  }
+  $updated=$unit|ConvertTo-Json -Depth 100|ConvertFrom-Json -Depth 100
+  $updated.instruction_surfaces+=[pscustomobject]@{surface_kind='skill';skill_id='rust-work-graph';action='update'}
+  & $owner {param($u,$l) Assert-AdmissionInstructionDeclaration $u $l} $updated $lifecycle
+  $validationOnly=$unit|ConvertTo-Json -Depth 100|ConvertFrom-Json -Depth 100
+  $validationOnly.work_mode='validation-only';$validationOnly.instruction_impact='review'
+  foreach($surface in $validationOnly.instruction_surfaces){$surface.action='review-no-change'}
+  $validationOnly.instruction_surfaces+=[pscustomobject]@{surface_kind='skill';skill_id='rust-work-graph';action='review-no-change'}
+  & $owner {param($u,$l) Assert-AdmissionInstructionDeclaration $u $l} $validationOnly $lifecycle
+  Write-Host 'Admission reviewed-skill routing controls passed (exact feature routing; extra/unknown/default-mode refusal; updated and validation-only behavior preserved).'
+}
 if($SelfTest-or$InstructionDeclarationOnly){
   & (Join-Path $PSScriptRoot 'Test-AdmissionInstructionDeclaration.ps1') -SelfTest
+  Test-AdmissionReviewedSkillRouting
   if($InstructionDeclarationOnly){return}
 }
 Import-Module (Join-Path $PSScriptRoot 'DevelopmentUnitAdmission.psm1') -Force

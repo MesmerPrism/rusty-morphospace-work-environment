@@ -1,4 +1,4 @@
-param([switch]$SelfTest,[switch]$AdditivePreparationOnly)
+param([switch]$SelfTest,[switch]$AdditivePreparationOnly,[switch]$SourceReadinessOnly)
 $ErrorActionPreference='Stop'
 $repoRoot=Split-Path $PSScriptRoot -Parent
 Import-Module (Join-Path $PSScriptRoot 'DevelopmentEnvelopePreparation.psm1') -Force
@@ -222,6 +222,67 @@ function Test-AdditivePreparationCases {
   Assert-Preparation $ordinaryRejected 'historical no-addition regression did not distinguish the ordinary target contract'
   Write-Host 'Additive preparation target and interrupted-intent self-tests passed.'
 }
+function Test-PreparationSourceReadinessCases {
+  param([object]$PreparationTemplate)
+  $preparationModule=Get-Module DevelopmentEnvelopePreparation
+  $trackedFile=Join-Path $dependency 'README.md'
+  $originalBytes=[IO.File]::ReadAllBytes($trackedFile)
+  $results=@()
+  try {
+    foreach($case in @('early-dirty','late-dirty','clean')) {
+      [IO.File]::WriteAllBytes($trackedFile,$originalBytes)
+      $root=Join-Path $temp ("source-readiness-"+$case)
+      Copy-Item $ws $root -Recurse
+      $path=Join-Path $temp ("source-readiness-"+$case+'.json')
+      Write-PreparationJson $path $PreparationTemplate
+      $arguments=@{WorkspaceRoot=$root;DevelopmentEnvelopePreparation=$path;ExpectedDevelopmentEnvelopePreparationSha256=(Get-MorphospaceFileSha256 $path);OutPath=(Join-Path $root 'receipts/portable-envelope-prepare.json');Timestamp='2026-08-25T00:01:00.0000000Z';Execute=$true}
+      if($case-ceq'early-dirty'){[IO.File]::AppendAllText($trackedFile,' dirty before invocation')}
+      $before=Get-PreparationWorkspaceInventory $root
+      $headsBefore=Get-PreparationRepositoryHeads $root
+      $timer=[Diagnostics.Stopwatch]::StartNew()
+      $observed=& $preparationModule {
+        param($request,$mode,$file)
+        $savedHistory=(Get-Item Function:Assert-PreparationHistoricalSupersessionClosure).ScriptBlock
+        $script:readinessHistoryCalls=0
+        $script:readinessOriginalHistory=$savedHistory
+        $script:readinessMode=$mode
+        $script:readinessTrackedFile=$file
+        try {
+          function script:Assert-PreparationHistoricalSupersessionClosure {
+            param([string]$Workspace)
+            $script:readinessHistoryCalls++
+            if($script:readinessMode-ceq'early-dirty'){throw 'History must not run for an already dirty mapped source.'}
+            & $script:readinessOriginalHistory $Workspace
+            if($script:readinessMode-ceq'late-dirty'){
+              [IO.File]::AppendAllText($script:readinessTrackedFile,' dirty after early readiness')
+            }
+          }
+          $message='';$receipt=$null
+          try{$receipt=Invoke-MorphospacePrepareDevelopmentEnvelope @request}catch{$message=$_.Exception.Message}
+          [pscustomobject]@{message=$message;history_calls=$script:readinessHistoryCalls;receipt=$receipt}
+        } finally {
+          Set-Item Function:script:Assert-PreparationHistoricalSupersessionClosure $savedHistory
+          Remove-Variable -Scope Script -Name readinessHistoryCalls,readinessOriginalHistory,readinessMode,readinessTrackedFile
+        }
+      } $arguments $case $trackedFile
+      $timer.Stop()
+      if($case-cne'clean'){
+        Assert-Preparation ($observed.message-ceq"Preparation source-composition repository 'read-only-dependency' is not tracked-clean.") "$case did not refuse the actual dirty mapped Git source: $($observed.message)"
+        $expectedHistoryCalls=if($case-ceq'early-dirty'){0}else{1}
+        Assert-Preparation ($observed.history_calls-eq$expectedHistoryCalls) "$case authenticated history in the wrong order"
+        Assert-Preparation ((Get-PreparationWorkspaceInventory $root)-ceq$before) "$case wrote an intent, artifact or projection before refusal"
+        Assert-Preparation ((Get-PreparationRepositoryHeads $root)-ceq$headsBefore) "$case changed a mapped source HEAD"
+      }else{
+        Assert-Preparation ($observed.message-ceq''-and$observed.history_calls-eq1-and$observed.receipt.executed) 'clean mapped sources skipped history or failed the real preparation'
+        $rawInput=Get-MorphospaceFileSha256 $path
+        $rawReceipt=Get-MorphospaceFileSha256 $arguments.OutPath
+        Assert-Preparation ($observed.receipt.audit_receipt.sha256-ceq$rawInput-and$rawReceipt-cne$rawInput) 'preparation changed its deliberate reviewed-input audit hash semantics'
+      }
+      $results+=,[pscustomobject]@{case=$case;history_calls=$observed.history_calls;elapsed_ms=[Math]::Round($timer.Elapsed.TotalMilliseconds,3)}
+    }
+  } finally {[IO.File]::WriteAllBytes($trackedFile,$originalBytes)}
+  Write-Host ("Preparation source-readiness causal cases passed: "+($results|ConvertTo-Json -Compress))
+}
 function SchemaPin([string]$revision,[string]$file){"https://raw.githubusercontent.com/MesmerPrism/rusty-morphospace-work-environment/$revision/schemas/$file"}
 function Get-PreparationWorkspaceInventory([string]$root){(@(Get-ChildItem -LiteralPath $root -Recurse -File -Force|ForEach-Object{[pscustomobject][ordered]@{path=[IO.Path]::GetRelativePath($root,$_.FullName).Replace('\','/');length=$_.Length;sha256=Get-MorphospaceFileSha256 $_.FullName}}|Sort-Object path)|ConvertTo-Json -Depth 4 -Compress)}
 function Get-PreparationRepositoryHeads([string]$root){$map=Read-MorphospaceProtocolJson (Join-Path $root 'repository-map.json');(@($map.repositories|ForEach-Object{[pscustomobject][ordered]@{repo_id=[string]$_.repo_id;head=(& git -C ([string]$_.path) rev-parse HEAD).Trim().ToLowerInvariant()}}|Sort-Object repo_id)|ConvertTo-Json -Compress)}
@@ -240,7 +301,10 @@ try {
   $targetProject=Copy-Preparation $project;$targetProject.'$schema'=SchemaPin $newPinRevision 'project-spec-v2.schema.json';$targetProject.revision=2;$targetProject.composition.selected_features=@('generic-envelope-feature');$targetProject.composition.selected_modules=@('existing-provider','generic-envelope-feature');$targetProject.composition.allowed_permissions=@('EXAMPLE_PERMISSION');$targetProject.authority_map+=,[pscustomobject][ordered]@{parameter='generic.envelope';owner='owner';adapters=@()};$targetProject.modules+=,[pscustomobject][ordered]@{module_id='generic-envelope-feature';feature_id='generic-envelope-feature';lane='owner';maturity='app-local';contract='fixture.generic.envelope';contract_revision='1';source_repo='planning';dependencies=@();selected=$true};$targetProject.repositories+=,[pscustomobject][ordered]@{repo_id='read-only-dependency';role='core';path='../read-only-dependency';allowed_paths=@('src/')};$targetProject.validation_profiles+=@(@('quick-host','raw-projection-devfast','raw-projection-candidate','maximum-blend-control-candidate')|ForEach-Object{[pscustomobject][ordered]@{profile_id=$_;commands=@('fixture')}})
   $targetLock=Copy-Preparation $lock;$targetLock.'$schema'=SchemaPin $newPinRevision 'feature-lock-v2.schema.json';$targetLock.project_revision=2;$targetLock.revision=2;$feature=New-FixtureFeature 'generic-envelope-feature';$feature.parameter_authorities=@([ordered]@{parameter='generic.envelope';owner='owner'});$feature.effects.permissions=@('EXAMPLE_PERMISSION');$targetLock.features+=,$feature;$targetLock.selected_features=@('existing-provider','generic-envelope-feature');$targetLock.effect_union.permissions=@('EXAMPLE_PERMISSION');$targetLock.lock_fingerprint=LockFingerprint $targetLock
   $eventsPath=Join-Path $ws 'iteration-events.jsonl';$input=[ordered]@{schema='rusty.morphospace.workflow.development_envelope_preparation.v1';preparation_id='portable-envelope-prepare';project_id='portable-envelope';predecessor_unit_id='u001';envelope=[ordered]@{project=$targetProject;feature_lock=$targetLock;schema_pin_revision=$newPinRevision;owner_repositories=@([ordered]@{repo_id='planning';source_roots=@('morphospace/')},[ordered]@{repo_id='read-only-dependency';source_roots=@('src/')});public_private_boundary='mixed';allowed_change_categories=@('implementation','validation','documentation-only');allowed_effect_categories=@('filesystem','build','device');allowed_permission_categories=@('EXAMPLE_PERMISSION');build_envelope=[ordered]@{class='product';allowed_profiles=@('quick-host','raw-projection-devfast','raw-projection-candidate','maximum-blend-control-candidate')};device_envelope=[ordered]@{requirement='required';allowed_kinds=@('quest-typed-deploy-launch-observe-stop','raw-projection-freshness','maximum-blend-fixed-90hz-cpu4-gpu4-ababa')};source_composition=[ordered]@{path='source-composition/prepared.json';repository_ids=@('planning','read-only-dependency')}};expected=[ordered]@{project_sha256=(Hash $project);state_sha256=(Hash $state);feature_lock_sha256=(Hash $lock);repository_map_path='repository-map.json';repository_map_sha256=(Get-MorphospaceFileSha256 (Join-Path $ws 'repository-map.json'));predecessor_unit_path='iteration-units/u001.json';predecessor_unit_sha256=(Hash $u001);events_sha256=(Get-MorphospaceFileSha256 $eventsPath);events_length=([IO.FileInfo]$eventsPath).Length;event_tail_id='u001-accepted'};does_not_prove=@('Does not admit a future unit or execute a device action.')}
-  $inputPath=Join-Path $temp 'prepare.json';Write-PreparationJson $inputPath $input;$out=Join-Path $ws 'receipts\portable-envelope-prepare.json';$dry=Invoke-MorphospacePrepareDevelopmentEnvelope -WorkspaceRoot $ws -DevelopmentEnvelopePreparation $inputPath -OutPath $out -Timestamp '2026-08-25T00:01:00.0000000Z';$inputHash=Get-MorphospaceFileSha256 $inputPath;$recoveryBase=Join-Path $temp 'recovery-base';Copy-Item $ws $recoveryBase -Recurse
+  $inputPath=Join-Path $temp 'prepare.json';Write-PreparationJson $inputPath $input;$out=Join-Path $ws 'receipts\portable-envelope-prepare.json'
+  Test-PreparationSourceReadinessCases $input
+  if($SourceReadinessOnly){return}
+  $dry=Invoke-MorphospacePrepareDevelopmentEnvelope -WorkspaceRoot $ws -DevelopmentEnvelopePreparation $inputPath -OutPath $out -Timestamp '2026-08-25T00:01:00.0000000Z';$inputHash=Get-MorphospaceFileSha256 $inputPath;$recoveryBase=Join-Path $temp 'recovery-base';Copy-Item $ws $recoveryBase -Recurse
   $suffixRoot=Join-Path $temp 'post-accept-suffix-preparation';Copy-Item $recoveryBase $suffixRoot -Recurse
   $suffixEvent=[ordered]@{schema='rusty.morphospace.workflow.iteration_event.v1';event_id='u001-accepted-evidence-relocated-0002';sequence=2;timestamp='2026-08-25T00:00:30.0000000Z';project_id='portable-envelope';unit_id='u001';event_type='state-transition';summary='Fixture accepted evidence placement correction.';receipts=@()}
   $suffixEventsPath=Join-Path $suffixRoot 'iteration-events.jsonl';[IO.File]::AppendAllText($suffixEventsPath,(($suffixEvent|ConvertTo-Json -Compress)+"`n"),[Text.UTF8Encoding]::new($false))

@@ -1,0 +1,376 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/quest-build-executor-selection-v1.schema.json",
+  "title": "Accepted published build executor request and retained compatibility selection",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/request"
+    },
+    {
+      "$ref": "#/$defs/selection"
+    }
+  ],
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "sha1": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,127}$"
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "relative": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*[\\\\:])(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//).+$"
+    },
+    "revision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commit",
+        "tree"
+      ],
+      "properties": {
+        "commit": {
+          "$ref": "#/$defs/sha1"
+        },
+        "tree": {
+          "$ref": "#/$defs/sha1"
+        }
+      }
+    },
+    "raw": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "bytes",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/path"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "qualification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dynamic_raw",
+        "dynamic_original",
+        "dynamic_collector",
+        "static_raw",
+        "static_original",
+        "static_collector",
+        "protected_assessment",
+        "independent_review",
+        "dynamic_data_review",
+        "dynamic_collection",
+        "required_checks",
+        "required_checks_original",
+        "static_independent_review",
+        "public_authorization_proof"
+      ],
+      "properties": {
+        "dynamic_raw": {
+          "$ref": "#/$defs/raw"
+        },
+        "dynamic_original": {
+          "$ref": "#/$defs/raw"
+        },
+        "dynamic_collector": {
+          "$ref": "#/$defs/raw"
+        },
+        "static_raw": {
+          "$ref": "#/$defs/raw"
+        },
+        "static_original": {
+          "$ref": "#/$defs/raw"
+        },
+        "static_collector": {
+          "$ref": "#/$defs/raw"
+        },
+        "protected_assessment": {
+          "$ref": "#/$defs/raw"
+        },
+        "independent_review": {
+          "$ref": "#/$defs/raw"
+        },
+        "dynamic_data_review": {
+          "$ref": "#/$defs/raw"
+        },
+        "dynamic_collection": {
+          "$ref": "#/$defs/raw"
+        },
+        "required_checks": {
+          "$ref": "#/$defs/raw"
+        },
+        "required_checks_original": {
+          "$ref": "#/$defs/raw"
+        },
+        "static_independent_review": {
+          "$ref": "#/$defs/raw"
+        },
+        "public_authorization_proof": {
+          "$ref": "#/$defs/raw"
+        }
+      }
+    },
+    "publication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pr_number",
+        "pr_raw",
+        "pr_original",
+        "pr_collector",
+        "merge_original",
+        "postmerge_raw",
+        "postmerge_original",
+        "postmerge_collector",
+        "postmerge_report",
+        "postmerge_manifest",
+        "postmerge_independent_review"
+      ],
+      "properties": {
+        "pr_number": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "pr_raw": {
+          "$ref": "#/$defs/raw"
+        },
+        "pr_original": {
+          "$ref": "#/$defs/raw"
+        },
+        "pr_collector": {
+          "$ref": "#/$defs/raw"
+        },
+        "merge_original": {
+          "$ref": "#/$defs/raw"
+        },
+        "postmerge_raw": {
+          "$ref": "#/$defs/raw"
+        },
+        "postmerge_original": {
+          "$ref": "#/$defs/raw"
+        },
+        "postmerge_collector": {
+          "$ref": "#/$defs/raw"
+        },
+        "postmerge_report": {
+          "$ref": "#/$defs/raw"
+        },
+        "postmerge_manifest": {
+          "$ref": "#/$defs/raw"
+        },
+        "postmerge_independent_review": {
+          "$ref": "#/$defs/raw"
+        }
+      }
+    },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "repository",
+        "repository_id",
+        "origin",
+        "remote_ref",
+        "subject",
+        "executor_root",
+        "executor_commit",
+        "candidate_commit",
+        "candidate_tree",
+        "git",
+        "accept_receipt",
+        "accept_original",
+        "accept_dispatch_sources",
+        "qualification",
+        "publication"
+      ],
+      "properties": {
+        "schema": {
+          "const": "rusty.morphospace.quest_build_executor_selection_request.v1"
+        },
+        "repository": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+        },
+        "repository_id": {
+          "$ref": "#/$defs/id"
+        },
+        "origin": {
+          "type": "string",
+          "pattern": "^https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\\.git$"
+        },
+        "remote_ref": {
+          "type": "string",
+          "pattern": "^refs/heads/[A-Za-z0-9][A-Za-z0-9/_-]*$"
+        },
+        "subject": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "workspace",
+            "project_id",
+            "unit_id",
+            "preparation_baseline",
+            "qualification_base",
+            "changed_paths"
+          ],
+          "properties": {
+            "workspace": {
+              "$ref": "#/$defs/path"
+            },
+            "project_id": {
+              "$ref": "#/$defs/id"
+            },
+            "unit_id": {
+              "$ref": "#/$defs/id"
+            },
+            "preparation_baseline": {
+              "$ref": "#/$defs/revision"
+            },
+            "qualification_base": {
+              "$ref": "#/$defs/revision"
+            },
+            "changed_paths": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/relative"
+              }
+            }
+          }
+        },
+        "executor_root": {
+          "$ref": "#/$defs/path"
+        },
+        "executor_commit": {
+          "$ref": "#/$defs/sha1"
+        },
+        "candidate_commit": {
+          "$ref": "#/$defs/sha1"
+        },
+        "candidate_tree": {
+          "$ref": "#/$defs/sha1"
+        },
+        "git": {
+          "$ref": "#/$defs/raw"
+        },
+        "accept_receipt": {
+          "$ref": "#/$defs/raw"
+        },
+        "accept_original": {
+          "$ref": "#/$defs/raw"
+        },
+        "accept_dispatch_sources": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/raw"
+          }
+        },
+        "qualification": {
+          "$ref": "#/$defs/qualification"
+        },
+        "publication": {
+          "$ref": "#/$defs/publication"
+        }
+      }
+    },
+    "selection": {
+      "description": "The task.actual_legacy schema and current039 flag are retained solely for existing fifteen-field consumers; they issue no new acceptance or tooling authority.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "selected_utc",
+        "executor_root",
+        "executor_commit",
+        "executor_tree",
+        "executor_pins_sha256",
+        "acceptance_observation_sha256",
+        "qualification_observation_sha256",
+        "actual_acceptance_event",
+        "remote_ref",
+        "fresh_remote_observation",
+        "current039_tooling_context_created",
+        "owner_state_mutated",
+        "installed_skills_changed",
+        "publication_or_device_authority"
+      ],
+      "properties": {
+        "schema": {
+          "const": "task.actual_legacy_executor_selection.v1"
+        },
+        "selected_utc": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "executor_root": {
+          "$ref": "#/$defs/path"
+        },
+        "executor_commit": {
+          "$ref": "#/$defs/sha1"
+        },
+        "executor_tree": {
+          "$ref": "#/$defs/sha1"
+        },
+        "executor_pins_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "acceptance_observation_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "qualification_observation_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "actual_acceptance_event": {
+          "type": "string",
+          "minLength": 1
+        },
+        "remote_ref": {
+          "type": "string",
+          "pattern": "^refs/heads/"
+        },
+        "fresh_remote_observation": {
+          "type": "string",
+          "minLength": 1
+        },
+        "current039_tooling_context_created": {
+          "const": false
+        },
+        "owner_state_mutated": {
+          "const": false
+        },
+        "installed_skills_changed": {
+          "const": false
+        },
+        "publication_or_device_authority": {
+          "const": false
+        }
+      }
+    }
+  }
+}

@@ -117,6 +117,7 @@ function Test-MorphospaceAffectedDependencyAssignmentDefinite {
 # Inventory ownership is weak; force-import starts a new runner analyzer lifetime.
 $script:affectedDependencyIndexes = [Runtime.CompilerServices.ConditionalWeakTable[object,object]]::new()
 $script:affectedDependencyAnalyzerSha = Get-MorphospaceAffectedDependencyBytesSha256 -Bytes ([IO.File]::ReadAllBytes($PSCommandPath))
+$script:affectedDependencyAnalyzerPath = $PSCommandPath
 
 function Get-MorphospaceAffectedDependencyIndexContext {
     param([string]$Root,[object]$Inventory,[object]$Declarations)
@@ -218,12 +219,13 @@ function New-MorphospaceAffectedDependencyIndex {
     return [pscustomobject]@{sha256=$Sha;length=$Bytes.Length;ast=$ast;assignments=$assignmentsByScope;typed=$typedScriptBlocksByScope;untyped=$untypedParametersByScope;parameters=$parametersByScope}
 }
 
-function Resolve-MorphospaceAffectedCheckDependencyClosure {
+function Resolve-MorphospaceAffectedDependencyClosureCore {
     param(
         [Parameter(Mandatory = $true)][string]$RepositoryRoot,
         [Parameter(Mandatory = $true)][string]$Entrypoint,
         [Parameter(Mandatory = $true)][object]$Inventory,
-        [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$DynamicDeclarations
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$DynamicDeclarations,
+        [Parameter(Mandatory = $true)][Collections.Generic.Dictionary[string,object]]$FileFacts
     )
     $root = [IO.Path]::GetFullPath($RepositoryRoot).TrimEnd([IO.Path]::DirectorySeparatorChar,[IO.Path]::AltDirectorySeparatorChar)
     $rootPrefix = $root + [IO.Path]::DirectorySeparatorChar
@@ -242,6 +244,7 @@ function Resolve-MorphospaceAffectedCheckDependencyClosure {
     $nodes = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $pending = [Collections.Generic.Queue[string]]::new()
     $parsedSha = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
+    $activeFacts = $null
 
     function Add-MorphospaceTrackedDependencyPath([string]$Importer,[string]$Value) {
         $normalized = $Value.Replace('\','/')
@@ -255,6 +258,7 @@ function Resolve-MorphospaceAffectedCheckDependencyClosure {
             if (-not $absolute.StartsWith($rootPrefix,[StringComparison]::OrdinalIgnoreCase)) { continue }
             $relative = [IO.Path]::GetRelativePath($root,$absolute).Replace('\','/')
             if (-not $trackedFiles.Contains($relative)) { continue }
+            if ($null -ne $activeFacts) { [void]$activeFacts.paths.Add($relative) }
             if ($nodes.Add($relative) -and $trackedScripts.Contains($relative)) { $pending.Enqueue($relative) }
             return $relative
         }
@@ -263,6 +267,7 @@ function Resolve-MorphospaceAffectedCheckDependencyClosure {
     function Add-MorphospaceFallback([string]$Importer,[string]$Variable,[string]$Kind) {
         $key = "$Importer|$Variable|$Kind"
         if (-not $fallbackReasons.ContainsKey($key)) { $fallbackReasons[$key] = [pscustomobject][ordered]@{importer=$Importer;variable=$Variable;kind=$Kind} }
+        if ($null -ne $activeFacts) { $activeFacts.fallbacks[$key] = $fallbackReasons[$key] }
     }
     function Use-MorphospaceDeclaration(
         [string]$Importer,
@@ -282,6 +287,7 @@ function Resolve-MorphospaceAffectedCheckDependencyClosure {
             }
         }
         $observedDeclarations[$key] = 1 + $(if ($observedDeclarations.ContainsKey($key)) { [int]$observedDeclarations[$key] } else { 0 })
+        if ($null -ne $activeFacts) { $activeFacts.declarations[$key] = 1 + $(if ($activeFacts.declarations.ContainsKey($key)) { [int]$activeFacts.declarations[$key] } else { 0 }) }
         $usedDeclarations[$key] = $declaration
         if ($declaration.PSObject.Properties.Name -ccontains 'target_paths') {
             foreach ($target in @($declaration.target_paths)) {
@@ -301,6 +307,26 @@ function Resolve-MorphospaceAffectedCheckDependencyClosure {
             [byte[]]$beforeBytes = [IO.File]::ReadAllBytes($absolute)
             $beforeSha = Get-MorphospaceAffectedDependencyBytesSha256 -Bytes $beforeBytes
             $parsedSha[$importer] = $beforeSha
+            $factsKey = "$($indexContext.fingerprint)|$importer|$beforeSha"
+            $facts = $null
+            $factsHit = $FileFacts.TryGetValue($factsKey,[ref]$facts)
+            $indexHit = $true
+            if ($factsHit) {
+                # Replay only this file's immutable observations into fresh graph,
+                # declaration-count and fallback state. No entrypoint state is cached.
+                foreach ($path in $facts.paths) {
+                    # These are resolved repository identities, not import literals.
+                    # Resolving them again can select a colliding importer-relative path.
+                    if (-not $trackedFiles.Contains([string]$path)) { throw "Cached dependency is no longer tracked: $path" }
+                    if ($nodes.Add([string]$path) -and $trackedScripts.Contains([string]$path)) { $pending.Enqueue([string]$path) }
+                }
+                foreach ($key in $facts.declarations.Keys) {
+                    $observedDeclarations[$key] = [int]$facts.declarations[$key] + $(if ($observedDeclarations.ContainsKey($key)) { [int]$observedDeclarations[$key] } else { 0 })
+                    $usedDeclarations[$key] = $declarations[$key]
+                }
+                foreach ($reason in $facts.fallbacks.Values) { Add-MorphospaceFallback -Importer $reason.importer -Variable $reason.variable -Kind $reason.kind }
+            } else {
+            $activeFacts = [pscustomobject]@{root=$root;importer=$importer;sha256=$beforeSha;paths=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal);declarations=[Collections.Generic.Dictionary[string,int]]::new([StringComparer]::Ordinal);fallbacks=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)}
             $index = $null
             $indexHit = $indexContext.indexes.TryGetValue($importer,[ref]$index) -and
                 [string]$index.sha256 -ceq $beforeSha -and [long]$index.length -eq $beforeBytes.Length
@@ -489,9 +515,13 @@ function Resolve-MorphospaceAffectedCheckDependencyClosure {
                     Add-MorphospaceFallback -Importer $importer -Variable ("scriptblock-method:" + $memberName) -Kind 'unresolved-expression-invocation'
                 }
             }
+            $facts = $activeFacts
+            $activeFacts = $null
+            }
             [byte[]]$afterBytes = [IO.File]::ReadAllBytes($absolute)
             if ((Get-MorphospaceAffectedDependencyBytesSha256 -Bytes $afterBytes) -cne $beforeSha) { throw "Affected dependency source bytes changed during analysis: $importer" }
             if (-not $indexHit) { $indexContext.indexes[$importer] = $index }
+            if (-not $factsHit) { $FileFacts[$factsKey] = $facts }
         }
         if ($fallbackReasons.Count -eq 0 -or $fallbackExpanded) { break }
         $fallbackExpanded = $true
@@ -531,4 +561,47 @@ function Resolve-MorphospaceAffectedCheckDependencyClosure {
     }
 }
 
-Export-ModuleMember -Function Resolve-MorphospaceAffectedCheckDependencyClosure
+function Resolve-MorphospaceAffectedCheckDependencyClosure {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][string]$Entrypoint,
+        [Parameter(Mandatory = $true)][object]$Inventory,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$DynamicDeclarations
+    )
+    $facts=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+    return Resolve-MorphospaceAffectedDependencyClosureCore -RepositoryRoot $RepositoryRoot -Entrypoint $Entrypoint -Inventory $Inventory -DynamicDeclarations $DynamicDeclarations -FileFacts $facts
+}
+
+function Resolve-MorphospaceAffectedCheckDependencyClosures {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Entrypoints,
+        [Parameter(Mandatory = $true)][object]$Inventory,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$DynamicDeclarations
+    )
+    # The owner constructs and retires this batch; no caller supplies cached proof.
+    $root=[IO.Path]::GetFullPath($RepositoryRoot).TrimEnd([IO.Path]::DirectorySeparatorChar,[IO.Path]::AltDirectorySeparatorChar)
+    $analyzer=Get-MorphospaceAffectedDependencyBytesSha256 -Bytes ([IO.File]::ReadAllBytes($script:affectedDependencyAnalyzerPath))
+    if($analyzer-cne$script:affectedDependencyAnalyzerSha){throw 'Affected dependency analyzer bytes changed after import.'}
+    $declarations=Get-MorphospaceAffectedDependencyDeclarations -Declarations $DynamicDeclarations
+    $context=Get-MorphospaceAffectedDependencyIndexContext -Root $root -Inventory $Inventory -Declarations $declarations
+    $fingerprint=$context.fingerprint
+    $facts=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+    $results=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+    try {
+        foreach($entrypoint in $Entrypoints){
+            $path=ConvertTo-MorphospaceAffectedDependencyPath $entrypoint
+            if(-not$results.ContainsKey($path)){$results[$path]=Resolve-MorphospaceAffectedDependencyClosureCore -RepositoryRoot $root -Entrypoint $path -Inventory $Inventory -DynamicDeclarations $DynamicDeclarations -FileFacts $facts}
+        }
+        $currentDeclarations=Get-MorphospaceAffectedDependencyDeclarations -Declarations $DynamicDeclarations
+        $current=Get-MorphospaceAffectedDependencyIndexContext -Root $root -Inventory $Inventory -Declarations $currentDeclarations
+        if($current.fingerprint-cne$fingerprint-or(Get-MorphospaceAffectedDependencyBytesSha256 -Bytes ([IO.File]::ReadAllBytes($script:affectedDependencyAnalyzerPath)))-cne$analyzer){throw 'Affected dependency analysis inputs changed during batch.'}
+        foreach($file in $facts.Values){if((Get-MorphospaceAffectedDependencyBytesSha256 -Bytes ([IO.File]::ReadAllBytes((Join-Path $file.root $file.importer))))-cne$file.sha256){throw "Affected dependency source bytes changed after batch analysis: $($file.importer)"}}
+        # Returned objects contain no cache/fact/AST references. Repeated consumers
+        # can mutate their values without changing this or any later invocation.
+        $detached=@{};foreach($path in $results.Keys){$detached[$path]=$results[$path]|ConvertTo-Json -Depth 30 -Compress|ConvertFrom-Json -Depth 30 -DateKind String}
+        return $detached
+    } finally { $facts.Clear();$results.Clear() }
+}
+
+Export-ModuleMember -Function Resolve-MorphospaceAffectedCheckDependencyClosure, Resolve-MorphospaceAffectedCheckDependencyClosures
