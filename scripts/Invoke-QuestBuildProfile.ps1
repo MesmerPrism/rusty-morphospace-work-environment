@@ -24,6 +24,8 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $script:QuestBuildEnvironmentModule=Import-Module (Join-Path $PSScriptRoot "lib/MorphospaceQuestBuildEnvironment.psm1") -PassThru
 $script:ActiveQuestBuildContext=$null
+$script:QuestSourceProvider=$null
+Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceQuestSourceProvider.psm1')
 $script:InitialProjectionFailures=@()
 $WaitPolicy = if($WaitPolicy -ieq 'Retained'){'Retained'}else{'Bounded'}
 if($WaitPolicy -ceq "Retained"){Import-Module (Join-Path $PSScriptRoot "lib/MorphospaceRetainedBuildProcess.psm1") -Force}
@@ -144,10 +146,13 @@ function Read-BuildProfile {
 }
 
 function Resolve-EnvironmentBindings {
-    param([object]$Profile, [string]$BindingsPath, [string]$BindingsSha256, [switch]$MetadataOnly)
+    param([object]$Profile, [string]$BindingsPath, [string]$BindingsSha256, [switch]$MetadataOnly, [string]$SourceDirectory='')
     $selectedGitExecutable=Get-QuestBuildGitPath
     $requirements = @($Profile.environment.PSObject.Properties)
     if ((@($requirements)).Count -eq 0) {
+        if($Profile.PSObject.Properties.Name-ccontains'preflight'-and$null-ne(Get-OptionalProperty $Profile.preflight 'source_composition')) {
+            if($null-ne(Get-OptionalProperty $Profile.preflight.source_composition 'provider_document')){throw 'A Quest provider requires a selected environment directory binding.'}
+        }
         if ($BindingsPath -or $BindingsSha256) { throw "Environment binding inputs were supplied for a profile that declares none." }
         return [pscustomobject]@{ Values = @{}; Evidence = @() }
     }
@@ -169,13 +174,21 @@ function Resolve-EnvironmentBindings {
         $revision = [string]$binding.git_revision
         $tree = [string]$binding.git_tree
         if (($revision -or $tree) -and ($revision -cnotmatch "^[a-f0-9]{40}$" -or $tree -cnotmatch "^[a-f0-9]{40}$" -or [string]$binding.kind -cne "directory")) { throw "Git-bound environment entries require one exact revision/tree pair and directory kind." }
-        if ($revision -and -not $MetadataOnly) {
-            $observedRevision = ((& $selectedGitExecutable -C $bindingPath rev-parse HEAD 2>$null) -join "").Trim()
-            $observedTree = ((& $selectedGitExecutable -C $bindingPath rev-parse "HEAD^{tree}" 2>$null) -join "").Trim()
-            $observedStatus = (& $selectedGitExecutable -C $bindingPath status --porcelain=v1 -z 2>$null) -join ""
-            if ($LASTEXITCODE -ne 0 -or $observedRevision -cne $revision -or $observedTree -cne $tree -or $observedStatus) { throw "Git-bound environment entry is not the exact clean revision and tree." }
-        }
         $byId[$bindingId] = [pscustomobject]@{ Path = $bindingPath; Kind = [string]$binding.kind; Revision = $revision; Tree = $tree }
+    }
+    if(-not $MetadataOnly) {
+        $composition=if($Profile.PSObject.Properties.Name-ccontains'preflight'){Get-OptionalProperty $Profile.preflight 'source_composition'}else{$null}
+        if($null-ne$composition-and$null-ne(Get-OptionalProperty $composition 'provider_document')) {
+            $script:QuestSourceProvider=Resolve-MorphospaceQuestSourceProvider -Profile $Profile -SourceRoot $SourceDirectory -Bindings $byId -Git $selectedGitExecutable
+        }
+        foreach($binding in $byId.Values) {
+            if(-not $binding.Revision){continue}
+            $observedRevision = ((& $selectedGitExecutable -C $binding.Path rev-parse HEAD 2>$null) -join "").Trim()
+            $observedTree = ((& $selectedGitExecutable -C $binding.Path rev-parse "HEAD^{tree}" 2>$null) -join "").Trim()
+            $observedStatus = (& $selectedGitExecutable -C $binding.Path status --porcelain=v1 -z 2>$null) -join ""
+            $allowDirty=$null-ne$script:QuestSourceProvider-and$script:QuestSourceProvider.AllowWorkingTreeChanges
+            if ($LASTEXITCODE -ne 0 -or $observedRevision -cne $binding.Revision -or $observedTree -cne $binding.Tree -or ($observedStatus-and-not$allowDirty)) { throw "Git-bound environment entry is not the exact clean revision and tree." }
+        }
     }
     $values = @{}
     $evidence = @()
@@ -269,7 +282,7 @@ function Get-SourceCompositionLock {
     param([object]$Preflight, [object]$Source, [object]$Environment, [System.Collections.Generic.List[object]]$Checks)
     $composition = if ($null -eq $Preflight) { $null } else { Get-OptionalProperty $Preflight "source_composition" }
     if ($null -eq $composition) { return [ordered]@{ source = $null; external_sources = @() } }
-    Assert-PropertySet $composition @("source", "external_sources") @() "Source composition"
+    Assert-PropertySet $composition @("source", "external_sources") @('provider_document') "Source composition"
     Assert-PropertySet $composition.source @("git_revision", "git_tree", "require_clean") @() "Source composition source"
     $sourceRevision = [string]$composition.source.git_revision
     $sourceTree = [string]$composition.source.git_tree
@@ -307,7 +320,9 @@ function Get-SourceCompositionLock {
             Add-PreflightCheck $Checks "source-composition.external.$sourceId" "passed" "" "The external source binding matches the declared exact composition lock."
         }
     }
-    return [ordered]@{ source = $sourceLock; external_sources = @($rows.ToArray()) }
+    $result=[ordered]@{ source = $sourceLock; external_sources = @($rows.ToArray()) }
+    if($null-ne$script:QuestSourceProvider){$result.provider_document=$script:QuestSourceProvider.Evidence}
+    return $result
 }
 
 function Read-SignerObservation {
@@ -442,6 +457,7 @@ function Invoke-QuestBuildPreflight {
         }
     }
     $sourceComposition = Get-SourceCompositionLock $preflight $source $Environment $checks
+    if($null-ne$script:QuestSourceProvider){Assert-MorphospaceQuestSourceProviderCurrent $script:QuestSourceProvider}
     $identity = Read-SignerObservation $preflight $SignerPath $SignerSha256 $checks
     $outputConfig = if ($null -eq $preflight) { $null } else { Get-OptionalProperty $preflight "output" }
     if ($null -ne $outputConfig) { Assert-PropertySet $outputConfig @() @("lane", "collision_policy", "allow_source_root") "Output preflight" }
@@ -738,10 +754,10 @@ try {
     $profile = Read-BuildProfile $ProfilePath $ProfileSha256 $source
     if([bool]$BuildContextPath-ne[bool]$BuildContextSha256){throw 'Build context path and SHA256 must be paired.'}
     if($BuildContextPath){
-        $environment=Resolve-EnvironmentBindings $profile.Document $EnvironmentBindingsPath $EnvironmentBindingsSha256 -MetadataOnly
+        $environment=Resolve-EnvironmentBindings $profile.Document $EnvironmentBindingsPath $EnvironmentBindingsSha256 -MetadataOnly -SourceDirectory $source
         $script:ActiveQuestBuildContext=Resolve-ProfileBuildContext $profile $environment
-        $environment=Invoke-MorphospaceQuestBuildEnvironment -Context $script:ActiveQuestBuildContext -Action {Resolve-EnvironmentBindings $profile.Document $EnvironmentBindingsPath $EnvironmentBindingsSha256}
-    }else{$environment=Resolve-EnvironmentBindings $profile.Document $EnvironmentBindingsPath $EnvironmentBindingsSha256}
+        $environment=Invoke-MorphospaceQuestBuildEnvironment -Context $script:ActiveQuestBuildContext -Action {Resolve-EnvironmentBindings $profile.Document $EnvironmentBindingsPath $EnvironmentBindingsSha256 -SourceDirectory $source}
+    }else{$environment=Resolve-EnvironmentBindings $profile.Document $EnvironmentBindingsPath $EnvironmentBindingsSha256 -SourceDirectory $source}
     $execution = Resolve-Execution $profile $ToolPath $ToolSha256
     $preflight = if($null-ne$script:ActiveQuestBuildContext){Invoke-MorphospaceQuestBuildEnvironment -Context $script:ActiveQuestBuildContext -Action {Invoke-QuestBuildPreflight $profile $execution $environment $SignerObservationPath $SignerObservationSha256}}else{Invoke-QuestBuildPreflight $profile $execution $environment $SignerObservationPath $SignerObservationSha256}
     # Private-only exact map guard. Never serialize this fingerprint.
@@ -758,12 +774,20 @@ try {
         if (Test-Path -LiteralPath $receiptFullPath) { throw "ReceiptPath already exists." }
         $dispatch={
             if ((Get-ChildEnvironmentSha256 $preflight.ChildEnvironment) -cne $privateDispatchEnvironmentSha256) { throw "Child environment changed before dispatch." }
+            if($null-ne$script:QuestSourceProvider){Assert-MorphospaceQuestSourceProviderCurrent $script:QuestSourceProvider}
             if($WaitPolicy -ceq 'Retained'){Invoke-MorphospaceRetainedBuildProcess -Execution $execution -EnvironmentValues $preflight.ChildEnvironment -BaseReceiptPath $receiptFullPath -EstimatedWarningSeconds $EstimatedWarningSeconds -CancelAfterMilliseconds $TestCancelAfterMilliseconds}
             else{Invoke-ChildProcess $execution $preflight.ChildEnvironment $receiptFullPath $TimeoutSeconds $TestCancelAfterMilliseconds}
         }
         $childResults=if($null-ne$script:ActiveQuestBuildContext){@(Invoke-MorphospaceQuestBuildEnvironment -Context $script:ActiveQuestBuildContext -Action $dispatch)}else{@(& $dispatch)}
         if ($childResults.Count -ne 1) { throw "Child wrapper emitted $($childResults.Count) result objects." }
         $child = $childResults[0]
+        $providerDrift=$false
+        if($null-ne$script:QuestSourceProvider) {
+            try {
+                if($null-ne$script:ActiveQuestBuildContext){Invoke-MorphospaceQuestBuildEnvironment -Context $script:ActiveQuestBuildContext -Action {Assert-MorphospaceQuestSourceProviderCurrent $script:QuestSourceProvider}}
+                else{Assert-MorphospaceQuestSourceProviderCurrent $script:QuestSourceProvider}
+            }catch{$providerDrift=$true}
+        }
         $payload = $preflight.Payload
         if ($child.Status -eq "passed") {
             if (-not (Test-Path -LiteralPath $profile.Artifact -PathType Leaf)) { $terminal = New-TerminalResult "build" "failed" $profile $execution $preflight @("artifact-missing") $child.Streams $payload $TimeoutSeconds $child.ChildProcess }
@@ -778,6 +802,10 @@ try {
         } else {
             $reason = switch ($child.Status) { "timed_out" { "child-timeout" } "cancelled" { "child-cancelled" } default { if($WaitPolicy-ceq"Retained" -and -not$child.ChildProcess.raw_capture_complete){"child-capture-incomplete"}else{"child-exit-nonzero"} } }
             $terminal = New-TerminalResult "build" $child.Status $profile $execution $preflight @($reason) $child.Streams $payload $TimeoutSeconds $child.ChildProcess
+        }
+        if($providerDrift) {
+            $status=if($child.Status-ceq'passed'){'failed'}else{$child.Status}
+            $terminal=New-TerminalResult 'build' $status $profile $execution $preflight @(@($terminal.reason_codes)+'source-provider-drift') $child.Streams $payload $TimeoutSeconds $child.ChildProcess
         }
         $exitCode = if ($terminal.terminal_status -eq "passed") { 0 } else { 1 }
     }
@@ -803,6 +831,7 @@ try {
     [Console]::Out.WriteLine((ConvertTo-CompactJson $terminal))
     $exitCode = 1
 } finally {
+    Close-MorphospaceQuestSourceProvider $script:QuestSourceProvider
     if($null-ne$runnerSourceHold){$runnerSourceHold.Dispose()}
 }
 exit $exitCode
