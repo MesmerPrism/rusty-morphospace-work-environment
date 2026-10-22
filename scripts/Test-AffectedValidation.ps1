@@ -2797,6 +2797,10 @@ function Invoke-AffectedCallableScopeSelfTest {
     } finally { if ([IO.Directory]::Exists($fixture)) { Remove-Item -LiteralPath $fixture -Recurse -Force } }
 }
 function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]$Registry) {
+    # This real nested module callback is deliberately declared, not exempted as
+    # an external executable. A missing/wrong row invalidates its exact consumers.
+    $admissionLedgerRows = @($Registry.dependency_declarations | Where-Object { [string]$_.importer -ceq 'scripts/Test-DevelopmentUnitAdmission.ps1' -and [string]$_.variable -ceq 'transitionLedgerModule' })
+    Assert-True ($admissionLedgerRows.Count -eq 1 -and [int]$admissionLedgerRows[0].count -eq 1 -and @($admissionLedgerRows[0].target_paths).Count -eq 1 -and [string]$admissionLedgerRows[0].target_paths[0] -ceq 'scripts/lib/MorphospaceTransitionLedger.psm1') 'Current admission ledger callback lacks its exact one-call tracked-module declaration.'
     Invoke-AffectedCallableScopeSelfTest
     Invoke-AffectedFallbackReceiptSelfTest -Root $Root -Registry $Registry
     Invoke-AffectedDependencyDemandEquivalenceSelfTest
@@ -2984,6 +2988,27 @@ function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]
         $aliasCountDamage = $aliasDeclaration | ConvertTo-Json -Depth 8 | ConvertFrom-Json -Depth 8 -DateKind String; $aliasCountDamage.count = 2
         Assert-AffectedThrows { Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @($aliasCountDamage) } '*declaration count changed*' 'Case-variant declaration alias bypassed exact observation count validation.'
         Assert-AffectedThrows { Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @($declaration,$aliasDeclaration) } '*invalid or duplicate identity*' 'Case-variant duplicate declarations were treated as distinct PowerShell variable identities.'
+
+        # Match the actual admission fixture: a saved Get-Module result is used
+        # once inside a function. Supplying the module as an ordinary argument is
+        # not a second callable site. The tracked target oracle is independent.
+        Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "`$transitionLedgerPath = Join-Path `$PSScriptRoot 'Dynamic.psm1'`n`$transitionLedgerModule = @(Get-Module -All | Where-Object { `$_.Path -eq `$transitionLedgerPath } | Select-Object -Last 1)[0]`nfunction Invoke-AdmissionLedgerFixture { & `$transitionLedgerModule { param(`$a) Start-MorphospaceTransitionLedger @a } @{} }`nInvoke-AdmissionLedgerFixture`n"
+        $admissionLedger = [pscustomobject][ordered]@{importer='scripts/Fallback.ps1';variable='transitionLedgerModule';count=1;target_paths=@('scripts/Dynamic.psm1')}
+        $admissionMissing = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
+        Assert-True ($admissionMissing.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($admissionMissing.resolution.fallback_reasons | Where-Object { $_.variable -ceq 'transitionLedgerModule' }).Count -eq 1) 'Undeclared nested ledger module callback bypassed fallback.'
+        $admissionExact = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @($admissionLedger)
+        Assert-True ($admissionExact.resolution.mode -ceq 'exact' -and @($admissionExact.resolution.fallback_reasons).Count -eq 0 -and ($admissionExact.paths -join ',') -ceq 'scripts/Dynamic.psm1,scripts/Fallback.ps1') 'Declared nested ledger module callback lost its exact tracked target.'
+        foreach ($damagedCount in @(0,2)) {
+            $admissionCount = [pscustomobject][ordered]@{importer='scripts/Fallback.ps1';variable='transitionLedgerModule';count=$damagedCount;target_paths=@('scripts/Dynamic.psm1')}
+            $countMessage = if ($damagedCount -eq 0) { '*invalid or duplicate identity*' } else { '*declaration count changed*' }
+            Assert-AffectedThrows { Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @($admissionCount) } $countMessage 'Nested ledger callback accepted a damaged declaration count.'
+        }
+        $admissionAbsent = [pscustomobject][ordered]@{importer='scripts/Fallback.ps1';variable='transitionLedgerModule';count=1;target_paths=@('scripts/Absent.psm1')}
+        Assert-AffectedThrows { Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @($admissionAbsent) } '*target is absent from the exact head*' 'Nested ledger callback accepted an untracked target.'
+        $admissionWrong = [pscustomobject][ordered]@{importer='scripts/Fallback.ps1';variable='transitionLedgerModule';count=1;target_paths=@('scripts/Static.psm1')}
+        $admissionWrongTarget = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @($admissionWrong)
+        Assert-AffectedThrows { Assert-True (($admissionWrongTarget.paths -join ',') -ceq 'scripts/Dynamic.psm1,scripts/Fallback.ps1') 'Nested ledger independent exact target oracle rejected wrong tracked target.' } '*independent exact target oracle*' 'Wrong tracked module target escaped the independent ledger oracle.'
+        Write-Host 'Admission ledger module callback controls passed: missing, exact, count-zero, count-two, absent-target, wrong-target.'
 
         $compiled = Test-MorphospaceAffectedValidationRegistry -Registry $Registry -RepositoryRoot $Root -SchemaPath (Join-Path $Root 'schemas/affected-validation-registry-v1.schema.json')
         $head = (& git -C $Root rev-parse HEAD).Trim()
