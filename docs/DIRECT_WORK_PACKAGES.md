@@ -24,6 +24,24 @@ limited to bounded implementation, validation, or documentation. Select
 `risk_tier` independently: guard profile controls authority, while risk tier
 controls validation depth.
 
+## Source landing and downstream adoption
+
+A bounded source package and a downstream product adoption unit have distinct
+outcomes. Source checks, review and protected normal CI/merge can qualify and
+land the source while product adoption remains pending. A package that changes
+workflow or publication authority still requires its own locked owner; this
+separation cannot downgrade that source work to the fast lane.
+
+When a frozen product contract explicitly orders source publication after its
+acceptance, preserve that contract and record the human's explicit superseding
+decision through the stateless source-delivery disposition in
+[Source-only publication](SOURCE_ONLY_PUBLICATION.md). The record changes no
+product state, event, tooling pointer, source reference or acceptance status.
+Preparing a disposition earns no landed-source credit. A later landed record
+must authenticate the actual publication subject's checks and normal merge.
+A port is a distinct source subject with an explicit review and limitations;
+the built original's APK, tests and adoption evidence do not transfer to it.
+
 ## Agent and framework adaptation
 
 Framework practices operate inside the selected owner package. Reuse its
