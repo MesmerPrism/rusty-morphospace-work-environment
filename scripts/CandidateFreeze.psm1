@@ -359,6 +359,31 @@ function Assert-MorphospaceCandidateRevisionRecoveryBindings {
     $frozenTransition=[pscustomobject]@{intent=$Intent;intent_path="receipts/transactions/$($Intent.transaction_id).intent.json";completion_path="receipts/transactions/$($Intent.transaction_id).completion.json"}
     Assert-MorphospaceCandidateRepositoryClosure $workspace $candidate $targetUnit $frozenTransition $composition
 }
+function Get-MorphospaceFrozenCandidateToolingProjection {
+    param([string]$Workspace,[object]$Candidate,[object]$LiveState,[object]$LiveUnit,[string]$ReceiptRelative)
+    # A typed compatible upgrade changes the live pointer, never the original
+    # frozen unit/hash. Reconstruct that original view only through the complete
+    # committed continuation and its authenticated immediate Freeze/Begin slot.
+    $frozen=Get-CandidateRevisionTransition $Workspace "$([string]$Candidate.freeze_id)-recorded" ([string]$Candidate.unit_id)
+    $originalUnit=$frozen.intent.target.unit.document;$originalState=$frozen.intent.target.state.document
+    [void](Get-MorphospaceFrozenCandidateTransition $Workspace $Candidate $originalState $originalUnit $ReceiptRelative)
+    if($LiveUnit.PSObject.Properties.Name-cnotcontains'tooling_context'-or$originalUnit.PSObject.Properties.Name-cnotcontains'tooling_context'-or[string]$LiveUnit.status-cne'validating'-or[string]$LiveState.current_unit-cne[string]$Candidate.unit_id){throw 'Frozen tooling projection requires the same current validating owner.'}
+    Assert-CandidateRevisionEqual $LiveUnit.candidate_freeze $originalUnit.candidate_freeze 'tooling upgrade frozen marker'
+    $map=Resolve-MorphospaceWorkspacePath $Workspace ([string]$Candidate.expected.repository_map_path) -RequireLeaf
+    $effective=Test-MorphospaceEffectiveDevelopmentEnvelope -WorkspaceRoot $Workspace -UnitId ([string]$Candidate.unit_id) -RepositoryMapPath $map
+    Assert-CandidateRevisionEqual $LiveUnit $effective.effective.unit 'tooling upgrade live unit'
+    Assert-CandidateRevisionEqual $LiveState $effective.effective.state 'tooling upgrade live state'
+    $upgrades=@($effective.tooling_upgrades|Where-Object{
+        [int]$_.intent.event.sequence-gt[int]$frozen.intent.event.sequence-and
+        (Get-MorphospaceCanonicalJsonSha256 $_.intent.target.unit.document.tooling_context)-ceq(Get-MorphospaceCanonicalJsonSha256 $LiveUnit.tooling_context)
+    })
+    if($upgrades.Count-ne1){throw 'Frozen tooling projection requires one authenticated upgrade to the selected live pointer.'}
+    $before=$originalUnit|ConvertTo-Json -Depth 100|ConvertFrom-Json -Depth 100 -DateKind String;$before.status='validating'
+    if((Get-MorphospaceCanonicalJsonSha256 $before)-cne[string]$upgrades[0].intent.pre.unit.sha256){throw 'Frozen tooling upgrade preimage differs from the original frozen unit.'}
+    $after=$before|ConvertTo-Json -Depth 100|ConvertFrom-Json -Depth 100 -DateKind String;$after.tooling_context=$LiveUnit.tooling_context
+    Assert-CandidateRevisionEqual $after $upgrades[0].intent.target.unit.document 'tooling upgrade pointer-only target'
+    [pscustomobject]@{unit=$originalUnit;state=$originalState;event_tail=$effective.effective.event_tail}
+}
 function Test-MorphospaceFrozenCandidate {
     param([string]$WorkspaceRoot,[object]$Unit)
     # This applies to all units.  It is deliberately before the W-016
@@ -381,6 +406,15 @@ function Test-MorphospaceFrozenCandidate {
     if([string]$candidate.freeze_id -cne [string]$freeze.freeze_id -or [string]$candidate.unit_id -cne [string]$Unit.unit_id){throw 'Frozen candidate receipt identity does not match its unit marker.'}
     $unitPath="iteration-units/$([string]$Unit.unit_id).json";$liveUnit=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace $unitPath -RequireLeaf)
     $project=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace 'project.spec.json' -RequireLeaf);$state=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace 'workspace.state.json' -RequireLeaf);$featureLock=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace 'feature.lock.json' -RequireLeaf)
+    $toolingProjection=$null
+    if($liveUnit.PSObject.Properties.Name-ccontains'tooling_context'){
+        $original=Get-CandidateRevisionTransition $workspace "$([string]$candidate.freeze_id)-recorded" ([string]$candidate.unit_id)
+        if((Get-MorphospaceCanonicalJsonSha256 $liveUnit.tooling_context)-cne(Get-MorphospaceCanonicalJsonSha256 $original.intent.target.unit.document.tooling_context)){
+            $toolingProjection=Get-MorphospaceFrozenCandidateToolingProjection $workspace $candidate $state $liveUnit ([string]$freeze.receipt_path)
+            $liveUnit=$toolingProjection.unit|ConvertTo-Json -Depth 100|ConvertFrom-Json -Depth 100 -DateKind String
+            $state=$toolingProjection.state|ConvertTo-Json -Depth 100|ConvertFrom-Json -Depth 100 -DateKind String
+        }
+    }
     if([string]$candidate.project_id -cne [string]$project.project_id -or [string]$candidate.unit_id -cne [string]$liveUnit.unit_id -or [string]$state.current_unit -cne [string]$liveUnit.unit_id -or [string]$state.last_event_id -cne "$([string]$candidate.freeze_id)-recorded"){throw 'Frozen candidate identity no longer matches the live active authority.'}
     $marker=$liveUnit.candidate_freeze;if([string]$candidate.schema-ceq'rusty.morphospace.workflow.candidate_freeze.v3'){$liveUnit.candidate_freeze=$candidate.predecessor.freeze}else{$liveUnit.PSObject.Properties.Remove('candidate_freeze')}
     foreach($check in @(@{e=$candidate.expected.project_sha256;a=(Get-MorphospaceCanonicalJsonSha256 $project);n='project'},@{e=$candidate.expected.unit_sha256;a=(Get-MorphospaceCanonicalJsonSha256 $liveUnit);n='unit'},@{e=$candidate.expected.feature_lock_sha256;a=(Get-MorphospaceCanonicalJsonSha256 $featureLock);n='feature lock'},@{e=$candidate.expected.source_composition_sha256;a=(Get-MorphospaceFileSha256 (Resolve-MorphospaceWorkspacePath $workspace $candidate.expected.source_composition_path -RequireLeaf));n='source composition'},@{e=$candidate.expected.repository_map_sha256;a=(Get-MorphospaceFileSha256 (Resolve-MorphospaceWorkspacePath $workspace $candidate.expected.repository_map_path -RequireLeaf));n='repository map'})){if([string]$check.e -cne [string]$check.a){throw "Frozen candidate $($check.n) drifted after freeze."}}
@@ -393,7 +427,8 @@ function Test-MorphospaceFrozenCandidate {
     Assert-MorphospaceCandidateRepositoryClosure $workspace $candidate $liveUnit $frozenTransition
     $eventLines=@(Get-Content -LiteralPath (Resolve-MorphospaceWorkspacePath $workspace 'iteration-events.jsonl' -RequireLeaf)|Where-Object{$_})
     $tail=$eventLines[-1]|ConvertFrom-Json
-    if([string]$tail.event_id-cne"$([string]$candidate.freeze_id)-recorded"){throw 'Frozen candidate transition is no longer the exact ledger tail.'}
+    $expectedTail=if($null-ne$toolingProjection){[string]$toolingProjection.event_tail.event_id}else{"$([string]$candidate.freeze_id)-recorded"}
+    if([string]$tail.event_id-cne$expectedTail){throw 'Frozen candidate transition is no longer the exact ledger tail.'}
     return $true
 }
 function Invoke-MorphospaceFreezeCandidate {

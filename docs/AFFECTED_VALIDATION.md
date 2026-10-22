@@ -175,6 +175,14 @@ invalidating otherwise reusable documentation, skill, or protocol-foundation
 leaves while retaining invalidation for real ownership, ledger, and authority
 consumers.
 
+Hosted intake shares immutable per-file static observations across its selected
+entrypoints within one intake call. The key binds the repository root, tracked
+inventory, analyzer, dynamic declarations, and actual file bytes. Resolved paths
+are replayed as exact repository identities; each check still constructs its own
+consume manifest, arguments, runner and prerequisite bindings. Final inventory,
+declaration, analyzer and source-byte checks reject drift before results escape.
+No caller-supplied, global or cross-intake closure cache grants reuse authority.
+
 Current-run leaf bytes are retained as canonical parent-owned in-memory
 snapshots only after the executor's supervisor has published one tagged result
 through a parent-created anonymous completion pipe, terminated its complete

@@ -52,6 +52,33 @@ Existing projects without the opt-in fields remain on their existing schema disp
 Current021 continues its retirement-first sequence. A later installer Update is a
 separate backup-first host action and must Verify against the upgraded context.
 
+A current validating unit may also upgrade immediately after its authenticated
+`FreezeCandidate` and `BeginValidation` transitions, before any subsequent
+current-unit action or recorded validation. The committed Freeze and Begin
+must be contiguous and bind the exact request preimage. The same owner remains
+validating; there may be no competing ready unit, blocker or pending publication.
+The Begin transition must not already bind a normal-validation selector. Its
+unit-contract hash includes the tooling pointer and cannot be reset by this
+pointer-only action. Existing exact retained Begin-state reconstruction refuses
+a selector-bound preimage before writes. When a selector is needed, bind a fresh
+one through the ordinary public Begin route after instruction completion; retain
+all selector hashes and receipt-consumption checks.
+The old context is authenticated historically, the new executor locally, and
+compatibility, product/source projection, loaded-module and raw CAS guards remain
+mandatory. The action emits a validating-to-validating receipt using the existing
+upgrade request and typed ledger transition.
+
+This upgrade preserves the original frozen marker and receipt bytes. Frozen
+reads authenticate the complete typed continuation to the physical live state,
+verify that the upgrade changed only the tooling pointer of the original
+validating unit, then reconstruct the original Freeze projection for its exact
+unit/state hash checks. They do not remove tooling from the hash or rewrite the
+marker. Historical upgrade verification uses that committed prefix even after
+later instruction completion, fresh validation and acceptance. No earlier pass
+is inherited: validation and acceptance still run under the new selected context.
+Run this public host fixture with
+`pwsh -NoProfile -File scripts/Test-ToolingContext.ps1 -SelfTest -Scenario validating-upgrade`.
+
 An authenticated failed frozen unit may deliberately upgrade tooling for its
 nonaccepting retirement. This route requires the exact active/current unit,
 a retained failing checkpoint, no remaining blockers or ready unit, and the

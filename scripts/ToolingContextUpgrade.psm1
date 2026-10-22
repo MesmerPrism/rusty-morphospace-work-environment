@@ -68,20 +68,45 @@ function Assert-ToolingUpgradeExecutingBoundTool {
  $resolver=Read-MorphospaceToolingContextResolver $Workspace $Context;$declared=[IO.Path]::GetFullPath([string]$resolver.executor_root).TrimEnd('\','/');$actual=[IO.Path]::GetFullPath((Split-Path $PSScriptRoot -Parent)).TrimEnd('\','/');$comparison=if([OperatingSystem]::IsWindows()){[StringComparison]::OrdinalIgnoreCase}else{[StringComparison]::Ordinal};if(-not$actual.Equals($declared,$comparison)){throw 'UpgradeToolingContext must execute from the new context executor root.'};if(@($Context.executor.closure|Where-Object{[string]$_.path-ceq'scripts/ToolingContextUpgrade.psm1'}).Count-ne1-or[string]$Context.executor.entrypoint-cne'scripts/ToolingContextUpgrade.psm1'){throw 'UpgradeToolingContext new executor closure does not bind its owner module entrypoint.'}
  [void](Assert-MorphospaceToolingContextLoadedOwnerModule -Context $Context -ExecutorRoot $declared -OwnerModule $MyInvocation.MyCommand.Module)
 }
+function Assert-ToolingUpgradeValidatingSlot {
+ param([string]$Workspace,[object]$Unit,[object]$State,[string]$UnitId)
+ # Both fresh execution and historical replay use the exact committed preimage.
+ # Never require today's tail to remain at Begin after the upgrade was consumed.
+ if([string]$Unit.unit_id-cne$UnitId-or[string]$Unit.status-cne'validating'-or[string]$State.current_unit-cne$UnitId-or$null-ne$State.next_ready_unit-or@($State.blockers).Count-ne0-or$null-ne$State.pending_push_bundle-or$Unit.PSObject.Properties.Name-cnotcontains'candidate_freeze'){throw 'Validating tooling upgrade requires the exact current frozen owner without competing work.'}
+ $events=@(Get-ToolingUpgradeEvents (Join-Path $Workspace 'iteration-events.jsonl'))
+ $freezeId="$([string]$Unit.candidate_freeze.freeze_id)-recorded"
+ $freezes=@($events|Where-Object event_id -CEQ $freezeId);$begins=@($events|Where-Object event_id -CEQ ([string]$State.last_event_id))
+ if($freezes.Count-ne1-or$begins.Count-ne1-or[string]$begins[0].unit_id-cne$UnitId-or[string]$begins[0].event_id-cnotmatch('^'+[regex]::Escape($UnitId)+'-validating-[0-9]{4,}$')-or[int]$begins[0].sequence-ne([int]$freezes[0].sequence+1)){throw 'Validating tooling upgrade requires an immediate same-unit Freeze and BeginValidation before recorded validation.'}
+ $retirement=Import-Module (Join-Path $PSScriptRoot 'ActiveUnitRetirement.psm1') -PassThru
+ $proofs=@(foreach($event in @($freezes[0],$begins[0])){
+  $proof=&$retirement {param($w,$id)Get-ActiveRetirementPlanningTransition $w $id -HistoricalProjection} $Workspace "$([string]$event.event_id)-transition"
+  if([string]$proof.intent.state.path-cne'workspace.state.json'-or[string]$proof.intent.unit.path-cne"iteration-units/$UnitId.json"-or[string]$proof.intent.events.path-cne'iteration-events.jsonl'-or(Get-MorphospaceCanonicalJsonSha256 $proof.intent.event)-cne(Get-MorphospaceCanonicalJsonSha256 $event)){throw 'Validating tooling upgrade committed lifecycle identity is detached.'}
+  &$retirement {param($w,$e,$p)Assert-ActiveRetirementRetainedLifecycle $w $e $p} $Workspace $event $proof
+  $proof
+ })
+ $freeze=$proofs[0];$begin=$proofs[1]
+ if([string]$begin.intent.expected.event_tail_id-cne$freezeId-or[string]$begin.intent.pre.state.sha256-cne[string]$freeze.intent.target.state.sha256-or[string]$begin.intent.pre.unit.sha256-cne[string]$freeze.intent.target.unit.sha256-or(Get-MorphospaceCanonicalJsonSha256 $begin.intent.target.unit.document)-cne(Get-MorphospaceCanonicalJsonSha256 $Unit)-or(Get-MorphospaceCanonicalJsonSha256 $begin.intent.target.state.document)-cne(Get-MorphospaceCanonicalJsonSha256 $State)){throw 'Validating tooling upgrade preimage differs from its committed Freeze and BeginValidation.'}
+ if((Get-MorphospaceCanonicalJsonSha256 $freeze.intent.target.unit.document.candidate_freeze)-cne(Get-MorphospaceCanonicalJsonSha256 $Unit.candidate_freeze)){throw 'Validating tooling upgrade original freeze marker is detached.'}
+ # Return the authenticated original projection for the frozen reader; no field
+ # is omitted from its original unit/state hashes and no marker is rewritten.
+ return $freeze
+}
 function Get-ToolingUpgradeSummary([object]$Unit) {
+ if([string]$Unit.status-ceq'validating'){return 'Upgraded compatible tooling before recorded validation while preserving the original frozen candidate and authenticated product envelope.'}
  if($Unit.PSObject.Properties.Name-ccontains'candidate_freeze'){return 'Upgraded tooling after failed validation while preserving the original frozen candidate and authenticated product envelope.'}
  return 'Upgraded the current pre-freeze tooling context while preserving the authenticated product envelope.'
 }
 function Assert-ToolingUpgradePreFreezeSlot {
  param([object]$Unit,[object]$State,[string]$UnitId,[string]$Workspace)
+ if([string]$Unit.status-ceq'validating'){Assert-ToolingUpgradeValidatingSlot $Workspace $Unit $State $UnitId|Out-Null;return}
  $active=[string]$Unit.status-ceq'active'-and[string]$State.current_unit-ceq$UnitId
  $ready=[string]$Unit.status-ceq'ready'-and$null-eq$State.current_unit-and[string]$State.next_ready_unit-ceq$UnitId
  if([string]$Unit.unit_id-cne$UnitId-or(-not$active-and-not$ready)){throw 'Tooling upgrade requires exact active ownership or exact next-ready slot before Freeze.'}
  if($Unit.PSObject.Properties.Name-ccontains'candidate_freeze'){$retirement=Import-Module (Join-Path $PSScriptRoot 'ActiveUnitRetirement.psm1') -PassThru; &$retirement {param($w,$u,$s,$id)Assert-ActiveRetirementPostNonpassUpgradeSlot $w $u $s $id} $Workspace $Unit $State $UnitId}
 }
 function New-ToolingUpgradeAutomationReceipt {
- param([object]$Request,[string]$Timestamp,[string]$OutRelative,[string]$RequestHash,[bool]$Executed,[string]$EventId,[ValidateSet('active','ready')][string]$Status='active')
- $result=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.work_unit_automation_receipt.v2';project_id=[string]$Request.project_id;unit_id=[string]$Request.unit_id;action='UpgradeToolingContext';timestamp=$Timestamp;executed=$Executed;transition='tooling-context-upgraded';status_before=$Status;status_after=$Status;current_unit_before=$(if($Status-ceq'active'){[string]$Request.unit_id}else{$null});current_unit_after=$(if($Status-ceq'active'){[string]$Request.unit_id}else{$null});preservation=[pscustomobject][ordered]@{git_mutation_performed=$false;device_mutation_performed=$false;remote_mutation_performed=$false};audit_receipt=[pscustomobject][ordered]@{path=$OutRelative;sha256=$RequestHash};event_id=$(if($Executed){$EventId}else{$null})}
+ param([object]$Request,[string]$Timestamp,[string]$OutRelative,[string]$RequestHash,[bool]$Executed,[string]$EventId,[ValidateSet('active','ready','validating')][string]$Status='active')
+ $result=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.work_unit_automation_receipt.v2';project_id=[string]$Request.project_id;unit_id=[string]$Request.unit_id;action='UpgradeToolingContext';timestamp=$Timestamp;executed=$Executed;transition='tooling-context-upgraded';status_before=$Status;status_after=$Status;current_unit_before=$(if($Status-cin@('active','validating')){[string]$Request.unit_id}else{$null});current_unit_after=$(if($Status-cin@('active','validating')){[string]$Request.unit_id}else{$null});preservation=[pscustomobject][ordered]@{git_mutation_performed=$false;device_mutation_performed=$false;remote_mutation_performed=$false};audit_receipt=[pscustomobject][ordered]@{path=$OutRelative;sha256=$RequestHash};event_id=$(if($Executed){$EventId}else{$null})}
  Test-ToolingUpgradeJson $result 'work-unit-automation-receipt-v2.schema.json' 'Tooling-context upgrade emitted an invalid automation receipt.';$result
 }
 

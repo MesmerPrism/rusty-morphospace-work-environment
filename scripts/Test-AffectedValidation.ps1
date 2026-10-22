@@ -49,6 +49,7 @@ $developmentUnitAdmissionBatchChecks = @(
     'tooling-context','tooling-context-product-negative','tooling-context-provenance-negative',
     'tooling-context-recovery-after-artifact','tooling-context-recovery-after-event',
     'tooling-context-recovery-after-intent','tooling-context-recovery-after-projection',
+    'tooling-context-validating-upgrade',
     'tooling-legacy-reclassification-helper','tooling-legacy-reclassification-integration',
     'tooling-preparation-integration'
 )
@@ -2797,6 +2798,10 @@ function Invoke-AffectedCallableScopeSelfTest {
     } finally { if ([IO.Directory]::Exists($fixture)) { Remove-Item -LiteralPath $fixture -Recurse -Force } }
 }
 function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]$Registry) {
+    # This real nested module callback is deliberately declared, not exempted as
+    # an external executable. A missing/wrong row invalidates its exact consumers.
+    $admissionLedgerRows = @($Registry.dependency_declarations | Where-Object { [string]$_.importer -ceq 'scripts/Test-DevelopmentUnitAdmission.ps1' -and [string]$_.variable -ceq 'transitionLedgerModule' })
+    Assert-True ($admissionLedgerRows.Count -eq 1 -and [int]$admissionLedgerRows[0].count -eq 1 -and @($admissionLedgerRows[0].target_paths).Count -eq 1 -and [string]$admissionLedgerRows[0].target_paths[0] -ceq 'scripts/lib/MorphospaceTransitionLedger.psm1') 'Current admission ledger callback lacks its exact one-call tracked-module declaration.'
     Invoke-AffectedCallableScopeSelfTest
     Invoke-AffectedFallbackReceiptSelfTest -Root $Root -Registry $Registry
     Invoke-AffectedDependencyDemandEquivalenceSelfTest
@@ -2984,6 +2989,27 @@ function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]
         $aliasCountDamage = $aliasDeclaration | ConvertTo-Json -Depth 8 | ConvertFrom-Json -Depth 8 -DateKind String; $aliasCountDamage.count = 2
         Assert-AffectedThrows { Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @($aliasCountDamage) } '*declaration count changed*' 'Case-variant declaration alias bypassed exact observation count validation.'
         Assert-AffectedThrows { Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @($declaration,$aliasDeclaration) } '*invalid or duplicate identity*' 'Case-variant duplicate declarations were treated as distinct PowerShell variable identities.'
+
+        # Match the actual admission fixture: a saved Get-Module result is used
+        # once inside a function. Supplying the module as an ordinary argument is
+        # not a second callable site. The tracked target oracle is independent.
+        Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "`$transitionLedgerPath = Join-Path `$PSScriptRoot 'Dynamic.psm1'`n`$transitionLedgerModule = @(Get-Module -All | Where-Object { `$_.Path -eq `$transitionLedgerPath } | Select-Object -Last 1)[0]`nfunction Invoke-AdmissionLedgerFixture { & `$transitionLedgerModule { param(`$a) Start-MorphospaceTransitionLedger @a } @{} }`nInvoke-AdmissionLedgerFixture`n"
+        $admissionLedger = [pscustomobject][ordered]@{importer='scripts/Fallback.ps1';variable='transitionLedgerModule';count=1;target_paths=@('scripts/Dynamic.psm1')}
+        $admissionMissing = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
+        Assert-True ($admissionMissing.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($admissionMissing.resolution.fallback_reasons | Where-Object { $_.variable -ceq 'transitionLedgerModule' }).Count -eq 1) 'Undeclared nested ledger module callback bypassed fallback.'
+        $admissionExact = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @($admissionLedger)
+        Assert-True ($admissionExact.resolution.mode -ceq 'exact' -and @($admissionExact.resolution.fallback_reasons).Count -eq 0 -and ($admissionExact.paths -join ',') -ceq 'scripts/Dynamic.psm1,scripts/Fallback.ps1') 'Declared nested ledger module callback lost its exact tracked target.'
+        foreach ($damagedCount in @(0,2)) {
+            $admissionCount = [pscustomobject][ordered]@{importer='scripts/Fallback.ps1';variable='transitionLedgerModule';count=$damagedCount;target_paths=@('scripts/Dynamic.psm1')}
+            $countMessage = if ($damagedCount -eq 0) { '*invalid or duplicate identity*' } else { '*declaration count changed*' }
+            Assert-AffectedThrows { Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @($admissionCount) } $countMessage 'Nested ledger callback accepted a damaged declaration count.'
+        }
+        $admissionAbsent = [pscustomobject][ordered]@{importer='scripts/Fallback.ps1';variable='transitionLedgerModule';count=1;target_paths=@('scripts/Absent.psm1')}
+        Assert-AffectedThrows { Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @($admissionAbsent) } '*target is absent from the exact head*' 'Nested ledger callback accepted an untracked target.'
+        $admissionWrong = [pscustomobject][ordered]@{importer='scripts/Fallback.ps1';variable='transitionLedgerModule';count=1;target_paths=@('scripts/Static.psm1')}
+        $admissionWrongTarget = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @($admissionWrong)
+        Assert-AffectedThrows { Assert-True (($admissionWrongTarget.paths -join ',') -ceq 'scripts/Dynamic.psm1,scripts/Fallback.ps1') 'Nested ledger independent exact target oracle rejected wrong tracked target.' } '*independent exact target oracle*' 'Wrong tracked module target escaped the independent ledger oracle.'
+        Write-Host 'Admission ledger module callback controls passed: missing, exact, count-zero, count-two, absent-target, wrong-target.'
 
         $compiled = Test-MorphospaceAffectedValidationRegistry -Registry $Registry -RepositoryRoot $Root -SchemaPath (Join-Path $Root 'schemas/affected-validation-registry-v1.schema.json')
         $head = (& git -C $Root rev-parse HEAD).Trim()
@@ -5246,6 +5272,45 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
         param($Artifacts,$Phase,$Binding,$Source,$PlanSha256,$SchemaPath)
         Assert-MorphospaceAffectedCheckPhaseArtifactSet -Artifacts $Artifacts -Phase $Phase -ExpectedBinding $Binding -ExpectedSource $Source -ExpectedPlanSha256 $PlanSha256 -PhaseReceiptSchemaPath $SchemaPath
     } @($fixtureContractArtifacts.ToArray()) $fixtureContractPhase $fixtureContractExpectedBinding $fixtureContractExpectedSource $fixtureContractPlanSha256 (Join-Path $repoRoot 'schemas/affected-validation-self-test-phase-receipt-v1.schema.json'))
+    $fixtureContractSchemaPath = Join-Path $repoRoot 'schemas/affected-validation-self-test-phase-receipt-v1.schema.json'
+    # BudgetSeconds is an estimate unless the producer enforces a
+    # timeout. Genuine completion beyond it must retain exact chronology.
+    $advisoryPhaseArtifacts = [Collections.Generic.List[object]]::new()
+    foreach ($phaseArtifact in @($fixtureContractArtifacts.ToArray())) {
+        [byte[]]$phaseBytes = [byte[]]([byte[]]$phaseArtifact.bytes).Clone()
+        if ([string]$phaseArtifact.path -cin @('trust-self-executor.start.json','trust-self-executor.terminal.json')) {
+            $advisoryDocument = [Text.UTF8Encoding]::new($false,$true).GetString($phaseBytes) | ConvertFrom-Json -Depth 64 -DateKind String
+            $advisoryDocument.budget_seconds = 1; $advisoryDocument.started_at = '2026-09-01T00:00:00Z'
+            if ([string]$phaseArtifact.path -ceq 'trust-self-executor.terminal.json') { $advisoryDocument.ended_at = '2026-09-01T00:00:03Z'; $advisoryDocument.elapsed_ms = 3000 }
+            $phaseBytes = [Text.UTF8Encoding]::new($false).GetBytes((ConvertTo-MorphospaceCanonicalJson -Value $advisoryDocument) + "`n")
+        }
+        $advisoryPhaseArtifacts.Add([pscustomobject][ordered]@{path=[string]$phaseArtifact.path;bytes=$phaseBytes})
+    }
+    [void](& $fixtureContractEvidenceModule { param($Artifacts,$Binding,$Source,$PlanSha256,$SchemaPath) Assert-MorphospaceAffectedCheckPhaseArtifactSet -Artifacts $Artifacts -Phase 'trust-self-executor' -ExpectedBinding $Binding -ExpectedSource $Source -ExpectedPlanSha256 $PlanSha256 -PhaseReceiptSchemaPath $SchemaPath } @($advisoryPhaseArtifacts.ToArray()) $fixtureContractExpectedBinding $fixtureContractExpectedSource $fixtureContractPlanSha256 $fixtureContractSchemaPath)
+    foreach ($damage in @('elapsed-mismatch','start-budget','budget-range','enforced-timeout','nonzero-exit','forged-timeout','forged-exit')) {
+        $damagedAdvisoryArtifacts = [Collections.Generic.List[object]]::new()
+        foreach ($phaseArtifact in @($advisoryPhaseArtifacts.ToArray())) {
+            [byte[]]$phaseBytes = [byte[]]([byte[]]$phaseArtifact.bytes).Clone()
+            if ([string]$phaseArtifact.path -cin @('trust-self-executor.start.json','trust-self-executor.terminal.json')) {
+                $damageDocument = [Text.UTF8Encoding]::new($false,$true).GetString($phaseBytes) | ConvertFrom-Json -Depth 64 -DateKind String
+                if ($damage -ceq 'budget-range') { $damageDocument.budget_seconds = 601 }
+                if ([string]$phaseArtifact.path -ceq 'trust-self-executor.start.json' -and $damage -ceq 'start-budget') { $damageDocument.budget_seconds = 2 }
+                if ([string]$phaseArtifact.path -ceq 'trust-self-executor.terminal.json') {
+                    if ($damage -ceq 'elapsed-mismatch') { $damageDocument.elapsed_ms = 5001 }
+                    if ($damage -ceq 'enforced-timeout') { $damageDocument.result = 'code-fail'; $damageDocument.child.timed_out = $true; $damageDocument.child.exit_code = $null }
+                    if ($damage -ceq 'nonzero-exit') { $damageDocument.result = 'code-fail'; $damageDocument.child.exit_code = 17 }
+                    if ($damage -ceq 'forged-timeout') { $damageDocument.child.timed_out = $true }
+                    if ($damage -ceq 'forged-exit') { $damageDocument.child.exit_code = 17 }
+                }
+                $phaseBytes = [Text.UTF8Encoding]::new($false).GetBytes((ConvertTo-MorphospaceCanonicalJson -Value $damageDocument) + "`n")
+            }
+            $damagedAdvisoryArtifacts.Add([pscustomobject][ordered]@{path=[string]$phaseArtifact.path;bytes=$phaseBytes})
+        }
+        $expectedDamage = switch ($damage) { 'elapsed-mismatch' { '*chronology or budget*' } 'start-budget' { '*terminal timing contract*' } 'budget-range' { '*schema*' } 'forged-timeout' { '*schema*' } 'forged-exit' { '*schema*' } default { '*identity or result*' } }
+        Assert-AffectedThrows { [void](& $fixtureContractEvidenceModule { param($Artifacts,$Binding,$Source,$PlanSha256,$SchemaPath) Assert-MorphospaceAffectedCheckPhaseArtifactSet -Artifacts $Artifacts -Phase 'trust-self-executor' -ExpectedBinding $Binding -ExpectedSource $Source -ExpectedPlanSha256 $PlanSha256 -PhaseReceiptSchemaPath $SchemaPath } @($damagedAdvisoryArtifacts.ToArray()) $fixtureContractExpectedBinding $fixtureContractExpectedSource $fixtureContractPlanSha256 $fixtureContractSchemaPath) } $expectedDamage "Advisory phase-artifact reader accepted $damage damage."
+    }
+    Write-Host 'Phase-artifact advisory completion and strict timing/outcome damage controls passed.'
+
     Remove-Item -LiteralPath $fixtureContractProjectionPath -Force
     Remove-Item -LiteralPath $fixtureContractPhaseRoot -Recurse -Force
     Write-Host "Schema-valid fixture phase receipt and artifact-set contract passed in $([long]$phaseArtifactClock.Elapsed.TotalMilliseconds)ms."
@@ -5891,12 +5956,13 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     # Every path from the combined raw-CAS and historical-debt candidate has a
     # single exact owner class.  Test each path independently so command-path
     # selection cannot conceal an unmapped or ambiguous shared-module route.
-    $validationAuthorityClosureChecks=@('authority-record-readiness','authority-runner-fast','authority-runner-handoff','transition-ledger','trust-migration-authority','validation-authority-launcher','validation-execution-authority') + $workflowConsumerFixtureChecks
+    $validationAuthorityClosureChecks=@('authority-record-readiness','authority-runner-fast','authority-runner-handoff','quest-build-executor-selection','transition-ledger','trust-migration-authority','validation-authority-launcher','validation-execution-authority') + $workflowConsumerFixtureChecks
     $preparationRepositoryScopeConsumerChecks=@(
         'active-development-envelope-extension',
         'tooling-context','tooling-context-product-negative','tooling-context-provenance-negative',
         'tooling-context-recovery-after-artifact','tooling-context-recovery-after-event',
         'tooling-context-recovery-after-intent','tooling-context-recovery-after-projection',
+        'tooling-context-validating-upgrade',
         'tooling-legacy-reclassification-helper','tooling-legacy-reclassification-integration',
         'tooling-preparation-integration',
         'active-unit-retirement-amendment-recovery','active-unit-retirement-nested-damage',
