@@ -39,7 +39,12 @@ run remain separate facts.
 - `$rusty-morphospace-cleanup`: user-requested manual cleanup; never schedule it.
 
 Install/update managed routers through [Local Skill Bootstrap](docs/LOCAL_SKILL_BOOTSTRAP.md)
-and `scripts/Install-LocalSkills.ps1`: writes require `-Execute`, updates back up
+and `scripts/Install-LocalSkills.ps1`. For new contexts, author an isolated
+managed-router resolver first with `New-MorphospaceToolingContextResolver`
+in [Tooling Context](docs/TOOLING_CONTEXT.md), using explicit retained storage
+outside all selected repository roots and an ignored workspace resolver. Host guidance updates
+must not replace a sealed context's selected files. Preserve existing resolver
+bindings and drift guards. Installer writes require `-Execute`, updates back up
 managed bytes and preserve unmanaged files. Canonical Meta source comes from an
 explicit clean `meta-quest-agent-workflow` checkout.
 
