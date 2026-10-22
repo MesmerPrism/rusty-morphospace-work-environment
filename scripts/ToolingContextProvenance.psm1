@@ -126,6 +126,138 @@ function Assert-MorphospaceToolingContextLocalObservation {
     Assert-MorphospaceToolingContextHistoricalObservation -Context $context -WorkspaceRoot $WorkspaceRoot|Out-Null;$true
 }
 
+
+function New-MorphospaceToolingContextResolver {
+    [CmdletBinding()]param(
+        [Parameter(Mandatory)][string]$WorkspaceRoot,
+        [Parameter(Mandatory)][string]$ContextId,
+        [Parameter(Mandatory)][string]$ExecutorRoot,
+        [Parameter(Mandatory)][string]$SnapshotRoot,
+        [Parameter(Mandatory)][string[]]$RepositoryRoots,
+        [Parameter(Mandatory)][object[]]$Routers,
+        [Parameter(Mandatory)][object[]]$RouterLocations,
+        [Parameter(Mandatory)][string]$ResolverPath,
+        [switch]$Execute
+    )
+    # This host authoring step precedes preparation. It neither edits a context
+    # nor changes the existing observed producer or its authority predicates.
+    $workspace=[IO.Path]::GetFullPath($WorkspaceRoot)
+    $relative=ConvertTo-MorphospaceProtocolRelativePath $ResolverPath
+    if($relative-cnotmatch'^local/'){throw 'New tooling resolver must be an ignored local/ binding.'}
+    if($ContextId-cnotmatch'^[a-z0-9][a-z0-9-]{1,127}$'){throw 'New tooling resolver context identity is invalid.'}
+    if(-not[IO.Path]::IsPathFullyQualified($ExecutorRoot)-or-not[IO.Directory]::Exists($ExecutorRoot)){throw 'New tooling resolver executor must be an existing absolute directory.'}
+    if(-not[IO.Path]::IsPathFullyQualified($SnapshotRoot)){throw 'Tooling router snapshot storage must be an explicit absolute retained directory.'}
+    $snapshotBase=[IO.Path]::GetFullPath($SnapshotRoot).TrimEnd('\','/')
+    $volume=[IO.Path]::GetPathRoot($snapshotBase)
+    if($snapshotBase.Length-le$volume.Length-or[IO.File]::Exists($snapshotBase)){throw 'Tooling router snapshot storage must be a retained directory below its filesystem root.'}
+    [void](ConvertTo-MorphospaceProtocolRelativePath ([IO.Path]::GetRelativePath($volume,$snapshotBase)))
+    Assert-MorphospaceNoReparseAncestor -Root $snapshotBase -Candidate $snapshotBase
+    if($RepositoryRoots.Count-eq0){throw 'Tooling router materialization requires the selected repository root locations.'}
+    $pathComparison=if([OperatingSystem]::IsWindows()){[StringComparison]::OrdinalIgnoreCase}else{[StringComparison]::Ordinal}
+    foreach($declared in @($RepositoryRoots)+@($workspace,$ExecutorRoot)){
+        if(-not[IO.Path]::IsPathFullyQualified($declared)){throw 'Tooling router repository root locations must be absolute.'}
+        $protected=[IO.Path]::GetFullPath($declared)
+        $protectedVolume=[IO.Path]::GetPathRoot($protected)
+        if($protected.Length-gt$protectedVolume.Length){$protected=$protected.TrimEnd('\','/')}
+        if($protected.Length-gt$protectedVolume.Length){[void](ConvertTo-MorphospaceProtocolRelativePath ([IO.Path]::GetRelativePath($protectedVolume,$protected)))}
+        Assert-MorphospaceNoReparseAncestor -Root $protected -Candidate $protected
+        if($snapshotBase.Equals($protected,$pathComparison)-or$snapshotBase.StartsWith($protected.TrimEnd('\','/')+[IO.Path]::DirectorySeparatorChar,$pathComparison)-or$protected.StartsWith($snapshotBase+[IO.Path]::DirectorySeparatorChar,$pathComparison)){throw 'Tooling router snapshot storage overlaps a declared repository, workspace or executor root.'}
+    }
+    $output=Resolve-MorphospaceWorkspacePath $workspace $relative
+    $locations=[Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach($row in $RouterLocations){
+        if(-not$locations.TryAdd([string]$row.skill_id,[string]$row.root)){throw 'New tooling resolver repeats a router location.'}
+    }
+    if($Routers.Count-eq0-or$locations.Count-ne$Routers.Count){throw 'New tooling resolver router and location sets differ.'}
+    $ids=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $files=[Collections.Generic.List[object]]::new()
+    foreach($router in @($Routers|Sort-Object -Property skill_id -CaseSensitive)){
+        $id=[string]$router.skill_id
+        if($id-cnotmatch'^[a-z0-9][a-z0-9-]{1,127}$'-or-not$ids.Add($id)-or-not$locations.ContainsKey($id)){throw 'New tooling resolver router identity is invalid, duplicated or unresolved.'}
+        $source=$locations[$id]
+        if(-not[IO.Path]::IsPathFullyQualified($source)-or-not[IO.Directory]::Exists($source)){throw 'New tooling resolver router source must be an existing absolute directory.'}
+        Assert-ToolingContextRouterLive $router $source
+        $paths=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        foreach($blob in @($router.managed_files)){
+            $path=ConvertTo-MorphospaceProtocolRelativePath ([string]$blob.path)
+            if(-not$paths.Add($path)){throw 'New tooling resolver repeats a managed file.'}
+        }
+        foreach($generated in @('.morphospace-skill-source.json','references/local-work-environment.json','references/local-meta-quest-playbooks.json')){
+            if($paths.Contains($generated)){throw 'New tooling resolver managed source collides with generated provenance.'}
+            $candidate=Resolve-MorphospaceWorkspacePath $source $generated
+            if([IO.File]::Exists($candidate)){[void]$paths.Add($generated)}
+        }
+        foreach($path in @($paths|Sort-Object -CaseSensitive)){
+            $absolute=Resolve-MorphospaceWorkspacePath $source $path -RequireLeaf
+            $bytes=[IO.File]::ReadAllBytes($absolute)
+            $files.Add([pscustomobject]@{path="$id/$path";source=$absolute;sha256=Get-MorphospaceSha256Bytes $bytes;bytes=$bytes})
+        }
+    }
+    # Include exact provenance and generated locator bytes, not unmanaged files.
+    $inventory=@($files|ForEach-Object{[pscustomobject][ordered]@{path=$_.path;sha256=$_.sha256}})
+    $digest=Get-MorphospaceCanonicalJsonSha256 $inventory
+    $snapshot=Resolve-MorphospaceWorkspacePath $snapshotBase $digest
+    if($relative.StartsWith('local/tooling-router-snapshots/',[StringComparison]::OrdinalIgnoreCase)){throw 'New tooling resolver cannot be written inside its router copy.'}
+    $resolver=[pscustomobject][ordered]@{
+        schema='rusty.morphospace.workflow.tooling_context_resolver.v1';context_id=$ContextId
+        executor_root=[IO.Path]::GetFullPath($ExecutorRoot)
+        routers=@($Routers|ForEach-Object{[pscustomobject][ordered]@{skill_id=[string]$_.skill_id;root=Join-Path $snapshot ([string]$_.skill_id)}})
+        status='resolved';does_not_prove=@('Locations and pre-seal managed copies only; no context upgrade, execution, acceptance or product authority.')
+    }
+    $resolverBytes=ConvertTo-MorphospaceProtocolJsonBytes $resolver
+    function Assert-SnapshotFiles([string]$Root){
+        $pending=[Collections.Generic.Queue[string]]::new();$pending.Enqueue($Root)
+        $actual=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        while($pending.Count){
+            foreach($entry in [IO.Directory]::EnumerateFileSystemEntries($pending.Dequeue())){
+                if(([IO.File]::GetAttributes($entry)-band[IO.FileAttributes]::ReparsePoint)-ne0){throw 'Tooling router copy contains a reparse point.'}
+                if([IO.Directory]::Exists($entry)){$pending.Enqueue($entry)}else{[void]$actual.Add([IO.Path]::GetRelativePath($Root,$entry).Replace('\','/'))}
+            }
+        }
+        if($actual.Count-ne$files.Count){throw 'Tooling router copy file set differs.'}
+        foreach($file in $files){
+            if(-not$actual.Contains([string]$file.path)){throw 'Tooling router copy file set differs.'}
+            $path=Resolve-MorphospaceWorkspacePath $Root ([string]$file.path) -RequireLeaf
+            if((Get-MorphospaceFileSha256 $path)-cne[string]$file.sha256){throw "Tooling router copy '$($file.path)' drifted."}
+        }
+    }
+    $exists=[IO.Directory]::Exists($snapshot)
+    if($exists){Assert-SnapshotFiles $snapshot}
+    if([IO.File]::Exists($output)-and(Get-MorphospaceFileSha256 $output)-cne(Get-MorphospaceSha256Bytes $resolverBytes)){throw 'New tooling resolver output already contains different bytes.'}
+    if(-not$Execute){return [pscustomobject]@{action='planned';resolver=[pscustomobject]@{path=$relative;sha256=Get-MorphospaceSha256Bytes $resolverBytes};router_root=$snapshot;executed=$false}}
+    $mutex=Enter-MorphospaceWorkspaceMutex $workspace
+    $stage=$null
+    try{
+        foreach($file in $files){if((Get-MorphospaceFileSha256 ([string]$file.source))-cne[string]$file.sha256){throw 'Tooling router source changed before materialization.'}}
+        foreach($router in $Routers){Assert-ToolingContextRouterLive $router $locations[[string]$router.skill_id]}
+        if([IO.File]::Exists($output)-and(Get-MorphospaceFileSha256 $output)-cne(Get-MorphospaceSha256Bytes $resolverBytes)){throw 'New tooling resolver output already contains different bytes.'}
+        if([IO.Directory]::Exists($snapshot)){Assert-SnapshotFiles $snapshot}else{
+            $stage=Resolve-MorphospaceWorkspacePath $snapshotBase ("staging-"+[guid]::NewGuid().ToString('N'))
+            [void][IO.Directory]::CreateDirectory($stage)
+            foreach($file in $files){
+                $destination=Resolve-MorphospaceWorkspacePath $stage ([string]$file.path)
+                [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($destination))
+                [IO.File]::WriteAllBytes($destination,[byte[]]$file.bytes)
+            }
+            Assert-SnapshotFiles $stage
+            foreach($file in $files){if((Get-MorphospaceFileSha256 ([string]$file.source))-cne[string]$file.sha256){throw 'Tooling router source changed before publication.'}}
+            [IO.Directory]::Move($stage,$snapshot);$stage=$null
+        }
+        $current=[IO.File]::Exists($output)
+        if(-not$current){Write-MorphospaceManagedProtocolJsonAtomic $workspace $relative $resolver -NoOverwrite}
+        [pscustomobject]@{action=$(if($current){'current'}else{'materialized'});resolver=[pscustomobject]@{path=$relative;sha256=Get-MorphospaceFileSha256 $output};router_root=$snapshot;executed=$true}
+    }finally{
+        try{
+            if($null-ne$stage-and[IO.Directory]::Exists($stage)){
+                # Only the new staging directory inside explicitly selected storage.
+                $checked=Resolve-MorphospaceWorkspacePath $snapshotBase ([IO.Path]::GetRelativePath($snapshotBase,$stage).Replace('\','/'))
+                if(-not$checked.Equals($stage,$pathComparison)){throw 'Router materialization staging identity changed.'}
+                Remove-Item -LiteralPath $stage -Recurse -Force
+            }
+        }finally{Exit-MorphospaceWorkspaceMutex $mutex}
+    }
+}
+
 function New-MorphospaceObservedToolingContext {
     [CmdletBinding()]param([Parameter(Mandatory)][string]$WorkspaceRoot,[Parameter(Mandatory)][string]$ContextId,[Parameter(Mandatory)][string]$ProjectId,[Parameter(Mandatory)][string]$PreparationId,[Parameter(Mandatory)][object]$ProductProjection,[Parameter(Mandatory)][string]$ResolverPath,[Parameter(Mandatory)][object]$Executor,[Parameter(Mandatory)][object[]]$Routers,[Parameter(Mandatory)][object]$Compatibility)
     $workspace=[IO.Path]::GetFullPath($WorkspaceRoot);$relative=ConvertTo-MorphospaceProtocolRelativePath $ResolverPath;$absolute=Resolve-MorphospaceWorkspacePath $workspace $relative -RequireLeaf
@@ -148,4 +280,4 @@ function Assert-MorphospaceToolingContextLoadedOwnerModule {
     while($pending.Count){$module=$pending.Dequeue();if(-not$seen.Add($module)){continue};if([string]::IsNullOrEmpty([string]$module.Path)){continue};$path=[IO.Path]::GetFullPath([string]$module.Path);if(-not$path.StartsWith($prefix,$comparison)){continue};$relative=[IO.Path]::GetRelativePath($root,$path).Replace('\','/');$disk=[IO.File]::ReadAllText($path);if(-not[string]::Equals([string]$module.Definition,$disk,[StringComparison]::Ordinal)){throw "Loaded owner module '$relative' differs from the exact executor bytes on disk."};if(-not$closure.ContainsKey($relative)-or[string]$closure[$relative]-cne(Get-MorphospaceFileSha256 $path)){throw "Loaded owner module '$relative' differs from the tooling-context closure."};foreach($nested in @($module.NestedModules)){$pending.Enqueue($nested)}};$true
 }
 
-Export-ModuleMember -Function Get-MorphospaceToolingContextProtocolId,Get-MorphospaceToolingContextAllowedActions,Get-ToolingContextSha256,New-MorphospaceToolingContext,New-MorphospaceObservedToolingContext,Assert-MorphospaceToolingContext,Read-MorphospaceToolingContextResolver,Assert-MorphospaceToolingContextLocalObservation,Assert-MorphospaceToolingContextHistoricalObservation,Assert-MorphospaceToolingContextOwnerValidationEvidence,Test-MorphospaceToolingContextCompatibility,Assert-MorphospaceToolingContextLoadedOwnerModule
+Export-ModuleMember -Function New-MorphospaceToolingContextResolver,Get-MorphospaceToolingContextProtocolId,Get-MorphospaceToolingContextAllowedActions,Get-ToolingContextSha256,New-MorphospaceToolingContext,New-MorphospaceObservedToolingContext,Assert-MorphospaceToolingContext,Read-MorphospaceToolingContextResolver,Assert-MorphospaceToolingContextLocalObservation,Assert-MorphospaceToolingContextHistoricalObservation,Assert-MorphospaceToolingContextOwnerValidationEvidence,Test-MorphospaceToolingContextCompatibility,Assert-MorphospaceToolingContextLoadedOwnerModule
