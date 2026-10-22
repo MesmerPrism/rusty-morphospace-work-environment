@@ -5271,6 +5271,45 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
         param($Artifacts,$Phase,$Binding,$Source,$PlanSha256,$SchemaPath)
         Assert-MorphospaceAffectedCheckPhaseArtifactSet -Artifacts $Artifacts -Phase $Phase -ExpectedBinding $Binding -ExpectedSource $Source -ExpectedPlanSha256 $PlanSha256 -PhaseReceiptSchemaPath $SchemaPath
     } @($fixtureContractArtifacts.ToArray()) $fixtureContractPhase $fixtureContractExpectedBinding $fixtureContractExpectedSource $fixtureContractPlanSha256 (Join-Path $repoRoot 'schemas/affected-validation-self-test-phase-receipt-v1.schema.json'))
+    $fixtureContractSchemaPath = Join-Path $repoRoot 'schemas/affected-validation-self-test-phase-receipt-v1.schema.json'
+    # BudgetSeconds is an estimate unless the producer enforces a
+    # timeout. Genuine completion beyond it must retain exact chronology.
+    $advisoryPhaseArtifacts = [Collections.Generic.List[object]]::new()
+    foreach ($phaseArtifact in @($fixtureContractArtifacts.ToArray())) {
+        [byte[]]$phaseBytes = [byte[]]([byte[]]$phaseArtifact.bytes).Clone()
+        if ([string]$phaseArtifact.path -cin @('trust-self-executor.start.json','trust-self-executor.terminal.json')) {
+            $advisoryDocument = [Text.UTF8Encoding]::new($false,$true).GetString($phaseBytes) | ConvertFrom-Json -Depth 64 -DateKind String
+            $advisoryDocument.budget_seconds = 1; $advisoryDocument.started_at = '2026-09-01T00:00:00Z'
+            if ([string]$phaseArtifact.path -ceq 'trust-self-executor.terminal.json') { $advisoryDocument.ended_at = '2026-09-01T00:00:03Z'; $advisoryDocument.elapsed_ms = 3000 }
+            $phaseBytes = [Text.UTF8Encoding]::new($false).GetBytes((ConvertTo-MorphospaceCanonicalJson -Value $advisoryDocument) + "`n")
+        }
+        $advisoryPhaseArtifacts.Add([pscustomobject][ordered]@{path=[string]$phaseArtifact.path;bytes=$phaseBytes})
+    }
+    [void](& $fixtureContractEvidenceModule { param($Artifacts,$Binding,$Source,$PlanSha256,$SchemaPath) Assert-MorphospaceAffectedCheckPhaseArtifactSet -Artifacts $Artifacts -Phase 'trust-self-executor' -ExpectedBinding $Binding -ExpectedSource $Source -ExpectedPlanSha256 $PlanSha256 -PhaseReceiptSchemaPath $SchemaPath } @($advisoryPhaseArtifacts.ToArray()) $fixtureContractExpectedBinding $fixtureContractExpectedSource $fixtureContractPlanSha256 $fixtureContractSchemaPath)
+    foreach ($damage in @('elapsed-mismatch','start-budget','budget-range','enforced-timeout','nonzero-exit','forged-timeout','forged-exit')) {
+        $damagedAdvisoryArtifacts = [Collections.Generic.List[object]]::new()
+        foreach ($phaseArtifact in @($advisoryPhaseArtifacts.ToArray())) {
+            [byte[]]$phaseBytes = [byte[]]([byte[]]$phaseArtifact.bytes).Clone()
+            if ([string]$phaseArtifact.path -cin @('trust-self-executor.start.json','trust-self-executor.terminal.json')) {
+                $damageDocument = [Text.UTF8Encoding]::new($false,$true).GetString($phaseBytes) | ConvertFrom-Json -Depth 64 -DateKind String
+                if ($damage -ceq 'budget-range') { $damageDocument.budget_seconds = 601 }
+                if ([string]$phaseArtifact.path -ceq 'trust-self-executor.start.json' -and $damage -ceq 'start-budget') { $damageDocument.budget_seconds = 2 }
+                if ([string]$phaseArtifact.path -ceq 'trust-self-executor.terminal.json') {
+                    if ($damage -ceq 'elapsed-mismatch') { $damageDocument.elapsed_ms = 5001 }
+                    if ($damage -ceq 'enforced-timeout') { $damageDocument.result = 'code-fail'; $damageDocument.child.timed_out = $true; $damageDocument.child.exit_code = $null }
+                    if ($damage -ceq 'nonzero-exit') { $damageDocument.result = 'code-fail'; $damageDocument.child.exit_code = 17 }
+                    if ($damage -ceq 'forged-timeout') { $damageDocument.child.timed_out = $true }
+                    if ($damage -ceq 'forged-exit') { $damageDocument.child.exit_code = 17 }
+                }
+                $phaseBytes = [Text.UTF8Encoding]::new($false).GetBytes((ConvertTo-MorphospaceCanonicalJson -Value $damageDocument) + "`n")
+            }
+            $damagedAdvisoryArtifacts.Add([pscustomobject][ordered]@{path=[string]$phaseArtifact.path;bytes=$phaseBytes})
+        }
+        $expectedDamage = switch ($damage) { 'elapsed-mismatch' { '*chronology or budget*' } 'start-budget' { '*terminal timing contract*' } 'budget-range' { '*schema*' } 'forged-timeout' { '*schema*' } 'forged-exit' { '*schema*' } default { '*identity or result*' } }
+        Assert-AffectedThrows { [void](& $fixtureContractEvidenceModule { param($Artifacts,$Binding,$Source,$PlanSha256,$SchemaPath) Assert-MorphospaceAffectedCheckPhaseArtifactSet -Artifacts $Artifacts -Phase 'trust-self-executor' -ExpectedBinding $Binding -ExpectedSource $Source -ExpectedPlanSha256 $PlanSha256 -PhaseReceiptSchemaPath $SchemaPath } @($damagedAdvisoryArtifacts.ToArray()) $fixtureContractExpectedBinding $fixtureContractExpectedSource $fixtureContractPlanSha256 $fixtureContractSchemaPath) } $expectedDamage "Advisory phase-artifact reader accepted $damage damage."
+    }
+    Write-Host 'Phase-artifact advisory completion and strict timing/outcome damage controls passed.'
+
     Remove-Item -LiteralPath $fixtureContractProjectionPath -Force
     Remove-Item -LiteralPath $fixtureContractPhaseRoot -Recurse -Force
     Write-Host "Schema-valid fixture phase receipt and artifact-set contract passed in $([long]$phaseArtifactClock.Elapsed.TotalMilliseconds)ms."

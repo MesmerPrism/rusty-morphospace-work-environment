@@ -381,7 +381,8 @@ function Assert-MorphospaceAffectedCheckPhaseArtifactSet {
         $endedAt=[DateTimeOffset]::ParseExact([string]$terminal.ended_at,'yyyy-MM-ddTHH:mm:ssZ',[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::AssumeUniversal)
     } catch { throw 'Affected check phase terminal chronology is invalid.' }
     $serializedElapsed=[long]($endedAt-$startedAt).TotalMilliseconds
-    if($serializedElapsed-lt 0 -or [Math]::Abs($serializedElapsed-[long]$terminal.elapsed_ms)-gt 1000 -or [long]$terminal.elapsed_ms-gt(([long]$terminal.budget_seconds*1000)+1000)){throw 'Affected check phase terminal chronology or budget is invalid.'}
+    # The producer records advisory estimates; enforced timeout remains a failed outcome.
+    if($serializedElapsed-lt 0 -or [Math]::Abs($serializedElapsed-[long]$terminal.elapsed_ms)-gt 1000){throw 'Affected check phase terminal chronology or budget is invalid.'}
     if([string]$terminal.child.stdout.path-cne$stdoutPath -or [string]$terminal.child.stderr.path-cne$stderrPath){throw 'Affected check phase terminal stream paths are invalid.'}
     $expectedPaths=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach($path in @($startPath,$stdoutPath,$stderrPath,$terminalPath)){[void]$expectedPaths.Add($path)}
