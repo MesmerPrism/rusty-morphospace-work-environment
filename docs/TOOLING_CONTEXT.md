@@ -7,7 +7,36 @@ current product source/map/feature projection, the complete tracked executor tre
 the exact clean Git commit/tree/remote, installed router provenance, and passing
 owner affected-validation evidence for the same executor revision.
 
-For a new local context, use `New-MorphospaceObservedToolingContext` with the
+For a new local context, first author its ignored resolver with
+`New-MorphospaceToolingContextResolver` from
+`scripts/ToolingContextProvenance.psm1`. This host-only step verifies the
+declared exact managed router set and copies its managed files, provenance and
+known generated locators into one content-addressed parent beneath
+`local/tooling-router-snapshots/`. Unmanaged contributor files are not copied.
+It plans without writes by default; `-Execute` publishes verified copies and
+a no-overwrite resolver. Exact existing copies are reusable; altered, partial
+or conflicting output is refused rather than repaired.
+
+The ordinary new-context route selects those copies, rather than the mutable
+global skill installation. A subsequent normal host guidance Update then cannot
+replace this context's selected managed files. Retain its selected executor and
+source checkouts: copies do not materialize or upgrade them. Generated locators
+are copied byte-exact, not rebound to a newer source. This adds no permission to
+edit an existing resolver or context. A context already pointing at a global
+installation still correctly refuses its drift and needs its existing supported
+consumer selection/upgrade route.
+
+`New-MorphospaceToolingContextResolver` accepts `WorkspaceRoot`,
+`ContextId`, `ExecutorRoot`, exact portable `Routers`,
+`RouterLocations` (`skill_id`/absolute `root` rows), and
+`ResolverPath` under ignored `local/`. Use its returned
+`resolver` path/hash in the preparation descriptor before hashing that
+request. Its `router_root` is the shared parent for context-bound installer
+Verify. This authoring command neither executes a lifecycle transition nor
+installs host skills; it changes no context schema, fingerprint, live observation,
+compatibility or loaded-owner predicate.
+
+Then use `New-MorphospaceObservedToolingContext` with the
 selected workspace and resolver. `New-MorphospaceToolingContext` constructs and
 validates a portable value only; it does not observe a checkout. The observed
 producer requires exact clean Git identity and raw closure hashes, then checks

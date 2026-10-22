@@ -138,7 +138,15 @@ A fresh ordinary request may opt into `tooling_context`. The descriptor names a
 portable context artifact, an ignored `local/` resolver-map binding, exact
 executor metadata and a finite closed import closure, exact managed-router
 records/files, and the fixed `tooling-context-v1` compatibility protocol.
-Preparation observes a clean executor HEAD/tree/origin and the installed router
+Before authoring and hashing the request, use
+`New-MorphospaceToolingContextResolver` from the
+[tooling owner](TOOLING_CONTEXT.md) to select verified context-local managed
+router copies. Its returned `resolver` is the descriptor's exact path/hash.
+Plan is read-only; explicit `-Execute` materializes these ignored host
+inputs before preparation. Do not point new contexts at an installation that
+ordinary host guidance updates will replace.
+
+Preparation observes a clean executor HEAD/tree/origin and the selected router
 files through that resolver. The executor root must be the checkout actually
 running preparation and the closure must contain the preparation module.
 Preparation never installs or updates tooling.

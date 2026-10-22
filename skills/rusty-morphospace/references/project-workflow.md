@@ -19,6 +19,12 @@ replace immutable unit, event, or receipt evidence. Work only inside the
 intersection of project and current-unit repositories and paths. Preserve
 dirty, detached, divergent, blocked, interrupted, and historical state.
 
+For new tooling contexts, use
+`<work-environment>/docs/TOOLING_CONTEXT.md` and its supported
+`New-MorphospaceToolingContextResolver` before sealing preparation.
+It selects context-local managed copies so host guidance updates remain
+independent. Never rewrite an existing resolver to follow an installation.
+
 For ordinary continuation, use
 `<work-environment>/docs/CURRENT_WORK_VALIDATION.md`: preserve
 the authenticated current suffix and explicit prerequisites, and do not retrofit
