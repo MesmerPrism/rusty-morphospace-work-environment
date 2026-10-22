@@ -44,6 +44,35 @@ Host compilation requires only the relevant build-root coordination. Acquire
 the exact headset claim immediately before an install, launch, or device
 observation. A warm build does not authorize a device mutation.
 
+### Quest-owned source provider for local iteration
+
+An optional `preflight.source_composition.provider_document` contains exactly
+`path`, `sha256`, `provider_binding_id` and `provider_module_sha256`. The path is
+an absolute local JSON file with the Quest-owned
+`rusty.quest.apk_source_composition.v1` or `v2` composition. The selected existing
+environment directory binding supplies only the fixed
+`tools/lib/SourceComposition.psm1` module and its fixed
+`Assert-QuestBuildSourceCompositionCurrent -Composition` export. It cannot name
+an arbitrary script, export or command line.
+
+The runner holds and authenticates the raw document and module, joins every
+bound Git directory and the executing SourceRoot to unique composition roots
+and exact commit/tree identities, then invokes Quest's assertion under the
+selected build context before dispatch and after the child naturally closes.
+Quest owns fingerprint and overlay verification; WEF does not reproduce that
+algorithm or treat a returned Boolean as authority. The primary Quest root is
+`rusty-quest`/`primary`; an application-owned executing root uses
+`app-owned-input`.
+
+Only the `warm` output lane with Boolean `source.require_clean=false` permits
+authenticated working-tree overlays on those matching roots. Candidate and
+clean-required profiles remain clean. Profiles without a provider retain the
+existing source/environment checks. The existing binding and source-composition
+payload retain the provider reference, module hash and actual fingerprint. A
+post-child provider failure makes the wrapper fail while preserving the actual
+child exit, raw streams and original failure reason. These facts do not confer
+qualification, acceptance, publication or device authority.
+
 ### Select an accepted build executor
 
 Use `scripts/New-QuestBuildExecutorSelection.ps1` when a caller needs a retained

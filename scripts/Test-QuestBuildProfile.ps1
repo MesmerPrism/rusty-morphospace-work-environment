@@ -1,4 +1,4 @@
-param([string]$RepoRoot = "", [string]$SeedContextPath = "", [string]$SeedContextSha256 = "")
+param([string]$RepoRoot = "", [string]$SeedContextPath = "", [string]$SeedContextSha256 = "", [switch]$ProviderOnly)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -254,6 +254,113 @@ function New-PrivacySeedContext {
     return [pscustomobject]@{Path=$path;Sha256=(Get-Sha $path)}
 }
 
+function Invoke-ProviderControls {
+    # This transport fixture models the Quest assertion API. The Quest owner
+    # tests its canonical fingerprint/overlay algorithm; WEF must not copy it.
+    $modulePath=Join-Path $externalSourceRoot 'tools/lib/SourceComposition.psm1'
+    Write-Utf8 $modulePath @'
+function Assert-QuestBuildSourceCompositionCurrent {
+ param($Composition,[switch]$AllowWorkingTreeChanges)
+ if($Composition.fingerprint -cne ('f'*64)){throw 'MODELED provider fingerprint differs'}
+ foreach($row in $Composition.repositories){
+  if((-not $row.tracked_worktree_clean)-and-not $AllowWorkingTreeChanges){throw 'MODELED provider requires clean sources'}
+  $marker=if($row.repository_id-ceq'rusty-quest'){'qfm-marker.txt'}else{'AndroidManifest.xml'}
+  if(-not $row.tracked_worktree_clean-and(Get-FileHash -LiteralPath (Join-Path $row.repository $marker) -Algorithm SHA256).Hash.ToLowerInvariant()-cne$row.worktree_overlay_sha256){throw 'MODELED provider overlay drift'}
+ }
+}
+Export-ModuleMember -Function Assert-QuestBuildSourceCompositionCurrent
+'@
+    & git -C $externalSourceRoot add tools/lib/SourceComposition.psm1
+    & git -C $externalSourceRoot commit -qm 'MODELED fixed provider API fixture'
+    $qr=((& git -C $externalSourceRoot rev-parse HEAD)-join '').Trim()
+    $qt=((& git -C $externalSourceRoot rev-parse 'HEAD^{tree}')-join '').Trim()
+    $pr=((& git -C $testRoot rev-parse HEAD)-join '').Trim()
+    $pt=((& git -C $testRoot rev-parse 'HEAD^{tree}')-join '').Trim()
+    $manifest=Join-Path $testRoot 'AndroidManifest.xml';$qm=Join-Path $externalSourceRoot 'qfm-marker.txt'
+    $savedManifest=[IO.File]::ReadAllBytes($manifest);$savedQm=[IO.File]::ReadAllBytes($qm)
+    $providerPath=Join-Path $profileRoot 'quest-provider.json'
+    $bindingPath=Join-Path $profileRoot 'provider-bindings.json'
+    $binding=[ordered]@{schema='rusty.morphospace.local_quest_build_environment.v1';bindings=@([ordered]@{id='quest-root';path=$externalSourceRoot;kind='directory';git_revision=$qr;git_tree=$qt})}
+    Write-Utf8 $bindingPath ($binding|ConvertTo-Json -Depth 20)
+    $p=New-Profile
+    $p.environment=[ordered]@{QUEST_ROOT='quest-root'}
+    $p.preflight.source_composition=[ordered]@{source=[ordered]@{git_revision=$pr;git_tree=$pt;require_clean=$false};external_sources=@([ordered]@{source_id='rusty-quest';binding_id='quest-root';git_revision=$qr;git_tree=$qt});provider_document=[ordered]@{path=$providerPath;sha256='0'*64;provider_binding_id='quest-root';provider_module_sha256=Get-Sha $modulePath}}
+    $options=@{EnvironmentBindingsPath=$bindingPath;EnvironmentBindingsSha256=Get-Sha $bindingPath}
+    if($SeedContextPath){$options.BuildContextPath=$SeedContextPath;$options.BuildContextSha256=$SeedContextSha256}
+    try {
+        Write-Utf8 $manifest '<manifest package="example.fixture" /><!-- local iteration -->'
+        Write-Utf8 $qm 'local Quest iteration'
+        $doc=[ordered]@{schema='rusty.quest.apk_source_composition.v2';fingerprint='f'*64;packages=@('MODELED-transport');repositories=@(
+            [ordered]@{repository_id='rusty-quest';role='primary';repository=$externalSourceRoot;commit=$qr;tree=$qt;tracked_worktree_clean=$false;worktree_overlay_sha256=Get-Sha $qm},
+            [ordered]@{repository_id='private-fixture';role='app-owned-input';repository=$testRoot;commit=$pr;tree=$pt;tracked_worktree_clean=$false;worktree_overlay_sha256=Get-Sha $manifest})}
+        Write-Utf8 $providerPath ($doc|ConvertTo-Json -Depth 20)
+        $p.preflight.source_composition.provider_document.sha256=Get-Sha $providerPath
+        $positive=Invoke-Runner Preflight (Write-Profile $p) @options
+        Assert-Terminal $positive preflight passed 0
+        Assert-True ($positive.Result.owner_payload.source_composition.provider_document.fingerprint-ceq$doc.fingerprint) 'Provider identity missing from bound source evidence.'
+        # Two legitimate build inputs can refer to one canonical provider row.
+        $aliasBinding=$binding|ConvertTo-Json -Depth 20|ConvertFrom-Json -AsHashtable -Depth 20
+        $aliasBinding.bindings+=@([ordered]@{id='native-quest-root';path=$externalSourceRoot;kind='directory';git_revision=$qr;git_tree=$qt})
+        $aliasPath=Join-Path $profileRoot 'alias-bindings.json';Write-Utf8 $aliasPath ($aliasBinding|ConvertTo-Json -Depth 20)
+        $aliasProfile=$p|ConvertTo-Json -Depth 20|ConvertFrom-Json -AsHashtable -Depth 20
+        $aliasProfile.environment.NATIVE_QUEST_ROOT='native-quest-root'
+        $aliasProfile.preflight.source_composition.external_sources+=@([ordered]@{source_id='native-quest';binding_id='native-quest-root';git_revision=$qr;git_tree=$qt})
+        $aliasOptions=$options.Clone();$aliasOptions.EnvironmentBindingsPath=$aliasPath;$aliasOptions.EnvironmentBindingsSha256=Get-Sha $aliasPath
+        Assert-Terminal (Invoke-Runner Preflight (Write-Profile $aliasProfile) @aliasOptions) preflight passed 0
+        $goodJson=$doc|ConvertTo-Json -Depth 20
+        $goodProfile=$p|ConvertTo-Json -Depth 20
+        foreach($damage in @('document-hash','module-hash','missing-binding','no-bindings','duplicate-id','duplicate-root','wrong-base','unmatched-root','wrong-primary','fingerprint','candidate','require-clean')) {
+            $bad=$goodProfile|ConvertFrom-Json -AsHashtable -Depth 30
+            $badDoc=$goodJson|ConvertFrom-Json -AsHashtable -Depth 30
+            switch($damage) {
+                'document-hash' {$bad.preflight.source_composition.provider_document.sha256='0'*64}
+                'module-hash' {$bad.preflight.source_composition.provider_document.provider_module_sha256='0'*64}
+                'missing-binding' {$bad.preflight.source_composition.provider_document.provider_binding_id='absent'}
+                'no-bindings' {$bad.environment=[ordered]@{}}
+                'duplicate-id' {$badDoc.repositories[1].repository_id='rusty-quest'}
+                'duplicate-root' {$badDoc.repositories[1].repository=$externalSourceRoot}
+                'wrong-base' {$badDoc.repositories[1].commit='0'*40}
+                'unmatched-root' {$badDoc.repositories[1].repository=$profileRoot}
+                'wrong-primary' {$badDoc.repositories[0].role='path-dependency'}
+                'fingerprint' {$badDoc.fingerprint='0'*64}
+                'candidate' {$bad.preflight.output.lane='candidate';$bad.preflight.output.collision_policy='content-addressed';$bad.artifact.relative_path='out/candidate-{content_sha256}.apk'}
+                'require-clean' {$bad.preflight.source_composition.source.require_clean=$true}
+            }
+            Write-Utf8 $providerPath ($badDoc|ConvertTo-Json -Depth 20)
+            if($damage-cne'document-hash'){$bad.preflight.source_composition.provider_document.sha256=Get-Sha $providerPath}
+            if($damage-ceq'no-bindings') {
+                $noBindingOptions=$options.Clone();$noBindingOptions.Remove('EnvironmentBindingsPath');$noBindingOptions.Remove('EnvironmentBindingsSha256')
+                Assert-Terminal (Invoke-Runner Preflight (Write-Profile $bad) @noBindingOptions) preflight contradiction 2
+            } else {Assert-Terminal (Invoke-Runner Preflight (Write-Profile $bad) @options) preflight contradiction 2}
+        }
+        Write-Utf8 $providerPath $goodJson
+        $p.preflight.source_composition.provider_document.sha256=Get-Sha $providerPath
+        $moduleBytes=[IO.File]::ReadAllBytes($modulePath)
+        try {
+            Write-Utf8 $modulePath 'function Other-Export {}; Export-ModuleMember -Function Other-Export'
+            $p.preflight.source_composition.provider_document.provider_module_sha256=Get-Sha $modulePath
+            Assert-Terminal (Invoke-Runner Preflight (Write-Profile $p) @options) preflight contradiction 2
+        } finally {[IO.File]::WriteAllBytes($modulePath,$moduleBytes)}
+        $p.preflight.source_composition.provider_document.provider_module_sha256=Get-Sha $modulePath
+        foreach($exit in @(0,13)) {
+            $p.arguments=@("out/provider-$exit.apk",'-ProviderMarker',$qm,'-ExitCode',[string]$exit)
+            $p.artifact.relative_path="out/provider-$exit.apk"
+            $invocation=Invoke-Runner Build (Write-Profile $p) @options -Receipt (Join-Path $profileRoot "provider-$exit.receipt.json") -Retained
+            Assert-True ($invocation.ExitCode-eq1-and$invocation.Result.child_process.started-and$invocation.Result.child_process.exit_code-eq$exit-and$invocation.Result.reason_codes-ccontains'source-provider-drift') 'Post-child provider drift discarded or relabeled actual child evidence.'
+            Assert-True ($invocation.Result.streams.captured-and$invocation.Result.child_process.raw_capture_complete-and$invocation.Result.child_process.process_reaped) 'Provider drift lost retained child raw closure.'
+            if($exit-eq13){Assert-True ($invocation.Result.reason_codes-ccontains'child-exit-nonzero') 'Provider drift masked original child failure.'}
+            Write-Utf8 $qm 'local Quest iteration'
+        }
+        Write-Host 'MODELED provider transport: authenticated local source/external dirt accepted.'
+    } finally {
+        [IO.File]::WriteAllBytes($manifest,$savedManifest);[IO.File]::WriteAllBytes($qm,$savedQm)
+        foreach($relative in @('out/provider-0.apk','out/provider-13.apk','captured.txt')) {
+            $owned=Join-Path $testRoot $relative
+            if(Test-Path -LiteralPath $owned -PathType Leaf){Remove-Item -LiteralPath $owned -Force}
+        }
+    }
+}
+
 try {
     New-Item -ItemType Directory -Path (Join-Path $testRoot "out") -Force | Out-Null
     Write-Utf8 (Join-Path $testRoot "AndroidManifest.xml") "<manifest package=\"example.fixture\" />`n"
@@ -263,7 +370,9 @@ param(
     [string]$Output,
     [string]$Text = "",
     [switch]$Large,
-    [switch]$Sleep
+    [switch]$Sleep,
+    [string]$ProviderMarker='',
+    [int]$ExitCode=0
 )
 if ($Sleep) { [Threading.Thread]::Sleep(5000) }
 if ($Large) {
@@ -278,6 +387,8 @@ $outputParent = Split-Path -Parent $outputPath
 if (-not (Test-Path -LiteralPath $outputParent)) { New-Item -ItemType Directory -Path $outputParent -Force | Out-Null }
 [System.IO.File]::WriteAllBytes($outputPath, [byte[]](1, 2, 3, 4))
 [System.IO.File]::WriteAllText((Join-Path $PSScriptRoot "captured.txt"), "output=$Output|text=$Text|pager=$env:GIT_PAGER", [System.Text.UTF8Encoding]::new($false))
+if($ProviderMarker){[IO.File]::WriteAllText($ProviderMarker,'MODELED post-child source drift')}
+exit $ExitCode
 '@
     & git -C $testRoot init -q
     & git -C $testRoot config user.email "fixture@example.invalid"
@@ -311,6 +422,10 @@ if (-not (Test-Path -LiteralPath $outputParent)) { New-Item -ItemType Directory 
     $externalTree = ((& git -C $externalSourceRoot rev-parse "HEAD^{tree}") -join "").Trim()
     $sourceRevision = ((& git -C $testRoot rev-parse HEAD) -join "").Trim()
     $sourceTree = ((& git -C $testRoot rev-parse "HEAD^{tree}") -join "").Trim()
+    Invoke-ProviderControls
+    if($ProviderOnly){return}
+    $externalRevision = ((& git -C $externalSourceRoot rev-parse HEAD) -join "").Trim()
+    $externalTree = ((& git -C $externalSourceRoot rev-parse "HEAD^{tree}") -join "").Trim()
     $environmentBindingsPath = Join-Path $profileRoot "environment-bindings.json"
     $environmentBindings = [ordered]@{
         schema = "rusty.morphospace.local_quest_build_environment.v1"
@@ -591,6 +706,11 @@ exit 13
         $fullProfileRoot = [System.IO.Path]::GetFullPath($profileRoot)
         if (-not $fullProfileRoot.StartsWith($tempRoot, [System.StringComparison]::OrdinalIgnoreCase)) { throw "Refusing to clean a profile path outside the system temporary directory." }
         Remove-Item -LiteralPath $fullProfileRoot -Recurse -Force
+    }
+    if(Test-Path -LiteralPath $externalSourceRoot) {
+        $externalFull=[IO.Path]::GetFullPath($externalSourceRoot)
+        if([IO.Path]::GetDirectoryName($externalFull)-cne[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\','/')){throw 'Unsafe external fixture cleanup root.'}
+        Remove-Item -LiteralPath $externalFull -Recurse -Force
     }
 }
 # One declared affected check covers the unchanged legacy corpus and the
