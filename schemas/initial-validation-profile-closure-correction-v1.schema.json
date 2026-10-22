@@ -1,0 +1,189 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/initial-validation-profile-closure-correction-v1.schema.json",
+  "title": "Exact initial validation profile closure correction",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "correction_id",
+    "project_id",
+    "unit_id",
+    "reason",
+    "expected",
+    "additions",
+    "does_not_prove"
+  ],
+  "properties": {
+    "schema": {
+      "const": "rusty.morphospace.workflow.initial_validation_profile_closure_correction.v1"
+    },
+    "correction_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,95}$"
+    },
+    "project_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,127}$"
+    },
+    "unit_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,127}$"
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "expected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "current_unit",
+        "project_revision",
+        "feature_lock_revision",
+        "plan_revision",
+        "feature_lock_generated_at",
+        "events_sha256",
+        "events_length",
+        "event_tail_id",
+        "source_composition",
+        "project_sha256",
+        "project_raw_sha256",
+        "feature_lock_sha256",
+        "feature_lock_raw_sha256",
+        "state_sha256",
+        "state_raw_sha256",
+        "unit_sha256",
+        "unit_raw_sha256"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "active",
+            "validating"
+          ]
+        },
+        "current_unit": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{1,127}$"
+        },
+        "project_revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "feature_lock_revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "plan_revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "feature_lock_generated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "events_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "events_length": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "event_tail_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{1,127}$"
+        },
+        "source_composition": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "path",
+            "sha256"
+          ],
+          "properties": {
+            "path": {
+              "type": "string",
+              "pattern": "^source-compositions/[a-zA-Z0-9._/-]+\\.json$"
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        },
+        "project_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "project_raw_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "feature_lock_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "feature_lock_raw_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "state_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "state_raw_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "unit_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "unit_raw_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "additions": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "profile_id",
+          "commands"
+        ],
+        "properties": {
+          "profile_id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{1,127}$"
+          },
+          "commands": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "does_not_prove": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  }
+}

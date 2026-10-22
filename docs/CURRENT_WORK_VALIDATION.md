@@ -81,6 +81,36 @@ case when a current validator diagnostic or explicit history task names it.
 
 ## Authenticated history and recovery cases
 
+An authentic initial unit can be `active`, or `validating` before any recorded
+validation, while an older Ready/Claim owner allowed a validation profile ID
+absent from `project.spec.json`. `CorrectInitialValidationProfileClosure` adds
+only that immutable unit's exact missing profile IDs and ordinal-deduplicated
+literal commands. It never runs those strings or infers passing evidence from
+them. Existing project profiles, the raw unit, source lock, status and committed
+ledger prefix remain unchanged. Project/feature-lock revisions and the workspace
+registry advance together through the existing v6 raw-preimage transaction.
+
+Use `Invoke-WorkUnitAutomation.ps1 -Action CorrectInitialValidationProfileClosure`
+with `-WorkspaceRoot`, `-UnitId`, `-InitialValidationProfileCorrectionPath` and
+the exact workspace `-OutPath receipts/<correction-id>.json`. The closed request
+schema binds current canonical/raw project, lock, state and unit hashes,
+revisions, original feature-lock timestamp, exact source-lock path/raw hash and
+ledger hash/length/tail. Supply the dry-run request hash through
+`-ExpectedInitialValidationProfileCorrectionSha256` for `-Execute`. An exact
+interrupted transaction uses existing authenticated repair; changed inputs or an
+unrelated pending transaction refuse. Historical reads authenticate the same
+additive projection through genuine later continuation.
+
+This standalone initial-owner action excludes admitted, frozen, accepted or
+checkpointed owners, bound tooling contexts, queued successors, blockers and
+pending publication. It does not expand an old context's fixed allowed-action
+protocol. Do not rewrite a claimed unit or use admission, retirement or a false
+acceptance to repair an initial project omission. Fresh Ready and Claim now
+refuse only unknown validation profile IDs with `validation-profile-unknown`;
+known IDs do not impose global equality between unit and project commands.
+Other claim advisories and existing idempotent owner continuations keep their
+existing meanings.
+
 Supersession-origin retirement preserves authenticated historical instruction
 repository observations, including recorded dirt, through its existing narrow
 observation projection. It still verifies the original receipt and its exact
