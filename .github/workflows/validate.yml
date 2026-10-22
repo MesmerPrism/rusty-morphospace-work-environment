@@ -204,33 +204,72 @@ jobs:
             $failure = $_
             if ([string]$_.Exception.Data['AffectedCacheFinalized'] -ceq 'true') { $inventorySha256 = [string]$_.Exception.Data['AffectedInventorySha256'] }
           }
-          if ($null -eq $failure -and -not (Test-Path -LiteralPath $evidencePath -PathType Leaf)) {
-            $failure = [Management.Automation.ErrorRecord]::new([IO.InvalidDataException]::new('Affected-validation executor returned without its required aggregate evidence.'),'AffectedValidationMissingEvidence',[Management.Automation.ErrorCategory]::InvalidData,$evidencePath)
-          }
-          if (-not (Test-Path -LiteralPath $evidencePath -PathType Leaf)) {
-            $message = if ($null -eq $failure) { 'Linux union returned without typed evidence.' } else { [string]$failure.Exception.Message }
-            if ($message.Length -gt 2048) { $message = $message.Substring(0,2048) }
-            $diagnostic = [pscustomobject][ordered]@{schema='rusty.morphospace.diagnostic.affected_validation_pre_evidence_failure.v1';authority='non-authoritative-terminal-diagnostic';phase='single-linux';result='code-fail';failure=[pscustomobject][ordered]@{failure_kind='pre-evidence';exception_type=if($null-eq$failure){'InvalidOperationException'}else{$failure.Exception.GetType().FullName};exception_message=$message};claims=[pscustomobject][ordered]@{typed_aggregate_evidence_produced=$false;acceptance_authority=$false;publication_authority=$false}}
-            [byte[]]$bytes = [Text.UTF8Encoding]::new($false).GetBytes(($diagnostic | ConvertTo-Json -Depth 6 -Compress) + "`n")
-            if ($bytes.Length -gt 65536) { throw 'Bounded Linux union diagnostic exceeded 65536 bytes.' }
-            $path = Join-Path $env:RUNNER_TEMP 'affected-linux-direct-diagnostic.json'
-            $stream = [IO.File]::Open($path,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
-            try { $stream.Write($bytes,0,$bytes.Length) } finally { $stream.Dispose() }
-            'pre_evidence_failure=true' | Add-Content -LiteralPath $env:GITHUB_OUTPUT
-            if ($null -ne $failure) { throw $failure }
-            throw 'Linux union returned without typed evidence.'
-          }
-          $evidence = Get-Content -LiteralPath $evidencePath -Raw | ConvertFrom-Json -Depth 64
-          if (-not (Test-Json -Json (Get-Content -LiteralPath $evidencePath -Raw) -SchemaFile ./schemas/affected-validation-evidence-v1.schema.json -ErrorAction Stop)) { throw 'Direct Linux aggregate fails its closed schema.' }
-          $expectedIds = @($selected | ForEach-Object { [string]$_.check_id })
-          $actualIds = @($evidence.check_results | ForEach-Object { [string]$_.check_id })
-          if ([string]$evidence.repository -cne [string]$plan.repository -or [string]$evidence.base.commit -cne [string]$plan.base.commit -or [string]$evidence.base.tree -cne [string]$plan.base.tree -or [string]$evidence.head.commit -cne [string]$plan.head.commit -or [string]$evidence.head.tree -cne [string]$plan.head.tree -or [string]$evidence.plan_sha256 -cne [string]$plan.plan_sha256 -or [string]$evidence.platform -cne 'linux' -or ($expectedIds -join ',') -cne ($actualIds -join ',')) { throw 'Direct Linux aggregate differs from the exact selected union.' }
-          "evidence_sha256=$((Get-FileHash -LiteralPath $evidencePath -Algorithm SHA256).Hash.ToLowerInvariant())" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
-          'evidence_ready=true' | Add-Content -LiteralPath $env:GITHUB_OUTPUT
-          if ($inventorySha256 -match '^[0-9a-f]{64}$') {
-            $inventoryPath = Join-Path $currentRoot 'inventory.json'
-            if (-not (Test-Path -LiteralPath $inventoryPath -PathType Leaf) -or (Get-FileHash -LiteralPath $inventoryPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $inventorySha256) { throw 'Direct Linux cache inventory differs from the executor receipt.' }
-            'cache_ready=true' | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+          try {
+            if ($null -eq $failure -and -not (Test-Path -LiteralPath $evidencePath -PathType Leaf)) {
+              $failure = [Management.Automation.ErrorRecord]::new([IO.InvalidDataException]::new('Affected-validation executor returned without its required aggregate evidence.'),'AffectedValidationMissingEvidence',[Management.Automation.ErrorCategory]::InvalidData,$evidencePath)
+            }
+            if (-not (Test-Path -LiteralPath $evidencePath -PathType Leaf)) {
+              $message = if ($null -eq $failure) { 'Linux union returned without typed evidence.' } else { [string]$failure.Exception.Message }
+              if ($message.Length -gt 2048) { $message = $message.Substring(0,2048) }
+              $diagnostic = [pscustomobject][ordered]@{schema='rusty.morphospace.diagnostic.affected_validation_pre_evidence_failure.v1';authority='non-authoritative-terminal-diagnostic';phase='single-linux';result='code-fail';failure=[pscustomobject][ordered]@{failure_kind='pre-evidence';exception_type=if($null-eq$failure){'InvalidOperationException'}else{$failure.Exception.GetType().FullName};exception_message=$message};claims=[pscustomobject][ordered]@{typed_aggregate_evidence_produced=$false;acceptance_authority=$false;publication_authority=$false}}
+              [byte[]]$bytes = [Text.UTF8Encoding]::new($false).GetBytes(($diagnostic | ConvertTo-Json -Depth 6 -Compress) + "`n")
+              if ($bytes.Length -gt 65536) { throw 'Bounded Linux union diagnostic exceeded 65536 bytes.' }
+              $path = Join-Path $env:RUNNER_TEMP 'affected-linux-direct-diagnostic.json'
+              $stream = [IO.File]::Open($path,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+              try { $stream.Write($bytes,0,$bytes.Length) } finally { $stream.Dispose() }
+              'pre_evidence_failure=true' | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+              if ($null -ne $failure) { throw $failure }
+              throw 'Linux union returned without typed evidence.'
+            }
+            $evidenceRaw = Get-Content -LiteralPath $evidencePath -Raw
+            if (-not (Test-Json -Json $evidenceRaw -SchemaFile ./schemas/affected-validation-evidence-v1.schema.json -ErrorAction Stop)) { throw 'Direct Linux aggregate fails its closed schema.' }
+            $evidence = $evidenceRaw | ConvertFrom-Json -Depth 64
+            $expectedIds = @($selected | ForEach-Object { [string]$_.check_id })
+            $actualIds = @($evidence.check_results | ForEach-Object { [string]$_.check_id })
+            if ([string]$evidence.repository -cne [string]$plan.repository -or [string]$evidence.base.commit -cne [string]$plan.base.commit -or [string]$evidence.base.tree -cne [string]$plan.base.tree -or [string]$evidence.head.commit -cne [string]$plan.head.commit -or [string]$evidence.head.tree -cne [string]$plan.head.tree -or [string]$evidence.plan_sha256 -cne [string]$plan.plan_sha256 -or [string]$evidence.platform -cne 'linux') { throw 'Direct Linux aggregate source differs from the selected plan.' }
+            # Failed prerequisites retain blocked leaf receipts in the inventory, not
+            # aggregate execution rows. Every aggregate row must still be unique and
+            # follow the exact selected order; PASS must cover the complete union.
+            $seenIds = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+            $selectedIndex = 0
+            foreach ($id in $actualIds) {
+              if (-not $seenIds.Add($id)) { throw 'Direct Linux aggregate repeats a selected check.' }
+              while ($selectedIndex -lt $expectedIds.Count -and $expectedIds[$selectedIndex] -cne $id) { $selectedIndex++ }
+              if ($selectedIndex -ge $expectedIds.Count) { throw 'Direct Linux aggregate contains an unknown or out-of-order check.' }
+              $selectedIndex++
+            }
+            if ([string]$evidence.result -ceq 'pass' -and ($expectedIds -join ',') -cne ($actualIds -join ',')) { throw 'Direct Linux aggregate differs from the exact selected union.' }
+            "evidence_sha256=$((Get-FileHash -LiteralPath $evidencePath -Algorithm SHA256).Hash.ToLowerInvariant())" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+            'evidence_ready=true' | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+            if ($inventorySha256 -match '^[0-9a-f]{64}$') {
+              $inventoryPath = Join-Path $currentRoot 'inventory.json'
+              if (-not (Test-Path -LiteralPath $inventoryPath -PathType Leaf) -or (Get-FileHash -LiteralPath $inventoryPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $inventorySha256) { throw 'Direct Linux cache inventory differs from the executor receipt.' }
+              $inventoryRaw = Get-Content -LiteralPath $inventoryPath -Raw
+              if (-not (Test-Json -Json $inventoryRaw -SchemaFile ./schemas/affected-validation-check-inventory-v1.schema.json -ErrorAction Stop)) { throw 'Direct Linux cache inventory fails its closed schema.' }
+              $inventory = $inventoryRaw | ConvertFrom-Json -Depth 64
+              if ([string]$inventory.producer.repository -cne [string]$plan.repository -or [string]$inventory.source.base.commit -cne [string]$plan.base.commit -or [string]$inventory.source.base.tree -cne [string]$plan.base.tree -or [string]$inventory.source.head.commit -cne [string]$plan.head.commit -or [string]$inventory.source.head.tree -cne [string]$plan.head.tree -or [string]$inventory.plan_sha256 -cne [string]$plan.plan_sha256 -or [string]$inventory.platform -cne 'linux') { throw 'Direct Linux cache inventory source differs from the selected plan.' }
+              $inventoryIds = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+              foreach ($entry in @($inventory.entries)) {
+                $id = [string]$entry.check_id
+                if (-not $inventoryIds.Add($id) -or $expectedIds -cnotcontains $id) { throw 'Direct Linux cache inventory repeats or invents a selected check.' }
+                $aggregateRows = @($evidence.check_results | Where-Object { [string]$_.check_id -ceq $id })
+                if ([string]$entry.mode -ceq 'blocked') {
+                  if ([string]$entry.result -cne 'blocked' -or $aggregateRows.Count -ne 0) { throw 'Direct Linux blocked inventory disposition differs from aggregate execution.' }
+                } elseif ($aggregateRows.Count -ne 1 -or [string]$entry.result -ceq 'blocked' -or [string]$entry.mode -cne [string]$aggregateRows[0].mode -or [string]$entry.result -cne [string]$aggregateRows[0].result) { throw 'Direct Linux executed inventory disposition differs from aggregate execution.' }
+              }
+              if ($inventoryIds.Count -ne $expectedIds.Count) { throw 'Direct Linux cache inventory does not cover the exact selected union.' }
+              'cache_ready=true' | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+            }
+          } catch {
+            if ($null -ne $failure) {
+              if (-not [object]::ReferenceEquals($_.Exception,$failure.Exception)) {
+                $message = [string]$_.Exception.Message
+                if ($message.Length -gt 2048) { $message = $message.Substring(0,2048) }
+                $failure.Exception.Data['AffectedEvidenceReportingFailure'] = $message
+              }
+              throw $failure
+            }
+            throw
           }
           if ($null -ne $failure) { throw $failure }
           if ([string]$evidence.result -cne 'pass') { throw 'Direct Linux aggregate did not pass.' }
@@ -516,30 +555,69 @@ jobs:
             $failure = $_
             if ([string]$_.Exception.Data['AffectedCacheFinalized'] -ceq 'true') { $inventorySha256 = [string]$_.Exception.Data['AffectedInventorySha256'] }
           }
-          if (-not (Test-Path -LiteralPath $evidencePath -PathType Leaf)) {
-            $message = if ($null -eq $failure) { 'Windows union returned without typed evidence.' } else { [string]$failure.Exception.Message }
-            if ($message.Length -gt 2048) { $message = $message.Substring(0,2048) }
-            $diagnostic = [pscustomobject][ordered]@{schema='rusty.morphospace.diagnostic.affected_validation_pre_evidence_failure.v1';authority='non-authoritative-terminal-diagnostic';phase='single-windows';result='code-fail';failure=[pscustomobject][ordered]@{failure_kind='pre-evidence';exception_type=if($null-eq$failure){'InvalidOperationException'}else{$failure.Exception.GetType().FullName};exception_message=$message};claims=[pscustomobject][ordered]@{typed_aggregate_evidence_produced=$false;acceptance_authority=$false;publication_authority=$false}}
-            [byte[]]$bytes = [Text.UTF8Encoding]::new($false).GetBytes(($diagnostic | ConvertTo-Json -Depth 6 -Compress) + "`n")
-            if ($bytes.Length -gt 65536) { throw 'Bounded Windows union diagnostic exceeded 65536 bytes.' }
-            $path = Join-Path $env:RUNNER_TEMP 'affected-windows-direct-diagnostic.json'
-            $stream = [IO.File]::Open($path,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
-            try { $stream.Write($bytes,0,$bytes.Length) } finally { $stream.Dispose() }
-            'pre_evidence_failure=true' | Add-Content -LiteralPath $env:GITHUB_OUTPUT
-            if ($null -ne $failure) { throw $failure }
-            throw 'Windows union returned without typed evidence.'
-          }
-          $evidence = Get-Content -LiteralPath $evidencePath -Raw | ConvertFrom-Json -Depth 64
-          if (-not (Test-Json -Json (Get-Content -LiteralPath $evidencePath -Raw) -SchemaFile ./schemas/affected-validation-evidence-v1.schema.json -ErrorAction Stop)) { throw 'Direct Windows aggregate fails its closed schema.' }
-          $expectedIds = @($selected | ForEach-Object { [string]$_.check_id })
-          $actualIds = @($evidence.check_results | ForEach-Object { [string]$_.check_id })
-          if ([string]$evidence.plan_sha256 -cne [string]$plan.plan_sha256 -or [string]$evidence.platform -cne 'windows' -or ($expectedIds -join ',') -cne ($actualIds -join ',')) { throw 'Direct Windows aggregate differs from the exact selected union.' }
-          "evidence_sha256=$((Get-FileHash -LiteralPath $evidencePath -Algorithm SHA256).Hash.ToLowerInvariant())" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
-          'evidence_ready=true' | Add-Content -LiteralPath $env:GITHUB_OUTPUT
-          if ($inventorySha256 -match '^[0-9a-f]{64}$') {
-            $inventoryPath = Join-Path $currentRoot 'inventory.json'
-            if (-not (Test-Path -LiteralPath $inventoryPath -PathType Leaf) -or (Get-FileHash -LiteralPath $inventoryPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $inventorySha256) { throw 'Direct Windows cache inventory differs from the executor receipt.' }
-            'cache_ready=true' | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+          try {
+            if (-not (Test-Path -LiteralPath $evidencePath -PathType Leaf)) {
+              $message = if ($null -eq $failure) { 'Windows union returned without typed evidence.' } else { [string]$failure.Exception.Message }
+              if ($message.Length -gt 2048) { $message = $message.Substring(0,2048) }
+              $diagnostic = [pscustomobject][ordered]@{schema='rusty.morphospace.diagnostic.affected_validation_pre_evidence_failure.v1';authority='non-authoritative-terminal-diagnostic';phase='single-windows';result='code-fail';failure=[pscustomobject][ordered]@{failure_kind='pre-evidence';exception_type=if($null-eq$failure){'InvalidOperationException'}else{$failure.Exception.GetType().FullName};exception_message=$message};claims=[pscustomobject][ordered]@{typed_aggregate_evidence_produced=$false;acceptance_authority=$false;publication_authority=$false}}
+              [byte[]]$bytes = [Text.UTF8Encoding]::new($false).GetBytes(($diagnostic | ConvertTo-Json -Depth 6 -Compress) + "`n")
+              if ($bytes.Length -gt 65536) { throw 'Bounded Windows union diagnostic exceeded 65536 bytes.' }
+              $path = Join-Path $env:RUNNER_TEMP 'affected-windows-direct-diagnostic.json'
+              $stream = [IO.File]::Open($path,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+              try { $stream.Write($bytes,0,$bytes.Length) } finally { $stream.Dispose() }
+              'pre_evidence_failure=true' | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+              if ($null -ne $failure) { throw $failure }
+              throw 'Windows union returned without typed evidence.'
+            }
+            $evidenceRaw = Get-Content -LiteralPath $evidencePath -Raw
+            if (-not (Test-Json -Json $evidenceRaw -SchemaFile ./schemas/affected-validation-evidence-v1.schema.json -ErrorAction Stop)) { throw 'Direct Windows aggregate fails its closed schema.' }
+            $evidence = $evidenceRaw | ConvertFrom-Json -Depth 64
+            $expectedIds = @($selected | ForEach-Object { [string]$_.check_id })
+            $actualIds = @($evidence.check_results | ForEach-Object { [string]$_.check_id })
+            if ([string]$evidence.repository -cne [string]$plan.repository -or [string]$evidence.base.commit -cne [string]$plan.base.commit -or [string]$evidence.base.tree -cne [string]$plan.base.tree -or [string]$evidence.head.commit -cne [string]$plan.head.commit -or [string]$evidence.head.tree -cne [string]$plan.head.tree -or [string]$evidence.plan_sha256 -cne [string]$plan.plan_sha256 -or [string]$evidence.platform -cne 'windows') { throw 'Direct Windows aggregate source differs from the selected plan.' }
+            # Failed prerequisites retain blocked leaf receipts in the inventory, not
+            # aggregate execution rows. Every aggregate row must still be unique and
+            # follow the exact selected order; PASS must cover the complete union.
+            $seenIds = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+            $selectedIndex = 0
+            foreach ($id in $actualIds) {
+              if (-not $seenIds.Add($id)) { throw 'Direct Windows aggregate repeats a selected check.' }
+              while ($selectedIndex -lt $expectedIds.Count -and $expectedIds[$selectedIndex] -cne $id) { $selectedIndex++ }
+              if ($selectedIndex -ge $expectedIds.Count) { throw 'Direct Windows aggregate contains an unknown or out-of-order check.' }
+              $selectedIndex++
+            }
+            if ([string]$evidence.result -ceq 'pass' -and ($expectedIds -join ',') -cne ($actualIds -join ',')) { throw 'Direct Windows aggregate differs from the exact selected union.' }
+            "evidence_sha256=$((Get-FileHash -LiteralPath $evidencePath -Algorithm SHA256).Hash.ToLowerInvariant())" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+            'evidence_ready=true' | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+            if ($inventorySha256 -match '^[0-9a-f]{64}$') {
+              $inventoryPath = Join-Path $currentRoot 'inventory.json'
+              if (-not (Test-Path -LiteralPath $inventoryPath -PathType Leaf) -or (Get-FileHash -LiteralPath $inventoryPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $inventorySha256) { throw 'Direct Windows cache inventory differs from the executor receipt.' }
+              $inventoryRaw = Get-Content -LiteralPath $inventoryPath -Raw
+              if (-not (Test-Json -Json $inventoryRaw -SchemaFile ./schemas/affected-validation-check-inventory-v1.schema.json -ErrorAction Stop)) { throw 'Direct Windows cache inventory fails its closed schema.' }
+              $inventory = $inventoryRaw | ConvertFrom-Json -Depth 64
+              if ([string]$inventory.producer.repository -cne [string]$plan.repository -or [string]$inventory.source.base.commit -cne [string]$plan.base.commit -or [string]$inventory.source.base.tree -cne [string]$plan.base.tree -or [string]$inventory.source.head.commit -cne [string]$plan.head.commit -or [string]$inventory.source.head.tree -cne [string]$plan.head.tree -or [string]$inventory.plan_sha256 -cne [string]$plan.plan_sha256 -or [string]$inventory.platform -cne 'windows') { throw 'Direct Windows cache inventory source differs from the selected plan.' }
+              $inventoryIds = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+              foreach ($entry in @($inventory.entries)) {
+                $id = [string]$entry.check_id
+                if (-not $inventoryIds.Add($id) -or $expectedIds -cnotcontains $id) { throw 'Direct Windows cache inventory repeats or invents a selected check.' }
+                $aggregateRows = @($evidence.check_results | Where-Object { [string]$_.check_id -ceq $id })
+                if ([string]$entry.mode -ceq 'blocked') {
+                  if ([string]$entry.result -cne 'blocked' -or $aggregateRows.Count -ne 0) { throw 'Direct Windows blocked inventory disposition differs from aggregate execution.' }
+                } elseif ($aggregateRows.Count -ne 1 -or [string]$entry.result -ceq 'blocked' -or [string]$entry.mode -cne [string]$aggregateRows[0].mode -or [string]$entry.result -cne [string]$aggregateRows[0].result) { throw 'Direct Windows executed inventory disposition differs from aggregate execution.' }
+              }
+              if ($inventoryIds.Count -ne $expectedIds.Count) { throw 'Direct Windows cache inventory does not cover the exact selected union.' }
+              'cache_ready=true' | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+            }
+          } catch {
+            if ($null -ne $failure) {
+              if (-not [object]::ReferenceEquals($_.Exception,$failure.Exception)) {
+                $message = [string]$_.Exception.Message
+                if ($message.Length -gt 2048) { $message = $message.Substring(0,2048) }
+                $failure.Exception.Data['AffectedEvidenceReportingFailure'] = $message
+              }
+              throw $failure
+            }
+            throw
           }
           if ($null -ne $failure) { throw $failure }
           if ([string]$evidence.result -cne 'pass') { throw 'Direct Windows aggregate did not pass.' }
@@ -827,33 +905,72 @@ jobs:
             $failure = $_
             if ([string]$_.Exception.Data['AffectedCacheFinalized'] -ceq 'true') { $inventorySha256 = [string]$_.Exception.Data['AffectedInventorySha256'] }
           }
-          if ($null -eq $failure -and -not (Test-Path -LiteralPath $evidencePath -PathType Leaf)) {
-            $failure = [Management.Automation.ErrorRecord]::new([IO.InvalidDataException]::new('Affected-validation executor returned without its required aggregate evidence.'),'AffectedValidationMissingEvidence',[Management.Automation.ErrorCategory]::InvalidData,$evidencePath)
-          }
-          if (-not (Test-Path -LiteralPath $evidencePath -PathType Leaf)) {
-            $message = if ($null -eq $failure) { 'Linux union returned without typed evidence.' } else { [string]$failure.Exception.Message }
-            if ($message.Length -gt 2048) { $message = $message.Substring(0,2048) }
-            $diagnostic = [pscustomobject][ordered]@{schema='rusty.morphospace.diagnostic.affected_validation_pre_evidence_failure.v1';authority='non-authoritative-terminal-diagnostic';phase='main-fallback';result='code-fail';failure=[pscustomobject][ordered]@{failure_kind='pre-evidence';exception_type=if($null-eq$failure){'InvalidOperationException'}else{$failure.Exception.GetType().FullName};exception_message=$message};claims=[pscustomobject][ordered]@{typed_aggregate_evidence_produced=$false;acceptance_authority=$false;publication_authority=$false}}
-            [byte[]]$bytes = [Text.UTF8Encoding]::new($false).GetBytes(($diagnostic | ConvertTo-Json -Depth 6 -Compress) + "`n")
-            if ($bytes.Length -gt 65536) { throw 'Bounded Linux union diagnostic exceeded 65536 bytes.' }
-            $path = Join-Path $env:RUNNER_TEMP 'affected-linux-direct-diagnostic.json'
-            $stream = [IO.File]::Open($path,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
-            try { $stream.Write($bytes,0,$bytes.Length) } finally { $stream.Dispose() }
-            'pre_evidence_failure=true' | Add-Content -LiteralPath $env:GITHUB_OUTPUT
-            if ($null -ne $failure) { throw $failure }
-            throw 'Linux union returned without typed evidence.'
-          }
-          $evidence = Get-Content -LiteralPath $evidencePath -Raw | ConvertFrom-Json -Depth 64
-          if (-not (Test-Json -Json (Get-Content -LiteralPath $evidencePath -Raw) -SchemaFile ./schemas/affected-validation-evidence-v1.schema.json -ErrorAction Stop)) { throw 'Direct Linux aggregate fails its closed schema.' }
-          $expectedIds = @($selected | ForEach-Object { [string]$_.check_id })
-          $actualIds = @($evidence.check_results | ForEach-Object { [string]$_.check_id })
-          if ([string]$evidence.repository -cne [string]$plan.repository -or [string]$evidence.base.commit -cne [string]$plan.base.commit -or [string]$evidence.base.tree -cne [string]$plan.base.tree -or [string]$evidence.head.commit -cne [string]$plan.head.commit -or [string]$evidence.head.tree -cne [string]$plan.head.tree -or [string]$evidence.plan_sha256 -cne [string]$plan.plan_sha256 -or [string]$evidence.platform -cne 'linux' -or ($expectedIds -join ',') -cne ($actualIds -join ',')) { throw 'Direct Linux aggregate differs from the exact selected union.' }
-          "evidence_sha256=$((Get-FileHash -LiteralPath $evidencePath -Algorithm SHA256).Hash.ToLowerInvariant())" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
-          'evidence_ready=true' | Add-Content -LiteralPath $env:GITHUB_OUTPUT
-          if ($inventorySha256 -match '^[0-9a-f]{64}$') {
-            $inventoryPath = Join-Path $currentRoot 'inventory.json'
-            if (-not (Test-Path -LiteralPath $inventoryPath -PathType Leaf) -or (Get-FileHash -LiteralPath $inventoryPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $inventorySha256) { throw 'Direct Linux cache inventory differs from the executor receipt.' }
-            'cache_ready=true' | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+          try {
+            if ($null -eq $failure -and -not (Test-Path -LiteralPath $evidencePath -PathType Leaf)) {
+              $failure = [Management.Automation.ErrorRecord]::new([IO.InvalidDataException]::new('Affected-validation executor returned without its required aggregate evidence.'),'AffectedValidationMissingEvidence',[Management.Automation.ErrorCategory]::InvalidData,$evidencePath)
+            }
+            if (-not (Test-Path -LiteralPath $evidencePath -PathType Leaf)) {
+              $message = if ($null -eq $failure) { 'Linux union returned without typed evidence.' } else { [string]$failure.Exception.Message }
+              if ($message.Length -gt 2048) { $message = $message.Substring(0,2048) }
+              $diagnostic = [pscustomobject][ordered]@{schema='rusty.morphospace.diagnostic.affected_validation_pre_evidence_failure.v1';authority='non-authoritative-terminal-diagnostic';phase='main-fallback';result='code-fail';failure=[pscustomobject][ordered]@{failure_kind='pre-evidence';exception_type=if($null-eq$failure){'InvalidOperationException'}else{$failure.Exception.GetType().FullName};exception_message=$message};claims=[pscustomobject][ordered]@{typed_aggregate_evidence_produced=$false;acceptance_authority=$false;publication_authority=$false}}
+              [byte[]]$bytes = [Text.UTF8Encoding]::new($false).GetBytes(($diagnostic | ConvertTo-Json -Depth 6 -Compress) + "`n")
+              if ($bytes.Length -gt 65536) { throw 'Bounded Linux union diagnostic exceeded 65536 bytes.' }
+              $path = Join-Path $env:RUNNER_TEMP 'affected-linux-direct-diagnostic.json'
+              $stream = [IO.File]::Open($path,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+              try { $stream.Write($bytes,0,$bytes.Length) } finally { $stream.Dispose() }
+              'pre_evidence_failure=true' | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+              if ($null -ne $failure) { throw $failure }
+              throw 'Linux union returned without typed evidence.'
+            }
+            $evidenceRaw = Get-Content -LiteralPath $evidencePath -Raw
+            if (-not (Test-Json -Json $evidenceRaw -SchemaFile ./schemas/affected-validation-evidence-v1.schema.json -ErrorAction Stop)) { throw 'Direct Linux aggregate fails its closed schema.' }
+            $evidence = $evidenceRaw | ConvertFrom-Json -Depth 64
+            $expectedIds = @($selected | ForEach-Object { [string]$_.check_id })
+            $actualIds = @($evidence.check_results | ForEach-Object { [string]$_.check_id })
+            if ([string]$evidence.repository -cne [string]$plan.repository -or [string]$evidence.base.commit -cne [string]$plan.base.commit -or [string]$evidence.base.tree -cne [string]$plan.base.tree -or [string]$evidence.head.commit -cne [string]$plan.head.commit -or [string]$evidence.head.tree -cne [string]$plan.head.tree -or [string]$evidence.plan_sha256 -cne [string]$plan.plan_sha256 -or [string]$evidence.platform -cne 'linux') { throw 'Direct Linux aggregate source differs from the selected plan.' }
+            # Failed prerequisites retain blocked leaf receipts in the inventory, not
+            # aggregate execution rows. Every aggregate row must still be unique and
+            # follow the exact selected order; PASS must cover the complete union.
+            $seenIds = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+            $selectedIndex = 0
+            foreach ($id in $actualIds) {
+              if (-not $seenIds.Add($id)) { throw 'Direct Linux aggregate repeats a selected check.' }
+              while ($selectedIndex -lt $expectedIds.Count -and $expectedIds[$selectedIndex] -cne $id) { $selectedIndex++ }
+              if ($selectedIndex -ge $expectedIds.Count) { throw 'Direct Linux aggregate contains an unknown or out-of-order check.' }
+              $selectedIndex++
+            }
+            if ([string]$evidence.result -ceq 'pass' -and ($expectedIds -join ',') -cne ($actualIds -join ',')) { throw 'Direct Linux aggregate differs from the exact selected union.' }
+            "evidence_sha256=$((Get-FileHash -LiteralPath $evidencePath -Algorithm SHA256).Hash.ToLowerInvariant())" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+            'evidence_ready=true' | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+            if ($inventorySha256 -match '^[0-9a-f]{64}$') {
+              $inventoryPath = Join-Path $currentRoot 'inventory.json'
+              if (-not (Test-Path -LiteralPath $inventoryPath -PathType Leaf) -or (Get-FileHash -LiteralPath $inventoryPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $inventorySha256) { throw 'Direct Linux cache inventory differs from the executor receipt.' }
+              $inventoryRaw = Get-Content -LiteralPath $inventoryPath -Raw
+              if (-not (Test-Json -Json $inventoryRaw -SchemaFile ./schemas/affected-validation-check-inventory-v1.schema.json -ErrorAction Stop)) { throw 'Direct Linux cache inventory fails its closed schema.' }
+              $inventory = $inventoryRaw | ConvertFrom-Json -Depth 64
+              if ([string]$inventory.producer.repository -cne [string]$plan.repository -or [string]$inventory.source.base.commit -cne [string]$plan.base.commit -or [string]$inventory.source.base.tree -cne [string]$plan.base.tree -or [string]$inventory.source.head.commit -cne [string]$plan.head.commit -or [string]$inventory.source.head.tree -cne [string]$plan.head.tree -or [string]$inventory.plan_sha256 -cne [string]$plan.plan_sha256 -or [string]$inventory.platform -cne 'linux') { throw 'Direct Linux cache inventory source differs from the selected plan.' }
+              $inventoryIds = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+              foreach ($entry in @($inventory.entries)) {
+                $id = [string]$entry.check_id
+                if (-not $inventoryIds.Add($id) -or $expectedIds -cnotcontains $id) { throw 'Direct Linux cache inventory repeats or invents a selected check.' }
+                $aggregateRows = @($evidence.check_results | Where-Object { [string]$_.check_id -ceq $id })
+                if ([string]$entry.mode -ceq 'blocked') {
+                  if ([string]$entry.result -cne 'blocked' -or $aggregateRows.Count -ne 0) { throw 'Direct Linux blocked inventory disposition differs from aggregate execution.' }
+                } elseif ($aggregateRows.Count -ne 1 -or [string]$entry.result -ceq 'blocked' -or [string]$entry.mode -cne [string]$aggregateRows[0].mode -or [string]$entry.result -cne [string]$aggregateRows[0].result) { throw 'Direct Linux executed inventory disposition differs from aggregate execution.' }
+              }
+              if ($inventoryIds.Count -ne $expectedIds.Count) { throw 'Direct Linux cache inventory does not cover the exact selected union.' }
+              'cache_ready=true' | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+            }
+          } catch {
+            if ($null -ne $failure) {
+              if (-not [object]::ReferenceEquals($_.Exception,$failure.Exception)) {
+                $message = [string]$_.Exception.Message
+                if ($message.Length -gt 2048) { $message = $message.Substring(0,2048) }
+                $failure.Exception.Data['AffectedEvidenceReportingFailure'] = $message
+              }
+              throw $failure
+            }
+            throw
           }
           if ($null -ne $failure) { throw $failure }
           if ([string]$evidence.result -cne 'pass') { throw 'Direct Linux aggregate did not pass.' }

@@ -3834,7 +3834,65 @@ if ($runFullSelector -or $runExecutorPassPhase) {
     $directWindowsBody = [string]$workflowJobs['standard-windows']
     $segmentedWindowsBody = [string]$workflowJobs['affected-windows-segments']
     Assert-True ($directWindowsBody.Contains("WINDOWS_DIRECT: `${{ needs.select.outputs.windows_direct }}") -and $directWindowsBody.Contains("`$env:SEGMENT_RESULT -cne 'skipped'") -and $segmentedWindowsBody.Contains("needs.select.outputs.windows_direct == 'false'")) 'Opt-in direct Windows mode does not exclude segmented execution or bind its skipped dependency.'
-    Assert-True ($directWindowsBody.Contains('Invoke-AffectedValidation.ps1 -RepositoryRoot . -BaseCommit $env:PR_BASE -HeadCommit $env:PR_HEAD') -and $directWindowsBody.Contains('-Platform windows -OutPath $evidencePath') -and $directWindowsBody.Contains("`$expectedIds -join ','") -and $directWindowsBody.Contains('Test-Json -Json (Get-Content -LiteralPath $evidencePath -Raw) -SchemaFile ./schemas/affected-validation-evidence-v1.schema.json')) 'Direct Windows mode does not execute and verify the exact selected union.'
+    Assert-True ($directWindowsBody.Contains('Invoke-AffectedValidation.ps1 -RepositoryRoot . -BaseCommit $env:PR_BASE -HeadCommit $env:PR_HEAD') -and $directWindowsBody.Contains('-Platform windows -OutPath $evidencePath') -and $directWindowsBody.Contains("`$expectedIds -join ','")) 'Direct Windows mode does not execute and verify the exact selected union.'
+    # Independently require the same read/closed-schema/parse contract in all
+    # three direct producers; their full PASS coverage checks remain separate.
+    $directRawRead = '$evidenceRaw = Get-Content -LiteralPath $evidencePath -Raw'
+    $directSchemaCall = 'Test-Json -Json $evidenceRaw -SchemaFile ./schemas/affected-validation-evidence-v1.schema.json -ErrorAction Stop'
+    $directRawParse = '$evidence = $evidenceRaw | ConvertFrom-Json -Depth 64'
+    $assertDirectRawSchema = {
+        param([string]$Body,[string]$Producer)
+        $readIndex = $Body.IndexOf($directRawRead,[StringComparison]::Ordinal)
+        $schemaIndex = $Body.IndexOf($directSchemaCall,[StringComparison]::Ordinal)
+        $parseIndex = $Body.IndexOf($directRawParse,[StringComparison]::Ordinal)
+        Assert-True ($readIndex -ge 0 -and $schemaIndex -gt $readIndex -and $parseIndex -gt $schemaIndex) "Direct producer '$Producer' omits its ordered aggregate raw/schema binding."
+    }
+    $directSchemaCases = 0
+    foreach ($producer in @('quick-linux','standard-windows','main-linux-delta')) {
+        $body = [string]$workflowJobs[$producer]
+        & $assertDirectRawSchema $body $producer
+        $directSchemaCases++
+        $damagedBodies = @(
+            $body.Replace($directRawRead,''),
+            $body.Replace($directRawRead,'$evidenceRaw = Get-Content -LiteralPath $wrongEvidencePath -Raw'),
+            $body.Replace($directSchemaCall,'$true'),
+            $body.Replace($directSchemaCall,'Test-Json -Json "{}" -SchemaFile ./schemas/affected-validation-evidence-v1.schema.json -ErrorAction Stop')
+        )
+        foreach ($damagedBody in $damagedBodies) {
+            Assert-AffectedThrows { & $assertDirectRawSchema $damagedBody $producer } '*ordered aggregate raw/schema binding*' "Direct producer '$producer' accepted damaged raw/schema conformance."
+            $directSchemaCases++
+        }
+        $readIndex = $body.IndexOf($directRawRead,[StringComparison]::Ordinal)
+        $parseEnd = $body.IndexOf($directRawParse,[StringComparison]::Ordinal) + $directRawParse.Length
+        $actualSchemaCheck = [scriptblock]::Create($body.Substring($readIndex,$parseEnd-$readIndex))
+        $schemaPath = [IO.Path]::GetTempFileName()
+        $schemaFixture = [pscustomobject][ordered]@{
+            schema='rusty.morphospace.workflow.affected_validation_evidence.v1'
+            repository='MesmerPrism/rusty-morphospace-work-environment'
+            base=[pscustomobject]@{commit=('a'*40);tree=('b'*40)}
+            head=[pscustomobject]@{commit=('c'*40);tree=('d'*40)}
+            plan_sha256=('e'*64);platform=$(if($producer-ceq'standard-windows'){'windows'}else{'linux'})
+            runner=[pscustomobject]@{os_description='Fixture OS';powershell_version='7.6.0'}
+            check_results=@([pscustomobject]@{check_id='fixture-pass';command_path='scripts/Test-Example.ps1';command_blob_sha1=('f'*40);mode='executed';result='pass';started=$true;failure_kind=$null;exit_code=0;timed_out=$false;output_truncated=$false;post_kill_drain_timed_out=$false;stdout_sha256=('0'*64);stderr_sha256=('0'*64);stdout_bytes=0;stderr_bytes=0})
+            result='pass'
+            claims=[pscustomobject]@{historical_aggregate_reused=$false;acceptance_authority=$false;publication_authority=$false}
+        }
+        Push-Location $repoRoot
+        try {
+            Write-Utf8 $schemaPath ($schemaFixture | ConvertTo-Json -Depth 12)
+            & { param([scriptblock]$Check,[string]$Path) $evidencePath=$Path; . $Check } $actualSchemaCheck $schemaPath
+            $directSchemaCases++
+            # Parsing accepts valid JSON with an unknown property; the actual
+            # closed schema call must refuse it independently of parser damage.
+            $schemaFixture | Add-Member -NotePropertyName unexpected_property -NotePropertyValue $true
+            $invalidJson = $schemaFixture | ConvertTo-Json -Depth 12
+            $null = $invalidJson | ConvertFrom-Json
+            Write-Utf8 $schemaPath $invalidJson
+            Assert-AffectedThrows { & { param([scriptblock]$Check,[string]$Path) $evidencePath=$Path; . $Check } $actualSchemaCheck $schemaPath } '*' "Direct producer '$producer' accepted schema-invalid valid JSON."
+            $directSchemaCases++
+        } finally { Pop-Location; [IO.File]::Delete($schemaPath) }
+    }
+    Write-Host "Direct sibling aggregate raw/schema conformance passed $directSchemaCases focused controls."
     Assert-True ($directWindowsBody.Contains('AffectedCacheFinalized') -and $directWindowsBody.Contains('cache_ready=true') -and $directWindowsBody.Contains('inventoryPath') -and $directWindowsBody.Contains("steps.direct.outputs.evidence_ready == 'true'")) 'Direct Windows mode lacks finalized cache and typed aggregate retention.'
     foreach ($invalidMode in @('unexpected','')) { Assert-AffectedThrows { Invoke-WorkflowSelectionGate -JobBody $directWindowsBody -SelectionVariable 'WINDOWS_SELECTED' -SelectionValue 'true' -SegmentResultVariable 'SEGMENT_RESULT' -WindowsDirect $invalidMode } '*execution mode must be exactly true or false*' 'Windows reducer accepted an invalid direct execution mode.' }
     Invoke-WorkflowSelectionGate -JobBody $directWindowsBody -SelectionVariable 'WINDOWS_SELECTED' -SelectionValue 'true' -SegmentResultVariable 'SEGMENT_RESULT' -SegmentResult 'skipped' -WindowsDirect 'true'

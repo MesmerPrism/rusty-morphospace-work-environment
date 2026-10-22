@@ -202,12 +202,105 @@ if ($env:PLATFORM_SELECTED -cne 'true') { throw 'Required current-delta platform
     foreach($fragment in @("format('validate-pr-{0}', github.event.pull_request.number)","format('validate-main-{0}', github.ref)","github.event_name == 'schedule' && 'validate-deep-schedule'","format('validate-deep-manual-{0}', github.run_id)","cancel-in-progress: `${{ github.event_name == 'pull_request' }}",'phase=''setup''','phase=''plan''','phase=''main-fallback''','FileMode]::CreateNew','bytes.Length-gt65536')){if(-not$Workflow.Contains($fragment)){throw "Validate workflow is missing required bounded/concurrency fragment '$fragment'."}}
     if(([regex]::Matches($Workflow,"'AffectedValidationMissingEvidence'")).Count-ne3){throw 'Validate workflow must synthesize exactly three typed direct/main missing-evidence failures.'}
 }
+function Invoke-TopologyDirectFailureSelfTest([string]$Workflow,[string]$Fixture) {
+    # Execute the real post-executor statements. No validator, Git, provider or
+    # runner-profile command is replaced or executed by this fixture.
+    $jobs=@{}
+    foreach($match in [regex]::Matches($Workflow,'(?ms)^  (?<name>[a-z0-9-]+):\r?\n(?<body>.*?)(?=^  [a-z0-9-]+:|\z)')){$jobs[$match.Groups['name'].Value]=$match.Groups['body'].Value}
+    $cases=@('failed-blocked','pass','pass-missing','pass-duplicate','pass-reordered','missing','malformed','wrong-source','unknown','duplicate','reordered','inventory-source','inventory-missing','inventory-blocked-mismatch','inventory-hash','no-inventory','secondary-write')
+    $count=0
+    foreach($producer in @(
+        @{job='quick-linux';step='Execute exact selected Linux union on this runner';platform='linux'},
+        @{job='standard-windows';step='Execute exact selected Windows union on this runner';platform='windows'},
+        @{job='main-linux-delta';step='Execute exact current Linux delta on this runner';platform='linux'}
+    )) {
+        $source=Get-TopologyStepSource $jobs[$producer.job] $producer.step
+        $tokens=$null;$errors=$null;$ast=[Management.Automation.Language.Parser]::ParseInput($source,[ref]$tokens,[ref]$errors)
+        if($errors.Count){throw 'Direct reporting fixture source does not parse.'}
+        $calls=@($ast.FindAll({param($node)$node-is[Management.Automation.Language.CommandAst]-and$node.GetCommandName()-eq'./scripts/Invoke-AffectedValidation.ps1'},$true))
+        if($calls.Count-ne1){throw 'Direct reporting fixture requires the unique actual executor invocation.'}
+        $executorTry=$calls[0].Parent
+        while($null-ne$executorTry-and$executorTry-isnot[Management.Automation.Language.TryStatementAst]){$executorTry=$executorTry.Parent}
+        $diff=@($ast.FindAll({param($node)$node-is[Management.Automation.Language.CommandAst]-and$node.GetCommandName()-eq'git'-and$node.Extent.StartOffset-gt$executorTry.Extent.EndOffset-and$node.Extent.Text.StartsWith('git diff --check',[StringComparison]::Ordinal)},$true))
+        if($null-eq$executorTry-or$diff.Count-ne1){throw 'Direct reporting fixture cannot isolate the actual post-executor boundary.'}
+        $tail=$source.Substring($executorTry.Extent.EndOffset,$diff[0].Extent.StartOffset-$executorTry.Extent.EndOffset)
+        foreach($case in $cases) {
+            $caseRoot=Join-Path $Fixture ($producer.job+'-'+$case);[void][IO.Directory]::CreateDirectory($caseRoot)
+            [void][IO.Directory]::CreateDirectory((Join-Path $caseRoot 'schemas'))
+            foreach($schema in @('affected-validation-evidence-v1.schema.json','affected-validation-check-inventory-v1.schema.json')){[IO.File]::Copy((Join-Path $PSScriptRoot ('../schemas/'+$schema)),(Join-Path $caseRoot ('schemas/'+$schema)))}
+            $currentRoot=Join-Path $caseRoot 'cache';[void][IO.Directory]::CreateDirectory($currentRoot)
+            $evidencePath=Join-Path $caseRoot 'aggregate.json'
+            $plan=[pscustomobject]@{repository='MesmerPrism/rusty-morphospace-work-environment';base=[pscustomobject]@{commit=('a'*40);tree=('b'*40)};head=[pscustomobject]@{commit=('c'*40);tree=('d'*40)};plan_sha256=('e'*64)}
+            # Independent topological oracle: second depends on the failed first;
+            # the third is independent. Blocked is an inventory disposition only.
+            $selected=@('producer-fail','dependent-blocked','independent-pass'|ForEach-Object{[pscustomobject]@{check_id=$_}})
+            $passing=$case.StartsWith('pass',[StringComparison]::Ordinal)
+            $rows=@()
+            foreach($id in @('producer-fail','dependent-blocked','independent-pass')) {
+                if(-not$passing-and$id-ceq'dependent-blocked'){continue}
+                $fails=-not$passing-and$id-ceq'producer-fail'
+                $rows+=[pscustomobject][ordered]@{check_id=$id;command_path='scripts/Test-Example.ps1';command_blob_sha1=('f'*40);mode='executed';result=$(if($fails){'code-fail'}else{'pass'});started=$true;failure_kind=$(if($fails){'exit-code'}else{$null});exit_code=$(if($fails){17}else{0});timed_out=$false;output_truncated=$false;post_kill_drain_timed_out=$false;stdout_sha256=('0'*64);stderr_sha256=('0'*64);stdout_bytes=0;stderr_bytes=0}
+            }
+            $document=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.affected_validation_evidence.v1';repository=$plan.repository;base=$plan.base;head=$plan.head;plan_sha256=$plan.plan_sha256;platform=$producer.platform;runner=[pscustomobject]@{os_description='Fixture OS';powershell_version='7.6.0'};check_results=$rows;result=$(if($passing){'pass'}else{'code-fail'});claims=[pscustomobject]@{historical_aggregate_reused=$false;acceptance_authority=$false;publication_authority=$false}}
+            $entries=@()
+            foreach($id in @('producer-fail','dependent-blocked','independent-pass')) {
+                $blocked=-not$passing-and$id-ceq'dependent-blocked'
+                $entries+=[pscustomobject][ordered]@{check_id=$id;binding_sha256=('1'*64);mode=$(if($blocked){'blocked'}else{'executed'});result=$(if($blocked){'blocked'}elseif(-not$passing-and$id-ceq'producer-fail'){'code-fail'}else{'pass'});receipt=[pscustomobject]@{path=($id+'/receipt.json');bytes=0;sha256=('0'*64)};stdout=[pscustomobject]@{path=($id+'/stdout.bin');bytes=0;sha256=('0'*64)};stderr=[pscustomobject]@{path=($id+'/stderr.bin');bytes=0;sha256=('0'*64)};artifacts=@()}
+            }
+            $inventory=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.affected_validation_check_inventory.v1';producer=[pscustomobject]@{context='github-actions';execution_id=('2'*32);repository=$plan.repository;event_name='pull_request';pull_request_number=1;run_id='1';run_attempt=1;workflow_path='.github/workflows/validate.yml';job=$producer.job};source=[pscustomobject]@{base=$plan.base;head=$plan.head};plan_sha256=$plan.plan_sha256;platform=$producer.platform;entries=$entries;claims=[pscustomobject]@{cache_transport_only=$true;candidate_admission=$false;acceptance_authority=$false;publication_authority=$false}}
+            switch($case) {
+                'pass-missing' {$document.check_results=@($rows[0],$rows[2])}
+                'pass-duplicate' {$document.check_results=@($rows[0],$rows[0],$rows[2])}
+                'pass-reordered' {$document.check_results=@($rows[2],$rows[1],$rows[0])}
+                'wrong-source' {$document.head=[pscustomobject]@{commit=('9'*40);tree=('d'*40)}}
+                'unknown' {$document.check_results[1].check_id='unknown-check'}
+                'duplicate' {$document.check_results=@($rows[0],$rows[0])}
+                'reordered' {$document.check_results=@($rows[1],$rows[0])}
+                'inventory-source' {$inventory.source.head=[pscustomobject]@{commit=('9'*40);tree=('d'*40)}}
+                'inventory-missing' {$inventory.entries=@($entries[0],$entries[2])}
+                'inventory-blocked-mismatch' {$inventory.entries[1].mode='executed';$inventory.entries[1].result='pass'}
+            }
+            if($case-cne'missing'){[IO.File]::WriteAllText($evidencePath,$(if($case-ceq'malformed'){'{invalid'}else{$document|ConvertTo-Json -Depth 15}),[Text.UTF8Encoding]::new($false))}
+            $inventoryPath=Join-Path $currentRoot 'inventory.json';[IO.File]::WriteAllText($inventoryPath,($inventory|ConvertTo-Json -Depth 15),[Text.UTF8Encoding]::new($false))
+            $inventorySha256=(Get-FileHash -LiteralPath $inventoryPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            if($case-ceq'inventory-hash'){$inventorySha256='3'*64}
+            if($case-ceq'no-inventory'){$inventorySha256=$null}
+            $originalFailure=if($passing){$null}else{[Management.Automation.ErrorRecord]::new([InvalidOperationException]::new('fixture original executor failure'),'FixtureOriginalExecutorFailure',[Management.Automation.ErrorCategory]::InvalidResult,'producer-fail')}
+            $failure=$originalFailure;$caught=$null
+            $savedTemp=$env:RUNNER_TEMP;$savedOutput=$env:GITHUB_OUTPUT
+            $env:RUNNER_TEMP=$caseRoot;$env:GITHUB_OUTPUT=Join-Path $caseRoot 'outputs.txt'
+            if($case-ceq'secondary-write'){$env:GITHUB_OUTPUT=Join-Path $caseRoot 'absent-parent/outputs.txt'}
+            Push-Location $caseRoot
+            try {
+                try { $tailBlock=[scriptblock]::Create($tail);. $tailBlock | Out-Null } catch {$caught=$_}
+                $output=if([IO.File]::Exists($env:GITHUB_OUTPUT)){[IO.File]::ReadAllText($env:GITHUB_OUTPUT)}else{''}
+                $ready=$output.Contains('evidence_ready=true');$cacheReady=$output.Contains('cache_ready=true')
+                if($passing) {
+                    if($case-ceq'pass'){if($null-ne$caught-or-not$ready-or-not$cacheReady){throw "Direct reporting $($producer.job) rejected exact full PASS."}}
+                    elseif($null-eq$caught-or$ready-or$cacheReady){throw "Direct reporting $($producer.job) accepted damaged PASS coverage: $case"}
+                } else {
+                    if($null-eq$caught-or-not[object]::ReferenceEquals($caught.Exception,$originalFailure.Exception)){throw "Direct reporting $($producer.job) masked the original executor ErrorRecord: $case"}
+                    $wantReady=$case-cin@('failed-blocked','inventory-source','inventory-missing','inventory-blocked-mismatch','inventory-hash','no-inventory')
+                    if($ready-ne$wantReady){throw "Direct reporting $($producer.job) misreported aggregate readiness: $case"}
+                    if($cacheReady-ne($case-ceq'failed-blocked')){throw "Direct reporting $($producer.job) misreported cache readiness: $case"}
+                    if($case-cin@('malformed','wrong-source','unknown','duplicate','reordered','inventory-source','inventory-missing','inventory-blocked-mismatch','inventory-hash','secondary-write')){
+                        if(-not$originalFailure.Exception.Data.Contains('AffectedEvidenceReportingFailure')){throw "Direct reporting $($producer.job) lost secondary evidence failure: $case"}
+                    }
+                    if($case-ceq'missing'-and-not$output.Contains('pre_evidence_failure=true')){throw "Direct reporting $($producer.job) lost missing-evidence diagnostic."}
+                }
+                $count++
+            } finally {$env:RUNNER_TEMP=$savedTemp;$env:GITHUB_OUTPUT=$savedOutput;Pop-Location}
+        }
+    }
+    Write-Host "Direct producer reporting passed $count actual-workflow-tail causal cases."
+}
 if ($SelfTest) {
     function Invoke-TopologySelfGit([string]$Root, [string[]]$Arguments) { $value = & git -C $Root @Arguments 2>&1; if ($LASTEXITCODE -ne 0) { throw "Topology self-test git failure: $($value -join "`n")" }; return ($value -join "`n").Trim() }
     function Write-TopologySelfUtf8([string]$Path, [string]$Text) { [IO.File]::WriteAllText($Path, $Text, [Text.UTF8Encoding]::new($false)) }
     $fixture = Join-Path ([IO.Path]::GetTempPath()) ('morphospace-affected-topology-' + [Guid]::NewGuid().ToString('N')); [void][IO.Directory]::CreateDirectory($fixture)
     try {
         $currentWorkflow=[IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\.github\workflows\validate.yml'),[Text.UTF8Encoding]::new($false,$true));Assert-ValidateWorkflowContract $currentWorkflow
+        Invoke-TopologyDirectFailureSelfTest $currentWorkflow $fixture
         # Only this owner self-test executes the actual policy after its closed
         # source contract has passed. Ordinary repository attestation never does.
         $definition=[regex]::Match($currentWorkflow,'(?ms)^          function Get-AffectedJobTimeoutMinutes\([^\r\n]*\) \{\r?\n.*?^          \}')
