@@ -49,6 +49,7 @@ $developmentUnitAdmissionBatchChecks = @(
     'tooling-context','tooling-context-product-negative','tooling-context-provenance-negative',
     'tooling-context-recovery-after-artifact','tooling-context-recovery-after-event',
     'tooling-context-recovery-after-intent','tooling-context-recovery-after-projection',
+    'tooling-context-validating-upgrade',
     'tooling-legacy-reclassification-helper','tooling-legacy-reclassification-integration',
     'tooling-preparation-integration'
 )
@@ -5955,12 +5956,13 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     # Every path from the combined raw-CAS and historical-debt candidate has a
     # single exact owner class.  Test each path independently so command-path
     # selection cannot conceal an unmapped or ambiguous shared-module route.
-    $validationAuthorityClosureChecks=@('authority-record-readiness','authority-runner-fast','authority-runner-handoff','transition-ledger','trust-migration-authority','validation-authority-launcher','validation-execution-authority') + $workflowConsumerFixtureChecks
+    $validationAuthorityClosureChecks=@('authority-record-readiness','authority-runner-fast','authority-runner-handoff','quest-build-executor-selection','transition-ledger','trust-migration-authority','validation-authority-launcher','validation-execution-authority') + $workflowConsumerFixtureChecks
     $preparationRepositoryScopeConsumerChecks=@(
         'active-development-envelope-extension',
         'tooling-context','tooling-context-product-negative','tooling-context-provenance-negative',
         'tooling-context-recovery-after-artifact','tooling-context-recovery-after-event',
         'tooling-context-recovery-after-intent','tooling-context-recovery-after-projection',
+        'tooling-context-validating-upgrade',
         'tooling-legacy-reclassification-helper','tooling-legacy-reclassification-integration',
         'tooling-preparation-integration',
         'active-unit-retirement-amendment-recovery','active-unit-retirement-nested-damage',
