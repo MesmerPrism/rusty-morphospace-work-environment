@@ -32,8 +32,9 @@ run remain separate facts.
 - `$rusty-morphospace`: normal first hop; resolves its installed locator directly.
 - `$system-engineering`: authority, contracts, interfaces and validation design.
 - `$rust-work-graph`: bounded source, dependency and instruction inventories.
-- `$meta-quest-workflow`: live Quest/ADB/APK/launch/capture/Meta work; this repo
-  owns no competing device procedure.
+- `$meta-quest-workflow`: Quest device work and hotload/reload/live-edit or
+  avoid-rebuild questions, including Java/Kotlin/JNI/Rust. Read its canonical
+  feedback guide and capability evidence before the selected app contract.
 - `$rusty-morphospace-context`: compatibility locator for existing callers.
 - `$rusty-morphospace-cleanup`: user-requested manual cleanup; never schedule it.
 
