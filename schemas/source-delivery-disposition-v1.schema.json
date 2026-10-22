@@ -1,0 +1,582 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/source-delivery-disposition-v1.schema.json",
+  "title": "Stateless independent source delivery; no product adoption credit",
+  "type": "object",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/request"
+    },
+    {
+      "$ref": "#/$defs/disposition"
+    },
+    {
+      "$ref": "#/$defs/landing_request"
+    },
+    {
+      "$ref": "#/$defs/landing"
+    }
+  ],
+  "$defs": {
+    "raw": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repo_id",
+        "commit",
+        "tree"
+      ],
+      "properties": {
+        "repo_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{1,191}$"
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "tree": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        }
+      }
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repo_id",
+        "repository",
+        "base_commit",
+        "base_tree",
+        "candidate_commit",
+        "candidate_tree",
+        "allowed_paths"
+      ],
+      "properties": {
+        "repo_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{1,191}$"
+        },
+        "repository": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+        },
+        "base_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "base_tree": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "candidate_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "candidate_tree": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "allowed_paths": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*/?$"
+          }
+        }
+      }
+    },
+    "relationship": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "review",
+        "limits"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "same-source",
+            "reviewed-port"
+          ]
+        },
+        "review": {
+          "$ref": "#/$defs/raw"
+        },
+        "limits": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "supersession": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authority",
+        "human_decision",
+        "scope",
+        "prior_dependency_refs"
+      ],
+      "properties": {
+        "authority": {
+          "const": "direct-human"
+        },
+        "human_decision": {
+          "$ref": "#/$defs/raw"
+        },
+        "scope": {
+          "enum": [
+            "source-before-adoption-ordering-only",
+            "accepted-source-owner-source-only"
+          ]
+        },
+        "prior_dependency_refs": {
+          "type": "array",
+          "minItems": 0,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "unit_json_pointer",
+              "value_sha256"
+            ],
+            "properties": {
+              "unit_json_pointer": {
+                "type": "string",
+                "pattern": "^/(acceptance|non_scope|outputs)/[0-9]+(?:/[A-Za-z_]+)?$"
+              },
+              "value_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            }
+          }
+        }
+      }
+    },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "kind",
+        "disposition_id",
+        "consumer",
+        "source_reference",
+        "publication_subject",
+        "ordering_supersession",
+        "relationship",
+        "source_package",
+        "source_check_commands",
+        "publication_map"
+      ],
+      "properties": {
+        "schema": {
+          "const": "rusty.morphospace.workflow.source_delivery_disposition.v1"
+        },
+        "kind": {
+          "const": "request"
+        },
+        "disposition_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{1,191}$"
+        },
+        "consumer": {
+          "$ref": "#/$defs/consumer"
+        },
+        "source_reference": {
+          "$ref": "#/$defs/identity"
+        },
+        "publication_subject": {
+          "$ref": "#/$defs/subject"
+        },
+        "ordering_supersession": {
+          "$ref": "#/$defs/supersession"
+        },
+        "relationship": {
+          "$ref": "#/$defs/relationship"
+        },
+        "source_package": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/raw"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source_check_commands": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "publication_map": {
+          "$ref": "#/$defs/raw"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "consumer": {
+                "properties": {
+                  "boundary_kind": {
+                    "const": "frozen-consumer"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "source_package": {
+                "$ref": "#/$defs/raw"
+              },
+              "ordering_supersession": {
+                "properties": {
+                  "scope": {
+                    "const": "source-before-adoption-ordering-only"
+                  },
+                  "prior_dependency_refs": {
+                    "minItems": 1
+                  }
+                }
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "source_package": {
+                "type": "null"
+              },
+              "ordering_supersession": {
+                "properties": {
+                  "scope": {
+                    "const": "accepted-source-owner-source-only"
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "disposition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "kind",
+        "request",
+        "request_reference",
+        "adoption_pending",
+        "source_landed",
+        "acceptance_credit"
+      ],
+      "properties": {
+        "schema": {
+          "const": "rusty.morphospace.workflow.source_delivery_disposition.v1"
+        },
+        "kind": {
+          "const": "disposition"
+        },
+        "request": {
+          "$ref": "#/$defs/request"
+        },
+        "adoption_pending": {
+          "const": true
+        },
+        "source_landed": {
+          "const": false
+        },
+        "acceptance_credit": {
+          "const": false
+        },
+        "request_reference": {
+          "$ref": "#/$defs/raw"
+        }
+      }
+    },
+    "landing_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "kind",
+        "disposition",
+        "source_checks",
+        "source_review",
+        "pull_request_number",
+        "pull_request_original",
+        "required_checks_original",
+        "merge_original",
+        "provider",
+        "source_before_original",
+        "source_after_original",
+        "source_git",
+        "source_git_invocation_path",
+        "provider_invocation_path"
+      ],
+      "properties": {
+        "schema": {
+          "const": "rusty.morphospace.workflow.source_delivery_disposition.v1"
+        },
+        "kind": {
+          "const": "landing-request"
+        },
+        "disposition": {
+          "$ref": "#/$defs/raw"
+        },
+        "source_checks": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/raw"
+          }
+        },
+        "source_review": {
+          "$ref": "#/$defs/raw"
+        },
+        "pull_request_number": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "pull_request_original": {
+          "$ref": "#/$defs/raw"
+        },
+        "required_checks_original": {
+          "$ref": "#/$defs/raw"
+        },
+        "merge_original": {
+          "$ref": "#/$defs/raw"
+        },
+        "provider": {
+          "$ref": "#/$defs/raw"
+        },
+        "source_before_original": {
+          "$ref": "#/$defs/raw"
+        },
+        "source_after_original": {
+          "$ref": "#/$defs/raw"
+        },
+        "source_git": {
+          "$ref": "#/$defs/raw"
+        },
+        "source_git_invocation_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "provider_invocation_path": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "landing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "kind",
+        "request",
+        "request_reference",
+        "merge_commit",
+        "merge_tree",
+        "adoption_pending",
+        "source_landed",
+        "acceptance_credit"
+      ],
+      "properties": {
+        "schema": {
+          "const": "rusty.morphospace.workflow.source_delivery_disposition.v1"
+        },
+        "kind": {
+          "const": "landing"
+        },
+        "request": {
+          "$ref": "#/$defs/landing_request"
+        },
+        "merge_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "merge_tree": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "adoption_pending": {
+          "const": true
+        },
+        "source_landed": {
+          "const": true
+        },
+        "acceptance_credit": {
+          "const": false
+        },
+        "request_reference": {
+          "$ref": "#/$defs/raw"
+        }
+      }
+    },
+    "frozen_consumer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "project_id",
+        "unit_id",
+        "freeze_id",
+        "freeze_receipt_sha256",
+        "begin_event_id",
+        "state_raw_sha256",
+        "unit_raw_sha256",
+        "events_raw_sha256",
+        "repository_map",
+        "workspace_root",
+        "boundary_kind"
+      ],
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{1,191}$"
+        },
+        "unit_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{1,191}$"
+        },
+        "freeze_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{1,191}$"
+        },
+        "freeze_receipt_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "begin_event_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{1,191}$"
+        },
+        "state_raw_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "unit_raw_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "events_raw_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "repository_map": {
+          "$ref": "#/$defs/raw"
+        },
+        "workspace_root": {
+          "type": "string",
+          "minLength": 1
+        },
+        "boundary_kind": {
+          "const": "frozen-consumer"
+        }
+      }
+    },
+    "accepted_owner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "project_id",
+        "unit_id",
+        "state_raw_sha256",
+        "unit_raw_sha256",
+        "events_raw_sha256",
+        "repository_map",
+        "workspace_root",
+        "boundary_kind",
+        "accept_event_id",
+        "accept_receipt"
+      ],
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{1,191}$"
+        },
+        "unit_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{1,191}$"
+        },
+        "state_raw_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "unit_raw_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "events_raw_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "repository_map": {
+          "$ref": "#/$defs/raw"
+        },
+        "workspace_root": {
+          "type": "string",
+          "minLength": 1
+        },
+        "boundary_kind": {
+          "const": "accepted-source-owner"
+        },
+        "accept_event_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{1,191}$"
+        },
+        "accept_receipt": {
+          "$ref": "#/$defs/raw"
+        }
+      }
+    },
+    "consumer": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/frozen_consumer"
+        },
+        {
+          "$ref": "#/$defs/accepted_owner"
+        }
+      ]
+    }
+  }
+}
