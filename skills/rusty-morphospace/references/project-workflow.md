@@ -1,18 +1,17 @@
 # Rusty Morphospace Project Workflow
 
-Use this reference for composition, activation, source work, lifecycle,
-validation and instruction impact. Recovery and audit remain in owner runbooks.
-Here, `<work-environment>` is the locator's `work_environment_root`; read its
-named runbooks under `<work-environment>/docs/`.
+`<work-environment>` is the installed locator's `work_environment_root`.
 
 ## Resume and scope
 
-Use `docs/DIRECT_WORK_PACKAGES.md#agent-and-framework-adaptation` for framework practices.
+For framework practices see `docs/DIRECT_WORK_PACKAGES.md#agent-and-framework-adaptation`.
+Queue discovery follows `<work-environment>/docs/DIRECT_WORK_PACKAGES.md#central-issue-queue`:
+optional `repos.planning_authority` in ignored `<work-environment>/local/local.paths.json`
+locates the authority's AGENTS/README.
 
-Read the nearest project instructions, then its `morphospace/project.spec.json`,
-`feature.lock.json`, `workspace.state.json`, current unit when present, and only
-the compact-state-named event tail and receipts. Check Git status for every
-repository in scope.
+Read nearest project instructions, `morphospace/project.spec.json`,
+`feature.lock.json`, `workspace.state.json`, the current unit when present and
+only the compact-state-named tail/receipts. Check Git status for in-scope repos.
 
 The project spec owns composition. The feature lock owns the permitted
 feature/effect closure. Workspace state is a resume projection; it does not

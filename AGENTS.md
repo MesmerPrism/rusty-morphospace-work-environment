@@ -11,6 +11,8 @@ Use the nearest owner instructions and the documents for the effect being
 changed. For a bounded implementation or documentation change, use
 [Direct Work Packages](docs/DIRECT_WORK_PACKAGES.md), including its
 [agent and framework adaptation](docs/DIRECT_WORK_PACKAGES.md#agent-and-framework-adaptation).
+Use its [central issue queue procedure](docs/DIRECT_WORK_PACKAGES.md#central-issue-queue)
+for package planning, concrete discoveries and handoff.
 For ordinary continuation, start with [Current Work Validation](docs/CURRENT_WORK_VALIDATION.md); read
 historical recovery only when selected or required by an actual current error.
 
