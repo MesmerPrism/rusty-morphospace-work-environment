@@ -283,8 +283,10 @@ Start here:
    ``pwsh -NoProfile -ExecutionPolicy Bypass -File <work-environment-root>/scripts/Test-WorkflowContracts.ps1 -WorkspaceRoot <project-root>/morphospace``
 
 The portable protocol guide is docs/PROJECT_WORKSPACE_PROTOCOL.md in the
-work-environment repository. Keep machine paths and private evidence outside
-tracked files.
+work-environment repository. Use the installed Rusty Morphospace router and
+docs/DIRECT_WORK_PACKAGES.md#central-issue-queue there to discover the adopted
+external authority's existing queue. Keep machine paths and private evidence
+outside tracked files.
 "@
     [System.IO.File]::WriteAllText((Join-Path $target "README.md"), $readme.Trim() + [Environment]::NewLine, $utf8NoBom)
 

@@ -29,7 +29,8 @@ Read [ownership-map.md](references/ownership-map.md) for lanes, ownership,
 module boundaries, and agent routing. Read
 [project-workflow.md](references/project-workflow.md) for project composition,
 feature activation, source locks, lifecycle, validation, privacy boundaries,
-or instruction synchronization.
+or instruction synchronization. It also resolves the adopted external authority's
+issue queue for package planning, concrete discoveries and handoff.
 For a fresh unit in an idle project, use that reference's preparation and
 admission routes, including retained proposal retirements and exact owner roots.
 
