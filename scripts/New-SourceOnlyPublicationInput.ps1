@@ -1,12 +1,15 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)][ValidateSet('Readiness', 'Plan', 'StartOperation', 'ObserveOperation', 'Execution')][string]$Action,
+    [Parameter(Mandatory = $true)][ValidateSet('Readiness', 'Plan', 'StartOperation', 'ObserveOperation', 'Execution', 'Disposition', 'ObserveLanding', 'VerifyLanding')][string]$Action,
     [string]$WorkspaceRoot = '', [string]$UnitId = '', [string]$RepoMapPath = '', [string]$PublicationId = '',
     [ValidateSet('fast-forward', 'provider-merge')][string]$PublicationMode = 'provider-merge',
     [string]$Remote = 'origin', [string]$TargetBranch = 'main', [string]$PlanPath = '', [string]$RepoId = '',
     [string]$OperationStartPath = '', [string]$OperationEvidencePath = '', [string]$ExpectedOperationEvidenceSha256 = '',
     [string[]]$OperationObservationPaths = @(), [string]$Timestamp = '',
-    [Parameter(Mandatory = $true)][string]$OutPath
+    [string]$RequestPath = '', [string]$ExpectedRequestSha256 = '',
+    [string]$HumanDecisionPath = '', [string]$ExpectedHumanDecisionSha256 = '',
+    [string]$LandingPath = '', [string]$ExpectedLandingSha256 = '',
+    [string]$OutPath = ''
 )
 
 Set-StrictMode -Version 2.0
@@ -14,6 +17,15 @@ $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'SourceOnlyPublicationInputs.psm1') -Force
 
 switch ($Action) {
+    'Disposition' {
+        New-MorphospaceSourceDeliveryDisposition -RequestPath $RequestPath -ExpectedRequestSha256 $ExpectedRequestSha256 -WorkspaceRoot $WorkspaceRoot -RepoMapPath $RepoMapPath -HumanDecisionPath $HumanDecisionPath -ExpectedHumanDecisionSha256 $ExpectedHumanDecisionSha256 -OutPath $OutPath
+    }
+    'ObserveLanding' {
+        New-MorphospaceSourceDeliveryLanding -RequestPath $RequestPath -ExpectedRequestSha256 $ExpectedRequestSha256 -RepoMapPath $RepoMapPath -OutPath $OutPath
+    }
+    'VerifyLanding' {
+        Test-MorphospaceSourceDeliveryLanding -LandingPath $LandingPath -ExpectedLandingSha256 $ExpectedLandingSha256 -WorkspaceRoot $WorkspaceRoot -UnitId $UnitId -RepositoryMap $RepoMapPath
+    }
     'Readiness' {
         Get-MorphospaceSourceOnlyPublicationReadiness -WorkspaceRoot $WorkspaceRoot -UnitId $UnitId -RepoMapPath $RepoMapPath -PublicationId $PublicationId -PublicationMode $PublicationMode -Remote $Remote -TargetBranch $TargetBranch -OutPath $OutPath
     }

@@ -1241,6 +1241,10 @@ function Test-MorphospaceValidationReceipt {
         if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf)) { throw "Validation artifact does not exist: $($artifact.path)" }
         $actualHash = Get-MorphospaceAuthoritySha256 $artifactPath
         if ($actualHash -ne ([string]$artifact.sha256).ToLowerInvariant()) { throw "Validation artifact hash mismatch for '$artifactId'." }
+        if ([string]$artifact.kind -ceq 'source-delivery-landing') {
+            $deliveryOwner = Import-Module (Join-Path $PSScriptRoot 'SourceOnlyPublicationInputs.psm1') -PassThru
+            [void](& $deliveryOwner { param($p,$h,$w,$u,$m) Test-MorphospaceSourceDeliveryLanding -LandingPath $p -ExpectedLandingSha256 $h -WorkspaceRoot $w -UnitId $u -RepositoryMap $m } $artifactPath $actualHash $WorkspaceRoot ([string]$Unit.unit_id) $RepositoryMap)
+        }
         $artifactMap[$artifactId] = $artifact
         $artifactPathMap[$artifactId] = $artifactPath
     }
