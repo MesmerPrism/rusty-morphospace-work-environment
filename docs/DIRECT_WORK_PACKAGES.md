@@ -70,17 +70,43 @@ remaining limits and resource custody. Preserve meaningful ignored inputs and
 original evidence still authenticated by consumers before worktree archival;
 use the existing cleanup and evidence-relocation contracts for retirement.
 
+## Central issue queue
+
+Use the existing queue published by the adopted external planning authority.
+Resolve the installed work-environment source through
+`references/local-work-environment.json`; its provenance does not grant authority.
+Use the authority binding in the nearest owner instructions or explicit task
+context. Otherwise, its root may be discovered through `repos.planning_authority`
+in the work-environment clone's ignored `local/local.paths.json`. This optional
+local path is navigation only. Read that authority root's `AGENTS.md` and
+`README.md`, and follow their existing queue pointer. Keep private identities
+and machine paths in ignored local configuration, never in portable source.
+
+Apply three triggers through one queue writer:
+
+- **New package:** skim relevant open items once. Keep one primary outcome and
+  record selected IDs plus brief deferrals in existing owner notes. Balanced
+  mode may include related work sharing actual validation with bounded cost/risk;
+  user-selected fast track includes direct delivery dependencies only.
+- **Concrete discovery:** deduplicate by cause. Update the existing row with
+  owner, state/problem, next action, done-when and an evidence pointer; continue
+  the selected product work. Add a new ID only for a distinct cause.
+- **Result or handoff:** reconcile selected IDs with final PR/evidence links,
+  remaining actions and limits. Keep source-landed, adoption-pending and
+  runtime-proven facts separate.
+
+If the binding is missing, conflicting or unavailable, or another writer owns
+the queue, retain one small linked pending update in existing owner notes and
+continue product work. Do not guess a queue, replace it with an ignored CURRENT
+backlog, or infer adoption/grants from a path. Queue upkeep does not widen an
+admitted scope, require a ticket per commit, rescan the full backlog, add a
+validation/build gate or create another approval loop. GSD/Superpowers notes
+reuse this authority and the selected owner; they are not another issue queue.
+
 ## Minimal package
 
-When an external planning authority publishes a central issue queue, consult
-relevant open items once when planning a new package. Keep one primary outcome;
-use balanced mode by default or fast track when the user prioritizes delivery.
-Balanced work may include related extras sharing actual validation, with bounded
-cost and risk; fast track includes only direct delivery dependencies. Record
-selected IDs and brief deferrals in existing notes, without new manifest fields
-or guards. Queue other discoveries for later and continue the selected work;
-do not rescan the full backlog or replan before each command. This selection
-does not widen an admitted unit or replace its owner requirements.
+Use the [central issue queue procedure](#central-issue-queue) for the three
+checkpoint triggers above. Package selection does not replace owner requirements.
 
 Keep the record outside public source repositories when it contains private
 intent or commands. Use public repository identities and portable relative
