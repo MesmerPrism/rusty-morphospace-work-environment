@@ -4,10 +4,10 @@
 
 ## Resume and scope
 
-For framework practices see `docs/DIRECT_WORK_PACKAGES.md#agent-and-framework-adaptation`.
-Queue discovery follows `<work-environment>/docs/DIRECT_WORK_PACKAGES.md#central-issue-queue`:
-optional `repos.planning_authority` in ignored `<work-environment>/local/local.paths.json`
-locates the authority's AGENTS/README.
+See `docs/DIRECT_WORK_PACKAGES.md#agent-and-framework-adaptation`.
+Queue: `<work-environment>/docs/DIRECT_WORK_PACKAGES.md#central-issue-queue`; optional ignored
+`<work-environment>/local/local.paths.json` `repos.planning_authority` locates authority AGENTS/README.
+Reload questions: `$meta-quest-workflow` feedback guide first, then app ABI/lifetime.
 
 Read nearest project instructions, `morphospace/project.spec.json`,
 `feature.lock.json`, `workspace.state.json`, the current unit when present and
