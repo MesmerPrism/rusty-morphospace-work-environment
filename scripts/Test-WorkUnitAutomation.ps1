@@ -2204,6 +2204,12 @@ try {
         [pscustomobject][ordered]@{ profile_id = "source-only"; command = "second source-only command" },
         [pscustomobject][ordered]@{ profile_id = "source-only"; command = "third source-only command" }
     )
+    $duplicateGateSpecPath = Join-Path $duplicateGateWorkspace "project.spec.json"
+    $duplicateGateSpec = Get-Content -LiteralPath $duplicateGateSpecPath -Raw | ConvertFrom-Json
+    $duplicateGateSpec.validation_profiles = @($duplicateGateSpec.validation_profiles) + @(
+        [pscustomobject][ordered]@{ profile_id = "source-only"; commands = @("first source-only command", "second source-only command", "third source-only command") }
+    )
+    Write-TestJson -Path $duplicateGateSpecPath -Value $duplicateGateSpec
     Write-TestJson -Path $duplicateGateUnitPath -Value $duplicateGateUnit
     Invoke-MorphospaceWorkUnitAutomation -Action Claim -WorkspaceRoot $duplicateGateWorkspace -UnitId "unit-duplicate-gate-001" -RepoMapPath $repoMapPath -Timestamp $fixed -Execute | Out-Null
     Invoke-MorphospaceWorkUnitAutomation -Action BeginValidation -WorkspaceRoot $duplicateGateWorkspace -UnitId "unit-duplicate-gate-001" -RepoMapPath $repoMapPath -Timestamp $fixed -Execute | Out-Null
