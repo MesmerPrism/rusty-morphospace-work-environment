@@ -109,15 +109,18 @@ For a new tooling context, first use
 `New-MorphospaceToolingContextResolver` in
 `scripts/ToolingContextProvenance.psm1`, as documented in
 [Tooling Context](TOOLING_CONTEXT.md). It copies the selected exact managed
-router files and generated provenance/locators into ignored context-local storage
-and returns a normal resolver binding. Supply that binding before preparation
+router files and generated provenance/locators into explicit persistent external
+`SnapshotRoot/<digest>` storage and returns a normal ignored workspace resolver.
+Supply every selected map root through `RepositoryRoots`; storage must be outside
+these roots, the workspace and executor. Retain both storage and source checkouts.
+Supply that binding before preparation
 seals the context. Verify such a context with its returned `router_root`
 as `TargetRoot` and the pinned executor as `RepoRoot`. Host guidance
 can subsequently Update at the ordinary global target independently.
 
 Existing contexts retain their resolver and drift guards. An installer backup
 does not itself change a context's selected root, and Update must not rewrite
-that resolver or accepted history. Context-local copies are neither global
+that resolver or accepted history. Retained copies are neither global
 skill deployment nor permission to run a different executor.
 
 Installing or updating a managed skill does not rewrite a project's product

@@ -140,8 +140,12 @@ function Test-IntegratedToolingContextVerify {
     $verified = (Invoke-InstallerChild -Arguments $arguments) | ConvertFrom-Json
     Assert-True ($verified.action -eq 'verified') 'Integrated context-bound Verify rejected authenticated forward-slash roots.'
     # A new context selects an isolated managed copy before its resolver is sealed.
+    $snapshotStore=Join-Path $testRoot 'retained-router-snapshots'
+    $declaredProductRoot=Join-Path $testRoot 'declared-product'
+    [void][IO.Directory]::CreateDirectory($declaredProductRoot)
     $snapshotArguments = @{
         WorkspaceRoot=$workspace; ContextId='snapshot-context'; ExecutorRoot=$installerSourceRoot
+        SnapshotRoot=$snapshotStore; RepositoryRoots=@($workspace,$installerSourceRoot,$declaredProductRoot)
         Routers=@($router); RouterLocations=@([pscustomobject]@{skill_id='rusty-morphospace';root=(Join-Path $targetRoot 'rusty-morphospace')})
         ResolverPath='local/snapshot-resolver.json'
     }
@@ -149,6 +153,7 @@ function Test-IntegratedToolingContextVerify {
     $planned = & $provenance { param($p) New-MorphospaceToolingContextResolver @p } $snapshotArguments
     Assert-True ($planned.action -eq 'planned') 'Router materialization without Execute was not a plan.'
     Assert-True (-not(Test-Path -LiteralPath (Join-Path $workspace 'local/snapshot-resolver.json'))) 'Read-only materialization wrote its resolver.'
+    Assert-True (-not(Test-Path -LiteralPath $snapshotStore)) 'Read-only materialization wrote external storage.'
     Assert-True ((@(Get-ChildItem -LiteralPath $workspace -Recurse -File | ForEach-Object FullName) -join [char]0) -ceq ($filesBefore -join [char]0)) 'Materialization plan wrote files.'
     $snapshotArguments.Execute=$true
     $materialized = & $provenance { param($p) New-MorphospaceToolingContextResolver @p } $snapshotArguments
@@ -175,7 +180,7 @@ function Test-IntegratedToolingContextVerify {
     } finally { [IO.File]::WriteAllBytes($snapshotSkill,$snapshotBytes) }
     # Input errors and publication conflicts must not rewrite any existing bytes.
     function Resolver-FilesFingerprint {
-        $values=@(Get-ChildItem -LiteralPath $workspace -Recurse -File | Sort-Object FullName | ForEach-Object { $_.FullName+':'+(Get-FileHash -LiteralPath $_.FullName).Hash })
+        $values=@(foreach($root in @($workspace,$snapshotStore)){if(Test-Path -LiteralPath $root){Get-ChildItem -LiteralPath $root -Recurse -File | Sort-Object FullName | ForEach-Object { $_.FullName+':'+(Get-FileHash -LiteralPath $_.FullName).Hash }}})
         return ($values -join [char]0)
     }
     function Deny-Materialization([hashtable]$Arguments,[string]$Expected) {
@@ -185,6 +190,23 @@ function Test-IntegratedToolingContextVerify {
         Assert-True ($message -match $Expected) ("Unexpected materialization refusal: "+$message)
         Assert-True ((Resolver-FilesFingerprint) -ceq $before) 'Refused materialization changed existing workspace files.'
     }
+    foreach($unsafeStore in @($workspace,(Join-Path $workspace 'cache'),$testRoot,$installerSourceRoot,(Join-Path $declaredProductRoot '../declared-product/cache'))){
+        $bad=$snapshotArguments.Clone();$bad.SnapshotRoot=$unsafeStore
+        Deny-Materialization $bad 'snapshot storage overlaps a declared repository, workspace or executor root'
+    }
+    $bad=$snapshotArguments.Clone();$bad.SnapshotRoot='relative-cache'
+    Deny-Materialization $bad 'explicit absolute retained directory'
+    $bad=$snapshotArguments.Clone();$bad.RepositoryRoots=@('relative-product')
+    Deny-Materialization $bad 'repository root locations must be absolute'
+    $bad=$snapshotArguments.Clone();$bad.RepositoryRoots=@()
+    Deny-Materialization $bad 'empty array|selected repository root locations'
+    $snapshotAlias=Join-Path $testRoot 'snapshot-storage-alias'
+    try {
+        $kind=if([OperatingSystem]::IsWindows()){'Junction'}else{'SymbolicLink'}
+        New-Item -ItemType $kind -Path $snapshotAlias -Target $declaredProductRoot | Out-Null
+        $bad=$snapshotArguments.Clone();$bad.SnapshotRoot=$snapshotAlias
+        Deny-Materialization $bad 'Reparse-point ancestors'
+    } finally { if(Test-Path -LiteralPath $snapshotAlias){Remove-Item -LiteralPath $snapshotAlias -Force} }
     foreach($unsafe in @('resolver.json','local/tooling-router-snapshots/bad.json','../escape.json')){
         $bad=$snapshotArguments.Clone();$bad.ResolverPath=$unsafe
         Deny-Materialization $bad 'ignored local/|inside its router copy|may not contain'

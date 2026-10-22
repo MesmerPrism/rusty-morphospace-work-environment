@@ -11,8 +11,11 @@ For a new local context, first author its ignored resolver with
 `New-MorphospaceToolingContextResolver` from
 `scripts/ToolingContextProvenance.psm1`. This host-only step verifies the
 declared exact managed router set and copies its managed files, provenance and
-known generated locators into one content-addressed parent beneath
-`local/tooling-router-snapshots/`. Unmanaged contributor files are not copied.
+known generated locators into `SnapshotRoot/<digest>`. Supply an explicit,
+persistent absolute `SnapshotRoot` outside every selected product/planning
+repository root, the workspace and executor. Retain this storage for the life
+of its contexts; no temporary or workspace-local default is selected. Unmanaged
+contributor files are not copied.
 It plans without writes by default; `-Execute` publishes verified copies and
 a no-overwrite resolver. Exact existing copies are reusable; altered, partial
 or conflicting output is refused rather than repaired.
@@ -27,9 +30,13 @@ installation still correctly refuses its drift and needs its existing supported
 consumer selection/upgrade route.
 
 `New-MorphospaceToolingContextResolver` accepts `WorkspaceRoot`,
-`ContextId`, `ExecutorRoot`, exact portable `Routers`,
+`ContextId`, `ExecutorRoot`, `SnapshotRoot`, `RepositoryRoots`, exact portable `Routers`,
 `RouterLocations` (`skill_id`/absolute `root` rows), and
-`ResolverPath` under ignored `local/`. Use its returned
+`ResolverPath` under ignored workspace `local/`. `RepositoryRoots` must list
+all selected repository-map root locations. This location-only input grants no
+authority: the actual instruction consumer still authenticates the complete map
+and refuses overlapping skill roots. Equal, ancestor and descendant storage
+overlap is refused before writes, as are unsafe aliases. Use its returned
 `resolver` path/hash in the preparation descriptor before hashing that
 request. Its `router_root` is the shared parent for context-bound installer
 Verify. This authoring command neither executes a lifecycle transition nor

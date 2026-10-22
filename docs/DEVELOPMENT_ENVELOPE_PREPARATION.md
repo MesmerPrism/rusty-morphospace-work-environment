@@ -140,10 +140,12 @@ executor metadata and a finite closed import closure, exact managed-router
 records/files, and the fixed `tooling-context-v1` compatibility protocol.
 Before authoring and hashing the request, use
 `New-MorphospaceToolingContextResolver` from the
-[tooling owner](TOOLING_CONTEXT.md) to select verified context-local managed
-router copies. Its returned `resolver` is the descriptor's exact path/hash.
-Plan is read-only; explicit `-Execute` materializes these ignored host
-inputs before preparation. Do not point new contexts at an installation that
+[tooling owner](TOOLING_CONTEXT.md) to select verified managed router copies.
+Supply persistent absolute `SnapshotRoot` outside all selected repository-map
+roots, the workspace and executor, and list those map roots in `RepositoryRoots`.
+Retain that external storage and the selected source checkouts. Its returned
+ignored workspace `resolver` is the descriptor's exact path/hash. Plan is read-only;
+explicit `-Execute` materializes these host inputs before preparation. Do not point new contexts at an installation that
 ordinary host guidance updates will replace.
 
 Preparation observes a clean executor HEAD/tree/origin and the selected router

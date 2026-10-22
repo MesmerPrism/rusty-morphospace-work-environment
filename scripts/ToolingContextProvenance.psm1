@@ -132,6 +132,8 @@ function New-MorphospaceToolingContextResolver {
         [Parameter(Mandatory)][string]$WorkspaceRoot,
         [Parameter(Mandatory)][string]$ContextId,
         [Parameter(Mandatory)][string]$ExecutorRoot,
+        [Parameter(Mandatory)][string]$SnapshotRoot,
+        [Parameter(Mandatory)][string[]]$RepositoryRoots,
         [Parameter(Mandatory)][object[]]$Routers,
         [Parameter(Mandatory)][object[]]$RouterLocations,
         [Parameter(Mandatory)][string]$ResolverPath,
@@ -144,6 +146,23 @@ function New-MorphospaceToolingContextResolver {
     if($relative-cnotmatch'^local/'){throw 'New tooling resolver must be an ignored local/ binding.'}
     if($ContextId-cnotmatch'^[a-z0-9][a-z0-9-]{1,127}$'){throw 'New tooling resolver context identity is invalid.'}
     if(-not[IO.Path]::IsPathFullyQualified($ExecutorRoot)-or-not[IO.Directory]::Exists($ExecutorRoot)){throw 'New tooling resolver executor must be an existing absolute directory.'}
+    if(-not[IO.Path]::IsPathFullyQualified($SnapshotRoot)){throw 'Tooling router snapshot storage must be an explicit absolute retained directory.'}
+    $snapshotBase=[IO.Path]::GetFullPath($SnapshotRoot).TrimEnd('\','/')
+    $volume=[IO.Path]::GetPathRoot($snapshotBase)
+    if($snapshotBase.Length-le$volume.Length-or[IO.File]::Exists($snapshotBase)){throw 'Tooling router snapshot storage must be a retained directory below its filesystem root.'}
+    [void](ConvertTo-MorphospaceProtocolRelativePath ([IO.Path]::GetRelativePath($volume,$snapshotBase)))
+    Assert-MorphospaceNoReparseAncestor -Root $snapshotBase -Candidate $snapshotBase
+    if($RepositoryRoots.Count-eq0){throw 'Tooling router materialization requires the selected repository root locations.'}
+    $pathComparison=if([OperatingSystem]::IsWindows()){[StringComparison]::OrdinalIgnoreCase}else{[StringComparison]::Ordinal}
+    foreach($declared in @($RepositoryRoots)+@($workspace,$ExecutorRoot)){
+        if(-not[IO.Path]::IsPathFullyQualified($declared)){throw 'Tooling router repository root locations must be absolute.'}
+        $protected=[IO.Path]::GetFullPath($declared)
+        $protectedVolume=[IO.Path]::GetPathRoot($protected)
+        if($protected.Length-gt$protectedVolume.Length){$protected=$protected.TrimEnd('\','/')}
+        if($protected.Length-gt$protectedVolume.Length){[void](ConvertTo-MorphospaceProtocolRelativePath ([IO.Path]::GetRelativePath($protectedVolume,$protected)))}
+        Assert-MorphospaceNoReparseAncestor -Root $protected -Candidate $protected
+        if($snapshotBase.Equals($protected,$pathComparison)-or$snapshotBase.StartsWith($protected.TrimEnd('\','/')+[IO.Path]::DirectorySeparatorChar,$pathComparison)-or$protected.StartsWith($snapshotBase+[IO.Path]::DirectorySeparatorChar,$pathComparison)){throw 'Tooling router snapshot storage overlaps a declared repository, workspace or executor root.'}
+    }
     $output=Resolve-MorphospaceWorkspacePath $workspace $relative
     $locations=[Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach($row in $RouterLocations){
@@ -177,8 +196,7 @@ function New-MorphospaceToolingContextResolver {
     # Include exact provenance and generated locator bytes, not unmanaged files.
     $inventory=@($files|ForEach-Object{[pscustomobject][ordered]@{path=$_.path;sha256=$_.sha256}})
     $digest=Get-MorphospaceCanonicalJsonSha256 $inventory
-    $snapshotRelative="local/tooling-router-snapshots/$digest"
-    $snapshot=Resolve-MorphospaceWorkspacePath $workspace $snapshotRelative
+    $snapshot=Resolve-MorphospaceWorkspacePath $snapshotBase $digest
     if($relative.StartsWith('local/tooling-router-snapshots/',[StringComparison]::OrdinalIgnoreCase)){throw 'New tooling resolver cannot be written inside its router copy.'}
     $resolver=[pscustomobject][ordered]@{
         schema='rusty.morphospace.workflow.tooling_context_resolver.v1';context_id=$ContextId
@@ -214,7 +232,7 @@ function New-MorphospaceToolingContextResolver {
         foreach($router in $Routers){Assert-ToolingContextRouterLive $router $locations[[string]$router.skill_id]}
         if([IO.File]::Exists($output)-and(Get-MorphospaceFileSha256 $output)-cne(Get-MorphospaceSha256Bytes $resolverBytes)){throw 'New tooling resolver output already contains different bytes.'}
         if([IO.Directory]::Exists($snapshot)){Assert-SnapshotFiles $snapshot}else{
-            $stage=Resolve-MorphospaceWorkspacePath $workspace ("local/tooling-router-snapshots/staging-"+[guid]::NewGuid().ToString('N'))
+            $stage=Resolve-MorphospaceWorkspacePath $snapshotBase ("staging-"+[guid]::NewGuid().ToString('N'))
             [void][IO.Directory]::CreateDirectory($stage)
             foreach($file in $files){
                 $destination=Resolve-MorphospaceWorkspacePath $stage ([string]$file.path)
@@ -229,13 +247,14 @@ function New-MorphospaceToolingContextResolver {
         if(-not$current){Write-MorphospaceManagedProtocolJsonAtomic $workspace $relative $resolver -NoOverwrite}
         [pscustomobject]@{action=$(if($current){'current'}else{'materialized'});resolver=[pscustomobject]@{path=$relative;sha256=Get-MorphospaceFileSha256 $output};router_root=$snapshot;executed=$true}
     }finally{
-        if($null-ne$stage-and[IO.Directory]::Exists($stage)){
-            # Only the newly allocated, validated local staging root is removed.
-            $checked=Resolve-MorphospaceWorkspacePath $workspace ([IO.Path]::GetRelativePath($workspace,$stage).Replace('\','/'))
-            if($checked-cne$stage){throw 'Router materialization staging identity changed.'}
-            Remove-Item -LiteralPath $stage -Recurse -Force
-        }
-        Exit-MorphospaceWorkspaceMutex $mutex
+        try{
+            if($null-ne$stage-and[IO.Directory]::Exists($stage)){
+                # Only the new staging directory inside explicitly selected storage.
+                $checked=Resolve-MorphospaceWorkspacePath $snapshotBase ([IO.Path]::GetRelativePath($snapshotBase,$stage).Replace('\','/'))
+                if(-not$checked.Equals($stage,$pathComparison)){throw 'Router materialization staging identity changed.'}
+                Remove-Item -LiteralPath $stage -Recurse -Force
+            }
+        }finally{Exit-MorphospaceWorkspaceMutex $mutex}
     }
 }
 
