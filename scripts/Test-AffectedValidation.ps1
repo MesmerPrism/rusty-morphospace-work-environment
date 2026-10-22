@@ -1319,7 +1319,9 @@ function Resolve-AffectedStaticOwnerPathRoot([object]$Node,[object]$Index,[objec
     if ($Depth -gt 4) { throw 'Module Name path root derivation is recursive or ambiguous.' }
     $node = Get-AffectedUnwrappedPathAst $Node
     if ($node -is [Management.Automation.Language.CommandAst]) {
-        if (-not (Test-AffectedStaticBuiltinCommand -Command $node -SourceAst $Index.ast -Name Split-Path -Module Microsoft.PowerShell.Management -Facts $Index.builtin_facts) -or $node.CommandElements.Count -ne 3 -or $node.CommandElements[1] -isnot [Management.Automation.Language.CommandParameterAst] -or $node.CommandElements[1].ParameterName -ine 'Parent' -or $null -ne $node.CommandElements[1].Argument -or $node.CommandElements[2] -isnot [Management.Automation.Language.VariableExpressionAst] -or $node.CommandElements[2].VariablePath.UserPath -ine 'PSScriptRoot') { throw 'Module Name path root is not a fixed importer-owned parent.' }
+        $parent = @($node.CommandElements | Where-Object { $_ -is [Management.Automation.Language.CommandParameterAst] -and $_.ParameterName -ieq 'Parent' -and $null -eq $_.Argument })
+        $path = @($node.CommandElements | Where-Object { $_ -is [Management.Automation.Language.VariableExpressionAst] -and $_.VariablePath.UserPath -ieq 'PSScriptRoot' -and -not $_.Splatted })
+        if (-not (Test-AffectedStaticBuiltinCommand -Command $node -SourceAst $Index.ast -Name Split-Path -Module Microsoft.PowerShell.Management -Facts $Index.builtin_facts) -or $node.CommandElements.Count -ne 3 -or $parent.Count -ne 1 -or $path.Count -ne 1 -or @($node.Redirections).Count -ne 0) { throw 'Module Name path root is not a fixed importer-owned parent.' }
         return [IO.Path]::GetDirectoryName([IO.Path]::GetDirectoryName($Index.absolute_path))
     }
     if ($node -isnot [Management.Automation.Language.VariableExpressionAst]) { throw 'Module Name path root is not a fixed owner-root expression.' }
@@ -1527,7 +1529,40 @@ function Get-AffectedAuditedModuleMemberTarget([string]$Importer, [Management.Au
     } else { throw "Audited module-member invocation changed its closed callback/argument contract: $key" }
     return [pscustomobject]@{key=$key;operation=$operation;target=[string]$declaration.import_path}
 }
-function New-AffectedTrackedImportGraph([string]$Root, [string[]]$Entrypoints, [object[]]$DynamicImportDeclarations = @(), [Collections.Generic.HashSet[string]]$TrackedPaths = $null) {
+function Get-AffectedGraphExternalBindings([object]$Index,[object]$Scope,[string]$Variable) {
+    $result = [Collections.Generic.List[object]]::new()
+    foreach ($assignment in @($Index.module_binding_assignments)) {
+        if (-not [object]::ReferenceEquals((Get-AffectedLexicalImportScope $assignment),$Scope)) { continue }
+        $leaves = @($assignment.Left.FindAll({param($node) $node -is [Management.Automation.Language.VariableExpressionAst]},$true))
+        $matched = @($leaves | Where-Object { ([string]$_.VariablePath.UserPath -replace '(?i)^(?:local|private):','') -ieq $Variable })
+        if ($matched.Count -eq 0) { continue }
+        if ($assignment.Left -isnot [Management.Automation.Language.VariableExpressionAst] -or $assignment.Left.VariablePath.UserPath -like 'private:*' -or $assignment.Operator -ne [Management.Automation.Language.TokenKind]::Equals) { throw "Graph external binding has an unsupported storage write: $Variable" }
+        $result.Add([pscustomobject]@{path_values=@(Get-AffectedIndexedLiteralScriptPaths $assignment.Right)})
+    }
+    return $result.ToArray()
+}
+function Get-AffectedGraphLiteralScriptPath([object]$Node,[string]$Value,[object]$Index,[object]$Scope,[string]$Root) {
+    $node = Get-AffectedUnwrappedPathAst $Node
+    $base = [IO.Path]::GetDirectoryName($Index.absolute_path)
+    if ($Value.Replace('\','/') -notmatch '^tools/') {
+        $full = if ($Value.Replace('\','/') -match '^scripts/') { [IO.Path]::GetFullPath((Join-Path $Root $Value)) } else { [IO.Path]::GetFullPath((Join-Path $base $Value)) }
+        if (-not $full.StartsWith($Root.TrimEnd('\','/')+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)) { throw 'Graph script path escapes the owner root.' }
+        return [IO.Path]::GetRelativePath($Root,$full).Replace('\','/')
+    }
+    if ($node -is [Management.Automation.Language.CommandAst]) {
+        if (-not (Test-AffectedStaticBuiltinCommand -Command $node -SourceAst $Index.ast -Name Join-Path -Module Microsoft.PowerShell.Management -Facts $Index.builtin_facts) -or
+            $node.CommandElements.Count -ne 3 -or $node.CommandElements[2] -isnot [Management.Automation.Language.StringConstantExpressionAst] -or
+            [string]$node.CommandElements[2].Value -cne $Value) { throw 'Graph script path is not one actual builtin Join-Path target.' }
+        $base = Get-AffectedStaticOwnerPathRoot -Node $node.CommandElements[1] -Index $Index -Scope $Scope -Root $Root
+    } elseif ($node -is [Management.Automation.Language.StringConstantExpressionAst]) {
+        if ($Value.Replace('\','/') -match '^(?:scripts|tools)/') { $base = $Root }
+    } else { throw 'Graph script path has an unsupported actual target expression.' }
+    if ([IO.Path]::IsPathRooted($Value) -or $Value.Contains(':') -or $Value.Replace('\','/') -match '(?:^|/)\.\.?/') { throw 'Graph script path is not canonical.' }
+    $full = [IO.Path]::GetFullPath((Join-Path $base $Value))
+    if (-not $full.StartsWith($Root.TrimEnd('\','/')+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)) { throw 'Graph script path escapes the owner root.' }
+    return [IO.Path]::GetRelativePath($Root,$full).Replace('\','/')
+}
+function New-AffectedTrackedImportGraph([string]$Root, [string[]]$Entrypoints, [object[]]$DynamicImportDeclarations = @(), [Collections.Generic.HashSet[string]]$TrackedPaths = $null, [object[]]$ExternalDependencyDeclarations = @()) {
     $root = [IO.Path]::GetFullPath($Root).TrimEnd('\','/')
     $rootPrefix = $root + [IO.Path]::DirectorySeparatorChar
     # Construction-local only; each reused export fact retains exact path/SHA.
@@ -1554,6 +1589,21 @@ function New-AffectedTrackedImportGraph([string]$Root, [string[]]$Entrypoints, [
         }
         $declarations[$key] = $declaration
     }
+    # Existing canonical registry declarations describe external command boundaries.
+    # Activate a complete importer group only for an actual declared external module
+    # import; do not reinterpret legacy tracked callback declarations or native calls.
+    $externalDeclarations = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+    foreach ($declaration in @($ExternalDependencyDeclarations)) {
+        if ($declaration.PSObject.Properties.Name -cnotcontains 'classification') { continue }
+        $properties = @($declaration.PSObject.Properties.Name); [Array]::Sort($properties,[StringComparer]::Ordinal)
+        $key = "$([string]$declaration.importer)|$(([string]$declaration.variable).ToLowerInvariant())"
+        if (($properties -join ',') -cne 'classification,count,importer,variable' -or [string]$declaration.classification -cne 'authenticated-external-command' -or
+            [string]$declaration.importer -cnotmatch '^scripts/[^:]+\.ps(?:m)?1$' -or [string]$declaration.variable -cnotmatch '^[A-Za-z_][A-Za-z0-9_:.-]*$' -or
+            [int]$declaration.count -lt 1 -or $externalDeclarations.ContainsKey($key)) { throw "Graph external dependency declaration is invalid or duplicate: $key" }
+        $externalDeclarations[$key] = [pscustomobject]@{ importer=[string]$declaration.importer;variable=[string]$declaration.variable;count=[int]$declaration.count }
+    }
+    $externalGroups = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $externalObserved = [Collections.Generic.Dictionary[string,int]]::new([StringComparer]::Ordinal)
     $observedDeclarations = [Collections.Generic.Dictionary[string,int]]::new([StringComparer]::Ordinal)
     $auditedMemberOperations = [Collections.Generic.Dictionary[string,int]]::new([StringComparer]::Ordinal)
     $nodes = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
@@ -1564,7 +1614,7 @@ function New-AffectedTrackedImportGraph([string]$Root, [string[]]$Entrypoints, [
     $analysisKeyByPath = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
     function Add-AffectedTrackedImportPath([string]$RelativePath) {
         $normalized = $RelativePath.Replace('\','/')
-        if ($normalized -cnotmatch '^scripts/[^:]+\.ps(?:m)?1$' -or $normalized -match '(?:^|/)\.\.?/') { throw "Owner import is not a canonical repository-relative .ps1/.psm1 path: $RelativePath" }
+        if ($normalized -cnotmatch '^(?:scripts|tools)/[^:]+\.ps(?:m)?1$' -or $normalized -match '(?:^|/)\.\.?/') { throw "Owner import is not a canonical repository-relative .ps1/.psm1 path: $RelativePath" }
         $absolute = [IO.Path]::GetFullPath((Join-Path $root $normalized))
         if (-not $absolute.StartsWith($rootPrefix,[StringComparison]::OrdinalIgnoreCase)) { throw "Owner import escapes the repository: $RelativePath" }
         if (-not $TrackedPaths.Contains($normalized) -or -not [IO.File]::Exists($absolute)) { throw "Owner import is absent or untracked: $normalized" }
@@ -1587,11 +1637,17 @@ function New-AffectedTrackedImportGraph([string]$Root, [string[]]$Entrypoints, [
         # untracked fixture-local paths remain outside the tracked-byte graph.
         foreach ($assignmentRecord in @($analysis.assignment_records)) {
             foreach ($assignmentValue in @($assignmentRecord.path_values)) {
-                $assignmentFull = if ($assignmentValue.Replace('\','/') -match '^scripts/') { [IO.Path]::GetFullPath((Join-Path $root $assignmentValue)) } else { [IO.Path]::GetFullPath((Join-Path $directory $assignmentValue)) }
+                $assignmentFull = if ($assignmentValue.Replace('\','/') -match '^(?:scripts|tools)/') { [IO.Path]::GetFullPath((Join-Path $root $assignmentValue)) } else { [IO.Path]::GetFullPath((Join-Path $directory $assignmentValue)) }
                 if ($assignmentFull.StartsWith($rootPrefix,[StringComparison]::OrdinalIgnoreCase)) {
                     $assignmentRelative = [IO.Path]::GetRelativePath($root,$assignmentFull).Replace('\','/')
                     if ($TrackedPaths.Contains($assignmentRelative)) { [void]$importEdges.Add($assignmentRelative) }
                 }
+            }
+        }
+        foreach ($candidateImport in @($analysis.imports)) {
+            if (@($candidateImport.path_values).Count -eq 0 -and @($candidateImport.variables).Count -eq 1) {
+                $key = "$importer|$(([string]$candidateImport.variables[0]).ToLowerInvariant())"
+                if ($externalDeclarations.ContainsKey($key)) { [void]$externalGroups.Add($importer) }
             }
         }
         foreach ($importRecord in @($analysis.imports)) {
@@ -1607,6 +1663,14 @@ function New-AffectedTrackedImportGraph([string]$Root, [string[]]$Entrypoints, [
                 if ($variables.Count -ne 1) { throw "Owner Import-Module is neither a literal nor one statically/audit-bound variable edge: $importer :: $($import.Extent.Text)" }
                 $variable = [string]$variables[0]
                 $scope = $importRecord.scope
+                $externalKey = "$importer|$($variable.ToLowerInvariant())"
+                if ($externalGroups.Contains($importer) -and $externalDeclarations.ContainsKey($externalKey)) {
+                    if (-not (Test-AffectedStaticBuiltinCommand -Command $import -SourceAst $analysis.ast -Name Import-Module -Module Microsoft.PowerShell.Core -Facts $analysis.builtin_facts)) { throw 'Graph external import does not prove builtin Import-Module.' }
+                    $bindings = @(Get-AffectedGraphExternalBindings -Index $analysis -Scope $scope -Variable $variable)
+                    if ($bindings.Count -gt 1 -or @($bindings | Where-Object { @($_.path_values).Count -ne 0 }).Count -ne 0) { throw "Graph external import has ambiguous or tracked literal bindings: $externalKey" }
+                    $externalObserved[$externalKey] = 1 + $(if ($externalObserved.ContainsKey($externalKey)) { $externalObserved[$externalKey] } else { 0 })
+                    continue
+                }
                 $boundValues = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
                 foreach ($assignmentRecord in @(Get-AffectedIndexedScopeAssignmentRecords -Index $analysis -Scope $scope -Variable $variable)) {
                     if (@($assignmentRecord.path_values).Count -ne 1) { throw "Static import variable assignment is not one literal script path: $importer|$variable" }
@@ -1656,7 +1720,8 @@ function New-AffectedTrackedImportGraph([string]$Root, [string[]]$Entrypoints, [
             $pathValues = @($invocationRecord.path_values)
             $invocationValues = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
             if ($pathValues.Count -eq 1) {
-                [void]$invocationValues.Add([string]$pathValues[0])
+                $resolvedPath = Get-AffectedGraphLiteralScriptPath -Node $firstElement -Value ([string]$pathValues[0]) -Index $analysis -Scope $invocationRecord.scope -Root $root
+                [void]$invocationValues.Add($resolvedPath)
             } elseif ($pathValues.Count -gt 1) {
                 throw "Owner invocation contains multiple literal tracked-script candidates: $importer :: $($invocation.Extent.Text)"
             } else {
@@ -1699,6 +1764,13 @@ function New-AffectedTrackedImportGraph([string]$Root, [string[]]$Entrypoints, [
                     if ($variables.Count -ne 1) { throw "Dynamic owner invocation does not contain one exact callable variable: $importer :: $($invocation.Extent.Text)" }
                     $variable = [string]$variables[0]
                     $scope = $invocationRecord.scope
+                    $externalKey = "$importer|$($variable.ToLowerInvariant())"
+                    if ($externalGroups.Contains($importer) -and $externalDeclarations.ContainsKey($externalKey)) {
+                        $externalBindings = @(Get-AffectedGraphExternalBindings -Index $analysis -Scope $scope -Variable $variable)
+                        if ($externalBindings.Count -gt 1 -or @($externalBindings | Where-Object { @($_.path_values).Count -ne 0 }).Count -ne 0) { throw "Graph external command has ambiguous or tracked literal bindings: $externalKey" }
+                        $externalObserved[$externalKey] = 1 + $(if ($externalObserved.ContainsKey($externalKey)) { $externalObserved[$externalKey] } else { 0 })
+                        continue
+                    }
                     $boundValues = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
                     $nonPathBinding = $false
                     $searchedScopes = [Collections.Generic.HashSet[object]]::new()
@@ -1731,6 +1803,7 @@ function New-AffectedTrackedImportGraph([string]$Root, [string[]]$Entrypoints, [
                     } else {
                         $scriptBlockParameter = Test-AffectedIndexedScriptBlockParameter -Index $analysis -Scope $scope -Variable $variable
                         $moduleScopeInvocation = [bool]$invocationRecord.has_scriptblock_argument
+                        if ($externalGroups.Contains($importer) -and -not $scriptBlockParameter -and -not $moduleScopeInvocation) { throw "Graph external command lacks an exact declaration: $importer|$variable" }
                         if ($nonPathBinding -or $scriptBlockParameter -or $moduleScopeInvocation -or $variable -match '(?i)(?:git|pwsh|powershell|python|executable|command)$') { continue }
                         $key = "$importer|$variable"
                         if (-not $declarations.ContainsKey($key)) { throw "Dynamic owner invocation lacks an exact declaration: $key" }
@@ -1742,7 +1815,7 @@ function New-AffectedTrackedImportGraph([string]$Root, [string[]]$Entrypoints, [
                 }
             }
             foreach ($invocationValue in @(ConvertTo-AffectedOrdinalUniqueStrings @($invocationValues))) {
-                $invocationFull = if ($invocationValue.Replace('\','/') -match '^scripts/') { [IO.Path]::GetFullPath((Join-Path $root $invocationValue)) } else { [IO.Path]::GetFullPath((Join-Path $directory $invocationValue)) }
+                $invocationFull = if ($invocationValue.Replace('\','/') -match '^(?:scripts|tools)/') { [IO.Path]::GetFullPath((Join-Path $root $invocationValue)) } else { [IO.Path]::GetFullPath((Join-Path $directory $invocationValue)) }
                 if (-not $invocationFull.StartsWith($rootPrefix,[StringComparison]::OrdinalIgnoreCase)) { throw "Owner invocation escapes the repository: $importer :: $invocationValue" }
                 [void]$importEdges.Add([IO.Path]::GetRelativePath($root,$invocationFull).Replace('\','/'))
             }
@@ -1751,6 +1824,12 @@ function New-AffectedTrackedImportGraph([string]$Root, [string[]]$Entrypoints, [
         [Array]::Sort($orderedEdges,[StringComparer]::Ordinal)
         $edges[$importer] = $orderedEdges
         foreach ($edge in $orderedEdges) { Add-AffectedTrackedImportPath $edge }
+    }
+    foreach ($key in @($externalDeclarations.Keys)) {
+        $declaration = $externalDeclarations[$key]
+        if (-not $externalGroups.Contains([string]$declaration.importer)) { continue }
+        $count = if ($externalObserved.ContainsKey($key)) { [int]$externalObserved[$key] } else { 0 }
+        if ($count -ne [int]$declaration.count) { throw "Graph external declaration invocation count differs: $key expected $($declaration.count), observed $count" }
     }
     foreach ($key in @($declarations.Keys)) {
         $declaration = $declarations[$key]
@@ -1899,7 +1978,7 @@ function Get-AffectedProtocolCommonOwnerChecks([string]$Root, [object]$Registry)
     }
     $graphEntrypoints = @(ConvertTo-AffectedOrdinalUniqueStrings @($ownerEntrypoints + $supplementaryEntrypoints))
     $graphClock = [Diagnostics.Stopwatch]::StartNew()
-    $graph = New-AffectedTrackedImportGraph -Root $Root -Entrypoints $graphEntrypoints -DynamicImportDeclarations $dynamicImports -TrackedPaths $trackedPaths
+    $graph = New-AffectedTrackedImportGraph -Root $Root -Entrypoints $graphEntrypoints -DynamicImportDeclarations $dynamicImports -TrackedPaths $trackedPaths -ExternalDependencyDeclarations @($Registry.dependency_declarations)
     $graphClock.Stop()
     foreach ($requiredInvocationEdge in @(
         @('scripts/Test-HistoryArchiveValidation.ps1','scripts/Test-HistoryArchiveCheckpoint.ps1'),
@@ -2068,6 +2147,89 @@ $module = Import-Module (Join-Path $OwnerDirectory 'scripts/lib/FixtureExports.p
         Write-Utf8 (Join-Path $ownerGraphFixture 'scripts/Test-ModuleExport.ps1') $moduleExportFixtureSource
         Write-Host 'Typed module export binding and nested-callee fixtures passed.'
     } finally { if ([IO.Directory]::Exists($ownerGraphFixture)) { Remove-Item -LiteralPath $ownerGraphFixture -Recurse -Force } }
+}
+function Invoke-AffectedRootAndExternalImportSelfTest {
+    $fixture = Join-Path ([IO.Path]::GetTempPath()) ('morphospace-real-import-forms-' + [guid]::NewGuid().ToString('N'))
+    [void][IO.Directory]::CreateDirectory((Join-Path $fixture 'scripts'))
+    [void][IO.Directory]::CreateDirectory((Join-Path $fixture 'tools'))
+    [void][IO.Directory]::CreateDirectory((Join-Path $fixture 'manifests'))
+    try {
+        $tracked = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        foreach ($path in @('scripts/RootConsumer.psm1','scripts/Provider.psm1','tools/Test-DirectWorkPackage.ps1','manifests/workflow-lifecycle.portable.json')) { [void]$tracked.Add($path) }
+        $rootSource = "& (Join-Path (Split-Path `$PSScriptRoot -Parent) 'tools/Test-DirectWorkPackage.ps1') -Path 'package.json'`n"
+        Write-Utf8 (Join-Path $fixture 'scripts/RootConsumer.psm1') $rootSource
+        Write-Utf8 (Join-Path $fixture 'tools/Test-DirectWorkPackage.ps1') "`$data = Get-Content -LiteralPath (Join-Path (Split-Path `$PSScriptRoot -Parent) 'manifests/workflow-lifecycle.portable.json')`n"
+        Write-Utf8 (Join-Path $fixture 'manifests/workflow-lifecycle.portable.json') '{}'
+        $providerSource = @'
+function Resolve-Provider($binding, $composition, [string]$Git) {
+    $modulePath = Get-ProviderModulePath $binding.Path
+    $module = Import-Module $modulePath -Force -PassThru -DisableNameChecking
+    $assertion = $module.ExportedCommands['Assert-QuestBuildSourceCompositionCurrent']
+    & $assertion -Composition $composition | Out-Null
+    & $Git -C $binding.Path rev-parse HEAD
+}
+'@
+        Write-Utf8 (Join-Path $fixture 'scripts/Provider.psm1') $providerSource
+        $external = @('Git','assertion','modulePath') | ForEach-Object { [pscustomobject][ordered]@{ importer='scripts/Provider.psm1';variable=$_;count=1;classification='authenticated-external-command' } }
+        $failures = [Collections.Generic.List[string]]::new()
+        try {
+            $graph = New-AffectedTrackedImportGraph -Root $fixture -Entrypoints @('scripts/RootConsumer.psm1') -TrackedPaths $tracked
+            Assert-True (@($graph.edges['scripts/RootConsumer.psm1']).Count -eq 1 -and $graph.edges['scripts/RootConsumer.psm1'][0] -ceq 'tools/Test-DirectWorkPackage.ps1') 'Repository-parent tool invocation lost its exact tracked edge.'
+        } catch { $failures.Add('repository-parent: ' + $_.Exception.Message) }
+        try {
+            $graph = New-AffectedTrackedImportGraph -Root $fixture -Entrypoints @('scripts/Provider.psm1') -TrackedPaths $tracked -ExternalDependencyDeclarations $external
+            Assert-True (@($graph.nodes).Count -eq 1 -and @($graph.edges['scripts/Provider.psm1']).Count -eq 0) 'External provider import invented a tracked repository target.'
+        } catch { $failures.Add('external-group: ' + $_.Exception.Message) }
+        Assert-True ($failures.Count -eq 0) ('Actual import forms are unsupported: ' + ($failures -join '; '))
+        # Independent expected data coverage uses the existing production resolver.
+        $records = foreach ($path in $tracked) {
+            $raw = [IO.File]::ReadAllBytes((Join-Path $fixture $path))
+            $header = [Text.Encoding]::UTF8.GetBytes("blob $($raw.Length)`0")
+            [pscustomobject]@{path=$path;mode='100644';type='blob';blob=[Convert]::ToHexString([Security.Cryptography.SHA1]::HashData([byte[]]($header+$raw))).ToLowerInvariant()}
+        }
+        $closure = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/RootConsumer.psm1' -Inventory ([pscustomobject]@{records=@($records)}) -DynamicDeclarations @()
+        Assert-True ($closure.resolution.mode -ceq 'exact' -and ($closure.paths -join ',') -ceq 'manifests/workflow-lifecycle.portable.json,scripts/RootConsumer.psm1,tools/Test-DirectWorkPackage.ps1') 'Repository-parent tool or its literal data dependency left the exact production closure.'
+        foreach ($damage in @('import-missing','assertion-missing','git-missing','duplicate','count-minus','count-plus','wrong-importer','wrong-class','extra-import','extra-assertion','extra-git','unknown-command','ambiguous-binding','tracked-decoy','shadow-import','case-ambiguous','wrapped-binding')) {
+            $damagedSource = $providerSource
+            $damagedDeclarations = @($external | ForEach-Object { [pscustomobject][ordered]@{importer=$_.importer;variable=$_.variable;count=$_.count;classification=$_.classification} })
+            switch ($damage) {
+                'import-missing' { $damagedDeclarations=@($damagedDeclarations | Where-Object variable -CNE modulePath) }
+                'assertion-missing' { $damagedDeclarations=@($damagedDeclarations | Where-Object variable -CNE assertion) }
+                'git-missing' { $damagedDeclarations=@($damagedDeclarations | Where-Object variable -CNE Git) }
+                'duplicate' { $damagedDeclarations+= $damagedDeclarations[0] }
+                'count-minus' { $damagedDeclarations[0].count=0 }
+                'count-plus' { $damagedDeclarations[0].count=2 }
+                'wrong-importer' { foreach($row in $damagedDeclarations){$row.importer='scripts/Other.psm1'} }
+                'wrong-class' { $damagedDeclarations[0].classification='unreviewed-external' }
+                'extra-import' { $damagedSource=$providerSource.Replace('    $assertion =',"    Import-Module `$modulePath`n    `$assertion =") }
+                'extra-assertion' { $damagedSource=$providerSource.Replace('    & $Git',"    & `$assertion -Composition `$composition`n    & `$Git") }
+                'extra-git' { $damagedSource=$providerSource.Replace('    & $Git',"    & `$Git --version`n    & `$Git") }
+                'unknown-command' { $damagedSource=$providerSource.Replace('    & $Git',"    & `$UnknownExecutable --version`n    & `$Git") }
+                'ambiguous-binding' { $damagedSource=$providerSource.Replace('    $module =',"    `$modulePath = Get-OtherModulePath`n    `$module =") }
+                'tracked-decoy' { $damagedSource=$providerSource.Replace('Get-ProviderModulePath $binding.Path',"'Provider.psm1'") }
+                'shadow-import' { $damagedSource="function Import-Module { 'not builtin' }`n"+$providerSource }
+                'case-ambiguous' { $damagedSource=$providerSource.Replace('    $module =',"    `$MODULEPATH = Get-OtherModulePath`n    `$module =") }
+                'wrapped-binding' { $damagedSource=$providerSource.Replace('    $module =',"    [string]`$modulePath = Get-OtherModulePath`n    `$module =") }
+            }
+            Write-Utf8 (Join-Path $fixture 'scripts/Provider.psm1') $damagedSource
+            Assert-AffectedThrows { New-AffectedTrackedImportGraph -Root $fixture -Entrypoints @('scripts/Provider.psm1') -TrackedPaths $tracked -ExternalDependencyDeclarations $damagedDeclarations } '*' "External provider group accepted damage: $damage"
+        }
+        Write-Utf8 (Join-Path $fixture 'scripts/Provider.psm1') $providerSource
+        foreach ($damage in @('wrong-root','unbound-root','escape','missing','shadow-join','shadow-parent')) {
+            $damagedSource=$rootSource
+            switch ($damage) {
+                'wrong-root' { $damagedSource=$rootSource.Replace('(Split-Path $PSScriptRoot -Parent)','$PSScriptRoot') }
+                'unbound-root' { $damagedSource=$rootSource.Replace('(Split-Path $PSScriptRoot -Parent)','$ForeignRoot') }
+                'escape' { $damagedSource=$rootSource.Replace('tools/Test-DirectWorkPackage.ps1','../outside.ps1') }
+                'missing' { $damagedSource=$rootSource.Replace('tools/Test-DirectWorkPackage.ps1','tools/Absent.ps1') }
+                'shadow-join' { $damagedSource="function Join-Path { 'untrusted' }`n"+$rootSource }
+                'shadow-parent' { $damagedSource="function Split-Path { 'untrusted' }`n"+$rootSource }
+            }
+            Write-Utf8 (Join-Path $fixture 'scripts/RootConsumer.psm1') $damagedSource
+            Assert-AffectedThrows { New-AffectedTrackedImportGraph -Root $fixture -Entrypoints @('scripts/RootConsumer.psm1') -TrackedPaths $tracked } '*' "Repository-parent tool accepted damage: $damage"
+        }
+        Write-Host 'Repository-parent tool and complete provider binding group passed.'
+    } finally { if ([IO.Directory]::Exists($fixture)) { Remove-Item -LiteralPath $fixture -Recurse -Force } }
 }
 function Invoke-AffectedAuditedModuleMemberSelfTest {
     $fixture = Join-Path ([IO.Path]::GetTempPath()) ('morphospace-audited-member-' + [guid]::NewGuid().ToString('N'))
@@ -3227,6 +3389,7 @@ if ($runReusePhase) {
 }
 
 if ($runGraphPhase) {
+    Invoke-AffectedRootAndExternalImportSelfTest
     $focusedRegistry = Read-MorphospaceProtocolJson -Path (Join-Path $repoRoot 'manifests/affected-validation-registry.json')
     [void](Test-MorphospaceAffectedValidationRegistry -Registry $focusedRegistry -RepositoryRoot $repoRoot -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-registry-v1.schema.json'))
     $focusedAudit = Invoke-AffectedGraphIndexSelfTest -Root $repoRoot -Registry $focusedRegistry
