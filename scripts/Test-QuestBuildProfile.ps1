@@ -307,6 +307,55 @@ Export-ModuleMember -Function Assert-QuestBuildSourceCompositionCurrent
         $aliasProfile.preflight.source_composition.external_sources+=@([ordered]@{source_id='native-quest';binding_id='native-quest-root';git_revision=$qr;git_tree=$qt})
         $aliasOptions=$options.Clone();$aliasOptions.EnvironmentBindingsPath=$aliasPath;$aliasOptions.EnvironmentBindingsSha256=Get-Sha $aliasPath
         Assert-Terminal (Invoke-Runner Preflight (Write-Profile $aliasProfile) @aliasOptions) preflight passed 0
+        # The selected tooling checkout is not necessarily the primary app input.
+        # Keep the transport model explicit; the Quest owner tests real identities.
+        $toolingRoot=Join-Path $profileRoot 'selected-provider-tooling'
+        New-Item -ItemType Directory -Path $toolingRoot -Force|Out-Null
+        & git -C $toolingRoot init -q
+        & git -C $toolingRoot config user.name 'Provider transport fixture'
+        & git -C $toolingRoot config user.email 'fixture@example.invalid'
+        $toolingModule=Join-Path $toolingRoot 'tools/lib/SourceComposition.psm1'
+        Write-Utf8 $toolingModule ([IO.File]::ReadAllText($modulePath))
+        Write-Utf8 (Join-Path $toolingRoot 'AndroidManifest.xml') '<manifest package="example.tooling" />'
+        & git -C $toolingRoot add .
+        & git -C $toolingRoot commit -qm 'MODELED separate provider tooling fixture'
+        Assert-True ($LASTEXITCODE-eq0) 'Separate provider tooling Git fixture failed.'
+        $tr=((& git -C $toolingRoot rev-parse HEAD)-join '').Trim()
+        $tt=((& git -C $toolingRoot rev-parse 'HEAD^{tree}')-join '').Trim()
+        $separatedDoc=$doc|ConvertTo-Json -Depth 20|ConvertFrom-Json -AsHashtable -Depth 20
+        $separatedDoc.repositories+=@([ordered]@{repository_id='tooling-fixture';role='app-owned-input';repository=$toolingRoot;commit=$tr;tree=$tt;tracked_worktree_clean=$true;worktree_overlay_sha256=''})
+        $separatedBinding=$binding|ConvertTo-Json -Depth 20|ConvertFrom-Json -AsHashtable -Depth 20
+        $separatedBinding.bindings+=@([ordered]@{id='tooling-root';path=$toolingRoot;kind='directory';git_revision=$tr;git_tree=$tt})
+        $separatedPath=Join-Path $profileRoot 'separated-provider-bindings.json'
+        Write-Utf8 $separatedPath ($separatedBinding|ConvertTo-Json -Depth 20)
+        $separatedProfile=$p|ConvertTo-Json -Depth 20|ConvertFrom-Json -AsHashtable -Depth 20
+        $separatedProfile.environment.TOOLING_ROOT='tooling-root'
+        $separatedProfile.preflight.source_composition.external_sources+=@([ordered]@{source_id='selected-tooling';binding_id='tooling-root';git_revision=$tr;git_tree=$tt})
+        $separatedProfile.preflight.source_composition.provider_document.provider_binding_id='tooling-root'
+        $separatedProfile.preflight.source_composition.provider_document.provider_module_sha256=Get-Sha $toolingModule
+        $separatedOptions=$options.Clone();$separatedOptions.EnvironmentBindingsPath=$separatedPath;$separatedOptions.EnvironmentBindingsSha256=Get-Sha $separatedPath
+        Write-Utf8 $providerPath ($separatedDoc|ConvertTo-Json -Depth 20)
+        $separatedProfile.preflight.source_composition.provider_document.sha256=Get-Sha $providerPath
+        $separated=Invoke-Runner Preflight (Write-Profile $separatedProfile) @separatedOptions
+        Assert-Terminal $separated preflight passed 0
+        Assert-True ($separated.Result.owner_payload.source_composition.provider_document.provider_binding_id-ceq'tooling-root') 'Separate selected tooling identity was substituted with the primary input.'
+        foreach($damage in @('missing-tooling-row','tooling-base','tooling-root','duplicate-tooling-row','tooling-module-hash','tooling-primary')) {
+            $bad=$separatedProfile|ConvertTo-Json -Depth 20|ConvertFrom-Json -AsHashtable -Depth 20
+            $badDoc=$separatedDoc|ConvertTo-Json -Depth 20|ConvertFrom-Json -AsHashtable -Depth 20
+            switch($damage) {
+                'missing-tooling-row' {$badDoc.repositories=@($badDoc.repositories|Where-Object repository_id -CNE 'tooling-fixture')}
+                'tooling-base' {$badDoc.repositories[2].commit='0'*40}
+                'tooling-root' {$badDoc.repositories[2].repository=$profileRoot}
+                'duplicate-tooling-row' {$badDoc.repositories+=@($badDoc.repositories[2])}
+                'tooling-module-hash' {$bad.preflight.source_composition.provider_document.provider_module_sha256='0'*64}
+                'tooling-primary' {$badDoc.repositories[2].role='primary'}
+            }
+            Write-Utf8 $providerPath ($badDoc|ConvertTo-Json -Depth 20)
+            $bad.preflight.source_composition.provider_document.sha256=Get-Sha $providerPath
+            Assert-Terminal (Invoke-Runner Preflight (Write-Profile $bad) @separatedOptions) preflight contradiction 2
+        }
+        Write-Utf8 $providerPath ($doc|ConvertTo-Json -Depth 20)
+        $p.preflight.source_composition.provider_document.sha256=Get-Sha $providerPath
         $goodJson=$doc|ConvertTo-Json -Depth 20
         $goodProfile=$p|ConvertTo-Json -Depth 20
         foreach($damage in @('document-hash','module-hash','missing-binding','no-bindings','duplicate-id','duplicate-root','wrong-base','unmatched-root','wrong-primary','fingerprint','candidate','require-clean')) {

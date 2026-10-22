@@ -64,6 +64,14 @@ algorithm or treat a returned Boolean as authority. The primary Quest root is
 `rusty-quest`/`primary`; an application-owned executing root uses
 `app-owned-input`.
 
+The selected provider tooling checkout may differ from that primary input. Its
+existing directory binding must join its own unique composition row and retain
+the exact bound Git commit/tree checks. Add a separate tooling owner input through
+Quest's existing `Add-QuestBuildOwnedRepository` API; do not replace the primary
+Quest row or substitute the tooling checkout for the application's source.
+Multiple binding IDs may still reference one canonical row. Missing, duplicate,
+wrong-root or wrong-base tooling rows remain invalid.
+
 Only the `warm` output lane with Boolean `source.require_clean=false` permits
 authenticated working-tree overlays on those matching roots. Candidate and
 clean-required profiles remain clean. Profiles without a provider retain the

@@ -75,7 +75,9 @@ function Resolve-MorphospaceQuestSourceProvider {
             $roots.Add($root,$row)
         }
         $primary=@($doc.repositories|Where-Object {$_.repository_id-ceq'rusty-quest'-and$_.role-ceq'primary'})
-        Assert-QuestProviderCondition ($primary.Count-eq1-and@( $doc.repositories|Where-Object role -CEQ primary).Count-eq1-and(Get-QuestProviderPath $primary[0].repository)-ceq(Get-QuestProviderPath $binding.Path)) 'Selected Quest provider root differs from its unique primary row.'
+        Assert-QuestProviderCondition ($primary.Count-eq1-and@( $doc.repositories|Where-Object role -CEQ primary).Count-eq1) 'Quest composition has no unique primary row.'
+        $providerRoot=Get-QuestProviderPath $binding.Path
+        Assert-QuestProviderCondition ($roots.ContainsKey($providerRoot)-and(Get-QuestProviderPath $roots[$providerRoot].repository)-ceq$providerRoot) 'Selected Quest provider root has no exact composition row.'
         $source=Get-QuestProviderPath $SourceRoot
         Assert-QuestProviderCondition ($roots.ContainsKey($source)-and$roots[$source].role-cin@('primary','app-owned-input')-and$roots[$source].commit-ceq$composition.source.git_revision-and$roots[$source].tree-ceq$composition.source.git_tree) 'SourceRoot does not join the provider/base.'
         foreach($b in $Bindings.Values) {
