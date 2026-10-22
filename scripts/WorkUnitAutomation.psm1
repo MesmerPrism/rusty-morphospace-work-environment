@@ -1278,6 +1278,7 @@ function Test-MorphospaceValidationReceipt {
             }
         }
         if ($definitionIndex -lt 0) { throw "Validation command drifted for gate '$($gate.gate_id)'." }
+        $definition = $unmatchedGateDefinitions[$definitionIndex]
         $unmatchedGateDefinitions.RemoveAt($definitionIndex)
         if ($ExpectedResult -eq "pass" -and [string]$gate.status -ne "pass") { throw "Passing validation has a non-passing gate '$($gate.gate_id)'." }
         foreach ($reference in @($gate.evidence_refs)) {
@@ -1285,6 +1286,11 @@ function Test-MorphospaceValidationReceipt {
         }
         if (@($gate.evidence_refs).Count -eq 0) { throw "Gate '$($gate.gate_id)' has no evidence references." }
         if (($definition.PSObject.Properties.Name -contains 'selection_kind') -and [string]$definition.selection_kind -ceq 'exact-external-evidence') {
+            if ($definition.selector.evidence.PSObject.Properties.Name -ccontains 'producer_result' -and
+                $null -ne $definition.selector.evidence.producer_result -and
+                [string]$gate.status -cne [string]$definition.selector.evidence.producer_result) {
+                throw "Selected validation gate '$($gate.gate_id)' status differs from its authenticated producer result."
+            }
             $expectedEvidencePath = [IO.Path]::GetFullPath([string]$definition.selector.evidence.path)
             $matchingEvidenceReferences = @($gate.evidence_refs | Where-Object {
                 $referenceId = [string]$_
@@ -2544,7 +2550,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
                         } else {
                             $state | Add-Member -NotePropertyName normal_validation_selection -NotePropertyValue $selectorResult.state_binding
                         }
-                        $event = New-MorphospaceEvent -State $state -Events $events -UnitId $UnitId -ActionSlug 'validation-selector-bound' -Timestamp $Timestamp -EventType 'validation' -Summary 'Bound an exact external Quick evidence selector to the already-validating frozen unit without executing its producer.'
+                        $event = New-MorphospaceEvent -State $state -Events $events -UnitId $UnitId -ActionSlug 'validation-selector-bound' -Timestamp $Timestamp -EventType 'validation' -Summary $(if($ValidationTier-ceq'quick'){'Bound an exact external Quick evidence selector to the already-validating frozen unit without executing its producer.'}else{"Bound an exact external $ValidationTier evidence selector to the already-validating frozen unit without executing its producer."})
                     }
                 } else {
                     $transition = "idempotent"
