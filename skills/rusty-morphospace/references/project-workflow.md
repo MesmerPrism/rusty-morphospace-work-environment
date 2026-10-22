@@ -13,11 +13,12 @@ Read nearest project instructions, `morphospace/project.spec.json`,
 `feature.lock.json`, `workspace.state.json`, the current unit when present and
 only the compact-state-named tail/receipts. Check Git status for in-scope repos.
 
-The project spec owns composition. The feature lock owns the permitted
-feature/effect closure. Workspace state is a resume projection; it does not
-replace immutable unit, event, or receipt evidence. Work only inside the
-intersection of project and current-unit repositories and paths. Preserve
-dirty, detached, divergent, blocked, interrupted, and historical state.
+Project spec and feature lock own composition and feature/effect closure.
+Workspace state resumes work; immutable unit/event/receipt evidence is authoritative.
+Write only within both project and current-unit scopes. Preserve dirty, detached,
+divergent, blocked, interrupted and historical state.
+
+New contexts before seal: `<work-environment>/docs/TOOLING_CONTEXT.md`.
 
 For ordinary continuation, use
 `<work-environment>/docs/CURRENT_WORK_VALIDATION.md`: preserve
