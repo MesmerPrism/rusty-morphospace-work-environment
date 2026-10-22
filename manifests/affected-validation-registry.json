@@ -71,7 +71,7 @@
     {"importer": "scripts/Test-ResolveBlocker.ps1", "variable": "damage", "count": 1, "target_paths": ["scripts/Test-ResolveBlocker.ps1"]},
     {"importer": "scripts/Test-SourceOnlyPublication.ps1", "variable": "gitExecutable", "count": 1, "classification": "authenticated-external-command"},
     {"importer":"scripts/Test-SourceOnlyPublicationInputs.ps1","variable":"gitExecutable","count":7,"classification":"authenticated-external-command"},
-    {"importer":"scripts/Test-SourceOnlyPublicationInputs.ps1","variable":"module","count":7,"target_paths":["scripts/SourceOnlyPublicationInputs.psm1"]},
+    {"importer":"scripts/Test-SourceOnlyPublicationInputs.ps1","variable":"module","count":8,"target_paths":["scripts/SourceOnlyPublicationInputs.psm1"]},
     {"importer":"scripts/Test-SourceOnlyPublicationInputs.ps1","variable":"script:deliverySavedGit","count":2,"target_paths":["scripts/SourceOnlyPublicationInputs.psm1"]},
     {"importer": "scripts/Test-TransitionLedger.ps1", "variable": "ModulePath", "count": 2, "target_paths": ["scripts/lib/MorphospaceTransitionLedger.psm1"]},
     {"importer": "scripts/Test-TransitionLedger.ps1", "variable": "observationDamage", "count": 1, "target_paths": ["scripts/Test-TransitionLedger.ps1"]},

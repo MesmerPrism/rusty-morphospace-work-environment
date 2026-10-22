@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([switch]$SelfTest, [switch]$DispositionOnly)
+param([switch]$SelfTest, [switch]$DispositionOnly, [switch]$FixedSourcePathOnly)
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
@@ -152,6 +152,37 @@ function New-DeliveryFixtureOriginal([string]$Root,[string]$Name,[string[]]$Argv
 }
 function Delivery-Hash([string]$Path){(Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()}
 function Delivery-Ref([string]$Path){[pscustomobject][ordered]@{path=[IO.Path]::GetFullPath($Path);sha256=Delivery-Hash $Path}}
+
+function Invoke-FixedSourcePathControls {
+    # Pure fixed-query contract: no Git, owner, filesystem or provider effects.
+    & $module {
+        $root=[IO.Path]::GetFullPath((Join-Path ([IO.Path]::GetTempPath()) 'source-delivery-fixed-query'))
+        $argv=@('git','--no-optional-locks','--no-pager','--no-replace-objects','-C',$root,'status','--porcelain=v2','--branch','--untracked-files=all')
+        Assert-SourceDeliveryFixedQueryArguments $argv $root
+        if($IsWindows) {
+            $forward=$root.Replace([char]92,[char]47)
+            $backward=$forward.Replace([char]47,[char]92)
+            if($forward -ceq $root -or -not $forward.Contains('/') -or $backward -ceq $forward -or -not $backward.Contains([char]92)){throw 'Fixture did not construct distinct slash/backslash spellings.'}
+            foreach($spelling in @($forward,$backward,$root.ToUpperInvariant())) {
+                $equivalent=@($argv);$equivalent[5]=$spelling
+                Assert-SourceDeliveryFixedQueryArguments $equivalent $root
+            }
+        }
+        foreach($damage in @('different-root','relative-root','changed-flag','extra-argument')) {
+            $bad=@($argv)
+            switch($damage) {
+                'different-root'{$bad[5]=$root+'-other'}
+                'relative-root'{$bad[5]='source-delivery-fixed-query'}
+                'changed-flag'{$bad[9]='--untracked-files=no'}
+                'extra-argument'{$bad+=@('--ignored')}
+            }
+            $rejected=$false
+            try {Assert-SourceDeliveryFixedQueryArguments $bad $root} catch {$rejected=$_.Exception.Message -like '*fixed clean-head Git query*'}
+            if(-not $rejected){throw "Fixed source query did not refuse $damage."}
+        }
+    }
+    'Fixed source-query path controls passed: native root and Windows slash/backslash/case spelling; different/relative roots and changed/extra flags refuse.'
+}
 
 function Invoke-DeliveryContractControls {
     $deliveryRoot=Join-Path ([IO.Path]::GetTempPath()) ('source-delivery-contract-'+[guid]::NewGuid().ToString('N'))
@@ -375,6 +406,8 @@ function Invoke-DeliveryContractControls {
     }
 }
 
+Invoke-FixedSourcePathControls
+if ($FixedSourcePathOnly) { return }
 if ($DispositionOnly) { Invoke-DeliveryContractControls; return }
 Invoke-DeliveryContractControls
 Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1') -Force

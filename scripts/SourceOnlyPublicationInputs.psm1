@@ -772,6 +772,19 @@ function Read-SourceDeliveryProvider($Reference,[string[]]$Arguments,[Collection
     [Text.UTF8Encoding]::new($false,$true).GetString($raw) | ConvertFrom-Json -Depth 100 -DateKind String -NoEnumerate
 }
 
+function Assert-SourceDeliveryFixedQueryArguments([string[]]$Argv,[string]$Root) {
+    $expected=@('--no-optional-locks','--no-pager','--no-replace-objects','-C',$Root,'status','--porcelain=v2','--branch','--untracked-files=all')
+    $actual=@($Argv|Select-Object -Skip 1)
+    Assert-SourceDelivery ($actual.Count -eq $expected.Count -and [IO.Path]::IsPathFullyQualified([string]$actual[4])) 'Source observation is not the fixed clean-head Git query.'
+    $comparer=if($IsWindows){[StringComparer]::OrdinalIgnoreCase}else{[StringComparer]::Ordinal}
+    $observedRoot=[IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath([string]$actual[4]))
+    $expectedRoot=[IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($Root))
+    Assert-SourceDelivery ($comparer.Equals($observedRoot,$expectedRoot)) 'Source observation is not the fixed clean-head Git query.'
+    # Normalize only the fixed -C directory; every other argument remains exact.
+    $actual[4]=$expected[4]
+    Assert-SourceDelivery ((ConvertTo-MorphospaceCanonicalJson $actual) -ceq (ConvertTo-MorphospaceCanonicalJson $expected)) 'Source observation is not the fixed clean-head Git query.'
+}
+
 function Get-SourceDeliveryLandingProof($Request,[Collections.IDictionary]$Observed,$Map,[switch]$Observe) {
     $disposition = Read-SourceDeliveryDocument $Request.disposition.path $Request.disposition.sha256 'disposition' $Observed
     $d = $disposition.request; $s=$d.publication_subject
@@ -791,8 +804,7 @@ function Get-SourceDeliveryLandingProof($Request,[Collections.IDictionary]$Obser
     $before=Read-SourceDeliveryOriginal $Request.source_before_original $Observed
     $after=Read-SourceDeliveryOriginal $Request.source_after_original $Observed
     foreach($snapshot in @($before,$after)) {
-        $expected=@('--no-optional-locks','--no-pager','--no-replace-objects','-C',$root,'status','--porcelain=v2','--branch','--untracked-files=all')
-        Assert-SourceDelivery ((ConvertTo-MorphospaceCanonicalJson @($snapshot.intent.argv|Select-Object -Skip 1)) -ceq (ConvertTo-MorphospaceCanonicalJson $expected)) 'Source observation is not the fixed clean-head Git query.'
+        Assert-SourceDeliveryFixedQueryArguments @($snapshot.intent.argv) $root
         Assert-SourceDelivery ([IO.Path]::GetFullPath([string]$snapshot.intent.argv[0]) -ceq [IO.Path]::GetFullPath($Request.source_git_invocation_path)) 'Original source Git executable identity differs.'
         $lines=@([IO.File]::ReadAllLines($snapshot.completion.stdout.path))
         Assert-SourceDelivery (@($lines|Where-Object {$_ -ceq "# branch.oid $($s.candidate_commit)"}).Count -eq 1 -and @($lines|Where-Object {$_ -and -not $_.StartsWith('# ')}).Count -eq 0) 'Source observation is dirty or names another head.'
