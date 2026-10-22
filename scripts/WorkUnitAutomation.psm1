@@ -561,6 +561,7 @@ function New-MorphospaceClaimPreflight {
     $unknownProfileIds = @($Unit.validation | ForEach-Object { [string]$_.profile_id } | Where-Object { $knownProfileIds -notcontains $_ } | Sort-Object -Unique)
     if ($unknownProfileIds.Count -gt 0) {
         & $addCheck 'validation-profile-closure' 'fail' 'completed' @('validation-profile-unknown')
+        $issues.Add('validation-profile-unknown') | Out-Null
     } else {
         & $addCheck 'validation-profile-closure' 'pass' 'completed' @()
     }
@@ -2373,6 +2374,10 @@ function Invoke-MorphospaceWorkUnitAutomation {
                     throw "Ready refuses withdrawn unit identity '$UnitId'; revise the proposal under a new unit identity."
                 }
                 Test-MorphospacePrerequisites -Unit $unit -UnitMap $unitMap
+                $readyProfileCheck = @($claimPreflight.coverage.checks | Where-Object { [string]$_.check_id -ceq 'validation-profile-closure' })
+                if ($readyProfileCheck.Count -ne 1 -or [string]$readyProfileCheck[0].outcome -cne 'pass') {
+                    throw 'Ready preflight blocked: validation-profile-unknown'
+                }
                 $readyInstructionCheck = @($claimPreflight.coverage.checks | Where-Object { [string]$_.check_id -ceq 'instruction-action-compatibility' })
                 if ($readyInstructionCheck.Count -ne 1 -or [string]$readyInstructionCheck[0].outcome -cne 'pass') {
                     throw "Ready preflight blocked: instruction action $(@($readyInstructionCheck[0].reason_codes) -join ' ')"

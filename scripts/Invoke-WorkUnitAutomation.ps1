@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("Inspect", "PrepareDevelopmentEnvelope", "ReprepareRetiredDevelopmentEnvelope", "PrepareBlockedSuccessor", "SupersedeActive", "RetireActive", "RecoverPreparationCompletionTimestamp", "ArchiveHistoryCheckpoint", "AdmitDevelopmentUnit", "RecoverAdmissionCompletionTimestamp", "RetireProposed", "Ready", "WithdrawReady", "Claim", "Resume", "CompleteInstructionSurfaces", "AmendActiveWriteScope", "ExtendActiveDevelopmentEnvelope", "UpgradeToolingContext", "NarrowValidationOnlyWriteScope", "FreezeCandidate", "RematerializeValidatingCandidate", "MaterializeInheritedCandidate", "CorrectActiveReadOnlyDependencies", "CorrectActiveProjectRepositoryScope", "CorrectActiveUnitContract", "RecordHistoricalUnitCompatibilityProjection", "RecordHistoricalSupersessionCompatibility", "BeginValidation", "ReturnToActive", "PreflightValidation", "RecordValidation", "Accept", "RelocateAcceptedValidationEvidence", "PreparePush", "PrepareSourceOnlyPublication", "RecordSourceOnlyPublication", "RetirePreparedPush", "ReconcilePreparedPublication", "ReconcilePreparedPushTransactionSuffix", "ResolveBlocker", "CorrectResolvedBlockerEvidence", "CorrectHistoricalBlockerResolutionIntentBinding", "CorrectCompletedTransitionSemantics", "NormalizeEventLedgerPrefix", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix", "ReconcileExecutedPreparedPublication")]
+    [ValidateSet("Inspect", "PrepareDevelopmentEnvelope", "ReprepareRetiredDevelopmentEnvelope", "PrepareBlockedSuccessor", "SupersedeActive", "RetireActive", "RecoverPreparationCompletionTimestamp", "ArchiveHistoryCheckpoint", "AdmitDevelopmentUnit", "RecoverAdmissionCompletionTimestamp", "RetireProposed", "Ready", "WithdrawReady", "Claim", "Resume", "CompleteInstructionSurfaces", "AmendActiveWriteScope", "ExtendActiveDevelopmentEnvelope", "UpgradeToolingContext", "NarrowValidationOnlyWriteScope", "FreezeCandidate", "RematerializeValidatingCandidate", "MaterializeInheritedCandidate", "CorrectActiveReadOnlyDependencies", "CorrectActiveProjectRepositoryScope", "CorrectInitialValidationProfileClosure", "CorrectActiveUnitContract", "RecordHistoricalUnitCompatibilityProjection", "RecordHistoricalSupersessionCompatibility", "BeginValidation", "ReturnToActive", "PreflightValidation", "RecordValidation", "Accept", "RelocateAcceptedValidationEvidence", "PreparePush", "PrepareSourceOnlyPublication", "RecordSourceOnlyPublication", "RetirePreparedPush", "ReconcilePreparedPublication", "ReconcilePreparedPushTransactionSuffix", "ResolveBlocker", "CorrectResolvedBlockerEvidence", "CorrectHistoricalBlockerResolutionIntentBinding", "CorrectCompletedTransitionSemantics", "NormalizeEventLedgerPrefix", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix", "ReconcileExecutedPreparedPublication")]
     [string]$Action,
     [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
     [string]$UnitId = "",
@@ -35,6 +35,8 @@ param(
     [string]$ExpectedReadOnlyDependencyCorrectionSha256 = "",
     [string]$ProjectRepositoryScopeCorrection = "",
     [string]$ExpectedProjectRepositoryScopeCorrectionSha256 = "",
+    [string]$InitialValidationProfileCorrectionPath = "",
+    [string]$ExpectedInitialValidationProfileCorrectionSha256 = "",
     [string]$ActiveUnitContractCorrection = "",
     [string]$ExpectedActiveUnitContractCorrectionSha256 = "",
     [string]$ActiveWriteScopeAmendment = "",
@@ -314,6 +316,16 @@ if ($Action -eq "CorrectActiveReadOnlyDependencies") {
         ConvertTo-Json -Depth 32
     return
 }
+if ($Action -eq "CorrectInitialValidationProfileClosure") {
+    if (-not $InitialValidationProfileCorrectionPath -or -not $OutPath) { throw 'CorrectInitialValidationProfileClosure requires InitialValidationProfileCorrectionPath and OutPath.' }
+    Import-Module (Join-Path $PSScriptRoot 'InitialValidationProfileClosureCorrection.psm1') -Force
+    Invoke-MorphospaceCorrectInitialValidationProfileClosure -WorkspaceRoot $WorkspaceRoot -UnitId $UnitId `
+        -InitialValidationProfileCorrectionPath $InitialValidationProfileCorrectionPath `
+        -ExpectedInitialValidationProfileCorrectionSha256 $ExpectedInitialValidationProfileCorrectionSha256 `
+        -Timestamp $Timestamp -OutPath $OutPath -Execute:$Execute | ConvertTo-Json -Depth 32
+    return
+}
+
 if ($Action -eq "CorrectActiveProjectRepositoryScope") {
     if (-not $ProjectRepositoryScopeCorrection) { throw "CorrectActiveProjectRepositoryScope requires ProjectRepositoryScopeCorrection." }
     if (-not $OutPath) { throw "CorrectActiveProjectRepositoryScope requires OutPath." }

@@ -1950,6 +1950,7 @@ function Get-AffectedProtocolCommonOwnerChecks([string]$Root, [object]$Registry)
     $registrationAudit = Assert-MorphospaceAffectedWorkEnvironmentLeafRegistration -Root $Root -Registry $Registry
     $ownerEntrypoints = @($registrationAudit.owner_entrypoints)
     $dynamicImports = @(
+        [pscustomobject]@{ importer='scripts/InitialValidationProfileClosureCorrection.psm1'; variable='script:initialProfileLedger'; count=3; import_path='scripts/lib/MorphospaceTransitionLedger.psm1' },
         [pscustomobject][ordered]@{ importer='scripts/ActiveUnitRetirement.psm1'; variable='scope.ledger'; count=2; import_path='scripts/lib/MorphospaceTransitionLedger.psm1' },
         [pscustomobject][ordered]@{ importer='scripts/Test-LocalSkillBootstrap.ps1'; variable='boundary'; count=2; import_path='scripts/Install-LocalSkills.ps1' },
         [pscustomobject][ordered]@{ importer='scripts/Test-AuthorityRecordReadiness.ps1'; variable='processModule'; count=1; import_path='scripts/lib/MorphospaceAuthorityProcess.psm1' },
@@ -1972,7 +1973,7 @@ function Get-AffectedProtocolCommonOwnerChecks([string]$Root, [object]$Registry)
     # but their tracked owner closures consume ProtocolCommon. Keep their
     # supplementary graph roots explicit so both source bindings and selection
     # expectations include them without adding duplicate cumulative execution.
-    $supplementaryEntrypoints = @('scripts/Test-InheritedCandidateMaterialization.ps1','scripts/Test-RecoveredPreparedAdmission.ps1')
+    $supplementaryEntrypoints = @('scripts/Test-InheritedCandidateMaterialization.ps1','scripts/Test-RecoveredPreparedAdmission.ps1','scripts/Test-InitialValidationProfileClosureCorrection.ps1')
     foreach ($supplementary in $supplementaryEntrypoints) {
         if (-not $trackedPaths.Contains($supplementary)) { throw "Supplementary ProtocolCommon owner entrypoint is absent or untracked: $supplementary" }
     }
@@ -6064,7 +6065,7 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     [void](Invoke-TestGit $fixture @('commit', '-m', 'shared automation receipt contract'))
     $automationReceiptHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
     $automationReceiptPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $rematerializationProducerHead -HeadRevision $automationReceiptHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
-    $automationReceiptExpectedChecks = @(($workflowConsumerFixtureChecks + $developmentUnitAdmissionBatchChecks) | Sort-Object)
+    $automationReceiptExpectedChecks = @(($workflowConsumerFixtureChecks + $developmentUnitAdmissionBatchChecks + @('initial-validation-profile-closure')) | Sort-Object)
     $automationReceiptActualChecks = @($automationReceiptPlan.selected_checks.check_id); [Array]::Sort($automationReceiptActualChecks, [System.StringComparer]::Ordinal)
     Assert-True (($automationReceiptActualChecks -join ',') -ceq ($automationReceiptExpectedChecks -join ',')) "Shared automation receipt selected the wrong exact closure: $($automationReceiptActualChecks -join ',')."
     foreach ($checkId in @('history-archive-checkpoint','history-archive-checkpoint-selftest','work-environment-deep')) { Assert-True (@($automationReceiptPlan.selected_checks.check_id) -cnotcontains $checkId) "Shared automation receipt change incorrectly selected '$checkId'." }
@@ -6132,6 +6133,7 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
         'active-unit-retirement-nested-map-guards','active-unit-retirement-nested-positive',
         'active-unit-retirement-nested-recovery',
         'workflow-contracts','normal-validation-selector','active-write-scope-amendment',
+        'initial-validation-profile-closure',
         'completed-transition-semantic-correction','correct-active-project-repository-scope',
         'correct-active-read-only-dependencies','development-unit-admission',
         'recovered-proposal-continuation','recovered-prepared-admission','recovered-preparation-retirement','validating-candidate-rematerialization',
@@ -6223,6 +6225,9 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
         [pscustomobject]@{ path='scripts/Test-ExternalValidationAuthorityGitHubAdapterSelfTest.ps1'; checks=@('external-validation-github-adapter','public-boundary'); exact_checks=$true },
         [pscustomobject]@{ path='schemas/historical-validation-debt-phase-receipt-v1.schema.json'; checks=@('historical-validation-debt-baseline','historical-validation-debt-phase-runner','work-unit-automation') },
         [pscustomobject]@{ path='scripts/Test-BlockedSupersessionTerminalValidation.ps1'; checks=@('blocked-supersession-terminal-validation') },
+        [pscustomobject]@{ path='scripts/InitialValidationProfileClosureCorrection.psm1'; checks=@('initial-validation-profile-closure','public-boundary'); exact_checks=$true },
+        [pscustomobject]@{ path='schemas/initial-validation-profile-closure-correction-v1.schema.json'; checks=@('initial-validation-profile-closure','public-boundary'); exact_checks=$true },
+        [pscustomobject]@{ path='scripts/Test-InitialValidationProfileClosureCorrection.ps1'; checks=@('initial-validation-profile-closure','public-boundary'); exact_checks=$true },
         [pscustomobject]@{ path='scripts/Test-CorrectActiveUnitContract.ps1'; checks=@('correct-active-unit-contract') },
         [pscustomobject]@{ path='schemas/active-unit-supersession-v1.schema.json'; checks=@('active-unit-supersession','work-unit-automation') },
         [pscustomobject]@{ path='scripts/ActiveUnitSupersession.psm1'; checks=@('active-unit-supersession','work-unit-automation') },
@@ -6237,7 +6242,7 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
         [pscustomobject]@{ path='tools/Test-ApkRunTransaction.ps1'; checks=@('apk-run-transaction'); expected_tier='quick' },
         [pscustomobject]@{ path='schemas/work-unit-automation-receipt-v2.schema.json'; checks=@('automation-receipt-v2-compatibility') },
         [pscustomobject]@{ path='scripts/Test-AutomationReceiptV2Compatibility.ps1'; checks=@('automation-receipt-v2-compatibility') },
-        [pscustomobject]@{ path='scripts/WorkUnitAutomation.psm1'; checks=@('automation-receipt-v2-compatibility','normal-validation-selector','work-unit-automation','workflow-contracts') },
+        [pscustomobject]@{ path='scripts/WorkUnitAutomation.psm1'; checks=@('initial-validation-profile-closure','automation-receipt-v2-compatibility','normal-validation-selector','work-unit-automation','workflow-contracts') },
         [pscustomobject]@{ path='scripts/DevelopmentEnvelopeProvenance.psm1'; checks=@('development-envelope-preparation','development-unit-admission','public-boundary','workflow-contracts','work-unit-automation') },
         [pscustomobject]@{ path='scripts/DevelopmentEnvelopeRepreparation.psm1'; checks=@('automation-receipt-v2-compatibility','development-unit-admission','public-boundary','workflow-contracts','development-envelope-preparation','normal-validation-selector','work-unit-automation','validating-candidate-rematerialization') },
         [pscustomobject]@{ path='scripts/Test-HistoricalValidationDebtBaseline.ps1'; checks=@('historical-validation-debt-baseline') },
