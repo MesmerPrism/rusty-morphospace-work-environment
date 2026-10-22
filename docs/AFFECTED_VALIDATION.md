@@ -926,3 +926,25 @@ changing validation results. Callers must drain stderr: the volume bound is not
 an I/O deadline. Synchronous child capture emits only start/return boundaries,
 including its internal cleanup; it has no periodic heartbeat. Existing cleanup,
 failure classification and finalized-inventory requirements remain authoritative.
+### Static graph consumers and external imports
+
+The graph fixture resolves repository-parent `Join-Path` tool calls from the
+actual builtin path expression. The resulting `scripts/` or `tools/` target
+must remain inside the owner root, tracked, present and byte-stable. A tool's
+literal data inputs remain part of the production dependency closure; adding
+a graph edge does not remove those inputs from affected selection.
+
+An importer with an explicitly declared external module import consumes its
+existing registry `authenticated-external-command` binding group. The graph
+checks the module import and its external CommandInfo/native calls against the
+complete declared identities and counts. It does not reinterpret that module
+as a tracked local file, infer a path from a caller DTO, or grant authority to
+execute it. The owning runtime still authenticates the selected external
+module, fixed export, source roots and current input bytes.
+
+Missing, duplicate, ambiguous or miscounted bindings, undeclared extra calls,
+shadowed path/import builtins, wrong roots and absent tracked targets refuse.
+Existing tracked module/export and source-stability checks remain in force.
+The focused `graph-import-closure` phase exercises both import forms and their
+refusal controls; production dependency compilation remains the owner of the
+exact file and data-input closure.
