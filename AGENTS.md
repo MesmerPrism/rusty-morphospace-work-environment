@@ -11,6 +11,8 @@ Use the nearest owner instructions and the documents for the effect being
 changed. For a bounded implementation or documentation change, use
 [Direct Work Packages](docs/DIRECT_WORK_PACKAGES.md), including its
 [agent and framework adaptation](docs/DIRECT_WORK_PACKAGES.md#agent-and-framework-adaptation).
+Use its [central issue queue procedure](docs/DIRECT_WORK_PACKAGES.md#central-issue-queue)
+for package planning, concrete discoveries and handoff.
 For ordinary continuation, start with [Current Work Validation](docs/CURRENT_WORK_VALIDATION.md); read
 historical recovery only when selected or required by an actual current error.
 
@@ -30,13 +32,19 @@ run remain separate facts.
 - `$rusty-morphospace`: normal first hop; resolves its installed locator directly.
 - `$system-engineering`: authority, contracts, interfaces and validation design.
 - `$rust-work-graph`: bounded source, dependency and instruction inventories.
-- `$meta-quest-workflow`: live Quest/ADB/APK/launch/capture/Meta work; this repo
-  owns no competing device procedure.
+- `$meta-quest-workflow`: Quest device work and hotload/reload/live-edit or
+  avoid-rebuild questions, including Java/Kotlin/JNI/Rust. Read its canonical
+  feedback guide and capability evidence before the selected app contract.
 - `$rusty-morphospace-context`: compatibility locator for existing callers.
 - `$rusty-morphospace-cleanup`: user-requested manual cleanup; never schedule it.
 
 Install/update managed routers through [Local Skill Bootstrap](docs/LOCAL_SKILL_BOOTSTRAP.md)
-and `scripts/Install-LocalSkills.ps1`: writes require `-Execute`, updates back up
+and `scripts/Install-LocalSkills.ps1`. For new contexts, author an isolated
+managed-router resolver first with `New-MorphospaceToolingContextResolver`
+in [Tooling Context](docs/TOOLING_CONTEXT.md), using explicit retained storage
+outside all selected repository roots and an ignored workspace resolver. Host guidance updates
+must not replace a sealed context's selected files. Preserve existing resolver
+bindings and drift guards. Installer writes require `-Execute`, updates back up
 managed bytes and preserve unmanaged files. Canonical Meta source comes from an
 explicit clean `meta-quest-agent-workflow` checkout.
 

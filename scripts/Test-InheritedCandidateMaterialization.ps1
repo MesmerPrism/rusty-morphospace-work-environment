@@ -50,6 +50,12 @@ try {
     $projectRoot = Join-Path $testRoot 'project'
     & (Join-Path $PSScriptRoot 'New-ProjectWorkspace.ps1') -ProjectRoot $projectRoot -ProjectId 'inherited-candidate-test' -Purpose 'Synthetic inherited-candidate materialization fixture.' -Execute | Out-Null
     $workspace = Join-Path $projectRoot 'morphospace'
+    $projectSpecPath = Join-Path $workspace 'project.spec.json'
+    $projectSpec = Get-Content -LiteralPath $projectSpecPath -Raw | ConvertFrom-Json
+    $projectSpec.validation_profiles = @($projectSpec.validation_profiles) + @(
+        [pscustomobject][ordered]@{ profile_id = 'synthetic'; commands = @('none') }
+    )
+    Write-InheritedCandidateTestJson -Path $projectSpecPath -Value $projectSpec
     $unitId = 'unit-inherited-001'; $bindingId = 'ic-test-001'
     $evidenceRoot = Join-Path $workspace "inherited-candidates\$bindingId"
     [IO.Directory]::CreateDirectory($evidenceRoot) | Out-Null

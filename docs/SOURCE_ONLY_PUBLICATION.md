@@ -1,5 +1,83 @@
 # Source-only publication
 
+## Independent source delivery while product adoption is pending
+
+The stateless `New-SourceOnlyPublicationInput.ps1` actions `Disposition`,
+`ObserveLanding` and `VerifyLanding` are separate from the accepted-trigger
+publication transaction below. They never create acceptance, change a unit or
+ledger, or weaken `PrepareSourceOnlyPublication`/`RecordSourceOnlyPublication`.
+
+Use the closed `source-delivery-disposition-v1.schema.json` request forms:
+
+1. `-Action Disposition -RequestPath <request> -ExpectedRequestSha256 <raw-hash>
+   -WorkspaceRoot <frozen-consumer> -RepoMapPath <publication-map>
+   -HumanDecisionPath <decision> -ExpectedHumanDecisionSha256 <raw-hash>
+   -OutPath <new-disposition>`. The invoking authority must possess the explicit
+   human decision; a JSON assertion supplies no delegation. The request pins the
+   exact committed immediate Freeze/Begin consumer preimage and original map,
+   the selected old dependency values by JSON pointer/hash, and a separate
+   publication subject/map and FAST source package. Its only supersession is
+   source-before-adoption ordering. The output says adoption pending, source
+   not landed and no acceptance credit.
+2. Qualify the committed publication subject with its own source checks and
+   review, required protected CI and ordinary merge. Retain real successful
+   terminal originals. Bracket the declared source checks with the fixed Git
+   query `git --no-optional-locks --no-pager --no-replace-objects -C <source>
+   status --porcelain=v2 --branch --untracked-files=all`; both observations must
+   name the exact subject and contain no dirty/untracked status records. Retain
+   their capture completion references and each check's exact argv/cwd.
+3. The landing request binds those originals, source review, pinned provider
+   executable and the normal merge command `gh pr merge <n> --repo <owner/repo>
+   --merge --match-head-commit <subject>`. After the actual merge, capture
+   `gh pr checks <n> --repo <owner/repo> --required --json name,state,link`, then
+   `gh api --method GET repos/<owner/repo>/pulls/<n>`. Use
+   `-Action ObserveLanding -RequestPath <request> -ExpectedRequestSha256 <hash>
+   -RepoMapPath <publication-map> -OutPath <new-landing>` with the clean subject
+   checkout retained. The source objects must prove the ordinary two-parent
+   merge and exact subject tree; fresh remote readback must retain that merge.
+4. `-Action VerifyLanding -LandingPath <landing> -ExpectedLandingSha256 <hash>
+   -WorkspaceRoot <consumer> -UnitId <unit> -RepoMapPath <consumer-map>`
+   authenticates the retained source evidence without another remote delta or
+   publication. A validation artifact of kind `source-delivery-landing` invokes
+   the same owning reader in the compatible owner. This authenticates only the
+   stated source delivery and relationship, not fulfillment of an old product
+   predicate, content equivalence, product validation or adoption. Every other
+   criterion, command, gate and live owner guard remains mandatory.
+
+
+The explicit `consumer.boundary_kind` selects two separate authority proofs.
+`frozen-consumer` preserves the original immediate Freeze/Begin, source and map,
+and requires the independently authorized FAST publication package above.
+`accepted-source-owner` instead binds the genuine committed Accept transaction,
+passing receipt, accepted source revision and qualified interval/write scope.
+An existing candidate Freeze also retains its raw receipt and original consumer
+map binding; initial accepted owners acquire no invented Freeze prerequisite. It requires
+`same-source`, a null `source_package`, and supersedes only the planning-layout
+publication ordering through an explicit human decision. It does not relabel a
+locked owner as FAST or require a fictional planning-role map. Both variants
+start with zero landed and acceptance credit; neither changes the owner.
+For an accepted owner the receipt's qualification base remains exact even when
+the publication base is older. Qualified trigger paths remain within the unit;
+carried publication paths must remain within project source scope. The complete
+publication interval needs its own source checks/review and required CI proof;
+accepted results do not automatically qualify carried source.
+
+A landing request retains the exact original provider and Git executable bytes
+in `provider` and `source_git`, with their original invocation locations in
+`provider_invocation_path` and `source_git_invocation_path`. ObserveLanding joins
+those bytes to the selected live executables and captured argv. Later retained
+verification authenticates the held bytes and original joins without requiring
+the former executable to remain installed at that location.
+
+Capture references use retained `task.root.command_capture_completion.v2`
+originals with complete raw streams, EOF, actual exit/reap and no retry or
+termination. The reader authenticates their byte/intent/argv joins; capture
+records are executor evidence, not cryptographic proof of arbitrary execution.
+Machine locators and human decision material belong in ignored evidence, never
+committed source. Preserve the referenced files and source objects until their
+consumers no longer need them. Preparing or verifying a record performs no
+push, merge, signing, build, device or product-owner action.
+
 Use `PrepareSourceOnlyPublication` and `RecordSourceOnlyPublication` when an
 accepted `integration-batch` development integration or snapshot must publish
 its source repositories but the distinct planning owner intentionally has no
@@ -154,3 +232,9 @@ with local-only planning, two ordered source repositories, empty source write
 scope, receipt-relative evidence, provider merges and preserved retired history.
 The focused recovery suite covers every owner interruption boundary. Neither
 fixture turns source publication into build, device, wearer or release evidence.
+
+Local iteration remains distinct from candidate qualification and source
+publication. A separately supported private Iteration/DevFast route may bind a
+base Git revision plus a hashed overlay for local compile/install and its own
+composition checks. These source-delivery records add no Freeze, CI or adoption
+prerequisite to that route, and do not relax clean candidate/source guards.

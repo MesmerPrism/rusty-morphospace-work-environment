@@ -561,6 +561,7 @@ function New-MorphospaceClaimPreflight {
     $unknownProfileIds = @($Unit.validation | ForEach-Object { [string]$_.profile_id } | Where-Object { $knownProfileIds -notcontains $_ } | Sort-Object -Unique)
     if ($unknownProfileIds.Count -gt 0) {
         & $addCheck 'validation-profile-closure' 'fail' 'completed' @('validation-profile-unknown')
+        $issues.Add('validation-profile-unknown') | Out-Null
     } else {
         & $addCheck 'validation-profile-closure' 'pass' 'completed' @()
     }
@@ -1240,6 +1241,10 @@ function Test-MorphospaceValidationReceipt {
         if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf)) { throw "Validation artifact does not exist: $($artifact.path)" }
         $actualHash = Get-MorphospaceAuthoritySha256 $artifactPath
         if ($actualHash -ne ([string]$artifact.sha256).ToLowerInvariant()) { throw "Validation artifact hash mismatch for '$artifactId'." }
+        if ([string]$artifact.kind -ceq 'source-delivery-landing') {
+            $deliveryOwner = Import-Module (Join-Path $PSScriptRoot 'SourceOnlyPublicationInputs.psm1') -PassThru
+            [void](& $deliveryOwner { param($p,$h,$w,$u,$m) Test-MorphospaceSourceDeliveryLanding -LandingPath $p -ExpectedLandingSha256 $h -WorkspaceRoot $w -UnitId $u -RepositoryMap $m } $artifactPath $actualHash $WorkspaceRoot ([string]$Unit.unit_id) $RepositoryMap)
+        }
         $artifactMap[$artifactId] = $artifact
         $artifactPathMap[$artifactId] = $artifactPath
     }
@@ -2379,6 +2384,10 @@ function Invoke-MorphospaceWorkUnitAutomation {
                     throw "Ready refuses withdrawn unit identity '$UnitId'; revise the proposal under a new unit identity."
                 }
                 Test-MorphospacePrerequisites -Unit $unit -UnitMap $unitMap
+                $readyProfileCheck = @($claimPreflight.coverage.checks | Where-Object { [string]$_.check_id -ceq 'validation-profile-closure' })
+                if ($readyProfileCheck.Count -ne 1 -or [string]$readyProfileCheck[0].outcome -cne 'pass') {
+                    throw 'Ready preflight blocked: validation-profile-unknown'
+                }
                 $readyInstructionCheck = @($claimPreflight.coverage.checks | Where-Object { [string]$_.check_id -ceq 'instruction-action-compatibility' })
                 if ($readyInstructionCheck.Count -ne 1 -or [string]$readyInstructionCheck[0].outcome -cne 'pass') {
                     throw "Ready preflight blocked: instruction action $(@($readyInstructionCheck[0].reason_codes) -join ' ')"
