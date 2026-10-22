@@ -176,6 +176,9 @@ clean-only worktrees, and changed paths outside the declared closure reject.
 An exact current validating unit can consume a compatible tooling upgrade in the
 closed immediate Freeze-to-Begin slot, before a current-unit validation result.
 This is a tooling-pointer transition, not a new candidate or source admission.
+The existing exact Begin-state reconstruction requires an unbound validation
+selector; it does not reset or reclassify an existing selector. A fresh selector
+may be bound afterward through the ordinary public Begin action when needed.
 The historical old context, live new executor, compatibility proof and unchanged
 product/source projection remain required. Frozen reads authenticate the typed
 continuation and the original Freeze unit/state projections, including the old

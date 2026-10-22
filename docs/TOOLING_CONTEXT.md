@@ -57,6 +57,12 @@ A current validating unit may also upgrade immediately after its authenticated
 current-unit action or recorded validation. The committed Freeze and Begin
 must be contiguous and bind the exact request preimage. The same owner remains
 validating; there may be no competing ready unit, blocker or pending publication.
+The Begin transition must not already bind a normal-validation selector. Its
+unit-contract hash includes the tooling pointer and cannot be reset by this
+pointer-only action. Existing exact retained Begin-state reconstruction refuses
+a selector-bound preimage before writes. When a selector is needed, bind a fresh
+one through the ordinary public Begin route after instruction completion; retain
+all selector hashes and receipt-consumption checks.
 The old context is authenticated historically, the new executor locally, and
 compatibility, product/source projection, loaded-module and raw CAS guards remain
 mandatory. The action emits a validating-to-validating receipt using the existing
