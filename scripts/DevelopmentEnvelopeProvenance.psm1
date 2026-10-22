@@ -222,7 +222,19 @@ function Get-PreparationProvenanceAdmissionPrefix {
   $value=ConvertFrom-MorphospaceProtocolJsonBytes ([Convert]::FromBase64String([string]$_.bytes_base64))
   if([string]$value.schema-ceq'rusty.morphospace.workflow.development_unit_admission.v1'){$value}
  })
- if($boundAdmissions.Count-eq1-and(Test-PreparationProvenanceHasEffectiveContinuation $Workspace $boundAdmissions[0])){
+  # This reader is used for the replacement admission's later live suffix.
+  # Ordinary Ready/Claim/validation also retain every envelope pointer. Their
+  # status delta selects authentication, never authority: the existing full
+  # reader must still prove every committed edge and the exact live projection.
+  $lifecycleContinuation=$false
+  if($boundAdmissions.Count-eq1){
+   $livePath=Resolve-MorphospaceWorkspacePath $Workspace "iteration-units/$([string]$boundAdmissions[0].unit_id).json"
+   if([IO.File]::Exists($livePath)){
+    $liveUnit=Read-MorphospaceProtocolJson $livePath
+    $lifecycleContinuation=[string]$liveUnit.status-cne[string]$boundAdmissions[0].unit.status
+   }
+  }
+  if($boundAdmissions.Count-eq1-and($lifecycleContinuation-or(Test-PreparationProvenanceHasEffectiveContinuation $Workspace $boundAdmissions[0]))){
   $continuation=Get-PreparationProvenanceEffectiveContinuation $Workspace $boundAdmissions[0] -ReadOnlyReady:$ReadOnlyReady
   $allEvents=@(Get-Content -LiteralPath (Resolve-MorphospaceWorkspacePath $Workspace 'iteration-events.jsonl' -RequireLeaf)|Where-Object{$_}|ForEach-Object{ConvertFrom-MorphospaceProtocolJsonBytes ([Text.UTF8Encoding]::new($false).GetBytes([string]$_))})
   $prefix=@($allEvents|Where-Object{[int]$_.sequence-lt[int]$continuation.admission_proof.intent.event.sequence})

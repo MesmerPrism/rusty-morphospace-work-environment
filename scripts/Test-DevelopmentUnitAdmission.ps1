@@ -1,4 +1,4 @@
-param([switch]$SelfTest,[switch]$AdditivePreparationOnly,[switch]$OwnPlanningCaseOnly,[switch]$ValidationOnlyFreezeOnly,[switch]$InstructionDeclarationOnly,[switch]$GitLongPathsOnly)
+param([switch]$SelfTest,[switch]$AdditivePreparationOnly,[switch]$OwnPlanningCaseOnly,[switch]$ValidationOnlyFreezeOnly,[switch]$InstructionDeclarationOnly,[switch]$GitLongPathsOnly,[switch]$ReplacementContinuationOnly)
 $ErrorActionPreference='Stop'
 $repoRoot=Split-Path $PSScriptRoot -Parent
 function Test-AdmissionReviewedSkillRouting {
@@ -52,6 +52,136 @@ $transitionLedgerPath=Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.p
 $transitionLedgerModule=@(Get-Module -All|Where-Object{$_.Path-eq$transitionLedgerPath}|Select-Object -Last 1)[0]
 if($null-eq$transitionLedgerModule){throw 'MorphospaceTransitionLedger module is unavailable.'}
 . (Join-Path $PSScriptRoot 'test-support/DevelopmentAdmissionFixture.ps1')
+
+function Set-AdmissionReplacementInstructionPlan([object]$Admission,[object]$Template){
+  $Admission.unit.instruction_impact='update'
+  $Admission.unit.instruction_none_justification=$null
+  $Admission.unit.instruction_surfaces=@(Copy-Envelope $Template.unit.instruction_surfaces)
+  foreach($surface in @($Admission.unit.instruction_surfaces)){$surface.status='planned'}
+}
+
+function Remove-AdmissionReplacementFixture([string]$Path){
+  $resolved=[IO.Path]::GetFullPath($Path).TrimEnd('\','/')
+  $temporary=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\','/')
+  $comparison=if($IsWindows){[StringComparison]::OrdinalIgnoreCase}else{[StringComparison]::Ordinal}
+  if(-not[IO.Path]::GetDirectoryName($resolved).Equals($temporary,$comparison)-or[IO.Path]::GetFileName($resolved)-cnotmatch'^workenv-replacement-(continuation|damage)-[0-9a-f]{32}$'){throw 'Refusing replacement fixture cleanup outside its exact named temporary root.'}
+  if(Test-Path -LiteralPath $resolved){Remove-Item -LiteralPath $resolved -Recurse -Force}
+}
+
+function Test-AdmissionReplacementContinuationDamage([string]$Workspace,[object]$Admission,[string[]]$Cases){
+  $provenance=Import-Module (Join-Path $PSScriptRoot 'DevelopmentEnvelopeProvenance.psm1') -PassThru
+  foreach($case in $Cases){
+    $damageRoot=Join-Path ([IO.Path]::GetTempPath()) ('workenv-replacement-damage-'+[guid]::NewGuid().ToString('N'))
+    try {
+      Copy-Item -LiteralPath $Workspace -Destination $damageRoot -Recurse
+      $eventsPath=Join-Path $damageRoot 'iteration-events.jsonl'
+      $events=@(Get-Content -LiteralPath $eventsPath|Where-Object{$_}|ForEach-Object{$_|ConvertFrom-Json -DateKind String})
+      $ready=@($events|Where-Object event_id -CMatch '^u003-ready-[0-9]{4}$')[0]
+      $claim=@($events|Where-Object event_id -CMatch '^u003-claimed-[0-9]{4}$')[0]
+      $begin=@($events|Where-Object event_id -CMatch '^u003-validating-[0-9]{4}$')[0]
+      switch($case){
+        'missing-ready-completion'{Remove-Item -LiteralPath (Join-Path $damageRoot "receipts/transactions/$($ready.event_id)-transition.completion.json")}
+        'claim-raw-drift'{[IO.File]::AppendAllText((Join-Path $damageRoot "receipts/transactions/$($claim.event_id)-transition.intent.json"),' ',[Text.UTF8Encoding]::new($false))}
+        'missing-begin-completion'{Remove-Item -LiteralPath (Join-Path $damageRoot "receipts/transactions/$($begin.event_id)-transition.completion.json")}
+        'begin-raw-drift'{[IO.File]::AppendAllText((Join-Path $damageRoot "receipts/transactions/$($begin.event_id)-transition.intent.json"),' ',[Text.UTF8Encoding]::new($false))}
+        'retirement-receipt-drift'{[IO.File]::AppendAllText((Join-Path $damageRoot 'receipts/u002-contract-retirement.json'),' ',[Text.UTF8Encoding]::new($false))}
+        'source-raw-drift'{[IO.File]::AppendAllText((Join-Path $damageRoot ([string]$Admission.preparation.source_composition_path)),' ',[Text.UTF8Encoding]::new($false))}
+        'detached-live-state'{$value=Read-EnvelopeProtocolJson (Join-Path $damageRoot 'workspace.state.json');$value.plan_revision=[int]$value.plan_revision+1;Write-EnvelopeJson (Join-Path $damageRoot 'workspace.state.json') $value}
+        'detached-freeze-marker'{$value=Read-EnvelopeProtocolJson (Join-Path $damageRoot 'iteration-units/u003.json');$value.candidate_freeze.receipt_sha256='0'*64;Write-EnvelopeJson (Join-Path $damageRoot 'iteration-units/u003.json') $value}
+        'instruction-receipt-drift'{[IO.File]::AppendAllText((Join-Path $damageRoot 'receipts/u003-instructions.json'),' ',[Text.UTF8Encoding]::new($false))}
+        'instruction-status-drift'{$value=Read-EnvelopeProtocolJson (Join-Path $damageRoot 'iteration-units/u003.json');$value.instruction_surfaces[0].status='planned';Write-EnvelopeJson (Join-Path $damageRoot 'iteration-units/u003.json') $value}
+        {$_-cin@('unowned-event','interleaved-owner','committed-authority')} {
+          $state=Read-EnvelopeProtocolJson (Join-Path $damageRoot 'workspace.state.json')
+          $unit=Read-EnvelopeProtocolJson (Join-Path $damageRoot 'iteration-units/u003.json')
+          $preState=Get-EnvelopeCanonicalJsonSha256 $state;$preUnit=Get-EnvelopeCanonicalJsonSha256 $unit
+          $tail=$events[-1];$eventId="u003-damage-$case";$state.last_event_id=$eventId
+          $event=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.iteration_event.v1';event_id=$eventId;sequence=[int]$tail.sequence+1;timestamp='2026-08-25T00:02:55.0000000Z';project_id='envelope-test';unit_id=$(if($case-ceq'interleaved-owner'){'u999'}else{'u003'});event_type='decision';summary='Injected continuation damage.';receipts=@()}
+          if($case-ceq'committed-authority'){
+            # A real committed ledger edge is necessary, but cannot authorize an
+            # unrelated objective change through the retained-envelope branch.
+            $unit.objective='Injected unauthorized authority change.'
+            &$transitionLedgerModule {param($a)Start-MorphospaceTransitionLedger @a} @{WorkspaceRoot=$damageRoot;TransactionId="$eventId-transition";StatePath='workspace.state.json';UnitPath='iteration-units/u003.json';EventsPath='iteration-events.jsonl';TargetState=$state;TargetUnit=$unit;Event=$event;ExpectedPreStateSha256=$preState;ExpectedPreUnitSha256=$preUnit;ExpectedEventTailId=[string]$tail.event_id;ExpectedEventsSha256=(Get-EnvelopeFileSha256 $eventsPath);ExpectedEventsLength=([IO.FileInfo]$eventsPath).Length}|Out-Null
+          }else{
+            [IO.File]::AppendAllText($eventsPath,(($event|ConvertTo-Json -Depth 20 -Compress)+"`n"),[Text.UTF8Encoding]::new($false));Write-EnvelopeJson (Join-Path $damageRoot 'workspace.state.json') $state
+          }
+        }
+        default{throw "Unknown replacement continuation damage '$case'."}
+      }
+      $before=Get-EnvelopeWorkspaceByteInventorySha256 $damageRoot;$rejected=$false;$message=''
+      try{&$provenance {param($w,$a)Test-MorphospaceDevelopmentUnitPreparation -WorkspaceRoot $w -Admission $a -Phase Freeze} $damageRoot $Admission|Out-Null}catch{if($_.Exception-is[Management.Automation.CommandNotFoundException]){throw};$rejected=$true;$message=$_.Exception.Message}
+      Assert-Envelope ($rejected-and$before-ceq(Get-EnvelopeWorkspaceByteInventorySha256 $damageRoot)) "replacement continuation accepted or wrote '$case'"
+      Write-Host "Replacement continuation refused $case without writes: $message"
+    } finally {Remove-AdmissionReplacementFixture $damageRoot}
+  }
+}
+
+function Test-AdmissionReplacementPostBegin([string]$Workspace,[object]$Admission){
+  $provenance=Import-Module (Join-Path $PSScriptRoot 'DevelopmentEnvelopeProvenance.psm1') -PassThru
+  $before=Get-EnvelopeWorkspaceByteInventorySha256 $Workspace
+  $proof=&$provenance {param($w,$a)Test-MorphospaceDevelopmentUnitPreparation -WorkspaceRoot $w -Admission $a -Phase Freeze} $Workspace $Admission
+  Assert-Envelope ([string]$proof.state.current_unit-ceq'u003'-and$before-ceq(Get-EnvelopeWorkspaceByteInventorySha256 $Workspace)) 'replacement mandatory provenance after BeginValidation failed or wrote workspace bytes'
+  Test-AdmissionReplacementContinuationDamage $Workspace $Admission @('missing-ready-completion','claim-raw-drift','missing-begin-completion','begin-raw-drift','retirement-receipt-drift','source-raw-drift','detached-live-state','detached-freeze-marker','unowned-event','interleaved-owner','committed-authority')
+  $completionArguments=@{Action='CompleteInstructionSurfaces';WorkspaceRoot=$Workspace;UnitId='u003';RepoMapPath=(Join-Path $Workspace 'repository-map.json');InstructionCompletionId='u003-instructions';OutPath=(Join-Path $Workspace 'receipts/u003-instructions.json');Timestamp='2026-08-25T00:02:50.0000000Z'}
+  $dry=&$automationModule {param($a)Invoke-MorphospaceWorkUnitAutomation @a} $completionArguments
+  Assert-Envelope ($before-ceq(Get-EnvelopeWorkspaceByteInventorySha256 $Workspace)) 'replacement instruction-completion preview wrote workspace bytes'
+  $completionArguments.ExpectedUnitSha256=[string]$dry.instruction_surface_completion.expected_unit_sha256
+  $completionArguments.ExpectedInstructionObservationSha256=[string]$dry.instruction_surface_completion.observation_sha256
+  $completionArguments.InstructionSurfaceIds=@($dry.instruction_surface_completion.surfaces.surface_id)
+  $completionArguments.Execute=$true
+  $run=&$automationModule {param($a)Invoke-MorphospaceWorkUnitAutomation @a} $completionArguments
+  Assert-Envelope ($run.executed-and$run.transition-ceq'planned-instruction-surfaces-to-complete') 'replacement did not complete its actual declared instruction surfaces'
+  $after=Get-EnvelopeWorkspaceByteInventorySha256 $Workspace
+  $proof=&$provenance {param($w,$a)Test-MorphospaceDevelopmentUnitPreparation -WorkspaceRoot $w -Admission $a -Phase Freeze} $Workspace $Admission
+  Assert-Envelope ([string]$proof.state.current_unit-ceq'u003'-and$after-ceq(Get-EnvelopeWorkspaceByteInventorySha256 $Workspace)) 'replacement mandatory provenance after instruction completion failed or wrote workspace bytes'
+  Test-AdmissionReplacementContinuationDamage $Workspace $Admission @('instruction-receipt-drift','instruction-status-drift')
+  $retiredAdmission=Read-EnvelopeProtocolJson (Join-Path $Workspace 'receipts/u002-admission.json')
+  $events=@(Get-Content -LiteralPath (Join-Path $Workspace 'iteration-events.jsonl')|Where-Object{$_}|ForEach-Object{$_|ConvertFrom-Json -DateKind String})
+  $before=Get-EnvelopeWorkspaceByteInventorySha256 $Workspace
+  &$provenance {param($w,$a,$e)Test-MorphospaceHistoricalDevelopmentAdmissionOrigin -WorkspaceRoot $w -Admission $a -Events $e} $Workspace $retiredAdmission $events|Out-Null
+  Assert-Envelope ($before-ceq(Get-EnvelopeWorkspaceByteInventorySha256 $Workspace)) 'replacement continuation changed bytes while authenticating its retired predecessor admission origin'
+  Write-Host 'Replacement continuation passed actual BeginValidation, instruction completion preview/execute, and mandatory provenance rereads.'
+}
+
+function Test-AdmissionReplacementContinuation {
+  $root=Join-Path ([IO.Path]::GetTempPath()) ('workenv-replacement-continuation-'+[guid]::NewGuid().ToString('N'))
+  try {
+    $seed=New-EnvelopeAdmissionPreparedFixture -Root $root -RepositoryRoot $repoRoot -TransitionLedgerModule $transitionLedgerModule -OwnerProducedPreparation
+    $workspace=$seed.workspace
+    $admissionPath=Join-Path $root 'admission.json';Write-EnvelopeJson $admissionPath $seed.admission_template
+    Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $workspace -DevelopmentUnitAdmission $admissionPath -ExpectedDevelopmentUnitAdmissionSha256 (Get-EnvelopeFileSha256 $admissionPath) -OutPath (Join-Path $workspace 'receipts/u002-admission.json') -Timestamp '2026-08-25T00:01:00.0000000Z' -Execute|Out-Null
+    $retirement=Import-Module (Join-Path $PSScriptRoot 'ProposedUnitRetirement.psm1') -PassThru
+    $arguments=@{WorkspaceRoot=$workspace;UnitId='u002';ReplacementUnitId='u003';RetirementReason='contract-invalid';OutPath=(Join-Path $workspace 'receipts/u002-contract-retirement.json');Timestamp='2026-08-25T00:01:30.0000000Z'}
+    $dry=&$retirement {param($a)Invoke-MorphospaceProposedUnitRetirement @a} $arguments
+    $pre=$dry.proposed_retirement.authenticated_preimage
+    $arguments.ExpectedStateSha256=[string]$pre.state_sha256;$arguments.ExpectedUnitSha256=[string]$pre.unit_sha256;$arguments.ExpectedUnitRawSha256=[string]$pre.unit_raw_sha256;$arguments.ExpectedEventsSha256=[string]$pre.events_sha256;$arguments.ExpectedEventsLength=[long]$pre.events_length;$arguments.ExpectedEventTailId=[string]$pre.event_tail_id;$arguments.ExpectedProposedRetirementBindingSha256=[string]$dry.proposed_retirement.binding_sha256;$arguments.Execute=$true
+    &$retirement {param($a)Invoke-MorphospaceProposedUnitRetirement @a} $arguments|Out-Null
+    $admission=New-EnvelopeReplacementAdmission -Template $seed.admission_template -Workspace $workspace -AdmissionId 'u003-admission' -UnitId 'u003'
+    Set-AdmissionReplacementInstructionPlan $admission $seed.admission_template
+    $admissionPath=Join-Path $root 'replacement.json';Write-EnvelopeJson $admissionPath $admission
+    Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $workspace -DevelopmentUnitAdmission $admissionPath -ExpectedDevelopmentUnitAdmissionSha256 (Get-EnvelopeFileSha256 $admissionPath) -OutPath (Join-Path $workspace 'receipts/u003-admission.json') -Timestamp '2026-08-25T00:02:00.0000000Z' -Execute|Out-Null
+    $arguments=@{WorkspaceRoot=$workspace;UnitId='u003';RepoMapPath=(Join-Path $workspace 'repository-map.json');ValidationTier='quick';Execute=$true}
+    &$automationModule {param($a)Invoke-MorphospaceWorkUnitAutomation @a -Action Ready -Timestamp '2026-08-25T00:02:10.0000000Z'} $arguments|Out-Null
+    $provenance=Import-Module (Join-Path $PSScriptRoot 'DevelopmentEnvelopeProvenance.psm1') -PassThru
+    $before=Get-EnvelopeWorkspaceByteInventorySha256 $workspace
+    &$provenance {param($w,$a)Test-MorphospaceDevelopmentUnitPreparation -WorkspaceRoot $w -Admission $a -Phase Freeze -ReadOnlyReady} $workspace $admission|Out-Null
+    $readyRejected=$false;try{&$provenance {param($w,$a)Test-MorphospaceDevelopmentUnitPreparation -WorkspaceRoot $w -Admission $a -Phase Freeze} $workspace $admission|Out-Null}catch{$readyRejected=$true}
+    Assert-Envelope ($readyRejected-and$before-ceq(Get-EnvelopeWorkspaceByteInventorySha256 $workspace)) 'replacement Ready provenance lost its explicit read-only boundary or wrote on rejection'
+    &$automationModule {param($a)Invoke-MorphospaceWorkUnitAutomation @a -Action Claim -Timestamp '2026-08-25T00:02:20.0000000Z'} $arguments|Out-Null
+    &$provenance {param($w,$a)Test-MorphospaceDevelopmentUnitPreparation -WorkspaceRoot $w -Admission $a -Phase Freeze} $workspace $admission|Out-Null
+    [IO.File]::AppendAllText((Join-Path $seed.source_repository 'morphospace/README.md'),'candidate change'+[Environment]::NewLine,[Text.UTF8Encoding]::new($false))
+    Invoke-EnvelopeGit $seed.source_repository @('add','morphospace/README.md')|Out-Null;Invoke-EnvelopeGit $seed.source_repository @('commit','-m','replacement-candidate')|Out-Null
+    $unit=Read-EnvelopeProtocolJson (Join-Path $workspace 'iteration-units/u003.json');$state=Read-EnvelopeProtocolJson (Join-Path $workspace 'workspace.state.json');$lock=Read-EnvelopeProtocolJson (Join-Path $workspace 'feature.lock.json');$events=Join-Path $workspace 'iteration-events.jsonl'
+    $freeze=[ordered]@{schema='rusty.morphospace.workflow.candidate_freeze.v1';freeze_id='u003-freeze';project_id='envelope-test';unit_id='u003';expected=[ordered]@{project_sha256=(Get-EnvelopeCanonicalJsonSha256 (Read-EnvelopeProtocolJson (Join-Path $workspace 'project.spec.json')));state_sha256=(Get-EnvelopeCanonicalJsonSha256 $state);unit_sha256=(Get-EnvelopeCanonicalJsonSha256 $unit);feature_lock_sha256=(Get-EnvelopeCanonicalJsonSha256 $lock);source_composition_path='source-composition.json';source_composition_sha256=(Get-EnvelopeFileSha256 (Join-Path $workspace 'source-composition.json'));repository_map_path='repository-map.json';repository_map_sha256=(Get-EnvelopeFileSha256 (Join-Path $workspace 'repository-map.json'));events_sha256=(Get-EnvelopeFileSha256 $events);events_length=([IO.FileInfo]$events).Length;event_tail_id=[string]$state.last_event_id};final_repositories=@([ordered]@{repo_id='project-shell';commit=(@(Invoke-EnvelopeGit $seed.source_repository @('rev-parse','HEAD'))[0]).Trim();tree=(@(Invoke-EnvelopeGit $seed.source_repository @('rev-parse','HEAD^{tree}'))[0]).Trim()});changed_paths=@([ordered]@{repo_id='project-shell';paths=@('morphospace/README.md')});cleanliness_policy='clean-only';instruction_surfaces=@([ordered]@{path='morphospace/README.md';disposition='reviewed-no-change'});feature_lock=[ordered]@{revision=[int]$lock.revision;sha256=(Get-EnvelopeCanonicalJsonSha256 $lock)};effects=@('none');permissions=@('none');device_use=@('none');test_matrix=@([ordered]@{test_id='quick';command='test'});cleanup_evidence=@('No residue.');source_composition=[ordered]@{path='source-composition.json';sha256=(Get-EnvelopeFileSha256 (Join-Path $workspace 'source-composition.json'))};does_not_prove=@('Host continuation conformance only.')}
+    $freezePath=Join-Path $root 'freeze.json';Write-EnvelopeJson $freezePath $freeze
+    $candidateOwner=Import-Module (Join-Path $PSScriptRoot 'CandidateFreeze.psm1') -PassThru
+    &$candidateOwner {param($a)Invoke-MorphospaceFreezeCandidate @a} @{WorkspaceRoot=$workspace;UnitId='u003';CandidateFreeze=$freezePath;ExpectedCandidateFreezeSha256=(Get-EnvelopeFileSha256 $freezePath);OutPath=(Join-Path $workspace 'receipts/u003-freeze.json');Timestamp='2026-08-25T00:02:30.0000000Z';Execute=$true}|Out-Null
+    &$automationModule {param($a)Invoke-MorphospaceWorkUnitAutomation @a -Action BeginValidation -Timestamp '2026-08-25T00:02:40.0000000Z'} $arguments|Out-Null
+    Test-AdmissionReplacementPostBegin $workspace $admission
+  } finally {
+    Remove-AdmissionReplacementFixture $root
+  }
+}
+if($ReplacementContinuationOnly){Test-AdmissionReplacementContinuation;return}
 
 function Test-EnvelopeGitLongPaths {
   $root=Join-Path ([IO.Path]::GetTempPath()) ('workenv-git-long-'+[guid]::NewGuid().ToString('N'))
@@ -636,7 +766,7 @@ try {
   }
 
   $replacementJourneyRoot=Join-Path $temp 'replacement-admission-complete-journey';Copy-Item -LiteralPath $retirementBase -Destination $replacementJourneyRoot -Recurse
-  $replacementAdmission=New-EnvelopeReplacementAdmission -Template $admission -Workspace $replacementJourneyRoot -AdmissionId 'u003-admission' -UnitId 'u003';$replacementPath=Join-Path $temp 'replacement-u003.json';Write-EnvelopeJson $replacementPath $replacementAdmission;$replacementOut=Join-Path $replacementJourneyRoot 'receipts\u003-admission.json'
+  $replacementAdmission=New-EnvelopeReplacementAdmission -Template $admission -Workspace $replacementJourneyRoot -AdmissionId 'u003-admission' -UnitId 'u003';Set-AdmissionReplacementInstructionPlan $replacementAdmission $admission;$replacementPath=Join-Path $temp 'replacement-u003.json';Write-EnvelopeJson $replacementPath $replacementAdmission;$replacementOut=Join-Path $replacementJourneyRoot 'receipts\u003-admission.json'
   $replacementBeforeDryRun=Get-EnvelopeWorkspaceByteInventorySha256 $replacementJourneyRoot;$replacementDry=Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $replacementJourneyRoot -DevelopmentUnitAdmission $replacementPath -OutPath $replacementOut -Timestamp '2026-08-25T00:02:00.0000000Z';$replacementAfterDryRun=Get-EnvelopeWorkspaceByteInventorySha256 $replacementJourneyRoot;Assert-Envelope ($replacementBeforeDryRun-ceq$replacementAfterDryRun) 'replacement admission dry run changed workspace bytes';$replacementRun=Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $replacementJourneyRoot -DevelopmentUnitAdmission $replacementPath -ExpectedDevelopmentUnitAdmissionSha256 $replacementDry.audit_receipt.sha256 -OutPath $replacementOut -Timestamp '2026-08-25T00:02:00.0000000Z' -Execute
   $replacementUnit=Read-EnvelopeProtocolJson (Join-Path $replacementJourneyRoot 'iteration-units\u003.json');$replacementState=Read-EnvelopeProtocolJson (Join-Path $replacementJourneyRoot 'workspace.state.json');$replacementTail=@(Get-Content -LiteralPath (Join-Path $replacementJourneyRoot 'iteration-events.jsonl')|Where-Object{$_}|ForEach-Object{$_|ConvertFrom-Json})[-1]
   Assert-Envelope ($replacementRun.transition-eq'development-unit-admitted'-and[string]$replacementUnit.status-ceq'proposed'-and$null-eq$replacementState.current_unit-and$null-eq$replacementState.next_ready_unit-and[string]$replacementTail.event_id-ceq'u003-admission-admitted') 'authenticated retirement did not admit its exact named replacement'
@@ -682,6 +812,7 @@ try {
   [IO.File]::WriteAllText((Join-Path $dependencyRepo 'dependency\post-freeze-drift.txt'),'post-freeze dependency drift'+[Environment]::NewLine,[Text.UTF8Encoding]::new($false));Invoke-EnvelopeGit $dependencyRepo @('add','dependency/post-freeze-drift.txt')|Out-Null;Invoke-EnvelopeGit $dependencyRepo @('commit','-m','post-freeze-dependency-drift')|Out-Null;$postFreezeBefore=Get-EnvelopeWorkspaceByteInventorySha256 $replacementJourneyRoot;$postFreezeRejected=$false;try{&$automationModule {param($arguments)Invoke-MorphospaceWorkUnitAutomation @arguments} @{Action='BeginValidation';WorkspaceRoot=$replacementJourneyRoot;UnitId='u003';RepoMapPath=(Join-Path $replacementJourneyRoot 'repository-map.json');ValidationTier='quick';Timestamp='2026-08-25T00:02:40.0000000Z';Execute=$true}|Out-Null}catch{$postFreezeRejected=$true};$postFreezeAfter=Get-EnvelopeWorkspaceByteInventorySha256 $replacementJourneyRoot;Invoke-EnvelopeGit $dependencyRepo @('switch','--detach',$dependencyCommit)|Out-Null;Assert-Envelope ($postFreezeRejected-and$postFreezeBefore-ceq$postFreezeAfter) 'BeginValidation accepted or mutated after post-Freeze read-only dependency drift'
   $replacementValidation=&$automationModule {param($arguments)Invoke-MorphospaceWorkUnitAutomation @arguments} @{Action='BeginValidation';WorkspaceRoot=$replacementJourneyRoot;UnitId='u003';RepoMapPath=(Join-Path $replacementJourneyRoot 'repository-map.json');ValidationTier='quick';Timestamp='2026-08-25T00:02:40.0000000Z';Execute=$true}
   $replacementValidatingUnit=Read-EnvelopeProtocolJson (Join-Path $replacementJourneyRoot 'iteration-units\u003.json');$replacementValidatingState=Read-EnvelopeProtocolJson (Join-Path $replacementJourneyRoot 'workspace.state.json');Assert-Envelope ($replacementValidation.transition-eq'active-to-validating'-and[string]$replacementValidatingUnit.status-ceq'validating'-and[string]$replacementValidatingState.current_unit-ceq'u003') 'authenticated replacement candidate Freeze did not pass the public BeginValidation consumer boundary'
+  Test-AdmissionReplacementPostBegin $replacementJourneyRoot $replacementAdmission
 
   $secondRetirementRoot=Join-Path $temp 'replacement-admission-second-retirement';Copy-Item -LiteralPath $retirementBase -Destination $secondRetirementRoot -Recurse
   $secondFirstReplacement=New-EnvelopeReplacementAdmission -Template $admission -Workspace $secondRetirementRoot -AdmissionId 'u003-admission' -UnitId 'u003';$secondFirstReplacementPath=Join-Path $temp 'replacement-u003-second-chain.json';Write-EnvelopeJson $secondFirstReplacementPath $secondFirstReplacement;$secondFirstOut=Join-Path $secondRetirementRoot 'receipts\u003-admission.json';$secondFirstDry=Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $secondRetirementRoot -DevelopmentUnitAdmission $secondFirstReplacementPath -OutPath $secondFirstOut -Timestamp '2026-08-25T00:02:20.0000000Z';Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $secondRetirementRoot -DevelopmentUnitAdmission $secondFirstReplacementPath -ExpectedDevelopmentUnitAdmissionSha256 $secondFirstDry.audit_receipt.sha256 -OutPath $secondFirstOut -Timestamp '2026-08-25T00:02:20.0000000Z' -Execute|Out-Null

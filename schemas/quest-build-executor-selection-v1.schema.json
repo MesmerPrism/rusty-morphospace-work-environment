@@ -2,6 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/quest-build-executor-selection-v1.schema.json",
   "title": "Accepted published build executor request and retained compatibility selection",
+  "type": "object",
   "oneOf": [
     {
       "$ref": "#/$defs/request"
