@@ -36,7 +36,9 @@ function Read-CurrentDispatch {
     if ((Get-CurrentCanonicalSha256 $resolved.state_binding) -cne (Get-CurrentCanonicalSha256 $selection)) { throw 'Current validation selected dispatch tuple drifted.' }
     $selector=Read-CurrentProtocolJson (Resolve-CurrentWorkspacePath -WorkspaceRoot $WorkspaceRoot -RelativePath $selection.selector_path -RequireLeaf)
     if ([string]$selector.schema -cne 'rusty.morphospace.workflow.normal_validation_selector.v2') { throw 'Current validation requires the declared-tier v2 contract.' }
-    if ((Get-CurrentFileSha256 (Join-Path $WorkspaceRoot $selector.unit.path)) -cne [string]$selector.unit.raw_sha256) { throw 'Current validation live producer unit raw bytes drifted from its selected dispatch.' }
+    # The resolver authenticates the original raw dispatch preimage and the
+    # status-independent contract. Begin may change active to validating; the
+    # current unit raw bytes remain in both live snapshots across the child.
     # Reuse only the observation just produced by this exact resolver call.
     # Nothing is caller-supplied or retained across the child boundary.
     $producer=$resolved.producer_observation
