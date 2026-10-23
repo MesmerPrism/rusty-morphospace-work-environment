@@ -532,6 +532,12 @@ if($Scenario-in@('post-nonpass','validating-upgrade','validating-observation','d
   # Keep the actual owner inside its authenticated mapped planning Git root.
   # A copied workspace or inner .git would stop exercising self-hosted closure.
   $nonpassWorkspace=$workspace
+  # The future corrected resolver is a host-only local binding. Ignore only
+  # this exact file before freezing the nested planning repository; neighboring
+  # local files and all control receipts still belong to the dirt guards.
+  $correctedResolverRelative='local/ctx-corrected-resolver.json'
+  [IO.File]::AppendAllText((Join-Path $seed.source_repository '.git/info/exclude'),"`n/morphospace/$correctedResolverRelative`n",[Text.UTF8Encoding]::new($false))
+  & git -C $seed.source_repository check-ignore --quiet -- "morphospace/$correctedResolverRelative";if($LASTEXITCODE-ne0){throw 'Exact future corrected resolver is not ignored by the nested fixture.'}
   & git -C $seed.source_repository add morphospace/;if($LASTEXITCODE-ne0){throw 'Nested planning checkpoint staging failed.'}
   & git -C $seed.source_repository commit -qm 'Checkpoint authentic nested admitted owner';if($LASTEXITCODE-ne0){throw 'Nested planning checkpoint failed.'}
   Assert-TC (-not(Test-Path -LiteralPath (Join-Path $workspace '.git'))) 'nested control workspace has no independent Git repository'
@@ -753,7 +759,8 @@ if($validatingUpgradeFixture){
   # compatibility owner still authenticates all original source/protocol pins.
   $correctedContext=Clone $new;$correctedContext.context_id='ctx-corrected'
   $correctedResolver=Read-TC (Join-Path $nonpassWorkspace ([string]$new.resolver.path));$correctedResolver.context_id='ctx-corrected'
-  $correctedResolverRelative='local/ctx-corrected-resolver.json';Write-TC (Join-Path $nonpassWorkspace $correctedResolverRelative) $correctedResolver
+  Write-TC (Join-Path $nonpassWorkspace $correctedResolverRelative) $correctedResolver
+  & git -C $seed.source_repository check-ignore --quiet -- "morphospace/$correctedResolverRelative";if($LASTEXITCODE-ne0){throw 'Corrected resolver escaped its exact fixture ignore binding.'}
   $correctedContext.resolver=[pscustomobject]@{path=$correctedResolverRelative;sha256=FileHash (Join-Path $nonpassWorkspace $correctedResolverRelative)}
   $correctedContext=Set-ContextFingerprint $correctedContext
   $correctionUpgrade=New-UpgradeRequest $nonpassWorkspace 'upgrade-correction' $correctedContext
@@ -830,8 +837,8 @@ if($validatingUpgradeFixture){
   $planningRootComparison=if($IsWindows){[StringComparison]::OrdinalIgnoreCase}else{[StringComparison]::Ordinal}
   $actualPlanningRoot=[IO.Path]::GetFullPath((GitScalar $nonpassWorkspace @('rev-parse','--show-toplevel')))
   Assert-TC ($actualPlanningRoot.Equals([IO.Path]::GetFullPath($seed.source_repository),$planningRootComparison)) 'full Standard consumer resolves the mapped outer planning Git root'
-  foreach($damage in @('unrelated-control','outside-control','staged-control','neighbor-selector','source')){
-   $damagePath=switch($damage){'outside-control'{Join-Path $seed.source_repository 'unrelated.txt'};'neighbor-selector'{Join-Path $nonpassWorkspace 'validation-authority/selectors/unrelated-selector.json'};'source'{Join-Path $seed.dependency_repository 'dependency/README.md'};default{Join-Path $nonpassWorkspace 'unrelated-control.txt'}}
+  foreach($damage in @('unrelated-control','unrelated-local','outside-control','staged-control','neighbor-selector','source')){
+   $damagePath=switch($damage){'unrelated-local'{Join-Path $nonpassWorkspace 'local/unrelated-control.json'};'outside-control'{Join-Path $seed.source_repository 'unrelated.txt'};'neighbor-selector'{Join-Path $nonpassWorkspace 'validation-authority/selectors/unrelated-selector.json'};'source'{Join-Path $seed.dependency_repository 'dependency/README.md'};default{Join-Path $nonpassWorkspace 'unrelated-control.txt'}}
    $original=if([IO.File]::Exists($damagePath)){[IO.File]::ReadAllBytes($damagePath)}else{$null}
    try{
     if($damage-ceq'neighbor-selector'){Write-TC $damagePath $selector}else{[IO.File]::AppendAllText($damagePath,"Unrelated fixture-only $damage dirt.`n",[Text.UTF8Encoding]::new($false))}
