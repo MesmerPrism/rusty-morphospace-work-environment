@@ -6,7 +6,7 @@
   "additionalProperties": false,
   "required": [
     "schema", "lock_id", "extension_id", "project_id", "unit_id",
-    "parent", "original_preparation", "repository_map", "fingerprint",
+    "parent", "repository_map", "fingerprint",
     "repositories", "status", "does_not_prove"
   ],
   "properties": {
@@ -17,6 +17,7 @@
     "project_id": { "$ref": "#/$defs/id" },
     "unit_id": { "$ref": "#/$defs/id" },
     "parent": { "$ref": "#/$defs/sourceBinding" },
+    "original_bootstrap": { "$ref": "#/$defs/bootstrapOrigin" },
     "original_preparation": {
       "type": "object", "additionalProperties": false,
       "required": ["preparation_id", "path", "raw_sha256", "canonical_sha256", "schema", "lock_id", "fingerprint"],
@@ -81,7 +82,9 @@
       "items": { "type": "string", "minLength": 1 }
     }
   },
+  "oneOf": [{"required":["original_preparation"],"not":{"required":["original_bootstrap"]},"properties":{"parent":{"properties":{"schema":{"enum":["rusty.morphospace.workflow.development_envelope_source_composition.v1","rusty.morphospace.workflow.development_envelope_source_composition.v2","rusty.morphospace.workflow.development_envelope_source_composition.v3","rusty.morphospace.workflow.active_development_envelope_source_composition.v1"]}}}}},{"required":["original_bootstrap"],"not":{"required":["original_preparation"]},"properties":{"parent":{"allOf":[{"$ref":"#/$defs/sourceBinding"},{"properties":{"schema":{"enum":["rusty.morphospace.workflow.source_composition_lock.v1","rusty.morphospace.workflow.active_development_envelope_source_composition.v1"]}}}]},"source_selection_mode":false}}],
   "$defs": {
+    "bootstrapOrigin": {"type":"object","additionalProperties":false,"required":["path","raw_sha256","canonical_sha256","schema","lock_id","fingerprint","kind","prefix_sha256","repository_map","ready","claim","first_extension_id"],"properties":{"path":{"$ref":"#/$defs/path"},"raw_sha256":{"$ref":"#/$defs/hash"},"canonical_sha256":{"$ref":"#/$defs/hash"},"schema":{"const":"rusty.morphospace.workflow.source_composition_lock.v1"},"lock_id":{"$ref":"#/$defs/id"},"fingerprint":{"$ref":"#/$defs/hash"},"kind":{"const":"native-featureless-ready-claim"},"prefix_sha256":{"$ref":"#/$defs/hash"},"first_extension_id":{"$ref":"#/$defs/id"},"repository_map":{"type":"object","additionalProperties":false,"required":["path","raw_sha256"],"properties":{"path":{"$ref":"#/$defs/path"},"raw_sha256":{"$ref":"#/$defs/hash"}}},"ready":{"type":"object","additionalProperties":false,"required":["event_id","intent_sha256","completion_sha256"],"properties":{"event_id":{"$ref":"#/$defs/id"},"intent_sha256":{"$ref":"#/$defs/hash"},"completion_sha256":{"$ref":"#/$defs/hash"}}},"claim":{"type":"object","additionalProperties":false,"required":["event_id","intent_sha256","completion_sha256"],"properties":{"event_id":{"$ref":"#/$defs/id"},"intent_sha256":{"$ref":"#/$defs/hash"},"completion_sha256":{"$ref":"#/$defs/hash"}}}}},
   "currentCheckout": {
     "type": "object",
     "additionalProperties": false,
@@ -132,7 +135,8 @@
           "rusty.morphospace.workflow.development_envelope_source_composition.v1",
           "rusty.morphospace.workflow.development_envelope_source_composition.v2",
           "rusty.morphospace.workflow.development_envelope_source_composition.v3",
-          "rusty.morphospace.workflow.active_development_envelope_source_composition.v1"
+          "rusty.morphospace.workflow.active_development_envelope_source_composition.v1",
+          "rusty.morphospace.workflow.source_composition_lock.v1"
         ] },
         "lock_id": { "$ref": "#/$defs/id" },
         "fingerprint": { "$ref": "#/$defs/hash" }
