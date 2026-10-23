@@ -232,6 +232,26 @@ function Invoke-MorphospaceUpgradeToolingContext { [CmdletBinding()]param([strin
 function Test-MorphospaceHistoricalToolingContextUpgrade { param([string]$WorkspaceRoot,[object]$ExpectedEvent);&$upgradeModule {param($w,$e)Test-MorphospaceHistoricalToolingContextUpgrade -WorkspaceRoot $w -ExpectedEvent $e} $WorkspaceRoot $ExpectedEvent }
 function Assert-TC([bool]$Value,[string]$Name){if(-not$Value){throw "Tooling-context self-test failed: $Name"}}
 function Assert-TCError([string]$Actual,[string]$Expected,[string]$Name){if($Actual-cne$Expected){throw "Tooling-context self-test unexpected $Name error: $Actual"};$true}
+# Workspace state permits the selection property to be omitted until the first
+# selected Begin. Absence and explicit null both mean unselected; every non-null
+# value still refuses these pre-selection endpoint assertions.
+function Test-TCNoNormalValidationSelection([object]$State){
+ return ($State.PSObject.Properties.Name-cnotcontains'normal_validation_selection'-or$null-eq$State.normal_validation_selection)
+}
+foreach($selectionCase in @(
+ [pscustomobject]@{name='absent';state=[pscustomobject]@{current_unit='u002'};expected=$true},
+ [pscustomobject]@{name='null';state=[pscustomobject]@{current_unit='u002';normal_validation_selection=$null};expected=$true},
+ [pscustomobject]@{name='bound';state=[pscustomobject]@{current_unit='u002';normal_validation_selection=[pscustomobject]@{unit_id='u002'}};expected=$false},
+ [pscustomobject]@{name='empty-object';state=[pscustomobject]@{normal_validation_selection=[pscustomobject]@{}};expected=$false},
+ [pscustomobject]@{name='empty-array';state=[pscustomobject]@{normal_validation_selection=@()};expected=$false},
+ [pscustomobject]@{name='false';state=[pscustomobject]@{normal_validation_selection=$false};expected=$false},
+ [pscustomobject]@{name='empty-string';state=[pscustomobject]@{normal_validation_selection=''};expected=$false},
+ [pscustomobject]@{name='zero';state=[pscustomobject]@{normal_validation_selection=0};expected=$false}
+)){
+ $selectionBefore=$selectionCase.state|ConvertTo-Json -Depth 100 -Compress
+ Assert-TC ((Test-TCNoNormalValidationSelection $selectionCase.state)-eq$selectionCase.expected) ("optional selection endpoint predicate $($selectionCase.name)")
+ Assert-TC (($selectionCase.state|ConvertTo-Json -Depth 100 -Compress)-ceq$selectionBefore) ("optional selection endpoint predicate preserves $($selectionCase.name) DTO")
+}
 function Read-TC([string]$Path){&$protocolModule {param($p)Read-MorphospaceProtocolJson $p} $Path}
 function ToBytes([object]$Value){&$protocolModule {param($v),[byte[]](ConvertTo-MorphospaceProtocolJsonBytes $v)} $Value}
 function FromBytes([byte[]]$Bytes){&$protocolModule {param($b)ConvertFrom-MorphospaceProtocolJsonBytes $b} $Bytes}
@@ -690,7 +710,7 @@ if($validatingUpgradeFixture){
    $null=&$run @mismatchArgs -Action ReturnToActive -ValidationReceipt $mismatchReceipt -ValidationResult blocked -Timestamp '2026-09-15T09:01:03.0000000Z' -Execute
    foreach($retained in $sourceMismatchRetained){Assert-TC ((FileHash (Join-Path $sourceMismatchWorkspace $retained.path))-ceq$retained.sha256) 'native mismatch branch preserves every original committed transaction file'}
    $mismatchState=Read-TC (Join-Path $sourceMismatchWorkspace 'workspace.state.json');$mismatchUnit=Read-TC (Join-Path $sourceMismatchWorkspace 'iteration-units/u002.json')
-   Assert-TC ([string]$mismatchUnit.status-ceq'active'-and[string]$mismatchState.validation_checkpoint.result-ceq'blocked'-and$null-eq$mismatchState.normal_validation_selection) 'native mismatch Return owns actual active blocked unselected endpoint'
+   Assert-TC ([string]$mismatchUnit.status-ceq'active'-and[string]$mismatchState.validation_checkpoint.result-ceq'blocked'-and(Test-TCNoNormalValidationSelection $mismatchState)) 'native mismatch Return owns actual active blocked unselected endpoint'
    $mismatchContext=Clone $new;$mismatchContext.context_id='ctx-source-mismatch'
    $mismatchResolver=Read-TC (Join-Path $sourceMismatchWorkspace ([string]$new.resolver.path));$mismatchResolver.context_id='ctx-source-mismatch'
    $mismatchResolverPath='local/ctx-source-mismatch-resolver.json';Write-TC (Join-Path $sourceMismatchWorkspace $mismatchResolverPath) $mismatchResolver
@@ -726,7 +746,7 @@ if($validatingUpgradeFixture){
   $blockedSha=FileHash (Join-Path $nonpassWorkspace $blockedRelative)
   $null=&$run @validatingArgs -Action ReturnToActive -ValidationReceipt $blockedRelative -ValidationResult blocked -Timestamp '2026-09-15T09:01:03.0000000Z' -Execute
   $returnedState=Read-TC (Join-Path $nonpassWorkspace 'workspace.state.json');$returnId=[string]$returnedState.last_event_id
-  Assert-TC ([string]$returnedState.validation_checkpoint.result-ceq'blocked'-and$null-eq$returnedState.normal_validation_selection) 'genuine blocked Return retains unselected active owner'
+  Assert-TC ([string]$returnedState.validation_checkpoint.result-ceq'blocked'-and(Test-TCNoNormalValidationSelection $returnedState)) 'genuine blocked Return retains unselected active owner'
   $retainedRelative="receipts/$returnId-retained-validation.json"
   Assert-TC ((FileHash (Join-Path $nonpassWorkspace $retainedRelative))-ceq$blockedSha) 'Return retains exact public blocked receipt bytes'
   # Same qualified executor, fresh context identity and local resolver. The
@@ -786,7 +806,7 @@ if($validatingUpgradeFixture){
   $freezePath=Join-Path $nonpassWorkspace 'receipts/u002-linked-correction.json';$freezeRawBefore=FileHash $freezePath
   $current=Read-TC (Join-Path $nonpassWorkspace 'iteration-units/u002.json');$markerBefore=Canonical $current.candidate_freeze
   $revisionState=Read-TC (Join-Path $nonpassWorkspace 'workspace.state.json')
-  Assert-TC ([string]$current.status-ceq'active'-and[string]$revisionState.current_unit-ceq'u002'-and$null-eq$revisionState.validation_checkpoint-and$null-eq$revisionState.normal_validation_selection-and[string]$current.tooling_context.path-ceq'tooling-contexts/ctx-corrected.json') 'linked Freeze retains active ownership and clears old selection and checkpoint while retaining new exact tooling pointer'
+  Assert-TC ([string]$current.status-ceq'active'-and[string]$revisionState.current_unit-ceq'u002'-and$null-eq$revisionState.validation_checkpoint-and(Test-TCNoNormalValidationSelection $revisionState)-and[string]$current.tooling_context.path-ceq'tooling-contexts/ctx-corrected.json') 'linked Freeze retains active ownership and clears old selection and checkpoint while retaining new exact tooling pointer'
   Assert-TC ((FileHash $originalFreezePath)-ceq$originalFreezeSha-and(FileHash (Join-Path $nonpassWorkspace $blockedRelative))-ceq$blockedSha) 'original Freeze and blocked public attempt remain byte exact'
   Test-MorphospaceHistoricalToolingContextUpgrade $nonpassWorkspace $correctionUpgradeEvent|Out-Null
   Write-TCPhase 'nested-blocked-return-upgrade-linked-freeze-recovered'
