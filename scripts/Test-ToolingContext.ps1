@@ -1,8 +1,9 @@
-param([switch]$ExecutorPreflightOnly,[switch]$ArtifactSelectionOnly,[string]$ActualIntentPath='', [string]$ExpectedActualIntentSha256='', [switch]$SelfTest,[switch]$Child,[switch]$KeepFailedFixture,[string]$OldCommit='',[string]$NewCommit='',[string]$HarnessRoot='',[ValidateSet('all','lifecycle','recovery','product-negative','provenance-negative','instruction-context','ready-lifecycle','post-nonpass','validating-upgrade')][string]$Scenario='all',[ValidateSet('all','after-intent','after-artifact','after-projection','after-event')][string]$RecoveryFault='all')
+param([switch]$ExecutorPreflightOnly,[switch]$ArtifactSelectionOnly,[string]$ActualIntentPath='', [string]$ExpectedActualIntentSha256='', [switch]$SelfTest,[switch]$Child,[switch]$KeepFailedFixture,[switch]$KeepFixture,[string]$OldCommit='',[string]$NewCommit='',[string]$HarnessRoot='',[ValidateSet('all','lifecycle','recovery','product-negative','provenance-negative','instruction-context','ready-lifecycle','post-nonpass','validating-upgrade','declared-tier-active')][string]$Scenario='all',[ValidateSet('all','after-intent','after-artifact','after-projection','after-event')][string]$RecoveryFault='all')
 Set-StrictMode -Version 2.0
 $ErrorActionPreference='Stop'
 $script:TestClosurePaths=$null
 $script:ToolingTestClock=[Diagnostics.Stopwatch]::StartNew()
+$declaredTierFixture=$Scenario-in@('validating-upgrade','declared-tier-active')
 function Write-TCPhase([string]$Name){[Console]::Error.WriteLine(('tooling_context_phase={0}; elapsed_seconds={1:N1}' -f $Name,$script:ToolingTestClock.Elapsed.TotalSeconds))}
 if(-not$SelfTest){throw 'Test-ToolingContext requires -SelfTest.'}
 trap { [Console]::Error.WriteLine("$($_.Exception.Message)`n$($_.ScriptStackTrace)"); exit 1 }
@@ -209,7 +210,7 @@ if(-not$Child){
     $postProcess.Dispose()
     if(-not$KeepFailedFixture){Remove-ToolingTestRoot $postRoot}
    }
-   if(-not$preserve){Remove-ToolingTestRoot $root}
+   if(-not$preserve-and-not$KeepFixture){Remove-ToolingTestRoot $root}
   }
  return
 }
@@ -254,6 +255,72 @@ function Set-ContextFingerprint([object]$Context){$identity=[ordered]@{context_i
 function Invoke-Upgrade([object]$Fixture,[string]$RequestPath,[string]$Fault='none'){Invoke-MorphospaceUpgradeToolingContext -WorkspaceRoot $Fixture.workspace -UnitId 'u002' -ToolingContextUpgrade $RequestPath -ExpectedToolingContextUpgradeSha256 (FileHash $RequestPath) -OutPath (Join-Path $Fixture.workspace "receipts/$([string](Read-TC $RequestPath).upgrade_id)-tooling-context-upgrade-request.json") -Timestamp '2026-09-15T09:00:00.0000000Z' -Execute -FaultAfter $Fault}
 function WorkspaceFingerprint([string]$Workspace){Canonical @(Get-ChildItem $Workspace -Recurse -File|Sort-Object FullName|ForEach-Object{[pscustomobject]@{p=$_.FullName.Substring($Workspace.Length).Replace('\','/');h=FileHash $_.FullName}})}
 
+# Focused producer regression, also consumed by the existing registered
+# validating-upgrade scenario from its already-earned active Freeze prefix.
+# Product/provider acceptance remains modeled; this owns only real dispatch.
+function Invoke-TCDeclaredTierActiveProducer([string]$Workspace,[string]$Id){
+ $unitPath=Join-Path $Workspace 'iteration-units/u002.json';$statePath=Join-Path $Workspace 'workspace.state.json'
+ $active=Read-TC $unitPath;Assert-TC ([string]$active.status-ceq'active') 'direct declared-tier producer starts from genuine active owner'
+ $activeRaw=FileHash $unitPath;$contract=Clone $active;$contract.PSObject.Properties.Remove('status');$contractHash=Canonical $contract
+ $matrix=@(&$automationModule {param($u)New-MorphospaceValidationMatrix -Unit $u -DeviceSerials @()} $active)
+ $gate=@($matrix|Where-Object profile_id -CEQ 'workflow-current')[0]
+ $freeze=Read-TC (Join-Path $Workspace $active.candidate_freeze.receipt_path)
+ $selectorModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceNormalValidationSelector.psm1') -PassThru
+ $evidencePath=Join-Path $HarnessRoot "$Id-evidence.json";$relative="validation-authority/selectors/$Id.json"
+ $identity=&$selectorModule {param($p)Get-MorphospaceCanonicalEvidencePathIdentity $p} $evidencePath
+ $selector=[ordered]@{schema='rusty.morphospace.workflow.normal_validation_selector.v2';selector_id=$Id;project=[ordered]@{project_id=$active.project_id;spec_path='project.spec.json';spec_raw_sha256=FileHash (Join-Path $Workspace 'project.spec.json')};unit=[ordered]@{unit_id='u002';path='iteration-units/u002.json';raw_sha256=$activeRaw;contract_sha256=$contractHash};declared_gate=[ordered]@{profile_id='workflow-current';command_sha256=BytesHash ([Text.UTF8Encoding]::new($false).GetBytes([string]$gate.command))};candidate_freeze=[ordered]@{freeze_id=$active.candidate_freeze.freeze_id;receipt_path=$active.candidate_freeze.receipt_path;receipt_sha256=$active.candidate_freeze.receipt_sha256;final_repositories=@($freeze.final_repositories)};tooling_context=(Clone $active.tooling_context);selection=[ordered]@{tier='standard';producer=[ordered]@{kind='bound-workflow-current-evidence-v2';path='scripts/Invoke-WorkflowCurrentValidation.ps1';sha256=FileHash (Join-Path $tool 'scripts/Invoke-WorkflowCurrentValidation.ps1')};output_evidence=[ordered]@{file_name=[IO.Path]::GetFileName($evidencePath);schema='rusty.morphospace.workflow.current_validation_evidence.v1';canonical_path_sha256=$identity.sha256;requires_create_new=$true}};does_not_authorize=@('Temporary direct producer fixture; no product/provider/acceptance/publication credit.')}
+ $selectorPath=Join-Path $Workspace $relative;Write-TC $selectorPath $selector
+ $selectorArgs=@{ValidationSelector=$relative;ExpectedValidationSelectorSha256=FileHash $selectorPath;ValidationEvidencePath=$evidencePath}
+ $run=Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1'
+ $begun=(&$run -WorkspaceRoot $Workspace -UnitId u002 -RepoMapPath (Join-Path $Workspace 'repository-map.json') -ValidationTier standard -Action BeginValidation @selectorArgs -Timestamp '2026-09-15T08:20:30.0000000Z' -Execute|Out-String)|ConvertFrom-Json -Depth 100 -DateKind String
+ $live=Read-TC $unitPath;$state=Read-TC $statePath;$liveContract=Clone $live;$liveContract.PSObject.Properties.Remove('status')
+ Assert-TC ($begun.executed-and$begun.transition-ceq'active-to-validating'-and[string]$live.status-ceq'validating') 'real direct selected Begin changes active to validating'
+ Assert-TC ((FileHash $unitPath)-cne$activeRaw-and(Canonical $liveContract)-ceq$contractHash-and[string]$state.normal_validation_selection.unit_raw_sha256-ceq$activeRaw-and[string]$state.normal_validation_selection.unit_contract_sha256-ceq$contractHash) 'direct Begin retains exact active raw preimage and immutable material contract'
+ Write-TCPhase 'direct-active-selected-begin-authenticated'
+ $captureModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceRetainedBuildProcess.psm1') -PassThru
+ $environment=@{};foreach($entry in [Environment]::GetEnvironmentVariables().GetEnumerator()){$environment[[string]$entry.Key]=[string]$entry.Value}
+ $execution=[pscustomobject]@{FileName=(@(Get-Command pwsh -CommandType Application)[0]).Source;WorkingDirectory=$Workspace;Arguments=@('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',(Join-Path $tool 'scripts/Invoke-WorkflowCurrentValidation.ps1'),'-WorkspaceRoot',$Workspace,'-EvidencePath',$evidencePath)}
+ function Invoke-DirectProducer([string]$Label){
+  $base=Join-Path $HarnessRoot "$Id-$Label-process"
+  $terminal=&$captureModule {param($ex,$envValues,$path)Invoke-MorphospaceRetainedBuildProcess -Execution $ex -EnvironmentValues $envValues -BaseReceiptPath $path -EstimatedWarningSeconds 60} $execution $environment $base
+  Write-TC ($base+'.json') $terminal
+  Assert-TC ($terminal.ChildProcess.process_reaped-and$terminal.ChildProcess.stdout_eof-and$terminal.ChildProcess.stderr_eof-and$terminal.ChildProcess.raw_capture_complete) "direct producer $Label actual native process closed"
+  [pscustomobject]@{terminal=$terminal;stderr=[IO.File]::ReadAllText($base+'.stderr.bin')}
+ }
+ $contextPath=Join-Path $Workspace $live.tooling_context.path
+ $mapped=(Read-TC (Join-Path $Workspace 'repository-map.json')).repositories
+ $sourceId=[string]$freeze.final_repositories[0].repo_id;$sourceRoot=[string]@($mapped|Where-Object repo_id -CEQ $sourceId)[0].path
+ $sourceRelative=@(& git -C $sourceRoot ls-files)[0];$sourcePath=Join-Path $sourceRoot $sourceRelative
+ Assert-TC ([IO.Path]::GetFullPath($sourcePath).StartsWith([IO.Path]::GetFullPath($HarnessRoot),[StringComparison]::OrdinalIgnoreCase)) 'direct source damage stays inside owned disposable fixture'
+ foreach($damage in @('contract','status','context','selector','preimage','source')){
+  $path=switch($damage){'context'{$contextPath};'selector'{$selectorPath};'preimage'{$statePath};'source'{$sourcePath};default{$unitPath}}
+  $bytes=[IO.File]::ReadAllBytes($path)
+  try{
+   switch($damage){
+    'contract'{$bad=Read-TC $unitPath;$bad.validation[0].command+=' material drift';Write-TC $unitPath $bad;$expected='*unit contract drifted beyond lifecycle status*'}
+    'status'{$bad=Read-TC $unitPath;$bad.status='active';Write-TC $unitPath $bad;$expected='*requires the live validating selected unit*'}
+    'context'{[IO.File]::AppendAllText($path,' ');$expected='*Prepared tooling context raw or canonical identity drifted*'}
+    'selector'{$bad=Read-TC $selectorPath;$bad.unit.raw_sha256='0'*64;Write-TC $selectorPath $bad;$expected='*selector SHA-256 does not match the expected owner binding*'}
+    'preimage'{$bad=Read-TC $statePath;$bad.normal_validation_selection.unit_raw_sha256=FileHash $unitPath;Write-TC $statePath $bad;$expected='*unit identity does not match the exact dispatch binding*'}
+    'source'{[IO.File]::AppendAllText($path,' ');$expected='*Frozen candidate clean-only repository*dirty*'}
+   }
+   $before=WorkspaceFingerprint $Workspace;$refusal=Invoke-DirectProducer $damage
+   Assert-TC ($refusal.terminal.ExitCode-ne0-and$refusal.stderr-like$expected-and$refusal.stderr-notlike'*not recognized*') "direct producer refuses material $damage at its owning guard"
+   Assert-TC ((WorkspaceFingerprint $Workspace)-ceq$before-and-not(Test-Path -LiteralPath $evidencePath)-and-not(Test-Path -LiteralPath ($evidencePath+'.terminal.json'))) "direct $damage refusal has no producer child/evidence or owner writes"
+  }finally{[IO.File]::WriteAllBytes($path,$bytes)}
+ }
+ $before=WorkspaceFingerprint $Workspace;$positive=Invoke-DirectProducer 'positive'
+ Assert-TC ($positive.terminal.ExitCode-eq0) "direct active selected Begin must run actual fresh producer successfully: $($positive.stderr)"
+ Assert-TC ((WorkspaceFingerprint $Workspace)-ceq$before) 'direct successful producer leaves exact owner bytes unchanged'
+ $evidence=Read-TC $evidencePath
+ Assert-TC ([string]$evidence.result-ceq'pass'-and[string]$evidence.selection.unit_raw_sha256-ceq$activeRaw-and[string]$evidence.selection.unit_contract_sha256-ceq$contractHash) 'direct evidence preserves original active dispatch preimage'
+ $bound=Read-TC $statePath
+ $resolved=&$selectorModule {param($w,$s,$hash,$path,$unit,$matrix,$bound)Resolve-MorphospaceNormalValidationSelector -WorkspaceRoot $w -SelectorReference $s -ExpectedSelectorSha256 $hash -EvidencePath $path -Spec (Read-MorphospaceProtocolJson (Join-Path $w 'project.spec.json')) -Unit $unit -DeclaredValidationMatrix $matrix -Action RecordValidation -ValidationTier standard -BoundSelection $bound} $Workspace $relative $selectorArgs.ExpectedValidationSelectorSha256 $evidencePath (Read-TC $unitPath) $matrix $bound.normal_validation_selection
+ Assert-TC ($resolved.evidence_phase-ceq'consumption') 'direct real typed terminal/raw evidence consumes under original exact binding'
+ Write-TCPhase 'direct-active-fresh-producer-complete'
+ [pscustomobject]@{result='pass';actual_active_to_validating=$true;actual_fresh_native_producer=$true;original_raw_preimage_retained=$true;status_independent_contract_retained=$true;material_refusals=6;live_before_after_unchanged=$true;device_calls=0;acceptance_claimed=$false}
+}
+
 function New-TCNormalSelector([string]$Workspace,[string]$Id){
  $unitPath=Join-Path $Workspace 'iteration-units/u002.json';$unit=Read-TC $unitPath;$contract=Clone $unit;$contract.PSObject.Properties.Remove('status')
  $freeze=Read-TC (Join-Path $Workspace ([string]$unit.candidate_freeze.receipt_path));$gate=$unit.validation[0]
@@ -296,7 +363,7 @@ if($nestedPlanning){
  }
  Write-TCPhase 'external-snapshot-root-refusals'
 }
-foreach($row in @([pscustomobject]@{id='ctx-old';routers=@($oldRouter,$oldSystemRouter,$oldGraphRouter)},[pscustomobject]@{id='ctx-new';routers=@($newRouter,$newSystemRouter,$newGraphRouter)})){
+foreach($row in @([pscustomobject]@{id='ctx-old';routers=$(if($declaredTierFixture){@($oldRouter,$oldSystemRouter)}else{@($oldRouter,$oldSystemRouter,$oldGraphRouter)})},[pscustomobject]@{id='ctx-new';routers=$(if($declaredTierFixture){@($newRouter,$newSystemRouter)}else{@($newRouter,$newSystemRouter,$newGraphRouter)})})){
  if($nestedPlanning){
   # Exercise the real host producer before the actual preparation/claim consumers.
   $materialized=&$provenanceModule {param($w,$id,$tool,$rows,$store,$roots)New-MorphospaceToolingContextResolver -WorkspaceRoot $w -ContextId $id -ExecutorRoot $tool -SnapshotRoot $store -RepositoryRoots $roots -Routers @($rows|ForEach-Object{$_.row}) -RouterLocations @($rows|ForEach-Object{[pscustomobject]@{skill_id=$_.row.skill_id;root=$_.root}}) -ResolverPath "local/$id-resolver.json" -Execute} $workspace $row.id $tool $row.routers $retainedRouterStorage $selectedRepositoryRoots
@@ -305,17 +372,17 @@ foreach($row in @([pscustomobject]@{id='ctx-old';routers=@($oldRouter,$oldSystem
 }
 $oldCompat=[pscustomobject][ordered]@{protocol_id='tooling-context-v1';product_lock_schema='rusty.morphospace.workflow.development_envelope_source_composition.v3';repository_map_schema='rusty.morphospace.workflow.repository_map.v1';allowed_actions=$actions;receipt=[pscustomobject]@{path='receipts/tool-protocol-old.json';sha256=FileHash (Join-Path $workspace 'receipts/tool-protocol-old.json')}};$newCompat=Clone $oldCompat;$newCompat.receipt=[pscustomobject]@{path='receipts/tool-protocol-new.json';sha256=FileHash (Join-Path $workspace 'receipts/tool-protocol-new.json')}
 $oldExecutor=[pscustomobject][ordered]@{repo_id='workflow';remote_url='https://example.invalid/work-environment.git';commit=$OldCommit;tree=$oldTree;publication_evidence=[pscustomobject]@{path='receipts/tool-publication-old.json';sha256=FileHash (Join-Path $workspace 'receipts/tool-publication-old.json')};entrypoint='scripts/ToolingContextUpgrade.psm1';closure=New-Closure $tool $OldCommit};$newExecutor=Clone $oldExecutor;$newExecutor.commit=$newCommit;$newExecutor.tree=$newTree;$newExecutor.publication_evidence=[pscustomobject]@{path='receipts/tool-publication-new.json';sha256=FileHash (Join-Path $workspace 'receipts/tool-publication-new.json')};$newExecutor.closure=New-Closure $tool $newCommit
-$descriptor=[pscustomobject][ordered]@{context_id='ctx-old';path='tooling-contexts/ctx-old.json';resolver=[pscustomobject]@{path='local/ctx-old-resolver.json';sha256=FileHash (Join-Path $workspace 'local/ctx-old-resolver.json')};executor=$oldExecutor;routers=@($oldRouter.row,$oldSystemRouter.row,$oldGraphRouter.row);compatibility=$oldCompat}
-$seed=New-EnvelopeAdmissionPreparedFixture -Root $fixtureRoot -RepositoryRoot $repoRoot -TransitionLedgerModule $ledgerModule -OwnerProducedPreparation -NearestAgentInstructions -SelfHostedReadOnlyPlanning:$nestedPlanning -ToolingContextDescriptor $descriptor;$workspace=$seed.workspace
+$descriptor=[pscustomobject][ordered]@{context_id='ctx-old';path='tooling-contexts/ctx-old.json';resolver=[pscustomobject]@{path='local/ctx-old-resolver.json';sha256=FileHash (Join-Path $workspace 'local/ctx-old-resolver.json')};executor=$oldExecutor;routers=$(if($declaredTierFixture){@($oldRouter.row,$oldSystemRouter.row)}else{@($oldRouter.row,$oldSystemRouter.row,$oldGraphRouter.row)});compatibility=$oldCompat}
+$seed=New-EnvelopeAdmissionPreparedFixture -Root $fixtureRoot -RepositoryRoot $repoRoot -TransitionLedgerModule $ledgerModule -OwnerProducedPreparation -NearestAgentInstructions -DeclaredTierConsumer:$declaredTierFixture -SelfHostedReadOnlyPlanning:$nestedPlanning -ToolingContextDescriptor $descriptor;$workspace=$seed.workspace
 $projection=[pscustomobject][ordered]@{source_composition=[pscustomobject][ordered]@{path='source-composition.json';sha256=FileHash (Join-Path $workspace 'source-composition.json')};repository_map=[pscustomobject][ordered]@{path='repository-map.json';sha256=FileHash (Join-Path $workspace 'repository-map.json')};feature_lock=[pscustomobject][ordered]@{path='feature.lock.json';sha256=FileHash (Join-Path $workspace 'feature.lock.json')}}
 $old=Read-TC (Join-Path $workspace 'tooling-contexts/ctx-old.json')
-$new=New-MorphospaceToolingContext -ContextId 'ctx-new' -ProjectId 'envelope-test' -PreparationId 'u002-envelope' -ProductProjection $projection -Resolver ([pscustomobject]@{path='local/ctx-new-resolver.json';sha256=FileHash (Join-Path $workspace 'local/ctx-new-resolver.json')}) -Executor $newExecutor -Routers @($newRouter.row,$newSystemRouter.row,$newGraphRouter.row) -Compatibility $newCompat
+$new=New-MorphospaceToolingContext -ContextId 'ctx-new' -ProjectId 'envelope-test' -PreparationId 'u002-envelope' -ProductProjection $projection -Resolver ([pscustomobject]@{path='local/ctx-new-resolver.json';sha256=FileHash (Join-Path $workspace 'local/ctx-new-resolver.json')}) -Executor $newExecutor -Routers $(if($declaredTierFixture){@($newRouter.row,$newSystemRouter.row)}else{@($newRouter.row,$newSystemRouter.row,$newGraphRouter.row)}) -Compatibility $newCompat
 $oldPointer=Clone $seed.preparation_receipt.tooling_context
 $admission=Clone $seed.admission_template;
 # This fixture's planning root needs a nearest instruction surface for the shortcut.
 # Declare it before the actual admission producer; never alter an admitted unit.
 [IO.File]::WriteAllText((Join-Path $seed.source_repository 'AGENTS.md'),"# Fixture agent instructions`nUse the bound owner tooling; perform no external effects.`n",[Text.UTF8Encoding]::new($false))
-$admission.unit.instruction_surfaces+=,[pscustomobject][ordered]@{surface_kind='agents';path='<project-shell>/AGENTS.md';owner='project-owner';change_reason='Review the nearest fixture planning instructions.';action='review-no-change';status='complete';validation='Read the fixture AGENTS.md before owner admission.';skill_id=$null}
+if(-not$declaredTierFixture){$admission.unit.instruction_surfaces+=,[pscustomobject][ordered]@{surface_kind='agents';path='<project-shell>/AGENTS.md';owner='project-owner';change_reason='Review the nearest fixture planning instructions.';action='review-no-change';status='complete';validation='Read the fixture AGENTS.md before owner admission.';skill_id=$null}}
 # Leave the declared set pending before admission so the later real completion
 # observes and completes it; no admitted unit projection is edited by the test.
 if($Scenario-in@('validating-upgrade','instruction-context')){foreach($surface in @($admission.unit.instruction_surfaces)){$surface.status='planned'}}
@@ -324,14 +391,32 @@ if($nestedPlanning){
  # README; author an actual nearest agents declaration before admission.
  foreach($surface in @($admission.unit.instruction_surfaces|Where-Object{$_.surface_kind-ceq'agents'-and$_.path-ceq'<read-only-dependency>/dependency/README.md'})){$surface.path='<project-shell>/morphospace/AGENTS.md';$surface.owner='project-shell';$surface.action='review-no-change'}
 }
-if($admission.PSObject.Properties.Name-cnotcontains'admission_kind'){$admission|Add-Member -NotePropertyName admission_kind -NotePropertyValue 'ordinary'};if($admission.preparation.PSObject.Properties.Name-cnotcontains'preparation_kind'){$admission.preparation|Add-Member -NotePropertyName preparation_kind -NotePropertyValue 'ordinary'};$admissionPath=Join-Path $HarnessRoot 'admission.json';Write-TC $admissionPath $admission;Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $workspace -DevelopmentUnitAdmission $admissionPath -ExpectedDevelopmentUnitAdmissionSha256 (FileHash $admissionPath) -OutPath (Join-Path $workspace 'receipts/u002-admission.json') -Timestamp '2026-09-15T08:10:00.0000000Z' -Execute|Out-Null
+if($Scenario-ceq'validating-upgrade'){$admission.admission_id='u002-original-admission';$admission.unit_id='u002-original';$admission.unit.unit_id='u002-original'}
+if($admission.PSObject.Properties.Name-cnotcontains'admission_kind'){$admission|Add-Member -NotePropertyName admission_kind -NotePropertyValue 'ordinary'};if($admission.preparation.PSObject.Properties.Name-cnotcontains'preparation_kind'){$admission.preparation|Add-Member -NotePropertyName preparation_kind -NotePropertyValue 'ordinary'};if($Scenario-ceq'validating-upgrade'){$originalConsumerPlan=Clone $admission};$admissionPath=Join-Path $HarnessRoot 'admission.json';Write-TC $admissionPath $admission;Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $workspace -DevelopmentUnitAdmission $admissionPath -ExpectedDevelopmentUnitAdmissionSha256 (FileHash $admissionPath) -OutPath (Join-Path $workspace "receipts/$($admission.admission_id).json") -Timestamp '2026-09-15T08:10:00.0000000Z' -Execute|Out-Null
+if($Scenario-ceq'validating-upgrade'){
+ # One genuine proposed original and named replacement, retaining the same producer preparation.
+ $run=Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1'
+ $retire=@{WorkspaceRoot=$workspace;UnitId='u002-original';ReplacementUnitId='u002';RetirementReason='contract-invalid';OutPath=(Join-Path $workspace 'receipts/u002-original-retired.json');Timestamp='2026-09-15T08:10:10.0000000Z'}
+ $retireDry=(&$run @retire -Action RetireProposed|Out-String)|ConvertFrom-Json -Depth 100 -DateKind String
+ $pre=$retireDry.proposed_retirement.authenticated_preimage
+ $retire.ExpectedStateSha256=$pre.state_sha256;$retire.ExpectedUnitSha256=$pre.unit_sha256;$retire.ExpectedUnitRawSha256=$pre.unit_raw_sha256;$retire.ExpectedEventsSha256=$pre.events_sha256;$retire.ExpectedEventsLength=$pre.events_length;$retire.ExpectedEventTailId=$pre.event_tail_id;$retire.ExpectedProposedRetirementBindingSha256=$retireDry.proposed_retirement.binding_sha256
+ $null=&$run @retire -Action RetireProposed -Execute
+ $admission=New-EnvelopeReplacementAdmission -Template $originalConsumerPlan -Workspace $workspace -AdmissionId 'u002-replacement-admission' -UnitId u002
+ Assert-TC ((Canonical $admission.preparation)-ceq(Canonical $originalConsumerPlan.preparation)) 'replacement retains the exact authored original preparation binding including kind'
+ $admission.unit.instruction_impact=$originalConsumerPlan.unit.instruction_impact;$admission.unit.instruction_none_justification=$null;$admission.unit.instruction_surfaces=@(Clone $originalConsumerPlan.unit.instruction_surfaces)
+ foreach($surface in @($admission.unit.instruction_surfaces)){$surface.status='planned'}
+ Assert-TC (@($admission.unit.instruction_surfaces).Count-eq7) 'replacement declares exactly seven instruction surfaces before admission'
+ $admissionPath=Join-Path $HarnessRoot 'replacement-admission.json';Write-TC $admissionPath $admission
+ Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $workspace -DevelopmentUnitAdmission $admissionPath -ExpectedDevelopmentUnitAdmissionSha256 (FileHash $admissionPath) -OutPath (Join-Path $workspace 'receipts/u002-replacement-admission.json') -Timestamp '2026-09-15T08:10:20.0000000Z' -Execute|Out-Null
+ Write-TCPhase 'replacement-preparation-admission-retirement-admission-complete'
+}
 if($nestedPlanning){
  # Invoke the actual map consumer on its authenticated admitted pre-Ready unit;
  # Ready's refusal summary otherwise obscures the precise overlap cause.
  $preReadyUnit=Read-TC (Join-Path $workspace 'iteration-units/u002.json');$preReadyMap=@{};foreach($row in (Read-TC (Join-Path $workspace 'repository-map.json')).repositories){$preReadyMap[[string]$row.repo_id]=$row}
  &$automationModule {param($w,$u,$m)Get-MorphospaceToolingInstructionRepositoryMap -WorkspaceRoot $w -Unit $u -RepositoryMap $m} $workspace $preReadyUnit $preReadyMap|Out-Null
 }
-$args=@{WorkspaceRoot=$workspace;UnitId='u002';RepoMapPath=(Join-Path $workspace 'repository-map.json');ValidationTier='quick'};&$automationModule {param($a)Invoke-MorphospaceWorkUnitAutomation @a -Action Ready -Timestamp '2026-09-15T08:11:00.0000000Z' -Execute} $args|Out-Null;$readyBase=Join-Path $HarnessRoot 'ready-base';Copy-Item -LiteralPath $workspace -Destination $readyBase -Recurse;if($Scenario-cne'ready-lifecycle'){&$automationModule {param($a)Invoke-MorphospaceWorkUnitAutomation @a -Action Claim -Timestamp '2026-09-15T08:12:00.0000000Z' -Execute} $args|Out-Null}
+$args=@{WorkspaceRoot=$workspace;UnitId='u002';RepoMapPath=(Join-Path $workspace 'repository-map.json');ValidationTier=$(if($declaredTierFixture){'standard'}else{'quick'})};&$automationModule {param($a)Invoke-MorphospaceWorkUnitAutomation @a -Action Ready -Timestamp '2026-09-15T08:11:00.0000000Z' -Execute} $args|Out-Null;$readyBase=Join-Path $HarnessRoot 'ready-base';Copy-Item -LiteralPath $workspace -Destination $readyBase -Recurse;if($Scenario-cne'ready-lifecycle'){&$automationModule {param($a)Invoke-MorphospaceWorkUnitAutomation @a -Action Claim -Timestamp '2026-09-15T08:12:00.0000000Z' -Execute} $args|Out-Null}
 if($nestedPlanning){
  $liveUnit=Read-TC (Join-Path $workspace 'iteration-units/u002.json');$rawMap=Read-TC (Join-Path $workspace 'repository-map.json');$mapped=@{};foreach($row in $rawMap.repositories){$mapped[[string]$row.repo_id]=$row}
  $instructionMap=&$automationModule {param($w,$u,$m)Get-MorphospaceToolingInstructionRepositoryMap -WorkspaceRoot $w -Unit $u -RepositoryMap $m} $workspace $liveUnit $mapped
@@ -387,14 +472,20 @@ if($Scenario-in@('all','lifecycle','instruction-context')){
   return
  }
 }
-if($Scenario-in@('post-nonpass','validating-upgrade')){
+if($Scenario-in@('post-nonpass','validating-upgrade','declared-tier-active')){
  $nonpassWorkspace=Join-Path $HarnessRoot 'post-nonpass';Copy-Item -LiteralPath $workspace -Destination $nonpassWorkspace -Recurse
  & git -C $nonpassWorkspace init --initial-branch=main|Out-Null;& git -C $nonpassWorkspace config user.name 'Nonpass Fixture';& git -C $nonpassWorkspace config user.email 'fixture@example.invalid';& git -C $nonpassWorkspace config commit.gpgsign false;& git -C $nonpassWorkspace config core.autocrlf false
  [IO.File]::AppendAllText((Join-Path $nonpassWorkspace '.git/info/exclude'),"`nlocal/`n")
  & git -C $nonpassWorkspace add --all;& git -C $nonpassWorkspace commit -qm 'Checkpoint authentic admitted fixture'
  $nonpassMap=Join-Path $nonpassWorkspace 'repository-map.json';$nonpassFreeze=Join-Path $HarnessRoot 'post-nonpass-freeze.json';$null=New-RetirementNonpassFreezeRequest $nonpassWorkspace $nonpassMap $nonpassFreeze
- $run=Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1';$lifecycle=@{WorkspaceRoot=$nonpassWorkspace;UnitId='u002';RepoMapPath=$nonpassMap;ValidationTier='quick'}
+ $run=Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1';$lifecycle=@{WorkspaceRoot=$nonpassWorkspace;UnitId='u002';RepoMapPath=$nonpassMap;ValidationTier=$(if($declaredTierFixture){'standard'}else{'quick'})}
  $null=&$run @lifecycle -Action FreezeCandidate -CandidateFreeze $nonpassFreeze -ExpectedCandidateFreezeSha256 (FileHash $nonpassFreeze) -OutPath (Join-Path $nonpassWorkspace 'receipts/u002-extension-freeze.json') -Timestamp '2026-09-15T08:20:00.0000000Z' -Execute
+ if($declaredTierFixture){
+  $directWorkspace=$nonpassWorkspace
+  if($Scenario-ceq'validating-upgrade'){$directWorkspace=Join-Path $HarnessRoot 'declared-tier-active';Copy-Item -LiteralPath $nonpassWorkspace -Destination $directWorkspace -Recurse}
+  $directResult=Invoke-TCDeclaredTierActiveProducer $directWorkspace 'u002-direct-standard'
+  if($Scenario-ceq'declared-tier-active'){$directResult|ConvertTo-Json -Compress;return}
+ }
  if($Scenario-ceq'validating-upgrade'){
   # Independent copied Freeze prefix; the real public Begin authenticates and
   # binds this selector. No supplied state DTO substitutes for owner history.
@@ -464,7 +555,7 @@ if($Scenario-ceq'validating-upgrade'){
  Write-TCPhase 'validating-compatible-upgrade-complete'
  $after=Read-TC (Join-Path $nonpassWorkspace 'iteration-units/u002.json');Assert-TC ((Canonical $after.candidate_freeze)-ceq$markerBefore-and(FileHash $freezePath)-ceq$freezeRawBefore) 'validating upgrade retains exact marker and original freeze bytes'
  Assert-TC (((@($projection.PSObject.Properties|ForEach-Object{FileHash (Join-Path $nonpassWorkspace ([string]$_.Value.path))}))-join'|')-ceq$productBefore) 'validating upgrade retains exact product projection'
- $validatingArgs=@{WorkspaceRoot=$nonpassWorkspace;UnitId='u002';RepoMapPath=$nonpassMap;ValidationTier='quick'}
+ $validatingArgs=@{WorkspaceRoot=$nonpassWorkspace;UnitId='u002';RepoMapPath=$nonpassMap;ValidationTier='standard'}
  $null=&$run @validatingArgs -Action Inspect
  $candidateModule=Import-Module (Join-Path $PSScriptRoot 'CandidateFreeze.psm1') -PassThru
  Assert-TC ([bool](&$candidateModule {param($w,$u)Test-MorphospaceFrozenCandidate -WorkspaceRoot $w -Unit $u} $nonpassWorkspace $after)) 'typed pointer upgrade authenticates original frozen candidate unit binding'
@@ -474,29 +565,72 @@ if($Scenario-ceq'validating-upgrade'){
  $completionArgs=@{InstructionCompletionId='u002-post-upgrade-instructions'}
  $dry=(&$run @validatingArgs -Action CompleteInstructionSurfaces @completionArgs|Out-String)|ConvertFrom-Json -Depth 100 -DateKind String
  $completion=$dry.instruction_surface_completion
+ Assert-TC (@($completion.surfaces).Count-eq7) 'exact seven dry instruction observations'
  Write-TCPhase 'validating-instruction-completion-dry-complete'
  $null=&$run @validatingArgs -Action CompleteInstructionSurfaces @completionArgs -InstructionSurfaceIds @($completion.surfaces|ForEach-Object{[string]$_.surface_id}) -ExpectedUnitSha256 ([string]$completion.expected_unit_sha256) -ExpectedInstructionObservationSha256 ([string]$completion.observation_sha256) -OutPath (Join-Path $nonpassWorkspace 'receipts/post-upgrade-instructions.json') -Timestamp '2026-09-15T09:01:00.0000000Z' -Execute
  Write-TCPhase 'validating-instruction-completion-executed'
  $current=Read-TC (Join-Path $nonpassWorkspace 'iteration-units/u002.json')
+ Assert-TC (@($current.instruction_surfaces).Count-eq7-and@($current.instruction_surfaces|Where-Object status -CNE 'complete').Count-eq0) 'actual seven instruction completions'
  Assert-TC ([bool](&$candidateModule {param($w,$u)Test-MorphospaceFrozenCandidate $w $u} $nonpassWorkspace $current)) 'frozen projection remains valid after mandatory instruction completion'
  Test-MorphospaceHistoricalToolingContextUpgrade $nonpassWorkspace $upgradeEvent|Out-Null
+ # Bind the actual post-completion unit and its unchanged original frozen command.
  $matrix=@(&$automationModule {param($u)New-MorphospaceValidationMatrix -Unit $u -DeviceSerials @()} $current)
- $evidencePath=Join-Path $HarnessRoot 'synthetic-validating-pass.txt';[IO.File]::WriteAllText($evidencePath,'Host-only modeled validation following an actual compatible tooling upgrade; no build or device qualification.')
- $evidence=[pscustomobject]@{receipt_id='u002-fresh-upgraded-validation';tier='quick';result='pass';artifacts=@([pscustomobject]@{artifact_id='fixture';kind='host-control';path=$evidencePath});criteria=@($current.acceptance|ForEach-Object{[pscustomobject]@{acceptance_id=$_.acceptance_id;status='pass';command=$_.command;evidence_refs=@('fixture')}});gates=@($matrix|Where-Object disposition -CNE 'forbidden'|ForEach-Object{[pscustomobject]@{gate_id=$_.gate_id;status='pass';command=$_.command;evidence_refs=@('fixture')}});device_validation=$null}
- Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceValidationReceipt.psm1')
- $null=New-MorphospaceValidationReceiptV1 -WorkspaceRoot $nonpassWorkspace -UnitId u002 -RepoMapPath $nonpassMap -Evidence $evidence -OutPath (Join-Path $nonpassWorkspace 'receipts/post-upgrade-pass.json') -CreatedAt '2026-09-15T09:02:00.0000000Z'
- $null=&$run @validatingArgs -Action RecordValidation -ValidationReceipt 'receipts/post-upgrade-pass.json' -ValidationResult pass -Timestamp '2026-09-15T09:03:00.0000000Z' -Execute
+ Assert-TC (@($current.acceptance).Count-eq4-and@($matrix|Where-Object disposition -CNE 'forbidden').Count-eq4) 'all four criteria and four required gates retained'
+ $gate=@($matrix|Where-Object profile_id -CEQ 'workflow-current')[0]
+ $selectorModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceNormalValidationSelector.psm1') -PassThru
+ $selectorId='u002-standard-current';$selectorRelative="validation-authority/selectors/$selectorId.json"
+ $evidencePath=Join-Path $HarnessRoot 'u002-standard-current-evidence.json'
+ $contract=Clone $current;$contract.PSObject.Properties.Remove('status')
+ $evidenceIdentity=&$selectorModule {param($p)Get-MorphospaceCanonicalEvidencePathIdentity $p} $evidencePath
+ $frozen=Read-TC $freezePath
+ $selector=[ordered]@{schema='rusty.morphospace.workflow.normal_validation_selector.v2';selector_id=$selectorId;project=[ordered]@{project_id=$current.project_id;spec_path='project.spec.json';spec_raw_sha256=FileHash (Join-Path $nonpassWorkspace 'project.spec.json')};unit=[ordered]@{unit_id='u002';path='iteration-units/u002.json';raw_sha256=FileHash (Join-Path $nonpassWorkspace 'iteration-units/u002.json');contract_sha256=Canonical $contract};declared_gate=[ordered]@{profile_id='workflow-current';command_sha256=BytesHash ([Text.UTF8Encoding]::new($false).GetBytes([string]$gate.command))};candidate_freeze=[ordered]@{freeze_id=$current.candidate_freeze.freeze_id;receipt_path=$current.candidate_freeze.receipt_path;receipt_sha256=$current.candidate_freeze.receipt_sha256;final_repositories=@($frozen.final_repositories)};tooling_context=(Clone $current.tooling_context);selection=[ordered]@{tier='standard';producer=[ordered]@{kind='bound-workflow-current-evidence-v2';path='scripts/Invoke-WorkflowCurrentValidation.ps1';sha256=FileHash (Join-Path $tool 'scripts/Invoke-WorkflowCurrentValidation.ps1')};output_evidence=[ordered]@{file_name=[IO.Path]::GetFileName($evidencePath);schema='rusty.morphospace.workflow.current_validation_evidence.v1';canonical_path_sha256=$evidenceIdentity.sha256;requires_create_new=$true}};does_not_authorize=@('Temporary host fixture; product/provider qualification is modeled, no actual H/APK/device/publication credit.')}
+ Write-TC (Join-Path $nonpassWorkspace $selectorRelative) $selector
+ $selectorArgs=@{ValidationSelector=$selectorRelative;ExpectedValidationSelectorSha256=FileHash (Join-Path $nonpassWorkspace $selectorRelative);ValidationEvidencePath=$evidencePath}
+ $selected=(&$run @validatingArgs @selectorArgs -Action BeginValidation -Timestamp '2026-09-15T09:01:10.0000000Z' -Execute|Out-String)|ConvertFrom-Json -Depth 100 -DateKind String
+ Assert-TC ($selected.executed-and[string]$selected.transition-ceq'validation-selector-bound') 'actual declared Standard selection bound'
+ & pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $tool 'scripts/Invoke-WorkflowCurrentValidation.ps1') -WorkspaceRoot $nonpassWorkspace -EvidencePath $evidencePath|Out-Null
+ if($LASTEXITCODE-ne0){throw 'Actual fixed fresh-process current-work producer failed.'}
+ Write-TCPhase 'validating-real-standard-producer-complete'
+ $selectedState=Read-TC (Join-Path $nonpassWorkspace 'workspace.state.json')
+ $resolved=&$selectorModule {param($w,$relative,$sha,$path,$u,$matrix,$bound)
+   Resolve-MorphospaceNormalValidationSelector -WorkspaceRoot $w -SelectorReference $relative -ExpectedSelectorSha256 $sha -EvidencePath $path -Spec (Read-MorphospaceProtocolJson (Join-Path $w 'project.spec.json')) -Unit $u -DeclaredValidationMatrix $matrix -Action RecordValidation -ValidationTier standard -BoundSelection $bound
+ } $nonpassWorkspace $selectorRelative $selectorArgs.ExpectedValidationSelectorSha256 $evidencePath $current $matrix $selectedState.normal_validation_selection
+ $matrix=@($resolved.validation_matrix)
+ $hostEvidence=Join-Path $HarnessRoot 'host-consumer-observations.json'
+ Write-TC $hostEvidence ([ordered]@{scope='Temporary host-only consumer wiring. Product/provider/APK facts remain modeled; no actual H qualification.';real_replacement_admission=$true;real_freeze_begin_upgrade=$true;original_freeze_unchanged=((FileHash $freezePath)-ceq$freezeRawBefore);completed_surfaces=@($current.instruction_surfaces).Count;real_current_work_producer_result=(Read-TC $evidencePath).result;four_criteria=@($current.acceptance.acceptance_id);four_required_gates=@($matrix|Where-Object disposition -CNE 'forbidden'|ForEach-Object gate_id)})
+ $evidence=[pscustomobject]@{receipt_id='u002-fresh-upgraded-standard';tier='standard';result='pass';artifacts=@([pscustomobject]@{artifact_id='workflow-current';kind='test-log';path=$evidencePath},[pscustomobject]@{artifact_id='host-fixture';kind='host-control';path=$hostEvidence});criteria=@($current.acceptance|ForEach-Object{[pscustomobject]@{acceptance_id=$_.acceptance_id;status='pass';command=$_.command;evidence_refs=@('host-fixture')}});gates=@($matrix|Where-Object disposition -CNE 'forbidden'|ForEach-Object{[pscustomobject]@{gate_id=$_.gate_id;status='pass';command=$_.command;evidence_refs=@(if($_.gate_id-ceq'validation-workflow-current'){'workflow-current'}else{'host-fixture'})}});device_validation=$null}
+ $receiptInput=Join-Path $HarnessRoot 'standard-receipt-evidence.json';Write-TC $receiptInput $evidence
+ $null=& (Join-Path $PSScriptRoot 'New-ValidationReceipt.ps1') -WorkspaceRoot $nonpassWorkspace -UnitId u002 -RepoMapPath $nonpassMap -EvidencePath $receiptInput -OutPath (Join-Path $nonpassWorkspace 'receipts/post-upgrade-pass.json') -CreatedAt '2026-09-15T09:02:00.0000000Z'
+ # Cheap damages call the owning receipt predicate, require its exact early obligation refusal,
+ # and leave the genuine passing receipt and workspace byte-exact for public Record.
+ $goodReceipt=Read-TC (Join-Path $nonpassWorkspace 'receipts/post-upgrade-pass.json')
+ foreach($collection in @('criteria','gates')){
+  $idProperty=if($collection-ceq'criteria'){'acceptance_id'}else{'gate_id'}
+  foreach($id in @($goodReceipt.$collection|ForEach-Object{[string]$_.$idProperty})){
+   foreach($damage in @('missing','failed','command','artifact')){
+    $bad=Clone $goodReceipt;$row=@($bad.$collection|Where-Object{[string]$_.$idProperty-ceq$id})[0]
+    switch($damage){'missing'{$bad.$collection=@($bad.$collection|Where-Object{[string]$_.$idProperty-cne$id})};'failed'{$row.status='fail'};'command'{$row.command='Caller substitute'};'artifact'{$row.evidence_refs=@('absent-artifact')}}
+    $damagePath=Join-Path $nonpassWorkspace 'receipts/obligation-damage.json';Write-TC $damagePath $bad;$message=''
+    try{&$automationModule {param($w,$u,$matrix)Test-MorphospaceValidationReceipt -WorkspaceRoot $w -ReceiptReference 'receipts/obligation-damage.json' -Spec (Read-MorphospaceProtocolJson (Join-Path $w 'project.spec.json')) -Unit $u -RepositoryMap @{} -RepositoryStates @([pscustomobject]@{repo_id='unreached-negative-fixture';available=$true;is_git=$false}) -ValidationMatrix $matrix -ExpectedResult pass -ExpectedTier standard} $nonpassWorkspace $current $matrix|Out-Null}catch{$message=$_.Exception.Message}
+    $pattern=switch($damage){'missing'{'*does not cover the exact*set*'};'failed'{'*non-passing*'};'command'{'*command drifted*'};'artifact'{'*unknown artifact*'}}
+    Assert-TC ($message-like$pattern) "Standard $collection/$id/$damage preserves exact obligation"
+   }
+  }
+ }
+ $null=&$run @validatingArgs @selectorArgs -Action RecordValidation -ValidationReceipt 'receipts/post-upgrade-pass.json' -ValidationResult pass -Timestamp '2026-09-15T09:03:00.0000000Z' -Execute
  Write-TCPhase 'validating-fresh-validation-recorded'
  $recordedUnit=Read-TC (Join-Path $nonpassWorkspace 'iteration-units/u002.json');$recordedState=Read-TC (Join-Path $nonpassWorkspace 'workspace.state.json');$denied=$false
  try{&$upgradeModule {param($w,$u,$st)Assert-ToolingUpgradeValidatingSlot $w $u $st u002} $nonpassWorkspace $recordedUnit $recordedState|Out-Null}catch{$denied=$true}
  Assert-TC $denied 'recorded validation cannot enter the pre-record upgrade slot'
  Test-MorphospaceHistoricalToolingContextUpgrade $nonpassWorkspace $upgradeEvent|Out-Null
- $null=&$run @validatingArgs -Action Accept -Timestamp '2026-09-15T09:04:00.0000000Z' -Execute
+ $null=&$run @validatingArgs @selectorArgs -Action Accept -Timestamp '2026-09-15T09:04:00.0000000Z' -Execute
  $accepted=Read-TC (Join-Path $nonpassWorkspace 'iteration-units/u002.json')
  Assert-TC ([string]$accepted.status-ceq'accepted'-and(Canonical $accepted.candidate_freeze)-ceq$markerBefore-and(FileHash $freezePath)-ceq$freezeRawBefore) 'fresh validation earns acceptance with original frozen marker and bytes'
  Test-MorphospaceHistoricalToolingContextUpgrade $nonpassWorkspace $upgradeEvent|Out-Null
+ & pwsh -NoProfile -NonInteractive -File (Join-Path $tool 'scripts/Test-WorkflowContracts.ps1') -RepoRoot $tool -WorkspaceRoot $nonpassWorkspace -RepositoryMapPath $nonpassMap -CurrentWorkspaceOnly -CurrentWorkOnly -SkipOwnerSelfTests
+ if($LASTEXITCODE-ne0){throw 'Fresh accepted consumer current-work validator failed.'}
  Write-TCPhase 'validating-upgrade-mandatory-action-fresh-validation-acceptance-complete'
- [pscustomobject]@{result='pass';scenario=$Scenario;actual_pre_record_validating_upgrade=$true;original_freeze_retained=$true;mandatory_read=$true;fresh_modeled_validation=$true;actual_fixture_acceptance=$true;device_calls=0}|ConvertTo-Json -Compress
+ [pscustomobject]@{result='pass';scenario=$Scenario;actual_pre_record_validating_upgrade=$true;original_freeze_retained=$true;mandatory_read=$true;real_declared_standard_producer=$true;modeled_product_provider_facts=$true;all_criteria=4;all_required_gates=4;completed_instructions=7;actual_fixture_acceptance=$true;device_calls=0}|ConvertTo-Json -Compress
  return
 }
 if($Scenario-ceq'post-nonpass'){
@@ -531,7 +665,7 @@ $mapBytes=[IO.File]::ReadAllBytes((Join-Path $negative.workspace 'repository-map
 $sourcePath=Join-Path $negative.workspace 'source-composition.json';$sourceBytes=[IO.File]::ReadAllBytes($sourcePath);try{[IO.File]::AppendAllText($sourcePath,' ');$r=New-UpgradeRequest $negative.workspace 'upgrade-source';$rp=Save-Request $HarnessRoot $r 'source.json';$rejected=$false;try{Invoke-MorphospaceUpgradeToolingContext -WorkspaceRoot $negative.workspace -UnitId u002 -ToolingContextUpgrade $rp -OutPath (Join-Path $negative.workspace 'receipts/upgrade-source-tooling-context-upgrade-request.json')|Out-Null}catch{$rejected=Assert-TCError $_.Exception.Message 'Tooling-context upgrade current product source_composition bytes drifted.' 'changed source'};Assert-TC $rejected 'changed source rejection'}finally{[IO.File]::WriteAllBytes($sourcePath,$sourceBytes)};Write-TCPhase 'product-negative-complete'}
 if($Scenario-in@('all','provenance-negative')){$negative=New-Case 'negative-provenance';$closurePath=Join-Path $tool 'scripts/ToolingContextUpgrade.psm1';$closureBytes=[IO.File]::ReadAllBytes($closurePath);try{[IO.File]::AppendAllText($closurePath,' ');$r=New-UpgradeRequest $negative.workspace 'upgrade-closure';$rp=Save-Request $HarnessRoot $r 'closure.json';$rejected=$false;try{Invoke-MorphospaceUpgradeToolingContext -WorkspaceRoot $negative.workspace -UnitId u002 -ToolingContextUpgrade $rp -OutPath (Join-Path $negative.workspace 'receipts/upgrade-closure-tooling-context-upgrade-request.json')|Out-Null}catch{$rejected=Assert-TCError $_.Exception.Message "Loaded owner module 'scripts/ToolingContextUpgrade.psm1' differs from the exact executor bytes on disk." 'changed closure'};Assert-TC $rejected 'changed closure rejection'}finally{[IO.File]::WriteAllBytes($closurePath,$closureBytes)}
 $maskedPath='docs/TOOLING_CONTEXT.md';$maskedAbsolute=Join-Path $tool $maskedPath;$maskedBytes=[IO.File]::ReadAllBytes($maskedAbsolute);try{[IO.File]::AppendAllText($maskedAbsolute,' ');& git -C $tool update-index --assume-unchanged -- $maskedPath;if($LASTEXITCODE-ne0){throw 'Fixture could not mask the historical-blob negative.'};$masked=Clone $new;@($masked.executor.closure|Where-Object{[string]$_.path-ceq$maskedPath})[0].sha256=FileHash $maskedAbsolute;$masked=Set-ContextFingerprint $masked;$r=New-UpgradeRequest $negative.workspace 'upgrade-masked-closure' $masked;$rp=Save-Request $HarnessRoot $r 'masked-closure.json';$rejected=$false;try{Invoke-MorphospaceUpgradeToolingContext -WorkspaceRoot $negative.workspace -UnitId u002 -ToolingContextUpgrade $rp -OutPath (Join-Path $negative.workspace 'receipts/upgrade-masked-closure-tooling-context-upgrade-request.json')|Out-Null}catch{$rejected=Assert-TCError $_.Exception.Message "Tooling context historical executor closure '$maskedPath' drifted." 'masked historical blob'};Assert-TC $rejected 'assume-unchanged historical blob rejection'}finally{& git -C $tool update-index --no-assume-unchanged -- $maskedPath;[IO.File]::WriteAllBytes($maskedAbsolute,$maskedBytes)}
-$dynamic=New-Case 'missing-dynamic-dependency';Write-TC (Join-Path $dynamic.workspace 'local/ctx-missing-dependency-resolver.json') ([pscustomobject][ordered]@{schema='rusty.morphospace.workflow.tooling_context_resolver.v1';context_id='ctx-missing-dependency';executor_root=$tool;routers=@([pscustomobject][ordered]@{skill_id='rusty-morphospace';root=$newRouter.root},[pscustomobject][ordered]@{skill_id='system-engineering';root=$newSystemRouter.root},[pscustomobject][ordered]@{skill_id='rust-work-graph';root=$newGraphRouter.root});status='resolved';does_not_prove=@('Local resolution only.')});$missingExecutor=Clone $newExecutor;$missingExecutor.closure=@($missingExecutor.closure|Where-Object{[string]$_.path-cne'scripts/Invoke-WorkUnitAutomation.ps1'});Assert-TC ($missingExecutor.closure.Count-lt$newExecutor.closure.Count) 'dynamic dependency fixture selection';$missing=New-MorphospaceToolingContext -ContextId 'ctx-missing-dependency' -ProjectId 'envelope-test' -PreparationId 'u002-envelope' -ProductProjection $projection -Resolver ([pscustomobject]@{path='local/ctx-missing-dependency-resolver.json';sha256=FileHash (Join-Path $dynamic.workspace 'local/ctx-missing-dependency-resolver.json')}) -Executor $missingExecutor -Routers @($newRouter.row,$newSystemRouter.row,$newGraphRouter.row) -Compatibility $newCompat;$r=New-UpgradeRequest $dynamic.workspace 'upgrade-missing-dependency' $missing;$rp=Save-Request $HarnessRoot $r 'missing-dependency.json';$rejected=$false;try{Invoke-MorphospaceUpgradeToolingContext -WorkspaceRoot $dynamic.workspace -UnitId u002 -ToolingContextUpgrade $rp -OutPath (Join-Path $dynamic.workspace 'receipts/upgrade-missing-dependency-tooling-context-upgrade-request.json')|Out-Null}catch{$rejected=Assert-TCError $_.Exception.Message "Tooling context closure omits owner-derived dependency 'scripts/Invoke-WorkUnitAutomation.ps1' (full-tracked-executor-tree)." 'missing dependency'};Assert-TC $rejected 'undeclared dynamic dependency rejection'
+$dynamic=New-Case 'missing-dynamic-dependency';Write-TC (Join-Path $dynamic.workspace 'local/ctx-missing-dependency-resolver.json') ([pscustomobject][ordered]@{schema='rusty.morphospace.workflow.tooling_context_resolver.v1';context_id='ctx-missing-dependency';executor_root=$tool;routers=@([pscustomobject][ordered]@{skill_id='rusty-morphospace';root=$newRouter.root},[pscustomobject][ordered]@{skill_id='system-engineering';root=$newSystemRouter.root},[pscustomobject][ordered]@{skill_id='rust-work-graph';root=$newGraphRouter.root});status='resolved';does_not_prove=@('Local resolution only.')});$missingExecutor=Clone $newExecutor;$missingExecutor.closure=@($missingExecutor.closure|Where-Object{[string]$_.path-cne'scripts/Invoke-WorkUnitAutomation.ps1'});Assert-TC ($missingExecutor.closure.Count-lt$newExecutor.closure.Count) 'dynamic dependency fixture selection';$missing=New-MorphospaceToolingContext -ContextId 'ctx-missing-dependency' -ProjectId 'envelope-test' -PreparationId 'u002-envelope' -ProductProjection $projection -Resolver ([pscustomobject]@{path='local/ctx-missing-dependency-resolver.json';sha256=FileHash (Join-Path $dynamic.workspace 'local/ctx-missing-dependency-resolver.json')}) -Executor $missingExecutor -Routers $(if($declaredTierFixture){@($newRouter.row,$newSystemRouter.row)}else{@($newRouter.row,$newSystemRouter.row,$newGraphRouter.row)}) -Compatibility $newCompat;$r=New-UpgradeRequest $dynamic.workspace 'upgrade-missing-dependency' $missing;$rp=Save-Request $HarnessRoot $r 'missing-dependency.json';$rejected=$false;try{Invoke-MorphospaceUpgradeToolingContext -WorkspaceRoot $dynamic.workspace -UnitId u002 -ToolingContextUpgrade $rp -OutPath (Join-Path $dynamic.workspace 'receipts/upgrade-missing-dependency-tooling-context-upgrade-request.json')|Out-Null}catch{$rejected=Assert-TCError $_.Exception.Message "Tooling context closure omits owner-derived dependency 'scripts/Invoke-WorkUnitAutomation.ps1' (full-tracked-executor-tree)." 'missing dependency'};Assert-TC $rejected 'undeclared dynamic dependency rejection'
 $forged=New-Case 'forged';$r=New-UpgradeRequest $forged.workspace 'upgrade-forged';$proofPath=Join-Path $forged.workspace $r.compatibility_receipt.path;$proof=Read-TC $proofPath;$proof.new_context.commit=$OldCommit;Write-TC $proofPath $proof;$r.compatibility_receipt.sha256=FileHash $proofPath;$rp=Save-Request $HarnessRoot $r 'forged.json';$rejected=$false;try{Invoke-MorphospaceUpgradeToolingContext -WorkspaceRoot $forged.workspace -UnitId u002 -ToolingContextUpgrade $rp -OutPath (Join-Path $forged.workspace 'receipts/upgrade-forged-tooling-context-upgrade-request.json')|Out-Null}catch{$rejected=Assert-TCError $_.Exception.Message 'Tooling-context compatibility receipt new_context binding is detached.' 'forged compatibility'};Assert-TC $rejected 'forged compatibility rejection';Write-TCPhase 'provenance-negative-complete'}
 if($Scenario-in@('all','ready-lifecycle')){
  $base=$readyBase

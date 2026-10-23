@@ -125,7 +125,7 @@
         "unit_id": { "$ref": "#/$defs/id" },
         "unit_raw_sha256": { "$ref": "#/$defs/hash" },
         "unit_contract_sha256": { "$ref": "#/$defs/hash" },
-        "tier": { "const": "quick" },
+        "tier": { "enum": ["quick", "standard", "deep"] },
         "selector_id": { "$ref": "#/$defs/id" },
         "selector_path": { "type": "string", "pattern": "^validation-authority/selectors/[a-z0-9][a-z0-9-]{1,127}\\.json$" },
         "selector_sha256": { "$ref": "#/$defs/hash" },

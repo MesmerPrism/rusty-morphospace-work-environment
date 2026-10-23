@@ -20,6 +20,18 @@ this workspace mode supplies no conformance, acceptance or execution credit.
 It is unavailable for alternative instruction-only, delta or historical-debt
 modes. It requires an explicit workspace and both existing switches.
 
+A frozen consumer whose original workflow command cannot be changed may use
+normal-validation selector v2 at its declared Standard or Deep tier. The fixed
+`Invoke-WorkflowCurrentValidation.ps1` producer comes directly from the live
+adopted context executor and its unique exact closure entry. It invokes the
+same current-work modes above through the existing retained raw-stream capture;
+no consumer tool copy or configurable command is accepted. The selector,
+original command/freeze, current unit/context, tier, terminal and evidence bytes
+remain bound through public receipt, Record and Accept. All other criteria,
+gates and mandatory instruction completion remain required. See
+[NORMAL_VALIDATION_SELECTOR.md](NORMAL_VALIDATION_SELECTOR.md). The retained v1
+Quick route and unsupported archive/rematerialization boundaries are unchanged.
+
 Before history authentication, this mode checks the required workspace files
 and any current or queued unit's exact tooling-context file and local resolver
 pin. A missing or changed resolver therefore denies early. The later complete
