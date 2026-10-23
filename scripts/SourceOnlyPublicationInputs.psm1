@@ -235,7 +235,8 @@ function Get-SourceOnlyPublicationAnalysis {
     $allowed = @($context.unit.allowed_repositories)
     $readOnlyIds = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     if ($context.unit.PSObject.Properties.Name -contains 'read_only_dependencies') { foreach ($item in @($context.unit.read_only_dependencies)) { [void]$readOnlyIds.Add([string]$item.repo_id) } }
-    foreach ($projectSource in @($context.project.repositories)) {
+    $projectSourceIds = @($context.project.repositories.repo_id)
+    foreach ($projectSource in @($mapSources | Where-Object { [string]$_.repo_id -cin $projectSourceIds })) {
         $projectRepoId = [string]$projectSource.repo_id
         if (@($allowed | Where-Object { [string]$_.repo_id -ceq $projectRepoId }).Count -eq 0 -and -not $readOnlyIds.Contains($projectRepoId)) { $reasons.Add("project-source-not-declared:$projectRepoId") }
     }
