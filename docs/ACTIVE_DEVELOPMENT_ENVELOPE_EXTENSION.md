@@ -186,6 +186,17 @@ artifact, projection, event, or completion. It has no caller proof override or
 skip mode. Exact replay is idempotent; changed input, lineage, map, source,
 projection, or CAS evidence fails closed.
 
+Canonical request capture can sort the properties of an authentic initial
+featureless v2 lock whose legacy fingerprint used producer property order.
+The shared fingerprint verifier recognizes the exact initial scaffold encoding
+from `New-ProjectWorkspace.ps1`: the complete initial field set, revisions,
+epoch timestamp, activation constants and empty feature/effect collections.
+It preserves all values, verifies their complete canonical identity, and
+requires the stored fingerprint to match that exact ordered producer encoding.
+It does not search property permutations, regenerate fingerprints or rewrite
+captured requests, pending intents or live locks. Existing raw and canonical
+preimage checks remain mandatory during execution, recovery and later reading.
+
 The extension proves no Claim, Freeze, validation, acceptance, publication,
 Git mutation, build, device action, schema-revision adoption, or changed
 objective authority. Later Amendment, Freeze, retirement, current-work reading,
