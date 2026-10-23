@@ -108,6 +108,36 @@ snapshot/archive or older Quick-only stale-successor release routes. Existing
 unsupported snapshot routes keep refusing; later policy never rewrites Quick
 history.
 
+For a tooling-aware workspace nested inside its read-only planning repository,
+current owner-produced control files may remain uncommitted after Freeze. The
+candidate owner derives a finite closure from the authenticated same-unit
+continuation: exact state/unit/ledger bytes, committed transition intents and
+completions, their exact artifacts, and each typed upgrade's hash-bound
+compatibility input. It also admits the exact validated selector file. Git
+checkpoints may commit some of these files, so observed dirt must be a subset
+of this closed set. Planning role or a workspace/directory prefix alone never
+admits dirt; unrelated control files, neighboring selectors, source changes and
+different staged bytes still refuse. Source pins, ancestry, raw artifacts,
+transaction order and module/context bindings remain required.
+
+A public validation receipt is a prospective input before Record creates its
+transition. For a selected declared-tier action, the lifecycle owner first runs
+the existing complete native receipt predicate, retaining the physical receipt's
+raw hash across that check. Before Record, ReturnToActive or Accept can change
+state, it repeats selector/evidence/source closure with only that exact consumed
+receipt path and unchanged raw bytes. An unrelated receipt for the same unit
+does not enter the closure. An initial consumption resolution supplies no dirt
+exemption or effect authority. The fixed producer continues to check dispatch
+closure before and after its settled child, and active Begin forwards its exact
+validated prospective selector into the independent frozen-candidate check.
+
+The registered tooling `validating-upgrade` fixture exercises this nested
+owner-produced Freeze, ordinary Begin, compatible upgrade, seven instruction
+completions, declared Standard selector, actual fresh-process producer, public
+receipt, Record, Accept and accepted current-work read. Its host-only product
+facts remain modeled; source qualification does not adopt tooling into another
+project or transfer APK, device or product acceptance evidence.
+
 The normal consumer does not execute the producer and does not create evidence.
 It changes no source, unit, freeze, repository, device, or remote bytes. Normal
 executed lifecycle actions transactionally bind/consume/clear the hash-only

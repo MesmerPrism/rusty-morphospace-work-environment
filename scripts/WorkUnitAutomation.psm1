@@ -1862,6 +1862,22 @@ function Invoke-MorphospaceAuthorityRunnerForRecord {
     return $nonce
 }
 
+function Assert-MorphospaceNormalValidationConsumedReceipt {
+    param([hashtable]$SelectorArguments,[object]$ExpectedSelection,[string]$ReceiptReference,[string]$ExpectedReceiptSha256)
+    if($null-eq$SelectorArguments){return}
+    $receiptPath=Resolve-MorphospaceReceiptPath -WorkspaceRoot ([string]$SelectorArguments.WorkspaceRoot) -ReceiptReference $ReceiptReference
+    if($ExpectedReceiptSha256-cnotmatch'^[0-9a-f]{64}$'-or(Get-MorphospaceFileSha256 $receiptPath)-cne$ExpectedReceiptSha256){throw 'Native-consumed normal-validation receipt raw bytes drifted.'}
+    $arguments=@{};foreach($key in $SelectorArguments.Keys){$arguments[$key]=$SelectorArguments[$key]}
+    $workspacePrefix=([string]$arguments.WorkspaceRoot).TrimEnd('\','/')+[IO.Path]::DirectorySeparatorChar
+    $arguments.ConsumedValidationReceipt=$receiptPath.Substring($workspacePrefix.Length).Replace('\','/')
+    $arguments.ExpectedConsumedValidationReceiptSha256=$ExpectedReceiptSha256
+    $final=Resolve-MorphospaceNormalValidationSelector @arguments
+    if((Get-MorphospaceCanonicalJsonSha256 $final.state_binding)-cne(Get-MorphospaceCanonicalJsonSha256 $ExpectedSelection)){
+        throw 'Final normal-validation consumption changed the exact selected tuple.'
+    }
+    if((Get-MorphospaceFileSha256 $receiptPath)-cne$ExpectedReceiptSha256){throw 'Native-consumed normal-validation receipt raw bytes drifted during final source closure.'}
+}
+
 function Invoke-MorphospaceWorkUnitAutomation {
     [CmdletBinding()]
     param(
@@ -2260,6 +2276,9 @@ function Invoke-MorphospaceWorkUnitAutomation {
     }
     $validationMatrix = @(New-MorphospaceValidationMatrix -Unit $unit -DeviceSerials $DeviceSerials)
     $selectorResult = $null
+    $normalValidationConsumptionArguments=$null
+    $selectorPlanningInputs=$null
+    $normalValidationDeclaredMatrix=@($validationMatrix)
     if ($ValidationSelector) {
         if (-not $ExpectedValidationSelectorSha256 -or -not $ValidationEvidencePath) {
             throw 'ValidationSelector requires ExpectedValidationSelectorSha256 and ValidationEvidencePath.'
@@ -2302,6 +2321,12 @@ function Invoke-MorphospaceWorkUnitAutomation {
             }
         }
         $validationMatrix = @($selectorResult.validation_matrix)
+        if($null-ne$selectorResult.producer_observation){
+            $selectorPlanningInputs=[pscustomobject]@{selector_path=$ValidationSelector;selector_sha256=$ExpectedValidationSelectorSha256;consumed_receipt_path='';consumed_receipt_sha256=''}
+            if($receiptConsumingSelectorAction){
+                $normalValidationConsumptionArguments=@{WorkspaceRoot=$resolvedWorkspace;SelectorReference=$ValidationSelector;ExpectedSelectorSha256=$ExpectedValidationSelectorSha256;EvidencePath=$ValidationEvidencePath;Spec=$spec;Unit=$unit;DeclaredValidationMatrix=$normalValidationDeclaredMatrix;Action=$Action;ValidationTier=$ValidationTier;BoundSelection=$boundSelectionForResolution}
+            }
+        }
     } elseif ($ExpectedValidationSelectorSha256 -or $ValidationEvidencePath) {
         throw 'ExpectedValidationSelectorSha256 and ValidationEvidencePath are invalid without ValidationSelector.'
     } elseif (
@@ -2550,7 +2575,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
                     $selectorFreezePath = Resolve-MorphospaceWorkspacePath $resolvedWorkspace ([string]$unit.candidate_freeze.receipt_path) -RequireLeaf
                     $selectorFreezeReceipt = Read-MorphospaceProtocolJson $selectorFreezePath
                     if ([string]$selectorFreezeReceipt.schema -ceq 'rusty.morphospace.workflow.candidate_freeze.v2') {
-                        [void](Test-MorphospaceFrozenCandidate -WorkspaceRoot $resolvedWorkspace -Unit $unit)
+                        [void](Test-MorphospaceFrozenCandidate -WorkspaceRoot $resolvedWorkspace -Unit $unit -PlanningInputs $selectorPlanningInputs)
                     }
                     $transition = 'validation-selector-bound'
                     if ($Execute) {
@@ -2566,7 +2591,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
                 }
             } else {
                 if ($beforeStatus -ne "active" -or [string]$state.current_unit -ne $UnitId) { throw "BeginValidation requires the matching active unit." }
-                [void](Test-MorphospaceFrozenCandidate -WorkspaceRoot $resolvedWorkspace -Unit $unit)
+                [void](Test-MorphospaceFrozenCandidate -WorkspaceRoot $resolvedWorkspace -Unit $unit -PlanningInputs $selectorPlanningInputs)
                 $requiredDeviceBlock = @($validationMatrix | Where-Object { $_.kind -eq "device" -and $_.disposition -eq "blocked-missing-serials" })
                 if ($requiredDeviceBlock.Count -gt 0) { throw "Required device validation has no explicit serials." }
                 $transition = "active-to-validating"
@@ -2594,6 +2619,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
             if (($unit.PSObject.Properties.Name -contains 'tags') -and @($unit.tags | Where-Object { [string]$_ -eq 'receipt-security' }).Count -ne 0) {
                 throw "Receipt-security units must record validation through the pinned authority path."
             }
+            $consumedReceiptRaw=Get-MorphospaceFileSha256 (Resolve-MorphospaceReceiptPath -WorkspaceRoot $resolvedWorkspace -ReceiptReference $ValidationReceipt)
             $null = Test-MorphospaceValidationReceipt `
                 -WorkspaceRoot $resolvedWorkspace `
                 -ReceiptReference $ValidationReceipt `
@@ -2605,6 +2631,8 @@ function Invoke-MorphospaceWorkUnitAutomation {
                 -ExpectedResult $ValidationResult `
                 -ExpectedTier $ValidationTier
             $validatedReceiptPath = Resolve-MorphospaceReceiptPath -WorkspaceRoot $resolvedWorkspace -ReceiptReference $ValidationReceipt
+            if((Get-MorphospaceFileSha256 $validatedReceiptPath)-cne$consumedReceiptRaw){throw 'Validation receipt changed while its native predicate ran.'}
+            if($null-ne$normalValidationConsumptionArguments){Assert-MorphospaceNormalValidationConsumedReceipt -SelectorArguments $normalValidationConsumptionArguments -ExpectedSelection $selectorResult.state_binding -ReceiptReference $ValidationReceipt -ExpectedReceiptSha256 $consumedReceiptRaw}
             $workspacePrefix = $resolvedWorkspace.TrimEnd("\", "/") + [System.IO.Path]::DirectorySeparatorChar
             $ValidationReceipt = $validatedReceiptPath.Substring($workspacePrefix.Length).Replace("\", "/")
             $transition = "validation-$ValidationResult-to-active"
@@ -2660,6 +2688,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
                 if (-not $AuthorityRunnerPath) { throw 'Receipt-security validation requires AuthorityRunnerPath; manual v2 receipt recording is rejected.' }
                 $authorityNonce = Invoke-MorphospaceAuthorityRunnerForRecord -WorkspaceRoot $resolvedWorkspace -UnitId $UnitId -RepositoryMap $repoMap -AuthorityRunnerPath $AuthorityRunnerPath -AuthorityRunnerArguments $AuthorityRunnerArguments -RunnerAction Validate -ValidationReceipt $ValidationReceipt
             }
+            $consumedReceiptRaw=Get-MorphospaceFileSha256 (Resolve-MorphospaceReceiptPath -WorkspaceRoot $resolvedWorkspace -ReceiptReference $ValidationReceipt)
             $validatedReceipt = Test-MorphospaceValidationReceipt `
                 -WorkspaceRoot $resolvedWorkspace `
                 -ReceiptReference $ValidationReceipt `
@@ -2672,6 +2701,8 @@ function Invoke-MorphospaceWorkUnitAutomation {
                 -ExpectedTier $ValidationTier `
                 -ExpectedExecutionNonce $authorityNonce
             $validatedReceiptPath = Resolve-MorphospaceReceiptPath -WorkspaceRoot $resolvedWorkspace -ReceiptReference $ValidationReceipt
+            if((Get-MorphospaceFileSha256 $validatedReceiptPath)-cne$consumedReceiptRaw){throw 'Validation receipt changed while its native predicate ran.'}
+            if($null-ne$normalValidationConsumptionArguments){Assert-MorphospaceNormalValidationConsumedReceipt -SelectorArguments $normalValidationConsumptionArguments -ExpectedSelection $selectorResult.state_binding -ReceiptReference $ValidationReceipt -ExpectedReceiptSha256 $consumedReceiptRaw}
             $workspacePrefix = $resolvedWorkspace.TrimEnd("\", "/") + [System.IO.Path]::DirectorySeparatorChar
             $ValidationReceipt = $validatedReceiptPath.Substring($workspacePrefix.Length).Replace("\", "/")
             $transition = "validation-$ValidationResult"
@@ -2706,6 +2737,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
             } else {
                 if ($beforeStatus -ne "validating" -or [string]$state.current_unit -ne $UnitId) { throw "Accept requires the matching validating unit." }
                 if ($null -eq $state.validation_checkpoint -or [string]$state.validation_checkpoint.result -ne "pass") { throw "Acceptance requires a passing validation checkpoint." }
+                $consumedReceiptRaw=Get-MorphospaceFileSha256 (Resolve-MorphospaceReceiptPath -WorkspaceRoot $resolvedWorkspace -ReceiptReference ([string]$state.validation_checkpoint.receipt))
                 $validatedReceipt = Test-MorphospaceValidationReceipt `
                     -WorkspaceRoot $resolvedWorkspace `
                     -ReceiptReference ([string]$state.validation_checkpoint.receipt) `
@@ -2716,6 +2748,8 @@ function Invoke-MorphospaceWorkUnitAutomation {
                     -ValidationMatrix $validationMatrix `
                     -ExpectedResult "pass" `
                     -ExpectedTier ([string]$state.validation_checkpoint.tier)
+                if((Get-MorphospaceFileSha256 (Resolve-MorphospaceReceiptPath -WorkspaceRoot $resolvedWorkspace -ReceiptReference ([string]$state.validation_checkpoint.receipt)))-cne$consumedReceiptRaw){throw 'Validation receipt changed while its native predicate ran.'}
+                if($null-ne$normalValidationConsumptionArguments){Assert-MorphospaceNormalValidationConsumedReceipt -SelectorArguments $normalValidationConsumptionArguments -ExpectedSelection $selectorResult.state_binding -ReceiptReference ([string]$state.validation_checkpoint.receipt) -ExpectedReceiptSha256 $consumedReceiptRaw}
                 Test-MorphospaceInstructionCompletion -Unit $unit
                 $transition = "validating-to-accepted"
                 if ($Execute) {

@@ -102,7 +102,26 @@ function Assert-ToolingUpgradePreFreezeSlot {
  $active=[string]$Unit.status-ceq'active'-and[string]$State.current_unit-ceq$UnitId
  $ready=[string]$Unit.status-ceq'ready'-and$null-eq$State.current_unit-and[string]$State.next_ready_unit-ceq$UnitId
  if([string]$Unit.unit_id-cne$UnitId-or(-not$active-and-not$ready)){throw 'Tooling upgrade requires exact active ownership or exact next-ready slot before Freeze.'}
- if($Unit.PSObject.Properties.Name-ccontains'candidate_freeze'){$retirement=Import-Module (Join-Path $PSScriptRoot 'ActiveUnitRetirement.psm1') -PassThru; &$retirement {param($w,$u,$s,$id)Assert-ActiveRetirementPostNonpassUpgradeSlot $w $u $s $id} $Workspace $Unit $State $UnitId}
+ if($Unit.PSObject.Properties.Name-ccontains'candidate_freeze'){
+  # Keep the original failed/resumed/resolved five-event route exact. Other
+  # frozen active entries must prove the native retained Return journey; an
+  # invalid route never falls back to a weaker owner predicate.
+  if([string]$State.last_event_id-cmatch('^'+[regex]::Escape($UnitId)+'-blocker-resolved-[0-9]{4,}$')){
+   $retirement=Import-Module (Join-Path $PSScriptRoot 'ActiveUnitRetirement.psm1') -PassThru
+   &$retirement {param($w,$u,$s,$id)Assert-ActiveRetirementPostNonpassUpgradeSlot $w $u $s $id} $Workspace $Unit $State $UnitId
+  }else{
+   $candidateOwner=Import-Module (Join-Path $PSScriptRoot 'CandidateFreeze.psm1') -PassThru
+   $journey=&$candidateOwner {param($w,$u,$s)Get-MorphospaceCandidateNonpassContinuation $w $u $s} $Workspace $Unit $State
+   # The retained attempt must name the original frozen writable source,
+   # independently of the new compatible tooling pointer selected below.
+   $original=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $Workspace ([string]$Unit.candidate_freeze.receipt_path) -RequireLeaf)
+   $attempt=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $Workspace ([string]$journey.returned.intent.artifacts[0].path) -RequireLeaf)
+   foreach($repository in @($original.final_repositories)){
+    $revisions=@($attempt.repository_revisions|Where-Object{[string]$_.repo_id-ceq[string]$repository.repo_id})
+    if($revisions.Count-ne1-or[string]$revisions[0].head_revision-cne[string]$repository.commit){throw 'Frozen tooling upgrade retained Return attempt source differs from its original freeze.'}
+   }
+  }
+ }
 }
 function New-ToolingUpgradeAutomationReceipt {
  param([object]$Request,[string]$Timestamp,[string]$OutRelative,[string]$RequestHash,[bool]$Executed,[string]$EventId,[ValidateSet('active','ready','validating')][string]$Status='active')
