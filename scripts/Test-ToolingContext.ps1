@@ -1,4 +1,4 @@
-param([switch]$ExecutorPreflightOnly,[switch]$ArtifactSelectionOnly,[string]$ActualIntentPath='', [string]$ExpectedActualIntentSha256='', [switch]$SelfTest,[switch]$Child,[switch]$KeepFailedFixture,[switch]$KeepFixture,[string]$OldCommit='',[string]$NewCommit='',[string]$HarnessRoot='',[ValidateSet('all','lifecycle','recovery','product-negative','provenance-negative','instruction-context','ready-lifecycle','post-nonpass','validating-upgrade','validating-observation','declared-tier-active')][string]$Scenario='all',[ValidateSet('all','after-intent','after-artifact','after-projection','after-event')][string]$RecoveryFault='all')
+param([switch]$ExecutorPreflightOnly,[switch]$ArtifactSelectionOnly,[string]$ActualIntentPath='', [string]$ExpectedActualIntentSha256='', [switch]$SelfTest,[switch]$Child,[switch]$KeepFailedFixture=$true,[switch]$KeepFixture,[string]$OldCommit='',[string]$NewCommit='',[string]$HarnessRoot='',[ValidateSet('all','lifecycle','recovery','product-negative','provenance-negative','instruction-context','ready-lifecycle','post-nonpass','validating-upgrade','validating-observation','declared-tier-active')][string]$Scenario='all',[ValidateSet('all','after-intent','after-artifact','after-projection','after-event')][string]$RecoveryFault='all')
 Set-StrictMode -Version 2.0
 $ErrorActionPreference='Stop'
 $script:TestClosurePaths=$null
@@ -160,11 +160,11 @@ if(-not$Child){
    # project ledger, router installation, modules, or external effects.
    $start=[Diagnostics.ProcessStartInfo]::new();$start.FileName=(@(Get-Command pwsh -CommandType Application)[0]).Source;$start.UseShellExecute=$false;$start.CreateNoWindow=$true;$start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
    foreach($argument in @('-NoProfile','-NonInteractive','-File',(Join-Path $sourceRoot 'scripts/Test-ToolingContext.ps1'),'-SelfTest','-Scenario','ready-lifecycle','-HarnessRoot',$readyRoot)){[void]$start.ArgumentList.Add($argument)}
-   if($KeepFailedFixture){[void]$start.ArgumentList.Add('-KeepFailedFixture')}
+   [void]$start.ArgumentList.Add(('-KeepFailedFixture:{0}' -f [bool]$KeepFailedFixture))
    $readyProcess=[Diagnostics.Process]::new();$readyProcess.StartInfo=$start;[void]$readyProcess.Start();$readyOutput=$readyProcess.StandardOutput.ReadToEndAsync();$readyError=$readyProcess.StandardError.ReadToEndAsync()
    $start=[Diagnostics.ProcessStartInfo]::new();$start.FileName=(@(Get-Command pwsh -CommandType Application)[0]).Source;$start.UseShellExecute=$false;$start.CreateNoWindow=$true;$start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
    foreach($argument in @('-NoProfile','-NonInteractive','-File',(Join-Path $sourceRoot 'scripts/Test-ToolingContext.ps1'),'-SelfTest','-Scenario','post-nonpass','-HarnessRoot',$postRoot)){[void]$start.ArgumentList.Add($argument)}
-   if($KeepFailedFixture){[void]$start.ArgumentList.Add('-KeepFailedFixture')}
+   [void]$start.ArgumentList.Add(('-KeepFailedFixture:{0}' -f [bool]$KeepFailedFixture))
    $postProcess=[Diagnostics.Process]::new();$postProcess.StartInfo=$start;[void]$postProcess.Start();$postOutput=$postProcess.StandardOutput.ReadToEndAsync();$postError=$postProcess.StandardError.ReadToEndAsync()
   }
   [IO.Directory]::CreateDirectory($tool)|Out-Null;foreach($name in @('.github','config','docs','examples','fixtures','manifests','schemas','scripts','skills','templates','tools')){Copy-Item -LiteralPath (Join-Path $sourceRoot $name) -Destination (Join-Path $tool $name) -Recurse};foreach($name in @('.gitattributes','.gitignore','AGENTS.md','CHANGELOG.md','CONTRIBUTING.md','LICENSE','NOTICE.md','README.md','SECURITY.md')){Copy-Item -LiteralPath (Join-Path $sourceRoot $name) -Destination (Join-Path $tool $name)};foreach($file in @(Get-ChildItem -LiteralPath $tool -Recurse -File)){if(@('.ps1','.psm1','.psd1','.json','.md','.yml','.yaml','.toml','.txt','.gitignore','.gitattributes')-contains$file.Extension-or$file.Name-in@('.gitignore','.gitattributes')){$text=[IO.File]::ReadAllText($file.FullName);if($text.IndexOf([char]0)-lt0){[IO.File]::WriteAllText($file.FullName,$text.Replace("`r`n","`n"),[Text.UTF8Encoding]::new($false))}}}
@@ -194,7 +194,7 @@ if(-not$Child){
    # This separate owning journey earns a fresh validation/acceptance after the
    # compatible validating upgrade; it inherits no pre-upgrade pass.
    $validatingChild=@('-NoProfile','-NonInteractive','-File',(Join-Path $sourceRoot 'scripts/Test-ToolingContext.ps1'),'-SelfTest','-Scenario','validating-upgrade')
-   if($KeepFailedFixture){$validatingChild+='-KeepFailedFixture'}
+   $validatingChild+=('-KeepFailedFixture:{0}' -f [bool]$KeepFailedFixture)
    & pwsh @validatingChild
    if($LASTEXITCODE-ne0){throw "Independent validating tooling journey failed with exit code $LASTEXITCODE."}
   }
@@ -789,9 +789,51 @@ if($validatingUpgradeFixture){
   $null=&$run @validatingArgs -Action FreezeCandidate @revisionArgs
   $nativeRevisionIntent=Join-Path $nonpassWorkspace 'receipts/transactions/u002-linked-correction-recorded-transition.intent.json'
   Assert-TC (-not(Test-Path -LiteralPath $nativeRevisionIntent)) 'fresh linked Freeze begins before native durable intent publication'
+  # Exercise the real native stage boundary before its first installation,
+  # using this same request and transaction rather than a fabricated intent.
+  $intentInterrupted=$false
+  try{&$candidateModule {param($w,$a)Invoke-MorphospaceFreezeCandidate -WorkspaceRoot $w -UnitId u002 @a -FaultAfter after-intent -Execute} $nonpassWorkspace $revisionArgs|Out-Null}catch{
+   if($_.Exception.Message-cne'Injected interruption after intent publication.'){throw}
+   $intentInterrupted=$true
+  }
+  Assert-TC ($intentInterrupted-and[IO.File]::Exists($nativeRevisionIntent)) 'linked Freeze reaches actual durable intent before stage installation'
+  $pendingIntent=Read-TC $nativeRevisionIntent
+  $stageRelative=&$ledgerModule {param($id)Get-MorphospaceLedgerArtifactStagePath $id 0} ([string]$pendingIntent.transaction_id)
+  $stagePath=Join-Path $nonpassWorkspace $stageRelative
+  $stageBytes=[IO.File]::ReadAllBytes($stagePath)
+  $stageTarget=Join-Path $nonpassWorkspace ([string]$pendingIntent.artifacts[0].path)
+  $pendingCompletion=Join-Path $nonpassWorkspace "receipts/transactions/$($pendingIntent.transaction_id).completion.json"
+  Assert-TC (@($pendingIntent.artifacts).Count-eq1-and(BytesHash $stageBytes)-ceq[string]$pendingIntent.artifacts[0].sha256-and[Convert]::ToBase64String($stageBytes)-ceq[string]$pendingIntent.artifacts[0].bytes_base64-and-not[IO.File]::Exists($stageTarget)-and-not[IO.File]::Exists($pendingCompletion)) 'actual native stage binds exact durable artifact bytes before target or completion exists'
+  $stageBoundaryBefore=WorkspaceFingerprint $nonpassWorkspace
+  foreach($stageDamage in @('stage-bytes','neighbor-index','neighbor-transaction','stage-and-target','missing-stage-and-target')){
+   $neighborPath=$null;$createdNeighbor=$false;$createdStageTarget=$false
+   try{
+    switch($stageDamage){
+     'stage-bytes'{[IO.File]::AppendAllText($stagePath,' ',[Text.UTF8Encoding]::new($false))}
+     'neighbor-index'{$neighborRelative=&$ledgerModule {param($id)Get-MorphospaceLedgerArtifactStagePath $id 1} ([string]$pendingIntent.transaction_id);$neighborPath=Join-Path $nonpassWorkspace $neighborRelative;if(Test-Path -LiteralPath $neighborPath){throw 'Neighbor stage fixture must be absent.'};[IO.File]::WriteAllBytes($neighborPath,$stageBytes);$createdNeighbor=$true}
+     'neighbor-transaction'{$neighborRelative=&$ledgerModule {Get-MorphospaceLedgerArtifactStagePath 'u099-unrelated-recorded-transition' 0};$neighborPath=Join-Path $nonpassWorkspace $neighborRelative;if(Test-Path -LiteralPath $neighborPath){throw 'Neighbor transaction fixture must be absent.'};[IO.File]::WriteAllBytes($neighborPath,$stageBytes);$createdNeighbor=$true}
+     'stage-and-target'{if(Test-Path -LiteralPath $stageTarget){throw 'Native staged target fixture must be absent.'};[IO.File]::WriteAllBytes($stageTarget,$stageBytes);$createdStageTarget=$true}
+     'missing-stage-and-target'{[IO.File]::Delete($stagePath)}
+    }
+    $beforeStageDamage=WorkspaceFingerprint $nonpassWorkspace;$stageMessage=''
+    try{&$run @validatingArgs -Action FreezeCandidate @revisionArgs -Execute|Out-Null}catch{$stageMessage=$_.Exception.Message}
+    $stagePattern=switch($stageDamage){'stage-bytes'{'*Candidate revision recovery control binding is detached*'};'stage-and-target'{'*Transition artifact target was occupied after intent publication*'};'missing-stage-and-target'{'*Transition artifact lost both its transaction stage and target*'};default{'*Self-hosted planning*dirt*'}}
+    Assert-TC ($stageMessage-like$stagePattern-and(WorkspaceFingerprint $nonpassWorkspace)-ceq$beforeStageDamage) "pending native stage/$stageDamage refuses without writes"
+   }finally{
+    if($createdNeighbor-and[IO.File]::Exists($neighborPath)){[IO.File]::Delete($neighborPath)}
+    if($createdStageTarget-and[IO.File]::Exists($stageTarget)){[IO.File]::Delete($stageTarget)}
+    [IO.File]::WriteAllBytes($stagePath,$stageBytes)
+   }
+   Assert-TC ((WorkspaceFingerprint $nonpassWorkspace)-ceq$stageBoundaryBefore) "pending native stage/$stageDamage restores exact boundary bytes"
+  }
+  # Recover that same native intent through its real artifact move and stop at
+  # the existing after-projection boundary for projection/neighbor controls.
   $interrupted=$false
-  try{&$candidateModule {param($w,$a)Invoke-MorphospaceFreezeCandidate -WorkspaceRoot $w -UnitId u002 @a -FaultAfter after-projection -Execute} $nonpassWorkspace $revisionArgs|Out-Null}catch{$interrupted=$_.Exception.Message-ceq'Injected interruption after projections.'}
-  Assert-TC $interrupted 'linked Freeze reaches actual interrupted projection boundary'
+  try{&$candidateModule {param($w,$a)Invoke-MorphospaceFreezeCandidate -WorkspaceRoot $w -UnitId u002 @a -FaultAfter after-projection -Execute} $nonpassWorkspace $revisionArgs|Out-Null}catch{
+   if($_.Exception.Message-cne'Injected interruption after projections.'){throw}
+   $interrupted=$true
+  }
+  Assert-TC ($interrupted-and-not[IO.File]::Exists($stagePath)-and[IO.File]::Exists($stageTarget)-and(FileHash $stageTarget)-ceq(BytesHash $stageBytes)) 'linked Freeze recovers the exact native stage and reaches actual interrupted projection boundary'
   Assert-TC ([IO.File]::Exists($nativeRevisionIntent)) 'native before-intent owner guard passed before actual linked Freeze publication'
   $pendingStatePath=Join-Path $nonpassWorkspace 'workspace.state.json';$pendingStateBytes=[IO.File]::ReadAllBytes($pendingStatePath)
   try{

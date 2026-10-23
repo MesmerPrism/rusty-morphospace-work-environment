@@ -407,7 +407,14 @@ function New-MorphospaceCandidateRevisionPendingPlanningClosure {
         }
     }
     &$add ([string]$paths.intent) (Get-MorphospaceFileSha256 $intentPath)
-    foreach($artifact in @($Intent.artifacts)){
+    # The ledger flushes each exact artifact stage before publishing intent,
+    # then invokes this owner again before installing those staged bytes. Only
+    # that ledger-derived indexed path and intent payload hash enter recovery.
+    $ledgerOwner=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceTransitionLedger.psm1') -PassThru
+    for($index=0;$index-lt@($Intent.artifacts).Count;$index++){
+        $artifact=@($Intent.artifacts)[$index]
+        $stageRelative=&$ledgerOwner {param($id,$i)Get-MorphospaceLedgerArtifactStagePath $id $i} ([string]$Intent.transaction_id) $index
+        if([IO.File]::Exists((Resolve-MorphospaceWorkspacePath $Workspace $stageRelative))){&$add $stageRelative ([string]$artifact.sha256)}
         if([IO.File]::Exists((Resolve-MorphospaceWorkspacePath $Workspace ([string]$artifact.path)))){&$add ([string]$artifact.path) ([string]$artifact.sha256)}
     }
     $completion=Resolve-MorphospaceWorkspacePath $Workspace ([string]$paths.completion)
