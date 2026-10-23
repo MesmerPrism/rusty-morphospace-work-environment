@@ -212,6 +212,7 @@ function New-MorphospaceValidationReceiptV1 {
 
     $baseByRepo = @{}
     $sourceLockPresent = $false
+    $activeEnvelopeFiles = @{}
     if (($unit.PSObject.Properties.Name -contains 'source_composition') -and $null -ne $unit.source_composition.lock_path) {
         $sourceLockPresent = $true
         if (-not ($unit.PSObject.Properties.Name -contains 'candidate_freeze')) { throw 'Validation receipt generation requires the candidate-freeze binding for a source-composition lock.' }
@@ -243,11 +244,43 @@ function New-MorphospaceValidationReceiptV1 {
             'rusty.morphospace.workflow.development_envelope_source_composition.v1'='development-envelope-source-composition-v1.schema.json'
             'rusty.morphospace.workflow.development_envelope_source_composition.v2'='development-envelope-source-composition-v2.schema.json'
             'rusty.morphospace.workflow.development_envelope_source_composition.v3'='development-envelope-source-composition-v3.schema.json'
+            'rusty.morphospace.workflow.active_development_envelope_source_composition.v1'='active-development-envelope-source-composition-v1.schema.json'
         }
         $lockSchema = [string]$lock.schema
         if (-not $lockSchemas.ContainsKey($lockSchema) -or -not (Test-Json -Json $lockJson -SchemaFile (Join-Path $repositoryRoot "schemas\$($lockSchemas[$lockSchema])") -ErrorAction Stop)) { throw 'Validation receipt source-composition lock does not satisfy a supported schema.' }
         if ([string]$lock.project_id -cne [string]$project.project_id -or (($lock.PSObject.Properties.Name -contains 'unit_id') -and [string]$lock.unit_id -cne $UnitId)) { throw 'Validation receipt source-composition identity does not match the project and unit.' }
-        foreach ($row in @($lock.repositories)) {
+        if ($lockSchema -ceq 'rusty.morphospace.workflow.active_development_envelope_source_composition.v1') {
+            if ([string]$unit.status -cne 'validating') { throw 'Active-envelope validation receipt generation requires the validating unit.' }
+            $statePath = Resolve-MorphospaceValidationReceiptWorkspacePath $workspace 'workspace.state.json' -RequireLeaf
+            $featureLockPath = Resolve-MorphospaceValidationReceiptWorkspacePath $workspace 'feature.lock.json' -RequireLeaf
+            $eventsPath = Resolve-MorphospaceValidationReceiptWorkspacePath $workspace 'iteration-events.jsonl' -RequireLeaf
+            $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json -Depth 100 -DateKind String
+            $featureLock = Get-Content -LiteralPath $featureLockPath -Raw | ConvertFrom-Json -Depth 100 -DateKind String
+            if ([string]$state.current_unit -cne $UnitId -or [string]$state.project_id -cne [string]$project.project_id) { throw 'Active-envelope validation receipt generation requires its current project and unit.' }
+            foreach ($path in @($projectPath,$unitPath,$statePath,$featureLockPath,$eventsPath,$lockPath,$mapPath,$freezePath)) {
+                $activeEnvelopeFiles[$path] = Get-MorphospaceValidationReceiptFileHash $path
+            }
+            Import-Module (Join-Path $PSScriptRoot '../DevelopmentEnvelopeProvenance.psm1') -DisableNameChecking
+            $envelope = Test-MorphospaceEffectiveDevelopmentEnvelope -WorkspaceRoot $workspace -UnitId $UnitId -RepositoryMapPath $mapPath
+            # Resolve the canonical serializer in this function's scope after the
+            # lineage reader loads its own static dependencies, without Force.
+            Import-Module (Join-Path $PSScriptRoot 'MorphospaceProtocolCommon.psm1') -DisableNameChecking
+            $effective = $envelope.effective
+            $lockCanonicalSha256 = Get-MorphospaceCanonicalJsonSha256 $lock
+            if ((Get-MorphospaceCanonicalJsonSha256 $effective.unit) -cne (Get-MorphospaceCanonicalJsonSha256 $unit) -or
+                (Get-MorphospaceCanonicalJsonSha256 $effective.state) -cne (Get-MorphospaceCanonicalJsonSha256 $state) -or
+                (Get-MorphospaceCanonicalJsonSha256 $effective.project) -cne (Get-MorphospaceCanonicalJsonSha256 $project) -or
+                (Get-MorphospaceCanonicalJsonSha256 $effective.feature_lock) -cne (Get-MorphospaceCanonicalJsonSha256 $featureLock)) { throw 'Active-envelope validation receipt authority differs from its authenticated live lineage.' }
+            if ([string]$effective.source_composition_binding.path -cne $lockRelative -or
+                [string]$effective.source_composition_binding.raw_sha256 -cne $lockSha256 -or
+                [string]$effective.source_composition_binding.canonical_sha256 -cne $lockCanonicalSha256 -or
+                (Get-MorphospaceCanonicalJsonSha256 $effective.source_composition) -cne $lockCanonicalSha256) { throw 'Active-envelope validation receipt source is detached from its authenticated lineage.' }
+            $effectiveMapPath = Resolve-MorphospaceValidationReceiptWorkspacePath $workspace ([string]$effective.repository_map.path) -RequireLeaf
+            if (-not $effectiveMapPath.Equals($mapPath,$script:MorphospaceValidationReceiptPathComparison) -or
+                [string]$effective.repository_map.raw_sha256 -cne $mapSha256) { throw 'Active-envelope validation receipt map is detached from its authenticated lineage.' }
+        }
+        Import-Module (Join-Path $PSScriptRoot 'MorphospaceSourceCompositionIdentity.psm1') -DisableNameChecking
+        foreach ($row in @(Get-MorphospaceSourceCompositionRepositoryPins -Composition $lock)) {
             $repoId = [string]$row.repo_id
             if ($baseByRepo.ContainsKey($repoId)) { throw "Validation receipt source-composition lock repeats '$repoId'." }
             $baseByRepo[$repoId] = [string]$row.commit
@@ -312,6 +345,9 @@ function New-MorphospaceValidationReceiptV1 {
         device_validation=Copy-MorphospaceValidationReceiptValue $Evidence.device_validation
     }
     [void](Assert-MorphospaceValidationReceiptStructure -Document $receipt -AllowedSchemaIds 'rusty.morphospace.workflow.validation_receipt.v1')
+    foreach ($path in $activeEnvelopeFiles.Keys) {
+        if ((Get-MorphospaceValidationReceiptFileHash $path) -cne [string]$activeEnvelopeFiles[$path]) { throw 'Active-envelope validation receipt authority changed during generation.' }
+    }
     [IO.Directory]::CreateDirectory($outputDirectory) | Out-Null
     Assert-MorphospaceValidationReceiptNoReparseAncestry $workspace $output
     $temporary = "$output.tmp-$([guid]::NewGuid().ToString('N'))"
