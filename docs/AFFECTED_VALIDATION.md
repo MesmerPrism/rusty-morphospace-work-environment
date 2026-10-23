@@ -486,6 +486,34 @@ absolute `gh` executable and a fresh ignored output directory:
     -GhPath $selectedGhPath -OutputDirectory $freshIgnoredOutput
 ```
 
+
+Add `-CaptureTimings` to that same already-required hosted invocation when phase
+attribution is useful. The optional observer uses a fresh, invocation-local
+monotonic clock and counters; it creates no extra provider request or cache.
+After the normal fresh output directory has been admitted, it best-effort
+writes `diagnostics/hosted-intake-timing.json` during finalization. A refusal
+before that admission writes no timing directory. A later refusal can retain
+closed spans and honestly open partial spans without a report or producer
+success marker. Missing, malformed or unavailable diagnostics mean unknown
+measurement, not a validation outcome.
+
+The diagnostic is explicitly non-proof data outside `hosted-intake.json` and
+`raw-manifest.json`. It does not change their fields, the successful stdout
+envelope, or any evidence schema. Sink collisions, reparse paths, serialization
+and storage failures do not overwrite an existing diagnostic, add stdout, or
+replace the producer's original error, exit or result.
+
+Spans cover source preflight, provider metadata/GETs, archive collection and
+expansion, uploaded-plan verification/public selector recomputation, registry
+and tree inventory, the existing shared dependency-closure batch, root
+inventories, leaf verification and final postimage/report work. Calls count
+attempted observations; verified executed/reused row counters advance only
+after the existing full leaf checks. Open spans remain incomplete. Parent and
+child spans are inclusive, so do not sum them as disjoint wall time. These
+elapsed/counter observations are not CPU samples, cache-hit or speedup claims,
+nor new qualification prerequisites. Timing controls live in the existing
+`-SelfTestPhase run-job-coverage` phase.
+
 The producer and candidate checkouts must be clean and bind their exact Git
 identities and held physical source bytes. The selected run must be a successful
 terminal `pull_request` run for that exact open same-repository PR/base/head and
