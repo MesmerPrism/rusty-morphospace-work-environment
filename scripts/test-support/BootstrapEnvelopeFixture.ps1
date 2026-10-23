@@ -52,9 +52,17 @@ function Test-NativeBootstrapEnvelopeExtension {
     $workspace=$fixture.workspace
     $unit=Read-EnvelopeProtocolJson (Join-Path $workspace 'iteration-units/u002.json')
     Assert-ActiveEnvelopeTest (@($unit.agent_scope_assessment.owner_repositories).Count-eq1-and@($unit.read_only_dependencies).Count-eq1) 'bootstrap fixture must preserve writable-only assessment plus independent retained readonly input'
+    $initialLockPath=Join-Path $workspace 'feature.lock.json';$initialLockHash=Get-EnvelopeFileSha256 $initialLockPath;$initialLock=Read-EnvelopeProtocolJson $initialLockPath
     $request=New-ActiveEnvelopeExtensionRequest -Workspace $workspace -RequestPath (Join-Path $Root 'root-extension.json') -AddedOwnerRoot 'docs/six.md'
+    # Preserve the genuine scaffold lock, including its legacy fingerprint.
+    # Canonical request transport loses producer property order without changing
+    # the authenticated before-lock values, just like the retained real caller.
+    Write-EnvelopeCanonicalJson $request.request_path $request.request
+    $capturedRequest=Read-EnvelopeProtocolJson $request.request_path
+    Assert-ActiveEnvelopeTest ((Get-EnvelopeFileSha256 $initialLockPath)-ceq$initialLockHash-and[string]$capturedRequest.before.feature_lock.lock_fingerprint-ceq[string]$initialLock.lock_fingerprint-and(Get-EnvelopeCanonicalJsonSha256 $capturedRequest.before.feature_lock)-ceq(Get-EnvelopeCanonicalJsonSha256 $initialLock)) 'canonical bootstrap request preserves the original native legacy lock and fingerprint'
     $before=Get-EnvelopeWorkspaceByteInventorySha256 $workspace
     $recoveryWorkspace=Join-Path $Root 'recovery-workspace';Copy-Item -LiteralPath $workspace -Destination $recoveryWorkspace -Recurse
+    $pendingWorkspace=Join-Path $Root 'after-intent-workspace';Copy-Item -LiteralPath $workspace -Destination $pendingWorkspace -Recurse
     $arguments=@{WorkspaceRoot=$workspace;UnitId='u002';ActiveDevelopmentEnvelopeExtension=$request.request_path;RepositoryMapPath=$request.map_path;OutPath=$request.receipt_path;SourceCompositionOutPath=$request.source_path}
     $dry=Invoke-MorphospaceExtendActiveDevelopmentEnvelope @arguments
     Assert-ActiveEnvelopeTest (-not$dry.executed-and(Get-EnvelopeWorkspaceByteInventorySha256 $workspace)-ceq$before) 'bootstrap extension DRY changed bytes'
@@ -122,7 +130,33 @@ function Test-NativeBootstrapEnvelopeExtension {
             Assert-ActiveEnvelopeTest ($message-like'*Native bootstrap retained origin bytes or map drifted*'-and(Get-EnvelopeWorkspaceByteInventorySha256 $workspace)-ceq$damagedBefore) "bootstrap retained raw input damage refused without writes: $relative/$message"
         }finally{[IO.File]::WriteAllBytes($absolute,$bytes)}
     }
+    # Reuse the native Ready/WithdrawReady/Ready/Claim setup for a real pending
+    # v6 intent. Resume the exact same request and intent; never reseal them.
+    $pending=New-ActiveEnvelopeExtensionRequest -Workspace $pendingWorkspace -RequestPath (Join-Path $Root 'after-intent-extension.json') -AddedOwnerRoot 'docs/six.md'
+    Write-EnvelopeCanonicalJson $pending.request_path $pending.request
+    $pendingRequestHash=Get-EnvelopeFileSha256 $pending.request_path
+    $pendingArgs=@{WorkspaceRoot=$pendingWorkspace;UnitId='u002';ActiveDevelopmentEnvelopeExtension=$pending.request_path;RepositoryMapPath=$pending.map_path;OutPath=$pending.receipt_path;SourceCompositionOutPath=$pending.source_path;ExpectedActiveDevelopmentEnvelopeExtensionSha256=$pendingRequestHash;Execute=$true}
+    $preimageHashes=@{};foreach($relative in @('project.spec.json','feature.lock.json','workspace.state.json','iteration-units/u002.json','iteration-events.jsonl','repository-map.json','source-compositions/u002.lock.json')){$preimageHashes[$relative]=Get-EnvelopeFileSha256 (Join-Path $pendingWorkspace $relative)}
+    $faulted=$false;try{Invoke-MorphospaceExtendActiveDevelopmentEnvelope @pendingArgs -FaultAfter after-intent|Out-Null}catch{$faulted=$_.Exception.Message-like'*Injected interruption after intent publication*'}
+    Assert-ActiveEnvelopeTest $faulted 'canonical legacy-lock bootstrap did not retain a genuine after-intent interruption'
+    $pendingIntentPath=Join-Path $pendingWorkspace 'receipts/transactions/u002-add-root-recorded-transition.intent.json';$pendingIntentHash=Get-EnvelopeFileSha256 $pendingIntentPath
+    $pendingCompletionPath=Join-Path $pendingWorkspace 'receipts/transactions/u002-add-root-recorded-transition.completion.json'
+    Assert-ActiveEnvelopeTest (-not(Test-Path -LiteralPath $pendingCompletionPath)-and-not(Test-Path -LiteralPath $pending.receipt_path)-and-not(Test-Path -LiteralPath $pending.source_path)) 'after-intent interruption installed an extension artifact or completion'
+    foreach($relative in $preimageHashes.Keys){Assert-ActiveEnvelopeTest ((Get-EnvelopeFileSha256 (Join-Path $pendingWorkspace $relative))-ceq[string]$preimageHashes[$relative]) "after-intent interruption changed native preimage $relative"}
+    $stageHashes=@{};foreach($index in @(0,1)){$stage=Join-Path $pendingWorkspace "receipts/transactions/u002-add-root-recorded-transition.artifact-$index.pending";$stageHashes[$stage]=Get-EnvelopeFileSha256 $stage}
+    Assert-ActiveEnvelopeTest ([string]$stageHashes[(Join-Path $pendingWorkspace 'receipts/transactions/u002-add-root-recorded-transition.artifact-0.pending')]-ceq$pendingRequestHash) 'pending request stage is not the exact canonical caller bytes'
+    $pendingLockPath=Join-Path $pendingWorkspace 'feature.lock.json';$pendingLockBytes=[IO.File]::ReadAllBytes($pendingLockPath)
+    try{
+        [IO.File]::AppendAllText($pendingLockPath,' ',[Text.UTF8Encoding]::new($false));$damagedBefore=Get-EnvelopeWorkspaceByteInventorySha256 $pendingWorkspace;$message=''
+        try{Invoke-MorphospaceExtendActiveDevelopmentEnvelope @pendingArgs|Out-Null}catch{$message=$_.Exception.Message}
+        Assert-ActiveEnvelopeTest ($message-like'*durable raw additional-projection byte-hash CAS*'-and(Get-EnvelopeWorkspaceByteInventorySha256 $pendingWorkspace)-ceq$damagedBefore) "pending canonical legacy-lock recovery waived raw preimage CAS or wrote on refusal: $message"
+    }finally{[IO.File]::WriteAllBytes($pendingLockPath,$pendingLockBytes)}
+    Assert-ActiveEnvelopeTest ((Get-EnvelopeFileSha256 $pendingIntentPath)-ceq$pendingIntentHash-and(Get-EnvelopeFileSha256 $pending.request_path)-ceq$pendingRequestHash) 'pending negative changed the immutable intent or caller request'
+    foreach($stage in $stageHashes.Keys){Assert-ActiveEnvelopeTest ((Get-EnvelopeFileSha256 $stage)-ceq[string]$stageHashes[$stage]) 'pending negative changed an exact staged artifact'}
+    $resumed=Invoke-MorphospaceExtendActiveDevelopmentEnvelope @pendingArgs
+    Assert-ActiveEnvelopeTest ($resumed.executed-and(Test-Path -LiteralPath $pendingCompletionPath)-and(Get-EnvelopeFileSha256 $pendingIntentPath)-ceq$pendingIntentHash-and(Get-EnvelopeFileSha256 $pending.request_path)-ceq$pendingRequestHash-and(Get-EnvelopeFileSha256 $pending.receipt_path)-ceq$pendingRequestHash) 'same-input native replay did not complete the immutable canonical legacy-lock intent'
     $recovery=New-ActiveEnvelopeExtensionRequest -Workspace $recoveryWorkspace -RequestPath (Join-Path $Root 'recovery-extension.json') -AddedOwnerRoot 'docs/six.md'
+    Write-EnvelopeCanonicalJson $recovery.request_path $recovery.request
     $faulted=$false
     try{Invoke-MorphospaceExtendActiveDevelopmentEnvelope -WorkspaceRoot $recoveryWorkspace -UnitId u002 -ActiveDevelopmentEnvelopeExtension $recovery.request_path -RepositoryMapPath $recovery.map_path -OutPath $recovery.receipt_path -SourceCompositionOutPath $recovery.source_path -ExpectedActiveDevelopmentEnvelopeExtensionSha256 (Get-EnvelopeFileSha256 $recovery.request_path) -Execute -FaultAfter after-projection|Out-Null}catch{$faulted=$_.Exception.Message-like'*Injected interruption*'}
     Assert-ActiveEnvelopeTest $faulted 'bootstrap genuine extension interruption was not reached'
@@ -166,5 +200,5 @@ function Test-NativeBootstrapEnvelopeExtension {
     $null=&$scopeProvenanceModule {param($w,$m)Test-MorphospaceEffectiveDevelopmentEnvelope $w u002 $m} $workspace $fixture.map
     & pwsh -NoProfile -File (Join-Path $PSScriptRoot '../Test-WorkflowContracts.ps1') -RepoRoot $repoRoot -WorkspaceRoot $workspace -RepositoryMapPath $fixture.map -CurrentWorkOnly -CurrentWorkspaceOnly -SkipOwnerSelfTests
     if($LASTEXITCODE-ne0){throw 'Fresh accepted native bootstrap current-work reader failed.'}
-    [pscustomobject]@{result='pass';native_ready_withdraw_ready_claim=$true;actual_readonly_shape=$true;root_extension=$true;generic_recovery=$true;second_extension=$true;freeze_begin_native_receipt_record_accept=$true;later_reader=$true;modeled_host_validation=$true;workspace=$workspace}|ConvertTo-Json -Compress
+    [pscustomobject]@{result='pass';native_ready_withdraw_ready_claim=$true;actual_readonly_shape=$true;canonical_legacy_lock_request=$true;after_intent_same_input_replay=$true;pending_raw_cas_refusal=$true;root_extension=$true;generic_recovery=$true;second_extension=$true;freeze_begin_native_receipt_record_accept=$true;later_reader=$true;modeled_host_validation=$true;workspace=$workspace}|ConvertTo-Json -Compress
 }
