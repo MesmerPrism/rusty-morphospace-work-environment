@@ -12,6 +12,46 @@ composition, and repository map must equal that chain's effective endpoint.
 Caller-supplied provenance, a copied workspace, or a self-consistent alternate
 map does not grant authority.
 
+One closed native-bootstrap origin is also supported: an initially featureless
+unit with an exact native `source_composition_lock.v1`, no tooling context, and
+no accepted predecessor at its original Claim. The owner authenticates one
+ordinary Ready and its direct Claim, their original committed bytes, the full
+retained event prefix, and the exact Claim unit/state endpoint. The finite prefix
+is empty or one earlier distinct native Ready/WithdrawReady pair. Its committed
+transactions and withdrawal receipt are authenticated; their raw bindings remain
+covered by `prefix_sha256` in the origin. Ready reconstructs its proposed unit and
+idle selector state; Claim preserves that state except its native ownership and
+event changes. Their clean source observations must match the native lock.
+Missing admission alone never selects this route; a competing admission or
+another origin shape fails closed at every live, continuation and recovery entry.
+
+Bootstrap extension is roots-only. It retains the original repository-map path
+and raw bytes, repository membership, read-only dependencies, source baselines,
+objective and every feature, effect, permission, build, device and acceptance
+ceiling. No repository addition, relocation or tooling adoption is permitted.
+The derivative keeps the existing v1 format with exactly one closed origin:
+`original_preparation` for an ordinarily admitted unit, or `original_bootstrap`
+binding the original native lock, map, Ready and Claim and first extension.
+These origin alternatives cannot be combined or substituted.
+
+Native Ready/Claim v1 did not fence project or feature-lock documents. The first
+reviewed extension therefore binds their exact current raw/canonical preimages;
+later replay derives that starting envelope from its committed transaction,
+never from a replacement live document. A later roots-only extension must be
+the direct authenticated successor of its parent extension. Generic recovery
+checks the original native proofs against the captured prefix even when the
+interrupted transaction has already installed its projections.
+
+A native bootstrap unit may declare independent read-only repositories in its
+original `read_only_dependencies` without listing them as writable assessment
+owners. This route derives only that retained read-only membership from the
+authenticated native unit, project, map and source lock. Paths and dependency
+records remain exact; no assessment row or writable authority is invented.
+Ordinary admitted units retain their complete assessment-closure requirement.
+Original scope descriptions and `non_scope` bytes remain bound origin evidence;
+only the exact additive target recorded by this transaction supplies added path
+authority. Other non-scope conditions and immutable fields remain unchanged.
+
 ## Closed additive change
 
 The owner-reviewed v1 request carries complete target project and feature-lock

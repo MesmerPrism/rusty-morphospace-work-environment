@@ -232,6 +232,8 @@ function Get-ActiveEnvelopeSourceComposition {
     $relocation=$Extension.PSObject.Properties.Name-ccontains'planning_authority_relocation'
     if($relocation){$relocationModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospacePlanningAuthorityRelocation.psm1') -PassThru;[void](&$relocationModule {param($w,$q,$p,$m)Assert-MorphospacePlanningAuthorityRelocation -WorkspaceRoot $w -Request $q -ParentSource $p -EffectiveMap $m} $WorkspaceRoot $Extension $parent $RepositoryMap)}
     $original = $Provenance.original.source_composition
+    $bootstrap=$Provenance.original.PSObject.Properties.Name-ccontains'bootstrap'
+    if($bootstrap){Assert-ActiveEnvelopeBootstrapLimits $Extension $Provenance.original.bootstrap_unit $Provenance.original.repository_map}
     $parentRows = Get-ActiveEnvelopeIndex @($parent.repositories) 'repo_id' 'Parent source composition'
     $mapRows = Get-ActiveEnvelopeIndex @($RepositoryMap.repositories) 'repo_id' 'Effective repository map'
     $oldWritable = Get-ActiveEnvelopeIndex @($Provenance.effective.unit.allowed_repositories) 'repo_id' 'Current writable scope'
@@ -260,7 +262,7 @@ function Get-ActiveEnvelopeSourceComposition {
             $parentTree = Get-ActiveEnvelopeParentCommit $old tree
             $baselineCommit = Get-ActiveEnvelopeBaselineCommit $old commit
             $baselineTree = Get-ActiveEnvelopeBaselineCommit $old tree
-            $introducedBy = if ($null -ne $old.PSObject.Properties['introduced_by']) { [string]$old.introduced_by } else { [string]$Provenance.original.preparation_receipt.preparation_id }
+            $introducedBy = if ($null -ne $old.PSObject.Properties['introduced_by']) { [string]$old.introduced_by } elseif($bootstrap){[string]$original.lock_id}else{[string]$Provenance.original.preparation_receipt.preparation_id}
             if($relocation-and$id-cne[string]$Extension.planning_authority_relocation.repo_id){
                 # This transaction selects planning authority only. Current product
                 # checkout observations are not a new selected source identity.
@@ -308,11 +310,6 @@ function Get-ActiveEnvelopeSourceComposition {
             path=[string]$parentBinding.path;raw_sha256=[string]$parentBinding.raw_sha256;canonical_sha256=[string]$parentBinding.canonical_sha256
             schema=[string]$parent.schema;lock_id=[string]$parent.lock_id;fingerprint=[string]$parent.fingerprint
         }
-        original_preparation=[pscustomobject][ordered]@{
-            preparation_id=[string]$Provenance.original.preparation_receipt.preparation_id
-            path=[string]$originalBinding.path;raw_sha256=[string]$originalBinding.raw_sha256;canonical_sha256=[string]$originalBinding.canonical_sha256
-            schema=[string]$original.schema;lock_id=[string]$original.lock_id;fingerprint=[string]$original.fingerprint
-        }
         repository_map=[pscustomobject][ordered]@{
             path=$RepositoryMapRelative;raw_sha256=$RepositoryMapRawSha256
             original_path=[string]$Provenance.original.repository_map.path
@@ -322,6 +319,13 @@ function Get-ActiveEnvelopeSourceComposition {
         repositories=@($records.ToArray())
         status='locked'
         does_not_prove=@('Does not change the admitted objective, accept or validate work, mutate Git or a device, grant publication authority, or waive any owner boundary.')
+    }
+    if($bootstrap){
+        $origin=Copy-ActiveEnvelopeValue $Provenance.original.bootstrap
+        $first=if($parent.PSObject.Properties.Name-ccontains'original_bootstrap'){[string]$parent.original_bootstrap.first_extension_id}else{[string]$Extension.extension_id}
+        $origin|Add-Member -Force first_extension_id $first;$source|Add-Member original_bootstrap $origin
+    }else{
+        $source|Add-Member original_preparation ([pscustomobject][ordered]@{preparation_id=[string]$Provenance.original.preparation_receipt.preparation_id;path=[string]$originalBinding.path;raw_sha256=[string]$originalBinding.raw_sha256;canonical_sha256=[string]$originalBinding.canonical_sha256;schema=[string]$original.schema;lock_id=[string]$original.lock_id;fingerprint=[string]$original.fingerprint})
     }
     if($relocation){$source|Add-Member source_selection_mode 'planning-authority-relocation-only'}
     $source.fingerprint = Get-ActiveEnvelopeHash $source
@@ -449,6 +453,15 @@ function Assert-ActiveEnvelopeTargetSemantics {
     $writable=Get-ActiveEnvelopeIndex @($Extension.target.allowed_repositories) 'repo_id' 'Target writable scope';$readOnly=Get-ActiveEnvelopeIndex @($Extension.target.read_only_dependencies) 'repo_id' 'Target read-only scope'
     foreach($id in $writable.Keys){if($readOnly.ContainsKey($id)){throw "Repository '$id' cannot be both writable and read-only."}}
     $ownerIndex=Get-ActiveEnvelopeIndex @($targetAssessment.owner_repositories) 'repo_id' 'Target assessment owners'
+    if($Provenance.PSObject.Properties.Name-ccontains'original'-and$Provenance.original.PSObject.Properties.Name-ccontains'bootstrap'){
+        Assert-ActiveEnvelopeBootstrapLimits $Extension $Provenance.original.bootstrap_unit $Provenance.original.repository_map
+        # The native unit separately owns retained read-only dependencies. This
+        # structural projection adds no assessment row or writable authority.
+        foreach($dependency in @($Provenance.original.bootstrap_unit.read_only_dependencies)){
+            $id=[string]$dependency.repo_id
+            if(-not$ownerIndex.ContainsKey($id)){$ownerIndex[$id]=[pscustomobject]@{repo_id=$id;source_roots=@($dependency.paths)}}
+        }
+    }
     $projectIndex=Get-ActiveEnvelopeIndex @($targetProject.repositories) 'repo_id' 'Target project repositories'
     foreach($id in $ownerIndex.Keys){if(-not$projectIndex.ContainsKey($id)-or(-not$writable.ContainsKey($id)-and-not$readOnly.ContainsKey($id))){throw "Target owner repository '$id' lacks exact project and unit closure."}}
     foreach($id in @($writable.Keys)+@($readOnly.Keys)){
@@ -470,6 +483,47 @@ function Assert-ActiveEnvelopeTargetSemantics {
     return $targetUnitClone
 }
 
+function Get-ActiveEnvelopeOriginalSourceBinding {
+    param([object]$Source)
+    if($Source.PSObject.Properties.Name-ccontains'original_bootstrap'){return $Source.original_bootstrap}
+    return $Source.original_preparation
+}
+function Assert-ActiveEnvelopeBootstrapLimits {
+    param([object]$Request,[object]$OriginalUnit,[object]$OriginalMap)
+    if($Request.PSObject.Properties.Name-ccontains'planning_authority_relocation'-or@($Request.additions.repository_ids).Count-ne0-or[string]$Request.expected.repository_map_path-cne[string]$OriginalMap.path-or[string]$Request.expected.repository_map_raw_sha256-cne[string]$OriginalMap.raw_sha256-or[string]$Request.effective_repository_map.path-cne[string]$OriginalMap.path-or[string]$Request.effective_repository_map.raw_sha256-cne[string]$OriginalMap.raw_sha256){throw 'Native bootstrap extension permits only roots with the exact original repository map.'}
+    if((Get-ActiveEnvelopeHash @($Request.before.read_only_dependencies))-cne(Get-ActiveEnvelopeHash @($OriginalUnit.read_only_dependencies))-or(Get-ActiveEnvelopeHash @($Request.target.read_only_dependencies))-cne(Get-ActiveEnvelopeHash @($OriginalUnit.read_only_dependencies))){throw 'Native bootstrap retained read-only dependency bytes changed.'}
+    Assert-ActiveEnvelopeExactSet @($Request.before.allowed_repositories.repo_id) @($OriginalUnit.allowed_repositories.repo_id) 'Native bootstrap writable repositories'
+    Assert-ActiveEnvelopeExactSet @($Request.target.allowed_repositories.repo_id) @($OriginalUnit.allowed_repositories.repo_id) 'Native bootstrap target writable repositories'
+    Assert-ActiveEnvelopeExactSet @($Request.before.agent_scope_assessment.owner_repositories.repo_id) @($OriginalUnit.agent_scope_assessment.owner_repositories.repo_id) 'Native bootstrap assessment owners'
+    Assert-ActiveEnvelopeExactSet @($Request.target.agent_scope_assessment.owner_repositories.repo_id) @($OriginalUnit.agent_scope_assessment.owner_repositories.repo_id) 'Native bootstrap target assessment owners'
+    foreach($dependency in @($OriginalUnit.read_only_dependencies)){
+        $id=[string]$dependency.repo_id
+        if(@($OriginalUnit.allowed_repositories.repo_id)-ccontains$id){throw 'Native bootstrap cannot derive writable rights from a read-only dependency.'}
+        $rows=@($Request.before.project.repositories|Where-Object repo_id -CEQ $id)
+        if($rows.Count-ne1){throw 'Native bootstrap read-only dependency is outside original project scope.'}
+        foreach($path in @($dependency.paths)){if(-not(Test-ActiveEnvelopePathAllowed ([string]$path) @($rows[0].allowed_paths))){throw 'Native bootstrap retained read-only path exceeds original project scope.'}}
+    }
+}
+function Assert-ActiveEnvelopeBootstrapOrigin {
+    param([string]$Workspace,[object]$Request,[object]$Source)
+    $binding=$Source.original_bootstrap;$firstId=[string]$binding.first_extension_id
+    $first=$Request
+    if([string]$Request.extension_id-cne$firstId){
+        $parent=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $Workspace ([string]$Source.parent.path) -RequireLeaf)
+        if($parent.PSObject.Properties.Name-cnotcontains'original_bootstrap'-or(Get-ActiveEnvelopeHash $parent.original_bootstrap)-cne(Get-ActiveEnvelopeHash $binding)){throw 'Native bootstrap parent origin differs.'}
+        $parentProof=Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $Workspace -TransactionId "$($parent.extension_id)-recorded-transition" -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath "iteration-units/$($Request.unit_id).json" -ExpectedEventsPath 'iteration-events.jsonl'
+        [void](Assert-ActiveEnvelopeHistoricalTransition $Workspace $parentProof.intent.event $parentProof)
+        if([string]$parentProof.intent.target.state.sha256-cne[string]$Request.expected.state_sha256-or[string]$parentProof.intent.target.unit.sha256-cne[string]$Request.expected.unit_sha256-or[string]$parentProof.intent.event.event_id-cne[string]$Request.expected.event_tail_id){throw 'Native bootstrap roots-only continuation is detached from its parent extension.'}
+        $firstProof=Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $Workspace -TransactionId "$firstId-recorded-transition" -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath "iteration-units/$($Request.unit_id).json" -ExpectedEventsPath 'iteration-events.jsonl'
+        $first=(Get-ActiveEnvelopeArtifactDocument $firstProof.intent $script:ActiveEnvelopeExtensionSchema 'active-development-envelope-extension-v1.schema.json').document
+    }
+    $originOwner=Import-Module (Join-Path $PSScriptRoot 'DevelopmentEnvelopeProvenance.psm1') -PassThru
+    $origin=&$originOwner {param($w,$id,$p,$map,$project,$feature,$u,$s,$tail)Get-PreparationProvenanceNativeBootstrap $w $id $p $map $project $feature $u $s $tail} $Workspace ([string]$Request.unit_id) ([string]$binding.path) ([string]$binding.repository_map.path) $first.before.project $first.before.feature_lock ([string]$first.expected.unit_sha256) ([string]$first.expected.state_sha256) ([string]$first.expected.event_tail_id)
+    $expected=Copy-ActiveEnvelopeValue $origin.binding;$expected|Add-Member first_extension_id $firstId
+    if((Get-ActiveEnvelopeHash $expected)-cne(Get-ActiveEnvelopeHash $binding)-or[string]$first.extension_id-cne$firstId-or[string]$first.expected.source_composition_path-cne[string]$binding.path-or[string]$Request.expected.original_source_composition_path-cne[string]$binding.path-or[string]$Request.expected.original_source_composition_raw_sha256-cne[string]$binding.raw_sha256){throw 'Native bootstrap derivative origin is detached from native source and lifecycle bytes.'}
+    Assert-ActiveEnvelopeBootstrapLimits $Request $origin.unit $origin.binding.repository_map
+    $origin
+}
 function Get-ActiveEnvelopeArtifactDocument {
     param([Parameter(Mandatory)][object]$Intent,[Parameter(Mandatory)][string]$Schema,[Parameter(Mandatory)][string]$SchemaFile)
     $matches=[Collections.Generic.List[object]]::new()
@@ -593,13 +647,14 @@ function Assert-ActiveEnvelopeArtifactBindings {
     }
     $mapPath=Resolve-MorphospaceWorkspacePath $workspace ([string]$request.effective_repository_map.path) -RequireLeaf
     if((Get-MorphospaceFileSha256 $mapPath)-cne[string]$request.effective_repository_map.raw_sha256-or[string]$source.repository_map.path-cne[string]$request.effective_repository_map.path-or[string]$source.repository_map.raw_sha256-cne[string]$request.effective_repository_map.raw_sha256){throw 'Active-envelope recovery effective repository map drifted.'}
-    foreach($binding in @($source.parent,$source.original_preparation)){
+    $originalSource=Get-ActiveEnvelopeOriginalSourceBinding $source
+    foreach($binding in @($source.parent,$originalSource)){
         $path=Resolve-MorphospaceWorkspacePath $workspace ([string]$binding.path) -RequireLeaf
         $document=Read-MorphospaceProtocolJson $path
         if((Get-MorphospaceFileSha256 $path)-cne[string]$binding.raw_sha256-or(Get-ActiveEnvelopeHash $document)-cne[string]$binding.canonical_sha256-or[string]$document.schema-cne[string]$binding.schema-or[string]$document.lock_id-cne[string]$binding.lock_id-or[string]$document.fingerprint-cne[string]$binding.fingerprint){throw 'Active-envelope recovery source lineage drifted.'}
     }
     $parentSource=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace ([string]$source.parent.path) -RequireLeaf)
-    if([string]$request.expected.source_composition_path-cne[string]$source.parent.path-or[string]$request.expected.source_composition_raw_sha256-cne[string]$source.parent.raw_sha256-or[string]$request.expected.source_composition_canonical_sha256-cne[string]$source.parent.canonical_sha256-or[string]$request.expected.original_source_composition_path-cne[string]$source.original_preparation.path-or[string]$request.expected.original_source_composition_raw_sha256-cne[string]$source.original_preparation.raw_sha256){throw 'Active-envelope recovery request source lineage is detached.'}
+    if([string]$request.expected.source_composition_path-cne[string]$source.parent.path-or[string]$request.expected.source_composition_raw_sha256-cne[string]$source.parent.raw_sha256-or[string]$request.expected.source_composition_canonical_sha256-cne[string]$source.parent.canonical_sha256-or[string]$request.expected.original_source_composition_path-cne[string]$originalSource.path-or[string]$request.expected.original_source_composition_raw_sha256-cne[string]$originalSource.raw_sha256){throw 'Active-envelope recovery request source lineage is detached.'}
     $parentMapPath=if([string]$parentSource.schema-ceq$script:ActiveEnvelopeSourceSchema){[string]$parentSource.repository_map.path}else{[string]$request.expected.original_repository_map_path}
     $parentMapHash=if([string]$parentSource.schema-ceq$script:ActiveEnvelopeSourceSchema){[string]$parentSource.repository_map.raw_sha256}else{[string]$request.expected.original_repository_map_raw_sha256}
     if([string]$request.expected.repository_map_path-cne$parentMapPath-or[string]$request.expected.repository_map_raw_sha256-cne$parentMapHash){throw 'Active-envelope recovery request repository-map lineage is detached.'}
@@ -637,7 +692,7 @@ function Assert-ActiveEnvelopeHistoricalSourceSemantics {
         if($objectTree.Count-ne1-or[string]$objectTree[0]-cne[string]$row.effective_tree){throw "Historical source tree for '$id' is detached from its commit."}
         if($before.ContainsKey($id)){
             $old=$before[$id]
-            $expectedIntroducer=if($old.PSObject.Properties.Name-contains'introduced_by'){[string]$old.introduced_by}else{[string]$Source.original_preparation.preparation_id}
+            $expectedIntroducer=if($old.PSObject.Properties.Name-contains'introduced_by'){[string]$old.introduced_by}elseif($Source.PSObject.Properties.Name-ccontains'original_bootstrap'){[string]$Source.original_bootstrap.lock_id}else{[string]$Source.original_preparation.preparation_id}
             if([string]$row.role-cne[string]$old.role-or[string]$row.introduced_by-cne$expectedIntroducer-or[string]$row.materialization_path-cne[string]$old.materialization_path-or[string]$row.baseline_commit-cne(Get-ActiveEnvelopeBaselineCommit $old commit)-or[string]$row.baseline_tree-cne(Get-ActiveEnvelopeBaselineCommit $old tree)-or[string]$row.parent_commit-cne(Get-ActiveEnvelopeParentCommit $old commit)-or[string]$row.parent_tree-cne(Get-ActiveEnvelopeParentCommit $old tree)){throw "Historical source row '$id' rewrites retained lineage identity."}
             if($relocation-and$id-cne[string]$Request.planning_authority_relocation.repo_id){
                 $retainedDirt=if($old.PSObject.Properties.Name-ccontains'permitted_active_dirt'){@($old.permitted_active_dirt)}else{@()}
@@ -682,6 +737,10 @@ function Assert-ActiveEnvelopeHistoricalTransition {
     $beforeUnit.source_composition=[pscustomobject][ordered]@{mode='exact-lock';lock_path=[string]$request.expected.source_composition_path;materialization_receipt=$null}
     if((Get-ActiveEnvelopeHash $beforeUnit)-cne[string]$intent.pre.unit.sha256-or(Get-ActiveEnvelopeHash $beforeUnit)-cne[string]$request.expected.unit_sha256-or(Get-ActiveEnvelopeHash $request.before.state)-cne[string]$intent.pre.state.sha256-or(Get-ActiveEnvelopeHash $request.before.state)-cne[string]$request.expected.state_sha256){throw 'Historical extension before state or unit is detached.'}
     $provenance=[pscustomobject]@{effective=[pscustomobject]@{project=$request.before.project;feature_lock=$request.before.feature_lock;state=$request.before.state;unit=$beforeUnit;assessment=$request.before.agent_scope_assessment}}
+    if($source.PSObject.Properties.Name-ccontains'original_bootstrap'){
+        $bootstrap=Assert-ActiveEnvelopeBootstrapOrigin $workspace $request $source
+        $provenance|Add-Member original ([pscustomobject]@{bootstrap=$bootstrap.binding;bootstrap_unit=$bootstrap.unit;repository_map=$bootstrap.binding.repository_map})
+    }
     $targetUnit=Assert-ActiveEnvelopeTargetSemantics $request $provenance (Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace ([string]$request.effective_repository_map.path) -RequireLeaf))
     $targetState=Copy-ActiveEnvelopeValue $request.before.state;$targetState.plan_revision=[int]$targetState.plan_revision+1;$targetState.last_event_id=[string]$ExpectedEvent.event_id;$targetState.module_registry=Get-MorphospaceDevelopmentEnvelopeModuleRegistry $request.target.project $request.target.feature_lock
     if((Get-ActiveEnvelopeHash $targetUnit)-cne[string]$intent.target.unit.sha256-or(Get-ActiveEnvelopeHash $request.target.state)-cne[string]$intent.target.state.sha256-or(Get-ActiveEnvelopeHash $request.target.state)-cne(Get-ActiveEnvelopeHash $targetState)){throw 'Historical extension target state or unit is not the exact derived projection.'}
