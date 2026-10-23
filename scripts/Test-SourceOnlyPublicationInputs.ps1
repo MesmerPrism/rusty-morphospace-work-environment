@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([switch]$SelfTest, [switch]$DispositionOnly, [switch]$FixedSourcePathOnly, [switch]$ActiveEnvelopeReceiptOnly, [switch]$ReviewedIntegrationNativeOnly, [switch]$ReviewedIntegrationOnly)
+param([switch]$SelfTest, [switch]$DispositionOnly, [switch]$FixedSourcePathOnly, [switch]$ActiveEnvelopeReceiptOnly, [switch]$ReviewedIntegrationNativeOnly, [switch]$ReviewedIntegrationOnly, [switch]$ProjectSourceDomainOnly)
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
@@ -64,7 +64,7 @@ function New-SyntheticOperationEvidence([object]$Start, [object]$Published, [str
     return [pscustomobject]@{ path = $OutPath; sha256 = Get-MorphospaceFileSha256 $OutPath; document = $document }
 }
 
-function New-RehearsalFixture([string]$Root) {
+function New-RehearsalFixture([string]$Root, [switch]$ProjectPlanningMember, [switch]$OmitReadOnlyDeclaration) {
     [IO.Directory]::CreateDirectory($Root) | Out-Null
     $provider = New-SyntheticSource $Root 'provider-source' 'provider.txt' 'SYNTHETIC-CONTENT-ONE'
     $consumer = New-SyntheticSource $Root 'consumer-source' 'consumer.txt' 'SYNTHETIC-CONTENT-TWO'
@@ -81,6 +81,7 @@ function New-RehearsalFixture([string]$Root) {
         [pscustomobject][ordered]@{ repo_id = 'consumer-source'; role = 'application'; path = '<consumer-source>'; allowed_paths = @('consumer.txt') },
         [pscustomobject][ordered]@{ repo_id = 'reference-source'; role = 'core'; path = '<reference-source>'; allowed_paths = @('reference.txt') }
     )
+    if ($ProjectPlanningMember) { $project.repositories += [pscustomobject][ordered]@{ repo_id = 'planning-owner'; role = 'planning'; path = '<planning-owner>'; allowed_paths = @('morphospace/') } }
     $project.validation_profiles = @([pscustomobject][ordered]@{ profile_id = 'snapshot'; commands = @('synthetic snapshot validation') })
     $lock = Get-Content -Raw (Join-Path $example 'feature.lock.json') | ConvertFrom-Json -Depth 64 -DateKind String; $lock.project_id = 'publication-rehearsal'; $lock.lock_fingerprint = Get-MorphospaceFeatureLockFingerprint $lock
     $unit = [pscustomobject][ordered]@{
@@ -93,6 +94,7 @@ function New-RehearsalFixture([string]$Root) {
         non_scope = @('Source mutation.', 'Planning publication.', 'Runtime or wearer claims.'); acceptance = @([pscustomobject][ordered]@{ acceptance_id = 'source-review'; proof = 'Synthetic source snapshot is reviewed.'; command = 'synthetic source review' })
         risk_tier = 'standard'; device_requirement = 'none'; validation = @([pscustomobject][ordered]@{ profile_id = 'snapshot'; command = 'synthetic snapshot validation' }); outputs = @('validation receipt'); commit_policy = 'Synthetic fixture only.'; push_checkpoint = 'integration-batch'
     }
+    if ($OmitReadOnlyDeclaration) { $unit.read_only_dependencies = @() }
     foreach ($surface in @(
         @{kind='readme';path='README.md';skill=$null},
         @{kind='skill';path='skills/rusty-morphospace/SKILL.md';skill='rusty-morphospace'},
@@ -132,6 +134,76 @@ function New-RehearsalFixture([string]$Root) {
 function Assert-CurrentWork([object]$Fixture, [string]$Phase) {
     $output = @(& pwsh -NoProfile -File (Join-Path $PSScriptRoot 'Test-WorkflowContracts.ps1') -RepoRoot (Split-Path $PSScriptRoot -Parent) -WorkspaceRoot $Fixture.workspace -RepositoryMapPath $Fixture.map -CurrentWorkOnly -SkipOwnerSelfTests 2>&1 | ForEach-Object { [string]$_ })
     if ($LASTEXITCODE -ne 0) { throw "Current-work validation failed after $Phase`: $($output -join ' ')" }
+}
+
+function Invoke-ProjectSourceDomainControls {
+    $domainRoot = Join-Path ([IO.Path]::GetTempPath()) ('source-only-domain-' + [guid]::NewGuid().ToString('N'))
+    try {
+        # Planning membership and read-only declarations are fixed before the
+        # native receipt/Record/Accept; no accepted projection is hand-rewritten.
+        $f = New-RehearsalFixture (Join-Path $domainRoot 'positive') -ProjectPlanningMember
+        Invoke-MorphospaceWorkUnitAutomation -Action RecordValidation -WorkspaceRoot $f.workspace -UnitId 'snapshot-unit' -RepoMapPath $f.map -ValidationTier standard -ValidationResult pass -ValidationReceipt 'receipts/snapshot-unit-pass-validation.json' -Timestamp '2026-09-08T09:02:00.0000000Z' -Execute | Out-Null
+        Invoke-MorphospaceWorkUnitAutomation -Action Accept -WorkspaceRoot $f.workspace -UnitId 'snapshot-unit' -RepoMapPath $f.map -Timestamp '2026-09-08T09:03:00.0000000Z' -Execute | Out-Null
+        Invoke-FixtureGit $f.planning @('add', 'morphospace') | Out-Null
+        Invoke-FixtureGit $f.planning @('commit', '-m', 'accept project-source domain fixture') | Out-Null
+        $before = @{}
+        foreach ($file in @(Get-ChildItem -LiteralPath $f.workspace -Recurse -File)) { $before[$file.FullName] = Get-MorphospaceFileSha256 $file.FullName }
+        $publicationId = 'project-source-domain-publication'
+        $readiness = Get-MorphospaceSourceOnlyPublicationReadiness -WorkspaceRoot $f.workspace -UnitId 'snapshot-unit' -RepoMapPath $f.map -PublicationId $publicationId
+        Assert-Builder ($readiness.status -ceq 'supported') "Project planning member was incorrectly required as source: $(@($readiness.reason_codes) -join ', ')."
+        $planPath = Join-Path $f.inputs 'domain-plan.json'
+        $plan = New-MorphospaceSourceOnlyPublicationPlan -WorkspaceRoot $f.workspace -UnitId 'snapshot-unit' -RepoMapPath $f.map -PublicationId $publicationId -OutPath $planPath
+        $expected = @('consumer-source', 'provider-source')
+        Assert-Builder ((@($plan.document.source_repositories.repo_id | Sort-Object -CaseSensitive) -join '|') -ceq (@($expected | Sort-Object -CaseSensitive) -join '|')) 'Plan acquired planning, read-only or external-map publication ownership.'
+        Assert-Builder ((@($readiness.source_repositories.repo_id | Sort-Object -CaseSensitive) -join '|') -ceq (@($expected | Sort-Object -CaseSensitive) -join '|')) 'Readiness and Plan writable source domains differ.'
+        $nativeOut = Join-Path $f.workspace "receipts/$publicationId-plan.json"
+        $dry = Invoke-MorphospacePrepareSourceOnlyPublication -WorkspaceRoot $f.workspace -UnitId 'snapshot-unit' -RepoMapPath $f.map -SourceOnlyPublicationPlan $planPath -ExpectedSourceOnlyPublicationPlanSha256 $plan.sha256 -OutPath $nativeOut
+        Assert-Builder ($dry.action -ceq 'PrepareSourceOnlyPublication' -and $dry.executed -eq $false -and -not (Test-Path -LiteralPath $nativeOut)) 'Native consumer did not accept the genuine public plan without a write.'
+
+        $support = Copy-Document $plan.document
+        $support.source_repositories[1].repo_id = 'skill-surfaces'
+        $supportPath = Join-Path $f.inputs 'non-project-source-plan.json'; Write-Json $supportPath $support
+        Assert-Rejected { Invoke-MorphospacePrepareSourceOnlyPublication -WorkspaceRoot $f.workspace -UnitId 'snapshot-unit' -RepoMapPath $f.map -SourceOnlyPublicationPlan $supportPath -ExpectedSourceOnlyPublicationPlanSha256 (Get-MorphospaceFileSha256 $supportPath) -OutPath $nativeOut } '*coverage*' 'non-project mapped source used as publication owner'
+        $missing = Copy-Document $plan.document
+        $missing.source_repositories = @($missing.source_repositories | Where-Object repo_id -CNE 'consumer-source')
+        $missingPath = Join-Path $f.inputs 'missing-writable-source-plan.json'; Write-Json $missingPath $missing
+        Assert-Rejected { Invoke-MorphospacePrepareSourceOnlyPublication -WorkspaceRoot $f.workspace -UnitId 'snapshot-unit' -RepoMapPath $f.map -SourceOnlyPublicationPlan $missingPath -ExpectedSourceOnlyPublicationPlanSha256 (Get-MorphospaceFileSha256 $missingPath) -OutPath $nativeOut } '*coverage*' 'missing exact writable publication owner'
+        $missingMap = Copy-Document (Read-MorphospaceProtocolJson $f.map)
+        $missingMap.repositories = @($missingMap.repositories | Where-Object repo_id -CNE 'consumer-source')
+        $missingMapPath = Join-Path $f.inputs 'missing-source-map.json'; Write-Json $missingMapPath $missingMap
+        $missingReadiness = Get-MorphospaceSourceOnlyPublicationReadiness -WorkspaceRoot $f.workspace -UnitId 'snapshot-unit' -RepoMapPath $missingMapPath -PublicationId $publicationId
+        Assert-Builder ($missingReadiness.status -ceq 'unsupported' -and @($missingReadiness.reason_codes) -ccontains 'allowed-source-shape-unsupported:consumer-source') 'Missing mapped writable source no longer refuses precisely.'
+
+        # Make all alias-fixture Git queries real and available. The temporary
+        # planning remote is also unsupported; require the physical-alias code
+        # itself, rather than accepting that other refusal as isolation proof.
+        Invoke-FixtureGit $f.planning @('remote', 'add', 'origin', $f.provider.remote) | Out-Null
+        Invoke-FixtureGit $f.planning @('fetch', 'origin', 'main') | Out-Null
+        Invoke-FixtureGit $f.planning @('branch', '--set-upstream-to=origin/main', 'main') | Out-Null
+        $aliasMap = Copy-Document (Read-MorphospaceProtocolJson $f.map)
+        @($aliasMap.repositories | Where-Object repo_id -CEQ 'provider-source')[0].path = $f.planning
+        $aliasMapPath = Join-Path $f.inputs 'source-planning-alias-map.json'; Write-Json $aliasMapPath $aliasMap
+        $aliasReadiness = Get-MorphospaceSourceOnlyPublicationReadiness -WorkspaceRoot $f.workspace -UnitId 'snapshot-unit' -RepoMapPath $aliasMapPath -PublicationId $publicationId
+        Assert-Builder ($aliasReadiness.status -ceq 'unsupported' -and @($aliasReadiness.reason_codes) -ccontains 'source-planning-physical-alias:provider-source') 'Actual planning/source physical alias no longer refuses precisely.'
+        $after = @(Get-ChildItem -LiteralPath $f.workspace -Recurse -File)
+        Assert-Builder ($after.Count -eq $before.Count) 'Readiness/Plan/consumer DRY or negative controls created an owner file.'
+        foreach ($file in $after) { Assert-Builder ($before.ContainsKey($file.FullName) -and (Get-MorphospaceFileSha256 $file.FullName) -ceq $before[$file.FullName]) 'Readiness/Plan/consumer DRY or negative controls changed owner bytes.' }
+
+        $uncovered = New-RehearsalFixture (Join-Path $domainRoot 'uncovered') -ProjectPlanningMember -OmitReadOnlyDeclaration
+        Invoke-MorphospaceWorkUnitAutomation -Action RecordValidation -WorkspaceRoot $uncovered.workspace -UnitId 'snapshot-unit' -RepoMapPath $uncovered.map -ValidationTier standard -ValidationResult pass -ValidationReceipt 'receipts/snapshot-unit-pass-validation.json' -Timestamp '2026-09-08T09:02:00.0000000Z' -Execute | Out-Null
+        Invoke-MorphospaceWorkUnitAutomation -Action Accept -WorkspaceRoot $uncovered.workspace -UnitId 'snapshot-unit' -RepoMapPath $uncovered.map -Timestamp '2026-09-08T09:03:00.0000000Z' -Execute | Out-Null
+        Invoke-FixtureGit $uncovered.planning @('add', 'morphospace') | Out-Null
+        Invoke-FixtureGit $uncovered.planning @('commit', '-m', 'accept uncovered project-source fixture') | Out-Null
+        $uncoveredReadiness = Get-MorphospaceSourceOnlyPublicationReadiness -WorkspaceRoot $uncovered.workspace -UnitId 'snapshot-unit' -RepoMapPath $uncovered.map -PublicationId 'uncovered-project-source'
+        Assert-Builder ($uncoveredReadiness.status -ceq 'unsupported' -and @($uncoveredReadiness.reason_codes) -ccontains 'project-source-not-declared:reference-source') 'Uncovered actual project source no longer refuses precisely.'
+        Assert-Rejected { New-MorphospaceSourceOnlyPublicationPlan -WorkspaceRoot $uncovered.workspace -UnitId 'snapshot-unit' -RepoMapPath $uncovered.map -PublicationId 'uncovered-project-source' -OutPath (Join-Path $uncovered.inputs 'uncovered-plan.json') } '*project-source-not-declared:reference-source*' 'uncovered actual project source plan'
+        [pscustomobject][ordered]@{ schema='rusty.morphospace.workflow.publication_project_source_domain_self_test.v1'; result='pass'; boundary_cases=5; public_readiness_plan_consumer='pass'; planning_member_not_source=$true; readonly_not_publication_owner=$true; external_map_not_publication_owner=$true; missing_source_refused=$true; physical_alias_refused=$true; exact_coverage_refused=$true; consumer_dry_owner_unchanged=$true; actual_project_or_provider_used=$false } | ConvertTo-Json -Depth 8 -Compress
+    } finally {
+        $cleanupRoot = [IO.Path]::GetFullPath($domainRoot).TrimEnd('\','/')
+        $temporaryRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\','/')
+        if (-not [IO.Path]::GetDirectoryName($cleanupRoot).Equals($temporaryRoot,[StringComparison]::OrdinalIgnoreCase) -or -not [IO.Path]::GetFileName($cleanupRoot).StartsWith('source-only-domain-',[StringComparison]::Ordinal)) { throw 'Project-source fixture cleanup target is outside its direct temporary namespace.' }
+        if (Test-Path -LiteralPath $cleanupRoot) { Remove-Item -LiteralPath $cleanupRoot -Recurse -Force }
+    }
 }
 
 function New-DeliveryFixtureOriginal([string]$Root,[string]$Name,[string[]]$Argv,[string]$Cwd,[string]$Text,[int]$Minute) {
@@ -788,10 +860,12 @@ function Invoke-ReviewedIntegrationNativeControls {
     }
 }
 
+if ($ProjectSourceDomainOnly) { Invoke-ProjectSourceDomainControls; return }
 if ($ReviewedIntegrationNativeOnly) { Invoke-ReviewedIntegrationNativeControls; return }
 if ($ReviewedIntegrationOnly) { Invoke-DeliveryContractControls; return }
 if ($ActiveEnvelopeReceiptOnly) { Invoke-ActiveEnvelopeReceiptControls; return }
 Invoke-FixedSourcePathControls
+if (-not $FixedSourcePathOnly -and -not $DispositionOnly) { Invoke-ProjectSourceDomainControls }
 if ($FixedSourcePathOnly) { return }
 if ($DispositionOnly) { Invoke-ReviewedIntegrationNativeControls; Invoke-ActiveEnvelopeReceiptControls; Invoke-DeliveryContractControls; return }
 Invoke-ReviewedIntegrationNativeControls
