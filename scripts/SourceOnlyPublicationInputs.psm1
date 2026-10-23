@@ -1,6 +1,7 @@
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
+$script:SourceOnlyPublishedParentOwner=Import-Module (Join-Path $PSScriptRoot 'SourceOnlyPublication.psm1') -PassThru
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceContentObservation.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1') -Force
@@ -1019,6 +1020,13 @@ function Invoke-SourceDeliveryIntegrationComputation {
 }
 
 function Get-SourceDeliveryPublishedIntegrationParent($Reference,[Collections.IDictionary]$Observed) {
+    $document=Read-SourceDeliveryReference $Reference $Observed
+    if([string]$document.kind-ceq'source-only-published-parent'){
+        [void](Read-SourceDeliveryDocument $Reference.path $Reference.sha256 'source-only-published-parent' $Observed)
+        $parent=&$script:SourceOnlyPublishedParentOwner {param($p,$h)Test-MorphospaceRecordedSourceOnlyPublicationParent -DescriptorPath $p -ExpectedDescriptorSha256 $h} ([string]$Reference.path) ([string]$Reference.sha256)
+        foreach($raw in @($parent.observed)){[void](Read-SourceDeliveryReference $raw $Observed -Bytes)}
+        return $parent
+    }
     $landing=Read-SourceDeliveryDocument $Reference.path $Reference.sha256 'landing' $Observed
     $original=Read-SourceDeliveryDocument $landing.request_reference.path $landing.request_reference.sha256 'landing-request' $Observed
     Assert-SourceDelivery ((ConvertTo-MorphospaceCanonicalJson $original) -ceq (ConvertTo-MorphospaceCanonicalJson $landing.request)) 'Published parent request is detached.'
@@ -1038,6 +1046,7 @@ function New-MorphospaceSourceDeliveryIntegrationComputation {
     $root=Get-SourceDeliveryRepository $request.publication_subject $map
     Assert-SourceDelivery ((Get-SourceDeliveryIntegrationSourceFence $root).head -ceq $request.publication_subject.candidate_commit) 'Computation checkout is not the clean subject.'
     $published=Get-SourceDeliveryPublishedIntegrationParent $request.published_landing $observed
+    if($published.PSObject.Properties.Name-ccontains'provenance_kind'){Assert-SourceDelivery ($published.source_reference.repo_id-ceq$request.source_reference.repo_id) 'Recorded source-only parent source identity differs.'}
     Assert-SourceDelivery ($published.merge_commit -ceq $request.publication_subject.base_commit -and $published.merge_tree -ceq $request.publication_subject.base_tree -and $published.publication_subject.repository -ceq $request.publication_subject.repository -and $published.source_reference.repo_id -ceq $request.source_reference.repo_id) 'Published integration parent/source differs.'
     $producer=[pscustomobject][ordered]@{entrypoint=Get-SourceDeliveryReference (Join-Path $PSScriptRoot 'New-SourceOnlyPublicationInput.ps1');module=Get-SourceDeliveryReference $PSCommandPath;schema=Get-SourceDeliveryReference (Join-Path (Split-Path $PSScriptRoot -Parent) 'schemas/source-delivery-disposition-v1.schema.json');host=Get-SourceDeliveryReference ([Diagnostics.Process]::GetCurrentProcess().MainModule.FileName)}
     foreach($ref in @($producer.entrypoint,$producer.module,$producer.schema,$producer.host)){[void](Read-SourceDeliveryReference $ref $observed -Bytes)}
@@ -1129,6 +1138,7 @@ function Assert-SourceDeliveryReviewedIntegration($Request,[Collections.IDiction
     Assert-MorphospaceExactPropertySet $stdout @('computation') @() 'Computation outer output'
     Assert-SourceDelivery ((ConvertTo-MorphospaceCanonicalJson $stdout.computation) -ceq (ConvertTo-MorphospaceCanonicalJson $integration.computation)) 'Outer original does not bind this exact computation output.'
     $published=Get-SourceDeliveryPublishedIntegrationParent $integration.published_landing $Observed
+    if($published.PSObject.Properties.Name-ccontains'provenance_kind'){Assert-SourceDelivery ($published.source_reference.repo_id-ceq$Request.source_reference.repo_id) 'Recorded source-only parent source identity differs.'}
     Assert-SourceDelivery ($published.merge_commit -ceq $input.publication_subject.base_commit -and $published.merge_tree -ceq $input.publication_subject.base_tree -and $published.publication_subject.repository -ceq $input.publication_subject.repository) 'Reviewed integration published parent differs.'
     $owner=Get-SourceDeliveryAcceptedOwner $Request.consumer.workspace_root $Request -Observed $Observed
     Read-SourceDeliveryIntegrationNative $computation $Observed $outer @($owner.accepted_paths)

@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([switch]$SelfTest,[switch]$RelocationOnly,[switch]$HistoricalRawOnly)
+param([switch]$SelfTest,[switch]$RelocationOnly,[switch]$HistoricalRawOnly,[switch]$PrepareCheckpointOnly)
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference='Stop'
@@ -12,7 +12,7 @@ function Write-Json($Path,$Value){[IO.Directory]::CreateDirectory([IO.Path]::Get
 function Read-Json($Path){Get-Content -Raw -LiteralPath $Path|ConvertFrom-Json -DateKind String}
 function Hash($Path){& $sourceOnly {param($p)Get-MorphospaceFileSha256 $p} $Path}
 function Canonical($Value){& $sourceOnly {param($v)Get-MorphospaceCanonicalJsonSha256 $v} $Value}
-function Assert-CurrentWork($Fixture,$Phase){try{$validatorExecutable=(@(Get-Command pwsh -CommandType Application -ErrorAction Stop)[0]).Source;$output=@(& $validatorExecutable -NoProfile -File (Join-Path $PSScriptRoot 'Test-WorkflowContracts.ps1') -RepoRoot (Split-Path $PSScriptRoot -Parent) -WorkspaceRoot $Fixture.workspace -RepositoryMapPath $Fixture.map -CurrentWorkOnly -SkipOwnerSelfTests 2>&1|ForEach-Object{[string]$_});if($LASTEXITCODE -ne 0){throw "Current-work validator returned exit code ${LASTEXITCODE}: $($output -join ' ')"}}catch{throw "Current-work validation failed after source-only ${Phase}: $($_.Exception.Message)`n$($_.ScriptStackTrace)"}}
+function Assert-CurrentWork($Fixture,$Phase,[switch]$WorkspaceOnly){$extra=[string[]]@(if($WorkspaceOnly){@('-CurrentWorkspaceOnly')}else{@()});try{$validatorExecutable=(@(Get-Command pwsh -CommandType Application -ErrorAction Stop)[0]).Source;$output=@(& $validatorExecutable -NoProfile -File (Join-Path $PSScriptRoot 'Test-WorkflowContracts.ps1') -RepoRoot (Split-Path $PSScriptRoot -Parent) -WorkspaceRoot $Fixture.workspace -RepositoryMapPath $Fixture.map -CurrentWorkOnly -SkipOwnerSelfTests @extra 2>&1|ForEach-Object{[string]$_});if($LASTEXITCODE -ne 0){throw "Current-work validator returned exit code ${LASTEXITCODE}: $($output -join ' ')"}}catch{throw "Current-work validation failed after source-only ${Phase}: $($_.Exception.Message)`n$($_.ScriptStackTrace)"}}
 function Git{
     param([string]$Path)
     $GitArguments=@($args)
@@ -77,7 +77,7 @@ function New-Fixture($Root,$PublicationId,[switch]$UntrackedHostArtifact){
     $state.module_registry.lock_fingerprint=$lock.lock_fingerprint
     Write-Json (Join-Path $workspace 'project.spec.json') $project;Write-Json (Join-Path $workspace 'feature.lock.json') $lock;Write-Json (Join-Path $workspace 'workspace.state.json') $state;Write-Json (Join-Path $workspace 'iteration-units/fixture-unit.json') $unit;[IO.File]::WriteAllText((Join-Path $workspace 'iteration-events.jsonl'),(($event|ConvertTo-Json -Compress)+"`n"),[Text.UTF8Encoding]::new($false));[IO.File]::WriteAllText((Join-Path $workspace 'receipts/host.txt'),'pass',[Text.UTF8Encoding]::new($false));$hostArtifact=Hash (Join-Path $workspace 'receipts/host.txt')
     $validation=[ordered]@{schema='rusty.morphospace.workflow.validation_receipt.v1';receipt_id='fixture-host-pass';project_id='fixture-project';unit_id='fixture-unit';created_at='2026-01-01T00:00:20Z';tier='standard';result='pass';repository_revisions=@([ordered]@{repo_id=$public.id;base_revision=$public.old;head_revision=$public.candidate;branch='codex/candidate'},[ordered]@{repo_id=$private.id;base_revision=$private.old;head_revision=$private.candidate;branch='codex/candidate'},[ordered]@{repo_id=$readonly.id;base_revision=$readonly.old;head_revision=$readonly.candidate;branch='codex/candidate'});changed_paths=@([ordered]@{repo_id=$private.id;path='private-agents.md'});artifacts=@([ordered]@{artifact_id='host';kind='fixture';path='host.txt';sha256=$hostArtifact});criteria=@([ordered]@{acceptance_id='host';status='pass';command='fixture';evidence_refs=@('host')});gates=@([ordered]@{gate_id='host';status='pass';command='fixture';evidence_refs=@('host')});device_validation=$null};Write-Json (Join-Path $workspace 'receipts/host-pass.json') $validation
-    Git $planning @('add','morphospace')|Out-Null;Git $planning @('commit','-m','baseline')|Out-Null;$acceptedState=Read-Json (Join-Path $workspace 'workspace.state.json');$acceptedState.current_unit=$null;$acceptedState.last_event_id='fixture-unit-accepted-0001';$acceptedState.last_accepted_receipt='receipts/host-pass.json';$acceptedState.validation_checkpoint=[ordered]@{tier='standard';receipt='receipts/host-pass.json';result='pass'};$acceptedUnit=Read-Json (Join-Path $workspace 'iteration-units/fixture-unit.json');$acceptedUnit.status='accepted';$acceptedEvent=[ordered]@{schema='rusty.morphospace.workflow.iteration_event.v1';event_id='fixture-unit-accepted-0001';sequence=2;timestamp='2026-01-01T00:00:30Z';project_id='fixture-project';unit_id='fixture-unit';event_type='state-transition';summary='accepted';receipts=@('receipts/host-pass.json')};Start-MorphospaceTransitionLedger -WorkspaceRoot $workspace -TransactionId 'fixture-unit-accepted-0001-transition' -StatePath 'workspace.state.json' -UnitPath 'iteration-units/fixture-unit.json' -EventsPath 'iteration-events.jsonl' -TargetState $acceptedState -TargetUnit $acceptedUnit -Event $acceptedEvent|Out-Null;Git $planning @('add','morphospace')|Out-Null;Git $planning @('commit','-m','accepted')|Out-Null
+    Git $planning @('add','morphospace')|Out-Null;Git $planning @('commit','-m','baseline')|Out-Null;$acceptedState=Read-Json (Join-Path $workspace 'workspace.state.json');$acceptedState.current_unit=$null;$acceptedState.last_event_id='fixture-unit-accepted-0001';$acceptedState.last_accepted_receipt='receipts/host-pass.json';$acceptedState.validation_checkpoint=[ordered]@{tier='standard';receipt='receipts/host-pass.json';result='pass'};$acceptedUnit=Read-Json (Join-Path $workspace 'iteration-units/fixture-unit.json');$acceptedUnit.status='accepted';$acceptedEvent=[ordered]@{schema='rusty.morphospace.workflow.iteration_event.v1';event_id='fixture-unit-accepted-0001';sequence=2;timestamp='2026-01-01T00:00:30Z';project_id='fixture-project';unit_id='fixture-unit';event_type='state-transition';summary='accepted';receipts=@('receipts/host-pass.json')};& $sourceOnly {param($w,$s,$u,$e)Start-MorphospaceTransitionLedger -WorkspaceRoot $w -TransactionId 'fixture-unit-accepted-0001-transition' -StatePath 'workspace.state.json' -UnitPath 'iteration-units/fixture-unit.json' -EventsPath 'iteration-events.jsonl' -TargetState $s -TargetUnit $u -Event $e} $workspace $acceptedState $acceptedUnit $acceptedEvent|Out-Null;Git $planning @('add','morphospace')|Out-Null;Git $planning @('commit','-m','accepted')|Out-Null
     $map=[ordered]@{schema='rusty.morphospace.workflow.repository_map.v1';repositories=@([ordered]@{repo_id=$public.id;path=$public.repo;role='source'},[ordered]@{repo_id=$private.id;path=$private.repo;role='source'},[ordered]@{repo_id=$readonly.id;path=$readonly.repo;role='source'},[ordered]@{repo_id='planning-repo';path=$planning;role='planning'})};$mapPath=Join-Path $inputs 'map.json';Write-Json $mapPath $map;$hostHash=Hash (Join-Path $workspace 'receipts/host-pass.json');$state=Read-Json (Join-Path $workspace 'workspace.state.json');$unit=Read-Json (Join-Path $workspace 'iteration-units/fixture-unit.json')
     function Row($s,$ordinal,$trigger,$carried){[ordered]@{dependency_ordinal=$ordinal;repo_id=$s.id;publication_mode='provider-merge';candidate_branch='codex/candidate';target_branch='main';upstream='origin/main';remote='origin';remote_url=$s.remote;old_revision=$s.old;old_tree=$s.old_tree;candidate_revision=$s.candidate;candidate_tree=$s.candidate_tree;final_revision=$null;final_tree=$s.candidate_tree;changed_paths=$s.paths;trigger_unit_paths=$trigger;carried_paths=$carried;validation_refs=@('host-pass');rollback_revision=$s.old}}
     $plan=[ordered]@{schema='rusty.morphospace.workflow.source_only_publication_plan.v1';publication_id=$PublicationId;project_id='fixture-project';trigger_unit_id='fixture-unit';trigger=[ordered]@{kind='accepted-development-snapshot';accepted_status='accepted';push_checkpoint='integration-batch'};acceptance_transition=[ordered]@{event_id='fixture-unit-accepted-0001';transaction_id='fixture-unit-accepted-0001-transition';validation_receipt=[ordered]@{path='receipts/host-pass.json';sha256=$hostHash}};planning_owner=[ordered]@{repo_id='planning-repo';branch=(GitValue $planning @('branch','--show-current'));head=(GitValue $planning @('rev-parse','HEAD'));tree=(GitValue $planning @('rev-parse','HEAD^{tree}'));remote_policy='no-configured-remotes'};expected=[ordered]@{project_sha256=(Canonical (Read-Json (Join-Path $workspace 'project.spec.json')));state_sha256=(Canonical $state);unit_sha256=(Canonical $unit);events_sha256=(Hash (Join-Path $workspace 'iteration-events.jsonl'));events_length=([IO.FileInfo](Join-Path $workspace 'iteration-events.jsonl')).Length;event_tail_id='fixture-unit-accepted-0001'};source_repositories=@((Row $public 1 @() @('public-carried.txt')),(Row $private 2 @('private-agents.md') @('private-carried.txt')));validation_evidence=@([ordered]@{evidence_id='host-pass';path='receipts/host-pass.json';sha256=$hostHash});preservation=[ordered]@{source_only=$true;planning_remote_required=$false;planning_remote_mutation_claimed=$false;planning_publication_performed=$false;unit_statuses_preserved=$true;acceptance_inferred=$false;validation_inferred=$false;wearer_acceptance_inferred=$false;force_push_allowed=$false}}
@@ -278,6 +278,70 @@ function Exercise-Recovery($Phase,$Stage){
     }finally{Remove-FixtureRoot $root}
 }
 
+function Invoke-CheckpointRecord($Fixture,$Path,$Hash,$Fault,[bool]$Execute){Invoke-MorphospaceRecordSourceOnlyPublication -WorkspaceRoot $Fixture.workspace -UnitId fixture-unit -RepoMapPath $Fixture.map -SourceOnlyPublicationExecution $Path -ExpectedSourceOnlyPublicationExecutionSha256 $Hash -OutPath (Join-Path $Fixture.workspace "receipts/$($Fixture.plan.publication_id)-execution.json") -Timestamp '2026-01-01T00:04:00Z' -FaultAfter $Fault -Execute:$Execute}
+
+function Assert-CheckpointWithoutPreparation($Fixture){&$sourceOnly {param($w,$m,$p,$pp)$c=Get-SourceOnlyContext $w fixture-unit $m;Assert-SourceOnlyPlan $c $p $pp} $Fixture.workspace $Fixture.map $Fixture.plan $Fixture.plan_path}
+
+function Assert-PrepareCheckpointPublication {
+    foreach($stage in @('none','after-intent','after-artifact','after-projection','after-event')){
+        $root=Join-Path ([IO.Path]::GetTempPath())('source-only-prepare-checkpoint-'+[guid]::NewGuid().ToString('N'))
+        try{
+            $f=New-Fixture $root "fixture-checkpoint-$stage";$planning=Split-Path $f.workspace -Parent
+            $planOut=Join-Path $f.inputs 'generated-plan.json'
+            # Genuine public producer, unchanged accepted fixture and real map.
+            Import-Module (Join-Path $PSScriptRoot 'SourceOnlyPublicationInputs.psm1') -Force
+            New-MorphospaceSourceOnlyPublicationPlan -WorkspaceRoot $f.workspace -UnitId fixture-unit -RepoMapPath $f.map -PublicationId $f.plan.publication_id -OutPath $planOut|Out-Null
+            $f.plan=Read-Json $planOut;$f.plan_path=$planOut;$f.plan_hash=Hash $planOut
+            $planHash=$f.plan_hash;$acceptedUnitHash=Hash (Join-Path $f.workspace 'iteration-units/fixture-unit.json')
+            Invoke-MorphospacePrepareSourceOnlyPublication -WorkspaceRoot $f.workspace -UnitId fixture-unit -RepoMapPath $f.map -SourceOnlyPublicationPlan $f.plan_path -ExpectedSourceOnlyPublicationPlanSha256 $f.plan_hash -OutPath (Join-Path $f.workspace "receipts/$($f.plan.publication_id)-plan.json") -Timestamp '2026-01-01T00:01:00Z' -Execute|Out-Null
+            Git $planning @('add','morphospace')|Out-Null;Git $planning @('commit','-m','checkpoint exact native Prepare')|Out-Null
+            $checkpoint=GitValue $planning @('rev-parse','HEAD')
+            $pub=Publish-Merge $f.public $root;$priv=Publish-Merge $f.private $root
+            $executionPath=Join-Path $f.inputs 'execution.json';Write-Json $executionPath (New-Execution $f $pub $priv);$executionHash=Hash $executionPath
+            # RED on original module: Bound planning head drifted.
+            Invoke-CheckpointRecord $f $executionPath $executionHash none $false|Out-Null
+            if($stage-ceq'none'){
+                Git $planning @('commit','--allow-empty','-m','unowned descendant')|Out-Null
+                Assert-Rejected {Invoke-CheckpointRecord $f $executionPath $executionHash none $false} 'extra descendant commit' '*checkpoint*' $f.workspace $f
+                Git $planning @('reset','--hard',$checkpoint)|Out-Null
+                $outside=Join-Path $planning 'unrelated.txt';[IO.File]::WriteAllText($outside,'not owned',[Text.UTF8Encoding]::new($false))
+                Assert-Rejected {Invoke-CheckpointRecord $f $executionPath $executionHash none $false} 'unrelated dirty checkpoint' '*unrelated dirty path*' $f.workspace $f
+                Git $planning @('add','unrelated.txt')|Out-Null
+                Assert-Rejected {Invoke-CheckpointRecord $f $executionPath $executionHash none $false} 'unrelated staged checkpoint' '*unrelated dirty path*' $f.workspace $f
+                Git $planning @('commit','--amend','--no-edit')|Out-Null
+                Assert-Rejected {Invoke-CheckpointRecord $f $executionPath $executionHash none $false} 'extra committed checkpoint path' '*checkpoint*' $f.workspace $f
+                Git $planning @('reset','--hard',$checkpoint)|Out-Null
+                Git $planning @('branch','-m','wrong-checkpoint-branch')|Out-Null
+                Assert-Rejected {Invoke-CheckpointRecord $f $executionPath $executionHash none $false} 'wrong checkpoint branch' '*planning branch drifted*' $f.workspace $f
+                Git $planning @('branch','-m',[string]$f.plan.planning_owner.branch)|Out-Null
+                $completion=Join-Path $f.workspace "receipts/transactions/$($f.plan.publication_id)-source-publication-prepared-transition.completion.json";$raw=[IO.File]::ReadAllBytes($completion)
+                [IO.File]::WriteAllText($completion,'{}',[Text.UTF8Encoding]::new($false))
+                Assert-Rejected {Invoke-CheckpointRecord $f $executionPath $executionHash none $false} 'Prepare completion raw drift' '*' $f.workspace $f
+                [IO.File]::WriteAllBytes($completion,$raw)
+                $sourceDirt=Join-Path $f.public.repo 'unrelated-source.txt';[IO.File]::WriteAllText($sourceDirt,'not source-owned',[Text.UTF8Encoding]::new($false))
+                Assert-Rejected {Invoke-CheckpointRecord $f $executionPath $executionHash none $false} 'source dirt after checkpoint' '*is dirty*' $f.workspace $f
+                [IO.File]::Delete($sourceDirt)
+                # Ordinary immediate-preparation identity is never weakened.
+                Assert-Rejected {Assert-CheckpointWithoutPreparation $f} 'checkpoint without AfterPrepare' '*planning head drifted*' $f.workspace $f
+            }
+            if($stage-cne'none'){
+                Assert-Fault {Invoke-CheckpointRecord $f $executionPath $executionHash $stage $true} "record $stage" $f
+                Assert-Rejected {Invoke-CheckpointRecord $f $executionPath $executionHash none $false} 'checkpoint partial Record DRY' '*requires -Execute recovery*' $f.workspace $f
+                $changed=Join-Path $f.inputs 'changed-execution.json';[IO.File]::WriteAllText($changed,(Get-Content -Raw -LiteralPath $executionPath)+' ',[Text.UTF8Encoding]::new($false))
+                Assert-Rejected {Invoke-MorphospaceRecordSourceOnlyPublication -WorkspaceRoot $f.workspace -UnitId fixture-unit -RepoMapPath $f.map -SourceOnlyPublicationExecution $changed -ExpectedSourceOnlyPublicationExecutionSha256 (Hash $changed) -OutPath (Join-Path $f.workspace "receipts/$($f.plan.publication_id)-execution.json") -Execute} 'checkpoint changed interrupted input' '*caller bytes do not match*' $f.workspace $f
+            }
+            Invoke-CheckpointRecord $f $executionPath $executionHash none $true|Out-Null
+            Invoke-CheckpointRecord $f $executionPath $executionHash none $true|Out-Null
+            $state=Read-Json (Join-Path $f.workspace 'workspace.state.json')
+            if($null-ne$state.pending_push_bundle-or$state.last_event_id-cne"$($f.plan.publication_id)-source-publication-recorded"-or(Hash $f.plan_path)-cne$planHash-or(Hash (Join-Path $f.workspace 'iteration-units/fixture-unit.json'))-cne$acceptedUnitHash-or(Hash $executionPath)-cne$executionHash){throw 'Checkpoint publication changed original plan/execution/accepted unit or failed to consume exact pending bundle.'}
+            if($stage-ceq'none'){Assert-CurrentWork $f 'checkpoint Record' -WorkspaceOnly}
+            "PASS exact Prepare checkpoint Record/replay $stage"
+        }finally{Remove-FixtureRoot $root}
+    }
+    'Source-only Prepare checkpoint self-test passed.'
+}
+
+if($PrepareCheckpointOnly){Assert-PrepareCheckpointPublication;return}
 if($HistoricalRawOnly){Assert-AcceptedEvidenceRelocationRejectsHistoricalRaw;'Historical raw evidence rejection self-test passed.';return}
 if($RelocationOnly){Assert-AcceptedEvidenceRelocation;Assert-AcceptedEvidenceRelocationRecovery;Assert-AcceptedEvidenceRelocationRejectsHistoricalRaw;'Accepted evidence relocation self-test passed.';return}
 
@@ -301,5 +365,6 @@ try{
     Assert-Rejected {Invoke-MorphospaceRecordSourceOnlyPublication -WorkspaceRoot $f.workspace -UnitId fixture-unit -RepoMapPath $f.map -SourceOnlyPublicationExecution $executionPath -OutPath (Join-Path $f.workspace 'receipts/fixture-source-publication-execution.json')} 'completed replay missing hash' '*requires its reviewed SHA-256*' $f.workspace
     Invoke-MorphospaceRecordSourceOnlyPublication -WorkspaceRoot $f.workspace -UnitId fixture-unit -RepoMapPath $f.map -SourceOnlyPublicationExecution $executionPath -ExpectedSourceOnlyPublicationExecutionSha256 $executionHash -OutPath (Join-Path $f.workspace 'receipts/fixture-source-publication-execution.json') -Execute|Out-Null
     foreach($stage in @('after-intent','after-artifact','after-projection','after-event')){Exercise-Recovery prepare $stage;Exercise-Recovery record $stage}
+    Assert-PrepareCheckpointPublication
     'Source-only publication self-test passed.'
 }finally{Remove-FixtureRoot $root}

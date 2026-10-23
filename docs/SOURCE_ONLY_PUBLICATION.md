@@ -277,6 +277,19 @@ only its exact interrupted ledger transaction. The planning repository remains
 local-only throughout: no remote, planning ref, or planning-publication claim
 is created.
 
+The plan continues to bind the accepted planning HEAD and tree observed before
+Prepare. It may also be consumed after one exact local Git checkpoint of the
+completed Prepare: the checkpoint must be a single direct child of that bound
+HEAD, on the same branch, and contain exactly the native state/event append,
+immutable plan, and preparation intent/completion. The owner authenticates
+their committed bytes and original preimage against the completed transaction;
+it does not accept an arbitrary descendant, extra path, substituted plan or
+caller-supplied replacement HEAD. The same finite checkpoint is retained during
+exact Record interruption recovery and replay, independently of later live
+Record projections. All existing accepted-unit, source, remote, ordering,
+worktree-dirt and pending-bundle guards still apply. Checkpointing Prepare does
+not authorize repeating an already executed source publication.
+
 Current-work validation recognizes the exact prepared or recorded source-only
 tail from its committed transition, schema-valid plan or execution artifact,
 retained accepted unit, and bounded state delta. This local history check does
@@ -304,3 +317,25 @@ publication. A separately supported private Iteration/DevFast route may bind a
 base Git revision plus a hashed overlay for local compile/install and its own
 composition checks. These source-delivery records add no Freeze, CI or adoption
 prerequisite to that route, and do not relax clean candidate/source guards.
+
+### Recorded source-only integration parent
+
+Reviewed integration may retain a closed `source-only-published-parent` descriptor
+through the existing `published_landing` raw-reference slot. It binds the original
+owner workspace, unit and repository-map bytes, canonical Plan/Execution and the
+completed native Record intent/completion, plus the selected writable repository.
+The source-only owner reauthenticates accepted validation and nested artifacts,
+exact Prepare/Record semantics and the current committed continuation on every use.
+For the supported Prepare-checkpoint case it derives the unique first-parent first
+child of the Plan's original planning HEAD and proves the exact five native paths;
+missing or ambiguous history is refused. Later legitimate owner commits do not
+become authority for a new Record. New Record and incomplete recovery still require
+the original planning HEAD or its single exact Prepare checkpoint and exact remote
+P. Only a genuinely completed Record can supply a historical parent, whose fresh
+remote readback must retain P as an ancestor after normal subsequent publication.
+
+This provenance supplies the owned published commit/tree and repository identity.
+It supplies no Landing, historical premerge checks, successor acceptance, product
+adoption or device success. Original source-map custody and the separate clean
+integration checkout remain distinct. The existing strict Landing branch, accepted
+successor delta, native merge computation and later verification remain mandatory.
