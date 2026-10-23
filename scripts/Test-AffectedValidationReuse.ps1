@@ -11,6 +11,7 @@ param(
     [Parameter(Mandatory = $true, ParameterSetName = 'hosted')][long]$RunId,
     [Parameter(Mandatory = $true, ParameterSetName = 'hosted')][string]$GhPath,
     [Parameter(Mandatory = $true, ParameterSetName = 'hosted')][string]$OutputDirectory,
+    [Parameter(ParameterSetName = 'hosted')][switch]$CaptureTimings,
     [Parameter(Mandatory = $true, ParameterSetName = 'self')][switch]$SelfTest,
     [Parameter(Mandatory = $true, ParameterSetName = 'dependencySharing')][switch]$DependencySharingSelfTest,
     [Parameter(Mandatory = $true, ParameterSetName = 'selfPhase')]
@@ -20,6 +21,71 @@ param(
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
+
+
+# Optional observations stay local to one intake and never enter proof DTOs.
+function New-ReuseHostedTiming {
+    param([switch]$Enabled,[long]$StartedTimestamp=-1)
+    if(-not$Enabled){return $null}
+    try{
+        if($StartedTimestamp-lt0){$StartedTimestamp=[Diagnostics.Stopwatch]::GetTimestamp()}
+        return [pscustomobject]@{started_ticks=$StartedTimestamp;frequency=[long][Diagnostics.Stopwatch]::Frequency;samples=[Collections.Generic.List[object]]::new();counters=[ordered]@{}}
+    }catch{return $null}
+}
+function Start-ReuseHostedTimingPhase {
+    param([object]$Timing,[string]$Phase,[long]$Timestamp=-1)
+    if($null-eq$Timing){return $null}
+    try{
+        if($Timestamp-lt0){$Timestamp=[Diagnostics.Stopwatch]::GetTimestamp()}
+        $sample=[pscustomobject]@{phase=$Phase;started_ticks=$Timestamp;completed=$false;elapsed_ticks=0L}
+        $Timing.samples.Add($sample)
+        return $sample
+    }catch{return $null}
+}
+function Complete-ReuseHostedTimingPhase {
+    param([object]$Timing,[object]$Sample,[long]$Timestamp=-1)
+    if($null-eq$Timing-or$null-eq$Sample){return}
+    try{
+        if($Timestamp-lt0){$Timestamp=[Diagnostics.Stopwatch]::GetTimestamp()}
+        if($Timestamp-lt[long]$Sample.started_ticks-or$Sample.completed){return}
+        $Sample.elapsed_ticks=$Timestamp-[long]$Sample.started_ticks;$Sample.completed=$true
+    }catch{}
+}
+function Add-ReuseHostedTimingCounter {
+    param([object]$Timing,[string]$Name,[long]$Value=1)
+    if($null-eq$Timing){return}
+    try{
+        if($Value-lt0){return}
+        if(-not$Timing.counters.Contains($Name)){$Timing.counters[$Name]=0L}
+        $Timing.counters[$Name]=[long]$Timing.counters[$Name]+$Value
+    }catch{}
+}
+function Write-ReuseHostedTiming {
+    param([object]$Timing,[string]$Output,[switch]$OutputAdmitted,[long]$Timestamp=-1)
+    # An observation sink cannot create output custody, change stdout, or mask
+    # the producer's success/error, including errors before its report exists.
+    if($null-eq$Timing-or-not$OutputAdmitted){return}
+    try{
+        if(-not[IO.Directory]::Exists($Output)){return}
+        if($Timestamp-lt0){$Timestamp=[Diagnostics.Stopwatch]::GetTimestamp()}
+        $frequency=[double]$Timing.frequency
+        if($frequency-le0-or$Timestamp-lt[long]$Timing.started_ticks){return}
+        $phases=[ordered]@{}
+        foreach($sample in $Timing.samples){
+            $name=[string]$sample.phase
+            if(-not$phases.Contains($name)){$phases[$name]=[pscustomobject]@{phase=$name;calls=0;completed_calls=0;incomplete_calls=0;elapsed_ms=0.0;observed_incomplete_ms=0.0}}
+            $row=$phases[$name];$row.calls++
+            if($sample.completed){$row.completed_calls++;$row.elapsed_ms+=1000.0*[long]$sample.elapsed_ticks/$frequency}
+            else{$row.incomplete_calls++;$row.observed_incomplete_ms+=1000.0*[Math]::Max(0L,$Timestamp-[long]$sample.started_ticks)/$frequency}
+        }
+        foreach($row in $phases.Values){$row.elapsed_ms=[Math]::Round($row.elapsed_ms,3);$row.observed_incomplete_ms=[Math]::Round($row.observed_incomplete_ms,3)}
+        $value=[pscustomobject][ordered]@{schema='rusty.morphospace.diagnostic.affected_validation_hosted_timing.v1';measurement_scope='current-invocation-monotonic-wall';elapsed_ms=[Math]::Round(1000.0*($Timestamp-[long]$Timing.started_ticks)/$frequency,3);phases=@($phases.Values);counters=$Timing.counters;notes=@('Nested phase spans are inclusive; do not sum them as disjoint wall time.','Calls count observations, not cache hits, speedup, validity or producer success.','Open spans are partial observations at diagnostic publication; no terminal producer outcome is inferred.')}
+        $path=Join-Path $Output 'diagnostics/hosted-intake-timing.json'
+        Assert-ReuseHostedNoReparse $path
+        [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($path))
+        Write-ReuseHostedJson $path $value
+    }catch{}
+}
 
 function Assert-ReuseWorkflowTokenContract([string]$Expected,[string]$Observed) {
     $sets=@()
@@ -172,6 +238,9 @@ function Invoke-ReuseHostedGet {
     if($Name-cnotmatch'\A[a-z0-9][a-z0-9-]{1,95}\z'){throw 'Hosted capture name is invalid.'}
     $path=Join-Path $Context.Output ('provider/'+$Name);[void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($path))
     $providerArguments=@(Get-ReuseHostedProviderArguments -Arguments $Arguments)
+    $timing=if($Context.PSObject.Properties.Name-ccontains'Timing'){$Context.Timing}else{$null}
+    $providerSpan=Start-ReuseHostedTimingPhase $timing 'provider-get'
+    Add-ReuseHostedTimingCounter $timing 'provider_get_calls'
     $intent=[pscustomobject][ordered]@{executable=$Context.Gh;executable_sha256=$Context.GhSha;arguments=@($providerArguments);producer_sha256=$Context.ScriptSha;started_at=[DateTimeOffset]::UtcNow.ToString('o');automatic_retry=$false;termination_requested=$false}
     Write-ReuseHostedJson ($path+'.intent.json') $intent
     $execution=[pscustomobject]@{FileName=$Context.Gh;WorkingDirectory=$Context.RepositoryRoot;Arguments=@($providerArguments)}
@@ -182,6 +251,7 @@ function Invoke-ReuseHostedGet {
     foreach($stream in @($result.Streams.stdout,$result.Streams.stderr)){
         if(-not$stream.eof-or$null-ne$stream.read_error-or$null-ne$stream.storage_error-or$stream.drained_bytes-ne$stream.stored_bytes-or$stream.stored_bytes-ne$stream.size_bytes-or(Get-FileHash -LiteralPath $stream.path -Algorithm SHA256).Hash.ToLowerInvariant()-cne$stream.sha256){throw 'Hosted provider raw stream closure differs.'}
     }
+    Complete-ReuseHostedTimingPhase $timing $providerSpan
     return [string]$result.Streams.stdout.path
 }
 function Read-ReuseHostedGetJson {
@@ -233,11 +303,16 @@ function Get-ReuseHostedRootBindingState {
     return $state
 }
 function Get-ReuseHostedSelectedRows {
-    param([object]$Context,[object]$Plan,[object[]]$Artifacts,[object[]]$Jobs)
+    param([object]$Context,[object]$Plan,[object[]]$Artifacts,[object[]]$Jobs,[object]$Timing=$null)
+    $selectedSpan=Start-ReuseHostedTimingPhase $Timing 'selected-row-verification'
+    $registrySpan=Start-ReuseHostedTimingPhase $Timing 'registry-tree-inventory'
+    Add-ReuseHostedTimingCounter $Timing 'registry_compile_calls'
     $registry=Read-MorphospaceProtocolJson (Join-Path $Context.RepositoryRoot 'manifests/affected-validation-registry.json')
     $compiled=Test-MorphospaceAffectedValidationRegistry -Registry $registry -RepositoryRoot $Context.RepositoryRoot -SchemaPath (Join-Path $Context.RepositoryRoot 'schemas/affected-validation-registry-v1.schema.json')
+    Add-ReuseHostedTimingCounter $Timing 'tree_inventory_calls'
     $tree=Get-MorphospaceAffectedTreeInventory -RepositoryRoot $Context.RepositoryRoot -Commit $Context.Head
     $runnerSources=@(Get-MorphospaceAffectedCheckRunnerSourceManifest -Inventory $tree)
+    Complete-ReuseHostedTimingPhase $Timing $registrySpan
     $checkMap=@{};foreach($check in @($registry.checks)){$checkMap[[string]$check.check_id]=$check}
     $closures=$null;$allRows=[Collections.Generic.List[object]]::new();$platforms=[Collections.Generic.List[object]]::new();$expectedJobs=[Collections.Generic.List[string]]::new()
     foreach($name in @('infrastructure','select','quick-linux','quick-windows','standard-windows')){$expectedJobs.Add($name)}
@@ -286,7 +361,10 @@ function Get-ReuseHostedSelectedRows {
             $candidates=@($Artifacts|Where-Object{[string]$_.metadata.name-ceq$name})
             if($candidates.Count-ne1){throw 'Hosted selected root lacks exactly one finalized per-check artifact.'}
             $a=$candidates[0];$producer=[pscustomobject]@{context='github-actions';repository=$Context.Repository;event_name='pull_request';pull_request_number=$Context.PullRequestNumber;workflow_path='.github/workflows/validate.yml'}
+            $inventorySpan=Start-ReuseHostedTimingPhase $Timing 'root-inventory'
+            Add-ReuseHostedTimingCounter $Timing 'root_inventory_calls'
             $validated=Read-MorphospaceAffectedCheckInventory -EvidenceDirectory $a.directory -ExpectedProducerContext $producer -InventorySchemaPath (Join-Path $Context.RepositoryRoot 'schemas/affected-validation-check-inventory-v1.schema.json')
+            Complete-ReuseHostedTimingPhase $Timing $inventorySpan
             $inv=$validated.inventory
             if([string]$inv.producer.run_id-cne[string]$Context.RunId-or[int]$inv.producer.run_attempt-ne$r.attempt-or[string]$inv.producer.job-cne$r.job-or[string]$inv.platform-cne$platform-or[string]$inv.plan_sha256-cne[string]$Plan.plan_sha256-or(Get-MorphospaceCanonicalJsonSha256 $inv.source)-cne(Get-MorphospaceCanonicalJsonSha256 ([pscustomobject]@{base=$Plan.base;head=$Plan.head}))){throw 'Hosted selected inventory producer attempt/job/platform/source differs.'}
             Assert-ReuseHostedExactSet @($inv.entries.check_id) @($r.payload.check_results.check_id) 'selected inventory root checks'
@@ -297,10 +375,17 @@ function Get-ReuseHostedSelectedRows {
         }
         $rootStates=@{};$counts=[ordered]@{executed=0;reused=0}
         foreach($selection in $selected){
+            $leafSpan=Start-ReuseHostedTimingPhase $Timing 'leaf-verification'
+            Add-ReuseHostedTimingCounter $Timing 'leaf_verification_calls'
             $id=[string]$selection.check_id;$check=$checkMap[$id];$snapshot=$snapshots[$id];$raw=[Convert]::FromBase64String($snapshot.receipt_base64);$receipt=[Text.UTF8Encoding]::new($false,$true).GetString($raw)|ConvertFrom-Json -Depth 100 -DateKind String
             $rootState=Get-ReuseHostedRootBindingState -States $rootStates -Root $rowRoots[$id].root -Runner $receipt.binding.runner -AggregateRunner $aggregate.runner
             $runner=$rootState.runner;$bindings=$rootState.bindings
-            if($null-eq$closures){$closures=Get-MorphospaceAffectedCheckDependencyClosures -Checks @($Plan.selected_checks|ForEach-Object{$checkMap[[string]$_.check_id]}) -CompiledRegistry $compiled -Inventory $tree -RepositoryRoot $Context.RepositoryRoot}
+            if($null-eq$closures){
+                $closureSpan=Start-ReuseHostedTimingPhase $Timing 'dependency-closure-batch'
+                Add-ReuseHostedTimingCounter $Timing 'dependency_closure_batches'
+                $closures=Get-MorphospaceAffectedCheckDependencyClosures -Checks @($Plan.selected_checks|ForEach-Object{$checkMap[[string]$_.check_id]}) -CompiledRegistry $compiled -Inventory $tree -RepositoryRoot $Context.RepositoryRoot
+                Complete-ReuseHostedTimingPhase $Timing $closureSpan
+            }
             $closure=$closures[$id];$prerequisites=@(foreach($prereq in @($check.prerequisite_checks)){if(-not$bindings.ContainsKey([string]$prereq)){throw 'Hosted current binding order omits a prerequisite.'};[pscustomobject]@{check_id=[string]$prereq;binding_sha256=[string]$bindings[[string]$prereq]}})
             $binding=New-MorphospaceAffectedCheckBinding -Repository $Context.Repository -Platform $platform -Check $check -Runner $runner -RunnerSourceManifest $runnerSources -DependencyManifest @($closure.manifest) -DependencyResolution $closure.resolution -PrerequisiteBindings $prerequisites
             $bindingSha=Get-MorphospaceCanonicalJsonSha256 $binding;$bindings[$id]=$bindingSha
@@ -319,17 +404,23 @@ function Get-ReuseHostedSelectedRows {
             foreach($stream in @('stdout','stderr')){if([long]$summary[0].($stream+'_bytes')-ne[long]$receipt.child.$stream.bytes-or[string]$summary[0].($stream+'_sha256')-cne[string]$receipt.child.$stream.sha256){throw 'Hosted root summary raw stream differs from leaf.'}}
             if([string]$summary[0].mode-cne[string]$receipt.mode-or[string]$summary[0].result-cne'pass'-or[string]$summary[0].command_path-cne[string]$binding.command_path-or[string]$summary[0].command_blob_sha1-cne[string]$binding.command_blob_sha1){throw 'Hosted summary command/mode/result differs from leaf.'}
             $counts[[string]$receipt.mode]++
+            Add-ReuseHostedTimingCounter $Timing ('verified_'+[string]$receipt.mode+'_rows')
+            Complete-ReuseHostedTimingPhase $Timing $leafSpan
             $allRows.Add([pscustomobject]@{platform=$platform;check_id=$id;mode=[string]$receipt.mode;result=[string]$receipt.result;producer=$rowRoots[$id].inventory.producer;receipt=Get-ReuseHostedRawRef $snapshot.receipt_path $Context.Output;evidence_source=$receipt.source;immediate_reused_from=$receipt.reused_from})
         }
         $platforms.Add([pscustomobject]@{platform=$platform;topology=if($segmented){'segmented'}else{'direct'};aggregate=Get-ReuseHostedRawRef $aggregatePath $Context.Output;selection=$selectionRef;roots=@($rootReports.ToArray());runner=[pscustomobject]@{aggregate=$aggregate.runner;roots=@(foreach($key in @($rootStates.Keys|Sort-Object)){[pscustomobject]@{logical_id=$key;check_binding=$rootStates[$key].runner}})};counts=$counts})
     }
     Assert-ReuseHostedExactSet @($Jobs|Where-Object conclusion -ceq 'success'|ForEach-Object{[string]$_.name}) @($expectedJobs.ToArray()) 'successful job identities'
     foreach($job in $Jobs){if([string]$job.status-cne'completed'-or[string]$job.conclusion-cnotin@('success','skipped')){throw 'Hosted run contains incomplete or nonpassing jobs.'}}
+    Complete-ReuseHostedTimingPhase $Timing $selectedSpan
     return [pscustomobject]@{rows=@($allRows.ToArray());platforms=@($platforms.ToArray())}
 }
 
 function Invoke-ReuseHostedIntake {
-    param([string]$RepositoryRoot,[string]$BeforeCommit,[string]$HeadCommit,[string]$Repository,[int]$PullRequestNumber,[long]$RunId,[string]$GhPath,[string]$OutputDirectory)
+    param([string]$RepositoryRoot,[string]$BeforeCommit,[string]$HeadCommit,[string]$Repository,[int]$PullRequestNumber,[long]$RunId,[string]$GhPath,[string]$OutputDirectory,[switch]$CaptureTimings)
+    $timing=New-ReuseHostedTiming -Enabled:$CaptureTimings
+    $sourceSpan=Start-ReuseHostedTimingPhase $timing 'source-preflight'
+    $timingOutputAdmitted=$false
     if($Repository-cnotmatch'\A[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\z'-or$PullRequestNumber-lt1-or$RunId-lt1-or$BeforeCommit-cnotmatch'\A[0-9a-f]{40}\z'-or$HeadCommit-cnotmatch'\A[0-9a-f]{40}\z'){throw 'Hosted candidate arguments must be exact canonical identities.'}
     $candidateRoot=[IO.Path]::GetFullPath($RepositoryRoot);$out=[IO.Path]::GetFullPath($OutputDirectory);$tool=[IO.Path]::GetFullPath($GhPath);$ownerRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
     if(-not[IO.Path]::IsPathFullyQualified($GhPath)-or-not[IO.File]::Exists($tool)-or-not[IO.Path]::IsPathFullyQualified($OutputDirectory)){throw 'Hosted intake requires absolute existing provider and absolute fresh output.'}
@@ -344,6 +435,7 @@ function Invoke-ReuseHostedIntake {
     $holds=[Collections.Generic.List[object]]::new();$sourceRecords=[Collections.Generic.List[object]]::new();$producerHead='';$producerTree=''
     try{
         foreach($sourceRoot in @($candidateRoot,$ownerRoot)|Select-Object -Unique){
+            Add-ReuseHostedTimingCounter $timing 'source_checkout_observations'
             $status=& git -C $sourceRoot status --porcelain --untracked-files=all 2>&1;if($LASTEXITCODE-ne0-or@($status).Count){throw 'Hosted intake requires clean source/producer checkouts.'}
             $sourceHead=(& git -C $sourceRoot rev-parse HEAD).Trim();if($LASTEXITCODE-ne0){throw 'Hosted source identity unavailable.'}
             if($sourceRoot-ceq$candidateRoot-and$sourceHead-cne$HeadCommit){throw 'Hosted candidate checkout HEAD differs.'}
@@ -358,6 +450,7 @@ function Invoke-ReuseHostedIntake {
         $paths=@('scripts/Test-AffectedValidationReuse.ps1')+@(& git -C $ownerRoot ls-files 'scripts/*.ps1' 'scripts/lib/*.psm1' 'schemas/affected-validation-*.schema.json' 'manifests/affected-validation-registry.json' '.github/workflows/validate.yml')
         if($LASTEXITCODE-ne0){throw 'Hosted producer source inventory unavailable.'}
         foreach($relative in @($paths|Sort-Object -Unique)){
+            Add-ReuseHostedTimingCounter $timing 'producer_file_join_calls'
             $path=Join-Path $ownerRoot $relative;Assert-ReuseHostedNoReparse $path
             $hold=[IO.File]::Open($path,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read);$holds.Add($hold)
             $blob=(& git -C $ownerRoot rev-parse ('HEAD:'+$relative)).Trim();$observedBlob=(& git -C $ownerRoot hash-object --no-filters -- $path).Trim()
@@ -366,6 +459,7 @@ function Invoke-ReuseHostedIntake {
         }
         if($candidateRoot-cne$ownerRoot){
             foreach($relative in @(& git -C $candidateRoot ls-files '.github/workflows/validate.yml' 'manifests/affected-validation-registry.json' 'scripts/*.ps1' 'scripts/lib/*.psm1' 'schemas/affected-validation-*.schema.json')){
+                Add-ReuseHostedTimingCounter $timing 'candidate_file_join_calls'
                 $path=Join-Path $candidateRoot $relative;Assert-ReuseHostedNoReparse $path;$holds.Add([IO.File]::Open($path,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read))
                 $blob=(& git -C $candidateRoot rev-parse ('HEAD:'+$relative)).Trim();$physical=(& git -C $candidateRoot hash-object --no-filters -- $path).Trim();if($LASTEXITCODE-ne0-or$blob-cne$physical){throw 'Hosted candidate input differs from exact Git source.'}
             }
@@ -378,8 +472,11 @@ function Invoke-ReuseHostedIntake {
         Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceAffectedValidationCheckEvidence.psm1') -Force -DisableNameChecking
         Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceRetainedBuildProcess.psm1') -Force -DisableNameChecking
         [void][IO.Directory]::CreateDirectory($out)
+        $timingOutputAdmitted=$true
+        Complete-ReuseHostedTimingPhase $timing $sourceSpan
         $environment=@{};foreach($key in [Environment]::GetEnvironmentVariables('Process').Keys){$environment[[string]$key]=[string][Environment]::GetEnvironmentVariable([string]$key,'Process')};[void]$environment.Remove('GH_DEBUG')
-        $context=[pscustomobject]@{Output=$out;RepositoryRoot=$candidateRoot;Gh=$tool;GhSha=$toolSha;ScriptSha=$scriptSha;Environment=$environment;Repository=$Repository;Head=$HeadCommit;RunId=$RunId;PullRequestNumber=$PullRequestNumber;Attempt=0;MergeSha='';LinuxMode=''}
+        $context=[pscustomobject]@{Output=$out;RepositoryRoot=$candidateRoot;Gh=$tool;GhSha=$toolSha;ScriptSha=$scriptSha;Environment=$environment;Repository=$Repository;Head=$HeadCommit;RunId=$RunId;PullRequestNumber=$PullRequestNumber;Attempt=0;MergeSha='';LinuxMode='';Timing=$timing}
+        $metadataSpan=Start-ReuseHostedTimingPhase $timing 'provider-metadata'
         $prefix='repos/'+$Repository
         $run=Read-ReuseHostedGetJson $context ($prefix+'/actions/runs/'+$RunId) 'run-initial'
         Assert-ReuseHostedRun -Run $run -Repository $Repository -PullRequestNumber $PullRequestNumber -RunId $RunId -BaseCommit $BeforeCommit -HeadCommit $HeadCommit
@@ -390,6 +487,8 @@ function Invoke-ReuseHostedIntake {
         $jobs=@(Get-ReuseHostedPages $context ($prefix+'/actions/runs/'+$RunId+'/jobs') 'jobs' 'jobs')
         foreach($job in $jobs){if([long]$job.run_id-ne$RunId-or[string]$job.head_sha-cne$HeadCommit-or[int]$job.run_attempt-ne$context.Attempt){throw 'Hosted latest job observation run/head/attempt differs.'}}
         $metadata=@(Get-ReuseHostedPages $context ($prefix+'/actions/runs/'+$RunId+'/artifacts') 'artifacts' 'artifacts')
+        Complete-ReuseHostedTimingPhase $timing $metadataSpan
+        $archiveSpan=Start-ReuseHostedTimingPhase $timing 'artifact-collection'
         $artifacts=[Collections.Generic.List[object]]::new();$names=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
         foreach($item in $metadata){
             if(-not$names.Add([string]$item.name)){throw 'Hosted provider artifact names are duplicated.'}
@@ -398,12 +497,19 @@ function Invoke-ReuseHostedIntake {
             if([string]$item.name-match'-diagnostic-'){continue}
             if([long]$item.workflow_run.id-ne$RunId-or[string]$item.workflow_run.head_sha-cne$HeadCommit-or$item.expired-isnot[bool]-or$item.expired-or[DateTimeOffset]::Parse([string]$item.expires_at)-le[DateTimeOffset]::UtcNow){throw 'Hosted artifact provider source/expiry differs.'}
             $folder=Join-Path $out ('artifacts/'+$item.id);[void][IO.Directory]::CreateDirectory($folder)
+            Add-ReuseHostedTimingCounter $timing 'artifact_download_calls'
             $zip=Invoke-ReuseHostedGet $context @('api',($prefix+'/actions/artifacts/'+$item.id+'/zip')) ('artifact-'+$item.id)
+            $expandSpan=Start-ReuseHostedTimingPhase $timing 'archive-expansion'
+            Add-ReuseHostedTimingCounter $timing 'archive_expansion_calls'
             $destination=Join-Path $folder 'files';$entries=@(Expand-ReuseHostedArchive $zip $destination ([string]$item.digest))
+            Add-ReuseHostedTimingCounter $timing 'expanded_files' $entries.Count
+            Complete-ReuseHostedTimingPhase $timing $expandSpan
             Write-ReuseHostedJson (Join-Path $folder 'artifact.json') $item;Write-ReuseHostedJson (Join-Path $folder 'members.json') $entries
             $artifacts.Add([pscustomobject]@{metadata=$item;directory=$destination;files=$entries})
         }
         foreach($file in @(Get-ChildItem -LiteralPath $out -File -Recurse)){$holds.Add([IO.File]::Open($file.FullName,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read))}
+        Complete-ReuseHostedTimingPhase $timing $archiveSpan
+        $planSpan=Start-ReuseHostedTimingPhase $timing 'plan-verification'
         $planArtifacts=@($artifacts|Where-Object{[string]$_.metadata.name-match'^affected-plan-[0-9a-f]{64}-'})
         $planWinner=@(Select-MorphospaceAffectedArtifactAttempts -Artifacts @($planArtifacts.metadata) -ExpectedIds @('plan') -RunId ([string]$RunId) -CurrentAttempt $context.Attempt)
         if($planWinner.Count-ne1){throw 'Hosted uploaded plan is not unique.'}
@@ -412,10 +518,15 @@ function Invoke-ReuseHostedIntake {
         $plan=Read-ReuseHostedPayload $planArtifact[0] 'affected-plan.json' 'affected-validation-plan-v2.schema.json' $candidateRoot
         $planPath=Join-Path $planArtifact[0].directory 'affected-plan.json'
         if(-not$plan.execution_permitted-or[string]$plan.selection_mode-ceq'mapping-incomplete'-or[string]$plan.repository-cne$Repository-or[string]$plan.base.commit-cne$BeforeCommit-or[string]$plan.head.commit-cne$HeadCommit-or[string]$plan.plan_sha256-cne[string]$planWinner[0].identity.digest){throw 'Hosted uploaded plan does not bind executable exact source.'}
+        $selectorSpan=Start-ReuseHostedTimingPhase $timing 'public-selector-recomputation'
+        Add-ReuseHostedTimingCounter $timing 'plan_recomputation_calls'
         $recomputed=Resolve-MorphospaceAffectedValidation -RepositoryRoot $candidateRoot -BaseRevision $BeforeCommit -HeadRevision $HeadCommit -RegistryPath (Join-Path $candidateRoot 'manifests/affected-validation-registry.json') -RequestedTier ([string]$plan.requested_tier)
+        Complete-ReuseHostedTimingPhase $timing $selectorSpan
         if((Get-MorphospaceCanonicalJsonSha256 $plan)-cne(Get-MorphospaceCanonicalJsonSha256 $recomputed)){throw 'Hosted plan differs from exact public selector.'}
         $workflowPath=Join-Path $candidateRoot '.github/workflows/validate.yml';$context.LinuxMode=Get-ReuseCandidateLinuxExecutionMode ([IO.File]::ReadAllText($workflowPath,[Text.UTF8Encoding]::new($false,$true)))
-        $selected=Get-ReuseHostedSelectedRows -Context $context -Plan $plan -Artifacts @($artifacts.ToArray()) -Jobs $jobs
+        Complete-ReuseHostedTimingPhase $timing $planSpan
+        $selected=Get-ReuseHostedSelectedRows -Context $context -Plan $plan -Artifacts @($artifacts.ToArray()) -Jobs $jobs -Timing $timing
+        $finalSpan=Start-ReuseHostedTimingPhase $timing 'final-postimage-report'
         $jobsByAttempt=@{};$jobsByAttempt[[string]$context.Attempt]=$jobs
         foreach($platform in @($selected.platforms)){
             foreach($root in @($platform.roots)){
@@ -441,8 +552,91 @@ function Invoke-ReuseHostedIntake {
         $rawFiles=@(Get-ChildItem -LiteralPath $out -File -Recurse|Sort-Object FullName|ForEach-Object{Get-ReuseHostedRawRef $_.FullName $out});$manifestPath=Join-Path $out 'raw-manifest.json';Write-ReuseHostedJson $manifestPath ([pscustomobject]@{files=$rawFiles})
         $report=[pscustomobject][ordered]@{schema='rusty.morphospace.diagnostic.affected_validation_hosted_intake.v1';result='pass';hosted_evidence_valid=$true;complete_leaf_union=$true;observed_at=[DateTimeOffset]::UtcNow.ToString('o');repository=$Repository;base=$plan.base;head=$plan.head;pull_request_number=$PullRequestNumber;run=[pscustomobject]@{id=$RunId;attempt=$context.Attempt;event=$run.event;status=$run.status;conclusion=$run.conclusion;workflow_id=$run.workflow_id};plan=[pscustomobject]@{file=Get-ReuseHostedRawRef $planPath $out;canonical_sha256=$plan.plan_sha256};platforms=$selected.platforms;rows=$selected.rows;counts=[pscustomobject]@{selected_rows=$selected.rows.Count;executed=@($selected.rows|Where-Object mode -ceq 'executed').Count;reused=@($selected.rows|Where-Object mode -ceq 'reused').Count};raw_manifest=Get-ReuseHostedRawRef $manifestPath $out;producer=[pscustomobject]@{entrypoint='scripts/Test-AffectedValidationReuse.ps1';commit=$producerHead;tree=$producerTree;source_refs=@($sourceRecords.ToArray());provider_executable_sha256=$toolSha;provider_hostname='github.com'};claims=[pscustomobject]@{current_source_qualified_self_contained_evidence=$true;historical_genesis_reverified=$false;candidate_admission=$false;acceptance_authority=$false;publication_authority=$false;device_used=$false}}
         $reportPath=Join-Path $out 'hosted-intake.json';Write-ReuseHostedJson $reportPath $report
+        Complete-ReuseHostedTimingPhase $timing $finalSpan
         return [pscustomobject]@{hosted_evidence_valid=$true;report=Get-ReuseHostedRawRef $reportPath $out;output_directory=$out;acceptance_authority=$false;publication_authority=$false}
-    }finally{foreach($hold in $holds){$hold.Dispose()}}
+    }finally{
+        try{foreach($hold in $holds){$hold.Dispose()}}
+        finally{Write-ReuseHostedTiming -Timing $timing -Output $out -OutputAdmitted:$timingOutputAdmitted}
+    }
+}
+
+
+function Invoke-ReuseHostedTimingControls {
+    param([string]$Fixture,[string]$SourceRoot)
+    $command=Get-Command (Join-Path $SourceRoot 'scripts/Test-AffectedValidationReuse.ps1')
+    if(-not$command.Parameters.ContainsKey('CaptureTimings')){throw 'Hosted timing observation contract is missing.'}
+    if((@($command.Parameters['CaptureTimings'].ParameterSets.Keys)-join'|')-cne'hosted'){throw 'Hosted timing option escaped its hosted-only parameter set.'}
+    $preadmission=Join-Path $Fixture 'timing-real-pre-admission'
+    $reason=''
+    try{[void](Invoke-ReuseHostedIntake -RepositoryRoot $SourceRoot -BeforeCommit 'not-canonical' -HeadCommit ('a'*40) -Repository 'owner/repo' -PullRequestNumber 1 -RunId 1 -GhPath (Get-Process -Id $PID).Path -OutputDirectory $preadmission -CaptureTimings)}catch{$reason=$_.Exception.Message}
+    if($reason-cne'Hosted candidate arguments must be exact canonical identities.'-or(Test-Path -LiteralPath $preadmission)){throw 'Actual pre-admission refusal changed or created diagnostics.'}
+    $tokens=$null;$errors=$null;$ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $SourceRoot 'scripts/Test-AffectedValidationReuse.ps1'),[ref]$tokens,[ref]$errors)
+    $reports=@($ast.FindAll({param($n)$n-is[Management.Automation.Language.AssignmentStatementAst]-and$n.Left.Extent.Text-ceq'$report'},$true))
+    if($errors.Count-or$reports.Count-ne1){throw 'Hosted report source did not parse uniquely.'}
+    $reportTable=@($reports[0].Right.FindAll({param($n)$n-is[Management.Automation.Language.HashtableAst]},$true)|Sort-Object { $_.Extent.StartOffset })[0]
+    $keys=@($reportTable.KeyValuePairs|ForEach-Object{[string]$_.Item1.Value})
+    $expected=@('schema','result','hosted_evidence_valid','complete_leaf_union','observed_at','repository','base','head','pull_request_number','run','plan','platforms','rows','counts','raw_manifest','producer','claims')
+    if(($keys-join'|')-cne($expected-join'|')){throw 'Timing changed the existing hosted report field contract.'}
+    $disabled=New-ReuseHostedTiming
+    if($null-ne$disabled){throw 'Disabled hosted timing allocated an invocation.'}
+    $absent=Join-Path $Fixture 'timing-unadmitted'
+    $none=@(Write-ReuseHostedTiming -Timing $disabled -Output $absent -OutputAdmitted)
+    if($none.Count-or(Test-Path -LiteralPath $absent)){throw 'Disabled timing emitted output or wrote a directory.'}
+    $timing=New-ReuseHostedTiming -Enabled -StartedTimestamp 100
+    $frequency=[long]$timing.frequency
+    $complete=Start-ReuseHostedTimingPhase $timing 'fixture-complete' -Timestamp (100+$frequency)
+    Complete-ReuseHostedTimingPhase $timing $complete -Timestamp (100+3*$frequency)
+    $open=Start-ReuseHostedTimingPhase $timing 'fixture-open' -Timestamp (100+4*$frequency)
+    Add-ReuseHostedTimingCounter $timing 'fixture_calls' 2
+    $none=@(Write-ReuseHostedTiming -Timing $timing -Output $absent -Timestamp (100+6*$frequency))
+    if($none.Count-or(Test-Path -LiteralPath $absent)){throw 'Pre-admission timing touched its output.'}
+    $output=Join-Path $Fixture 'timing-admitted';[void][IO.Directory]::CreateDirectory($output)
+    $none=@(Write-ReuseHostedTiming -Timing $timing -Output $output -OutputAdmitted -Timestamp (100+6*$frequency))
+    if($none.Count){throw 'Timing publication polluted producer stdout.'}
+    $path=Join-Path $output 'diagnostics/hosted-intake-timing.json'
+    $diagnostic=[IO.File]::ReadAllText($path)|ConvertFrom-Json -Depth 20
+    $closed=@($diagnostic.phases|Where-Object phase -CEQ 'fixture-complete')
+    $partial=@($diagnostic.phases|Where-Object phase -CEQ 'fixture-open')
+    if($diagnostic.elapsed_ms-ne6000-or$closed.Count-ne1-or$closed[0].calls-ne1-or$closed[0].completed_calls-ne1-or$closed[0].elapsed_ms-ne2000-or$partial.Count-ne1-or$partial[0].completed_calls-ne0-or$partial[0].incomplete_calls-ne1-or$partial[0].observed_incomplete_ms-ne2000-or$diagnostic.counters.fixture_calls-ne2){throw 'Hosted timing arithmetic/count/partial contract differs.'}
+    if($diagnostic.PSObject.Properties.Name-ccontains'result'-or$diagnostic.PSObject.Properties.Name-ccontains'hosted_evidence_valid'-or$diagnostic.PSObject.Properties.Name-ccontains'complete_leaf_union'){throw 'Timing diagnostic claimed a producer outcome.'}
+    $other=New-ReuseHostedTiming -Enabled
+    if($other.samples.Count-ne0-or$other.counters.Count-ne0-or[object]::ReferenceEquals($other,$timing)){throw 'Hosted timing state escaped its invocation.'}
+    $backwards=Start-ReuseHostedTimingPhase $other 'fixture-backwards' -Timestamp 200
+    Complete-ReuseHostedTimingPhase $other $backwards -Timestamp 199
+    if($backwards.completed){throw 'Backwards timing fabricated a completed span.'}
+    $before=[IO.File]::ReadAllBytes($path)
+    $none=@(Write-ReuseHostedTiming -Timing $timing -Output $output -OutputAdmitted)
+    if($none.Count-or[Convert]::ToBase64String([IO.File]::ReadAllBytes($path))-cne[Convert]::ToBase64String($before)){throw 'Timing overwrote an existing diagnostic or emitted output.'}
+    $blocked=Join-Path $Fixture 'timing-blocked';[void][IO.Directory]::CreateDirectory($blocked)
+    [IO.File]::WriteAllText((Join-Path $blocked 'diagnostics'),'owned sink failure')
+    $observed=$null;$original=$null
+    try{
+        try{throw [IO.InvalidDataException]::new('original producer refusal')}
+        catch{$original=$_;try{throw}finally{Write-ReuseHostedTiming -Timing $timing -Output $blocked -OutputAdmitted}}
+    }catch{$observed=$_}
+    # PowerShell rethrow creates a new ErrorRecord wrapper even without a sink.
+    # Preserve the actual exception identity and original record semantics.
+    if(-not[object]::ReferenceEquals($original.Exception,$observed.Exception)-or$original.FullyQualifiedErrorId-cne$observed.FullyQualifiedErrorId-or$original.CategoryInfo.Category-ne$observed.CategoryInfo.Category-or-not[object]::ReferenceEquals($original.TargetObject,$observed.TargetObject)){throw 'Timing sink failure replaced the original producer error.'}
+    $value=Get-ReuseHostedTimingSuccessControlValue $timing $blocked
+    if($value-cne'unchanged producer value'){throw 'Timing sink failure changed a producer success value.'}
+    Write-ReuseHostedTiming -Timing ([pscustomobject]@{}) -Output $blocked -OutputAdmitted
+    $childSource='$ErrorActionPreference=''Stop'''+ "`n"
+    foreach($name in @('New-ReuseHostedTiming','Write-ReuseHostedTiming','Assert-ReuseHostedNoReparse','Write-ReuseHostedJson')){$childSource+='function '+$name+' {'+(Get-Command $name).Definition+"}`n"}
+    $childSource+='$timing=New-ReuseHostedTiming -Enabled;try{[Console]::Out.Write(''producer-marker'');throw [IO.InvalidDataException]::new(''original-producer-refusal'')}finally{Write-ReuseHostedTiming -Timing $timing -Output '''+$blocked.Replace("'","''")+''' -OutputAdmitted}'
+    $start=[Diagnostics.ProcessStartInfo]::new((Get-Process -Id $PID).Path);$start.UseShellExecute=$false;$start.CreateNoWindow=$true;$start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
+    foreach($argument in @('-NoProfile','-NonInteractive','-Command',$childSource)){$start.ArgumentList.Add($argument)}
+    $process=[Diagnostics.Process]::new();$process.StartInfo=$start
+    try{
+        if(-not$process.Start()){throw 'Native timing refusal control did not start.'}
+        $stdout=$process.StandardOutput.ReadToEndAsync();$stderr=$process.StandardError.ReadToEndAsync()
+        $process.WaitForExit();$text=$stdout.GetAwaiter().GetResult();$errorText=$stderr.GetAwaiter().GetResult()
+        if($process.ExitCode-ne1-or$text-cne'producer-marker'-or-not$errorText.Contains('original-producer-refusal')){throw 'Timing sink changed actual native nonzero exit or original streams.'}
+    }finally{$process.Dispose()}
+    Write-Host 'Candidate-hosted invocation timing controls passed (observations only; no provider calls or timing claim).'
+}
+function Get-ReuseHostedTimingSuccessControlValue {
+    param([object]$Timing,[string]$Output)
+    try{return 'unchanged producer value'}finally{Write-ReuseHostedTiming -Timing $Timing -Output $Output -OutputAdmitted}
 }
 
 function Invoke-ReuseHostedProviderControls {
@@ -538,11 +732,14 @@ function Invoke-ReuseHostedProducerControls {
         $aggregateName='affected-linux-'+$hash+'-101-'+$attempt;$aggregateFile='affected-linux-evidence.json';$aggregateDir=Join-Path $stage 'aggregate-artifact';[void][IO.Directory]::CreateDirectory($aggregateDir);[IO.File]::Copy($evidencePath,(Join-Path $aggregateDir $aggregateFile))
         $artifacts=@([pscustomobject]@{metadata=[pscustomobject]@{id=1;name=$aggregateName};directory=$aggregateDir;files=@(Get-ReuseHostedRawRef (Join-Path $aggregateDir $aggregateFile) $aggregateDir)},[pscustomobject]@{metadata=[pscustomobject]@{id=2;name=('affected-checks-linux-'+$head+'-'+$attempt)};directory=$inventoryRoot;files=@(Get-ChildItem -LiteralPath $inventoryRoot -File -Recurse|ForEach-Object{Get-ReuseHostedRawRef $_.FullName $inventoryRoot})})
         $context=[pscustomobject]@{RepositoryRoot=$repo;Head=$head;Repository=$plan.repository;RunId=101;Attempt=$attempt;PullRequestNumber=7;LinuxMode='linux-direct';MergeSha=$head;Output=$output}
-        $selected=Get-ReuseHostedSelectedRows -Context $context -Plan $plan -Artifacts $artifacts -Jobs $jobs
+        $producerTiming=New-ReuseHostedTiming -Enabled
+        $selected=Get-ReuseHostedSelectedRows -Context $context -Plan $plan -Artifacts $artifacts -Jobs $jobs -Timing $producerTiming
+        if($producerTiming.counters.dependency_closure_batches-ne1-or$producerTiming.counters.root_inventory_calls-ne1-or$producerTiming.counters.leaf_verification_calls-ne2-or$producerTiming.counters[('verified_'+$(if($attempt-eq1){'executed'}else{'reused'})+'_rows')]-ne2){throw 'Hosted timing counters did not follow actual producer verification boundaries.'}
         $expectedMode=if($attempt-eq1){'executed'}else{'reused'}
         if($selected.rows.Count-ne2-or@($selected.rows|Where-Object mode -cne $expectedMode).Count){throw 'Hosted reader did not retain the real self-contained producer disposition.'}
         if($attempt-eq3){
             foreach($damage in @('attempt','job','source','raw','binding','runner','pointer','summary','extra-job')){
+                $damageTiming=if($damage-ceq'extra-job'){New-ReuseHostedTiming -Enabled}else{$null}
                 $inventoryPath=Join-Path $inventoryRoot 'inventory.json';$inventoryBytes=[IO.File]::ReadAllBytes($inventoryPath);$damagedJobs=$jobs;$restorePath='';$restoreBytes=$null
                 try{
                     if($damage-ceq'extra-job'){$damagedJobs=@($jobs)+[pscustomobject]@{name='foreign';status='completed';conclusion='success'}}
@@ -564,7 +761,13 @@ function Invoke-ReuseHostedProducerControls {
                             [IO.File]::WriteAllText($inventoryPath,($inv|ConvertTo-Json -Depth 100 -Compress),[Text.UTF8Encoding]::new($false))
                         }
                     }
-                    $refused=$false;try{[void](Get-ReuseHostedSelectedRows -Context $context -Plan $plan -Artifacts $artifacts -Jobs $damagedJobs)}catch{$refused=$true};if(-not$refused){throw "Hosted real producer control accepted $damage drift."}
+                    $refused=$false;try{[void](Get-ReuseHostedSelectedRows -Context $context -Plan $plan -Artifacts $artifacts -Jobs $damagedJobs -Timing $damageTiming)}catch{$refused=$true};if(-not$refused){throw "Hosted real producer control accepted $damage drift."}
+                    if($damage-ceq'extra-job'){
+                        Write-ReuseHostedTiming -Timing $damageTiming -Output $stage -OutputAdmitted
+                        $partial=[IO.File]::ReadAllText((Join-Path $stage 'diagnostics/hosted-intake-timing.json'))|ConvertFrom-Json -Depth 20
+                        $active=@($partial.phases|Where-Object phase -CEQ 'selected-row-verification')
+                        if($active.Count-ne1-or$active[0].incomplete_calls-ne1-or$active[0].completed_calls-ne0-or$partial.counters.verified_reused_rows-ne2){throw 'Late coverage refusal did not retain honestly partial timing with verified leaf counters.'}
+                    }
                 }finally{[IO.File]::WriteAllBytes($inventoryPath,$inventoryBytes);if($restorePath){[IO.File]::WriteAllBytes($restorePath,$restoreBytes)}}
             }
         }
@@ -776,6 +979,7 @@ if (-not [string]::IsNullOrWhiteSpace($SelfTestPhase)) {
         Write-ReuseSelfUtf8 $receiptPath (($receipt | ConvertTo-Json -Depth 64 -Compress) + "`n")
         }
         if ($runRunJobCoverage) {
+        Invoke-ReuseHostedTimingControls -Fixture $fixture -SourceRoot $sourceRoot
         Invoke-ReuseHostedProviderControls -Fixture $fixture
         Invoke-ReuseHostedProducerControls -Fixture $fixture -SourceRoot $sourceRoot
         $currentWorkflow=[IO.File]::ReadAllText((Join-Path $sourceRoot '.github/workflows/validate.yml'))
@@ -839,7 +1043,7 @@ if (-not [string]::IsNullOrWhiteSpace($SelfTestPhase)) {
 }
 
 if ($CandidateHosted) {
-    $hostedResult=Invoke-ReuseHostedIntake -RepositoryRoot $RepositoryRoot -BeforeCommit $BeforeCommit -HeadCommit $HeadCommit -Repository $Repository -PullRequestNumber $PullRequestNumber -RunId $RunId -GhPath $GhPath -OutputDirectory $OutputDirectory
+    $hostedResult=Invoke-ReuseHostedIntake -RepositoryRoot $RepositoryRoot -BeforeCommit $BeforeCommit -HeadCommit $HeadCommit -Repository $Repository -PullRequestNumber $PullRequestNumber -RunId $RunId -GhPath $GhPath -OutputDirectory $OutputDirectory -CaptureTimings:$CaptureTimings
     $hostedResult|ConvertTo-Json -Depth 100 -Compress
     return
 }
